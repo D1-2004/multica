@@ -444,6 +444,30 @@ describe("AppConfigSchema dingtalk_client_id drift", () => {
   });
 });
 
+describe("AppConfigSchema dingtalk_only drift", () => {
+  it("parses dingtalk_only when the server locks sign-in to DingTalk", () => {
+    const parsed = AppConfigSchema.parse({ dingtalk_only: true });
+    expect(parsed.dingtalk_only).toBe(true);
+  });
+
+  it("leaves dingtalk_only undefined when an older server omits it", () => {
+    const parsed = AppConfigSchema.parse({ allow_signup: true });
+    expect(parsed.dingtalk_only).toBeUndefined();
+  });
+
+  it("coerces a malformed dingtalk_only to false without failing the whole config", () => {
+    const parsed = AppConfigSchema.parse({
+      allow_signup: true,
+      dingtalk_client_id: "dingxxxxappkey",
+      dingtalk_only: "yes",
+    });
+    // Bad boolean → false; the rest of the config still parses so the login
+    // page keeps working (API-compat rule).
+    expect(parsed.dingtalk_only).toBe(false);
+    expect(parsed.dingtalk_client_id).toBe("dingxxxxappkey");
+  });
+});
+
 describe("InboxUnreadSummarySchema", () => {
   const ENDPOINT = { endpoint: "GET /api/inbox/unread-summary" };
 

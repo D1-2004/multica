@@ -1,6 +1,7 @@
 import { LoginPage } from "@multica/views/auth";
 import { DragStrip } from "@multica/views/platform";
 import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
+import { useConfigStore } from "@multica/core/config";
 
 function requireRuntimeAppUrl(): string {
   const runtimeConfig = window.desktopAPI.runtimeConfig;
@@ -14,6 +15,9 @@ function requireRuntimeAppUrl(): string {
 
 export function DesktopLoginPage() {
   const webUrl = requireRuntimeAppUrl();
+  // When the backend locks sign-in to DingTalk, hide the email form + Google
+  // button here too (config is seeded by CoreProvider's AuthInitializer).
+  const dingtalkOnly = useConfigStore((s) => s.dingtalkOnly);
   // Both OAuth providers hand off to the web login page (which renders whichever
   // provider buttons the backend has configured) in the default browser with the
   // platform=desktop flag. The web callback redirects the token back via the
@@ -33,8 +37,9 @@ export function DesktopLoginPage() {
           // Auth store update triggers AppContent re-render → shows DesktopShell.
           // Initial workspace navigation happens in routes.tsx via IndexRedirect.
         }}
-        onGoogleLogin={openWebLogin}
+        onGoogleLogin={dingtalkOnly ? undefined : openWebLogin}
         onDingtalkLogin={openWebLogin}
+        dingtalkOnly={dingtalkOnly}
       />
     </div>
   );

@@ -60,6 +60,7 @@ function LoginPageContent() {
   const { t } = useT("auth");
   const googleClientId = useConfigStore((state) => state.googleClientId);
   const dingtalkClientId = useConfigStore((state) => state.dingtalkClientId);
+  const dingtalkOnly = useConfigStore((state) => state.dingtalkOnly);
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
   const searchParams = useSearchParams();
@@ -220,6 +221,7 @@ function LoginPageContent() {
             }
           : undefined
       }
+      dingtalkOnly={dingtalkOnly}
       cliCallback={
         cliCallbackRaw && validateCliCallback(cliCallbackRaw)
           ? { url: cliCallbackRaw, state: cliState }
