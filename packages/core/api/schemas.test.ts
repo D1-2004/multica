@@ -539,6 +539,31 @@ describe("AppConfigSchema cdn_signed drift", () => {
   });
 });
 
+describe("AppConfigSchema dingtalk_client_id drift", () => {
+  it("parses dingtalk_client_id when the server provides it", () => {
+    const parsed = AppConfigSchema.parse({ dingtalk_client_id: "dingxxxxappkey" });
+    expect(parsed.dingtalk_client_id).toBe("dingxxxxappkey");
+  });
+
+  it("leaves dingtalk_client_id undefined when a DingTalk-less server omits it", () => {
+    const parsed = AppConfigSchema.parse({ allow_signup: true });
+    expect(parsed.dingtalk_client_id).toBeUndefined();
+  });
+
+  it("coerces a malformed dingtalk_client_id to undefined instead of failing the whole config", () => {
+    const parsed = AppConfigSchema.parse({
+      allow_signup: true,
+      google_client_id: "google-abc",
+      dingtalk_client_id: 12345,
+    });
+    // The bad field is dropped, but the rest of the config still parses so the
+    // login page can keep rendering the other providers (MUL API-compat rule).
+    expect(parsed.dingtalk_client_id).toBeUndefined();
+    expect(parsed.google_client_id).toBe("google-abc");
+    expect(parsed.allow_signup).toBe(true);
+  });
+});
+
 describe("InboxUnreadSummarySchema", () => {
   const ENDPOINT = { endpoint: "GET /api/inbox/unread-summary" };
 

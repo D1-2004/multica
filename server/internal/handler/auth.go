@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -461,6 +462,33 @@ type googleUserInfo struct {
 	Picture string `json:"picture"`
 }
 
+// DingTalkLoginRequest carries the one-time authorization code (DingTalk names
+// the callback query param `authCode`) that the frontend receives after the
+// user completes the QR / consent screen.
+type DingTalkLoginRequest struct {
+	Code string `json:"code"`
+}
+
+// dingtalkTokenResponse is the subset of POST /v1.0/oauth2/userAccessToken we
+// consume. DingTalk uses camelCase JSON, unlike Google's snake_case.
+type dingtalkTokenResponse struct {
+	AccessToken string `json:"accessToken"`
+	ExpireIn    int64  `json:"expireIn"`
+	CorpID      string `json:"corpId"`
+}
+
+// dingtalkUserInfo is the subset of GET /v1.0/contact/users/me we consume.
+// `email` is frequently empty for org members, so identity keys off `unionId`,
+// which is stable and unique per person for this app.
+type dingtalkUserInfo struct {
+	Nick      string `json:"nick"`
+	AvatarURL string `json:"avatarUrl"`
+	Mobile    string `json:"mobile"`
+	OpenID    string `json:"openId"`
+	UnionID   string `json:"unionId"`
+	Email     string `json:"email"`
+}
+
 func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 	var req GoogleLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -608,6 +636,202 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("user logged in via google", append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "email", user.Email)...)
+	writeJSON(w, http.StatusOK, LoginResponse{
+		Token: tokenString,
+		User:  userToResponse(user),
+	})
+}
+
+// DingTalkLogin mirrors GoogleLogin for DingTalk's unified OAuth2 ("扫码登录").
+// The frontend redirects the browser to login.dingtalk.com/oauth2/auth and
+// receives an authCode on the /auth/callback page; this handler exchanges it
+// for a user access token, reads the DingTalk contact profile, and maps that
+// identity onto a Multica user.
+//
+// DingTalk profiles are not guaranteed to expose a real email, so identity is
+// keyed on a synthetic address derived from the stable `unionId`
+// (`<unionId>@dingtalk.com`). This slots DingTalk users into the existing
+// email-keyed user model with no schema change, and — crucially — never folds
+// the mutable nickname into the key, so a display-name change can't mint a
+// second account. The real nickname/avatar are stored on the user's name and
+// avatar fields for display. For an internal ("企业内部") DingTalk app, only org
+// members can complete this flow, which is the access restriction we want.
+func (h *Handler) DingTalkLogin(w http.ResponseWriter, r *http.Request) {
+	var req DingTalkLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Code == "" {
+		writeError(w, http.StatusBadRequest, "code is required")
+		return
+	}
+
+	clientID := os.Getenv("DINGTALK_CLIENT_ID")
+	clientSecret := os.Getenv("DINGTALK_CLIENT_SECRET")
+	if clientID == "" || clientSecret == "" {
+		writeError(w, http.StatusServiceUnavailable, "DingTalk login is not configured")
+		return
+	}
+
+	// Exchange the authorization code for a user access token.
+	tokenReqBody, err := json.Marshal(map[string]string{
+		"clientId":     clientID,
+		"clientSecret": clientSecret,
+		"code":         req.Code,
+		"grantType":    "authorization_code",
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	tokenReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+		"https://api.dingtalk.com/v1.0/oauth2/userAccessToken", bytes.NewReader(tokenReqBody))
+	if err != nil {
+		slog.Error("failed to create dingtalk token request", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	tokenReq.Header.Set("Content-Type", "application/json")
+
+	tokenResp, err := http.DefaultClient.Do(tokenReq)
+	if err != nil {
+		slog.Error("dingtalk oauth token exchange failed", "error", err)
+		writeError(w, http.StatusBadGateway, "failed to exchange code with DingTalk")
+		return
+	}
+	defer tokenResp.Body.Close()
+
+	tokenBody, err := io.ReadAll(tokenResp.Body)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to read DingTalk token response")
+		return
+	}
+
+	if tokenResp.StatusCode != http.StatusOK {
+		slog.Error("dingtalk oauth token exchange returned error", "status", tokenResp.StatusCode, "body", string(tokenBody))
+		writeError(w, http.StatusBadRequest, "failed to exchange code with DingTalk")
+		return
+	}
+
+	var dtToken dingtalkTokenResponse
+	if err := json.Unmarshal(tokenBody, &dtToken); err != nil {
+		writeError(w, http.StatusBadGateway, "failed to parse DingTalk token response")
+		return
+	}
+	if dtToken.AccessToken == "" {
+		writeError(w, http.StatusBadGateway, "DingTalk token response missing access token")
+		return
+	}
+
+	// Fetch the DingTalk user's contact profile.
+	userInfoReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		"https://api.dingtalk.com/v1.0/contact/users/me", nil)
+	if err != nil {
+		slog.Error("failed to create dingtalk userinfo request", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	userInfoReq.Header.Set("x-acs-dingtalk-access-token", dtToken.AccessToken)
+
+	userInfoResp, err := http.DefaultClient.Do(userInfoReq)
+	if err != nil {
+		slog.Error("dingtalk userinfo fetch failed", "error", err)
+		writeError(w, http.StatusBadGateway, "failed to fetch user info from DingTalk")
+		return
+	}
+	defer userInfoResp.Body.Close()
+
+	userInfoBody, err := io.ReadAll(userInfoResp.Body)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to read DingTalk user info")
+		return
+	}
+
+	if userInfoResp.StatusCode != http.StatusOK {
+		slog.Error("dingtalk userinfo returned error", "status", userInfoResp.StatusCode, "body", string(userInfoBody))
+		writeError(w, http.StatusBadGateway, "failed to fetch user info from DingTalk")
+		return
+	}
+
+	var dtUser dingtalkUserInfo
+	if err := json.Unmarshal(userInfoBody, &dtUser); err != nil {
+		writeError(w, http.StatusBadGateway, "failed to parse DingTalk user info")
+		return
+	}
+
+	if dtUser.UnionID == "" {
+		writeError(w, http.StatusBadGateway, "DingTalk account has no unionId")
+		return
+	}
+
+	// Synthesize a stable, unique identity address from the unionId. Lowercase
+	// only the domain — the unionId itself is kept verbatim so two distinct
+	// ids can never collide, and it round-trips deterministically through
+	// GetUserByEmail on every subsequent login.
+	email := dtUser.UnionID + "@dingtalk.com"
+
+	user, isNew, err := h.findOrCreateUser(r.Context(), email)
+	if err != nil {
+		var signupErr SignupError
+		if errors.As(err, &signupErr) {
+			writeError(w, http.StatusForbidden, signupErr.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to create user")
+		return
+	}
+	if isNew {
+		evt := analytics.Signup(uuidToString(user.ID), user.Email, signupSourceFromRequest(r))
+		evt.Properties["auth_method"] = "dingtalk"
+		obsmetrics.RecordEvent(h.Analytics, h.Metrics, evt)
+	}
+
+	// Backfill display name/avatar from the DingTalk profile on first login
+	// (default name is the email prefix = the unionId) or when still unset.
+	needsUpdate := false
+	newName := user.Name
+	newAvatar := user.AvatarUrl
+
+	if dtUser.Nick != "" && user.Name == strings.Split(email, "@")[0] {
+		newName = dtUser.Nick
+		needsUpdate = true
+	}
+	if dtUser.AvatarURL != "" && !user.AvatarUrl.Valid {
+		newAvatar = pgtype.Text{String: dtUser.AvatarURL, Valid: true}
+		needsUpdate = true
+	}
+
+	if needsUpdate {
+		updated, err := h.Queries.UpdateUser(r.Context(), db.UpdateUserParams{
+			ID:        user.ID,
+			Name:      newName,
+			AvatarUrl: newAvatar,
+		})
+		if err == nil {
+			user = updated
+		}
+	}
+
+	tokenString, err := h.issueJWT(user)
+	if err != nil {
+		slog.Warn("dingtalk login failed", append(logger.RequestAttrs(r), "error", err, "email", email)...)
+		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+
+	if err := auth.SetAuthCookies(w, tokenString); err != nil {
+		slog.Warn("failed to set auth cookies", "error", err)
+	}
+
+	if h.CFSigner != nil {
+		for _, cookie := range h.CFSigner.SignedCookies(time.Now().Add(72 * time.Hour)) {
+			http.SetCookie(w, cookie)
+		}
+	}
+
+	slog.Info("user logged in via dingtalk", append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "email", user.Email)...)
 	writeJSON(w, http.StatusOK, LoginResponse{
 		Token: tokenString,
 		User:  userToResponse(user),

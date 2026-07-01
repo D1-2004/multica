@@ -23,11 +23,13 @@ function CallbackContent() {
   const searchParams = useSearchParams();
   const qc = useQueryClient();
   const loginWithGoogle = useAuthStore((s) => s.loginWithGoogle);
+  const loginWithDingtalk = useAuthStore((s) => s.loginWithDingtalk);
   const [error, setError] = useState("");
   const [desktopToken, setDesktopToken] = useState<string | null>(null);
 
   useEffect(() => {
-    const code = searchParams.get("code");
+    // Google returns the grant as `code`; DingTalk returns it as `authCode`.
+    const code = searchParams.get("code") || searchParams.get("authCode");
     if (!code) {
       setError("Missing authorization code");
       return;
@@ -42,6 +44,9 @@ function CallbackContent() {
     const state = searchParams.get("state") || "";
     const stateParts = state.split(",");
     const isDesktop = stateParts.includes("platform:desktop");
+    // Which OAuth provider issued this code — the login page stamped a
+    // "provider:dingtalk" marker into the state for DingTalk; Google omits it.
+    const isDingtalk = stateParts.includes("provider:dingtalk");
     const nextPart = stateParts.find((p) => p.startsWith("next:"));
     // Strip "next:" prefix, then drop anything that isn't a safe relative path
     // so an attacker-controlled `state=next:https://evil` cannot redirect here.
@@ -69,10 +74,9 @@ function CallbackContent() {
         : null;
 
     if (cliCallback) {
-      // CLI login flow: exchange the Google code for a JWT, then redirect the
-      // token back to the CLI's local HTTP listener (e.g. WSL2 host).
-      api
-        .googleLogin(code, redirectUri)
+      // CLI login flow: exchange the code for a JWT, then redirect the token
+      // back to the CLI's local HTTP listener (e.g. WSL2 host).
+      (isDingtalk ? api.dingtalkLogin(code) : api.googleLogin(code, redirectUri))
         .then(({ token }) => {
           redirectToCliCallback(cliCallback, token, cliState);
         })
@@ -81,8 +85,7 @@ function CallbackContent() {
         });
     } else if (isDesktop) {
       // Desktop flow: exchange code for token, then redirect via deep link
-      api
-        .googleLogin(code, redirectUri)
+      (isDingtalk ? api.dingtalkLogin(code) : api.googleLogin(code, redirectUri))
         .then(({ token }) => {
           setDesktopToken(token);
           window.location.href = `multica://auth/callback?token=${encodeURIComponent(token)}`;
@@ -92,7 +95,7 @@ function CallbackContent() {
         });
     } else {
       // Normal web flow
-      loginWithGoogle(code, redirectUri)
+      (isDingtalk ? loginWithDingtalk(code) : loginWithGoogle(code, redirectUri))
         .then(async (loggedInUser) => {
           const wsList = await api.listWorkspaces();
           qc.setQueryData(workspaceKeys.list(), wsList);
@@ -141,7 +144,7 @@ function CallbackContent() {
           setError(err instanceof Error ? err.message : "Login failed");
         });
     }
-  }, [searchParams, loginWithGoogle, router, qc]);
+  }, [searchParams, loginWithGoogle, loginWithDingtalk, router, qc]);
 
   if (desktopToken) {
     return (
