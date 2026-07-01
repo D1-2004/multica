@@ -426,6 +426,15 @@ export class ApiClient {
     });
   }
 
+  // DingTalk's OAuth callback returns a single-use `authCode`; the backend
+  // exchanges it server-side (no redirect_uri needed for the token step).
+  async dingtalkLogin(code: string): Promise<LoginResponse> {
+    return this.fetch("/auth/dingtalk", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    });
+  }
+
   async logout(): Promise<void> {
     await this.fetch("/auth/logout", { method: "POST" });
   }

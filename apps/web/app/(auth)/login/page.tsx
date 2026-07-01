@@ -59,6 +59,7 @@ function LoginPageContent() {
   const qc = useQueryClient();
   const { t } = useT("auth");
   const googleClientId = useConfigStore((state) => state.googleClientId);
+  const dingtalkClientId = useConfigStore((state) => state.dingtalkClientId);
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
   const searchParams = useSearchParams();
@@ -141,6 +142,13 @@ function LoginPageContent() {
     .filter(Boolean)
     .join(",") || undefined;
 
+  // DingTalk shares the /auth/callback page with Google, so its state carries a
+  // "provider:dingtalk" marker (plus the same platform/next/CLI params) that
+  // tells the callback which provider to exchange the code with.
+  const dingtalkState = googleState
+    ? `provider:dingtalk,${googleState}`
+    : "provider:dingtalk";
+
   // While the desktop handoff is in progress (or has produced a token/error),
   // render a dedicated screen instead of flashing the login form or redirecting
   // away to a workspace page.
@@ -200,6 +208,15 @@ function LoginPageContent() {
               clientId: googleClientId,
               redirectUri: `${window.location.origin}/auth/callback`,
               state: googleState,
+            }
+          : undefined
+      }
+      dingtalk={
+        dingtalkClientId
+          ? {
+              clientId: dingtalkClientId,
+              redirectUri: `${window.location.origin}/auth/callback`,
+              state: dingtalkState,
             }
           : undefined
       }
