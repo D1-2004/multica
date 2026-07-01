@@ -14,15 +14,10 @@ import type { OnboardingStep } from "./types";
  * for the same reason — users shouldn't think of reading the intro
  * as progress toward completing setup.
  *
- * Note: "teammate" (the old "Create your first agent" step) is no longer
- * part of the in-flow sequence. Helper agent creation now happens after
- * onboarding exits, via the workspace OnboardingHelperModal — see
- * `packages/views/workspace/onboarding-helper-modal.tsx`.
+ * FDE Agent keeps self-host onboarding intentionally short: sign in, create
+ * or pick a workspace, then land in the product. Runtime/daemon setup is
+ * handled after onboarding from the workspace/settings surfaces.
  */
 export const ONBOARDING_STEP_ORDER: readonly OnboardingStep[] = [
-  "source",
-  "role",
-  "use_case",
   "workspace",
-  "runtime",
 ] as const;
