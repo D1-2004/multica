@@ -30,6 +30,15 @@ type AppConfig struct {
 	// login.dingtalk.com/oauth2/auth authorize URL with it. Omitted when
 	// empty so responses stay identical to the previous shape.
 	DingtalkClientID string `json:"dingtalk_client_id,omitempty"`
+	// DingtalkOnly, when true, tells the web/desktop login screen to hide the
+	// email-code and Google entry points and offer DingTalk as the only way in.
+	// It is set from LOGIN_DINGTALK_ONLY and is the display half of the lock;
+	// the router also stops registering /auth/send-code, /auth/verify-code and
+	// /auth/google so the email/Google paths are closed server-side too. Since
+	// the DingTalk app is an 企业内部应用, its OAuth login only admits members of
+	// that organization, so DingTalk-only login restricts access to the org.
+	// Omitted when false to keep responses identical to the previous shape.
+	DingtalkOnly bool `json:"dingtalk_only,omitempty"`
 	// WorkspaceCreationDisabled mirrors the server-side
 	// DISABLE_WORKSPACE_CREATION env var so the UI can hide every
 	// "Create workspace" affordance on self-hosted instances. Omitted
@@ -65,6 +74,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		AllowSignup:               os.Getenv("ALLOW_SIGNUP") != "false",
 		GoogleClientID:            os.Getenv("GOOGLE_CLIENT_ID"),
 		DingtalkClientID:          os.Getenv("DINGTALK_CLIENT_ID"),
+		DingtalkOnly:              DingtalkOnlyEnabled(),
 		WorkspaceCreationDisabled: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 	}
 	if h.Storage != nil {
@@ -86,6 +96,15 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, config)
+}
+
+// DingtalkOnlyEnabled reports whether LOGIN_DINGTALK_ONLY locks sign-in to the
+// DingTalk provider. It is read in two places that must agree: GetConfig (so the
+// login UI hides email/Google) and the router (so /auth/send-code,
+// /auth/verify-code and /auth/google are not registered at all). Exported so the
+// cmd/server router can share the same source of truth.
+func DingtalkOnlyEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("LOGIN_DINGTALK_ONLY")), "true")
 }
 
 func daemonSetupURLsFromEnv() (string, string) {

@@ -10,6 +10,8 @@ interface ConfigState {
   allowSignup: boolean;
   googleClientId: string;
   dingtalkClientId: string;
+  // When true, the login screen shows DingTalk as the only sign-in method.
+  dingtalkOnly: boolean;
   daemonServerUrl: string;
   daemonAppUrl: string;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
@@ -22,6 +24,7 @@ interface ConfigState {
     allowSignup: boolean;
     googleClientId?: string;
     dingtalkClientId?: string;
+    dingtalkOnly?: boolean;
     workspaceCreationDisabled?: boolean;
   }) => void;
   setDaemonConfig: (config: {
@@ -37,6 +40,7 @@ export const configStore = createStore<ConfigState>((set) => ({
   allowSignup: true,
   googleClientId: "",
   dingtalkClientId: "",
+  dingtalkOnly: false,
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
@@ -46,8 +50,9 @@ export const configStore = createStore<ConfigState>((set) => ({
     allowSignup,
     googleClientId = "",
     dingtalkClientId = "",
+    dingtalkOnly = false,
     workspaceCreationDisabled = false,
-  }) => set({ allowSignup, googleClientId, dingtalkClientId, workspaceCreationDisabled }),
+  }) => set({ allowSignup, googleClientId, dingtalkClientId, dingtalkOnly, workspaceCreationDisabled }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
   setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),

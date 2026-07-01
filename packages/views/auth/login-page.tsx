@@ -62,6 +62,11 @@ interface LoginPageProps {
   google?: GoogleAuthConfig;
   /** DingTalk OAuth config. Omit to disable DingTalk login. */
   dingtalk?: DingtalkAuthConfig;
+  /** When true, DingTalk is the only way in: the email-code form, the Google
+   *  button, and the divider are hidden, and the DingTalk button becomes the
+   *  primary action. Ignored when no DingTalk option is available, so the card
+   *  can never render empty. */
+  dingtalkOnly?: boolean;
   /** CLI callback config for authorizing CLI tools. */
   cliCallback?: CliCallbackConfig;
   /** Called after a token is obtained (e.g. to set cookies). */
@@ -116,6 +121,7 @@ export function LoginPage({
   onSuccess,
   google,
   dingtalk,
+  dingtalkOnly,
   cliCallback,
   onTokenObtained,
   onGoogleLogin,
@@ -322,6 +328,14 @@ export function LoginPage({
     window.location.href = `https://login.dingtalk.com/oauth2/auth?${params}`;
   };
 
+  const hasDingtalk = Boolean(dingtalk || onDingtalkLogin);
+  const hasGoogle = Boolean(google || onGoogleLogin);
+  // Collapse to a DingTalk-only screen only when there is actually a DingTalk
+  // button to show; otherwise fall back to the full form so the card is never
+  // left empty (e.g. a server that set the flag but no client id).
+  const dingtalkOnlyMode = dingtalkOnly === true && hasDingtalk;
+  const showGoogle = !dingtalkOnlyMode && hasGoogle;
+
   // -------------------------------------------------------------------------
   // CLI confirm step
   // -------------------------------------------------------------------------
@@ -451,53 +465,67 @@ export function LoginPage({
             {t(($) => $.signin.title)}
           </CardTitle>
           <CardDescription>
-            {t(($) => $.signin.description)}
+            {dingtalkOnlyMode
+              ? t(($) => $.signin.dingtalk_only_description)
+              : t(($) => $.signin.description)}
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          <form id="login-form" onSubmit={handleSendCode} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="login-email">{t(($) => $.common.email)}</Label>
-              <Input
-                id="login-email"
-                type="email"
-                placeholder={t(($) => $.common.email_placeholder)}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoFocus
-                required
-              />
-            </div>
-            {error && (
+        {dingtalkOnlyMode ? (
+          error ? (
+            <CardContent>
               <p className="text-sm text-destructive">{error}</p>
-            )}
-          </form>
-        </CardContent>
-        <CardFooter className="flex flex-col gap-3">
-          <Button
-            type="submit"
-            form="login-form"
-            className="w-full"
-            size="lg"
-            disabled={!email || loading}
-          >
-            {loading
-              ? t(($) => $.signin.sending)
-              : t(($) => $.signin.continue)}
-          </Button>
-          {(google || onGoogleLogin || dingtalk || onDingtalkLogin) && (
-            <>
-              <div className="relative w-full">
-                <div className="absolute inset-0 flex items-center">
-                  <span className="w-full border-t" />
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-card px-2 text-muted-foreground">
-                    {t(($) => $.signin.divider)}
-                  </span>
-                </div>
+            </CardContent>
+          ) : null
+        ) : (
+          <CardContent>
+            <form id="login-form" onSubmit={handleSendCode} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="login-email">{t(($) => $.common.email)}</Label>
+                <Input
+                  id="login-email"
+                  type="email"
+                  placeholder={t(($) => $.common.email_placeholder)}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoFocus
+                  required
+                />
               </div>
-              {(google || onGoogleLogin) && (
+              {error && (
+                <p className="text-sm text-destructive">{error}</p>
+              )}
+            </form>
+          </CardContent>
+        )}
+        <CardFooter className="flex flex-col gap-3">
+          {!dingtalkOnlyMode && (
+            <Button
+              type="submit"
+              form="login-form"
+              className="w-full"
+              size="lg"
+              disabled={!email || loading}
+            >
+              {loading
+                ? t(($) => $.signin.sending)
+                : t(($) => $.signin.continue)}
+            </Button>
+          )}
+          {(showGoogle || hasDingtalk) && (
+            <>
+              {!dingtalkOnlyMode && (
+                <div className="relative w-full">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-card px-2 text-muted-foreground">
+                      {t(($) => $.signin.divider)}
+                    </span>
+                  </div>
+                </div>
+              )}
+              {showGoogle && (
                 <Button
                   type="button"
                   variant="outline"
@@ -527,7 +555,7 @@ export function LoginPage({
                   {t(($) => $.signin.google)}
                 </Button>
               )}
-              {(dingtalk || onDingtalkLogin) && (
+              {hasDingtalk && (
                 <Button
                   type="button"
                   variant="outline"
