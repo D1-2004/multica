@@ -466,6 +466,15 @@ export class ApiClient {
     });
   }
 
+  // Feishu (Lark) returns the grant as `code` and, unlike DingTalk, the
+  // backend must send the same redirect_uri again on the token exchange.
+  async larkLogin(code: string, redirectUri: string): Promise<LoginResponse> {
+    return this.fetch("/auth/lark", {
+      method: "POST",
+      body: JSON.stringify({ code, redirect_uri: redirectUri }),
+    });
+  }
+
   async logout(): Promise<void> {
     await this.fetch("/auth/logout", { method: "POST" });
   }

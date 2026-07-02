@@ -94,6 +94,9 @@ export interface AppConfigResponse {
   // (email-code + Google are hidden and disabled server-side). Older servers
   // omit the field; treat that as false.
   dingtalk_only?: boolean;
+  // Feishu (Lark) app AppID. When present the login screen renders the
+  // "Continue with Feishu" button. Older servers omit it.
+  lark_client_id?: string;
   posthog_key?: string;
   posthog_host?: string;
   analytics_environment?: string;
@@ -245,6 +248,7 @@ export const AppConfigSchema = z.object({
   google_client_id: OptionalStringSchema,
   dingtalk_client_id: OptionalStringSchema,
   dingtalk_only: BooleanWithDefaultSchema(false).optional(),
+  lark_client_id: OptionalStringSchema,
   posthog_key: OptionalStringSchema,
   posthog_host: OptionalStringSchema,
   analytics_environment: OptionalStringSchema,
@@ -261,6 +265,7 @@ export const EMPTY_APP_CONFIG: AppConfigResponse = {
   google_client_id: "",
   dingtalk_client_id: "",
   dingtalk_only: false,
+  lark_client_id: "",
   daemon_server_url: "",
   daemon_app_url: "",
   workspace_creation_disabled: false,

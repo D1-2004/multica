@@ -564,6 +564,23 @@ describe("AppConfigSchema dingtalk_client_id drift", () => {
   });
 });
 
+describe("AppConfigSchema lark_client_id drift", () => {
+  it("parses lark_client_id when the server provides it", () => {
+    const parsed = AppConfigSchema.parse({ lark_client_id: "cli_feishuappid" });
+    expect(parsed.lark_client_id).toBe("cli_feishuappid");
+  });
+
+  it("leaves lark_client_id undefined when a Feishu-less server omits it", () => {
+    const parsed = AppConfigSchema.parse({ cdn_domain: "cdn.example.com" });
+    expect(parsed.lark_client_id).toBeUndefined();
+  });
+
+  it("drops a malformed lark_client_id instead of failing the parse", () => {
+    const parsed = AppConfigSchema.parse({ lark_client_id: 12345 });
+    expect(parsed.lark_client_id).toBeUndefined();
+  });
+});
+
 describe("AppConfigSchema dingtalk_only drift", () => {
   it("parses dingtalk_only when the server locks sign-in to DingTalk", () => {
     const parsed = AppConfigSchema.parse({ dingtalk_only: true });

@@ -12,6 +12,7 @@ interface ConfigState {
   dingtalkClientId: string;
   // When true, the login screen shows DingTalk as the only sign-in method.
   dingtalkOnly: boolean;
+  larkClientId: string;
   daemonServerUrl: string;
   daemonAppUrl: string;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
@@ -29,6 +30,7 @@ interface ConfigState {
     googleClientId?: string;
     dingtalkClientId?: string;
     dingtalkOnly?: boolean;
+    larkClientId?: string;
     workspaceCreationDisabled?: boolean;
   }) => void;
   setDaemonConfig: (config: {
@@ -45,6 +47,7 @@ export const configStore = createStore<ConfigState>((set) => ({
   googleClientId: "",
   dingtalkClientId: "",
   dingtalkOnly: false,
+  larkClientId: "",
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
@@ -56,6 +59,7 @@ export const configStore = createStore<ConfigState>((set) => ({
     googleClientId = "",
     dingtalkClientId = "",
     dingtalkOnly = false,
+    larkClientId = "",
     workspaceCreationDisabled = false,
   }) =>
     set({
@@ -63,6 +67,7 @@ export const configStore = createStore<ConfigState>((set) => ({
       googleClientId,
       dingtalkClientId,
       dingtalkOnly,
+      larkClientId,
       workspaceCreationDisabled,
       authConfigLoaded: true,
     }),
