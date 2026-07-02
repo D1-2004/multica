@@ -60,7 +60,12 @@ export function AuthInitializer({
           allowSignup: cfg.allow_signup,
           googleClientId: cfg.google_client_id,
           dingtalkClientId: cfg.dingtalk_client_id,
-          dingtalkOnly: cfg.dingtalk_only === true,
+          // Older backends predate login_providers; honor their legacy
+          // dingtalk_only flag as a single-provider allowlist so the lock
+          // still applies against them.
+          loginProviders:
+            cfg.login_providers ??
+            (cfg.dingtalk_only === true ? ["dingtalk"] : []),
           larkClientId: cfg.lark_client_id,
           // Old servers omit this field — treat that as "creation allowed"
           // (the managed-cloud default) rather than blocking the UI.

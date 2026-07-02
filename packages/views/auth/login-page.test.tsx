@@ -760,7 +760,7 @@ describe("Feishu (Lark) login", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides the Feishu button in DingTalk-only mode", () => {
+  it("renders both provider buttons without the email form in OAuth-only mode", () => {
     renderWithI18n(
       <LoginPage
         onSuccess={vi.fn()}
@@ -768,12 +768,21 @@ describe("Feishu (Lark) login", () => {
           clientId: "ding_test",
           redirectUri: "http://localhost:3000/auth/callback",
         }}
-        dingtalkOnly
         lark={larkConfig}
+        oauthOnly
       />,
     );
     expect(
-      screen.queryByRole("button", { name: /continue with feishu/i }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: /continue with dingtalk/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /continue with feishu/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the email form when oauthOnly is set with no provider configured", () => {
+    renderWithI18n(<LoginPage onSuccess={vi.fn()} oauthOnly />);
+    expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
   });
 });

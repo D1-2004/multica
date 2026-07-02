@@ -30,15 +30,21 @@ type AppConfig struct {
 	// login.dingtalk.com/oauth2/auth authorize URL with it. Omitted when
 	// empty so responses stay identical to the previous shape.
 	DingtalkClientID string `json:"dingtalk_client_id,omitempty"`
-	// DingtalkOnly, when true, tells the web/desktop login screen to hide the
-	// email-code and Google entry points and offer DingTalk as the only way in.
-	// It is set from LOGIN_DINGTALK_ONLY and is the display half of the lock;
-	// the router also stops registering /auth/send-code, /auth/verify-code and
-	// /auth/google so the email/Google paths are closed server-side too. Since
-	// the DingTalk app is an 企业内部应用, its OAuth login only admits members of
-	// that organization, so DingTalk-only login restricts access to the org.
+	// DingtalkOnly is kept for older installed clients: it is derived (true
+	// only when the LoginProviders allowlist is exactly ["dingtalk"]) so a
+	// desktop build that predates login_providers still collapses to the
+	// DingTalk-only screen. New clients read LoginProviders instead.
 	// Omitted when false to keep responses identical to the previous shape.
 	DingtalkOnly bool `json:"dingtalk_only,omitempty"`
+	// LoginProviders is the sign-in allowlist from LOGIN_PROVIDERS (e.g.
+	// ["dingtalk","lark"]). It is the display half of the lock — the login
+	// screen only offers the listed entry points — while the router refuses
+	// to register the login routes of providers outside the list, so the
+	// closed paths 404 server-side too. Since the DingTalk/Feishu apps are
+	// 企业内部应用, their OAuth logins only admit members of the organization,
+	// so an OAuth-only allowlist restricts access to the org. Omitted when
+	// unrestricted to keep responses identical to the previous shape.
+	LoginProviders []string `json:"login_providers,omitempty"`
 	// LarkClientID is the Feishu app's AppID (cli_xxx). When set, the web app
 	// renders the "使用飞书登录" button and builds the
 	// accounts.feishu.cn/open-apis/authen/v1/authorize URL with it. Non-secret
@@ -81,10 +87,12 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		AllowSignup:               os.Getenv("ALLOW_SIGNUP") != "false",
 		GoogleClientID:            os.Getenv("GOOGLE_CLIENT_ID"),
 		DingtalkClientID:          os.Getenv("DINGTALK_CLIENT_ID"),
-		DingtalkOnly:              DingtalkOnlyEnabled(),
 		LarkClientID:              os.Getenv("LARK_CLIENT_ID"),
 		WorkspaceCreationDisabled: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 	}
+	providers := LoginProviders()
+	config.LoginProviders = providers
+	config.DingtalkOnly = len(providers) == 1 && providers[0] == "dingtalk"
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()
 	}
@@ -106,13 +114,55 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, config)
 }
 
-// DingtalkOnlyEnabled reports whether LOGIN_DINGTALK_ONLY locks sign-in to the
-// DingTalk provider. It is read in two places that must agree: GetConfig (so the
-// login UI hides email/Google) and the router (so /auth/send-code,
-// /auth/verify-code and /auth/google are not registered at all). Exported so the
-// cmd/server router can share the same source of truth.
-func DingtalkOnlyEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("LOGIN_DINGTALK_ONLY")), "true")
+// knownLoginProviders enumerates the values accepted in LOGIN_PROVIDERS.
+// Unknown entries are dropped so a typo narrows the lock instead of
+// silently opening a provider.
+var knownLoginProviders = map[string]bool{
+	"email":    true,
+	"google":   true,
+	"dingtalk": true,
+	"lark":     true,
+}
+
+// LoginProviders returns the sign-in allowlist from LOGIN_PROVIDERS
+// (comma-separated, e.g. "dingtalk,lark"). nil means unrestricted. The
+// legacy LOGIN_DINGTALK_ONLY=true is honored as ["dingtalk"] when
+// LOGIN_PROVIDERS is unset so existing deployments keep working while the
+// env migrates. Read in two places that must agree: GetConfig (so the login
+// UI hides closed entry points) and the router (so closed login routes are
+// not registered at all).
+func LoginProviders() []string {
+	raw := strings.TrimSpace(os.Getenv("LOGIN_PROVIDERS"))
+	if raw == "" {
+		if strings.EqualFold(strings.TrimSpace(os.Getenv("LOGIN_DINGTALK_ONLY")), "true") {
+			return []string{"dingtalk"}
+		}
+		return nil
+	}
+	var providers []string
+	for _, part := range strings.Split(raw, ",") {
+		name := strings.ToLower(strings.TrimSpace(part))
+		if knownLoginProviders[name] {
+			providers = append(providers, name)
+		}
+	}
+	return providers
+}
+
+// LoginProviderAllowed reports whether the named provider may sign in. An
+// empty allowlist (no LOGIN_PROVIDERS, no legacy flag) allows everything.
+// Exported so the cmd/server router can share the same source of truth.
+func LoginProviderAllowed(name string) bool {
+	providers := LoginProviders()
+	if len(providers) == 0 {
+		return true
+	}
+	for _, p := range providers {
+		if p == name {
+			return true
+		}
+	}
+	return false
 }
 
 func daemonSetupURLsFromEnv() (string, string) {

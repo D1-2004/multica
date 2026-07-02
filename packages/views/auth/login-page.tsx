@@ -72,11 +72,11 @@ interface LoginPageProps {
   google?: GoogleAuthConfig;
   /** DingTalk OAuth config. Omit to disable DingTalk login. */
   dingtalk?: DingtalkAuthConfig;
-  /** When true, DingTalk is the only way in: the email-code form, the Google
-   *  button, and the divider are hidden, and the DingTalk button becomes the
-   *  primary action. Ignored when no DingTalk option is available, so the card
-   *  can never render empty. */
-  dingtalkOnly?: boolean;
+  /** When true, email-code entry is disabled (LOGIN_PROVIDERS without
+   *  "email"): the email form and divider are hidden and the configured
+   *  OAuth providers are the only way in. Ignored when no provider button is
+   *  available, so the card can never render empty. */
+  oauthOnly?: boolean;
   /** Feishu (Lark) OAuth config. Omit to disable Feishu login. */
   lark?: LarkAuthConfig;
   /** CLI callback config for authorizing CLI tools. */
@@ -135,7 +135,7 @@ export function LoginPage({
   onSuccess,
   google,
   dingtalk,
-  dingtalkOnly,
+  oauthOnly,
   lark,
   cliCallback,
   onTokenObtained,
@@ -365,14 +365,14 @@ export function LoginPage({
 
   const hasDingtalk = Boolean(dingtalk || onDingtalkLogin);
   const hasGoogle = Boolean(google || onGoogleLogin);
-  // Collapse to a DingTalk-only screen only when there is actually a DingTalk
-  // button to show; otherwise fall back to the full form so the card is never
-  // left empty (e.g. a server that set the flag but no client id).
-  const dingtalkOnlyMode = dingtalkOnly === true && hasDingtalk;
-  const showGoogle = !dingtalkOnlyMode && hasGoogle;
   const hasLark = Boolean(lark || onLarkLogin);
-  // The DingTalk-only lock hides every other provider, Feishu included.
-  const showLark = !dingtalkOnlyMode && hasLark;
+  // Which providers render is entirely the caller's choice — the app layer
+  // only passes configs for providers allowed by LOGIN_PROVIDERS. Collapse to
+  // an OAuth-only screen only when there is actually a provider button to
+  // show; otherwise fall back to the full form so the card is never left
+  // empty (e.g. a server that set the lock but no client ids).
+  const oauthOnlyMode =
+    oauthOnly === true && (hasGoogle || hasDingtalk || hasLark);
 
   // -------------------------------------------------------------------------
   // CLI confirm step
@@ -503,12 +503,12 @@ export function LoginPage({
             {t(($) => $.signin.title)}
           </CardTitle>
           <CardDescription>
-            {dingtalkOnlyMode
-              ? t(($) => $.signin.dingtalk_only_description)
+            {oauthOnlyMode
+              ? t(($) => $.signin.oauth_only_description)
               : t(($) => $.signin.description)}
           </CardDescription>
         </CardHeader>
-        {dingtalkOnlyMode ? (
+        {oauthOnlyMode ? (
           error ? (
             <CardContent>
               <p className="text-sm text-destructive">{error}</p>
@@ -536,7 +536,7 @@ export function LoginPage({
           </CardContent>
         )}
         <CardFooter className="flex flex-col gap-3">
-          {!dingtalkOnlyMode && (
+          {!oauthOnlyMode && (
             <Button
               type="submit"
               form="login-form"
@@ -549,9 +549,9 @@ export function LoginPage({
                 : t(($) => $.signin.continue)}
             </Button>
           )}
-          {(showGoogle || hasDingtalk || showLark) && (
+          {(hasGoogle || hasDingtalk || hasLark) && (
             <>
-              {!dingtalkOnlyMode && (
+              {!oauthOnlyMode && (
                 <div className="relative w-full">
                   <div className="absolute inset-0 flex items-center">
                     <span className="w-full border-t" />
@@ -563,7 +563,7 @@ export function LoginPage({
                   </div>
                 </div>
               )}
-              {showGoogle && (
+              {hasGoogle && (
                 <Button
                   type="button"
                   variant="outline"
@@ -613,7 +613,7 @@ export function LoginPage({
                   {t(($) => $.signin.dingtalk)}
                 </Button>
               )}
-              {showLark && (
+              {hasLark && (
                 <Button
                   type="button"
                   variant="outline"

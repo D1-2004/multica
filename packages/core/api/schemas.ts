@@ -90,10 +90,14 @@ export interface AppConfigResponse {
   allow_signup: boolean;
   google_client_id?: string;
   dingtalk_client_id?: string;
-  // When true the login screen offers DingTalk as the only sign-in method
-  // (email-code + Google are hidden and disabled server-side). Older servers
-  // omit the field; treat that as false.
+  // Legacy single-provider lock: true when the sign-in allowlist is exactly
+  // ["dingtalk"]. Newer servers also send login_providers; older servers omit
+  // both fields — treat that as unrestricted.
   dingtalk_only?: boolean;
+  // Sign-in allowlist (e.g. ["dingtalk","lark"]): the login screen must only
+  // offer the listed entry points; the unlisted routes are closed
+  // server-side. Empty/omitted means unrestricted.
+  login_providers?: string[];
   // Feishu (Lark) app AppID. When present the login screen renders the
   // "Continue with Feishu" button. Older servers omit it.
   lark_client_id?: string;
@@ -248,6 +252,13 @@ export const AppConfigSchema = z.object({
   google_client_id: OptionalStringSchema,
   dingtalk_client_id: OptionalStringSchema,
   dingtalk_only: BooleanWithDefaultSchema(false).optional(),
+  login_providers: z.preprocess(
+    (value) =>
+      Array.isArray(value)
+        ? value.filter((item) => typeof item === "string")
+        : undefined,
+    z.array(z.string()).optional(),
+  ),
   lark_client_id: OptionalStringSchema,
   posthog_key: OptionalStringSchema,
   posthog_host: OptionalStringSchema,
@@ -265,6 +276,7 @@ export const EMPTY_APP_CONFIG: AppConfigResponse = {
   google_client_id: "",
   dingtalk_client_id: "",
   dingtalk_only: false,
+  login_providers: [],
   lark_client_id: "",
   daemon_server_url: "",
   daemon_app_url: "",

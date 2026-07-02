@@ -742,18 +742,25 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
 	authVerifyRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_VERIFY", 20), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
-	// When LOGIN_DINGTALK_ONLY is set, the email-code and Google login paths are
-	// closed entirely — not merely hidden in the UI — so DingTalk is the sole
-	// way in. Because the DingTalk app is an 企业内部应用, its OAuth login only
-	// admits members of that organization, which is the access restriction we
-	// want. The routes simply aren't registered, so a direct POST 404s.
-	if !handler.DingtalkOnlyEnabled() {
+	// LOGIN_PROVIDERS (with LOGIN_DINGTALK_ONLY as its legacy alias) closes
+	// the login paths of unlisted providers entirely — not merely hidden in
+	// the UI: the routes simply aren't registered, so a direct POST 404s.
+	// Because the DingTalk/Feishu apps are 企业内部应用, their OAuth logins only
+	// admit members of that organization, which is the access restriction we
+	// want from an OAuth-only allowlist like "dingtalk,lark".
+	if handler.LoginProviderAllowed("email") {
 		r.With(authRL).Post("/auth/send-code", h.SendCode)
 		r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
+	}
+	if handler.LoginProviderAllowed("google") {
 		r.With(authRL).Post("/auth/google", h.GoogleLogin)
+	}
+	if handler.LoginProviderAllowed("lark") {
 		r.With(authRL).Post("/auth/lark", h.LarkLogin)
 	}
-	r.With(authRL).Post("/auth/dingtalk", h.DingTalkLogin)
+	if handler.LoginProviderAllowed("dingtalk") {
+		r.With(authRL).Post("/auth/dingtalk", h.DingTalkLogin)
+	}
 	r.Post("/auth/logout", h.Logout)
 
 	// Public API

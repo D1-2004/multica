@@ -605,6 +605,35 @@ describe("AppConfigSchema dingtalk_only drift", () => {
   });
 });
 
+describe("AppConfigSchema login_providers drift", () => {
+  it("parses login_providers when the server locks sign-in to an allowlist", () => {
+    const parsed = AppConfigSchema.parse({
+      login_providers: ["dingtalk", "lark"],
+    });
+    expect(parsed.login_providers).toEqual(["dingtalk", "lark"]);
+  });
+
+  it("leaves login_providers undefined when an older server omits it", () => {
+    const parsed = AppConfigSchema.parse({ allow_signup: true });
+    expect(parsed.login_providers).toBeUndefined();
+  });
+
+  it("drops a malformed login_providers instead of failing the whole config", () => {
+    const parsed = AppConfigSchema.parse({
+      allow_signup: true,
+      login_providers: "dingtalk",
+    });
+    expect(parsed.login_providers).toBeUndefined();
+  });
+
+  it("filters non-string entries out of login_providers", () => {
+    const parsed = AppConfigSchema.parse({
+      login_providers: ["dingtalk", 42, null, "lark"],
+    });
+    expect(parsed.login_providers).toEqual(["dingtalk", "lark"]);
+  });
+});
+
 describe("InboxUnreadSummarySchema", () => {
   const ENDPOINT = { endpoint: "GET /api/inbox/unread-summary" };
 
