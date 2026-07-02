@@ -89,3 +89,27 @@ export interface Invitation {
   inviter_email?: string;
   workspace_name?: string;
 }
+
+export interface DingTalkUser {
+  user_id: string;
+  union_id?: string;
+  name: string;
+  avatar_url?: string | null;
+  mobile?: string;
+  title?: string;
+  email?: string;
+  department_ids?: number[];
+}
+
+export interface DingTalkUserSearchResponse {
+  users: DingTalkUser[];
+}
+
+export interface AddDingTalkGroupMembersRequest {
+  chat_id: string;
+  user_ids: string[];
+}
+
+export interface AddDingTalkGroupMembersResponse {
+  added_user_ids: string[];
+}

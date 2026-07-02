@@ -11,9 +11,11 @@ import type {
   BillingTopupsPage,
   BillingTransactionsPage,
   CancelTaskResponse,
+  AddDingTalkGroupMembersResponse,
   CreateAgentFromTemplateResponse,
   CreateBillingCheckoutSessionResponse,
   CreateBillingPortalSessionResponse,
+  DingTalkUserSearchResponse,
   GroupedIssuesResponse,
   InboxWorkspaceUnread,
   ListIssuesResponse,
@@ -926,6 +928,33 @@ export const EMPTY_USER: User = {
   timezone: null,
   created_at: "",
   updated_at: "",
+};
+
+const DingTalkUserSchema = z.object({
+  user_id: z.string(),
+  union_id: z.string().optional(),
+  name: z.string().default(""),
+  avatar_url: z.string().nullable().optional().transform((v) => v ?? null),
+  mobile: z.string().optional(),
+  title: z.string().optional(),
+  email: z.string().optional(),
+  department_ids: z.array(z.number()).default([]),
+}).loose();
+
+export const DingTalkUserSearchResponseSchema = z.object({
+  users: z.array(DingTalkUserSchema).default([]),
+}).loose();
+
+export const EMPTY_DINGTALK_USER_SEARCH_RESPONSE: DingTalkUserSearchResponse = {
+  users: [],
+};
+
+export const AddDingTalkGroupMembersResponseSchema = z.object({
+  added_user_ids: z.array(z.string()).default([]),
+}).loose();
+
+export const EMPTY_ADD_DINGTALK_GROUP_MEMBERS_RESPONSE: AddDingTalkGroupMembersResponse = {
+  added_user_ids: [],
 };
 
 // ---------------------------------------------------------------------------

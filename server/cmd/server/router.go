@@ -25,6 +25,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -176,6 +177,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	h.Metrics = opts.BusinessMetrics
+	if appKey, appSecret := strings.TrimSpace(os.Getenv("DINGTALK_APP_KEY")), strings.TrimSpace(os.Getenv("DINGTALK_APP_SECRET")); appKey != "" && appSecret != "" {
+		h.DingTalk = dingtalk.NewClient(dingtalk.Config{
+			AppKey:      appKey,
+			AppSecret:   appSecret,
+			OpenAPIBase: strings.TrimSpace(os.Getenv("DINGTALK_OPENAPI_BASE")),
+			OAPIBase:    strings.TrimSpace(os.Getenv("DINGTALK_OAPI_BASE")),
+			Logger:      slog.Default(),
+		})
+		slog.Info("dingtalk integration enabled")
+	} else {
+		slog.Info("dingtalk integration disabled (DINGTALK_APP_KEY or DINGTALK_APP_SECRET not set)")
+	}
 	if pool != nil {
 		if reporter, err := sourcechannel.NewSender(queries, sourcechannel.SenderConfig{}); err != nil {
 			slog.Warn("source channel reporter disabled", "error", err)
@@ -763,6 +776,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/members", h.CreateInvitation)
+					r.Get("/dingtalk/users/search", h.SearchDingTalkUsers)
+					r.Post("/dingtalk/group-members", h.AddDingTalkGroupMembers)
 					r.Route("/members/{memberId}", func(r chi.Router) {
 						r.Patch("/", h.UpdateMember)
 						r.Delete("/", h.DeleteMember)
