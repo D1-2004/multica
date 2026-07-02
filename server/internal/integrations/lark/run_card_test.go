@@ -3,6 +3,7 @@ package lark
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,9 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+// errTest is the transient failure injected into the fakes.
+var errTest = errors.New("injected test failure")
 
 // --- renderer -------------------------------------------------------------
 
@@ -148,6 +152,15 @@ func TestRenderRunCardTerminalStates(t *testing.T) {
 		if strings.Contains(cardJSON, runCardCancelAction) {
 			t.Fatalf("%s card must not offer the terminate button", tc.status)
 		}
+		if tc.status == "cancelled" {
+			// text_tag color enum has no "grey" — the neutral grey is
+			// "neutral"; "grey" would silently fall back to blue.
+			// (Border/icon greys elsewhere in the card are fine.)
+			tags := doc["header"].(map[string]any)["text_tag_list"].([]any)
+			if color := tags[0].(map[string]any)["color"]; color != "neutral" {
+				t.Fatalf("cancelled text_tag color = %v, want neutral", color)
+			}
+		}
 		if tc.status == "failed" {
 			if !strings.Contains(cardJSON, "**错误**") {
 				t.Fatalf("failed card should surface the error line")
@@ -235,8 +248,15 @@ type fakeRunCardStore struct {
 
 	getIssueCalls  int
 	statusUpdates  []UpdateOutboundCardStatusParams
-	createdCards   []CreateOutboundCardMessageParams
+	claims         []ClaimOutboundCardMessageParams
+	setMessageIDs  []SetOutboundCardMessageIDParams
+	deletedCards   []pgtype.UUID
 	nextCardRowSeq int
+
+	// now stamps CreatedAt on claimed rows (drives the claim-TTL path).
+	now func() time.Time
+	// setMessageIDErr forces SetLarkOutboundCardMessageID to fail.
+	setMessageIDErr error
 }
 
 func newFakeRunCardStore() *fakeRunCardStore {
@@ -329,21 +349,59 @@ func (f *fakeRunCardStore) GetLarkOutboundCardByTask(_ context.Context, taskID p
 	return c, nil
 }
 
-func (f *fakeRunCardStore) CreateLarkOutboundCardMessage(_ context.Context, arg CreateOutboundCardMessageParams) (OutboundCardMessage, error) {
+func (f *fakeRunCardStore) ClaimLarkOutboundCardMessage(_ context.Context, arg ClaimOutboundCardMessageParams) (OutboundCardMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.createdCards = append(f.createdCards, arg)
+	if _, exists := f.cards[uuidString(arg.TaskID)]; exists {
+		// Mirrors ON CONFLICT DO NOTHING: the racer gets no row back.
+		return OutboundCardMessage{}, pgx.ErrNoRows
+	}
+	f.claims = append(f.claims, arg)
 	f.nextCardRowSeq++
+	createdAt := pgtype.Timestamptz{}
+	if f.now != nil {
+		createdAt = pgtype.Timestamptz{Time: f.now(), Valid: true}
+	}
 	row := OutboundCardMessage{
 		ID:                   pgtype.UUID{Bytes: [16]byte{byte(f.nextCardRowSeq)}, Valid: true},
 		ChatSessionID:        arg.ChatSessionID,
 		TaskID:               arg.TaskID,
 		ChannelChatID:        arg.ChannelChatID,
-		ChannelCardMessageID: arg.ChannelCardMessageID,
+		ChannelCardMessageID: "",
 		Status:               arg.Status,
+		CreatedAt:            createdAt,
 	}
 	f.cards[uuidString(arg.TaskID)] = row
 	return row, nil
+}
+
+func (f *fakeRunCardStore) SetLarkOutboundCardMessageID(_ context.Context, arg SetOutboundCardMessageIDParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.setMessageIDErr != nil {
+		return f.setMessageIDErr
+	}
+	f.setMessageIDs = append(f.setMessageIDs, arg)
+	for taskID, row := range f.cards {
+		if row.ID == arg.ID {
+			row.ChannelCardMessageID = arg.MessageID
+			row.Status = arg.Status
+			f.cards[taskID] = row
+		}
+	}
+	return nil
+}
+
+func (f *fakeRunCardStore) DeleteLarkOutboundCardMessage(_ context.Context, id pgtype.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deletedCards = append(f.deletedCards, id)
+	for taskID, row := range f.cards {
+		if row.ID == id {
+			delete(f.cards, taskID)
+		}
+	}
+	return nil
 }
 
 func (f *fakeRunCardStore) UpdateLarkOutboundCardStatus(_ context.Context, arg UpdateOutboundCardStatusParams) error {
@@ -360,9 +418,11 @@ func (fakeCardCredentials) DecryptAppSecret(inst Installation) (string, error) {
 }
 
 type fakeCardClient struct {
-	mu      sync.Mutex
-	sends   []SendCardParams
-	patches []PatchCardParams
+	mu       sync.Mutex
+	sends    []SendCardParams
+	patches  []PatchCardParams
+	sendErr  error
+	patchErr error
 }
 
 func (f *fakeCardClient) IsConfigured() bool { return true }
@@ -370,12 +430,18 @@ func (f *fakeCardClient) SendInteractiveCard(_ context.Context, p SendCardParams
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sends = append(f.sends, p)
+	if f.sendErr != nil {
+		return "", f.sendErr
+	}
 	return "om_run_card", nil
 }
 func (f *fakeCardClient) PatchInteractiveCard(_ context.Context, p PatchCardParams) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.patches = append(f.patches, p)
+	if f.patchErr != nil {
+		return f.patchErr
+	}
 	return nil
 }
 func (f *fakeCardClient) SendTextMessage(_ context.Context, p SendTextParams) (string, error) {
@@ -462,6 +528,7 @@ func newRunCardFixture(t *testing.T) *runCardFixture {
 	}
 	fx.store.workspaces[workspaceID] = db.Workspace{
 		ID:          uuidFromString(t, workspaceID),
+		Slug:        "acme",
 		IssuePrefix: "FDE",
 	}
 	fx.store.agents[agentID] = db.Agent{
@@ -480,6 +547,7 @@ func newRunCardFixture(t *testing.T) *runCardFixture {
 		ChannelChatID:  "oc_test_chat",
 	}
 
+	fx.store.now = func() time.Time { return fx.now }
 	fx.pub = NewRunCardPublisher(fx.store, fakeCardCredentials{}, fx.client, RunCardPublisherConfig{
 		AppURL:           "https://multica.example",
 		PatchMinInterval: 3 * time.Second,
@@ -540,15 +608,25 @@ func TestRunCardPublisherSendsOnQueued(t *testing.T) {
 	if !strings.Contains(send.CardJSON, "FDE-6") {
 		t.Fatalf("card must carry the issue identifier, got %s", send.CardJSON)
 	}
-	if len(fx.store.createdCards) != 1 {
-		t.Fatalf("outbound card rows = %d, want 1", len(fx.store.createdCards))
+	if !strings.Contains(send.CardJSON, "https://multica.example/acme/issues/FDE-6") {
+		t.Fatalf("open button must use the workspace-scoped issue URL, got %s", send.CardJSON)
 	}
-	created := fx.store.createdCards[0]
-	if uuidString(created.ChatSessionID) != fx.sessionID {
-		t.Fatalf("card row chat_session = %s", uuidString(created.ChatSessionID))
+	if len(fx.store.claims) != 1 {
+		t.Fatalf("outbound card claims = %d, want 1", len(fx.store.claims))
 	}
-	if created.Status != string(CardStatusStreaming) {
-		t.Fatalf("card row status = %s", created.Status)
+	claim := fx.store.claims[0]
+	if uuidString(claim.ChatSessionID) != fx.sessionID {
+		t.Fatalf("card row chat_session = %s", uuidString(claim.ChatSessionID))
+	}
+	if claim.Status != string(CardStatusPending) {
+		t.Fatalf("claim row status = %s, want pending until the send lands", claim.Status)
+	}
+	if len(fx.store.setMessageIDs) != 1 {
+		t.Fatalf("message id records = %d, want 1", len(fx.store.setMessageIDs))
+	}
+	recorded := fx.store.setMessageIDs[0]
+	if recorded.MessageID != "om_run_card" || recorded.Status != string(CardStatusStreaming) {
+		t.Fatalf("recorded send = %+v", recorded)
 	}
 }
 
@@ -723,5 +801,174 @@ func TestRunCardPublisherRendersDetailFromMessages(t *testing.T) {
 	}
 	if !strings.Contains(first, "echo step") {
 		t.Fatalf("detail line should include the command preview, got %q", first)
+	}
+}
+
+func foreignClaimRow(t *testing.T, fx *runCardFixture, age time.Duration) OutboundCardMessage {
+	t.Helper()
+	return OutboundCardMessage{
+		ID:            pgtype.UUID{Bytes: [16]byte{0xEE}, Valid: true},
+		ChatSessionID: uuidFromString(t, fx.sessionID),
+		TaskID:        uuidFromString(t, fx.taskID),
+		ChannelChatID: "oc_test_chat",
+		Status:        string(CardStatusPending),
+		CreatedAt:     pgtype.Timestamptz{Time: fx.now.Add(-age), Valid: true},
+	}
+}
+
+func TestRunCardPublisherClaimInProgressBacksOffThenPatches(t *testing.T) {
+	fx := newRunCardFixture(t)
+	fx.store.mu.Lock()
+	fx.store.cards[fx.taskID] = foreignClaimRow(t, fx, 0) // fresh claim by "another replica"
+	fx.store.mu.Unlock()
+
+	fx.pub.handleEvent(fx.event(protocol.EventTaskQueued))
+
+	if len(fx.client.sends)+len(fx.client.patches) != 0 {
+		t.Fatalf("a fresh foreign claim must suppress our send/patch")
+	}
+	if len(fx.timers) != 1 {
+		t.Fatalf("worker should arm a retry timer, got %d", len(fx.timers))
+	}
+
+	// The winner records its message id; our retry converges via patch.
+	fx.store.mu.Lock()
+	row := fx.store.cards[fx.taskID]
+	row.ChannelCardMessageID = "om_foreign"
+	fx.store.cards[fx.taskID] = row
+	fx.store.mu.Unlock()
+	fx.now = fx.now.Add(10 * time.Second)
+	fx.timers[0].fn()
+
+	if len(fx.client.sends) != 0 {
+		t.Fatalf("must never double-send once the winner's card exists")
+	}
+	if len(fx.client.patches) != 1 || fx.client.patches[0].LarkCardMessageID != "om_foreign" {
+		t.Fatalf("retry should patch the winner's card, got %+v", fx.client.patches)
+	}
+}
+
+func TestRunCardPublisherStaleClaimTakeover(t *testing.T) {
+	fx := newRunCardFixture(t)
+	fx.store.mu.Lock()
+	fx.store.cards[fx.taskID] = foreignClaimRow(t, fx, 2*time.Minute) // dead claimer
+	fx.store.mu.Unlock()
+
+	fx.pub.handleEvent(fx.event(protocol.EventTaskQueued))
+
+	if len(fx.store.deletedCards) != 1 {
+		t.Fatalf("stale claim must be released, deletes = %d", len(fx.store.deletedCards))
+	}
+	if len(fx.timers) != 1 {
+		t.Fatalf("takeover should arm a retry, got %d timers", len(fx.timers))
+	}
+	fx.now = fx.now.Add(10 * time.Second)
+	fx.timers[0].fn()
+	if len(fx.client.sends) != 1 || len(fx.store.claims) != 1 {
+		t.Fatalf("retry after takeover should claim and send (sends=%d claims=%d)",
+			len(fx.client.sends), len(fx.store.claims))
+	}
+}
+
+func TestRunCardPublisherSendFailureReleasesClaim(t *testing.T) {
+	fx := newRunCardFixture(t)
+	fx.client.sendErr = errTest
+	fx.pub.handleEvent(fx.event(protocol.EventTaskQueued))
+
+	if len(fx.store.deletedCards) != 1 {
+		t.Fatalf("failed send must release its claim")
+	}
+	if len(fx.timers) != 1 {
+		t.Fatalf("failed send should arm a retry timer")
+	}
+
+	fx.client.mu.Lock()
+	fx.client.sendErr = nil
+	fx.client.mu.Unlock()
+	fx.now = fx.now.Add(10 * time.Second)
+	fx.timers[0].fn()
+	if len(fx.store.setMessageIDs) != 1 {
+		t.Fatalf("retry should complete the first send")
+	}
+}
+
+func TestRunCardPublisherRetriesTerminalPatchFailure(t *testing.T) {
+	fx := newRunCardFixture(t)
+	fx.pub.handleEvent(fx.event(protocol.EventTaskQueued)) // successful send
+
+	fx.client.mu.Lock()
+	fx.client.patchErr = errTest
+	fx.client.mu.Unlock()
+	fx.now = fx.now.Add(30 * time.Second)
+	fx.setTaskStatus(t, "completed")
+	fx.pub.handleEvent(fx.event(protocol.EventTaskCompleted))
+
+	if len(fx.store.statusUpdates) != 0 {
+		t.Fatalf("failed terminal patch must not finalize the row")
+	}
+	if len(fx.timers) != 1 {
+		t.Fatalf("terminal patch failure must arm a retry — the terminal event never fires again")
+	}
+
+	fx.client.mu.Lock()
+	fx.client.patchErr = nil
+	fx.client.mu.Unlock()
+	fx.now = fx.now.Add(10 * time.Second)
+	fx.timers[0].fn()
+
+	if len(fx.store.statusUpdates) != 1 || fx.store.statusUpdates[0].Status != string(CardStatusFinal) {
+		t.Fatalf("retried terminal patch should finalize the row, got %+v", fx.store.statusUpdates)
+	}
+	fx.pub.mu.Lock()
+	workers := len(fx.pub.workers)
+	fx.pub.mu.Unlock()
+	if workers != 0 {
+		t.Fatalf("worker must be dropped after the terminal patch lands")
+	}
+}
+
+func TestRunCardPublisherRetryGivesUpAfterCap(t *testing.T) {
+	fx := newRunCardFixture(t)
+	fx.pub.handleEvent(fx.event(protocol.EventTaskQueued)) // successful send
+
+	fx.client.mu.Lock()
+	fx.client.patchErr = errTest
+	fx.client.mu.Unlock()
+	fx.now = fx.now.Add(time.Minute)
+	fx.setTaskStatus(t, "completed")
+	fx.pub.handleEvent(fx.event(protocol.EventTaskCompleted))
+
+	for i := 0; i < runCardMaxRetries; i++ {
+		if len(fx.timers) != i+1 {
+			t.Fatalf("retry %d: timers = %d, want %d", i, len(fx.timers), i+1)
+		}
+		fx.now = fx.now.Add(time.Minute)
+		fx.timers[len(fx.timers)-1].fn()
+	}
+	if len(fx.timers) != runCardMaxRetries {
+		t.Fatalf("give-up must not arm another timer, got %d", len(fx.timers))
+	}
+	fx.pub.mu.Lock()
+	workers := len(fx.pub.workers)
+	fx.pub.mu.Unlock()
+	if workers != 0 {
+		t.Fatalf("worker must be dropped after giving up (map leak), %d left", workers)
+	}
+}
+
+func TestRunCardRetryDelayBacksOff(t *testing.T) {
+	base := 3 * time.Second
+	got := []time.Duration{
+		runCardRetryDelay(base, 1),
+		runCardRetryDelay(base, 2),
+		runCardRetryDelay(base, 3),
+		runCardRetryDelay(base, 4),
+		runCardRetryDelay(base, 5),
+	}
+	want := []time.Duration{3 * time.Second, 6 * time.Second, 12 * time.Second, 24 * time.Second, 30 * time.Second}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("attempt %d: delay = %v, want %v", i+1, got[i], want[i])
+		}
 	}
 }

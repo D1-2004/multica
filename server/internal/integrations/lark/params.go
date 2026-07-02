@@ -130,6 +130,24 @@ type CreateOutboundCardMessageParams struct {
 	TaskID               pgtype.UUID
 }
 
+// ClaimOutboundCardMessageParams inserts an outbound card row BEFORE the
+// platform send (empty message id) so the task_id unique index acts as a
+// cross-replica send lock.
+type ClaimOutboundCardMessageParams struct {
+	ChatSessionID pgtype.UUID
+	ChannelChatID string
+	Status        string
+	TaskID        pgtype.UUID
+}
+
+// SetOutboundCardMessageIDParams records the platform message id (and the
+// post-send status) on a previously claimed outbound card row.
+type SetOutboundCardMessageIDParams struct {
+	ID        pgtype.UUID
+	MessageID string
+	Status    string
+}
+
 // UpdateOutboundCardStatusParams transitions an outbound card's status.
 type UpdateOutboundCardStatusParams struct {
 	ID     pgtype.UUID

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,28 @@ const defaultRunCardPatchInterval = 3 * time.Second
 // runCardPreviewRunes caps a single detail line's preview text.
 const runCardPreviewRunes = 80
 
+// runCardMaxRetries bounds how many times a worker re-attempts a
+// failed publish before giving up. Terminal events fire exactly once,
+// so without retries a single transient Lark/DB failure at the
+// terminal transition would leave the card stale forever.
+const runCardMaxRetries = 5
+
+// runCardRetryDelay backs off failed publish attempts: base, 2x, 4x…
+// capped at 30s so a short Lark outage converges quickly once it ends.
+func runCardRetryDelay(base time.Duration, attempt int) time.Duration {
+	d := base
+	for i := 1; i < attempt; i++ {
+		d *= 2
+		if d >= 30*time.Second {
+			return 30 * time.Second
+		}
+	}
+	if d > 30*time.Second {
+		return 30 * time.Second
+	}
+	return d
+}
+
 // runCardStatusView maps an agent_task_queue.status to the card's
 // visual state. Template colors come from Lark's fixed header palette.
 type runCardStatusView struct {
@@ -57,13 +80,15 @@ func runCardViewForStatus(status string) runCardStatusView {
 	case "waiting_local_directory":
 		return runCardStatusView{Label: "等待本地目录", Template: "orange", TagColor: "orange", Active: true, Verb: "正在处理"}
 	case "deferred":
-		return runCardStatusView{Label: "已延期", Template: "grey", TagColor: "grey", Active: true, Verb: "稍后处理"}
+		// text_tag color has its own enum ("neutral" is the grey there;
+		// "grey" is header-template-only and would fall back to blue).
+		return runCardStatusView{Label: "已延期", Template: "grey", TagColor: "neutral", Active: true, Verb: "稍后处理"}
 	case "completed":
 		return runCardStatusView{Label: "已完成", Template: "green", TagColor: "green", Active: false, Verb: "已完成"}
 	case "failed":
 		return runCardStatusView{Label: "失败", Template: "red", TagColor: "red", Active: false, Verb: "处理失败"}
 	case "cancelled":
-		return runCardStatusView{Label: "已取消", Template: "grey", TagColor: "grey", Active: false, Verb: "已取消"}
+		return runCardStatusView{Label: "已取消", Template: "grey", TagColor: "neutral", Active: false, Verb: "已取消"}
 	default:
 		return runCardStatusView{Label: status, Template: "blue", TagColor: "blue", Active: false, Verb: "正在处理"}
 	}
@@ -391,7 +416,9 @@ type RunCardQueries interface {
 	GetLarkInstallation(ctx context.Context, id pgtype.UUID) (Installation, error)
 	GetLarkChatSessionBindingBySession(ctx context.Context, chatSessionID pgtype.UUID) (ChatSessionBinding, error)
 	GetLarkOutboundCardByTask(ctx context.Context, taskID pgtype.UUID) (OutboundCardMessage, error)
-	CreateLarkOutboundCardMessage(ctx context.Context, arg CreateOutboundCardMessageParams) (OutboundCardMessage, error)
+	ClaimLarkOutboundCardMessage(ctx context.Context, arg ClaimOutboundCardMessageParams) (OutboundCardMessage, error)
+	SetLarkOutboundCardMessageID(ctx context.Context, arg SetOutboundCardMessageIDParams) error
+	DeleteLarkOutboundCardMessage(ctx context.Context, id pgtype.UUID) error
 	UpdateLarkOutboundCardStatus(ctx context.Context, arg UpdateOutboundCardStatusParams) error
 }
 
@@ -587,6 +614,9 @@ type runCardWorker struct {
 	lastPatch time.Time
 	timer     stopTimer
 	target    *runCardTarget
+	// retries counts consecutive failed publish attempts; reset on the
+	// first success. Bounds the retry backoff loop in run().
+	retries int
 }
 
 func (w *runCardWorker) request(urgent bool) {
@@ -660,13 +690,41 @@ func (w *runCardWorker) run() {
 			w.mu.Unlock()
 			p.markNegative(w.taskID)
 			return
+		case runCardOutcomeRetry:
+			// Restore the update we consumed and back off. Terminal
+			// events fire exactly once, so parking without a timer
+			// here would leave the card stale forever when the last
+			// event's publish hit a transient failure.
+			w.dirty = true
+			w.retries++
+			if w.retries <= runCardMaxRetries {
+				if w.timer == nil {
+					w.timer = p.cfg.newTimer(runCardRetryDelay(p.cfg.PatchMinInterval, w.retries), w.timerFired)
+				}
+				w.running = false
+				w.mu.Unlock()
+				return
+			}
+			// Give up: drop the worker so the map cannot grow with
+			// permanently failing tasks. A later bus event or button
+			// tap recreates it with a fresh retry budget.
+			w.dirty = false
+			w.running = false
+			w.mu.Unlock()
+			p.dropWorker(w.taskID)
+			p.cfg.Logger.Warn("lark run card: giving up after repeated publish failures",
+				"task_id", w.taskID, "attempts", runCardMaxRetries)
+			return
 		case runCardOutcomeTerminal:
+			w.retries = 0
 			if !w.dirty {
 				w.running = false
 				w.mu.Unlock()
 				p.dropWorker(w.taskID)
 				return
 			}
+		default:
+			w.retries = 0
 		}
 		if !w.dirty {
 			w.running = false
@@ -695,7 +753,9 @@ type runCardOutcome int
 const (
 	runCardOutcomeOK runCardOutcome = iota
 	// runCardOutcomeRetry: transient failure — do not cache anything;
-	// the next task event retries resolution naturally.
+	// the worker re-marks itself dirty and backs off via a bounded
+	// retry timer (see run()), since a terminal event has no follow-up
+	// event to retrigger it naturally.
 	runCardOutcomeRetry
 	// runCardOutcomeNegative: proven non-target — cache and stop.
 	runCardOutcomeNegative
@@ -819,11 +879,16 @@ func (p *RunCardPublisher) resolveTarget(ctx context.Context, w *runCardWorker, 
 
 	identifier := fmt.Sprintf("#%d", issue.Number)
 	issueURL := ""
-	if ws, werr := p.queries.GetWorkspace(ctx, issue.WorkspaceID); werr == nil && ws.IssuePrefix != "" {
-		identifier = fmt.Sprintf("%s-%d", ws.IssuePrefix, issue.Number)
-	}
-	if p.cfg.AppURL != "" {
-		issueURL = strings.TrimRight(p.cfg.AppURL, "/") + "/issues/" + identifier
+	if ws, werr := p.queries.GetWorkspace(ctx, issue.WorkspaceID); werr == nil {
+		if ws.IssuePrefix != "" {
+			identifier = fmt.Sprintf("%s-%d", ws.IssuePrefix, issue.Number)
+		}
+		// The issue-detail route is workspace-scoped
+		// (/{workspaceSlug}/issues/{id}); a root-level /issues/{id}
+		// would 404 ("issues" is a reserved slug).
+		if p.cfg.AppURL != "" && ws.Slug != "" {
+			issueURL = strings.TrimRight(p.cfg.AppURL, "/") + "/" + url.PathEscape(ws.Slug) + "/issues/" + url.PathEscape(identifier)
+		}
 	}
 
 	agentName := ""
@@ -894,56 +959,43 @@ func (p *RunCardPublisher) buildState(ctx context.Context, task db.AgentTaskQueu
 	return st, nil
 }
 
-// deliver sends the first revision (and records the outbound row) or
-// patches the existing card. The unique index on
-// channel_outbound_card_message.task_id makes the send race safe: a
-// concurrent first-send loses the insert and converges via patch on
-// the next revision.
+// runCardClaimTTL bounds how long an outbound row may sit with an
+// empty channel_card_message_id (claimed, send not yet recorded)
+// before another attempt treats the claiming replica as dead, deletes
+// the row, and re-claims.
+const runCardClaimTTL = time.Minute
+
+// deliver sends the first revision or patches the existing card.
+//
+// First sends are claim-then-send: the outbound row is inserted BEFORE
+// the Lark call with an empty message id, so the partial unique index
+// on task_id acts as a cross-replica lock — task events for one task
+// can fire on different replicas (the /issue inbound lands on the WS
+// lease holder, daemon progress on whichever node serves its HTTP),
+// and send-before-insert would let both post a card. Losing the claim
+// or finding an unfinished claim returns an error so the worker's
+// bounded retry re-checks after the winner records the message id.
 func (p *RunCardPublisher) deliver(ctx context.Context, task db.AgentTaskQueue, target *runCardTarget, cardJSON string, terminal bool) error {
 	card, err := p.queries.GetLarkOutboundCardByTask(ctx, task.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if terminal {
-			// The run ended before we ever sent a card (e.g. instant
-			// failure while Lark was unreachable). A dead run's first
-			// card is still worth sending — it carries the outcome.
-			p.cfg.Logger.Info("lark run card: first send is terminal", "task_id", uuidString(task.ID), "status", task.Status)
-		}
-		var messageID string
-		sendErr := sendWithThreadFallback(p.cfg.Logger, "send run card", threadReplyTarget(target.binding), func(t ReplyTarget) error {
-			var serr error
-			messageID, serr = p.client.SendInteractiveCard(ctx, SendCardParams{
-				InstallationID: target.creds,
-				ChatID:         ChatID(target.binding.ChannelChatID),
-				CardJSON:       cardJSON,
-				ReplyTarget:    t,
-			})
-			return serr
-		})
-		if sendErr != nil {
-			return sendErr
-		}
-		status := CardStatusStreaming
-		if terminal {
-			status = cardStatusForTask(task.Status)
-		}
-		if _, cerr := p.queries.CreateLarkOutboundCardMessage(ctx, CreateOutboundCardMessageParams{
-			ChatSessionID:        target.binding.ChatSessionID,
-			TaskID:               task.ID,
-			ChannelChatID:        target.binding.ChannelChatID,
-			ChannelCardMessageID: messageID,
-			Status:               string(status),
-		}); cerr != nil {
-			// Row insert failed after a successful send (or a racer
-			// inserted first). Log loudly: without the row the next
-			// revision would send a duplicate card.
-			p.cfg.Logger.Error("lark run card: record outbound card failed",
-				"task_id", uuidString(task.ID), "message_id", messageID, "error", cerr)
-			return cerr
-		}
-		return nil
+		return p.sendFirstRevision(ctx, task, target, cardJSON, terminal)
 	}
 	if err != nil {
 		return fmt.Errorf("load outbound card: %w", err)
+	}
+
+	if card.ChannelCardMessageID == "" {
+		// A claim exists but the send hasn't been recorded: either
+		// another replica is mid-send (retry shortly and patch), or
+		// that replica died between claim and record — in which case
+		// release the stale claim so the retry can re-send.
+		if card.CreatedAt.Valid && p.cfg.Now().Sub(card.CreatedAt.Time) > runCardClaimTTL {
+			if derr := p.queries.DeleteLarkOutboundCardMessage(ctx, card.ID); derr != nil {
+				return fmt.Errorf("release stale card claim: %w", derr)
+			}
+			return errors.New("released stale card claim; retrying send")
+		}
+		return errors.New("card claim in progress on another attempt")
 	}
 
 	if perr := p.client.PatchInteractiveCard(ctx, PatchCardParams{
@@ -961,6 +1013,70 @@ func (p *RunCardPublisher) deliver(ctx context.Context, task db.AgentTaskQueue, 
 			p.cfg.Logger.Warn("lark run card: update card row status failed",
 				"task_id", uuidString(task.ID), "error", uerr)
 		}
+	}
+	return nil
+}
+
+func (p *RunCardPublisher) sendFirstRevision(ctx context.Context, task db.AgentTaskQueue, target *runCardTarget, cardJSON string, terminal bool) error {
+	if terminal {
+		// The run ended before we ever sent a card (e.g. instant
+		// failure while Lark was unreachable). A dead run's first
+		// card is still worth sending — it carries the outcome.
+		p.cfg.Logger.Info("lark run card: first send is terminal", "task_id", uuidString(task.ID), "status", task.Status)
+	}
+	claim, err := p.queries.ClaimLarkOutboundCardMessage(ctx, ClaimOutboundCardMessageParams{
+		ChatSessionID: target.binding.ChatSessionID,
+		TaskID:        task.ID,
+		ChannelChatID: target.binding.ChannelChatID,
+		Status:        string(CardStatusPending),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Another replica holds the claim; retry patches once it
+		// records the message id.
+		return errors.New("card claim lost to a concurrent sender")
+	}
+	if err != nil {
+		return fmt.Errorf("claim outbound card: %w", err)
+	}
+
+	var messageID string
+	sendErr := sendWithThreadFallback(p.cfg.Logger, "send run card", threadReplyTarget(target.binding), func(t ReplyTarget) error {
+		var serr error
+		messageID, serr = p.client.SendInteractiveCard(ctx, SendCardParams{
+			InstallationID: target.creds,
+			ChatID:         ChatID(target.binding.ChannelChatID),
+			CardJSON:       cardJSON,
+			ReplyTarget:    t,
+		})
+		return serr
+	})
+	if sendErr != nil {
+		// Release the claim so the retry (or another replica) can
+		// re-send. A failed delete leaves the claim to the TTL
+		// takeover path in deliver().
+		if derr := p.queries.DeleteLarkOutboundCardMessage(ctx, claim.ID); derr != nil {
+			p.cfg.Logger.Warn("lark run card: release claim after failed send failed",
+				"task_id", uuidString(task.ID), "error", derr)
+		}
+		return sendErr
+	}
+
+	status := CardStatusStreaming
+	if terminal {
+		status = cardStatusForTask(task.Status)
+	}
+	if uerr := p.queries.SetLarkOutboundCardMessageID(ctx, SetOutboundCardMessageIDParams{
+		ID:        claim.ID,
+		MessageID: messageID,
+		Status:    string(status),
+	}); uerr != nil {
+		// The card is live in the chat but the row still looks like a
+		// claim. Log loudly; the TTL takeover in deliver() will
+		// eventually re-send, orphaning this message — rare and
+		// bounded, but worth an operator's attention.
+		p.cfg.Logger.Error("lark run card: record sent message id failed",
+			"task_id", uuidString(task.ID), "message_id", messageID, "error", uerr)
+		return uerr
 	}
 	return nil
 }

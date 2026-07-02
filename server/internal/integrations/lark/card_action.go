@@ -116,6 +116,7 @@ type RunCardActionQueries interface {
 	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
 	GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error)
 	GetLarkUserBindingByOpenID(ctx context.Context, arg GetUserBindingByOpenIDParams) (UserBinding, error)
+	IsWorkspaceMember(ctx context.Context, workspaceID, userID pgtype.UUID) (bool, error)
 }
 
 // RunCardActionHandlerConfig wires the handler. Replier is optional:
@@ -222,13 +223,17 @@ func (h *RunCardActionHandler) process(ctx context.Context, inst Installation, a
 	}
 
 	// Permission gate: the tapper must be a bound workspace user on
-	// this installation — the same bar /issue itself requires. Unbound
-	// tappers get the standard binding prompt (p2p) when a replier is
-	// wired.
-	if _, berr := h.cfg.Queries.GetLarkUserBindingByOpenID(ctx, GetUserBindingByOpenIDParams{
+	// this installation — the same bar the inbound /issue path
+	// enforces (binding lookup AND a live membership re-check; a
+	// binding row alone is not membership proof since MUL-3515
+	// dropped the channel_* FKs). Unbound tappers get the standard
+	// binding prompt (p2p) when a replier is wired; revoked members
+	// are dropped silently.
+	binding, berr := h.cfg.Queries.GetLarkUserBindingByOpenID(ctx, GetUserBindingByOpenIDParams{
 		InstallationID: inst.ID,
 		ChannelUserID:  string(act.OperatorOpenID),
-	}); berr != nil {
+	})
+	if berr != nil {
 		if errors.Is(berr, pgx.ErrNoRows) {
 			log.Info("lark card action: unbound operator; prompting to bind",
 				"operator", string(act.OperatorOpenID), "task_id", rawTaskID)
@@ -242,6 +247,16 @@ func (h *RunCardActionHandler) process(ctx context.Context, inst Installation, a
 			return
 		}
 		log.Warn("lark card action: binding lookup failed", "error", berr)
+		return
+	}
+	isMember, merr := h.cfg.Queries.IsWorkspaceMember(ctx, inst.WorkspaceID, binding.MulticaUserID)
+	if merr != nil {
+		log.Warn("lark card action: membership check failed", "task_id", rawTaskID, "error", merr)
+		return
+	}
+	if !isMember {
+		log.Warn("lark card action: operator is no longer a workspace member; dropping cancel",
+			"operator", string(act.OperatorOpenID), "task_id", rawTaskID)
 		return
 	}
 
