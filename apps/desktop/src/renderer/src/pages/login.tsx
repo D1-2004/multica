@@ -1,7 +1,7 @@
 import { LoginPage } from "@multica/views/auth";
 import { DragStrip } from "@multica/views/platform";
 import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
-import { useConfigStore } from "@multica/core/config";
+import { isLoginProviderAllowed, useConfigStore } from "@multica/core/config";
 import { Loader2 } from "lucide-react";
 
 function requireRuntimeAppUrl(): string {
@@ -16,15 +16,17 @@ function requireRuntimeAppUrl(): string {
 
 export function DesktopLoginPage() {
   const webUrl = requireRuntimeAppUrl();
-  // When the backend locks sign-in to DingTalk, hide the email form + Google
-  // button here too (config is seeded by CoreProvider's AuthInitializer).
-  const dingtalkOnly = useConfigStore((s) => s.dingtalkOnly);
+  // When the backend locks sign-in with LOGIN_PROVIDERS, hide the closed
+  // entry points here too (config is seeded by CoreProvider's AuthInitializer).
+  const loginProviders = useConfigStore((s) => s.loginProviders);
+  const allows = (provider: string) =>
+    isLoginProviderAllowed(loginProviders, provider);
   // Only offer the Feishu button when the backend actually has a Feishu app
   // configured — unlike Google/DingTalk this is gated on config so
   // Feishu-less deployments don't show a dead button.
   const larkClientId = useConfigStore((s) => s.larkClientId);
-  // Wait for /api/config before rendering the form so a DingTalk-only backend
-  // doesn't flash the email + Google buttons first.
+  // Wait for /api/config before rendering the form so a provider-locked
+  // backend doesn't flash the email + Google buttons first.
   const authConfigLoaded = useConfigStore((s) => s.authConfigLoaded);
   // Both OAuth providers hand off to the web login page (which renders whichever
   // provider buttons the backend has configured) in the default browser with the
@@ -46,10 +48,10 @@ export function DesktopLoginPage() {
             // Auth store update triggers AppContent re-render → shows DesktopShell.
             // Initial workspace navigation happens in routes.tsx via IndexRedirect.
           }}
-          onGoogleLogin={dingtalkOnly ? undefined : openWebLogin}
-          onDingtalkLogin={openWebLogin}
-          onLarkLogin={larkClientId && !dingtalkOnly ? openWebLogin : undefined}
-          dingtalkOnly={dingtalkOnly}
+          onGoogleLogin={allows("google") ? openWebLogin : undefined}
+          onDingtalkLogin={allows("dingtalk") ? openWebLogin : undefined}
+          onLarkLogin={allows("lark") && larkClientId ? openWebLogin : undefined}
+          oauthOnly={!allows("email")}
         />
       ) : (
         <div className="flex flex-1 items-center justify-center">

@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { sanitizeNextUrl, useAuthStore } from "@multica/core/auth";
-import { useConfigStore } from "@multica/core/config";
+import { isLoginProviderAllowed, useConfigStore } from "@multica/core/config";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import {
   paths,
@@ -60,8 +60,12 @@ function LoginPageContent() {
   const { t } = useT("auth");
   const googleClientId = useConfigStore((state) => state.googleClientId);
   const dingtalkClientId = useConfigStore((state) => state.dingtalkClientId);
-  const dingtalkOnly = useConfigStore((state) => state.dingtalkOnly);
+  const loginProviders = useConfigStore((state) => state.loginProviders);
   const larkClientId = useConfigStore((state) => state.larkClientId);
+  // LOGIN_PROVIDERS allowlist: a provider button renders only when the
+  // backend both allows the provider and has its client id configured.
+  const allows = (provider: string) =>
+    isLoginProviderAllowed(loginProviders, provider);
   const authConfigLoaded = useConfigStore((state) => state.authConfigLoaded);
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
@@ -224,7 +228,7 @@ function LoginPageContent() {
     <LoginPage
       onSuccess={handleSuccess}
       google={
-        googleClientId
+        googleClientId && allows("google")
           ? {
               clientId: googleClientId,
               redirectUri: `${window.location.origin}/auth/callback`,
@@ -233,7 +237,7 @@ function LoginPageContent() {
           : undefined
       }
       dingtalk={
-        dingtalkClientId
+        dingtalkClientId && allows("dingtalk")
           ? {
               clientId: dingtalkClientId,
               redirectUri: `${window.location.origin}/auth/callback`,
@@ -242,7 +246,7 @@ function LoginPageContent() {
           : undefined
       }
       lark={
-        larkClientId
+        larkClientId && allows("lark")
           ? {
               clientId: larkClientId,
               redirectUri: `${window.location.origin}/auth/callback`,
@@ -250,7 +254,7 @@ function LoginPageContent() {
             }
           : undefined
       }
-      dingtalkOnly={dingtalkOnly}
+      oauthOnly={!allows("email")}
       cliCallback={
         cliCallbackRaw && validateCliCallback(cliCallbackRaw)
           ? { url: cliCallbackRaw, state: cliState }
