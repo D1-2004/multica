@@ -19,6 +19,10 @@ interface ConfigState {
   // the managed-cloud case.
   workspaceCreationDisabled: boolean;
   featureFlags: Record<string, boolean>;
+  // True once /api/config has resolved (on success OR failure). The login
+  // screen gates its render on this so a DingTalk-only deployment doesn't
+  // flash the email form before the config flips it to DingTalk-only.
+  authConfigLoaded: boolean;
   setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
   setAuthConfig: (config: {
     allowSignup: boolean;
@@ -45,6 +49,7 @@ export const configStore = createStore<ConfigState>((set) => ({
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
   featureFlags: {},
+  authConfigLoaded: false,
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
   setAuthConfig: ({
     allowSignup,
@@ -52,7 +57,15 @@ export const configStore = createStore<ConfigState>((set) => ({
     dingtalkClientId = "",
     dingtalkOnly = false,
     workspaceCreationDisabled = false,
-  }) => set({ allowSignup, googleClientId, dingtalkClientId, dingtalkOnly, workspaceCreationDisabled }),
+  }) =>
+    set({
+      allowSignup,
+      googleClientId,
+      dingtalkClientId,
+      dingtalkOnly,
+      workspaceCreationDisabled,
+      authConfigLoaded: true,
+    }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
   setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),

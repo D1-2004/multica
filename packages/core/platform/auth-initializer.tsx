@@ -80,7 +80,11 @@ export function AuthInitializer({
         }
       })
       .catch(() => {
-        /* config is optional — legacy file card matching degrades gracefully */
+        // config is optional (file-card matching degrades gracefully), but
+        // still mark it resolved with safe defaults so the login screen — which
+        // waits on authConfigLoaded to avoid a provider flash — doesn't spin
+        // forever when /api/config is unreachable.
+        configStore.getState().setAuthConfig({ allowSignup: true });
       });
 
     const onAuthSuccess = (user: User) => {
