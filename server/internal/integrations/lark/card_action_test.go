@@ -102,6 +102,7 @@ func (f *fakeCanceller) CancelTask(_ context.Context, taskID pgtype.UUID) (*db.A
 type fakeActionQueries struct {
 	store    *fakeRunCardStore
 	bindings map[string]UserBinding // keyed by installationID + "/" + open_id
+	members  map[string]bool        // keyed by workspaceID + "/" + userID
 }
 
 func (f *fakeActionQueries) GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error) {
@@ -118,6 +119,10 @@ func (f *fakeActionQueries) GetLarkUserBindingByOpenID(_ context.Context, arg Ge
 		return UserBinding{}, pgx.ErrNoRows
 	}
 	return b, nil
+}
+
+func (f *fakeActionQueries) IsWorkspaceMember(_ context.Context, workspaceID, userID pgtype.UUID) (bool, error) {
+	return f.members[uuidString(workspaceID)+"/"+uuidString(userID)], nil
 }
 
 type recordingReplier struct {
@@ -146,6 +151,7 @@ func newActionFixture(t *testing.T) *actionFixture {
 	installationID := "66666666-6666-6666-6666-666666666666"
 	inst := base.store.installations[installationID]
 
+	operatorUserID := uuidFromString(t, "77777777-7777-7777-7777-777777777777")
 	fx := &actionFixture{
 		runCardFixture: base,
 		queries: &fakeActionQueries{
@@ -153,8 +159,12 @@ func newActionFixture(t *testing.T) *actionFixture {
 			bindings: map[string]UserBinding{
 				installationID + "/ou_operator": {
 					WorkspaceID:   inst.WorkspaceID,
+					MulticaUserID: operatorUserID,
 					ChannelUserID: "ou_operator",
 				},
+			},
+			members: map[string]bool{
+				uuidString(inst.WorkspaceID) + "/" + uuidString(operatorUserID): true,
 			},
 		},
 		canceller: &fakeCanceller{},
@@ -264,6 +274,26 @@ func TestCardActionUnboundOperatorGetsBindingPrompt(t *testing.T) {
 	}
 	if fx.replier.replies[0].SenderOpenID != "ou_stranger" {
 		t.Fatalf("binding prompt should target the tapper")
+	}
+}
+
+func TestCardActionRejectsRevokedMember(t *testing.T) {
+	fx := newActionFixture(t)
+	// Binding row survives, but the user was removed from the
+	// workspace: the membership re-check must block the cancel.
+	fx.queries.members = map[string]bool{}
+
+	fx.handler.HandleCardAction(context.Background(), fx.inst, fx.cancelAction("evt_revoked"))
+
+	fx.canceller.mu.Lock()
+	defer fx.canceller.mu.Unlock()
+	if len(fx.canceller.calls) != 0 {
+		t.Fatalf("revoked member must not cancel tasks")
+	}
+	fx.replier.mu.Lock()
+	defer fx.replier.mu.Unlock()
+	if len(fx.replier.replies) != 0 {
+		t.Fatalf("revoked member should be dropped silently, got %+v", fx.replier.replies)
 	}
 }
 

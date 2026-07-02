@@ -386,6 +386,32 @@ func (s *ChannelStore) UpdateLarkOutboundCardStatus(ctx context.Context, arg Upd
 	})
 }
 
+func (s *ChannelStore) ClaimLarkOutboundCardMessage(ctx context.Context, arg ClaimOutboundCardMessageParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.ClaimChannelOutboundCardMessage(ctx, db.ClaimChannelOutboundCardMessageParams{
+		ChatSessionID: arg.ChatSessionID,
+		ChannelType:   channelTypeFeishu,
+		ChannelChatID: arg.ChannelChatID,
+		Status:        arg.Status,
+		TaskID:        arg.TaskID,
+	})
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) SetLarkOutboundCardMessageID(ctx context.Context, arg SetOutboundCardMessageIDParams) error {
+	return s.Queries.SetChannelOutboundCardMessageID(ctx, db.SetChannelOutboundCardMessageIDParams{
+		ID:                   arg.ID,
+		ChannelCardMessageID: arg.MessageID,
+		Status:               arg.Status,
+	})
+}
+
+func (s *ChannelStore) DeleteLarkOutboundCardMessage(ctx context.Context, id pgtype.UUID) error {
+	return s.Queries.DeleteChannelOutboundCardMessage(ctx, id)
+}
+
 // installationsFromRows maps a slice of channel_installation rows to domain
 // Installations, surfacing the first config-decode error.
 func installationsFromRows(rows []db.ChannelInstallation) ([]Installation, error) {

@@ -112,6 +112,54 @@ func (q *Queries) ClaimChannelInboundDedup(ctx context.Context, arg ClaimChannel
 	return i, err
 }
 
+const claimChannelOutboundCardMessage = `-- name: ClaimChannelOutboundCardMessage :one
+INSERT INTO channel_outbound_card_message (
+    chat_session_id, task_id, channel_type, channel_chat_id,
+    channel_card_message_id, status
+) VALUES (
+    $1, $5, $2, $3, '', $4
+)
+ON CONFLICT (task_id) WHERE task_id IS NOT NULL DO NOTHING
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at
+`
+
+type ClaimChannelOutboundCardMessageParams struct {
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	ChannelType   string      `json:"channel_type"`
+	ChannelChatID string      `json:"channel_chat_id"`
+	Status        string      `json:"status"`
+	TaskID        pgtype.UUID `json:"task_id"`
+}
+
+// Claim-then-send guard for run cards: the row is inserted BEFORE the
+// platform send with an empty channel_card_message_id, so the partial
+// unique index on (task_id) doubles as a cross-replica lock. Exactly
+// one caller gets the row back; racers get no row (pgx.ErrNoRows) and
+// must back off. SetChannelOutboundCardMessageID records the real
+// message id after the send succeeds.
+func (q *Queries) ClaimChannelOutboundCardMessage(ctx context.Context, arg ClaimChannelOutboundCardMessageParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, claimChannelOutboundCardMessage,
+		arg.ChatSessionID,
+		arg.ChannelType,
+		arg.ChannelChatID,
+		arg.Status,
+		arg.TaskID,
+	)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const consumeChannelBindingToken = `-- name: ConsumeChannelBindingToken :one
 UPDATE channel_binding_token
 SET consumed_at = now()
@@ -381,6 +429,18 @@ type DeleteChannelChatSessionBindingsByInstallationParams struct {
 // channel binding is removed.
 func (q *Queries) DeleteChannelChatSessionBindingsByInstallation(ctx context.Context, arg DeleteChannelChatSessionBindingsByInstallationParams) error {
 	_, err := q.db.Exec(ctx, deleteChannelChatSessionBindingsByInstallation, arg.InstallationID, arg.ChannelType)
+	return err
+}
+
+const deleteChannelOutboundCardMessage = `-- name: DeleteChannelOutboundCardMessage :exec
+DELETE FROM channel_outbound_card_message
+WHERE id = $1
+`
+
+// Releases a claim whose send failed (or was abandoned by a crashed
+// replica) so a later attempt can re-claim and send.
+func (q *Queries) DeleteChannelOutboundCardMessage(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteChannelOutboundCardMessage, id)
 	return err
 }
 
@@ -993,6 +1053,25 @@ type SetChannelInstallationStatusParams struct {
 
 func (q *Queries) SetChannelInstallationStatus(ctx context.Context, arg SetChannelInstallationStatusParams) error {
 	_, err := q.db.Exec(ctx, setChannelInstallationStatus, arg.ID, arg.Status)
+	return err
+}
+
+const setChannelOutboundCardMessageID = `-- name: SetChannelOutboundCardMessageID :exec
+UPDATE channel_outbound_card_message
+SET channel_card_message_id = $2,
+    status = $3,
+    last_patched_at = now()
+WHERE id = $1
+`
+
+type SetChannelOutboundCardMessageIDParams struct {
+	ID                   pgtype.UUID `json:"id"`
+	ChannelCardMessageID string      `json:"channel_card_message_id"`
+	Status               string      `json:"status"`
+}
+
+func (q *Queries) SetChannelOutboundCardMessageID(ctx context.Context, arg SetChannelOutboundCardMessageIDParams) error {
+	_, err := q.db.Exec(ctx, setChannelOutboundCardMessageID, arg.ID, arg.ChannelCardMessageID, arg.Status)
 	return err
 }
 

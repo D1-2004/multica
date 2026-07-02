@@ -392,6 +392,35 @@ SET status = $2,
     last_patched_at = now()
 WHERE id = $1;
 
+-- name: ClaimChannelOutboundCardMessage :one
+-- Claim-then-send guard for run cards: the row is inserted BEFORE the
+-- platform send with an empty channel_card_message_id, so the partial
+-- unique index on (task_id) doubles as a cross-replica lock. Exactly
+-- one caller gets the row back; racers get no row (pgx.ErrNoRows) and
+-- must back off. SetChannelOutboundCardMessageID records the real
+-- message id after the send succeeds.
+INSERT INTO channel_outbound_card_message (
+    chat_session_id, task_id, channel_type, channel_chat_id,
+    channel_card_message_id, status
+) VALUES (
+    $1, sqlc.arg('task_id'), $2, $3, '', $4
+)
+ON CONFLICT (task_id) WHERE task_id IS NOT NULL DO NOTHING
+RETURNING *;
+
+-- name: SetChannelOutboundCardMessageID :exec
+UPDATE channel_outbound_card_message
+SET channel_card_message_id = $2,
+    status = $3,
+    last_patched_at = now()
+WHERE id = $1;
+
+-- name: DeleteChannelOutboundCardMessage :exec
+-- Releases a claim whose send failed (or was abandoned by a crashed
+-- replica) so a later attempt can re-claim and send.
+DELETE FROM channel_outbound_card_message
+WHERE id = $1;
+
 -- =====================
 -- channel_binding_token
 -- =====================
