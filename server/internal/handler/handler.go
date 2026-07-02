@@ -204,7 +204,12 @@ type Handler struct {
 	// self-hosted deployments.
 	DingTalk      dingtalk.CapabilityClient
 	DingTalkOAuth dingtalk.OAuthClient
-	cfg           Config
+	// LarkOAuth resolves Feishu login codes for POST /auth/lark. Production
+	// prefers the private channel agent (LARK_AGENT_BASE_URL) so the app
+	// secret stays outside this backend; the direct client remains available
+	// for self-hosted / local-dev deployments.
+	LarkOAuth lark.OAuthClient
+	cfg       Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {

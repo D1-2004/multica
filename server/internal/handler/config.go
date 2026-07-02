@@ -38,6 +38,13 @@ type AppConfig struct {
 	// that organization, so DingTalk-only login restricts access to the org.
 	// Omitted when false to keep responses identical to the previous shape.
 	DingtalkOnly bool `json:"dingtalk_only,omitempty"`
+	// LarkClientID is the Feishu app's AppID (cli_xxx). When set, the web app
+	// renders the "使用飞书登录" button and builds the
+	// accounts.feishu.cn/open-apis/authen/v1/authorize URL with it. Non-secret
+	// — required on this backend even when the code exchange runs through the
+	// private agent, because the login page needs it for the authorize URL
+	// (same split as DINGTALK_CLIENT_ID). Omitted when empty.
+	LarkClientID string `json:"lark_client_id,omitempty"`
 	// WorkspaceCreationDisabled mirrors the server-side
 	// DISABLE_WORKSPACE_CREATION env var so the UI can hide every
 	// "Create workspace" affordance on self-hosted instances. Omitted
@@ -70,6 +77,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		GoogleClientID:            os.Getenv("GOOGLE_CLIENT_ID"),
 		DingtalkClientID:          os.Getenv("DINGTALK_CLIENT_ID"),
 		DingtalkOnly:              DingtalkOnlyEnabled(),
+		LarkClientID:              os.Getenv("LARK_CLIENT_ID"),
 		WorkspaceCreationDisabled: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 	}
 	if h.Storage != nil {

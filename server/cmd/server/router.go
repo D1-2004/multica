@@ -213,6 +213,32 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	} else {
 		slog.Info("dingtalk integration disabled (DINGTALK_APP_KEY or DINGTALK_APP_SECRET not set)")
 	}
+	// Lark (Feishu) login identity resolution — same tiering as DingTalk:
+	// prefer the private channel agent so the app secret stays outside this
+	// backend, fall back to the direct open-API client for self-host/dev.
+	if larkAgentBase := strings.TrimSpace(os.Getenv("LARK_AGENT_BASE_URL")); larkAgentBase != "" {
+		agentClient := lark.NewOAuthAgentClient(lark.OAuthAgentClientConfig{
+			BaseURL:        larkAgentBase,
+			InternalSecret: strings.TrimSpace(os.Getenv("LARK_AGENT_INTERNAL_SECRET")),
+			Logger:         slog.Default(),
+		})
+		h.LarkOAuth = agentClient
+		if agentClient.IsConfigured() {
+			slog.Info("lark oauth enabled via private agent", "base_url", larkAgentBase)
+		} else {
+			slog.Info("lark oauth disabled (LARK_AGENT_INTERNAL_SECRET not set)")
+		}
+	} else if larkClientID, larkClientSecret := strings.TrimSpace(os.Getenv("LARK_CLIENT_ID")), strings.TrimSpace(os.Getenv("LARK_CLIENT_SECRET")); larkClientID != "" && larkClientSecret != "" {
+		h.LarkOAuth = lark.NewOAuthHTTPClient(lark.OAuthConfig{
+			ClientID:     larkClientID,
+			ClientSecret: larkClientSecret,
+			APIBase:      strings.TrimSpace(os.Getenv("LARK_OPENAPI_BASE")),
+			Logger:       slog.Default(),
+		})
+		slog.Info("lark oauth enabled via direct client")
+	} else {
+		slog.Info("lark oauth disabled (LARK_CLIENT_ID or LARK_CLIENT_SECRET not set)")
+	}
 	if pool != nil {
 		if reporter, err := sourcechannel.NewSender(queries, sourcechannel.SenderConfig{}); err != nil {
 			slog.Warn("source channel reporter disabled", "error", err)
@@ -671,6 +697,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.With(authRL).Post("/auth/send-code", h.SendCode)
 		r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
 		r.With(authRL).Post("/auth/google", h.GoogleLogin)
+		r.With(authRL).Post("/auth/lark", h.LarkLogin)
 	}
 	r.With(authRL).Post("/auth/dingtalk", h.DingTalkLogin)
 	r.Post("/auth/logout", h.Logout)
