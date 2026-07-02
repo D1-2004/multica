@@ -151,6 +151,7 @@ func (c *OAuthHTTPClient) ResolveOAuthUser(ctx context.Context, code, redirectUR
 		if detail == "" {
 			detail = strings.TrimSpace(string(body))
 		}
+		c.logger.Warn("lark token exchange failed", "status", res.StatusCode)
 		return OAuthUser{}, fmt.Errorf("lark oauth: token exchange failed (HTTP %d): %s", res.StatusCode, detail)
 	}
 
@@ -172,6 +173,7 @@ func (c *OAuthHTTPClient) ResolveOAuthUser(ctx context.Context, code, redirectUR
 		return OAuthUser{}, fmt.Errorf("lark oauth: decode user_info (HTTP %d): %w", infoRes.StatusCode, err)
 	}
 	if info.Code != 0 {
+		c.logger.Warn("lark user_info failed", "code", info.Code)
 		return OAuthUser{}, fmt.Errorf("lark oauth: user_info failed: code=%d msg=%q", info.Code, info.Msg)
 	}
 
