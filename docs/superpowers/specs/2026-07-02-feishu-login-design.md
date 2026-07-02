@@ -93,3 +93,29 @@ Two deltas vs DingTalk that shape the design:
 - Feishu org member search / group-member invite (DingTalk parity feature — separate round).
 - LOGIN_LARK_ONLY lock.
 - Lark international brand (accounts.larksuite.com) — base URLs are env-overridable, but only feishu-brand is wired and verified now.
+
+## Result (2026-07-02)
+
+Implemented across both repos, every task spec-reviewed and quality-reviewed:
+
+- multica (develop): `09210cbe2` + `609c9ad71` + `fde8e0505` (lark OAuth clients, 8 httptest tests), `d4e86ee0e` (`/auth/lark` handler + config + router tiering, 5 handler tests), `627e77e33` (core plumbing, 3 schema drift tests), `0f862fc3a` (login button + 4-locale i18n, 2 component tests), `14ee0b0ba` (web/desktop wiring).
+- dingtalk-native-agent: `f80c3539` (`POST /internal/lark/oauth/user`, LarkClient adapter, config/container/health).
+
+Verified:
+
+- Go: build/vet/gofmt clean; 8 lark OAuth client tests pass. TS: core 707, views 1540 (incl. 196 login-page+parity), desktop 249 tests pass; web/desktop/core/views typecheck clean.
+- End-to-end smoke against the REAL Feishu API: local agent (`LARK_APP_ID=cli_aab264b001f8dbcf`) → `POST /internal/lark/oauth/user` with a fake code → agent log `Feishu token exchange failed (HTTP 400): The authorization code is not found...` (real round-trip + RFC 6749 error_description parsing confirmed) → route answers 502. A real `lark.OAuthAgentClient` (Go) against the live agent surfaced `lark oauth agent: HTTP 502: {"ok":false,...}` — cross-service contract verified. Feishu validates the code before the client secret, so this smoke is deployment-equivalent for the fake-code path.
+
+Known gaps / environment notes:
+
+- The 5 `TestLarkLogin*` handler tests compile but SKIP locally: no Postgres available on this machine (Docker Hub and mirrors unreachable from this network). CI runs them (pgvector service).
+- Go-server-mode smoke (`/api/config` + `/auth/lark` on a running backend) blocked by the same missing local Postgres.
+- `apps/web/app/(auth)/login/page.test.tsx` has 6 PRE-EXISTING failures (missing `useConfigStore` mock vs the `authConfigLoaded` gate from `360922277`) — reproduced identically without the Feishu diff; follow-up fix recommended, unrelated to this feature.
+- A real authorization code can only be exercised via the browser flow (same limitation as DingTalk).
+
+Remaining operator steps:
+
+1. Feishu console (app `cli_aab264b001f8dbcf` or a dedicated prod app): whitelist redirect URLs `http://localhost:3000/auth/callback` (dev) and `https://<web-domain>/auth/callback` (prod).
+2. Railway `dingtalk-native-agent`: set `LARK_APP_ID`, `LARK_APP_SECRET`.
+3. Railway `multica-backend`: set `LARK_AGENT_BASE_URL` (private domain), `LARK_AGENT_INTERNAL_SECRET` (= the agent's `INTERNAL_API_SECRET`), `LARK_CLIENT_ID` (non-secret, for the login button).
+4. Push both repos' commits (nothing was pushed by the implementation session).
