@@ -101,6 +101,26 @@ func (c *AgentClient) ResolveOAuthUser(ctx context.Context, code string) (OAuthU
 	return resp.User, nil
 }
 
+func (c *AgentClient) SendPersonalNotification(ctx context.Context, req PersonalNotification) error {
+	req.Card.Title = strings.TrimSpace(req.Card.Title)
+	req.Card.Text = strings.TrimSpace(req.Card.Text)
+	req.Card.URL = strings.TrimSpace(req.Card.URL)
+	req.Card.ButtonText = strings.TrimSpace(req.Card.ButtonText)
+	req.Recipient.UserID = strings.TrimSpace(req.Recipient.UserID)
+	req.Recipient.UnionID = strings.TrimSpace(req.Recipient.UnionID)
+	req.Recipient.Email = strings.TrimSpace(req.Recipient.Email)
+	req.Recipient.Name = strings.TrimSpace(req.Recipient.Name)
+	req.Source = strings.TrimSpace(req.Source)
+	req.DedupeKey = strings.TrimSpace(req.DedupeKey)
+	if req.Card.Title == "" {
+		return &APIError{Code: "missing_title", Message: "DingTalk notification title is required"}
+	}
+	if req.Card.Text == "" {
+		return &APIError{Code: "missing_text", Message: "DingTalk notification text is required"}
+	}
+	return c.doJSON(ctx, http.MethodPost, "/internal/dingtalk/notifications/personal", req, nil)
+}
+
 func (c *AgentClient) doJSON(ctx context.Context, method, path string, body any, out any) error {
 	if !c.IsConfigured() {
 		return &APIError{Code: "agent_not_configured", Message: "DingTalk agent client is not configured"}

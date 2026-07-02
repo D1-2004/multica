@@ -66,10 +66,36 @@ type OAuthUser struct {
 	CorpID    string `json:"corp_id,omitempty"`
 }
 
+type PersonalNotificationRecipient struct {
+	UserID  string `json:"user_id,omitempty"`
+	UnionID string `json:"union_id,omitempty"`
+	Email   string `json:"email,omitempty"`
+	Name    string `json:"name,omitempty"`
+}
+
+type PersonalNotificationCard struct {
+	Title      string `json:"title"`
+	Text       string `json:"text"`
+	URL        string `json:"url,omitempty"`
+	ButtonText string `json:"button_text,omitempty"`
+}
+
+type PersonalNotification struct {
+	Recipient PersonalNotificationRecipient `json:"recipient"`
+	Card      PersonalNotificationCard      `json:"card"`
+	Source    string                        `json:"source,omitempty"`
+	DedupeKey string                        `json:"dedupe_key,omitempty"`
+}
+
 type CapabilityClient interface {
 	IsConfigured() bool
 	SearchUsers(ctx context.Context, query string, limit int) ([]User, error)
 	AddGroupMembers(ctx context.Context, chatID string, userIDs []string) error
+}
+
+type PersonalNotificationClient interface {
+	IsConfigured() bool
+	SendPersonalNotification(ctx context.Context, req PersonalNotification) error
 }
 
 type OAuthClient interface {
