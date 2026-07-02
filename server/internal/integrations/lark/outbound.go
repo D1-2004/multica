@@ -161,10 +161,11 @@ type CredentialsResolver interface {
 // PatcherConfig tunes the outbound Patcher. Defaults via withDefaults;
 // tests typically override Renderer / Now / Logger.
 type PatcherConfig struct {
-	// Renderer drives the error card template used on the EventTaskFailed
-	// path. The success path (EventChatDone) bypasses the renderer
-	// entirely — it sends the raw assistant reply as a plain text IM
-	// message — so this only matters for the failure branch.
+	// Renderer is currently unused by the Patcher itself (the chat
+	// reply is plain text; status/error cards moved to the run-card
+	// publisher). It stays configurable because the Renderer machinery
+	// is the package's generic card factory and tests exercise it
+	// through this seam.
 	Renderer Renderer
 	Now      func() time.Time
 	Logger   *slog.Logger
@@ -188,9 +189,9 @@ func (c PatcherConfig) withDefaults() PatcherConfig {
 // side of §4.5 — but the original "thinking → streaming → final card"
 // lifecycle was reduced to a single plain-text reply on EventChatDone
 // after Bohan reported the card chrome made replies feel like system
-// notifications. The error path is the one survivor of card rendering:
-// failed runs surface as a short error card on EventTaskFailed because
-// the visual distinction from a normal reply is genuinely useful.
+// notifications. Status/error cards now live in the run-card publisher
+// (run_card.go), which tracks the whole run — the Patcher owns only
+// the final ANSWER text plus the typing-indicator lifecycle.
 //
 // Scope:
 //
@@ -247,8 +248,13 @@ func (p *Patcher) SetTypingIndicatorManager(m *TypingIndicatorManager) {
 //     a system notification nested in card chrome; flipping to plain
 //     text makes free-form chat feel native.
 //
-//   - EventTaskFailed — the run failed; surface a short error card
-//     so the failure is visually distinct from a successful reply.
+//   - EventTaskFailed — kept ONLY to clear the typing-indicator
+//     reaction (EventChatDone never fires for a failed run, so the
+//     "processing" emoji would otherwise linger forever). The error
+//     CARD this event used to send moved to the run-card publisher
+//     (run_card.go), which owns the full status-card lifecycle for
+//     both chat and /issue runs — sending a second error card here
+//     would double-post.
 //
 // We deliberately do NOT subscribe to EventTaskQueued / EventTaskRunning
 // (no thinking-card lifecycle anymore — adds noise without value) or to
@@ -279,7 +285,7 @@ func (p *Patcher) handleEvent(e events.Event) {
 }
 
 func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
-	taskID, chatSessionID, ok := taskAndSessionFromEvent(e)
+	_, chatSessionID, ok := taskAndSessionFromEvent(e)
 	if !ok {
 		return nil
 	}
@@ -310,24 +316,17 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 		return err
 	}
 
-	agent, agentErr := p.queries.GetAgent(ctx, inst.AgentID)
-	agentName := ""
-	if agentErr == nil {
-		agentName = agent.Name
-	}
-
 	// Clear the "processing" reaction before the reply is visible so the
 	// user sees a clean transition. Best-effort: a failure here is logged
-	// but does not block the actual reply.
+	// but does not block the actual reply. On EventTaskFailed this Clear
+	// is the whole job — the failure card itself comes from the run-card
+	// publisher.
 	if p.typingIndicator != nil {
 		p.typingIndicator.Clear(ctx, chatSessionID)
 	}
 
-	switch e.Type {
-	case protocol.EventChatDone:
+	if e.Type == protocol.EventChatDone {
 		return p.sendChatReply(ctx, creds, binding, e.Payload)
-	case protocol.EventTaskFailed:
-		return p.fail(ctx, creds, binding, taskID, agentName, e.Payload)
 	}
 	return nil
 }
@@ -451,36 +450,6 @@ func (p *Patcher) installationCredentials(inst Installation) (InstallationCreden
 	return creds, nil
 }
 
-// fail surfaces a short error card on task failure. Unlike the
-// success path (plain text via sendChatReply), failures stay as cards
-// because the user benefits from the visual distinction — a red /
-// header-styled card is much harder to miss than a regular bubble,
-// and these are rare enough that the card chrome isn't noisy.
-//
-// One-shot send (no patching, no DB row): if the task fails a second
-// time we'd just send a second card, which is fine — failure is
-// usually a single terminal event.
-func (p *Patcher) fail(ctx context.Context, creds InstallationCredentials, binding ChatSessionBinding, taskID pgtype.UUID, agentName string, payload any) error {
-	render, err := p.cfg.Renderer.Render(RenderInput{
-		Kind:         CardKindError,
-		AgentName:    agentName,
-		TaskID:       taskID,
-		ErrorMessage: errorMessageFromPayload(payload),
-	})
-	if err != nil {
-		return fmt.Errorf("render error card: %w", err)
-	}
-	return sendWithThreadFallback(p.cfg.Logger, "send error card", threadReplyTarget(binding), func(t ReplyTarget) error {
-		_, err := p.client.SendInteractiveCard(ctx, SendCardParams{
-			InstallationID: creds,
-			ChatID:         ChatID(binding.ChannelChatID),
-			CardJSON:       render.JSON,
-			ReplyTarget:    t,
-		})
-		return err
-	})
-}
-
 // taskAndSessionFromEvent parses the typed-ish payload broadcastTaskEvent
 // publishes — a map[string]any with `task_id` (always) and
 // `chat_session_id` (chat tasks only). EventChatDone carries a
@@ -525,18 +494,6 @@ func chatDoneContent(payload any) string {
 		return p.Content
 	case map[string]any:
 		if s, ok := p["content"].(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-func errorMessageFromPayload(payload any) string {
-	if m, ok := payload.(map[string]any); ok {
-		if s, ok := m["error"].(string); ok {
-			return s
-		}
-		if s, ok := m["error_message"].(string); ok {
 			return s
 		}
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -345,13 +344,13 @@ func TestPatcherSkipsWhenNoChatSessionBinding(t *testing.T) {
 	}
 }
 
-// TestPatcherFailEventSendsErrorCard verifies the failure path still
-// surfaces a card. The visual distinction between a successful reply
-// (plain text bubble) and a failure (red header card) is genuinely
-// useful — and failures are rare enough that the card chrome isn't
-// noisy. One-shot send (no patching of any prior thinking card,
-// because there isn't one anymore).
-func TestPatcherFailEventSendsErrorCard(t *testing.T) {
+// TestPatcherFailEventSendsNoCard pins the failure-path handoff: the
+// red error card moved to the run-card publisher (run_card.go), which
+// owns the whole status-card lifecycle, so the Patcher must stay
+// subscribed to task:failed ONLY for the typing-indicator clear and
+// must not post anything itself — a second card here would double-post
+// alongside the run card's terminal 失败 revision.
+func TestPatcherFailEventSendsNoCard(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee444444-ee44-ee44-ee44-eeeeeeeeeeee")
 
@@ -368,14 +367,9 @@ func TestPatcherFailEventSendsErrorCard(t *testing.T) {
 
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	if len(api.sent) != 1 {
-		t.Fatalf("fail event must send an error card; got %d card sends", len(api.sent))
-	}
-	if len(api.patched) != 0 {
-		t.Errorf("fail event must NOT patch any card (no prior card lifecycle); got %d patches", len(api.patched))
-	}
-	if !strings.Contains(api.sent[0].CardJSON, "boom") {
-		t.Errorf("error card body should embed the error message; got %s", api.sent[0].CardJSON)
+	if len(api.sent) != 0 || len(api.textSent) != 0 || len(api.patched) != 0 {
+		t.Fatalf("task:failed must produce no Patcher outbound (run card owns it); got cards=%d text=%d patches=%d",
+			len(api.sent), len(api.textSent), len(api.patched))
 	}
 }
 

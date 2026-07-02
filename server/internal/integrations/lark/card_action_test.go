@@ -101,8 +101,9 @@ func (f *fakeCanceller) CancelTask(_ context.Context, taskID pgtype.UUID) (*db.A
 
 type fakeActionQueries struct {
 	store    *fakeRunCardStore
-	bindings map[string]UserBinding // keyed by installationID + "/" + open_id
-	members  map[string]bool        // keyed by workspaceID + "/" + userID
+	bindings map[string]UserBinding    // keyed by installationID + "/" + open_id
+	members  map[string]bool           // keyed by workspaceID + "/" + userID
+	sessions map[string]db.ChatSession // keyed by chat_session_id
 }
 
 func (f *fakeActionQueries) GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error) {
@@ -123,6 +124,14 @@ func (f *fakeActionQueries) GetLarkUserBindingByOpenID(_ context.Context, arg Ge
 
 func (f *fakeActionQueries) IsWorkspaceMember(_ context.Context, workspaceID, userID pgtype.UUID) (bool, error) {
 	return f.members[uuidString(workspaceID)+"/"+uuidString(userID)], nil
+}
+
+func (f *fakeActionQueries) GetChatSession(_ context.Context, id pgtype.UUID) (db.ChatSession, error) {
+	s, ok := f.sessions[uuidString(id)]
+	if !ok {
+		return db.ChatSession{}, pgx.ErrNoRows
+	}
+	return s, nil
 }
 
 type recordingReplier struct {
@@ -294,6 +303,41 @@ func TestCardActionRejectsRevokedMember(t *testing.T) {
 	defer fx.replier.mu.Unlock()
 	if len(fx.replier.replies) != 0 {
 		t.Fatalf("revoked member should be dropped silently, got %+v", fx.replier.replies)
+	}
+}
+
+func TestCardActionChatTaskOnlyCreatorCancels(t *testing.T) {
+	fx := newActionFixture(t)
+	fx.makeChatTask(t)
+	creatorID := uuidFromString(t, "77777777-7777-7777-7777-777777777777") // = operator's Multica user
+	fx.queries.sessions = map[string]db.ChatSession{
+		fx.sessionID: {
+			ID:          uuidFromString(t, fx.sessionID),
+			WorkspaceID: fx.inst.WorkspaceID,
+			CreatorID:   creatorID,
+		},
+	}
+
+	fx.handler.HandleCardAction(context.Background(), fx.inst, fx.cancelAction("evt_chat_creator"))
+	fx.canceller.mu.Lock()
+	calls := len(fx.canceller.calls)
+	fx.canceller.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("session creator must be able to cancel the chat task, calls = %d", calls)
+	}
+
+	// A different creator: the tapper is bound and a member, but not
+	// the session owner — mirrors CancelTaskByUser's product rule.
+	fx.queries.sessions[fx.sessionID] = db.ChatSession{
+		ID:          uuidFromString(t, fx.sessionID),
+		WorkspaceID: fx.inst.WorkspaceID,
+		CreatorID:   uuidFromString(t, "88888888-8888-8888-8888-888888888888"),
+	}
+	fx.handler.HandleCardAction(context.Background(), fx.inst, fx.cancelAction("evt_chat_stranger"))
+	fx.canceller.mu.Lock()
+	defer fx.canceller.mu.Unlock()
+	if len(fx.canceller.calls) != 1 {
+		t.Fatalf("non-creator must not cancel a chat task, calls = %d", len(fx.canceller.calls))
 	}
 }
 

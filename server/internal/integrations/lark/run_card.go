@@ -121,6 +121,7 @@ type RunCardState struct {
 	TaskID          string
 	Status          string
 	AgentName       string
+	IsChat          bool
 	IssueIdentifier string
 	IssueTitle      string
 	IssueURL        string
@@ -146,9 +147,15 @@ type RunCardState struct {
 func renderRunCard(st RunCardState) (string, error) {
 	view := runCardViewForStatus(st.Status)
 
-	title := fmt.Sprintf("%s %s %s", st.AgentName, view.Verb, st.IssueIdentifier)
-	if st.AgentName == "" {
-		title = fmt.Sprintf("Multica %s %s", view.Verb, st.IssueIdentifier)
+	agentName := st.AgentName
+	if agentName == "" {
+		agentName = "Multica"
+	}
+	title := fmt.Sprintf("%s %s %s", agentName, view.Verb, st.IssueIdentifier)
+	if st.IsChat {
+		// Chat runs have no issue identifier; the status tag + summary
+		// carry the state, the title just names the conversation run.
+		title = agentName + " · 对话任务"
 	}
 
 	header := map[string]any{
@@ -535,12 +542,8 @@ func (p *RunCardPublisher) Register(bus *events.Bus) {
 }
 
 func (p *RunCardPublisher) handleEvent(e events.Event) {
-	taskID, chatSessionID, ok := taskAndSessionFromEvent(e)
+	taskID, _, ok := taskAndSessionFromEvent(e)
 	if !ok {
-		return
-	}
-	if chatSessionID.Valid {
-		// Chat-session task — owned by the Patcher's plain-reply flow.
 		return
 	}
 	urgent := e.Type != protocol.EventTaskMessage && e.Type != protocol.EventTaskProgress
@@ -598,6 +601,10 @@ type runCardTarget struct {
 	issueIdentifier string
 	issueTitle      string
 	issueURL        string
+	// isChat marks a chat-session task (a question asked in the Lark
+	// chat) rather than a /issue-born issue task. Chat cards drop the
+	// issue identifier/link and title themselves as a conversation run.
+	isChat bool
 }
 
 // runCardWorker serializes all I/O for one task's card. dirty/urgent
@@ -788,7 +795,7 @@ func (p *RunCardPublisher) publish(w *runCardWorker) runCardOutcome {
 		log.Warn("lark run card: load task failed", "task_id", w.taskID, "error", err)
 		return runCardOutcomeRetry
 	}
-	if task.ChatSessionID.Valid || !task.IssueID.Valid {
+	if !task.ChatSessionID.Valid && !task.IssueID.Valid {
 		return runCardOutcomeNegative
 	}
 
@@ -831,21 +838,36 @@ func (p *RunCardPublisher) resolveTarget(ctx context.Context, w *runCardWorker, 
 	}
 
 	log := p.cfg.Logger
-	issue, err := p.queries.GetIssue(ctx, task.IssueID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+
+	// Two task shapes get run cards: chat-session tasks (a question
+	// asked in the Lark chat — the binding hangs directly off the
+	// task's chat session) and issue tasks whose issue was created by
+	// /issue in a Lark chat (the binding hangs off the issue's origin
+	// chat session).
+	isChat := task.ChatSessionID.Valid
+	bindingSession := task.ChatSessionID
+	var issue db.Issue
+	if !isChat {
+		var err error
+		issue, err = p.queries.GetIssue(ctx, task.IssueID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, runCardOutcomeNegative
+			}
+			log.Warn("lark run card: load issue failed", "task_id", w.taskID, "error", err)
+			return nil, runCardOutcomeRetry
+		}
+		if !issue.OriginType.Valid || issue.OriginType.String != "lark_chat" || !issue.OriginID.Valid {
 			return nil, runCardOutcomeNegative
 		}
-		log.Warn("lark run card: load issue failed", "task_id", w.taskID, "error", err)
-		return nil, runCardOutcomeRetry
-	}
-	if !issue.OriginType.Valid || issue.OriginType.String != "lark_chat" || !issue.OriginID.Valid {
-		return nil, runCardOutcomeNegative
+		bindingSession = issue.OriginID
 	}
 
-	binding, err := p.queries.GetLarkChatSessionBindingBySession(ctx, issue.OriginID)
+	binding, err := p.queries.GetLarkChatSessionBindingBySession(ctx, bindingSession)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			// Web/desktop chat session (or a non-Lark issue) — not a
+			// Lark target.
 			return nil, runCardOutcomeNegative
 		}
 		log.Warn("lark run card: load chat binding failed", "task_id", w.taskID, "error", err)
@@ -877,17 +899,22 @@ func (p *RunCardPublisher) resolveTarget(ctx context.Context, w *runCardWorker, 
 		creds.TenantKey = inst.TenantKey.String
 	}
 
-	identifier := fmt.Sprintf("#%d", issue.Number)
+	identifier := ""
 	issueURL := ""
-	if ws, werr := p.queries.GetWorkspace(ctx, issue.WorkspaceID); werr == nil {
-		if ws.IssuePrefix != "" {
-			identifier = fmt.Sprintf("%s-%d", ws.IssuePrefix, issue.Number)
-		}
-		// The issue-detail route is workspace-scoped
-		// (/{workspaceSlug}/issues/{id}); a root-level /issues/{id}
-		// would 404 ("issues" is a reserved slug).
-		if p.cfg.AppURL != "" && ws.Slug != "" {
-			issueURL = strings.TrimRight(p.cfg.AppURL, "/") + "/" + url.PathEscape(ws.Slug) + "/issues/" + url.PathEscape(identifier)
+	issueTitle := ""
+	if !isChat {
+		identifier = fmt.Sprintf("#%d", issue.Number)
+		issueTitle = issue.Title
+		if ws, werr := p.queries.GetWorkspace(ctx, issue.WorkspaceID); werr == nil {
+			if ws.IssuePrefix != "" {
+				identifier = fmt.Sprintf("%s-%d", ws.IssuePrefix, issue.Number)
+			}
+			// The issue-detail route is workspace-scoped
+			// (/{workspaceSlug}/issues/{id}); a root-level /issues/{id}
+			// would 404 ("issues" is a reserved slug).
+			if p.cfg.AppURL != "" && ws.Slug != "" {
+				issueURL = strings.TrimRight(p.cfg.AppURL, "/") + "/" + url.PathEscape(ws.Slug) + "/issues/" + url.PathEscape(identifier)
+			}
 		}
 	}
 
@@ -901,8 +928,9 @@ func (p *RunCardPublisher) resolveTarget(ctx context.Context, w *runCardWorker, 
 		creds:           creds,
 		agentName:       agentName,
 		issueIdentifier: identifier,
-		issueTitle:      issue.Title,
+		issueTitle:      issueTitle,
 		issueURL:        issueURL,
+		isChat:          isChat,
 	}
 	w.mu.Lock()
 	w.target = target
@@ -936,6 +964,7 @@ func (p *RunCardPublisher) buildState(ctx context.Context, task db.AgentTaskQueu
 		TaskID:          uuidString(task.ID),
 		Status:          task.Status,
 		AgentName:       target.agentName,
+		IsChat:          target.isChat,
 		IssueIdentifier: target.issueIdentifier,
 		IssueTitle:      target.issueTitle,
 		IssueURL:        target.issueURL,
