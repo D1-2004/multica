@@ -185,25 +185,38 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.FeatureFlags = opts.FeatureFlags
 	h.TaskService.FeatureFlags = opts.FeatureFlags
 	if agentBaseURL := strings.TrimSpace(os.Getenv("DINGTALK_AGENT_BASE_URL")); agentBaseURL != "" {
-		h.DingTalk = dingtalk.NewAgentClient(dingtalk.AgentClientConfig{
+		agentClient := dingtalk.NewAgentClient(dingtalk.AgentClientConfig{
 			BaseURL:        agentBaseURL,
 			InternalSecret: strings.TrimSpace(os.Getenv("DINGTALK_AGENT_INTERNAL_SECRET")),
 			Logger:         slog.Default(),
 		})
+		h.DingTalk = agentClient
+		h.DingTalkOAuth = agentClient
 		if h.DingTalk.IsConfigured() {
 			slog.Info("dingtalk integration enabled via private agent", "base_url", agentBaseURL)
 		} else {
 			slog.Info("dingtalk integration disabled (DINGTALK_AGENT_INTERNAL_SECRET not set)")
 		}
 	} else if appKey, appSecret := strings.TrimSpace(os.Getenv("DINGTALK_APP_KEY")), strings.TrimSpace(os.Getenv("DINGTALK_APP_SECRET")); appKey != "" && appSecret != "" {
-		h.DingTalk = dingtalk.NewClient(dingtalk.Config{
+		client := dingtalk.NewClient(dingtalk.Config{
 			AppKey:      appKey,
 			AppSecret:   appSecret,
 			OpenAPIBase: strings.TrimSpace(os.Getenv("DINGTALK_OPENAPI_BASE")),
 			OAPIBase:    strings.TrimSpace(os.Getenv("DINGTALK_OAPI_BASE")),
 			Logger:      slog.Default(),
 		})
+		h.DingTalk = client
+		h.DingTalkOAuth = client
 		slog.Info("dingtalk integration enabled")
+	} else if clientID, clientSecret := strings.TrimSpace(os.Getenv("DINGTALK_CLIENT_ID")), strings.TrimSpace(os.Getenv("DINGTALK_CLIENT_SECRET")); clientID != "" && clientSecret != "" {
+		h.DingTalkOAuth = dingtalk.NewClient(dingtalk.Config{
+			AppKey:      clientID,
+			AppSecret:   clientSecret,
+			OpenAPIBase: strings.TrimSpace(os.Getenv("DINGTALK_OPENAPI_BASE")),
+			OAPIBase:    strings.TrimSpace(os.Getenv("DINGTALK_OAPI_BASE")),
+			Logger:      slog.Default(),
+		})
+		slog.Info("dingtalk oauth enabled via direct client")
 	} else {
 		slog.Info("dingtalk integration disabled (DINGTALK_APP_KEY or DINGTALK_APP_SECRET not set)")
 	}

@@ -86,6 +86,21 @@ func (c *AgentClient) AddGroupMembers(ctx context.Context, chatID string, userID
 	}, &resp)
 }
 
+func (c *AgentClient) ResolveOAuthUser(ctx context.Context, code string) (OAuthUser, error) {
+	var resp struct {
+		User OAuthUser `json:"user"`
+	}
+	if err := c.doJSON(ctx, http.MethodPost, "/internal/dingtalk/oauth/user", map[string]any{
+		"code": strings.TrimSpace(code),
+	}, &resp); err != nil {
+		return OAuthUser{}, err
+	}
+	if strings.TrimSpace(resp.User.UnionID) == "" {
+		return OAuthUser{}, &APIError{Code: "missing_union_id", Message: "DingTalk agent returned no unionId"}
+	}
+	return resp.User, nil
+}
+
 func (c *AgentClient) doJSON(ctx context.Context, method, path string, body any, out any) error {
 	if !c.IsConfigured() {
 		return &APIError{Code: "agent_not_configured", Message: "DingTalk agent client is not configured"}

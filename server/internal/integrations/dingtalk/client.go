@@ -56,10 +56,25 @@ type User struct {
 	Department []int64 `json:"department_ids,omitempty"`
 }
 
+type OAuthUser struct {
+	Nick      string `json:"nick,omitempty"`
+	AvatarURL string `json:"avatar_url,omitempty"`
+	Mobile    string `json:"mobile,omitempty"`
+	OpenID    string `json:"open_id,omitempty"`
+	UnionID   string `json:"union_id"`
+	Email     string `json:"email,omitempty"`
+	CorpID    string `json:"corp_id,omitempty"`
+}
+
 type CapabilityClient interface {
 	IsConfigured() bool
 	SearchUsers(ctx context.Context, query string, limit int) ([]User, error)
 	AddGroupMembers(ctx context.Context, chatID string, userIDs []string) error
+}
+
+type OAuthClient interface {
+	IsConfigured() bool
+	ResolveOAuthUser(ctx context.Context, code string) (OAuthUser, error)
 }
 
 type APIError struct {
@@ -104,6 +119,72 @@ func NewClient(cfg Config) *Client {
 
 func (c *Client) IsConfigured() bool {
 	return c != nil && c.appKey != "" && c.appSecret != ""
+}
+
+func (c *Client) ResolveOAuthUser(ctx context.Context, code string) (OAuthUser, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return OAuthUser{}, &APIError{Code: "missing_code", Message: "DingTalk auth code is required"}
+	}
+	if !c.IsConfigured() {
+		return OAuthUser{}, &APIError{Code: "not_configured", Message: "DingTalk client is not configured"}
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"accessToken"`
+		ExpireIn    int64  `json:"expireIn"`
+		CorpID      string `json:"corpId"`
+	}
+	if err := c.postRaw(ctx, c.openAPIBase+"/v1.0/oauth2/userAccessToken", map[string]string{
+		"clientId":     c.appKey,
+		"clientSecret": c.appSecret,
+		"code":         code,
+		"grantType":    "authorization_code",
+	}, &tokenResp); err != nil {
+		return OAuthUser{}, err
+	}
+	if tokenResp.AccessToken == "" {
+		return OAuthUser{}, &APIError{Code: "empty_access_token", Message: "DingTalk userAccessToken response missing accessToken"}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.openAPIBase+"/v1.0/contact/users/me", nil)
+	if err != nil {
+		return OAuthUser{}, err
+	}
+	req.Header.Set("x-acs-dingtalk-access-token", tokenResp.AccessToken)
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		return OAuthUser{}, err
+	}
+	defer res.Body.Close()
+	resBody, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return OAuthUser{}, &APIError{Status: res.StatusCode, Code: "userinfo_failed", Message: strings.TrimSpace(string(resBody))}
+	}
+	var raw struct {
+		Nick      string `json:"nick"`
+		AvatarURL string `json:"avatarUrl"`
+		Mobile    string `json:"mobile"`
+		OpenID    string `json:"openId"`
+		UnionID   string `json:"unionId"`
+		Email     string `json:"email"`
+	}
+	if err := json.Unmarshal(resBody, &raw); err != nil {
+		return OAuthUser{}, fmt.Errorf("decode dingtalk user info: %w", err)
+	}
+	unionID := strings.TrimSpace(raw.UnionID)
+	if unionID == "" {
+		return OAuthUser{}, &APIError{Code: "missing_union_id", Message: "DingTalk account has no unionId"}
+	}
+	return OAuthUser{
+		Nick:      strings.TrimSpace(raw.Nick),
+		AvatarURL: strings.TrimSpace(raw.AvatarURL),
+		Mobile:    strings.TrimSpace(raw.Mobile),
+		OpenID:    strings.TrimSpace(raw.OpenID),
+		UnionID:   unionID,
+		Email:     strings.TrimSpace(raw.Email),
+		CorpID:    strings.TrimSpace(tokenResp.CorpID),
+	}, nil
 }
 
 func (c *Client) SearchUsers(ctx context.Context, query string, limit int) ([]User, error) {

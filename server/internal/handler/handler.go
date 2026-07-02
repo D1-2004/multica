@@ -223,8 +223,9 @@ type Handler struct {
 	// dingtalk-native-agent transport so Open Platform credentials stay outside
 	// this backend; the direct OpenAPI client remains available for explicit
 	// self-hosted deployments.
-	DingTalk dingtalk.CapabilityClient
-	cfg      Config
+	DingTalk      dingtalk.CapabilityClient
+	DingTalkOAuth dingtalk.OAuthClient
+	cfg           Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
