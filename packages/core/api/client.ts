@@ -12,6 +12,8 @@ import type {
   DingTalkUser,
   AddDingTalkGroupMembersRequest,
   AddDingTalkGroupMembersResponse,
+  AddDingTalkWorkspaceMembersRequest,
+  AddDingTalkWorkspaceMembersResponse,
   ListIssuesParams,
   ListGroupedIssuesParams,
   Agent,
@@ -167,6 +169,7 @@ import {
   CreateAgentFromTemplateResponseSchema,
   AgentBuilderSessionSchema,
   AddDingTalkGroupMembersResponseSchema,
+  AddDingTalkWorkspaceMembersResponseSchema,
   DingTalkUserSearchResponseSchema,
   DashboardAgentRunTimeListSchema,
   DashboardRunTimeDailyListSchema,
@@ -181,6 +184,7 @@ import {
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_AGENT_BUILDER_SESSION,
   EMPTY_ADD_DINGTALK_GROUP_MEMBERS_RESPONSE,
+  EMPTY_ADD_DINGTALK_WORKSPACE_MEMBERS_RESPONSE,
   EMPTY_DINGTALK_USER_SEARCH_RESPONSE,
   EMPTY_GROUPED_ISSUES_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
@@ -1668,6 +1672,22 @@ export class ApiClient {
       EMPTY_DINGTALK_USER_SEARCH_RESPONSE,
       { endpoint: "GET /api/workspaces/:id/dingtalk/users/search" },
     ).users;
+  }
+
+  async addDingTalkWorkspaceMembers(
+    workspaceId: string,
+    data: AddDingTalkWorkspaceMembersRequest,
+  ): Promise<AddDingTalkWorkspaceMembersResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/dingtalk/members`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(
+      raw,
+      AddDingTalkWorkspaceMembersResponseSchema,
+      EMPTY_ADD_DINGTALK_WORKSPACE_MEMBERS_RESPONSE,
+      { endpoint: "POST /api/workspaces/:id/dingtalk/members" },
+    );
   }
 
   async addDingTalkGroupMembers(

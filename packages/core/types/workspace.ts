@@ -113,3 +113,15 @@ export interface AddDingTalkGroupMembersRequest {
 export interface AddDingTalkGroupMembersResponse {
   added_user_ids: string[];
 }
+
+export interface AddDingTalkWorkspaceMembersRequest {
+  users: DingTalkUser[];
+  role: MemberRole;
+}
+
+export interface AddDingTalkWorkspaceMembersResponse {
+  members: MemberWithUser[];
+  added_count: number;
+  already_member_count: number;
+  unresolved_user_ids?: string[];
+}

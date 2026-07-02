@@ -77,6 +77,8 @@ export type {
   DingTalkUserSearchResponse,
   AddDingTalkGroupMembersRequest,
   AddDingTalkGroupMembersResponse,
+  AddDingTalkWorkspaceMembersRequest,
+  AddDingTalkWorkspaceMembersResponse,
 } from "./workspace";
 export type { InboxItem, InboxSeverity, InboxItemType, InboxWorkspaceUnread } from "./inbox";
 export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences, NotificationPreferenceResponse } from "./notification-preference";
