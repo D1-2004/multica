@@ -223,8 +223,9 @@ type Handler struct {
 	// dingtalk-native-agent transport so Open Platform credentials stay outside
 	// this backend; the direct OpenAPI client remains available for explicit
 	// self-hosted deployments.
-	DingTalk      dingtalk.CapabilityClient
-	DingTalkOAuth dingtalk.OAuthClient
+	DingTalk              dingtalk.CapabilityClient
+	DingTalkNotifications dingtalk.PersonalNotificationClient
+	DingTalkOAuth         dingtalk.OAuthClient
 	// LarkOAuth resolves Feishu login codes for POST /auth/lark. Production
 	// prefers the private channel agent (LARK_AGENT_BASE_URL) so the app
 	// secret stays outside this backend; the direct client remains available

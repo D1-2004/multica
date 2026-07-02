@@ -191,6 +191,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			Logger:         slog.Default(),
 		})
 		h.DingTalk = agentClient
+		h.DingTalkNotifications = agentClient
 		h.DingTalkOAuth = agentClient
 		if h.DingTalk.IsConfigured() {
 			slog.Info("dingtalk integration enabled via private agent", "base_url", agentBaseURL)
@@ -219,6 +220,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("dingtalk oauth enabled via direct client")
 	} else {
 		slog.Info("dingtalk integration disabled (DINGTALK_APP_KEY or DINGTALK_APP_SECRET not set)")
+	}
+	if h.DingTalkNotifications != nil && h.DingTalkNotifications.IsConfigured() {
+		registerDingTalkNotificationListeners(bus, queries, h.DingTalkNotifications, appURLFromEnv())
+		slog.Info("dingtalk personal notification listener enabled")
 	}
 	// Lark (Feishu) login identity resolution — same tiering as DingTalk:
 	// prefer the private channel agent so the app secret stays outside this
