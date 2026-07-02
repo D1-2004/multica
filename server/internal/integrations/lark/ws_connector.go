@@ -88,6 +88,13 @@ type WSConnectorConfig struct {
 	// should not tear down the entire connection.
 	FrameDecoder FrameDecoder
 
+	// CardActions optionally receives card.action.trigger callbacks
+	// decoded from the same long connection (the developer console
+	// must route callback subscriptions through long connection for
+	// these frames to arrive). Nil drops card callbacks with the
+	// standard unhandled-event ACK — the pre-run-card behavior.
+	CardActions CardActionSink
+
 	// Enricher optionally expands a decoded message's body with the
 	// context the user explicitly attached (quoted reply / forwarded
 	// bundle) before it is emitted to the dispatcher. It runs on the
@@ -371,6 +378,20 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 			continue
 		}
 		if !ok {
+			// Not an im.message.receive_v1 event. Card button callbacks
+			// (card.action.trigger) also land here — same envelope, same
+			// long connection — so give the card sink a chance before
+			// treating the frame as heartbeat / unhandled. The sink is
+			// fire-and-forget (it does its real work async) and the frame
+			// is ACKed 200 either way: Lark's re-push on a missing ack
+			// would only duplicate a click we already accepted.
+			if c.cfg.CardActions != nil {
+				if act, aok, aerr := DecodeCardActionPayload(payload); aerr != nil {
+					log.Warn("lark ws connector: card action decode failed", "err", aerr.Error())
+				} else if aok {
+					c.cfg.CardActions.HandleCardAction(ctx, inst, act)
+				}
+			}
 			// Heartbeat / unhandled event type. ACK 200 so the server
 			// stops sending it; the decoder owns the "what we handle"
 			// policy.

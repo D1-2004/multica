@@ -332,6 +332,32 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					resolverReplier = replier
 				}
 
+				// Run cards: issue tasks born from a Lark `/issue` get one
+				// interactive card per run — sent when the task enqueues,
+				// patched on every status transition plus a throttled
+				// task:message cadence, and finalized on the terminal
+				// event. The terminate button round-trips through
+				// card.action.trigger on the same long connection (the
+				// developer console must enable that callback under
+				// 事件与回调 → 回调配置 → 使用长连接接收回调).
+				runCards := lark.NewRunCardPublisher(cs, installSvc, larkClient, lark.RunCardPublisherConfig{
+					AppURL: appURLFromEnv(),
+					Logger: slog.Default(),
+				})
+				runCards.Register(bus)
+				var cardSink lark.CardActionSink
+				if cardActions, caErr := lark.NewRunCardActionHandler(lark.RunCardActionHandlerConfig{
+					Queries:   cs,
+					Tasks:     h.TaskService,
+					Publisher: runCards,
+					Replier:   replier,
+					Logger:    slog.Default(),
+				}); caErr != nil {
+					slog.Error("lark: run-card action handler init failed; card actions disabled", "error", caErr)
+				} else {
+					cardSink = cardActions
+				}
+
 				// Feishu adapter (MUL-3620): the WSLongConnConnector talks
 				// Lark's long-conn protocol over gorilla/websocket and wraps
 				// every read with a ctx-cancel watchdog so lease loss /
@@ -347,7 +373,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Registering the Factory (connect/send) + ResolverSet
 				// (inbound pipeline seams) is all it takes to add the platform
 				// to the engine — no engine edit.
-				connector, connectorLabel := buildLarkConnector(installSvc, larkClient)
+				connector, connectorLabel := buildLarkConnector(installSvc, larkClient, cardSink)
 				lark.RegisterFeishu(channelRegistry, lark.FeishuChannelDeps{
 					Connector:   connector,
 					APIClient:   larkClient,
@@ -1221,7 +1247,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 //
 // Returns the connector plus a short label for the boot log:
 // "ws-long-conn" in the healthy case, "noop" in the fallback case.
-func buildLarkConnector(installSvc *lark.InstallationService, apiClient lark.APIClient) (lark.EventConnector, string) {
+func buildLarkConnector(installSvc *lark.InstallationService, apiClient lark.APIClient, cardActions lark.CardActionSink) (lark.EventConnector, string) {
 	endpointFetcher, err := lark.NewHTTPConnectionTokenFetcher(lark.HTTPConnectionTokenConfig{
 		BaseURL: strings.TrimSpace(os.Getenv("MULTICA_LARK_CALLBACK_BASE_URL")),
 		Logger:  slog.Default(),
@@ -1264,6 +1290,7 @@ func buildLarkConnector(installSvc *lark.InstallationService, apiClient lark.API
 		EndpointFetcher:     endpointFetcher,
 		FrameDecoder:        decoder,
 		Enricher:            enricher,
+		CardActions:         cardActions,
 		CredentialsProvider: credsProvider,
 		Logger:              slog.Default(),
 	})
