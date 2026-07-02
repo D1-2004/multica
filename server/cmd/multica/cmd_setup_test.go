@@ -2,8 +2,12 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -364,5 +368,49 @@ func TestServerHostIsLocal(t *testing.T) {
 				t.Errorf("serverHostIsLocal(%q) = %v, want %v", tc.server, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestProbeServerRetries verifies the hardened reachability probe: a healthy
+// server that is briefly slow or returns a transient non-200 must be reported
+// reachable (the old single 2s shot false-negatived on cross-region latency and
+// mid-deploy restarts), while a server that never returns 200 stays unreachable.
+func TestProbeServerRetries(t *testing.T) {
+	origBackoff, origAttempts := probeBackoff, probeAttempts
+	probeBackoff, probeAttempts = time.Millisecond, 3
+	t.Cleanup(func() { probeBackoff, probeAttempts = origBackoff, origAttempts })
+
+	t.Run("succeeds after transient non-200 responses", func(t *testing.T) {
+		var calls int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if atomic.AddInt32(&calls, 1) < 3 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(srv.Close)
+		if !probeServer(srv.URL) {
+			t.Fatalf("probeServer: want true once /health returns 200 on retry")
+		}
+	})
+
+	t.Run("false when server never returns 200", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+		}))
+		t.Cleanup(srv.Close)
+		if probeServer(srv.URL) {
+			t.Fatalf("probeServer: want false when /health never returns 200")
+		}
+	})
+}
+
+// TestSetupSelfHostSkipProbeFlag pins the --skip-probe escape hatch so a healthy
+// server behind a slow / restrictive network can still be configured without the
+// reachability check hard-blocking setup.
+func TestSetupSelfHostSkipProbeFlag(t *testing.T) {
+	if setupSelfHostCmd.Flag("skip-probe") == nil {
+		t.Fatal("setup self-host is missing --skip-probe")
 	}
 }
