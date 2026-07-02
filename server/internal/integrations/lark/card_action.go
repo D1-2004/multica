@@ -115,6 +115,7 @@ type TaskCanceller interface {
 type RunCardActionQueries interface {
 	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
 	GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error)
+	GetChatSession(ctx context.Context, id pgtype.UUID) (db.ChatSession, error)
 	GetLarkUserBindingByOpenID(ctx context.Context, arg GetUserBindingByOpenIDParams) (UserBinding, error)
 	IsWorkspaceMember(ctx context.Context, workspaceID, userID pgtype.UUID) (bool, error)
 }
@@ -268,20 +269,42 @@ func (h *RunCardActionHandler) process(ctx context.Context, inst Installation, a
 		log.Warn("lark card action: load task failed", "task_id", rawTaskID, "error", terr)
 		return
 	}
-	if !task.IssueID.Valid {
-		log.Warn("lark card action: task has no issue", "task_id", rawTaskID)
-		return
-	}
-	issue, ierr := h.cfg.Queries.GetIssue(ctx, task.IssueID)
-	if ierr != nil {
-		log.Warn("lark card action: load issue failed", "task_id", rawTaskID, "error", ierr)
-		return
-	}
-	if issue.WorkspaceID != inst.WorkspaceID {
-		log.Warn("lark card action: workspace mismatch; dropping cancel",
-			"task_id", rawTaskID,
-			"issue_workspace", uuidString(issue.WorkspaceID),
-			"installation_workspace", uuidString(inst.WorkspaceID))
+	switch {
+	case task.ChatSessionID.Valid:
+		// Chat runs mirror CancelTaskByUser's product rule: only the
+		// session creator may cancel their own conversation task.
+		session, serr := h.cfg.Queries.GetChatSession(ctx, task.ChatSessionID)
+		if serr != nil {
+			log.Warn("lark card action: load chat session failed", "task_id", rawTaskID, "error", serr)
+			return
+		}
+		if session.WorkspaceID != inst.WorkspaceID {
+			log.Warn("lark card action: chat workspace mismatch; dropping cancel",
+				"task_id", rawTaskID,
+				"session_workspace", uuidString(session.WorkspaceID),
+				"installation_workspace", uuidString(inst.WorkspaceID))
+			return
+		}
+		if session.CreatorID != binding.MulticaUserID {
+			log.Warn("lark card action: operator is not the chat session creator; dropping cancel",
+				"task_id", rawTaskID, "operator", string(act.OperatorOpenID))
+			return
+		}
+	case task.IssueID.Valid:
+		issue, ierr := h.cfg.Queries.GetIssue(ctx, task.IssueID)
+		if ierr != nil {
+			log.Warn("lark card action: load issue failed", "task_id", rawTaskID, "error", ierr)
+			return
+		}
+		if issue.WorkspaceID != inst.WorkspaceID {
+			log.Warn("lark card action: workspace mismatch; dropping cancel",
+				"task_id", rawTaskID,
+				"issue_workspace", uuidString(issue.WorkspaceID),
+				"installation_workspace", uuidString(inst.WorkspaceID))
+			return
+		}
+	default:
+		log.Warn("lark card action: task has neither issue nor chat session", "task_id", rawTaskID)
 		return
 	}
 

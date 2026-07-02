@@ -653,8 +653,22 @@ func TestRunCardPublisherPatchesOnStatusTransition(t *testing.T) {
 	}
 }
 
-func TestRunCardPublisherSkipsChatSessionTasks(t *testing.T) {
+// makeChatTask rewires the fixture's task as a chat-session task (a
+// question asked in the Lark chat) instead of a /issue-born issue task.
+func (fx *runCardFixture) makeChatTask(t *testing.T) {
+	t.Helper()
+	fx.store.mu.Lock()
+	task := fx.store.tasks[fx.taskID]
+	task.IssueID = pgtype.UUID{}
+	task.ChatSessionID = uuidFromString(t, fx.sessionID)
+	fx.store.tasks[fx.taskID] = task
+	fx.store.mu.Unlock()
+}
+
+func TestRunCardPublisherSendsForChatTasks(t *testing.T) {
 	fx := newRunCardFixture(t)
+	fx.makeChatTask(t)
+
 	fx.pub.handleEvent(events.Event{
 		Type:   protocol.EventTaskQueued,
 		TaskID: fx.taskID,
@@ -663,8 +677,44 @@ func TestRunCardPublisherSkipsChatSessionTasks(t *testing.T) {
 			"chat_session_id": fx.sessionID,
 		},
 	})
+
+	if len(fx.client.sends) != 1 {
+		t.Fatalf("chat task must get a run card, sends = %d", len(fx.client.sends))
+	}
+	card := fx.client.sends[0].CardJSON
+	if !strings.Contains(card, "对话任务") {
+		t.Fatalf("chat card should title itself as a conversation run: %s", card)
+	}
+	if strings.Contains(card, "open_url") {
+		t.Fatalf("chat card has no issue to open in Multica: %s", card)
+	}
+	if !strings.Contains(card, runCardCancelAction) {
+		t.Fatalf("chat card must carry the terminate button")
+	}
+	fx.store.mu.Lock()
+	issueCalls := fx.store.getIssueCalls
+	fx.store.mu.Unlock()
+	if issueCalls != 0 {
+		t.Fatalf("chat resolution must not touch the issue table, got %d lookups", issueCalls)
+	}
+}
+
+func TestRunCardPublisherIgnoresWebChatSessions(t *testing.T) {
+	fx := newRunCardFixture(t)
+	fx.makeChatTask(t)
+	// Remove the Lark binding: this is now a plain web/desktop chat.
+	fx.store.mu.Lock()
+	delete(fx.store.bindings, fx.sessionID)
+	fx.store.mu.Unlock()
+
+	fx.pub.handleEvent(events.Event{
+		Type:    protocol.EventTaskQueued,
+		TaskID:  fx.taskID,
+		Payload: map[string]any{"task_id": fx.taskID, "chat_session_id": fx.sessionID},
+	})
+
 	if len(fx.client.sends)+len(fx.client.patches) != 0 {
-		t.Fatalf("chat-session tasks must not produce run cards")
+		t.Fatalf("web-only chat sessions must not produce Lark cards")
 	}
 }
 
