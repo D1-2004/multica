@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Crown, Shield, User, Plus, MoreHorizontal, UserMinus, Users, Clock, X, Mail, Search, Save, UserPlus, MessageCircle } from "lucide-react";
 import { ActorAvatar } from "../../common/actor-avatar";
 import type { MemberWithUser, MemberRole, Invitation, DingTalkUser, Workspace } from "@multica/core/types";
@@ -10,6 +10,13 @@ import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@multica/ui/components/ui/avatar";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@multica/ui/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -277,9 +284,14 @@ function DingTalkUserRow({
   ].filter(Boolean).join(" · ");
 
   return (
-    <label className="flex cursor-pointer items-center gap-3 px-4 py-3 hover:bg-accent/40">
+    <label
+      className={[
+        "flex cursor-pointer items-center gap-3 rounded-lg px-3 py-3 transition-colors",
+        checked ? "bg-primary/5 ring-1 ring-primary/20" : "hover:bg-accent/50",
+      ].join(" ")}
+    >
       <Checkbox checked={checked} onCheckedChange={onToggle} />
-      <Avatar size="sm">
+      <Avatar>
         {user.avatar_url && <AvatarImage src={user.avatar_url} alt={user.name} />}
         <AvatarFallback>{initials(user.name || user.user_id)}</AvatarFallback>
       </Avatar>
@@ -320,6 +332,7 @@ export function MembersTab() {
   const [dingtalkLoading, setDingtalkLoading] = useState(false);
   const [dingtalkConfigSaving, setDingtalkConfigSaving] = useState(false);
   const [dingtalkActionLoading, setDingtalkActionLoading] = useState<"workspace" | "group" | null>(null);
+  const [dingtalkPickerOpen, setDingtalkPickerOpen] = useState(false);
   const [memberActionId, setMemberActionId] = useState<string | null>(null);
   const [invitationActionId, setInvitationActionId] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
@@ -344,6 +357,7 @@ export function MembersTab() {
     setDingtalkResults([]);
     setSelectedDingtalkUsers({});
     setDingtalkSearchAttempted(false);
+    setDingtalkPickerOpen(false);
   }, [workspace?.id]);
 
   const handleInviteMember = async () => {
@@ -365,19 +379,40 @@ export function MembersTab() {
     }
   };
 
-  const handleDingTalkSearch = async () => {
-    if (!workspace || !dingtalkQuery.trim()) return;
+  const searchDingTalkUsers = useCallback(async (query: string) => {
+    if (!workspace || !query.trim()) return;
     setDingtalkLoading(true);
     setDingtalkSearchAttempted(true);
     try {
-      const users = await api.searchDingTalkUsers(workspace.id, dingtalkQuery.trim(), 10);
+      const users = await api.searchDingTalkUsers(workspace.id, query.trim(), 10);
       setDingtalkResults(users);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_dingtalk_search_failed));
     } finally {
       setDingtalkLoading(false);
     }
+  }, [workspace, t]);
+
+  const handleDingTalkSearch = async () => {
+    await searchDingTalkUsers(dingtalkQuery);
   };
+
+  useEffect(() => {
+    if (!dingtalkPickerOpen) return;
+
+    const query = dingtalkQuery.trim();
+    if (!query) {
+      setDingtalkLoading(false);
+      setDingtalkSearchAttempted(false);
+      setDingtalkResults([]);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void searchDingTalkUsers(query);
+    }, 320);
+    return () => window.clearTimeout(timer);
+  }, [dingtalkPickerOpen, dingtalkQuery, searchDingTalkUsers]);
 
   const toggleDingTalkUser = (dingtalkUser: DingTalkUser) => {
     setSelectedDingtalkUsers((prev) => {
@@ -584,12 +619,18 @@ export function MembersTab() {
         {canManageWorkspace && (
           <Card>
             <CardContent className="space-y-4">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <MessageCircle className="h-4 w-4 text-muted-foreground" />
-                  <h3 className="text-sm font-medium">{t(($) => $.members.dingtalk_title)}</h3>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <MessageCircle className="h-4 w-4 text-muted-foreground" />
+                    <h3 className="text-sm font-medium">{t(($) => $.members.dingtalk_title)}</h3>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{t(($) => $.members.dingtalk_description)}</p>
                 </div>
-                <p className="text-xs text-muted-foreground">{t(($) => $.members.dingtalk_description)}</p>
+                <Button onClick={() => setDingtalkPickerOpen(true)}>
+                  <UserPlus className="h-4 w-4" />
+                  {t(($) => $.members.dingtalk_open_picker)}
+                </Button>
               </div>
 
               <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
@@ -606,78 +647,6 @@ export function MembersTab() {
                   <Save className="h-4 w-4" />
                   {dingtalkConfigSaving ? t(($) => $.members.dingtalk_saving_group) : t(($) => $.members.dingtalk_save_group)}
                 </Button>
-              </div>
-
-              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <Input
-                  value={dingtalkQuery}
-                  onChange={(e) => setDingtalkQuery(e.target.value)}
-                  placeholder={t(($) => $.members.dingtalk_search_placeholder)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && dingtalkQuery.trim()) handleDingTalkSearch();
-                  }}
-                />
-                <Button
-                  variant="secondary"
-                  onClick={handleDingTalkSearch}
-                  disabled={dingtalkLoading || !dingtalkQuery.trim()}
-                >
-                  <Search className="h-4 w-4" />
-                  {dingtalkLoading ? t(($) => $.members.dingtalk_searching) : t(($) => $.members.dingtalk_search)}
-                </Button>
-              </div>
-
-              <div className="overflow-hidden rounded-lg border border-border/70">
-                {dingtalkResults.length > 0 ? (
-                  <div className="max-h-72 divide-y divide-border/60 overflow-y-auto">
-                    {dingtalkResults.map((dingtalkUser) => (
-                      <DingTalkUserRow
-                        key={dingtalkUser.user_id}
-                        user={dingtalkUser}
-                        checked={!!selectedDingtalkUsers[dingtalkUser.user_id]}
-                        onToggle={() => toggleDingTalkUser(dingtalkUser)}
-                        userIdLabel={t(($) => $.members.dingtalk_user_id)}
-                        noEmailLabel={t(($) => $.members.dingtalk_no_email_badge)}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="px-4 py-5 text-sm text-muted-foreground">
-                    {dingtalkSearchAttempted ? t(($) => $.members.dingtalk_no_results) : t(($) => $.members.dingtalk_search_hint)}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-xs text-muted-foreground">
-                  {t(($) => $.members.dingtalk_selected_count, { count: selectedDingtalkList.length })}
-                </div>
-                <div className="grid gap-2 sm:grid-cols-[120px_auto_auto]">
-                  <Select value={dingtalkInviteRole} onValueChange={(value) => setDingtalkInviteRole(value as MemberRole)}>
-                    <SelectTrigger size="sm">
-                      <SelectValue>{() => roleConfig[dingtalkInviteRole].label}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="member">{roleConfig.member.label}</SelectItem>
-                      <SelectItem value="admin">{roleConfig.admin.label}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    variant="outline"
-                    onClick={handleInviteDingTalkSelected}
-                    disabled={dingtalkActionLoading !== null || selectedDingtalkList.length === 0}
-                  >
-                    <UserPlus className="h-4 w-4" />
-                    {t(($) => $.members.dingtalk_invite_workspace)}
-                  </Button>
-                  <Button
-                    onClick={handleAddDingTalkGroupMembers}
-                    disabled={dingtalkActionLoading !== null || selectedDingtalkList.length === 0 || !dingtalkGroupChatIdValue}
-                  >
-                    <MessageCircle className="h-4 w-4" />
-                    {t(($) => $.members.dingtalk_add_group)}
-                  </Button>
-                </div>
               </div>
             </CardContent>
           </Card>
@@ -725,6 +694,120 @@ export function MembersTab() {
           </div>
         </section>
       )}
+
+      <Dialog open={dingtalkPickerOpen} onOpenChange={setDingtalkPickerOpen}>
+        <DialogContent
+          className="flex h-[min(680px,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl"
+          showCloseButton={false}
+        >
+          <div className="flex shrink-0 items-start justify-between gap-4 border-b px-6 py-5">
+            <DialogHeader className="gap-1">
+              <DialogTitle className="text-2xl font-semibold leading-tight">
+                {t(($) => $.members.dingtalk_picker_title)}
+              </DialogTitle>
+              <DialogDescription className="sr-only">
+                {t(($) => $.members.dingtalk_picker_description)}
+              </DialogDescription>
+            </DialogHeader>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setDingtalkPickerOpen(false)}
+              title={t(($) => $.members.dingtalk_picker_close)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+
+          <div className="shrink-0 px-6 py-4">
+            <div className="flex h-14 items-center gap-3 rounded-xl border border-border bg-background px-4 shadow-xs">
+              <Search className="h-5 w-5 shrink-0 text-muted-foreground" />
+              <input
+                autoFocus
+                value={dingtalkQuery}
+                onChange={(e) => setDingtalkQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && dingtalkQuery.trim()) handleDingTalkSearch();
+                }}
+                placeholder={t(($) => $.members.dingtalk_search_placeholder)}
+                className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-4">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="text-sm font-medium text-muted-foreground">
+                {dingtalkQuery.trim()
+                  ? t(($) => $.members.dingtalk_picker_results)
+                  : t(($) => $.members.dingtalk_picker_suggestions)}
+              </div>
+              {dingtalkLoading && (
+                <div className="text-xs text-muted-foreground">{t(($) => $.members.dingtalk_searching)}</div>
+              )}
+            </div>
+
+            {dingtalkResults.length > 0 ? (
+              <div className="space-y-1.5">
+                {dingtalkResults.map((dingtalkUser) => (
+                  <DingTalkUserRow
+                    key={dingtalkUser.user_id}
+                    user={dingtalkUser}
+                    checked={!!selectedDingtalkUsers[dingtalkUser.user_id]}
+                    onToggle={() => toggleDingTalkUser(dingtalkUser)}
+                    userIdLabel={t(($) => $.members.dingtalk_user_id)}
+                    noEmailLabel={t(($) => $.members.dingtalk_no_email_badge)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-border px-6 py-10 text-center">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+                  <Users className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div className="mt-3 text-sm font-medium">
+                  {dingtalkSearchAttempted ? t(($) => $.members.dingtalk_no_results) : t(($) => $.members.dingtalk_picker_empty_title)}
+                </div>
+                <div className="mt-1 max-w-xs text-xs text-muted-foreground">
+                  {dingtalkSearchAttempted ? t(($) => $.members.dingtalk_picker_no_results_hint) : t(($) => $.members.dingtalk_picker_empty_description)}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex shrink-0 flex-col gap-3 border-t bg-muted/40 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-muted-foreground">
+              {t(($) => $.members.dingtalk_selected_count, { count: selectedDingtalkList.length })}
+            </div>
+            <div className="grid gap-2 sm:grid-cols-[120px_auto_auto]">
+              <Select value={dingtalkInviteRole} onValueChange={(value) => setDingtalkInviteRole(value as MemberRole)}>
+                <SelectTrigger size="sm">
+                  <SelectValue>{() => roleConfig[dingtalkInviteRole].label}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="member">{roleConfig.member.label}</SelectItem>
+                  <SelectItem value="admin">{roleConfig.admin.label}</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                onClick={handleInviteDingTalkSelected}
+                disabled={dingtalkActionLoading !== null || selectedDingtalkList.length === 0}
+              >
+                <UserPlus className="h-4 w-4" />
+                {t(($) => $.members.dingtalk_invite_workspace)}
+              </Button>
+              <Button
+                onClick={handleAddDingTalkGroupMembers}
+                disabled={dingtalkActionLoading !== null || selectedDingtalkList.length === 0 || !dingtalkGroupChatIdValue}
+              >
+                <MessageCircle className="h-4 w-4" />
+                {t(($) => $.members.dingtalk_add_group)}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!confirmAction} onOpenChange={(v) => { if (!v) setConfirmAction(null); }}>
         <AlertDialogContent>
