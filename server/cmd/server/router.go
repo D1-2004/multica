@@ -27,6 +27,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composiointeg "github.com/multica-ai/multica/server/internal/integrations/composio"
+	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -183,6 +184,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.Metrics = opts.BusinessMetrics
 	h.FeatureFlags = opts.FeatureFlags
 	h.TaskService.FeatureFlags = opts.FeatureFlags
+	if appKey, appSecret := strings.TrimSpace(os.Getenv("DINGTALK_APP_KEY")), strings.TrimSpace(os.Getenv("DINGTALK_APP_SECRET")); appKey != "" && appSecret != "" {
+		h.DingTalk = dingtalk.NewClient(dingtalk.Config{
+			AppKey:      appKey,
+			AppSecret:   appSecret,
+			OpenAPIBase: strings.TrimSpace(os.Getenv("DINGTALK_OPENAPI_BASE")),
+			OAPIBase:    strings.TrimSpace(os.Getenv("DINGTALK_OAPI_BASE")),
+			Logger:      slog.Default(),
+		})
+		slog.Info("dingtalk integration enabled")
+	} else {
+		slog.Info("dingtalk integration disabled (DINGTALK_APP_KEY or DINGTALK_APP_SECRET not set)")
+	}
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
 	if opts.BusinessMetrics != nil {
@@ -836,6 +849,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/members", h.CreateInvitation)
+					r.Get("/dingtalk/users/search", h.SearchDingTalkUsers)
+					r.Post("/dingtalk/group-members", h.AddDingTalkGroupMembers)
 					r.Route("/members/{memberId}", func(r chi.Router) {
 						r.Patch("/", h.UpdateMember)
 						r.Delete("/", h.DeleteMember)

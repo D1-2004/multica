@@ -9,6 +9,9 @@ import type {
   UpdateMeRequest,
   CreateMemberRequest,
   UpdateMemberRequest,
+  DingTalkUser,
+  AddDingTalkGroupMembersRequest,
+  AddDingTalkGroupMembersResponse,
   ListIssuesParams,
   ListGroupedIssuesParams,
   Agent,
@@ -163,6 +166,8 @@ import {
   CloudRuntimeNodeSchema,
   CreateAgentFromTemplateResponseSchema,
   AgentBuilderSessionSchema,
+  AddDingTalkGroupMembersResponseSchema,
+  DingTalkUserSearchResponseSchema,
   DashboardAgentRunTimeListSchema,
   DashboardRunTimeDailyListSchema,
   DashboardUsageByAgentListSchema,
@@ -175,6 +180,8 @@ import {
   EMPTY_CLOUD_RUNTIME_NODE_LIST,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_AGENT_BUILDER_SESSION,
+  EMPTY_ADD_DINGTALK_GROUP_MEMBERS_RESPONSE,
+  EMPTY_DINGTALK_USER_SEARCH_RESPONSE,
   EMPTY_GROUPED_ISSUES_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
   EMPTY_SEARCH_ISSUES_RESPONSE,
@@ -1647,6 +1654,36 @@ export class ApiClient {
     await this.fetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
       method: "DELETE",
     });
+  }
+
+  async searchDingTalkUsers(workspaceId: string, query: string, limit = 10): Promise<DingTalkUser[]> {
+    const params = new URLSearchParams({
+      q: query,
+      limit: String(limit),
+    });
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/dingtalk/users/search?${params.toString()}`);
+    return parseWithFallback(
+      raw,
+      DingTalkUserSearchResponseSchema,
+      EMPTY_DINGTALK_USER_SEARCH_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/dingtalk/users/search" },
+    ).users;
+  }
+
+  async addDingTalkGroupMembers(
+    workspaceId: string,
+    data: AddDingTalkGroupMembersRequest,
+  ): Promise<AddDingTalkGroupMembersResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/dingtalk/group-members`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(
+      raw,
+      AddDingTalkGroupMembersResponseSchema,
+      EMPTY_ADD_DINGTALK_GROUP_MEMBERS_RESPONSE,
+      { endpoint: "POST /api/workspaces/:id/dingtalk/group-members" },
+    );
   }
 
   async leaveWorkspace(workspaceId: string): Promise<void> {

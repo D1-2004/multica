@@ -23,6 +23,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
+	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -216,7 +217,11 @@ type Handler struct {
 	// Config); when unconfigured its Enabled() reports false and callers fall
 	// back silently.
 	LLM *llm.Client
-	cfg Config
+	// DingTalk is an optional deployment-wide Open Platform client used by the
+	// settings members tab to resolve organization users and add them to a
+	// configured DingTalk group. Nil unless DINGTALK_APP_KEY/APP_SECRET are set.
+	DingTalk *dingtalk.Client
+	cfg      Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
