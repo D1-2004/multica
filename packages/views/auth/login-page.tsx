@@ -45,6 +45,16 @@ interface DingtalkAuthConfig {
   state?: string;
 }
 
+interface LarkAuthConfig {
+  /** Feishu app AppID (cli_xxx). */
+  clientId: string;
+  redirectUri: string;
+  /** Opaque state passed through Feishu OAuth. Carries a "provider:lark"
+   *  marker plus platform/next/CLI params so the shared /auth/callback page
+   *  can tell which provider to exchange the code with. */
+  state?: string;
+}
+
 interface CliCallbackConfig {
   /** Validated localhost callback URL */
   url: string;
@@ -67,6 +77,8 @@ interface LoginPageProps {
    *  primary action. Ignored when no DingTalk option is available, so the card
    *  can never render empty. */
   dingtalkOnly?: boolean;
+  /** Feishu (Lark) OAuth config. Omit to disable Feishu login. */
+  lark?: LarkAuthConfig;
   /** CLI callback config for authorizing CLI tools. */
   cliCallback?: CliCallbackConfig;
   /** Called after a token is obtained (e.g. to set cookies). */
@@ -75,6 +87,8 @@ interface LoginPageProps {
   onGoogleLogin?: () => void;
   /** Override DingTalk login handler (e.g. desktop opens browser externally). When provided, renders the DingTalk button even if `dingtalk` config is omitted. */
   onDingtalkLogin?: () => void;
+  /** Override Feishu login handler (e.g. desktop opens browser externally). When provided, renders the Feishu button even if `lark` config is omitted. */
+  onLarkLogin?: () => void;
   /** Slot rendered at the bottom of the sign-in card, below the
    *  Google button. The web shell uses it for a "Prefer the desktop
    *  app?" prompt; desktop omits it (a download prompt inside the app
@@ -122,10 +136,12 @@ export function LoginPage({
   google,
   dingtalk,
   dingtalkOnly,
+  lark,
   cliCallback,
   onTokenObtained,
   onGoogleLogin,
   onDingtalkLogin,
+  onLarkLogin,
   extra,
 }: LoginPageProps) {
   const { t } = useT("auth");
@@ -328,6 +344,25 @@ export function LoginPage({
     window.location.href = `https://login.dingtalk.com/oauth2/auth?${params}`;
   };
 
+  const handleLarkLogin = () => {
+    if (onLarkLogin) {
+      onLarkLogin();
+      return;
+    }
+    if (!lark) return;
+    // Feishu OAuth: the browser goes to the Feishu authorize page, which
+    // returns a `code` to redirectUri. Feishu re-validates redirect_uri on
+    // the server-side token exchange, so the callback page must send the
+    // exact same value to /auth/lark.
+    const params = new URLSearchParams({
+      client_id: lark.clientId,
+      redirect_uri: lark.redirectUri,
+      response_type: "code",
+    });
+    if (lark.state) params.set("state", lark.state);
+    window.location.href = `https://accounts.feishu.cn/open-apis/authen/v1/authorize?${params}`;
+  };
+
   const hasDingtalk = Boolean(dingtalk || onDingtalkLogin);
   const hasGoogle = Boolean(google || onGoogleLogin);
   // Collapse to a DingTalk-only screen only when there is actually a DingTalk
@@ -335,6 +370,9 @@ export function LoginPage({
   // left empty (e.g. a server that set the flag but no client id).
   const dingtalkOnlyMode = dingtalkOnly === true && hasDingtalk;
   const showGoogle = !dingtalkOnlyMode && hasGoogle;
+  const hasLark = Boolean(lark || onLarkLogin);
+  // The DingTalk-only lock hides every other provider, Feishu included.
+  const showLark = !dingtalkOnlyMode && hasLark;
 
   // -------------------------------------------------------------------------
   // CLI confirm step
@@ -511,7 +549,7 @@ export function LoginPage({
                 : t(($) => $.signin.continue)}
             </Button>
           )}
-          {(showGoogle || hasDingtalk) && (
+          {(showGoogle || hasDingtalk || showLark) && (
             <>
               {!dingtalkOnlyMode && (
                 <div className="relative w-full">
@@ -573,6 +611,31 @@ export function LoginPage({
                     <path d="M12 3C6.5 3 2 6.6 2 11c0 2.53 1.46 4.78 3.72 6.26-.2 1.02-.7 2.31-1.62 3.34-.22.24.02.62.34.5 1.9-.68 3.28-1.5 4.2-2.16.98.24 2.02.36 3.1.36 5.5 0 10-3.6 10-8s-4.5-8-9.94-8Zm4.9 6.53-2.62 6.06c-.12.28-.5.32-.68.08l-1.5-2.02-2.86 1.06c-.3.1-.56-.24-.38-.5l4.9-6.98c.2-.28.62-.06.5.26l-1.44 3.9 3.66-1.66c.32-.14.6.2.46.52Z" />
                   </svg>
                   {t(($) => $.signin.dingtalk)}
+                </Button>
+              )}
+              {showLark && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  size="lg"
+                  onClick={handleLarkLogin}
+                  disabled={loading}
+                >
+                  <svg
+                    className="mr-2 h-4 w-4"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#3370FF"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M22 2 11 13" />
+                    <path d="m22 2-7 20-4-9-9-4Z" />
+                  </svg>
+                  {t(($) => $.signin.lark)}
                 </Button>
               )}
             </>
