@@ -461,6 +461,22 @@ type googleUserInfo struct {
 	Picture string `json:"picture"`
 }
 
+// DingTalkLoginRequest carries the one-time authorization code (DingTalk names
+// the callback query param `authCode`) that the frontend receives after the
+// user completes the QR / consent screen.
+type DingTalkLoginRequest struct {
+	Code string `json:"code"`
+}
+
+// LarkLoginRequest carries the one-time authorization code from Feishu's
+// OAuth redirect plus the redirect_uri used on the authorize step — Feishu
+// re-validates redirect_uri during the token exchange (DingTalk does not,
+// Google does).
+type LarkLoginRequest struct {
+	Code        string `json:"code"`
+	RedirectURI string `json:"redirect_uri"`
+}
+
 func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 	var req GoogleLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -608,6 +624,235 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("user logged in via google", append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "email", user.Email)...)
+	writeJSON(w, http.StatusOK, LoginResponse{
+		Token: tokenString,
+		User:  userToResponse(user),
+	})
+}
+
+// DingTalkLogin mirrors GoogleLogin for DingTalk's unified OAuth2 ("扫码登录").
+// The frontend redirects the browser to login.dingtalk.com/oauth2/auth and
+// receives an authCode on the /auth/callback page; this handler exchanges it
+// for a user access token, reads the DingTalk contact profile, and maps that
+// identity onto a Multica user.
+//
+// DingTalk profiles are not guaranteed to expose a real email, so identity is
+// keyed on a synthetic address derived from the stable `unionId`
+// (`<unionId>@dingtalk.com`). This slots DingTalk users into the existing
+// email-keyed user model with no schema change, and — crucially — never folds
+// the mutable nickname into the key, so a display-name change can't mint a
+// second account. The real nickname/avatar are stored on the user's name and
+// avatar fields for display. For an internal ("企业内部") DingTalk app, only org
+// members can complete this flow, which is the access restriction we want.
+func (h *Handler) DingTalkLogin(w http.ResponseWriter, r *http.Request) {
+	var req DingTalkLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Code == "" {
+		writeError(w, http.StatusBadRequest, "code is required")
+		return
+	}
+
+	if h.DingTalkOAuth == nil || !h.DingTalkOAuth.IsConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "DingTalk login is not configured")
+		return
+	}
+
+	dtUser, err := h.DingTalkOAuth.ResolveOAuthUser(r.Context(), req.Code)
+	if err != nil {
+		slog.Error("dingtalk oauth user resolution failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusBadGateway, "failed to resolve DingTalk user")
+		return
+	}
+
+	if dtUser.UnionID == "" {
+		writeError(w, http.StatusBadGateway, "DingTalk account has no unionId")
+		return
+	}
+
+	// Synthesize a stable, unique identity address from the unionId. Lowercase
+	// only the domain — the unionId itself is kept verbatim so two distinct
+	// ids can never collide, and it round-trips deterministically through
+	// GetUserByEmail on every subsequent login.
+	email := dtUser.UnionID + "@dingtalk.com"
+
+	user, isNew, err := h.findOrCreateUser(r.Context(), email)
+	if err != nil {
+		var signupErr SignupError
+		if errors.As(err, &signupErr) {
+			writeError(w, http.StatusForbidden, signupErr.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to create user")
+		return
+	}
+	if isNew {
+		evt := analytics.Signup(uuidToString(user.ID), user.Email, signupSourceFromRequest(r))
+		evt.Properties["auth_method"] = "dingtalk"
+		obsmetrics.RecordEvent(h.Analytics, h.Metrics, evt)
+	}
+
+	// Backfill display name/avatar from the DingTalk profile on first login
+	// (default name is the email prefix = the unionId) or when still unset.
+	needsUpdate := false
+	newName := user.Name
+	newAvatar := user.AvatarUrl
+
+	if dtUser.Nick != "" && user.Name == strings.Split(email, "@")[0] {
+		newName = dtUser.Nick
+		needsUpdate = true
+	}
+	if dtUser.AvatarURL != "" && !user.AvatarUrl.Valid {
+		newAvatar = pgtype.Text{String: dtUser.AvatarURL, Valid: true}
+		needsUpdate = true
+	}
+
+	if needsUpdate {
+		updated, err := h.Queries.UpdateUser(r.Context(), db.UpdateUserParams{
+			ID:        user.ID,
+			Name:      newName,
+			AvatarUrl: newAvatar,
+		})
+		if err == nil {
+			user = updated
+		}
+	}
+
+	tokenString, err := h.issueJWT(user)
+	if err != nil {
+		slog.Warn("dingtalk login failed", append(logger.RequestAttrs(r), "error", err, "email", email)...)
+		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+
+	if err := auth.SetAuthCookies(w, tokenString); err != nil {
+		slog.Warn("failed to set auth cookies", "error", err)
+	}
+
+	if h.CFSigner != nil {
+		for _, cookie := range h.CFSigner.SignedCookies(time.Now().Add(72 * time.Hour)) {
+			http.SetCookie(w, cookie)
+		}
+	}
+
+	slog.Info("user logged in via dingtalk", append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "email", user.Email)...)
+	writeJSON(w, http.StatusOK, LoginResponse{
+		Token: tokenString,
+		User:  userToResponse(user),
+	})
+}
+
+// LarkLogin mirrors DingTalkLogin for Feishu (飞书 / Lark) OAuth. The frontend
+// sends the browser to accounts.feishu.cn/open-apis/authen/v1/authorize and
+// receives a `code` on the shared /auth/callback page (provider disambiguated
+// by a "provider:lark" marker in state); this handler exchanges it for a user
+// access token, reads the Feishu profile, and maps that identity onto a
+// Multica user.
+//
+// Like DingTalk, Feishu profiles are not guaranteed to expose a usable email,
+// so identity is keyed on a synthetic address derived from the stable
+// union_id (`<union_id>@feishu.cn`) — never the mutable display name, and
+// never the real email even when present, so the identity key can't drift.
+// The real name/avatar are backfilled for display only. For an 企业自建应用,
+// only members of that Feishu org can complete the flow.
+func (h *Handler) LarkLogin(w http.ResponseWriter, r *http.Request) {
+	var req LarkLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Code == "" {
+		writeError(w, http.StatusBadRequest, "code is required")
+		return
+	}
+
+	if h.LarkOAuth == nil || !h.LarkOAuth.IsConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "Feishu login is not configured")
+		return
+	}
+
+	lkUser, err := h.LarkOAuth.ResolveOAuthUser(r.Context(), req.Code, req.RedirectURI)
+	if err != nil {
+		slog.Error("lark oauth user resolution failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusBadGateway, "failed to resolve Feishu user")
+		return
+	}
+
+	if lkUser.UnionID == "" {
+		writeError(w, http.StatusBadGateway, "Feishu account has no union_id")
+		return
+	}
+
+	// Synthesize a stable, unique identity address from the union_id — the
+	// same scheme as DingTalk (`<unionId>@dingtalk.com`). The union_id is
+	// kept verbatim so two distinct ids can never collide and it round-trips
+	// deterministically through GetUserByEmail on every subsequent login.
+	email := lkUser.UnionID + "@feishu.cn"
+
+	user, isNew, err := h.findOrCreateUser(r.Context(), email)
+	if err != nil {
+		var signupErr SignupError
+		if errors.As(err, &signupErr) {
+			writeError(w, http.StatusForbidden, signupErr.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to create user")
+		return
+	}
+	if isNew {
+		evt := analytics.Signup(uuidToString(user.ID), user.Email, signupSourceFromRequest(r))
+		evt.Properties["auth_method"] = "lark"
+		obsmetrics.RecordEvent(h.Analytics, h.Metrics, evt)
+	}
+
+	// Backfill display name/avatar from the Feishu profile on first login
+	// (default name is the email prefix = the union_id) or when still unset.
+	needsUpdate := false
+	newName := user.Name
+	newAvatar := user.AvatarUrl
+
+	if lkUser.Name != "" && user.Name == strings.Split(email, "@")[0] {
+		newName = lkUser.Name
+		needsUpdate = true
+	}
+	if lkUser.AvatarURL != "" && !user.AvatarUrl.Valid {
+		newAvatar = pgtype.Text{String: lkUser.AvatarURL, Valid: true}
+		needsUpdate = true
+	}
+
+	if needsUpdate {
+		updated, err := h.Queries.UpdateUser(r.Context(), db.UpdateUserParams{
+			ID:        user.ID,
+			Name:      newName,
+			AvatarUrl: newAvatar,
+		})
+		if err == nil {
+			user = updated
+		}
+	}
+
+	tokenString, err := h.issueJWT(user)
+	if err != nil {
+		slog.Warn("lark login failed", append(logger.RequestAttrs(r), "error", err, "email", email)...)
+		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+
+	if err := auth.SetAuthCookies(w, tokenString); err != nil {
+		slog.Warn("failed to set auth cookies", "error", err)
+	}
+
+	if h.CFSigner != nil {
+		for _, cookie := range h.CFSigner.SignedCookies(time.Now().Add(72 * time.Hour)) {
+			http.SetCookie(w, cookie)
+		}
+	}
+
+	slog.Info("user logged in via lark", append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "email", user.Email)...)
 	writeJSON(w, http.StatusOK, LoginResponse{
 		Token: tokenString,
 		User:  userToResponse(user),

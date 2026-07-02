@@ -9,6 +9,11 @@ import type {
   UpdateMeRequest,
   CreateMemberRequest,
   UpdateMemberRequest,
+  DingTalkUser,
+  AddDingTalkGroupMembersRequest,
+  AddDingTalkGroupMembersResponse,
+  AddDingTalkWorkspaceMembersRequest,
+  AddDingTalkWorkspaceMembersResponse,
   ListIssuesParams,
   ListGroupedIssuesParams,
   Agent,
@@ -152,6 +157,9 @@ import {
   CloudRuntimeNodeListSchema,
   CloudRuntimeNodeSchema,
   CreateAgentFromTemplateResponseSchema,
+  AddDingTalkGroupMembersResponseSchema,
+  AddDingTalkWorkspaceMembersResponseSchema,
+  DingTalkUserSearchResponseSchema,
   DashboardAgentRunTimeListSchema,
   DashboardRunTimeDailyListSchema,
   DashboardUsageByAgentListSchema,
@@ -163,6 +171,9 @@ import {
   EMPTY_CLOUD_RUNTIME_NODE,
   EMPTY_CLOUD_RUNTIME_NODE_LIST,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
+  EMPTY_ADD_DINGTALK_GROUP_MEMBERS_RESPONSE,
+  EMPTY_ADD_DINGTALK_WORKSPACE_MEMBERS_RESPONSE,
+  EMPTY_DINGTALK_USER_SEARCH_RESPONSE,
   EMPTY_GROUPED_ISSUES_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
   EMPTY_SEARCH_ISSUES_RESPONSE,
@@ -421,6 +432,24 @@ export class ApiClient {
 
   async googleLogin(code: string, redirectUri: string): Promise<LoginResponse> {
     return this.fetch("/auth/google", {
+      method: "POST",
+      body: JSON.stringify({ code, redirect_uri: redirectUri }),
+    });
+  }
+
+  // DingTalk's OAuth callback returns a single-use `authCode`; the backend
+  // exchanges it server-side (no redirect_uri needed for the token step).
+  async dingtalkLogin(code: string): Promise<LoginResponse> {
+    return this.fetch("/auth/dingtalk", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    });
+  }
+
+  // Feishu (Lark) returns the grant as `code` and, unlike DingTalk, the
+  // backend must send the same redirect_uri again on the token exchange.
+  async larkLogin(code: string, redirectUri: string): Promise<LoginResponse> {
+    return this.fetch("/auth/lark", {
       method: "POST",
       body: JSON.stringify({ code, redirect_uri: redirectUri }),
     });
@@ -1584,6 +1613,52 @@ export class ApiClient {
     await this.fetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
       method: "DELETE",
     });
+  }
+
+  async searchDingTalkUsers(workspaceId: string, query: string, limit = 10): Promise<DingTalkUser[]> {
+    const params = new URLSearchParams({
+      q: query,
+      limit: String(limit),
+    });
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/dingtalk/users/search?${params.toString()}`);
+    return parseWithFallback(
+      raw,
+      DingTalkUserSearchResponseSchema,
+      EMPTY_DINGTALK_USER_SEARCH_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/dingtalk/users/search" },
+    ).users;
+  }
+
+  async addDingTalkWorkspaceMembers(
+    workspaceId: string,
+    data: AddDingTalkWorkspaceMembersRequest,
+  ): Promise<AddDingTalkWorkspaceMembersResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/dingtalk/members`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(
+      raw,
+      AddDingTalkWorkspaceMembersResponseSchema,
+      EMPTY_ADD_DINGTALK_WORKSPACE_MEMBERS_RESPONSE,
+      { endpoint: "POST /api/workspaces/:id/dingtalk/members" },
+    );
+  }
+
+  async addDingTalkGroupMembers(
+    workspaceId: string,
+    data: AddDingTalkGroupMembersRequest,
+  ): Promise<AddDingTalkGroupMembersResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/dingtalk/group-members`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(
+      raw,
+      AddDingTalkGroupMembersResponseSchema,
+      EMPTY_ADD_DINGTALK_GROUP_MEMBERS_RESPONSE,
+      { endpoint: "POST /api/workspaces/:id/dingtalk/group-members" },
+    );
   }
 
   async leaveWorkspace(workspaceId: string): Promise<void> {

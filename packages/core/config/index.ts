@@ -9,16 +9,29 @@ interface ConfigState {
   cdnSigned: boolean;
   allowSignup: boolean;
   googleClientId: string;
+  dingtalkClientId: string;
+  // Sign-in allowlist from LOGIN_PROVIDERS (e.g. ["dingtalk","lark"]). The
+  // login screen must only offer the listed entry points; the unlisted login
+  // routes are closed server-side. Empty means unrestricted.
+  loginProviders: string[];
+  larkClientId: string;
   daemonServerUrl: string;
   daemonAppUrl: string;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
   // must be hidden. Defaults to false so unknown / older servers behave like
   // the managed-cloud case.
   workspaceCreationDisabled: boolean;
+  // True once /api/config has resolved (on success OR failure). The login
+  // screen gates its render on this so a provider-locked deployment doesn't
+  // flash the email form before the config applies the lock.
+  authConfigLoaded: boolean;
   setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
   setAuthConfig: (config: {
     allowSignup: boolean;
     googleClientId?: string;
+    dingtalkClientId?: string;
+    loginProviders?: string[];
+    larkClientId?: string;
     workspaceCreationDisabled?: boolean;
   }) => void;
   setDaemonConfig: (config: {
@@ -32,15 +45,44 @@ export const configStore = createStore<ConfigState>((set) => ({
   cdnSigned: false,
   allowSignup: true,
   googleClientId: "",
+  dingtalkClientId: "",
+  loginProviders: [],
+  larkClientId: "",
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
+  authConfigLoaded: false,
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
-  setAuthConfig: ({ allowSignup, googleClientId = "", workspaceCreationDisabled = false }) =>
-    set({ allowSignup, googleClientId, workspaceCreationDisabled }),
+  setAuthConfig: ({
+    allowSignup,
+    googleClientId = "",
+    dingtalkClientId = "",
+    loginProviders = [],
+    larkClientId = "",
+    workspaceCreationDisabled = false,
+  }) =>
+    set({
+      allowSignup,
+      googleClientId,
+      dingtalkClientId,
+      loginProviders,
+      larkClientId,
+      workspaceCreationDisabled,
+      authConfigLoaded: true,
+    }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
 }));
+
+// isLoginProviderAllowed reports whether a sign-in entry point may be
+// offered. An empty allowlist (older servers, or no LOGIN_PROVIDERS set)
+// allows everything. Provider names: "email" | "google" | "dingtalk" | "lark".
+export function isLoginProviderAllowed(
+  providers: string[],
+  name: string,
+): boolean {
+  return providers.length === 0 || providers.includes(name);
+}
 
 export function useConfigStore(): ConfigState;
 export function useConfigStore<T>(selector: (state: ConfigState) => T): T;

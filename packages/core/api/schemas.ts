@@ -11,9 +11,12 @@ import type {
   BillingTopupsPage,
   BillingTransactionsPage,
   CancelTaskResponse,
+  AddDingTalkGroupMembersResponse,
+  AddDingTalkWorkspaceMembersResponse,
   CreateAgentFromTemplateResponse,
   CreateBillingCheckoutSessionResponse,
   CreateBillingPortalSessionResponse,
+  DingTalkUserSearchResponse,
   GroupedIssuesResponse,
   InboxWorkspaceUnread,
   ListIssuesResponse,
@@ -36,6 +39,18 @@ export interface AppConfigResponse {
   cdn_signed?: boolean;
   allow_signup: boolean;
   google_client_id?: string;
+  dingtalk_client_id?: string;
+  // Legacy single-provider lock: true when the sign-in allowlist is exactly
+  // ["dingtalk"]. Newer servers also send login_providers; older servers omit
+  // both fields — treat that as unrestricted.
+  dingtalk_only?: boolean;
+  // Sign-in allowlist (e.g. ["dingtalk","lark"]): the login screen must only
+  // offer the listed entry points; the unlisted routes are closed
+  // server-side. Empty/omitted means unrestricted.
+  login_providers?: string[];
+  // Feishu (Lark) app AppID. When present the login screen renders the
+  // "Continue with Feishu" button. Older servers omit it.
+  lark_client_id?: string;
   posthog_key?: string;
   posthog_host?: string;
   analytics_environment?: string;
@@ -176,6 +191,16 @@ export const AppConfigSchema = z.object({
   cdn_signed: BooleanWithDefaultSchema(false),
   allow_signup: BooleanWithDefaultSchema(true),
   google_client_id: OptionalStringSchema,
+  dingtalk_client_id: OptionalStringSchema,
+  dingtalk_only: BooleanWithDefaultSchema(false).optional(),
+  login_providers: z.preprocess(
+    (value) =>
+      Array.isArray(value)
+        ? value.filter((item) => typeof item === "string")
+        : undefined,
+    z.array(z.string()).optional(),
+  ),
+  lark_client_id: OptionalStringSchema,
   posthog_key: OptionalStringSchema,
   posthog_host: OptionalStringSchema,
   analytics_environment: OptionalStringSchema,
@@ -189,6 +214,10 @@ export const EMPTY_APP_CONFIG: AppConfigResponse = {
   cdn_signed: false,
   allow_signup: true,
   google_client_id: "",
+  dingtalk_client_id: "",
+  dingtalk_only: false,
+  login_providers: [],
+  lark_client_id: "",
   daemon_server_url: "",
   daemon_app_url: "",
   workspace_creation_disabled: false,
@@ -917,6 +946,58 @@ export const EMPTY_USER: User = {
   timezone: null,
   created_at: "",
   updated_at: "",
+};
+
+const DingTalkUserSchema = z.object({
+  user_id: z.string(),
+  union_id: z.string().optional(),
+  name: z.string().default(""),
+  avatar_url: z.string().nullable().optional().transform((v) => v ?? null),
+  mobile: z.string().optional(),
+  title: z.string().optional(),
+  email: z.string().optional(),
+  department_ids: z.array(z.number()).default([]),
+}).loose();
+
+export const DingTalkUserSearchResponseSchema = z.object({
+  users: z.array(DingTalkUserSchema).default([]),
+}).loose();
+
+export const EMPTY_DINGTALK_USER_SEARCH_RESPONSE: DingTalkUserSearchResponse = {
+  users: [],
+};
+
+export const AddDingTalkGroupMembersResponseSchema = z.object({
+  added_user_ids: z.array(z.string()).default([]),
+}).loose();
+
+export const EMPTY_ADD_DINGTALK_GROUP_MEMBERS_RESPONSE: AddDingTalkGroupMembersResponse = {
+  added_user_ids: [],
+};
+
+const DingTalkWorkspaceMemberSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  user_id: z.string(),
+  role: z.enum(["owner", "admin", "member"]),
+  created_at: z.string(),
+  name: z.string().default(""),
+  email: z.string().default(""),
+  avatar_url: z.string().nullable().default(null),
+}).loose();
+
+export const AddDingTalkWorkspaceMembersResponseSchema = z.object({
+  members: z.array(DingTalkWorkspaceMemberSchema).default([]),
+  added_count: z.number().default(0),
+  already_member_count: z.number().default(0),
+  unresolved_user_ids: z.array(z.string()).default([]),
+}).loose();
+
+export const EMPTY_ADD_DINGTALK_WORKSPACE_MEMBERS_RESPONSE: AddDingTalkWorkspaceMembersResponse = {
+  members: [],
+  added_count: 0,
+  already_member_count: 0,
+  unresolved_user_ids: [],
 };
 
 // ---------------------------------------------------------------------------

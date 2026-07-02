@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { sanitizeNextUrl, useAuthStore } from "@multica/core/auth";
-import { useConfigStore } from "@multica/core/config";
+import { isLoginProviderAllowed, useConfigStore } from "@multica/core/config";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import {
   paths,
@@ -59,6 +59,14 @@ function LoginPageContent() {
   const qc = useQueryClient();
   const { t } = useT("auth");
   const googleClientId = useConfigStore((state) => state.googleClientId);
+  const dingtalkClientId = useConfigStore((state) => state.dingtalkClientId);
+  const loginProviders = useConfigStore((state) => state.loginProviders);
+  const larkClientId = useConfigStore((state) => state.larkClientId);
+  // LOGIN_PROVIDERS allowlist: a provider button renders only when the
+  // backend both allows the provider and has its client id configured.
+  const allows = (provider: string) =>
+    isLoginProviderAllowed(loginProviders, provider);
+  const authConfigLoaded = useConfigStore((state) => state.authConfigLoaded);
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
   const searchParams = useSearchParams();
@@ -141,6 +149,20 @@ function LoginPageContent() {
     .filter(Boolean)
     .join(",") || undefined;
 
+  // DingTalk shares the /auth/callback page with Google, so its state carries a
+  // "provider:dingtalk" marker (plus the same platform/next/CLI params) that
+  // tells the callback which provider to exchange the code with.
+  const dingtalkState = googleState
+    ? `provider:dingtalk,${googleState}`
+    : "provider:dingtalk";
+
+  // Feishu shares /auth/callback with Google and DingTalk; its state carries
+  // a "provider:lark" marker so the callback exchanges the code with the
+  // right provider (Feishu and Google both return the grant as `code`).
+  const larkState = googleState
+    ? `provider:lark,${googleState}`
+    : "provider:lark";
+
   // While the desktop handoff is in progress (or has produced a token/error),
   // render a dedicated screen instead of flashing the login form or redirecting
   // away to a workspace page.
@@ -191,11 +213,22 @@ function LoginPageContent() {
     );
   }
 
+  // Hold the login card until /api/config resolves so a DingTalk-only
+  // deployment doesn't flash the email form before switching to DingTalk-only.
+  // authConfigLoaded flips true on both success and failure of the config fetch.
+  if (!authConfigLoaded) {
+    return (
+      <div className="flex min-h-svh items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
   return (
     <LoginPage
       onSuccess={handleSuccess}
       google={
-        googleClientId
+        googleClientId && allows("google")
           ? {
               clientId: googleClientId,
               redirectUri: `${window.location.origin}/auth/callback`,
@@ -203,6 +236,25 @@ function LoginPageContent() {
             }
           : undefined
       }
+      dingtalk={
+        dingtalkClientId && allows("dingtalk")
+          ? {
+              clientId: dingtalkClientId,
+              redirectUri: `${window.location.origin}/auth/callback`,
+              state: dingtalkState,
+            }
+          : undefined
+      }
+      lark={
+        larkClientId && allows("lark")
+          ? {
+              clientId: larkClientId,
+              redirectUri: `${window.location.origin}/auth/callback`,
+              state: larkState,
+            }
+          : undefined
+      }
+      oauthOnly={!allows("email")}
       cliCallback={
         cliCallbackRaw && validateCliCallback(cliCallbackRaw)
           ? { url: cliCallbackRaw, state: cliState }
