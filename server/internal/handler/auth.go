@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -469,26 +468,6 @@ type DingTalkLoginRequest struct {
 	Code string `json:"code"`
 }
 
-// dingtalkTokenResponse is the subset of POST /v1.0/oauth2/userAccessToken we
-// consume. DingTalk uses camelCase JSON, unlike Google's snake_case.
-type dingtalkTokenResponse struct {
-	AccessToken string `json:"accessToken"`
-	ExpireIn    int64  `json:"expireIn"`
-	CorpID      string `json:"corpId"`
-}
-
-// dingtalkUserInfo is the subset of GET /v1.0/contact/users/me we consume.
-// `email` is frequently empty for org members, so identity keys off `unionId`,
-// which is stable and unique per person for this app.
-type dingtalkUserInfo struct {
-	Nick      string `json:"nick"`
-	AvatarURL string `json:"avatarUrl"`
-	Mobile    string `json:"mobile"`
-	OpenID    string `json:"openId"`
-	UnionID   string `json:"unionId"`
-	Email     string `json:"email"`
-}
-
 func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 	var req GoogleLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -668,96 +647,15 @@ func (h *Handler) DingTalkLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientID := os.Getenv("DINGTALK_CLIENT_ID")
-	clientSecret := os.Getenv("DINGTALK_CLIENT_SECRET")
-	if clientID == "" || clientSecret == "" {
+	if h.DingTalkOAuth == nil || !h.DingTalkOAuth.IsConfigured() {
 		writeError(w, http.StatusServiceUnavailable, "DingTalk login is not configured")
 		return
 	}
 
-	// Exchange the authorization code for a user access token.
-	tokenReqBody, err := json.Marshal(map[string]string{
-		"clientId":     clientID,
-		"clientSecret": clientSecret,
-		"code":         req.Code,
-		"grantType":    "authorization_code",
-	})
+	dtUser, err := h.DingTalkOAuth.ResolveOAuthUser(r.Context(), req.Code)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	tokenReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
-		"https://api.dingtalk.com/v1.0/oauth2/userAccessToken", bytes.NewReader(tokenReqBody))
-	if err != nil {
-		slog.Error("failed to create dingtalk token request", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	tokenReq.Header.Set("Content-Type", "application/json")
-
-	tokenResp, err := http.DefaultClient.Do(tokenReq)
-	if err != nil {
-		slog.Error("dingtalk oauth token exchange failed", "error", err)
-		writeError(w, http.StatusBadGateway, "failed to exchange code with DingTalk")
-		return
-	}
-	defer tokenResp.Body.Close()
-
-	tokenBody, err := io.ReadAll(tokenResp.Body)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to read DingTalk token response")
-		return
-	}
-
-	if tokenResp.StatusCode != http.StatusOK {
-		slog.Error("dingtalk oauth token exchange returned error", "status", tokenResp.StatusCode, "body", string(tokenBody))
-		writeError(w, http.StatusBadRequest, "failed to exchange code with DingTalk")
-		return
-	}
-
-	var dtToken dingtalkTokenResponse
-	if err := json.Unmarshal(tokenBody, &dtToken); err != nil {
-		writeError(w, http.StatusBadGateway, "failed to parse DingTalk token response")
-		return
-	}
-	if dtToken.AccessToken == "" {
-		writeError(w, http.StatusBadGateway, "DingTalk token response missing access token")
-		return
-	}
-
-	// Fetch the DingTalk user's contact profile.
-	userInfoReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
-		"https://api.dingtalk.com/v1.0/contact/users/me", nil)
-	if err != nil {
-		slog.Error("failed to create dingtalk userinfo request", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	userInfoReq.Header.Set("x-acs-dingtalk-access-token", dtToken.AccessToken)
-
-	userInfoResp, err := http.DefaultClient.Do(userInfoReq)
-	if err != nil {
-		slog.Error("dingtalk userinfo fetch failed", "error", err)
-		writeError(w, http.StatusBadGateway, "failed to fetch user info from DingTalk")
-		return
-	}
-	defer userInfoResp.Body.Close()
-
-	userInfoBody, err := io.ReadAll(userInfoResp.Body)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to read DingTalk user info")
-		return
-	}
-
-	if userInfoResp.StatusCode != http.StatusOK {
-		slog.Error("dingtalk userinfo returned error", "status", userInfoResp.StatusCode, "body", string(userInfoBody))
-		writeError(w, http.StatusBadGateway, "failed to fetch user info from DingTalk")
-		return
-	}
-
-	var dtUser dingtalkUserInfo
-	if err := json.Unmarshal(userInfoBody, &dtUser); err != nil {
-		writeError(w, http.StatusBadGateway, "failed to parse DingTalk user info")
+		slog.Error("dingtalk oauth user resolution failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusBadGateway, "failed to resolve DingTalk user")
 		return
 	}
 
