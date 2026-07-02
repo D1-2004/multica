@@ -61,6 +61,7 @@ export function AuthInitializer({
           googleClientId: cfg.google_client_id,
           dingtalkClientId: cfg.dingtalk_client_id,
           dingtalkOnly: cfg.dingtalk_only === true,
+          larkClientId: cfg.lark_client_id,
           // Old servers omit this field — treat that as "creation allowed"
           // (the managed-cloud default) rather than blocking the UI.
           workspaceCreationDisabled: cfg.workspace_creation_disabled === true,
