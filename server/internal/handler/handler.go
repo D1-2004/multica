@@ -23,6 +23,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
+	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -216,7 +217,20 @@ type Handler struct {
 	// Config); when unconfigured its Enabled() reports false and callers fall
 	// back silently.
 	LLM *llm.Client
-	cfg Config
+	// DingTalk is an optional deployment-wide capability client used by the
+	// settings members tab to resolve organization users and add them to a
+	// configured DingTalk group. Production prefers the private
+	// dingtalk-native-agent transport so Open Platform credentials stay outside
+	// this backend; the direct OpenAPI client remains available for explicit
+	// self-hosted deployments.
+	DingTalk      dingtalk.CapabilityClient
+	DingTalkOAuth dingtalk.OAuthClient
+	// LarkOAuth resolves Feishu login codes for POST /auth/lark. Production
+	// prefers the private channel agent (LARK_AGENT_BASE_URL) so the app
+	// secret stays outside this backend; the direct client remains available
+	// for self-hosted / local-dev deployments.
+	LarkOAuth lark.OAuthClient
+	cfg       Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {

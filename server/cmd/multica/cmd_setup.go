@@ -77,6 +77,7 @@ func init() {
 	setupSelfHostCmd.Flags().String("app-url", "", "Frontend app URL (e.g. https://app.internal.co) (env: MULTICA_APP_URL)")
 	setupSelfHostCmd.Flags().Int("port", 8080, "Backend server port (used when --server-url is not set)")
 	setupSelfHostCmd.Flags().Int("frontend-port", 3000, "Frontend port (used when --app-url is not set)")
+	setupSelfHostCmd.Flags().Bool("skip-probe", false, "Skip the reachability check and save the configuration even if the health check fails (useful on slow or restrictive networks where the check times out)")
 	setupSelfHostCmd.Flags().String(callbackHostFlag, "", callbackHostFlagHelp)
 
 	setupCmd.AddCommand(setupCloudCmd)
@@ -226,14 +227,25 @@ func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 	// working config or wipe the saved token: persistSelfHostConfigIfReachable
 	// writes only when the server answers, so an unreachable host leaves the
 	// existing config untouched and the user stays logged in.
-	reachable, err := persistSelfHostConfigIfReachable(serverURL, appURL, profile, probeServer)
+	//
+	// The probe guards against clobbering a working config with a typo'd URL,
+	// but a slow or restrictive network (cross-region latency to a cloud host,
+	// or the backend briefly restarting) can make a healthy server look
+	// unreachable. --skip-probe bypasses the check and saves anyway.
+	probe := probeServer
+	if skip, _ := cmd.Flags().GetBool("skip-probe"); skip {
+		probe = func(string) bool { return true }
+	}
+	reachable, err := persistSelfHostConfigIfReachable(serverURL, appURL, profile, probe)
 	if err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 	if !reachable {
 		fmt.Fprintf(os.Stderr, "\n⚠ Server at %s is not reachable.\n", serverURL)
 		fmt.Fprintln(os.Stderr, "  Your existing configuration was left unchanged.")
-		fmt.Fprintln(os.Stderr, "  Verify the URL, then re-run 'multica setup self-host' once it's reachable.")
+		fmt.Fprintln(os.Stderr, "  Verify the URL, then re-run 'multica setup self-host' once it's reachable,")
+		fmt.Fprintln(os.Stderr, "  or pass --skip-probe to save the configuration without the health check")
+		fmt.Fprintln(os.Stderr, "  (e.g. behind a slow or restrictive network).")
 		return nil
 	}
 
@@ -363,21 +375,44 @@ func promptAppURL(serverURL string) (string, error) {
 	return strings.TrimRight(strings.TrimSpace(line), "/"), nil
 }
 
+// Reachability probe tuning. Vars (not consts) so tests can shrink the backoff.
+// A generous per-attempt timeout plus a few retries tolerates cross-region /
+// cross-border latency to a cloud host and a backend that is briefly restarting,
+// so a healthy server is not misreported as unreachable — the old single 2s
+// shot false-negatived on slow links and mid-deploy restarts, hard-blocking
+// `setup self-host` even though the server was up.
+var (
+	probeTimeout  = 8 * time.Second
+	probeAttempts = 3
+	probeBackoff  = time.Second
+)
+
 // probeServer checks whether a Multica backend is reachable at the given URL.
+// It retries a few times with a generous per-attempt timeout so transient
+// slowness or a restart is not mistaken for an unreachable server. A connection
+// error or a non-200 /health both count as a miss and are retried.
 func probeServer(baseURL string) bool {
-	url := strings.TrimRight(baseURL, "/") + "/health"
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return false
+	healthURL := strings.TrimRight(baseURL, "/") + "/health"
+	client := &http.Client{Timeout: probeTimeout}
+	for attempt := 0; attempt < probeAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * probeBackoff)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+		if err != nil {
+			cancel()
+			return false
+		}
+		resp, err := client.Do(req)
+		cancel()
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return true
+		}
 	}
-
-	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	return false
 }

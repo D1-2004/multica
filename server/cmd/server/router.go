@@ -27,6 +27,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composiointeg "github.com/multica-ai/multica/server/internal/integrations/composio"
+	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -183,6 +184,68 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.Metrics = opts.BusinessMetrics
 	h.FeatureFlags = opts.FeatureFlags
 	h.TaskService.FeatureFlags = opts.FeatureFlags
+	if agentBaseURL := strings.TrimSpace(os.Getenv("DINGTALK_AGENT_BASE_URL")); agentBaseURL != "" {
+		agentClient := dingtalk.NewAgentClient(dingtalk.AgentClientConfig{
+			BaseURL:        agentBaseURL,
+			InternalSecret: strings.TrimSpace(os.Getenv("DINGTALK_AGENT_INTERNAL_SECRET")),
+			Logger:         slog.Default(),
+		})
+		h.DingTalk = agentClient
+		h.DingTalkOAuth = agentClient
+		if h.DingTalk.IsConfigured() {
+			slog.Info("dingtalk integration enabled via private agent", "base_url", agentBaseURL)
+		} else {
+			slog.Info("dingtalk integration disabled (DINGTALK_AGENT_INTERNAL_SECRET not set)")
+		}
+	} else if appKey, appSecret := strings.TrimSpace(os.Getenv("DINGTALK_APP_KEY")), strings.TrimSpace(os.Getenv("DINGTALK_APP_SECRET")); appKey != "" && appSecret != "" {
+		client := dingtalk.NewClient(dingtalk.Config{
+			AppKey:      appKey,
+			AppSecret:   appSecret,
+			OpenAPIBase: strings.TrimSpace(os.Getenv("DINGTALK_OPENAPI_BASE")),
+			OAPIBase:    strings.TrimSpace(os.Getenv("DINGTALK_OAPI_BASE")),
+			Logger:      slog.Default(),
+		})
+		h.DingTalk = client
+		h.DingTalkOAuth = client
+		slog.Info("dingtalk integration enabled")
+	} else if clientID, clientSecret := strings.TrimSpace(os.Getenv("DINGTALK_CLIENT_ID")), strings.TrimSpace(os.Getenv("DINGTALK_CLIENT_SECRET")); clientID != "" && clientSecret != "" {
+		h.DingTalkOAuth = dingtalk.NewClient(dingtalk.Config{
+			AppKey:      clientID,
+			AppSecret:   clientSecret,
+			OpenAPIBase: strings.TrimSpace(os.Getenv("DINGTALK_OPENAPI_BASE")),
+			OAPIBase:    strings.TrimSpace(os.Getenv("DINGTALK_OAPI_BASE")),
+			Logger:      slog.Default(),
+		})
+		slog.Info("dingtalk oauth enabled via direct client")
+	} else {
+		slog.Info("dingtalk integration disabled (DINGTALK_APP_KEY or DINGTALK_APP_SECRET not set)")
+	}
+	// Lark (Feishu) login identity resolution — same tiering as DingTalk:
+	// prefer the private channel agent so the app secret stays outside this
+	// backend, fall back to the direct open-API client for self-host/dev.
+	if larkAgentBase := strings.TrimSpace(os.Getenv("LARK_AGENT_BASE_URL")); larkAgentBase != "" {
+		agentClient := lark.NewOAuthAgentClient(lark.OAuthAgentClientConfig{
+			BaseURL:        larkAgentBase,
+			InternalSecret: strings.TrimSpace(os.Getenv("LARK_AGENT_INTERNAL_SECRET")),
+			Logger:         slog.Default(),
+		})
+		h.LarkOAuth = agentClient
+		if agentClient.IsConfigured() {
+			slog.Info("lark oauth enabled via private agent", "base_url", larkAgentBase)
+		} else {
+			slog.Info("lark oauth disabled (LARK_AGENT_INTERNAL_SECRET not set)")
+		}
+	} else if larkClientID, larkClientSecret := strings.TrimSpace(os.Getenv("LARK_CLIENT_ID")), strings.TrimSpace(os.Getenv("LARK_CLIENT_SECRET")); larkClientID != "" && larkClientSecret != "" {
+		h.LarkOAuth = lark.NewOAuthHTTPClient(lark.OAuthConfig{
+			ClientID:     larkClientID,
+			ClientSecret: larkClientSecret,
+			APIBase:      strings.TrimSpace(os.Getenv("LARK_OPENAPI_BASE")),
+			Logger:       slog.Default(),
+		})
+		slog.Info("lark oauth enabled via direct client")
+	} else {
+		slog.Info("lark oauth disabled (LARK_CLIENT_ID or LARK_CLIENT_SECRET not set)")
+	}
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
 	if opts.BusinessMetrics != nil {
@@ -705,9 +768,25 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
 	authVerifyRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_VERIFY", 20), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
-	r.With(authRL).Post("/auth/send-code", h.SendCode)
-	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
-	r.With(authRL).Post("/auth/google", h.GoogleLogin)
+	// LOGIN_PROVIDERS (with LOGIN_DINGTALK_ONLY as its legacy alias) closes
+	// the login paths of unlisted providers entirely — not merely hidden in
+	// the UI: the routes simply aren't registered, so a direct POST 404s.
+	// Because the DingTalk/Feishu apps are 企业内部应用, their OAuth logins only
+	// admit members of that organization, which is the access restriction we
+	// want from an OAuth-only allowlist like "dingtalk,lark".
+	if handler.LoginProviderAllowed("email") {
+		r.With(authRL).Post("/auth/send-code", h.SendCode)
+		r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
+	}
+	if handler.LoginProviderAllowed("google") {
+		r.With(authRL).Post("/auth/google", h.GoogleLogin)
+	}
+	if handler.LoginProviderAllowed("lark") {
+		r.With(authRL).Post("/auth/lark", h.LarkLogin)
+	}
+	if handler.LoginProviderAllowed("dingtalk") {
+		r.With(authRL).Post("/auth/dingtalk", h.DingTalkLogin)
+	}
 	r.Post("/auth/logout", h.Logout)
 
 	// Public API
@@ -854,6 +933,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/members", h.CreateInvitation)
+					r.Get("/dingtalk/users/search", h.SearchDingTalkUsers)
+					r.Post("/dingtalk/members", h.AddDingTalkWorkspaceMembers)
+					r.Post("/dingtalk/group-members", h.AddDingTalkGroupMembers)
 					r.Route("/members/{memberId}", func(r chi.Router) {
 						r.Patch("/", h.UpdateMember)
 						r.Delete("/", h.DeleteMember)

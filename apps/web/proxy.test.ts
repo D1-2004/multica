@@ -16,6 +16,21 @@ function redirectLocation(path: string, cookies: Record<string, string> = {}) {
   return proxy(makeRequest(path, cookies)).headers.get("location");
 }
 
+describe("web proxy", () => {
+  it("redirects logged-out root visitors to login before rendering the page", () => {
+    expect(redirectLocation("/")).toBe("https://app.multica.test/login");
+  });
+
+  it("keeps the existing root shortcut for logged-in visitors with a last workspace", () => {
+    expect(
+      redirectLocation("/", {
+        multica_logged_in: "1",
+        last_workspace_slug: "acme",
+      }),
+    ).toBe("https://app.multica.test/acme/issues");
+  });
+});
+
 describe("proxy legacy workspace route redirects", () => {
   const sessionCookies = {
     multica_logged_in: "1",

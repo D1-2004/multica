@@ -74,15 +74,15 @@ export function proxy(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // --- Root path: redirect logged-in users to their last workspace ---
-  if (pathname === "/" && hasSession && lastSlug) {
+  // --- Root path: enter the app instead of rendering the public landing page ---
+  if (pathname === "/") {
     const url = req.nextUrl.clone();
-    url.pathname = `/${lastSlug}/issues`;
+    url.pathname = hasSession && lastSlug ? `/${lastSlug}/issues` : "/login";
     return NextResponse.redirect(url);
   }
 
   // --- Default: forward locale header to RSC, no redirect/rewrite ---
-  // Covers logged-out root path, /login, /:slug/*, and everything else.
+  // Covers /login, /:slug/*, and everything else.
   return nextWithLocale(req);
 }
 

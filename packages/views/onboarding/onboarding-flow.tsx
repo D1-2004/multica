@@ -128,19 +128,16 @@ export function OnboardingFlow({
   const storedQuestionnaire = mergeQuestionnaire(user.onboarding_questionnaire);
   const [answers, setAnswers] = useState<QuestionnaireAnswers>(storedQuestionnaire);
 
-  const [step, setStep] = useState<OnboardingStep>("welcome");
+  const [step, setStep] = useState<OnboardingStep>("workspace");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
 
-  // Fetched at Step 0 + Step 2. Step 2 uses it to detect a pre-existing
+  // Fetched at the workspace step. The workspace step uses it to detect a pre-existing
   // workspace from an earlier abandoned onboarding (so StepWorkspace shows
   // "Continue with {name}" instead of CreateWorkspaceForm — avoiding the
-  // slug conflict that creation would hit). Step 0 uses it to decide
-  // whether to render the "I've done this before" skip button — only
-  // shown when the user already has at least one workspace, otherwise
-  // skipping would land them in limbo.
+  // slug conflict that creation would hit).
   const { data: workspaces = [], isFetched: workspacesFetched } = useQuery({
     ...workspaceListOptions(),
-    enabled: step === "welcome" || step === "workspace",
+    enabled: step === "workspace",
   });
   const existingWorkspace = workspace ?? workspaces[0] ?? null;
   const canSkipWelcome = workspacesFetched && workspaces.length > 0;
@@ -212,12 +209,20 @@ export function OnboardingFlow({
   }, [workspaces, onComplete]);
 
   const handleWorkspaceCreated = useCallback(
-    (ws: Workspace) => {
+    async (ws: Workspace) => {
       setWorkspace(ws);
       setCurrentWorkspace(ws.slug, ws.id);
-      advanceFrom("workspace");
+      try {
+        await completeOnboarding("runtime_skipped", ws.id);
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : t(($) => $.errors.skip_failed),
+        );
+        return;
+      }
+      onComplete(ws, undefined);
     },
-    [advanceFrom],
+    [onComplete, t],
   );
 
   const handleRuntimeNext = useCallback(
@@ -317,7 +322,6 @@ export function OnboardingFlow({
       <StepWorkspace
         existing={existingWorkspace}
         onCreated={handleWorkspaceCreated}
-        onBack={() => handleBack("workspace")}
       />
     );
   }

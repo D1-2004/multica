@@ -59,6 +59,14 @@ export function AuthInitializer({
         configStore.getState().setAuthConfig({
           allowSignup: cfg.allow_signup,
           googleClientId: cfg.google_client_id,
+          dingtalkClientId: cfg.dingtalk_client_id,
+          // Older backends predate login_providers; honor their legacy
+          // dingtalk_only flag as a single-provider allowlist so the lock
+          // still applies against them.
+          loginProviders:
+            cfg.login_providers ??
+            (cfg.dingtalk_only === true ? ["dingtalk"] : []),
+          larkClientId: cfg.lark_client_id,
           // Old servers omit this field — treat that as "creation allowed"
           // (the managed-cloud default) rather than blocking the UI.
           workspaceCreationDisabled: cfg.workspace_creation_disabled === true,
@@ -78,7 +86,11 @@ export function AuthInitializer({
         }
       })
       .catch(() => {
-        /* config is optional — legacy file card matching degrades gracefully */
+        // config is optional (file-card matching degrades gracefully), but
+        // still mark it resolved with safe defaults so the login screen — which
+        // waits on authConfigLoaded to avoid a provider flash — doesn't spin
+        // forever when /api/config is unreachable.
+        configStore.getState().setAuthConfig({ allowSignup: true });
       });
 
     const onAuthSuccess = (user: User) => {

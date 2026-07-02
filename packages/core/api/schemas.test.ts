@@ -539,6 +539,101 @@ describe("AppConfigSchema cdn_signed drift", () => {
   });
 });
 
+describe("AppConfigSchema dingtalk_client_id drift", () => {
+  it("parses dingtalk_client_id when the server provides it", () => {
+    const parsed = AppConfigSchema.parse({ dingtalk_client_id: "dingxxxxappkey" });
+    expect(parsed.dingtalk_client_id).toBe("dingxxxxappkey");
+  });
+
+  it("leaves dingtalk_client_id undefined when a DingTalk-less server omits it", () => {
+    const parsed = AppConfigSchema.parse({ allow_signup: true });
+    expect(parsed.dingtalk_client_id).toBeUndefined();
+  });
+
+  it("coerces a malformed dingtalk_client_id to undefined instead of failing the whole config", () => {
+    const parsed = AppConfigSchema.parse({
+      allow_signup: true,
+      google_client_id: "google-abc",
+      dingtalk_client_id: 12345,
+    });
+    // The bad field is dropped, but the rest of the config still parses so the
+    // login page can keep rendering the other providers (MUL API-compat rule).
+    expect(parsed.dingtalk_client_id).toBeUndefined();
+    expect(parsed.google_client_id).toBe("google-abc");
+    expect(parsed.allow_signup).toBe(true);
+  });
+});
+
+describe("AppConfigSchema lark_client_id drift", () => {
+  it("parses lark_client_id when the server provides it", () => {
+    const parsed = AppConfigSchema.parse({ lark_client_id: "cli_feishuappid" });
+    expect(parsed.lark_client_id).toBe("cli_feishuappid");
+  });
+
+  it("leaves lark_client_id undefined when a Feishu-less server omits it", () => {
+    const parsed = AppConfigSchema.parse({ cdn_domain: "cdn.example.com" });
+    expect(parsed.lark_client_id).toBeUndefined();
+  });
+
+  it("drops a malformed lark_client_id instead of failing the parse", () => {
+    const parsed = AppConfigSchema.parse({ lark_client_id: 12345 });
+    expect(parsed.lark_client_id).toBeUndefined();
+  });
+});
+
+describe("AppConfigSchema dingtalk_only drift", () => {
+  it("parses dingtalk_only when the server locks sign-in to DingTalk", () => {
+    const parsed = AppConfigSchema.parse({ dingtalk_only: true });
+    expect(parsed.dingtalk_only).toBe(true);
+  });
+
+  it("leaves dingtalk_only undefined when an older server omits it", () => {
+    const parsed = AppConfigSchema.parse({ allow_signup: true });
+    expect(parsed.dingtalk_only).toBeUndefined();
+  });
+
+  it("coerces a malformed dingtalk_only to false without failing the whole config", () => {
+    const parsed = AppConfigSchema.parse({
+      allow_signup: true,
+      dingtalk_client_id: "dingxxxxappkey",
+      dingtalk_only: "yes",
+    });
+    // Bad boolean → false; the rest of the config still parses so the login
+    // page keeps working (API-compat rule).
+    expect(parsed.dingtalk_only).toBe(false);
+    expect(parsed.dingtalk_client_id).toBe("dingxxxxappkey");
+  });
+});
+
+describe("AppConfigSchema login_providers drift", () => {
+  it("parses login_providers when the server locks sign-in to an allowlist", () => {
+    const parsed = AppConfigSchema.parse({
+      login_providers: ["dingtalk", "lark"],
+    });
+    expect(parsed.login_providers).toEqual(["dingtalk", "lark"]);
+  });
+
+  it("leaves login_providers undefined when an older server omits it", () => {
+    const parsed = AppConfigSchema.parse({ allow_signup: true });
+    expect(parsed.login_providers).toBeUndefined();
+  });
+
+  it("drops a malformed login_providers instead of failing the whole config", () => {
+    const parsed = AppConfigSchema.parse({
+      allow_signup: true,
+      login_providers: "dingtalk",
+    });
+    expect(parsed.login_providers).toBeUndefined();
+  });
+
+  it("filters non-string entries out of login_providers", () => {
+    const parsed = AppConfigSchema.parse({
+      login_providers: ["dingtalk", 42, null, "lark"],
+    });
+    expect(parsed.login_providers).toEqual(["dingtalk", "lark"]);
+  });
+});
+
 describe("InboxUnreadSummarySchema", () => {
   const ENDPOINT = { endpoint: "GET /api/inbox/unread-summary" };
 

@@ -746,3 +746,43 @@ describe("validateCliCallback", () => {
     expect(validateCliCallback("not-a-url")).toBe(false);
   });
 });
+
+describe("Feishu (Lark) login", () => {
+  const larkConfig = {
+    clientId: "cli_testapp",
+    redirectUri: "http://localhost:3000/auth/callback",
+  };
+
+  it("renders the Feishu button when lark config is provided", () => {
+    renderWithI18n(<LoginPage onSuccess={vi.fn()} lark={larkConfig} />);
+    expect(
+      screen.getByRole("button", { name: /continue with feishu/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders both provider buttons without the email form in OAuth-only mode", () => {
+    renderWithI18n(
+      <LoginPage
+        onSuccess={vi.fn()}
+        dingtalk={{
+          clientId: "ding_test",
+          redirectUri: "http://localhost:3000/auth/callback",
+        }}
+        lark={larkConfig}
+        oauthOnly
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /continue with dingtalk/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /continue with feishu/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the email form when oauthOnly is set with no provider configured", () => {
+    renderWithI18n(<LoginPage onSuccess={vi.fn()} oauthOnly />);
+    expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
+  });
+});
