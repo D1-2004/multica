@@ -56,6 +56,12 @@ type User struct {
 	Department []int64 `json:"department_ids,omitempty"`
 }
 
+type CapabilityClient interface {
+	IsConfigured() bool
+	SearchUsers(ctx context.Context, query string, limit int) ([]User, error)
+	AddGroupMembers(ctx context.Context, chatID string, userIDs []string) error
+}
+
 type APIError struct {
 	Status  int
 	Code    string

@@ -196,10 +196,13 @@ type Handler struct {
 	// unless Slack is configured; GetChatChannelHistory then reports "no channel
 	// integration". A future platform satisfies the same reader interface.
 	SlackHistory ChatChannelHistoryReader
-	// DingTalk is an optional deployment-wide Open Platform client used by the
+	// DingTalk is an optional deployment-wide capability client used by the
 	// settings members tab to resolve organization users and add them to a
-	// configured DingTalk group. Nil unless DINGTALK_APP_KEY/APP_SECRET are set.
-	DingTalk *dingtalk.Client
+	// configured DingTalk group. Production prefers the private
+	// dingtalk-native-agent transport so Open Platform credentials stay outside
+	// this backend; the direct OpenAPI client remains available for explicit
+	// self-hosted deployments.
+	DingTalk dingtalk.CapabilityClient
 	cfg      Config
 }
 

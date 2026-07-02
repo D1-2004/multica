@@ -177,7 +177,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	h.Metrics = opts.BusinessMetrics
-	if appKey, appSecret := strings.TrimSpace(os.Getenv("DINGTALK_APP_KEY")), strings.TrimSpace(os.Getenv("DINGTALK_APP_SECRET")); appKey != "" && appSecret != "" {
+	if agentBaseURL := strings.TrimSpace(os.Getenv("DINGTALK_AGENT_BASE_URL")); agentBaseURL != "" {
+		h.DingTalk = dingtalk.NewAgentClient(dingtalk.AgentClientConfig{
+			BaseURL:        agentBaseURL,
+			InternalSecret: strings.TrimSpace(os.Getenv("DINGTALK_AGENT_INTERNAL_SECRET")),
+			Logger:         slog.Default(),
+		})
+		if h.DingTalk.IsConfigured() {
+			slog.Info("dingtalk integration enabled via private agent", "base_url", agentBaseURL)
+		} else {
+			slog.Info("dingtalk integration disabled (DINGTALK_AGENT_INTERNAL_SECRET not set)")
+		}
+	} else if appKey, appSecret := strings.TrimSpace(os.Getenv("DINGTALK_APP_KEY")), strings.TrimSpace(os.Getenv("DINGTALK_APP_SECRET")); appKey != "" && appSecret != "" {
 		h.DingTalk = dingtalk.NewClient(dingtalk.Config{
 			AppKey:      appKey,
 			AppSecret:   appSecret,
