@@ -746,3 +746,34 @@ describe("validateCliCallback", () => {
     expect(validateCliCallback("not-a-url")).toBe(false);
   });
 });
+
+describe("Feishu (Lark) login", () => {
+  const larkConfig = {
+    clientId: "cli_testapp",
+    redirectUri: "http://localhost:3000/auth/callback",
+  };
+
+  it("renders the Feishu button when lark config is provided", () => {
+    renderWithI18n(<LoginPage onSuccess={vi.fn()} lark={larkConfig} />);
+    expect(
+      screen.getByRole("button", { name: /continue with feishu/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the Feishu button in DingTalk-only mode", () => {
+    renderWithI18n(
+      <LoginPage
+        onSuccess={vi.fn()}
+        dingtalk={{
+          clientId: "ding_test",
+          redirectUri: "http://localhost:3000/auth/callback",
+        }}
+        dingtalkOnly
+        lark={larkConfig}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /continue with feishu/i }),
+    ).not.toBeInTheDocument();
+  });
+});
