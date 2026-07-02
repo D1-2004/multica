@@ -61,6 +61,7 @@ function LoginPageContent() {
   const googleClientId = useConfigStore((state) => state.googleClientId);
   const dingtalkClientId = useConfigStore((state) => state.dingtalkClientId);
   const dingtalkOnly = useConfigStore((state) => state.dingtalkOnly);
+  const larkClientId = useConfigStore((state) => state.larkClientId);
   const authConfigLoaded = useConfigStore((state) => state.authConfigLoaded);
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
@@ -151,6 +152,13 @@ function LoginPageContent() {
     ? `provider:dingtalk,${googleState}`
     : "provider:dingtalk";
 
+  // Feishu shares /auth/callback with Google and DingTalk; its state carries
+  // a "provider:lark" marker so the callback exchanges the code with the
+  // right provider (Feishu and Google both return the grant as `code`).
+  const larkState = googleState
+    ? `provider:lark,${googleState}`
+    : "provider:lark";
+
   // While the desktop handoff is in progress (or has produced a token/error),
   // render a dedicated screen instead of flashing the login form or redirecting
   // away to a workspace page.
@@ -230,6 +238,15 @@ function LoginPageContent() {
               clientId: dingtalkClientId,
               redirectUri: `${window.location.origin}/auth/callback`,
               state: dingtalkState,
+            }
+          : undefined
+      }
+      lark={
+        larkClientId
+          ? {
+              clientId: larkClientId,
+              redirectUri: `${window.location.origin}/auth/callback`,
+              state: larkState,
             }
           : undefined
       }
