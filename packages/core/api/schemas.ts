@@ -12,6 +12,7 @@ import type {
   BillingTransactionsPage,
   CancelTaskResponse,
   AddDingTalkGroupMembersResponse,
+  AddDingTalkWorkspaceMembersResponse,
   CreateAgentFromTemplateResponse,
   CreateBillingCheckoutSessionResponse,
   CreateBillingPortalSessionResponse,
@@ -955,6 +956,31 @@ export const AddDingTalkGroupMembersResponseSchema = z.object({
 
 export const EMPTY_ADD_DINGTALK_GROUP_MEMBERS_RESPONSE: AddDingTalkGroupMembersResponse = {
   added_user_ids: [],
+};
+
+const DingTalkWorkspaceMemberSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  user_id: z.string(),
+  role: z.enum(["owner", "admin", "member"]),
+  created_at: z.string(),
+  name: z.string().default(""),
+  email: z.string().default(""),
+  avatar_url: z.string().nullable().default(null),
+}).loose();
+
+export const AddDingTalkWorkspaceMembersResponseSchema = z.object({
+  members: z.array(DingTalkWorkspaceMemberSchema).default([]),
+  added_count: z.number().default(0),
+  already_member_count: z.number().default(0),
+  unresolved_user_ids: z.array(z.string()).default([]),
+}).loose();
+
+export const EMPTY_ADD_DINGTALK_WORKSPACE_MEMBERS_RESPONSE: AddDingTalkWorkspaceMembersResponse = {
+  members: [],
+  added_count: 0,
+  already_member_count: 0,
+  unresolved_user_ids: [],
 };
 
 // ---------------------------------------------------------------------------

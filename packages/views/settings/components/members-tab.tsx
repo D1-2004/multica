@@ -1,10 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Crown, Shield, User, Plus, MoreHorizontal, UserMinus, Users, Clock, X, Mail, Search, Save, UserPlus, MessageCircle } from "lucide-react";
+import { Crown, Shield, User, MoreHorizontal, UserMinus, Users, Clock, X, Mail, Search, UserPlus } from "lucide-react";
 import { ActorAvatar } from "../../common/actor-avatar";
-import type { MemberWithUser, MemberRole, Invitation, DingTalkUser, Workspace } from "@multica/core/types";
-import { Input } from "@multica/ui/components/ui/input";
+import type { MemberWithUser, MemberRole, Invitation, DingTalkUser } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -59,33 +58,50 @@ const ROLE_ICONS: Record<MemberRole, typeof Crown> = {
   member: User,
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function getDingTalkChatId(settings: Record<string, unknown> | undefined): string {
-  const dingtalk = settings?.dingtalk;
-  if (isRecord(dingtalk) && typeof dingtalk.chat_id === "string") {
-    return dingtalk.chat_id;
-  }
-  const flatChatId = settings?.dingtalk_chat_id ?? settings?.dingtalk_group_chat_id;
-  return typeof flatChatId === "string" ? flatChatId : "";
-}
-
-function withDingTalkChatId(settings: Record<string, unknown>, chatId: string): Record<string, unknown> {
-  const dingtalk = isRecord(settings.dingtalk) ? settings.dingtalk : {};
-  return {
-    ...settings,
-    dingtalk: {
-      ...dingtalk,
-      chat_id: chatId.trim(),
-    },
-  };
-}
-
 function initials(name: string): string {
   const chars = Array.from(name.trim() || "?");
   return chars.slice(0, 2).join("").toUpperCase();
+}
+
+function normalizeSearchText(value: string | undefined | null): string {
+  return (value ?? "").trim().replace(/\s+/g, "").toLowerCase();
+}
+
+function dingTalkSearchScore(user: DingTalkUser, query: string, index: number): number {
+  const needle = normalizeSearchText(query);
+  if (!needle) return index;
+  const fields = [
+    user.name,
+    user.email,
+    user.mobile,
+    user.user_id,
+    user.union_id,
+    user.title,
+  ].map(normalizeSearchText).filter(Boolean);
+  const name = normalizeSearchText(user.name);
+
+  if (name === needle) return index / 1000;
+  if (fields.some((field) => field === needle)) return 1 + index / 1000;
+  if (name.startsWith(needle)) return 2 + index / 1000;
+  if (fields.some((field) => field.startsWith(needle))) return 3 + index / 1000;
+  if (name.includes(needle)) return 4 + index / 1000;
+  if (fields.some((field) => field.includes(needle))) return 5 + index / 1000;
+  return 10 + index / 1000;
+}
+
+function rankDingTalkUsers(users: DingTalkUser[], query: string): DingTalkUser[] {
+  const seen = new Set<string>();
+  return users
+    .filter((user) => {
+      const key = user.user_id || user.union_id || user.email;
+      if (!key) return false;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((user, index) => ({ user, score: dingTalkSearchScore(user, query, index) }))
+    .sort((a, b) => a.score - b.score)
+    .map(({ user }) => user);
 }
 
 function useRoleLabels() {
@@ -269,13 +285,13 @@ function DingTalkUserRow({
   checked,
   onToggle,
   userIdLabel,
-  noEmailLabel,
+  identityLabel,
 }: {
   user: DingTalkUser;
   checked: boolean;
   onToggle: () => void;
   userIdLabel: string;
-  noEmailLabel: string;
+  identityLabel: string;
 }) {
   const meta = [
     user.title,
@@ -300,7 +316,7 @@ function DingTalkUserRow({
           <span className="truncate text-sm font-medium">{user.name || user.user_id}</span>
           {!user.email && (
             <Badge variant="outline" className="shrink-0">
-              {noEmailLabel}
+              {identityLabel}
             </Badge>
           )}
         </div>
@@ -320,18 +336,14 @@ export function MembersTab() {
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: invitations = [] } = useQuery(invitationListOptions(wsId));
 
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<MemberRole>("member");
-  const [inviteLoading, setInviteLoading] = useState(false);
   const [dingtalkQuery, setDingtalkQuery] = useState("");
   const [dingtalkResults, setDingtalkResults] = useState<DingTalkUser[]>([]);
   const [selectedDingtalkUsers, setSelectedDingtalkUsers] = useState<Record<string, DingTalkUser>>({});
-  const [dingtalkInviteRole, setDingtalkInviteRole] = useState<MemberRole>("member");
-  const [dingtalkGroupChatId, setDingtalkGroupChatId] = useState("");
+  const [dingtalkMemberRole, setDingtalkMemberRole] = useState<MemberRole>("member");
   const [dingtalkSearchAttempted, setDingtalkSearchAttempted] = useState(false);
+  const [dingtalkSearchError, setDingtalkSearchError] = useState<string | null>(null);
   const [dingtalkLoading, setDingtalkLoading] = useState(false);
-  const [dingtalkConfigSaving, setDingtalkConfigSaving] = useState(false);
-  const [dingtalkActionLoading, setDingtalkActionLoading] = useState<"workspace" | "group" | null>(null);
+  const [dingtalkActionLoading, setDingtalkActionLoading] = useState(false);
   const [dingtalkPickerOpen, setDingtalkPickerOpen] = useState(false);
   const [memberActionId, setMemberActionId] = useState<string | null>(null);
   const [invitationActionId, setInvitationActionId] = useState<string | null>(null);
@@ -347,47 +359,40 @@ export function MembersTab() {
   const isOwner = currentMember?.role === "owner";
   const ownerCount = members.filter((m) => m.role === "owner").length;
   const selectedDingtalkList = Object.values(selectedDingtalkUsers);
-  const savedDingTalkChatId = getDingTalkChatId(workspace?.settings);
-  const dingtalkGroupChatIdValue = dingtalkGroupChatId.trim();
-  const dingtalkGroupDirty = dingtalkGroupChatIdValue !== savedDingTalkChatId.trim();
+  const dingtalkEmptyTitle = dingtalkSearchError
+    ? t(($) => $.members.dingtalk_search_error_title)
+    : dingtalkSearchAttempted
+      ? t(($) => $.members.dingtalk_no_results)
+      : t(($) => $.members.dingtalk_picker_empty_title);
+  const dingtalkEmptyDescription = dingtalkSearchError
+    ? t(($) => $.members.dingtalk_search_error_hint)
+    : dingtalkSearchAttempted
+      ? t(($) => $.members.dingtalk_picker_no_results_hint)
+      : t(($) => $.members.dingtalk_picker_empty_description);
+  const dingtalkAddButtonLabel = dingtalkActionLoading
+    ? t(($) => $.members.dingtalk_adding_workspace)
+    : t(($) => $.members.dingtalk_add_workspace);
 
   useEffect(() => {
-    setDingtalkGroupChatId(getDingTalkChatId(workspace?.settings));
     setDingtalkQuery("");
     setDingtalkResults([]);
     setSelectedDingtalkUsers({});
     setDingtalkSearchAttempted(false);
+    setDingtalkSearchError(null);
     setDingtalkPickerOpen(false);
   }, [workspace?.id]);
-
-  const handleInviteMember = async () => {
-    if (!workspace) return;
-    setInviteLoading(true);
-    try {
-      await api.createMember(workspace.id, {
-        email: inviteEmail,
-        role: inviteRole,
-      });
-      setInviteEmail("");
-      setInviteRole("member");
-      qc.invalidateQueries({ queryKey: workspaceKeys.invitations(wsId) });
-      toast.success(t(($) => $.members.toast_invitation_sent));
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_invitation_failed));
-    } finally {
-      setInviteLoading(false);
-    }
-  };
 
   const searchDingTalkUsers = useCallback(async (query: string) => {
     if (!workspace || !query.trim()) return;
     setDingtalkLoading(true);
     setDingtalkSearchAttempted(true);
+    setDingtalkSearchError(null);
     try {
-      const users = await api.searchDingTalkUsers(workspace.id, query.trim(), 10);
-      setDingtalkResults(users);
+      const users = await api.searchDingTalkUsers(workspace.id, query.trim(), 20);
+      setDingtalkResults(rankDingTalkUsers(users, query));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_dingtalk_search_failed));
+      setDingtalkResults([]);
+      setDingtalkSearchError(e instanceof Error ? e.message : t(($) => $.members.toast_dingtalk_search_failed));
     } finally {
       setDingtalkLoading(false);
     }
@@ -405,6 +410,7 @@ export function MembersTab() {
       setDingtalkLoading(false);
       setDingtalkSearchAttempted(false);
       setDingtalkResults([]);
+      setDingtalkSearchError(null);
       return;
     }
 
@@ -426,26 +432,7 @@ export function MembersTab() {
     });
   };
 
-  const handleSaveDingTalkGroup = async () => {
-    if (!workspace) return;
-    setDingtalkConfigSaving(true);
-    try {
-      const updated = await api.updateWorkspace(workspace.id, {
-        settings: withDingTalkChatId(workspace.settings ?? {}, dingtalkGroupChatId),
-      });
-      qc.setQueryData<Workspace[]>(workspaceKeys.list(), (old) =>
-        old?.map((w) => (w.id === updated.id ? updated : w)) ?? old,
-      );
-      qc.invalidateQueries({ queryKey: workspaceKeys.list() });
-      toast.success(t(($) => $.members.toast_dingtalk_group_saved));
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_dingtalk_group_save_failed));
-    } finally {
-      setDingtalkConfigSaving(false);
-    }
-  };
-
-  const handleInviteDingTalkSelected = async () => {
+  const handleAddDingTalkWorkspaceMembers = async () => {
     if (!workspace) return;
     const users = Object.values(selectedDingtalkUsers);
     if (users.length === 0) {
@@ -453,63 +440,31 @@ export function MembersTab() {
       return;
     }
 
-    setDingtalkActionLoading("workspace");
-    let sent = 0;
-    let skipped = 0;
-    let failed = 0;
+    setDingtalkActionLoading(true);
     try {
-      for (const dingtalkUser of users) {
-        const email = dingtalkUser.email?.trim();
-        if (!email) {
-          skipped += 1;
-          continue;
-        }
-        try {
-          await api.createMember(workspace.id, {
-            email,
-            role: dingtalkInviteRole,
-          });
-          sent += 1;
-        } catch {
-          failed += 1;
-        }
-      }
-      qc.invalidateQueries({ queryKey: workspaceKeys.invitations(wsId) });
-      if (sent === 0) {
-        toast.error(skipped === users.length ? t(($) => $.members.toast_dingtalk_missing_email) : t(($) => $.members.toast_dingtalk_invite_failed));
-      } else if (skipped > 0 || failed > 0) {
-        toast.warning(t(($) => $.members.toast_dingtalk_invite_partial, { sent, skipped: skipped + failed }));
-      } else {
-        toast.success(t(($) => $.members.toast_dingtalk_invite_sent, { count: sent }));
-      }
-    } finally {
-      setDingtalkActionLoading(null);
-    }
-  };
-
-  const handleAddDingTalkGroupMembers = async () => {
-    if (!workspace) return;
-    const userIds = Object.keys(selectedDingtalkUsers);
-    if (userIds.length === 0) {
-      toast.error(t(($) => $.members.toast_dingtalk_select_member));
-      return;
-    }
-    if (!dingtalkGroupChatIdValue) {
-      toast.error(t(($) => $.members.toast_dingtalk_group_missing));
-      return;
-    }
-
-    setDingtalkActionLoading("group");
-    try {
-      const resp = await api.addDingTalkGroupMembers(workspace.id, {
-        chat_id: dingtalkGroupChatIdValue,
-        user_ids: userIds,
+      const resp = await api.addDingTalkWorkspaceMembers(workspace.id, {
+        users,
+        role: dingtalkMemberRole,
       });
-      toast.success(t(($) => $.members.toast_dingtalk_group_added, { count: resp.added_user_ids.length }));
+      qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
+      const unresolved = resp.unresolved_user_ids?.length ?? 0;
+      if (resp.added_count > 0 && unresolved > 0) {
+        toast.warning(t(($) => $.members.toast_dingtalk_add_partial, { added: resp.added_count, skipped: unresolved }));
+      } else if (resp.added_count > 0) {
+        toast.success(t(($) => $.members.toast_dingtalk_add_success, { count: resp.added_count }));
+      } else if (resp.already_member_count > 0 && unresolved === 0) {
+        toast.success(t(($) => $.members.toast_dingtalk_already_members, { count: resp.already_member_count }));
+      } else {
+        toast.error(t(($) => $.members.toast_dingtalk_identity_missing, { count: unresolved || users.length }));
+      }
+      if (resp.added_count > 0 || (resp.already_member_count > 0 && unresolved === 0)) {
+        setSelectedDingtalkUsers({});
+        setDingtalkPickerOpen(false);
+      }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_dingtalk_group_failed));
+      toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_dingtalk_add_failed));
     } finally {
-      setDingtalkActionLoading(null);
+      setDingtalkActionLoading(false);
     }
   };
 
@@ -581,48 +536,11 @@ export function MembersTab() {
 
         {canManageWorkspace && (
           <Card>
-            <CardContent className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Plus className="h-4 w-4 text-muted-foreground" />
-                <h3 className="text-sm font-medium">{t(($) => $.members.invite_title)}</h3>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-[1fr_120px_auto]">
-                <Input
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  placeholder={t(($) => $.members.invite_email_placeholder)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && inviteEmail.trim()) handleInviteMember();
-                  }}
-                />
-                <Select value={inviteRole} onValueChange={(value) => setInviteRole(value as MemberRole)}>
-                  <SelectTrigger size="sm">
-                    <SelectValue>{() => roleConfig[inviteRole].label}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="member">{roleConfig.member.label}</SelectItem>
-                    <SelectItem value="admin">{roleConfig.admin.label}</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button
-                  onClick={handleInviteMember}
-                  disabled={inviteLoading || !inviteEmail.trim()}
-                >
-                  {inviteLoading ? t(($) => $.members.inviting) : t(($) => $.members.invite_button)}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {canManageWorkspace && (
-          <Card>
-            <CardContent className="space-y-4">
+            <CardContent>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 space-y-1">
                   <div className="flex items-center gap-2">
-                    <MessageCircle className="h-4 w-4 text-muted-foreground" />
+                    <UserPlus className="h-4 w-4 text-muted-foreground" />
                     <h3 className="text-sm font-medium">{t(($) => $.members.dingtalk_title)}</h3>
                   </div>
                   <p className="text-xs text-muted-foreground">{t(($) => $.members.dingtalk_description)}</p>
@@ -630,22 +548,6 @@ export function MembersTab() {
                 <Button onClick={() => setDingtalkPickerOpen(true)}>
                   <UserPlus className="h-4 w-4" />
                   {t(($) => $.members.dingtalk_open_picker)}
-                </Button>
-              </div>
-
-              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <Input
-                  value={dingtalkGroupChatId}
-                  onChange={(e) => setDingtalkGroupChatId(e.target.value)}
-                  placeholder={t(($) => $.members.dingtalk_chat_id_placeholder)}
-                />
-                <Button
-                  variant="outline"
-                  onClick={handleSaveDingTalkGroup}
-                  disabled={dingtalkConfigSaving || !dingtalkGroupDirty}
-                >
-                  <Save className="h-4 w-4" />
-                  {dingtalkConfigSaving ? t(($) => $.members.dingtalk_saving_group) : t(($) => $.members.dingtalk_save_group)}
                 </Button>
               </div>
             </CardContent>
@@ -756,7 +658,7 @@ export function MembersTab() {
                     checked={!!selectedDingtalkUsers[dingtalkUser.user_id]}
                     onToggle={() => toggleDingTalkUser(dingtalkUser)}
                     userIdLabel={t(($) => $.members.dingtalk_user_id)}
-                    noEmailLabel={t(($) => $.members.dingtalk_no_email_badge)}
+                    identityLabel={t(($) => $.members.dingtalk_identity_badge)}
                   />
                 ))}
               </div>
@@ -765,12 +667,8 @@ export function MembersTab() {
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
                   <Users className="h-5 w-5 text-muted-foreground" />
                 </div>
-                <div className="mt-3 text-sm font-medium">
-                  {dingtalkSearchAttempted ? t(($) => $.members.dingtalk_no_results) : t(($) => $.members.dingtalk_picker_empty_title)}
-                </div>
-                <div className="mt-1 max-w-xs text-xs text-muted-foreground">
-                  {dingtalkSearchAttempted ? t(($) => $.members.dingtalk_picker_no_results_hint) : t(($) => $.members.dingtalk_picker_empty_description)}
-                </div>
+                <div className="mt-3 text-sm font-medium">{dingtalkEmptyTitle}</div>
+                <div className="mt-1 max-w-xs text-xs text-muted-foreground">{dingtalkEmptyDescription}</div>
               </div>
             )}
           </div>
@@ -779,10 +677,10 @@ export function MembersTab() {
             <div className="text-sm text-muted-foreground">
               {t(($) => $.members.dingtalk_selected_count, { count: selectedDingtalkList.length })}
             </div>
-            <div className="grid gap-2 sm:grid-cols-[120px_auto_auto]">
-              <Select value={dingtalkInviteRole} onValueChange={(value) => setDingtalkInviteRole(value as MemberRole)}>
+            <div className="grid gap-2 sm:grid-cols-[120px_auto]">
+              <Select value={dingtalkMemberRole} onValueChange={(value) => setDingtalkMemberRole(value as MemberRole)}>
                 <SelectTrigger size="sm">
-                  <SelectValue>{() => roleConfig[dingtalkInviteRole].label}</SelectValue>
+                  <SelectValue>{() => roleConfig[dingtalkMemberRole].label}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="member">{roleConfig.member.label}</SelectItem>
@@ -790,19 +688,11 @@ export function MembersTab() {
                 </SelectContent>
               </Select>
               <Button
-                variant="outline"
-                onClick={handleInviteDingTalkSelected}
-                disabled={dingtalkActionLoading !== null || selectedDingtalkList.length === 0}
+                onClick={handleAddDingTalkWorkspaceMembers}
+                disabled={dingtalkActionLoading || selectedDingtalkList.length === 0}
               >
                 <UserPlus className="h-4 w-4" />
-                {t(($) => $.members.dingtalk_invite_workspace)}
-              </Button>
-              <Button
-                onClick={handleAddDingTalkGroupMembers}
-                disabled={dingtalkActionLoading !== null || selectedDingtalkList.length === 0 || !dingtalkGroupChatIdValue}
-              >
-                <MessageCircle className="h-4 w-4" />
-                {t(($) => $.members.dingtalk_add_group)}
+                {dingtalkAddButtonLabel}
               </Button>
             </div>
           </div>
