@@ -61,6 +61,7 @@ function LoginPageContent() {
   const googleClientId = useConfigStore((state) => state.googleClientId);
   const dingtalkClientId = useConfigStore((state) => state.dingtalkClientId);
   const dingtalkOnly = useConfigStore((state) => state.dingtalkOnly);
+  const authConfigLoaded = useConfigStore((state) => state.authConfigLoaded);
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
   const searchParams = useSearchParams();
@@ -196,6 +197,17 @@ function LoginPageContent() {
             )}
           </CardContent>
         </Card>
+      </div>
+    );
+  }
+
+  // Hold the login card until /api/config resolves so a DingTalk-only
+  // deployment doesn't flash the email form before switching to DingTalk-only.
+  // authConfigLoaded flips true on both success and failure of the config fetch.
+  if (!authConfigLoaded) {
+    return (
+      <div className="flex min-h-svh items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
   }

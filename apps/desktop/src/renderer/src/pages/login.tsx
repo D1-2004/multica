@@ -2,6 +2,7 @@ import { LoginPage } from "@multica/views/auth";
 import { DragStrip } from "@multica/views/platform";
 import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
 import { useConfigStore } from "@multica/core/config";
+import { Loader2 } from "lucide-react";
 
 function requireRuntimeAppUrl(): string {
   const runtimeConfig = window.desktopAPI.runtimeConfig;
@@ -18,6 +19,9 @@ export function DesktopLoginPage() {
   // When the backend locks sign-in to DingTalk, hide the email form + Google
   // button here too (config is seeded by CoreProvider's AuthInitializer).
   const dingtalkOnly = useConfigStore((s) => s.dingtalkOnly);
+  // Wait for /api/config before rendering the form so a DingTalk-only backend
+  // doesn't flash the email + Google buttons first.
+  const authConfigLoaded = useConfigStore((s) => s.authConfigLoaded);
   // Both OAuth providers hand off to the web login page (which renders whichever
   // provider buttons the backend has configured) in the default browser with the
   // platform=desktop flag. The web callback redirects the token back via the
@@ -31,16 +35,22 @@ export function DesktopLoginPage() {
   return (
     <div className="flex h-screen flex-col">
       <DragStrip />
-      <LoginPage
-        logo={<MulticaIcon bordered size="lg" />}
-        onSuccess={() => {
-          // Auth store update triggers AppContent re-render → shows DesktopShell.
-          // Initial workspace navigation happens in routes.tsx via IndexRedirect.
-        }}
-        onGoogleLogin={dingtalkOnly ? undefined : openWebLogin}
-        onDingtalkLogin={openWebLogin}
-        dingtalkOnly={dingtalkOnly}
-      />
+      {authConfigLoaded ? (
+        <LoginPage
+          logo={<MulticaIcon bordered size="lg" />}
+          onSuccess={() => {
+            // Auth store update triggers AppContent re-render → shows DesktopShell.
+            // Initial workspace navigation happens in routes.tsx via IndexRedirect.
+          }}
+          onGoogleLogin={dingtalkOnly ? undefined : openWebLogin}
+          onDingtalkLogin={openWebLogin}
+          dingtalkOnly={dingtalkOnly}
+        />
+      ) : (
+        <div className="flex flex-1 items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      )}
     </div>
   );
 }
