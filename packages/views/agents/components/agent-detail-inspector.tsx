@@ -46,6 +46,7 @@ import { RuntimePicker } from "./inspector/runtime-picker";
 import { SkillAttach } from "./inspector/skill-attach";
 import { ThinkingPropRow } from "./inspector/thinking-prop-row";
 import { VisibilityPicker } from "./inspector/visibility-picker";
+import { DingTalkAgentBindButton } from "../../settings/components/dingtalk-tab";
 import { LarkAgentBindButton } from "../../settings/components/lark-tab";
 import { SlackAgentBindButton } from "../../settings/components/slack-tab";
 
@@ -236,6 +237,11 @@ export function AgentDetailInspector({
               onShowConnectedDetails={onShowIntegrations}
             />
             <SlackAgentBindButton
+              agentId={agent.id}
+              agentName={agent.name}
+              onShowConnectedDetails={onShowIntegrations}
+            />
+            <DingTalkAgentBindButton
               agentId={agent.id}
               agentName={agent.name}
               onShowConnectedDetails={onShowIntegrations}

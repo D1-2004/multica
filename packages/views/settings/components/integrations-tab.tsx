@@ -1,5 +1,6 @@
 "use client";
 
+import { DingTalkTab } from "./dingtalk-tab";
 import { LarkTab } from "./lark-tab";
 import { SlackTab } from "./slack-tab";
 import { useT } from "../../i18n";
@@ -21,6 +22,10 @@ export function IntegrationsTab() {
       <section className="space-y-4">
         <h2 className="text-sm font-semibold">{t(($) => $.slack.section_title)}</h2>
         <SlackTab />
+      </section>
+      <section className="space-y-4">
+        <h2 className="text-sm font-semibold">{t(($) => $.dingtalk.section_title)}</h2>
+        <DingTalkTab />
       </section>
     </div>
   );
