@@ -237,6 +237,10 @@ type Handler struct {
 	// at-rest key is unset or the RegistrationService failed to
 	// construct at boot.
 	DingTalkRegistration *dingtalk.RegistrationService
+	// DingTalkBindingTokens mints/redeems the user-binding tokens behind
+	// the "link your DingTalk account" prompt. Nil unless the DingTalk
+	// bot integration is configured (MULTICA_DINGTALK_SECRET_KEY set).
+	DingTalkBindingTokens *dingtalk.BindingTokenService
 	// LarkOAuth resolves Feishu login codes for POST /auth/lark. Production
 	// prefers the private channel agent (LARK_AGENT_BASE_URL) so the app
 	// secret stays outside this backend; the direct client remains available

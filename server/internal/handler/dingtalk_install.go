@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -251,4 +252,70 @@ func (h *Handler) GetDingTalkInstallStatus(w http.ResponseWriter, r *http.Reques
 		// RegistrationService at the row-commit point, not here.
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// RedeemDingTalkBindingTokenRequest carries the raw token the user clicked
+// through from the bot's "link your account" prompt.
+type RedeemDingTalkBindingTokenRequest struct {
+	Token string `json:"token"`
+}
+
+// RedeemDingTalkBindingTokenResponse echoes the bound workspace/installation/
+// user so the frontend can confirm without a second fetch.
+type RedeemDingTalkBindingTokenResponse struct {
+	WorkspaceID    string `json:"workspace_id"`
+	InstallationID string `json:"installation_id"`
+	DingTalkUserID string `json:"dingtalk_user_id"`
+}
+
+// RedeemDingTalkBindingToken (POST /api/dingtalk/binding/redeem) binds the
+// DingTalk user id carried by the token to the logged-in Multica user. The
+// redeemer's identity comes from the session, not the token, so a stolen
+// token cannot bind a DingTalk id to an attacker's account. Failure modes
+// map to distinct status codes (mirrors the Slack/Lark redeem endpoints):
+//   - 410 Gone:      token unknown / consumed / expired
+//   - 409 Conflict:  this DingTalk id is already bound to a different user
+//   - 403 Forbidden: redeemer is not a workspace member
+func (h *Handler) RedeemDingTalkBindingToken(w http.ResponseWriter, r *http.Request) {
+	if h.DingTalkBindingTokens == nil {
+		writeError(w, http.StatusServiceUnavailable, "dingtalk integration not configured")
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req RedeemDingTalkBindingTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Token == "" {
+		writeError(w, http.StatusBadRequest, "token is required")
+		return
+	}
+	userUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
+		return
+	}
+
+	redeemed, err := h.DingTalkBindingTokens.RedeemAndBind(r.Context(), req.Token, userUUID)
+	if err != nil {
+		switch {
+		case errors.Is(err, dingtalk.ErrBindingTokenInvalid):
+			writeError(w, http.StatusGone, "binding token invalid or expired")
+		case errors.Is(err, dingtalk.ErrBindingAlreadyAssigned):
+			writeError(w, http.StatusConflict, "this DingTalk account is already bound to a different Multica user")
+		case errors.Is(err, dingtalk.ErrBindingNotWorkspaceMember):
+			writeError(w, http.StatusForbidden, "binding refused (are you a workspace member?)")
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to redeem token")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, RedeemDingTalkBindingTokenResponse{
+		WorkspaceID:    uuidToString(redeemed.WorkspaceID),
+		InstallationID: uuidToString(redeemed.InstallationID),
+		DingTalkUserID: redeemed.DingTalkUserID,
+	})
 }

@@ -60,3 +60,9 @@ export interface DingTalkInstallStatusResponse {
    * diagnostic tooltip. */
   error_message?: string;
 }
+
+export interface RedeemDingTalkBindingTokenResponse {
+  workspace_id: string;
+  installation_id: string;
+  dingtalk_user_id: string;
+}
