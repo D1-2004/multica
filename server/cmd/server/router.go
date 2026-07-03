@@ -533,6 +533,31 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			} else {
 				h.DingTalkInstallations = installSvc
 
+				// Inbound channel (DingTalk Stream Mode). The registered Factory
+				// makes the engine.Supervisor open one Stream connection per
+				// active dingtalk installation; the ResolverSet runs the shared
+				// inbound pipeline (identity binding, dedup, chat session,
+				// /issue, run trigger) over the generic channel_* tables.
+				dtMessenger := dingtalk.NewRobotMessenger(os.Getenv("DINGTALK_OPENAPI_BASE"), nil)
+				dtBindingSvc := dingtalk.NewBindingTokenService(queries, pool)
+				h.DingTalkBindingTokens = dtBindingSvc
+				dtReplier := dingtalk.NewOutboundReplier(dingtalk.OutboundReplierConfig{
+					Binding: dtBindingSvc,
+					// The bind link (/dingtalk/bind) is a web-app page, so it must
+					// use the app URL, NOT MULTICA_PUBLIC_URL. Mirrors Slack/Lark.
+					AppURL: appURLFromEnv(),
+					Logger: slog.Default(),
+				})
+				channelRouter.Register(dingtalk.TypeDingtalk, dingtalk.NewDingTalkResolverSet(queries, pool, dtReplier))
+				dingtalk.NewOutbound(queries, box.Open, dtMessenger, slog.Default()).Register(bus)
+				dingtalk.RegisterDingTalk(channelRegistry, dingtalk.ChannelDeps{
+					Decrypt:     box.Open,
+					Logger:      slog.Default(),
+					OpenAPIBase: os.Getenv("DINGTALK_OPENAPI_BASE"),
+					Messenger:   dtMessenger,
+				})
+				slog.Info("dingtalk inbound pipeline wired", "connector", "stream-mode")
+
 				// Device-flow registration. The base URL override exists for
 				// staging/mock endpoints; the optional source label is a
 				// DingTalk-assigned partner value (empty omits it, which the
@@ -1019,6 +1044,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// logged-in user (from the session) is bound to the Slack id the token
 		// carries.
 		r.Post("/api/slack/binding/redeem", h.RedeemSlackBindingToken)
+		// DingTalk binding-token redemption. Same rationale as Lark/Slack:
+		// not workspace-scoped — the redemption itself mints the binding row
+		// for the logged-in user.
+		r.Post("/api/dingtalk/binding/redeem", h.RedeemDingTalkBindingToken)
 
 		// User-scoped invitation routes (no workspace context required)
 		r.Get("/api/invitations", h.ListMyInvitations)

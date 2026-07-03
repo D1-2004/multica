@@ -123,6 +123,7 @@ import type {
   ListDingTalkInstallationsResponse,
   BeginDingTalkInstallResponse,
   DingTalkInstallStatusResponse,
+  RedeemDingTalkBindingTokenResponse,
   RegisterSlackBYORequest,
   RedeemSlackBindingTokenResponse,
   Squad,
@@ -2392,6 +2393,13 @@ export class ApiClient {
   async deleteDingTalkInstallation(workspaceId: string, installationId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/dingtalk/installations/${installationId}`, {
       method: "DELETE",
+    });
+  }
+
+  async redeemDingTalkBindingToken(token: string): Promise<RedeemDingTalkBindingTokenResponse> {
+    return this.fetch(`/api/dingtalk/binding/redeem`, {
+      method: "POST",
+      body: JSON.stringify({ token }),
     });
   }
 

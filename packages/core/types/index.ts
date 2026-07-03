@@ -144,6 +144,7 @@ export type {
   ListDingTalkInstallationsResponse,
   BeginDingTalkInstallResponse,
   DingTalkInstallStatusResponse,
+  RedeemDingTalkBindingTokenResponse,
 } from "./dingtalk";
 export type {
   Autopilot,
