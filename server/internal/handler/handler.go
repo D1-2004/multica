@@ -226,6 +226,17 @@ type Handler struct {
 	DingTalk              dingtalk.CapabilityClient
 	DingTalkNotifications dingtalk.PersonalNotificationClient
 	DingTalkOAuth         dingtalk.OAuthClient
+	// DingTalk bot installations (scan-to-create device flow). Both are
+	// nil when the DingTalk master key (MULTICA_DINGTALK_SECRET_KEY) is
+	// unset; the corresponding HTTP handlers return 503 in that case.
+	// Wired in cmd/server/router.go after handler.New.
+	DingTalkInstallations *dingtalk.InstallationService
+	// DingTalkRegistration owns the device-flow install lifecycle: begin
+	// a registration session against oapi.dingtalk.com, poll, and on
+	// success write the dingtalk channel_installation row. Nil when the
+	// at-rest key is unset or the RegistrationService failed to
+	// construct at boot.
+	DingTalkRegistration *dingtalk.RegistrationService
 	// LarkOAuth resolves Feishu login codes for POST /auth/lark. Production
 	// prefers the private channel agent (LARK_AGENT_BASE_URL) so the app
 	// secret stays outside this backend; the direct client remains available

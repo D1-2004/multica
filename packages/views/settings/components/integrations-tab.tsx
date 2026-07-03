@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { DingTalkTab } from "./dingtalk-tab";
 import { LarkTab } from "./lark-tab";
 import { ComposioTab } from "./composio-tab";
 import { SlackTab } from "./slack-tab";
@@ -43,6 +44,9 @@ export function IntegrationsTab() {
       )}
       <SettingsSection title={t(($) => $.slack.section_title)}>
         <SlackTab />
+      </SettingsSection>
+      <SettingsSection title={t(($) => $.dingtalk.section_title)}>
+        <DingTalkTab />
       </SettingsSection>
     </SettingsTab>
   );

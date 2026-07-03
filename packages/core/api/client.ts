@@ -123,6 +123,9 @@ import type {
   BeginLarkInstallResponse,
   LarkInstallStatusResponse,
   RedeemLarkBindingTokenResponse,
+  ListDingTalkInstallationsResponse,
+  BeginDingTalkInstallResponse,
+  DingTalkInstallStatusResponse,
   ComposioToolkit,
   ComposioConnection,
   ComposioConnectInitResponse,
@@ -2554,6 +2557,31 @@ export class ApiClient {
   /** Disconnects a Composio connection the caller owns. */
   async deleteComposioConnection(connectionId: string): Promise<void> {
     await this.fetch(`/api/integrations/composio/connections/${connectionId}`, {
+      method: "DELETE",
+    });
+  }
+
+  // DingTalk bot integration (scan-to-create device flow)
+  async listDingTalkInstallations(workspaceId: string): Promise<ListDingTalkInstallationsResponse> {
+    return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/installations`);
+  }
+
+  async beginDingTalkInstall(workspaceId: string, agentId: string): Promise<BeginDingTalkInstallResponse> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/install/begin?${search.toString()}`, {
+      method: "POST",
+    });
+  }
+
+  async getDingTalkInstallStatus(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<DingTalkInstallStatusResponse> {
+    return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/install/${sessionId}/status`);
+  }
+
+  async deleteDingTalkInstallation(workspaceId: string, installationId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/dingtalk/installations/${installationId}`, {
       method: "DELETE",
     });
   }

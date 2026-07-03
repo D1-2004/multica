@@ -508,6 +508,62 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("lark integration disabled (MULTICA_LARK_SECRET_KEY not set)")
 	}
 
+	// DingTalk bot installations — the scan-to-create device flow
+	// ("一键创建钉钉应用扫码接入", oapi.dingtalk.com /app/registration/*).
+	// Gated on MULTICA_DINGTALK_SECRET_KEY, the at-rest key for the
+	// per-installation client_secret. Distinct from the deployment-wide
+	// DingTalk capability/OAuth clients wired above: those carry ONE
+	// operator-configured corp app, while each installation here is a
+	// per-agent app minted in the scanning user's own org. The inbound
+	// transport (DingTalk Stream Mode) is a follow-up; installs are
+	// created and managed now so credentials are already provisioned
+	// when it lands.
+	if dtKey, err := secretbox.LoadKey("MULTICA_DINGTALK_SECRET_KEY"); err == nil {
+		box, err := secretbox.New(dtKey)
+		if err != nil {
+			slog.Error("dingtalk: secretbox.New failed; dingtalk bot integration disabled", "error", err)
+		} else {
+			installSvc, ierr := dingtalk.NewInstallationService(queries, box)
+			if ierr != nil {
+				slog.Error("dingtalk: InstallationService init failed; dingtalk bot integration disabled", "error", ierr)
+			} else {
+				h.DingTalkInstallations = installSvc
+
+				// Device-flow registration. The base URL override exists for
+				// staging/mock endpoints; the optional source label is a
+				// DingTalk-assigned partner value (empty omits it, which the
+				// protocol supports).
+				regClient := dingtalk.NewRegistrationClient(dingtalk.RegistrationConfig{
+					BaseURL: strings.TrimSpace(os.Getenv("MULTICA_DINGTALK_REGISTRATION_BASE_URL")),
+					Source:  strings.TrimSpace(os.Getenv("MULTICA_DINGTALK_REGISTRATION_SOURCE")),
+				})
+				// Verifier: exchange the freshly minted credentials for an app
+				// access token before committing them, so a half-created app
+				// surfaces as a clean install error instead of a dead row.
+				verifier := dingtalk.NewCredentialVerifier(os.Getenv("DINGTALK_OPENAPI_BASE"), nil)
+				regSvc, rerr := dingtalk.NewRegistrationService(
+					dingtalk.RegistrationServiceConfig{Logger: slog.Default()},
+					regClient,
+					installSvc,
+					queries,
+					verifier,
+				)
+				if rerr != nil {
+					slog.Error("dingtalk: RegistrationService init failed; install disabled", "error", rerr)
+				} else {
+					// Publish dingtalk_installation:created at row-commit time so
+					// the connection badge refreshes on every workspace client, not
+					// just the tab that polls the install status to success.
+					regSvc.SetEventBus(bus)
+					h.DingTalkRegistration = regSvc
+					slog.Info("dingtalk device-flow install enabled")
+				}
+			}
+		}
+	} else {
+		slog.Info("dingtalk bot integration disabled (MULTICA_DINGTALK_SECRET_KEY not set)")
+	}
+
 	// Slack integration. Multi-tenant B2 model (MUL-3666): Multica hosts ONE
 	// Slack app, workspaces self-install via OAuth, and inbound runs on a single
 	// deployment-level Socket Mode connection routed by team_id — replacing the
@@ -990,6 +1046,26 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// terminal failure.
 					r.Post("/lark/install/begin", h.BeginLarkInstall)
 					r.Get("/lark/install/{sessionId}/status", h.GetLarkInstallStatus)
+				})
+
+				// DingTalk bot installations. Same member/admin split as
+				// Lark: listing is member-visible so the Integrations tab
+				// renders connection state for everyone; install / revoke
+				// require admin.
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
+					r.Get("/dingtalk/installations", h.ListDingTalkInstallations)
+				})
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
+					r.Delete("/dingtalk/installations/{installationId}", h.RevokeDingTalkInstallation)
+					// Scan-to-create device flow. Begin opens a new
+					// registration session against DingTalk and returns
+					// the QR-code URL; the frontend dialog then polls
+					// /install/{sessionId}/status until success or
+					// terminal failure.
+					r.Post("/dingtalk/install/begin", h.BeginDingTalkInstall)
+					r.Get("/dingtalk/install/{sessionId}/status", h.GetDingTalkInstallStatus)
 				})
 
 				// Slack integration (MUL-3666). Same admin/member split as
