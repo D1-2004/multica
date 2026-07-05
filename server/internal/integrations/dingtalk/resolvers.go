@@ -26,11 +26,13 @@ const originDingTalkChat = "dingtalk_chat"
 // NewDingTalkResolverSet assembles the DingTalk ResolverSet over the
 // generated queries + a tx starter (for the shared session service). The
 // replier delivers the outbound binding-prompt / status / issue-created
-// notices; pass nil to disable them.
-func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier) engine.ResolverSet {
+// notices; typing drives the "processing" emotion on ingested messages;
+// auto resolves unbound org members through the corp directory. Each is
+// optional — pass nil to disable.
+func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing engine.TypingNotifier, auto *AutoBinder) engine.ResolverSet {
 	return engine.ResolverSet{
 		Installation: &installationResolver{q: q},
-		Identity:     &identityResolver{q: q},
+		Identity:     &identityResolver{q: q, auto: auto},
 		Dedup:        &deduper{q: q},
 		Session: &sessionBinder{session: engine.NewChatSession(q, tx, TypeDingtalk, engine.SessionTitles{
 			Group:    "DingTalk group chat",
@@ -39,6 +41,7 @@ func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.O
 		})},
 		Audit:      &auditor{q: q},
 		Replier:    replier,
+		Typing:     typing,
 		OriginType: originDingTalkChat,
 	}
 }
@@ -117,7 +120,19 @@ func (r *installationResolver) ResolveInstallation(ctx context.Context, msg chan
 
 // ---- identity ----
 
-type identityResolver struct{ q *db.Queries }
+// identityQueries is the narrow DB surface the resolver needs. *db.Queries
+// satisfies it.
+type identityQueries interface {
+	GetChannelUserBindingByUserID(ctx context.Context, arg db.GetChannelUserBindingByUserIDParams) (db.ChannelUserBinding, error)
+	GetMemberByUserAndWorkspace(ctx context.Context, arg db.GetMemberByUserAndWorkspaceParams) (db.Member, error)
+}
+
+type identityResolver struct {
+	q identityQueries
+	// auto resolves unbound senders through the corp directory; nil keeps
+	// the explicit bind-prompt flow as the only path.
+	auto *AutoBinder
+}
 
 func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) (engine.ResolvedIdentity, error) {
 	binding, err := r.q.GetChannelUserBindingByUserID(ctx, db.GetChannelUserBindingByUserIDParams{
@@ -126,6 +141,9 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			if r.auto != nil {
+				return r.auto.Resolve(ctx, inst, msg)
+			}
 			return engine.ResolvedIdentity{}, engine.ErrSenderUnbound
 		}
 		return engine.ResolvedIdentity{}, err
@@ -207,6 +225,36 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 		MessageID:   p.Message.MessageID,
 		ClaimToken:  p.ClaimToken,
 	})
+}
+
+// ---- typing indicator ----
+
+// dingtalkTypingNotifier adapts TypingIndicatorManager to the engine's
+// TypingNotifier seam. Mirrors lark's feishuTypingNotifier.
+type dingtalkTypingNotifier struct{ mgr *TypingIndicatorManager }
+
+// NewTypingNotifier wraps the manager for the ResolverSet.
+func NewTypingNotifier(mgr *TypingIndicatorManager) engine.TypingNotifier {
+	return &dingtalkTypingNotifier{mgr: mgr}
+}
+
+func (n *dingtalkTypingNotifier) OnIngested(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, sessionID pgtype.UUID) {
+	instRow, ok := inst.Platform.(db.ChannelInstallation)
+	if !ok {
+		return
+	}
+	raw, _ := decodeDingTalkRaw(msg) // best-effort; a decode miss just skips the age guard
+	n.mgr.Add(ctx, instRow, sessionID, EmotionTarget{
+		OpenConversationID: msg.Source.ChatID,
+		OpenMsgID:          msg.MessageID,
+	}, raw.CreateAt)
+}
+
+// OnSettled clears the emotion when the run trigger enqueued no task
+// (agent offline / archived, or an enqueue failure) — the bus-driven
+// clear on chat-done / task-failed never fires for those.
+func (n *dingtalkTypingNotifier) OnSettled(ctx context.Context, sessionID pgtype.UUID) {
+	n.mgr.Clear(ctx, sessionID)
 }
 
 // ---- audit ----

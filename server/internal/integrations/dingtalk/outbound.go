@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -35,20 +36,26 @@ type Outbound struct {
 	q         outboundQueries
 	decrypt   Decrypter
 	messenger *RobotMessenger
+	typing    *TypingIndicatorManager
 	logger    *slog.Logger
 }
 
-// NewOutbound builds the DingTalk outbound subscriber.
-func NewOutbound(q outboundQueries, decrypt Decrypter, messenger *RobotMessenger, logger *slog.Logger) *Outbound {
+// NewOutbound builds the DingTalk outbound subscriber. typing is the
+// "processing" emotion manager to clear before the reply lands; nil
+// disables the clear.
+func NewOutbound(q outboundQueries, decrypt Decrypter, messenger *RobotMessenger, typing *TypingIndicatorManager, logger *slog.Logger) *Outbound {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Outbound{q: q, decrypt: decrypt, messenger: messenger, logger: logger}
+	return &Outbound{q: q, decrypt: decrypt, messenger: messenger, typing: typing, logger: logger}
 }
 
-// Register subscribes to the chat-done event on the bus.
+// Register subscribes to the chat-done and task-failed events on the bus:
+// chat-done delivers the reply, task-failed only clears the "processing"
+// emotion (there is no failure reply on this channel).
 func (o *Outbound) Register(bus *events.Bus) {
 	bus.Subscribe(protocol.EventChatDone, o.handleEvent)
+	bus.Subscribe(protocol.EventTaskFailed, o.handleEvent)
 }
 
 func (o *Outbound) handleEvent(e events.Event) {
@@ -63,10 +70,19 @@ func (o *Outbound) handleEvent(e events.Event) {
 }
 
 func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
-	sessionID, err := util.ParseUUID(e.ChatSessionID)
-	if err != nil || !sessionID.Valid {
+	sessionID := sessionIDFromEvent(e)
+	if !sessionID.Valid {
 		// Issue / autopilot tasks carry no chat_session.
 		return nil
+	}
+	// Clear the "processing" emotion before the reply is visible so the
+	// user sees a clean transition. Best-effort and a no-op for sessions
+	// with no tracked emotion (other channels, task-failed after settle).
+	if o.typing != nil {
+		o.typing.Clear(ctx, sessionID)
+	}
+	if e.Type != protocol.EventChatDone {
+		return nil // task-failed: the clear above is the whole job
 	}
 	binding, err := o.q.GetChannelChatSessionBindingBySession(ctx, db.GetChannelChatSessionBindingBySessionParams{
 		ChatSessionID: sessionID,
@@ -115,6 +131,30 @@ func outboundTarget(b db.ChannelChatSessionBinding) RobotTarget {
 		}
 	}
 	return RobotTarget{OpenConversationID: b.ChannelChatID}
+}
+
+// sessionIDFromEvent recovers the chat session id from a bus event. The
+// top-level scope hint is only stamped on chat:done; task:failed goes
+// through broadcastTaskEvent, which carries chat_session_id solely inside
+// the payload map — so fall back to the payload like lark's
+// taskAndSessionFromEvent does.
+func sessionIDFromEvent(e events.Event) pgtype.UUID {
+	if id, err := util.ParseUUID(e.ChatSessionID); err == nil && id.Valid {
+		return id
+	}
+	switch p := e.Payload.(type) {
+	case map[string]any:
+		if s, _ := p["chat_session_id"].(string); s != "" {
+			if id, err := util.ParseUUID(s); err == nil {
+				return id
+			}
+		}
+	case protocol.ChatDonePayload:
+		if id, err := util.ParseUUID(p.ChatSessionID); err == nil {
+			return id
+		}
+	}
+	return pgtype.UUID{}
 }
 
 // chatDoneContent extracts the reply text from an EventChatDone payload

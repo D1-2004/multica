@@ -41,7 +41,11 @@ import { useT } from "../../i18n";
 // The DingTalk developer console where installed apps are managed
 // (credentials, permissions, release). The scan-to-create flow does not
 // return a console deep link per app, so we link to the console home.
-const DINGTALK_DEV_CONSOLE = "https://open-dev.dingtalk.com";
+/** Deep link into the dev console's enterprise internal-app list — the
+ * page the scan-created bot app lives on. A per-app detail link needs the
+ * console's numeric appId, which the device flow does not return, so the
+ * list page is the closest stable target. */
+const DINGTALK_DEV_CONSOLE = "https://open-dev.dingtalk.com/fe/app#/corp/app";
 
 // DingTalkTab is the workspace settings panel for DingTalk bot
 // installations, created through the scan-to-create device flow

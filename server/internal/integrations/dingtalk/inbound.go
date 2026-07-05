@@ -54,6 +54,9 @@ type dingtalkRawEvent struct {
 	SenderNick                string `json:"sender_nick,omitempty"`
 	ConversationTitle         string `json:"conversation_title,omitempty"`
 	Msgtype                   string `json:"msgtype,omitempty"`
+	// CreateAt is the callback's epoch-millisecond send time; the typing
+	// indicator uses it to skip stale redeliveries after a reconnect.
+	CreateAt int64 `json:"create_at,omitempty"`
 }
 
 // inboundFromBotCallback normalizes one bot-message callback. ok=false
@@ -82,6 +85,7 @@ func inboundFromBotCallback(data botCallbackData, clientID string) (channel.Inbo
 		SenderNick:                data.SenderNick,
 		ConversationTitle:         data.ConversationTitle,
 		Msgtype:                   data.Msgtype,
+		CreateAt:                  data.CreateAt,
 	})
 	msgType := channel.MsgTypeText
 	if data.Msgtype != "text" && data.Msgtype != "" {
