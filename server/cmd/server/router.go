@@ -534,7 +534,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// active dingtalk installation; the ResolverSet runs the shared
 				// inbound pipeline (identity binding, dedup, chat session,
 				// /issue, run trigger) over the generic channel_* tables.
-				dtMessenger := dingtalk.NewRobotMessenger(os.Getenv("DINGTALK_OPENAPI_BASE"), nil)
+				dtMessenger := dingtalk.NewRobotMessenger(os.Getenv("DINGTALK_OPENAPI_BASE"), os.Getenv("DINGTALK_OAPI_BASE"), nil)
 				dtBindingSvc := dingtalk.NewBindingTokenService(queries, pool)
 				h.DingTalkBindingTokens = dtBindingSvc
 				dtReplier := dingtalk.NewOutboundReplier(dingtalk.OutboundReplierConfig{
@@ -544,8 +544,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					AppURL: appURLFromEnv(),
 					Logger: slog.Default(),
 				})
-				channelRouter.Register(dingtalk.TypeDingtalk, dingtalk.NewDingTalkResolverSet(queries, pool, dtReplier))
-				dingtalk.NewOutbound(queries, box.Open, dtMessenger, slog.Default()).Register(bus)
+				// "Processing" emotion on ingested messages, cleared when the
+				// reply lands (chat-done / task-failed via Outbound below).
+				dtTyping := dingtalk.NewTypingIndicatorManager(dtMessenger, box.Open, queries, slog.Default())
+				// Directory auto-bind: an unbound org member is matched to
+				// their Multica account by unionid, so the explicit
+				// "click to bind" prompt is only the fallback.
+				dtAutoBinder := dingtalk.NewAutoBinder(queries, dtMessenger, box.Open, slog.Default())
+				channelRouter.Register(dingtalk.TypeDingtalk, dingtalk.NewDingTalkResolverSet(queries, pool, dtReplier, dingtalk.NewTypingNotifier(dtTyping), dtAutoBinder))
+				dingtalk.NewOutbound(queries, box.Open, dtMessenger, dtTyping, slog.Default()).Register(bus)
 				dingtalk.RegisterDingTalk(channelRegistry, dingtalk.ChannelDeps{
 					Decrypt:     box.Open,
 					Logger:      slog.Default(),
