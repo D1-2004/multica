@@ -527,6 +527,29 @@ func (q *Queries) DeleteChannelOutboundCardMessagesBySession(ctx context.Context
 	return err
 }
 
+const deleteChannelUserBinding = `-- name: DeleteChannelUserBinding :execrows
+DELETE FROM channel_user_binding
+WHERE installation_id = $1 AND channel_user_id = $2
+`
+
+type DeleteChannelUserBindingParams struct {
+	InstallationID pgtype.UUID `json:"installation_id"`
+	ChannelUserID  string      `json:"channel_user_id"`
+}
+
+// The explicit self-unbind (/unbind chat command): drop the sender's own
+// binding on one installation. Keyed the same way as the inbound identity
+// lookup, so the sender can only ever detach the platform identity they
+// are speaking from — no cross-user reach. Returns the row count so the
+// caller can tell "unbound" from "was never bound".
+func (q *Queries) DeleteChannelUserBinding(ctx context.Context, arg DeleteChannelUserBindingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteChannelUserBinding, arg.InstallationID, arg.ChannelUserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteChannelUserBindingsByInstallation = `-- name: DeleteChannelUserBindingsByInstallation :exec
 DELETE FROM channel_user_binding
 WHERE installation_id = $1

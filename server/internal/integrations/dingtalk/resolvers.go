@@ -42,6 +42,7 @@ func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.O
 		Audit:      &auditor{q: q},
 		Replier:    replier,
 		Typing:     typing,
+		Unbind:     &unbinder{q: q},
 		OriginType: originDingTalkChat,
 	}
 }
@@ -52,6 +53,7 @@ var (
 	_ engine.Deduper              = (*deduper)(nil)
 	_ engine.SessionBinder        = (*sessionBinder)(nil)
 	_ engine.Auditor              = (*auditor)(nil)
+	_ engine.SenderUnbinder       = (*unbinder)(nil)
 )
 
 // dingtalkBindingConfig is the opaque outbound routing persisted on the
@@ -225,6 +227,30 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 		MessageID:   p.Message.MessageID,
 		ClaimToken:  p.ClaimToken,
 	})
+}
+
+// ---- unbind ----
+
+// unbindQueries is the narrow DB surface the unbinder needs. *db.Queries
+// satisfies it.
+type unbindQueries interface {
+	DeleteChannelUserBinding(ctx context.Context, arg db.DeleteChannelUserBindingParams) (int64, error)
+}
+
+// unbinder implements the /unbind command: delete the sender's own binding
+// on this installation. The key is the same platform sender id the identity
+// lookup uses, so the reach is exactly "the identity you are speaking from".
+type unbinder struct{ q unbindQueries }
+
+func (r *unbinder) UnbindSender(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) (bool, error) {
+	deleted, err := r.q.DeleteChannelUserBinding(ctx, db.DeleteChannelUserBindingParams{
+		InstallationID: inst.ID,
+		ChannelUserID:  msg.Source.SenderID,
+	})
+	if err != nil {
+		return false, err
+	}
+	return deleted > 0, nil
 }
 
 // ---- typing indicator ----

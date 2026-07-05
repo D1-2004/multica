@@ -36,6 +36,9 @@ import (
 const (
 	agentOfflineText  = "⚠️ 智能体当前离线。你的消息已收到，上线后会继续处理。"
 	agentArchivedText = "⚠️ 该智能体已归档，无法响应。请联系工作区管理员。"
+	agentBusyText     = "⏳ 智能体正在处理其他任务，你的消息已排队，空出来后会立即处理。"
+	unboundText       = "✅ 已解除你的钉钉账号与 Multica 的绑定。之后再发消息会重新识别身份。"
+	unboundMissText   = "当前钉钉账号没有绑定记录，无需解绑。"
 )
 
 // bindingMinter is the binding-token surface the replier needs.
@@ -112,6 +115,20 @@ func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstall
 	case engine.OutcomeAgentArchived:
 		if err := r.post(ctx, msg, agentArchivedText); err != nil {
 			r.logger.WarnContext(ctx, "dingtalk replier: archived notice failed",
+				"installation_id", util.UUIDToString(inst.ID), "error", err)
+		}
+	case engine.OutcomeAgentBusy:
+		if err := r.post(ctx, msg, agentBusyText); err != nil {
+			r.logger.WarnContext(ctx, "dingtalk replier: busy notice failed",
+				"installation_id", util.UUIDToString(inst.ID), "error", err)
+		}
+	case engine.OutcomeUnbound:
+		text := unboundText
+		if !res.UnbindExisted {
+			text = unboundMissText
+		}
+		if err := r.post(ctx, msg, text); err != nil {
+			r.logger.WarnContext(ctx, "dingtalk replier: unbind confirmation failed",
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
 	case engine.OutcomeIngested:
