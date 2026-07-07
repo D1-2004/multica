@@ -57,6 +57,10 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 	metadata, err := json.Marshal(map[string]any{
 		"kind":            service.FCE2BMetadataKind,
 		"template":        h.cfg.FCE2B.Template,
+		"api_url":         h.cfg.FCE2B.APIURL,
+		"domain":          h.cfg.FCE2B.Domain,
+		"model_base_url":  h.cfg.FCE2B.LLMBaseURL,
+		"model":           h.cfg.FCE2B.LLMModel,
 		"timeout_seconds": h.cfg.FCE2B.TimeoutSeconds,
 		"created_by":      uuidToString(member.UserID),
 		"runner":          service.FCE2BRunnerCommand,

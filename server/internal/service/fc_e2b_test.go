@@ -61,6 +61,11 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		Template:            "multica-fc-hermes-v1",
 		ServerURL:           "https://api.multica.test",
 		APIKey:              "e2b_secret",
+		APIURL:              "https://api.cn-beijing.e2b.fc.aliyuncs.com",
+		Domain:              "cn-beijing.e2b.fc.aliyuncs.com",
+		LLMBaseURL:          "https://maas-api.alibaba-inc.com/v1",
+		LLMAPIKey:           "maas_secret",
+		LLMModel:            "qwen3.7-max",
 		CLIPath:             "/usr/local/bin/e2b",
 		TimeoutSeconds:      1800,
 		SandboxReadyTimeout: time.Second,
@@ -89,7 +94,11 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 	if got := len(runner.calls); got != 3 {
 		t.Fatalf("runner calls = %d, want 3", got)
 	}
-	wantEnv := []string{"E2B_API_KEY=e2b_secret"}
+	wantEnv := []string{
+		"E2B_API_KEY=e2b_secret",
+		"E2B_API_URL=https://api.cn-beijing.e2b.fc.aliyuncs.com",
+		"E2B_DOMAIN=cn-beijing.e2b.fc.aliyuncs.com",
+	}
 	for i, call := range runner.calls {
 		if call.name != "/usr/local/bin/e2b" {
 			t.Fatalf("call %d name = %q", i, call.name)
@@ -120,8 +129,11 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		"-e", "MULTICA_RUNTIME_ID=11111111-1111-1111-1111-111111111111",
 		"-e", "MULTICA_DAEMON_ID=fc-e2b:ws:fc-hermes",
 		"-e", "MULTICA_AGENT_RUNTIME_NAME=FC-Hermes",
+		"-e", "OPENAI_BASE_URL=https://maas-api.alibaba-inc.com/v1",
+		"-e", "OPENAI_API_KEY=maas_secret",
+		"-e", "OPENAI_MODEL=qwen3.7-max",
 		"sbx_123",
-		"multica", "daemon", "run-once",
+		"multica-fc-hermes-runner",
 		"--runtime-id", "11111111-1111-1111-1111-111111111111",
 		"--provider", "hermes",
 	}
