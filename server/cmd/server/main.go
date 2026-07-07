@@ -372,6 +372,7 @@ func main() {
 	taskSvc := service.NewTaskService(queries, pool, hub, bus, daemonWakeup)
 	taskSvc.Analytics = analyticsClient
 	taskSvc.Metrics = businessMetrics
+	taskSvc.RuntimeLauncher = service.NewFCE2BLauncher(queries, taskSvc, service.FCE2BConfigFromEnv(), nil)
 	autopilotSvc := service.NewAutopilotService(queries, pool, bus, taskSvc)
 	registerAutopilotListeners(bus, autopilotSvc)
 

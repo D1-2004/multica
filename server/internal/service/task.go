@@ -53,6 +53,9 @@ type TaskService struct {
 	// exactly as before. Wired in router.go after composiointeg.NewService
 	// succeeds; the concrete type is *composio.Service.
 	Composio ComposioOverlayBuilder
+	// RuntimeLauncher is optional. When set, it may start server-managed
+	// runtimes for a newly queued task; local runtimes simply no-op there.
+	RuntimeLauncher TaskRuntimeLauncher
 
 	analyticsContextMu    sync.Mutex
 	analyticsContextCache map[string]analytics.TaskContext
@@ -82,6 +85,10 @@ type ComposioOverlayBuilder interface {
 
 type TaskWakeupNotifier interface {
 	NotifyTaskAvailable(runtimeID, taskID string)
+}
+
+type TaskRuntimeLauncher interface {
+	LaunchTask(ctx context.Context, task db.AgentTaskQueue) error
 }
 
 // triggerSummaryMaxLen caps the snapshot length so the row stays cheap to
@@ -2880,6 +2887,15 @@ func priorityToInt(p string) int32 {
 func (s *TaskService) NotifyTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
 	s.captureTaskQueued(ctx, task)
 	s.notifyTaskAvailable(task)
+	if s.RuntimeLauncher == nil {
+		return
+	}
+	taskCopy := task
+	go func() {
+		if err := s.RuntimeLauncher.LaunchTask(context.Background(), taskCopy); err != nil {
+			slog.Warn("runtime launcher failed after task enqueue", "task_id", util.UUIDToString(taskCopy.ID), "error", err)
+		}
+	}()
 }
 
 // notifyTaskAvailable runs after a task has been inserted: bumps the

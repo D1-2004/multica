@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -16,6 +17,15 @@ type stubWakeup struct {
 
 func (s *stubWakeup) NotifyTaskAvailable(runtimeID, taskID string) {
 	s.calls = append(s.calls, struct{ runtimeID, taskID string }{runtimeID, taskID})
+}
+
+type stubRuntimeLauncher struct {
+	calls chan db.AgentTaskQueue
+}
+
+func (s *stubRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue) error {
+	s.calls <- task
+	return nil
 }
 
 // TestNotifyTaskAvailable_BumpsBeforeWakeup pins the contract noted in
@@ -99,5 +109,36 @@ func TestNotifyTaskAvailable_InvalidWithoutRuntimeIsNoOp(t *testing.T) {
 	}
 	if got := len(wakeup.calls); got != 0 {
 		t.Fatalf("expected 0 wakeup calls when RuntimeID is invalid, got %d", got)
+	}
+}
+
+func TestNotifyTaskEnqueued_InvokesRuntimeLauncher(t *testing.T) {
+	rdb := newRedisTestClient(t)
+	cache := NewEmptyClaimCache(rdb)
+	wakeup := &stubWakeup{}
+	launcher := &stubRuntimeLauncher{calls: make(chan db.AgentTaskQueue, 1)}
+
+	svc := &TaskService{
+		EmptyClaim:      cache,
+		Wakeup:          wakeup,
+		RuntimeLauncher: launcher,
+	}
+
+	task := db.AgentTaskQueue{
+		ID:        testUUID(10),
+		RuntimeID: testUUID(11),
+	}
+	svc.NotifyTaskEnqueued(context.Background(), task)
+
+	select {
+	case got := <-launcher.calls:
+		if util.UUIDToString(got.ID) != util.UUIDToString(task.ID) {
+			t.Fatalf("launcher task id = %q, want %q", util.UUIDToString(got.ID), util.UUIDToString(task.ID))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runtime launcher was not invoked")
+	}
+	if got := len(wakeup.calls); got != 1 {
+		t.Fatalf("expected wakeup to remain wired, got %d calls", got)
 	}
 }

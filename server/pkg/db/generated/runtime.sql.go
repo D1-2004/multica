@@ -705,6 +705,8 @@ UPDATE agent_runtime
 SET status = 'offline', updated_at = now()
 WHERE status = 'online'
   AND id = ANY($1::uuid[])
+  AND runtime_mode <> 'cloud'
+  AND COALESCE(metadata->>'kind', '') <> 'fc-e2b'
   AND last_seen_at < now() - make_interval(secs => $2::double precision)
 RETURNING id, workspace_id, owner_id, daemon_id, provider
 `
@@ -843,6 +845,8 @@ func (q *Queries) RecordRuntimeLegacyDaemonID(ctx context.Context, arg RecordRun
 const selectStaleOnlineRuntimes = `-- name: SelectStaleOnlineRuntimes :many
 SELECT id, workspace_id, owner_id, daemon_id, provider FROM agent_runtime
 WHERE status = 'online'
+  AND runtime_mode <> 'cloud'
+  AND COALESCE(metadata->>'kind', '') <> 'fc-e2b'
   AND last_seen_at < now() - make_interval(secs => $1::double precision)
 `
 
@@ -1296,6 +1300,85 @@ func (q *Queries) UpsertAgentRuntimeWithProfile(ctx context.Context, arg UpsertA
 		&i.ProfileID,
 		&i.CustomName,
 		&i.Inserted,
+	)
+	return i, err
+}
+
+const upsertCloudAgentRuntime = `-- name: UpsertCloudAgentRuntime :one
+INSERT INTO agent_runtime (
+    workspace_id,
+    daemon_id,
+    name,
+    runtime_mode,
+    provider,
+    status,
+    device_info,
+    metadata,
+    owner_id,
+    visibility,
+    last_seen_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+ON CONFLICT (workspace_id, daemon_id, provider) WHERE profile_id IS NULL
+DO UPDATE SET
+    name = EXCLUDED.name,
+    runtime_mode = EXCLUDED.runtime_mode,
+    status = EXCLUDED.status,
+    device_info = EXCLUDED.device_info,
+    metadata = EXCLUDED.metadata,
+    owner_id = EXCLUDED.owner_id,
+    visibility = EXCLUDED.visibility,
+    last_seen_at = now(),
+    updated_at = now()
+RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, visibility, profile_id
+`
+
+type UpsertCloudAgentRuntimeParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	DaemonID    pgtype.Text `json:"daemon_id"`
+	Name        string      `json:"name"`
+	RuntimeMode string      `json:"runtime_mode"`
+	Provider    string      `json:"provider"`
+	Status      string      `json:"status"`
+	DeviceInfo  string      `json:"device_info"`
+	Metadata    []byte      `json:"metadata"`
+	OwnerID     pgtype.UUID `json:"owner_id"`
+	Visibility  string      `json:"visibility"`
+}
+
+// Cloud runtimes are synthetic, server-owned runtime records. They are
+// permanently online from Multica's perspective and do not heartbeat like
+// local daemons, so they use an explicit visibility and owner on creation.
+func (q *Queries) UpsertCloudAgentRuntime(ctx context.Context, arg UpsertCloudAgentRuntimeParams) (AgentRuntime, error) {
+	row := q.db.QueryRow(ctx, upsertCloudAgentRuntime,
+		arg.WorkspaceID,
+		arg.DaemonID,
+		arg.Name,
+		arg.RuntimeMode,
+		arg.Provider,
+		arg.Status,
+		arg.DeviceInfo,
+		arg.Metadata,
+		arg.OwnerID,
+		arg.Visibility,
+	)
+	var i AgentRuntime
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.DaemonID,
+		&i.Name,
+		&i.RuntimeMode,
+		&i.Provider,
+		&i.Status,
+		&i.DeviceInfo,
+		&i.Metadata,
+		&i.LastSeenAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerID,
+		&i.LegacyDaemonID,
+		&i.Visibility,
+		&i.ProfileID,
 	)
 	return i, err
 }

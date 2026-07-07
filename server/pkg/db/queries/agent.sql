@@ -625,6 +625,23 @@ SET status = 'failed',
 WHERE id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
 RETURNING *;
 
+-- name: FailAgentTaskRuntimeStart :one
+-- Marks a task as failed when a server-managed cloud runtime could not start
+-- the one-shot runner. The runtime_id predicate prevents a stale launch
+-- goroutine from failing a task that has been moved/retried onto another
+-- runtime, and the status set is deliberately narrower than FailAgentTask:
+-- this path runs before the daemon owns the task.
+UPDATE agent_task_queue
+SET status = 'failed',
+    completed_at = now(),
+    error = @error,
+    failure_reason = 'runtime_start_failed',
+    prepare_lease_expires_at = NULL
+WHERE id = @id
+  AND runtime_id = @runtime_id
+  AND status IN ('queued', 'dispatched')
+RETURNING *;
+
 -- name: UpdateAgentTaskSession :exec
 -- Pins the resume pointer mid-flight so a daemon crash leaves a usable
 -- session_id/work_dir on the task row. No-op if the task is no longer
