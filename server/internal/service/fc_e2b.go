@@ -26,7 +26,7 @@ import (
 const (
 	FCE2BMetadataKind  = "fc-e2b"
 	FCE2BProvider      = "hermes"
-	FCE2BRunnerCommand = "multica daemon run-once"
+	FCE2BRunnerCommand = "multica-fc-hermes-runner"
 
 	defaultFCE2BCLIPath             = "e2b"
 	defaultFCE2BTimeoutSeconds      = 3600
@@ -39,6 +39,11 @@ type FCE2BConfig struct {
 	Template            string
 	ServerURL           string
 	APIKey              string
+	APIURL              string
+	Domain              string
+	LLMBaseURL          string
+	LLMAPIKey           string
+	LLMModel            string
 	CLIPath             string
 	TimeoutSeconds      int
 	SandboxReadyTimeout time.Duration
@@ -51,6 +56,11 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		Template:            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TEMPLATE")),
 		ServerURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_SERVER_URL")), "/"),
 		APIKey:              strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_KEY")),
+		APIURL:              strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_URL")), "/"),
+		Domain:              strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),
+		LLMBaseURL:          strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_BASE_URL")), "/"),
+		LLMAPIKey:           strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_API_KEY")),
+		LLMModel:            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_MODEL")),
 		CLIPath:             strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_CLI_PATH")),
 		TimeoutSeconds:      defaultFCE2BTimeoutSeconds,
 		SandboxReadyTimeout: defaultFCE2BSandboxReadyTimeout,
@@ -95,6 +105,21 @@ func (c FCE2BConfig) Validate() error {
 	}
 	if strings.TrimSpace(c.APIKey) == "" {
 		missing = append(missing, "MULTICA_FC_E2B_API_KEY")
+	}
+	if strings.TrimSpace(c.APIURL) == "" {
+		missing = append(missing, "MULTICA_FC_E2B_API_URL")
+	}
+	if strings.TrimSpace(c.Domain) == "" {
+		missing = append(missing, "MULTICA_FC_E2B_DOMAIN")
+	}
+	if strings.TrimSpace(c.LLMBaseURL) == "" {
+		missing = append(missing, "MULTICA_FC_E2B_OPENAI_BASE_URL")
+	}
+	if strings.TrimSpace(c.LLMAPIKey) == "" {
+		missing = append(missing, "MULTICA_FC_E2B_OPENAI_API_KEY")
+	}
+	if strings.TrimSpace(c.LLMModel) == "" {
+		missing = append(missing, "MULTICA_FC_E2B_OPENAI_MODEL")
 	}
 	if strings.TrimSpace(c.CLIPath) == "" {
 		missing = append(missing, "MULTICA_FC_E2B_CLI_PATH")
@@ -260,8 +285,11 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "MULTICA_RUNTIME_ID=" + runtimeID,
 		"-e", "MULTICA_DAEMON_ID=" + rt.DaemonID.String,
 		"-e", "MULTICA_AGENT_RUNTIME_NAME=" + rt.Name,
+		"-e", "OPENAI_BASE_URL=" + l.Config.LLMBaseURL,
+		"-e", "OPENAI_API_KEY=" + l.Config.LLMAPIKey,
+		"-e", "OPENAI_MODEL=" + l.Config.LLMModel,
 		sandboxID,
-		"multica", "daemon", "run-once",
+		FCE2BRunnerCommand,
 		"--runtime-id", runtimeID,
 		"--provider", FCE2BProvider,
 	}
@@ -272,7 +300,11 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 }
 
 func (l *FCE2BLauncher) e2bEnv() []string {
-	return []string{"E2B_API_KEY=" + l.Config.APIKey}
+	return []string{
+		"E2B_API_KEY=" + l.Config.APIKey,
+		"E2B_API_URL=" + l.Config.APIURL,
+		"E2B_DOMAIN=" + l.Config.Domain,
+	}
 }
 
 func (l *FCE2BLauncher) failLaunch(ctx context.Context, task db.AgentTaskQueue, msg string) error {
