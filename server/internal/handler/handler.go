@@ -86,6 +86,7 @@ type Config struct {
 	// return 503 instead of attempting to dial a hard-coded private service.
 	CloudRuntimeFleetURL     string
 	CloudRuntimeFleetTimeout time.Duration
+	FCE2B                    service.FCE2BConfig
 	AttachmentDownloadMode   string
 	AttachmentDownloadURLTTL time.Duration
 	// AttachmentFrameAncestors are trusted browser origins allowed to embed
@@ -258,6 +259,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 
 	taskSvc := service.NewTaskService(queries, txStarter, hub, bus, daemonHub)
 	taskSvc.Analytics = analyticsClient
+	taskSvc.RuntimeLauncher = service.NewFCE2BLauncher(queries, taskSvc, cfg.FCE2B, nil)
 	return &Handler{
 		Queries:               queries,
 		DB:                    executor,

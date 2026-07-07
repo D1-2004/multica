@@ -48,6 +48,13 @@ var daemonStatusCmd = &cobra.Command{
 	RunE:  runDaemonStatus,
 }
 
+var daemonRunOnceCmd = &cobra.Command{
+	Use:    "run-once",
+	Short:  "Claim and run one task without registering or heartbeating",
+	Hidden: true,
+	RunE:   runDaemonRunOnce,
+}
+
 var daemonRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the running daemon (stop + start)",
@@ -95,6 +102,14 @@ func init() {
 
 	daemonStatusCmd.Flags().String("output", "table", "Output format: table or json")
 
+	rof := daemonRunOnceCmd.Flags()
+	rof.String("runtime-id", "", "Runtime ID to claim for (env: MULTICA_RUNTIME_ID)")
+	rof.String("daemon-token", "", "Daemon token to authenticate with (env: MULTICA_DAEMON_TOKEN)")
+	rof.String("daemon-id", "", "Daemon identifier (env: MULTICA_DAEMON_ID)")
+	rof.String("provider", "hermes", "Agent provider")
+	rof.String("runtime-name", "", "Runtime display name (env: MULTICA_AGENT_RUNTIME_NAME)")
+	rof.Int("health-port", 0, "Health server port")
+
 	// restart shares all the same flags as start
 	rf := daemonRestartCmd.Flags()
 	rf.Bool("foreground", false, "Run in the foreground instead of background")
@@ -121,6 +136,7 @@ func init() {
 	daemonCmd.AddCommand(daemonStopCmd)
 	daemonCmd.AddCommand(daemonRestartCmd)
 	daemonCmd.AddCommand(daemonStatusCmd)
+	daemonCmd.AddCommand(daemonRunOnceCmd)
 	daemonCmd.AddCommand(daemonLogsCmd)
 	daemonCmd.AddCommand(daemonDiskUsageCmd)
 }
@@ -465,6 +481,74 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	}
 
 	return nil
+}
+
+func runDaemonRunOnce(cmd *cobra.Command, _ []string) error {
+	util.EnsureHiddenConsole()
+
+	profile := resolveProfile(cmd)
+	serverURL := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL", "")
+	if serverURL == "" {
+		return fmt.Errorf("MULTICA_SERVER_URL is required")
+	}
+	runtimeID := cli.FlagOrEnv(cmd, "runtime-id", "MULTICA_RUNTIME_ID", "")
+	if runtimeID == "" {
+		return fmt.Errorf("MULTICA_RUNTIME_ID is required")
+	}
+	daemonToken := cli.FlagOrEnv(cmd, "daemon-token", "MULTICA_DAEMON_TOKEN", "")
+	if daemonToken == "" {
+		return fmt.Errorf("MULTICA_DAEMON_TOKEN is required")
+	}
+	provider, _ := cmd.Flags().GetString("provider")
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return fmt.Errorf("provider is required")
+	}
+	runtimeName := cli.FlagOrEnv(cmd, "runtime-name", "MULTICA_AGENT_RUNTIME_NAME", "")
+	if runtimeName == "" {
+		runtimeName = provider
+	}
+	healthPort, _ := cmd.Flags().GetInt("health-port")
+	if healthPort <= 0 {
+		healthPort = healthPortForProfile(profile)
+	}
+
+	overrides := daemon.Overrides{
+		ServerURL:          serverURL,
+		DaemonID:           cli.FlagOrEnv(cmd, "daemon-id", "MULTICA_DAEMON_ID", ""),
+		RuntimeName:        runtimeName,
+		Profile:            profile,
+		HealthPort:         healthPort,
+		MaxConcurrentTasks: 1,
+		DisableAutoUpdate:  true,
+	}
+	cfg, err := daemon.LoadConfig(overrides)
+	if err != nil {
+		return err
+	}
+	cfg.CLIVersion = version
+	cfg.LaunchedBy = "fc-e2b"
+
+	ctx, stop := notifyShutdownContext(context.Background())
+	defer stop()
+
+	logger := logger_pkg.NewLogger("daemon")
+	serverSnapshotProvider, flags, err := execenv.NewDaemonFeatureFlagServiceFromEnv(logger)
+	if err != nil {
+		return err
+	}
+	execenv.SetServerSnapshotProvider(serverSnapshotProvider)
+	execenv.SetFeatureFlags(flags)
+	defer execenv.SetServerSnapshotProvider(nil)
+	defer execenv.SetFeatureFlags(nil)
+
+	d := daemon.New(cfg, logger)
+	return d.RunOnce(ctx, daemon.RunOnceOptions{
+		RuntimeID:   runtimeID,
+		DaemonToken: daemonToken,
+		Provider:    provider,
+		RuntimeName: runtimeName,
+	})
 }
 
 // --- daemon restart ---

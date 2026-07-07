@@ -1563,6 +1563,70 @@ func (q *Queries) FailAgentTask(ctx context.Context, arg FailAgentTaskParams) (A
 	return i, err
 }
 
+const failAgentTaskRuntimeStart = `-- name: FailAgentTaskRuntimeStart :one
+UPDATE agent_task_queue
+SET status = 'failed',
+    completed_at = now(),
+    error = $1,
+    failure_reason = 'runtime_start_failed',
+    prepare_lease_expires_at = NULL
+WHERE id = $2
+  AND runtime_id = $3
+  AND status IN ('queued', 'dispatched')
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, escalation_for_task_id, fire_at
+`
+
+type FailAgentTaskRuntimeStartParams struct {
+	Error     pgtype.Text `json:"error"`
+	ID        pgtype.UUID `json:"id"`
+	RuntimeID pgtype.UUID `json:"runtime_id"`
+}
+
+// Marks a task as failed when a server-managed cloud runtime could not start
+// the one-shot runner. The runtime_id predicate prevents a stale launch
+// goroutine from failing a task that has been moved/retried onto another
+// runtime, and the status set is deliberately narrower than FailAgentTask:
+// this path runs before the daemon owns the task.
+func (q *Queries) FailAgentTaskRuntimeStart(ctx context.Context, arg FailAgentTaskRuntimeStartParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, failAgentTaskRuntimeStart, arg.Error, arg.ID, arg.RuntimeID)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+	)
+	return i, err
+}
+
 const failStaleTasks = `-- name: FailStaleTasks :many
 UPDATE agent_task_queue
 SET status = 'failed', completed_at = now(), error = 'task timed out',

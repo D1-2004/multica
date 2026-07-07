@@ -61,6 +61,36 @@ DO UPDATE SET
     updated_at = now()
 RETURNING *, (xmax = 0) AS inserted;
 
+-- name: UpsertCloudAgentRuntime :one
+-- Cloud runtimes are synthetic, server-owned runtime records. They are
+-- permanently online from Multica's perspective and do not heartbeat like
+-- local daemons, so they use an explicit visibility and owner on creation.
+INSERT INTO agent_runtime (
+    workspace_id,
+    daemon_id,
+    name,
+    runtime_mode,
+    provider,
+    status,
+    device_info,
+    metadata,
+    owner_id,
+    visibility,
+    last_seen_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+ON CONFLICT (workspace_id, daemon_id, provider) WHERE profile_id IS NULL
+DO UPDATE SET
+    name = EXCLUDED.name,
+    runtime_mode = EXCLUDED.runtime_mode,
+    status = EXCLUDED.status,
+    device_info = EXCLUDED.device_info,
+    metadata = EXCLUDED.metadata,
+    owner_id = EXCLUDED.owner_id,
+    visibility = EXCLUDED.visibility,
+    last_seen_at = now(),
+    updated_at = now()
+RETURNING *;
+
 -- name: UpsertAgentRuntimeWithProfile :one
 -- Custom-runtime registration: a daemon resolved a workspace runtime_profile's
 -- command_name on PATH and is registering an instance of it. The arbiter is the
@@ -158,6 +188,8 @@ WHERE id = $1;
 -- record means the DB row is just lagging, not actually dead).
 SELECT id, workspace_id, owner_id, daemon_id, provider FROM agent_runtime
 WHERE status = 'online'
+  AND runtime_mode <> 'cloud'
+  AND COALESCE(metadata->>'kind', '') <> 'fc-e2b'
   AND last_seen_at < now() - make_interval(secs => @stale_seconds::double precision);
 
 -- name: MarkRuntimesOfflineByIDs :many
@@ -176,6 +208,8 @@ UPDATE agent_runtime
 SET status = 'offline', updated_at = now()
 WHERE status = 'online'
   AND id = ANY(@ids::uuid[])
+  AND runtime_mode <> 'cloud'
+  AND COALESCE(metadata->>'kind', '') <> 'fc-e2b'
   AND last_seen_at < now() - make_interval(secs => @stale_seconds::double precision)
 RETURNING id, workspace_id, owner_id, daemon_id, provider;
 
