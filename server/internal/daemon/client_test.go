@@ -85,7 +85,7 @@ func TestClient_VersionOmittedWhenUnset(t *testing.T) {
 	}
 }
 
-func TestClient_ClaimTaskWithColdStartOption(t *testing.T) {
+func TestClient_ClaimTaskWithRunOnceOptions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Path; got != "/api/daemon/runtimes/runtime-1/tasks/claim" {
 			t.Fatalf("path = %q", got)
@@ -97,13 +97,16 @@ func TestClient_ClaimTaskWithColdStartOption(t *testing.T) {
 		if got, _ := body["fc_e2b_cold_start"].(bool); !got {
 			t.Fatalf("fc_e2b_cold_start = %v, want true; body=%v", body["fc_e2b_cold_start"], body)
 		}
+		if got, _ := body["target_task_id"].(string); got != "task-1" {
+			t.Fatalf("target_task_id = %q, want task-1; body=%v", got, body)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"task":null}`))
 	}))
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
-	if _, err := c.ClaimTaskWithOptions(context.Background(), "runtime-1", ClaimTaskOptions{FCE2BColdStart: true}); err != nil {
+	if _, err := c.ClaimTaskWithOptions(context.Background(), "runtime-1", ClaimTaskOptions{FCE2BColdStart: true, TargetTaskID: "task-1"}); err != nil {
 		t.Fatalf("ClaimTaskWithOptions: %v", err)
 	}
 }

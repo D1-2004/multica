@@ -144,6 +144,9 @@ import type {
   CloudRuntimeNode,
   CreateFCE2BRuntimeRequest,
   CreateCloudRuntimeNodeRequest,
+  DWSAuthProfile,
+  DWSAuthSession,
+  FCE2BTemplate,
   ListCloudRuntimeNodesParams,
 } from "../runtimes/cloud-runtime";
 import { type Logger, noopLogger } from "../logger";
@@ -985,6 +988,27 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
+  }
+
+  async listFCE2BTemplates(): Promise<FCE2BTemplate[]> {
+    return this.fetch("/api/runtimes/fc-e2b/templates");
+  }
+
+  async listDWSAuthProfiles(workspaceId: string): Promise<DWSAuthProfile[]> {
+    return this.fetch(`/api/workspaces/${workspaceId}/dws/profiles`);
+  }
+
+  async beginDWSAuth(workspaceId: string): Promise<DWSAuthSession> {
+    return this.fetch(`/api/workspaces/${workspaceId}/dws/auth/begin`, {
+      method: "POST",
+    });
+  }
+
+  async getDWSAuthStatus(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<DWSAuthSession> {
+    return this.fetch(`/api/workspaces/${workspaceId}/dws/auth/${sessionId}/status`);
   }
 
   async listCloudRuntimeNodes(

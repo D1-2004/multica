@@ -104,6 +104,7 @@ func init() {
 
 	rof := daemonRunOnceCmd.Flags()
 	rof.String("runtime-id", "", "Runtime ID to claim for (env: MULTICA_RUNTIME_ID)")
+	rof.String("target-task-id", "", "Task ID to claim for run-once (env: MULTICA_TASK_ID)")
 	rof.String("daemon-token", "", "Daemon token to authenticate with (env: MULTICA_DAEMON_TOKEN)")
 	rof.String("daemon-id", "", "Daemon identifier (env: MULTICA_DAEMON_ID)")
 	rof.String("provider", "hermes", "Agent provider")
@@ -495,6 +496,7 @@ func runDaemonRunOnce(cmd *cobra.Command, _ []string) error {
 	if runtimeID == "" {
 		return fmt.Errorf("MULTICA_RUNTIME_ID is required")
 	}
+	targetTaskID := cli.FlagOrEnv(cmd, "target-task-id", "MULTICA_TASK_ID", "")
 	daemonToken := cli.FlagOrEnv(cmd, "daemon-token", "MULTICA_DAEMON_TOKEN", "")
 	if daemonToken == "" {
 		return fmt.Errorf("MULTICA_DAEMON_TOKEN is required")
@@ -549,6 +551,7 @@ func runDaemonRunOnce(cmd *cobra.Command, _ []string) error {
 		Provider:       provider,
 		RuntimeName:    runtimeName,
 		FCE2BColdStart: strings.EqualFold(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_COLD_START")), "true") || strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_COLD_START")) == "1",
+		TargetTaskID:   targetTaskID,
 	})
 }
 

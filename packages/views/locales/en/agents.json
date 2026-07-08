@@ -250,6 +250,17 @@
     "create_failed_toast": "Failed to create agent",
     "skill_attach_failed_toast": "Agent created, but failed to attach skills: {{error}}",
     "squad_join_failed_toast": "Agent \"{{name}}\" was created but couldn't join the squad: {{error}}. You can add it manually from Members.",
+    "dws": {
+      "title": "DWS Identity",
+      "description": "This FC runtime uses the DingTalk Workspace CLI inside the sandbox. Bind a DWS login profile to this agent.",
+      "connect": "Connect DWS",
+      "loading": "Loading DWS profiles...",
+      "empty": "No DWS profile yet. Connect one first.",
+      "connected": "DWS profile connected",
+      "load_failed": "Failed to load DWS profiles",
+      "start_failed": "Failed to start DWS login",
+      "poll_failed": "Failed to check DWS login status"
+    },
     "instructions": {
       "label": "Instructions",
       "placeholder_blank": "Click to write instructions…",

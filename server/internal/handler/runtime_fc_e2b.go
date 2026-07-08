@@ -15,7 +15,32 @@ import (
 
 type createFCE2BRuntimeRequest struct {
 	Name       string `json:"name"`
+	TemplateID string `json:"template_id"`
+	Template   string `json:"template"`
 	Visibility string `json:"visibility"`
+}
+
+func (h *Handler) ListFCE2BTemplates(w http.ResponseWriter, r *http.Request) {
+	if !h.cfg.FCE2B.Enabled {
+		writeError(w, http.StatusServiceUnavailable, "FC/E2B runtime is disabled")
+		return
+	}
+	if err := h.cfg.FCE2B.ValidateTemplateAPI(); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+		return
+	}
+
+	templates, err := service.ListFCE2BTemplates(r.Context(), h.cfg.FCE2B, nil)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, templates)
 }
 
 func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
@@ -41,9 +66,27 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	templateRef := strings.TrimSpace(req.TemplateID)
+	if templateRef == "" {
+		templateRef = strings.TrimSpace(req.Template)
+	}
+	if templateRef == "" {
+		writeError(w, http.StatusBadRequest, "template_id is required")
+		return
+	}
+	templates, err := service.ListFCE2BTemplates(r.Context(), h.cfg.FCE2B, nil)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	selected, ok := selectFCE2BTemplate(templates, templateRef)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "template_id does not match an available FC/E2B template")
+		return
+	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
-		name = "FC-Hermes"
+		name = defaultFCE2BRuntimeName(selected)
 	}
 	visibility := strings.TrimSpace(req.Visibility)
 	if visibility == "" {
@@ -56,11 +99,11 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 
 	metadata, err := json.Marshal(map[string]any{
 		"kind":            service.FCE2BMetadataKind,
-		"template":        h.cfg.FCE2B.Template,
-		"api_url":         h.cfg.FCE2B.APIURL,
-		"domain":          h.cfg.FCE2B.Domain,
-		"model_base_url":  h.cfg.FCE2B.LLMBaseURL,
-		"model":           h.cfg.FCE2B.LLMModel,
+		"template":        selected.Template,
+		"template_id":     selected.ID,
+		"template_name":   selected.Name,
+		"template_status": selected.Status,
+		"capabilities":    fcE2BTemplateCapabilities(selected),
 		"timeout_seconds": h.cfg.FCE2B.TimeoutSeconds,
 		"created_by":      uuidToString(member.UserID),
 		"runner":          service.FCE2BRunnerCommand,
@@ -70,7 +113,7 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	daemonID := "fc-e2b:" + workspaceID + ":" + runtimeSlug(name)
+	daemonID := "fc-e2b:" + workspaceID + ":" + runtimeSlug(selected.Template) + ":" + runtimeSlug(name) + ":" + randomID()[:8]
 	rt, err := h.Queries.UpsertCloudAgentRuntime(r.Context(), db.UpsertCloudAgentRuntimeParams{
 		WorkspaceID: parseUUID(workspaceID),
 		DaemonID:    pgtype.Text{String: daemonID, Valid: true},
@@ -92,6 +135,54 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 		"action": "create",
 	})
 	writeJSON(w, http.StatusCreated, runtimeToResponse(rt))
+}
+
+func selectFCE2BTemplate(templates []service.FCE2BTemplate, ref string) (service.FCE2BTemplate, bool) {
+	ref = strings.TrimSpace(ref)
+	for _, t := range templates {
+		for _, candidate := range []string{t.Template, t.ID, t.Name} {
+			if strings.TrimSpace(candidate) == ref {
+				return t, true
+			}
+		}
+	}
+	return service.FCE2BTemplate{}, false
+}
+
+func defaultFCE2BRuntimeName(t service.FCE2BTemplate) string {
+	base := strings.TrimSpace(t.Name)
+	if base == "" {
+		base = strings.TrimSpace(t.Template)
+	}
+	if base == "" {
+		return "FC-Hermes"
+	}
+	base = strings.TrimPrefix(base, "multica-fc-")
+	base = strings.TrimSuffix(base, "-runtime")
+	base = strings.TrimSuffix(base, "-template")
+	parts := strings.FieldsFunc(base, func(r rune) bool {
+		return r == '-' || r == '_' || r == '.'
+	})
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		clean = append(clean, strings.ToUpper(part[:1])+part[1:])
+	}
+	if len(clean) == 0 {
+		return "FC-Hermes"
+	}
+	return "FC-" + strings.Join(clean, "-")
+}
+
+func fcE2BTemplateCapabilities(t service.FCE2BTemplate) []string {
+	capabilities := []string{"hermes"}
+	haystack := strings.ToLower(strings.Join([]string{t.Template, t.ID, t.Name}, " "))
+	if strings.Contains(haystack, "dws") {
+		capabilities = append(capabilities, "dws")
+	}
+	return capabilities
 }
 
 func runtimeSlug(name string) string {

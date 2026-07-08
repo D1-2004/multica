@@ -1233,7 +1233,8 @@ func requestHasDaemonCapability(r *http.Request, capability string) bool {
 // ClaimTaskByRuntime atomically claims the next queued task for a runtime.
 // The response includes the agent's name and skills, fetched fresh from the DB.
 type claimTaskByRuntimeRequest struct {
-	FCE2BColdStart bool `json:"fc_e2b_cold_start"`
+	FCE2BColdStart bool   `json:"fc_e2b_cold_start"`
+	TargetTaskID   string `json:"target_task_id"`
 }
 
 func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
@@ -1281,7 +1282,19 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	claimStart := time.Now()
-	task, err := h.TaskService.ClaimTaskForRuntime(r.Context(), parseUUID(runtimeID))
+	targetTaskID := strings.TrimSpace(req.TargetTaskID)
+	var task *db.AgentTaskQueue
+	var err error
+	if targetTaskID != "" {
+		targetTaskUUID, ok := parseUUIDOrBadRequest(w, targetTaskID, "target_task_id")
+		if !ok {
+			outcome = "error_request"
+			return
+		}
+		task, err = h.TaskService.ClaimTaskByIDForRuntime(r.Context(), runtime.ID, targetTaskUUID)
+	} else {
+		task, err = h.TaskService.ClaimTaskForRuntime(r.Context(), runtime.ID)
+	}
 	claimMs = time.Since(claimStart).Milliseconds()
 	if err != nil {
 		outcome = "error_claim"

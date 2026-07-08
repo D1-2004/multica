@@ -242,6 +242,17 @@
     "create_failed_toast": "에이전트를 만들지 못했습니다",
     "skill_attach_failed_toast": "에이전트는 만들었지만 스킬을 연결하지 못했습니다: {{error}}",
     "squad_join_failed_toast": "에이전트 \"{{name}}\"은(는) 만들었지만 스쿼드에 참가하지 못했습니다: {{error}}. 멤버에서 직접 추가할 수 있습니다.",
+    "dws": {
+      "title": "DWS Identity",
+      "description": "This FC runtime uses the DingTalk Workspace CLI inside the sandbox. Bind a DWS login profile to this agent.",
+      "connect": "Connect DWS",
+      "loading": "Loading DWS profiles...",
+      "empty": "No DWS profile yet. Connect one first.",
+      "connected": "DWS profile connected",
+      "load_failed": "Failed to load DWS profiles",
+      "start_failed": "Failed to start DWS login",
+      "poll_failed": "Failed to check DWS login status"
+    },
     "instructions": {
       "label": "지침",
       "placeholder_blank": "클릭해서 지침 작성...",

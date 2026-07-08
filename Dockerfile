@@ -25,9 +25,24 @@ RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_codex_u
 # --- Runtime stage ---
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata coreutils nodejs npm \
+ARG DWS_VERSION=v1.0.50
+ARG DWS_RELEASE_BASE=https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/releases/download
+
+RUN apk add --no-cache ca-certificates tzdata coreutils curl nodejs npm \
     && npm install -g @e2b/cli@2.13.0 \
     && npm cache clean --force
+
+RUN set -eux; \
+    mkdir -p /tmp/dws; \
+    base="${DWS_RELEASE_BASE}/${DWS_VERSION}"; \
+    curl -fsSLo /tmp/dws/checksums.txt "${base}/checksums.txt"; \
+    curl -fsSLo /tmp/dws/dws-linux-amd64.tar.gz "${base}/dws-linux-amd64.tar.gz"; \
+    cd /tmp/dws; \
+    grep '  dws-linux-amd64.tar.gz$' checksums.txt | sha256sum -c -; \
+    tar -xzf dws-linux-amd64.tar.gz; \
+    install -m 0755 dws /usr/local/bin/dws; \
+    rm -rf /tmp/dws; \
+    dws version
 
 WORKDIR /app
 

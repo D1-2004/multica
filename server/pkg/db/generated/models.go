@@ -363,6 +363,21 @@ type DaemonToken struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type DwsAuthProfile struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	OwnerID              pgtype.UUID        `json:"owner_id"`
+	Label                string             `json:"label"`
+	CorpID               string             `json:"corp_id"`
+	CorpName             string             `json:"corp_name"`
+	UserID               string             `json:"user_id"`
+	UserName             string             `json:"user_name"`
+	Status               string             `json:"status"`
+	AuthArchiveEncrypted []byte             `json:"auth_archive_encrypted"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
 type FcE2bSandboxSession struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`

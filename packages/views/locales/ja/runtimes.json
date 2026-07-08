@@ -218,16 +218,22 @@
     }
   },
   "fc_e2b_runtime": {
-    "action": "FC-Hermes",
-    "title": "FC-Hermes ランタイム",
-    "description": "一回限りの FC/E2B サンドボックスで動作するクラウド Hermes ランタイムを作成します。テンプレート、タイムアウト、モデル設定はサーバー側で管理されます。",
+    "action": "Add Cloud SB Runtime",
+    "title": "Add Cloud SB Runtime",
+    "description": "Choose an FC/E2B template and create an independent cloud Hermes runtime. The server owns timeout and model configuration.",
     "create": "ランタイムを作成",
     "creating": "作成中...",
     "cancel": "キャンセル",
-    "toast_created": "FC-Hermes ランタイムを作成しました",
-    "toast_create_failed": "FC-Hermes ランタイムを作成できませんでした",
+    "toast_created": "FC runtime created",
+    "toast_create_failed": "Failed to create FC runtime",
     "visibility_hint": "非公開ランタイムはあなたとワークスペース管理者のみが使用できます。公開ランタイムはすべてのワークスペースメンバーが使用できます。",
+    "template_search_placeholder": "Search template name or ID...",
+    "templates_loading": "Loading templates...",
+    "templates_failed": "Failed to load templates",
+    "templates_empty": "No templates available",
+    "name_placeholder": "For example FC-Hermes-DWS",
     "fields": {
+      "template": "Template",
       "name": "名前",
       "visibility": "可視性"
     }

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Globe, Lock } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Globe, Loader2, Lock } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ModelDropdown } from "./model-dropdown";
 import { RuntimePicker, isRuntimeUsableForUser } from "./runtime-picker";
@@ -18,6 +18,7 @@ import type {
   MemberWithUser,
   CreateAgentRequest,
 } from "@multica/core/types";
+import type { DWSAuthProfile, DWSAuthSession } from "@multica/core/runtimes";
 import { isImeComposing } from "@multica/core/utils";
 import {
   Dialog,
@@ -37,6 +38,17 @@ import {
 } from "@multica/core/agents";
 import { CharCounter } from "./char-counter";
 import { useT } from "../../i18n";
+
+function runtimeRequiresDWS(runtime: RuntimeDevice | null): boolean {
+  if (!runtime || runtime.runtime_mode !== "cloud") return false;
+  if (runtime.metadata?.kind !== "fc-e2b") return false;
+  const capabilities = runtime.metadata?.capabilities;
+  if (Array.isArray(capabilities) && capabilities.some((c) => String(c).toLowerCase() === "dws")) {
+    return true;
+  }
+  const template = `${runtime.metadata?.template ?? ""} ${runtime.metadata?.template_name ?? ""}`.toLowerCase();
+  return template.includes("dws");
+}
 
 export function CreateAgentDialog({
   runtimes,
@@ -110,6 +122,12 @@ export function CreateAgentDialog({
   });
 
   const selectedRuntime = runtimes.find((d) => d.id === selectedRuntimeId) ?? null;
+  const selectedRuntimeRequiresDWS = runtimeRequiresDWS(selectedRuntime);
+  const [dwsProfiles, setDwsProfiles] = useState<DWSAuthProfile[]>([]);
+  const [dwsProfilesLoading, setDwsProfilesLoading] = useState(false);
+  const [selectedDwsProfileId, setSelectedDwsProfileId] = useState("");
+  const [dwsSession, setDwsSession] = useState<DWSAuthSession | null>(null);
+  const [dwsAuthStarting, setDwsAuthStarting] = useState(false);
   // Defense-in-depth: even if a locked runtime somehow ends up selected
   // (e.g. duplicate of an agent whose template runtime is now locked, and
   // the workspace has no usable fallback), gate Create on it so we don't
@@ -117,6 +135,69 @@ export function CreateAgentDialog({
   const selectedRuntimeLocked =
     selectedRuntime != null &&
     !isRuntimeUsableForUser(selectedRuntime, currentUserId);
+
+  useEffect(() => {
+    if (!selectedRuntimeRequiresDWS || !wsId) {
+      setDwsProfiles([]);
+      setSelectedDwsProfileId("");
+      setDwsSession(null);
+      return;
+    }
+    let cancelled = false;
+    setDwsProfilesLoading(true);
+    api
+      .listDWSAuthProfiles(wsId)
+      .then((profiles) => {
+        if (cancelled) return;
+        setDwsProfiles(profiles);
+        setSelectedDwsProfileId((current) => current || profiles[0]?.id || "");
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          toast.error(err instanceof Error ? err.message : t(($) => $.create_dialog.dws.load_failed));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDwsProfilesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRuntimeRequiresDWS, t, wsId]);
+
+  useEffect(() => {
+    if (!wsId || !dwsSession || dwsSession.status !== "pending") return;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await api.getDWSAuthStatus(wsId, dwsSession.id);
+        setDwsSession(next);
+        if (next.status === "succeeded" && next.profile) {
+          setDwsProfiles((profiles) => {
+            const without = profiles.filter((profile) => profile.id !== next.profile!.id);
+            return [next.profile!, ...without];
+          });
+          setSelectedDwsProfileId(next.profile.id);
+          toast.success(t(($) => $.create_dialog.dws.connected));
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : t(($) => $.create_dialog.dws.poll_failed));
+      }
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [dwsSession, t, wsId]);
+
+  const beginDWSAuth = async () => {
+    if (!wsId) return;
+    setDwsAuthStarting(true);
+    try {
+      const session = await api.beginDWSAuth(wsId);
+      setDwsSession(session);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t(($) => $.create_dialog.dws.start_failed));
+    } finally {
+      setDwsAuthStarting(false);
+    }
+  };
 
   // Shared squad-join follow-up. Returns nothing — the caller has
   // already shown its create-success toast; we only need to surface a
@@ -163,6 +244,13 @@ export function CreateAgentDialog({
         instructions: trimmedInstructions || undefined,
         avatar_url: avatarUrl ?? undefined,
       };
+      if (selectedRuntimeRequiresDWS) {
+        data.runtime_config = {
+          fc_e2b: {
+            dws_profile_id: selectedDwsProfileId,
+          },
+        };
+      }
       if (template) {
         // Duplicate path: forward the hidden config fields the source
         // agent had so the clone is functional out of the box (args /
@@ -334,6 +422,84 @@ export function CreateAgentDialog({
               onSelect={setSelectedRuntimeId}
             />
 
+            {selectedRuntimeRequiresDWS && (
+              <div className="rounded-lg border p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <Label className="text-xs text-muted-foreground">
+                      {t(($) => $.create_dialog.dws.title)}
+                    </Label>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t(($) => $.create_dialog.dws.description)}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={beginDWSAuth}
+                    disabled={dwsAuthStarting || dwsSession?.status === "pending"}
+                  >
+                    {dwsAuthStarting && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    )}
+                    {t(($) => $.create_dialog.dws.connect)}
+                  </Button>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {dwsProfilesLoading && (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      {t(($) => $.create_dialog.dws.loading)}
+                    </div>
+                  )}
+                  {dwsProfiles.length > 0 && (
+                    <select
+                      value={selectedDwsProfileId}
+                      onChange={(event) => setSelectedDwsProfileId(event.target.value)}
+                      className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                    >
+                      {dwsProfiles.map((profile) => (
+                        <option key={profile.id} value={profile.id}>
+                          {profile.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {!dwsProfilesLoading && dwsProfiles.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {t(($) => $.create_dialog.dws.empty)}
+                    </p>
+                  )}
+                  {dwsSession?.status === "pending" && (
+                    <div className="rounded-md bg-muted p-2 text-xs">
+                      {dwsSession.login_url && (
+                        <a
+                          href={dwsSession.login_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-medium text-primary underline-offset-2 hover:underline"
+                        >
+                          {dwsSession.login_url}
+                        </a>
+                      )}
+                      {dwsSession.user_code && (
+                        <div className="mt-1 font-mono">{dwsSession.user_code}</div>
+                      )}
+                      {dwsSession.message && (
+                        <div className="mt-1 text-muted-foreground">
+                          {dwsSession.message}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {dwsSession?.status === "failed" && (
+                    <p className="text-xs text-destructive">{dwsSession.error}</p>
+                  )}
+                </div>
+              </div>
+            )}
+
             <ModelDropdown
               runtimeId={selectedRuntime?.id ?? null}
               runtime={selectedRuntime}
@@ -376,7 +542,11 @@ export function CreateAgentDialog({
           <Button
             onClick={handleSubmit}
             disabled={
-              creating || !name.trim() || !selectedRuntime || selectedRuntimeLocked
+              creating ||
+              !name.trim() ||
+              !selectedRuntime ||
+              selectedRuntimeLocked ||
+              (selectedRuntimeRequiresDWS && !selectedDwsProfileId)
             }
             title={
               selectedRuntimeLocked

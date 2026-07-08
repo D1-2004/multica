@@ -181,6 +181,7 @@ func (c *Client) Token() string {
 
 type ClaimTaskOptions struct {
 	FCE2BColdStart bool
+	TargetTaskID   string
 }
 
 func (c *Client) ClaimTask(ctx context.Context, runtimeID string) (*Task, error) {
@@ -194,6 +195,9 @@ func (c *Client) ClaimTaskWithOptions(ctx context.Context, runtimeID string, opt
 	body := map[string]any{}
 	if opts.FCE2BColdStart {
 		body["fc_e2b_cold_start"] = true
+	}
+	if targetTaskID := strings.TrimSpace(opts.TargetTaskID); targetTaskID != "" {
+		body["target_task_id"] = targetTaskID
 	}
 	if err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/claim", runtimeID), body, &resp); err != nil {
 		return nil, err
