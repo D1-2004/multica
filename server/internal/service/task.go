@@ -2999,10 +2999,29 @@ func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 		return
 	}
 	taskCopy := task
+	slog.Info("runtime launcher scheduled",
+		"task_id", util.UUIDToString(taskCopy.ID),
+		"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
+		"agent_id", util.UUIDToString(taskCopy.AgentID),
+	)
 	go func() {
+		started := time.Now()
 		if err := s.RuntimeLauncher.LaunchTask(context.Background(), taskCopy); err != nil {
-			slog.Warn("runtime launcher failed for task", "task_id", util.UUIDToString(taskCopy.ID), "error", err)
+			slog.Warn("runtime launcher failed for task",
+				"task_id", util.UUIDToString(taskCopy.ID),
+				"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
+				"agent_id", util.UUIDToString(taskCopy.AgentID),
+				"duration", time.Since(started).String(),
+				"error", err,
+			)
+			return
 		}
+		slog.Info("runtime launcher finished",
+			"task_id", util.UUIDToString(taskCopy.ID),
+			"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
+			"agent_id", util.UUIDToString(taskCopy.AgentID),
+			"duration", time.Since(started).String(),
+		)
 	}()
 }
 

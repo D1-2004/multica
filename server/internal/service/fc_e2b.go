@@ -333,6 +333,15 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	if l == nil || l.Queries == nil || l.Tasks == nil || !task.RuntimeID.Valid {
 		return nil
 	}
+	taskID := util.UUIDToString(task.ID)
+	runtimeID := util.UUIDToString(task.RuntimeID)
+	agentID := util.UUIDToString(task.AgentID)
+	started := time.Now()
+	slog.Info("FC/E2B launch started",
+		"task_id", taskID,
+		"runtime_id", runtimeID,
+		"agent_id", agentID,
+	)
 	rt, err := l.Queries.GetAgentRuntime(ctx, task.RuntimeID)
 	if err != nil {
 		return fmt.Errorf("load runtime for FC/E2B launch: %w", err)
@@ -356,6 +365,11 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	if err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
+	slog.Info("FC/E2B launch template resolved",
+		"task_id", taskID,
+		"runtime_id", runtimeID,
+		"template", template,
+	)
 
 	token, err := auth.GenerateDaemonToken()
 	if err != nil {
@@ -379,9 +393,30 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	if err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
+	scopeType := ""
+	scopeID := ""
+	if scoped {
+		scopeType = scope.typ
+		scopeID = util.UUIDToString(scope.id)
+	}
+	slog.Info("FC/E2B sandbox resolved",
+		"task_id", taskID,
+		"runtime_id", runtimeID,
+		"sandbox_id", sandboxID,
+		"cold_start", coldStart,
+		"scope_type", scopeType,
+		"scope_id", scopeID,
+	)
 	if err := l.execRunOnce(ctx, sandboxID, rt, task.ID, token, coldStart, extraEnv); err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
+	slog.Info("FC/E2B run-once submitted",
+		"task_id", taskID,
+		"runtime_id", runtimeID,
+		"sandbox_id", sandboxID,
+		"cold_start", coldStart,
+		"duration", time.Since(started).String(),
+	)
 	if scoped {
 		_ = l.Queries.TouchFCE2BSandboxSession(ctx, db.TouchFCE2BSandboxSessionParams{
 			RuntimeID: rt.ID,
@@ -560,7 +595,7 @@ func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (str
 		"--lifecycle.ontimeout", "kill",
 		template,
 	}
-	out, err := l.Runner.Run(ctx, l.Config.CLIPath, args, l.e2bEnv())
+	out, err := l.runE2BCommand(ctx, args)
 	if err != nil {
 		return "", fmt.Errorf("FC/E2B sandbox create failed: %w", err)
 	}
@@ -572,7 +607,7 @@ func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (str
 }
 
 func (l *FCE2BLauncher) checkSandboxReady(ctx context.Context, sandboxID string) error {
-	_, err := l.Runner.Run(ctx, l.Config.CLIPath, []string{"sandbox", "exec", sandboxID, "true"}, l.e2bEnv())
+	_, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", sandboxID, "true"})
 	return err
 }
 
@@ -580,7 +615,7 @@ func (l *FCE2BLauncher) waitSandboxReady(ctx context.Context, sandboxID string) 
 	deadline := time.Now().Add(l.Config.SandboxReadyTimeout)
 	var lastErr error
 	for {
-		_, err := l.Runner.Run(ctx, l.Config.CLIPath, []string{"sandbox", "exec", sandboxID, "true"}, l.e2bEnv())
+		_, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", sandboxID, "true"})
 		if err == nil {
 			return nil
 		}
@@ -624,10 +659,20 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"--runtime-id", runtimeID,
 		"--provider", FCE2BProvider,
 	)
-	if _, err := l.Runner.Run(ctx, l.Config.CLIPath, args, l.e2bEnv()); err != nil {
+	if _, err := l.runE2BCommand(ctx, args); err != nil {
 		return fmt.Errorf("FC/E2B runner exec failed: %w", err)
 	}
 	return nil
+}
+
+func (l *FCE2BLauncher) runE2BCommand(ctx context.Context, args []string) (string, error) {
+	timeout := l.Config.SandboxReadyTimeout
+	if timeout <= 0 {
+		timeout = defaultFCE2BSandboxReadyTimeout
+	}
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return l.Runner.Run(cmdCtx, l.Config.CLIPath, args, l.e2bEnv())
 }
 
 func (l *FCE2BLauncher) e2bEnv() []string {
