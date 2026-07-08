@@ -1979,6 +1979,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 
 	// Broadcast
 	s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task)
+	s.triggerNextQueuedTaskForTerminal(ctx, task)
 
 	return &task, nil
 }
@@ -2240,6 +2241,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 	// Broadcast
 	s.broadcastTaskEvent(ctx, protocol.EventTaskFailed, task)
+	if retried == nil {
+		s.triggerNextQueuedTaskForTerminal(ctx, task)
+	}
 
 	return &task, nil
 }
@@ -2887,15 +2891,79 @@ func priorityToInt(p string) int32 {
 func (s *TaskService) NotifyTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
 	s.captureTaskQueued(ctx, task)
 	s.notifyTaskAvailable(task)
-	if s.RuntimeLauncher == nil {
+	s.launchRuntimeForTask(task)
+}
+
+func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
+	if s == nil || s.RuntimeLauncher == nil {
 		return
 	}
 	taskCopy := task
 	go func() {
 		if err := s.RuntimeLauncher.LaunchTask(context.Background(), taskCopy); err != nil {
-			slog.Warn("runtime launcher failed after task enqueue", "task_id", util.UUIDToString(taskCopy.ID), "error", err)
+			slog.Warn("runtime launcher failed for task", "task_id", util.UUIDToString(taskCopy.ID), "error", err)
 		}
 	}()
+}
+
+// triggerNextQueuedTaskForTerminal bridges long-lived daemon semantics for
+// server-managed run-once runtimes. A normal ASB daemon finishes a task and
+// keeps polling, so a follow-up comment queued behind the active task is picked
+// up naturally. FC/E2B run-once exits after one claim; when the terminal task
+// releases the claim serialization group, the server nudges the next queued
+// task in the same issue/chat/quick-create lane.
+func (s *TaskService) triggerNextQueuedTaskForTerminal(ctx context.Context, terminal db.AgentTaskQueue) {
+	if s == nil || s.Queries == nil || !terminal.RuntimeID.Valid {
+		return
+	}
+	candidates, err := s.Queries.ListQueuedClaimCandidatesByRuntime(ctx, terminal.RuntimeID)
+	if err != nil {
+		slog.Warn("list queued tasks after terminal task failed",
+			"task_id", util.UUIDToString(terminal.ID),
+			"runtime_id", util.UUIDToString(terminal.RuntimeID),
+			"error", err,
+		)
+		return
+	}
+	next, ok := nextQueuedTaskForTerminal(terminal, candidates)
+	if !ok {
+		return
+	}
+	slog.Info("terminal task triggered queued runtime task",
+		"task_id", util.UUIDToString(terminal.ID),
+		"next_task_id", util.UUIDToString(next.ID),
+		"runtime_id", util.UUIDToString(next.RuntimeID),
+	)
+	s.notifyTaskAvailable(next)
+	s.launchRuntimeForTask(next)
+}
+
+func nextQueuedTaskForTerminal(terminal db.AgentTaskQueue, candidates []db.AgentTaskQueue) (db.AgentTaskQueue, bool) {
+	if !terminal.AgentID.Valid {
+		return db.AgentTaskQueue{}, false
+	}
+	for _, candidate := range candidates {
+		if !candidate.AgentID.Valid || candidate.AgentID != terminal.AgentID {
+			continue
+		}
+		if sameTaskSerializationGroup(terminal, candidate) {
+			return candidate, true
+		}
+	}
+	return db.AgentTaskQueue{}, false
+}
+
+func sameTaskSerializationGroup(a, b db.AgentTaskQueue) bool {
+	if a.IssueID.Valid {
+		return b.IssueID.Valid && b.IssueID == a.IssueID
+	}
+	if a.ChatSessionID.Valid {
+		return b.ChatSessionID.Valid && b.ChatSessionID == a.ChatSessionID
+	}
+	if !a.AutopilotRunID.Valid {
+		return !b.IssueID.Valid && !b.ChatSessionID.Valid && !b.AutopilotRunID.Valid
+	}
+	return false
 }
 
 // notifyTaskAvailable runs after a task has been inserted: bumps the
