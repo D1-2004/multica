@@ -289,6 +289,7 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "OPENAI_API_KEY=" + l.Config.LLMAPIKey,
 		"-e", "OPENAI_MODEL=" + l.Config.LLMModel,
 		sandboxID,
+		"--",
 		FCE2BRunnerCommand,
 		"--runtime-id", runtimeID,
 		"--provider", FCE2BProvider,
