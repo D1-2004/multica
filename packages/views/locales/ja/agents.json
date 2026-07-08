@@ -282,6 +282,17 @@
     "create_failed_toast": "エージェントを作成できませんでした",
     "skill_attach_failed_toast": "エージェントは作成されましたが、スキルを追加できませんでした: {{error}}",
     "squad_join_failed_toast": "エージェント \"{{name}}\" は作成されましたが、スクワッドに参加できませんでした: {{error}}。メンバーから手動で追加できます。",
+    "dws": {
+      "title": "DWS Identity",
+      "description": "This FC runtime uses the DingTalk Workspace CLI inside the sandbox. Bind a DWS login profile to this agent.",
+      "connect": "Connect DWS",
+      "loading": "Loading DWS profiles...",
+      "empty": "No DWS profile yet. Connect one first.",
+      "connected": "DWS profile connected",
+      "load_failed": "Failed to load DWS profiles",
+      "start_failed": "Failed to start DWS login",
+      "poll_failed": "Failed to check DWS login status"
+    },
     "instructions": {
       "label": "指示",
       "placeholder_blank": "クリックして指示を作成...",

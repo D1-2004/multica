@@ -207,6 +207,38 @@ func TestNextQueuedTaskForTerminal_SelectsSameChatAgent(t *testing.T) {
 	}
 }
 
+func TestNextQueuedTaskForTerminal_SelectsSameAgentWhenNoSameChat(t *testing.T) {
+	terminal := db.AgentTaskQueue{
+		ID:            testUUID(37),
+		RuntimeID:     testUUID(38),
+		AgentID:       testUUID(39),
+		ChatSessionID: testUUID(40),
+	}
+	want := db.AgentTaskQueue{
+		ID:            testUUID(41),
+		RuntimeID:     terminal.RuntimeID,
+		AgentID:       terminal.AgentID,
+		ChatSessionID: testUUID(42),
+	}
+	candidates := []db.AgentTaskQueue{
+		{
+			ID:            testUUID(43),
+			RuntimeID:     terminal.RuntimeID,
+			AgentID:       testUUID(44),
+			ChatSessionID: terminal.ChatSessionID,
+		},
+		want,
+	}
+
+	got, ok := nextQueuedTaskForTerminal(terminal, candidates)
+	if !ok {
+		t.Fatal("expected a queued task for the same agent")
+	}
+	if util.UUIDToString(got.ID) != util.UUIDToString(want.ID) {
+		t.Fatalf("next queued task = %q, want %q", util.UUIDToString(got.ID), util.UUIDToString(want.ID))
+	}
+}
+
 func TestNextQueuedTaskForTerminal_SelectsQuickCreateShape(t *testing.T) {
 	terminal := db.AgentTaskQueue{
 		ID:        testUUID(40),

@@ -175,6 +175,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		CloudRuntimeFleetURL:     cloudRuntimeFleetURLFromEnv(),
 		CloudRuntimeFleetTimeout: envDuration("MULTICA_CLOUD_FLEET_TIMEOUT", 35*time.Second),
 		FCE2B:                    service.FCE2BConfigFromEnv(),
+		DWSCLIPath:               strings.TrimSpace(os.Getenv("MULTICA_DWS_CLI_PATH")),
+		DWSAuthTimeout:           envDuration("MULTICA_DWS_AUTH_TIMEOUT", 10*time.Minute),
 		AttachmentDownloadMode:   os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
 		AttachmentDownloadURLTTL: envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
 		AttachmentFrameAncestors: origins,
@@ -186,6 +188,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.Metrics = opts.BusinessMetrics
 	h.FeatureFlags = opts.FeatureFlags
 	h.TaskService.FeatureFlags = opts.FeatureFlags
+	if dwsKey, err := secretbox.LoadKey("MULTICA_DWS_SECRET_KEY"); err == nil {
+		box, err := secretbox.New(dwsKey)
+		if err != nil {
+			slog.Error("dws: secretbox.New failed; dws auth profiles disabled", "error", err)
+		} else {
+			h.DWSAuthBox = box
+			slog.Info("dws auth profile storage enabled")
+		}
+	} else {
+		slog.Info("dws auth profile storage disabled (MULTICA_DWS_SECRET_KEY not set)")
+	}
 	if agentBaseURL := strings.TrimSpace(os.Getenv("DINGTALK_AGENT_BASE_URL")); agentBaseURL != "" {
 		agentClient := dingtalk.NewAgentClient(dingtalk.AgentClientConfig{
 			BaseURL:        agentBaseURL,
@@ -1046,6 +1059,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/dingtalk/users/search", h.SearchDingTalkUsers)
 					r.Post("/dingtalk/members", h.AddDingTalkWorkspaceMembers)
 					r.Post("/dingtalk/group-members", h.AddDingTalkGroupMembers)
+					r.Get("/dws/profiles", h.ListDWSAuthProfiles)
+					r.Post("/dws/auth/begin", h.BeginDWSAuth)
+					r.Get("/dws/auth/{sessionId}/status", h.GetDWSAuthStatus)
 					r.Route("/members/{memberId}", func(r chi.Router) {
 						r.Patch("/", h.UpdateMember)
 						r.Delete("/", h.DeleteMember)
@@ -1440,6 +1456,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Runtimes
 			r.Route("/api/runtimes", func(r chi.Router) {
 				r.Get("/", h.ListAgentRuntimes)
+				r.Get("/fc-e2b/templates", h.ListFCE2BTemplates)
 				r.Post("/fc-e2b", h.CreateFCE2BRuntime)
 				r.Route("/{runtimeId}", func(r chi.Router) {
 					r.Patch("/", h.UpdateAgentRuntime)

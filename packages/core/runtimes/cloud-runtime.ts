@@ -1,4 +1,4 @@
-import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type { AgentRuntime } from "../types";
 import type { RuntimeVisibility } from "../types/agent";
@@ -39,12 +39,53 @@ export interface CreateCloudRuntimeNodeRequest {
 
 export interface CreateFCE2BRuntimeRequest {
   name?: string;
+  template_id: string;
   visibility?: RuntimeVisibility;
+}
+
+export interface FCE2BTemplate {
+  id?: string;
+  name?: string;
+  template: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DWSAuthProfile {
+  id: string;
+  workspace_id: string;
+  owner_id?: string;
+  label: string;
+  corp_id?: string;
+  corp_name?: string;
+  user_id?: string;
+  user_name?: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DWSAuthSession {
+  id: string;
+  status: "pending" | "succeeded" | "failed";
+  message?: string;
+  login_url?: string;
+  user_code?: string;
+  error?: string;
+  profile?: DWSAuthProfile;
+  created_at: string;
+  updated_at: string;
 }
 
 export const cloudRuntimeKeys = {
   all: (wsId: string) => ["cloud-runtime", wsId] as const,
   nodes: (wsId: string) => [...cloudRuntimeKeys.all(wsId), "nodes"] as const,
+  fcE2BTemplates: (wsId: string) =>
+    [...cloudRuntimeKeys.all(wsId), "fc-e2b-templates"] as const,
+  dwsProfiles: (wsId: string) =>
+    [...cloudRuntimeKeys.all(wsId), "dws-profiles"] as const,
 };
 
 const PENDING_NODE_STATUSES = new Set([
@@ -75,6 +116,18 @@ export function cloudRuntimeNodeListOptions(
         : false,
     staleTime: 15 * 1000,
   });
+}
+
+export function fcE2BTemplateListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: cloudRuntimeKeys.fcE2BTemplates(wsId),
+    queryFn: () => api.listFCE2BTemplates(),
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useFCE2BTemplates(wsId: string) {
+  return useQuery(fcE2BTemplateListOptions(wsId));
 }
 
 export function useCreateCloudRuntimeNode(wsId: string) {

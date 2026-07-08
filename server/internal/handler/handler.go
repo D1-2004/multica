@@ -32,6 +32,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/llm"
@@ -90,6 +91,8 @@ type Config struct {
 	CloudRuntimeFleetURL     string
 	CloudRuntimeFleetTimeout time.Duration
 	FCE2B                    service.FCE2BConfig
+	DWSCLIPath               string
+	DWSAuthTimeout           time.Duration
 	AttachmentDownloadMode   string
 	AttachmentDownloadURLTTL time.Duration
 	// AttachmentFrameAncestors are trusted browser origins allowed to embed
@@ -137,6 +140,7 @@ type Handler struct {
 	LocalSkillListStore   LocalSkillListStore
 	LocalSkillImportStore LocalSkillImportStore
 	FeatureFlags          *featureflag.Service
+	DWSAuthSessions       *DWSAuthSessionStore
 	LivenessStore         LivenessStore
 	HeartbeatScheduler    HeartbeatScheduler
 	Storage               storage.Storage
@@ -206,6 +210,7 @@ type Handler struct {
 	// "link your Slack account" prompt (MUL-3666). Nil unless Slack is
 	// configured (MULTICA_SLACK_SECRET_KEY set).
 	SlackBindingTokens *slack.BindingTokenService
+	DWSAuthBox         *secretbox.Box
 	// SlackHistory backs the agent-facing `multica chat history` command: it
 	// reads a chat session's bound Slack conversation on demand (MUL-3871). Nil
 	// unless Slack is configured; GetChatChannelHistory then reports "no channel
@@ -268,6 +273,12 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	if cfg.AttachmentDownloadURLTTL <= 0 {
 		cfg.AttachmentDownloadURLTTL = defaultAttachmentDownloadURLTTL
 	}
+	if cfg.DWSCLIPath == "" {
+		cfg.DWSCLIPath = "dws"
+	}
+	if cfg.DWSAuthTimeout <= 0 {
+		cfg.DWSAuthTimeout = 10 * time.Minute
+	}
 
 	var daemonHub *daemonws.Hub
 	if len(daemonHubs) > 0 {
@@ -297,6 +308,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		ModelListStore:        NewInMemoryModelListStore(),
 		LocalSkillListStore:   NewInMemoryLocalSkillListStore(),
 		LocalSkillImportStore: NewInMemoryLocalSkillImportStore(),
+		DWSAuthSessions:       NewDWSAuthSessionStore(),
 		LivenessStore:         NewNoopLivenessStore(),
 		HeartbeatScheduler:    NewPassthroughHeartbeatScheduler(queries),
 		Storage:               store,

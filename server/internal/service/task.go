@@ -1495,6 +1495,106 @@ func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.A
 	return claimed, nil
 }
 
+// ClaimTaskByIDForRuntime claims a specific queued task for a run-once runtime.
+// FC/E2B launches choose a sandbox from the triggering task's chat/issue scope,
+// so the daemon must not claim a different queued task on the same runtime.
+func (s *TaskService) ClaimTaskByIDForRuntime(ctx context.Context, runtimeID, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
+	start := time.Now()
+	var (
+		outcome                                                              = "unknown"
+		getAgentMs, countRunningMs, claimAgentMs, updateStatusMs, dispatchMs int64
+		claimed                                                              *db.AgentTaskQueue
+		agentID                                                              pgtype.UUID
+	)
+	defer func() {
+		if agentID.Valid {
+			s.maybeLogClaimSlow(agentID, outcome, start, getAgentMs, countRunningMs, claimAgentMs, updateStatusMs, dispatchMs)
+		}
+	}()
+
+	err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		target, err := qtx.GetAgentTask(ctx, taskID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				outcome = "target_not_found"
+				return nil
+			}
+			outcome = "error_get_target"
+			return fmt.Errorf("target task not found: %w", err)
+		}
+		agentID = target.AgentID
+		if !target.RuntimeID.Valid || target.RuntimeID != runtimeID || target.Status != "queued" {
+			outcome = "target_not_claimable"
+			return nil
+		}
+
+		t0 := time.Now()
+		agent, err := qtx.GetAgentForClaimUpdate(ctx, target.AgentID)
+		getAgentMs = time.Since(t0).Milliseconds()
+		if err != nil {
+			outcome = "error_get_agent"
+			return fmt.Errorf("agent not found: %w", err)
+		}
+
+		t0 = time.Now()
+		running, err := qtx.CountRunningTasks(ctx, target.AgentID)
+		countRunningMs = time.Since(t0).Milliseconds()
+		if err != nil {
+			outcome = "error_count_running"
+			return fmt.Errorf("count running tasks: %w", err)
+		}
+		if running >= int64(agent.MaxConcurrentTasks) {
+			slog.Debug("task claim: no capacity", "agent_id", util.UUIDToString(target.AgentID), "running", running, "max", agent.MaxConcurrentTasks)
+			outcome = "no_capacity"
+			return nil
+		}
+
+		t0 = time.Now()
+		task, err := qtx.ClaimAgentTaskByID(ctx, db.ClaimAgentTaskByIDParams{
+			ID:               taskID,
+			RuntimeID:        runtimeID,
+			PrepareLeaseSecs: prepareLeaseDuration.Seconds(),
+		})
+		claimAgentMs = time.Since(t0).Milliseconds()
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				slog.Debug("task claim: target task not available", "task_id", util.UUIDToString(taskID), "runtime_id", util.UUIDToString(runtimeID))
+				outcome = "target_blocked"
+				return nil
+			}
+			outcome = "error_claim"
+			return fmt.Errorf("claim target task: %w", err)
+		}
+
+		claimedTask := task
+		claimed = &claimedTask
+		return nil
+	})
+	if err != nil {
+		if outcome == "unknown" {
+			outcome = "error_transaction"
+		}
+		return nil, err
+	}
+	if claimed == nil {
+		return nil, nil
+	}
+
+	slog.Info("task claimed", "task_id", util.UUIDToString(claimed.ID), "agent_id", util.UUIDToString(claimed.AgentID), "targeted", true)
+	s.captureTaskDispatched(ctx, *claimed)
+
+	t0 := time.Now()
+	s.ReconcileAgentStatus(ctx, claimed.AgentID)
+	updateStatusMs = time.Since(t0).Milliseconds()
+
+	t0 = time.Now()
+	s.broadcastTaskDispatch(ctx, *claimed)
+	dispatchMs = time.Since(t0).Milliseconds()
+
+	outcome = "claimed"
+	return claimed, nil
+}
+
 // ClaimTaskForRuntime claims the next runnable task for a runtime while
 // still respecting each agent's max_concurrent_tasks limit.
 //
@@ -2908,10 +3008,10 @@ func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 
 // triggerNextQueuedTaskForTerminal bridges long-lived daemon semantics for
 // server-managed run-once runtimes. A normal ASB daemon finishes a task and
-// keeps polling, so a follow-up comment queued behind the active task is picked
-// up naturally. FC/E2B run-once exits after one claim; when the terminal task
-// releases the claim serialization group, the server nudges the next queued
-// task in the same issue/chat/quick-create lane.
+// keeps polling, so queued work is picked up naturally. FC/E2B run-once exits
+// after one claim; when a terminal task releases capacity, the server nudges
+// the next queued task for the same agent, preferring the same issue/chat/
+// quick-create lane when one exists.
 func (s *TaskService) triggerNextQueuedTaskForTerminal(ctx context.Context, terminal db.AgentTaskQueue) {
 	if s == nil || s.Queries == nil || !terminal.RuntimeID.Valid {
 		return
@@ -2942,13 +3042,21 @@ func nextQueuedTaskForTerminal(terminal db.AgentTaskQueue, candidates []db.Agent
 	if !terminal.AgentID.Valid {
 		return db.AgentTaskQueue{}, false
 	}
+	var firstSameAgent *db.AgentTaskQueue
 	for _, candidate := range candidates {
 		if !candidate.AgentID.Valid || candidate.AgentID != terminal.AgentID {
 			continue
 		}
+		if firstSameAgent == nil {
+			candidateCopy := candidate
+			firstSameAgent = &candidateCopy
+		}
 		if sameTaskSerializationGroup(terminal, candidate) {
 			return candidate, true
 		}
+	}
+	if firstSameAgent != nil {
+		return *firstSameAgent, true
 	}
 	return db.AgentTaskQueue{}, false
 }

@@ -249,16 +249,22 @@
     }
   },
   "fc_e2b_runtime": {
-    "action": "FC-Hermes",
-    "title": "FC-Hermes Runtime",
-    "description": "Create a cloud Hermes runtime backed by one-shot FC/E2B sandboxes. The server owns the template, timeout, and model configuration.",
+    "action": "Add Cloud SB Runtime",
+    "title": "Add Cloud SB Runtime",
+    "description": "Choose an FC/E2B template and create an independent cloud Hermes runtime. The server owns timeout and model configuration.",
     "create": "Create runtime",
     "creating": "Creating...",
     "cancel": "Cancel",
-    "toast_created": "FC-Hermes runtime created",
-    "toast_create_failed": "Failed to create FC-Hermes runtime",
+    "toast_created": "FC runtime created",
+    "toast_create_failed": "Failed to create FC runtime",
     "visibility_hint": "Private runtimes can only be used by you and workspace admins. Public runtimes can be used by any workspace member.",
+    "template_search_placeholder": "Search template name or ID...",
+    "templates_loading": "Loading templates...",
+    "templates_failed": "Failed to load templates",
+    "templates_empty": "No templates available",
+    "name_placeholder": "For example FC-Hermes-DWS",
     "fields": {
+      "template": "Template",
       "name": "Name",
       "visibility": "Visibility"
     }

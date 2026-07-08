@@ -922,6 +922,84 @@ func (q *Queries) ClearAgentComposioToolkitAllowlist(ctx context.Context, id pgt
 	return i, err
 }
 
+const claimAgentTaskByID = `-- name: ClaimAgentTaskByID :one
+UPDATE agent_task_queue AS atq
+SET status = 'dispatched',
+    dispatched_at = now(),
+    prepare_lease_expires_at = now() + make_interval(secs => $1::double precision)
+WHERE atq.id = $2
+  AND atq.runtime_id = $3
+  AND atq.status = 'queued'
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_task_queue active
+      WHERE active.agent_id = atq.agent_id
+        AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
+        AND (
+          (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
+          OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
+          OR (
+            atq.issue_id IS NULL
+            AND atq.chat_session_id IS NULL
+            AND atq.autopilot_run_id IS NULL
+            AND active.issue_id IS NULL
+            AND active.chat_session_id IS NULL
+            AND active.autopilot_run_id IS NULL
+          )
+        )
+  )
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, escalation_for_task_id, fire_at
+`
+
+type ClaimAgentTaskByIDParams struct {
+	PrepareLeaseSecs float64     `json:"prepare_lease_secs"`
+	ID               pgtype.UUID `json:"id"`
+	RuntimeID        pgtype.UUID `json:"runtime_id"`
+}
+
+// Claims one specific queued task for a run-once runtime. This is used by
+// FC/E2B launches where the sandbox scope is chosen from the task that caused
+// the launch; claiming any other queued task can run the wrong chat inside the
+// wrong warm sandbox.
+func (q *Queries) ClaimAgentTaskByID(ctx context.Context, arg ClaimAgentTaskByIDParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, claimAgentTaskByID, arg.PrepareLeaseSecs, arg.ID, arg.RuntimeID)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+	)
+	return i, err
+}
+
 const clearAgentMcpConfig = `-- name: ClearAgentMcpConfig :one
 UPDATE agent SET mcp_config = NULL, updated_at = now()
 WHERE id = $1

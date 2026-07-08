@@ -472,6 +472,37 @@ WHERE id = @task_id
   AND dispatched_at = @dispatched_at
 RETURNING *;
 
+-- name: ClaimAgentTaskByID :one
+-- Claims one specific queued task for a run-once runtime. This is used by
+-- FC/E2B launches where the sandbox scope is chosen from the task that caused
+-- the launch; claiming any other queued task can run the wrong chat inside the
+-- wrong warm sandbox.
+UPDATE agent_task_queue AS atq
+SET status = 'dispatched',
+    dispatched_at = now(),
+    prepare_lease_expires_at = now() + make_interval(secs => @prepare_lease_secs::double precision)
+WHERE atq.id = @id
+  AND atq.runtime_id = @runtime_id
+  AND atq.status = 'queued'
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_task_queue active
+      WHERE active.agent_id = atq.agent_id
+        AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
+        AND (
+          (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
+          OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
+          OR (
+            atq.issue_id IS NULL
+            AND atq.chat_session_id IS NULL
+            AND atq.autopilot_run_id IS NULL
+            AND active.issue_id IS NULL
+            AND active.chat_session_id IS NULL
+            AND active.autopilot_run_id IS NULL
+          )
+        )
+  )
+RETURNING *;
+
 -- name: ReclaimStaleDispatchedTaskForRuntime :one
 -- Re-delivers a task whose previous claim likely succeeded server-side but
 -- whose response never reached the daemon. The task is still in `dispatched`

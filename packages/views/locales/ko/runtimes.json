@@ -237,16 +237,22 @@
     }
   },
   "fc_e2b_runtime": {
-    "action": "FC-Hermes",
-    "title": "FC-Hermes 런타임",
-    "description": "일회성 FC/E2B 샌드박스로 실행되는 클라우드 Hermes 런타임을 만듭니다. 템플릿, 제한 시간, 모델 설정은 서버에서 관리합니다.",
+    "action": "Add Cloud SB Runtime",
+    "title": "Add Cloud SB Runtime",
+    "description": "Choose an FC/E2B template and create an independent cloud Hermes runtime. The server owns timeout and model configuration.",
     "create": "런타임 만들기",
     "creating": "만드는 중...",
     "cancel": "취소",
-    "toast_created": "FC-Hermes 런타임을 만들었습니다",
-    "toast_create_failed": "FC-Hermes 런타임을 만들지 못했습니다",
+    "toast_created": "FC runtime created",
+    "toast_create_failed": "Failed to create FC runtime",
     "visibility_hint": "비공개 런타임은 본인과 워크스페이스 관리자만 사용할 수 있습니다. 공개 런타임은 모든 워크스페이스 멤버가 사용할 수 있습니다.",
+    "template_search_placeholder": "Search template name or ID...",
+    "templates_loading": "Loading templates...",
+    "templates_failed": "Failed to load templates",
+    "templates_empty": "No templates available",
+    "name_placeholder": "For example FC-Hermes-DWS",
     "fields": {
+      "template": "Template",
       "name": "이름",
       "visibility": "공개 범위"
     }

@@ -237,16 +237,22 @@
     }
   },
   "fc_e2b_runtime": {
-    "action": "FC-Hermes",
-    "title": "FC-Hermes 运行时",
-    "description": "创建一个由一次性 FC/E2B 沙箱承载的云端 Hermes 运行时。模板、超时和模型配置由服务端管理。",
+    "action": "Add Cloud SB Runtime",
+    "title": "Add Cloud SB Runtime",
+    "description": "选择一个 FC/E2B 模板，创建独立的云端 Hermes 运行时。超时和模型配置由服务端管理。",
     "create": "创建运行时",
     "creating": "创建中...",
     "cancel": "取消",
-    "toast_created": "FC-Hermes 运行时已创建",
-    "toast_create_failed": "创建 FC-Hermes 运行时失败",
+    "toast_created": "FC runtime 已创建",
+    "toast_create_failed": "创建 FC runtime 失败",
     "visibility_hint": "私有运行时仅你和工作区管理员可用。公开运行时可供所有工作区成员使用。",
+    "template_search_placeholder": "搜索模板名称或 ID...",
+    "templates_loading": "正在加载模板...",
+    "templates_failed": "加载模板失败",
+    "templates_empty": "没有可用模板",
+    "name_placeholder": "例如 FC-Hermes-DWS",
     "fields": {
+      "template": "模板",
       "name": "名称",
       "visibility": "可见性"
     }

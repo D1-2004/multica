@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -47,6 +50,7 @@ type FCE2BConfig struct {
 	LLMBaseURL          string
 	LLMAPIKey           string
 	LLMModel            string
+	DWSSecretKey        string
 	CLIPath             string
 	TimeoutSeconds      int
 	SandboxReadyTimeout time.Duration
@@ -64,6 +68,7 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		LLMBaseURL:          strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_BASE_URL")), "/"),
 		LLMAPIKey:           strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_API_KEY")),
 		LLMModel:            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_MODEL")),
+		DWSSecretKey:        strings.TrimSpace(os.Getenv("MULTICA_DWS_SECRET_KEY")),
 		CLIPath:             strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_CLI_PATH")),
 		TimeoutSeconds:      defaultFCE2BTimeoutSeconds,
 		SandboxReadyTimeout: defaultFCE2BSandboxReadyTimeout,
@@ -100,9 +105,6 @@ func (c FCE2BConfig) Validate() error {
 		return c.ParseError
 	}
 	var missing []string
-	if strings.TrimSpace(c.Template) == "" {
-		missing = append(missing, "MULTICA_FC_E2B_TEMPLATE")
-	}
 	if strings.TrimSpace(c.ServerURL) == "" {
 		missing = append(missing, "MULTICA_FC_E2B_SERVER_URL")
 	}
@@ -139,6 +141,29 @@ func (c FCE2BConfig) Validate() error {
 	return nil
 }
 
+func (c FCE2BConfig) ValidateTemplateAPI() error {
+	if c.ParseError != nil {
+		return c.ParseError
+	}
+	var missing []string
+	if strings.TrimSpace(c.APIKey) == "" {
+		missing = append(missing, "MULTICA_FC_E2B_API_KEY")
+	}
+	if strings.TrimSpace(c.APIURL) == "" {
+		missing = append(missing, "MULTICA_FC_E2B_API_URL")
+	}
+	if strings.TrimSpace(c.Domain) == "" {
+		missing = append(missing, "MULTICA_FC_E2B_DOMAIN")
+	}
+	if strings.TrimSpace(c.CLIPath) == "" {
+		missing = append(missing, "MULTICA_FC_E2B_CLI_PATH")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing FC/E2B template config: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
 func IsFCE2BRuntime(rt db.AgentRuntime) bool {
 	if rt.RuntimeMode != "cloud" {
 		return false
@@ -156,6 +181,16 @@ type CommandRunner interface {
 	Run(ctx context.Context, name string, args []string, env []string) (string, error)
 }
 
+type FCE2BTemplate struct {
+	ID        string         `json:"id,omitempty"`
+	Name      string         `json:"name,omitempty"`
+	Template  string         `json:"template"`
+	Status    string         `json:"status,omitempty"`
+	CreatedAt string         `json:"created_at,omitempty"`
+	UpdatedAt string         `json:"updated_at,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+}
+
 type OSCommandRunner struct{}
 
 func (OSCommandRunner) Run(ctx context.Context, name string, args []string, env []string) (string, error) {
@@ -168,6 +203,94 @@ func (OSCommandRunner) Run(ctx context.Context, name string, args []string, env 
 		return output.String(), fmt.Errorf("command failed: %w: %s", err, redact.Text(output.String()))
 	}
 	return output.String(), nil
+}
+
+func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunner) ([]FCE2BTemplate, error) {
+	if runner == nil {
+		runner = OSCommandRunner{}
+	}
+	if err := cfg.ValidateTemplateAPI(); err != nil {
+		return nil, err
+	}
+	out, err := runner.Run(ctx, cfg.CLIPath, []string{"template", "list", "--format", "json"}, fcE2BEnv(cfg))
+	if err != nil {
+		return nil, fmt.Errorf("FC/E2B template list failed: %w", err)
+	}
+	templates, err := parseFCE2BTemplates(out)
+	if err != nil {
+		return nil, err
+	}
+	return templates, nil
+}
+
+func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return nil, errors.New("FC/E2B template list returned empty output")
+	}
+
+	var raw any
+	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
+		return nil, fmt.Errorf("FC/E2B template list returned invalid JSON: %w", err)
+	}
+
+	var items []any
+	switch v := raw.(type) {
+	case []any:
+		items = v
+	case map[string]any:
+		for _, key := range []string{"templates", "items", "data"} {
+			if arr, ok := v[key].([]any); ok {
+				items = arr
+				break
+			}
+		}
+	default:
+		return nil, errors.New("FC/E2B template list returned unexpected JSON")
+	}
+	if items == nil {
+		return nil, errors.New("FC/E2B template list returned no templates")
+	}
+
+	templates := make([]FCE2BTemplate, 0, len(items))
+	for _, item := range items {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		t := FCE2BTemplate{
+			ID:        firstString(obj, "id", "template_id", "templateID"),
+			Name:      firstString(obj, "name", "template_name", "templateName", "alias"),
+			Status:    firstString(obj, "status", "state"),
+			CreatedAt: firstString(obj, "created_at", "createdAt", "create_time", "createTime"),
+			UpdatedAt: firstString(obj, "updated_at", "updatedAt", "update_time", "updateTime"),
+			Metadata:  obj,
+		}
+		t.Template = firstString(obj, "template", "templateName", "name", "id", "template_id", "templateID")
+		if strings.TrimSpace(t.Template) == "" {
+			continue
+		}
+		templates = append(templates, t)
+	}
+	return templates, nil
+}
+
+func firstString(obj map[string]any, keys ...string) string {
+	for _, key := range keys {
+		switch v := obj[key].(type) {
+		case string:
+			if s := strings.TrimSpace(v); s != "" {
+				return s
+			}
+		case fmt.Stringer:
+			if s := strings.TrimSpace(v.String()); s != "" {
+				return s
+			}
+		case float64:
+			return strconv.FormatInt(int64(v), 10)
+		}
+	}
+	return ""
 }
 
 type FCE2BLauncher struct {
@@ -217,6 +340,10 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	if !rt.OwnerID.Valid {
 		return l.failLaunch(ctx, task, "FC/E2B runtime has no owner_id")
 	}
+	template, err := fcE2BTemplateForRuntime(rt, l.Config.Template)
+	if err != nil {
+		return l.failLaunch(ctx, task, err.Error())
+	}
 
 	token, err := auth.GenerateDaemonToken()
 	if err != nil {
@@ -230,13 +357,17 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	}); err != nil {
 		return l.failLaunch(ctx, task, "failed to persist FC/E2B daemon token")
 	}
-
-	scope, scoped := fcE2BScopeForTask(task)
-	sandboxID, coldStart, err := l.resolveSandbox(ctx, rt, scope, scoped)
+	extraEnv, err := l.extraEnvForTask(ctx, task, rt)
 	if err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
-	if err := l.execRunOnce(ctx, sandboxID, rt, token, coldStart); err != nil {
+
+	scope, scoped := fcE2BScopeForTask(task)
+	sandboxID, coldStart, err := l.resolveSandbox(ctx, rt, scope, scoped, template)
+	if err != nil {
+		return l.failLaunch(ctx, task, err.Error())
+	}
+	if err := l.execRunOnce(ctx, sandboxID, rt, task.ID, token, coldStart, extraEnv); err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
 	if scoped {
@@ -260,7 +391,104 @@ func fcE2BScopeForTask(task db.AgentTaskQueue) (fcE2BTaskScope, bool) {
 	return fcE2BTaskScope{}, false
 }
 
-func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool) (string, bool, error) {
+func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQueue, rt db.AgentRuntime) (map[string]string, error) {
+	agentRow, err := l.Queries.GetAgent(ctx, task.AgentID)
+	if err != nil {
+		return nil, fmt.Errorf("load agent for FC/E2B launch: %w", err)
+	}
+	profileID, hasProfile, err := dwsProfileIDFromRuntimeConfig(agentRow.RuntimeConfig)
+	if err != nil {
+		return nil, err
+	}
+	if !hasProfile {
+		if fcE2BRuntimeRequiresDWS(rt) {
+			return nil, errors.New("DWS profile is required for this FC/E2B runtime")
+		}
+		return nil, nil
+	}
+	profileUUID, err := util.ParseUUID(profileID)
+	if err != nil {
+		return nil, errors.New("runtime_config.fc_e2b.dws_profile_id is not a valid UUID")
+	}
+	profile, err := l.Queries.GetDWSAuthProfileForWorkspace(ctx, db.GetDWSAuthProfileForWorkspaceParams{
+		ID:          profileUUID,
+		WorkspaceID: agentRow.WorkspaceID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load DWS profile for FC/E2B launch: %w", err)
+	}
+	archive, err := l.decryptDWSAuthArchive(profile.AuthArchiveEncrypted)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{"DWS_AUTH_ARCHIVE_B64": archive}, nil
+}
+
+func dwsProfileIDFromRuntimeConfig(raw []byte) (string, bool, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return "", false, nil
+	}
+	var cfg struct {
+		FCE2B struct {
+			DWSProfileID string `json:"dws_profile_id"`
+		} `json:"fc_e2b"`
+		DWSProfileID string `json:"dws_profile_id"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return "", false, fmt.Errorf("parse agent runtime_config for DWS profile: %w", err)
+	}
+	profileID := strings.TrimSpace(cfg.FCE2B.DWSProfileID)
+	if profileID == "" {
+		profileID = strings.TrimSpace(cfg.DWSProfileID)
+	}
+	return profileID, profileID != "", nil
+}
+
+func fcE2BRuntimeRequiresDWS(rt db.AgentRuntime) bool {
+	var metadata struct {
+		Template     string   `json:"template"`
+		TemplateName string   `json:"template_name"`
+		Capabilities []string `json:"capabilities"`
+	}
+	if len(rt.Metadata) > 0 {
+		_ = json.Unmarshal(rt.Metadata, &metadata)
+	}
+	for _, capability := range metadata.Capabilities {
+		if strings.EqualFold(strings.TrimSpace(capability), "dws") {
+			return true
+		}
+	}
+	return strings.Contains(strings.ToLower(metadata.Template+" "+metadata.TemplateName), "dws")
+}
+
+func (l *FCE2BLauncher) decryptDWSAuthArchive(ciphertext []byte) (string, error) {
+	if len(ciphertext) == 0 {
+		return "", errors.New("DWS profile archive is empty")
+	}
+	rawKey := strings.TrimSpace(l.Config.DWSSecretKey)
+	if rawKey == "" {
+		return "", errors.New("MULTICA_DWS_SECRET_KEY is required for DWS profiles")
+	}
+	key, err := base64.StdEncoding.DecodeString(rawKey)
+	if err != nil {
+		return "", errors.New("MULTICA_DWS_SECRET_KEY is not valid base64")
+	}
+	box, err := secretbox.New(key)
+	if err != nil {
+		return "", fmt.Errorf("MULTICA_DWS_SECRET_KEY is invalid: %w", err)
+	}
+	plain, err := box.Open(ciphertext)
+	if err != nil {
+		return "", errors.New("failed to decrypt DWS profile archive")
+	}
+	archive := strings.TrimSpace(string(plain))
+	if archive == "" {
+		return "", errors.New("DWS profile archive is empty")
+	}
+	return archive, nil
+}
+
+func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool, template string) (string, bool, error) {
 	if scoped {
 		session, err := l.Queries.GetActiveFCE2BSandboxSession(ctx, db.GetActiveFCE2BSandboxSessionParams{
 			RuntimeID: rt.ID,
@@ -284,7 +512,7 @@ func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, 
 		}
 	}
 
-	sandboxID, err := l.createSandbox(ctx)
+	sandboxID, err := l.createSandbox(ctx, template)
 	if err != nil {
 		return "", true, err
 	}
@@ -298,7 +526,7 @@ func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, 
 			ScopeType:   scope.typ,
 			ScopeID:     scope.id,
 			SandboxID:   sandboxID,
-			Template:    l.Config.Template,
+			Template:    template,
 			ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Duration(l.Config.TimeoutSeconds) * time.Second), Valid: true},
 		})
 		if err != nil {
@@ -308,13 +536,17 @@ func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, 
 	return sandboxID, true, nil
 }
 
-func (l *FCE2BLauncher) createSandbox(ctx context.Context) (string, error) {
+func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (string, error) {
+	template = strings.TrimSpace(template)
+	if template == "" {
+		return "", errors.New("FC/E2B runtime has no template")
+	}
 	args := []string{
 		"sandbox", "create",
 		"--detach",
 		"--timeout", strconv.Itoa(l.Config.TimeoutSeconds),
 		"--lifecycle.ontimeout", "kill",
-		l.Config.Template,
+		template,
 	}
 	out, err := l.Runner.Run(ctx, l.Config.CLIPath, args, l.e2bEnv())
 	if err != nil {
@@ -352,7 +584,7 @@ func (l *FCE2BLauncher) waitSandboxReady(ctx context.Context, sandboxID string) 
 	}
 }
 
-func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db.AgentRuntime, token string, coldStart bool) error {
+func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db.AgentRuntime, taskID pgtype.UUID, token string, coldStart bool, extraEnv map[string]string) error {
 	runtimeID := util.UUIDToString(rt.ID)
 	args := []string{
 		"sandbox", "exec",
@@ -360,6 +592,7 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "MULTICA_SERVER_URL=" + l.Config.ServerURL,
 		"-e", "MULTICA_DAEMON_TOKEN=" + token,
 		"-e", "MULTICA_RUNTIME_ID=" + runtimeID,
+		"-e", "MULTICA_TASK_ID=" + util.UUIDToString(taskID),
 		"-e", "MULTICA_DAEMON_ID=" + rt.DaemonID.String,
 		"-e", "MULTICA_AGENT_RUNTIME_NAME=" + rt.Name,
 		"-e", "OPENAI_BASE_URL=" + l.Config.LLMBaseURL,
@@ -368,6 +601,9 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 	}
 	if coldStart {
 		args = append(args, "-e", "MULTICA_FC_E2B_COLD_START=true")
+	}
+	for _, key := range sortedEnvKeys(extraEnv) {
+		args = append(args, "-e", key+"="+extraEnv[key])
 	}
 	args = append(args,
 		sandboxID,
@@ -383,11 +619,41 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 }
 
 func (l *FCE2BLauncher) e2bEnv() []string {
+	return fcE2BEnv(l.Config)
+}
+
+func fcE2BEnv(cfg FCE2BConfig) []string {
 	return []string{
-		"E2B_API_KEY=" + l.Config.APIKey,
-		"E2B_API_URL=" + l.Config.APIURL,
-		"E2B_DOMAIN=" + l.Config.Domain,
+		"E2B_API_KEY=" + cfg.APIKey,
+		"E2B_API_URL=" + cfg.APIURL,
+		"E2B_DOMAIN=" + cfg.Domain,
 	}
+}
+
+func sortedEnvKeys(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func fcE2BTemplateForRuntime(rt db.AgentRuntime, configuredTemplate string) (string, error) {
+	var metadata struct {
+		Template string `json:"template"`
+	}
+	if len(rt.Metadata) > 0 {
+		_ = json.Unmarshal(rt.Metadata, &metadata)
+	}
+	template := strings.TrimSpace(metadata.Template)
+	if template == "" {
+		template = strings.TrimSpace(configuredTemplate)
+	}
+	if template == "" {
+		return "", errors.New("FC/E2B runtime has no template")
+	}
+	return template, nil
 }
 
 func (l *FCE2BLauncher) failLaunch(ctx context.Context, task db.AgentTaskQueue, msg string) error {

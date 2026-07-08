@@ -71,7 +71,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		SandboxReadyTimeout: time.Second,
 	}, runner)
 
-	sandboxID, err := launcher.createSandbox(context.Background())
+	sandboxID, err := launcher.createSandbox(context.Background(), "multica-fc-hermes-v1")
 	if err != nil {
 		t.Fatalf("createSandbox returned error: %v", err)
 	}
@@ -87,7 +87,8 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		Name:     "FC-Hermes",
 		DaemonID: pgtype.Text{String: "fc-e2b:ws:fc-hermes", Valid: true},
 	}
-	if err := launcher.execRunOnce(context.Background(), sandboxID, rt, "mdt_test_token", true); err != nil {
+	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	if err := launcher.execRunOnce(context.Background(), sandboxID, rt, taskID, "mdt_test_token", true, nil); err != nil {
 		t.Fatalf("execRunOnce returned error: %v", err)
 	}
 
@@ -127,6 +128,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		"-e", "MULTICA_SERVER_URL=https://api.multica.test",
 		"-e", "MULTICA_DAEMON_TOKEN=mdt_test_token",
 		"-e", "MULTICA_RUNTIME_ID=11111111-1111-1111-1111-111111111111",
+		"-e", "MULTICA_TASK_ID=22222222-2222-2222-2222-222222222222",
 		"-e", "MULTICA_DAEMON_ID=fc-e2b:ws:fc-hermes",
 		"-e", "MULTICA_AGENT_RUNTIME_NAME=FC-Hermes",
 		"-e", "OPENAI_BASE_URL=https://api-deap.dingtalk.com/deapai",
@@ -162,13 +164,51 @@ func TestFCE2BExecRunOnceWarmSandboxDoesNotInjectColdStart(t *testing.T) {
 		DaemonID: pgtype.Text{String: "fc-e2b:ws:fc-hermes", Valid: true},
 	}
 
-	if err := launcher.execRunOnce(context.Background(), "sbx_warm", rt, "mdt_test_token", false); err != nil {
+	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	if err := launcher.execRunOnce(context.Background(), "sbx_warm", rt, taskID, "mdt_test_token", false, nil); err != nil {
 		t.Fatalf("execRunOnce returned error: %v", err)
 	}
 	for _, arg := range runner.calls[0].args {
 		if arg == "MULTICA_FC_E2B_COLD_START=true" {
 			t.Fatalf("warm sandbox exec must not inject cold-start marker: %#v", runner.calls[0].args)
 		}
+	}
+}
+
+func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
+	runner := &fakeCommandRunner{}
+	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{
+		ServerURL:  "https://api.multica.test",
+		APIKey:     "e2b_secret",
+		APIURL:     "https://api.cn-beijing.e2b.fc.aliyuncs.com",
+		Domain:     "cn-beijing.e2b.fc.aliyuncs.com",
+		LLMBaseURL: "https://api-deap.dingtalk.com/deapai",
+		LLMAPIKey:  "maas_secret",
+		LLMModel:   "qwen3.5-plus",
+		CLIPath:    "/usr/local/bin/e2b",
+	}, runner)
+	rt := db.AgentRuntime{
+		ID:       util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		Name:     "FC-Hermes-DWS",
+		DaemonID: pgtype.Text{String: "fc-e2b:ws:fc-hermes-dws", Valid: true},
+	}
+
+	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	if err := launcher.execRunOnce(context.Background(), "sbx_dws", rt, taskID, "mdt_test_token", false, map[string]string{
+		"DWS_AUTH_ARCHIVE_B64": "archive_secret",
+	}); err != nil {
+		t.Fatalf("execRunOnce returned error: %v", err)
+	}
+	args := runner.calls[0].args
+	found := false
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "-e" && args[i+1] == "DWS_AUTH_ARCHIVE_B64=archive_secret" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("exec args did not include DWS auth env")
 	}
 }
 

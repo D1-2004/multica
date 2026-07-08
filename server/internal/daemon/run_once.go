@@ -13,6 +13,7 @@ type RunOnceOptions struct {
 	Provider       string
 	RuntimeName    string
 	FCE2BColdStart bool
+	TargetTaskID   string
 }
 
 func (d *Daemon) RunOnce(ctx context.Context, opts RunOnceOptions) error {
@@ -20,6 +21,7 @@ func (d *Daemon) RunOnce(ctx context.Context, opts RunOnceOptions) error {
 	opts.DaemonToken = strings.TrimSpace(opts.DaemonToken)
 	opts.Provider = strings.TrimSpace(opts.Provider)
 	opts.RuntimeName = strings.TrimSpace(opts.RuntimeName)
+	opts.TargetTaskID = strings.TrimSpace(opts.TargetTaskID)
 	if opts.RuntimeID == "" {
 		return fmt.Errorf("runtime id is required")
 	}
@@ -49,12 +51,13 @@ func (d *Daemon) RunOnce(ctx context.Context, opts RunOnceOptions) error {
 	d.seedRunOnceRuntime(opts.RuntimeID, opts.RuntimeName, opts.Provider)
 	task, err := d.client.ClaimTaskWithOptions(runCtx, opts.RuntimeID, ClaimTaskOptions{
 		FCE2BColdStart: opts.FCE2BColdStart,
+		TargetTaskID:   opts.TargetTaskID,
 	})
 	if err != nil {
 		return fmt.Errorf("claim task: %w", err)
 	}
 	if task == nil {
-		d.logger.Info("run-once claimed no task", "runtime_id", opts.RuntimeID)
+		d.logger.Info("run-once claimed no task", "runtime_id", opts.RuntimeID, "target_task_id", opts.TargetTaskID)
 		return nil
 	}
 	if task.WorkspaceID == "" {

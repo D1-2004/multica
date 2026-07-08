@@ -477,28 +477,45 @@ describe("ApiClient", () => {
       created_at: "2026-07-08T00:00:00Z",
       updated_at: "2026-07-08T00:00:00Z",
     };
-    const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response(JSON.stringify(runtime), {
-        status: 201,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([{ template: "multica-fc-hermes-v1" }]),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(runtime), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
     vi.stubGlobal("fetch", fetchMock);
 
     const client = new ApiClient("https://api.example.test");
+    await client.listFCE2BTemplates();
     await client.createFCE2BRuntime({
       name: "FC-Hermes",
+      template_id: "multica-fc-hermes-v1",
       visibility: "private",
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://api.example.test/api/runtimes/fc-e2b/templates",
+    );
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
       "https://api.example.test/api/runtimes/fc-e2b",
     );
-    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
       method: "POST",
       body: JSON.stringify({
         name: "FC-Hermes",
+        template_id: "multica-fc-hermes-v1",
         visibility: "private",
       }),
     });
