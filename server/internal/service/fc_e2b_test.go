@@ -50,6 +50,40 @@ func TestParseE2BSandboxIDStrictCreateOutput(t *testing.T) {
 	}
 }
 
+func TestParseFCE2BTemplatesUsesAliasesAndBuildStatus(t *testing.T) {
+	got, err := parseFCE2BTemplates(`[
+		{
+			"templateID": "idt7f6on323gsyuqjt59",
+			"aliases": ["multica-fc-hermes-dws-v1"],
+			"names": ["multica-fc-hermes-dws-v1"],
+			"buildStatus": "ready",
+			"createdAt": "2026-07-08T13:16:30.740524Z",
+			"updatedAt": "2026-07-08T13:19:01.365773Z"
+		}
+	]`)
+	if err != nil {
+		t.Fatalf("parseFCE2BTemplates returned error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("templates = %d, want 1", len(got))
+	}
+	if got[0].ID != "idt7f6on323gsyuqjt59" {
+		t.Fatalf("id = %q", got[0].ID)
+	}
+	if got[0].Name != "multica-fc-hermes-dws-v1" {
+		t.Fatalf("name = %q", got[0].Name)
+	}
+	if got[0].Template != "multica-fc-hermes-dws-v1" {
+		t.Fatalf("template = %q", got[0].Template)
+	}
+	if got[0].Status != "ready" {
+		t.Fatalf("status = %q", got[0].Status)
+	}
+	if got[0].UpdatedAt != "2026-07-08T13:19:01.365773Z" {
+		t.Fatalf("updated_at = %q", got[0].UpdatedAt)
+	}
+}
+
 func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 	runner := &fakeCommandRunner{out: []string{
 		"Sandbox created with ID sbx_123 using template multica-fc-hermes-v1",

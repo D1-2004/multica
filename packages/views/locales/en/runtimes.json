@@ -243,6 +243,7 @@
     "templates_loading": "Loading templates...",
     "templates_failed": "Failed to load templates",
     "templates_empty": "No templates available",
+    "template_updated": "Updated {{time}}",
     "name_placeholder": "For example FC-Hermes-DWS",
     "fields": {
       "template": "Template",

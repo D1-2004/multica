@@ -231,6 +231,7 @@
     "templates_loading": "正在加载模板...",
     "templates_failed": "加载模板失败",
     "templates_empty": "没有可用模板",
+    "template_updated": "更新于 {{time}}",
     "name_placeholder": "例如 FC-Hermes-DWS",
     "fields": {
       "template": "模板",
