@@ -133,6 +133,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		"-e", "OPENAI_API_KEY=maas_secret",
 		"-e", "OPENAI_MODEL=qwen3.7-max",
 		"sbx_123",
+		"--",
 		"multica-fc-hermes-runner",
 		"--runtime-id", "11111111-1111-1111-1111-111111111111",
 		"--provider", "hermes",
