@@ -13,8 +13,9 @@ import (
 )
 
 type fakeCommandRunner struct {
-	calls []fakeCommandCall
-	out   []string
+	calls     []fakeCommandCall
+	deadlines []bool
+	out       []string
 }
 
 type fakeCommandCall struct {
@@ -23,18 +24,41 @@ type fakeCommandCall struct {
 	env  []string
 }
 
-func (f *fakeCommandRunner) Run(_ context.Context, name string, args []string, env []string) (string, error) {
+func (f *fakeCommandRunner) Run(ctx context.Context, name string, args []string, env []string) (string, error) {
 	f.calls = append(f.calls, fakeCommandCall{
 		name: name,
 		args: append([]string(nil), args...),
 		env:  append([]string(nil), env...),
 	})
+	_, hasDeadline := ctx.Deadline()
+	f.deadlines = append(f.deadlines, hasDeadline)
 	if len(f.out) == 0 {
 		return "", nil
 	}
 	out := f.out[0]
 	f.out = f.out[1:]
 	return out, nil
+}
+
+func TestFCE2BLauncherCommandsUseSandboxReadyTimeout(t *testing.T) {
+	runner := &fakeCommandRunner{out: []string{
+		"Sandbox created with ID sbx_timeout using template multica-fc-hermes-v1",
+	}}
+	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{
+		APIKey:              "e2b_secret",
+		APIURL:              "https://api.cn-beijing.e2b.fc.aliyuncs.com",
+		Domain:              "cn-beijing.e2b.fc.aliyuncs.com",
+		CLIPath:             "/usr/local/bin/e2b",
+		TimeoutSeconds:      1800,
+		SandboxReadyTimeout: time.Minute,
+	}, runner)
+
+	if _, err := launcher.createSandbox(context.Background(), "multica-fc-hermes-v1"); err != nil {
+		t.Fatalf("createSandbox returned error: %v", err)
+	}
+	if len(runner.deadlines) != 1 || !runner.deadlines[0] {
+		t.Fatalf("createSandbox runner deadline = %#v, want one deadline", runner.deadlines)
+	}
 }
 
 func TestParseE2BSandboxIDStrictCreateOutput(t *testing.T) {
