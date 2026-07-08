@@ -2,8 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import type { RuntimeModel } from "@multica/core/types";
-import { runtimeModelsOptions } from "@multica/core/runtimes";
+import type { AgentRuntime, RuntimeModel } from "@multica/core/types";
+import { isFCE2BRuntime, runtimeModelsOptions } from "@multica/core/runtimes";
 import { PropRow } from "../../../common/prop-row";
 import { SettingsRow } from "../../../settings/components/settings-layout";
 import { useT } from "../../../i18n";
@@ -29,6 +29,7 @@ import { ThinkingPicker } from "./thinking-picker";
  */
 export function ThinkingPropRow({
   runtimeId,
+  runtime,
   runtimeOnline,
   provider,
   model,
@@ -37,6 +38,7 @@ export function ThinkingPropRow({
   onChange,
 }: {
   runtimeId: string | null;
+  runtime?: AgentRuntime | null;
   runtimeOnline: boolean;
   /** Runtime provider type (e.g. "codex", "claude"). Used to decide whether an
    *  empty model can safely preview a default model's effort catalog. */
@@ -47,10 +49,12 @@ export function ThinkingPropRow({
   onChange: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
+  const managedByRuntime = isFCE2BRuntime(runtime);
   const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
+    runtimeModelsOptions(runtimeOnline && !managedByRuntime ? runtimeId : null),
   );
 
+  if (managedByRuntime && !value) return null;
   const models = modelsQuery.data?.models ?? [];
   const entry = pickModelEntry(models, model, provider);
   const levels = entry?.thinking?.supported_levels ?? [];
@@ -72,6 +76,7 @@ export function ThinkingPropRow({
 export function ThinkingSettingField({
   label,
   runtimeId,
+  runtime,
   runtimeOnline,
   provider,
   model,
@@ -81,6 +86,7 @@ export function ThinkingSettingField({
 }: {
   label: ReactNode;
   runtimeId: string | null;
+  runtime?: AgentRuntime | null;
   runtimeOnline: boolean;
   provider: string;
   model: string;
@@ -88,14 +94,15 @@ export function ThinkingSettingField({
   canEdit: boolean;
   onChange: (next: string) => Promise<void> | void;
 }) {
+  const managedByRuntime = isFCE2BRuntime(runtime);
   const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
+    runtimeModelsOptions(runtimeOnline && !managedByRuntime ? runtimeId : null),
   );
   const models = modelsQuery.data?.models ?? [];
   const entry = pickModelEntry(models, model, provider);
   const levels = entry?.thinking?.supported_levels ?? [];
 
-  if (levels.length === 0 && !value) return null;
+  if ((managedByRuntime || levels.length === 0) && !value) return null;
 
   return (
     <SettingsRow label={label} size="select-wide">

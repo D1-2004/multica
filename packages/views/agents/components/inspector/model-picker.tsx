@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Cpu, Loader2, Plus } from "lucide-react";
-import { runtimeModelsOptions } from "@multica/core/runtimes";
+import { isFCE2BRuntime, runtimeModelsOptions } from "@multica/core/runtimes";
+import type { AgentRuntime } from "@multica/core/types";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import {
@@ -28,6 +29,7 @@ import { useT } from "../../../i18n";
  */
 export function ModelPicker({
   runtimeId,
+  runtime,
   runtimeOnline,
   value,
   canEdit = true,
@@ -36,6 +38,7 @@ export function ModelPicker({
   onChange,
 }: {
   runtimeId: string | null;
+  runtime?: AgentRuntime | null;
   runtimeOnline: boolean;
   value: string;
   /** When false, render a static read-only display and skip the popover. */
@@ -47,9 +50,10 @@ export function ModelPicker({
   const { t } = useT("agents");
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const managedByRuntime = isFCE2BRuntime(runtime);
 
   const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
+    runtimeModelsOptions(runtimeOnline && !managedByRuntime ? runtimeId : null),
   );
   const supported = modelsQuery.data?.supported ?? true;
   // Memoise the model list so every downstream useMemo gets a stable
@@ -84,7 +88,7 @@ export function ModelPicker({
     if (id !== value) await onChange(id);
   };
 
-  if (!supported && !modelsQuery.isLoading) {
+  if (managedByRuntime || (!supported && !modelsQuery.isLoading)) {
     if (variant === "field") {
       const control = (
         <div className="flex min-h-10 items-center gap-2 rounded-lg border border-dashed border-input bg-input/50 px-3 text-sm text-muted-foreground">

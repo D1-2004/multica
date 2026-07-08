@@ -236,6 +236,21 @@
       "disk_size_invalid": "디스크 크기는 양의 정수여야 합니다"
     }
   },
+  "fc_e2b_runtime": {
+    "action": "FC-Hermes",
+    "title": "FC-Hermes 런타임",
+    "description": "일회성 FC/E2B 샌드박스로 실행되는 클라우드 Hermes 런타임을 만듭니다. 템플릿, 제한 시간, 모델 설정은 서버에서 관리합니다.",
+    "create": "런타임 만들기",
+    "creating": "만드는 중...",
+    "cancel": "취소",
+    "toast_created": "FC-Hermes 런타임을 만들었습니다",
+    "toast_create_failed": "FC-Hermes 런타임을 만들지 못했습니다",
+    "visibility_hint": "비공개 런타임은 본인과 워크스페이스 관리자만 사용할 수 있습니다. 공개 런타임은 모든 워크스페이스 멤버가 사용할 수 있습니다.",
+    "fields": {
+      "name": "이름",
+      "visibility": "공개 범위"
+    }
+  },
   "update": {
     "cli_version_label": "CLI 버전:",
     "version_unknown": "알 수 없음",

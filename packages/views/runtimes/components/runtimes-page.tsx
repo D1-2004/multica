@@ -16,7 +16,10 @@ import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { runtimeProfileListOptions } from "@multica/core/runtimes";
 import { runtimeListOptions, runtimeKeys } from "@multica/core/runtimes/queries";
 import { useWSEvent } from "@multica/core/realtime";
-import { agentListOptions } from "@multica/core/workspace/queries";
+import {
+  agentListOptions,
+  memberListOptions,
+} from "@multica/core/workspace/queries";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import {
@@ -28,6 +31,7 @@ import { PageHeader } from "../../layout/page-header";
 import { AppLink } from "../../navigation";
 import { ConnectRemoteDialog } from "./connect-remote-dialog";
 import { CloudRuntimeDialog } from "./cloud-runtime-dialog";
+import { FCE2BRuntimeDialog } from "./fc-e2b-runtime-dialog";
 import { ProviderLogo } from "./provider-logo";
 import { buildWorkloadIndex, RuntimeList } from "./runtime-list";
 import { pendingRuntimeFromProfile } from "./pending-runtime";
@@ -74,6 +78,7 @@ export function RuntimesPage({
   const qc = useQueryClient();
   const [showConnectDialog, setShowConnectDialog] = useState(false);
   const [showCloudRuntimeDialog, setShowCloudRuntimeDialog] = useState(false);
+  const [showFCE2BRuntimeDialog, setShowFCE2BRuntimeDialog] = useState(false);
 
   const { data: runtimes = [], isLoading: runtimesLoading } = useQuery(
     runtimeListOptions(wsId),
@@ -82,6 +87,7 @@ export function RuntimesPage({
     runtimeProfileListOptions(wsId),
   );
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
 
   const handleDaemonEvent = useCallback(() => {
@@ -94,6 +100,9 @@ export function RuntimesPage({
     [agents, snapshot],
   );
   const now = useNowTick();
+  const currentMember = members.find((member) => member.user_id === currentUserId);
+  const canManageRuntimes =
+    currentMember?.role === "owner" || currentMember?.role === "admin";
   const machines = useMemo(
     () =>
       buildRuntimeMachines(runtimes, {
@@ -143,6 +152,8 @@ export function RuntimesPage({
         onConnectRemote={() => setShowConnectDialog(true)}
         cloudRuntimeEnabled={cloudRuntimeEnabled}
         onOpenCloudRuntime={() => setShowCloudRuntimeDialog(true)}
+        canManageRuntimes={canManageRuntimes}
+        onOpenFCE2BRuntime={() => setShowFCE2BRuntimeDialog(true)}
       />
 
       {showEmpty ? (
@@ -175,6 +186,9 @@ export function RuntimesPage({
       )}
       {cloudRuntimeEnabled && showCloudRuntimeDialog && (
         <CloudRuntimeDialog onClose={() => setShowCloudRuntimeDialog(false)} />
+      )}
+      {canManageRuntimes && showFCE2BRuntimeDialog && (
+        <FCE2BRuntimeDialog onClose={() => setShowFCE2BRuntimeDialog(false)} />
       )}
     </div>
   );
@@ -212,11 +226,15 @@ function PageHeaderBar({
   onConnectRemote,
   cloudRuntimeEnabled,
   onOpenCloudRuntime,
+  canManageRuntimes,
+  onOpenFCE2BRuntime,
 }: {
   totalCount: number;
   onConnectRemote: () => void;
   cloudRuntimeEnabled: boolean;
   onOpenCloudRuntime: () => void;
+  canManageRuntimes: boolean;
+  onOpenFCE2BRuntime: () => void;
 }) {
   const { t, i18n } = useT("runtimes");
   return (
@@ -231,6 +249,13 @@ function PageHeaderBar({
       }}
       actions={
         <>
+          {canManageRuntimes && (
+            <CollectionPageHeaderAction
+              icon={Cloud}
+              label={t(($) => $.fc_e2b_runtime.action)}
+              onClick={onOpenFCE2BRuntime}
+            />
+          )}
           {cloudRuntimeEnabled && (
             <CollectionPageHeaderAction
               icon={Cloud}

@@ -248,6 +248,21 @@
       "disk_size_invalid": "Disk size must be a positive integer"
     }
   },
+  "fc_e2b_runtime": {
+    "action": "FC-Hermes",
+    "title": "FC-Hermes Runtime",
+    "description": "Create a cloud Hermes runtime backed by one-shot FC/E2B sandboxes. The server owns the template, timeout, and model configuration.",
+    "create": "Create runtime",
+    "creating": "Creating...",
+    "cancel": "Cancel",
+    "toast_created": "FC-Hermes runtime created",
+    "toast_create_failed": "Failed to create FC-Hermes runtime",
+    "visibility_hint": "Private runtimes can only be used by you and workspace admins. Public runtimes can be used by any workspace member.",
+    "fields": {
+      "name": "Name",
+      "visibility": "Visibility"
+    }
+  },
   "update": {
     "cli_version_label": "CLI Version:",
     "version_unknown": "unknown",

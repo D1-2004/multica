@@ -236,6 +236,21 @@
       "disk_size_invalid": "ディスクサイズは正の整数である必要があります"
     }
   },
+  "fc_e2b_runtime": {
+    "action": "FC-Hermes",
+    "title": "FC-Hermes ランタイム",
+    "description": "一回限りの FC/E2B サンドボックスで動作するクラウド Hermes ランタイムを作成します。テンプレート、タイムアウト、モデル設定はサーバー側で管理されます。",
+    "create": "ランタイムを作成",
+    "creating": "作成中...",
+    "cancel": "キャンセル",
+    "toast_created": "FC-Hermes ランタイムを作成しました",
+    "toast_create_failed": "FC-Hermes ランタイムを作成できませんでした",
+    "visibility_hint": "非公開ランタイムはあなたとワークスペース管理者のみが使用できます。公開ランタイムはすべてのワークスペースメンバーが使用できます。",
+    "fields": {
+      "name": "名前",
+      "visibility": "可視性"
+    }
+  },
   "update": {
     "cli_version_label": "CLI バージョン:",
     "version_unknown": "不明",

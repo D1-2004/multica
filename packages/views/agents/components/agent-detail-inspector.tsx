@@ -231,6 +231,7 @@ export function AgentDetailInspector({
               variant="field"
               showLabel={false}
               runtimeId={agent.runtime_id}
+              runtime={runtime}
               runtimeOnline={!!isOnline}
               value={agent.model ?? ""}
               canEdit={canEdit}
@@ -240,6 +241,7 @@ export function AgentDetailInspector({
           <ThinkingSettingField
             label={t(($) => $.inspector.prop_thinking)}
             runtimeId={agent.runtime_id}
+            runtime={runtime}
             runtimeOnline={!!isOnline}
             provider={runtime?.provider ?? ""}
             model={agent.model ?? ""}

@@ -151,6 +151,7 @@ import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
 import type {
   CloudRuntimeNode,
+  CreateFCE2BRuntimeRequest,
   CreateCloudRuntimeNodeRequest,
   ListCloudRuntimeNodesParams,
 } from "../runtimes/cloud-runtime";
@@ -1016,6 +1017,15 @@ export class ApiClient {
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.owner) search.set("owner", params.owner);
     return this.fetch(`/api/runtimes?${search}`);
+  }
+
+  async createFCE2BRuntime(
+    data: CreateFCE2BRuntimeRequest,
+  ): Promise<AgentRuntime> {
+    return this.fetch("/api/runtimes/fc-e2b", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async listCloudRuntimeNodes(
