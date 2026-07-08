@@ -212,6 +212,11 @@ func buildChatPrompt(task Task) string {
 		// prefixed with "我先读取…"). Tell the agent to keep them out of its answer.
 		b.WriteString("Do these reads SILENTLY as an internal step — they are how you gather context, not part of your answer. Do NOT narrate them: your reply must not begin with what you are about to read or just read (no \"我先读取…\" / \"let me read the history / open the thread\"). Reply to the user with your answer only.\n\n")
 	}
+	if strings.TrimSpace(task.ChatHistory) != "" {
+		b.WriteString("Conversation history from earlier turns in this Multica chat. Use it as context for the latest user message; do not restate it unless the user asks:\n")
+		b.WriteString(task.ChatHistory)
+		b.WriteString("\n\n")
+	}
 	if task.Agent != nil && len(task.Agent.Skills) > 0 {
 		refs := ExtractSlashSkills(task.ChatMessage)
 		if len(refs) > 0 {

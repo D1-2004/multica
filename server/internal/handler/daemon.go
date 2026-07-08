@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -1231,9 +1232,14 @@ func requestHasDaemonCapability(r *http.Request, capability string) bool {
 
 // ClaimTaskByRuntime atomically claims the next queued task for a runtime.
 // The response includes the agent's name and skills, fetched fresh from the DB.
+type claimTaskByRuntimeRequest struct {
+	FCE2BColdStart bool `json:"fc_e2b_cold_start"`
+}
+
 func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
 	start := time.Now()
+	var req claimTaskByRuntimeRequest
 
 	var (
 		outcome                  = "unauth"
@@ -1265,6 +1271,14 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 	runtimeWorkspaceID := uuidToString(runtime.WorkspaceID)
 	authMs = time.Since(start).Milliseconds()
+
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			outcome = "error_request"
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
 
 	claimStart := time.Now()
 	task, err := h.TaskService.ClaimTaskForRuntime(r.Context(), parseUUID(runtimeID))
@@ -1656,6 +1670,12 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			// URL alone is signed and 30-min expiring on the private CDN.
 			if msgs, err := h.Queries.ListChatMessages(r.Context(), cs.ID); err == nil && len(msgs) > 0 {
 				unanswered := trailingUserMessages(msgs)
+				if req.FCE2BColdStart && service.IsFCE2BRuntime(runtime) {
+					historyEnd := len(msgs) - len(unanswered)
+					if historyEnd > 0 {
+						resp.ChatHistory = boundedChatHistoryTranscript(msgs[:historyEnd])
+					}
+				}
 				parts := make([]string, 0, len(unanswered))
 				for _, m := range unanswered {
 					if strings.TrimSpace(m.Content) != "" {
@@ -2044,6 +2064,42 @@ func trailingUserMessages(msgs []db.ChatMessage) []db.ChatMessage {
 		}
 	}
 	return msgs[start:]
+}
+
+func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
+	const (
+		maxMessages = 20
+		maxBytes    = 12000
+	)
+	if len(msgs) > maxMessages {
+		msgs = msgs[len(msgs)-maxMessages:]
+	}
+	var selected []string
+	total := 0
+	for i := len(msgs) - 1; i >= 0; i-- {
+		content := strings.TrimSpace(msgs[i].Content)
+		if content == "" {
+			continue
+		}
+		role := "User"
+		if msgs[i].Role == "assistant" {
+			role = "Assistant"
+		}
+		part := role + ":\n" + content
+		partBytes := len(part)
+		if len(selected) > 0 {
+			partBytes += 2
+		}
+		if total > 0 && total+partBytes > maxBytes {
+			break
+		}
+		selected = append(selected, part)
+		total += partBytes
+	}
+	for i, j := 0, len(selected)-1; i < j; i, j = i+1, j-1 {
+		selected[i], selected[j] = selected[j], selected[i]
+	}
+	return strings.Join(selected, "\n\n")
 }
 
 // ListPendingTasksByRuntime returns queued/dispatched tasks for a runtime.
