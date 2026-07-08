@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Cpu, Loader2, Plus, Check, Info } from "lucide-react";
-import { runtimeModelsOptions } from "@multica/core/runtimes";
-import type { RuntimeModel } from "@multica/core/types";
+import { isFCE2BRuntime, runtimeModelsOptions } from "@multica/core/runtimes";
+import type { AgentRuntime, RuntimeModel } from "@multica/core/types";
 import {
   Popover,
   PopoverTrigger,
@@ -24,12 +24,14 @@ import { useT } from "../../i18n";
 // any future model-less runtime.
 export function ModelDropdown({
   runtimeId,
+  runtime,
   runtimeOnline,
   value,
   onChange,
   disabled,
 }: {
   runtimeId: string | null;
+  runtime?: AgentRuntime | null;
   runtimeOnline: boolean;
   value: string;
   onChange: (value: string) => void;
@@ -38,9 +40,10 @@ export function ModelDropdown({
   const { t } = useT("agents");
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const managedByRuntime = isFCE2BRuntime(runtime);
 
   const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
+    runtimeModelsOptions(runtimeOnline && !managedByRuntime ? runtimeId : null),
   );
 
   const supported = modelsQuery.data?.supported ?? true;
@@ -56,10 +59,10 @@ export function ModelDropdown({
   // model selection, clear any previously-saved value so we don't
   // persist a ghost configuration that never takes effect.
   useEffect(() => {
-    if (!supported && value !== "") {
+    if ((managedByRuntime || !supported) && value !== "") {
       onChange("");
     }
-  }, [supported, value, onChange]);
+  }, [managedByRuntime, supported, value, onChange]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return grouped;
@@ -96,7 +99,7 @@ export function ModelDropdown({
         ? t(($) => $.model_dropdown.default_provider)
         : t(($) => $.model_dropdown.runtime_offline_manual));
 
-  if (!supported && !modelsQuery.isLoading) {
+  if (managedByRuntime || (!supported && !modelsQuery.isLoading)) {
     return (
       <div className="flex flex-col min-w-0">
         <div className="flex h-6 items-center">

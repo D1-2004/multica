@@ -31,6 +31,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { PageHeader } from "../../layout/page-header";
 import { ConnectRemoteDialog } from "./connect-remote-dialog";
 import { CloudRuntimeDialog } from "./cloud-runtime-dialog";
+import { FCE2BRuntimeDialog } from "./fc-e2b-runtime-dialog";
 import { RuntimeProfilesDialog } from "./runtime-profiles-dialog";
 import { ProviderLogo } from "./provider-logo";
 import { RuntimeList, buildWorkloadIndex } from "./runtime-list";
@@ -117,6 +118,7 @@ export function RuntimesPage({
   }, []);
   const [showConnectDialog, setShowConnectDialog] = useState(false);
   const [showCloudRuntimeDialog, setShowCloudRuntimeDialog] = useState(false);
+  const [showFCE2BRuntimeDialog, setShowFCE2BRuntimeDialog] = useState(false);
   const [pendingProfiles, setPendingProfiles] = useState<PendingRuntimeProfile[]>(
     [],
   );
@@ -256,6 +258,7 @@ export function RuntimesPage({
         onOpenCloudRuntime={() => setShowCloudRuntimeDialog(true)}
         canManageProfiles={canManageProfiles}
         onAddRuntime={() => setShowProfilesDialog(true)}
+        onOpenFCE2BRuntime={() => setShowFCE2BRuntimeDialog(true)}
       />
 
       {showEmpty ? (
@@ -335,6 +338,9 @@ export function RuntimesPage({
       {cloudRuntimeEnabled && showCloudRuntimeDialog && (
         <CloudRuntimeDialog onClose={() => setShowCloudRuntimeDialog(false)} />
       )}
+      {canManageProfiles && showFCE2BRuntimeDialog && (
+        <FCE2BRuntimeDialog onClose={() => setShowFCE2BRuntimeDialog(false)} />
+      )}
       {canManageProfiles && showProfilesDialog && (
         <RuntimeProfilesDialog
           wsId={wsId}
@@ -363,6 +369,7 @@ function PageHeaderBar({
   onOpenCloudRuntime,
   canManageProfiles,
   onAddRuntime,
+  onOpenFCE2BRuntime,
 }: {
   totalCount: number;
   onConnectRemote: () => void;
@@ -370,6 +377,7 @@ function PageHeaderBar({
   onOpenCloudRuntime: () => void;
   canManageProfiles: boolean;
   onAddRuntime: () => void;
+  onOpenFCE2BRuntime: () => void;
 }) {
   const { t } = useT("runtimes");
   return (
@@ -384,10 +392,25 @@ function PageHeaderBar({
         )}
       </div>
       {/* Quiet chrome buttons (outline, icon-only below md) — primary is
-          reserved for the empty state's CTA. All three share the same
+          reserved for the empty state's CTA. These actions share the same
           dimensions, padding, and responsive icon-only behavior so the
           header reads as a single, consistent action group. */}
       <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+        {canManageProfiles && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 w-8 gap-1 px-0 md:w-auto md:px-2.5"
+            aria-label={t(($) => $.fc_e2b_runtime.action)}
+            onClick={onOpenFCE2BRuntime}
+          >
+            <Cloud className="h-3.5 w-3.5" />
+            <span className="hidden md:inline">
+              {t(($) => $.fc_e2b_runtime.action)}
+            </span>
+          </Button>
+        )}
         {canManageProfiles && (
           <Button
             type="button"

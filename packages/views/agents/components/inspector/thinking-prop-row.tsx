@@ -1,8 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import type { RuntimeModel } from "@multica/core/types";
-import { runtimeModelsOptions } from "@multica/core/runtimes";
+import type { AgentRuntime, RuntimeModel } from "@multica/core/types";
+import { isFCE2BRuntime, runtimeModelsOptions } from "@multica/core/runtimes";
 import { PropRow } from "../../../common/prop-row";
 import { useT } from "../../../i18n";
 import { ThinkingPicker } from "./thinking-picker";
@@ -27,6 +27,7 @@ import { ThinkingPicker } from "./thinking-picker";
  */
 export function ThinkingPropRow({
   runtimeId,
+  runtime,
   runtimeOnline,
   model,
   value,
@@ -34,6 +35,7 @@ export function ThinkingPropRow({
   onChange,
 }: {
   runtimeId: string | null;
+  runtime?: AgentRuntime | null;
   runtimeOnline: boolean;
   model: string;
   value: string;
@@ -41,10 +43,12 @@ export function ThinkingPropRow({
   onChange: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
+  const managedByRuntime = isFCE2BRuntime(runtime);
   const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
+    runtimeModelsOptions(runtimeOnline && !managedByRuntime ? runtimeId : null),
   );
 
+  if (managedByRuntime && !value) return null;
   const models = modelsQuery.data?.models ?? [];
   const entry = pickModelEntry(models, model);
   const levels = entry?.thinking?.supported_levels ?? [];

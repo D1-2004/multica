@@ -137,6 +137,7 @@ export function AgentDetailInspector({
         <PropRow label={t(($) => $.inspector.prop_model)} interactive={false}>
           <ModelPicker
             runtimeId={agent.runtime_id}
+            runtime={runtime}
             runtimeOnline={!!isOnline}
             value={agent.model ?? ""}
             canEdit={canEdit}
@@ -145,6 +146,7 @@ export function AgentDetailInspector({
         </PropRow>
         <ThinkingPropRow
           runtimeId={agent.runtime_id}
+          runtime={runtime}
           runtimeOnline={!!isOnline}
           model={agent.model ?? ""}
           value={agent.thinking_level ?? ""}

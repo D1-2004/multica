@@ -1,5 +1,8 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import type { AgentRuntime } from "../types";
+import type { RuntimeVisibility } from "../types/agent";
+import { runtimeKeys } from "./queries";
 
 export interface CloudRuntimeNode {
   id: string;
@@ -32,6 +35,11 @@ export interface CreateCloudRuntimeNodeRequest {
   iam_instance_profile?: string;
   disk_size_gb?: number;
   tags?: Record<string, string>;
+}
+
+export interface CreateFCE2BRuntimeRequest {
+  name?: string;
+  visibility?: RuntimeVisibility;
 }
 
 export const cloudRuntimeKeys = {
@@ -86,6 +94,23 @@ export function useDeleteCloudRuntimeNode(wsId: string) {
     mutationFn: (instanceId: string) => api.deleteCloudRuntimeNode(instanceId),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: cloudRuntimeKeys.all(wsId) });
+    },
+  });
+}
+
+export function isFCE2BRuntime(
+  runtime: Pick<AgentRuntime, "runtime_mode" | "metadata"> | null | undefined,
+): boolean {
+  return runtime?.runtime_mode === "cloud" && runtime.metadata?.kind === "fc-e2b";
+}
+
+export function useCreateFCE2BRuntime(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateFCE2BRuntimeRequest) =>
+      api.createFCE2BRuntime(data),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
     },
   });
 }
