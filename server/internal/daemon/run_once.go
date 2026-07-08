@@ -8,10 +8,11 @@ import (
 )
 
 type RunOnceOptions struct {
-	RuntimeID   string
-	DaemonToken string
-	Provider    string
-	RuntimeName string
+	RuntimeID      string
+	DaemonToken    string
+	Provider       string
+	RuntimeName    string
+	FCE2BColdStart bool
 }
 
 func (d *Daemon) RunOnce(ctx context.Context, opts RunOnceOptions) error {
@@ -46,7 +47,9 @@ func (d *Daemon) RunOnce(ctx context.Context, opts RunOnceOptions) error {
 	d.ready.Store(true)
 
 	d.seedRunOnceRuntime(opts.RuntimeID, opts.RuntimeName, opts.Provider)
-	task, err := d.client.ClaimTask(runCtx, opts.RuntimeID)
+	task, err := d.client.ClaimTaskWithOptions(runCtx, opts.RuntimeID, ClaimTaskOptions{
+		FCE2BColdStart: opts.FCE2BColdStart,
+	})
 	if err != nil {
 		return fmt.Errorf("claim task: %w", err)
 	}

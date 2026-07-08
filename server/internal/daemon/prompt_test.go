@@ -1,8 +1,11 @@
 package daemon
 
 import (
+	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
 // TestBuildQuickCreatePromptRules locks in the rules that govern how the
@@ -305,6 +308,19 @@ func TestBuildChatPromptChannelAwareness(t *testing.T) {
 		})
 		if strings.Contains(out, "multica chat history") {
 			t.Fatalf("web-only chat prompt should not mention channel history, got:\n%s", out)
+		}
+	})
+
+	t.Run("cold-start history is injected when present", func(t *testing.T) {
+		out := buildChatPrompt(Task{
+			ChatSessionID: "sess-1",
+			ChatHistory:   "User:\n1+1等于多少\n\nAssistant:\n1+1等于2。",
+			ChatMessage:   "+2呢",
+		})
+		for _, want := range []string{"Conversation history from earlier turns", "1+1等于2。", "User message:\n+2呢"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("cold-start chat prompt missing %q\n--- output ---\n%s", want, out)
+			}
 		}
 	})
 }
@@ -858,5 +874,41 @@ func TestBuildCommentPromptSameThreadKeepsSingleReply(t *testing.T) {
 	// trigger comment.
 	if !strings.Contains(out, "--parent c3 --content-file ./reply.md") {
 		t.Errorf("same-thread run must keep the single --parent=trigger reply cookbook, got:\n%s", out)
+	}
+}
+
+func TestBuildPromptColdStartAfterUnreusedWorkdirReadsIssueThread(t *testing.T) {
+	const issueID = "issue-fc-cold-1"
+	task := Task{
+		IssueID:               issueID,
+		TriggerCommentID:      "trigger-1",
+		TriggerThreadID:       "thread-root-1",
+		TriggerCommentContent: "continue from the old issue",
+		TriggerAuthorType:     "member",
+		PriorSessionID:        "session-from-old-sandbox",
+		PriorWorkDir:          "/workspaces/ws/old-task/workdir",
+	}
+	taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
+
+	reused := gateResumeToReusedWorkdir(&task, &taskCtx, "/workspaces/ws/new-task/workdir", slog.Default())
+	if reused {
+		t.Fatal("fresh FC/E2B sandbox workdir must not be treated as reused")
+	}
+	if task.PriorSessionID != "" || taskCtx.PriorSessionResumed {
+		t.Fatalf("unreused workdir must clear resume state, got session=%q resumed=%v", task.PriorSessionID, taskCtx.PriorSessionResumed)
+	}
+
+	out := BuildPrompt(task, "hermes")
+	if strings.Contains(out, "triggering comment is already included above") {
+		t.Fatalf("prompt should not use warm resumed hint after resume was cleared:\n%s", out)
+	}
+	for _, want := range []string{
+		"multica issue get " + issueID + " --output json",
+		"multica issue comment list " + issueID + " --thread thread-root-1 --tail 30 --output json",
+		"multica issue comment list " + issueID + " --recent 10 --output json",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("cold issue prompt missing %q\n--- output ---\n%s", want, out)
+		}
 	}
 }

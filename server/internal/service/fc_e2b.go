@@ -28,6 +28,9 @@ const (
 	FCE2BProvider      = "hermes"
 	FCE2BRunnerCommand = "multica-fc-hermes-runner"
 
+	fcE2BScopeTypeChat  = "chat"
+	fcE2BScopeTypeIssue = "issue"
+
 	defaultFCE2BCLIPath             = "e2b"
 	defaultFCE2BTimeoutSeconds      = 3600
 	defaultFCE2BSandboxReadyTimeout = 60 * time.Second
@@ -174,6 +177,11 @@ type FCE2BLauncher struct {
 	Runner  CommandRunner
 }
 
+type fcE2BTaskScope struct {
+	typ string
+	id  pgtype.UUID
+}
+
 func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner CommandRunner) *FCE2BLauncher {
 	if runner == nil {
 		runner = OSCommandRunner{}
@@ -223,17 +231,81 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		return l.failLaunch(ctx, task, "failed to persist FC/E2B daemon token")
 	}
 
-	sandboxID, err := l.createSandbox(ctx)
+	scope, scoped := fcE2BScopeForTask(task)
+	sandboxID, coldStart, err := l.resolveSandbox(ctx, rt, scope, scoped)
 	if err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
-	if err := l.waitSandboxReady(ctx, sandboxID); err != nil {
+	if err := l.execRunOnce(ctx, sandboxID, rt, token, coldStart); err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
-	if err := l.execRunOnce(ctx, sandboxID, rt, token); err != nil {
-		return l.failLaunch(ctx, task, err.Error())
+	if scoped {
+		_ = l.Queries.TouchFCE2BSandboxSession(ctx, db.TouchFCE2BSandboxSessionParams{
+			RuntimeID: rt.ID,
+			ScopeType: scope.typ,
+			ScopeID:   scope.id,
+			SandboxID: sandboxID,
+		})
 	}
 	return nil
+}
+
+func fcE2BScopeForTask(task db.AgentTaskQueue) (fcE2BTaskScope, bool) {
+	if task.ChatSessionID.Valid {
+		return fcE2BTaskScope{typ: fcE2BScopeTypeChat, id: task.ChatSessionID}, true
+	}
+	if task.IssueID.Valid {
+		return fcE2BTaskScope{typ: fcE2BScopeTypeIssue, id: task.IssueID}, true
+	}
+	return fcE2BTaskScope{}, false
+}
+
+func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool) (string, bool, error) {
+	if scoped {
+		session, err := l.Queries.GetActiveFCE2BSandboxSession(ctx, db.GetActiveFCE2BSandboxSessionParams{
+			RuntimeID: rt.ID,
+			ScopeType: scope.typ,
+			ScopeID:   scope.id,
+		})
+		if err == nil {
+			if err := l.checkSandboxReady(ctx, session.SandboxID); err != nil {
+				_ = l.Queries.MarkFCE2BSandboxSessionStale(ctx, db.MarkFCE2BSandboxSessionStaleParams{
+					RuntimeID: rt.ID,
+					ScopeType: scope.typ,
+					ScopeID:   scope.id,
+					SandboxID: session.SandboxID,
+				})
+				return "", false, fmt.Errorf("FC/E2B warm sandbox %s is unavailable: %w", session.SandboxID, err)
+			}
+			return session.SandboxID, false, nil
+		}
+		if err != pgx.ErrNoRows {
+			return "", false, fmt.Errorf("load FC/E2B sandbox session: %w", err)
+		}
+	}
+
+	sandboxID, err := l.createSandbox(ctx)
+	if err != nil {
+		return "", true, err
+	}
+	if err := l.waitSandboxReady(ctx, sandboxID); err != nil {
+		return "", true, err
+	}
+	if scoped {
+		_, err = l.Queries.UpsertFCE2BSandboxSession(ctx, db.UpsertFCE2BSandboxSessionParams{
+			WorkspaceID: rt.WorkspaceID,
+			RuntimeID:   rt.ID,
+			ScopeType:   scope.typ,
+			ScopeID:     scope.id,
+			SandboxID:   sandboxID,
+			Template:    l.Config.Template,
+			ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Duration(l.Config.TimeoutSeconds) * time.Second), Valid: true},
+		})
+		if err != nil {
+			return "", true, fmt.Errorf("record FC/E2B sandbox session: %w", err)
+		}
+	}
+	return sandboxID, true, nil
 }
 
 func (l *FCE2BLauncher) createSandbox(ctx context.Context) (string, error) {
@@ -253,6 +325,11 @@ func (l *FCE2BLauncher) createSandbox(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("FC/E2B sandbox create returned no sandbox id")
 	}
 	return id, nil
+}
+
+func (l *FCE2BLauncher) checkSandboxReady(ctx context.Context, sandboxID string) error {
+	_, err := l.Runner.Run(ctx, l.Config.CLIPath, []string{"sandbox", "exec", sandboxID, "true"}, l.e2bEnv())
+	return err
 }
 
 func (l *FCE2BLauncher) waitSandboxReady(ctx context.Context, sandboxID string) error {
@@ -275,7 +352,7 @@ func (l *FCE2BLauncher) waitSandboxReady(ctx context.Context, sandboxID string) 
 	}
 }
 
-func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db.AgentRuntime, token string) error {
+func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db.AgentRuntime, token string, coldStart bool) error {
 	runtimeID := util.UUIDToString(rt.ID)
 	args := []string{
 		"sandbox", "exec",
@@ -288,12 +365,17 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "OPENAI_BASE_URL=" + l.Config.LLMBaseURL,
 		"-e", "OPENAI_API_KEY=" + l.Config.LLMAPIKey,
 		"-e", "OPENAI_MODEL=" + l.Config.LLMModel,
+	}
+	if coldStart {
+		args = append(args, "-e", "MULTICA_FC_E2B_COLD_START=true")
+	}
+	args = append(args,
 		sandboxID,
 		"--",
 		FCE2BRunnerCommand,
 		"--runtime-id", runtimeID,
 		"--provider", FCE2BProvider,
-	}
+	)
 	if _, err := l.Runner.Run(ctx, l.Config.CLIPath, args, l.e2bEnv()); err != nil {
 		return fmt.Errorf("FC/E2B runner exec failed: %w", err)
 	}

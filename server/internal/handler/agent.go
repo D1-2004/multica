@@ -323,6 +323,7 @@ type AgentTaskResponse struct {
 	ChatSessionID            string                 `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
 	ChatChannelType          string                 `json:"chat_channel_type,omitempty"`           // "slack" when the chat session is backed by an IM channel; empty for a web-only chat. Makes the agent channel-aware (read history from the channel, not Multica)
 	ChatInThread             bool                   `json:"chat_in_thread,omitempty"`              // true when the latest @mention was a thread reply; tells the agent to start with `multica chat thread` vs `multica chat history`
+	ChatHistory              string                 `json:"chat_history,omitempty"`                // bounded prior chat transcript for FC/E2B cold starts
 	ChatMessage              string                 `json:"chat_message,omitempty"`                // user message for chat tasks
 	ChatMessageAttachments   []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"`    // attachments on the user message — agent calls `multica attachment download <id>` per entry
 	ChatIntro                bool                   `json:"chat_intro,omitempty"`                  // true for the agent's proactive self-introduction chat (is_agent_intro session, no user message); the daemon builds an intro prompt instead of a reply prompt

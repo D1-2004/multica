@@ -100,6 +100,29 @@ func TestClient_VersionOmittedWhenUnset(t *testing.T) {
 	}
 }
 
+func TestClient_ClaimTaskWithColdStartOption(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/api/daemon/runtimes/runtime-1/tasks/claim" {
+			t.Fatalf("path = %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if got, _ := body["fc_e2b_cold_start"].(bool); !got {
+			t.Fatalf("fc_e2b_cold_start = %v, want true; body=%v", body["fc_e2b_cold_start"], body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"task":null}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	if _, err := c.ClaimTaskWithOptions(context.Background(), "runtime-1", ClaimTaskOptions{FCE2BColdStart: true}); err != nil {
+		t.Fatalf("ClaimTaskWithOptions: %v", err)
+	}
+}
+
 // noSleepRetry replaces retrySleep with an immediate no-op so tests don't
 // actually wait the 4s/8s/16s/... backoffs. Returns a restore func.
 func noSleepRetry(t *testing.T) func() {

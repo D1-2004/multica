@@ -63,9 +63,9 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		APIKey:              "e2b_secret",
 		APIURL:              "https://api.cn-beijing.e2b.fc.aliyuncs.com",
 		Domain:              "cn-beijing.e2b.fc.aliyuncs.com",
-		LLMBaseURL:          "https://maas-api.alibaba-inc.com/v1",
+		LLMBaseURL:          "https://api-deap.dingtalk.com/deapai",
 		LLMAPIKey:           "maas_secret",
-		LLMModel:            "qwen3.7-max",
+		LLMModel:            "qwen3.5-plus",
 		CLIPath:             "/usr/local/bin/e2b",
 		TimeoutSeconds:      1800,
 		SandboxReadyTimeout: time.Second,
@@ -87,7 +87,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		Name:     "FC-Hermes",
 		DaemonID: pgtype.Text{String: "fc-e2b:ws:fc-hermes", Valid: true},
 	}
-	if err := launcher.execRunOnce(context.Background(), sandboxID, rt, "mdt_test_token"); err != nil {
+	if err := launcher.execRunOnce(context.Background(), sandboxID, rt, "mdt_test_token", true); err != nil {
 		t.Fatalf("execRunOnce returned error: %v", err)
 	}
 
@@ -129,9 +129,10 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		"-e", "MULTICA_RUNTIME_ID=11111111-1111-1111-1111-111111111111",
 		"-e", "MULTICA_DAEMON_ID=fc-e2b:ws:fc-hermes",
 		"-e", "MULTICA_AGENT_RUNTIME_NAME=FC-Hermes",
-		"-e", "OPENAI_BASE_URL=https://maas-api.alibaba-inc.com/v1",
+		"-e", "OPENAI_BASE_URL=https://api-deap.dingtalk.com/deapai",
 		"-e", "OPENAI_API_KEY=maas_secret",
-		"-e", "OPENAI_MODEL=qwen3.7-max",
+		"-e", "OPENAI_MODEL=qwen3.5-plus",
+		"-e", "MULTICA_FC_E2B_COLD_START=true",
 		"sbx_123",
 		"--",
 		"multica-fc-hermes-runner",
@@ -140,6 +141,53 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 	}
 	if !reflect.DeepEqual(runner.calls[2].args, wantExecArgs) {
 		t.Fatalf("exec args = %#v, want %#v", runner.calls[2].args, wantExecArgs)
+	}
+}
+
+func TestFCE2BExecRunOnceWarmSandboxDoesNotInjectColdStart(t *testing.T) {
+	runner := &fakeCommandRunner{}
+	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{
+		ServerURL:  "https://api.multica.test",
+		APIKey:     "e2b_secret",
+		APIURL:     "https://api.cn-beijing.e2b.fc.aliyuncs.com",
+		Domain:     "cn-beijing.e2b.fc.aliyuncs.com",
+		LLMBaseURL: "https://api-deap.dingtalk.com/deapai",
+		LLMAPIKey:  "maas_secret",
+		LLMModel:   "qwen3.5-plus",
+		CLIPath:    "/usr/local/bin/e2b",
+	}, runner)
+	rt := db.AgentRuntime{
+		ID:       util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		Name:     "FC-Hermes",
+		DaemonID: pgtype.Text{String: "fc-e2b:ws:fc-hermes", Valid: true},
+	}
+
+	if err := launcher.execRunOnce(context.Background(), "sbx_warm", rt, "mdt_test_token", false); err != nil {
+		t.Fatalf("execRunOnce returned error: %v", err)
+	}
+	for _, arg := range runner.calls[0].args {
+		if arg == "MULTICA_FC_E2B_COLD_START=true" {
+			t.Fatalf("warm sandbox exec must not inject cold-start marker: %#v", runner.calls[0].args)
+		}
+	}
+}
+
+func TestFCE2BScopeForTask(t *testing.T) {
+	chatID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	issueID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+
+	scope, ok := fcE2BScopeForTask(db.AgentTaskQueue{ChatSessionID: chatID, IssueID: issueID})
+	if !ok || scope.typ != fcE2BScopeTypeChat || scope.id != chatID {
+		t.Fatalf("chat scope = (%+v, %v), want chat %s", scope, ok, util.UUIDToString(chatID))
+	}
+
+	scope, ok = fcE2BScopeForTask(db.AgentTaskQueue{IssueID: issueID})
+	if !ok || scope.typ != fcE2BScopeTypeIssue || scope.id != issueID {
+		t.Fatalf("issue scope = (%+v, %v), want issue %s", scope, ok, util.UUIDToString(issueID))
+	}
+
+	if _, ok := fcE2BScopeForTask(db.AgentTaskQueue{}); ok {
+		t.Fatal("task without chat or issue scope must not be scoped")
 	}
 }
 

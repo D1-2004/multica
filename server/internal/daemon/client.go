@@ -182,11 +182,23 @@ func (c *Client) Token() string {
 	return c.token
 }
 
+type ClaimTaskOptions struct {
+	FCE2BColdStart bool
+}
+
 func (c *Client) ClaimTask(ctx context.Context, runtimeID string) (*Task, error) {
+	return c.ClaimTaskWithOptions(ctx, runtimeID, ClaimTaskOptions{})
+}
+
+func (c *Client) ClaimTaskWithOptions(ctx context.Context, runtimeID string, opts ClaimTaskOptions) (*Task, error) {
 	var resp struct {
 		Task *Task `json:"task"`
 	}
-	if err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/claim", runtimeID), map[string]any{}, &resp); err != nil {
+	body := map[string]any{}
+	if opts.FCE2BColdStart {
+		body["fc_e2b_cold_start"] = true
+	}
+	if err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/claim", runtimeID), body, &resp); err != nil {
 		return nil, err
 	}
 	return resp.Task, nil

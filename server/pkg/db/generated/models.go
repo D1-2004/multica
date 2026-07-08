@@ -409,6 +409,21 @@ type DaemonToken struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type FcE2bSandboxSession struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	RuntimeID   pgtype.UUID        `json:"runtime_id"`
+	ScopeType   string             `json:"scope_type"`
+	ScopeID     pgtype.UUID        `json:"scope_id"`
+	SandboxID   string             `json:"sandbox_id"`
+	Template    string             `json:"template"`
+	Status      string             `json:"status"`
+	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Feedback struct {
 	ID          pgtype.UUID        `json:"id"`
 	UserID      pgtype.UUID        `json:"user_id"`
