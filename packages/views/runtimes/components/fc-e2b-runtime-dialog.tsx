@@ -32,13 +32,33 @@ import {
 import { useT } from "../../i18n";
 
 function templateRuntimeName(template: FCE2BTemplate): string {
-  const raw = (template.name || template.template || template.id || "Hermes")
+  const raw = (templateDisplayName(template) || "Hermes")
     .replace(/^multica-fc-/i, "")
     .replace(/-runtime$/i, "")
     .replace(/-template$/i, "");
   const parts = raw.split(/[-_.\s]+/).filter(Boolean);
   if (parts.length === 0) return "FC-Hermes";
   return `FC-${parts.map((part) => part[0]!.toUpperCase() + part.slice(1)).join("-")}`;
+}
+
+function templateDisplayName(template: FCE2BTemplate): string {
+  return template.name || template.template || template.id || "";
+}
+
+function templateIdentifier(template: FCE2BTemplate): string {
+  return template.id || template.template || template.name || "";
+}
+
+function formatTemplateUpdatedAt(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
@@ -58,6 +78,7 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
       template.id,
       template.template,
       template.status,
+      template.updated_at,
     ]
       .filter(Boolean)
       .join(" ")
@@ -149,6 +170,9 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
                 const selected =
                   selectedTemplate?.template === template.template &&
                   selectedTemplate?.id === template.id;
+                const displayName = templateDisplayName(template);
+                const identifier = templateIdentifier(template);
+                const updatedAt = formatTemplateUpdatedAt(template.updated_at);
                 return (
                   <button
                     key={`${template.template}:${template.id ?? ""}:${template.name ?? ""}`}
@@ -158,14 +182,23 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
                   >
                     <span className="min-w-0 space-y-1">
                       <span className="block truncate font-medium">
-                        {template.name || template.template}
+                        {displayName}
                       </span>
-                      <span className="block truncate text-muted-foreground">
-                        {template.id || template.template}
-                      </span>
-                      {template.status && (
-                        <span className="block text-muted-foreground">
-                          {template.status}
+                      {identifier && identifier !== displayName && (
+                        <span className="block truncate text-muted-foreground">
+                          {identifier}
+                        </span>
+                      )}
+                      {(updatedAt || template.status) && (
+                        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground">
+                          {updatedAt && (
+                            <span className="truncate">
+                              {t(($) => $.fc_e2b_runtime.template_updated, {
+                                time: updatedAt,
+                              })}
+                            </span>
+                          )}
+                          {template.status && <span>{template.status}</span>}
                         </span>
                       )}
                     </span>

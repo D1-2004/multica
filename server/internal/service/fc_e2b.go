@@ -260,13 +260,13 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 		}
 		t := FCE2BTemplate{
 			ID:        firstString(obj, "id", "template_id", "templateID"),
-			Name:      firstString(obj, "name", "template_name", "templateName", "alias"),
-			Status:    firstString(obj, "status", "state"),
+			Name:      firstString(obj, "name", "template_name", "templateName", "alias", "aliases", "names"),
+			Status:    firstString(obj, "status", "state", "buildStatus", "build_status"),
 			CreatedAt: firstString(obj, "created_at", "createdAt", "create_time", "createTime"),
 			UpdatedAt: firstString(obj, "updated_at", "updatedAt", "update_time", "updateTime"),
 			Metadata:  obj,
 		}
-		t.Template = firstString(obj, "template", "templateName", "name", "id", "template_id", "templateID")
+		t.Template = firstString(obj, "template", "templateName", "name", "alias", "aliases", "names", "id", "template_id", "templateID")
 		if strings.TrimSpace(t.Template) == "" {
 			continue
 		}
@@ -285,6 +285,18 @@ func firstString(obj map[string]any, keys ...string) string {
 		case fmt.Stringer:
 			if s := strings.TrimSpace(v.String()); s != "" {
 				return s
+			}
+		case []any:
+			for _, item := range v {
+				if s := strings.TrimSpace(fmt.Sprint(item)); s != "" {
+					return s
+				}
+			}
+		case []string:
+			for _, item := range v {
+				if s := strings.TrimSpace(item); s != "" {
+					return s
+				}
 			}
 		case float64:
 			return strconv.FormatInt(int64(v), 10)
