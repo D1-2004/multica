@@ -142,3 +142,115 @@ func TestNotifyTaskEnqueued_InvokesRuntimeLauncher(t *testing.T) {
 		t.Fatalf("expected wakeup to remain wired, got %d calls", got)
 	}
 }
+
+func TestNextQueuedTaskForTerminal_SelectsSameIssueAgent(t *testing.T) {
+	terminal := db.AgentTaskQueue{
+		ID:        testUUID(20),
+		RuntimeID: testUUID(21),
+		AgentID:   testUUID(22),
+		IssueID:   testUUID(23),
+	}
+	want := db.AgentTaskQueue{
+		ID:        testUUID(24),
+		RuntimeID: terminal.RuntimeID,
+		AgentID:   terminal.AgentID,
+		IssueID:   terminal.IssueID,
+	}
+	candidates := []db.AgentTaskQueue{
+		{
+			ID:        testUUID(25),
+			RuntimeID: terminal.RuntimeID,
+			AgentID:   testUUID(26),
+			IssueID:   terminal.IssueID,
+		},
+		want,
+	}
+
+	got, ok := nextQueuedTaskForTerminal(terminal, candidates)
+	if !ok {
+		t.Fatal("expected a queued task in the same issue/agent lane")
+	}
+	if util.UUIDToString(got.ID) != util.UUIDToString(want.ID) {
+		t.Fatalf("next queued task = %q, want %q", util.UUIDToString(got.ID), util.UUIDToString(want.ID))
+	}
+}
+
+func TestNextQueuedTaskForTerminal_SelectsSameChatAgent(t *testing.T) {
+	terminal := db.AgentTaskQueue{
+		ID:            testUUID(30),
+		RuntimeID:     testUUID(31),
+		AgentID:       testUUID(32),
+		ChatSessionID: testUUID(33),
+	}
+	want := db.AgentTaskQueue{
+		ID:            testUUID(34),
+		RuntimeID:     terminal.RuntimeID,
+		AgentID:       terminal.AgentID,
+		ChatSessionID: terminal.ChatSessionID,
+	}
+	candidates := []db.AgentTaskQueue{
+		{
+			ID:            testUUID(35),
+			RuntimeID:     terminal.RuntimeID,
+			AgentID:       terminal.AgentID,
+			ChatSessionID: testUUID(36),
+		},
+		want,
+	}
+
+	got, ok := nextQueuedTaskForTerminal(terminal, candidates)
+	if !ok {
+		t.Fatal("expected a queued task in the same chat/agent lane")
+	}
+	if util.UUIDToString(got.ID) != util.UUIDToString(want.ID) {
+		t.Fatalf("next queued task = %q, want %q", util.UUIDToString(got.ID), util.UUIDToString(want.ID))
+	}
+}
+
+func TestNextQueuedTaskForTerminal_SelectsQuickCreateShape(t *testing.T) {
+	terminal := db.AgentTaskQueue{
+		ID:        testUUID(40),
+		RuntimeID: testUUID(41),
+		AgentID:   testUUID(42),
+	}
+	want := db.AgentTaskQueue{
+		ID:        testUUID(43),
+		RuntimeID: terminal.RuntimeID,
+		AgentID:   terminal.AgentID,
+	}
+	candidates := []db.AgentTaskQueue{
+		{
+			ID:             testUUID(44),
+			RuntimeID:      terminal.RuntimeID,
+			AgentID:        terminal.AgentID,
+			AutopilotRunID: testUUID(45),
+		},
+		want,
+	}
+
+	got, ok := nextQueuedTaskForTerminal(terminal, candidates)
+	if !ok {
+		t.Fatal("expected a queued task in the same quick-create lane")
+	}
+	if util.UUIDToString(got.ID) != util.UUIDToString(want.ID) {
+		t.Fatalf("next queued task = %q, want %q", util.UUIDToString(got.ID), util.UUIDToString(want.ID))
+	}
+}
+
+func TestNextQueuedTaskForTerminal_RejectsMissingAgent(t *testing.T) {
+	terminal := db.AgentTaskQueue{
+		ID:        testUUID(50),
+		RuntimeID: testUUID(51),
+		IssueID:   testUUID(52),
+	}
+	candidates := []db.AgentTaskQueue{{
+		ID:        testUUID(53),
+		RuntimeID: terminal.RuntimeID,
+		AgentID:   testUUID(54),
+		IssueID:   terminal.IssueID,
+	}}
+
+	if _, ok := nextQueuedTaskForTerminal(terminal, candidates); ok {
+		t.Fatal("missing terminal agent must not drain an unrelated queued task")
+	}
+}
