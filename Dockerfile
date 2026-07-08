@@ -28,7 +28,7 @@ FROM alpine:3.21
 ARG DWS_VERSION=v1.0.50
 ARG DWS_RELEASE_BASE=https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/releases/download
 
-RUN apk add --no-cache ca-certificates tzdata coreutils curl nodejs npm \
+RUN apk add --no-cache ca-certificates tzdata coreutils curl gcompat libc6-compat libstdc++ nodejs npm \
     && npm install -g @e2b/cli@2.13.0 \
     && npm cache clean --force
 
