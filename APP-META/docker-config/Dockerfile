@@ -31,6 +31,7 @@ WORKDIR /workspace
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 ENV npm_config_registry=https://registry.npmmirror.com
 ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY ${APP_NAME}.tgz /tmp/source.tgz
 RUN tar -xzf /tmp/source.tgz --strip-components=1 -C /workspace
 RUN corepack enable && corepack prepare pnpm@10.28.2 --activate && pnpm config set registry "${NPM_CONFIG_REGISTRY}"
