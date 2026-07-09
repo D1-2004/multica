@@ -4,6 +4,7 @@ import type { TaskMessagePayload } from "../types/events";
 import {
   isTaskMessageTaskId,
   mergeTaskMessagesBySeq,
+  pendingChatTaskOptions,
   taskMessagesOptions,
 } from "./queries";
 
@@ -28,6 +29,23 @@ describe("taskMessagesOptions", () => {
 
     expect(isTaskMessageTaskId(taskId)).toBe(false);
     expect(taskMessagesOptions(taskId).enabled).toBe(false);
+  });
+});
+
+describe("pendingChatTaskOptions", () => {
+  it("keeps syncing while a chat task is in flight", () => {
+    const options = pendingChatTaskOptions("session-1");
+    const interval = options.refetchInterval as (query: { state: { data?: { task_id?: string } } }) => number | false;
+
+    expect(interval({ state: { data: { task_id: "task-1" } } })).toBe(2000);
+  });
+
+  it("stops syncing after the server reports no in-flight chat task", () => {
+    const options = pendingChatTaskOptions("session-1");
+    const interval = options.refetchInterval as (query: { state: { data?: { task_id?: string } } }) => number | false;
+
+    expect(interval({ state: { data: {} } })).toBe(false);
+    expect(interval({ state: {} })).toBe(false);
   });
 });
 
