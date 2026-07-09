@@ -28,9 +28,12 @@ RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_codex_u
 FROM ${NODE_BASE_IMAGE} AS web-builder
 ARG APP_NAME
 WORKDIR /workspace
+ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+ENV npm_config_registry=https://registry.npmmirror.com
+ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
 COPY ${APP_NAME}.tgz /tmp/source.tgz
 RUN tar -xzf /tmp/source.tgz --strip-components=1 -C /workspace
-RUN corepack enable && corepack prepare pnpm@10.28.2 --activate
+RUN corepack enable && corepack prepare pnpm@10.28.2 --activate && pnpm config set registry "${NPM_CONFIG_REGISTRY}"
 ENV REMOTE_API_URL=http://127.0.0.1:8080
 ENV NEXT_PUBLIC_APP_VERSION=dev
 ENV STANDALONE=true
@@ -60,6 +63,8 @@ ENV FRONTEND_PORT=3000
 ENV HOSTNAME=0.0.0.0
 ENV MULTICA_DWS_CLI_PATH=/usr/local/bin/dws
 ENV PATH="/home/admin/${APP_NAME}/node/bin:/home/admin/${APP_NAME}/target/${APP_NAME}/bin:${PATH}"
+ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+ENV npm_config_registry=https://registry.npmmirror.com
 
 RUN npm install -g @e2b/cli@2.13.0 && npm cache clean --force
 RUN set -eux; \
