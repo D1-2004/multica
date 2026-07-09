@@ -77,13 +77,13 @@ export function chatMessagesPageOptions(sessionId: string, limit = 50) {
  * Refetched via WS invalidation in useRealtimeSync when chat:message / chat:done
  * / task:completed / task:failed arrive.
  */
-export function pendingChatTaskOptions(sessionId: string) {
+export function pendingChatTaskOptions(sessionId: string, syncWhilePending = false) {
   return queryOptions({
     queryKey: chatKeys.pendingTask(sessionId),
     queryFn: () => api.getPendingChatTask(sessionId),
     enabled: !!sessionId,
     refetchInterval: (query) => (
-      query.state.data?.task_id ? 2000 : false
+      syncWhilePending && query.state.data?.task_id ? 2000 : false
     ),
     staleTime: Infinity,
   });
@@ -131,12 +131,12 @@ export function mergeTaskMessagesBySeq(
  * Drives the FAB "running" indicator while the chat window is minimised —
  * no per-session query is active then, so we need this roll-up.
  */
-export function pendingChatTasksOptions(wsId: string) {
+export function pendingChatTasksOptions(wsId: string, syncWhilePending = false) {
   return queryOptions({
     queryKey: chatKeys.pendingTasks(wsId),
     queryFn: () => api.listPendingChatTasks(),
     refetchInterval: (query) => (
-      query.state.data?.tasks?.length ? 2000 : false
+      syncWhilePending && query.state.data?.tasks?.length ? 2000 : false
     ),
     staleTime: Infinity,
   });

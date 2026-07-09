@@ -28,6 +28,17 @@ func (s *stubRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQue
 	return nil
 }
 
+type blockingRuntimeLauncher struct {
+	calls   chan db.AgentTaskQueue
+	release chan struct{}
+}
+
+func (s *blockingRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue) error {
+	s.calls <- task
+	<-s.release
+	return nil
+}
+
 // TestNotifyTaskAvailable_BumpsBeforeWakeup pins the contract noted in
 // the EmptyClaimCache docs: the version Bump MUST run before the
 // daemon WS wakeup, otherwise the wakeup-driven claim could read a
@@ -141,6 +152,34 @@ func TestNotifyTaskEnqueued_InvokesRuntimeLauncher(t *testing.T) {
 	if got := len(wakeup.calls); got != 1 {
 		t.Fatalf("expected wakeup to remain wired, got %d calls", got)
 	}
+}
+
+func TestLaunchRuntimeForTask_DedupesInFlightTask(t *testing.T) {
+	launcher := &blockingRuntimeLauncher{
+		calls:   make(chan db.AgentTaskQueue, 2),
+		release: make(chan struct{}),
+	}
+	svc := &TaskService{RuntimeLauncher: launcher}
+	task := db.AgentTaskQueue{
+		ID:        testUUID(12),
+		RuntimeID: testUUID(13),
+		AgentID:   testUUID(14),
+	}
+
+	svc.launchRuntimeForTask(task)
+	select {
+	case <-launcher.calls:
+	case <-time.After(time.Second):
+		t.Fatal("runtime launcher was not invoked")
+	}
+
+	svc.launchRuntimeForTask(task)
+	select {
+	case <-launcher.calls:
+		t.Fatal("duplicate launch was scheduled while the first launch was still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(launcher.release)
 }
 
 func TestNextQueuedTaskForTerminal_SelectsSameIssueAgent(t *testing.T) {

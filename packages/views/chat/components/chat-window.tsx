@@ -16,6 +16,8 @@ import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useAuthStore } from "@multica/core/auth";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
+import { runtimeListOptions } from "@multica/core/runtimes/queries";
+import { isFCE2BRuntime } from "@multica/core/runtimes";
 import { canAssignAgent } from "@multica/views/issues/components";
 import { api } from "@multica/core/api";
 import { useAgentPresenceDetail, useWorkspaceAgentAvailability } from "@multica/core/agents";
@@ -170,9 +172,37 @@ export function ChatWindow() {
   const user = useAuthStore((s) => s.user);
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
   // Single sessions cache — eliminates the separate active/all queries
   // that used to drift during the WS-invalidate window.
   const { data: sessions = [] } = useQuery(chatSessionsOptions(wsId));
+  // Legacy archived sessions (the old soft-archive feature was removed but
+  // pre-existing rows with status='archived' may still exist) are excluded
+  // from the history dropdown. If one is still the active session, ChatInput
+  // is disabled and the server still rejects POST /messages for it.
+  const currentSession = activeSessionId
+    ? sessions.find((s) => s.id === activeSessionId)
+    : null;
+  const isSessionArchived = currentSession?.status === "archived";
+
+  const currentMember = members.find((m) => m.user_id === user?.id);
+  const memberRole = currentMember?.role;
+  const availableAgents = agents.filter(
+    (a) => !a.archived_at && canAssignAgent(a, user?.id, memberRole),
+  );
+
+  // Resolve selected agent: stored preference → first available
+  const activeAgent =
+    availableAgents.find((a) => a.id === selectedAgentId) ??
+    availableAgents[0] ??
+    null;
+  const pendingTaskAgent = currentSession
+    ? availableAgents.find((a) => a.id === currentSession.agent_id) ?? null
+    : activeAgent;
+  const pendingTaskRuntime = pendingTaskAgent?.runtime_id
+    ? runtimes.find((runtime) => runtime.id === pendingTaskAgent.runtime_id) ?? null
+    : null;
+  const syncPendingTaskFromServer = isFCE2BRuntime(pendingTaskRuntime);
   const {
     data: rawMessagePages,
     isLoading: messagesLoading,
@@ -203,7 +233,7 @@ export function ChatWindow() {
   //
   // This is the SOLE source for pendingTaskId — no mirror in the store.
   const { data: pendingTask } = useQuery(
-    pendingChatTaskOptions(activeSessionId ?? ""),
+    pendingChatTaskOptions(activeSessionId ?? "", syncPendingTaskFromServer),
   );
   const pendingTaskId = pendingTask?.task_id ?? null;
   const stopRequestedBeforeTaskRef = useRef(false);
@@ -217,30 +247,9 @@ export function ChatWindow() {
     setRestoreDraftRequest(null);
   }, []);
 
-  // Legacy archived sessions (the old soft-archive feature was removed but
-  // pre-existing rows with status='archived' may still exist) are excluded
-  // from the history dropdown. If one is still the active session, ChatInput
-  // is disabled and the server still rejects POST /messages for it.
-  const currentSession = activeSessionId
-    ? sessions.find((s) => s.id === activeSessionId)
-    : null;
-  const isSessionArchived = currentSession?.status === "archived";
-
   const qc = useQueryClient();
   const createSession = useCreateChatSession();
   const markRead = useMarkChatSessionRead();
-
-  const currentMember = members.find((m) => m.user_id === user?.id);
-  const memberRole = currentMember?.role;
-  const availableAgents = agents.filter(
-    (a) => !a.archived_at && canAssignAgent(a, user?.id, memberRole),
-  );
-
-  // Resolve selected agent: stored preference → first available
-  const activeAgent =
-    availableAgents.find((a) => a.id === selectedAgentId) ??
-    availableAgents[0] ??
-    null;
 
   // Three-state availability — "loading" stays neutral (no banner, no
   // disable) so the input doesn't flash a fake "no agent" state in the

@@ -844,6 +844,18 @@ func (h *Handler) GetPendingChatTask(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, PendingChatTaskResponse{})
 		return
 	}
+	if task.Status == "queued" && h.TaskService != nil {
+		fullTask, err := h.Queries.GetAgentTask(r.Context(), task.ID)
+		if err != nil {
+			slog.Warn("failed to load pending chat task for queued recovery",
+				"chat_session_id", uuidToString(session.ID),
+				"task_id", uuidToString(task.ID),
+				"error", err,
+			)
+		} else {
+			h.TaskService.RecoverQueuedFCE2BTask(r.Context(), fullTask)
+		}
+	}
 
 	writeJSON(w, http.StatusOK, PendingChatTaskResponse{
 		TaskID:    uuidToString(task.ID),
