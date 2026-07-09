@@ -189,6 +189,8 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		"-e", "MULTICA_TASK_ID=22222222-2222-2222-2222-222222222222",
 		"-e", "MULTICA_DAEMON_ID=fc-e2b:ws:fc-hermes",
 		"-e", "MULTICA_AGENT_RUNTIME_NAME=FC-Hermes",
+		"-e", "HOME=/home/user",
+		"-e", "DWS_CONFIG_DIR=/home/user/.dws",
 		"-e", "OPENAI_BASE_URL=https://api-deap.dingtalk.com/deapai",
 		"-e", "OPENAI_API_KEY=maas_secret",
 		"-e", "OPENAI_MODEL=qwen3.5-plus",
