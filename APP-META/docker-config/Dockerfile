@@ -41,8 +41,6 @@ ENV STANDALONE=true
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @multica/web build
 
-FROM ${NODE_BASE_IMAGE} AS node-runtime
-
 FROM hub.docker.alibaba-inc.com/aone-base-global/alios8-nodejs:2.0
 ARG APP_NAME=dt-fde-multica
 ARG ENV_TYPE
@@ -78,7 +76,8 @@ RUN set -eux; \
 
 RUN mkdir -p /home/admin/${APP_NAME}/target/${APP_NAME} /home/admin/${APP_NAME}/logs /home/admin/${APP_NAME}/node/bin /home/admin/cai/conf/apps && \
     cp -rf /home/admin/appname/bin /home/admin/${APP_NAME} && \
-    mv /home/admin/${APP_NAME}/bin/start.sh /home/admin/start.sh
+    mv /home/admin/${APP_NAME}/bin/start.sh /home/admin/start.sh && \
+    ln -sf "$(command -v node)" /home/admin/${APP_NAME}/node/bin/node
 
 WORKDIR /home/admin/${APP_NAME}/bin
 
@@ -86,7 +85,6 @@ VOLUME /home/admin/logs /home/admin/cai/logs /home/admin/${APP_NAME}/logs /home/
 
 COPY environment/cai/conf/nginx-proxy.conf /home/admin/cai/conf/apps/${APP_NAME}.conf
 COPY environment/common/custom/app/bin/*.sh /home/admin/${APP_NAME}/bin/
-COPY --from=node-runtime /usr/local/bin/node /home/admin/${APP_NAME}/node/bin/node
 COPY --from=backend-builder /workspace/src/ /home/admin/${APP_NAME}/target/${APP_NAME}/src/
 COPY --from=backend-builder /workspace/server/bin/ /home/admin/${APP_NAME}/target/${APP_NAME}/bin/
 COPY --from=backend-builder /workspace/server/migrations/ /home/admin/${APP_NAME}/target/${APP_NAME}/migrations/
