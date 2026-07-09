@@ -46,8 +46,6 @@ FROM ${NODE_BASE_IMAGE} AS node-runtime
 FROM hub.docker.alibaba-inc.com/aone-base-global/alios8-nodejs:2.0
 ARG APP_NAME=dt-fde-multica
 ARG ENV_TYPE
-ARG DWS_VERSION=v1.0.50
-ARG DWS_RELEASE_BASE=https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/releases/download
 
 EXPOSE 80
 EXPOSE 3000
@@ -68,14 +66,9 @@ ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 ENV npm_config_registry=https://registry.npmmirror.com
 
 RUN npm install -g @e2b/cli@2.13.0 && npm cache clean --force
-RUN --mount=type=secret,id=ghproxy \
-    set -eu; \
-    ghproxy="$(cat /run/secrets/ghproxy)"; \
-    test -n "${ghproxy}"; \
-    mkdir -p /tmp/dws; \
-    base="${DWS_RELEASE_BASE}/${DWS_VERSION}"; \
-    curl --proxy "${ghproxy}" -fsSLo /tmp/dws/checksums.txt "${base}/checksums.txt"; \
-    curl --proxy "${ghproxy}" -fsSLo /tmp/dws/dws-linux-amd64.tar.gz "${base}/dws-linux-amd64.tar.gz"; \
+COPY dws/checksums.txt /tmp/dws/checksums.txt
+COPY dws/dws-linux-amd64.tar.gz /tmp/dws/dws-linux-amd64.tar.gz
+RUN set -eux; \
     cd /tmp/dws; \
     grep '  dws-linux-amd64.tar.gz$' checksums.txt | sha256sum -c -; \
     tar -xzf dws-linux-amd64.tar.gz; \
