@@ -431,7 +431,7 @@ func TestAutopilotsSkillCoversDispatchAndSideEffects(t *testing.T) {
 		"multica autopilot trigger <autopilot-id> --output json",
 		"Do not run `trigger`",
 		"webhook tokens",
-		"{{date}}",
+		"Thu Jul 9 2026",
 		"squad's leader agent",
 		"references/autopilots-source-map.md",
 	}

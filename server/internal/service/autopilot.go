@@ -1307,7 +1307,7 @@ func prettifyJSON(raw []byte) ([]byte, error) {
 // issueTitleTemplateTokenRE matches any {{...}} token in an issue-title
 // template. We deliberately permit whitespace inside the braces ({{ date }})
 // so users can format templates either way; the canonical token is still
-// {{date}}.
+// Thu Jul 9 2026.
 var issueTitleTemplateTokenRE = regexp.MustCompile(`\{\{\s*([^{}]*?)\s*\}\}`)
 
 // interpolateTemplate substitutes supported {{name}} placeholders in the
