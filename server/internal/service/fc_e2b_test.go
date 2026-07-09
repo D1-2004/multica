@@ -291,6 +291,77 @@ func TestFCE2BScopeForTask(t *testing.T) {
 	}
 }
 
+func TestFCE2BTaskHasActiveBlocker(t *testing.T) {
+	agentID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
+	targetID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	activeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	otherID := util.MustParseUUID("44444444-4444-4444-4444-444444444444")
+	chatID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
+	issueID := util.MustParseUUID("66666666-6666-6666-6666-666666666666")
+
+	target := db.AgentTaskQueue{
+		ID:            targetID,
+		AgentID:       agentID,
+		Status:        "queued",
+		ChatSessionID: chatID,
+	}
+	if !fcE2BTaskHasActiveBlocker(target, []db.AgentTaskQueue{{
+		ID:            activeID,
+		AgentID:       agentID,
+		Status:        "running",
+		ChatSessionID: chatID,
+	}}) {
+		t.Fatal("expected active task in same chat to block target claim")
+	}
+	if fcE2BTaskHasActiveBlocker(target, []db.AgentTaskQueue{{
+		ID:            activeID,
+		AgentID:       agentID,
+		Status:        "completed",
+		ChatSessionID: chatID,
+	}}) {
+		t.Fatal("completed task must not block target claim")
+	}
+	if fcE2BTaskHasActiveBlocker(target, []db.AgentTaskQueue{{
+		ID:            activeID,
+		AgentID:       agentID,
+		Status:        "queued",
+		ChatSessionID: chatID,
+	}}) {
+		t.Fatal("queued task must not be treated as an active blocker")
+	}
+	if fcE2BTaskHasActiveBlocker(target, []db.AgentTaskQueue{{
+		ID:            activeID,
+		AgentID:       agentID,
+		Status:        "running",
+		ChatSessionID: otherID,
+	}}) {
+		t.Fatal("different chat must not block target claim")
+	}
+
+	issueTarget := db.AgentTaskQueue{
+		ID:      targetID,
+		AgentID: agentID,
+		Status:  "queued",
+		IssueID: issueID,
+	}
+	if !fcE2BTaskHasActiveBlocker(issueTarget, []db.AgentTaskQueue{{
+		ID:      activeID,
+		AgentID: agentID,
+		Status:  "dispatched",
+		IssueID: issueID,
+	}}) {
+		t.Fatal("active task in same issue must block target claim")
+	}
+	if fcE2BTaskHasActiveBlocker(issueTarget, []db.AgentTaskQueue{{
+		ID:      activeID,
+		AgentID: otherID,
+		Status:  "running",
+		IssueID: issueID,
+	}}) {
+		t.Fatal("different agent must not block target claim")
+	}
+}
+
 func TestIsFCE2BRuntime(t *testing.T) {
 	metadata, err := json.Marshal(map[string]any{"kind": FCE2BMetadataKind})
 	if err != nil {
