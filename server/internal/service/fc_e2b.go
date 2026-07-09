@@ -40,6 +40,8 @@ const (
 	fcE2BDaemonTokenTTL             = time.Hour
 	fcE2BRunnerClaimTimeout         = 30 * time.Second
 	fcE2BRunnerClaimPollInterval    = 500 * time.Millisecond
+	fcE2BRunOnceHealthPortBase      = 20000
+	fcE2BRunOnceHealthPortSpan      = 30000
 )
 
 type fcE2BRunnerClaimState string
@@ -748,6 +750,7 @@ func (l *FCE2BLauncher) waitSandboxReady(ctx context.Context, sandboxID string) 
 
 func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db.AgentRuntime, taskID pgtype.UUID, token string, coldStart bool, extraEnv map[string]string) error {
 	runtimeID := util.UUIDToString(rt.ID)
+	healthPort := fcE2BHealthPortForTask(taskID)
 	args := []string{
 		"sandbox", "exec",
 		"--background",
@@ -775,11 +778,20 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		FCE2BRunnerCommand,
 		"--runtime-id", runtimeID,
 		"--provider", FCE2BProvider,
+		"--health-port", strconv.Itoa(healthPort),
 	)
 	if _, err := l.runE2BCommand(ctx, args); err != nil {
 		return fmt.Errorf("FC/E2B runner exec failed: %w", err)
 	}
 	return nil
+}
+
+func fcE2BHealthPortForTask(taskID pgtype.UUID) int {
+	sum := 0
+	for _, b := range taskID.Bytes {
+		sum = (sum*31 + int(b)) % fcE2BRunOnceHealthPortSpan
+	}
+	return fcE2BRunOnceHealthPortBase + sum
 }
 
 func (l *FCE2BLauncher) runE2BCommand(ctx context.Context, args []string) (string, error) {
@@ -854,6 +866,7 @@ func parseE2BSandboxID(output string) (string, error) {
 func (s *TaskService) FailTaskRuntimeStart(ctx context.Context, taskID, runtimeID pgtype.UUID, errMsg string) (*db.AgentTaskQueue, error) {
 	errMsg = redact.Text(errMsg)
 	var task db.AgentTaskQueue
+	var assistantMsg *db.ChatMessage
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.FailAgentTaskRuntimeStart(ctx, db.FailAgentTaskRuntimeStartParams{
 			ID:        taskID,
@@ -881,7 +894,27 @@ func (s *TaskService) FailTaskRuntimeStart(ctx context.Context, taskID, runtimeI
 			Type:    "error",
 			Content: pgtype.Text{String: "Runtime start failed: " + errMsg, Valid: true},
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		if task.ChatSessionID.Valid {
+			row, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
+				ChatSessionID: task.ChatSessionID,
+				Role:          "assistant",
+				Content:       "Runtime start failed: " + errMsg,
+				TaskID:        task.ID,
+				FailureReason: pgtype.Text{String: "runtime_start_failed", Valid: true},
+				ElapsedMs:     computeChatElapsedMs(task),
+			})
+			if err != nil {
+				return fmt.Errorf("create runtime-start-failed chat message: %w", err)
+			}
+			assistantMsg = &row
+			if err := qtx.SetUnreadSinceIfNull(ctx, task.ChatSessionID); err != nil {
+				return fmt.Errorf("set unread_since for runtime-start-failed chat: %w", err)
+			}
+		}
+		return nil
 	}); err != nil {
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil && errors.Is(err, pgx.ErrNoRows) {
 			return &existing, nil
@@ -898,6 +931,9 @@ func (s *TaskService) FailTaskRuntimeStart(ctx context.Context, taskID, runtimeI
 	)
 	s.captureTaskFailed(ctx, task)
 	s.ReconcileAgentStatus(ctx, task.AgentID)
+	if task.ChatSessionID.Valid {
+		s.broadcastChatDone(ctx, task, assistantMsg)
+	}
 	s.broadcastTaskEvent(ctx, protocol.EventTaskFailed, task)
 	return &task, nil
 }
