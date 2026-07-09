@@ -68,9 +68,13 @@ ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 ENV npm_config_registry=https://registry.npmmirror.com
 
 RUN npm install -g @e2b/cli@2.13.0 && npm cache clean --force
-RUN set -eux; \
+RUN --mount=type=secret,id=ghproxy \
+    set -eux; \
+    ghproxy="$(cat /run/secrets/ghproxy)"; \
+    test -n "${ghproxy}"; \
+    case "${ghproxy}" in */) ghproxy_prefix="${ghproxy}" ;; *) ghproxy_prefix="${ghproxy}/" ;; esac; \
     mkdir -p /tmp/dws; \
-    base="${DWS_RELEASE_BASE}/${DWS_VERSION}"; \
+    base="${ghproxy_prefix}${DWS_RELEASE_BASE}/${DWS_VERSION}"; \
     curl -fsSLo /tmp/dws/checksums.txt "${base}/checksums.txt"; \
     curl -fsSLo /tmp/dws/dws-linux-amd64.tar.gz "${base}/dws-linux-amd64.tar.gz"; \
     cd /tmp/dws; \
