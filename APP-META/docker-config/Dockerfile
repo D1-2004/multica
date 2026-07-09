@@ -1,5 +1,5 @@
 ARG APP_NAME=dt-fde-multica
-ARG GO_BASE_IMAGE=multica-fc-registry-vpc.cn-beijing.cr.aliyuncs.com/multica/dockerhub-library-golang:1.26-bookworm
+ARG GO_BASE_IMAGE=hub.docker.alibaba-inc.com/library/golang:1.26-bookworm
 ARG NODE_BASE_IMAGE=hub.docker.alibaba-inc.com/library/node:22-bookworm-slim
 
 FROM ${GO_BASE_IMAGE} AS backend-builder
