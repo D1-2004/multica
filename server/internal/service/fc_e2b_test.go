@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -200,6 +201,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		"multica-fc-hermes-runner",
 		"--runtime-id", "11111111-1111-1111-1111-111111111111",
 		"--provider", "hermes",
+		"--health-port", strconv.Itoa(fcE2BHealthPortForTask(taskID)),
 	}
 	if !reflect.DeepEqual(runner.calls[2].args, wantExecArgs) {
 		t.Fatalf("exec args = %#v, want %#v", runner.calls[2].args, wantExecArgs)
@@ -232,6 +234,16 @@ func TestFCE2BExecRunOnceWarmSandboxDoesNotInjectColdStart(t *testing.T) {
 		if arg == "MULTICA_FC_E2B_COLD_START=true" {
 			t.Fatalf("warm sandbox exec must not inject cold-start marker: %#v", runner.calls[0].args)
 		}
+	}
+	foundHealthPort := false
+	for i := 0; i < len(runner.calls[0].args)-1; i++ {
+		if runner.calls[0].args[i] == "--health-port" && runner.calls[0].args[i+1] == strconv.Itoa(fcE2BHealthPortForTask(taskID)) {
+			foundHealthPort = true
+			break
+		}
+	}
+	if !foundHealthPort {
+		t.Fatalf("warm sandbox exec must pass task-specific health port: %#v", runner.calls[0].args)
 	}
 }
 
