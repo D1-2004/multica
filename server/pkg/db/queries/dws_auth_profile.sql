@@ -6,16 +6,18 @@ INSERT INTO dws_auth_profile (
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
--- name: ListDWSAuthProfiles :many
+-- name: ListDWSAuthProfilesForOwner :many
 SELECT * FROM dws_auth_profile
 WHERE workspace_id = $1
+  AND owner_id = $2
   AND status = 'active'
 ORDER BY updated_at DESC, created_at DESC;
 
--- name: GetDWSAuthProfileForWorkspace :one
+-- name: GetDWSAuthProfileForOwner :one
 SELECT * FROM dws_auth_profile
 WHERE id = $1
   AND workspace_id = $2
+  AND owner_id = $3
   AND status = 'active';
 
 -- name: RevokeDWSAuthProfile :one
@@ -23,4 +25,5 @@ UPDATE dws_auth_profile
 SET status = 'revoked', updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
+  AND owner_id = $3
 RETURNING *;

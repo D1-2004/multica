@@ -1049,6 +1049,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// are admin-gated below).
 					r.Get("/runtime-profiles", h.ListRuntimeProfiles)
 					r.Get("/runtime-profiles/{profileId}", h.GetRuntimeProfile)
+					r.Get("/dws/profiles", h.ListDWSAuthProfiles)
+					r.Delete("/dws/profiles/{profileId}", h.DeleteDWSAuthProfile)
+					r.Post("/dws/auth/begin", h.BeginDWSAuth)
+					r.Get("/dws/auth/{sessionId}/status", h.GetDWSAuthStatus)
 				})
 				// Admin-level access
 				r.Group(func(r chi.Router) {
@@ -1059,9 +1063,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/dingtalk/users/search", h.SearchDingTalkUsers)
 					r.Post("/dingtalk/members", h.AddDingTalkWorkspaceMembers)
 					r.Post("/dingtalk/group-members", h.AddDingTalkGroupMembers)
-					r.Get("/dws/profiles", h.ListDWSAuthProfiles)
-					r.Post("/dws/auth/begin", h.BeginDWSAuth)
-					r.Get("/dws/auth/{sessionId}/status", h.GetDWSAuthStatus)
 					r.Route("/members/{memberId}", func(r chi.Router) {
 						r.Patch("/", h.UpdateMember)
 						r.Delete("/", h.DeleteMember)

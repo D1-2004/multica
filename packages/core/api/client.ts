@@ -1039,6 +1039,16 @@ export class ApiClient {
     return this.fetch(`/api/workspaces/${workspaceId}/dws/profiles`);
   }
 
+  async deleteDWSAuthProfile(
+    workspaceId: string,
+    profileId: string,
+  ): Promise<DWSAuthProfile> {
+    return this.fetch(
+      `/api/workspaces/${workspaceId}/dws/profiles/${profileId}`,
+      { method: "DELETE" },
+    );
+  }
+
   async beginDWSAuth(workspaceId: string): Promise<DWSAuthSession> {
     return this.fetch(`/api/workspaces/${workspaceId}/dws/auth/begin`, {
       method: "POST",

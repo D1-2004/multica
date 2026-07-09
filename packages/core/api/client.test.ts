@@ -521,6 +521,34 @@ describe("ApiClient", () => {
     });
   });
 
+  it("uses the DWS profile delete API contract", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: "profile-1",
+          workspace_id: "ws-1",
+          label: "DWS profile",
+          status: "revoked",
+          created_at: "2026-07-09T00:00:00Z",
+          updated_at: "2026-07-09T00:00:00Z",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.deleteDWSAuthProfile("ws-1", "profile-1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/workspaces/ws-1/dws/profiles/profile-1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
   it("falls back when Cloud Runtime node responses drift", async () => {
     const fetchMock = vi
       .fn()

@@ -372,7 +372,11 @@
       "connected": "DWS 身份已连接",
       "load_failed": "加载 DWS 身份失败",
       "start_failed": "启动 DWS 登录失败",
-      "poll_failed": "获取 DWS 登录状态失败"
+      "poll_failed": "获取 DWS 登录状态失败",
+      "delete": "删除 DWS 身份",
+      "delete_confirm": "删除 DWS 身份“{{label}}”？绑定它的智能体将不能继续执行 DWS 任务。",
+      "deleted": "DWS 身份已删除",
+      "delete_failed": "删除 DWS 身份失败"
     },
     "instructions": {
       "label": "指令",

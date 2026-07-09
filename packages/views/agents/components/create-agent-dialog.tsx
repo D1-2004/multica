@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Globe, Loader2, Lock, Users } from "lucide-react";
+import { Globe, Loader2, Lock, Trash2, Users } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ModelDropdown } from "./model-dropdown";
 import { RuntimePicker, isRuntimeUsableForUser } from "./runtime-picker";
@@ -181,6 +181,7 @@ export function CreateAgentDialog({
   const [selectedDwsProfileId, setSelectedDwsProfileId] = useState("");
   const [dwsSession, setDwsSession] = useState<DWSAuthSession | null>(null);
   const [dwsAuthStarting, setDwsAuthStarting] = useState(false);
+  const [deletingDwsProfileId, setDeletingDwsProfileId] = useState("");
   // Defense-in-depth: even if a locked runtime somehow ends up selected
   // (e.g. duplicate of an agent whose template runtime is now locked, and
   // the workspace has no usable fallback), gate Create on it so we don't
@@ -255,6 +256,30 @@ export function CreateAgentDialog({
       toast.error(err instanceof Error ? err.message : t(($) => $.create_dialog.dws.start_failed));
     } finally {
       setDwsAuthStarting(false);
+    }
+  };
+
+  const deleteSelectedDWSProfile = async () => {
+    if (!wsId || !selectedDwsProfileId) return;
+    const profile = dwsProfiles.find((item) => item.id === selectedDwsProfileId);
+    const label = profile?.label || t(($) => $.create_dialog.dws.title);
+    if (!window.confirm(t(($) => $.create_dialog.dws.delete_confirm, { label }))) {
+      return;
+    }
+    setDeletingDwsProfileId(selectedDwsProfileId);
+    try {
+      await api.deleteDWSAuthProfile(wsId, selectedDwsProfileId);
+      const deletedProfileId = selectedDwsProfileId;
+      const nextProfiles = dwsProfiles.filter((item) => item.id !== deletedProfileId);
+      setDwsProfiles(nextProfiles);
+      setSelectedDwsProfileId((current) =>
+        current === deletedProfileId ? nextProfiles[0]?.id || "" : current,
+      );
+      toast.success(t(($) => $.create_dialog.dws.deleted));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t(($) => $.create_dialog.dws.delete_failed));
+    } finally {
+      setDeletingDwsProfileId("");
     }
   };
 
@@ -545,17 +570,33 @@ export function CreateAgentDialog({
                     </div>
                   )}
                   {dwsProfiles.length > 0 && (
-                    <select
-                      value={selectedDwsProfileId}
-                      onChange={(event) => setSelectedDwsProfileId(event.target.value)}
-                      className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                    >
-                      {dwsProfiles.map((profile) => (
-                        <option key={profile.id} value={profile.id}>
-                          {profile.label}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={selectedDwsProfileId}
+                        onChange={(event) => setSelectedDwsProfileId(event.target.value)}
+                        className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm"
+                      >
+                        {dwsProfiles.map((profile) => (
+                          <option key={profile.id} value={profile.id}>
+                            {profile.label}
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="ghost"
+                        onClick={deleteSelectedDWSProfile}
+                        disabled={!!deletingDwsProfileId}
+                        title={t(($) => $.create_dialog.dws.delete)}
+                      >
+                        {deletingDwsProfileId === selectedDwsProfileId ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </div>
                   )}
                   {!dwsProfilesLoading && dwsProfiles.length === 0 && (
                     <p className="text-xs text-muted-foreground">

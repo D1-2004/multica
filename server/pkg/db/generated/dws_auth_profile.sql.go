@@ -60,20 +60,22 @@ func (q *Queries) CreateDWSAuthProfile(ctx context.Context, arg CreateDWSAuthPro
 	return i, err
 }
 
-const getDWSAuthProfileForWorkspace = `-- name: GetDWSAuthProfileForWorkspace :one
+const getDWSAuthProfileForOwner = `-- name: GetDWSAuthProfileForOwner :one
 SELECT id, workspace_id, owner_id, label, corp_id, corp_name, user_id, user_name, status, auth_archive_encrypted, created_at, updated_at FROM dws_auth_profile
 WHERE id = $1
   AND workspace_id = $2
+  AND owner_id = $3
   AND status = 'active'
 `
 
-type GetDWSAuthProfileForWorkspaceParams struct {
+type GetDWSAuthProfileForOwnerParams struct {
 	ID          pgtype.UUID `json:"id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	OwnerID     pgtype.UUID `json:"owner_id"`
 }
 
-func (q *Queries) GetDWSAuthProfileForWorkspace(ctx context.Context, arg GetDWSAuthProfileForWorkspaceParams) (DwsAuthProfile, error) {
-	row := q.db.QueryRow(ctx, getDWSAuthProfileForWorkspace, arg.ID, arg.WorkspaceID)
+func (q *Queries) GetDWSAuthProfileForOwner(ctx context.Context, arg GetDWSAuthProfileForOwnerParams) (DwsAuthProfile, error) {
+	row := q.db.QueryRow(ctx, getDWSAuthProfileForOwner, arg.ID, arg.WorkspaceID, arg.OwnerID)
 	var i DwsAuthProfile
 	err := row.Scan(
 		&i.ID,
@@ -92,15 +94,21 @@ func (q *Queries) GetDWSAuthProfileForWorkspace(ctx context.Context, arg GetDWSA
 	return i, err
 }
 
-const listDWSAuthProfiles = `-- name: ListDWSAuthProfiles :many
+const listDWSAuthProfilesForOwner = `-- name: ListDWSAuthProfilesForOwner :many
 SELECT id, workspace_id, owner_id, label, corp_id, corp_name, user_id, user_name, status, auth_archive_encrypted, created_at, updated_at FROM dws_auth_profile
 WHERE workspace_id = $1
+  AND owner_id = $2
   AND status = 'active'
 ORDER BY updated_at DESC, created_at DESC
 `
 
-func (q *Queries) ListDWSAuthProfiles(ctx context.Context, workspaceID pgtype.UUID) ([]DwsAuthProfile, error) {
-	rows, err := q.db.Query(ctx, listDWSAuthProfiles, workspaceID)
+type ListDWSAuthProfilesForOwnerParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	OwnerID     pgtype.UUID `json:"owner_id"`
+}
+
+func (q *Queries) ListDWSAuthProfilesForOwner(ctx context.Context, arg ListDWSAuthProfilesForOwnerParams) ([]DwsAuthProfile, error) {
+	rows, err := q.db.Query(ctx, listDWSAuthProfilesForOwner, arg.WorkspaceID, arg.OwnerID)
 	if err != nil {
 		return nil, err
 	}
@@ -137,16 +145,18 @@ UPDATE dws_auth_profile
 SET status = 'revoked', updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
+  AND owner_id = $3
 RETURNING id, workspace_id, owner_id, label, corp_id, corp_name, user_id, user_name, status, auth_archive_encrypted, created_at, updated_at
 `
 
 type RevokeDWSAuthProfileParams struct {
 	ID          pgtype.UUID `json:"id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	OwnerID     pgtype.UUID `json:"owner_id"`
 }
 
 func (q *Queries) RevokeDWSAuthProfile(ctx context.Context, arg RevokeDWSAuthProfileParams) (DwsAuthProfile, error) {
-	row := q.db.QueryRow(ctx, revokeDWSAuthProfile, arg.ID, arg.WorkspaceID)
+	row := q.db.QueryRow(ctx, revokeDWSAuthProfile, arg.ID, arg.WorkspaceID, arg.OwnerID)
 	var i DwsAuthProfile
 	err := row.Scan(
 		&i.ID,
