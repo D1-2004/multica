@@ -208,7 +208,7 @@ describe("runtime machine grouping", () => {
     expect(machines).toHaveLength(2);
     const cloud = machines.find((m) => m.id === "cloud:device:My Laptop");
     expect(cloud).toMatchObject({
-      title: "My Laptop",
+      title: "Codex (My Laptop)",
       section: "cloud",
       isCurrent: false,
     });
@@ -304,6 +304,35 @@ describe("runtime machine grouping", () => {
       subtitle: "Cloud worker",
       section: "cloud",
     });
+  });
+
+  it("uses cloud runtime names instead of generic device info", () => {
+    const machines = buildRuntimeMachines(
+      [
+        makeRuntime({
+          id: "fc-dws",
+          daemon_id: "fc-e2b:ws:template:dws",
+          runtime_mode: "cloud",
+          provider: "hermes",
+          name: "FC-Hermes-DWS",
+          device_info: "FC/E2B one-shot sandbox",
+        }),
+        makeRuntime({
+          id: "fc-smoke",
+          daemon_id: "fc-e2b:ws:template:smoke",
+          runtime_mode: "cloud",
+          provider: "hermes",
+          name: "FC-Hermes-Smoke",
+          device_info: "FC/E2B one-shot sandbox",
+        }),
+      ],
+      { now: NOW },
+    );
+
+    const titles = machines.map((machine) => machine.title);
+    expect(titles).toContain("FC-Hermes-DWS");
+    expect(titles).toContain("FC-Hermes-Smoke");
+    expect(titles).not.toContain("FC/E2B one-shot sandbox");
   });
 });
 

@@ -279,6 +279,10 @@ function machineTitle(
   const first = runtimes[0];
   if (!first) return "Unknown machine";
 
+  if (first.runtime_mode === "cloud" && first.name.trim()) {
+    return first.name.trim();
+  }
+
   const deviceName = runtimeDeviceName(first);
   if (deviceName) return deviceName;
 
