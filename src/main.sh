@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 LOG_DIR="/home/admin/${APP_NAME}/logs"
 RUN_DIR="/home/admin/${APP_NAME}/run"
-ANTX_PACKAGE="/home/admin/${APP_NAME}/target/${APP_NAME}.tgz"
 
 mkdir -p "$LOG_DIR" "$RUN_DIR" "$APP_ROOT/data/uploads"
 touch "$LOG_DIR/bootstrap.log"
@@ -107,22 +106,8 @@ load_antx_runtime_config() {
   if [[ -n "$found_antx_path" ]]; then
     echo "[multica][runtime] found Aone config file: $found_antx_path"
     cp "$found_antx_path" "$antx_file"
-  elif [[ -f "$ANTX_PACKAGE" ]]; then
-    echo "[multica][runtime] searching Aone config in package: $ANTX_PACKAGE"
-    local antx_entry=""
-    antx_entry="$(
-      tar -tf "$ANTX_PACKAGE" 2>/dev/null | awk '
-        $0 == "antx.properties" || $0 == "./antx.properties" || $0 ~ /\/antx\.properties$/ {
-          print
-          exit
-        }
-      '
-    )"
-    if [[ -n "$antx_entry" ]]; then
-      if ! tar -xOf "$ANTX_PACKAGE" "$antx_entry" >"$antx_file" 2>/dev/null; then
-        : >"$antx_file"
-      fi
-    fi
+  else
+    echo "[multica][runtime] no Aone config file found; using process environment"
   fi
 
   while IFS= read -r line || [[ -n "$line" ]]; do
