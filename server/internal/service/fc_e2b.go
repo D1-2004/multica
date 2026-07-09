@@ -38,6 +38,16 @@ const (
 	defaultFCE2BTimeoutSeconds      = 3600
 	defaultFCE2BSandboxReadyTimeout = 60 * time.Second
 	fcE2BDaemonTokenTTL             = time.Hour
+	fcE2BRunnerClaimTimeout         = 30 * time.Second
+	fcE2BRunnerClaimPollInterval    = 500 * time.Millisecond
+)
+
+type fcE2BRunnerClaimState string
+
+const (
+	fcE2BRunnerClaimObserved fcE2BRunnerClaimState = "observed"
+	fcE2BRunnerClaimBlocked  fcE2BRunnerClaimState = "blocked"
+	fcE2BRunnerClaimStalled  fcE2BRunnerClaimState = "stalled"
 )
 
 type FCE2BConfig struct {
@@ -417,6 +427,26 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		"cold_start", coldStart,
 		"duration", time.Since(started).String(),
 	)
+	claimState, err := l.waitForRunOnceClaim(ctx, task)
+	if err != nil {
+		return l.failLaunch(ctx, task, err.Error())
+	}
+	switch claimState {
+	case fcE2BRunnerClaimObserved:
+		slog.Info("FC/E2B run-once claim observed",
+			"task_id", taskID,
+			"runtime_id", runtimeID,
+			"sandbox_id", sandboxID,
+		)
+	case fcE2BRunnerClaimBlocked:
+		slog.Info("FC/E2B run-once claim blocked by active task",
+			"task_id", taskID,
+			"runtime_id", runtimeID,
+			"sandbox_id", sandboxID,
+		)
+	case fcE2BRunnerClaimStalled:
+		return l.failLaunch(ctx, task, fmt.Sprintf("FC/E2B runner did not claim task within %s after sandbox exec", fcE2BRunnerClaimTimeout))
+	}
 	if scoped {
 		_ = l.Queries.TouchFCE2BSandboxSession(ctx, db.TouchFCE2BSandboxSessionParams{
 			RuntimeID: rt.ID,
@@ -436,6 +466,87 @@ func fcE2BScopeForTask(task db.AgentTaskQueue) (fcE2BTaskScope, bool) {
 		return fcE2BTaskScope{typ: fcE2BScopeTypeIssue, id: task.IssueID}, true
 	}
 	return fcE2BTaskScope{}, false
+}
+
+func (l *FCE2BLauncher) waitForRunOnceClaim(ctx context.Context, task db.AgentTaskQueue) (fcE2BRunnerClaimState, error) {
+	deadline := time.NewTimer(fcE2BRunnerClaimTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(fcE2BRunnerClaimPollInterval)
+	defer ticker.Stop()
+	checkedInitialBlocker := false
+
+	for {
+		current, err := l.Queries.GetAgentTask(ctx, task.ID)
+		if err != nil {
+			return "", fmt.Errorf("verify FC/E2B runner claim: %w", err)
+		}
+		if current.Status != "queued" {
+			return fcE2BRunnerClaimObserved, nil
+		}
+		if !checkedInitialBlocker {
+			checkedInitialBlocker = true
+			tasks, err := l.Queries.ListAgentTasks(ctx, current.AgentID)
+			if err != nil {
+				return "", fmt.Errorf("check FC/E2B runner claim blockers: %w", err)
+			}
+			if fcE2BTaskHasActiveBlocker(current, tasks) {
+				return fcE2BRunnerClaimBlocked, nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-deadline.C:
+			fresh, err := l.Queries.GetAgentTask(ctx, task.ID)
+			if err != nil {
+				return "", fmt.Errorf("verify FC/E2B runner claim: %w", err)
+			}
+			if fresh.Status != "queued" {
+				return fcE2BRunnerClaimObserved, nil
+			}
+			tasks, err := l.Queries.ListAgentTasks(ctx, fresh.AgentID)
+			if err != nil {
+				return "", fmt.Errorf("check FC/E2B runner claim blockers: %w", err)
+			}
+			if fcE2BTaskHasActiveBlocker(fresh, tasks) {
+				return fcE2BRunnerClaimBlocked, nil
+			}
+			return fcE2BRunnerClaimStalled, nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func fcE2BTaskHasActiveBlocker(target db.AgentTaskQueue, tasks []db.AgentTaskQueue) bool {
+	for _, active := range tasks {
+		if active.ID == target.ID || active.AgentID != target.AgentID {
+			continue
+		}
+		if !fcE2BTaskStatusBlocksClaim(active.Status) {
+			continue
+		}
+		if target.IssueID.Valid && active.IssueID == target.IssueID {
+			return true
+		}
+		if target.ChatSessionID.Valid && active.ChatSessionID == target.ChatSessionID {
+			return true
+		}
+		if !target.IssueID.Valid && !target.ChatSessionID.Valid && !target.AutopilotRunID.Valid &&
+			!active.IssueID.Valid && !active.ChatSessionID.Valid && !active.AutopilotRunID.Valid {
+			return true
+		}
+	}
+	return false
+}
+
+func fcE2BTaskStatusBlocksClaim(status string) bool {
+	switch status {
+	case "dispatched", "running", "waiting_local_directory":
+		return true
+	default:
+		return false
+	}
 }
 
 func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQueue, rt db.AgentRuntime) (map[string]string, error) {
