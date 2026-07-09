@@ -6,12 +6,13 @@ FROM ${GO_BASE_IMAGE} AS backend-builder
 ARG APP_NAME
 ARG GO_VERSION=1.26.1
 WORKDIR /workspace
-RUN yum install -y curl tar gzip ca-certificates && yum clean all && \
-    curl -fsSLo /tmp/go.tgz "https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz" && \
+RUN curl -fsSLo /tmp/go.tgz "https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz" && \
     rm -rf /usr/local/go && \
     tar -C /usr/local -xzf /tmp/go.tgz && \
     rm -f /tmp/go.tgz
 ENV PATH="/usr/local/go/bin:${PATH}"
+ENV GOPROXY=https://goproxy.cn
+ENV GOSUMDB=sum.golang.google.cn
 COPY ${APP_NAME}.tgz /tmp/source.tgz
 RUN tar -xzf /tmp/source.tgz --strip-components=1 -C /workspace
 RUN cd server && go mod download
@@ -60,7 +61,6 @@ ENV HOSTNAME=0.0.0.0
 ENV MULTICA_DWS_CLI_PATH=/usr/local/bin/dws
 ENV PATH="/home/admin/${APP_NAME}/node/bin:/home/admin/${APP_NAME}/target/${APP_NAME}/bin:${PATH}"
 
-RUN yum install -y curl tar gzip coreutils ca-certificates && yum clean all
 RUN npm install -g @e2b/cli@2.13.0 && npm cache clean --force
 RUN set -eux; \
     mkdir -p /tmp/dws; \
