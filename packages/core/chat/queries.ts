@@ -122,6 +122,9 @@ export function pendingChatTaskOptions(sessionId: string) {
     queryKey: chatKeys.pendingTask(sessionId),
     queryFn: () => api.getPendingChatTask(sessionId),
     enabled: !!sessionId,
+    refetchInterval: (query) => (
+      query.state.data?.task_id ? 2000 : false
+    ),
     staleTime: Infinity,
   });
 }
