@@ -135,6 +135,9 @@ export function pendingChatTasksOptions(wsId: string) {
   return queryOptions({
     queryKey: chatKeys.pendingTasks(wsId),
     queryFn: () => api.listPendingChatTasks(),
+    refetchInterval: (query) => (
+      query.state.data?.tasks?.length ? 2000 : false
+    ),
     staleTime: Infinity,
   });
 }

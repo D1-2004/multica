@@ -5,6 +5,7 @@ import {
   isTaskMessageTaskId,
   mergeTaskMessagesBySeq,
   pendingChatTaskOptions,
+  pendingChatTasksOptions,
   taskMessagesOptions,
 } from "./queries";
 
@@ -45,6 +46,23 @@ describe("pendingChatTaskOptions", () => {
     const interval = options.refetchInterval as (query: { state: { data?: { task_id?: string } } }) => number | false;
 
     expect(interval({ state: { data: {} } })).toBe(false);
+    expect(interval({ state: {} })).toBe(false);
+  });
+});
+
+describe("pendingChatTasksOptions", () => {
+  it("keeps syncing the aggregate while any chat task is in flight", () => {
+    const options = pendingChatTasksOptions("ws-1");
+    const interval = options.refetchInterval as (query: { state: { data?: { tasks?: unknown[] } } }) => number | false;
+
+    expect(interval({ state: { data: { tasks: [{ task_id: "task-1" }] } } })).toBe(2000);
+  });
+
+  it("stops syncing the aggregate when there are no in-flight chat tasks", () => {
+    const options = pendingChatTasksOptions("ws-1");
+    const interval = options.refetchInterval as (query: { state: { data?: { tasks?: unknown[] } } }) => number | false;
+
+    expect(interval({ state: { data: { tasks: [] } } })).toBe(false);
     expect(interval({ state: {} })).toBe(false);
   });
 });
