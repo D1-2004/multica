@@ -31,7 +31,7 @@ Execution modes:
 - `run_only` creates an agent task directly. No issue is created; any durable
   report location has to come from other task context or instructions.
 
-`issue-title-template` only supports `Thu Jul 9 2026`. Do not invent `{{trigger_id}}`, `{{branch}}`, or other variables.
+`issue-title-template` only supports `{{date}}`. Do not invent `{{trigger_id}}`, `{{branch}}`, or other variables.
 
 ## CLI
 

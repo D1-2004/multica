@@ -1,5 +1,14 @@
-# 更多关于Release文件的规范和约定，请点击 https://yuque.antfin.com/aone/geh0qs/252891532
+# 更多关于 Release 文件的规范和约定，请点击 https://yuque.antfin.com/aone/geh0qs/252891532
 
-# 构建源码语言类型
-build.language=python
+# Aone3 应用配置。Multica 是 Go API + Next.js Web 的 monorepo，走
+# APP-META/docker-config 下的自维护 Dockerfile，在同一台机器里启动
+# backend:8080 和 frontend:3000，再由 tengine 暴露 80。
+code.language=nodejs
+build.tools.docker.args=--build-arg APP_NAME=${APP_NAME} --build-arg ENV_TYPE=${ENV_TYPE}
 
+# 依赖和编译由 APP-META Dockerfile 的多阶段构建完成。
+build.plugin.skip.swnode=True
+build.plugin.skip.npcc=True
+build.image=hub.docker.alibaba-inc.com/aone-base-global/alios8-nodejs:builder
+
+baseline.jdk=jdk-1.8.0_40

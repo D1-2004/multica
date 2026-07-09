@@ -118,7 +118,7 @@ func TestInterpolateTemplate_InvalidTriggerTimezoneFallsBackToUTC(t *testing.T) 
 	s := &AutopilotService{}
 	ap := db.Autopilot{
 		Title:              "fallback",
-		IssueTitleTemplate: pgtype.Text{String: "report Thu Jul 9 2026", Valid: true},
+		IssueTitleTemplate: pgtype.Text{String: "report {{date}}", Valid: true},
 	}
 	run := db.AutopilotRun{
 		TriggeredAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 23, 30, 0, 0, time.UTC), Valid: true},
@@ -182,8 +182,8 @@ func TestBuildIssueDescription_NonWebhookSourceWithPayloadIgnored(t *testing.T) 
 }
 
 // TestInterpolateTemplate covers the three behaviours that real autopilot
-// runs depend on: Thu Jul 9 2026 substitution, falling back to Title when the
-// template is unset/empty, and leaving any non-Thu Jul 9 2026 text alone (the
+// runs depend on: {{date}} substitution, falling back to Title when the
+// template is unset/empty, and leaving any non-{{date}} text alone (the
 // handler is the layer that prevents unknown tokens from being stored in
 // the first place — service-layer interpolation stays substitute-or-leave).
 func TestInterpolateTemplate(t *testing.T) {
@@ -198,7 +198,7 @@ func TestInterpolateTemplate(t *testing.T) {
 	}{
 		{
 			name:   "date placeholder substituted",
-			ap:     db.Autopilot{Title: "fallback", IssueTitleTemplate: pgtype.Text{String: "probe — Thu Jul 9 2026", Valid: true}},
+			ap:     db.Autopilot{Title: "fallback", IssueTitleTemplate: pgtype.Text{String: "probe — {{date}}", Valid: true}},
 			expect: "probe — " + today,
 		},
 		{
@@ -230,7 +230,7 @@ func TestInterpolateTemplate_UsesTriggerTimezoneForDate(t *testing.T) {
 	s := &AutopilotService{}
 	ap := db.Autopilot{
 		Title:              "fallback",
-		IssueTitleTemplate: pgtype.Text{String: "Tokyo report Thu Jul 9 2026", Valid: true},
+		IssueTitleTemplate: pgtype.Text{String: "Tokyo report {{date}}", Valid: true},
 	}
 	run := db.AutopilotRun{
 		TriggeredAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 23, 30, 0, 0, time.UTC), Valid: true},
@@ -244,7 +244,7 @@ func TestInterpolateTemplate_UsesTriggerTimezoneForDate(t *testing.T) {
 
 // TestValidateIssueTitleTemplate locks down what create/update accept.
 // Reject path: anything inside {{...}} that is not in the supported set.
-// Accept path: empty, plain text, and the canonical Thu Jul 9 2026 placeholder
+// Accept path: empty, plain text, and the canonical {{date}} placeholder
 // in both compact and whitespace-padded forms.
 func TestValidateIssueTitleTemplate(t *testing.T) {
 	t.Run("accepts empty template", func(t *testing.T) {
@@ -257,9 +257,9 @@ func TestValidateIssueTitleTemplate(t *testing.T) {
 			t.Fatalf("plain text must be valid: %v", err)
 		}
 	})
-	t.Run("accepts Thu Jul 9 2026", func(t *testing.T) {
-		if err := ValidateIssueTitleTemplate("probe — Thu Jul 9 2026"); err != nil {
-			t.Fatalf("Thu Jul 9 2026 must be valid: %v", err)
+	t.Run("accepts {{date}}", func(t *testing.T) {
+		if err := ValidateIssueTitleTemplate("probe — {{date}}"); err != nil {
+			t.Fatalf("{{date}} must be valid: %v", err)
 		}
 	})
 	t.Run("accepts {{ date }} with whitespace", func(t *testing.T) {
@@ -279,7 +279,7 @@ func TestValidateIssueTitleTemplate(t *testing.T) {
 		{"mustache style unknown variable", "probe — {{trigger_id}}", "trigger_id"},
 		{"datetime not yet supported", "probe — {{datetime}}", "datetime"},
 		{"empty placeholder", "probe — {{}}", ""},
-		{"mixed valid + invalid still fails", "probe — Thu Jul 9 2026 {{trigger_source}}", "trigger_source"},
+		{"mixed valid + invalid still fails", "probe — {{date}} {{trigger_source}}", "trigger_source"},
 	}
 	for _, tc := range rejections {
 		t.Run(tc.name, func(t *testing.T) {
