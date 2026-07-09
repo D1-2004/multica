@@ -2197,12 +2197,42 @@ func (s *TaskService) LoadAgentSkills(ctx context.Context, agentID pgtype.UUID) 
 	return result
 }
 
+// LoadAgentExecutionSkills returns every skill that should be visible to an
+// agent during task execution: workspace-bound skills, platform built-ins, and
+// runtime-specific skills implied by the agent/runtime configuration.
+func (s *TaskService) LoadAgentExecutionSkills(ctx context.Context, agentID pgtype.UUID) []AgentSkillData {
+	skills := s.LoadAgentSkills(ctx, agentID)
+	skills = append(skills, s.BuiltinSkills()...)
+	if s.agentNeedsDWSSkill(ctx, agentID) {
+		skills = append(skills, DWSAgentSkill())
+	}
+	return skills
+}
+
 // LoadAgentSkillBundles returns every skill visible to an agent, including
 // built-ins, with stable bundle hashes and lightweight refs for slim claims.
 func (s *TaskService) LoadAgentSkillBundles(ctx context.Context, agentID pgtype.UUID) ([]AgentSkillData, []AgentSkillRefData) {
-	skills := s.LoadAgentSkills(ctx, agentID)
-	skills = append(skills, s.BuiltinSkills()...)
-	return BuildAgentSkillBundles(skills)
+	return BuildAgentSkillBundles(s.LoadAgentExecutionSkills(ctx, agentID))
+}
+
+func (s *TaskService) agentNeedsDWSSkill(ctx context.Context, agentID pgtype.UUID) bool {
+	if s == nil || s.Queries == nil {
+		return false
+	}
+	agent, err := s.Queries.GetAgent(ctx, agentID)
+	if err != nil {
+		return false
+	}
+	if _, hasProfile, err := DWSProfileIDFromRuntimeConfig(agent.RuntimeConfig); err == nil && hasProfile {
+		return true
+	}
+	if agent.RuntimeID.Valid {
+		runtime, err := s.Queries.GetAgentRuntime(ctx, agent.RuntimeID)
+		if err == nil && fcE2BRuntimeRequiresDWS(runtime) {
+			return true
+		}
+	}
+	return false
 }
 
 func BuildAgentSkillBundles(skills []AgentSkillData) ([]AgentSkillData, []AgentSkillRefData) {

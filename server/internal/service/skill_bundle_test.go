@@ -1,6 +1,9 @@
 package service
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestBuildAgentSkillBundlesProducesRefsAndFullBundles(t *testing.T) {
 	bundles, refs := BuildAgentSkillBundles([]AgentSkillData{
@@ -34,5 +37,26 @@ func TestBuildAgentSkillBundlesAssignsBuiltinID(t *testing.T) {
 	}
 	if refs[0].ID != "builtin:multica-working-on-issues" || refs[0].Source != "builtin" {
 		t.Fatalf("builtin ref = %+v", refs[0])
+	}
+}
+
+func TestDWSAgentSkillShipsDWSInstructions(t *testing.T) {
+	skill := DWSAgentSkill()
+	if skill.Name != "multica-dws" {
+		t.Fatalf("skill name = %q, want multica-dws", skill.Name)
+	}
+	if !strings.Contains(skill.Content, "dws auth status --format json") {
+		t.Fatal("DWS skill must instruct agents to verify DWS auth")
+	}
+	if !strings.Contains(skill.Content, "dws contact user get-self --format json") {
+		t.Fatal("DWS skill must include the current-user DWS smoke command")
+	}
+
+	_, refs := BuildAgentSkillBundles([]AgentSkillData{skill})
+	if len(refs) != 1 {
+		t.Fatalf("refs = %d, want 1", len(refs))
+	}
+	if refs[0].ID != "builtin:multica-dws" || refs[0].Source != "builtin" {
+		t.Fatalf("DWS skill ref = %+v", refs[0])
 	}
 }
