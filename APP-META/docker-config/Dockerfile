@@ -84,7 +84,7 @@ WORKDIR /home/admin/${APP_NAME}/bin
 VOLUME /home/admin/logs /home/admin/cai/logs /home/admin/${APP_NAME}/logs /home/admin/${APP_NAME}/target/${APP_NAME}/data /home/a/vipsrv-dns/vipsrv-cache
 
 COPY environment/cai/conf/nginx-proxy.conf /home/admin/cai/conf/apps/${APP_NAME}.conf
-COPY environment/common/custom/app/bin/*.sh /home/admin/${APP_NAME}/bin/
+COPY environment/common/custom/app/bin/ /home/admin/appname/bin/
 COPY --from=backend-builder /workspace/src/ /home/admin/${APP_NAME}/target/${APP_NAME}/src/
 COPY --from=backend-builder /workspace/server/bin/ /home/admin/${APP_NAME}/target/${APP_NAME}/bin/
 COPY --from=backend-builder /workspace/server/migrations/ /home/admin/${APP_NAME}/target/${APP_NAME}/migrations/
@@ -93,7 +93,6 @@ COPY --from=web-builder /workspace/apps/web/.next/static/ /home/admin/${APP_NAME
 COPY --from=web-builder /workspace/apps/web/public/ /home/admin/${APP_NAME}/target/${APP_NAME}/web/apps/web/public/
 COPY ${APP_NAME}.tgz /home/admin/${APP_NAME}/target/${APP_NAME}.tgz
 
-RUN chmod +x /home/admin/start.sh /home/admin/${APP_NAME}/bin/*.sh /home/admin/${APP_NAME}/target/${APP_NAME}/bin/* /home/admin/${APP_NAME}/target/${APP_NAME}/src/main.sh /home/admin/${APP_NAME}/node/bin/node && \
-    echo "/home/admin/${APP_NAME}/bin/nodejsctl pubstart" >> /home/admin/start.sh
+RUN chmod +x /home/admin/start.sh /home/admin/appname/bin/* /home/admin/${APP_NAME}/target/${APP_NAME}/bin/* /home/admin/${APP_NAME}/target/${APP_NAME}/src/main.sh /home/admin/${APP_NAME}/node/bin/node
 
 ENTRYPOINT ["/home/admin/start.sh"]

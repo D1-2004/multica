@@ -1,0 +1,8 @@
+#!/bin/bash
+set -euo pipefail
+
+app_name="${APP_NAME:-$(basename "$(cd "$(dirname "$0")/.." && pwd -P)")}"
+app_root="/home/admin/${app_name}"
+
+echo "start ${app_name} from ${app_root}"
+exec bash "${app_root}/target/${app_name}/src/main.sh"
