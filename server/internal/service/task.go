@@ -55,7 +55,9 @@ type TaskService struct {
 	Composio ComposioOverlayBuilder
 	// RuntimeLauncher is optional. When set, it may start server-managed
 	// runtimes for a newly queued task; local runtimes simply no-op there.
-	RuntimeLauncher TaskRuntimeLauncher
+	RuntimeLauncher       TaskRuntimeLauncher
+	runtimeLaunches       sync.Map
+	fcE2BQueuedRecoveries sync.Map
 
 	analyticsContextMu    sync.Mutex
 	analyticsContextCache map[string]analytics.TaskContext
@@ -130,6 +132,7 @@ const (
 	// stretching this global crash-recovery window.
 	claimResponseRecoveryWindow = 90 * time.Second
 	prepareLeaseDuration        = 45 * time.Second
+	fcE2BQueuedRecoveryAge      = 15 * time.Second
 )
 
 // buildCommentTriggerSummary fetches the comment content and truncates
@@ -2999,12 +3002,22 @@ func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 		return
 	}
 	taskCopy := task
+	taskKey := util.UUIDToString(taskCopy.ID)
+	if _, loaded := s.runtimeLaunches.LoadOrStore(taskKey, struct{}{}); loaded {
+		slog.Debug("runtime launcher already scheduled",
+			"task_id", taskKey,
+			"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
+			"agent_id", util.UUIDToString(taskCopy.AgentID),
+		)
+		return
+	}
 	slog.Info("runtime launcher scheduled",
-		"task_id", util.UUIDToString(taskCopy.ID),
+		"task_id", taskKey,
 		"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
 		"agent_id", util.UUIDToString(taskCopy.AgentID),
 	)
 	go func() {
+		defer s.runtimeLaunches.Delete(taskKey)
 		started := time.Now()
 		if err := s.RuntimeLauncher.LaunchTask(context.Background(), taskCopy); err != nil {
 			slog.Warn("runtime launcher failed for task",
@@ -3023,6 +3036,44 @@ func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 			"duration", time.Since(started).String(),
 		)
 	}()
+}
+
+// RecoverQueuedFCE2BTask is a narrow repair hook for server-managed cloud
+// runtimes: if a chat/issue task was queued while the launcher was unavailable
+// or died before the sandbox claimed it, querying the task can kick the same
+// launcher path once. Local/ASB runtimes are intentionally ignored.
+func (s *TaskService) RecoverQueuedFCE2BTask(ctx context.Context, task db.AgentTaskQueue) {
+	if s == nil || s.Queries == nil || s.RuntimeLauncher == nil {
+		return
+	}
+	if task.Status != "queued" || !task.RuntimeID.Valid {
+		return
+	}
+	if task.CreatedAt.Valid && time.Since(task.CreatedAt.Time) < fcE2BQueuedRecoveryAge {
+		return
+	}
+	rt, err := s.Queries.GetAgentRuntime(ctx, task.RuntimeID)
+	if err != nil {
+		slog.Warn("queued FC/E2B recovery could not load runtime",
+			"task_id", util.UUIDToString(task.ID),
+			"runtime_id", util.UUIDToString(task.RuntimeID),
+			"error", err,
+		)
+		return
+	}
+	if !IsFCE2BRuntime(rt) {
+		return
+	}
+	taskKey := util.UUIDToString(task.ID)
+	if _, loaded := s.fcE2BQueuedRecoveries.LoadOrStore(taskKey, struct{}{}); loaded {
+		return
+	}
+	slog.Info("recovering queued FC/E2B task",
+		"task_id", taskKey,
+		"runtime_id", util.UUIDToString(task.RuntimeID),
+		"agent_id", util.UUIDToString(task.AgentID),
+	)
+	s.launchRuntimeForTask(task)
 }
 
 // triggerNextQueuedTaskForTerminal bridges long-lived daemon semantics for

@@ -36,15 +36,22 @@ describe("taskMessagesOptions", () => {
 });
 
 describe("pendingChatTaskOptions", () => {
-  it("keeps syncing while a chat task is in flight", () => {
+  it("does not sync in-flight tasks unless the caller opts in", () => {
     const options = pendingChatTaskOptions("session-1");
+    const interval = options.refetchInterval as (query: { state: { data?: { task_id?: string } } }) => number | false;
+
+    expect(interval({ state: { data: { task_id: "task-1" } } })).toBe(false);
+  });
+
+  it("keeps syncing while an opted-in chat task is in flight", () => {
+    const options = pendingChatTaskOptions("session-1", true);
     const interval = options.refetchInterval as (query: { state: { data?: { task_id?: string } } }) => number | false;
 
     expect(interval({ state: { data: { task_id: "task-1" } } })).toBe(2000);
   });
 
-  it("stops syncing after the server reports no in-flight chat task", () => {
-    const options = pendingChatTaskOptions("session-1");
+  it("stops syncing an opted-in query after the server reports no in-flight chat task", () => {
+    const options = pendingChatTaskOptions("session-1", true);
     const interval = options.refetchInterval as (query: { state: { data?: { task_id?: string } } }) => number | false;
 
     expect(interval({ state: { data: {} } })).toBe(false);
@@ -53,15 +60,22 @@ describe("pendingChatTaskOptions", () => {
 });
 
 describe("pendingChatTasksOptions", () => {
-  it("keeps syncing the aggregate while any chat task is in flight", () => {
+  it("does not sync aggregate in-flight tasks unless the caller opts in", () => {
     const options = pendingChatTasksOptions("ws-1");
+    const interval = options.refetchInterval as (query: { state: { data?: { tasks?: unknown[] } } }) => number | false;
+
+    expect(interval({ state: { data: { tasks: [{ task_id: "task-1" }] } } })).toBe(false);
+  });
+
+  it("keeps syncing the opted-in aggregate while any chat task is in flight", () => {
+    const options = pendingChatTasksOptions("ws-1", true);
     const interval = options.refetchInterval as (query: { state: { data?: { tasks?: unknown[] } } }) => number | false;
 
     expect(interval({ state: { data: { tasks: [{ task_id: "task-1" }] } } })).toBe(2000);
   });
 
-  it("stops syncing the aggregate when there are no in-flight chat tasks", () => {
-    const options = pendingChatTasksOptions("ws-1");
+  it("stops syncing the opted-in aggregate when there are no in-flight chat tasks", () => {
+    const options = pendingChatTasksOptions("ws-1", true);
     const interval = options.refetchInterval as (query: { state: { data?: { tasks?: unknown[] } } }) => number | false;
 
     expect(interval({ state: { data: { tasks: [] } } })).toBe(false);
