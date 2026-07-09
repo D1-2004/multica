@@ -1518,11 +1518,10 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			agentSkillCount = len(skillRefs)
 			resp.Agent.SkillRefs = skillRefs
 		} else {
-			skills := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
+			skills := h.TaskService.LoadAgentExecutionSkills(r.Context(), task.AgentID)
 			agentSkillCount = len(skills)
 			builtinSkills := h.TaskService.BuiltinSkills()
 			builtinSkillCount = len(builtinSkills)
-			skills = append(skills, builtinSkills...)
 			resp.Agent.Skills = skills
 		}
 	}
