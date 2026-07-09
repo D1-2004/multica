@@ -7,6 +7,7 @@ LOG_DIR="/home/admin/${APP_NAME}/logs"
 ANTX_PACKAGE="/home/admin/${APP_NAME}/target/${APP_NAME}.tgz"
 
 mkdir -p "$LOG_DIR" "$APP_ROOT/data/uploads"
+exec > >(tee -a "$LOG_DIR/bootstrap.log") 2>&1
 cd "$APP_ROOT"
 
 RUNTIME_CONFIG_KEYS=(
@@ -81,6 +82,8 @@ load_antx_runtime_config() {
     "$APP_ROOT/conf/antx.properties"
     "/home/admin/${APP_NAME}/antx.properties"
     "/home/admin/${APP_NAME}/conf/antx.properties"
+    "/home/admin/conf/antx.properties"
+    "/home/admin/cai/conf/antx.properties"
     "/home/admin/antx.properties"
   )
   local antx_file
