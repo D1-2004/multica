@@ -121,7 +121,7 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 		RuntimeMode: "cloud",
 		Provider:    service.FCE2BProvider,
 		Status:      "online",
-		DeviceInfo:  "FC/E2B one-shot sandbox",
+		DeviceInfo:  name,
 		Metadata:    metadata,
 		OwnerID:     member.UserID,
 		Visibility:  visibility,
