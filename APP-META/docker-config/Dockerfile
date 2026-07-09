@@ -1,10 +1,17 @@
 ARG APP_NAME=dt-fde-multica
-ARG GO_BASE_IMAGE=multica-fc-registry.cn-beijing.cr.aliyuncs.com/multica/dockerhub-library-golang:1.26-bookworm
+ARG GO_BASE_IMAGE=hub.docker.alibaba-inc.com/aone-base-global/alios8-nodejs:2.0
 ARG NODE_BASE_IMAGE=hub.docker.alibaba-inc.com/aone-base-global/alios8-nodejs:2.0
 
 FROM ${GO_BASE_IMAGE} AS backend-builder
 ARG APP_NAME
+ARG GO_VERSION=1.26.1
 WORKDIR /workspace
+RUN yum install -y curl tar gzip ca-certificates && yum clean all && \
+    curl -fsSLo /tmp/go.tgz "https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz" && \
+    rm -rf /usr/local/go && \
+    tar -C /usr/local -xzf /tmp/go.tgz && \
+    rm -f /tmp/go.tgz
+ENV PATH="/usr/local/go/bin:${PATH}"
 COPY ${APP_NAME}.tgz /tmp/source.tgz
 RUN tar -xzf /tmp/source.tgz --strip-components=1 -C /workspace
 RUN cd server && go mod download
