@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -752,6 +753,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ownerUUID := parseUUID(ownerID)
 
 	runtime, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
 		ID:          runtimeUUID,
@@ -798,6 +800,9 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.RuntimeConfig == nil {
 		rc = []byte("{}")
 	}
+	if !h.validateDWSProfileConfigForOwner(w, r, wsUUID, ownerUUID, rc) {
+		return
+	}
 
 	ce, _ := json.Marshal(req.CustomEnv)
 	if req.CustomEnv == nil {
@@ -825,7 +830,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		RuntimeID:          runtime.ID,
 		Visibility:         req.Visibility,
 		MaxConcurrentTasks: req.MaxConcurrentTasks,
-		OwnerID:            parseUUID(ownerID),
+		OwnerID:            ownerUUID,
 		CustomEnv:          ce,
 		CustomArgs:         ca,
 		McpConfig:          mc,
@@ -934,6 +939,40 @@ func canViewAgentSecrets(agent db.Agent, userID string, memberRole string) bool 
 		return true
 	}
 	return uuidToString(agent.OwnerID) == userID
+}
+
+func (h *Handler) validateDWSProfileConfigForOwner(
+	w http.ResponseWriter,
+	r *http.Request,
+	workspaceID pgtype.UUID,
+	ownerID pgtype.UUID,
+	runtimeConfig []byte,
+) bool {
+	profileID, hasProfile, err := service.DWSProfileIDFromRuntimeConfig(runtimeConfig)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	if !hasProfile {
+		return true
+	}
+	profileUUID, ok := parseUUIDOrBadRequest(w, profileID, "dws_profile_id")
+	if !ok {
+		return false
+	}
+	if _, err := h.Queries.GetDWSAuthProfileForOwner(r.Context(), db.GetDWSAuthProfileForOwnerParams{
+		ID:          profileUUID,
+		WorkspaceID: workspaceID,
+		OwnerID:     ownerID,
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusBadRequest, "dws_profile_id is not available for this user")
+			return false
+		}
+		writeError(w, http.StatusInternalServerError, "failed to validate DWS profile")
+		return false
+	}
+	return true
 }
 
 // broadcastAgentResponse strips secret-bearing fields from an
@@ -1054,6 +1093,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// and silently destroys the real secret (issue #3260).
 		preserveMaskedGatewayToken(req.RuntimeConfig, existing.RuntimeConfig)
 		rc, _ := json.Marshal(req.RuntimeConfig)
+		if !h.validateDWSProfileConfigForOwner(w, r, existing.WorkspaceID, existing.OwnerID, rc) {
+			return
+		}
 		params.RuntimeConfig = rc
 	}
 	if req.CustomArgs != nil {

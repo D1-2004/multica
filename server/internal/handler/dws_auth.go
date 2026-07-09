@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -48,15 +50,17 @@ type DWSAuthSessionResponse struct {
 }
 
 type dwsAuthSession struct {
-	ID        string
-	Status    string
-	Message   string
-	LoginURL  string
-	UserCode  string
-	Error     string
-	Profile   *DWSAuthProfileResponse
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID          string
+	WorkspaceID pgtype.UUID
+	OwnerID     pgtype.UUID
+	Status      string
+	Message     string
+	LoginURL    string
+	UserCode    string
+	Error       string
+	Profile     *DWSAuthProfileResponse
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type DWSAuthSessionStore struct {
@@ -68,15 +72,17 @@ func NewDWSAuthSessionStore() *DWSAuthSessionStore {
 	return &DWSAuthSessionStore{sessions: make(map[string]*dwsAuthSession)}
 }
 
-func (s *DWSAuthSessionStore) Create(id string) *dwsAuthSession {
+func (s *DWSAuthSessionStore) Create(id string, workspaceID, ownerID pgtype.UUID) *dwsAuthSession {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
 	session := &dwsAuthSession{
-		ID:        id,
-		Status:    "pending",
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          id,
+		WorkspaceID: workspaceID,
+		OwnerID:     ownerID,
+		Status:      "pending",
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	s.sessions[id] = session
 	return cloneDWSAuthSession(session)
@@ -117,10 +123,21 @@ func (h *Handler) ListDWSAuthProfiles(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
 		return
 	}
-	rows, err := h.Queries.ListDWSAuthProfiles(r.Context(), wsUUID)
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	ownerUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
+		return
+	}
+	rows, err := h.Queries.ListDWSAuthProfilesForOwner(r.Context(), db.ListDWSAuthProfilesForOwnerParams{
+		WorkspaceID: wsUUID,
+		OwnerID:     ownerUUID,
+	})
 	if err != nil {
 		writeError(w, 500, "failed to list DWS profiles")
 		return
@@ -130,6 +147,43 @@ func (h *Handler) ListDWSAuthProfiles(w http.ResponseWriter, r *http.Request) {
 		out = append(out, dwsProfileToResponse(row))
 	}
 	writeJSON(w, 200, out)
+}
+
+func (h *Handler) DeleteDWSAuthProfile(w http.ResponseWriter, r *http.Request) {
+	workspaceID := chi.URLParam(r, "id")
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return
+	}
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	ownerUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
+		return
+	}
+	profileUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "profileId"), "profile id")
+	if !ok {
+		return
+	}
+	profile, err := h.Queries.RevokeDWSAuthProfile(r.Context(), db.RevokeDWSAuthProfileParams{
+		ID:          profileUUID,
+		WorkspaceID: wsUUID,
+		OwnerID:     ownerUUID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "DWS profile not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to delete DWS profile")
+		return
+	}
+	writeJSON(w, http.StatusOK, dwsProfileToResponse(profile))
 }
 
 func (h *Handler) BeginDWSAuth(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +196,7 @@ func (h *Handler) BeginDWSAuth(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -153,19 +207,36 @@ func (h *Handler) BeginDWSAuth(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	session := h.DWSAuthSessions.Create(randomID())
+	session := h.DWSAuthSessions.Create(randomID(), wsUUID, ownerUUID)
 	go h.runDWSAuthSession(session.ID, wsUUID, ownerUUID)
 	writeJSON(w, 202, dwsSessionToResponse(session))
 }
 
 func (h *Handler) GetDWSAuthStatus(w http.ResponseWriter, r *http.Request) {
 	workspaceID := chi.URLParam(r, "id")
-	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return
+	}
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	ownerUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
 		return
 	}
 	sessionID := chi.URLParam(r, "sessionId")
 	session, ok := h.DWSAuthSessions.Get(sessionID)
 	if !ok {
+		writeError(w, 404, "DWS auth session not found")
+		return
+	}
+	if uuidToString(session.WorkspaceID) != uuidToString(wsUUID) ||
+		uuidToString(session.OwnerID) != uuidToString(ownerUUID) {
 		writeError(w, 404, "DWS auth session not found")
 		return
 	}

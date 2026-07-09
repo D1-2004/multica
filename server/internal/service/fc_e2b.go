@@ -443,7 +443,7 @@ func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQu
 	if err != nil {
 		return nil, fmt.Errorf("load agent for FC/E2B launch: %w", err)
 	}
-	profileID, hasProfile, err := dwsProfileIDFromRuntimeConfig(agentRow.RuntimeConfig)
+	profileID, hasProfile, err := DWSProfileIDFromRuntimeConfig(agentRow.RuntimeConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -457,9 +457,10 @@ func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQu
 	if err != nil {
 		return nil, errors.New("runtime_config.fc_e2b.dws_profile_id is not a valid UUID")
 	}
-	profile, err := l.Queries.GetDWSAuthProfileForWorkspace(ctx, db.GetDWSAuthProfileForWorkspaceParams{
+	profile, err := l.Queries.GetDWSAuthProfileForOwner(ctx, db.GetDWSAuthProfileForOwnerParams{
 		ID:          profileUUID,
 		WorkspaceID: agentRow.WorkspaceID,
+		OwnerID:     agentRow.OwnerID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("load DWS profile for FC/E2B launch: %w", err)
@@ -471,7 +472,10 @@ func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQu
 	return map[string]string{"DWS_AUTH_ARCHIVE_B64": archive}, nil
 }
 
-func dwsProfileIDFromRuntimeConfig(raw []byte) (string, bool, error) {
+// DWSProfileIDFromRuntimeConfig extracts the optional DWS profile binding from
+// the agent runtime_config JSON. The server accepts both the current nested
+// shape and the legacy top-level key so old agents keep their binding.
+func DWSProfileIDFromRuntimeConfig(raw []byte) (string, bool, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return "", false, nil
 	}

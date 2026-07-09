@@ -243,7 +243,11 @@
       "connected": "DWS profile connected",
       "load_failed": "Failed to load DWS profiles",
       "start_failed": "Failed to start DWS login",
-      "poll_failed": "Failed to check DWS login status"
+      "poll_failed": "Failed to check DWS login status",
+      "delete": "Delete DWS profile",
+      "delete_confirm": "Delete DWS profile \"{{label}}\"? Agents using it will no longer be able to run DWS tasks.",
+      "deleted": "DWS profile deleted",
+      "delete_failed": "Failed to delete DWS profile"
     },
     "instructions": {
       "label": "指示",
