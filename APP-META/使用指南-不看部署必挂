@@ -1,0 +1,21 @@
+第一步: 新建发布变更
+
+第二步: 将导入的所有dockerfile文件里面的appName都修改为当前应用名称，同时看看dockerfile安装的内容是否满足您的应用要求做一些相应修改
+修改 environment/common/bin/appctl.sh 中的$TARGET为需要启动的主程序。
+
+第三步: 构建基础镜像
+(请确保app.release文件中jdk和dockerfile_base中的jdk是一个版本,若没有app.release文件请添加，参看http://docs.alibaba-inc.com/pages/viewpage.action?pageId=252891532)
+  1)访问https://aone.alibaba-inc.com/appcenter/overview -》查找具体应用进入概述页面-》点击基础镜像
+  2)创建基础镜像,填写第一步的变更仓库地址，成功创建基础镜像
+  
+ Q: 为什么要创建基础镜像？
+ A：把不常变化的内容(如基础RPM、启动脚本等)做成基础镜像，在应用发布的指定Dockerfile中FROM基础镜像，重复的内容不再执行，应用基础镜像被
+    推送到全部的构建机器，提高镜像构建速度，再也不用坐在那里干等构建了
+ Q: environment目录什么作用？
+ A: 普通web应用有nginx和tomcat两个容器在测试环境与生产环境存在配置差异时可以区分环境目录编写不同配置文件，复制到对应的；
+
+第四步: 用基础镜像地址替换每一个dockerfile（除了Dockerfile_base外）的From关键字后面的地址
+
+第五步: 将变更提交发布到日常环境
+
+使用docker常见问题可在这里查阅,不一定都能找到，可进入docker群提问:http://www.atatech.org/articles/53899 

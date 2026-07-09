@@ -1,0 +1,15 @@
+[Unit]
+Description={TARGET} Service
+Requires=
+After=
+
+[Service]
+User=admin
+Group=admin
+PIDFile=/var/run/{TARGET}.pid
+ExecStartPre=/bin/rm -f /var/run/{TARGET}.pid
+ExecStart={TARGET_PATH} 2>/home/admin/{TARGET}/logs/stderr
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
