@@ -262,6 +262,40 @@ stop_existing_processes() {
   rm -f "$RUN_DIR/backend.pid" "$RUN_DIR/frontend.pid" "$RUN_DIR/health.pid"
 }
 
+stop_current_processes() {
+  local pid
+  local attempt
+  local running
+
+  echo "[multica][runtime] stopping current application processes"
+  for pid in "$backend_pid" "$frontend_pid" "$health_pid"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  done
+
+  for attempt in $(seq 1 10); do
+    running=false
+    for pid in "$backend_pid" "$frontend_pid" "$health_pid"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        running=true
+        break
+      fi
+    done
+    if [[ "$running" == false ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "[multica][runtime] force stopping current application processes"
+  for pid in "$backend_pid" "$frontend_pid" "$health_pid"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
+}
+
 current_release_is_healthy() {
   local release_id="${AONE_MIX_FLOW_INST_ID:-}"
 
@@ -328,6 +362,42 @@ wait_for_startup() {
   return 1
 }
 
+supervise_processes() {
+  local shutdown_requested=false
+
+  trap 'shutdown_requested=true' TERM INT
+  echo "[multica][runtime] supervising application processes"
+
+  while [[ "$shutdown_requested" == false ]]; do
+    if ! kill -0 "$backend_pid" 2>/dev/null; then
+      echo "[multica][runtime] backend exited while application was running"
+      dump_log_tail "backend" "$LOG_DIR/backend.log"
+      stop_current_processes
+      return 1
+    fi
+    if ! kill -0 "$frontend_pid" 2>/dev/null; then
+      echo "[multica][runtime] frontend exited while application was running"
+      dump_log_tail "frontend" "$LOG_DIR/frontend.log"
+      stop_current_processes
+      return 1
+    fi
+    if ! kill -0 "$health_pid" 2>/dev/null; then
+      echo "[multica][runtime] health server exited while application was running"
+      dump_log_tail "health" "$LOG_DIR/health.log"
+      stop_current_processes
+      return 1
+    fi
+    sleep 5 || true
+  done
+
+  echo "[multica][runtime] shutdown signal received"
+  trap - TERM INT
+  stop_current_processes
+}
+
+exec 9>"$RUN_DIR/start.lock"
+flock -x 9
+
 if current_release_is_healthy; then
   echo "[multica][runtime] release ${AONE_MIX_FLOW_INST_ID} already healthy; skipping duplicate start"
   exit 0
@@ -340,8 +410,15 @@ echo "[multica][runtime] running migrations"
 echo "[multica][runtime] migrations completed"
 
 start_processes
-wait_for_startup
+if ! wait_for_startup; then
+  stop_current_processes
+  exit 1
+fi
 
 if [[ -n "${AONE_MIX_FLOW_INST_ID:-}" ]]; then
   printf '%s' "$AONE_MIX_FLOW_INST_ID" >"$RUN_DIR/release-id"
 fi
+
+flock -u 9
+exec 9>&-
+supervise_processes
