@@ -45,7 +45,10 @@ FROM hub.docker.alibaba-inc.com/aone-base-global/alios8-nodejs:2.0
 ARG APP_NAME=dt-fde-multica
 ARG ENV_TYPE
 
-RUN command -v setsid >/dev/null && command -v flock >/dev/null
+RUN command -v setsid >/dev/null && \
+    command -v flock >/dev/null && \
+    test -x /home/admin/appname/bin/nodejsctl && \
+    test -x /home/admin/appname/bin/nginxctl
 
 EXPOSE 80
 EXPOSE 3000
@@ -77,7 +80,7 @@ RUN set -eux; \
     rm -rf /tmp/dws; \
     dws version
 
-RUN mkdir -p /home/admin/${APP_NAME}/target/${APP_NAME} /home/admin/${APP_NAME}/logs /home/admin/${APP_NAME}/node/bin /home/admin/cai/conf/apps && \
+RUN mkdir -p /home/admin/${APP_NAME}/target/${APP_NAME} /home/admin/${APP_NAME}/logs /home/admin/${APP_NAME}/node/bin /home/admin/cai/bin /home/admin/cai/conf/apps && \
     cp -rf /home/admin/appname/bin /home/admin/${APP_NAME} && \
     mv /home/admin/${APP_NAME}/bin/start.sh /home/admin/start.sh && \
     ln -sf "$(command -v node)" /home/admin/${APP_NAME}/node/bin/node
