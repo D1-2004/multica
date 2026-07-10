@@ -181,6 +181,11 @@ type Daemon struct {
 	// reconcile.go and runTaskWakeupConnection.
 	reconcile *reconcileBroadcaster
 
+	// pendingReports persists terminal task callbacks (complete/fail) that
+	// exhausted their inline retry schedule, for background redelivery. See
+	// pending_reports.go. Nil-safe: tests constructing Daemon directly skip it.
+	pendingReports *pendingReportStore
+
 	// runtimeGoneMu guards runtimeGoneInflight, reregisterNextAttempt, and
 	// reregisterLastCompletedAt. The state lets heartbeat / poller / WS-ack
 	// handlers converge on a single recovery path when they each detect that a
@@ -274,6 +279,14 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	}
 	d.runner = taskRunnerFunc(d.runTask)
 	d.runUpdateFn = d.runUpdate
+	// Queue file lives next to daemon.id. A missing profile dir degrades to a
+	// memory-only queue rather than blocking startup.
+	if dir, err := cli.ProfileDir(""); err == nil {
+		d.pendingReports = loadPendingReportStore(filepath.Join(dir, pendingReportsFileName), logger)
+	} else {
+		logger.Warn("pending reports: profile dir unavailable; queue is memory-only", "error", err)
+		d.pendingReports = loadPendingReportStore("", logger)
+	}
 	return d
 }
 
@@ -804,6 +817,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
 	go d.tokenRenewalLoop(ctx)
+	go d.pendingReportsLoop(ctx)
 
 	// Preflight succeeded and the background loops are up: the daemon has
 	// registered its runtimes and can now claim and run tasks. Flip /health
@@ -3152,15 +3166,23 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 		// error reaching us here means the schedule was exhausted while
 		// the upstream was still 5xx / unreachable. Converting that into
 		// a fail would lose the agent's actual result and surface a
-		// misleading red badge in the UI — leave the task in running
-		// instead so a future fix (server-side stuck-task reaper, or a
-		// daemon-side persistent pending queue) can recover it. Only
-		// permanent server-side rejections (4xx other than 408/429)
-		// warrant the legacy fallback, because at that point the server
-		// has already refused this task and the only useful UI signal
-		// left is a concrete failure.
+		// misleading red badge in the UI — queue the report for background
+		// redelivery instead (pending_reports.go): the task stays running
+		// until the replay lands, and the agent's real result survives both
+		// extended outages and daemon restarts. Only permanent server-side
+		// rejections (4xx other than 408/429) warrant the legacy fallback,
+		// because at that point the server has already refused this task and
+		// the only useful UI signal left is a concrete failure.
 		if isTransientError(err) {
-			taskLog.Error("complete task failed after retries; leaving task in running rather than falling back to fail", "error", err)
+			taskLog.Error("complete task failed after retries; queueing for redelivery", "error", err)
+			d.queueTerminalReport(pendingTerminalReport{
+				Kind:       pendingReportKindComplete,
+				TaskID:     taskID,
+				Output:     result.Comment,
+				BranchName: result.BranchName,
+				SessionID:  result.SessionID,
+				WorkDir:    result.WorkDir,
+			}, taskLog)
 			return
 		}
 		taskLog.Error("complete task rejected by server, falling back to fail", "error", err)
@@ -3175,6 +3197,16 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 		fallbackErrMsg := fmt.Sprintf("complete task failed: %s", err.Error())
 		if failErr := d.client.FailTask(ctx, taskID, fallbackErrMsg, result.SessionID, result.WorkDir, taskfailure.Classify(fallbackErrMsg).String()); failErr != nil {
 			taskLog.Error("fail task fallback also failed", "error", failErr)
+			if isTransientError(failErr) {
+				d.queueTerminalReport(pendingTerminalReport{
+					Kind:          pendingReportKindFail,
+					TaskID:        taskID,
+					Error:         fallbackErrMsg,
+					FailureReason: taskfailure.Classify(fallbackErrMsg).String(),
+					SessionID:     result.SessionID,
+					WorkDir:       result.WorkDir,
+				}, taskLog)
+			}
 		}
 	default:
 		failureReason := result.FailureReason
@@ -3198,6 +3230,16 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 		taskLog.Info("task did not complete, reporting failure", "status", result.Status, "failure_reason", failureReason)
 		if err := d.client.FailTask(ctx, taskID, result.Comment, result.SessionID, result.WorkDir, failureReason); err != nil {
 			taskLog.Error("report failed task failed", "error", err)
+			if isTransientError(err) {
+				d.queueTerminalReport(pendingTerminalReport{
+					Kind:          pendingReportKindFail,
+					TaskID:        taskID,
+					Error:         result.Comment,
+					FailureReason: failureReason,
+					SessionID:     result.SessionID,
+					WorkDir:       result.WorkDir,
+				}, taskLog)
+			}
 		}
 	}
 }
