@@ -802,6 +802,36 @@ WHERE t.id = v.id
   AND t.created_at < now() - make_interval(secs => @ttl_secs::double precision)
 RETURNING t.*;
 
+-- name: FindAgentIssuesWithLostCompletion :many
+-- Agent-assigned issues stuck in in_progress after their work already
+-- finished: the latest task for the issue completed more than grace_secs ago
+-- and no active task remains. This happens when the agent's own issue-status
+-- update was lost (server outage during the run, agent exited before the CLI
+-- call landed, ...). CompleteTask deliberately never touches issue status —
+-- the agent owns it — so without this reconcile the issue shows in_progress
+-- forever. Failed/cancelled last tasks are excluded: HandleFailedTasks
+-- already rolls those issues back to todo.
+SELECT i.id, i.workspace_id
+FROM issue i
+JOIN LATERAL (
+    SELECT t.status, t.completed_at
+    FROM agent_task_queue t
+    WHERE t.issue_id = i.id
+    ORDER BY t.created_at DESC
+    LIMIT 1
+) last_task ON TRUE
+WHERE i.status = 'in_progress'
+  AND i.assignee_type = 'agent'
+  AND last_task.status = 'completed'
+  AND last_task.completed_at < now() - make_interval(secs => @grace_secs::double precision)
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_task_queue a
+      WHERE a.issue_id = i.id
+        AND a.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+  )
+ORDER BY last_task.completed_at ASC
+LIMIT @max_per_tick::int;
+
 -- name: CancelAgentTask :one
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL

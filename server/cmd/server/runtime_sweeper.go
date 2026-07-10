@@ -68,6 +68,18 @@ const (
 	// ticks and 500 rows/tick we drain 60k rows/hour worst case — plenty
 	// of headroom for the documented backlog without monopolising DB CPU.
 	queuedExpireBatchSize = 500
+	// issueReconcileGraceSeconds is how long an agent-assigned issue may sit
+	// in in_progress after its last task completed before the sweeper moves
+	// it to in_review. The agent normally sets issue status itself during the
+	// run; the grace window is only meant to absorb an agent whose status
+	// update is momentarily behind its task completion, so it needs to sit
+	// above CLI retry jitter but well below "someone notices a phantom
+	// in-flight run on the board". 15 minutes.
+	issueReconcileGraceSeconds = 900.0
+	// issueReconcileBatchSize caps reconciled issues per tick, mirroring
+	// queuedExpireBatchSize's rationale: bounded sweep transactions, drain
+	// any backlog over subsequent ticks.
+	issueReconcileBatchSize = 100
 )
 
 // runRuntimeSweeper periodically marks runtimes as offline if their
@@ -93,6 +105,7 @@ func runRuntimeSweeper(ctx context.Context, queries *db.Queries, liveness handle
 			sweepStaleRuntimes(ctx, queries, liveness, taskSvc, bus)
 			sweepStaleTasks(ctx, queries, taskSvc, bus)
 			sweepExpiredQueuedTasks(ctx, queries, taskSvc)
+			sweepLostCompletionIssues(ctx, taskSvc)
 			gcRuntimes(ctx, queries, bus)
 		}
 	}
@@ -302,6 +315,19 @@ func sweepExpiredQueuedTasks(ctx context.Context, queries *db.Queries, taskSvc *
 	slog.Info("task sweeper: expired stale queued tasks", "count", len(failedTasks))
 	taskSvc.CaptureQueuedExpiredTasks(ctx, failedTasks)
 	taskSvc.HandleFailedTasks(ctx, failedTasks)
+}
+
+// sweepLostCompletionIssues moves agent-assigned issues whose last task
+// completed but whose status stayed in_progress (the agent's own status
+// update was lost) to in_review. Completion-side twin of the stuck-issue
+// reset that HandleFailedTasks performs for failed tasks.
+func sweepLostCompletionIssues(ctx context.Context, taskSvc *service.TaskService) {
+	if taskSvc == nil {
+		return
+	}
+	if n := taskSvc.ReconcileIssuesWithLostCompletion(ctx, issueReconcileGraceSeconds, issueReconcileBatchSize); n > 0 {
+		slog.Info("task sweeper: reconciled lost-completion issues", "count", n)
+	}
 }
 
 // broadcastFailedTasks is preserved as a thin shim for the integration tests
