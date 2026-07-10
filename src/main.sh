@@ -220,6 +220,59 @@ process.on("SIGINT", () => server.close(() => process.exit(0)));
 NODE
 }
 
+process_patterns=(
+  "$APP_ROOT/bin/server"
+  "node apps/web/server[.]js"
+  "$RUN_DIR/health-server[.]js"
+)
+
+processes_running() {
+  local pattern
+  for pattern in "${process_patterns[@]}"; do
+    if pgrep -f "$pattern" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+stop_existing_processes() {
+  local pattern
+  local attempt
+
+  echo "[multica][runtime] stopping existing application processes"
+  for pattern in "${process_patterns[@]}"; do
+    pkill -TERM -f "$pattern" >/dev/null 2>&1 || true
+  done
+
+  for attempt in $(seq 1 10); do
+    if ! processes_running; then
+      break
+    fi
+    sleep 1
+  done
+
+  if processes_running; then
+    echo "[multica][runtime] force stopping remaining application processes"
+    for pattern in "${process_patterns[@]}"; do
+      pkill -KILL -f "$pattern" >/dev/null 2>&1 || true
+    done
+  fi
+
+  rm -f "$RUN_DIR/backend.pid" "$RUN_DIR/frontend.pid" "$RUN_DIR/health.pid"
+}
+
+current_release_is_healthy() {
+  local release_id="${AONE_MIX_FLOW_INST_ID:-}"
+
+  [[ -n "$release_id" ]] || return 1
+  [[ -f "$RUN_DIR/release-id" ]] || return 1
+  [[ "$(cat "$RUN_DIR/release-id")" == "$release_id" ]] || return 1
+  curl -fsS "http://127.0.0.1:${BACKEND_PORT}/healthz" >/dev/null 2>&1 || return 1
+  curl -fsS "http://127.0.0.1:${FRONTEND_PORT}/" >/dev/null 2>&1 || return 1
+  curl -fsS "http://127.0.0.1:${AONE_HEALTH_PORT}/check.node" >/dev/null 2>&1 || return 1
+}
+
 start_processes() {
   echo "[multica][runtime] starting backend"
   nohup "$APP_ROOT/bin/server" >"$LOG_DIR/backend.log" 2>&1 &
@@ -275,9 +328,20 @@ wait_for_startup() {
   return 1
 }
 
+if current_release_is_healthy; then
+  echo "[multica][runtime] release ${AONE_MIX_FLOW_INST_ID} already healthy; skipping duplicate start"
+  exit 0
+fi
+
+stop_existing_processes
+
 echo "[multica][runtime] running migrations"
 "$APP_ROOT/bin/migrate" up
 echo "[multica][runtime] migrations completed"
 
 start_processes
 wait_for_startup
+
+if [[ -n "${AONE_MIX_FLOW_INST_ID:-}" ]]; then
+  printf '%s' "$AONE_MIX_FLOW_INST_ID" >"$RUN_DIR/release-id"
+fi
