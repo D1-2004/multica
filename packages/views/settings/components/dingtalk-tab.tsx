@@ -709,7 +709,7 @@ function DingTalkInstallDialog({
               <Button variant="outline" size="sm" onClick={onClose}>
                 {t(($) => $.dingtalk.install_close)}
               </Button>
-              <Button size="sm" onClick={beginSession} disabled={beginning}>
+              <Button size="sm" onClick={() => beginSession()} disabled={beginning}>
                 <RefreshCw className="h-3 w-3" />
                 {t(($) => $.dingtalk.install_retry)}
               </Button>
