@@ -8,7 +8,7 @@
 - 连接地址：`dt-fde-multica.rwlb.zhangbei.rds.aliyuncs.com`
 - 端口：`5432`
 - 网络路径：应用安全外联，经公网连接地址访问
-- TLS：连接串使用 `sslmode=require`
+- TLS：实例当前未启用 SSL，现阶段连接串使用 `sslmode=disable`；启用 PolarDB SSL 后统一切换为 `sslmode=require`
 
 这里共享的是 **PolarDB 实例**，不是 Multica 的业务库和账号。新应用不要复用 `multica_pre` 或 `multica_app`，应单独创建数据库和登录账号，避免迁移脚本、表名、权限和连接数互相影响。
 
@@ -82,7 +82,7 @@ SELECT inet_client_addr();
 连接串格式：
 
 ```text
-postgresql://<app_user>:<url-encoded-password>@dt-fde-multica.rwlb.zhangbei.rds.aliyuncs.com:5432/<app_db>?sslmode=require&connect_timeout=10&application_name=<app_name>
+postgresql://<app_user>:<url-encoded-password>@dt-fde-multica.rwlb.zhangbei.rds.aliyuncs.com:5432/<app_db>?sslmode=disable&connect_timeout=10&application_name=<app_name>
 ```
 
 注意：
@@ -91,6 +91,8 @@ postgresql://<app_user>:<url-encoded-password>@dt-fde-multica.rwlb.zhangbei.rds.
 - 在 Aone 预发配置中保存为 secret，例如配置键 `DATABASE_URL`。
 - 不要把完整连接串放进 Git、日志、工单正文、截图或群消息。
 - 每台应用实例先把连接池上限设为 `5` 到 `10`，再根据实例最大连接数和实际负载调整。所有应用、所有实例的连接池总和应留出管理和迁移连接余量。
+
+当前 `sslmode=disable` 是实例现状，不是长期推荐配置。数据库负责人启用 PolarDB SSL 后，所有应用应在同一变更窗口把连接串切换为 `sslmode=require` 并重新验证，避免部分应用仍以明文协议连接。
 
 ## 5. 分层验证
 
@@ -113,7 +115,7 @@ nc -vz -w 5 dt-fde-multica.rwlb.zhangbei.rds.aliyuncs.com 5432
 以下命令会交互式询问密码，避免密码进入 shell 历史：
 
 ```bash
-psql "host=dt-fde-multica.rwlb.zhangbei.rds.aliyuncs.com port=5432 dbname=<app_db> user=<app_user> sslmode=require connect_timeout=10"
+psql "host=dt-fde-multica.rwlb.zhangbei.rds.aliyuncs.com port=5432 dbname=<app_db> user=<app_user> sslmode=disable connect_timeout=10"
 ```
 
 登录后执行：
