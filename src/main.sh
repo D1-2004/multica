@@ -309,21 +309,21 @@ current_release_is_healthy() {
 
 start_processes() {
   echo "[multica][runtime] starting backend"
-  nohup "$APP_ROOT/bin/server" >"$LOG_DIR/backend.log" 2>&1 &
+  nohup setsid "$APP_ROOT/bin/server" </dev/null >"$LOG_DIR/backend.log" 2>&1 &
   backend_pid=$!
   echo "$backend_pid" >"$RUN_DIR/backend.pid"
 
   echo "[multica][runtime] starting frontend"
   (
     cd "$APP_ROOT/web"
-    PORT="$FRONTEND_PORT" HOSTNAME=0.0.0.0 nohup node apps/web/server.js >"$LOG_DIR/frontend.log" 2>&1 &
+    PORT="$FRONTEND_PORT" HOSTNAME=0.0.0.0 nohup setsid node apps/web/server.js </dev/null >"$LOG_DIR/frontend.log" 2>&1 &
     echo $! >"$RUN_DIR/frontend.pid"
   )
   frontend_pid="$(cat "$RUN_DIR/frontend.pid")"
 
   write_health_server
   echo "[multica][runtime] starting Aone health server"
-  nohup node "$RUN_DIR/health-server.js" >"$LOG_DIR/health.log" 2>&1 &
+  nohup setsid node "$RUN_DIR/health-server.js" </dev/null >"$LOG_DIR/health.log" 2>&1 &
   health_pid=$!
   echo "$health_pid" >"$RUN_DIR/health.pid"
 }
@@ -362,39 +362,6 @@ wait_for_startup() {
   return 1
 }
 
-supervise_processes() {
-  local shutdown_requested=false
-
-  trap 'shutdown_requested=true' TERM INT
-  echo "[multica][runtime] supervising application processes"
-
-  while [[ "$shutdown_requested" == false ]]; do
-    if ! kill -0 "$backend_pid" 2>/dev/null; then
-      echo "[multica][runtime] backend exited while application was running"
-      dump_log_tail "backend" "$LOG_DIR/backend.log"
-      stop_current_processes
-      return 1
-    fi
-    if ! kill -0 "$frontend_pid" 2>/dev/null; then
-      echo "[multica][runtime] frontend exited while application was running"
-      dump_log_tail "frontend" "$LOG_DIR/frontend.log"
-      stop_current_processes
-      return 1
-    fi
-    if ! kill -0 "$health_pid" 2>/dev/null; then
-      echo "[multica][runtime] health server exited while application was running"
-      dump_log_tail "health" "$LOG_DIR/health.log"
-      stop_current_processes
-      return 1
-    fi
-    sleep 5 || true
-  done
-
-  echo "[multica][runtime] shutdown signal received"
-  trap - TERM INT
-  stop_current_processes
-}
-
 exec 9>"$RUN_DIR/start.lock"
 flock -x 9
 
@@ -421,4 +388,4 @@ fi
 
 flock -u 9
 exec 9>&-
-supervise_processes
+echo "[multica][runtime] detached application processes are healthy"

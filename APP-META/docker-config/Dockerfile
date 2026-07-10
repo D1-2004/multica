@@ -45,6 +45,8 @@ FROM hub.docker.alibaba-inc.com/aone-base-global/alios8-nodejs:2.0
 ARG APP_NAME=dt-fde-multica
 ARG ENV_TYPE
 
+RUN command -v setsid >/dev/null && command -v flock >/dev/null
+
 EXPOSE 80
 EXPOSE 3000
 EXPOSE 6001
