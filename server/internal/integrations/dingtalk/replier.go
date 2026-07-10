@@ -18,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // This file is the DingTalk OutboundReplier — the engine seam that delivers
@@ -48,9 +49,17 @@ type bindingMinter interface {
 	Mint(ctx context.Context, workspaceID, installationID pgtype.UUID, dingTalkUserID string) (BindingToken, error)
 }
 
+// agentNamer resolves a bot's display name for the binding prompt so the
+// user sees which bot they are connecting to. *db.Queries satisfies it via
+// GetAgent. Optional — nil falls back to the generic prompt copy.
+type agentNamer interface {
+	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
+}
+
 // OutboundReplier implements engine.OutboundReplier for DingTalk.
 type OutboundReplier struct {
 	binding     bindingMinter
+	agentNamer  agentNamer
 	httpClient  *http.Client
 	appURL      string
 	bindingPath string
@@ -62,6 +71,9 @@ type OutboundReplier struct {
 // skipped (the offline/archived/issue notices still fire).
 type OutboundReplierConfig struct {
 	Binding bindingMinter
+	// AgentNamer resolves the bot's name for the bind prompt. Optional; nil
+	// keeps the generic "bind to Multica" copy.
+	AgentNamer agentNamer
 	// AppURL is the Multica web app host the user clicks into to redeem the
 	// binding token (MULTICA_APP_URL ?? FRONTEND_ORIGIN — the bind page
 	// /dingtalk/bind is served by the web app, not the API host).
@@ -92,6 +104,7 @@ func NewOutboundReplier(cfg OutboundReplierConfig) *OutboundReplier {
 	}
 	return &OutboundReplier{
 		binding:     cfg.Binding,
+		agentNamer:  cfg.AgentNamer,
 		httpClient:  httpClient,
 		appURL:      strings.TrimRight(cfg.AppURL, "/"),
 		bindingPath: bindingPath,
@@ -168,9 +181,29 @@ func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.Res
 		return fmt.Errorf("mint binding token: %w", err)
 	}
 	bindURL := r.appURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
-	text := "👋 要开始与我对话，请先将你的钉钉账号绑定到 Multica：[点击绑定](" +
-		bindURL + ")\n\n（链接 15 分钟内有效）"
+	botName := r.botName(ctx, inst)
+	intro := "👋 要开始与我对话，请先将你的钉钉账号绑定到 Multica"
+	if botName != "" {
+		intro = "👋 要开始与「" + botName + "」对话，请先将你的钉钉账号绑定到 Multica"
+	}
+	text := intro + "：[点击绑定](" + bindURL + ")\n\n（链接 15 分钟内有效）"
 	return r.post(ctx, msg, text)
+}
+
+// botName resolves the bot's display name for the bind prompt. Best effort:
+// returns "" when no namer is configured or the lookup fails, so the prompt
+// degrades to the generic copy rather than failing.
+func (r *OutboundReplier) botName(ctx context.Context, inst engine.ResolvedInstallation) string {
+	if r.agentNamer == nil || !inst.AgentID.Valid {
+		return ""
+	}
+	agent, err := r.agentNamer.GetAgent(ctx, inst.AgentID)
+	if err != nil {
+		r.logger.WarnContext(ctx, "dingtalk replier: bot name lookup failed",
+			"installation_id", util.UUIDToString(inst.ID), "error", err)
+		return ""
+	}
+	return strings.TrimSpace(agent.Name)
 }
 
 // post delivers text through the inbound message's session webhook.

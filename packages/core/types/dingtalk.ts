@@ -65,4 +65,6 @@ export interface RedeemDingTalkBindingTokenResponse {
   workspace_id: string;
   installation_id: string;
   dingtalk_user_id: string;
+  /** Bound bot's display name for the confirmation copy; may be absent. */
+  agent_name?: string;
 }
