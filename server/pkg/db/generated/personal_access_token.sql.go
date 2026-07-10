@@ -167,8 +167,17 @@ const updatePersonalAccessTokenLastUsed = `-- name: UpdatePersonalAccessTokenLas
 UPDATE personal_access_token
 SET last_used_at = now()
 WHERE id = $1
+  AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds')
 `
 
+// last_used_at is display metadata, so a 60s staleness guard is plenty.
+// The guard is also the hot-row defense: every authenticated request from a
+// daemon shares one PAT, and when the auth cache TTL lapses under load, the
+// concurrent misses all fire this UPDATE at the same row. Unguarded, they
+// convoy on the row lock for seconds each while holding pool connections
+// (observed 2.5-5.9s per UPDATE in prod). With the guard, the first writer
+// wins and the rest re-evaluate the predicate after its commit (READ
+// COMMITTED EvalPlanQual) and skip without writing.
 func (q *Queries) UpdatePersonalAccessTokenLastUsed(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, updatePersonalAccessTokenLastUsed, id)
 	return err
