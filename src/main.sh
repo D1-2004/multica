@@ -203,7 +203,7 @@ const server = http.createServer(async (req, res) => {
   ]);
   if (backendReady && frontendReady) {
     res.writeHead(200, { "content-type": "text/plain" });
-    res.end("ok");
+    res.end("success");
     return;
   }
 
