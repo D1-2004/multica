@@ -1,0 +1,61 @@
+#!/bin/bash
+set -euo pipefail
+
+app_name="${APP_NAME:?APP_NAME is required}"
+app_root="/home/admin/${app_name}"
+app_bin="${app_root}/bin"
+nginxctl="/home/admin/cai/bin/nginxctl"
+health_url="http://127.0.0.1:${AONE_HEALTH_PORT:-6001}/check.node"
+nginx_health_url="http://127.0.0.1:80/check.node"
+
+source "${app_bin}/start.sh"
+source "${app_bin}/stop.sh"
+
+wait_for_success() {
+  local label="$1"
+  local url="$2"
+  local attempt
+  local body
+
+  for attempt in $(seq 1 60); do
+    if body="$(curl -fsS --max-time 3 "$url" 2>/dev/null)" && [[ "$body" == *success* ]]; then
+      echo "${label} health check passed"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "${label} health check failed: ${url}"
+  return 1
+}
+
+stop_runtime() {
+  "$nginxctl" stop >/dev/null 2>&1 || true
+  stop_app
+}
+
+start_runtime() {
+  [[ -x "$nginxctl" ]] || { echo "nginxctl not found: $nginxctl"; return 1; }
+  start_app
+  wait_for_success "application" "$health_url"
+  "$nginxctl" start
+  wait_for_success "nginx" "$nginx_health_url"
+}
+
+case "${1:-}" in
+  start|restart|pubstart)
+    stop_runtime
+    start_runtime
+    ;;
+  stop)
+    stop_runtime
+    ;;
+  status)
+    wait_for_success "application" "$health_url"
+    wait_for_success "nginx" "$nginx_health_url"
+    ;;
+  *)
+    echo "Usage: $0 {start|restart|pubstart|stop|status}"
+    exit 2
+    ;;
+esac
