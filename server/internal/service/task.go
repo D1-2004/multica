@@ -2752,6 +2752,45 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 	return retried
 }
 
+// ReconcileIssuesWithLostCompletion moves agent-assigned issues that are
+// still in_progress after their last task completed (and stayed quiet for
+// the grace period) to in_review. It is the completion-side twin of the
+// stuck-issue reset in HandleFailedTasks: the agent owns issue status by
+// design, but when its status update is lost — server outage during the
+// run, agent process gone before the CLI call landed — nothing else ever
+// moves the issue, and it reads as "working" forever. in_review is the
+// conservative landing state: the task result (and its fallback comment)
+// is already on the issue, so a human looking at the board sees finished
+// work awaiting review rather than a phantom in-flight run.
+func (s *TaskService) ReconcileIssuesWithLostCompletion(ctx context.Context, graceSecs float64, maxPerTick int32) int {
+	rows, err := s.Queries.FindAgentIssuesWithLostCompletion(ctx, db.FindAgentIssuesWithLostCompletionParams{
+		GraceSecs:  graceSecs,
+		MaxPerTick: maxPerTick,
+	})
+	if err != nil {
+		slog.Warn("issue reconcile: query failed", "error", err)
+		return 0
+	}
+	reconciled := 0
+	for _, row := range rows {
+		updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+			ID:          row.ID,
+			Status:      "in_review",
+			WorkspaceID: row.WorkspaceID,
+		})
+		if err != nil {
+			slog.Warn("issue reconcile: status update failed",
+				"issue_id", util.UUIDToString(row.ID), "error", err)
+			continue
+		}
+		slog.Info("issue reconcile: lost completion recovered",
+			"issue_id", util.UUIDToString(row.ID), "new_status", "in_review")
+		s.broadcastIssueUpdated(updated, "in_progress")
+		reconciled++
+	}
+	return reconciled
+}
+
 // runInTx executes fn inside a single DB transaction. If TxStarter is nil
 // (e.g. some tests construct TaskService directly), fn runs against the
 // regular Queries handle without transactional guarantees.
