@@ -186,10 +186,16 @@ func (h *Handler) BeginDingTalkInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// allow_unbound opts the new bot into "connect to customers" mode: an
+	// unbound / non-member sender is served as the installer rather than
+	// prompted to bind. Absent / non-"true" = the default bind-first bot.
+	allowUnbound := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("allow_unbound")), "true")
+
 	res, err := h.DingTalkRegistration.BeginInstall(r.Context(), dingtalk.BeginInstallParams{
-		WorkspaceID: wsUUID,
-		AgentID:     agentUUID,
-		InitiatorID: initiatorUUID,
+		WorkspaceID:  wsUUID,
+		AgentID:      agentUUID,
+		InitiatorID:  initiatorUUID,
+		AllowUnbound: allowUnbound,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to start install: "+err.Error())
@@ -266,6 +272,9 @@ type RedeemDingTalkBindingTokenResponse struct {
 	WorkspaceID    string `json:"workspace_id"`
 	InstallationID string `json:"installation_id"`
 	DingTalkUserID string `json:"dingtalk_user_id"`
+	// AgentName is the bound bot's display name for the confirmation copy;
+	// empty when unavailable.
+	AgentName string `json:"agent_name,omitempty"`
 }
 
 // RedeemDingTalkBindingToken (POST /api/dingtalk/binding/redeem) binds the
@@ -317,5 +326,6 @@ func (h *Handler) RedeemDingTalkBindingToken(w http.ResponseWriter, r *http.Requ
 		WorkspaceID:    uuidToString(redeemed.WorkspaceID),
 		InstallationID: uuidToString(redeemed.InstallationID),
 		DingTalkUserID: redeemed.DingTalkUserID,
+		AgentName:      redeemed.AgentName,
 	})
 }

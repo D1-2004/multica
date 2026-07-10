@@ -2611,8 +2611,13 @@ export class ApiClient {
     return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/installations`);
   }
 
-  async beginDingTalkInstall(workspaceId: string, agentId: string): Promise<BeginDingTalkInstallResponse> {
+  async beginDingTalkInstall(
+    workspaceId: string,
+    agentId: string,
+    allowUnbound = false,
+  ): Promise<BeginDingTalkInstallResponse> {
     const search = new URLSearchParams({ agent_id: agentId });
+    if (allowUnbound) search.set("allow_unbound", "true");
     return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/install/begin?${search.toString()}`, {
       method: "POST",
     });

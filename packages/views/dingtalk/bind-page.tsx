@@ -11,7 +11,7 @@ import { useT } from "../i18n";
 type RedeemState =
   | { kind: "idle" }
   | { kind: "redeeming" }
-  | { kind: "done"; workspaceId: string; installationId: string }
+  | { kind: "done"; workspaceId: string; installationId: string; agentName?: string }
   | { kind: "needs-auth" }
   | { kind: "error"; reason: string };
 
@@ -52,6 +52,7 @@ export function DingTalkBindPage({ token }: { token: string | null }) {
           kind: "done",
           workspaceId: resp.workspace_id,
           installationId: resp.installation_id,
+          agentName: resp.agent_name,
         });
       } catch (e) {
         setState({
@@ -89,7 +90,11 @@ export function DingTalkBindPage({ token }: { token: string | null }) {
             </>
           ) : state.kind === "done" ? (
             <>
-              <p className="text-sm font-medium">{t(($) => $.dingtalk_bind.done_title)}</p>
+              <p className="text-sm font-medium">
+                {state.agentName
+                  ? t(($) => $.dingtalk_bind.done_title_for_agent, { agent: state.agentName })
+                  : t(($) => $.dingtalk_bind.done_title)}
+              </p>
               <p className="text-xs text-muted-foreground">
                 {t(($) => $.dingtalk_bind.done_description)}
               </p>

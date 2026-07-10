@@ -9,6 +9,7 @@ import { ChevronRight, ExternalLink, RefreshCw, Trash2 } from "lucide-react";
 import { QRCode } from "react-qr-code";
 import { cn } from "@multica/ui/lib/utils";
 import { Button } from "@multica/ui/components/ui/button";
+import { Switch } from "@multica/ui/components/ui/switch";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import {
   AlertDialog,
@@ -505,14 +506,20 @@ function DingTalkInstallDialog({
   const [beginning, setBeginning] = useState(false);
   const closedRef = useRef(false);
 
-  async function beginSession() {
+  // allowUnbound is baked into the QR session at begin time (the flag is
+  // persisted when the scan completes), so toggling it re-begins the
+  // session with a fresh device code. Default off = the standard
+  // bind-first bot.
+  const [allowUnbound, setAllowUnbound] = useState(false);
+
+  async function beginSession(allow = allowUnbound) {
     setBeginning(true);
     setStatus("pending");
     setErrorReason(null);
     setErrorMessage(null);
     setSession(null);
     try {
-      const res = await api.beginDingTalkInstall(wsId, agentId);
+      const res = await api.beginDingTalkInstall(wsId, agentId, allow);
       if (closedRef.current) return;
       setSession({
         sessionId: res.session_id,
@@ -623,6 +630,25 @@ function DingTalkInstallDialog({
 
           {session && status === "pending" && (
             <>
+              <div className="flex w-full items-start gap-3 rounded-md border p-3">
+                <Switch
+                  id="dingtalk-allow-unbound"
+                  checked={allowUnbound}
+                  disabled={beginning}
+                  onCheckedChange={(checked) => {
+                    setAllowUnbound(checked);
+                    void beginSession(checked);
+                  }}
+                />
+                <label htmlFor="dingtalk-allow-unbound" className="flex-1 cursor-pointer">
+                  <span className="text-sm font-medium">
+                    {t(($) => $.dingtalk.install_allow_unbound_label)}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    {t(($) => $.dingtalk.install_allow_unbound_hint)}
+                  </span>
+                </label>
+              </div>
               <div className="rounded-md border bg-white p-3">
                 <QRCode value={session.qrCodeURL} size={192} />
               </div>

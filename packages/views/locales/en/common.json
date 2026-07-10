@@ -66,6 +66,7 @@
     "needs_auth_description": "Sign in to Multica to finish linking. The token in this link binds your DingTalk account to the Multica user you sign in as.",
     "sign_in": "Sign in",
     "done_title": "Linked.",
+    "done_title_for_agent": "Linked to {{agent}}.",
     "done_description": "Your next message to the bot in DingTalk will reach the bound agent directly. You can close this page.",
     "error_title": "Linking didn't complete",
     "error_admin_hint": "If this keeps failing, message the bot again in DingTalk to get a fresh link.",

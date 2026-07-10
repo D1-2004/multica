@@ -54,6 +54,10 @@ type RedeemedBindingToken struct {
 	WorkspaceID    pgtype.UUID
 	InstallationID pgtype.UUID
 	DingTalkUserID string
+	// AgentName is the bound bot's display name, surfaced on the redeem
+	// confirmation so the user sees which bot they connected to. Best
+	// effort: empty when the lookup fails (never blocks the bind).
+	AgentName string
 }
 
 // BindingTokenService mints and redeems DingTalk binding tokens. Redemption
@@ -146,10 +150,17 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 	if err := tx.Commit(ctx); err != nil {
 		return RedeemedBindingToken{}, fmt.Errorf("commit: %w", err)
 	}
+	// Best-effort bot name for the confirmation screen — after commit so a
+	// lookup miss can never roll back a completed bind.
+	agentName, err := s.q.GetAgentNameByChannelInstallation(ctx, row.InstallationID)
+	if err != nil {
+		agentName = ""
+	}
 	return RedeemedBindingToken{
 		WorkspaceID:    row.WorkspaceID,
 		InstallationID: row.InstallationID,
 		DingTalkUserID: row.ChannelUserID,
+		AgentName:      agentName,
 	}, nil
 }
 

@@ -569,6 +569,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				h.DingTalkBindingTokens = dtBindingSvc
 				dtReplier := dingtalk.NewOutboundReplier(dingtalk.OutboundReplierConfig{
 					Binding: dtBindingSvc,
+					// Names the bot in the bind prompt ("要开始与「<bot>」对话…").
+					AgentNamer: queries,
 					// The bind link (/dingtalk/bind) is a web-app page, so it must
 					// use the app URL, NOT MULTICA_PUBLIC_URL. Mirrors Slack/Lark.
 					AppURL: appURLFromEnv(),

@@ -66,6 +66,7 @@
     "needs_auth_description": "連携を完了するには Multica にサインインしてください。このリンクのトークンは、サインインした Multica ユーザーにあなたの DingTalk アカウントを紐づけます。",
     "sign_in": "サインイン",
     "done_title": "連携しました。",
+    "done_title_for_agent": "{{agent}} に連携しました。",
     "done_description": "次回 DingTalk でボットにメッセージを送ると、紐づいたエージェントに直接届きます。このページは閉じて構いません。",
     "error_title": "連携が完了しませんでした",
     "error_admin_hint": "失敗が続く場合は、DingTalk でボットにもう一度メッセージを送り、新しいリンクを取得してください。",

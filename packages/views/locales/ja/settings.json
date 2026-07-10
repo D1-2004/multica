@@ -536,6 +536,8 @@
     "install_dialog_description_for_agent": "スマートフォンの DingTalk で下の QR コードをスキャンし、{{agent}} 用のアプリを作成してください。",
     "install_starting": "QR コードを準備しています…",
     "install_scan_hint": "DingTalk → スキャン → 新しいアプリを承認。",
+    "install_allow_unbound_label": "外部ユーザーに接続（バインド不要）",
+    "install_allow_unbound_hint": "オンにすると、このボットにメッセージを送れる人は誰でもバインドなしで対話できます。メッセージはあなた（インストール者）の権限でエージェントを実行します。エージェントを顧客に接続する用途向けです。",
     "install_open_link_fallback": "または、ここをタップして DingTalk で開く",
     "install_success": "インストール完了 — アプリの資格情報が発行されました。",
     "install_success_toast": "DingTalk ボットをインストールしました",

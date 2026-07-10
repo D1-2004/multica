@@ -543,6 +543,8 @@
     "install_dialog_description_for_agent": "Open DingTalk on your phone and scan the code below to create an app for {{agent}}.",
     "install_starting": "Preparing QR code…",
     "install_scan_hint": "DingTalk → Scan → authorize the new app.",
+    "install_allow_unbound_label": "Connect to external users (no binding)",
+    "install_allow_unbound_hint": "When on, anyone who can message this bot can chat with it without binding a Multica account — messages run the agent under your (the installer's) identity. Use this to connect an agent to customers.",
     "install_open_link_fallback": "Or tap here to open in DingTalk",
     "install_success": "Install complete — the app is provisioned.",
     "install_success_toast": "DingTalk bot installed",

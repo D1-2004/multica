@@ -66,6 +66,7 @@
     "needs_auth_description": "需要登录 Multica 才能完成关联。链接中的 token 会将你的钉钉账号绑定到当前登录的 Multica 用户。",
     "sign_in": "登录",
     "done_title": "已关联。",
+    "done_title_for_agent": "已关联到「{{agent}}」。",
     "done_description": "下次在钉钉向机器人发送消息时，会直接送达绑定的智能体。可以关闭此页面。",
     "error_title": "关联未完成",
     "error_admin_hint": "如果反复失败，请在钉钉重新向机器人发消息以获取新的链接。",

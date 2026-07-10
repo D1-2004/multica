@@ -2361,6 +2361,22 @@ func (q *Queries) GetAgentInWorkspace(ctx context.Context, arg GetAgentInWorkspa
 	return i, err
 }
 
+const getAgentNameByChannelInstallation = `-- name: GetAgentNameByChannelInstallation :one
+SELECT a.name FROM agent a
+JOIN channel_installation ci ON ci.agent_id = a.id
+WHERE ci.id = $1
+`
+
+// Resolve the bot's display name (the agent behind a channel installation)
+// for binding UX — shown in the "link your account" prompt and on the
+// redeem confirmation so the user sees WHICH bot they are connecting to.
+func (q *Queries) GetAgentNameByChannelInstallation(ctx context.Context, id pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getAgentNameByChannelInstallation, id)
+	var name string
+	err := row.Scan(&name)
+	return name, err
+}
+
 const getAgentTask = `-- name: GetAgentTask :one
 SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id FROM agent_task_queue
 WHERE id = $1

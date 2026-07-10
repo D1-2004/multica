@@ -25,6 +25,9 @@ type InstallationParams struct {
 	ClientID        string
 	ClientSecret    string // plaintext; encrypted at the service boundary
 	InstallerUserID pgtype.UUID
+	// AllowUnbound persists the "serve unbound senders as the installer"
+	// mode on the installation config (see dingtalkInstallConfig).
+	AllowUnbound bool
 }
 
 var (
@@ -130,6 +133,7 @@ func (s *InstallationService) Upsert(ctx context.Context, p InstallationParams) 
 	cfg, err := encodeInstallConfig(Installation{
 		ClientID:           p.ClientID,
 		AppSecretEncrypted: sealed,
+		AllowUnbound:       p.AllowUnbound,
 	})
 	if err != nil {
 		return Installation{}, err

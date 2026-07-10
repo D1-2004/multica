@@ -66,6 +66,7 @@
     "needs_auth_description": "연결을 완료하려면 Multica에 로그인하세요. 이 링크의 토큰은 로그인한 Multica 사용자에게 DingTalk 계정을 연결합니다.",
     "sign_in": "로그인",
     "done_title": "연결되었습니다.",
+    "done_title_for_agent": "{{agent}}에 연결되었습니다.",
     "done_description": "다음에 DingTalk에서 봇에게 메시지를 보내면 연결된 에이전트에게 바로 전달됩니다. 이 페이지를 닫아도 됩니다.",
     "error_title": "연결이 완료되지 않았습니다",
     "error_admin_hint": "계속 실패하면 DingTalk에서 봇에게 다시 메시지를 보내 새 링크를 받으세요.",
