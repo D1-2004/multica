@@ -16,6 +16,14 @@ WHERE id = $1;
 SELECT * FROM agent
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: GetAgentNameByChannelInstallation :one
+-- Resolve the bot's display name (the agent behind a channel installation)
+-- for binding UX — shown in the "link your account" prompt and on the
+-- redeem confirmation so the user sees WHICH bot they are connecting to.
+SELECT a.name FROM agent a
+JOIN channel_installation ci ON ci.agent_id = a.id
+WHERE ci.id = $1;
+
 -- name: CreateAgent :one
 INSERT INTO agent (
     workspace_id, name, description, avatar_url, runtime_mode,

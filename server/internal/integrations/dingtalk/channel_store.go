@@ -47,9 +47,12 @@ type Installation struct {
 	AppSecretEncrypted []byte
 	InstallerUserID    pgtype.UUID
 	Status             string
-	InstalledAt        pgtype.Timestamptz
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
+	// AllowUnbound serves unbound / non-member senders as the installer
+	// rather than prompting them to bind — the "connect to customers" mode.
+	AllowUnbound bool
+	InstalledAt  pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 // InstallationStatus mirrors the channel_installation status column
@@ -77,6 +80,12 @@ func NewChannelStore(q *db.Queries) *ChannelStore {
 type dingtalkInstallConfig struct {
 	AppID              string `json:"app_id"`
 	AppSecretEncrypted string `json:"app_secret_encrypted,omitempty"`
+	// AllowUnbound opts this installation out of the per-sender identity
+	// check: an unbound / non-member sender is served as the installer
+	// instead of the "click to bind" prompt. The operator accepts that
+	// anyone who can message the bot drives the agent under the installer's
+	// workspace identity. Omitted (false) = default bind-first behavior.
+	AllowUnbound bool `json:"allow_unbound,omitempty"`
 }
 
 // UpsertInstallationParams is the write shape for
@@ -170,6 +179,7 @@ func installationFromRow(row db.ChannelInstallation) (Installation, error) {
 		AppSecretEncrypted: secret,
 		InstallerUserID:    row.InstallerUserID,
 		Status:             row.Status,
+		AllowUnbound:       cfg.AllowUnbound,
 		InstalledAt:        row.InstalledAt,
 		CreatedAt:          row.CreatedAt,
 		UpdatedAt:          row.UpdatedAt,
@@ -180,7 +190,7 @@ func installationFromRow(row db.ChannelInstallation) (Installation, error) {
 // the dingtalk fields of an Installation. The secret is emitted as
 // unwrapped base64.
 func encodeInstallConfig(inst Installation) ([]byte, error) {
-	cfg := dingtalkInstallConfig{AppID: inst.ClientID}
+	cfg := dingtalkInstallConfig{AppID: inst.ClientID, AllowUnbound: inst.AllowUnbound}
 	if len(inst.AppSecretEncrypted) > 0 {
 		cfg.AppSecretEncrypted = base64.StdEncoding.EncodeToString(inst.AppSecretEncrypted)
 	}
