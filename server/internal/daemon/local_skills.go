@@ -14,7 +14,7 @@ import (
 const (
 	maxLocalSkillFileSize   int64 = 1 << 20
 	maxLocalSkillBundleSize int64 = 8 << 20
-	maxLocalSkillFileCount        = 128
+	maxLocalSkillFileCount        = 200
 	// Cap how deep skill discovery descends below a runtime root. opencode
 	// stores skills two levels deep (e.g. `release/reporter/SKILL.md`); a
 	// few extra levels covers any realistic future layout while bounding
