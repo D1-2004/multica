@@ -1788,6 +1788,67 @@ func (q *Queries) FailStaleTasks(ctx context.Context, arg FailStaleTasksParams) 
 	return items, nil
 }
 
+const findAgentIssuesWithLostCompletion = `-- name: FindAgentIssuesWithLostCompletion :many
+SELECT i.id, i.workspace_id
+FROM issue i
+JOIN LATERAL (
+    SELECT t.status, t.completed_at
+    FROM agent_task_queue t
+    WHERE t.issue_id = i.id
+    ORDER BY t.created_at DESC
+    LIMIT 1
+) last_task ON TRUE
+WHERE i.status = 'in_progress'
+  AND i.assignee_type = 'agent'
+  AND last_task.status = 'completed'
+  AND last_task.completed_at < now() - make_interval(secs => $1::double precision)
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_task_queue a
+      WHERE a.issue_id = i.id
+        AND a.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+  )
+ORDER BY last_task.completed_at ASC
+LIMIT $2::int
+`
+
+type FindAgentIssuesWithLostCompletionParams struct {
+	GraceSecs  float64 `json:"grace_secs"`
+	MaxPerTick int32   `json:"max_per_tick"`
+}
+
+type FindAgentIssuesWithLostCompletionRow struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Agent-assigned issues stuck in in_progress after their work already
+// finished: the latest task for the issue completed more than grace_secs ago
+// and no active task remains. This happens when the agent's own issue-status
+// update was lost (server outage during the run, agent exited before the CLI
+// call landed, ...). CompleteTask deliberately never touches issue status —
+// the agent owns it — so without this reconcile the issue shows in_progress
+// forever. Failed/cancelled last tasks are excluded: HandleFailedTasks
+// already rolls those issues back to todo.
+func (q *Queries) FindAgentIssuesWithLostCompletion(ctx context.Context, arg FindAgentIssuesWithLostCompletionParams) ([]FindAgentIssuesWithLostCompletionRow, error) {
+	rows, err := q.db.Query(ctx, findAgentIssuesWithLostCompletion, arg.GraceSecs, arg.MaxPerTick)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FindAgentIssuesWithLostCompletionRow{}
+	for rows.Next() {
+		var i FindAgentIssuesWithLostCompletionRow
+		if err := rows.Scan(&i.ID, &i.WorkspaceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAgent = `-- name: GetAgent :one
 SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
 WHERE id = $1
