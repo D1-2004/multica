@@ -206,28 +206,34 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		} else {
 			slog.Info("dingtalk integration disabled (DINGTALK_AGENT_INTERNAL_SECRET not set)")
 		}
-	} else if appKey, appSecret := strings.TrimSpace(os.Getenv("DINGTALK_APP_KEY")), strings.TrimSpace(os.Getenv("DINGTALK_APP_SECRET")); appKey != "" && appSecret != "" {
-		client := dingtalk.NewClient(dingtalk.Config{
-			AppKey:      appKey,
-			AppSecret:   appSecret,
-			OpenAPIBase: strings.TrimSpace(os.Getenv("DINGTALK_OPENAPI_BASE")),
-			OAPIBase:    strings.TrimSpace(os.Getenv("DINGTALK_OAPI_BASE")),
-			Logger:      slog.Default(),
-		})
-		h.DingTalk = client
-		h.DingTalkOAuth = client
-		slog.Info("dingtalk integration enabled")
-	} else if clientID, clientSecret := strings.TrimSpace(os.Getenv("DINGTALK_CLIENT_ID")), strings.TrimSpace(os.Getenv("DINGTALK_CLIENT_SECRET")); clientID != "" && clientSecret != "" {
-		h.DingTalkOAuth = dingtalk.NewClient(dingtalk.Config{
-			AppKey:      clientID,
-			AppSecret:   clientSecret,
-			OpenAPIBase: strings.TrimSpace(os.Getenv("DINGTALK_OPENAPI_BASE")),
-			OAPIBase:    strings.TrimSpace(os.Getenv("DINGTALK_OAPI_BASE")),
-			Logger:      slog.Default(),
-		})
-		slog.Info("dingtalk oauth enabled via direct client")
 	} else {
-		slog.Info("dingtalk integration disabled (DINGTALK_APP_KEY or DINGTALK_APP_SECRET not set)")
+		// AppKey/AppSecret and ClientId/ClientSecret are the same credential
+		// pair under the DingTalk console's old and new naming, so the direct
+		// client accepts either: deployments already configured for login get
+		// directory search and group capabilities without duplicating secrets.
+		appKey := strings.TrimSpace(os.Getenv("DINGTALK_APP_KEY"))
+		if appKey == "" {
+			appKey = strings.TrimSpace(os.Getenv("DINGTALK_CLIENT_ID"))
+		}
+		appSecret := strings.TrimSpace(os.Getenv("DINGTALK_APP_SECRET"))
+		if appSecret == "" {
+			appSecret = strings.TrimSpace(os.Getenv("DINGTALK_CLIENT_SECRET"))
+		}
+		if appKey != "" && appSecret != "" {
+			client := dingtalk.NewClient(dingtalk.Config{
+				AppKey:      appKey,
+				AppSecret:   appSecret,
+				OpenAPIBase: strings.TrimSpace(os.Getenv("DINGTALK_OPENAPI_BASE")),
+				OAPIBase:    strings.TrimSpace(os.Getenv("DINGTALK_OAPI_BASE")),
+				TOPBase:     strings.TrimSpace(os.Getenv("DINGTALK_TOP_BASE")),
+				Logger:      slog.Default(),
+			})
+			h.DingTalk = client
+			h.DingTalkOAuth = client
+			slog.Info("dingtalk integration enabled via direct client")
+		} else {
+			slog.Info("dingtalk integration disabled (DINGTALK_CLIENT_ID or DINGTALK_CLIENT_SECRET not set)")
+		}
 	}
 	if h.DingTalkNotifications != nil && h.DingTalkNotifications.IsConfigured() {
 		registerDingTalkNotificationListeners(bus, queries, h.DingTalkNotifications, appURLFromEnv())

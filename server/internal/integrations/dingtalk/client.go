@@ -24,6 +24,7 @@ type Config struct {
 	AppSecret   string
 	OpenAPIBase string
 	OAPIBase    string
+	TOPBase     string
 	HTTPClient  *http.Client
 	Logger      *slog.Logger
 }
@@ -33,6 +34,7 @@ type Client struct {
 	appSecret   string
 	openAPIBase string
 	oapiBase    string
+	topBase     string
 	httpClient  *http.Client
 	logger      *slog.Logger
 
@@ -125,6 +127,10 @@ func NewClient(cfg Config) *Client {
 	if oapiBase == "" {
 		oapiBase = defaultOAPIBase
 	}
+	topBase := strings.TrimSpace(cfg.TOPBase)
+	if topBase == "" {
+		topBase = defaultTOPBase
+	}
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 10 * time.Second}
@@ -138,6 +144,7 @@ func NewClient(cfg Config) *Client {
 		appSecret:   strings.TrimSpace(cfg.AppSecret),
 		openAPIBase: openBase,
 		oapiBase:    oapiBase,
+		topBase:     topBase,
 		httpClient:  httpClient,
 		logger:      logger,
 	}
@@ -234,19 +241,51 @@ func (c *Client) SearchUsers(ctx context.Context, query string, limit int) ([]Us
 		return []User{u}, nil
 	}
 
-	userIDs, err := c.searchUserIDs(ctx, query, limit)
-	if err != nil {
-		if users, deptErr := c.searchDepartmentUsers(ctx, query, limit); deptErr == nil && len(users) > 0 {
-			return users, nil
-		}
-		// If the deployment has not yet published enterprise address-book
-		// search, still support exact userId entry.
-		if u, detailErr := c.GetUser(ctx, query); detailErr == nil {
-			return []User{u}, nil
-		}
-		return nil, err
+	// Tiered lookup mirroring dingtalk-native-agent: corp contact (花名)
+	// search first, then the OpenAPI contact search, then a department scan,
+	// and finally exact-userId entry. Tier failures degrade to the next tier
+	// instead of failing the whole search, so a missing permission or an
+	// unpublished API surfaces as "no results" rather than an error toast.
+	var errs []error
+
+	if users, err := c.searchCorpContacts(ctx, query, limit); err != nil {
+		errs = append(errs, err)
+		c.logger.Warn("dingtalk: corp contact search failed", "query", query, "error", err)
+	} else if len(users) > 0 {
+		return users, nil
 	}
 
+	if users, err := c.searchContactUsers(ctx, query, limit); err != nil {
+		errs = append(errs, err)
+		c.logger.Warn("dingtalk: contact search failed", "query", query, "error", err)
+	} else if len(users) > 0 {
+		return users, nil
+	}
+
+	if users, err := c.searchDepartmentUsers(ctx, query, limit); err != nil {
+		errs = append(errs, err)
+		c.logger.Warn("dingtalk: department search failed", "query", query, "error", err)
+	} else if len(users) > 0 {
+		return users, nil
+	}
+
+	if u, err := c.GetUser(ctx, query); err == nil {
+		return []User{u}, nil
+	} else {
+		errs = append(errs, err)
+	}
+
+	if len(errs) > 0 {
+		c.logger.Warn("dingtalk: user search returned no results after errors", "query", query, "errors", len(errs), "first_error", errs[0])
+	}
+	return nil, nil
+}
+
+func (c *Client) searchContactUsers(ctx context.Context, query string, limit int) ([]User, error) {
+	userIDs, err := c.searchUserIDs(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
 	users := make([]User, 0, len(userIDs))
 	for _, userID := range userIDs {
 		u, err := c.GetUser(ctx, userID)
