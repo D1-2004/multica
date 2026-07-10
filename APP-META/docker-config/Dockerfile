@@ -89,7 +89,7 @@ WORKDIR /home/admin/${APP_NAME}/bin
 
 VOLUME /home/admin/logs /home/admin/cai/logs /home/admin/${APP_NAME}/logs /home/admin/${APP_NAME}/target/${APP_NAME}/data /home/a/vipsrv-dns/vipsrv-cache
 
-COPY environment/cai/conf/nginx-proxy.conf /home/admin/cai/conf/apps/${APP_NAME}.conf
+COPY environment/cai/conf/nginx-proxy.conf /home/admin/cai/conf/server.conf
 COPY environment/common/custom/app/bin/ /home/admin/appname/bin/
 COPY --from=backend-builder /workspace/src/ /home/admin/${APP_NAME}/target/${APP_NAME}/src/
 COPY --from=backend-builder /workspace/server/bin/ /home/admin/${APP_NAME}/target/${APP_NAME}/bin/
