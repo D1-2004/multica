@@ -583,7 +583,7 @@ func validImportOnConflict(strategy string) bool {
 const (
 	maxImportFileSize  = 1 << 20 // 1 MiB per file
 	maxImportTotalSize = 8 << 20 // 8 MiB per import bundle (sum of supporting files)
-	maxImportFileCount = 128     // max number of supporting files
+	maxImportFileCount = 200     // max number of supporting files
 )
 
 // importedSkill holds the data extracted from an external source.
