@@ -226,3 +226,42 @@ Do not claim verification passed unless you ran it. If you skip checks because t
 
 - All queries filter by `workspace_id`; membership gates access; `X-Workspace-ID` selects the workspace.
 - Issue assignees are polymorphic: `assignee_type` plus `assignee_id` can reference a member or an agent.
+
+## Aone Fork
+
+This repo is the Aone-deployed fork of `multica-ai/multica`: upstream code plus a
+deployment layer (`APP-META/`, `src/main.sh`, `scripts/aone-deploy.sh`). Operating
+the deployment — deploying, reading server logs, changing runtime config,
+diagnosing a failed deploy — is covered by the `aone-deploy` skill in
+`.agents/skills/`. The rules below are the ones that break production if missed.
+
+Migrations run at container start, so a failing migration means the pods never
+start:
+
+- Pre-release is managed Postgres (PolarDB). It refuses `CREATE EXTENSION` to the
+  app role with SQLSTATE 42501 — even when the role owns the database and the
+  extension is one Postgres marks as trusted. Wrap every `CREATE EXTENSION` in
+  `DO $$ ... EXCEPTION WHEN OTHERS THEN RAISE NOTICE ... END $$;`, and guard any
+  index that depends on its opclass the same way (which costs `CONCURRENTLY` —
+  it cannot run inside a `DO` block). Precedent: `032_issue_search_index`
+  (pg_bigm), `076_task_usage_pgcron_extension` (pg_cron), `137`-`142` (pg_trgm).
+- The runner tracks applied migrations by **full filename stem**, not by number.
+  A renamed file re-runs, so any migration that may be replayed on a live
+  database must be idempotent (`IF NOT EXISTS`).
+- Verify risky migrations against the real pre-release database inside a
+  rolled-back transaction. A local Postgres runs as superuser and cannot
+  reproduce PolarDB's permission model.
+
+When syncing upstream (`git merge upstream/main`):
+
+- Never `git stash` mid-merge. It drops `MERGE_HEAD` and silently reverts staged
+  conflict resolutions to their pre-merge content — which still compiles and
+  still passes tests. Use a separate `git worktree` to compare against the
+  pre-merge tree.
+- Upstream reuses migration numbers the fork may already have taken. Renumber the
+  fork's own migrations above upstream's range (the lint test in
+  `internal/migrations` enforces this) and make them idempotent, since the live
+  database already applied them under the old stems.
+- Never carry a fork requirement inside an upstream-owned migration. Re-assert it
+  in a fork-owned migration that runs after (see 166 re-adding `dingtalk_chat` on
+  top of upstream's 149), or the next sync silently drops it.

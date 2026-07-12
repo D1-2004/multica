@@ -44,6 +44,14 @@ pnpm typecheck        # TypeScript check
 pnpm test             # TS unit tests (Vitest)
 make test             # Go tests
 make check            # Full verification pipeline
+make deploy           # Submit the current branch to the Aone 预发 pipeline
 ```
+
+### Aone Fork
+
+This repo is the Aone-deployed fork of `multica-ai/multica`. Deploying, reading
+server logs, changing runtime config, and diagnosing a failed deploy are covered
+by the `aone-deploy` skill in `.agents/skills/`. The migration and upstream-sync
+rules that break production if missed are in CLAUDE.md ("Aone Fork").
 
 See CLAUDE.md for the authoritative rules and common commands.
