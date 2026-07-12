@@ -810,6 +810,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// dev keeps working without exposing the metrics on a public listener.
 	r.Get("/health/realtime", realtimeMetricsHandler(os.Getenv("REALTIME_METRICS_TOKEN")))
 
+	// Runtime log tail for operators — lets deployments without pod shell
+	// access (Aone) inspect backend/frontend logs remotely. Reachable through
+	// the public /api/ proxy route; requires MULTICA_LOG_TAIL_TOKEN via
+	// Authorization: Bearer, and is disabled unless MULTICA_LOG_DIR is set
+	// (main.sh exports it in containerized deployments).
+	r.Get("/api/internal/logs/tail", logTailHandler(os.Getenv("MULTICA_LOG_TAIL_TOKEN"), os.Getenv("MULTICA_LOG_DIR")))
+
 	// WebSocket
 	mc := &membershipChecker{queries: queries}
 	pr := &patResolver{queries: queries, cache: patCache}
