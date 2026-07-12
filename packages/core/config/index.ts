@@ -25,6 +25,7 @@ interface ConfigState {
   // screen gates its render on this so a provider-locked deployment doesn't
   // flash the email form before the config applies the lock.
   authConfigLoaded: boolean;
+  featureFlags: Record<string, boolean>;
   setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
   setAuthConfig: (config: {
     allowSignup: boolean;
@@ -38,6 +39,7 @@ interface ConfigState {
     daemonServerUrl?: string;
     daemonAppUrl?: string;
   }) => void;
+  setFeatureFlags: (flags?: Record<string, boolean>) => void;
 }
 
 export const configStore = createStore<ConfigState>((set) => ({
@@ -52,6 +54,7 @@ export const configStore = createStore<ConfigState>((set) => ({
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
   authConfigLoaded: false,
+  featureFlags: {},
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
   setAuthConfig: ({
     allowSignup,
@@ -72,6 +75,7 @@ export const configStore = createStore<ConfigState>((set) => ({
     }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
+  setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),
 }));
 
 // isLoginProviderAllowed reports whether a sign-in entry point may be
@@ -88,4 +92,18 @@ export function useConfigStore(): ConfigState;
 export function useConfigStore<T>(selector: (state: ConfigState) => T): T;
 export function useConfigStore<T>(selector?: (state: ConfigState) => T) {
   return useStore(configStore, selector as (state: ConfigState) => T);
+}
+
+export function featureFlagEnabled(
+  flags: Readonly<Record<string, boolean>> | undefined,
+  key: string,
+  defaultValue = false,
+): boolean {
+  return flags?.[key] ?? defaultValue;
+}
+
+export function useFeatureEnabled(key: string, defaultValue = false): boolean {
+  return useConfigStore((state) =>
+    featureFlagEnabled(state.featureFlags, key, defaultValue),
+  );
 }

@@ -6,7 +6,6 @@ import { installFreezeWatchdog } from "../diagnostics/freeze-watchdog";
 import { setApiInstance, setSchemaLogger } from "../api";
 import { createAuthStore, registerAuthStore } from "../auth";
 import { createChatStore, registerChatStore } from "../chat";
-import { shouldShowSourceChannelReporting } from "../onboarding/source-reporting";
 import {
   I18nProvider,
   LocaleAdapterProvider,
@@ -19,6 +18,7 @@ import { defaultStorage } from "./storage";
 import { AuthInitializer } from "./auth-initializer";
 import type { CoreProviderProps, ClientIdentity } from "./types";
 import type { StorageAdapter } from "../types/storage";
+import { configureShortcutPlatform } from "../shortcuts/platform";
 
 // Module-level singletons — created once at first render, never recreated.
 // Vite HMR preserves module-level state, so these survive hot reloads.
@@ -35,6 +35,15 @@ function initCore(
 ) {
   if (initialized) return;
 
+  configureShortcutPlatform(
+    identity?.os === "macos" ||
+      identity?.os === "windows" ||
+      identity?.os === "linux" ||
+      identity?.os === "unknown"
+      ? identity.os
+      : null,
+  );
+
   const api = new ApiClient(apiBaseUrl, {
     logger: createLogger("api"),
     onUnauthorized: () => {
@@ -44,10 +53,6 @@ function initCore(
   });
   setApiInstance(api);
   setSchemaLogger(createLogger("api-schema"));
-  console.info(
-    "[Multica] self-hosted API:",
-    shouldShowSourceChannelReporting(),
-  );
 
   // In token mode, hydrate token from storage.
   if (!cookieAuth) {

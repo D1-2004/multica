@@ -90,7 +90,8 @@
     "card_due_date": "Due date",
     "card_project": "Project",
     "card_labels": "Labels",
-    "card_child_progress": "Sub-issue progress"
+    "card_child_progress": "Sub-issue progress",
+    "show_sub_issues": "Show sub-issues"
   },
   "view": {
     "tooltip_board": "Board view",
@@ -226,9 +227,16 @@
     "archive_tooltip": "Archive",
     "pin_tooltip": "Pin to sidebar",
     "unpin_tooltip": "Unpin from sidebar",
+    "thread_nav_label": "Jump to comment thread",
     "sidebar_tooltip": "Toggle sidebar",
-    "cmdf_toast_title": "Find on page only covers what's visible",
-    "cmdf_toast_description": "The timeline is virtualized — ⌘F can't see off-screen comments. Full in-app search is coming.",
+    "find": {
+      "placeholder": "Find in issue...",
+      "count": "{{current}}/{{total}}",
+      "no_matches": "No matches",
+      "previous": "Previous match",
+      "next": "Next match",
+      "close": "Close find"
+    },
     "update_failed": "Failed to update issue",
     "link_copied": "Link copied",
     "link_copy_failed": "Failed to copy link",
@@ -374,6 +382,8 @@
     "trigger_comment": "Comment trigger",
     "trigger_initial": "Initial run",
     "trigger_handoff_prefix": "Handoff: ",
+    "included_comments_one": "Includes {{count}} comment",
+    "included_comments_other": "Includes {{count}} comments",
     "status_queued": "Queued",
     "status_dispatched": "Starting",
     "status_waiting_local_directory": "Waiting for local directory",
@@ -431,7 +441,7 @@
     "unpin_from_sidebar": "Unpin from sidebar",
     "copy_link": "Copy link",
     "copy_workdir_path": "Copy local workdir path",
-    "more": "More",
+    "relations": "Relations",
     "create_sub_issue": "Create sub-issue",
     "set_parent_issue": "Set parent issue...",
     "remove_parent_issue": "Remove parent issue",

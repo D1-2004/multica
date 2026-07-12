@@ -26,6 +26,33 @@ func writeTestLocalSkill(t *testing.T, root, rel string, files map[string]string
 	return skillDir
 }
 
+func writeTestClaudePlugin(t *testing.T, home, id, name string, enabled bool) string {
+	t.Helper()
+	installPath := filepath.Join(home, ".claude", "plugins", "cache", name, "1.0.0")
+	if err := os.MkdirAll(filepath.Join(installPath, ".claude-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"` + name + `","skills":"./skills","mcpServers":"./mcp.json"}`
+	if err := os.WriteFile(filepath.Join(installPath, ".claude-plugin", "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "plugins"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	installed := `{"version":2,"plugins":{"` + id + `":[{"scope":"user","installPath":"` + installPath + `"}]}}`
+	if err := os.WriteFile(filepath.Join(home, ".claude", "plugins", "installed_plugins.json"), []byte(installed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := `{"enabledPlugins":{"` + id + `":` + map[bool]string{true: "true", false: "false"}[enabled] + `}}`
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(settings), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return installPath
+}
+
 func TestListRuntimeLocalSkills_Claude(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -70,6 +97,55 @@ func TestListRuntimeLocalSkills_Claude(t *testing.T) {
 	}
 }
 
+func TestListRuntimeLocalSkills_ClaudeEnabledPlugin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	installPath := writeTestClaudePlugin(t, home, "paper-desktop@paper", "paper-desktop", true)
+	writeTestLocalSkill(t, filepath.Join(installPath, "skills"), "design-to-code", map[string]string{
+		"SKILL.md": "---\nname: Design to code\ndescription: Turn a design into code\n---\n# Design\n",
+	})
+
+	skills, supported, err := listRuntimeLocalSkills("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !supported || len(skills) != 1 {
+		t.Fatalf("supported=%v skills=%#v", supported, skills)
+	}
+	got := skills[0]
+	if got.Key != "paper-desktop:design-to-code" || got.Name != "paper-desktop:design-to-code" {
+		t.Fatalf("plugin skill identity = %#v", got)
+	}
+	if got.Root != localSkillRootPlugin || got.Plugin != "paper-desktop@paper" {
+		t.Fatalf("plugin skill origin = %#v", got)
+	}
+
+	bundle, supported, err := loadRuntimeLocalSkillBundle("claude", got.Key)
+	if err != nil || !supported {
+		t.Fatalf("load plugin bundle: supported=%v err=%v", supported, err)
+	}
+	if bundle.Name != got.Key || bundle.Description != "Turn a design into code" {
+		t.Fatalf("plugin bundle = %#v", bundle)
+	}
+}
+
+func TestListRuntimeLocalSkills_ClaudeDisabledPluginIsHidden(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	installPath := writeTestClaudePlugin(t, home, "paper-desktop@paper", "paper-desktop", false)
+	writeTestLocalSkill(t, filepath.Join(installPath, "skills"), "design-to-code", map[string]string{
+		"SKILL.md": "---\nname: Design to code\n---\n",
+	})
+
+	skills, supported, err := listRuntimeLocalSkills("claude")
+	if err != nil || !supported {
+		t.Fatalf("supported=%v err=%v", supported, err)
+	}
+	if len(skills) != 0 {
+		t.Fatalf("disabled plugin skills should be hidden, got %#v", skills)
+	}
+}
+
 func TestListRuntimeLocalSkills_Kiro(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -96,6 +172,86 @@ func TestListRuntimeLocalSkills_Kiro(t *testing.T) {
 	}
 	if skills[0].SourcePath != "~/.kiro/skills/review-helper" {
 		t.Fatalf("source_path = %q", skills[0].SourcePath)
+	}
+}
+
+func TestLocalSkills_DiscoversACPProviderRoots(t *testing.T) {
+	tests := []struct {
+		provider string
+		root     string
+		wantPath string
+		wantName string
+	}{
+		{
+			provider: "hermes",
+			root:     filepath.Join(".hermes", "skills"),
+			wantPath: "~/.hermes/skills/review-helper",
+			wantName: "Hermes Review",
+		},
+		{
+			provider: "kimi",
+			root:     filepath.Join(".kimi", "skills"),
+			wantPath: "~/.kimi/skills/review-helper",
+			wantName: "Kimi Review",
+		},
+		{
+			provider: "qoder",
+			root:     filepath.Join(".qoder", "skills"),
+			wantPath: "~/.qoder/skills/review-helper",
+			wantName: "Qoder Review",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.provider, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+
+			writeTestLocalSkill(t, filepath.Join(home, tc.root), "review-helper", map[string]string{
+				"SKILL.md": "---\nname: " + tc.wantName + "\ndescription: Review code\n---\n# Review\n",
+				"notes.md": "notes",
+			})
+
+			skills, supported, err := listRuntimeLocalSkills(tc.provider)
+			if err != nil {
+				t.Fatalf("listRuntimeLocalSkills: %v", err)
+			}
+			if !supported {
+				t.Fatalf("%s should be supported", tc.provider)
+			}
+			if len(skills) != 1 {
+				t.Fatalf("expected 1 skill, got %d (%v)", len(skills), skills)
+			}
+			if skills[0].Key != "review-helper" {
+				t.Fatalf("key = %q, want review-helper", skills[0].Key)
+			}
+			if skills[0].Name != tc.wantName {
+				t.Fatalf("name = %q, want %q", skills[0].Name, tc.wantName)
+			}
+			if skills[0].Root != localSkillRootProvider {
+				t.Fatalf("root = %q, want %q", skills[0].Root, localSkillRootProvider)
+			}
+			if skills[0].SourcePath != tc.wantPath {
+				t.Fatalf("source_path = %q, want %q", skills[0].SourcePath, tc.wantPath)
+			}
+
+			bundle, supported, err := loadRuntimeLocalSkillBundle(tc.provider, "review-helper")
+			if err != nil {
+				t.Fatalf("loadRuntimeLocalSkillBundle: %v", err)
+			}
+			if !supported {
+				t.Fatalf("%s should be supported for import", tc.provider)
+			}
+			if bundle.Name != tc.wantName {
+				t.Fatalf("bundle name = %q, want %q", bundle.Name, tc.wantName)
+			}
+			if bundle.SourcePath != tc.wantPath {
+				t.Fatalf("bundle source_path = %q, want %q", bundle.SourcePath, tc.wantPath)
+			}
+			if len(bundle.Files) != 1 {
+				t.Fatalf("expected 1 supporting file, got %d", len(bundle.Files))
+			}
+		})
 	}
 }
 

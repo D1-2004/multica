@@ -78,8 +78,18 @@ vi.mock("@multica/core/auth", () => {
 });
 
 vi.mock("../../../settings/components/lark-tab", () => ({
-  LarkAgentBindButton: ({ agentId }: { agentId: string }) => (
-    <div data-testid="lark-bind-button" data-agent-id={agentId} />
+  LarkAgentBindButton: ({
+    agentId,
+    agentOwnerId,
+  }: {
+    agentId: string;
+    agentOwnerId?: string | null;
+  }) => (
+    <div
+      data-testid="lark-bind-button"
+      data-agent-id={agentId}
+      data-agent-owner-id={agentOwnerId ?? ""}
+    />
   ),
 }));
 
@@ -116,6 +126,8 @@ const agent: Agent = {
   runtime_config: {},
   custom_args: [],
   visibility: "workspace",
+  permission_mode: "public_to",
+  invocation_targets: [{ target_type: "workspace", target_id: null }],
   status: "idle",
   max_concurrent_tasks: 1,
   model: "",
@@ -186,17 +198,38 @@ describe("IntegrationsTab", () => {
     expect(screen.queryByTestId("dingtalk-bind-button")).toBeNull();
   });
 
-  it("points members at Settings with one role notice (not per-platform) when they can't manage", () => {
+  it("points members at Settings when they are neither an admin nor the agent owner", () => {
+    // A plain member viewing an agent owned by someone else can manage
+    // neither platform, so the read-only note replaces both sections.
     membersRef.current = [{ user_id: "user-1", role: "member" }];
-    renderTab(<IntegrationsTab agent={agent} />);
-    // The role gate is hoisted above the per-platform sections, so the notice
-    // appears exactly once and neither bind entry renders.
+    renderTab(<IntegrationsTab agent={{ ...agent, owner_id: "user-2" }} />);
     expect(
       screen.getByText(/Only workspace owners and admins can connect an agent/i),
     ).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
     expect(screen.queryByTestId("slack-bind-button")).toBeNull();
     expect(screen.queryByTestId("dingtalk-bind-button")).toBeNull();
+  });
+
+  it("lets a non-admin agent owner bind Lark but keeps Slack and DingTalk admin-only", () => {
+    // The agent's owner (user-1) is only a plain workspace member. Lark
+    // authorizes the agent owner (canManageAgent), so the Lark bind entry
+    // renders and receives owner_id; Slack's and DingTalk's routes stay
+    // admin-only, so they show the read-only note instead of a CTA (MUL-4213).
+    membersRef.current = [{ user_id: "user-1", role: "member" }];
+    renderTab(<IntegrationsTab agent={agent} />);
+    const larkButton = screen.getByTestId("lark-bind-button");
+    expect(larkButton.getAttribute("data-agent-id")).toBe("agent-1");
+    expect(larkButton.getAttribute("data-agent-owner-id")).toBe("user-1");
+    expect(screen.queryByTestId("slack-bind-button")).toBeNull();
+    expect(screen.queryByTestId("dingtalk-bind-button")).toBeNull();
+    // Both the Slack and the DingTalk section fall back to the shared
+    // members note.
+    expect(
+      screen.getAllByText(
+        /Only workspace owners and admins can connect an agent/i,
+      ),
+    ).toHaveLength(2);
   });
 
   it("renders the bind entry (not coming-soon) when installs are unavailable but the agent is already bound", () => {

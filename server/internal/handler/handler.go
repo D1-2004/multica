@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -20,8 +21,8 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/featureflagdispatch"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
@@ -33,6 +34,8 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/featureflag"
+	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
 // randomID returns a random 16-byte hex string used as a request ID for
@@ -97,6 +100,18 @@ type Config struct {
 	// frontend/CORS origin allowlist so split app/api self-hosted deployments
 	// can frame API-hosted PDFs without allowing arbitrary third-party frames.
 	AttachmentFrameAncestors []string
+	// LLM* configure the basic LLM API layer (MUL-4238). They back the
+	// server-internal LLM helpers in pkg/llm (e.g. chat title generation).
+	// The generic OpenAI-compatible passthrough endpoints were removed in
+	// MUL-4309; LLM access is internal-only now. When both LLMAPIKey and
+	// LLMBaseURL are empty the layer is disabled and callers fall back
+	// silently (see maybeGenerateChatTitleAsync).
+	//   - LLMAPIKey       -> MULTICA_LLM_API_KEY
+	//   - LLMBaseURL       -> MULTICA_LLM_BASE_URL (OpenAI or any compatible gateway)
+	//   - LLMDefaultModel  -> MULTICA_LLM_DEFAULT_MODEL (used when a request omits `model`)
+	LLMAPIKey       string
+	LLMBaseURL      string
+	LLMDefaultModel string
 }
 
 type cloudRuntimeProxy interface {
@@ -106,10 +121,6 @@ type cloudRuntimeProxy interface {
 
 type RuntimeProfileRefreshNotifier interface {
 	NotifyRuntimeProfilesChanged(workspaceID, profileID string)
-}
-
-type SourceChannelReporter interface {
-	ReportSelfHostSourceChannel(userID, channel, sourceOther, apiBaseURL string, includeDomain bool)
 }
 
 type Handler struct {
@@ -129,13 +140,12 @@ type Handler struct {
 	LocalSkillListStore   LocalSkillListStore
 	LocalSkillImportStore LocalSkillImportStore
 	DWSAuthSessions       *DWSAuthSessionStore
-	DaemonFeatureFlags    *featureflagdispatch.Evaluator
+	FeatureFlags          *featureflag.Service
 	LivenessStore         LivenessStore
 	HeartbeatScheduler    HeartbeatScheduler
 	Storage               storage.Storage
 	CFSigner              *auth.CloudFrontSigner
 	Analytics             analytics.Client
-	SourceChannelReporter SourceChannelReporter
 	// Metrics is the shared business-metrics collector built by main.go.
 	// May be nil in tests / self-hosted with the metrics listener disabled;
 	// every Record* method is nil-safe and obsmetrics.RecordEvent treats a
@@ -169,6 +179,10 @@ type Handler struct {
 	// UI consults IsConfigured() to decide whether to surface install
 	// entry points.
 	LarkAPIClient lark.APIClient
+	// Composio integration (MUL-3720). Nil when COMPOSIO_API_KEY is unset;
+	// the composio HTTP handlers return 503 in that case. Wired in
+	// cmd/server/router.go after handler.New.
+	Composio *composio.Service
 	// ChannelSupervisor owns the per-installation supervisor goroutines
 	// that hold the §4.4 WS lease and drive each channel.Channel
 	// (MUL-3620 generalized the Feishu-only Hub into this channel-agnostic
@@ -231,7 +245,14 @@ type Handler struct {
 	// secret stays outside this backend; the direct client remains available
 	// for self-hosted / local-dev deployments.
 	LarkOAuth lark.OAuthClient
-	cfg       Config
+	// LLM is the basic LLM API layer (MUL-4238): a thin wrapper over the
+	// OpenAI Go SDK backing server-internal one-shot LLM helpers such as chat
+	// title generation. The generic passthrough endpoints were removed in
+	// MUL-4309, so it is internal-only now. Always non-nil (New builds it from
+	// Config); when unconfigured its Enabled() reports false and callers fall
+	// back silently.
+	LLM *llm.Client
+	cfg Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
@@ -299,14 +320,33 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 			BaseURL: cfg.CloudRuntimeFleetURL,
 			Timeout: cfg.CloudRuntimeFleetTimeout,
 		}),
+		LLM: llm.New(llm.Config{
+			APIKey:       cfg.LLMAPIKey,
+			BaseURL:      cfg.LLMBaseURL,
+			DefaultModel: cfg.LLMDefaultModel,
+		}),
 		cfg: cfg,
 	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	// Marshal the body up front so we can advertise an accurate Content-Length
+	// header. Streaming straight into the ResponseWriter after WriteHeader forces
+	// net/http into chunked transfer encoding, which omits Content-Length; buffering
+	// first lets clients (and proxies) see the exact body size.
+	body, err := json.Marshal(v)
+	if err != nil {
+		// Fall back to a minimal, self-describing error payload rather than leaving
+		// the client with a half-written response.
+		body = []byte(`{"error":"failed to encode response"}`)
+		status = http.StatusInternalServerError
+	}
+	// Match the trailing newline that json.Encoder.Encode historically appended.
+	body = append(body, '\n')
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_, _ = w.Write(body)
 }
 
 // writeMeasuredJSON behaves like writeJSON but returns the encoded body size so
@@ -320,6 +360,7 @@ func writeMeasuredJSON(w http.ResponseWriter, status int, v any) (int, error) {
 	}
 	body = append(body, '\n')
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(status)
 	if _, err := w.Write(body); err != nil {
 		return len(body), err
@@ -352,9 +393,41 @@ func timestampToString(t pgtype.Timestamptz) string { return util.TimestampToStr
 func timestampToPtr(t pgtype.Timestamptz) *string   { return util.TimestampToPtr(t) }
 func dateToPtr(d pgtype.Date) *string               { return util.DateToPtr(d) }
 func uuidToPtr(u pgtype.UUID) *string               { return util.UUIDToPtr(u) }
-func int8ToPtr(v pgtype.Int8) *int64                { return util.Int8ToPtr(v) }
-func int4ToPtr(v pgtype.Int4) *int32                { return util.Int4ToPtr(v) }
-func ptrToInt4(v *int32) pgtype.Int4                { return util.PtrToInt4(v) }
+
+// uuidsToStrings maps a UUID array column to string ids, skipping NULL/invalid
+// entries. Returns nil (not an empty slice) when there is nothing to emit so
+// `omitempty` JSON fields drop out cleanly (MUL-4195).
+func uuidsToStrings(us []pgtype.UUID) []string {
+	if len(us) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(us))
+	for _, u := range us {
+		if u.Valid {
+			out = append(out, uuidToString(u))
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// uuidStringsOrEmpty preserves the distinction between a modern, authoritative
+// empty UUID-array value (`[]`) and a field omitted by a legacy server. Delivery
+// receipts use this so clients never mistake zero delivered comments for an
+// unknown receipt and fall back to the enqueue-time plan.
+func uuidStringsOrEmpty(us []pgtype.UUID) []string {
+	out := uuidsToStrings(us)
+	if out == nil {
+		return []string{}
+	}
+	return out
+}
+
+func int8ToPtr(v pgtype.Int8) *int64 { return util.Int8ToPtr(v) }
+func int4ToPtr(v pgtype.Int4) *int32 { return util.Int4ToPtr(v) }
+func ptrToInt4(v *int32) pgtype.Int4 { return util.PtrToInt4(v) }
 
 // parseUUIDOrBadRequest validates a UUID string sourced from user input
 // (URL params, request body, headers). On invalid input it writes a 400
@@ -777,6 +850,10 @@ func (h *Handler) loadAgentForUser(w http.ResponseWriter, r *http.Request, agent
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return db.Agent{}, false
+	}
+	if agent.Kind != "user" {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return db.Agent{}, false
 	}

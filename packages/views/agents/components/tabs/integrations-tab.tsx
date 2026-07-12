@@ -57,8 +57,21 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
   const configured = listing?.configured === true;
   const installSupported = listing?.install_supported === true;
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManage =
+  const isWorkspaceAdmin =
     currentMember?.role === "owner" || currentMember?.role === "admin";
+  const isAgentOwner =
+    !!user?.id && agent.owner_id != null && agent.owner_id === user.id;
+  // Lark bind/manage is authorized for the agent's owner OR a workspace
+  // owner/admin (server/internal/handler/lark.go canManageAgent, MUL-4213).
+  // Slack's install/revoke routes are still workspace owner/admin-only, so
+  // its gate stays admin-only — the agent owner must not see a Slack CTA the
+  // backend would 403.
+  const canManageLark = isWorkspaceAdmin || isAgentOwner;
+  const canManageSlack = isWorkspaceAdmin;
+  // DingTalk install/revoke routes are workspace owner/admin-only too
+  // (server/internal/handler/dingtalk.go), so its gate matches Slack — the
+  // agent owner must not see a CTA the backend would 403.
+  const canManageDingTalk = isWorkspaceAdmin;
   const hasActiveInstall =
     listing?.installations.some(
       (inst) => inst.agent_id === agent.id && inst.status === "active",
@@ -78,11 +91,11 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
       (inst) => inst.agent_id === agent.id && inst.status === "active",
     ) ?? false;
 
-  // Install / manage is gated on workspace owner/admin for every platform, so
-  // the role notice is hoisted above the per-platform sections — one note
-  // instead of repeating it under each integration. Members can still view
-  // connected bots in the (member-visible) Settings → Integrations listing.
-  if (!canManage) {
+  // A member who can manage none of the platforms (not a workspace admin and
+  // not this agent's owner) gets the read-only note instead of the sections.
+  // Members can still view connected bots in the (member-visible)
+  // Settings → Integrations listing.
+  if (!canManageLark && !canManageSlack && !canManageDingTalk) {
     return (
       <div className="space-y-6">
         <p className="text-xs text-muted-foreground">
@@ -135,10 +148,15 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
               </p>
             </div>
           ) : (
-            // Owner/admin with either a supported transport or an existing
-            // bot: the shared button renders the scan-to-bind CTA or the
-            // already-connected "Manage in Lark" badge.
-            <LarkAgentBindButton agentId={agent.id} agentName={agent.name} />
+            // Agent owner or workspace owner/admin with either a supported
+            // transport or an existing bot: the shared button renders the
+            // scan-to-bind CTA or the already-connected "Manage in Lark"
+            // badge. It self-authorizes on agentOwnerId + role.
+            <LarkAgentBindButton
+              agentId={agent.id}
+              agentName={agent.name}
+              agentOwnerId={agent.owner_id}
+            />
           )}
         </div>
       </section>
@@ -156,7 +174,14 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
           </div>
         </div>
         <div className="border-t px-4 py-3">
-          {!slackConfigured ? (
+          {!canManageSlack ? (
+            // Slack install/revoke stay workspace owner/admin-only, so an
+            // agent owner who is not an admin only gets the read-only note
+            // here (unlike Lark above). Reuses the shared members note.
+            <p className="text-xs text-muted-foreground">
+              {t(($) => $.tab_body.integrations.members_note)}
+            </p>
+          ) : !slackConfigured ? (
             <p className="text-xs text-muted-foreground">
               {ts(($) => $.slack.not_enabled_title)}
             </p>
@@ -189,7 +214,14 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
           </div>
         </div>
         <div className="border-t px-4 py-3">
-          {!dingtalkConfigured ? (
+          {!canManageDingTalk ? (
+            // DingTalk install/revoke stay workspace owner/admin-only, so an
+            // agent owner who is not an admin only gets the read-only note
+            // here (like Slack above). Reuses the shared members note.
+            <p className="text-xs text-muted-foreground">
+              {t(($) => $.tab_body.integrations.members_note)}
+            </p>
+          ) : !dingtalkConfigured ? (
             <p className="text-xs text-muted-foreground">
               {ts(($) => $.dingtalk.not_enabled_title)}
             </p>

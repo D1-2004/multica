@@ -51,6 +51,7 @@ import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions, invitationListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
 import { useT } from "../../i18n";
+import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
 
 const ROLE_ICONS: Record<MemberRole, typeof Crown> = {
   owner: Crown,
@@ -157,7 +158,7 @@ function MemberRow({
 
   return (
     <div className="flex items-center gap-3 px-4 py-3">
-      <ActorAvatar actorType="member" actorId={member.user_id} size={32} />
+      <ActorAvatar actorType="member" actorId={member.user_id} size="lg" />
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium truncate">{member.name}</div>
         <div className="text-xs text-muted-foreground truncate">{member.email}</div>
@@ -527,12 +528,8 @@ export function MembersTab() {
   if (!workspace) return null;
 
   return (
-    <div className="space-y-8">
-      <section className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Users className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">{t(($) => $.members.section_title, { count: members.length })}</h2>
-        </div>
+    <SettingsTab title={t(($) => $.page.tabs.members)}>
+      <SettingsSection title={t(($) => $.members.section_title, { count: members.length })}>
 
         {canManageWorkspace && (
           <Card>
@@ -555,9 +552,9 @@ export function MembersTab() {
         )}
 
         {members.length > 0 ? (
-          <div className="overflow-hidden rounded-xl ring-1 ring-foreground/10">
-            {members.map((m, i) => (
-              <div key={m.id} className={i > 0 ? "border-t border-border/50" : ""}>
+          <SettingsCard>
+            {members.map((m) => (
+              <div key={m.id}>
                 <MemberRow
                   member={m}
                   canManage={canManageWorkspace}
@@ -570,21 +567,17 @@ export function MembersTab() {
                 />
               </div>
             ))}
-          </div>
+          </SettingsCard>
         ) : (
           <p className="text-sm text-muted-foreground">{t(($) => $.members.no_members)}</p>
         )}
-      </section>
+      </SettingsSection>
 
       {invitations.length > 0 && (
-        <section className="space-y-4">
-          <div className="flex items-center gap-2">
-            <Clock className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">{t(($) => $.members.pending_title, { count: invitations.length })}</h2>
-          </div>
-          <div className="overflow-hidden rounded-xl ring-1 ring-foreground/10">
-            {invitations.map((inv, i) => (
-              <div key={inv.id} className={i > 0 ? "border-t border-border/50" : ""}>
+        <SettingsSection title={t(($) => $.members.pending_title, { count: invitations.length })}>
+          <SettingsCard>
+            {invitations.map((inv) => (
+              <div key={inv.id}>
                 <InvitationRow
                   invitation={inv}
                   canManage={canManageWorkspace}
@@ -593,8 +586,8 @@ export function MembersTab() {
                 />
               </div>
             ))}
-          </div>
-        </section>
+          </SettingsCard>
+        </SettingsSection>
       )}
 
       <Dialog open={dingtalkPickerOpen} onOpenChange={setDingtalkPickerOpen}>
@@ -719,6 +712,6 @@ export function MembersTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </SettingsTab>
   );
 }

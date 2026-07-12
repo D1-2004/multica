@@ -217,7 +217,7 @@ function InstallationRow({
         <ActorAvatar
           actorType="agent"
           actorId={installation.agent_id}
-          size={32}
+          size="lg"
           enableHoverCard
           profileLink
         />

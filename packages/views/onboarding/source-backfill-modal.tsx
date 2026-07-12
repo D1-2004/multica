@@ -11,12 +11,10 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
-import { captureEvent } from "@multica/core/analytics";
 import { useAuthStore } from "@multica/core/auth";
 import {
   needsSourceBackfill,
   saveQuestionnaire,
-  shouldShowSourceChannelReporting,
   type QuestionnaireAnswers,
   type Source,
 } from "@multica/core/onboarding";
@@ -38,19 +36,17 @@ import {
   IconOtherOptionCard,
 } from "./components/icon-option-card";
 import type { QuestionOption } from "./steps/step-question";
-import { SourceReportingControls } from "./source-reporting-controls";
 import { mergedQuestionnairePatch } from "./source-backfill-merge";
 import { useSourceBackfillDismissCount } from "./source-backfill-dismiss";
 import { useT } from "../i18n";
 
 const EMPTY_BACKFILL: Pick<
   QuestionnaireAnswers,
-  "source" | "source_other" | "source_skipped" | "source_domain_consent"
+  "source" | "source_other" | "source_skipped"
 > = {
   source: [],
   source_other: null,
   source_skipped: false,
-  source_domain_consent: true,
 };
 
 /**
@@ -136,13 +132,11 @@ export function SourceBackfillModal() {
         if (next || !open) return;
         // Base UI fires onOpenChange(false) for X, ESC, and outside
         // click — all three count as "dismiss without committing".
-        captureEvent("source_backfill_dismissed", { trigger: "close" });
         bumpDismissCount();
         setOpen(false);
       }}
     >
       <SourceBackfillDialogBody
-        open={open}
         onComplete={() => setOpen(false)}
       />
     </Dialog>
@@ -158,28 +152,14 @@ SourceBackfillModal.displayName = "SourceBackfillModal";
  * starts fresh.
  */
 function SourceBackfillDialogBody({
-  open,
   onComplete,
 }: {
-  open: boolean;
   onComplete: () => void;
 }) {
   const { t } = useT("onboarding");
-  const showSourceReporting = shouldShowSourceChannelReporting();
 
   const [answers, setAnswers] = useState(EMPTY_BACKFILL);
   const [busy, setBusy] = useState(false);
-  const shownEmittedRef = useRef(false);
-
-  // Fire the funnel-open event exactly once per open transition.
-  // `open` flips back when the parent closes us, and a fresh subsequent
-  // open mounts a brand-new body, so the ref starts fresh too.
-  useEffect(() => {
-    if (!open) return;
-    if (shownEmittedRef.current) return;
-    shownEmittedRef.current = true;
-    captureEvent("source_backfill_shown");
-  }, [open]);
 
   const options = useMemo<QuestionOption[]>(
     () => [
@@ -207,7 +187,6 @@ function SourceBackfillDialogBody({
   // HDYHAU prompts (Fairing, Recast, HockeyStack) and gives the team
   // clean channel weights without splitting users across N buckets.
   const pickedSlug: string | null = answers.source[0] ?? null;
-  const domainConsent = answers.source_domain_consent !== false;
   const otherOption = options.find((o) => o.isOther) ?? null;
   const otherSelected = pickedSlug === otherOption?.slug;
   const otherFilled = (answers.source_other ?? "").trim().length > 0;
@@ -230,7 +209,6 @@ function SourceBackfillDialogBody({
           // type immediately. A previous text value would be misleading.
           source_other: a.source[0] === "other" ? a.source_other : null,
           source_skipped: false,
-          source_domain_consent: a.source_domain_consent !== false,
         }));
         return;
       }
@@ -240,7 +218,6 @@ function SourceBackfillDialogBody({
         source: [slug],
         source_other: null,
         source_skipped: false,
-        source_domain_consent: a.source_domain_consent !== false,
       }));
     },
     [],
@@ -265,19 +242,14 @@ function SourceBackfillDialogBody({
           source: answers.source,
           source_other: answers.source_other,
           source_skipped: false,
-          source_domain_consent: domainConsent,
         }),
       );
-      captureEvent("source_backfill_submitted", {
-        source: answers.source,
-        ...(answers.source_other ? { source_other: answers.source_other } : {}),
-      });
       onComplete();
     } catch (err) {
       setBusy(false);
       toast.error(err instanceof Error ? err.message : "Failed to save");
     }
-  }, [canSubmit, answers.source, answers.source_other, domainConsent, onComplete]);
+  }, [canSubmit, answers.source, answers.source_other, onComplete]);
 
   const skip = useCallback(async () => {
     if (busy) return;
@@ -290,20 +262,18 @@ function SourceBackfillDialogBody({
           source: [],
           source_other: null,
           source_skipped: true,
-          source_domain_consent: domainConsent,
         }),
       );
-      captureEvent("source_backfill_skipped");
       onComplete();
     } catch (err) {
       setBusy(false);
       toast.error(err instanceof Error ? err.message : "Failed to save");
     }
-  }, [busy, domainConsent, onComplete]);
+  }, [busy, onComplete]);
 
   return (
-    <DialogContent className="flex max-h-[calc(100vh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
-      <div className="shrink-0 px-6 pt-6 pb-2">
+    <DialogContent className="sm:max-w-2xl p-0 gap-0 overflow-hidden">
+      <div className="px-6 pt-6 pb-2">
         <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
           {t(($) => $.source_backfill.eyebrow)}
         </div>
@@ -315,55 +285,39 @@ function SourceBackfillDialogBody({
         </p>
       </div>
 
-      <div className="min-h-0 overflow-y-auto px-6 pt-4 pb-4">
-        <fieldset
-          role="radiogroup"
-          aria-label={t(($) => $.questions.source.question)}
-          className="m-0 grid grid-cols-1 gap-2 p-0 sm:grid-cols-2"
-        >
-          {options.map((option) =>
-            option.isOther ? (
-              <IconOtherOptionCard
-                key={option.slug}
-                icon={option.icon}
-                label={option.label}
-                selected={otherSelected}
-                onSelect={() => handleSelect(option)}
-                otherValue={answers.source_other ?? ""}
-                onOtherChange={handleOtherChange}
-                onConfirm={submit}
-                placeholder={t(($) => $.questions.source.other_placeholder)}
-                mode="radio"
-              />
-            ) : (
-              <IconOptionCard
-                key={option.slug}
-                icon={option.icon}
-                label={option.label}
-                selected={pickedSlug === option.slug}
-                onSelect={() => handleSelect(option)}
-                mode="radio"
-              />
-            ),
-          )}
-        </fieldset>
-
-        {showSourceReporting && pickedSlug !== null ? (
-          <div className="pt-4">
-            <SourceReportingControls
-              domainConsent={domainConsent}
-              onDomainConsentChange={(enabled) =>
-                setAnswers((a) => ({
-                  ...a,
-                  source_domain_consent: enabled,
-                }))
-              }
+      <fieldset
+        role="radiogroup"
+        aria-label={t(($) => $.questions.source.question)}
+        className="m-0 grid grid-cols-1 gap-2 p-0 px-6 pt-4 sm:grid-cols-2"
+      >
+        {options.map((option) =>
+          option.isOther ? (
+            <IconOtherOptionCard
+              key={option.slug}
+              icon={option.icon}
+              label={option.label}
+              selected={otherSelected}
+              onSelect={() => handleSelect(option)}
+              otherValue={answers.source_other ?? ""}
+              onOtherChange={handleOtherChange}
+              onConfirm={submit}
+              placeholder={t(($) => $.questions.source.other_placeholder)}
+              mode="radio"
             />
-          </div>
-        ) : null}
-      </div>
+          ) : (
+            <IconOptionCard
+              key={option.slug}
+              icon={option.icon}
+              label={option.label}
+              selected={pickedSlug === option.slug}
+              onSelect={() => handleSelect(option)}
+              mode="radio"
+            />
+          ),
+        )}
+      </fieldset>
 
-      <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-2 border-t bg-muted/40 px-6 py-3">
+      <div className="mt-4 flex flex-wrap items-center justify-end gap-x-4 gap-y-2 border-t bg-muted/40 px-6 py-3">
         <span
           aria-live="polite"
           className="mr-auto text-xs text-muted-foreground"

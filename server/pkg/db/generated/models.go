@@ -44,6 +44,22 @@ type Agent struct {
 	McpConfig          []byte             `json:"mcp_config"`
 	Model              pgtype.Text        `json:"model"`
 	ThinkingLevel      pgtype.Text        `json:"thinking_level"`
+	// Composio toolkit slugs this agent is allowed to mount as MCP. NULL or empty array = no MCP overlay. Mounted for any run that passes the agent invocation-permission gate (MUL-3963); the overlay uses the agent OWNER's active Composio connection, so sharing the agent (public_to) shares these apps with whoever may invoke it. No longer gated on originator == owner. Stored as TEXT[] so the dispatch path can intersect against the owner's active connections with a single SQL ANY() filter.
+	ComposioToolkitAllowlist []string `json:"composio_toolkit_allowlist"`
+	// Agent invocation permission mode (MUL-3963). private = owner only; public_to = allow-list in agent_invocation_target. Replaces visibility as the authorization source for triggering runs; visibility is now a derived legacy field. Default private = deny-by-default.
+	PermissionMode string      `json:"permission_mode"`
+	Kind           string      `json:"kind"`
+	SystemKey      pgtype.Text `json:"system_key"`
+}
+
+// Allow-list of who may invoke a public_to agent (MUL-3963). One row per (agent, target_type, target); targets stack and canInvokeAgent OR-matches. workspace rows store the agent workspace_id in target_id; member rows store the user id; team rows are reserved and inert in V1. Rows only matter when agent.permission_mode = public_to. No DB foreign keys: agent_id / created_by / member target_id relationships are maintained in the application layer (see migration comment).
+type AgentInvocationTarget struct {
+	ID         pgtype.UUID        `json:"id"`
+	AgentID    pgtype.UUID        `json:"agent_id"`
+	TargetType string             `json:"target_type"`
+	TargetID   pgtype.UUID        `json:"target_id"`
+	CreatedBy  pgtype.UUID        `json:"created_by"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type AgentRuntime struct {
@@ -63,12 +79,14 @@ type AgentRuntime struct {
 	LegacyDaemonID pgtype.Text        `json:"legacy_daemon_id"`
 	Visibility     string             `json:"visibility"`
 	ProfileID      pgtype.UUID        `json:"profile_id"`
+	CustomName     pgtype.Text        `json:"custom_name"`
 }
 
 type AgentSkill struct {
 	AgentID   pgtype.UUID        `json:"agent_id"`
 	SkillID   pgtype.UUID        `json:"skill_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Enabled   bool               `json:"enabled"`
 }
 
 type AgentTaskQueue struct {
@@ -102,8 +120,23 @@ type AgentTaskQueue struct {
 	HandoffNote           pgtype.Text        `json:"handoff_note"`
 	PrepareLeaseExpiresAt pgtype.Timestamptz `json:"prepare_lease_expires_at"`
 	SquadID               pgtype.UUID        `json:"squad_id"`
-	EscalationForTaskID   pgtype.UUID        `json:"escalation_for_task_id"`
-	FireAt                pgtype.Timestamptz `json:"fire_at"`
+	// Per-task MCP servers computed at dispatch time, merged on top of agent.mcp_config. Currently used by Composio integration to inject the initiator user's session URL. Cleared after task completes via trg_clear_runtime_mcp_overlay.
+	RuntimeMcpOverlay   []byte             `json:"runtime_mcp_overlay"`
+	EscalationForTaskID pgtype.UUID        `json:"escalation_for_task_id"`
+	FireAt              pgtype.Timestamptz `json:"fire_at"`
+	// Top-of-chain human originator for this run. For human-triggered tasks (comment by a member, chat, quick-create) equals that member. For agent-fanout tasks inherited from the parent task's originator_user_id via comment.source_task_id. NULL when no human is in the chain (autopilot, system-driven). Used by canInvokeAgent to judge A2A by the originator; the Composio overlay now follows invocation permission and uses the agent owner's connection, so this is audit/attribution + A2A gating, NOT a Composio owner==originator gate (MUL-3963).
+	OriginatorUserID pgtype.UUID `json:"originator_user_id"`
+	// Non-secret per-task connected app metadata corresponding to runtime_mcp_overlay, used by the daemon brief to tell agents which app capabilities are mounted. Cleared with runtime_mcp_overlay after task completion.
+	RuntimeConnectedApps []byte        `json:"runtime_connected_apps"`
+	CoalescedCommentIds  []pgtype.UUID `json:"coalesced_comment_ids"`
+	DeliveredCommentIds  []pgtype.UUID `json:"delivered_comment_ids"`
+	ChatInputTaskID      pgtype.UUID   `json:"chat_input_task_id"`
+}
+
+type AgentToLabel struct {
+	AgentID   pgtype.UUID        `json:"agent_id"`
+	LabelID   pgtype.UUID        `json:"label_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type Attachment struct {
@@ -282,21 +315,34 @@ type ChatMessage struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	FailureReason pgtype.Text        `json:"failure_reason"`
 	ElapsedMs     pgtype.Int8        `json:"elapsed_ms"`
+	MessageKind   string             `json:"message_kind"`
+}
+
+type ChatPinnedAgent struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	Position    float64            `json:"position"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type ChatSession struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	AgentID     pgtype.UUID        `json:"agent_id"`
-	CreatorID   pgtype.UUID        `json:"creator_id"`
-	Title       string             `json:"title"`
-	SessionID   pgtype.Text        `json:"session_id"`
-	WorkDir     pgtype.Text        `json:"work_dir"`
-	Status      string             `json:"status"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	UnreadSince pgtype.Timestamptz `json:"unread_since"`
-	RuntimeID   pgtype.UUID        `json:"runtime_id"`
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	AgentID      pgtype.UUID        `json:"agent_id"`
+	CreatorID    pgtype.UUID        `json:"creator_id"`
+	Title        string             `json:"title"`
+	SessionID    pgtype.Text        `json:"session_id"`
+	WorkDir      pgtype.Text        `json:"work_dir"`
+	Status       string             `json:"status"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	UnreadSince  pgtype.Timestamptz `json:"unread_since"`
+	RuntimeID    pgtype.UUID        `json:"runtime_id"`
+	LastReadAt   pgtype.Timestamptz `json:"last_read_at"`
+	IsAgentIntro bool               `json:"is_agent_intro"`
+	PinnedAt     pgtype.Timestamptz `json:"pinned_at"`
 }
 
 type Comment struct {
@@ -528,12 +574,14 @@ type IssueDependency struct {
 }
 
 type IssueLabel struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	Name        string             `json:"name"`
-	Color       string             `json:"color"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	Name         string             `json:"name"`
+	Color        string             `json:"color"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	ResourceType string             `json:"resource_type"`
+	Description  string             `json:"description"`
 }
 
 type IssuePullRequest struct {
@@ -543,6 +591,7 @@ type IssuePullRequest struct {
 	LinkedByID    pgtype.UUID        `json:"linked_by_id"`
 	LinkedAt      pgtype.Timestamptz `json:"linked_at"`
 	CloseIntent   bool               `json:"close_intent"`
+	ReferenceOnly bool               `json:"reference_only"`
 }
 
 type IssueReaction struct {
@@ -727,19 +776,6 @@ type RuntimeProfile struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
-type SelfHostSourceChannel struct {
-	InstanceHash    string             `json:"instance_hash"`
-	SubjectHash     string             `json:"subject_hash"`
-	Channel         string             `json:"channel"`
-	SchemaVersion   int32              `json:"schema_version"`
-	FirstReceivedAt pgtype.Timestamptz `json:"first_received_at"`
-	LastReceivedAt  pgtype.Timestamptz `json:"last_received_at"`
-	ReportCount     int32              `json:"report_count"`
-	SourceOther     pgtype.Text        `json:"source_other"`
-	Domain          pgtype.Text        `json:"domain"`
-	DomainMd5       pgtype.Text        `json:"domain_md5"`
-}
-
 type Skill struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
@@ -759,6 +795,12 @@ type SkillFile struct {
 	Content   string             `json:"content"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SkillToLabel struct {
+	SkillID   pgtype.UUID        `json:"skill_id"`
+	LabelID   pgtype.UUID        `json:"label_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type Squad struct {
@@ -808,13 +850,6 @@ type SysCronExecution struct {
 	ErrorMsg     pgtype.Text        `json:"error_msg"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-}
-
-type SystemSetting struct {
-	Key       string             `json:"key"`
-	Value     string             `json:"value"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type TaskMessage struct {
@@ -906,6 +941,20 @@ type User struct {
 	ProfileDescription      string             `json:"profile_description"`
 	// User-preferred IANA timezone for report rendering (Viewing tz). NULL means "use the browser-detected tz at render time". Affects dashboards, charts, and any "today" label shown to this user. Does not affect data materialisation — all rollups remain in UTC.
 	Timezone pgtype.Text `json:"timezone"`
+}
+
+type UserComposioConnection struct {
+	ID                 pgtype.UUID        `json:"id"`
+	UserID             pgtype.UUID        `json:"user_id"`
+	ToolkitSlug        string             `json:"toolkit_slug"`
+	AuthConfigID       string             `json:"auth_config_id"`
+	ConnectedAccountID string             `json:"connected_account_id"`
+	ComposioUserID     string             `json:"composio_user_id"`
+	Status             string             `json:"status"`
+	ConnectedAt        pgtype.Timestamptz `json:"connected_at"`
+	LastUsedAt         pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 type VerificationCode struct {

@@ -3,6 +3,7 @@ import type {
   Agent,
   AgentTemplate,
   AgentTemplateSummary,
+  AgentBuilderSession,
   Attachment,
   BillingBalance,
   BillingBatchesPage,
@@ -19,8 +20,11 @@ import type {
   DingTalkUserSearchResponse,
   GroupedIssuesResponse,
   InboxWorkspaceUnread,
+  Label,
   ListIssuesResponse,
+  ListLabelsResponse,
   ListWebhookDeliveriesResponse,
+  ResourceLabelsResponse,
   SearchIssuesResponse,
   SearchProjectsResponse,
   Squad,
@@ -29,6 +33,52 @@ import type {
   WebhookDelivery,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
+import type { CreateFeedbackResponse } from "../feedback/types";
+
+// Label responses are consumed by settings tables and resource pickers. Keep
+// the resource type lenient so newer server scopes do not break older clients,
+// while defaulting fields that predate scoped label catalogs.
+export const LabelSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  resource_type: z.string().optional().default("issue"),
+  name: z.string(),
+  description: z.string().optional().default(""),
+  color: z.string(),
+  usage_count: z.number().optional().default(0),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const EMPTY_LABEL: Label = {
+  id: "",
+  workspace_id: "",
+  resource_type: "issue",
+  name: "",
+  description: "",
+  color: "#6b7280",
+  usage_count: 0,
+  created_at: "",
+  updated_at: "",
+};
+
+export const ListLabelsResponseSchema = z.object({
+  labels: z.array(LabelSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_LIST_LABELS_RESPONSE: ListLabelsResponse = {
+  labels: [],
+  total: 0,
+};
+
+export const ResourceLabelsResponseSchema = z.object({
+  labels: z.array(LabelSchema).default([]),
+}).loose();
+
+export const EMPTY_RESOURCE_LABELS_RESPONSE: ResourceLabelsResponse = {
+  labels: [],
+};
 
 export interface AppConfigResponse {
   cdn_domain: string;
@@ -57,6 +107,7 @@ export interface AppConfigResponse {
   daemon_server_url?: string;
   daemon_app_url?: string;
   workspace_creation_disabled?: boolean;
+  feature_flags?: Record<string, boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +237,14 @@ const BooleanWithDefaultSchema = (fallback: boolean) =>
     z.boolean().default(fallback),
   );
 
+const FeatureFlagsSchema = z.preprocess(
+  (value) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : undefined,
+  z.record(z.string(), BooleanWithDefaultSchema(false)).default({}),
+);
+
 export const AppConfigSchema = z.object({
   cdn_domain: z.string().default(""),
   cdn_signed: BooleanWithDefaultSchema(false),
@@ -207,6 +266,7 @@ export const AppConfigSchema = z.object({
   daemon_server_url: OptionalStringSchema,
   daemon_app_url: OptionalStringSchema,
   workspace_creation_disabled: BooleanWithDefaultSchema(false).optional(),
+  feature_flags: FeatureFlagsSchema,
 }).loose();
 
 export const EMPTY_APP_CONFIG: AppConfigResponse = {
@@ -221,6 +281,17 @@ export const EMPTY_APP_CONFIG: AppConfigResponse = {
   daemon_server_url: "",
   daemon_app_url: "",
   workspace_creation_disabled: false,
+  feature_flags: {},
+};
+
+export const CreateFeedbackResponseSchema = z.object({
+  id: z.string(),
+  created_at: z.string(),
+}).loose();
+
+export const EMPTY_CREATE_FEEDBACK_RESPONSE: CreateFeedbackResponse = {
+  id: "",
+  created_at: "",
 };
 
 export const CommentSchema = z.object({
@@ -530,15 +601,19 @@ const RuntimeUsageByHourSchema = z.object({
 export const RuntimeUsageByHourListSchema = z.array(RuntimeUsageByHourSchema);
 
 // ---------------------------------------------------------------------------
-// Task cancellation (`POST /api/tasks/:id/cancel`)
-//
-// This response is consumed directly by chat recovery. The embedded task
-// object stays loose so daemon/runtime fields can drift, but the optional
-// `cancelled_chat_message` payload must be well-formed before the UI deletes
-// a message from cache or restores text into the input.
+// Agent task responses. The base object stays loose so daemon/runtime fields
+// can drift while task-list consumers still validate the fields they render.
 // ---------------------------------------------------------------------------
 
-const AgentTaskResponseSchema = z.object({
+const OptionalStringArraySchema = z.preprocess(
+  (value) =>
+    Array.isArray(value) && value.every((item) => typeof item === "string")
+      ? value
+      : undefined,
+  z.array(z.string()).optional(),
+);
+
+export const AgentTaskSchema = z.object({
   id: z.string(),
   agent_id: z.string().default(""),
   runtime_id: z.string().default(""),
@@ -557,6 +632,11 @@ const AgentTaskResponseSchema = z.object({
   parent_task_id: z.string().optional(),
   attempt: z.number().optional(),
   trigger_comment_id: z.string().optional(),
+  // Coverage is additive display metadata. A mixed-version or partially
+  // upgraded server must not make one malformed optional field erase the
+  // entire execution log, so degrade that field to "absent" independently.
+  coalesced_comment_ids: OptionalStringArraySchema,
+  delivered_comment_ids: OptionalStringArraySchema,
   trigger_summary: z.string().optional(),
   handoff_note: z.string().optional(),
   kind: z.string().optional(),
@@ -564,6 +644,11 @@ const AgentTaskResponseSchema = z.object({
   relative_work_dir: z.string().optional(),
 }).loose();
 
+export const AgentTaskListSchema = z.array(AgentTaskSchema);
+
+// Task cancellation (`POST /api/tasks/:id/cancel`) is consumed directly by
+// chat recovery. Its optional message payload must be well-formed before the
+// UI deletes a message from cache or restores text into the input.
 const CancelledChatMessageSchema = z.object({
   chat_session_id: z.string(),
   message_id: z.string(),
@@ -574,7 +659,7 @@ const CancelledChatMessageSchema = z.object({
   attachments: z.array(AttachmentSchema).optional(),
 }).loose();
 
-export const CancelTaskResponseSchema = AgentTaskResponseSchema.extend({
+export const CancelTaskResponseSchema = AgentTaskSchema.extend({
   cancelled_chat_message: CancelledChatMessageSchema.nullish()
     .transform((value) => value ?? undefined),
 }).loose();
@@ -654,13 +739,45 @@ export const EMPTY_AGENT_TEMPLATE_DETAIL: AgentTemplate = {
   instructions: "",
 };
 
+// ---------------------------------------------------------------------------
+// Agent invocation permissions (MUL-3963)
+//
+// Full agent request/response payloads are NOT zod-validated today — the API
+// client returns them typed directly (see client.ts `listAgents` /
+// `getAgent` / `createAgent`), so there is no `AgentSchema` /
+// `CreateAgentRequestSchema` / `UpdateAgentRequestSchema` to extend here.
+// These lenient, exported fragments encode the new permission fields so any
+// future agent schema — and the from-template minimal agent below — can reuse
+// them. Per this file's convention the enum stays lenient (a future
+// server-side value degrades to the strict default rather than failing the
+// parse), and the target array defaults to `[]`.
+// ---------------------------------------------------------------------------
+
+export const AgentPermissionModeSchema = z
+  .enum(["private", "public_to"])
+  .catch("private");
+
+export const AgentInvocationTargetSchema = z
+  .object({
+    target_type: z.string(),
+    target_id: z.string().nullable().optional().transform((v) => v ?? null),
+  })
+  .loose();
+
+export const AgentInvocationTargetsSchema = z
+  .array(AgentInvocationTargetSchema)
+  .default([]);
+
 // `agent` is a full Agent record — schematising every field would duplicate
 // a 50-field interface and bit-rot fast. We keep it loose and require only
 // `id`, the one field the create-from-template flow consumes (used to
 // navigate to the new agent's detail page). Downstream code already
-// optional-chains the rest.
+// optional-chains the rest. The permission fields are parsed leniently when
+// present so the from-template response carries a well-formed access shape.
 const MinimalAgentSchema = z.object({
   id: z.string(),
+  permission_mode: AgentPermissionModeSchema.optional(),
+  invocation_targets: AgentInvocationTargetsSchema.optional(),
 }).loose();
 
 export const CreateAgentFromTemplateResponseSchema = z.object({
@@ -678,6 +795,18 @@ export const EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE: CreateAgentFromTemplateR
   agent: { id: "" } as Agent,
   imported_skill_ids: [],
   reused_skill_ids: [],
+};
+
+export const AgentBuilderSessionSchema = z.object({
+  session_id: z.string(),
+  builder_agent_id: z.string(),
+  runtime_id: z.string(),
+}).loose();
+
+export const EMPTY_AGENT_BUILDER_SESSION: AgentBuilderSession = {
+  session_id: "",
+  builder_agent_id: "",
+  runtime_id: "",
 };
 
 // Squad list responses carry lightweight membership previews used by hover
