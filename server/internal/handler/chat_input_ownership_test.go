@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -29,7 +30,12 @@ func setupDirectChatSession(t *testing.T, ctx context.Context, title string) (ag
 // sendDirectChat drives the transactional direct-send service path and returns
 // the owning task id. The user message is created inside the same transaction
 // with task_id = the new task, and the task owns its own input batch.
-func sendDirectChat(t *testing.T, ctx context.Context, agentID, sessionID, content string) string {
+type directChatSendResult struct {
+	TaskID    string
+	Collected bool
+}
+
+func sendDirectChatResult(t *testing.T, ctx context.Context, agentID, sessionID, content string) directChatSendResult {
 	t.Helper()
 	sess, err := testHandler.Queries.GetChatSession(ctx, parseUUID(sessionID))
 	if err != nil {
@@ -43,7 +49,15 @@ func sendDirectChat(t *testing.T, ctx context.Context, agentID, sessionID, conte
 	if err != nil {
 		t.Fatalf("SendDirectChatMessage: %v", err)
 	}
-	return uuidToString(res.Task.ID)
+	return directChatSendResult{
+		TaskID:    uuidToString(res.Task.ID),
+		Collected: res.Collected,
+	}
+}
+
+func sendDirectChat(t *testing.T, ctx context.Context, agentID, sessionID, content string) string {
+	t.Helper()
+	return sendDirectChatResult(t, ctx, agentID, sessionID, content).TaskID
 }
 
 func markTaskRunning(t *testing.T, ctx context.Context, taskID string) {
@@ -65,12 +79,204 @@ func completeResult(t *testing.T, output string) []byte {
 	return b
 }
 
-// TestDirectChat_TaskOwnsItsOwnInputBatch is the core input-boundary contract
-// (MUL-4351): each direct send owns exactly the user message it created. When
-// U1→T1 and U2→T2 are both queued, T1's claim must deliver ONLY U1 (never
-// "U1\n\nU2" the way the trailing-message selector would), and after T1
-// completes, T2 delivers ONLY U2.
-func TestDirectChat_TaskOwnsItsOwnInputBatch(t *testing.T) {
+func TestSendDirectChatMessageCollectsQueuedMessages(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID, sessionID, _, _ := setupDirectChatSession(t, ctx, "collector chat")
+
+	first := sendDirectChatResult(t, ctx, agentID, sessionID, "first")
+	second := sendDirectChatResult(t, ctx, agentID, sessionID, "second")
+
+	if first.Collected {
+		t.Fatal("first send must create a new task")
+	}
+	if !second.Collected {
+		t.Fatal("second send must collect into the queued task")
+	}
+	if second.TaskID != first.TaskID {
+		t.Fatalf("collector task mismatch: first=%s second=%s", first.TaskID, second.TaskID)
+	}
+
+	var taskCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue WHERE chat_session_id = $1
+	`, sessionID).Scan(&taskCount); err != nil {
+		t.Fatalf("count chat tasks: %v", err)
+	}
+	if taskCount != 1 {
+		t.Fatalf("expected one queued collector, got %d tasks", taskCount)
+	}
+
+	owned, err := testHandler.Queries.ListChatInputMessages(ctx, parseUUID(first.TaskID))
+	if err != nil {
+		t.Fatalf("list collector input: %v", err)
+	}
+	if got := msgContents(owned); len(got) != 2 || got[0] != "first" || got[1] != "second" {
+		t.Fatalf("collector input = %#v, want [first second]", got)
+	}
+}
+
+func TestSendDirectChatMessageCreatesCollectorBehindRunningTask(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID, sessionID, _, _ := setupDirectChatSession(t, ctx, "collector behind running chat")
+
+	running := sendDirectChatResult(t, ctx, agentID, sessionID, "running")
+	markTaskRunning(t, ctx, running.TaskID)
+	next := sendDirectChatResult(t, ctx, agentID, sessionID, "next one")
+	collected := sendDirectChatResult(t, ctx, agentID, sessionID, "next two")
+
+	if next.Collected {
+		t.Fatal("first send behind a running task must create the next collector")
+	}
+	if !collected.Collected || collected.TaskID != next.TaskID {
+		t.Fatalf("later send must reuse next collector: next=%+v collected=%+v", next, collected)
+	}
+	if next.TaskID == running.TaskID {
+		t.Fatal("running task input must remain sealed")
+	}
+
+	var taskCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue WHERE chat_session_id = $1
+	`, sessionID).Scan(&taskCount); err != nil {
+		t.Fatalf("count chat tasks: %v", err)
+	}
+	if taskCount != 2 {
+		t.Fatalf("expected running task plus one collector, got %d tasks", taskCount)
+	}
+
+	owned, err := testHandler.Queries.ListChatInputMessages(ctx, parseUUID(next.TaskID))
+	if err != nil {
+		t.Fatalf("list next collector input: %v", err)
+	}
+	if got := msgContents(owned); len(got) != 2 || got[0] != "next one" || got[1] != "next two" {
+		t.Fatalf("next collector input = %#v, want [next one next two]", got)
+	}
+}
+
+func TestSendDirectChatMessageConcurrentCollector(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID, sessionID, _, _ := setupDirectChatSession(t, ctx, "concurrent collector chat")
+	session, err := testHandler.Queries.GetChatSession(ctx, parseUUID(sessionID))
+	if err != nil {
+		t.Fatalf("load chat session: %v", err)
+	}
+	agent, err := testHandler.Queries.GetAgent(ctx, parseUUID(agentID))
+	if err != nil {
+		t.Fatalf("load agent: %v", err)
+	}
+
+	type result struct {
+		taskID    string
+		collected bool
+		err       error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for _, content := range []string{"alpha", "beta"} {
+		content := content
+		go func() {
+			<-start
+			res, sendErr := testHandler.TaskService.SendDirectChatMessage(
+				ctx, session, agent, parseUUID(testUserID), content, nil, "member", parseUUID(testUserID),
+			)
+			if sendErr != nil {
+				results <- result{err: sendErr}
+				return
+			}
+			results <- result{taskID: uuidToString(res.Task.ID), collected: res.Collected}
+		}()
+	}
+	close(start)
+
+	first := <-results
+	second := <-results
+	if first.err != nil || second.err != nil {
+		t.Fatalf("concurrent sends failed: first=%v second=%v", first.err, second.err)
+	}
+	if first.taskID != second.taskID {
+		t.Fatalf("concurrent sends created different collectors: first=%s second=%s", first.taskID, second.taskID)
+	}
+	if first.collected == second.collected {
+		t.Fatalf("expected exactly one collected result: first=%t second=%t", first.collected, second.collected)
+	}
+
+	var taskCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue WHERE chat_session_id = $1
+	`, sessionID).Scan(&taskCount); err != nil {
+		t.Fatalf("count chat tasks: %v", err)
+	}
+	if taskCount != 1 {
+		t.Fatalf("expected one queued collector after concurrent sends, got %d", taskCount)
+	}
+}
+
+func TestQueuedDirectChatCollectorLocksTaskUntilMessageCommit(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID, sessionID, _, _ := setupDirectChatSession(t, ctx, "collector dispatch lock chat")
+	taskID := sendDirectChat(t, ctx, agentID, sessionID, "first")
+
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin collector transaction: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := db.New(tx)
+	if _, err := qtx.LockChatSessionForDirectSend(ctx, parseUUID(sessionID)); err != nil {
+		t.Fatalf("lock session: %v", err)
+	}
+	collector, err := qtx.GetQueuedDirectChatCollector(ctx, parseUUID(sessionID))
+	if err != nil {
+		t.Fatalf("select collector: %v", err)
+	}
+	if uuidToString(collector.ID) != taskID {
+		t.Fatalf("collector = %s, want %s", uuidToString(collector.ID), taskID)
+	}
+
+	dispatchDone := make(chan error, 1)
+	go func() {
+		_, updateErr := testPool.Exec(ctx, `
+			UPDATE agent_task_queue SET status = 'dispatched', dispatched_at = now()
+			WHERE id = $1 AND status = 'queued'
+		`, taskID)
+		dispatchDone <- updateErr
+	}()
+
+	select {
+	case updateErr := <-dispatchDone:
+		t.Fatalf("dispatcher updated collector before message transaction committed: %v", updateErr)
+	case <-time.After(100 * time.Millisecond):
+		// Expected: SELECT ... FOR UPDATE keeps dispatch behind the send.
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit collector transaction: %v", err)
+	}
+	select {
+	case updateErr := <-dispatchDone:
+		if updateErr != nil {
+			t.Fatalf("dispatcher update after commit: %v", updateErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher remained blocked after collector transaction committed")
+	}
+}
+
+// TestDirectChat_QueuedMessagesShareCollectorInputBatch pins the collector
+// contract: messages arriving before dispatch share one task-owned batch and
+// are delivered together in their original order.
+func TestDirectChat_QueuedMessagesShareCollectorInputBatch(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -80,26 +286,14 @@ func TestDirectChat_TaskOwnsItsOwnInputBatch(t *testing.T) {
 	t1 := sendDirectChat(t, ctx, agentID, sessionID, "看上海天气")
 	t2 := sendDirectChat(t, ctx, agentID, sessionID, "还有青岛")
 
-	// Both tasks own their own input batch.
+	if t2 != t1 {
+		t.Fatalf("queued messages must share one collector: first=%s second=%s", t1, t2)
+	}
 	assertTaskInputOwner(t, ctx, t1, t1)
-	assertTaskInputOwner(t, ctx, t2, t2)
 
 	claimed := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
-	if claimed.ChatMessage != "看上海天气" {
-		t.Fatalf("first claim must deliver ONLY its owned message; got %q", claimed.ChatMessage)
-	}
-
-	// Complete the first task (the older T1, claimed first by created_at order),
-	// then the next claim must deliver only the other message rather than a
-	// coalesced pair. The claim leaves T1 dispatched; move it to running so the
-	// completion CAS (WHERE status='running') applies.
-	markTaskRunning(t, ctx, t1)
-	if _, err := testHandler.TaskService.CompleteTask(ctx, parseUUID(t1), completeResult(t, "上海晴"), "", ""); err != nil {
-		t.Fatalf("complete first task: %v", err)
-	}
-	claimed2 := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
-	if claimed2.ChatMessage != "还有青岛" {
-		t.Fatalf("second claim must deliver ONLY the second owned message; got %q", claimed2.ChatMessage)
+	if claimed.ChatMessage != "看上海天气\n\n还有青岛" {
+		t.Fatalf("collector claim must deliver both queued messages; got %q", claimed.ChatMessage)
 	}
 }
 
@@ -272,6 +466,25 @@ func TestFailTask_ChatRetryInheritsInputOwnerAndPriority(t *testing.T) {
 	}
 	if len(owned) != 1 || owned[0].Content != "root question" {
 		t.Fatalf("retry child must read the root input batch; got %+v", msgContents(owned))
+	}
+
+	// A retry child replays the root-owned input batch, so it must never become
+	// the collector for a newly-arriving message. That message needs a fresh
+	// self-owned task whose input will actually be loaded when claimed.
+	next := sendDirectChatResult(t, ctx, agentID, sessionID, "new question")
+	if next.Collected {
+		t.Fatal("new message must not collect into a queued retry child")
+	}
+	if next.TaskID == childID {
+		t.Fatal("new message must create a fresh collector behind the retry child")
+	}
+	assertTaskInputOwner(t, ctx, next.TaskID, next.TaskID)
+	nextOwned, err := testHandler.Queries.ListChatInputMessages(ctx, parseUUID(next.TaskID))
+	if err != nil {
+		t.Fatalf("list fresh collector input: %v", err)
+	}
+	if len(nextOwned) != 1 || nextOwned[0].Content != "new question" {
+		t.Fatalf("fresh collector must own the new message; got %+v", msgContents(nextOwned))
 	}
 }
 

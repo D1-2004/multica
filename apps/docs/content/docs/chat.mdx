@@ -18,7 +18,27 @@ Two rules of thumb:
 
 ## Start a conversation
 
-Open **Chat** from the sidebar, pick an agent, and start a new conversation. The interface feels like any messaging app: you send a message, the agent replies. Each message triggers a run in the background (an enqueued `task`), so replies may take a few seconds.
+Open **Chat** from the sidebar, pick an agent, and start a new conversation. The interface feels like any messaging app: you send a message, the agent replies. Messages waiting in the same Session are collected into one queued run; once that run starts, later messages form the next queued run.
+
+### Manage Chat Sessions from the CLI
+
+The CLI talks directly to the Chat Session API; these commands do not create or depend on an issue.
+
+```bash
+multica chat list
+multica chat start --agent Lambda --title "Release review" "Review today's release"
+multica chat send abcd "Also check the rollback plan"
+multica chat messages abcd
+multica chat get abcd
+```
+
+`abcd` can be any unique Session ID prefix of at least four characters. Use `-` as the message to read multiline content from stdin:
+
+```bash
+cat prompt.md | multica chat send abcd -
+```
+
+`chat start` and `chat send` return JSON containing `session_id`, `message_id`, `task_id`, and `collected`. A `collected: true` result means the message joined the existing queued execution for that Session.
 
 ## What an agent can and cannot do in chat
 

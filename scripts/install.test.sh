@@ -3,133 +3,150 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Build a self-contained sandbox with stub `curl` and a tarball that the
-# release-binary fallback path will download. Each test supplies its own
-# `brew` stub to model a specific Homebrew failure mode.
-_setup_sandbox() {
+setup_sandbox() {
   local tmp="$1"
-  local stub_bin="$tmp/stub-bin"
-  local install_bin="$tmp/install-bin"
-  local payload_dir="$tmp/payload"
-  mkdir -p "$stub_bin" "$install_bin" "$payload_dir"
+  mkdir -p "$tmp/stub-bin" "$tmp/install-bin" "$tmp/home"
 
-  cat >"$payload_dir/multica" <<'STUB'
+  cat >"$tmp/stub-bin/git" <<'STUB'
 #!/usr/bin/env bash
-echo "multica v0.3.2 (commit: test)"
-STUB
-  chmod +x "$payload_dir/multica"
-  tar -czf "$tmp/multica.tar.gz" -C "$payload_dir" multica
-
-  cat >"$stub_bin/curl" <<'STUB'
-#!/usr/bin/env bash
-if [[ "$*" == *"-sI"* ]]; then
-  printf 'HTTP/2 302\r\nlocation: https://github.com/multica-ai/multica/releases/tag/v0.3.2\r\n'
-  exit 0
+set -euo pipefail
+printf 'git %s\n' "$*" >> "$MULTICA_TEST_LOG"
+if [ "${1:-}" = "clone" ]; then
+  destination="${@: -1}"
+  mkdir -p "$destination/.git" "$destination/server"
 fi
+if [[ "$*" == *"rev-parse --short HEAD"* ]]; then
+  printf 'abc1234\n'
+fi
+STUB
+  chmod +x "$tmp/stub-bin/git"
 
-out=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -o)
-      out="$2"
-      shift 2
-      ;;
-    *)
-      shift
-      ;;
-  esac
+  cat >"$tmp/stub-bin/go" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'go cwd=%s args=%s\n' "$PWD" "$*" >> "$MULTICA_TEST_LOG"
+if [ "${MULTICA_TEST_GO_FAIL:-}" = "1" ]; then
+  exit 19
+fi
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    output="$2"
+    break
+  fi
+  shift
 done
-
-if [[ -z "$out" ]]; then
-  echo "stub curl expected -o" >&2
-  exit 2
-fi
-cp "$MULTICA_TEST_ARCHIVE" "$out"
+[ -n "$output" ] || exit 20
+printf '#!/usr/bin/env bash\necho source-cli\n' > "$output"
+chmod +x "$output"
 STUB
-  chmod +x "$stub_bin/curl"
+  chmod +x "$tmp/stub-bin/go"
 }
 
-_run_installer() {
+run_installer() {
   local tmp="$1"
-  local out="$tmp/install.out"
-  local err="$tmp/install.err"
-  if ! PATH="$tmp/stub-bin:$tmp/install-bin:/usr/bin:/bin" \
+  shift
+  HOME="$tmp/home" \
+    PATH="$tmp/stub-bin:/usr/bin:/bin" \
     MULTICA_BIN_DIR="$tmp/install-bin" \
-    MULTICA_TEST_ARCHIVE="$tmp/multica.tar.gz" \
-    bash "$ROOT_DIR/scripts/install.sh" >"$out" 2>"$err"; then
-    echo "install.sh exited non-zero" >&2
-    cat "$out" >&2 || true
-    cat "$err" >&2 || true
-    return 1
-  fi
+    MULTICA_TEST_LOG="$tmp/commands.log" \
+    bash "$ROOT_DIR/scripts/install.sh" "$@" >"$tmp/install.out" 2>"$tmp/install.err"
+}
 
-  if [[ ! -x "$tmp/install-bin/multica" ]]; then
-    echo "expected fallback binary at $tmp/install-bin/multica" >&2
-    cat "$out" >&2 || true
-    cat "$err" >&2 || true
-    return 1
-  fi
-
-  if ! grep -q "Homebrew output (last 80 lines):" "$err"; then
-    echo "expected diagnostic tail in stderr" >&2
-    cat "$err" >&2 || true
+assert_contains() {
+  local file="$1"
+  local expected="$2"
+  if ! grep -Fq -- "$expected" "$file"; then
+    echo "expected $file to contain: $expected" >&2
+    cat "$file" >&2 || true
     return 1
   fi
 }
 
-test_brew_install_failure_falls_back_to_release_binary() {
+test_default_installs_fork_develop() {
   local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
+  setup_sandbox "$tmp"
 
-  _setup_sandbox "$tmp"
-  cat >"$tmp/stub-bin/brew" <<'STUB'
-#!/usr/bin/env bash
-case "${1:-}" in
-  tap)
-    exit 0
-    ;;
-  install)
-    echo "simulated brew install failure" >&2
-    exit 42
-    ;;
-  list)
-    exit 1
-    ;;
-  *)
-    exit 0
-    ;;
-esac
-STUB
-  chmod +x "$tmp/stub-bin/brew"
+  run_installer "$tmp"
 
-  _run_installer "$tmp"
+  [ -x "$tmp/install-bin/multica" ]
+  [ "$(tr -d '\r\n' < "$tmp/home/.multica/update-source")" = "fork" ]
+  assert_contains "$tmp/commands.log" "git clone --filter=blob:none --no-checkout https://github.com/D1-2004/multica.git"
+  assert_contains "$tmp/commands.log" "fetch --force --depth=1 origin develop"
+  assert_contains "$tmp/commands.log" "go cwd=$tmp/home/.multica/source/fork/server"
 }
 
-test_brew_tap_failure_falls_back_to_release_binary() {
+test_official_source_defaults_to_main() {
   local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
+  setup_sandbox "$tmp"
 
-  _setup_sandbox "$tmp"
-  cat >"$tmp/stub-bin/brew" <<'STUB'
-#!/usr/bin/env bash
-case "${1:-}" in
-  tap)
-    echo "simulated brew tap failure" >&2
-    exit 17
-    ;;
-  *)
-    echo "brew $* should not be reached after tap failure" >&2
-    exit 99
-    ;;
-esac
-STUB
-  chmod +x "$tmp/stub-bin/brew"
+  run_installer "$tmp" --source official
 
-  _run_installer "$tmp"
+  [ "$(tr -d '\r\n' < "$tmp/home/.multica/update-source")" = "official" ]
+  assert_contains "$tmp/commands.log" "git clone --filter=blob:none --no-checkout https://github.com/multica-ai/multica.git"
+  assert_contains "$tmp/commands.log" "fetch --force --depth=1 origin main"
 }
 
-test_brew_install_failure_falls_back_to_release_binary
-test_brew_tap_failure_falls_back_to_release_binary
+test_ref_override_is_used() {
+  local tmp
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  setup_sandbox "$tmp"
+
+  run_installer "$tmp" --source fork --ref feature/chat
+  assert_contains "$tmp/commands.log" "fetch --force --depth=1 origin feature/chat"
+}
+
+test_build_failure_preserves_binary_and_source() {
+  local tmp
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  setup_sandbox "$tmp"
+  printf 'old binary' > "$tmp/install-bin/multica"
+  chmod +x "$tmp/install-bin/multica"
+  mkdir -p "$tmp/home/.multica"
+  printf 'official\n' > "$tmp/home/.multica/update-source"
+
+  if HOME="$tmp/home" \
+    PATH="$tmp/stub-bin:/usr/bin:/bin" \
+    MULTICA_BIN_DIR="$tmp/install-bin" \
+    MULTICA_TEST_LOG="$tmp/commands.log" \
+    MULTICA_TEST_GO_FAIL=1 \
+    bash "$ROOT_DIR/scripts/install.sh" --source fork >"$tmp/install.out" 2>"$tmp/install.err"; then
+    echo "installer unexpectedly succeeded with a failed source build" >&2
+    return 1
+  fi
+
+  [ "$(cat "$tmp/install-bin/multica")" = "old binary" ]
+  [ "$(tr -d '\r\n' < "$tmp/home/.multica/update-source")" = "official" ]
+  assert_contains "$tmp/install.err" "existing CLI was not changed"
+}
+
+test_missing_tool_is_actionable() {
+  local tmp
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  setup_sandbox "$tmp"
+  mv "$tmp/stub-bin/go" "$tmp/stub-bin/go.hidden"
+
+  if HOME="$tmp/home" \
+    PATH="$tmp/stub-bin:/usr/bin:/bin" \
+    MULTICA_BIN_DIR="$tmp/install-bin" \
+    MULTICA_TEST_LOG="$tmp/commands.log" \
+    bash "$ROOT_DIR/scripts/install.sh" >"$tmp/install.out" 2>"$tmp/install.err"; then
+    echo "installer unexpectedly succeeded without go" >&2
+    return 1
+  fi
+  assert_contains "$tmp/install.err" "Go is required"
+}
+
+test_default_installs_fork_develop
+test_official_source_defaults_to_main
+test_ref_override_is_used
+test_build_failure_preserves_binary_and_source
+test_missing_tool_is_actionable
 echo "install.sh tests passed"

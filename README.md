@@ -67,21 +67,28 @@ Multica manages the full agent lifecycle: from task assignment to execution moni
 
 ## Quick Install
 
-### macOS / Linux (Homebrew - recommended)
+### macOS / Linux (fork CLI from source)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/D1-2004/multica/develop/scripts/install.sh | bash
+```
+
+This fork defaults to `D1-2004/multica@develop`, so fork-only commands are not replaced by an official release. Git and Go 1.26+ are required.
+
+To install the official source instead, or select an explicit ref:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/D1-2004/multica/develop/scripts/install.sh | bash -s -- --source official
+curl -fsSL https://raw.githubusercontent.com/D1-2004/multica/develop/scripts/install.sh | bash -s -- --source fork --ref <branch-or-tag>
+```
+
+The selected source is saved in `~/.multica/update-source`. Later, `multica update` keeps using it; `multica update --source fork|official --ref <ref>` switches source explicitly.
+
+### macOS / Linux (official Homebrew CLI)
 
 ```bash
 brew install multica-ai/tap/multica
 ```
-
-Use `brew upgrade multica-ai/tap/multica` to keep the CLI current.
-
-### macOS / Linux (install script)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
-```
-
-Use this if Homebrew is not available. The script installs the Multica CLI on macOS and Linux by using Homebrew when it is on `PATH`, otherwise it downloads the binary directly.
 
 ### Windows (PowerShell)
 
@@ -98,7 +105,7 @@ multica setup          # Connect to Multica Cloud, log in, start daemon
 > **Self-hosting?** Add `--with-server` to deploy a full Multica server on your machine:
 >
 > ```bash
-> curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
+> curl -fsSL https://raw.githubusercontent.com/D1-2004/multica/develop/scripts/install.sh | bash -s -- --with-server
 > multica setup self-host
 > ```
 >
@@ -148,7 +155,10 @@ The `multica` CLI connects your local machine to Multica — authenticate, manag
 | `multica workspace switch <id\|slug>` | Switch the default workspace for this profile |
 | `multica issue list` | List issues in your workspace |
 | `multica issue create` | Create a new issue |
-| `multica update` | Update to the latest version |
+| `multica chat start --agent <name> <message>` | Start a managed Chat Session |
+| `multica chat send <session> <message>` | Send or collect a message by Session |
+| `multica chat list` | List Chat Sessions |
+| `multica update` | Update from the persisted fork/official source |
 
 See the [CLI and Daemon Guide](CLI_AND_DAEMON.md) for the full command reference.
 
@@ -191,4 +201,3 @@ make dev
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow, worktree support, testing, and troubleshooting.
 
 An iOS mobile client lives in [`apps/mobile/`](apps/mobile/) — see its [README](apps/mobile/README.md) for how to build it onto your own iPhone.
-

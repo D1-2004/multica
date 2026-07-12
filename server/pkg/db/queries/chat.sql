@@ -202,6 +202,25 @@ VALUES (
 )
 RETURNING *;
 
+-- name: LockChatSessionForDirectSend :one
+-- Serializes direct sends for one session so concurrent callers cannot each
+-- create their own queued collector after observing the same empty queue.
+SELECT id FROM chat_session
+WHERE id = $1
+FOR UPDATE;
+
+-- name: GetQueuedDirectChatCollector :one
+-- A task-owned direct-chat task may continue collecting messages only while
+-- it is queued. Once dispatched/running its input batch is sealed and a later
+-- send must create the next collector.
+SELECT * FROM agent_task_queue
+WHERE chat_session_id = $1
+  AND status = 'queued'
+  AND chat_input_task_id = id
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+FOR UPDATE;
+
 -- name: SetChatTaskInputOwnerSelf :one
 -- Stamps a freshly-created direct-chat task as the owner of its own input batch
 -- (chat_input_task_id = id), so a later claim loads exactly the user messages

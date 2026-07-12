@@ -1130,6 +1130,7 @@ type DirectChatSendResult struct {
 	Task               db.AgentTaskQueue
 	Message            db.ChatMessage
 	BoundAttachmentIDs []pgtype.UUID
+	Collected          bool
 }
 
 // SendDirectChatMessage atomically persists one web/mobile direct-chat turn:
@@ -1150,30 +1151,41 @@ func (s *TaskService) SendDirectChatMessage(ctx context.Context, session db.Chat
 
 	var out DirectChatSendResult
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
-		task, err := qtx.CreateChatTask(ctx, db.CreateChatTaskParams{
-			AgentID:              session.AgentID,
-			RuntimeID:            agent.RuntimeID,
-			Priority:             2, // medium priority for chat; matches EnqueueChatTask
-			ChatSessionID:        session.ID,
-			InitiatorUserID:      initiatorUserID,
-			OriginatorUserID:     initiatorUserID,
-			ForceFreshSession:    pgtype.Bool{Bool: false, Valid: true},
-			RuntimeMcpOverlay:    overlay.Overlay,
-			RuntimeConnectedApps: overlay.ConnectedApps,
-		})
-		if err != nil {
-			return fmt.Errorf("create direct chat task: %w", err)
+		if _, err := qtx.LockChatSessionForDirectSend(ctx, session.ID); err != nil {
+			return fmt.Errorf("lock direct chat session: %w", err)
 		}
-		// Claim this task's own input batch (chat_input_task_id = id) in the same
-		// transaction, before the user message is written with task_id = task.id.
-		task, err = qtx.SetChatTaskInputOwnerSelf(ctx, task.ID)
-		if err != nil {
-			return fmt.Errorf("stamp direct chat input owner: %w", err)
+
+		task, err := qtx.GetQueuedDirectChatCollector(ctx, session.ID)
+		if err == nil {
+			out.Collected = true
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("find queued direct chat collector: %w", err)
+		} else {
+			task, err = qtx.CreateChatTask(ctx, db.CreateChatTaskParams{
+				AgentID:              session.AgentID,
+				RuntimeID:            agent.RuntimeID,
+				Priority:             2, // medium priority for chat; matches EnqueueChatTask
+				ChatSessionID:        session.ID,
+				InitiatorUserID:      initiatorUserID,
+				OriginatorUserID:     initiatorUserID,
+				ForceFreshSession:    pgtype.Bool{Bool: false, Valid: true},
+				RuntimeMcpOverlay:    overlay.Overlay,
+				RuntimeConnectedApps: overlay.ConnectedApps,
+			})
+			if err != nil {
+				return fmt.Errorf("create direct chat task: %w", err)
+			}
+			// The task owns the messages collected before it leaves queued state.
+			task, err = qtx.SetChatTaskInputOwnerSelf(ctx, task.ID)
+			if err != nil {
+				return fmt.Errorf("stamp direct chat input owner: %w", err)
+			}
 		}
 		out.Task = task
 
-		// Create the user message already owned by this task (task_id = task.id),
-		// so it belongs to this immutable input batch the instant it exists.
+		// Create the user message already owned by the selected task. A queued
+		// collector may own several messages; dispatch seals the batch because
+		// GetQueuedDirectChatCollector no longer returns that task afterwards.
 		msg, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
 			ChatSessionID: session.ID,
 			Role:          "user",
@@ -1212,13 +1224,16 @@ func (s *TaskService) SendDirectChatMessage(ctx context.Context, session db.Chat
 		return nil, err
 	}
 
-	slog.Info("direct chat task enqueued",
+	slog.Info("direct chat message queued",
 		"task_id", util.UUIDToString(out.Task.ID),
 		"chat_session_id", util.UUIDToString(session.ID),
-		"agent_id", util.UUIDToString(session.AgentID))
-	// Notify only after commit. See EnqueueTaskForIssue for ordering rationale.
-	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, out.Task)
-	s.NotifyTaskEnqueued(ctx, out.Task)
+		"agent_id", util.UUIDToString(session.AgentID),
+		"collected", out.Collected)
+	if !out.Collected {
+		// Notify only after commit. See EnqueueTaskForIssue for ordering rationale.
+		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, out.Task)
+		s.NotifyTaskEnqueued(ctx, out.Task)
+	}
 	return &out, nil
 }
 
