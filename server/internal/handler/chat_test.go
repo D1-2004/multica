@@ -124,6 +124,48 @@ func TestSendChatMessage_LinksAttachments(t *testing.T) {
 	}
 }
 
+func TestSendChatMessage_ReportsQueuedCollection(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	origLauncher := testHandler.TaskService.RuntimeLauncher
+	testHandler.TaskService.RuntimeLauncher = nil
+	defer func() { testHandler.TaskService.RuntimeLauncher = origLauncher }()
+
+	agentID := createHandlerTestAgent(t, "ChatSendCollectedAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	send := func(content string) SendChatMessageResponse {
+		t.Helper()
+		req := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{
+			"content": content,
+		})
+		req = withURLParam(req, "sessionId", sessionID)
+		req = withChatTestWorkspaceCtx(t, req)
+		w := httptest.NewRecorder()
+		testHandler.SendChatMessage(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("SendChatMessage: expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+		var response SendChatMessageResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode send response: %v", err)
+		}
+		return response
+	}
+
+	first := send("first")
+	second := send("second")
+	if first.Collected {
+		t.Fatal("first send must report collected=false")
+	}
+	if !second.Collected {
+		t.Fatal("second queued send must report collected=true")
+	}
+	if first.TaskID != second.TaskID {
+		t.Fatalf("queued sends must report the same collector task: first=%s second=%s", first.TaskID, second.TaskID)
+	}
+}
+
 // TestSendChatMessage_ArchivedAgent verifies that sending to a session whose
 // agent was archived is rejected with 409 BEFORE any message is persisted.
 // EnqueueChatTask rejects an archived agent, but only after CreateChatMessage;
