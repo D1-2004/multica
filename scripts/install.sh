@@ -21,7 +21,6 @@ SOURCE_REF="${MULTICA_REF:-}"
 SOURCE_ROOT="${MULTICA_SOURCE_DIR:-$HOME/.multica/source}"
 SOURCE_DEFAULT_REF=""
 REPO_URL=""
-REPO_WEB_URL=""  # without .git, for GitHub web APIs
 INSTALL_DIR="${MULTICA_INSTALL_DIR:-$HOME/.multica/server}"
 
 # Colors (disabled when not a terminal)
@@ -114,13 +113,11 @@ resolve_source() {
       SOURCE_NAME="fork"
       SOURCE_DEFAULT_REF="develop"
       REPO_URL="https://github.com/D1-2004/multica.git"
-      REPO_WEB_URL="https://github.com/D1-2004/multica"
       ;;
     official)
       SOURCE_NAME="official"
       SOURCE_DEFAULT_REF="main"
       REPO_URL="https://github.com/multica-ai/multica.git"
-      REPO_WEB_URL="https://github.com/multica-ai/multica"
       ;;
     *)
       fail "Unknown source '$1'. Use --source fork or --source official."
@@ -217,21 +214,14 @@ add_to_path() {
   done
 }
 
-get_latest_version() {
-  # grep exits 1 when no match; use `|| true` to avoid triggering pipefail
-  curl -sI "$REPO_WEB_URL/releases/latest" 2>/dev/null | grep -i '^location:' | sed 's/.*tag\///' | tr -d '\r\n' || true
-}
-
 get_selfhost_ref() {
   if [ -n "${MULTICA_SELFHOST_REF:-}" ]; then
     printf '%s' "$MULTICA_SELFHOST_REF"
     return
   fi
 
-  local latest
-  latest=$(get_latest_version)
-  if [ -n "$latest" ]; then
-    printf '%s' "$latest"
+	if [ -n "${SOURCE_REF:-}" ]; then
+	  printf '%s' "$SOURCE_REF"
     return
   fi
 
@@ -309,6 +299,7 @@ setup_server() {
   if [ -d "$INSTALL_DIR/.git" ]; then
     info "Updating existing installation at $INSTALL_DIR..."
     cd "$INSTALL_DIR"
+	git remote set-url origin "$REPO_URL"
   else
     info "Cloning Multica repository..."
     if ! command_exists git; then
@@ -509,7 +500,7 @@ main() {
 		echo "  MULTICA_SOURCE_DIR    Managed git checkout root"
 		echo "                        (default: \$HOME/.multica/source)"
         echo "  MULTICA_SELFHOST_REF  Git ref to check out for self-host assets"
-		echo "                        (default: latest release tag, falling back to the source default)"
+		echo "                        (default: --ref or the selected source default)"
         echo ""
         echo "After installation, run 'multica setup' to configure your environment."
         exit 0
