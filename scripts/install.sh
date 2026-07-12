@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Multica installer — installs the CLI and optionally provisions a self-host server.
 #
-# Install / upgrade CLI only:
-#   curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+# Install / upgrade the fork CLI from source (default):
+#   curl -fsSL https://raw.githubusercontent.com/D1-2004/multica/develop/scripts/install.sh | bash
+# Install the official CLI from source:
+#   curl -fsSL https://raw.githubusercontent.com/D1-2004/multica/develop/scripts/install.sh | bash -s -- --source official
 #
 # Install CLI + provision self-host server:
-#   curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
+#   curl -fsSL https://raw.githubusercontent.com/D1-2004/multica/develop/scripts/install.sh | bash -s -- --with-server
 #
 # After installation, run `multica setup` to configure your environment.
 #
@@ -14,10 +16,13 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-REPO_URL="https://github.com/multica-ai/multica.git"
-REPO_WEB_URL="https://github.com/multica-ai/multica"  # without .git, for GitHub web APIs
+SOURCE_NAME="${MULTICA_SOURCE:-fork}"
+SOURCE_REF="${MULTICA_REF:-}"
+SOURCE_ROOT="${MULTICA_SOURCE_DIR:-$HOME/.multica/source}"
+SOURCE_DEFAULT_REF=""
+REPO_URL=""
+REPO_WEB_URL=""  # without .git, for GitHub web APIs
 INSTALL_DIR="${MULTICA_INSTALL_DIR:-$HOME/.multica/server}"
-BREW_PACKAGE="multica-ai/tap/multica"
 
 # Colors (disabled when not a terminal)
 if [ -t 1 ] || [ -t 2 ]; then
@@ -103,85 +108,103 @@ detect_os() {
 # ---------------------------------------------------------------------------
 # CLI Installation
 # ---------------------------------------------------------------------------
-_dump_brew_log() {
-  local log="$1"
-  if [ -s "$log" ]; then
-    warn "Homebrew output (last 80 lines):"
-    tail -n 80 "$log" | sed 's/^/  /' >&2
+resolve_source() {
+  case "$1" in
+    fork)
+      SOURCE_NAME="fork"
+      SOURCE_DEFAULT_REF="develop"
+      REPO_URL="https://github.com/D1-2004/multica.git"
+      REPO_WEB_URL="https://github.com/D1-2004/multica"
+      ;;
+    official)
+      SOURCE_NAME="official"
+      SOURCE_DEFAULT_REF="main"
+      REPO_URL="https://github.com/multica-ai/multica.git"
+      REPO_WEB_URL="https://github.com/multica-ai/multica"
+      ;;
+    *)
+      fail "Unknown source '$1'. Use --source fork or --source official."
+      ;;
+  esac
+}
+
+checkout_cli_source() {
+  local source_dir="$1"
+  local ref="$2"
+
+  mkdir -p "$SOURCE_ROOT"
+  if [ -d "$source_dir/.git" ]; then
+    git -C "$source_dir" remote set-url origin "$REPO_URL"
+  else
+    if [ -e "$source_dir" ]; then
+      warn "Removing incomplete managed source checkout at $source_dir"
+      rm -rf "$source_dir"
+    fi
+    git clone --filter=blob:none --no-checkout "$REPO_URL" "$source_dir"
+  fi
+  git -C "$source_dir" fetch --force --depth=1 origin "$ref"
+  git -C "$source_dir" checkout --detach FETCH_HEAD
+}
+
+select_cli_bin_dir() {
+  if [ -n "${MULTICA_BIN_DIR:-}" ]; then
+    printf '%s' "$MULTICA_BIN_DIR"
+  elif [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
+    printf '%s' "/usr/local/bin"
+  else
+    printf '%s' "$HOME/.local/bin"
   fi
 }
 
-install_cli_brew() {
-  info "Installing Multica CLI via Homebrew..."
-  local brew_log
-  brew_log=$(mktemp)
-  if ! brew tap multica-ai/tap >"$brew_log" 2>&1; then
-    warn "Failed to add Homebrew tap. Falling back to GitHub Releases binary install."
-    _dump_brew_log "$brew_log"
-    rm -f "$brew_log"
-    return 1
-  fi
-  # brew install exits non-zero if already installed on older Homebrew versions
-  if ! brew install "$BREW_PACKAGE" >"$brew_log" 2>&1; then
-    if brew list "$BREW_PACKAGE" >/dev/null 2>&1; then
-      rm -f "$brew_log"
-      ok "Multica CLI already installed via Homebrew"
-    else
-      warn "Failed to install multica via Homebrew. Falling back to GitHub Releases binary install."
-      _dump_brew_log "$brew_log"
-      rm -f "$brew_log"
-      return 1
-    fi
-  else
-    rm -f "$brew_log"
-    ok "Multica CLI installed via Homebrew"
-  fi
+save_update_source() {
+  local config_dir="$HOME/.multica"
+  local tmp
+  mkdir -p "$config_dir"
+  tmp=$(mktemp "$config_dir/.update-source.XXXXXX")
+  chmod 600 "$tmp"
+  printf '%s\n' "$SOURCE_NAME" > "$tmp"
+  mv -f "$tmp" "$config_dir/update-source"
 }
 
-install_cli_binary() {
-  info "Installing Multica CLI from GitHub Releases..."
+install_cli_source() {
+  local ref="${SOURCE_REF:-$SOURCE_DEFAULT_REF}"
+  local source_dir="$SOURCE_ROOT/$SOURCE_NAME"
+  local bin_dir destination tmp_binary commit build_date
 
-  # Get latest release tag
-  local latest
-  latest=$(curl -sI "$REPO_WEB_URL/releases/latest" 2>/dev/null | grep -i '^location:' | sed 's/.*tag\///' | tr -d '\r\n' || true)
-  if [ -z "$latest" ]; then
-    fail "Could not determine latest release. Check your network connection."
+  command_exists git || fail "Git is required to install the Multica CLI from source. Install git and retry."
+  command_exists go || fail "Go is required to install the Multica CLI from source. Install Go 1.26+ and retry."
+
+  info "Preparing ${SOURCE_NAME} source (${ref})..."
+  checkout_cli_source "$source_dir" "$ref"
+
+  bin_dir=$(select_cli_bin_dir)
+  mkdir -p "$bin_dir"
+  destination="$bin_dir/multica"
+  tmp_binary=$(mktemp "$bin_dir/.multica-build.XXXXXX")
+  rm -f "$tmp_binary"
+  commit=$(git -C "$source_dir" rev-parse --short HEAD 2>/dev/null || printf 'unknown')
+  build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  info "Building Multica CLI from ${SOURCE_NAME}@${ref}..."
+  if ! (
+    cd "$source_dir/server"
+    go build -trimpath \
+      -ldflags "-X main.version=source-${SOURCE_NAME} -X main.commit=${commit} -X main.date=${build_date}" \
+      -o "$tmp_binary" ./cmd/multica
+  ); then
+    rm -f "$tmp_binary"
+    fail "Failed to build the Multica CLI from ${SOURCE_NAME}@${ref}. The existing CLI was not changed."
   fi
 
-  local version="${latest#v}"
-  local url="https://github.com/multica-ai/multica/releases/download/${latest}/multica-cli-${version}-${OS}-${ARCH}.tar.gz"
-  local tmp_dir
-  tmp_dir=$(mktemp -d)
+  chmod 755 "$tmp_binary"
+  mv -f "$tmp_binary" "$destination"
+  save_update_source
 
-  info "Downloading $url ..."
-  if ! curl -fsSL "$url" -o "$tmp_dir/multica.tar.gz"; then
-    rm -rf "$tmp_dir"
-    fail "Failed to download CLI binary."
+  if ! echo "$PATH" | tr ':' '\n' | grep -q "^$bin_dir$"; then
+    export PATH="$bin_dir:$PATH"
+    add_to_path "$bin_dir"
   fi
-
-  tar -xzf "$tmp_dir/multica.tar.gz" -C "$tmp_dir" multica
-
-  # Try /usr/local/bin first, fall back to ~/.local/bin. Tests and scripted
-  # installs can override the first choice with MULTICA_BIN_DIR.
-  local bin_dir="${MULTICA_BIN_DIR:-/usr/local/bin}"
-  if [ -w "$bin_dir" ]; then
-    mv "$tmp_dir/multica" "$bin_dir/multica"
-  elif command_exists sudo; then
-    sudo mv "$tmp_dir/multica" "$bin_dir/multica"
-  else
-    bin_dir="$HOME/.local/bin"
-    mkdir -p "$bin_dir"
-    mv "$tmp_dir/multica" "$bin_dir/multica"
-    chmod +x "$bin_dir/multica"
-    # Add to PATH if not already there
-    if ! echo "$PATH" | tr ':' '\n' | grep -q "^$bin_dir$"; then
-      export PATH="$bin_dir:$PATH"
-      add_to_path "$bin_dir"
-    fi
-  fi
-
-  rm -rf "$tmp_dir"
-  ok "Multica CLI installed to $bin_dir/multica"
+  ok "Multica CLI installed from ${SOURCE_NAME}@${ref} to $destination"
 }
 
 add_to_path() {
@@ -212,7 +235,7 @@ get_selfhost_ref() {
     return
   fi
 
-  printf '%s' "main"
+  printf '%s' "$SOURCE_DEFAULT_REF"
 }
 
 checkout_server_ref() {
@@ -248,58 +271,8 @@ pull_official_selfhost_images() {
   exit 1
 }
 
-upgrade_cli_brew() {
-  info "Upgrading Multica CLI via Homebrew..."
-  brew update 2>/dev/null || true
-  if brew upgrade "$BREW_PACKAGE" 2>/dev/null; then
-    ok "Multica CLI upgraded via Homebrew"
-  else
-    # brew upgrade exits non-zero if already up to date
-    ok "Multica CLI is already the latest version"
-  fi
-}
-
 install_cli() {
-  if command_exists multica; then
-    local current_ver
-    # `multica version` outputs "multica 0.3.23 (commit: f46b929eb, built: 2026-06-16T10:11:56Z)" — extract just the version
-    current_ver=$(multica version 2>/dev/null | awk 'NR==1{print $2}' || echo "unknown")
-
-    local latest_ver
-    latest_ver=$(get_latest_version)
-
-    # Normalize: strip leading 'v' for comparison
-    local current_cmp="${current_ver#v}"
-    local latest_cmp="${latest_ver#v}"
-
-    if [ -z "$latest_ver" ] || [ "$current_cmp" = "$latest_cmp" ]; then
-      ok "Multica CLI is up to date ($current_ver)"
-      return 0
-    fi
-
-    info "Multica CLI $current_ver installed, latest is $latest_ver — upgrading..."
-    if command_exists brew && brew list "$BREW_PACKAGE" >/dev/null 2>&1; then
-      upgrade_cli_brew
-    else
-      install_cli_binary
-    fi
-
-    local new_ver
-    new_ver=$(multica version 2>/dev/null | awk 'NR==1{print $2}' || echo "unknown")
-    ok "Multica CLI upgraded ($current_ver → $new_ver)"
-    return 0
-  fi
-
-  if command_exists brew; then
-    install_cli_brew || install_cli_binary
-  else
-    install_cli_binary
-  fi
-
-  # Verify
-  if ! command_exists multica; then
-    fail "CLI installed but 'multica' not found on PATH. You may need to restart your shell."
-  fi
+  install_cli_source
 }
 
 # ---------------------------------------------------------------------------
@@ -427,7 +400,7 @@ run_default() {
   printf "     ${CYAN}multica setup self-host${RESET}       # Connect to a self-hosted server\n"
   printf "\n"
   printf "  ${BOLD}Self-hosting?${RESET} Install the server first:\n"
-  printf "     curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server\n"
+  printf "     curl -fsSL https://raw.githubusercontent.com/D1-2004/multica/develop/scripts/install.sh | bash -s -- --with-server\n"
   printf "\n"
 }
 
@@ -465,7 +438,7 @@ run_with_server() {
   printf "  or read the generated code from backend logs when Resend is unset.\n"
   printf "\n"
   printf "  ${BOLD}To stop all services:${RESET}\n"
-  printf "     curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --stop\n"
+  printf "     curl -fsSL https://raw.githubusercontent.com/D1-2004/multica/develop/scripts/install.sh | bash -s -- --stop\n"
   printf "\n"
 }
 
@@ -506,10 +479,24 @@ main() {
       --with-server) mode="with-server" ;;
       --local)       mode="with-server" ;;  # backwards compat alias
       --stop)        mode="stop" ;;
+	  --source)
+		[ $# -ge 2 ] || fail "--source requires fork or official"
+		SOURCE_NAME="$2"
+		shift
+		;;
+	  --source=*) SOURCE_NAME="${1#*=}" ;;
+	  --ref)
+		[ $# -ge 2 ] || fail "--ref requires a branch, tag, or commit"
+		SOURCE_REF="$2"
+		shift
+		;;
+	  --ref=*) SOURCE_REF="${1#*=}" ;;
       --help|-h)
-        echo "Usage: install.sh [--with-server | --stop]"
+		echo "Usage: install.sh [--source fork|official] [--ref <git-ref>] [--with-server | --stop]"
         echo ""
-        echo "  (default)       Install / upgrade the Multica CLI"
+		echo "  (default)       Build and install the fork CLI from develop"
+		echo "  --source        Source registry entry: fork (default) or official"
+		echo "  --ref           Branch, tag, or commit (defaults to develop/main)"
         echo "  --with-server   Install CLI + provision a self-host server (Docker)"
         echo "  --stop          Stop a self-hosted installation"
         echo ""
@@ -517,18 +504,24 @@ main() {
         echo "  MULTICA_INSTALL_DIR   Self-host server install directory"
         echo "                        (default: \$HOME/.multica/server)"
         echo "  MULTICA_BIN_DIR       Target directory for the CLI binary when"
-        echo "                        installing from GitHub Releases"
+		echo "                        building from source"
         echo "                        (default: /usr/local/bin, then \$HOME/.local/bin)"
+		echo "  MULTICA_SOURCE_DIR    Managed git checkout root"
+		echo "                        (default: \$HOME/.multica/source)"
         echo "  MULTICA_SELFHOST_REF  Git ref to check out for self-host assets"
-        echo "                        (default: latest release tag, falling back to main)"
+		echo "                        (default: latest release tag, falling back to the source default)"
         echo ""
         echo "After installation, run 'multica setup' to configure your environment."
         exit 0
         ;;
-      *) warn "Unknown option: $1" ;;
+	  *) fail "Unknown option: $1" ;;
     esac
     shift
   done
+
+	if [ "$mode" != "stop" ]; then
+	  resolve_source "$SOURCE_NAME"
+	fi
 
   case "$mode" in
     default)     run_default ;;
