@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -12,6 +13,15 @@ import (
 )
 
 var updateDownloadTimeout time.Duration = cli.DefaultUpdateDownloadTimeout
+var updateSource string
+var updateRef string
+
+var (
+	updateBuildAndInstallSource = cli.BuildAndInstallSource
+	updateCurrentExecutablePath = cli.CurrentExecutablePath
+	updateLoadSource            = cli.LoadUpdateSource
+	updateSaveSource            = cli.SaveUpdateSource
+)
 
 var updateCmd = &cobra.Command{
 	Use:   "update",
@@ -21,6 +31,8 @@ var updateCmd = &cobra.Command{
 
 func init() {
 	updateCmd.Flags().DurationVar(&updateDownloadTimeout, "download-timeout", cli.DefaultUpdateDownloadTimeout, "Maximum time to wait for the release archive download")
+	updateCmd.Flags().StringVar(&updateSource, "source", "", "Update from source: fork or official (persisted after success)")
+	updateCmd.Flags().StringVar(&updateRef, "ref", "", "Git branch, tag, or commit to build (defaults to the source's main branch)")
 }
 
 func runUpdate(_ *cobra.Command, _ []string) error {
@@ -29,6 +41,21 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "Current version: %s (commit: %s, built: %s)\n", version, commit, date)
+
+	selectedSource := strings.TrimSpace(updateSource)
+	if selectedSource == "" {
+		var err error
+		selectedSource, err = updateLoadSource()
+		if err != nil {
+			return err
+		}
+	}
+	if selectedSource != "" {
+		return runSourceUpdate(selectedSource, updateRef)
+	}
+	if strings.TrimSpace(updateRef) != "" {
+		return fmt.Errorf("--ref requires --source fork|official or an existing persisted source")
+	}
 
 	// Check latest version from GitHub.
 	latest, err := cli.FetchLatestRelease()
@@ -65,6 +92,31 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	output, err := cli.UpdateViaDownloadWithTimeout(targetVersion, updateDownloadTimeout)
 	if err != nil {
 		return fmt.Errorf("update failed: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "%s\nUpdate complete.\n", output)
+	return nil
+}
+
+func runSourceUpdate(sourceName, ref string) error {
+	spec, err := cli.ResolveSource(sourceName)
+	if err != nil {
+		return err
+	}
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		ref = spec.DefaultRef
+	}
+	destination, err := updateCurrentExecutablePath()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Updating from %s source (%s)...\n", spec.Name, ref)
+	output, err := updateBuildAndInstallSource(context.Background(), spec, ref, destination)
+	if err != nil {
+		return fmt.Errorf("source update failed: %w", err)
+	}
+	if err := updateSaveSource(spec.Name); err != nil {
+		return fmt.Errorf("source update succeeded but could not persist source: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "%s\nUpdate complete.\n", output)
 	return nil
