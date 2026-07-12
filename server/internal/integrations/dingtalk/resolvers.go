@@ -145,9 +145,12 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			if r.auto != nil {
-				return r.auto.Resolve(ctx, inst, msg)
+				// A directory match keeps the sender's own identity; the
+				// customer-mode fallthrough only overrides the failures.
+				id, autoErr := r.auto.Resolve(ctx, inst, msg)
+				return r.applyAllowUnbound(inst, id, autoErr)
 			}
-			return engine.ResolvedIdentity{}, engine.ErrSenderUnbound
+			return r.applyAllowUnbound(inst, engine.ResolvedIdentity{}, engine.ErrSenderUnbound)
 		}
 		return engine.ResolvedIdentity{}, err
 	}
@@ -157,11 +160,47 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 		WorkspaceID: inst.WorkspaceID,
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return engine.ResolvedIdentity{}, engine.ErrSenderNotMember
+			return r.applyAllowUnbound(inst, engine.ResolvedIdentity{}, engine.ErrSenderNotMember)
 		}
 		return engine.ResolvedIdentity{}, err
 	}
 	return engine.ResolvedIdentity{UserID: binding.MulticaUserID}, nil
+}
+
+// applyAllowUnbound is the "connect an agent to external customers"
+// fallthrough. When identity resolution ends in the two product-outcome
+// sentinels (ErrSenderUnbound / ErrSenderNotMember) AND the installation
+// opted into allow_unbound, the sender is served as the installer instead
+// of being bounced to the bind prompt. Every other error (and the success
+// case) passes through untouched, so a bound member always keeps their own
+// identity and audit trail. The installer is by construction a workspace
+// member, so this cannot smuggle in a non-member identity.
+func (r *identityResolver) applyAllowUnbound(inst engine.ResolvedInstallation, id engine.ResolvedIdentity, err error) (engine.ResolvedIdentity, error) {
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, engine.ErrSenderUnbound) && !errors.Is(err, engine.ErrSenderNotMember) {
+		return engine.ResolvedIdentity{}, err
+	}
+	if !installationAllowsUnbound(inst) || !inst.InstallerUserID.Valid {
+		return engine.ResolvedIdentity{}, err
+	}
+	return engine.ResolvedIdentity{UserID: inst.InstallerUserID}, nil
+}
+
+// installationAllowsUnbound reports whether the installation config carries
+// allow_unbound=true. Reads the raw config off the already-loaded platform
+// row so no extra query is needed on the inbound path.
+func installationAllowsUnbound(inst engine.ResolvedInstallation) bool {
+	row, ok := inst.Platform.(db.ChannelInstallation)
+	if !ok || len(row.Config) == 0 {
+		return false
+	}
+	var cfg dingtalkInstallConfig
+	if err := json.Unmarshal(row.Config, &cfg); err != nil {
+		return false
+	}
+	return cfg.AllowUnbound
 }
 
 // ---- dedup ----

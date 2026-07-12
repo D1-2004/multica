@@ -378,6 +378,8 @@
     "install_dialog_description_for_agent": "用钉钉扫描下方二维码，为 {{agent}} 创建一个应用。",
     "install_starting": "正在准备二维码…",
     "install_scan_hint": "钉钉 → 扫一扫 → 授权创建应用。",
+    "install_allow_unbound_label": "连接给外部用户（免绑定）",
+    "install_allow_unbound_hint": "开启后，任何能给这个机器人发消息的人都可直接对话，无需绑定 Multica 账号——消息会以你（安装者）的身份运行 Agent。适合把 Agent 接给客户。",
     "install_open_link_fallback": "或点这里直接在钉钉中打开",
     "install_success": "安装完成，应用凭证已就绪。",
     "install_success_toast": "钉钉 Bot 已安装",

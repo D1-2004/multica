@@ -190,10 +190,11 @@ func (s *RegistrationService) publishInstalled(workspaceID, installationID pgtyp
 
 // registrationSession is the in-memory state for one in-flight install.
 type registrationSession struct {
-	id          string
-	workspaceID pgtype.UUID
-	agentID     pgtype.UUID
-	initiatorID pgtype.UUID
+	id           string
+	workspaceID  pgtype.UUID
+	agentID      pgtype.UUID
+	initiatorID  pgtype.UUID
+	allowUnbound bool
 
 	deviceCode string
 	qrCodeURL  string
@@ -260,6 +261,9 @@ type BeginInstallParams struct {
 	WorkspaceID pgtype.UUID
 	AgentID     pgtype.UUID
 	InitiatorID pgtype.UUID
+	// AllowUnbound requests the "serve unbound senders as the installer"
+	// mode; persisted on the installation when the scan completes.
+	AllowUnbound bool
 }
 
 // BeginInstallResult is the public payload the handler echoes to the
@@ -305,11 +309,12 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 		return BeginInstallResult{}, fmt.Errorf("dingtalk registration: mint session id: %w", err)
 	}
 	sess := &registrationSession{
-		id:          sessionID,
-		workspaceID: p.WorkspaceID,
-		agentID:     p.AgentID,
-		initiatorID: p.InitiatorID,
-		deviceCode:  begin.DeviceCode,
+		id:           sessionID,
+		workspaceID:  p.WorkspaceID,
+		agentID:      p.AgentID,
+		initiatorID:  p.InitiatorID,
+		allowUnbound: p.AllowUnbound,
+		deviceCode:   begin.DeviceCode,
 		qrCodeURL:   begin.QRCodeURL,
 		interval:    begin.Interval,
 		expiresAt:   now.Add(begin.ExpiresIn),
@@ -441,6 +446,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		ClientID:        res.ClientID,
 		ClientSecret:    res.ClientSecret,
 		InstallerUserID: sess.initiatorID,
+		AllowUnbound:    sess.allowUnbound,
 	})
 	if err != nil {
 		s.cfg.Logger.Warn("dingtalk registration: upsert installation",
