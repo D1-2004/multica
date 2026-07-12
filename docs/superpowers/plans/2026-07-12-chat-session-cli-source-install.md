@@ -377,18 +377,24 @@ Fork-Patch: P50
 **Files:**
 - None
 
-- [ ] **Step 1: 最终审计**
+- [x] **Step 1: 最终审计**
 
 逐项核对 spec：Session manage、collector、fork 默认源码安装、official source、update source persistence、测试与文档均有直接证据。
 
-- [ ] **Step 2: 推送分支**
+- [x] **Step 2: 推送分支**
 
 ```bash
 git push -u origin codex/chat-session-cli
 ```
 
-- [ ] **Step 3: 创建以 develop 为 base 的 Draft PR**
+- [x] **Step 3: 创建 Draft PR**
 
 PR 标题：`feat(cli): 支持 Chat Session 管理与源码安装`
 
 正文包含行为、collector 并发语义、安装来源、兼容性、测试证据与已知限制；不合并 PR。
+
+**交付结果**
+
+- Draft PR: `https://github.com/D1-2004/multica/pull/7`
+- 远端 `develop` 仍是 rebase 前的分叉历史；直接作为 base 会产生 277 commits / 1130 files 的污染 diff。
+- 为保持 P50 可审，已发布本地最新 `develop@8c4832bed` 为堆叠基线 `codex/multica-latest-base`，PR 相对该基线为 11 commits / 20 files（含本交付记录）；未改写远端 `develop`。
