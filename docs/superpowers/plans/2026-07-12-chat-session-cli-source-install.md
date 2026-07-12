@@ -18,11 +18,11 @@
 - Modify: `server/internal/service/task.go`
 - Test: `server/internal/handler/chat_input_ownership_test.go`
 
-- [ ] **Step 1: 写首次发送与 queued collector 复用的失败测试**
+- [x] **Step 1: 写首次发送与 queued collector 复用的失败测试**
 
 在 `chat_input_ownership_test.go` 增加：首次 `SendDirectChatMessage` 返回新 task 且 `Collected=false`；第二次发送返回同一个 task、`Collected=true`，数据库只有一个 queued task，两条 user message 均绑定该 task。
 
-- [ ] **Step 2: 运行测试确认 RED**
+- [x] **Step 2: 运行测试确认 RED**
 
 Run:
 
@@ -33,7 +33,7 @@ go test ./internal/handler -run 'TestSendDirectChatMessageCollectsQueuedMessages
 
 Expected: FAIL，因为 `Collected` 不存在或第二次发送创建了新 task。
 
-- [ ] **Step 3: 添加锁与 collector 查询**
+- [x] **Step 3: 添加锁与 collector 查询**
 
 在 `chat.sql` 增加：
 
@@ -52,7 +52,7 @@ LIMIT 1;
 
 运行 `make sqlc`，只保留事实源导致的 generated diff。
 
-- [ ] **Step 4: 最小实现 collector 复用**
+- [x] **Step 4: 最小实现 collector 复用**
 
 扩展 `DirectChatSendResult`：
 
@@ -62,16 +62,16 @@ Collected bool
 
 在事务开始锁 Session；查询 queued collector，存在则复用，不存在才执行 `CreateChatTask + SetChatTaskInputOwnerSelf`。新 message 的 `TaskID` 始终使用选定 task id。
 
-- [ ] **Step 5: 运行测试确认 GREEN**
+- [x] **Step 5: 运行测试确认 GREEN**
 
 Run: Task 1 Step 2 同一命令。
 Expected: PASS。
 
-- [ ] **Step 6: 写 active task 后只创建一个下一 collector 的失败测试**
+- [x] **Step 6: 写 active task 后只创建一个下一 collector 的失败测试**
 
 把首 task 更新为 `running`，连续发送两条消息；断言第一条创建第二个 queued task，第二条复用它，总 task 数为 2。
 
-- [ ] **Step 7: 运行 RED/GREEN 并提交**
+- [x] **Step 7: 运行 RED/GREEN 并提交**
 
 实现应由 Step 4 自然满足；先确认新测试在错误实现下能失败，再恢复实现并运行：
 
@@ -94,11 +94,11 @@ Fork-Patch: P50
 - Test: `server/internal/handler/chat_input_ownership_test.go`
 - Test: `server/internal/handler/chat_test.go`
 
-- [ ] **Step 1: 写并发发送失败测试**
+- [x] **Step 1: 写并发发送失败测试**
 
 并发调用两次 direct send，使用 channel 同时起跑；断言 Session 中只有一个 queued task，两个结果中一个 `Collected=false`、另一个 `true`。
 
-- [ ] **Step 2: 运行测试确认 RED 后使其 GREEN**
+- [x] **Step 2: 运行测试确认 RED 后使其 GREEN**
 
 Run:
 
@@ -108,7 +108,7 @@ go test ./internal/handler -run 'TestSendDirectChatMessageConcurrentCollector' -
 
 Session row lock 应保证通过；若测试暴露事务隔离问题，只在查询/事务边界内修复，不增加新表。
 
-- [ ] **Step 3: 写 handler 响应失败测试**
+- [x] **Step 3: 写 handler 响应失败测试**
 
 断言 `SendChatMessageResponse` JSON 包含：
 
@@ -116,7 +116,7 @@ Session row lock 应保证通过；若测试暴露事务隔离问题，只在查
 {"message_id":"...","task_id":"...","created_at":"...","attachment_ids":null,"collected":true}
 ```
 
-- [ ] **Step 4: 追加 collected 字段并验证**
+- [x] **Step 4: 追加 collected 字段并验证**
 
 在响应 struct 增加 `Collected bool`，取自 service result。
 
@@ -126,7 +126,7 @@ Run:
 go test ./internal/handler -run 'TestSendChatMessage.*Collected|TestSendDirectChatMessage' -count=1
 ```
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```text
 feat(fork/chat): 暴露消息 collector 状态
@@ -140,7 +140,7 @@ Fork-Patch: P50
 - Modify: `server/cmd/multica/cmd_chat.go`
 - Create: `server/cmd/multica/cmd_chat_test.go`
 
-- [ ] **Step 1: 为 list/get/messages 写失败测试**
+- [x] **Step 1: 为 list/get/messages 写失败测试**
 
 使用 `httptest.Server` 断言：
 
@@ -149,7 +149,7 @@ Fork-Patch: P50
 - `chat messages <id>` 请求 `GET /api/chat/sessions/<id>/messages`；
 - JSON 输出保持服务端字段，table 输出含 ID/Agent/Status/Title 或 Role/Content。
 
-- [ ] **Step 2: 运行测试确认 RED**
+- [x] **Step 2: 运行测试确认 RED**
 
 ```bash
 go test ./cmd/multica -run 'TestChat(List|Get|Messages)' -count=1
@@ -157,15 +157,15 @@ go test ./cmd/multica -run 'TestChat(List|Get|Messages)' -count=1
 
 Expected: FAIL，因为命令尚未注册。
 
-- [ ] **Step 3: 实现只读 manage 命令**
+- [x] **Step 3: 实现只读 manage 命令**
 
 在 `cmd_chat.go` 注册 `list/get/messages`，复用 `newAPIClient`、`cli.PrintJSON`、`cli.PrintTable`。新增 `resolveChatSessionID`，完整 UUID直通，短前缀通过 Session list 唯一解析。
 
-- [ ] **Step 4: 验证 GREEN**
+- [x] **Step 4: 验证 GREEN**
 
 运行 Step 2 命令并确认 PASS。
 
-- [ ] **Step 5: 为 start/send 与 stdin 写失败测试**
+- [x] **Step 5: 为 start/send 与 stdin 写失败测试**
 
 覆盖：
 
@@ -176,13 +176,13 @@ Expected: FAIL，因为命令尚未注册。
 - start 的 send 失败错误包含已创建 Session ID；
 - 输出包含 `session_id/message_id/task_id/collected`。
 
-- [ ] **Step 6: 运行测试确认 RED**
+- [x] **Step 6: 运行测试确认 RED**
 
 ```bash
 go test ./cmd/multica -run 'TestChat(Start|Send)' -count=1
 ```
 
-- [ ] **Step 7: 实现 start/send 并验证 GREEN**
+- [x] **Step 7: 实现 start/send 并验证 GREEN**
 
 实现共享 `readChatMessage` 与 `sendChatSessionMessage`；不引用 Issue command 或 issue API。
 
@@ -192,7 +192,7 @@ Run:
 go test ./cmd/multica -run 'TestChat' -count=1
 ```
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```text
 feat(fork/cli): 增加 Chat Session manage 命令
@@ -208,17 +208,17 @@ Fork-Patch: P50
 - Modify: `server/cmd/multica/cmd_update.go`
 - Modify: `server/cmd/multica/cmd_update_test.go`
 
-- [ ] **Step 1: 写 source registry 与持久化失败测试**
+- [x] **Step 1: 写 source registry 与持久化失败测试**
 
 期望：`fork` → `https://github.com/D1-2004/multica.git`, default ref `develop`；`official` → `https://github.com/multica-ai/multica.git`, default ref `main`；未知 source 报错；`~/.multica/update-source` 原子保存/读取。
 
-- [ ] **Step 2: 运行测试确认 RED**
+- [x] **Step 2: 运行测试确认 RED**
 
 ```bash
 go test ./internal/cli -run 'Test(SourceSpec|UpdateSource)' -count=1
 ```
 
-- [ ] **Step 3: 实现 registry 与配置文件**
+- [x] **Step 3: 实现 registry 与配置文件**
 
 定义：
 
@@ -229,21 +229,21 @@ func LoadUpdateSource() (string, error)
 func SaveUpdateSource(name string) error
 ```
 
-- [ ] **Step 4: 写源码 checkout/build 原子安装失败测试**
+- [x] **Step 4: 写源码 checkout/build 原子安装失败测试**
 
 用临时 HOME、目标 binary 和 PATH 中的 fake `git/go` 覆盖：首次 clone、后续 fetch、ref 覆盖、build 失败不替换旧 binary、成功替换并保留 executable mode。
 
-- [ ] **Step 5: 运行测试确认 RED**
+- [x] **Step 5: 运行测试确认 RED**
 
 ```bash
 go test ./internal/cli -run 'TestBuildAndInstallSource' -count=1
 ```
 
-- [ ] **Step 6: 实现 BuildAndInstallSource**
+- [x] **Step 6: 实现 BuildAndInstallSource**
 
 源码目录为 `~/.multica/source/<source>`；checkout 到 `origin/<default>` 或用户 ref；从 `server` 执行 `go build -ldflags ... ./cmd/multica`，输出到目标目录临时文件，成功后调用现有 `replaceBinary`。
 
-- [ ] **Step 7: 为 update flags 写失败测试并实现**
+- [x] **Step 7: 为 update flags 写失败测试并实现**
 
 `multica update --source fork|official --ref <ref>` 使用 source updater；成功后才 SaveUpdateSource。无 flags 且存在来源文件时沿用；没有来源文件时保留现有 release/Homebrew 路径。
 
@@ -253,7 +253,7 @@ Run:
 go test ./cmd/multica ./internal/cli -run 'Test.*Update|Test(SourceSpec|UpdateSource|BuildAndInstallSource)' -count=1
 ```
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```text
 feat(fork/cli): 支持 fork 与官方源码更新
@@ -267,7 +267,7 @@ Fork-Patch: P50
 - Modify: `scripts/install.sh`
 - Modify: `scripts/install.test.sh`
 
-- [ ] **Step 1: 重写 installer 测试为源码安装期望并确认 RED**
+- [x] **Step 1: 重写 installer 测试为源码安装期望并确认 RED**
 
 用 fake `git/go` 断言：默认 clone fork/develop；`--source official` clone official/main；`--ref` 覆盖；成功写 `~/.multica/update-source`；build 失败保留旧 binary 和旧来源；缺少 git/go 给出明确错误。
 
@@ -279,18 +279,18 @@ bash scripts/install.test.sh
 
 Expected: FAIL，当前脚本仍走 Homebrew/Release。
 
-- [ ] **Step 2: 实现 source 参数和构建安装**
+- [x] **Step 2: 实现 source 参数和构建安装**
 
 删除默认 CLI 安装中的 brew/release 分支，加入 source registry、clone/fetch、detached checkout、`go build` 临时输出、原子移动和来源写入。`--with-server` 同样使用所选 repo/ref。
 
-- [ ] **Step 3: 验证 GREEN 与 shell 语法**
+- [x] **Step 3: 验证 GREEN 与 shell 语法**
 
 ```bash
 bash -n scripts/install.sh
 bash scripts/install.test.sh
 ```
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```text
 feat(fork/install): 默认从 fork 源码安装 CLI
@@ -306,7 +306,7 @@ Fork-Patch: P50
 - Modify: `README.md`
 - Modify: `docs/superpowers/plans/2026-07-12-chat-session-cli-source-install.md`
 
-- [ ] **Step 1: 文档化 P50 与命令**
+- [x] **Step 1: 文档化 P50 与命令**
 
 记录 Chat manage/collector 边界、安装命令：
 
@@ -315,7 +315,7 @@ curl -fsSL https://raw.githubusercontent.com/D1-2004/multica/develop/scripts/ins
 curl -fsSL https://raw.githubusercontent.com/D1-2004/multica/develop/scripts/install.sh | bash -s -- --source official
 ```
 
-- [ ] **Step 2: 运行事实源/生成代码检查**
+- [x] **Step 2: 运行事实源/生成代码检查**
 
 ```bash
 make sqlc
@@ -325,7 +325,7 @@ git status --short
 
 确认 sqlc 二次运行无新 diff、没有冲突标记、仅计划内文件变化。
 
-- [ ] **Step 3: 完整 Go 与 shell 验证**
+- [x] **Step 3: 完整 Go 与 shell 验证**
 
 ```bash
 set -a; source .env.worktree; set +a
@@ -333,7 +333,7 @@ set -a; source .env.worktree; set +a
 bash scripts/install.test.sh
 ```
 
-- [ ] **Step 4: 前端契约验证**
+- [x] **Step 4: 前端契约验证**
 
 ```bash
 pnpm typecheck
@@ -342,7 +342,7 @@ pnpm test
 
 新增 JSON 字段必须不破坏 Web/Mobile schema 与测试。
 
-- [ ] **Step 5: 构建真实 CLI 并做 help smoke**
+- [x] **Step 5: 构建真实 CLI 并做 help smoke**
 
 ```bash
 make build
@@ -351,17 +351,26 @@ server/bin/multica chat start --help
 server/bin/multica update --help
 ```
 
-- [ ] **Step 6: 请求代码审查并修复 Critical/Important**
+- [x] **Step 6: 请求代码审查并修复 Critical/Important**
 
 审查范围为设计提交之后到 HEAD，重点检查 collector 并发、CLI API 路径与原子二进制替换。
 
-- [ ] **Step 7: 回填计划结果并提交**
+- [x] **Step 7: 回填计划结果并提交**
 
 ```text
 docs(fork): 记录 Chat Session CLI 与源码安装
 
 Fork-Patch: P50
 ```
+
+**执行结果（2026-07-12）**
+
+- sqlc 二次生成前后 `chat.sql.go` 哈希一致；排除了 3 个与 P50 无关的基线 generated drift。
+- P50 定向 Go 包全部通过；collector 并发与 dispatch 锁竞争测试连续 10 轮通过；shell installer 测试通过。
+- `pnpm typecheck`、Mobile typecheck/15 tests 通过；真实 CLI 构建及 `chat/update --help` smoke 通过。
+- 自审发现并修复 dispatcher 抢占 queued collector 的窗口：collector 查询现在同时锁 Session 与 task 行。
+- 全量基线仍有 2 个既存 Go 用例问题：cloud runtime 测试与查询排除条件矛盾；Codex 100ms inactivity 测试存在稳定时序竞争。本分支对对应目录无 diff。
+- `pnpm test` 除既存 `integrations-tab.test.tsx` 3 例缺失 workspace context 外，其余执行通过；P50 对 `packages/views` 无 diff。
 
 ### Task 7: 推送并创建 Draft PR
 

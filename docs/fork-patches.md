@@ -150,6 +150,30 @@ Fork-Patch: P20
 - Agent create 必须同时保留 upstream permission/invocation targets、Composio allowlist 与 fork DWS profile ownership validation。
 - Runtime UI 已适配 upstream machine-centric 页面；FC E2B 创建入口只对 workspace owner/admin 显示。
 
+### P50：Chat Session CLI 与 fork 源码安装
+
+**提交范围**
+
+- 使用 `git log --grep='Fork-Patch: P50' upstream/main..HEAD` 查询，避免 rebase 后维护失效 hash。
+- Session collector：同一 Chat Session 的 queued 消息合并到一个执行批次，running/dispatched 后创建下一 collector。
+- CLI manage：`chat list/get/messages/start/send` 直接管理 Session，不依赖 Issue。
+- 源码安装与更新：默认 `fork/develop`，显式支持 `official/main` 和自定义 `--ref`。
+
+**主要目录**
+
+- `server/internal/service/task.go`、`server/pkg/db/queries/chat.sql`
+- `server/cmd/multica/cmd_chat_manage.go`
+- `server/internal/cli/source_update.go`、`server/cmd/multica/cmd_update.go`
+- `scripts/install.sh`
+
+**依赖与冲突热点**
+
+- collector 查询只允许 `chat_input_task_id = id` 的自持有 queued task；retry child 继承根输入，不能吸收新消息。
+- `cmd_chat_manage.go` 与 `source_update.go` 均为 fork 独立文件，升级时优先整层重放，避免改动 upstream 原命令文件。
+- `chat.go` 只增加 additive `collected` 响应字段；upstream 若提供等价字段，应删除重复适配并保留 CLI 兼容。
+- SQL 冲突仍先合并 `chat.sql` 再生成，仅保留 `chat.sql.go` 的事实源 diff。
+- 安装器只有在源码构建成功后才替换 binary 并写 `~/.multica/update-source`；失败时旧 CLI 与旧来源必须保持不变。
+
 ### P90：通用可靠性修复
 
 **提交范围**
@@ -182,9 +206,10 @@ Fork-Patch: P20
 2. P10 身份 provider 与登录策略。
 3. P20 Channel/DingTalk 基础、再叠 P30 Lark 卡片。
 4. P40 FC E2B 基础、sandbox、DWS、最后 chat recovery。
-5. P90 通用修复。
-6. P95 当前 upstream 兼容层；每轮升级重新审视，不视为永久产品 PATCH。
-7. 文档随各层提交，不使用跨层 merge commit。
+5. P50 Chat Session manage、collector、源码安装与更新。
+6. P90 通用修复。
+7. P95 当前 upstream 兼容层；每轮升级重新审视，不视为永久产品 PATCH。
+8. 文档随各层提交，不使用跨层 merge commit。
 
 ## 每次 upstream 升级检查表
 
