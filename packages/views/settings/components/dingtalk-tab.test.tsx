@@ -279,7 +279,7 @@ describe("DingTalkInstallDialog (device flow)", () => {
     expect(screen.getByTestId("qr-code").getAttribute("data-value")).toBe(
       "https://open-dev.dingtalk.com/fe/app-registration?user_code=MUEU",
     );
-    expect(mockBeginInstall).toHaveBeenCalledWith("workspace-1", "agent-1");
+    expect(mockBeginInstall).toHaveBeenCalledWith("workspace-1", "agent-1", false);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2100);

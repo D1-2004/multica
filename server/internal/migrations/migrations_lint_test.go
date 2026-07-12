@@ -45,6 +45,14 @@ var legacyDuplicateMigrationStems = map[string][]string{
 	"124": {"124_autopilot_run_planned_at", "124_channel_generalization", "124_task_prepare_lease"},
 	"127": {"127_issue_pull_request_reference_only", "127_task_squad_id", "127_user_composio_connection"},
 	"128": {"128_agent_task_queue_runtime_mcp_overlay", "128_autopilot_collaborator", "128_comment_routing_escalation"},
+	// Fork compatibility: these stems shipped before the fork rebased onto an
+	// upstream line that had independently allocated the same numeric prefixes.
+	// schema_migrations tracks the full stem, so preserving both names lets
+	// existing fork databases apply only the newly introduced upstream stem
+	// without replaying the already-applied fork migration under a new number.
+	"132": {"132_agent_task_queue_runtime_connected_apps", "132_issue_origin_dingtalk_chat"},
+	"133": {"133_fc_e2b_sandbox_session", "133_github_installation_multi_workspace"},
+	"134": {"134_dws_auth_profile", "134_runtime_profile_add_qoder"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)

@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Crown, Shield, User, MoreHorizontal, UserMinus, Users, Clock, X, Mail, Search, UserPlus } from "lucide-react";
+import { Crown, Shield, User, Plus, MoreHorizontal, UserMinus, Users, Clock, X, Mail, Search, UserPlus } from "lucide-react";
 import { ActorAvatar } from "../../common/actor-avatar";
 import type { MemberWithUser, MemberRole, Invitation, DingTalkUser } from "@multica/core/types";
+import { Input } from "@multica/ui/components/ui/input";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -337,6 +338,9 @@ export function MembersTab() {
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: invitations = [] } = useQuery(invitationListOptions(wsId));
 
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<MemberRole>("member");
+  const [inviteLoading, setInviteLoading] = useState(false);
   const [dingtalkQuery, setDingtalkQuery] = useState("");
   const [dingtalkResults, setDingtalkResults] = useState<DingTalkUser[]>([]);
   const [selectedDingtalkUsers, setSelectedDingtalkUsers] = useState<Record<string, DingTalkUser>>({});
@@ -373,6 +377,25 @@ export function MembersTab() {
   const dingtalkAddButtonLabel = dingtalkActionLoading
     ? t(($) => $.members.dingtalk_adding_workspace)
     : t(($) => $.members.dingtalk_add_workspace);
+
+  const handleInviteMember = async () => {
+    if (!workspace) return;
+    setInviteLoading(true);
+    try {
+      await api.createMember(workspace.id, {
+        email: inviteEmail,
+        role: inviteRole,
+      });
+      setInviteEmail("");
+      setInviteRole("member");
+      qc.invalidateQueries({ queryKey: workspaceKeys.invitations(wsId) });
+      toast.success(t(($) => $.members.toast_invitation_sent));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_invitation_failed));
+    } finally {
+      setInviteLoading(false);
+    }
+  };
 
   useEffect(() => {
     setDingtalkQuery("");

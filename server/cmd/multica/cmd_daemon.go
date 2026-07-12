@@ -647,15 +647,6 @@ func runDaemonRunOnce(cmd *cobra.Command, _ []string) error {
 	defer stop()
 
 	logger := logger_pkg.NewLogger("daemon")
-	serverSnapshotProvider, flags, err := execenv.NewDaemonFeatureFlagServiceFromEnv(logger)
-	if err != nil {
-		return err
-	}
-	execenv.SetServerSnapshotProvider(serverSnapshotProvider)
-	execenv.SetFeatureFlags(flags)
-	defer execenv.SetServerSnapshotProvider(nil)
-	defer execenv.SetFeatureFlags(nil)
-
 	d := daemon.New(cfg, logger)
 	return d.RunOnce(ctx, daemon.RunOnceOptions{
 		RuntimeID:      runtimeID,

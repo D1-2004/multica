@@ -910,9 +910,6 @@ func (s *TaskService) FailTaskRuntimeStart(ctx context.Context, taskID, runtimeI
 				return fmt.Errorf("create runtime-start-failed chat message: %w", err)
 			}
 			assistantMsg = &row
-			if err := qtx.SetUnreadSinceIfNull(ctx, task.ChatSessionID); err != nil {
-				return fmt.Errorf("set unread_since for runtime-start-failed chat: %w", err)
-			}
 		}
 		return nil
 	}); err != nil {
