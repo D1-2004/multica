@@ -427,6 +427,7 @@ WHERE chat_session_id = $1
   AND chat_input_task_id = id
 ORDER BY created_at ASC, id ASC
 LIMIT 1
+FOR UPDATE
 `
 
 // A task-owned direct-chat task may continue collecting messages only while

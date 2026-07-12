@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -216,6 +217,59 @@ func TestSendDirectChatMessageConcurrentCollector(t *testing.T) {
 	}
 	if taskCount != 1 {
 		t.Fatalf("expected one queued collector after concurrent sends, got %d", taskCount)
+	}
+}
+
+func TestQueuedDirectChatCollectorLocksTaskUntilMessageCommit(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID, sessionID, _, _ := setupDirectChatSession(t, ctx, "collector dispatch lock chat")
+	taskID := sendDirectChat(t, ctx, agentID, sessionID, "first")
+
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin collector transaction: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := db.New(tx)
+	if _, err := qtx.LockChatSessionForDirectSend(ctx, parseUUID(sessionID)); err != nil {
+		t.Fatalf("lock session: %v", err)
+	}
+	collector, err := qtx.GetQueuedDirectChatCollector(ctx, parseUUID(sessionID))
+	if err != nil {
+		t.Fatalf("select collector: %v", err)
+	}
+	if uuidToString(collector.ID) != taskID {
+		t.Fatalf("collector = %s, want %s", uuidToString(collector.ID), taskID)
+	}
+
+	dispatchDone := make(chan error, 1)
+	go func() {
+		_, updateErr := testPool.Exec(ctx, `
+			UPDATE agent_task_queue SET status = 'dispatched', dispatched_at = now()
+			WHERE id = $1 AND status = 'queued'
+		`, taskID)
+		dispatchDone <- updateErr
+	}()
+
+	select {
+	case updateErr := <-dispatchDone:
+		t.Fatalf("dispatcher updated collector before message transaction committed: %v", updateErr)
+	case <-time.After(100 * time.Millisecond):
+		// Expected: SELECT ... FOR UPDATE keeps dispatch behind the send.
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit collector transaction: %v", err)
+	}
+	select {
+	case updateErr := <-dispatchDone:
+		if updateErr != nil {
+			t.Fatalf("dispatcher update after commit: %v", updateErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher remained blocked after collector transaction committed")
 	}
 }
 

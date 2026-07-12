@@ -218,7 +218,8 @@ WHERE chat_session_id = $1
   AND status = 'queued'
   AND chat_input_task_id = id
 ORDER BY created_at ASC, id ASC
-LIMIT 1;
+LIMIT 1
+FOR UPDATE;
 
 -- name: SetChatTaskInputOwnerSelf :one
 -- Stamps a freshly-created direct-chat task as the owner of its own input batch
