@@ -1695,7 +1695,7 @@ Kill the dev agent and server. Then run the broad checks:
 
 ```bash
 cd /Users/yuanzhan/Documents/multica-railway/multica && pnpm typecheck && pnpm test
-cd server && go build ./... && go test ./internal/integrations/lark/ ./internal/handler/ -run 'Lark|OAuth' 
+cd server && go build ./... && go test ./internal/integrations/lark/ ./internal/handler/ -run 'Lark|OAuth'
 ```
 
 Append a `Result:` section to `docs/superpowers/specs/2026-07-02-feishu-login-design.md` recording what was verified and the remaining operator steps (Feishu console redirect URL whitelist; Railway env: agent `LARK_APP_ID/SECRET`, backend `LARK_AGENT_BASE_URL`, `LARK_AGENT_INTERNAL_SECRET`, `LARK_CLIENT_ID`), then commit:

@@ -40,4 +40,3 @@ WHERE runtime_id = $1
   AND scope_type = $2
   AND scope_id = $3
   AND sandbox_id = $4;
-

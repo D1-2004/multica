@@ -167,7 +167,8 @@ Fork-Patch: P20
 
 **当前提交**
 
-- `5346e9c2a` 适配认证配置、成员邀请、Avatar、daemon feature flag、聊天未读模型和 132-134 migration 重号。
+- 使用 `git log --grep='Fork-Patch: P95' upstream/main..HEAD` 查询，避免 rebase 后在文档里维护失效 hash。
+- 当前内容包括新主线契约适配、132-134 migration 重号兼容，以及保证 PATCH 栈检查可执行的空白清理。
 
 **维护规则**
 

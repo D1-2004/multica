@@ -16,4 +16,3 @@ CREATE TABLE fc_e2b_sandbox_session (
 
 CREATE INDEX idx_fc_e2b_sandbox_session_runtime
     ON fc_e2b_sandbox_session(runtime_id, status, expires_at);
-
