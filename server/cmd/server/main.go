@@ -282,6 +282,19 @@ func main() {
 		}
 	} else {
 		slog.Info("realtime: REDIS_URL not set — using in-memory hub (single-node mode)")
+		// Realtime browser fanout stays single-node, but daemon wakeups cannot:
+		// a daemon's wakeup socket is pinned to one replica while the task that
+		// should wake it is enqueued by whichever replica served the request, so
+		// with the bare hub roughly every other wakeup is delivered to a node
+		// that does not hold the socket and the daemon waits out a full poll
+		// interval instead. Relay the hint through Postgres LISTEN/NOTIFY, which
+		// every deployment already has, so cross-node delivery works without
+		// Redis. Redis, when present, keeps using the richer stream relay above.
+		pgNotifier := daemonws.NewPGNotifier(daemonHub, pool, slog.Default())
+		go pgNotifier.Listen(relayCtx)
+		daemonWakeup = pgNotifier
+		slog.Info("daemon wakeup: relaying through Postgres LISTEN/NOTIFY",
+			"channel", daemonws.PGNotifyChannel)
 	}
 	registerListeners(bus, broadcaster)
 
