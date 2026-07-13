@@ -1932,13 +1932,6 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agentIdentityContextToken := strings.TrimSpace(req.AgentIdentityContextToken)
-	if agentIdentityContextToken != "" {
-		runtime, err := h.Queries.GetAgentRuntime(r.Context(), agent.RuntimeID)
-		if err != nil || !service.IsFCE2BRuntime(runtime) {
-			writeAgentIdentityContextUnsupported(w, "agent must use an FC/E2B runtime")
-			return
-		}
-	}
 
 	// Daemon CLI version gate. The agent-side prompt + create-flow rely on
 	// behaviors introduced in MinQuickCreateCLIVersion (URL attachment
@@ -2000,7 +1993,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		parentIssueUUID = pid
 	}
 
-	task, err := h.TaskService.EnqueueQuickCreateTaskWithAgentIdentity(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, projectUUID, parentIssueUUID, attachmentIDs, agentIdentityContextToken)
+	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, projectUUID, parentIssueUUID, attachmentIDs, agentIdentityContextToken)
 	if err != nil {
 		slog.Warn("quick-create enqueue failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to enqueue quick-create task")
@@ -2017,13 +2010,6 @@ func writeAgentUnavailable(w http.ResponseWriter, reason string) {
 	w.WriteHeader(http.StatusUnprocessableEntity)
 	json.NewEncoder(w).Encode(map[string]any{
 		"code":   "agent_unavailable",
-		"reason": reason,
-	})
-}
-
-func writeAgentIdentityContextUnsupported(w http.ResponseWriter, reason string) {
-	writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-		"code":   "agent_identity_context_unsupported",
 		"reason": reason,
 	})
 }
@@ -2196,25 +2182,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agentIdentityContextToken := strings.TrimSpace(req.AgentIdentityContextToken)
-	if agentIdentityContextToken != "" {
-		if status == "backlog" || !assigneeType.Valid || assigneeType.String != "agent" || !assigneeID.Valid {
-			writeAgentIdentityContextUnsupported(w, "ContextToken requires an immediately assigned agent")
-			return
-		}
-		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-			ID:          assigneeID,
-			WorkspaceID: wsUUID,
-		})
-		if err != nil || !agent.RuntimeID.Valid {
-			writeAgentIdentityContextUnsupported(w, "agent must have an FC/E2B runtime")
-			return
-		}
-		runtime, err := h.Queries.GetAgentRuntime(r.Context(), agent.RuntimeID)
-		if err != nil || !service.IsFCE2BRuntime(runtime) {
-			writeAgentIdentityContextUnsupported(w, "agent must use an FC/E2B runtime")
-			return
-		}
-	}
 
 	var parentIssueID pgtype.UUID
 	var projectID pgtype.UUID
@@ -2343,29 +2310,29 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
-		WorkspaceID:    wsUUID,
-		Title:          req.Title,
-		Description:    ptrToText(req.Description),
-		Status:         status,
-		Priority:       priority,
-		AssigneeType:   assigneeType,
-		AssigneeID:     assigneeID,
-		CreatorType:    creatorType,
-		CreatorID:      parseUUID(actualCreatorID),
-		ParentIssueID:  parentIssueID,
-		ProjectID:      projectID,
-		StartDate:      startDate,
-		DueDate:        dueDate,
-		OriginType:     originType,
-		OriginID:       originID,
-		Stage:          ptrToInt4(req.Stage),
-		AttachmentIDs:  attachmentIDs,
-		AllowDuplicate: req.AllowDuplicate,
-	}, service.IssueCreateOpts{
+		WorkspaceID:               wsUUID,
+		Title:                     req.Title,
+		Description:               ptrToText(req.Description),
+		Status:                    status,
+		Priority:                  priority,
+		AssigneeType:              assigneeType,
+		AssigneeID:                assigneeID,
+		CreatorType:               creatorType,
+		CreatorID:                 parseUUID(actualCreatorID),
+		ParentIssueID:             parentIssueID,
+		ProjectID:                 projectID,
+		StartDate:                 startDate,
+		DueDate:                   dueDate,
+		OriginType:                originType,
+		OriginID:                  originID,
+		Stage:                     ptrToInt4(req.Stage),
+		AttachmentIDs:             attachmentIDs,
+		AllowDuplicate:            req.AllowDuplicate,
 		AgentIdentityContextToken: agentIdentityContextToken,
-		ActorID:                   actualCreatorID,
-		AnalyticsAgentID:          analyticsAgentID,
-		Platform:                  func() string { p, _, _ := middleware.ClientMetadataFromContext(r.Context()); return p }(),
+	}, service.IssueCreateOpts{
+		ActorID:          actualCreatorID,
+		AnalyticsAgentID: analyticsAgentID,
+		Platform:         func() string { p, _, _ := middleware.ClientMetadataFromContext(r.Context()); return p }(),
 		BroadcastPayload: func(issue db.Issue, atts []db.Attachment) map[string]any {
 			payload := issueToResponse(issue, prefix)
 			payload.Attachments = buildAttachmentResponses(atts)

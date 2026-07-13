@@ -474,6 +474,29 @@ describe("CreateIssueModal", () => {
     expect(mockToastDismiss).toHaveBeenCalledWith("toast-1");
   });
 
+  it("forwards the extension ContextToken when creating an issue", async () => {
+    const user = userEvent.setup();
+
+    renderModal(<CreateIssueModal onClose={vi.fn()} />);
+
+    await user.type(screen.getByPlaceholderText("Issue title"), "Run with DWS identity");
+    await user.click(screen.getByRole("button", { name: "More extensions" }));
+    await user.type(
+      screen.getByLabelText("Agent Identity ContextToken"),
+      "  ctx_page_token  ",
+    );
+    await user.click(screen.getByRole("button", { name: "Create Issue" }));
+
+    await waitFor(() => {
+      expect(mockCreateIssue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Run with DWS identity",
+          agent_identity_context_token: "ctx_page_token",
+        }),
+      );
+    });
+  });
+
   it("keeps manual mode open and clears content when create another is enabled", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

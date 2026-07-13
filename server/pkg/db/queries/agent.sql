@@ -210,18 +210,10 @@ VALUES (
     CASE
         WHEN COALESCE(sqlc.narg('head_sha')::text, '') <> ''
           OR COALESCE(sqlc.narg('agent_identity_context_token')::text, '') <> ''
-        THEN
-            CASE
-                WHEN COALESCE(sqlc.narg('head_sha')::text, '') <> ''
-                THEN jsonb_build_object('head_sha', sqlc.narg('head_sha')::text)
-                ELSE '{}'::jsonb
-            END
-            ||
-            CASE
-                WHEN COALESCE(sqlc.narg('agent_identity_context_token')::text, '') <> ''
-                THEN jsonb_build_object('agent_identity_context_token', sqlc.narg('agent_identity_context_token')::text)
-                ELSE '{}'::jsonb
-            END
+        THEN jsonb_strip_nulls(jsonb_build_object(
+            'head_sha', NULLIF(sqlc.narg('head_sha')::text, ''),
+            'agent_identity_context_token', NULLIF(sqlc.narg('agent_identity_context_token')::text, '')
+        ))
         ELSE NULL
     END,
     sqlc.narg(originator_user_id),

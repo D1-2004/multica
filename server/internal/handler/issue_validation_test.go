@@ -1,34 +1,11 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
-
-func TestCreateIssueAgentIdentityContextRequiresImmediateAgent(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":                        "ContextToken restriction test",
-		"agent_identity_context_token": "context-token-secret",
-	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
-	}
-	var body map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if body["code"] != "agent_identity_context_unsupported" {
-		t.Fatalf("code = %#v", body["code"])
-	}
-	if strings.Contains(w.Body.String(), "context-token-secret") {
-		t.Fatal("response leaked ContextToken")
-	}
-}
 
 func TestCreateIssueInvalidStatusReturns400(t *testing.T) {
 	w := httptest.NewRecorder()

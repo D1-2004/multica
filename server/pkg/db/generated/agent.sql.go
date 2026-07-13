@@ -1344,18 +1344,10 @@ VALUES (
     CASE
         WHEN COALESCE($12::text, '') <> ''
           OR COALESCE($13::text, '') <> ''
-        THEN
-            CASE
-                WHEN COALESCE($12::text, '') <> ''
-                THEN jsonb_build_object('head_sha', $12::text)
-                ELSE '{}'::jsonb
-            END
-            ||
-            CASE
-                WHEN COALESCE($13::text, '') <> ''
-                THEN jsonb_build_object('agent_identity_context_token', $13::text)
-                ELSE '{}'::jsonb
-            END
+        THEN jsonb_strip_nulls(jsonb_build_object(
+            'head_sha', NULLIF($12::text, ''),
+            'agent_identity_context_token', NULLIF($13::text, '')
+        ))
         ELSE NULL
     END,
     $14,

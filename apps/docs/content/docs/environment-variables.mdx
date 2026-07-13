@@ -200,12 +200,14 @@ These variables enable the self-hosted server to create a cloud Hermes runtime b
 | `MULTICA_FC_E2B_DOMAIN` | empty | E2B sandbox domain, for example `cn-beijing.e2b.fc.aliyuncs.com` |
 | `MULTICA_FC_E2B_OPENAI_BASE_URL` | empty | OpenAI-compatible LLM endpoint for Hermes, for example `https://maas-api.alibaba-inc.com/v1` |
 | `MULTICA_FC_E2B_OPENAI_API_KEY` | empty | LLM API key injected into the sandbox runner. Not written to the database or runtime metadata |
-| `MULTICA_FC_E2B_OPENAI_MODEL` | empty | Hermes model written into the sandbox's Hermes config |
+| `MULTICA_FC_E2B_OPENAI_MODELS` | empty | JSON array of Hermes models available to FC agents. The first item is the default when an agent has no pinned model |
 | `MULTICA_FC_E2B_CLI_PATH` | `e2b` | Path to the `e2b` CLI executable on the server host |
 | `MULTICA_FC_E2B_TIMEOUT_SECONDS` | `3600` | Sandbox lifetime in seconds |
 | `MULTICA_FC_E2B_SANDBOX_READY_TIMEOUT` | `60s` | How long the server waits for a newly created sandbox to accept `exec` |
+| `MULTICA_AGENT_IDENTITY_BASE_URL` | empty | Agent Identity service used by ContextToken tasks. The server forwards this URL and the task token to the FC/E2B sandbox; credential redemption happens inside the sandbox |
+| `MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS` | `10` | Timeout for the sandbox Agent Identity credential redemption request |
 
-The sandbox template must provide `multica`, `hermes`, and `multica-fc-hermes-runner` on `PATH`. For Hermes with a custom OpenAI-compatible endpoint, do not set `MULTICA_HERMES_MODEL` on the agent or daemon; the runner writes the model into Hermes' own config so Hermes keeps using its custom provider credentials.
+The sandbox template must provide `multica`, `hermes`, and `multica-fc-hermes-runner` on `PATH`. An FC agent may pin one model from `MULTICA_FC_E2B_OPENAI_MODELS`; agents without a pinned model use the first item. The runner writes the resolved model into Hermes' own config so Hermes keeps using its custom provider credentials. When a task carries `agent_identity_context_token`, the runner exchanges it once during sandbox startup and DWS refreshes the resulting login with its refresh token for the rest of the task.
 
 ### Default agent arguments (`MULTICA_<PROVIDER>_ARGS`)
 

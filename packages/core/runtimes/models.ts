@@ -15,7 +15,7 @@ const POLL_TIMEOUT_MS = 30_000;
 // (via heartbeat piggyback) and polls until the daemon reports back or
 // the request times out. Returns both the models list and a
 // `supported` flag: `supported=false` means the provider ignores
-// per-agent model selection entirely (hermes today) — the UI uses
+// per-agent model selection entirely — the UI uses
 // this to disable its dropdown instead of accepting a value that
 // wouldn't be honoured at runtime.
 export async function resolveRuntimeModels(

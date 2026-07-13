@@ -75,10 +75,23 @@ func TestRedactBearerToken(t *testing.T) {
 }
 
 func TestRedactAuthCodeEnvironmentValue(t *testing.T) {
+	t.Parallel()
 	input := "sandbox exec failed: DWS_AUTH_CODE=one-time-auth-code"
 	got := Text(input)
 	if strings.Contains(got, "one-time-auth-code") {
 		t.Fatalf("auth code not redacted: %s", got)
+	}
+	if !strings.Contains(got, "[REDACTED CREDENTIAL]") {
+		t.Fatalf("missing redaction marker: %s", got)
+	}
+}
+
+func TestRedactAgentIdentityContextTokenJSON(t *testing.T) {
+	t.Parallel()
+	input := `{"agent_identity_context_token":"context-token-secret","status":"queued"}`
+	got := Text(input)
+	if strings.Contains(got, "context-token-secret") {
+		t.Fatalf("ContextToken not redacted: %s", got)
 	}
 	if !strings.Contains(got, "[REDACTED CREDENTIAL]") {
 		t.Fatalf("missing redaction marker: %s", got)

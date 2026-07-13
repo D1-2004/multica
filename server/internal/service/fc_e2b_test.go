@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -14,17 +13,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
-
-type fakeAgentIdentityRedeemer struct {
-	credential AgentIdentityCredential
-	err        error
-	tokens     []string
-}
-
-func (f *fakeAgentIdentityRedeemer) RedeemDWSAuthCode(_ context.Context, contextToken string) (AgentIdentityCredential, error) {
-	f.tokens = append(f.tokens, contextToken)
-	return f.credential, f.err
-}
 
 type fakeCommandRunner struct {
 	calls     []fakeCommandCall
@@ -137,7 +125,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		Domain:              "cn-beijing.e2b.fc.aliyuncs.com",
 		LLMBaseURL:          "https://api-deap.dingtalk.com/deapai",
 		LLMAPIKey:           "maas_secret",
-		LLMModel:            "qwen3.5-plus",
+		LLMModels:           []string{"qwen3.5-plus", "qwen3.7-max"},
 		CLIPath:             "/usr/local/bin/e2b",
 		TimeoutSeconds:      1800,
 		SandboxReadyTimeout: time.Second,
@@ -160,7 +148,9 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		DaemonID: pgtype.Text{String: "fc-e2b:ws:fc-hermes", Valid: true},
 	}
 	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
-	if err := launcher.execRunOnce(context.Background(), sandboxID, rt, taskID, "mdt_test_token", true, nil); err != nil {
+	if err := launcher.execRunOnce(context.Background(), sandboxID, rt, taskID, "mdt_test_token", true, map[string]string{
+		"OPENAI_MODEL": "qwen3.7-max",
+	}); err != nil {
 		t.Fatalf("execRunOnce returned error: %v", err)
 	}
 
@@ -207,8 +197,8 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		"-e", "DWS_CONFIG_DIR=/home/user/.dws",
 		"-e", "OPENAI_BASE_URL=https://api-deap.dingtalk.com/deapai",
 		"-e", "OPENAI_API_KEY=maas_secret",
-		"-e", "OPENAI_MODEL=qwen3.5-plus",
 		"-e", "MULTICA_FC_E2B_COLD_START=true",
+		"-e", "OPENAI_MODEL=qwen3.7-max",
 		"sbx_123",
 		"--",
 		"multica-fc-hermes-runner",
@@ -230,7 +220,7 @@ func TestFCE2BExecRunOnceWarmSandboxDoesNotInjectColdStart(t *testing.T) {
 		Domain:     "cn-beijing.e2b.fc.aliyuncs.com",
 		LLMBaseURL: "https://api-deap.dingtalk.com/deapai",
 		LLMAPIKey:  "maas_secret",
-		LLMModel:   "qwen3.5-plus",
+		LLMModels:  []string{"qwen3.5-plus"},
 		CLIPath:    "/usr/local/bin/e2b",
 	}, runner)
 	rt := db.AgentRuntime{
@@ -269,7 +259,7 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 		Domain:     "cn-beijing.e2b.fc.aliyuncs.com",
 		LLMBaseURL: "https://api-deap.dingtalk.com/deapai",
 		LLMAPIKey:  "maas_secret",
-		LLMModel:   "qwen3.5-plus",
+		LLMModels:  []string{"qwen3.5-plus"},
 		CLIPath:    "/usr/local/bin/e2b",
 	}, runner)
 	rt := db.AgentRuntime{
@@ -344,69 +334,70 @@ func TestFCE2BExtraEnvAllowsAgentWithoutDWSProfile(t *testing.T) {
 		pool.Exec(cleanupCtx, `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 
-	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{}, nil)
+	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{LLMModels: []string{"qwen3.5-plus"}}, nil)
 	env, err := launcher.extraEnvForTask(ctx, db.AgentTaskQueue{
 		AgentID: util.MustParseUUID(agentID),
 	})
 	if err != nil {
 		t.Fatalf("extraEnvForTask returned error: %v", err)
 	}
-	if len(env) != 0 {
-		t.Fatalf("extra env = %#v, want no DWS credentials", env)
+	if !reflect.DeepEqual(env, map[string]string{"OPENAI_MODEL": "qwen3.5-plus"}) {
+		t.Fatalf("extra env = %#v, want default FC model only", env)
 	}
 }
 
-func TestFCE2BExtraEnvRedeemsContextTokenWithoutLoadingProfile(t *testing.T) {
-	redeemer := &fakeAgentIdentityRedeemer{credential: AgentIdentityCredential{
-		UID:      "user-123",
-		AuthCode: "auth-code-secret",
-	}}
-	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{}, nil)
-	launcher.AgentIdentity = redeemer
-	taskContext, _ := json.Marshal(map[string]string{
-		"agent_identity_context_token": "context-token-secret",
-	})
-
-	env, err := launcher.extraEnvForTask(context.Background(), db.AgentTaskQueue{Context: taskContext})
+func TestParseFCE2BModels(t *testing.T) {
+	models, err := parseFCE2BModels(`[" qwen3.7-plus ","claude-sonnet-4-6"]`)
 	if err != nil {
-		t.Fatalf("extraEnvForTask: %v", err)
+		t.Fatalf("parseFCE2BModels returned error: %v", err)
 	}
-	want := map[string]string{"DWS_AUTH_CODE": "auth-code-secret", "DWS_UID": "user-123"}
-	if !reflect.DeepEqual(env, want) {
-		t.Fatalf("env = %#v, want %#v", env, want)
+	if !reflect.DeepEqual(models, []string{"qwen3.7-plus", "claude-sonnet-4-6"}) {
+		t.Fatalf("models = %#v", models)
 	}
-	if !reflect.DeepEqual(redeemer.tokens, []string{"context-token-secret"}) {
-		t.Fatalf("tokens = %#v", redeemer.tokens)
-	}
-	if _, ok := env["DWS_AUTH_ARCHIVE_B64"]; ok {
-		t.Fatal("ContextToken mode must not inject a profile archive")
+	for _, raw := range []string{
+		`"qwen3.7-plus"`,
+		`[]`,
+		`["qwen3.7-plus", "qwen3.7-plus"]`,
+		`["qwen3.7-plus", ""]`,
+	} {
+		if _, err := parseFCE2BModels(raw); err == nil {
+			t.Fatalf("parseFCE2BModels(%s) must fail", raw)
+		}
 	}
 }
 
-func TestFCE2BExtraEnvContextTokenFailureDoesNotUseProfile(t *testing.T) {
-	redeemer := &fakeAgentIdentityRedeemer{err: errors.New("redeem failed")}
-	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{}, nil)
-	launcher.AgentIdentity = redeemer
-	taskContext, _ := json.Marshal(map[string]string{
-		"agent_identity_context_token": "context-token-secret",
+func TestFCE2BModelForAgent(t *testing.T) {
+	cfg := FCE2BConfig{LLMModels: []string{"qwen3.7-plus", "qwen3.7-max"}}
+	if got, err := cfg.ModelForAgent(""); err != nil || got != "qwen3.7-plus" {
+		t.Fatalf("default model = %q, %v", got, err)
+	}
+	if got, err := cfg.ModelForAgent("qwen3.7-max"); err != nil || got != "qwen3.7-max" {
+		t.Fatalf("selected model = %q, %v", got, err)
+	}
+	if _, err := cfg.ModelForAgent("unknown-model"); err == nil {
+		t.Fatal("unknown agent model must fail")
+	}
+}
+
+func TestFCE2BExtraEnvIncludesAgentIdentityContextToken(t *testing.T) {
+	task := db.AgentTaskQueue{
+		Context: []byte(`{"agent_identity_context_token":"ctx_sandbox_token"}`),
+	}
+	got, err := fcE2BAgentIdentityExtraEnv(task, FCE2BConfig{
+		AgentIdentityBaseURL: "https://pre-agent-identity.dingtalk.com",
+		AgentIdentityTimeout: 7 * time.Second,
 	})
-
-	_, err := launcher.extraEnvForTask(context.Background(), db.AgentTaskQueue{Context: taskContext})
-	if err == nil || err.Error() != "redeem failed" {
-		t.Fatalf("error = %v", err)
+	if err != nil {
+		t.Fatalf("fcE2BAgentIdentityExtraEnv: %v", err)
 	}
-}
-
-func TestAgentIdentityContextTokenFromTaskContext(t *testing.T) {
-	token, ok, err := AgentIdentityContextTokenFromTaskContext([]byte(`{"head_sha":"abc","agent_identity_context_token":" token "}`))
-	if err != nil || !ok || token != "token" {
-		t.Fatalf("result = (%q, %v, %v)", token, ok, err)
+	if got["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_sandbox_token" {
+		t.Fatalf("AGENT_IDENTITY_CONTEXT_TOKEN = %q, want ctx_sandbox_token", got["AGENT_IDENTITY_CONTEXT_TOKEN"])
 	}
-	if _, ok, err := AgentIdentityContextTokenFromTaskContext([]byte(`{"head_sha":"abc"}`)); err != nil || ok {
-		t.Fatalf("head-only context = (%v, %v)", ok, err)
+	if got["MULTICA_AGENT_IDENTITY_BASE_URL"] != "https://pre-agent-identity.dingtalk.com" {
+		t.Fatalf("MULTICA_AGENT_IDENTITY_BASE_URL = %q", got["MULTICA_AGENT_IDENTITY_BASE_URL"])
 	}
-	if _, _, err := AgentIdentityContextTokenFromTaskContext([]byte(`{`)); err == nil {
-		t.Fatal("malformed context must fail")
+	if got["MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS"] != "7" {
+		t.Fatalf("MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS = %q", got["MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS"])
 	}
 }
 

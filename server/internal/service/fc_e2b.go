@@ -62,7 +62,7 @@ type FCE2BConfig struct {
 	Domain               string
 	LLMBaseURL           string
 	LLMAPIKey            string
-	LLMModel             string
+	LLMModels            []string
 	DWSSecretKey         string
 	AgentIdentityBaseURL string
 	AgentIdentityTimeout time.Duration
@@ -82,7 +82,6 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		Domain:               strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),
 		LLMBaseURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_BASE_URL")), "/"),
 		LLMAPIKey:            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_API_KEY")),
-		LLMModel:             strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_MODEL")),
 		DWSSecretKey:         strings.TrimSpace(os.Getenv("MULTICA_DWS_SECRET_KEY")),
 		AgentIdentityBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_BASE_URL")), "/"),
 		AgentIdentityTimeout: defaultAgentIdentityTimeout,
@@ -90,13 +89,19 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		TimeoutSeconds:       defaultFCE2BTimeoutSeconds,
 		SandboxReadyTimeout:  defaultFCE2BSandboxReadyTimeout,
 	}
+	models, err := parseFCE2BModels(os.Getenv("MULTICA_FC_E2B_OPENAI_MODELS"))
+	if err != nil {
+		cfg.ParseError = errors.Join(cfg.ParseError, err)
+	} else {
+		cfg.LLMModels = models
+	}
 	if cfg.CLIPath == "" {
 		cfg.CLIPath = defaultFCE2BCLIPath
 	}
 	if raw := strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TIMEOUT_SECONDS")); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n <= 0 {
-			cfg.ParseError = fmt.Errorf("invalid MULTICA_FC_E2B_TIMEOUT_SECONDS")
+			cfg.ParseError = errors.Join(cfg.ParseError, fmt.Errorf("invalid MULTICA_FC_E2B_TIMEOUT_SECONDS"))
 		} else {
 			cfg.TimeoutSeconds = n
 		}
@@ -148,8 +153,8 @@ func (c FCE2BConfig) Validate() error {
 	if strings.TrimSpace(c.LLMAPIKey) == "" {
 		missing = append(missing, "MULTICA_FC_E2B_OPENAI_API_KEY")
 	}
-	if strings.TrimSpace(c.LLMModel) == "" {
-		missing = append(missing, "MULTICA_FC_E2B_OPENAI_MODEL")
+	if len(c.LLMModels) == 0 {
+		missing = append(missing, "MULTICA_FC_E2B_OPENAI_MODELS")
 	}
 	if strings.TrimSpace(c.CLIPath) == "" {
 		missing = append(missing, "MULTICA_FC_E2B_CLI_PATH")
@@ -164,6 +169,49 @@ func (c FCE2BConfig) Validate() error {
 		return fmt.Errorf("missing FC/E2B config: %s", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+func parseFCE2BModels(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var models []string
+	if err := json.Unmarshal([]byte(raw), &models); err != nil {
+		return nil, errors.New("invalid MULTICA_FC_E2B_OPENAI_MODELS: expected a JSON string array")
+	}
+	if len(models) == 0 {
+		return nil, errors.New("invalid MULTICA_FC_E2B_OPENAI_MODELS: array must not be empty")
+	}
+	seen := make(map[string]struct{}, len(models))
+	for i, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			return nil, fmt.Errorf("invalid MULTICA_FC_E2B_OPENAI_MODELS: item %d is empty", i)
+		}
+		if _, ok := seen[model]; ok {
+			return nil, fmt.Errorf("invalid MULTICA_FC_E2B_OPENAI_MODELS: duplicate model %q", model)
+		}
+		seen[model] = struct{}{}
+		models[i] = model
+	}
+	return models, nil
+}
+
+func (c FCE2BConfig) ModelForAgent(model string) (string, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		if len(c.LLMModels) == 0 {
+			return "", errors.New("MULTICA_FC_E2B_OPENAI_MODELS is empty")
+		}
+		return c.LLMModels[0], nil
+	}
+	for _, allowed := range c.LLMModels {
+		if model == allowed {
+			return model, nil
+		}
+	}
+	return "", fmt.Errorf("agent model %q is not configured in MULTICA_FC_E2B_OPENAI_MODELS", model)
 }
 
 func (c FCE2BConfig) ValidateTemplateAPI() error {
@@ -331,11 +379,10 @@ func firstString(obj map[string]any, keys ...string) string {
 }
 
 type FCE2BLauncher struct {
-	Queries       *db.Queries
-	Tasks         *TaskService
-	Config        FCE2BConfig
-	Runner        CommandRunner
-	AgentIdentity AgentIdentityRedeemer
+	Queries *db.Queries
+	Tasks   *TaskService
+	Config  FCE2BConfig
+	Runner  CommandRunner
 }
 
 type fcE2BTaskScope struct {
@@ -347,20 +394,12 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 	if runner == nil {
 		runner = OSCommandRunner{}
 	}
-	launcher := &FCE2BLauncher{
+	return &FCE2BLauncher{
 		Queries: q,
 		Tasks:   tasks,
 		Config:  cfg,
 		Runner:  runner,
 	}
-	if cfg.AgentIdentityBaseURL != "" {
-		timeout := cfg.AgentIdentityTimeout
-		if timeout <= 0 {
-			timeout = defaultAgentIdentityTimeout
-		}
-		launcher.AgentIdentity = NewHTTPAgentIdentityRedeemer(cfg.AgentIdentityBaseURL, timeout)
-	}
-	return launcher
 }
 
 func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) error {
@@ -573,34 +612,34 @@ func fcE2BTaskStatusBlocksClaim(status string) bool {
 }
 
 func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQueue) (map[string]string, error) {
-	contextToken, hasContextToken, err := AgentIdentityContextTokenFromTaskContext(task.Context)
+	agentIdentityEnv, err := fcE2BAgentIdentityExtraEnv(task, l.Config)
 	if err != nil {
 		return nil, err
 	}
-	if hasContextToken {
-		if l.AgentIdentity == nil {
-			return nil, errors.New("MULTICA_AGENT_IDENTITY_BASE_URL is required for ContextToken tasks")
-		}
-		credential, err := l.AgentIdentity.RedeemDWSAuthCode(ctx, contextToken)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]string{
-			"DWS_AUTH_CODE": credential.AuthCode,
-			"DWS_UID":       credential.UID,
-		}, nil
-	}
-
 	agentRow, err := l.Queries.GetAgent(ctx, task.AgentID)
 	if err != nil {
 		return nil, fmt.Errorf("load agent for FC/E2B launch: %w", err)
 	}
+	model, err := l.Config.ModelForAgent(agentRow.Model.String)
+	if err != nil {
+		return nil, err
+	}
+	env := map[string]string{"OPENAI_MODEL": model}
+	for key, value := range agentIdentityEnv {
+		env[key] = value
+	}
+	if len(agentIdentityEnv) > 0 {
+		// ContextToken authorization is task-scoped and must not reuse a
+		// previously bound DWS profile when sandbox initialization fails.
+		return env, nil
+	}
+
 	profileID, hasProfile, err := DWSProfileIDFromRuntimeConfig(agentRow.RuntimeConfig)
 	if err != nil {
 		return nil, err
 	}
 	if !hasProfile {
-		return nil, nil
+		return env, nil
 	}
 	profileUUID, err := util.ParseUUID(profileID)
 	if err != nil {
@@ -618,21 +657,39 @@ func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQu
 	if err != nil {
 		return nil, err
 	}
-	return map[string]string{"DWS_AUTH_ARCHIVE_B64": archive}, nil
+	env["DWS_AUTH_ARCHIVE_B64"] = archive
+	return env, nil
 }
 
-func AgentIdentityContextTokenFromTaskContext(raw []byte) (string, bool, error) {
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return "", false, nil
+func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue, cfg FCE2BConfig) (map[string]string, error) {
+	if len(bytes.TrimSpace(task.Context)) == 0 {
+		return nil, nil
 	}
-	var taskContext struct {
-		AgentIdentityContextToken string `json:"agent_identity_context_token"`
+	var payload map[string]any
+	if err := json.Unmarshal(task.Context, &payload); err != nil {
+		return nil, fmt.Errorf("parse task context for Agent Identity: %w", err)
 	}
-	if err := json.Unmarshal(raw, &taskContext); err != nil {
-		return "", false, fmt.Errorf("parse task context for Agent Identity: %w", err)
+	token, _ := payload[protocol.AgentIdentityContextTokenJSONKey].(string)
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, nil
 	}
-	token := strings.TrimSpace(taskContext.AgentIdentityContextToken)
-	return token, token != "", nil
+	if cfg.AgentIdentityBaseURL == "" {
+		return nil, errors.New("MULTICA_AGENT_IDENTITY_BASE_URL is required for ContextToken tasks")
+	}
+	timeout := cfg.AgentIdentityTimeout
+	if timeout <= 0 {
+		timeout = defaultAgentIdentityTimeout
+	}
+	seconds := int(timeout / time.Second)
+	if seconds <= 0 {
+		seconds = int(defaultAgentIdentityTimeout / time.Second)
+	}
+	return map[string]string{
+		protocol.AgentIdentityContextTokenEnvKey: token,
+		"MULTICA_AGENT_IDENTITY_BASE_URL":        cfg.AgentIdentityBaseURL,
+		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS": strconv.Itoa(seconds),
+	}, nil
 }
 
 // DWSProfileIDFromRuntimeConfig extracts the optional DWS profile binding from
@@ -797,7 +854,6 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "DWS_CONFIG_DIR=/home/user/.dws",
 		"-e", "OPENAI_BASE_URL=" + l.Config.LLMBaseURL,
 		"-e", "OPENAI_API_KEY=" + l.Config.LLMAPIKey,
-		"-e", "OPENAI_MODEL=" + l.Config.LLMModel,
 	}
 	if coldStart {
 		args = append(args, "-e", "MULTICA_FC_E2B_COLD_START=true")
