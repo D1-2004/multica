@@ -40,10 +40,10 @@ export function ModelDropdown({
   const { t } = useT("agents");
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const managedByRuntime = isFCE2BRuntime(runtime);
+  const fixedCatalog = isFCE2BRuntime(runtime);
 
   const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline && !managedByRuntime ? runtimeId : null),
+    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
   );
 
   const supported = modelsQuery.data?.supported ?? true;
@@ -59,10 +59,10 @@ export function ModelDropdown({
   // model selection, clear any previously-saved value so we don't
   // persist a ghost configuration that never takes effect.
   useEffect(() => {
-    if ((managedByRuntime || !supported) && value !== "") {
+    if (!supported && value !== "") {
       onChange("");
     }
-  }, [managedByRuntime, supported, value, onChange]);
+  }, [supported, value, onChange]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return grouped;
@@ -83,7 +83,7 @@ export function ModelDropdown({
   const exactMatch = models.some(
     (m) => m.id === trimmedSearch || m.label === trimmedSearch,
   );
-  const canCreate = trimmedSearch.length > 0 && !exactMatch;
+  const canCreate = !fixedCatalog && trimmedSearch.length > 0 && !exactMatch;
 
   const select = (id: string) => {
     onChange(id);
@@ -99,7 +99,7 @@ export function ModelDropdown({
         ? t(($) => $.model_dropdown.default_provider)
         : t(($) => $.model_dropdown.runtime_offline_manual));
 
-  if (managedByRuntime || (!supported && !modelsQuery.isLoading)) {
+  if (!supported && !modelsQuery.isLoading) {
     return (
       <div className="flex flex-col min-w-0">
         <div className="flex h-6 items-center">
