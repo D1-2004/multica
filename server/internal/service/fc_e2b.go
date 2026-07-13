@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -370,6 +373,59 @@ type FCE2BLauncher struct {
 	Tasks   *TaskService
 	Config  FCE2BConfig
 	Runner  CommandRunner
+
+	// Pool backs the cross-replica sandbox lock. Optional: without it the
+	// launcher serializes nothing, which is only safe in a single-process
+	// deployment (see resolveSandbox).
+	Pool *pgxpool.Pool
+}
+
+// fcE2BSandboxLockClass namespaces the advisory lock so it cannot collide with
+// the migration loop's lock or the usage-rollup lock. "FCE2" as an int32.
+const fcE2BSandboxLockClass int32 = 0x46434532
+
+// lockSandboxScope serializes the read-then-create in resolveSandbox across
+// replicas. The launch is driven by whichever replica served the enqueue (or
+// the pending-chat poll, which the load balancer spreads freely), and the
+// in-process launch guard only dedups within one replica — so without this two
+// replicas both miss the session row, both boot a sandbox, and the second
+// Upsert clobbers the first, leaving an orphaned microVM billed until timeout.
+//
+// The lock is held across the sandbox boot (seconds), so it holds one pooled
+// connection for that long. The loser blocks, then re-reads and reuses the
+// winner's sandbox.
+func (l *FCE2BLauncher) lockSandboxScope(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope) (func(), error) {
+	if l.Pool == nil {
+		return func() {}, nil
+	}
+	key := fcE2BScopeLockKey(rt.ID, scope)
+	conn, err := l.Pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire connection for sandbox lock: %w", err)
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1, $2)", fcE2BSandboxLockClass, key); err != nil {
+		conn.Release()
+		return nil, fmt.Errorf("acquire sandbox lock: %w", err)
+	}
+	return func() {
+		// Unlock on a background context: the caller's ctx may already be done
+		// (a cancelled launch), and a lock left held would wedge every later
+		// launch for this scope until the connection is recycled.
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1, $2)", fcE2BSandboxLockClass, key); err != nil {
+			slog.Warn("fc/e2b: release sandbox lock failed", "err", err)
+		}
+		conn.Release()
+	}, nil
+}
+
+func fcE2BScopeLockKey(runtimeID pgtype.UUID, scope fcE2BTaskScope) int32 {
+	h := fnv.New32a()
+	_, _ = h.Write(runtimeID.Bytes[:])
+	_, _ = io.WriteString(h, scope.typ)
+	_, _ = h.Write(scope.id.Bytes[:])
+	return int32(h.Sum32())
 }
 
 type fcE2BTaskScope struct {
@@ -386,6 +442,16 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 		Tasks:   tasks,
 		Config:  cfg,
 		Runner:  runner,
+	}
+}
+
+// SetPool wires the connection the cross-replica sandbox lock needs. Left nil
+// (tests, single-process runs) the launcher serializes nothing — which is the
+// pre-existing behavior, and the reason two replicas could each boot a sandbox
+// for the same scope.
+func (l *FCE2BLauncher) SetPool(pool *pgxpool.Pool) {
+	if l != nil {
+		l.Pool = pool
 	}
 }
 
@@ -705,6 +771,14 @@ func (l *FCE2BLauncher) decryptDWSAuthArchive(ciphertext []byte) (string, error)
 
 func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool, template string) (string, bool, error) {
 	if scoped {
+		// Serialize the lookup-or-create with the other replicas before reading:
+		// a check outside the lock is exactly the race that orphans sandboxes.
+		release, err := l.lockSandboxScope(ctx, rt, scope)
+		if err != nil {
+			return "", false, err
+		}
+		defer release()
+
 		session, err := l.Queries.GetActiveFCE2BSandboxSession(ctx, db.GetActiveFCE2BSandboxSessionParams{
 			RuntimeID: rt.ID,
 			ScopeType: scope.typ,

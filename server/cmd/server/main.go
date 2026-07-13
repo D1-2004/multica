@@ -390,7 +390,12 @@ func main() {
 	taskSvc := service.NewTaskService(queries, pool, hub, bus, daemonWakeup)
 	taskSvc.Analytics = analyticsClient
 	taskSvc.Metrics = businessMetrics
-	taskSvc.RuntimeLauncher = service.NewFCE2BLauncher(queries, taskSvc, service.FCE2BConfigFromEnv(), nil)
+	fcLauncher := service.NewFCE2BLauncher(queries, taskSvc, service.FCE2BConfigFromEnv(), nil)
+	// The pool backs the cross-replica sandbox lock: without it two replicas
+	// can each boot a sandbox for the same chat, and the loser's microVM is
+	// orphaned and billed until it times out.
+	fcLauncher.SetPool(pool)
+	taskSvc.RuntimeLauncher = fcLauncher
 	autopilotSvc := service.NewAutopilotService(queries, pool, bus, taskSvc)
 	registerAutopilotListeners(bus, autopilotSvc)
 
