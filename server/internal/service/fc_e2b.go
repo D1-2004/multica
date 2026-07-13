@@ -61,7 +61,7 @@ type FCE2BConfig struct {
 	Domain              string
 	LLMBaseURL          string
 	LLMAPIKey           string
-	LLMModel            string
+	LLMModels           []string
 	DWSSecretKey        string
 	CLIPath             string
 	TimeoutSeconds      int
@@ -79,11 +79,16 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		Domain:              strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),
 		LLMBaseURL:          strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_BASE_URL")), "/"),
 		LLMAPIKey:           strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_API_KEY")),
-		LLMModel:            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_MODEL")),
 		DWSSecretKey:        strings.TrimSpace(os.Getenv("MULTICA_DWS_SECRET_KEY")),
 		CLIPath:             strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_CLI_PATH")),
 		TimeoutSeconds:      defaultFCE2BTimeoutSeconds,
 		SandboxReadyTimeout: defaultFCE2BSandboxReadyTimeout,
+	}
+	models, err := parseFCE2BModels(os.Getenv("MULTICA_FC_E2B_OPENAI_MODELS"))
+	if err != nil {
+		cfg.ParseError = errors.Join(cfg.ParseError, err)
+	} else {
+		cfg.LLMModels = models
 	}
 	if cfg.CLIPath == "" {
 		cfg.CLIPath = defaultFCE2BCLIPath
@@ -91,7 +96,7 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 	if raw := strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TIMEOUT_SECONDS")); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n <= 0 {
-			cfg.ParseError = fmt.Errorf("invalid MULTICA_FC_E2B_TIMEOUT_SECONDS")
+			cfg.ParseError = errors.Join(cfg.ParseError, fmt.Errorf("invalid MULTICA_FC_E2B_TIMEOUT_SECONDS"))
 		} else {
 			cfg.TimeoutSeconds = n
 		}
@@ -135,8 +140,8 @@ func (c FCE2BConfig) Validate() error {
 	if strings.TrimSpace(c.LLMAPIKey) == "" {
 		missing = append(missing, "MULTICA_FC_E2B_OPENAI_API_KEY")
 	}
-	if strings.TrimSpace(c.LLMModel) == "" {
-		missing = append(missing, "MULTICA_FC_E2B_OPENAI_MODEL")
+	if len(c.LLMModels) == 0 {
+		missing = append(missing, "MULTICA_FC_E2B_OPENAI_MODELS")
 	}
 	if strings.TrimSpace(c.CLIPath) == "" {
 		missing = append(missing, "MULTICA_FC_E2B_CLI_PATH")
@@ -151,6 +156,49 @@ func (c FCE2BConfig) Validate() error {
 		return fmt.Errorf("missing FC/E2B config: %s", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+func parseFCE2BModels(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var models []string
+	if err := json.Unmarshal([]byte(raw), &models); err != nil {
+		return nil, errors.New("invalid MULTICA_FC_E2B_OPENAI_MODELS: expected a JSON string array")
+	}
+	if len(models) == 0 {
+		return nil, errors.New("invalid MULTICA_FC_E2B_OPENAI_MODELS: array must not be empty")
+	}
+	seen := make(map[string]struct{}, len(models))
+	for i, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			return nil, fmt.Errorf("invalid MULTICA_FC_E2B_OPENAI_MODELS: item %d is empty", i)
+		}
+		if _, ok := seen[model]; ok {
+			return nil, fmt.Errorf("invalid MULTICA_FC_E2B_OPENAI_MODELS: duplicate model %q", model)
+		}
+		seen[model] = struct{}{}
+		models[i] = model
+	}
+	return models, nil
+}
+
+func (c FCE2BConfig) ModelForAgent(model string) (string, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		if len(c.LLMModels) == 0 {
+			return "", errors.New("MULTICA_FC_E2B_OPENAI_MODELS is empty")
+		}
+		return c.LLMModels[0], nil
+	}
+	for _, allowed := range c.LLMModels {
+		if model == allowed {
+			return model, nil
+		}
+	}
+	return "", fmt.Errorf("agent model %q is not configured in MULTICA_FC_E2B_OPENAI_MODELS", model)
 }
 
 func (c FCE2BConfig) ValidateTemplateAPI() error {
@@ -557,6 +605,14 @@ func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQu
 	if err != nil {
 		return nil, fmt.Errorf("load agent for FC/E2B launch: %w", err)
 	}
+	model, err := l.Config.ModelForAgent(agentRow.Model.String)
+	if err != nil {
+		return nil, err
+	}
+	if env == nil {
+		env = map[string]string{}
+	}
+	env["OPENAI_MODEL"] = model
 	profileID, hasProfile, err := DWSProfileIDFromRuntimeConfig(agentRow.RuntimeConfig)
 	if err != nil {
 		return nil, err
@@ -579,9 +635,6 @@ func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQu
 	archive, err := l.decryptDWSAuthArchive(profile.AuthArchiveEncrypted)
 	if err != nil {
 		return nil, err
-	}
-	if env == nil {
-		env = map[string]string{}
 	}
 	env["DWS_AUTH_ARCHIVE_B64"] = archive
 	return env, nil
@@ -762,7 +815,6 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "DWS_CONFIG_DIR=/home/user/.dws",
 		"-e", "OPENAI_BASE_URL=" + l.Config.LLMBaseURL,
 		"-e", "OPENAI_API_KEY=" + l.Config.LLMAPIKey,
-		"-e", "OPENAI_MODEL=" + l.Config.LLMModel,
 	}
 	if coldStart {
 		args = append(args, "-e", "MULTICA_FC_E2B_COLD_START=true")
