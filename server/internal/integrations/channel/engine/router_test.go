@@ -9,9 +9,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // ---- fakes ----
@@ -625,5 +628,92 @@ func TestRouter_BareFreshCommand_ConsumedWithoutRun(t *testing.T) {
 	h.router.Drain()
 	if h.tasks.freshArg() {
 		t.Error("pending fresh must be consumed by the previous run")
+	}
+}
+
+// An inbound message must reach a web client watching the same chat without a
+// reload. The engine writes through the service layer, so unlike the web send
+// path it inherits no handler broadcast — the Router has to publish one.
+func TestRouter_InboundMessage_BroadcastsChatMessage(t *testing.T) {
+	h := newHarness(t)
+	bus := events.New()
+	h.router.SetEventBus(bus)
+
+	var mu sync.Mutex
+	var got []events.Event
+	bus.SubscribeAll(func(ev events.Event) {
+		mu.Lock()
+		got = append(got, ev)
+		mu.Unlock()
+	})
+
+	msgID := uuidFromString(t, "77777777-7777-7777-7777-777777777777")
+	h.binder.appendResult = AppendResult{
+		DedupMarked: true,
+		MessageID:   msgID,
+		Content:     "看一下上海天气",
+		CreatedAt:   pgtype.Timestamptz{Time: time.Unix(1_700_000_000, 0), Valid: true},
+	}
+
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	var chatEvent *events.Event
+	for i := range got {
+		if got[i].Type == protocol.EventChatMessage {
+			chatEvent = &got[i]
+			break
+		}
+	}
+	if chatEvent == nil {
+		t.Fatalf("no chat:message broadcast for an inbound message; saw %d events", len(got))
+	}
+	if chatEvent.WorkspaceID == "" {
+		t.Error("event carries no workspace; a scoped client would never receive it")
+	}
+	payload, ok := chatEvent.Payload.(protocol.ChatMessagePayload)
+	if !ok {
+		t.Fatalf("payload type = %T", chatEvent.Payload)
+	}
+	if payload.MessageID != util.UUIDToString(msgID) {
+		t.Errorf("message id = %q", payload.MessageID)
+	}
+	if payload.Role != "user" || payload.Content != "看一下上海天气" {
+		t.Errorf("unexpected payload: %+v", payload)
+	}
+}
+
+// A message that never committed must not be broadcast: a bubble no reload can
+// reproduce is worse than a missing one.
+func TestRouter_InboundMessage_NoBroadcastWithoutCommittedMessage(t *testing.T) {
+	h := newHarness(t)
+	bus := events.New()
+	h.router.SetEventBus(bus)
+
+	var mu sync.Mutex
+	var chatEvents int
+	bus.SubscribeAll(func(ev events.Event) {
+		if ev.Type == protocol.EventChatMessage {
+			mu.Lock()
+			chatEvents++
+			mu.Unlock()
+		}
+	})
+
+	// The append reports no message id — the shape of every path that did not
+	// durably write one.
+	h.binder.appendResult = AppendResult{DedupMarked: true}
+
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if chatEvents != 0 {
+		t.Fatalf("broadcast %d chat:message events with no committed row", chatEvents)
 	}
 }

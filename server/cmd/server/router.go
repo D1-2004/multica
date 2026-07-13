@@ -311,6 +311,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// is the single shared inbound handler injected into every Channel.
 	channelRegistry := channel.NewRegistry()
 	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{Logger: slog.Default()})
+	// So an inbound DingTalk/Slack/Lark message appears in a web client
+	// watching the same chat without a reload: the engine writes through the
+	// service layer and inherits no handler broadcast of its own.
+	channelRouter.SetEventBus(bus)
 	// Debounce the per-session run trigger so a burst of messages collapses
 	// into one agent run instead of one per message (MUL-2968).
 	channelRouter.EnableRunBatching(engine.DefaultChatRunBatchWindow)

@@ -11,8 +11,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // Router is the channel-agnostic inbound pipeline — the generalization of the
@@ -36,6 +39,12 @@ type Router struct {
 	issues IssueCreator
 	tasks  TaskEnqueuer
 	reader SessionReader
+
+	// bus is optional (nil is valid). When wired, a committed inbound message
+	// broadcasts chat:message — the same event the web send path publishes
+	// from its handler. Every channel funnels through this Router, so this is
+	// the one place that needs the wiring.
+	bus *events.Bus
 
 	batcher *pendingBatcher
 
@@ -66,6 +75,14 @@ type RouterConfig struct {
 // the IssueCreator + TaskEnqueuer that /issue and chat runs go through, and a
 // SessionReader for the debounced flush. Register a platform's ResolverSet
 // with Register before Handle is called.
+// SetEventBus wires the optional bus after construction so the constructor
+// signature (and every test that calls it) stays untouched. Nil-safe.
+func (r *Router) SetEventBus(bus *events.Bus) {
+	if r != nil {
+		r.bus = bus
+	}
+}
+
 func NewRouter(issues IssueCreator, tasks TaskEnqueuer, reader SessionReader, cfg RouterConfig) *Router {
 	if cfg.ReplyTimeout == 0 {
 		cfg.ReplyTimeout = 2500 * time.Millisecond
@@ -304,11 +321,15 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	// 6. Append message + in-tx dedup Mark — the durable transition point.
 	appendRes, err := set.Session.AppendMessage(ctx, AppendParams{
 		SessionID:      sessionID,
+		WorkspaceID:    inst.WorkspaceID,
 		Sender:         identity.UserID,
 		InstallationID: inst.ID,
 		Message:        msg,
 		ClaimToken:     claimToken,
 	})
+	if err == nil {
+		r.publishInboundMessage(inst.WorkspaceID, sessionID, identity.UserID, appendRes)
+	}
 	if err != nil {
 		if errors.Is(err, ErrClaimLost) {
 			return Result{}, finalizeNone, err
@@ -567,3 +588,32 @@ func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, ori
 var ErrEmptyIssueTitle = errors.New("issue title is empty")
 
 var _ channel.InboundHandler = (*Router)(nil).Handle
+
+// publishInboundMessage broadcasts a committed inbound message as chat:message,
+// mirroring what handler.SendChatMessage does for the web send path. Without
+// it the message is durable but silent: a web client watching the same chat
+// only sees it on reload, and never at all when the follow-up task fails to
+// enqueue (no chat:done ever lands either).
+//
+// Best-effort and nil-safe — a missing broadcast must never fail an ingest
+// that has already committed.
+func (r *Router) publishInboundMessage(workspaceID, sessionID, sender pgtype.UUID, res AppendResult) {
+	if r == nil || r.bus == nil || !res.MessageID.Valid || !workspaceID.Valid {
+		return
+	}
+	session := util.UUIDToString(sessionID)
+	r.bus.Publish(events.Event{
+		Type:          protocol.EventChatMessage,
+		WorkspaceID:   util.UUIDToString(workspaceID),
+		ActorType:     "member",
+		ActorID:       util.UUIDToString(sender),
+		ChatSessionID: session,
+		Payload: protocol.ChatMessagePayload{
+			ChatSessionID: session,
+			MessageID:     util.UUIDToString(res.MessageID),
+			Role:          "user",
+			Content:       res.Content,
+			CreatedAt:     res.CreatedAt.Time.Format(time.RFC3339Nano),
+		},
+	})
+}
