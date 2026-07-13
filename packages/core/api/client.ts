@@ -119,6 +119,13 @@ import type {
   GitHubPullRequest,
   ListGitHubInstallationsResponse,
   GitHubConnectResponse,
+  GitHubAgentPreviewRequest,
+  GitHubAgentPreview,
+  ListGitHubAgentRepositoriesResponse,
+  CreateGitHubAgentRequest,
+  CreateGitHubAgentResponse,
+  AgentSource,
+  SyncAgentSourceResponse,
   ListLarkInstallationsResponse,
   BeginLarkInstallResponse,
   LarkInstallStatusResponse,
@@ -252,6 +259,16 @@ import {
   EMPTY_LABEL,
   EMPTY_LIST_LABELS_RESPONSE,
   EMPTY_RESOURCE_LABELS_RESPONSE,
+  GitHubAgentPreviewSchema,
+  ListGitHubAgentRepositoriesResponseSchema,
+  AgentSourceSchema,
+  CreateGitHubAgentResponseSchema,
+  SyncAgentSourceResponseSchema,
+  EMPTY_GITHUB_AGENT_PREVIEW,
+  EMPTY_GITHUB_AGENT_REPOSITORIES,
+  EMPTY_AGENT_SOURCE,
+  EMPTY_CREATE_GITHUB_AGENT_RESPONSE,
+  EMPTY_SYNC_AGENT_SOURCE_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -2528,6 +2545,69 @@ export class ApiClient {
     await this.fetch(`/api/workspaces/${workspaceId}/github/installations/${installationId}`, {
       method: "DELETE",
     });
+  }
+
+  async listGitHubAgentRepositories(
+    workspaceId: string,
+    installationId: string,
+  ): Promise<ListGitHubAgentRepositoriesResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/github/repositories?installation_id=${encodeURIComponent(installationId)}`,
+    );
+    return parseWithFallback(
+      raw,
+      ListGitHubAgentRepositoriesResponseSchema,
+      EMPTY_GITHUB_AGENT_REPOSITORIES,
+      { endpoint: "GET /api/workspaces/:id/github/repositories" },
+    );
+  }
+
+  async previewGitHubAgent(
+    workspaceId: string,
+    data: GitHubAgentPreviewRequest,
+  ): Promise<GitHubAgentPreview> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/github/agent-preview`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(raw, GitHubAgentPreviewSchema, EMPTY_GITHUB_AGENT_PREVIEW, {
+      endpoint: "POST /api/workspaces/:id/github/agent-preview",
+    });
+  }
+
+  async createGitHubAgent(
+    workspaceId: string,
+    data: CreateGitHubAgentRequest,
+  ): Promise<CreateGitHubAgentResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/github/agents`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(
+      raw,
+      CreateGitHubAgentResponseSchema,
+      EMPTY_CREATE_GITHUB_AGENT_RESPONSE,
+      { endpoint: "POST /api/workspaces/:id/github/agents" },
+    );
+  }
+
+  async getAgentSource(agentId: string): Promise<AgentSource> {
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/source`);
+    return parseWithFallback(raw, AgentSourceSchema, EMPTY_AGENT_SOURCE, {
+      endpoint: "GET /api/agents/:id/source",
+    });
+  }
+
+  async syncAgentSource(agentId: string): Promise<SyncAgentSourceResponse> {
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/source/sync`, {
+      method: "POST",
+    });
+    return parseWithFallback(
+      raw,
+      SyncAgentSourceResponseSchema,
+      EMPTY_SYNC_AGENT_SOURCE_RESPONSE,
+      { endpoint: "POST /api/agents/:id/source/sync" },
+    );
   }
 
   async listIssuePullRequests(issueId: string): Promise<{ pull_requests: GitHubPullRequest[] }> {

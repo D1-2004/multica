@@ -19,6 +19,10 @@ ORDER BY created_at ASC, id ASC;
 SELECT * FROM github_installation
 WHERE id = $1;
 
+-- name: GetGitHubInstallationInWorkspace :one
+SELECT * FROM github_installation
+WHERE id = $1 AND workspace_id = $2;
+
 -- name: CreateGitHubInstallation :one
 INSERT INTO github_installation (
     workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id

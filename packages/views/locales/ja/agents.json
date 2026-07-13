@@ -132,7 +132,10 @@
     "dm_no_permission_toast": "このエージェントとチャットする権限がありません。",
     "assign_work": "作業を割り当てる",
     "more_actions_aria": "エージェントの操作",
-    "updated": "{{when}}に更新"
+    "updated": "{{when}}に更新",
+    "source_sync_succeeded": "GitHub ソースを同期しました",
+    "source_already_current": "GitHub ソースは最新です",
+    "source_sync_failed": "GitHub ソースを同期できませんでした"
   },
   "inspector": {
     "section_profile": "プロフィール",
@@ -170,13 +173,20 @@
     "edit_description_title": "説明を編集",
     "description_placeholder": "このエージェントは何をしますか？",
     "save": "保存",
-    "cancel": "キャンセル"
+    "cancel": "キャンセル",
+    "github_managed_profile": "名前と説明は GitHub リポジトリで管理されています。"
   },
   "overview": {
     "agent_context": "エージェント",
     "access": "アクセス",
     "attention_title": "対応が必要な task",
-    "attention_queued_other": "ランタイムが利用できないため、{{count}}件の task が待機中です。"
+    "attention_queued_other": "ランタイムが利用できないため、{{count}}件の task が待機中です。",
+    "source_title": "GitHub ソース",
+    "source_ref": "Ref",
+    "source_commit": "コミット",
+    "source_synced_at": "最終同期",
+    "source_sync": "今すぐ同期",
+    "source_status": { "ready": "正常", "failed": "同期失敗", "disconnected": "切断済み" }
   },
   "skill_attach": {
     "trigger_aria": "ワークスペースのスキルを追加",
@@ -331,6 +341,7 @@
     },
     "instructions": {
       "intro": "すべてのタスクで使用する System Prompt を設定します。Markdown に対応しています。",
+      "github_managed": "この System Prompt は接続された GitHub リポジトリで管理されています。更新するにはソースを同期してください。",
       "system_prompt_label": "System Prompt",
       "placeholder": "このエージェントの役割、専門分野、作業スタイルを定義してください。\n\n# 例\nあなたは React と TypeScript を専門とするフロントエンドエンジニアです。\n\n## 作業スタイル\n- 小さく焦点を絞った PR を作成する — 論理的な変更ごとに1コミット\n- 継承よりコンポジションを優先する\n- 新しいコンポーネントには必ずユニットテストを追加する\n\n## 制約\n- 明示的な承認なしに shared/ の型を変更しない\n- features/ の既存のコンポーネントパターンに従う"
     },
@@ -708,6 +719,7 @@
     "step_template": "テンプレートを選択",
     "step_configure": "確認して設定",
     "step_ai": "会話で作成",
+    "step_github": "GitHub からインポート",
     "modes": {
       "blank": {
         "title": "空白から始める",
@@ -720,7 +732,33 @@
       "ai": {
         "title": "AI で作成",
         "description": "期待する成果を説明すると、Agent Builder が重要な質問を行い、下書きをリアルタイムで作成します。"
+      },
+      "github": {
+        "title": "GitHub からインポート",
+        "description": "multica-agent.yaml、指示、スキル、補助ファイルを含むバージョン管理されたリポジトリから作成します。"
       }
+    },
+    "github": {
+      "source_title": "GitHub ソース",
+      "source_hint": "リポジトリと ref を選択し、作成前に multica-agent.yaml を検証してプレビューします。",
+      "not_configured": "GitHub エージェントソースが設定されていません",
+      "admin_required": "ワークスペース admin 権限が必要です",
+      "admin_required_hint": "非公開リポジトリのプレビューと GitHub ベースのエージェント作成は owner または admin のみ利用できます。",
+      "no_installation": "GitHub installation が接続されていません",
+      "connect_hint": "先に GitHub App を設定し、ワークスペース設定で installation を接続してください。",
+      "open_settings": "GitHub 設定を開く",
+      "installation": "Installation",
+      "repository": "リポジトリ",
+      "repositories_loading": "リポジトリを読み込み中…",
+      "repository_placeholder": "リポジトリを選択",
+      "git_ref": "ブランチ、タグ、またはコミット",
+      "git_ref_placeholder": "空の場合は既定ブランチを使用",
+      "preview": "検証してプレビュー",
+      "preview_failed": "この GitHub エージェントをプレビューできませんでした。",
+      "preview_ready": "検証済み",
+      "repository_skills": "リポジトリ管理のスキル",
+      "managed_fields_hint": "名前、説明、指示、リポジトリのスキルは GitHub で管理されます。追加のワークスペーススキルはここで設定できます。",
+      "runtime_incompatible": "このリポジトリは選択した {{provider}} ランタイムに対応していません。"
     },
     "templates": {
       "search": "テンプレートを検索…",

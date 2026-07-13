@@ -32,6 +32,7 @@ interface InspectorProps {
   members: MemberWithUser[];
   currentUserId: string | null;
   canEdit: boolean;
+  sourceManaged?: boolean;
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
 }
 
@@ -56,6 +57,7 @@ export function AgentDetailInspector({
   members,
   currentUserId,
   canEdit,
+  sourceManaged = false,
   onUpdate,
 }: InspectorProps) {
   const { t } = useT("agents");
@@ -99,6 +101,7 @@ export function AgentDetailInspector({
     onSave: saveProfile,
     enabled:
       canEdit &&
+      !sourceManaged &&
       profileDraft.name.length > 0 &&
       profileDraft.description.length <= AGENT_DESCRIPTION_MAX_LENGTH,
     isEqual: profileDraftsEqual,
@@ -152,7 +155,7 @@ export function AgentDetailInspector({
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 onBlur={profileAutoSave.flush}
-                disabled={!canEdit}
+                disabled={!canEdit || sourceManaged}
                 aria-invalid={nameInvalid || undefined}
               />
               {nameInvalid ? (
@@ -176,7 +179,7 @@ export function AgentDetailInspector({
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
                 onBlur={profileAutoSave.flush}
-                disabled={!canEdit}
+                disabled={!canEdit || sourceManaged}
                 rows={5}
                 maxLength={AGENT_DESCRIPTION_MAX_LENGTH}
                 className="resize-y"
@@ -186,6 +189,11 @@ export function AgentDetailInspector({
                 length={[...description].length}
                 max={AGENT_DESCRIPTION_MAX_LENGTH}
               />
+              {sourceManaged && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t(($) => $.inspector.github_managed_profile)}
+                </p>
+              )}
             </div>
           </SettingsRow>
           <SettingsRow

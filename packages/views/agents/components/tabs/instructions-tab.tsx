@@ -11,10 +11,12 @@ export function InstructionsTab({
   agent,
   onSave,
   onDirtyChange,
+  readOnly = false,
 }: {
   agent: Agent;
   onSave: (instructions: string) => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
+  readOnly?: boolean;
 }) {
   const { t } = useT("agents");
   const [value, setValue] = useState(agent.instructions ?? "");
@@ -45,7 +47,9 @@ export function InstructionsTab({
   return (
     <div className="space-y-5">
       <p className="max-w-2xl text-pretty text-sm leading-6 text-muted-foreground">
-        {t(($) => $.tab_body.instructions.intro)}
+        {readOnly
+          ? t(($) => $.tab_body.instructions.github_managed)
+          : t(($) => $.tab_body.instructions.intro)}
       </p>
 
       <div className="space-y-2">
@@ -64,10 +68,11 @@ export function InstructionsTab({
           placeholder={t(($) => $.tab_body.instructions.placeholder)}
           rows={18}
           className="min-h-96 resize-y leading-6"
+          disabled={readOnly}
         />
       </div>
 
-      <div className="flex items-center justify-end gap-3">
+      {!readOnly && <div className="flex items-center justify-end gap-3">
         {isDirty && (
           <span className="text-xs text-muted-foreground">{t(($) => $.tab_body.common.unsaved_changes)}</span>
         )}
@@ -86,7 +91,7 @@ export function InstructionsTab({
           )}
           {t(($) => $.tab_body.common.save)}
         </Button>
-      </div>
+      </div>}
     </div>
   );
 }

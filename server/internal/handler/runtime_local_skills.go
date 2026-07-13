@@ -900,6 +900,8 @@ func (h *Handler) ReportLocalSkillImportResult(w http.ResponseWriter, r *http.Re
 				failMsg = "you no longer have permission to overwrite this skill"
 			case errors.Is(oerr, errSkillOverwriteNameMismatch):
 				failMsg = "target skill name no longer matches the imported skill"
+			case errors.Is(oerr, errSkillOverwriteSourceManaged):
+				failMsg = "target skill is managed by a GitHub agent source"
 			}
 			h.failLocalSkillImport(w, r, requestID, failMsg)
 			return

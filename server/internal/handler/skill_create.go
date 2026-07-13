@@ -98,9 +98,10 @@ func (h *Handler) createSkillWithFiles(ctx context.Context, input skillCreateInp
 // user's confirm and this write. Callers map them to a failed import and must
 // NOT fall back to creating a new skill.
 var (
-	errSkillOverwriteNotFound     = errors.New("target skill not found")
-	errSkillOverwriteForbidden    = errors.New("not permitted to overwrite target skill")
-	errSkillOverwriteNameMismatch = errors.New("target skill name does not match the imported skill")
+	errSkillOverwriteNotFound      = errors.New("target skill not found")
+	errSkillOverwriteForbidden     = errors.New("not permitted to overwrite target skill")
+	errSkillOverwriteNameMismatch  = errors.New("target skill name does not match the imported skill")
+	errSkillOverwriteSourceManaged = errors.New("target skill is managed by a GitHub agent source")
 )
 
 type skillOverwriteInput struct {
@@ -159,6 +160,11 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 	}
 	if !canOverwriteSkillByLocalImport(input.UserID, existing) {
 		return SkillWithFilesResponse{}, errSkillOverwriteForbidden
+	}
+	if _, err := qtx.GetAgentSourceSkillBySkillID(ctx, existing.ID); err == nil {
+		return SkillWithFilesResponse{}, errSkillOverwriteSourceManaged
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return SkillWithFilesResponse{}, err
 	}
 	// The overwrite is keyed on target_skill_id, but the conflict the user
 	// confirmed was a same-name collision; reject if the target's name no longer

@@ -1,11 +1,13 @@
 "use client";
 
-import { Bot, Server } from "lucide-react";
+import { Bot, GitFork, Loader2, RefreshCw, Server } from "lucide-react";
 import type {
   Agent,
   AgentRuntime,
+  AgentSource,
   MemberWithUser,
 } from "@multica/core/types";
+import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 import { VisibilityBadge } from "./visibility-badge";
@@ -15,6 +17,10 @@ interface AgentOverviewSummaryProps {
   agent: Agent;
   runtime: AgentRuntime | null;
   owner: MemberWithUser | null;
+  source?: AgentSource | null;
+  canSyncSource?: boolean;
+  sourceSyncing?: boolean;
+  onSourceSync?: () => void;
 }
 
 /**
@@ -26,6 +32,10 @@ export function AgentOverviewSummary({
   agent,
   runtime,
   owner,
+  source = null,
+  canSyncSource = false,
+  sourceSyncing = false,
+  onSourceSync,
 }: AgentOverviewSummaryProps) {
   const { t } = useT("agents");
   const runtimeOnline = runtime?.status === "online";
@@ -108,6 +118,71 @@ export function AgentOverviewSummary({
           </p>
         )}
       </section>
+
+      {source && (
+        <section className="mt-5 border-t pt-5">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="flex items-center gap-1.5 text-sm font-medium">
+              <GitFork className="size-3.5" aria-hidden="true" />
+              {t(($) => $.overview.source_title)}
+            </h2>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                source.sync_status === "ready"
+                  ? "bg-success/10 text-success"
+                  : "bg-destructive/10 text-destructive"
+              }`}
+            >
+              {t(($) => $.overview.source_status[source.sync_status === "ready" ? "ready" : source.sync_status === "disconnected" ? "disconnected" : "failed"])}
+            </span>
+          </div>
+          <a
+            href={`https://github.com/${source.repository}`}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-3 block truncate text-xs font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            {source.repository}
+          </a>
+          <dl className="mt-2 space-y-2 text-xs">
+            <SummaryRow label={t(($) => $.overview.source_ref)}>
+              <span className="font-mono text-foreground">{source.ref}</span>
+            </SummaryRow>
+            <SummaryRow label={t(($) => $.overview.source_commit)}>
+              <span className="font-mono text-foreground">{source.synced_commit_sha.slice(0, 12)}</span>
+            </SummaryRow>
+            {source.last_synced_at && (
+              <SummaryRow label={t(($) => $.overview.source_synced_at)}>
+                <span className="text-foreground">
+                  {new Date(source.last_synced_at).toLocaleString()}
+                </span>
+              </SummaryRow>
+            )}
+          </dl>
+          {source.last_sync_error && (
+            <p className="mt-3 break-words text-xs leading-5 text-destructive">
+              {source.last_sync_error}
+            </p>
+          )}
+          {canSyncSource && onSourceSync && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3 w-full"
+              disabled={sourceSyncing || !source.github_connected}
+              onClick={onSourceSync}
+            >
+              {sourceSyncing ? (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <RefreshCw className="size-3.5" aria-hidden="true" />
+              )}
+              {t(($) => $.overview.source_sync)}
+            </Button>
+          )}
+        </section>
+      )}
 
       <AgentPerformanceSummary agent={agent} />
     </aside>

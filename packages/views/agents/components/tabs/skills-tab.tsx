@@ -139,6 +139,15 @@ export function SkillsTab({
             {agent.skills.map((skill) => {
               const enabled = skill.enabled !== false;
               const busy = busyId === skill.id;
+              const sourceManaged = workspaceSkills.some((workspaceSkill) => {
+                if (workspaceSkill.id !== skill.id) return false;
+                const origin = workspaceSkill.config.origin;
+                return (
+                  typeof origin === "object" &&
+                  origin !== null &&
+                  (origin as Record<string, unknown>).type === "github_agent_source"
+                );
+              });
               return (
                 <li key={skill.id} className="flex items-center gap-3 p-3">
                   <button
@@ -157,6 +166,11 @@ export function SkillsTab({
                     <span className="min-w-0 flex-1">
                       <span className={cn("block text-sm font-medium", !enabled && "text-muted-foreground")}>
                         {skill.name}
+                        {sourceManaged && (
+                          <Badge variant="outline" className="ml-2 align-middle text-[10px]">
+                            GitHub
+                          </Badge>
+                        )}
                       </span>
                       <span className="block truncate text-xs text-muted-foreground">
                         {skill.description || t(($) => $.tab_body.skills.no_description)}
@@ -176,7 +190,7 @@ export function SkillsTab({
                           })}
                         />
                       )}
-                      <Button
+                      {!sourceManaged && <Button
                         variant="ghost"
                         size="icon-sm"
                         onClick={() => handleRemove(skill.id)}
@@ -187,7 +201,7 @@ export function SkillsTab({
                         className="text-muted-foreground hover:text-destructive"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      </Button>}
                     </>
                   )}
                 </li>

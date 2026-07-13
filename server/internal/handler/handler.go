@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"os"
 	"strconv"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/githubapp"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
@@ -158,6 +160,7 @@ type Handler struct {
 	WebhookRateLimiter   WebhookRateLimiter
 	WebhookIPRateLimiter WebhookRateLimiter
 	CloudRuntime         cloudRuntimeProxy
+	GitHubApp            *githubapp.Client
 	// Lark integration. All three are nil when the Lark master key
 	// (MULTICA_LARK_SECRET_KEY) is unset; the corresponding HTTP
 	// handlers return 503 in that case so a misconfigured self-host
@@ -301,6 +304,15 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		fcLauncher.SetPool(pool)
 	}
 	taskSvc.RuntimeLauncher = fcLauncher
+	githubClient, githubErr := githubapp.New(githubapp.Config{
+		AppID:      os.Getenv("GITHUB_APP_ID"),
+		PrivateKey: os.Getenv("GITHUB_APP_PRIVATE_KEY"),
+		APIBase:    os.Getenv("GITHUB_API_BASE_URL"),
+	})
+	if githubErr != nil && !errors.Is(githubErr, githubapp.ErrUnavailable) {
+		slog.Warn("github agent sources disabled", "error", githubErr)
+	}
+
 	return &Handler{
 		Queries:               queries,
 		DB:                    executor,
@@ -329,6 +341,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 			BaseURL: cfg.CloudRuntimeFleetURL,
 			Timeout: cfg.CloudRuntimeFleetTimeout,
 		}),
+		GitHubApp: githubClient,
 		LLM: llm.New(llm.Config{
 			APIKey:       cfg.LLMAPIKey,
 			BaseURL:      cfg.LLMBaseURL,
