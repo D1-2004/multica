@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
@@ -42,6 +43,7 @@ func TestNormalizeRedisEndpoint(t *testing.T) {
 func TestRedisOptionsFromEnvWithoutRedis(t *testing.T) {
 	t.Setenv("REDIS_URL", "")
 	t.Setenv(redisAuthzInstanceIDEnv, "")
+	t.Setenv(redisAuthzEndpointEnv, "")
 
 	opts, source, err := redisOptionsFromEnv()
 	if err != nil {
@@ -49,6 +51,17 @@ func TestRedisOptionsFromEnvWithoutRedis(t *testing.T) {
 	}
 	if opts != nil || source != "" {
 		t.Fatalf("redisOptionsFromEnv = (%v, %q), want (nil, empty)", opts, source)
+	}
+}
+
+func TestRedisOptionsFromEnvAuthzRequiresEndpoint(t *testing.T) {
+	t.Setenv("REDIS_URL", "")
+	t.Setenv(redisAuthzInstanceIDEnv, "r-test")
+	t.Setenv(redisAuthzEndpointEnv, "")
+
+	_, _, err := redisOptionsFromEnv()
+	if err == nil || !strings.Contains(err.Error(), redisAuthzEndpointEnv+" is required") {
+		t.Fatalf("redisOptionsFromEnv error = %v, want missing %s", err, redisAuthzEndpointEnv)
 	}
 }
 

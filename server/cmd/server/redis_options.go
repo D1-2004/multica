@@ -8,12 +8,14 @@ import (
 	"strings"
 
 	"github.com/redis/go-redis/v9"
-	"gitlab.alibaba-inc.com/koastline/normandy-credential-sdk-golang/credential/helper"
 	"gitlab.alibaba-inc.com/koastline/normandy-credential-sdk-golang/credential/provider"
 	"gitlab.alibaba-inc.com/koastline/normandy-credential-sdk-golang/credential/urn"
 )
 
-const redisAuthzInstanceIDEnv = "REDIS_AUTHZ_INSTANCE_ID"
+const (
+	redisAuthzInstanceIDEnv = "REDIS_AUTHZ_INSTANCE_ID"
+	redisAuthzEndpointEnv   = "REDIS_AUTHZ_ENDPOINT"
+)
 
 func redisOptionsFromEnv() (*redis.Options, string, error) {
 	if rawURL := strings.TrimSpace(os.Getenv("REDIS_URL")); rawURL != "" {
@@ -28,6 +30,14 @@ func redisOptionsFromEnv() (*redis.Options, string, error) {
 	if instanceID == "" {
 		return nil, "", nil
 	}
+	endpoint := strings.TrimSpace(os.Getenv(redisAuthzEndpointEnv))
+	if endpoint == "" {
+		return nil, "", fmt.Errorf("%s is required when %s is set", redisAuthzEndpointEnv, redisAuthzInstanceIDEnv)
+	}
+	addr, err := normalizeRedisEndpoint(endpoint)
+	if err != nil {
+		return nil, "", fmt.Errorf("normalize Aone Redis endpoint for %s: %w", instanceID, err)
+	}
 
 	resourceURN := urn.OfAliyunKvStoreInstanceId(instanceID)
 	credentialProvider, err := provider.GetDefaultCredentialProvider()
@@ -40,15 +50,6 @@ func redisOptionsFromEnv() (*redis.Options, string, error) {
 	}
 	if credential.Username == "" || credential.Password == "" {
 		return nil, "", fmt.Errorf("Aone Redis credential for %s is incomplete", instanceID)
-	}
-
-	endpoint, err := helper.GetEndpoint(resourceURN)
-	if err != nil {
-		return nil, "", fmt.Errorf("get Aone Redis endpoint for %s: %w", instanceID, err)
-	}
-	addr, err := normalizeRedisEndpoint(endpoint)
-	if err != nil {
-		return nil, "", fmt.Errorf("normalize Aone Redis endpoint for %s: %w", instanceID, err)
 	}
 
 	return &redis.Options{
