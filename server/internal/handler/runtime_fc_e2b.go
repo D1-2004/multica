@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -22,10 +23,12 @@ type createFCE2BRuntimeRequest struct {
 
 func (h *Handler) ListFCE2BTemplates(w http.ResponseWriter, r *http.Request) {
 	if !h.cfg.FCE2B.Enabled {
+		slog.Warn("FC/E2B template list rejected: runtime disabled")
 		writeError(w, http.StatusServiceUnavailable, "FC/E2B runtime is disabled")
 		return
 	}
 	if err := h.cfg.FCE2B.ValidateTemplateAPI(); err != nil {
+		slog.Warn("FC/E2B template list rejected: invalid config", "error", err)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
@@ -37,6 +40,7 @@ func (h *Handler) ListFCE2BTemplates(w http.ResponseWriter, r *http.Request) {
 
 	templates, err := service.ListFCE2BTemplates(r.Context(), h.cfg.FCE2B, nil)
 	if err != nil {
+		slog.Error("FC/E2B template list failed", "error", err)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
@@ -76,6 +80,7 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 	templates, err := service.ListFCE2BTemplates(r.Context(), h.cfg.FCE2B, nil)
 	if err != nil {
+		slog.Error("FC/E2B template validation failed during runtime creation", "error", err)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}

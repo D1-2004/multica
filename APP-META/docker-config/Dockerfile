@@ -69,7 +69,11 @@ ENV PATH="/home/admin/${APP_NAME}/node/bin:/home/admin/${APP_NAME}/target/${APP_
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 ENV npm_config_registry=https://registry.npmmirror.com
 
-RUN npm install -g @e2b/cli@2.13.0 && npm cache clean --force
+RUN npm install -g @e2b/cli@2.13.0 && \
+    E2B_BIN="$(command -v e2b)" && \
+    if [ "${E2B_BIN}" != "/usr/local/bin/e2b" ]; then ln -sf "${E2B_BIN}" /usr/local/bin/e2b; fi && \
+    /usr/local/bin/e2b --version && \
+    npm cache clean --force
 COPY dws/checksums.txt /tmp/dws/checksums.txt
 COPY dws/dws-linux-amd64.tar.gz /tmp/dws/dws-linux-amd64.tar.gz
 RUN set -eux; \
