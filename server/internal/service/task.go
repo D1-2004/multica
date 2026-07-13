@@ -947,13 +947,14 @@ func (s *TaskService) EnqueueDeferredAssigneeFallback(ctx context.Context, issue
 // onto the agent's Instructions, matching the behavior of issue-bound
 // tasks assigned to the squad.
 type QuickCreateContext struct {
-	Type          string   `json:"type"`
-	Prompt        string   `json:"prompt"`
-	RequesterID   string   `json:"requester_id"`
-	WorkspaceID   string   `json:"workspace_id"`
-	ProjectID     string   `json:"project_id,omitempty"`
-	SquadID       string   `json:"squad_id,omitempty"`
-	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	Type                      string   `json:"type"`
+	Prompt                    string   `json:"prompt"`
+	RequesterID               string   `json:"requester_id"`
+	WorkspaceID               string   `json:"workspace_id"`
+	ProjectID                 string   `json:"project_id,omitempty"`
+	SquadID                   string   `json:"squad_id,omitempty"`
+	AttachmentIDs             []string `json:"attachment_ids,omitempty"`
+	AgentIdentityContextToken string   `json:"agent_identity_context_token,omitempty"`
 	// ParentIssueID is the optional UUID of the parent issue the new issue
 	// should be filed under. Set when the user opens the modal from "Add
 	// sub issue" on an existing issue; the daemon claim handler resolves the
@@ -985,7 +986,7 @@ const QuickCreateContextType = "quick_create"
 // parentIssueID is optional (zero-valued pgtype.UUID when the user didn't
 // open the modal from "Add sub issue"). The handler is responsible for
 // validating it belongs to the same workspace before passing it in.
-func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID) (db.AgentTaskQueue, error) {
+func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, agentIdentityContextToken string) (db.AgentTaskQueue, error) {
 	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
@@ -1002,6 +1003,9 @@ func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, workspaceID, r
 		Prompt:      prompt,
 		RequesterID: util.UUIDToString(requesterID),
 		WorkspaceID: util.UUIDToString(workspaceID),
+	}
+	if token := strings.TrimSpace(agentIdentityContextToken); token != "" {
+		payload.AgentIdentityContextToken = token
 	}
 	if projectID.Valid {
 		payload.ProjectID = util.UUIDToString(projectID)
