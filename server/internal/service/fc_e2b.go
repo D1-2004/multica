@@ -552,6 +552,7 @@ func fcE2BTaskStatusBlocksClaim(status string) bool {
 }
 
 func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQueue, rt db.AgentRuntime) (map[string]string, error) {
+	env := fcE2BAgentIdentityExtraEnv(task)
 	agentRow, err := l.Queries.GetAgent(ctx, task.AgentID)
 	if err != nil {
 		return nil, fmt.Errorf("load agent for FC/E2B launch: %w", err)
@@ -564,7 +565,7 @@ func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQu
 		if fcE2BRuntimeRequiresDWS(rt) {
 			return nil, errors.New("DWS profile is required for this FC/E2B runtime")
 		}
-		return nil, nil
+		return env, nil
 	}
 	profileUUID, err := util.ParseUUID(profileID)
 	if err != nil {
@@ -582,7 +583,24 @@ func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQu
 	if err != nil {
 		return nil, err
 	}
-	return map[string]string{"DWS_AUTH_ARCHIVE_B64": archive}, nil
+	if env == nil {
+		env = map[string]string{}
+	}
+	env["DWS_AUTH_ARCHIVE_B64"] = archive
+	return env, nil
+}
+
+func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue) map[string]string {
+	var payload map[string]any
+	if len(task.Context) == 0 || json.Unmarshal(task.Context, &payload) != nil {
+		return nil
+	}
+	token, _ := payload[protocol.AgentIdentityContextTokenJSONKey].(string)
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil
+	}
+	return map[string]string{protocol.AgentIdentityContextTokenEnvKey: token}
 }
 
 // DWSProfileIDFromRuntimeConfig extracts the optional DWS profile binding from

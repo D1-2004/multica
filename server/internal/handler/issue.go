@@ -2110,7 +2110,8 @@ type CreateIssueRequest struct {
 	OriginType *string `json:"origin_type,omitempty"`
 	OriginID   *string `json:"origin_id,omitempty"`
 
-	AllowDuplicate bool `json:"allow_duplicate,omitempty"`
+	AgentIdentityContextToken string `json:"agent_identity_context_token,omitempty"`
+	AllowDuplicate            bool   `json:"allow_duplicate,omitempty"`
 }
 
 func duplicateIssueMessage(issue IssueResponse) string {
@@ -2305,24 +2306,25 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
-		WorkspaceID:    wsUUID,
-		Title:          req.Title,
-		Description:    ptrToText(req.Description),
-		Status:         status,
-		Priority:       priority,
-		AssigneeType:   assigneeType,
-		AssigneeID:     assigneeID,
-		CreatorType:    creatorType,
-		CreatorID:      parseUUID(actualCreatorID),
-		ParentIssueID:  parentIssueID,
-		ProjectID:      projectID,
-		StartDate:      startDate,
-		DueDate:        dueDate,
-		OriginType:     originType,
-		OriginID:       originID,
-		Stage:          ptrToInt4(req.Stage),
-		AttachmentIDs:  attachmentIDs,
-		AllowDuplicate: req.AllowDuplicate,
+		WorkspaceID:               wsUUID,
+		Title:                     req.Title,
+		Description:               ptrToText(req.Description),
+		Status:                    status,
+		Priority:                  priority,
+		AssigneeType:              assigneeType,
+		AssigneeID:                assigneeID,
+		CreatorType:               creatorType,
+		CreatorID:                 parseUUID(actualCreatorID),
+		ParentIssueID:             parentIssueID,
+		ProjectID:                 projectID,
+		StartDate:                 startDate,
+		DueDate:                   dueDate,
+		OriginType:                originType,
+		OriginID:                  originID,
+		Stage:                     ptrToInt4(req.Stage),
+		AttachmentIDs:             attachmentIDs,
+		AllowDuplicate:            req.AllowDuplicate,
+		AgentIdentityContextToken: req.AgentIdentityContextToken,
 	}, service.IssueCreateOpts{
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,

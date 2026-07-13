@@ -284,6 +284,16 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	}
 }
 
+func TestFCE2BExtraEnvIncludesAgentIdentityContextToken(t *testing.T) {
+	task := db.AgentTaskQueue{
+		Context: []byte(`{"agent_identity_context_token":"ctx_sandbox_token"}`),
+	}
+	got := fcE2BAgentIdentityExtraEnv(task)
+	if got["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_sandbox_token" {
+		t.Fatalf("AGENT_IDENTITY_CONTEXT_TOKEN = %q, want ctx_sandbox_token", got["AGENT_IDENTITY_CONTEXT_TOKEN"])
+	}
+}
+
 func TestFCE2BScopeForTask(t *testing.T) {
 	chatID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
 	issueID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
