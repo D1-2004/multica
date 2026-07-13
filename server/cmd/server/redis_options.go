@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -73,7 +74,19 @@ func normalizeRedisEndpoint(endpoint string) (string, error) {
 		raw = parsed.Host
 	}
 
-	if _, _, err := net.SplitHostPort(raw); err == nil {
+	if host, port, err := net.SplitHostPort(raw); err == nil {
+		// SplitHostPort only splits on the last colon — it accepts any port
+		// text, numeric or not. Validate here, where a typo in the configured
+		// endpoint can still be reported against the endpoint itself; left to
+		// the client it would surface much later as an opaque dial failure,
+		// and Redis is load-bearing enough that the server exits on it.
+		if host == "" {
+			return "", fmt.Errorf("endpoint %q has no host", endpoint)
+		}
+		n, perr := strconv.ParseUint(port, 10, 16)
+		if perr != nil || n == 0 {
+			return "", fmt.Errorf("endpoint %q has an invalid port %q", endpoint, port)
+		}
 		return raw, nil
 	}
 	if strings.Contains(raw, ":") {

@@ -24,8 +24,13 @@ const (
 	logTailDefaultLines = 200
 	logTailMaxLines     = 2000
 	// logTailReadBudget bounds how far back the handler reads from the end
-	// of the file, regardless of the requested line count.
-	logTailReadBudget = int64(4 << 20)
+	// of the file, regardless of the requested line count. The request log is
+	// chatty enough (a health probe every ~100ms) that 4 MiB covered only the
+	// last few minutes, which put the one-off startup lines — the integration
+	// and relay wiring an operator actually needs — out of reach within
+	// minutes of a deploy. `contains` filters inside this window, so the
+	// budget also bounds what a filter can find.
+	logTailReadBudget = int64(64 << 20)
 )
 
 // logTailHandler serves the tail of a runtime log file so operators can
