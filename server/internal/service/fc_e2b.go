@@ -40,6 +40,7 @@ const (
 	defaultFCE2BCLIPath             = "e2b"
 	defaultFCE2BTimeoutSeconds      = 3600
 	defaultFCE2BSandboxReadyTimeout = 60 * time.Second
+	defaultAgentIdentityTimeout     = 10 * time.Second
 	fcE2BDaemonTokenTTL             = time.Hour
 	fcE2BRunnerClaimTimeout         = 30 * time.Second
 	fcE2BRunnerClaimPollInterval    = 500 * time.Millisecond
@@ -56,36 +57,40 @@ const (
 )
 
 type FCE2BConfig struct {
-	Enabled             bool
-	Template            string
-	ServerURL           string
-	APIKey              string
-	APIURL              string
-	Domain              string
-	LLMBaseURL          string
-	LLMAPIKey           string
-	LLMModels           []string
-	DWSSecretKey        string
-	CLIPath             string
-	TimeoutSeconds      int
-	SandboxReadyTimeout time.Duration
-	ParseError          error
+	Enabled              bool
+	Template             string
+	ServerURL            string
+	APIKey               string
+	APIURL               string
+	Domain               string
+	LLMBaseURL           string
+	LLMAPIKey            string
+	LLMModels            []string
+	DWSSecretKey         string
+	AgentIdentityBaseURL string
+	AgentIdentityTimeout time.Duration
+	CLIPath              string
+	TimeoutSeconds       int
+	SandboxReadyTimeout  time.Duration
+	ParseError           error
 }
 
 func FCE2BConfigFromEnv() FCE2BConfig {
 	cfg := FCE2BConfig{
-		Enabled:             envBool("MULTICA_FC_E2B_ENABLED"),
-		Template:            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TEMPLATE")),
-		ServerURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_SERVER_URL")), "/"),
-		APIKey:              strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_KEY")),
-		APIURL:              strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_URL")), "/"),
-		Domain:              strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),
-		LLMBaseURL:          strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_BASE_URL")), "/"),
-		LLMAPIKey:           strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_API_KEY")),
-		DWSSecretKey:        strings.TrimSpace(os.Getenv("MULTICA_DWS_SECRET_KEY")),
-		CLIPath:             strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_CLI_PATH")),
-		TimeoutSeconds:      defaultFCE2BTimeoutSeconds,
-		SandboxReadyTimeout: defaultFCE2BSandboxReadyTimeout,
+		Enabled:              envBool("MULTICA_FC_E2B_ENABLED"),
+		Template:             strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TEMPLATE")),
+		ServerURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_SERVER_URL")), "/"),
+		APIKey:               strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_KEY")),
+		APIURL:               strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_URL")), "/"),
+		Domain:               strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),
+		LLMBaseURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_BASE_URL")), "/"),
+		LLMAPIKey:            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_API_KEY")),
+		DWSSecretKey:         strings.TrimSpace(os.Getenv("MULTICA_DWS_SECRET_KEY")),
+		AgentIdentityBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_BASE_URL")), "/"),
+		AgentIdentityTimeout: defaultAgentIdentityTimeout,
+		CLIPath:              strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_CLI_PATH")),
+		TimeoutSeconds:       defaultFCE2BTimeoutSeconds,
+		SandboxReadyTimeout:  defaultFCE2BSandboxReadyTimeout,
 	}
 	models, err := parseFCE2BModels(os.Getenv("MULTICA_FC_E2B_OPENAI_MODELS"))
 	if err != nil {
@@ -110,6 +115,14 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 			cfg.ParseError = errors.Join(cfg.ParseError, fmt.Errorf("invalid MULTICA_FC_E2B_SANDBOX_READY_TIMEOUT"))
 		} else {
 			cfg.SandboxReadyTimeout = d
+		}
+	}
+	if raw := strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			cfg.ParseError = errors.Join(cfg.ParseError, fmt.Errorf("invalid MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS"))
+		} else {
+			cfg.AgentIdentityTimeout = time.Duration(n) * time.Second
 		}
 	}
 	return cfg
@@ -497,23 +510,6 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		"template", template,
 	)
 
-	token, err := auth.GenerateDaemonToken()
-	if err != nil {
-		return l.failLaunch(ctx, task, "failed to mint FC/E2B daemon token")
-	}
-	if _, err := l.Queries.CreateDaemonToken(ctx, db.CreateDaemonTokenParams{
-		TokenHash:   auth.HashToken(token),
-		WorkspaceID: rt.WorkspaceID,
-		DaemonID:    rt.DaemonID.String,
-		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(fcE2BDaemonTokenTTL), Valid: true},
-	}); err != nil {
-		return l.failLaunch(ctx, task, "failed to persist FC/E2B daemon token")
-	}
-	extraEnv, err := l.extraEnvForTask(ctx, task)
-	if err != nil {
-		return l.failLaunch(ctx, task, err.Error())
-	}
-
 	scope, scoped := fcE2BScopeForTask(task)
 	sandboxID, coldStart, err := l.resolveSandbox(ctx, rt, scope, scoped, template)
 	if err != nil {
@@ -533,6 +529,22 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		"scope_type", scopeType,
 		"scope_id", scopeID,
 	)
+	extraEnv, err := l.extraEnvForTask(ctx, task)
+	if err != nil {
+		return l.failLaunch(ctx, task, err.Error())
+	}
+	token, err := auth.GenerateDaemonToken()
+	if err != nil {
+		return l.failLaunch(ctx, task, "failed to mint FC/E2B daemon token")
+	}
+	if _, err := l.Queries.CreateDaemonToken(ctx, db.CreateDaemonTokenParams{
+		TokenHash:   auth.HashToken(token),
+		WorkspaceID: rt.WorkspaceID,
+		DaemonID:    rt.DaemonID.String,
+		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(fcE2BDaemonTokenTTL), Valid: true},
+	}); err != nil {
+		return l.failLaunch(ctx, task, "failed to persist FC/E2B daemon token")
+	}
 	if err := l.execRunOnce(ctx, sandboxID, rt, task.ID, token, coldStart, extraEnv); err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
@@ -666,7 +678,10 @@ func fcE2BTaskStatusBlocksClaim(status string) bool {
 }
 
 func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQueue) (map[string]string, error) {
-	env := fcE2BAgentIdentityExtraEnv(task)
+	agentIdentityEnv, err := fcE2BAgentIdentityExtraEnv(task, l.Config)
+	if err != nil {
+		return nil, err
+	}
 	agentRow, err := l.Queries.GetAgent(ctx, task.AgentID)
 	if err != nil {
 		return nil, fmt.Errorf("load agent for FC/E2B launch: %w", err)
@@ -675,10 +690,16 @@ func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQu
 	if err != nil {
 		return nil, err
 	}
-	if env == nil {
-		env = map[string]string{}
+	env := map[string]string{"OPENAI_MODEL": model}
+	for key, value := range agentIdentityEnv {
+		env[key] = value
 	}
-	env["OPENAI_MODEL"] = model
+	if len(agentIdentityEnv) > 0 {
+		// ContextToken authorization is task-scoped and must not reuse a
+		// previously bound DWS profile when sandbox initialization fails.
+		return env, nil
+	}
+
 	profileID, hasProfile, err := DWSProfileIDFromRuntimeConfig(agentRow.RuntimeConfig)
 	if err != nil {
 		return nil, err
@@ -706,17 +727,35 @@ func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQu
 	return env, nil
 }
 
-func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue) map[string]string {
+func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue, cfg FCE2BConfig) (map[string]string, error) {
+	if len(bytes.TrimSpace(task.Context)) == 0 {
+		return nil, nil
+	}
 	var payload map[string]any
-	if len(task.Context) == 0 || json.Unmarshal(task.Context, &payload) != nil {
-		return nil
+	if err := json.Unmarshal(task.Context, &payload); err != nil {
+		return nil, fmt.Errorf("parse task context for Agent Identity: %w", err)
 	}
 	token, _ := payload[protocol.AgentIdentityContextTokenJSONKey].(string)
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return nil
+		return nil, nil
 	}
-	return map[string]string{protocol.AgentIdentityContextTokenEnvKey: token}
+	if cfg.AgentIdentityBaseURL == "" {
+		return nil, errors.New("MULTICA_AGENT_IDENTITY_BASE_URL is required for ContextToken tasks")
+	}
+	timeout := cfg.AgentIdentityTimeout
+	if timeout <= 0 {
+		timeout = defaultAgentIdentityTimeout
+	}
+	seconds := int(timeout / time.Second)
+	if seconds <= 0 {
+		seconds = int(defaultAgentIdentityTimeout / time.Second)
+	}
+	return map[string]string{
+		protocol.AgentIdentityContextTokenEnvKey: token,
+		"MULTICA_AGENT_IDENTITY_BASE_URL":        cfg.AgentIdentityBaseURL,
+		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS": strconv.Itoa(seconds),
+	}, nil
 }
 
 // DWSProfileIDFromRuntimeConfig extracts the optional DWS profile binding from

@@ -1158,7 +1158,6 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if len(attachmentIDs) > 0 {
 		body["attachment_ids"] = attachmentIDs
 	}
-
 	// Pre-validate attachments BEFORE creating the issue so a bad path can
 	// never produce a half-created issue (which would otherwise trigger
 	// callers — especially the agent doing quick-create — to retry the whole

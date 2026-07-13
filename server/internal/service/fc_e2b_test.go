@@ -397,9 +397,33 @@ func TestFCE2BExtraEnvIncludesAgentIdentityContextToken(t *testing.T) {
 	task := db.AgentTaskQueue{
 		Context: []byte(`{"agent_identity_context_token":"ctx_sandbox_token"}`),
 	}
-	got := fcE2BAgentIdentityExtraEnv(task)
+	got, err := fcE2BAgentIdentityExtraEnv(task, FCE2BConfig{
+		AgentIdentityBaseURL: "https://pre-agent-identity.dingtalk.com",
+		AgentIdentityTimeout: 7 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("fcE2BAgentIdentityExtraEnv: %v", err)
+	}
 	if got["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_sandbox_token" {
 		t.Fatalf("AGENT_IDENTITY_CONTEXT_TOKEN = %q, want ctx_sandbox_token", got["AGENT_IDENTITY_CONTEXT_TOKEN"])
+	}
+	if got["MULTICA_AGENT_IDENTITY_BASE_URL"] != "https://pre-agent-identity.dingtalk.com" {
+		t.Fatalf("MULTICA_AGENT_IDENTITY_BASE_URL = %q", got["MULTICA_AGENT_IDENTITY_BASE_URL"])
+	}
+	if got["MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS"] != "7" {
+		t.Fatalf("MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS = %q", got["MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS"])
+	}
+}
+
+func TestFCE2BConfigFromEnvAgentIdentity(t *testing.T) {
+	t.Setenv("MULTICA_AGENT_IDENTITY_BASE_URL", "https://pre-agent-identity.dingtalk.com/")
+	t.Setenv("MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS", "7")
+	cfg := FCE2BConfigFromEnv()
+	if cfg.AgentIdentityBaseURL != "https://pre-agent-identity.dingtalk.com" {
+		t.Fatalf("base url = %q", cfg.AgentIdentityBaseURL)
+	}
+	if cfg.AgentIdentityTimeout != 7*time.Second {
+		t.Fatalf("timeout = %s", cfg.AgentIdentityTimeout)
 	}
 }
 

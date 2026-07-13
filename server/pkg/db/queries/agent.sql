@@ -191,13 +191,9 @@ WHERE agent_id = $1
 ORDER BY created_at DESC;
 
 -- name: CreateAgentTask :one
--- head_sha stamps the commit under review into the task's context JSONB so the
--- reviewer-loop dedup (HasPendingTaskForIssueAndAgent) can tell a pending run
--- against an OLD head apart from a fresh request against a NEW head (TEN-356).
--- Empty/absent head_sha leaves context NULL, preserving pre-TEN-356 behavior for
--- issues with no linked PR. Issue-linked tasks never hit quick-create context
--- parsing (parseQuickCreateContext short-circuits on IssueID.Valid), so this
--- key rides harmlessly alongside.
+-- head_sha and agent_identity_context_token are server-private task context.
+-- Neither is exposed by the task response. Empty values leave context NULL,
+-- preserving the existing behavior for ordinary issue tasks.
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,
     coalesced_comment_ids, trigger_summary, force_fresh_session, is_leader_task, handoff_note,
