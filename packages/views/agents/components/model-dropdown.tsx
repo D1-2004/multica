@@ -31,7 +31,7 @@ export function ModelDropdown({
   disabled,
 }: {
   runtimeId: string | null;
-  runtime?: AgentRuntime | null;
+  runtime: AgentRuntime | null;
   runtimeOnline: boolean;
   value: string;
   onChange: (value: string) => void;
