@@ -2,10 +2,10 @@ package slack
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -40,9 +40,13 @@ type reactionAPI interface {
 
 // typingState is the (channel, message ts) pair needed to remove a reaction.
 // Slack removes by emoji name + item ref, so there is no reaction id to store.
+// typingState is the persisted shape of one pending reaction. It lives in
+// channel_typing_indicator.target (migration 168) rather than in process
+// memory: the replica that clears a reaction is the one that serves the
+// daemon's completion POST, not the lease-holding replica that ingested.
 type typingState struct {
-	ChannelID string
-	MessageTS string
+	ChannelID string `json:"channel_id"`
+	MessageTS string `json:"message_ts"`
 }
 
 // TypingIndicatorQueries is the narrow DB surface the manager needs to resolve
@@ -51,6 +55,8 @@ type typingState struct {
 type TypingIndicatorQueries interface {
 	GetChannelChatSessionBindingBySession(ctx context.Context, arg db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error)
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
+	AddChannelTypingIndicator(ctx context.Context, arg db.AddChannelTypingIndicatorParams) error
+	TakeChannelTypingIndicators(ctx context.Context, arg db.TakeChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error)
 }
 
 // TypingIndicatorManager owns the "processing" reaction lifecycle for inbound
@@ -66,9 +72,6 @@ type TypingIndicatorManager struct {
 	decrypt Decrypter
 	log     *slog.Logger
 	newAPI  func(creds credentials) reactionAPI
-
-	mu     sync.RWMutex
-	states map[string][]typingState // key = chat_session_id string
 }
 
 // NewTypingIndicatorManager builds a manager over the generated queries and the
@@ -83,7 +86,6 @@ func NewTypingIndicatorManager(q TypingIndicatorQueries, decrypt Decrypter, logg
 		decrypt: decrypt,
 		log:     logger,
 		newAPI:  func(c credentials) reactionAPI { return slack.New(c.BotToken) },
-		states:  make(map[string][]typingState),
 	}
 }
 
@@ -111,10 +113,23 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.ChannelInstall
 			"chat_session_id", util.UUIDToString(sessionID), "message_ts", messageTS, "err", err)
 		return
 	}
-	key := util.UUIDToString(sessionID)
-	m.mu.Lock()
-	m.states[key] = append(m.states[key], typingState{ChannelID: channelID, MessageTS: messageTS})
-	m.mu.Unlock()
+	payload, err := json.Marshal(typingState{ChannelID: channelID, MessageTS: messageTS})
+	if err != nil {
+		m.log.Warn("slack typing indicator: encode target failed",
+			"chat_session_id", util.UUIDToString(sessionID), "err", err)
+		return
+	}
+	if err := m.q.AddChannelTypingIndicator(ctx, db.AddChannelTypingIndicatorParams{
+		ChatSessionID:  sessionID,
+		ChannelType:    string(TypeSlack),
+		InstallationID: inst.ID,
+		Target:         payload,
+	}); err != nil {
+		// The reaction is already on the message; failing to record it only
+		// means it will not be removed. Cosmetic, so log and move on.
+		m.log.Warn("slack typing indicator: persist target failed",
+			"chat_session_id", util.UUIDToString(sessionID), "message_ts", messageTS, "err", err)
+	}
 }
 
 // Clear removes every tracked reaction for the chat session and drops the state.
@@ -123,12 +138,29 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.ChannelInstall
 // logged but do not abort the loop. Best-effort throughout.
 func (m *TypingIndicatorManager) Clear(ctx context.Context, sessionID pgtype.UUID) {
 	key := util.UUIDToString(sessionID)
-	m.mu.Lock()
-	states := m.states[key]
-	delete(m.states, key)
-	m.mu.Unlock()
-	if len(states) == 0 {
+	// DELETE ... RETURNING claims the pending reactions: if two replicas race
+	// to clear the same run, exactly one gets the rows and only it removes.
+	rows, err := m.q.TakeChannelTypingIndicators(ctx, db.TakeChannelTypingIndicatorsParams{
+		ChatSessionID: sessionID,
+		ChannelType:   string(TypeSlack),
+	})
+	if err != nil {
+		m.log.Warn("slack typing indicator: take pending targets failed",
+			"chat_session_id", key, "err", err)
 		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+	states := make([]typingState, 0, len(rows))
+	for _, row := range rows {
+		var st typingState
+		if err := json.Unmarshal(row.Target, &st); err != nil {
+			m.log.Warn("slack typing indicator: decode target failed",
+				"chat_session_id", key, "err", err)
+			continue
+		}
+		states = append(states, st)
 	}
 
 	binding, err := m.q.GetChannelChatSessionBindingBySession(ctx, db.GetChannelChatSessionBindingBySessionParams{

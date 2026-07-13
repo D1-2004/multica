@@ -2,12 +2,14 @@ package lark
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // typingEmoji is the Lark emoji_type used for the "processing" indicator.
@@ -20,9 +22,23 @@ const typingEmoji = "Typing"
 const typingIndicatorMaxAge = 2 * time.Minute
 
 // TypingIndicatorState holds the identifiers needed to remove a reaction.
+// TypingIndicatorState is the persisted shape of one pending reaction. It
+// lives in channel_typing_indicator.target (migration 168) rather than in
+// process memory: the replica that clears a reaction is the one that serves
+// the daemon's completion POST, not the lease-holding replica that ingested
+// the message. ReactionID is only knowable from the Add response, so unlike
+// DingTalk/Slack it cannot be rebuilt from the binding row.
 type TypingIndicatorState struct {
-	MessageID  string
-	ReactionID string
+	MessageID  string `json:"message_id"`
+	ReactionID string `json:"reaction_id"`
+}
+
+// TypingIndicatorStore persists pending reactions across replicas. Separate
+// from TypingIndicatorQueries so the lark store abstraction (which speaks lark
+// types) stays untouched.
+type TypingIndicatorStore interface {
+	AddChannelTypingIndicator(ctx context.Context, arg db.AddChannelTypingIndicatorParams) error
+	TakeChannelTypingIndicators(ctx context.Context, arg db.TakeChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error)
 }
 
 // TypingIndicatorQueries is the narrow DB surface the manager needs.
@@ -46,8 +62,15 @@ type TypingIndicatorManager struct {
 	queries     TypingIndicatorQueries
 	log         *slog.Logger
 
-	mu     sync.RWMutex
-	states map[string][]*TypingIndicatorState // key = chat_session_id string
+	store TypingIndicatorStore
+}
+
+// SetStore wires the cross-replica store. Nil-safe: without it the manager adds
+// reactions it can never clear, which is the pre-migration-168 behavior.
+func (m *TypingIndicatorManager) SetStore(store TypingIndicatorStore) {
+	if m != nil {
+		m.store = store
+	}
 }
 
 // NewTypingIndicatorManager constructs a manager. All dependencies must
@@ -61,7 +84,6 @@ func NewTypingIndicatorManager(client APIClient, credentials CredentialsResolver
 		credentials: credentials,
 		queries:     queries,
 		log:         log,
-		states:      make(map[string][]*TypingIndicatorState),
 	}
 }
 
@@ -110,12 +132,23 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst Installation, cha
 	}
 
 	key := uuidString(chatSessionID)
-	m.mu.Lock()
-	m.states[key] = append(m.states[key], &TypingIndicatorState{
-		MessageID:  messageID,
-		ReactionID: reactionID,
-	})
-	m.mu.Unlock()
+	if m.store != nil {
+		payload, jerr := json.Marshal(TypingIndicatorState{MessageID: messageID, ReactionID: reactionID})
+		if jerr != nil {
+			m.log.Warn("lark typing indicator: encode target failed",
+				"chat_session_id", key, "err", jerr)
+		} else if serr := m.store.AddChannelTypingIndicator(ctx, db.AddChannelTypingIndicatorParams{
+			ChatSessionID:  chatSessionID,
+			ChannelType:    "feishu",
+			InstallationID: inst.ID,
+			Target:         payload,
+		}); serr != nil {
+			// The reaction is already on the message; failing to record it only
+			// means it will not be removed. Cosmetic, so log and move on.
+			m.log.Warn("lark typing indicator: persist target failed",
+				"chat_session_id", key, "message_id", messageID, "err", serr)
+		}
+	}
 
 	m.log.Debug("lark typing indicator: reaction added",
 		"chat_session_id", key,
@@ -130,13 +163,32 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst Installation, cha
 // Individual delete failures are logged but do not abort the loop.
 func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype.UUID) {
 	key := uuidString(chatSessionID)
-	m.mu.Lock()
-	states := m.states[key]
-	delete(m.states, key)
-	m.mu.Unlock()
-
-	if len(states) == 0 {
+	if m.store == nil {
 		return
+	}
+	// DELETE ... RETURNING claims the pending reactions: if two replicas race
+	// to clear the same run, exactly one gets the rows and only it removes.
+	rows, err := m.store.TakeChannelTypingIndicators(ctx, db.TakeChannelTypingIndicatorsParams{
+		ChatSessionID: chatSessionID,
+		ChannelType:   "feishu",
+	})
+	if err != nil {
+		m.log.Warn("lark typing indicator: take pending targets failed",
+			"chat_session_id", key, "err", err)
+		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+	states := make([]*TypingIndicatorState, 0, len(rows))
+	for _, row := range rows {
+		var st TypingIndicatorState
+		if err := json.Unmarshal(row.Target, &st); err != nil {
+			m.log.Warn("lark typing indicator: decode target failed",
+				"chat_session_id", key, "err", err)
+			continue
+		}
+		states = append(states, &st)
 	}
 
 	binding, err := m.queries.GetLarkChatSessionBindingBySession(ctx, chatSessionID)

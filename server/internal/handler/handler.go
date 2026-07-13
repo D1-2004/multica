@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
@@ -291,7 +292,15 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 
 	taskSvc := service.NewTaskService(queries, txStarter, hub, bus, daemonHub)
 	taskSvc.Analytics = analyticsClient
-	taskSvc.RuntimeLauncher = service.NewFCE2BLauncher(queries, taskSvc, cfg.FCE2B, nil)
+	fcLauncher := service.NewFCE2BLauncher(queries, taskSvc, cfg.FCE2B, nil)
+	// In production txStarter IS the pool; the launcher needs it for the
+	// cross-replica sandbox lock (two replicas booting a sandbox for the same
+	// chat orphan one of them, billed until timeout). Tests pass a fake — they
+	// stay single-process, so nil is correct there.
+	if pool, ok := txStarter.(*pgxpool.Pool); ok {
+		fcLauncher.SetPool(pool)
+	}
+	taskSvc.RuntimeLauncher = fcLauncher
 	return &Handler{
 		Queries:               queries,
 		DB:                    executor,

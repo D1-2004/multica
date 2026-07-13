@@ -398,6 +398,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// message while the agent is working, then removes it before the
 				// reply is sent. Best-effort; failures are logged only.
 				typingIndicator := lark.NewTypingIndicatorManager(larkClient, installSvc, cs, slog.Default())
+				// Pending reactions live in the DB, not in this process: the
+				// replica that clears one is whichever served the daemon's
+				// completion POST, not the lease holder that ingested.
+				typingIndicator.SetStore(queries)
 				patcher.SetTypingIndicatorManager(typingIndicator)
 
 				// Inbound pipeline seams: lark_inbound_audit logger and the

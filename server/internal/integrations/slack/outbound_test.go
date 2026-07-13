@@ -27,6 +27,7 @@ type fakeOutboundQueries struct {
 	bindingErr error
 	inst       db.ChannelInstallation
 	instErr    error
+	indicators []db.ChannelTypingIndicator
 }
 
 func (f *fakeOutboundQueries) GetChannelChatSessionBindingBySession(context.Context, db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error) {
@@ -144,4 +145,29 @@ func TestOutbound_IgnoresNonSlackAndEmptyAndRevoked(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The pending-indicator store, faked in memory with the DELETE...RETURNING
+// semantics the real query has: a take claims the rows and empties the set.
+func (f *fakeOutboundQueries) AddChannelTypingIndicator(_ context.Context, arg db.AddChannelTypingIndicatorParams) error {
+	f.indicators = append(f.indicators, db.ChannelTypingIndicator{
+		ChatSessionID:  arg.ChatSessionID,
+		ChannelType:    arg.ChannelType,
+		InstallationID: arg.InstallationID,
+		Target:         arg.Target,
+	})
+	return nil
+}
+
+func (f *fakeOutboundQueries) TakeChannelTypingIndicators(_ context.Context, arg db.TakeChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error) {
+	var taken, kept []db.ChannelTypingIndicator
+	for _, row := range f.indicators {
+		if row.ChatSessionID == arg.ChatSessionID && row.ChannelType == arg.ChannelType {
+			taken = append(taken, row)
+			continue
+		}
+		kept = append(kept, row)
+	}
+	f.indicators = kept
+	return taken, nil
 }
