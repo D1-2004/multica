@@ -184,6 +184,11 @@
       "title": "Add sub-issue",
       "description": "Search for an issue to add as a sub-issue of the new issue"
     },
+    "extensions": {
+      "title": "More extensions",
+      "context_token_label": "Agent Identity ContextToken",
+      "context_token_placeholder": "Paste ContextToken"
+    },
     "agent": {
       "created_by": "Created by",
       "select_agent_aria": "Select agent",

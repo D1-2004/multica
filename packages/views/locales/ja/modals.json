@@ -182,6 +182,11 @@
       "title": "サブイシューを追加",
       "description": "新しいイシューのサブイシューとして追加するイシューを検索してください"
     },
+    "extensions": {
+      "title": "その他の拡張項目",
+      "context_token_label": "Agent Identity ContextToken",
+      "context_token_placeholder": "ContextToken を貼り付け"
+    },
     "agent": {
       "created_by": "作成者",
       "select_agent_aria": "エージェントを選択",
