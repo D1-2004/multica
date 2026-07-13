@@ -11,7 +11,8 @@ RUN curl -fsSLo /tmp/go.tgz "https://dl.google.com/go/go${GO_VERSION}.linux-amd6
     tar -C /usr/local -xzf /tmp/go.tgz && \
     rm -f /tmp/go.tgz
 ENV PATH="/usr/local/go/bin:${PATH}"
-ENV GOPROXY=https://goproxy.cn
+ENV GOPROXY=http://goproxy.alibaba-inc.com
+ENV GONOSUMDB=*.alibaba-inc.com
 ENV GOSUMDB=sum.golang.google.cn
 COPY ${APP_NAME}.tgz /tmp/source.tgz
 RUN tar -xzf /tmp/source.tgz --strip-components=1 -C /workspace
@@ -19,7 +20,7 @@ RUN cd server && go mod download
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
-RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o bin/server ./cmd/server
+RUN cd server && CGO_ENABLED=1 go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o bin/server ./cmd/server
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" -o bin/multica ./cmd/multica
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/migrate ./cmd/migrate
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_task_usage_hourly ./cmd/backfill_task_usage_hourly
@@ -98,6 +99,7 @@ COPY environment/common/custom/app/bin/ /home/admin/appname/bin/
 COPY --from=backend-builder /workspace/src/ /home/admin/${APP_NAME}/target/${APP_NAME}/src/
 COPY --from=backend-builder /workspace/server/bin/ /home/admin/${APP_NAME}/target/${APP_NAME}/bin/
 COPY --from=backend-builder /workspace/server/migrations/ /home/admin/${APP_NAME}/target/${APP_NAME}/migrations/
+COPY --from=backend-builder /workspace/${APP_NAME}.release /home/admin/${APP_NAME}/target/${APP_NAME}/${APP_NAME}.release
 COPY --from=web-builder /workspace/apps/web/.next/standalone/ /home/admin/${APP_NAME}/target/${APP_NAME}/web/
 COPY --from=web-builder /workspace/apps/web/.next/static/ /home/admin/${APP_NAME}/target/${APP_NAME}/web/apps/web/.next/static/
 COPY --from=web-builder /workspace/apps/web/public/ /home/admin/${APP_NAME}/target/${APP_NAME}/web/apps/web/public/

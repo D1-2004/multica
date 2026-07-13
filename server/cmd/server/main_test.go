@@ -7,6 +7,67 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func TestNormalizeRedisEndpoint(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		want     string
+		wantErr  bool
+	}{
+		{name: "host and port", endpoint: "redis.internal:6380", want: "redis.internal:6380"},
+		{name: "host uses Redis default port", endpoint: "redis.internal", want: "redis.internal:6379"},
+		{name: "URL", endpoint: "redis://redis.internal:6380/0", want: "redis.internal:6380"},
+		{name: "empty", endpoint: "", wantErr: true},
+		{name: "invalid port", endpoint: "redis.internal:not-a-port", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeRedisEndpoint(tt.endpoint)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("normalizeRedisEndpoint(%q) expected error", tt.endpoint)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeRedisEndpoint(%q): %v", tt.endpoint, err)
+			}
+			if got != tt.want {
+				t.Errorf("normalizeRedisEndpoint(%q) = %q, want %q", tt.endpoint, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRedisOptionsFromEnvWithoutRedis(t *testing.T) {
+	t.Setenv("REDIS_URL", "")
+	t.Setenv(redisAuthzInstanceIDEnv, "")
+
+	opts, source, err := redisOptionsFromEnv()
+	if err != nil {
+		t.Fatalf("redisOptionsFromEnv: %v", err)
+	}
+	if opts != nil || source != "" {
+		t.Fatalf("redisOptionsFromEnv = (%v, %q), want (nil, empty)", opts, source)
+	}
+}
+
+func TestRedisOptionsFromEnvURL(t *testing.T) {
+	t.Setenv("REDIS_URL", "redis://:secret@redis.internal:6380/3")
+	t.Setenv(redisAuthzInstanceIDEnv, "r-ignored")
+
+	opts, source, err := redisOptionsFromEnv()
+	if err != nil {
+		t.Fatalf("redisOptionsFromEnv: %v", err)
+	}
+	if source != "url" {
+		t.Fatalf("source = %q, want url", source)
+	}
+	if opts.Addr != "redis.internal:6380" || opts.Password != "secret" || opts.DB != 3 {
+		t.Fatalf("unexpected Redis options: Addr=%q PasswordSet=%t DB=%d", opts.Addr, opts.Password != "", opts.DB)
+	}
+}
+
 func TestRedisClientName(t *testing.T) {
 	tests := []struct {
 		name     string

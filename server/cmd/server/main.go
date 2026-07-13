@@ -232,54 +232,59 @@ func main() {
 		closeRedisClient("realtime-write", relayWriteRedis)
 		closeRedisClient("store", storeRedis)
 	}()
-	if redisURL := os.Getenv("REDIS_URL"); redisURL != "" {
-		opts, err := redis.ParseURL(redisURL)
-		if err != nil {
-			slog.Error("invalid REDIS_URL — falling back to in-memory hub", "error", err)
-		} else {
-			if envBool("REDIS_DISABLE_CLIENT_NAME", false) {
-				slog.Info("redis: CLIENT SETNAME disabled (REDIS_DISABLE_CLIENT_NAME=true) for managed Redis compatibility")
-			}
-			storeRedis = newNamedRedisClient(opts, "store")
-			relayWriteRedis = newNamedRedisClient(opts, "realtime-write")
-
-			relayMode := realtimeRelayModeFromEnv()
-			relayConfig := shardedRelayConfigFromEnv()
-			switch relayMode {
-			case "legacy":
-				relayReadRedis = newNamedRedisClient(opts, "realtime-read")
-				relay = realtime.NewRedisRelayWithClients(hub, relayWriteRedis, relayReadRedis)
-				slog.Info("daemon websocket wakeup: Redis fanout disabled in legacy realtime relay mode")
-			case "dual":
-				shardedReadRedis = newNamedRedisClient(opts, "realtime-read-sharded")
-				legacyReadRedis = newNamedRedisClient(opts, "realtime-read-legacy")
-				sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, shardedReadRedis, relayConfig)
-				sharded.SetDaemonRuntimeDeliverer(daemonHub)
-				legacy := realtime.NewRedisRelayWithClients(hub, relayWriteRedis, legacyReadRedis)
-				relay = realtime.NewMirroredRelay(sharded, legacy)
-				daemonWakeup = daemonws.NewRelayNotifier(daemonHub, sharded)
-			default:
-				relayReadRedis = newNamedRedisClient(opts, "realtime-read")
-				sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, relayReadRedis, relayConfig)
-				sharded.SetDaemonRuntimeDeliverer(daemonHub)
-				relay = sharded
-				daemonWakeup = daemonws.NewRelayNotifier(daemonHub, sharded)
-			}
-			relay.Start(relayCtx)
-			broadcaster = realtime.NewDualWriteBroadcaster(hub, relay)
-			slog.Info(
-				"realtime: Redis relay enabled",
-				"node_id", relay.NodeID(),
-				"mode", relayMode,
-				"shards", relayConfig.Shards,
-				"stream_max_len", relayConfig.StreamMaxLen,
-				"xread_count", relayConfig.ReadCount,
-				"xread_block", relayConfig.ReadBlock.String(),
-				"store_pool_size", opts.PoolSize,
-				"realtime_write_pool_size", opts.PoolSize,
-				"realtime_read_pool_size", opts.PoolSize,
-			)
+	redisOpts, redisSource, err := redisOptionsFromEnv()
+	if err != nil {
+		slog.Error("Redis configuration failed", "error", err)
+		os.Exit(1)
+	}
+	if redisOpts != nil {
+		if envBool("REDIS_DISABLE_CLIENT_NAME", false) {
+			slog.Info("redis: CLIENT SETNAME disabled (REDIS_DISABLE_CLIENT_NAME=true) for managed Redis compatibility")
 		}
+		storeRedis = newNamedRedisClient(redisOpts, "store")
+		if err := storeRedis.Ping(ctx).Err(); err != nil {
+			slog.Error("unable to ping Redis", "source", redisSource, "error", err)
+			os.Exit(1)
+		}
+		slog.Info("connected to Redis", "source", redisSource)
+		relayWriteRedis = newNamedRedisClient(redisOpts, "realtime-write")
+
+		relayMode := realtimeRelayModeFromEnv()
+		relayConfig := shardedRelayConfigFromEnv()
+		switch relayMode {
+		case "legacy":
+			relayReadRedis = newNamedRedisClient(redisOpts, "realtime-read")
+			relay = realtime.NewRedisRelayWithClients(hub, relayWriteRedis, relayReadRedis)
+			slog.Info("daemon websocket wakeup: Redis fanout disabled in legacy realtime relay mode")
+		case "dual":
+			shardedReadRedis = newNamedRedisClient(redisOpts, "realtime-read-sharded")
+			legacyReadRedis = newNamedRedisClient(redisOpts, "realtime-read-legacy")
+			sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, shardedReadRedis, relayConfig)
+			sharded.SetDaemonRuntimeDeliverer(daemonHub)
+			legacy := realtime.NewRedisRelayWithClients(hub, relayWriteRedis, legacyReadRedis)
+			relay = realtime.NewMirroredRelay(sharded, legacy)
+			daemonWakeup = daemonws.NewRelayNotifier(daemonHub, sharded)
+		default:
+			relayReadRedis = newNamedRedisClient(redisOpts, "realtime-read")
+			sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, relayReadRedis, relayConfig)
+			sharded.SetDaemonRuntimeDeliverer(daemonHub)
+			relay = sharded
+			daemonWakeup = daemonws.NewRelayNotifier(daemonHub, sharded)
+		}
+		relay.Start(relayCtx)
+		broadcaster = realtime.NewDualWriteBroadcaster(hub, relay)
+		slog.Info(
+			"realtime: Redis relay enabled",
+			"node_id", relay.NodeID(),
+			"mode", relayMode,
+			"shards", relayConfig.Shards,
+			"stream_max_len", relayConfig.StreamMaxLen,
+			"xread_count", relayConfig.ReadCount,
+			"xread_block", relayConfig.ReadBlock.String(),
+			"store_pool_size", redisOpts.PoolSize,
+			"realtime_write_pool_size", redisOpts.PoolSize,
+			"realtime_read_pool_size", redisOpts.PoolSize,
+		)
 	} else {
 		slog.Info("realtime: REDIS_URL not set — using in-memory hub (single-node mode)")
 		// Realtime browser fanout stays single-node, but daemon wakeups cannot:
