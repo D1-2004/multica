@@ -231,6 +231,7 @@ export function AgentDetailInspector({
               variant="field"
               showLabel={false}
               runtimeId={agent.runtime_id}
+              runtime={runtime}
               runtimeOnline={!!isOnline}
               value={agent.model ?? ""}
               canEdit={canEdit}
