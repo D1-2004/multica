@@ -238,7 +238,7 @@ func (h *Handler) GetDingTalkInstallStatus(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "session id is required")
 		return
 	}
-	state, err := h.DingTalkRegistration.GetSession(wsUUID, sessionID)
+	state, err := h.DingTalkRegistration.GetSession(r.Context(), wsUUID, sessionID)
 	if err != nil {
 		if errors.Is(err, dingtalk.ErrRegistrationSessionNotFound) {
 			writeError(w, http.StatusNotFound, "install session not found")

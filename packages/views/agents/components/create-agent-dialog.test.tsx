@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import type { Agent, MemberWithUser, RuntimeDevice } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
@@ -11,6 +11,7 @@ import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import enCommon from "../../locales/en/common.json";
 import enAgents from "../../locales/en/agents.json";
+import { ApiClient, setApiInstance } from "@multica/core/api";
 
 const navigationStub: NavigationAdapter = {
   push: vi.fn(),
@@ -287,6 +288,38 @@ describe("CreateAgentDialog runtime visibility gate", () => {
       .find((b) => b.textContent === "Create");
     expect(createBtn).toBeDefined();
     expect((createBtn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("allows a DWS-capable FC runtime without a DWS identity", async () => {
+    const apiClient = new ApiClient("");
+    const listProfiles = vi
+      .spyOn(apiClient, "listDWSAuthProfiles")
+      .mockResolvedValue([]);
+    setApiInstance(apiClient);
+    const dwsRuntime = makeRuntime({
+      id: "rt-fc-dws",
+      name: "FC Hermes DWS",
+      runtime_mode: "cloud",
+      provider: "hermes",
+      metadata: {
+        kind: "fc-e2b",
+        capabilities: ["hermes", "dws"],
+      },
+    });
+    const { onCreate } = renderDialog([dwsRuntime]);
+
+    await screen.findByText("No DWS identity connected. The agent can still run without DWS.");
+    fireEvent.change(screen.getByPlaceholderText("e.g. Deep Research Agent"), {
+      target: { value: "FC Agent" },
+    });
+
+    const createButton = screen.getByRole("button", { name: "Create" });
+    expect(createButton).toBeEnabled();
+    fireEvent.click(createButton);
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    expect(onCreate.mock.calls[0]?.[0].runtime_config).toBeUndefined();
+    listProfiles.mockRestore();
   });
 });
 
