@@ -365,10 +365,10 @@
     "squad_join_failed_toast": "智能体「{{name}}」已创建，但加入小队失败：{{error}}。你可以在 Members 标签里手动添加。",
     "dws": {
       "title": "DWS 身份",
-      "description": "这个 FC runtime 会在沙箱里使用钉钉工作区 CLI，需要为该智能体绑定一个 DWS 登录身份。",
+      "description": "这个 FC 运行时支持在沙箱中使用钉钉工作区 CLI；仅在智能体需要 DWS 能力时连接身份。",
       "connect": "连接 DWS",
       "loading": "加载 DWS 身份...",
-      "empty": "还没有可用的 DWS 身份，请先连接。",
+      "empty": "尚未连接 DWS 身份；智能体仍可在不使用 DWS 的情况下运行。",
       "connected": "DWS 身份已连接",
       "load_failed": "加载 DWS 身份失败",
       "start_failed": "启动 DWS 登录失败",

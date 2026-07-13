@@ -395,7 +395,7 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	}); err != nil {
 		return l.failLaunch(ctx, task, "failed to persist FC/E2B daemon token")
 	}
-	extraEnv, err := l.extraEnvForTask(ctx, task, rt)
+	extraEnv, err := l.extraEnvForTask(ctx, task)
 	if err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
@@ -551,7 +551,7 @@ func fcE2BTaskStatusBlocksClaim(status string) bool {
 	}
 }
 
-func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQueue, rt db.AgentRuntime) (map[string]string, error) {
+func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQueue) (map[string]string, error) {
 	agentRow, err := l.Queries.GetAgent(ctx, task.AgentID)
 	if err != nil {
 		return nil, fmt.Errorf("load agent for FC/E2B launch: %w", err)
@@ -561,9 +561,6 @@ func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQu
 		return nil, err
 	}
 	if !hasProfile {
-		if fcE2BRuntimeRequiresDWS(rt) {
-			return nil, errors.New("DWS profile is required for this FC/E2B runtime")
-		}
 		return nil, nil
 	}
 	profileUUID, err := util.ParseUUID(profileID)
@@ -606,23 +603,6 @@ func DWSProfileIDFromRuntimeConfig(raw []byte) (string, bool, error) {
 		profileID = strings.TrimSpace(cfg.DWSProfileID)
 	}
 	return profileID, profileID != "", nil
-}
-
-func fcE2BRuntimeRequiresDWS(rt db.AgentRuntime) bool {
-	var metadata struct {
-		Template     string   `json:"template"`
-		TemplateName string   `json:"template_name"`
-		Capabilities []string `json:"capabilities"`
-	}
-	if len(rt.Metadata) > 0 {
-		_ = json.Unmarshal(rt.Metadata, &metadata)
-	}
-	for _, capability := range metadata.Capabilities {
-		if strings.EqualFold(strings.TrimSpace(capability), "dws") {
-			return true
-		}
-	}
-	return strings.Contains(strings.ToLower(metadata.Template+" "+metadata.TemplateName), "dws")
 }
 
 func (l *FCE2BLauncher) decryptDWSAuthArchive(ciphertext []byte) (string, error) {

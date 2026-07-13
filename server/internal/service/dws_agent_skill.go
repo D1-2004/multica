@@ -23,7 +23,7 @@ If DWS auth is missing, expired, or a command returns ` + "`unknown command`" + 
 `
 
 // DWSAgentSkill returns the runtime-specific DWS instructions injected into
-// FC/E2B Hermes agents that have a DWS profile or select a DWS-capable template.
+// FC/E2B Hermes agents that have a DWS profile bound to them.
 func DWSAgentSkill() AgentSkillData {
 	return AgentSkillData{
 		Name:        "multica-dws",

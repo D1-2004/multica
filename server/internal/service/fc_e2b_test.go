@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strconv"
 	"testing"
@@ -281,6 +282,65 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("exec args did not include DWS auth env")
+	}
+}
+
+func TestFCE2BExtraEnvAllowsAgentWithoutDWSProfile(t *testing.T) {
+	ctx := context.Background()
+	pool := newTaskClaimRacePool(t)
+	queries := db.New(pool)
+	suffix := time.Now().UnixNano()
+
+	var userID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO "user" (name, email)
+		VALUES ($1, $2)
+		RETURNING id
+	`, "FC No DWS Test", fmt.Sprintf("fc-no-dws-%d@multica.test", suffix)).Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	var workspaceID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO workspace (name, slug, description, issue_prefix)
+		VALUES ($1, $2, '', 'FND')
+		RETURNING id
+	`, "FC No DWS Test", fmt.Sprintf("fc-no-dws-%d", suffix)).Scan(&workspaceID); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO member (workspace_id, user_id, role)
+		VALUES ($1, $2, 'owner')
+	`, workspaceID, userID); err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	var agentID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO agent (
+			workspace_id, name, runtime_mode, runtime_config,
+			visibility, max_concurrent_tasks, owner_id
+		)
+		VALUES ($1, 'FC Agent Without DWS', 'cloud', '{}'::jsonb, 'private', 1, $2)
+		RETURNING id
+	`, workspaceID, userID).Scan(&agentID); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx := context.Background()
+		pool.Exec(cleanupCtx, `DELETE FROM agent WHERE id = $1`, agentID)
+		pool.Exec(cleanupCtx, `DELETE FROM member WHERE workspace_id = $1 AND user_id = $2`, workspaceID, userID)
+		pool.Exec(cleanupCtx, `DELETE FROM workspace WHERE id = $1`, workspaceID)
+		pool.Exec(cleanupCtx, `DELETE FROM "user" WHERE id = $1`, userID)
+	})
+
+	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{}, nil)
+	env, err := launcher.extraEnvForTask(ctx, db.AgentTaskQueue{
+		AgentID: util.MustParseUUID(agentID),
+	})
+	if err != nil {
+		t.Fatalf("extraEnvForTask returned error: %v", err)
+	}
+	if len(env) != 0 {
+		t.Fatalf("extra env = %#v, want no DWS credentials", env)
 	}
 }
 

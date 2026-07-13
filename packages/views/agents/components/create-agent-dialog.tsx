@@ -45,7 +45,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { CharCounter } from "./char-counter";
 import { useT } from "../../i18n";
 
-function runtimeRequiresDWS(runtime: RuntimeDevice | null): boolean {
+function runtimeSupportsDWS(runtime: RuntimeDevice | null): boolean {
   if (!runtime || runtime.runtime_mode !== "cloud") return false;
   if (runtime.metadata?.kind !== "fc-e2b") return false;
   const capabilities = runtime.metadata?.capabilities;
@@ -175,7 +175,7 @@ export function CreateAgentDialog({
   });
 
   const selectedRuntime = runtimes.find((d) => d.id === selectedRuntimeId) ?? null;
-  const selectedRuntimeRequiresDWS = runtimeRequiresDWS(selectedRuntime);
+  const selectedRuntimeSupportsDWS = runtimeSupportsDWS(selectedRuntime);
   const [dwsProfiles, setDwsProfiles] = useState<DWSAuthProfile[]>([]);
   const [dwsProfilesLoading, setDwsProfilesLoading] = useState(false);
   const [selectedDwsProfileId, setSelectedDwsProfileId] = useState("");
@@ -197,7 +197,7 @@ export function CreateAgentDialog({
     templateTeamTargets.length === 0;
 
   useEffect(() => {
-    if (!selectedRuntimeRequiresDWS || !wsId) {
+    if (!selectedRuntimeSupportsDWS || !wsId) {
       setDwsProfiles([]);
       setSelectedDwsProfileId("");
       setDwsSession(null);
@@ -223,7 +223,7 @@ export function CreateAgentDialog({
     return () => {
       cancelled = true;
     };
-  }, [selectedRuntimeRequiresDWS, t, wsId]);
+  }, [selectedRuntimeSupportsDWS, t, wsId]);
 
   useEffect(() => {
     if (!wsId || !dwsSession || dwsSession.status !== "pending") return;
@@ -335,7 +335,7 @@ export function CreateAgentDialog({
         avatar_url: avatarUrl ?? undefined,
         skill_ids: [...selectedSkillIds],
       };
-      if (selectedRuntimeRequiresDWS) {
+      if (selectedRuntimeSupportsDWS && selectedDwsProfileId) {
         data.runtime_config = {
           fc_e2b: {
             dws_profile_id: selectedDwsProfileId,
@@ -538,7 +538,7 @@ export function CreateAgentDialog({
               onSelect={setSelectedRuntimeId}
             />
 
-            {selectedRuntimeRequiresDWS && (
+            {selectedRuntimeSupportsDWS && (
               <div className="rounded-lg border p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -677,8 +677,7 @@ export function CreateAgentDialog({
               creating ||
               !name.trim() ||
               !selectedRuntime ||
-              selectedRuntimeLocked ||
-              (selectedRuntimeRequiresDWS && !selectedDwsProfileId)
+              selectedRuntimeLocked
             }
             title={
               selectedRuntimeLocked

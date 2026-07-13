@@ -284,10 +284,10 @@
     "squad_join_failed_toast": "エージェント \"{{name}}\" は作成されましたが、スクワッドに参加できませんでした: {{error}}。メンバーから手動で追加できます。",
     "dws": {
       "title": "DWS Identity",
-      "description": "This FC runtime uses the DingTalk Workspace CLI inside the sandbox. Bind a DWS login profile to this agent.",
+      "description": "This FC runtime can use the DingTalk Workspace CLI inside the sandbox. Connect a DWS identity only when this agent needs it.",
       "connect": "Connect DWS",
       "loading": "Loading DWS profiles...",
-      "empty": "No DWS profile yet. Connect one first.",
+      "empty": "No DWS identity connected. The agent can still run without DWS.",
       "connected": "DWS profile connected",
       "load_failed": "Failed to load DWS profiles",
       "start_failed": "Failed to start DWS login",
