@@ -475,6 +475,7 @@ func init() {
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
 	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
+	issueCreateCmd.Flags().String("agent-identity-context-token", "", "Agent Identity ContextToken for DWS authorization in an FC sandbox")
 
 	// issue update
 	issueUpdateCmd.Flags().String("title", "", "New title")
@@ -1153,6 +1154,9 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	attachmentIDs = appendUniqueStrings(attachmentIDs, envAttachmentIDs...)
 	if len(attachmentIDs) > 0 {
 		body["attachment_ids"] = attachmentIDs
+	}
+	if contextToken, _ := cmd.Flags().GetString("agent-identity-context-token"); strings.TrimSpace(contextToken) != "" {
+		body["agent_identity_context_token"] = strings.TrimSpace(contextToken)
 	}
 
 	// Pre-validate attachments BEFORE creating the issue so a bad path can

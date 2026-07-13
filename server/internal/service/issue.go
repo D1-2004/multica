@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -75,6 +76,10 @@ type IssueCreateParams struct {
 // IssueCreateOpts groups optional knobs for IssueService.Create. Most
 // callers leave it zero-valued.
 type IssueCreateOpts struct {
+	// AgentIdentityContextToken is forwarded only to the queued FC/E2B task.
+	// It is not persisted on the issue or included in events and responses.
+	AgentIdentityContextToken string
+
 	// BroadcastPayload, if non-nil, is invoked after the issue row is
 	// created and attachments are linked. Its return value is sent as
 	// the EventIssueCreated payload via the event bus. The HTTP handler
@@ -281,7 +286,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 
 	s.publishIssueCreated(issue, attachments, p.CreatorType, actorID, opts)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
-	s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID)
+	s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, opts.AgentIdentityContextToken)
 
 	return IssueCreateResult{Issue: issue, Attachments: attachments}, nil
 }
@@ -388,12 +393,18 @@ func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autop
 	}
 }
 
-func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID string) {
+func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID, agentIdentityContextToken string) {
 	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
 		return
 	}
 	if s.shouldEnqueueAgentTask(ctx, issue) {
-		if _, err := s.TaskService.EnqueueTaskForIssue(ctx, issue); err != nil {
+		var err error
+		if strings.TrimSpace(agentIdentityContextToken) != "" {
+			_, err = s.TaskService.EnqueueTaskForIssueWithAgentIdentity(ctx, issue, agentIdentityContextToken)
+		} else {
+			_, err = s.TaskService.EnqueueTaskForIssue(ctx, issue)
+		}
+		if err != nil {
 			slog.Warn("enqueue agent task on create failed",
 				"issue_id", util.UUIDToString(issue.ID),
 				"error", err)

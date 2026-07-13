@@ -1343,41 +1343,50 @@ VALUES (
     $11,
     CASE
         WHEN COALESCE($12::text, '') <> ''
-        THEN jsonb_build_object('head_sha', $12::text)
+          OR COALESCE($13::text, '') <> ''
+        THEN
+            CASE
+                WHEN COALESCE($12::text, '') <> ''
+                THEN jsonb_build_object('head_sha', $12::text)
+                ELSE '{}'::jsonb
+            END
+            ||
+            CASE
+                WHEN COALESCE($13::text, '') <> ''
+                THEN jsonb_build_object('agent_identity_context_token', $13::text)
+                ELSE '{}'::jsonb
+            END
         ELSE NULL
     END,
-    $13,
     $14,
-    $15
+    $15,
+    $16
 )
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id
 `
 
 type CreateAgentTaskParams struct {
-	AgentID              pgtype.UUID   `json:"agent_id"`
-	RuntimeID            pgtype.UUID   `json:"runtime_id"`
-	IssueID              pgtype.UUID   `json:"issue_id"`
-	Priority             int32         `json:"priority"`
-	TriggerCommentID     pgtype.UUID   `json:"trigger_comment_id"`
-	CoalescedCommentIds  []pgtype.UUID `json:"coalesced_comment_ids"`
-	TriggerSummary       pgtype.Text   `json:"trigger_summary"`
-	ForceFreshSession    pgtype.Bool   `json:"force_fresh_session"`
-	IsLeaderTask         pgtype.Bool   `json:"is_leader_task"`
-	HandoffNote          pgtype.Text   `json:"handoff_note"`
-	SquadID              pgtype.UUID   `json:"squad_id"`
-	HeadSha              pgtype.Text   `json:"head_sha"`
-	OriginatorUserID     pgtype.UUID   `json:"originator_user_id"`
-	RuntimeMcpOverlay    []byte        `json:"runtime_mcp_overlay"`
-	RuntimeConnectedApps []byte        `json:"runtime_connected_apps"`
+	AgentID                   pgtype.UUID   `json:"agent_id"`
+	RuntimeID                 pgtype.UUID   `json:"runtime_id"`
+	IssueID                   pgtype.UUID   `json:"issue_id"`
+	Priority                  int32         `json:"priority"`
+	TriggerCommentID          pgtype.UUID   `json:"trigger_comment_id"`
+	CoalescedCommentIds       []pgtype.UUID `json:"coalesced_comment_ids"`
+	TriggerSummary            pgtype.Text   `json:"trigger_summary"`
+	ForceFreshSession         pgtype.Bool   `json:"force_fresh_session"`
+	IsLeaderTask              pgtype.Bool   `json:"is_leader_task"`
+	HandoffNote               pgtype.Text   `json:"handoff_note"`
+	SquadID                   pgtype.UUID   `json:"squad_id"`
+	HeadSha                   pgtype.Text   `json:"head_sha"`
+	AgentIdentityContextToken pgtype.Text   `json:"agent_identity_context_token"`
+	OriginatorUserID          pgtype.UUID   `json:"originator_user_id"`
+	RuntimeMcpOverlay         []byte        `json:"runtime_mcp_overlay"`
+	RuntimeConnectedApps      []byte        `json:"runtime_connected_apps"`
 }
 
-// head_sha stamps the commit under review into the task's context JSONB so the
-// reviewer-loop dedup (HasPendingTaskForIssueAndAgent) can tell a pending run
-// against an OLD head apart from a fresh request against a NEW head (TEN-356).
-// Empty/absent head_sha leaves context NULL, preserving pre-TEN-356 behavior for
-// issues with no linked PR. Issue-linked tasks never hit quick-create context
-// parsing (parseQuickCreateContext short-circuits on IssueID.Valid), so this
-// key rides harmlessly alongside.
+// head_sha and agent_identity_context_token are server-private task context.
+// Neither is exposed by the task response. Empty values leave context NULL,
+// preserving the existing behavior for ordinary issue tasks.
 func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams) (AgentTaskQueue, error) {
 	row := q.db.QueryRow(ctx, createAgentTask,
 		arg.AgentID,
@@ -1392,6 +1401,7 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 		arg.HandoffNote,
 		arg.SquadID,
 		arg.HeadSha,
+		arg.AgentIdentityContextToken,
 		arg.OriginatorUserID,
 		arg.RuntimeMcpOverlay,
 		arg.RuntimeConnectedApps,
