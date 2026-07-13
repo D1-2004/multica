@@ -38,7 +38,9 @@ func newInstallationServiceForTest(t *testing.T) *InstallationService {
 func newRegistrationServiceForTest(t *testing.T) *RegistrationService {
 	t.Helper()
 	client := NewRegistrationClient(RegistrationConfig{BaseURL: "http://127.0.0.1:0"})
-	svc, err := NewRegistrationService(RegistrationServiceConfig{}, client, newInstallationServiceForTest(t), &db.Queries{}, nil)
+	svc, err := NewRegistrationService(
+		RegistrationServiceConfig{sessionStore: newMemSessionStore()},
+		client, newInstallationServiceForTest(t), &db.Queries{}, nil)
 	if err != nil {
 		t.Fatalf("NewRegistrationService: %v", err)
 	}
@@ -109,26 +111,27 @@ func TestRegistrationGetSessionNotFound(t *testing.T) {
 	ws := uuidFromStringSvc(t, "11111111-1111-1111-1111-111111111111")
 	otherWs := uuidFromStringSvc(t, "22222222-2222-2222-2222-222222222222")
 
-	if _, err := s.GetSession(ws, "nope"); !errors.Is(err, ErrRegistrationSessionNotFound) {
+	if _, err := s.GetSession(context.Background(), ws, "nope"); !errors.Is(err, ErrRegistrationSessionNotFound) {
 		t.Errorf("unknown session: want ErrRegistrationSessionNotFound, got %v", err)
 	}
 
 	// Plant a session by hand for the cross-workspace test (BeginInstall
 	// requires a live registration endpoint; we are only exercising the
 	// lookup boundary).
-	s.mu.Lock()
-	s.sessions["plant-1"] = &registrationSession{
-		id:          "plant-1",
-		workspaceID: ws,
-		status:      RegistrationStatusPending,
+	if err := s.store.Create(context.Background(), sessionRecord{
+		ID:          "plant-1",
+		WorkspaceID: ws,
+		Status:      RegistrationStatusPending,
+		ExpiresAt:   time.Now().Add(10 * time.Minute),
+	}, ws); err != nil {
+		t.Fatalf("plant session: %v", err)
 	}
-	s.mu.Unlock()
 
-	if _, err := s.GetSession(otherWs, "plant-1"); !errors.Is(err, ErrRegistrationSessionNotFound) {
+	if _, err := s.GetSession(context.Background(), otherWs, "plant-1"); !errors.Is(err, ErrRegistrationSessionNotFound) {
 		t.Errorf("cross-workspace lookup: want ErrRegistrationSessionNotFound, got %v", err)
 	}
 
-	state, err := s.GetSession(ws, "plant-1")
+	state, err := s.GetSession(context.Background(), ws, "plant-1")
 	if err != nil {
 		t.Fatalf("same-workspace lookup: %v", err)
 	}
@@ -143,25 +146,31 @@ func TestRegistrationGetSessionGCsExpiredEntries(t *testing.T) {
 	s.cfg.Now = func() time.Time { return now }
 	ws := uuidFromStringSvc(t, "11111111-1111-1111-1111-111111111111")
 
-	s.mu.Lock()
-	s.sessions["expired"] = &registrationSession{
-		id:          "expired",
-		workspaceID: ws,
-		status:      RegistrationStatusError,
-		gcAfter:     now.Add(-1 * time.Minute),
+	ctx := context.Background()
+	for _, plant := range []struct {
+		id      string
+		gcAfter time.Time
+	}{
+		{"expired", now.Add(-1 * time.Minute)},
+		{"live", now.Add(10 * time.Minute)},
+	} {
+		if err := s.store.Create(ctx, sessionRecord{
+			ID:          plant.id,
+			WorkspaceID: ws,
+			Status:      RegistrationStatusPending,
+			ExpiresAt:   now.Add(10 * time.Minute),
+		}, ws); err != nil {
+			t.Fatalf("plant %s: %v", plant.id, err)
+		}
+		if err := s.store.FinishError(ctx, plant.id, RegistrationReasonProtocol, "boom", plant.gcAfter); err != nil {
+			t.Fatalf("finish %s: %v", plant.id, err)
+		}
 	}
-	s.sessions["live"] = &registrationSession{
-		id:          "live",
-		workspaceID: ws,
-		status:      RegistrationStatusSuccess,
-		gcAfter:     now.Add(10 * time.Minute),
-	}
-	s.mu.Unlock()
 
-	if _, err := s.GetSession(ws, "live"); err != nil {
+	if _, err := s.GetSession(context.Background(), ws, "live"); err != nil {
 		t.Errorf("live session lookup: %v", err)
 	}
-	if _, err := s.GetSession(ws, "expired"); !errors.Is(err, ErrRegistrationSessionNotFound) {
+	if _, err := s.GetSession(context.Background(), ws, "expired"); !errors.Is(err, ErrRegistrationSessionNotFound) {
 		t.Errorf("expired session lookup: want not-found, got %v", err)
 	}
 }
@@ -266,7 +275,7 @@ func waitForTerminal(t *testing.T, svc *RegistrationService, ws pgtype.UUID, ses
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		state, err := svc.GetSession(ws, sessionID)
+		state, err := svc.GetSession(context.Background(), ws, sessionID)
 		if err != nil {
 			t.Fatalf("GetSession: %v", err)
 		}
@@ -290,7 +299,7 @@ func TestRegistrationPollingVerifierRejectionEndsSession(t *testing.T) {
 		"client_id": "dingabc", "client_secret": "s3cret",
 	}
 	svc, err := NewRegistrationService(
-		RegistrationServiceConfig{},
+		RegistrationServiceConfig{sessionStore: newMemSessionStore()},
 		client,
 		newInstallationServiceForTest(t),
 		&db.Queries{},
@@ -321,7 +330,7 @@ func TestRegistrationPollingFailEndsSession(t *testing.T) {
 		"fail_reason": "用户拒绝授权",
 	}
 	svc, err := NewRegistrationService(
-		RegistrationServiceConfig{},
+		RegistrationServiceConfig{sessionStore: newMemSessionStore()},
 		client,
 		newInstallationServiceForTest(t),
 		&db.Queries{},

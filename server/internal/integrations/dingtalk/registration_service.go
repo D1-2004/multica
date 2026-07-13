@@ -74,6 +74,12 @@ type RegistrationServiceConfig struct {
 
 	// Logger is used for protocol-level warnings. Nil uses slog.Default().
 	Logger *slog.Logger
+
+	// sessionStore overrides the DB-backed store. In-package tests inject
+	// the in-memory implementation; production leaves this nil so the
+	// constructor wires the DB store, without which a multi-replica
+	// deployment 404s every cross-pod status poll.
+	sessionStore sessionStore
 }
 
 func (c RegistrationServiceConfig) withDefaults() RegistrationServiceConfig {
@@ -103,11 +109,9 @@ func (c RegistrationServiceConfig) withDefaults() RegistrationServiceConfig {
 // DingTalk account to a Multica user happens later through the
 // channel binding-token flow once the inbound transport lands.
 //
-// In-process session storage is intentional, for the same reason the
-// lark service documents: sessions are short-lived, the QR has no value
-// outside the browser session that initiated it, and persisting
-// half-completed installs would add a migration + GC sweep without
-// delivering any product capability.
+// Session state is persisted (migration 167) rather than kept in
+// process: this deployment runs several replicas, and a status poll may
+// be served by any of them, not just the one that opened the session.
 type RegistrationService struct {
 	cfg         RegistrationServiceConfig
 	client      *RegistrationClient
@@ -122,8 +126,13 @@ type RegistrationService struct {
 	// valid — install still works, it just won't push the WS frame.
 	bus *events.Bus
 
-	mu       sync.Mutex
-	sessions map[string]*registrationSession
+	// store holds the observable session state. It is DB-backed in
+	// production: the browser's status polls are load-balanced across
+	// replicas, so a session that lived only in the memory of the pod
+	// that served /install/begin 404s on every poll that lands
+	// elsewhere. The device code and the polling goroutine still live
+	// only on the originating pod — see registration_store.go.
+	store sessionStore
 }
 
 // authQueriesAdapter is the minimal lookup surface the service needs
@@ -155,13 +164,18 @@ func NewRegistrationService(
 	if queries == nil {
 		return nil, errors.New("dingtalk registration: queries is required")
 	}
+	resolved := cfg.withDefaults()
+	store := resolved.sessionStore
+	if store == nil {
+		store = &dbSessionStore{q: queries}
+	}
 	return &RegistrationService{
-		cfg:         cfg.withDefaults(),
+		cfg:         resolved,
 		client:      client,
 		installs:    installs,
 		verifier:    verifier,
 		authQueries: queries,
-		sessions:    make(map[string]*registrationSession),
+		store:       store,
 	}, nil
 }
 
@@ -315,14 +329,19 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 		initiatorID:  p.InitiatorID,
 		allowUnbound: p.AllowUnbound,
 		deviceCode:   begin.DeviceCode,
-		qrCodeURL:   begin.QRCodeURL,
-		interval:    begin.Interval,
-		expiresAt:   now.Add(begin.ExpiresIn),
-		status:      RegistrationStatusPending,
+		qrCodeURL:    begin.QRCodeURL,
+		interval:     begin.Interval,
+		expiresAt:    now.Add(begin.ExpiresIn),
+		status:       RegistrationStatusPending,
 	}
-	s.mu.Lock()
-	s.sessions[sessionID] = sess
-	s.mu.Unlock()
+	if err := s.store.Create(ctx, sessionRecord{
+		ID:          sess.id,
+		WorkspaceID: sess.workspaceID,
+		Status:      RegistrationStatusPending,
+		ExpiresAt:   sess.expiresAt,
+	}, sess.agentID); err != nil {
+		return BeginInstallResult{}, fmt.Errorf("dingtalk registration: persist session: %w", err)
+	}
 
 	// The polling goroutine outlives the request context, so we cannot
 	// reuse ctx here. Its own context is sized to the (capped) device
@@ -341,26 +360,47 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 // finished session. The workspace UUID is required so a session
 // initiated by one workspace cannot be polled by another.
 //
-// ErrRegistrationSessionNotFound is returned for unknown / expired /
-// GC'd sessions; the frontend treats it the same as an error reason of
+// ErrRegistrationSessionNotFound is returned for unknown / swept
+// sessions; the frontend treats it the same as an error reason of
 // "session_lost" — prompt the user to restart the install.
-func (s *RegistrationService) GetSession(workspaceID pgtype.UUID, sessionID string) (RegistrationSessionState, error) {
+//
+// The read goes to the store, not to the polling goroutine's memory, so
+// any replica can answer a poll for a session another replica opened.
+func (s *RegistrationService) GetSession(ctx context.Context, workspaceID pgtype.UUID, sessionID string) (RegistrationSessionState, error) {
 	if strings.TrimSpace(sessionID) == "" {
 		return RegistrationSessionState{}, ErrRegistrationSessionNotFound
 	}
-	s.gcExpired()
-	s.mu.Lock()
-	sess, ok := s.sessions[sessionID]
-	s.mu.Unlock()
-	if !ok {
-		return RegistrationSessionState{}, ErrRegistrationSessionNotFound
+	if err := s.store.Sweep(ctx, s.cfg.Now()); err != nil {
+		s.cfg.Logger.Warn("dingtalk registration: sweep failed", "err", err)
 	}
-	if !uuidEqual(sess.workspaceID, workspaceID) {
+	rec, err := s.store.Get(ctx, sessionID)
+	if err != nil {
+		return RegistrationSessionState{}, err
+	}
+	if !uuidEqual(rec.WorkspaceID, workspaceID) {
 		// Treat as not found — leaking "exists but wrong workspace"
 		// would let an attacker enumerate session ids across workspaces.
 		return RegistrationSessionState{}, ErrRegistrationSessionNotFound
 	}
-	return sess.snapshot(), nil
+	// A row still pending past the device-code expiry means the poller is
+	// gone: either the deadline passed before it could record the outcome,
+	// or the replica driving it was rolled. Report it as expired so the
+	// dialog offers a rescan instead of spinning forever.
+	if rec.Status == RegistrationStatusPending && !rec.ExpiresAt.IsZero() && rec.ExpiresAt.Before(s.cfg.Now()) {
+		return RegistrationSessionState{
+			ID:           rec.ID,
+			Status:       RegistrationStatusError,
+			ErrorReason:  RegistrationReasonExpired,
+			ErrorMessage: "QR expired before authorization",
+		}, nil
+	}
+	return RegistrationSessionState{
+		ID:             rec.ID,
+		Status:         rec.Status,
+		InstallationID: rec.InstallationID,
+		ErrorReason:    rec.ErrorReason,
+		ErrorMessage:   rec.ErrorMessage,
+	}, nil
 }
 
 // runPolling is the background loop: wait → poll → branch on result.
@@ -379,7 +419,7 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 			s.cfg.Logger.Info("dingtalk registration: session expired",
 				"session_id", sess.id,
 				"workspace_id", uuidString(sess.workspaceID))
-			sess.markError(RegistrationReasonExpired, "QR expired before authorization", s.gcDeadline())
+			s.recordError(sess, RegistrationReasonExpired, "QR expired before authorization")
 			return
 		case <-time.After(interval):
 		}
@@ -390,7 +430,7 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 			if errors.As(err, &re) {
 				s.cfg.Logger.Warn("dingtalk registration: protocol error",
 					"session_id", sess.id, "code", re.Code, "desc", re.Description)
-				sess.markError(RegistrationReasonProtocol, re.Error(), s.gcDeadline())
+				s.recordError(sess, RegistrationReasonProtocol, re.Error())
 				return
 			}
 			// Transient transport error (DNS, network) — log and try
@@ -417,7 +457,7 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 			}
 			s.cfg.Logger.Info("dingtalk registration: terminal error",
 				"session_id", sess.id, "code", res.Err.Code, "desc", res.Err.Description)
-			sess.markError(reason, res.Err.Error(), s.gcDeadline())
+			s.recordError(sess, reason, res.Err.Error())
 			return
 		default:
 			// WAITING — keep the interval, loop.
@@ -435,7 +475,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		if err := s.verifier.VerifyAppCredentials(ctx, res.ClientID, res.ClientSecret); err != nil {
 			s.cfg.Logger.Warn("dingtalk registration: credentials check failed",
 				"session_id", sess.id, "err", err)
-			sess.markError(RegistrationReasonCredentialsCheckFailed, err.Error(), s.gcDeadline())
+			s.recordError(sess, RegistrationReasonCredentialsCheckFailed, err.Error())
 			return
 		}
 	}
@@ -451,11 +491,11 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 	if err != nil {
 		s.cfg.Logger.Warn("dingtalk registration: upsert installation",
 			"session_id", sess.id, "err", err)
-		sess.markError(RegistrationReasonInstallationConflict, err.Error(), s.gcDeadline())
+		s.recordError(sess, RegistrationReasonInstallationConflict, err.Error())
 		return
 	}
 
-	sess.markSuccess(inst.ID, s.gcDeadline())
+	s.recordSuccess(sess, inst.ID)
 	// Publish at the commit point so the connection badge updates on
 	// every workspace client without a page refresh — not only on the
 	// tab that happens to poll the status endpoint to success.
@@ -467,25 +507,30 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		"installation_id", uuidString(inst.ID))
 }
 
-func (s *RegistrationService) gcDeadline() time.Time {
-	return s.cfg.Now().Add(s.cfg.SessionTTL)
+// recordSuccess / recordError commit a terminal outcome. They update the
+// driving goroutine's own copy and — the part that matters for a
+// multi-replica deployment — persist it, so a poll served by any other
+// replica sees the outcome instead of an unknown session.
+func (s *RegistrationService) recordSuccess(sess *registrationSession, installationID pgtype.UUID) {
+	gcAfter := s.gcDeadline()
+	sess.markSuccess(installationID, gcAfter)
+	if err := s.store.FinishSuccess(context.Background(), sess.id, installationID, gcAfter); err != nil {
+		s.cfg.Logger.Error("dingtalk registration: persist success failed; poll will report the session as expired",
+			"session_id", sess.id, "err", err)
+	}
 }
 
-// gcExpired drops any session whose `gcAfter` is in the past. Pending
-// sessions are NOT GC'd here — runPolling sets their gcAfter when it
-// terminates, and an expired-by-deadline session closes itself.
-func (s *RegistrationService) gcExpired() {
-	now := s.cfg.Now()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for id, sess := range s.sessions {
-		sess.mu.Lock()
-		drop := !sess.gcAfter.IsZero() && sess.gcAfter.Before(now)
-		sess.mu.Unlock()
-		if drop {
-			delete(s.sessions, id)
-		}
+func (s *RegistrationService) recordError(sess *registrationSession, reason, message string) {
+	gcAfter := s.gcDeadline()
+	sess.markError(reason, message, gcAfter)
+	if err := s.store.FinishError(context.Background(), sess.id, reason, message, gcAfter); err != nil {
+		s.cfg.Logger.Error("dingtalk registration: persist error failed",
+			"session_id", sess.id, "reason", reason, "err", err)
 	}
+}
+
+func (s *RegistrationService) gcDeadline() time.Time {
+	return s.cfg.Now().Add(s.cfg.SessionTTL)
 }
 
 // ErrRegistrationSessionNotFound is what the service returns for
