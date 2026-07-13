@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/multica-ai/multica/server/internal/service"
 )
 
 // ---------------------------------------------------------------------------
@@ -44,7 +43,7 @@ const (
 
 // ModelListRequest represents a pending or completed model list request.
 // Supported is false when the provider ignores per-agent model
-// selection entirely. The UI uses this to
+// selection entirely (currently: hermes). The UI uses this to
 // disable its dropdown rather than silently accepting a value the
 // backend will drop.
 //
@@ -303,31 +302,6 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 	}
 	if rt.Status != "online" {
 		writeError(w, http.StatusServiceUnavailable, "runtime is offline")
-		return
-	}
-	if service.IsFCE2BRuntime(rt) {
-		if len(h.cfg.FCE2B.LLMModels) == 0 {
-			writeError(w, http.StatusServiceUnavailable, "MULTICA_FC_E2B_OPENAI_MODELS is empty")
-			return
-		}
-		models := make([]ModelEntry, 0, len(h.cfg.FCE2B.LLMModels))
-		for i, model := range h.cfg.FCE2B.LLMModels {
-			models = append(models, ModelEntry{
-				ID:       model,
-				Label:    model,
-				Provider: service.FCE2BProvider,
-				Default:  i == 0,
-			})
-		}
-		writeJSON(w, http.StatusOK, ModelListRequest{
-			ID:        "fc-e2b:" + uuidToString(rt.ID),
-			RuntimeID: uuidToString(rt.ID),
-			Status:    ModelListCompleted,
-			Models:    models,
-			Supported: true,
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		})
 		return
 	}
 

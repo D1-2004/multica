@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -74,53 +73,6 @@ func TestRuntimeHandlersRejectMalformedRuntimeID(t *testing.T) {
 				t.Fatalf("%s: expected 400 for malformed runtimeId, got %d: %s", tt.name, w.Code, w.Body.String())
 			}
 		})
-	}
-}
-
-func TestInitiateListModelsReturnsConfiguredFCE2BModels(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
-	ctx := context.Background()
-	var runtimeID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_runtime (
-			workspace_id, daemon_id, name, runtime_mode, provider,
-			status, device_info, metadata, last_seen_at, visibility, owner_id
-		)
-		VALUES ($1, NULL, 'FC model catalog runtime', 'cloud', 'hermes',
-			'online', 'fc-e2b fixture', '{"kind":"fc-e2b"}'::jsonb, now(), 'private', $2)
-		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&runtimeID); err != nil {
-		t.Fatalf("create FC runtime: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
-
-	original := testHandler.cfg.FCE2B
-	testHandler.cfg.FCE2B = service.FCE2BConfig{
-		LLMModels: []string{"qwen3.7-plus", "claude-sonnet-4-6"},
-	}
-	t.Cleanup(func() { testHandler.cfg.FCE2B = original })
-
-	w := httptest.NewRecorder()
-	req := newRequest(http.MethodPost, "/api/runtimes/"+runtimeID+"/models", nil)
-	req = withURLParam(req, "runtimeId", runtimeID)
-	testHandler.InitiateListModels(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp ModelListRequest
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp.Status != ModelListCompleted || !resp.Supported || len(resp.Models) != 2 {
-		t.Fatalf("unexpected FC model response: %#v", resp)
-	}
-	if resp.Models[0].ID != "qwen3.7-plus" || !resp.Models[0].Default {
-		t.Fatalf("first model must be the configured default: %#v", resp.Models[0])
-	}
-	if resp.Models[1].ID != "claude-sonnet-4-6" || resp.Models[1].Default {
-		t.Fatalf("second model must be selectable and non-default: %#v", resp.Models[1])
 	}
 }
 

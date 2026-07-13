@@ -50,10 +50,10 @@ export function ModelPicker({
   const { t } = useT("agents");
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const fixedCatalog = isFCE2BRuntime(runtime);
+  const managedByRuntime = isFCE2BRuntime(runtime);
 
   const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
+    runtimeModelsOptions(runtimeOnline && !managedByRuntime ? runtimeId : null),
   );
   const supported = modelsQuery.data?.supported ?? true;
   // Memoise the model list so every downstream useMemo gets a stable
@@ -77,7 +77,7 @@ export function ModelPicker({
   const exactMatch = models.some(
     (m) => m.id === trimmedSearch || m.label === trimmedSearch,
   );
-  const canCreate = !fixedCatalog && trimmedSearch.length > 0 && !exactMatch;
+  const canCreate = trimmedSearch.length > 0 && !exactMatch;
 
   const triggerLabel = value || t(($) => $.pickers.model_default);
   const triggerTitle = t(($) => $.pickers.model_tooltip, { value: triggerLabel });
@@ -88,7 +88,7 @@ export function ModelPicker({
     if (id !== value) await onChange(id);
   };
 
-  if (!supported && !modelsQuery.isLoading) {
+  if (managedByRuntime || (!supported && !modelsQuery.isLoading)) {
     if (variant === "field") {
       const control = (
         <div className="flex min-h-10 items-center gap-2 rounded-lg border border-dashed border-input bg-input/50 px-3 text-sm text-muted-foreground">

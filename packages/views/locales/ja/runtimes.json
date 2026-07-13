@@ -239,7 +239,7 @@
   "fc_e2b_runtime": {
     "action": "Add Cloud SB Runtime",
     "title": "Add Cloud SB Runtime",
-    "description": "Choose an FC/E2B template and create an independent cloud Hermes runtime. The server owns timeout and the model catalog; each agent can select a model from that catalog.",
+    "description": "Choose an FC/E2B template and create an independent cloud Hermes runtime. The server owns timeout and model configuration.",
     "create": "ランタイムを作成",
     "creating": "作成中...",
     "cancel": "キャンセル",

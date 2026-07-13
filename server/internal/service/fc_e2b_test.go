@@ -125,7 +125,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		Domain:              "cn-beijing.e2b.fc.aliyuncs.com",
 		LLMBaseURL:          "https://api-deap.dingtalk.com/deapai",
 		LLMAPIKey:           "maas_secret",
-		LLMModels:           []string{"qwen3.5-plus", "qwen3.7-max"},
+		LLMModel:            "qwen3.5-plus",
 		CLIPath:             "/usr/local/bin/e2b",
 		TimeoutSeconds:      1800,
 		SandboxReadyTimeout: time.Second,
@@ -148,9 +148,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		DaemonID: pgtype.Text{String: "fc-e2b:ws:fc-hermes", Valid: true},
 	}
 	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
-	if err := launcher.execRunOnce(context.Background(), sandboxID, rt, taskID, "mdt_test_token", true, map[string]string{
-		"OPENAI_MODEL": "qwen3.7-max",
-	}); err != nil {
+	if err := launcher.execRunOnce(context.Background(), sandboxID, rt, taskID, "mdt_test_token", true, nil); err != nil {
 		t.Fatalf("execRunOnce returned error: %v", err)
 	}
 
@@ -197,8 +195,8 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		"-e", "DWS_CONFIG_DIR=/home/user/.dws",
 		"-e", "OPENAI_BASE_URL=https://api-deap.dingtalk.com/deapai",
 		"-e", "OPENAI_API_KEY=maas_secret",
+		"-e", "OPENAI_MODEL=qwen3.5-plus",
 		"-e", "MULTICA_FC_E2B_COLD_START=true",
-		"-e", "OPENAI_MODEL=qwen3.7-max",
 		"sbx_123",
 		"--",
 		"multica-fc-hermes-runner",
@@ -220,7 +218,7 @@ func TestFCE2BExecRunOnceWarmSandboxDoesNotInjectColdStart(t *testing.T) {
 		Domain:     "cn-beijing.e2b.fc.aliyuncs.com",
 		LLMBaseURL: "https://api-deap.dingtalk.com/deapai",
 		LLMAPIKey:  "maas_secret",
-		LLMModels:  []string{"qwen3.5-plus"},
+		LLMModel:   "qwen3.5-plus",
 		CLIPath:    "/usr/local/bin/e2b",
 	}, runner)
 	rt := db.AgentRuntime{
@@ -259,7 +257,7 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 		Domain:     "cn-beijing.e2b.fc.aliyuncs.com",
 		LLMBaseURL: "https://api-deap.dingtalk.com/deapai",
 		LLMAPIKey:  "maas_secret",
-		LLMModels:  []string{"qwen3.5-plus"},
+		LLMModel:   "qwen3.5-plus",
 		CLIPath:    "/usr/local/bin/e2b",
 	}, runner)
 	rt := db.AgentRuntime{
@@ -334,48 +332,15 @@ func TestFCE2BExtraEnvAllowsAgentWithoutDWSProfile(t *testing.T) {
 		pool.Exec(cleanupCtx, `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 
-	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{LLMModels: []string{"qwen3.5-plus"}}, nil)
+	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{}, nil)
 	env, err := launcher.extraEnvForTask(ctx, db.AgentTaskQueue{
 		AgentID: util.MustParseUUID(agentID),
 	})
 	if err != nil {
 		t.Fatalf("extraEnvForTask returned error: %v", err)
 	}
-	if !reflect.DeepEqual(env, map[string]string{"OPENAI_MODEL": "qwen3.5-plus"}) {
-		t.Fatalf("extra env = %#v, want default FC model only", env)
-	}
-}
-
-func TestParseFCE2BModels(t *testing.T) {
-	models, err := parseFCE2BModels(`[" qwen3.7-plus ","claude-sonnet-4-6"]`)
-	if err != nil {
-		t.Fatalf("parseFCE2BModels returned error: %v", err)
-	}
-	if !reflect.DeepEqual(models, []string{"qwen3.7-plus", "claude-sonnet-4-6"}) {
-		t.Fatalf("models = %#v", models)
-	}
-	for _, raw := range []string{
-		`"qwen3.7-plus"`,
-		`[]`,
-		`["qwen3.7-plus", "qwen3.7-plus"]`,
-		`["qwen3.7-plus", ""]`,
-	} {
-		if _, err := parseFCE2BModels(raw); err == nil {
-			t.Fatalf("parseFCE2BModels(%s) must fail", raw)
-		}
-	}
-}
-
-func TestFCE2BModelForAgent(t *testing.T) {
-	cfg := FCE2BConfig{LLMModels: []string{"qwen3.7-plus", "qwen3.7-max"}}
-	if got, err := cfg.ModelForAgent(""); err != nil || got != "qwen3.7-plus" {
-		t.Fatalf("default model = %q, %v", got, err)
-	}
-	if got, err := cfg.ModelForAgent("qwen3.7-max"); err != nil || got != "qwen3.7-max" {
-		t.Fatalf("selected model = %q, %v", got, err)
-	}
-	if _, err := cfg.ModelForAgent("unknown-model"); err == nil {
-		t.Fatal("unknown agent model must fail")
+	if len(env) != 0 {
+		t.Fatalf("extra env = %#v, want no DWS credentials", env)
 	}
 }
 
