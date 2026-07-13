@@ -295,6 +295,15 @@ type ChannelOutboundCardMessage struct {
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 }
 
+type ChannelTypingIndicator struct {
+	ID             pgtype.UUID        `json:"id"`
+	ChatSessionID  pgtype.UUID        `json:"chat_session_id"`
+	ChannelType    string             `json:"channel_type"`
+	InstallationID pgtype.UUID        `json:"installation_id"`
+	Target         []byte             `json:"target"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type ChannelUserBinding struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
