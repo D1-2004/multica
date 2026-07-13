@@ -103,6 +103,39 @@ spec:
 	}
 }
 
+func TestCompileNormalizesOptionalCollections(t *testing.T) {
+	manifest := `apiVersion: multica.ai/v1alpha1
+kind: Agent
+metadata:
+  name: reviewer
+spec:
+  instructions: AGENT.md
+`
+	repository := fakeRepository{
+		tree: githubapp.Tree{Entries: []githubapp.TreeEntry{
+			{Path: ManifestPath, Type: "blob", Mode: "100644", SHA: "manifest", Size: int64(len(manifest))},
+			{Path: "AGENT.md", Type: "blob", Mode: "100644", SHA: "instructions", Size: 4},
+		}},
+		blobs: map[string][]byte{
+			"manifest": []byte(manifest), "instructions": []byte("work"),
+		},
+	}
+
+	bundle, err := Compile(context.Background(), repository, Source{InstallationID: 1, Owner: "acme", Repository: "agent", CommitSHA: "abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Skills == nil {
+		t.Fatal("skills must serialize as an empty array, not null")
+	}
+	if bundle.Warnings == nil {
+		t.Fatal("warnings must serialize as an empty array, not null")
+	}
+	if bundle.Manifest.Spec.Compatibility.Providers == nil {
+		t.Fatal("compatible providers must serialize as an empty array, not null")
+	}
+}
+
 func TestCompileRejectsSymlinkAndLFS(t *testing.T) {
 	baseManifest := `apiVersion: multica.ai/v1alpha1
 kind: Agent

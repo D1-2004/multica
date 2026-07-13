@@ -414,7 +414,7 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		h.sendAgentWelcomeChat(r.Context(), created, ownerID, workspaceID)
 	}
 	redactAgentResponseForActor(&response, actorType)
-	warnings := append([]string(nil), resolved.bundle.Warnings...)
+	warnings := append([]string{}, resolved.bundle.Warnings...)
 	if currentSHA, resolveErr := h.GitHubApp.ResolveCommit(
 		r.Context(),
 		resolved.installation.InstallationID,

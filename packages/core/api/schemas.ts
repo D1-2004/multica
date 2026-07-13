@@ -837,6 +837,8 @@ const GitHubAgentSkillPreviewSchema = z.object({
   file_count: z.number().int().nonnegative().default(0),
 }).loose();
 
+const NullableStringArraySchema = z.array(z.string()).nullish().transform((value) => value ?? []);
+
 export const GitHubAgentPreviewSchema = z.object({
   installation_id: z.string(),
   repository: z.string(),
@@ -845,10 +847,10 @@ export const GitHubAgentPreviewSchema = z.object({
   name: z.string(),
   description: z.string().default(""),
   instructions: z.string().default(""),
-  skills: z.array(GitHubAgentSkillPreviewSchema).default([]),
-  compatible_providers: z.array(z.string()).default([]),
-  warnings: z.array(z.string()).default([]),
-  blockers: z.array(z.string()).default([]),
+  skills: z.array(GitHubAgentSkillPreviewSchema).nullish().transform((value) => value ?? []),
+  compatible_providers: NullableStringArraySchema,
+  warnings: NullableStringArraySchema,
+  blockers: NullableStringArraySchema,
 }).loose();
 
 export const EMPTY_GITHUB_AGENT_PREVIEW: GitHubAgentPreview = {
@@ -898,7 +900,7 @@ export const EMPTY_AGENT_SOURCE: AgentSource = {
 export const CreateGitHubAgentResponseSchema = z.object({
   agent: MinimalAgentSchema,
   source: AgentSourceSchema,
-  warnings: z.array(z.string()).default([]),
+  warnings: NullableStringArraySchema,
 }).loose();
 
 export const EMPTY_CREATE_GITHUB_AGENT_RESPONSE: CreateGitHubAgentResponse = {
@@ -910,7 +912,7 @@ export const EMPTY_CREATE_GITHUB_AGENT_RESPONSE: CreateGitHubAgentResponse = {
 export const SyncAgentSourceResponseSchema = z.object({
   source: AgentSourceSchema,
   changed: z.boolean().default(false),
-  warnings: z.array(z.string()).default([]),
+  warnings: NullableStringArraySchema,
 }).loose();
 
 export const EMPTY_SYNC_AGENT_SOURCE_RESPONSE: SyncAgentSourceResponse = {

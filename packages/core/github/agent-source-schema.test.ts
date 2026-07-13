@@ -23,6 +23,36 @@ describe("GitHub agent source API schemas", () => {
     expect(parsed).toEqual(EMPTY_GITHUB_AGENT_PREVIEW);
   });
 
+  it("normalizes nullable collection fields from older preview responses", () => {
+    const parsed = parseWithFallback(
+      {
+        installation_id: "installation",
+        repository: "acme/agent",
+        ref: "main",
+        resolved_sha: "abc",
+        name: "reviewer",
+        description: "Reviews code",
+        instructions: "Review safely",
+        skills: null,
+        compatible_providers: null,
+        warnings: null,
+        blockers: null,
+      },
+      GitHubAgentPreviewSchema,
+      EMPTY_GITHUB_AGENT_PREVIEW,
+      { endpoint: "POST /api/workspaces/:id/github/agent-preview" },
+    );
+
+    expect(parsed).toMatchObject({
+      repository: "acme/agent",
+      name: "reviewer",
+      skills: [],
+      compatible_providers: [],
+      warnings: [],
+      blockers: [],
+    });
+  });
+
   it("defaults additive source status fields from older responses", () => {
     const parsed = parseWithFallback(
       {

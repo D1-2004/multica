@@ -114,6 +114,12 @@ func ParseManifest(content []byte) (Manifest, error) {
 	if err := validateManifest(manifest); err != nil {
 		return Manifest{}, err
 	}
+	if manifest.Spec.Skills == nil {
+		manifest.Spec.Skills = []ManifestSkill{}
+	}
+	if manifest.Spec.Compatibility.Providers == nil {
+		manifest.Spec.Compatibility.Providers = []string{}
+	}
 	return manifest, nil
 }
 
@@ -193,7 +199,12 @@ func Compile(ctx context.Context, client RepositoryClient, source Source) (Bundl
 		return Bundle{}, err
 	}
 
-	bundle := Bundle{Manifest: manifest, Instructions: string(instructionsBytes)}
+	bundle := Bundle{
+		Manifest:     manifest,
+		Instructions: string(instructionsBytes),
+		Skills:       make([]Skill, 0, len(manifest.Spec.Skills)),
+		Warnings:     []string{},
+	}
 	totalSize := len(manifestBytes) + len(instructionsBytes)
 	seenSkillNames := make(map[string]string, len(manifest.Spec.Skills))
 	for _, skillRef := range manifest.Spec.Skills {
