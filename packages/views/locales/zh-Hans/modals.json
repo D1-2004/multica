@@ -182,6 +182,11 @@
       "title": "添加子 issue",
       "description": "搜索一个 issue 设为子级"
     },
+    "extensions": {
+      "title": "更多扩展项",
+      "context_token_label": "Agent Identity ContextToken",
+      "context_token_placeholder": "粘贴 ContextToken"
+    },
     "agent": {
       "created_by": "创建者",
       "select_agent_aria": "选择智能体",
