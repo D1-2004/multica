@@ -344,6 +344,20 @@ func TestFCE2BExtraEnvAllowsAgentWithoutDWSProfile(t *testing.T) {
 	if !reflect.DeepEqual(env, map[string]string{"OPENAI_MODEL": "qwen3.5-plus"}) {
 		t.Fatalf("extra env = %#v, want default FC model only", env)
 	}
+
+	if _, err := pool.Exec(ctx, `UPDATE agent SET model = 'qwen3.7-plus' WHERE id = $1`, agentID); err != nil {
+		t.Fatalf("save selected FC model: %v", err)
+	}
+	launcher.Config.LLMModels = []string{"qwen3.5-plus", "qwen3.7-plus"}
+	env, err = launcher.extraEnvForTask(ctx, db.AgentTaskQueue{
+		AgentID: util.MustParseUUID(agentID),
+	})
+	if err != nil {
+		t.Fatalf("extraEnvForTask with selected model returned error: %v", err)
+	}
+	if !reflect.DeepEqual(env, map[string]string{"OPENAI_MODEL": "qwen3.7-plus"}) {
+		t.Fatalf("extra env = %#v, want selected FC model", env)
+	}
 }
 
 func TestParseFCE2BModels(t *testing.T) {
