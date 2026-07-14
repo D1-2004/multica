@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -73,7 +74,7 @@ func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndPassesRuntimeContext
 		"padding":%q
 	}`, agentID, len(attachmentBody), files.URL+"/diagram.png", time.Now().Add(time.Hour).UnixMilli(), strings.Repeat("x", maxWebhookBodyBytes+1))
 
-	w := postAgentDispatchForTest(t, body)
+	w := postAgentDispatchForTest(t, body, agentID)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("HandleAgentDispatch: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -167,6 +168,7 @@ func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndPassesRuntimeContext
 }
 
 func TestHandleAgentDispatchRequiresAgentIDWhenCreatingIssue(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-bot-dispatch-required-agent", nil)
 	body := `{
 		"input":{
 			"systemPrompt":{"text":"External input."},
@@ -175,7 +177,7 @@ func TestHandleAgentDispatchRequiresAgentIDWhenCreatingIssue(t *testing.T) {
 		},
 		"contextToken":"new-issue-context"
 	}`
-	w := postAgentDispatchForTest(t, body)
+	w := postAgentDispatchForTest(t, body, agentID)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("HandleAgentDispatch missing agentId: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
@@ -248,7 +250,7 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 		"contextToken":"follow-up-context"
 	}`, issueID, len(attachmentBody), files.URL+"/spec.pdf")
 
-	w := postAgentDispatchForTest(t, body)
+	w := postAgentDispatchForTest(t, body, agentID)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("HandleAgentDispatch continuation: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -350,7 +352,7 @@ func TestHandleAgentDispatchContinuationRejectsRunningIssueTask(t *testing.T) {
 		},
 		"contextToken":"fresh-one-shot-context"
 	}`, issueID)
-	w := postAgentDispatchForTest(t, body)
+	w := postAgentDispatchForTest(t, body, agentID)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("HandleAgentDispatch running continuation: expected 409, got %d: %s", w.Code, w.Body.String())
 	}
@@ -401,12 +403,11 @@ func TestHandleAgentDispatchRejectsMemberWithoutAgentInvocationPermission(t *tes
 		},
 		"contextToken":"private-agent-context"
 	}`, agentID)
+	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, memberID, agentID)
 	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withURLParams(req,
-		"userId", memberID,
-		"workspaceId", testWorkspaceID,
-	)
+	req.Header.Set("Authorization", "Bearer "+deliverySecret)
+	req = withURLParams(req, "endpointId", endpointID)
 	w := httptest.NewRecorder()
 	testHandler.HandleAgentDispatch(w, req)
 	if w.Code != http.StatusForbidden {
@@ -414,15 +415,124 @@ func TestHandleAgentDispatchRejectsMemberWithoutAgentInvocationPermission(t *tes
 	}
 }
 
-func postAgentDispatchForTest(t *testing.T, body string) *httptest.ResponseRecorder {
-	t.Helper()
+func TestHandleAgentDispatchRejectsContinuationOutsideEndpointAgent(t *testing.T) {
+	boundAgentID := createHandlerTestAgent(t, "test-bot-dispatch-bound-continuation", nil)
+	otherAgentID := createHandlerTestAgent(t, "test-bot-dispatch-other-continuation", nil)
+	created, err := testHandler.IssueService.Create(context.Background(), service.IssueCreateParams{
+		WorkspaceID:    parseUUID(testWorkspaceID),
+		Title:          "Another agent's external topic",
+		Description:    pgtype.Text{String: "Initial external event", Valid: true},
+		Status:         "backlog",
+		Priority:       "none",
+		AssigneeType:   pgtype.Text{String: "agent", Valid: true},
+		AssigneeID:     parseUUID(otherAgentID),
+		CreatorType:    "member",
+		CreatorID:      parseUUID(testUserID),
+		AllowDuplicate: true,
+	}, service.IssueCreateOpts{})
+	if err != nil {
+		t.Fatalf("create issue fixture: %v", err)
+	}
+	issueID := uuidToString(created.Issue.ID)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, boundAgentID)
+	body := fmt.Sprintf(`{
+		"continuation":{"kind":"issue","issueId":%q},
+		"input":{"userPrompt":{"text":"Do not cross endpoint scope."},"attachments":[]},
+		"contextToken":"dispatch-continuation-scope-context"
+	}`, issueID)
 	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withURLParams(req,
-		"userId", testUserID,
-		"workspaceId", testWorkspaceID,
-	)
+	req.Header.Set("Authorization", "Bearer "+deliverySecret)
+	req = withURLParams(req, "endpointId", endpointID)
+	w := httptest.NewRecorder()
+	testHandler.HandleAgentDispatch(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("HandleAgentDispatch continuation endpoint agent: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleAgentDispatchRejectsMissingOrInvalidDeliverySecret(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-bot-dispatch-auth", nil)
+	endpointID, _ := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+	body := fmt.Sprintf(`{
+		"agentId":%q,
+		"input":{"userPrompt":{"text":"Authenticated delivery only."},"attachments":[]},
+		"contextToken":"dispatch-auth-context"
+	}`, agentID)
+
+	for _, tc := range []struct {
+		name          string
+		authorization string
+	}{
+		{name: "missing secret"},
+		{name: "invalid secret", authorization: "Bearer wrong-secret"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			if tc.authorization != "" {
+				req.Header.Set("Authorization", tc.authorization)
+			}
+			req = withURLParams(req, "endpointId", endpointID)
+			w := httptest.NewRecorder()
+			testHandler.HandleAgentDispatch(w, req)
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("HandleAgentDispatch auth: expected 401, got %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandleAgentDispatchRejectsAgentOutsideEndpoint(t *testing.T) {
+	boundAgentID := createHandlerTestAgent(t, "test-bot-dispatch-bound", nil)
+	requestedAgentID := createHandlerTestAgent(t, "test-bot-dispatch-other", nil)
+	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, boundAgentID)
+	body := fmt.Sprintf(`{
+		"agentId":%q,
+		"input":{"userPrompt":{"text":"Do not cross endpoint scope."},"attachments":[]},
+		"contextToken":"dispatch-agent-scope-context"
+	}`, requestedAgentID)
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+deliverySecret)
+	req = withURLParams(req, "endpointId", endpointID)
+	w := httptest.NewRecorder()
+	testHandler.HandleAgentDispatch(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("HandleAgentDispatch endpoint agent: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func postAgentDispatchForTest(t *testing.T, body, agentID string) *httptest.ResponseRecorder {
+	t.Helper()
+	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+deliverySecret)
+	req = withURLParams(req, "endpointId", endpointID)
 	w := httptest.NewRecorder()
 	testHandler.HandleAgentDispatch(w, req)
 	return w
+}
+
+func createAgentDispatchEndpointForTest(t *testing.T, actorUserID, agentID string) (string, string) {
+	t.Helper()
+	deliverySecret := "test-agent-dispatch-delivery-secret"
+	secretHash := sha256.Sum256([]byte(deliverySecret))
+	var endpointID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_dispatch_endpoint (workspace_id, agent_id, actor_user_id, secret_hash)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id
+	`, testWorkspaceID, agentID, actorUserID, secretHash[:]).Scan(&endpointID); err != nil {
+		t.Fatalf("create agent dispatch endpoint: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_dispatch_endpoint WHERE id = $1`, endpointID)
+	})
+	return endpointID, deliverySecret
 }
