@@ -35,6 +35,7 @@ type beginDingTalkAccountBindingRequest struct {
 
 type dingTalkAccountBindingCallbackRequest struct {
 	SourceID           string `json:"source_id"`
+	AccountExternalID  string `json:"account_external_id"`
 	AccountDisplayName string `json:"account_display_name"`
 	AccountAvatarURL   string `json:"account_avatar_url"`
 }
@@ -141,8 +142,9 @@ func (h *Handler) CompleteDingTalkAccountBindingCallback(w http.ResponseWriter, 
 		InstallationID:     installationID,
 		CallbackToken:      callbackToken,
 		SourceID:           request.SourceID,
+		AccountExternalID:  request.AccountExternalID,
 		AccountDisplayName: request.AccountDisplayName,
-		AccountAvatarURL: request.AccountAvatarURL,
+		AccountAvatarURL:   request.AccountAvatarURL,
 	})
 	if err != nil {
 		writeDingTalkAccountBindingError(w, err)

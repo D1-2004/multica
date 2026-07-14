@@ -159,20 +159,30 @@ func (f *fakeBindingStore) RevokeDingTalkAccountBinding(_ context.Context, arg d
 }
 
 type fakeBindingRouter struct {
-	issued       BindingToken
-	issueErr     error
-	subscription Subscription
-	getErr       error
-	deleteErr    error
-	issueAgent   string
-	issueURL     string
-	deleted      []string
+	issued            BindingToken
+	issueErr          error
+	subscription      Subscription
+	getErr            error
+	deleteErr         error
+	issueAgent        string
+	issueURL          string
+	deleted           []string
+	createdExternalID  string
+	createdAgentID     string
+	createdDispatchURL string
 }
 
 func (f *fakeBindingRouter) IssueBindingToken(_ context.Context, agentID, dispatchURL string) (BindingToken, error) {
 	f.issueAgent = agentID
 	f.issueURL = dispatchURL
 	return f.issued, f.issueErr
+}
+
+func (f *fakeBindingRouter) CreateDingTalkAccountSubscription(_ context.Context, accountExternalID, agentID, dispatchURL string) (Subscription, error) {
+	f.createdExternalID = accountExternalID
+	f.createdAgentID = agentID
+	f.createdDispatchURL = dispatchURL
+	return f.subscription, f.getErr
 }
 
 func (f *fakeBindingRouter) GetSubscription(_ context.Context, sourceID string) (Subscription, error) {
@@ -308,7 +318,7 @@ func TestBeginDingTalkAccountBindingRejectsActive(t *testing.T) {
 	}
 }
 
-func TestCompleteCallbackVerifiesSubscriptionAndActivates(t *testing.T) {
+func TestCompleteCallbackCreatesHTTPSubscriptionAndActivates(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	callbackToken := canonicalCallbackToken
 	store := pendingBindingStore(t, now, callbackToken)
@@ -325,11 +335,11 @@ func TestCompleteCallbackVerifiesSubscriptionAndActivates(t *testing.T) {
 	service := newBindingServiceForTest(t, store, router, now)
 
 	binding, err := service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID:   store.row.ID,
-		CallbackToken:    callbackToken,
-		SourceID:         "source-1",
+		InstallationID:     store.row.ID,
+		CallbackToken:      callbackToken,
+		AccountExternalID:  "123",
 		AccountDisplayName: "Zhang San",
-		AccountAvatarURL: "https://example.com/avatar.png",
+		AccountAvatarURL:   "https://example.com/avatar.png",
 	})
 	if err != nil {
 		t.Fatalf("CompleteCallback() error = %v", err)
@@ -343,6 +353,12 @@ func TestCompleteCallbackVerifiesSubscriptionAndActivates(t *testing.T) {
 	}
 	if activeConfig.RouterSourceID != "source-1" || activeConfig.BoundAt == nil {
 		t.Fatalf("active config = %#v", activeConfig)
+	}
+	if router.createdExternalID != "123" ||
+		router.createdAgentID != uuidStringForTest(store.row.AgentID) ||
+		router.createdDispatchURL != config.DispatchURL {
+		t.Fatalf("HTTP subscription request = external %q agent %q url %q",
+			router.createdExternalID, router.createdAgentID, router.createdDispatchURL)
 	}
 	assertMetricCounter(t, service.metrics, "dingtalk_account_callback_total", map[string]string{"outcome": "success"}, 1)
 	assertMetricCounter(t, service.metrics, "dingtalk_account_subscription_verify_total", map[string]string{"outcome": "success"}, 1)
@@ -483,14 +499,17 @@ func TestCompleteCallbackIsIdempotentAndRejectsDifferentSource(t *testing.T) {
 	service := newBindingServiceForTest(t, store, router, now)
 
 	if _, err := service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		SourceID:       "source-1",
+		InstallationID:    store.row.ID,
+		CallbackToken:     canonicalCallbackToken,
+		AccountExternalID: "123",
 	}); err != nil {
 		t.Fatalf("idempotent callback error = %v", err)
 	}
 	if store.activated {
 		t.Fatal("idempotent callback must not rewrite active row")
+	}
+	if router.createdExternalID != "" {
+		t.Fatal("idempotent callback must not create another Router subscription")
 	}
 
 	_, err = service.CompleteCallback(context.Background(), CallbackParams{
