@@ -666,8 +666,11 @@ func (s *TaskService) EnqueueTaskForIssue(ctx context.Context, issue db.Issue, t
 	return s.enqueueIssueTask(ctx, issue, commentID, false, "", "")
 }
 
+// EnqueueTaskForIssueWithAgentIdentityContext carries a ContextToken in the
+// server-side task context. It is never copied onto the issue and is forwarded
+// to the daemon and FC/E2B launcher when the task is dispatched.
 func (s *TaskService) EnqueueTaskForIssueWithAgentIdentityContext(ctx context.Context, issue db.Issue, agentIdentityContextToken string) (db.AgentTaskQueue, error) {
-	return s.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, "", agentIdentityContextToken)
+	return s.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, "", strings.TrimSpace(agentIdentityContextToken))
 }
 
 // EnqueueTaskForIssueWithHandoff is the assign/promote variant that carries a
@@ -947,14 +950,16 @@ func (s *TaskService) EnqueueDeferredAssigneeFallback(ctx context.Context, issue
 // onto the agent's Instructions, matching the behavior of issue-bound
 // tasks assigned to the squad.
 type QuickCreateContext struct {
-	Type                      string   `json:"type"`
-	Prompt                    string   `json:"prompt"`
-	RequesterID               string   `json:"requester_id"`
-	WorkspaceID               string   `json:"workspace_id"`
-	ProjectID                 string   `json:"project_id,omitempty"`
-	SquadID                   string   `json:"squad_id,omitempty"`
-	AttachmentIDs             []string `json:"attachment_ids,omitempty"`
-	AgentIdentityContextToken string   `json:"agent_identity_context_token,omitempty"`
+	Type          string   `json:"type"`
+	Prompt        string   `json:"prompt"`
+	RequesterID   string   `json:"requester_id"`
+	WorkspaceID   string   `json:"workspace_id"`
+	ProjectID     string   `json:"project_id,omitempty"`
+	SquadID       string   `json:"squad_id,omitempty"`
+	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	// AgentIdentityContextToken is server-private task context. The claim
+	// response forwards it to the daemon and FC/E2B sandbox for login setup.
+	AgentIdentityContextToken string `json:"agent_identity_context_token,omitempty"`
 	// ParentIssueID is the optional UUID of the parent issue the new issue
 	// should be filed under. Set when the user opens the modal from "Add
 	// sub issue" on an existing issue; the daemon claim handler resolves the
