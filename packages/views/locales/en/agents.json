@@ -190,7 +190,7 @@
     "description_placeholder": "What does this agent do?",
     "save": "Save",
     "cancel": "Cancel",
-    "github_managed_profile": "Name and description are managed by the GitHub repository."
+    "github_managed_profile": "Instructions and repository skills are managed by GitHub; name and description remain editable in Multica."
   },
   "overview": {
     "agent_context": "Agent",
@@ -310,7 +310,7 @@
       "preview_failed": "Could not preview this GitHub agent.",
       "preview_ready": "Validated",
       "repository_skills": "Repository-managed skills",
-      "managed_fields_hint": "Name, description, instructions, and repository skills are managed by GitHub. You can attach additional workspace skills here.",
+      "managed_fields_hint": "Instructions and repository skills are managed by GitHub. Name and description are creation defaults and can be changed in Multica; you can also attach workspace skills here.",
       "runtime_incompatible": "This repository does not support the selected {{provider}} runtime."
     },
     "templates": {

@@ -182,7 +182,7 @@
     "description_placeholder": "이 에이전트는 무엇을 하나요?",
     "save": "저장",
     "cancel": "취소",
-    "github_managed_profile": "이름과 설명은 GitHub 저장소에서 관리합니다."
+    "github_managed_profile": "지침과 저장소 스킬은 GitHub에서 관리하며, 이름과 설명은 Multica에서 편집할 수 있습니다."
   },
   "overview": {
     "agent_context": "에이전트",
@@ -757,7 +757,7 @@
       "preview_failed": "이 GitHub 에이전트를 미리 볼 수 없습니다.",
       "preview_ready": "검증됨",
       "repository_skills": "저장소에서 관리하는 스킬",
-      "managed_fields_hint": "이름, 설명, 지침 및 저장소 스킬은 GitHub에서 관리합니다. 추가 워크스페이스 스킬은 여기서 연결할 수 있습니다.",
+      "managed_fields_hint": "지침과 저장소 스킬은 GitHub에서 관리합니다. 이름과 설명은 생성 기본값이며 Multica에서 변경할 수 있고, 추가 워크스페이스 스킬도 연결할 수 있습니다.",
       "runtime_incompatible": "이 저장소는 선택한 {{provider}} 런타임을 지원하지 않습니다."
     },
     "templates": {

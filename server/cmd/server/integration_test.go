@@ -71,7 +71,16 @@ func TestMain(m *testing.M) {
 
 	bus := events.New()
 	registerListeners(bus, hub)
+	previousTemplateCatalog, hadTemplateCatalog := os.LookupEnv("MULTICA_GIT_AGENT_TEMPLATES_JSON")
+	if !hadTemplateCatalog {
+		_ = os.Setenv("MULTICA_GIT_AGENT_TEMPLATES_JSON", `[{"key":"integration-disabled","display_name":"Integration disabled template","description":"authorization fixture","repository":"example/template","ref":"main","enabled":false}]`)
+	}
 	router := NewRouter(pool, hub, bus, analytics.NoopClient{}, nil)
+	if !hadTemplateCatalog {
+		_ = os.Unsetenv("MULTICA_GIT_AGENT_TEMPLATES_JSON")
+	} else {
+		_ = os.Setenv("MULTICA_GIT_AGENT_TEMPLATES_JSON", previousTemplateCatalog)
+	}
 	testServer = httptest.NewServer(router)
 
 	// Generate a JWT token directly for the test user
@@ -253,6 +262,97 @@ func TestReadinessEndpoints(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGitAgentTemplateRoutesHonorTaskTokenWorkspaceAndRole(t *testing.T) {
+	ctx := context.Background()
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT a.id, a.runtime_id
+		FROM agent a
+		WHERE a.workspace_id = $1
+		ORDER BY a.created_at ASC
+		LIMIT 1
+	`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("load fixture agent: %v", err)
+	}
+
+	mintTaskToken := func(t *testing.T, userID string) string {
+		t.Helper()
+		var taskID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority)
+			VALUES ($1, $2, 'queued', 0)
+			RETURNING id
+		`, agentID, runtimeID).Scan(&taskID); err != nil {
+			t.Fatalf("create task: %v", err)
+		}
+		raw := "mat_integration_" + taskID
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO task_token (token_hash, task_id, agent_id, workspace_id, user_id, expires_at)
+			VALUES ($1, $2, $3, $4, $5, now() + interval '10 minutes')
+		`, auth.HashToken(raw), taskID, agentID, testWorkspaceID, userID); err != nil {
+			t.Fatalf("create task token: %v", err)
+		}
+		return raw
+	}
+	request := func(t *testing.T, token, method, path string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(method, testServer.URL+path, bytes.NewReader([]byte(`{"runtime_id":"unused"}`)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	ownerToken := mintTaskToken(t, testUserID)
+	resp := request(t, ownerToken, http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/git-agent-templates")
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("owner task-token list: got %d: %s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+
+	resp = request(t, ownerToken, http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/git-agent-templates/integration-disabled/agents")
+	if resp.StatusCode != http.StatusConflict {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("owner task-token create should pass role gate and reach disabled-template handler: got %d: %s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+
+	resp = request(t, ownerToken, http.MethodGet, "/api/workspaces/00000000-0000-0000-0000-000000000001/git-agent-templates")
+	if resp.StatusCode != http.StatusForbidden {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("cross-workspace task token: got %d: %s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+
+	memberEmail := "template-task-member@multica.ai"
+	var memberUserID string
+	if err := testPool.QueryRow(ctx, `INSERT INTO "user" (name, email) VALUES ('Template Task Member', $1) RETURNING id`, memberEmail).Scan(&memberUserID); err != nil {
+		t.Fatalf("create member user: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, memberUserID) })
+	if _, err := testPool.Exec(ctx, `INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')`, testWorkspaceID, memberUserID); err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	memberToken := mintTaskToken(t, memberUserID)
+	resp = request(t, memberToken, http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/git-agent-templates/integration-disabled/agents")
+	if resp.StatusCode != http.StatusForbidden {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("member task-token create: got %d: %s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
 }
 
 func TestConfigRouteIsPublic(t *testing.T) {

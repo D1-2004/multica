@@ -2,11 +2,23 @@
 
 > 状态：架构现状快照，不是实施计划
 >
-> 日期：2026-07-13
+> 日期：2026-07-14
 >
-> 分支审计：已对五个仓库执行远端更新，并核对当前分支、远端主干、release 和 feature 分支；本文按审计后的最新相关代码修订。
+> 分支审计：2026-07-13 已对五个仓库执行远端更新并核对远端主干、release 和 feature 分支；2026-07-14 又核对了 `dt-fde-multica` 本地集成分支。本文明确区分“代码已具备”“本地分支已集成”和“线上/Runtime 已采用”，不从其中一项推断另外两项。
 >
 > 范围：只讨论“用户通过一个 Factory Bot 创建另一个 Bot”的最小闭环，不讨论数字员工、每个 Agent 独立 Git 仓库、Agent 自我迭代等后续能力。
+
+## 0. 2026-07-14 本地实施更新
+
+当前本地分支已补齐 Multica 侧的 Git Agent 模板目录与 CLI，但尚未提交、push、部署或进入 Runtime 镜像：
+
+- 服务端从 `MULTICA_GIT_AGENT_TEMPLATES_JSON` 加载 0..N 个受信任 Git 模板仓库，并提供 workspace-scoped 的 list/get/create API；未来可替换为数据库 provider 和管理 UI，不改变 CLI 契约。
+- CLI 已新增 `multica agent template list/get`、`multica agent create-from-template` 和 `multica dingtalk install begin/status`。
+- `create-from-template` 只接受模板 key、`runtime_id` 和可选实例名称/描述，不暴露 repository/ref/installation/SHA，也不提供 model/thinking-level 参数。
+- Git manifest 的 name/description 现在是创建默认值；Agent 创建时可覆盖，创建后可在 Multica 修改，Git 同步不会覆盖。Instructions 和 repository-managed skills 仍由 Git 同步管理。
+- 每个 Git Agent Source 使用独立的 source-scoped skill 快照，允许多个 Agent 从同一模板创建，且一个 Agent 的同步不会修改另一个 Agent 的 skill row。
+- 本地 `.env` 已把 `D1-2004/multica-agent-base-git@main` 注册为 `factory-default`；`./.multica/start-local.sh restart` 已在本地 PostgreSQL 模式完成构建并通过 backend/frontend 健康检查。
+- 当前平台和 Linux AMD64 CLI 均已构建；Multica 测试覆盖 task token 的 owner/member/cross-workspace 权限契约。没有执行真实 FC Sandbox、线上 Multica、镜像或钉钉授权联调。
 
 ## 1. 结论
 
@@ -16,7 +28,7 @@
 
 1. Gateway 将钉钉原始事件正确转换为 Router 要求的标准消息，不能继续使用硬编码 source，也不能丢失发送者 `uid/orgId`。
 2. Router 根据标准消息中的可信发送者创建短期身份 ContextToken，并随消息传给 Multica。
-3. Multica 最新 release 已包含 ContextToken 传输链路，但 `develop` 和 Runtime 镜像的 Multica 构建来源尚未对齐；需要让实际部署版本、服务端和 Runtime CLI 使用同一套兼容实现。
+3. Multica 已实现 ContextToken 的接收、保存和透传，本地集成分支也已把这部分能力合入最新 `origin/develop` 基线；剩余问题是让实际部署版本和 Runtime 镜像采用同一套兼容实现，并覆盖 Router 的真实消息入口。
 4. `multica-fc-hermes-runtime` 要在启动 Agent 前兑换 ContextToken，并用 DWS auth code 覆盖为本条消息发送者的 DWS 登录态。
 5. Factory Bot 需要一组受限、稳定、可幂等调用的能力，用于从固定模板创建 Agent、选择 Runtime、发起钉钉 Bot 授权并查询结果。
 6. 新 Bot 授权后需要把真实 Bot source 注册到 Gateway/Router 并绑定新 `agent_id`。
@@ -72,7 +84,7 @@ MVP 不要求新 Bot 在授权完成后主动发送第一条消息。只要能�
 | `agent-message-gateway` | 钉钉事件接入和标准化适配层 | Event Center/MetaQ 消费、消息解密、钉钉原始字段、订阅和绑定入口、向 Router 推送事件 | 按 Router v2 契约组装 source/conversation/sender/message，正确透传 `senderId`、`realmOrgid` 和明文，去掉硬编码和敏感日志 | 不选择目标 Agent；不创建 Agent；不签发身份凭证；不启动沙箱 |
 | `agent-message-router` | 标准消息路由和 Agent 派发层 | 消息来源、来源到 `agent_id` 的绑定、会话、去重、派发任务、`Idempotency-Key` | 调用 `agent-identity` 创建 ContextToken、在派发协议中携带 Token、把消息安全派发给 Multica | 不解析钉钉密文；不创建/修改 Agent；不管理模板和 Runtime；不保存长期 DWS 凭证 |
 | `agent-identity` | 短期身份凭证代理 | Identity Context、ContextToken、DWS auth code 兑换、TTL、撤销和 Token 哈希存储 | 配置可用的 DWS Client、向 Router 开放可信 HSF 调用、向沙箱开放受控 redeem 地址并完成联调 | 不接收或路由钉钉消息；不决定消息发给哪个 Agent；不创建 Agent/Bot；不选择 Runtime |
-| `dt-fde-multica` | Agent 控制面 | Agent、`agent_id`、模板、Runtime、任务队列、FC/E2B 沙箱调度、钉钉 Bot 安装，以及最新 release 中已有的 Issue/快速创建 ContextToken 传输 | Router 派发入口及其逐任务 Token 接入、部署和 Runtime 版本对齐、Factory Bot 的受限创建能力、Runtime 池分配和创建幂等 | 不作为用户真实身份源；不解析钉钉原始消息；不签发 DWS 凭证；不在镜像内实现 DWS 登录 |
+| `dt-fde-multica` | Agent 控制面 | Agent、`agent_id`、模板、Runtime、任务队列、FC/E2B 沙箱调度、钉钉 Bot 安装，以及 Issue/快速创建到任务和沙箱的 ContextToken 传输 | Router 可信派发入口、部署和 Runtime 版本对齐、Factory Bot 的受限创建能力、Runtime 池分配和创建幂等 | 不作为用户真实身份源；不解析钉钉原始消息；不签发 DWS 凭证；不在镜像内实现 DWS 登录 |
 | `multica-fc-hermes-runtime` | FC Agent Sandbox 执行镜像 | Hermes、Multica CLI、DWS CLI/Skill、模型配置、固定 DWS profile 导入、`daemon run-once` | ContextToken redeem、DWS auth code exchange、身份覆盖与验证、镜像版本兼容和身份回归测试 | 不保存 Agent 定义；不路由消息；不创建 Bot 安装；不决定使用哪个用户身份 |
 | Agent 模板 GitHub 仓库 | 经审核的 Agent 内容源 | Agent 指令、Skill、脚本和其他模板文件 | 确定版本策略、私有仓库读取方式、审核和发布到 Multica 的流程 | 不是 Agent 的运行目录；不承载任务产物；MVP 不为每个新 Agent 复制一个仓库；不负责运行和身份认证 |
 
@@ -200,31 +212,27 @@ Multica 已具备：
 
 需要注意：同一 Daemon 上即使配置多个 Runtime，仍共享 Daemon 的全局并发上限。仅创建多个 Runtime 记录不会自动增加实际执行容量。FC/E2B 的沙箱则按 Runtime 和会话/Issue 维度创建或复用。
 
-#### 从模板创建 Agent
+#### 从 Git 仓库模板创建 Agent
 
-后端已经提供：
+本地集成分支已新增面向 Factory Bot 的 Git 模板目录接口：
 
 ```text
-POST /api/agents/from-template
+GET  /api/workspaces/{workspace_id}/git-agent-templates
+GET  /api/workspaces/{workspace_id}/git-agent-templates/{template_key}
+POST /api/workspaces/{workspace_id}/git-agent-templates/{template_key}/agents
 ```
 
-请求可以指定：
+对应 CLI 为：
 
-- `template_slug`
-- `name`
-- `runtime_id`
-- 可选模型、权限、字段覆盖和额外 Skill
+```bash
+multica agent template list --output json
+multica agent template get <template-key> --output json
+multica agent create-from-template <template-key> --runtime-id <runtime-id> --output json
+```
 
-响应会返回完整 Agent，其中包含新建的 `agent.id`，同时返回导入或复用的 Skill ID。
+模板目录只保存受信任仓库的稳定 key、repository/ref 和展示元数据；服务端在创建时根据工作区 GitHub installation 重新解析仓库、固定 commit、编译 `multica-agent.yaml` 并原子创建 Agent、Agent Source 和独立的 repository-managed skill 快照。调用方不能传入任意仓库或 SHA。
 
-当前限制：
-
-- 模板定义目前是编译进服务的 JSON，位于 `server/internal/agenttmpl/templates/`；
-- 模板内的 Skill 可以通过 URL 拉取，但当前下载方式不支持私有 GitHub 仓库认证；
-- 模板不会自动随 GitHub 仓库实时同步；
-- 当前 CLI 没有暴露“从模板创建 Agent”的命令，只有后端 API。
-
-因此，MVP 不缺模板创建的核心后端能力，缺的是给 Factory Bot 使用的稳定、受限调用面。
+旧的内部静态模板接口仍存在于代码中，但不属于本次 Factory Bot 契约；这里的“模板”只指 Git 仓库 Agent 模板。
 
 #### 钉钉 Bot 安装
 
@@ -247,41 +255,77 @@ GET  /api/workspaces/{workspace_id}/dingtalk/install/{session_id}/status
 
 - 接口要求工作区 Owner/Admin 权限；
 - 最新 release 已将安装会话状态持久化到数据库，不同副本可以查询同一个会话；但设备码和轮询协程仍由发起授权的副本持有，该副本消失时会话会转为过期，用户需要重新发起授权；
-- 当前 CLI 没有暴露安装开始和状态查询命令；
+- 本地集成分支已提供安装开始和状态查询 CLI，但线上/镜像是否包含该 CLI 仍未验证；
 - Factory Agent 如果直接持有管理员用户的通用任务 Token，理论上可调用，但权限范围过大，不适合作为正式安全边界。
 
 #### ContextToken 传入沙箱
 
-实现最初来自分支：
+Multica 在这段链路中的职责已经明确：它不生成 ContextToken，也不根据客户端传入的用户 ID 冒充用户；它只接收上游 Agent Identity 已签发的任务级 Token，将其保存在内部任务上下文，并在任务启动时透传给 Daemon 或 FC/E2B 沙箱。
+
+字段约定：
+
+| 位置 | 名称 |
+| --- | --- |
+| HTTP JSON 字段 | `agent_identity_context_token` |
+| `agent_task_queue.context` JSON key | `agent_identity_context_token` |
+| 沙箱/Agent 进程环境变量 | `AGENT_IDENTITY_CONTEXT_TOKEN` |
+| 协议常量 | `server/pkg/protocol/messages.go` |
+
+当前已确认的输入入口包括：
+
+- 页面创建 Issue：`POST /api/issues`；
+- 页面智能创建：`POST /api/issues/quick-create`；
+- CLI 创建 Issue：`multica issue create --agent-identity-context-token ...`；
+- 上游系统使用 PAT 或服务账号 Token 直接调用上述 HTTP API。
+
+其中，普通 Issue 只有在指派给可运行的 Agent/Squad 且状态不是 backlog 时才会入队；quick-create 会直接创建没有 Issue 绑定的 `agent_task_queue` 任务。当前没有开放通用的 `POST /api/tasks` 允许上游任意插入内部任务。
+
+实现最初进入以下功能/release 历史：
 
 ```text
 feature/20260713_30155297_codex/agent-identity-context-token_1
 ```
 
-该分支核对点 `9f537021` 已进入最新 release
+该分支核对点 `9f537021` 已进入已核对的 release
 `releases/20260713210640872_r_release_342160_dt-fde-multica-code` 的
-`bdd31ee8`，因此不能再把它描述为“只存在于功能分支”。但它尚未进入
-`origin/develop`，也不能据此推断当前线上部署已经使用该 release。
+`bdd31ee8`，因此不能再把它描述为“只存在于功能分支”。当前本地分支
+`codex/factory-bot-mvp-integration` 又从 `origin/develop@cd1dc5cd` 出发，合入了
+`origin/feature/20260713_30171661_agent-identity-context-token_1@68d02346`；对应
+merge commit 为 `cb776d61`。这说明本地集成代码已经同时包含最新 develop 基线和
+ContextToken 能力，但仍不能据此推断线上部署或 Runtime 镜像已经采用该分支。
 
 已实现：
 
 - CLI 创建 Issue 时接受 `--agent-identity-context-token`；
 - Issue 创建和快速创建接受 `agent_identity_context_token`；
-- Token 写入 `agent_task_queue.context`；
-- Daemon 领取任务时返回 Token；
-- 本地 Daemon 和 FC/E2B 启动 Agent 时注入环境变量：
+- 普通 Issue、Squad leader 和 quick-create 入队时将 Token 写入 `agent_task_queue.context`；
+- Token 不写入 Issue 正文、评论或附件；
+- Daemon claim 普通任务或 quick-create 任务时在响应中返回 Token；
+- 本地 Daemon 启动 Agent 进程时注入：
 
 ```text
 AGENT_IDENTITY_CONTEXT_TOKEN
 ```
 
-这说明在上述最新 release 中，“Token 从 Multica 的 Issue/快速创建请求进入任务，再进入沙箱环境”的链路已经存在。
+- FC/E2B Launcher 从任务 context 读取 Token，并在创建或复用沙箱时注入：
+
+```text
+AGENT_IDENTITY_CONTEXT_TOKEN
+MULTICA_AGENT_IDENTITY_BASE_URL
+MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS
+```
+
+- ContextToken 任务要求服务端配置 `MULTICA_AGENT_IDENTITY_BASE_URL`；缺少配置时会拒绝启动该任务，而不是悄悄回退到固定 DWS profile；
+- 当任务带 ContextToken 时，FC/E2B Launcher 不再注入 Agent 绑定的 `DWS_AUTH_ARCHIVE_B64`，从服务端侧保证“逐任务身份优先”；
+- 日志脱敏规则已覆盖 `agent_identity_context_token` 和 `dws_auth_code`。
+
+这说明“Token 从 Multica 的 Issue/quick-create 请求进入任务，再进入 Daemon/沙箱环境”的链路已经存在。后续 Runtime 可以统一从环境变量读取 Token，不需要直接访问 Multica 数据库。
 
 当前限制：
 
 - Router、普通评论、重跑、频道消息等入口尚未统一为每次任务生成并传递新 Token；
 - 该实现只完成 Token 传输，没有调用 `agent-identity` 创建 Token；
-- `origin/develop` 尚不包含该能力，实际部署分支和 Runtime 镜像的 Multica 构建版本必须显式对齐；
+- 原始 `origin/develop` 分支本身仍不包含该能力；当前只有本地集成分支同时包含最新 develop 基线与 ContextToken，因此实际部署分支和 Runtime 镜像的 Multica 构建版本仍必须显式对齐；
 - 当前沙箱启动脚本没有兑换 Token 和初始化 DWS 的逻辑；
 - 当前随项目打包的 DWS CLI 未发现原生识别 `AGENT_IDENTITY_CONTEXT_TOKEN` 的能力；
 - 页面上的手工 Token 输入仅适合调试，不应成为生产交互，也不应向用户暴露。
@@ -368,7 +412,7 @@ Router 当前明确不负责 Agent 生命周期，也不管理 Bot 凭证，这�
 - Runner 不读取 `AGENT_IDENTITY_CONTEXT_TOKEN`，也不调用 `agent-identity` redeem；
 - Runner 不执行 DWS auth code exchange；
 - smoke test 只验证命令存在，不验证“ContextToken -> auth code -> 当前用户”的真实闭环；
-- Dockerfile 默认从 `D1-2004/multica.git` 的 `develop` 构建 Multica CLI；当前核对到的 ContextToken 实现在 `dt-fde-multica` 最新 release 中，而不在该工程的 `origin/develop`，因此镜像不会自动获得已核对的兼容实现；
+- Dockerfile 默认从 `D1-2004/multica.git` 的 `develop` 构建 Multica CLI；ContextToken 虽已进入 `dt-fde-multica` 的已核对 release 和当前本地集成分支，但尚未进入原始 `origin/develop`，因此镜像不会自动获得已核对的兼容实现；
 - Multica 会按 Chat Session 或 Issue 复用 FC sandbox，因此不能假设每次任务都是没有旧登录态的全新 HOME。
 
 本次远端审计未发现该 Runtime 仓库有比 `master@74b99fb` 更新的分支实现；ContextToken redeem 和 DWS exchange 仍需要在该仓库新增。
@@ -427,14 +471,14 @@ Gateway DTO 已有 `senderId` 和 `extension.realmOrgid`，但必须用真实事
 
 这个适配器可以实现在 Multica 内，不需要独立部署一个 Provisioning Service。
 
-#### 4. 对齐 ContextToken release、develop、实际部署和 Runtime CLI
+#### 4. 将已集成的 ContextToken 能力对齐到实际部署和 Runtime CLI
 
-最新 release `bdd31ee8` 已包含服务端、Daemon 和 FC/E2B 的 Token 传输实现；剩余问题不是重新实现这段链路，而是消除版本分叉并覆盖真正的消息入口。需要：
+已核对 release `bdd31ee8` 和当前本地集成分支都包含服务端、Daemon 和 FC/E2B 的 Token 传输实现；剩余问题不是重新实现这段链路，而是把本地集成结果纳入实际部署基线、消除 Runtime 构建版本分叉，并覆盖真正的消息入口。需要：
 
-1. 确认实际部署使用包含 `bdd31ee8` 的 release，或将相同能力前移到后续部署基线；
+1. 确认实际部署使用包含该能力的 release，或将当前本地集成分支作为后续部署基线；
 2. 让 Router 消息入口、评论/继续对话和实际使用的任务入口都能写入逐任务 Token；
 3. 保留并验证 FC Launcher 在创建/复用 sandbox 时把本任务 Token 注入 Runner 的能力；
-4. `multica-fc-hermes-runtime` 构建与服务端兼容且包含相应协议的 Multica CLI，而不是继续无条件从未包含该能力的 `develop` 构建；
+4. `multica-fc-hermes-runtime` 构建与服务端兼容且包含相应协议的 Multica CLI，而不是继续无条件从原始 `develop` 构建；
 5. 用 commit、版本号或 digest 固定 Runtime 镜像/E2B Template，避免服务端和 CLI 协议漂移；
 6. 增加从 Multica 入队到 Runner 环境变量可见的集成测试。
 
@@ -574,8 +618,8 @@ MVP 最简单的做法是使用少量经审核、固定版本的内置模板，�
 - Router 集成 `agent-identity-client` 并创建 ContextToken；
 - Router 派发协议增加 ContextToken；
 - Multica 增加受认证的 Router 消息入口；
-- Multica 把每次消息的 Token 传入任务和沙箱；
-- 将已进入最新 release 的 ContextToken 能力对齐到实际部署基线，并让 Runtime 镜像构建兼容版本的 Multica CLI；
+- Multica 已有的 Token 接收、保存和透传能力不需要重写；只需让 Router 真实消息入口把每次消息的 Token 写入任务；
+- 将当前本地集成分支中的 ContextToken 能力对齐到实际部署基线，并让 Runtime 镜像构建兼容版本的 Multica CLI；
 - `multica-fc-hermes-runner` 增加 redeem、`dws auth exchange`、身份覆盖和自检；
 - 固定并发布包含该能力的 FC/E2B Template；
 - Multica CLI 或 Capability API 增加从模板创建、发起钉钉授权、查询状态；
@@ -670,11 +714,11 @@ MVP 完成必须通过以下真实链路验收：
 
 ## 13. 本次现状核对范围
 
-本文中的“已有”和“缺少”基于 2026-07-13 对五个仓库执行 `fetch --all --prune` 后，对当前分支、远端主干、release 和 feature 分支的检查。除 `dt-fde-multica` 当前工作分支没有 upstream、因此只更新远端引用而未擅自合并外，其余四个仓库当前分支执行 `pull --ff-only` 后均为最新。
+本文中的其他四个仓库状态仍基于 2026-07-13 对五个仓库执行 `fetch --all --prune` 后，对远端主干、release 和 feature 分支的检查。`dt-fde-multica` 则在 2026-07-14 追加核对了当前本地集成分支；该分支没有 upstream，尚未 push，也未据此触发线上部署。
 
 | 仓库 | 最新相关核对点 | 分支审计结论 |
 | --- | --- | --- |
-| `dt-fde-multica` | release `bdd31ee8`、`develop@b7ced2c2`、ContextToken feature `9f537021` | 最新 release 已包含 ContextToken 传输和钉钉安装会话持久化；`develop` 仍不含 ContextToken。`develop` 另有 per-agent sandbox model 等新改动，但不闭合本 MVP 的身份链路 |
+| `dt-fde-multica` | 本地集成分支 `62ede8ef`、`origin/develop@cd1dc5cd`、ContextToken feature `68d02346`、已核对 release `bdd31ee8` | 本地集成分支以最新 develop 为基线并已合入 ContextToken、FC Hermes model routing 和既有 GitHub Agent Source 改动；原始 `origin/develop` 仍不含 ContextToken。是否进入线上部署和 Runtime 镜像仍需单独确认 |
 | `agent-message-gateway` | release `80c3d6a` | 当前 release 已是最新相关业务代码，没有未合入的新业务分支；标准消息硬编码和字段缺失问题仍存在 |
 | `agent-message-router` | release `6636561`、feature `91c1768` | 较新的 feature 只为 staging 开启 JPDA 调试，没有 Router、Identity 或 Multica 业务逻辑变化 |
 | `agent-identity` | `master@d43e80d`、release `d5e9b55` | 远端有一条提交历史未合入 `master` 的旧 release，但两者 tree 完全一致，没有额外业务代码；ContextToken 和 DWS auth code exchange 结论不变 |
@@ -682,7 +726,8 @@ MVP 完成必须通过以下真实链路验收：
 
 其他关联核对范围：
 
-- `dt-fde-multica` 最新 release 为 `releases/20260713210640872_r_release_342160_dt-fde-multica-code`；ContextToken 功能分支为 `feature/20260713_30155297_codex/agent-identity-context-token_1`；
+- `dt-fde-multica` 当前本地分支为 `codex/factory-bot-mvp-integration@62ede8ef`，无 upstream、未 push；基线为 `origin/develop@cd1dc5cd`；
+- 当前本地分支通过 `cb776d61` 合入 `origin/feature/20260713_30171661_agent-identity-context-token_1@68d02346`；历史上已核对的 release `releases/20260713210640872_r_release_342160_dt-fde-multica-code@bdd31ee8` 也包含同类 ContextToken 传输能力；
 - `agent-message-gateway` 当前分支为 `releases/20260710110212464_r_release_342157_agent-message-gateway-code`；
 - `agent-message-router` 当前分支为 `releases/20260710191313812_r_release_342152_agent-message-router-code`；
 - `agent-identity` 的 DWS auth code exchange 能力已包含在 `master@d43e80d`；

@@ -1390,9 +1390,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name != nil || req.Description != nil || req.Instructions != nil {
+	if req.Instructions != nil {
 		if _, sourceErr := h.Queries.GetAgentSourceByAgentID(r.Context(), existing.ID); sourceErr == nil {
-			writeError(w, http.StatusConflict, "name, description, and instructions are managed by the GitHub source")
+			writeError(w, http.StatusConflict, "instructions are managed by the GitHub source")
 			return
 		} else if !errors.Is(sourceErr, pgx.ErrNoRows) {
 			writeError(w, http.StatusInternalServerError, "failed to verify agent source ownership")

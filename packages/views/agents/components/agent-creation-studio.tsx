@@ -607,8 +607,8 @@ export function AgentCreationStudio() {
           repository: githubPreview.repository,
           ref: githubPreview.ref,
           resolved_sha: githubPreview.resolved_sha,
-          name: githubPreview.name,
-          description: githubPreview.description,
+          name: draft.name.trim(),
+          description: draft.description.trim(),
           instructions: githubPreview.instructions,
           avatar_url: draft.avatarUrl ?? undefined,
           runtime_id: selectedRuntime.id,
@@ -1344,7 +1344,6 @@ function ConfigurationPanel({
               value={draft.name}
               onChange={(event) => set("name", event.target.value)}
               placeholder={t(($) => $.create_dialog.name_placeholder)}
-              disabled={sourceManaged}
             />
           </DraftFieldRow>
           <DraftFieldRow
@@ -1363,7 +1362,6 @@ function ConfigurationPanel({
               placeholder={t(($) => $.create_dialog.description_placeholder)}
               rows={compact ? 3 : 4}
               className="resize-y"
-              disabled={sourceManaged}
             />
           </DraftFieldRow>
         </SettingsCard>

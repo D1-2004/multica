@@ -181,33 +181,11 @@ func (h *Handler) PreviewGitHubAgent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) githubAgentPreviewBlockers(ctx context.Context, workspaceID pgtype.UUID, bundle agentsource.Bundle) ([]string, error) {
-	blockers := make([]string, 0)
-	exists, err := h.Queries.AgentNameExistsInWorkspace(ctx, db.AgentNameExistsInWorkspaceParams{
-		WorkspaceID: workspaceID,
-		Name:        bundle.Manifest.Metadata.Name,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if exists {
-		blockers = append(blockers, fmt.Sprintf("an agent named %q already exists in this workspace", bundle.Manifest.Metadata.Name))
-	}
-	for _, compiled := range bundle.Skills {
-		_, err := h.Queries.GetSkillByWorkspaceAndName(ctx, db.GetSkillByWorkspaceAndNameParams{
-			WorkspaceID: workspaceID,
-			Name:        compiled.Name,
-		})
-		switch {
-		case err == nil:
-			blockers = append(blockers, fmt.Sprintf("a skill named %q already exists in this workspace", compiled.Name))
-		case errors.Is(err, pgx.ErrNoRows):
-			continue
-		default:
-			return nil, err
-		}
-	}
-	return blockers, nil
+func (h *Handler) githubAgentPreviewBlockers(_ context.Context, _ pgtype.UUID, _ agentsource.Bundle) ([]string, error) {
+	// Source-managed skills are materialized under a source-scoped storage name,
+	// so two Agents may safely use the same repository skill without sharing a
+	// mutable skill row. Runtime snapshots remain isolated per Agent Source.
+	return []string{}, nil
 }
 
 func sourceSkillPreviews(skills []agentsource.Skill) []GitHubAgentSkillPreview {
@@ -252,8 +230,9 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		writeGitHubSourceError(w, err)
 		return
 	}
-	if utf8.RuneCountInString(resolved.bundle.Manifest.Metadata.Description) > maxAgentDescriptionLength {
-		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("manifest description must be %d characters or fewer", maxAgentDescriptionLength))
+	agentName, agentDescription, err := gitAgentInstanceProfile(request, rawFields, resolved.bundle)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	if request.RuntimeID == "" {
@@ -346,8 +325,8 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	created, err := qtx.CreateAgent(r.Context(), db.CreateAgentParams{
 		WorkspaceID:  wsUUID,
-		Name:         resolved.bundle.Manifest.Metadata.Name,
-		Description:  resolved.bundle.Manifest.Metadata.Description,
+		Name:         agentName,
+		Description:  agentDescription,
 		Instructions: resolved.bundle.Instructions,
 		AvatarUrl:    ptrToText(request.AvatarURL),
 		RuntimeMode:  runtime.RuntimeMode, RuntimeConfig: runtimeConfig, RuntimeID: runtime.ID,
@@ -382,7 +361,7 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, compiledSkill := range resolved.bundle.Skills {
-		skillRow, err := createSourceSkillInTx(r.Context(), qtx, wsUUID, ownerUUID, resolved, compiledSkill)
+		skillRow, err := createSourceSkillInTx(r.Context(), qtx, wsUUID, ownerUUID, resolved, source.ID, compiledSkill)
 		if err != nil {
 			writeAgentSourceDatabaseError(w, err)
 			return
@@ -424,11 +403,31 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 	); resolveErr == nil && !strings.EqualFold(currentSHA, resolved.sha) {
 		warnings = append(warnings, "the configured Git ref advanced after preview; the agent was created from the previewed commit")
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{
+	payload := map[string]any{
 		"agent":    response,
 		"source":   agentSourceToResponse(source),
 		"warnings": warnings,
-	})
+	}
+	if templateKey, ok := r.Context().Value(gitAgentTemplateContextKey{}).(string); ok && templateKey != "" {
+		payload["agent_id"] = response.ID
+		payload["template_key"] = templateKey
+	}
+	writeJSON(w, http.StatusCreated, payload)
+}
+
+func gitAgentInstanceProfile(request CreateGitHubAgentRequest, rawFields map[string]json.RawMessage, bundle agentsource.Bundle) (string, string, error) {
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		name = bundle.Manifest.Metadata.Name
+	}
+	description := request.Description
+	if _, present := rawFields["description"]; !present {
+		description = bundle.Manifest.Metadata.Description
+	}
+	if utf8.RuneCountInString(description) > maxAgentDescriptionLength {
+		return "", "", fmt.Errorf("description must be %d characters or fewer", maxAgentDescriptionLength)
+	}
+	return name, description, nil
 }
 
 func (h *Handler) GetAgentSource(w http.ResponseWriter, r *http.Request) {
@@ -492,13 +491,6 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if utf8.RuneCountInString(bundle.Manifest.Metadata.Description) > maxAgentDescriptionLength {
-		err = fmt.Errorf("manifest description must be %d characters or fewer", maxAgentDescriptionLength)
-		h.recordAgentSourceFailure(r.Context(), source.ID, err)
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
-		return
-	}
-
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start source sync")
@@ -539,12 +531,7 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, AgentSourceSyncResponse{Source: agentSourceToResponse(locked), Changed: false, Warnings: bundle.Warnings})
 		return
 	}
-	if _, err := qtx.UpdateAgent(r.Context(), db.UpdateAgentParams{
-		ID:           agentRow.ID,
-		Name:         pgtype.Text{String: bundle.Manifest.Metadata.Name, Valid: true},
-		Description:  pgtype.Text{String: bundle.Manifest.Metadata.Description, Valid: true},
-		Instructions: pgtype.Text{String: bundle.Instructions, Valid: true},
-	}); err != nil {
+	if _, err := qtx.UpdateAgent(r.Context(), gitAgentSourceSnapshotUpdate(agentRow.ID, bundle)); err != nil {
 		recordTransactionFailure(fmt.Errorf("update agent snapshot: %w", err), http.StatusInternalServerError, "failed to update agent snapshot", true)
 		return
 	}
@@ -560,14 +547,14 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 	for _, compiledSkill := range bundle.Skills {
 		mapping, exists := byPath[compiledSkill.SourcePath]
 		if exists {
-			if err := updateSourceSkillInTx(r.Context(), qtx, mapping.SkillID, resolvedGitHubAgentSource{installation: installation, repository: githubapp.Repository{FullName: source.RepoOwner + "/" + source.RepoName}, ref: source.Ref, sha: sha, bundle: bundle}, compiledSkill); err != nil {
+			if err := updateSourceSkillInTx(r.Context(), qtx, mapping.SkillID, resolvedGitHubAgentSource{installation: installation, repository: githubapp.Repository{FullName: source.RepoOwner + "/" + source.RepoName}, ref: source.Ref, sha: sha, bundle: bundle}, locked.ID, compiledSkill); err != nil {
 				recordTransactionFailure(fmt.Errorf("update source skill %q: %w", compiledSkill.SourcePath, err), http.StatusInternalServerError, "failed to update source skill", true)
 				return
 			}
 			delete(byPath, compiledSkill.SourcePath)
 			continue
 		}
-		createdSkill, err := createSourceSkillInTx(r.Context(), qtx, agentRow.WorkspaceID, agentRow.OwnerID, resolvedGitHubAgentSource{installation: installation, repository: githubapp.Repository{FullName: source.RepoOwner + "/" + source.RepoName}, ref: source.Ref, sha: sha, bundle: bundle}, compiledSkill)
+		createdSkill, err := createSourceSkillInTx(r.Context(), qtx, agentRow.WorkspaceID, agentRow.OwnerID, resolvedGitHubAgentSource{installation: installation, repository: githubapp.Repository{FullName: source.RepoOwner + "/" + source.RepoName}, ref: source.Ref, sha: sha, bundle: bundle}, locked.ID, compiledSkill)
 		if err != nil {
 			recordTransactionFailure(fmt.Errorf("create source skill %q: %w", compiledSkill.SourcePath, err), http.StatusInternalServerError, "failed to create source skill", true)
 			return
@@ -607,6 +594,17 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 	}
 	h.publishAgentSourceSync(r, agentRow, true)
 	writeJSON(w, http.StatusOK, AgentSourceSyncResponse{Source: agentSourceToResponse(updatedSource), Changed: true, Warnings: bundle.Warnings})
+}
+
+// gitAgentSourceSnapshotUpdate is intentionally narrow: repository sync owns
+// executable instructions, while the Multica Agent owns its display name and
+// description after creation. Keep those profile fields unset so a manifest
+// update cannot silently rename an existing Agent.
+func gitAgentSourceSnapshotUpdate(agentID pgtype.UUID, bundle agentsource.Bundle) db.UpdateAgentParams {
+	return db.UpdateAgentParams{
+		ID:           agentID,
+		Instructions: pgtype.Text{String: bundle.Instructions, Valid: true},
+	}
 }
 
 func (h *Handler) publishAgentSourceSync(r *http.Request, agentRow db.Agent, changed bool) {
@@ -686,13 +684,13 @@ func (h *Handler) resolveAndCompileGitHubAgent(ctx context.Context, workspaceID 
 	return resolvedGitHubAgentSource{installation: installation, repository: repository, ref: ref, sha: sha, bundle: bundle}, nil
 }
 
-func createSourceSkillInTx(ctx context.Context, queries *db.Queries, workspaceID, creatorID pgtype.UUID, source resolvedGitHubAgentSource, compiled agentsource.Skill) (db.Skill, error) {
+func createSourceSkillInTx(ctx context.Context, queries *db.Queries, workspaceID, creatorID pgtype.UUID, source resolvedGitHubAgentSource, agentSourceID pgtype.UUID, compiled agentsource.Skill) (db.Skill, error) {
 	config, err := json.Marshal(sourceSkillConfig(source, compiled.SourcePath))
 	if err != nil {
 		return db.Skill{}, err
 	}
 	created, err := queries.CreateSkill(ctx, db.CreateSkillParams{
-		WorkspaceID: workspaceID, Name: sanitizeNullBytes(compiled.Name),
+		WorkspaceID: workspaceID, Name: sourceManagedSkillName(compiled.Name, agentSourceID),
 		Description: sanitizeNullBytes(compiled.Description), Content: sanitizeNullBytes(compiled.Content),
 		Config: config, CreatedBy: creatorID,
 	})
@@ -707,13 +705,13 @@ func createSourceSkillInTx(ctx context.Context, queries *db.Queries, workspaceID
 	return created, nil
 }
 
-func updateSourceSkillInTx(ctx context.Context, queries *db.Queries, skillID pgtype.UUID, source resolvedGitHubAgentSource, compiled agentsource.Skill) error {
+func updateSourceSkillInTx(ctx context.Context, queries *db.Queries, skillID pgtype.UUID, source resolvedGitHubAgentSource, agentSourceID pgtype.UUID, compiled agentsource.Skill) error {
 	config, err := json.Marshal(sourceSkillConfig(source, compiled.SourcePath))
 	if err != nil {
 		return err
 	}
 	if _, err := queries.UpdateSkill(ctx, db.UpdateSkillParams{
-		ID: skillID, Name: pgtype.Text{String: sanitizeNullBytes(compiled.Name), Valid: true},
+		ID: skillID, Name: pgtype.Text{String: sourceManagedSkillName(compiled.Name, agentSourceID), Valid: true},
 		Description: pgtype.Text{String: sanitizeNullBytes(compiled.Description), Valid: true},
 		Content:     pgtype.Text{String: sanitizeNullBytes(compiled.Content), Valid: true}, Config: config,
 	}); err != nil {
@@ -728,6 +726,18 @@ func updateSourceSkillInTx(ctx context.Context, queries *db.Queries, skillID pgt
 		}
 	}
 	return nil
+}
+
+func sourceManagedSkillName(name string, agentSourceID pgtype.UUID) string {
+	sourceID := strings.ReplaceAll(uuidToString(agentSourceID), "-", "")
+	if len(sourceID) > 16 {
+		sourceID = sourceID[:16]
+	}
+	name = sanitizeNullBytes(strings.TrimSpace(name))
+	if sourceID == "" {
+		return name
+	}
+	return name + "--" + sourceID
 }
 
 func sourceSkillConfig(source resolvedGitHubAgentSource, sourcePath string) map[string]any {

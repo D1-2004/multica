@@ -182,7 +182,7 @@
     "description_placeholder": "这个智能体做什么？",
     "save": "保存",
     "cancel": "取消",
-    "github_managed_profile": "名称和描述由 GitHub 仓库管理。"
+    "github_managed_profile": "指令和仓库 skill 由 GitHub 管理；名称和描述可在 Multica 中编辑。"
   },
   "overview": {
     "agent_context": "智能体",
@@ -301,7 +301,7 @@
       "preview_failed": "无法预览此 GitHub 智能体。",
       "preview_ready": "校验通过",
       "repository_skills": "仓库管理的 skill",
-      "managed_fields_hint": "名称、描述、指令和仓库 skill 由 GitHub 管理；你仍可在这里附加额外的工作区 skill。",
+      "managed_fields_hint": "指令和仓库 skill 由 GitHub 管理；名称和描述仅作为创建默认值，可在 Multica 中修改；你仍可附加额外的工作区 skill。",
       "runtime_incompatible": "此仓库不支持所选的 {{provider}} runtime。"
     },
     "templates": {
