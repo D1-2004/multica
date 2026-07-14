@@ -315,20 +315,33 @@ func TestFCE2BExtraEnvAllowsAgentWithoutDWSProfile(t *testing.T) {
 	`, workspaceID, userID); err != nil {
 		t.Fatalf("create member: %v", err)
 	}
+	var runtimeID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (
+			workspace_id, name, runtime_mode, provider, status,
+			device_info, metadata, visibility, owner_id
+		)
+		VALUES ($1, 'FC No DWS Runtime', 'cloud', 'hermes', 'online',
+			'test runtime', '{"kind":"fc-e2b"}'::jsonb, 'private', $2)
+		RETURNING id
+	`, workspaceID, userID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
 	var agentID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO agent (
 			workspace_id, name, runtime_mode, runtime_config,
-			visibility, max_concurrent_tasks, owner_id
+			runtime_id, visibility, max_concurrent_tasks, owner_id
 		)
-		VALUES ($1, 'FC Agent Without DWS', 'cloud', '{}'::jsonb, 'private', 1, $2)
+		VALUES ($1, 'FC Agent Without DWS', 'cloud', '{}'::jsonb, $2, 'private', 1, $3)
 		RETURNING id
-	`, workspaceID, userID).Scan(&agentID); err != nil {
+	`, workspaceID, runtimeID, userID).Scan(&agentID); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
 	t.Cleanup(func() {
 		cleanupCtx := context.Background()
 		pool.Exec(cleanupCtx, `DELETE FROM agent WHERE id = $1`, agentID)
+		pool.Exec(cleanupCtx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 		pool.Exec(cleanupCtx, `DELETE FROM member WHERE workspace_id = $1 AND user_id = $2`, workspaceID, userID)
 		pool.Exec(cleanupCtx, `DELETE FROM workspace WHERE id = $1`, workspaceID)
 		pool.Exec(cleanupCtx, `DELETE FROM "user" WHERE id = $1`, userID)
