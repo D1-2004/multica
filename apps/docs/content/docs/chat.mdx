@@ -85,6 +85,25 @@ The Turn response separates agent execution (`status`, `reply`) from post-proces
 
 The bundled DWS script passes the immutable Turn ID as DWS `--uuid`, so retrying delivery after a sandbox crash is idempotent within DWS's 24-hour deduplication window.
 
+### Token-authenticated API smoke test
+
+The repository includes a standard-library-only Python smoke test for the durable Session/Turn API. Pass secrets through environment variables so the Token does not appear in shell history:
+
+```bash
+export MULTICA_SERVER_URL="https://your-multica.example.com"
+export MULTICA_TOKEN="mul_..."
+export MULTICA_AGENT_ID="agent-uuid"
+# Optional when the Token is not already bound to one workspace:
+export MULTICA_WORKSPACE_ID="workspace-uuid"
+
+python3 scripts/chat_api_smoke.py \
+  --session-key "smoke:chat-reply:$(date +%s)" \
+  --message "Reply with API_SMOKE_OK" \
+  --expect-reply-contains API_SMOKE_OK
+```
+
+To verify the reply-template snapshot without running DWS from the Python process, add `--reply-template dws-reply --reply-config @reply-config.json`. The resulting Turn should remain `reply_delivery_status: pending` until the initiating sandbox executes its installed template.
+
 ## What an agent can and cannot do in chat
 
 Agents run in a **fully sandboxed** mode inside a conversation.
