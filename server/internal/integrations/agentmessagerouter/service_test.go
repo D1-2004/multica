@@ -13,7 +13,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	dto "github.com/prometheus/client_model/go"
 
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -261,6 +263,7 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if router.issueAgent != uuidStringForTest(agentID) || router.issueURL != config.DispatchURL {
 		t.Fatalf("Router issue request = agent %q url %q", router.issueAgent, router.issueURL)
 	}
+	assertMetricCounter(t, service.metrics, "dingtalk_account_begin_total", map[string]string{"outcome": "success"}, 1)
 }
 
 func TestBeginDingTalkAccountBindingRejectsActive(t *testing.T) {
@@ -337,6 +340,8 @@ func TestCompleteCallbackVerifiesSubscriptionAndActivates(t *testing.T) {
 	if activeConfig.RouterSourceID != "source-1" || activeConfig.BoundAt == nil {
 		t.Fatalf("active config = %#v", activeConfig)
 	}
+	assertMetricCounter(t, service.metrics, "dingtalk_account_callback_total", map[string]string{"outcome": "success"}, 1)
+	assertMetricCounter(t, service.metrics, "dingtalk_account_subscription_verify_total", map[string]string{"outcome": "success"}, 1)
 	encoded, err := json.Marshal(binding)
 	if err != nil {
 		t.Fatal(err)
@@ -377,6 +382,8 @@ func TestCompleteCallbackMismatchDeletesRouterSubscriptionWithoutActivating(t *t
 	if len(router.deleted) != 1 || router.deleted[0] != "source-1" {
 		t.Fatalf("compensation deletes = %#v", router.deleted)
 	}
+	assertMetricCounter(t, service.metrics, "dingtalk_account_callback_total", map[string]string{"outcome": "conflict"}, 1)
+	assertMetricCounter(t, service.metrics, "dingtalk_account_subscription_verify_total", map[string]string{"outcome": "inactive"}, 1)
 }
 
 func TestCompleteCallbackCompensatesVerifiedSourceWhenActivationLosesPendingCAS(t *testing.T) {
@@ -578,6 +585,7 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 	if store.revokeArg.AgentID != store.row.AgentID {
 		t.Fatalf("revoke agent = %v, want %v", store.revokeArg.AgentID, store.row.AgentID)
 	}
+	assertMetricCounter(t, service.metrics, "dingtalk_account_unbind_total", map[string]string{"outcome": "success"}, 1)
 
 	listed, err := service.List(context.Background(), store.row.WorkspaceID)
 	if err != nil {
@@ -635,11 +643,41 @@ func newBindingServiceForTest(t *testing.T, store Store, router Router, now time
 		Keyring:        keyring,
 		Random:         rand.Reader,
 		Now:            func() time.Time { return now },
+		Metrics:        obsmetrics.NewBusinessMetrics(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return service
+}
+
+func assertMetricCounter(t *testing.T, businessMetrics *obsmetrics.BusinessMetrics, name string, labels map[string]string, want float64) {
+	t.Helper()
+	family := obsmetrics.GatherForTest(t, businessMetrics)[name]
+	if family == nil {
+		t.Fatalf("metric family %s is missing", name)
+	}
+	for _, metric := range family.GetMetric() {
+		if metricLabelsMatch(metric, labels) {
+			if got := metric.GetCounter().GetValue(); got != want {
+				t.Fatalf("metric %s = %v, want %v", name, got, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("metric %s labels %#v are missing", name, labels)
+}
+
+func metricLabelsMatch(metric *dto.Metric, labels map[string]string) bool {
+	if len(metric.GetLabel()) != len(labels) {
+		return false
+	}
+	for _, label := range metric.GetLabel() {
+		if labels[label.GetName()] != label.GetValue() {
+			return false
+		}
+	}
+	return true
 }
 
 func pendingBindingStore(t *testing.T, now time.Time, callbackToken string) *fakeBindingStore {

@@ -263,6 +263,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	} else if keyring, err := agentmessagerouter.ParseDispatchKeyring(dispatchKeysRaw, dispatchCurrentKeyID); err != nil {
 		slog.Error("agent dispatch credential derivation disabled", "error", err)
 	} else {
+		keyring.SetMetrics(opts.BusinessMetrics)
 		h.AgentDispatchKeys = keyring
 		dbaseBindingURL := strings.TrimSpace(os.Getenv("DINGTALK_DBASE_BINDING_PAGE_URL"))
 		dbaseOrigin, originErr := handler.NormalizeDingTalkAccountBindingOrigin(
@@ -277,6 +278,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			DBaseBindingURL: dbaseBindingURL,
 			Keyring:         keyring,
 			Random:          rand.Reader,
+			Metrics:         opts.BusinessMetrics,
 		})
 		if originErr != nil || clientErr != nil || serviceErr != nil ||
 			!dBaseBindingURLMatchesOrigin(dbaseBindingURL, dbaseOrigin) {
