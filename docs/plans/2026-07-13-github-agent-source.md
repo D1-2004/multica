@@ -108,7 +108,7 @@ spec:
 
 ### 3. 来源与来源 skill 的数据模型
 
-新增 fork-owned、双向、可重放的迁移（当前序列计划使用 `167_github_agent_source`，执行前再次检查最新迁移号）：
+新增 fork-owned、双向、可重放的迁移（当前序列使用 `169_github_agent_source`）：
 
 ```text
 agent_source
@@ -213,7 +213,7 @@ agent_source_skill
 
 预计范围，执行中按现有模块组织调整文件名，但不改变职责：
 
-- `server/migrations/167_github_agent_source.{up,down}.sql`：来源及来源 skill 映射，双向且可重放。
+- `server/migrations/169_github_agent_source.{up,down}.sql`：来源及来源 skill 映射，双向且可重放。
 - `server/pkg/db/queries/agent_source.sql`、`skill.sql`、`agent.sql`：来源读取/锁定/CAS、来源 skill 管理和共享创建 helper 所需 query；随后运行 sqlc。
 - `server/internal/githubapp/` 或现有 GitHub handler 的可复用内部包：App JWT、installation token、repo/ref/tree/blob client，避免 handler 和 skill importer 相互依赖。
 - `server/internal/agentsource/`：manifest 类型/strict parser、路径与大小校验、GitHub bundle compiler、同步 diff 与候选快照。
