@@ -1012,6 +1012,9 @@ func fcE2BTemplateForRuntime(rt db.AgentRuntime, configuredTemplate string) (str
 }
 
 func (l *FCE2BLauncher) failLaunch(ctx context.Context, task db.AgentTaskQueue, msg string) error {
+	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) {
+		return cause
+	}
 	_, err := l.Tasks.FailTaskRuntimeStart(ctx, task.ID, task.RuntimeID, msg)
 	if err != nil {
 		return err
