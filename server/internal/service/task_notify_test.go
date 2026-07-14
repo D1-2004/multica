@@ -20,21 +20,25 @@ func (s *stubWakeup) NotifyTaskAvailable(runtimeID, taskID string) {
 }
 
 type stubRuntimeLauncher struct {
-	calls chan db.AgentTaskQueue
+	calls chan runtimeLaunchCall
+}
+
+type runtimeLaunchCall struct {
+	task db.AgentTaskQueue
 }
 
 func (s *stubRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue) error {
-	s.calls <- task
+	s.calls <- runtimeLaunchCall{task: task}
 	return nil
 }
 
 type blockingRuntimeLauncher struct {
-	calls   chan db.AgentTaskQueue
+	calls   chan runtimeLaunchCall
 	release chan struct{}
 }
 
 func (s *blockingRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue) error {
-	s.calls <- task
+	s.calls <- runtimeLaunchCall{task: task}
 	<-s.release
 	return nil
 }
@@ -124,13 +128,10 @@ func TestNotifyTaskAvailable_InvalidWithoutRuntimeIsNoOp(t *testing.T) {
 }
 
 func TestNotifyTaskEnqueued_InvokesRuntimeLauncher(t *testing.T) {
-	rdb := newRedisTestClient(t)
-	cache := NewEmptyClaimCache(rdb)
 	wakeup := &stubWakeup{}
-	launcher := &stubRuntimeLauncher{calls: make(chan db.AgentTaskQueue, 1)}
+	launcher := &stubRuntimeLauncher{calls: make(chan runtimeLaunchCall, 1)}
 
 	svc := &TaskService{
-		EmptyClaim:      cache,
 		Wakeup:          wakeup,
 		RuntimeLauncher: launcher,
 	}
@@ -143,8 +144,8 @@ func TestNotifyTaskEnqueued_InvokesRuntimeLauncher(t *testing.T) {
 
 	select {
 	case got := <-launcher.calls:
-		if util.UUIDToString(got.ID) != util.UUIDToString(task.ID) {
-			t.Fatalf("launcher task id = %q, want %q", util.UUIDToString(got.ID), util.UUIDToString(task.ID))
+		if util.UUIDToString(got.task.ID) != util.UUIDToString(task.ID) {
+			t.Fatalf("launcher task id = %q, want %q", util.UUIDToString(got.task.ID), util.UUIDToString(task.ID))
 		}
 	case <-time.After(time.Second):
 		t.Fatal("runtime launcher was not invoked")
@@ -156,7 +157,7 @@ func TestNotifyTaskEnqueued_InvokesRuntimeLauncher(t *testing.T) {
 
 func TestLaunchRuntimeForTask_DedupesInFlightTask(t *testing.T) {
 	launcher := &blockingRuntimeLauncher{
-		calls:   make(chan db.AgentTaskQueue, 2),
+		calls:   make(chan runtimeLaunchCall, 2),
 		release: make(chan struct{}),
 	}
 	svc := &TaskService{RuntimeLauncher: launcher}

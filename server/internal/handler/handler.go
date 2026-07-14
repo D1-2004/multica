@@ -134,6 +134,7 @@ type Handler struct {
 	Bus                   *events.Bus
 	TaskService           *service.TaskService
 	IssueService          *service.IssueService
+	IssueCommentService   *service.IssueCommentService
 	AutopilotService      *service.AutopilotService
 	EmailService          *service.EmailService
 	UpdateStore           UpdateStore
@@ -145,6 +146,7 @@ type Handler struct {
 	LivenessStore         LivenessStore
 	HeartbeatScheduler    HeartbeatScheduler
 	Storage               storage.Storage
+	AgentDispatchHTTPClient *http.Client
 	CFSigner              *auth.CloudFrontSigner
 	Analytics             analytics.Client
 	// Metrics is the shared business-metrics collector built by main.go.
@@ -311,6 +313,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		Bus:                   bus,
 		TaskService:           taskSvc,
 		IssueService:          service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
+		IssueCommentService:   service.NewIssueCommentService(queries, bus, taskSvc),
 		AutopilotService:      service.NewAutopilotService(queries, txStarter, bus, taskSvc),
 		EmailService:          emailService,
 		UpdateStore:           NewInMemoryUpdateStore(),
