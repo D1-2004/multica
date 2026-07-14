@@ -152,7 +152,21 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Initialize storage with S3 as primary, fallback to local
 	var store storage.Storage
-	s3 := storage.NewS3StorageFromEnv()
+	var s3Opts []storage.S3Option
+	// Aone OSS admits only short-lived (STS) credentials — its bucket policy
+	// rejects any acs:AccessId that is not TMP.*/STS.* — so the keys come from
+	// the managed credential service and must be re-fetched as they expire.
+	// Absent OSS_AUTHZ_BUCKET this is nil and the storage layer behaves exactly
+	// as upstream (static keys, or local disk when S3_BUCKET is unset too).
+	ossCredentials, err := ossCredentialsFromEnv()
+	if err != nil {
+		slog.Error("OSS credential configuration failed", "error", err)
+		os.Exit(1)
+	}
+	if ossCredentials != nil {
+		s3Opts = append(s3Opts, storage.WithCredentialsProvider(ossCredentials))
+	}
+	s3 := storage.NewS3StorageFromEnv(s3Opts...)
 	if s3 != nil {
 		store = s3
 	} else {
