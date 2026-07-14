@@ -42,7 +42,7 @@ const (
 	defaultFCE2BSandboxReadyTimeout = 60 * time.Second
 	defaultAgentIdentityTimeout     = 10 * time.Second
 	fcE2BDaemonTokenTTL             = time.Hour
-	fcE2BRunnerClaimTimeout         = 30 * time.Second
+	fcE2BRunnerClaimTimeout         = 2 * time.Minute
 	fcE2BRunnerClaimPollInterval    = 500 * time.Millisecond
 	fcE2BRunOnceHealthPortBase      = 20000
 	fcE2BRunOnceHealthPortSpan      = 30000
