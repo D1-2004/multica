@@ -400,6 +400,7 @@ func TestFCE2BExtraEnvIncludesAgentIdentityContextToken(t *testing.T) {
 	got, err := fcE2BAgentIdentityExtraEnv(task, FCE2BConfig{
 		AgentIdentityBaseURL: "https://pre-agent-identity.dingtalk.com",
 		AgentIdentityTimeout: 7 * time.Second,
+		DWSClientSecret:      "dws-client-secret",
 	})
 	if err != nil {
 		t.Fatalf("fcE2BAgentIdentityExtraEnv: %v", err)
@@ -413,17 +414,24 @@ func TestFCE2BExtraEnvIncludesAgentIdentityContextToken(t *testing.T) {
 	if got["MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS"] != "7" {
 		t.Fatalf("MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS = %q", got["MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS"])
 	}
+	if got["DWS_CLIENT_SECRET"] != "dws-client-secret" {
+		t.Fatal("DWS_CLIENT_SECRET was not forwarded")
+	}
 }
 
 func TestFCE2BConfigFromEnvAgentIdentity(t *testing.T) {
 	t.Setenv("MULTICA_AGENT_IDENTITY_BASE_URL", "https://pre-agent-identity.dingtalk.com/")
 	t.Setenv("MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS", "7")
+	t.Setenv("MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET", "dws-client-secret")
 	cfg := FCE2BConfigFromEnv()
 	if cfg.AgentIdentityBaseURL != "https://pre-agent-identity.dingtalk.com" {
 		t.Fatalf("base url = %q", cfg.AgentIdentityBaseURL)
 	}
 	if cfg.AgentIdentityTimeout != 7*time.Second {
 		t.Fatalf("timeout = %s", cfg.AgentIdentityTimeout)
+	}
+	if cfg.DWSClientSecret != "dws-client-secret" {
+		t.Fatal("DWS client secret was not loaded")
 	}
 }
 
