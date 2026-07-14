@@ -89,6 +89,33 @@ type AgentSkill struct {
 	Enabled   bool               `json:"enabled"`
 }
 
+type AgentSource struct {
+	ID                   pgtype.UUID        `json:"id"`
+	AgentID              pgtype.UUID        `json:"agent_id"`
+	SourceType           string             `json:"source_type"`
+	GithubInstallationID pgtype.UUID        `json:"github_installation_id"`
+	RepoOwner            string             `json:"repo_owner"`
+	RepoName             string             `json:"repo_name"`
+	Ref                  string             `json:"ref"`
+	ManifestPath         string             `json:"manifest_path"`
+	SyncedCommitSha      string             `json:"synced_commit_sha"`
+	SyncStatus           string             `json:"sync_status"`
+	LastSyncError        pgtype.Text        `json:"last_sync_error"`
+	LastSyncAttemptAt    pgtype.Timestamptz `json:"last_sync_attempt_at"`
+	LastSyncedAt         pgtype.Timestamptz `json:"last_synced_at"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentSourceSkill struct {
+	AgentSourceID pgtype.UUID        `json:"agent_source_id"`
+	SkillID       pgtype.UUID        `json:"skill_id"`
+	SourcePath    string             `json:"source_path"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentTaskQueue struct {
 	ID                    pgtype.UUID        `json:"id"`
 	AgentID               pgtype.UUID        `json:"agent_id"`
@@ -127,10 +154,12 @@ type AgentTaskQueue struct {
 	// Top-of-chain human originator for this run. For human-triggered tasks (comment by a member, chat, quick-create) equals that member. For agent-fanout tasks inherited from the parent task's originator_user_id via comment.source_task_id. NULL when no human is in the chain (autopilot, system-driven). Used by canInvokeAgent to judge A2A by the originator; the Composio overlay now follows invocation permission and uses the agent owner's connection, so this is audit/attribution + A2A gating, NOT a Composio owner==originator gate (MUL-3963).
 	OriginatorUserID pgtype.UUID `json:"originator_user_id"`
 	// Non-secret per-task connected app metadata corresponding to runtime_mcp_overlay, used by the daemon brief to tell agents which app capabilities are mounted. Cleared with runtime_mcp_overlay after task completion.
-	RuntimeConnectedApps []byte        `json:"runtime_connected_apps"`
-	CoalescedCommentIds  []pgtype.UUID `json:"coalesced_comment_ids"`
-	DeliveredCommentIds  []pgtype.UUID `json:"delivered_comment_ids"`
-	ChatInputTaskID      pgtype.UUID   `json:"chat_input_task_id"`
+	RuntimeConnectedApps        []byte             `json:"runtime_connected_apps"`
+	CoalescedCommentIds         []pgtype.UUID      `json:"coalesced_comment_ids"`
+	DeliveredCommentIds         []pgtype.UUID      `json:"delivered_comment_ids"`
+	ChatInputTaskID             pgtype.UUID        `json:"chat_input_task_id"`
+	RuntimeLaunchLeaseToken     pgtype.UUID        `json:"runtime_launch_lease_token"`
+	RuntimeLaunchLeaseExpiresAt pgtype.Timestamptz `json:"runtime_launch_lease_expires_at"`
 }
 
 type AgentToLabel struct {

@@ -140,7 +140,10 @@
     "dm_no_permission_toast": "你没有权限与该智能体聊天。",
     "assign_work": "分配工作",
     "more_actions_aria": "智能体操作",
-    "updated": "{{when}}更新"
+    "updated": "{{when}}更新",
+    "source_sync_succeeded": "GitHub 来源已同步",
+    "source_already_current": "GitHub 来源已是最新版本",
+    "source_sync_failed": "同步 GitHub 来源失败"
   },
   "inspector": {
     "section_profile": "资料",
@@ -178,13 +181,20 @@
     "edit_description_title": "编辑描述",
     "description_placeholder": "这个智能体做什么？",
     "save": "保存",
-    "cancel": "取消"
+    "cancel": "取消",
+    "github_managed_profile": "指令和仓库 skill 由 GitHub 管理；名称和描述可在 Multica 中编辑。"
   },
   "overview": {
     "agent_context": "智能体",
     "access": "访问权限",
     "attention_title": "Task 需要处理",
-    "attention_queued_other": "运行时不可用，当前有 {{count}} 个 task 正在排队。"
+    "attention_queued_other": "运行时不可用，当前有 {{count}} 个 task 正在排队。",
+    "source_title": "GitHub 来源",
+    "source_ref": "Ref",
+    "source_commit": "Commit",
+    "source_synced_at": "最近同步",
+    "source_sync": "立即同步",
+    "source_status": { "ready": "正常", "failed": "同步失败", "disconnected": "已断开" }
   },
   "skill_attach": {
     "trigger_aria": "附加工作区 skill",
@@ -265,10 +275,34 @@
     "step_template": "选择模板",
     "step_configure": "检查并配置",
     "step_ai": "通过对话创建",
+    "step_github": "从 GitHub 导入",
     "modes": {
       "blank": { "title": "从空白开始", "description": "自己配置每个字段。适合已经明确知道智能体应该如何工作的用户。" },
       "template": { "title": "使用模板", "description": "从整理好的指令和 skill 开始，再根据工作区需要修改每个细节。" },
-      "ai": { "title": "通过 AI 创建", "description": "描述你想要的结果。Agent Builder 会提出关键问题并实时生成草稿。" }
+      "ai": { "title": "通过 AI 创建", "description": "描述你想要的结果。Agent Builder 会提出关键问题并实时生成草稿。" },
+      "github": { "title": "从 GitHub 导入", "description": "从包含 multica-agent.yaml、指令、skill 和配套文件的版本化仓库创建。" }
+    },
+    "github": {
+      "source_title": "GitHub 来源",
+      "source_hint": "选择仓库和 ref，在创建智能体前校验并预览 multica-agent.yaml。",
+      "not_configured": "尚未配置 GitHub 智能体来源",
+      "admin_required": "需要工作区管理员权限",
+      "admin_required_hint": "只有工作区 owner 或 admin 可以预览私有仓库内容并创建 GitHub 来源智能体。",
+      "no_installation": "尚未连接 GitHub installation",
+      "connect_hint": "请先配置 GitHub App，并在工作区设置中连接 installation。",
+      "open_settings": "打开 GitHub 设置",
+      "installation": "Installation",
+      "repository": "仓库",
+      "repositories_loading": "正在加载仓库…",
+      "repository_placeholder": "选择仓库",
+      "git_ref": "分支、tag 或 commit",
+      "git_ref_placeholder": "留空时使用默认分支",
+      "preview": "校验并预览",
+      "preview_failed": "无法预览此 GitHub 智能体。",
+      "preview_ready": "校验通过",
+      "repository_skills": "仓库管理的 skill",
+      "managed_fields_hint": "指令和仓库 skill 由 GitHub 管理；名称和描述仅作为创建默认值，可在 Multica 中修改；你仍可附加额外的工作区 skill。",
+      "runtime_incompatible": "此仓库不支持所选的 {{provider}} runtime。"
     },
     "templates": {
       "search": "搜索模板…",
@@ -412,6 +446,7 @@
     },
     "instructions": {
       "intro": "设置每个任务都会使用的 System Prompt，支持 Markdown。",
+      "github_managed": "此 System Prompt 由关联的 GitHub 仓库管理；请同步来源来更新内容。",
       "system_prompt_label": "System Prompt",
       "placeholder": "定义这个智能体的角色、专长和工作风格。\n\n# 示例\n你是一名专注 React 和 TypeScript 的前端工程师。\n\n## 工作风格\n- 写小而聚焦的 PR —— 每个逻辑变更一个 commit\n- 优先组合而不是继承\n- 新组件总是配单元测试\n\n## 约束\n- 未经明确批准不要修改 shared/ 下的 type\n- 遵循 features/ 中现有的组件模式"
     },
@@ -604,7 +639,30 @@
     },
     "integrations": {
       "intro": "把这个智能体连接到外部聊天平台，让大家在自己熟悉的工具里直接与它协作。",
-      "members_note": "只有工作区的所有者和管理员才能把智能体连接到外部聊天平台。你可以在「设置 → 集成」中查看已连接的 Bot。"
+      "members_note": "只有工作区的所有者和管理员才能把智能体连接到外部聊天平台。你可以在「设置 → 集成」中查看已连接的 Bot。",
+      "dingtalk_account_title": "钉钉账号",
+      "dingtalk_account_description": "将一个钉钉账号关联到此智能体，用于直接投递任务。",
+      "dingtalk_account_loading": "正在加载钉钉账号关联状态...",
+      "dingtalk_account_not_configured": "当前部署尚未配置钉钉账号关联。",
+      "dingtalk_account_connect": "关联钉钉账号",
+      "dingtalk_account_starting": "正在生成二维码...",
+      "dingtalk_account_begin_failed": "无法发起钉钉账号关联。",
+      "dingtalk_account_dialog_title": "关联钉钉账号",
+      "dingtalk_account_dialog_description": "使用钉钉扫码，将账号关联到 {{agent}}。",
+      "dingtalk_account_scan_hint": "请使用钉钉扫描此二维码。关联成功后页面会自动更新。",
+      "dingtalk_account_expired_title": "此二维码已过期",
+      "dingtalk_account_expired_description": "请生成新的二维码后继续。",
+      "dingtalk_account_new_qr": "生成新二维码",
+      "dingtalk_account_close": "关闭",
+      "dingtalk_account_connected": "已关联钉钉账号",
+      "dingtalk_account_fallback_name": "钉钉账号",
+      "dingtalk_account_pending_restart": "上次关联未完成。请生成新的二维码后重试。",
+      "dingtalk_account_unbind": "解除关联",
+      "dingtalk_account_unbinding": "正在解除...",
+      "dingtalk_account_unbind_failed": "无法解除钉钉账号关联。",
+      "dingtalk_account_confirm_title": "解除钉钉账号关联？",
+      "dingtalk_account_confirm_description": "此智能体将不再接收该钉钉账号的任务。",
+      "dingtalk_account_cancel": "取消"
     },
     "activity": {
       "status": {

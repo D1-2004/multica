@@ -133,6 +133,15 @@ export type {
   GitHubPullRequestState,
   ListGitHubInstallationsResponse,
   GitHubConnectResponse,
+  GitHubAgentRepository,
+  ListGitHubAgentRepositoriesResponse,
+  GitHubAgentSkillPreview,
+  GitHubAgentPreviewRequest,
+  GitHubAgentPreview,
+  CreateGitHubAgentRequest,
+  CreateGitHubAgentResponse,
+  AgentSource,
+  SyncAgentSourceResponse,
 } from "./github";
 export type {
   LarkInstallation,
@@ -159,6 +168,11 @@ export type {
   DingTalkInstallStatusResponse,
   RedeemDingTalkBindingTokenResponse,
 } from "./dingtalk";
+export type {
+  DingTalkAccountBinding,
+  DingTalkAccountBindingsResponse,
+  BeginDingTalkAccountBindingResponse,
+} from "./dingtalk-account-binding";
 export type {
   Autopilot,
   AutopilotStatus,

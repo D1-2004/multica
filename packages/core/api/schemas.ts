@@ -18,7 +18,14 @@ import type {
   CreateBillingCheckoutSessionResponse,
   CreateBillingPortalSessionResponse,
   DingTalkUserSearchResponse,
+  BeginDingTalkAccountBindingResponse,
+  DingTalkAccountBindingsResponse,
   GroupedIssuesResponse,
+  GitHubAgentPreview,
+  ListGitHubAgentRepositoriesResponse,
+  AgentSource,
+  CreateGitHubAgentResponse,
+  SyncAgentSourceResponse,
   InboxWorkspaceUnread,
   Label,
   ListIssuesResponse,
@@ -34,6 +41,62 @@ import type {
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
+
+const DingTalkAccountBindingSchema = z
+  .object({
+    id: z.string(),
+    workspace_id: z.string(),
+    agent_id: z.string(),
+    status: z.string(),
+    account_display_name: z.string().nullable().optional(),
+    account_avatar_url: z.string().nullable().optional(),
+    bound_at: z.string().nullable().optional(),
+  })
+  .loose()
+  .transform((binding) => ({
+    id: binding.id,
+    workspaceId: binding.workspace_id,
+    agentId: binding.agent_id,
+    status: binding.status,
+    accountDisplayName: binding.account_display_name,
+    accountAvatarUrl: binding.account_avatar_url,
+    boundAt: binding.bound_at,
+  }));
+
+export const DingTalkAccountBindingsResponseSchema = z
+  .object({
+    bindings: z.array(DingTalkAccountBindingSchema),
+    configured: z.boolean(),
+  })
+  .loose()
+  .transform((response) => ({
+    bindings: response.bindings,
+    configured: response.configured,
+  }));
+
+export const EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE: DingTalkAccountBindingsResponse = {
+  bindings: [],
+  configured: false,
+};
+
+export const BeginDingTalkAccountBindingResponseSchema = z
+  .object({
+    installation_id: z.string(),
+    qr_code_url: z.string(),
+    expires_at: z.string(),
+  })
+  .loose()
+  .transform((response) => ({
+    installationId: response.installation_id,
+    qrCodeUrl: response.qr_code_url,
+    expiresAt: response.expires_at,
+  }));
+
+export const EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE: BeginDingTalkAccountBindingResponse = {
+  installationId: "",
+  qrCodeUrl: "",
+  expiresAt: "",
+};
 
 // Label responses are consumed by settings tables and resource pickers. Keep
 // the resource type lenient so newer server scopes do not break older clients,
@@ -812,6 +875,113 @@ export const EMPTY_AGENT_BUILDER_SESSION: AgentBuilderSession = {
   session_id: "",
   builder_agent_id: "",
   runtime_id: "",
+};
+
+export const GitHubAgentRepositorySchema = z.object({
+  installation_id: z.string(),
+  full_name: z.string(),
+  private: z.boolean().default(false),
+  default_branch: z.string().default(""),
+  html_url: z.string().default(""),
+}).loose();
+
+export const ListGitHubAgentRepositoriesResponseSchema = z.object({
+  repositories: z.array(GitHubAgentRepositorySchema).default([]),
+}).loose();
+
+export const EMPTY_GITHUB_AGENT_REPOSITORIES: ListGitHubAgentRepositoriesResponse = {
+  repositories: [],
+};
+
+const GitHubAgentSkillPreviewSchema = z.object({
+  source_path: z.string(),
+  name: z.string(),
+  description: z.string().default(""),
+  file_count: z.number().int().nonnegative().default(0),
+}).loose();
+
+const NullableStringArraySchema = z.array(z.string()).nullish().transform((value) => value ?? []);
+
+export const GitHubAgentPreviewSchema = z.object({
+  installation_id: z.string(),
+  repository: z.string(),
+  ref: z.string(),
+  resolved_sha: z.string(),
+  name: z.string(),
+  description: z.string().default(""),
+  instructions: z.string().default(""),
+  skills: z.array(GitHubAgentSkillPreviewSchema).nullish().transform((value) => value ?? []),
+  compatible_providers: NullableStringArraySchema,
+  warnings: NullableStringArraySchema,
+  blockers: NullableStringArraySchema,
+}).loose();
+
+export const EMPTY_GITHUB_AGENT_PREVIEW: GitHubAgentPreview = {
+  installation_id: "",
+  repository: "",
+  ref: "",
+  resolved_sha: "",
+  name: "",
+  description: "",
+  instructions: "",
+  skills: [],
+  compatible_providers: [],
+  warnings: [],
+  blockers: [],
+};
+
+export const AgentSourceSchema = z.object({
+  agent_id: z.string(),
+  source_type: z.string(),
+  installation_id: z.string().nullable().default(null),
+  repository: z.string(),
+  ref: z.string(),
+  manifest_path: z.string().default("multica-agent.yaml"),
+  synced_commit_sha: z.string(),
+  sync_status: z.string(),
+  last_sync_error: z.string().nullable().default(null),
+  last_sync_attempt_at: z.string().nullable().default(null),
+  last_synced_at: z.string().default(""),
+  github_connected: z.boolean().default(false),
+}).loose();
+
+export const EMPTY_AGENT_SOURCE: AgentSource = {
+  agent_id: "",
+  source_type: "github",
+  installation_id: null,
+  repository: "",
+  ref: "",
+  manifest_path: "multica-agent.yaml",
+  synced_commit_sha: "",
+  sync_status: "disconnected",
+  last_sync_error: null,
+  last_sync_attempt_at: null,
+  last_synced_at: "",
+  github_connected: false,
+};
+
+export const CreateGitHubAgentResponseSchema = z.object({
+  agent: MinimalAgentSchema,
+  source: AgentSourceSchema,
+  warnings: NullableStringArraySchema,
+}).loose();
+
+export const EMPTY_CREATE_GITHUB_AGENT_RESPONSE: CreateGitHubAgentResponse = {
+  agent: { id: "" } as Agent,
+  source: EMPTY_AGENT_SOURCE,
+  warnings: [],
+};
+
+export const SyncAgentSourceResponseSchema = z.object({
+  source: AgentSourceSchema,
+  changed: z.boolean().default(false),
+  warnings: NullableStringArraySchema,
+}).loose();
+
+export const EMPTY_SYNC_AGENT_SOURCE_RESPONSE: SyncAgentSourceResponse = {
+  source: EMPTY_AGENT_SOURCE,
+  changed: false,
+  warnings: [],
 };
 
 // Squad list responses carry lightweight membership previews used by hover

@@ -79,6 +79,8 @@ CI나 headless 환경에서는 브라우저 플로우를 건너뛰세요. 웹 �
 | `multica agent list` | 워크스페이스의 에이전트 나열 |
 | `multica agent get <slug>` | 에이전트의 구성 표시 |
 | `multica agent create ...` | 에이전트 생성 |
+| `multica agent template list/get` | 승인된 Git 저장소 에이전트 템플릿 조회 |
+| `multica agent create-from-template <key> --runtime-id <id>` | 승인된 Git 템플릿에서 에이전트 생성 |
 | `multica agent update <slug> ...` | 에이전트 업데이트 |
 | `multica agent archive <slug>` | 보관 |
 | `multica agent restore <slug>` | 보관된 에이전트 복원 |
@@ -89,6 +91,9 @@ CI나 headless 환경에서는 브라우저 플로우를 건너뛰세요. 웹 �
 | `multica skill list/get/create/update/delete` | 스킬 CRUD |
 | `multica skill import ...` | GitHub, ClawHub, 또는 로컬 기기에서 스킬 가져오기 |
 | `multica skill files ...` | 중첩: 스킬의 파일 관리 |
+| `multica dingtalk install begin/status` | DingTalk 봇 설치 세션 시작 또는 상태 조회 |
+
+Git 에이전트 템플릿은 `multica-agent.yaml`을 포함하는 승인된 저장소입니다. Manifest의 이름과 설명은 생성 기본값이며 Multica에서 덮어쓰고 나중에 편집할 수 있습니다. 저장소 동기화는 지침과 저장소 관리 스킬만 관리합니다. `create-from-template`에는 model 또는 thinking-level 옵션이 없습니다.
 
 ### 스킬 가져오기 충돌
 

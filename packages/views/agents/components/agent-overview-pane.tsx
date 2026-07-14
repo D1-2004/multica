@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
   Agent,
+  AgentSource,
   AgentRuntime,
   MemberWithUser,
 } from "@multica/core/types";
@@ -12,6 +13,7 @@ import { useFeatureEnabled } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { dingtalkInstallationsOptions } from "@multica/core/dingtalk";
+import { dingtalkAccountBindingsOptions } from "@multica/core/dingtalk-account-bindings";
 import { larkInstallationsOptions } from "@multica/core/lark";
 import { slackInstallationsOptions } from "@multica/core/slack";
 import {
@@ -126,6 +128,9 @@ interface AgentOverviewPaneProps {
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
   currentUserId?: string | null;
   canEdit: boolean;
+  source?: AgentSource | null;
+  sourceSyncing?: boolean;
+  onSourceSync?: () => void;
   navIntent?: DetailTab | null;
   onNavIntentHandled?: () => void;
 }
@@ -146,6 +151,9 @@ export function AgentOverviewPane({
   onUpdate,
   currentUserId,
   canEdit,
+  source = null,
+  sourceSyncing = false,
+  onSourceSync,
   navIntent,
   onNavIntentHandled,
 }: AgentOverviewPaneProps) {
@@ -176,11 +184,16 @@ export function AgentOverviewPane({
     ...dingtalkInstallationsOptions(wsId),
     enabled: !!wsId,
   });
+  const { data: dingtalkAccountListing } = useQuery({
+    ...dingtalkAccountBindingsOptions(wsId),
+    enabled: !!wsId,
+  });
 
   const integrationsConfigured =
     larkListing?.configured === true ||
     slackListing?.configured === true ||
-    dingtalkListing?.configured === true;
+    dingtalkListing?.configured === true ||
+    dingtalkAccountListing?.configured === true;
 
   const visibleCapabilityTabs = useMemo(() => {
     const showMcp = runtime
@@ -351,6 +364,10 @@ export function AgentOverviewPane({
                 agent={agent}
                 runtime={runtime}
                 owner={owner}
+                source={source}
+                canSyncSource={canEdit}
+                sourceSyncing={sourceSyncing}
+                onSourceSync={onSourceSync}
               />
             </div>
           </div>
@@ -412,6 +429,7 @@ export function AgentOverviewPane({
                         onUpdate(agent.id, { instructions })
                       }
                       onDirtyChange={setActiveDirty}
+                      readOnly={source != null}
                     />
                   )}
                   {effectiveView === "skills" && (
@@ -443,6 +461,7 @@ export function AgentOverviewPane({
                       members={members}
                       currentUserId={currentUserId ?? null}
                       canEdit={canEdit}
+                      sourceManaged={source != null}
                       onUpdate={onUpdate}
                     />
                   )}

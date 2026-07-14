@@ -1,0 +1,272 @@
+package agentmessagerouter
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+const maxRouterResponseBytes = 1 << 20
+
+type ClientConfig struct {
+	BaseURL           string
+	ServiceCredential string
+	HTTPClient        *http.Client
+}
+
+type Client struct {
+	baseURL           *url.URL
+	serviceCredential string
+	httpClient        *http.Client
+}
+
+type BindingToken struct {
+	BindingToken string    `json:"bindingToken"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+}
+
+type Subscription struct {
+	SourceID    string `json:"sourceId"`
+	AgentID     string `json:"agentId"`
+	DispatchURL string `json:"dispatchUrl"`
+	Status      string `json:"status"`
+}
+
+type routerResponse[T any] struct {
+	Success bool   `json:"success"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Data    *T     `json:"data"`
+}
+
+type routerErrorResponse struct {
+	Code string `json:"code"`
+}
+
+var (
+	ErrRouterAPI            = errors.New("agent message router returned a business error")
+	ErrSubscriptionNotFound = errors.New("agent message router subscription not found")
+)
+
+type RouterAPIError struct {
+	Code                 string
+	subscriptionNotFound bool
+}
+
+func (e *RouterAPIError) Error() string {
+	if e == nil || e.Code == "" {
+		return ErrRouterAPI.Error()
+	}
+	return "agent message router returned a business error (" + e.Code + ")"
+}
+
+func (e *RouterAPIError) Is(target error) bool {
+	if target == ErrRouterAPI {
+		return true
+	}
+	return target == ErrSubscriptionNotFound && e != nil && e.subscriptionNotFound
+}
+
+func NewClient(config ClientConfig) (*Client, error) {
+	baseURL, err := url.Parse(strings.TrimSpace(config.BaseURL))
+	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" ||
+		(baseURL.Scheme != "http" && baseURL.Scheme != "https") ||
+		baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
+		return nil, errors.New("agent message router base url is invalid")
+	}
+	credential := strings.TrimSpace(config.ServiceCredential)
+	if credential == "" || strings.ContainsAny(credential, " \t\r\n") {
+		return nil, errors.New("agent message router service credential is required")
+	}
+	baseURL.Path = strings.TrimRight(baseURL.Path, "/")
+	httpClient := config.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 10 * time.Second}
+	}
+	return &Client{
+		baseURL:           baseURL,
+		serviceCredential: credential,
+		httpClient:        httpClient,
+	}, nil
+}
+
+func (c *Client) IssueBindingToken(ctx context.Context, agentID, dispatchURL string) (BindingToken, error) {
+	body, err := json.Marshal(map[string]string{
+		"agentId":     agentID,
+		"dispatchUrl": dispatchURL,
+	})
+	if err != nil {
+		return BindingToken{}, errors.New("encode account binding token request")
+	}
+	response, err := c.do(ctx, http.MethodPost, "/api/account-binding-tokens", bytes.NewReader(body))
+	if err != nil {
+		return BindingToken{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return BindingToken{}, decodeRouterHTTPError(response.Body, response.StatusCode)
+	}
+	result, err := decodeDirectRouterResponse[BindingToken](response.Body)
+	if err != nil {
+		return BindingToken{}, err
+	}
+	if result.BindingToken == "" || result.ExpiresAt.IsZero() {
+		return BindingToken{}, errors.New("agent message router token issue response is invalid")
+	}
+	return result, nil
+}
+
+func (c *Client) GetSubscription(ctx context.Context, sourceID string) (Subscription, error) {
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceID == "" {
+		return Subscription{}, errors.New("agent message router subscription source id is required")
+	}
+	response, err := c.do(ctx, http.MethodGet, "/api/subscriptions/"+url.PathEscape(sourceID), nil)
+	if err != nil {
+		return Subscription{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return Subscription{}, fmt.Errorf("agent message router subscription query failed with status %d", response.StatusCode)
+	}
+	result, err := decodeRouterResponse[Subscription](response.Body)
+	if err != nil {
+		return Subscription{}, err
+	}
+	if result.SourceID != sourceID || result.Status != "active" ||
+		!isTrimmedNonEmpty(result.AgentID) || !isTrimmedNonEmpty(result.DispatchURL) {
+		return Subscription{}, errors.New("agent message router subscription response is invalid")
+	}
+	return result, nil
+}
+
+func (c *Client) DeleteSubscription(ctx context.Context, sourceID string) error {
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceID == "" {
+		return errors.New("agent message router subscription source id is required")
+	}
+	response, err := c.do(ctx, http.MethodDelete, "/api/subscriptions/"+url.PathEscape(sourceID), nil)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("agent message router subscription delete failed with status %d", response.StatusCode)
+	}
+	result, err := decodeRouterResponse[Subscription](response.Body)
+	if err != nil {
+		return err
+	}
+	if result.SourceID != sourceID || result.Status != "inactive" {
+		return errors.New("agent message router subscription delete response is invalid")
+	}
+	if (result.AgentID == "") != (result.DispatchURL == "") {
+		return errors.New("agent message router subscription delete response is invalid")
+	}
+	if result.AgentID != "" && (!isTrimmedNonEmpty(result.AgentID) || !isTrimmedNonEmpty(result.DispatchURL)) {
+		return errors.New("agent message router subscription delete response is invalid")
+	}
+	return nil
+}
+
+func (c *Client) do(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	if c == nil || c.baseURL == nil || c.httpClient == nil {
+		return nil, errors.New("agent message router client is not configured")
+	}
+	target := *c.baseURL
+	target.Path = strings.TrimRight(target.Path, "/") + path
+	request, err := http.NewRequestWithContext(ctx, method, target.String(), body)
+	if err != nil {
+		return nil, errors.New("create agent message router request")
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", "Bearer "+c.serviceCredential)
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return nil, errors.New("agent message router request failed")
+	}
+	return response, nil
+}
+
+func decodeRouterResponse[T any](reader io.Reader) (T, error) {
+	var zero T
+	body, err := readRouterResponseBody(reader)
+	if err != nil {
+		return zero, errors.New("agent message router response is invalid")
+	}
+	var response routerResponse[T]
+	if err := json.Unmarshal(body, &response); err != nil {
+		return zero, errors.New("agent message router response is invalid")
+	}
+	if !response.Success {
+		return zero, newRouterAPIError(response.Code, response.Message)
+	}
+	if response.Code != "success" || response.Data == nil {
+		return zero, errors.New("agent message router response is invalid")
+	}
+	return *response.Data, nil
+}
+
+func decodeDirectRouterResponse[T any](reader io.Reader) (T, error) {
+	var response T
+	body, err := readRouterResponseBody(reader)
+	if err != nil || json.Unmarshal(body, &response) != nil {
+		var zero T
+		return zero, errors.New("agent message router response is invalid")
+	}
+	return response, nil
+}
+
+func decodeRouterHTTPError(reader io.Reader, status int) error {
+	body, err := readRouterResponseBody(reader)
+	if err == nil {
+		var response routerErrorResponse
+		if json.Unmarshal(body, &response) == nil {
+			return &RouterAPIError{Code: safeRouterErrorCode(response.Code)}
+		}
+	}
+	return fmt.Errorf("agent message router request failed with status %d", status)
+}
+
+func readRouterResponseBody(reader io.Reader) ([]byte, error) {
+	limited := io.LimitReader(reader, maxRouterResponseBytes+1)
+	body, err := io.ReadAll(limited)
+	if err != nil || len(body) > maxRouterResponseBytes {
+		return nil, errors.New("agent message router response is invalid")
+	}
+	return body, nil
+}
+
+func newRouterAPIError(code, message string) error {
+	safeCode := safeRouterErrorCode(code)
+	return &RouterAPIError{
+		Code:                 safeCode,
+		subscriptionNotFound: safeCode == "business_error" && message == "subscription_not_found",
+	}
+}
+
+func safeRouterErrorCode(code string) string {
+	if len(code) == 0 || len(code) > 64 {
+		return "unknown"
+	}
+	for _, character := range code {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '_' {
+			return "unknown"
+		}
+	}
+	return code
+}
+
+func isTrimmedNonEmpty(value string) bool {
+	return value != "" && strings.TrimSpace(value) == value
+}

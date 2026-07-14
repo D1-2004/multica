@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { ApiClient } from "./client";
-import { parseWithFallback } from "./schema";
+import { noopLogger } from "../logger";
+import { parseWithFallback, setSchemaLogger } from "./schema";
 
 // Helper: stub fetch with a single JSON response. Status defaults to 200.
 function stubFetchJson(body: unknown, status = 200) {
@@ -18,6 +19,36 @@ function stubFetchJson(body: unknown, status = 200) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setSchemaLogger(noopLogger);
+});
+
+describe("parseWithFallback sensitive responses", () => {
+  it("can omit the received payload from validation warnings", () => {
+    const warn = vi.fn();
+    setSchemaLogger({
+      ...noopLogger,
+      warn,
+    });
+
+    const secretQR =
+      "https://dbase.example/#bindingToken=router-secret&callbackToken=callback-secret";
+    const parsed = parseWithFallback(
+      { qr_code_url: secretQR },
+      z.object({ installation_id: z.string() }),
+      { installation_id: "" },
+      {
+        endpoint: "POST /api/workspaces/:id/dingtalk/account-bindings/begin",
+        includeReceived: false,
+      },
+    );
+
+    expect(parsed).toEqual({ installation_id: "" });
+    expect(warn).toHaveBeenCalledTimes(1);
+    const warningMetadata = warn.mock.calls[0]?.[1];
+    expect(warningMetadata).not.toHaveProperty("received");
+    expect(JSON.stringify(warningMetadata)).not.toContain("router-secret");
+    expect(JSON.stringify(warningMetadata)).not.toContain("callback-secret");
+  });
 });
 
 // These tests cover the five failure modes that white-screened the desktop

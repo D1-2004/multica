@@ -23,6 +23,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/githubapp"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -468,7 +469,7 @@ func fetchInstallationAccount(ctx context.Context, installationID int64) (login,
 // time.Now().
 func signGitHubAppJWT(now time.Time) (string, error) {
 	appID := strings.TrimSpace(os.Getenv("GITHUB_APP_ID"))
-	pemKey := strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY"))
+	pemKey := githubapp.NormalizePrivateKeyPEM(os.Getenv("GITHUB_APP_PRIVATE_KEY"))
 	if appID == "" || pemKey == "" {
 		return "", nil
 	}
@@ -540,6 +541,10 @@ func (h *Handler) DeleteGitHubInstallation(w http.ResponseWriter, r *http.Reques
 	id := chi.URLParam(r, "installationId")
 	idUUID, ok := parseUUIDOrBadRequest(w, id, "installation id")
 	if !ok {
+		return
+	}
+	if err := h.Queries.MarkAgentSourcesDisconnectedByInstallation(r.Context(), idUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to mark GitHub agent sources disconnected")
 		return
 	}
 	if err := h.Queries.DeleteGitHubInstallation(r.Context(), db.DeleteGitHubInstallationParams{
@@ -686,6 +691,17 @@ func (h *Handler) handleInstallationEvent(ctx context.Context, body []byte) {
 		// We DELETE … RETURNING so each broadcast can be scoped to its
 		// workspace; events without WorkspaceID are dropped by the realtime
 		// listener and would leave already-open Settings tabs stale.
+		bindings, err := h.Queries.ListGitHubInstallationsByInstallationID(ctx, p.Installation.ID)
+		if err != nil {
+			slog.Warn("github: list installation bindings failed", "err", err, "installation_id", p.Installation.ID)
+			return
+		}
+		for _, binding := range bindings {
+			if err := h.Queries.MarkAgentSourcesDisconnectedByInstallation(ctx, binding.ID); err != nil {
+				slog.Warn("github: mark agent sources disconnected failed", "err", err, "installation_id", p.Installation.ID, "binding_id", uuidToString(binding.ID))
+				return
+			}
+		}
 		deleted, err := h.Queries.DeleteGitHubInstallationByInstallationID(ctx, p.Installation.ID)
 		if err != nil {
 			slog.Warn("github: delete installation failed", "err", err, "installation_id", p.Installation.ID)

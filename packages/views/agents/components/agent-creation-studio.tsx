@@ -8,6 +8,7 @@ import {
   Check,
   ChevronRight,
   FileText,
+  GitFork,
   Loader2,
   MessageSquare,
   Search,
@@ -21,6 +22,10 @@ import {
   agentTemplateDetailOptions,
   agentTemplateListOptions,
 } from "@multica/core/agents";
+import {
+  githubAgentRepositoriesOptions,
+  githubInstallationsOptions,
+} from "@multica/core/github";
 import {
   chatKeys,
   chatMessagesOptions,
@@ -38,6 +43,9 @@ import type {
   AgentTemplateSummary,
   ChatMessage,
   CreateAgentRequest,
+  GitHubAgentPreview,
+  GitHubAgentRepository,
+  GitHubInstallation,
   MemberWithUser,
   RuntimeDevice,
   RuntimeModel,
@@ -59,7 +67,7 @@ import {
   ChatMessageList,
   ChatMessageSkeleton,
 } from "../../chat/components/chat-message-list";
-import { useNavigation } from "../../navigation";
+import { AppLink, useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { ActorAvatar } from "../../common/actor-avatar";
 import {
@@ -70,8 +78,19 @@ import { ModelDropdown } from "./model-dropdown";
 import { RuntimePicker, isRuntimeUsableForUser } from "./runtime-picker";
 import { SkillMultiSelect } from "./skill-multi-select";
 
-type StudioMode = "choose" | "templates" | "blank" | "template" | "ai";
+type StudioMode = "choose" | "templates" | "blank" | "template" | "ai" | "github";
 type PermissionScope = "private" | "workspace" | "members";
+
+export function isGitHubRuntimeCompatible(
+  preview: GitHubAgentPreview | null,
+  runtime: RuntimeDevice | null,
+): boolean {
+  return (
+    preview != null &&
+    (preview.compatible_providers.length === 0 ||
+      (runtime != null && preview.compatible_providers.includes(runtime.provider)))
+  );
+}
 
 export interface AgentDraft {
   name: string;
@@ -132,6 +151,7 @@ export function AgentCreationStudio() {
   const { data: templates = [], isLoading: templatesLoading } = useQuery(
     agentTemplateListOptions(),
   );
+  const githubInstallationsQuery = useQuery(githubInstallationsOptions(wsId));
 
   const duplicateAgent = duplicateId
     ? agents.find((agent) => agent.id === duplicateId) ?? null
@@ -147,6 +167,12 @@ export function AgentCreationStudio() {
   const [builderStarting, setBuilderStarting] = useState(false);
   const [builderClosing, setBuilderClosing] = useState(false);
   const [builderError, setBuilderError] = useState<string | null>(null);
+  const [githubInstallationId, setGitHubInstallationId] = useState("");
+  const [githubRepository, setGitHubRepository] = useState("");
+  const [githubRef, setGitHubRef] = useState("");
+  const [githubPreview, setGitHubPreview] = useState<GitHubAgentPreview | null>(null);
+  const [githubPreviewing, setGitHubPreviewing] = useState(false);
+  const [githubError, setGitHubError] = useState<string | null>(null);
   const [builderRestoreDraft, setBuilderRestoreDraft] = useState<{
     id: string;
     content: string;
@@ -154,6 +180,27 @@ export function AgentCreationStudio() {
   const duplicateAppliedRef = useRef(false);
   const appliedAssistantMessageRef = useRef<string | null>(null);
   const builderSessionIdRef = useRef("");
+
+  const githubRepositoriesQuery = useQuery(
+    {
+      ...githubAgentRepositoriesOptions(wsId, githubInstallationId),
+      enabled:
+        mode === "github" &&
+        githubInstallationsQuery.data?.can_manage === true &&
+        !!githubInstallationId,
+    },
+  );
+  const githubRepositories = githubRepositoriesQuery.data?.repositories ?? [];
+
+  useEffect(() => {
+    if (
+      mode !== "github" ||
+      githubInstallationsQuery.data?.can_manage !== true ||
+      githubInstallationId ||
+      !githubInstallationsQuery.data.installations.length
+    ) return;
+    setGitHubInstallationId(githubInstallationsQuery.data.installations[0]?.id ?? "");
+  }, [mode, githubInstallationId, githubInstallationsQuery.data]);
 
   useEffect(() => {
     builderSessionIdRef.current = builderSessionId;
@@ -181,7 +228,8 @@ export function AgentCreationStudio() {
       draft.name.trim().length > 0 ||
       draft.description.trim().length > 0 ||
       draft.instructions.trim().length > 0 ||
-      draft.skillIds.size > 0);
+      draft.skillIds.size > 0 ||
+      githubPreview != null);
 
   useEffect(() => {
     if (!hasUnsavedDraft || creating) return;
@@ -351,10 +399,15 @@ export function AgentCreationStudio() {
     draft.permissionScope === "members" &&
     draft.memberIds.size === 0 &&
     draft.teamIds.size === 0;
+  const githubRuntimeCompatible =
+    mode !== "github" ||
+    isGitHubRuntimeCompatible(githubPreview, selectedRuntime);
   const canCreate =
     draft.name.trim().length > 0 &&
     selectedRuntime != null &&
     isRuntimeUsableForUser(selectedRuntime, currentUser?.id ?? null) &&
+    githubRuntimeCompatible &&
+    (mode !== "github" || githubPreview?.blockers.length === 0) &&
     !accessInvalid &&
     !creating;
   const currentModeLabel =
@@ -364,13 +417,19 @@ export function AgentCreationStudio() {
         ? t(($) => $.creation_studio.step_template)
         : mode === "ai"
           ? t(($) => $.creation_studio.step_ai)
-          : t(($) => $.creation_studio.step_configure);
+          : mode === "github"
+            ? t(($) => $.creation_studio.step_github)
+            : t(($) => $.creation_studio.step_configure);
 
   const resetCreationMode = () => {
     setMode("choose");
     setSelectedTemplate(null);
     setSourceTemplate(null);
     setBuilderSessionId("");
+    setGitHubRepository("");
+    setGitHubRef("");
+    setGitHubPreview(null);
+    setGitHubError(null);
   };
 
   const deleteBuilderSession = async () => {
@@ -421,6 +480,48 @@ export function AgentCreationStudio() {
       runtimeId: current.runtimeId || usableRuntimes[0]?.id || "",
     }));
     setMode("blank");
+  };
+
+  const chooseGitHub = () => {
+    setSourceTemplate(null);
+    setDraft((current) => ({
+      ...EMPTY_DRAFT,
+      runtimeId: current.runtimeId || usableRuntimes[0]?.id || "",
+    }));
+    setGitHubRepository("");
+    setGitHubRef("");
+    setGitHubPreview(null);
+    setGitHubError(null);
+    setMode("github");
+  };
+
+  const previewGitHubAgent = async () => {
+    if (!githubInstallationId || !githubRepository) return;
+    setGitHubPreviewing(true);
+    setGitHubError(null);
+    setCreateError(null);
+    try {
+      const preview = await api.previewGitHubAgent(wsId, {
+        installation_id: githubInstallationId,
+        repository: githubRepository,
+        ref: githubRef.trim() || undefined,
+      });
+      setGitHubPreview(preview);
+      setGitHubRef(preview.ref);
+      setDraft((current) => ({
+        ...current,
+        name: preview.name,
+        description: preview.description,
+        instructions: preview.instructions,
+      }));
+    } catch (error) {
+      setGitHubPreview(null);
+      setGitHubError(
+        error instanceof Error ? error.message : t(($) => $.creation_studio.github.preview_failed),
+      );
+    } finally {
+      setGitHubPreviewing(false);
+    }
   };
 
   const applyTemplate = () => {
@@ -544,7 +645,26 @@ export function AgentCreationStudio() {
     try {
       const invocationTargets = buildInvocationTargets(draft);
       let agent: Agent;
-      if (sourceTemplate) {
+      if (mode === "github" && githubPreview) {
+        const response = await api.createGitHubAgent(wsId, {
+          installation_id: githubPreview.installation_id,
+          repository: githubPreview.repository,
+          ref: githubPreview.ref,
+          resolved_sha: githubPreview.resolved_sha,
+          name: draft.name.trim(),
+          description: draft.description.trim(),
+          instructions: githubPreview.instructions,
+          avatar_url: draft.avatarUrl ?? undefined,
+          runtime_id: selectedRuntime.id,
+          model: draft.model.trim() || undefined,
+          permission_mode:
+            draft.permissionScope === "private" ? "private" : "public_to",
+          invocation_targets: invocationTargets,
+          skill_ids: [...draft.skillIds],
+        });
+        agent = response.agent;
+        response.warnings.forEach((warning) => toast.warning(warning));
+      } else if (sourceTemplate) {
         const response = await api.createAgentFromTemplate({
           template_slug: sourceTemplate.slug,
           name: draft.name.trim(),
@@ -648,7 +768,12 @@ export function AgentCreationStudio() {
         {mode !== "choose" && mode !== "templates" && (
           <div className="ml-auto hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
             <span className="rounded-full bg-muted px-2 py-1">
-              {sourceTemplate?.name ?? (mode === "ai" ? t(($) => $.creation_studio.modes.ai.title) : t(($) => $.creation_studio.modes.blank.title))}
+              {sourceTemplate?.name ??
+                (mode === "ai"
+                  ? t(($) => $.creation_studio.modes.ai.title)
+                  : mode === "github"
+                    ? t(($) => $.creation_studio.modes.github.title)
+                    : t(($) => $.creation_studio.modes.blank.title))}
             </span>
             {selectedRuntime && (
               <span className="rounded-full bg-muted px-2 py-1">
@@ -662,7 +787,9 @@ export function AgentCreationStudio() {
       {mode === "choose" && (
         <ModeChooser
           onBlank={chooseBlank}
+          onTemplate={() => setMode("templates")}
           onAI={() => setMode("ai")}
+          onGitHub={chooseGitHub}
           agentBuilderEnabled={agentBuilderEnabled}
         />
       )}
@@ -705,6 +832,78 @@ export function AgentCreationStudio() {
             squad={!!squadId}
             onCreate={createAgent}
           />
+        </div>
+      )}
+
+      {mode === "github" && (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-4xl space-y-8 px-5 py-8 sm:px-8">
+            <GitHubSourcePicker
+              configured={githubInstallationsQuery.data?.configured ?? false}
+              canManage={githubInstallationsQuery.data?.can_manage === true}
+              loadingInstallations={githubInstallationsQuery.isLoading}
+              installations={githubInstallationsQuery.data?.installations ?? []}
+              installationId={githubInstallationId}
+              onInstallationChange={(id) => {
+                setGitHubInstallationId(id);
+                setGitHubRepository("");
+                setGitHubRef("");
+                setGitHubPreview(null);
+                setGitHubError(null);
+              }}
+              repositories={githubRepositories}
+              loadingRepositories={githubRepositoriesQuery.isLoading}
+              repository={githubRepository}
+              onRepositoryChange={(fullName) => {
+                const selected = githubRepositories.find((item) => item.full_name === fullName);
+                setGitHubRepository(fullName);
+                setGitHubRef(selected?.default_branch ?? "");
+                setGitHubPreview(null);
+                setGitHubError(null);
+              }}
+              gitRef={githubRef}
+              onRefChange={(value) => {
+                setGitHubRef(value);
+                setGitHubPreview(null);
+              }}
+              preview={githubPreview}
+              previewing={githubPreviewing}
+              error={
+                githubError ??
+                (githubRepositoriesQuery.error instanceof Error
+                  ? githubRepositoriesQuery.error.message
+                  : null)
+              }
+              settingsHref={`${paths.settings()}?tab=github`}
+              onPreview={() => void previewGitHubAgent()}
+            />
+            {githubPreview && (
+              <ConfigurationPanel
+                sourceManaged
+                draft={draft}
+                onChange={setDraft}
+                runtimes={runtimes}
+                runtimesLoading={runtimesLoading}
+                members={members}
+                currentUserId={currentUser?.id ?? null}
+                createError={
+                  !githubRuntimeCompatible && selectedRuntime
+                    ? t(($) => $.creation_studio.github.runtime_incompatible, {
+                        provider: selectedRuntime.provider,
+                      })
+                    : createError
+                }
+              />
+            )}
+          </div>
+          {githubPreview && (
+            <StudioFooter
+              canCreate={canCreate}
+              creating={creating}
+              squad={!!squadId}
+              onCreate={createAgent}
+            />
+          )}
         </div>
       )}
 
@@ -774,11 +973,15 @@ export function AgentCreationStudio() {
 
 function ModeChooser({
   onBlank,
+  onTemplate,
   onAI,
+  onGitHub,
   agentBuilderEnabled,
 }: {
   onBlank: () => void;
+  onTemplate: () => void;
   onAI: () => void;
+  onGitHub: () => void;
   agentBuilderEnabled: boolean;
 }) {
   const { t } = useT("agents");
@@ -788,6 +991,18 @@ function ModeChooser({
       title: t(($) => $.creation_studio.modes.blank.title),
       description: t(($) => $.creation_studio.modes.blank.description),
       action: onBlank,
+    },
+    {
+      icon: Bot,
+      title: t(($) => $.creation_studio.modes.template.title),
+      description: t(($) => $.creation_studio.modes.template.description),
+      action: onTemplate,
+    },
+    {
+      icon: GitFork,
+      title: t(($) => $.creation_studio.modes.github.title),
+      description: t(($) => $.creation_studio.modes.github.description),
+      action: onGitHub,
     },
     ...(agentBuilderEnabled
       ? [{
@@ -813,7 +1028,7 @@ function ModeChooser({
             {t(($) => $.creation_studio.choose_description)}
           </p>
         </div>
-        <div className="mx-auto mt-9 grid max-w-3xl gap-4 md:grid-cols-2">
+        <div className="mt-9 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {modes.map(({ icon: Icon, title, description, action, recommended }) => (
             <button
               key={title}
@@ -943,6 +1158,180 @@ function TemplateChooser({
   );
 }
 
+function GitHubSourcePicker({
+  configured,
+  canManage,
+  loadingInstallations,
+  installations,
+  installationId,
+  onInstallationChange,
+  repositories,
+  loadingRepositories,
+  repository,
+  onRepositoryChange,
+  gitRef,
+  onRefChange,
+  preview,
+  previewing,
+  error,
+  settingsHref,
+  onPreview,
+}: {
+  configured: boolean;
+  canManage: boolean;
+  loadingInstallations: boolean;
+  installations: GitHubInstallation[];
+  installationId: string;
+  onInstallationChange: (value: string) => void;
+  repositories: GitHubAgentRepository[];
+  loadingRepositories: boolean;
+  repository: string;
+  onRepositoryChange: (value: string) => void;
+  gitRef: string;
+  onRefChange: (value: string) => void;
+  preview: GitHubAgentPreview | null;
+  previewing: boolean;
+  error: string | null;
+  settingsHref: string;
+  onPreview: () => void;
+}) {
+  const { t } = useT("agents");
+  const unavailable =
+    !loadingInstallations &&
+    (!configured || !canManage || installations.length === 0);
+
+  return (
+    <SettingsSection
+      title={t(($) => $.creation_studio.github.source_title)}
+      description={t(($) => $.creation_studio.github.source_hint)}
+    >
+      <SettingsCard>
+        {loadingInstallations ? (
+          <div className="flex justify-center p-8">
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : unavailable ? (
+          <div className="p-5">
+            <p className="text-sm font-medium">
+              {!canManage
+                ? t(($) => $.creation_studio.github.admin_required)
+                : configured
+                  ? t(($) => $.creation_studio.github.no_installation)
+                  : t(($) => $.creation_studio.github.not_configured)}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {!canManage
+                ? t(($) => $.creation_studio.github.admin_required_hint)
+                : t(($) => $.creation_studio.github.connect_hint)}
+            </p>
+            {canManage && (
+              <AppLink
+                href={settingsHref}
+                className="mt-4 inline-flex h-8 items-center justify-center rounded-md border bg-background px-3 text-xs font-medium shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {t(($) => $.creation_studio.github.open_settings)}
+              </AppLink>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4 p-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="space-y-1.5 text-xs font-medium">
+                <span>{t(($) => $.creation_studio.github.installation)}</span>
+                <select
+                  value={installationId}
+                  onChange={(event) => onInstallationChange(event.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >
+                  {installations.map((installation) => (
+                    <option key={installation.id} value={installation.id}>
+                      {installation.account_login}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1.5 text-xs font-medium">
+                <span>{t(($) => $.creation_studio.github.repository)}</span>
+                <select
+                  value={repository}
+                  onChange={(event) => onRepositoryChange(event.target.value)}
+                  disabled={!installationId || loadingRepositories}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >
+                  <option value="">
+                    {loadingRepositories
+                      ? t(($) => $.creation_studio.github.repositories_loading)
+                      : t(($) => $.creation_studio.github.repository_placeholder)}
+                  </option>
+                  {repositories.map((item) => (
+                    <option key={item.full_name} value={item.full_name}>
+                      {item.full_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="block space-y-1.5 text-xs font-medium">
+              <span>{t(($) => $.creation_studio.github.git_ref)}</span>
+              <Input
+                value={gitRef}
+                onChange={(event) => onRefChange(event.target.value)}
+                disabled={!repository}
+                placeholder={t(($) => $.creation_studio.github.git_ref_placeholder)}
+              />
+            </label>
+            <div className="flex justify-end">
+              <Button onClick={onPreview} disabled={!repository || previewing}>
+                {previewing && <Loader2 className="size-4 animate-spin" />}
+                {t(($) => $.creation_studio.github.preview)}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div role="alert" className="border-t border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            {error}
+          </div>
+        )}
+
+        {preview && (
+          <div className="space-y-4 border-t p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium">{preview.name}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {preview.repository}@{preview.ref} · {preview.resolved_sha.slice(0, 12)}
+                </p>
+              </div>
+              <span className="rounded-full bg-success/10 px-2 py-1 text-[11px] font-medium text-success">
+                {t(($) => $.creation_studio.github.preview_ready)}
+              </span>
+            </div>
+            {preview.skills.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">
+                  {t(($) => $.creation_studio.github.repository_skills)}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {preview.skills.map((skill) => (
+                    <span key={skill.source_path} className="rounded-md border bg-muted/30 px-2 py-1 text-xs">
+                      {skill.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {[...preview.blockers, ...preview.warnings].map((message) => (
+              <p key={message} className="text-xs text-warning-foreground">{message}</p>
+            ))}
+          </div>
+        )}
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
 function ConfigurationPanel({
   draft,
   onChange,
@@ -952,6 +1341,7 @@ function ConfigurationPanel({
   currentUserId,
   createError,
   compact = false,
+  sourceManaged = false,
 }: {
   draft: AgentDraft;
   onChange: (draft: AgentDraft) => void;
@@ -961,6 +1351,7 @@ function ConfigurationPanel({
   currentUserId: string | null;
   createError: string | null;
   compact?: boolean;
+  sourceManaged?: boolean;
 }) {
   const { t } = useT("agents");
   const selectedRuntime = runtimes.find((runtime) => runtime.id === draft.runtimeId) ?? null;
@@ -1045,9 +1436,15 @@ function ConfigurationPanel({
               placeholder={t(($) => $.create_dialog.instructions.editor_placeholder)}
               rows={compact ? 9 : 12}
               className="min-h-44 resize-y font-mono text-[13px] leading-6"
+              disabled={sourceManaged}
             />
           </DraftFieldRow>
           <div className="px-4 py-4">
+            {sourceManaged && (
+              <p className="mb-3 text-xs leading-5 text-muted-foreground">
+                {t(($) => $.creation_studio.github.managed_fields_hint)}
+              </p>
+            )}
             <SkillMultiSelect
               selectedIds={draft.skillIds}
               onChange={(ids) => set("skillIds", ids)}

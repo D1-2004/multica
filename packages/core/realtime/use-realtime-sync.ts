@@ -19,12 +19,14 @@ import {
   agentTaskSnapshotKeys,
   agentActivityKeys,
   agentRunCountsKeys,
+  agentSourceKeys,
   agentTasksKeys,
 } from "../agents/queries";
 import { githubKeys } from "../github/queries";
 import { larkKeys } from "../lark/queries";
 import { slackKeys } from "../slack/queries";
 import { dingtalkKeys } from "../dingtalk/queries";
+import { dingtalkAccountBindingKeys } from "../dingtalk-account-bindings/queries";
 import {
   onIssueCreated,
   onIssueUpdated,
@@ -397,6 +399,7 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
     qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+    qc.invalidateQueries({ queryKey: agentSourceKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
@@ -409,6 +412,9 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
     qc.invalidateQueries({ queryKey: agentRunCountsKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: chatKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: labelKeys.all(wsId) });
+    qc.invalidateQueries({
+      queryKey: dingtalkAccountBindingKeys.list(wsId),
+    });
   }
   // Cross-workspace, so outside the wsId guard: a reconnect may have missed
   // inbox events from any workspace, so re-pull the switcher-dot summary.
@@ -506,6 +512,7 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+          qc.invalidateQueries({ queryKey: agentSourceKeys.all(wsId) });
           // Squad members status is derived per agent, so any agent
           // change (status flip, archive, runtime swap) needs to refresh the
           // per-squad members-status cache without refetching the static squad
@@ -589,6 +596,14 @@ export function useRealtimeSync(
       dingtalk_installation: () => {
         const wsId = getCurrentWsId();
         if (wsId) qc.invalidateQueries({ queryKey: dingtalkKeys.installations(wsId) });
+      },
+      dingtalk_account_binding: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) {
+          qc.invalidateQueries({
+            queryKey: dingtalkAccountBindingKeys.list(wsId),
+          });
+        }
       },
       pull_request: () => {
         // PR list is keyed by issue id, not workspace, so we invalidate all

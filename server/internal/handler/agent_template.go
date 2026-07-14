@@ -267,6 +267,13 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 			Name:        ref.CachedName,
 		})
 		if err == nil {
+			if managed, sourceErr := h.isSourceManagedSkill(r.Context(), existing.ID); sourceErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to verify skill source ownership")
+				return
+			} else if managed {
+				writeError(w, http.StatusConflict, fmt.Sprintf("template skill %q is managed by another agent source", ref.CachedName))
+				return
+			}
 			preReused[i] = existing
 			slog.Info("agent-template create: pre-reuse hit (skipped fetch)",
 				append(logger.RequestAttrs(r),
@@ -356,6 +363,13 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 			Name:        imp.name,
 		})
 		if err == nil {
+			if _, sourceErr := qtx.GetAgentSourceSkillBySkillID(r.Context(), existing.ID); sourceErr == nil {
+				writeError(w, http.StatusConflict, fmt.Sprintf("template skill %q is managed by another agent source", imp.name))
+				return
+			} else if !errors.Is(sourceErr, pgx.ErrNoRows) {
+				writeError(w, http.StatusInternalServerError, "failed to verify skill source ownership")
+				return
+			}
 			slog.Info("agent-template create: reusing existing skill (frontmatter-name match, cached_name drifted)",
 				append(logger.RequestAttrs(r),
 					"index", i,

@@ -59,6 +59,12 @@ const larkListingRef = vi.hoisted(() => ({
 const slackListingRef = vi.hoisted(() => ({
   current: { installations: [] as unknown[], configured: false },
 }));
+const dingtalkListingRef = vi.hoisted(() => ({
+  current: { installations: [] as unknown[], configured: false },
+}));
+const dingtalkAccountListingRef = vi.hoisted(() => ({
+  current: { bindings: [] as unknown[], configured: false },
+}));
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
 }));
@@ -72,6 +78,18 @@ vi.mock("@multica/core/slack", () => ({
   slackInstallationsOptions: () => ({
     queryKey: ["slack", "installations"],
     queryFn: () => Promise.resolve(slackListingRef.current),
+  }),
+}));
+vi.mock("@multica/core/dingtalk", () => ({
+  dingtalkInstallationsOptions: () => ({
+    queryKey: ["dingtalk", "installations"],
+    queryFn: () => Promise.resolve(dingtalkListingRef.current),
+  }),
+}));
+vi.mock("@multica/core/dingtalk-account-bindings", () => ({
+  dingtalkAccountBindingsOptions: () => ({
+    queryKey: ["dingtalk-account-bindings", "list"],
+    queryFn: () => Promise.resolve(dingtalkAccountListingRef.current),
   }),
 }));
 
@@ -164,6 +182,8 @@ function openSettings() {
 beforeEach(() => {
   larkListingRef.current = { installations: [], configured: false };
   slackListingRef.current = { installations: [], configured: false };
+  dingtalkListingRef.current = { installations: [], configured: false };
+  dingtalkAccountListingRef.current = { bindings: [], configured: false };
 });
 
 describe("AgentOverviewPane MCP tab visibility", () => {
@@ -223,7 +243,16 @@ describe("AgentOverviewPane Integrations tab visibility", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides the Integrations tab when neither Lark nor Slack is configured", () => {
+  it("shows the Integrations tab when only DingTalk account association is configured", async () => {
+    dingtalkAccountListingRef.current = { bindings: [], configured: true };
+    renderPane([makeRuntime("claude")]);
+    openCapabilities();
+    expect(
+      await screen.findByRole("tab", { name: /^Integrations$/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the Integrations tab when no integration is configured", () => {
     // Default refs are configured:false; the tab must not appear on
     // deployments without either integration, the common case.
     renderPane([makeRuntime("claude")]);
