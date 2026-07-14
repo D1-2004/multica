@@ -207,6 +207,7 @@ These variables enable the self-hosted server to create a cloud Hermes runtime b
 | `MULTICA_FC_E2B_SANDBOX_READY_TIMEOUT` | `60s` | How long the server waits for a newly created sandbox to accept `exec` |
 | `MULTICA_AGENT_IDENTITY_BASE_URL` | empty | Agent Identity service used by ContextToken tasks. The server forwards this URL and the task token to the FC/E2B sandbox; credential redemption happens inside the sandbox |
 | `MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS` | `10` | Timeout for the sandbox Agent Identity credential redemption request |
+| `MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET` | empty | DWS OAuth client secret injected only into ContextToken sandbox startup and cleared immediately after AuthCode exchange |
 
 The sandbox template must provide `multica`, `hermes`, and `multica-fc-hermes-runner` on `PATH`. An FC agent may pin one model from `MULTICA_FC_E2B_OPENAI_MODELS`; agents without a pinned model use the first item. The runner writes the resolved model into Hermes' own config so Hermes keeps using its custom provider credentials. When a task carries `agent_identity_context_token`, the runner exchanges it once during sandbox startup and DWS refreshes the resulting login with its refresh token for the rest of the task.
 
