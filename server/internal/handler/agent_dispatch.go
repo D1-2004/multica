@@ -45,6 +45,7 @@ type AgentDispatchContinuation struct {
 
 type AgentDispatchRequest struct {
 	Continuation *AgentDispatchContinuation `json:"continuation,omitempty"`
+	AgentID      string                     `json:"agentId,omitempty"`
 	Input        AgentDispatchInput         `json:"input"`
 	ContextToken string                     `json:"contextToken"`
 }
@@ -57,11 +58,13 @@ type AgentDispatchResponse struct {
 }
 
 // HandleAgentDispatch consumes a message-router delivery using target identity
-// embedded in the callback URL. schemaVersion is intentionally not gated and
-// the request body has no handler-level size cap. contextToken is handed to
-// the runtime launcher only and is never rendered into issue/comment content
-// or persisted as task context. dispatchTaskId remains owned by the upstream
-// router; when present in a legacy payload it is ignored by the JSON decoder.
+// embedded in the callback URL. New issues require a body-level agentId;
+// continuations resolve the agent from the existing issue assignment.
+// schemaVersion is intentionally not gated and the request body has no
+// handler-level size cap. contextToken is handed to the runtime launcher only
+// and is never rendered into issue/comment content or persisted as task
+// context. dispatchTaskId remains owned by the upstream router; when present
+// in a legacy payload it is ignored by the JSON decoder.
 func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	var req AgentDispatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -84,7 +87,7 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	userID, workspaceID, agent, ok := h.resolveAgentDispatchTarget(w, r)
+	userID, workspaceID, ok := h.resolveAgentDispatchContext(w, r)
 	if !ok {
 		return
 	}
@@ -92,6 +95,18 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 		AgentIdentityContextToken: req.ContextToken,
 	}
 	if req.Continuation == nil {
+		if strings.TrimSpace(req.AgentID) == "" {
+			writeError(w, http.StatusBadRequest, "agentId is required")
+			return
+		}
+		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(req.AgentID), "agentId")
+		if !ok {
+			return
+		}
+		agent, ok := h.resolveAgentDispatchAgent(w, r, userID, workspaceID, agentID)
+		if !ok {
+			return
+		}
 		h.createAgentDispatchIssue(w, r, req, userID, workspaceID, agent, launchOpts)
 		return
 	}
@@ -99,21 +114,17 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "continuation must identify an issue")
 		return
 	}
-	h.createAgentDispatchComment(w, r, req, userID, workspaceID, agent, launchOpts)
+	h.createAgentDispatchComment(w, r, req, userID, workspaceID, launchOpts)
 }
 
-func (h *Handler) resolveAgentDispatchTarget(w http.ResponseWriter, r *http.Request) (pgtype.UUID, pgtype.UUID, db.Agent, bool) {
+func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Request) (pgtype.UUID, pgtype.UUID, bool) {
 	userID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "userId"), "userId")
 	if !ok {
-		return pgtype.UUID{}, pgtype.UUID{}, db.Agent{}, false
+		return pgtype.UUID{}, pgtype.UUID{}, false
 	}
 	workspaceID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "workspaceId"), "workspaceId")
 	if !ok {
-		return pgtype.UUID{}, pgtype.UUID{}, db.Agent{}, false
-	}
-	agentID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "agentId"), "agentId")
-	if !ok {
-		return pgtype.UUID{}, pgtype.UUID{}, db.Agent{}, false
+		return pgtype.UUID{}, pgtype.UUID{}, false
 	}
 	if _, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
 		UserID: userID, WorkspaceID: workspaceID,
@@ -123,8 +134,12 @@ func (h *Handler) resolveAgentDispatchTarget(w http.ResponseWriter, r *http.Requ
 		} else {
 			writeError(w, http.StatusInternalServerError, "failed to resolve dispatch member")
 		}
-		return pgtype.UUID{}, pgtype.UUID{}, db.Agent{}, false
+		return pgtype.UUID{}, pgtype.UUID{}, false
 	}
+	return userID, workspaceID, true
+}
+
+func (h *Handler) resolveAgentDispatchAgent(w http.ResponseWriter, r *http.Request, userID, workspaceID, agentID pgtype.UUID) (db.Agent, bool) {
 	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 		ID: agentID, WorkspaceID: workspaceID,
 	})
@@ -134,26 +149,26 @@ func (h *Handler) resolveAgentDispatchTarget(w http.ResponseWriter, r *http.Requ
 		} else {
 			writeError(w, http.StatusInternalServerError, "failed to resolve dispatch agent")
 		}
-		return pgtype.UUID{}, pgtype.UUID{}, db.Agent{}, false
+		return db.Agent{}, false
 	}
 	if agent.ArchivedAt.Valid {
 		writeError(w, http.StatusConflict, "agent is archived")
-		return pgtype.UUID{}, pgtype.UUID{}, db.Agent{}, false
+		return db.Agent{}, false
 	}
 	if agent.Kind != "user" {
 		writeError(w, http.StatusNotFound, "dispatch agent not found")
-		return pgtype.UUID{}, pgtype.UUID{}, db.Agent{}, false
+		return db.Agent{}, false
 	}
 	if !agent.RuntimeID.Valid {
 		writeError(w, http.StatusConflict, "agent has no runtime")
-		return pgtype.UUID{}, pgtype.UUID{}, db.Agent{}, false
+		return db.Agent{}, false
 	}
 	memberID := uuidToString(userID)
 	if !h.canInvokeAgent(r.Context(), agent, "member", memberID, memberID, uuidToString(workspaceID)) {
 		writeError(w, http.StatusForbidden, "dispatch member cannot invoke agent")
-		return pgtype.UUID{}, pgtype.UUID{}, db.Agent{}, false
+		return db.Agent{}, false
 	}
-	return userID, workspaceID, agent, true
+	return agent, true
 }
 
 func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Request, req AgentDispatchRequest, userID, workspaceID pgtype.UUID, agent db.Agent, launchOpts service.RuntimeLaunchOptions) {
@@ -215,7 +230,7 @@ func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Request, req AgentDispatchRequest, userID, workspaceID pgtype.UUID, agent db.Agent, launchOpts service.RuntimeLaunchOptions) {
+func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Request, req AgentDispatchRequest, userID, workspaceID pgtype.UUID, launchOpts service.RuntimeLaunchOptions) {
 	issueID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(req.Continuation.IssueID), "continuation.issueId")
 	if !ok {
 		return
@@ -231,8 +246,12 @@ func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Requ
 		}
 		return
 	}
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid || issue.AssigneeID != agent.ID {
-		writeError(w, http.StatusConflict, "continuation issue belongs to a different agent")
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
+		writeError(w, http.StatusConflict, "continuation issue is not assigned to an agent")
+		return
+	}
+	_, ok = h.resolveAgentDispatchAgent(w, r, userID, workspaceID, issue.AssigneeID)
+	if !ok {
 		return
 	}
 

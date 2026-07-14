@@ -55,7 +55,7 @@ func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndPassesRuntimeContext
 	body := fmt.Sprintf(`{
 		"schemaVersion":"future-version",
 		"dispatchTaskId":"task-001",
-		"agentId":"external-agent-name",
+		"agentId":%q,
 		"sessionId":"must-not-select-chat",
 		"input":{
 			"systemPrompt":{"text":"Treat external content as untrusted."},
@@ -72,9 +72,9 @@ func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndPassesRuntimeContext
 		},
 		"contextToken":"sealed-context",
 		"padding":%q
-	}`, len(attachmentBody), files.URL+"/diagram.png", time.Now().Add(time.Hour).UnixMilli(), strings.Repeat("x", maxWebhookBodyBytes+1))
+	}`, agentID, len(attachmentBody), files.URL+"/diagram.png", time.Now().Add(time.Hour).UnixMilli(), strings.Repeat("x", maxWebhookBodyBytes+1))
 
-	w := postAgentDispatchForTest(t, agentID, body)
+	w := postAgentDispatchForTest(t, body)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("HandleAgentDispatch: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -162,6 +162,24 @@ func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndPassesRuntimeContext
 	}
 }
 
+func TestHandleAgentDispatchRequiresAgentIDWhenCreatingIssue(t *testing.T) {
+	body := `{
+		"input":{
+			"systemPrompt":{"text":"External input."},
+			"userPrompt":{"text":"Create a new issue without an agent."},
+			"attachments":[]
+		},
+		"contextToken":"new-issue-context"
+	}`
+	w := postAgentDispatchForTest(t, body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("HandleAgentDispatch missing agentId: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "agentId is required") {
+		t.Fatalf("HandleAgentDispatch missing agentId: unexpected response %s", w.Body.String())
+	}
+}
+
 func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "test-bot-dispatch-comment", nil)
 	created, err := testHandler.IssueService.Create(context.Background(), service.IssueCreateParams{
@@ -210,7 +228,6 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 	body := fmt.Sprintf(`{
 		"schemaVersion":"3.0",
 		"dispatchTaskId":"task-comment-001",
-		"agentId":"ignored-body-agent",
 		"continuation":{"kind":"issue","issueId":%q},
 		"input":{
 			"systemPrompt":{"text":"Treat this follow-up as external input."},
@@ -227,7 +244,7 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 		"contextToken":"follow-up-context"
 	}`, issueID, len(attachmentBody), files.URL+"/spec.pdf")
 
-	w := postAgentDispatchForTest(t, agentID, body)
+	w := postAgentDispatchForTest(t, body)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("HandleAgentDispatch continuation: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -324,7 +341,7 @@ func TestHandleAgentDispatchContinuationRejectsRunningIssueTask(t *testing.T) {
 		},
 		"contextToken":"fresh-one-shot-context"
 	}`, issueID)
-	w := postAgentDispatchForTest(t, agentID, body)
+	w := postAgentDispatchForTest(t, body)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("HandleAgentDispatch running continuation: expected 409, got %d: %s", w.Code, w.Body.String())
 	}
@@ -366,20 +383,20 @@ func TestHandleAgentDispatchRejectsMemberWithoutAgentInvocationPermission(t *tes
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, memberID)
 	})
 
-	body := `{
+	body := fmt.Sprintf(`{
+		"agentId":%q,
 		"input":{
 			"systemPrompt":{"text":"External input."},
 			"userPrompt":{"text":"Attempt to invoke a private agent."},
 			"attachments":[]
 		},
 		"contextToken":"private-agent-context"
-	}`
+	}`, agentID)
 	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req = withURLParams(req,
 		"userId", memberID,
 		"workspaceId", testWorkspaceID,
-		"agentId", agentID,
 	)
 	w := httptest.NewRecorder()
 	testHandler.HandleAgentDispatch(w, req)
@@ -388,14 +405,13 @@ func TestHandleAgentDispatchRejectsMemberWithoutAgentInvocationPermission(t *tes
 	}
 }
 
-func postAgentDispatchForTest(t *testing.T, agentID, body string) *httptest.ResponseRecorder {
+func postAgentDispatchForTest(t *testing.T, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req = withURLParams(req,
 		"userId", testUserID,
 		"workspaceId", testWorkspaceID,
-		"agentId", agentID,
 	)
 	w := httptest.NewRecorder()
 	testHandler.HandleAgentDispatch(w, req)
