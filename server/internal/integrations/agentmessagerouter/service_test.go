@@ -230,11 +230,11 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if result.ExpiresAt != router.issued.ExpiresAt {
 		t.Fatalf("expires at = %v, want %v", result.ExpiresAt, router.issued.ExpiresAt)
 	}
-	parsedQR, err := url.Parse(result.QRCodeURL)
-	if err != nil {
-		t.Fatal(err)
+	_, rawFragment, found := strings.Cut(result.QRCodeURL, "#")
+	if !found {
+		t.Fatalf("QR code URL has no fragment: %q", result.QRCodeURL)
 	}
-	fragment, err := url.ParseQuery(parsedQR.Fragment)
+	fragment, err := url.ParseQuery(rawFragment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,6 +245,10 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	}
 	if fragment.Get("agentId") != "" || fragment.Get("dispatchUrl") != "" {
 		t.Fatalf("QR leaked routing fields: %#v", fragment)
+	}
+	wantCallbackURL := "https://multica.example/api/integrations/dingtalk/account-bindings/11111111-1111-1111-1111-111111111111/callback"
+	if got := fragment.Get("callbackUrl"); got != wantCallbackURL {
+		t.Fatalf("callback URL after one browser decode = %q, want %q", got, wantCallbackURL)
 	}
 	persisted := string(store.row.Config)
 	if strings.Contains(persisted, router.issued.BindingToken) || strings.Contains(string(store.beginConfig), router.issued.BindingToken) {

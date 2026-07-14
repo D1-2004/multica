@@ -220,11 +220,10 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		"callbackToken": {callbackToken},
 		"expiresAt":     {strconv.FormatInt(issued.ExpiresAt.Unix(), 10)},
 	}
-	qrCodeURL := *s.dbaseBindingURL
-	qrCodeURL.Fragment = fragment.Encode()
+	qrCodeURL := s.dbaseBindingURL.String() + "#" + fragment.Encode()
 	return BeginResult{
 		InstallationID: util.UUIDToString(row.ID),
-		QRCodeURL:      qrCodeURL.String(),
+		QRCodeURL:      qrCodeURL,
 		ExpiresAt:      issued.ExpiresAt.UTC(),
 	}, nil
 }
