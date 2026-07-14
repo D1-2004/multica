@@ -14,7 +14,7 @@ ALTER TABLE channel_installation
     ADD CONSTRAINT channel_installation_status_check
     CHECK (status IN ('active', 'revoked'));
 
--- Recreate migration 183's schema so rolling the application back remains
+-- Recreate migration 185's schema so rolling the application back remains
 -- possible. IF NOT EXISTS keeps an operator replay safe.
 CREATE TABLE IF NOT EXISTS agent_dispatch_endpoint (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
