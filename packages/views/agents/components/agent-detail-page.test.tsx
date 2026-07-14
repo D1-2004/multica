@@ -43,6 +43,13 @@ vi.mock("@multica/core/hooks", () => ({
 }));
 vi.mock("@multica/core/agents", () => ({
   useWorkspacePresenceMap: () => ({ byAgent: new Map() }),
+  agentSourceOptions: (wsId: string, agentId: string) => ({
+    queryKey: ["agent-source", wsId, agentId],
+    queryFn: () => Promise.resolve(undefined),
+  }),
+  agentSourceKeys: {
+    detail: (wsId: string, agentId: string) => ["agent-source", wsId, agentId],
+  },
 }));
 vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: (wsId: string) => ({
@@ -56,7 +63,10 @@ vi.mock("@multica/core/workspace/queries", () => ({
         ? new Promise(() => {})
         : Promise.resolve(membersRef.current),
   }),
-  workspaceKeys: { agents: (wsId: string) => ["agents", wsId] },
+  workspaceKeys: {
+    agents: (wsId: string) => ["agents", wsId],
+    skills: (wsId: string) => ["skills", wsId],
+  },
 }));
 vi.mock("@multica/core/runtimes", () => ({
   runtimeListOptions: (wsId: string) => ({

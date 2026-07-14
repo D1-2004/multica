@@ -54,6 +54,14 @@ PR をマージ**せずに**クローズした場合は、PR カードの状態�
 - **App がインストールされていないリポジトリの PR** — App がなければ、Multica は webhook をまったく受け取りません。
 - **PR をイシューに手動で紐づける** — まだこのための UI はありません。チームの慣習で識別子を Multica が読まない場所に置いている場合は、PR タイトルや本文に追加してください。
 
+## リポジトリからエージェントを作成する
+
+GitHub App に **Contents: Read-only** 権限があり、App の認証情報が設定されている場合、**Agents → エージェントを作成 → GitHub からインポート**を利用できます。リポジトリは定義のバージョン管理されたソースであり、ランタイムの作業ディレクトリではありません。
+
+ルートの `multica-agent.yaml` で `apiVersion: multica.ai/v1alpha1`、`kind: Agent`、名前、説明、指示ファイル、スキルディレクトリ、任意の対応 provider を宣言します。各スキルディレクトリには `SKILL.md` と任意の補助ファイルを置きます。
+
+Multica は選択した commit を検証し、データベースのスナップショットとして保存します。名前、説明、指示、リポジトリのスキルは GitHub 管理、ランタイム、モデル、アクセス、追加スキルは Multica 管理です。変更は自動反映されず、エージェント Overview の **今すぐ同期**で明示的に同期します。
+
 ## 連携解除
 
 **設定 → GitHub** にはインストール一覧はありません — 既存のインストールは GitHub から直接管理します。
@@ -67,7 +75,7 @@ PR をマージ**せずに**クローズした場合は、PR カードの状態�
 
 - **連携 / 連携解除**にはワークスペースの **owner または admin** が必要です。member にはカードの説明は見えますが、Connect ボタンは見えません。
 - イシューの **Pull requests** サイドバーは、そのイシューを閲覧できる誰にでも表示されます — イシュー詳細の他の部分と同じ権限です。
-- GitHub App は pull request とメタデータへの**読み取り専用**アクセスを要求します。Multica はコミット、コメント、ステータスチェックを GitHub に書き戻すことはありません。
+- GitHub App は pull request、メタデータ、リポジトリ Contents への**読み取り専用**アクセスを要求します。Multica は GitHub に書き戻しません。
 
 ## セルフホストのセットアップ
 
@@ -94,6 +102,7 @@ Multica Cloud で Multica を実行している場合、連携はすでに構成
 | **Webhook URL** | `https://<api-host>/api/webhooks/github`。 |
 | **Webhook secret** | 長いランダム文字列を生成してください（例: `openssl rand -hex 32`）。手順 2 で同じ値を Multica の env に貼り付けます。 |
 | **Permissions → Repository → Pull requests** | **Read-only**。 |
+| **Permissions → Repository → Contents** | **Read-only**。リポジトリからのエージェント作成と同期に必要です。 |
 | **Permissions → Repository → Metadata** | Read-only（必須）。 |
 | **Subscribe to events** | **Pull request** をチェックしてください。 |
 | **Where can this GitHub App be installed?** | お好みで。単一組織のセットアップなら `Only on this account` で十分です。 |
@@ -115,8 +124,7 @@ API サーバーで:
 GITHUB_APP_SLUG=multica-acme
 GITHUB_WEBHOOK_SECRET=<the webhook secret you generated>
 
-# 任意（推奨）— インストール時点で接続済みアカウント名を取得できるため、
-# 最初の webhook が届くまで待たなくて済みます:
+# PR 連携だけなら任意。GitHub からのエージェント作成と同期には必須:
 GITHUB_APP_ID=<App 設定ページに表示される数値の App ID>
 GITHUB_APP_PRIVATE_KEY=<BEGIN/END 行を含む完全な PEM ブロック>
 ```
@@ -126,7 +134,7 @@ GITHUB_APP_PRIVATE_KEY=<BEGIN/END 行を含む完全な PEM ブロック>
 - Settings の `Connect GitHub` が**無効**になり、「not configured」のヒントが表示されます。
 - `/api/webhooks/github` エンドポイントが **`503 github webhooks not configured`** を返します — Multica は secret なしでイベントを処理することを拒否し、すべての署名を黙って有効として扱うことはありません。
 
-`GITHUB_APP_ID` と `GITHUB_APP_PRIVATE_KEY` は**任意**です。これらを設定すると、setup コールバックが GitHub の App 認証された `/app/installations/{id}` エンドポイントを呼び出して、インストール時点で実際の組織名やユーザー名を取得できます。設定しない場合、接続カードには一時的に `Connected to unknown` と表示され、GitHub から `installation.created` webhook が届くと（通常は数秒以内に）Multica が行を更新し、リアルタイムブロードキャストを発行するため、開いている Settings タブは手動更新なしで反映されます。秘密鍵は App 設定ページの **Private keys → Generate a private key** で生成し、PEM ブロック全体（`-----BEGIN/END RSA PRIVATE KEY-----` の行を含む）を改行を保ったまま env 変数に貼り付けてください。
+`GITHUB_APP_ID` と `GITHUB_APP_PRIVATE_KEY` は PR 連携だけなら任意ですが、リポジトリからのエージェント作成と同期には両方が必要です。Multica はこれらから短命の installation access token を発行し、token をデータベースには保存しません。
 
 `FRONTEND_ORIGIN` も設定されている必要があります（どのプロダクションのセルフホストでもすでに設定されています）。インストール後、setup コールバックがユーザーを `<FRONTEND_ORIGIN>/settings?tab=github` に戻します。
 
@@ -134,7 +142,7 @@ env 変数を設定した後は API を再起動してください。
 
 ### 3. マイグレーションを実行する
 
-この連携はテーブルをマイグレーション `079_github_integration` で提供します。古いデプロイをアップグレードする場合:
+installation と pull request の連携テーブルはマイグレーション `079_github_integration`、GitHub エージェントソースのテーブルは `169_github_agent_source` で提供されます。古いデプロイをアップグレードする場合:
 
 ```bash
 make migrate-up

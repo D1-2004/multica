@@ -4,6 +4,7 @@ import {
   decodeBuilderInput,
   deriveDuplicateAccess,
   encodeBuilderInput,
+  isGitHubRuntimeCompatible,
   mergeBuilderDraft,
   parseBuilderDraft,
   stripBuilderDraft,
@@ -106,5 +107,27 @@ Return findings."}</agent_draft>`;
         invocation_targets: [{ target_type: "workspace", target_id: null }],
       }).permissionScope,
     ).toBe("workspace");
+  });
+
+  it("enforces the GitHub manifest provider allow-list", () => {
+    const preview = {
+      compatible_providers: ["claude", "codex"],
+    } as NonNullable<Parameters<typeof isGitHubRuntimeCompatible>[0]>;
+    const claudeRuntime = {
+      provider: "claude",
+    } as Parameters<typeof isGitHubRuntimeCompatible>[1];
+    const kimiRuntime = {
+      provider: "kimi",
+    } as Parameters<typeof isGitHubRuntimeCompatible>[1];
+
+    expect(isGitHubRuntimeCompatible(preview, claudeRuntime)).toBe(true);
+    expect(isGitHubRuntimeCompatible(preview, kimiRuntime)).toBe(false);
+    expect(isGitHubRuntimeCompatible(null, claudeRuntime)).toBe(false);
+    expect(
+      isGitHubRuntimeCompatible(
+        { ...preview, compatible_providers: [] },
+        kimiRuntime,
+      ),
+    ).toBe(true);
   });
 });

@@ -542,6 +542,10 @@ func (h *Handler) DeleteGitHubInstallation(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	if err := h.Queries.MarkAgentSourcesDisconnectedByInstallation(r.Context(), idUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to mark GitHub agent sources disconnected")
+		return
+	}
 	if err := h.Queries.DeleteGitHubInstallation(r.Context(), db.DeleteGitHubInstallationParams{
 		ID:          idUUID,
 		WorkspaceID: wsUUID,
@@ -686,6 +690,17 @@ func (h *Handler) handleInstallationEvent(ctx context.Context, body []byte) {
 		// We DELETE … RETURNING so each broadcast can be scoped to its
 		// workspace; events without WorkspaceID are dropped by the realtime
 		// listener and would leave already-open Settings tabs stale.
+		bindings, err := h.Queries.ListGitHubInstallationsByInstallationID(ctx, p.Installation.ID)
+		if err != nil {
+			slog.Warn("github: list installation bindings failed", "err", err, "installation_id", p.Installation.ID)
+			return
+		}
+		for _, binding := range bindings {
+			if err := h.Queries.MarkAgentSourcesDisconnectedByInstallation(ctx, binding.ID); err != nil {
+				slog.Warn("github: mark agent sources disconnected failed", "err", err, "installation_id", p.Installation.ID, "binding_id", uuidToString(binding.ID))
+				return
+			}
+		}
 		deleted, err := h.Queries.DeleteGitHubInstallationByInstallationID(ctx, p.Installation.ID)
 		if err != nil {
 			slog.Warn("github: delete installation failed", "err", err, "installation_id", p.Installation.ID)

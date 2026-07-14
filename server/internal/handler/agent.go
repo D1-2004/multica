@@ -985,6 +985,13 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "skill does not belong to this workspace")
 			return
 		}
+		if managed, err := h.isSourceManagedSkill(r.Context(), skillID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to verify skill source ownership")
+			return
+		} else if managed {
+			writeError(w, http.StatusBadRequest, "source-managed skills cannot be attached to another agent")
+			return
+		}
 	}
 
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -1382,6 +1389,15 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	if req.Instructions != nil {
+		if _, sourceErr := h.Queries.GetAgentSourceByAgentID(r.Context(), existing.ID); sourceErr == nil {
+			writeError(w, http.StatusConflict, "instructions are managed by the GitHub source")
+			return
+		} else if !errors.Is(sourceErr, pgx.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "failed to verify agent source ownership")
+			return
+		}
 	}
 
 	// Hard-reject any attempt to write custom_env through the generic

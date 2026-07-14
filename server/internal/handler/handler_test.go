@@ -2261,6 +2261,46 @@ func TestUpdateAgentMcpConfigAbsentPreservesValue(t *testing.T) {
 	assertJSONEqual(t, fetchAgentMcpConfig(t, agentID), `{"preset":"keep"}`)
 }
 
+func TestUpdateGitHubSourcedAgentAllowsLocalProfileButRejectsInstructions(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "Git source profile original", nil)
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO agent_source (
+			agent_id, repo_owner, repo_name, ref, synced_commit_sha, created_by
+		) VALUES ($1, 'acme', 'factory-agent', 'main', '0123456789012345678901234567890123456789', $2)
+	`, agentID, testUserID); err != nil {
+		t.Fatalf("create agent source: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/agents/"+agentID, map[string]any{
+		"name":        "Locally renamed agent",
+		"description": "Locally edited description",
+	})
+	req = withURLParam(req, "id", agentID)
+	testHandler.UpdateAgent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateAgent profile: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated AgentResponse
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode updated agent: %v", err)
+	}
+	if updated.Name != "Locally renamed agent" || updated.Description != "Locally edited description" {
+		t.Fatalf("profile not updated: name=%q description=%q", updated.Name, updated.Description)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/agents/"+agentID, map[string]any{"instructions": "local override"})
+	req = withURLParam(req, "id", agentID)
+	testHandler.UpdateAgent(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("UpdateAgent instructions: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "instructions are managed by the GitHub source") {
+		t.Fatalf("unexpected instructions error: %s", w.Body.String())
+	}
+}
+
 func TestUpdateAgentMcpConfigNullClearsValue(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "Handler Mcp Clear", []byte(`{"preset":"clear"}`))
 

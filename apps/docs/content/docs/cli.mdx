@@ -79,6 +79,8 @@ For the difference between token types, see [Authentication and tokens](/auth-to
 | `multica agent list` | List the workspace's agents |
 | `multica agent get <slug>` | Show an agent's configuration |
 | `multica agent create ...` | Create an agent |
+| `multica agent template list/get` | Discover approved Git repository agent templates |
+| `multica agent create-from-template <key> --runtime-id <id>` | Create an agent from an approved Git template |
 | `multica agent update <slug> ...` | Update an agent |
 | `multica agent archive <slug>` | Archive |
 | `multica agent restore <slug>` | Restore an archived agent |
@@ -89,6 +91,13 @@ For the difference between token types, see [Authentication and tokens](/auth-to
 | `multica skill list/get/create/update/delete` | Skill CRUD |
 | `multica skill import ...` | Import a skill from GitHub, ClawHub, or the local machine |
 | `multica skill files ...` | Nested: manage a skill's files |
+| `multica dingtalk install begin/status` | Start or inspect a DingTalk bot installation session |
+
+Git agent templates are approved repositories containing
+`multica-agent.yaml`. The manifest name and description are creation defaults;
+the Agent instance can override and later edit them in Multica. Repository sync
+continues to own instructions and repository-managed skills. The
+`create-from-template` command does not expose model or thinking-level flags.
 
 ### Skill import conflicts
 
