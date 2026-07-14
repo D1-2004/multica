@@ -33,6 +33,12 @@ export interface ChatSession {
   creator_id: string;
   title: string;
   status: "active" | "archived";
+  /** Stable caller-defined key scoped to the current workspace/user. */
+  session_key?: string | null;
+  /** Sandbox-local final reply template name. The server never executes it. */
+  reply_template?: string;
+  /** Structured configuration passed to the sandbox template for each Turn. */
+  reply_config?: Record<string, unknown>;
   /** True when the session has any unread assistant replies. List-only.
    *  Convenience for `unread_count > 0`. */
   has_unread: boolean;
@@ -122,6 +128,8 @@ export interface ChatMessagesPage {
 export interface SendChatMessageResponse {
   message_id: string;
   task_id: string;
+  /** Sandbox-local terminal post-processor inherited by this Turn. */
+  reply_template?: string;
   /**
    * Server-authoritative task creation time. Optimistic StatusPill seed
    * uses this as its anchor so the timer starts from the real `0s` —
@@ -136,6 +144,31 @@ export interface SendChatMessageResponse {
    * compat with servers that predate the field.
    */
   attachment_ids?: string[];
+}
+
+export interface ChatTurnReply {
+  message_id: string;
+  content: string;
+  message_kind: ChatMessageKind;
+  created_at: string;
+  failure_reason?: string | null;
+}
+
+export interface ChatTurn {
+  id: string;
+  chat_session_id: string;
+  status: string;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error?: string | null;
+  failure_reason?: string | null;
+  reply?: ChatTurnReply | null;
+  reply_template: string;
+  reply_config: Record<string, unknown>;
+  reply_delivery_status: "not_configured" | "pending" | "delivered" | "failed";
+  reply_delivery_error?: string | null;
+  reply_delivered_at?: string | null;
 }
 
 export interface CancelledChatMessage {

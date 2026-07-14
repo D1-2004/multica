@@ -166,6 +166,105 @@ func TestSendChatMessage_ReportsQueuedCollection(t *testing.T) {
 	}
 }
 
+func TestChatSessionKeyAndTurnReplyTemplate(t *testing.T) {
+	origLauncher := testHandler.TaskService.RuntimeLauncher
+	testHandler.TaskService.RuntimeLauncher = nil
+	defer func() { testHandler.TaskService.RuntimeLauncher = origLauncher }()
+
+	agentID := createHandlerTestAgent(t, "ChatReplyTemplateAgent", []byte("[]"))
+	create := func() (int, ChatSessionResponse) {
+		req := newRequest("POST", "/api/chat/sessions", map[string]any{
+			"agent_id":       agentID,
+			"title":          "DWS conversation",
+			"session_key":    "dws:conversation:message",
+			"reply_template": "dws-reply",
+			"reply_config": map[string]any{
+				"mode": "reply", "openConversationId": "cid-1", "openMessageId": "msg-1",
+			},
+		})
+		req = withChatTestWorkspaceCtx(t, req)
+		w := httptest.NewRecorder()
+		testHandler.CreateChatSession(w, req)
+		var response ChatSessionResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode create response: %v (%s)", err, w.Body.String())
+		}
+		return w.Code, response
+	}
+
+	firstCode, first := create()
+	secondCode, second := create()
+	if firstCode != http.StatusCreated || secondCode != http.StatusOK {
+		t.Fatalf("idempotent create status = %d/%d, want 201/200", firstCode, secondCode)
+	}
+	if first.ID == "" || second.ID != first.ID {
+		t.Fatalf("idempotent session ids = %q/%q", first.ID, second.ID)
+	}
+	if first.ReplyTemplate != "dws-reply" || first.SessionKey == nil || *first.SessionKey != "dws:conversation:message" {
+		t.Fatalf("session reply settings = %#v", first)
+	}
+
+	sendReq := newRequest("POST", "/api/chat/sessions/"+first.ID+"/messages", map[string]any{"content": "hello"})
+	sendReq = withURLParam(sendReq, "sessionId", first.ID)
+	sendReq = withChatTestWorkspaceCtx(t, sendReq)
+	sendW := httptest.NewRecorder()
+	testHandler.SendChatMessage(sendW, sendReq)
+	if sendW.Code != http.StatusCreated {
+		t.Fatalf("send: %d %s", sendW.Code, sendW.Body.String())
+	}
+	var sent SendChatMessageResponse
+	if err := json.Unmarshal(sendW.Body.Bytes(), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent.ReplyTemplate != "dws-reply" {
+		t.Fatalf("send reply_template = %q", sent.ReplyTemplate)
+	}
+
+	turnReq := newRequest("GET", "/api/chat/sessions/"+first.ID+"/turns/"+sent.TaskID, nil)
+	turnReq = withURLParams(turnReq, "sessionId", first.ID, "turnId", sent.TaskID)
+	turnReq = withChatTestWorkspaceCtx(t, turnReq)
+	turnW := httptest.NewRecorder()
+	testHandler.GetChatTurn(turnW, turnReq)
+	if turnW.Code != http.StatusOK {
+		t.Fatalf("get turn: %d %s", turnW.Code, turnW.Body.String())
+	}
+	var turn ChatTurnResponse
+	if err := json.Unmarshal(turnW.Body.Bytes(), &turn); err != nil {
+		t.Fatal(err)
+	}
+	if turn.ID != sent.TaskID || turn.ReplyTemplate != "dws-reply" || turn.ReplyDeliveryStatus != "pending" {
+		t.Fatalf("turn response = %#v", turn)
+	}
+
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_task_queue SET status = 'completed', completed_at = now() WHERE id = $1
+	`, sent.TaskID); err != nil {
+		t.Fatalf("complete turn fixture: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO chat_message (chat_session_id, role, content, task_id)
+		VALUES ($1, 'assistant', 'final answer', $2)
+	`, first.ID, sent.TaskID); err != nil {
+		t.Fatalf("insert turn reply fixture: %v", err)
+	}
+	deliveryReq := newRequest("POST", "/api/chat/sessions/"+first.ID+"/turns/"+sent.TaskID+"/delivery", map[string]any{
+		"status": "delivered",
+	})
+	deliveryReq = withURLParams(deliveryReq, "sessionId", first.ID, "turnId", sent.TaskID)
+	deliveryReq = withChatTestWorkspaceCtx(t, deliveryReq)
+	deliveryW := httptest.NewRecorder()
+	testHandler.SetChatTurnReplyDelivery(deliveryW, deliveryReq)
+	if deliveryW.Code != http.StatusOK {
+		t.Fatalf("set delivery: %d %s", deliveryW.Code, deliveryW.Body.String())
+	}
+	if err := json.Unmarshal(deliveryW.Body.Bytes(), &turn); err != nil {
+		t.Fatal(err)
+	}
+	if turn.Reply == nil || turn.Reply.Content != "final answer" || turn.ReplyDeliveryStatus != "delivered" {
+		t.Fatalf("delivered turn response = %#v", turn)
+	}
+}
+
 // TestSendChatMessage_ArchivedAgent verifies that sending to a session whose
 // agent was archived is rejected with 409 BEFORE any message is persisted.
 // EnqueueChatTask rejects an archived agent, but only after CreateChatMessage;

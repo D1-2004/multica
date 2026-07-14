@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -44,8 +46,17 @@ var chatStartCmd = &cobra.Command{
 var chatSendCmd = &cobra.Command{
 	Use:   "send <session-id> <message|->",
 	Short: "Send a message to a Chat Session",
-	Args:  cobra.MinimumNArgs(2),
-	RunE:  runChatSend,
+	Args: func(cmd *cobra.Command, args []string) error {
+		key, _ := cmd.Flags().GetString("session-key")
+		if strings.TrimSpace(key) != "" && len(args) >= 1 {
+			return nil
+		}
+		if len(args) < 2 {
+			return fmt.Errorf("session id and message are required (or use --session-key with a message)")
+		}
+		return nil
+	},
+	RunE: runChatSend,
 }
 
 func init() {
@@ -54,6 +65,14 @@ func init() {
 	}
 	chatStartCmd.Flags().String("agent", "", "Agent name or UUID")
 	chatStartCmd.Flags().String("title", "", "Optional Session title")
+	chatStartCmd.Flags().String("session-key", "", "Stable idempotency key for creating or resuming the Session")
+	chatStartCmd.Flags().String("reply-template", "", "Installed sandbox reply template to run for terminal Turns")
+	chatStartCmd.Flags().String("reply-config", "", "Path to a JSON object passed to the reply template")
+	chatStartCmd.Flags().Bool("wait", false, "Wait for the Turn's terminal status")
+	chatStartCmd.Flags().Duration("wait-timeout", 30*time.Minute, "Maximum time to wait for a terminal Turn")
+	chatSendCmd.Flags().String("session-key", "", "Send by stable SessionKey instead of Session UUID")
+	chatSendCmd.Flags().Bool("wait", false, "Wait for the Turn's terminal status")
+	chatSendCmd.Flags().Duration("wait-timeout", 30*time.Minute, "Maximum time to wait for a terminal Turn")
 	chatCmd.AddCommand(chatListCmd, chatGetCmd, chatMessagesCmd, chatStartCmd, chatSendCmd)
 }
 
@@ -168,11 +187,25 @@ func runChatStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolve chat agent: %w", err)
 	}
 	title, _ := cmd.Flags().GetString("title")
+	sessionKey, _ := cmd.Flags().GetString("session-key")
+	replyTemplate, _ := cmd.Flags().GetString("reply-template")
+	replyConfig, err := readReplyConfigFlag(cmd)
+	if err != nil {
+		return err
+	}
 	var session map[string]any
-	if err := client.PostJSON(ctx, "/api/chat/sessions", map[string]any{
-		"agent_id": agentID,
-		"title":    strings.TrimSpace(title),
-	}, &session); err != nil {
+	createBody := map[string]any{
+		"agent_id":       agentID,
+		"title":          strings.TrimSpace(title),
+		"reply_template": strings.TrimSpace(replyTemplate),
+		"reply_config":   replyConfig,
+	}
+	if strings.TrimSpace(sessionKey) != "" {
+		err = client.PutJSON(ctx, "/api/chat/sessions/by-key/"+url.PathEscape(strings.TrimSpace(sessionKey)), createBody, &session)
+	} else {
+		err = client.PostJSON(ctx, "/api/chat/sessions", createBody, &session)
+	}
+	if err != nil {
 		return fmt.Errorf("create chat session: %w", err)
 	}
 	sessionID := strVal(session, "id")
@@ -183,11 +216,16 @@ func runChatStart(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("chat session %s was created, but sending its first message failed: %w", sessionID, err)
 	}
-	return cli.PrintJSON(os.Stdout, chatSendOutput(sessionID, sent))
+	return finishChatSend(cmd, client, session, sessionID, sent)
 }
 
 func runChatSend(cmd *cobra.Command, args []string) error {
-	message, err := readChatMessage(cmd, args[1:])
+	sessionKey, _ := cmd.Flags().GetString("session-key")
+	messageArgs := args[1:]
+	if strings.TrimSpace(sessionKey) != "" {
+		messageArgs = args
+	}
+	message, err := readChatMessage(cmd, messageArgs)
 	if err != nil {
 		return err
 	}
@@ -198,15 +236,65 @@ func runChatSend(cmd *cobra.Command, args []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	sessionID, err := resolveChatSessionID(ctx, client, args[0])
+	var session map[string]any
+	var sessionID string
+	var sent map[string]any
+	if strings.TrimSpace(sessionKey) != "" {
+		keyPath := url.PathEscape(strings.TrimSpace(sessionKey))
+		if err := client.GetJSON(ctx, "/api/chat/sessions/by-key/"+keyPath, &session); err != nil {
+			return fmt.Errorf("get chat session by key: %w", err)
+		}
+		sessionID = strVal(session, "id")
+		err = client.PostJSON(ctx, "/api/chat/sessions/by-key/"+keyPath+"/messages", map[string]any{"content": message}, &sent)
+	} else {
+		sessionID, err = resolveChatSessionID(ctx, client, args[0])
+		if err == nil {
+			sent, err = sendChatSessionMessage(ctx, client, sessionID, message)
+		}
+		session = map[string]any{"reply_template": sent["reply_template"]}
+	}
+	if err != nil {
+		return fmt.Errorf("send chat message: %w", err)
+	}
+	return finishChatSend(cmd, client, session, sessionID, sent)
+}
+
+func readReplyConfigFlag(cmd *cobra.Command) (map[string]any, error) {
+	path, _ := cmd.Flags().GetString("reply-config")
+	if strings.TrimSpace(path) == "" {
+		return map[string]any{}, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read reply config: %w", err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil || config == nil {
+		return nil, fmt.Errorf("reply config must be a JSON object")
+	}
+	return config, nil
+}
+
+func finishChatSend(cmd *cobra.Command, client *cli.APIClient, session map[string]any, sessionID string, sent map[string]any) error {
+	wait, _ := cmd.Flags().GetBool("wait")
+	if strVal(session, "reply_template") != "" {
+		wait = true
+	}
+	if !wait {
+		return cli.PrintJSON(os.Stdout, chatSendOutput(sessionID, sent))
+	}
+	timeout, _ := cmd.Flags().GetDuration("wait-timeout")
+	turn, err := waitForChatTurn(client, sessionID, strVal(sent, "task_id"), timeout)
 	if err != nil {
 		return err
 	}
-	sent, err := sendChatSessionMessage(ctx, client, sessionID, message)
-	if err != nil {
-		return err
+	if strVal(turn, "reply_template") != "" && strVal(turn, "reply_delivery_status") != "delivered" {
+		turn, err = executeChatReplyTemplate(client, sessionID, turn)
+		if err != nil {
+			return err
+		}
 	}
-	return cli.PrintJSON(os.Stdout, chatSendOutput(sessionID, sent))
+	return cli.PrintJSON(os.Stdout, turn)
 }
 
 func fetchChatSessions(ctx context.Context, client *cli.APIClient) ([]map[string]any, error) {

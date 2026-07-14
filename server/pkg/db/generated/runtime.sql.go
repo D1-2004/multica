@@ -16,7 +16,7 @@ UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
 WHERE (runtime_id = ANY($1::uuid[]) OR agent_id = ANY($2::uuid[]))
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, reply_template, reply_config, reply_delivery_status, reply_delivery_error, reply_delivered_at
 `
 
 type CancelAgentTasksByRuntimeOrAgentParams struct {
@@ -86,6 +86,11 @@ func (q *Queries) CancelAgentTasksByRuntimeOrAgent(ctx context.Context, arg Canc
 			&i.CoalescedCommentIds,
 			&i.DeliveredCommentIds,
 			&i.ChatInputTaskID,
+			&i.ReplyTemplate,
+			&i.ReplyConfig,
+			&i.ReplyDeliveryStatus,
+			&i.ReplyDeliveryError,
+			&i.ReplyDeliveredAt,
 		); err != nil {
 			return nil, err
 		}
@@ -217,7 +222,7 @@ WHERE status IN ('dispatched', 'running', 'waiting_local_directory')
   AND runtime_id IN (
     SELECT id FROM agent_runtime WHERE status = 'offline'
   )
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, reply_template, reply_config, reply_delivery_status, reply_delivery_error, reply_delivered_at
 `
 
 // Marks dispatched/running/waiting_local_directory tasks as failed when
@@ -271,6 +276,11 @@ func (q *Queries) FailTasksForOfflineRuntimes(ctx context.Context) ([]AgentTaskQ
 			&i.CoalescedCommentIds,
 			&i.DeliveredCommentIds,
 			&i.ChatInputTaskID,
+			&i.ReplyTemplate,
+			&i.ReplyConfig,
+			&i.ReplyDeliveryStatus,
+			&i.ReplyDeliveryError,
+			&i.ReplyDeliveredAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1329,7 +1339,7 @@ DO UPDATE SET
     visibility = EXCLUDED.visibility,
     last_seen_at = now(),
     updated_at = now()
-RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, visibility, profile_id
+RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, visibility, profile_id, custom_name
 `
 
 type UpsertCloudAgentRuntimeParams struct {
@@ -1379,6 +1389,7 @@ func (q *Queries) UpsertCloudAgentRuntime(ctx context.Context, arg UpsertCloudAg
 		&i.LegacyDaemonID,
 		&i.Visibility,
 		&i.ProfileID,
+		&i.CustomName,
 	)
 	return i, err
 }

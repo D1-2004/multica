@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -24,13 +25,55 @@ import (
 // meaningful summary, short enough to keep the dropdown row scannable.
 const chatSessionTitleMaxLen = 200
 
+const (
+	chatSessionKeyMaxLen    = 200
+	chatReplyTemplateMaxLen = 100
+	chatReplyConfigMaxBytes = 16 * 1024
+)
+
 // ---------------------------------------------------------------------------
 // Chat Sessions
 // ---------------------------------------------------------------------------
 
 type CreateChatSessionRequest struct {
-	AgentID string `json:"agent_id"`
-	Title   string `json:"title"`
+	AgentID       string          `json:"agent_id"`
+	Title         string          `json:"title"`
+	SessionKey    string          `json:"session_key"`
+	ReplyTemplate string          `json:"reply_template"`
+	ReplyConfig   json.RawMessage `json:"reply_config"`
+}
+
+func normalizeChatReplySettings(template string, raw json.RawMessage) (string, []byte, error) {
+	template = strings.TrimSpace(template)
+	if len(template) > chatReplyTemplateMaxLen {
+		return "", nil, errors.New("reply_template is too long")
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		raw = json.RawMessage(`{}`)
+	}
+	if len(raw) > chatReplyConfigMaxBytes {
+		return "", nil, errors.New("reply_config is too large")
+	}
+	var object map[string]any
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return "", nil, errors.New("reply_config must be a JSON object")
+	}
+	canonical, err := json.Marshal(object)
+	if err != nil {
+		return "", nil, errors.New("invalid reply_config")
+	}
+	return template, canonical, nil
+}
+
+func normalizeChatSessionKey(raw string) (pgtype.Text, error) {
+	key := strings.TrimSpace(raw)
+	if key == "" {
+		return pgtype.Text{}, nil
+	}
+	if len(key) > chatSessionKeyMaxLen {
+		return pgtype.Text{}, errors.New("session_key is too long")
+	}
+	return pgtype.Text{String: key, Valid: true}, nil
 }
 
 func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +90,16 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AgentID == "" {
 		writeError(w, http.StatusBadRequest, "agent_id is required")
+		return
+	}
+	sessionKey, err := normalizeChatSessionKey(req.SessionKey)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	replyTemplate, replyConfig, err := normalizeChatReplySettings(req.ReplyTemplate, req.ReplyConfig)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	agentID, ok := parseUUIDOrBadRequest(w, req.AgentID, "agent_id")
@@ -80,18 +133,115 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if sessionKey.Valid {
+		existing, lookupErr := h.Queries.GetChatSessionByKey(r.Context(), db.GetChatSessionByKeyParams{
+			WorkspaceID: workspaceUUID,
+			CreatorID:   parseUUID(userID),
+			SessionKey:  sessionKey,
+		})
+		if lookupErr == nil {
+			if existing.AgentID != agentID {
+				writeError(w, http.StatusConflict, "session_key is already bound to another agent")
+				return
+			}
+			writeJSON(w, http.StatusOK, chatSessionToResponse(existing))
+			return
+		}
+		if !errors.Is(lookupErr, pgx.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "failed to resolve chat session key")
+			return
+		}
+	}
+
 	session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
-		WorkspaceID: workspaceUUID,
-		AgentID:     agentID,
-		CreatorID:   parseUUID(userID),
-		Title:       req.Title,
+		WorkspaceID:   workspaceUUID,
+		AgentID:       agentID,
+		CreatorID:     parseUUID(userID),
+		Title:         req.Title,
+		SessionKey:    sessionKey,
+		ReplyTemplate: pgtype.Text{String: replyTemplate, Valid: replyTemplate != ""},
+		ReplyConfig:   replyConfig,
 	})
 	if err != nil {
+		// A concurrent idempotent create may have won the unique key race.
+		if sessionKey.Valid {
+			if existing, lookupErr := h.Queries.GetChatSessionByKey(r.Context(), db.GetChatSessionByKeyParams{
+				WorkspaceID: workspaceUUID, CreatorID: parseUUID(userID), SessionKey: sessionKey,
+			}); lookupErr == nil && existing.AgentID == agentID {
+				writeJSON(w, http.StatusOK, chatSessionToResponse(existing))
+				return
+			}
+		}
 		writeError(w, http.StatusInternalServerError, "failed to create chat session")
 		return
 	}
 
 	writeJSON(w, http.StatusCreated, chatSessionToResponse(session))
+}
+
+func (h *Handler) PutChatSessionByKey(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimSpace(chi.URLParam(r, "sessionKey"))
+	if key == "" || len(key) > chatSessionKeyMaxLen {
+		writeError(w, http.StatusBadRequest, "invalid session_key")
+		return
+	}
+	var body map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	body["session_key"], _ = json.Marshal(key)
+	encoded, _ := json.Marshal(body)
+	r.Body = io.NopCloser(strings.NewReader(string(encoded)))
+	h.CreateChatSession(w, r)
+}
+
+func (h *Handler) loadChatSessionByKeyForUser(w http.ResponseWriter, r *http.Request) (db.ChatSession, bool) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return db.ChatSession{}, false
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	key, err := normalizeChatSessionKey(chi.URLParam(r, "sessionKey"))
+	if err != nil || !key.Valid {
+		writeError(w, http.StatusBadRequest, "invalid session_key")
+		return db.ChatSession{}, false
+	}
+	session, err := h.Queries.GetChatSessionByKey(r.Context(), db.GetChatSessionByKeyParams{
+		WorkspaceID: parseUUID(workspaceID), CreatorID: parseUUID(userID), SessionKey: key,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return db.ChatSession{}, false
+	}
+	agent, err := h.Queries.GetAgent(r.Context(), session.AgentID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return db.ChatSession{}, false
+	}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+		return db.ChatSession{}, false
+	}
+	return session, true
+}
+
+func (h *Handler) GetChatSessionByKey(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.loadChatSessionByKeyForUser(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, chatSessionToResponse(session))
+}
+
+func (h *Handler) SendChatMessageByKey(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.loadChatSessionByKeyForUser(w, r)
+	if !ok {
+		return
+	}
+	chi.RouteContext(r.Context()).URLParams.Add("sessionId", uuidToString(session.ID))
+	h.SendChatMessage(w, r)
 }
 
 func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
@@ -509,7 +659,10 @@ type SendChatMessageRequest struct {
 type SendChatMessageResponse struct {
 	MessageID string `json:"message_id"`
 	TaskID    string `json:"task_id"`
-	Collected bool   `json:"collected"`
+	// ReplyTemplate tells sandbox callers whether this Turn needs terminal
+	// post-processing without an extra Session read.
+	ReplyTemplate string `json:"reply_template"`
+	Collected     bool   `json:"collected"`
 	// AttachmentIDs are the attachment rows actually bound to this message by
 	// the server. The client diffs these against the ids it requested so it
 	// can warn the user when an attachment silently failed to bind — no extra
@@ -669,6 +822,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		Collected:     sent.Collected,
 		CreatedAt:     timestampToString(task.CreatedAt),
 		AttachmentIDs: boundAttachmentIDs,
+		ReplyTemplate: task.ReplyTemplate,
 	})
 }
 
@@ -821,6 +975,163 @@ type PendingChatTaskResponse struct {
 	TaskID    string `json:"task_id,omitempty"`
 	Status    string `json:"status,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
+}
+
+type ChatTurnReplyResponse struct {
+	MessageID     string  `json:"message_id"`
+	Content       string  `json:"content"`
+	MessageKind   string  `json:"message_kind"`
+	CreatedAt     string  `json:"created_at"`
+	FailureReason *string `json:"failure_reason"`
+}
+
+type ChatTurnResponse struct {
+	ID                  string                 `json:"id"`
+	ChatSessionID       string                 `json:"chat_session_id"`
+	Status              string                 `json:"status"`
+	CreatedAt           string                 `json:"created_at"`
+	StartedAt           *string                `json:"started_at"`
+	CompletedAt         *string                `json:"completed_at"`
+	Error               *string                `json:"error"`
+	FailureReason       *string                `json:"failure_reason"`
+	Reply               *ChatTurnReplyResponse `json:"reply"`
+	ReplyTemplate       string                 `json:"reply_template"`
+	ReplyConfig         json.RawMessage        `json:"reply_config"`
+	ReplyDeliveryStatus string                 `json:"reply_delivery_status"`
+	ReplyDeliveryError  *string                `json:"reply_delivery_error"`
+	ReplyDeliveredAt    *string                `json:"reply_delivered_at"`
+}
+
+func chatTurnToResponse(turn db.GetChatTurnRow) ChatTurnResponse {
+	resp := ChatTurnResponse{
+		ID:                  uuidToString(turn.ID),
+		ChatSessionID:       uuidToString(turn.ChatSessionID),
+		Status:              turn.Status,
+		CreatedAt:           timestampToString(turn.CreatedAt),
+		StartedAt:           timestampToPtr(turn.StartedAt),
+		CompletedAt:         timestampToPtr(turn.CompletedAt),
+		Error:               textToPtr(turn.Error),
+		FailureReason:       textToPtr(turn.FailureReason),
+		ReplyTemplate:       turn.ReplyTemplate,
+		ReplyConfig:         json.RawMessage(turn.ReplyConfig),
+		ReplyDeliveryStatus: turn.ReplyDeliveryStatus,
+		ReplyDeliveryError:  textToPtr(turn.ReplyDeliveryError),
+		ReplyDeliveredAt:    timestampToPtr(turn.ReplyDeliveredAt),
+	}
+	if turn.ReplyMessageID.Valid {
+		resp.Reply = &ChatTurnReplyResponse{
+			MessageID:     uuidToString(turn.ReplyMessageID),
+			Content:       turn.ReplyContent,
+			MessageKind:   normalizeMessageKind(turn.ReplyMessageKind),
+			CreatedAt:     timestampToString(turn.ReplyCreatedAt),
+			FailureReason: textToPtr(turn.ReplyFailureReason),
+		}
+	}
+	if len(resp.ReplyConfig) == 0 {
+		resp.ReplyConfig = json.RawMessage(`{}`)
+	}
+	return resp
+}
+
+func (h *Handler) GetChatTurn(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, chi.URLParam(r, "sessionId"))
+	if !ok {
+		return
+	}
+	turnID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "turnId"), "turn id")
+	if !ok {
+		return
+	}
+	turn, err := h.Queries.GetChatTurn(r.Context(), db.GetChatTurnParams{ID: turnID, ChatSessionID: session.ID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "chat turn not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, chatTurnToResponse(turn))
+}
+
+func (h *Handler) ListChatTurns(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, chi.URLParam(r, "sessionId"))
+	if !ok {
+		return
+	}
+	ids, err := h.Queries.ListChatTurnIDs(r.Context(), session.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list chat turns")
+		return
+	}
+	turns := make([]ChatTurnResponse, 0, len(ids))
+	for _, id := range ids {
+		turn, err := h.Queries.GetChatTurn(r.Context(), db.GetChatTurnParams{ID: id, ChatSessionID: session.ID})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load chat turn")
+			return
+		}
+		turns = append(turns, chatTurnToResponse(turn))
+	}
+	writeJSON(w, http.StatusOK, turns)
+}
+
+type SetChatTurnReplyDeliveryRequest struct {
+	Status string `json:"status"`
+	Error  string `json:"error"`
+}
+
+func (h *Handler) SetChatTurnReplyDelivery(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, chi.URLParam(r, "sessionId"))
+	if !ok {
+		return
+	}
+	turnID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "turnId"), "turn id")
+	if !ok {
+		return
+	}
+	var req SetChatTurnReplyDeliveryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Status != "delivered" && req.Status != "failed" {
+		writeError(w, http.StatusBadRequest, "status must be delivered or failed")
+		return
+	}
+	turn, err := h.Queries.GetChatTurn(r.Context(), db.GetChatTurnParams{ID: turnID, ChatSessionID: session.ID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "chat turn not found")
+		return
+	}
+	if turn.Status != "completed" && turn.Status != "failed" && turn.Status != "cancelled" {
+		writeError(w, http.StatusConflict, "chat turn is not terminal")
+		return
+	}
+	if _, err := h.Queries.SetChatTurnReplyDelivery(r.Context(), db.SetChatTurnReplyDeliveryParams{
+		ID: turnID, ChatSessionID: session.ID, ReplyDeliveryStatus: req.Status,
+		ReplyDeliveryError: pgtype.Text{String: strings.TrimSpace(req.Error), Valid: strings.TrimSpace(req.Error) != ""},
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, "chat turn has no reply template")
+		return
+	}
+	updated, err := h.Queries.GetChatTurn(r.Context(), db.GetChatTurnParams{ID: turnID, ChatSessionID: session.ID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load chat turn")
+		return
+	}
+	writeJSON(w, http.StatusOK, chatTurnToResponse(updated))
 }
 
 // MarkChatSessionRead clears the session's unread_since (→ has_unread=false)
@@ -1149,12 +1460,15 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 type ChatSessionResponse struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
-	AgentID     string `json:"agent_id"`
-	CreatorID   string `json:"creator_id"`
-	Title       string `json:"title"`
-	Status      string `json:"status"`
+	ID            string          `json:"id"`
+	WorkspaceID   string          `json:"workspace_id"`
+	AgentID       string          `json:"agent_id"`
+	CreatorID     string          `json:"creator_id"`
+	Title         string          `json:"title"`
+	Status        string          `json:"status"`
+	SessionKey    *string         `json:"session_key"`
+	ReplyTemplate string          `json:"reply_template"`
+	ReplyConfig   json.RawMessage `json:"reply_config"`
 	// Only populated by list endpoints — single-session fetches return 0/false/nil.
 	// HasUnread is kept as a convenience (== UnreadCount > 0) for existing consumers.
 	HasUnread   bool             `json:"has_unread"`
@@ -1222,16 +1536,23 @@ type ChatMessageResponse struct {
 }
 
 func chatSessionToResponse(s db.ChatSession) ChatSessionResponse {
+	replyConfig := json.RawMessage(s.ReplyConfig)
+	if len(replyConfig) == 0 {
+		replyConfig = json.RawMessage(`{}`)
+	}
 	return ChatSessionResponse{
-		ID:          uuidToString(s.ID),
-		WorkspaceID: uuidToString(s.WorkspaceID),
-		AgentID:     uuidToString(s.AgentID),
-		CreatorID:   uuidToString(s.CreatorID),
-		Title:       s.Title,
-		Status:      s.Status,
-		Pinned:      s.PinnedAt.Valid,
-		CreatedAt:   timestampToString(s.CreatedAt),
-		UpdatedAt:   timestampToString(s.UpdatedAt),
+		ID:            uuidToString(s.ID),
+		WorkspaceID:   uuidToString(s.WorkspaceID),
+		AgentID:       uuidToString(s.AgentID),
+		CreatorID:     uuidToString(s.CreatorID),
+		Title:         s.Title,
+		Status:        s.Status,
+		SessionKey:    textToPtr(s.SessionKey),
+		ReplyTemplate: s.ReplyTemplate,
+		ReplyConfig:   replyConfig,
+		Pinned:        s.PinnedAt.Valid,
+		CreatedAt:     timestampToString(s.CreatedAt),
+		UpdatedAt:     timestampToString(s.UpdatedAt),
 	}
 }
 

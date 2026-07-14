@@ -76,17 +76,27 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 }
 
 const createChatSession = `-- name: CreateChatSession :one
-INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, runtime_id, is_agent_intro)
-VALUES ($1, $2, $3, $4, (SELECT runtime_id FROM agent WHERE id = $2), $5)
-RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at
+INSERT INTO chat_session (
+  workspace_id, agent_id, creator_id, title, runtime_id, is_agent_intro,
+  session_key, reply_template, reply_config
+)
+VALUES (
+  $1, $2, $3, $4, (SELECT runtime_id FROM agent WHERE id = $2), $5,
+  $6, COALESCE($7::text, ''),
+  COALESCE($8::jsonb, '{}'::jsonb)
+)
+RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, session_key, reply_template, reply_config
 `
 
 type CreateChatSessionParams struct {
-	WorkspaceID  pgtype.UUID `json:"workspace_id"`
-	AgentID      pgtype.UUID `json:"agent_id"`
-	CreatorID    pgtype.UUID `json:"creator_id"`
-	Title        string      `json:"title"`
-	IsAgentIntro bool        `json:"is_agent_intro"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	AgentID       pgtype.UUID `json:"agent_id"`
+	CreatorID     pgtype.UUID `json:"creator_id"`
+	Title         string      `json:"title"`
+	IsAgentIntro  bool        `json:"is_agent_intro"`
+	SessionKey    pgtype.Text `json:"session_key"`
+	ReplyTemplate pgtype.Text `json:"reply_template"`
+	ReplyConfig   []byte      `json:"reply_config"`
 }
 
 func (q *Queries) CreateChatSession(ctx context.Context, arg CreateChatSessionParams) (ChatSession, error) {
@@ -96,6 +106,9 @@ func (q *Queries) CreateChatSession(ctx context.Context, arg CreateChatSessionPa
 		arg.CreatorID,
 		arg.Title,
 		arg.IsAgentIntro,
+		arg.SessionKey,
+		arg.ReplyTemplate,
+		arg.ReplyConfig,
 	)
 	var i ChatSession
 	err := row.Scan(
@@ -114,6 +127,9 @@ func (q *Queries) CreateChatSession(ctx context.Context, arg CreateChatSessionPa
 		&i.LastReadAt,
 		&i.IsAgentIntro,
 		&i.PinnedAt,
+		&i.SessionKey,
+		&i.ReplyTemplate,
+		&i.ReplyConfig,
 	)
 	return i, err
 }
@@ -122,16 +138,20 @@ const createChatTask = `-- name: CreateChatTask :one
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, chat_session_id,
     initiator_user_id, originator_user_id, force_fresh_session, runtime_mcp_overlay,
-    runtime_connected_apps
+    runtime_connected_apps, reply_template, reply_config, reply_delivery_status
 )
 VALUES (
     $1, $2, NULL, 'queued', $3, $4, $5,
     $6,
     COALESCE($7::boolean, FALSE),
     $8,
-    $9
+    $9,
+    COALESCE($10::text, ''),
+    COALESCE($11::jsonb, '{}'::jsonb),
+    CASE WHEN COALESCE($10::text, '') = ''
+         THEN 'not_configured' ELSE 'pending' END
 )
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, reply_template, reply_config, reply_delivery_status, reply_delivery_error, reply_delivered_at
 `
 
 type CreateChatTaskParams struct {
@@ -144,6 +164,8 @@ type CreateChatTaskParams struct {
 	ForceFreshSession    pgtype.Bool `json:"force_fresh_session"`
 	RuntimeMcpOverlay    []byte      `json:"runtime_mcp_overlay"`
 	RuntimeConnectedApps []byte      `json:"runtime_connected_apps"`
+	ReplyTemplate        pgtype.Text `json:"reply_template"`
+	ReplyConfig          []byte      `json:"reply_config"`
 }
 
 func (q *Queries) CreateChatTask(ctx context.Context, arg CreateChatTaskParams) (AgentTaskQueue, error) {
@@ -157,6 +179,8 @@ func (q *Queries) CreateChatTask(ctx context.Context, arg CreateChatTaskParams) 
 		arg.ForceFreshSession,
 		arg.RuntimeMcpOverlay,
 		arg.RuntimeConnectedApps,
+		arg.ReplyTemplate,
+		arg.ReplyConfig,
 	)
 	var i AgentTaskQueue
 	err := row.Scan(
@@ -198,6 +222,11 @@ func (q *Queries) CreateChatTask(ctx context.Context, arg CreateChatTaskParams) 
 		&i.CoalescedCommentIds,
 		&i.DeliveredCommentIds,
 		&i.ChatInputTaskID,
+		&i.ReplyTemplate,
+		&i.ReplyConfig,
+		&i.ReplyDeliveryStatus,
+		&i.ReplyDeliveryError,
+		&i.ReplyDeliveredAt,
 	)
 	return i, err
 }
@@ -270,7 +299,7 @@ func (q *Queries) GetChatMessage(ctx context.Context, id pgtype.UUID) (ChatMessa
 }
 
 const getChatSession = `-- name: GetChatSession :one
-SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at FROM chat_session
+SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, session_key, reply_template, reply_config FROM chat_session
 WHERE id = $1
 `
 
@@ -293,12 +322,52 @@ func (q *Queries) GetChatSession(ctx context.Context, id pgtype.UUID) (ChatSessi
 		&i.LastReadAt,
 		&i.IsAgentIntro,
 		&i.PinnedAt,
+		&i.SessionKey,
+		&i.ReplyTemplate,
+		&i.ReplyConfig,
+	)
+	return i, err
+}
+
+const getChatSessionByKey = `-- name: GetChatSessionByKey :one
+SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, session_key, reply_template, reply_config FROM chat_session
+WHERE workspace_id = $1 AND creator_id = $2 AND session_key = $3
+`
+
+type GetChatSessionByKeyParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	CreatorID   pgtype.UUID `json:"creator_id"`
+	SessionKey  pgtype.Text `json:"session_key"`
+}
+
+func (q *Queries) GetChatSessionByKey(ctx context.Context, arg GetChatSessionByKeyParams) (ChatSession, error) {
+	row := q.db.QueryRow(ctx, getChatSessionByKey, arg.WorkspaceID, arg.CreatorID, arg.SessionKey)
+	var i ChatSession
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.CreatorID,
+		&i.Title,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UnreadSince,
+		&i.RuntimeID,
+		&i.LastReadAt,
+		&i.IsAgentIntro,
+		&i.PinnedAt,
+		&i.SessionKey,
+		&i.ReplyTemplate,
+		&i.ReplyConfig,
 	)
 	return i, err
 }
 
 const getChatSessionInWorkspace = `-- name: GetChatSessionInWorkspace :one
-SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at FROM chat_session
+SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, session_key, reply_template, reply_config FROM chat_session
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -326,6 +395,141 @@ func (q *Queries) GetChatSessionInWorkspace(ctx context.Context, arg GetChatSess
 		&i.LastReadAt,
 		&i.IsAgentIntro,
 		&i.PinnedAt,
+		&i.SessionKey,
+		&i.ReplyTemplate,
+		&i.ReplyConfig,
+	)
+	return i, err
+}
+
+const getChatTurn = `-- name: GetChatTurn :one
+SELECT atq.id, atq.agent_id, atq.issue_id, atq.status, atq.priority, atq.dispatched_at, atq.started_at, atq.completed_at, atq.result, atq.error, atq.created_at, atq.context, atq.runtime_id, atq.session_id, atq.work_dir, atq.trigger_comment_id, atq.chat_session_id, atq.autopilot_run_id, atq.attempt, atq.max_attempts, atq.parent_task_id, atq.failure_reason, atq.trigger_summary, atq.force_fresh_session, atq.is_leader_task, atq.wait_reason, atq.initiator_user_id, atq.handoff_note, atq.prepare_lease_expires_at, atq.squad_id, atq.runtime_mcp_overlay, atq.escalation_for_task_id, atq.fire_at, atq.originator_user_id, atq.runtime_connected_apps, atq.coalesced_comment_ids, atq.delivered_comment_ids, atq.chat_input_task_id, atq.reply_template, atq.reply_config, atq.reply_delivery_status, atq.reply_delivery_error, atq.reply_delivered_at,
+       cm.id AS reply_message_id,
+       COALESCE(cm.content, '') AS reply_content,
+       COALESCE(cm.message_kind, '') AS reply_message_kind,
+       cm.created_at AS reply_created_at,
+       cm.failure_reason AS reply_failure_reason
+FROM agent_task_queue atq
+LEFT JOIN LATERAL (
+  SELECT id, content, message_kind, created_at, failure_reason
+  FROM chat_message
+  WHERE chat_session_id = atq.chat_session_id
+    AND task_id = atq.id
+    AND role = 'assistant'
+  ORDER BY created_at DESC, id DESC
+  LIMIT 1
+) cm ON true
+WHERE atq.id = $1 AND atq.chat_session_id = $2
+`
+
+type GetChatTurnParams struct {
+	ID            pgtype.UUID `json:"id"`
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+}
+
+type GetChatTurnRow struct {
+	ID                    pgtype.UUID        `json:"id"`
+	AgentID               pgtype.UUID        `json:"agent_id"`
+	IssueID               pgtype.UUID        `json:"issue_id"`
+	Status                string             `json:"status"`
+	Priority              int32              `json:"priority"`
+	DispatchedAt          pgtype.Timestamptz `json:"dispatched_at"`
+	StartedAt             pgtype.Timestamptz `json:"started_at"`
+	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
+	Result                []byte             `json:"result"`
+	Error                 pgtype.Text        `json:"error"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	Context               []byte             `json:"context"`
+	RuntimeID             pgtype.UUID        `json:"runtime_id"`
+	SessionID             pgtype.Text        `json:"session_id"`
+	WorkDir               pgtype.Text        `json:"work_dir"`
+	TriggerCommentID      pgtype.UUID        `json:"trigger_comment_id"`
+	ChatSessionID         pgtype.UUID        `json:"chat_session_id"`
+	AutopilotRunID        pgtype.UUID        `json:"autopilot_run_id"`
+	Attempt               int32              `json:"attempt"`
+	MaxAttempts           int32              `json:"max_attempts"`
+	ParentTaskID          pgtype.UUID        `json:"parent_task_id"`
+	FailureReason         pgtype.Text        `json:"failure_reason"`
+	TriggerSummary        pgtype.Text        `json:"trigger_summary"`
+	ForceFreshSession     bool               `json:"force_fresh_session"`
+	IsLeaderTask          bool               `json:"is_leader_task"`
+	WaitReason            pgtype.Text        `json:"wait_reason"`
+	InitiatorUserID       pgtype.UUID        `json:"initiator_user_id"`
+	HandoffNote           pgtype.Text        `json:"handoff_note"`
+	PrepareLeaseExpiresAt pgtype.Timestamptz `json:"prepare_lease_expires_at"`
+	SquadID               pgtype.UUID        `json:"squad_id"`
+	RuntimeMcpOverlay     []byte             `json:"runtime_mcp_overlay"`
+	EscalationForTaskID   pgtype.UUID        `json:"escalation_for_task_id"`
+	FireAt                pgtype.Timestamptz `json:"fire_at"`
+	OriginatorUserID      pgtype.UUID        `json:"originator_user_id"`
+	RuntimeConnectedApps  []byte             `json:"runtime_connected_apps"`
+	CoalescedCommentIds   []pgtype.UUID      `json:"coalesced_comment_ids"`
+	DeliveredCommentIds   []pgtype.UUID      `json:"delivered_comment_ids"`
+	ChatInputTaskID       pgtype.UUID        `json:"chat_input_task_id"`
+	ReplyTemplate         string             `json:"reply_template"`
+	ReplyConfig           []byte             `json:"reply_config"`
+	ReplyDeliveryStatus   string             `json:"reply_delivery_status"`
+	ReplyDeliveryError    pgtype.Text        `json:"reply_delivery_error"`
+	ReplyDeliveredAt      pgtype.Timestamptz `json:"reply_delivered_at"`
+	ReplyMessageID        pgtype.UUID        `json:"reply_message_id"`
+	ReplyContent          string             `json:"reply_content"`
+	ReplyMessageKind      string             `json:"reply_message_kind"`
+	ReplyCreatedAt        pgtype.Timestamptz `json:"reply_created_at"`
+	ReplyFailureReason    pgtype.Text        `json:"reply_failure_reason"`
+}
+
+func (q *Queries) GetChatTurn(ctx context.Context, arg GetChatTurnParams) (GetChatTurnRow, error) {
+	row := q.db.QueryRow(ctx, getChatTurn, arg.ID, arg.ChatSessionID)
+	var i GetChatTurnRow
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ReplyTemplate,
+		&i.ReplyConfig,
+		&i.ReplyDeliveryStatus,
+		&i.ReplyDeliveryError,
+		&i.ReplyDeliveredAt,
+		&i.ReplyMessageID,
+		&i.ReplyContent,
+		&i.ReplyMessageKind,
+		&i.ReplyCreatedAt,
+		&i.ReplyFailureReason,
 	)
 	return i, err
 }
@@ -421,7 +625,7 @@ func (q *Queries) GetPendingChatTask(ctx context.Context, chatSessionID pgtype.U
 }
 
 const getQueuedDirectChatCollector = `-- name: GetQueuedDirectChatCollector :one
-SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id FROM agent_task_queue
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, reply_template, reply_config, reply_delivery_status, reply_delivery_error, reply_delivered_at FROM agent_task_queue
 WHERE chat_session_id = $1
   AND status = 'queued'
   AND chat_input_task_id = id
@@ -475,6 +679,11 @@ func (q *Queries) GetQueuedDirectChatCollector(ctx context.Context, chatSessionI
 		&i.CoalescedCommentIds,
 		&i.DeliveredCommentIds,
 		&i.ChatInputTaskID,
+		&i.ReplyTemplate,
+		&i.ReplyConfig,
+		&i.ReplyDeliveryStatus,
+		&i.ReplyDeliveryError,
+		&i.ReplyDeliveredAt,
 	)
 	return i, err
 }
@@ -531,7 +740,7 @@ func (q *Queries) LinkChatMessageToTask(ctx context.Context, arg LinkChatMessage
 }
 
 const listAllChatSessionsByCreator = `-- name: ListAllChatSessionsByCreator :many
-SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_id, cs.work_dir, cs.status, cs.created_at, cs.updated_at, cs.unread_since, cs.runtime_id, cs.last_read_at, cs.is_agent_intro, cs.pinned_at,
+SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_id, cs.work_dir, cs.status, cs.created_at, cs.updated_at, cs.unread_since, cs.runtime_id, cs.last_read_at, cs.is_agent_intro, cs.pinned_at, cs.session_key, cs.reply_template, cs.reply_config,
        (SELECT count(*) FROM chat_message m
           WHERE m.chat_session_id = cs.id
             AND m.role = 'assistant'
@@ -574,6 +783,9 @@ type ListAllChatSessionsByCreatorRow struct {
 	LastReadAt               pgtype.Timestamptz `json:"last_read_at"`
 	IsAgentIntro             bool               `json:"is_agent_intro"`
 	PinnedAt                 pgtype.Timestamptz `json:"pinned_at"`
+	SessionKey               pgtype.Text        `json:"session_key"`
+	ReplyTemplate            string             `json:"reply_template"`
+	ReplyConfig              []byte             `json:"reply_config"`
 	UnreadCount              int32              `json:"unread_count"`
 	LastMessageContent       string             `json:"last_message_content"`
 	LastMessageRole          string             `json:"last_message_role"`
@@ -607,6 +819,9 @@ func (q *Queries) ListAllChatSessionsByCreator(ctx context.Context, arg ListAllC
 			&i.LastReadAt,
 			&i.IsAgentIntro,
 			&i.PinnedAt,
+			&i.SessionKey,
+			&i.ReplyTemplate,
+			&i.ReplyConfig,
 			&i.UnreadCount,
 			&i.LastMessageContent,
 			&i.LastMessageRole,
@@ -757,7 +972,7 @@ func (q *Queries) ListChatMessagesPage(ctx context.Context, arg ListChatMessages
 }
 
 const listChatSessionsByCreator = `-- name: ListChatSessionsByCreator :many
-SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_id, cs.work_dir, cs.status, cs.created_at, cs.updated_at, cs.unread_since, cs.runtime_id, cs.last_read_at, cs.is_agent_intro, cs.pinned_at,
+SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_id, cs.work_dir, cs.status, cs.created_at, cs.updated_at, cs.unread_since, cs.runtime_id, cs.last_read_at, cs.is_agent_intro, cs.pinned_at, cs.session_key, cs.reply_template, cs.reply_config,
        (SELECT count(*) FROM chat_message m
           WHERE m.chat_session_id = cs.id
             AND m.role = 'assistant'
@@ -800,6 +1015,9 @@ type ListChatSessionsByCreatorRow struct {
 	LastReadAt               pgtype.Timestamptz `json:"last_read_at"`
 	IsAgentIntro             bool               `json:"is_agent_intro"`
 	PinnedAt                 pgtype.Timestamptz `json:"pinned_at"`
+	SessionKey               pgtype.Text        `json:"session_key"`
+	ReplyTemplate            string             `json:"reply_template"`
+	ReplyConfig              []byte             `json:"reply_config"`
 	UnreadCount              int32              `json:"unread_count"`
 	LastMessageContent       string             `json:"last_message_content"`
 	LastMessageRole          string             `json:"last_message_role"`
@@ -836,6 +1054,9 @@ func (q *Queries) ListChatSessionsByCreator(ctx context.Context, arg ListChatSes
 			&i.LastReadAt,
 			&i.IsAgentIntro,
 			&i.PinnedAt,
+			&i.SessionKey,
+			&i.ReplyTemplate,
+			&i.ReplyConfig,
 			&i.UnreadCount,
 			&i.LastMessageContent,
 			&i.LastMessageRole,
@@ -846,6 +1067,33 @@ func (q *Queries) ListChatSessionsByCreator(ctx context.Context, arg ListChatSes
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatTurnIDs = `-- name: ListChatTurnIDs :many
+SELECT id FROM agent_task_queue
+WHERE chat_session_id = $1
+ORDER BY created_at DESC, id DESC
+LIMIT 100
+`
+
+func (q *Queries) ListChatTurnIDs(ctx context.Context, chatSessionID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listChatTurnIDs, chatSessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -963,7 +1211,7 @@ UPDATE chat_session
 SET status = CASE WHEN $2::bool THEN 'archived' ELSE 'active' END,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at
+RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, session_key, reply_template, reply_config
 `
 
 type SetChatSessionArchivedParams struct {
@@ -994,6 +1242,9 @@ func (q *Queries) SetChatSessionArchived(ctx context.Context, arg SetChatSession
 		&i.LastReadAt,
 		&i.IsAgentIntro,
 		&i.PinnedAt,
+		&i.SessionKey,
+		&i.ReplyTemplate,
+		&i.ReplyConfig,
 	)
 	return i, err
 }
@@ -1002,7 +1253,7 @@ const setChatSessionPinned = `-- name: SetChatSessionPinned :one
 UPDATE chat_session
 SET pinned_at = CASE WHEN $2::bool THEN COALESCE(pinned_at, now()) ELSE NULL END
 WHERE id = $1
-RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at
+RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, session_key, reply_template, reply_config
 `
 
 type SetChatSessionPinnedParams struct {
@@ -1034,6 +1285,9 @@ func (q *Queries) SetChatSessionPinned(ctx context.Context, arg SetChatSessionPi
 		&i.LastReadAt,
 		&i.IsAgentIntro,
 		&i.PinnedAt,
+		&i.SessionKey,
+		&i.ReplyTemplate,
+		&i.ReplyConfig,
 	)
 	return i, err
 }
@@ -1042,7 +1296,7 @@ const setChatTaskInputOwnerSelf = `-- name: SetChatTaskInputOwnerSelf :one
 UPDATE agent_task_queue
 SET chat_input_task_id = id
 WHERE id = $1
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, reply_template, reply_config, reply_delivery_status, reply_delivery_error, reply_delivered_at
 `
 
 // Stamps a freshly-created direct-chat task as the owner of its own input batch
@@ -1093,6 +1347,83 @@ func (q *Queries) SetChatTaskInputOwnerSelf(ctx context.Context, id pgtype.UUID)
 		&i.CoalescedCommentIds,
 		&i.DeliveredCommentIds,
 		&i.ChatInputTaskID,
+		&i.ReplyTemplate,
+		&i.ReplyConfig,
+		&i.ReplyDeliveryStatus,
+		&i.ReplyDeliveryError,
+		&i.ReplyDeliveredAt,
+	)
+	return i, err
+}
+
+const setChatTurnReplyDelivery = `-- name: SetChatTurnReplyDelivery :one
+UPDATE agent_task_queue
+SET reply_delivery_status = $3,
+    reply_delivery_error = CASE WHEN $3 = 'failed' THEN $4 ELSE NULL END,
+    reply_delivered_at = CASE WHEN $3 = 'delivered' THEN now() ELSE NULL END
+WHERE id = $1 AND chat_session_id = $2 AND reply_template <> ''
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, reply_template, reply_config, reply_delivery_status, reply_delivery_error, reply_delivered_at
+`
+
+type SetChatTurnReplyDeliveryParams struct {
+	ID                  pgtype.UUID `json:"id"`
+	ChatSessionID       pgtype.UUID `json:"chat_session_id"`
+	ReplyDeliveryStatus string      `json:"reply_delivery_status"`
+	ReplyDeliveryError  pgtype.Text `json:"reply_delivery_error"`
+}
+
+func (q *Queries) SetChatTurnReplyDelivery(ctx context.Context, arg SetChatTurnReplyDeliveryParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, setChatTurnReplyDelivery,
+		arg.ID,
+		arg.ChatSessionID,
+		arg.ReplyDeliveryStatus,
+		arg.ReplyDeliveryError,
+	)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ReplyTemplate,
+		&i.ReplyConfig,
+		&i.ReplyDeliveryStatus,
+		&i.ReplyDeliveryError,
+		&i.ReplyDeliveredAt,
 	)
 	return i, err
 }
@@ -1141,7 +1472,7 @@ func (q *Queries) UpdateChatSessionSession(ctx context.Context, arg UpdateChatSe
 const updateChatSessionTitle = `-- name: UpdateChatSessionTitle :one
 UPDATE chat_session SET title = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at
+RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, session_key, reply_template, reply_config
 `
 
 type UpdateChatSessionTitleParams struct {
@@ -1168,6 +1499,9 @@ func (q *Queries) UpdateChatSessionTitle(ctx context.Context, arg UpdateChatSess
 		&i.LastReadAt,
 		&i.IsAgentIntro,
 		&i.PinnedAt,
+		&i.SessionKey,
+		&i.ReplyTemplate,
+		&i.ReplyConfig,
 	)
 	return i, err
 }
@@ -1175,7 +1509,7 @@ func (q *Queries) UpdateChatSessionTitle(ctx context.Context, arg UpdateChatSess
 const updateChatSessionTitleIfCurrent = `-- name: UpdateChatSessionTitleIfCurrent :one
 UPDATE chat_session SET title = $1, updated_at = now()
 WHERE id = $2 AND title = $3
-RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at
+RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, session_key, reply_template, reply_config
 `
 
 type UpdateChatSessionTitleIfCurrentParams struct {
@@ -1211,6 +1545,9 @@ func (q *Queries) UpdateChatSessionTitleIfCurrent(ctx context.Context, arg Updat
 		&i.LastReadAt,
 		&i.IsAgentIntro,
 		&i.PinnedAt,
+		&i.SessionKey,
+		&i.ReplyTemplate,
+		&i.ReplyConfig,
 	)
 	return i, err
 }

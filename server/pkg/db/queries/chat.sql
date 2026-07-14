@@ -1,7 +1,18 @@
 -- name: CreateChatSession :one
-INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, runtime_id, is_agent_intro)
-VALUES ($1, $2, $3, $4, (SELECT runtime_id FROM agent WHERE id = $2), $5)
+INSERT INTO chat_session (
+  workspace_id, agent_id, creator_id, title, runtime_id, is_agent_intro,
+  session_key, reply_template, reply_config
+)
+VALUES (
+  $1, $2, $3, $4, (SELECT runtime_id FROM agent WHERE id = $2), $5,
+  sqlc.narg(session_key), COALESCE(sqlc.narg(reply_template)::text, ''),
+  COALESCE(sqlc.narg(reply_config)::jsonb, '{}'::jsonb)
+)
 RETURNING *;
+
+-- name: GetChatSessionByKey :one
+SELECT * FROM chat_session
+WHERE workspace_id = $1 AND creator_id = $2 AND session_key = $3;
 
 -- name: GetChatSession :one
 SELECT * FROM chat_session
@@ -191,15 +202,52 @@ WHERE id = $1;
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, chat_session_id,
     initiator_user_id, originator_user_id, force_fresh_session, runtime_mcp_overlay,
-    runtime_connected_apps
+    runtime_connected_apps, reply_template, reply_config, reply_delivery_status
 )
 VALUES (
     $1, $2, NULL, 'queued', $3, $4, $5,
     sqlc.narg(originator_user_id),
     COALESCE(sqlc.narg('force_fresh_session')::boolean, FALSE),
     sqlc.narg(runtime_mcp_overlay),
-    sqlc.narg(runtime_connected_apps)
+    sqlc.narg(runtime_connected_apps),
+    COALESCE(sqlc.narg(reply_template)::text, ''),
+    COALESCE(sqlc.narg(reply_config)::jsonb, '{}'::jsonb),
+    CASE WHEN COALESCE(sqlc.narg(reply_template)::text, '') = ''
+         THEN 'not_configured' ELSE 'pending' END
 )
+RETURNING *;
+
+-- name: GetChatTurn :one
+SELECT atq.*,
+       cm.id AS reply_message_id,
+       COALESCE(cm.content, '') AS reply_content,
+       COALESCE(cm.message_kind, '') AS reply_message_kind,
+       cm.created_at AS reply_created_at,
+       cm.failure_reason AS reply_failure_reason
+FROM agent_task_queue atq
+LEFT JOIN LATERAL (
+  SELECT id, content, message_kind, created_at, failure_reason
+  FROM chat_message
+  WHERE chat_session_id = atq.chat_session_id
+    AND task_id = atq.id
+    AND role = 'assistant'
+  ORDER BY created_at DESC, id DESC
+  LIMIT 1
+) cm ON true
+WHERE atq.id = $1 AND atq.chat_session_id = $2;
+
+-- name: ListChatTurnIDs :many
+SELECT id FROM agent_task_queue
+WHERE chat_session_id = $1
+ORDER BY created_at DESC, id DESC
+LIMIT 100;
+
+-- name: SetChatTurnReplyDelivery :one
+UPDATE agent_task_queue
+SET reply_delivery_status = $3,
+    reply_delivery_error = CASE WHEN $3 = 'failed' THEN sqlc.narg(reply_delivery_error) ELSE NULL END,
+    reply_delivered_at = CASE WHEN $3 = 'delivered' THEN now() ELSE NULL END
+WHERE id = $1 AND chat_session_id = $2 AND reply_template <> ''
 RETURNING *;
 
 -- name: LockChatSessionForDirectSend :one

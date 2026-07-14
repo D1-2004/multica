@@ -40,6 +40,51 @@ cat prompt.md | multica chat send abcd -
 
 `chat start` and `chat send` return JSON containing `session_id`, `message_id`, `task_id`, and `collected`. A `collected: true` result means the message joined the existing queued execution for that Session.
 
+### Reliable Turn replies from a sandbox
+
+Automation can bind a stable `session_key` and a sandbox-local final reply template to a Session. The key makes create/resume idempotent; every returned `task_id` is the Turn ID and remains queryable after reconnects.
+
+Install the bundled DWS post-processor in the sandbox:
+
+```bash
+multica chat reply-template install dws-reply \
+  --script ./scripts/chat-reply-templates/dws-reply.sh
+```
+
+Create or resume a Session with a fixed DWS reply target:
+
+```bash
+cat > reply-config.json <<'JSON'
+{
+  "mode": "reply",
+  "openConversationId": "cid...",
+  "openMessageId": "msg...",
+  "senderOpenDingTalkId": "user...",
+  "aiTag": true
+}
+JSON
+
+multica chat start \
+  --agent Lambda \
+  --session-key "dingtalk:cid...:thread" \
+  --reply-template dws-reply \
+  --reply-config reply-config.json \
+  "Answer this message"
+```
+
+A Session with a reply template waits for its Turn automatically. The CLI ignores intermediate streaming messages, polls the durable Turn endpoint until `completed`, `failed`, or `cancelled`, then passes the final Turn JSON to the installed script on stdin. The script runs inside the caller's sandbox and uses that sandbox's DWS login; Multica Server never uploads or executes it.
+
+You can send and recover state independently:
+
+```bash
+multica chat send --session-key "dingtalk:cid...:thread" "Follow-up"
+multica chat turn <session-id> <task-id> --wait --deliver
+```
+
+The Turn response separates agent execution (`status`, `reply`) from post-processing (`reply_delivery_status`, `reply_delivery_error`). WebSocket events may make UI updates faster, but the persisted Turn query is the reliability source and survives a dropped stream or restarted caller.
+
+The bundled DWS script passes the immutable Turn ID as DWS `--uuid`, so retrying delivery after a sandbox crash is idempotent within DWS's 24-hour deduplication window.
+
 ## What an agent can and cannot do in chat
 
 Agents run in a **fully sandboxed** mode inside a conversation.

@@ -1520,6 +1520,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Route("/api/chat/sessions", func(r chi.Router) {
 				r.Post("/", h.CreateChatSession)
 				r.Get("/", h.ListChatSessions)
+				r.Route("/by-key/{sessionKey}", func(r chi.Router) {
+					r.Put("/", h.PutChatSessionByKey)
+					r.Get("/", h.GetChatSessionByKey)
+					r.Post("/messages", h.SendChatMessageByKey)
+				})
 				r.Route("/{sessionId}", func(r chi.Router) {
 					r.Get("/", h.GetChatSession)
 					r.Patch("/", h.UpdateChatSession)
@@ -1530,6 +1535,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/messages", h.ListChatMessages)
 					r.Get("/messages/page", h.ListChatMessagesPage)
 					r.Get("/pending-task", h.GetPendingChatTask)
+					r.Get("/turns", h.ListChatTurns)
+					r.Get("/turns/{turnId}", h.GetChatTurn)
+					r.Post("/turns/{turnId}/delivery", h.SetChatTurnReplyDelivery)
 					r.Post("/read", h.MarkChatSessionRead)
 				})
 			})

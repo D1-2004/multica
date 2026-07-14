@@ -1936,11 +1936,25 @@ export class ApiClient {
     return this.fetch(`/api/chat/sessions/${id}`);
   }
 
-  async createChatSession(data: { agent_id: string; title?: string }): Promise<ChatSession> {
+  async createChatSession(data: {
+    agent_id: string;
+    title?: string;
+    session_key?: string;
+    reply_template?: string;
+    reply_config?: Record<string, unknown>;
+  }): Promise<ChatSession> {
     return this.fetch("/api/chat/sessions", {
       method: "POST",
       body: JSON.stringify(data),
     });
+  }
+
+  async getChatTurn(sessionId: string, turnId: string): Promise<import("../types/chat").ChatTurn> {
+    return this.fetch(`/api/chat/sessions/${sessionId}/turns/${turnId}`);
+  }
+
+  async listChatTurns(sessionId: string): Promise<import("../types/chat").ChatTurn[]> {
+    return this.fetch(`/api/chat/sessions/${sessionId}/turns`);
   }
 
   async deleteChatSession(id: string): Promise<void> {

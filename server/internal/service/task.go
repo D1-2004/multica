@@ -1171,6 +1171,8 @@ func (s *TaskService) SendDirectChatMessage(ctx context.Context, session db.Chat
 				ForceFreshSession:    pgtype.Bool{Bool: false, Valid: true},
 				RuntimeMcpOverlay:    overlay.Overlay,
 				RuntimeConnectedApps: overlay.ConnectedApps,
+				ReplyTemplate:        pgtype.Text{String: session.ReplyTemplate, Valid: session.ReplyTemplate != ""},
+				ReplyConfig:          session.ReplyConfig,
 			})
 			if err != nil {
 				return fmt.Errorf("create direct chat task: %w", err)
