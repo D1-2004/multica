@@ -22,6 +22,8 @@ import type {
 } from "@multica/core/types";
 import {
   type AgentPresenceDetail,
+  agentSourceKeys,
+  agentSourceOptions,
   useWorkspacePresenceMap,
 } from "@multica/core/agents";
 import { api, ApiError } from "@multica/core/api";
@@ -114,6 +116,12 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   } = useAgentPermissions(agent, wsId);
 
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [sourceSyncing, setSourceSyncing] = useState(false);
+
+  const { data: agentSource } = useQuery({
+    ...agentSourceOptions(wsId, agentId),
+    enabled: !!agent,
+  });
 
   // One-shot channel: the inspector's compact Lark status row asks the
   // overview pane to focus a tab. The pane clears it after consuming.
@@ -180,6 +188,32 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       toast.success(t(($) => $.detail.agent_restored_toast));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t(($) => $.detail.restore_failed_toast));
+    }
+  };
+
+  const handleSourceSync = async () => {
+    if (!agentSource || sourceSyncing) return;
+    setSourceSyncing(true);
+    try {
+      const result = await api.syncAgentSource(agentId);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: agentSourceKeys.detail(wsId, agentId) }),
+        qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) }),
+        qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) }),
+      ]);
+      toast.success(
+        result.changed
+          ? t(($) => $.detail.source_sync_succeeded)
+          : t(($) => $.detail.source_already_current),
+      );
+      result.warnings.forEach((warning) => toast.warning(warning));
+    } catch (error) {
+      await qc.invalidateQueries({ queryKey: agentSourceKeys.detail(wsId, agentId) });
+      toast.error(
+        error instanceof Error ? error.message : t(($) => $.detail.source_sync_failed),
+      );
+    } finally {
+      setSourceSyncing(false);
     }
   };
 
@@ -330,6 +364,9 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
           onUpdate={handleUpdate}
           currentUserId={currentUser?.id ?? null}
           canEdit={canEdit.allowed}
+          source={agentSource ?? null}
+          sourceSyncing={sourceSyncing}
+          onSourceSync={handleSourceSync}
           navIntent={tabNavIntent}
           onNavIntentHandled={() => setTabNavIntent(null)}
         />

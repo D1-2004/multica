@@ -216,8 +216,9 @@ S3 の前段に CloudFront を置く場合、3 つの変数が適用されます
 |---|---|---|
 | `GITHUB_APP_SLUG` | 空 | GitHub App の slug（`https://github.com/apps/<slug>` の末尾部分）。設定 → GitHub のインストールボタン URL を構成します |
 | `GITHUB_WEBHOOK_SECRET` | 空 | GitHub App に設定した Webhook secret。すべての `pull_request` / `installation` delivery の HMAC-SHA256 検証に使われ、setup コールバックの state token の HMAC キーとしても使われます |
-| `GITHUB_APP_ID` | 空 | 任意。App 設定ページに表示される数値の App ID。`GITHUB_APP_PRIVATE_KEY` と併せて設定すると、setup コールバックがインストール時点で GitHub から連携先のアカウント名を取得できます |
-| `GITHUB_APP_PRIVATE_KEY` | 空 | 任意。App の RSA 秘密鍵の完全な PEM ブロック（`-----BEGIN/END-----` 行を含み、改行を保ったまま）。GitHub の App 認証 REST 呼び出しに必要な短命 JWT の発行に使われます |
+| `GITHUB_APP_ID` | 空 | PR 連携だけなら任意。リポジトリベースのエージェントには必須 |
+| `GITHUB_APP_PRIVATE_KEY` | 空 | PR 連携だけなら任意。リポジトリベースのエージェントには必須。完全な RSA 秘密鍵 PEM ブロック |
+| `GITHUB_API_BASE_URL` | `https://api.github.com` | GitHub Enterprise またはテストプロキシ用の任意の API ベース URL |
 
 **いずれかの必須変数が設定されていない場合の動作:**
 
@@ -227,6 +228,7 @@ S3 の前段に CloudFront を置く場合、3 つの変数が適用されます
 **任意の `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` が設定されていない場合の動作:**
 
 - インストール直後、接続カードには一時的に `Connected to unknown` と表示されます。GitHub から `installation.created` webhook が届くと（通常は数秒以内）、Multica は行を実際の組織名/ユーザー名に更新し、リアルタイムブロードキャストを発行するため、開いている Settings → GitHub タブは手動更新なしで反映されます。
+- PR 連携は動作しますが、GitHub リポジトリからのエージェント作成と同期は利用できません。
 
 **注:** `GITHUB_WEBHOOK_SECRET` はインストールフローの state token の署名キーとして再利用されるため、運用者は secret を 1 つだけ管理すればよいです。これは GitHub App の *Client* secret では**ありません** — Client secret は OAuth 関連であり、この連携では使われません。完全な手順は [GitHub 連携 → セルフホストのセットアップ](/github-integration#self-host-setup)を参照してください。
 

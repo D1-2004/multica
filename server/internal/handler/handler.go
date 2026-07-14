@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"os"
 	"strconv"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/githubapp"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
@@ -110,9 +112,10 @@ type Config struct {
 	//   - LLMAPIKey       -> MULTICA_LLM_API_KEY
 	//   - LLMBaseURL       -> MULTICA_LLM_BASE_URL (OpenAI or any compatible gateway)
 	//   - LLMDefaultModel  -> MULTICA_LLM_DEFAULT_MODEL (used when a request omits `model`)
-	LLMAPIKey       string
-	LLMBaseURL      string
-	LLMDefaultModel string
+	LLMAPIKey         string
+	LLMBaseURL        string
+	LLMDefaultModel   string
+	GitAgentTemplates service.GitAgentTemplateCatalog
 }
 
 type cloudRuntimeProxy interface {
@@ -129,29 +132,31 @@ type WorkspaceSetRefreshNotifier interface {
 }
 
 type Handler struct {
-	Queries                *db.Queries
-	DB                     dbExecutor
-	TxStarter              txStarter
-	Hub                    *realtime.Hub
-	DaemonHub              *daemonws.Hub
-	DaemonProfileRefresh   RuntimeProfileRefreshNotifier
-	DaemonWorkspaceRefresh WorkspaceSetRefreshNotifier
-	Bus                    *events.Bus
-	TaskService            *service.TaskService
-	IssueService           *service.IssueService
-	AutopilotService       *service.AutopilotService
-	EmailService           *service.EmailService
-	UpdateStore            UpdateStore
-	ModelListStore         ModelListStore
-	LocalSkillListStore    LocalSkillListStore
-	LocalSkillImportStore  LocalSkillImportStore
-	DWSAuthSessions        *DWSAuthSessionStore
-	FeatureFlags           *featureflag.Service
-	LivenessStore          LivenessStore
-	HeartbeatScheduler     HeartbeatScheduler
-	Storage                storage.Storage
-	CFSigner               *auth.CloudFrontSigner
-	Analytics              analytics.Client
+	Queries                 *db.Queries
+	DB                      dbExecutor
+	TxStarter               txStarter
+	Hub                     *realtime.Hub
+	DaemonHub               *daemonws.Hub
+	DaemonProfileRefresh    RuntimeProfileRefreshNotifier
+	DaemonWorkspaceRefresh  WorkspaceSetRefreshNotifier
+	Bus                     *events.Bus
+	TaskService             *service.TaskService
+	IssueService            *service.IssueService
+	IssueCommentService     *service.IssueCommentService
+	AutopilotService        *service.AutopilotService
+	EmailService            *service.EmailService
+	UpdateStore             UpdateStore
+	ModelListStore          ModelListStore
+	LocalSkillListStore     LocalSkillListStore
+	LocalSkillImportStore   LocalSkillImportStore
+	DWSAuthSessions         *DWSAuthSessionStore
+	FeatureFlags            *featureflag.Service
+	LivenessStore           LivenessStore
+	HeartbeatScheduler      HeartbeatScheduler
+	Storage                 storage.Storage
+	AgentDispatchHTTPClient *http.Client
+	CFSigner                *auth.CloudFrontSigner
+	Analytics               analytics.Client
 	// Metrics is the shared business-metrics collector built by main.go.
 	// May be nil in tests / self-hosted with the metrics listener disabled;
 	// every Record* method is nil-safe and obsmetrics.RecordEvent treats a
@@ -165,6 +170,8 @@ type Handler struct {
 	WebhookAbsoluteIPRateLimiter WebhookRateLimiter
 	WebhookDeliveryWorker        *WebhookDeliveryWorker
 	CloudRuntime                 cloudRuntimeProxy
+	GitHubApp                    *githubapp.Client
+	GitAgentTemplates            service.GitAgentTemplateCatalog
 	// Lark integration. All three are nil when the Lark master key
 	// (MULTICA_LARK_SECRET_KEY) is unset; the corresponding HTTP
 	// handlers return 503 in that case so a misconfigured self-host
@@ -310,6 +317,16 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		fcLauncher.SetPool(pool)
 	}
 	taskSvc.RuntimeLauncher = fcLauncher
+
+	githubClient, githubErr := githubapp.New(githubapp.Config{
+		AppID:      os.Getenv("GITHUB_APP_ID"),
+		PrivateKey: os.Getenv("GITHUB_APP_PRIVATE_KEY"),
+		APIBase:    os.Getenv("GITHUB_API_BASE_URL"),
+	})
+	if githubErr != nil && !errors.Is(githubErr, githubapp.ErrUnavailable) {
+		slog.Warn("github agent sources disabled", "error", githubErr)
+	}
+
 	h := &Handler{
 		Queries:                      queries,
 		DB:                           executor,
@@ -321,6 +338,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		Bus:                          bus,
 		TaskService:                  taskSvc,
 		IssueService:                 service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
+		IssueCommentService:          service.NewIssueCommentService(queries, bus, taskSvc),
 		AutopilotService:             service.NewAutopilotService(queries, txStarter, bus, taskSvc),
 		EmailService:                 emailService,
 		UpdateStore:                  NewInMemoryUpdateStore(),
@@ -340,6 +358,8 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 			BaseURL: cfg.CloudRuntimeFleetURL,
 			Timeout: cfg.CloudRuntimeFleetTimeout,
 		}),
+		GitHubApp:         githubClient,
+		GitAgentTemplates: cfg.GitAgentTemplates,
 		LLM: llm.New(llm.Config{
 			APIKey:       cfg.LLMAPIKey,
 			BaseURL:      cfg.LLMBaseURL,

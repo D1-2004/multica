@@ -19,6 +19,7 @@ import {
   agentTaskSnapshotKeys,
   agentActivityKeys,
   agentRunCountsKeys,
+  agentSourceKeys,
   agentTasksKeys,
 } from "../agents/queries";
 import { githubKeys } from "../github/queries";
@@ -397,6 +398,7 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
     qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+    qc.invalidateQueries({ queryKey: agentSourceKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
@@ -506,6 +508,7 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+          qc.invalidateQueries({ queryKey: agentSourceKeys.all(wsId) });
           // Squad members status is derived per agent, so any agent
           // change (status flip, archive, runtime swap) needs to refresh the
           // per-squad members-status cache without refetching the static squad

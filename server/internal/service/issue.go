@@ -135,6 +135,7 @@ type IssueCreateResult struct {
 	Issue          db.Issue
 	Attachments    []db.Attachment
 	DuplicateIssue *db.Issue
+	EnqueuedTask   *db.AgentTaskQueue
 }
 
 // Create runs the full issue-creation pipeline atomically end-to-end:
@@ -282,9 +283,9 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 
 	s.publishIssueCreated(issue, attachments, p.CreatorType, actorID, opts)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
-	s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, p.AgentIdentityContextToken)
+	enqueuedTask := s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, p.AgentIdentityContextToken)
 
-	return IssueCreateResult{Issue: issue, Attachments: attachments}, nil
+	return IssueCreateResult{Issue: issue, Attachments: attachments, EnqueuedTask: enqueuedTask}, nil
 }
 
 // linkAttachments links the given attachment IDs to the newly created
@@ -389,20 +390,24 @@ func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autop
 	}
 }
 
-func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID, agentIdentityContextToken string) {
+func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID, agentIdentityContextToken string) *db.AgentTaskQueue {
 	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
-		return
+		return nil
 	}
 	if s.shouldEnqueueAgentTask(ctx, issue) {
-		if _, err := s.TaskService.EnqueueTaskForIssueWithAgentIdentityContext(ctx, issue, agentIdentityContextToken); err != nil {
+		task, err := s.TaskService.EnqueueTaskForIssueWithAgentIdentityContext(ctx, issue, agentIdentityContextToken)
+		if err != nil {
 			slog.Warn("enqueue agent task on create failed",
 				"issue_id", util.UUIDToString(issue.ID),
 				"error", err)
+		} else {
+			return &task
 		}
 	}
 	if s.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
 		s.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, creatorType, actorID, agentIdentityContextToken)
 	}
+	return nil
 }
 
 // shouldEnqueueAgentTask returns true when an issue create or assignment

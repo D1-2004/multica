@@ -42,7 +42,7 @@ const (
 	defaultFCE2BSandboxReadyTimeout = 60 * time.Second
 	defaultAgentIdentityTimeout     = 10 * time.Second
 	fcE2BDaemonTokenTTL             = time.Hour
-	fcE2BRunnerClaimTimeout         = 30 * time.Second
+	fcE2BRunnerClaimTimeout         = 2 * time.Minute
 	fcE2BRunnerClaimPollInterval    = 500 * time.Millisecond
 	fcE2BRunOnceHealthPortBase      = 20000
 	fcE2BRunOnceHealthPortSpan      = 30000
@@ -69,6 +69,7 @@ type FCE2BConfig struct {
 	DWSSecretKey         string
 	AgentIdentityBaseURL string
 	AgentIdentityTimeout time.Duration
+	DWSClientSecret      string
 	CLIPath              string
 	TimeoutSeconds       int
 	SandboxReadyTimeout  time.Duration
@@ -88,6 +89,7 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		DWSSecretKey:         strings.TrimSpace(os.Getenv("MULTICA_DWS_SECRET_KEY")),
 		AgentIdentityBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_BASE_URL")), "/"),
 		AgentIdentityTimeout: defaultAgentIdentityTimeout,
+		DWSClientSecret:      strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET")),
 		CLIPath:              strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_CLI_PATH")),
 		TimeoutSeconds:       defaultFCE2BTimeoutSeconds,
 		SandboxReadyTimeout:  defaultFCE2BSandboxReadyTimeout,
@@ -743,6 +745,9 @@ func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue, cfg FCE2BConfig) (map[st
 	if cfg.AgentIdentityBaseURL == "" {
 		return nil, errors.New("MULTICA_AGENT_IDENTITY_BASE_URL is required for ContextToken tasks")
 	}
+	if cfg.DWSClientSecret == "" {
+		return nil, errors.New("MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET is required for ContextToken tasks")
+	}
 	timeout := cfg.AgentIdentityTimeout
 	if timeout <= 0 {
 		timeout = defaultAgentIdentityTimeout
@@ -755,6 +760,7 @@ func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue, cfg FCE2BConfig) (map[st
 		protocol.AgentIdentityContextTokenEnvKey: token,
 		"MULTICA_AGENT_IDENTITY_BASE_URL":        cfg.AgentIdentityBaseURL,
 		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS": strconv.Itoa(seconds),
+		"DWS_CLIENT_SECRET":                      cfg.DWSClientSecret,
 	}, nil
 }
 
@@ -1006,6 +1012,9 @@ func fcE2BTemplateForRuntime(rt db.AgentRuntime, configuredTemplate string) (str
 }
 
 func (l *FCE2BLauncher) failLaunch(ctx context.Context, task db.AgentTaskQueue, msg string) error {
+	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) {
+		return cause
+	}
 	_, err := l.Tasks.FailTaskRuntimeStart(ctx, task.ID, task.RuntimeID, msg)
 	if err != nil {
 		return err

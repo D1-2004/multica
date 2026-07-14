@@ -46,6 +46,7 @@ RUNTIME_CONFIG_KEYS=(
   MULTICA_FC_E2B_SANDBOX_READY_TIMEOUT
   MULTICA_AGENT_IDENTITY_BASE_URL
   MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS
+  MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET
   RESEND_API_KEY
   RESEND_FROM_EMAIL
   SMTP_HOST
@@ -80,6 +81,10 @@ RUNTIME_CONFIG_KEYS=(
   REALTIME_METRICS_TOKEN
   MULTICA_LOG_TAIL_TOKEN
   MULTICA_TRUSTED_PROXIES
+  MULTICA_GIT_AGENT_TEMPLATES_JSON
+  GITHUB_APP_ID
+  GITHUB_APP_PRIVATE_KEY
+  GITHUB_API_BASE_URL
   GITHUB_APP_SLUG
   GITHUB_WEBHOOK_SECRET
   ALLOW_SIGNUP
@@ -104,6 +109,7 @@ load_antx_runtime_config() {
     "$APP_ROOT/conf/antx.properties"
     "/home/admin/${APP_NAME}/antx.properties"
     "/home/admin/${APP_NAME}/conf/antx.properties"
+    "/home/admin/vmcommon/antx.properties"
     "/home/admin/conf/antx.properties"
     "/home/admin/cai/conf/antx.properties"
     "/home/admin/antx.properties"

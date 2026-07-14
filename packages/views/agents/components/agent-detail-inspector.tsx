@@ -32,6 +32,7 @@ interface InspectorProps {
   members: MemberWithUser[];
   currentUserId: string | null;
   canEdit: boolean;
+  sourceManaged?: boolean;
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
 }
 
