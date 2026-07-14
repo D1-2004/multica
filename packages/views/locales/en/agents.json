@@ -148,7 +148,10 @@
     "dm_no_permission_toast": "You don't have access to chat with this agent.",
     "assign_work": "Assign work",
     "more_actions_aria": "Agent actions",
-    "updated": "Updated {{when}}"
+    "updated": "Updated {{when}}",
+    "source_sync_succeeded": "GitHub source synced",
+    "source_already_current": "GitHub source is already current",
+    "source_sync_failed": "Failed to sync GitHub source"
   },
   "inspector": {
     "section_profile": "Profile",
@@ -186,14 +189,21 @@
     "edit_description_title": "Edit description",
     "description_placeholder": "What does this agent do?",
     "save": "Save",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "github_managed_profile": "Instructions and repository skills are managed by GitHub; name and description remain editable in Multica."
   },
   "overview": {
     "agent_context": "Agent",
     "access": "Access",
     "attention_title": "Tasks need attention",
     "attention_queued_one": "{{count}} task is queued while the runtime is unavailable.",
-    "attention_queued_other": "{{count}} tasks are queued while the runtime is unavailable."
+    "attention_queued_other": "{{count}} tasks are queued while the runtime is unavailable.",
+    "source_title": "GitHub source",
+    "source_ref": "Ref",
+    "source_commit": "Commit",
+    "source_synced_at": "Last synced",
+    "source_sync": "Sync now",
+    "source_status": { "ready": "Ready", "failed": "Sync failed", "disconnected": "Disconnected" }
   },
   "skill_attach": {
     "trigger_aria": "Attach a workspace skill",
@@ -274,10 +284,34 @@
     "step_template": "Choose a template",
     "step_configure": "Review and configure",
     "step_ai": "Build through conversation",
+    "step_github": "Import from GitHub",
     "modes": {
       "blank": { "title": "Start blank", "description": "Configure every field yourself. Best when you already know exactly how this agent should work." },
       "template": { "title": "Use a template", "description": "Start from curated instructions and skills, then adapt every detail to your workspace." },
-      "ai": { "title": "Build with AI", "description": "Describe the outcome you want. An Agent Builder will ask focused questions and prepare a live draft." }
+      "ai": { "title": "Build with AI", "description": "Describe the outcome you want. An Agent Builder will ask focused questions and prepare a live draft." },
+      "github": { "title": "Import from GitHub", "description": "Create from a versioned repository containing multica-agent.yaml, instructions, skills, and supporting files." }
+    },
+    "github": {
+      "source_title": "GitHub source",
+      "source_hint": "Select a repository and ref, then validate its multica-agent.yaml before creating the agent.",
+      "not_configured": "GitHub agent sources are not configured",
+      "admin_required": "Workspace admin access is required",
+      "admin_required_hint": "Only workspace owners and admins can preview private repository contents or create GitHub-backed agents.",
+      "no_installation": "No GitHub installation is connected",
+      "connect_hint": "Configure the GitHub App and connect an installation in workspace settings first.",
+      "open_settings": "Open GitHub settings",
+      "installation": "Installation",
+      "repository": "Repository",
+      "repositories_loading": "Loading repositories…",
+      "repository_placeholder": "Select a repository",
+      "git_ref": "Branch, tag, or commit",
+      "git_ref_placeholder": "Uses the default branch when empty",
+      "preview": "Validate & preview",
+      "preview_failed": "Could not preview this GitHub agent.",
+      "preview_ready": "Validated",
+      "repository_skills": "Repository-managed skills",
+      "managed_fields_hint": "Instructions and repository skills are managed by GitHub. Name and description are creation defaults and can be changed in Multica; you can also attach workspace skills here.",
+      "runtime_incompatible": "This repository does not support the selected {{provider}} runtime."
     },
     "templates": {
       "search": "Search templates…",
@@ -422,6 +456,7 @@
     },
     "instructions": {
       "intro": "Set the system prompt used for every task. Markdown is supported.",
+      "github_managed": "This system prompt is managed by the connected GitHub repository. Sync the source to update it.",
       "system_prompt_label": "System prompt",
       "placeholder": "Define this agent's role, expertise, and working style.\n\n# Example\nYou are a frontend engineer specializing in React and TypeScript.\n\n## Working Style\n- Write small, focused PRs — one commit per logical change\n- Prefer composition over inheritance\n- Always add unit tests for new components\n\n## Constraints\n- Do not modify shared/ types without explicit approval\n- Follow the existing component patterns in features/"
     },

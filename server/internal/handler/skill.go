@@ -433,6 +433,9 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 	if !h.canManageSkill(w, r, skill) {
 		return
 	}
+	if h.rejectSourceManagedSkillWrite(w, r, skill.ID) {
+		return
+	}
 
 	var req UpdateSkillRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -537,6 +540,9 @@ func (h *Handler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.canManageSkill(w, r, skill) {
+		return
+	}
+	if h.rejectSourceManagedSkillWrite(w, r, skill.ID) {
 		return
 	}
 
@@ -2082,6 +2088,9 @@ func (h *Handler) UpsertSkillFile(w http.ResponseWriter, r *http.Request) {
 	if !h.canManageSkill(w, r, skill) {
 		return
 	}
+	if h.rejectSourceManagedSkillWrite(w, r, skill.ID) {
+		return
+	}
 
 	var req CreateSkillFileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2118,6 +2127,9 @@ func (h *Handler) DeleteSkillFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.canManageSkill(w, r, skill) {
+		return
+	}
+	if h.rejectSourceManagedSkillWrite(w, r, skill.ID) {
 		return
 	}
 
@@ -2186,6 +2198,9 @@ func (h *Handler) SetAgentSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.validateAgentSkillIDsInWorkspace(w, r, agent, skillUUIDs) {
+		return
+	}
+	if !h.ensureSourceManagedSkillsIncluded(w, r, agent, skillUUIDs) {
 		return
 	}
 
@@ -2321,6 +2336,13 @@ func (h *Handler) RemoveAgentSkill(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if managed, err := h.isSourceManagedSkill(r.Context(), skillID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to verify skill source ownership")
+		return
+	} else if managed {
+		writeError(w, http.StatusConflict, "source-managed skills cannot be removed manually")
+		return
+	}
 	if err := h.Queries.RemoveAgentSkill(r.Context(), db.RemoveAgentSkillParams{
 		AgentID: agent.ID,
 		SkillID: skillID,
@@ -2332,6 +2354,20 @@ func (h *Handler) RemoveAgentSkill(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) validateAgentSkillIDsInWorkspace(w http.ResponseWriter, r *http.Request, agent db.Agent, skillUUIDs []pgtype.UUID) bool {
+	managedForAgent := map[string]struct{}{}
+	if source, err := h.Queries.GetAgentSourceByAgentID(r.Context(), agent.ID); err == nil {
+		mappings, err := h.Queries.ListAgentSourceSkills(r.Context(), source.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load source-managed skills")
+			return false
+		}
+		for _, mapping := range mappings {
+			managedForAgent[uuidToString(mapping.SkillID)] = struct{}{}
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to load agent source")
+		return false
+	}
 	seen := map[string]struct{}{}
 	for _, skillID := range skillUUIDs {
 		key := uuidToString(skillID)
@@ -2346,8 +2382,57 @@ func (h *Handler) validateAgentSkillIDsInWorkspace(w http.ResponseWriter, r *htt
 			writeError(w, http.StatusNotFound, "skill not found")
 			return false
 		}
+		if managed, err := h.isSourceManagedSkill(r.Context(), skillID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to verify skill source ownership")
+			return false
+		} else if managed {
+			if _, belongsToAgent := managedForAgent[key]; !belongsToAgent {
+				writeError(w, http.StatusBadRequest, "source-managed skills cannot be attached to another agent")
+				return false
+			}
+		}
 	}
 	return true
+}
+
+func (h *Handler) ensureSourceManagedSkillsIncluded(w http.ResponseWriter, r *http.Request, agent db.Agent, skillUUIDs []pgtype.UUID) bool {
+	source, err := h.Queries.GetAgentSourceByAgentID(r.Context(), agent.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load agent source")
+		return false
+	}
+	mappings, err := h.Queries.ListAgentSourceSkills(r.Context(), source.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load source-managed skills")
+		return false
+	}
+	requested := make(map[string]struct{}, len(skillUUIDs))
+	for _, skillID := range skillUUIDs {
+		requested[uuidToString(skillID)] = struct{}{}
+	}
+	for _, mapping := range mappings {
+		if _, ok := requested[uuidToString(mapping.SkillID)]; !ok {
+			writeError(w, http.StatusConflict, "source-managed skills cannot be removed manually")
+			return false
+		}
+	}
+	return true
+}
+
+func (h *Handler) rejectSourceManagedSkillWrite(w http.ResponseWriter, r *http.Request, skillID pgtype.UUID) bool {
+	managed, err := h.isSourceManagedSkill(r.Context(), skillID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to verify skill source ownership")
+		return true
+	}
+	if managed {
+		writeError(w, http.StatusConflict, "this skill is managed by a GitHub agent source")
+		return true
+	}
+	return false
 }
 
 func (h *Handler) writeUpdatedAgentSkills(w http.ResponseWriter, r *http.Request, agent db.Agent) {

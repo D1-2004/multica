@@ -198,6 +198,33 @@ func (q *Queries) GetGitHubInstallationByID(ctx context.Context, id pgtype.UUID)
 	return i, err
 }
 
+const getGitHubInstallationInWorkspace = `-- name: GetGitHubInstallationInWorkspace :one
+SELECT id, workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id, created_at, updated_at FROM github_installation
+WHERE id = $1 AND workspace_id = $2
+`
+
+type GetGitHubInstallationInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetGitHubInstallationInWorkspace(ctx context.Context, arg GetGitHubInstallationInWorkspaceParams) (GithubInstallation, error) {
+	row := q.db.QueryRow(ctx, getGitHubInstallationInWorkspace, arg.ID, arg.WorkspaceID)
+	var i GithubInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.InstallationID,
+		&i.AccountLogin,
+		&i.AccountType,
+		&i.AccountAvatarUrl,
+		&i.ConnectedByID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getGitHubPullRequest = `-- name: GetGitHubPullRequest :one
 SELECT id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files FROM github_pull_request
 WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4

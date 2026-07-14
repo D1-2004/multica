@@ -133,6 +133,15 @@ export type {
   GitHubPullRequestState,
   ListGitHubInstallationsResponse,
   GitHubConnectResponse,
+  GitHubAgentRepository,
+  ListGitHubAgentRepositoriesResponse,
+  GitHubAgentSkillPreview,
+  GitHubAgentPreviewRequest,
+  GitHubAgentPreview,
+  CreateGitHubAgentRequest,
+  CreateGitHubAgentResponse,
+  AgentSource,
+  SyncAgentSourceResponse,
 } from "./github";
 export type {
   LarkInstallation,

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
   Agent,
+  AgentSource,
   AgentRuntime,
   MemberWithUser,
 } from "@multica/core/types";
@@ -127,6 +128,9 @@ interface AgentOverviewPaneProps {
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
   currentUserId?: string | null;
   canEdit: boolean;
+  source?: AgentSource | null;
+  sourceSyncing?: boolean;
+  onSourceSync?: () => void;
   navIntent?: DetailTab | null;
   onNavIntentHandled?: () => void;
 }
@@ -147,6 +151,9 @@ export function AgentOverviewPane({
   onUpdate,
   currentUserId,
   canEdit,
+  source = null,
+  sourceSyncing = false,
+  onSourceSync,
   navIntent,
   onNavIntentHandled,
 }: AgentOverviewPaneProps) {
@@ -357,6 +364,10 @@ export function AgentOverviewPane({
                 agent={agent}
                 runtime={runtime}
                 owner={owner}
+                source={source}
+                canSyncSource={canEdit}
+                sourceSyncing={sourceSyncing}
+                onSourceSync={onSourceSync}
               />
             </div>
           </div>
@@ -418,6 +429,7 @@ export function AgentOverviewPane({
                         onUpdate(agent.id, { instructions })
                       }
                       onDirtyChange={setActiveDirty}
+                      readOnly={source != null}
                     />
                   )}
                   {effectiveView === "skills" && (
@@ -449,6 +461,7 @@ export function AgentOverviewPane({
                       members={members}
                       currentUserId={currentUserId ?? null}
                       canEdit={canEdit}
+                      sourceManaged={source != null}
                       onUpdate={onUpdate}
                     />
                   )}

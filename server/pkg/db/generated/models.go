@@ -89,6 +89,33 @@ type AgentSkill struct {
 	Enabled   bool               `json:"enabled"`
 }
 
+type AgentSource struct {
+	ID                   pgtype.UUID        `json:"id"`
+	AgentID              pgtype.UUID        `json:"agent_id"`
+	SourceType           string             `json:"source_type"`
+	GithubInstallationID pgtype.UUID        `json:"github_installation_id"`
+	RepoOwner            string             `json:"repo_owner"`
+	RepoName             string             `json:"repo_name"`
+	Ref                  string             `json:"ref"`
+	ManifestPath         string             `json:"manifest_path"`
+	SyncedCommitSha      string             `json:"synced_commit_sha"`
+	SyncStatus           string             `json:"sync_status"`
+	LastSyncError        pgtype.Text        `json:"last_sync_error"`
+	LastSyncAttemptAt    pgtype.Timestamptz `json:"last_sync_attempt_at"`
+	LastSyncedAt         pgtype.Timestamptz `json:"last_synced_at"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentSourceSkill struct {
+	AgentSourceID pgtype.UUID        `json:"agent_source_id"`
+	SkillID       pgtype.UUID        `json:"skill_id"`
+	SourcePath    string             `json:"source_path"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentTaskQueue struct {
 	ID                    pgtype.UUID        `json:"id"`
 	AgentID               pgtype.UUID        `json:"agent_id"`

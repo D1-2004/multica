@@ -1,3 +1,5 @@
+import type { Agent, CreateAgentRequest } from "./agent";
+
 export type GitHubPullRequestState = "open" | "closed" | "merged" | "draft";
 
 /** Aggregated CI status for a PR's current head SHA, computed server-side from
@@ -75,4 +77,77 @@ export interface GitHubConnectResponse {
   /** The GitHub App install URL the browser should open. Empty when `configured` is false. */
   url?: string;
   configured: boolean;
+}
+
+export interface GitHubAgentRepository {
+  installation_id: string;
+  full_name: string;
+  private: boolean;
+  default_branch: string;
+  html_url: string;
+}
+
+export interface ListGitHubAgentRepositoriesResponse {
+  repositories: GitHubAgentRepository[];
+}
+
+export interface GitHubAgentSkillPreview {
+  source_path: string;
+  name: string;
+  description: string;
+  file_count: number;
+}
+
+export interface GitHubAgentPreviewRequest {
+  installation_id: string;
+  repository: string;
+  ref?: string;
+}
+
+export interface GitHubAgentPreview {
+  installation_id: string;
+  repository: string;
+  ref: string;
+  resolved_sha: string;
+  name: string;
+  description: string;
+  instructions: string;
+  skills: GitHubAgentSkillPreview[];
+  compatible_providers: string[];
+  warnings: string[];
+  blockers: string[];
+}
+
+export interface CreateGitHubAgentRequest extends CreateAgentRequest {
+  installation_id: string;
+  repository: string;
+  ref: string;
+  resolved_sha: string;
+}
+
+export interface AgentSource {
+  agent_id: string;
+  source_type: "github" | string;
+  installation_id: string | null;
+  repository: string;
+  ref: string;
+  manifest_path: string;
+  synced_commit_sha: string;
+  sync_status: "ready" | "failed" | "disconnected" | string;
+  last_sync_error: string | null;
+  last_sync_attempt_at: string | null;
+  last_synced_at: string;
+  github_connected: boolean;
+}
+
+export interface CreateGitHubAgentResponse {
+  agent: Agent;
+  source: AgentSource;
+  warnings: string[];
+}
+
+export interface SyncAgentSourceResponse {
+  source: AgentSource;
+  changed: boolean;
+  warnings: string[];
 }

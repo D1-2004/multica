@@ -79,6 +79,8 @@ Token 类型的详细区分见 [认证与令牌](/auth-tokens)。
 | `multica agent list` | 列出工作区的智能体 |
 | `multica agent get <slug>` | 查看智能体配置 |
 | `multica agent create ...` | 创建智能体 |
+| `multica agent template list/get` | 查看已批准的 Git 仓库智能体模板 |
+| `multica agent create-from-template <key> --runtime-id <id>` | 从已批准的 Git 模板创建智能体 |
 | `multica agent update <slug> ...` | 修改智能体 |
 | `multica agent archive <slug>` | 归档 |
 | `multica agent restore <slug>` | 恢复归档的智能体 |
@@ -89,6 +91,9 @@ Token 类型的详细区分见 [认证与令牌](/auth-tokens)。
 | `multica skill list/get/create/update/delete` | Skill CRUD |
 | `multica skill import ...` | 从 GitHub / ClawHub / 本机导入 Skill |
 | `multica skill files ...` | 嵌套：管理 Skill 的文件 |
+| `multica dingtalk install begin/status` | 发起或查看钉钉机器人安装会话 |
+
+Git 智能体模板是包含 `multica-agent.yaml` 的已批准仓库。Manifest 中的名称和描述只是创建默认值，智能体实例可在创建时覆盖并在 Multica 中继续修改；仓库同步仍管理 instructions 和仓库内的 skill。`create-from-template` 不提供 model 或 thinking-level 参数。
 
 ### Skill 导入冲突
 

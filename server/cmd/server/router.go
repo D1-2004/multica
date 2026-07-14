@@ -230,6 +230,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	cfSigner := auth.NewCloudFrontSignerFromEnv()
 	origins := allowedOrigins()
 
+	gitAgentTemplates, err := service.NewStaticGitAgentTemplateCatalog(os.Getenv(service.GitAgentTemplatesEnv))
+	if err != nil {
+		panic(err)
+	}
 	signupConfig := handler.Config{
 		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
 		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
@@ -248,6 +252,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		LLMAPIKey:                strings.TrimSpace(os.Getenv("MULTICA_LLM_API_KEY")),
 		LLMBaseURL:               strings.TrimSpace(os.Getenv("MULTICA_LLM_BASE_URL")),
 		LLMDefaultModel:          strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
+		GitAgentTemplates:        gitAgentTemplates,
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	h.Metrics = opts.BusinessMetrics
@@ -1186,6 +1191,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// the handler strips the management handle and adds a
 					// can_manage hint so the UI can gate connect/disconnect.
 					r.Get("/github/installations", h.ListGitHubInstallations)
+					r.Get("/git-agent-templates", h.ListGitAgentTemplates)
+					r.Get("/git-agent-templates/{templateKey}", h.GetGitAgentTemplate)
 					// Custom runtime profiles — listing/reading is member-visible
 					// (the Runtime page renders for everyone; create/edit/delete
 					// are admin-gated below).
@@ -1215,6 +1222,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Put("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Delete("/runtime-profiles/{profileId}", h.DeleteRuntimeProfile)
+					r.Get("/github/repositories", h.ListGitHubAgentRepositories)
+					r.Post("/github/agent-preview", h.PreviewGitHubAgent)
+					r.Post("/github/agents", h.CreateGitHubAgent)
+					r.Post("/git-agent-templates/{templateKey}/agents", h.CreateGitAgentFromTemplate)
 				})
 				// Owner-only access
 				r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)
@@ -1539,6 +1550,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/from-template", h.CreateAgentFromTemplate)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAgent)
+					r.Get("/source", h.GetAgentSource)
+					r.Post("/source/sync", h.SyncAgentSource)
 					r.Put("/", h.UpdateAgent)
 					r.Post("/archive", h.ArchiveAgent)
 					r.Post("/restore", h.RestoreAgent)

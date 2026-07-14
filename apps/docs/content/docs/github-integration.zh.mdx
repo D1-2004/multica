@@ -67,6 +67,30 @@ PR **关闭但没合并**——只更新 PR 卡片的状态为 `Closed`，issue 
 - **App 没安装的仓库里的 PR**——没 App，Multica 收不到 webhook
 - **手动把 PR 关联到 issue**——暂时没有这个 UI。如果你们的约定把编号放到 Multica 不扫的地方，请改放到 PR 标题或正文里
 
+## 从仓库创建智能体
+
+GitHub App 拥有 **Contents: Read-only** 权限且服务端配置了 App 凭证后，工作区 owner/admin 可以通过 **Agents → 创建智能体 → 从 GitHub 导入**，从 installation 可访问的仓库创建智能体。仓库列表、预览和创建保持 admin-only，避免连接 App 后把私有仓库名称和内容暴露给所有成员。仓库是智能体定义的版本化来源，不是智能体运行时的工作目录。
+
+仓库根目录必须包含 `multica-agent.yaml`：
+
+```yaml
+apiVersion: multica.ai/v1alpha1
+kind: Agent
+metadata:
+  name: Repository agent
+  description: 使用仓库内维护的规范审查代码变更。
+spec:
+  instructions: AGENT.md
+  skills:
+    - path: skills/code-review
+  compatibility:
+    providers: [claude, codex]
+```
+
+每个 skill path 指向一个包含 `SKILL.md` 和可选配套文件的目录。Multica 校验清单后，把所选 commit 编译为数据库快照。名称、描述、指令和仓库 skill 由 GitHub 管理；runtime、model、访问权限和额外工作区 skill 仍由 Multica 管理。
+
+仓库发生修改后**不会自动生效**。在智能体 Overview 点击 **立即同步**，Multica 才会解析配置的 ref 并原子替换 GitHub 管理的快照。已经派发的任务继续使用派发时的快照。断开 installation 后，最后一次有效快照仍可运行，但不能继续同步。
+
 ## 断开连接
 
 **Settings → GitHub** 里没有 installation 列表——现有 installation 直接到 GitHub 上管理：
@@ -80,7 +104,7 @@ PR **关闭但没合并**——只更新 PR 卡片的状态为 `Closed`，issue 
 
 - **Connect / Disconnect** 需要工作区 **owner 或 admin**。普通成员能看到卡片描述但看不到 Connect 按钮
 - **Pull requests** 侧栏对所有能看到该 issue 的成员可见——和 issue 详情页其他部分权限一致
-- GitHub App 申请的是 PR 和 Metadata 的 **只读** 权限。Multica 从不向 GitHub 推 commit、评论或 status check
+- GitHub App 申请的是 PR、Metadata 和仓库 Contents 的 **只读** 权限。Multica 从不向 GitHub 推 commit、评论或 status check
 
 ## Self-Host 配置
 
@@ -107,6 +131,7 @@ Self-Host 需要：建一个 GitHub App、指向你的 server、设两个环境�
 | **Webhook URL** | `https://<api-host>/api/webhooks/github` |
 | **Webhook secret** | 生成一个长随机字符串（例如 `openssl rand -hex 32`）。这个值会同样填到 step 2 的 env 里 |
 | **Permissions → Repository → Pull requests** | **Read-only** |
+| **Permissions → Repository → Contents** | **Read-only**。从仓库创建和同步智能体时必需 |
 | **Permissions → Repository → Metadata** | Read-only（必填）|
 | **Subscribe to events** | 勾选 **Pull request** |
 | **Where can this GitHub App be installed?** | 自选。单组织部署建议选 `Only on this account` |
@@ -128,7 +153,7 @@ API server 上：
 GITHUB_APP_SLUG=multica-acme
 GITHUB_WEBHOOK_SECRET=<你刚生成的 webhook secret>
 
-# 可选但建议配置——安装完成时直接拿到关联账号名，而不是等第一次 webhook 才刷新：
+# 仅做 PR 关联时可选；从 GitHub 创建和同步智能体时必填：
 GITHUB_APP_ID=<App 设置页上的数字 App ID>
 GITHUB_APP_PRIVATE_KEY=<完整 PEM 块，包含 BEGIN/END 行>
 ```
@@ -138,7 +163,7 @@ GITHUB_APP_PRIVATE_KEY=<完整 PEM 块，包含 BEGIN/END 行>
 - Settings 里 `Connect GitHub` 按钮会被 **disable**，并显示「not configured」提示
 - `/api/webhooks/github` 直接返回 **`503 github webhooks not configured`**——Multica 在 secret 没配置时拒绝处理事件，不会出现「没 secret 也接受 webhook」的安全坑
 
-`GITHUB_APP_ID` 和 `GITHUB_APP_PRIVATE_KEY` **可选**。配上之后，setup 回调可以用 App JWT 鉴权调用 GitHub `/app/installations/{id}`，安装完成那一刻就拿到真实的组织名/用户名。不配的话，连接卡片会先显示 `已连接到 unknown`，等 GitHub 的 `installation.created` webhook 到达（通常几秒内），Multica 会刷新 row 并通过 realtime 推送让 Settings 页面无需手动刷新即可更新。私钥从 App 设置页 **Private keys → Generate a private key** 生成，把整段 PEM（含 `-----BEGIN/END RSA PRIVATE KEY-----` 两行）粘到 env 里，保留换行。
+`GITHUB_APP_ID` 和 `GITHUB_APP_PRIVATE_KEY` 只有在单独使用 PR 关联时才是可选项。从仓库创建或同步智能体需要同时配置二者，因为 Multica 会用它们签发短效 installation access token 来读取 Contents API。token 会自动刷新，也不会写入数据库。私钥从 App 设置页 **Private keys → Generate a private key** 生成，把整段 PEM（含 `-----BEGIN/END RSA PRIVATE KEY-----` 两行）粘到 env 里，保留换行。
 
 `FRONTEND_ORIGIN` 也必须设置（任何生产 self-host 都已经设了）——setup 回调结束后用它把用户跳回 `<FRONTEND_ORIGIN>/settings?tab=github`。
 
@@ -146,7 +171,7 @@ GITHUB_APP_PRIVATE_KEY=<完整 PEM 块，包含 BEGIN/END 行>
 
 ### 3. 执行 migration
 
-集成的表在 migration `079_github_integration` 里。如果是升级既有部署：
+installation 与 pull request 集成表由 migration `079_github_integration` 提供；GitHub 智能体来源表由 `169_github_agent_source` 提供。如果是升级既有部署：
 
 ```bash
 make migrate-up
