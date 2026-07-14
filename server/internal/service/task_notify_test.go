@@ -20,21 +20,26 @@ func (s *stubWakeup) NotifyTaskAvailable(runtimeID, taskID string) {
 }
 
 type stubRuntimeLauncher struct {
-	calls chan db.AgentTaskQueue
+	calls chan runtimeLaunchCall
 }
 
-func (s *stubRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue) error {
-	s.calls <- task
+type runtimeLaunchCall struct {
+	task db.AgentTaskQueue
+	opts RuntimeLaunchOptions
+}
+
+func (s *stubRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue, opts RuntimeLaunchOptions) error {
+	s.calls <- runtimeLaunchCall{task: task, opts: opts}
 	return nil
 }
 
 type blockingRuntimeLauncher struct {
-	calls   chan db.AgentTaskQueue
+	calls   chan runtimeLaunchCall
 	release chan struct{}
 }
 
-func (s *blockingRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue) error {
-	s.calls <- task
+func (s *blockingRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue, opts RuntimeLaunchOptions) error {
+	s.calls <- runtimeLaunchCall{task: task, opts: opts}
 	<-s.release
 	return nil
 }
@@ -124,13 +129,10 @@ func TestNotifyTaskAvailable_InvalidWithoutRuntimeIsNoOp(t *testing.T) {
 }
 
 func TestNotifyTaskEnqueued_InvokesRuntimeLauncher(t *testing.T) {
-	rdb := newRedisTestClient(t)
-	cache := NewEmptyClaimCache(rdb)
 	wakeup := &stubWakeup{}
-	launcher := &stubRuntimeLauncher{calls: make(chan db.AgentTaskQueue, 1)}
+	launcher := &stubRuntimeLauncher{calls: make(chan runtimeLaunchCall, 1)}
 
 	svc := &TaskService{
-		EmptyClaim:      cache,
 		Wakeup:          wakeup,
 		RuntimeLauncher: launcher,
 	}
@@ -139,12 +141,18 @@ func TestNotifyTaskEnqueued_InvokesRuntimeLauncher(t *testing.T) {
 		ID:        testUUID(10),
 		RuntimeID: testUUID(11),
 	}
-	svc.NotifyTaskEnqueued(context.Background(), task)
+	opts := RuntimeLaunchOptions{
+		AgentIdentityContextToken: "secret-context",
+	}
+	svc.NotifyTaskEnqueuedWithOptions(context.Background(), task, opts)
 
 	select {
 	case got := <-launcher.calls:
-		if util.UUIDToString(got.ID) != util.UUIDToString(task.ID) {
-			t.Fatalf("launcher task id = %q, want %q", util.UUIDToString(got.ID), util.UUIDToString(task.ID))
+		if util.UUIDToString(got.task.ID) != util.UUIDToString(task.ID) {
+			t.Fatalf("launcher task id = %q, want %q", util.UUIDToString(got.task.ID), util.UUIDToString(task.ID))
+		}
+		if got.opts != opts {
+			t.Fatalf("launcher options = %+v, want %+v", got.opts, opts)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("runtime launcher was not invoked")
@@ -156,7 +164,7 @@ func TestNotifyTaskEnqueued_InvokesRuntimeLauncher(t *testing.T) {
 
 func TestLaunchRuntimeForTask_DedupesInFlightTask(t *testing.T) {
 	launcher := &blockingRuntimeLauncher{
-		calls:   make(chan db.AgentTaskQueue, 2),
+		calls:   make(chan runtimeLaunchCall, 2),
 		release: make(chan struct{}),
 	}
 	svc := &TaskService{RuntimeLauncher: launcher}
@@ -166,14 +174,14 @@ func TestLaunchRuntimeForTask_DedupesInFlightTask(t *testing.T) {
 		AgentID:   testUUID(14),
 	}
 
-	svc.launchRuntimeForTask(task)
+	svc.launchRuntimeForTask(task, RuntimeLaunchOptions{AgentIdentityContextToken: "context-1"})
 	select {
 	case <-launcher.calls:
 	case <-time.After(time.Second):
 		t.Fatal("runtime launcher was not invoked")
 	}
 
-	svc.launchRuntimeForTask(task)
+	svc.launchRuntimeForTask(task, RuntimeLaunchOptions{AgentIdentityContextToken: "context-1"})
 	select {
 	case <-launcher.calls:
 		t.Fatal("duplicate launch was scheduled while the first launch was still in flight")

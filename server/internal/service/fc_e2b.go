@@ -31,6 +31,11 @@ const (
 	FCE2BProvider      = "hermes"
 	FCE2BRunnerCommand = "multica-fc-hermes-runner"
 
+	// AgentIdentityContextTokenEnv is consumed by the sandbox runtime's
+	// identity/credential layer. It is injected only for the lifetime of the
+	// run-once process and is never written to Multica business storage.
+	AgentIdentityContextTokenEnv = "AGENT_IDENTITY_CONTEXT_TOKEN"
+
 	fcE2BScopeTypeChat  = "chat"
 	fcE2BScopeTypeIssue = "issue"
 
@@ -341,7 +346,7 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 	}
 }
 
-func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) error {
+func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue, launchOpts RuntimeLaunchOptions) error {
 	if l == nil || l.Queries == nil || l.Tasks == nil || !task.RuntimeID.Valid {
 		return nil
 	}
@@ -399,6 +404,12 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	if err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
+	for key, value := range runtimeLaunchEnv(launchOpts) {
+		if extraEnv == nil {
+			extraEnv = make(map[string]string)
+		}
+		extraEnv[key] = value
+	}
 
 	scope, scoped := fcE2BScopeForTask(task)
 	sandboxID, coldStart, err := l.resolveSandbox(ctx, rt, scope, scoped, template)
@@ -420,7 +431,11 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		"scope_id", scopeID,
 	)
 	if err := l.execRunOnce(ctx, sandboxID, rt, task.ID, token, coldStart, extraEnv); err != nil {
-		return l.failLaunch(ctx, task, err.Error())
+		msg := err.Error()
+		if launchOpts.AgentIdentityContextToken != "" {
+			msg = strings.ReplaceAll(msg, launchOpts.AgentIdentityContextToken, "[REDACTED]")
+		}
+		return l.failLaunch(ctx, task, msg)
 	}
 	slog.Info("FC/E2B run-once submitted",
 		"task_id", taskID,
@@ -458,6 +473,14 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		})
 	}
 	return nil
+}
+
+func runtimeLaunchEnv(opts RuntimeLaunchOptions) map[string]string {
+	env := make(map[string]string, 2)
+	if token := strings.TrimSpace(opts.AgentIdentityContextToken); token != "" {
+		env[AgentIdentityContextTokenEnv] = token
+	}
+	return env
 }
 
 func fcE2BScopeForTask(task db.AgentTaskQueue) (fcE2BTaskScope, bool) {

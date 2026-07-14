@@ -285,6 +285,18 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	}
 }
 
+func TestRuntimeLaunchEnvCarriesOnlyAgentIdentityContext(t *testing.T) {
+	env := runtimeLaunchEnv(RuntimeLaunchOptions{
+		AgentIdentityContextToken: "ctx-secret",
+	})
+	if env[AgentIdentityContextTokenEnv] != "ctx-secret" {
+		t.Fatalf("%s = %q", AgentIdentityContextTokenEnv, env[AgentIdentityContextTokenEnv])
+	}
+	if _, exists := env["MULTICA_DISPATCH_TASK_ID"]; exists {
+		t.Fatal("dispatchTaskId must remain owned by the upstream router")
+	}
+}
+
 func TestFCE2BExtraEnvAllowsAgentWithoutDWSProfile(t *testing.T) {
 	ctx := context.Background()
 	pool := newTaskClaimRacePool(t)

@@ -935,9 +935,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// purpose: the bearer token in the URL path IS the credential. Workspace
 	// context is derived from the trigger row, never from request headers.
 	r.Post("/api/webhooks/autopilots/{token}", h.HandleAutopilotWebhook)
-	// External message-router dispatch ingress. The target agent determines
-	// workspace and creator identity; request headers cannot override either.
-	r.Post("/api/webhooks/agent-dispatch", h.HandleAgentDispatch)
+	// External message-router dispatch ingress. Subscription-time callback URL
+	// construction supplies the member/workspace/agent target; request headers
+	// and the body-level agentId cannot override it.
+	r.Post("/api/webhooks/agent-dispatch/{userId}/{workspaceId}/{agentId}", h.HandleAgentDispatch)
 	// GitHub App webhook (no Multica auth — requests are authenticated via
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
