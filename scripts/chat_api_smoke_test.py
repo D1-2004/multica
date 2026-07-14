@@ -7,7 +7,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from chat_api_smoke import SmokeConfig, run_smoke
+from chat_api_smoke import SmokeConfig, SmokeTransportError, run_smoke, wait_for_turn
 
 
 class FakeMulticaHandler(BaseHTTPRequestHandler):
@@ -98,6 +98,21 @@ class ChatAPISmokeTest(unittest.TestCase):
         self.assertEqual(result["turns"][0]["reply_delivery_status"], "pending")
         self.assertTrue(FakeMulticaHandler.auth_headers)
         self.assertEqual(set(FakeMulticaHandler.auth_headers), {"Bearer mul_test_secret"})
+
+    def test_turn_poll_retries_transient_transport_error(self) -> None:
+        class FlakyClient:
+            calls = 0
+
+            def request(self, _method: str, _path: str) -> dict[str, object]:
+                self.calls += 1
+                if self.calls == 1:
+                    raise SmokeTransportError("connection reset")
+                return {"id": "turn-1", "status": "completed"}
+
+        client = FlakyClient()
+        turn = wait_for_turn(client, "session-1", "turn-1", timeout=1, poll_interval=0)
+        self.assertEqual(turn["status"], "completed")
+        self.assertEqual(client.calls, 2)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,10 @@ class SmokeError(RuntimeError):
     pass
 
 
+class SmokeTransportError(SmokeError):
+    pass
+
+
 @dataclass(frozen=True)
 class SmokeConfig:
     base_url: str
@@ -64,8 +68,9 @@ class APIClient:
         except HTTPError as exc:
             detail = exc.read(4096).decode("utf-8", errors="replace")
             raise SmokeError(f"{method} {path} returned HTTP {exc.code}: {detail}") from exc
-        except URLError as exc:
-            raise SmokeError(f"{method} {path} failed: {exc.reason}") from exc
+        except (URLError, TimeoutError, ConnectionError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            raise SmokeTransportError(f"{method} {path} failed: {reason}") from exc
         if not payload:
             return None
         try:
@@ -90,7 +95,13 @@ def wait_for_turn(
     deadline = time.monotonic() + timeout
     path = f"/api/chat/sessions/{quote(session_id, safe='')}/turns/{quote(turn_id, safe='')}"
     while True:
-        turn = client.request("GET", path)
+        try:
+            turn = client.request("GET", path)
+        except SmokeTransportError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(poll_interval)
+            continue
         if not isinstance(turn, dict):
             raise SmokeError("Turn endpoint did not return an object")
         status = turn.get("status")
