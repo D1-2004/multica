@@ -69,6 +69,7 @@ type FCE2BConfig struct {
 	DWSSecretKey         string
 	AgentIdentityBaseURL string
 	AgentIdentityTimeout time.Duration
+	DWSClientSecret      string
 	CLIPath              string
 	TimeoutSeconds       int
 	SandboxReadyTimeout  time.Duration
@@ -88,6 +89,7 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		DWSSecretKey:         strings.TrimSpace(os.Getenv("MULTICA_DWS_SECRET_KEY")),
 		AgentIdentityBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_BASE_URL")), "/"),
 		AgentIdentityTimeout: defaultAgentIdentityTimeout,
+		DWSClientSecret:      strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET")),
 		CLIPath:              strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_CLI_PATH")),
 		TimeoutSeconds:       defaultFCE2BTimeoutSeconds,
 		SandboxReadyTimeout:  defaultFCE2BSandboxReadyTimeout,
@@ -743,6 +745,9 @@ func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue, cfg FCE2BConfig) (map[st
 	if cfg.AgentIdentityBaseURL == "" {
 		return nil, errors.New("MULTICA_AGENT_IDENTITY_BASE_URL is required for ContextToken tasks")
 	}
+	if cfg.DWSClientSecret == "" {
+		return nil, errors.New("MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET is required for ContextToken tasks")
+	}
 	timeout := cfg.AgentIdentityTimeout
 	if timeout <= 0 {
 		timeout = defaultAgentIdentityTimeout
@@ -755,6 +760,7 @@ func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue, cfg FCE2BConfig) (map[st
 		protocol.AgentIdentityContextTokenEnvKey: token,
 		"MULTICA_AGENT_IDENTITY_BASE_URL":        cfg.AgentIdentityBaseURL,
 		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS": strconv.Itoa(seconds),
+		"DWS_CLIENT_SECRET":                      cfg.DWSClientSecret,
 	}, nil
 }
 
