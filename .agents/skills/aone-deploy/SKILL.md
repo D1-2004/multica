@@ -1,8 +1,6 @@
 ---
 name: aone-deploy
-description: Deploy this fork to the Aone pre-release environment, read its runtime logs, change its runtime config, and diagnose a failed deploy. Use when asked to deploy, redeploy, check the deployment, read server logs, set an environment variable, or investigate why pre-release is broken.
-metadata:
-  version: "1.0.0"
+description: Deploy this fork to the Aone pre-release environment, read runtime logs, safely update the env-vars trait, and diagnose failed builds or deploys. Use when asked to deploy, redeploy, check deployment status, read server logs, add or change environment variables, fix Aquaman YAML or env.value type errors, or investigate why pre-release is broken.
 ---
 
 # Aone Deploy & Operations
@@ -37,11 +35,11 @@ manual **预发验证** gate. Deploying never publishes to production.
 ## Deploy
 
 Pushing to `develop` does **not** redeploy once the flow instance is parked at
-预发验证. Always trigger explicitly after a push:
+预发验证. Always trigger explicitly after a push or config change:
 
 ```bash
-a1 app pipeline run --pipeline-id 66            # re-enter; returns newPipelineInstanceId
-a1 app pipeline status --pipeline-id 66 --format json | jq -r '.stages[] | "\(.name): \(.status)"'
+a1 app pipeline reenter --pipeline-id 66 --format json
+a1 app pipeline status --instance-id <newPipelineInstanceId> --format json
 ```
 
 `make deploy` (scripts/aone-deploy.sh) is the fallback when the flow has been
@@ -77,18 +75,87 @@ Runtime config lives in the Aone environment trait, is rendered to
 never reach the process, no matter what the console says.
 
 ```bash
-# read (env 6721850 = 预发)
+# List names only (env 6721850 = 预发). Never print values into the transcript.
 a1 env get 6721850 --format json | jq -r '.configurations.envTraits[] | select(.key=="env-vars") | .content.envs[].key'
-
-# write: read-modify-write the whole trait (there is no per-key update; create
-# fails with "注入规则已存在" unless the trait is deleted first)
-a1 env get 6721850 --format json \
-  | jq -c --arg v "$VALUE" '(.configurations.envTraits[] | select(.key=="env-vars") | .content) | .envs += [{"key":"NEW_KEY","value":$v}]' > payload.json
-a1 env trait delete --env-id 6721850 --trait-key env-vars
-a1 env trait create --env-id 6721850 --trait-key env-vars --version 0.0.1 --form-data "$(cat payload.json)"
 ```
 
-Config changes take effect only after a redeploy (`a1 app pipeline run`).
+### Mandatory serialization rule
+
+Aone interpolates each trait `envs[].value` into StatefulSet YAML without
+reliably forcing a string scalar. Raw multiline text can break YAML, while raw
+values beginning with `[`, `{`, or `-` can become arrays or objects. Kubernetes
+requires `containers[].env[].value` to be a string.
+
+For every key introduced or changed in one operation, store the intended runtime
+value as a **JSON string literal**:
+
+```text
+traitValue = JSON.stringify(runtimeValue)
+```
+
+Examples (non-secret):
+
+```text
+runtime: https://api.github.com
+trait:   "https://api.github.com"
+
+runtime: [{"key":"factory-default"}]
+trait:   "[{\"key\":\"factory-default\"}]"
+```
+
+For PEM data, first make it one line with literal `\n` separators, then apply
+`JSON.stringify`. The server accepts literal `\n` in `GITHUB_APP_PRIVATE_KEY`.
+Do not use raw PEM lines, raw JSON arrays/objects, or YAML lists as trait values.
+
+Apply this rule uniformly to all keys in the current change. Do not rewrite
+unrelated legacy keys merely to normalize them.
+
+### Safe read-modify-write
+
+There is no per-key update. `create` fails with `注入规则已存在` until the old
+trait is deleted, so treat the operation as a guarded replacement:
+
+1. Read with `a1 env trait get --env-id 6721850 --trait-key env-vars --format json`.
+2. Parse the response's `formData` JSON string in memory. Preserve every entry,
+   update only the intended keys, reject duplicate keys, and JSON-stringify each
+   new runtime value.
+3. Retain the original `formData` in memory for rollback. Never print values,
+   put them in a shell command shown to the user, or write them into the repo.
+4. Delete `env-vars`, then recreate it with the original version and modified
+   `formData`.
+5. If recreation fails, immediately recreate the original trait.
+6. Re-read and verify key count, uniqueness, target presence, and that each
+   changed value parses as a JSON string. Output names and validation results
+   only, never values.
+
+Prefer an in-process orchestration script that passes the generated form data to
+`a1` dynamically; this keeps secrets out of tool-call text and terminal output.
+
+Config is snapshotted during the pipeline's 配置项合并 stage. After changing the
+trait, always start a new `reenter`; an already-running instance will keep its old
+snapshot.
+
+### Recognize serialization failures
+
+- `while scanning a simple key` / `could not find expected ':'`: raw multiline
+  content, usually PEM, broke YAML.
+- `Expected a string but was BEGIN_ARRAY ... env[N].value`: a raw JSON/YAML list
+  was parsed as an array.
+- `Expected a string but was BEGIN_OBJECT ... env[N].value`: a raw object was
+  parsed as an object.
+
+The Aone build component can display `FAIL` even when `componentData.jobs[].status`
+is `SUCCESS`; in that case inspect the attached Aquaman environment error. It is
+a post-build spec check, not a source build failure.
+
+Config changes take effect only after a successful redeploy. Verify 代码合并,
+构建, 制品扫描, 预发部署, and 预发集成测试 separately; `预发验证` remains a
+manual gate.
+
+Secrets frequently appear in Aquaman's expanded StatefulSet error text. Extract
+only the error class and JSON path. If a full error was pasted into chat, advise
+rotating every exposed credential. Base64 is transport encoding, not encryption;
+use KeyCenter when the environment adopts managed secret injection.
 
 Keys that gate product surfaces (easy to get wrong):
 
