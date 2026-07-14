@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -31,17 +34,13 @@ const (
 	FCE2BProvider      = "hermes"
 	FCE2BRunnerCommand = "multica-fc-hermes-runner"
 
-	// AgentIdentityContextTokenEnv is consumed by the sandbox runtime's
-	// identity/credential layer. It is injected only for the lifetime of the
-	// run-once process and is never written to Multica business storage.
-	AgentIdentityContextTokenEnv = "AGENT_IDENTITY_CONTEXT_TOKEN"
-
 	fcE2BScopeTypeChat  = "chat"
 	fcE2BScopeTypeIssue = "issue"
 
 	defaultFCE2BCLIPath             = "e2b"
 	defaultFCE2BTimeoutSeconds      = 3600
 	defaultFCE2BSandboxReadyTimeout = 60 * time.Second
+	defaultAgentIdentityTimeout     = 10 * time.Second
 	fcE2BDaemonTokenTTL             = time.Hour
 	fcE2BRunnerClaimTimeout         = 30 * time.Second
 	fcE2BRunnerClaimPollInterval    = 500 * time.Millisecond
@@ -58,37 +57,46 @@ const (
 )
 
 type FCE2BConfig struct {
-	Enabled             bool
-	Template            string
-	ServerURL           string
-	APIKey              string
-	APIURL              string
-	Domain              string
-	LLMBaseURL          string
-	LLMAPIKey           string
-	LLMModel            string
-	DWSSecretKey        string
-	CLIPath             string
-	TimeoutSeconds      int
-	SandboxReadyTimeout time.Duration
-	ParseError          error
+	Enabled              bool
+	Template             string
+	ServerURL            string
+	APIKey               string
+	APIURL               string
+	Domain               string
+	LLMBaseURL           string
+	LLMAPIKey            string
+	LLMModels            []string
+	DWSSecretKey         string
+	AgentIdentityBaseURL string
+	AgentIdentityTimeout time.Duration
+	CLIPath              string
+	TimeoutSeconds       int
+	SandboxReadyTimeout  time.Duration
+	ParseError           error
 }
 
 func FCE2BConfigFromEnv() FCE2BConfig {
 	cfg := FCE2BConfig{
-		Enabled:             envBool("MULTICA_FC_E2B_ENABLED"),
-		Template:            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TEMPLATE")),
-		ServerURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_SERVER_URL")), "/"),
-		APIKey:              strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_KEY")),
-		APIURL:              strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_URL")), "/"),
-		Domain:              strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),
-		LLMBaseURL:          strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_BASE_URL")), "/"),
-		LLMAPIKey:           strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_API_KEY")),
-		LLMModel:            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_MODEL")),
-		DWSSecretKey:        strings.TrimSpace(os.Getenv("MULTICA_DWS_SECRET_KEY")),
-		CLIPath:             strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_CLI_PATH")),
-		TimeoutSeconds:      defaultFCE2BTimeoutSeconds,
-		SandboxReadyTimeout: defaultFCE2BSandboxReadyTimeout,
+		Enabled:              envBool("MULTICA_FC_E2B_ENABLED"),
+		Template:             strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TEMPLATE")),
+		ServerURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_SERVER_URL")), "/"),
+		APIKey:               strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_KEY")),
+		APIURL:               strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_URL")), "/"),
+		Domain:               strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),
+		LLMBaseURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_BASE_URL")), "/"),
+		LLMAPIKey:            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_API_KEY")),
+		DWSSecretKey:         strings.TrimSpace(os.Getenv("MULTICA_DWS_SECRET_KEY")),
+		AgentIdentityBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_BASE_URL")), "/"),
+		AgentIdentityTimeout: defaultAgentIdentityTimeout,
+		CLIPath:              strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_CLI_PATH")),
+		TimeoutSeconds:       defaultFCE2BTimeoutSeconds,
+		SandboxReadyTimeout:  defaultFCE2BSandboxReadyTimeout,
+	}
+	models, err := parseFCE2BModels(os.Getenv("MULTICA_FC_E2B_OPENAI_MODELS"))
+	if err != nil {
+		cfg.ParseError = errors.Join(cfg.ParseError, err)
+	} else {
+		cfg.LLMModels = models
 	}
 	if cfg.CLIPath == "" {
 		cfg.CLIPath = defaultFCE2BCLIPath
@@ -96,7 +104,7 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 	if raw := strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TIMEOUT_SECONDS")); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n <= 0 {
-			cfg.ParseError = fmt.Errorf("invalid MULTICA_FC_E2B_TIMEOUT_SECONDS")
+			cfg.ParseError = errors.Join(cfg.ParseError, fmt.Errorf("invalid MULTICA_FC_E2B_TIMEOUT_SECONDS"))
 		} else {
 			cfg.TimeoutSeconds = n
 		}
@@ -107,6 +115,14 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 			cfg.ParseError = errors.Join(cfg.ParseError, fmt.Errorf("invalid MULTICA_FC_E2B_SANDBOX_READY_TIMEOUT"))
 		} else {
 			cfg.SandboxReadyTimeout = d
+		}
+	}
+	if raw := strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			cfg.ParseError = errors.Join(cfg.ParseError, fmt.Errorf("invalid MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS"))
+		} else {
+			cfg.AgentIdentityTimeout = time.Duration(n) * time.Second
 		}
 	}
 	return cfg
@@ -140,8 +156,8 @@ func (c FCE2BConfig) Validate() error {
 	if strings.TrimSpace(c.LLMAPIKey) == "" {
 		missing = append(missing, "MULTICA_FC_E2B_OPENAI_API_KEY")
 	}
-	if strings.TrimSpace(c.LLMModel) == "" {
-		missing = append(missing, "MULTICA_FC_E2B_OPENAI_MODEL")
+	if len(c.LLMModels) == 0 {
+		missing = append(missing, "MULTICA_FC_E2B_OPENAI_MODELS")
 	}
 	if strings.TrimSpace(c.CLIPath) == "" {
 		missing = append(missing, "MULTICA_FC_E2B_CLI_PATH")
@@ -156,6 +172,49 @@ func (c FCE2BConfig) Validate() error {
 		return fmt.Errorf("missing FC/E2B config: %s", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+func parseFCE2BModels(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var models []string
+	if err := json.Unmarshal([]byte(raw), &models); err != nil {
+		return nil, errors.New("invalid MULTICA_FC_E2B_OPENAI_MODELS: expected a JSON string array")
+	}
+	if len(models) == 0 {
+		return nil, errors.New("invalid MULTICA_FC_E2B_OPENAI_MODELS: array must not be empty")
+	}
+	seen := make(map[string]struct{}, len(models))
+	for i, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			return nil, fmt.Errorf("invalid MULTICA_FC_E2B_OPENAI_MODELS: item %d is empty", i)
+		}
+		if _, ok := seen[model]; ok {
+			return nil, fmt.Errorf("invalid MULTICA_FC_E2B_OPENAI_MODELS: duplicate model %q", model)
+		}
+		seen[model] = struct{}{}
+		models[i] = model
+	}
+	return models, nil
+}
+
+func (c FCE2BConfig) ModelForAgent(model string) (string, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		if len(c.LLMModels) == 0 {
+			return "", errors.New("MULTICA_FC_E2B_OPENAI_MODELS is empty")
+		}
+		return c.LLMModels[0], nil
+	}
+	for _, allowed := range c.LLMModels {
+		if model == allowed {
+			return model, nil
+		}
+	}
+	return "", fmt.Errorf("agent model %q is not configured in MULTICA_FC_E2B_OPENAI_MODELS", model)
 }
 
 func (c FCE2BConfig) ValidateTemplateAPI() error {
@@ -327,6 +386,59 @@ type FCE2BLauncher struct {
 	Tasks   *TaskService
 	Config  FCE2BConfig
 	Runner  CommandRunner
+
+	// Pool backs the cross-replica sandbox lock. Optional: without it the
+	// launcher serializes nothing, which is only safe in a single-process
+	// deployment (see resolveSandbox).
+	Pool *pgxpool.Pool
+}
+
+// fcE2BSandboxLockClass namespaces the advisory lock so it cannot collide with
+// the migration loop's lock or the usage-rollup lock. "FCE2" as an int32.
+const fcE2BSandboxLockClass int32 = 0x46434532
+
+// lockSandboxScope serializes the read-then-create in resolveSandbox across
+// replicas. The launch is driven by whichever replica served the enqueue (or
+// the pending-chat poll, which the load balancer spreads freely), and the
+// in-process launch guard only dedups within one replica — so without this two
+// replicas both miss the session row, both boot a sandbox, and the second
+// Upsert clobbers the first, leaving an orphaned microVM billed until timeout.
+//
+// The lock is held across the sandbox boot (seconds), so it holds one pooled
+// connection for that long. The loser blocks, then re-reads and reuses the
+// winner's sandbox.
+func (l *FCE2BLauncher) lockSandboxScope(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope) (func(), error) {
+	if l.Pool == nil {
+		return func() {}, nil
+	}
+	key := fcE2BScopeLockKey(rt.ID, scope)
+	conn, err := l.Pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire connection for sandbox lock: %w", err)
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1, $2)", fcE2BSandboxLockClass, key); err != nil {
+		conn.Release()
+		return nil, fmt.Errorf("acquire sandbox lock: %w", err)
+	}
+	return func() {
+		// Unlock on a background context: the caller's ctx may already be done
+		// (a cancelled launch), and a lock left held would wedge every later
+		// launch for this scope until the connection is recycled.
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1, $2)", fcE2BSandboxLockClass, key); err != nil {
+			slog.Warn("fc/e2b: release sandbox lock failed", "err", err)
+		}
+		conn.Release()
+	}, nil
+}
+
+func fcE2BScopeLockKey(runtimeID pgtype.UUID, scope fcE2BTaskScope) int32 {
+	h := fnv.New32a()
+	_, _ = h.Write(runtimeID.Bytes[:])
+	_, _ = io.WriteString(h, scope.typ)
+	_, _ = h.Write(scope.id.Bytes[:])
+	return int32(h.Sum32())
 }
 
 type fcE2BTaskScope struct {
@@ -346,7 +458,17 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 	}
 }
 
-func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue, launchOpts RuntimeLaunchOptions) error {
+// SetPool wires the connection the cross-replica sandbox lock needs. Left nil
+// (tests, single-process runs) the launcher serializes nothing — which is the
+// pre-existing behavior, and the reason two replicas could each boot a sandbox
+// for the same scope.
+func (l *FCE2BLauncher) SetPool(pool *pgxpool.Pool) {
+	if l != nil {
+		l.Pool = pool
+	}
+}
+
+func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) error {
 	if l == nil || l.Queries == nil || l.Tasks == nil || !task.RuntimeID.Valid {
 		return nil
 	}
@@ -388,29 +510,6 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue, 
 		"template", template,
 	)
 
-	token, err := auth.GenerateDaemonToken()
-	if err != nil {
-		return l.failLaunch(ctx, task, "failed to mint FC/E2B daemon token")
-	}
-	if _, err := l.Queries.CreateDaemonToken(ctx, db.CreateDaemonTokenParams{
-		TokenHash:   auth.HashToken(token),
-		WorkspaceID: rt.WorkspaceID,
-		DaemonID:    rt.DaemonID.String,
-		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(fcE2BDaemonTokenTTL), Valid: true},
-	}); err != nil {
-		return l.failLaunch(ctx, task, "failed to persist FC/E2B daemon token")
-	}
-	extraEnv, err := l.extraEnvForTask(ctx, task)
-	if err != nil {
-		return l.failLaunch(ctx, task, err.Error())
-	}
-	for key, value := range runtimeLaunchEnv(launchOpts) {
-		if extraEnv == nil {
-			extraEnv = make(map[string]string)
-		}
-		extraEnv[key] = value
-	}
-
 	scope, scoped := fcE2BScopeForTask(task)
 	sandboxID, coldStart, err := l.resolveSandbox(ctx, rt, scope, scoped, template)
 	if err != nil {
@@ -430,12 +529,24 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue, 
 		"scope_type", scopeType,
 		"scope_id", scopeID,
 	)
+	extraEnv, err := l.extraEnvForTask(ctx, task)
+	if err != nil {
+		return l.failLaunch(ctx, task, err.Error())
+	}
+	token, err := auth.GenerateDaemonToken()
+	if err != nil {
+		return l.failLaunch(ctx, task, "failed to mint FC/E2B daemon token")
+	}
+	if _, err := l.Queries.CreateDaemonToken(ctx, db.CreateDaemonTokenParams{
+		TokenHash:   auth.HashToken(token),
+		WorkspaceID: rt.WorkspaceID,
+		DaemonID:    rt.DaemonID.String,
+		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(fcE2BDaemonTokenTTL), Valid: true},
+	}); err != nil {
+		return l.failLaunch(ctx, task, "failed to persist FC/E2B daemon token")
+	}
 	if err := l.execRunOnce(ctx, sandboxID, rt, task.ID, token, coldStart, extraEnv); err != nil {
-		msg := err.Error()
-		if launchOpts.AgentIdentityContextToken != "" {
-			msg = strings.ReplaceAll(msg, launchOpts.AgentIdentityContextToken, "[REDACTED]")
-		}
-		return l.failLaunch(ctx, task, msg)
+		return l.failLaunch(ctx, task, err.Error())
 	}
 	slog.Info("FC/E2B run-once submitted",
 		"task_id", taskID,
@@ -473,14 +584,6 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue, 
 		})
 	}
 	return nil
-}
-
-func runtimeLaunchEnv(opts RuntimeLaunchOptions) map[string]string {
-	env := make(map[string]string, 2)
-	if token := strings.TrimSpace(opts.AgentIdentityContextToken); token != "" {
-		env[AgentIdentityContextTokenEnv] = token
-	}
-	return env
 }
 
 func fcE2BScopeForTask(task db.AgentTaskQueue) (fcE2BTaskScope, bool) {
@@ -575,16 +678,34 @@ func fcE2BTaskStatusBlocksClaim(status string) bool {
 }
 
 func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQueue) (map[string]string, error) {
+	agentIdentityEnv, err := fcE2BAgentIdentityExtraEnv(task, l.Config)
+	if err != nil {
+		return nil, err
+	}
 	agentRow, err := l.Queries.GetAgent(ctx, task.AgentID)
 	if err != nil {
 		return nil, fmt.Errorf("load agent for FC/E2B launch: %w", err)
 	}
+	model, err := l.Config.ModelForAgent(agentRow.Model.String)
+	if err != nil {
+		return nil, err
+	}
+	env := map[string]string{"OPENAI_MODEL": model}
+	for key, value := range agentIdentityEnv {
+		env[key] = value
+	}
+	if len(agentIdentityEnv) > 0 {
+		// ContextToken authorization is task-scoped and must not reuse a
+		// previously bound DWS profile when sandbox initialization fails.
+		return env, nil
+	}
+
 	profileID, hasProfile, err := DWSProfileIDFromRuntimeConfig(agentRow.RuntimeConfig)
 	if err != nil {
 		return nil, err
 	}
 	if !hasProfile {
-		return nil, nil
+		return env, nil
 	}
 	profileUUID, err := util.ParseUUID(profileID)
 	if err != nil {
@@ -602,7 +723,39 @@ func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQu
 	if err != nil {
 		return nil, err
 	}
-	return map[string]string{"DWS_AUTH_ARCHIVE_B64": archive}, nil
+	env["DWS_AUTH_ARCHIVE_B64"] = archive
+	return env, nil
+}
+
+func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue, cfg FCE2BConfig) (map[string]string, error) {
+	if len(bytes.TrimSpace(task.Context)) == 0 {
+		return nil, nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(task.Context, &payload); err != nil {
+		return nil, fmt.Errorf("parse task context for Agent Identity: %w", err)
+	}
+	token, _ := payload[protocol.AgentIdentityContextTokenJSONKey].(string)
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, nil
+	}
+	if cfg.AgentIdentityBaseURL == "" {
+		return nil, errors.New("MULTICA_AGENT_IDENTITY_BASE_URL is required for ContextToken tasks")
+	}
+	timeout := cfg.AgentIdentityTimeout
+	if timeout <= 0 {
+		timeout = defaultAgentIdentityTimeout
+	}
+	seconds := int(timeout / time.Second)
+	if seconds <= 0 {
+		seconds = int(defaultAgentIdentityTimeout / time.Second)
+	}
+	return map[string]string{
+		protocol.AgentIdentityContextTokenEnvKey: token,
+		"MULTICA_AGENT_IDENTITY_BASE_URL":        cfg.AgentIdentityBaseURL,
+		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS": strconv.Itoa(seconds),
+	}, nil
 }
 
 // DWSProfileIDFromRuntimeConfig extracts the optional DWS profile binding from
@@ -657,6 +810,14 @@ func (l *FCE2BLauncher) decryptDWSAuthArchive(ciphertext []byte) (string, error)
 
 func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool, template string) (string, bool, error) {
 	if scoped {
+		// Serialize the lookup-or-create with the other replicas before reading:
+		// a check outside the lock is exactly the race that orphans sandboxes.
+		release, err := l.lockSandboxScope(ctx, rt, scope)
+		if err != nil {
+			return "", false, err
+		}
+		defer release()
+
 		session, err := l.Queries.GetActiveFCE2BSandboxSession(ctx, db.GetActiveFCE2BSandboxSessionParams{
 			RuntimeID: rt.ID,
 			ScopeType: scope.typ,
@@ -767,7 +928,6 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "DWS_CONFIG_DIR=/home/user/.dws",
 		"-e", "OPENAI_BASE_URL=" + l.Config.LLMBaseURL,
 		"-e", "OPENAI_API_KEY=" + l.Config.LLMAPIKey,
-		"-e", "OPENAI_MODEL=" + l.Config.LLMModel,
 	}
 	if coldStart {
 		args = append(args, "-e", "MULTICA_FC_E2B_COLD_START=true")

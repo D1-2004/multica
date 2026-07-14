@@ -25,11 +25,11 @@ func NewIssueCommentService(q *db.Queries, bus *events.Bus, tasks *TaskService) 
 }
 
 type IssueCommentCreateParams struct {
-	Issue                db.Issue
-	AuthorID             pgtype.UUID
-	Content              string
-	AttachmentIDs        []pgtype.UUID
-	RuntimeLaunchOptions RuntimeLaunchOptions
+	Issue                     db.Issue
+	AuthorID                  pgtype.UUID
+	Content                   string
+	AttachmentIDs             []pgtype.UUID
+	AgentIdentityContextToken string
 }
 
 type IssueCommentCreateOpts struct {
@@ -62,8 +62,7 @@ func (s *IssueCommentService) CreateExternalFollowUp(ctx context.Context, params
 		return IssueCommentCreateResult{}, fmt.Errorf("check active issue task: %w", err)
 	}
 	// External follow-ups must not merge with or queue behind an active task:
-	// their one-shot context token belongs to a distinct runtime launch and is
-	// deliberately not persisted for a later retry.
+	// their task-scoped context token belongs to a distinct runtime launch.
 	if active {
 		return IssueCommentCreateResult{}, ErrIssueDispatchPending
 	}
@@ -108,7 +107,7 @@ func (s *IssueCommentService) CreateExternalFollowUp(ctx context.Context, params
 			Payload:     payload,
 		})
 	}
-	task, err := s.TaskService.EnqueueTaskForIssueWithLaunchOptions(ctx, issue, params.RuntimeLaunchOptions, comment.ID)
+	task, err := s.TaskService.EnqueueTaskForIssueWithAgentIdentityContext(ctx, issue, params.AgentIdentityContextToken, comment.ID)
 	if err != nil {
 		return IssueCommentCreateResult{Comment: comment, Attachments: attachments}, fmt.Errorf("enqueue issue follow-up: %w", err)
 	}

@@ -28,6 +28,11 @@ func TestMarkRuntimesOfflineByIDs_RespectsConcurrentHeartbeat(t *testing.T) {
 	// threshold — the SELECT step would pick this up as a candidate. Use
 	// 2× the threshold so this stays correct if staleThresholdSeconds is
 	// retuned in the future.
+	//
+	// runtime_mode must be 'local': MarkRuntimesOfflineByIDs skips cloud and
+	// fc-e2b runtimes (they have no daemon heartbeat to go stale), so a cloud
+	// seed makes the query veto the write for the wrong reason — the heartbeat
+	// race this test guards would then pass vacuously.
 	staleSeed := time.Duration(staleThresholdSeconds*2) * time.Second
 	var runtimeID string
 	if err := testPool.QueryRow(ctx, `
@@ -35,7 +40,7 @@ func TestMarkRuntimesOfflineByIDs_RespectsConcurrentHeartbeat(t *testing.T) {
 			workspace_id, daemon_id, name, runtime_mode, provider,
 			status, device_info, metadata, last_seen_at
 		)
-		VALUES ($1, NULL, $2, 'cloud', 'claude',
+		VALUES ($1, NULL, $2, 'local', 'claude',
 			'online', '', '{}'::jsonb, now() - make_interval(secs => $3))
 		RETURNING id
 	`, testWorkspaceID, "race-test-runtime", staleSeed.Seconds()).Scan(&runtimeID); err != nil {
@@ -101,7 +106,7 @@ func TestMarkRuntimesOfflineByIDs_OfflinesGenuinelyStale(t *testing.T) {
 			workspace_id, daemon_id, name, runtime_mode, provider,
 			status, device_info, metadata, last_seen_at
 		)
-		VALUES ($1, NULL, $2, 'cloud', 'claude',
+		VALUES ($1, NULL, $2, 'local', 'claude',
 			'online', '', '{}'::jsonb, now() - make_interval(secs => $3))
 		RETURNING id
 	`, testWorkspaceID, "race-test-stale-runtime", staleSeed.Seconds()).Scan(&runtimeID); err != nil {

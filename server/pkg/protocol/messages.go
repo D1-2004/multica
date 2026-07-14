@@ -7,6 +7,11 @@ const (
 	DaemonCapabilityCoalescedCommentsV1 = "coalesced-comments-v1"
 )
 
+const (
+	AgentIdentityContextTokenJSONKey = "agent_identity_context_token"
+	AgentIdentityContextTokenEnvKey  = "AGENT_IDENTITY_CONTEXT_TOKEN"
+)
+
 // Message is the envelope for all WebSocket messages.
 type Message struct {
 	Type    string          `json:"type"`

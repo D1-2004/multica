@@ -472,6 +472,7 @@ func init() {
 	issueCreateCmd.Flags().String("start-date", "", "Start date (calendar day, YYYY-MM-DD)")
 	issueCreateCmd.Flags().String("due-date", "", "Due date (calendar day, YYYY-MM-DD)")
 	issueCreateCmd.Flags().Bool("allow-duplicate", false, "Allow creating an issue even when an active duplicate exists")
+	issueCreateCmd.Flags().String("agent-identity-context-token", "", "Agent Identity ContextToken to pass only to the queued task runtime")
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
 	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
@@ -1125,6 +1126,9 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if v, _ := cmd.Flags().GetBool("allow-duplicate"); v {
 		body["allow_duplicate"] = true
 	}
+	if v, _ := cmd.Flags().GetString("agent-identity-context-token"); strings.TrimSpace(v) != "" {
+		body["agent_identity_context_token"] = strings.TrimSpace(v)
+	}
 	aType, aID, hasAssignee, resolveErr := pickAssigneeFromFlags(ctx, client, cmd, "assignee", "assignee-id", issueAssigneeKinds)
 	if resolveErr != nil {
 		return fmt.Errorf("resolve assignee: %w", resolveErr)
@@ -1154,7 +1158,6 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if len(attachmentIDs) > 0 {
 		body["attachment_ids"] = attachmentIDs
 	}
-
 	// Pre-validate attachments BEFORE creating the issue so a bad path can
 	// never produce a half-created issue (which would otherwise trigger
 	// callers — especially the agent doing quick-create — to retry the whole

@@ -2,9 +2,9 @@ package dingtalk
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,11 +24,17 @@ const typingIndicatorMaxAge = 2 * time.Minute
 type typingQueries interface {
 	GetChannelChatSessionBindingBySession(ctx context.Context, arg db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error)
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
+	AddChannelTypingIndicator(ctx context.Context, arg db.AddChannelTypingIndicatorParams) error
+	TakeChannelTypingIndicators(ctx context.Context, arg db.TakeChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error)
 }
 
-// typingIndicatorState identifies one "processing" emotion to recall.
-type typingIndicatorState struct {
-	target EmotionTarget
+// typingIndicatorTarget is the persisted shape of one pending emotion. It is
+// stored as opaque JSON in channel_typing_indicator.target (migration 168) —
+// the emotion must be recallable by whichever replica handles the run's
+// completion, which is not the replica that ingested the message.
+type typingIndicatorTarget struct {
+	OpenConversationID string `json:"open_conversation_id"`
+	OpenMsgID          string `json:"open_msg_id"`
 }
 
 // TypingIndicatorManager owns the "processing" emotion lifecycle for
@@ -44,9 +50,6 @@ type TypingIndicatorManager struct {
 	decrypt   Decrypter
 	q         typingQueries
 	log       *slog.Logger
-
-	mu     sync.Mutex
-	states map[string][]typingIndicatorState // key = chat_session_id string
 }
 
 // NewTypingIndicatorManager constructs the manager. messenger, decrypt
@@ -60,7 +63,6 @@ func NewTypingIndicatorManager(messenger *RobotMessenger, decrypt Decrypter, q t
 		decrypt:   decrypt,
 		q:         q,
 		log:       log,
-		states:    make(map[string][]typingIndicatorState),
 	}
 }
 
@@ -91,10 +93,30 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.ChannelInstall
 			"chat_session_id", util.UUIDToString(chatSessionID), "open_msg_id", target.OpenMsgID, "err", err)
 		return
 	}
-	key := util.UUIDToString(chatSessionID)
-	m.mu.Lock()
-	m.states[key] = append(m.states[key], typingIndicatorState{target: target})
-	m.mu.Unlock()
+	// Persist, do not remember: the replica that clears this emotion is the one
+	// that serves the daemon's completion POST, which the load balancer picks
+	// independently of the WS lease that pinned the ingest here.
+	payload, err := json.Marshal(typingIndicatorTarget{
+		OpenConversationID: target.OpenConversationID,
+		OpenMsgID:          target.OpenMsgID,
+	})
+	if err != nil {
+		m.log.Warn("dingtalk typing indicator: encode target failed",
+			"chat_session_id", util.UUIDToString(chatSessionID), "err", err)
+		return
+	}
+	if err := m.q.AddChannelTypingIndicator(ctx, db.AddChannelTypingIndicatorParams{
+		ChatSessionID:  chatSessionID,
+		ChannelType:    string(TypeDingtalk),
+		InstallationID: inst.ID,
+		Target:         payload,
+	}); err != nil {
+		// The emotion is already on the message; failing to record it only
+		// means it will not be recalled. Cosmetic, so log and move on.
+		m.log.Warn("dingtalk typing indicator: persist target failed",
+			"chat_session_id", util.UUIDToString(chatSessionID),
+			"open_msg_id", target.OpenMsgID, "err", err)
+	}
 }
 
 // Clear recalls every tracked "processing" emotion for the chat session
@@ -102,12 +124,18 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.ChannelInstall
 // agent's reply lands. Individual recall failures are logged, not fatal.
 func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype.UUID) {
 	key := util.UUIDToString(chatSessionID)
-	m.mu.Lock()
-	states := m.states[key]
-	delete(m.states, key)
-	m.mu.Unlock()
-
-	if len(states) == 0 {
+	// DELETE ... RETURNING claims the pending emotions: if two replicas race to
+	// clear the same run, exactly one gets the rows and only it recalls.
+	rows, err := m.q.TakeChannelTypingIndicators(ctx, db.TakeChannelTypingIndicatorsParams{
+		ChatSessionID: chatSessionID,
+		ChannelType:   string(TypeDingtalk),
+	})
+	if err != nil {
+		m.log.Warn("dingtalk typing indicator: take pending targets failed",
+			"chat_session_id", key, "err", err)
+		return
+	}
+	if len(rows) == 0 {
 		return
 	}
 
@@ -137,10 +165,17 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype
 			"chat_session_id", key, "err", err)
 		return
 	}
-	for _, s := range states {
-		if err := m.messenger.RecallEmotionReply(ctx, creds, s.target); err != nil {
+	for _, row := range rows {
+		var t typingIndicatorTarget
+		if err := json.Unmarshal(row.Target, &t); err != nil {
+			m.log.Warn("dingtalk typing indicator: decode target failed",
+				"chat_session_id", key, "err", err)
+			continue
+		}
+		target := EmotionTarget{OpenConversationID: t.OpenConversationID, OpenMsgID: t.OpenMsgID}
+		if err := m.messenger.RecallEmotionReply(ctx, creds, target); err != nil {
 			m.log.Warn("dingtalk typing indicator: recall emotion failed",
-				"chat_session_id", key, "open_msg_id", s.target.OpenMsgID, "err", err)
+				"chat_session_id", key, "open_msg_id", target.OpenMsgID, "err", err)
 		}
 	}
 }

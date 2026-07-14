@@ -66,7 +66,7 @@ type slashQueries interface {
 // command needs to hand the invoker's prompt to the agent. *service.TaskService
 // satisfies it; tests supply a fake.
 type quickCreateEnqueuer interface {
-	EnqueueQuickCreateTask(ctx context.Context, workspaceID, requesterID, agentID, squadID pgtype.UUID, prompt string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID) (db.AgentTaskQueue, error)
+	EnqueueQuickCreateTask(ctx context.Context, workspaceID, requesterID, agentID, squadID pgtype.UUID, prompt string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, agentIdentityContextToken string) (db.AgentTaskQueue, error)
 }
 
 // SlashCommandProcessor handles the Slack `/issue` slash command end to end.
@@ -194,6 +194,7 @@ func (p *SlashCommandProcessor) process(ctx context.Context, cmd slack.SlashComm
 		pgtype.UUID{}, // no project
 		pgtype.UUID{}, // no parent issue
 		nil,           // no attachments
+		"",            // no agent identity context token
 	); err != nil {
 		p.logger.WarnContext(ctx, "slack slash command: enqueue quick-create failed",
 			"app_id", cmd.APIAppID, "error", err)

@@ -182,6 +182,11 @@
       "title": "하위 이슈 추가",
       "description": "새 이슈의 하위 이슈로 추가할 이슈를 검색하세요"
     },
+    "extensions": {
+      "title": "더 많은 확장 항목",
+      "context_token_label": "Agent Identity ContextToken",
+      "context_token_placeholder": "ContextToken 붙여넣기"
+    },
     "agent": {
       "created_by": "생성자",
       "select_agent_aria": "에이전트 선택",

@@ -1812,12 +1812,13 @@ func (h *Handler) ChildIssueProgress(w http.ResponseWriter, r *http.Request) {
 // keeping the sub-issue intent of the entry point regardless of whether
 // the user submits via manual or agent mode.
 type QuickCreateIssueRequest struct {
-	AgentID       string   `json:"agent_id,omitempty"`
-	SquadID       string   `json:"squad_id,omitempty"`
-	Prompt        string   `json:"prompt"`
-	ProjectID     string   `json:"project_id,omitempty"`
-	ParentIssueID string   `json:"parent_issue_id,omitempty"`
-	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	AgentID                   string   `json:"agent_id,omitempty"`
+	SquadID                   string   `json:"squad_id,omitempty"`
+	Prompt                    string   `json:"prompt"`
+	ProjectID                 string   `json:"project_id,omitempty"`
+	ParentIssueID             string   `json:"parent_issue_id,omitempty"`
+	AttachmentIDs             []string `json:"attachment_ids,omitempty"`
+	AgentIdentityContextToken string   `json:"agent_identity_context_token,omitempty"`
 }
 
 // QuickCreateIssueResponse echoes the queued task id so the frontend can
@@ -1930,6 +1931,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeAgentUnavailable(w, "agent's runtime is offline")
 		return
 	}
+	agentIdentityContextToken := strings.TrimSpace(req.AgentIdentityContextToken)
 
 	// Daemon CLI version gate. The agent-side prompt + create-flow rely on
 	// behaviors introduced in MinQuickCreateCLIVersion (URL attachment
@@ -1991,7 +1993,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		parentIssueUUID = pid
 	}
 
-	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, projectUUID, parentIssueUUID, attachmentIDs)
+	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, projectUUID, parentIssueUUID, attachmentIDs, agentIdentityContextToken)
 	if err != nil {
 		slog.Warn("quick-create enqueue failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to enqueue quick-create task")
@@ -2090,18 +2092,19 @@ func readRuntimeCLIVersion(metadata []byte) string {
 }
 
 type CreateIssueRequest struct {
-	Title         string   `json:"title"`
-	Description   *string  `json:"description"`
-	Status        string   `json:"status"`
-	Priority      string   `json:"priority"`
-	AssigneeType  *string  `json:"assignee_type"`
-	AssigneeID    *string  `json:"assignee_id"`
-	ParentIssueID *string  `json:"parent_issue_id"`
-	ProjectID     *string  `json:"project_id"`
-	Stage         *int32   `json:"stage,omitempty"`
-	StartDate     *string  `json:"start_date"`
-	DueDate       *string  `json:"due_date"`
-	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	Title                     string   `json:"title"`
+	Description               *string  `json:"description"`
+	Status                    string   `json:"status"`
+	Priority                  string   `json:"priority"`
+	AssigneeType              *string  `json:"assignee_type"`
+	AssigneeID                *string  `json:"assignee_id"`
+	ParentIssueID             *string  `json:"parent_issue_id"`
+	ProjectID                 *string  `json:"project_id"`
+	Stage                     *int32   `json:"stage,omitempty"`
+	StartDate                 *string  `json:"start_date"`
+	DueDate                   *string  `json:"due_date"`
+	AttachmentIDs             []string `json:"attachment_ids,omitempty"`
+	AgentIdentityContextToken string   `json:"agent_identity_context_token,omitempty"`
 	// OriginType / OriginID stamp the new issue with its provenance so
 	// platform-internal flows can deterministically locate it later. Only
 	// trusted callers should set these — currently the daemon CLI passes
@@ -2177,6 +2180,8 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, msg)
 		return
 	}
+
+	agentIdentityContextToken := strings.TrimSpace(req.AgentIdentityContextToken)
 
 	var parentIssueID pgtype.UUID
 	var projectID pgtype.UUID
@@ -2305,24 +2310,25 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
-		WorkspaceID:    wsUUID,
-		Title:          req.Title,
-		Description:    ptrToText(req.Description),
-		Status:         status,
-		Priority:       priority,
-		AssigneeType:   assigneeType,
-		AssigneeID:     assigneeID,
-		CreatorType:    creatorType,
-		CreatorID:      parseUUID(actualCreatorID),
-		ParentIssueID:  parentIssueID,
-		ProjectID:      projectID,
-		StartDate:      startDate,
-		DueDate:        dueDate,
-		OriginType:     originType,
-		OriginID:       originID,
-		Stage:          ptrToInt4(req.Stage),
-		AttachmentIDs:  attachmentIDs,
-		AllowDuplicate: req.AllowDuplicate,
+		WorkspaceID:               wsUUID,
+		Title:                     req.Title,
+		Description:               ptrToText(req.Description),
+		Status:                    status,
+		Priority:                  priority,
+		AssigneeType:              assigneeType,
+		AssigneeID:                assigneeID,
+		CreatorType:               creatorType,
+		CreatorID:                 parseUUID(actualCreatorID),
+		ParentIssueID:             parentIssueID,
+		ProjectID:                 projectID,
+		StartDate:                 startDate,
+		DueDate:                   dueDate,
+		OriginType:                originType,
+		OriginID:                  originID,
+		Stage:                     ptrToInt4(req.Stage),
+		AttachmentIDs:             attachmentIDs,
+		AllowDuplicate:            req.AllowDuplicate,
+		AgentIdentityContextToken: agentIdentityContextToken,
 	}, service.IssueCreateOpts{
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,

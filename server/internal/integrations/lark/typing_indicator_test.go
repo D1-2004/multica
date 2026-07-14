@@ -2,12 +2,15 @@ package lark
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // fakeTypingAPIClient records reaction calls and can be programmed to fail.
@@ -92,6 +95,8 @@ func TestTypingIndicatorAddRecordsState(t *testing.T) {
 	api := &fakeTypingAPIClient{addReturn: "reaction-123"}
 	queries := &fakeTypingQueries{}
 	mgr := NewTypingIndicatorManager(api, fakeTypingCreds{secret: "shh"}, queries, newDiscardLogger())
+	store := &fakeTypingStore{}
+	mgr.SetStore(store)
 
 	inst := Installation{AppID: "cli_test", Region: "feishu"}
 	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}, Valid: true}
@@ -105,12 +110,18 @@ func TestTypingIndicatorAddRecordsState(t *testing.T) {
 		t.Fatalf("unexpected add call params: %+v", api.addCalled[0])
 	}
 
-	key := uuidString(session)
-	mgr.mu.RLock()
-	states := mgr.states[key]
-	mgr.mu.RUnlock()
-	if len(states) != 1 || states[0].MessageID != "msg-1" || states[0].ReactionID != "reaction-123" {
-		t.Fatalf("unexpected state: %+v", states)
+	// The pending reaction must be persisted, not held in this process: the
+	// replica that clears it is the one that serves the daemon's completion
+	// POST, not the lease holder that ingested the message.
+	if len(store.rows) != 1 {
+		t.Fatalf("expected 1 persisted indicator, got %d", len(store.rows))
+	}
+	var got TypingIndicatorState
+	if err := json.Unmarshal(store.rows[0].Target, &got); err != nil {
+		t.Fatalf("decode persisted target: %v", err)
+	}
+	if got.MessageID != "msg-1" || got.ReactionID != "reaction-123" {
+		t.Fatalf("unexpected persisted target: %+v", got)
 	}
 }
 
@@ -146,6 +157,8 @@ func TestTypingIndicatorAddSkipsOldMessages(t *testing.T) {
 func TestTypingIndicatorAddLogsOnAPIError(t *testing.T) {
 	api := &fakeTypingAPIClient{addErr: errors.New("lark down")}
 	mgr := NewTypingIndicatorManager(api, fakeTypingCreds{secret: "shh"}, &fakeTypingQueries{}, newDiscardLogger())
+	store := &fakeTypingStore{}
+	mgr.SetStore(store)
 
 	inst := Installation{AppID: "cli_test", Region: "feishu"}
 	session := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
@@ -155,13 +168,9 @@ func TestTypingIndicatorAddLogsOnAPIError(t *testing.T) {
 	if len(api.addCalled) != 1 {
 		t.Fatalf("expected 1 add call, got %d", len(api.addCalled))
 	}
-
-	key := uuidString(session)
-	mgr.mu.RLock()
-	states := mgr.states[key]
-	mgr.mu.RUnlock()
-	if len(states) != 0 {
-		t.Fatalf("expected 0 states after error, got %d", len(states))
+	// The reaction never landed, so nothing may be recorded for a later clear.
+	if len(store.rows) != 0 {
+		t.Fatalf("expected 0 persisted indicators after an add error, got %d", len(store.rows))
 	}
 }
 
@@ -178,6 +187,8 @@ func TestTypingIndicatorClearDeletesReactions(t *testing.T) {
 		},
 	}
 	mgr := NewTypingIndicatorManager(api, fakeTypingCreds{secret: "shh"}, queries, newDiscardLogger())
+	store := &fakeTypingStore{}
+	mgr.SetStore(store)
 
 	inst := Installation{AppID: "cli_test", Region: "feishu"}
 	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4}, Valid: true}
@@ -196,12 +207,10 @@ func TestTypingIndicatorClearDeletesReactions(t *testing.T) {
 		t.Fatalf("unexpected delete params: %+v", api.deleteCalled[0])
 	}
 
-	key := uuidString(session)
-	mgr.mu.RLock()
-	states := mgr.states[key]
-	mgr.mu.RUnlock()
-	if len(states) != 0 {
-		t.Fatalf("expected 0 states after clear, got %d", len(states))
+	// The claim is the delete: a cleared indicator must be gone from the store,
+	// so a second replica racing the same clear finds nothing to remove.
+	if len(store.rows) != 0 {
+		t.Fatalf("expected 0 persisted indicators after clear, got %d", len(store.rows))
 	}
 }
 
@@ -218,6 +227,8 @@ func TestTypingIndicatorClearNoOpWhenEmpty(t *testing.T) {
 		},
 	}
 	mgr := NewTypingIndicatorManager(api, fakeTypingCreds{secret: "shh"}, queries, newDiscardLogger())
+	store := &fakeTypingStore{}
+	mgr.SetStore(store)
 
 	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4}, Valid: true}
 	mgr.Clear(context.Background(), session)
@@ -240,6 +251,8 @@ func TestTypingIndicatorClearLogsOnDeleteError(t *testing.T) {
 		},
 	}
 	mgr := NewTypingIndicatorManager(api, fakeTypingCreds{secret: "shh"}, queries, newDiscardLogger())
+	store := &fakeTypingStore{}
+	mgr.SetStore(store)
 
 	inst := Installation{AppID: "cli_test", Region: "feishu"}
 	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4}, Valid: true}
@@ -265,6 +278,8 @@ func TestTypingIndicatorMultipleMessagesPerSession(t *testing.T) {
 		},
 	}
 	mgr := NewTypingIndicatorManager(api, fakeTypingCreds{secret: "shh"}, queries, newDiscardLogger())
+	store := &fakeTypingStore{}
+	mgr.SetStore(store)
 
 	inst := Installation{AppID: "cli_test", Region: "feishu"}
 	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4}, Valid: true}
@@ -296,6 +311,8 @@ func TestTypingIndicatorConcurrentAddAndClear(t *testing.T) {
 		},
 	}
 	mgr := NewTypingIndicatorManager(api, fakeTypingCreds{secret: "shh"}, queries, newDiscardLogger())
+	store := &fakeTypingStore{}
+	mgr.SetStore(store)
 
 	inst := Installation{AppID: "cli_test", Region: "feishu"}
 	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4}, Valid: true}
@@ -314,4 +331,33 @@ func TestTypingIndicatorConcurrentAddAndClear(t *testing.T) {
 	}()
 	<-done
 	time.Sleep(10 * time.Millisecond)
+}
+
+// fakeTypingStore fakes channel_typing_indicator with the DELETE...RETURNING
+// semantics the real query has: a take claims the rows and empties the set.
+type fakeTypingStore struct {
+	rows []db.ChannelTypingIndicator
+}
+
+func (f *fakeTypingStore) AddChannelTypingIndicator(_ context.Context, arg db.AddChannelTypingIndicatorParams) error {
+	f.rows = append(f.rows, db.ChannelTypingIndicator{
+		ChatSessionID:  arg.ChatSessionID,
+		ChannelType:    arg.ChannelType,
+		InstallationID: arg.InstallationID,
+		Target:         arg.Target,
+	})
+	return nil
+}
+
+func (f *fakeTypingStore) TakeChannelTypingIndicators(_ context.Context, arg db.TakeChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error) {
+	var taken, kept []db.ChannelTypingIndicator
+	for _, row := range f.rows {
+		if row.ChatSessionID == arg.ChatSessionID && row.ChannelType == arg.ChannelType {
+			taken = append(taken, row)
+			continue
+		}
+		kept = append(kept, row)
+	}
+	f.rows = kept
+	return taken, nil
 }

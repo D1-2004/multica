@@ -25,11 +25,10 @@ type stubRuntimeLauncher struct {
 
 type runtimeLaunchCall struct {
 	task db.AgentTaskQueue
-	opts RuntimeLaunchOptions
 }
 
-func (s *stubRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue, opts RuntimeLaunchOptions) error {
-	s.calls <- runtimeLaunchCall{task: task, opts: opts}
+func (s *stubRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue) error {
+	s.calls <- runtimeLaunchCall{task: task}
 	return nil
 }
 
@@ -38,8 +37,8 @@ type blockingRuntimeLauncher struct {
 	release chan struct{}
 }
 
-func (s *blockingRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue, opts RuntimeLaunchOptions) error {
-	s.calls <- runtimeLaunchCall{task: task, opts: opts}
+func (s *blockingRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue) error {
+	s.calls <- runtimeLaunchCall{task: task}
 	<-s.release
 	return nil
 }
@@ -141,18 +140,12 @@ func TestNotifyTaskEnqueued_InvokesRuntimeLauncher(t *testing.T) {
 		ID:        testUUID(10),
 		RuntimeID: testUUID(11),
 	}
-	opts := RuntimeLaunchOptions{
-		AgentIdentityContextToken: "secret-context",
-	}
-	svc.NotifyTaskEnqueuedWithOptions(context.Background(), task, opts)
+	svc.NotifyTaskEnqueued(context.Background(), task)
 
 	select {
 	case got := <-launcher.calls:
 		if util.UUIDToString(got.task.ID) != util.UUIDToString(task.ID) {
 			t.Fatalf("launcher task id = %q, want %q", util.UUIDToString(got.task.ID), util.UUIDToString(task.ID))
-		}
-		if got.opts != opts {
-			t.Fatalf("launcher options = %+v, want %+v", got.opts, opts)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("runtime launcher was not invoked")
@@ -174,14 +167,14 @@ func TestLaunchRuntimeForTask_DedupesInFlightTask(t *testing.T) {
 		AgentID:   testUUID(14),
 	}
 
-	svc.launchRuntimeForTask(task, RuntimeLaunchOptions{AgentIdentityContextToken: "context-1"})
+	svc.launchRuntimeForTask(task)
 	select {
 	case <-launcher.calls:
 	case <-time.After(time.Second):
 		t.Fatal("runtime launcher was not invoked")
 	}
 
-	svc.launchRuntimeForTask(task, RuntimeLaunchOptions{AgentIdentityContextToken: "context-1"})
+	svc.launchRuntimeForTask(task)
 	select {
 	case <-launcher.calls:
 		t.Fatal("duplicate launch was scheduled while the first launch was still in flight")

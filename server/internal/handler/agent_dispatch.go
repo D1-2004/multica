@@ -61,10 +61,11 @@ type AgentDispatchResponse struct {
 // embedded in the callback URL. New issues require a body-level agentId;
 // continuations resolve the agent from the existing issue assignment.
 // schemaVersion is intentionally not gated and the request body has no
-// handler-level size cap. contextToken is handed to the runtime launcher only
-// and is never rendered into issue/comment content or persisted as task
-// context. dispatchTaskId remains owned by the upstream router; when present
-// in a legacy payload it is ignored by the JSON decoder.
+// handler-level size cap. contextToken is stored only in the server-private
+// task context so the daemon and FC/E2B launcher can pass it to the runtime; it
+// is never rendered into issue/comment content. dispatchTaskId remains owned by
+// the upstream router; when present in a legacy payload it is ignored by the
+// JSON decoder.
 func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	var req AgentDispatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -91,9 +92,6 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	launchOpts := service.RuntimeLaunchOptions{
-		AgentIdentityContextToken: req.ContextToken,
-	}
 	if req.Continuation == nil {
 		if strings.TrimSpace(req.AgentID) == "" {
 			writeError(w, http.StatusBadRequest, "agentId is required")
@@ -107,14 +105,14 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		h.createAgentDispatchIssue(w, r, req, userID, workspaceID, agent, launchOpts)
+		h.createAgentDispatchIssue(w, r, req, userID, workspaceID, agent, req.ContextToken)
 		return
 	}
 	if req.Continuation.Kind != "issue" || strings.TrimSpace(req.Continuation.IssueID) == "" {
 		writeError(w, http.StatusBadRequest, "continuation must identify an issue")
 		return
 	}
-	h.createAgentDispatchComment(w, r, req, userID, workspaceID, launchOpts)
+	h.createAgentDispatchComment(w, r, req, userID, workspaceID, req.ContextToken)
 }
 
 func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Request) (pgtype.UUID, pgtype.UUID, bool) {
@@ -171,7 +169,7 @@ func (h *Handler) resolveAgentDispatchAgent(w http.ResponseWriter, r *http.Reque
 	return agent, true
 }
 
-func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Request, req AgentDispatchRequest, userID, workspaceID pgtype.UUID, agent db.Agent, launchOpts service.RuntimeLaunchOptions) {
+func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Request, req AgentDispatchRequest, userID, workspaceID pgtype.UUID, agent db.Agent, agentIdentityContextToken string) {
 	attachmentService := service.NewExternalAttachmentService(h.Queries, h.Storage, h.AgentDispatchHTTPClient)
 	imported, err := attachmentService.Import(r.Context(), service.ExternalAttachmentImportParams{
 		WorkspaceID: workspaceID,
@@ -200,13 +198,13 @@ func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Reques
 		AssigneeID:     agent.ID,
 		CreatorType:    "member",
 		CreatorID:      userID,
-		AttachmentIDs:  attachmentIDs(imported),
-		AllowDuplicate: true,
+		AttachmentIDs:             attachmentIDs(imported),
+		AllowDuplicate:            true,
+		AgentIdentityContextToken: agentIdentityContextToken,
 	}, service.IssueCreateOpts{
-		ActorID:             uuidToString(userID),
-		AnalyticsAgentID:    uuidToString(agent.ID),
-		Platform:            "webhook",
-		RuntimeLaunchOptions: launchOpts,
+		ActorID:          uuidToString(userID),
+		AnalyticsAgentID: uuidToString(agent.ID),
+		Platform:         "webhook",
 		BroadcastPayload: func(issue db.Issue, _ []db.Attachment) map[string]any {
 			return map[string]any{"issue": issueToResponse(issue, prefix)}
 		},
@@ -230,7 +228,7 @@ func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Request, req AgentDispatchRequest, userID, workspaceID pgtype.UUID, launchOpts service.RuntimeLaunchOptions) {
+func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Request, req AgentDispatchRequest, userID, workspaceID pgtype.UUID, agentIdentityContextToken string) {
 	issueID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(req.Continuation.IssueID), "continuation.issueId")
 	if !ok {
 		return
@@ -273,11 +271,11 @@ func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Requ
 		}
 	}()
 	result, err := h.IssueCommentService.CreateExternalFollowUp(r.Context(), service.IssueCommentCreateParams{
-		Issue:                issue,
-		AuthorID:             userID,
-		Content:              buildAgentDispatchContent(req.Input),
-		AttachmentIDs:        attachmentIDs(imported),
-		RuntimeLaunchOptions: launchOpts,
+		Issue:                     issue,
+		AuthorID:                  userID,
+		Content:                   buildAgentDispatchContent(req.Input),
+		AttachmentIDs:             attachmentIDs(imported),
+		AgentIdentityContextToken: agentIdentityContextToken,
 	}, service.IssueCommentCreateOpts{
 		BroadcastPayload: func(comment db.Comment, attachments []db.Attachment) map[string]any {
 			responses := make([]AttachmentResponse, 0, len(attachments))

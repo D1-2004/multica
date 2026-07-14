@@ -17,6 +17,8 @@ export interface CreateIssueRequest {
   start_date?: string;
   due_date?: string;
   attachment_ids?: string[];
+  /** Server-private ContextToken used to authorize DWS inside an FC sandbox. */
+  agent_identity_context_token?: string;
 }
 
 export interface UpdateIssueRequest {

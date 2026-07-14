@@ -17,15 +17,14 @@ import (
 
 type capturedRuntimeLaunch struct {
 	task db.AgentTaskQueue
-	opts service.RuntimeLaunchOptions
 }
 
 type captureRuntimeLauncher struct {
 	calls chan capturedRuntimeLaunch
 }
 
-func (l *captureRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue, opts service.RuntimeLaunchOptions) error {
-	l.calls <- capturedRuntimeLaunch{task: task, opts: opts}
+func (l *captureRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue) error {
+	l.calls <- capturedRuntimeLaunch{task: task}
 	return nil
 }
 
@@ -146,19 +145,24 @@ func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndPassesRuntimeContext
 		if uuidToString(launch.task.ID) != resp.TaskID {
 			t.Fatalf("launched task = %s, want %s", uuidToString(launch.task.ID), resp.TaskID)
 		}
-		if launch.opts.AgentIdentityContextToken != "sealed-context" {
-			t.Fatalf("unexpected runtime launch options: %+v", launch.opts)
-		}
 	case <-time.After(time.Second):
 		t.Fatal("runtime launcher was not called")
 	}
 
 	var taskContext []byte
-	if err := testPool.QueryRow(context.Background(), `SELECT context FROM agent_task_queue WHERE id = $1`, resp.TaskID).Scan(&taskContext); err != nil {
+	var storedContextToken pgtype.Text
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT context, context->>'agent_identity_context_token'
+		FROM agent_task_queue
+		WHERE id = $1
+	`, resp.TaskID).Scan(&taskContext, &storedContextToken); err != nil {
 		t.Fatalf("load task context: %v", err)
 	}
-	if strings.Contains(string(taskContext), "sealed-context") || strings.Contains(string(taskContext), "task-001") {
-		t.Fatalf("task context leaked dispatch credentials: %s", taskContext)
+	if !storedContextToken.Valid || storedContextToken.String != "sealed-context" {
+		t.Fatalf("task context token = %q, want sealed-context", storedContextToken.String)
+	}
+	if strings.Contains(string(taskContext), "task-001") {
+		t.Fatalf("task context leaked upstream dispatch identity: %s", taskContext)
 	}
 }
 
@@ -258,6 +262,7 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 
 	var content string
 	var triggerCommentID pgtype.UUID
+	var storedContextToken pgtype.Text
 	if err := testPool.QueryRow(context.Background(), `SELECT content FROM comment WHERE id = $1`, resp.CommentID).Scan(&content); err != nil {
 		t.Fatalf("load created comment: %v", err)
 	}
@@ -269,11 +274,18 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 			t.Fatalf("comment leaked %q: %s", forbidden, content)
 		}
 	}
-	if err := testPool.QueryRow(context.Background(), `SELECT trigger_comment_id FROM agent_task_queue WHERE id = $1`, resp.TaskID).Scan(&triggerCommentID); err != nil {
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT trigger_comment_id, context->>'agent_identity_context_token'
+		FROM agent_task_queue
+		WHERE id = $1
+	`, resp.TaskID).Scan(&triggerCommentID, &storedContextToken); err != nil {
 		t.Fatalf("load follow-up task: %v", err)
 	}
 	if uuidToString(triggerCommentID) != resp.CommentID {
 		t.Fatalf("task trigger comment = %s, want %s", uuidToString(triggerCommentID), resp.CommentID)
+	}
+	if !storedContextToken.Valid || storedContextToken.String != "follow-up-context" {
+		t.Fatalf("task context token = %q, want follow-up-context", storedContextToken.String)
 	}
 	var attachmentCount int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM attachment WHERE comment_id = $1`, resp.CommentID).Scan(&attachmentCount); err != nil {
@@ -284,10 +296,7 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 	}
 
 	select {
-	case launch := <-launcher.calls:
-		if launch.opts.AgentIdentityContextToken != "follow-up-context" {
-			t.Fatalf("unexpected runtime launch options: %+v", launch.opts)
-		}
+	case <-launcher.calls:
 	case <-time.After(time.Second):
 		t.Fatal("runtime launcher was not called for follow-up")
 	}

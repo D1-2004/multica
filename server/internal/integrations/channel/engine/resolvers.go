@@ -111,7 +111,12 @@ type EnsureSessionParams struct {
 // is the dedup owner-fence token; the binder runs the dedup Mark INSIDE its
 // chat_message+session tx so the durable write and the Mark commit atomically.
 type AppendParams struct {
-	SessionID      pgtype.UUID
+	SessionID pgtype.UUID
+	// WorkspaceID scopes the chat:message broadcast the append publishes.
+	// Without it an inbound message lands in the database with no realtime
+	// event, so a web client watching the same chat sees nothing until it
+	// reloads (and never, when the follow-up task fails to enqueue).
+	WorkspaceID    pgtype.UUID
 	Sender         pgtype.UUID
 	InstallationID pgtype.UUID
 	Message        channel.InboundMessage
@@ -125,6 +130,14 @@ type AppendResult struct {
 	// DedupMarked is true when AppendMessage finalized the dedup claim in its
 	// own tx; the Router then skips the post-pipeline finalize.
 	DedupMarked bool
+	// The committed message. The Router broadcasts it: an inbound message is
+	// written through the service layer, so unlike the web send path it
+	// inherits no handler broadcast, and without one a web client watching the
+	// same chat sees nothing until it reloads. Zero when the implementation
+	// does not report a message (test fakes).
+	MessageID pgtype.UUID
+	Content   string
+	CreatedAt pgtype.Timestamptz
 }
 
 // IssueCommand is the parsed /issue command.

@@ -29,6 +29,7 @@ require (
 	github.com/slack-go/slack v0.26.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
+	gitlab.alibaba-inc.com/koastline/normandy-credential-sdk-golang v1.1.4
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.35.0
 	google.golang.org/protobuf v1.36.8
@@ -64,10 +65,12 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
+	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
+	gitlab.alibaba-inc.com/cmms-package/cmmsdkgo v1.1.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/net v0.43.0 // indirect

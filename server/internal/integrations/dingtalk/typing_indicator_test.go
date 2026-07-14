@@ -70,9 +70,10 @@ func testInstallationRow(t *testing.T, id pgtype.UUID, clientID string) db.Chann
 func plaintextDecrypter(b []byte) ([]byte, error) { return b, nil }
 
 type fakeTypingQueries struct {
-	binding db.ChannelChatSessionBinding
-	inst    db.ChannelInstallation
-	calls   int
+	binding    db.ChannelChatSessionBinding
+	inst       db.ChannelInstallation
+	calls      int
+	indicators []db.ChannelTypingIndicator
 }
 
 func (f *fakeTypingQueries) GetChannelChatSessionBindingBySession(_ context.Context, _ db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error) {
@@ -158,5 +159,81 @@ func TestTypingIndicatorSkipsEmptyTarget(t *testing.T) {
 
 	if len(rec.replies) != 0 {
 		t.Fatalf("empty target must not get an emotion, got %d", len(rec.replies))
+	}
+}
+
+// The pending-indicator store, faked in memory with the DELETE...RETURNING
+// semantics the real query has: a take claims the rows and empties the set.
+func (f *fakeTypingQueries) AddChannelTypingIndicator(_ context.Context, arg db.AddChannelTypingIndicatorParams) error {
+	f.indicators = append(f.indicators, db.ChannelTypingIndicator{
+		ChatSessionID:  arg.ChatSessionID,
+		ChannelType:    arg.ChannelType,
+		InstallationID: arg.InstallationID,
+		Target:         arg.Target,
+	})
+	return nil
+}
+
+func (f *fakeTypingQueries) TakeChannelTypingIndicators(_ context.Context, arg db.TakeChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error) {
+	var taken, kept []db.ChannelTypingIndicator
+	for _, row := range f.indicators {
+		if row.ChatSessionID == arg.ChatSessionID && row.ChannelType == arg.ChannelType {
+			taken = append(taken, row)
+			continue
+		}
+		kept = append(kept, row)
+	}
+	f.indicators = kept
+	return taken, nil
+}
+
+// The regression this table exists for: the emotion is added by the replica the
+// WS lease pinned the ingest to, but it is cleared by whichever replica served
+// the daemon's completion POST — a plain load-balanced call. Two managers over
+// one store stand in for the two replicas.
+func TestTypingIndicatorClearsFromAnotherReplica(t *testing.T) {
+	rec, srv := newEmotionAPIServer(t)
+	messenger := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
+
+	instID := typingTestUUID(1)
+	instRow := testInstallationRow(t, instID, "client_a")
+	// One store, two managers: the shared DB both replicas talk to.
+	shared := &fakeTypingQueries{
+		binding: db.ChannelChatSessionBinding{InstallationID: instID},
+		inst:    instRow,
+	}
+	replicaA := NewTypingIndicatorManager(messenger, plaintextDecrypter, shared, nil)
+	replicaB := NewTypingIndicatorManager(messenger, plaintextDecrypter, shared, nil)
+
+	session := typingTestUUID(2)
+	replicaA.Add(context.Background(), instRow, session,
+		EmotionTarget{OpenConversationID: "cid_1", OpenMsgID: "msg_1"}, 0)
+	rec.mu.Lock()
+	adds := len(rec.replies)
+	rec.mu.Unlock()
+	if adds != 1 {
+		t.Fatalf("replica A should have added the emotion, got %d adds", adds)
+	}
+
+	// The run completes; the daemon's POST lands on the other replica.
+	replicaB.Clear(context.Background(), session)
+
+	rec.mu.Lock()
+	recalls := append([]map[string]any(nil), rec.recalls...)
+	rec.mu.Unlock()
+	if len(recalls) != 1 {
+		t.Fatalf("replica B must recall the emotion replica A added, got %d recalls", len(recalls))
+	}
+	if recalls[0]["openMsgId"] != "msg_1" {
+		t.Errorf("recalled the wrong message: %v", recalls[0])
+	}
+
+	// The take is the claim: a racing clear on replica A finds nothing left.
+	replicaA.Clear(context.Background(), session)
+	rec.mu.Lock()
+	total := len(rec.recalls)
+	rec.mu.Unlock()
+	if total != 1 {
+		t.Errorf("a second clear must not recall again, got %d recalls", total)
 	}
 }

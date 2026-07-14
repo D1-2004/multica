@@ -242,6 +242,7 @@ func (s *ChatSession) createSessionAndBinding(ctx context.Context, in EnsureSess
 // across sibling threads.
 type AppendInput struct {
 	SessionID      pgtype.UUID
+	WorkspaceID    pgtype.UUID
 	Sender         pgtype.UUID
 	InstallationID pgtype.UUID
 	Body           string
@@ -280,11 +281,12 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 		}
 	}
 
-	if _, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
+	msg, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
 		ChatSessionID: in.SessionID,
 		Role:          "user",
 		Content:       in.Body,
-	}); err != nil {
+	})
+	if err != nil {
 		return AppendResult{}, fmt.Errorf("create chat message: %w", err)
 	}
 	if err := qtx.TouchChatSession(ctx, in.SessionID); err != nil {
@@ -324,7 +326,17 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	if err := tx.Commit(ctx); err != nil {
 		return AppendResult{}, fmt.Errorf("commit: %w", err)
 	}
-	return AppendResult{IssueCommand: cmd, DedupMarked: markedInTx}, nil
+	// The committed row travels back to the Router, which broadcasts it. The
+	// engine writes through the service layer and so inherits no handler
+	// broadcast — without this an inbound message is durable but invisible to
+	// a web client watching the same chat until it reloads.
+	return AppendResult{
+		IssueCommand: cmd,
+		DedupMarked:  markedInTx,
+		MessageID:    msg.ID,
+		Content:      msg.Content,
+		CreatedAt:    msg.CreatedAt,
+	}, nil
 }
 
 func isUniqueViolation(err error) bool {

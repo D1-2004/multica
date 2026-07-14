@@ -1502,6 +1502,14 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		if rc := bytes.TrimSpace(agent.RuntimeConfig); len(rc) > 0 && !bytes.Equal(rc, []byte("{}")) && !bytes.Equal(rc, []byte("null")) {
 			runtimeConfig = json.RawMessage(agent.RuntimeConfig)
 		}
+		model := agent.Model.String
+		if service.IsFCE2BRuntime(runtime) {
+			// FC/E2B uses the saved agent model only when the server launches the
+			// sandbox and injects OPENAI_MODEL. Forwarding the same value to the
+			// daemon makes Hermes call session/set_model, which bypasses the
+			// custom provider credentials written by the runtime runner.
+			model = ""
+		}
 		resp.Agent = &TaskAgentData{
 			ID:            uuidToString(agent.ID),
 			Name:          agent.Name,
@@ -1509,7 +1517,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			CustomEnv:     customEnv,
 			CustomArgs:    customArgs,
 			McpConfig:     mcpConfig,
-			Model:         agent.Model.String,
+			Model:         model,
 			ThinkingLevel: agent.ThinkingLevel.String,
 			RuntimeConfig: runtimeConfig,
 		}
@@ -2081,6 +2089,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			resp.QuickCreateAttachmentIDs = append([]string(nil), qc.AttachmentIDs...)
 			resp.ThreadName = qc.Prompt
 			resp.WorkspaceID = qc.WorkspaceID
+			resp.AgentIdentityContextToken = qc.AgentIdentityContextToken
 
 			// When the user picked a project in the modal, surface its title
 			// and resources to the daemon so the agent has the same context
