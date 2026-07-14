@@ -109,6 +109,7 @@ load_antx_runtime_config() {
     "$APP_ROOT/conf/antx.properties"
     "/home/admin/${APP_NAME}/antx.properties"
     "/home/admin/${APP_NAME}/conf/antx.properties"
+    "/home/admin/vmcommon/antx.properties"
     "/home/admin/conf/antx.properties"
     "/home/admin/cai/conf/antx.properties"
     "/home/admin/antx.properties"
