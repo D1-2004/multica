@@ -421,21 +421,23 @@ func writeSubIssueCreation(b *strings.Builder) {
 
 // writeSkills emits the Skills section listing skill names + descriptions.
 func writeSkills(b *strings.Builder, provider string, ctx TaskContextForEnv) {
-	if len(ctx.AgentSkills) == 0 {
+	skills := modelVisibleSkills(ctx.AgentSkills)
+	if len(skills) == 0 {
 		return
 	}
 	b.WriteString("## Skills\n\n")
 	switch provider {
 	case "claude", "codebuddy":
 		b.WriteString("You have the following skills installed (discovered automatically):\n\n")
-	case "codex", "copilot", "opencode", "openclaw", "pi", "cursor", "kimi", "kiro", "qoder", "antigravity":
+	case "codex", "copilot", "opencode", "deveco", "openclaw", "pi", "cursor", "kimi", "kiro", "qoder", "antigravity", "hermes":
+		// Hermes discovers these from its per-task HERMES_HOME/skills (seeded by
+		// the daemon), so it needs the same "discovered automatically" framing
+		// as the other native-discovery runtimes rather than a path pointer.
 		b.WriteString("You have the following skills installed (discovered automatically):\n\n")
-	case "hermes":
-		b.WriteString("Detailed skill instructions are in `.agent_context/skills/`. Each subdirectory contains a `SKILL.md`.\n\n")
 	default:
 		b.WriteString("Detailed skill instructions are in `.agent_context/skills/`. Each subdirectory contains a `SKILL.md`.\n\n")
 	}
-	for _, skill := range ctx.AgentSkills {
+	for _, skill := range skills {
 		if desc := strings.TrimSpace(skill.Description); desc != "" {
 			fmt.Fprintf(b, "- **%s** — %s\n", skill.Name, desc)
 		} else {

@@ -1,6 +1,6 @@
 -- name: AddChannelTypingIndicator :exec
 -- Records one pending indicator. Written by the replica that ingested the
--- message; read by whichever replica ends up clearing it (see migration 168).
+-- message; read by whichever replica ends up clearing it (see migration 182).
 INSERT INTO channel_typing_indicator (
     chat_session_id, channel_type, installation_id, target
 ) VALUES ($1, $2, $3, $4);

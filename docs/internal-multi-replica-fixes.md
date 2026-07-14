@@ -37,11 +37,11 @@ MULTICA_LOG_TAIL_TOKEN           # 远程日志端点
 
 | 提交 | 问题 |
 | --- | --- |
-| `6f374e57` | **钉钉安装会话跨 pod 404**。会话存进程内存 map，扫码后轮询被负载均衡分到另一个 pod → "安装会话已失效"。改为落库（迁移 167）。 |
+| `6f374e57` | **钉钉安装会话跨 pod 404**。会话存进程内存 map，扫码后轮询被负载均衡分到另一个 pod → "安装会话已失效"。改为落库（迁移 181）。 |
 | `d30c8c41` | **nginx 不转发 WS 升级头**，daemon 唤醒长连（`/api/daemon/ws`）从来没握手成功过 → 任务只能靠 30 秒轮询发现。加了 WS 专用的精确匹配 location。（上游 issue #2500 至今开着） |
 | `fa5dc1d1` | **跨 pod 唤醒丢失**。daemon 的 WS 钉在一个 pod，任务可能在另一个 pod 入队 → 约 50% 唤醒丢失。加了 Postgres LISTEN/NOTIFY 中继（**Redis 配上后自动走 Redis relay，PG 中继退居兜底**）。 |
 | `5f1e2121` | **入站消息不发 WS 事件**。渠道引擎写 chat_message 走 service 层，继承不到 handler 的广播 → 钉钉发来的消息网页上必须刷新才可见；任务入队失败时永远不可见。Router 提交后广播。 |
-| `b612c7fb` | **「思考中」指示器永不消失**（钉钉/飞书/Slack）。表情 ID 存进程内存，**添加**被租约钉在 pod A，**清除**由 daemon 的 HTTP POST 触发（随机落 pod）→ 约一半的运行清不掉。改为落库（迁移 168），`DELETE...RETURNING` 兼做跨副本抢占。 |
+| `b612c7fb` | **「思考中」指示器永不消失**（钉钉/飞书/Slack）。表情 ID 存进程内存，**添加**被租约钉在 pod A，**清除**由 daemon 的 HTTP POST 触发（随机落 pod）→ 约一半的运行清不掉。改为落库（迁移 182），`DELETE...RETURNING` 兼做跨副本抢占。 |
 | `cd1dc5cd` | **FC/E2B 沙箱重复启动（烧钱）**。`sync.Map` 去重是进程内的，两个 pod 都会建沙箱，一个成为孤儿计费到超时。用 Postgres 咨询锁串行化 `(runtime, scope)` 的查-建。 |
 | `2ecd6cc4` | **附件 + 头像跨 pod 404**。上传落各 pod 本地盘 → 下载打到另一个 pod 就 404；删除也只删单个 pod，另一个 pod 的文件永远留着且**免鉴权可下载**。接 OSS。 |
 

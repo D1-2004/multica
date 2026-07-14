@@ -29,7 +29,7 @@ type typingQueries interface {
 }
 
 // typingIndicatorTarget is the persisted shape of one pending emotion. It is
-// stored as opaque JSON in channel_typing_indicator.target (migration 168) —
+// stored as opaque JSON in channel_typing_indicator.target (migration 182) —
 // the emotion must be recallable by whichever replica handles the run's
 // completion, which is not the replica that ingested the message.
 type typingIndicatorTarget struct {

@@ -17,7 +17,11 @@
 --   dingtalk {"open_conversation_id": ..., "open_msg_id": ...}
 --   lark     {"message_id": ..., "reaction_id": ...}
 --   slack    {"channel_id": ..., "message_ts": ...}
-CREATE TABLE channel_typing_indicator (
+--
+-- Idempotent: this shipped as 168 before an upstream sync claimed that number,
+-- and the runner keys applied migrations by full filename stem — so under its
+-- new stem it re-runs against a database that already has the table.
+CREATE TABLE IF NOT EXISTS channel_typing_indicator (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     chat_session_id UUID NOT NULL REFERENCES chat_session(id) ON DELETE CASCADE,
     channel_type    TEXT NOT NULL,
@@ -27,5 +31,5 @@ CREATE TABLE channel_typing_indicator (
 );
 
 -- The clear path takes every pending indicator for one session of one channel.
-CREATE INDEX idx_channel_typing_indicator_session
+CREATE INDEX IF NOT EXISTS idx_channel_typing_indicator_session
     ON channel_typing_indicator (chat_session_id, channel_type);

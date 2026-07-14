@@ -41,7 +41,7 @@ type reactionAPI interface {
 // typingState is the (channel, message ts) pair needed to remove a reaction.
 // Slack removes by emoji name + item ref, so there is no reaction id to store.
 // typingState is the persisted shape of one pending reaction. It lives in
-// channel_typing_indicator.target (migration 168) rather than in process
+// channel_typing_indicator.target (migration 182) rather than in process
 // memory: the replica that clears a reaction is the one that serves the
 // daemon's completion POST, not the lease-holding replica that ingested.
 type typingState struct {

@@ -25,7 +25,7 @@ type AddChannelTypingIndicatorParams struct {
 }
 
 // Records one pending indicator. Written by the replica that ingested the
-// message; read by whichever replica ends up clearing it (see migration 168).
+// message; read by whichever replica ends up clearing it (see migration 182).
 func (q *Queries) AddChannelTypingIndicator(ctx context.Context, arg AddChannelTypingIndicatorParams) error {
 	_, err := q.db.Exec(ctx, addChannelTypingIndicator,
 		arg.ChatSessionID,

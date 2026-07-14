@@ -23,7 +23,7 @@ const typingIndicatorMaxAge = 2 * time.Minute
 
 // TypingIndicatorState holds the identifiers needed to remove a reaction.
 // TypingIndicatorState is the persisted shape of one pending reaction. It
-// lives in channel_typing_indicator.target (migration 168) rather than in
+// lives in channel_typing_indicator.target (migration 182) rather than in
 // process memory: the replica that clears a reaction is the one that serves
 // the daemon's completion POST, not the lease-holding replica that ingested
 // the message. ReactionID is only knowable from the Add response, so unlike
