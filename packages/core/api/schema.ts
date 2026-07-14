@@ -14,6 +14,9 @@ export interface ParseOptions {
   /** Endpoint identifier used in the warning log so we can grep for which
    *  contract drifted in production telemetry. */
   endpoint: string;
+  /** Sensitive responses may contain one-time credentials. Set this to false
+   *  to keep the raw payload out of schema-validation warnings. */
+  includeReceived?: boolean;
 }
 
 /**
@@ -43,13 +46,10 @@ export function parseWithFallback<T>(
 ): T {
   const result = schema.safeParse(data);
   if (result.success) return result.data as T;
-  schemaLogger.warn(
-    `API response failed schema validation: ${opts.endpoint}`,
-    {
-      endpoint: opts.endpoint,
-      issues: result.error.issues,
-      received: data,
-    },
-  );
+  schemaLogger.warn(`API response failed schema validation: ${opts.endpoint}`, {
+    endpoint: opts.endpoint,
+    issues: result.error.issues,
+    ...(opts.includeReceived === false ? {} : { received: data }),
+  });
   return fallback;
 }

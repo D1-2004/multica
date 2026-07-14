@@ -134,14 +134,12 @@ func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusUnauthorized, "invalid dispatch credentials")
 		return agentDispatchContext{}, false
 	}
-	endpointID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "endpointId"), "endpointId")
-	if !ok {
+	endpointID := strings.TrimSpace(chi.URLParam(r, "endpointId"))
+	if h.AgentDispatchKeys == nil || !h.AgentDispatchKeys.VerifyDeliverySecret(endpointID, deliverySecret) {
+		writeError(w, http.StatusUnauthorized, "invalid dispatch credentials")
 		return agentDispatchContext{}, false
 	}
-	endpoint, err := h.Queries.GetActiveAgentDispatchEndpoint(r.Context(), db.GetActiveAgentDispatchEndpointParams{
-		ID:         endpointID,
-		SecretHash: service.HashAgentDispatchDeliverySecret(deliverySecret),
-	})
+	endpoint, err := h.Queries.GetActiveDingTalkAccountBindingByEndpoint(r.Context(), endpointID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusUnauthorized, "invalid dispatch credentials")
@@ -151,7 +149,7 @@ func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Req
 		return agentDispatchContext{}, false
 	}
 	return agentDispatchContext{
-		UserID:      endpoint.ActorUserID,
+		UserID:      endpoint.InstallerUserID,
 		WorkspaceID: endpoint.WorkspaceID,
 		AgentID:     endpoint.AgentID,
 	}, true

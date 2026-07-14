@@ -257,16 +257,16 @@ func TestSupervisorAcquiresLeaseAndConnects(t *testing.T) {
 
 // TestSupervisorSkipsUnregisteredChannelType covers the B2 (MUL-3666) guard:
 // an active installation whose channel_type has no registered Factory must be
-// left alone — never leased, never Built — because it is driven outside the
-// Supervisor (Slack's app-level connector owns one shared connection for all
-// its installations). A registered type alongside it still connects normally.
+// left alone — never leased, never Built. dingtalk_account is a binding record,
+// not a bot channel, so it must never be connected by the Supervisor. A
+// registered type alongside it still connects normally.
 func TestSupervisorSkipsUnregisteredChannelType(t *testing.T) {
 	q := newFakeStore()
 	feishuID := uuidFromString(t, "2a111111-1111-1111-1111-111111111111")
-	slackID := uuidFromString(t, "2b222222-2222-2222-2222-222222222222")
+	dingTalkAccountID := uuidFromString(t, "2b222222-2222-2222-2222-222222222222")
 	q.installations = []Installation{
 		activeInst(feishuID, "fp1"),
-		{ID: slackID, ChannelType: channel.Type("slack"), Fingerprint: "fp2", Config: []byte(`{}`)},
+		{ID: dingTalkAccountID, ChannelType: channel.Type("dingtalk_account"), Fingerprint: "fp2", Config: []byte(`{}`)},
 	}
 
 	fc := &fakeChannel{typ: channel.TypeFeishu}
@@ -281,9 +281,9 @@ func TestSupervisorSkipsUnregisteredChannelType(t *testing.T) {
 	if !waitFor(300*time.Millisecond, func() bool { return fc.Connects() >= 1 }) {
 		t.Fatalf("registered feishu installation should connect; connects=%d", fc.Connects())
 	}
-	// Give the supervisor a few sweep cycles to (not) act on the slack row.
+	// Give the supervisor a few sweep cycles to (not) act on the binding row.
 	time.Sleep(50 * time.Millisecond)
-	if owner, ok := q.leaseHolder(slackID); ok {
+	if owner, ok := q.leaseHolder(dingTalkAccountID); ok {
 		t.Fatalf("unregistered channel type must never be leased, got owner %q", owner)
 	}
 	if got := atomic.LoadInt32(&builds); got != 1 {

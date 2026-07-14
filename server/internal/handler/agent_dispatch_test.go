@@ -2,7 +2,7 @@ package handler
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -487,6 +488,25 @@ func TestHandleAgentDispatchRejectsMissingOrInvalidDeliverySecret(t *testing.T) 
 	}
 }
 
+func TestHandleAgentDispatchRejectsMalformedEndpointWithoutParsingOracle(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-bot-dispatch-malformed-endpoint", nil)
+	_, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+	body := fmt.Sprintf(`{
+		"agentId":%q,
+		"input":{"userPrompt":{"text":"Authenticated delivery only."},"attachments":[]},
+		"contextToken":"dispatch-auth-context"
+	}`, agentID)
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+deliverySecret)
+	req = withURLParams(req, "endpointId", "not-a-versioned-endpoint")
+	w := httptest.NewRecorder()
+	testHandler.HandleAgentDispatch(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("malformed endpoint: expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestHandleAgentDispatchRejectsAgentOutsideEndpoint(t *testing.T) {
 	boundAgentID := createHandlerTestAgent(t, "test-bot-dispatch-bound", nil)
 	requestedAgentID := createHandlerTestAgent(t, "test-bot-dispatch-other", nil)
@@ -521,18 +541,57 @@ func postAgentDispatchForTest(t *testing.T, body, agentID string) *httptest.Resp
 
 func createAgentDispatchEndpointForTest(t *testing.T, actorUserID, agentID string) (string, string) {
 	t.Helper()
-	deliverySecret := "test-agent-dispatch-delivery-secret"
-	secretHash := sha256.Sum256([]byte(deliverySecret))
-	var endpointID string
+	keyring, err := agentmessagerouter.ParseDispatchKeyring(
+		"v1:ERERERERERERERERERERERERERERERERERERERERERE",
+		"v1",
+	)
+	if err != nil {
+		t.Fatalf("parse dispatch keyring: %v", err)
+	}
+	endpointID, err := keyring.GenerateEndpointID(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate dispatch endpoint: %v", err)
+	}
+	deliverySecret, err := keyring.DeriveDeliverySecret(endpointID)
+	if err != nil {
+		t.Fatalf("derive dispatch credential: %v", err)
+	}
+	_, callbackHash, err := agentmessagerouter.GenerateCallbackToken(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate callback credential: %v", err)
+	}
+	dispatchURL, err := agentmessagerouter.BuildDispatchURL("https://multica.example", endpointID)
+	if err != nil {
+		t.Fatalf("build dispatch URL: %v", err)
+	}
+	config := agentmessagerouter.NewPendingDingTalkAccountConfig(
+		endpointID,
+		dispatchURL,
+		callbackHash,
+		time.Now().Add(10*time.Minute),
+	)
+	boundAt := time.Now().UTC()
+	config.RouterSourceID = "source-" + endpointID
+	config.BoundAt = &boundAt
+	configJSON, err := config.Marshal()
+	if err != nil {
+		t.Fatalf("marshal dispatch binding config: %v", err)
+	}
+	var installationID string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO agent_dispatch_endpoint (workspace_id, agent_id, actor_user_id, secret_hash)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO channel_installation (
+			workspace_id, agent_id, channel_type, config, status, installer_user_id
+		)
+		VALUES ($1, $2, 'dingtalk_account', $3, 'active', $4)
 		RETURNING id
-	`, testWorkspaceID, agentID, actorUserID, secretHash[:]).Scan(&endpointID); err != nil {
+	`, testWorkspaceID, agentID, configJSON, actorUserID).Scan(&installationID); err != nil {
 		t.Fatalf("create agent dispatch endpoint: %v", err)
 	}
+	previousKeyring := testHandler.AgentDispatchKeys
+	testHandler.AgentDispatchKeys = keyring
 	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_dispatch_endpoint WHERE id = $1`, endpointID)
+		testHandler.AgentDispatchKeys = previousKeyring
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM channel_installation WHERE id = $1`, installationID)
 	})
 	return endpointID, deliverySecret
 }

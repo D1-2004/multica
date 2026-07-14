@@ -12,6 +12,7 @@ import { useFeatureEnabled } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { dingtalkInstallationsOptions } from "@multica/core/dingtalk";
+import { dingtalkAccountBindingsOptions } from "@multica/core/dingtalk-account-bindings";
 import { larkInstallationsOptions } from "@multica/core/lark";
 import { slackInstallationsOptions } from "@multica/core/slack";
 import {
@@ -176,11 +177,16 @@ export function AgentOverviewPane({
     ...dingtalkInstallationsOptions(wsId),
     enabled: !!wsId,
   });
+  const { data: dingtalkAccountListing } = useQuery({
+    ...dingtalkAccountBindingsOptions(wsId),
+    enabled: !!wsId,
+  });
 
   const integrationsConfigured =
     larkListing?.configured === true ||
     slackListing?.configured === true ||
-    dingtalkListing?.configured === true;
+    dingtalkListing?.configured === true ||
+    dingtalkAccountListing?.configured === true;
 
   const visibleCapabilityTabs = useMemo(() => {
     const showMcp = runtime

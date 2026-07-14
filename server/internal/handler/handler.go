@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
@@ -147,6 +148,7 @@ type Handler struct {
 	HeartbeatScheduler    HeartbeatScheduler
 	Storage               storage.Storage
 	AgentDispatchHTTPClient *http.Client
+	AgentDispatchKeys       *agentmessagerouter.DispatchKeyring
 	CFSigner              *auth.CloudFrontSigner
 	Analytics             analytics.Client
 	// Metrics is the shared business-metrics collector built by main.go.
@@ -243,6 +245,8 @@ type Handler struct {
 	// the "link your DingTalk account" prompt. Nil unless the DingTalk
 	// bot integration is configured (MULTICA_DINGTALK_SECRET_KEY set).
 	DingTalkBindingTokens *dingtalk.BindingTokenService
+	DingTalkAccountBindings dingTalkAccountBindingService
+	DingTalkAccountBindingOrigin string
 	// LarkOAuth resolves Feishu login codes for POST /auth/lark. Production
 	// prefers the private channel agent (LARK_AGENT_BASE_URL) so the app
 	// secret stays outside this backend; the direct client remains available

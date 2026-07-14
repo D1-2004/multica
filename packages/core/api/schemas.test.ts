@@ -5,8 +5,12 @@ import {
   DashboardAgentRunTimeListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
+  BeginDingTalkAccountBindingResponseSchema,
   CreateFeedbackResponseSchema,
+  DingTalkAccountBindingsResponseSchema,
   DuplicateIssueErrorBodySchema,
+  EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
+  EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
   EMPTY_CREATE_FEEDBACK_RESPONSE,
   EMPTY_INBOX_UNREAD_SUMMARY,
   EMPTY_USER,
@@ -23,6 +27,77 @@ import {
   UserSchema,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
+
+describe("DingTalk account binding schemas", () => {
+  it("parses the list wire shape into camelCase domain values", () => {
+    const parsed = DingTalkAccountBindingsResponseSchema.parse({
+      bindings: [
+        {
+          id: "installation-1",
+          workspace_id: "workspace-1",
+          agent_id: "agent-1",
+          status: "active",
+          account_display_name: "Zhang San",
+          account_avatar_url: "https://example.test/avatar.png",
+          bound_at: "2026-07-14T09:30:00Z",
+          future_field: true,
+        },
+      ],
+      configured: true,
+    });
+
+    expect(parsed).toEqual({
+      bindings: [
+        {
+          id: "installation-1",
+          workspaceId: "workspace-1",
+          agentId: "agent-1",
+          status: "active",
+          accountDisplayName: "Zhang San",
+          accountAvatarUrl: "https://example.test/avatar.png",
+          boundAt: "2026-07-14T09:30:00Z",
+        },
+      ],
+      configured: true,
+    });
+  });
+
+  it("falls back safely when the binding list is malformed", () => {
+    expect(
+      parseWithFallback(
+        { bindings: "not-an-array", configured: true },
+        DingTalkAccountBindingsResponseSchema,
+        EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
+        { endpoint: "GET /api/workspaces/:id/dingtalk/account-bindings" },
+      ),
+    ).toEqual({ bindings: [], configured: false });
+  });
+
+  it("parses begin and falls back when a credential-bearing response drifts", () => {
+    expect(
+      BeginDingTalkAccountBindingResponseSchema.parse({
+        installation_id: "installation-1",
+        qr_code_url: "https://dbase.example/#bindingToken=secret",
+        expires_at: "2026-07-14T09:35:00Z",
+      }),
+    ).toEqual({
+      installationId: "installation-1",
+      qrCodeUrl: "https://dbase.example/#bindingToken=secret",
+      expiresAt: "2026-07-14T09:35:00Z",
+    });
+    expect(
+      parseWithFallback(
+        { qr_code_url: 42 },
+        BeginDingTalkAccountBindingResponseSchema,
+        EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
+        {
+          endpoint: "POST /api/workspaces/:id/dingtalk/account-bindings/begin",
+          includeReceived: false,
+        },
+      ),
+    ).toEqual({ installationId: "", qrCodeUrl: "", expiresAt: "" });
+  });
+});
 
 const baseIssue = {
   id: "11111111-1111-1111-1111-111111111111",

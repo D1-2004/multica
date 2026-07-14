@@ -531,7 +531,30 @@
     },
     "integrations": {
       "intro": "이 에이전트를 외부 채팅 플랫폼에 연결해 팀원이 평소 사용하는 도구에서 바로 함께 작업할 수 있도록 합니다.",
-      "members_note": "에이전트를 외부 채팅 플랫폼에 연결할 수 있는 사람은 워크스페이스 소유자와 관리자뿐입니다. 연결된 봇은 설정 → 연동에서 확인할 수 있습니다."
+      "members_note": "에이전트를 외부 채팅 플랫폼에 연결할 수 있는 사람은 워크스페이스 소유자와 관리자뿐입니다. 연결된 봇은 설정 → 연동에서 확인할 수 있습니다.",
+      "dingtalk_account_title": "DingTalk 계정",
+      "dingtalk_account_description": "작업을 직접 전달할 수 있도록 DingTalk 계정 하나를 이 에이전트에 연결합니다.",
+      "dingtalk_account_loading": "DingTalk 계정 연결 상태를 불러오는 중...",
+      "dingtalk_account_not_configured": "현재 배포에는 DingTalk 계정 연결이 설정되어 있지 않습니다.",
+      "dingtalk_account_connect": "DingTalk 계정 연결",
+      "dingtalk_account_starting": "QR 코드 생성 중...",
+      "dingtalk_account_begin_failed": "DingTalk 계정 연결을 시작하지 못했습니다.",
+      "dingtalk_account_dialog_title": "DingTalk 계정 연결",
+      "dingtalk_account_dialog_description": "DingTalk으로 스캔해 계정을 {{agent}}에 연결하세요.",
+      "dingtalk_account_scan_hint": "DingTalk에서 이 QR 코드를 스캔하세요. 연결이 완료되면 이 페이지가 자동으로 업데이트됩니다.",
+      "dingtalk_account_expired_title": "이 QR 코드는 만료되었습니다",
+      "dingtalk_account_expired_description": "새 QR 코드를 생성해 계속하세요.",
+      "dingtalk_account_new_qr": "새 QR 코드 생성",
+      "dingtalk_account_close": "닫기",
+      "dingtalk_account_connected": "연결된 DingTalk 계정",
+      "dingtalk_account_fallback_name": "DingTalk 계정",
+      "dingtalk_account_pending_restart": "이전 연결이 완료되지 않았습니다. 새 QR 코드를 생성해 다시 시도하세요.",
+      "dingtalk_account_unbind": "연결 해제",
+      "dingtalk_account_unbinding": "연결 해제 중...",
+      "dingtalk_account_unbind_failed": "DingTalk 계정 연결을 해제하지 못했습니다.",
+      "dingtalk_account_confirm_title": "DingTalk 계정 연결을 해제할까요?",
+      "dingtalk_account_confirm_description": "이 에이전트는 더 이상 이 DingTalk 계정의 작업을 받지 않습니다.",
+      "dingtalk_account_cancel": "취소"
     },
     "activity": {
       "status": {

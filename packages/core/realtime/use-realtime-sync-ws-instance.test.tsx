@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { WSClient } from "../api/ws-client";
@@ -62,6 +62,34 @@ describe("useRealtimeSync — ws instance change", () => {
     invalidateSpy = vi.spyOn(qc, "invalidateQueries");
   });
 
+  it.each([
+    "dingtalk_account_binding:activated",
+    "dingtalk_account_binding:revoked",
+  ])("invalidates only the account binding query for %s", (eventType) => {
+    vi.useFakeTimers();
+    const ws = createMockWs();
+    const setQueryDataSpy = vi.spyOn(qc, "setQueryData");
+    renderHook(() => useRealtimeSync(ws, stores), {
+      wrapper: createWrapper(qc),
+    });
+    invalidateSpy.mockClear();
+    setQueryDataSpy.mockClear();
+
+    const anyHandler = vi.mocked(ws.onAny).mock.calls[0]?.[0];
+    expect(anyHandler).toBeDefined();
+    act(() => {
+      anyHandler?.({ type: eventType, payload: {} } as never);
+      vi.advanceTimersByTime(101);
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["dingtalk-account-bindings", "ws-1", "list"],
+    });
+    expect(setQueryDataSpy).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it("skips invalidation on first non-null ws instance", () => {
     const ws = createMockWs();
     renderHook(() => useRealtimeSync(ws, stores), {
@@ -108,9 +136,9 @@ describe("useRealtimeSync — ws instance change", () => {
     rerender({ ws: ws2 });
 
     // Should have called invalidateQueries for all workspace-scoped keys
-    // (15 workspace-scoped + 6 per-issue prefixes + 4 per-chat prefixes
-    // + 1 workspaceKeys.list() + 1 cross-workspace inbox unread summary = 27 calls)
-    expect(invalidateSpy).toHaveBeenCalledTimes(27);
+    // (16 workspace-scoped + 6 per-issue prefixes + 4 per-chat prefixes
+    // + 1 workspaceKeys.list() + 1 cross-workspace inbox unread summary = 28 calls)
+    expect(invalidateSpy).toHaveBeenCalledTimes(28);
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {
@@ -144,6 +172,7 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(calls).toContainEqual(["chat", "ws-1"]);
     expect(calls).toContainEqual(["labels", "ws-1"]);
     expect(calls).toContainEqual(["workspaces", "ws-1", "invitations"]);
+    expect(calls).toContainEqual(["dingtalk-account-bindings", "ws-1", "list"]);
   });
 
   it("invalidates per-issue caches (no wsId in key) on ws instance change", () => {

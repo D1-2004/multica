@@ -616,7 +616,30 @@
     },
     "integrations": {
       "intro": "Connect this agent to external chat platforms so people can work with it where they already are.",
-      "members_note": "Only workspace owners and admins can connect an agent to an external chat platform. You can view connected bots in Settings → Integrations."
+      "members_note": "Only workspace owners and admins can connect an agent to an external chat platform. You can view connected bots in Settings → Integrations.",
+      "dingtalk_account_title": "DingTalk account",
+      "dingtalk_account_description": "Associate one DingTalk account with this agent for direct task delivery.",
+      "dingtalk_account_loading": "Loading DingTalk account association...",
+      "dingtalk_account_not_configured": "DingTalk account association is not configured for this deployment.",
+      "dingtalk_account_connect": "Associate DingTalk account",
+      "dingtalk_account_starting": "Generating QR code...",
+      "dingtalk_account_begin_failed": "Unable to start DingTalk account association.",
+      "dingtalk_account_dialog_title": "Associate DingTalk account",
+      "dingtalk_account_dialog_description": "Scan with DingTalk to associate an account with {{agent}}.",
+      "dingtalk_account_scan_hint": "Scan this QR code in DingTalk. This page updates automatically after the association succeeds.",
+      "dingtalk_account_expired_title": "This QR code has expired",
+      "dingtalk_account_expired_description": "Generate a new QR code to continue.",
+      "dingtalk_account_new_qr": "Generate a new QR code",
+      "dingtalk_account_close": "Close",
+      "dingtalk_account_connected": "Associated DingTalk account",
+      "dingtalk_account_fallback_name": "DingTalk account",
+      "dingtalk_account_pending_restart": "The previous association was not completed. Generate a new QR code to try again.",
+      "dingtalk_account_unbind": "Unbind",
+      "dingtalk_account_unbinding": "Unbinding...",
+      "dingtalk_account_unbind_failed": "Unable to unbind the DingTalk account.",
+      "dingtalk_account_confirm_title": "Unbind DingTalk account?",
+      "dingtalk_account_confirm_description": "This agent will stop receiving tasks for this DingTalk account.",
+      "dingtalk_account_cancel": "Cancel"
     },
     "activity": {
       "status": {
