@@ -47,9 +47,8 @@ type TaskService struct {
 	EmptyClaim *EmptyClaimCache
 	// RuntimeLauncher is optional. When set, it may start server-managed
 	// runtimes for a newly queued task; local runtimes simply no-op there.
-	RuntimeLauncher       TaskRuntimeLauncher
-	runtimeLaunches       sync.Map
-	fcE2BQueuedRecoveries sync.Map
+	RuntimeLauncher     TaskRuntimeLauncher
+	runtimeLaunchLeases taskRuntimeLaunchLeaseStore
 	// Composio computes the per-task MCP overlay (Stage 3 of the Composio
 	// epic, MUL-3721) — the integration's "current user's connected apps
 	// → MCP session URL" hook called from each Enqueue* path. Optional: a
@@ -196,7 +195,14 @@ func NewTaskService(q *db.Queries, tx TxStarter, hub *realtime.Hub, bus *events.
 	if len(wakeups) > 0 {
 		wakeup = wakeups[0]
 	}
-	return &TaskService{Queries: q, TxStarter: tx, Hub: hub, Bus: bus, Wakeup: wakeup}
+	return &TaskService{
+		Queries:             q,
+		TxStarter:           tx,
+		Hub:                 hub,
+		Bus:                 bus,
+		Wakeup:              wakeup,
+		runtimeLaunchLeases: newPostgresTaskRuntimeLaunchLeaseStore(q),
+	}
 }
 
 var trivialDoneMarkers = []string{
@@ -3083,28 +3089,60 @@ func (s *TaskService) NotifyTaskEnqueued(ctx context.Context, task db.AgentTaskQ
 }
 
 func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
-	if s == nil || s.RuntimeLauncher == nil {
+	if s == nil || s.RuntimeLauncher == nil || s.runtimeLaunchLeases == nil {
 		return
 	}
 	taskCopy := task
-	taskKey := util.UUIDToString(taskCopy.ID)
-	if _, loaded := s.runtimeLaunches.LoadOrStore(taskKey, struct{}{}); loaded {
-		slog.Debug("runtime launcher already scheduled",
+	go func() {
+		taskKey := util.UUIDToString(taskCopy.ID)
+		acquireCtx, acquireCancel := context.WithTimeout(context.Background(), runtimeLaunchLeaseDBTimeout)
+		lease, acquired, err := s.runtimeLaunchLeases.Acquire(acquireCtx, taskCopy.ID, runtimeLaunchLeaseDuration)
+		acquireCancel()
+		if err != nil {
+			slog.Warn("runtime launcher lease acquisition failed",
+				"task_id", taskKey,
+				"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
+				"agent_id", util.UUIDToString(taskCopy.AgentID),
+				"error", err,
+			)
+			return
+		}
+		if !acquired {
+			slog.Debug("runtime launcher lease already held",
+				"task_id", taskKey,
+				"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
+				"agent_id", util.UUIDToString(taskCopy.AgentID),
+			)
+			return
+		}
+
+		launchCtx, cancelLaunch := context.WithCancelCause(context.Background())
+		renewDone := make(chan struct{})
+		go s.renewRuntimeLaunchLease(launchCtx, cancelLaunch, lease, renewDone)
+
+		slog.Info("runtime launcher scheduled",
 			"task_id", taskKey,
 			"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
 			"agent_id", util.UUIDToString(taskCopy.AgentID),
 		)
-		return
-	}
-	slog.Info("runtime launcher scheduled",
-		"task_id", taskKey,
-		"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
-		"agent_id", util.UUIDToString(taskCopy.AgentID),
-	)
-	go func() {
-		defer s.runtimeLaunches.Delete(taskKey)
 		started := time.Now()
-		if err := s.RuntimeLauncher.LaunchTask(context.Background(), taskCopy); err != nil {
+		err = s.RuntimeLauncher.LaunchTask(launchCtx, taskCopy)
+		cancelLaunch(context.Canceled)
+		<-renewDone
+
+		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), runtimeLaunchLeaseDBTimeout)
+		releaseErr := s.runtimeLaunchLeases.Release(releaseCtx, lease)
+		releaseCancel()
+		if releaseErr != nil {
+			slog.Warn("runtime launcher lease release failed",
+				"task_id", taskKey,
+				"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
+				"agent_id", util.UUIDToString(taskCopy.AgentID),
+				"error", releaseErr,
+			)
+		}
+
+		if err != nil {
 			slog.Warn("runtime launcher failed for task",
 				"task_id", util.UUIDToString(taskCopy.ID),
 				"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
@@ -3121,6 +3159,44 @@ func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 			"duration", time.Since(started).String(),
 		)
 	}()
+}
+
+func (s *TaskService) renewRuntimeLaunchLease(
+	ctx context.Context,
+	cancelLaunch context.CancelCauseFunc,
+	lease taskRuntimeLaunchLease,
+	done chan<- struct{},
+) {
+	defer close(done)
+	ticker := time.NewTicker(runtimeLaunchLeaseRenewInterval)
+	defer ticker.Stop()
+	expiresAt := lease.expiresAt
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			renewCtx, renewCancel := context.WithTimeout(context.Background(), runtimeLaunchLeaseDBTimeout)
+			nextExpiry, renewed, err := s.runtimeLaunchLeases.Renew(renewCtx, lease, runtimeLaunchLeaseDuration)
+			renewCancel()
+			if err == nil && renewed {
+				expiresAt = nextExpiry
+				continue
+			}
+			if err == nil {
+				cancelLaunch(errRuntimeLaunchLeaseLost)
+				return
+			}
+			slog.Warn("runtime launcher lease renewal failed",
+				"task_id", util.UUIDToString(lease.taskID),
+				"error", err,
+			)
+			if time.Until(expiresAt) <= runtimeLaunchLeaseRenewInterval+runtimeLaunchLeaseDBTimeout {
+				cancelLaunch(fmt.Errorf("%w: %v", errRuntimeLaunchLeaseLost, err))
+				return
+			}
+		}
+	}
 }
 
 // RecoverQueuedFCE2BTask is a narrow repair hook for server-managed cloud
@@ -3149,12 +3225,20 @@ func (s *TaskService) RecoverQueuedFCE2BTask(ctx context.Context, task db.AgentT
 	if !IsFCE2BRuntime(rt) {
 		return
 	}
-	taskKey := util.UUIDToString(task.ID)
-	if _, loaded := s.fcE2BQueuedRecoveries.LoadOrStore(taskKey, struct{}{}); loaded {
+	tasks, err := s.Queries.ListAgentTasks(ctx, task.AgentID)
+	if err != nil {
+		slog.Warn("queued FC/E2B recovery could not check blockers",
+			"task_id", util.UUIDToString(task.ID),
+			"runtime_id", util.UUIDToString(task.RuntimeID),
+			"error", err,
+		)
+		return
+	}
+	if fcE2BTaskHasActiveBlocker(task, tasks) {
 		return
 	}
 	slog.Info("recovering queued FC/E2B task",
-		"task_id", taskKey,
+		"task_id", util.UUIDToString(task.ID),
 		"runtime_id", util.UUIDToString(task.RuntimeID),
 		"agent_id", util.UUIDToString(task.AgentID),
 	)
