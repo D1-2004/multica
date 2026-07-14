@@ -265,6 +265,19 @@ func TestChatSessionKeyAndTurnReplyTemplate(t *testing.T) {
 	}
 }
 
+func TestChatSessionKeyFromPathUnescapesCallerKey(t *testing.T) {
+	key, err := chatSessionKeyFromPath("dingtalk%3Acid%2Fthread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !key.Valid || key.String != "dingtalk:cid/thread" {
+		t.Fatalf("decoded key = %#v", key)
+	}
+	if _, err := chatSessionKeyFromPath("bad%ZZkey"); err == nil {
+		t.Fatal("invalid percent encoding must be rejected")
+	}
+}
+
 // TestSendChatMessage_ArchivedAgent verifies that sending to a session whose
 // agent was archived is rejected with 409 BEFORE any message is persisted.
 // EnqueueChatTask rejects an archived agent, but only after CreateChatMessage;

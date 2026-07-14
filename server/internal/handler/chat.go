@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -74,6 +75,14 @@ func normalizeChatSessionKey(raw string) (pgtype.Text, error) {
 		return pgtype.Text{}, errors.New("session_key is too long")
 	}
 	return pgtype.Text{String: key, Valid: true}, nil
+}
+
+func chatSessionKeyFromPath(raw string) (pgtype.Text, error) {
+	decoded, err := url.PathUnescape(raw)
+	if err != nil {
+		return pgtype.Text{}, errors.New("invalid session_key")
+	}
+	return normalizeChatSessionKey(decoded)
 }
 
 func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
@@ -180,8 +189,8 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) PutChatSessionByKey(w http.ResponseWriter, r *http.Request) {
-	key := strings.TrimSpace(chi.URLParam(r, "sessionKey"))
-	if key == "" || len(key) > chatSessionKeyMaxLen {
+	sessionKey, err := chatSessionKeyFromPath(chi.URLParam(r, "sessionKey"))
+	if err != nil || !sessionKey.Valid {
 		writeError(w, http.StatusBadRequest, "invalid session_key")
 		return
 	}
@@ -190,7 +199,7 @@ func (h *Handler) PutChatSessionByKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	body["session_key"], _ = json.Marshal(key)
+	body["session_key"], _ = json.Marshal(sessionKey.String)
 	encoded, _ := json.Marshal(body)
 	r.Body = io.NopCloser(strings.NewReader(string(encoded)))
 	h.CreateChatSession(w, r)
@@ -202,7 +211,7 @@ func (h *Handler) loadChatSessionByKeyForUser(w http.ResponseWriter, r *http.Req
 		return db.ChatSession{}, false
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
-	key, err := normalizeChatSessionKey(chi.URLParam(r, "sessionKey"))
+	key, err := chatSessionKeyFromPath(chi.URLParam(r, "sessionKey"))
 	if err != nil || !key.Valid {
 		writeError(w, http.StatusBadRequest, "invalid session_key")
 		return db.ChatSession{}, false

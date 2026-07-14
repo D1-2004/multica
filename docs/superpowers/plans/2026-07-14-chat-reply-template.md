@@ -19,4 +19,5 @@
 - DWS 模板只消费最终 `reply.content`，中间 Streaming 消息不会触发；Turn ID 作为 DWS `--uuid`，恢复重试具备 24 小时幂等去重。
 - 前端 core 类型/API 已暴露固定模板、Turn 与 delivery 字段；本次不增加通用脚本编辑 UI，避免把沙箱本地脚本误建模为服务端资源。
 - 新增纯 Python 标准库 API 冒烟脚本，通过 Bearer Token 验证 SessionKey 幂等创建、按 key 投递、Turn 终态/最终回复和 Turn 列表；配套假服务单测不会访问真实环境。
+- 首轮 production 冒烟发现 Router 保留了路径中的 `%3A/%2F`；Handler 现先解码路径参数再持久化，保证 API 返回原始调用方 SessionKey，并拒绝非法 percent encoding。
 - 验证：相关 CLI/Handler/Service Go 测试通过；`pnpm typecheck` 全部通过；DWS reply/send help 与脚本语法已核对；migration 164 已在隔离 worktree 数据库成功执行。全量 `cmd/server` 仍有既有 runtime sweeper 用例失败，该路径与本次改动无文件交集，单独复跑 3 次结果一致。
