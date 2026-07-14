@@ -23,6 +23,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/githubapp"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -468,7 +469,7 @@ func fetchInstallationAccount(ctx context.Context, installationID int64) (login,
 // time.Now().
 func signGitHubAppJWT(now time.Time) (string, error) {
 	appID := strings.TrimSpace(os.Getenv("GITHUB_APP_ID"))
-	pemKey := strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY"))
+	pemKey := githubapp.NormalizePrivateKeyPEM(os.Getenv("GITHUB_APP_PRIVATE_KEY"))
 	if appID == "" || pemKey == "" {
 		return "", nil
 	}

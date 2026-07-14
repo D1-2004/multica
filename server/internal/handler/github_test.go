@@ -2496,6 +2496,16 @@ func TestSignGitHubAppJWT_ClaimsAndSignature(t *testing.T) {
 	}
 }
 
+func TestSignGitHubAppJWTAcceptsEscapedPrivateKeyNewlines(t *testing.T) {
+	pemBytes, _ := generateTestRSAKeyPEM(t)
+	t.Setenv("GITHUB_APP_ID", "424242")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY", strings.ReplaceAll(string(pemBytes), "\n", `\n`))
+
+	if _, err := signGitHubAppJWT(time.Now()); err != nil {
+		t.Fatalf("sign with escaped PEM newlines: %v", err)
+	}
+}
+
 // TestFetchInstallationAccount_AuthenticatedPopulatesRow simulates the
 // GitHub `/app/installations/{id}` endpoint with a JWT-gated mock and
 // verifies that fetchInstallationAccount, when fully configured,

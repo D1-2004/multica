@@ -263,3 +263,16 @@ func newTestClient(t *testing.T, baseURL string) *Client {
 	}
 	return client
 }
+
+func TestNewAcceptsEscapedPrivateKeyNewlines(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	escaped := strings.ReplaceAll(string(pemKey), "\n", `\n`)
+
+	if _, err := New(Config{AppID: "123", PrivateKey: escaped}); err != nil {
+		t.Fatalf("New() with escaped PEM newlines: %v", err)
+	}
+}

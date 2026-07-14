@@ -38,6 +38,12 @@ type Config struct {
 	ResponseLimit int64
 }
 
+// NormalizePrivateKeyPEM accepts PEM values stored either with real newlines or
+// with literal \n separators, as required by single-line environment stores.
+func NormalizePrivateKeyPEM(value string) string {
+	return strings.ReplaceAll(strings.TrimSpace(value), `\n`, "\n")
+}
+
 type Client struct {
 	appID         string
 	privateKey    *rsa.PrivateKey
@@ -92,7 +98,7 @@ func (e *APIError) Error() string {
 
 func New(cfg Config) (*Client, error) {
 	appID := strings.TrimSpace(cfg.AppID)
-	pemKey := strings.TrimSpace(cfg.PrivateKey)
+	pemKey := NormalizePrivateKeyPEM(cfg.PrivateKey)
 	if appID == "" || pemKey == "" {
 		return nil, ErrUnavailable
 	}
