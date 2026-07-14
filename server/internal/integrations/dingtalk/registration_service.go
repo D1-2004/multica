@@ -109,7 +109,7 @@ func (c RegistrationServiceConfig) withDefaults() RegistrationServiceConfig {
 // DingTalk account to a Multica user happens later through the
 // channel binding-token flow once the inbound transport lands.
 //
-// Session state is persisted (migration 167) rather than kept in
+// Session state is persisted (migration 181) rather than kept in
 // process: this deployment runs several replicas, and a status poll may
 // be served by any of them, not just the one that opened the session.
 type RegistrationService struct {

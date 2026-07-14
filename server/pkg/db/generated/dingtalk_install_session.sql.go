@@ -26,7 +26,7 @@ type CreateDingTalkInstallSessionParams struct {
 
 // Opens a device-flow install session. Written by the pod that served
 // /install/begin; readable from every pod, which is the whole point (see
-// migration 167).
+// migration 181).
 func (q *Queries) CreateDingTalkInstallSession(ctx context.Context, arg CreateDingTalkInstallSessionParams) error {
 	_, err := q.db.Exec(ctx, createDingTalkInstallSession,
 		arg.ID,

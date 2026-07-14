@@ -1,7 +1,7 @@
 -- name: CreateDingTalkInstallSession :exec
 -- Opens a device-flow install session. Written by the pod that served
 -- /install/begin; readable from every pod, which is the whole point (see
--- migration 167).
+-- migration 181).
 INSERT INTO dingtalk_install_session (
     id, workspace_id, agent_id, expires_at
 ) VALUES ($1, $2, $3, $4);

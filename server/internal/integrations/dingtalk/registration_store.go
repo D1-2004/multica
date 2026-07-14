@@ -15,7 +15,7 @@ import (
 // sessionRecord is the observable state of an install session — everything a
 // status poll needs, and nothing more. The device code and the polling
 // goroutine deliberately stay in the memory of the pod that began the session
-// (see migration 167).
+// (see migration 181).
 type sessionRecord struct {
 	ID             string
 	WorkspaceID    pgtype.UUID

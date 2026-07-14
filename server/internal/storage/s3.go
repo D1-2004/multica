@@ -36,7 +36,27 @@ type S3Storage struct {
 //   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (optional; falls back to default credential chain)
 //   - AWS_ENDPOINT_URL (optional S3-compatible endpoint)
 //   - S3_USE_PATH_STYLE (optional; defaults to true when AWS_ENDPOINT_URL is set)
-func NewS3StorageFromEnv() *S3Storage {
+//
+// S3Option customizes the storage built from the environment.
+type S3Option func(*s3Options)
+
+type s3Options struct {
+	credentials aws.CredentialsProvider
+}
+
+// WithCredentialsProvider supplies credentials the SDK re-invokes, rather than
+// the static AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY pair. Deployments whose
+// object store only admits short-lived (STS) credentials need this: keys read
+// once at boot would be rejected the moment they expire.
+func WithCredentialsProvider(p aws.CredentialsProvider) S3Option {
+	return func(o *s3Options) { o.credentials = p }
+}
+
+func NewS3StorageFromEnv(opts ...S3Option) *S3Storage {
+	var options s3Options
+	for _, opt := range opts {
+		opt(&options)
+	}
 	bucket := os.Getenv("S3_BUCKET")
 	if bucket == "" {
 		slog.Info("S3_BUCKET not set, cloud upload disabled")
@@ -54,19 +74,27 @@ func NewS3StorageFromEnv() *S3Storage {
 		region = "us-west-2"
 	}
 
-	opts := []func(*config.LoadOptions) error{
+	cfgOpts := []func(*config.LoadOptions) error{
 		config.WithRegion(region),
 	}
 
-	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-	if accessKey != "" && secretKey != "" {
-		opts = append(opts, config.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
-		))
+	credentialSource := "default chain"
+	switch {
+	case options.credentials != nil:
+		cfgOpts = append(cfgOpts, config.WithCredentialsProvider(options.credentials))
+		credentialSource = "provider"
+	default:
+		accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+		secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+		if accessKey != "" && secretKey != "" {
+			cfgOpts = append(cfgOpts, config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
+			))
+			credentialSource = "static keys"
+		}
 	}
 
-	cfg, err := config.LoadDefaultConfig(context.Background(), opts...)
+	cfg, err := config.LoadDefaultConfig(context.Background(), cfgOpts...)
 	if err != nil {
 		slog.Error("failed to load AWS config", "error", err)
 		return nil
@@ -86,7 +114,8 @@ func NewS3StorageFromEnv() *S3Storage {
 		})
 	}
 
-	slog.Info("S3 storage initialized", "bucket", bucket, "region", region, "cdn_domain", cdnDomain, "endpoint_url", endpointURL, "use_path_style", usePathStyle)
+	slog.Info("S3 storage initialized", "bucket", bucket, "region", region, "cdn_domain", cdnDomain,
+		"endpoint_url", endpointURL, "use_path_style", usePathStyle, "credentials", credentialSource)
 	return &S3Storage{
 		client:       s3.NewFromConfig(cfg, s3Opts...),
 		bucket:       bucket,

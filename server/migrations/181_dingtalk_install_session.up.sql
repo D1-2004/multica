@@ -12,7 +12,11 @@
 -- device code is a short-lived credential we do not want at rest, and one
 -- driver per session is exactly what the device flow wants. If that pod dies
 -- mid-flow the row simply ages out at expires_at and the user rescans.
-CREATE TABLE dingtalk_install_session (
+--
+-- Idempotent: this shipped as 167 before an upstream sync claimed that number,
+-- and the runner keys applied migrations by full filename stem — so under its
+-- new stem it re-runs against a database that already has the table.
+CREATE TABLE IF NOT EXISTS dingtalk_install_session (
     -- Opaque random id minted by the service; also the URL path segment the
     -- frontend polls, so it is the natural primary key.
     id              TEXT PRIMARY KEY,
@@ -37,5 +41,5 @@ CREATE TABLE dingtalk_install_session (
 
 -- Drives the sweep: terminal rows past gc_after, and pending rows abandoned
 -- long after they expired.
-CREATE INDEX idx_dingtalk_install_session_sweep
+CREATE INDEX IF NOT EXISTS idx_dingtalk_install_session_sweep
     ON dingtalk_install_session (gc_after, expires_at);

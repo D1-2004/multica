@@ -45,6 +45,13 @@ var legacyDuplicateMigrationStems = map[string][]string{
 	"124": {"124_autopilot_run_planned_at", "124_channel_generalization", "124_task_prepare_lease"},
 	"127": {"127_issue_pull_request_reference_only", "127_task_squad_id", "127_user_composio_connection"},
 	"128": {"128_agent_task_queue_runtime_mcp_overlay", "128_autopilot_collaborator", "128_comment_routing_escalation"},
+	// Not legacy and not ours: upstream landed two 175s in the same window
+	// (MUL-4050's deveco runtime profile and the webhook delivery worker). Both
+	// are already applied upstream under these stems, and the runner keys
+	// applied migrations by full filename stem — renaming either here would
+	// silently re-run it on every database that has it. Recorded instead, so
+	// the lint stays a real guard for the prefixes we do control.
+	"175": {"175_runtime_profile_add_deveco", "175_webhook_delivery_worker"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)

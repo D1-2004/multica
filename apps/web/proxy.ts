@@ -4,6 +4,7 @@ import {
   MULTICA_LOCALE_HEADER,
   resolveLocaleFromSignals,
 } from "./lib/locale-routing";
+import { isOfficialMarketingHost } from "./lib/public-host";
 
 // Old workspace-scoped route segments that existed before the URL refactor
 // (pre-#1131). Any URL with these as the FIRST segment is a legacy URL that
@@ -75,7 +76,10 @@ export function proxy(req: NextRequest) {
   }
 
   // --- Root path: enter the app instead of rendering the public landing page ---
-  if (pathname === "/") {
+  // This deployment serves no marketing site, so "/" always enters the app:
+  // logged-in users land on their last workspace, everyone else on /login. The
+  // official cloud host keeps serving its public landing page at "/".
+  if (pathname === "/" && !isOfficialMarketingHost(req.nextUrl.hostname)) {
     const url = req.nextUrl.clone();
     url.pathname = hasSession && lastSlug ? `/${lastSlug}/issues` : "/login";
     return NextResponse.redirect(url);
