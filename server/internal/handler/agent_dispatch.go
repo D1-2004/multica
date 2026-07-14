@@ -131,23 +131,28 @@ type agentDispatchContext struct {
 func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Request) (agentDispatchContext, bool) {
 	deliverySecret, ok := agentDispatchBearerSecret(r.Header.Get("Authorization"))
 	if !ok {
+		h.Metrics.RecordDispatchAuth("missing_credential")
 		writeError(w, http.StatusUnauthorized, "invalid dispatch credentials")
 		return agentDispatchContext{}, false
 	}
 	endpointID := strings.TrimSpace(chi.URLParam(r, "endpointId"))
 	if h.AgentDispatchKeys == nil || !h.AgentDispatchKeys.VerifyDeliverySecret(endpointID, deliverySecret) {
+		h.Metrics.RecordDispatchAuth("invalid_credential")
 		writeError(w, http.StatusUnauthorized, "invalid dispatch credentials")
 		return agentDispatchContext{}, false
 	}
 	endpoint, err := h.Queries.GetActiveDingTalkAccountBindingByEndpoint(r.Context(), endpointID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			h.Metrics.RecordDispatchAuth("endpoint_not_found")
 			writeError(w, http.StatusUnauthorized, "invalid dispatch credentials")
 		} else {
+			h.Metrics.RecordDispatchAuth("storage_error")
 			writeError(w, http.StatusInternalServerError, "failed to resolve dispatch endpoint")
 		}
 		return agentDispatchContext{}, false
 	}
+	h.Metrics.RecordDispatchAuth("success")
 	return agentDispatchContext{
 		UserID:      endpoint.InstallerUserID,
 		WorkspaceID: endpoint.WorkspaceID,

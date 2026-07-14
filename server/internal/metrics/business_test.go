@@ -6,6 +6,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
@@ -95,6 +96,28 @@ func TestBusinessMetricsLLMPricingAndUnpricedTokens(t *testing.T) {
 	}
 }
 
+func TestBusinessMetricsDingTalkAccountAndDispatchCounters(t *testing.T) {
+	m := NewBusinessMetrics()
+
+	m.RecordDingTalkAccountBegin("success")
+	m.RecordDingTalkAccountCallback("expired")
+	m.RecordDingTalkAccountSubscriptionVerify("agent_mismatch")
+	m.RecordDingTalkAccountUnbind("router_unavailable")
+	m.RecordDispatchCredentialDerive("success", "v1")
+	m.RecordDispatchAuth("invalid_credential")
+
+	families := GatherForTest(t, m)
+	assertCounterValue(t, families["dingtalk_account_begin_total"], map[string]string{"outcome": "success"}, 1)
+	assertCounterValue(t, families["dingtalk_account_callback_total"], map[string]string{"outcome": "expired"}, 1)
+	assertCounterValue(t, families["dingtalk_account_subscription_verify_total"], map[string]string{"outcome": "agent_mismatch"}, 1)
+	assertCounterValue(t, families["dingtalk_account_unbind_total"], map[string]string{"outcome": "router_unavailable"}, 1)
+	assertCounterValue(t, families["dispatch_credential_derive_total"], map[string]string{
+		"outcome": "success",
+		"key_id":  "v1",
+	}, 1)
+	assertCounterValue(t, families["dispatch_auth_total"], map[string]string{"outcome": "invalid_credential"}, 1)
+}
+
 func TestBusinessMetricsRegistryExposesAllFamilies(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	m := NewBusinessMetrics()
@@ -145,6 +168,12 @@ func TestBusinessMetricsRegistryExposesAllFamilies(t *testing.T) {
 	m.ObserveGithubPRMergeSeconds(120)
 	m.RecordCloudRuntimeRequest("provision", "ok", 0.5)
 	m.RecordDaemonWSMessageReceived("heartbeat")
+	m.RecordDingTalkAccountBegin("success")
+	m.RecordDingTalkAccountCallback("success")
+	m.RecordDingTalkAccountSubscriptionVerify("success")
+	m.RecordDingTalkAccountUnbind("success")
+	m.RecordDispatchCredentialDerive("success", "v1")
+	m.RecordDispatchAuth("success")
 
 	families, err := registry.Gather()
 	if err != nil {
@@ -166,4 +195,27 @@ func exerciseEvent(m *BusinessMetrics, name string, props map[string]any) {
 		props = map[string]any{}
 	}
 	m.IncForEvent(analytics.Event{Name: name, Properties: props})
+}
+
+func assertCounterValue(t *testing.T, family *dto.MetricFamily, labels map[string]string, want float64) {
+	t.Helper()
+	if family == nil {
+		t.Fatal("metric family is missing")
+	}
+	for _, metric := range family.GetMetric() {
+		matched := len(metric.GetLabel()) == len(labels)
+		for _, label := range metric.GetLabel() {
+			if labels[label.GetName()] != label.GetValue() {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			if got := metric.GetCounter().GetValue(); got != want {
+				t.Fatalf("counter value = %v, want %v", got, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("metric labels %#v are missing", labels)
 }
