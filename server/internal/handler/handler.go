@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
@@ -129,29 +130,32 @@ type WorkspaceSetRefreshNotifier interface {
 }
 
 type Handler struct {
-	Queries                *db.Queries
-	DB                     dbExecutor
-	TxStarter              txStarter
-	Hub                    *realtime.Hub
-	DaemonHub              *daemonws.Hub
-	DaemonProfileRefresh   RuntimeProfileRefreshNotifier
-	DaemonWorkspaceRefresh WorkspaceSetRefreshNotifier
-	Bus                    *events.Bus
-	TaskService            *service.TaskService
-	IssueService           *service.IssueService
-	AutopilotService       *service.AutopilotService
-	EmailService           *service.EmailService
-	UpdateStore            UpdateStore
-	ModelListStore         ModelListStore
-	LocalSkillListStore    LocalSkillListStore
-	LocalSkillImportStore  LocalSkillImportStore
-	DWSAuthSessions        *DWSAuthSessionStore
-	FeatureFlags           *featureflag.Service
-	LivenessStore          LivenessStore
-	HeartbeatScheduler     HeartbeatScheduler
-	Storage                storage.Storage
-	CFSigner               *auth.CloudFrontSigner
-	Analytics              analytics.Client
+	Queries                 *db.Queries
+	DB                      dbExecutor
+	TxStarter               txStarter
+	Hub                     *realtime.Hub
+	DaemonHub               *daemonws.Hub
+	DaemonProfileRefresh    RuntimeProfileRefreshNotifier
+	DaemonWorkspaceRefresh  WorkspaceSetRefreshNotifier
+	Bus                     *events.Bus
+	TaskService             *service.TaskService
+	IssueService            *service.IssueService
+	IssueCommentService     *service.IssueCommentService
+	AutopilotService        *service.AutopilotService
+	EmailService            *service.EmailService
+	UpdateStore             UpdateStore
+	ModelListStore          ModelListStore
+	LocalSkillListStore     LocalSkillListStore
+	LocalSkillImportStore   LocalSkillImportStore
+	DWSAuthSessions         *DWSAuthSessionStore
+	FeatureFlags            *featureflag.Service
+	LivenessStore           LivenessStore
+	HeartbeatScheduler      HeartbeatScheduler
+	Storage                 storage.Storage
+	AgentDispatchHTTPClient *http.Client
+	AgentDispatchKeys       *agentmessagerouter.DispatchKeyring
+	CFSigner                *auth.CloudFrontSigner
+	Analytics               analytics.Client
 	// Metrics is the shared business-metrics collector built by main.go.
 	// May be nil in tests / self-hosted with the metrics listener disabled;
 	// every Record* method is nil-safe and obsmetrics.RecordEvent treats a
@@ -247,7 +251,9 @@ type Handler struct {
 	// DingTalkBindingTokens mints/redeems the user-binding tokens behind
 	// the "link your DingTalk account" prompt. Nil unless the DingTalk
 	// bot integration is configured (MULTICA_DINGTALK_SECRET_KEY set).
-	DingTalkBindingTokens *dingtalk.BindingTokenService
+	DingTalkBindingTokens        *dingtalk.BindingTokenService
+	DingTalkAccountBindings      dingTalkAccountBindingService
+	DingTalkAccountBindingOrigin string
 	// LarkOAuth resolves Feishu login codes for POST /auth/lark. Production
 	// prefers the private channel agent (LARK_AGENT_BASE_URL) so the app
 	// secret stays outside this backend; the direct client remains available
@@ -321,6 +327,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		Bus:                          bus,
 		TaskService:                  taskSvc,
 		IssueService:                 service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
+		IssueCommentService:          service.NewIssueCommentService(queries, bus, taskSvc),
 		AutopilotService:             service.NewAutopilotService(queries, txStarter, bus, taskSvc),
 		EmailService:                 emailService,
 		UpdateStore:                  NewInMemoryUpdateStore(),

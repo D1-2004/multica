@@ -523,7 +523,30 @@
     },
     "integrations": {
       "intro": "このエージェントを外部のチャットプラットフォームに接続し、普段使っているツールから直接やり取りできるようにします。",
-      "members_note": "エージェントを外部チャットプラットフォームに接続できるのはワークスペースのオーナーと管理者のみです。接続済みの Bot は「設定 → 連携」で確認できます。"
+      "members_note": "エージェントを外部チャットプラットフォームに接続できるのはワークスペースのオーナーと管理者のみです。接続済みの Bot は「設定 → 連携」で確認できます。",
+      "dingtalk_account_title": "DingTalk アカウント",
+      "dingtalk_account_description": "タスクを直接送信するため、DingTalk アカウントをこのエージェントに関連付けます。",
+      "dingtalk_account_loading": "DingTalk アカウントの関連付け状態を読み込んでいます...",
+      "dingtalk_account_not_configured": "この環境では DingTalk アカウントの関連付けが設定されていません。",
+      "dingtalk_account_connect": "DingTalk アカウントを関連付ける",
+      "dingtalk_account_starting": "QR コードを生成しています...",
+      "dingtalk_account_begin_failed": "DingTalk アカウントの関連付けを開始できませんでした。",
+      "dingtalk_account_dialog_title": "DingTalk アカウントを関連付ける",
+      "dingtalk_account_dialog_description": "DingTalk でスキャンし、アカウントを {{agent}} に関連付けます。",
+      "dingtalk_account_scan_hint": "DingTalk でこの QR コードをスキャンしてください。関連付けが完了すると、このページは自動的に更新されます。",
+      "dingtalk_account_expired_title": "この QR コードは期限切れです",
+      "dingtalk_account_expired_description": "新しい QR コードを生成して続行してください。",
+      "dingtalk_account_new_qr": "新しい QR コードを生成",
+      "dingtalk_account_close": "閉じる",
+      "dingtalk_account_connected": "関連付け済みの DingTalk アカウント",
+      "dingtalk_account_fallback_name": "DingTalk アカウント",
+      "dingtalk_account_pending_restart": "前回の関連付けは完了していません。新しい QR コードを生成してもう一度お試しください。",
+      "dingtalk_account_unbind": "関連付けを解除",
+      "dingtalk_account_unbinding": "解除しています...",
+      "dingtalk_account_unbind_failed": "DingTalk アカウントの関連付けを解除できませんでした。",
+      "dingtalk_account_confirm_title": "DingTalk アカウントの関連付けを解除しますか？",
+      "dingtalk_account_confirm_description": "このエージェントは、この DingTalk アカウントからのタスクを受信しなくなります。",
+      "dingtalk_account_cancel": "キャンセル"
     },
     "activity": {
       "status": {

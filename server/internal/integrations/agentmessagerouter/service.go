@@ -1,0 +1,446 @@
+package agentmessagerouter
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+)
+
+const (
+	defaultCallbackTTL  = 10 * time.Minute
+	maxAccountNameRunes = 128
+	maxAvatarURLBytes   = 2048
+	maxSourceIDBytes    = 64
+)
+
+var (
+	ErrNotConfigured     = errors.New("dingtalk account binding is not configured")
+	ErrAlreadyActive     = errors.New("dingtalk account binding is already active")
+	ErrNotFound          = errors.New("dingtalk account binding not found")
+	ErrCallbackExpired   = errors.New("dingtalk account binding callback expired")
+	ErrBindingConflict   = errors.New("dingtalk account binding conflict")
+	ErrRouterUnavailable = errors.New("agent message router is unavailable")
+	ErrInvalidResult     = errors.New("dingtalk account binding result is invalid")
+)
+
+// Store is the generated-query seam used by the binding lifecycle. *db.Queries
+// satisfies it directly; tests use an in-memory fake.
+type Store interface {
+	BeginDingTalkAccountBinding(context.Context, db.BeginDingTalkAccountBindingParams) (db.ChannelInstallation, error)
+	GetDingTalkAccountBinding(context.Context, pgtype.UUID) (db.ChannelInstallation, error)
+	GetDingTalkAccountBindingByAgent(context.Context, db.GetDingTalkAccountBindingByAgentParams) (db.ChannelInstallation, error)
+	GetDingTalkAccountBindingInWorkspace(context.Context, db.GetDingTalkAccountBindingInWorkspaceParams) (db.ChannelInstallation, error)
+	ListDingTalkAccountBindings(context.Context, pgtype.UUID) ([]db.ChannelInstallation, error)
+	ActivateDingTalkAccountBinding(context.Context, db.ActivateDingTalkAccountBindingParams) (db.ChannelInstallation, error)
+	RevokeDingTalkAccountBinding(context.Context, db.RevokeDingTalkAccountBindingParams) (db.ChannelInstallation, error)
+}
+
+// Router is the existing subscription contract used to issue a QR credential,
+// verify the DBase callback, and proxy unbind. *Client satisfies it.
+type Router interface {
+	IssueBindingToken(ctx context.Context, agentID, dispatchURL string) (BindingToken, error)
+	GetSubscription(ctx context.Context, sourceID string) (Subscription, error)
+	DeleteSubscription(ctx context.Context, sourceID string) error
+}
+
+type ServiceConfig struct {
+	PublicBaseURL   string
+	DBaseBindingURL string
+	CallbackTTL     time.Duration
+	Keyring         *DispatchKeyring
+	Random          io.Reader
+	Now             func() time.Time
+}
+
+type Service struct {
+	store           Store
+	router          Router
+	publicOrigin    *url.URL
+	dbaseBindingURL *url.URL
+	callbackTTL     time.Duration
+	keyring         *DispatchKeyring
+	random          io.Reader
+	now             func() time.Time
+}
+
+type BeginParams struct {
+	WorkspaceID pgtype.UUID
+	AgentID     pgtype.UUID
+	InitiatorID pgtype.UUID
+}
+
+type BeginResult struct {
+	InstallationID string    `json:"installation_id"`
+	QRCodeURL      string    `json:"qr_code_url"`
+	ExpiresAt      time.Time `json:"expires_at"`
+}
+
+type CallbackParams struct {
+	InstallationID     pgtype.UUID
+	CallbackToken      string
+	SourceID           string
+	AccountDisplayName string
+	AccountAvatarURL   string
+}
+
+type UnbindParams struct {
+	WorkspaceID    pgtype.UUID
+	InstallationID pgtype.UUID
+}
+
+func NewService(store Store, router Router, config ServiceConfig) (*Service, error) {
+	if store == nil || router == nil || config.Keyring == nil || config.Random == nil {
+		return nil, ErrNotConfigured
+	}
+	publicOrigin, err := canonicalHTTPSOrigin(config.PublicBaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid public origin", ErrNotConfigured)
+	}
+	dbaseBindingURL, err := parseDBaseBindingURL(config.DBaseBindingURL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid DBase binding URL", ErrNotConfigured)
+	}
+	callbackTTL := config.CallbackTTL
+	if callbackTTL <= 0 {
+		callbackTTL = defaultCallbackTTL
+	}
+	now := config.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &Service{
+		store:           store,
+		router:          router,
+		publicOrigin:    publicOrigin,
+		dbaseBindingURL: dbaseBindingURL,
+		callbackTTL:     callbackTTL,
+		keyring:         config.Keyring,
+		random:          config.Random,
+		now:             now,
+	}, nil
+}
+
+func (s *Service) Begin(ctx context.Context, params BeginParams) (BeginResult, error) {
+	if !params.WorkspaceID.Valid || !params.AgentID.Valid || !params.InitiatorID.Valid {
+		return BeginResult{}, ErrNotFound
+	}
+	if s == nil || s.store == nil || s.router == nil || s.keyring == nil || s.random == nil {
+		return BeginResult{}, ErrNotConfigured
+	}
+	endpointID, err := s.keyring.GenerateEndpointID(s.random)
+	if err != nil {
+		return BeginResult{}, fmt.Errorf("%w: endpoint generation failed", ErrNotConfigured)
+	}
+	dispatchURL, err := BuildDispatchURL(s.publicOrigin.String(), endpointID)
+	if err != nil {
+		return BeginResult{}, fmt.Errorf("%w: dispatch URL generation failed", ErrNotConfigured)
+	}
+	callbackToken, callbackHash, err := GenerateCallbackToken(s.random)
+	if err != nil {
+		return BeginResult{}, fmt.Errorf("%w: callback credential generation failed", ErrNotConfigured)
+	}
+	callbackExpiresAt := s.now().UTC().Add(s.callbackTTL)
+	pendingConfig, err := NewPendingDingTalkAccountConfig(
+		endpointID,
+		dispatchURL,
+		callbackHash,
+		callbackExpiresAt,
+	).Marshal()
+	if err != nil {
+		return BeginResult{}, fmt.Errorf("%w: pending config", ErrInvalidResult)
+	}
+	row, err := s.store.BeginDingTalkAccountBinding(ctx, db.BeginDingTalkAccountBindingParams{
+		WorkspaceID:     params.WorkspaceID,
+		AgentID:         params.AgentID,
+		Config:          pendingConfig,
+		InstallerUserID: params.InitiatorID,
+	})
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return BeginResult{}, fmt.Errorf("begin dingtalk account binding: %w", err)
+		}
+		existing, lookupErr := s.store.GetDingTalkAccountBindingByAgent(ctx, db.GetDingTalkAccountBindingByAgentParams{
+			WorkspaceID: params.WorkspaceID,
+			AgentID:     params.AgentID,
+		})
+		if lookupErr == nil && existing.Status == "active" {
+			return BeginResult{}, ErrAlreadyActive
+		}
+		if errors.Is(lookupErr, pgx.ErrNoRows) {
+			return BeginResult{}, ErrNotFound
+		}
+		if lookupErr != nil {
+			return BeginResult{}, fmt.Errorf("lookup dingtalk account binding: %w", lookupErr)
+		}
+		return BeginResult{}, ErrBindingConflict
+	}
+	if row.Status != "pending" || row.ChannelType != ChannelTypeDingTalkAccount {
+		return BeginResult{}, ErrInvalidResult
+	}
+	storedConfig, err := ParseDingTalkAccountConfig(row.Config)
+	if err != nil {
+		return BeginResult{}, fmt.Errorf("%w: stored pending config", ErrInvalidResult)
+	}
+	issued, err := s.router.IssueBindingToken(ctx, util.UUIDToString(row.AgentID), storedConfig.DispatchURL)
+	if err != nil {
+		return BeginResult{}, ErrRouterUnavailable
+	}
+	if strings.TrimSpace(issued.BindingToken) == "" || !issued.ExpiresAt.After(s.now()) {
+		return BeginResult{}, ErrInvalidResult
+	}
+	callbackURL := *s.publicOrigin
+	callbackURL.Path = "/api/integrations/dingtalk/account-bindings/" + util.UUIDToString(row.ID) + "/callback"
+	fragment := url.Values{
+		"bindingToken":  {issued.BindingToken},
+		"callbackUrl":   {callbackURL.String()},
+		"callbackToken": {callbackToken},
+		"expiresAt":     {strconv.FormatInt(issued.ExpiresAt.Unix(), 10)},
+	}
+	qrCodeURL := *s.dbaseBindingURL
+	qrCodeURL.Fragment = fragment.Encode()
+	return BeginResult{
+		InstallationID: util.UUIDToString(row.ID),
+		QRCodeURL:      qrCodeURL.String(),
+		ExpiresAt:      issued.ExpiresAt.UTC(),
+	}, nil
+}
+
+func (s *Service) List(ctx context.Context, workspaceID pgtype.UUID) ([]PublicDingTalkAccountBinding, error) {
+	if s == nil || s.store == nil {
+		return nil, ErrNotConfigured
+	}
+	if !workspaceID.Valid {
+		return nil, ErrNotFound
+	}
+	rows, err := s.store.ListDingTalkAccountBindings(ctx, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list dingtalk account bindings: %w", err)
+	}
+	bindings := make([]PublicDingTalkAccountBinding, 0, len(rows))
+	for _, row := range rows {
+		binding, err := publicBindingFromRow(row)
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, nil
+}
+
+func (s *Service) CompleteCallback(ctx context.Context, params CallbackParams) (PublicDingTalkAccountBinding, error) {
+	if s == nil || s.store == nil || s.router == nil {
+		return PublicDingTalkAccountBinding{}, ErrNotConfigured
+	}
+	if !params.InstallationID.Valid {
+		return PublicDingTalkAccountBinding{}, ErrNotFound
+	}
+	sourceID := strings.TrimSpace(params.SourceID)
+	displayName := strings.TrimSpace(params.AccountDisplayName)
+	avatarURL := strings.TrimSpace(params.AccountAvatarURL)
+	if sourceID == "" || sourceID != params.SourceID || len(sourceID) > maxSourceIDBytes ||
+		utf8.RuneCountInString(displayName) > maxAccountNameRunes ||
+		!validAccountAvatarURL(avatarURL) {
+		return PublicDingTalkAccountBinding{}, ErrInvalidResult
+	}
+	row, err := s.store.GetDingTalkAccountBinding(ctx, params.InstallationID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PublicDingTalkAccountBinding{}, ErrNotFound
+		}
+		return PublicDingTalkAccountBinding{}, fmt.Errorf("get dingtalk account binding: %w", err)
+	}
+	config, err := ParseDingTalkAccountConfig(row.Config)
+	if err != nil {
+		return PublicDingTalkAccountBinding{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
+	}
+	if !VerifyCallbackToken(params.CallbackToken, config.CallbackTokenHash) ||
+		!s.now().Before(config.CallbackExpiresAt) {
+		return PublicDingTalkAccountBinding{}, ErrCallbackExpired
+	}
+	if row.Status == "active" {
+		if config.RouterSourceID != sourceID {
+			return PublicDingTalkAccountBinding{}, ErrBindingConflict
+		}
+		if err := s.verifyActiveSubscription(ctx, sourceID, row, config); err != nil {
+			return PublicDingTalkAccountBinding{}, err
+		}
+		return publicBindingFromRow(row)
+	}
+	if row.Status != "pending" {
+		return PublicDingTalkAccountBinding{}, ErrBindingConflict
+	}
+	subscription, err := s.router.GetSubscription(ctx, sourceID)
+	if err != nil {
+		return PublicDingTalkAccountBinding{}, mapSubscriptionLookupError(err)
+	}
+	if !subscriptionMatches(subscription, sourceID, row, config) {
+		// Only compensate a source whose GET response proves it belongs to this
+		// exact agent and dispatch URL. Never DELETE an unverified body sourceId.
+		if subscription.SourceID == sourceID &&
+			subscription.AgentID == util.UUIDToString(row.AgentID) &&
+			subscription.DispatchURL == config.DispatchURL {
+			if err := s.router.DeleteSubscription(ctx, subscription.SourceID); err != nil {
+				return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+			}
+		}
+		return PublicDingTalkAccountBinding{}, ErrBindingConflict
+	}
+	boundAt := s.now().UTC()
+	config.RouterSourceID = sourceID
+	config.AccountDisplayName = displayName
+	config.AccountAvatarURL = avatarURL
+	config.BoundAt = &boundAt
+	activeConfig, err := config.Marshal()
+	if err != nil {
+		return PublicDingTalkAccountBinding{}, fmt.Errorf("%w: active binding config", ErrInvalidResult)
+	}
+	activated, err := s.store.ActivateDingTalkAccountBinding(ctx, db.ActivateDingTalkAccountBindingParams{
+		Config:                    activeConfig,
+		ID:                        row.ID,
+		WorkspaceID:               row.WorkspaceID,
+		AgentID:                   row.AgentID,
+		ExpectedCallbackTokenHash: config.CallbackTokenHash,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			current, lookupErr := s.store.GetDingTalkAccountBinding(ctx, params.InstallationID)
+			if lookupErr == nil && current.Status == "active" {
+				currentConfig, parseErr := ParseDingTalkAccountConfig(current.Config)
+				if parseErr == nil && currentConfig.RouterSourceID == sourceID &&
+					VerifyCallbackToken(params.CallbackToken, currentConfig.CallbackTokenHash) &&
+					s.now().Before(currentConfig.CallbackExpiresAt) {
+					return publicBindingFromRow(current)
+				}
+			}
+			// The callback source was already verified against this exact agent and
+			// dispatch URL. If the local CAS lost to a newer pending attempt, an
+			// unbind, or another source becoming active, remove only this losing
+			// source. Never delete the source stored by the winning active row.
+			if lookupErr == nil {
+				if deleteErr := s.router.DeleteSubscription(ctx, sourceID); deleteErr != nil {
+					return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+				}
+			}
+			return PublicDingTalkAccountBinding{}, ErrBindingConflict
+		}
+		return PublicDingTalkAccountBinding{}, fmt.Errorf("activate dingtalk account binding: %w", err)
+	}
+	return publicBindingFromRow(activated)
+}
+
+func (s *Service) Unbind(ctx context.Context, params UnbindParams) (PublicDingTalkAccountBinding, error) {
+	if s == nil || s.store == nil || s.router == nil {
+		return PublicDingTalkAccountBinding{}, ErrNotConfigured
+	}
+	if !params.WorkspaceID.Valid || !params.InstallationID.Valid {
+		return PublicDingTalkAccountBinding{}, ErrNotFound
+	}
+	row, err := s.store.GetDingTalkAccountBindingInWorkspace(ctx, db.GetDingTalkAccountBindingInWorkspaceParams{
+		ID:          params.InstallationID,
+		WorkspaceID: params.WorkspaceID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PublicDingTalkAccountBinding{}, ErrNotFound
+		}
+		return PublicDingTalkAccountBinding{}, fmt.Errorf("get dingtalk account binding: %w", err)
+	}
+	config, err := ParseDingTalkAccountConfig(row.Config)
+	if err != nil {
+		return PublicDingTalkAccountBinding{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
+	}
+	if config.RouterSourceID != "" {
+		if err := s.router.DeleteSubscription(ctx, config.RouterSourceID); err != nil {
+			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+		}
+	} else if row.Status == "active" {
+		return PublicDingTalkAccountBinding{}, ErrInvalidResult
+	}
+	revoked, err := s.store.RevokeDingTalkAccountBinding(ctx, db.RevokeDingTalkAccountBindingParams{
+		ID:          row.ID,
+		WorkspaceID: row.WorkspaceID,
+		AgentID:     row.AgentID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PublicDingTalkAccountBinding{}, ErrNotFound
+		}
+		return PublicDingTalkAccountBinding{}, fmt.Errorf("revoke dingtalk account binding: %w", err)
+	}
+	return publicBindingFromRow(revoked)
+}
+
+func (s *Service) verifyActiveSubscription(ctx context.Context, sourceID string, row db.ChannelInstallation, config DingTalkAccountConfig) error {
+	subscription, err := s.router.GetSubscription(ctx, sourceID)
+	if err != nil {
+		return mapSubscriptionLookupError(err)
+	}
+	if !subscriptionMatches(subscription, sourceID, row, config) {
+		return ErrBindingConflict
+	}
+	return nil
+}
+
+func mapSubscriptionLookupError(err error) error {
+	if errors.Is(err, ErrSubscriptionNotFound) {
+		return ErrBindingConflict
+	}
+	return ErrRouterUnavailable
+}
+
+func subscriptionMatches(subscription Subscription, sourceID string, row db.ChannelInstallation, config DingTalkAccountConfig) bool {
+	return subscription.SourceID == sourceID &&
+		subscription.AgentID == util.UUIDToString(row.AgentID) &&
+		subscription.DispatchURL == config.DispatchURL &&
+		subscription.Status == "active"
+}
+
+func publicBindingFromRow(row db.ChannelInstallation) (PublicDingTalkAccountBinding, error) {
+	if row.ChannelType != ChannelTypeDingTalkAccount {
+		return PublicDingTalkAccountBinding{}, ErrInvalidResult
+	}
+	config, err := ParseDingTalkAccountConfig(row.Config)
+	if err != nil {
+		return PublicDingTalkAccountBinding{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
+	}
+	return config.PublicBinding(
+		util.UUIDToString(row.ID),
+		util.UUIDToString(row.WorkspaceID),
+		util.UUIDToString(row.AgentID),
+		row.Status,
+	), nil
+}
+
+func parseDBaseBindingURL(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Hostname() == "" ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.ForceQuery ||
+		parsed.Opaque != "" {
+		return nil, errors.New("DBase binding URL must be an absolute HTTPS URL without query or fragment")
+	}
+	return parsed, nil
+}
+
+func validAccountAvatarURL(raw string) bool {
+	if raw == "" {
+		return true
+	}
+	if len(raw) > maxAvatarURLBytes {
+		return false
+	}
+	parsed, err := url.Parse(raw)
+	return err == nil && parsed.Scheme == "https" && parsed.Host != "" && parsed.Hostname() != "" &&
+		parsed.User == nil && parsed.Fragment == "" && parsed.Opaque == ""
+}

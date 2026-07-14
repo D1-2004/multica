@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiError } from "./client";
+import { noopLogger } from "../logger";
+import { setSchemaLogger } from "./schema";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setSchemaLogger(noopLogger);
 });
 
 describe("ApiClient label response schemas", () => {
@@ -45,6 +48,107 @@ describe("ApiClient label response schemas", () => {
 });
 
 describe("ApiClient", () => {
+  it("uses the DingTalk account binding HTTP contract", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            bindings: [
+              {
+                id: "installation-1",
+                workspace_id: "workspace-1",
+                agent_id: "agent-1",
+                status: "active",
+                account_display_name: "Zhang San",
+                account_avatar_url: null,
+                bound_at: "2026-07-14T09:30:00Z",
+              },
+            ],
+            configured: true,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            installation_id: "installation-1",
+            qr_code_url: "https://dbase.example/#bindingToken=secret",
+            expires_at: "2026-07-14T09:35:00Z",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(
+      client.listDingTalkAccountBindings("workspace-1"),
+    ).resolves.toMatchObject({
+      bindings: [{ id: "installation-1", agentId: "agent-1" }],
+      configured: true,
+    });
+    await expect(
+      client.beginDingTalkAccountBinding("workspace-1", "agent-1"),
+    ).resolves.toEqual({
+      installationId: "installation-1",
+      qrCodeUrl: "https://dbase.example/#bindingToken=secret",
+      expiresAt: "2026-07-14T09:35:00Z",
+    });
+    await expect(
+      client.deleteDingTalkAccountBinding("workspace-1", "installation-1"),
+    ).resolves.toBeUndefined();
+
+    expect(fetchMock.mock.calls.map(([url, init]) => ({
+      url,
+      method: init?.method ?? "GET",
+      body: init?.body,
+    }))).toEqual([
+      {
+        url: "https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings",
+        method: "GET",
+        body: undefined,
+      },
+      {
+        url: "https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/begin",
+        method: "POST",
+        body: JSON.stringify({ agent_id: "agent-1" }),
+      },
+      {
+        url: "https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/installation-1",
+        method: "DELETE",
+        body: undefined,
+      },
+    ]);
+  });
+
+  it("does not log the credential-bearing begin payload when parsing fails", async () => {
+    const warn = vi.fn();
+    setSchemaLogger({ ...noopLogger, warn });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            qr_code_url:
+              "https://dbase.example/#bindingToken=router-secret&callbackToken=callback-secret",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(
+      client.beginDingTalkAccountBinding("workspace-1", "agent-1"),
+    ).resolves.toEqual({ installationId: "", qrCodeUrl: "", expiresAt: "" });
+
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("router-secret");
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("callback-secret");
+  });
+
   it("preserves HTTP status on failed requests", async () => {
     vi.stubGlobal(
       "fetch",

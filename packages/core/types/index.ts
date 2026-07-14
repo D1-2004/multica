@@ -160,6 +160,11 @@ export type {
   RedeemDingTalkBindingTokenResponse,
 } from "./dingtalk";
 export type {
+  DingTalkAccountBinding,
+  DingTalkAccountBindingsResponse,
+  BeginDingTalkAccountBindingResponse,
+} from "./dingtalk-account-binding";
+export type {
   Autopilot,
   AutopilotStatus,
   AutopilotExecutionMode,

@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -24,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
+	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composiointeg "github.com/multica-ai/multica/server/internal/integrations/composio"
@@ -70,6 +73,54 @@ func allowedOrigins() []string {
 		return defaultOrigins
 	}
 	return origins
+}
+
+func dingTalkAccountCallbackCORSMiddleware(appOrigins []string, dbaseOrigin string) func(http.Handler) http.Handler {
+	global := cors.Handler(cors.Options{
+		AllowedOrigins:   appOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Workspace-ID", "X-Workspace-Slug", "X-Request-ID", "X-Agent-ID", "X-Task-ID", "X-CSRF-Token", "X-Client-Platform", "X-Client-Version", "X-Client-OS"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	})
+	callback := cors.Handler(cors.Options{
+		AllowedOrigins: []string{strings.TrimSpace(dbaseOrigin)},
+		AllowedMethods: []string{"POST", "OPTIONS"},
+		AllowedHeaders: []string{"Authorization", "Content-Type"},
+		MaxAge:         300,
+	})
+	return func(next http.Handler) http.Handler {
+		globalHandler := global(next)
+		callbackHandler := callback(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isDingTalkAccountCallbackPath(r.URL.Path) {
+				callbackHandler.ServeHTTP(w, r)
+				return
+			}
+			globalHandler.ServeHTTP(w, r)
+		})
+	}
+}
+
+func isDingTalkAccountCallbackPath(path string) bool {
+	const prefix = "/api/integrations/dingtalk/account-bindings/"
+	const suffix = "/callback"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return false
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	return id != "" && !strings.Contains(id, "/")
+}
+
+func dBaseBindingURLMatchesOrigin(bindingURL, expectedOrigin string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(bindingURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	origin, err := handler.NormalizeDingTalkAccountBindingOrigin(
+		(&url.URL{Scheme: parsed.Scheme, Host: parsed.Host}).String(),
+	)
+	return err == nil && origin == expectedOrigin
 }
 
 // appURLFromEnv resolves the user-facing web app URL. It prefers
@@ -200,6 +251,41 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	h.Metrics = opts.BusinessMetrics
+	dispatchKeysRaw := strings.TrimSpace(os.Getenv("MULTICA_AGENT_DISPATCH_KEYS"))
+	dispatchCurrentKeyID := strings.TrimSpace(os.Getenv("MULTICA_AGENT_DISPATCH_CURRENT_KEY_ID"))
+	if dispatchKeysRaw == "" && dispatchCurrentKeyID == "" {
+		slog.Info("agent dispatch credential derivation disabled (keyring not set)")
+	} else if keyring, err := agentmessagerouter.ParseDispatchKeyring(dispatchKeysRaw, dispatchCurrentKeyID); err != nil {
+		slog.Error("agent dispatch credential derivation disabled", "error", err)
+	} else {
+		h.AgentDispatchKeys = keyring
+		dbaseBindingURL := strings.TrimSpace(os.Getenv("DINGTALK_DBASE_BINDING_PAGE_URL"))
+		dbaseOrigin, originErr := handler.NormalizeDingTalkAccountBindingOrigin(
+			os.Getenv("DINGTALK_DBASE_BINDING_ORIGIN"),
+		)
+		routerClient, clientErr := agentmessagerouter.NewClient(agentmessagerouter.ClientConfig{
+			BaseURL:           strings.TrimSpace(os.Getenv("AGENT_MESSAGE_ROUTER_INTERNAL_URL")),
+			ServiceCredential: strings.TrimSpace(os.Getenv("AGENT_MESSAGE_ROUTER_SERVICE_CREDENTIAL")),
+		})
+		bindingService, serviceErr := agentmessagerouter.NewService(queries, routerClient, agentmessagerouter.ServiceConfig{
+			PublicBaseURL:   signupConfig.PublicURL,
+			DBaseBindingURL: dbaseBindingURL,
+			Keyring:         keyring,
+			Random:          rand.Reader,
+		})
+		if originErr != nil || clientErr != nil || serviceErr != nil ||
+			!dBaseBindingURLMatchesOrigin(dbaseBindingURL, dbaseOrigin) {
+			slog.Error("dingtalk account binding disabled due to invalid configuration",
+				"origin_error", originErr,
+				"router_error", clientErr,
+				"service_error", serviceErr,
+			)
+		} else {
+			h.DingTalkAccountBindings = bindingService
+			h.DingTalkAccountBindingOrigin = dbaseOrigin
+			slog.Info("dingtalk account binding enabled")
+		}
+	}
 	if dwsKey, err := secretbox.LoadKey("MULTICA_DWS_SECRET_KEY"); err == nil {
 		box, err := secretbox.New(dwsKey)
 		if err != nil {
@@ -872,13 +958,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// using one config source instead of a parallel one.
 	realtime.SetTrustedProxies(signupConfig.TrustedProxies)
 
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   origins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Workspace-ID", "X-Workspace-Slug", "X-Request-ID", "X-Agent-ID", "X-Task-ID", "X-CSRF-Token", "X-Client-Platform", "X-Client-Version", "X-Client-OS"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
+	r.Use(dingTalkAccountCallbackCORSMiddleware(
+		origins,
+		h.DingTalkAccountBindingOrigin,
+	))
 
 	// Health / readiness checks
 	r.Get("/health", health.liveHandler)
@@ -964,6 +1047,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// purpose: the bearer token in the URL path IS the credential. Workspace
 	// context is derived from the trigger row, never from request headers.
 	r.Post("/api/webhooks/autopilots/{token}", h.HandleAutopilotWebhook)
+	// External message-router dispatch ingress. The non-secret endpoint id
+	// resolves binding context server-side; a separate Bearer delivery secret
+	// authenticates the caller and is never embedded in the callback URL.
+	r.Post("/api/webhooks/agent-dispatch/{endpointId}", h.HandleAgentDispatch)
+	// DBase completes a DingTalk account binding without a Multica session.
+	// The path-aware CORS policy above admits only the configured DBase origin;
+	// this handler also requires that exact Origin and the per-attempt callback
+	// Bearer token before it verifies the Router subscription.
+	r.Post("/api/integrations/dingtalk/account-bindings/{installationId}/callback", h.CompleteDingTalkAccountBindingCallback)
 	// GitHub App webhook (no Multica auth — requests are authenticated via
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
@@ -1171,6 +1263,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/dingtalk/installations", h.ListDingTalkInstallations)
+					r.Get("/dingtalk/account-bindings", h.ListDingTalkAccountBindings)
+					r.Post("/dingtalk/account-bindings/begin", h.BeginDingTalkAccountBinding)
+					r.Delete("/dingtalk/account-bindings/{installationId}", h.UnbindDingTalkAccountBinding)
 				})
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))

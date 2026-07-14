@@ -18,6 +18,8 @@ import type {
   CreateBillingCheckoutSessionResponse,
   CreateBillingPortalSessionResponse,
   DingTalkUserSearchResponse,
+  BeginDingTalkAccountBindingResponse,
+  DingTalkAccountBindingsResponse,
   GroupedIssuesResponse,
   InboxWorkspaceUnread,
   Label,
@@ -34,6 +36,62 @@ import type {
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
+
+const DingTalkAccountBindingSchema = z
+  .object({
+    id: z.string(),
+    workspace_id: z.string(),
+    agent_id: z.string(),
+    status: z.string(),
+    account_display_name: z.string().nullable().optional(),
+    account_avatar_url: z.string().nullable().optional(),
+    bound_at: z.string().nullable().optional(),
+  })
+  .loose()
+  .transform((binding) => ({
+    id: binding.id,
+    workspaceId: binding.workspace_id,
+    agentId: binding.agent_id,
+    status: binding.status,
+    accountDisplayName: binding.account_display_name,
+    accountAvatarUrl: binding.account_avatar_url,
+    boundAt: binding.bound_at,
+  }));
+
+export const DingTalkAccountBindingsResponseSchema = z
+  .object({
+    bindings: z.array(DingTalkAccountBindingSchema),
+    configured: z.boolean(),
+  })
+  .loose()
+  .transform((response) => ({
+    bindings: response.bindings,
+    configured: response.configured,
+  }));
+
+export const EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE: DingTalkAccountBindingsResponse = {
+  bindings: [],
+  configured: false,
+};
+
+export const BeginDingTalkAccountBindingResponseSchema = z
+  .object({
+    installation_id: z.string(),
+    qr_code_url: z.string(),
+    expires_at: z.string(),
+  })
+  .loose()
+  .transform((response) => ({
+    installationId: response.installation_id,
+    qrCodeUrl: response.qr_code_url,
+    expiresAt: response.expires_at,
+  }));
+
+export const EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE: BeginDingTalkAccountBindingResponse = {
+  installationId: "",
+  qrCodeUrl: "",
+  expiresAt: "",
+};
 
 // Label responses are consumed by settings tables and resource pickers. Keep
 // the resource type lenient so newer server scopes do not break older clients,

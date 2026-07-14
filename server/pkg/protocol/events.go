@@ -158,4 +158,10 @@ const (
 	// either.
 	EventDingTalkInstallationCreated = "dingtalk_installation:created"
 	EventDingTalkInstallationRevoked = "dingtalk_installation:revoked"
+
+	// DingTalk account binding lifecycle. This is deliberately separate from
+	// the DingTalk Bot installation events above: account bindings use the
+	// Agent Message Router and never start a channel connector.
+	EventDingTalkAccountBindingActivated = "dingtalk_account_binding:activated"
+	EventDingTalkAccountBindingRevoked   = "dingtalk_account_binding:revoked"
 )

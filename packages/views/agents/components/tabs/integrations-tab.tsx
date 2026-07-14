@@ -13,6 +13,7 @@ import { DingTalkAgentBindButton } from "../../../settings/components/dingtalk-t
 import { LarkAgentBindButton } from "../../../settings/components/lark-tab";
 import { SlackAgentBindButton } from "../../../settings/components/slack-tab";
 import { useT } from "../../../i18n";
+import { DingTalkAccountBindingCard } from "../integrations/dingtalk-account-binding";
 
 /**
  * Integrations tab on the agent detail page. Surfaces the same external-
@@ -101,6 +102,7 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
         <p className="text-xs text-muted-foreground">
           {t(($) => $.tab_body.integrations.intro)}
         </p>
+        <DingTalkAccountBindingCard agentId={agent.id} agentName={agent.name} />
         <p className="text-xs text-muted-foreground">
           {t(($) => $.tab_body.integrations.members_note)}
         </p>
@@ -113,6 +115,8 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
       <p className="text-xs text-muted-foreground">
         {t(($) => $.tab_body.integrations.intro)}
       </p>
+
+      <DingTalkAccountBindingCard agentId={agent.id} agentName={agent.name} />
 
       <section className="rounded-lg border">
         <div className="flex items-start gap-3 p-4">

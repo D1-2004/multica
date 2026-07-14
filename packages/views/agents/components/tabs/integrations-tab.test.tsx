@@ -108,6 +108,15 @@ vi.mock("../../../settings/components/dingtalk-tab", () => ({
   ),
 }));
 
+vi.mock("../integrations/dingtalk-account-binding", () => ({
+  DingTalkAccountBindingCard: ({ agentId }: { agentId: string }) => (
+    <section
+      aria-label="DingTalk account association"
+      data-agent-id={agentId}
+    />
+  ),
+}));
+
 import { IntegrationsTab } from "./integrations-tab";
 
 const TEST_RESOURCES = {
@@ -165,6 +174,9 @@ describe("IntegrationsTab", () => {
     expect(screen.getByText("Lark")).toBeTruthy();
     expect(screen.getByText("Slack")).toBeTruthy();
     expect(screen.getByText("DingTalk")).toBeTruthy();
+    expect(
+      screen.getByRole("region", { name: /DingTalk account association/i }),
+    ).toHaveAttribute("data-agent-id", "agent-1");
     expect(screen.getByTestId("lark-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
     expect(screen.getByTestId("slack-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
     expect(screen.getByTestId("dingtalk-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
@@ -199,10 +211,14 @@ describe("IntegrationsTab", () => {
   });
 
   it("points members at Settings when they are neither an admin nor the agent owner", () => {
-    // A plain member viewing an agent owned by someone else can manage
-    // neither platform, so the read-only note replaces both sections.
+    // A plain member viewing an agent owned by someone else cannot manage
+    // bot installations, but account association remains available to every
+    // logged-in workspace member.
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     renderTab(<IntegrationsTab agent={{ ...agent, owner_id: "user-2" }} />);
+    expect(
+      screen.getByRole("region", { name: /DingTalk account association/i }),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Only workspace owners and admins can connect an agent/i),
     ).toBeTruthy();

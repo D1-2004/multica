@@ -132,6 +132,8 @@ import type {
   BeginDingTalkInstallResponse,
   DingTalkInstallStatusResponse,
   RedeemDingTalkBindingTokenResponse,
+  DingTalkAccountBindingsResponse,
+  BeginDingTalkAccountBindingResponse,
   RegisterSlackBYORequest,
   RedeemSlackBindingTokenResponse,
   Squad,
@@ -252,6 +254,10 @@ import {
   EMPTY_LABEL,
   EMPTY_LIST_LABELS_RESPONSE,
   EMPTY_RESOURCE_LABELS_RESPONSE,
+  BeginDingTalkAccountBindingResponseSchema,
+  DingTalkAccountBindingsResponseSchema,
+  EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
+  EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -2610,6 +2616,53 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ token }),
     });
+  }
+
+  // DingTalk account binding (independent from the DingTalk bot installation)
+  async listDingTalkAccountBindings(
+    workspaceId: string,
+  ): Promise<DingTalkAccountBindingsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings`,
+    );
+    return parseWithFallback(
+      raw,
+      DingTalkAccountBindingsResponseSchema,
+      EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/dingtalk/account-bindings" },
+    );
+  }
+
+  async beginDingTalkAccountBinding(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<BeginDingTalkAccountBindingResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/begin`,
+      {
+        method: "POST",
+        body: JSON.stringify({ agent_id: agentId }),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      BeginDingTalkAccountBindingResponseSchema,
+      EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
+      {
+        endpoint: "POST /api/workspaces/:id/dingtalk/account-bindings/begin",
+        includeReceived: false,
+      },
+    );
+  }
+
+  async deleteDingTalkAccountBinding(
+    workspaceId: string,
+    installationId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${installationId}`,
+      { method: "DELETE" },
+    );
   }
 
   // Composio integration (MUL-3720). All routes are user-scoped (a connection

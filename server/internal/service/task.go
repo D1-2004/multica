@@ -669,8 +669,12 @@ func (s *TaskService) EnqueueTaskForIssue(ctx context.Context, issue db.Issue, t
 // EnqueueTaskForIssueWithAgentIdentityContext carries a ContextToken in the
 // server-side task context. It is never copied onto the issue and is forwarded
 // to the daemon and FC/E2B launcher when the task is dispatched.
-func (s *TaskService) EnqueueTaskForIssueWithAgentIdentityContext(ctx context.Context, issue db.Issue, agentIdentityContextToken string) (db.AgentTaskQueue, error) {
-	return s.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, "", strings.TrimSpace(agentIdentityContextToken))
+func (s *TaskService) EnqueueTaskForIssueWithAgentIdentityContext(ctx context.Context, issue db.Issue, agentIdentityContextToken string, triggerCommentID ...pgtype.UUID) (db.AgentTaskQueue, error) {
+	var commentID pgtype.UUID
+	if len(triggerCommentID) > 0 {
+		commentID = triggerCommentID[0]
+	}
+	return s.enqueueIssueTask(ctx, issue, commentID, false, "", strings.TrimSpace(agentIdentityContextToken))
 }
 
 // EnqueueTaskForIssueWithHandoff is the assign/promote variant that carries a
