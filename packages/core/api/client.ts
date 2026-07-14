@@ -261,10 +261,6 @@ import {
   EMPTY_LABEL,
   EMPTY_LIST_LABELS_RESPONSE,
   EMPTY_RESOURCE_LABELS_RESPONSE,
-  BeginDingTalkAccountBindingResponseSchema,
-  DingTalkAccountBindingsResponseSchema,
-  EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
-  EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
   GitHubAgentPreviewSchema,
   ListGitHubAgentRepositoriesResponseSchema,
   AgentSourceSchema,
@@ -275,6 +271,10 @@ import {
   EMPTY_AGENT_SOURCE,
   EMPTY_CREATE_GITHUB_AGENT_RESPONSE,
   EMPTY_SYNC_AGENT_SOURCE_RESPONSE,
+  BeginDingTalkAccountBindingResponseSchema,
+  DingTalkAccountBindingsResponseSchema,
+  EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
+  EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.

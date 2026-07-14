@@ -239,7 +239,7 @@ func TestLaunchRuntimeForTask_DedupesInFlightTask(t *testing.T) {
 
 func TestLaunchRuntimeForTask_DedupesAcrossReplicas(t *testing.T) {
 	launcher := &blockingRuntimeLauncher{
-		calls:   make(chan db.AgentTaskQueue, 2),
+		calls:   make(chan runtimeLaunchCall, 2),
 		release: make(chan struct{}),
 	}
 	leases := newFakeRuntimeLaunchLeaseStore()
