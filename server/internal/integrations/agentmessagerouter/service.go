@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	defaultCallbackTTL  = 10 * time.Minute
-	maxAccountNameRunes = 128
-	maxAvatarURLBytes   = 2048
-	maxSourceIDBytes    = 64
+	defaultCallbackTTL        = 10 * time.Minute
+	maxAccountNameRunes       = 128
+	maxAvatarURLBytes         = 2048
+	maxSourceIDBytes          = 64
+	maxAccountExternalIDBytes = 128
 )
 
 var (
@@ -53,6 +54,7 @@ type Store interface {
 // verify the DBase callback, and proxy unbind. *Client satisfies it.
 type Router interface {
 	IssueBindingToken(ctx context.Context, agentID, dispatchURL string) (BindingToken, error)
+	CreateDingTalkAccountSubscription(ctx context.Context, accountExternalID, agentID, dispatchURL string) (Subscription, error)
 	GetSubscription(ctx context.Context, sourceID string) (Subscription, error)
 	DeleteSubscription(ctx context.Context, sourceID string) error
 }
@@ -95,6 +97,7 @@ type CallbackParams struct {
 	InstallationID     pgtype.UUID
 	CallbackToken      string
 	SourceID           string
+	AccountExternalID  string
 	AccountDisplayName string
 	AccountAvatarURL   string
 }
@@ -274,9 +277,12 @@ func (s *Service) CompleteCallback(ctx context.Context, params CallbackParams) (
 		return PublicDingTalkAccountBinding{}, ErrNotFound
 	}
 	sourceID := strings.TrimSpace(params.SourceID)
+	accountExternalID := strings.TrimSpace(params.AccountExternalID)
 	displayName := strings.TrimSpace(params.AccountDisplayName)
 	avatarURL := strings.TrimSpace(params.AccountAvatarURL)
-	if sourceID == "" || sourceID != params.SourceID || len(sourceID) > maxSourceIDBytes ||
+	if (sourceID == "") == (accountExternalID == "") ||
+		sourceID != params.SourceID || accountExternalID != params.AccountExternalID ||
+		len(sourceID) > maxSourceIDBytes || len(accountExternalID) > maxAccountExternalIDBytes ||
 		utf8.RuneCountInString(displayName) > maxAccountNameRunes ||
 		!validAccountAvatarURL(avatarURL) {
 		return PublicDingTalkAccountBinding{}, ErrInvalidResult
@@ -295,6 +301,25 @@ func (s *Service) CompleteCallback(ctx context.Context, params CallbackParams) (
 	if !VerifyCallbackToken(params.CallbackToken, config.CallbackTokenHash) ||
 		!s.now().Before(config.CallbackExpiresAt) {
 		return PublicDingTalkAccountBinding{}, ErrCallbackExpired
+	}
+	if accountExternalID != "" && row.Status == "active" {
+		sourceID = strings.TrimSpace(config.RouterSourceID)
+		if !isTrimmedNonEmpty(sourceID) || len(sourceID) > maxSourceIDBytes {
+			return PublicDingTalkAccountBinding{}, ErrInvalidResult
+		}
+	} else if accountExternalID != "" {
+		created, createErr := s.router.CreateDingTalkAccountSubscription(
+			ctx,
+			accountExternalID,
+			util.UUIDToString(row.AgentID),
+			config.DispatchURL,
+		)
+		if createErr != nil || !isTrimmedNonEmpty(created.SourceID) ||
+			len(created.SourceID) > maxSourceIDBytes ||
+			subscriptionVerificationOutcome(created, created.SourceID, row, config) != "success" {
+			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+		}
+		sourceID = created.SourceID
 	}
 	if row.Status == "active" {
 		if config.RouterSourceID != sourceID {
