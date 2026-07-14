@@ -385,6 +385,38 @@ RETURNING *;
 SELECT * FROM agent_task_queue
 WHERE id = $1;
 
+-- name: AcquireAgentTaskRuntimeLaunchLease :one
+-- Fences server-managed runtime startup across API replicas. Only queued tasks
+-- may acquire the lease; an expired lease is reclaimable after the prior
+-- process died or lost database connectivity.
+UPDATE agent_task_queue
+SET runtime_launch_lease_token = @lease_token,
+    runtime_launch_lease_expires_at = now() + make_interval(secs => @lease_seconds::double precision)
+WHERE id = @task_id
+  AND status = 'queued'
+  AND (
+    runtime_launch_lease_expires_at IS NULL
+    OR runtime_launch_lease_expires_at <= now()
+  )
+RETURNING runtime_launch_lease_expires_at;
+
+-- name: RenewAgentTaskRuntimeLaunchLease :one
+-- The token predicate fences a stale launcher from extending a lease that a
+-- newer replica acquired after expiry.
+UPDATE agent_task_queue
+SET runtime_launch_lease_expires_at = now() + make_interval(secs => @lease_seconds::double precision)
+WHERE id = @task_id
+  AND runtime_launch_lease_token = @lease_token
+  AND runtime_launch_lease_expires_at > now()
+RETURNING runtime_launch_lease_expires_at;
+
+-- name: ReleaseAgentTaskRuntimeLaunchLease :execrows
+UPDATE agent_task_queue
+SET runtime_launch_lease_token = NULL,
+    runtime_launch_lease_expires_at = NULL
+WHERE id = @task_id
+  AND runtime_launch_lease_token = @lease_token;
+
 -- name: GetAgentTaskInWorkspace :one
 -- Loads a task only when its owning agent lives in the given workspace.
 -- agent_id is NOT NULL on every task row (and ON DELETE CASCADE, so the agent

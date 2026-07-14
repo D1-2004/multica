@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -35,6 +37,54 @@ func (s *stubRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQue
 type blockingRuntimeLauncher struct {
 	calls   chan runtimeLaunchCall
 	release chan struct{}
+}
+
+type fakeRuntimeLaunchLeaseStore struct {
+	mu   sync.Mutex
+	held map[string]taskRuntimeLaunchLease
+}
+
+func newFakeRuntimeLaunchLeaseStore() *fakeRuntimeLaunchLeaseStore {
+	return &fakeRuntimeLaunchLeaseStore{held: make(map[string]taskRuntimeLaunchLease)}
+}
+
+func (s *fakeRuntimeLaunchLeaseStore) Acquire(_ context.Context, taskID pgtype.UUID, ttl time.Duration) (taskRuntimeLaunchLease, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := util.UUIDToString(taskID)
+	if _, ok := s.held[key]; ok {
+		return taskRuntimeLaunchLease{}, false, nil
+	}
+	lease := taskRuntimeLaunchLease{
+		taskID:    taskID,
+		token:     testUUID(byte(len(s.held) + 100)),
+		expiresAt: time.Now().Add(ttl),
+	}
+	s.held[key] = lease
+	return lease, true, nil
+}
+
+func (s *fakeRuntimeLaunchLeaseStore) Renew(_ context.Context, lease taskRuntimeLaunchLease, ttl time.Duration) (time.Time, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := util.UUIDToString(lease.taskID)
+	current, ok := s.held[key]
+	if !ok || current.token != lease.token {
+		return time.Time{}, false, nil
+	}
+	current.expiresAt = time.Now().Add(ttl)
+	s.held[key] = current
+	return current.expiresAt, true, nil
+}
+
+func (s *fakeRuntimeLaunchLeaseStore) Release(_ context.Context, lease taskRuntimeLaunchLease) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := util.UUIDToString(lease.taskID)
+	if current, ok := s.held[key]; ok && current.token == lease.token {
+		delete(s.held, key)
+	}
+	return nil
 }
 
 func (s *blockingRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue) error {
@@ -132,8 +182,9 @@ func TestNotifyTaskEnqueued_InvokesRuntimeLauncher(t *testing.T) {
 	launcher := &stubRuntimeLauncher{calls: make(chan runtimeLaunchCall, 1)}
 
 	svc := &TaskService{
-		Wakeup:          wakeup,
-		RuntimeLauncher: launcher,
+		Wakeup:              wakeup,
+		RuntimeLauncher:     launcher,
+		runtimeLaunchLeases: newFakeRuntimeLaunchLeaseStore(),
 	}
 
 	task := db.AgentTaskQueue{
@@ -160,7 +211,10 @@ func TestLaunchRuntimeForTask_DedupesInFlightTask(t *testing.T) {
 		calls:   make(chan runtimeLaunchCall, 2),
 		release: make(chan struct{}),
 	}
-	svc := &TaskService{RuntimeLauncher: launcher}
+	svc := &TaskService{
+		RuntimeLauncher:     launcher,
+		runtimeLaunchLeases: newFakeRuntimeLaunchLeaseStore(),
+	}
 	task := db.AgentTaskQueue{
 		ID:        testUUID(12),
 		RuntimeID: testUUID(13),
@@ -179,6 +233,47 @@ func TestLaunchRuntimeForTask_DedupesInFlightTask(t *testing.T) {
 	case <-launcher.calls:
 		t.Fatal("duplicate launch was scheduled while the first launch was still in flight")
 	case <-time.After(50 * time.Millisecond):
+	}
+	close(launcher.release)
+}
+
+func TestLaunchRuntimeForTask_DedupesAcrossReplicas(t *testing.T) {
+	launcher := &blockingRuntimeLauncher{
+		calls:   make(chan runtimeLaunchCall, 2),
+		release: make(chan struct{}),
+	}
+	leases := newFakeRuntimeLaunchLeaseStore()
+	newReplica := func() *TaskService {
+		return &TaskService{
+			RuntimeLauncher:     launcher,
+			runtimeLaunchLeases: leases,
+		}
+	}
+	replicaA, replicaB := newReplica(), newReplica()
+	task := db.AgentTaskQueue{
+		ID:        testUUID(15),
+		RuntimeID: testUUID(16),
+		AgentID:   testUUID(17),
+	}
+
+	start := make(chan struct{})
+	for _, replica := range []*TaskService{replicaA, replicaB} {
+		go func(svc *TaskService) {
+			<-start
+			svc.launchRuntimeForTask(task)
+		}(replica)
+	}
+	close(start)
+
+	select {
+	case <-launcher.calls:
+	case <-time.After(time.Second):
+		t.Fatal("runtime launcher was not invoked")
+	}
+	select {
+	case <-launcher.calls:
+		t.Fatal("two replicas launched the same task while its distributed lease was held")
+	case <-time.After(100 * time.Millisecond):
 	}
 	close(launcher.release)
 }
