@@ -43,6 +43,7 @@ type Store interface {
 	GetDingTalkAccountBindingByAgent(context.Context, db.GetDingTalkAccountBindingByAgentParams) (db.ChannelInstallation, error)
 	GetDingTalkAccountBindingInWorkspace(context.Context, db.GetDingTalkAccountBindingInWorkspaceParams) (db.ChannelInstallation, error)
 	ListDingTalkAccountBindings(context.Context, pgtype.UUID) ([]db.ChannelInstallation, error)
+	ClearExpiredDingTalkAccountCallbackCredentials(context.Context, db.ClearExpiredDingTalkAccountCallbackCredentialsParams) error
 	ActivateDingTalkAccountBinding(context.Context, db.ActivateDingTalkAccountBindingParams) (db.ChannelInstallation, error)
 	RevokeDingTalkAccountBinding(context.Context, db.RevokeDingTalkAccountBindingParams) (db.ChannelInstallation, error)
 }
@@ -223,6 +224,15 @@ func (s *Service) List(ctx context.Context, workspaceID pgtype.UUID) ([]PublicDi
 	}
 	if !workspaceID.Valid {
 		return nil, ErrNotFound
+	}
+	if err := s.store.ClearExpiredDingTalkAccountCallbackCredentials(ctx, db.ClearExpiredDingTalkAccountCallbackCredentialsParams{
+		WorkspaceID:   workspaceID,
+		ExpiredBefore: pgtype.Timestamptz{
+			Time:  s.now().UTC(),
+			Valid: true,
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("clear expired dingtalk account callback credentials: %w", err)
 	}
 	rows, err := s.store.ListDingTalkAccountBindings(ctx, workspaceID)
 	if err != nil {

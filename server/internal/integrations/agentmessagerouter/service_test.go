@@ -20,17 +20,19 @@ import (
 const canonicalCallbackToken = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 type fakeBindingStore struct {
-	row         db.ChannelInstallation
-	beginErr    error
-	getErr      error
-	activateErr error
+	row          db.ChannelInstallation
+	beginErr     error
+	getErr       error
+	activateErr  error
 	activateHook func(*fakeBindingStore)
-	revokeErr   error
-	listErr     error
-	beginConfig []byte
-	revokeArg   db.RevokeDingTalkAccountBindingParams
-	activated   bool
-	revoked     bool
+	revokeErr    error
+	listErr      error
+	cleanupErr   error
+	beginConfig  []byte
+	revokeArg    db.RevokeDingTalkAccountBindingParams
+	cleanupCalls int
+	activated    bool
+	revoked      bool
 }
 
 func (f *fakeBindingStore) BeginDingTalkAccountBinding(_ context.Context, arg db.BeginDingTalkAccountBindingParams) (db.ChannelInstallation, error) {
@@ -108,6 +110,27 @@ func (f *fakeBindingStore) ListDingTalkAccountBindings(_ context.Context, _ pgty
 		return nil, nil
 	}
 	return []db.ChannelInstallation{f.row}, nil
+}
+
+func (f *fakeBindingStore) ClearExpiredDingTalkAccountCallbackCredentials(_ context.Context, arg db.ClearExpiredDingTalkAccountCallbackCredentialsParams) error {
+	f.cleanupCalls++
+	if f.cleanupErr != nil {
+		return f.cleanupErr
+	}
+	if !f.row.ID.Valid || !arg.ExpiredBefore.Valid {
+		return nil
+	}
+	config, err := ParseDingTalkAccountConfig(f.row.Config)
+	if err != nil {
+		return err
+	}
+	if config.CallbackExpiresAt.IsZero() || config.CallbackExpiresAt.After(arg.ExpiredBefore.Time) {
+		return nil
+	}
+	config.CallbackTokenHash = ""
+	config.CallbackExpiresAt = time.Time{}
+	f.row.Config, err = config.Marshal()
+	return err
 }
 
 func (f *fakeBindingStore) ActivateDingTalkAccountBinding(_ context.Context, arg db.ActivateDingTalkAccountBindingParams) (db.ChannelInstallation, error) {
@@ -571,6 +594,31 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("list leaked %q: %s", secret, encoded)
 		}
+	}
+}
+
+func TestListClearsExpiredCallbackCredentialBeforeReturningBindings(t *testing.T) {
+	now := time.Date(2026, 7, 14, 9, 20, 0, 0, time.UTC)
+	store := pendingBindingStore(t, now.Add(-20*time.Minute), canonicalCallbackToken)
+	router := &fakeBindingRouter{}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	listed, err := service.List(context.Background(), store.row.WorkspaceID)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("listed = %#v", listed)
+	}
+	if store.cleanupCalls != 1 {
+		t.Fatalf("cleanup calls = %d, want 1", store.cleanupCalls)
+	}
+	config, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.CallbackTokenHash != "" || !config.CallbackExpiresAt.IsZero() {
+		t.Fatalf("expired callback credential was retained: %#v", config)
 	}
 }
 
