@@ -85,10 +85,6 @@ class FactoryAPI:
     def template_list(self) -> Any:
         return self.request("GET", self._workspace_path("agent-templates"))
 
-    def bootstrap_link(self) -> Any:
-        """Create a user-bound, short-lived FDE workspace bootstrap link."""
-        return self.request("POST", "/api/fde/bootstrap/intents", {})
-
     def template_get(self, slug: str) -> Any:
         return self.request(
             "GET", self._workspace_path("agent-templates", quote(slug, safe=""))
@@ -162,7 +158,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Call Multica Factory Bot APIs")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("template-list")
-    commands.add_parser("bootstrap-link")
     template_get = commands.add_parser("template-get")
     template_get.add_argument("template_slug")
     commands.add_parser("runtime-list")
@@ -185,8 +180,6 @@ def build_parser() -> argparse.ArgumentParser:
 def run(api: FactoryAPI, args: argparse.Namespace) -> Any:
     if args.command == "template-list":
         return api.template_list()
-    if args.command == "bootstrap-link":
-        return api.bootstrap_link()
     if args.command == "template-get":
         return api.template_get(args.template_slug)
     if args.command == "runtime-list":

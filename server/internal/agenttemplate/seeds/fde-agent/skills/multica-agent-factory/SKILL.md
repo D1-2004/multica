@@ -1,25 +1,11 @@
 ---
 name: multica-agent-factory
-description: Create a user-bound FDE workspace link from a DingTalk single chat, or discover workspace Agent templates and runtimes, create one independent Multica Agent from a persisted snapshot, and optionally connect it to DingTalk through a task-authenticated API helper.
+description: Discover workspace Agent templates and runtimes, create one independent Multica Agent from a persisted snapshot, and optionally connect it to DingTalk through a task-authenticated API helper.
 ---
 
 # Multica Agent Factory
 
 Use this skill when a user wants to create, configure, or connect a Multica Agent. The bundled `scripts/multica_factory_api.py` helper and its JSON output are the only operational interface. It uses task-scoped authentication and reads complete workspace template snapshots from Multica. It never compiles a checked-out repository or falls back to generic Agent/Skill creation commands.
-
-## Create an FDE workspace link
-
-When the user asks to create or open their FDE workspace, this flow takes precedence over Agent-template creation. It is supported only in a DingTalk single chat and requires no user-supplied identity or workspace fields. Run exactly:
-
-```bash
-python3 <helper> bootstrap-link
-```
-
-The server derives the current task, Agent, DingTalk installation, single-chat session, and sender identity from trusted task-token context. Never ask for or pass a unionId, staffId, mobile number, email, user ID, or target workspace ID.
-
-Return the JSON `url` as a clickable link and mention that it expires at `expires_at`. Make the link the final response of this task so it is delivered to DingTalk, then stop. Do not open the link, authenticate for the user, poll it, or call `bootstrap-link` again in the same task. If the API says the request is not a DingTalk single chat, explain that the user must message the bot privately. If it says the sender or installation cannot be verified, report that blocker without falling back to another identity mechanism.
-
-The browser page performs DingTalk authentication and workspace creation. Success is shown only on that page as “创建完成，可以返回钉钉”; the bot does not send a completion message and does not expose workspace details.
 
 ## Helper location and authentication
 
@@ -34,8 +20,6 @@ Run it with `python3`. It reads `MULTICA_SERVER_URL`, `MULTICA_WORKSPACE_ID`, an
 The current server requires the triggering user's workspace membership to be `owner` or `admin` for Agent creation and DingTalk installation. If the helper returns HTTP 403, report that permission requirement; do not attempt to bypass it or use another credential.
 
 ## Preconditions
-
-The FDE workspace-link flow above does not run template or runtime discovery. The following preconditions apply only to Agent creation.
 
 1. The normal user input is only an Agent name and a natural-language description of its capabilities. Do not ask for fields that can be derived or discovered.
 2. Run `python3 <helper> template-list` and `python3 <helper> runtime-list` before creating the Agent.

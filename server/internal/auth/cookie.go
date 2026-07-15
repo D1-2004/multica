@@ -18,45 +18,10 @@ import (
 )
 
 const (
-	AuthCookieName                 = "multica_auth"
-	CSRFCookieName                 = "multica_csrf"
-	FDEBootstrapIdentityCookieName = "multica_fde_bootstrap_identity"
-	defaultAuthTokenTTL            = 30 * 24 * time.Hour // 30 days
+	AuthCookieName      = "multica_auth"
+	CSRFCookieName      = "multica_csrf"
+	defaultAuthTokenTTL = 30 * 24 * time.Hour // 30 days
 )
-
-// SetFDEBootstrapIdentityCookie stores the short-lived DingTalk identity proof
-// used only by the FDE bootstrap completion endpoint. The proof is signed by
-// the server; HttpOnly prevents page scripts from copying it into request
-// bodies or logs. It intentionally shares the auth cookie's deployment-aware
-// Secure/Domain policy.
-func SetFDEBootstrapIdentityCookie(w http.ResponseWriter, token string, ttl time.Duration) {
-	now := time.Now()
-	http.SetCookie(w, &http.Cookie{
-		Name:     FDEBootstrapIdentityCookieName,
-		Value:    token,
-		Path:     "/api/fde/bootstrap",
-		Domain:   cookieDomain(),
-		MaxAge:   int(ttl.Seconds()),
-		Expires:  now.Add(ttl),
-		HttpOnly: true,
-		Secure:   isSecureCookie(),
-		SameSite: http.SameSiteStrictMode,
-	})
-}
-
-func ClearFDEBootstrapIdentityCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     FDEBootstrapIdentityCookieName,
-		Value:    "",
-		Path:     "/api/fde/bootstrap",
-		Domain:   cookieDomain(),
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
-		HttpOnly: true,
-		Secure:   isSecureCookie(),
-		SameSite: http.SameSiteStrictMode,
-	})
-}
 
 var (
 	ipCookieDomainWarnOnce sync.Once

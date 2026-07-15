@@ -212,18 +212,6 @@ func (m *RobotMessenger) LookupUserUnionID(ctx context.Context, creds channelCre
 	return result.UnionID, email, nil
 }
 
-// LookupInstallationUserUnionID is the credential-safe public seam used by
-// the FDE bootstrap handler. Callers pass the already-decrypted installation
-// credentials; the internal channelCredentials type remains private so it
-// cannot leak into HTTP request/response models.
-func (m *RobotMessenger) LookupInstallationUserUnionID(ctx context.Context, clientID, clientSecret, staffID string) (string, error) {
-	unionID, _, err := m.LookupUserUnionID(ctx, channelCredentials{
-		ClientID:     strings.TrimSpace(clientID),
-		ClientSecret: strings.TrimSpace(clientSecret),
-	}, staffID)
-	return unionID, err
-}
-
 func (m *RobotMessenger) post(ctx context.Context, path, token string, body map[string]any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {

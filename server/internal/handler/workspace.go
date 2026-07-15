@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,20 +10,29 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/agenttemplate"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
-	"github.com/multica-ai/multica/server/internal/workspaceprovision"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+var nonAlpha = regexp.MustCompile(`[^a-zA-Z]`)
 var workspaceSlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 // generateIssuePrefix produces a 2-5 char uppercase prefix from a workspace name.
 // Examples: "Jiayuan's Workspace" → "JIA", "My Team" → "MYT", "AB" → "AB".
 func generateIssuePrefix(name string) string {
-	return workspaceprovision.GenerateIssuePrefix(name)
+	letters := nonAlpha.ReplaceAllString(name, "")
+	if len(letters) == 0 {
+		return "WS"
+	}
+	letters = strings.ToUpper(letters)
+	if len(letters) > 3 {
+		letters = letters[:3]
+	}
+	return letters
 }
 
 type WorkspaceResponse struct {
@@ -182,25 +190,39 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	qtx := h.Queries.WithTx(tx)
-	ws, err := workspaceprovision.Create(r.Context(), qtx, workspaceprovision.Params{
-		Name: req.Name, Slug: req.Slug, Description: ptrToText(req.Description),
-		Context: ptrToText(req.Context), IssuePrefix: issuePrefix, OwnerID: parseUUID(userID),
+	ws, err := qtx.CreateWorkspace(r.Context(), db.CreateWorkspaceParams{
+		Name:        req.Name,
+		Slug:        req.Slug,
+		Description: ptrToText(req.Description),
+		Context:     ptrToText(req.Context),
+		IssuePrefix: issuePrefix,
 	})
 	if err != nil {
-		var provisionErr *workspaceprovision.Error
-		if errors.As(err, &provisionErr) && provisionErr.Step == workspaceprovision.StepWorkspace && isUniqueViolation(err) {
+		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "workspace slug already exists")
 			return
 		}
-		if errors.As(err, &provisionErr) && provisionErr.Step == workspaceprovision.StepOwner {
-			writeError(w, http.StatusInternalServerError, "failed to add owner: "+provisionErr.Err.Error())
-			return
-		}
-		if errors.As(err, &provisionErr) && provisionErr.Step == workspaceprovision.StepTemplate {
-			writeError(w, http.StatusInternalServerError, "failed to initialize workspace agent template")
-			return
-		}
 		writeError(w, http.StatusInternalServerError, "failed to create workspace: "+err.Error())
+		return
+	}
+
+	_, err = qtx.CreateMember(r.Context(), db.CreateMemberParams{
+		WorkspaceID: ws.ID,
+		UserID:      parseUUID(userID),
+		Role:        "owner",
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add owner: "+err.Error())
+		return
+	}
+
+	if _, err := qtx.CreateWorkspaceTemplateFromSeed(r.Context(), db.CreateWorkspaceTemplateFromSeedParams{
+		WorkspaceID: ws.ID,
+		Slug:        agenttemplate.DefaultSlug,
+		CreatedBy:   parseUUID(userID),
+		SystemKey:   agenttemplate.DefaultSystemKey,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to initialize workspace agent template")
 		return
 	}
 
