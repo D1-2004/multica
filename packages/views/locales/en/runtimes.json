@@ -249,8 +249,8 @@
     }
   },
   "fc_e2b_runtime": {
-    "action": "Add Cloud SB Runtime",
-    "title": "Add Cloud SB Runtime",
+    "action": "Add Cloud Sandbox",
+    "title": "Add Cloud Sandbox",
     "description": "Choose an FC/E2B template and create an independent cloud Hermes runtime. The server owns timeout and the model catalog; each agent can select a model from that catalog.",
     "create": "Create runtime",
     "creating": "Creating...",
