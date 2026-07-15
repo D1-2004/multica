@@ -230,6 +230,13 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if result.ExpiresAt != router.issued.ExpiresAt {
 		t.Fatalf("expires at = %v, want %v", result.ExpiresAt, router.issued.ExpiresAt)
 	}
+	parsedQRCodeURL, err := url.Parse(result.QRCodeURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsedQRCodeURL.RawQuery != "" {
+		t.Fatalf("QR code secrets leaked into query: %q", parsedQRCodeURL.RawQuery)
+	}
 	_, rawFragment, found := strings.Cut(result.QRCodeURL, "#")
 	if !found {
 		t.Fatalf("QR code URL has no fragment: %q", result.QRCodeURL)
@@ -238,21 +245,32 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fragment) != 4 || fragment.Get("bindingToken") != router.issued.BindingToken ||
+	if len(fragment) != 6 || fragment.Get("bindingToken") != router.issued.BindingToken ||
 		fragment.Get("callbackToken") == "" || fragment.Get("callbackUrl") == "" ||
-		fragment.Get("expiresAt") != strconv.FormatInt(router.issued.ExpiresAt.Unix(), 10) {
+		fragment.Get("expiresAt") != strconv.FormatInt(router.issued.ExpiresAt.Unix(), 10) ||
+		fragment.Get("agentId") != uuidStringForTest(store.row.AgentID) ||
+		fragment.Get("dispatchUrl") != oldConfig.DispatchURL {
 		t.Fatalf("unexpected QR fragment: %#v", fragment)
 	}
-	if fragment.Get("agentId") != "" || fragment.Get("dispatchUrl") != "" {
-		t.Fatalf("QR leaked routing fields: %#v", fragment)
+	for key, values := range fragment {
+		if len(values) != 1 {
+			t.Fatalf("QR fragment field %q has %d values", key, len(values))
+		}
+	}
+	if strings.Contains(rawFragment, oldConfig.DispatchURL) ||
+		!strings.Contains(rawFragment, "dispatchUrl=https%3A%2F%2F") {
+		t.Fatalf("dispatch URL was not encoded exactly once: %q", rawFragment)
 	}
 	wantCallbackURL := "https://multica.example/api/integrations/dingtalk/account-bindings/11111111-1111-1111-1111-111111111111/callback"
 	if got := fragment.Get("callbackUrl"); got != wantCallbackURL {
 		t.Fatalf("callback URL after one browser decode = %q, want %q", got, wantCallbackURL)
 	}
 	persisted := string(store.row.Config)
-	if strings.Contains(persisted, router.issued.BindingToken) || strings.Contains(string(store.beginConfig), router.issued.BindingToken) {
-		t.Fatal("Router binding token was persisted")
+	callbackToken := fragment.Get("callbackToken")
+	if strings.Contains(persisted, router.issued.BindingToken) || strings.Contains(persisted, callbackToken) ||
+		strings.Contains(string(store.beginConfig), router.issued.BindingToken) ||
+		strings.Contains(string(store.beginConfig), callbackToken) {
+		t.Fatal("raw binding credential was persisted")
 	}
 	config, err := ParseDingTalkAccountConfig(store.row.Config)
 	if err != nil {
@@ -261,13 +279,92 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if config.DispatchEndpointID != oldEndpoint {
 		t.Fatalf("endpoint = %q, want reused %q", config.DispatchEndpointID, oldEndpoint)
 	}
-	if !VerifyCallbackToken(fragment.Get("callbackToken"), config.CallbackTokenHash) {
+	if !VerifyCallbackToken(callbackToken, config.CallbackTokenHash) {
 		t.Fatal("persisted callback hash does not match returned token")
 	}
 	if router.issueAgent != uuidStringForTest(agentID) || router.issueURL != config.DispatchURL {
 		t.Fatalf("Router issue request = agent %q url %q", router.issueAgent, router.issueURL)
 	}
 	assertMetricCounter(t, service.metrics, "dingtalk_account_begin_total", map[string]string{"outcome": "success"}, 1)
+}
+
+func TestBeginDingTalkAccountBindingRejectsExpiredRouterToken(t *testing.T) {
+	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	store := &fakeBindingStore{}
+	router := &fakeBindingRouter{issued: BindingToken{
+		BindingToken: "bat_v1.expired-router-token",
+		ExpiresAt:    now,
+	}}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	_, err := service.Begin(context.Background(), BeginParams{
+		WorkspaceID: uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+		AgentID:     uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+		InitiatorID: uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+	})
+	if !errors.Is(err, ErrInvalidResult) {
+		t.Fatalf("Begin() error = %v, want ErrInvalidResult", err)
+	}
+}
+
+func TestBeginDingTalkAccountBindingRejectsMismatchedInstallationOwnership(t *testing.T) {
+	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	workspaceID := uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	agentID := uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	config := NewPendingDingTalkAccountConfig(
+		"v1_EREREREREREREREREREREQ",
+		"https://multica.example/api/webhooks/agent-dispatch/v1_EREREREREREREREREREREQ",
+		HashCallbackToken(canonicalCallbackToken),
+		now.Add(time.Minute),
+	)
+	raw, err := config.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name        string
+		workspaceID string
+		agentID     string
+	}{
+		{
+			name:        "different workspace",
+			workspaceID: "dddddddd-dddd-dddd-dddd-dddddddddddd",
+			agentID:     uuidStringForTest(agentID),
+		},
+		{
+			name:        "different agent",
+			workspaceID: uuidStringForTest(workspaceID),
+			agentID:     "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeBindingStore{row: bindingRow(
+				tt.workspaceID,
+				tt.agentID,
+				"11111111-1111-1111-1111-111111111111",
+				"pending",
+				raw,
+			)}
+			router := &fakeBindingRouter{issued: BindingToken{
+				BindingToken: "bat_v1.router-secret-must-not-be-persisted",
+				ExpiresAt:    now.Add(5 * time.Minute),
+			}}
+			service := newBindingServiceForTest(t, store, router, now)
+
+			_, err := service.Begin(context.Background(), BeginParams{
+				WorkspaceID: workspaceID,
+				AgentID:     agentID,
+				InitiatorID: uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+			})
+			if !errors.Is(err, ErrInvalidResult) {
+				t.Fatalf("Begin() error = %v, want ErrInvalidResult", err)
+			}
+			if router.issueAgent != "" {
+				t.Fatalf("mismatched installation issued Router token for agent %q", router.issueAgent)
+			}
+		})
+	}
 }
 
 func TestBeginDingTalkAccountBindingRejectsActive(t *testing.T) {
@@ -410,6 +507,64 @@ func TestCompleteCallbackMismatchDeletesRouterSubscriptionWithoutActivating(t *t
 	}
 	assertMetricCounter(t, service.metrics, "dingtalk_account_callback_total", map[string]string{"outcome": "conflict"}, 1)
 	assertMetricCounter(t, service.metrics, "dingtalk_account_subscription_verify_total", map[string]string{"outcome": "inactive"}, 1)
+}
+
+func TestCompleteCallbackRejectsTamperedRoutingWithoutDeleting(t *testing.T) {
+	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name         string
+		mutate       func(*Subscription)
+		metricResult string
+	}{
+		{
+			name: "agent id",
+			mutate: func(subscription *Subscription) {
+				subscription.AgentID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+			},
+			metricResult: "agent_mismatch",
+		},
+		{
+			name: "dispatch url",
+			mutate: func(subscription *Subscription) {
+				subscription.DispatchURL = "https://attacker.example/api/webhooks/agent-dispatch/v1_EREREREREREREREREREREQ"
+			},
+			metricResult: "dispatch_url_mismatch",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := pendingBindingStore(t, now, canonicalCallbackToken)
+			config, err := ParseDingTalkAccountConfig(store.row.Config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			subscription := Subscription{
+				SourceID:    "source-1",
+				AgentID:     uuidStringForTest(store.row.AgentID),
+				DispatchURL: config.DispatchURL,
+				Status:      "active",
+			}
+			tt.mutate(&subscription)
+			router := &fakeBindingRouter{subscription: subscription}
+			service := newBindingServiceForTest(t, store, router, now)
+
+			_, err = service.CompleteCallback(context.Background(), CallbackParams{
+				InstallationID: store.row.ID,
+				CallbackToken:  canonicalCallbackToken,
+				SourceID:       "source-1",
+			})
+			if !errors.Is(err, ErrBindingConflict) {
+				t.Fatalf("CompleteCallback() error = %v, want ErrBindingConflict", err)
+			}
+			if store.activated {
+				t.Fatal("tampered Router subscription was activated")
+			}
+			if len(router.deleted) != 0 {
+				t.Fatalf("unverified subscription was deleted: %#v", router.deleted)
+			}
+			assertMetricCounter(t, service.metrics, "dingtalk_account_subscription_verify_total", map[string]string{"outcome": tt.metricResult}, 1)
+		})
+	}
 }
 
 func TestCompleteCallbackCompensatesVerifiedSourceWhenActivationLosesPendingCAS(t *testing.T) {

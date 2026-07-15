@@ -198,7 +198,8 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		}
 		return BeginResult{}, ErrBindingConflict
 	}
-	if row.Status != "pending" || row.ChannelType != ChannelTypeDingTalkAccount {
+	if row.Status != "pending" || row.ChannelType != ChannelTypeDingTalkAccount ||
+		row.WorkspaceID != params.WorkspaceID || row.AgentID != params.AgentID {
 		return BeginResult{}, ErrInvalidResult
 	}
 	storedConfig, err := ParseDingTalkAccountConfig(row.Config)
@@ -219,6 +220,8 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		"callbackUrl":   {callbackURL.String()},
 		"callbackToken": {callbackToken},
 		"expiresAt":     {strconv.FormatInt(issued.ExpiresAt.Unix(), 10)},
+		"agentId":       {util.UUIDToString(row.AgentID)},
+		"dispatchUrl":   {storedConfig.DispatchURL},
 	}
 	qrCodeURL := s.dbaseBindingURL.String() + "#" + fragment.Encode()
 	return BeginResult{
