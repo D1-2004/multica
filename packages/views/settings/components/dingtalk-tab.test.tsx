@@ -285,6 +285,18 @@ describe("DingTalkInstallDialog (device flow)", () => {
       "agent-1",
       false,
     );
+    expect(
+      screen.getByText(/Allow other organization members to use this bot/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/only the user who creates this enterprise bot can chat/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/other members in the same DingTalk organization/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/expand the bot's availability in the DingTalk developer console/i),
+    ).toBeTruthy();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2100);
