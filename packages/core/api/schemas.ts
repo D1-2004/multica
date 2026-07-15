@@ -42,25 +42,36 @@ import type {
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
 
-const DingTalkAccountBindingSchema = z
+const DingTalkAccountBindingOutcomeSchema = z
   .object({
-    id: z.string(),
-    workspace_id: z.string(),
-    agent_id: z.string(),
     status: z.string(),
     account_display_name: z.string().nullable().optional(),
     account_avatar_url: z.string().nullable().optional(),
     bound_at: z.string().nullable().optional(),
   })
   .loose()
+  .transform((outcome) => ({
+    status: outcome.status,
+    accountDisplayName: outcome.account_display_name,
+    accountAvatarUrl: outcome.account_avatar_url,
+    boundAt: outcome.bound_at,
+  }));
+
+const DingTalkAccountBindingSchema = z
+  .object({
+    id: z.string(),
+    workspace_id: z.string(),
+    agent_id: z.string(),
+    dws_identity: DingTalkAccountBindingOutcomeSchema,
+    message_route: DingTalkAccountBindingOutcomeSchema,
+  })
+  .loose()
   .transform((binding) => ({
     id: binding.id,
     workspaceId: binding.workspace_id,
     agentId: binding.agent_id,
-    status: binding.status,
-    accountDisplayName: binding.account_display_name,
-    accountAvatarUrl: binding.account_avatar_url,
-    boundAt: binding.bound_at,
+    dwsIdentity: binding.dws_identity,
+    messageRoute: binding.message_route,
   }));
 
 export const DingTalkAccountBindingsResponseSchema = z

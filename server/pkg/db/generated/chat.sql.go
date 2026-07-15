@@ -122,14 +122,15 @@ const createChatTask = `-- name: CreateChatTask :one
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, chat_session_id,
     initiator_user_id, originator_user_id, force_fresh_session, runtime_mcp_overlay,
-    runtime_connected_apps
+    runtime_connected_apps, context
 )
 VALUES (
     $1, $2, NULL, 'queued', $3, $4, $5,
     $6,
     COALESCE($7::boolean, FALSE),
     $8,
-    $9
+    $9,
+    $10
 )
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, runtime_launch_lease_token, runtime_launch_lease_expires_at
 `
@@ -144,6 +145,7 @@ type CreateChatTaskParams struct {
 	ForceFreshSession    pgtype.Bool `json:"force_fresh_session"`
 	RuntimeMcpOverlay    []byte      `json:"runtime_mcp_overlay"`
 	RuntimeConnectedApps []byte      `json:"runtime_connected_apps"`
+	TaskContext          []byte      `json:"task_context"`
 }
 
 func (q *Queries) CreateChatTask(ctx context.Context, arg CreateChatTaskParams) (AgentTaskQueue, error) {
@@ -157,6 +159,7 @@ func (q *Queries) CreateChatTask(ctx context.Context, arg CreateChatTaskParams) 
 		arg.ForceFreshSession,
 		arg.RuntimeMcpOverlay,
 		arg.RuntimeConnectedApps,
+		arg.TaskContext,
 	)
 	var i AgentTaskQueue
 	err := row.Scan(

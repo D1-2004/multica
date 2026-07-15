@@ -282,9 +282,6 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 	if request.RuntimeConfig == nil {
 		runtimeConfig = []byte("{}")
 	}
-	if !h.validateDWSProfileConfigForOwner(w, r, wsUUID, ownerUUID, runtimeConfig) {
-		return
-	}
 	customEnv, _ := json.Marshal(request.CustomEnv)
 	if request.CustomEnv == nil {
 		customEnv = []byte("{}")

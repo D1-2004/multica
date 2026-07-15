@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -11,7 +13,10 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // This file is the DingTalk ResolverSet: the platform-specific seams the
@@ -30,10 +35,11 @@ const originDingTalkChat = "dingtalk_chat"
 // notices; typing drives the "processing" emotion on ingested messages;
 // auto resolves unbound org members through the corp directory. Each is
 // optional — pass nil to disable.
-func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing engine.TypingNotifier, auto *AutoBinder) engine.ResolverSet {
+func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing engine.TypingNotifier, auto *AutoBinder, employees RobotEmployeeResolver) engine.ResolverSet {
 	return engine.ResolverSet{
 		Installation: &installationResolver{q: q},
 		Identity:     &identityResolver{q: q, auto: auto},
+		TaskContext:  &robotTaskContextResolver{q: q, employees: employees},
 		Dedup:        &deduper{q: q},
 		Session: &sessionBinder{session: engine.NewChatSession(q, tx, TypeDingtalk, engine.SessionTitles{
 			Group:    "DingTalk group chat",
@@ -46,6 +52,66 @@ func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.O
 		Unbind:     &unbinder{q: q},
 		OriginType: originDingTalkChat,
 	}
+}
+
+// RobotEmployeeResolver maps the current bot-message sender to the backend
+// identity Agent Identity expects. Implementations must resolve each message;
+// no Agent-bound identity or cached user profile is accepted here.
+type RobotEmployeeResolver interface {
+	ResolveEmployeeByCorpID(ctx context.Context, corpID, staffID string) (orgemphsf.Employee, error)
+}
+
+type robotTaskContextQueries interface {
+	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
+	GetAgentRuntime(ctx context.Context, id pgtype.UUID) (db.AgentRuntime, error)
+}
+
+type robotTaskContextResolver struct {
+	q         robotTaskContextQueries
+	employees RobotEmployeeResolver
+}
+
+func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) ([]byte, error) {
+	if r == nil || r.q == nil || r.employees == nil {
+		return nil, errors.New("DingTalk robot DWS identity resolver is not configured")
+	}
+	agent, err := r.q.GetAgent(ctx, inst.AgentID)
+	if err != nil {
+		return nil, fmt.Errorf("load DingTalk robot agent: %w", err)
+	}
+	if !agent.RuntimeID.Valid {
+		return nil, nil
+	}
+	runtime, err := r.q.GetAgentRuntime(ctx, agent.RuntimeID)
+	if err != nil {
+		return nil, fmt.Errorf("load DingTalk robot runtime: %w", err)
+	}
+	if !service.FCE2BRuntimeHasCapability(runtime, "dws") {
+		slog.Info("dingtalk robot DWS identity skipped", "reason", "runtime_without_dws_capability")
+		return nil, nil
+	}
+	raw, err := decodeDingTalkRaw(msg)
+	if err != nil {
+		return nil, fmt.Errorf("decode DingTalk robot sender: %w", err)
+	}
+	slog.Info("dingtalk robot DWS identity resolving",
+		"has_staff_id", strings.TrimSpace(raw.SenderStaffID) != "",
+		"has_corp_id", strings.TrimSpace(raw.SenderCorpID) != "",
+	)
+	if strings.TrimSpace(raw.SenderStaffID) == "" || strings.TrimSpace(raw.SenderCorpID) == "" {
+		return nil, errors.New("DingTalk robot sender has no organization identity")
+	}
+	employee, err := r.employees.ResolveEmployeeByCorpID(ctx, raw.SenderCorpID, raw.SenderStaffID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve DingTalk robot sender identity: %w", err)
+	}
+	slog.Info("dingtalk robot DWS identity resolved")
+	return json.Marshal(map[string]any{
+		protocol.DingTalkRobotIdentityJSONKey: protocol.DingTalkRobotIdentity{
+			UID:   employee.UID,
+			OrgID: employee.OrgID,
+		},
+	})
 }
 
 var (

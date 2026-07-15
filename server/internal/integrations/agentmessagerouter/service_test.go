@@ -22,19 +22,21 @@ import (
 const canonicalCallbackToken = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 type fakeBindingStore struct {
-	row          db.ChannelInstallation
-	beginErr     error
-	getErr       error
-	activateErr  error
-	activateHook func(*fakeBindingStore)
-	revokeErr    error
-	listErr      error
-	cleanupErr   error
-	beginConfig  []byte
-	revokeArg    db.RevokeDingTalkAccountBindingParams
-	cleanupCalls int
-	activated    bool
-	revoked      bool
+	row             db.ChannelInstallation
+	beginErr        error
+	getErr          error
+	activateErr     error
+	activateHook    func(*fakeBindingStore)
+	revokeErr       error
+	listErr         error
+	beginConfig     []byte
+	revokeArg       db.RevokeDingTalkAccountBindingParams
+	activated       bool
+	revoked         bool
+	identityAttempt db.AgentDingtalkIdentityAttempt
+	identity        db.AgentDingtalkIdentity
+	cleanupErr      error
+	cleanupCalls    int
 }
 
 func (f *fakeBindingStore) BeginDingTalkAccountBinding(_ context.Context, arg db.BeginDingTalkAccountBindingParams) (db.ChannelInstallation, error) {
@@ -154,8 +156,68 @@ func (f *fakeBindingStore) RevokeDingTalkAccountBinding(_ context.Context, arg d
 	}
 	f.revokeArg = arg
 	f.row.Status = "revoked"
+	f.identityAttempt = db.AgentDingtalkIdentityAttempt{}
+	f.identity = db.AgentDingtalkIdentity{}
 	f.revoked = true
 	return f.row, nil
+}
+
+func (f *fakeBindingStore) BeginAgentDingTalkIdentityAttempt(_ context.Context, arg db.BeginAgentDingTalkIdentityAttemptParams) (db.AgentDingtalkIdentityAttempt, error) {
+	f.identityAttempt = db.AgentDingtalkIdentityAttempt{
+		ID:                mustUUIDForTest("22222222-2222-2222-2222-222222222222"),
+		WorkspaceID:       arg.WorkspaceID,
+		AgentID:           arg.AgentID,
+		InitiatorUserID:   arg.InitiatorUserID,
+		CallbackTokenHash: arg.CallbackTokenHash,
+		ExpiresAt:         arg.ExpiresAt,
+	}
+	return f.identityAttempt, nil
+}
+
+func (f *fakeBindingStore) GetAgentDingTalkIdentityAttempt(_ context.Context, _ pgtype.UUID) (db.AgentDingtalkIdentityAttempt, error) {
+	if !f.identityAttempt.ID.Valid {
+		return db.AgentDingtalkIdentityAttempt{}, pgx.ErrNoRows
+	}
+	return f.identityAttempt, nil
+}
+
+func (f *fakeBindingStore) CompleteAgentDingTalkIdentityAttempt(_ context.Context, arg db.CompleteAgentDingTalkIdentityAttemptParams) (db.CompleteAgentDingTalkIdentityAttemptRow, error) {
+	now := time.Now().UTC()
+	f.identityAttempt.CompletedUid = arg.DwsUid
+	f.identityAttempt.CompletedOrgID = arg.OrgID
+	f.identityAttempt.UsedAt = pgtype.Timestamptz{Time: now, Valid: true}
+	f.identity = db.AgentDingtalkIdentity{
+		AgentID:            f.identityAttempt.AgentID,
+		WorkspaceID:        f.identityAttempt.WorkspaceID,
+		DwsUid:             arg.DwsUid.String,
+		OrgID:              arg.OrgID.String,
+		AccountDisplayName: arg.AccountDisplayName,
+		AccountAvatarUrl:   arg.AccountAvatarUrl,
+		BoundBy:            f.identityAttempt.InitiatorUserID,
+		BoundAt:            pgtype.Timestamptz{Time: now, Valid: true},
+	}
+	return db.CompleteAgentDingTalkIdentityAttemptRow{
+		AgentID:            f.identity.AgentID,
+		WorkspaceID:        f.identity.WorkspaceID,
+		DwsUid:             f.identity.DwsUid,
+		OrgID:              f.identity.OrgID,
+		AccountDisplayName: f.identity.AccountDisplayName,
+		AccountAvatarUrl:   f.identity.AccountAvatarUrl,
+		BoundBy:            f.identity.BoundBy,
+		BoundAt:            f.identity.BoundAt,
+	}, nil
+}
+
+func (f *fakeBindingStore) GetAgentDingTalkIdentity(_ context.Context, _ db.GetAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error) {
+	if !f.identity.AgentID.Valid {
+		return db.AgentDingtalkIdentity{}, pgx.ErrNoRows
+	}
+	return f.identity, nil
+}
+
+func (f *fakeBindingStore) DeleteAgentDingTalkIdentityAttempts(_ context.Context, _ db.DeleteAgentDingTalkIdentityAttemptsParams) error {
+	f.identityAttempt = db.AgentDingtalkIdentityAttempt{}
+	return nil
 }
 
 type fakeBindingRouter struct {
@@ -245,8 +307,9 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fragment) != 6 || fragment.Get("bindingToken") != router.issued.BindingToken ||
+	if len(fragment) != 8 || fragment.Get("bindingToken") != router.issued.BindingToken ||
 		fragment.Get("callbackToken") == "" || fragment.Get("callbackUrl") == "" ||
+		fragment.Get("identityCallbackToken") == "" || fragment.Get("identityCallbackUrl") == "" ||
 		fragment.Get("expiresAt") != strconv.FormatInt(router.issued.ExpiresAt.Unix(), 10) ||
 		fragment.Get("agentId") != uuidStringForTest(store.row.AgentID) ||
 		fragment.Get("dispatchUrl") != oldConfig.DispatchURL {
@@ -281,6 +344,9 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	}
 	if !VerifyCallbackToken(callbackToken, config.CallbackTokenHash) {
 		t.Fatal("persisted callback hash does not match returned token")
+	}
+	if !VerifyCallbackToken(fragment.Get("identityCallbackToken"), store.identityAttempt.CallbackTokenHash) {
+		t.Fatal("persisted identity callback hash does not match returned token")
 	}
 	if router.issueAgent != uuidStringForTest(agentID) || router.issueURL != config.DispatchURL {
 		t.Fatalf("Router issue request = agent %q url %q", router.issueAgent, router.issueURL)
@@ -453,7 +519,7 @@ func TestCompleteCallbackVerifiesSubscriptionAndActivates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteCallback() error = %v", err)
 	}
-	if !store.activated || binding.Status != "active" || binding.AccountDisplayName != "Zhang San" {
+	if !store.activated || binding.MessageRoute.Status != "active" || binding.MessageRoute.AccountDisplayName != "Zhang San" {
 		t.Fatalf("binding = %#v, activated=%v", binding, store.activated)
 	}
 	activeConfig, err := ParseDingTalkAccountConfig(store.row.Config)
@@ -734,6 +800,95 @@ func TestCompleteCallbackRejectsOversizedSourceID(t *testing.T) {
 	}
 }
 
+func TestCompleteIdentityCallbackValidatesAndStoresIdentity(t *testing.T) {
+	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	store := pendingBindingStore(t, now, canonicalCallbackToken)
+	identityToken := canonicalCallbackToken
+	store.identityAttempt = identityAttemptForTest(t, store, identityToken, now.Add(10*time.Minute))
+	service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
+
+	params := IdentityCallbackParams{
+		AttemptID:          store.identityAttempt.ID,
+		CallbackToken:      identityToken,
+		AccountUID:         "24710833",
+		AccountOrgID:       "439446171",
+		AccountDisplayName: "Xu Mo",
+		AccountAvatarURL:   "https://example.com/avatar.png",
+	}
+	binding, err := service.CompleteIdentityCallback(context.Background(), params)
+	if err != nil {
+		t.Fatalf("CompleteIdentityCallback() error = %v", err)
+	}
+	if binding.DWSIdentity.Status != "active" || binding.DWSIdentity.AccountDisplayName != "Xu Mo" ||
+		binding.MessageRoute.Status != "pending" {
+		t.Fatalf("binding = %#v", binding)
+	}
+	if store.identity.DwsUid != "24710833" || store.identity.OrgID != "439446171" {
+		t.Fatalf("stored identity = %#v", store.identity)
+	}
+	encoded, err := json.Marshal(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"24710833", "439446171", identityToken} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("public binding leaked identity value %q: %s", secret, encoded)
+		}
+	}
+
+	if _, err := service.CompleteIdentityCallback(context.Background(), params); err != nil {
+		t.Fatalf("idempotent identity callback error = %v", err)
+	}
+}
+
+func TestCompleteIdentityCallbackRejectsInvalidBackendUID(t *testing.T) {
+	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	store := pendingBindingStore(t, now, canonicalCallbackToken)
+	store.identityAttempt = identityAttemptForTest(t, store, canonicalCallbackToken, now.Add(time.Minute))
+	service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
+	params := identityCallbackParamsForTest(store.identityAttempt.ID)
+	params.AccountUID = "not-a-uid"
+
+	_, err := service.CompleteIdentityCallback(context.Background(), params)
+	if !errors.Is(err, ErrInvalidResult) {
+		t.Fatalf("CompleteIdentityCallback() error = %v, want ErrInvalidResult", err)
+	}
+	if store.identity.AgentID.Valid {
+		t.Fatalf("mismatched identity was persisted: %#v", store.identity)
+	}
+}
+
+func TestCompleteIdentityCallbackRejectsExpiredAttempt(t *testing.T) {
+	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	store := pendingBindingStore(t, now, canonicalCallbackToken)
+	store.identityAttempt = identityAttemptForTest(t, store, canonicalCallbackToken, now.Add(-time.Second))
+	service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
+
+	_, err := service.CompleteIdentityCallback(context.Background(), identityCallbackParamsForTest(store.identityAttempt.ID))
+	if !errors.Is(err, ErrCallbackExpired) {
+		t.Fatalf("CompleteIdentityCallback() error = %v, want ErrCallbackExpired", err)
+	}
+}
+
+func TestCompleteIdentityCallbackAllowsSameIdentityForMultipleAgents(t *testing.T) {
+	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	for i, agentID := range []string{
+		"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+		"dddddddd-dddd-dddd-dddd-dddddddddddd",
+	} {
+		store := pendingBindingStore(t, now, canonicalCallbackToken)
+		store.row.AgentID = uuidForTest(t, agentID)
+		store.identityAttempt = identityAttemptForTest(t, store, canonicalCallbackToken, now.Add(time.Minute))
+		service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
+		if _, err := service.CompleteIdentityCallback(context.Background(), identityCallbackParamsForTest(store.identityAttempt.ID)); err != nil {
+			t.Fatalf("agent %d identity callback error = %v", i, err)
+		}
+		if store.identity.DwsUid != "24710833" || store.identity.AgentID != store.row.AgentID {
+			t.Fatalf("agent %d stored identity = %#v", i, store.identity)
+		}
+	}
+}
+
 func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
@@ -760,7 +915,8 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unbind() error = %v", err)
 	}
-	if len(router.deleted) != 1 || router.deleted[0] != "source-1" || !store.revoked || binding.Status != "revoked" {
+	if len(router.deleted) != 1 || router.deleted[0] != "source-1" || !store.revoked ||
+		binding.MessageRoute.Status != "revoked" || binding.DWSIdentity.Status != "unbound" {
 		t.Fatalf("delete=%#v revoked=%v binding=%#v", router.deleted, store.revoked, binding)
 	}
 	if store.revokeArg.AgentID != store.row.AgentID {
@@ -772,7 +928,7 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if len(listed) != 1 || listed[0].Status != "revoked" {
+	if len(listed) != 1 || listed[0].MessageRoute.Status != "revoked" || listed[0].DWSIdentity.Status != "unbound" {
 		t.Fatalf("listed = %#v", listed)
 	}
 	encoded, err := json.Marshal(listed)
@@ -811,20 +967,21 @@ func TestListClearsExpiredCallbackCredentialBeforeReturningBindings(t *testing.T
 	}
 }
 
-func newBindingServiceForTest(t *testing.T, store Store, router Router, now time.Time) *Service {
+func newBindingServiceForTest(t *testing.T, store *fakeBindingStore, router Router, now time.Time) *Service {
 	t.Helper()
 	keyring, err := ParseDispatchKeyring("v1:ERERERERERERERERERERERERERERERERERERERERERE", "v1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	service, err := NewService(store, router, ServiceConfig{
-		PublicBaseURL:  "https://multica.example",
+		PublicBaseURL:   "https://multica.example",
 		DBaseBindingURL: "https://dbase.example/bind",
-		CallbackTTL:    10 * time.Minute,
-		Keyring:        keyring,
-		Random:         rand.Reader,
-		Now:            func() time.Time { return now },
-		Metrics:        obsmetrics.NewBusinessMetrics(),
+		CallbackTTL:     10 * time.Minute,
+		Keyring:         keyring,
+		Random:          rand.Reader,
+		Now:             func() time.Time { return now },
+		IdentityStore:   store,
+		Metrics:         obsmetrics.NewBusinessMetrics(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -881,6 +1038,29 @@ func pendingBindingStore(t *testing.T, now time.Time, callbackToken string) *fak
 		"pending",
 		raw,
 	)}
+}
+
+func identityAttemptForTest(t *testing.T, store *fakeBindingStore, callbackToken string, expiresAt time.Time) db.AgentDingtalkIdentityAttempt {
+	t.Helper()
+	return db.AgentDingtalkIdentityAttempt{
+		ID:                uuidForTest(t, "22222222-2222-2222-2222-222222222222"),
+		WorkspaceID:       store.row.WorkspaceID,
+		AgentID:           store.row.AgentID,
+		InitiatorUserID:   store.row.InstallerUserID,
+		CallbackTokenHash: HashCallbackToken(callbackToken),
+		ExpiresAt:         pgtype.Timestamptz{Time: expiresAt, Valid: true},
+	}
+}
+
+func identityCallbackParamsForTest(attemptID pgtype.UUID) IdentityCallbackParams {
+	return IdentityCallbackParams{
+		AttemptID:          attemptID,
+		CallbackToken:      canonicalCallbackToken,
+		AccountUID:         "24710833",
+		AccountOrgID:       "439446171",
+		AccountDisplayName: "Xu Mo",
+		AccountAvatarURL:   "https://example.com/avatar.png",
+	}
 }
 
 func bindingRow(workspaceID, agentID, installationID, status string, config []byte) db.ChannelInstallation {

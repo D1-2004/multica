@@ -33,9 +33,14 @@ type DingTalkAccountConfig struct {
 }
 
 type PublicDingTalkAccountBinding struct {
-	ID                 string     `json:"id"`
-	WorkspaceID        string     `json:"workspace_id"`
-	AgentID            string     `json:"agent_id"`
+	ID           string                       `json:"id"`
+	WorkspaceID  string                       `json:"workspace_id"`
+	AgentID      string                       `json:"agent_id"`
+	DWSIdentity  PublicDingTalkBindingOutcome `json:"dws_identity"`
+	MessageRoute PublicDingTalkBindingOutcome `json:"message_route"`
+}
+
+type PublicDingTalkBindingOutcome struct {
 	Status             string     `json:"status"`
 	AccountDisplayName string     `json:"account_display_name,omitempty"`
 	AccountAvatarURL   string     `json:"account_avatar_url,omitempty"`
@@ -104,15 +109,24 @@ func (c DingTalkAccountConfig) Validate() error {
 	return nil
 }
 
-func (c DingTalkAccountConfig) PublicBinding(id, workspaceID, agentID, status string) PublicDingTalkAccountBinding {
+func (c DingTalkAccountConfig) PublicBinding(
+	id,
+	workspaceID,
+	agentID,
+	messageRouteStatus string,
+	dwsIdentity PublicDingTalkBindingOutcome,
+) PublicDingTalkAccountBinding {
 	return PublicDingTalkAccountBinding{
-		ID:                 id,
-		WorkspaceID:        workspaceID,
-		AgentID:            agentID,
-		Status:             status,
-		AccountDisplayName: c.AccountDisplayName,
-		AccountAvatarURL:   c.AccountAvatarURL,
-		BoundAt:            c.BoundAt,
+		ID:          id,
+		WorkspaceID: workspaceID,
+		AgentID:     agentID,
+		DWSIdentity: dwsIdentity,
+		MessageRoute: PublicDingTalkBindingOutcome{
+			Status:             messageRouteStatus,
+			AccountDisplayName: c.AccountDisplayName,
+			AccountAvatarURL:   c.AccountAvatarURL,
+			BoundAt:            c.BoundAt,
+		},
 	}
 }
 

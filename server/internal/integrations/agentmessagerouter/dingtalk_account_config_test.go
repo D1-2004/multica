@@ -11,16 +11,16 @@ func TestDingTalkAccountConfigRoundTripAndPublicProjection(t *testing.T) {
 	expiresAt := time.Date(2026, 7, 14, 10, 10, 0, 0, time.UTC)
 	boundAt := time.Date(2026, 7, 14, 10, 0, 12, 0, time.UTC)
 	want := DingTalkAccountConfig{
-		SchemaVersion:       1,
-		DispatchEndpointID:  "v1_AAECAwQFBgcICQoLDA0ODw",
-		DispatchKeyID:       "v1",
-		DispatchURL:         "https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
-		CallbackTokenHash:   strings.Repeat("a", 64),
+		SchemaVersion:      1,
+		DispatchEndpointID: "v1_AAECAwQFBgcICQoLDA0ODw",
+		DispatchKeyID:      "v1",
+		DispatchURL:        "https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
+		CallbackTokenHash:  strings.Repeat("a", 64),
 		CallbackExpiresAt:  expiresAt,
-		RouterSourceID:      "source-1",
-		AccountDisplayName:  "Zhang San",
-		AccountAvatarURL:    "https://example.com/avatar.png",
-		BoundAt:             &boundAt,
+		RouterSourceID:     "source-1",
+		AccountDisplayName: "Zhang San",
+		AccountAvatarURL:   "https://example.com/avatar.png",
+		BoundAt:            &boundAt,
 	}
 	raw, err := want.Marshal()
 	if err != nil {
@@ -36,7 +36,13 @@ func TestDingTalkAccountConfigRoundTripAndPublicProjection(t *testing.T) {
 		t.Fatalf("round trip mismatch: %#v", got)
 	}
 
-	public := got.PublicBinding("installation-1", "workspace-1", "agent-1", "active")
+	public := got.PublicBinding(
+		"installation-1",
+		"workspace-1",
+		"agent-1",
+		"active",
+		PublicDingTalkBindingOutcome{Status: "unbound"},
+	)
 	encoded, err := json.Marshal(public)
 	if err != nil {
 		t.Fatalf("marshal public binding: %v", err)
@@ -87,11 +93,11 @@ func TestCallbackTokenRejectsNonCanonicalRawValuesBeforeHashing(t *testing.T) {
 
 func TestDingTalkAccountConfigRequiresCanonicalMatchingDispatchURL(t *testing.T) {
 	base := DingTalkAccountConfig{
-		SchemaVersion:       1,
-		DispatchEndpointID:  "v1_AAECAwQFBgcICQoLDA0ODw",
-		DispatchKeyID:       "v1",
-		DispatchURL:         "https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
-		CallbackTokenHash:   strings.Repeat("a", 64),
+		SchemaVersion:      1,
+		DispatchEndpointID: "v1_AAECAwQFBgcICQoLDA0ODw",
+		DispatchKeyID:      "v1",
+		DispatchURL:        "https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
+		CallbackTokenHash:  strings.Repeat("a", 64),
 		CallbackExpiresAt:  time.Date(2026, 7, 14, 10, 10, 0, 0, time.UTC),
 	}
 	if err := base.Validate(); err != nil {
@@ -115,10 +121,10 @@ func TestDingTalkAccountConfigRequiresCanonicalMatchingDispatchURL(t *testing.T)
 
 func TestDingTalkAccountConfigRequiresCallbackHashAndExpiryTogether(t *testing.T) {
 	config := DingTalkAccountConfig{
-		SchemaVersion:       1,
-		DispatchEndpointID:  "v1_AAECAwQFBgcICQoLDA0ODw",
-		DispatchKeyID:       "v1",
-		DispatchURL:         "https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
+		SchemaVersion:      1,
+		DispatchEndpointID: "v1_AAECAwQFBgcICQoLDA0ODw",
+		DispatchKeyID:      "v1",
+		DispatchURL:        "https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
 		CallbackExpiresAt:  time.Date(2026, 7, 14, 10, 10, 0, 0, time.UTC),
 	}
 	if err := config.Validate(); err == nil {

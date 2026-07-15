@@ -11,7 +11,6 @@ import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import enCommon from "../../locales/en/common.json";
 import enAgents from "../../locales/en/agents.json";
-import { ApiClient, setApiInstance } from "@multica/core/api";
 
 const navigationStub: NavigationAdapter = {
   push: vi.fn(),
@@ -291,11 +290,6 @@ describe("CreateAgentDialog runtime visibility gate", () => {
   });
 
   it("allows a DWS-capable FC runtime without a DWS identity", async () => {
-    const apiClient = new ApiClient("");
-    const listProfiles = vi
-      .spyOn(apiClient, "listDWSAuthProfiles")
-      .mockResolvedValue([]);
-    setApiInstance(apiClient);
     const dwsRuntime = makeRuntime({
       id: "rt-fc-dws",
       name: "FC Hermes DWS",
@@ -308,7 +302,6 @@ describe("CreateAgentDialog runtime visibility gate", () => {
     });
     const { onCreate } = renderDialog([dwsRuntime]);
 
-    await screen.findByText("No DWS identity connected. The agent can still run without DWS.");
     fireEvent.change(screen.getByPlaceholderText("e.g. Deep Research Agent"), {
       target: { value: "FC Agent" },
     });
@@ -319,7 +312,6 @@ describe("CreateAgentDialog runtime visibility gate", () => {
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
     expect(onCreate.mock.calls[0]?.[0].runtime_config).toBeUndefined();
-    listProfiles.mockRestore();
   });
 });
 

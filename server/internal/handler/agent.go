@@ -943,10 +943,6 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.RuntimeConfig == nil {
 		rc = []byte("{}")
 	}
-	if !h.validateDWSProfileConfigForOwner(w, r, wsUUID, ownerUUID, rc) {
-		return
-	}
-
 	ce, _ := json.Marshal(req.CustomEnv)
 	if req.CustomEnv == nil {
 		ce = []byte("{}")
@@ -1114,7 +1110,7 @@ func (h *Handler) sendAgentWelcomeChat(ctx context.Context, agent db.Agent, crea
 		return
 	}
 
-	if _, err := h.TaskService.EnqueueChatTask(ctx, session, parseUUID(creatorID), false); err != nil {
+	if _, err := h.TaskService.EnqueueChatTask(ctx, session, parseUUID(creatorID), false, nil); err != nil {
 		slog.Warn("agent welcome: enqueue task failed", "chat_session_id", uuidToString(session.ID), "error", err)
 	}
 }
@@ -1202,40 +1198,6 @@ func canViewAgentSecrets(agent db.Agent, userID string, memberRole string) bool 
 		return true
 	}
 	return uuidToString(agent.OwnerID) == userID
-}
-
-func (h *Handler) validateDWSProfileConfigForOwner(
-	w http.ResponseWriter,
-	r *http.Request,
-	workspaceID pgtype.UUID,
-	ownerID pgtype.UUID,
-	runtimeConfig []byte,
-) bool {
-	profileID, hasProfile, err := service.DWSProfileIDFromRuntimeConfig(runtimeConfig)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return false
-	}
-	if !hasProfile {
-		return true
-	}
-	profileUUID, ok := parseUUIDOrBadRequest(w, profileID, "dws_profile_id")
-	if !ok {
-		return false
-	}
-	if _, err := h.Queries.GetDWSAuthProfileForOwner(r.Context(), db.GetDWSAuthProfileForOwnerParams{
-		ID:          profileUUID,
-		WorkspaceID: workspaceID,
-		OwnerID:     ownerID,
-	}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusBadRequest, "dws_profile_id is not available for this user")
-			return false
-		}
-		writeError(w, http.StatusInternalServerError, "failed to validate DWS profile")
-		return false
-	}
-	return true
 }
 
 // broadcastAgentResponse strips secret-bearing fields from an
@@ -1438,9 +1400,6 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// and silently destroys the real secret (issue #3260).
 		preserveMaskedGatewayToken(req.RuntimeConfig, existing.RuntimeConfig)
 		rc, _ := json.Marshal(req.RuntimeConfig)
-		if !h.validateDWSProfileConfigForOwner(w, r, existing.WorkspaceID, existing.OwnerID, rc) {
-			return
-		}
 		params.RuntimeConfig = rc
 	}
 	if req.CustomArgs != nil {

@@ -26,12 +26,14 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
+	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composiointeg "github.com/multica-ai/multica/server/internal/integrations/composio"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
+	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -103,13 +105,18 @@ func dingTalkAccountCallbackCORSMiddleware(appOrigins []string, dbaseOrigin stri
 }
 
 func isDingTalkAccountCallbackPath(path string) bool {
-	const prefix = "/api/integrations/dingtalk/account-bindings/"
 	const suffix = "/callback"
-	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
-		return false
+	for _, prefix := range []string{
+		"/api/integrations/dingtalk/account-bindings/",
+		"/api/integrations/dingtalk/account-identities/",
+	} {
+		if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+			continue
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+		return id != "" && !strings.Contains(id, "/")
 	}
-	id := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
-	return id != "" && !strings.Contains(id, "/")
+	return false
 }
 
 func dBaseBindingURLMatchesOrigin(bindingURL, expectedOrigin string) bool {
@@ -244,8 +251,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		CloudRuntimeFleetURL:     cloudRuntimeFleetURLFromEnv(),
 		CloudRuntimeFleetTimeout: envDuration("MULTICA_CLOUD_FLEET_TIMEOUT", 35*time.Second),
 		FCE2B:                    service.FCE2BConfigFromEnv(),
-		DWSCLIPath:               strings.TrimSpace(os.Getenv("MULTICA_DWS_CLI_PATH")),
-		DWSAuthTimeout:           envDuration("MULTICA_DWS_AUTH_TIMEOUT", 10*time.Minute),
 		AttachmentDownloadMode:   os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
 		AttachmentDownloadURLTTL: envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
 		AttachmentFrameAncestors: origins,
@@ -278,6 +283,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			DBaseBindingURL: dbaseBindingURL,
 			Keyring:         keyring,
 			Random:          rand.Reader,
+			IdentityStore:   queries,
 			Metrics:         opts.BusinessMetrics,
 		})
 		if originErr != nil || clientErr != nil || serviceErr != nil ||
@@ -292,17 +298,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			h.DingTalkAccountBindingOrigin = dbaseOrigin
 			slog.Info("dingtalk account binding enabled")
 		}
-	}
-	if dwsKey, err := secretbox.LoadKey("MULTICA_DWS_SECRET_KEY"); err == nil {
-		box, err := secretbox.New(dwsKey)
-		if err != nil {
-			slog.Error("dws: secretbox.New failed; dws auth profiles disabled", "error", err)
-		} else {
-			h.DWSAuthBox = box
-			slog.Info("dws auth profile storage enabled")
-		}
-	} else {
-		slog.Info("dws auth profile storage disabled (MULTICA_DWS_SECRET_KEY not set)")
 	}
 	if agentBaseURL := strings.TrimSpace(os.Getenv("DINGTALK_AGENT_BASE_URL")); agentBaseURL != "" {
 		agentClient := dingtalk.NewAgentClient(dingtalk.AgentClientConfig{
@@ -708,7 +703,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// their Multica account by unionid, so the explicit
 				// "click to bind" prompt is only the fallback.
 				dtAutoBinder := dingtalk.NewAutoBinder(queries, dtMessenger, box.Open, slog.Default())
-				channelRouter.Register(dingtalk.TypeDingtalk, dingtalk.NewDingTalkResolverSet(queries, pool, dtReplier, dingtalk.NewTypingNotifier(dtTyping), dtAutoBinder))
+				channelRouter.Register(dingtalk.TypeDingtalk, dingtalk.NewDingTalkResolverSet(
+					queries,
+					pool,
+					dtReplier,
+					dingtalk.NewTypingNotifier(dtTyping),
+					dtAutoBinder,
+					orgemphsf.NewClient(),
+				))
 				dingtalk.NewOutbound(queries, box.Open, dtMessenger, dtTyping, slog.Default()).Register(bus)
 				dingtalk.RegisterDingTalk(channelRegistry, dingtalk.ChannelDeps{
 					Decrypt:     box.Open,
@@ -993,6 +995,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// (main.sh exports it in containerized deployments).
 	r.Get("/api/internal/logs/tail", logTailHandler(os.Getenv("MULTICA_LOG_TAIL_TOKEN"), os.Getenv("MULTICA_LOG_DIR")))
 
+	// Deployment-only HSF diagnostic. This proves that the application can
+	// reach Agent Identity through its local Dapr sidecar without ever exposing
+	// the short-lived ContextToken returned by the provider.
+	r.Post("/api/internal/agent-identity/hsf-check", agentIdentityHSFCheckHandler(
+		os.Getenv("MULTICA_LOG_TAIL_TOKEN"),
+		agentidentityhsf.NewClient(),
+	))
+
 	// WebSocket
 	mc := &membershipChecker{queries: queries}
 	pr := &patResolver{queries: queries, cache: patCache}
@@ -1063,6 +1073,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// this handler also requires that exact Origin and the per-attempt callback
 	// Bearer token before it verifies the Router subscription.
 	r.Post("/api/integrations/dingtalk/account-bindings/{installationId}/callback", h.CompleteDingTalkAccountBindingCallback)
+	r.Post("/api/integrations/dingtalk/account-identities/{attemptId}/callback", h.CompleteDingTalkIdentityCallback)
 	// GitHub App webhook (no Multica auth — requests are authenticated via
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
@@ -1200,10 +1211,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// are admin-gated below).
 					r.Get("/runtime-profiles", h.ListRuntimeProfiles)
 					r.Get("/runtime-profiles/{profileId}", h.GetRuntimeProfile)
-					r.Get("/dws/profiles", h.ListDWSAuthProfiles)
-					r.Delete("/dws/profiles/{profileId}", h.DeleteDWSAuthProfile)
-					r.Post("/dws/auth/begin", h.BeginDWSAuth)
-					r.Get("/dws/auth/{sessionId}/status", h.GetDWSAuthStatus)
 				})
 				// Admin-level access
 				r.Group(func(r chi.Router) {

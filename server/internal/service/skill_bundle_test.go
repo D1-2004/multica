@@ -51,6 +51,9 @@ func TestDWSAgentSkillShipsDWSInstructions(t *testing.T) {
 	if !strings.Contains(skill.Content, "dws contact user get-self --format json") {
 		t.Fatal("DWS skill must include the current-user DWS smoke command")
 	}
+	if !strings.Contains(skill.Content, "bind a DingTalk account") || strings.Contains(skill.Content, "imported DWS login profile") {
+		t.Fatal("DWS skill must direct missing authentication to Agent binding without legacy profiles")
+	}
 
 	_, refs := BuildAgentSkillBundles([]AgentSkillData{skill})
 	if len(refs) != 1 {
