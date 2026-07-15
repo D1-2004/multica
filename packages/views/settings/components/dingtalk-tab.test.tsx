@@ -184,7 +184,7 @@ describe("DingTalkAgentBindButton (CTA gate)", () => {
     render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
-    expect(screen.getByRole("button", { name: /Bind to DingTalk/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Create enterprise bot/i })).toBeTruthy();
   });
 
   it("hides the bind CTA for a non-admin member (matches backend admin gate)", () => {
@@ -219,8 +219,8 @@ describe("DingTalkAgentBindButton (CTA gate)", () => {
       wrapper: I18nWrapper,
     });
     expect(screen.getByTestId("dingtalk-agent-bot-connected")).toBeTruthy();
-    expect(screen.getByText(/Connected to DingTalk/i)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Bind to DingTalk/i })).toBeNull();
+    expect(screen.getByText(/Enterprise bot connected/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Create enterprise bot/i })).toBeNull();
   });
 
   it("renders the compact status row when onShowConnectedDetails is provided", async () => {
@@ -266,7 +266,7 @@ describe("DingTalkInstallDialog (device flow)", () => {
     render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
-    await user.click(screen.getByRole("button", { name: /Bind to DingTalk/i }));
+    await user.click(screen.getByRole("button", { name: /Create enterprise bot/i }));
     await waitFor(() => {
       expect(screen.getByTestId("qr-code")).toBeTruthy();
     });
@@ -285,6 +285,18 @@ describe("DingTalkInstallDialog (device flow)", () => {
       "agent-1",
       false,
     );
+    expect(
+      screen.getByText(/Allow other organization members to use this bot/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/only the user who creates this enterprise bot can chat/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/other members in the same DingTalk organization/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/expand the bot's availability in the DingTalk developer console/i),
+    ).toBeTruthy();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2100);
@@ -347,7 +359,7 @@ describe("DingTalkInstallDialog (device flow)", () => {
     render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: StrictModeWrapper,
     });
-    await user.click(screen.getByRole("button", { name: /Bind to DingTalk/i }));
+    await user.click(screen.getByRole("button", { name: /Create enterprise bot/i }));
 
     await waitFor(
       () => {
@@ -371,7 +383,7 @@ describe("DingTalkTab (settings panel)", () => {
       install_supported: false,
     };
     render(<DingTalkTab />, { wrapper: I18nWrapper });
-    expect(screen.getByText(/DingTalk integration not enabled/i)).toBeTruthy();
+    expect(screen.getByText(/Enterprise bot unavailable/i)).toBeTruthy();
     expect(screen.getByText(/MULTICA_DINGTALK_SECRET_KEY/)).toBeTruthy();
   });
 
@@ -382,7 +394,7 @@ describe("DingTalkTab (settings panel)", () => {
       install_supported: false,
     };
     render(<DingTalkTab />, { wrapper: I18nWrapper });
-    expect(screen.getByText(/DingTalk bot installation coming soon/i)).toBeTruthy();
+    expect(screen.getByText(/Enterprise bot installation coming soon/i)).toBeTruthy();
   });
 
   it("lists installations by agent identity and disconnects via the API", async () => {

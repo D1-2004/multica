@@ -48,7 +48,7 @@ import { useT } from "../../i18n";
  * list page is the closest stable target. */
 const DINGTALK_DEV_CONSOLE = "https://open-dev.dingtalk.com/fe/app#/corp/app";
 
-// DingTalkTab is the workspace settings panel for DingTalk bot
+// DingTalkTab is the workspace settings panel for DingTalk enterprise bot
 // installations, created through the scan-to-create device flow
 // ("一键创建钉钉应用"). Listing is member-visible; the disconnect action
 // is admin-only (the backend enforces it; the UI hides the button for
