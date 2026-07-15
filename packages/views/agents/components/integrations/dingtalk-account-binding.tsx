@@ -284,7 +284,7 @@ export function DingTalkAccountBindingCard({
                     <QRCode
                       value={attempt.qrCodeUrl}
                       size={192}
-                      aria-label="DingTalk account QR code"
+                      aria-label={t(($) => $.tab_body.integrations.dingtalk_account_qr_label)}
                     />
                   </div>
                   <p className="text-center text-xs text-muted-foreground">

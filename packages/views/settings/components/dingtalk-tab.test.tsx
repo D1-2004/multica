@@ -184,7 +184,7 @@ describe("DingTalkAgentBindButton (CTA gate)", () => {
     render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
-    expect(screen.getByRole("button", { name: /Bind to DingTalk/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Create enterprise bot/i })).toBeTruthy();
   });
 
   it("hides the bind CTA for a non-admin member (matches backend admin gate)", () => {
@@ -219,8 +219,8 @@ describe("DingTalkAgentBindButton (CTA gate)", () => {
       wrapper: I18nWrapper,
     });
     expect(screen.getByTestId("dingtalk-agent-bot-connected")).toBeTruthy();
-    expect(screen.getByText(/Connected to DingTalk/i)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Bind to DingTalk/i })).toBeNull();
+    expect(screen.getByText(/Enterprise bot connected/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Create enterprise bot/i })).toBeNull();
   });
 
   it("renders the compact status row when onShowConnectedDetails is provided", async () => {
@@ -266,7 +266,7 @@ describe("DingTalkInstallDialog (device flow)", () => {
     render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
-    await user.click(screen.getByRole("button", { name: /Bind to DingTalk/i }));
+    await user.click(screen.getByRole("button", { name: /Create enterprise bot/i }));
     await waitFor(() => {
       expect(screen.getByTestId("qr-code")).toBeTruthy();
     });
@@ -347,7 +347,7 @@ describe("DingTalkInstallDialog (device flow)", () => {
     render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: StrictModeWrapper,
     });
-    await user.click(screen.getByRole("button", { name: /Bind to DingTalk/i }));
+    await user.click(screen.getByRole("button", { name: /Create enterprise bot/i }));
 
     await waitFor(
       () => {
@@ -382,7 +382,7 @@ describe("DingTalkTab (settings panel)", () => {
       install_supported: false,
     };
     render(<DingTalkTab />, { wrapper: I18nWrapper });
-    expect(screen.getByText(/DingTalk bot installation coming soon/i)).toBeTruthy();
+    expect(screen.getByText(/Enterprise bot installation coming soon/i)).toBeTruthy();
   });
 
   it("lists installations by agent identity and disconnects via the API", async () => {
