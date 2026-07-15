@@ -104,7 +104,10 @@ func TestGetEmployeeByStaffIDInvokesOrgEmpService(t *testing.T) {
 		"rpc-version":                serviceVersion,
 		"rpc-group":                  serviceGroup,
 		"rpc-method-name":            methodName,
-		"rpc-method-parameter-types": parameterTypes,
+		// Keep this literal independent from parameterTypes: Dapr HSF splits
+		// multiple generic parameter types on commas. A semicolon makes the
+		// consumer see one type for the two request arguments.
+		"rpc-method-parameter-types": "java.lang.Long,java.lang.String",
 		"serialization-type":         "application/json",
 		"rpc-generic":                "true",
 		"rpc-timeout":                "10000",

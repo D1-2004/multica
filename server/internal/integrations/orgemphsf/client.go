@@ -27,7 +27,7 @@ const (
 	serviceVersion   = "1.0.0"
 	serviceGroup     = "HSF"
 	methodName       = "getEmpInfoByStaffId"
-	parameterTypes   = "java.lang.Long;java.lang.String"
+	parameterTypes   = "java.lang.Long,java.lang.String"
 
 	corpIDPrefix    = "ding"
 	corpIDDESKey    = "369f6228"
