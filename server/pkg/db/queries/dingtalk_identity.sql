@@ -28,9 +28,8 @@ WHERE attempt.id = sqlc.arg('id');
 -- name: CompleteAgentDingTalkIdentityAttempt :one
 WITH completed AS (
     UPDATE agent_dingtalk_identity_attempt
-    SET completed_open_id = sqlc.arg('account_open_id'),
+    SET completed_uid = sqlc.arg('dws_uid'),
         completed_org_id = sqlc.arg('org_id'),
-        completed_corp_id = sqlc.arg('account_corp_id'),
         used_at = now(),
         updated_at = now()
     WHERE id = sqlc.arg('attempt_id')
@@ -42,8 +41,6 @@ WITH completed AS (
     INSERT INTO agent_dingtalk_identity (
         agent_id,
         workspace_id,
-        account_open_id,
-        account_corp_id,
         dws_uid,
         org_id,
         account_display_name,
@@ -55,8 +52,6 @@ WITH completed AS (
     SELECT
         completed.agent_id,
         completed.workspace_id,
-        sqlc.arg('account_open_id'),
-        sqlc.arg('account_corp_id'),
         sqlc.arg('dws_uid'),
         sqlc.arg('org_id'),
         sqlc.arg('account_display_name'),
@@ -67,8 +62,6 @@ WITH completed AS (
     FROM completed
     ON CONFLICT (agent_id) DO UPDATE SET
         workspace_id = EXCLUDED.workspace_id,
-        account_open_id = EXCLUDED.account_open_id,
-        account_corp_id = EXCLUDED.account_corp_id,
         dws_uid = EXCLUDED.dws_uid,
         org_id = EXCLUDED.org_id,
         account_display_name = EXCLUDED.account_display_name,

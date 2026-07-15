@@ -38,6 +38,50 @@ func newTestClient(invoker *fakeBindingInvoker) *Client {
 	}
 }
 
+func TestDecodeCorpIDMatchesJavaCorpIDUtils(t *testing.T) {
+	orgID, err := DecodeCorpID("ding8196cd9a2b2405da24f2f5cc6abecb85")
+	if err != nil {
+		t.Fatalf("DecodeCorpID: %v", err)
+	}
+	if orgID != "439446171" {
+		t.Fatalf("orgID = %q, want 439446171", orgID)
+	}
+}
+
+func TestDecodeCorpIDRejectsMalformedValues(t *testing.T) {
+	for _, corpID := range []string{
+		"",
+		"8196cd9a2b2405da24f2f5cc6abecb85",
+		"dingnot-hex",
+		"ding8196cd9a2b2405da",
+	} {
+		if _, err := DecodeCorpID(corpID); err == nil {
+			t.Fatalf("DecodeCorpID(%q) unexpectedly succeeded", corpID)
+		}
+	}
+}
+
+func TestResolveEmployeeByCorpIDDecodesLocallyThenInvokesOrgEmpService(t *testing.T) {
+	invoker := &fakeBindingInvoker{event: &dapr.BindingEvent{Data: []byte(`{
+		"success":true,
+		"result":{"uid":24710833,"orgId":439446171,"staffId":"106201"}
+	}`)}}
+	employee, err := newTestClient(invoker).ResolveEmployeeByCorpID(
+		context.Background(),
+		"ding8196cd9a2b2405da24f2f5cc6abecb85",
+		"106201",
+	)
+	if err != nil {
+		t.Fatalf("ResolveEmployeeByCorpID: %v", err)
+	}
+	if employee.UID != "24710833" || employee.OrgID != "439446171" || employee.StaffID != "106201" {
+		t.Fatalf("unexpected employee: %#v", employee)
+	}
+	if got := invoker.request.Metadata["rpc-interface-name"]; got != serviceInterface {
+		t.Fatalf("rpc-interface-name = %q, want %q", got, serviceInterface)
+	}
+}
+
 func TestGetEmployeeByStaffIDInvokesOrgEmpService(t *testing.T) {
 	invoker := &fakeBindingInvoker{event: &dapr.BindingEvent{Data: []byte(`{
 		"success":true,

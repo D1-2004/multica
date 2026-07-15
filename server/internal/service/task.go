@@ -1117,7 +1117,7 @@ var ErrChatTaskAgentNoRuntime = errors.New("chat task: agent has no runtime")
 // forceFreshSession applies only to the task created by this call. The daemon
 // uses it to skip prior chat-session resume for this dispatch without clearing
 // the chat session's stored resume pointer for future normal messages.
-func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSession, initiatorUserID pgtype.UUID, forceFreshSession bool) (db.AgentTaskQueue, error) {
+func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSession, initiatorUserID pgtype.UUID, forceFreshSession bool, taskContext []byte) (db.AgentTaskQueue, error) {
 	agent, err := s.Queries.GetAgent(ctx, chatSession.AgentID)
 	if err != nil {
 		slog.Error("chat task enqueue failed", "chat_session_id", util.UUIDToString(chatSession.ID), "error", err)
@@ -1142,6 +1142,7 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 			Bool:  forceFreshSession,
 			Valid: true,
 		},
+		TaskContext:          taskContext,
 		RuntimeMcpOverlay:    runtimeMCPOverlay.Overlay,
 		RuntimeConnectedApps: runtimeMCPOverlay.ConnectedApps,
 	})

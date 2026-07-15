@@ -284,7 +284,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			Keyring:         keyring,
 			Random:          rand.Reader,
 			IdentityStore:   queries,
-			OrgEmployees:    orgemphsf.NewClient(),
 			Metrics:         opts.BusinessMetrics,
 		})
 		if originErr != nil || clientErr != nil || serviceErr != nil ||
@@ -704,7 +703,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// their Multica account by unionid, so the explicit
 				// "click to bind" prompt is only the fallback.
 				dtAutoBinder := dingtalk.NewAutoBinder(queries, dtMessenger, box.Open, slog.Default())
-				channelRouter.Register(dingtalk.TypeDingtalk, dingtalk.NewDingTalkResolverSet(queries, pool, dtReplier, dingtalk.NewTypingNotifier(dtTyping), dtAutoBinder))
+				channelRouter.Register(dingtalk.TypeDingtalk, dingtalk.NewDingTalkResolverSet(
+					queries,
+					pool,
+					dtReplier,
+					dingtalk.NewTypingNotifier(dtTyping),
+					dtAutoBinder,
+					orgemphsf.NewClient(),
+				))
 				dingtalk.NewOutbound(queries, box.Open, dtMessenger, dtTyping, slog.Default()).Register(bus)
 				dingtalk.RegisterDingTalk(channelRegistry, dingtalk.ChannelDeps{
 					Decrypt:     box.Open,

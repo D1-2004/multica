@@ -1110,7 +1110,7 @@ func (h *Handler) sendAgentWelcomeChat(ctx context.Context, agent db.Agent, crea
 		return
 	}
 
-	if _, err := h.TaskService.EnqueueChatTask(ctx, session, parseUUID(creatorID), false); err != nil {
+	if _, err := h.TaskService.EnqueueChatTask(ctx, session, parseUUID(creatorID), false, nil); err != nil {
 		slog.Warn("agent welcome: enqueue task failed", "chat_session_id", uuidToString(session.ID), "error", err)
 	}
 }

@@ -195,7 +195,7 @@ func TestDingTalkIdentityCallbackForwardsFixedShapeAndPublishesEvent(t *testing.
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/api/integrations/dingtalk/account-identities/44444444-4444-4444-4444-444444444444/callback",
-		strings.NewReader(`{"account_open_id":"106201","account_org_id":"439446171","account_corp_id":"ding-corp","account_display_name":"Xu Mo","account_avatar_url":"https://example.com/avatar.png"}`),
+		strings.NewReader(`{"account_uid":"24710833","account_org_id":"439446171","account_display_name":"Xu Mo","account_avatar_url":"https://example.com/avatar.png"}`),
 	)
 	req.Header.Set("Origin", "https://dbase.example.internal")
 	req.Header.Set("Authorization", "Bearer "+strings.Repeat("A", 43))
@@ -207,15 +207,15 @@ func TestDingTalkIdentityCallbackForwardsFixedShapeAndPublishesEvent(t *testing.
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
-	if service.identityCallbackCalls != 1 || service.identityParams.AccountOpenID != "106201" ||
-		service.identityParams.AccountOrgID != "439446171" || service.identityParams.AccountCorpID != "ding-corp" ||
+	if service.identityCallbackCalls != 1 || service.identityParams.AccountUID != "24710833" ||
+		service.identityParams.AccountOrgID != "439446171" ||
 		service.identityParams.CallbackToken != strings.Repeat("A", 43) {
 		t.Fatalf("identity callback params = %#v", service.identityParams)
 	}
 	if published.Type != protocol.EventDingTalkAccountBindingActivated || published.WorkspaceID != service.identityResult.WorkspaceID {
 		t.Fatalf("published event = %#v", published)
 	}
-	for _, sensitive := range []string{"106201", "439446171", "ding-corp", strings.Repeat("A", 43)} {
+	for _, sensitive := range []string{"24710833", "439446171", strings.Repeat("A", 43)} {
 		if strings.Contains(w.Body.String(), sensitive) {
 			t.Fatalf("identity callback response leaked %q: %s", sensitive, w.Body.String())
 		}
@@ -275,8 +275,6 @@ func TestDingTalkAccountBindingServiceErrorsHaveStableCodes(t *testing.T) {
 		{err: agentmessagerouter.ErrBindingConflict, wantStatus: http.StatusConflict, wantCode: "binding_result_conflict"},
 		{err: agentmessagerouter.ErrCallbackExpired, wantStatus: http.StatusGone, wantCode: "binding_callback_expired"},
 		{err: agentmessagerouter.ErrRouterUnavailable, wantStatus: http.StatusBadGateway, wantCode: "subscription_verify_failed"},
-		{err: agentmessagerouter.ErrIdentityUnavailable, wantStatus: http.StatusBadGateway, wantCode: "identity_verify_failed"},
-		{err: agentmessagerouter.ErrIdentityMismatch, wantStatus: http.StatusConflict, wantCode: "identity_mismatch"},
 		{err: errors.New("unexpected"), wantStatus: http.StatusInternalServerError, wantCode: "binding_internal_error"},
 	}
 	for _, tt := range tests {

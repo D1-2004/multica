@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -29,15 +28,13 @@ const (
 )
 
 var (
-	ErrNotConfigured       = errors.New("dingtalk account binding is not configured")
-	ErrAlreadyActive       = errors.New("dingtalk account binding is already active")
-	ErrNotFound            = errors.New("dingtalk account binding not found")
-	ErrCallbackExpired     = errors.New("dingtalk account binding callback expired")
-	ErrBindingConflict     = errors.New("dingtalk account binding conflict")
-	ErrRouterUnavailable   = errors.New("agent message router is unavailable")
-	ErrIdentityUnavailable = errors.New("dingtalk identity service is unavailable")
-	ErrIdentityMismatch    = errors.New("dingtalk identity does not match the scanned account")
-	ErrInvalidResult       = errors.New("dingtalk account binding result is invalid")
+	ErrNotConfigured     = errors.New("dingtalk account binding is not configured")
+	ErrAlreadyActive     = errors.New("dingtalk account binding is already active")
+	ErrNotFound          = errors.New("dingtalk account binding not found")
+	ErrCallbackExpired   = errors.New("dingtalk account binding callback expired")
+	ErrBindingConflict   = errors.New("dingtalk account binding conflict")
+	ErrRouterUnavailable = errors.New("agent message router is unavailable")
+	ErrInvalidResult     = errors.New("dingtalk account binding result is invalid")
 )
 
 // Store is the generated-query seam used by the binding lifecycle. *db.Queries
@@ -61,10 +58,6 @@ type IdentityStore interface {
 	DeleteAgentDingTalkIdentityAttempts(context.Context, db.DeleteAgentDingTalkIdentityAttemptsParams) error
 }
 
-type EmployeeResolver interface {
-	GetEmployeeByStaffID(context.Context, string, string) (orgemphsf.Employee, error)
-}
-
 // Router is the existing subscription contract used to issue a QR credential,
 // verify the DBase callback, and proxy unbind. *Client satisfies it.
 type Router interface {
@@ -82,7 +75,6 @@ type ServiceConfig struct {
 	Random          io.Reader
 	Now             func() time.Time
 	IdentityStore   IdentityStore
-	OrgEmployees    EmployeeResolver
 	Metrics         *obsmetrics.BusinessMetrics
 }
 
@@ -96,7 +88,6 @@ type Service struct {
 	random          io.Reader
 	now             func() time.Time
 	identityStore   IdentityStore
-	orgEmployees    EmployeeResolver
 	metrics         *obsmetrics.BusinessMetrics
 }
 
@@ -124,9 +115,8 @@ type CallbackParams struct {
 type IdentityCallbackParams struct {
 	AttemptID          pgtype.UUID
 	CallbackToken      string
-	AccountOpenID      string
+	AccountUID         string
 	AccountOrgID       string
-	AccountCorpID      string
 	AccountDisplayName string
 	AccountAvatarURL   string
 }
@@ -138,7 +128,7 @@ type UnbindParams struct {
 
 func NewService(store Store, router Router, config ServiceConfig) (*Service, error) {
 	if store == nil || router == nil || config.Keyring == nil || config.Random == nil ||
-		config.IdentityStore == nil || config.OrgEmployees == nil {
+		config.IdentityStore == nil {
 		return nil, ErrNotConfigured
 	}
 	publicOrigin, err := canonicalHTTPSOrigin(config.PublicBaseURL)
@@ -167,7 +157,6 @@ func NewService(store Store, router Router, config ServiceConfig) (*Service, err
 		random:          config.Random,
 		now:             now,
 		identityStore:   config.IdentityStore,
-		orgEmployees:    config.OrgEmployees,
 		metrics:         config.Metrics,
 	}, nil
 }

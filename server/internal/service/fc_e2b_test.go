@@ -400,9 +400,8 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO agent_dingtalk_identity (
-			agent_id, workspace_id, account_open_id, account_corp_id,
-			dws_uid, org_id, account_display_name, bound_by
-		) VALUES ($1, $2, '106201', 'ding-corp', '24710833', '439446171', 'Xu Mo', $3)
+			agent_id, workspace_id, dws_uid, org_id, account_display_name, bound_by
+		) VALUES ($1, $2, '24710833', '439446171', 'Xu Mo', $3)
 	`, agentID, workspaceID, userID); err != nil {
 		t.Fatalf("bind Agent DingTalk identity: %v", err)
 	}
@@ -416,6 +415,9 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" ||
 		env["AGENT_IDENTITY_CONTEXT_TOKEN"] == "caller_token_must_be_ignored" {
 		t.Fatalf("chat ContextToken env = %#v", env)
+	}
+	if _, present := env["DWS_UID"]; present {
+		t.Fatalf("chat must not inject a legacy DWS_UID: %#v", env)
 	}
 	if len(identityClient.requests) != 1 {
 		t.Fatalf("Agent Identity requests = %d, want 1", len(identityClient.requests))

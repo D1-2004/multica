@@ -28,7 +28,7 @@ SELECT
 FROM agent a
 WHERE a.id = $2
   AND a.workspace_id = $1
-RETURNING id, workspace_id, agent_id, initiator_user_id, callback_token_hash, expires_at, completed_open_id, completed_org_id, completed_corp_id, used_at, created_at, updated_at
+RETURNING id, workspace_id, agent_id, initiator_user_id, callback_token_hash, expires_at, completed_org_id, used_at, created_at, updated_at, completed_uid
 `
 
 type BeginAgentDingTalkIdentityAttemptParams struct {
@@ -55,12 +55,11 @@ func (q *Queries) BeginAgentDingTalkIdentityAttempt(ctx context.Context, arg Beg
 		&i.InitiatorUserID,
 		&i.CallbackTokenHash,
 		&i.ExpiresAt,
-		&i.CompletedOpenID,
 		&i.CompletedOrgID,
-		&i.CompletedCorpID,
 		&i.UsedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CompletedUid,
 	)
 	return i, err
 }
@@ -68,22 +67,19 @@ func (q *Queries) BeginAgentDingTalkIdentityAttempt(ctx context.Context, arg Beg
 const completeAgentDingTalkIdentityAttempt = `-- name: CompleteAgentDingTalkIdentityAttempt :one
 WITH completed AS (
     UPDATE agent_dingtalk_identity_attempt
-    SET completed_open_id = $1,
+    SET completed_uid = $1,
         completed_org_id = $2,
-        completed_corp_id = $3,
         used_at = now(),
         updated_at = now()
-    WHERE id = $4
-      AND callback_token_hash = $5
+    WHERE id = $3
+      AND callback_token_hash = $4
       AND used_at IS NULL
       AND now() < expires_at
-    RETURNING id, workspace_id, agent_id, initiator_user_id, callback_token_hash, expires_at, completed_open_id, completed_org_id, completed_corp_id, used_at, created_at, updated_at
+    RETURNING id, workspace_id, agent_id, initiator_user_id, callback_token_hash, expires_at, completed_org_id, used_at, created_at, updated_at, completed_uid
 ), upserted AS (
     INSERT INTO agent_dingtalk_identity (
         agent_id,
         workspace_id,
-        account_open_id,
-        account_corp_id,
         dws_uid,
         org_id,
         account_display_name,
@@ -96,19 +92,15 @@ WITH completed AS (
         completed.agent_id,
         completed.workspace_id,
         $1,
-        $3,
-        $6,
         $2,
-        $7,
-        $8,
+        $5,
+        $6,
         completed.initiator_user_id,
         now(),
         now()
     FROM completed
     ON CONFLICT (agent_id) DO UPDATE SET
         workspace_id = EXCLUDED.workspace_id,
-        account_open_id = EXCLUDED.account_open_id,
-        account_corp_id = EXCLUDED.account_corp_id,
         dws_uid = EXCLUDED.dws_uid,
         org_id = EXCLUDED.org_id,
         account_display_name = EXCLUDED.account_display_name,
@@ -117,18 +109,16 @@ WITH completed AS (
         bound_at = EXCLUDED.bound_at,
         updated_at = EXCLUDED.updated_at
     WHERE agent_dingtalk_identity.workspace_id = EXCLUDED.workspace_id
-    RETURNING agent_dingtalk_identity.agent_id, agent_dingtalk_identity.workspace_id, agent_dingtalk_identity.account_open_id, agent_dingtalk_identity.account_corp_id, agent_dingtalk_identity.dws_uid, agent_dingtalk_identity.org_id, agent_dingtalk_identity.account_display_name, agent_dingtalk_identity.account_avatar_url, agent_dingtalk_identity.bound_by, agent_dingtalk_identity.bound_at, agent_dingtalk_identity.updated_at
+    RETURNING agent_dingtalk_identity.agent_id, agent_dingtalk_identity.workspace_id, agent_dingtalk_identity.dws_uid, agent_dingtalk_identity.org_id, agent_dingtalk_identity.account_display_name, agent_dingtalk_identity.account_avatar_url, agent_dingtalk_identity.bound_by, agent_dingtalk_identity.bound_at, agent_dingtalk_identity.updated_at
 )
-SELECT agent_id, workspace_id, account_open_id, account_corp_id, dws_uid, org_id, account_display_name, account_avatar_url, bound_by, bound_at, updated_at FROM upserted
+SELECT agent_id, workspace_id, dws_uid, org_id, account_display_name, account_avatar_url, bound_by, bound_at, updated_at FROM upserted
 `
 
 type CompleteAgentDingTalkIdentityAttemptParams struct {
-	AccountOpenID      pgtype.Text `json:"account_open_id"`
+	DwsUid             pgtype.Text `json:"dws_uid"`
 	OrgID              pgtype.Text `json:"org_id"`
-	AccountCorpID      pgtype.Text `json:"account_corp_id"`
 	AttemptID          pgtype.UUID `json:"attempt_id"`
 	CallbackTokenHash  string      `json:"callback_token_hash"`
-	DwsUid             string      `json:"dws_uid"`
 	AccountDisplayName string      `json:"account_display_name"`
 	AccountAvatarUrl   string      `json:"account_avatar_url"`
 }
@@ -136,8 +126,6 @@ type CompleteAgentDingTalkIdentityAttemptParams struct {
 type CompleteAgentDingTalkIdentityAttemptRow struct {
 	AgentID            pgtype.UUID        `json:"agent_id"`
 	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
-	AccountOpenID      string             `json:"account_open_id"`
-	AccountCorpID      string             `json:"account_corp_id"`
 	DwsUid             string             `json:"dws_uid"`
 	OrgID              string             `json:"org_id"`
 	AccountDisplayName string             `json:"account_display_name"`
@@ -149,12 +137,10 @@ type CompleteAgentDingTalkIdentityAttemptRow struct {
 
 func (q *Queries) CompleteAgentDingTalkIdentityAttempt(ctx context.Context, arg CompleteAgentDingTalkIdentityAttemptParams) (CompleteAgentDingTalkIdentityAttemptRow, error) {
 	row := q.db.QueryRow(ctx, completeAgentDingTalkIdentityAttempt,
-		arg.AccountOpenID,
+		arg.DwsUid,
 		arg.OrgID,
-		arg.AccountCorpID,
 		arg.AttemptID,
 		arg.CallbackTokenHash,
-		arg.DwsUid,
 		arg.AccountDisplayName,
 		arg.AccountAvatarUrl,
 	)
@@ -162,8 +148,6 @@ func (q *Queries) CompleteAgentDingTalkIdentityAttempt(ctx context.Context, arg 
 	err := row.Scan(
 		&i.AgentID,
 		&i.WorkspaceID,
-		&i.AccountOpenID,
-		&i.AccountCorpID,
 		&i.DwsUid,
 		&i.OrgID,
 		&i.AccountDisplayName,
@@ -192,7 +176,7 @@ func (q *Queries) DeleteAgentDingTalkIdentityAttempts(ctx context.Context, arg D
 }
 
 const getAgentDingTalkIdentity = `-- name: GetAgentDingTalkIdentity :one
-SELECT identity.agent_id, identity.workspace_id, identity.account_open_id, identity.account_corp_id, identity.dws_uid, identity.org_id, identity.account_display_name, identity.account_avatar_url, identity.bound_by, identity.bound_at, identity.updated_at
+SELECT identity.agent_id, identity.workspace_id, identity.dws_uid, identity.org_id, identity.account_display_name, identity.account_avatar_url, identity.bound_by, identity.bound_at, identity.updated_at
 FROM agent_dingtalk_identity identity
 JOIN agent a
   ON a.id = identity.agent_id
@@ -212,8 +196,6 @@ func (q *Queries) GetAgentDingTalkIdentity(ctx context.Context, arg GetAgentDing
 	err := row.Scan(
 		&i.AgentID,
 		&i.WorkspaceID,
-		&i.AccountOpenID,
-		&i.AccountCorpID,
 		&i.DwsUid,
 		&i.OrgID,
 		&i.AccountDisplayName,
@@ -226,7 +208,7 @@ func (q *Queries) GetAgentDingTalkIdentity(ctx context.Context, arg GetAgentDing
 }
 
 const getAgentDingTalkIdentityAttempt = `-- name: GetAgentDingTalkIdentityAttempt :one
-SELECT attempt.id, attempt.workspace_id, attempt.agent_id, attempt.initiator_user_id, attempt.callback_token_hash, attempt.expires_at, attempt.completed_open_id, attempt.completed_org_id, attempt.completed_corp_id, attempt.used_at, attempt.created_at, attempt.updated_at
+SELECT attempt.id, attempt.workspace_id, attempt.agent_id, attempt.initiator_user_id, attempt.callback_token_hash, attempt.expires_at, attempt.completed_org_id, attempt.used_at, attempt.created_at, attempt.updated_at, attempt.completed_uid
 FROM agent_dingtalk_identity_attempt attempt
 JOIN agent a
   ON a.id = attempt.agent_id
@@ -244,12 +226,11 @@ func (q *Queries) GetAgentDingTalkIdentityAttempt(ctx context.Context, id pgtype
 		&i.InitiatorUserID,
 		&i.CallbackTokenHash,
 		&i.ExpiresAt,
-		&i.CompletedOpenID,
 		&i.CompletedOrgID,
-		&i.CompletedCorpID,
 		&i.UsedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CompletedUid,
 	)
 	return i, err
 }

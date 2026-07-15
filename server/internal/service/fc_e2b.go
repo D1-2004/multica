@@ -743,15 +743,12 @@ func (l *FCE2BLauncher) chatDWSIdentityEnv(
 	if !FCE2BRuntimeHasCapability(runtime, "dws") {
 		return nil, nil
 	}
-	identity, err := l.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
-		WorkspaceID: runtime.WorkspaceID,
-		AgentID:     task.AgentID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
+	uid, orgID, identitySource, err := l.chatDWSIdentity(ctx, task, runtime)
 	if err != nil {
-		return nil, fmt.Errorf("load Agent DingTalk identity for chat: %w", err)
+		return nil, err
+	}
+	if uid == "" {
+		return nil, nil
 	}
 	if l.AgentIdentity == nil {
 		return nil, errors.New("Agent Identity HSF client is not configured")
@@ -767,9 +764,10 @@ func (l *FCE2BLauncher) chatDWSIdentityEnv(
 		Source: map[string]string{
 			"app":             "dt-fde-multica",
 			"chat_session_id": util.UUIDToString(task.ChatSessionID),
+			"identity_source": identitySource,
 		},
-		UID:        identity.DwsUid,
-		OrgID:      identity.OrgID,
+		UID:        uid,
+		OrgID:      orgID,
 		TTLSeconds: 900,
 	})
 	if err != nil {
@@ -779,10 +777,59 @@ func (l *FCE2BLauncher) chatDWSIdentityEnv(
 	if err != nil {
 		return nil, err
 	}
-	// Agent Identity uses the backend numeric UID, while DWS auth exchange and
-	// get-self identify the bound employee by staffId/openid.
-	env["DWS_UID"] = identity.AccountOpenID
 	return env, nil
+}
+
+func (l *FCE2BLauncher) chatDWSIdentity(ctx context.Context, task db.AgentTaskQueue, runtime db.AgentRuntime) (uid, orgID, source string, err error) {
+	robotIdentity, present, err := dingTalkRobotIdentityFromTask(task.Context)
+	if err != nil {
+		return "", "", "", err
+	}
+	if present {
+		return robotIdentity.UID, robotIdentity.OrgID, "dingtalk_robot_sender", nil
+	}
+	identity, err := l.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+		WorkspaceID: runtime.WorkspaceID,
+		AgentID:     task.AgentID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", "", nil
+	}
+	if err != nil {
+		return "", "", "", fmt.Errorf("load Agent DingTalk identity for web chat: %w", err)
+	}
+	return identity.DwsUid, identity.OrgID, "agent_binding", nil
+}
+
+func dingTalkRobotIdentityFromTask(taskContext []byte) (protocol.DingTalkRobotIdentity, bool, error) {
+	if len(bytes.TrimSpace(taskContext)) == 0 {
+		return protocol.DingTalkRobotIdentity{}, false, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(taskContext, &payload); err != nil {
+		return protocol.DingTalkRobotIdentity{}, false, errors.New("decode chat task context")
+	}
+	raw, present := payload[protocol.DingTalkRobotIdentityJSONKey]
+	if !present {
+		return protocol.DingTalkRobotIdentity{}, false, nil
+	}
+	var identity protocol.DingTalkRobotIdentity
+	if err := json.Unmarshal(raw, &identity); err != nil || !isPositiveDecimalIdentifier(identity.UID) || !isPositiveDecimalIdentifier(identity.OrgID) {
+		return protocol.DingTalkRobotIdentity{}, true, errors.New("invalid DingTalk robot identity in task context")
+	}
+	return identity, true, nil
+}
+
+func isPositiveDecimalIdentifier(value string) bool {
+	if value == "" || value == "0" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue, cfg FCE2BConfig) (map[string]string, error) {

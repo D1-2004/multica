@@ -15,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -184,16 +183,13 @@ func (f *fakeBindingStore) GetAgentDingTalkIdentityAttempt(_ context.Context, _ 
 
 func (f *fakeBindingStore) CompleteAgentDingTalkIdentityAttempt(_ context.Context, arg db.CompleteAgentDingTalkIdentityAttemptParams) (db.CompleteAgentDingTalkIdentityAttemptRow, error) {
 	now := time.Now().UTC()
-	f.identityAttempt.CompletedOpenID = arg.AccountOpenID
+	f.identityAttempt.CompletedUid = arg.DwsUid
 	f.identityAttempt.CompletedOrgID = arg.OrgID
-	f.identityAttempt.CompletedCorpID = arg.AccountCorpID
 	f.identityAttempt.UsedAt = pgtype.Timestamptz{Time: now, Valid: true}
 	f.identity = db.AgentDingtalkIdentity{
 		AgentID:            f.identityAttempt.AgentID,
 		WorkspaceID:        f.identityAttempt.WorkspaceID,
-		AccountOpenID:      arg.AccountOpenID.String,
-		AccountCorpID:      arg.AccountCorpID.String,
-		DwsUid:             arg.DwsUid,
+		DwsUid:             arg.DwsUid.String,
 		OrgID:              arg.OrgID.String,
 		AccountDisplayName: arg.AccountDisplayName,
 		AccountAvatarUrl:   arg.AccountAvatarUrl,
@@ -203,8 +199,6 @@ func (f *fakeBindingStore) CompleteAgentDingTalkIdentityAttempt(_ context.Contex
 	return db.CompleteAgentDingTalkIdentityAttemptRow{
 		AgentID:            f.identity.AgentID,
 		WorkspaceID:        f.identity.WorkspaceID,
-		AccountOpenID:      f.identity.AccountOpenID,
-		AccountCorpID:      f.identity.AccountCorpID,
 		DwsUid:             f.identity.DwsUid,
 		OrgID:              f.identity.OrgID,
 		AccountDisplayName: f.identity.AccountDisplayName,
@@ -224,23 +218,6 @@ func (f *fakeBindingStore) GetAgentDingTalkIdentity(_ context.Context, _ db.GetA
 func (f *fakeBindingStore) DeleteAgentDingTalkIdentityAttempts(_ context.Context, _ db.DeleteAgentDingTalkIdentityAttemptsParams) error {
 	f.identityAttempt = db.AgentDingtalkIdentityAttempt{}
 	return nil
-}
-
-type fakeEmployeeResolver struct {
-	employee orgemphsf.Employee
-	err      error
-	calls    int
-}
-
-func (f *fakeEmployeeResolver) GetEmployeeByStaffID(_ context.Context, orgID, staffID string) (orgemphsf.Employee, error) {
-	f.calls++
-	if f.err != nil {
-		return orgemphsf.Employee{}, f.err
-	}
-	if f.employee.UID != "" {
-		return f.employee, nil
-	}
-	return orgemphsf.Employee{UID: "24710833", OrgID: orgID, StaffID: staffID}, nil
 }
 
 type fakeBindingRouter struct {
@@ -671,20 +648,13 @@ func TestCompleteIdentityCallbackValidatesAndStoresIdentity(t *testing.T) {
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
 	identityToken := canonicalCallbackToken
 	store.identityAttempt = identityAttemptForTest(t, store, identityToken, now.Add(10*time.Minute))
-	resolver := &fakeEmployeeResolver{employee: orgemphsf.Employee{
-		UID:     "24710833",
-		OrgID:   "439446171",
-		StaffID: "106201",
-	}}
 	service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
-	service.orgEmployees = resolver
 
 	params := IdentityCallbackParams{
 		AttemptID:          store.identityAttempt.ID,
 		CallbackToken:      identityToken,
-		AccountOpenID:      "106201",
+		AccountUID:         "24710833",
 		AccountOrgID:       "439446171",
-		AccountCorpID:      "ding-corp",
 		AccountDisplayName: "Xu Mo",
 		AccountAvatarURL:   "https://example.com/avatar.png",
 	}
@@ -696,63 +666,50 @@ func TestCompleteIdentityCallbackValidatesAndStoresIdentity(t *testing.T) {
 		binding.MessageRoute.Status != "pending" {
 		t.Fatalf("binding = %#v", binding)
 	}
-	if store.identity.DwsUid != "24710833" || store.identity.OrgID != "439446171" ||
-		store.identity.AccountOpenID != "106201" || store.identity.AccountCorpID != "ding-corp" {
+	if store.identity.DwsUid != "24710833" || store.identity.OrgID != "439446171" {
 		t.Fatalf("stored identity = %#v", store.identity)
 	}
 	encoded, err := json.Marshal(binding)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"24710833", "439446171", "106201", "ding-corp", identityToken} {
+	for _, secret := range []string{"24710833", "439446171", identityToken} {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("public binding leaked identity value %q: %s", secret, encoded)
 		}
 	}
 
-	resolver.err = errors.New("must not be called for an idempotent retry")
 	if _, err := service.CompleteIdentityCallback(context.Background(), params); err != nil {
 		t.Fatalf("idempotent identity callback error = %v", err)
 	}
-	if resolver.calls != 1 {
-		t.Fatalf("employee resolver calls = %d, want 1", resolver.calls)
-	}
 }
 
-func TestCompleteIdentityCallbackRejectsEmployeeMismatch(t *testing.T) {
+func TestCompleteIdentityCallbackRejectsInvalidBackendUID(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
 	store.identityAttempt = identityAttemptForTest(t, store, canonicalCallbackToken, now.Add(time.Minute))
 	service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
-	service.orgEmployees = &fakeEmployeeResolver{employee: orgemphsf.Employee{
-		UID:     "24710833",
-		OrgID:   "439446171",
-		StaffID: "different-staff-id",
-	}}
+	params := identityCallbackParamsForTest(store.identityAttempt.ID)
+	params.AccountUID = "not-a-uid"
 
-	_, err := service.CompleteIdentityCallback(context.Background(), identityCallbackParamsForTest(store.identityAttempt.ID))
-	if !errors.Is(err, ErrIdentityMismatch) {
-		t.Fatalf("CompleteIdentityCallback() error = %v, want ErrIdentityMismatch", err)
+	_, err := service.CompleteIdentityCallback(context.Background(), params)
+	if !errors.Is(err, ErrInvalidResult) {
+		t.Fatalf("CompleteIdentityCallback() error = %v, want ErrInvalidResult", err)
 	}
 	if store.identity.AgentID.Valid {
 		t.Fatalf("mismatched identity was persisted: %#v", store.identity)
 	}
 }
 
-func TestCompleteIdentityCallbackRejectsExpiredAttemptBeforeHSF(t *testing.T) {
+func TestCompleteIdentityCallbackRejectsExpiredAttempt(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
 	store.identityAttempt = identityAttemptForTest(t, store, canonicalCallbackToken, now.Add(-time.Second))
-	resolver := &fakeEmployeeResolver{}
 	service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
-	service.orgEmployees = resolver
 
 	_, err := service.CompleteIdentityCallback(context.Background(), identityCallbackParamsForTest(store.identityAttempt.ID))
 	if !errors.Is(err, ErrCallbackExpired) {
 		t.Fatalf("CompleteIdentityCallback() error = %v, want ErrCallbackExpired", err)
-	}
-	if resolver.calls != 0 {
-		t.Fatalf("expired callback made %d HSF calls", resolver.calls)
 	}
 }
 
@@ -769,7 +726,7 @@ func TestCompleteIdentityCallbackAllowsSameIdentityForMultipleAgents(t *testing.
 		if _, err := service.CompleteIdentityCallback(context.Background(), identityCallbackParamsForTest(store.identityAttempt.ID)); err != nil {
 			t.Fatalf("agent %d identity callback error = %v", i, err)
 		}
-		if store.identity.AccountOpenID != "106201" || store.identity.AgentID != store.row.AgentID {
+		if store.identity.DwsUid != "24710833" || store.identity.AgentID != store.row.AgentID {
 			t.Fatalf("agent %d stored identity = %#v", i, store.identity)
 		}
 	}
@@ -867,7 +824,6 @@ func newBindingServiceForTest(t *testing.T, store *fakeBindingStore, router Rout
 		Random:          rand.Reader,
 		Now:             func() time.Time { return now },
 		IdentityStore:   store,
-		OrgEmployees:    &fakeEmployeeResolver{},
 		Metrics:         obsmetrics.NewBusinessMetrics(),
 	})
 	if err != nil {
@@ -943,9 +899,8 @@ func identityCallbackParamsForTest(attemptID pgtype.UUID) IdentityCallbackParams
 	return IdentityCallbackParams{
 		AttemptID:          attemptID,
 		CallbackToken:      canonicalCallbackToken,
-		AccountOpenID:      "106201",
+		AccountUID:         "24710833",
 		AccountOrgID:       "439446171",
-		AccountCorpID:      "ding-corp",
 		AccountDisplayName: "Xu Mo",
 		AccountAvatarURL:   "https://example.com/avatar.png",
 	}

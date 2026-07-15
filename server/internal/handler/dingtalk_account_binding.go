@@ -42,9 +42,8 @@ type dingTalkAccountBindingCallbackRequest struct {
 }
 
 type dingTalkIdentityCallbackRequest struct {
-	AccountOpenID      string `json:"account_open_id"`
+	AccountUID         string `json:"account_uid"`
 	AccountOrgID       string `json:"account_org_id"`
-	AccountCorpID      string `json:"account_corp_id"`
 	AccountDisplayName string `json:"account_display_name"`
 	AccountAvatarURL   string `json:"account_avatar_url"`
 }
@@ -194,9 +193,8 @@ func (h *Handler) CompleteDingTalkIdentityCallback(w http.ResponseWriter, r *htt
 	result, err := h.DingTalkAccountBindings.CompleteIdentityCallback(r.Context(), agentmessagerouter.IdentityCallbackParams{
 		AttemptID:          attemptID,
 		CallbackToken:      callbackToken,
-		AccountOpenID:      request.AccountOpenID,
+		AccountUID:         request.AccountUID,
 		AccountOrgID:       request.AccountOrgID,
-		AccountCorpID:      request.AccountCorpID,
 		AccountDisplayName: request.AccountDisplayName,
 		AccountAvatarURL:   request.AccountAvatarURL,
 	})
@@ -295,10 +293,6 @@ func writeDingTalkAccountBindingError(w http.ResponseWriter, err error) {
 		writeDingTalkAccountBindingAPIError(w, http.StatusConflict, "binding_result_conflict", "binding result conflict")
 	case errors.Is(err, agentmessagerouter.ErrRouterUnavailable):
 		writeDingTalkAccountBindingAPIError(w, http.StatusBadGateway, "subscription_verify_failed", "subscription verification failed")
-	case errors.Is(err, agentmessagerouter.ErrIdentityUnavailable):
-		writeDingTalkAccountBindingAPIError(w, http.StatusBadGateway, "identity_verify_failed", "dingtalk identity verification failed")
-	case errors.Is(err, agentmessagerouter.ErrIdentityMismatch):
-		writeDingTalkAccountBindingAPIError(w, http.StatusConflict, "identity_mismatch", "dingtalk identity does not match the scanned account")
 	default:
 		writeDingTalkAccountBindingAPIError(w, http.StatusInternalServerError, "binding_internal_error", "dingtalk account binding failed")
 	}

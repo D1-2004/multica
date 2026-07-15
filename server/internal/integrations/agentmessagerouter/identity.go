@@ -13,22 +13,18 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-const maxCorpIDBytes = 256
-
 func (s *Service) CompleteIdentityCallback(ctx context.Context, params IdentityCallbackParams) (PublicDingTalkAccountBinding, error) {
-	if s == nil || s.identityStore == nil || s.orgEmployees == nil || s.store == nil {
+	if s == nil || s.identityStore == nil || s.store == nil {
 		return PublicDingTalkAccountBinding{}, ErrNotConfigured
 	}
 	if !params.AttemptID.Valid {
 		return PublicDingTalkAccountBinding{}, ErrNotFound
 	}
-	openID := strings.TrimSpace(params.AccountOpenID)
+	uid := strings.TrimSpace(params.AccountUID)
 	orgID := strings.TrimSpace(params.AccountOrgID)
-	corpID := strings.TrimSpace(params.AccountCorpID)
 	displayName := strings.TrimSpace(params.AccountDisplayName)
 	avatarURL := strings.TrimSpace(params.AccountAvatarURL)
-	if !isDecimalIdentifier(openID) || !isDecimalIdentifier(orgID) ||
-		corpID == "" || corpID != params.AccountCorpID || len(corpID) > maxCorpIDBytes ||
+	if !isDecimalIdentifier(uid) || !isDecimalIdentifier(orgID) ||
 		utf8.RuneCountInString(displayName) > maxAccountNameRunes || !validAccountAvatarURL(avatarURL) {
 		return PublicDingTalkAccountBinding{}, ErrInvalidResult
 	}
@@ -45,26 +41,17 @@ func (s *Service) CompleteIdentityCallback(ctx context.Context, params IdentityC
 		return PublicDingTalkAccountBinding{}, ErrCallbackExpired
 	}
 	if attempt.UsedAt.Valid {
-		if !attemptMatchesIdentityCallback(attempt, openID, orgID, corpID) {
+		if !attemptMatchesIdentityCallback(attempt, uid, orgID) {
 			return PublicDingTalkAccountBinding{}, ErrBindingConflict
 		}
 		return s.publicBindingForAgent(ctx, attempt.WorkspaceID, attempt.AgentID)
 	}
 
-	employee, err := s.orgEmployees.GetEmployeeByStaffID(ctx, orgID, openID)
-	if err != nil {
-		return PublicDingTalkAccountBinding{}, fmt.Errorf("%w: %v", ErrIdentityUnavailable, err)
-	}
-	if employee.OrgID != orgID || employee.StaffID != openID || !isDecimalIdentifier(employee.UID) {
-		return PublicDingTalkAccountBinding{}, ErrIdentityMismatch
-	}
 	_, err = s.identityStore.CompleteAgentDingTalkIdentityAttempt(ctx, db.CompleteAgentDingTalkIdentityAttemptParams{
-		AccountOpenID:      pgtype.Text{String: openID, Valid: true},
+		DwsUid:             pgtype.Text{String: uid, Valid: true},
 		OrgID:              pgtype.Text{String: orgID, Valid: true},
-		AccountCorpID:      pgtype.Text{String: corpID, Valid: true},
 		AttemptID:          attempt.ID,
 		CallbackTokenHash:  attempt.CallbackTokenHash,
-		DwsUid:             employee.UID,
 		AccountDisplayName: displayName,
 		AccountAvatarUrl:   avatarURL,
 	})
@@ -72,7 +59,7 @@ func (s *Service) CompleteIdentityCallback(ctx context.Context, params IdentityC
 		if errors.Is(err, pgx.ErrNoRows) {
 			current, lookupErr := s.identityStore.GetAgentDingTalkIdentityAttempt(ctx, params.AttemptID)
 			if lookupErr == nil && current.UsedAt.Valid &&
-				attemptMatchesIdentityCallback(current, openID, orgID, corpID) {
+				attemptMatchesIdentityCallback(current, uid, orgID) {
 				return s.publicBindingForAgent(ctx, current.WorkspaceID, current.AgentID)
 			}
 			return PublicDingTalkAccountBinding{}, ErrBindingConflict
@@ -96,10 +83,9 @@ func (s *Service) publicBindingForAgent(ctx context.Context, workspaceID, agentI
 	return s.publicBinding(ctx, row)
 }
 
-func attemptMatchesIdentityCallback(attempt db.AgentDingtalkIdentityAttempt, openID, orgID, corpID string) bool {
-	return attempt.CompletedOpenID.Valid && attempt.CompletedOpenID.String == openID &&
-		attempt.CompletedOrgID.Valid && attempt.CompletedOrgID.String == orgID &&
-		attempt.CompletedCorpID.Valid && attempt.CompletedCorpID.String == corpID
+func attemptMatchesIdentityCallback(attempt db.AgentDingtalkIdentityAttempt, uid, orgID string) bool {
+	return attempt.CompletedUid.Valid && attempt.CompletedUid.String == uid &&
+		attempt.CompletedOrgID.Valid && attempt.CompletedOrgID.String == orgID
 }
 
 func isDecimalIdentifier(value string) bool {

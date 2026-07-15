@@ -3,10 +3,13 @@ package orgemphsf
 import (
 	"bytes"
 	"context"
+	"crypto/des"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -25,6 +28,11 @@ const (
 	serviceGroup     = "HSF"
 	methodName       = "getEmpInfoByStaffId"
 	parameterTypes   = "java.lang.Long;java.lang.String"
+
+	corpIDPrefix    = "ding"
+	corpIDDESKey    = "369f6228"
+	maxCorpIDBytes  = 256
+	maxStaffIDBytes = 256
 )
 
 type Employee struct {
@@ -85,6 +93,83 @@ func daprAddressFromEnv() string {
 		port = defaultDaprGRPCPort
 	}
 	return net.JoinHostPort("127.0.0.1", port)
+}
+
+// ResolveEmployeeByCorpID resolves the employee behind one DingTalk bot
+// message. The org ID is encoded in senderCorpId, so only the employee lookup
+// crosses HSF and the task never reuses an Agent-bound identity.
+func (c *Client) ResolveEmployeeByCorpID(ctx context.Context, corpID, staffID string) (Employee, error) {
+	corpID = strings.TrimSpace(corpID)
+	staffID = strings.TrimSpace(staffID)
+	if corpID == "" || len(corpID) > maxCorpIDBytes {
+		return Employee{}, &ValidationError{Field: "corp_id"}
+	}
+	if staffID == "" || len(staffID) > maxStaffIDBytes {
+		return Employee{}, &ValidationError{Field: "staff_id"}
+	}
+	orgID, err := DecodeCorpID(corpID)
+	if err != nil {
+		return Employee{}, &ValidationError{Field: "corp_id"}
+	}
+	employee, err := c.GetEmployeeByStaffID(ctx, orgID, staffID)
+	if err != nil {
+		return Employee{}, err
+	}
+	if employee.OrgID != orgID || employee.StaffID != staffID {
+		return Employee{}, errors.New("organization employee HSF returned a mismatched identity")
+	}
+	return employee, nil
+}
+
+// DecodeCorpID mirrors CorpIdUtils#getOrgIdByCorpId: strip the ding prefix,
+// URL-decode the base16 payload, decrypt DES/ECB/PKCS5Padding, then parse the
+// positive Java Long value.
+func DecodeCorpID(corpID string) (string, error) {
+	corpID = strings.TrimSpace(corpID)
+	if !strings.HasPrefix(corpID, corpIDPrefix) || len(corpID) > maxCorpIDBytes {
+		return "", errors.New("invalid corp ID")
+	}
+	encoded, err := url.QueryUnescape(strings.TrimPrefix(corpID, corpIDPrefix))
+	if err != nil || encoded == "" {
+		return "", errors.New("invalid corp ID encoding")
+	}
+	ciphertext, err := hex.DecodeString(encoded)
+	if err != nil || len(ciphertext) == 0 || len(ciphertext)%des.BlockSize != 0 {
+		return "", errors.New("invalid corp ID ciphertext")
+	}
+	block, err := des.NewCipher([]byte(corpIDDESKey))
+	if err != nil {
+		return "", errors.New("initialize corp ID decoder")
+	}
+	plaintext := make([]byte, len(ciphertext))
+	for offset := 0; offset < len(ciphertext); offset += des.BlockSize {
+		block.Decrypt(plaintext[offset:offset+des.BlockSize], ciphertext[offset:offset+des.BlockSize])
+	}
+	plaintext, err = unpadPKCS5(plaintext)
+	if err != nil {
+		return "", errors.New("invalid corp ID padding")
+	}
+	orgID, err := strconv.ParseInt(string(plaintext), 10, 64)
+	if err != nil || orgID <= 0 {
+		return "", errors.New("invalid corp ID organization")
+	}
+	return strconv.FormatInt(orgID, 10), nil
+}
+
+func unpadPKCS5(data []byte) ([]byte, error) {
+	if len(data) == 0 || len(data)%des.BlockSize != 0 {
+		return nil, errors.New("invalid padded data")
+	}
+	padding := int(data[len(data)-1])
+	if padding < 1 || padding > des.BlockSize || padding > len(data) {
+		return nil, errors.New("invalid padding size")
+	}
+	for _, value := range data[len(data)-padding:] {
+		if int(value) != padding {
+			return nil, errors.New("invalid padding bytes")
+		}
+	}
+	return data[:len(data)-padding], nil
 }
 
 func (c *Client) GetEmployeeByStaffID(ctx context.Context, orgID, staffID string) (Employee, error) {

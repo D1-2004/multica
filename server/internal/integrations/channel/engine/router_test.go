@@ -157,19 +157,21 @@ func (f *fakeIssues) Create(_ context.Context, p service.IssueCreateParams, _ se
 }
 
 type fakeTasks struct {
-	mu         sync.Mutex
-	called     bool
-	forceFresh bool
-	initiator  pgtype.UUID
-	err        error
+	mu          sync.Mutex
+	called      bool
+	forceFresh  bool
+	initiator   pgtype.UUID
+	taskContext []byte
+	err         error
 }
 
-func (f *fakeTasks) EnqueueChatTask(_ context.Context, _ db.ChatSession, initiator pgtype.UUID, forceFresh bool) (db.AgentTaskQueue, error) {
+func (f *fakeTasks) EnqueueChatTask(_ context.Context, _ db.ChatSession, initiator pgtype.UUID, forceFresh bool, taskContext []byte) (db.AgentTaskQueue, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.called = true
 	f.forceFresh = forceFresh
 	f.initiator = initiator
+	f.taskContext = append([]byte(nil), taskContext...)
 	return db.AgentTaskQueue{}, f.err
 }
 func (f *fakeTasks) wasCalled() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.called }
