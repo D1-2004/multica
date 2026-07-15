@@ -128,6 +128,30 @@ func (q *Queries) BeginDingTalkAccountBinding(ctx context.Context, arg BeginDing
 	return i, err
 }
 
+const clearExpiredDingTalkAccountCallbackCredentials = `-- name: ClearExpiredDingTalkAccountCallbackCredentials :exec
+UPDATE channel_installation
+SET config = config - 'callback_token_hash' - 'callback_expires_at',
+    updated_at = now()
+WHERE workspace_id = $1
+  AND channel_type = 'dingtalk_account'
+  AND NULLIF(config ->> 'callback_token_hash', '') IS NOT NULL
+  AND NULLIF(config ->> 'callback_expires_at', '')::timestamptz
+      <= $2::timestamptz
+`
+
+type ClearExpiredDingTalkAccountCallbackCredentialsParams struct {
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	ExpiredBefore pgtype.Timestamptz `json:"expired_before"`
+}
+
+// Callback credentials are only needed for short-lived idempotent retries.
+// Remove both fields together after expiry while preserving the active binding
+// and its stable dispatch endpoint.
+func (q *Queries) ClearExpiredDingTalkAccountCallbackCredentials(ctx context.Context, arg ClearExpiredDingTalkAccountCallbackCredentialsParams) error {
+	_, err := q.db.Exec(ctx, clearExpiredDingTalkAccountCallbackCredentials, arg.WorkspaceID, arg.ExpiredBefore)
+	return err
+}
+
 const getActiveDingTalkAccountBindingByEndpoint = `-- name: GetActiveDingTalkAccountBindingByEndpoint :one
 SELECT ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.status, ci.ws_lease_token, ci.ws_lease_expires_at, ci.installer_user_id, ci.installed_at, ci.created_at, ci.updated_at
 FROM channel_installation ci

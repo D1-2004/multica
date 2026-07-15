@@ -142,7 +142,7 @@ func (h *Handler) CompleteDingTalkAccountBindingCallback(w http.ResponseWriter, 
 		CallbackToken:      callbackToken,
 		SourceID:           request.SourceID,
 		AccountDisplayName: request.AccountDisplayName,
-		AccountAvatarURL: request.AccountAvatarURL,
+		AccountAvatarURL:   request.AccountAvatarURL,
 	})
 	if err != nil {
 		writeDingTalkAccountBindingError(w, err)
