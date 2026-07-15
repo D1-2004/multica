@@ -65,34 +65,6 @@ The HTTP body (`CreateAgentRequest`) accepts: `name`, `description`,
 `instructions`, `runtime_id`, `runtime_config`, `custom_env`, `custom_args`,
 `model`, `thinking_level`, `visibility`, `max_concurrent_tasks`, `mcp_config`.
 
-### Git-backed agent templates
-
-Here, an agent template means an approved Git repository containing
-`multica-agent.yaml`; it does not mean Multica's legacy internal static
-template registry. Discover and inspect approved repositories before creating:
-
-```bash
-multica agent template list --output json
-multica agent template get <template-key> --output json
-multica agent create-from-template <template-key> \
-  --runtime-id <runtime-id> \
-  [--name <instance-name>] \
-  [--description <instance-description>] \
-  --output json
-```
-
-The stable `template-key` resolves server-side through the workspace catalog;
-the caller cannot supply a repository, ref, installation id, or commit SHA.
-The server resolves the configured ref to an immutable commit and persists the
-result as a Git-backed Agent Source.
-
-The manifest's name and description are creation defaults. They can be
-overridden during creation and edited later in Multica. Git sync owns the
-instructions and repository-managed skills, but never overwrites an existing
-Agent's name or description. The template command intentionally exposes no
-`--model` or `--thinking-level`; effective runtime settings come from the
-configured runtime defaults.
-
 After creation, an administrator can start and inspect DingTalk bot setup with:
 
 ```bash
@@ -241,8 +213,6 @@ Read-only (safe): `agent get`, `agent skills list`, `agent env get`.
 State-changing (require an explicit instruction — do not run speculatively):
 
 - `multica agent create` — inserts a new agent row.
-- `multica agent create-from-template` — resolves an approved Git template and
-  atomically creates an Agent, its Git source, and repository-managed skills.
 - `multica dingtalk install begin` — opens an external DingTalk installation
   session; `status` itself is read-only.
 - `multica agent skills add` / `set` — mutate bindings (`set` is destructive:

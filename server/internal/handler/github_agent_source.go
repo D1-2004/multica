@@ -337,7 +337,7 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 	}, permission, manualSkills, func(created db.Agent) error {
 		var createErr error
 		source, createErr = qtx.CreateAgentSource(r.Context(), db.CreateAgentSourceParams{
-			AgentID: created.ID, GithubInstallationID: resolved.installation.ID,
+			AgentID: created.ID, WorkspaceID: wsUUID, GithubInstallationID: resolved.installation.ID,
 			RepoOwner: ownerFromFullName(resolved.repository.FullName), RepoName: repoFromFullName(resolved.repository.FullName),
 			Ref: resolved.ref, ManifestPath: agentsource.ManifestPath, SyncedCommitSha: resolved.sha, CreatedBy: ownerUUID,
 		})
@@ -438,6 +438,10 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 	source, err := h.Queries.GetAgentSourceByAgentID(r.Context(), agentRow.ID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent source not found")
+		return
+	}
+	if source.SourceType == "managed_git" {
+		writeError(w, http.StatusConflict, "this Agent source is updated automatically by Multica")
 		return
 	}
 	if !source.GithubInstallationID.Valid {
@@ -751,7 +755,7 @@ func (h *Handler) recordAgentSourceFailure(ctx context.Context, sourceID pgtype.
 func agentSourceToResponse(source db.AgentSource) AgentSourceResponse {
 	status := source.SyncStatus
 	connected := source.GithubInstallationID.Valid
-	if !connected {
+	if source.SourceType == "github" && !connected {
 		status = "disconnected"
 	}
 	var installationID *string

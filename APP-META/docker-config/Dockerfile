@@ -49,7 +49,11 @@ FROM hub.docker.alibaba-inc.com/aone-base-global/alios8-nodejs:2.0
 ARG APP_NAME=dt-fde-multica
 ARG ENV_TYPE
 
-RUN command -v setsid >/dev/null && \
+RUN yum install -y git && \
+    yum clean all && \
+    rm -rf /var/cache/yum && \
+    git --version && \
+    command -v setsid >/dev/null && \
     command -v flock >/dev/null && \
     test -x /home/admin/appname/bin/nodejsctl && \
     test -x /home/admin/appname/bin/nginxctl

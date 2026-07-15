@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -10,10 +11,27 @@ import (
 
 func newDingTalkTestCommand(use string) *cobra.Command {
 	cmd := &cobra.Command{Use: use}
-	addTemplateTestFlags(cmd)
+	addDingTalkTestFlags(cmd)
 	cmd.Flags().Bool("allow-unbound", false, "")
 	cmd.Flags().String("output", "json", "")
 	return cmd
+}
+
+func addDingTalkTestFlags(cmd *cobra.Command) {
+	cmd.Flags().String("server-url", "", "")
+	cmd.Flags().String("workspace-id", "", "")
+	cmd.Flags().String("profile", "", "")
+	cmd.Flags().String("token", "", "")
+}
+
+func dingTalkTestEnv(t *testing.T, handler http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-123")
+	server := httptest.NewServer(handler)
+	t.Setenv("MULTICA_SERVER_URL", server.URL)
+	return server
 }
 
 func TestDingTalkInstallCommandsRegistered(t *testing.T) {
@@ -30,7 +48,7 @@ func TestDingTalkInstallCommandsRegistered(t *testing.T) {
 
 func TestRunDingTalkInstallBegin(t *testing.T) {
 	var gotMethod, gotPath, gotAgentID, gotAllowUnbound string
-	server := templateTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
+	server := dingTalkTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
 		gotAgentID = r.URL.Query().Get("agent_id")
 		gotAllowUnbound = r.URL.Query().Get("allow_unbound")
@@ -54,7 +72,7 @@ func TestRunDingTalkInstallBegin(t *testing.T) {
 
 func TestRunDingTalkInstallBeginAllowUnbound(t *testing.T) {
 	var gotAllowUnbound string
-	server := templateTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
+	server := dingTalkTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
 		gotAllowUnbound = r.URL.Query().Get("allow_unbound")
 		_ = json.NewEncoder(w).Encode(map[string]any{"session_id": "session-1", "qr_code_url": "https://example.test/qr"})
 	})
@@ -74,7 +92,7 @@ func TestRunDingTalkInstallBeginAllowUnbound(t *testing.T) {
 
 func TestRunDingTalkInstallStatus(t *testing.T) {
 	var gotMethod, gotPath string
-	server := templateTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
+	server := dingTalkTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "pending"})
 	})
