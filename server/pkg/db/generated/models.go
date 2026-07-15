@@ -188,40 +188,6 @@ type AgentTaskQueue struct {
 	RuntimeLaunchLeaseExpiresAt pgtype.Timestamptz `json:"runtime_launch_lease_expires_at"`
 }
 
-type AgentTemplate struct {
-	ID                  pgtype.UUID        `json:"id"`
-	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
-	Slug                string             `json:"slug"`
-	DisplayName         string             `json:"display_name"`
-	Description         string             `json:"description"`
-	SourceType          string             `json:"source_type"`
-	ManagementMode      string             `json:"management_mode"`
-	SystemKey           pgtype.Text        `json:"system_key"`
-	BundleSchemaVersion int32              `json:"bundle_schema_version"`
-	BundleSizeBytes     int32              `json:"bundle_size_bytes"`
-	Bundle              []byte             `json:"bundle"`
-	ContentHash         string             `json:"content_hash"`
-	CreatedBy           pgtype.UUID        `json:"created_by"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-}
-
-type AgentTemplateGithubSource struct {
-	TemplateID           pgtype.UUID        `json:"template_id"`
-	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
-	GithubInstallationID pgtype.UUID        `json:"github_installation_id"`
-	RepoOwner            string             `json:"repo_owner"`
-	RepoName             string             `json:"repo_name"`
-	Ref                  string             `json:"ref"`
-	SyncedCommitSha      string             `json:"synced_commit_sha"`
-	SyncStatus           string             `json:"sync_status"`
-	LastSyncError        pgtype.Text        `json:"last_sync_error"`
-	LastSyncAttemptAt    pgtype.Timestamptz `json:"last_sync_attempt_at"`
-	LastSyncedAt         pgtype.Timestamptz `json:"last_synced_at"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-}
-
 type AgentToLabel struct {
 	AgentID   pgtype.UUID        `json:"agent_id"`
 	LabelID   pgtype.UUID        `json:"label_id"`
@@ -832,18 +798,6 @@ type PinnedItem struct {
 	ItemID      pgtype.UUID        `json:"item_id"`
 	Position    float64            `json:"position"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-}
-
-type PlatformTemplateSeed struct {
-	SystemKey           string             `json:"system_key"`
-	ReleaseVersion      int64              `json:"release_version"`
-	DisplayName         string             `json:"display_name"`
-	Description         string             `json:"description"`
-	ContentHash         string             `json:"content_hash"`
-	BundleSchemaVersion int32              `json:"bundle_schema_version"`
-	BundleSizeBytes     int32              `json:"bundle_size_bytes"`
-	Bundle              []byte             `json:"bundle"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Project struct {

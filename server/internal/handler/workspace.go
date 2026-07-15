@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/agenttemplate"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -213,16 +212,6 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to add owner: "+err.Error())
-		return
-	}
-
-	if _, err := qtx.CreateWorkspaceTemplateFromSeed(r.Context(), db.CreateWorkspaceTemplateFromSeedParams{
-		WorkspaceID: ws.ID,
-		Slug:        agenttemplate.DefaultSlug,
-		CreatedBy:   parseUUID(userID),
-		SystemKey:   agenttemplate.DefaultSystemKey,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to initialize workspace agent template")
 		return
 	}
 

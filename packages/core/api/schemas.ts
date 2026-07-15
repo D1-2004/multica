@@ -759,7 +759,7 @@ export const EMPTY_CANCEL_TASK_RESPONSE: CancelTaskResponse = {
 };
 
 // ---------------------------------------------------------------------------
-// Workspace agent template catalog — `/api/workspaces/:id/agent-templates*` and the
+// Agent template catalog — `/api/agent-templates*` and the
 // create-from-template response. The desktop app's create-agent picker
 // reaches these endpoints, and a future server change to the template shape
 // would white-screen older installed builds (#2192 pattern) without these
@@ -769,22 +769,15 @@ export const EMPTY_CANCEL_TASK_RESPONSE: CancelTaskResponse = {
 // ---------------------------------------------------------------------------
 
 const AgentTemplateSkillRefSchema = z.object({
-  source_path: z.string(),
-  name: z.string().default(""),
-  description: z.string().default(""),
-  file_count: z.number().int().nonnegative().default(0),
+  source_url: z.string(),
+  cached_name: z.string().default(""),
+  cached_description: z.string().default(""),
 }).loose();
 
-const AgentTemplateSummaryWireSchema = z.object({
-  id: z.string().optional(),
+const AgentTemplateSummarySchemaBase = z.object({
   slug: z.string(),
-  display_name: z.string().optional(),
-  name: z.string().optional(),
+  name: z.string(),
   description: z.string().default(""),
-  source_type: z.string().optional(),
-  management_mode: z.string().optional(),
-  content_hash: z.string().optional(),
-  bundle_size_bytes: z.number().int().nonnegative().optional(),
   category: z.string().optional(),
   icon: z.string().optional(),
   accent: z.string().optional(),
@@ -794,35 +787,27 @@ const AgentTemplateSummaryWireSchema = z.object({
   skills: z.array(AgentTemplateSkillRefSchema).default([]),
 }).loose();
 
-const normalizeAgentTemplateSummary = (value: z.infer<typeof AgentTemplateSummaryWireSchema>): AgentTemplateSummary => ({
-  ...value,
-  name: value.display_name ?? value.name ?? "",
-});
-
-export const AgentTemplateSummarySchema = AgentTemplateSummaryWireSchema.transform(normalizeAgentTemplateSummary);
+export const AgentTemplateSummarySchema = AgentTemplateSummarySchemaBase;
 
 // List endpoint historically returns a bare array. Server could legitimately
 // migrate to `{templates: [...]}` later — we accept either shape so an old
 // desktop survives the upgrade.
 export const AgentTemplateSummaryListSchema = z.union([
-  z.array(AgentTemplateSummaryWireSchema).transform((values) => values.map(normalizeAgentTemplateSummary)),
-  z.object({ templates: z.array(AgentTemplateSummaryWireSchema).default([]) })
+  z.array(AgentTemplateSummarySchemaBase),
+  z.object({ templates: z.array(AgentTemplateSummarySchemaBase).default([]) })
     .loose()
-    .transform((v) => v.templates.map(normalizeAgentTemplateSummary)),
+    .transform((v) => v.templates),
 ]);
 
 export const EMPTY_AGENT_TEMPLATE_SUMMARY_LIST: AgentTemplateSummary[] = [];
 
-export const AgentTemplateSchema = AgentTemplateSummaryWireSchema.extend({
+export const AgentTemplateSchema = AgentTemplateSummarySchemaBase.extend({
   // Detail-only field. Default "" so a malformed detail still renders the
   // header + skill list; the user just sees an empty Instructions block.
   instructions: z.string().default(""),
-}).loose().transform((value): AgentTemplate => ({
-  ...normalizeAgentTemplateSummary(value),
-  instructions: value.instructions,
-}));
+}).loose();
 
-// Used as the parse fallback for the workspace template detail endpoint. Slug comes
+// Used as the parse fallback for `GET /api/agent-templates/:slug`. Slug comes
 // from the URL, so we round-trip the requested one back into the fallback
 // at the call site (see `getAgentTemplate` in client.ts).
 export const EMPTY_AGENT_TEMPLATE_DETAIL: AgentTemplate = {
@@ -876,9 +861,8 @@ const MinimalAgentSchema = z.object({
 
 export const CreateAgentFromTemplateResponseSchema = z.object({
   agent: MinimalAgentSchema,
-  agent_id: z.string().optional(),
-  template_slug: z.string().optional(),
-  warnings: z.array(z.string()).default([]),
+  imported_skill_ids: z.array(z.string()).default([]),
+  reused_skill_ids: z.array(z.string()).default([]),
 }).loose();
 
 // Fallback when the success response fails to parse. The agent server-side
@@ -888,7 +872,8 @@ export const CreateAgentFromTemplateResponseSchema = z.object({
 // invalidation, so the user finds their new agent in the list.
 export const EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE: CreateAgentFromTemplateResponse = {
   agent: { id: "" } as Agent,
-  warnings: [],
+  imported_skill_ids: [],
+  reused_skill_ids: [],
 };
 
 export const AgentBuilderSessionSchema = z.object({

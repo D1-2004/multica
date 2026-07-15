@@ -110,9 +110,10 @@ type Config struct {
 	//   - LLMAPIKey       -> MULTICA_LLM_API_KEY
 	//   - LLMBaseURL       -> MULTICA_LLM_BASE_URL (OpenAI or any compatible gateway)
 	//   - LLMDefaultModel  -> MULTICA_LLM_DEFAULT_MODEL (used when a request omits `model`)
-	LLMAPIKey       string
-	LLMBaseURL      string
-	LLMDefaultModel string
+	LLMAPIKey         string
+	LLMBaseURL        string
+	LLMDefaultModel   string
+	GitAgentTemplates service.GitAgentTemplateCatalog
 }
 
 type cloudRuntimeProxy interface {
@@ -168,6 +169,7 @@ type Handler struct {
 	WebhookDeliveryWorker        *WebhookDeliveryWorker
 	CloudRuntime                 cloudRuntimeProxy
 	GitHubApp                    *githubapp.Client
+	GitAgentTemplates            service.GitAgentTemplateCatalog
 	// Lark integration. All three are nil when the Lark master key
 	// (MULTICA_LARK_SECRET_KEY) is unset; the corresponding HTTP
 	// handlers return 503 in that case so a misconfigured self-host
@@ -354,7 +356,8 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 			BaseURL: cfg.CloudRuntimeFleetURL,
 			Timeout: cfg.CloudRuntimeFleetTimeout,
 		}),
-		GitHubApp: githubClient,
+		GitHubApp:         githubClient,
+		GitAgentTemplates: cfg.GitAgentTemplates,
 		LLM: llm.New(llm.Config{
 			APIKey:       cfg.LLMAPIKey,
 			BaseURL:      cfg.LLMBaseURL,

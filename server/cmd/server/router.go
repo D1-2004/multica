@@ -19,7 +19,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/multica-ai/multica/server/internal/agenttemplate"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
@@ -203,11 +202,6 @@ type RouterOptions struct {
 // NewRouter shim) discard the second value.
 func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client, opts RouterOptions) (chi.Router, *handler.Handler) {
 	queries := db.New(pool)
-	if pool != nil {
-		if _, err := agenttemplate.ReconcileDefaultSeed(context.Background(), queries); err != nil {
-			panic("reconcile default agent template seed: " + err.Error())
-		}
-	}
 	emailSvc := service.NewEmailService()
 	daemonHub := opts.DaemonHub
 	if daemonHub == nil {
@@ -243,6 +237,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	cfSigner := auth.NewCloudFrontSignerFromEnv()
 	origins := allowedOrigins()
 
+	gitAgentTemplates, err := service.NewStaticGitAgentTemplateCatalog(os.Getenv(service.GitAgentTemplatesEnv))
+	if err != nil {
+		panic(err)
+	}
 	signupConfig := handler.Config{
 		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
 		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
@@ -259,6 +257,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		LLMAPIKey:                strings.TrimSpace(os.Getenv("MULTICA_LLM_API_KEY")),
 		LLMBaseURL:               strings.TrimSpace(os.Getenv("MULTICA_LLM_BASE_URL")),
 		LLMDefaultModel:          strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
+		GitAgentTemplates:        gitAgentTemplates,
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	h.Metrics = opts.BusinessMetrics
@@ -1211,9 +1210,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// the handler strips the management handle and adds a
 					// can_manage hint so the UI can gate connect/disconnect.
 					r.Get("/github/installations", h.ListGitHubInstallations)
-					r.Get("/agent-templates", h.ListAgentTemplates)
-					r.Get("/agent-templates/{slug}", h.GetAgentTemplate)
-					r.Post("/agent-templates/{slug}/agents", h.CreateAgentFromTemplate)
+					r.Get("/git-agent-templates", h.ListGitAgentTemplates)
+					r.Get("/git-agent-templates/{templateKey}", h.GetGitAgentTemplate)
 					// Custom runtime profiles — listing/reading is member-visible
 					// (the Runtime page renders for everyone; create/edit/delete
 					// are admin-gated below).
@@ -1242,9 +1240,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/github/repositories", h.ListGitHubAgentRepositories)
 					r.Post("/github/agent-preview", h.PreviewGitHubAgent)
 					r.Post("/github/agents", h.CreateGitHubAgent)
-					r.Post("/agent-templates/github", h.CreateGitHubAgentTemplate)
-					r.Post("/agent-templates/{slug}/sync", h.SyncAgentTemplate)
-					r.Delete("/agent-templates/{slug}", h.DeleteAgentTemplate)
+					r.Post("/git-agent-templates/{templateKey}/agents", h.CreateGitAgentFromTemplate)
 				})
 				// Owner-only access
 				r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)
@@ -1566,6 +1562,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Route("/api/agents", func(r chi.Router) {
 				r.Get("/", h.ListAgents)
 				r.Post("/", h.CreateAgent)
+				// Agent templates: pre-configured instructions + skill refs.
+				// Picking a template imports the referenced skills into the
+				// workspace (find-or-create by name) and creates the agent
+				// with the template's instructions in one transaction.
+				r.Post("/from-template", h.CreateAgentFromTemplate)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAgent)
 					r.Get("/source", h.GetAgentSource)
@@ -1592,6 +1593,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			// Agent templates catalog (browse + detail). The Create flow
+			// lives under /api/agents/from-template above; this route is for
+			// the picker UI to list available templates.
+			r.Route("/api/agent-templates", func(r chi.Router) {
+				r.Get("/", h.ListAgentTemplates)
+				r.Get("/{slug}", h.GetAgentTemplate)
+			})
 			r.Post("/api/agent-builder/sessions", h.CreateAgentBuilderSession)
 
 			// Skills

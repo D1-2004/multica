@@ -945,19 +945,19 @@ export class ApiClient {
     );
   }
 
-  async listAgentTemplates(wsId: string): Promise<AgentTemplateSummary[]> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(wsId)}/agent-templates`);
+  async listAgentTemplates(): Promise<AgentTemplateSummary[]> {
+    const raw = await this.fetch<unknown>("/api/agent-templates");
     return parseWithFallback(
       raw,
       AgentTemplateSummaryListSchema,
       EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
-      { endpoint: "GET /api/workspaces/:id/agent-templates" },
+      { endpoint: "GET /api/agent-templates" },
     );
   }
 
-  async getAgentTemplate(wsId: string, slug: string): Promise<AgentTemplate> {
+  async getAgentTemplate(slug: string): Promise<AgentTemplate> {
     const raw = await this.fetch<unknown>(
-      `/api/workspaces/${encodeURIComponent(wsId)}/agent-templates/${encodeURIComponent(slug)}`,
+      `/api/agent-templates/${encodeURIComponent(slug)}`,
     );
     // Round-trip the requested slug into the fallback so a malformed
     // detail response still produces a navigable record matching the URL
@@ -966,26 +966,27 @@ export class ApiClient {
       raw,
       AgentTemplateSchema,
       { ...EMPTY_AGENT_TEMPLATE_DETAIL, slug },
-      { endpoint: "GET /api/workspaces/:id/agent-templates/:slug" },
+      { endpoint: "GET /api/agent-templates/:slug" },
     );
   }
 
-  /** Creates an agent from the workspace's persisted template snapshot. */
+  /** Creates an agent from a curated template. The server fetches every
+   *  referenced skill URL in parallel, materializes them into the workspace
+   *  (find-or-create by name), and writes the agent + skill bindings in a
+   *  single transaction. On any upstream fetch failure, the entire write is
+   *  rolled back and the API returns 422 with `failed_urls`. */
   async createAgentFromTemplate(
-    wsId: string,
     data: CreateAgentFromTemplateRequest,
   ): Promise<CreateAgentFromTemplateResponse> {
-    const { template_slug: templateSlug, extra_skill_ids: extraSkillIds, ...request } = data;
-    const raw = await this.fetch<unknown>(
-      `/api/workspaces/${encodeURIComponent(wsId)}/agent-templates/${encodeURIComponent(templateSlug)}/agents`, {
+    const raw = await this.fetch<unknown>("/api/agents/from-template", {
       method: "POST",
-      body: JSON.stringify({ ...request, skill_ids: extraSkillIds }),
+      body: JSON.stringify(data),
     });
     return parseWithFallback(
       raw,
       CreateAgentFromTemplateResponseSchema,
       EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
-      { endpoint: "POST /api/workspaces/:id/agent-templates/:slug/agents" },
+      { endpoint: "POST /api/agents/from-template" },
     );
   }
 

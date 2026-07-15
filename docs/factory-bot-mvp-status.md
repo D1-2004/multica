@@ -8,16 +8,16 @@
 >
 > 范围：只讨论“用户通过一个 Factory Bot 创建另一个 Bot”的最小闭环，不讨论数字员工、每个 Agent 独立 Git 仓库、Agent 自我迭代等后续能力。
 
-## 0. 2026-07-15 本地实施更新
+## 0. 2026-07-14 本地实施更新
 
-当前本地分支已将模板语义收敛为 workspace-owned Bundle 快照，但尚未提交、push、部署或进入 Runtime 镜像：
+当前本地分支已补齐 Multica 侧的 Git Agent 模板目录与 CLI，但尚未提交、push、部署或进入 Runtime 镜像：
 
-- 平台初始化模板以完整 Bundle 随 Multica 发布，并在服务启动时写入单调 `release_version` 的当前 Seed；每个新 workspace 在创建事务内复制一份独立模板快照，已有 workspace 不回填。
-- 用户 Git 模板由 workspace owner/admin 使用该 workspace 的 GitHub installation 导入；显式 sync 完整编译成功后原子覆盖当前 Bundle，失败保留旧快照。
-- CLI 提供 `agent template list/get/create-from-git/sync/delete` 与 `agent create-from-template`；原 Git preset catalog、环境变量和误命名路由已经删除。
-- `create-from-template` 只接受模板 slug、`runtime_id` 和可选实例名称/描述。创建只读数据库 Bundle，不访问 GitHub，并生成独立 Agent/Skill/SkillFile 行。
-- Agent 不记录 template ID、revision、commit SHA 或 Git source。模板更新和删除不会修改既有 Agent。
-- 当前嵌入 Seed 内容来自开发期 Factory Agent 仓库快照，正式发布前可替换内容并递增 `release_version`；它不再与该 Git 仓库同步。
+- 服务端从 `MULTICA_GIT_AGENT_TEMPLATES_JSON` 加载 0..N 个受信任 Git 模板仓库，并提供 workspace-scoped 的 list/get/create API；未来可替换为数据库 provider 和管理 UI，不改变 CLI 契约。
+- CLI 已新增 `multica agent template list/get`、`multica agent create-from-template` 和 `multica dingtalk install begin/status`。
+- `create-from-template` 只接受模板 key、`runtime_id` 和可选实例名称/描述，不暴露 repository/ref/installation/SHA，也不提供 model/thinking-level 参数。
+- Git manifest 的 name/description 现在是创建默认值；Agent 创建时可覆盖，创建后可在 Multica 修改，Git 同步不会覆盖。Instructions 和 repository-managed skills 仍由 Git 同步管理。
+- 每个 Git Agent Source 使用独立的 source-scoped skill 快照，允许多个 Agent 从同一模板创建，且一个 Agent 的同步不会修改另一个 Agent 的 skill row。
+- 本地 `.env` 已把 `D1-2004/multica-agent-base-git@main` 注册为 `factory-default`；`./.multica/start-local.sh restart` 已在本地 PostgreSQL 模式完成构建并通过 backend/frontend 健康检查。
 - 当前平台和 Linux AMD64 CLI 均已构建；Multica 测试覆盖 task token 的 owner/member/cross-workspace 权限契约。没有执行真实 FC Sandbox、线上 Multica、镜像或钉钉授权联调。
 
 ## 1. 结论
@@ -212,31 +212,27 @@ Multica 已具备：
 
 需要注意：同一 Daemon 上即使配置多个 Runtime，仍共享 Daemon 的全局并发上限。仅创建多个 Runtime 记录不会自动增加实际执行容量。FC/E2B 的沙箱则按 Runtime 和会话/Issue 维度创建或复用。
 
-#### 从 Workspace 模板快照创建 Agent
+#### 从 Git 仓库模板创建 Agent
 
-本地集成分支提供 workspace-scoped 模板接口：
+本地集成分支已新增面向 Factory Bot 的 Git 模板目录接口：
 
 ```text
-GET    /api/workspaces/{workspace_id}/agent-templates
-GET    /api/workspaces/{workspace_id}/agent-templates/{slug}
-POST   /api/workspaces/{workspace_id}/agent-templates/{slug}/agents
-POST   /api/workspaces/{workspace_id}/agent-templates/github
-POST   /api/workspaces/{workspace_id}/agent-templates/{slug}/sync
-DELETE /api/workspaces/{workspace_id}/agent-templates/{slug}
+GET  /api/workspaces/{workspace_id}/git-agent-templates
+GET  /api/workspaces/{workspace_id}/git-agent-templates/{template_key}
+POST /api/workspaces/{workspace_id}/git-agent-templates/{template_key}/agents
 ```
 
 对应 CLI 为：
 
 ```bash
 multica agent template list --output json
-multica agent template get <slug> --output json
-multica agent create-from-template <slug> --runtime-id <runtime-id> --output json
-multica agent template create-from-git <slug> --installation-id <id> --repository <owner/repo>
-multica agent template sync <slug>
-multica agent template delete <slug>
+multica agent template get <template-key> --output json
+multica agent create-from-template <template-key> --runtime-id <runtime-id> --output json
 ```
 
-模板行保存完整 instructions、Skill `SKILL.md` 和 supporting files。平台模板不绑定 Git；用户 Git 模板仅在导入和显式 sync 时访问 GitHub。创建 Agent 始终只读取数据库当前快照，并且不保存模板来源关系。旧的内部 JSON registry 和 Git preset catalog 已删除。
+模板目录只保存受信任仓库的稳定 key、repository/ref 和展示元数据；服务端在创建时根据工作区 GitHub installation 重新解析仓库、固定 commit、编译 `multica-agent.yaml` 并原子创建 Agent、Agent Source 和独立的 repository-managed skill 快照。调用方不能传入任意仓库或 SHA。
+
+旧的内部静态模板接口仍存在于代码中，但不属于本次 Factory Bot 契约；这里的“模板”只指 Git 仓库 Agent 模板。
 
 #### 钉钉 Bot 安装
 
