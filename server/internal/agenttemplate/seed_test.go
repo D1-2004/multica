@@ -11,7 +11,7 @@ func TestDefaultSeedContainsCompleteOfflineBundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadDefaultSeed: %v", err)
 	}
-	if seed.SystemKey != DefaultSystemKey || seed.Slug != DefaultSlug || seed.ReleaseVersion != 2 {
+	if seed.SystemKey != DefaultSystemKey || seed.Slug != DefaultSlug || seed.ReleaseVersion != 4 {
 		t.Fatalf("unexpected seed metadata: %#v", seed)
 	}
 	if len(seed.Bundle.Skills) != 2 {

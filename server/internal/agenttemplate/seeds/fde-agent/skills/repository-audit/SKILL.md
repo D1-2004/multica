@@ -17,4 +17,3 @@ Use this skill before making repository changes and again before claiming work i
 6. Report verification evidence and anything not verified.
 
 When a POSIX shell and Git are available, `scripts/check-repository.sh` provides a safe initial status and whitespace check. It does not modify the repository.
-
