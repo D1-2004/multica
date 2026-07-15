@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 )
 
 const dispatchDomain = "multica-agent-dispatch:v1:"
@@ -22,6 +24,7 @@ var dispatchKeyIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,31}$`)
 type DispatchKeyring struct {
 	currentKeyID string
 	keys         map[string][]byte
+	metrics      *obsmetrics.BusinessMetrics
 }
 
 func ParseDispatchKeyring(raw, currentKeyID string) (*DispatchKeyring, error) {
@@ -79,6 +82,13 @@ func (k *DispatchKeyring) CurrentKeyID() string {
 	return k.currentKeyID
 }
 
+func (k *DispatchKeyring) SetMetrics(businessMetrics *obsmetrics.BusinessMetrics) {
+	if k == nil {
+		return
+	}
+	k.metrics = businessMetrics
+}
+
 func (k *DispatchKeyring) GenerateEndpointID(random io.Reader) (string, error) {
 	if k == nil || random == nil || k.currentKeyID == "" {
 		return "", errors.New("agent dispatch keyring is not configured")
@@ -93,6 +103,9 @@ func (k *DispatchKeyring) GenerateEndpointID(random io.Reader) (string, error) {
 func (k *DispatchKeyring) DeriveDeliverySecret(endpointID string) (string, error) {
 	keyID, err := parseEndpointID(endpointID)
 	if err != nil {
+		if k != nil {
+			k.metrics.RecordDispatchCredentialDerive("invalid_endpoint", "invalid")
+		}
 		return "", err
 	}
 	if k == nil {
@@ -100,11 +113,14 @@ func (k *DispatchKeyring) DeriveDeliverySecret(endpointID string) (string, error
 	}
 	key, ok := k.keys[keyID]
 	if !ok {
+		k.metrics.RecordDispatchCredentialDerive("unknown_key", "unknown")
 		return "", errors.New("agent dispatch endpoint uses an unknown key id")
 	}
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write([]byte(dispatchDomain + endpointID))
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+	secret := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	k.metrics.RecordDispatchCredentialDerive("success", keyID)
+	return secret, nil
 }
 
 func (k *DispatchKeyring) VerifyDeliverySecret(endpointID, actual string) bool {

@@ -111,7 +111,7 @@ vi.mock("../../../settings/components/dingtalk-tab", () => ({
 vi.mock("../integrations/dingtalk-account-binding", () => ({
   DingTalkAccountBindingCard: ({ agentId }: { agentId: string }) => (
     <section
-      aria-label="DingTalk account association"
+      aria-label="Enterprise digital employee"
       data-agent-id={agentId}
     />
   ),
@@ -173,28 +173,46 @@ describe("IntegrationsTab", () => {
     renderTab(<IntegrationsTab agent={agent} />);
     expect(screen.getByText("Lark")).toBeTruthy();
     expect(screen.getByText("Slack")).toBeTruthy();
-    expect(screen.getByText("DingTalk")).toBeTruthy();
+    expect(screen.getByText("Enterprise bot")).toBeTruthy();
+    const digitalEmployee = screen.getByRole("region", {
+      name: /Enterprise digital employee/i,
+    });
+    const enterpriseBot = screen.getByText("Enterprise bot");
+    const lark = screen.getByText("Lark");
+    const slack = screen.getByText("Slack");
+    expect(digitalEmployee).toHaveAttribute("data-agent-id", "agent-1");
     expect(
-      screen.getByRole("region", { name: /DingTalk account association/i }),
-    ).toHaveAttribute("data-agent-id", "agent-1");
+      digitalEmployee.compareDocumentPosition(enterpriseBot) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      enterpriseBot.compareDocumentPosition(lark) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      lark.compareDocumentPosition(slack) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.getByTestId("lark-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
     expect(screen.getByTestId("slack-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
     expect(screen.getByTestId("dingtalk-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
   });
 
-  it("shows the coming-soon notice when the install transport is not wired", () => {
+  it("shows Lark coming-soon but keeps the DingTalk bind entry when the install transport is not wired", () => {
     installationsRef.current = {
       installations: [],
       configured: true,
       install_supported: false,
     };
     renderTab(<IntegrationsTab agent={agent} />);
-    // All three listings share the fixture, so both the Lark and the
-    // DingTalk sections surface their own coming-soon copy.
+    // Lark has no manual fallback, so it still surfaces coming-soon.
     expect(screen.getByText(/Lark Bot installation coming soon/i)).toBeTruthy();
-    expect(screen.getByText(/DingTalk bot installation coming soon/i)).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
-    expect(screen.queryByTestId("dingtalk-bind-button")).toBeNull();
+    // DingTalk offers a manual-credential install path, so its bind entry
+    // renders even when the scan-to-create transport is down.
+    expect(screen.queryByText(/DingTalk bot installation coming soon/i)).toBeNull();
+    expect(screen.getByTestId("dingtalk-bind-button").getAttribute("data-agent-id")).toBe(
+      "agent-1",
+    );
   });
 
   it("shows the not-enabled notice when the deployment has no Lark key", () => {
@@ -205,7 +223,7 @@ describe("IntegrationsTab", () => {
     };
     renderTab(<IntegrationsTab agent={agent} />);
     expect(screen.getByText(/Lark integration not enabled/i)).toBeTruthy();
-    expect(screen.getByText(/DingTalk integration not enabled/i)).toBeTruthy();
+    expect(screen.getByText(/Enterprise bot unavailable/i)).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
     expect(screen.queryByTestId("dingtalk-bind-button")).toBeNull();
   });
@@ -217,10 +235,10 @@ describe("IntegrationsTab", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     renderTab(<IntegrationsTab agent={{ ...agent, owner_id: "user-2" }} />);
     expect(
-      screen.getByRole("region", { name: /DingTalk account association/i }),
+      screen.getByRole("region", { name: /Enterprise digital employee/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Only workspace owners and admins can connect an agent/i),
+      screen.getByText(/Only workspace owners and admins can create enterprise bots/i),
     ).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
     expect(screen.queryByTestId("slack-bind-button")).toBeNull();
@@ -243,7 +261,7 @@ describe("IntegrationsTab", () => {
     // members note.
     expect(
       screen.getAllByText(
-        /Only workspace owners and admins can connect an agent/i,
+        /Only workspace owners and admins can create enterprise bots/i,
       ),
     ).toHaveLength(2);
   });

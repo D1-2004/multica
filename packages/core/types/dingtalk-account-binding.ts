@@ -1,11 +1,16 @@
-export interface DingTalkAccountBinding {
-  id: string;
-  workspaceId: string;
-  agentId: string;
+export interface DingTalkAccountBindingOutcome {
   status: string;
   accountDisplayName?: string | null;
   accountAvatarUrl?: string | null;
   boundAt?: string | null;
+}
+
+export interface DingTalkAccountBinding {
+  id: string;
+  workspaceId: string;
+  agentId: string;
+  dwsIdentity: DingTalkAccountBindingOutcome;
+  messageRoute: DingTalkAccountBindingOutcome;
 }
 
 export interface DingTalkAccountBindingsResponse {

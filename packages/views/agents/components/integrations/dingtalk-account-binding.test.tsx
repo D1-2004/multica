@@ -23,7 +23,7 @@ vi.mock("@multica/core/hooks", () => ({
 
 vi.mock("react-qr-code", () => ({
   QRCode: ({ value }: { value: string }) => (
-    <svg aria-label="DingTalk account QR code" data-value={value} />
+    <svg aria-label="Enterprise digital employee QR code" data-value={value} />
   ),
 }));
 
@@ -59,10 +59,18 @@ const activeBinding = {
   id: "installation-1",
   workspaceId: "workspace-1",
   agentId: "agent-1",
-  status: "active",
-  accountDisplayName: "Zhang San",
-  accountAvatarUrl: "https://example.test/avatar.png",
-  boundAt: "2026-07-14T09:30:00Z",
+  dwsIdentity: {
+    status: "active",
+    accountDisplayName: "Zhang San",
+    accountAvatarUrl: "https://example.test/avatar.png",
+    boundAt: "2026-07-14T09:30:00Z",
+  },
+  messageRoute: {
+    status: "active",
+    accountDisplayName: "Zhang San",
+    accountAvatarUrl: "https://example.test/avatar.png",
+    boundAt: "2026-07-14T09:30:00Z",
+  },
 };
 
 beforeEach(() => {
@@ -76,7 +84,7 @@ beforeEach(() => {
   beginBinding.mockResolvedValue({
     installationId: "installation-1",
     qrCodeUrl:
-      "https://dbase.example/#bindingToken=router-secret&callbackToken=callback-secret",
+      "https://dbase.example/#bindingToken=router-secret&callbackToken=callback-secret&identityCallbackToken=identity-secret",
     expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
   });
   deleteBinding.mockResolvedValue(undefined);
@@ -93,10 +101,10 @@ describe("DingTalkAccountBindingCard", () => {
     renderCard();
 
     expect(
-      await screen.findByText(/DingTalk account association is not configured/i),
+      await screen.findByText(/Enterprise digital employee binding is not configured/i),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Associate DingTalk account/i }),
+      screen.queryByRole("button", { name: /Bind digital employee/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -105,13 +113,13 @@ describe("DingTalkAccountBindingCard", () => {
 
     renderCard();
     await user.click(
-      await screen.findByRole("button", { name: /Associate DingTalk account/i }),
+      await screen.findByRole("button", { name: /Bind digital employee/i }),
     );
 
-    const qr = await screen.findByLabelText("DingTalk account QR code");
+    const qr = await screen.findByLabelText("Enterprise digital employee QR code");
     expect(qr).toHaveAttribute(
       "data-value",
-      "https://dbase.example/#bindingToken=router-secret&callbackToken=callback-secret",
+      "https://dbase.example/#bindingToken=router-secret&callbackToken=callback-secret&identityCallbackToken=identity-secret",
     );
     expect(beginBinding).toHaveBeenCalledWith("workspace-1", "agent-1");
   });
@@ -126,7 +134,7 @@ describe("DingTalkAccountBindingCard", () => {
 
     renderCard();
     await user.click(
-      await screen.findByRole("button", { name: /Associate DingTalk account/i }),
+      await screen.findByRole("button", { name: /Bind digital employee/i }),
     );
 
     expect(await screen.findByText(/This QR code has expired/i)).toBeInTheDocument();
@@ -139,9 +147,9 @@ describe("DingTalkAccountBindingCard", () => {
     const user = userEvent.setup();
     const { queryClient } = renderCard();
     await user.click(
-      await screen.findByRole("button", { name: /Associate DingTalk account/i }),
+      await screen.findByRole("button", { name: /Bind digital employee/i }),
     );
-    expect(await screen.findByLabelText("DingTalk account QR code")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Enterprise digital employee QR code")).toBeInTheDocument();
 
     listBindings.mockResolvedValue({
       bindings: [activeBinding],
@@ -179,16 +187,41 @@ describe("DingTalkAccountBindingCard", () => {
     expect(screen.getByText("Zhang San")).toBeInTheDocument();
   });
 
+  it("keeps DWS identity active when the message route is still pending", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          messageRoute: { status: "pending" },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard();
+
+    expect(await screen.findByText("Zhang San")).toBeInTheDocument();
+    expect(screen.getByText(/DWS identity:\s*Active/i)).toBeInTheDocument();
+    expect(screen.getByText(/Direct message route:\s*Pending/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
+  });
+
   it("lets a member restart a pending association after reload", async () => {
     listBindings.mockResolvedValue({
-      bindings: [{ ...activeBinding, status: "pending" }],
+      bindings: [
+        {
+          ...activeBinding,
+          dwsIdentity: { status: "unbound" },
+          messageRoute: { status: "pending" },
+        },
+      ],
       configured: true,
     });
 
     renderCard();
 
     expect(
-      await screen.findByText(/The previous association was not completed/i),
+      await screen.findByText(/The previous digital employee binding was not completed/i),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Generate a new QR code/i }),

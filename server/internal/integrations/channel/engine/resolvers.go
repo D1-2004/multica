@@ -180,6 +180,13 @@ type IdentityResolver interface {
 	ResolveSender(ctx context.Context, inst ResolvedInstallation, msg channel.InboundMessage) (ResolvedIdentity, error)
 }
 
+// TaskContextResolver derives server-private context for the task created from
+// one inbound message. It runs before the message is appended, so an identity
+// resolution failure cannot enqueue work under another user's credentials.
+type TaskContextResolver interface {
+	ResolveTaskContext(ctx context.Context, inst ResolvedInstallation, msg channel.InboundMessage) ([]byte, error)
+}
+
 // Deduper is the two-phase idempotency seam. Claim mints an owner-fence token
 // (ErrDuplicate when already processed / in flight); Mark/Release are fenced on
 // the token (a no-op on token mismatch is not an error).
@@ -235,13 +242,13 @@ type TypingNotifier interface {
 }
 
 // ResolverSet is the per-platform bundle the Router runs the pipeline through.
-// Installation/Identity/Dedup/Session/Audit are required; Replier/Typing/
-// Unbind are optional (a nil Unbind disables the /unbind command for the
-// platform). OriginType is the issue.origin_type label written for /issue
-// commands from this channel (Feishu: "lark_chat").
+// Installation/Identity/Dedup/Session/Audit are required; TaskContext,
+// Replier, Typing, and Unbind are optional. OriginType is the issue.origin_type
+// label written for /issue commands from this channel (Feishu: "lark_chat").
 type ResolverSet struct {
 	Installation InstallationResolver
 	Identity     IdentityResolver
+	TaskContext  TaskContextResolver
 	Dedup        Deduper
 	Session      SessionBinder
 	Audit        Auditor
@@ -260,7 +267,7 @@ type IssueCreator interface {
 // TaskEnqueuer is the narrow subset of service.TaskService the Router needs to
 // trigger a chat run. Shared across platforms.
 type TaskEnqueuer interface {
-	EnqueueChatTask(ctx context.Context, session db.ChatSession, initiatorUserID pgtype.UUID, forceFreshSession bool) (db.AgentTaskQueue, error)
+	EnqueueChatTask(ctx context.Context, session db.ChatSession, initiatorUserID pgtype.UUID, forceFreshSession bool, taskContext []byte) (db.AgentTaskQueue, error)
 }
 
 // SessionReader reads the rows the debounced flush + /issue identifier need.

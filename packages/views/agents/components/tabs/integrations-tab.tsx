@@ -85,12 +85,11 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
       (inst) => inst.agent_id === agent.id && inst.status === "active",
     ) ?? false;
 
+  // DingTalk exposes a manual-credential install path that works whenever
+  // the integration is configured, even if the scan-to-create device flow
+  // (install_supported) is down — so the bind entry only gates on
+  // `dingtalkConfigured`. DingTalkAgentBindButton picks scan vs. manual.
   const dingtalkConfigured = dingtalkListing?.configured === true;
-  const dingtalkInstallSupported = dingtalkListing?.install_supported === true;
-  const dingtalkHasActiveInstall =
-    dingtalkListing?.installations.some(
-      (inst) => inst.agent_id === agent.id && inst.status === "active",
-    ) ?? false;
 
   // A member who can manage none of the platforms (not a workspace admin and
   // not this agent's owner) gets the read-only note instead of the sections.
@@ -117,6 +116,39 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
       </p>
 
       <DingTalkAccountBindingCard agentId={agent.id} agentName={agent.name} />
+
+      <section className="rounded-lg border">
+        <div className="flex items-start gap-3 p-4">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
+            <ScanLine className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1 space-y-1">
+            <h3 className="text-sm font-medium">{ts(($) => $.dingtalk.section_title)}</h3>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {ts(($) => $.dingtalk.page_description)}
+            </p>
+          </div>
+        </div>
+        <div className="border-t px-4 py-3">
+          {!canManageDingTalk ? (
+            // DingTalk install/revoke stay workspace owner/admin-only, so an
+            // agent owner who is not an admin only gets the read-only note
+            // here (like Slack above). Reuses the shared members note.
+            <p className="text-xs text-muted-foreground">
+              {t(($) => $.tab_body.integrations.members_note)}
+            </p>
+          ) : !dingtalkConfigured ? (
+            <p className="text-xs text-muted-foreground">
+              {ts(($) => $.dingtalk.not_enabled_title)}
+            </p>
+          ) : (
+            // Configured: the shared button renders the scan-or-manual bind
+            // CTA (or the connected badge). The manual path keeps binding
+            // possible even when the scan flow is down.
+            <DingTalkAgentBindButton agentId={agent.id} agentName={agent.name} />
+          )}
+        </div>
+      </section>
 
       <section className="rounded-lg border">
         <div className="flex items-start gap-3 p-4">
@@ -201,46 +233,6 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
             </div>
           ) : (
             <SlackAgentBindButton agentId={agent.id} agentName={agent.name} />
-          )}
-        </div>
-      </section>
-
-      <section className="rounded-lg border">
-        <div className="flex items-start gap-3 p-4">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-            <ScanLine className="h-4 w-4" />
-          </span>
-          <div className="min-w-0 flex-1 space-y-1">
-            <h3 className="text-sm font-medium">{ts(($) => $.dingtalk.section_title)}</h3>
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              {ts(($) => $.dingtalk.page_description)}
-            </p>
-          </div>
-        </div>
-        <div className="border-t px-4 py-3">
-          {!canManageDingTalk ? (
-            // DingTalk install/revoke stay workspace owner/admin-only, so an
-            // agent owner who is not an admin only gets the read-only note
-            // here (like Slack above). Reuses the shared members note.
-            <p className="text-xs text-muted-foreground">
-              {t(($) => $.tab_body.integrations.members_note)}
-            </p>
-          ) : !dingtalkConfigured ? (
-            <p className="text-xs text-muted-foreground">
-              {ts(($) => $.dingtalk.not_enabled_title)}
-            </p>
-          ) : !dingtalkInstallSupported && !dingtalkHasActiveInstall ? (
-            // Key is set but the device-flow registration isn't wired in
-            // this build. An agent that is ALREADY bound is exempt:
-            // install_supported only governs NEW installs.
-            <div className="space-y-1">
-              <p className="text-xs font-medium">{ts(($) => $.dingtalk.preview_title)}</p>
-              <p className="text-xs text-muted-foreground">
-                {ts(($) => $.dingtalk.preview_description)}
-              </p>
-            </div>
-          ) : (
-            <DingTalkAgentBindButton agentId={agent.id} agentName={agent.name} />
           )}
         </div>
       </section>

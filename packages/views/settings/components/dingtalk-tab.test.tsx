@@ -27,6 +27,7 @@ const ApiError = vi.hoisted(() => {
 
 const mockBeginInstall = vi.hoisted(() => vi.fn());
 const mockGetStatus = vi.hoisted(() => vi.fn());
+const mockManualInstall = vi.hoisted(() => vi.fn());
 const mockDeleteInstallation = vi.hoisted(() => vi.fn());
 const mockInvalidate = vi.hoisted(() => vi.fn());
 
@@ -100,6 +101,7 @@ vi.mock("@multica/core/api", () => ({
   api: {
     beginDingTalkInstall: mockBeginInstall,
     getDingTalkInstallStatus: mockGetStatus,
+    manualInstallDingTalk: mockManualInstall,
     deleteDingTalkInstallation: mockDeleteInstallation,
   },
   ApiError,
@@ -184,7 +186,7 @@ describe("DingTalkAgentBindButton (CTA gate)", () => {
     render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
-    expect(screen.getByRole("button", { name: /Bind to DingTalk/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Create enterprise bot/i })).toBeTruthy();
   });
 
   it("hides the bind CTA for a non-admin member (matches backend admin gate)", () => {
@@ -196,10 +198,24 @@ describe("DingTalkAgentBindButton (CTA gate)", () => {
     expect(container.innerHTML).toBe("");
   });
 
-  it("hides the bind CTA when install_supported is false", () => {
+  it("keeps the bind CTA when install_supported is false (manual fallback)", () => {
+    // The scan-to-create device flow being unavailable must NOT hide the
+    // CTA — the manual-credential path still works whenever configured.
     installationsRef.current = {
       installations: [],
       configured: true,
+      install_supported: false,
+    };
+    render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
+      wrapper: I18nWrapper,
+    });
+    expect(screen.getByRole("button", { name: /Create enterprise bot/i })).toBeTruthy();
+  });
+
+  it("hides the bind CTA when the integration is not configured", () => {
+    installationsRef.current = {
+      installations: [],
+      configured: false,
       install_supported: false,
     };
     const { container } = render(
@@ -219,8 +235,8 @@ describe("DingTalkAgentBindButton (CTA gate)", () => {
       wrapper: I18nWrapper,
     });
     expect(screen.getByTestId("dingtalk-agent-bot-connected")).toBeTruthy();
-    expect(screen.getByText(/Connected to DingTalk/i)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Bind to DingTalk/i })).toBeNull();
+    expect(screen.getByText(/Enterprise bot connected/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Create enterprise bot/i })).toBeNull();
   });
 
   it("renders the compact status row when onShowConnectedDetails is provided", async () => {
@@ -266,7 +282,7 @@ describe("DingTalkInstallDialog (device flow)", () => {
     render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
-    await user.click(screen.getByRole("button", { name: /Bind to DingTalk/i }));
+    await user.click(screen.getByRole("button", { name: /Create enterprise bot/i }));
     await waitFor(() => {
       expect(screen.getByTestId("qr-code")).toBeTruthy();
     });
@@ -285,6 +301,18 @@ describe("DingTalkInstallDialog (device flow)", () => {
       "agent-1",
       false,
     );
+    expect(
+      screen.getByText(/Allow other organization members to use this bot/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/only the user who creates this enterprise bot can chat/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/other members in the same DingTalk organization/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/expand the bot's availability in the DingTalk developer console/i),
+    ).toBeTruthy();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2100);
@@ -347,7 +375,7 @@ describe("DingTalkInstallDialog (device flow)", () => {
     render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: StrictModeWrapper,
     });
-    await user.click(screen.getByRole("button", { name: /Bind to DingTalk/i }));
+    await user.click(screen.getByRole("button", { name: /Create enterprise bot/i }));
 
     await waitFor(
       () => {
@@ -361,6 +389,90 @@ describe("DingTalkInstallDialog (device flow)", () => {
   });
 });
 
+describe("DingTalkInstallDialog (manual credential flow)", () => {
+  beforeEach(resetFixtures);
+
+  it("opens straight into the manual form and creates the install from pasted credentials", async () => {
+    const user = userEvent.setup();
+    installationsRef.current = {
+      installations: [],
+      configured: true,
+      install_supported: false,
+    };
+    mockManualInstall.mockResolvedValue({ id: "inst-9" });
+
+    render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
+      wrapper: I18nWrapper,
+    });
+    await user.click(screen.getByRole("button", { name: /Create enterprise bot/i }));
+
+    // Scan is unavailable, so the dialog is on the manual form and never
+    // touches the begin endpoint.
+    const form = await screen.findByTestId("dingtalk-install-manual-form");
+    expect(form).toBeTruthy();
+    expect(mockBeginInstall).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText(/AppKey/i), "dingkey123");
+    await user.type(screen.getByLabelText(/AppSecret/i), "secret456");
+    await user.click(screen.getByTestId("dingtalk-install-manual-submit"));
+
+    await waitFor(() => {
+      expect(mockManualInstall).toHaveBeenCalledWith("workspace-1", "agent-1", {
+        clientId: "dingkey123",
+        clientSecret: "secret456",
+        allowUnbound: false,
+      });
+      expect(mockInvalidate).toHaveBeenCalled();
+      expect(toast.success).toHaveBeenCalled();
+    });
+  });
+
+  it("blocks submit and surfaces an error when a credential field is empty", async () => {
+    const user = userEvent.setup();
+    installationsRef.current = {
+      installations: [],
+      configured: true,
+      install_supported: false,
+    };
+
+    render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
+      wrapper: I18nWrapper,
+    });
+    await user.click(screen.getByRole("button", { name: /Create enterprise bot/i }));
+    await screen.findByTestId("dingtalk-install-manual-form");
+
+    await user.type(screen.getByLabelText(/AppKey/i), "dingkey123");
+    // AppSecret intentionally left blank.
+    await user.click(screen.getByTestId("dingtalk-install-manual-submit"));
+
+    expect(mockManualInstall).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(/Enter both the AppKey and the AppSecret/i),
+    ).toBeTruthy();
+  });
+
+  it("offers the manual form as a fallback from the scan view when the device flow is wired", async () => {
+    const user = userEvent.setup();
+    mockBeginInstall.mockResolvedValue({
+      session_id: "sess-1",
+      qr_code_url: "https://open-dev.dingtalk.com/fe/app-registration?user_code=MUEU",
+      expires_in_seconds: 300,
+      poll_interval_seconds: 2,
+    });
+    mockGetStatus.mockResolvedValue({ status: "pending" });
+
+    render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
+      wrapper: I18nWrapper,
+    });
+    await user.click(screen.getByRole("button", { name: /Create enterprise bot/i }));
+
+    // Scan view first (QR from begin), then switch to the manual form.
+    await waitFor(() => expect(screen.getByTestId("qr-code")).toBeTruthy());
+    await user.click(screen.getByTestId("dingtalk-install-manual-link"));
+    expect(screen.getByTestId("dingtalk-install-manual-form")).toBeTruthy();
+  });
+});
+
 describe("DingTalkTab (settings panel)", () => {
   beforeEach(resetFixtures);
 
@@ -371,18 +483,21 @@ describe("DingTalkTab (settings panel)", () => {
       install_supported: false,
     };
     render(<DingTalkTab />, { wrapper: I18nWrapper });
-    expect(screen.getByText(/DingTalk integration not enabled/i)).toBeTruthy();
+    expect(screen.getByText(/Enterprise bot unavailable/i)).toBeTruthy();
     expect(screen.getByText(/MULTICA_DINGTALK_SECRET_KEY/)).toBeTruthy();
   });
 
-  it("renders the coming-soon notice when install is unsupported and nothing is installed", () => {
+  it("renders the connected-bots empty state (not coming-soon) when install is unsupported and nothing is installed", () => {
+    // Manual install now works whenever configured, so the panel no longer
+    // dead-ends on a "coming soon" notice — it points at the agent page.
     installationsRef.current = {
       installations: [],
       configured: true,
       install_supported: false,
     };
     render(<DingTalkTab />, { wrapper: I18nWrapper });
-    expect(screen.getByText(/DingTalk bot installation coming soon/i)).toBeTruthy();
+    expect(screen.queryByText(/DingTalk bot installation coming soon/i)).toBeNull();
+    expect(screen.getByText(/No enterprise bots connected yet/i)).toBeTruthy();
   });
 
   it("lists installations by agent identity and disconnects via the API", async () => {

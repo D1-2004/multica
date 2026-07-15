@@ -17,9 +17,12 @@ import (
 )
 
 type fakeDingTalkAccountBindingService struct {
-	callbackCalls  int
-	callbackResult agentmessagerouter.PublicDingTalkAccountBinding
-	unbindResult   agentmessagerouter.PublicDingTalkAccountBinding
+	callbackCalls         int
+	identityCallbackCalls int
+	identityParams        agentmessagerouter.IdentityCallbackParams
+	callbackResult        agentmessagerouter.PublicDingTalkAccountBinding
+	identityResult        agentmessagerouter.PublicDingTalkAccountBinding
+	unbindResult          agentmessagerouter.PublicDingTalkAccountBinding
 }
 
 func (f *fakeDingTalkAccountBindingService) Begin(context.Context, agentmessagerouter.BeginParams) (agentmessagerouter.BeginResult, error) {
@@ -33,6 +36,12 @@ func (f *fakeDingTalkAccountBindingService) List(context.Context, pgtype.UUID) (
 func (f *fakeDingTalkAccountBindingService) CompleteCallback(context.Context, agentmessagerouter.CallbackParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
 	f.callbackCalls++
 	return f.callbackResult, nil
+}
+
+func (f *fakeDingTalkAccountBindingService) CompleteIdentityCallback(_ context.Context, params agentmessagerouter.IdentityCallbackParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
+	f.identityCallbackCalls++
+	f.identityParams = params
+	return f.identityResult, nil
 }
 
 func (f *fakeDingTalkAccountBindingService) Unbind(context.Context, agentmessagerouter.UnbindParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
@@ -55,7 +64,7 @@ func TestListDingTalkAccountBindingsReportsUnconfiguredWithoutSecrets(t *testing
 func TestDingTalkAccountCallbackRequiresExactOriginAndBearer(t *testing.T) {
 	service := &fakeDingTalkAccountBindingService{}
 	h := &Handler{
-		DingTalkAccountBindings:     service,
+		DingTalkAccountBindings:      service,
 		DingTalkAccountBindingOrigin: "https://dbase.example.internal",
 	}
 	body := `{"source_id":"source-1","account_display_name":"Zhang San"}`
@@ -97,7 +106,7 @@ func TestDingTalkAccountCallbackRequiresExactOriginAndBearer(t *testing.T) {
 func TestDingTalkAccountCallbackRejectsOversizedBody(t *testing.T) {
 	service := &fakeDingTalkAccountBindingService{}
 	h := &Handler{
-		DingTalkAccountBindings:     service,
+		DingTalkAccountBindings:      service,
 		DingTalkAccountBindingOrigin: "https://dbase.example.internal",
 	}
 	req := httptest.NewRequest(
@@ -122,10 +131,10 @@ func TestDingTalkAccountCallbackRejectsOversizedBody(t *testing.T) {
 func TestDingTalkAccountCallbackPublishesActivatedEvent(t *testing.T) {
 	service := &fakeDingTalkAccountBindingService{
 		callbackResult: agentmessagerouter.PublicDingTalkAccountBinding{
-			ID:          "11111111-1111-1111-1111-111111111111",
-			WorkspaceID: "22222222-2222-2222-2222-222222222222",
-			AgentID:     "33333333-3333-3333-3333-333333333333",
-			Status:      "active",
+			ID:           "11111111-1111-1111-1111-111111111111",
+			WorkspaceID:  "22222222-2222-2222-2222-222222222222",
+			AgentID:      "33333333-3333-3333-3333-333333333333",
+			MessageRoute: agentmessagerouter.PublicDingTalkBindingOutcome{Status: "active"},
 		},
 	}
 	bus := events.New()
@@ -134,9 +143,9 @@ func TestDingTalkAccountCallbackPublishesActivatedEvent(t *testing.T) {
 		published = event
 	})
 	h := &Handler{
-		DingTalkAccountBindings:     service,
+		DingTalkAccountBindings:      service,
 		DingTalkAccountBindingOrigin: "https://dbase.example.internal",
-		Bus:                         bus,
+		Bus:                          bus,
 	}
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -160,13 +169,67 @@ func TestDingTalkAccountCallbackPublishesActivatedEvent(t *testing.T) {
 	}
 }
 
-func TestUnbindDingTalkAccountPublishesRevokedEvent(t *testing.T) {
+func TestDingTalkIdentityCallbackForwardsFixedShapeAndPublishesEvent(t *testing.T) {
 	service := &fakeDingTalkAccountBindingService{
-		unbindResult: agentmessagerouter.PublicDingTalkAccountBinding{
+		identityResult: agentmessagerouter.PublicDingTalkAccountBinding{
 			ID:          "11111111-1111-1111-1111-111111111111",
 			WorkspaceID: "22222222-2222-2222-2222-222222222222",
 			AgentID:     "33333333-3333-3333-3333-333333333333",
-			Status:      "revoked",
+			DWSIdentity: agentmessagerouter.PublicDingTalkBindingOutcome{
+				Status:             "active",
+				AccountDisplayName: "Xu Mo",
+			},
+			MessageRoute: agentmessagerouter.PublicDingTalkBindingOutcome{Status: "pending"},
+		},
+	}
+	bus := events.New()
+	var published events.Event
+	bus.Subscribe(protocol.EventDingTalkAccountBindingActivated, func(event events.Event) {
+		published = event
+	})
+	h := &Handler{
+		DingTalkAccountBindings:      service,
+		DingTalkAccountBindingOrigin: "https://dbase.example.internal",
+		Bus:                          bus,
+	}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/integrations/dingtalk/account-identities/44444444-4444-4444-4444-444444444444/callback",
+		strings.NewReader(`{"account_uid":"24710833","account_org_id":"439446171","account_display_name":"Xu Mo","account_avatar_url":"https://example.com/avatar.png"}`),
+	)
+	req.Header.Set("Origin", "https://dbase.example.internal")
+	req.Header.Set("Authorization", "Bearer "+strings.Repeat("A", 43))
+	req = withURLParams(req, "attemptId", "44444444-4444-4444-4444-444444444444")
+	w := httptest.NewRecorder()
+
+	h.CompleteDingTalkIdentityCallback(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if service.identityCallbackCalls != 1 || service.identityParams.AccountUID != "24710833" ||
+		service.identityParams.AccountOrgID != "439446171" ||
+		service.identityParams.CallbackToken != strings.Repeat("A", 43) {
+		t.Fatalf("identity callback params = %#v", service.identityParams)
+	}
+	if published.Type != protocol.EventDingTalkAccountBindingActivated || published.WorkspaceID != service.identityResult.WorkspaceID {
+		t.Fatalf("published event = %#v", published)
+	}
+	for _, sensitive := range []string{"24710833", "439446171", strings.Repeat("A", 43)} {
+		if strings.Contains(w.Body.String(), sensitive) {
+			t.Fatalf("identity callback response leaked %q: %s", sensitive, w.Body.String())
+		}
+	}
+}
+
+func TestUnbindDingTalkAccountPublishesRevokedEvent(t *testing.T) {
+	service := &fakeDingTalkAccountBindingService{
+		unbindResult: agentmessagerouter.PublicDingTalkAccountBinding{
+			ID:           "11111111-1111-1111-1111-111111111111",
+			WorkspaceID:  "22222222-2222-2222-2222-222222222222",
+			AgentID:      "33333333-3333-3333-3333-333333333333",
+			DWSIdentity:  agentmessagerouter.PublicDingTalkBindingOutcome{Status: "unbound"},
+			MessageRoute: agentmessagerouter.PublicDingTalkBindingOutcome{Status: "revoked"},
 		},
 	}
 	bus := events.New()

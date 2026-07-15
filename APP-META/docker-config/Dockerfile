@@ -68,7 +68,6 @@ ENV PORT=8080
 ENV BACKEND_PORT=8080
 ENV FRONTEND_PORT=3000
 ENV HOSTNAME=0.0.0.0
-ENV MULTICA_DWS_CLI_PATH=/usr/local/bin/dws
 ENV PATH="/home/admin/${APP_NAME}/node/bin:/home/admin/${APP_NAME}/target/${APP_NAME}/bin:${PATH}"
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 ENV npm_config_registry=https://registry.npmmirror.com
@@ -99,6 +98,7 @@ VOLUME /home/admin/logs /home/admin/cai/logs /home/admin/${APP_NAME}/logs /home/
 
 COPY environment/cai/conf/nginx-proxy.conf /home/admin/cai/conf/server.conf
 COPY environment/common/custom/app/bin/ /home/admin/appname/bin/
+COPY dapr-custom/ /home/admin/${APP_NAME}/conf/dapr-custom/
 COPY --from=backend-builder /workspace/src/ /home/admin/${APP_NAME}/target/${APP_NAME}/src/
 COPY --from=backend-builder /workspace/server/bin/ /home/admin/${APP_NAME}/target/${APP_NAME}/bin/
 COPY --from=backend-builder /workspace/server/migrations/ /home/admin/${APP_NAME}/target/${APP_NAME}/migrations/

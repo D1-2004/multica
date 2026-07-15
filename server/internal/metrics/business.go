@@ -39,7 +39,8 @@ type BusinessMetrics struct {
 
 	// PR3 funnel / community / commercial counters. See business_events.go
 	// for the field-level docs and labels.
-	events *businessEventMetrics
+	events              *businessEventMetrics
+	dingTalkIntegration *dingTalkIntegrationMetrics
 }
 
 func NewBusinessMetrics() *BusinessMetrics {
@@ -146,14 +147,15 @@ func NewBusinessMetrics() *BusinessMetrics {
 			Help:      "Total dispatched or running task leases expired by the scheduler.",
 		}, metricLabels("multica_task_lease_expired_total")),
 		activeTasks: map[string]activeTaskLabels{},
-		events:      newBusinessEventMetrics(),
+		events:              newBusinessEventMetrics(),
+		dingTalkIntegration: newDingTalkIntegrationMetrics(),
 	}
 	m.prewarmFailureReasons()
 	return m
 }
 
 func (m *BusinessMetrics) Collectors() []prometheus.Collector {
-	return append([]prometheus.Collector{
+	collectors := []prometheus.Collector{
 		m.taskEnqueued,
 		m.taskDispatched,
 		m.taskStarted,
@@ -170,7 +172,10 @@ func (m *BusinessMetrics) Collectors() []prometheus.Collector {
 		m.llmRequests,
 		m.taskQueuedExpired,
 		m.taskLeaseExpired,
-	}, m.events.collectors()...)
+	}
+	collectors = append(collectors, m.events.collectors()...)
+	collectors = append(collectors, m.dingTalkIntegration.collectors()...)
+	return collectors
 }
 
 func (m *BusinessMetrics) RecordTaskEnqueued(source, runtimeMode string) {

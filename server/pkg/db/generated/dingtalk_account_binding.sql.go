@@ -128,6 +128,30 @@ func (q *Queries) BeginDingTalkAccountBinding(ctx context.Context, arg BeginDing
 	return i, err
 }
 
+const clearExpiredDingTalkAccountCallbackCredentials = `-- name: ClearExpiredDingTalkAccountCallbackCredentials :exec
+UPDATE channel_installation
+SET config = config - 'callback_token_hash' - 'callback_expires_at',
+    updated_at = now()
+WHERE workspace_id = $1
+  AND channel_type = 'dingtalk_account'
+  AND NULLIF(config ->> 'callback_token_hash', '') IS NOT NULL
+  AND NULLIF(config ->> 'callback_expires_at', '')::timestamptz
+      <= $2::timestamptz
+`
+
+type ClearExpiredDingTalkAccountCallbackCredentialsParams struct {
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	ExpiredBefore pgtype.Timestamptz `json:"expired_before"`
+}
+
+// Callback credentials are only needed for short-lived idempotent retries.
+// Remove both fields together after expiry while preserving the active binding
+// and its stable dispatch endpoint.
+func (q *Queries) ClearExpiredDingTalkAccountCallbackCredentials(ctx context.Context, arg ClearExpiredDingTalkAccountCallbackCredentialsParams) error {
+	_, err := q.db.Exec(ctx, clearExpiredDingTalkAccountCallbackCredentials, arg.WorkspaceID, arg.ExpiredBefore)
+	return err
+}
+
 const getActiveDingTalkAccountBindingByEndpoint = `-- name: GetActiveDingTalkAccountBindingByEndpoint :one
 SELECT ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.status, ci.ws_lease_token, ci.ws_lease_expires_at, ci.installer_user_id, ci.installed_at, ci.created_at, ci.updated_at
 FROM channel_installation ci
@@ -316,15 +340,31 @@ func (q *Queries) ListDingTalkAccountBindings(ctx context.Context, workspaceID p
 }
 
 const revokeDingTalkAccountBinding = `-- name: RevokeDingTalkAccountBinding :one
-UPDATE channel_installation
+WITH target AS (
+    SELECT installation.id, installation.workspace_id, installation.agent_id
+    FROM channel_installation installation
+    WHERE installation.id = $1
+      AND installation.workspace_id = $2
+      AND installation.agent_id = $3
+      AND installation.channel_type = 'dingtalk_account'
+      AND installation.status IN ('pending', 'active', 'revoked')
+), deleted_identity AS (
+    DELETE FROM agent_dingtalk_identity identity
+    USING target
+    WHERE identity.workspace_id = target.workspace_id
+      AND identity.agent_id = target.agent_id
+), deleted_attempts AS (
+    DELETE FROM agent_dingtalk_identity_attempt attempt
+    USING target
+    WHERE attempt.workspace_id = target.workspace_id
+      AND attempt.agent_id = target.agent_id
+)
+UPDATE channel_installation installation
 SET status = 'revoked',
     updated_at = now()
-WHERE id = $1
-  AND workspace_id = $2
-  AND agent_id = $3
-  AND channel_type = 'dingtalk_account'
-  AND status IN ('pending', 'active', 'revoked')
-RETURNING id, workspace_id, agent_id, channel_type, config, status, ws_lease_token, ws_lease_expires_at, installer_user_id, installed_at, created_at, updated_at
+FROM target
+WHERE installation.id = target.id
+RETURNING installation.id, installation.workspace_id, installation.agent_id, installation.channel_type, installation.config, installation.status, installation.ws_lease_token, installation.ws_lease_expires_at, installation.installer_user_id, installation.installed_at, installation.created_at, installation.updated_at
 `
 
 type RevokeDingTalkAccountBindingParams struct {
@@ -334,7 +374,9 @@ type RevokeDingTalkAccountBindingParams struct {
 }
 
 // Router DELETE happens before this local transition. The endpoint and other
-// config are retained so a later begin can reuse the stable dispatch URL.
+// config are retained so a later begin can reuse the stable dispatch URL. The
+// Agent's DWS identity and pending identity attempts are removed in the same
+// database statement as the local route transition.
 func (q *Queries) RevokeDingTalkAccountBinding(ctx context.Context, arg RevokeDingTalkAccountBindingParams) (ChannelInstallation, error) {
 	row := q.db.QueryRow(ctx, revokeDingTalkAccountBinding, arg.ID, arg.WorkspaceID, arg.AgentID)
 	var i ChannelInstallation

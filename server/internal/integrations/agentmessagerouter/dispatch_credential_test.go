@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 )
 
 func TestDispatchCredentialFixedFixture(t *testing.T) {
@@ -88,6 +90,47 @@ func TestDispatchCredentialFailsClosedForInvalidConfigAndEndpoint(t *testing.T) 
 		if keyring.VerifyDeliverySecret(endpointID, "anything") {
 			t.Fatalf("endpoint %q unexpectedly verified", endpointID)
 		}
+	}
+}
+
+func TestDispatchCredentialMetricsDoNotExposeUnknownKeyIDs(t *testing.T) {
+	validKey := base64.RawStdEncoding.EncodeToString(make([]byte, 32))
+	keyring, err := ParseDispatchKeyring("v1:"+validKey, "v1")
+	if err != nil {
+		t.Fatalf("ParseDispatchKeyring: %v", err)
+	}
+	businessMetrics := obsmetrics.NewBusinessMetrics()
+	keyring.SetMetrics(businessMetrics)
+
+	if _, err := keyring.DeriveDeliverySecret("v1_AAECAwQFBgcICQoLDA0ODw"); err != nil {
+		t.Fatalf("derive known key: %v", err)
+	}
+	if _, err := keyring.DeriveDeliverySecret("attacker_AAECAwQFBgcICQoLDA0ODw"); err == nil {
+		t.Fatal("expected unknown key to fail")
+	}
+	if _, err := keyring.DeriveDeliverySecret("not-an-endpoint"); err == nil {
+		t.Fatal("expected malformed endpoint to fail")
+	}
+
+	family := obsmetrics.GatherForTest(t, businessMetrics)["dispatch_credential_derive_total"]
+	if family == nil {
+		t.Fatal("dispatch credential metric family is missing")
+	}
+	labels := make(map[string]int)
+	for _, metric := range family.GetMetric() {
+		keyID := ""
+		for _, label := range metric.GetLabel() {
+			if label.GetName() == "key_id" {
+				keyID = label.GetValue()
+			}
+		}
+		labels[keyID]++
+	}
+	if labels["v1"] != 1 || labels["unknown"] != 1 || labels["invalid"] != 1 {
+		t.Fatalf("key_id labels = %#v", labels)
+	}
+	if labels["attacker"] != 0 {
+		t.Fatalf("attacker-controlled key_id was exposed: %#v", labels)
 	}
 }
 

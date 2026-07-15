@@ -135,6 +135,7 @@ import type {
   ComposioConnectInitResponse,
   SlackInstallation,
   ListSlackInstallationsResponse,
+  DingTalkInstallation,
   ListDingTalkInstallationsResponse,
   BeginDingTalkInstallResponse,
   DingTalkInstallStatusResponse,
@@ -162,8 +163,6 @@ import type {
   CloudRuntimeNode,
   CreateFCE2BRuntimeRequest,
   CreateCloudRuntimeNodeRequest,
-  DWSAuthProfile,
-  DWSAuthSession,
   FCE2BTemplate,
   ListCloudRuntimeNodesParams,
 } from "../runtimes/cloud-runtime";
@@ -1057,33 +1056,6 @@ export class ApiClient {
 
   async listFCE2BTemplates(): Promise<FCE2BTemplate[]> {
     return this.fetch("/api/runtimes/fc-e2b/templates");
-  }
-
-  async listDWSAuthProfiles(workspaceId: string): Promise<DWSAuthProfile[]> {
-    return this.fetch(`/api/workspaces/${workspaceId}/dws/profiles`);
-  }
-
-  async deleteDWSAuthProfile(
-    workspaceId: string,
-    profileId: string,
-  ): Promise<DWSAuthProfile> {
-    return this.fetch(
-      `/api/workspaces/${workspaceId}/dws/profiles/${profileId}`,
-      { method: "DELETE" },
-    );
-  }
-
-  async beginDWSAuth(workspaceId: string): Promise<DWSAuthSession> {
-    return this.fetch(`/api/workspaces/${workspaceId}/dws/auth/begin`, {
-      method: "POST",
-    });
-  }
-
-  async getDWSAuthStatus(
-    workspaceId: string,
-    sessionId: string,
-  ): Promise<DWSAuthSession> {
-    return this.fetch(`/api/workspaces/${workspaceId}/dws/auth/${sessionId}/status`);
   }
 
   async listCloudRuntimeNodes(
@@ -2683,6 +2655,26 @@ export class ApiClient {
     sessionId: string,
   ): Promise<DingTalkInstallStatusResponse> {
     return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/install/${sessionId}/status`);
+  }
+
+  // Manual install: create the DingTalk bot installation directly from an
+  // operator-supplied AppKey/AppSecret, the fallback for when the
+  // scan-to-create device flow is unavailable. Available whenever DingTalk
+  // is configured (independent of install_supported).
+  async manualInstallDingTalk(
+    workspaceId: string,
+    agentId: string,
+    params: { clientId: string; clientSecret: string; allowUnbound?: boolean },
+  ): Promise<DingTalkInstallation> {
+    return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/install/manual`, {
+      method: "POST",
+      body: JSON.stringify({
+        agent_id: agentId,
+        client_id: params.clientId,
+        client_secret: params.clientSecret,
+        allow_unbound: params.allowUnbound ?? false,
+      }),
+    });
   }
 
   async deleteDingTalkInstallation(workspaceId: string, installationId: string): Promise<void> {

@@ -119,6 +119,7 @@ type dingtalkRawEvent struct {
 	SessionWebhook            string `json:"session_webhook,omitempty"`
 	SessionWebhookExpiredTime int64  `json:"session_webhook_expired_time,omitempty"`
 	SenderStaffID             string `json:"sender_staff_id,omitempty"`
+	SenderCorpID              string `json:"sender_corp_id,omitempty"`
 	SenderNick                string `json:"sender_nick,omitempty"`
 	ConversationTitle         string `json:"conversation_title,omitempty"`
 	Msgtype                   string `json:"msgtype,omitempty"`
@@ -150,6 +151,7 @@ func inboundFromBotCallback(data botCallbackData, clientID string) (channel.Inbo
 		SessionWebhook:            data.SessionWebhook,
 		SessionWebhookExpiredTime: data.SessionWebhookExpiredTime,
 		SenderStaffID:             data.SenderStaffID,
+		SenderCorpID:              data.SenderCorpID,
 		SenderNick:                data.SenderNick,
 		ConversationTitle:         data.ConversationTitle,
 		Msgtype:                   data.Msgtype,

@@ -1117,7 +1117,7 @@ var ErrChatTaskAgentNoRuntime = errors.New("chat task: agent has no runtime")
 // forceFreshSession applies only to the task created by this call. The daemon
 // uses it to skip prior chat-session resume for this dispatch without clearing
 // the chat session's stored resume pointer for future normal messages.
-func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSession, initiatorUserID pgtype.UUID, forceFreshSession bool) (db.AgentTaskQueue, error) {
+func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSession, initiatorUserID pgtype.UUID, forceFreshSession bool, taskContext []byte) (db.AgentTaskQueue, error) {
 	agent, err := s.Queries.GetAgent(ctx, chatSession.AgentID)
 	if err != nil {
 		slog.Error("chat task enqueue failed", "chat_session_id", util.UUIDToString(chatSession.ID), "error", err)
@@ -1142,6 +1142,7 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 			Bool:  forceFreshSession,
 			Valid: true,
 		},
+		TaskContext:          taskContext,
 		RuntimeMcpOverlay:    runtimeMCPOverlay.Overlay,
 		RuntimeConnectedApps: runtimeMCPOverlay.ConnectedApps,
 	})
@@ -1150,7 +1151,12 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 		return db.AgentTaskQueue{}, fmt.Errorf("create chat task: %w", err)
 	}
 
-	slog.Info("chat task enqueued", "task_id", util.UUIDToString(task.ID), "chat_session_id", util.UUIDToString(chatSession.ID), "agent_id", util.UUIDToString(chatSession.AgentID))
+	slog.Info("chat task enqueued",
+		"task_id", util.UUIDToString(task.ID),
+		"chat_session_id", util.UUIDToString(chatSession.ID),
+		"agent_id", util.UUIDToString(chatSession.AgentID),
+		"has_task_context", len(taskContext) > 0,
+	)
 	// See EnqueueTaskForIssue for ordering rationale.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
@@ -3181,11 +3187,11 @@ func (s *TaskService) agentNeedsDWSSkill(ctx context.Context, agentID pgtype.UUI
 		return false
 	}
 	agent, err := s.Queries.GetAgent(ctx, agentID)
-	if err != nil {
+	if err != nil || !agent.RuntimeID.Valid {
 		return false
 	}
-	_, hasProfile, err := DWSProfileIDFromRuntimeConfig(agent.RuntimeConfig)
-	return err == nil && hasProfile
+	runtime, err := s.Queries.GetAgentRuntime(ctx, agent.RuntimeID)
+	return err == nil && FCE2BRuntimeHasCapability(runtime, "dws")
 }
 
 func BuildAgentSkillBundles(skills []AgentSkillData) ([]AgentSkillData, []AgentSkillRefData) {

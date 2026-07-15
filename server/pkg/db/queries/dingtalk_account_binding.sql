@@ -72,6 +72,19 @@ WHERE ci.workspace_id = sqlc.arg('workspace_id')
   AND ci.channel_type = 'dingtalk_account'
 ORDER BY ci.created_at ASC, ci.id ASC;
 
+-- name: ClearExpiredDingTalkAccountCallbackCredentials :exec
+-- Callback credentials are only needed for short-lived idempotent retries.
+-- Remove both fields together after expiry while preserving the active binding
+-- and its stable dispatch endpoint.
+UPDATE channel_installation
+SET config = config - 'callback_token_hash' - 'callback_expires_at',
+    updated_at = now()
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND channel_type = 'dingtalk_account'
+  AND NULLIF(config ->> 'callback_token_hash', '') IS NOT NULL
+  AND NULLIF(config ->> 'callback_expires_at', '')::timestamptz
+      <= sqlc.arg('expired_before')::timestamptz;
+
 -- name: ActivateDingTalkAccountBinding :one
 -- Callback completion is a compare-and-swap over every ownership dimension and
 -- the current callback attempt. A stale QR can never activate a newer pending
@@ -90,16 +103,34 @@ RETURNING *;
 
 -- name: RevokeDingTalkAccountBinding :one
 -- Router DELETE happens before this local transition. The endpoint and other
--- config are retained so a later begin can reuse the stable dispatch URL.
-UPDATE channel_installation
+-- config are retained so a later begin can reuse the stable dispatch URL. The
+-- Agent's DWS identity and pending identity attempts are removed in the same
+-- database statement as the local route transition.
+WITH target AS (
+    SELECT installation.id, installation.workspace_id, installation.agent_id
+    FROM channel_installation installation
+    WHERE installation.id = sqlc.arg('id')
+      AND installation.workspace_id = sqlc.arg('workspace_id')
+      AND installation.agent_id = sqlc.arg('agent_id')
+      AND installation.channel_type = 'dingtalk_account'
+      AND installation.status IN ('pending', 'active', 'revoked')
+), deleted_identity AS (
+    DELETE FROM agent_dingtalk_identity identity
+    USING target
+    WHERE identity.workspace_id = target.workspace_id
+      AND identity.agent_id = target.agent_id
+), deleted_attempts AS (
+    DELETE FROM agent_dingtalk_identity_attempt attempt
+    USING target
+    WHERE attempt.workspace_id = target.workspace_id
+      AND attempt.agent_id = target.agent_id
+)
+UPDATE channel_installation installation
 SET status = 'revoked',
     updated_at = now()
-WHERE id = sqlc.arg('id')
-  AND workspace_id = sqlc.arg('workspace_id')
-  AND agent_id = sqlc.arg('agent_id')
-  AND channel_type = 'dingtalk_account'
-  AND status IN ('pending', 'active', 'revoked')
-RETURNING *;
+FROM target
+WHERE installation.id = target.id
+RETURNING installation.*;
 
 -- name: GetActiveDingTalkAccountBindingByEndpoint :one
 -- Public dispatch resolution must fail closed when the workspace or agent was

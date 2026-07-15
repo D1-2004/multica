@@ -243,7 +243,7 @@ describe("AgentOverviewPane Integrations tab visibility", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the Integrations tab when only DingTalk account association is configured", async () => {
+  it("shows the Integrations tab when only enterprise digital employee binding is configured", async () => {
     dingtalkAccountListingRef.current = { bindings: [], configured: true };
     renderPane([makeRuntime("claude")]);
     openCapabilities();

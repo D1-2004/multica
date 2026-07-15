@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -10,9 +11,21 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+type fakeAgentIdentityContextCreator struct {
+	requests []agentidentityhsf.CreateContextRequest
+	result   agentidentityhsf.CreateContextResult
+	err      error
+}
+
+func (f *fakeAgentIdentityContextCreator) CreateContext(_ context.Context, request agentidentityhsf.CreateContextRequest) (agentidentityhsf.CreateContextResult, error) {
+	f.requests = append(f.requests, request)
+	return f.result, f.err
+}
 
 type fakeCommandRunner struct {
 	calls     []fakeCommandCall
@@ -270,14 +283,14 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 
 	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
 	if err := launcher.execRunOnce(context.Background(), "sbx_dws", rt, taskID, "mdt_test_token", false, map[string]string{
-		"DWS_AUTH_ARCHIVE_B64": "archive_secret",
+		"AGENT_IDENTITY_CONTEXT_TOKEN": "context_secret",
 	}); err != nil {
 		t.Fatalf("execRunOnce returned error: %v", err)
 	}
 	args := runner.calls[0].args
 	found := false
 	for i := 0; i < len(args)-1; i++ {
-		if args[i] == "-e" && args[i+1] == "DWS_AUTH_ARCHIVE_B64=archive_secret" {
+		if args[i] == "-e" && args[i+1] == "AGENT_IDENTITY_CONTEXT_TOKEN=context_secret" {
 			found = true
 			break
 		}
@@ -287,7 +300,7 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	}
 }
 
-func TestFCE2BExtraEnvAllowsAgentWithoutDWSProfile(t *testing.T) {
+func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	ctx := context.Background()
 	pool := newTaskClaimRacePool(t)
 	queries := db.New(pool)
@@ -321,8 +334,8 @@ func TestFCE2BExtraEnvAllowsAgentWithoutDWSProfile(t *testing.T) {
 			workspace_id, name, runtime_mode, provider, status,
 			device_info, metadata, visibility, owner_id
 		)
-		VALUES ($1, 'FC No DWS Runtime', 'cloud', 'hermes', 'online',
-			'test runtime', '{"kind":"fc-e2b"}'::jsonb, 'private', $2)
+		VALUES ($1, 'FC DWS Runtime', 'cloud', 'hermes', 'online',
+			'test runtime', '{"kind":"fc-e2b","capabilities":["hermes","dws"]}'::jsonb, 'private', $2)
 		RETURNING id
 	`, workspaceID, userID).Scan(&runtimeID); err != nil {
 		t.Fatalf("create runtime: %v", err)
@@ -347,29 +360,89 @@ func TestFCE2BExtraEnvAllowsAgentWithoutDWSProfile(t *testing.T) {
 		pool.Exec(cleanupCtx, `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 
+	identityClient := &fakeAgentIdentityContextCreator{
+		result: agentidentityhsf.CreateContextResult{ContextToken: "ctx_from_agent_binding"},
+	}
 	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{LLMModels: []string{"qwen3.5-plus"}}, nil)
-	env, err := launcher.extraEnvForTask(ctx, db.AgentTaskQueue{
-		AgentID: util.MustParseUUID(agentID),
-	})
+	launcher.AgentIdentity = identityClient
+	runtime, err := queries.GetAgentRuntime(ctx, util.MustParseUUID(runtimeID))
+	if err != nil {
+		t.Fatalf("load runtime: %v", err)
+	}
+	task := db.AgentTaskQueue{
+		ID:            util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID:       util.MustParseUUID(agentID),
+		ChatSessionID: util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		Context:       []byte(`{"agent_identity_context_token":"caller_token_must_be_ignored"}`),
+	}
+	env, err := launcher.extraEnvForTask(ctx, task, runtime, "sbx-no-identity")
 	if err != nil {
 		t.Fatalf("extraEnvForTask returned error: %v", err)
 	}
 	if !reflect.DeepEqual(env, map[string]string{"OPENAI_MODEL": "qwen3.5-plus"}) {
 		t.Fatalf("extra env = %#v, want default FC model only", env)
 	}
+	if len(identityClient.requests) != 0 {
+		t.Fatalf("unbound chat made Agent Identity requests: %#v", identityClient.requests)
+	}
 
 	if _, err := pool.Exec(ctx, `UPDATE agent SET model = 'qwen3.7-plus' WHERE id = $1`, agentID); err != nil {
 		t.Fatalf("save selected FC model: %v", err)
 	}
 	launcher.Config.LLMModels = []string{"qwen3.5-plus", "qwen3.7-plus"}
-	env, err = launcher.extraEnvForTask(ctx, db.AgentTaskQueue{
-		AgentID: util.MustParseUUID(agentID),
-	})
+	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-no-identity")
 	if err != nil {
 		t.Fatalf("extraEnvForTask with selected model returned error: %v", err)
 	}
 	if !reflect.DeepEqual(env, map[string]string{"OPENAI_MODEL": "qwen3.7-plus"}) {
 		t.Fatalf("extra env = %#v, want selected FC model", env)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO agent_dingtalk_identity (
+			agent_id, workspace_id, dws_uid, org_id, account_display_name, bound_by
+		) VALUES ($1, $2, '24710833', '439446171', 'Xu Mo', $3)
+	`, agentID, workspaceID, userID); err != nil {
+		t.Fatalf("bind Agent DingTalk identity: %v", err)
+	}
+	launcher.Config.AgentIdentityBaseURL = "https://pre-agent-identity.dingtalk.com"
+	launcher.Config.AgentIdentityTimeout = 2 * time.Second
+	launcher.Config.DWSClientSecret = "dws-client-secret"
+	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-chat")
+	if err != nil {
+		t.Fatalf("extraEnvForTask with bound identity returned error: %v", err)
+	}
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" ||
+		env["AGENT_IDENTITY_CONTEXT_TOKEN"] == "caller_token_must_be_ignored" {
+		t.Fatalf("chat ContextToken env = %#v", env)
+	}
+	if _, present := env["DWS_UID"]; present {
+		t.Fatalf("chat must not inject a legacy DWS_UID: %#v", env)
+	}
+	if len(identityClient.requests) != 1 {
+		t.Fatalf("Agent Identity requests = %d, want 1", len(identityClient.requests))
+	}
+	request := identityClient.requests[0]
+	if request.UID != "24710833" || request.OrgID != "439446171" || request.TTLSeconds != 900 ||
+		request.RuntimeID != "sbx-chat" || request.TaskID != util.UUIDToString(task.ID) ||
+		request.Source["chat_session_id"] != util.UUIDToString(task.ChatSessionID) {
+		t.Fatalf("Agent Identity request = %#v", request)
+	}
+
+	identityClient.err = errors.New("HSF unavailable")
+	if _, err := launcher.extraEnvForTask(ctx, task, runtime, "sbx-chat"); err == nil {
+		t.Fatal("bound chat must fail when Agent Identity context creation fails")
+	}
+
+	identityClient.err = nil
+	requestCount := len(identityClient.requests)
+	runtime.Metadata = []byte(`{"kind":"fc-e2b","capabilities":["hermes"]}`)
+	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-no-dws")
+	if err != nil {
+		t.Fatalf("non-DWS runtime chat returned error: %v", err)
+	}
+	if len(identityClient.requests) != requestCount || !reflect.DeepEqual(env, map[string]string{"OPENAI_MODEL": "qwen3.7-plus"}) {
+		t.Fatalf("non-DWS runtime used Agent Identity: requests=%d env=%#v", len(identityClient.requests), env)
 	}
 }
 

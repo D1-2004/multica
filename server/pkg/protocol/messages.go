@@ -15,7 +15,15 @@ const (
 const (
 	AgentIdentityContextTokenJSONKey = "agent_identity_context_token"
 	AgentIdentityContextTokenEnvKey  = "AGENT_IDENTITY_CONTEXT_TOKEN"
+	DingTalkRobotIdentityJSONKey     = "dingtalk_robot_identity"
 )
+
+// DingTalkRobotIdentity is resolved from the current inbound bot message.
+// It is server-private task context and is never accepted from chat clients.
+type DingTalkRobotIdentity struct {
+	UID   string `json:"uid"`
+	OrgID string `json:"org_id"`
+}
 
 // RPCRequestPayload is the generic daemon→server request envelope carried in a
 // protocol.Message of type EventDaemonRPCRequest. RequestID correlates the
