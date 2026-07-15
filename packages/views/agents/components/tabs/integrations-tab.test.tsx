@@ -205,7 +205,7 @@ describe("IntegrationsTab", () => {
     };
     renderTab(<IntegrationsTab agent={agent} />);
     expect(screen.getByText(/Lark integration not enabled/i)).toBeTruthy();
-    expect(screen.getByText(/DingTalk integration not enabled/i)).toBeTruthy();
+    expect(screen.getByText(/Enterprise bot unavailable/i)).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
     expect(screen.queryByTestId("dingtalk-bind-button")).toBeNull();
   });

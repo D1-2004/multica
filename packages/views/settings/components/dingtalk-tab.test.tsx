@@ -371,7 +371,7 @@ describe("DingTalkTab (settings panel)", () => {
       install_supported: false,
     };
     render(<DingTalkTab />, { wrapper: I18nWrapper });
-    expect(screen.getByText(/DingTalk integration not enabled/i)).toBeTruthy();
+    expect(screen.getByText(/Enterprise bot unavailable/i)).toBeTruthy();
     expect(screen.getByText(/MULTICA_DINGTALK_SECRET_KEY/)).toBeTruthy();
   });
 
