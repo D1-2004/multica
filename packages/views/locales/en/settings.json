@@ -558,7 +558,19 @@
     "install_error_conflict": "Could not save the installation. Another app may already be bound to this agent.",
     "install_error_session_lost": "Install session expired or was lost. Scan again to start over.",
     "install_error_forbidden": "You no longer have permission to create enterprise bots in this workspace. Ask a workspace admin to continue.",
-    "install_error_generic": "Install failed. Try again."
+    "install_error_generic": "Install failed. Try again.",
+    "install_manual_link": "Can't scan? Enter the app credentials manually",
+    "install_manual_description": "Create an app in the DingTalk developer console, then paste its AppKey and AppSecret below to connect it to this agent.",
+    "install_manual_console_link": "Open the DingTalk developer console",
+    "install_manual_appkey_label": "AppKey (Client ID)",
+    "install_manual_appkey_placeholder": "e.g. dingxxxxxxxxxxxxxxxx",
+    "install_manual_appsecret_label": "AppSecret (Client Secret)",
+    "install_manual_appsecret_placeholder": "Paste the app secret",
+    "install_manual_submit": "Connect app",
+    "install_manual_submitting": "Connecting…",
+    "install_manual_back_to_scan": "Back to QR scan",
+    "install_manual_missing_fields": "Enter both the AppKey and the AppSecret.",
+    "install_manual_error_generic": "Could not connect the app. Check the AppKey and AppSecret, then try again."
   },
   "repositories": {
     "section_title": "Repositories",

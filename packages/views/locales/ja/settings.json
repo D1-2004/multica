@@ -551,7 +551,19 @@
     "install_error_conflict": "インストール情報を保存できませんでした。このエージェントには別のアプリが接続されている可能性があります。",
     "install_error_session_lost": "インストールセッションが失効または失われました。もう一度スキャンしてやり直してください。",
     "install_error_forbidden": "このワークスペースで DingTalk ボットをインストールする権限がありません。ワークスペース管理者にお問い合わせください。",
-    "install_error_generic": "インストールに失敗しました。もう一度お試しください。"
+    "install_error_generic": "インストールに失敗しました。もう一度お試しください。",
+    "install_manual_link": "スキャンできませんか？アプリの認証情報を手動で入力",
+    "install_manual_description": "DingTalk 開発者コンソールでアプリを作成し、その AppKey と AppSecret を下に貼り付けて、このエージェントに接続します。",
+    "install_manual_console_link": "DingTalk 開発者コンソールを開く",
+    "install_manual_appkey_label": "AppKey（Client ID）",
+    "install_manual_appkey_placeholder": "例：dingxxxxxxxxxxxxxxxx",
+    "install_manual_appsecret_label": "AppSecret（Client Secret）",
+    "install_manual_appsecret_placeholder": "アプリシークレットを貼り付け",
+    "install_manual_submit": "アプリを接続",
+    "install_manual_submitting": "接続中…",
+    "install_manual_back_to_scan": "QR スキャンに戻る",
+    "install_manual_missing_fields": "AppKey と AppSecret の両方を入力してください。",
+    "install_manual_error_generic": "アプリを接続できませんでした。AppKey と AppSecret を確認して、もう一度お試しください。"
   },
   "repositories": {
     "section_title": "リポジトリ",

@@ -9,6 +9,8 @@ import { ChevronRight, ExternalLink, RefreshCw, Trash2 } from "lucide-react";
 import { QRCode } from "react-qr-code";
 import { cn } from "@multica/ui/lib/utils";
 import { Button } from "@multica/ui/components/ui/button";
+import { Input } from "@multica/ui/components/ui/input";
+import { Label } from "@multica/ui/components/ui/label";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import {
@@ -76,7 +78,6 @@ export function DingTalkTab() {
   });
   const installations = data?.installations ?? [];
   const configured = data?.configured === true;
-  const installSupported = data?.install_supported === true;
 
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -115,15 +116,6 @@ export function DingTalkTab() {
               </code>{" "}
               {t(($) => $.dingtalk.not_enabled_description_suffix)}{" "}
               {t(($) => $.dingtalk.not_enabled_self_host_hint)}
-            </p>
-          </CardContent>
-        </Card>
-      ) : !installSupported && installations.length === 0 ? (
-        <Card>
-          <CardContent className="space-y-2">
-            <p className="text-sm font-medium">{t(($) => $.dingtalk.preview_title)}</p>
-            <p className="text-xs text-muted-foreground">
-              {t(($) => $.dingtalk.preview_description)}
             </p>
           </CardContent>
         </Card>
@@ -278,6 +270,12 @@ export function DingTalkAgentBindButton({
     ...dingtalkInstallationsOptions(wsId),
     enabled: !!wsId,
   });
+  // `configured` (at-rest key present) gates the CTA; `install_supported`
+  // only governs whether the scan-to-create device flow is wired. The
+  // manual-credential path works whenever configured, so the button shows
+  // even when the scan flow is down — the dialog opens straight into the
+  // manual form in that case.
+  const configured = listing?.configured === true;
   const installSupported = listing?.install_supported === true;
 
   const { data: members = [] } = useQuery({
@@ -304,7 +302,7 @@ export function DingTalkAgentBindButton({
     );
   }
 
-  if (!installSupported) return null;
+  if (!configured) return null;
 
   return (
     <>
@@ -329,6 +327,7 @@ export function DingTalkAgentBindButton({
           wsId={wsId}
           agentId={agentId}
           agentName={agentName}
+          installSupported={installSupported}
           onClose={() => setDialogOpen(false)}
         />
       )}
@@ -471,12 +470,21 @@ function DingTalkAgentBotConnectedBadge({
   );
 }
 
-// DingTalkInstallDialog walks the user through the device-flow install:
-// 1) POST /dingtalk/install/begin → render QR
-// 2) poll /dingtalk/install/{sessionId}/status until success | error
-// 3) on success: toast, close, invalidate installations cache
+// DingTalkInstallDialog walks the user through binding an agent to a
+// DingTalk app. It offers two paths:
 //
-// The dialog re-fetches a fresh session on each "retry" rather than
+//   scan   — the device flow: POST /dingtalk/install/begin → render QR →
+//            poll /dingtalk/install/{sessionId}/status until success/error.
+//   manual — the fallback: the operator creates the app themselves in the
+//            DingTalk developer console and pastes its AppKey/AppSecret,
+//            which POST /dingtalk/install/manual persists directly. This
+//            keeps binding possible when the scan flow is broken or the
+//            device-flow transport is not wired (installSupported=false).
+//
+// When installSupported is false the dialog opens straight into the manual
+// form and never touches the (unavailable) begin endpoint.
+//
+// The scan path re-fetches a fresh session on each "retry" rather than
 // reusing a stale device_code — DingTalk's device_code is single-use
 // and time-boxed. Session/polling state handling mirrors
 // LarkInstallDialog (see that file for the StrictMode closedRef note).
@@ -484,15 +492,25 @@ function DingTalkInstallDialog({
   wsId,
   agentId,
   agentName,
+  installSupported,
   onClose,
 }: {
   wsId: string;
   agentId: string;
   agentName?: string;
+  /** Whether the scan-to-create device flow is wired. When false the
+   * dialog starts in — and stays on — the manual form. */
+  installSupported: boolean;
   onClose: () => void;
 }) {
   const { t } = useT("settings");
   const qc = useQueryClient();
+
+  // Which install path is on screen. Default to scan when it is available,
+  // otherwise the manual form is the only option.
+  const [mode, setMode] = useState<"scan" | "manual">(
+    installSupported ? "scan" : "manual",
+  );
 
   const [session, setSession] = useState<null | {
     sessionId: string;
@@ -509,8 +527,14 @@ function DingTalkInstallDialog({
   // allowUnbound is baked into the QR session at begin time (the flag is
   // persisted when the scan completes), so toggling it re-begins the
   // session with a fresh device code. Default off = the standard
-  // bind-first bot.
+  // bind-first bot. The manual form reuses the same flag.
   const [allowUnbound, setAllowUnbound] = useState(false);
+
+  // Manual-form state.
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
 
   async function beginSession(allow = allowUnbound) {
     setBeginning(true);
@@ -537,9 +561,54 @@ function DingTalkInstallDialog({
     }
   }
 
+  // Switch to the manual form. Nothing to begin — the operator supplies
+  // the credentials directly.
+  function switchToManual() {
+    setMode("manual");
+    setManualError(null);
+  }
+
+  // Switch (back) to the scan flow, minting a fresh session if none is in
+  // flight yet (e.g. the dialog opened straight into the manual form).
+  function switchToScan() {
+    setMode("scan");
+    if (!session && !beginning) void beginSession();
+  }
+
+  async function submitManual() {
+    const key = clientId.trim();
+    const secret = clientSecret.trim();
+    if (!key || !secret) {
+      setManualError(t(($) => $.dingtalk.install_manual_missing_fields));
+      return;
+    }
+    setSubmitting(true);
+    setManualError(null);
+    try {
+      await api.manualInstallDingTalk(wsId, agentId, {
+        clientId: key,
+        clientSecret: secret,
+        allowUnbound,
+      });
+      if (closedRef.current) return;
+      await qc.invalidateQueries({ queryKey: dingtalkKeys.installations(wsId) });
+      toast.success(t(($) => $.dingtalk.install_success_toast));
+      onClose();
+    } catch (e) {
+      if (closedRef.current) return;
+      setManualError(
+        e instanceof Error ? e.message : t(($) => $.dingtalk.install_manual_error_generic),
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   useEffect(() => {
     closedRef.current = false;
-    void beginSession();
+    // Only the scan path talks to the begin endpoint; when the device flow
+    // is unavailable the dialog opens on the manual form and must not.
+    if (installSupported) void beginSession();
     return () => {
       closedRef.current = true;
     };
@@ -547,7 +616,7 @@ function DingTalkInstallDialog({
   }, []);
 
   useEffect(() => {
-    if (!session || status !== "pending") return;
+    if (mode !== "scan" || !session || status !== "pending") return;
     const intervalMs = Math.max(2000, session.pollIntervalSeconds * 1000);
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -604,7 +673,7 @@ function DingTalkInstallDialog({
       if (timer) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.sessionId, status]);
+  }, [session?.sessionId, status, mode]);
 
   return (
     <Dialog
@@ -624,23 +693,151 @@ function DingTalkInstallDialog({
         </DialogHeader>
 
         <div className="flex flex-col items-center gap-4 py-2">
-          {beginning && !session && (
-            <p className="text-sm text-muted-foreground">{t(($) => $.dingtalk.install_starting)}</p>
-          )}
-
-          {session && status === "pending" && (
+          {mode === "scan" ? (
             <>
+              {beginning && !session && (
+                <p className="text-sm text-muted-foreground">{t(($) => $.dingtalk.install_starting)}</p>
+              )}
+
+              {session && status === "pending" && (
+                <>
+                  <div className="flex w-full items-start gap-3 rounded-md border p-3">
+                    <Switch
+                      id="dingtalk-allow-unbound"
+                      checked={allowUnbound}
+                      disabled={beginning}
+                      onCheckedChange={(checked) => {
+                        setAllowUnbound(checked);
+                        void beginSession(checked);
+                      }}
+                    />
+                    <label htmlFor="dingtalk-allow-unbound" className="flex-1 cursor-pointer">
+                      <span className="text-sm font-medium">
+                        {t(($) => $.dingtalk.install_allow_unbound_label)}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        {t(($) => $.dingtalk.install_allow_unbound_hint)}
+                      </span>
+                    </label>
+                  </div>
+                  <div className="rounded-md border bg-white p-3">
+                    <QRCode value={session.qrCodeURL} size={192} />
+                  </div>
+                  <p className="text-center text-xs text-muted-foreground">
+                    {t(($) => $.dingtalk.install_scan_hint)}
+                  </p>
+                  <a
+                    href={session.qrCodeURL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs underline text-muted-foreground"
+                  >
+                    {t(($) => $.dingtalk.install_open_link_fallback)}
+                  </a>
+                </>
+              )}
+
+              {status === "success" && (
+                <p className="text-sm font-medium">{t(($) => $.dingtalk.install_success)}</p>
+              )}
+
+              {status === "error" && (
+                <div className="space-y-2 text-center">
+                  <p className="text-sm font-medium text-destructive">
+                    {(() => {
+                      switch (errorReason) {
+                        case "expired":
+                          return t(($) => $.dingtalk.install_error_expired);
+                        case "install_failed":
+                          return t(($) => $.dingtalk.install_error_install_failed);
+                        case "dingtalk_protocol_error":
+                          return t(($) => $.dingtalk.install_error_protocol);
+                        case "credentials_check_failed":
+                          return t(($) => $.dingtalk.install_error_credentials);
+                        case "installation_conflict":
+                          return t(($) => $.dingtalk.install_error_conflict);
+                        case "session_lost":
+                          return t(($) => $.dingtalk.install_error_session_lost);
+                        case "forbidden":
+                          return t(($) => $.dingtalk.install_error_forbidden);
+                        default:
+                          return t(($) => $.dingtalk.install_error_generic);
+                      }
+                    })()}
+                  </p>
+                  {errorMessage && (
+                    <p className="text-[10px] text-muted-foreground break-all">
+                      {errorMessage}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {status !== "success" && (
+                <button
+                  type="button"
+                  onClick={switchToManual}
+                  className="text-xs underline text-muted-foreground hover:text-foreground"
+                  data-testid="dingtalk-install-manual-link"
+                >
+                  {t(($) => $.dingtalk.install_manual_link)}
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="w-full space-y-4" data-testid="dingtalk-install-manual-form">
+              <p className="text-xs text-muted-foreground">
+                {t(($) => $.dingtalk.install_manual_description)}
+              </p>
+              <a
+                href={DINGTALK_DEV_CONSOLE}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+              >
+                <ExternalLink className="h-3 w-3" />
+                {t(($) => $.dingtalk.install_manual_console_link)}
+              </a>
+              <div className="space-y-1.5">
+                <Label htmlFor="dingtalk-manual-appkey">
+                  {t(($) => $.dingtalk.install_manual_appkey_label)}
+                </Label>
+                <Input
+                  id="dingtalk-manual-appkey"
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  placeholder={t(($) => $.dingtalk.install_manual_appkey_placeholder)}
+                  disabled={submitting}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="dingtalk-manual-appsecret">
+                  {t(($) => $.dingtalk.install_manual_appsecret_label)}
+                </Label>
+                <Input
+                  id="dingtalk-manual-appsecret"
+                  type="password"
+                  value={clientSecret}
+                  onChange={(e) => setClientSecret(e.target.value)}
+                  placeholder={t(($) => $.dingtalk.install_manual_appsecret_placeholder)}
+                  disabled={submitting}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
               <div className="flex w-full items-start gap-3 rounded-md border p-3">
                 <Switch
-                  id="dingtalk-allow-unbound"
+                  id="dingtalk-manual-allow-unbound"
                   checked={allowUnbound}
-                  disabled={beginning}
-                  onCheckedChange={(checked) => {
-                    setAllowUnbound(checked);
-                    void beginSession(checked);
-                  }}
+                  disabled={submitting}
+                  onCheckedChange={setAllowUnbound}
                 />
-                <label htmlFor="dingtalk-allow-unbound" className="flex-1 cursor-pointer">
+                <label
+                  htmlFor="dingtalk-manual-allow-unbound"
+                  className="flex-1 cursor-pointer"
+                >
                   <span className="text-sm font-medium">
                     {t(($) => $.dingtalk.install_allow_unbound_label)}
                   </span>
@@ -649,62 +846,42 @@ function DingTalkInstallDialog({
                   </span>
                 </label>
               </div>
-              <div className="rounded-md border bg-white p-3">
-                <QRCode value={session.qrCodeURL} size={192} />
-              </div>
-              <p className="text-center text-xs text-muted-foreground">
-                {t(($) => $.dingtalk.install_scan_hint)}
-              </p>
-              <a
-                href={session.qrCodeURL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs underline text-muted-foreground"
-              >
-                {t(($) => $.dingtalk.install_open_link_fallback)}
-              </a>
-            </>
-          )}
-
-          {status === "success" && (
-            <p className="text-sm font-medium">{t(($) => $.dingtalk.install_success)}</p>
-          )}
-
-          {status === "error" && (
-            <div className="space-y-2 text-center">
-              <p className="text-sm font-medium text-destructive">
-                {(() => {
-                  switch (errorReason) {
-                    case "expired":
-                      return t(($) => $.dingtalk.install_error_expired);
-                    case "install_failed":
-                      return t(($) => $.dingtalk.install_error_install_failed);
-                    case "dingtalk_protocol_error":
-                      return t(($) => $.dingtalk.install_error_protocol);
-                    case "credentials_check_failed":
-                      return t(($) => $.dingtalk.install_error_credentials);
-                    case "installation_conflict":
-                      return t(($) => $.dingtalk.install_error_conflict);
-                    case "session_lost":
-                      return t(($) => $.dingtalk.install_error_session_lost);
-                    case "forbidden":
-                      return t(($) => $.dingtalk.install_error_forbidden);
-                    default:
-                      return t(($) => $.dingtalk.install_error_generic);
-                  }
-                })()}
-              </p>
-              {errorMessage && (
-                <p className="text-[10px] text-muted-foreground break-all">
-                  {errorMessage}
+              {manualError && (
+                <p className="text-xs text-destructive" role="alert">
+                  {manualError}
                 </p>
+              )}
+              {installSupported && (
+                <button
+                  type="button"
+                  onClick={switchToScan}
+                  className="text-xs underline text-muted-foreground hover:text-foreground"
+                >
+                  {t(($) => $.dingtalk.install_manual_back_to_scan)}
+                </button>
               )}
             </div>
           )}
         </div>
 
         <DialogFooter>
-          {status === "error" ? (
+          {mode === "manual" ? (
+            <>
+              <Button variant="outline" size="sm" onClick={onClose} disabled={submitting}>
+                {t(($) => $.dingtalk.install_close)}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void submitManual()}
+                disabled={submitting}
+                data-testid="dingtalk-install-manual-submit"
+              >
+                {submitting
+                  ? t(($) => $.dingtalk.install_manual_submitting)
+                  : t(($) => $.dingtalk.install_manual_submit)}
+              </Button>
+            </>
+          ) : status === "error" ? (
             <>
               <Button variant="outline" size="sm" onClick={onClose}>
                 {t(($) => $.dingtalk.install_close)}

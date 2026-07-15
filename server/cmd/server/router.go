@@ -732,6 +732,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// access token before committing them, so a half-created app
 				// surfaces as a clean install error instead of a dead row.
 				verifier := dingtalk.NewCredentialVerifier(os.Getenv("DINGTALK_OPENAPI_BASE"), nil)
+				// The manual install path reuses the same verifier to
+				// validate operator-supplied credentials. It is set here
+				// (independent of the device-flow RegistrationService below)
+				// so manual install keeps working even when the scan flow
+				// fails to construct.
+				h.DingTalkCredentialVerifier = verifier
 				regSvc, rerr := dingtalk.NewRegistrationService(
 					dingtalk.RegistrationServiceConfig{Logger: slog.Default()},
 					regClient,
@@ -1297,6 +1303,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// terminal failure.
 					r.Post("/dingtalk/install/begin", h.BeginDingTalkInstall)
 					r.Get("/dingtalk/install/{sessionId}/status", h.GetDingTalkInstallStatus)
+					// Manual install fallback: create the installation from
+					// operator-supplied AppKey/AppSecret when the scan-to-create
+					// device flow is unavailable.
+					r.Post("/dingtalk/install/manual", h.ManualInstallDingTalk)
 				})
 
 				// Slack integration (MUL-3666). Same admin/member split as
