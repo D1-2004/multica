@@ -174,9 +174,24 @@ describe("IntegrationsTab", () => {
     expect(screen.getByText("Lark")).toBeTruthy();
     expect(screen.getByText("Slack")).toBeTruthy();
     expect(screen.getByText("Enterprise bot")).toBeTruthy();
+    const digitalEmployee = screen.getByRole("region", {
+      name: /Enterprise digital employee/i,
+    });
+    const enterpriseBot = screen.getByText("Enterprise bot");
+    const lark = screen.getByText("Lark");
+    const slack = screen.getByText("Slack");
+    expect(digitalEmployee).toHaveAttribute("data-agent-id", "agent-1");
     expect(
-      screen.getByRole("region", { name: /Enterprise digital employee/i }),
-    ).toHaveAttribute("data-agent-id", "agent-1");
+      digitalEmployee.compareDocumentPosition(enterpriseBot) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      enterpriseBot.compareDocumentPosition(lark) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      lark.compareDocumentPosition(slack) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.getByTestId("lark-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
     expect(screen.getByTestId("slack-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
     expect(screen.getByTestId("dingtalk-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
