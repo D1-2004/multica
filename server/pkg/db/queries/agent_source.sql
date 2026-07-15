@@ -53,6 +53,21 @@ SELECT * FROM agent_source
 WHERE workspace_id = $1
   AND managed_source_key = $2;
 
+-- name: UpdateManagedAgentOwner :one
+UPDATE agent AS target
+SET owner_id = sqlc.arg(owner_id),
+    updated_at = now()
+WHERE target.id = sqlc.arg(agent_id)
+  AND target.workspace_id = sqlc.arg(workspace_id)
+  AND EXISTS (
+      SELECT 1
+      FROM agent_source
+      WHERE agent_source.agent_id = target.id
+        AND agent_source.source_type = 'managed_git'
+        AND agent_source.managed_source_key = sqlc.arg(managed_source_key)
+  )
+RETURNING target.*;
+
 -- name: ListOutdatedIdleManagedAgentSources :many
 SELECT source.*
 FROM agent_source AS source

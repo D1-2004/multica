@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/managedagent"
 	"github.com/multica-ai/multica/server/internal/service"
 )
 
@@ -170,5 +172,91 @@ func TestUpsertFDERuntimeAlignsOwnerOnRetry(t *testing.T) {
 	}
 	if runtime.OwnerID != secondOwnerID {
 		t.Fatalf("runtime owner = %s, want scanner/Agent owner %s", uuidToString(runtime.OwnerID), uuidToString(secondOwnerID))
+	}
+}
+
+func TestManagedAgentProvisionReassignsExistingAgentToScanner(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler database fixture unavailable")
+	}
+
+	ctx := context.Background()
+	suffix := randomID()[:8]
+	sourceKey := "fde-agent-test-" + suffix
+	var firstOwnerID, scannerID, workspaceID, runtimeID, agentID pgtype.UUID
+	for _, row := range []struct {
+		name  string
+		email string
+		id    *pgtype.UUID
+	}{
+		{name: "FDE Existing Owner", email: fmt.Sprintf("fde-existing-owner-%s@multica.test", suffix), id: &firstOwnerID},
+		{name: "FDE Scanner", email: fmt.Sprintf("fde-scanner-%s@multica.test", suffix), id: &scannerID},
+	} {
+		if err := testPool.QueryRow(ctx, `INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id`, row.name, row.email).Scan(row.id); err != nil {
+			t.Fatalf("create %s: %v", row.name, err)
+		}
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workspace (name, slug, issue_prefix)
+		VALUES ('FDE Existing Agent', $1, 'FEA') RETURNING id
+	`, "fde-existing-agent-"+suffix).Scan(&workspaceID); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM managed_agent_source_snapshot WHERE source_key = $1`, sourceKey)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id IN ($1, $2)`, firstOwnerID, scannerID)
+	})
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (
+			workspace_id, daemon_id, name, runtime_mode, provider, status,
+			device_info, metadata, owner_id, visibility
+		) VALUES ($1, $2, 'FDE Runtime', 'cloud', 'fc-e2b', 'online', 'test', '{}', $3, 'private')
+		RETURNING id
+	`, workspaceID, "fc-e2b:fde:"+uuidToString(workspaceID), firstOwnerID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent (
+			workspace_id, name, runtime_mode, runtime_config, visibility, status,
+			max_concurrent_tasks, owner_id, description, runtime_id, instructions,
+			custom_env, custom_args, permission_mode
+		) VALUES ($1, 'FDE Existing Agent', 'cloud', '{}', 'private', 'offline', 6, $2, '', $3, '', '{}', '[]', 'private')
+		RETURNING id
+	`, workspaceID, firstOwnerID, runtimeID).Scan(&agentID); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO managed_agent_source_snapshot (source_key, repository_url, ref)
+		VALUES ($1, $2, 'master')
+	`, sourceKey, managedagent.DefaultRepositoryURL); err != nil {
+		t.Fatalf("create managed snapshot ledger: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_source (
+			agent_id, workspace_id, source_type, managed_source_key, repo_owner,
+			repo_name, ref, manifest_path, synced_commit_sha, sync_status, created_by
+		) VALUES ($1, $2, 'managed_git', $4, 'keeperqaq', 'fde-agent',
+			'master', 'multica-agent.yaml', 'test-sha', 'ready', $3)
+	`, agentID, workspaceID, firstOwnerID, sourceKey); err != nil {
+		t.Fatalf("create managed source: %v", err)
+	}
+
+	managed, err := managedagent.New(testHandler.Queries, testPool, managedagent.Config{
+		SourceKey: sourceKey, RepositoryURL: managedagent.DefaultRepositoryURL,
+		Ref: managedagent.DefaultRef, SyncInterval: 30 * time.Minute, BatchSize: 50,
+	}, nil)
+	if err != nil {
+		t.Fatalf("create managed service: %v", err)
+	}
+	agent, created, err := managed.Provision(ctx, workspaceID, scannerID, runtimeID, "cloud", "")
+	if err != nil {
+		t.Fatalf("reuse managed Agent: %v", err)
+	}
+	if created {
+		t.Fatal("existing managed Agent must be reused")
+	}
+	if agent.OwnerID != scannerID {
+		t.Fatalf("Agent owner = %s, want scanner %s", uuidToString(agent.OwnerID), uuidToString(scannerID))
 	}
 }

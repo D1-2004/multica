@@ -574,3 +574,65 @@ func (q *Queries) MarkAgentSourcesDisconnectedByInstallation(ctx context.Context
 	_, err := q.db.Exec(ctx, markAgentSourcesDisconnectedByInstallation, githubInstallationID)
 	return err
 }
+
+const updateManagedAgentOwner = `-- name: UpdateManagedAgentOwner :one
+UPDATE agent AS target
+SET owner_id = $1,
+    updated_at = now()
+WHERE target.id = $2
+  AND target.workspace_id = $3
+  AND EXISTS (
+      SELECT 1
+      FROM agent_source
+      WHERE agent_source.agent_id = target.id
+        AND agent_source.source_type = 'managed_git'
+        AND agent_source.managed_source_key = $4
+  )
+RETURNING target.id, target.workspace_id, target.name, target.avatar_url, target.runtime_mode, target.runtime_config, target.visibility, target.status, target.max_concurrent_tasks, target.owner_id, target.created_at, target.updated_at, target.description, target.runtime_id, target.instructions, target.archived_at, target.archived_by, target.custom_env, target.custom_args, target.mcp_config, target.model, target.thinking_level, target.composio_toolkit_allowlist, target.permission_mode, target.kind, target.system_key
+`
+
+type UpdateManagedAgentOwnerParams struct {
+	OwnerID          pgtype.UUID `json:"owner_id"`
+	AgentID          pgtype.UUID `json:"agent_id"`
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	ManagedSourceKey pgtype.Text `json:"managed_source_key"`
+}
+
+func (q *Queries) UpdateManagedAgentOwner(ctx context.Context, arg UpdateManagedAgentOwnerParams) (Agent, error) {
+	row := q.db.QueryRow(ctx, updateManagedAgentOwner,
+		arg.OwnerID,
+		arg.AgentID,
+		arg.WorkspaceID,
+		arg.ManagedSourceKey,
+	)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.RuntimeMode,
+		&i.RuntimeConfig,
+		&i.Visibility,
+		&i.Status,
+		&i.MaxConcurrentTasks,
+		&i.OwnerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Description,
+		&i.RuntimeID,
+		&i.Instructions,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+		&i.CustomEnv,
+		&i.CustomArgs,
+		&i.McpConfig,
+		&i.Model,
+		&i.ThinkingLevel,
+		&i.ComposioToolkitAllowlist,
+		&i.PermissionMode,
+		&i.Kind,
+		&i.SystemKey,
+	)
+	return i, err
+}

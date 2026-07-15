@@ -22,11 +22,12 @@ import (
 )
 
 const (
-	DefaultSourceKey    = "fde-agent"
-	DefaultRef          = "main"
-	DefaultSyncInterval = 30 * time.Minute
-	DefaultBatchSize    = 50
-	advisoryLockName    = "multica:managed-agent-source:fde-agent"
+	DefaultSourceKey     = "fde-agent"
+	DefaultRepositoryURL = "https://gitee.com/keeperqaq/fde-agent.git"
+	DefaultRef           = "master"
+	DefaultSyncInterval  = 30 * time.Minute
+	DefaultBatchSize     = 50
+	advisoryLockName     = "multica:managed-agent-source:fde-agent"
 )
 
 var ErrSnapshotUnavailable = errors.New("managed agent source snapshot is unavailable")
@@ -42,7 +43,7 @@ type Config struct {
 func ConfigFromEnv() Config {
 	return Config{
 		SourceKey:     DefaultSourceKey,
-		RepositoryURL: strings.TrimSpace(os.Getenv("MULTICA_FDE_AGENT_REPOSITORY_URL")),
+		RepositoryURL: envOrDefault("MULTICA_FDE_AGENT_REPOSITORY_URL", DefaultRepositoryURL),
 		Ref:           envOrDefault("MULTICA_FDE_AGENT_REPOSITORY_REF", DefaultRef),
 		SyncInterval:  durationOrDefault(os.Getenv("MULTICA_FDE_AGENT_SYNC_INTERVAL"), DefaultSyncInterval),
 		BatchSize:     int32OrDefault(os.Getenv("MULTICA_FDE_AGENT_ROLLOUT_BATCH_SIZE"), DefaultBatchSize),
@@ -56,11 +57,11 @@ func (c Config) Validate() error {
 		return nil
 	}
 	parsed, err := url.Parse(c.RepositoryURL)
-	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, "gitee.com") || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return errors.New("MULTICA_FDE_AGENT_REPOSITORY_URL must be a public https://gitee.com repository URL")
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("MULTICA_FDE_AGENT_REPOSITORY_URL must be a credential-free public HTTPS Git repository URL")
 	}
 	pathParts := strings.Split(strings.Trim(strings.TrimSuffix(parsed.Path, ".git"), "/"), "/")
-	if len(pathParts) < 2 || slicesContain(pathParts, "") || slicesContain(pathParts, ".") || slicesContain(pathParts, "..") || strings.ContainsRune(c.Ref, '\x00') || strings.TrimSpace(c.Ref) == "" {
+	if len(pathParts) < 1 || slicesContain(pathParts, "") || slicesContain(pathParts, ".") || slicesContain(pathParts, "..") || strings.ContainsRune(c.Ref, '\x00') || strings.TrimSpace(c.Ref) == "" {
 		return errors.New("invalid managed FDE Agent repository/ref configuration")
 	}
 	if c.BatchSize <= 0 || c.SyncInterval <= 0 {
@@ -247,7 +248,7 @@ func (s *Service) cloneAndCompile(ctx context.Context) (string, agentsource.Bund
 // the same Agent.
 func (s *Service) Provision(ctx context.Context, workspaceID, ownerID, runtimeID pgtype.UUID, runtimeMode, model string) (db.Agent, bool, error) {
 	if existing, err := s.queries.GetManagedAgentSourceInWorkspace(ctx, db.GetManagedAgentSourceInWorkspaceParams{WorkspaceID: workspaceID, ManagedSourceKey: pgtype.Text{String: s.config.SourceKey, Valid: true}}); err == nil {
-		agent, err := s.queries.GetAgent(ctx, existing.AgentID)
+		agent, err := s.updateExistingOwner(ctx, existing.AgentID, workspaceID, ownerID)
 		return agent, false, err
 	}
 	snapshot, bundle, err := s.EnsureSnapshot(ctx)
@@ -284,7 +285,7 @@ func (s *Service) Provision(ctx context.Context, workspaceID, ownerID, runtimeID
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		if existing, getErr := s.queries.GetManagedAgentSourceInWorkspace(ctx, db.GetManagedAgentSourceInWorkspaceParams{WorkspaceID: workspaceID, ManagedSourceKey: pgtype.Text{String: s.config.SourceKey, Valid: true}}); getErr == nil {
-			agent, getAgentErr := s.queries.GetAgent(ctx, existing.AgentID)
+			agent, getAgentErr := s.updateExistingOwner(ctx, existing.AgentID, workspaceID, ownerID)
 			return agent, false, getAgentErr
 		}
 		return db.Agent{}, false, err
@@ -305,6 +306,13 @@ func (s *Service) Provision(ctx context.Context, workspaceID, ownerID, runtimeID
 		return db.Agent{}, false, err
 	}
 	return agent, true, nil
+}
+
+func (s *Service) updateExistingOwner(ctx context.Context, agentID, workspaceID, ownerID pgtype.UUID) (db.Agent, error) {
+	return s.queries.UpdateManagedAgentOwner(ctx, db.UpdateManagedAgentOwnerParams{
+		AgentID: agentID, WorkspaceID: workspaceID, OwnerID: ownerID,
+		ManagedSourceKey: pgtype.Text{String: s.config.SourceKey, Valid: true},
+	})
 }
 
 func (s *Service) Rollout(ctx context.Context, sha string, bundle agentsource.Bundle) error {

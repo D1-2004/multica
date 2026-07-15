@@ -5,20 +5,36 @@ import (
 	"time"
 )
 
-func TestConfigValidateAcceptsOnlyPublicGiteeRepository(t *testing.T) {
+func TestConfigFromEnvUsesFixedRepositoryByDefault(t *testing.T) {
+	t.Setenv("MULTICA_FDE_AGENT_REPOSITORY_URL", "")
+	config := ConfigFromEnv()
+	if config.RepositoryURL != DefaultRepositoryURL {
+		t.Fatalf("repository URL = %q, want %q", config.RepositoryURL, DefaultRepositoryURL)
+	}
+}
+
+func TestConfigValidateAcceptsCredentialFreePublicHTTPSRepository(t *testing.T) {
 	valid := Config{
 		SourceKey: DefaultSourceKey, RepositoryURL: "https://gitee.com/acme/fde-agent.git",
 		Ref: "main", SyncInterval: 30 * time.Minute, BatchSize: 50,
 	}
-	if err := valid.Validate(); err != nil {
-		t.Fatalf("valid config rejected: %v", err)
+	for _, raw := range []string{
+		"https://gitee.com/acme/fde-agent.git",
+		"https://github.com/acme/fde-agent.git",
+		"https://gitlab.example.com/fde-agent.git",
+		"https://git.example.com:8443/team/fde-agent.git",
+	} {
+		candidate := valid
+		candidate.RepositoryURL = raw
+		if err := candidate.Validate(); err != nil {
+			t.Errorf("valid public HTTPS repository rejected: %s: %v", raw, err)
+		}
 	}
 	for _, raw := range []string{
 		"http://gitee.com/acme/fde-agent.git",
-		"https://github.com/acme/fde-agent.git",
 		"https://token@gitee.com/acme/fde-agent.git",
-		"https://gitee.com:444/acme/fde-agent.git",
-		"https://gitee.com/acme",
+		"https:///acme/fde-agent.git",
+		"https://gitee.com/acme/fde-agent.git?token=secret",
 		"https://gitee.com/acme/../fde-agent",
 	} {
 		candidate := valid
