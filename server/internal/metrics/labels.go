@@ -32,6 +32,8 @@ const (
 	labelResult       = "result"
 	labelOp           = "op"
 	labelGate         = "gate"
+	labelOutcome      = "outcome"
+	labelKeyID        = "key_id"
 )
 
 var businessMetricLabels = map[string][]string{
@@ -84,6 +86,14 @@ var businessMetricLabels = map[string][]string{
 	"multica_cloudruntime_request_duration_seconds":    {labelOp},
 	"multica_feedback_submitted_total":                 {labelKind, labelPlatform},
 	"multica_contact_sales_submitted_total":            {labelSource},
+
+	// DingTalk account binding and dispatch credential contract.
+	"dingtalk_account_begin_total":               {labelOutcome},
+	"dingtalk_account_callback_total":            {labelOutcome},
+	"dingtalk_account_subscription_verify_total": {labelOutcome},
+	"dingtalk_account_unbind_total":              {labelOutcome},
+	"dispatch_credential_derive_total":            {labelOutcome, labelKeyID},
+	"dispatch_auth_total":                         {labelOutcome},
 }
 
 var forbiddenMetricLabels = map[string]struct{}{
@@ -146,6 +156,28 @@ var (
 	}
 	knownFailureReasons = map[string]string{}
 	modelAliasUnsafeRe  = regexp.MustCompile(`[^a-z0-9._:/+-]+`)
+	metricKeyIDRe       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,31}$`)
+	knownOperationOutcomes = map[string]string{
+		"success":               "success",
+		"error":                 "error",
+		"not_configured":        "not_configured",
+		"already_active":        "already_active",
+		"not_found":             "not_found",
+		"expired":               "expired",
+		"conflict":              "conflict",
+		"router_unavailable":    "router_unavailable",
+		"invalid_result":        "invalid_result",
+		"invalid_endpoint":      "invalid_endpoint",
+		"unknown_key":           "unknown_key",
+		"missing_credential":    "missing_credential",
+		"invalid_credential":    "invalid_credential",
+		"endpoint_not_found":    "endpoint_not_found",
+		"storage_error":         "storage_error",
+		"inactive":              "inactive",
+		"source_mismatch":       "source_mismatch",
+		"agent_mismatch":        "agent_mismatch",
+		"dispatch_url_mismatch": "dispatch_url_mismatch",
+	}
 )
 
 func init() {
@@ -230,4 +262,20 @@ func NormalizeModelAlias(value string) string {
 		return value[:128]
 	}
 	return value
+}
+
+func NormalizeOperationOutcome(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if normalized, ok := knownOperationOutcomes[value]; ok {
+		return normalized
+	}
+	return "error"
+}
+
+func normalizeMetricKeyID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "invalid" || value == "unknown" || metricKeyIDRe.MatchString(value) {
+		return value
+	}
+	return "unknown"
 }

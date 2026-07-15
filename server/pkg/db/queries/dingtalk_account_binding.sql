@@ -72,6 +72,19 @@ WHERE ci.workspace_id = sqlc.arg('workspace_id')
   AND ci.channel_type = 'dingtalk_account'
 ORDER BY ci.created_at ASC, ci.id ASC;
 
+-- name: ClearExpiredDingTalkAccountCallbackCredentials :exec
+-- Callback credentials are only needed for short-lived idempotent retries.
+-- Remove both fields together after expiry while preserving the active binding
+-- and its stable dispatch endpoint.
+UPDATE channel_installation
+SET config = config - 'callback_token_hash' - 'callback_expires_at',
+    updated_at = now()
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND channel_type = 'dingtalk_account'
+  AND NULLIF(config ->> 'callback_token_hash', '') IS NOT NULL
+  AND NULLIF(config ->> 'callback_expires_at', '')::timestamptz
+      <= sqlc.arg('expired_before')::timestamptz;
+
 -- name: ActivateDingTalkAccountBinding :one
 -- Callback completion is a compare-and-swap over every ownership dimension and
 -- the current callback attempt. A stale QR can never activate a newer pending

@@ -22,4 +22,7 @@ func TestNormalizeLabelsCollapseUnknownValues(t *testing.T) {
 	if got := NormalizeTaskSource("task-123"); got != "other" {
 		t.Fatalf("NormalizeTaskSource unknown = %q, want other", got)
 	}
+	if got := NormalizeOperationOutcome("workspace-123"); got != "error" {
+		t.Fatalf("NormalizeOperationOutcome unknown = %q, want error", got)
+	}
 }

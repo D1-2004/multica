@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -23,6 +24,34 @@ type capturedRuntimeLaunch struct {
 
 type captureRuntimeLauncher struct {
 	calls chan capturedRuntimeLaunch
+}
+
+func TestHandleAgentDispatchRecordsMissingCredential(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler integration database is unavailable")
+	}
+	businessMetrics := obsmetrics.NewBusinessMetrics()
+	originalMetrics := testHandler.Metrics
+	testHandler.Metrics = businessMetrics
+	t.Cleanup(func() { testHandler.Metrics = originalMetrics })
+
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(`{}`))
+	req = withURLParams(req, "endpointId", "v1_AAECAwQFBgcICQoLDA0ODw")
+	w := httptest.NewRecorder()
+	testHandler.HandleAgentDispatch(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("missing credential: expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+
+	family := obsmetrics.GatherForTest(t, businessMetrics)["dispatch_auth_total"]
+	if family == nil || len(family.GetMetric()) != 1 {
+		t.Fatalf("dispatch auth metrics = %#v", family)
+	}
+	metric := family.GetMetric()[0]
+	if len(metric.GetLabel()) != 1 || metric.GetLabel()[0].GetName() != "outcome" ||
+		metric.GetLabel()[0].GetValue() != "missing_credential" || metric.GetCounter().GetValue() != 1 {
+		t.Fatalf("dispatch auth metric = %#v", metric)
+	}
 }
 
 func (l *captureRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue) error {
