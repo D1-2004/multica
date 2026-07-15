@@ -41,6 +41,7 @@ func init() {
 	dingtalkInstallCmd.AddCommand(dingtalkInstallStatusCmd)
 
 	dingtalkInstallBeginCmd.Flags().String("agent-id", "", "Agent ID to bind to the DingTalk bot (required)")
+	dingtalkInstallBeginCmd.Flags().Bool("allow-unbound", false, "Allow external users to use the bot without binding a Multica account")
 	dingtalkInstallBeginCmd.Flags().String("output", "json", "Output format: json")
 	dingtalkInstallStatusCmd.Flags().String("output", "json", "Output format: json")
 }
@@ -61,10 +62,15 @@ func runDingTalkInstallBegin(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	allowUnbound, _ := cmd.Flags().GetBool("allow-unbound")
 
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-	path := fmt.Sprintf("/api/workspaces/%s/dingtalk/install/begin?agent_id=%s", url.PathEscape(workspaceID), url.QueryEscape(strings.TrimSpace(agentID)))
+	query := url.Values{"agent_id": {strings.TrimSpace(agentID)}}
+	if allowUnbound {
+		query.Set("allow_unbound", "true")
+	}
+	path := fmt.Sprintf("/api/workspaces/%s/dingtalk/install/begin?%s", url.PathEscape(workspaceID), query.Encode())
 	var result map[string]any
 	if err := client.PostJSON(ctx, path, map[string]any{}, &result); err != nil {
 		return fmt.Errorf("begin DingTalk install: %w", err)

@@ -102,6 +102,8 @@ multica dingtalk install status <session-id> --output json
 
 `begin` creates a QR-code installation session. `status` is a single read of
 that session (`pending`, `success`, or `error`); the CLI does not poll forever.
+Add `--allow-unbound` to `begin` when external users or customers should use
+the Agent without binding a Multica account.
 
 ## Field contracts
 

@@ -48,7 +48,7 @@ repositories with `multica-agent.yaml`.
 | Catalog HTTP API | `server/internal/handler/git_agent_template.go` | Resolves template key, workspace GitHub installation and immutable SHA server-side, then reuses Git Agent creation |
 | Git instance ownership | `server/internal/handler/github_agent_source.go` | Manifest name/description are create defaults; source sync updates instructions and source-managed skills only |
 | Editable source Agent profile | `server/internal/handler/agent.go` | Name and description remain editable; only instructions are rejected as Git-managed |
-| DingTalk install CLI | `server/cmd/multica/cmd_dingtalk.go` | `begin` creates a QR session and `status` performs one status read |
+| DingTalk install CLI | `server/cmd/multica/cmd_dingtalk.go` | `begin` creates a QR session; optional `--allow-unbound` sends `allow_unbound=true` for external users; `status` performs one status read |
 
 ## Create handler — `server/internal/handler/agent.go`
 

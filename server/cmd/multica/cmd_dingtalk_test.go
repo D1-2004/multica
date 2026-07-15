@@ -11,6 +11,7 @@ import (
 func newDingTalkTestCommand(use string) *cobra.Command {
 	cmd := &cobra.Command{Use: use}
 	addTemplateTestFlags(cmd)
+	cmd.Flags().Bool("allow-unbound", false, "")
 	cmd.Flags().String("output", "json", "")
 	return cmd
 }
@@ -22,12 +23,17 @@ func TestDingTalkInstallCommandsRegistered(t *testing.T) {
 			t.Fatalf("dingtalk install %s not registered: %v / %#v", name, err, cmd)
 		}
 	}
+	if flag := dingtalkInstallBeginCmd.Flags().Lookup("allow-unbound"); flag == nil {
+		t.Fatal("dingtalk install begin --allow-unbound flag not registered")
+	}
 }
 
 func TestRunDingTalkInstallBegin(t *testing.T) {
-	var gotMethod, gotPath, gotAgentID string
+	var gotMethod, gotPath, gotAgentID, gotAllowUnbound string
 	server := templateTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotPath, gotAgentID = r.Method, r.URL.Path, r.URL.Query().Get("agent_id")
+		gotMethod, gotPath = r.Method, r.URL.Path
+		gotAgentID = r.URL.Query().Get("agent_id")
+		gotAllowUnbound = r.URL.Query().Get("allow_unbound")
 		_ = json.NewEncoder(w).Encode(map[string]any{"session_id": "session-1", "qr_code_url": "https://example.test/qr"})
 	})
 	defer server.Close()
@@ -40,6 +46,29 @@ func TestRunDingTalkInstallBegin(t *testing.T) {
 	}
 	if gotMethod != http.MethodPost || gotPath != "/api/workspaces/ws-123/dingtalk/install/begin" || gotAgentID != "agent-1" {
 		t.Fatalf("request = %s %s agent_id=%q", gotMethod, gotPath, gotAgentID)
+	}
+	if gotAllowUnbound != "" {
+		t.Fatalf("allow_unbound = %q, want omitted", gotAllowUnbound)
+	}
+}
+
+func TestRunDingTalkInstallBeginAllowUnbound(t *testing.T) {
+	var gotAllowUnbound string
+	server := templateTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
+		gotAllowUnbound = r.URL.Query().Get("allow_unbound")
+		_ = json.NewEncoder(w).Encode(map[string]any{"session_id": "session-1", "qr_code_url": "https://example.test/qr"})
+	})
+	defer server.Close()
+
+	cmd := newDingTalkTestCommand("begin")
+	cmd.Flags().String("agent-id", "", "")
+	_ = cmd.Flags().Set("agent-id", "agent-1")
+	_ = cmd.Flags().Set("allow-unbound", "true")
+	if err := runDingTalkInstallBegin(cmd, nil); err != nil {
+		t.Fatalf("runDingTalkInstallBegin: %v", err)
+	}
+	if gotAllowUnbound != "true" {
+		t.Fatalf("allow_unbound = %q, want true", gotAllowUnbound)
 	}
 }
 
