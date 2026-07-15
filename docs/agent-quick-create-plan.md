@@ -191,7 +191,7 @@ skill 引用为什么用 URL 而不是内联 SKILL.md 内容:
     ]
   }
   ```
-- **新 endpoint**:`POST /api/agents/from-template`
+- **新 endpoint**:`POST /api/workspaces/{workspace_id}/agent-templates/{slug}/agents`
   - 请求:`{template_slug, name, runtime_id, ...overrides}`
   - 后端流程(**全部在一个事务里**):
     1. 加载 template JSON

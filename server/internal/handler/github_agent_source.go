@@ -320,7 +320,8 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
-	created, err := qtx.CreateAgent(r.Context(), db.CreateAgentParams{
+	var source db.AgentSource
+	created, err := materializeAgentBundleInTx(r.Context(), qtx, db.CreateAgentParams{
 		WorkspaceID:  wsUUID,
 		Name:         agentName,
 		Description:  agentDescription,
@@ -333,44 +334,33 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		Model:                    pgtype.Text{String: request.Model, Valid: request.Model != ""},
 		ThinkingLevel:            pgtype.Text{String: request.ThinkingLevel, Valid: request.ThinkingLevel != ""},
 		ComposioToolkitAllowlist: allowlist,
+	}, permission, manualSkills, func(created db.Agent) error {
+		var createErr error
+		source, createErr = qtx.CreateAgentSource(r.Context(), db.CreateAgentSourceParams{
+			AgentID: created.ID, GithubInstallationID: resolved.installation.ID,
+			RepoOwner: ownerFromFullName(resolved.repository.FullName), RepoName: repoFromFullName(resolved.repository.FullName),
+			Ref: resolved.ref, ManifestPath: agentsource.ManifestPath, SyncedCommitSha: resolved.sha, CreatedBy: ownerUUID,
+		})
+		if createErr != nil {
+			return createErr
+		}
+		for _, compiledSkill := range resolved.bundle.Skills {
+			skillRow, createErr := createSourceSkillInTx(r.Context(), qtx, wsUUID, ownerUUID, resolved, source.ID, compiledSkill)
+			if createErr != nil {
+				return createErr
+			}
+			if createErr = qtx.AddAgentSkill(r.Context(), db.AddAgentSkillParams{AgentID: created.ID, SkillID: skillRow.ID}); createErr != nil {
+				return createErr
+			}
+			if _, createErr = qtx.CreateAgentSourceSkill(r.Context(), db.CreateAgentSourceSkillParams{AgentSourceID: source.ID, SkillID: skillRow.ID, SourcePath: compiledSkill.SourcePath}); createErr != nil {
+				return createErr
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		writeAgentSourceDatabaseError(w, err)
 		return
-	}
-	if err := replaceInvocationTargetsWithQueries(r.Context(), qtx, created.ID, ownerUUID, permission.targets); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save agent access")
-		return
-	}
-	source, err := qtx.CreateAgentSource(r.Context(), db.CreateAgentSourceParams{
-		AgentID: created.ID, GithubInstallationID: resolved.installation.ID,
-		RepoOwner: ownerFromFullName(resolved.repository.FullName), RepoName: repoFromFullName(resolved.repository.FullName),
-		Ref: resolved.ref, ManifestPath: agentsource.ManifestPath, SyncedCommitSha: resolved.sha, CreatedBy: ownerUUID,
-	})
-	if err != nil {
-		writeAgentSourceDatabaseError(w, err)
-		return
-	}
-	for _, skillID := range manualSkills {
-		if err := qtx.AddAgentSkill(r.Context(), db.AddAgentSkillParams{AgentID: created.ID, SkillID: skillID}); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to attach agent skill")
-			return
-		}
-	}
-	for _, compiledSkill := range resolved.bundle.Skills {
-		skillRow, err := createSourceSkillInTx(r.Context(), qtx, wsUUID, ownerUUID, resolved, source.ID, compiledSkill)
-		if err != nil {
-			writeAgentSourceDatabaseError(w, err)
-			return
-		}
-		if err := qtx.AddAgentSkill(r.Context(), db.AddAgentSkillParams{AgentID: created.ID, SkillID: skillRow.ID}); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to attach source skill")
-			return
-		}
-		if _, err := qtx.CreateAgentSourceSkill(r.Context(), db.CreateAgentSourceSkillParams{AgentSourceID: source.ID, SkillID: skillRow.ID, SourcePath: compiledSkill.SourcePath}); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to track source skill")
-			return
-		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit GitHub agent create")
@@ -404,10 +394,6 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		"agent":    response,
 		"source":   agentSourceToResponse(source),
 		"warnings": warnings,
-	}
-	if templateKey, ok := r.Context().Value(gitAgentTemplateContextKey{}).(string); ok && templateKey != "" {
-		payload["agent_id"] = response.ID
-		payload["template_key"] = templateKey
 	}
 	writeJSON(w, http.StatusCreated, payload)
 }

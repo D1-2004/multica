@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildInvocationTargets,
+  defaultTemplateSkillPaths,
   decodeBuilderInput,
   deriveDuplicateAccess,
   encodeBuilderInput,
@@ -8,6 +9,7 @@ import {
   mergeBuilderDraft,
   parseBuilderDraft,
   stripBuilderDraft,
+  templateSkillsForDisplay,
   type AgentDraft,
 } from "./agent-creation-studio";
 
@@ -227,5 +229,34 @@ Return findings."}</agent_draft>`;
         kimiRuntime,
       ),
     ).toBe(true);
+  });
+
+  it("uses detail skills when the list summary omits template contents", () => {
+    const selected = {
+      slug: "fde-agent",
+      name: "FDE Agent",
+      description: "",
+      skills: [],
+    };
+    const detail = {
+      ...selected,
+      instructions: "Build agents",
+      skills: [
+        {
+          source_path: "skills/multica-agent-factory",
+          name: "Multica Agent Factory",
+          description: "Creates agents",
+          file_count: 2,
+        },
+      ],
+    };
+
+    expect(templateSkillsForDisplay(selected, detail)).toEqual(detail.skills);
+    expect([...defaultTemplateSkillPaths(detail)]).toEqual([
+      "skills/multica-agent-factory",
+    ]);
+    expect(
+      templateSkillsForDisplay(selected, { ...detail, slug: "another-template" }),
+    ).toEqual([]);
   });
 });

@@ -40,6 +40,8 @@ import {
 import type {
   Agent,
   AgentInvocationTargetInput,
+  AgentTemplate,
+  AgentTemplateSkillRef,
   AgentTemplateSummary,
   ChatMessage,
   CreateAgentRequest,
@@ -90,6 +92,18 @@ export function isGitHubRuntimeCompatible(
     (preview.compatible_providers.length === 0 ||
       (runtime != null && preview.compatible_providers.includes(runtime.provider)))
   );
+}
+
+export function templateSkillsForDisplay(
+  selected: AgentTemplateSummary | null,
+  detail: AgentTemplate | undefined,
+): AgentTemplateSkillRef[] {
+  if (!selected) return [];
+  return detail?.slug === selected.slug ? detail.skills : selected.skills;
+}
+
+export function defaultTemplateSkillPaths(detail: AgentTemplate): Set<string> {
+  return new Set(detail.skills.map((skill) => skill.source_path));
 }
 
 export interface AgentDraft {
@@ -149,7 +163,7 @@ export function AgentCreationStudio() {
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: workspaceSkills = [] } = useQuery(skillListOptions(wsId));
   const { data: templates = [], isLoading: templatesLoading } = useQuery(
-    agentTemplateListOptions(),
+    agentTemplateListOptions(wsId),
   );
   const githubInstallationsQuery = useQuery(githubInstallationsOptions(wsId));
 
@@ -158,7 +172,8 @@ export function AgentCreationStudio() {
     : null;
   const [mode, setMode] = useState<StudioMode>(duplicateId ? "blank" : "choose");
   const [draft, setDraft] = useState<AgentDraft>(EMPTY_DRAFT);
-  const [sourceTemplate, setSourceTemplate] = useState<AgentTemplateSummary | null>(null);
+  const [sourceTemplate, setSourceTemplate] = useState<AgentTemplate | null>(null);
+  const [templateSkillPaths, setTemplateSkillPaths] = useState<Set<string>>(new Set());
   const [selectedTemplate, setSelectedTemplate] = useState<AgentTemplateSummary | null>(null);
   const [templateSearch, setTemplateSearch] = useState("");
   const [creating, setCreating] = useState(false);
@@ -243,7 +258,7 @@ export function AgentCreationStudio() {
 
   const templateSlug = selectedTemplate?.slug ?? "";
   const templateDetailQuery = useQuery({
-    ...agentTemplateDetailOptions(templateSlug),
+    ...agentTemplateDetailOptions(wsId, templateSlug),
     enabled: templateSlug.length > 0,
   });
 
@@ -527,7 +542,8 @@ export function AgentCreationStudio() {
   const applyTemplate = () => {
     const detail = templateDetailQuery.data;
     if (!selectedTemplate || !detail) return;
-    setSourceTemplate(selectedTemplate);
+    setSourceTemplate(detail);
+    setTemplateSkillPaths(defaultTemplateSkillPaths(detail));
     setDraft((current) => ({
       ...EMPTY_DRAFT,
       name: detail.name,
@@ -665,7 +681,7 @@ export function AgentCreationStudio() {
         agent = response.agent;
         response.warnings.forEach((warning) => toast.warning(warning));
       } else if (sourceTemplate) {
-        const response = await api.createAgentFromTemplate({
+        const response = await api.createAgentFromTemplate(wsId, {
           template_slug: sourceTemplate.slug,
           name: draft.name.trim(),
           description: draft.description.trim(),
@@ -677,6 +693,7 @@ export function AgentCreationStudio() {
             draft.permissionScope === "private" ? "private" : "public_to",
           invocation_targets: invocationTargets,
           extra_skill_ids: [...draft.skillIds],
+          template_skill_paths: [...templateSkillPaths],
         });
         agent = response.agent;
       } else {
@@ -817,6 +834,9 @@ export function AgentCreationStudio() {
               </div>
             )}
             <ConfigurationPanel
+              bundledSkills={sourceTemplate?.skills}
+              selectedBundledSkillPaths={templateSkillPaths}
+              onSelectedBundledSkillPathsChange={setTemplateSkillPaths}
               draft={draft}
               onChange={setDraft}
               runtimes={runtimes}
@@ -1080,11 +1100,12 @@ function TemplateChooser({
   onSearch: (value: string) => void;
   selected: AgentTemplateSummary | null;
   onSelect: (template: AgentTemplateSummary) => void;
-  detail: { instructions: string } | undefined;
+  detail: AgentTemplate | undefined;
   detailLoading: boolean;
   onUse: () => void;
 }) {
   const { t } = useT("agents");
+  const displayedSkills = templateSkillsForDisplay(selected, detail);
   return (
     <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.1fr)]">
       <section className="flex min-h-0 flex-col border-r">
@@ -1146,8 +1167,8 @@ function TemplateChooser({
               <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Bot className="size-6" /></span>
               <div><h2 className="text-xl font-semibold">{selected.name}</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">{selected.description}</p></div>
             </div>
-            {selected.skills.length > 0 && (
-              <div className="mt-7"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t(($) => $.creation_studio.templates.skills)}</h3><div className="mt-3 space-y-2">{selected.skills.map((skill) => <div key={skill.source_url} className="flex items-start gap-2 rounded-lg border bg-card p-3"><Check className="mt-0.5 size-4 shrink-0 text-success" /><div><div className="text-sm font-medium">{skill.cached_name}</div><div className="mt-0.5 text-xs text-muted-foreground">{skill.cached_description}</div></div></div>)}</div></div>
+            {displayedSkills.length > 0 && (
+              <div className="mt-7"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t(($) => $.creation_studio.templates.skills)}</h3><div className="mt-3 space-y-2">{displayedSkills.map((skill) => <div key={skill.source_path} className="flex items-start gap-2 rounded-lg border bg-card p-3"><Check className="mt-0.5 size-4 shrink-0 text-success" /><div><div className="text-sm font-medium">{skill.name}</div><div className="mt-0.5 text-xs text-muted-foreground">{skill.description}</div></div></div>)}</div></div>
             )}
             <div className="mt-7"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t(($) => $.creation_studio.templates.instructions)}</h3><div className="mt-3 max-h-80 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-muted/30 p-4 text-sm leading-6">{detailLoading ? <Loader2 className="size-4 animate-spin" /> : detail?.instructions}</div></div>
             <div className="mt-7 flex justify-end"><Button onClick={onUse} disabled={detailLoading || !detail}>{t(($) => $.creation_studio.templates.use)}<ChevronRight className="size-4" /></Button></div>
@@ -1342,6 +1363,9 @@ function ConfigurationPanel({
   createError,
   compact = false,
   sourceManaged = false,
+  bundledSkills = [],
+  selectedBundledSkillPaths = new Set(),
+  onSelectedBundledSkillPathsChange,
 }: {
   draft: AgentDraft;
   onChange: (draft: AgentDraft) => void;
@@ -1352,6 +1376,9 @@ function ConfigurationPanel({
   createError: string | null;
   compact?: boolean;
   sourceManaged?: boolean;
+  bundledSkills?: AgentTemplateSkillRef[];
+  selectedBundledSkillPaths?: ReadonlySet<string>;
+  onSelectedBundledSkillPathsChange?: (paths: Set<string>) => void;
 }) {
   const { t } = useT("agents");
   const selectedRuntime = runtimes.find((runtime) => runtime.id === draft.runtimeId) ?? null;
@@ -1439,6 +1466,40 @@ function ConfigurationPanel({
               disabled={sourceManaged}
             />
           </DraftFieldRow>
+          {bundledSkills.length > 0 && (
+            <div className="border-t px-4 py-4">
+              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                {t(($) => $.creation_studio.templates.skills)}
+              </div>
+              <div className="mt-2 space-y-2">
+                {bundledSkills.map((skill) => (
+                  <label
+                    key={skill.source_path}
+                    className="flex cursor-pointer items-start gap-2.5 rounded-lg border bg-muted/20 px-3 py-2.5 transition-colors hover:bg-muted/40"
+                  >
+                    <Checkbox
+                      className="mt-0.5"
+                      checked={selectedBundledSkillPaths.has(skill.source_path)}
+                      onCheckedChange={(checked) => {
+                        const next = new Set(selectedBundledSkillPaths);
+                        if (checked === true) next.add(skill.source_path);
+                        else next.delete(skill.source_path);
+                        onSelectedBundledSkillPathsChange?.(next);
+                      }}
+                    />
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium">{skill.name}</div>
+                      {skill.description && (
+                        <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                          {skill.description}
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="px-4 py-4">
             {sourceManaged && (
               <p className="mb-3 text-xs leading-5 text-muted-foreground">

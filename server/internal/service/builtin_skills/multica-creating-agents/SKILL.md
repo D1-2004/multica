@@ -65,33 +65,40 @@ The HTTP body (`CreateAgentRequest`) accepts: `name`, `description`,
 `instructions`, `runtime_id`, `runtime_config`, `custom_env`, `custom_args`,
 `model`, `thinking_level`, `visibility`, `max_concurrent_tasks`, `mcp_config`.
 
-### Git-backed agent templates
+### Workspace agent templates
 
-Here, an agent template means an approved Git repository containing
-`multica-agent.yaml`; it does not mean Multica's legacy internal static
-template registry. Discover and inspect approved repositories before creating:
+Templates are workspace-owned, complete Bundle snapshots stored by Multica.
+Creating an Agent copies the snapshot's instructions, skills, and supporting
+files without reading GitHub. Discover and inspect templates before creating:
 
 ```bash
 multica agent template list --output json
-multica agent template get <template-key> --output json
-multica agent create-from-template <template-key> \
+multica agent template get <template-slug> --output json
+multica agent create-from-template <template-slug> \
   --runtime-id <runtime-id> \
   [--name <instance-name>] \
   [--description <instance-description>] \
   --output json
 ```
 
-The stable `template-key` resolves server-side through the workspace catalog;
-the caller cannot supply a repository, ref, installation id, or commit SHA.
-The server resolves the configured ref to an immutable commit and persists the
-result as a Git-backed Agent Source.
+The template slug resolves only inside the selected workspace. The platform
+template is seeded when a new workspace is created. Workspace owner/admin users
+can also import and explicitly synchronize a user-managed Git template:
 
-The manifest's name and description are creation defaults. They can be
-overridden during creation and edited later in Multica. Git sync owns the
-instructions and repository-managed skills, but never overwrites an existing
-Agent's name or description. The template command intentionally exposes no
-`--model` or `--thinking-level`; effective runtime settings come from the
-configured runtime defaults.
+```bash
+multica agent template create-from-git <template-slug> \
+  --installation-id <installation-id> \
+  --repository <owner/repository> [--ref <ref>]
+multica agent template sync <template-slug>
+multica agent template delete <template-slug>
+```
+
+The manifest's name and description are creation defaults. After creation the
+Agent and its independently materialized skill rows have no template ID,
+revision, commit SHA, or source relation. Template synchronization or deletion
+therefore never changes an existing Agent. The create command intentionally
+exposes no `--model` or `--thinking-level`; effective settings come from the
+runtime defaults.
 
 After creation, an administrator can start and inspect DingTalk bot setup with:
 

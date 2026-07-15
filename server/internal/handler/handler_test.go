@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/agenttemplate"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -54,6 +55,11 @@ func TestMain(m *testing.M) {
 	}
 
 	queries := db.New(pool)
+	if _, err := agenttemplate.ReconcileDefaultSeed(ctx, queries); err != nil {
+		fmt.Printf("Failed to reconcile agent template seed: %v\n", err)
+		pool.Close()
+		os.Exit(1)
+	}
 	hub := realtime.NewHub()
 	go hub.Run()
 	bus := events.New()
@@ -2424,6 +2430,18 @@ func TestCreateWorkspaceUsesRequestedSlug(t *testing.T) {
 	}
 	if created.Slug != slug {
 		t.Fatalf("CreateWorkspace: expected slug %q, got %q", slug, created.Slug)
+	}
+	var templateCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM agent_template
+		WHERE workspace_id = $1 AND slug = $2
+		  AND source_type = 'platform' AND management_mode = 'system_managed'
+	`, created.ID, agenttemplate.DefaultSlug).Scan(&templateCount); err != nil {
+		t.Fatalf("CreateWorkspace: load initialized template: %v", err)
+	}
+	if templateCount != 1 {
+		t.Fatalf("CreateWorkspace: initialized templates = %d, want 1", templateCount)
 	}
 }
 

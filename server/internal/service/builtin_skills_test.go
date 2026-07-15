@@ -343,6 +343,10 @@ func TestCreatingAgentsSkillCoversAgentCreationContracts(t *testing.T) {
 		"multica agent skills add <agent-id> --skill-ids <skill-id> --output json",
 		"multica agent skills list <agent-id> --output json",
 		"multica agent get <agent-id> --output json",
+		"multica agent template list --output json",
+		"multica agent template create-from-git <template-slug>",
+		"multica agent template sync <template-slug>",
+		"multica agent create-from-template <template-slug>",
 		"255",
 		"references/creating-agents-source-map.md",
 	}

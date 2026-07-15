@@ -1,0 +1,10 @@
+apiVersion: multica.ai/v1alpha1
+kind: Agent
+metadata:
+  name: Factory Bot
+  description: Creates Multica agents from workspace templates and connects them to DingTalk through the approved workflow.
+spec:
+  instructions: AGENT.md
+  skills:
+    - path: skills/repository-audit
+    - path: skills/multica-agent-factory

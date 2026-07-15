@@ -274,7 +274,7 @@ describe("ApiClient schema fallback", () => {
     it("falls back to [] when the body is null", async () => {
       stubFetchJson(null);
       const client = new ApiClient("https://api.example.test");
-      const tmpls = await client.listAgentTemplates();
+      const tmpls = await client.listAgentTemplates("ws-1");
       expect(tmpls).toEqual([]);
     });
 
@@ -283,7 +283,7 @@ describe("ApiClient schema fallback", () => {
       // them. Picker code calls `template.skills.length` — must not throw.
       stubFetchJson([{ slug: "x", name: "X" }]);
       const client = new ApiClient("https://api.example.test");
-      const tmpls = await client.listAgentTemplates();
+      const tmpls = await client.listAgentTemplates("ws-1");
       expect(tmpls).toHaveLength(1);
       expect(tmpls[0]?.skills).toEqual([]);
     });
@@ -294,7 +294,7 @@ describe("ApiClient schema fallback", () => {
         { slug: "b", name: "B", description: "", skills: [] },
       ]);
       const client = new ApiClient("https://api.example.test");
-      const tmpls = await client.listAgentTemplates();
+      const tmpls = await client.listAgentTemplates("ws-1");
       expect(tmpls.map((t) => t.slug)).toEqual(["a", "b"]);
     });
 
@@ -306,7 +306,7 @@ describe("ApiClient schema fallback", () => {
         total: 1,
       });
       const client = new ApiClient("https://api.example.test");
-      const tmpls = await client.listAgentTemplates();
+      const tmpls = await client.listAgentTemplates("ws-1");
       expect(tmpls).toHaveLength(1);
       expect(tmpls[0]?.slug).toBe("a");
     });
@@ -318,7 +318,7 @@ describe("ApiClient schema fallback", () => {
       // trips it so the page header still makes sense after a parse miss.
       stubFetchJson({ wrong: "shape" });
       const client = new ApiClient("https://api.example.test");
-      const detail = await client.getAgentTemplate("code-reviewer");
+      const detail = await client.getAgentTemplate("ws-1", "code-reviewer");
       expect(detail.slug).toBe("code-reviewer");
       expect(detail.skills).toEqual([]);
       expect(detail.instructions).toBe("");
@@ -332,7 +332,7 @@ describe("ApiClient schema fallback", () => {
         skills: [],
       });
       const client = new ApiClient("https://api.example.test");
-      const detail = await client.getAgentTemplate("code-reviewer");
+      const detail = await client.getAgentTemplate("ws-1", "code-reviewer");
       expect(detail.instructions).toBe("");
     });
   });
@@ -408,27 +408,43 @@ describe("ApiClient schema fallback", () => {
       // the navigation step rather than landing on `/agents/`.
       stubFetchJson({ unexpected: "shape" });
       const client = new ApiClient("https://api.example.test");
-      const resp = await client.createAgentFromTemplate({
+      const resp = await client.createAgentFromTemplate("ws-1", {
         template_slug: "x",
         name: "X",
         runtime_id: "rt-1",
       });
       expect(resp.agent.id).toBe("");
-      expect(resp.imported_skill_ids).toEqual([]);
-      expect(resp.reused_skill_ids).toEqual([]);
+      expect(resp.warnings).toEqual([]);
     });
 
-    it("defaults imported_skill_ids / reused_skill_ids to [] when missing", async () => {
+    it("defaults warnings to [] when missing", async () => {
       stubFetchJson({ agent: { id: "agent-1" } });
       const client = new ApiClient("https://api.example.test");
-      const resp = await client.createAgentFromTemplate({
+      const resp = await client.createAgentFromTemplate("ws-1", {
         template_slug: "x",
         name: "X",
         runtime_id: "rt-1",
       });
       expect(resp.agent.id).toBe("agent-1");
-      expect(resp.imported_skill_ids).toEqual([]);
-      expect(resp.reused_skill_ids).toEqual([]);
+      expect(resp.warnings).toEqual([]);
+    });
+
+    it("forwards the selected template skill paths separately from workspace skills", async () => {
+      stubFetchJson({ agent: { id: "agent-1" }, warnings: [] });
+      const client = new ApiClient("https://api.example.test");
+      await client.createAgentFromTemplate("ws-1", {
+        template_slug: "fde-agent",
+        name: "Factory",
+        runtime_id: "rt-1",
+        template_skill_paths: ["skills/multica-agent-factory"],
+        extra_skill_ids: ["workspace-skill-1"],
+      });
+
+      const init = vi.mocked(fetch).mock.calls[0]?.[1];
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        template_skill_paths: ["skills/multica-agent-factory"],
+        skill_ids: ["workspace-skill-1"],
+      });
     });
   });
 });

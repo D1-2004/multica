@@ -98,29 +98,28 @@ export function agentTasksOptions(wsId: string, agentId: string) {
   });
 }
 
-// Agent templates are workspace-independent: a static catalog served from
-// the server's embedded JSON. Cache effectively forever — the only way the
-// list / detail change is a server deploy, and a hard reload picks that up.
 export const agentTemplateKeys = {
   all: () => ["agent-templates"] as const,
-  list: () => [...agentTemplateKeys.all(), "list"] as const,
-  detail: (slug: string) => [...agentTemplateKeys.all(), "detail", slug] as const,
+  list: (wsId: string) => [...agentTemplateKeys.all(), wsId, "list"] as const,
+  detail: (wsId: string, slug: string) => [...agentTemplateKeys.all(), wsId, "detail", slug] as const,
 };
 
-export function agentTemplateListOptions() {
+export function agentTemplateListOptions(wsId: string) {
   return queryOptions({
-    queryKey: agentTemplateKeys.list(),
-    queryFn: () => api.listAgentTemplates(),
-    staleTime: Infinity,
+    queryKey: agentTemplateKeys.list(wsId),
+    queryFn: () => api.listAgentTemplates(wsId),
+    enabled: !!wsId,
+    staleTime: 30 * 1000,
     gcTime: 30 * 60 * 1000,
   });
 }
 
-export function agentTemplateDetailOptions(slug: string) {
+export function agentTemplateDetailOptions(wsId: string, slug: string) {
   return queryOptions({
-    queryKey: agentTemplateKeys.detail(slug),
-    queryFn: () => api.getAgentTemplate(slug),
-    staleTime: Infinity,
+    queryKey: agentTemplateKeys.detail(wsId, slug),
+    queryFn: () => api.getAgentTemplate(wsId, slug),
+    enabled: !!wsId && !!slug,
+    staleTime: 30 * 1000,
     gcTime: 30 * 60 * 1000,
   });
 }

@@ -27,30 +27,20 @@ func templateTestEnv(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	return server
 }
 
-func TestAgentTemplateCommandsRegisteredWithoutModelFlags(t *testing.T) {
-	for _, path := range [][]string{{"template", "list"}, {"template", "get"}, {"create-from-template"}} {
-		cmd, _, err := agentCmd.Find(path)
-		if err != nil || cmd == nil {
-			t.Fatalf("agent command %v not registered: %v", path, err)
-		}
-	}
-	for _, name := range []string{"model", "thinking-level"} {
-		if flag := agentCreateFromTemplateCmd.Flags().Lookup(name); flag != nil {
-			t.Fatalf("create-from-template unexpectedly exposes --%s", name)
-		}
-	}
-}
-
-func TestRunAgentTemplateListAndGet(t *testing.T) {
-	var paths []string
+func TestAgentTemplateCommandsUseWorkspaceTemplatePaths(t *testing.T) {
+	var requests []string
 	server := templateTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.EscapedPath())
+		requests = append(requests, r.Method+" "+r.URL.EscapedPath())
 		w.Header().Set("Content-Type", "application/json")
-		if strings.HasSuffix(r.URL.Path, "/git-agent-templates") {
-			_ = json.NewEncoder(w).Encode(map[string]any{"templates": []map[string]any{{"key": "factory/default", "available": true}}})
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"key": "factory/default", "available": true})
+		if strings.HasSuffix(r.URL.Path, "/agent-templates") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"templates": []any{}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"slug": "fde-agent", "template": map[string]any{"slug": "fde-agent"}})
 	})
 	defer server.Close()
 
@@ -58,81 +48,75 @@ func TestRunAgentTemplateListAndGet(t *testing.T) {
 	addTemplateTestFlags(list)
 	list.Flags().String("output", "json", "")
 	if err := runAgentTemplateList(list, nil); err != nil {
-		t.Fatalf("runAgentTemplateList: %v", err)
+		t.Fatal(err)
 	}
-
 	get := &cobra.Command{Use: "get"}
 	addTemplateTestFlags(get)
 	get.Flags().String("output", "json", "")
-	if err := runAgentTemplateGet(get, []string{"factory/default"}); err != nil {
-		t.Fatalf("runAgentTemplateGet: %v", err)
+	if err := runAgentTemplateGet(get, []string{"fde-agent"}); err != nil {
+		t.Fatal(err)
 	}
-
-	if len(paths) != 2 || paths[0] != "/api/workspaces/ws-123/git-agent-templates" || paths[1] != "/api/workspaces/ws-123/git-agent-templates/factory%2Fdefault" {
-		t.Fatalf("paths = %#v", paths)
+	sync := &cobra.Command{Use: "sync"}
+	addTemplateTestFlags(sync)
+	sync.Flags().String("output", "json", "")
+	if err := runAgentTemplateSync(sync, []string{"fde-agent"}); err != nil {
+		t.Fatal(err)
+	}
+	del := &cobra.Command{Use: "delete"}
+	addTemplateTestFlags(del)
+	if err := runAgentTemplateDelete(del, []string{"fde-agent"}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"GET /api/workspaces/ws-123/agent-templates",
+		"GET /api/workspaces/ws-123/agent-templates/fde-agent",
+		"POST /api/workspaces/ws-123/agent-templates/fde-agent/sync",
+		"DELETE /api/workspaces/ws-123/agent-templates/fde-agent",
+	}
+	if strings.Join(requests, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("requests = %#v", requests)
 	}
 }
 
-func TestRunAgentCreateFromTemplateSendsOnlyCreationOverrides(t *testing.T) {
-	var gotMethod, gotPath string
-	var gotBody map[string]any
+func TestRunAgentTemplateCreateFromGitAndCreateAgentBodies(t *testing.T) {
+	var paths []string
+	var bodies []map[string]any
 	server := templateTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotPath = r.Method, r.URL.EscapedPath()
-		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-			t.Errorf("decode body: %v", err)
-		}
+		paths = append(paths, r.URL.EscapedPath())
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "agent-1", "template_key": "factory/default"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"slug": "fde-agent", "agent_id": "agent-1", "template_slug": "fde-agent"})
 	})
 	defer server.Close()
-
-	cmd := &cobra.Command{Use: "create-from-template"}
-	addTemplateTestFlags(cmd)
-	cmd.Flags().String("runtime-id", "", "")
-	cmd.Flags().String("name", "", "")
-	cmd.Flags().String("description", "", "")
-	cmd.Flags().String("output", "json", "")
-	_ = cmd.Flags().Set("runtime-id", "runtime-1")
-	_ = cmd.Flags().Set("name", "My factory agent")
-	_ = cmd.Flags().Set("description", "Locally owned description")
-
-	if err := runAgentCreateFromTemplate(cmd, []string{"factory/default"}); err != nil {
-		t.Fatalf("runAgentCreateFromTemplate: %v", err)
+	createGit := &cobra.Command{Use: "create-from-git"}
+	addTemplateTestFlags(createGit)
+	createGit.Flags().String("installation-id", "", "")
+	createGit.Flags().String("repository", "", "")
+	createGit.Flags().String("ref", "", "")
+	createGit.Flags().String("output", "json", "")
+	_ = createGit.Flags().Set("installation-id", "install-1")
+	_ = createGit.Flags().Set("repository", "owner/repo")
+	_ = createGit.Flags().Set("ref", "main")
+	if err := runAgentTemplateCreateFromGit(createGit, []string{"custom"}); err != nil {
+		t.Fatal(err)
 	}
-	if gotMethod != http.MethodPost || gotPath != "/api/workspaces/ws-123/git-agent-templates/factory%2Fdefault/agents" {
-		t.Fatalf("request = %s %s", gotMethod, gotPath)
+	createAgent := &cobra.Command{Use: "create-from-template"}
+	addTemplateTestFlags(createAgent)
+	createAgent.Flags().String("runtime-id", "", "")
+	createAgent.Flags().String("name", "", "")
+	createAgent.Flags().String("description", "", "")
+	createAgent.Flags().String("output", "json", "")
+	_ = createAgent.Flags().Set("runtime-id", "runtime-1")
+	_ = createAgent.Flags().Set("name", "My Agent")
+	if err := runAgentCreateFromTemplate(createAgent, []string{"fde-agent"}); err != nil {
+		t.Fatal(err)
 	}
-	if gotBody["runtime_id"] != "runtime-1" || gotBody["name"] != "My factory agent" || gotBody["description"] != "Locally owned description" {
-		t.Fatalf("body = %#v", gotBody)
+	if paths[0] != "/api/workspaces/ws-123/agent-templates/github" || paths[1] != "/api/workspaces/ws-123/agent-templates/fde-agent/agents" {
+		t.Fatalf("paths = %#v", paths)
 	}
-	for _, forbidden := range []string{"model", "thinking_level", "repository", "ref", "resolved_sha", "installation_id"} {
-		if _, exists := gotBody[forbidden]; exists {
-			t.Errorf("body unexpectedly contains %q: %#v", forbidden, gotBody)
-		}
-	}
-}
-
-func TestRunAgentTemplateListUsesTaskTokenInAgentExecutionContext(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-123")
-	t.Setenv("MULTICA_AGENT_ID", "agent-123")
-	t.Setenv("MULTICA_TASK_ID", "task-123")
-	t.Setenv("MULTICA_TOKEN", "mat_task-token")
-	var authorization string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authorization = r.Header.Get("Authorization")
-		_ = json.NewEncoder(w).Encode(map[string]any{"templates": []any{}})
-	}))
-	defer server.Close()
-	t.Setenv("MULTICA_SERVER_URL", server.URL)
-
-	cmd := &cobra.Command{Use: "list"}
-	addTemplateTestFlags(cmd)
-	cmd.Flags().String("output", "json", "")
-	if err := runAgentTemplateList(cmd, nil); err != nil {
-		t.Fatalf("runAgentTemplateList: %v", err)
-	}
-	if authorization != "Bearer mat_task-token" {
-		t.Fatalf("Authorization = %q, want task token", authorization)
+	if bodies[0]["slug"] != "custom" || bodies[0]["repository"] != "owner/repo" || bodies[1]["runtime_id"] != "runtime-1" || bodies[1]["name"] != "My Agent" {
+		t.Fatalf("bodies = %#v", bodies)
 	}
 }

@@ -71,16 +71,7 @@ func TestMain(m *testing.M) {
 
 	bus := events.New()
 	registerListeners(bus, hub)
-	previousTemplateCatalog, hadTemplateCatalog := os.LookupEnv("MULTICA_GIT_AGENT_TEMPLATES_JSON")
-	if !hadTemplateCatalog {
-		_ = os.Setenv("MULTICA_GIT_AGENT_TEMPLATES_JSON", `[{"key":"integration-disabled","display_name":"Integration disabled template","description":"authorization fixture","repository":"example/template","ref":"main","enabled":false}]`)
-	}
 	router := NewRouter(pool, hub, bus, analytics.NoopClient{}, nil)
-	if !hadTemplateCatalog {
-		_ = os.Unsetenv("MULTICA_GIT_AGENT_TEMPLATES_JSON")
-	} else {
-		_ = os.Setenv("MULTICA_GIT_AGENT_TEMPLATES_JSON", previousTemplateCatalog)
-	}
 	testServer = httptest.NewServer(router)
 
 	// Generate a JWT token directly for the test user
@@ -264,7 +255,7 @@ func TestReadinessEndpoints(t *testing.T) {
 	}
 }
 
-func TestGitAgentTemplateRoutesHonorTaskTokenWorkspaceAndRole(t *testing.T) {
+func TestAgentTemplateRoutesHonorTaskTokenWorkspaceAndRole(t *testing.T) {
 	ctx := context.Background()
 	var agentID, runtimeID string
 	if err := testPool.QueryRow(ctx, `
@@ -312,7 +303,7 @@ func TestGitAgentTemplateRoutesHonorTaskTokenWorkspaceAndRole(t *testing.T) {
 	}
 
 	ownerToken := mintTaskToken(t, testUserID)
-	resp := request(t, ownerToken, http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/git-agent-templates")
+	resp := request(t, ownerToken, http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/agent-templates")
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -320,15 +311,15 @@ func TestGitAgentTemplateRoutesHonorTaskTokenWorkspaceAndRole(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	resp = request(t, ownerToken, http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/git-agent-templates/integration-disabled/agents")
-	if resp.StatusCode != http.StatusConflict {
+	resp = request(t, ownerToken, http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/agent-templates/github")
+	if resp.StatusCode != http.StatusBadRequest {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		t.Fatalf("owner task-token create should pass role gate and reach disabled-template handler: got %d: %s", resp.StatusCode, body)
+		t.Fatalf("owner task-token create should pass role gate and reach request validation: got %d: %s", resp.StatusCode, body)
 	}
 	resp.Body.Close()
 
-	resp = request(t, ownerToken, http.MethodGet, "/api/workspaces/00000000-0000-0000-0000-000000000001/git-agent-templates")
+	resp = request(t, ownerToken, http.MethodGet, "/api/workspaces/00000000-0000-0000-0000-000000000001/agent-templates")
 	if resp.StatusCode != http.StatusForbidden {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -346,7 +337,7 @@ func TestGitAgentTemplateRoutesHonorTaskTokenWorkspaceAndRole(t *testing.T) {
 		t.Fatalf("create member: %v", err)
 	}
 	memberToken := mintTaskToken(t, memberUserID)
-	resp = request(t, memberToken, http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/git-agent-templates/integration-disabled/agents")
+	resp = request(t, memberToken, http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/agent-templates/github")
 	if resp.StatusCode != http.StatusForbidden {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
