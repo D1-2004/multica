@@ -54,67 +54,6 @@ func TestClientIssuesBindingTokenWithServiceCredential(t *testing.T) {
 	}
 }
 
-func TestClientCreatesDingTalkAccountSubscriptionOverHTTP(t *testing.T) {
-	dispatchURL := "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/subscriptions" {
-			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer service-credential" {
-			t.Fatalf("Authorization = %q", got)
-		}
-		var body struct {
-			Source struct {
-				Platform   string  `json:"platform"`
-				TenantID   *string `json:"tenantId"`
-				Type       string  `json:"type"`
-				ExternalID string  `json:"externalId"`
-			} `json:"source"`
-			Agent struct {
-				AgentID     string `json:"agentId"`
-				DispatchURL string `json:"dispatchUrl"`
-			} `json:"agent"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		if body.Source.Platform != "dingtalk" || body.Source.Type != "account" ||
-			body.Source.ExternalID != "123" || body.Source.TenantID != nil ||
-			body.Agent.AgentID != "agent-1" || body.Agent.DispatchURL != dispatchURL {
-			t.Fatalf("request body = %#v", body)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"success": true,
-			"code":    "success",
-			"data": map[string]any{
-				"sourceId":    "source-1",
-				"agentId":     "agent-1",
-				"dispatchUrl": dispatchURL,
-				"status":      "active",
-			},
-		})
-	}))
-	defer server.Close()
-
-	client, err := NewClient(ClientConfig{
-		BaseURL:           server.URL,
-		ServiceCredential: "service-credential",
-		HTTPClient:        server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-	subscription, err := client.CreateDingTalkAccountSubscription(
-		context.Background(), "123", "agent-1", dispatchURL)
-	if err != nil {
-		t.Fatalf("CreateDingTalkAccountSubscription: %v", err)
-	}
-	if subscription.SourceID != "source-1" || subscription.AgentID != "agent-1" ||
-		subscription.DispatchURL != dispatchURL || subscription.Status != "active" {
-		t.Fatalf("subscription = %#v", subscription)
-	}
-}
-
 func TestClientGetsAndDeletesSubscription(t *testing.T) {
 	var deleteCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

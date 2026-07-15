@@ -123,54 +123,6 @@ func (c *Client) IssueBindingToken(ctx context.Context, agentID, dispatchURL str
 	return result, nil
 }
 
-func (c *Client) CreateDingTalkAccountSubscription(
-	ctx context.Context,
-	accountExternalID string,
-	agentID string,
-	dispatchURL string,
-) (Subscription, error) {
-	accountExternalID = strings.TrimSpace(accountExternalID)
-	agentID = strings.TrimSpace(agentID)
-	dispatchURL = strings.TrimSpace(dispatchURL)
-	if accountExternalID == "" || agentID == "" || dispatchURL == "" {
-		return Subscription{}, errors.New("agent message router subscription request is invalid")
-	}
-	body, err := json.Marshal(map[string]any{
-		"source": map[string]string{
-			"platform":   "dingtalk",
-			"type":       "account",
-			"externalId": accountExternalID,
-		},
-		"agent": map[string]string{
-			"agentId":     agentID,
-			"dispatchUrl": dispatchURL,
-		},
-	})
-	if err != nil {
-		return Subscription{}, errors.New("encode agent message router subscription request")
-	}
-	response, err := c.do(ctx, http.MethodPost, "/api/subscriptions", bytes.NewReader(body))
-	if err != nil {
-		return Subscription{}, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return Subscription{}, fmt.Errorf(
-			"agent message router subscription create failed with status %d",
-			response.StatusCode,
-		)
-	}
-	result, err := decodeRouterResponse[Subscription](response.Body)
-	if err != nil {
-		return Subscription{}, err
-	}
-	if !isTrimmedNonEmpty(result.SourceID) || result.AgentID != agentID ||
-		result.DispatchURL != dispatchURL || result.Status != "active" {
-		return Subscription{}, errors.New("agent message router subscription response is invalid")
-	}
-	return result, nil
-}
-
 func (c *Client) GetSubscription(ctx context.Context, sourceID string) (Subscription, error) {
 	sourceID = strings.TrimSpace(sourceID)
 	if sourceID == "" {
