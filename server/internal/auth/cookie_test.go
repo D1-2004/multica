@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -129,5 +130,27 @@ func TestSetAuthCookies_HTTPSProduction(t *testing.T) {
 		if c.Domain != "app.example.com" {
 			t.Errorf("cookie %q Domain = %q, want %q", c.Name, c.Domain, "app.example.com")
 		}
+	}
+}
+
+func TestSetFDEBootstrapIdentityCookieIsShortLivedAndHttpOnly(t *testing.T) {
+	t.Setenv("FRONTEND_ORIGIN", "https://app.example.com")
+	t.Setenv("COOKIE_DOMAIN", "app.example.com")
+
+	rec := httptest.NewRecorder()
+	SetFDEBootstrapIdentityCookie(rec, "signed-proof", 5*time.Minute)
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one identity cookie, got %d", len(cookies))
+	}
+	cookie := cookies[0]
+	if cookie.Name != FDEBootstrapIdentityCookieName || cookie.Value != "signed-proof" {
+		t.Fatalf("unexpected identity cookie: %#v", cookie)
+	}
+	if cookie.Path != "/api/fde/bootstrap" || !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("identity cookie security attributes are incorrect: %#v", cookie)
+	}
+	if cookie.MaxAge != 300 || cookie.Domain != "app.example.com" {
+		t.Fatalf("identity cookie scope/lifetime are incorrect: %#v", cookie)
 	}
 }

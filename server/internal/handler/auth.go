@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/fdebootstrap"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -727,10 +728,21 @@ func (h *Handler) DingTalkLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
+	identityHMAC, err := fdebootstrap.IdentityHMAC(dtUser.UnionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to bind DingTalk identity")
+		return
+	}
+	identityProof, err := fdebootstrap.SignIdentityAssertion(uuidToString(user.ID), identityHMAC, time.Now())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to bind DingTalk identity")
+		return
+	}
 
 	if err := auth.SetAuthCookies(w, tokenString); err != nil {
 		slog.Warn("failed to set auth cookies", "error", err)
 	}
+	auth.SetFDEBootstrapIdentityCookie(w, identityProof, fdebootstrap.AssertionTTL)
 
 	if h.CFSigner != nil {
 		for _, cookie := range h.CFSigner.SignedCookies(time.Now().Add(72 * time.Hour)) {

@@ -1664,6 +1664,20 @@ export class ApiClient {
     });
   }
 
+  // FDE product bootstrap. Status is intentionally public and contains no
+  // workspace/user data; completion relies on the normal auth+CSRF cookies
+  // plus the short-lived DingTalk identity proof cookie.
+  async getFDEBootstrapIntentStatus(token: string): Promise<{ status: "authentication_required" | "expired" }> {
+    return this.fetch(`/api/fde/bootstrap/intents/${encodeURIComponent(token)}`);
+  }
+
+  async completeFDEBootstrapIntent(token: string): Promise<{ status: "ready" }> {
+    return this.fetch(`/api/fde/bootstrap/intents/${encodeURIComponent(token)}/complete`, {
+      method: "POST",
+      body: "{}",
+    });
+  }
+
   // Workspaces
   async listWorkspaces(): Promise<Workspace[]> {
     return this.fetch("/api/workspaces");

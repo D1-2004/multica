@@ -60,6 +60,9 @@ type dbExecutor interface {
 }
 
 type Config struct {
+	// AppURL is the browser-facing Multica origin. FDE bootstrap links point
+	// here because the temporary completion page is served by the web app.
+	AppURL              string
 	AllowSignup         bool
 	AllowedEmails       []string
 	AllowedEmailDomains []string
@@ -126,6 +129,10 @@ type RuntimeProfileRefreshNotifier interface {
 
 type WorkspaceSetRefreshNotifier interface {
 	NotifyWorkspacesChanged(userID string)
+}
+
+type DingTalkBootstrapDirectory interface {
+	LookupInstallationUserUnionID(ctx context.Context, clientID, clientSecret, staffID string) (string, error)
 }
 
 type Handler struct {
@@ -239,7 +246,8 @@ type Handler struct {
 	// nil when the DingTalk master key (MULTICA_DINGTALK_SECRET_KEY) is
 	// unset; the corresponding HTTP handlers return 503 in that case.
 	// Wired in cmd/server/router.go after handler.New.
-	DingTalkInstallations *dingtalk.InstallationService
+	DingTalkInstallations      *dingtalk.InstallationService
+	DingTalkBootstrapDirectory DingTalkBootstrapDirectory
 	// DingTalkRegistration owns the device-flow install lifecycle: begin
 	// a registration session against oapi.dingtalk.com, poll, and on
 	// success write the dingtalk channel_installation row. Nil when the

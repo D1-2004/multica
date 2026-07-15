@@ -538,6 +538,25 @@ type FcE2bSandboxSession struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type FdeBootstrapIntent struct {
+	ID                   pgtype.UUID        `json:"id"`
+	TokenHash            []byte             `json:"token_hash"`
+	ExpectedIdentityHmac []byte             `json:"expected_identity_hmac"`
+	SourceWorkspaceID    pgtype.UUID        `json:"source_workspace_id"`
+	SourceAgentID        pgtype.UUID        `json:"source_agent_id"`
+	SourceTaskID         pgtype.UUID        `json:"source_task_id"`
+	SourceChatSessionID  pgtype.UUID        `json:"source_chat_session_id"`
+	SourceInstallationID pgtype.UUID        `json:"source_installation_id"`
+	Status               string             `json:"status"`
+	UserID               pgtype.UUID        `json:"user_id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	ExpiresAt            pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt           pgtype.Timestamptz `json:"consumed_at"`
+	LastErrorCode        pgtype.Text        `json:"last_error_code"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Feedback struct {
 	ID          pgtype.UUID        `json:"id"`
 	UserID      pgtype.UUID        `json:"user_id"`
@@ -844,6 +863,16 @@ type PlatformTemplateSeed struct {
 	BundleSizeBytes     int32              `json:"bundle_size_bytes"`
 	Bundle              []byte             `json:"bundle"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProductWorkspaceProvisioning struct {
+	UserID        pgtype.UUID        `json:"user_id"`
+	ProductKey    string             `json:"product_key"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	Status        string             `json:"status"`
+	LastErrorCode pgtype.Text        `json:"last_error_code"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Project struct {

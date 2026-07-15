@@ -244,6 +244,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	origins := allowedOrigins()
 
 	signupConfig := handler.Config{
+		AppURL:                   appURLFromEnv(),
 		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
 		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
 		AllowedEmailDomains:      splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
@@ -686,6 +687,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// inbound pipeline (identity binding, dedup, chat session,
 				// /issue, run trigger) over the generic channel_* tables.
 				dtMessenger := dingtalk.NewRobotMessenger(os.Getenv("DINGTALK_OPENAPI_BASE"), os.Getenv("DINGTALK_OAPI_BASE"), nil)
+				h.DingTalkBootstrapDirectory = dtMessenger
 				dtBindingSvc := dingtalk.NewBindingTokenService(queries, pool)
 				h.DingTalkBindingTokens = dtBindingSvc
 				dtReplier := dingtalk.NewOutboundReplier(dingtalk.OutboundReplierConfig{
@@ -1065,6 +1067,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Public API
 	r.Get("/api/config", h.GetConfig)
+	r.Get("/api/fde/bootstrap/intents/{token}", h.GetFDEBootstrapIntentStatus)
 	r.With(contactSalesRL).Post("/api/contact-sales", h.CreateContactSales)
 
 	// Webhook ingress for autopilots. Outside the authenticated group on
@@ -1174,6 +1177,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
+		r.Post("/api/fde/bootstrap/intents", h.CreateFDEBootstrapIntent)
+		r.With(handler.RequireHumanActor).Post("/api/fde/bootstrap/intents/{token}/complete", h.CompleteFDEBootstrapIntent)
 
 		// Note (MUL-4309): the generic OpenAI-compatible passthrough endpoints
 		// (POST /api/llm/v1/chat/completions[/stream]) were intentionally
