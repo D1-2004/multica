@@ -3181,11 +3181,11 @@ func (s *TaskService) agentNeedsDWSSkill(ctx context.Context, agentID pgtype.UUI
 		return false
 	}
 	agent, err := s.Queries.GetAgent(ctx, agentID)
-	if err != nil {
+	if err != nil || !agent.RuntimeID.Valid {
 		return false
 	}
-	_, hasProfile, err := DWSProfileIDFromRuntimeConfig(agent.RuntimeConfig)
-	return err == nil && hasProfile
+	runtime, err := s.Queries.GetAgentRuntime(ctx, agent.RuntimeID)
+	return err == nil && FCE2BRuntimeHasCapability(runtime, "dws")
 }
 
 func BuildAgentSkillBundles(skills []AgentSkillData) ([]AgentSkillData, []AgentSkillRefData) {

@@ -52,6 +52,35 @@ type Agent struct {
 	SystemKey      pgtype.Text `json:"system_key"`
 }
 
+type AgentDingtalkIdentity struct {
+	AgentID            pgtype.UUID        `json:"agent_id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	AccountOpenID      string             `json:"account_open_id"`
+	AccountCorpID      string             `json:"account_corp_id"`
+	DwsUid             string             `json:"dws_uid"`
+	OrgID              string             `json:"org_id"`
+	AccountDisplayName string             `json:"account_display_name"`
+	AccountAvatarUrl   string             `json:"account_avatar_url"`
+	BoundBy            pgtype.UUID        `json:"bound_by"`
+	BoundAt            pgtype.Timestamptz `json:"bound_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentDingtalkIdentityAttempt struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	InitiatorUserID   pgtype.UUID        `json:"initiator_user_id"`
+	CallbackTokenHash string             `json:"callback_token_hash"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+	CompletedOpenID   pgtype.Text        `json:"completed_open_id"`
+	CompletedOrgID    pgtype.Text        `json:"completed_org_id"`
+	CompletedCorpID   pgtype.Text        `json:"completed_corp_id"`
+	UsedAt            pgtype.Timestamptz `json:"used_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 // Allow-list of who may invoke a public_to agent (MUL-3963). One row per (agent, target_type, target); targets stack and canInvokeAgent OR-matches. workspace rows store the agent workspace_id in target_id; member rows store the user id; team rows are reserved and inert in V1. Rows only matter when agent.permission_mode = public_to. No DB foreign keys: agent_id / created_by / member target_id relationships are maintained in the application layer (see migration comment).
 type AgentInvocationTarget struct {
 	ID         pgtype.UUID        `json:"id"`
@@ -461,21 +490,6 @@ type DingtalkInstallSession struct {
 	GcAfter        pgtype.Timestamptz `json:"gc_after"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-}
-
-type DwsAuthProfile struct {
-	ID                   pgtype.UUID        `json:"id"`
-	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
-	OwnerID              pgtype.UUID        `json:"owner_id"`
-	Label                string             `json:"label"`
-	CorpID               string             `json:"corp_id"`
-	CorpName             string             `json:"corp_name"`
-	UserID               string             `json:"user_id"`
-	UserName             string             `json:"user_name"`
-	Status               string             `json:"status"`
-	AuthArchiveEncrypted []byte             `json:"auth_archive_encrypted"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
 type FcE2bSandboxSession struct {

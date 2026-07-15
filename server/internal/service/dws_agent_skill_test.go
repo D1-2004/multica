@@ -11,7 +11,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestLoadAgentExecutionSkillsAddsDWSOnlyForBoundProfile(t *testing.T) {
+func TestLoadAgentExecutionSkillsFollowsRuntimeDWSCapability(t *testing.T) {
 	ctx := context.Background()
 	pool := newTaskClaimRacePool(t)
 	queries := db.New(pool)
@@ -53,20 +53,31 @@ func TestLoadAgentExecutionSkillsAddsDWSOnlyForBoundProfile(t *testing.T) {
 	`, workspaceID, userID).Scan(&dwsRuntimeID); err != nil {
 		t.Fatalf("create DWS runtime: %v", err)
 	}
-	var boundAgentID string
+	var nonDWSRuntimeID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (
+			workspace_id, name, runtime_mode, provider, status,
+			device_info, metadata, visibility, owner_id
+		)
+		VALUES ($1, 'FC Hermes', 'cloud', 'hermes', 'online',
+			'test runtime', '{"kind":"fc-e2b","capabilities":["hermes"]}'::jsonb, 'private', $2)
+		RETURNING id
+	`, workspaceID, userID).Scan(&nonDWSRuntimeID); err != nil {
+		t.Fatalf("create non-DWS runtime: %v", err)
+	}
+	var firstDWSAgentID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO agent (
 			workspace_id, name, description, runtime_mode, runtime_config,
 			runtime_id, visibility, max_concurrent_tasks, owner_id
 		)
-		VALUES ($1, 'DWS Agent', '', 'cloud',
-			'{"fc_e2b":{"dws_profile_id":"11111111-1111-1111-1111-111111111111"}}'::jsonb,
+		VALUES ($1, 'DWS Agent', '', 'cloud', '{}'::jsonb,
 			$2, 'private', 1, $3)
 		RETURNING id
-	`, workspaceID, dwsRuntimeID, userID).Scan(&boundAgentID); err != nil {
+	`, workspaceID, dwsRuntimeID, userID).Scan(&firstDWSAgentID); err != nil {
 		t.Fatalf("create DWS agent: %v", err)
 	}
-	var unboundAgentID string
+	var secondDWSAgentID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO agent (
 			workspace_id, name, description, runtime_mode, runtime_config,
@@ -74,25 +85,40 @@ func TestLoadAgentExecutionSkillsAddsDWSOnlyForBoundProfile(t *testing.T) {
 		)
 		VALUES ($1, 'Unbound DWS Agent', '', 'cloud', '{}'::jsonb, $2, 'private', 1, $3)
 		RETURNING id
-	`, workspaceID, dwsRuntimeID, userID).Scan(&unboundAgentID); err != nil {
+	`, workspaceID, dwsRuntimeID, userID).Scan(&secondDWSAgentID); err != nil {
 		t.Fatalf("create unbound DWS agent: %v", err)
+	}
+	var nonDWSAgentID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, visibility, max_concurrent_tasks, owner_id
+		)
+		VALUES ($1, 'Non-DWS Agent', '', 'cloud', '{}'::jsonb, $2, 'private', 1, $3)
+		RETURNING id
+	`, workspaceID, nonDWSRuntimeID, userID).Scan(&nonDWSAgentID); err != nil {
+		t.Fatalf("create non-DWS agent: %v", err)
 	}
 	t.Cleanup(func() {
 		cleanupCtx := context.Background()
-		pool.Exec(cleanupCtx, `DELETE FROM agent WHERE id IN ($1, $2)`, boundAgentID, unboundAgentID)
-		pool.Exec(cleanupCtx, `DELETE FROM agent_runtime WHERE id = $1`, dwsRuntimeID)
+		pool.Exec(cleanupCtx, `DELETE FROM agent WHERE id IN ($1, $2, $3)`, firstDWSAgentID, secondDWSAgentID, nonDWSAgentID)
+		pool.Exec(cleanupCtx, `DELETE FROM agent_runtime WHERE id IN ($1, $2)`, dwsRuntimeID, nonDWSRuntimeID)
 		pool.Exec(cleanupCtx, `DELETE FROM member WHERE workspace_id = $1 AND user_id = $2`, workspaceID, userID)
 		pool.Exec(cleanupCtx, `DELETE FROM workspace WHERE id = $1`, workspaceID)
 		pool.Exec(cleanupCtx, `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 
-	dwsSkills := svc.LoadAgentExecutionSkills(ctx, util.MustParseUUID(boundAgentID))
-	if !hasSkillName(dwsSkills, "multica-dws") {
-		t.Fatalf("DWS-bound agent execution skills missing multica-dws: %#v", skillNames(dwsSkills))
+	firstSkills := svc.LoadAgentExecutionSkills(ctx, util.MustParseUUID(firstDWSAgentID))
+	if !hasSkillName(firstSkills, "multica-dws") {
+		t.Fatalf("first DWS runtime agent skills missing multica-dws: %#v", skillNames(firstSkills))
 	}
-	unboundSkills := svc.LoadAgentExecutionSkills(ctx, util.MustParseUUID(unboundAgentID))
-	if hasSkillName(unboundSkills, "multica-dws") {
-		t.Fatalf("DWS-capable runtime without a profile unexpectedly received multica-dws: %#v", skillNames(unboundSkills))
+	secondSkills := svc.LoadAgentExecutionSkills(ctx, util.MustParseUUID(secondDWSAgentID))
+	if !hasSkillName(secondSkills, "multica-dws") {
+		t.Fatalf("second DWS runtime agent skills missing multica-dws: %#v", skillNames(secondSkills))
+	}
+	nonDWSSkills := svc.LoadAgentExecutionSkills(ctx, util.MustParseUUID(nonDWSAgentID))
+	if hasSkillName(nonDWSSkills, "multica-dws") {
+		t.Fatalf("non-DWS runtime agent unexpectedly received multica-dws: %#v", skillNames(nonDWSSkills))
 	}
 }
 

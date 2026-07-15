@@ -114,9 +114,9 @@ Multica 是最终保存新 Agent 的系统，也是新 Agent 被派发任务和�
 
 ### 3.5 `multica-fc-hermes-runtime`：在沙箱里真正运行 Agent
 
-该仓库构建当前 FC/E2B 使用的 Hermes Runtime 镜像。镜像内包含 Hermes、Multica CLI、DWS CLI v1.0.50、DWS Skill 和 `multica-fc-hermes-runner`。Runner 配置模型、准备 DWS 环境，然后执行 `multica daemon run-once` 领取一个任务。
+该仓库构建当前 FC/E2B 使用的 Hermes Runtime 镜像。镜像内包含 Hermes、Multica CLI、DWS CLI v1.0.51、DWS Skill 和 `multica-fc-hermes-runner`。Runner 配置模型、为每个任务创建独立 DWS 配置目录，然后执行 `multica daemon run-once` 领取一个任务。
 
-当前 Runner 只支持导入 Multica 从 Agent `runtime_config` 绑定的 `DWS_AUTH_ARCHIVE_B64`。这是 Agent 固定 profile，不是本次对话者身份。MVP 需要在同一个 Runner 中优先处理逐任务 ContextToken，并确保复用沙箱时覆盖上一次 DWS 登录态。
+Runner 只接受逐任务 ContextToken 身份：有 Token 时兑换 DWS AuthCode 并校验登录 UID；无 Token 时使用全新的空配置目录继续普通任务。任务结束后删除该目录，不读取或导入 Agent 历史 DWS profile。
 
 ### 3.6 Agent 模板 GitHub 仓库：提供能力内容
 
@@ -307,7 +307,7 @@ ContextToken 能力，但仍不能据此推断线上部署或 Runtime 镜像已�
 AGENT_IDENTITY_CONTEXT_TOKEN
 ```
 
-- FC/E2B Launcher 从任务 context 读取 Token，并在创建或复用沙箱时注入：
+- FC/E2B Launcher 从任务 context 读取 Token，或者在 DWS Chat 启动前依据 Agent 已绑定的钉钉身份创建 Token，并在创建或复用沙箱时注入：
 
 ```text
 AGENT_IDENTITY_CONTEXT_TOKEN
@@ -315,8 +315,8 @@ MULTICA_AGENT_IDENTITY_BASE_URL
 MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS
 ```
 
-- ContextToken 任务要求服务端配置 `MULTICA_AGENT_IDENTITY_BASE_URL`；缺少配置时会拒绝启动该任务，而不是悄悄回退到固定 DWS profile；
-- 当任务带 ContextToken 时，FC/E2B Launcher 不再注入 Agent 绑定的 `DWS_AUTH_ARCHIVE_B64`，从服务端侧保证“逐任务身份优先”；
+- ContextToken 任务要求服务端配置 `MULTICA_AGENT_IDENTITY_BASE_URL`；缺少配置时会拒绝启动该任务，不会使用其他身份；
+- Chat 的 DWS 身份只来自 Agent 绑定的钉钉账号；未绑定时不注入身份，绑定后创建或兑换失败则任务失败；
 - 日志脱敏规则已覆盖 `agent_identity_context_token` 和 `dws_auth_code`。
 
 这说明“Token 从 Multica 的 Issue/quick-create 请求进入任务，再进入 Daemon/沙箱环境”的链路已经存在。后续 Runtime 可以统一从环境变量读取 Token，不需要直接访问 Multica 数据库。
@@ -399,23 +399,14 @@ Router 当前明确不负责 Agent 生命周期，也不管理 Bot 凭证，这�
 当前已有：
 
 - 面向 FC Agent Sandbox/E2B 的 Hermes Runtime 镜像；
-- 镜像内包含 Hermes、Multica CLI、Python、DWS CLI v1.0.50 和 DWS Skill；
+- 镜像内包含 Hermes、Multica CLI、Python、DWS CLI v1.0.51 和 DWS Skill；
 - Runner 根据 Multica 注入的环境变量配置 MaaS/OpenAI 兼容模型；
 - Runner 最终执行 `multica daemon run-once`，只领取指定 Runtime 的一个任务；
-- Multica 可以注入 `DWS_AUTH_ARCHIVE_B64`，Runner 用 `dws auth import --base64` 导入 Agent 绑定的 DWS profile；
-- Runner 会比较目标 profile 与沙箱当前 `corp_id:user_id`，身份不同时使用 `--force` 覆盖，这说明它已经考虑了沙箱复用时的身份污染问题；
+- Runner 为每个任务创建独立 `DWS_CONFIG_DIR`，避免复用沙箱时继承其他任务身份；
+- 有 ContextToken 时，Runner 兑换短期 AuthCode，执行 `dws auth exchange`，再校验 `dws auth status` 和 `dws contact user get-self`；
 - Runtime smoke test 会检查 `multica`、`hermes`、`dws` 和 DWS Skill 是否存在。
 
-当前固定 profile 链路与本 MVP 的逐消息身份链路不同：
-
-- `DWS_AUTH_ARCHIVE_B64` 来自 Agent `runtime_config.fc_e2b.dws_profile_id`，代表 Agent 所有者预先绑定的长期 profile；
-- Runner 不读取 `AGENT_IDENTITY_CONTEXT_TOKEN`，也不调用 `agent-identity` redeem；
-- Runner 不执行 DWS auth code exchange；
-- smoke test 只验证命令存在，不验证“ContextToken -> auth code -> 当前用户”的真实闭环；
-- Dockerfile 默认从 `D1-2004/multica.git` 的 `develop` 构建 Multica CLI；ContextToken 虽已进入 `dt-fde-multica` 的已核对 release 和当前本地集成分支，但尚未进入原始 `origin/develop`，因此镜像不会自动获得已核对的兼容实现；
-- Multica 会按 Chat Session 或 Issue 复用 FC sandbox，因此不能假设每次任务都是没有旧登录态的全新 HOME。
-
-本次远端审计未发现该 Runtime 仓库有比 `master@74b99fb` 更新的分支实现；ContextToken redeem 和 DWS exchange 仍需要在该仓库新增。
+历史授权包和 Agent 固定 DWS profile 链路已经删除。Chat 的唯一 DWS 身份来源是 Agent 绑定的钉钉账号；Issue 仍可显式携带 ContextToken。Multica 会按 Chat Session 或 Issue 复用 FC sandbox，因此 Runner 每次都使用独立临时配置目录并在结束时清理。
 
 DWS CLI 代码中存在隐藏命令：
 
@@ -492,12 +483,12 @@ Gateway DTO 已有 `senderId` 和 `extension.realmOrgid`，但必须用真实事
 2. 调用 `agent-identity` redeem 接口；
 3. 获取 `uid/orgId/clientId/authCode`；
 4. 设置正确的 DWS client 配置，并调用候选命令 `dws auth exchange --code ... --uid ...`；
-5. 对复用 sandbox 强制覆盖或清理旧 profile，不能继续沿用 Agent 固定 `DWS_AUTH_ARCHIVE_B64`；
+5. 对复用 sandbox 使用独立临时 DWS 配置目录，并在任务结束时删除；
 6. 使用 `dws auth status` 和 `dws contact user get-self` 验证 `uid/orgId`；
 7. 清除 shell 中的 ContextToken/authCode，并确保日志不输出；
 8. 再执行 `multica daemon run-once` 启动真正的 Agent Runtime。
 
-Factory Bot 和新建 Bot 的身份策略必须明确为“逐任务 ContextToken 优先”。现有固定 DWS profile 可以继续服务旧 Agent，但不能在本 MVP 路径中覆盖本条消息发送者。
+Factory Bot 和新建 Bot 的身份策略统一为逐任务 ContextToken；不再保留或读取固定 DWS profile。
 
 #### 6. Factory Bot 的受限创建能力
 
@@ -637,7 +628,7 @@ MVP 最简单的做法是使用少量经审核、固定版本的内置模板，�
 1. 钉钉事件中的 `senderId` 和 `extension.realmOrgid` 是否分别等于 `agent-identity` 所需的 DWS 数字 `uid/orgId`，以及群聊/跨组织场景应选哪个 org。
 2. `agent-identity` 的 Diamond 配置中是否有正确的 DWS `clientId`、权限范围和线上可用的 HSF 依赖。
 3. 沙箱网络是否能访问 `agent-identity` redeem 地址。
-4. Runtime 实际固定的 DWS CLI v1.0.50 是否包含 `dws auth exchange`，并能使用 `agent-identity` 返回的 `clientId/authCode/uid` 在无交互环境生成有效登录态。
+4. Runtime 已固定 DWS CLI v1.0.51 并包含 `dws auth exchange`；仍需在预发用真实绑定身份验证 `agent-identity` 返回的 `clientId/authCode/uid` 能生成有效登录态。
 5. 钉钉租户是否允许当前用户创建/安装 Bot，以及是否存在审批、配额或频控。
 6. Runtime/FC 沙箱是否具备目标并发容量。
 7. 如果模板或 Skill 位于私有 GitHub 仓库，是否有可用且最小权限的 GitHub App 安装凭证。

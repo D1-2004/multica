@@ -162,8 +162,6 @@ import type {
   CloudRuntimeNode,
   CreateFCE2BRuntimeRequest,
   CreateCloudRuntimeNodeRequest,
-  DWSAuthProfile,
-  DWSAuthSession,
   FCE2BTemplate,
   ListCloudRuntimeNodesParams,
 } from "../runtimes/cloud-runtime";
@@ -1057,33 +1055,6 @@ export class ApiClient {
 
   async listFCE2BTemplates(): Promise<FCE2BTemplate[]> {
     return this.fetch("/api/runtimes/fc-e2b/templates");
-  }
-
-  async listDWSAuthProfiles(workspaceId: string): Promise<DWSAuthProfile[]> {
-    return this.fetch(`/api/workspaces/${workspaceId}/dws/profiles`);
-  }
-
-  async deleteDWSAuthProfile(
-    workspaceId: string,
-    profileId: string,
-  ): Promise<DWSAuthProfile> {
-    return this.fetch(
-      `/api/workspaces/${workspaceId}/dws/profiles/${profileId}`,
-      { method: "DELETE" },
-    );
-  }
-
-  async beginDWSAuth(workspaceId: string): Promise<DWSAuthSession> {
-    return this.fetch(`/api/workspaces/${workspaceId}/dws/auth/begin`, {
-      method: "POST",
-    });
-  }
-
-  async getDWSAuthStatus(
-    workspaceId: string,
-    sessionId: string,
-  ): Promise<DWSAuthSession> {
-    return this.fetch(`/api/workspaces/${workspaceId}/dws/auth/${sessionId}/status`);
   }
 
   async listCloudRuntimeNodes(

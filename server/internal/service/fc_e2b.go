@@ -3,7 +3,6 @@ package service
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,8 +21,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/util"
-	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -66,7 +65,6 @@ type FCE2BConfig struct {
 	LLMBaseURL           string
 	LLMAPIKey            string
 	LLMModels            []string
-	DWSSecretKey         string
 	AgentIdentityBaseURL string
 	AgentIdentityTimeout time.Duration
 	DWSClientSecret      string
@@ -86,7 +84,6 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		Domain:               strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),
 		LLMBaseURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_BASE_URL")), "/"),
 		LLMAPIKey:            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_API_KEY")),
-		DWSSecretKey:         strings.TrimSpace(os.Getenv("MULTICA_DWS_SECRET_KEY")),
 		AgentIdentityBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_BASE_URL")), "/"),
 		AgentIdentityTimeout: defaultAgentIdentityTimeout,
 		DWSClientSecret:      strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET")),
@@ -255,6 +252,28 @@ func IsFCE2BRuntime(rt db.AgentRuntime) bool {
 	return metadata.Kind == FCE2BMetadataKind
 }
 
+func FCE2BRuntimeHasCapability(rt db.AgentRuntime, capability string) bool {
+	if !IsFCE2BRuntime(rt) {
+		return false
+	}
+	capability = strings.ToLower(strings.TrimSpace(capability))
+	if capability == "" {
+		return false
+	}
+	var metadata struct {
+		Capabilities []string `json:"capabilities"`
+	}
+	if json.Unmarshal(rt.Metadata, &metadata) != nil {
+		return false
+	}
+	for _, candidate := range metadata.Capabilities {
+		if strings.ToLower(strings.TrimSpace(candidate)) == capability {
+			return true
+		}
+	}
+	return false
+}
+
 type CommandRunner interface {
 	Run(ctx context.Context, name string, args []string, env []string) (string, error)
 }
@@ -384,15 +403,20 @@ func firstString(obj map[string]any, keys ...string) string {
 }
 
 type FCE2BLauncher struct {
-	Queries *db.Queries
-	Tasks   *TaskService
-	Config  FCE2BConfig
-	Runner  CommandRunner
+	Queries       *db.Queries
+	Tasks         *TaskService
+	Config        FCE2BConfig
+	Runner        CommandRunner
+	AgentIdentity AgentIdentityContextCreator
 
 	// Pool backs the cross-replica sandbox lock. Optional: without it the
 	// launcher serializes nothing, which is only safe in a single-process
 	// deployment (see resolveSandbox).
 	Pool *pgxpool.Pool
+}
+
+type AgentIdentityContextCreator interface {
+	CreateContext(context.Context, agentidentityhsf.CreateContextRequest) (agentidentityhsf.CreateContextResult, error)
 }
 
 // fcE2BSandboxLockClass namespaces the advisory lock so it cannot collide with
@@ -453,10 +477,11 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 		runner = OSCommandRunner{}
 	}
 	return &FCE2BLauncher{
-		Queries: q,
-		Tasks:   tasks,
-		Config:  cfg,
-		Runner:  runner,
+		Queries:       q,
+		Tasks:         tasks,
+		Config:        cfg,
+		Runner:        runner,
+		AgentIdentity: agentidentityhsf.NewClient(),
 	}
 }
 
@@ -531,7 +556,7 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		"scope_type", scopeType,
 		"scope_id", scopeID,
 	)
-	extraEnv, err := l.extraEnvForTask(ctx, task)
+	extraEnv, err := l.extraEnvForTask(ctx, task, rt, sandboxID)
 	if err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
@@ -679,11 +704,12 @@ func fcE2BTaskStatusBlocksClaim(status string) bool {
 	}
 }
 
-func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQueue) (map[string]string, error) {
-	agentIdentityEnv, err := fcE2BAgentIdentityExtraEnv(task, l.Config)
-	if err != nil {
-		return nil, err
-	}
+func (l *FCE2BLauncher) extraEnvForTask(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	runtime db.AgentRuntime,
+	sandboxID string,
+) (map[string]string, error) {
 	agentRow, err := l.Queries.GetAgent(ctx, task.AgentID)
 	if err != nil {
 		return nil, fmt.Errorf("load agent for FC/E2B launch: %w", err)
@@ -693,39 +719,69 @@ func (l *FCE2BLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQu
 		return nil, err
 	}
 	env := map[string]string{"OPENAI_MODEL": model}
+	var agentIdentityEnv map[string]string
+	if task.ChatSessionID.Valid {
+		agentIdentityEnv, err = l.chatDWSIdentityEnv(ctx, task, runtime, sandboxID)
+	} else {
+		agentIdentityEnv, err = fcE2BAgentIdentityExtraEnv(task, l.Config)
+	}
+	if err != nil {
+		return nil, err
+	}
 	for key, value := range agentIdentityEnv {
 		env[key] = value
 	}
-	if len(agentIdentityEnv) > 0 {
-		// ContextToken authorization is task-scoped and must not reuse a
-		// previously bound DWS profile when sandbox initialization fails.
-		return env, nil
-	}
+	return env, nil
+}
 
-	profileID, hasProfile, err := DWSProfileIDFromRuntimeConfig(agentRow.RuntimeConfig)
+func (l *FCE2BLauncher) chatDWSIdentityEnv(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	runtime db.AgentRuntime,
+	sandboxID string,
+) (map[string]string, error) {
+	if !FCE2BRuntimeHasCapability(runtime, "dws") {
+		return nil, nil
+	}
+	identity, err := l.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+		WorkspaceID: runtime.WorkspaceID,
+		AgentID:     task.AgentID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load Agent DingTalk identity for chat: %w", err)
 	}
-	if !hasProfile {
-		return env, nil
+	if l.AgentIdentity == nil {
+		return nil, errors.New("Agent Identity HSF client is not configured")
 	}
-	profileUUID, err := util.ParseUUID(profileID)
-	if err != nil {
-		return nil, errors.New("runtime_config.fc_e2b.dws_profile_id is not a valid UUID")
-	}
-	profile, err := l.Queries.GetDWSAuthProfileForOwner(ctx, db.GetDWSAuthProfileForOwnerParams{
-		ID:          profileUUID,
-		WorkspaceID: agentRow.WorkspaceID,
-		OwnerID:     agentRow.OwnerID,
+	taskID := util.UUIDToString(task.ID)
+	result, err := l.AgentIdentity.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
+		RequestID:   "multica-chat-" + taskID,
+		TaskID:      taskID,
+		AgentID:     util.UUIDToString(task.AgentID),
+		RuntimeType: "E2B",
+		RuntimeID:   sandboxID,
+		Reason:      "Multica chat DWS authorization",
+		Source: map[string]string{
+			"app":             "dt-fde-multica",
+			"chat_session_id": util.UUIDToString(task.ChatSessionID),
+		},
+		UID:        identity.DwsUid,
+		OrgID:      identity.OrgID,
+		TTLSeconds: 900,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("load DWS profile for FC/E2B launch: %w", err)
+		return nil, fmt.Errorf("create Agent Identity context for chat: %w", err)
 	}
-	archive, err := l.decryptDWSAuthArchive(profile.AuthArchiveEncrypted)
+	env, err := fcE2BAgentIdentityEnvForToken(result.ContextToken, l.Config)
 	if err != nil {
 		return nil, err
 	}
-	env["DWS_AUTH_ARCHIVE_B64"] = archive
+	// Agent Identity uses the backend numeric UID, while DWS auth exchange and
+	// get-self identify the bound employee by staffId/openid.
+	env["DWS_UID"] = identity.AccountOpenID
 	return env, nil
 }
 
@@ -741,6 +797,14 @@ func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue, cfg FCE2BConfig) (map[st
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return nil, nil
+	}
+	return fcE2BAgentIdentityEnvForToken(token, cfg)
+}
+
+func fcE2BAgentIdentityEnvForToken(token string, cfg FCE2BConfig) (map[string]string, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, errors.New("Agent Identity returned an empty ContextToken")
 	}
 	if cfg.AgentIdentityBaseURL == "" {
 		return nil, errors.New("MULTICA_AGENT_IDENTITY_BASE_URL is required for ContextToken tasks")
@@ -762,56 +826,6 @@ func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue, cfg FCE2BConfig) (map[st
 		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS": strconv.Itoa(seconds),
 		"DWS_CLIENT_SECRET":                      cfg.DWSClientSecret,
 	}, nil
-}
-
-// DWSProfileIDFromRuntimeConfig extracts the optional DWS profile binding from
-// the agent runtime_config JSON. The server accepts both the current nested
-// shape and the legacy top-level key so old agents keep their binding.
-func DWSProfileIDFromRuntimeConfig(raw []byte) (string, bool, error) {
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return "", false, nil
-	}
-	var cfg struct {
-		FCE2B struct {
-			DWSProfileID string `json:"dws_profile_id"`
-		} `json:"fc_e2b"`
-		DWSProfileID string `json:"dws_profile_id"`
-	}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return "", false, fmt.Errorf("parse agent runtime_config for DWS profile: %w", err)
-	}
-	profileID := strings.TrimSpace(cfg.FCE2B.DWSProfileID)
-	if profileID == "" {
-		profileID = strings.TrimSpace(cfg.DWSProfileID)
-	}
-	return profileID, profileID != "", nil
-}
-
-func (l *FCE2BLauncher) decryptDWSAuthArchive(ciphertext []byte) (string, error) {
-	if len(ciphertext) == 0 {
-		return "", errors.New("DWS profile archive is empty")
-	}
-	rawKey := strings.TrimSpace(l.Config.DWSSecretKey)
-	if rawKey == "" {
-		return "", errors.New("MULTICA_DWS_SECRET_KEY is required for DWS profiles")
-	}
-	key, err := base64.StdEncoding.DecodeString(rawKey)
-	if err != nil {
-		return "", errors.New("MULTICA_DWS_SECRET_KEY is not valid base64")
-	}
-	box, err := secretbox.New(key)
-	if err != nil {
-		return "", fmt.Errorf("MULTICA_DWS_SECRET_KEY is invalid: %w", err)
-	}
-	plain, err := box.Open(ciphertext)
-	if err != nil {
-		return "", errors.New("failed to decrypt DWS profile archive")
-	}
-	archive := strings.TrimSpace(string(plain))
-	if archive == "" {
-		return "", errors.New("DWS profile archive is empty")
-	}
-	return archive, nil
 }
 
 func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool, template string) (string, bool, error) {

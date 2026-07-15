@@ -170,6 +170,7 @@ export type {
 } from "./dingtalk";
 export type {
   DingTalkAccountBinding,
+  DingTalkAccountBindingOutcome,
   DingTalkAccountBindingsResponse,
   BeginDingTalkAccountBindingResponse,
 } from "./dingtalk-account-binding";

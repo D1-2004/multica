@@ -26,6 +26,7 @@ type dingTalkAccountBindingService interface {
 	Begin(context.Context, agentmessagerouter.BeginParams) (agentmessagerouter.BeginResult, error)
 	List(context.Context, pgtype.UUID) ([]agentmessagerouter.PublicDingTalkAccountBinding, error)
 	CompleteCallback(context.Context, agentmessagerouter.CallbackParams) (agentmessagerouter.PublicDingTalkAccountBinding, error)
+	CompleteIdentityCallback(context.Context, agentmessagerouter.IdentityCallbackParams) (agentmessagerouter.PublicDingTalkAccountBinding, error)
 	Unbind(context.Context, agentmessagerouter.UnbindParams) (agentmessagerouter.PublicDingTalkAccountBinding, error)
 }
 
@@ -35,6 +36,14 @@ type beginDingTalkAccountBindingRequest struct {
 
 type dingTalkAccountBindingCallbackRequest struct {
 	SourceID           string `json:"source_id"`
+	AccountDisplayName string `json:"account_display_name"`
+	AccountAvatarURL   string `json:"account_avatar_url"`
+}
+
+type dingTalkIdentityCallbackRequest struct {
+	AccountOpenID      string `json:"account_open_id"`
+	AccountOrgID       string `json:"account_org_id"`
+	AccountCorpID      string `json:"account_corp_id"`
 	AccountDisplayName string `json:"account_display_name"`
 	AccountAvatarURL   string `json:"account_avatar_url"`
 }
@@ -142,7 +151,7 @@ func (h *Handler) CompleteDingTalkAccountBindingCallback(w http.ResponseWriter, 
 		CallbackToken:      callbackToken,
 		SourceID:           request.SourceID,
 		AccountDisplayName: request.AccountDisplayName,
-		AccountAvatarURL: request.AccountAvatarURL,
+		AccountAvatarURL:   request.AccountAvatarURL,
 	})
 	if err != nil {
 		writeDingTalkAccountBindingError(w, err)
@@ -153,6 +162,51 @@ func (h *Handler) CompleteDingTalkAccountBindingCallback(w http.ResponseWriter, 
 		result.WorkspaceID,
 		"system",
 		"dingtalk_account_binding",
+		map[string]any{"id": result.ID},
+	)
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) CompleteDingTalkIdentityCallback(w http.ResponseWriter, r *http.Request) {
+	if h.DingTalkAccountBindings == nil || strings.TrimSpace(h.DingTalkAccountBindingOrigin) == "" {
+		writeDingTalkAccountBindingAPIError(w, http.StatusServiceUnavailable, "binding_not_configured", "dingtalk account binding is not configured")
+		return
+	}
+	if r.Header.Get("Origin") != h.DingTalkAccountBindingOrigin {
+		writeDingTalkAccountBindingAPIError(w, http.StatusForbidden, "callback_origin_forbidden", "callback origin is not allowed")
+		return
+	}
+	callbackToken, ok := bearerToken(r.Header.Get("Authorization"))
+	if !ok {
+		writeDingTalkAccountBindingAPIError(w, http.StatusUnauthorized, "callback_auth_required", "callback authorization required")
+		return
+	}
+	attemptID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "attemptId"), "attempt id")
+	if !ok {
+		return
+	}
+	var request dingTalkIdentityCallbackRequest
+	if err := decodeLimitedJSON(w, r, maxDingTalkAccountCallbackBodyBytes, &request, "invalid_binding_result"); err != nil {
+		return
+	}
+	result, err := h.DingTalkAccountBindings.CompleteIdentityCallback(r.Context(), agentmessagerouter.IdentityCallbackParams{
+		AttemptID:          attemptID,
+		CallbackToken:      callbackToken,
+		AccountOpenID:      request.AccountOpenID,
+		AccountOrgID:       request.AccountOrgID,
+		AccountCorpID:      request.AccountCorpID,
+		AccountDisplayName: request.AccountDisplayName,
+		AccountAvatarURL:   request.AccountAvatarURL,
+	})
+	if err != nil {
+		writeDingTalkAccountBindingError(w, err)
+		return
+	}
+	h.publish(
+		protocol.EventDingTalkAccountBindingActivated,
+		result.WorkspaceID,
+		"system",
+		"dingtalk_identity_binding",
 		map[string]any{"id": result.ID},
 	)
 	writeJSON(w, http.StatusOK, result)
@@ -239,6 +293,10 @@ func writeDingTalkAccountBindingError(w http.ResponseWriter, err error) {
 		writeDingTalkAccountBindingAPIError(w, http.StatusConflict, "binding_result_conflict", "binding result conflict")
 	case errors.Is(err, agentmessagerouter.ErrRouterUnavailable):
 		writeDingTalkAccountBindingAPIError(w, http.StatusBadGateway, "subscription_verify_failed", "subscription verification failed")
+	case errors.Is(err, agentmessagerouter.ErrIdentityUnavailable):
+		writeDingTalkAccountBindingAPIError(w, http.StatusBadGateway, "identity_verify_failed", "dingtalk identity verification failed")
+	case errors.Is(err, agentmessagerouter.ErrIdentityMismatch):
+		writeDingTalkAccountBindingAPIError(w, http.StatusConflict, "identity_mismatch", "dingtalk identity does not match the scanned account")
 	default:
 		writeDingTalkAccountBindingAPIError(w, http.StatusInternalServerError, "binding_internal_error", "dingtalk account binding failed")
 	}

@@ -90,16 +90,34 @@ RETURNING *;
 
 -- name: RevokeDingTalkAccountBinding :one
 -- Router DELETE happens before this local transition. The endpoint and other
--- config are retained so a later begin can reuse the stable dispatch URL.
-UPDATE channel_installation
+-- config are retained so a later begin can reuse the stable dispatch URL. The
+-- Agent's DWS identity and pending identity attempts are removed in the same
+-- database statement as the local route transition.
+WITH target AS (
+    SELECT installation.id, installation.workspace_id, installation.agent_id
+    FROM channel_installation installation
+    WHERE installation.id = sqlc.arg('id')
+      AND installation.workspace_id = sqlc.arg('workspace_id')
+      AND installation.agent_id = sqlc.arg('agent_id')
+      AND installation.channel_type = 'dingtalk_account'
+      AND installation.status IN ('pending', 'active', 'revoked')
+), deleted_identity AS (
+    DELETE FROM agent_dingtalk_identity identity
+    USING target
+    WHERE identity.workspace_id = target.workspace_id
+      AND identity.agent_id = target.agent_id
+), deleted_attempts AS (
+    DELETE FROM agent_dingtalk_identity_attempt attempt
+    USING target
+    WHERE attempt.workspace_id = target.workspace_id
+      AND attempt.agent_id = target.agent_id
+)
+UPDATE channel_installation installation
 SET status = 'revoked',
     updated_at = now()
-WHERE id = sqlc.arg('id')
-  AND workspace_id = sqlc.arg('workspace_id')
-  AND agent_id = sqlc.arg('agent_id')
-  AND channel_type = 'dingtalk_account'
-  AND status IN ('pending', 'active', 'revoked')
-RETURNING *;
+FROM target
+WHERE installation.id = target.id
+RETURNING installation.*;
 
 -- name: GetActiveDingTalkAccountBindingByEndpoint :one
 -- Public dispatch resolution must fail closed when the workspace or agent was

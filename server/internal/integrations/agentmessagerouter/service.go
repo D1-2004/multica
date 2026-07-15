@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -26,13 +27,15 @@ const (
 )
 
 var (
-	ErrNotConfigured     = errors.New("dingtalk account binding is not configured")
-	ErrAlreadyActive     = errors.New("dingtalk account binding is already active")
-	ErrNotFound          = errors.New("dingtalk account binding not found")
-	ErrCallbackExpired   = errors.New("dingtalk account binding callback expired")
-	ErrBindingConflict   = errors.New("dingtalk account binding conflict")
-	ErrRouterUnavailable = errors.New("agent message router is unavailable")
-	ErrInvalidResult     = errors.New("dingtalk account binding result is invalid")
+	ErrNotConfigured       = errors.New("dingtalk account binding is not configured")
+	ErrAlreadyActive       = errors.New("dingtalk account binding is already active")
+	ErrNotFound            = errors.New("dingtalk account binding not found")
+	ErrCallbackExpired     = errors.New("dingtalk account binding callback expired")
+	ErrBindingConflict     = errors.New("dingtalk account binding conflict")
+	ErrRouterUnavailable   = errors.New("agent message router is unavailable")
+	ErrIdentityUnavailable = errors.New("dingtalk identity service is unavailable")
+	ErrIdentityMismatch    = errors.New("dingtalk identity does not match the scanned account")
+	ErrInvalidResult       = errors.New("dingtalk account binding result is invalid")
 )
 
 // Store is the generated-query seam used by the binding lifecycle. *db.Queries
@@ -45,6 +48,18 @@ type Store interface {
 	ListDingTalkAccountBindings(context.Context, pgtype.UUID) ([]db.ChannelInstallation, error)
 	ActivateDingTalkAccountBinding(context.Context, db.ActivateDingTalkAccountBindingParams) (db.ChannelInstallation, error)
 	RevokeDingTalkAccountBinding(context.Context, db.RevokeDingTalkAccountBindingParams) (db.ChannelInstallation, error)
+}
+
+type IdentityStore interface {
+	BeginAgentDingTalkIdentityAttempt(context.Context, db.BeginAgentDingTalkIdentityAttemptParams) (db.AgentDingtalkIdentityAttempt, error)
+	GetAgentDingTalkIdentityAttempt(context.Context, pgtype.UUID) (db.AgentDingtalkIdentityAttempt, error)
+	CompleteAgentDingTalkIdentityAttempt(context.Context, db.CompleteAgentDingTalkIdentityAttemptParams) (db.CompleteAgentDingTalkIdentityAttemptRow, error)
+	GetAgentDingTalkIdentity(context.Context, db.GetAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error)
+	DeleteAgentDingTalkIdentityAttempts(context.Context, db.DeleteAgentDingTalkIdentityAttemptsParams) error
+}
+
+type EmployeeResolver interface {
+	GetEmployeeByStaffID(context.Context, string, string) (orgemphsf.Employee, error)
 }
 
 // Router is the existing subscription contract used to issue a QR credential,
@@ -62,6 +77,8 @@ type ServiceConfig struct {
 	Keyring         *DispatchKeyring
 	Random          io.Reader
 	Now             func() time.Time
+	IdentityStore   IdentityStore
+	OrgEmployees    EmployeeResolver
 }
 
 type Service struct {
@@ -73,6 +90,8 @@ type Service struct {
 	keyring         *DispatchKeyring
 	random          io.Reader
 	now             func() time.Time
+	identityStore   IdentityStore
+	orgEmployees    EmployeeResolver
 }
 
 type BeginParams struct {
@@ -95,13 +114,24 @@ type CallbackParams struct {
 	AccountAvatarURL   string
 }
 
+type IdentityCallbackParams struct {
+	AttemptID          pgtype.UUID
+	CallbackToken      string
+	AccountOpenID      string
+	AccountOrgID       string
+	AccountCorpID      string
+	AccountDisplayName string
+	AccountAvatarURL   string
+}
+
 type UnbindParams struct {
 	WorkspaceID    pgtype.UUID
 	InstallationID pgtype.UUID
 }
 
 func NewService(store Store, router Router, config ServiceConfig) (*Service, error) {
-	if store == nil || router == nil || config.Keyring == nil || config.Random == nil {
+	if store == nil || router == nil || config.Keyring == nil || config.Random == nil ||
+		config.IdentityStore == nil || config.OrgEmployees == nil {
 		return nil, ErrNotConfigured
 	}
 	publicOrigin, err := canonicalHTTPSOrigin(config.PublicBaseURL)
@@ -129,6 +159,8 @@ func NewService(store Store, router Router, config ServiceConfig) (*Service, err
 		keyring:         config.Keyring,
 		random:          config.Random,
 		now:             now,
+		identityStore:   config.IdentityStore,
+		orgEmployees:    config.OrgEmployees,
 	}, nil
 }
 
@@ -200,13 +232,41 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (BeginResult, e
 	if strings.TrimSpace(issued.BindingToken) == "" || !issued.ExpiresAt.After(s.now()) {
 		return BeginResult{}, ErrInvalidResult
 	}
+	identityCallbackToken, identityCallbackHash, err := GenerateCallbackToken(s.random)
+	if err != nil {
+		return BeginResult{}, fmt.Errorf("%w: identity callback credential generation failed", ErrNotConfigured)
+	}
+	identityExpiresAt := issued.ExpiresAt.UTC()
+	if callbackExpiresAt.Before(identityExpiresAt) {
+		identityExpiresAt = callbackExpiresAt
+	}
+	if err := s.identityStore.DeleteAgentDingTalkIdentityAttempts(ctx, db.DeleteAgentDingTalkIdentityAttemptsParams{
+		WorkspaceID: row.WorkspaceID,
+		AgentID:     row.AgentID,
+	}); err != nil {
+		return BeginResult{}, fmt.Errorf("prepare dingtalk identity attempt: %w", err)
+	}
+	identityAttempt, err := s.identityStore.BeginAgentDingTalkIdentityAttempt(ctx, db.BeginAgentDingTalkIdentityAttemptParams{
+		WorkspaceID:       row.WorkspaceID,
+		AgentID:           row.AgentID,
+		InitiatorUserID:   row.InstallerUserID,
+		CallbackTokenHash: identityCallbackHash,
+		ExpiresAt:         pgtype.Timestamptz{Time: identityExpiresAt, Valid: true},
+	})
+	if err != nil {
+		return BeginResult{}, fmt.Errorf("begin dingtalk identity attempt: %w", err)
+	}
 	callbackURL := *s.publicOrigin
 	callbackURL.Path = "/api/integrations/dingtalk/account-bindings/" + util.UUIDToString(row.ID) + "/callback"
+	identityCallbackURL := *s.publicOrigin
+	identityCallbackURL.Path = "/api/integrations/dingtalk/account-identities/" + util.UUIDToString(identityAttempt.ID) + "/callback"
 	fragment := url.Values{
-		"bindingToken":  {issued.BindingToken},
-		"callbackUrl":   {callbackURL.String()},
-		"callbackToken": {callbackToken},
-		"expiresAt":     {strconv.FormatInt(issued.ExpiresAt.Unix(), 10)},
+		"bindingToken":          {issued.BindingToken},
+		"callbackUrl":           {callbackURL.String()},
+		"callbackToken":         {callbackToken},
+		"identityCallbackUrl":   {identityCallbackURL.String()},
+		"identityCallbackToken": {identityCallbackToken},
+		"expiresAt":             {strconv.FormatInt(identityExpiresAt.Unix(), 10)},
 	}
 	qrCodeURL := *s.dbaseBindingURL
 	qrCodeURL.Fragment = fragment.Encode()
@@ -230,7 +290,7 @@ func (s *Service) List(ctx context.Context, workspaceID pgtype.UUID) ([]PublicDi
 	}
 	bindings := make([]PublicDingTalkAccountBinding, 0, len(rows))
 	for _, row := range rows {
-		binding, err := publicBindingFromRow(row)
+		binding, err := s.publicBinding(ctx, row)
 		if err != nil {
 			return nil, err
 		}
@@ -276,7 +336,7 @@ func (s *Service) CompleteCallback(ctx context.Context, params CallbackParams) (
 		if err := s.verifyActiveSubscription(ctx, sourceID, row, config); err != nil {
 			return PublicDingTalkAccountBinding{}, err
 		}
-		return publicBindingFromRow(row)
+		return s.publicBinding(ctx, row)
 	}
 	if row.Status != "pending" {
 		return PublicDingTalkAccountBinding{}, ErrBindingConflict
@@ -321,7 +381,7 @@ func (s *Service) CompleteCallback(ctx context.Context, params CallbackParams) (
 				if parseErr == nil && currentConfig.RouterSourceID == sourceID &&
 					VerifyCallbackToken(params.CallbackToken, currentConfig.CallbackTokenHash) &&
 					s.now().Before(currentConfig.CallbackExpiresAt) {
-					return publicBindingFromRow(current)
+					return s.publicBinding(ctx, current)
 				}
 			}
 			// The callback source was already verified against this exact agent and
@@ -337,7 +397,7 @@ func (s *Service) CompleteCallback(ctx context.Context, params CallbackParams) (
 		}
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("activate dingtalk account binding: %w", err)
 	}
-	return publicBindingFromRow(activated)
+	return s.publicBinding(ctx, activated)
 }
 
 func (s *Service) Unbind(ctx context.Context, params UnbindParams) (PublicDingTalkAccountBinding, error) {
@@ -379,7 +439,7 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (PublicDingTa
 		}
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("revoke dingtalk account binding: %w", err)
 	}
-	return publicBindingFromRow(revoked)
+	return s.publicBinding(ctx, revoked)
 }
 
 func (s *Service) verifyActiveSubscription(ctx context.Context, sourceID string, row db.ChannelInstallation, config DingTalkAccountConfig) error {
@@ -407,7 +467,7 @@ func subscriptionMatches(subscription Subscription, sourceID string, row db.Chan
 		subscription.Status == "active"
 }
 
-func publicBindingFromRow(row db.ChannelInstallation) (PublicDingTalkAccountBinding, error) {
+func (s *Service) publicBinding(ctx context.Context, row db.ChannelInstallation) (PublicDingTalkAccountBinding, error) {
 	if row.ChannelType != ChannelTypeDingTalkAccount {
 		return PublicDingTalkAccountBinding{}, ErrInvalidResult
 	}
@@ -415,11 +475,28 @@ func publicBindingFromRow(row db.ChannelInstallation) (PublicDingTalkAccountBind
 	if err != nil {
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
 	}
+	dwsIdentity := PublicDingTalkBindingOutcome{Status: "unbound"}
+	identity, identityErr := s.identityStore.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+		WorkspaceID: row.WorkspaceID,
+		AgentID:     row.AgentID,
+	})
+	if identityErr == nil {
+		boundAt := identity.BoundAt.Time
+		dwsIdentity = PublicDingTalkBindingOutcome{
+			Status:             "active",
+			AccountDisplayName: identity.AccountDisplayName,
+			AccountAvatarURL:   identity.AccountAvatarUrl,
+			BoundAt:            &boundAt,
+		}
+	} else if !errors.Is(identityErr, pgx.ErrNoRows) {
+		return PublicDingTalkAccountBinding{}, fmt.Errorf("load dingtalk identity: %w", identityErr)
+	}
 	return config.PublicBinding(
 		util.UUIDToString(row.ID),
 		util.UUIDToString(row.WorkspaceID),
 		util.UUIDToString(row.AgentID),
 		row.Status,
+		dwsIdentity,
 	), nil
 }
 

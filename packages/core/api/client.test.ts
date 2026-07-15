@@ -59,10 +59,13 @@ describe("ApiClient", () => {
                 id: "installation-1",
                 workspace_id: "workspace-1",
                 agent_id: "agent-1",
-                status: "active",
-                account_display_name: "Zhang San",
-                account_avatar_url: null,
-                bound_at: "2026-07-14T09:30:00Z",
+                dws_identity: {
+                  status: "active",
+                  account_display_name: "Zhang San",
+                  account_avatar_url: null,
+                  bound_at: "2026-07-14T09:30:00Z",
+                },
+                message_route: { status: "active" },
               },
             ],
             configured: true,
@@ -623,34 +626,6 @@ describe("ApiClient", () => {
         visibility: "private",
       }),
     });
-  });
-
-  it("uses the DWS profile delete API contract", async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          id: "profile-1",
-          workspace_id: "ws-1",
-          label: "DWS profile",
-          status: "revoked",
-          created_at: "2026-07-09T00:00:00Z",
-          updated_at: "2026-07-09T00:00:00Z",
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      ),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const client = new ApiClient("https://api.example.test");
-    await client.deleteDWSAuthProfile("ws-1", "profile-1");
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.example.test/api/workspaces/ws-1/dws/profiles/profile-1",
-      expect.objectContaining({ method: "DELETE" }),
-    );
   });
 
   it("falls back when Cloud Runtime node responses drift", async () => {

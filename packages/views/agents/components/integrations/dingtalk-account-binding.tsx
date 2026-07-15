@@ -6,7 +6,7 @@ import { Link2, RefreshCw, Trash2 } from "lucide-react";
 import { QRCode } from "react-qr-code";
 import type {
   BeginDingTalkAccountBindingResponse,
-  DingTalkAccountBinding,
+  DingTalkAccountBindingOutcome,
 } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
@@ -44,8 +44,8 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-function displayName(binding: DingTalkAccountBinding, fallback: string): string {
-  const name = binding.accountDisplayName?.trim();
+function displayName(outcome: DingTalkAccountBindingOutcome, fallback: string): string {
+  const name = outcome.accountDisplayName?.trim();
   return name || fallback;
 }
 
@@ -70,20 +70,20 @@ export function DingTalkAccountBindingCard({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const activeBinding = useMemo(
+  const currentBinding = useMemo(
     () =>
       data?.bindings.find(
-        (binding) => binding.agentId === agentId && binding.status === "active",
+        (binding) => binding.agentId === agentId,
       ) ?? null,
     [agentId, data?.bindings],
   );
-  const pendingBinding = useMemo(
-    () =>
-      data?.bindings.find(
-        (binding) => binding.agentId === agentId && binding.status === "pending",
-      ) ?? null,
-    [agentId, data?.bindings],
-  );
+  const dwsIdentityActive = currentBinding?.dwsIdentity.status === "active";
+  const messageRouteActive = currentBinding?.messageRoute.status === "active";
+  const hasConnectedBinding = dwsIdentityActive || messageRouteActive;
+  const pendingBinding = currentBinding?.messageRoute.status === "pending";
+  const accountOutcome = dwsIdentityActive
+    ? currentBinding?.dwsIdentity
+    : currentBinding?.messageRoute;
 
   useEffect(() => {
     if (!attempt) {
@@ -102,10 +102,10 @@ export function DingTalkAccountBindingCard({
   }, [attempt]);
 
   useEffect(() => {
-    if (!activeBinding) return;
+    if (!dwsIdentityActive) return;
     setAttempt(null);
     setExpired(false);
-  }, [activeBinding]);
+  }, [dwsIdentityActive]);
 
   async function startBinding() {
     setActionError(null);
@@ -133,10 +133,10 @@ export function DingTalkAccountBindingCard({
   }
 
   async function unbind() {
-    if (!activeBinding) return;
+    if (!currentBinding || !hasConnectedBinding) return;
     setActionError(null);
     try {
-      await deleteBinding.mutateAsync(activeBinding.id);
+      await deleteBinding.mutateAsync(currentBinding.id);
       setConfirmOpen(false);
     } catch (error) {
       setActionError(
@@ -177,23 +177,23 @@ export function DingTalkAccountBindingCard({
           <p className="text-xs text-muted-foreground">
             {t(($) => $.tab_body.integrations.dingtalk_account_not_configured)}
           </p>
-        ) : activeBinding ? (
+        ) : currentBinding && hasConnectedBinding && accountOutcome ? (
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
                 <Avatar>
-                  {activeBinding.accountAvatarUrl ? (
+                  {accountOutcome.accountAvatarUrl ? (
                     <AvatarImage
-                      src={activeBinding.accountAvatarUrl}
+                      src={accountOutcome.accountAvatarUrl}
                       alt={displayName(
-                        activeBinding,
+                        accountOutcome,
                         t(($) => $.tab_body.integrations.dingtalk_account_fallback_name),
                       )}
                     />
                   ) : null}
                   <AvatarFallback>
                     {displayName(
-                      activeBinding,
+                      accountOutcome,
                       t(($) => $.tab_body.integrations.dingtalk_account_fallback_name),
                     ).slice(0, 1)}
                   </AvatarFallback>
@@ -201,13 +201,26 @@ export function DingTalkAccountBindingCard({
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">
                     {displayName(
-                      activeBinding,
+                      accountOutcome,
                       t(($) => $.tab_body.integrations.dingtalk_account_fallback_name),
                     )}
                   </p>
-                  <p className="text-xs text-muted-foreground">
-                    {t(($) => $.tab_body.integrations.dingtalk_account_connected)}
-                  </p>
+                  <div className="mt-1 space-y-1 text-xs text-muted-foreground">
+                    <p>
+                      {t(($) => $.tab_body.integrations.dingtalk_account_dws_identity)}: {" "}
+                      {dwsIdentityActive
+                        ? t(($) => $.tab_body.integrations.dingtalk_account_status_active)
+                        : t(($) => $.tab_body.integrations.dingtalk_account_status_unbound)}
+                    </p>
+                    <p>
+                      {t(($) => $.tab_body.integrations.dingtalk_account_message_route)}: {" "}
+                      {messageRouteActive
+                        ? t(($) => $.tab_body.integrations.dingtalk_account_status_active)
+                        : currentBinding.messageRoute.status === "pending"
+                          ? t(($) => $.tab_body.integrations.dingtalk_account_status_pending)
+                          : t(($) => $.tab_body.integrations.dingtalk_account_status_unbound)}
+                    </p>
+                  </div>
                 </div>
               </div>
               <Button

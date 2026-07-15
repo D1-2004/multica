@@ -68,7 +68,6 @@ ENV PORT=8080
 ENV BACKEND_PORT=8080
 ENV FRONTEND_PORT=3000
 ENV HOSTNAME=0.0.0.0
-ENV MULTICA_DWS_CLI_PATH=/usr/local/bin/dws
 ENV PATH="/home/admin/${APP_NAME}/node/bin:/home/admin/${APP_NAME}/target/${APP_NAME}/bin:${PATH}"
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 ENV npm_config_registry=https://registry.npmmirror.com
