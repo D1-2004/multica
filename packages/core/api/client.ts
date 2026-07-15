@@ -135,6 +135,7 @@ import type {
   ComposioConnectInitResponse,
   SlackInstallation,
   ListSlackInstallationsResponse,
+  DingTalkInstallation,
   ListDingTalkInstallationsResponse,
   BeginDingTalkInstallResponse,
   DingTalkInstallStatusResponse,
@@ -2683,6 +2684,26 @@ export class ApiClient {
     sessionId: string,
   ): Promise<DingTalkInstallStatusResponse> {
     return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/install/${sessionId}/status`);
+  }
+
+  // Manual install: create the DingTalk bot installation directly from an
+  // operator-supplied AppKey/AppSecret, the fallback for when the
+  // scan-to-create device flow is unavailable. Available whenever DingTalk
+  // is configured (independent of install_supported).
+  async manualInstallDingTalk(
+    workspaceId: string,
+    agentId: string,
+    params: { clientId: string; clientSecret: string; allowUnbound?: boolean },
+  ): Promise<DingTalkInstallation> {
+    return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/install/manual`, {
+      method: "POST",
+      body: JSON.stringify({
+        agent_id: agentId,
+        client_id: params.clientId,
+        client_secret: params.clientSecret,
+        allow_unbound: params.allowUnbound ?? false,
+      }),
+    });
   }
 
   async deleteDingTalkInstallation(workspaceId: string, installationId: string): Promise<void> {

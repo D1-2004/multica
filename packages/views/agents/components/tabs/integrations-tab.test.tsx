@@ -182,19 +182,22 @@ describe("IntegrationsTab", () => {
     expect(screen.getByTestId("dingtalk-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
   });
 
-  it("shows the coming-soon notice when the install transport is not wired", () => {
+  it("shows Lark coming-soon but keeps the DingTalk bind entry when the install transport is not wired", () => {
     installationsRef.current = {
       installations: [],
       configured: true,
       install_supported: false,
     };
     renderTab(<IntegrationsTab agent={agent} />);
-    // All three listings share the fixture, so both the Lark and the
-    // DingTalk sections surface their own coming-soon copy.
+    // Lark has no manual fallback, so it still surfaces coming-soon.
     expect(screen.getByText(/Lark Bot installation coming soon/i)).toBeTruthy();
-    expect(screen.getByText(/DingTalk bot installation coming soon/i)).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
-    expect(screen.queryByTestId("dingtalk-bind-button")).toBeNull();
+    // DingTalk offers a manual-credential install path, so its bind entry
+    // renders even when the scan-to-create transport is down.
+    expect(screen.queryByText(/DingTalk bot installation coming soon/i)).toBeNull();
+    expect(screen.getByTestId("dingtalk-bind-button").getAttribute("data-agent-id")).toBe(
+      "agent-1",
+    );
   });
 
   it("shows the not-enabled notice when the deployment has no Lark key", () => {

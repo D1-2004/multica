@@ -558,7 +558,19 @@
     "install_error_conflict": "未能保存安装信息：该智能体可能已绑定其他应用。",
     "install_error_session_lost": "安装会话已失效或丢失，请重新扫码。",
     "install_error_forbidden": "你已没有在此工作区安装钉钉 Bot 的权限，请联系工作区管理员。",
-    "install_error_generic": "安装失败，请重试。"
+    "install_error_generic": "安装失败，请重试。",
+    "install_manual_link": "无法扫码？手动填写应用凭证",
+    "install_manual_description": "在钉钉开发者后台创建应用，然后将其 AppKey 和 AppSecret 填写到下方，绑定到该智能体。",
+    "install_manual_console_link": "打开钉钉开发者后台",
+    "install_manual_appkey_label": "AppKey（Client ID）",
+    "install_manual_appkey_placeholder": "例如 dingxxxxxxxxxxxxxxxx",
+    "install_manual_appsecret_label": "AppSecret（Client Secret）",
+    "install_manual_appsecret_placeholder": "粘贴应用密钥",
+    "install_manual_submit": "绑定应用",
+    "install_manual_submitting": "绑定中…",
+    "install_manual_back_to_scan": "返回扫码",
+    "install_manual_missing_fields": "请同时填写 AppKey 和 AppSecret。",
+    "install_manual_error_generic": "无法绑定应用。请检查 AppKey 和 AppSecret 后重试。"
   },
   "repositories": {
     "section_title": "代码仓库",

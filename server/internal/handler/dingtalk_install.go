@@ -260,6 +260,124 @@ func (h *Handler) GetDingTalkInstallStatus(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// ManualInstallDingTalkRequest carries the operator-supplied app
+// credentials for the manual install path — the fallback for when the
+// scan-to-create device flow ("一键创建") is unavailable (the DingTalk
+// registration endpoints are down, or the deployment never wired the
+// device flow at all). The operator creates the app themselves in the
+// DingTalk developer console and pastes its AppKey / AppSecret here.
+type ManualInstallDingTalkRequest struct {
+	// AgentID is the Multica agent the new app binds to; must belong to
+	// this workspace.
+	AgentID string `json:"agent_id"`
+	// ClientID is the DingTalk AppKey.
+	ClientID string `json:"client_id"`
+	// ClientSecret is the DingTalk AppSecret; encrypted at rest inside
+	// InstallationService.Upsert, so it never persists as plaintext.
+	ClientSecret string `json:"client_secret"`
+	// AllowUnbound opts the bot into "serve unbound senders as the
+	// installer" mode — same semantics as the device-flow toggle.
+	AllowUnbound bool `json:"allow_unbound"`
+}
+
+// ManualInstallDingTalk (POST /api/workspaces/{id}/dingtalk/install/manual)
+// creates an installation directly from operator-supplied credentials,
+// bypassing the device flow. Admin-only at the router. It is available
+// whenever DingTalk is configured (the at-rest key is set) regardless of
+// whether the device-flow RegistrationService is wired — that is the
+// point: it keeps a workspace unblocked when the scan flow is broken.
+//
+// When a credential verifier is wired it exchanges the pair for an app
+// access token first, so a typo'd AppKey/AppSecret surfaces as a clean
+// error here instead of a silently dead bot later.
+func (h *Handler) ManualInstallDingTalk(w http.ResponseWriter, r *http.Request) {
+	if h.DingTalkInstallations == nil {
+		writeError(w, http.StatusServiceUnavailable, "dingtalk integration not configured")
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	wsUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
+	if !ok {
+		return
+	}
+	var req ManualInstallDingTalkRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	agentIDStr := strings.TrimSpace(req.AgentID)
+	clientID := strings.TrimSpace(req.ClientID)
+	clientSecret := strings.TrimSpace(req.ClientSecret)
+	if agentIDStr == "" {
+		writeError(w, http.StatusBadRequest, "agent_id is required")
+		return
+	}
+	if clientID == "" {
+		writeError(w, http.StatusBadRequest, "client_id is required")
+		return
+	}
+	if clientSecret == "" {
+		writeError(w, http.StatusBadRequest, "client_secret is required")
+		return
+	}
+	agentUUID, ok := parseUUIDOrBadRequest(w, agentIDStr, "agent_id")
+	if !ok {
+		return
+	}
+	// Ownership check at the boundary: a workspace admin must not bind an
+	// app to another workspace's agent by guessing its UUID.
+	if _, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+		ID:          agentUUID,
+		WorkspaceID: wsUUID,
+	}); err != nil {
+		writeError(w, http.StatusNotFound, "agent not found in this workspace")
+		return
+	}
+	initiatorUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
+		return
+	}
+
+	// Verify the operator-supplied credentials before persisting so a
+	// wrong AppKey/AppSecret is caught here, not at the first inbound
+	// message. Skipped when no verifier is wired (offline / test builds).
+	if h.DingTalkCredentialVerifier != nil {
+		if err := h.DingTalkCredentialVerifier.VerifyAppCredentials(r.Context(), clientID, clientSecret); err != nil {
+			writeError(w, http.StatusBadGateway, "dingtalk credentials check failed: "+err.Error())
+			return
+		}
+	}
+
+	inst, err := h.DingTalkInstallations.Upsert(r.Context(), dingtalk.InstallationParams{
+		WorkspaceID:     wsUUID,
+		AgentID:         agentUUID,
+		ClientID:        clientID,
+		ClientSecret:    clientSecret,
+		InstallerUserID: initiatorUUID,
+		AllowUnbound:    req.AllowUnbound,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, dingtalk.ErrAppOwnedByAnotherWorkspace):
+			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, dingtalk.ErrAgentAlreadyConnected):
+			writeError(w, http.StatusConflict, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to save dingtalk installation")
+		}
+		return
+	}
+	// Mirror the device-flow success broadcast so every workspace client
+	// refreshes its connection badge the moment the row commits.
+	h.publish(protocol.EventDingTalkInstallationCreated, uuidToString(wsUUID), "user", userID, map[string]any{
+		"installation_id": uuidToString(inst.ID),
+	})
+	writeJSON(w, http.StatusOK, dingTalkInstallationToResponse(inst))
+}
+
 // RedeemDingTalkBindingTokenRequest carries the raw token the user clicked
 // through from the bot's "link your account" prompt.
 type RedeemDingTalkBindingTokenRequest struct {

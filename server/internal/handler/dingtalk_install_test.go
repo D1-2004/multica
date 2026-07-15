@@ -35,6 +35,19 @@ func TestBeginDingTalkInstall_NotConfigured(t *testing.T) {
 	}
 }
 
+func TestManualInstallDingTalk_NotConfigured(t *testing.T) {
+	// Manual install is gated on the at-rest key (DingTalkInstallations),
+	// NOT on the device-flow RegistrationService — but with neither wired
+	// it must still 503 rather than panic on a nil InstallationService.
+	h := &Handler{}
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/x/dingtalk/install/manual", nil)
+	w := httptest.NewRecorder()
+	h.ManualInstallDingTalk(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestGetDingTalkInstallStatus_NotConfigured(t *testing.T) {
 	h := &Handler{}
 	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/x/dingtalk/install/sess_y/status", nil)

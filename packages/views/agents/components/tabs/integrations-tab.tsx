@@ -85,12 +85,11 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
       (inst) => inst.agent_id === agent.id && inst.status === "active",
     ) ?? false;
 
+  // DingTalk exposes a manual-credential install path that works whenever
+  // the integration is configured, even if the scan-to-create device flow
+  // (install_supported) is down — so the bind entry only gates on
+  // `dingtalkConfigured`. DingTalkAgentBindButton picks scan vs. manual.
   const dingtalkConfigured = dingtalkListing?.configured === true;
-  const dingtalkInstallSupported = dingtalkListing?.install_supported === true;
-  const dingtalkHasActiveInstall =
-    dingtalkListing?.installations.some(
-      (inst) => inst.agent_id === agent.id && inst.status === "active",
-    ) ?? false;
 
   // A member who can manage none of the platforms (not a workspace admin and
   // not this agent's owner) gets the read-only note instead of the sections.
@@ -229,17 +228,11 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
             <p className="text-xs text-muted-foreground">
               {ts(($) => $.dingtalk.not_enabled_title)}
             </p>
-          ) : !dingtalkInstallSupported && !dingtalkHasActiveInstall ? (
-            // Key is set but the device-flow registration isn't wired in
-            // this build. An agent that is ALREADY bound is exempt:
-            // install_supported only governs NEW installs.
-            <div className="space-y-1">
-              <p className="text-xs font-medium">{ts(($) => $.dingtalk.preview_title)}</p>
-              <p className="text-xs text-muted-foreground">
-                {ts(($) => $.dingtalk.preview_description)}
-              </p>
-            </div>
           ) : (
+            // Configured: the shared button renders the scan-or-manual bind
+            // CTA (or the connected badge). The manual path keeps binding
+            // possible even when the scan flow is down, so there is no
+            // "coming soon" state for DingTalk.
             <DingTalkAgentBindButton agentId={agent.id} agentName={agent.name} />
           )}
         </div>

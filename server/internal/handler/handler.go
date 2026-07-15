@@ -253,6 +253,12 @@ type Handler struct {
 	// at-rest key is unset or the RegistrationService failed to
 	// construct at boot.
 	DingTalkRegistration *dingtalk.RegistrationService
+	// DingTalkCredentialVerifier validates an operator-supplied
+	// (client_id, client_secret) pair on the manual install path
+	// (ManualInstallDingTalk) before it is persisted. Wired alongside
+	// DingTalkInstallations; nil disables the pre-check (offline / test
+	// builds), in which case the credentials are stored unverified.
+	DingTalkCredentialVerifier dingtalk.AppCredentialVerifier
 	// DingTalkBindingTokens mints/redeems the user-binding tokens behind
 	// the "link your DingTalk account" prompt. Nil unless the DingTalk
 	// bot integration is configured (MULTICA_DINGTALK_SECRET_KEY set).
