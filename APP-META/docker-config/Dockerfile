@@ -99,6 +99,7 @@ VOLUME /home/admin/logs /home/admin/cai/logs /home/admin/${APP_NAME}/logs /home/
 
 COPY environment/cai/conf/nginx-proxy.conf /home/admin/cai/conf/server.conf
 COPY environment/common/custom/app/bin/ /home/admin/appname/bin/
+COPY dapr-custom/ /home/admin/${APP_NAME}/conf/dapr-custom/
 COPY --from=backend-builder /workspace/src/ /home/admin/${APP_NAME}/target/${APP_NAME}/src/
 COPY --from=backend-builder /workspace/server/bin/ /home/admin/${APP_NAME}/target/${APP_NAME}/bin/
 COPY --from=backend-builder /workspace/server/migrations/ /home/admin/${APP_NAME}/target/${APP_NAME}/migrations/

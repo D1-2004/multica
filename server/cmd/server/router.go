@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
+	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
@@ -992,6 +993,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Authorization: Bearer, and is disabled unless MULTICA_LOG_DIR is set
 	// (main.sh exports it in containerized deployments).
 	r.Get("/api/internal/logs/tail", logTailHandler(os.Getenv("MULTICA_LOG_TAIL_TOKEN"), os.Getenv("MULTICA_LOG_DIR")))
+
+	// Deployment-only HSF diagnostic. This proves that the application can
+	// reach Agent Identity through its local Dapr sidecar without ever exposing
+	// the short-lived ContextToken returned by the provider.
+	r.Post("/api/internal/agent-identity/hsf-check", agentIdentityHSFCheckHandler(
+		os.Getenv("MULTICA_LOG_TAIL_TOKEN"),
+		agentidentityhsf.NewClient(),
+	))
 
 	// WebSocket
 	mc := &membershipChecker{queries: queries}
