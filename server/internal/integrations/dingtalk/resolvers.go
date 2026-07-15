@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -86,12 +87,17 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		return nil, fmt.Errorf("load DingTalk robot runtime: %w", err)
 	}
 	if !service.FCE2BRuntimeHasCapability(runtime, "dws") {
+		slog.Info("dingtalk robot DWS identity skipped", "reason", "runtime_without_dws_capability")
 		return nil, nil
 	}
 	raw, err := decodeDingTalkRaw(msg)
 	if err != nil {
 		return nil, fmt.Errorf("decode DingTalk robot sender: %w", err)
 	}
+	slog.Info("dingtalk robot DWS identity resolving",
+		"has_staff_id", strings.TrimSpace(raw.SenderStaffID) != "",
+		"has_corp_id", strings.TrimSpace(raw.SenderCorpID) != "",
+	)
 	if strings.TrimSpace(raw.SenderStaffID) == "" || strings.TrimSpace(raw.SenderCorpID) == "" {
 		return nil, errors.New("DingTalk robot sender has no organization identity")
 	}
@@ -99,6 +105,7 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 	if err != nil {
 		return nil, fmt.Errorf("resolve DingTalk robot sender identity: %w", err)
 	}
+	slog.Info("dingtalk robot DWS identity resolved")
 	return json.Marshal(map[string]any{
 		protocol.DingTalkRobotIdentityJSONKey: protocol.DingTalkRobotIdentity{
 			UID:   employee.UID,

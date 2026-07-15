@@ -750,6 +750,10 @@ func (l *FCE2BLauncher) chatDWSIdentityEnv(
 	if uid == "" {
 		return nil, nil
 	}
+	slog.Info("FC/E2B chat DWS identity selected",
+		"task_id", util.UUIDToString(task.ID),
+		"identity_source", identitySource,
+	)
 	if l.AgentIdentity == nil {
 		return nil, errors.New("Agent Identity HSF client is not configured")
 	}
@@ -787,6 +791,18 @@ func (l *FCE2BLauncher) chatDWSIdentity(ctx context.Context, task db.AgentTaskQu
 	}
 	if present {
 		return robotIdentity.UID, robotIdentity.OrgID, "dingtalk_robot_sender", nil
+	}
+	if task.ChatSessionID.Valid {
+		_, bindingErr := l.Queries.GetChannelChatSessionBindingBySession(ctx, db.GetChannelChatSessionBindingBySessionParams{
+			ChatSessionID: task.ChatSessionID,
+			ChannelType:   "dingtalk",
+		})
+		switch {
+		case bindingErr == nil:
+			return "", "", "", errors.New("DingTalk robot identity is missing from chat task context")
+		case !errors.Is(bindingErr, pgx.ErrNoRows):
+			return "", "", "", fmt.Errorf("detect DingTalk robot chat identity source: %w", bindingErr)
+		}
 	}
 	identity, err := l.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
 		WorkspaceID: runtime.WorkspaceID,

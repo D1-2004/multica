@@ -325,6 +325,10 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			return Result{}, finalizeRelease, fmt.Errorf("resolve chat task context: %w", err)
 		}
 	}
+	r.logger.Info("channel router: chat task context resolved",
+		"channel_type", string(msg.Source.ChannelType),
+		"has_task_context", len(taskContext) > 0,
+	)
 
 	// 6. Append message + in-tx dedup Mark — the durable transition point.
 	appendRes, err := set.Session.AppendMessage(ctx, AppendParams{
