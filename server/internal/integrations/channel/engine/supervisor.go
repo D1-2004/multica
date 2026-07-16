@@ -11,6 +11,7 @@ import (
 	mathrand "math/rand/v2"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -19,15 +20,26 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
+const streamTargetUnmetLogInterval = 30 * time.Second
+
 // Installation is the channel-agnostic view of one channel_installation
 // row the Supervisor needs to drive a connection. It is intentionally
 // minimal: the engine never reads platform credentials directly — it
 // hands Config to the registry factory, which decodes what it needs — and
 // it never branches on ChannelType beyond using it to pick the factory.
 type Installation struct {
-	// ID is the channel_installation primary key. It is the lease key and
-	// the supervisors-map key (one supervisor goroutine per ID).
+	// ID is the channel_installation primary key. It is the PostgreSQL lease
+	// key and the supervisors-map key (one supervisor goroutine per ID).
 	ID pgtype.UUID
+
+	// StreamGroupID is an opaque, deterministic identifier for the platform
+	// credential set that owns a coordinated Stream connection. Unlike ID it
+	// is stable when the same DingTalk client_id is installed in another
+	// environment/database, so Redis enforces one global target across prepub,
+	// production, and every replica. The store derives it from a namespaced
+	// client_id hash; the raw client_id and secret never enter Redis or logs.
+	// It is required only when ChannelType has a StreamCoordinator configured.
+	StreamGroupID pgtype.UUID
 
 	// ChannelType selects the registry Factory that builds this row's
 	// Channel ("feishu", "slack", …).
@@ -134,6 +146,22 @@ type Config struct {
 	// default.
 	ShutdownTimeout time.Duration
 
+	// StreamCoordinators opt selected channel types into shared multi-member
+	// connection coordination. A configured type never falls back to the
+	// legacy PostgreSQL singleton lease: the coordinator is its sole ownership
+	// authority. DingTalk wires a Redis coordinator here; Feishu and other
+	// channel types continue to use InstallationStore's exclusive lease.
+	StreamCoordinators map[channel.Type]StreamCoordinator
+
+	// StreamRenewInterval controls coordinated member renewal and capacity
+	// retry. It must be substantially shorter than the coordinator's TTL.
+	StreamRenewInterval time.Duration
+
+	// StreamDrainTimeout is the process-level graceful handoff budget. During
+	// this window a DRAINING connection keeps receiving until replacement
+	// READY capacity exists; hard shutdown cancels it after the budget.
+	StreamDrainTimeout time.Duration
+
 	// Now returns the current time. Injected for tests; production uses
 	// time.Now.
 	Now func() time.Time
@@ -169,6 +197,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.ShutdownTimeout == 0 {
 		c.ShutdownTimeout = 15 * time.Second
+	}
+	if c.StreamRenewInterval == 0 {
+		c.StreamRenewInterval = 2 * time.Second
+	}
+	if c.StreamDrainTimeout == 0 {
+		c.StreamDrainTimeout = 15 * time.Second
 	}
 	if c.Now == nil {
 		c.Now = time.Now
@@ -238,6 +272,9 @@ type supervisorEntry struct {
 	cancel      context.CancelFunc
 	fingerprint string
 	gen         uint64
+	coordinated bool
+	drain       chan struct{}
+	done        chan struct{}
 }
 
 // NewSupervisor constructs a Supervisor bound to the supplied store,
@@ -353,6 +390,70 @@ func (s *Supervisor) WaitWithTimeout(timeout time.Duration) bool {
 // can pass the same value to WaitWithTimeout without re-deriving it.
 func (s *Supervisor) ShutdownTimeout() time.Duration { return s.cfg.ShutdownTimeout }
 
+// StreamDrainTimeout exposes the graceful coordinated-connection handoff
+// budget to the process owner. BeginShutdown should be called as soon as
+// SIGTERM arrives; the caller may drain HTTP in parallel, then wait this long
+// before cancelling Run's parent context.
+func (s *Supervisor) StreamDrainTimeout() time.Duration { return s.cfg.StreamDrainTimeout }
+
+// BeginShutdown starts graceful connection handoff without cancelling Run's
+// parent context. Coordinated streams enter DRAINING and keep consuming until
+// replacement READY capacity exists. Legacy singleton streams are cancelled
+// immediately. No new installation supervisor may start after this call.
+// It is idempotent.
+func (s *Supervisor) BeginShutdown() {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return
+	}
+	s.stopped = true
+	for _, entry := range s.supervisors {
+		if entry.coordinated {
+			close(entry.drain)
+			continue
+		}
+		entry.cancel()
+	}
+	s.mu.Unlock()
+}
+
+// WaitForHandoffs waits for coordinated supervisors that existed when the call
+// began to finish their graceful handoff. Legacy supervisors are cancelled by
+// BeginShutdown but do not consume the Stream handoff budget. This method does
+// not wait for Run itself; callers use it before cancelling Run's parent
+// context. A non-positive timeout waits without a deadline.
+func (s *Supervisor) WaitForHandoffs(timeout time.Duration) bool {
+	s.mu.Lock()
+	done := make([]<-chan struct{}, 0, len(s.supervisors))
+	for _, entry := range s.supervisors {
+		if entry.coordinated {
+			done = append(done, entry.done)
+		}
+	}
+	s.mu.Unlock()
+
+	wait := make(chan struct{})
+	go func() {
+		for _, ch := range done {
+			<-ch
+		}
+		close(wait)
+	}()
+	if timeout <= 0 {
+		<-wait
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-wait:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
 // sweep enumerates currently-active installations and starts a supervisor
 // for any this process does not yet supervise. Supervisors for revoked
 // installations are cancelled. Supervisors whose installation row rotated
@@ -428,16 +529,22 @@ func (s *Supervisor) startSupervisor(parent context.Context, inst Installation) 
 		return
 	}
 	ctx, cancel := context.WithCancel(parent)
+	_, coordinated := s.cfg.StreamCoordinators[inst.ChannelType]
+	drain := make(chan struct{})
+	done := make(chan struct{})
 	s.supervisorGen++
 	gen := s.supervisorGen
 	s.supervisors[id] = supervisorEntry{
 		cancel:      cancel,
 		fingerprint: inst.Fingerprint,
 		gen:         gen,
+		coordinated: coordinated,
+		drain:       drain,
+		done:        done,
 	}
 	s.wg.Add(1)
 	s.mu.Unlock()
-	go s.supervise(ctx, inst, id, gen)
+	go s.supervise(ctx, inst, id, gen, drain, done)
 }
 
 // leaseToken composes the per-supervisor lease token: the process-wide
@@ -454,8 +561,9 @@ func leaseToken(nodeID string, gen uint64) string {
 // acquire lease → build channel → run it (Connect blocks) → renew lease
 // while it runs → on exit, release + back off → repeat. Returns when ctx is
 // cancelled.
-func (s *Supervisor) supervise(ctx context.Context, inst Installation, id string, gen uint64) {
+func (s *Supervisor) supervise(ctx context.Context, inst Installation, id string, gen uint64, drain <-chan struct{}, done chan<- struct{}) {
 	defer s.wg.Done()
+	defer close(done)
 	defer func() {
 		// Only clear the map entry if it still belongs to us — gen
 		// disambiguates "this entry is mine" from "the rotation path already
@@ -466,6 +574,18 @@ func (s *Supervisor) supervise(ctx context.Context, inst Installation, id string
 		}
 		s.mu.Unlock()
 	}()
+
+	if coordinator := s.cfg.StreamCoordinators[inst.ChannelType]; coordinator != nil {
+		s.superviseCoordinated(ctx, inst, id, gen, drain, coordinator)
+		return
+	}
+	s.superviseExclusive(ctx, inst, id, gen)
+}
+
+// superviseExclusive is the legacy singleton connection lifecycle backed by
+// channel_installation.ws_lease_*. It remains the authority for channel types
+// that are not explicitly assigned a StreamCoordinator.
+func (s *Supervisor) superviseExclusive(ctx context.Context, inst Installation, id string, gen uint64) {
 
 	leaseTok := leaseToken(s.nodeID, gen)
 	log := s.cfg.Logger.With(
@@ -501,9 +621,12 @@ func (s *Supervisor) supervise(ctx context.Context, inst Installation, id string
 		// Lease acquired. Build the platform channel via the registry,
 		// run it under a child context, and renew the lease in parallel.
 		ch, err := s.registry.Build(channel.Config{
-			Type:    inst.ChannelType,
-			Raw:     inst.Config,
-			Handler: s.handler,
+			Type:           inst.ChannelType,
+			Raw:            inst.Config,
+			InstallationID: id,
+			ConnectionID:   leaseTok,
+			NodeID:         s.nodeID,
+			Handler:        s.handler,
 		})
 		if err != nil {
 			log.Error("channel engine: build channel failed", "error", err)
@@ -552,6 +675,450 @@ func (s *Supervisor) supervise(ctx context.Context, inst Installation, id string
 			return
 		}
 		backoff = nextBackoff(backoff, s.cfg.MaxBackoff)
+	}
+}
+
+// streamLeaseDeadlineWatchdog is independent of Redis I/O. A blocked Renew
+// must not keep a WebSocket consuming after its Redis member has expired and a
+// successor is eligible to claim capacity. Reset is called only after a
+// successful state transition/renewal; expiry cancels the physical connection.
+type streamLeaseDeadlineWatchdog struct {
+	mu         sync.Mutex
+	timer      *time.Timer
+	generation uint64
+	stopped    bool
+	expired    atomic.Bool
+	cancel     context.CancelFunc
+	now        func() time.Time
+}
+
+func newStreamLeaseDeadlineWatchdog(cancel context.CancelFunc, now func() time.Time, deadline time.Time) *streamLeaseDeadlineWatchdog {
+	w := &streamLeaseDeadlineWatchdog{cancel: cancel, now: now}
+	w.Reset(deadline)
+	return w
+}
+
+func (w *streamLeaseDeadlineWatchdog) Reset(deadline time.Time) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.stopped || w.expired.Load() {
+		return
+	}
+	w.generation++
+	generation := w.generation
+	if w.timer != nil {
+		w.timer.Stop()
+	}
+	delay := deadline.Sub(w.now())
+	if delay < 0 {
+		delay = 0
+	}
+	w.timer = time.AfterFunc(delay, func() {
+		w.mu.Lock()
+		if w.stopped || generation != w.generation || !w.expired.CompareAndSwap(false, true) {
+			w.mu.Unlock()
+			return
+		}
+		cancel := w.cancel
+		w.mu.Unlock()
+		cancel()
+	})
+}
+
+func (w *streamLeaseDeadlineWatchdog) Stop() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.stopped = true
+	w.generation++
+	if w.timer != nil {
+		w.timer.Stop()
+	}
+	w.mu.Unlock()
+}
+
+func (w *streamLeaseDeadlineWatchdog) Expired() bool {
+	return w != nil && w.expired.Load()
+}
+
+// streamTargetUnmetLimiter delays the first warning and then emits at most one
+// warning per interval while READY remains below target. Meeting target resets
+// the observation window, so a later degradation gets its own bounded signal.
+type streamTargetUnmetLimiter struct {
+	firstObserved time.Time
+	lastLogged    time.Time
+}
+
+func (l *streamTargetUnmetLimiter) shouldLog(now time.Time, snapshot StreamLeaseSnapshot) bool {
+	if snapshot.TargetReady <= 0 || snapshot.Ready >= snapshot.TargetReady {
+		l.firstObserved = time.Time{}
+		l.lastLogged = time.Time{}
+		return false
+	}
+	if l.firstObserved.IsZero() || now.Before(l.firstObserved) {
+		l.firstObserved = now
+		l.lastLogged = time.Time{}
+		return false
+	}
+	if now.Sub(l.firstObserved) < streamTargetUnmetLogInterval {
+		return false
+	}
+	if !l.lastLogged.IsZero() && now.Sub(l.lastLogged) < streamTargetUnmetLogInterval {
+		return false
+	}
+	l.lastLogged = now
+	return true
+}
+
+func logStreamTargetUnmet(log *slog.Logger, limiter *streamTargetUnmetLimiter, now time.Time, phase string, snapshot StreamLeaseSnapshot) {
+	if limiter == nil || !limiter.shouldLog(now, snapshot) {
+		return
+	}
+	log.Warn("channel stream READY target remains unmet",
+		"event", "channel_stream_target_unmet",
+		"phase", phase,
+		"target_ready", snapshot.TargetReady,
+		"member_total", snapshot.Total,
+		"member_connecting", snapshot.Connecting,
+		"member_ready", snapshot.Ready,
+		"member_draining", snapshot.Draining,
+	)
+}
+
+// streamOperationContext bounds one Redis operation by the currently fenced
+// local lease deadline. The watchdog independently cancels the WebSocket at the
+// same boundary; this context makes a conforming Redis client return promptly
+// instead of holding the supervisor goroutine beyond it.
+func streamOperationContext(parent context.Context, now func() time.Time, deadline time.Time) (context.Context, context.CancelFunc) {
+	remaining := deadline.Sub(now())
+	if remaining < 0 {
+		remaining = 0
+	}
+	return context.WithTimeout(parent, remaining)
+}
+
+// superviseCoordinated owns one member of a multi-connection Stream set. One
+// process still runs at most one contender per installation; the shared
+// coordinator admits the configured global READY target across every process
+// and environment. No PostgreSQL lease is touched on this path.
+func (s *Supervisor) superviseCoordinated(
+	ctx context.Context,
+	inst Installation,
+	id string,
+	gen uint64,
+	drain <-chan struct{},
+	coordinator StreamCoordinator,
+) {
+	connectionID := leaseToken(s.nodeID, gen)
+	log := s.cfg.Logger.With(
+		"installation_id", id,
+		"channel_type", string(inst.ChannelType),
+		"node_id", s.nodeID,
+		"connection_id", connectionID,
+	)
+	backoff := s.cfg.MinBackoff
+	var targetUnmet streamTargetUnmetLimiter
+
+	for {
+		if ctx.Err() != nil || channelClosed(drain) {
+			return
+		}
+
+		lease, snapshot, acquired, err := coordinator.Claim(ctx, inst.StreamGroupID, connectionID)
+		if err != nil {
+			log.Warn("channel stream coordination claim failed",
+				"event", "channel_stream_claim_failed",
+				"error_class", streamCoordinationErrorClass(err),
+				"error", err,
+			)
+			if sleepWithDrain(ctx, drain, s.cfg.StreamRenewInterval) {
+				return
+			}
+			continue
+		}
+		logStreamTargetUnmet(log, &targetUnmet, s.cfg.Now(), "claim", snapshot)
+		if !acquired {
+			if sleepWithDrain(ctx, drain, s.cfg.StreamRenewInterval) {
+				return
+			}
+			continue
+		}
+		log.Info("channel stream coordination member claimed",
+			"event", "channel_stream_claimed",
+			"stream_state", string(lease.State),
+			"target_ready", snapshot.TargetReady,
+			"member_total", snapshot.Total,
+			"member_connecting", snapshot.Connecting,
+			"member_ready", snapshot.Ready,
+			"member_draining", snapshot.Draining,
+		)
+
+		var leaseMu sync.Mutex
+		currentLease := lease
+		deadline := s.cfg.Now().Add(snapshot.RemainingTTL())
+		if snapshot.RemainingTTL() <= 0 {
+			deadline = s.cfg.Now().Add(coordinator.LeaseTTL())
+		}
+		var ready atomic.Bool
+		var watchdog *streamLeaseDeadlineWatchdog
+
+		updateLease := func(next StreamLease, nextSnapshot StreamLeaseSnapshot) {
+			currentLease = next
+			remaining := nextSnapshot.RemainingTTL()
+			if remaining <= 0 {
+				remaining = coordinator.LeaseTTL()
+			}
+			deadline = s.cfg.Now().Add(remaining)
+			if watchdog != nil {
+				watchdog.Reset(deadline)
+			}
+		}
+		onReady := func(readyCtx context.Context) error {
+			leaseMu.Lock()
+			markCtx, markCancel := streamOperationContext(readyCtx, s.cfg.Now, deadline)
+			next, readySnapshot, markErr := coordinator.MarkReady(markCtx, currentLease)
+			markCancel()
+			if markErr == nil {
+				updateLease(next, readySnapshot)
+			}
+			leaseMu.Unlock()
+			if markErr != nil {
+				log.Warn("channel stream coordination ready transition failed",
+					"event", "channel_stream_ready_failed",
+					"error_class", streamCoordinationErrorClass(markErr),
+					"error", markErr,
+				)
+				return markErr
+			}
+			ready.Store(true)
+			log.Info("channel stream connection ready",
+				"event", "channel_stream_ready",
+				"target_ready", readySnapshot.TargetReady,
+				"member_total", readySnapshot.Total,
+				"member_connecting", readySnapshot.Connecting,
+				"member_ready", readySnapshot.Ready,
+				"member_draining", readySnapshot.Draining,
+			)
+			return nil
+		}
+
+		ch, err := s.registry.Build(channel.Config{
+			Type:           inst.ChannelType,
+			Raw:            inst.Config,
+			InstallationID: id,
+			ConnectionID:   connectionID,
+			NodeID:         s.nodeID,
+			OnReady:        onReady,
+			Handler:        s.handler,
+		})
+		if err != nil {
+			log.Error("channel stream build failed",
+				"event", "channel_stream_build_failed",
+				"error_class", "channel_build",
+				"error", err,
+			)
+			s.releaseStreamLease(coordinator, currentLease, log)
+			if sleepWithDrain(ctx, drain, backoff) {
+				return
+			}
+			backoff = nextBackoff(backoff, s.cfg.MaxBackoff)
+			continue
+		}
+
+		runCtx, runCancel := context.WithCancel(ctx)
+		watchdog = newStreamLeaseDeadlineWatchdog(runCancel, s.cfg.Now, deadline)
+		connectDone := make(chan error, 1)
+		startedAt := s.cfg.Now()
+		go func() { connectDone <- ch.Connect(runCtx) }()
+
+		ticker := time.NewTicker(s.cfg.StreamRenewInterval)
+		drainCh := drain
+		drainRequested := false
+		draining := false
+		stopReason := ""
+		var runErr error
+		connectReturned := false
+
+		for stopReason == "" {
+			select {
+			case runErr = <-connectDone:
+				connectReturned = true
+				if watchdog.Expired() {
+					stopReason = "lease_deadline"
+				} else {
+					stopReason = "transport_exit"
+				}
+			case <-ctx.Done():
+				stopReason = "context_cancelled"
+				runCancel()
+			case <-drainCh:
+				drainCh = nil
+				drainRequested = true
+				if !ready.Load() {
+					stopReason = "shutdown_before_ready"
+					runCancel()
+				}
+			case <-ticker.C:
+				leaseMu.Lock()
+				if drainRequested && !draining && ready.Load() {
+					drainCtx, drainCancel := streamOperationContext(runCtx, s.cfg.Now, deadline)
+					next, drainSnapshot, drainErr := coordinator.BeginDrain(drainCtx, currentLease)
+					drainCancel()
+					if drainErr == nil {
+						updateLease(next, drainSnapshot)
+						draining = true
+						log.Info("channel stream graceful handoff started",
+							"event", "channel_stream_draining",
+							"target_ready", drainSnapshot.TargetReady,
+							"member_total", drainSnapshot.Total,
+							"member_ready", drainSnapshot.Ready,
+							"member_draining", drainSnapshot.Draining,
+						)
+						if drainSnapshot.ReadyTargetMet() {
+							stopReason = "handoff_ready"
+						}
+					} else if errors.Is(drainErr, ErrStreamDrainInProgress) {
+						// Another old member already owns the one handoff credit.
+						// Closing this READY member lets replacements fill both
+						// non-draining slots without ever creating a fourth member.
+						stopReason = "parallel_drain"
+						log.Info("channel stream handoff already in progress",
+							"event", "channel_stream_parallel_drain",
+						)
+					} else {
+						log.Warn("channel stream begin drain failed",
+							"event", "channel_stream_drain_failed",
+							"error_class", streamCoordinationErrorClass(drainErr),
+							"error", drainErr,
+						)
+					}
+				}
+				if stopReason == "" {
+					renewCtx, renewCancel := streamOperationContext(runCtx, s.cfg.Now, deadline)
+					renewSnapshot, renewErr := coordinator.Renew(renewCtx, currentLease)
+					renewCancel()
+					if renewErr == nil {
+						remaining := renewSnapshot.RemainingTTL()
+						if remaining <= 0 {
+							remaining = coordinator.LeaseTTL()
+						}
+						deadline = s.cfg.Now().Add(remaining)
+						watchdog.Reset(deadline)
+						logStreamTargetUnmet(log, &targetUnmet, s.cfg.Now(), "renew", renewSnapshot)
+						if draining && renewSnapshot.ReadyTargetMet() {
+							stopReason = "handoff_ready"
+						}
+					} else {
+						fatalLeaseError := errors.Is(renewErr, ErrStreamLeaseLost) ||
+							errors.Is(renewErr, ErrStreamLeaseStateMismatch) ||
+							errors.Is(renewErr, ErrStreamCoordinatorCorruptState)
+						if fatalLeaseError || watchdog.Expired() || !s.cfg.Now().Before(deadline) {
+							stopReason = "lease_lost"
+						}
+						log.Warn("channel stream lease renewal failed",
+							"event", "channel_stream_renew_failed",
+							"error_class", streamCoordinationErrorClass(renewErr),
+							"fail_closed", stopReason == "lease_lost",
+							"error", renewErr,
+						)
+					}
+				}
+				leaseMu.Unlock()
+				if stopReason != "" {
+					runCancel()
+				}
+			}
+		}
+		ticker.Stop()
+		watchdog.Stop()
+		runCancel()
+		if !connectReturned {
+			runErr = <-connectDone
+		}
+		s.disconnect(ch, id, log)
+		leaseMu.Lock()
+		finalLease := currentLease
+		leaseMu.Unlock()
+		s.releaseStreamLease(coordinator, finalLease, log)
+
+		uptime := s.cfg.Now().Sub(startedAt)
+		log.Info("channel stream connection stopped",
+			"event", "channel_stream_stopped",
+			"stop_reason", stopReason,
+			"uptime_ms", uptime.Milliseconds(),
+			"ready", ready.Load(),
+			"error", runErr,
+		)
+		if ctx.Err() != nil || drainRequested || channelClosed(drain) {
+			return
+		}
+		if uptime >= s.cfg.ResetBackoffAfter {
+			backoff = s.cfg.MinBackoff
+		}
+		if sleepWithDrain(ctx, drain, jitter(backoff)) {
+			return
+		}
+		backoff = nextBackoff(backoff, s.cfg.MaxBackoff)
+	}
+}
+
+func (s *Supervisor) releaseStreamLease(coordinator StreamCoordinator, lease StreamLease, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.LeaseReleaseTimeout)
+	defer cancel()
+	if err := coordinator.Release(ctx, lease); err != nil {
+		log.Warn("channel stream lease release failed",
+			"event", "channel_stream_release_failed",
+			"error_class", streamCoordinationErrorClass(err),
+			"error", err,
+		)
+		return
+	}
+	log.Info("channel stream lease released", "event", "channel_stream_released")
+}
+
+func streamCoordinationErrorClass(err error) string {
+	switch {
+	case errors.Is(err, ErrStreamLeaseLost):
+		return "lease_lost"
+	case errors.Is(err, ErrStreamLeaseStateMismatch):
+		return "state_mismatch"
+	case errors.Is(err, ErrStreamDrainInProgress):
+		return "drain_in_progress"
+	case errors.Is(err, ErrStreamCoordinatorCorruptState):
+		return "corrupt_state"
+	case errors.Is(err, ErrStreamCoordinatorConfig):
+		return "configuration"
+	default:
+		return "redis_transport"
+	}
+}
+
+func channelClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+func sleepWithDrain(ctx context.Context, drain <-chan struct{}, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() != nil || channelClosed(drain)
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return true
+	case <-drain:
+		return true
+	case <-timer.C:
+		return false
 	}
 }
 

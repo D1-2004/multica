@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,12 +11,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -145,22 +149,34 @@ func (r *Router) Handle(ctx context.Context, msg channel.InboundMessage) error {
 	set, ok := r.sets[msg.Source.ChannelType]
 	r.mu.RUnlock()
 	if !ok {
-		r.logger.Error("channel router: no resolver set", "channel_type", string(msg.Source.ChannelType))
+		r.logger.Error("channel router: no resolver set",
+			"event", "channel_inbound_resolver_missing",
+			"channel_type", string(msg.Source.ChannelType),
+			"message_id_hash", inboundTraceHash(msg.MessageID),
+			"event_id_hash", inboundTraceHash(msg.EventID),
+		)
 		return ErrNoResolverSet
 	}
 
 	res, inst, err := r.dispatch(ctx, set, msg)
 	if err != nil {
 		r.logger.Error("channel router: dispatch error",
+			"event", "channel_inbound_dispatch_failed",
 			"channel_type", string(msg.Source.ChannelType),
-			"event_id", msg.EventID,
+			"installation_id", uuidString(inst.ID),
+			"message_id_hash", inboundTraceHash(msg.MessageID),
+			"event_id_hash", inboundTraceHash(msg.EventID),
 			"error", err,
 		)
 		return err
 	}
-	r.logger.Debug("channel router: dispatch outcome",
+	r.logger.Info("channel router: dispatch outcome",
+		"event", "channel_inbound_dispatched",
 		"channel_type", string(msg.Source.ChannelType),
-		"event_id", msg.EventID,
+		"installation_id", uuidString(inst.ID),
+		"chat_session_id", uuidString(res.ChatSessionID),
+		"message_id_hash", inboundTraceHash(msg.MessageID),
+		"event_id_hash", inboundTraceHash(msg.EventID),
 		"outcome", string(res.Outcome),
 		"drop_reason", string(res.DropReason),
 	)
@@ -218,7 +234,13 @@ func (r *Router) dispatch(ctx context.Context, set ResolverSet, msg channel.Inbo
 	res, finalize, err := r.processClaimed(ctx, set, msg, inst, claimToken)
 
 	if claimed {
-		r.applyFinalize(ctx, set, inst.ID, msg.MessageID, claimToken, finalize)
+		if finalizeErr := r.applyFinalize(ctx, set, inst.ID, msg.MessageID, claimToken, finalize); finalizeErr != nil {
+			wrapped := fmt.Errorf("finalize inbound dedup: %w", finalizeErr)
+			if err != nil {
+				return res, inst, errors.Join(err, wrapped)
+			}
+			return res, inst, wrapped
+		}
 	}
 
 	// ErrClaimLost: another worker holds the claim. Surface as duplicate.
@@ -338,6 +360,68 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		"has_task_context", len(taskContext) > 0,
 	)
 
+	// DingTalk Stream must hand the callback off durably before its inbox row
+	// can be finalized. Prepare the delayed task outside the append transaction
+	// (the runtime overlay may perform network I/O), then let AppendMessage
+	// commit task + message + dedup Mark atomically. Other channels retain the
+	// existing in-memory batching path until they opt into the same contract.
+	var preparedTask *service.PreparedChannelChatTask
+	durableOutcome := OutcomeIngested
+	durableFresh := false
+	issueCommand, issueCommandRequested := ParseIssueCommand(msg.Text)
+	var durableIssueResult *service.IssueCreateResult
+	if set.DurableRuns && issueCommandRequested {
+		resolvedCommand, err := r.resolveDurableIssueCommand(ctx, sessionID, *issueCommand)
+		if err != nil {
+			return Result{}, finalizeRelease, fmt.Errorf("resolve durable issue command: %w", err)
+		}
+		issueRes, recovered, err := r.createOrRecoverDurableIssue(
+			ctx,
+			inst,
+			set.OriginType,
+			identity.UserID,
+			msg.MessageID,
+			resolvedCommand,
+		)
+		if err != nil {
+			return Result{}, finalizeRelease, fmt.Errorf("create durable issue command: %w", err)
+		}
+		durableIssueResult = &issueRes
+		if recovered {
+			r.logger.Info("channel issue command recovered after retry",
+				"event", "channel_issue_command_recovered",
+				"channel_type", string(msg.Source.ChannelType),
+				"installation_id", uuidString(inst.ID),
+				"chat_session_id", uuidString(sessionID),
+				"message_id_hash", inboundTraceHash(msg.MessageID),
+				"issue_id", uuidString(issueRes.Issue.ID),
+			)
+		}
+	}
+	if set.DurableRuns && !issueCommandRequested {
+		session, err := r.reader.GetChatSession(ctx, sessionID)
+		if err != nil {
+			return Result{}, finalizeRelease, fmt.Errorf("load chat session for durable task: %w", err)
+		}
+		durableFresh = r.takePendingFresh(keyForSession(sessionID), msg.ForceFresh)
+		prepared, err := r.tasks.PrepareChannelChatTask(ctx, session, identity.UserID, durableFresh, taskContext)
+		if err != nil {
+			switch {
+			case errors.Is(err, service.ErrChatTaskAgentNoRuntime):
+				durableOutcome = OutcomeAgentOffline
+			case errors.Is(err, service.ErrChatTaskAgentArchived):
+				durableOutcome = OutcomeAgentArchived
+			default:
+				if durableFresh {
+					r.markPendingFresh(keyForSession(sessionID))
+				}
+				return Result{}, finalizeRelease, fmt.Errorf("prepare durable chat task: %w", err)
+			}
+		} else {
+			preparedTask = &prepared
+		}
+	}
+
 	// 6. Append message + in-tx dedup Mark — the durable transition point.
 	appendRes, err := set.Session.AppendMessage(ctx, AppendParams{
 		SessionID:      sessionID,
@@ -346,11 +430,15 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		InstallationID: inst.ID,
 		Message:        msg,
 		ClaimToken:     claimToken,
+		PreparedTask:   preparedTask,
 	})
 	if err == nil {
 		r.publishInboundMessage(inst.WorkspaceID, sessionID, identity.UserID, appendRes)
 	}
 	if err != nil {
+		if set.DurableRuns && durableFresh {
+			r.markPendingFresh(keyForSession(sessionID))
+		}
 		if errors.Is(err, ErrClaimLost) {
 			return Result{}, finalizeNone, err
 		}
@@ -366,17 +454,36 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	}
 
 	res := Result{
-		Outcome:        OutcomeIngested,
+		Outcome:        durableOutcome,
 		InstallationID: inst.ID,
 		ChatSessionID:  sessionID,
 		Sender:         msg.Source.SenderID,
 	}
+	if set.DurableRuns && preparedTask == nil && durableFresh {
+		// A product state (archived/no runtime) intentionally commits the
+		// message without a task. Preserve the fresh-session request for the next
+		// message that can actually create one.
+		r.markPendingFresh(keyForSession(sessionID))
+	}
 
 	// 7. /issue command, if present. chat_message is already durable; all
 	//    error returns from here signal finalizeNone (or the defensive Mark).
-	if appendRes.IssueCommand != nil {
-		issueRes, err := r.createIssue(ctx, inst, set.OriginType, identity.UserID, sessionID, *appendRes.IssueCommand)
+	if appendRes.IssueCommand != nil || durableIssueResult != nil {
+		var issueRes service.IssueCreateResult
+		if durableIssueResult != nil {
+			issueRes = *durableIssueResult
+		} else {
+			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.UserID, sessionID, *appendRes.IssueCommand)
+		}
 		if err != nil {
+			r.logger.Error("channel issue command failed",
+				"event", "channel_issue_command_create_failed",
+				"channel_type", string(msg.Source.ChannelType),
+				"installation_id", uuidString(inst.ID),
+				"chat_session_id", uuidString(sessionID),
+				"message_id_hash", inboundTraceHash(msg.MessageID),
+				"error", err,
+			)
 			return Result{}, postAppendFinalize, fmt.Errorf("create issue from command: %w", err)
 		}
 		res.IssueID = issueRes.Issue.ID
@@ -387,6 +494,47 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		} else {
 			res.IssueIdentifier = fmt.Sprintf("#%d", issueRes.Issue.Number)
 		}
+		issueTaskID := ""
+		if issueRes.EnqueuedTask != nil {
+			issueTaskID = uuidString(issueRes.EnqueuedTask.ID)
+		}
+		r.logger.Info("channel issue command created",
+			"event", "channel_issue_command_created",
+			"channel_type", string(msg.Source.ChannelType),
+			"installation_id", uuidString(inst.ID),
+			"chat_session_id", uuidString(sessionID),
+			"message_id_hash", inboundTraceHash(msg.MessageID),
+			"issue_id", uuidString(issueRes.Issue.ID),
+			"task_id", issueTaskID,
+		)
+		// IssueService owns the assigned issue's task. Scheduling an additional
+		// chat task for the command would run the agent twice.
+		return res, postAppendFinalize, nil
+	}
+
+	if set.DurableRuns {
+		if preparedTask != nil {
+			r.logger.Info("channel chat task persisted with inbound message",
+				"event", "channel_chat_task_persisted",
+				"channel_type", string(msg.Source.ChannelType),
+				"installation_id", uuidString(inst.ID),
+				"chat_session_id", uuidString(sessionID),
+				"message_id_hash", inboundTraceHash(msg.MessageID),
+				"task_id", uuidString(appendRes.TaskID),
+				"task_fire_at", appendRes.TaskFireAt.Time.UTC(),
+				"outcome", string(durableOutcome),
+			)
+		} else {
+			r.logger.Info("channel chat message persisted without runnable task",
+				"event", "channel_chat_message_persisted_without_task",
+				"channel_type", string(msg.Source.ChannelType),
+				"installation_id", uuidString(inst.ID),
+				"chat_session_id", uuidString(sessionID),
+				"message_id_hash", inboundTraceHash(msg.MessageID),
+				"outcome", string(durableOutcome),
+			)
+		}
+		return res, postAppendFinalize, nil
 	}
 
 	// 8. Debounce the run trigger. The synchronous outcome is OutcomeIngested
@@ -432,7 +580,12 @@ func (r *Router) flushChatRun(set ResolverSet, inst ResolvedInstallation, msg ch
 	session, err := r.reader.GetChatSession(ctx, sessionID)
 	if err != nil {
 		r.logger.Error("channel router: flush reload chat session failed",
-			"chat_session_id", uuidString(sessionID), "err", err.Error())
+			"event", "channel_chat_run_reload_failed",
+			"installation_id", uuidString(inst.ID),
+			"chat_session_id", uuidString(sessionID),
+			"message_id_hash", inboundTraceHash(msg.MessageID),
+			"error", err,
+		)
 		r.clearTyping(ctx, set, sessionID)
 		return
 	}
@@ -449,10 +602,22 @@ func (r *Router) flushChatRun(set ResolverSet, inst ResolvedInstallation, msg ch
 			r.emitFlushReply(ctx, set, inst, msg, sessionID, OutcomeAgentArchived)
 		default:
 			r.logger.Error("channel router: flush enqueue chat task failed",
-				"chat_session_id", uuidString(sessionID), "err", err.Error())
+				"event", "channel_chat_run_enqueue_failed",
+				"installation_id", uuidString(inst.ID),
+				"chat_session_id", uuidString(sessionID),
+				"message_id_hash", inboundTraceHash(msg.MessageID),
+				"error", err,
+			)
 		}
 		return
 	}
+	r.logger.Info("channel chat run enqueued",
+		"event", "channel_chat_run_enqueued",
+		"installation_id", uuidString(inst.ID),
+		"chat_session_id", uuidString(sessionID),
+		"message_id_hash", inboundTraceHash(msg.MessageID),
+		"has_task_context", len(taskContext) > 0,
+	)
 
 	// The run is enqueued; if the agent is already at max_concurrent_tasks
 	// the reply will not start until a slot frees, which can read as "the
@@ -566,16 +731,29 @@ func keyForSession(sessionID pgtype.UUID) string {
 	return string(sessionID.Bytes[:])
 }
 
+// ErrDedupFinalize marks a failed post-pipeline dedup transition. Callers must
+// retry it only after the 60-second stale-claim window; an immediate retry
+// would observe the still-live claim as a duplicate and could incorrectly
+// finalize the durable inbox row without ever re-running the pipeline.
+var ErrDedupFinalize = errors.New("channel router: dedup finalize failed")
+
 // applyFinalize flips the in-flight claim row to its terminal state,
-// token-fenced. Best-effort: a transport failure cannot abort the outcome.
-func (r *Router) applyFinalize(ctx context.Context, set ResolverSet, instID pgtype.UUID, messageID string, claimToken pgtype.UUID, action dedupFinalize) {
+// token-fenced. A storage failure is part of the durable processing outcome:
+// swallowing it would let the inbox declare success while the claim remains
+// live and suppresses the retry as a duplicate.
+func (r *Router) applyFinalize(ctx context.Context, set ResolverSet, instID pgtype.UUID, messageID string, claimToken pgtype.UUID, action dedupFinalize) error {
+	var err error
 	switch action {
 	case finalizeMark:
-		_ = set.Dedup.Mark(ctx, instID, messageID, claimToken)
+		err = set.Dedup.Mark(ctx, instID, messageID, claimToken)
 	case finalizeRelease:
-		_ = set.Dedup.Release(ctx, instID, messageID, claimToken)
+		err = set.Dedup.Release(ctx, instID, messageID, claimToken)
 	case finalizeNone:
 	}
+	if err != nil {
+		return errors.Join(ErrDedupFinalize, err)
+	}
+	return nil
 }
 
 func (r *Router) drop(ctx context.Context, set ResolverSet, msg channel.InboundMessage, instID pgtype.UUID, reason DropReason) Result {
@@ -583,7 +761,7 @@ func (r *Router) drop(ctx context.Context, set ResolverSet, msg channel.InboundM
 	return Result{Outcome: OutcomeDropped, DropReason: reason, InstallationID: instID}
 }
 
-func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, originType string, creatorUserID, sessionID pgtype.UUID, cmd IssueCommand) (service.IssueCreateResult, error) {
+func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, originType string, creatorUserID, originID pgtype.UUID, cmd IssueCommand) (service.IssueCreateResult, error) {
 	if cmd.Title == "" {
 		return service.IssueCreateResult{}, ErrEmptyIssueTitle
 	}
@@ -598,9 +776,75 @@ func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, ori
 		CreatorType:  "member",
 		CreatorID:    creatorUserID,
 		OriginType:   pgtype.Text{String: originType, Valid: originType != ""},
-		OriginID:     sessionID,
+		OriginID:     originID,
 	}
 	return r.issues.Create(ctx, params, service.IssueCreateOpts{})
+}
+
+func (r *Router) resolveDurableIssueCommand(ctx context.Context, sessionID pgtype.UUID, cmd IssueCommand) (IssueCommand, error) {
+	if cmd.Title != "" {
+		return cmd, nil
+	}
+	reader, ok := r.reader.(PreviousUserMessageReader)
+	if !ok {
+		return IssueCommand{}, errors.New("previous-message reader is not configured")
+	}
+	prev, err := reader.GetMostRecentUserChatMessage(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return IssueCommand{}, ErrEmptyIssueTitle
+		}
+		return IssueCommand{}, fmt.Errorf("previous message lookup: %w", err)
+	}
+	cmd.Title = titleFromPreviousMessage(prev.Content)
+	if cmd.Title == "" {
+		return IssueCommand{}, ErrEmptyIssueTitle
+	}
+	return cmd, nil
+}
+
+func (r *Router) createOrRecoverDurableIssue(
+	ctx context.Context,
+	inst ResolvedInstallation,
+	originType string,
+	creatorUserID pgtype.UUID,
+	messageID string,
+	cmd IssueCommand,
+) (service.IssueCreateResult, bool, error) {
+	if strings.TrimSpace(messageID) == "" {
+		return service.IssueCreateResult{}, false, errors.New("durable issue command has no message id")
+	}
+	reader, ok := r.reader.(IssueOriginReader)
+	if !ok {
+		return service.IssueCreateResult{}, false, errors.New("issue-origin reader is not configured")
+	}
+	originID := durableIssueCommandOriginID(inst.ID, messageID)
+	existing, err := reader.GetIssueByOrigin(ctx, db.GetIssueByOriginParams{
+		WorkspaceID: inst.WorkspaceID,
+		OriginType:  pgtype.Text{String: originType, Valid: originType != ""},
+		OriginID:    originID,
+	})
+	if err == nil {
+		return service.IssueCreateResult{Issue: existing}, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return service.IssueCreateResult{}, false, fmt.Errorf("lookup issue by durable origin: %w", err)
+	}
+	created, err := r.createIssue(ctx, inst, originType, creatorUserID, originID, cmd)
+	return created, false, err
+}
+
+// durableIssueCommandOriginID is stable across retries and replicas while
+// exposing neither the platform message ID nor credentials. The UUID version
+// and variant bits are set to the RFC 4122 name-based shape so database/tooling
+// treats the opaque digest as an ordinary UUID.
+func durableIssueCommandOriginID(installationID pgtype.UUID, messageID string) pgtype.UUID {
+	sum := sha256.Sum256([]byte("multica:channel-issue:v1\x00" + uuidString(installationID) + "\x00" + messageID))
+	var id [16]byte
+	copy(id[:], sum[:16])
+	id[6] = (id[6] & 0x0f) | 0x50
+	id[8] = (id[8] & 0x3f) | 0x80
+	return pgtype.UUID{Bytes: id, Valid: true}
 }
 
 // ErrEmptyIssueTitle is returned by createIssue when /issue has no title and
@@ -608,6 +852,14 @@ func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, ori
 var ErrEmptyIssueTitle = errors.New("issue title is empty")
 
 var _ channel.InboundHandler = (*Router)(nil).Handle
+
+func inboundTraceHash(value string) string {
+	if value == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:8])
+}
 
 // publishInboundMessage broadcasts a committed inbound message as chat:message,
 // mirroring what handler.SendChatMessage does for the web send path. Without

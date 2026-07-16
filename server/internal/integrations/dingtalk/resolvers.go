@@ -2,11 +2,13 @@ package dingtalk
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -15,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -46,11 +49,12 @@ func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.O
 			Direct:   "DingTalk direct message",
 			Fallback: "DingTalk chat",
 		})},
-		Audit:      &auditor{q: q},
-		Replier:    replier,
-		Typing:     typing,
-		Unbind:     &unbinder{q: q},
-		OriginType: originDingTalkChat,
+		Audit:       &auditor{q: q},
+		Replier:     replier,
+		Typing:      typing,
+		Unbind:      &unbinder{q: q},
+		OriginType:  originDingTalkChat,
+		DurableRuns: true,
 	}
 }
 
@@ -72,50 +76,127 @@ type robotTaskContextResolver struct {
 }
 
 func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) ([]byte, error) {
+	startedAt := time.Now()
+	log := slog.With(
+		"installation_id", util.UUIDToString(inst.ID),
+		"message_id_hash", dingtalkTraceHash(msg.MessageID),
+		"sender_id_hash", dingtalkTraceHash(msg.Source.SenderID),
+	)
 	if r == nil || r.q == nil || r.employees == nil {
+		log.Error("dingtalk robot DWS identity resolver unavailable",
+			"event", "dingtalk_dws_identity_failed",
+			"error_class", "configuration",
+		)
 		return nil, errors.New("DingTalk robot DWS identity resolver is not configured")
 	}
 	agent, err := r.q.GetAgent(ctx, inst.AgentID)
 	if err != nil {
+		log.Error("dingtalk robot DWS identity agent load failed",
+			"event", "dingtalk_dws_identity_failed",
+			"error_class", "database",
+			"latency_ms", time.Since(startedAt).Milliseconds(),
+			"error", err,
+		)
 		return nil, fmt.Errorf("load DingTalk robot agent: %w", err)
 	}
 	if !agent.RuntimeID.Valid {
+		log.Info("dingtalk robot DWS identity skipped",
+			"event", "dingtalk_dws_identity_skipped",
+			"reason", "agent_without_runtime",
+			"latency_ms", time.Since(startedAt).Milliseconds(),
+		)
 		return nil, nil
 	}
 	runtime, err := r.q.GetAgentRuntime(ctx, agent.RuntimeID)
 	if err != nil {
+		log.Error("dingtalk robot DWS identity runtime load failed",
+			"event", "dingtalk_dws_identity_failed",
+			"error_class", "database",
+			"latency_ms", time.Since(startedAt).Milliseconds(),
+			"error", err,
+		)
 		return nil, fmt.Errorf("load DingTalk robot runtime: %w", err)
 	}
 	if !service.FCE2BRuntimeHasCapability(runtime, "dws") {
-		slog.Info("dingtalk robot DWS identity skipped", "reason", "runtime_without_dws_capability")
+		log.Info("dingtalk robot DWS identity skipped",
+			"event", "dingtalk_dws_identity_skipped",
+			"reason", "runtime_without_dws_capability",
+			"latency_ms", time.Since(startedAt).Milliseconds(),
+		)
 		return nil, nil
 	}
 	raw, err := decodeDingTalkRaw(msg)
 	if err != nil {
+		log.Warn("dingtalk robot DWS identity payload decode failed",
+			"event", "dingtalk_dws_identity_failed",
+			"error_class", "invalid_payload",
+			"latency_ms", time.Since(startedAt).Milliseconds(),
+			"error", err,
+		)
 		return nil, fmt.Errorf("decode DingTalk robot sender: %w", err)
 	}
-	slog.Info("dingtalk robot DWS identity resolving",
+	log = log.With(
+		"staff_id_hash", dingtalkTraceHash(raw.SenderStaffID),
+		"corp_id_hash", dingtalkTraceHash(raw.SenderCorpID),
+	)
+	log.Info("dingtalk robot DWS identity resolving",
+		"event", "dingtalk_dws_identity_started",
 		"has_staff_id", strings.TrimSpace(raw.SenderStaffID) != "",
 		"has_corp_id", strings.TrimSpace(raw.SenderCorpID) != "",
 	)
 	if strings.TrimSpace(raw.SenderStaffID) == "" || strings.TrimSpace(raw.SenderCorpID) == "" {
+		log.Warn("dingtalk robot DWS identity rejected",
+			"event", "dingtalk_dws_identity_rejected",
+			"error_class", "missing_organization_identity",
+			"latency_ms", time.Since(startedAt).Milliseconds(),
+		)
 		return nil, fmt.Errorf("%w: DingTalk robot sender has no organization identity", engine.ErrTaskContextRejected)
 	}
 	employee, err := r.employees.ResolveEmployeeByCorpID(ctx, raw.SenderCorpID, raw.SenderStaffID)
 	if err != nil {
 		var validationErr *orgemphsf.ValidationError
 		if errors.As(err, &validationErr) {
+			log.Warn("dingtalk robot DWS identity rejected",
+				"event", "dingtalk_dws_identity_rejected",
+				"error_class", "validation",
+				"latency_ms", time.Since(startedAt).Milliseconds(),
+				"error", err,
+			)
 			return nil, fmt.Errorf("%w: resolve DingTalk robot sender identity: %w", engine.ErrTaskContextRejected, err)
 		}
+		log.Error("dingtalk robot DWS identity lookup failed",
+			"event", "dingtalk_dws_identity_failed",
+			"error_class", "employee_resolver",
+			"latency_ms", time.Since(startedAt).Milliseconds(),
+			"error", err,
+		)
 		return nil, fmt.Errorf("resolve DingTalk robot sender identity: %w", err)
 	}
-	slog.Info("dingtalk robot DWS identity resolved")
+	log.Info("dingtalk robot DWS identity resolved",
+		"event", "dingtalk_dws_identity_resolved",
+		"uid_hash", dingtalkTraceHash(employee.UID),
+		"org_id_hash", dingtalkTraceHash(employee.OrgID),
+		"latency_ms", time.Since(startedAt).Milliseconds(),
+	)
 	return json.Marshal(map[string]any{
 		protocol.DingTalkRobotIdentityJSONKey: protocol.DingTalkRobotIdentity{
 			UID:   employee.UID,
 			OrgID: employee.OrgID,
 		},
 	})
+}
+
+// dingtalkTraceHash returns a stable, non-reversible correlation key for SLS.
+// Staff/corp/user/message identifiers remain queryable after an operator hashes
+// the known value locally, while the raw identifiers never enter application
+// logs. Sixteen hex characters are enough for operational correlation without
+// turning the log field into a credential or identity store.
+func dingtalkTraceHash(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(raw))
+	return fmt.Sprintf("%x", sum[:8])
 }
 
 var (
@@ -161,20 +242,37 @@ func nullText(s string) pgtype.Text {
 
 // ---- installation routing ----
 
-type installationResolver struct{ q *db.Queries }
+type installationQueries interface {
+	GetChannelInstallation(context.Context, db.GetChannelInstallationParams) (db.ChannelInstallation, error)
+}
+
+type installationResolver struct{ q installationQueries }
 
 func (r *installationResolver) ResolveInstallation(ctx context.Context, msg channel.InboundMessage) (engine.ResolvedInstallation, error) {
 	raw, err := decodeDingTalkRaw(msg)
 	if err != nil {
 		return engine.ResolvedInstallation{}, err
 	}
-	// Route by the client_id the per-installation connection stamped on
-	// the message: each Stream Mode connection only ever delivers its own
-	// app's callbacks, so the app id uniquely identifies the installation.
-	inst, err := r.q.GetChannelInstallationByAppID(ctx, db.GetChannelInstallationByAppIDParams{
+	// Durable callbacks are fenced to the installation row that admitted them.
+	// Never follow app_id to a replacement row: a revoked bot can be reclaimed
+	// by another workspace while an older callback is queued.
+	installationID, parseErr := util.ParseUUID(raw.InstallationID)
+	if parseErr != nil {
+		return engine.ResolvedInstallation{}, fmt.Errorf("invalid admitted installation id: %w", parseErr)
+	}
+	inst, err := r.q.GetChannelInstallation(ctx, db.GetChannelInstallationParams{
+		ID:          installationID,
 		ChannelType: string(TypeDingtalk),
-		AppID:       raw.ClientID,
 	})
+	if err == nil {
+		var cfg dingtalkInstallConfig
+		if decodeErr := json.Unmarshal(inst.Config, &cfg); decodeErr != nil {
+			return engine.ResolvedInstallation{}, fmt.Errorf("decode admitted installation config: %w", decodeErr)
+		}
+		if cfg.AppID != raw.ClientID {
+			return engine.ResolvedInstallation{}, engine.ErrInstallationNotFound
+		}
+	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return engine.ResolvedInstallation{}, engine.ErrInstallationNotFound
@@ -333,14 +431,17 @@ func (r *sessionBinder) EnsureSession(ctx context.Context, p engine.EnsureSessio
 func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams) (engine.AppendResult, error) {
 	return r.session.AppendUserMessage(ctx, engine.AppendInput{
 		SessionID:      p.SessionID,
+		WorkspaceID:    p.WorkspaceID,
 		Sender:         p.Sender,
 		InstallationID: p.InstallationID,
 		Body:           dingtalkMessageBody(p.Message),
 		// CommandText is the user's OWN typed text: the /issue parser must
 		// see the bare message, not the speaker-labelled body.
-		CommandText: p.Message.Text,
-		MessageID:   p.Message.MessageID,
-		ClaimToken:  p.ClaimToken,
+		CommandText:  p.Message.Text,
+		MessageID:    p.Message.MessageID,
+		ThreadID:     p.Message.Source.ThreadID,
+		ClaimToken:   p.ClaimToken,
+		PreparedTask: p.PreparedTask,
 	})
 }
 

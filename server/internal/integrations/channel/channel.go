@@ -84,6 +84,19 @@ type Config struct {
 	Type Type
 	Raw  json.RawMessage
 
+	// InstallationID and connection identity are observability metadata from
+	// the Supervisor. They never contain platform credentials.
+	InstallationID string
+	ConnectionID   string
+	NodeID         string
+
+	// OnReady is called by connection-oriented adapters after transport dial
+	// succeeds and before they consume the first inbound frame. Coordinated
+	// connections use it to atomically transition CONNECTING -> READY. A
+	// non-nil error aborts the connection; nil means no readiness barrier is
+	// required (the legacy singleton path).
+	OnReady func(context.Context) error
+
 	// Handler is the shared inbound entry point the engine injects so the
 	// built Channel can deliver normalized InboundMessage values into the
 	// core (see InboundHandler). A Factory captures it and invokes it from

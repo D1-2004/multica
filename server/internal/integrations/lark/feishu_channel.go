@@ -249,10 +249,11 @@ func (s *channelInstallationStore) ListActiveInstallations(ctx context.Context) 
 	out := make([]engine.Installation, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, engine.Installation{
-			ID:          row.ID,
-			ChannelType: channel.Type(row.ChannelType),
-			Fingerprint: rowFingerprint(row),
-			Config:      row.Config,
+			ID:            row.ID,
+			StreamGroupID: rowStreamGroupID(row),
+			ChannelType:   channel.Type(row.ChannelType),
+			Fingerprint:   rowFingerprint(row),
+			Config:        row.Config,
 		})
 	}
 	return out, nil
@@ -292,4 +293,28 @@ func rowFingerprint(row db.ChannelInstallation) string {
 	_, _ = h.Write([]byte{0})
 	_, _ = h.Write(row.Config)
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// rowStreamGroupID returns the cross-environment ownership identity used by
+// the Redis DingTalk Stream coordinator. channel_installation.id is local to
+// one database and therefore cannot coordinate the same client_id installed
+// in prepub and production. The first 128 bits of SHA-256 are carried as an
+// opaque UUID solely because the coordinator already uses pgtype.UUID; this is
+// not a database row ID. A missing/malformed app_id yields an invalid UUID so
+// the explicitly-enabled coordinator fails closed instead of opening an
+// uncoordinated connection.
+func rowStreamGroupID(row db.ChannelInstallation) pgtype.UUID {
+	if row.ChannelType != "dingtalk" {
+		return pgtype.UUID{}
+	}
+	var cfg struct {
+		AppID string `json:"app_id"`
+	}
+	if err := json.Unmarshal(row.Config, &cfg); err != nil || cfg.AppID == "" {
+		return pgtype.UUID{}
+	}
+	sum := sha256.Sum256([]byte(row.ChannelType + "\x00" + cfg.AppID))
+	var id [16]byte
+	copy(id[:], sum[:16])
+	return pgtype.UUID{Bytes: id, Valid: true}
 }
