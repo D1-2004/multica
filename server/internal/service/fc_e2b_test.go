@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -54,82 +53,6 @@ func (f *fakeCommandRunner) Run(ctx context.Context, name string, args []string,
 	out := f.out[0]
 	f.out = f.out[1:]
 	return out, nil
-}
-
-func TestFCE2BProviderForTemplate(t *testing.T) {
-	cases := []struct {
-		refs []string
-		want string
-	}{
-		{[]string{"multica-fc-hermes-v1", "", ""}, "hermes"},
-		{[]string{"multica-fc-hermes-dws-v1", "tpl_1", "multica-fc-hermes-dws-v1"}, "hermes"},
-		{[]string{"multica-fc-opencode-v1", "", ""}, "opencode"},
-		{[]string{"", "tpl_2", "multica-fc-OpenCode-dws"}, "opencode"},
-		{[]string{"custom-team-template", "", ""}, "hermes"},
-		{[]string{}, "hermes"},
-	}
-	for _, tc := range cases {
-		if got := FCE2BProviderForTemplate(tc.refs...); got != tc.want {
-			t.Fatalf("FCE2BProviderForTemplate(%v) = %q, want %q", tc.refs, got, tc.want)
-		}
-	}
-}
-
-func TestIsFCE2BSupportedProvider(t *testing.T) {
-	for _, provider := range []string{"hermes", "opencode", " Hermes ", "OPENCODE"} {
-		if !IsFCE2BSupportedProvider(provider) {
-			t.Fatalf("IsFCE2BSupportedProvider(%q) = false, want true", provider)
-		}
-	}
-	for _, provider := range []string{"", "codex", "claude", "pi"} {
-		if IsFCE2BSupportedProvider(provider) {
-			t.Fatalf("IsFCE2BSupportedProvider(%q) = true, want false", provider)
-		}
-	}
-}
-
-func TestFCE2BRunnerCommandForProvider(t *testing.T) {
-	cases := []struct {
-		provider string
-		want     string
-	}{
-		{"hermes", "multica-fc-hermes-runner"},
-		{"opencode", "multica-fc-opencode-runner"},
-		{" OpenCode ", "multica-fc-opencode-runner"},
-		{"", "multica-fc-hermes-runner"},
-	}
-	for _, tc := range cases {
-		if got := FCE2BRunnerCommandForProvider(tc.provider); got != tc.want {
-			t.Fatalf("FCE2BRunnerCommandForProvider(%q) = %q, want %q", tc.provider, got, tc.want)
-		}
-	}
-}
-
-func TestFCE2BRuntimeProviderAndRunner(t *testing.T) {
-	legacy := db.AgentRuntime{Provider: ""}
-	if got := FCE2BRuntimeProvider(legacy); got != "hermes" {
-		t.Fatalf("legacy runtime provider = %q, want hermes", got)
-	}
-	if got := fcE2BRunnerForRuntime(legacy); got != "multica-fc-hermes-runner" {
-		t.Fatalf("legacy runtime runner = %q, want multica-fc-hermes-runner", got)
-	}
-
-	opencode := db.AgentRuntime{Provider: "opencode"}
-	if got := FCE2BRuntimeProvider(opencode); got != "opencode" {
-		t.Fatalf("opencode runtime provider = %q, want opencode", got)
-	}
-	if got := fcE2BRunnerForRuntime(opencode); got != "multica-fc-opencode-runner" {
-		t.Fatalf("opencode runtime runner = %q, want multica-fc-opencode-runner", got)
-	}
-
-	// The runner recorded at creation time wins over the derived convention.
-	pinned := db.AgentRuntime{
-		Provider: "opencode",
-		Metadata: []byte(`{"runner":"custom-runner"}`),
-	}
-	if got := fcE2BRunnerForRuntime(pinned); got != "custom-runner" {
-		t.Fatalf("pinned runtime runner = %q, want custom-runner", got)
-	}
 }
 
 func TestFCE2BLauncherCommandsUseSandboxReadyTimeout(t *testing.T) {
@@ -298,43 +221,6 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 	}
 	if !reflect.DeepEqual(runner.calls[2].args, wantExecArgs) {
 		t.Fatalf("exec args = %#v, want %#v", runner.calls[2].args, wantExecArgs)
-	}
-}
-
-func TestFCE2BExecRunOnceUsesRuntimeProviderAndRunner(t *testing.T) {
-	runner := &fakeCommandRunner{}
-	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{
-		ServerURL:  "https://api.multica.test",
-		APIKey:     "e2b_secret",
-		APIURL:     "https://api.cn-beijing.e2b.fc.aliyuncs.com",
-		Domain:     "cn-beijing.e2b.fc.aliyuncs.com",
-		LLMBaseURL: "https://api-deap.dingtalk.com/deapai",
-		LLMAPIKey:  "maas_secret",
-		LLMModels:  []string{"qwen3.5-plus"},
-		CLIPath:    "/usr/local/bin/e2b",
-	}, runner)
-	rt := db.AgentRuntime{
-		ID:       util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
-		Name:     "FC-Opencode",
-		Provider: "opencode",
-		DaemonID: pgtype.Text{String: "fc-e2b:ws:fc-opencode", Valid: true},
-		Metadata: []byte(`{"kind":"fc-e2b","template":"multica-fc-opencode-v1","runner":"multica-fc-opencode-runner"}`),
-	}
-
-	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
-	if err := launcher.execRunOnce(context.Background(), "sbx_oc", rt, taskID, "mdt_test_token", false, nil); err != nil {
-		t.Fatalf("execRunOnce returned error: %v", err)
-	}
-	args := runner.calls[0].args
-	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "-- multica-fc-opencode-runner ") {
-		t.Fatalf("exec args must invoke the opencode runner: %#v", args)
-	}
-	if !strings.Contains(joined, "--provider opencode") {
-		t.Fatalf("exec args must pass the runtime provider: %#v", args)
-	}
-	if strings.Contains(joined, "hermes") {
-		t.Fatalf("opencode runtime exec must not mention hermes: %#v", args)
 	}
 }
 

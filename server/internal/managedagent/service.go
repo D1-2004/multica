@@ -245,9 +245,8 @@ func (s *Service) cloneAndCompile(ctx context.Context) (string, agentsource.Bund
 
 // Provision materializes the latest shared snapshot into one workspace. The
 // partial unique index makes retries and concurrent API replicas converge on
-// the same Agent. runtimeProvider is the agent provider of the FC runtime the
-// Agent is pinned to; the manifest must declare compatibility with it.
-func (s *Service) Provision(ctx context.Context, workspaceID, ownerID, runtimeID pgtype.UUID, runtimeMode, runtimeProvider, model string) (db.Agent, bool, error) {
+// the same Agent.
+func (s *Service) Provision(ctx context.Context, workspaceID, ownerID, runtimeID pgtype.UUID, runtimeMode, model string) (db.Agent, bool, error) {
 	if existing, err := s.queries.GetManagedAgentSourceInWorkspace(ctx, db.GetManagedAgentSourceInWorkspaceParams{WorkspaceID: workspaceID, ManagedSourceKey: pgtype.Text{String: s.config.SourceKey, Valid: true}}); err == nil {
 		agent, err := s.updateExistingOwner(ctx, existing.AgentID, workspaceID, ownerID)
 		return agent, false, err
@@ -256,8 +255,8 @@ func (s *Service) Provision(ctx context.Context, workspaceID, ownerID, runtimeID
 	if err != nil {
 		return db.Agent{}, false, err
 	}
-	if !providerAllowed(bundle.Manifest.Spec.Compatibility.Providers, runtimeProvider) {
-		return db.Agent{}, false, fmt.Errorf("managed FDE Agent manifest is not compatible with the fixed FC runtime provider %q", runtimeProvider)
+	if !providerAllowed(bundle.Manifest.Spec.Compatibility.Providers, "hermes") {
+		return db.Agent{}, false, errors.New("managed FDE Agent manifest is not compatible with the fixed FC runtime")
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

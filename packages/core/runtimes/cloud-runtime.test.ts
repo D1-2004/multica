@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRuntime } from "../types";
-import { fcE2BProviderForTemplate, isFCE2BRuntime } from "./cloud-runtime";
+import { isFCE2BRuntime } from "./cloud-runtime";
 
 function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
   return {
@@ -28,23 +28,5 @@ describe("isFCE2BRuntime", () => {
     expect(isFCE2BRuntime(makeRuntime())).toBe(true);
     expect(isFCE2BRuntime(makeRuntime({ runtime_mode: "local" }))).toBe(false);
     expect(isFCE2BRuntime(makeRuntime({ metadata: { kind: "other" } }))).toBe(false);
-  });
-});
-
-describe("fcE2BProviderForTemplate", () => {
-  it("preselects the provider named by the template, defaulting to hermes", () => {
-    expect(fcE2BProviderForTemplate({ template: "multica-fc-hermes-v1" })).toBe(
-      "hermes",
-    );
-    expect(
-      fcE2BProviderForTemplate({ template: "multica-fc-opencode-v1" }),
-    ).toBe("opencode");
-    expect(
-      fcE2BProviderForTemplate({ template: "tpl_1", name: "OpenCode Team" }),
-    ).toBe("opencode");
-    // Dual-CLI templates that name no provider preselect the default.
-    expect(fcE2BProviderForTemplate({ template: "multica-fc-team-v1" })).toBe(
-      "hermes",
-    );
   });
 });

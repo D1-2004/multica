@@ -239,7 +239,7 @@
   "fc_e2b_runtime": {
     "action": "增加云沙箱",
     "title": "增加云沙箱",
-    "description": "选择一个 FC/E2B 模板，创建独立的云沙箱运行时。超时和模型目录由服务端管理，每个 Agent 可从目录中选择模型。",
+    "description": "选择一个 FC/E2B 模板，创建独立的云端 Hermes 运行时。超时和模型目录由服务端管理，每个 Agent 可从目录中选择模型。",
     "create": "创建运行时",
     "creating": "创建中...",
     "cancel": "取消",
@@ -252,10 +252,8 @@
     "templates_empty": "没有可用模板",
     "template_updated": "更新于 {{time}}",
     "name_placeholder": "例如 FC-Hermes-DWS",
-    "provider_hint": "该运行时使用的 agent CLI，需已包含在所选模板中。",
     "fields": {
       "template": "模板",
-      "provider": "运行时",
       "name": "名称",
       "visibility": "可见性"
     }
