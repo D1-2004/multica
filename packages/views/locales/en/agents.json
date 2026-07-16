@@ -653,6 +653,7 @@
       "dingtalk_account_new_qr": "Generate a new QR code",
       "dingtalk_account_close": "Close",
       "dingtalk_account_connected": "Enterprise digital employee bound",
+      "dingtalk_account_organization": "Organization",
       "dingtalk_account_dws_identity": "DWS identity",
       "dingtalk_account_message_route": "Direct message route",
       "dingtalk_account_status_active": "Active",

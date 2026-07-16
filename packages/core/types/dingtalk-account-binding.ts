@@ -1,5 +1,6 @@
 export interface DingTalkAccountBindingOutcome {
   status: string;
+  organizationName?: string | null;
   accountDisplayName?: string | null;
   accountAvatarUrl?: string | null;
   boundAt?: string | null;
