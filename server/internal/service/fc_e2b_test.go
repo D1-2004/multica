@@ -1153,6 +1153,25 @@ func TestFCE2BExtraEnvIncludesAgentIdentityContextToken(t *testing.T) {
 	}
 }
 
+func TestFCE2BExtraEnvAllowsGithubOnlyAgentIdentityWithoutDWSSecret(t *testing.T) {
+	task := db.AgentTaskQueue{
+		Context: []byte(`{"agent_identity_context_token":"ctx_github_token"}`),
+	}
+	got, err := fcE2BAgentIdentityExtraEnv(task, FCE2BConfig{
+		AgentIdentityBaseURL: "https://pre-agent-identity.dingtalk.com",
+		AgentIdentityTimeout: 7 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("fcE2BAgentIdentityExtraEnv: %v", err)
+	}
+	if got["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_github_token" {
+		t.Fatalf("AGENT_IDENTITY_CONTEXT_TOKEN = %q, want ctx_github_token", got["AGENT_IDENTITY_CONTEXT_TOKEN"])
+	}
+	if _, ok := got["DWS_CLIENT_SECRET"]; ok {
+		t.Fatal("DWS_CLIENT_SECRET should be omitted when not configured")
+	}
+}
+
 func TestFCE2BTaskTraceEnv(t *testing.T) {
 	trace, err := chattrace.From("37d0871a-3657-4c74-91fa-39e846fa90a0", "web", 1_721_000_000_123)
 	if err != nil {

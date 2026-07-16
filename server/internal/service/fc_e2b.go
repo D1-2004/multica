@@ -1614,9 +1614,6 @@ func fcE2BAgentIdentityEnvForToken(token string, cfg FCE2BConfig) (map[string]st
 	if cfg.AgentIdentityBaseURL == "" {
 		return nil, errors.New("MULTICA_AGENT_IDENTITY_BASE_URL is required for ContextToken tasks")
 	}
-	if cfg.DWSClientSecret == "" {
-		return nil, errors.New("MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET is required for ContextToken tasks")
-	}
 	timeout := cfg.AgentIdentityTimeout
 	if timeout <= 0 {
 		timeout = defaultAgentIdentityTimeout
@@ -1625,12 +1622,15 @@ func fcE2BAgentIdentityEnvForToken(token string, cfg FCE2BConfig) (map[string]st
 	if seconds <= 0 {
 		seconds = int(defaultAgentIdentityTimeout / time.Second)
 	}
-	return map[string]string{
+	env := map[string]string{
 		protocol.AgentIdentityContextTokenEnvKey: token,
 		"MULTICA_AGENT_IDENTITY_BASE_URL":        cfg.AgentIdentityBaseURL,
 		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS": strconv.Itoa(seconds),
-		"DWS_CLIENT_SECRET":                      cfg.DWSClientSecret,
-	}, nil
+	}
+	if cfg.DWSClientSecret != "" {
+		env["DWS_CLIENT_SECRET"] = cfg.DWSClientSecret
+	}
+	return env, nil
 }
 
 func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool, template string, trace chattrace.Trace) (string, bool, error) {
