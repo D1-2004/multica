@@ -191,6 +191,7 @@ func (f *fakeBindingStore) CompleteAgentDingTalkIdentityAttempt(_ context.Contex
 		WorkspaceID:        f.identityAttempt.WorkspaceID,
 		DwsUid:             arg.DwsUid.String,
 		OrgID:              arg.OrgID.String,
+		OrganizationName:   arg.OrganizationName,
 		AccountDisplayName: arg.AccountDisplayName,
 		AccountAvatarUrl:   arg.AccountAvatarUrl,
 		BoundBy:            f.identityAttempt.InitiatorUserID,
@@ -201,6 +202,7 @@ func (f *fakeBindingStore) CompleteAgentDingTalkIdentityAttempt(_ context.Contex
 		WorkspaceID:        f.identity.WorkspaceID,
 		DwsUid:             f.identity.DwsUid,
 		OrgID:              f.identity.OrgID,
+		OrganizationName:   f.identity.OrganizationName,
 		AccountDisplayName: f.identity.AccountDisplayName,
 		AccountAvatarUrl:   f.identity.AccountAvatarUrl,
 		BoundBy:            f.identity.BoundBy,
@@ -808,22 +810,26 @@ func TestCompleteIdentityCallbackValidatesAndStoresIdentity(t *testing.T) {
 	service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
 
 	params := IdentityCallbackParams{
-		AttemptID:          store.identityAttempt.ID,
-		CallbackToken:      identityToken,
-		AccountUID:         "24710833",
-		AccountOrgID:       "439446171",
-		AccountDisplayName: "Xu Mo",
-		AccountAvatarURL:   "https://example.com/avatar.png",
+		AttemptID:               store.identityAttempt.ID,
+		CallbackToken:           identityToken,
+		AccountUID:              "24710833",
+		AccountOrgID:            "439446171",
+		AccountOrganizationName: "Alibaba Group",
+		AccountDisplayName:      "Xu Mo",
+		AccountAvatarURL:        "https://example.com/avatar.png",
 	}
 	binding, err := service.CompleteIdentityCallback(context.Background(), params)
 	if err != nil {
 		t.Fatalf("CompleteIdentityCallback() error = %v", err)
 	}
-	if binding.DWSIdentity.Status != "active" || binding.DWSIdentity.AccountDisplayName != "Xu Mo" ||
+	if binding.DWSIdentity.Status != "active" ||
+		binding.DWSIdentity.OrganizationName != "Alibaba Group" ||
+		binding.DWSIdentity.AccountDisplayName != "Xu Mo" ||
 		binding.MessageRoute.Status != "pending" {
 		t.Fatalf("binding = %#v", binding)
 	}
-	if store.identity.DwsUid != "24710833" || store.identity.OrgID != "439446171" {
+	if store.identity.DwsUid != "24710833" || store.identity.OrgID != "439446171" ||
+		store.identity.OrganizationName != "Alibaba Group" {
 		t.Fatalf("stored identity = %#v", store.identity)
 	}
 	encoded, err := json.Marshal(binding)
@@ -1119,12 +1125,13 @@ func identityAttemptForTest(t *testing.T, store *fakeBindingStore, callbackToken
 
 func identityCallbackParamsForTest(attemptID pgtype.UUID) IdentityCallbackParams {
 	return IdentityCallbackParams{
-		AttemptID:          attemptID,
-		CallbackToken:      canonicalCallbackToken,
-		AccountUID:         "24710833",
-		AccountOrgID:       "439446171",
-		AccountDisplayName: "Xu Mo",
-		AccountAvatarURL:   "https://example.com/avatar.png",
+		AttemptID:               attemptID,
+		CallbackToken:           canonicalCallbackToken,
+		AccountUID:              "24710833",
+		AccountOrgID:            "439446171",
+		AccountOrganizationName: "Alibaba Group",
+		AccountDisplayName:      "Xu Mo",
+		AccountAvatarURL:        "https://example.com/avatar.png",
 	}
 }
 

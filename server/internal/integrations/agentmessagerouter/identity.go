@@ -22,9 +22,11 @@ func (s *Service) CompleteIdentityCallback(ctx context.Context, params IdentityC
 	}
 	uid := strings.TrimSpace(params.AccountUID)
 	orgID := strings.TrimSpace(params.AccountOrgID)
+	organizationName := strings.TrimSpace(params.AccountOrganizationName)
 	displayName := strings.TrimSpace(params.AccountDisplayName)
 	avatarURL := strings.TrimSpace(params.AccountAvatarURL)
 	if !isDecimalIdentifier(uid) || !isDecimalIdentifier(orgID) ||
+		utf8.RuneCountInString(organizationName) > maxOrganizationNameRunes ||
 		utf8.RuneCountInString(displayName) > maxAccountNameRunes || !validAccountAvatarURL(avatarURL) {
 		return PublicDingTalkAccountBinding{}, ErrInvalidResult
 	}
@@ -50,6 +52,7 @@ func (s *Service) CompleteIdentityCallback(ctx context.Context, params IdentityC
 	_, err = s.identityStore.CompleteAgentDingTalkIdentityAttempt(ctx, db.CompleteAgentDingTalkIdentityAttemptParams{
 		DwsUid:             pgtype.Text{String: uid, Valid: true},
 		OrgID:              pgtype.Text{String: orgID, Valid: true},
+		OrganizationName:   organizationName,
 		AttemptID:          attempt.ID,
 		CallbackTokenHash:  attempt.CallbackTokenHash,
 		AccountDisplayName: displayName,

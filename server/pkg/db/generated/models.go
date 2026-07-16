@@ -62,6 +62,7 @@ type AgentDingtalkIdentity struct {
 	BoundBy            pgtype.UUID        `json:"bound_by"`
 	BoundAt            pgtype.Timestamptz `json:"bound_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	OrganizationName   string             `json:"organization_name"`
 }
 
 type AgentDingtalkIdentityAttempt struct {

@@ -536,6 +536,7 @@
       "dingtalk_account_new_qr": "新しい QR コードを生成",
       "dingtalk_account_close": "閉じる",
       "dingtalk_account_connected": "企業デジタル従業員をバインド済み",
+      "dingtalk_account_organization": "組織",
       "dingtalk_account_dws_identity": "DWS ID",
       "dingtalk_account_message_route": "ダイレクトメッセージ経路",
       "dingtalk_account_status_active": "有効",

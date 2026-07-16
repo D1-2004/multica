@@ -25,7 +25,7 @@ type DingTalkAccountConfig struct {
 	DispatchKeyID      string     `json:"dispatch_key_id"`
 	DispatchURL        string     `json:"dispatch_url"`
 	CallbackTokenHash  string     `json:"callback_token_hash,omitempty"`
-	CallbackExpiresAt time.Time   `json:"callback_expires_at,omitempty"`
+	CallbackExpiresAt  time.Time  `json:"callback_expires_at,omitempty"`
 	RouterSourceID     string     `json:"router_source_id,omitempty"`
 	AccountDisplayName string     `json:"account_display_name,omitempty"`
 	AccountAvatarURL   string     `json:"account_avatar_url,omitempty"`
@@ -42,6 +42,7 @@ type PublicDingTalkAccountBinding struct {
 
 type PublicDingTalkBindingOutcome struct {
 	Status             string     `json:"status"`
+	OrganizationName   string     `json:"organization_name,omitempty"`
 	AccountDisplayName string     `json:"account_display_name,omitempty"`
 	AccountAvatarURL   string     `json:"account_avatar_url,omitempty"`
 	BoundAt            *time.Time `json:"bound_at,omitempty"`
@@ -55,7 +56,7 @@ func NewPendingDingTalkAccountConfig(endpointID, dispatchURL, callbackHash strin
 		DispatchKeyID:      keyID,
 		DispatchURL:        dispatchURL,
 		CallbackTokenHash:  callbackHash,
-		CallbackExpiresAt: callbackExpiresAt.UTC(),
+		CallbackExpiresAt:  callbackExpiresAt.UTC(),
 	}
 }
 

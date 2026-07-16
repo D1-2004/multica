@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	defaultCallbackTTL  = 10 * time.Minute
-	maxAccountNameRunes = 128
-	maxAvatarURLBytes   = 2048
-	maxSourceIDBytes    = 64
+	defaultCallbackTTL       = 10 * time.Minute
+	maxAccountNameRunes      = 128
+	maxOrganizationNameRunes = 256
+	maxAvatarURLBytes        = 2048
+	maxSourceIDBytes         = 64
 )
 
 var (
@@ -110,12 +111,13 @@ type CallbackParams struct {
 }
 
 type IdentityCallbackParams struct {
-	AttemptID          pgtype.UUID
-	CallbackToken      string
-	AccountUID         string
-	AccountOrgID       string
-	AccountDisplayName string
-	AccountAvatarURL   string
+	AttemptID               pgtype.UUID
+	CallbackToken           string
+	AccountUID              string
+	AccountOrgID            string
+	AccountOrganizationName string
+	AccountDisplayName      string
+	AccountAvatarURL        string
 }
 
 type UnbindParams struct {
@@ -568,6 +570,7 @@ func (s *Service) publicBinding(ctx context.Context, row db.ChannelInstallation)
 		boundAt := identity.BoundAt.Time
 		dwsIdentity = PublicDingTalkBindingOutcome{
 			Status:             "active",
+			OrganizationName:   identity.OrganizationName,
 			AccountDisplayName: identity.AccountDisplayName,
 			AccountAvatarURL:   identity.AccountAvatarUrl,
 			BoundAt:            &boundAt,
