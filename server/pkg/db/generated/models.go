@@ -517,6 +517,7 @@ type DingtalkStreamInbox struct {
 	LastReceivedAt   pgtype.Timestamptz `json:"last_received_at"`
 	ProcessedAt      pgtype.Timestamptz `json:"processed_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	ReceiverHostname pgtype.Text        `json:"receiver_hostname"`
 }
 
 type FcE2bSandboxSession struct {

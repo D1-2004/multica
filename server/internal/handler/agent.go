@@ -377,6 +377,9 @@ type AgentTaskResponse struct {
 	// MUL-3292.
 	AuthToken                 string `json:"auth_token,omitempty"`
 	AgentIdentityContextToken string `json:"agent_identity_context_token,omitempty"`
+	// DingTalkDWSIdentityUnavailable tells compatible daemons to inject a
+	// user-visible explanation while still running the chat task normally.
+	DingTalkDWSIdentityUnavailable bool `json:"dingtalk_dws_identity_unavailable,omitempty"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata embedded in
@@ -455,32 +458,33 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		handoffNote = t.HandoffNote.String
 	}
 	return AgentTaskResponse{
-		ID:                        uuidToString(t.ID),
-		AgentID:                   uuidToString(t.AgentID),
-		RuntimeID:                 uuidToString(t.RuntimeID),
-		IssueID:                   uuidToString(t.IssueID),
-		WorkspaceID:               workspaceID,
-		Status:                    t.Status,
-		Priority:                  t.Priority,
-		DispatchedAt:              timestampToPtr(t.DispatchedAt),
-		StartedAt:                 timestampToPtr(t.StartedAt),
-		CompletedAt:               timestampToPtr(t.CompletedAt),
-		Result:                    result,
-		Error:                     textToPtr(t.Error),
-		FailureReason:             failureReason,
-		Attempt:                   t.Attempt,
-		MaxAttempts:               t.MaxAttempts,
-		ParentTaskID:              uuidToPtr(t.ParentTaskID),
-		IsLeaderTask:              t.IsLeaderTask,
-		CreatedAt:                 timestampToString(t.CreatedAt),
-		TriggerCommentID:          uuidToPtr(t.TriggerCommentID),
-		CoalescedCommentIDs:       uuidsToStrings(t.CoalescedCommentIds),
-		DeliveredCommentIDs:       uuidStringsOrEmpty(t.DeliveredCommentIds),
-		TriggerSummary:            textToPtr(t.TriggerSummary),
-		HandoffNote:               handoffNote,
-		AgentIdentityContextToken: taskContextString(t.Context, protocol.AgentIdentityContextTokenJSONKey),
-		WorkDir:                   workDir,
-		RelativeWorkDir:           relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
+		ID:                             uuidToString(t.ID),
+		AgentID:                        uuidToString(t.AgentID),
+		RuntimeID:                      uuidToString(t.RuntimeID),
+		IssueID:                        uuidToString(t.IssueID),
+		WorkspaceID:                    workspaceID,
+		Status:                         t.Status,
+		Priority:                       t.Priority,
+		DispatchedAt:                   timestampToPtr(t.DispatchedAt),
+		StartedAt:                      timestampToPtr(t.StartedAt),
+		CompletedAt:                    timestampToPtr(t.CompletedAt),
+		Result:                         result,
+		Error:                          textToPtr(t.Error),
+		FailureReason:                  failureReason,
+		Attempt:                        t.Attempt,
+		MaxAttempts:                    t.MaxAttempts,
+		ParentTaskID:                   uuidToPtr(t.ParentTaskID),
+		IsLeaderTask:                   t.IsLeaderTask,
+		CreatedAt:                      timestampToString(t.CreatedAt),
+		TriggerCommentID:               uuidToPtr(t.TriggerCommentID),
+		CoalescedCommentIDs:            uuidsToStrings(t.CoalescedCommentIds),
+		DeliveredCommentIDs:            uuidStringsOrEmpty(t.DeliveredCommentIds),
+		TriggerSummary:                 textToPtr(t.TriggerSummary),
+		HandoffNote:                    handoffNote,
+		AgentIdentityContextToken:      taskContextString(t.Context, protocol.AgentIdentityContextTokenJSONKey),
+		DingTalkDWSIdentityUnavailable: taskContextHasKey(t.Context, protocol.DingTalkRobotIdentityUnavailableJSONKey),
+		WorkDir:                        workDir,
+		RelativeWorkDir:                relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
 		// Surface task source so the UI can distinguish issue-linked tasks
 		// from chat-spawned or autopilot-spawned ones; all three may arrive
 		// with issue_id = "" once a task has no linked issue.
@@ -500,6 +504,18 @@ func taskContextString(raw []byte, key string) string {
 	}
 	value, _ := payload[key].(string)
 	return strings.TrimSpace(value)
+}
+
+func taskContextHasKey(raw []byte, key string) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false
+	}
+	value, present := payload[key]
+	return present && len(bytes.TrimSpace(value)) > 0 && string(bytes.TrimSpace(value)) != "null"
 }
 
 // relativeWorkDir produces a privacy-safe display form of the daemon-reported

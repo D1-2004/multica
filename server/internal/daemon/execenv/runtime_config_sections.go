@@ -498,6 +498,14 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 	}
 }
 
+func writeDingTalkDWSIdentityAvailability(b *strings.Builder, ctx TaskContextForEnv) {
+	if !ctx.DingTalkDWSIdentityUnavailable {
+		return
+	}
+	b.WriteString("## DingTalk DWS Identity\n\n")
+	b.WriteString("The current DingTalk sender has no usable DWS identity. Continue the task with every capability that does not require DWS, and do not use the robot creator's or another group member's DWS identity. In the final reply, explicitly tell the user: 无法获取您的身份信息，可能是由于不是群归属组织的成员。\n\n")
+}
+
 // buildMetaSkillContentSlim is the post-MUL-3560 brief assembler.
 // Called from buildMetaSkillContent (runtime_config.go). The
 // `runtime_brief_slim` flag that once gated it was retired in MUL-4297.
@@ -533,6 +541,7 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	writeTaskInitiator(&b, ctx)
 	writeWorkspaceContext(&b, ctx)
 	writeConnectedApps(&b, ctx)
+	writeDingTalkDWSIdentityAvailability(&b, ctx)
 
 	switch kind {
 	case kindQuickCreate:

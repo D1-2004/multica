@@ -718,7 +718,11 @@ func (l *FCE2BLauncher) extraEnvForTask(
 	if err != nil {
 		return nil, err
 	}
-	env := map[string]string{"OPENAI_MODEL": model}
+	env, err := sandboxSourceEnv(task.Context)
+	if err != nil {
+		return nil, err
+	}
+	env["OPENAI_MODEL"] = model
 	var agentIdentityEnv map[string]string
 	if task.ChatSessionID.Valid {
 		agentIdentityEnv, err = l.chatDWSIdentityEnv(ctx, task, runtime, sandboxID)
@@ -730,6 +734,38 @@ func (l *FCE2BLauncher) extraEnvForTask(
 	}
 	for key, value := range agentIdentityEnv {
 		env[key] = value
+	}
+	slog.Info("FC/E2B sandbox source selected",
+		"event", "fc_e2b_sandbox_source_selected",
+		"task_id", util.UUIDToString(task.ID),
+		"sandbox_source_hostname", env[protocol.SandboxSourceHostnameEnvKey],
+		"dingtalk_stream_hostname", env[protocol.DingTalkStreamHostnameEnvKey],
+		"dingtalk_stream_node_id", env[protocol.DingTalkStreamNodeIDEnvKey],
+		"dingtalk_stream_connection_id", env[protocol.DingTalkStreamConnectionIDEnvKey],
+	)
+	return env, nil
+}
+
+func sandboxSourceEnv(taskContext []byte) (map[string]string, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return nil, fmt.Errorf("resolve sandbox source hostname: %w", err)
+	}
+	hostname = strings.TrimSpace(hostname)
+	if hostname == "" {
+		return nil, errors.New("sandbox source hostname is empty")
+	}
+	env := map[string]string{
+		protocol.SandboxSourceHostnameEnvKey: hostname,
+	}
+	streamSource, present, err := dingTalkStreamSourceFromTask(taskContext)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		env[protocol.DingTalkStreamHostnameEnvKey] = streamSource.Hostname
+		env[protocol.DingTalkStreamNodeIDEnvKey] = streamSource.NodeID
+		env[protocol.DingTalkStreamConnectionIDEnvKey] = streamSource.ConnectionID
 	}
 	return env, nil
 }
@@ -792,6 +828,13 @@ func (l *FCE2BLauncher) chatDWSIdentity(ctx context.Context, task db.AgentTaskQu
 	if present {
 		return robotIdentity.UID, robotIdentity.OrgID, "dingtalk_robot_sender", nil
 	}
+	identityUnavailable, err := dingTalkRobotIdentityUnavailableFromTask(task.Context)
+	if err != nil {
+		return "", "", "", err
+	}
+	if identityUnavailable {
+		return "", "", "dingtalk_robot_sender_unavailable", nil
+	}
 	if task.ChatSessionID.Valid {
 		_, bindingErr := l.Queries.GetChannelChatSessionBindingBySession(ctx, db.GetChannelChatSessionBindingBySessionParams{
 			ChatSessionID: task.ChatSessionID,
@@ -834,6 +877,50 @@ func dingTalkRobotIdentityFromTask(taskContext []byte) (protocol.DingTalkRobotId
 		return protocol.DingTalkRobotIdentity{}, true, errors.New("invalid DingTalk robot identity in task context")
 	}
 	return identity, true, nil
+}
+
+func dingTalkRobotIdentityUnavailableFromTask(taskContext []byte) (bool, error) {
+	if len(bytes.TrimSpace(taskContext)) == 0 {
+		return false, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(taskContext, &payload); err != nil {
+		return false, errors.New("decode chat task context")
+	}
+	raw, present := payload[protocol.DingTalkRobotIdentityUnavailableJSONKey]
+	if !present {
+		return false, nil
+	}
+	var unavailable protocol.DingTalkRobotIdentityUnavailable
+	if err := json.Unmarshal(raw, &unavailable); err != nil || strings.TrimSpace(unavailable.Reason) == "" {
+		return false, errors.New("invalid DingTalk robot identity unavailable marker in task context")
+	}
+	return true, nil
+}
+
+func dingTalkStreamSourceFromTask(taskContext []byte) (protocol.DingTalkStreamSource, bool, error) {
+	if len(bytes.TrimSpace(taskContext)) == 0 {
+		return protocol.DingTalkStreamSource{}, false, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(taskContext, &payload); err != nil {
+		return protocol.DingTalkStreamSource{}, false, errors.New("decode chat task context")
+	}
+	raw, present := payload[protocol.DingTalkStreamSourceJSONKey]
+	if !present {
+		return protocol.DingTalkStreamSource{}, false, nil
+	}
+	var source protocol.DingTalkStreamSource
+	if err := json.Unmarshal(raw, &source); err != nil {
+		return protocol.DingTalkStreamSource{}, true, errors.New("invalid DingTalk Stream source in task context")
+	}
+	source.Hostname = strings.TrimSpace(source.Hostname)
+	source.NodeID = strings.TrimSpace(source.NodeID)
+	source.ConnectionID = strings.TrimSpace(source.ConnectionID)
+	if source.Hostname == "" || source.NodeID == "" || source.ConnectionID == "" {
+		return protocol.DingTalkStreamSource{}, true, errors.New("invalid DingTalk Stream source in task context")
+	}
+	return source, true, nil
 }
 
 func isPositiveDecimalIdentifier(value string) bool {

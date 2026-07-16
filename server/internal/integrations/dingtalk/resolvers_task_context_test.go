@@ -63,47 +63,47 @@ func taskContextMessage(t *testing.T, corpID, staffID string) channel.InboundMes
 	return channel.InboundMessage{Raw: raw}
 }
 
-func TestRobotTaskContextResolverRejectsMissingOrganizationIdentity(t *testing.T) {
-	resolver := newRobotTaskContextResolver(&robotEmployeeResolverStub{})
-	_, err := resolver.ResolveTaskContext(context.Background(), engine.ResolvedInstallation{}, taskContextMessage(t, "", "Staff-A_106201"))
-	if !errors.Is(err, engine.ErrTaskContextRejected) {
-		t.Fatalf("error = %v, want ErrTaskContextRejected", err)
+func TestRobotTaskContextResolverContinuesWithoutMissingOrganizationIdentity(t *testing.T) {
+	employee := &robotEmployeeResolverStub{}
+	resolver := newRobotTaskContextResolver(employee)
+	contextJSON, err := resolver.ResolveTaskContext(context.Background(), engine.ResolvedInstallation{}, taskContextMessage(t, "", "Staff-A_106201"))
+	if err != nil {
+		t.Fatalf("ResolveTaskContext: %v", err)
+	}
+	assertDingTalkIdentityUnavailable(t, contextJSON, protocol.DingTalkRobotIdentityUnavailableMissingOrg)
+	if employee.corpID != "" || employee.staffID != "" {
+		t.Fatalf("employee resolver must not run without organization identity: corp=%q staff=%q", employee.corpID, employee.staffID)
 	}
 }
 
-func TestRobotTaskContextResolverRejectsValidationErrorWithoutMaskingIt(t *testing.T) {
+func TestRobotTaskContextResolverContinuesWithoutIdentityAfterValidationError(t *testing.T) {
 	validationErr := &orgemphsf.ValidationError{Field: "staff_id"}
 	resolver := newRobotTaskContextResolver(&robotEmployeeResolverStub{err: validationErr})
 
-	_, err := resolver.ResolveTaskContext(
+	contextJSON, err := resolver.ResolveTaskContext(
 		context.Background(),
 		engine.ResolvedInstallation{},
 		taskContextMessage(t, "ding-corp", "Staff-A_106201"),
 	)
-	if !errors.Is(err, engine.ErrTaskContextRejected) {
-		t.Fatalf("error = %v, want ErrTaskContextRejected", err)
+	if err != nil {
+		t.Fatalf("ResolveTaskContext: %v", err)
 	}
-	var gotValidation *orgemphsf.ValidationError
-	if !errors.As(err, &gotValidation) || gotValidation.Field != "staff_id" {
-		t.Fatalf("error = %v, want wrapped staff_id ValidationError", err)
-	}
+	assertDingTalkIdentityUnavailable(t, contextJSON, protocol.DingTalkRobotIdentityUnavailableLookupError)
 }
 
-func TestRobotTaskContextResolverPreservesInfrastructureError(t *testing.T) {
+func TestRobotTaskContextResolverContinuesWithoutIdentityAfterInfrastructureError(t *testing.T) {
 	infraErr := errors.New("HSF unavailable")
 	resolver := newRobotTaskContextResolver(&robotEmployeeResolverStub{err: infraErr})
 
-	_, err := resolver.ResolveTaskContext(
+	contextJSON, err := resolver.ResolveTaskContext(
 		context.Background(),
 		engine.ResolvedInstallation{},
 		taskContextMessage(t, "ding-corp", "Staff-A_106201"),
 	)
-	if errors.Is(err, engine.ErrTaskContextRejected) {
-		t.Fatalf("infrastructure error was misclassified: %v", err)
+	if err != nil {
+		t.Fatalf("ResolveTaskContext: %v", err)
 	}
-	if !errors.Is(err, infraErr) {
-		t.Fatalf("error = %v, want wrapped infrastructure error", err)
-	}
+	assertDingTalkIdentityUnavailable(t, contextJSON, protocol.DingTalkRobotIdentityUnavailableLookupError)
 }
 
 func TestRobotTaskContextResolverBuildsIdentityForOpaqueStaffID(t *testing.T) {
@@ -132,5 +132,62 @@ func TestRobotTaskContextResolverBuildsIdentityForOpaqueStaffID(t *testing.T) {
 	identity := payload[protocol.DingTalkRobotIdentityJSONKey]
 	if identity.UID != "24710833" || identity.OrgID != "439446171" {
 		t.Fatalf("identity = %#v", identity)
+	}
+}
+
+func TestRobotTaskContextResolverCarriesStreamSourceWithIdentity(t *testing.T) {
+	employee := &robotEmployeeResolverStub{employee: orgemphsf.Employee{
+		UID:   "24710833",
+		OrgID: "439446171",
+	}}
+	resolver := newRobotTaskContextResolver(employee)
+	raw, err := json.Marshal(dingtalkRawEvent{
+		SenderCorpID:  "ding-corp",
+		SenderStaffID: "Staff-A_106201",
+		StreamSource: &protocol.DingTalkStreamSource{
+			Hostname:     "dt-fde-multica033008056137.pre.na620",
+			NodeID:       "node-a",
+			ConnectionID: "node-a-g3",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal raw message: %v", err)
+	}
+	contextJSON, err := resolver.ResolveTaskContext(
+		context.Background(),
+		engine.ResolvedInstallation{},
+		channel.InboundMessage{Raw: raw},
+	)
+	if err != nil {
+		t.Fatalf("ResolveTaskContext: %v", err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(contextJSON, &payload); err != nil {
+		t.Fatalf("decode task context: %v", err)
+	}
+	var source protocol.DingTalkStreamSource
+	if err := json.Unmarshal(payload[protocol.DingTalkStreamSourceJSONKey], &source); err != nil {
+		t.Fatalf("decode Stream source: %v", err)
+	}
+	if source.Hostname != "dt-fde-multica033008056137.pre.na620" || source.NodeID != "node-a" || source.ConnectionID != "node-a-g3" {
+		t.Fatalf("Stream source = %+v", source)
+	}
+	if _, ok := payload[protocol.DingTalkRobotIdentityJSONKey]; !ok {
+		t.Fatal("robot identity missing from combined task context")
+	}
+}
+
+func assertDingTalkIdentityUnavailable(t *testing.T, contextJSON []byte, wantReason string) {
+	t.Helper()
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(contextJSON, &payload); err != nil {
+		t.Fatalf("decode task context: %v", err)
+	}
+	var unavailable protocol.DingTalkRobotIdentityUnavailable
+	if err := json.Unmarshal(payload[protocol.DingTalkRobotIdentityUnavailableJSONKey], &unavailable); err != nil {
+		t.Fatalf("decode identity unavailable marker: %v", err)
+	}
+	if unavailable.Reason != wantReason {
+		t.Fatalf("identity unavailable reason = %q, want %q", unavailable.Reason, wantReason)
 	}
 }

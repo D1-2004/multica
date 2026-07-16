@@ -287,6 +287,9 @@ func TestChannelConnectHandlesPingCallbackAndDisconnect(t *testing.T) {
 	if admission.InstallationID != "00000000-0000-0000-0000-000000000020" || admission.ConnectionID != "node-a-g1" || admission.NodeID != "node-a" {
 		t.Errorf("admission source metadata = %+v", admission)
 	}
+	if admission.ReceiverHostname == "" {
+		t.Errorf("admission receiver hostname is empty: %+v", admission)
+	}
 	if !strings.Contains(admission.Data, `"sessionWebhook"`) || !strings.Contains(admission.Data, `"msg_1"`) {
 		t.Errorf("admission data did not preserve callback payload")
 	}
