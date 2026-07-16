@@ -263,7 +263,7 @@ func TestManagedAgentProvisionReassignsExistingAgentToScanner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create managed service: %v", err)
 	}
-	agent, created, err := managed.Provision(ctx, workspaceID, scannerID, runtimeID, "cloud", "")
+	agent, created, err := managed.Provision(ctx, workspaceID, scannerID, runtimeID, "cloud", "hermes", "")
 	if err != nil {
 		t.Fatalf("reuse managed Agent: %v", err)
 	}

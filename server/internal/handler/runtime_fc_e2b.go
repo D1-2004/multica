@@ -18,6 +18,7 @@ type createFCE2BRuntimeRequest struct {
 	Name       string `json:"name"`
 	TemplateID string `json:"template_id"`
 	Template   string `json:"template"`
+	Provider   string `json:"provider"`
 	Visibility string `json:"visibility"`
 }
 
@@ -89,9 +90,14 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "template_id does not match an available FC/E2B template")
 		return
 	}
+	provider, ok := resolveFCE2BProvider(req.Provider, selected)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "provider must be one of: "+strings.Join(service.FCE2BSupportedProviders, ", "))
+		return
+	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
-		name = defaultFCE2BRuntimeName(selected)
+		name = defaultFCE2BRuntimeName(provider, selected)
 	}
 	visibility := strings.TrimSpace(req.Visibility)
 	if visibility == "" {
@@ -108,10 +114,10 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 		"template_id":     selected.ID,
 		"template_name":   selected.Name,
 		"template_status": selected.Status,
-		"capabilities":    fcE2BTemplateCapabilities(selected),
+		"capabilities":    fcE2BTemplateCapabilities(provider, selected),
 		"timeout_seconds": h.cfg.FCE2B.TimeoutSeconds,
 		"created_by":      uuidToString(member.UserID),
-		"runner":          service.FCE2BRunnerCommand,
+		"runner":          service.FCE2BRunnerCommandForProvider(provider),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to encode runtime metadata")
@@ -124,7 +130,7 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 		DaemonID:    pgtype.Text{String: daemonID, Valid: true},
 		Name:        name,
 		RuntimeMode: "cloud",
-		Provider:    service.FCE2BProvider,
+		Provider:    provider,
 		Status:      "online",
 		DeviceInfo:  name,
 		Metadata:    metadata,
@@ -154,13 +160,31 @@ func selectFCE2BTemplate(templates []service.FCE2BTemplate, ref string) (service
 	return service.FCE2BTemplate{}, false
 }
 
-func defaultFCE2BRuntimeName(t service.FCE2BTemplate) string {
+// resolveFCE2BProvider picks the agent provider for a new runtime: an explicit
+// request value wins (a template image may ship several agent CLIs), otherwise
+// the template name decides. Returns ok=false for unsupported values.
+func resolveFCE2BProvider(requested string, t service.FCE2BTemplate) (string, bool) {
+	requested = strings.ToLower(strings.TrimSpace(requested))
+	if requested == "" {
+		return service.FCE2BProviderForTemplate(t.Template, t.ID, t.Name), true
+	}
+	if !service.IsFCE2BSupportedProvider(requested) {
+		return "", false
+	}
+	return requested, true
+}
+
+// defaultFCE2BRuntimeName derives a display name from the template, prefixing
+// the provider when the template name does not already mention it — two
+// runtimes created from the same dual-CLI template must not collide.
+func defaultFCE2BRuntimeName(provider string, t service.FCE2BTemplate) string {
+	providerPart := strings.ToUpper(provider[:1]) + provider[1:]
 	base := strings.TrimSpace(t.Name)
 	if base == "" {
 		base = strings.TrimSpace(t.Template)
 	}
 	if base == "" {
-		return "FC-Hermes"
+		return "FC-" + providerPart
 	}
 	base = strings.TrimPrefix(base, "multica-fc-")
 	base = strings.TrimSuffix(base, "-runtime")
@@ -168,21 +192,28 @@ func defaultFCE2BRuntimeName(t service.FCE2BTemplate) string {
 	parts := strings.FieldsFunc(base, func(r rune) bool {
 		return r == '-' || r == '_' || r == '.'
 	})
-	clean := make([]string, 0, len(parts))
+	clean := make([]string, 0, len(parts)+1)
+	hasProvider := false
 	for _, part := range parts {
 		if part == "" {
 			continue
 		}
+		if strings.EqualFold(part, provider) {
+			hasProvider = true
+		}
 		clean = append(clean, strings.ToUpper(part[:1])+part[1:])
 	}
 	if len(clean) == 0 {
-		return "FC-Hermes"
+		return "FC-" + providerPart
+	}
+	if !hasProvider {
+		clean = append([]string{providerPart}, clean...)
 	}
 	return "FC-" + strings.Join(clean, "-")
 }
 
-func fcE2BTemplateCapabilities(t service.FCE2BTemplate) []string {
-	capabilities := []string{"hermes"}
+func fcE2BTemplateCapabilities(provider string, t service.FCE2BTemplate) []string {
+	capabilities := []string{provider}
 	haystack := strings.ToLower(strings.Join([]string{t.Template, t.ID, t.Name}, " "))
 	if strings.Contains(haystack, "dws") {
 		capabilities = append(capabilities, "dws")

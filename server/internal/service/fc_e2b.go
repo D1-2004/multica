@@ -29,9 +29,10 @@ import (
 )
 
 const (
-	FCE2BMetadataKind  = "fc-e2b"
-	FCE2BProvider      = "hermes"
-	FCE2BRunnerCommand = "multica-fc-hermes-runner"
+	FCE2BMetadataKind = "fc-e2b"
+	// FCE2BProvider is the default agent provider for sandbox templates that
+	// do not name another supported provider (see FCE2BProviderForTemplate).
+	FCE2BProvider = "hermes"
 
 	fcE2BScopeTypeChat  = "chat"
 	fcE2BScopeTypeIssue = "issue"
@@ -250,6 +251,80 @@ func IsFCE2BRuntime(rt db.AgentRuntime) bool {
 		return false
 	}
 	return metadata.Kind == FCE2BMetadataKind
+}
+
+// FCE2BSupportedProviders lists the agent providers an FC/E2B sandbox runtime
+// can run. A template image may ship several of these CLIs side by side; the
+// runtime's provider is chosen at creation time. FCE2BProvider (hermes) is
+// the default when a request names none.
+var FCE2BSupportedProviders = []string{FCE2BProvider, "opencode"}
+
+// IsFCE2BSupportedProvider reports whether provider can back an FC/E2B
+// sandbox runtime.
+func IsFCE2BSupportedProvider(provider string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	for _, candidate := range FCE2BSupportedProviders {
+		if candidate == provider {
+			return true
+		}
+	}
+	return false
+}
+
+// FCE2BProviderForTemplate derives a default agent provider from a template's
+// identifiers (template/id/name). The FC template API exposes no structured
+// agent metadata, so this sniffs the name the same way the "dws" capability
+// is sniffed. It is only a default — a template may ship multiple agent CLIs,
+// and an explicit provider on the create request wins. Templates that name no
+// supported provider default to hermes.
+func FCE2BProviderForTemplate(refs ...string) string {
+	haystack := strings.ToLower(strings.Join(refs, " "))
+	for _, provider := range FCE2BSupportedProviders {
+		if provider == FCE2BProvider {
+			continue
+		}
+		if strings.Contains(haystack, provider) {
+			return provider
+		}
+	}
+	return FCE2BProvider
+}
+
+// FCE2BRunnerCommandForProvider returns the in-sandbox runner wrapper for a
+// provider, following the multica-fc-<provider>-runner convention the
+// template images ship on PATH.
+func FCE2BRunnerCommandForProvider(provider string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		provider = FCE2BProvider
+	}
+	return "multica-fc-" + provider + "-runner"
+}
+
+// FCE2BRuntimeProvider returns the agent provider recorded on an FC/E2B
+// runtime row. Legacy rows created before providers were derived from the
+// template carry the provider column already ("hermes"), so the fallback only
+// covers rows with an empty column (test fixtures, pre-provider data).
+func FCE2BRuntimeProvider(rt db.AgentRuntime) string {
+	if provider := strings.ToLower(strings.TrimSpace(rt.Provider)); provider != "" {
+		return provider
+	}
+	return FCE2BProvider
+}
+
+// fcE2BRunnerForRuntime resolves the runner command for a runtime: the
+// metadata recorded at creation wins, then the provider-derived convention.
+func fcE2BRunnerForRuntime(rt db.AgentRuntime) string {
+	var metadata struct {
+		Runner string `json:"runner"`
+	}
+	if len(rt.Metadata) > 0 {
+		_ = json.Unmarshal(rt.Metadata, &metadata)
+	}
+	if runner := strings.TrimSpace(metadata.Runner); runner != "" {
+		return runner
+	}
+	return FCE2BRunnerCommandForProvider(FCE2BRuntimeProvider(rt))
 }
 
 func FCE2BRuntimeHasCapability(rt db.AgentRuntime, capability string) bool {
@@ -1021,9 +1096,9 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 	args = append(args,
 		sandboxID,
 		"--",
-		FCE2BRunnerCommand,
+		fcE2BRunnerForRuntime(rt),
 		"--runtime-id", runtimeID,
-		"--provider", FCE2BProvider,
+		"--provider", FCE2BRuntimeProvider(rt),
 		"--health-port", strconv.Itoa(healthPort),
 	)
 	if _, err := l.runE2BCommand(ctx, args); err != nil {

@@ -104,7 +104,7 @@ func (h *Handler) ProvisionFDEOnboarding(w http.ResponseWriter, r *http.Request)
 	if len(h.cfg.FCE2B.LLMModels) > 0 {
 		model = h.cfg.FCE2B.LLMModels[0]
 	}
-	agent, created, err := h.ManagedAgent.Provision(r.Context(), workspace.ID, ownerID, runtime.ID, runtime.RuntimeMode, model)
+	agent, created, err := h.ManagedAgent.Provision(r.Context(), workspace.ID, ownerID, runtime.ID, runtime.RuntimeMode, runtime.Provider, model)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "failed to prepare FDE Agent: "+err.Error())
 		return
@@ -244,11 +244,14 @@ func (h *Handler) resolveOrCreateFDEWorkspace(r *http.Request, userID pgtype.UUI
 func (h *Handler) upsertFDERuntime(r *http.Request, workspaceID, ownerID pgtype.UUID) (db.AgentRuntime, error) {
 	name := "FDE Runtime"
 	daemonID := pgtype.Text{String: "fc-e2b:fde:" + uuidToString(workspaceID), Valid: true}
+	// The FDE template is DWS-enabled by contract, so "dws" is asserted here
+	// rather than sniffed from the template name.
+	provider := service.FCE2BProviderForTemplate(h.cfg.FCE2B.Template)
 	metadata, err := json.Marshal(map[string]any{
 		"kind": service.FCE2BMetadataKind, "template": h.cfg.FCE2B.Template,
 		"template_id": h.cfg.FCE2B.Template, "template_name": name,
-		"capabilities": []string{"hermes", "dws"}, "timeout_seconds": h.cfg.FCE2B.TimeoutSeconds,
-		"created_by": uuidToString(ownerID), "runner": service.FCE2BRunnerCommand,
+		"capabilities": []string{provider, "dws"}, "timeout_seconds": h.cfg.FCE2B.TimeoutSeconds,
+		"created_by": uuidToString(ownerID), "runner": service.FCE2BRunnerCommandForProvider(provider),
 		"managed_source_key": "fde-agent",
 	})
 	if err != nil {
@@ -257,7 +260,7 @@ func (h *Handler) upsertFDERuntime(r *http.Request, workspaceID, ownerID pgtype.
 	return h.Queries.UpsertCloudAgentRuntime(r.Context(), db.UpsertCloudAgentRuntimeParams{
 		WorkspaceID: workspaceID,
 		DaemonID:    daemonID,
-		Name:        name, RuntimeMode: "cloud", Provider: service.FCE2BProvider,
+		Name:        name, RuntimeMode: "cloud", Provider: provider,
 		Status: "online", DeviceInfo: name, Metadata: metadata, OwnerID: ownerID, Visibility: "private",
 	})
 }
