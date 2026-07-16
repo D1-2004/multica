@@ -79,8 +79,6 @@ CI やヘッドレス環境では、ブラウザフローをスキップでき�
 | `multica agent list` | ワークスペースのエージェントを一覧 |
 | `multica agent get <slug>` | エージェントの構成を表示 |
 | `multica agent create ...` | エージェントを作成 |
-| `multica agent template list/get` | 承認済み Git リポジトリのエージェントテンプレートを表示 |
-| `multica agent create-from-template <key> --runtime-id <id>` | 承認済み Git テンプレートからエージェントを作成 |
 | `multica agent update <slug> ...` | エージェントを更新 |
 | `multica agent archive <slug>` | アーカイブ |
 | `multica agent restore <slug>` | アーカイブ済みのエージェントを復元 |
@@ -92,8 +90,6 @@ CI やヘッドレス環境では、ブラウザフローをスキップでき�
 | `multica skill import ...` | GitHub、ClawHub、またはローカルマシンからスキルをインポート |
 | `multica skill files ...` | ネスト: スキルのファイルを管理 |
 | `multica dingtalk install begin/status` | DingTalk Bot のインストールセッションを開始または確認 |
-
-Git エージェントテンプレートは `multica-agent.yaml` を含む承認済みリポジトリです。Manifest の名前と説明は作成時の既定値で、Multica から上書き・編集できます。リポジトリ同期は指示とリポジトリ管理スキルのみを管理します。`create-from-template` に model や thinking-level のオプションはありません。
 
 ### スキルインポートの競合
 

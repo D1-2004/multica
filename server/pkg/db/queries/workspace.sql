@@ -7,6 +7,16 @@ JOIN workspace w ON w.id = m.workspace_id
 WHERE m.user_id = $1
 ORDER BY w.created_at ASC;
 
+-- name: ListAdminWorkspacesForUser :many
+SELECT w.id, w.name, w.slug, w.description, w.settings,
+       w.created_at, w.updated_at, w.context, w.repos,
+       w.issue_prefix, w.issue_counter, w.avatar_url
+FROM member m
+JOIN workspace w ON w.id = m.workspace_id
+WHERE m.user_id = $1
+  AND m.role IN ('owner', 'admin')
+ORDER BY w.created_at ASC;
+
 -- name: ListDaemonWorkspaces :many
 -- Daemons only need the membership set and display name to discover which
 -- workspaces should have local runtimes. Keep this projection intentionally

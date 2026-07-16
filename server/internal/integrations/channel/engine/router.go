@@ -322,6 +322,14 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	if set.TaskContext != nil {
 		taskContext, err = set.TaskContext.ResolveTaskContext(ctx, inst, msg)
 		if err != nil {
+			if errors.Is(err, ErrTaskContextRejected) {
+				r.logger.Warn("channel router: task context rejected",
+					"channel_type", string(msg.Source.ChannelType),
+					"event_id", msg.EventID,
+					"error", err,
+				)
+				return r.drop(ctx, set, msg, inst.ID, DropReasonTaskContextRejected), finalizeMark, nil
+			}
 			return Result{}, finalizeRelease, fmt.Errorf("resolve chat task context: %w", err)
 		}
 	}

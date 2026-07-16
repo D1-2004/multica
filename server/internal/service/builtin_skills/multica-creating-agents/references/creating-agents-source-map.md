@@ -33,22 +33,13 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | `agent env get` | 894 | `GET /api/agents/{id}/env` | `multica agent env get --help` |
 | `agent env set` | 929 | `PUT /api/agents/{id}/env` with full `custom_env` map (935, 949) | `multica agent env set --help` |
 
-The legacy internal template backend (`server/internal/agenttmpl/`,
-`POST /api/agents/from-template`) remains separate and is not exposed by the
-CLI. The supported `agent template` commands below refer only to approved Git
-repositories with `multica-agent.yaml`.
-
-## Git Agent template catalog — CLI and server
+## Git Agent and DingTalk installation
 
 | Contract | Source | Behavior |
 |---|---|---|
-| `agent template list/get` | `server/cmd/multica/cmd_agent_template.go` | Reads workspace-approved Git template metadata and resolved manifest defaults |
-| `agent create-from-template` | `server/cmd/multica/cmd_agent_template.go` | Sends only `runtime_id` plus optional instance `name`/`description`; no model, thinking, repository, ref, installation, or SHA flags |
-| Catalog provider | `server/internal/service/git_agent_template_catalog.go` | Loads 0..N allowlisted repositories from `MULTICA_GIT_AGENT_TEMPLATES_JSON` behind a replaceable provider interface |
-| Catalog HTTP API | `server/internal/handler/git_agent_template.go` | Resolves template key, workspace GitHub installation and immutable SHA server-side, then reuses Git Agent creation |
 | Git instance ownership | `server/internal/handler/github_agent_source.go` | Manifest name/description are create defaults; source sync updates instructions and source-managed skills only |
 | Editable source Agent profile | `server/internal/handler/agent.go` | Name and description remain editable; only instructions are rejected as Git-managed |
-| DingTalk install CLI | `server/cmd/multica/cmd_dingtalk.go` | `begin` creates a QR session and `status` performs one status read |
+| DingTalk install CLI | `server/cmd/multica/cmd_dingtalk.go` | `begin` creates a QR session; optional `--allow-unbound` sends `allow_unbound=true` for external users; `status` performs one status read |
 
 ## Create handler — `server/internal/handler/agent.go`
 

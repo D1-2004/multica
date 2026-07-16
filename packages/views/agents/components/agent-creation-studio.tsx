@@ -4,24 +4,17 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
-  Bot,
-  Check,
   ChevronRight,
   FileText,
   GitFork,
   Loader2,
   MessageSquare,
-  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useFeatureEnabled } from "@multica/core/config";
 import { AGENT_BUILDER_FLAG } from "@multica/core/feature-flags";
-import {
-  agentTemplateDetailOptions,
-  agentTemplateListOptions,
-} from "@multica/core/agents";
 import {
   githubAgentRepositoriesOptions,
   githubInstallationsOptions,
@@ -40,7 +33,6 @@ import {
 import type {
   Agent,
   AgentInvocationTargetInput,
-  AgentTemplateSummary,
   ChatMessage,
   CreateAgentRequest,
   GitHubAgentPreview,
@@ -78,7 +70,7 @@ import { ModelDropdown } from "./model-dropdown";
 import { RuntimePicker, isRuntimeUsableForUser } from "./runtime-picker";
 import { SkillMultiSelect } from "./skill-multi-select";
 
-type StudioMode = "choose" | "templates" | "blank" | "template" | "ai" | "github";
+type StudioMode = "choose" | "blank" | "ai" | "github";
 type PermissionScope = "private" | "workspace" | "members";
 
 export function isGitHubRuntimeCompatible(
@@ -148,9 +140,6 @@ export function AgentCreationStudio() {
   );
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: workspaceSkills = [] } = useQuery(skillListOptions(wsId));
-  const { data: templates = [], isLoading: templatesLoading } = useQuery(
-    agentTemplateListOptions(),
-  );
   const githubInstallationsQuery = useQuery(githubInstallationsOptions(wsId));
 
   const duplicateAgent = duplicateId
@@ -158,9 +147,6 @@ export function AgentCreationStudio() {
     : null;
   const [mode, setMode] = useState<StudioMode>(duplicateId ? "blank" : "choose");
   const [draft, setDraft] = useState<AgentDraft>(EMPTY_DRAFT);
-  const [sourceTemplate, setSourceTemplate] = useState<AgentTemplateSummary | null>(null);
-  const [selectedTemplate, setSelectedTemplate] = useState<AgentTemplateSummary | null>(null);
-  const [templateSearch, setTemplateSearch] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [builderSessionId, setBuilderSessionId] = useState("");
@@ -223,7 +209,6 @@ export function AgentCreationStudio() {
 
   const hasUnsavedDraft =
     mode !== "choose" &&
-    mode !== "templates" &&
     (builderSessionId.length > 0 ||
       draft.name.trim().length > 0 ||
       draft.description.trim().length > 0 ||
@@ -240,12 +225,6 @@ export function AgentCreationStudio() {
     window.addEventListener("beforeunload", warnBeforeUnload);
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
   }, [creating, hasUnsavedDraft]);
-
-  const templateSlug = selectedTemplate?.slug ?? "";
-  const templateDetailQuery = useQuery({
-    ...agentTemplateDetailOptions(templateSlug),
-    enabled: templateSlug.length > 0,
-  });
 
   const builderMessagesQuery = useQuery({
     ...chatMessagesOptions(builderSessionId),
@@ -384,17 +363,6 @@ export function AgentCreationStudio() {
     validBuilderModelIds,
   ]);
 
-  const filteredTemplates = useMemo(() => {
-    const query = templateSearch.trim().toLowerCase();
-    if (!query) return templates;
-    return templates.filter(
-      (template) =>
-        template.name.toLowerCase().includes(query) ||
-        template.description.toLowerCase().includes(query) ||
-        template.category?.toLowerCase().includes(query),
-    );
-  }, [templateSearch, templates]);
-
   const accessInvalid =
     draft.permissionScope === "members" &&
     draft.memberIds.size === 0 &&
@@ -413,9 +381,7 @@ export function AgentCreationStudio() {
   const currentModeLabel =
     mode === "choose"
       ? t(($) => $.creation_studio.step_choose)
-      : mode === "templates"
-        ? t(($) => $.creation_studio.step_template)
-        : mode === "ai"
+      : mode === "ai"
           ? t(($) => $.creation_studio.step_ai)
           : mode === "github"
             ? t(($) => $.creation_studio.step_github)
@@ -423,8 +389,6 @@ export function AgentCreationStudio() {
 
   const resetCreationMode = () => {
     setMode("choose");
-    setSelectedTemplate(null);
-    setSourceTemplate(null);
     setBuilderSessionId("");
     setGitHubRepository("");
     setGitHubRef("");
@@ -460,10 +424,6 @@ export function AgentCreationStudio() {
       navigation.push(paths.agents());
       return;
     }
-    if (mode === "templates" && selectedTemplate) {
-      setSelectedTemplate(null);
-      return;
-    }
     if (duplicateId) {
       if (!(await deleteBuilderSession())) return;
       navigation.push(paths.agents());
@@ -474,7 +434,6 @@ export function AgentCreationStudio() {
   };
 
   const chooseBlank = () => {
-    setSourceTemplate(null);
     setDraft((current) => ({
       ...EMPTY_DRAFT,
       runtimeId: current.runtimeId || usableRuntimes[0]?.id || "",
@@ -483,7 +442,6 @@ export function AgentCreationStudio() {
   };
 
   const chooseGitHub = () => {
-    setSourceTemplate(null);
     setDraft((current) => ({
       ...EMPTY_DRAFT,
       runtimeId: current.runtimeId || usableRuntimes[0]?.id || "",
@@ -522,20 +480,6 @@ export function AgentCreationStudio() {
     } finally {
       setGitHubPreviewing(false);
     }
-  };
-
-  const applyTemplate = () => {
-    const detail = templateDetailQuery.data;
-    if (!selectedTemplate || !detail) return;
-    setSourceTemplate(selectedTemplate);
-    setDraft((current) => ({
-      ...EMPTY_DRAFT,
-      name: detail.name,
-      description: detail.description,
-      instructions: detail.instructions,
-      runtimeId: current.runtimeId || usableRuntimes[0]?.id || "",
-    }));
-    setMode("template");
   };
 
   const startBuilder = async () => {
@@ -664,21 +608,6 @@ export function AgentCreationStudio() {
         });
         agent = response.agent;
         response.warnings.forEach((warning) => toast.warning(warning));
-      } else if (sourceTemplate) {
-        const response = await api.createAgentFromTemplate({
-          template_slug: sourceTemplate.slug,
-          name: draft.name.trim(),
-          description: draft.description.trim(),
-          instructions: draft.instructions.trim(),
-          avatar_url: draft.avatarUrl ?? undefined,
-          runtime_id: selectedRuntime.id,
-          model: draft.model.trim() || undefined,
-          permission_mode:
-            draft.permissionScope === "private" ? "private" : "public_to",
-          invocation_targets: invocationTargets,
-          extra_skill_ids: [...draft.skillIds],
-        });
-        agent = response.agent;
       } else {
         const request: CreateAgentRequest = {
           name: draft.name.trim(),
@@ -765,15 +694,14 @@ export function AgentCreationStudio() {
             {currentModeLabel}
           </p>
         </div>
-        {mode !== "choose" && mode !== "templates" && (
+        {mode !== "choose" && (
           <div className="ml-auto hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
             <span className="rounded-full bg-muted px-2 py-1">
-              {sourceTemplate?.name ??
-                (mode === "ai"
+              {mode === "ai"
                   ? t(($) => $.creation_studio.modes.ai.title)
                   : mode === "github"
                     ? t(($) => $.creation_studio.modes.github.title)
-                    : t(($) => $.creation_studio.modes.blank.title))}
+                    : t(($) => $.creation_studio.modes.blank.title)}
             </span>
             {selectedRuntime && (
               <span className="rounded-full bg-muted px-2 py-1">
@@ -787,28 +715,13 @@ export function AgentCreationStudio() {
       {mode === "choose" && (
         <ModeChooser
           onBlank={chooseBlank}
-          onTemplate={() => setMode("templates")}
           onAI={() => setMode("ai")}
           onGitHub={chooseGitHub}
           agentBuilderEnabled={agentBuilderEnabled}
         />
       )}
 
-      {mode === "templates" && (
-        <TemplateChooser
-          templates={filteredTemplates}
-          loading={templatesLoading}
-          search={templateSearch}
-          onSearch={setTemplateSearch}
-          selected={selectedTemplate}
-          onSelect={setSelectedTemplate}
-          detail={templateDetailQuery.data}
-          detailLoading={templateDetailQuery.isLoading}
-          onUse={applyTemplate}
-        />
-      )}
-
-      {(mode === "blank" || mode === "template") && (
+      {mode === "blank" && (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-4xl px-5 py-8 sm:px-8">
             {duplicateAgent && (
@@ -973,13 +886,11 @@ export function AgentCreationStudio() {
 
 function ModeChooser({
   onBlank,
-  onTemplate,
   onAI,
   onGitHub,
   agentBuilderEnabled,
 }: {
   onBlank: () => void;
-  onTemplate: () => void;
   onAI: () => void;
   onGitHub: () => void;
   agentBuilderEnabled: boolean;
@@ -991,12 +902,6 @@ function ModeChooser({
       title: t(($) => $.creation_studio.modes.blank.title),
       description: t(($) => $.creation_studio.modes.blank.description),
       action: onBlank,
-    },
-    {
-      icon: Bot,
-      title: t(($) => $.creation_studio.modes.template.title),
-      description: t(($) => $.creation_studio.modes.template.description),
-      action: onTemplate,
     },
     {
       icon: GitFork,
@@ -1028,7 +933,7 @@ function ModeChooser({
             {t(($) => $.creation_studio.choose_description)}
           </p>
         </div>
-        <div className="mt-9 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-9 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {modes.map(({ icon: Icon, title, description, action, recommended }) => (
             <button
               key={title}
@@ -1059,101 +964,6 @@ function ModeChooser({
           ))}
         </div>
       </div>
-    </main>
-  );
-}
-
-function TemplateChooser({
-  templates,
-  loading,
-  search,
-  onSearch,
-  selected,
-  onSelect,
-  detail,
-  detailLoading,
-  onUse,
-}: {
-  templates: AgentTemplateSummary[];
-  loading: boolean;
-  search: string;
-  onSearch: (value: string) => void;
-  selected: AgentTemplateSummary | null;
-  onSelect: (template: AgentTemplateSummary) => void;
-  detail: { instructions: string } | undefined;
-  detailLoading: boolean;
-  onUse: () => void;
-}) {
-  const { t } = useT("agents");
-  return (
-    <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.1fr)]">
-      <section className="flex min-h-0 flex-col border-r">
-        <div className="border-b p-4">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-            <Input
-              name="template-search"
-              autoComplete="off"
-              value={search}
-              onChange={(event) => onSearch(event.target.value)}
-              placeholder={t(($) => $.creation_studio.templates.search)}
-              className="pl-9"
-              aria-label={t(($) => $.creation_studio.templates.search_label)}
-            />
-          </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          {loading ? (
-            <div className="flex justify-center py-16"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
-          ) : templates.length === 0 ? (
-            <div className="py-16 text-center text-sm text-muted-foreground">{t(($) => $.creation_studio.templates.empty)}</div>
-          ) : (
-            <div className="space-y-2">
-              {templates.map((template) => (
-                <button
-                  key={template.slug}
-                  type="button"
-                  onClick={() => onSelect(template)}
-                  className={cn(
-                    "flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    selected?.slug === template.slug ? "border-primary bg-primary/5" : "border-transparent hover:bg-muted",
-                  )}
-                >
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted"><Bot className="size-4" /></span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-2">
-                      <span className="truncate text-sm font-medium">{template.name}</span>
-                      {template.category && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{template.category}</span>}
-                    </span>
-                    <span className="mt-1 line-clamp-2 block text-xs leading-5 text-muted-foreground">{template.description}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-      <section className="min-h-0 overflow-y-auto">
-        {!selected ? (
-          <div className="flex h-full min-h-80 flex-col items-center justify-center px-8 text-center text-muted-foreground">
-            <Bot className="size-8" />
-            <p className="mt-3 text-sm">{t(($) => $.creation_studio.templates.select_hint)}</p>
-          </div>
-        ) : (
-          <div className="mx-auto max-w-3xl p-6 sm:p-8">
-            <div className="flex items-start gap-4">
-              <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Bot className="size-6" /></span>
-              <div><h2 className="text-xl font-semibold">{selected.name}</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">{selected.description}</p></div>
-            </div>
-            {selected.skills.length > 0 && (
-              <div className="mt-7"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t(($) => $.creation_studio.templates.skills)}</h3><div className="mt-3 space-y-2">{selected.skills.map((skill) => <div key={skill.source_url} className="flex items-start gap-2 rounded-lg border bg-card p-3"><Check className="mt-0.5 size-4 shrink-0 text-success" /><div><div className="text-sm font-medium">{skill.cached_name}</div><div className="mt-0.5 text-xs text-muted-foreground">{skill.cached_description}</div></div></div>)}</div></div>
-            )}
-            <div className="mt-7"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t(($) => $.creation_studio.templates.instructions)}</h3><div className="mt-3 max-h-80 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-muted/30 p-4 text-sm leading-6">{detailLoading ? <Loader2 className="size-4 animate-spin" /> : detail?.instructions}</div></div>
-            <div className="mt-7 flex justify-end"><Button onClick={onUse} disabled={detailLoading || !detail}>{t(($) => $.creation_studio.templates.use)}<ChevronRight className="size-4" /></Button></div>
-          </div>
-        )}
-      </section>
     </main>
   );
 }

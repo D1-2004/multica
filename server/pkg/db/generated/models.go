@@ -132,6 +132,8 @@ type AgentSource struct {
 	CreatedBy            pgtype.UUID        `json:"created_by"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	ManagedSourceKey     pgtype.Text        `json:"managed_source_key"`
 }
 
 type AgentSourceSkill struct {
@@ -760,6 +762,20 @@ type LarkUserBinding struct {
 	LarkOpenID     string             `json:"lark_open_id"`
 	UnionID        pgtype.Text        `json:"union_id"`
 	BoundAt        pgtype.Timestamptz `json:"bound_at"`
+}
+
+type ManagedAgentSourceSnapshot struct {
+	SourceKey         string             `json:"source_key"`
+	RepositoryUrl     string             `json:"repository_url"`
+	Ref               string             `json:"ref"`
+	ResolvedCommitSha pgtype.Text        `json:"resolved_commit_sha"`
+	BundleHash        pgtype.Text        `json:"bundle_hash"`
+	Bundle            []byte             `json:"bundle"`
+	LastCheckAt       pgtype.Timestamptz `json:"last_check_at"`
+	LastSuccessAt     pgtype.Timestamptz `json:"last_success_at"`
+	LastError         pgtype.Text        `json:"last_error"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Member struct {

@@ -383,3 +383,65 @@ func hashBundle(bundle Bundle) string {
 	}
 	return hex.EncodeToString(hash.Sum(nil))
 }
+
+// ValidateBundle verifies a persisted bundle before it is materialized. The
+// canonical hash excludes warnings and is shared with Compile and CompileFS.
+func ValidateBundle(bundle Bundle) error {
+	if err := validateManifest(bundle.Manifest); err != nil {
+		return err
+	}
+	if !isText([]byte(bundle.Instructions)) {
+		return errors.New("instructions must be UTF-8 text")
+	}
+	if len(bundle.Skills) > MaxSkills {
+		return fmt.Errorf("agent bundle exceeds the %d skill limit", MaxSkills)
+	}
+	totalSize := len(bundle.Instructions)
+	seenPaths := make(map[string]struct{}, len(bundle.Skills))
+	seenNames := make(map[string]struct{}, len(bundle.Skills))
+	for _, compiled := range bundle.Skills {
+		if err := validateRepositoryPath(compiled.SourcePath, "skill source_path"); err != nil {
+			return err
+		}
+		if _, exists := seenPaths[compiled.SourcePath]; exists {
+			return fmt.Errorf("duplicate skill path %q", compiled.SourcePath)
+		}
+		seenPaths[compiled.SourcePath] = struct{}{}
+		if strings.TrimSpace(compiled.Name) == "" || utf8.RuneCountInString(compiled.Name) > MaxAgentNameLength {
+			return fmt.Errorf("skill %q has an invalid name", compiled.SourcePath)
+		}
+		if _, exists := seenNames[compiled.Name]; exists {
+			return fmt.Errorf("duplicate skill name %q", compiled.Name)
+		}
+		seenNames[compiled.Name] = struct{}{}
+		if !isText([]byte(compiled.Content)) || len(compiled.Files) > MaxSkillFiles {
+			return fmt.Errorf("skill %q has invalid content", compiled.SourcePath)
+		}
+		skillSize := len(compiled.Content)
+		seenFiles := make(map[string]struct{}, len(compiled.Files))
+		for _, file := range compiled.Files {
+			if err := validateRepositoryPath(file.Path, "skill file path"); err != nil {
+				return err
+			}
+			if _, exists := seenFiles[file.Path]; exists {
+				return fmt.Errorf("skill %q has duplicate file %q", compiled.SourcePath, file.Path)
+			}
+			seenFiles[file.Path] = struct{}{}
+			if !isText([]byte(file.Content)) || len(file.Content) > MaxFileSize {
+				return fmt.Errorf("skill file %q has invalid content", file.Path)
+			}
+			skillSize += len(file.Content)
+		}
+		if skillSize > MaxSkillSize {
+			return fmt.Errorf("skill %q exceeds the %d byte bundle limit", compiled.SourcePath, MaxSkillSize)
+		}
+		totalSize += skillSize
+	}
+	if totalSize > MaxBundleSize {
+		return fmt.Errorf("agent bundle exceeds the %d byte limit", MaxBundleSize)
+	}
+	if bundle.Hash == "" || bundle.Hash != hashBundle(bundle) {
+		return errors.New("agent bundle hash is invalid")
+	}
+	return nil
+}

@@ -100,6 +100,13 @@ DO UPDATE SET
     updated_at = now()
 RETURNING *;
 
+-- name: GetCloudAgentRuntimeByDaemon :one
+SELECT * FROM agent_runtime
+WHERE workspace_id = $1
+  AND daemon_id = $2
+  AND provider = $3
+  AND profile_id IS NULL;
+
 -- name: UpsertAgentRuntimeWithProfile :one
 -- Custom-runtime registration: a daemon resolved a workspace runtime_profile's
 -- command_name on PATH and is registering an instance of it. The arbiter is the

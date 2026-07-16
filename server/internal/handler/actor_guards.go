@@ -18,18 +18,18 @@ import (
 // token kind the caller used:
 //
 //   - JWT cookie / mul_ PAT  → X-User-ID = the human's user id.
-//                              X-Actor-Source is left empty.
+//     X-Actor-Source is left empty.
 //   - mat_ task token        → X-User-ID = the OWNING human's user id,
-//                              plus X-Agent-ID, X-Task-ID, and the
-//                              authoritative server-set header
-//                              `X-Actor-Source: task_token`.
+//     plus X-Agent-ID, X-Task-ID, and the
+//     authoritative server-set header
+//     `X-Actor-Source: task_token`.
 //   - mcn_ cloud-node PAT    → X-User-ID = the OWNING human's user id,
-//                              plus `X-Actor-Source: cloud_pat`.
-//                              The token authenticates a cloud-runtime
-//                              EC2 node operating on the owner's
-//                              behalf — same conceptual category as
-//                              mat_ (machine running owner-scoped
-//                              code) for authorization purposes.
+//     plus `X-Actor-Source: cloud_pat`.
+//     The token authenticates a cloud-runtime
+//     EC2 node operating on the owner's
+//     behalf — same conceptual category as
+//     mat_ (machine running owner-scoped
+//     code) for authorization purposes.
 //
 // The mat_ and mcn_ designs (MUL-2600 and the cloud-node PAT story
 // respectively) were both deliberately built this way: every request
@@ -101,6 +101,19 @@ func RequireHumanActor(next http.Handler) http.Handler {
 		switch r.Header.Get("X-Actor-Source") {
 		case "task_token", "cloud_pat":
 			writeError(w, http.StatusForbidden, "this endpoint is only available to human actors")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireDingTalkHumanActor is the FDE onboarding authentication boundary.
+// X-Auth-Method is stripped and reconstructed by Auth from a signed JWT claim,
+// so PATs, task/cloud credentials and non-DingTalk login JWTs cannot forge it.
+func RequireDingTalkHumanActor(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Actor-Source") != "" || r.Header.Get("X-Auth-Method") != "dingtalk" {
+			writeError(w, http.StatusForbidden, "this endpoint requires DingTalk user authentication")
 			return
 		}
 		next.ServeHTTP(w, r)

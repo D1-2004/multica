@@ -35,6 +35,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
+	"github.com/multica-ai/multica/server/internal/managedagent"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -237,10 +238,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	cfSigner := auth.NewCloudFrontSignerFromEnv()
 	origins := allowedOrigins()
 
-	gitAgentTemplates, err := service.NewStaticGitAgentTemplateCatalog(os.Getenv(service.GitAgentTemplatesEnv))
-	if err != nil {
-		panic(err)
-	}
 	signupConfig := handler.Config{
 		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
 		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
@@ -257,9 +254,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		LLMAPIKey:                strings.TrimSpace(os.Getenv("MULTICA_LLM_API_KEY")),
 		LLMBaseURL:               strings.TrimSpace(os.Getenv("MULTICA_LLM_BASE_URL")),
 		LLMDefaultModel:          strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
-		GitAgentTemplates:        gitAgentTemplates,
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	if managed, managedErr := managedagent.New(queries, pool, managedagent.ConfigFromEnv(), slog.Default()); managedErr != nil {
+		slog.Error("managed FDE Agent source disabled due to invalid configuration", "error", managedErr)
+	} else {
+		h.ManagedAgent = managed
+	}
 	h.Metrics = opts.BusinessMetrics
 	dispatchKeysRaw := strings.TrimSpace(os.Getenv("MULTICA_AGENT_DISPATCH_KEYS"))
 	dispatchCurrentKeyID := strings.TrimSpace(os.Getenv("MULTICA_AGENT_DISPATCH_CURRENT_KEY_ID"))
@@ -1060,6 +1061,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	if handler.LoginProviderAllowed("dingtalk") {
 		r.With(authRL).Post("/auth/dingtalk", h.DingTalkLogin)
 	}
+	// The FDE mobile entry is intentionally separate from the ordinary login
+	// provider allowlist. It always authenticates the current DingTalk user;
+	// the handler still returns 503 unless the internal DingTalk app is wired.
+	r.With(authRL).Post("/auth/fde/dingtalk", h.DingTalkLogin)
 	r.Post("/auth/logout", h.Logout)
 
 	// Public API
@@ -1173,6 +1178,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
+		r.With(handler.RequireDingTalkHumanActor).Get("/api/fde/onboarding", h.GetFDEOnboarding)
+		r.With(handler.RequireDingTalkHumanActor).Post("/api/fde/onboarding", h.ProvisionFDEOnboarding)
 
 		// Note (MUL-4309): the generic OpenAI-compatible passthrough endpoints
 		// (POST /api/llm/v1/chat/completions[/stream]) were intentionally
@@ -1210,8 +1217,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// the handler strips the management handle and adds a
 					// can_manage hint so the UI can gate connect/disconnect.
 					r.Get("/github/installations", h.ListGitHubInstallations)
-					r.Get("/git-agent-templates", h.ListGitAgentTemplates)
-					r.Get("/git-agent-templates/{templateKey}", h.GetGitAgentTemplate)
 					// Custom runtime profiles — listing/reading is member-visible
 					// (the Runtime page renders for everyone; create/edit/delete
 					// are admin-gated below).
@@ -1240,7 +1245,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/github/repositories", h.ListGitHubAgentRepositories)
 					r.Post("/github/agent-preview", h.PreviewGitHubAgent)
 					r.Post("/github/agents", h.CreateGitHubAgent)
-					r.Post("/git-agent-templates/{templateKey}/agents", h.CreateGitAgentFromTemplate)
 				})
 				// Owner-only access
 				r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)
@@ -1562,11 +1566,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Route("/api/agents", func(r chi.Router) {
 				r.Get("/", h.ListAgents)
 				r.Post("/", h.CreateAgent)
-				// Agent templates: pre-configured instructions + skill refs.
-				// Picking a template imports the referenced skills into the
-				// workspace (find-or-create by name) and creates the agent
-				// with the template's instructions in one transaction.
-				r.Post("/from-template", h.CreateAgentFromTemplate)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAgent)
 					r.Get("/source", h.GetAgentSource)
@@ -1593,13 +1592,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Agent templates catalog (browse + detail). The Create flow
-			// lives under /api/agents/from-template above; this route is for
-			// the picker UI to list available templates.
-			r.Route("/api/agent-templates", func(r chi.Router) {
-				r.Get("/", h.ListAgentTemplates)
-				r.Get("/{slug}", h.GetAgentTemplate)
-			})
 			r.Post("/api/agent-builder/sessions", h.CreateAgentBuilderSession)
 
 			// Skills

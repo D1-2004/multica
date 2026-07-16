@@ -235,6 +235,32 @@ the deployment — deploying, reading server logs, changing runtime config,
 diagnosing a failed deploy — is covered by the `aone-deploy` skill in
 `.agents/skills/`. The rules below are the ones that break production if missed.
 
+Pre-release and production must be treated as multi-replica deployments. The
+pre-release environment provides shared PostgreSQL, Tair, and OSS:
+
+- Transactional domain state and idempotency belong in PostgreSQL. Do not use
+  process memory or a node-local file as the source of truth for templates,
+  bootstrap intents, provisioning state, leases, or revision coordination.
+- Wire Tair through `REDIS_URL` for cross-node realtime fanout, wakeup hints,
+  rate limits, and other short-lived coordination. Keep
+  `REALTIME_RELAY_MODE=sharded` (the default) or `dual`; `legacy` does not fan
+  daemon workspace/profile notifications across nodes. A local in-process hub
+  is only a delivery optimization, never shared state.
+- Use OSS for large immutable objects or artifacts when storing them directly
+  in PostgreSQL is no longer appropriate. Store object identity and lifecycle
+  metadata transactionally in PostgreSQL; do not use a node-local filesystem.
+- Every replica must receive the same `JWT_SECRET`, integration encryption keys
+  (including `MULTICA_DINGTALK_SECRET_KEY`), public app origin, and callback
+  configuration. Tokens or encrypted installation credentials created on one
+  replica must be readable on every other replica.
+- Startup reconciliation must be idempotent and monotonic under rolling
+  deployments. Old replicas must not downgrade shared state, and any new bundle
+  schema must remain readable by the old and new binaries during the rollout.
+  Roll back seeded content by publishing a higher release version containing
+  the rollback content, never by decrementing the release version.
+- Exercise concurrent state transitions with separate database transactions or
+  connections, and review the old/new-binary rolling window before release.
+
 Migrations run at container start, so a failing migration means the pods never
 start:
 
