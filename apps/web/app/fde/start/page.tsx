@@ -191,13 +191,35 @@ function FDEStartContent() {
           {stage === "choose" && state && state.workspaces.length > 1 && (
             <div className="space-y-4">
               <p className="text-sm text-slate-600">请选择要开通 FDE 的工作空间：</p>
-              <div className="space-y-2">
-                {state.workspaces.map((workspace) => (
-                  <button key={workspace.id} type="button" onClick={() => setWorkspaceID(workspace.id)} className={`w-full rounded-xl border px-4 py-3 text-left transition ${workspaceID === workspace.id ? "border-sky-500 bg-sky-50" : "border-slate-200 bg-white"}`}>
-                    <span className="block font-medium">{workspace.name}</span>
-                    <span className="mt-1 block text-xs text-slate-500">{workspace.slug}</span>
-                  </button>
-                ))}
+              <div className="space-y-2" role="radiogroup" aria-label="FDE 工作空间">
+                {state.workspaces.map((workspace) => {
+                  const selected = workspaceID === workspace.id;
+                  return (
+                    <button
+                      key={workspace.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => setWorkspaceID(workspace.id)}
+                      className={`flex w-full items-center justify-between gap-3 rounded-xl border-2 px-4 py-3 text-left transition ${
+                        selected
+                          ? "border-sky-600 bg-sky-100 shadow-sm ring-2 ring-sky-200"
+                          : "border-slate-200 bg-white active:border-sky-300 active:bg-sky-50"
+                      }`}
+                    >
+                      <span className="min-w-0">
+                        <span className={`block font-medium ${selected ? "text-sky-950" : "text-slate-900"}`}>{workspace.name}</span>
+                        <span className={`mt-1 block truncate text-xs ${selected ? "text-sky-700" : "text-slate-500"}`}>{workspace.slug}</span>
+                      </span>
+                      <span className={`flex shrink-0 items-center gap-1.5 text-xs font-medium ${selected ? "text-sky-700" : "text-slate-400"}`}>
+                        <span className={`flex size-6 items-center justify-center rounded-full border-2 ${selected ? "border-sky-600 bg-sky-600 text-white" : "border-slate-300 bg-white"}`}>
+                          {selected && <CheckCircle2 className="size-4" aria-hidden="true" />}
+                        </span>
+                        {selected && <span>已选择</span>}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
               <Button className="h-12 w-full" disabled={!workspaceID} onClick={submit}>继续</Button>
             </div>
