@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -67,16 +69,17 @@ func decodeChannelCredentials(raw json.RawMessage, decrypt Decrypter) (channelCr
 // dingtalkChannel per active installation via the registered Factory and
 // owns the lease / reconnect lifecycle; Connect blocks on the receive loop.
 type dingtalkChannel struct {
-	creds          channelCredentials
-	openAPIBase    string
-	httpClient     *http.Client
-	inbox          StreamInbox
-	onReady        func(context.Context) error
-	installationID string
-	connectionID   string
-	nodeID         string
-	messenger      *RobotMessenger
-	logger         *slog.Logger
+	creds            channelCredentials
+	openAPIBase      string
+	httpClient       *http.Client
+	inbox            StreamInbox
+	onReady          func(context.Context) error
+	installationID   string
+	connectionID     string
+	nodeID           string
+	receiverHostname string
+	messenger        *RobotMessenger
+	logger           *slog.Logger
 }
 
 func (c *dingtalkChannel) Type() channel.Type { return TypeDingtalk }
@@ -130,6 +133,7 @@ func (c *dingtalkChannel) Connect(ctx context.Context) error {
 		"installation_id", c.installationID,
 		"connection_id", c.connectionID,
 		"node_id", c.nodeID,
+		"receiver_hostname", c.receiverHostname,
 	)
 
 	// Close the socket when ctx is cancelled so the blocking ReadMessage
@@ -217,17 +221,19 @@ func (c *dingtalkChannel) handleFrame(ctx context.Context, conn *websocket.Conn,
 			"installation_id", c.installationID,
 			"connection_id", c.connectionID,
 			"node_id", c.nodeID,
+			"receiver_hostname", c.receiverHostname,
 			"stream_message_id_hash", streamInboxTraceHash(frame.messageID()),
 		)
 		receipt, err := c.inbox.PersistFrame(ctx, c.creds.ClientID, StreamFrameAdmission{
-			InstallationID: c.installationID,
-			ConnectionID:   c.connectionID,
-			NodeID:         c.nodeID,
-			MessageID:      frame.messageID(),
-			Topic:          frame.topic(),
-			SpecVersion:    frame.SpecVersion,
-			Time:           frame.Time,
-			Data:           frame.Data,
+			InstallationID:   c.installationID,
+			ConnectionID:     c.connectionID,
+			NodeID:           c.nodeID,
+			ReceiverHostname: c.receiverHostname,
+			MessageID:        frame.messageID(),
+			Topic:            frame.topic(),
+			SpecVersion:      frame.SpecVersion,
+			Time:             frame.Time,
+			Data:             frame.Data,
 		})
 		if err != nil {
 			// Returning without an ACK deliberately asks DingTalk to redeliver.
@@ -305,17 +311,26 @@ func newDingTalkFactory(deps ChannelDeps) channel.Factory {
 		if err != nil {
 			return nil, err
 		}
+		receiverHostname, err := os.Hostname()
+		if err != nil {
+			return nil, fmt.Errorf("dingtalk: resolve Stream receiver hostname: %w", err)
+		}
+		receiverHostname = strings.TrimSpace(receiverHostname)
+		if receiverHostname == "" {
+			return nil, errors.New("dingtalk: Stream receiver hostname is empty")
+		}
 		return &dingtalkChannel{
-			creds:          creds,
-			openAPIBase:    base,
-			httpClient:     &http.Client{Timeout: 30 * time.Second},
-			inbox:          deps.Inbox,
-			onReady:        cfg.OnReady,
-			installationID: cfg.InstallationID,
-			connectionID:   cfg.ConnectionID,
-			nodeID:         cfg.NodeID,
-			messenger:      deps.Messenger,
-			logger:         logger,
+			creds:            creds,
+			openAPIBase:      base,
+			httpClient:       &http.Client{Timeout: 30 * time.Second},
+			inbox:            deps.Inbox,
+			onReady:          cfg.OnReady,
+			installationID:   cfg.InstallationID,
+			connectionID:     cfg.ConnectionID,
+			nodeID:           cfg.NodeID,
+			receiverHostname: receiverHostname,
+			messenger:        deps.Messenger,
+			logger:           logger,
 		}, nil
 	}
 }

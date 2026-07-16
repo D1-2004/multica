@@ -7,6 +7,7 @@ INSERT INTO dingtalk_stream_inbox AS inbox (
     client_id,
     connection_id,
     node_id,
+    receiver_hostname,
     dedupe_key,
     stream_message_id,
     bot_message_id,
@@ -20,6 +21,7 @@ SELECT
     sqlc.arg('client_id')::text,
     sqlc.arg('connection_id')::text,
     sqlc.arg('node_id')::text,
+    sqlc.arg('receiver_hostname')::text,
     sqlc.arg('dedupe_key')::text,
     sqlc.arg('stream_message_id')::text,
     sqlc.narg('bot_message_id')::text,
@@ -36,6 +38,7 @@ ON CONFLICT (installation_id, dedupe_key) DO UPDATE SET
     stream_message_id = EXCLUDED.stream_message_id,
     connection_id = EXCLUDED.connection_id,
     node_id = EXCLUDED.node_id,
+    receiver_hostname = EXCLUDED.receiver_hostname,
     bot_message_id = COALESCE(EXCLUDED.bot_message_id, inbox.bot_message_id),
     payload_encrypted = CASE
         WHEN inbox.status IN ('queued', 'processing') THEN EXCLUDED.payload_encrypted

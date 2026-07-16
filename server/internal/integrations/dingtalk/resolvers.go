@@ -90,6 +90,28 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		)
 		return nil, errors.New("DingTalk robot DWS identity resolver is not configured")
 	}
+	raw, err := decodeDingTalkRaw(msg)
+	if err != nil {
+		log.Warn("dingtalk robot task context payload decode failed",
+			"event", "dingtalk_task_context_failed",
+			"error_class", "invalid_payload",
+			"latency_ms", time.Since(startedAt).Milliseconds(),
+			"error", err,
+		)
+		return nil, fmt.Errorf("decode DingTalk robot task context: %w", err)
+	}
+	taskContext := make(map[string]any)
+	if raw.StreamSource != nil {
+		source := protocol.DingTalkStreamSource{
+			Hostname:     strings.TrimSpace(raw.StreamSource.Hostname),
+			NodeID:       strings.TrimSpace(raw.StreamSource.NodeID),
+			ConnectionID: strings.TrimSpace(raw.StreamSource.ConnectionID),
+		}
+		if source.Hostname == "" || source.NodeID == "" || source.ConnectionID == "" {
+			return nil, errors.New("invalid DingTalk Stream source in task context")
+		}
+		taskContext[protocol.DingTalkStreamSourceJSONKey] = source
+	}
 	agent, err := r.q.GetAgent(ctx, inst.AgentID)
 	if err != nil {
 		log.Error("dingtalk robot DWS identity agent load failed",
@@ -106,7 +128,7 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 			"reason", "agent_without_runtime",
 			"latency_ms", time.Since(startedAt).Milliseconds(),
 		)
-		return nil, nil
+		return marshalDingTalkTaskContext(taskContext)
 	}
 	runtime, err := r.q.GetAgentRuntime(ctx, agent.RuntimeID)
 	if err != nil {
@@ -124,17 +146,7 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 			"reason", "runtime_without_dws_capability",
 			"latency_ms", time.Since(startedAt).Milliseconds(),
 		)
-		return nil, nil
-	}
-	raw, err := decodeDingTalkRaw(msg)
-	if err != nil {
-		log.Warn("dingtalk robot DWS identity payload decode failed",
-			"event", "dingtalk_dws_identity_failed",
-			"error_class", "invalid_payload",
-			"latency_ms", time.Since(startedAt).Milliseconds(),
-			"error", err,
-		)
-		return nil, fmt.Errorf("decode DingTalk robot sender: %w", err)
+		return marshalDingTalkTaskContext(taskContext)
 	}
 	log = log.With(
 		"staff_id_hash", dingtalkTraceHash(raw.SenderStaffID),
@@ -151,7 +163,10 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 			"error_class", "missing_organization_identity",
 			"latency_ms", time.Since(startedAt).Milliseconds(),
 		)
-		return dingtalkIdentityUnavailableContext(protocol.DingTalkRobotIdentityUnavailableMissingOrg)
+		taskContext[protocol.DingTalkRobotIdentityUnavailableJSONKey] = protocol.DingTalkRobotIdentityUnavailable{
+			Reason: protocol.DingTalkRobotIdentityUnavailableMissingOrg,
+		}
+		return marshalDingTalkTaskContext(taskContext)
 	}
 	employee, err := r.employees.ResolveEmployeeByCorpID(ctx, raw.SenderCorpID, raw.SenderStaffID)
 	if err != nil {
@@ -163,7 +178,10 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 				"latency_ms", time.Since(startedAt).Milliseconds(),
 				"error", err,
 			)
-			return dingtalkIdentityUnavailableContext(protocol.DingTalkRobotIdentityUnavailableLookupError)
+			taskContext[protocol.DingTalkRobotIdentityUnavailableJSONKey] = protocol.DingTalkRobotIdentityUnavailable{
+				Reason: protocol.DingTalkRobotIdentityUnavailableLookupError,
+			}
+			return marshalDingTalkTaskContext(taskContext)
 		}
 		log.Error("dingtalk robot DWS identity lookup failed; continuing without DWS",
 			"event", "dingtalk_dws_identity_unavailable",
@@ -171,7 +189,10 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 			"latency_ms", time.Since(startedAt).Milliseconds(),
 			"error", err,
 		)
-		return dingtalkIdentityUnavailableContext(protocol.DingTalkRobotIdentityUnavailableLookupError)
+		taskContext[protocol.DingTalkRobotIdentityUnavailableJSONKey] = protocol.DingTalkRobotIdentityUnavailable{
+			Reason: protocol.DingTalkRobotIdentityUnavailableLookupError,
+		}
+		return marshalDingTalkTaskContext(taskContext)
 	}
 	log.Info("dingtalk robot DWS identity resolved",
 		"event", "dingtalk_dws_identity_resolved",
@@ -179,20 +200,18 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		"org_id_hash", dingtalkTraceHash(employee.OrgID),
 		"latency_ms", time.Since(startedAt).Milliseconds(),
 	)
-	return json.Marshal(map[string]any{
-		protocol.DingTalkRobotIdentityJSONKey: protocol.DingTalkRobotIdentity{
-			UID:   employee.UID,
-			OrgID: employee.OrgID,
-		},
-	})
+	taskContext[protocol.DingTalkRobotIdentityJSONKey] = protocol.DingTalkRobotIdentity{
+		UID:   employee.UID,
+		OrgID: employee.OrgID,
+	}
+	return marshalDingTalkTaskContext(taskContext)
 }
 
-func dingtalkIdentityUnavailableContext(reason string) ([]byte, error) {
-	return json.Marshal(map[string]any{
-		protocol.DingTalkRobotIdentityUnavailableJSONKey: protocol.DingTalkRobotIdentityUnavailable{
-			Reason: reason,
-		},
-	})
+func marshalDingTalkTaskContext(taskContext map[string]any) ([]byte, error) {
+	if len(taskContext) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(taskContext)
 }
 
 // dingtalkTraceHash returns a stable, non-reversible correlation key for SLS.

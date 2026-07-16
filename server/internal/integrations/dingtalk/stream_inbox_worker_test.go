@@ -157,14 +157,15 @@ func TestStreamInboxPersistEncryptsPayloadAndUsesBotMessageID(t *testing.T) {
 	payload := `{"msgId":"bot-message-1","senderStaffId":"staff-secret","sessionWebhook":"https://example.test/send?session=secret"}`
 
 	receipt, err := worker.PersistFrame(context.Background(), "ding-client-secret", StreamFrameAdmission{
-		InstallationID: "00000000-0000-0000-0000-000000000002",
-		ConnectionID:   "node-a-g1",
-		NodeID:         "node-a",
-		MessageID:      "stream-message-1",
-		Topic:          streamTopicBotMessage,
-		SpecVersion:    "1.0",
-		Time:           123,
-		Data:           payload,
+		InstallationID:   "00000000-0000-0000-0000-000000000002",
+		ConnectionID:     "node-a-g1",
+		NodeID:           "node-a",
+		ReceiverHostname: "stream-host-a",
+		MessageID:        "stream-message-1",
+		Topic:            streamTopicBotMessage,
+		SpecVersion:      "1.0",
+		Time:             123,
+		Data:             payload,
 	})
 	if err != nil {
 		t.Fatalf("PersistFrame: %v", err)
@@ -176,7 +177,7 @@ func TestStreamInboxPersistEncryptsPayloadAndUsesBotMessageID(t *testing.T) {
 		t.Fatalf("admissions = %d, want 1", len(store.admitParams))
 	}
 	params := store.admitParams[0]
-	if params.InstallationID != util.MustParseUUID("00000000-0000-0000-0000-000000000002") || params.ConnectionID != "node-a-g1" || params.NodeID != "node-a" {
+	if params.InstallationID != util.MustParseUUID("00000000-0000-0000-0000-000000000002") || params.ConnectionID != "node-a-g1" || params.NodeID != "node-a" || params.ReceiverHostname != "stream-host-a" {
 		t.Errorf("admission source fence = installation %s connection %q node %q", util.UUIDToString(params.InstallationID), params.ConnectionID, params.NodeID)
 	}
 	if params.DedupeKey != "bot:bot-message-1" || !params.BotMessageID.Valid || params.BotMessageID.String != "bot-message-1" {
@@ -205,12 +206,13 @@ func TestStreamInboxPersistUsesStreamIDForMalformedPayload(t *testing.T) {
 	worker := newStreamInboxWorker(store, nil, box.Seal, box.Open, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
 
 	if _, err := worker.PersistFrame(context.Background(), "client", StreamFrameAdmission{
-		InstallationID: "00000000-0000-0000-0000-000000000002",
-		ConnectionID:   "node-a-g1",
-		NodeID:         "node-a",
-		MessageID:      "stream-2",
-		Topic:          streamTopicBotMessage,
-		Data:           "not-json",
+		InstallationID:   "00000000-0000-0000-0000-000000000002",
+		ConnectionID:     "node-a-g1",
+		NodeID:           "node-a",
+		ReceiverHostname: "stream-host-a",
+		MessageID:        "stream-2",
+		Topic:            streamTopicBotMessage,
+		Data:             "not-json",
 	}); err != nil {
 		t.Fatalf("PersistFrame: %v", err)
 	}
@@ -230,12 +232,13 @@ func TestStreamInboxPersistFailureLogsSafeSourceMetadata(t *testing.T) {
 	worker := newStreamInboxWorker(store, nil, box.Seal, box.Open, slog.New(slog.NewJSONHandler(&logs, nil)))
 	payload := `{"msgId":"bot-message-1","sessionWebhook":"https://example.test/send?session=must-not-log"}`
 	_, err = worker.PersistFrame(context.Background(), "client-secret", StreamFrameAdmission{
-		InstallationID: "00000000-0000-0000-0000-000000000002",
-		ConnectionID:   "node-a-g1",
-		NodeID:         "node-a",
-		MessageID:      "stream-message-1",
-		Topic:          streamTopicBotMessage,
-		Data:           payload,
+		InstallationID:   "00000000-0000-0000-0000-000000000002",
+		ConnectionID:     "node-a-g1",
+		NodeID:           "node-a",
+		ReceiverHostname: "stream-host-a",
+		MessageID:        "stream-message-1",
+		Topic:            streamTopicBotMessage,
+		Data:             payload,
 	})
 	if err == nil {
 		t.Fatal("PersistFrame succeeded, want database error")
@@ -281,6 +284,9 @@ func TestStreamInboxProcessNextDispatchesAndFinalizes(t *testing.T) {
 	raw, err := decodeDingTalkRaw(received[0])
 	if err != nil || raw.InstallationID != "00000000-0000-0000-0000-000000000020" {
 		t.Fatalf("admission installation fence = %q, %v", raw.InstallationID, err)
+	}
+	if raw.StreamSource == nil || raw.StreamSource.Hostname != "stream-host-a" || raw.StreamSource.NodeID != "node-a" || raw.StreamSource.ConnectionID != "node-a-g1" {
+		t.Fatalf("stream source = %+v", raw.StreamSource)
 	}
 	if len(store.completions) != 1 || store.completions[0].status != streamInboxStatusProcessed {
 		t.Fatalf("completions = %+v", store.completions)
@@ -557,6 +563,7 @@ func testStreamInboxRow(t *testing.T, box *secretbox.Box, attemptCount int32, pa
 		ClientID:         "client-1",
 		ConnectionID:     "node-a-g1",
 		NodeID:           "node-a",
+		ReceiverHostname: pgtype.Text{String: "stream-host-a", Valid: true},
 		StreamMessageID:  "stream-1",
 		PayloadEncrypted: sealed,
 		Status:           "processing",

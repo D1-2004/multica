@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // This file holds the translation from a DingTalk bot-message callback
@@ -130,16 +131,20 @@ type dingtalkRawEvent struct {
 	// CreateAt is the callback's epoch-millisecond send time; the typing
 	// indicator uses it to skip stale redeliveries after a reconnect.
 	CreateAt int64 `json:"create_at,omitempty"`
+	// StreamSource is Multica transport metadata, not part of DingTalk's
+	// callback. The durable inbox stamps it after decrypting the callback so it
+	// can follow the task without exposing the callback payload.
+	StreamSource *protocol.DingTalkStreamSource `json:"stream_source,omitempty"`
 }
 
 // inboundFromBotCallback normalizes one bot-message callback. ok=false
 // drops payloads that must not reach the core (no message id — nothing
 // to dedup on).
 func inboundFromBotCallback(data botCallbackData, clientID string) (channel.InboundMessage, bool) {
-	return inboundFromBotCallbackForInstallation(data, clientID, "")
+	return inboundFromBotCallbackForInstallation(data, clientID, "", protocol.DingTalkStreamSource{})
 }
 
-func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, installationID string) (channel.InboundMessage, bool) {
+func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, installationID string, streamSource protocol.DingTalkStreamSource) (channel.InboundMessage, bool) {
 	if data.MsgID == "" {
 		return channel.InboundMessage{}, false
 	}
@@ -154,6 +159,11 @@ func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, insta
 	if senderID == "" {
 		senderID = data.SenderID
 	}
+	var rawStreamSource *protocol.DingTalkStreamSource
+	if streamSource.Hostname != "" || streamSource.NodeID != "" || streamSource.ConnectionID != "" {
+		copied := streamSource
+		rawStreamSource = &copied
+	}
 	raw, _ := json.Marshal(dingtalkRawEvent{
 		ClientID:                  clientID,
 		InstallationID:            installationID,
@@ -165,6 +175,7 @@ func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, insta
 		ConversationTitle:         data.ConversationTitle,
 		Msgtype:                   data.Msgtype,
 		CreateAt:                  data.CreateAt,
+		StreamSource:              rawStreamSource,
 	})
 	msgType := channel.MsgTypeText
 	text := strings.TrimSpace(data.Text.Content)
