@@ -27,12 +27,36 @@ type fakeInstallQueries struct {
 	byAppIDErr error
 	deleteErr  error
 
-	upsertCalls  []db.UpsertChannelInstallationParams
-	byAppIDCalls []db.UpsertChannelInstallationByAppIDParams
-	deleteCalls  []db.DeleteChannelChatSessionBindingsByInstallationParams
+	upsertCalls         []db.UpsertChannelInstallationParams
+	byAppIDCalls        []db.UpsertChannelInstallationByAppIDParams
+	deleteCalls         []db.DeleteChannelChatSessionBindingsByInstallationParams
+	reclaimAppIDCalls   []db.ReclaimDeadChannelInstallationByAppIDParams
+	reclaimByAgentCalls []db.ReclaimRevokedChannelInstallationByAgentParams
 }
 
 func (f *fakeInstallQueries) WithTx(pgx.Tx) installQueries { return f }
+
+// ReclaimDeadChannelInstallationByAppID mimics the SQL predicate: a REVOKED
+// prev row held by any (workspace, agent) pair OTHER than the caller's own is
+// removed, so the subsequent lookup misses. Live/own rows are spared. Orphan
+// reclaim (deleted workspace/agent) is not modeled — the fake has no
+// existence tables.
+func (f *fakeInstallQueries) ReclaimDeadChannelInstallationByAppID(_ context.Context, arg db.ReclaimDeadChannelInstallationByAppIDParams) (pgtype.UUID, error) {
+	f.reclaimAppIDCalls = append(f.reclaimAppIDCalls, arg)
+	if f.prevErr == nil && f.prev.Status == "revoked" &&
+		!(uuidEqual(f.prev.WorkspaceID, arg.WorkspaceID) && uuidEqual(f.prev.AgentID, arg.AgentID)) {
+		removed := f.prev.ID
+		f.prev = db.ChannelInstallation{}
+		f.prevErr = pgx.ErrNoRows
+		return removed, nil
+	}
+	return pgtype.UUID{}, pgx.ErrNoRows
+}
+
+func (f *fakeInstallQueries) ReclaimRevokedChannelInstallationByAgent(_ context.Context, arg db.ReclaimRevokedChannelInstallationByAgentParams) (pgtype.UUID, error) {
+	f.reclaimByAgentCalls = append(f.reclaimByAgentCalls, arg)
+	return pgtype.UUID{}, pgx.ErrNoRows
+}
 
 func (f *fakeInstallQueries) GetChannelInstallationByAppID(context.Context, db.GetChannelInstallationByAppIDParams) (db.ChannelInstallation, error) {
 	if f.prevErr != nil {
@@ -266,5 +290,110 @@ func TestUpsertSwitchAgentTargetOccupied(t *testing.T) {
 	}
 	if len(q.deleteCalls) != 0 {
 		t.Error("must not retire chat sessions when the move failed")
+	}
+}
+
+// revokedRowForTest is prevRowForTest flipped to 'revoked' — the leftover a
+// disconnect deliberately keeps (audit) that used to pin both unique slots.
+func revokedRowForTest(workspaceID pgtype.UUID) db.ChannelInstallation {
+	row := prevRowForTest(workspaceID)
+	row.Status = "revoked"
+	return row
+}
+
+func TestUpsertRebindsRevokedBotToNewAgent(t *testing.T) {
+	// THE reported bug: disconnect the bot from agent A, then bind the SAME
+	// bot to agent B. The revoked row must be reclaimed so the install lands
+	// as a FRESH agent-keyed upsert instead of tripping "already connected".
+	q := &fakeInstallQueries{prev: revokedRowForTest(instTestWorkspace)}
+	svc, tx := newUpsertServiceForTest(t, q)
+
+	inst, err := svc.Upsert(context.Background(), installParamsForTest(instTestAgentB))
+	if err != nil {
+		t.Fatalf("Upsert after disconnect: %v", err)
+	}
+	if len(q.reclaimAppIDCalls) != 1 {
+		t.Fatalf("want 1 app-id reclaim, got %d", len(q.reclaimAppIDCalls))
+	}
+	if got := q.reclaimAppIDCalls[0]; got.ChannelType != channelTypeDingTalk || got.AppID != "ding-client-x" {
+		t.Errorf("reclaim keyed by (%q, %q), want (dingtalk, ding-client-x)", got.ChannelType, got.AppID)
+	}
+	// The ghost row is gone, so this is a fresh install, not a move.
+	if len(q.upsertCalls) != 1 || len(q.byAppIDCalls) != 0 {
+		t.Errorf("want fresh agent-keyed upsert after reclaim, got %d/%d upsert/byAppID", len(q.upsertCalls), len(q.byAppIDCalls))
+	}
+	if len(q.deleteCalls) != 0 {
+		t.Errorf("no chat sessions to retire on a fresh install, got %d calls", len(q.deleteCalls))
+	}
+	if !tx.committed {
+		t.Error("tx not committed")
+	}
+	if !uuidEqual(inst.AgentID, instTestAgentB) {
+		t.Errorf("returned AgentID = %v, want agent B", inst.AgentID)
+	}
+}
+
+func TestUpsertRebindsRevokedBotAcrossWorkspaces(t *testing.T) {
+	// A bot disconnected in workspace X must be rebindable by workspace Y —
+	// holding the app credentials proves control. The revoked ghost row used
+	// to surface as ErrAppOwnedByAnotherWorkspace forever.
+	q := &fakeInstallQueries{prev: revokedRowForTest(instTestOtherWs)}
+	svc, tx := newUpsertServiceForTest(t, q)
+
+	if _, err := svc.Upsert(context.Background(), installParamsForTest(instTestAgentB)); err != nil {
+		t.Fatalf("Upsert across workspaces after disconnect: %v", err)
+	}
+	if len(q.upsertCalls) != 1 || len(q.byAppIDCalls) != 0 {
+		t.Errorf("want fresh agent-keyed upsert after reclaim, got %d/%d upsert/byAppID", len(q.upsertCalls), len(q.byAppIDCalls))
+	}
+	if !tx.committed {
+		t.Error("tx not committed")
+	}
+}
+
+func TestUpsertSameAgentReinstallSparesOwnRevokedRow(t *testing.T) {
+	// Re-installing the SAME agent's disconnected bot must NOT reclaim its
+	// row: the agent-keyed upsert reactivates it in place, preserving the
+	// installation id and every user binding hanging off it.
+	q := &fakeInstallQueries{prev: revokedRowForTest(instTestWorkspace)}
+	svc, _ := newUpsertServiceForTest(t, q)
+
+	if _, err := svc.Upsert(context.Background(), installParamsForTest(instTestAgentA)); err != nil {
+		t.Fatalf("same-agent reinstall: %v", err)
+	}
+	if q.prevErr != nil {
+		t.Error("own revoked row must be spared by the reclaim, but it was removed")
+	}
+	if len(q.upsertCalls) != 1 || len(q.byAppIDCalls) != 0 {
+		t.Errorf("want in-place agent-keyed reactivation, got %d/%d upsert/byAppID", len(q.upsertCalls), len(q.byAppIDCalls))
+	}
+	if len(q.reclaimByAgentCalls) != 0 {
+		t.Errorf("no move happened, target-agent reclaim must not run, got %d calls", len(q.reclaimByAgentCalls))
+	}
+}
+
+func TestUpsertSwitchAgentClearsTargetRevokedLeftover(t *testing.T) {
+	// Moving a LIVE bot to agent B whose own bot was disconnected earlier:
+	// B's revoked leftover pins the (workspace, agent, channel) slot and
+	// must be cleared before the move, or the upsert aborts with a spurious
+	// ErrAgentAlreadyConnected.
+	q := &fakeInstallQueries{prev: prevRowForTest(instTestWorkspace)}
+	svc, tx := newUpsertServiceForTest(t, q)
+
+	if _, err := svc.Upsert(context.Background(), installParamsForTest(instTestAgentB)); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if len(q.reclaimByAgentCalls) != 1 {
+		t.Fatalf("want 1 target-agent reclaim before the move, got %d", len(q.reclaimByAgentCalls))
+	}
+	got := q.reclaimByAgentCalls[0]
+	if !uuidEqual(got.WorkspaceID, instTestWorkspace) || !uuidEqual(got.AgentID, instTestAgentB) || got.ChannelType != channelTypeDingTalk {
+		t.Errorf("reclaim keyed by (%v, %v, %q), want (workspace, agent B, dingtalk)", got.WorkspaceID, got.AgentID, got.ChannelType)
+	}
+	if len(q.byAppIDCalls) != 1 {
+		t.Fatalf("want the move to proceed after the reclaim, got %d byAppID calls", len(q.byAppIDCalls))
+	}
+	if !tx.committed {
+		t.Error("tx not committed")
 	}
 }

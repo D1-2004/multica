@@ -942,6 +942,71 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 	}
 }
 
+// activeBindingStoreForUnbind builds an ACTIVE binding row with a router
+// source id, the precondition every unbind test starts from.
+func activeBindingStoreForUnbind(t *testing.T, now time.Time) *fakeBindingStore {
+	t.Helper()
+	store := pendingBindingStore(t, now, canonicalCallbackToken)
+	config, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundAt := now
+	config.RouterSourceID = "source-1"
+	config.BoundAt = &boundAt
+	store.row.Config, err = config.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.row.Status = "active"
+	return store
+}
+
+func TestUnbindProceedsWhenRouterSubscriptionAlreadyGone(t *testing.T) {
+	// Multi-replica recovery: a crash between the router delete and the
+	// local revoke (or a concurrent unbind on another pod) leaves the
+	// subscription already deleted remotely. The router reports that as its
+	// subscription_not_found business error — the retry must treat it as
+	// "already deleted" and complete the local revoke, not 502 forever.
+	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	store := activeBindingStoreForUnbind(t, now)
+	router := &fakeBindingRouter{deleteErr: newRouterAPIError("business_error", "subscription_not_found")}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	binding, err := service.Unbind(context.Background(), UnbindParams{
+		WorkspaceID:    store.row.WorkspaceID,
+		InstallationID: store.row.ID,
+	})
+	if err != nil {
+		t.Fatalf("Unbind() error = %v, want success on already-deleted subscription", err)
+	}
+	if !store.revoked || binding.MessageRoute.Status != "revoked" {
+		t.Fatalf("revoked=%v binding=%#v", store.revoked, binding)
+	}
+	assertMetricCounter(t, service.metrics, "dingtalk_account_unbind_total", map[string]string{"outcome": "success"}, 1)
+}
+
+func TestUnbindStaysFailClosedOnOtherRouterErrors(t *testing.T) {
+	// Anything but the explicit not-found signal (transport failure, 5xx,
+	// auth error) must still abort BEFORE the local transition, or a live
+	// router subscription would keep dispatching into a revoked binding.
+	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	store := activeBindingStoreForUnbind(t, now)
+	router := &fakeBindingRouter{deleteErr: errors.New("router transport failure")}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	_, err := service.Unbind(context.Background(), UnbindParams{
+		WorkspaceID:    store.row.WorkspaceID,
+		InstallationID: store.row.ID,
+	})
+	if !errors.Is(err, ErrRouterUnavailable) {
+		t.Fatalf("Unbind() error = %v, want ErrRouterUnavailable", err)
+	}
+	if store.revoked {
+		t.Fatal("local row must not be revoked when the router delete failed")
+	}
+}
+
 func TestListClearsExpiredCallbackCredentialBeforeReturningBindings(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 20, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now.Add(-20*time.Minute), canonicalCallbackToken)

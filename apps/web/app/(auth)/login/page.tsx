@@ -26,7 +26,6 @@ import {
 import { Button } from "@multica/ui/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { setLoggedInCookie } from "@/features/auth/auth-cookie";
-import Link from "next/link";
 import { LoginPage, validateCliCallback } from "@multica/views/auth";
 import { useT } from "@multica/views/i18n";
 
@@ -250,6 +249,7 @@ function LoginPageContent() {
 
   return (
     <LoginPage
+      title="FDE 工作台"
       onSuccess={handleSuccess}
       google={
         googleClientId && allows("google")
@@ -287,13 +287,7 @@ function LoginPageContent() {
       onTokenObtained={setLoggedInCookie}
       extra={
         <span className="text-xs text-muted-foreground">
-          {t(($) => $.web.prefer_desktop)}{" "}
-          <Link
-            href="/download"
-            className="font-medium text-foreground underline decoration-foreground/30 underline-offset-4 hover:decoration-foreground/70"
-          >
-            {t(($) => $.web.download)}
-          </Link>
+          {t(($) => $.web.internal_only)}
         </span>
       }
     />

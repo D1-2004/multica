@@ -445,7 +445,20 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding Publ
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
 	}
 	if config.RouterSourceID != "" {
-		if err := s.router.DeleteSubscription(ctx, config.RouterSourceID); err != nil {
+		// Remote delete stays fail-closed EXCEPT for the router's explicit
+		// "subscription_not_found" business error: the subscription is
+		// already gone, which is exactly the state this delete wants. This
+		// is the multi-replica recovery path — a pod that crashed between
+		// the router delete and the local revoke, or a concurrent unbind on
+		// another replica, leaves the remote side deleted while the local
+		// row is still active; without this tolerance every retry 502s
+		// forever and the binding can never be unbound (re-begin then 409s
+		// on the active row). Transport failures and other router errors
+		// still abort before the local transition, so a live subscription
+		// is never orphaned. Revoke itself is idempotent (status IN
+		// pending/active/revoked), so double unbinds converge.
+		if err := s.router.DeleteSubscription(ctx, config.RouterSourceID); err != nil &&
+			!errors.Is(err, ErrSubscriptionNotFound) {
 			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
 		}
 	} else if row.Status == "active" {
