@@ -67,12 +67,16 @@ func decodeChannelCredentials(raw json.RawMessage, decrypt Decrypter) (channelCr
 // dingtalkChannel per active installation via the registered Factory and
 // owns the lease / reconnect lifecycle; Connect blocks on the receive loop.
 type dingtalkChannel struct {
-	creds       channelCredentials
-	openAPIBase string
-	httpClient  *http.Client
-	handler     channel.InboundHandler
-	messenger   *RobotMessenger
-	logger      *slog.Logger
+	creds          channelCredentials
+	openAPIBase    string
+	httpClient     *http.Client
+	inbox          StreamInbox
+	onReady        func(context.Context) error
+	installationID string
+	connectionID   string
+	nodeID         string
+	messenger      *RobotMessenger
+	logger         *slog.Logger
 }
 
 func (c *dingtalkChannel) Type() channel.Type { return TypeDingtalk }
@@ -103,8 +107,8 @@ func (c *dingtalkChannel) Send(ctx context.Context, out channel.OutboundMessage)
 // with its OWN client credentials) and runs the receive loop until ctx is
 // cancelled or the link drops.
 func (c *dingtalkChannel) Connect(ctx context.Context) error {
-	if c.handler == nil {
-		return errors.New("dingtalk: inbound handler not configured")
+	if c.inbox == nil {
+		return errors.New("dingtalk: stream inbox not configured")
 	}
 	ep, err := openStreamEndpoint(ctx, c.httpClient, c.openAPIBase, c.creds.ClientID, c.creds.ClientSecret)
 	if err != nil {
@@ -115,7 +119,18 @@ func (c *dingtalkChannel) Connect(ctx context.Context) error {
 		return err
 	}
 	defer conn.Close()
-	c.logger.Info("dingtalk stream: connected", "client_id", c.creds.ClientID)
+	if c.onReady != nil {
+		if err := c.onReady(ctx); err != nil {
+			return fmt.Errorf("dingtalk stream: mark connection ready: %w", err)
+		}
+	}
+	c.logger.Info("dingtalk stream connected",
+		"event", "dingtalk_stream_connected",
+		"client_id_hash", streamInboxTraceHash(c.creds.ClientID),
+		"installation_id", c.installationID,
+		"connection_id", c.connectionID,
+		"node_id", c.nodeID,
+	)
 
 	// Close the socket when ctx is cancelled so the blocking ReadMessage
 	// below unblocks immediately (gorilla reads are not ctx-aware).
@@ -151,7 +166,11 @@ func (c *dingtalkChannel) Connect(ctx context.Context) error {
 		}
 		var frame streamFrame
 		if err := json.Unmarshal(payload, &frame); err != nil {
-			c.logger.Warn("dingtalk stream: undecodable frame", "error", err, "client_id", c.creds.ClientID)
+			c.logger.Warn("dingtalk stream frame is not decodable",
+				"event", "dingtalk_stream_frame_invalid",
+				"client_id_hash", streamInboxTraceHash(c.creds.ClientID),
+				"error_class", "payload_invalid",
+			)
 			continue
 		}
 		reconnect, err := c.handleFrame(ctx, conn, &frame)
@@ -170,10 +189,9 @@ func (c *dingtalkChannel) Connect(ctx context.Context) error {
 	}
 }
 
-// handleFrame ACKs one frame and dispatches bot messages to the engine.
-// The ACK goes out FIRST (mirroring Slack's ack-before-handle): DingTalk
-// redelivers un-ACKed callbacks, and the engine's dedup layer absorbs any
-// redelivery that races the handler anyway.
+// handleFrame persists bot callbacks before ACK. The committed inbox row is
+// the transport durability boundary: uncommitted callbacks stay un-ACKed and
+// DingTalk may redeliver them; committed callbacks are handled asynchronously.
 func (c *dingtalkChannel) handleFrame(ctx context.Context, conn *websocket.Conn, frame *streamFrame) (reconnect bool, err error) {
 	switch frame.Type {
 	case streamFrameTypeSystem:
@@ -195,23 +213,50 @@ func (c *dingtalkChannel) handleFrame(ctx context.Context, conn *websocket.Conn,
 			_ = writeStreamResponse(conn, newStreamAck(frame, `{"response":{}}`))
 			return false, nil
 		}
+		traceLog := c.logger.With(
+			"installation_id", c.installationID,
+			"connection_id", c.connectionID,
+			"node_id", c.nodeID,
+			"stream_message_id_hash", streamInboxTraceHash(frame.messageID()),
+		)
+		receipt, err := c.inbox.PersistFrame(ctx, c.creds.ClientID, StreamFrameAdmission{
+			InstallationID: c.installationID,
+			ConnectionID:   c.connectionID,
+			NodeID:         c.nodeID,
+			MessageID:      frame.messageID(),
+			Topic:          frame.topic(),
+			SpecVersion:    frame.SpecVersion,
+			Time:           frame.Time,
+			Data:           frame.Data,
+		})
+		if err != nil {
+			// Returning without an ACK deliberately asks DingTalk to redeliver.
+			traceLog.Error("dingtalk stream callback admission failed before ack",
+				"event", "dingtalk_stream_callback_admission_failed",
+				"error_class", "durable_admission",
+				"acknowledged", false,
+				"error", err,
+			)
+			return false, fmt.Errorf("dingtalk stream: persist callback before ack: %w", err)
+		}
 		if err := writeStreamResponse(conn, newStreamAck(frame, `{"response":{}}`)); err != nil {
+			traceLog.Error("dingtalk stream callback ack write failed after admission",
+				"event", "dingtalk_stream_callback_ack_failed",
+				"inbox_id", receipt.ID,
+				"error_class", "stream_write",
+				"inbox_status", receipt.Status,
+				"delivery_count", receipt.DeliveryCount,
+				"error", err,
+			)
 			return false, fmt.Errorf("dingtalk stream: ack callback: %w", err)
 		}
-		var data botCallbackData
-		if err := json.Unmarshal([]byte(frame.Data), &data); err != nil {
-			c.logger.Warn("dingtalk stream: undecodable bot callback", "error", err, "client_id", c.creds.ClientID)
-			return false, nil
-		}
-		msg, ok := inboundFromBotCallback(data, c.creds.ClientID)
-		if !ok {
-			return false, nil
-		}
-		// A non-nil handler error is an infrastructure failure; it
-		// propagates so the supervisor reconnects (product drops return nil).
-		if err := c.handler(ctx, msg); err != nil {
-			return false, err
-		}
+		c.inbox.Notify()
+		traceLog.Info("dingtalk stream callback acknowledged",
+			"event", "dingtalk_stream_callback_acknowledged",
+			"inbox_id", receipt.ID,
+			"inbox_status", receipt.Status,
+			"delivery_count", receipt.DeliveryCount,
+		)
 		return false, nil
 
 	default: // EVENT — not subscribed today; ACK so the server stops redelivering.
@@ -221,10 +266,12 @@ func (c *dingtalkChannel) handleFrame(ctx context.Context, conn *websocket.Conn,
 }
 
 // ChannelDeps are the shared dependencies the DingTalk Factory closes over.
-// The engine inbound handler is supplied per-build via channel.Config.Handler.
 type ChannelDeps struct {
 	Decrypt Decrypter
 	Logger  *slog.Logger
+	// Inbox is the process-wide durable Stream inbox. It is mandatory: the
+	// channel never reverts to synchronous callback handling.
+	Inbox StreamInbox
 	// OpenAPIBase overrides https://api.dingtalk.com (tests/proxies).
 	OpenAPIBase string
 	// Messenger delivers Channel.Send outbound messages. Optional: nil
@@ -251,17 +298,24 @@ func newDingTalkFactory(deps ChannelDeps) channel.Factory {
 		base = defaultOpenAPIBase
 	}
 	return func(cfg channel.Config) (channel.Channel, error) {
+		if deps.Inbox == nil {
+			return nil, errors.New("dingtalk: stream inbox not configured")
+		}
 		creds, err := decodeChannelCredentials(cfg.Raw, deps.Decrypt)
 		if err != nil {
 			return nil, err
 		}
 		return &dingtalkChannel{
-			creds:       creds,
-			openAPIBase: base,
-			httpClient:  &http.Client{Timeout: 30 * time.Second},
-			handler:     cfg.Handler,
-			messenger:   deps.Messenger,
-			logger:      logger,
+			creds:          creds,
+			openAPIBase:    base,
+			httpClient:     &http.Client{Timeout: 30 * time.Second},
+			inbox:          deps.Inbox,
+			onReady:        cfg.OnReady,
+			installationID: cfg.InstallationID,
+			connectionID:   cfg.ConnectionID,
+			nodeID:         cfg.NodeID,
+			messenger:      deps.Messenger,
+			logger:         logger,
 		}, nil
 	}
 }

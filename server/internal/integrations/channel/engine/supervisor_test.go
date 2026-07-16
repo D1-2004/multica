@@ -683,3 +683,297 @@ func TestSupervisorKickSweepsImmediately(t *testing.T) {
 	cancel()
 	sup.Wait()
 }
+
+type fakeStreamCoordinator struct {
+	mu            sync.Mutex
+	target        int
+	ttl           time.Duration
+	ready         int
+	claimed       bool
+	markReady     int
+	beginDrain    int
+	releases      int
+	renewErr      error
+	renewBlock    chan struct{}
+	renewCtxErr   error
+	drainObserved chan struct{}
+	lastClaimID   pgtype.UUID
+}
+
+func (f *fakeStreamCoordinator) snapshot(state StreamLeaseState) StreamLeaseSnapshot {
+	now := time.Now()
+	return StreamLeaseSnapshot{
+		TargetReady: f.target,
+		State:       state,
+		Total:       1,
+		Ready:       f.ready,
+		Draining: func() int {
+			if state == StreamLeaseDraining {
+				return 1
+			}
+			return 0
+		}(),
+		ServerNow: now,
+		ExpiresAt: now.Add(f.ttl),
+	}
+}
+
+func (f *fakeStreamCoordinator) Claim(_ context.Context, id pgtype.UUID, token string) (StreamLease, StreamLeaseSnapshot, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastClaimID = id
+	if f.claimed {
+		return StreamLease{}, f.snapshot(StreamLeaseConnecting), false, nil
+	}
+	f.claimed = true
+	lease := StreamLease{InstallationID: id, Token: token, State: StreamLeaseConnecting}
+	return lease, f.snapshot(StreamLeaseConnecting), true, nil
+}
+
+func (f *fakeStreamCoordinator) MarkReady(_ context.Context, lease StreamLease) (StreamLease, StreamLeaseSnapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.markReady++
+	f.ready = 1
+	lease.State = StreamLeaseReady
+	return lease, f.snapshot(StreamLeaseReady), nil
+}
+
+func (f *fakeStreamCoordinator) Renew(ctx context.Context, lease StreamLease) (StreamLeaseSnapshot, error) {
+	f.mu.Lock()
+	block := f.renewBlock
+	renewErr := f.renewErr
+	f.mu.Unlock()
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			f.mu.Lock()
+			f.renewCtxErr = ctx.Err()
+			f.mu.Unlock()
+			return StreamLeaseSnapshot{}, ctx.Err()
+		}
+	}
+	if renewErr != nil {
+		return StreamLeaseSnapshot{}, renewErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.snapshot(lease.State), nil
+}
+
+func (f *fakeStreamCoordinator) BeginDrain(_ context.Context, lease StreamLease) (StreamLease, StreamLeaseSnapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.beginDrain++
+	lease.State = StreamLeaseDraining
+	if f.drainObserved != nil && f.beginDrain == 1 {
+		close(f.drainObserved)
+	}
+	return lease, f.snapshot(StreamLeaseDraining), nil
+}
+
+func (f *fakeStreamCoordinator) Release(_ context.Context, _ StreamLease) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.releases++
+	return nil
+}
+
+func (f *fakeStreamCoordinator) TargetReady() int        { return f.target }
+func (f *fakeStreamCoordinator) LeaseTTL() time.Duration { return f.ttl }
+
+type readyFakeChannel struct {
+	onReady  func(context.Context) error
+	connects atomic.Int32
+}
+
+func (f *readyFakeChannel) Type() channel.Type { return channel.Type("dingtalk-test") }
+func (f *readyFakeChannel) Connect(ctx context.Context) error {
+	f.connects.Add(1)
+	if f.onReady == nil {
+		return errors.New("missing ready callback")
+	}
+	if err := f.onReady(ctx); err != nil {
+		return err
+	}
+	<-ctx.Done()
+	return nil
+}
+func (f *readyFakeChannel) Disconnect(context.Context) error { return nil }
+func (f *readyFakeChannel) Send(context.Context, channel.OutboundMessage) (channel.SendResult, error) {
+	return channel.SendResult{}, nil
+}
+func (f *readyFakeChannel) Capabilities() channel.Capability { return channel.CapText }
+
+func TestSupervisorCoordinatedConnectionMarksReadyAndHandsOff(t *testing.T) {
+	typ := channel.Type("dingtalk-test")
+	instID := uuidFromString(t, "dddddddd-dddd-dddd-dddd-dddddddddddd")
+	streamGroupID := uuidFromString(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	store := newFakeStore()
+	store.installations = []Installation{{ID: instID, StreamGroupID: streamGroupID, ChannelType: typ, Fingerprint: "fp", Config: []byte(`{}`)}}
+	coord := &fakeStreamCoordinator{target: 2, ttl: 100 * time.Millisecond, drainObserved: make(chan struct{})}
+	fc := &readyFakeChannel{}
+	reg := channel.NewRegistry()
+	reg.Register(typ, func(cfg channel.Config) (channel.Channel, error) {
+		fc.onReady = cfg.OnReady
+		return fc, nil
+	})
+	cfg := fastConfig()
+	cfg.StreamRenewInterval = 5 * time.Millisecond
+	cfg.StreamCoordinators = map[channel.Type]StreamCoordinator{typ: coord}
+	sup := NewSupervisor(store, reg, nil, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	go sup.Run(ctx)
+
+	if !waitFor(300*time.Millisecond, func() bool { return fc.connects.Load() == 1 }) {
+		t.Fatal("coordinated channel did not connect")
+	}
+	if got := atomic.LoadInt32(&store.acquireCount); got != 0 {
+		t.Fatalf("coordinated channel touched PostgreSQL lease %d times", got)
+	}
+
+	sup.BeginShutdown()
+	select {
+	case <-coord.drainObserved:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("coordinated channel never entered DRAINING")
+	}
+	coord.mu.Lock()
+	coord.ready = 2 // replacement connection is READY
+	coord.mu.Unlock()
+	if !sup.WaitForHandoffs(500 * time.Millisecond) {
+		t.Fatal("graceful handoff did not finish after replacement became READY")
+	}
+	cancel()
+	sup.Wait()
+	coord.mu.Lock()
+	defer coord.mu.Unlock()
+	if coord.lastClaimID != streamGroupID {
+		t.Fatalf("coordinator claimed local installation id %+v, want cross-environment stream group %+v", coord.lastClaimID, streamGroupID)
+	}
+	if coord.markReady != 1 || coord.beginDrain != 1 || coord.releases != 1 {
+		t.Fatalf("coordination transitions mark=%d drain=%d release=%d", coord.markReady, coord.beginDrain, coord.releases)
+	}
+}
+
+func TestSupervisorCoordinatedRenewFailureFailsClosedAtLocalDeadline(t *testing.T) {
+	typ := channel.Type("dingtalk-test")
+	instID := uuidFromString(t, "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+	store := newFakeStore()
+	store.installations = []Installation{{ID: instID, StreamGroupID: instID, ChannelType: typ, Fingerprint: "fp", Config: []byte(`{}`)}}
+	coord := &fakeStreamCoordinator{target: 1, ttl: 30 * time.Millisecond, renewErr: errors.New("redis unavailable")}
+	fc := &readyFakeChannel{}
+	reg := channel.NewRegistry()
+	reg.Register(typ, func(cfg channel.Config) (channel.Channel, error) {
+		fc.onReady = cfg.OnReady
+		return fc, nil
+	})
+	cfg := fastConfig()
+	cfg.StreamRenewInterval = 5 * time.Millisecond
+	cfg.StreamCoordinators = map[channel.Type]StreamCoordinator{typ: coord}
+	sup := NewSupervisor(store, reg, nil, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go sup.Run(ctx)
+
+	if !waitFor(500*time.Millisecond, func() bool {
+		coord.mu.Lock()
+		defer coord.mu.Unlock()
+		return coord.releases == 1
+	}) {
+		t.Fatal("connection was not closed and released after Redis lease deadline")
+	}
+	cancel()
+	sup.Wait()
+}
+
+func TestSupervisorCoordinatedBlockedRenewCannotCrossLeaseDeadline(t *testing.T) {
+	typ := channel.Type("dingtalk-test")
+	instID := uuidFromString(t, "ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb")
+	store := newFakeStore()
+	store.installations = []Installation{{ID: instID, StreamGroupID: instID, ChannelType: typ, Fingerprint: "fp", Config: []byte(`{}`)}}
+	coord := &fakeStreamCoordinator{
+		target:     1,
+		ttl:        40 * time.Millisecond,
+		renewBlock: make(chan struct{}),
+	}
+	fc := &readyFakeChannel{}
+	reg := channel.NewRegistry()
+	reg.Register(typ, func(cfg channel.Config) (channel.Channel, error) {
+		fc.onReady = cfg.OnReady
+		return fc, nil
+	})
+	cfg := fastConfig()
+	cfg.StreamRenewInterval = 5 * time.Millisecond
+	cfg.StreamCoordinators = map[channel.Type]StreamCoordinator{typ: coord}
+	sup := NewSupervisor(store, reg, nil, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	started := time.Now()
+	go sup.Run(ctx)
+
+	if !waitFor(300*time.Millisecond, func() bool {
+		coord.mu.Lock()
+		defer coord.mu.Unlock()
+		return coord.releases == 1
+	}) {
+		cancel()
+		sup.Wait()
+		t.Fatal("blocked Redis Renew kept the physical connection past its lease deadline")
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("fail-closed elapsed %s, want <= 200ms", elapsed)
+	}
+	coord.mu.Lock()
+	renewCtxErr := coord.renewCtxErr
+	coord.mu.Unlock()
+	if renewCtxErr == nil {
+		t.Fatal("blocked Renew did not receive a lease-bounded context cancellation")
+	}
+	cancel()
+	sup.Wait()
+}
+
+func TestSupervisorWaitForHandoffsIgnoresLegacySupervisors(t *testing.T) {
+	sup := NewSupervisor(newFakeStore(), channel.NewRegistry(), nil, fastConfig())
+	coordinatedDone := make(chan struct{})
+	close(coordinatedDone)
+	legacyDone := make(chan struct{})
+	sup.supervisors["coordinated"] = supervisorEntry{coordinated: true, done: coordinatedDone}
+	sup.supervisors["legacy"] = supervisorEntry{coordinated: false, done: legacyDone}
+
+	if !sup.WaitForHandoffs(20 * time.Millisecond) {
+		t.Fatal("legacy supervisor incorrectly consumed the coordinated handoff budget")
+	}
+}
+
+func TestStreamTargetUnmetLimiterIsDelayedAndRateLimited(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	snapshot := StreamLeaseSnapshot{TargetReady: 2, Ready: 1, Total: 1}
+	var limiter streamTargetUnmetLimiter
+
+	if limiter.shouldLog(base, snapshot) {
+		t.Fatal("first unmet observation must start the grace window, not log")
+	}
+	if limiter.shouldLog(base.Add(streamTargetUnmetLogInterval-time.Millisecond), snapshot) {
+		t.Fatal("unmet target logged before grace interval")
+	}
+	if !limiter.shouldLog(base.Add(streamTargetUnmetLogInterval), snapshot) {
+		t.Fatal("persistent unmet target did not log after grace interval")
+	}
+	if limiter.shouldLog(base.Add(streamTargetUnmetLogInterval+time.Second), snapshot) {
+		t.Fatal("persistent unmet target log was not rate limited")
+	}
+	if !limiter.shouldLog(base.Add(2*streamTargetUnmetLogInterval), snapshot) {
+		t.Fatal("persistent unmet target did not log again after rate-limit interval")
+	}
+
+	met := snapshot
+	met.Ready = met.TargetReady
+	if limiter.shouldLog(base.Add(2*streamTargetUnmetLogInterval+time.Second), met) {
+		t.Fatal("met target must not log")
+	}
+	if limiter.shouldLog(base.Add(3*streamTargetUnmetLogInterval), snapshot) {
+		t.Fatal("a later degradation must start a fresh grace window")
+	}
+}

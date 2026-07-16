@@ -122,6 +122,11 @@ type AppendParams struct {
 	InstallationID pgtype.UUID
 	Message        channel.InboundMessage
 	ClaimToken     pgtype.UUID
+	// PreparedTask is present for channels whose inbound run must be made
+	// durable in the same transaction as the message and dedup Mark. It is
+	// prepared outside the transaction because building the runtime overlay may
+	// perform network I/O.
+	PreparedTask *service.PreparedChannelChatTask
 }
 
 // AppendResult reports what AppendMessage decided.
@@ -139,6 +144,10 @@ type AppendResult struct {
 	MessageID pgtype.UUID
 	Content   string
 	CreatedAt pgtype.Timestamptz
+	// TaskID is the durable deferred task atomically committed with the message.
+	// It is zero for legacy channel paths that still enqueue after append.
+	TaskID     pgtype.UUID
+	TaskFireAt pgtype.Timestamptz
 }
 
 // IssueCommand is the parsed /issue command.
@@ -260,6 +269,10 @@ type ResolverSet struct {
 	Typing       TypingNotifier
 	Unbind       SenderUnbinder
 	OriginType   string
+	// DurableRuns commits the delayed chat task in the same transaction as the
+	// inbound message. It is enabled for DingTalk Stream, whose ACK contract
+	// requires a restart-safe handoff all the way through task creation.
+	DurableRuns bool
 }
 
 // IssueCreator is the narrow subset of service.IssueService the Router needs
@@ -272,6 +285,7 @@ type IssueCreator interface {
 // trigger a chat run. Shared across platforms.
 type TaskEnqueuer interface {
 	EnqueueChatTask(ctx context.Context, session db.ChatSession, initiatorUserID pgtype.UUID, forceFreshSession bool, taskContext []byte) (db.AgentTaskQueue, error)
+	PrepareChannelChatTask(ctx context.Context, session db.ChatSession, initiatorUserID pgtype.UUID, forceFreshSession bool, taskContext []byte) (service.PreparedChannelChatTask, error)
 }
 
 // SessionReader reads the rows the debounced flush + /issue identifier need.
@@ -283,4 +297,18 @@ type SessionReader interface {
 	GetWorkspace(ctx context.Context, id pgtype.UUID) (db.Workspace, error)
 	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
 	CountRunningTasks(ctx context.Context, agentID pgtype.UUID) (int64, error)
+}
+
+// IssueOriginReader is an optional capability used by durable channel issue
+// commands. Looking up the deterministic origin before Create closes the
+// process-crash window between issue commit and inbound-message append.
+type IssueOriginReader interface {
+	GetIssueByOrigin(ctx context.Context, arg db.GetIssueByOriginParams) (db.Issue, error)
+}
+
+// PreviousUserMessageReader is the optional lookup needed to resolve a bare
+// `/issue` command before the durable issue is created. *db.Queries implements
+// it; declaring it separately keeps legacy test/session readers minimal.
+type PreviousUserMessageReader interface {
+	GetMostRecentUserChatMessage(ctx context.Context, chatSessionID pgtype.UUID) (db.ChatMessage, error)
 }

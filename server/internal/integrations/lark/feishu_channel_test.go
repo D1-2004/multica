@@ -8,6 +8,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // fakeSender embeds the APIClient interface (nil) and overrides only
@@ -222,5 +223,30 @@ func TestDispatchResultFromEngine(t *testing.T) {
 	}
 	if res.IssueIdentifier != "MUL-7" {
 		t.Fatalf("issue identifier not mapped: %q", res.IssueIdentifier)
+	}
+}
+
+func TestRowStreamGroupIDStableAcrossInstallationRows(t *testing.T) {
+	config := json.RawMessage(`{"app_id":"shared-dingtalk-client","app_secret_encrypted":"cipher-a"}`)
+	first := rowStreamGroupID(db.ChannelInstallation{ChannelType: "dingtalk", Config: config})
+	second := rowStreamGroupID(db.ChannelInstallation{
+		ChannelType: "dingtalk",
+		Config:      json.RawMessage(`{"app_id":"shared-dingtalk-client","app_secret_encrypted":"cipher-b"}`),
+	})
+	other := rowStreamGroupID(db.ChannelInstallation{
+		ChannelType: "dingtalk",
+		Config:      json.RawMessage(`{"app_id":"other-dingtalk-client","app_secret_encrypted":"cipher-a"}`),
+	})
+	if !first.Valid || first != second {
+		t.Fatalf("same client_id must share one cross-environment stream group: first=%+v second=%+v", first, second)
+	}
+	if first == other {
+		t.Fatal("different client_id values must not share a stream group")
+	}
+	if got := rowStreamGroupID(db.ChannelInstallation{ChannelType: "dingtalk", Config: json.RawMessage(`{}`)}); got.Valid {
+		t.Fatalf("missing app_id must fail closed, got %+v", got)
+	}
+	if got := rowStreamGroupID(db.ChannelInstallation{ChannelType: "feishu", Config: config}); got.Valid {
+		t.Fatalf("uncoordinated channel must not receive a DingTalk stream group, got %+v", got)
 	}
 }

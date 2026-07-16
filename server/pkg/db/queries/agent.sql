@@ -1070,6 +1070,7 @@ UPDATE agent_task_queue
 SET status = 'queued'
 WHERE runtime_id = @runtime_id
   AND status = 'deferred'
+  AND chat_session_id IS NULL
   AND fire_at <= now()
 RETURNING *;
 
@@ -1095,8 +1096,60 @@ UPDATE agent_task_queue
 SET status = 'queued'
 WHERE runtime_id = ANY(@runtime_ids::uuid[])
   AND status = 'deferred'
+  AND chat_session_id IS NULL
   AND fire_at <= now()
 RETURNING *;
+
+-- name: PromoteDueDeferredChannelChatTasks :many
+-- Globally promotes due channel-chat debounce batches. Multiple API replicas
+-- may run this worker; row locks plus the status predicate make the transition
+-- single-winner. fire_at intentionally remains set after promotion: it is the
+-- durable marker that the queued task still needs its wake/runtime-launch
+-- handoff. While queued, the notification worker treats it as next_notify_at.
+WITH due AS (
+    SELECT id
+    FROM agent_task_queue
+    WHERE status = 'deferred'
+      AND chat_session_id IS NOT NULL
+      AND fire_at <= now()
+    ORDER BY fire_at ASC, id ASC
+    LIMIT sqlc.arg('batch_size')
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE agent_task_queue AS task
+SET status = 'queued'
+FROM due
+WHERE task.id = due.id
+  AND task.status = 'deferred'
+RETURNING task.*;
+
+-- name: ClaimPendingChannelChatTaskNotifications :many
+-- Claims due wake/runtime-launch handoffs by moving next_notify_at (fire_at)
+-- forward BEFORE any external side effect. If the worker dies after this
+-- commit, the same queued task becomes due again after retry_seconds. Once a
+-- daemon claims it, status leaves queued and retries stop naturally. The
+-- runtime launch lease suppresses redundant FC/E2B launches that are already
+-- in progress on another replica.
+WITH pending AS (
+    SELECT id
+    FROM agent_task_queue
+    WHERE status = 'queued'
+      AND chat_session_id IS NOT NULL
+      AND fire_at <= now()
+      AND (
+          runtime_launch_lease_expires_at IS NULL
+          OR runtime_launch_lease_expires_at <= now()
+      )
+    ORDER BY fire_at ASC, id ASC
+    LIMIT sqlc.arg('batch_size')
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE agent_task_queue AS task
+SET fire_at = now() + make_interval(secs => sqlc.arg('retry_seconds')::double precision)
+FROM pending
+WHERE task.id = pending.id
+  AND task.status = 'queued'
+RETURNING task.*;
 
 -- name: CancelDeferredEscalationsForTask :many
 UPDATE agent_task_queue

@@ -215,6 +215,10 @@ type Handler struct {
 	// delivering events, to flush debounced run triggers and join in-flight
 	// reply goroutines. Built unconditionally (even without Lark).
 	ChannelRouter *engine.Router
+	// DingTalkStreamInbox is the durable admission worker for Stream callbacks.
+	// The connector commits encrypted callback payloads here before ACK; main
+	// runs the worker pool and joins it after Stream connections have stopped.
+	DingTalkStreamInbox *dingtalk.StreamInboxWorker
 	// SlackInstall owns the bring-your-own-app Slack install lifecycle (register
 	// pasted tokens / list / revoke) and the at-rest encryption of each app's bot
 	// + app tokens (MUL-3666). Nil unless MULTICA_SLACK_SECRET_KEY is set.

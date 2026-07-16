@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -39,6 +41,7 @@ type fakeSessionQueries struct {
 	nextSession     byte
 	createdSessions int
 	messages        []string
+	messageTaskIDs  []pgtype.UUID
 	touched         int
 	replyTargets    int
 	lastConfig      []byte // config of the most recent CreateChannelChatSessionBinding
@@ -48,6 +51,9 @@ type fakeSessionQueries struct {
 	markRows         int64   // MarkChannelInboundDedupProcessed result
 	createBindingErr error   // simulate a unique violation on create
 	raceWinner       pgtype.UUID
+	upsertedTask     db.AgentTaskQueue
+	upsertTaskCalls  int
+	upsertTaskErr    error
 }
 
 func newFake() *fakeSessionQueries {
@@ -83,8 +89,26 @@ func (f *fakeSessionQueries) CreateChannelChatSessionBinding(_ context.Context, 
 	return db.ChannelChatSessionBinding{ChatSessionID: arg.ChatSessionID}, nil
 }
 
+func (f *fakeSessionQueries) UpsertDeferredChannelChatTask(_ context.Context, arg db.UpsertDeferredChannelChatTaskParams) (db.AgentTaskQueue, error) {
+	f.upsertTaskCalls++
+	if f.upsertTaskErr != nil {
+		return db.AgentTaskQueue{}, f.upsertTaskErr
+	}
+	task := db.AgentTaskQueue{
+		ID:            arg.ID,
+		AgentID:       arg.AgentID,
+		RuntimeID:     arg.RuntimeID,
+		ChatSessionID: arg.ChatSessionID,
+		Status:        "deferred",
+		FireAt:        pgtype.Timestamptz{Time: time.Now().Add(3 * time.Second), Valid: true},
+	}
+	f.upsertedTask = task
+	return task, nil
+}
+
 func (f *fakeSessionQueries) CreateChatMessage(_ context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error) {
 	f.messages = append(f.messages, arg.Content)
+	f.messageTaskIDs = append(f.messageTaskIDs, arg.TaskID)
 	return db.ChatMessage{}, nil
 }
 
@@ -262,6 +286,92 @@ func TestAppendUserMessage_PlainText(t *testing.T) {
 	}
 	if f.touched != 1 || f.replyTargets != 1 {
 		t.Errorf("touched=%d replyTargets=%d, want 1/1", f.touched, f.replyTargets)
+	}
+}
+
+func TestAppendUserMessage_DurableTaskAndMessageShareTransaction(t *testing.T) {
+	f := newFake()
+	s := newTestSession(f)
+	prepared := &service.PreparedChannelChatTask{
+		ID:                   uid(9),
+		AgentID:              uid(2),
+		RuntimeID:            uid(3),
+		InitiatorUserID:      uid(7),
+		OriginatorUserID:     uid(7),
+		ForceFreshSession:    true,
+		TaskContext:          []byte(`{"source":"dingtalk"}`),
+		RuntimeMCPOverlay:    []byte(`{"mcpServers":{}}`),
+		RuntimeConnectedApps: []byte(`[]`),
+		DebounceSeconds:      3,
+	}
+
+	res, err := s.AppendUserMessage(context.Background(), AppendInput{
+		SessionID:      uid(1),
+		Sender:         uid(7),
+		InstallationID: uid(8),
+		Body:           "durable",
+		MessageID:      "m-durable",
+		PreparedTask:   prepared,
+	})
+	if err != nil {
+		t.Fatalf("AppendUserMessage: %v", err)
+	}
+	if f.upsertTaskCalls != 1 || f.upsertedTask.ID != prepared.ID {
+		t.Fatalf("durable task upsert = (%d, %v), want (1, %v)", f.upsertTaskCalls, f.upsertedTask.ID, prepared.ID)
+	}
+	if len(f.messageTaskIDs) != 1 || f.messageTaskIDs[0] != prepared.ID {
+		t.Fatalf("message task ids = %v, want [%v]", f.messageTaskIDs, prepared.ID)
+	}
+	if res.TaskID != prepared.ID || !res.TaskFireAt.Valid {
+		t.Fatalf("append result task = (%v, %v), want durable task and fire_at", res.TaskID, res.TaskFireAt)
+	}
+}
+
+func TestAppendUserMessage_DurableTaskFailurePreventsMessage(t *testing.T) {
+	f := newFake()
+	f.upsertTaskErr = fmt.Errorf("database unavailable")
+	s := newTestSession(f)
+	_, err := s.AppendUserMessage(context.Background(), AppendInput{
+		SessionID: uid(1),
+		Body:      "must not land",
+		MessageID: "m-durable-fail",
+		PreparedTask: &service.PreparedChannelChatTask{
+			ID: uid(9), AgentID: uid(2), RuntimeID: uid(3),
+			InitiatorUserID: uid(7), OriginatorUserID: uid(7), DebounceSeconds: 3,
+		},
+	})
+	if err == nil {
+		t.Fatal("durable task upsert failure must fail the append")
+	}
+	if len(f.messages) != 0 {
+		t.Fatalf("message landed without its durable task: %v", f.messages)
+	}
+}
+
+func TestAppendUserMessage_IssueCommandNeverCreatesDeferredChatTask(t *testing.T) {
+	f := newFake()
+	s := newTestSession(f)
+	res, err := s.AppendUserMessage(context.Background(), AppendInput{
+		SessionID:   uid(1),
+		Body:        "/issue Fix once",
+		CommandText: "/issue Fix once",
+		MessageID:   "m-issue",
+		PreparedTask: &service.PreparedChannelChatTask{
+			ID: uid(9), AgentID: uid(2), RuntimeID: uid(3),
+			InitiatorUserID: uid(7), OriginatorUserID: uid(7), DebounceSeconds: 3,
+		},
+	})
+	if err != nil {
+		t.Fatalf("AppendUserMessage: %v", err)
+	}
+	if res.IssueCommand == nil || res.IssueCommand.Title != "Fix once" {
+		t.Fatalf("issue command = %+v", res.IssueCommand)
+	}
+	if f.upsertTaskCalls != 0 || res.TaskID.Valid {
+		t.Fatalf("/issue created deferred chat task: calls=%d task=%v", f.upsertTaskCalls, res.TaskID)
+	}
+	if len(f.messageTaskIDs) != 1 || f.messageTaskIDs[0].Valid {
+		t.Fatalf("/issue message task ids = %v, want NULL", f.messageTaskIDs)
 	}
 }
 

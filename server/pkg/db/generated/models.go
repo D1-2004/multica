@@ -491,6 +491,33 @@ type DingtalkInstallSession struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type DingtalkStreamInbox struct {
+	ID               pgtype.UUID        `json:"id"`
+	InstallationID   pgtype.UUID        `json:"installation_id"`
+	ClientID         string             `json:"client_id"`
+	ConnectionID     string             `json:"connection_id"`
+	NodeID           string             `json:"node_id"`
+	DedupeKey        string             `json:"dedupe_key"`
+	StreamMessageID  string             `json:"stream_message_id"`
+	BotMessageID     pgtype.Text        `json:"bot_message_id"`
+	Topic            string             `json:"topic"`
+	SpecVersion      pgtype.Text        `json:"spec_version"`
+	FrameTime        pgtype.Int8        `json:"frame_time"`
+	PayloadEncrypted []byte             `json:"payload_encrypted"`
+	Status           string             `json:"status"`
+	DeliveryCount    int32              `json:"delivery_count"`
+	AttemptCount     int32              `json:"attempt_count"`
+	AvailableAt      pgtype.Timestamptz `json:"available_at"`
+	LeaseToken       pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt   pgtype.Timestamptz `json:"lease_expires_at"`
+	LastErrorClass   pgtype.Text        `json:"last_error_class"`
+	LastError        pgtype.Text        `json:"last_error"`
+	ReceivedAt       pgtype.Timestamptz `json:"received_at"`
+	LastReceivedAt   pgtype.Timestamptz `json:"last_received_at"`
+	ProcessedAt      pgtype.Timestamptz `json:"processed_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type FcE2bSandboxSession struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`

@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -140,6 +143,47 @@ func appURLFromEnv() string {
 		return v
 	}
 	return strings.TrimRight(strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")), "/")
+}
+
+// dingTalkStreamConnectionTarget implements the staged ownership cutover for
+// DingTalk Stream connections:
+//
+//   - absent: keep the PostgreSQL singleton lease while running the new durable
+//     inbox connector (safe while older binaries still exist);
+//   - 1 or 2: make Redis the sole ownership authority with that READY target.
+//
+// There is deliberately no automatic Redis fallback. Once an operator opts in
+// with 1/2, a missing Redis client is a startup configuration error.
+func dingTalkStreamConnectionTarget() (target int, coordinated bool, err error) {
+	raw := strings.TrimSpace(os.Getenv("MULTICA_DINGTALK_STREAM_CONNECTION_TARGET"))
+	if raw == "" {
+		return 0, false, nil
+	}
+	target, err = strconv.Atoi(raw)
+	if err != nil || (target != 1 && target != 2) {
+		return 0, false, fmt.Errorf("MULTICA_DINGTALK_STREAM_CONNECTION_TARGET must be empty, 1, or 2")
+	}
+	return target, true, nil
+}
+
+func dingTalkStreamCoordinatorFromEnv(rdb *redis.Client) (engine.StreamCoordinator, int, bool, error) {
+	target, coordinated, err := dingTalkStreamConnectionTarget()
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if !coordinated {
+		return nil, 0, false, nil
+	}
+	if rdb == nil {
+		return nil, 0, false, errors.New("MULTICA_DINGTALK_STREAM_CONNECTION_TARGET requires Redis")
+	}
+	coordinator, err := engine.NewRedisStreamCoordinator(rdb, engine.RedisStreamCoordinatorConfig{
+		TargetReady: target,
+	})
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("initialize DingTalk Stream coordinator: %w", err)
+	}
+	return coordinator, target, true, nil
 }
 
 // parseTrustedProxies parses a comma-separated list of CIDR prefixes from the
@@ -417,6 +461,36 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// connection of its own outside the per-installation supervisor. The Router
 	// is the single shared inbound handler injected into every Channel.
 	channelRegistry := channel.NewRegistry()
+	channelSupervisorConfig := engine.Config{}
+	dingtalkStreamCoordinator, dingtalkStreamTarget, dingtalkStreamCoordinated, coordinatorErr := dingTalkStreamCoordinatorFromEnv(rdb)
+	if coordinatorErr != nil {
+		// NewRouterWithOptions predates startup-error returns. Panicking here is
+		// intentional: an explicit Redis ownership setting must never leave the
+		// process healthy with its DingTalk connector silently disabled.
+		slog.Error("dingtalk stream coordinator startup configuration failed",
+			"event", "dingtalk_stream_coordinator_startup_failed",
+			"error_class", "configuration",
+			"error", coordinatorErr,
+		)
+		panic(coordinatorErr)
+	}
+	if dingtalkStreamCoordinated {
+		channelSupervisorConfig.StreamCoordinators = map[channel.Type]engine.StreamCoordinator{
+			dingtalk.TypeDingtalk: dingtalkStreamCoordinator,
+		}
+		slog.Info("dingtalk stream coordinator configured",
+			"event", "dingtalk_stream_coordinator_configured",
+			"coordination_mode", "redis",
+			"target_ready", dingtalkStreamTarget,
+			"lease_ttl_ms", dingtalkStreamCoordinator.LeaseTTL().Milliseconds(),
+		)
+	} else {
+		slog.Info("dingtalk stream coordinator using rollout-safe singleton lease",
+			"event", "dingtalk_stream_coordinator_configured",
+			"coordination_mode", "postgres_singleton",
+			"target_ready", 1,
+		)
+	}
 	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{Logger: slog.Default()})
 	// So an inbound DingTalk/Slack/Lark message appears in a web client
 	// watching the same chat without a reload: the engine writes through the
@@ -430,7 +504,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		lark.NewChannelInstallationStore(queries),
 		channelRegistry,
 		channelRouter.Handle,
-		engine.Config{},
+		channelSupervisorConfig,
 	)
 	// A freshly-installed bot must not wait out the sweep PollInterval
 	// (default 30s) before its connection opens: platform pushes in that
@@ -680,11 +754,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			} else {
 				h.DingTalkInstallations = installSvc
 
-				// Inbound channel (DingTalk Stream Mode). The registered Factory
-				// makes the engine.Supervisor open one Stream connection per
-				// active dingtalk installation; the ResolverSet runs the shared
-				// inbound pipeline (identity binding, dedup, chat session,
-				// /issue, run trigger) over the generic channel_* tables.
+				// Inbound channel (DingTalk Stream Mode). The rollout starts on the
+				// PostgreSQL singleton lease and explicitly cuts over to Redis global
+				// coordination. Both modes commit each encrypted callback to the same
+				// durable inbox before ACK.
 				dtMessenger := dingtalk.NewRobotMessenger(os.Getenv("DINGTALK_OPENAPI_BASE"), os.Getenv("DINGTALK_OAPI_BASE"), nil)
 				dtBindingSvc := dingtalk.NewBindingTokenService(queries, pool)
 				h.DingTalkBindingTokens = dtBindingSvc
@@ -713,13 +786,33 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					orgemphsf.NewClient(),
 				))
 				dingtalk.NewOutbound(queries, box.Open, dtMessenger, dtTyping, slog.Default()).Register(bus)
+				streamInbox := dingtalk.NewStreamInboxWorker(
+					pool,
+					channelRouter.Handle,
+					box.Seal,
+					box.Open,
+					slog.Default(),
+				)
+				h.DingTalkStreamInbox = streamInbox
 				dingtalk.RegisterDingTalk(channelRegistry, dingtalk.ChannelDeps{
 					Decrypt:     box.Open,
 					Logger:      slog.Default(),
+					Inbox:       streamInbox,
 					OpenAPIBase: os.Getenv("DINGTALK_OPENAPI_BASE"),
 					Messenger:   dtMessenger,
 				})
-				slog.Info("dingtalk inbound pipeline wired", "connector", "stream-mode")
+				coordinationMode := "postgres_singleton"
+				effectiveTarget := 1
+				if dingtalkStreamCoordinated {
+					coordinationMode = "redis"
+					effectiveTarget = dingtalkStreamTarget
+				}
+				slog.Info("dingtalk inbound pipeline wired",
+					"event", "dingtalk_stream_connector_wired",
+					"connector", "stream-mode",
+					"coordination_mode", coordinationMode,
+					"target_ready", effectiveTarget,
+				)
 
 				// Device-flow registration. The base URL override exists for
 				// staging/mock endpoints; the optional source label is a

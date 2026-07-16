@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -41,6 +42,7 @@ type SessionQueries interface {
 	GetChannelChatSessionBinding(ctx context.Context, arg db.GetChannelChatSessionBindingParams) (db.ChannelChatSessionBinding, error)
 	CreateChatSession(ctx context.Context, arg db.CreateChatSessionParams) (db.ChatSession, error)
 	CreateChannelChatSessionBinding(ctx context.Context, arg db.CreateChannelChatSessionBindingParams) (db.ChannelChatSessionBinding, error)
+	UpsertDeferredChannelChatTask(ctx context.Context, arg db.UpsertDeferredChannelChatTaskParams) (db.AgentTaskQueue, error)
 	CreateChatMessage(ctx context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error)
 	TouchChatSession(ctx context.Context, id pgtype.UUID) error
 	GetMostRecentUserChatMessage(ctx context.Context, chatSessionID pgtype.UUID) (db.ChatMessage, error)
@@ -64,6 +66,9 @@ func (a dbSessionQueries) CreateChatSession(ctx context.Context, arg db.CreateCh
 }
 func (a dbSessionQueries) CreateChannelChatSessionBinding(ctx context.Context, arg db.CreateChannelChatSessionBindingParams) (db.ChannelChatSessionBinding, error) {
 	return a.q.CreateChannelChatSessionBinding(ctx, arg)
+}
+func (a dbSessionQueries) UpsertDeferredChannelChatTask(ctx context.Context, arg db.UpsertDeferredChannelChatTaskParams) (db.AgentTaskQueue, error) {
+	return a.q.UpsertDeferredChannelChatTask(ctx, arg)
 }
 func (a dbSessionQueries) CreateChatMessage(ctx context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error) {
 	return a.q.CreateChatMessage(ctx, arg)
@@ -250,6 +255,7 @@ type AppendInput struct {
 	MessageID      string
 	ThreadID       string
 	ClaimToken     pgtype.UUID
+	PreparedTask   *service.PreparedChannelChatTask
 }
 
 // AppendUserMessage writes the user message into the chat_session (touching it
@@ -281,10 +287,35 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 		}
 	}
 
+	var task db.AgentTaskQueue
+	if in.PreparedTask != nil && cmd == nil {
+		prepared := in.PreparedTask
+		task, err = qtx.UpsertDeferredChannelChatTask(ctx, db.UpsertDeferredChannelChatTaskParams{
+			ID:                   prepared.ID,
+			AgentID:              prepared.AgentID,
+			RuntimeID:            prepared.RuntimeID,
+			ChatSessionID:        in.SessionID,
+			InitiatorUserID:      prepared.InitiatorUserID,
+			OriginatorUserID:     prepared.OriginatorUserID,
+			ForceFreshSession:    pgtype.Bool{Bool: prepared.ForceFreshSession, Valid: true},
+			RuntimeMcpOverlay:    prepared.RuntimeMCPOverlay,
+			RuntimeConnectedApps: prepared.RuntimeConnectedApps,
+			TaskContext:          prepared.TaskContext,
+			DebounceSeconds:      prepared.DebounceSeconds,
+		})
+		if err != nil {
+			return AppendResult{}, fmt.Errorf("upsert deferred channel task: %w", err)
+		}
+		if !task.ID.Valid || !task.FireAt.Valid || task.ChatSessionID != in.SessionID || task.Status != "deferred" {
+			return AppendResult{}, fmt.Errorf("upsert deferred channel task returned invalid state")
+		}
+	}
+
 	msg, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
 		ChatSessionID: in.SessionID,
 		Role:          "user",
 		Content:       in.Body,
+		TaskID:        task.ID,
 	})
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("create chat message: %w", err)
@@ -336,6 +367,8 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 		MessageID:    msg.ID,
 		Content:      msg.Content,
 		CreatedAt:    msg.CreatedAt,
+		TaskID:       task.ID,
+		TaskFireAt:   task.FireAt,
 	}, nil
 }
 

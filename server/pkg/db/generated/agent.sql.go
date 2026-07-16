@@ -1011,6 +1011,101 @@ func (q *Queries) ClaimAgentTaskByID(ctx context.Context, arg ClaimAgentTaskByID
 	return i, err
 }
 
+const claimPendingChannelChatTaskNotifications = `-- name: ClaimPendingChannelChatTaskNotifications :many
+WITH pending AS (
+    SELECT id
+    FROM agent_task_queue
+    WHERE status = 'queued'
+      AND chat_session_id IS NOT NULL
+      AND fire_at <= now()
+      AND (
+          runtime_launch_lease_expires_at IS NULL
+          OR runtime_launch_lease_expires_at <= now()
+      )
+    ORDER BY fire_at ASC, id ASC
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE agent_task_queue AS task
+SET fire_at = now() + make_interval(secs => $1::double precision)
+FROM pending
+WHERE task.id = pending.id
+  AND task.status = 'queued'
+RETURNING task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.runtime_launch_lease_token, task.runtime_launch_lease_expires_at
+`
+
+type ClaimPendingChannelChatTaskNotificationsParams struct {
+	RetrySeconds float64 `json:"retry_seconds"`
+	BatchSize    int32   `json:"batch_size"`
+}
+
+// Claims due wake/runtime-launch handoffs by moving next_notify_at (fire_at)
+// forward BEFORE any external side effect. If the worker dies after this
+// commit, the same queued task becomes due again after retry_seconds. Once a
+// daemon claims it, status leaves queued and retries stop naturally. The
+// runtime launch lease suppresses redundant FC/E2B launches that are already
+// in progress on another replica.
+func (q *Queries) ClaimPendingChannelChatTaskNotifications(ctx context.Context, arg ClaimPendingChannelChatTaskNotificationsParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, claimPendingChannelChatTaskNotifications, arg.RetrySeconds, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.RuntimeLaunchLeaseToken,
+			&i.RuntimeLaunchLeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const clearAgentComposioToolkitAllowlist = `-- name: ClearAgentComposioToolkitAllowlist :one
 UPDATE agent SET composio_toolkit_allowlist = NULL, updated_at = now()
 WHERE id = $1
@@ -3863,11 +3958,97 @@ func (q *Queries) MergeCommentIntoPendingTask(ctx context.Context, arg MergeComm
 	return i, err
 }
 
+const promoteDueDeferredChannelChatTasks = `-- name: PromoteDueDeferredChannelChatTasks :many
+WITH due AS (
+    SELECT id
+    FROM agent_task_queue
+    WHERE status = 'deferred'
+      AND chat_session_id IS NOT NULL
+      AND fire_at <= now()
+    ORDER BY fire_at ASC, id ASC
+    LIMIT $1
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE agent_task_queue AS task
+SET status = 'queued'
+FROM due
+WHERE task.id = due.id
+  AND task.status = 'deferred'
+RETURNING task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.runtime_launch_lease_token, task.runtime_launch_lease_expires_at
+`
+
+// Globally promotes due channel-chat debounce batches. Multiple API replicas
+// may run this worker; row locks plus the status predicate make the transition
+// single-winner. fire_at intentionally remains set after promotion: it is the
+// durable marker that the queued task still needs its wake/runtime-launch
+// handoff. While queued, the notification worker treats it as next_notify_at.
+func (q *Queries) PromoteDueDeferredChannelChatTasks(ctx context.Context, batchSize int32) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, promoteDueDeferredChannelChatTasks, batchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.RuntimeLaunchLeaseToken,
+			&i.RuntimeLaunchLeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const promoteDueDeferredTasksForRuntime = `-- name: PromoteDueDeferredTasksForRuntime :many
 UPDATE agent_task_queue
 SET status = 'queued'
 WHERE runtime_id = $1
   AND status = 'deferred'
+  AND chat_session_id IS NULL
   AND fire_at <= now()
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, runtime_launch_lease_token, runtime_launch_lease_expires_at
 `
@@ -3938,6 +4119,7 @@ UPDATE agent_task_queue
 SET status = 'queued'
 WHERE runtime_id = ANY($1::uuid[])
   AND status = 'deferred'
+  AND chat_session_id IS NULL
   AND fire_at <= now()
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, runtime_launch_lease_token, runtime_launch_lease_expires_at
 `

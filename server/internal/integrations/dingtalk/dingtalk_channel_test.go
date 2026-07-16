@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,6 +30,53 @@ type fakeStreamServer struct {
 	conn     *websocket.Conn
 	acks     chan streamFrameResponse
 	connOpen chan struct{}
+}
+
+type fakeStreamInbox struct {
+	mu sync.Mutex
+
+	admissions  []StreamFrameAdmission
+	clientIDs   []string
+	notifyCount int
+	persistErr  error
+	receipt     StreamInboxReceipt
+	entered     chan struct{}
+	release     chan struct{}
+}
+
+func (f *fakeStreamInbox) PersistFrame(
+	ctx context.Context,
+	clientID string,
+	frame StreamFrameAdmission,
+) (StreamInboxReceipt, error) {
+	if f.entered != nil {
+		select {
+		case f.entered <- struct{}{}:
+		default:
+		}
+	}
+	if f.release != nil {
+		select {
+		case <-ctx.Done():
+			return StreamInboxReceipt{}, ctx.Err()
+		case <-f.release:
+		}
+	}
+	if f.persistErr != nil {
+		return StreamInboxReceipt{}, f.persistErr
+	}
+	f.mu.Lock()
+	f.clientIDs = append(f.clientIDs, clientID)
+	f.admissions = append(f.admissions, frame)
+	receipt := f.receipt
+	f.mu.Unlock()
+	return receipt, nil
+}
+
+func (f *fakeStreamInbox) Notify() {
+	f.mu.Lock()
+	f.notifyCount++
+	f.mu.Unlock()
 }
 
 func newFakeStreamServer(t *testing.T) (*fakeStreamServer, *httptest.Server) {
@@ -101,9 +149,20 @@ func (f *fakeStreamServer) waitAck(t *testing.T) streamFrameResponse {
 	}
 }
 
+func (f *fakeStreamServer) assertNoAck(t *testing.T, wait time.Duration) {
+	t.Helper()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case ack := <-f.acks:
+		t.Fatalf("unexpected ACK: %+v", ack)
+	case <-timer.C:
+	}
+}
+
 // newTestChannel builds a dingtalkChannel against the fake server with a
-// recording inbound handler.
-func newTestChannel(t *testing.T, srvURL string, handler channel.InboundHandler) *dingtalkChannel {
+// durable inbox stand-in.
+func newTestChannel(t *testing.T, srvURL string, inbox StreamInbox) *dingtalkChannel {
 	t.Helper()
 	box, err := secretbox.New(make([]byte, 32))
 	if err != nil {
@@ -117,8 +176,14 @@ func newTestChannel(t *testing.T, srvURL string, handler channel.InboundHandler)
 	if err != nil {
 		t.Fatalf("encode config: %v", err)
 	}
-	factory := newDingTalkFactory(ChannelDeps{Decrypt: box.Open, OpenAPIBase: srvURL})
-	ch, err := factory(channel.Config{Type: TypeDingtalk, Raw: cfg, Handler: handler})
+	factory := newDingTalkFactory(ChannelDeps{Decrypt: box.Open, OpenAPIBase: srvURL, Inbox: inbox})
+	ch, err := factory(channel.Config{
+		Type:           TypeDingtalk,
+		Raw:            cfg,
+		InstallationID: "00000000-0000-0000-0000-000000000020",
+		ConnectionID:   "node-a-g1",
+		NodeID:         "node-a",
+	})
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
@@ -145,16 +210,15 @@ func botCallbackFrame(t *testing.T, data botCallbackData) streamFrame {
 
 func TestChannelConnectHandlesPingCallbackAndDisconnect(t *testing.T) {
 	f, srv := newFakeStreamServer(t)
-
-	var mu sync.Mutex
-	var received []channel.InboundMessage
-	handler := func(ctx context.Context, msg channel.InboundMessage) error {
-		mu.Lock()
-		defer mu.Unlock()
-		received = append(received, msg)
-		return nil
+	inbox := &fakeStreamInbox{
+		receipt: StreamInboxReceipt{
+			ID:             "inbox-1",
+			InstallationID: "installation-1",
+			Status:         "queued",
+			DeliveryCount:  1,
+		},
 	}
-	ch := newTestChannel(t, srv.URL, handler)
+	ch := newTestChannel(t, srv.URL, inbox)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -190,7 +254,8 @@ func TestChannelConnectHandlesPingCallbackAndDisconnect(t *testing.T) {
 		t.Errorf("pong = %+v", pong)
 	}
 
-	// CALLBACK bot message → ACK + normalized inbound delivery.
+	// CALLBACK bot message → durable admission, then ACK. Dispatch belongs to
+	// the asynchronous inbox worker and is deliberately absent here.
 	f.sendFrame(t, botCallbackFrame(t, botCallbackData{
 		ConversationID:   "cidXXX==",
 		MsgID:            "msg_1",
@@ -208,22 +273,22 @@ func TestChannelConnectHandlesPingCallbackAndDisconnect(t *testing.T) {
 		t.Errorf("callback ack = %+v", ack)
 	}
 	waitFor(t, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return len(received) == 1
-	}, "inbound delivery")
-	mu.Lock()
-	msg := received[0]
-	mu.Unlock()
-	if msg.MessageID != "msg_1" || msg.Text != "你好" || msg.Source.SenderID != "staff_1" {
-		t.Errorf("inbound = %+v", msg)
+		inbox.mu.Lock()
+		defer inbox.mu.Unlock()
+		return len(inbox.admissions) == 1 && inbox.notifyCount == 1
+	}, "inbox admission")
+	inbox.mu.Lock()
+	admission := inbox.admissions[0]
+	clientID := inbox.clientIDs[0]
+	inbox.mu.Unlock()
+	if clientID != "ding_client" || admission.MessageID != "frame-1" || admission.Topic != streamTopicBotMessage {
+		t.Errorf("admission route = client %q frame %+v", clientID, admission)
 	}
-	if msg.Source.ChatType != channel.ChatTypeP2P || msg.Source.ChatID != "cidXXX==" {
-		t.Errorf("inbound source = %+v", msg.Source)
+	if admission.InstallationID != "00000000-0000-0000-0000-000000000020" || admission.ConnectionID != "node-a-g1" || admission.NodeID != "node-a" {
+		t.Errorf("admission source metadata = %+v", admission)
 	}
-	var raw dingtalkRawEvent
-	if err := json.Unmarshal(msg.Raw, &raw); err != nil || raw.ClientID != "ding_client" || raw.SessionWebhook == "" {
-		t.Errorf("raw = %+v err=%v", raw, err)
+	if !strings.Contains(admission.Data, `"sessionWebhook"`) || !strings.Contains(admission.Data, `"msg_1"`) {
+		t.Errorf("admission data did not preserve callback payload")
 	}
 
 	// SYSTEM disconnect → Connect returns an error so the supervisor
@@ -244,7 +309,7 @@ func TestChannelConnectHandlesPingCallbackAndDisconnect(t *testing.T) {
 
 func TestChannelConnectReturnsNilOnContextCancel(t *testing.T) {
 	f, srv := newFakeStreamServer(t)
-	ch := newTestChannel(t, srv.URL, func(context.Context, channel.InboundMessage) error { return nil })
+	ch := newTestChannel(t, srv.URL, &fakeStreamInbox{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	connectErr := make(chan error, 1)
@@ -265,10 +330,12 @@ func TestChannelConnectReturnsNilOnContextCancel(t *testing.T) {
 	}
 }
 
-func TestChannelConnectPropagatesHandlerInfraError(t *testing.T) {
+func TestChannelDoesNotAckWhenInboxCommitFails(t *testing.T) {
 	f, srv := newFakeStreamServer(t)
 	infra := errors.New("db down")
-	ch := newTestChannel(t, srv.URL, func(context.Context, channel.InboundMessage) error { return infra })
+	ch := newTestChannel(t, srv.URL, &fakeStreamInbox{persistErr: infra})
+	var logs strings.Builder
+	ch.logger = slog.New(slog.NewJSONHandler(&logs, nil))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -282,17 +349,109 @@ func TestChannelConnectPropagatesHandlerInfraError(t *testing.T) {
 	f.sendFrame(t, botCallbackFrame(t, botCallbackData{
 		ConversationID: "cid", MsgID: "m1", SenderStaffID: "s1", ConversationType: "2", Msgtype: "text",
 	}))
-	// The ACK still goes out before the handler runs.
-	if ack := f.waitAck(t); ack.Code != streamAckCodeOK {
-		t.Errorf("ack = %+v", ack)
-	}
 	select {
 	case err := <-connectErr:
 		if !errors.Is(err, infra) {
-			t.Errorf("Connect error = %v, want handler infra error", err)
+			t.Errorf("Connect error = %v, want inbox commit error", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Connect did not propagate handler error")
+		t.Fatal("Connect did not propagate inbox commit error")
+	}
+	f.assertNoAck(t, 150*time.Millisecond)
+	for _, field := range []string{
+		"dingtalk_stream_callback_admission_failed",
+		"00000000-0000-0000-0000-000000000020",
+		"node-a-g1",
+		"node-a",
+		streamInboxTraceHash("frame-1"),
+	} {
+		if !strings.Contains(logs.String(), field) {
+			t.Errorf("admission failure logs missing %q: %s", field, logs.String())
+		}
+	}
+}
+
+func TestChannelCommitsBeforeCallbackAck(t *testing.T) {
+	f, srv := newFakeStreamServer(t)
+	inbox := &fakeStreamInbox{
+		receipt: StreamInboxReceipt{InstallationID: "installation-1", Status: "queued", DeliveryCount: 1},
+		entered: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	ch := newTestChannel(t, srv.URL, inbox)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	connectErr := make(chan error, 1)
+	go func() { connectErr <- ch.Connect(ctx) }()
+	select {
+	case <-f.connOpen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection never opened")
+	}
+	f.sendFrame(t, botCallbackFrame(t, botCallbackData{
+		ConversationID: "cid", MsgID: "m1", SenderStaffID: "s1", ConversationType: "2", Msgtype: "text",
+	}))
+	select {
+	case <-inbox.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("callback did not enter inbox admission")
+	}
+	f.assertNoAck(t, 150*time.Millisecond)
+	close(inbox.release)
+	if ack := f.waitAck(t); ack.Code != streamAckCodeOK {
+		t.Errorf("ack = %+v", ack)
+	}
+}
+
+func TestChannelMarksReadyBeforeReadingFirstFrame(t *testing.T) {
+	f, srv := newFakeStreamServer(t)
+	ch := newTestChannel(t, srv.URL, &fakeStreamInbox{})
+	readyEntered := make(chan struct{}, 1)
+	readyRelease := make(chan struct{})
+	ch.onReady = func(ctx context.Context) error {
+		readyEntered <- struct{}{}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-readyRelease:
+			return nil
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	connectErr := make(chan error, 1)
+	go func() { connectErr <- ch.Connect(ctx) }()
+	select {
+	case <-f.connOpen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection never opened")
+	}
+	select {
+	case <-readyEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ready barrier was not entered")
+	}
+
+	f.sendFrame(t, streamFrame{
+		Type:    streamFrameTypeSystem,
+		Headers: map[string]string{streamHeaderTopic: streamTopicPing, streamHeaderMessageID: "ping-before-ready"},
+		Data:    `{"ts": 1}`,
+	})
+	f.assertNoAck(t, 150*time.Millisecond)
+	close(readyRelease)
+	if ack := f.waitAck(t); ack.Headers[streamHeaderMessageID] != "ping-before-ready" {
+		t.Fatalf("pong after ready = %+v", ack)
+	}
+	cancel()
+	select {
+	case err := <-connectErr:
+		if err != nil {
+			t.Fatalf("Connect after cancel = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Connect did not stop")
 	}
 }
 

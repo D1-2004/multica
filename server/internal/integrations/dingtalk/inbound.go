@@ -113,6 +113,10 @@ type dingtalkRawEvent struct {
 	// rather than read from the payload, mirroring how each Slack
 	// connection only ever delivers its own app's events.
 	ClientID string `json:"client_id"`
+	// InstallationID is the immutable admission-time routing fence. Durable
+	// inbox callbacks must resolve this exact row instead of following an app_id
+	// that may have been reclaimed by another workspace before processing.
+	InstallationID string `json:"installation_id,omitempty"`
 	// SessionWebhook is the per-message reply webhook (valid ~90 min);
 	// the OutboundReplier posts verdict replies through it with no
 	// access token or API permission needed.
@@ -132,6 +136,10 @@ type dingtalkRawEvent struct {
 // drops payloads that must not reach the core (no message id — nothing
 // to dedup on).
 func inboundFromBotCallback(data botCallbackData, clientID string) (channel.InboundMessage, bool) {
+	return inboundFromBotCallbackForInstallation(data, clientID, "")
+}
+
+func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, installationID string) (channel.InboundMessage, bool) {
 	if data.MsgID == "" {
 		return channel.InboundMessage{}, false
 	}
@@ -148,6 +156,7 @@ func inboundFromBotCallback(data botCallbackData, clientID string) (channel.Inbo
 	}
 	raw, _ := json.Marshal(dingtalkRawEvent{
 		ClientID:                  clientID,
+		InstallationID:            installationID,
 		SessionWebhook:            data.SessionWebhook,
 		SessionWebhookExpiredTime: data.SessionWebhookExpiredTime,
 		SenderStaffID:             data.SenderStaffID,
