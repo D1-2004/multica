@@ -2,6 +2,7 @@ package dingtalk
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -197,17 +198,34 @@ func TestDingTalkSessionRouting(t *testing.T) {
 		ConversationID: "cidGRP==", MsgID: "m2", SenderStaffID: "staff1", ConversationType: "2", Msgtype: "text",
 	}, "c")
 	key, cfg = dingtalkSessionRouting(grp)
-	if key != "cidGRP==" {
-		t.Errorf("group binding key = %q", key)
+	if key == "cidGRP==" || !strings.HasPrefix(key, "cidGRP==:sender:v1:") {
+		t.Errorf("group binding key = %q, want sender-isolated key", key)
 	}
 	var groupCfg dingtalkBindingConfig
 	if err := json.Unmarshal(cfg, &groupCfg); err != nil {
 		t.Fatalf("group config decode: %v", err)
 	}
-	// Group sessions must NOT pin a staff id — the reply target is the
-	// conversation itself.
+	// Group sessions do not pin a DM target; the real conversation id remains
+	// available for outbound even though the binding key is composite.
 	if groupCfg.SenderStaffID != "" {
 		t.Errorf("group binding config staff id = %q, want empty", groupCfg.SenderStaffID)
+	}
+	if groupCfg.OpenConversationID != "cidGRP==" {
+		t.Errorf("group open conversation id = %q", groupCfg.OpenConversationID)
+	}
+
+	sameSender := grp
+	sameSender.MessageID = "m3"
+	sameKey, _ := dingtalkSessionRouting(sameSender)
+	if sameKey != key {
+		t.Errorf("same group sender key changed: %q != %q", sameKey, key)
+	}
+	otherSender := grp
+	otherSender.Source.SenderID = "staff2"
+	otherSender.MessageID = "m4"
+	otherKey, _ := dingtalkSessionRouting(otherSender)
+	if otherKey == key {
+		t.Errorf("different group senders shared binding key %q", key)
 	}
 }
 

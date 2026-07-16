@@ -64,8 +64,9 @@ func outboundFixture(t *testing.T, rec *httptest.Server) (*Outbound, *TypingIndi
 	q := &fakeTypingQueries{
 		binding: db.ChannelChatSessionBinding{
 			InstallationID: instID,
-			ChannelChatID:  "cid",
+			ChannelChatID:  "cid:sender:hashed",
 			ChatType:       string(channel.ChatTypeGroup),
+			Config:         []byte(`{"open_conversation_id":"cid"}`),
 		},
 		inst: instRow,
 	}
@@ -73,6 +74,49 @@ func outboundFixture(t *testing.T, rec *httptest.Server) (*Outbound, *TypingIndi
 	// fakeTypingQueries satisfies outboundQueries too — same two methods.
 	out := NewOutbound(q, plaintextDecrypter, messenger, mgr, nil)
 	return out, mgr, q
+}
+
+func TestOutboundTargetUsesPersistedPlatformRouting(t *testing.T) {
+	tests := []struct {
+		name string
+		row  db.ChannelChatSessionBinding
+		want RobotTarget
+	}{
+		{
+			name: "sender-isolated group uses real conversation id",
+			row: db.ChannelChatSessionBinding{
+				ChatType:      string(channel.ChatTypeGroup),
+				ChannelChatID: "cid:sender:v1:hash",
+				Config:        []byte(`{"open_conversation_id":"cid"}`),
+			},
+			want: RobotTarget{OpenConversationID: "cid"},
+		},
+		{
+			name: "direct message uses sender staff id",
+			row: db.ChannelChatSessionBinding{
+				ChatType:      string(channel.ChatTypeP2P),
+				ChannelChatID: "cid-dm",
+				Config:        []byte(`{"sender_staff_id":"staff1"}`),
+			},
+			want: RobotTarget{UserStaffID: "staff1"},
+		},
+		{
+			name: "pre-isolation group remains routable during rollout",
+			row: db.ChannelChatSessionBinding{
+				ChatType:      string(channel.ChatTypeGroup),
+				ChannelChatID: "legacy-cid",
+				Config:        []byte(`{}`),
+			},
+			want: RobotTarget{OpenConversationID: "legacy-cid"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := outboundTarget(tc.row); got != tc.want {
+				t.Fatalf("outbound target = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestOutboundTaskFailedClearsTypingAndNotifies(t *testing.T) {
@@ -129,5 +173,8 @@ func TestOutboundChatDoneClearsTypingBeforeReply(t *testing.T) {
 	}
 	if len(rec.sends) != 1 {
 		t.Fatalf("expected the reply to be sent, got %d", len(rec.sends))
+	}
+	if got, _ := rec.sends[0]["openConversationId"].(string); got != "cid" {
+		t.Fatalf("reply target = %q, want real group conversation id", got)
 	}
 }

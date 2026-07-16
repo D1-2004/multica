@@ -51,8 +51,8 @@ type Source struct {
 	// owning Channel's Type.
 	ChannelType Type
 
-	// ChatID is the platform conversation identifier. One ChatID maps to
-	// one Multica chat_session via the channel_chat_session_binding.
+	// ChatID is the platform conversation identifier. A SessionBinder may map
+	// it directly or combine it with a thread/sender isolation key.
 	ChatID string
 
 	// ChatType discriminates direct from group conversations.
