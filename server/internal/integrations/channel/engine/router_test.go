@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -35,6 +37,15 @@ type fakeIdentity struct {
 
 func (f *fakeIdentity) ResolveSender(_ context.Context, _ ResolvedInstallation, _ channel.InboundMessage) (ResolvedIdentity, error) {
 	return f.id, f.err
+}
+
+type fakeTaskContext struct {
+	value []byte
+	err   error
+}
+
+func (f *fakeTaskContext) ResolveTaskContext(_ context.Context, _ ResolvedInstallation, _ channel.InboundMessage) ([]byte, error) {
+	return f.value, f.err
 }
 
 type fakeDedup struct {
@@ -75,6 +86,7 @@ type fakeBinder struct {
 	ensureErr    error
 	appendResult AppendResult
 	appendErr    error
+	appendCalls  int
 	lastEnsure   EnsureSessionParams
 	lastAppend   AppendParams
 }
@@ -84,6 +96,7 @@ func (f *fakeBinder) EnsureSession(_ context.Context, p EnsureSessionParams) (pg
 	return f.ensureID, f.ensureErr
 }
 func (f *fakeBinder) AppendMessage(_ context.Context, p AppendParams) (AppendResult, error) {
+	f.appendCalls++
 	f.lastAppend = p
 	return f.appendResult, f.appendErr
 }
@@ -246,6 +259,7 @@ type harness struct {
 	router   *Router
 	inst     *fakeInstaller
 	ident    *fakeIdentity
+	taskCtx  *fakeTaskContext
 	dedup    *fakeDedup
 	binder   *fakeBinder
 	audit    *fakeAuditor
@@ -262,6 +276,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{
 		inst:     &fakeInstaller{inst: activeResolved(t)},
 		ident:    &fakeIdentity{id: ResolvedIdentity{UserID: uuidFromString(t, "44444444-4444-4444-4444-444444444444")}},
+		taskCtx:  &fakeTaskContext{},
 		dedup:    &fakeDedup{token: uuidFromString(t, "55555555-5555-5555-5555-555555555555")},
 		binder:   &fakeBinder{ensureID: uuidFromString(t, "66666666-6666-6666-6666-666666666666"), appendResult: AppendResult{DedupMarked: true}},
 		audit:    &fakeAuditor{},
@@ -276,6 +291,7 @@ func newHarness(t *testing.T) *harness {
 	h.router.Register(channel.TypeFeishu, ResolverSet{
 		Installation: h.inst,
 		Identity:     h.ident,
+		TaskContext:  h.taskCtx,
 		Dedup:        h.dedup,
 		Session:      h.binder,
 		Audit:        h.audit,
@@ -392,6 +408,40 @@ func TestRouter_EnsureSessionError_Releases(t *testing.T) {
 	}
 	if h.dedup.releases() != 1 {
 		t.Fatalf("ensure-session error must Release the claim (1), got %d", h.dedup.releases())
+	}
+}
+
+func TestRouter_TaskContextRejected_DropsWithoutReconnecting(t *testing.T) {
+	h := newHarness(t)
+	h.taskCtx.err = fmt.Errorf("%w: invalid staff ID", ErrTaskContextRejected)
+
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("task-context rejection must not be an infrastructure error: %v", err)
+	}
+	if reason, _ := h.audit.last(); reason != DropReasonTaskContextRejected {
+		t.Fatalf("drop reason = %q, want %q", reason, DropReasonTaskContextRejected)
+	}
+	if h.dedup.marks() != 1 || h.dedup.releases() != 0 {
+		t.Fatalf("rejection must Mark without Release; marks=%d releases=%d", h.dedup.marks(), h.dedup.releases())
+	}
+	if h.binder.appendCalls != 0 || h.tasks.wasCalled() {
+		t.Fatalf("rejected task context must not append or enqueue; appends=%d enqueued=%t", h.binder.appendCalls, h.tasks.wasCalled())
+	}
+}
+
+func TestRouter_TaskContextInfrastructureError_Releases(t *testing.T) {
+	h := newHarness(t)
+	h.taskCtx.err = errors.New("HSF unavailable")
+
+	err := h.router.Handle(context.Background(), p2pMessage(t))
+	if err == nil || !strings.Contains(err.Error(), "resolve chat task context") {
+		t.Fatalf("infrastructure error = %v", err)
+	}
+	if h.dedup.releases() != 1 || h.dedup.marks() != 0 {
+		t.Fatalf("infrastructure error must Release without Mark; marks=%d releases=%d", h.dedup.marks(), h.dedup.releases())
+	}
+	if h.binder.appendCalls != 0 || h.tasks.wasCalled() {
+		t.Fatalf("failed task context must not append or enqueue; appends=%d enqueued=%t", h.binder.appendCalls, h.tasks.wasCalled())
 	}
 }
 

@@ -99,10 +99,14 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		"has_corp_id", strings.TrimSpace(raw.SenderCorpID) != "",
 	)
 	if strings.TrimSpace(raw.SenderStaffID) == "" || strings.TrimSpace(raw.SenderCorpID) == "" {
-		return nil, errors.New("DingTalk robot sender has no organization identity")
+		return nil, fmt.Errorf("%w: DingTalk robot sender has no organization identity", engine.ErrTaskContextRejected)
 	}
 	employee, err := r.employees.ResolveEmployeeByCorpID(ctx, raw.SenderCorpID, raw.SenderStaffID)
 	if err != nil {
+		var validationErr *orgemphsf.ValidationError
+		if errors.As(err, &validationErr) {
+			return nil, fmt.Errorf("%w: resolve DingTalk robot sender identity: %w", engine.ErrTaskContextRejected, err)
+		}
 		return nil, fmt.Errorf("resolve DingTalk robot sender identity: %w", err)
 	}
 	slog.Info("dingtalk robot DWS identity resolved")
