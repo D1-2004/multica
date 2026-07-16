@@ -608,6 +608,7 @@ describe("ApiClient", () => {
     await client.createFCE2BRuntime({
       name: "FC-Hermes",
       template_id: "multica-fc-hermes-v1",
+      provider: "hermes",
       visibility: "private",
     });
 
@@ -623,6 +624,7 @@ describe("ApiClient", () => {
       body: JSON.stringify({
         name: "FC-Hermes",
         template_id: "multica-fc-hermes-v1",
+        provider: "hermes",
         visibility: "private",
       }),
     });

@@ -239,7 +239,7 @@
   "fc_e2b_runtime": {
     "action": "クラウドサンドボックスを追加",
     "title": "クラウドサンドボックスを追加",
-    "description": "Choose an FC/E2B template and create an independent cloud Hermes runtime. The server owns timeout and the model catalog; each agent can select a model from that catalog.",
+    "description": "Choose an FC/E2B template and create an independent cloud sandbox runtime. The server owns timeout and the model catalog; each agent can select a model from that catalog.",
     "create": "ランタイムを作成",
     "creating": "作成中...",
     "cancel": "キャンセル",
@@ -252,8 +252,10 @@
     "templates_empty": "No templates available",
     "template_updated": "Updated {{time}}",
     "name_placeholder": "For example FC-Hermes-DWS",
+    "provider_hint": "このランタイムが実行するエージェント CLI。選択したテンプレートに含まれている必要があります。",
     "fields": {
       "template": "Template",
+      "provider": "ランタイム",
       "name": "名前",
       "visibility": "可視性"
     }
