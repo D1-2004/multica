@@ -82,6 +82,7 @@ WITH completed AS (
         workspace_id,
         dws_uid,
         org_id,
+        organization_name,
         account_display_name,
         account_avatar_url,
         bound_by,
@@ -95,6 +96,7 @@ WITH completed AS (
         $2,
         $5,
         $6,
+        $7,
         completed.initiator_user_id,
         now(),
         now()
@@ -103,15 +105,16 @@ WITH completed AS (
         workspace_id = EXCLUDED.workspace_id,
         dws_uid = EXCLUDED.dws_uid,
         org_id = EXCLUDED.org_id,
+        organization_name = EXCLUDED.organization_name,
         account_display_name = EXCLUDED.account_display_name,
         account_avatar_url = EXCLUDED.account_avatar_url,
         bound_by = EXCLUDED.bound_by,
         bound_at = EXCLUDED.bound_at,
         updated_at = EXCLUDED.updated_at
     WHERE agent_dingtalk_identity.workspace_id = EXCLUDED.workspace_id
-    RETURNING agent_dingtalk_identity.agent_id, agent_dingtalk_identity.workspace_id, agent_dingtalk_identity.dws_uid, agent_dingtalk_identity.org_id, agent_dingtalk_identity.account_display_name, agent_dingtalk_identity.account_avatar_url, agent_dingtalk_identity.bound_by, agent_dingtalk_identity.bound_at, agent_dingtalk_identity.updated_at
+    RETURNING agent_dingtalk_identity.agent_id, agent_dingtalk_identity.workspace_id, agent_dingtalk_identity.dws_uid, agent_dingtalk_identity.org_id, agent_dingtalk_identity.account_display_name, agent_dingtalk_identity.account_avatar_url, agent_dingtalk_identity.bound_by, agent_dingtalk_identity.bound_at, agent_dingtalk_identity.updated_at, agent_dingtalk_identity.organization_name
 )
-SELECT agent_id, workspace_id, dws_uid, org_id, account_display_name, account_avatar_url, bound_by, bound_at, updated_at FROM upserted
+SELECT agent_id, workspace_id, dws_uid, org_id, account_display_name, account_avatar_url, bound_by, bound_at, updated_at, organization_name FROM upserted
 `
 
 type CompleteAgentDingTalkIdentityAttemptParams struct {
@@ -119,6 +122,7 @@ type CompleteAgentDingTalkIdentityAttemptParams struct {
 	OrgID              pgtype.Text `json:"org_id"`
 	AttemptID          pgtype.UUID `json:"attempt_id"`
 	CallbackTokenHash  string      `json:"callback_token_hash"`
+	OrganizationName   string      `json:"organization_name"`
 	AccountDisplayName string      `json:"account_display_name"`
 	AccountAvatarUrl   string      `json:"account_avatar_url"`
 }
@@ -133,6 +137,7 @@ type CompleteAgentDingTalkIdentityAttemptRow struct {
 	BoundBy            pgtype.UUID        `json:"bound_by"`
 	BoundAt            pgtype.Timestamptz `json:"bound_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	OrganizationName   string             `json:"organization_name"`
 }
 
 func (q *Queries) CompleteAgentDingTalkIdentityAttempt(ctx context.Context, arg CompleteAgentDingTalkIdentityAttemptParams) (CompleteAgentDingTalkIdentityAttemptRow, error) {
@@ -141,6 +146,7 @@ func (q *Queries) CompleteAgentDingTalkIdentityAttempt(ctx context.Context, arg 
 		arg.OrgID,
 		arg.AttemptID,
 		arg.CallbackTokenHash,
+		arg.OrganizationName,
 		arg.AccountDisplayName,
 		arg.AccountAvatarUrl,
 	)
@@ -155,6 +161,7 @@ func (q *Queries) CompleteAgentDingTalkIdentityAttempt(ctx context.Context, arg 
 		&i.BoundBy,
 		&i.BoundAt,
 		&i.UpdatedAt,
+		&i.OrganizationName,
 	)
 	return i, err
 }
@@ -176,7 +183,7 @@ func (q *Queries) DeleteAgentDingTalkIdentityAttempts(ctx context.Context, arg D
 }
 
 const getAgentDingTalkIdentity = `-- name: GetAgentDingTalkIdentity :one
-SELECT identity.agent_id, identity.workspace_id, identity.dws_uid, identity.org_id, identity.account_display_name, identity.account_avatar_url, identity.bound_by, identity.bound_at, identity.updated_at
+SELECT identity.agent_id, identity.workspace_id, identity.dws_uid, identity.org_id, identity.account_display_name, identity.account_avatar_url, identity.bound_by, identity.bound_at, identity.updated_at, identity.organization_name
 FROM agent_dingtalk_identity identity
 JOIN agent a
   ON a.id = identity.agent_id
@@ -203,6 +210,7 @@ func (q *Queries) GetAgentDingTalkIdentity(ctx context.Context, arg GetAgentDing
 		&i.BoundBy,
 		&i.BoundAt,
 		&i.UpdatedAt,
+		&i.OrganizationName,
 	)
 	return i, err
 }

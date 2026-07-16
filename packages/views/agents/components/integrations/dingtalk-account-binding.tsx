@@ -206,6 +206,13 @@ export function DingTalkAccountBindingCard({
                     )}
                   </p>
                   <div className="mt-1 space-y-1 text-xs text-muted-foreground">
+                    {dwsIdentityActive &&
+                    currentBinding.dwsIdentity.organizationName?.trim() ? (
+                      <p>
+                        {t(($) => $.tab_body.integrations.dingtalk_account_organization)}:{" "}
+                        {currentBinding.dwsIdentity.organizationName}
+                      </p>
+                    ) : null}
                     <p>
                       {t(($) => $.tab_body.integrations.dingtalk_account_dws_identity)}: {" "}
                       {dwsIdentityActive

@@ -42,6 +42,7 @@ import type { CreateFeedbackResponse } from "../feedback/types";
 const DingTalkAccountBindingOutcomeSchema = z
   .object({
     status: z.string(),
+    organization_name: z.string().nullable().optional(),
     account_display_name: z.string().nullable().optional(),
     account_avatar_url: z.string().nullable().optional(),
     bound_at: z.string().nullable().optional(),
@@ -49,6 +50,7 @@ const DingTalkAccountBindingOutcomeSchema = z
   .loose()
   .transform((outcome) => ({
     status: outcome.status,
+    organizationName: outcome.organization_name,
     accountDisplayName: outcome.account_display_name,
     accountAvatarUrl: outcome.account_avatar_url,
     boundAt: outcome.bound_at,

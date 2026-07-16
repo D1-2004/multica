@@ -41,10 +41,11 @@ type dingTalkAccountBindingCallbackRequest struct {
 }
 
 type dingTalkIdentityCallbackRequest struct {
-	AccountUID         string `json:"account_uid"`
-	AccountOrgID       string `json:"account_org_id"`
-	AccountDisplayName string `json:"account_display_name"`
-	AccountAvatarURL   string `json:"account_avatar_url"`
+	AccountUID              string `json:"account_uid"`
+	AccountOrgID            string `json:"account_org_id"`
+	AccountOrganizationName string `json:"account_organization_name"`
+	AccountDisplayName      string `json:"account_display_name"`
+	AccountAvatarURL        string `json:"account_avatar_url"`
 }
 
 func (h *Handler) ListDingTalkAccountBindings(w http.ResponseWriter, r *http.Request) {
@@ -189,12 +190,13 @@ func (h *Handler) CompleteDingTalkIdentityCallback(w http.ResponseWriter, r *htt
 		return
 	}
 	result, err := h.DingTalkAccountBindings.CompleteIdentityCallback(r.Context(), agentmessagerouter.IdentityCallbackParams{
-		AttemptID:          attemptID,
-		CallbackToken:      callbackToken,
-		AccountUID:         request.AccountUID,
-		AccountOrgID:       request.AccountOrgID,
-		AccountDisplayName: request.AccountDisplayName,
-		AccountAvatarURL:   request.AccountAvatarURL,
+		AttemptID:               attemptID,
+		CallbackToken:           callbackToken,
+		AccountUID:              request.AccountUID,
+		AccountOrgID:            request.AccountOrgID,
+		AccountOrganizationName: request.AccountOrganizationName,
+		AccountDisplayName:      request.AccountDisplayName,
+		AccountAvatarURL:        request.AccountAvatarURL,
 	})
 	if err != nil {
 		writeDingTalkAccountBindingError(w, err)

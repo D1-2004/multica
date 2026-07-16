@@ -641,6 +641,7 @@
       "dingtalk_account_new_qr": "生成新二维码",
       "dingtalk_account_close": "关闭",
       "dingtalk_account_connected": "已绑定企业数字员工",
+      "dingtalk_account_organization": "组织",
       "dingtalk_account_dws_identity": "DWS 身份",
       "dingtalk_account_message_route": "私聊路由",
       "dingtalk_account_status_active": "已生效",

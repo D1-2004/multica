@@ -61,6 +61,7 @@ const activeBinding = {
   agentId: "agent-1",
   dwsIdentity: {
     status: "active",
+    organizationName: "Alibaba Group",
     accountDisplayName: "Zhang San",
     accountAvatarUrl: "https://example.test/avatar.png",
     boundAt: "2026-07-14T09:30:00Z",
@@ -201,6 +202,7 @@ describe("DingTalkAccountBindingCard", () => {
     renderCard();
 
     expect(await screen.findByText("Zhang San")).toBeInTheDocument();
+    expect(screen.getByText(/Organization:\s*Alibaba Group/i)).toBeInTheDocument();
     expect(screen.getByText(/DWS identity:\s*Active/i)).toBeInTheDocument();
     expect(screen.getByText(/Direct message route:\s*Pending/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();

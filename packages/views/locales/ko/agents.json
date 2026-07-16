@@ -544,6 +544,7 @@
       "dingtalk_account_new_qr": "새 QR 코드 생성",
       "dingtalk_account_close": "닫기",
       "dingtalk_account_connected": "기업 디지털 직원 바인딩됨",
+      "dingtalk_account_organization": "조직",
       "dingtalk_account_dws_identity": "DWS 신원",
       "dingtalk_account_message_route": "다이렉트 메시지 경로",
       "dingtalk_account_status_active": "활성",

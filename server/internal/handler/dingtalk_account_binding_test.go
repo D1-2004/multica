@@ -177,6 +177,7 @@ func TestDingTalkIdentityCallbackForwardsFixedShapeAndPublishesEvent(t *testing.
 			AgentID:     "33333333-3333-3333-3333-333333333333",
 			DWSIdentity: agentmessagerouter.PublicDingTalkBindingOutcome{
 				Status:             "active",
+				OrganizationName:   "Alibaba Group",
 				AccountDisplayName: "Xu Mo",
 			},
 			MessageRoute: agentmessagerouter.PublicDingTalkBindingOutcome{Status: "pending"},
@@ -195,7 +196,7 @@ func TestDingTalkIdentityCallbackForwardsFixedShapeAndPublishesEvent(t *testing.
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/api/integrations/dingtalk/account-identities/44444444-4444-4444-4444-444444444444/callback",
-		strings.NewReader(`{"account_uid":"24710833","account_org_id":"439446171","account_display_name":"Xu Mo","account_avatar_url":"https://example.com/avatar.png"}`),
+		strings.NewReader(`{"account_uid":"24710833","account_org_id":"439446171","account_organization_name":"Alibaba Group","account_display_name":"Xu Mo","account_avatar_url":"https://example.com/avatar.png"}`),
 	)
 	req.Header.Set("Origin", "https://dbase.example.internal")
 	req.Header.Set("Authorization", "Bearer "+strings.Repeat("A", 43))
@@ -209,6 +210,7 @@ func TestDingTalkIdentityCallbackForwardsFixedShapeAndPublishesEvent(t *testing.
 	}
 	if service.identityCallbackCalls != 1 || service.identityParams.AccountUID != "24710833" ||
 		service.identityParams.AccountOrgID != "439446171" ||
+		service.identityParams.AccountOrganizationName != "Alibaba Group" ||
 		service.identityParams.CallbackToken != strings.Repeat("A", 43) {
 		t.Fatalf("identity callback params = %#v", service.identityParams)
 	}

@@ -40,6 +40,7 @@ describe("DingTalk account binding schemas", () => {
           agent_id: "agent-1",
           dws_identity: {
             status: "active",
+            organization_name: "Alibaba Group",
             account_display_name: "Zhang San",
             account_avatar_url: "https://example.test/avatar.png",
             bound_at: "2026-07-14T09:30:00Z",
@@ -59,6 +60,7 @@ describe("DingTalk account binding schemas", () => {
           agentId: "agent-1",
           dwsIdentity: {
             status: "active",
+            organizationName: "Alibaba Group",
             accountDisplayName: "Zhang San",
             accountAvatarUrl: "https://example.test/avatar.png",
             boundAt: "2026-07-14T09:30:00Z",
