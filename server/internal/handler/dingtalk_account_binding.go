@@ -20,7 +20,10 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-const maxDingTalkAccountCallbackBodyBytes = 16 << 10
+const (
+	maxDingTalkAccountCallbackBodyBytes      = 16 << 10
+	maxDingTalkMessageRouteCallbackBodyBytes = 1 << 20
+)
 
 type dingTalkAccountBindingService interface {
 	Begin(context.Context, agentmessagerouter.BeginParams) (agentmessagerouter.BeginResult, error)
@@ -35,9 +38,11 @@ type beginDingTalkAccountBindingRequest struct {
 }
 
 type dingTalkAccountBindingCallbackRequest struct {
-	SourceID           string `json:"source_id"`
-	AccountDisplayName string `json:"account_display_name"`
-	AccountAvatarURL   string `json:"account_avatar_url"`
+	SourceID           string                                            `json:"source_id"`
+	AccountDisplayName string                                            `json:"account_display_name"`
+	AccountAvatarURL   string                                            `json:"account_avatar_url"`
+	MessageScope       string                                            `json:"message_scope"`
+	Conversations      []agentmessagerouter.DingTalkConversationSnapshot `json:"conversations"`
 }
 
 type dingTalkIdentityCallbackRequest struct {
@@ -143,7 +148,7 @@ func (h *Handler) CompleteDingTalkAccountBindingCallback(w http.ResponseWriter, 
 		return
 	}
 	var request dingTalkAccountBindingCallbackRequest
-	if err := decodeLimitedJSON(w, r, maxDingTalkAccountCallbackBodyBytes, &request, "invalid_binding_result"); err != nil {
+	if err := decodeLimitedJSON(w, r, maxDingTalkMessageRouteCallbackBodyBytes, &request, "invalid_binding_result"); err != nil {
 		return
 	}
 	result, err := h.DingTalkAccountBindings.CompleteCallback(r.Context(), agentmessagerouter.CallbackParams{
@@ -152,6 +157,8 @@ func (h *Handler) CompleteDingTalkAccountBindingCallback(w http.ResponseWriter, 
 		SourceID:           request.SourceID,
 		AccountDisplayName: request.AccountDisplayName,
 		AccountAvatarURL:   request.AccountAvatarURL,
+		MessageScope:       request.MessageScope,
+		Conversations:      request.Conversations,
 	})
 	if err != nil {
 		writeDingTalkAccountBindingError(w, err)

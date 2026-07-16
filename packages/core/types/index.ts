@@ -170,6 +170,9 @@ export type {
 export type {
   DingTalkAccountBinding,
   DingTalkAccountBindingOutcome,
+  DingTalkConversationSummary,
+  DingTalkMessageRouteOutcome,
+  DingTalkMessageScope,
   DingTalkAccountBindingsResponse,
   BeginDingTalkAccountBindingResponse,
 } from "./dingtalk-account-binding";

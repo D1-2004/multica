@@ -2,11 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link2, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Link2, RefreshCw, Trash2 } from "lucide-react";
 import { QRCode } from "react-qr-code";
+import { mid2Url } from "@ali/ding-mediaid";
 import type {
   BeginDingTalkAccountBindingResponse,
   DingTalkAccountBindingOutcome,
+  DingTalkConversationSummary,
+  DingTalkMessageRouteOutcome,
 } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
@@ -47,6 +50,124 @@ function errorMessage(error: unknown, fallback: string): string {
 function displayName(outcome: DingTalkAccountBindingOutcome, fallback: string): string {
   const name = outcome.accountDisplayName?.trim();
   return name || fallback;
+}
+
+function conversationAvatarUrls(
+  avatarMediaId?: string | null,
+  avatarUrl?: string | null,
+): string[] {
+  const candidates: string[] = [];
+  const mediaId = avatarMediaId?.trim();
+  if (mediaId) {
+    try {
+      const mediaUrl = mid2Url(mediaId, { imageSize: "thumb" })?.trim();
+      if (mediaUrl) candidates.push(mediaUrl);
+    } catch {
+      // Fall through to the URL snapshot when the media ID cannot be decoded.
+    }
+  }
+  const snapshotUrl = avatarUrl?.trim();
+  if (snapshotUrl && !candidates.includes(snapshotUrl)) {
+    candidates.push(snapshotUrl);
+  }
+  return candidates;
+}
+
+function DingTalkConversationAvatar({
+  conversation,
+}: {
+  conversation: DingTalkConversationSummary;
+}) {
+  const { avatarMediaId, avatarUrl: snapshotAvatarUrl } = conversation;
+  const avatarUrls = useMemo(
+    () => conversationAvatarUrls(avatarMediaId, snapshotAvatarUrl),
+    [avatarMediaId, snapshotAvatarUrl],
+  );
+  const [avatarIndex, setAvatarIndex] = useState(0);
+
+  useEffect(() => setAvatarIndex(0), [avatarUrls]);
+
+  const currentAvatarUrl = avatarUrls[avatarIndex];
+  return (
+    <Avatar size="sm">
+      {currentAvatarUrl ? (
+        <AvatarImage
+          src={currentAvatarUrl}
+          alt={conversation.name}
+          onLoadingStatusChange={(status) => {
+            if (status === "error") {
+              setAvatarIndex((index) => Math.min(index + 1, avatarUrls.length));
+            }
+          }}
+        />
+      ) : null}
+      <AvatarFallback>
+        {Array.from(conversation.name.trim())[0] || "?"}
+      </AvatarFallback>
+    </Avatar>
+  );
+}
+
+function DingTalkMessageScopeSummary({
+  outcome,
+}: {
+  outcome: DingTalkMessageRouteOutcome;
+}) {
+  const { t } = useT("agents");
+  const [expanded, setExpanded] = useState(false);
+
+  switch (outcome.messageScope) {
+    case "all":
+      return (
+        <p>
+          {t(($) => $.tab_body.integrations.dingtalk_account_scope_all)}
+        </p>
+      );
+    case "custom": {
+      const summary = t(
+        ($) => $.tab_body.integrations.dingtalk_account_scope_custom,
+        { count: outcome.conversations.length },
+      );
+      return (
+        <div>
+          <button
+            type="button"
+            className="flex items-center gap-1 text-left hover:text-foreground"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((open) => !open)}
+          >
+            {expanded ? (
+              <ChevronDown className="size-3 shrink-0" />
+            ) : (
+              <ChevronRight className="size-3 shrink-0" />
+            )}
+            <span>{summary}</span>
+          </button>
+          {expanded ? (
+            <ul className="mt-2 space-y-2 pl-4">
+              {outcome.conversations.map((conversation) => {
+                return (
+                  <li key={conversation.cid} className="flex items-center gap-2">
+                    <DingTalkConversationAvatar conversation={conversation} />
+                    <span className="leading-relaxed text-foreground">
+                      {conversation.name}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+        </div>
+      );
+    }
+    case "direct_only":
+    default:
+      return (
+        <p>
+          {t(($) => $.tab_body.integrations.dingtalk_account_scope_direct_only)}
+        </p>
+      );
+  }
 }
 
 export function DingTalkAccountBindingCard({
@@ -219,14 +340,16 @@ export function DingTalkAccountBindingCard({
                         ? t(($) => $.tab_body.integrations.dingtalk_account_status_active)
                         : t(($) => $.tab_body.integrations.dingtalk_account_status_unbound)}
                     </p>
-                    <p>
-                      {t(($) => $.tab_body.integrations.dingtalk_account_message_route)}: {" "}
-                      {messageRouteActive
-                        ? t(($) => $.tab_body.integrations.dingtalk_account_status_active)
-                        : currentBinding.messageRoute.status === "pending"
+                    {messageRouteActive ? (
+                      <DingTalkMessageScopeSummary outcome={currentBinding.messageRoute} />
+                    ) : (
+                      <p>
+                        {t(($) => $.tab_body.integrations.dingtalk_account_message_route)}: {" "}
+                        {currentBinding.messageRoute.status === "pending"
                           ? t(($) => $.tab_body.integrations.dingtalk_account_status_pending)
                           : t(($) => $.tab_body.integrations.dingtalk_account_status_unbound)}
-                    </p>
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>

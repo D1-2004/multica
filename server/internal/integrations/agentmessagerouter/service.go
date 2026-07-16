@@ -108,6 +108,8 @@ type CallbackParams struct {
 	SourceID           string
 	AccountDisplayName string
 	AccountAvatarURL   string
+	MessageScope       string
+	Conversations      []DingTalkConversationSnapshot
 }
 
 type IdentityCallbackParams struct {
@@ -330,9 +332,10 @@ func (s *Service) CompleteCallback(ctx context.Context, params CallbackParams) (
 	sourceID := strings.TrimSpace(params.SourceID)
 	displayName := strings.TrimSpace(params.AccountDisplayName)
 	avatarURL := strings.TrimSpace(params.AccountAvatarURL)
+	messageScope, conversations, conversationErr := normalizeDingTalkConversationBinding(params.MessageScope, params.Conversations)
 	if sourceID == "" || sourceID != params.SourceID || len(sourceID) > maxSourceIDBytes ||
 		utf8.RuneCountInString(displayName) > maxAccountNameRunes ||
-		!validAccountAvatarURL(avatarURL) {
+		!validAccountAvatarURL(avatarURL) || conversationErr != nil {
 		return PublicDingTalkAccountBinding{}, ErrInvalidResult
 	}
 	row, err := s.store.GetDingTalkAccountBinding(ctx, params.InstallationID)
@@ -379,6 +382,8 @@ func (s *Service) CompleteCallback(ctx context.Context, params CallbackParams) (
 	config.RouterSourceID = sourceID
 	config.AccountDisplayName = displayName
 	config.AccountAvatarURL = avatarURL
+	config.MessageScope = messageScope
+	config.Conversations = conversations
 	config.BoundAt = &boundAt
 	activeConfig, err := config.Marshal()
 	if err != nil {

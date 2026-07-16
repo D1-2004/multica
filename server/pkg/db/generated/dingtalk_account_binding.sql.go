@@ -360,7 +360,13 @@ WITH target AS (
       AND attempt.agent_id = target.agent_id
 )
 UPDATE channel_installation installation
-SET status = 'revoked',
+SET config = jsonb_build_object(
+        'schema_version', installation.config -> 'schema_version',
+        'dispatch_endpoint_id', installation.config -> 'dispatch_endpoint_id',
+        'dispatch_key_id', installation.config -> 'dispatch_key_id',
+        'dispatch_url', installation.config -> 'dispatch_url'
+    ),
+    status = 'revoked',
     updated_at = now()
 FROM target
 WHERE installation.id = target.id
@@ -373,10 +379,11 @@ type RevokeDingTalkAccountBindingParams struct {
 	AgentID     pgtype.UUID `json:"agent_id"`
 }
 
-// Router DELETE happens before this local transition. The endpoint and other
-// config are retained so a later begin can reuse the stable dispatch URL. The
-// Agent's DWS identity and pending identity attempts are removed in the same
-// database statement as the local route transition.
+// Router DELETE happens before this local transition. Retain only the stable
+// dispatch endpoint fields needed by a later begin; remove all callback,
+// source, account, avatar, scope, conversation, and binding-time snapshots.
+// The Agent's DWS identity and pending identity attempts are removed in the
+// same database statement as the local route transition.
 func (q *Queries) RevokeDingTalkAccountBinding(ctx context.Context, arg RevokeDingTalkAccountBindingParams) (ChannelInstallation, error) {
 	row := q.db.QueryRow(ctx, revokeDingTalkAccountBinding, arg.ID, arg.WorkspaceID, arg.AgentID)
 	var i ChannelInstallation

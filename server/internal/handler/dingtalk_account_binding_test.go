@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -18,6 +19,7 @@ import (
 
 type fakeDingTalkAccountBindingService struct {
 	callbackCalls         int
+	callbackParams        agentmessagerouter.CallbackParams
 	identityCallbackCalls int
 	identityParams        agentmessagerouter.IdentityCallbackParams
 	callbackResult        agentmessagerouter.PublicDingTalkAccountBinding
@@ -33,8 +35,9 @@ func (f *fakeDingTalkAccountBindingService) List(context.Context, pgtype.UUID) (
 	return nil, nil
 }
 
-func (f *fakeDingTalkAccountBindingService) CompleteCallback(context.Context, agentmessagerouter.CallbackParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
+func (f *fakeDingTalkAccountBindingService) CompleteCallback(_ context.Context, params agentmessagerouter.CallbackParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
 	f.callbackCalls++
+	f.callbackParams = params
 	return f.callbackResult, nil
 }
 
@@ -112,7 +115,7 @@ func TestDingTalkAccountCallbackRejectsOversizedBody(t *testing.T) {
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/api/integrations/dingtalk/account-bindings/11111111-1111-1111-1111-111111111111/callback",
-		strings.NewReader(`{"source_id":"source-1","account_display_name":"`+strings.Repeat("x", maxDingTalkAccountCallbackBodyBytes)+`"}`),
+		strings.NewReader(`{"source_id":"source-1","account_display_name":"`+strings.Repeat("x", maxDingTalkMessageRouteCallbackBodyBytes)+`"}`),
 	)
 	req.Header.Set("Origin", "https://dbase.example.internal")
 	req.Header.Set("Authorization", "Bearer "+strings.Repeat("A", 43))
@@ -166,6 +169,93 @@ func TestDingTalkAccountCallbackPublishesActivatedEvent(t *testing.T) {
 		published.WorkspaceID != service.callbackResult.WorkspaceID ||
 		published.ActorType != "system" {
 		t.Fatalf("published event = %#v", published)
+	}
+}
+
+func TestDingTalkAccountCallbackForwardsMessageScopeAndConversations(t *testing.T) {
+	service := &fakeDingTalkAccountBindingService{}
+	h := &Handler{
+		DingTalkAccountBindings:      service,
+		DingTalkAccountBindingOrigin: "https://dbase.example.internal",
+	}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/integrations/dingtalk/account-bindings/11111111-1111-1111-1111-111111111111/callback",
+		strings.NewReader(`{
+			"source_id":"source-1",
+			"account_display_name":"Zhang San",
+			"message_scope":"custom",
+			"conversations":[
+				{"cid":"cid-alpha","name":"Project Alpha","avatar_media_id":"@media-alpha","avatar_url":"https://example.com/alpha.png"},
+				{"cid":"cid-beta","name":"Project Beta"}
+			]
+		}`),
+	)
+	req.Header.Set("Origin", "https://dbase.example.internal")
+	req.Header.Set("Authorization", "Bearer "+strings.Repeat("A", 43))
+	req = withURLParams(req, "installationId", "11111111-1111-1111-1111-111111111111")
+	w := httptest.NewRecorder()
+
+	h.CompleteDingTalkAccountBindingCallback(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	encoded, err := json.Marshal(service.callbackParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forwarded map[string]any
+	if err := json.Unmarshal(encoded, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+	if forwarded["MessageScope"] != "custom" {
+		t.Fatalf("forwarded message scope = %#v params=%s", forwarded["MessageScope"], encoded)
+	}
+	conversations, ok := forwarded["Conversations"].([]any)
+	if !ok || len(conversations) != 2 {
+		t.Fatalf("forwarded conversations = %#v params=%s", forwarded["Conversations"], encoded)
+	}
+}
+
+func TestDingTalkAccountCallbackHasNoConversationCountLimit(t *testing.T) {
+	service := &fakeDingTalkAccountBindingService{}
+	h := &Handler{
+		DingTalkAccountBindings:      service,
+		DingTalkAccountBindingOrigin: "https://dbase.example.internal",
+	}
+	conversations := make([]map[string]string, 400)
+	for i := range conversations {
+		conversations[i] = map[string]string{
+			"cid":  "cid-" + strconv.Itoa(i),
+			"name": "Conversation " + strconv.Itoa(i),
+		}
+	}
+	body, err := json.Marshal(map[string]any{
+		"source_id":     "source-1",
+		"message_scope": "all",
+		"conversations": conversations,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) <= 16<<10 {
+		t.Fatalf("test body = %d bytes, want larger than legacy limit", len(body))
+	}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/integrations/dingtalk/account-bindings/11111111-1111-1111-1111-111111111111/callback",
+		strings.NewReader(string(body)),
+	)
+	req.Header.Set("Origin", "https://dbase.example.internal")
+	req.Header.Set("Authorization", "Bearer "+strings.Repeat("A", 43))
+	req = withURLParams(req, "installationId", "11111111-1111-1111-1111-111111111111")
+	w := httptest.NewRecorder()
+
+	h.CompleteDingTalkAccountBindingCallback(w, req)
+
+	if w.Code != http.StatusOK || service.callbackCalls != 1 {
+		t.Fatalf("status = %d callback calls = %d body=%s", w.Code, service.callbackCalls, w.Body.String())
 	}
 }
 
