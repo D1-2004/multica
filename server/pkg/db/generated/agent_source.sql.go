@@ -11,6 +11,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const agentHasActiveTasks = `-- name: AgentHasActiveTasks :one
+SELECT EXISTS (
+    SELECT 1
+    FROM agent_task_queue
+    WHERE agent_id = $1
+      AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+)
+`
+
+func (q *Queries) AgentHasActiveTasks(ctx context.Context, agentID pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, agentHasActiveTasks, agentID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const agentNameExistsInWorkspace = `-- name: AgentNameExistsInWorkspace :one
 SELECT EXISTS (
     SELECT 1
@@ -35,18 +51,19 @@ func (q *Queries) AgentNameExistsInWorkspace(ctx context.Context, arg AgentNameE
 
 const createAgentSource = `-- name: CreateAgentSource :one
 INSERT INTO agent_source (
-    agent_id, source_type, github_installation_id, repo_owner, repo_name, ref,
+    agent_id, workspace_id, source_type, github_installation_id, repo_owner, repo_name, ref,
     manifest_path, synced_commit_sha, sync_status, last_sync_attempt_at,
     last_synced_at, created_by
 ) VALUES (
-    $1, 'github', $2, $3, $4, $5,
-    $6, $7, 'ready', now(), now(), $8
+    $1, $2, 'github', $3, $4, $5, $6,
+    $7, $8, 'ready', now(), now(), $9
 )
-RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at
+RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key
 `
 
 type CreateAgentSourceParams struct {
 	AgentID              pgtype.UUID `json:"agent_id"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
 	GithubInstallationID pgtype.UUID `json:"github_installation_id"`
 	RepoOwner            string      `json:"repo_owner"`
 	RepoName             string      `json:"repo_name"`
@@ -59,6 +76,7 @@ type CreateAgentSourceParams struct {
 func (q *Queries) CreateAgentSource(ctx context.Context, arg CreateAgentSourceParams) (AgentSource, error) {
 	row := q.db.QueryRow(ctx, createAgentSource,
 		arg.AgentID,
+		arg.WorkspaceID,
 		arg.GithubInstallationID,
 		arg.RepoOwner,
 		arg.RepoName,
@@ -85,6 +103,8 @@ func (q *Queries) CreateAgentSource(ctx context.Context, arg CreateAgentSourcePa
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
+		&i.ManagedSourceKey,
 	)
 	return i, err
 }
@@ -117,6 +137,66 @@ func (q *Queries) CreateAgentSourceSkill(ctx context.Context, arg CreateAgentSou
 	return i, err
 }
 
+const createManagedAgentSource = `-- name: CreateManagedAgentSource :one
+INSERT INTO agent_source (
+    agent_id, workspace_id, source_type, managed_source_key, repo_owner, repo_name,
+    ref, manifest_path, synced_commit_sha, sync_status, last_sync_attempt_at,
+    last_synced_at, created_by
+) VALUES (
+    $1, $2, 'managed_git', $3, $4, $5,
+    $6, $7, $8, 'ready', now(), now(), $9
+)
+RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key
+`
+
+type CreateManagedAgentSourceParams struct {
+	AgentID          pgtype.UUID `json:"agent_id"`
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	ManagedSourceKey pgtype.Text `json:"managed_source_key"`
+	RepoOwner        string      `json:"repo_owner"`
+	RepoName         string      `json:"repo_name"`
+	Ref              string      `json:"ref"`
+	ManifestPath     string      `json:"manifest_path"`
+	SyncedCommitSha  string      `json:"synced_commit_sha"`
+	CreatedBy        pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) CreateManagedAgentSource(ctx context.Context, arg CreateManagedAgentSourceParams) (AgentSource, error) {
+	row := q.db.QueryRow(ctx, createManagedAgentSource,
+		arg.AgentID,
+		arg.WorkspaceID,
+		arg.ManagedSourceKey,
+		arg.RepoOwner,
+		arg.RepoName,
+		arg.Ref,
+		arg.ManifestPath,
+		arg.SyncedCommitSha,
+		arg.CreatedBy,
+	)
+	var i AgentSource
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.SourceType,
+		&i.GithubInstallationID,
+		&i.RepoOwner,
+		&i.RepoName,
+		&i.Ref,
+		&i.ManifestPath,
+		&i.SyncedCommitSha,
+		&i.SyncStatus,
+		&i.LastSyncError,
+		&i.LastSyncAttemptAt,
+		&i.LastSyncedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.WorkspaceID,
+		&i.ManagedSourceKey,
+	)
+	return i, err
+}
+
 const deleteAgentSourceSkill = `-- name: DeleteAgentSourceSkill :exec
 DELETE FROM agent_source_skill
 WHERE agent_source_id = $1 AND skill_id = $2
@@ -134,7 +214,7 @@ func (q *Queries) DeleteAgentSourceSkill(ctx context.Context, arg DeleteAgentSou
 
 const getAgentSourceByAgentID = `-- name: GetAgentSourceByAgentID :one
 
-SELECT id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at FROM agent_source
+SELECT id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key FROM agent_source
 WHERE agent_id = $1
 `
 
@@ -159,12 +239,14 @@ func (q *Queries) GetAgentSourceByAgentID(ctx context.Context, agentID pgtype.UU
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
+		&i.ManagedSourceKey,
 	)
 	return i, err
 }
 
 const getAgentSourceInWorkspace = `-- name: GetAgentSourceInWorkspace :one
-SELECT agent_source.id, agent_source.agent_id, agent_source.source_type, agent_source.github_installation_id, agent_source.repo_owner, agent_source.repo_name, agent_source.ref, agent_source.manifest_path, agent_source.synced_commit_sha, agent_source.sync_status, agent_source.last_sync_error, agent_source.last_sync_attempt_at, agent_source.last_synced_at, agent_source.created_by, agent_source.created_at, agent_source.updated_at
+SELECT agent_source.id, agent_source.agent_id, agent_source.source_type, agent_source.github_installation_id, agent_source.repo_owner, agent_source.repo_name, agent_source.ref, agent_source.manifest_path, agent_source.synced_commit_sha, agent_source.sync_status, agent_source.last_sync_error, agent_source.last_sync_attempt_at, agent_source.last_synced_at, agent_source.created_by, agent_source.created_at, agent_source.updated_at, agent_source.workspace_id, agent_source.managed_source_key
 FROM agent_source
 JOIN agent ON agent.id = agent_source.agent_id
 WHERE agent_source.agent_id = $1
@@ -197,6 +279,8 @@ func (q *Queries) GetAgentSourceInWorkspace(ctx context.Context, arg GetAgentSou
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
+		&i.ManagedSourceKey,
 	)
 	return i, err
 }
@@ -216,6 +300,43 @@ func (q *Queries) GetAgentSourceSkillBySkillID(ctx context.Context, skillID pgty
 		&i.SourcePath,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getManagedAgentSourceInWorkspace = `-- name: GetManagedAgentSourceInWorkspace :one
+SELECT id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key FROM agent_source
+WHERE workspace_id = $1
+  AND managed_source_key = $2
+`
+
+type GetManagedAgentSourceInWorkspaceParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	ManagedSourceKey pgtype.Text `json:"managed_source_key"`
+}
+
+func (q *Queries) GetManagedAgentSourceInWorkspace(ctx context.Context, arg GetManagedAgentSourceInWorkspaceParams) (AgentSource, error) {
+	row := q.db.QueryRow(ctx, getManagedAgentSourceInWorkspace, arg.WorkspaceID, arg.ManagedSourceKey)
+	var i AgentSource
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.SourceType,
+		&i.GithubInstallationID,
+		&i.RepoOwner,
+		&i.RepoName,
+		&i.Ref,
+		&i.ManifestPath,
+		&i.SyncedCommitSha,
+		&i.SyncStatus,
+		&i.LastSyncError,
+		&i.LastSyncAttemptAt,
+		&i.LastSyncedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.WorkspaceID,
+		&i.ManagedSourceKey,
 	)
 	return i, err
 }
@@ -253,8 +374,76 @@ func (q *Queries) ListAgentSourceSkills(ctx context.Context, agentSourceID pgtyp
 	return items, nil
 }
 
+const listOutdatedIdleManagedAgentSources = `-- name: ListOutdatedIdleManagedAgentSources :many
+SELECT source.id, source.agent_id, source.source_type, source.github_installation_id, source.repo_owner, source.repo_name, source.ref, source.manifest_path, source.synced_commit_sha, source.sync_status, source.last_sync_error, source.last_sync_attempt_at, source.last_synced_at, source.created_by, source.created_at, source.updated_at, source.workspace_id, source.managed_source_key
+FROM agent_source AS source
+WHERE source.source_type = 'managed_git'
+  AND source.managed_source_key = $1
+  AND source.synced_commit_sha <> $2
+  AND source.id > $3
+  AND NOT EXISTS (
+      SELECT 1
+      FROM agent_task_queue AS task
+      WHERE task.agent_id = source.agent_id
+        AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+  )
+ORDER BY source.id ASC
+LIMIT $4
+`
+
+type ListOutdatedIdleManagedAgentSourcesParams struct {
+	SourceKey       pgtype.Text `json:"source_key"`
+	TargetCommitSha string      `json:"target_commit_sha"`
+	AfterID         pgtype.UUID `json:"after_id"`
+	BatchSize       int32       `json:"batch_size"`
+}
+
+func (q *Queries) ListOutdatedIdleManagedAgentSources(ctx context.Context, arg ListOutdatedIdleManagedAgentSourcesParams) ([]AgentSource, error) {
+	rows, err := q.db.Query(ctx, listOutdatedIdleManagedAgentSources,
+		arg.SourceKey,
+		arg.TargetCommitSha,
+		arg.AfterID,
+		arg.BatchSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentSource{}
+	for rows.Next() {
+		var i AgentSource
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.SourceType,
+			&i.GithubInstallationID,
+			&i.RepoOwner,
+			&i.RepoName,
+			&i.Ref,
+			&i.ManifestPath,
+			&i.SyncedCommitSha,
+			&i.SyncStatus,
+			&i.LastSyncError,
+			&i.LastSyncAttemptAt,
+			&i.LastSyncedAt,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.WorkspaceID,
+			&i.ManagedSourceKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockAgentSourceByAgentID = `-- name: LockAgentSourceByAgentID :one
-SELECT id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at FROM agent_source
+SELECT id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key FROM agent_source
 WHERE agent_id = $1
 FOR UPDATE
 `
@@ -279,6 +468,8 @@ func (q *Queries) LockAgentSourceByAgentID(ctx context.Context, agentID pgtype.U
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
+		&i.ManagedSourceKey,
 	)
 	return i, err
 }
@@ -293,7 +484,7 @@ SET sync_status = CASE
     last_sync_attempt_at = now(),
     updated_at = now()
 WHERE id = $1
-RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at
+RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key
 `
 
 type MarkAgentSourceSyncFailedParams struct {
@@ -321,6 +512,8 @@ func (q *Queries) MarkAgentSourceSyncFailed(ctx context.Context, arg MarkAgentSo
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
+		&i.ManagedSourceKey,
 	)
 	return i, err
 }
@@ -334,7 +527,7 @@ SET synced_commit_sha = $2,
     last_synced_at = now(),
     updated_at = now()
 WHERE id = $1
-RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at
+RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key
 `
 
 type MarkAgentSourceSyncSucceededParams struct {
@@ -362,6 +555,8 @@ func (q *Queries) MarkAgentSourceSyncSucceeded(ctx context.Context, arg MarkAgen
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
+		&i.ManagedSourceKey,
 	)
 	return i, err
 }
@@ -378,4 +573,66 @@ WHERE github_installation_id = $1
 func (q *Queries) MarkAgentSourcesDisconnectedByInstallation(ctx context.Context, githubInstallationID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, markAgentSourcesDisconnectedByInstallation, githubInstallationID)
 	return err
+}
+
+const updateManagedAgentOwner = `-- name: UpdateManagedAgentOwner :one
+UPDATE agent AS target
+SET owner_id = $1,
+    updated_at = now()
+WHERE target.id = $2
+  AND target.workspace_id = $3
+  AND EXISTS (
+      SELECT 1
+      FROM agent_source
+      WHERE agent_source.agent_id = target.id
+        AND agent_source.source_type = 'managed_git'
+        AND agent_source.managed_source_key = $4
+  )
+RETURNING target.id, target.workspace_id, target.name, target.avatar_url, target.runtime_mode, target.runtime_config, target.visibility, target.status, target.max_concurrent_tasks, target.owner_id, target.created_at, target.updated_at, target.description, target.runtime_id, target.instructions, target.archived_at, target.archived_by, target.custom_env, target.custom_args, target.mcp_config, target.model, target.thinking_level, target.composio_toolkit_allowlist, target.permission_mode, target.kind, target.system_key
+`
+
+type UpdateManagedAgentOwnerParams struct {
+	OwnerID          pgtype.UUID `json:"owner_id"`
+	AgentID          pgtype.UUID `json:"agent_id"`
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	ManagedSourceKey pgtype.Text `json:"managed_source_key"`
+}
+
+func (q *Queries) UpdateManagedAgentOwner(ctx context.Context, arg UpdateManagedAgentOwnerParams) (Agent, error) {
+	row := q.db.QueryRow(ctx, updateManagedAgentOwner,
+		arg.OwnerID,
+		arg.AgentID,
+		arg.WorkspaceID,
+		arg.ManagedSourceKey,
+	)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.RuntimeMode,
+		&i.RuntimeConfig,
+		&i.Visibility,
+		&i.Status,
+		&i.MaxConcurrentTasks,
+		&i.OwnerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Description,
+		&i.RuntimeID,
+		&i.Instructions,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+		&i.CustomEnv,
+		&i.CustomArgs,
+		&i.McpConfig,
+		&i.Model,
+		&i.ThinkingLevel,
+		&i.ComposioToolkitAllowlist,
+		&i.PermissionMode,
+		&i.Kind,
+		&i.SystemKey,
+	)
+	return i, err
 }

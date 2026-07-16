@@ -133,7 +133,6 @@ func TestRequireHumanActor_IgnoresUnknownActorSource(t *testing.T) {
 	}
 }
 
-
 // TestRequireHumanActor_AppliedViaChiRouterUse pins the wiring side of
 // the contract: when the guard is attached to a chi route group via
 // r.Use, every endpoint in that group is protected, and a task-token
@@ -158,5 +157,40 @@ func TestRequireHumanActor_AppliedViaChiRouterUse(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", w.Code)
+	}
+}
+
+func TestRequireDingTalkHumanActor(t *testing.T) {
+	cases := []struct {
+		name        string
+		authMethod  string
+		actorSource string
+		wantStatus  int
+	}{
+		{name: "dingtalk jwt", authMethod: "dingtalk", wantStatus: http.StatusOK},
+		{name: "ordinary jwt", wantStatus: http.StatusForbidden},
+		{name: "google jwt", authMethod: "google", wantStatus: http.StatusForbidden},
+		{name: "task token cannot inherit method", authMethod: "dingtalk", actorSource: "task_token", wantStatus: http.StatusForbidden},
+		{name: "cloud pat cannot inherit method", authMethod: "dingtalk", actorSource: "cloud_pat", wantStatus: http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			guard := RequireDingTalkHumanActor(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusOK)
+			}))
+			req := httptest.NewRequest(http.MethodPost, "/api/fde/onboarding", nil)
+			req.Header.Set("X-Auth-Method", tc.authMethod)
+			req.Header.Set("X-Actor-Source", tc.actorSource)
+			w := httptest.NewRecorder()
+			guard.ServeHTTP(w, req)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", w.Code, tc.wantStatus)
+			}
+			if called != (tc.wantStatus == http.StatusOK) {
+				t.Fatalf("inner handler called = %v", called)
+			}
+		})
 	}
 }

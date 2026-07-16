@@ -416,6 +416,9 @@ func main() {
 	if h.WebhookDeliveryWorker != nil {
 		go h.WebhookDeliveryWorker.Run(sweepCtx)
 	}
+	if h.ManagedAgent != nil && h.ManagedAgent.Enabled() {
+		go h.ManagedAgent.Run(sweepCtx)
+	}
 
 	// Channel inbound supervisor (MUL-3620): holds the §4.4 WS lease per
 	// installation and drives each channel.Channel. It is built

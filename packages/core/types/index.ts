@@ -1,5 +1,10 @@
 export type { Issue, IssueStatus, IssuePriority, IssueAssigneeType, IssueMetadata, IssueMetadataValue, IssueReaction } from "./issue";
 export type {
+  FDEOnboardingState,
+  ProvisionFDEOnboardingRequest,
+  ProvisionFDEOnboardingResponse,
+} from "./fde";
+export type {
   Agent,
   AgentStatus,
   AgentRuntimeMode,
@@ -20,12 +25,6 @@ export type {
   UpdateRuntimeProfileRequest,
   CreateAgentRequest,
   AgentBuilderSession,
-  AgentTemplate,
-  AgentTemplateSummary,
-  AgentTemplateSkillRef,
-  CreateAgentFromTemplateRequest,
-  CreateAgentFromTemplateResponse,
-  CreateAgentFromTemplateFailure,
   UpdateAgentRequest,
   AgentEnvResponse,
   UpdateAgentEnvRequest,

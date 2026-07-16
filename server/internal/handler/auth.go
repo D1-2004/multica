@@ -150,13 +150,21 @@ func isSixDigitCode(code string) bool {
 }
 
 func (h *Handler) issueJWT(user db.User) (string, error) {
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	return h.issueJWTWithAuthMethod(user, "")
+}
+
+func (h *Handler) issueJWTWithAuthMethod(user db.User, authMethod string) (string, error) {
+	claims := jwt.MapClaims{
 		"sub":   uuidToString(user.ID),
 		"email": user.Email,
 		"name":  user.Name,
 		"exp":   time.Now().Add(auth.AuthTokenTTL()).Unix(),
 		"iat":   time.Now().Unix(),
-	})
+	}
+	if strings.TrimSpace(authMethod) != "" {
+		claims["auth_method"] = strings.TrimSpace(authMethod)
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(auth.JWTSecret())
 }
 
@@ -721,7 +729,7 @@ func (h *Handler) DingTalkLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tokenString, err := h.issueJWT(user)
+	tokenString, err := h.issueJWTWithAuthMethod(user, "dingtalk")
 	if err != nil {
 		slog.Warn("dingtalk login failed", append(logger.RequestAttrs(r), "error", err, "email", email)...)
 		writeError(w, http.StatusInternalServerError, "failed to generate token")

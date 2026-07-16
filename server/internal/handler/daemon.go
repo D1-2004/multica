@@ -2916,6 +2916,11 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	// by the existing per-(issue, agent) dedup, and terminating because the
 	// triggering comment always predates the follow-up run's started_at.
 	h.reconcileCommentsOnCompletion(r.Context(), task)
+	if h.ManagedAgent != nil {
+		if err := h.ManagedAgent.ReconcileAgent(r.Context(), task.AgentID); err != nil {
+			slog.Warn("complete task: managed Agent reconciliation failed", "agent_id", uuidToString(task.AgentID), "error", err)
+		}
+	}
 	// The terminal transaction and completion reconciliation are committed.
 	// Wake the owning runtime now so queued work that was blocked by this
 	// task's agent capacity or serialization key is re-claimed immediately.
@@ -3499,6 +3504,11 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("fail task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if h.ManagedAgent != nil {
+		if err := h.ManagedAgent.ReconcileAgent(r.Context(), task.AgentID); err != nil {
+			slog.Warn("fail task: managed Agent reconciliation failed", "agent_id", uuidToString(task.AgentID), "error", err)
+		}
 	}
 	h.TaskService.NotifyTaskFinished(*task)
 

@@ -512,6 +512,45 @@ func (q *Queries) GetAgentRuntimes(ctx context.Context, ids []pgtype.UUID) ([]Ag
 	return items, nil
 }
 
+const getCloudAgentRuntimeByDaemon = `-- name: GetCloudAgentRuntimeByDaemon :one
+SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, visibility, profile_id, custom_name FROM agent_runtime
+WHERE workspace_id = $1
+  AND daemon_id = $2
+  AND provider = $3
+  AND profile_id IS NULL
+`
+
+type GetCloudAgentRuntimeByDaemonParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	DaemonID    pgtype.Text `json:"daemon_id"`
+	Provider    string      `json:"provider"`
+}
+
+func (q *Queries) GetCloudAgentRuntimeByDaemon(ctx context.Context, arg GetCloudAgentRuntimeByDaemonParams) (AgentRuntime, error) {
+	row := q.db.QueryRow(ctx, getCloudAgentRuntimeByDaemon, arg.WorkspaceID, arg.DaemonID, arg.Provider)
+	var i AgentRuntime
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.DaemonID,
+		&i.Name,
+		&i.RuntimeMode,
+		&i.Provider,
+		&i.Status,
+		&i.DeviceInfo,
+		&i.Metadata,
+		&i.LastSeenAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerID,
+		&i.LegacyDaemonID,
+		&i.Visibility,
+		&i.ProfileID,
+		&i.CustomName,
+	)
+	return i, err
+}
+
 const listAgentRuntimes = `-- name: ListAgentRuntimes :many
 SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, visibility, profile_id, custom_name FROM agent_runtime
 WHERE workspace_id = $1

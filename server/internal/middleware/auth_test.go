@@ -196,6 +196,37 @@ func TestAuth_ValidToken(t *testing.T) {
 	}
 }
 
+func TestAuth_PropagatesSignedAuthMethodAndRejectsForgedHeader(t *testing.T) {
+	claims := validClaims()
+	claims["auth_method"] = "dingtalk"
+	token := generateToken(claims, auth.JWTSecret())
+
+	var got string
+	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Auth-Method")
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/fde/onboarding", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Auth-Method", "google")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || got != "dingtalk" {
+		t.Fatalf("status=%d X-Auth-Method=%q, want 200/dingtalk", w.Code, got)
+	}
+
+	got = "not-called"
+	ordinary := generateToken(validClaims(), auth.JWTSecret())
+	req = httptest.NewRequest(http.MethodGet, "/api/fde/onboarding", nil)
+	req.Header.Set("Authorization", "Bearer "+ordinary)
+	req.Header.Set("X-Auth-Method", "dingtalk")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || got != "" {
+		t.Fatalf("forged header survived: status=%d X-Auth-Method=%q", w.Code, got)
+	}
+}
+
 func TestAuth_MissingClaims(t *testing.T) {
 	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next handler should not be called")

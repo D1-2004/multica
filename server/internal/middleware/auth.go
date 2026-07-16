@@ -44,6 +44,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 			// to convince a downstream handler that its request came
 			// from a non-task-token path.
 			r.Header.Del("X-Actor-Source")
+			r.Header.Del("X-Auth-Method")
 
 			tokenString, fromCookie := extractToken(r)
 			if tokenString == "" {
@@ -227,6 +228,9 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 			r.Header.Set("X-User-ID", sub)
 			if email, ok := claims["email"].(string); ok {
 				r.Header.Set("X-User-Email", email)
+			}
+			if authMethod, ok := claims["auth_method"].(string); ok && strings.TrimSpace(authMethod) != "" {
+				r.Header.Set("X-Auth-Method", strings.TrimSpace(authMethod))
 			}
 
 			next.ServeHTTP(w, r)
