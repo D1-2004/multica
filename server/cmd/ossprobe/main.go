@@ -62,6 +62,10 @@ func main() {
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = os.Getenv("PROBE_PATH_STYLE") == "true"
+		// Match internal/storage/s3.go: OSS rejects the SDK's default
+		// flexible-checksum (aws-chunked) uploads.
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 	})
 
 	key := "probe/multica-oss-probe.txt"
