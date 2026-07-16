@@ -45,6 +45,12 @@ func TestDWSAgentSkillShipsDWSInstructions(t *testing.T) {
 	if skill.Name != "multica-dws" {
 		t.Fatalf("skill name = %q, want multica-dws", skill.Name)
 	}
+	if !strings.Contains(skill.Description, "current-user identity by default") ||
+		!strings.Contains(skill.Description, "explicitly requests bot identity") ||
+		!strings.Contains(skill.Description, "dws chat message send") ||
+		!strings.Contains(skill.Description, "dws chat message send-by-bot") {
+		t.Fatal("DWS skill summary must make current-user sending the default and bot sending opt-in")
+	}
 	if !strings.Contains(skill.Content, "dws auth status --format json") {
 		t.Fatal("DWS skill must instruct agents to verify DWS auth")
 	}
@@ -54,6 +60,18 @@ func TestDWSAgentSkillShipsDWSInstructions(t *testing.T) {
 	if !strings.Contains(skill.Content, "bind a DingTalk account") || strings.Contains(skill.Content, "imported DWS login profile") {
 		t.Fatal("DWS skill must direct missing authentication to Agent binding without legacy profiles")
 	}
+	for _, required := range []string{
+		"dws chat message send",
+		"dws chat message send-by-bot",
+		"Default to the current-user identity",
+		"Only use bot identity when the user explicitly asks",
+		"Do not switch to bot identity because current-user sending fails",
+		"obtain explicit confirmation before sending",
+	} {
+		if !strings.Contains(skill.Content, required) {
+			t.Fatalf("DWS skill must pin sender identity rule %q", required)
+		}
+	}
 
 	_, refs := BuildAgentSkillBundles([]AgentSkillData{skill})
 	if len(refs) != 1 {
@@ -61,5 +79,8 @@ func TestDWSAgentSkillShipsDWSInstructions(t *testing.T) {
 	}
 	if refs[0].ID != "builtin:multica-dws" || refs[0].Source != "builtin" {
 		t.Fatalf("DWS skill ref = %+v", refs[0])
+	}
+	if refs[0].Description != skill.Description {
+		t.Fatalf("DWS skill ref description = %q, want %q", refs[0].Description, skill.Description)
 	}
 }
