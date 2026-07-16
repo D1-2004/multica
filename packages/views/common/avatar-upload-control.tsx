@@ -121,7 +121,14 @@ export function AvatarUploadControl({
     try {
       const result = await upload(cropped);
       if (!result) return;
-      await onUploaded(result.link);
+      // Persist the server-chosen durable URL (`markdown_url`) over the raw
+      // storage URL (`link`). On public-CDN deployments they are identical;
+      // on private-storage deployments (e.g. OSS behind a VPC-only endpoint)
+      // the raw URL is unreachable from browsers and the durable URL is the
+      // server-proxied `/api/attachments/{id}/download`. Fall back to the raw
+      // URL for the no-workspace upload branch, which has no attachment row
+      // to proxy through.
+      await onUploaded(result.markdown_url || result.link);
       setDialogOpen(false);
       setPickedFile(null);
       toast.success(t(($) => $.avatar_upload.updated));
