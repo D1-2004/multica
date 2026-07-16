@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -63,14 +64,15 @@ type Encrypter func(plaintext []byte) (ciphertext []byte, err error)
 // StreamFrameAdmission is the callback subset retained by the durable inbox.
 // Data is encrypted before the first database write and must never be logged.
 type StreamFrameAdmission struct {
-	InstallationID string
-	ConnectionID   string
-	NodeID         string
-	MessageID      string
-	Topic          string
-	SpecVersion    string
-	Time           int64
-	Data           string
+	InstallationID   string
+	ConnectionID     string
+	NodeID           string
+	ReceiverHostname string
+	MessageID        string
+	Topic            string
+	SpecVersion      string
+	Time             int64
+	Data             string
 }
 
 // StreamInboxReceipt describes the committed row without exposing callback
@@ -191,6 +193,10 @@ func (w *StreamInboxWorker) PersistFrame(
 	if frame.NodeID == "" {
 		return StreamInboxReceipt{}, errors.New("dingtalk stream inbox: node id is empty")
 	}
+	frame.ReceiverHostname = strings.TrimSpace(frame.ReceiverHostname)
+	if frame.ReceiverHostname == "" {
+		return StreamInboxReceipt{}, errors.New("dingtalk stream inbox: receiver hostname is empty")
+	}
 	frame.MessageID = strings.TrimSpace(frame.MessageID)
 	if frame.MessageID == "" {
 		return StreamInboxReceipt{}, errors.New("dingtalk stream inbox: stream message id is empty")
@@ -218,6 +224,7 @@ func (w *StreamInboxWorker) PersistFrame(
 		"installation_id", frame.InstallationID,
 		"connection_id", frame.ConnectionID,
 		"node_id", frame.NodeID,
+		"receiver_hostname", frame.ReceiverHostname,
 		"stream_message_id_hash", streamInboxTraceHash(frame.MessageID),
 		"bot_message_id_hash", streamInboxTraceHash(metadata.MsgID),
 	)
@@ -235,6 +242,7 @@ func (w *StreamInboxWorker) PersistFrame(
 		ClientID:         clientID,
 		ConnectionID:     frame.ConnectionID,
 		NodeID:           frame.NodeID,
+		ReceiverHostname: frame.ReceiverHostname,
 		DedupeKey:        dedupeKey,
 		StreamMessageID:  frame.MessageID,
 		BotMessageID:     botMessageID,
@@ -434,6 +442,7 @@ func (w *StreamInboxWorker) ProcessNext(ctx context.Context) (bool, error) {
 		"installation_id", util.UUIDToString(row.InstallationID),
 		"connection_id", row.ConnectionID,
 		"node_id", row.NodeID,
+		"receiver_hostname", row.ReceiverHostname.String,
 		"stream_message_id_hash", traceHash,
 		"bot_message_id_hash", streamInboxTraceHash(row.BotMessageID.String),
 	)
@@ -458,7 +467,15 @@ func (w *StreamInboxWorker) ProcessNext(ctx context.Context) (bool, error) {
 	if err := json.Unmarshal(plain, &data); err != nil {
 		return true, w.complete(ctx, row, streamInboxStatusDiscarded, "payload_invalid", "callback payload invalid", traceHash)
 	}
-	msg, ok := inboundFromBotCallbackForInstallation(data, row.ClientID, util.UUIDToString(row.InstallationID))
+	var streamSource protocol.DingTalkStreamSource
+	if row.ReceiverHostname.Valid && strings.TrimSpace(row.ReceiverHostname.String) != "" {
+		streamSource = protocol.DingTalkStreamSource{
+			Hostname:     row.ReceiverHostname.String,
+			NodeID:       row.NodeID,
+			ConnectionID: row.ConnectionID,
+		}
+	}
+	msg, ok := inboundFromBotCallbackForInstallation(data, row.ClientID, util.UUIDToString(row.InstallationID), streamSource)
 	if !ok {
 		return true, w.complete(ctx, row, streamInboxStatusDiscarded, "payload_unusable", "callback has no message id", traceHash)
 	}
