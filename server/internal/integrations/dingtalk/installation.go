@@ -62,6 +62,8 @@ type installQueries interface {
 	UpsertChannelInstallation(ctx context.Context, arg db.UpsertChannelInstallationParams) (db.ChannelInstallation, error)
 	UpsertChannelInstallationByAppID(ctx context.Context, arg db.UpsertChannelInstallationByAppIDParams) (db.ChannelInstallation, error)
 	DeleteChannelChatSessionBindingsByInstallation(ctx context.Context, arg db.DeleteChannelChatSessionBindingsByInstallationParams) error
+	ReclaimDeadChannelInstallationByAppID(ctx context.Context, arg db.ReclaimDeadChannelInstallationByAppIDParams) (pgtype.UUID, error)
+	ReclaimRevokedChannelInstallationByAgent(ctx context.Context, arg db.ReclaimRevokedChannelInstallationByAgentParams) (pgtype.UUID, error)
 }
 
 // dbInstallQueries adapts *db.Queries to installQueries — the generated
@@ -146,6 +148,24 @@ func (s *InstallationService) Upsert(ctx context.Context, p InstallationParams) 
 	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.q.WithTx(tx)
 
+	// Free the (dingtalk, client_id) routing slot from any DEAD prior owner —
+	// a revoked placeholder held by another agent or workspace, or an orphan
+	// whose owning workspace/agent was deleted (#4810) — before the lookup, so
+	// a bot that was disconnected can be rebound instead of tripping a unique
+	// violation on its own ghost row. The caller's OWN revoked row is spared:
+	// the agent-keyed upsert below reactivates it in place, preserving its
+	// installation id and user bindings. Mirrors slack.persistInstall and
+	// lark.ChannelStore.ReclaimDeadInstallationByAppID.
+	if _, err := qtx.ReclaimDeadChannelInstallationByAppID(ctx, db.ReclaimDeadChannelInstallationByAppIDParams{
+		ChannelType: channelTypeDingTalk,
+		AppID:       p.ClientID,
+		WorkspaceID: p.WorkspaceID,
+		AgentID:     p.AgentID,
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		// pgx.ErrNoRows just means nothing was dead — a no-op, not a failure.
+		return Installation{}, fmt.Errorf("reclaim dead dingtalk installation: %w", err)
+	}
+
 	// Who holds this client_id today? Decides which upsert shape applies
 	// and fences the cross-workspace case with a clear error instead of a
 	// raw unique violation.
@@ -163,6 +183,20 @@ func (s *InstallationService) Upsert(ctx context.Context, p InstallationParams) 
 
 	var row db.ChannelInstallation
 	if prevFound && !uuidEqual(prev.AgentID, p.AgentID) {
+		// The TARGET agent may still hold a revoked leftover from an earlier
+		// disconnect. It pins the (workspace_id, agent_id, channel_type)
+		// unique slot and would abort the move below with a spurious
+		// "already connected" even though its occupant is dead — clear it
+		// (and its dependents) first. An ACTIVE row is left alone: that is
+		// the genuine ErrAgentAlreadyConnected conflict.
+		if _, err := qtx.ReclaimRevokedChannelInstallationByAgent(ctx, db.ReclaimRevokedChannelInstallationByAgentParams{
+			WorkspaceID: p.WorkspaceID,
+			AgentID:     p.AgentID,
+			ChannelType: channelTypeDingTalk,
+		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return Installation{}, fmt.Errorf("reclaim target agent's revoked installation: %w", err)
+		}
+
 		// Agent switch: conflict on the (channel_type, app_id) routing
 		// index moves the existing row to the new agent and reactivates
 		// it. The query's workspace fence turns a cross-workspace race
