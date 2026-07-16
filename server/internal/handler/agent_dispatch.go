@@ -47,7 +47,6 @@ type AgentDispatchRequest struct {
 	Continuation *AgentDispatchContinuation `json:"continuation,omitempty"`
 	AgentID      string                     `json:"agentId,omitempty"`
 	Input        AgentDispatchInput         `json:"input"`
-	ContextToken string                     `json:"contextToken"`
 }
 
 type AgentDispatchResponse struct {
@@ -63,11 +62,9 @@ type AgentDispatchResponse struct {
 // New issues still require a body-level agentId and it must match the endpoint;
 // continuations resolve the issue while remaining scoped to the same agent.
 // schemaVersion is intentionally not gated and the request body has no
-// handler-level size cap. contextToken is stored only in the server-private
-// task context so the daemon and FC/E2B launcher can pass it to the runtime; it
-// is never rendered into issue/comment content. dispatchTaskId remains owned by
-// the upstream router; when present in a legacy payload it is ignored by the
-// JSON decoder.
+// handler-level size cap. Agent identity credentials remain agent-owned;
+// contextToken and dispatchTaskId from legacy router payloads are ignored by
+// the JSON decoder and never enter issue/comment content or task context.
 func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	dispatchContext, ok := h.resolveAgentDispatchContext(w, r)
 	if !ok {
@@ -77,11 +74,6 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	var req AgentDispatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	req.ContextToken = strings.TrimSpace(req.ContextToken)
-	if req.ContextToken == "" {
-		writeError(w, http.StatusBadRequest, "contextToken is required")
 		return
 	}
 	if strings.TrimSpace(req.Input.UserPrompt.Text) == "" {
@@ -112,14 +104,14 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		h.createAgentDispatchIssue(w, r, req, dispatchContext.UserID, dispatchContext.WorkspaceID, agent, req.ContextToken)
+		h.createAgentDispatchIssue(w, r, req, dispatchContext.UserID, dispatchContext.WorkspaceID, agent)
 		return
 	}
 	if req.Continuation.Kind != "issue" || strings.TrimSpace(req.Continuation.IssueID) == "" {
 		writeError(w, http.StatusBadRequest, "continuation must identify an issue")
 		return
 	}
-	h.createAgentDispatchComment(w, r, req, dispatchContext, req.ContextToken)
+	h.createAgentDispatchComment(w, r, req, dispatchContext)
 }
 
 type agentDispatchContext struct {
@@ -200,7 +192,7 @@ func (h *Handler) resolveAgentDispatchAgent(w http.ResponseWriter, r *http.Reque
 	return agent, true
 }
 
-func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Request, req AgentDispatchRequest, userID, workspaceID pgtype.UUID, agent db.Agent, agentIdentityContextToken string) {
+func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Request, req AgentDispatchRequest, userID, workspaceID pgtype.UUID, agent db.Agent) {
 	attachmentService := service.NewExternalAttachmentService(h.Queries, h.Storage, h.AgentDispatchHTTPClient)
 	imported, err := attachmentService.Import(r.Context(), service.ExternalAttachmentImportParams{
 		WorkspaceID: workspaceID,
@@ -229,9 +221,8 @@ func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Reques
 		AssigneeID:     agent.ID,
 		CreatorType:    "member",
 		CreatorID:      userID,
-		AttachmentIDs:             attachmentIDs(imported),
-		AllowDuplicate:            true,
-		AgentIdentityContextToken: agentIdentityContextToken,
+		AttachmentIDs:  attachmentIDs(imported),
+		AllowDuplicate: true,
 	}, service.IssueCreateOpts{
 		ActorID:          uuidToString(userID),
 		AnalyticsAgentID: uuidToString(agent.ID),
@@ -259,7 +250,7 @@ func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Request, req AgentDispatchRequest, dispatchContext agentDispatchContext, agentIdentityContextToken string) {
+func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Request, req AgentDispatchRequest, dispatchContext agentDispatchContext) {
 	issueID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(req.Continuation.IssueID), "continuation.issueId")
 	if !ok {
 		return
@@ -306,11 +297,10 @@ func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Requ
 		}
 	}()
 	result, err := h.IssueCommentService.CreateExternalFollowUp(r.Context(), service.IssueCommentCreateParams{
-		Issue:                     issue,
-		AuthorID:                  dispatchContext.UserID,
-		Content:                   buildAgentDispatchContent(req.Input),
-		AttachmentIDs:             attachmentIDs(imported),
-		AgentIdentityContextToken: agentIdentityContextToken,
+		Issue:         issue,
+		AuthorID:      dispatchContext.UserID,
+		Content:       buildAgentDispatchContent(req.Input),
+		AttachmentIDs: attachmentIDs(imported),
 	}, service.IssueCommentCreateOpts{
 		BroadcastPayload: func(comment db.Comment, attachments []db.Attachment) map[string]any {
 			responses := make([]AttachmentResponse, 0, len(attachments))
@@ -327,7 +317,7 @@ func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Requ
 		},
 	})
 	if errors.Is(err, service.ErrIssueDispatchPending) {
-		writeError(w, http.StatusConflict, "issue already has a pending agent task; retry with a fresh contextToken")
+		writeError(w, http.StatusConflict, "issue already has a pending agent task; retry after it finishes")
 		return
 	}
 	if err != nil {

@@ -59,7 +59,7 @@ func (l *captureRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTask
 	return nil
 }
 
-func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndPassesRuntimeContext(t *testing.T) {
+func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndIgnoresRouterContextToken(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "test-bot-dispatch-issue", nil)
 	attachmentBody := []byte("fake-png-content")
 	files := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -189,11 +189,42 @@ func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndPassesRuntimeContext
 	`, resp.TaskID).Scan(&taskContext, &storedContextToken); err != nil {
 		t.Fatalf("load task context: %v", err)
 	}
-	if !storedContextToken.Valid || storedContextToken.String != "sealed-context" {
-		t.Fatalf("task context token = %q, want sealed-context", storedContextToken.String)
+	if storedContextToken.Valid {
+		t.Fatalf("task context token = %q, want Router contextToken ignored", storedContextToken.String)
 	}
 	if strings.Contains(string(taskContext), "task-001") {
 		t.Fatalf("task context leaked upstream dispatch identity: %s", taskContext)
+	}
+}
+
+func TestHandleAgentDispatchCreatesIssueWithoutRouterContextToken(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-bot-dispatch-no-context-token", nil)
+	body := fmt.Sprintf(`{
+		"agentId":%q,
+		"input":{"userPrompt":{"text":"Create an issue using the selected agent."},"attachments":[]}
+	}`, agentID)
+
+	w := postAgentDispatchForTest(t, body, agentID)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("HandleAgentDispatch without contextToken: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp AgentDispatchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, resp.Continuation.IssueID)
+	})
+	var hasRouterContextToken bool
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT COALESCE(context ? 'agent_identity_context_token', false)
+		FROM agent_task_queue
+		WHERE id = $1
+	`, resp.TaskID).Scan(&hasRouterContextToken); err != nil {
+		t.Fatalf("load task context: %v", err)
+	}
+	if hasRouterContextToken {
+		t.Fatal("task context unexpectedly contains a Router-provided identity token")
 	}
 }
 
@@ -204,8 +235,7 @@ func TestHandleAgentDispatchRequiresAgentIDWhenCreatingIssue(t *testing.T) {
 			"systemPrompt":{"text":"External input."},
 			"userPrompt":{"text":"Create a new issue without an agent."},
 			"attachments":[]
-		},
-		"contextToken":"new-issue-context"
+		}
 	}`
 	w := postAgentDispatchForTest(t, body, agentID)
 	if w.Code != http.StatusBadRequest {
@@ -316,8 +346,8 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 	if uuidToString(triggerCommentID) != resp.CommentID {
 		t.Fatalf("task trigger comment = %s, want %s", uuidToString(triggerCommentID), resp.CommentID)
 	}
-	if !storedContextToken.Valid || storedContextToken.String != "follow-up-context" {
-		t.Fatalf("task context token = %q, want follow-up-context", storedContextToken.String)
+	if storedContextToken.Valid {
+		t.Fatalf("task context token = %q, want Router contextToken ignored", storedContextToken.String)
 	}
 	var attachmentCount int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM attachment WHERE comment_id = $1`, resp.CommentID).Scan(&attachmentCount); err != nil {
@@ -379,8 +409,7 @@ func TestHandleAgentDispatchContinuationRejectsRunningIssueTask(t *testing.T) {
 			"systemPrompt":{"text":"External input."},
 			"userPrompt":{"text":"Follow up while the previous run is active."},
 			"attachments":[]
-		},
-		"contextToken":"fresh-one-shot-context"
+		}
 	}`, issueID)
 	w := postAgentDispatchForTest(t, body, agentID)
 	if w.Code != http.StatusConflict {
@@ -430,8 +459,7 @@ func TestHandleAgentDispatchRejectsMemberWithoutAgentInvocationPermission(t *tes
 			"systemPrompt":{"text":"External input."},
 			"userPrompt":{"text":"Attempt to invoke a private agent."},
 			"attachments":[]
-		},
-		"contextToken":"private-agent-context"
+		}
 	}`, agentID)
 	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, memberID, agentID)
 	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
@@ -471,8 +499,7 @@ func TestHandleAgentDispatchRejectsContinuationOutsideEndpointAgent(t *testing.T
 	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, boundAgentID)
 	body := fmt.Sprintf(`{
 		"continuation":{"kind":"issue","issueId":%q},
-		"input":{"userPrompt":{"text":"Do not cross endpoint scope."},"attachments":[]},
-		"contextToken":"dispatch-continuation-scope-context"
+		"input":{"userPrompt":{"text":"Do not cross endpoint scope."},"attachments":[]}
 	}`, issueID)
 	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -490,8 +517,7 @@ func TestHandleAgentDispatchRejectsMissingOrInvalidDeliverySecret(t *testing.T) 
 	endpointID, _ := createAgentDispatchEndpointForTest(t, testUserID, agentID)
 	body := fmt.Sprintf(`{
 		"agentId":%q,
-		"input":{"userPrompt":{"text":"Authenticated delivery only."},"attachments":[]},
-		"contextToken":"dispatch-auth-context"
+		"input":{"userPrompt":{"text":"Authenticated delivery only."},"attachments":[]}
 	}`, agentID)
 
 	for _, tc := range []struct {
@@ -522,8 +548,7 @@ func TestHandleAgentDispatchRejectsMalformedEndpointWithoutParsingOracle(t *test
 	_, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
 	body := fmt.Sprintf(`{
 		"agentId":%q,
-		"input":{"userPrompt":{"text":"Authenticated delivery only."},"attachments":[]},
-		"contextToken":"dispatch-auth-context"
+		"input":{"userPrompt":{"text":"Authenticated delivery only."},"attachments":[]}
 	}`, agentID)
 	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -542,8 +567,7 @@ func TestHandleAgentDispatchRejectsAgentOutsideEndpoint(t *testing.T) {
 	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, boundAgentID)
 	body := fmt.Sprintf(`{
 		"agentId":%q,
-		"input":{"userPrompt":{"text":"Do not cross endpoint scope."},"attachments":[]},
-		"contextToken":"dispatch-agent-scope-context"
+		"input":{"userPrompt":{"text":"Do not cross endpoint scope."},"attachments":[]}
 	}`, requestedAgentID)
 	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
