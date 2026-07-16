@@ -65,6 +65,11 @@ interface CliCallbackConfig {
 interface LoginPageProps {
   /** Logo element rendered above the title */
   logo?: ReactNode;
+  /** Overrides the sign-in step title (e.g. an internal product name). When
+   *  set, a small "Powered by Multica" credit is shown beneath the card to
+   *  preserve upstream attribution (license §1(b)). Defaults to the localized
+   *  "Sign in to Multica". */
+  title?: ReactNode;
   /** Called after successful login. The workspace list is seeded into React
    *  Query before this fires, so the caller can compute a destination URL. */
   onSuccess: () => void;
@@ -132,6 +137,7 @@ export function validateCliCallback(cliCallback: string): boolean {
 
 export function LoginPage({
   logo,
+  title,
   onSuccess,
   google,
   dingtalk,
@@ -500,7 +506,7 @@ export function LoginPage({
         <CardHeader className="text-center">
           {logo && <div className="mx-auto mb-4">{logo}</div>}
           <CardTitle className="text-2xl">
-            {t(($) => $.signin.title)}
+            {title ?? t(($) => $.signin.title)}
           </CardTitle>
           <CardDescription>
             {oauthOnlyMode
@@ -608,7 +614,7 @@ export function LoginPage({
                     fill="#1677FF"
                     aria-hidden="true"
                   >
-                    <path d="M12 3C6.5 3 2 6.6 2 11c0 2.53 1.46 4.78 3.72 6.26-.2 1.02-.7 2.31-1.62 3.34-.22.24.02.62.34.5 1.9-.68 3.28-1.5 4.2-2.16.98.24 2.02.36 3.1.36 5.5 0 10-3.6 10-8s-4.5-8-9.94-8Zm4.9 6.53-2.62 6.06c-.12.28-.5.32-.68.08l-1.5-2.02-2.86 1.06c-.3.1-.56-.24-.38-.5l4.9-6.98c.2-.28.62-.06.5.26l-1.44 3.9 3.66-1.66c.32-.14.6.2.46.52Z" />
+                    <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10s10-4.477 10-10S17.523 2 12 2m4.49 9.04l-.006.014c-.42.898-1.516 2.66-1.516 2.66l-.005-.012l-.32.558h1.543l-2.948 3.919l.67-2.666h-1.215l.422-1.763a17 17 0 0 0-1.223.349s-.646.378-1.862-.729c0 0-.82-.722-.344-.902c.202-.077.981-.175 1.595-.257a80 80 0 0 1 1.338-.172s-2.555.039-3.161-.057c-.606-.095-1.375-1.107-1.539-1.996c0 0-.253-.488.545-.257s4.101.9 4.101.9S8.27 9.312 7.983 8.99c-.286-.32-.841-1.754-.769-2.634c0 0 .031-.22.257-.16c0 0 3.176 1.45 5.347 2.245s4.06 1.199 3.816 2.228c-.02.087-.072.216-.144.37" />
                   </svg>
                   {t(($) => $.signin.dingtalk)}
                 </Button>
@@ -641,6 +647,11 @@ export function LoginPage({
             </>
           )}
           {extra && <div className="w-full pt-1 text-center">{extra}</div>}
+          {title && (
+            <p className="w-full pt-1 text-center text-[11px] text-muted-foreground/70">
+              Powered by Multica
+            </p>
+          )}
         </CardFooter>
       </Card>
     </div>
