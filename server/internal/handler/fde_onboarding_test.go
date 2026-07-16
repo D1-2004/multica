@@ -57,6 +57,20 @@ func TestGetFDEOnboardingListsOnlyAdminWorkspaces(t *testing.T) {
 	}
 }
 
+func TestFDEDingTalkInstallAllowsOtherOrganizationMembers(t *testing.T) {
+	workspaceID := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	agentID := pgtype.UUID{Bytes: [16]byte{2}, Valid: true}
+	initiatorID := pgtype.UUID{Bytes: [16]byte{3}, Valid: true}
+
+	params := fdeDingTalkInstallParams(workspaceID, agentID, initiatorID)
+	if params.WorkspaceID != workspaceID || params.AgentID != agentID || params.InitiatorID != initiatorID {
+		t.Fatalf("install identities = %#v, want workspace=%v agent=%v initiator=%v", params, workspaceID, agentID, initiatorID)
+	}
+	if !params.AllowUnbound {
+		t.Fatal("FDE DingTalk installation must allow other organization members by default")
+	}
+}
+
 func TestResolveOrCreateFDEWorkspaceIsIdempotentPerUser(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler database fixture unavailable")

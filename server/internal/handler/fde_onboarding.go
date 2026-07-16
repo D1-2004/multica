@@ -135,10 +135,10 @@ func (h *Handler) ProvisionFDEOnboarding(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	begin, err := h.DingTalkRegistration.BeginInstall(r.Context(), dingtalk.BeginInstallParams{
-		WorkspaceID: workspace.ID, AgentID: agent.ID, InitiatorID: ownerID,
-		AllowUnbound: false,
-	})
+	begin, err := h.DingTalkRegistration.BeginInstall(
+		r.Context(),
+		fdeDingTalkInstallParams(workspace.ID, agent.ID, ownerID),
+	)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to start DingTalk install: "+err.Error())
 		return
@@ -151,6 +151,17 @@ func (h *Handler) ProvisionFDEOnboarding(w http.ResponseWriter, r *http.Request)
 			ExpiresInSeconds: begin.ExpiresInSeconds, PollIntervalSeconds: begin.PollIntervalSeconds,
 		},
 	})
+}
+
+func fdeDingTalkInstallParams(workspaceID, agentID, initiatorID pgtype.UUID) dingtalk.BeginInstallParams {
+	return dingtalk.BeginInstallParams{
+		WorkspaceID: workspaceID,
+		AgentID:     agentID,
+		InitiatorID: initiatorID,
+		// The managed FDE bot is an organization entry point, so coworkers who
+		// can reach it must not be forced through Multica account binding first.
+		AllowUnbound: true,
+	}
 }
 
 var (
