@@ -197,6 +197,57 @@ detached_audit AS (
 )
 SELECT id FROM dead;
 
+-- name: ReclaimRevokedChannelInstallationByAgent :one
+-- Companion to ReclaimDeadChannelInstallationByAppID for the move path: frees
+-- the TARGET agent's (workspace_id, agent_id, channel_type) slot when it is
+-- pinned by a REVOKED leftover from an earlier disconnect. Without this, moving
+-- an installation to that agent (DingTalk's agent-switch upsert, keyed by
+-- app_id) trips the unique constraint even though the occupying row is dead —
+-- the "duplicate binding" refusal after an unbind. Revoke is the owner's
+-- explicit "I'm done with this bot", so the row and its application-owned
+-- dependents (no FK/cascade, MUL-3515 §4) are cleared the same way the
+-- app_id-keyed reclaim does. An ACTIVE row is deliberately NOT touched: that
+-- is a genuine conflict the caller must refuse. Returns the removed id;
+-- pgx.ErrNoRows means nothing was dead — a no-op the caller treats as success.
+WITH dead AS (
+    DELETE FROM channel_installation ci
+    WHERE ci.workspace_id = sqlc.arg('workspace_id')
+      AND ci.agent_id = sqlc.arg('agent_id')
+      AND ci.channel_type = sqlc.arg('channel_type')
+      AND ci.status = 'revoked'
+    RETURNING ci.id
+),
+cleared_chat_sessions AS (
+    DELETE FROM channel_chat_session_binding
+    WHERE installation_id IN (SELECT id FROM dead)
+    RETURNING chat_session_id
+),
+cleared_outbound_cards AS (
+    -- Reached through the just-removed chat-session bindings; see the app_id
+    -- reclaim above for why chat_session_id is the only reliable link.
+    DELETE FROM channel_outbound_card_message
+    WHERE chat_session_id IN (SELECT chat_session_id FROM cleared_chat_sessions)
+),
+cleared_binding_tokens AS (
+    DELETE FROM channel_binding_token
+    WHERE installation_id IN (SELECT id FROM dead)
+),
+cleared_user_bindings AS (
+    DELETE FROM channel_user_binding
+    WHERE installation_id IN (SELECT id FROM dead)
+),
+cleared_inbound_dedup AS (
+    DELETE FROM channel_inbound_message_dedup
+    WHERE installation_id IN (SELECT id FROM dead)
+),
+detached_audit AS (
+    -- Same DETACH semantics as the app_id-keyed reclaim: the workspace still
+    -- exists, so a NULL-installation audit row stays useful for triage.
+    UPDATE channel_inbound_audit SET installation_id = NULL
+    WHERE installation_id IN (SELECT id FROM dead)
+)
+SELECT id FROM dead;
+
 -- name: DeleteChannelInstallationsByArchivedRuntimeAgents :exec
 -- Application-layer replacement for the (deliberately absent, MUL-3515 §4)
 -- workspace/agent ON DELETE CASCADE: on runtime teardown, before the archived
