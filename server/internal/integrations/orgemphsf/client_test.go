@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -64,17 +65,17 @@ func TestDecodeCorpIDRejectsMalformedValues(t *testing.T) {
 func TestResolveEmployeeByCorpIDDecodesLocallyThenInvokesOrgEmpService(t *testing.T) {
 	invoker := &fakeBindingInvoker{event: &dapr.BindingEvent{Data: []byte(`{
 		"success":true,
-		"result":{"uid":24710833,"orgId":439446171,"staffId":"106201"}
+		"result":{"uid":24710833,"orgId":439446171,"staffId":"Staff-A_106201"}
 	}`)}}
 	employee, err := newTestClient(invoker).ResolveEmployeeByCorpID(
 		context.Background(),
 		"ding8196cd9a2b2405da24f2f5cc6abecb85",
-		"106201",
+		"Staff-A_106201",
 	)
 	if err != nil {
 		t.Fatalf("ResolveEmployeeByCorpID: %v", err)
 	}
-	if employee.UID != "24710833" || employee.OrgID != "439446171" || employee.StaffID != "106201" {
+	if employee.UID != "24710833" || employee.OrgID != "439446171" || employee.StaffID != "Staff-A_106201" {
 		t.Fatalf("unexpected employee: %#v", employee)
 	}
 	if got := invoker.request.Metadata["rpc-interface-name"]; got != serviceInterface {
@@ -85,25 +86,25 @@ func TestResolveEmployeeByCorpIDDecodesLocallyThenInvokesOrgEmpService(t *testin
 func TestGetEmployeeByStaffIDInvokesOrgEmpService(t *testing.T) {
 	invoker := &fakeBindingInvoker{event: &dapr.BindingEvent{Data: []byte(`{
 		"success":true,
-		"result":{"uid":24710833,"orgId":439446171,"staffId":"106201"}
+		"result":{"uid":24710833,"orgId":439446171,"staffId":"Staff-A_106201"}
 	}`)}}
 	client := newTestClient(invoker)
 
-	employee, err := client.GetEmployeeByStaffID(context.Background(), "439446171", "106201")
+	employee, err := client.GetEmployeeByStaffID(context.Background(), "439446171", "Staff-A_106201")
 	if err != nil {
 		t.Fatalf("GetEmployeeByStaffID: %v", err)
 	}
-	if employee.UID != "24710833" || employee.OrgID != "439446171" || employee.StaffID != "106201" {
+	if employee.UID != "24710833" || employee.OrgID != "439446171" || employee.StaffID != "Staff-A_106201" {
 		t.Fatalf("unexpected employee: %#v", employee)
 	}
 	if !invoker.closed || invoker.request == nil {
 		t.Fatal("Dapr binding was not invoked and closed")
 	}
 	wantMetadata := map[string]string{
-		"rpc-interface-name":         serviceInterface,
-		"rpc-version":                serviceVersion,
-		"rpc-group":                  serviceGroup,
-		"rpc-method-name":            methodName,
+		"rpc-interface-name": serviceInterface,
+		"rpc-version":        serviceVersion,
+		"rpc-group":          serviceGroup,
+		"rpc-method-name":    methodName,
 		// Keep this literal independent from parameterTypes: Dapr HSF splits
 		// multiple generic parameter types on commas. A semicolon makes the
 		// consumer see one type for the two request arguments.
@@ -124,7 +125,7 @@ func TestGetEmployeeByStaffIDInvokesOrgEmpService(t *testing.T) {
 	if err := decoder.Decode(&args); err != nil {
 		t.Fatalf("decode request: %v", err)
 	}
-	if len(args) != 2 || args[0].(json.Number).String() != "439446171" || args[1] != "106201" {
+	if len(args) != 2 || args[0].(json.Number).String() != "439446171" || args[1] != "Staff-A_106201" {
 		t.Fatalf("unexpected request arguments: %#v", args)
 	}
 }
@@ -141,18 +142,59 @@ func TestGetEmployeeByStaffIDAcceptsStringEncodedLongs(t *testing.T) {
 }
 
 func TestGetEmployeeByStaffIDRejectsInvalidInputBeforeDial(t *testing.T) {
-	dialed := false
-	client := &Client{dial: func(context.Context, string) (bindingInvoker, error) {
-		dialed = true
-		return nil, errors.New("unexpected dial")
-	}}
-	_, err := client.GetEmployeeByStaffID(context.Background(), "not-an-org", "106201")
-	var validationErr *ValidationError
-	if !errors.As(err, &validationErr) || validationErr.Field != "org_id" {
-		t.Fatalf("error = %#v", err)
+	for _, tc := range []struct {
+		name    string
+		orgID   string
+		staffID string
+		field   string
+	}{
+		{name: "invalid org", orgID: "not-an-org", staffID: "Staff-A_106201", field: "org_id"},
+		{name: "empty staff", orgID: "439446171", staffID: "", field: "staff_id"},
+		{name: "blank staff", orgID: "439446171", staffID: "   ", field: "staff_id"},
+		{name: "oversized staff", orgID: "439446171", staffID: strings.Repeat("a", maxStaffIDBytes+1), field: "staff_id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dialed := false
+			client := &Client{dial: func(context.Context, string) (bindingInvoker, error) {
+				dialed = true
+				return nil, errors.New("unexpected dial")
+			}}
+			_, err := client.GetEmployeeByStaffID(context.Background(), tc.orgID, tc.staffID)
+			var validationErr *ValidationError
+			if !errors.As(err, &validationErr) || validationErr.Field != tc.field {
+				t.Fatalf("error = %#v, want field %q", err, tc.field)
+			}
+			if dialed {
+				t.Fatal("invalid input reached Dapr")
+			}
+		})
 	}
-	if dialed {
-		t.Fatal("invalid input reached Dapr")
+}
+
+func TestResolveEmployeeByCorpIDRejectsMismatchedIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		responseID  string
+		responseOrg string
+	}{
+		{name: "different staff", responseID: "Staff-A_106202", responseOrg: "439446171"},
+		{name: "staff case differs", responseID: "staff-A_106201", responseOrg: "439446171"},
+		{name: "different org", responseID: "Staff-A_106201", responseOrg: "439446172"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			invoker := &fakeBindingInvoker{event: &dapr.BindingEvent{Data: []byte(fmt.Sprintf(`{
+				"success":true,
+				"result":{"uid":24710833,"orgId":%s,"staffId":%q}
+			}`, tc.responseOrg, tc.responseID))}}
+			_, err := newTestClient(invoker).ResolveEmployeeByCorpID(
+				context.Background(),
+				"ding8196cd9a2b2405da24f2f5cc6abecb85",
+				"Staff-A_106201",
+			)
+			if err == nil || !strings.Contains(err.Error(), "mismatched identity") {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
 
@@ -173,12 +215,14 @@ func TestGetEmployeeByStaffIDReturnsSafeServiceError(t *testing.T) {
 }
 
 func TestGetEmployeeByStaffIDRejectsIncompleteResponse(t *testing.T) {
-	invoker := &fakeBindingInvoker{event: &dapr.BindingEvent{Data: []byte(`{
-		"success":true,
-		"result":{"uid":24710833,"orgId":439446171,"staffId":""}
-	}`)}}
-	_, err := newTestClient(invoker).GetEmployeeByStaffID(context.Background(), "439446171", "106201")
-	if err == nil || !strings.Contains(err.Error(), "incomplete") {
-		t.Fatalf("error = %v", err)
+	for _, staffID := range []string{"", "   ", strings.Repeat("a", maxStaffIDBytes+1)} {
+		invoker := &fakeBindingInvoker{event: &dapr.BindingEvent{Data: []byte(fmt.Sprintf(`{
+			"success":true,
+			"result":{"uid":24710833,"orgId":439446171,"staffId":%q}
+		}`, staffID))}}
+		_, err := newTestClient(invoker).GetEmployeeByStaffID(context.Background(), "439446171", "Staff-A_106201")
+		if err == nil || !strings.Contains(err.Error(), "incomplete") {
+			t.Fatalf("staffID length=%d error=%v", len(staffID), err)
+		}
 	}
 }

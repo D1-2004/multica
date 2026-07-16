@@ -46,8 +46,8 @@ const (
 	OutcomeFreshSession Outcome = "fresh_session"
 )
 
-// DropReason enumerates the drop-audit categories. Values match the legacy
-// lark drop reasons 1:1.
+// DropReason enumerates the drop-audit categories. Shared values retain the
+// legacy Lark names; channel-specific pipeline guards add explicit reasons.
 type DropReason string
 
 const (
@@ -57,6 +57,7 @@ const (
 	DropReasonDuplicate           DropReason = "duplicate"
 	DropReasonRevokedInstallation DropReason = "revoked_installation"
 	DropReasonInvalidEvent        DropReason = "invalid_event"
+	DropReasonTaskContextRejected DropReason = "task_context_rejected"
 )
 
 // Result is the typed verdict the Router produces for one inbound message,
@@ -163,6 +164,9 @@ var (
 	// ErrClaimLost: a concurrent reclaim rotated the dedup token mid-flight →
 	// treated as a duplicate.
 	ErrClaimLost = errors.New("engine: dedup claim lost")
+	// ErrTaskContextRejected: the message cannot safely produce task context →
+	// consume it as a product rejection without restarting the transport.
+	ErrTaskContextRejected = errors.New("engine: task context rejected")
 )
 
 // InstallationResolver routes an inbound message to its installation. The

@@ -178,7 +178,7 @@ func (c *Client) GetEmployeeByStaffID(ctx context.Context, orgID, staffID string
 	if !isDecimalIdentifier(orgID) {
 		return Employee{}, &ValidationError{Field: "org_id"}
 	}
-	if !isDecimalIdentifier(staffID) {
+	if staffID == "" || len(staffID) > maxStaffIDBytes {
 		return Employee{}, &ValidationError{Field: "staff_id"}
 	}
 
@@ -235,7 +235,7 @@ func (c *Client) GetEmployeeByStaffID(ctx context.Context, orgID, staffID string
 		StaffID: strings.TrimSpace(response.Result.StaffID),
 	}
 	if !isDecimalIdentifier(employee.UID) || !isDecimalIdentifier(employee.OrgID) ||
-		!isDecimalIdentifier(employee.StaffID) {
+		employee.StaffID == "" || len(employee.StaffID) > maxStaffIDBytes {
 		return Employee{}, errors.New("organization employee HSF returned an incomplete response")
 	}
 	return employee, nil
