@@ -134,6 +134,63 @@ func TestFCE2BRuntimeProviderAndRunner(t *testing.T) {
 	}
 }
 
+func TestFCE2BTaskLaunchBlocker(t *testing.T) {
+	agentID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
+	chatID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	otherChatID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	target := db.AgentTaskQueue{
+		ID:            util.MustParseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+		AgentID:       agentID,
+		ChatSessionID: chatID,
+		Status:        "queued",
+		Priority:      2,
+		CreatedAt:     pgtype.Timestamptz{Time: time.Date(2026, 7, 16, 14, 12, 0, 0, time.UTC), Valid: true},
+	}
+	task := func(id string, chat pgtype.UUID, status string, priority int32, createdAt time.Time) db.AgentTaskQueue {
+		return db.AgentTaskQueue{
+			ID:            util.MustParseUUID(id),
+			AgentID:       agentID,
+			ChatSessionID: chat,
+			Status:        status,
+			Priority:      priority,
+			CreatedAt:     pgtype.Timestamptz{Time: createdAt, Valid: true},
+		}
+	}
+
+	t.Run("active task in the same chat blocks before side effects", func(t *testing.T) {
+		active := task("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", chatID, "running", 2, target.CreatedAt.Time.Add(-time.Minute))
+		blocker, reason, blocked := fcE2BTaskLaunchBlocker(target, []db.AgentTaskQueue{target, active})
+		if !blocked || blocker.ID != active.ID || reason != "active_task" {
+			t.Fatalf("blocker = %#v, reason = %q, blocked = %v", blocker, reason, blocked)
+		}
+	})
+
+	t.Run("earlier queued task in the same chat preserves claim order", func(t *testing.T) {
+		earlier := task("cccccccc-cccc-cccc-cccc-cccccccccccc", chatID, "queued", 2, target.CreatedAt.Time.Add(-time.Second))
+		blocker, reason, blocked := fcE2BTaskLaunchBlocker(target, []db.AgentTaskQueue{target, earlier})
+		if !blocked || blocker.ID != earlier.ID || reason != "queued_predecessor" {
+			t.Fatalf("blocker = %#v, reason = %q, blocked = %v", blocker, reason, blocked)
+		}
+	})
+
+	t.Run("higher priority queued task blocks even when created later", func(t *testing.T) {
+		higher := task("dddddddd-dddd-dddd-dddd-dddddddddddd", chatID, "queued", 3, target.CreatedAt.Time.Add(time.Second))
+		blocker, reason, blocked := fcE2BTaskLaunchBlocker(target, []db.AgentTaskQueue{target, higher})
+		if !blocked || blocker.ID != higher.ID || reason != "queued_predecessor" {
+			t.Fatalf("blocker = %#v, reason = %q, blocked = %v", blocker, reason, blocked)
+		}
+	})
+
+	t.Run("later task and other chat do not block", func(t *testing.T) {
+		later := task("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", chatID, "queued", 2, target.CreatedAt.Time.Add(time.Second))
+		otherChat := task("ffffffff-ffff-ffff-ffff-ffffffffffff", otherChatID, "running", 2, target.CreatedAt.Time.Add(-time.Minute))
+		completed := task("99999999-9999-9999-9999-999999999999", chatID, "completed", 2, target.CreatedAt.Time.Add(-time.Minute))
+		if blocker, reason, blocked := fcE2BTaskLaunchBlocker(target, []db.AgentTaskQueue{target, later, otherChat, completed}); blocked {
+			t.Fatalf("unexpected blocker = %#v, reason = %q", blocker, reason)
+		}
+	})
+}
+
 func TestFCE2BLauncherCommandsUseSandboxReadyTimeout(t *testing.T) {
 	runner := &fakeCommandRunner{out: []string{
 		"Sandbox created with ID sbx_timeout using template multica-fc-hermes-v1",
