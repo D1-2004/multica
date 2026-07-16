@@ -250,6 +250,7 @@ function LoginPageContent() {
 
   return (
     <LoginPage
+      title="FDE 工作台"
       onSuccess={handleSuccess}
       google={
         googleClientId && allows("google")
@@ -286,15 +287,20 @@ function LoginPageContent() {
       }
       onTokenObtained={setLoggedInCookie}
       extra={
-        <span className="text-xs text-muted-foreground">
-          {t(($) => $.web.prefer_desktop)}{" "}
-          <Link
-            href="/download"
-            className="font-medium text-foreground underline decoration-foreground/30 underline-offset-4 hover:decoration-foreground/70"
-          >
-            {t(($) => $.web.download)}
-          </Link>
-        </span>
+        <div className="flex flex-col items-center gap-1.5">
+          <span className="text-xs text-muted-foreground">
+            {t(($) => $.web.internal_only)}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {t(($) => $.web.prefer_desktop)}{" "}
+            <Link
+              href="/download"
+              className="font-medium text-foreground underline decoration-foreground/30 underline-offset-4 hover:decoration-foreground/70"
+            >
+              {t(($) => $.web.download)}
+            </Link>
+          </span>
+        </div>
       }
     />
   );
