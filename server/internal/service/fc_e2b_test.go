@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"strconv"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type fakeAgentIdentityContextCreator struct {
@@ -533,6 +535,42 @@ func TestFCE2BExtraEnvIncludesAgentIdentityContextToken(t *testing.T) {
 	}
 	if got["DWS_CLIENT_SECRET"] != "dws-client-secret" {
 		t.Fatal("DWS_CLIENT_SECRET was not forwarded")
+	}
+}
+
+func TestSandboxSourceEnvCarriesLauncherAndDingTalkStreamHosts(t *testing.T) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		t.Fatalf("os.Hostname: %v", err)
+	}
+	taskContext, err := json.Marshal(map[string]any{
+		protocol.DingTalkStreamSourceJSONKey: protocol.DingTalkStreamSource{
+			Hostname:     "dt-fde-multica033008056137.pre.na620",
+			NodeID:       "node-a",
+			ConnectionID: "node-a-g3",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal task context: %v", err)
+	}
+	env, err := sandboxSourceEnv(taskContext)
+	if err != nil {
+		t.Fatalf("sandboxSourceEnv: %v", err)
+	}
+	if env[protocol.SandboxSourceHostnameEnvKey] != hostname {
+		t.Fatalf("sandbox source hostname = %q, want %q", env[protocol.SandboxSourceHostnameEnvKey], hostname)
+	}
+	if env[protocol.DingTalkStreamHostnameEnvKey] != "dt-fde-multica033008056137.pre.na620" ||
+		env[protocol.DingTalkStreamNodeIDEnvKey] != "node-a" ||
+		env[protocol.DingTalkStreamConnectionIDEnvKey] != "node-a-g3" {
+		t.Fatalf("DingTalk Stream env = %#v", env)
+	}
+}
+
+func TestSandboxSourceEnvRejectsPartialDingTalkStreamSource(t *testing.T) {
+	_, err := sandboxSourceEnv([]byte(`{"dingtalk_stream_source":{"hostname":"stream-host"}}`))
+	if err == nil {
+		t.Fatal("sandboxSourceEnv accepted a partial DingTalk Stream source")
 	}
 }
 

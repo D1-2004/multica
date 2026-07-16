@@ -19,6 +19,11 @@ const (
 	DingTalkRobotIdentityUnavailableJSONKey     = "dingtalk_robot_identity_unavailable"
 	DingTalkRobotIdentityUnavailableMissingOrg  = "missing_organization_identity"
 	DingTalkRobotIdentityUnavailableLookupError = "employee_lookup_failed"
+	DingTalkStreamSourceJSONKey                 = "dingtalk_stream_source"
+	SandboxSourceHostnameEnvKey                 = "MULTICA_SANDBOX_SOURCE_HOSTNAME"
+	DingTalkStreamHostnameEnvKey                = "MULTICA_DINGTALK_STREAM_HOSTNAME"
+	DingTalkStreamNodeIDEnvKey                  = "MULTICA_DINGTALK_STREAM_NODE_ID"
+	DingTalkStreamConnectionIDEnvKey            = "MULTICA_DINGTALK_STREAM_CONNECTION_ID"
 )
 
 // DingTalkRobotIdentity is resolved from the current inbound bot message.
@@ -34,6 +39,16 @@ type DingTalkRobotIdentity struct {
 // task context, and so the daemon can tell the agent to explain the limitation.
 type DingTalkRobotIdentityUnavailable struct {
 	Reason string `json:"reason"`
+}
+
+// DingTalkStreamSource identifies the backend process that received one
+// DingTalk Stream callback. It is persisted with the task so a later FC/E2B
+// launcher on another replica can expose both sides of the handoff inside the
+// sandbox.
+type DingTalkStreamSource struct {
+	Hostname     string `json:"hostname"`
+	NodeID       string `json:"node_id"`
+	ConnectionID string `json:"connection_id"`
 }
 
 // RPCRequestPayload is the generic daemon→server request envelope carried in a

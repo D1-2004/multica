@@ -18,6 +18,7 @@ INSERT INTO dingtalk_stream_inbox AS inbox (
     client_id,
     connection_id,
     node_id,
+    receiver_hostname,
     dedupe_key,
     stream_message_id,
     bot_message_id,
@@ -36,17 +37,19 @@ SELECT
     $6::text,
     $7::text,
     $8::text,
-    $9::bigint,
-    $10::bytea
+    $9::text,
+    $10::bigint,
+    $11::bytea
 FROM channel_installation AS installation
 WHERE installation.channel_type = 'dingtalk'
-  AND installation.id = $11::uuid
+  AND installation.id = $12::uuid
   AND installation.status = 'active'
   AND installation.config ->> 'app_id' = $1::text
 ON CONFLICT (installation_id, dedupe_key) DO UPDATE SET
     stream_message_id = EXCLUDED.stream_message_id,
     connection_id = EXCLUDED.connection_id,
     node_id = EXCLUDED.node_id,
+    receiver_hostname = EXCLUDED.receiver_hostname,
     bot_message_id = COALESCE(EXCLUDED.bot_message_id, inbox.bot_message_id),
     payload_encrypted = CASE
         WHEN inbox.status IN ('queued', 'processing') THEN EXCLUDED.payload_encrypted
@@ -55,13 +58,14 @@ ON CONFLICT (installation_id, dedupe_key) DO UPDATE SET
     delivery_count = inbox.delivery_count + 1,
     last_received_at = now(),
     updated_at = now()
-RETURNING inbox.id, inbox.installation_id, inbox.client_id, inbox.connection_id, inbox.node_id, inbox.dedupe_key, inbox.stream_message_id, inbox.bot_message_id, inbox.topic, inbox.spec_version, inbox.frame_time, inbox.payload_encrypted, inbox.status, inbox.delivery_count, inbox.attempt_count, inbox.available_at, inbox.lease_token, inbox.lease_expires_at, inbox.last_error_class, inbox.last_error, inbox.received_at, inbox.last_received_at, inbox.processed_at, inbox.updated_at
+RETURNING inbox.id, inbox.installation_id, inbox.client_id, inbox.connection_id, inbox.node_id, inbox.dedupe_key, inbox.stream_message_id, inbox.bot_message_id, inbox.topic, inbox.spec_version, inbox.frame_time, inbox.payload_encrypted, inbox.status, inbox.delivery_count, inbox.attempt_count, inbox.available_at, inbox.lease_token, inbox.lease_expires_at, inbox.last_error_class, inbox.last_error, inbox.received_at, inbox.last_received_at, inbox.processed_at, inbox.updated_at, inbox.receiver_hostname
 `
 
 type AdmitDingTalkStreamInboxParams struct {
 	ClientID         string      `json:"client_id"`
 	ConnectionID     string      `json:"connection_id"`
 	NodeID           string      `json:"node_id"`
+	ReceiverHostname string      `json:"receiver_hostname"`
 	DedupeKey        string      `json:"dedupe_key"`
 	StreamMessageID  string      `json:"stream_message_id"`
 	BotMessageID     pgtype.Text `json:"bot_message_id"`
@@ -79,6 +83,7 @@ func (q *Queries) AdmitDingTalkStreamInbox(ctx context.Context, arg AdmitDingTal
 		arg.ClientID,
 		arg.ConnectionID,
 		arg.NodeID,
+		arg.ReceiverHostname,
 		arg.DedupeKey,
 		arg.StreamMessageID,
 		arg.BotMessageID,
@@ -114,6 +119,7 @@ func (q *Queries) AdmitDingTalkStreamInbox(ctx context.Context, arg AdmitDingTal
 		&i.LastReceivedAt,
 		&i.ProcessedAt,
 		&i.UpdatedAt,
+		&i.ReceiverHostname,
 	)
 	return i, err
 }
@@ -141,7 +147,7 @@ SET status = 'processing',
     updated_at = now()
 FROM due
 WHERE inbox.id = due.id
-RETURNING inbox.id, inbox.installation_id, inbox.client_id, inbox.connection_id, inbox.node_id, inbox.dedupe_key, inbox.stream_message_id, inbox.bot_message_id, inbox.topic, inbox.spec_version, inbox.frame_time, inbox.payload_encrypted, inbox.status, inbox.delivery_count, inbox.attempt_count, inbox.available_at, inbox.lease_token, inbox.lease_expires_at, inbox.last_error_class, inbox.last_error, inbox.received_at, inbox.last_received_at, inbox.processed_at, inbox.updated_at
+RETURNING inbox.id, inbox.installation_id, inbox.client_id, inbox.connection_id, inbox.node_id, inbox.dedupe_key, inbox.stream_message_id, inbox.bot_message_id, inbox.topic, inbox.spec_version, inbox.frame_time, inbox.payload_encrypted, inbox.status, inbox.delivery_count, inbox.attempt_count, inbox.available_at, inbox.lease_token, inbox.lease_expires_at, inbox.last_error_class, inbox.last_error, inbox.received_at, inbox.last_received_at, inbox.processed_at, inbox.updated_at, inbox.receiver_hostname
 `
 
 // The caller holds the installation's session-scoped advisory lock. Claim only
@@ -174,6 +180,7 @@ func (q *Queries) ClaimNextDingTalkStreamInboxForInstallation(ctx context.Contex
 		&i.LastReceivedAt,
 		&i.ProcessedAt,
 		&i.UpdatedAt,
+		&i.ReceiverHostname,
 	)
 	return i, err
 }
@@ -198,7 +205,7 @@ SET status = $1,
 WHERE id = $4
   AND status = 'processing'
   AND lease_token = $5
-RETURNING id, installation_id, client_id, connection_id, node_id, dedupe_key, stream_message_id, bot_message_id, topic, spec_version, frame_time, payload_encrypted, status, delivery_count, attempt_count, available_at, lease_token, lease_expires_at, last_error_class, last_error, received_at, last_received_at, processed_at, updated_at
+RETURNING id, installation_id, client_id, connection_id, node_id, dedupe_key, stream_message_id, bot_message_id, topic, spec_version, frame_time, payload_encrypted, status, delivery_count, attempt_count, available_at, lease_token, lease_expires_at, last_error_class, last_error, received_at, last_received_at, processed_at, updated_at, receiver_hostname
 `
 
 type CompleteClaimedDingTalkStreamInboxParams struct {
@@ -243,6 +250,7 @@ func (q *Queries) CompleteClaimedDingTalkStreamInbox(ctx context.Context, arg Co
 		&i.LastReceivedAt,
 		&i.ProcessedAt,
 		&i.UpdatedAt,
+		&i.ReceiverHostname,
 	)
 	return i, err
 }
@@ -318,7 +326,7 @@ SET status = 'queued',
 WHERE id = $1
   AND status = 'dead'
   AND payload_encrypted IS NOT NULL
-RETURNING id, installation_id, client_id, connection_id, node_id, dedupe_key, stream_message_id, bot_message_id, topic, spec_version, frame_time, payload_encrypted, status, delivery_count, attempt_count, available_at, lease_token, lease_expires_at, last_error_class, last_error, received_at, last_received_at, processed_at, updated_at
+RETURNING id, installation_id, client_id, connection_id, node_id, dedupe_key, stream_message_id, bot_message_id, topic, spec_version, frame_time, payload_encrypted, status, delivery_count, attempt_count, available_at, lease_token, lease_expires_at, last_error_class, last_error, received_at, last_received_at, processed_at, updated_at, receiver_hostname
 `
 
 // Deliberately narrow operator repair primitive: only a retained dead-letter
@@ -353,6 +361,7 @@ func (q *Queries) RequeueDeadDingTalkStreamInbox(ctx context.Context, id pgtype.
 		&i.LastReceivedAt,
 		&i.ProcessedAt,
 		&i.UpdatedAt,
+		&i.ReceiverHostname,
 	)
 	return i, err
 }
@@ -370,7 +379,7 @@ SET status = 'queued',
 WHERE id = $4
   AND status = 'processing'
   AND lease_token = $5
-RETURNING id, installation_id, client_id, connection_id, node_id, dedupe_key, stream_message_id, bot_message_id, topic, spec_version, frame_time, payload_encrypted, status, delivery_count, attempt_count, available_at, lease_token, lease_expires_at, last_error_class, last_error, received_at, last_received_at, processed_at, updated_at
+RETURNING id, installation_id, client_id, connection_id, node_id, dedupe_key, stream_message_id, bot_message_id, topic, spec_version, frame_time, payload_encrypted, status, delivery_count, attempt_count, available_at, lease_token, lease_expires_at, last_error_class, last_error, received_at, last_received_at, processed_at, updated_at, receiver_hostname
 `
 
 type RetryClaimedDingTalkStreamInboxParams struct {
@@ -415,6 +424,7 @@ func (q *Queries) RetryClaimedDingTalkStreamInbox(ctx context.Context, arg Retry
 		&i.LastReceivedAt,
 		&i.ProcessedAt,
 		&i.UpdatedAt,
+		&i.ReceiverHostname,
 	)
 	return i, err
 }

@@ -135,6 +135,48 @@ func TestRobotTaskContextResolverBuildsIdentityForOpaqueStaffID(t *testing.T) {
 	}
 }
 
+func TestRobotTaskContextResolverCarriesStreamSourceWithIdentity(t *testing.T) {
+	employee := &robotEmployeeResolverStub{employee: orgemphsf.Employee{
+		UID:   "24710833",
+		OrgID: "439446171",
+	}}
+	resolver := newRobotTaskContextResolver(employee)
+	raw, err := json.Marshal(dingtalkRawEvent{
+		SenderCorpID:  "ding-corp",
+		SenderStaffID: "Staff-A_106201",
+		StreamSource: &protocol.DingTalkStreamSource{
+			Hostname:     "dt-fde-multica033008056137.pre.na620",
+			NodeID:       "node-a",
+			ConnectionID: "node-a-g3",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal raw message: %v", err)
+	}
+	contextJSON, err := resolver.ResolveTaskContext(
+		context.Background(),
+		engine.ResolvedInstallation{},
+		channel.InboundMessage{Raw: raw},
+	)
+	if err != nil {
+		t.Fatalf("ResolveTaskContext: %v", err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(contextJSON, &payload); err != nil {
+		t.Fatalf("decode task context: %v", err)
+	}
+	var source protocol.DingTalkStreamSource
+	if err := json.Unmarshal(payload[protocol.DingTalkStreamSourceJSONKey], &source); err != nil {
+		t.Fatalf("decode Stream source: %v", err)
+	}
+	if source.Hostname != "dt-fde-multica033008056137.pre.na620" || source.NodeID != "node-a" || source.ConnectionID != "node-a-g3" {
+		t.Fatalf("Stream source = %+v", source)
+	}
+	if _, ok := payload[protocol.DingTalkRobotIdentityJSONKey]; !ok {
+		t.Fatal("robot identity missing from combined task context")
+	}
+}
+
 func assertDingTalkIdentityUnavailable(t *testing.T, contextJSON []byte, wantReason string) {
 	t.Helper()
 	var payload map[string]json.RawMessage
