@@ -212,6 +212,43 @@ VALUES (
 )
 RETURNING *;
 
+-- name: UpsertDeferredChannelChatTask :one
+-- Persists the channel chat's silence-window batch before the inbound handler
+-- may report success. A partial unique index permits one open deferred batch
+-- per chat_session; once the promoter seals it as queued, the next message can
+-- create the next batch. Every message in the batch is tagged with the returned
+-- task id, and chat_input_task_id makes that exact set the daemon's immutable
+-- input instead of relying on the legacy trailing-message scan.
+INSERT INTO agent_task_queue (
+    id, agent_id, runtime_id, issue_id, status, priority, chat_session_id,
+    initiator_user_id, originator_user_id, force_fresh_session,
+    runtime_mcp_overlay, runtime_connected_apps, context,
+    chat_input_task_id, fire_at
+)
+VALUES (
+    @id, @agent_id, @runtime_id, NULL, 'deferred', 2, @chat_session_id,
+    @initiator_user_id, @originator_user_id,
+    COALESCE(sqlc.narg('force_fresh_session')::boolean, FALSE),
+    sqlc.narg(runtime_mcp_overlay), sqlc.narg(runtime_connected_apps),
+    sqlc.narg(task_context), @id,
+    now() + make_interval(secs => @debounce_seconds::double precision)
+)
+ON CONFLICT (chat_session_id)
+    WHERE status = 'deferred' AND chat_session_id IS NOT NULL
+DO UPDATE SET
+    agent_id = EXCLUDED.agent_id,
+    runtime_id = EXCLUDED.runtime_id,
+    priority = EXCLUDED.priority,
+    initiator_user_id = EXCLUDED.initiator_user_id,
+    originator_user_id = EXCLUDED.originator_user_id,
+    force_fresh_session = agent_task_queue.force_fresh_session OR EXCLUDED.force_fresh_session,
+    runtime_mcp_overlay = EXCLUDED.runtime_mcp_overlay,
+    runtime_connected_apps = EXCLUDED.runtime_connected_apps,
+    context = EXCLUDED.context,
+    chat_input_task_id = agent_task_queue.id,
+    fire_at = EXCLUDED.fire_at
+RETURNING *;
+
 -- name: SetChatTaskInputOwnerSelf :one
 -- Stamps a freshly-created direct-chat task as the owner of its own input batch
 -- (chat_input_task_id = id), so a later claim loads exactly the user messages

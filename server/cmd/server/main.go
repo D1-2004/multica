@@ -396,6 +396,11 @@ func main() {
 	// orphaned and billed until it times out.
 	fcLauncher.SetPool(pool)
 	taskSvc.RuntimeLauncher = fcLauncher
+	// NewRouterWithOptions owns the request-path TaskService and wires its
+	// Redis-backed empty-claim cache there. This background TaskService owns the
+	// FC/E2B launcher; share the same cache so a promoted durable channel task
+	// invalidates a daemon's cached empty verdict before sending its wakeup.
+	taskSvc.EmptyClaim = h.TaskService.EmptyClaim
 	autopilotSvc := service.NewAutopilotService(queries, pool, bus, taskSvc)
 	registerAutopilotListeners(bus, autopilotSvc)
 
@@ -410,11 +415,15 @@ func main() {
 
 	// Start background sweeper to mark stale runtimes as offline.
 	go runRuntimeSweeper(sweepCtx, queries, liveness, taskSvc, bus)
+	go taskSvc.RunDeferredChannelTaskPromoter(sweepCtx)
 	go heartbeatScheduler.Run(sweepCtx)
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
 	go runDBStatsLogger(sweepCtx, pool)
 	if h.WebhookDeliveryWorker != nil {
 		go h.WebhookDeliveryWorker.Run(sweepCtx)
+	}
+	if h.DingTalkStreamInbox != nil {
+		go h.DingTalkStreamInbox.Run(sweepCtx)
 	}
 	if h.ManagedAgent != nil && h.ManagedAgent.Enabled() {
 		go h.ManagedAgent.Run(sweepCtx)
@@ -484,6 +493,12 @@ func main() {
 	<-quit
 
 	slog.Info("shutting down server")
+	// Start Stream handoff immediately while HTTP and background workers are
+	// still alive. DRAINING connections continue durable admission until
+	// replacement READY capacity exists; no new supervisors start afterwards.
+	if h.ChannelSupervisor != nil {
+		h.ChannelSupervisor.BeginShutdown()
+	}
 	autopilotCancel()
 
 	// Order matters: drain in-flight HTTP first so any heartbeat handlers
@@ -497,6 +512,14 @@ func main() {
 		os.Exit(1)
 	}
 	apiShutdownCancel()
+	if h.ChannelSupervisor != nil {
+		if !h.ChannelSupervisor.WaitForHandoffs(h.ChannelSupervisor.StreamDrainTimeout()) {
+			slog.Warn("channel supervisor: graceful Stream handoff timed out; forcing shutdown",
+				"event", "channel_stream_handoff_timeout",
+				"timeout", h.ChannelSupervisor.StreamDrainTimeout().String(),
+			)
+		}
+	}
 
 	// HTTP is fully drained — safe to stop the sweeper and flush the
 	// final batch of queued heartbeat bumps.
@@ -504,6 +527,11 @@ func main() {
 	heartbeatScheduler.Stop()
 	if h.WebhookDeliveryWorker != nil && !h.WebhookDeliveryWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("webhook delivery worker did not exit within shutdown timeout")
+	}
+	if h.DingTalkStreamInbox != nil && !h.DingTalkStreamInbox.WaitWithTimeout(5*time.Second) {
+		slog.Warn("dingtalk stream inbox worker did not exit within shutdown timeout",
+			"event", "dingtalk_stream_inbox_shutdown_timeout",
+		)
 	}
 
 	// Join the channel supervisor's per-installation goroutines so the

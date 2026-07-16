@@ -34,6 +34,7 @@ RUNTIME_CONFIG_KEYS=(
   MULTICA_AGENT_DISPATCH_CURRENT_KEY_ID
   MULTICA_AGENT_DISPATCH_KEYS
   MULTICA_DINGTALK_SECRET_KEY
+  MULTICA_DINGTALK_STREAM_CONNECTION_TARGET
   MULTICA_LARK_SECRET_KEY
   MULTICA_SLACK_SECRET_KEY
   MULTICA_FC_E2B_ENABLED
@@ -258,6 +259,13 @@ process_patterns=(
   "$RUN_DIR/health-server[.]js"
 )
 
+# The backend's bounded graceful-shutdown path can spend up to 53 seconds in
+# sequence: HTTP drain (10s), Stream handoff (15s), webhook worker (5s),
+# DingTalk inbox worker (5s), channel supervisor (15s), and metrics drain
+# (3s). Keep a small scheduling margin so a rolling deploy does not SIGKILL
+# the old backend before those durability and connection-handoff steps finish.
+existing_process_shutdown_budget_seconds=60
+
 processes_running() {
   local pattern
   for pattern in "${process_patterns[@]}"; do
@@ -277,7 +285,7 @@ stop_existing_processes() {
     pkill -TERM -f "$pattern" >/dev/null 2>&1 || true
   done
 
-  for attempt in $(seq 1 10); do
+  for attempt in $(seq 1 "$existing_process_shutdown_budget_seconds"); do
     if ! processes_running; then
       break
     fi

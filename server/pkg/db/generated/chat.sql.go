@@ -1156,3 +1156,115 @@ func (q *Queries) UpdateChatSessionTitleIfCurrent(ctx context.Context, arg Updat
 	)
 	return i, err
 }
+
+const upsertDeferredChannelChatTask = `-- name: UpsertDeferredChannelChatTask :one
+INSERT INTO agent_task_queue (
+    id, agent_id, runtime_id, issue_id, status, priority, chat_session_id,
+    initiator_user_id, originator_user_id, force_fresh_session,
+    runtime_mcp_overlay, runtime_connected_apps, context,
+    chat_input_task_id, fire_at
+)
+VALUES (
+    $1, $2, $3, NULL, 'deferred', 2, $4,
+    $5, $6,
+    COALESCE($7::boolean, FALSE),
+    $8, $9,
+    $10, $1,
+    now() + make_interval(secs => $11::double precision)
+)
+ON CONFLICT (chat_session_id)
+    WHERE status = 'deferred' AND chat_session_id IS NOT NULL
+DO UPDATE SET
+    agent_id = EXCLUDED.agent_id,
+    runtime_id = EXCLUDED.runtime_id,
+    priority = EXCLUDED.priority,
+    initiator_user_id = EXCLUDED.initiator_user_id,
+    originator_user_id = EXCLUDED.originator_user_id,
+    force_fresh_session = agent_task_queue.force_fresh_session OR EXCLUDED.force_fresh_session,
+    runtime_mcp_overlay = EXCLUDED.runtime_mcp_overlay,
+    runtime_connected_apps = EXCLUDED.runtime_connected_apps,
+    context = EXCLUDED.context,
+    chat_input_task_id = agent_task_queue.id,
+    fire_at = EXCLUDED.fire_at
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, runtime_launch_lease_token, runtime_launch_lease_expires_at
+`
+
+type UpsertDeferredChannelChatTaskParams struct {
+	ID                   pgtype.UUID `json:"id"`
+	AgentID              pgtype.UUID `json:"agent_id"`
+	RuntimeID            pgtype.UUID `json:"runtime_id"`
+	ChatSessionID        pgtype.UUID `json:"chat_session_id"`
+	InitiatorUserID      pgtype.UUID `json:"initiator_user_id"`
+	OriginatorUserID     pgtype.UUID `json:"originator_user_id"`
+	ForceFreshSession    pgtype.Bool `json:"force_fresh_session"`
+	RuntimeMcpOverlay    []byte      `json:"runtime_mcp_overlay"`
+	RuntimeConnectedApps []byte      `json:"runtime_connected_apps"`
+	TaskContext          []byte      `json:"task_context"`
+	DebounceSeconds      float64     `json:"debounce_seconds"`
+}
+
+// Persists the channel chat's silence-window batch before the inbound handler
+// may report success. A partial unique index permits one open deferred batch
+// per chat_session; once the promoter seals it as queued, the next message can
+// create the next batch. Every message in the batch is tagged with the returned
+// task id, and chat_input_task_id makes that exact set the daemon's immutable
+// input instead of relying on the legacy trailing-message scan.
+func (q *Queries) UpsertDeferredChannelChatTask(ctx context.Context, arg UpsertDeferredChannelChatTaskParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, upsertDeferredChannelChatTask,
+		arg.ID,
+		arg.AgentID,
+		arg.RuntimeID,
+		arg.ChatSessionID,
+		arg.InitiatorUserID,
+		arg.OriginatorUserID,
+		arg.ForceFreshSession,
+		arg.RuntimeMcpOverlay,
+		arg.RuntimeConnectedApps,
+		arg.TaskContext,
+		arg.DebounceSeconds,
+	)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.RuntimeLaunchLeaseToken,
+		&i.RuntimeLaunchLeaseExpiresAt,
+	)
+	return i, err
+}

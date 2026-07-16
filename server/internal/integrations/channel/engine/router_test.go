@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/events"
@@ -55,6 +56,8 @@ type fakeDedup struct {
 	markCalls  int
 	relCalls   int
 	claimCalls int
+	markErr    error
+	releaseErr error
 }
 
 func (f *fakeDedup) Claim(_ context.Context, _ pgtype.UUID, _ string) (pgtype.UUID, error) {
@@ -70,13 +73,13 @@ func (f *fakeDedup) Mark(_ context.Context, _ pgtype.UUID, _ string, _ pgtype.UU
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.markCalls++
-	return nil
+	return f.markErr
 }
 func (f *fakeDedup) Release(_ context.Context, _ pgtype.UUID, _ string, _ pgtype.UUID) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.relCalls++
-	return nil
+	return f.releaseErr
 }
 func (f *fakeDedup) marks() int    { f.mu.Lock(); defer f.mu.Unlock(); return f.markCalls }
 func (f *fakeDedup) releases() int { f.mu.Lock(); defer f.mu.Unlock(); return f.relCalls }
@@ -170,12 +173,15 @@ func (f *fakeIssues) Create(_ context.Context, p service.IssueCreateParams, _ se
 }
 
 type fakeTasks struct {
-	mu          sync.Mutex
-	called      bool
-	forceFresh  bool
-	initiator   pgtype.UUID
-	taskContext []byte
-	err         error
+	mu           sync.Mutex
+	called       bool
+	prepared     bool
+	forceFresh   bool
+	initiator    pgtype.UUID
+	taskContext  []byte
+	err          error
+	prepareErr   error
+	preparedTask service.PreparedChannelChatTask
 }
 
 func (f *fakeTasks) EnqueueChatTask(_ context.Context, _ db.ChatSession, initiator pgtype.UUID, forceFresh bool, taskContext []byte) (db.AgentTaskQueue, error) {
@@ -190,10 +196,26 @@ func (f *fakeTasks) EnqueueChatTask(_ context.Context, _ db.ChatSession, initiat
 func (f *fakeTasks) wasCalled() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.called }
 func (f *fakeTasks) freshArg() bool  { f.mu.Lock(); defer f.mu.Unlock(); return f.forceFresh }
 
+func (f *fakeTasks) PrepareChannelChatTask(_ context.Context, _ db.ChatSession, initiator pgtype.UUID, forceFresh bool, taskContext []byte) (service.PreparedChannelChatTask, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.prepared = true
+	f.forceFresh = forceFresh
+	f.initiator = initiator
+	f.taskContext = append([]byte(nil), taskContext...)
+	return f.preparedTask, f.prepareErr
+}
+
+func (f *fakeTasks) wasPrepared() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.prepared }
+
 type fakeReader struct {
-	session db.ChatSession
-	ws      db.Workspace
-	sessErr error
+	session     db.ChatSession
+	ws          db.Workspace
+	sessErr     error
+	originIssue db.Issue
+	originErr   error
+	previous    db.ChatMessage
+	previousErr error
 	// Capacity inputs for the flush's OutcomeAgentBusy check. The zero
 	// value (maxConcurrent=0) reads as "no capacity limit".
 	maxConcurrent int32
@@ -211,6 +233,12 @@ func (f *fakeReader) GetAgent(_ context.Context, _ pgtype.UUID) (db.Agent, error
 }
 func (f *fakeReader) CountRunningTasks(_ context.Context, _ pgtype.UUID) (int64, error) {
 	return f.running, nil
+}
+func (f *fakeReader) GetIssueByOrigin(_ context.Context, _ db.GetIssueByOriginParams) (db.Issue, error) {
+	return f.originIssue, f.originErr
+}
+func (f *fakeReader) GetMostRecentUserChatMessage(_ context.Context, _ pgtype.UUID) (db.ChatMessage, error) {
+	return f.previous, f.previousErr
 }
 
 type fakeUnbinder struct {
@@ -285,7 +313,7 @@ func newHarness(t *testing.T) *harness {
 		unbinder: &fakeUnbinder{existed: true},
 		issues:   &fakeIssues{},
 		tasks:    &fakeTasks{},
-		reader:   &fakeReader{ws: db.Workspace{IssuePrefix: "MUL"}},
+		reader:   &fakeReader{ws: db.Workspace{IssuePrefix: "MUL"}, originErr: pgx.ErrNoRows},
 	}
 	h.router = NewRouter(h.issues, h.tasks, h.reader, RouterConfig{Logger: discardLogger()})
 	h.router.Register(channel.TypeFeishu, ResolverSet{
@@ -301,6 +329,14 @@ func newHarness(t *testing.T) *harness {
 		OriginType:   "lark_chat",
 	})
 	return h
+}
+
+func enableDurableRuns(h *harness) {
+	h.router.mu.Lock()
+	set := h.router.sets[channel.TypeFeishu]
+	set.DurableRuns = true
+	h.router.sets[channel.TypeFeishu] = set
+	h.router.mu.Unlock()
 }
 
 func TestRouter_NoResolverSet_ReturnsError(t *testing.T) {
@@ -411,6 +447,33 @@ func TestRouter_EnsureSessionError_Releases(t *testing.T) {
 	}
 }
 
+func TestRouter_DedupReleaseFailureSurfaces(t *testing.T) {
+	h := newHarness(t)
+	h.binder.ensureErr = errors.New("db down")
+	h.dedup.releaseErr = errors.New("dedup store unavailable")
+
+	err := h.router.Handle(context.Background(), p2pMessage(t))
+	if !errors.Is(err, ErrDedupFinalize) {
+		t.Fatalf("release failure must surface ErrDedupFinalize, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "ensure chat session") {
+		t.Fatalf("original pipeline error must be preserved, got %v", err)
+	}
+}
+
+func TestRouter_DedupMarkFailureSurfaces(t *testing.T) {
+	h := newHarness(t)
+	h.dedup.markErr = errors.New("dedup store unavailable")
+	msg := p2pMessage(t)
+	msg.Source.ChatType = channel.ChatTypeGroup
+	msg.AddressedToBot = false
+
+	err := h.router.Handle(context.Background(), msg)
+	if !errors.Is(err, ErrDedupFinalize) {
+		t.Fatalf("mark failure must surface ErrDedupFinalize, got %v", err)
+	}
+}
+
 func TestRouter_TaskContextRejected_DropsWithoutReconnecting(t *testing.T) {
 	h := newHarness(t)
 	h.taskCtx.err = fmt.Errorf("%w: invalid staff ID", ErrTaskContextRejected)
@@ -466,6 +529,82 @@ func TestRouter_Ingested_InTxMark_FinalizeNone(t *testing.T) {
 	}
 }
 
+func TestRouter_DurableRunIsPreparedAndCommittedByAppend(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	taskID := uuidFromString(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	h.tasks.preparedTask = service.PreparedChannelChatTask{
+		ID: taskID, AgentID: h.inst.inst.AgentID, RuntimeID: uuidFromString(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+		InitiatorUserID: h.ident.id.UserID, OriginatorUserID: h.ident.id.UserID, DebounceSeconds: 3,
+	}
+	h.binder.appendResult = AppendResult{DedupMarked: true, TaskID: taskID}
+	h.reader.session = db.ChatSession{ID: h.binder.ensureID, AgentID: h.inst.inst.AgentID}
+
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !h.tasks.wasPrepared() {
+		t.Fatal("durable run must be prepared before append")
+	}
+	if h.tasks.wasCalled() {
+		t.Fatal("durable run must not use the in-memory enqueue path")
+	}
+	if h.binder.lastAppend.PreparedTask == nil || h.binder.lastAppend.PreparedTask.ID != taskID {
+		t.Fatalf("append prepared task = %+v, want %v", h.binder.lastAppend.PreparedTask, taskID)
+	}
+	if h.dedup.releases() != 0 || h.dedup.marks() != 0 {
+		t.Fatalf("atomic durable append must not finalize outside tx; marks=%d releases=%d", h.dedup.marks(), h.dedup.releases())
+	}
+}
+
+func TestRouter_DurablePrepareFailureReleasesWithoutAppend(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	h.reader.session = db.ChatSession{ID: h.binder.ensureID, AgentID: h.inst.inst.AgentID}
+	h.tasks.prepareErr = errors.New("overlay database unavailable")
+
+	err := h.router.Handle(context.Background(), p2pMessage(t))
+	if err == nil || !strings.Contains(err.Error(), "prepare durable chat task") {
+		t.Fatalf("prepare error = %v", err)
+	}
+	if h.binder.appendCalls != 0 {
+		t.Fatalf("message appended without prepared task: calls=%d", h.binder.appendCalls)
+	}
+	if h.dedup.releases() != 1 || h.dedup.marks() != 0 {
+		t.Fatalf("prepare failure must release the claim; marks=%d releases=%d", h.dedup.marks(), h.dedup.releases())
+	}
+}
+
+func TestRouter_DurableNoRuntimeCommitsMessageAndRepliesOffline(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	h.reader.session = db.ChatSession{ID: h.binder.ensureID, AgentID: h.inst.inst.AgentID}
+	h.tasks.prepareErr = service.ErrChatTaskAgentNoRuntime
+
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("no-runtime is a product outcome, not an infrastructure retry: %v", err)
+	}
+	if h.binder.appendCalls != 1 || h.binder.lastAppend.PreparedTask != nil {
+		t.Fatalf("offline message append = calls %d prepared %+v, want one append without task", h.binder.appendCalls, h.binder.lastAppend.PreparedTask)
+	}
+	if h.dedup.releases() != 0 || h.dedup.marks() != 0 {
+		t.Fatalf("offline message is finalized in append tx; marks=%d releases=%d", h.dedup.marks(), h.dedup.releases())
+	}
+	if !waitFor(time.Second, func() bool {
+		for _, result := range h.replier.calls() {
+			if result.Outcome == OutcomeAgentOffline {
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatal("expected agent-offline reply")
+	}
+	if h.typing.calls() != 0 {
+		t.Fatal("offline message must not leave a processing indicator")
+	}
+}
+
 func TestRouter_ClaimLost_Drops(t *testing.T) {
 	h := newHarness(t)
 	h.binder.appendErr = ErrClaimLost
@@ -484,7 +623,9 @@ func TestRouter_IssueCommand_Creates(t *testing.T) {
 	h := newHarness(t)
 	h.binder.appendResult = AppendResult{DedupMarked: true, IssueCommand: &IssueCommand{Title: "Fix login", Description: "details"}}
 	h.issues.result = service.IssueCreateResult{Issue: db.Issue{ID: uuidFromString(t, "77777777-7777-7777-7777-777777777777"), Number: 42, Title: "Fix login"}}
-	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+	msg := p2pMessage(t)
+	msg.Text = "/issue Fix login\ndetails"
+	if err := h.router.Handle(context.Background(), msg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !h.issues.called {
@@ -492,6 +633,9 @@ func TestRouter_IssueCommand_Creates(t *testing.T) {
 	}
 	if h.issues.params.OriginType.String != "lark_chat" {
 		t.Fatalf("origin_type must come from the resolver set, got %q", h.issues.params.OriginType.String)
+	}
+	if h.tasks.wasCalled() {
+		t.Fatal("/issue must use the issue task only, not enqueue a second chat task")
 	}
 	if !waitFor(time.Second, func() bool {
 		for _, r := range h.replier.calls() {
@@ -502,6 +646,101 @@ func TestRouter_IssueCommand_Creates(t *testing.T) {
 		return false
 	}) {
 		t.Fatalf("expected an issue-created reply with the workspace-qualified identifier")
+	}
+}
+
+func TestRouter_DurableIssueCommandSkipsDeferredChatTask(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	h.reader.session = db.ChatSession{ID: h.binder.ensureID, AgentID: h.inst.inst.AgentID}
+	h.binder.appendResult = AppendResult{DedupMarked: true, IssueCommand: &IssueCommand{Title: "Fix durable command"}}
+	h.issues.result = service.IssueCreateResult{Issue: db.Issue{
+		ID: uuidFromString(t, "77777777-7777-7777-7777-777777777777"), Number: 43, Title: "Fix durable command",
+	}}
+	msg := p2pMessage(t)
+	msg.Text = "/issue Fix durable command"
+
+	if err := h.router.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if h.tasks.wasPrepared() || h.tasks.wasCalled() {
+		t.Fatal("durable /issue must not prepare or enqueue a chat task")
+	}
+	if h.binder.lastAppend.PreparedTask != nil {
+		t.Fatalf("durable /issue append carried a chat task: %+v", h.binder.lastAppend.PreparedTask)
+	}
+	if h.issues.params.OriginID == h.binder.ensureID {
+		t.Fatal("durable /issue must use a per-message origin, not the chat session id")
+	}
+	wantOrigin := durableIssueCommandOriginID(h.inst.inst.ID, msg.MessageID)
+	if h.issues.params.OriginID != wantOrigin {
+		t.Fatalf("durable /issue origin = %+v, want %+v", h.issues.params.OriginID, wantOrigin)
+	}
+}
+
+func TestRouter_DurableIssueCreateFailureDoesNotAppendOrMark(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	h.issues.err = errors.New("issue database unavailable")
+	msg := p2pMessage(t)
+	msg.Text = "/issue retry me"
+
+	err := h.router.Handle(context.Background(), msg)
+	if err == nil || !strings.Contains(err.Error(), "create durable issue command") {
+		t.Fatalf("Handle error = %v, want durable issue create failure", err)
+	}
+	if h.binder.appendCalls != 0 {
+		t.Fatalf("message appended before durable issue creation: calls=%d", h.binder.appendCalls)
+	}
+	if h.dedup.releases() != 1 || h.dedup.marks() != 0 {
+		t.Fatalf("failed pre-append create must release claim: marks=%d releases=%d", h.dedup.marks(), h.dedup.releases())
+	}
+}
+
+func TestRouter_DurableIssueRetryRecoversCommittedIssueBeforeAppend(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	h.reader.originErr = nil
+	h.reader.originIssue = db.Issue{
+		ID:       uuidFromString(t, "77777777-7777-7777-7777-777777777777"),
+		Number:   44,
+		Title:    "already committed",
+		OriginID: durableIssueCommandOriginID(h.inst.inst.ID, "om-1"),
+	}
+	h.binder.appendResult = AppendResult{DedupMarked: true, IssueCommand: &IssueCommand{Title: "already committed"}}
+	msg := p2pMessage(t)
+	msg.Text = "/issue already committed"
+
+	if err := h.router.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("retry recovery failed: %v", err)
+	}
+	if h.issues.called {
+		t.Fatal("retry created a second issue instead of recovering by origin")
+	}
+	if h.binder.appendCalls != 1 {
+		t.Fatalf("recovered issue message append calls = %d, want 1", h.binder.appendCalls)
+	}
+	if h.dedup.releases() != 0 {
+		t.Fatalf("successful recovery released processed claim: %d", h.dedup.releases())
+	}
+}
+
+func TestRouter_DurableBareIssueResolvesPreviousMessageBeforeCreate(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	h.reader.previous = db.ChatMessage{Content: "previous request\nmore detail"}
+	h.binder.appendResult = AppendResult{DedupMarked: true, IssueCommand: &IssueCommand{Title: "previous request"}}
+	h.issues.result = service.IssueCreateResult{Issue: db.Issue{
+		ID: uuidFromString(t, "77777777-7777-7777-7777-777777777777"), Number: 45, Title: "previous request",
+	}}
+	msg := p2pMessage(t)
+	msg.Text = "/issue"
+
+	if err := h.router.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("bare durable /issue failed: %v", err)
+	}
+	if h.issues.params.Title != "previous request" {
+		t.Fatalf("resolved durable issue title = %q", h.issues.params.Title)
 	}
 }
 
