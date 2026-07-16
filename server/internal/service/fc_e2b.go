@@ -792,6 +792,13 @@ func (l *FCE2BLauncher) chatDWSIdentity(ctx context.Context, task db.AgentTaskQu
 	if present {
 		return robotIdentity.UID, robotIdentity.OrgID, "dingtalk_robot_sender", nil
 	}
+	identityUnavailable, err := dingTalkRobotIdentityUnavailableFromTask(task.Context)
+	if err != nil {
+		return "", "", "", err
+	}
+	if identityUnavailable {
+		return "", "", "dingtalk_robot_sender_unavailable", nil
+	}
 	if task.ChatSessionID.Valid {
 		_, bindingErr := l.Queries.GetChannelChatSessionBindingBySession(ctx, db.GetChannelChatSessionBindingBySessionParams{
 			ChatSessionID: task.ChatSessionID,
@@ -834,6 +841,25 @@ func dingTalkRobotIdentityFromTask(taskContext []byte) (protocol.DingTalkRobotId
 		return protocol.DingTalkRobotIdentity{}, true, errors.New("invalid DingTalk robot identity in task context")
 	}
 	return identity, true, nil
+}
+
+func dingTalkRobotIdentityUnavailableFromTask(taskContext []byte) (bool, error) {
+	if len(bytes.TrimSpace(taskContext)) == 0 {
+		return false, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(taskContext, &payload); err != nil {
+		return false, errors.New("decode chat task context")
+	}
+	raw, present := payload[protocol.DingTalkRobotIdentityUnavailableJSONKey]
+	if !present {
+		return false, nil
+	}
+	var unavailable protocol.DingTalkRobotIdentityUnavailable
+	if err := json.Unmarshal(raw, &unavailable); err != nil || strings.TrimSpace(unavailable.Reason) == "" {
+		return false, errors.New("invalid DingTalk robot identity unavailable marker in task context")
+	}
+	return true, nil
 }
 
 func isPositiveDecimalIdentifier(value string) bool {

@@ -146,32 +146,32 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		"has_corp_id", strings.TrimSpace(raw.SenderCorpID) != "",
 	)
 	if strings.TrimSpace(raw.SenderStaffID) == "" || strings.TrimSpace(raw.SenderCorpID) == "" {
-		log.Warn("dingtalk robot DWS identity rejected",
-			"event", "dingtalk_dws_identity_rejected",
+		log.Info("dingtalk robot DWS identity unavailable; continuing without DWS",
+			"event", "dingtalk_dws_identity_unavailable",
 			"error_class", "missing_organization_identity",
 			"latency_ms", time.Since(startedAt).Milliseconds(),
 		)
-		return nil, fmt.Errorf("%w: DingTalk robot sender has no organization identity", engine.ErrTaskContextRejected)
+		return dingtalkIdentityUnavailableContext(protocol.DingTalkRobotIdentityUnavailableMissingOrg)
 	}
 	employee, err := r.employees.ResolveEmployeeByCorpID(ctx, raw.SenderCorpID, raw.SenderStaffID)
 	if err != nil {
 		var validationErr *orgemphsf.ValidationError
 		if errors.As(err, &validationErr) {
-			log.Warn("dingtalk robot DWS identity rejected",
-				"event", "dingtalk_dws_identity_rejected",
+			log.Warn("dingtalk robot DWS identity unavailable; continuing without DWS",
+				"event", "dingtalk_dws_identity_unavailable",
 				"error_class", "validation",
 				"latency_ms", time.Since(startedAt).Milliseconds(),
 				"error", err,
 			)
-			return nil, fmt.Errorf("%w: resolve DingTalk robot sender identity: %w", engine.ErrTaskContextRejected, err)
+			return dingtalkIdentityUnavailableContext(protocol.DingTalkRobotIdentityUnavailableLookupError)
 		}
-		log.Error("dingtalk robot DWS identity lookup failed",
-			"event", "dingtalk_dws_identity_failed",
+		log.Error("dingtalk robot DWS identity lookup failed; continuing without DWS",
+			"event", "dingtalk_dws_identity_unavailable",
 			"error_class", "employee_resolver",
 			"latency_ms", time.Since(startedAt).Milliseconds(),
 			"error", err,
 		)
-		return nil, fmt.Errorf("resolve DingTalk robot sender identity: %w", err)
+		return dingtalkIdentityUnavailableContext(protocol.DingTalkRobotIdentityUnavailableLookupError)
 	}
 	log.Info("dingtalk robot DWS identity resolved",
 		"event", "dingtalk_dws_identity_resolved",
@@ -183,6 +183,14 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		protocol.DingTalkRobotIdentityJSONKey: protocol.DingTalkRobotIdentity{
 			UID:   employee.UID,
 			OrgID: employee.OrgID,
+		},
+	})
+}
+
+func dingtalkIdentityUnavailableContext(reason string) ([]byte, error) {
+	return json.Marshal(map[string]any{
+		protocol.DingTalkRobotIdentityUnavailableJSONKey: protocol.DingTalkRobotIdentityUnavailable{
+			Reason: reason,
 		},
 	})
 }

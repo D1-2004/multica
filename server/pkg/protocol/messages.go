@@ -13,9 +13,12 @@ const (
 )
 
 const (
-	AgentIdentityContextTokenJSONKey = "agent_identity_context_token"
-	AgentIdentityContextTokenEnvKey  = "AGENT_IDENTITY_CONTEXT_TOKEN"
-	DingTalkRobotIdentityJSONKey     = "dingtalk_robot_identity"
+	AgentIdentityContextTokenJSONKey            = "agent_identity_context_token"
+	AgentIdentityContextTokenEnvKey             = "AGENT_IDENTITY_CONTEXT_TOKEN"
+	DingTalkRobotIdentityJSONKey                = "dingtalk_robot_identity"
+	DingTalkRobotIdentityUnavailableJSONKey     = "dingtalk_robot_identity_unavailable"
+	DingTalkRobotIdentityUnavailableMissingOrg  = "missing_organization_identity"
+	DingTalkRobotIdentityUnavailableLookupError = "employee_lookup_failed"
 )
 
 // DingTalkRobotIdentity is resolved from the current inbound bot message.
@@ -23,6 +26,14 @@ const (
 type DingTalkRobotIdentity struct {
 	UID   string `json:"uid"`
 	OrgID string `json:"org_id"`
+}
+
+// DingTalkRobotIdentityUnavailable marks a robot chat task that must run
+// without DWS credentials. The marker is explicit so the FC/E2B launcher does
+// not mistake an intentionally identity-less external sender for corrupted
+// task context, and so the daemon can tell the agent to explain the limitation.
+type DingTalkRobotIdentityUnavailable struct {
+	Reason string `json:"reason"`
 }
 
 // RPCRequestPayload is the generic daemon→server request envelope carried in a
