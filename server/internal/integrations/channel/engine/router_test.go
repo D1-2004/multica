@@ -761,6 +761,25 @@ func TestRouter_GroupSessionCreatorIsInstaller(t *testing.T) {
 	}
 }
 
+func TestRouter_SenderIsolatedGroupSessionCreatorIsSender(t *testing.T) {
+	h := newHarness(t)
+	h.router.mu.Lock()
+	set := h.router.sets[channel.TypeFeishu]
+	set.GroupSessionsPerSender = true
+	h.router.sets[channel.TypeFeishu] = set
+	h.router.mu.Unlock()
+
+	msg := p2pMessage(t)
+	msg.Source.ChatType = channel.ChatTypeGroup
+	msg.AddressedToBot = true
+	if err := h.router.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if h.binder.lastEnsure.Sender != h.ident.id.UserID {
+		t.Fatalf("sender-isolated group session creator must be the sender")
+	}
+}
+
 func TestRouter_P2PSessionCreatorIsSender(t *testing.T) {
 	h := newHarness(t)
 	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {

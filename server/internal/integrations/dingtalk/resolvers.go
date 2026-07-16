@@ -49,12 +49,13 @@ func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.O
 			Direct:   "DingTalk direct message",
 			Fallback: "DingTalk chat",
 		})},
-		Audit:       &auditor{q: q},
-		Replier:     replier,
-		Typing:      typing,
-		Unbind:      &unbinder{q: q},
-		OriginType:  originDingTalkChat,
-		DurableRuns: true,
+		Audit:                  &auditor{q: q},
+		Replier:                replier,
+		Typing:                 typing,
+		Unbind:                 &unbinder{q: q},
+		OriginType:             originDingTalkChat,
+		DurableRuns:            true,
+		GroupSessionsPerSender: true,
 	}
 }
 
@@ -211,26 +212,33 @@ var (
 // dingtalkBindingConfig is the opaque outbound routing persisted on the
 // chat-session binding's config. For a DM the robot API addresses the
 // recipient by staff id (not by conversation id), so the sender's staff id
-// is captured at session creation; a DM session has exactly one human, so
-// the value is stable for the session's life. Group sessions leave it
-// empty — the binding key (conversationId) IS the openConversationId the
-// group send API wants.
+// is captured at session creation. For a group the binding key is composite
+// (conversation + sender) while replies still target the real conversation,
+// so that openConversationId is persisted separately.
 type dingtalkBindingConfig struct {
-	SenderStaffID string `json:"sender_staff_id,omitempty"`
+	SenderStaffID      string `json:"sender_staff_id,omitempty"`
+	OpenConversationID string `json:"open_conversation_id,omitempty"`
 }
 
 // dingtalkSessionRouting derives the session-isolation key and the outbound
-// routing config from one inbound message. DingTalk has no threads, so the
-// key is simply the conversation id for both chat types.
+// routing config from one inbound message. A DM has one human and remains
+// keyed by conversation. A group is keyed by conversation + sender so two
+// people mentioning the same robot cannot share a deferred task, FC/E2B
+// sandbox, or Hermes continuation session.
 func dingtalkSessionRouting(msg channel.InboundMessage) (bindingKey string, config []byte) {
 	var cfg dingtalkBindingConfig
 	if msg.Source.ChatType == channel.ChatTypeP2P {
 		if raw, err := decodeDingTalkRaw(msg); err == nil {
 			cfg.SenderStaffID = raw.SenderStaffID
 		}
+		out, _ := json.Marshal(cfg)
+		return msg.Source.ChatID, out
 	}
+	cfg.OpenConversationID = msg.Source.ChatID
+	senderHash := sha256.Sum256([]byte(msg.Source.SenderID))
+	bindingKey = fmt.Sprintf("%s:sender:v1:%x", msg.Source.ChatID, senderHash)
 	out, _ := json.Marshal(cfg)
-	return msg.Source.ChatID, out
+	return bindingKey, out
 }
 
 func nullText(s string) pgtype.Text {

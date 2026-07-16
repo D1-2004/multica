@@ -100,8 +100,8 @@ type ResolvedIdentity struct {
 }
 
 // EnsureSessionParams carries the inputs for SessionBinder.EnsureSession.
-// Sender is the resolved session creator (the sole human for p2p, the
-// installer for group chats — the Router decides which and passes it here).
+// Sender is the resolved session creator. It is the sole human for p2p and
+// sender-isolated groups; shared group sessions use the installer.
 type EnsureSessionParams struct {
 	Installation ResolvedInstallation
 	Sender       pgtype.UUID
@@ -273,6 +273,11 @@ type ResolverSet struct {
 	// inbound message. It is enabled for DingTalk Stream, whose ACK contract
 	// requires a restart-safe handoff all the way through task creation.
 	DurableRuns bool
+	// GroupSessionsPerSender means the platform's SessionBinder gives each
+	// sender in a group a distinct chat session. The sender therefore owns the
+	// session instead of the installer. DingTalk enables this so deferred-task,
+	// sandbox, and continuation state cannot cross group members.
+	GroupSessionsPerSender bool
 }
 
 // IssueCreator is the narrow subset of service.IssueService the Router needs

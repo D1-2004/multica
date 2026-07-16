@@ -129,16 +129,23 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 
 // outboundTarget recovers the robot-API send target from the chat binding:
 // a DM addresses the recipient by the staff id captured on the binding
-// config; a group addresses the conversation id (the binding key).
+// config; a group reads the real conversation id from config because its
+// binding key also contains the sender-isolation suffix.
 func outboundTarget(b db.ChannelChatSessionBinding) RobotTarget {
+	var cfg dingtalkBindingConfig
+	if len(b.Config) > 0 {
+		_ = json.Unmarshal(b.Config, &cfg)
+	}
 	if b.ChatType == string(channel.ChatTypeP2P) {
-		var cfg dingtalkBindingConfig
-		if len(b.Config) > 0 {
-			if err := json.Unmarshal(b.Config, &cfg); err == nil && cfg.SenderStaffID != "" {
-				return RobotTarget{UserStaffID: cfg.SenderStaffID}
-			}
+		if cfg.SenderStaffID != "" {
+			return RobotTarget{UserStaffID: cfg.SenderStaffID}
 		}
 	}
+	if cfg.OpenConversationID != "" {
+		return RobotTarget{OpenConversationID: cfg.OpenConversationID}
+	}
+	// Bindings created before sender isolation stored the real group id in
+	// channel_chat_id. Keep in-flight replies valid during a rolling deploy.
 	return RobotTarget{OpenConversationID: b.ChannelChatID}
 }
 

@@ -306,11 +306,10 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		}
 	}
 
-	// 5. Resolve the chat_session. Group sessions are created by the INSTALLER
-	//    (stable workspace identity that won't churn with group membership);
-	//    p2p sessions by the sole human sender.
+	// 5. Resolve the chat_session. Shared group sessions are created by the
+	//    installer; p2p and sender-isolated group sessions by the sole human.
 	sessionCreator := identity.UserID
-	if msg.Source.ChatType == channel.ChatTypeGroup {
+	if msg.Source.ChatType == channel.ChatTypeGroup && !set.GroupSessionsPerSender {
 		sessionCreator = inst.InstallerUserID
 	}
 	sessionID, err := set.Session.EnsureSession(ctx, EnsureSessionParams{
