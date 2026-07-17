@@ -109,6 +109,13 @@ func NewS3StorageFromEnv(opts ...S3Option) *S3Storage {
 		s3Opts = append(s3Opts, func(o *s3.Options) {
 			if endpointURL != "" {
 				o.BaseEndpoint = aws.String(endpointURL)
+				// S3-compatible stores (Aliyun OSS, older MinIO) reject the
+				// SDK's default flexible-checksum uploads ("aws-chunked encoding
+				// is not supported with the specified x-amz-content-sha256
+				// value"), so only send checksums when an operation requires
+				// them. Real AWS (no custom endpoint) keeps the SDK defaults.
+				o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+				o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 			}
 			o.UsePathStyle = usePathStyle
 		})
