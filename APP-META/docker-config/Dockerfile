@@ -38,7 +38,9 @@ ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY ${APP_NAME}.tgz /tmp/source.tgz
 RUN tar -xzf /tmp/source.tgz --strip-components=1 -C /workspace
-RUN corepack enable && corepack prepare pnpm@10.28.2 --activate && pnpm config set registry "${NPM_CONFIG_REGISTRY}"
+RUN corepack enable && corepack prepare pnpm@10.28.2 --activate && \
+    pnpm config set registry "${NPM_CONFIG_REGISTRY}" && \
+    pnpm config set "@ali:registry" "https://registry.anpm.alibaba-inc.com"
 ENV REMOTE_API_URL=http://127.0.0.1:8080
 ENV NEXT_PUBLIC_APP_VERSION=dev
 ENV STANDALONE=true
