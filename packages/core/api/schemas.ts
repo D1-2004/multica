@@ -136,13 +136,13 @@ const FDEInstallSchema = z.object({
 
 export const FDEOnboardingStateSchema = z.object({
   configured: z.boolean(),
-  dedicated: z.boolean().optional().default(false),
+  create_only: z.boolean().optional().default(false),
   workspaces: z.array(FDEWorkspaceSchema).default([]),
 }).loose();
 
 export const EMPTY_FDE_ONBOARDING_STATE: FDEOnboardingState = {
   configured: false,
-  dedicated: false,
+  create_only: false,
   workspaces: [],
 };
 

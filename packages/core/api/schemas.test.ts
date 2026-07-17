@@ -130,17 +130,17 @@ describe("FDE onboarding schemas", () => {
     updated_at: "2026-07-17T00:00:00Z",
   };
 
-  it("defaults the dedicated marker to false for an older backend", () => {
+  it("defaults the create-only marker to false for an older backend", () => {
     expect(FDEOnboardingStateSchema.parse({ configured: true, workspaces: [] })).toEqual({
       configured: true,
-      dedicated: false,
+      create_only: false,
       workspaces: [],
     });
   });
 
-  it("falls back safely when the dedicated workspace response is malformed", () => {
+  it("falls back safely when the create-only workspace response is malformed", () => {
     expect(parseWithFallback(
-      { configured: true, dedicated: true, workspaces: [{ id: 42 }] },
+      { configured: true, create_only: true, workspaces: [{ id: 42 }] },
       FDEOnboardingStateSchema,
       EMPTY_FDE_ONBOARDING_STATE,
       { endpoint: "GET /api/fde/onboarding" },

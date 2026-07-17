@@ -83,7 +83,7 @@ describe("FDEStartPage DingTalk authentication", () => {
     });
     mockGetFDEOnboarding.mockResolvedValue({
       configured: true,
-      dedicated: true,
+      create_only: true,
       workspaces: [
         workspace("workspace-1", "研发空间", "engineering"),
         workspace("workspace-2", "产品空间", "product"),
@@ -130,7 +130,7 @@ describe("FDEStartPage DingTalk installation navigation", () => {
     mockSearchParams.current = new URLSearchParams();
     mockGetFDEOnboarding.mockResolvedValue({
       configured: true,
-      dedicated: true,
+      create_only: true,
       workspaces: [workspace("workspace-1", "研发空间", "engineering")],
     });
     mockProvisionFDEOnboarding.mockResolvedValue({
@@ -150,7 +150,11 @@ describe("FDEStartPage DingTalk installation navigation", () => {
   });
 
   it("opens the registration URL through the mobile-safe navigation helper", async () => {
+    const user = userEvent.setup();
     render(<FDEStartPage />);
+
+    await user.type(await screen.findByLabelText("工作区名称"), "新的 FDE 工作区");
+    await user.click(screen.getByRole("button", { name: "创建并继续" }));
 
     await waitFor(() =>
       expect(mockOpenDingTalkInstallPage).toHaveBeenCalledWith(
@@ -160,7 +164,7 @@ describe("FDEStartPage DingTalk installation navigation", () => {
   });
 });
 
-describe("FDEStartPage dedicated workspace onboarding", () => {
+describe("FDEStartPage create-only workspace onboarding", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
@@ -169,7 +173,7 @@ describe("FDEStartPage dedicated workspace onboarding", () => {
     sessionStorage.setItem("multica_fde_dingtalk_authenticated", "1");
     mockGetFDEOnboarding.mockResolvedValue({
       configured: true,
-      dedicated: true,
+      create_only: true,
       workspaces: [],
     });
     mockProvisionFDEOnboarding.mockResolvedValue({
@@ -181,12 +185,13 @@ describe("FDEStartPage dedicated workspace onboarding", () => {
     });
   });
 
-  it("always asks for a new dedicated workspace without rendering existing choices", async () => {
+  it("always asks for a new workspace when none exist", async () => {
     const user = userEvent.setup();
     render(<FDEStartPage />);
 
     expect(await screen.findByText("创建专属 FDE 开发者工作空间")).toBeVisible();
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    expect(screen.getByText("暂无已有工作区")).toBeVisible();
     expect(screen.getByText(/不会修改你已有的工作区/)).toBeVisible();
 
     await user.type(screen.getByLabelText("工作区名称"), "我的 FDE 工作区");
@@ -197,30 +202,43 @@ describe("FDEStartPage dedicated workspace onboarding", () => {
     }));
   });
 
-  it("resumes the recorded FDE workspace and only offers returning to DingTalk when complete", async () => {
+  it("shows existing workspaces as read-only and creates another workspace", async () => {
     const user = userEvent.setup();
     const existing = workspace("workspace-fde", "之前创建的 FDE 工作区", "previous-fde");
     mockGetFDEOnboarding.mockResolvedValue({
       configured: true,
-      dedicated: true,
+      create_only: true,
       workspaces: [existing],
-    });
-    mockProvisionFDEOnboarding.mockResolvedValue({
-      workspace: existing,
-      runtime_id: "runtime-1",
-      agent_id: "agent-1",
-      agent_created: false,
-      install_complete: true,
     });
 
     render(<FDEStartPage />);
 
-    expect(await screen.findByText("初始化已完成")).toBeVisible();
+    expect(await screen.findByText("已有工作区（仅展示）")).toBeVisible();
     expect(screen.getByText("之前创建的 FDE 工作区")).toBeVisible();
+    expect(screen.getByText("previous-fde")).toBeVisible();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(mockProvisionFDEOnboarding).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("工作区名称"), "本次新建的 FDE 工作区");
+    await user.click(screen.getByRole("button", { name: "创建并继续" }));
+
+    await waitFor(() => expect(mockProvisionFDEOnboarding).toHaveBeenCalledWith({
+      workspace_name: "本次新建的 FDE 工作区",
+    }));
+    expect(mockProvisionFDEOnboarding).not.toHaveBeenCalledWith({ workspace_id: "workspace-fde" });
+  });
+
+  it("only offers returning to DingTalk after the new flow completes", async () => {
+    const user = userEvent.setup();
+    render(<FDEStartPage />);
+
+    await user.type(await screen.findByLabelText("工作区名称"), "我的 FDE 工作区");
+    await user.click(screen.getByRole("button", { name: "创建并继续" }));
+
+    expect(await screen.findByText("初始化已完成")).toBeVisible();
     expect(screen.queryByText("进入 FDE 工作空间")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "返回钉钉" }));
 
-    expect(mockProvisionFDEOnboarding).toHaveBeenCalledWith({ workspace_id: "workspace-fde" });
     expect(mockCloseDingTalkPage).toHaveBeenCalledOnce();
   });
 });

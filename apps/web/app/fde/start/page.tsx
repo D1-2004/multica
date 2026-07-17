@@ -7,6 +7,7 @@ import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import type {
   BeginDingTalkInstallResponse,
+  FDEOnboardingState,
   ProvisionFDEOnboardingResponse,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
@@ -30,6 +31,7 @@ function FDEStartContent() {
   const setUser = useAuthStore((state) => state.setUser);
   const [stage, setStage] = useState<Stage>("auth");
   const [error, setError] = useState("");
+  const [state, setState] = useState<FDEOnboardingState | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
   const [result, setResult] = useState<ProvisionFDEOnboardingResponse | null>(null);
   const [install, setInstall] = useState<BeginDingTalkInstallResponse | null>(null);
@@ -41,11 +43,11 @@ function FDEStartContent() {
     setStage("error");
   }, []);
 
-  const provision = useCallback(async (input: { workspace_id?: string; workspace_name?: string }) => {
+  const provision = useCallback(async (workspaceNameInput: string) => {
     setStage("provision");
     setError("");
     try {
-      const response = await api.provisionFDEOnboarding(input);
+      const response = await api.provisionFDEOnboarding({ workspace_name: workspaceNameInput });
       setResult(response);
       if (response.install_complete) {
         setStage("done");
@@ -130,13 +132,9 @@ function FDEStartContent() {
       try {
         const onboarding = await api.getFDEOnboarding();
         if (!onboarding.configured) throw new Error("FDE 开通服务尚未配置完整");
-        if (onboarding.dedicated !== true) throw new Error("FDE 开通服务正在升级，请稍后重试");
-        if (onboarding.workspaces.length > 1) throw new Error("FDE 开通状态异常，请稍后重试");
-        if (onboarding.workspaces.length === 1) {
-          await provision({ workspace_id: onboarding.workspaces[0]?.id });
-        } else {
-          setStage("create");
-        }
+        if (onboarding.create_only !== true) throw new Error("FDE 开通服务正在升级，请稍后重试");
+        setState(onboarding);
+        setStage("create");
       } catch (cause) {
         fail(cause instanceof Error ? cause.message : "无法加载开通状态");
       }
@@ -173,7 +171,7 @@ function FDEStartContent() {
 
   const submit = () => {
     if (!workspaceName.trim()) return;
-    void provision({ workspace_name: workspaceName.trim() });
+    void provision(workspaceName.trim());
   };
 
   return (
@@ -190,12 +188,33 @@ function FDEStartContent() {
           )}
 
           {stage === "create" && (
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="workspace-name" className="mb-2 block text-sm font-medium">工作区名称</label>
-                <Input id="workspace-name" value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="例如：我的 FDE 工作区" autoFocus />
-              </div>
-              <Button className="h-12 w-full" disabled={!workspaceName.trim()} onClick={submit}>创建并继续</Button>
+            <div className="space-y-6">
+              <section className="space-y-3" aria-labelledby="existing-workspaces-title">
+                <div>
+                  <h2 id="existing-workspaces-title" className="text-sm font-medium text-slate-900">已有工作区（仅展示）</h2>
+                  <p className="mt-1 text-xs text-slate-500">已有工作区不会被选择、修改或用于本次初始化。</p>
+                </div>
+                {state && state.workspaces.length > 0 ? (
+                  <div className="space-y-2">
+                    {state.workspaces.map((workspace) => (
+                      <div key={workspace.id} className="rounded-xl border border-slate-200 bg-slate-100/80 px-4 py-3 opacity-70">
+                        <p className="font-medium text-slate-700">{workspace.name}</p>
+                        <p className="mt-1 truncate text-xs text-slate-500">{workspace.slug}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">暂无已有工作区</div>
+                )}
+              </section>
+              <section className="space-y-4" aria-labelledby="new-workspace-title">
+                <h2 id="new-workspace-title" className="text-sm font-medium text-slate-900">新建专属 FDE 开发者工作空间</h2>
+                <div>
+                  <label htmlFor="workspace-name" className="mb-2 block text-sm font-medium">工作区名称</label>
+                  <Input id="workspace-name" value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="例如：我的 FDE 工作区" autoFocus />
+                </div>
+                <Button className="h-12 w-full" disabled={!workspaceName.trim()} onClick={submit}>创建并继续</Button>
+              </section>
             </div>
           )}
 

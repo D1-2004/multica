@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
@@ -19,12 +18,11 @@ import (
 
 type FDEOnboardingStateResponse struct {
 	Configured bool                `json:"configured"`
-	Dedicated  bool                `json:"dedicated"`
+	CreateOnly bool                `json:"create_only"`
 	Workspaces []WorkspaceResponse `json:"workspaces"`
 }
 
 type FDEOnboardingProvisionRequest struct {
-	WorkspaceID   string `json:"workspace_id"`
 	WorkspaceName string `json:"workspace_name"`
 }
 
@@ -42,17 +40,18 @@ func (h *Handler) GetFDEOnboarding(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	workspaces := []WorkspaceResponse{}
-	workspace, err := h.Queries.GetFDEOnboardingWorkspaceForUser(r.Context(), parseUUID(userID))
-	if err == nil {
-		workspaces = append(workspaces, workspaceToResponse(workspace))
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusInternalServerError, "failed to inspect FDE onboarding workspace")
+	rows, err := h.Queries.ListWorkspaces(r.Context(), parseUUID(userID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list workspaces")
 		return
+	}
+	workspaces := make([]WorkspaceResponse, len(rows))
+	for i, workspace := range rows {
+		workspaces[i] = workspaceToResponse(workspace)
 	}
 	writeJSON(w, http.StatusOK, FDEOnboardingStateResponse{
 		Configured: h.fdeOnboardingConfigured(),
-		Dedicated:  true,
+		CreateOnly: true,
 		Workspaces: workspaces,
 	})
 }
@@ -85,10 +84,10 @@ func (h *Handler) ProvisionFDEOnboarding(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ownerID := parseUUID(userID)
-	workspace, err := h.resolveOrCreateFDEWorkspace(r, ownerID, req)
+	workspace, err := h.createFDEWorkspace(r, ownerID, req)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, errFDEWorkspaceForbidden) || errors.Is(err, errFDEWorkspaceCreationDisabled) {
+		if errors.Is(err, errFDEWorkspaceCreationDisabled) {
 			status = http.StatusForbidden
 		} else if !errors.Is(err, errFDEWorkspaceInput) {
 			status = http.StatusInternalServerError
@@ -168,25 +167,16 @@ func fdeDingTalkInstallParams(workspaceID, agentID, initiatorID pgtype.UUID) din
 
 var (
 	errFDEWorkspaceInput            = errors.New("workspace name is required")
-	errFDEWorkspaceForbidden        = errors.New("workspace is not the current user's dedicated FDE workspace")
 	errFDEWorkspaceCreationDisabled = errors.New("workspace creation is disabled for this instance")
 )
 
-func (h *Handler) resolveOrCreateFDEWorkspace(r *http.Request, userID pgtype.UUID, req FDEOnboardingProvisionRequest) (db.Workspace, error) {
-	if strings.TrimSpace(req.WorkspaceID) != "" {
-		workspaceID, err := parseUUIDValue(req.WorkspaceID)
-		if err != nil {
-			return db.Workspace{}, errFDEWorkspaceInput
-		}
-		workspace, err := h.Queries.GetFDEOnboardingWorkspaceForUser(r.Context(), userID)
-		if err != nil || workspace.ID != workspaceID {
-			return db.Workspace{}, errFDEWorkspaceForbidden
-		}
-		return workspace, nil
-	}
+func (h *Handler) createFDEWorkspace(r *http.Request, userID pgtype.UUID, req FDEOnboardingProvisionRequest) (db.Workspace, error) {
 	name := strings.TrimSpace(req.WorkspaceName)
 	if name == "" {
 		return db.Workspace{}, errFDEWorkspaceInput
+	}
+	if h.cfg.DisableWorkspaceCreation {
+		return db.Workspace{}, errFDEWorkspaceCreationDisabled
 	}
 	base := runtimeSlug(name)
 	if base == "fc-hermes" || isReservedSlug(base) {
@@ -202,37 +192,11 @@ func (h *Handler) resolveOrCreateFDEWorkspace(r *http.Request, userID pgtype.UUI
 			return db.Workspace{}, err
 		}
 		qtx := h.Queries.WithTx(tx)
-		if _, err := tx.Exec(r.Context(), "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "multica:fde-workspace:"+uuidToString(userID)); err != nil {
-			_ = tx.Rollback(r.Context())
-			return db.Workspace{}, err
-		}
-		if _, err := qtx.LockFDEOnboardingWorkspaceForUser(r.Context(), userID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			_ = tx.Rollback(r.Context())
-			return db.Workspace{}, err
-		}
-		existing, err := qtx.GetFDEOnboardingWorkspaceForUser(r.Context(), userID)
-		if err == nil {
-			_ = tx.Rollback(r.Context())
-			return existing, nil
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			_ = tx.Rollback(r.Context())
-			return db.Workspace{}, err
-		}
-		if h.cfg.DisableWorkspaceCreation {
-			_ = tx.Rollback(r.Context())
-			return db.Workspace{}, errFDEWorkspaceCreationDisabled
-		}
 		workspace, err := qtx.CreateWorkspace(r.Context(), db.CreateWorkspaceParams{
 			Name: name, Slug: slug, IssuePrefix: generateIssuePrefix(name),
 		})
 		if err == nil {
 			_, err = qtx.CreateMember(r.Context(), db.CreateMemberParams{WorkspaceID: workspace.ID, UserID: userID, Role: "owner"})
-		}
-		if err == nil {
-			_, err = qtx.UpsertFDEOnboardingWorkspace(r.Context(), db.UpsertFDEOnboardingWorkspaceParams{
-				UserID: userID, WorkspaceID: workspace.ID,
-			})
 		}
 		if err == nil {
 			err = tx.Commit(r.Context())
