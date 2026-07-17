@@ -5,6 +5,21 @@ type BrowserNavigation = {
   open: Window["open"];
 };
 
+type NativeOpenLink = (options: {
+  url: string;
+  enableShare?: boolean;
+}) => Promise<unknown>;
+
+type NativeOpenLinkLoader = () => Promise<NativeOpenLink>;
+
+async function loadNativeOpenLink(): Promise<NativeOpenLink> {
+  await import("dingtalk-jsapi/entry/mobile");
+  const { default: openLink } = await import(
+    "dingtalk-jsapi/api/biz/util/openLink"
+  );
+  return openLink;
+}
+
 export function isIOSDingTalk(
   navigatorSnapshot: NavigatorSnapshot = navigator,
 ): boolean {
@@ -15,16 +30,22 @@ export function isIOSDingTalk(
   return isDingTalk && isIOSDevice;
 }
 
-export function openDingTalkInstallPage(
+export async function openDingTalkInstallPage(
   url: string,
   browser: BrowserNavigation = window,
   navigatorSnapshot: NavigatorSnapshot = navigator,
-): void {
+  nativeOpenLinkLoader: NativeOpenLinkLoader = loadNativeOpenLink,
+): Promise<void> {
   if (isIOSDingTalk(navigatorSnapshot)) {
-    // iOS DingTalk blocks async _blank popups and may reopen the target in a
-    // desktop-style web context. Staying in the current WebView preserves the
-    // DingTalk mobile context and allows its app-registration handoff to run.
-    browser.location.assign(url);
+    try {
+      const nativeOpenLink = await nativeOpenLinkLoader();
+      await nativeOpenLink({ url, enableShare: false });
+    } catch {
+      // Older iOS clients may not expose the native API. The current-WebView
+      // fallback still completes registration, though DingTalk can show an
+      // intermediate text-link confirmation in that compatibility path.
+      browser.location.assign(url);
+    }
     return;
   }
   browser.open(url, "_blank", "noopener,noreferrer");

@@ -150,7 +150,7 @@ function FDEStartContent() {
     if (stage !== "install" || !install || !result) return;
     if (!openedInstall.current) {
       openedInstall.current = true;
-      openDingTalkInstallPage(install.qr_code_url);
+      void openDingTalkInstallPage(install.qr_code_url);
     }
     const interval = window.setInterval(async () => {
       try {
@@ -246,7 +246,7 @@ function FDEStartContent() {
             <div className="space-y-4 text-center">
               <StatusLoading text="等待钉钉机器人创建完成…" />
               <p className="text-sm text-slate-600">如果钉钉创建页面没有自动打开，请点击下面的按钮。</p>
-              <Button className="h-12 w-full" onClick={() => openDingTalkInstallPage(install.qr_code_url)}>前往创建钉钉机器人</Button>
+              <Button className="h-12 w-full" onClick={() => void openDingTalkInstallPage(install.qr_code_url)}>前往创建钉钉机器人</Button>
             </div>
           )}
 

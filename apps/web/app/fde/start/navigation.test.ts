@@ -22,15 +22,47 @@ function browserNavigation() {
 }
 
 describe("FDE DingTalk navigation", () => {
-  it("keeps iPhone DingTalk registration in the current WebView", () => {
+  it("opens iPhone DingTalk registration through the native openLink API", async () => {
     const browser = browserNavigation();
     const mobileNavigator = navigatorSnapshot(
       "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AliApp(DingTalk/7.6.50)",
       "iPhone",
       5,
     );
+    const nativeOpenLink = vi.fn().mockResolvedValue({});
+    const loadNativeOpenLink = vi.fn().mockResolvedValue(nativeOpenLink);
 
-    openDingTalkInstallPage(installURL, browser, mobileNavigator);
+    await openDingTalkInstallPage(
+      installURL,
+      browser,
+      mobileNavigator,
+      loadNativeOpenLink,
+    );
+
+    expect(loadNativeOpenLink).toHaveBeenCalledOnce();
+    expect(nativeOpenLink).toHaveBeenCalledWith({
+      url: installURL,
+      enableShare: false,
+    });
+    expect(browser.location.assign).not.toHaveBeenCalled();
+    expect(browser.open).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the current WebView when native openLink is unavailable", async () => {
+    const browser = browserNavigation();
+    const mobileNavigator = navigatorSnapshot(
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AliApp(DingTalk/7.6.50)",
+      "iPhone",
+      5,
+    );
+    const loadNativeOpenLink = vi.fn().mockRejectedValue(new Error("unsupported"));
+
+    await openDingTalkInstallPage(
+      installURL,
+      browser,
+      mobileNavigator,
+      loadNativeOpenLink,
+    );
 
     expect(browser.location.assign).toHaveBeenCalledWith(installURL);
     expect(browser.open).not.toHaveBeenCalled();
@@ -48,15 +80,21 @@ describe("FDE DingTalk navigation", () => {
     ).toBe(true);
   });
 
-  it("preserves the working Android DingTalk new-window flow", () => {
+  it("preserves the working Android DingTalk new-window flow", async () => {
     const browser = browserNavigation();
     const mobileNavigator = navigatorSnapshot(
       "Mozilla/5.0 (Linux; Android 15) AliApp(DingTalk/7.6.50)",
       "Linux armv8l",
       5,
     );
+    const loadNativeOpenLink = vi.fn();
 
-    openDingTalkInstallPage(installURL, browser, mobileNavigator);
+    await openDingTalkInstallPage(
+      installURL,
+      browser,
+      mobileNavigator,
+      loadNativeOpenLink,
+    );
 
     expect(browser.open).toHaveBeenCalledWith(
       installURL,
@@ -64,5 +102,6 @@ describe("FDE DingTalk navigation", () => {
       "noopener,noreferrer",
     );
     expect(browser.location.assign).not.toHaveBeenCalled();
+    expect(loadNativeOpenLink).not.toHaveBeenCalled();
   });
 });
