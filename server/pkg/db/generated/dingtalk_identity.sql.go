@@ -242,3 +242,39 @@ func (q *Queries) GetAgentDingTalkIdentityAttempt(ctx context.Context, id pgtype
 	)
 	return i, err
 }
+
+const getAgentDingTalkIdentityAttemptByAgent = `-- name: GetAgentDingTalkIdentityAttemptByAgent :one
+SELECT attempt.id, attempt.workspace_id, attempt.agent_id, attempt.initiator_user_id, attempt.callback_token_hash, attempt.expires_at, attempt.completed_org_id, attempt.used_at, attempt.created_at, attempt.updated_at, attempt.completed_uid
+FROM agent_dingtalk_identity_attempt attempt
+JOIN agent a
+  ON a.id = attempt.agent_id
+ AND a.workspace_id = attempt.workspace_id
+WHERE attempt.workspace_id = $1
+  AND attempt.agent_id = $2
+ORDER BY attempt.created_at DESC
+LIMIT 1
+`
+
+type GetAgentDingTalkIdentityAttemptByAgentParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+}
+
+func (q *Queries) GetAgentDingTalkIdentityAttemptByAgent(ctx context.Context, arg GetAgentDingTalkIdentityAttemptByAgentParams) (AgentDingtalkIdentityAttempt, error) {
+	row := q.db.QueryRow(ctx, getAgentDingTalkIdentityAttemptByAgent, arg.WorkspaceID, arg.AgentID)
+	var i AgentDingtalkIdentityAttempt
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.InitiatorUserID,
+		&i.CallbackTokenHash,
+		&i.ExpiresAt,
+		&i.CompletedOrgID,
+		&i.UsedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedUid,
+	)
+	return i, err
+}

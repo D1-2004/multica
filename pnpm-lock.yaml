@@ -954,6 +954,9 @@ importers:
 
   packages/views:
     dependencies:
+      '@ali/ding-mediaid':
+        specifier: 2.3.9
+        version: 2.3.9
       '@base-ui/react':
         specifier: ^1.3.0
         version: 1.3.0(@types/react@19.2.14)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -1170,6 +1173,15 @@ packages:
 
   '@adobe/css-tools@4.4.4':
     resolution: {integrity: sha512-Elp+iwUx5rN5+Y8xLt5/GRoG20WGoDCQ/1Fb+1LiGtvwbDavuSk0jhD/eZdckHAuzcDzccnkv+rEjyWfRx18gg==}
+
+  '@ali/ding-mediaid@2.3.9':
+    resolution: {integrity: sha512-C4qGmL2mxJklNMRQlUI/KtvLGCInuKJGJvcKk2bP3PSpvzPdSj7jq5CfrZgUTg5F/fboMEXrboxrLEF2sGBKxA==}
+
+  '@ali/msgpack@1.1.0':
+    resolution: {integrity: sha512-FjCoX9eOd+W4L3caa+8oQ4caCQGJ33NIqP97kFgAw+pBX3lQ/NQ7LxXCnbxZOJYu8qXC0i7ZnfVrOcE7LQWCdg==}
+
+  '@ali/utf8-encoding@0.1.2':
+    resolution: {integrity: sha512-Xq8NQWnSdQS5wFU2eBy26HZLKLEwS8MaGxS2QTcqP4nSkbmShWjbwocc70kppOeXeXnlPCSdJomWlaKFRNMnmw==}
 
   '@alloc/quick-lru@5.2.0':
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
@@ -5017,6 +5029,10 @@ packages:
     resolution: {integrity: sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==}
     engines: {node: 18 || 20 || >=22}
 
+  base64-arraybuffer@0.2.0:
+    resolution: {integrity: sha512-7emyCsu1/xiBXgQZrscw/8KPRT44I4Yq9Pe6EGs3aPRTsWuggML1/1DTuZUuIaJPIm1FTDUVXl4x/yW8s0kQDQ==}
+    engines: {node: '>= 0.6.0'}
+
   base64-js@1.5.1:
     resolution: {integrity: sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==}
 
@@ -7540,6 +7556,9 @@ packages:
 
   jsonfile@6.2.0:
     resolution: {integrity: sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==}
+
+  jsuri@1.3.1:
+    resolution: {integrity: sha512-LLdAeqOf88/X0hylAI7oSir6QUsz/8kOW0FcJzzu/SJRfORA/oPHycAOthkNp7eLPlTAbqVDFbqNRHkRVzEA3g==}
 
   jsx-ast-utils@3.3.5:
     resolution: {integrity: sha512-ZZow9HBI5O6EPgSJLUb8n2NKgmVWTwCvHGwFuJlMjvLFqlGG6pjirPhtdsseaLZjSibD8eegzmYpUZwoIlj2cQ==}
@@ -10734,6 +10753,18 @@ snapshots:
   7zip-bin@5.2.0: {}
 
   '@adobe/css-tools@4.4.4': {}
+
+  '@ali/ding-mediaid@2.3.9':
+    dependencies:
+      '@ali/msgpack': 1.1.0
+      base64-arraybuffer: 0.2.0
+      jsuri: 1.3.1
+
+  '@ali/msgpack@1.1.0':
+    dependencies:
+      '@ali/utf8-encoding': 0.1.2
+
+  '@ali/utf8-encoding@0.1.2': {}
 
   '@alloc/quick-lru@5.2.0': {}
 
@@ -15333,6 +15364,8 @@ snapshots:
 
   balanced-match@4.0.4: {}
 
+  base64-arraybuffer@0.2.0: {}
+
   base64-js@1.5.1: {}
 
   baseline-browser-mapping@2.10.9: {}
@@ -18487,6 +18520,8 @@ snapshots:
       universalify: 2.0.1
     optionalDependencies:
       graceful-fs: 4.2.11
+
+  jsuri@1.3.1: {}
 
   jsx-ast-utils@3.3.5:
     dependencies:

@@ -17,6 +17,7 @@ import type {
   DingTalkUserSearchResponse,
   BeginDingTalkAccountBindingResponse,
   DingTalkAccountBindingsResponse,
+  DingTalkMessageScope,
   GroupedIssuesResponse,
   GitHubAgentPreview,
   ListGitHubAgentRepositoriesResponse,
@@ -56,13 +57,70 @@ const DingTalkAccountBindingOutcomeSchema = z
     boundAt: outcome.bound_at,
   }));
 
+const DingTalkConversationSummarySchema = z
+  .object({
+    cid: z.string(),
+    name: z.string(),
+    avatar_media_id: z.string().nullable().optional(),
+    avatar_url: z.string().nullable().optional(),
+  })
+  .loose()
+  .transform((conversation) => ({
+    cid: conversation.cid,
+    name: conversation.name,
+    ...(conversation.avatar_media_id !== undefined
+      ? { avatarMediaId: conversation.avatar_media_id }
+      : {}),
+    ...(conversation.avatar_url !== undefined
+      ? { avatarUrl: conversation.avatar_url }
+      : {}),
+  }));
+
+function normalizeDingTalkMessageScope(scope?: string): DingTalkMessageScope {
+  switch (scope) {
+    case "custom":
+    case "all":
+      return scope;
+    case "direct_only":
+    default:
+      return "direct_only";
+  }
+}
+
+const DingTalkMessageRouteOutcomeSchema = z
+  .object({
+    status: z.string(),
+    organization_name: z.string().nullable().optional(),
+    account_display_name: z.string().nullable().optional(),
+    account_avatar_url: z.string().nullable().optional(),
+    bound_at: z.string().nullable().optional(),
+    message_scope: z.string().optional(),
+    conversations: z.array(DingTalkConversationSummarySchema).optional().default([]),
+  })
+  .loose()
+  .transform((outcome) => ({
+    status: outcome.status,
+    ...(outcome.organization_name !== undefined
+      ? { organizationName: outcome.organization_name }
+      : {}),
+    ...(outcome.account_display_name !== undefined
+      ? { accountDisplayName: outcome.account_display_name }
+      : {}),
+    ...(outcome.account_avatar_url !== undefined
+      ? { accountAvatarUrl: outcome.account_avatar_url }
+      : {}),
+    ...(outcome.bound_at !== undefined ? { boundAt: outcome.bound_at } : {}),
+    messageScope: normalizeDingTalkMessageScope(outcome.message_scope),
+    conversations: outcome.conversations,
+  }));
+
 const DingTalkAccountBindingSchema = z
   .object({
     id: z.string(),
     workspace_id: z.string(),
     agent_id: z.string(),
     dws_identity: DingTalkAccountBindingOutcomeSchema,
-    message_route: DingTalkAccountBindingOutcomeSchema,
+    message_route: DingTalkMessageRouteOutcomeSchema,
   })
   .loose()
   .transform((binding) => ({

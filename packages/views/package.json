@@ -57,6 +57,7 @@
     "./locales/*": "./locales/*"
   },
   "dependencies": {
+    "@ali/ding-mediaid": "2.3.9",
     "@base-ui/react": "^1.3.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",

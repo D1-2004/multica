@@ -45,7 +45,22 @@ describe("DingTalk account binding schemas", () => {
             account_avatar_url: "https://example.test/avatar.png",
             bound_at: "2026-07-14T09:30:00Z",
           },
-          message_route: { status: "pending" },
+          message_route: {
+            status: "active",
+            message_scope: "custom",
+            conversations: [
+              {
+                cid: "cid-group-1",
+                name: "Project Alpha",
+                avatar_media_id: "@media-alpha",
+                avatar_url: "https://example.test/alpha.png",
+              },
+              {
+                cid: "cid-group-2",
+                name: "Project Beta",
+              },
+            ],
+          },
           future_field: true,
         },
       ],
@@ -66,11 +81,45 @@ describe("DingTalk account binding schemas", () => {
             boundAt: "2026-07-14T09:30:00Z",
           },
           messageRoute: {
-            status: "pending",
+            status: "active",
+            messageScope: "custom",
+            conversations: [
+              {
+                cid: "cid-group-1",
+                name: "Project Alpha",
+                avatarMediaId: "@media-alpha",
+                avatarUrl: "https://example.test/alpha.png",
+              },
+              {
+                cid: "cid-group-2",
+                name: "Project Beta",
+              },
+            ],
           },
         },
       ],
       configured: true,
+    });
+  });
+
+  it("defaults old message-route responses to direct-only with no conversations", () => {
+    const parsed = DingTalkAccountBindingsResponseSchema.parse({
+      bindings: [
+        {
+          id: "installation-1",
+          workspace_id: "workspace-1",
+          agent_id: "agent-1",
+          dws_identity: { status: "unbound" },
+          message_route: { status: "active" },
+        },
+      ],
+      configured: true,
+    });
+
+    expect(parsed.bindings[0]?.messageRoute).toEqual({
+      status: "active",
+      messageScope: "direct_only",
+      conversations: [],
     });
   });
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -11,11 +11,13 @@ import type { ApiClient } from "@multica/core/api/client";
 import { dingtalkAccountBindingKeys } from "@multica/core/dingtalk-account-bindings";
 import enCommon from "../../../locales/en/common.json";
 import enAgents from "../../../locales/en/agents.json";
+import zhHansAgents from "../../../locales/zh-Hans/agents.json";
 import { DingTalkAccountBindingCard } from "./dingtalk-account-binding";
 
 const listBindings = vi.fn();
 const beginBinding = vi.fn();
 const deleteBinding = vi.fn();
+const mid2Url = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "workspace-1",
@@ -24,6 +26,30 @@ vi.mock("@multica/core/hooks", () => ({
 vi.mock("react-qr-code", () => ({
   QRCode: ({ value }: { value: string }) => (
     <svg aria-label="Enterprise digital employee QR code" data-value={value} />
+  ),
+}));
+
+vi.mock("@ali/ding-mediaid", () => ({ mid2Url }));
+
+vi.mock("@multica/ui/components/ui/avatar", () => ({
+  Avatar: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+  AvatarImage: ({
+    src,
+    alt,
+    onLoadingStatusChange,
+  }: {
+    src?: string;
+    alt?: string;
+    onLoadingStatusChange?: (status: "error") => void;
+  }) => (
+    <img
+      src={src}
+      alt={alt}
+      onError={() => onLoadingStatusChange?.("error")}
+    />
+  ),
+  AvatarFallback: ({ children }: { children: ReactNode }) => (
+    <span>{children}</span>
   ),
 }));
 
@@ -71,11 +97,19 @@ const activeBinding = {
     accountDisplayName: "Zhang San",
     accountAvatarUrl: "https://example.test/avatar.png",
     boundAt: "2026-07-14T09:30:00Z",
+    messageScope: "direct_only",
+    conversations: [],
   },
 };
 
+const beginQRCodeURL =
+  "https://dbase.example/#bindingToken=router-secret&callbackToken=callback-secret&callbackUrl=https%3A%2F%2Fmultica.example.com%2Fapi%2Fintegrations%2Fdingtalk%2Faccount-bindings%2Finstallation-1%2Fcallback&expiresAt=1784032200&agentId=agent-1&dispatchUrl=https%3A%2F%2Fmultica.example.com%2Fapi%2Fwebhooks%2Fagent-dispatch%2Fv1_endpoint";
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mid2Url.mockImplementation(
+    (mediaId: string) => `https://media.example.test/${mediaId.slice(1)}.png`,
+  );
   setApiInstance({
     listDingTalkAccountBindings: listBindings,
     beginDingTalkAccountBinding: beginBinding,
@@ -84,8 +118,7 @@ beforeEach(() => {
   listBindings.mockResolvedValue({ bindings: [], configured: true });
   beginBinding.mockResolvedValue({
     installationId: "installation-1",
-    qrCodeUrl:
-      "https://dbase.example/#bindingToken=router-secret&callbackToken=callback-secret&identityCallbackToken=identity-secret",
+    qrCodeUrl: beginQRCodeURL,
     expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
   });
   deleteBinding.mockResolvedValue(undefined);
@@ -96,6 +129,124 @@ afterEach(() => {
 });
 
 describe("DingTalkAccountBindingCard", () => {
+  it.each([
+    ["direct_only", "Listening to my direct messages"],
+    ["all", "Listening to all messages"],
+  ] as const)("shows the %s message scope summary", async (messageScope, summary) => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          messageRoute: { ...activeBinding.messageRoute, messageScope },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard();
+
+    expect(await screen.findByText(summary)).toBeInTheDocument();
+  });
+
+  it("uses the exact Chinese listening summaries", () => {
+    const integrations = zhHansAgents.tab_body.integrations;
+
+    expect(integrations.dingtalk_account_scope_direct_only).toBe("已监听我聊消息");
+    expect(integrations.dingtalk_account_scope_all).toBe("已监听全部消息");
+    expect(integrations.dingtalk_account_scope_custom_other).toBe(
+      "已监听 {{count}} 个对话的消息",
+    );
+  });
+
+  it("expands every custom conversation with media-id, URL, and initial fallbacks", async () => {
+    mid2Url.mockImplementation((mediaId: string) => {
+      if (mediaId === "@broken-media") throw new Error("invalid media id");
+      return `https://media.example.test/${mediaId.slice(1)}.png`;
+    });
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          messageRoute: {
+            ...activeBinding.messageRoute,
+            messageScope: "custom",
+            conversations: [
+              {
+                cid: "cid-alpha",
+                name: "Project Alpha",
+                avatarMediaId: "@media-alpha",
+                avatarUrl: "https://fallback.example.test/alpha.png",
+              },
+              {
+                cid: "cid-beta",
+                name: "Project Beta",
+                avatarUrl: "https://fallback.example.test/beta.png",
+              },
+              {
+                cid: "cid-gamma",
+                name: "Project Gamma",
+                avatarMediaId: "@broken-media",
+                avatarUrl: "https://fallback.example.test/gamma.png",
+              },
+              { cid: "cid-delta", name: "Delta Team" },
+            ],
+          },
+        },
+      ],
+      configured: true,
+    });
+    const user = userEvent.setup();
+
+    renderCard();
+
+    const summary = await screen.findByRole("button", {
+      name: "Listening to messages from 4 conversations",
+    });
+    expect(summary).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Project Alpha")).not.toBeInTheDocument();
+
+    await user.click(summary);
+
+    expect(summary).toHaveAttribute("aria-expanded", "true");
+    for (const name of [
+      "Project Alpha",
+      "Project Beta",
+      "Project Gamma",
+      "Delta Team",
+    ]) {
+      expect(screen.getByText(name)).toBeInTheDocument();
+    }
+    expect(screen.getByRole("img", { name: "Project Alpha" })).toHaveAttribute(
+      "src",
+      "https://media.example.test/media-alpha.png",
+    );
+    fireEvent.error(screen.getByRole("img", { name: "Project Alpha" }));
+    expect(screen.getByRole("img", { name: "Project Alpha" })).toHaveAttribute(
+      "src",
+      "https://fallback.example.test/alpha.png",
+    );
+    fireEvent.error(screen.getByRole("img", { name: "Project Alpha" }));
+    expect(
+      screen.queryByRole("img", { name: "Project Alpha" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Project Beta" })).toHaveAttribute(
+      "src",
+      "https://fallback.example.test/beta.png",
+    );
+    expect(screen.getByRole("img", { name: "Project Gamma" })).toHaveAttribute(
+      "src",
+      "https://fallback.example.test/gamma.png",
+    );
+    expect(screen.getByText("D")).toBeInTheDocument();
+    expect(mid2Url).toHaveBeenCalledWith("@media-alpha", {
+      imageSize: "thumb",
+    });
+
+    await user.click(summary);
+    expect(summary).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Project Alpha")).not.toBeInTheDocument();
+  });
+
   it("shows the unconfigured state without a begin action", async () => {
     listBindings.mockResolvedValue({ bindings: [], configured: false });
 
@@ -120,7 +271,7 @@ describe("DingTalkAccountBindingCard", () => {
     const qr = await screen.findByLabelText("Enterprise digital employee QR code");
     expect(qr).toHaveAttribute(
       "data-value",
-      "https://dbase.example/#bindingToken=router-secret&callbackToken=callback-secret&identityCallbackToken=identity-secret",
+      beginQRCodeURL,
     );
     expect(beginBinding).toHaveBeenCalledWith("workspace-1", "agent-1");
   });
@@ -206,6 +357,45 @@ describe("DingTalkAccountBindingCard", () => {
     expect(screen.getByText(/DWS identity:\s*Active/i)).toBeInTheDocument();
     expect(screen.getByText(/Direct message route:\s*Pending/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
+  });
+
+  it("shows that message listening was skipped after identity-only binding", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          messageRoute: { status: "skipped" },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard();
+
+    expect(await screen.findByText("Zhang San")).toBeInTheDocument();
+    expect(screen.getByText(/Direct message route:\s*Skipped/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
+  });
+
+  it("shows terminal task failures and allows a fresh binding attempt", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          dwsIdentity: { status: "failed" },
+          messageRoute: { status: "failed" },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard();
+
+    expect(await screen.findByText(/DWS identity:\s*Failed/i)).toBeInTheDocument();
+    expect(screen.getByText(/Direct message route:\s*Failed/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Generate a new QR code/i }),
+    ).toBeInTheDocument();
   });
 
   it("lets a member restart a pending association after reload", async () => {
