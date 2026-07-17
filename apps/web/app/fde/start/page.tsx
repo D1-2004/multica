@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from "@multica/ui/components/ui/card";
 import { Input } from "@multica/ui/components/ui/input";
+import { openDingTalkInstallPage, replaceCurrentPage } from "./navigation";
 
 const oauthStateKey = "multica_fde_oauth_state";
 const oauthCompleteKey = "multica_fde_dingtalk_authenticated";
@@ -65,6 +66,23 @@ function FDEStartContent() {
     if (booted.current) return;
     booted.current = true;
     const run = async () => {
+      const beginOAuth = async () => {
+        const config = await api.getConfig();
+        if (!config.dingtalk_client_id) throw new Error("钉钉登录尚未配置");
+        const stateValue = crypto.randomUUID();
+        sessionStorage.setItem(oauthStateKey, stateValue);
+        localStorage.setItem(oauthStateKey, stateValue);
+        const params = new URLSearchParams({
+          client_id: config.dingtalk_client_id,
+          redirect_uri: `${window.location.origin}/fde/start`,
+          response_type: "code",
+          scope: "openid",
+          prompt: "consent",
+          state: stateValue,
+        });
+        replaceCurrentPage(`https://login.dingtalk.com/oauth2/auth?${params}`);
+      };
+
       const code = searchParams.get("authCode") || searchParams.get("code");
       const returnedState = searchParams.get("state") || "";
       const oauthError = searchParams.get("error");
@@ -73,9 +91,19 @@ function FDEStartContent() {
         return;
       }
       if (code) {
-        const expected = sessionStorage.getItem(oauthStateKey);
-        if (!expected || expected !== returnedState) {
-          fail("登录状态已失效，请重新打开开通链接");
+        const sessionState = sessionStorage.getItem(oauthStateKey);
+        const durableState = localStorage.getItem(oauthStateKey);
+        const stateMatches = returnedState !== ""
+          && (returnedState === sessionState || returnedState === durableState);
+        if (!stateMatches) {
+          sessionStorage.removeItem(oauthStateKey);
+          localStorage.removeItem(oauthStateKey);
+          window.history.replaceState({}, "", "/fde/start");
+          try {
+            await beginOAuth();
+          } catch (cause) {
+            fail(cause instanceof Error ? cause.message : "无法启动钉钉登录");
+          }
           return;
         }
         setStage("auth");
@@ -84,6 +112,7 @@ function FDEStartContent() {
           api.setToken(login.token);
           setUser(login.user);
           sessionStorage.removeItem(oauthStateKey);
+          localStorage.removeItem(oauthStateKey);
           sessionStorage.setItem(oauthCompleteKey, "1");
           window.history.replaceState({}, "", "/fde/start");
         } catch (cause) {
@@ -92,19 +121,7 @@ function FDEStartContent() {
         }
       } else if (sessionStorage.getItem(oauthCompleteKey) !== "1") {
         try {
-          const config = await api.getConfig();
-          if (!config.dingtalk_client_id) throw new Error("钉钉登录尚未配置");
-          const stateValue = crypto.randomUUID();
-          sessionStorage.setItem(oauthStateKey, stateValue);
-          const params = new URLSearchParams({
-            client_id: config.dingtalk_client_id,
-            redirect_uri: `${window.location.origin}/fde/start`,
-            response_type: "code",
-            scope: "openid",
-            prompt: "consent",
-            state: stateValue,
-          });
-          window.location.replace(`https://login.dingtalk.com/oauth2/auth?${params}`);
+          await beginOAuth();
           return;
         } catch (cause) {
           fail(cause instanceof Error ? cause.message : "无法启动钉钉登录");
@@ -133,7 +150,7 @@ function FDEStartContent() {
     if (stage !== "install" || !install || !result) return;
     if (!openedInstall.current) {
       openedInstall.current = true;
-      window.open(install.qr_code_url, "_blank", "noopener,noreferrer");
+      openDingTalkInstallPage(install.qr_code_url);
     }
     const interval = window.setInterval(async () => {
       try {
@@ -229,7 +246,7 @@ function FDEStartContent() {
             <div className="space-y-4 text-center">
               <StatusLoading text="等待钉钉机器人创建完成…" />
               <p className="text-sm text-slate-600">如果钉钉创建页面没有自动打开，请点击下面的按钮。</p>
-              <Button className="h-12 w-full" onClick={() => window.open(install.qr_code_url, "_blank", "noopener,noreferrer")}>前往创建钉钉机器人</Button>
+              <Button className="h-12 w-full" onClick={() => openDingTalkInstallPage(install.qr_code_url)}>前往创建钉钉机器人</Button>
             </div>
           )}
 
