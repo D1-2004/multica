@@ -1643,9 +1643,11 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		model := agent.Model.String
 		if service.IsFCE2BRuntime(runtime) {
 			// FC/E2B uses the saved agent model only when the server launches the
-			// sandbox and injects OPENAI_MODEL. Forwarding the same value to the
-			// daemon makes Hermes call session/set_model, which bypasses the
-			// custom provider credentials written by the runtime runner.
+			// sandbox and injects OPENAI_MODEL; the in-sandbox runner writes it
+			// into the agent's own config for every provider. Forwarding the same
+			// value to the daemon would make the agent re-select the model itself
+			// (e.g. Hermes calls session/set_model), bypassing the custom provider
+			// credentials the runner wrote.
 			model = ""
 		}
 		resp.Agent = &TaskAgentData{

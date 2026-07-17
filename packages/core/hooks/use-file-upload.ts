@@ -13,14 +13,15 @@ import { MAX_FILE_SIZE } from "../constants/upload";
 //   `link`         — the same value as `att.url`. Short-lived for the
 //                    LocalStorage backend (HMAC-signed `/uploads/<key>`)
 //                    and a long-lived CDN URL on S3 / CloudFront. This
-//                    is what avatar / logo callers persist into
-//                    `avatar_url` style fields, and what URL-only
-//                    consumers (Markdown renderers without a record
-//                    in hand) get to load directly. Keeping it
-//                    semantically equal to `att.url` preserves the
-//                    pre-MUL-3130 contract for non-markdown callers
-//                    so avatar uploads do not get rerouted through
-//                    the workspace-membership-gated download endpoint.
+//                    is what URL-only consumers (Markdown renderers
+//                    without a record in hand) get to load directly.
+//                    Avatar / logo callers persist
+//                    `att.markdown_url || link` instead: on public-CDN
+//                    deployments `markdown_url` IS the storage URL, and
+//                    on private-storage deployments (VPC-only OSS/S3)
+//                    the raw storage URL never loads from a browser, so
+//                    the server-proxied durable URL is the only shape
+//                    that renders (see AvatarUploadControl).
 //
 //   `markdownLink` — the URL the editor writes into markdown bodies.
 //                    Source: `att.markdown_url` from the server, which

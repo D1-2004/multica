@@ -6,6 +6,9 @@ import { Check, Cloud, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import type { RuntimeVisibility } from "@multica/core/types/agent";
 import {
+  FC_E2B_RUNTIME_PROVIDERS,
+  fcE2BProviderForTemplate,
+  type FCE2BRuntimeProvider,
   type FCE2BTemplate,
   useCreateFCE2BRuntime,
   useFCE2BTemplates,
@@ -31,14 +34,30 @@ import {
 } from "@multica/ui/components/ui/select";
 import { useT } from "../../i18n";
 
-function templateRuntimeName(template: FCE2BTemplate): string {
-  const raw = (templateDisplayName(template) || "Hermes")
+const PROVIDER_LABELS: Record<FCE2BRuntimeProvider, string> = {
+  hermes: "Hermes",
+  opencode: "OpenCode",
+};
+
+// Mirrors the server-side default name: the provider is prefixed when the
+// template name does not mention it, so two runtimes created from the same
+// dual-CLI template get distinct defaults.
+function templateRuntimeName(
+  template: FCE2BTemplate,
+  provider: FCE2BRuntimeProvider,
+): string {
+  const providerPart = provider[0]!.toUpperCase() + provider.slice(1);
+  const raw = (templateDisplayName(template) || providerPart)
     .replace(/^multica-fc-/i, "")
     .replace(/-runtime$/i, "")
     .replace(/-template$/i, "");
   const parts = raw.split(/[-_.\s]+/).filter(Boolean);
-  if (parts.length === 0) return "FC-Hermes";
-  return `FC-${parts.map((part) => part[0]!.toUpperCase() + part.slice(1)).join("-")}`;
+  if (parts.length === 0) return `FC-${providerPart}`;
+  const clean = parts.map((part) => part[0]!.toUpperCase() + part.slice(1));
+  if (!parts.some((part) => part.toLowerCase() === provider)) {
+    clean.unshift(providerPart);
+  }
+  return `FC-${clean.join("-")}`;
 }
 
 function templateDisplayName(template: FCE2BTemplate): string {
@@ -69,6 +88,7 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
   const templates = templatesQuery.data ?? [];
   const [query, setQuery] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<FCE2BTemplate | null>(null);
+  const [provider, setProvider] = useState<FCE2BRuntimeProvider>("hermes");
   const [name, setName] = useState("");
   const [visibility, setVisibility] = useState<RuntimeVisibility>("private");
 
@@ -87,10 +107,24 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
   });
 
   const pickTemplate = (template: FCE2BTemplate) => {
+    const nextProvider = fcE2BProviderForTemplate(template);
     setSelectedTemplate(template);
+    setProvider(nextProvider);
     if (!name.trim()) {
-      setName(templateRuntimeName(template));
+      setName(templateRuntimeName(template, nextProvider));
     }
+  };
+
+  const pickProvider = (nextProvider: FCE2BRuntimeProvider) => {
+    // Re-seed the name only while it still matches the previous default, so a
+    // user-typed name never gets clobbered.
+    if (
+      selectedTemplate &&
+      (!name.trim() || name === templateRuntimeName(selectedTemplate, provider))
+    ) {
+      setName(templateRuntimeName(selectedTemplate, nextProvider));
+    }
+    setProvider(nextProvider);
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -99,7 +133,8 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
     try {
       await createRuntime.mutateAsync({
         template_id: selectedTemplate.template || selectedTemplate.id || selectedTemplate.name || "",
-        name: name.trim() || templateRuntimeName(selectedTemplate),
+        name: name.trim() || templateRuntimeName(selectedTemplate, provider),
+        provider,
         visibility,
       });
       toast.success(t(($) => $.fc_e2b_runtime.toast_created));
@@ -210,6 +245,30 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
           </div>
 
           <div className="space-y-1.5">
+            <Label className="text-xs">
+              {t(($) => $.fc_e2b_runtime.fields.provider)}
+            </Label>
+            <Select
+              value={provider}
+              onValueChange={(value) => pickProvider(value as FCE2BRuntimeProvider)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FC_E2B_RUNTIME_PROVIDERS.map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {PROVIDER_LABELS[option]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {t(($) => $.fc_e2b_runtime.provider_hint)}
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
             <Label htmlFor="fc-e2b-runtime-name" className="text-xs">
               {t(($) => $.fc_e2b_runtime.fields.name)}
             </Label>
@@ -219,7 +278,7 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
               onChange={(event) => setName(event.target.value)}
               placeholder={
                 selectedTemplate
-                  ? templateRuntimeName(selectedTemplate)
+                  ? templateRuntimeName(selectedTemplate, provider)
                   : t(($) => $.fc_e2b_runtime.name_placeholder)
               }
             />

@@ -244,6 +244,46 @@ func TestNewS3StorageFromEnv_ConfiguresEndpointPathStyle(t *testing.T) {
 	})
 }
 
+func TestNewS3StorageFromEnv_ChecksumModeForCustomEndpoint(t *testing.T) {
+	t.Run("custom endpoint only sends checksums when required", func(t *testing.T) {
+		t.Setenv("S3_BUCKET", "test-bucket")
+		t.Setenv("S3_REGION", "us-east-1")
+		t.Setenv("AWS_ACCESS_KEY_ID", "AKID")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "SECRET")
+		t.Setenv("AWS_ENDPOINT_URL", "https://objects.example.com")
+
+		store := NewS3StorageFromEnv()
+		if store == nil {
+			t.Fatal("NewS3StorageFromEnv() = nil")
+		}
+		opts := store.client.Options()
+		if opts.RequestChecksumCalculation != aws.RequestChecksumCalculationWhenRequired {
+			t.Fatalf("RequestChecksumCalculation = %v, want WhenRequired", opts.RequestChecksumCalculation)
+		}
+		if opts.ResponseChecksumValidation != aws.ResponseChecksumValidationWhenRequired {
+			t.Fatalf("ResponseChecksumValidation = %v, want WhenRequired", opts.ResponseChecksumValidation)
+		}
+	})
+
+	t.Run("real aws keeps SDK checksum defaults", func(t *testing.T) {
+		t.Setenv("S3_BUCKET", "test-bucket")
+		t.Setenv("S3_REGION", "us-east-1")
+		t.Setenv("AWS_ACCESS_KEY_ID", "AKID")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "SECRET")
+		t.Setenv("AWS_ENDPOINT_URL", "")
+		t.Setenv("S3_USE_PATH_STYLE", "")
+
+		store := NewS3StorageFromEnv()
+		if store == nil {
+			t.Fatal("NewS3StorageFromEnv() = nil")
+		}
+		opts := store.client.Options()
+		if opts.RequestChecksumCalculation == aws.RequestChecksumCalculationWhenRequired {
+			t.Fatalf("RequestChecksumCalculation = WhenRequired, want SDK default (WhenSupported)")
+		}
+	})
+}
+
 func TestS3StorageUploadedURL(t *testing.T) {
 	const key = "uploads/abc/file.png"
 

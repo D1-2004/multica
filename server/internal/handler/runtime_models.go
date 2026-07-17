@@ -315,7 +315,7 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 			models = append(models, ModelEntry{
 				ID:       model,
 				Label:    model,
-				Provider: service.FCE2BProvider,
+				Provider: service.FCE2BRuntimeProvider(rt),
 				Default:  i == 0,
 			})
 		}
