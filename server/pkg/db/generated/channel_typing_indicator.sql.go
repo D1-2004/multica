@@ -76,3 +76,47 @@ func (q *Queries) TakeChannelTypingIndicators(ctx context.Context, arg TakeChann
 	}
 	return items, nil
 }
+
+const takeChannelTypingIndicatorsByTask = `-- name: TakeChannelTypingIndicatorsByTask :many
+DELETE FROM channel_typing_indicator
+WHERE chat_session_id = $1
+  AND channel_type = $2
+  AND target->>'task_id' = $3::text
+RETURNING id, chat_session_id, channel_type, installation_id, target, created_at
+`
+
+type TakeChannelTypingIndicatorsByTaskParams struct {
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	ChannelType   string      `json:"channel_type"`
+	TaskID        string      `json:"task_id"`
+}
+
+// Atomically claims the pending indicators owned by one task. The task id is
+// stored in the platform-shaped JSON target so the shared table remains
+// schema-neutral while concurrent turns in one chat session stay isolated.
+func (q *Queries) TakeChannelTypingIndicatorsByTask(ctx context.Context, arg TakeChannelTypingIndicatorsByTaskParams) ([]ChannelTypingIndicator, error) {
+	rows, err := q.db.Query(ctx, takeChannelTypingIndicatorsByTask, arg.ChatSessionID, arg.ChannelType, arg.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChannelTypingIndicator{}
+	for rows.Next() {
+		var i ChannelTypingIndicator
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChatSessionID,
+			&i.ChannelType,
+			&i.InstallationID,
+			&i.Target,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

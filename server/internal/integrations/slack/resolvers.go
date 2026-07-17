@@ -373,7 +373,7 @@ type slackTypingNotifier struct{ mgr *TypingIndicatorManager }
 // the bot is processing it. The resolved installation carries the bot token in
 // its Config blob — the InstallationResolver stashed the db.ChannelInstallation
 // row in Platform, the documented adapter boundary the core never reads.
-func (n *slackTypingNotifier) OnIngested(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, sessionID pgtype.UUID) {
+func (n *slackTypingNotifier) OnIngested(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, sessionID, _ pgtype.UUID) {
 	ci, ok := inst.Platform.(db.ChannelInstallation)
 	if !ok {
 		return

@@ -808,6 +808,48 @@ func (q *Queries) ListChatSessionsByCreator(ctx context.Context, arg ListChatSes
 	return items, nil
 }
 
+const listPendingChatMessagePreviewsAfterTask = `-- name: ListPendingChatMessagePreviewsAfterTask :many
+SELECT m.id, m.content, m.created_at
+FROM agent_task_queue pending
+JOIN agent_task_queue completed ON completed.id = $1
+JOIN chat_message m ON m.task_id = COALESCE(pending.chat_input_task_id, pending.id)
+WHERE pending.chat_session_id = completed.chat_session_id
+  AND pending.status IN ('deferred', 'queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND COALESCE(pending.chat_input_task_id, pending.id)
+      <> COALESCE(completed.chat_input_task_id, completed.id)
+  AND m.role = 'user'
+ORDER BY pending.created_at ASC, m.created_at ASC, m.id ASC
+`
+
+type ListPendingChatMessagePreviewsAfterTaskRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	Content   string             `json:"content"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+// Lists the exact user messages owned by later active turns in the same chat.
+// The completed task's input owner is excluded so an automatic retry of the
+// just-finished turn is never presented as a separate queued user message.
+func (q *Queries) ListPendingChatMessagePreviewsAfterTask(ctx context.Context, taskID pgtype.UUID) ([]ListPendingChatMessagePreviewsAfterTaskRow, error) {
+	rows, err := q.db.Query(ctx, listPendingChatMessagePreviewsAfterTask, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPendingChatMessagePreviewsAfterTaskRow{}
+	for rows.Next() {
+		var i ListPendingChatMessagePreviewsAfterTaskRow
+		if err := rows.Scan(&i.ID, &i.Content, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingChatTasksByCreator = `-- name: ListPendingChatTasksByCreator :many
 SELECT atq.id AS task_id, atq.status, atq.chat_session_id, cs.agent_id
 FROM agent_task_queue atq
