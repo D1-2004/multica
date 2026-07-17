@@ -101,11 +101,28 @@ WHERE id = sqlc.arg('id')
   AND config ->> 'callback_token_hash' = sqlc.arg('expected_callback_token_hash')::text
 RETURNING *;
 
+-- name: CompleteDingTalkAccountBindingResult :one
+-- Record a terminal result that did not create a Router source. The caller
+-- chooses active only for an identity-only skipped route; failures stay
+-- pending so a later begin can issue a fresh attempt.
+UPDATE channel_installation
+SET config = sqlc.arg('config'),
+    status = sqlc.arg('status'),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND agent_id = sqlc.arg('agent_id')
+  AND channel_type = 'dingtalk_account'
+  AND status = 'pending'
+  AND config ->> 'callback_token_hash' = sqlc.arg('expected_callback_token_hash')::text
+RETURNING *;
+
 -- name: RevokeDingTalkAccountBinding :one
--- Router DELETE happens before this local transition. The endpoint and other
--- config are retained so a later begin can reuse the stable dispatch URL. The
--- Agent's DWS identity and pending identity attempts are removed in the same
--- database statement as the local route transition.
+-- Router DELETE happens before this local transition. Retain only the stable
+-- dispatch endpoint fields needed by a later begin; remove all callback,
+-- source, account, avatar, scope, conversation, and binding-time snapshots.
+-- The Agent's DWS identity and pending identity attempts are removed in the
+-- same database statement as the local route transition.
 WITH target AS (
     SELECT installation.id, installation.workspace_id, installation.agent_id
     FROM channel_installation installation
@@ -126,7 +143,13 @@ WITH target AS (
       AND attempt.agent_id = target.agent_id
 )
 UPDATE channel_installation installation
-SET status = 'revoked',
+SET config = jsonb_build_object(
+        'schema_version', installation.config -> 'schema_version',
+        'dispatch_endpoint_id', installation.config -> 'dispatch_endpoint_id',
+        'dispatch_key_id', installation.config -> 'dispatch_key_id',
+        'dispatch_url', installation.config -> 'dispatch_url'
+    ),
+    status = 'revoked',
     updated_at = now()
 FROM target
 WHERE installation.id = target.id

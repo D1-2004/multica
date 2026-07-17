@@ -152,6 +152,59 @@ func (q *Queries) ClearExpiredDingTalkAccountCallbackCredentials(ctx context.Con
 	return err
 }
 
+const completeDingTalkAccountBindingResult = `-- name: CompleteDingTalkAccountBindingResult :one
+UPDATE channel_installation
+SET config = $1,
+    status = $2,
+    updated_at = now()
+WHERE id = $3
+  AND workspace_id = $4
+  AND agent_id = $5
+  AND channel_type = 'dingtalk_account'
+  AND status = 'pending'
+  AND config ->> 'callback_token_hash' = $6::text
+RETURNING id, workspace_id, agent_id, channel_type, config, status, ws_lease_token, ws_lease_expires_at, installer_user_id, installed_at, created_at, updated_at
+`
+
+type CompleteDingTalkAccountBindingResultParams struct {
+	Config                    []byte      `json:"config"`
+	Status                    string      `json:"status"`
+	ID                        pgtype.UUID `json:"id"`
+	WorkspaceID               pgtype.UUID `json:"workspace_id"`
+	AgentID                   pgtype.UUID `json:"agent_id"`
+	ExpectedCallbackTokenHash string      `json:"expected_callback_token_hash"`
+}
+
+// Record a terminal result that did not create a Router source. The caller
+// chooses active only for an identity-only skipped route; failures stay
+// pending so a later begin can issue a fresh attempt.
+func (q *Queries) CompleteDingTalkAccountBindingResult(ctx context.Context, arg CompleteDingTalkAccountBindingResultParams) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, completeDingTalkAccountBindingResult,
+		arg.Config,
+		arg.Status,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.AgentID,
+		arg.ExpectedCallbackTokenHash,
+	)
+	var i ChannelInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getActiveDingTalkAccountBindingByEndpoint = `-- name: GetActiveDingTalkAccountBindingByEndpoint :one
 SELECT ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.status, ci.ws_lease_token, ci.ws_lease_expires_at, ci.installer_user_id, ci.installed_at, ci.created_at, ci.updated_at
 FROM channel_installation ci
@@ -360,7 +413,13 @@ WITH target AS (
       AND attempt.agent_id = target.agent_id
 )
 UPDATE channel_installation installation
-SET status = 'revoked',
+SET config = jsonb_build_object(
+        'schema_version', installation.config -> 'schema_version',
+        'dispatch_endpoint_id', installation.config -> 'dispatch_endpoint_id',
+        'dispatch_key_id', installation.config -> 'dispatch_key_id',
+        'dispatch_url', installation.config -> 'dispatch_url'
+    ),
+    status = 'revoked',
     updated_at = now()
 FROM target
 WHERE installation.id = target.id
@@ -373,10 +432,11 @@ type RevokeDingTalkAccountBindingParams struct {
 	AgentID     pgtype.UUID `json:"agent_id"`
 }
 
-// Router DELETE happens before this local transition. The endpoint and other
-// config are retained so a later begin can reuse the stable dispatch URL. The
-// Agent's DWS identity and pending identity attempts are removed in the same
-// database statement as the local route transition.
+// Router DELETE happens before this local transition. Retain only the stable
+// dispatch endpoint fields needed by a later begin; remove all callback,
+// source, account, avatar, scope, conversation, and binding-time snapshots.
+// The Agent's DWS identity and pending identity attempts are removed in the
+// same database statement as the local route transition.
 func (q *Queries) RevokeDingTalkAccountBinding(ctx context.Context, arg RevokeDingTalkAccountBindingParams) (ChannelInstallation, error) {
 	row := q.db.QueryRow(ctx, revokeDingTalkAccountBinding, arg.ID, arg.WorkspaceID, arg.AgentID)
 	var i ChannelInstallation

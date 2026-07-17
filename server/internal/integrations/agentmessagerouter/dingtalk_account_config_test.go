@@ -57,6 +57,92 @@ func TestDingTalkAccountConfigRoundTripAndPublicProjection(t *testing.T) {
 	}
 }
 
+func TestDingTalkAccountConfigPreservesConversationSnapshots(t *testing.T) {
+	raw := []byte(`{
+		"schema_version":1,
+		"dispatch_endpoint_id":"v1_AAECAwQFBgcICQoLDA0ODw",
+		"dispatch_key_id":"v1",
+		"dispatch_url":"https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
+		"router_source_id":"source-1",
+		"bound_at":"2026-07-14T10:00:12Z",
+		"message_scope":"custom",
+		"conversations":[
+			{"cid":"cid-alpha","name":"Project Alpha","avatar_media_id":"@media-alpha","avatar_url":"https://example.com/alpha.png"},
+			{"cid":"cid-beta","name":"Project Beta"}
+		]
+	}`)
+
+	config, err := ParseDingTalkAccountConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseDingTalkAccountConfig: %v", err)
+	}
+	reencoded, err := config.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var stored map[string]any
+	if err := json.Unmarshal(reencoded, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored["message_scope"] != "custom" {
+		t.Fatalf("stored message scope = %#v", stored["message_scope"])
+	}
+	storedConversations, ok := stored["conversations"].([]any)
+	if !ok || len(storedConversations) != 2 {
+		t.Fatalf("stored conversations = %#v", stored["conversations"])
+	}
+
+	public := config.PublicBinding(
+		"installation-1",
+		"workspace-1",
+		"agent-1",
+		"active",
+		PublicDingTalkBindingOutcome{Status: "unbound"},
+	)
+	publicJSON, err := json.Marshal(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		MessageRoute struct {
+			MessageScope  string           `json:"message_scope"`
+			Conversations []map[string]any `json:"conversations"`
+		} `json:"message_route"`
+	}
+	if err := json.Unmarshal(publicJSON, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.MessageRoute.MessageScope != "custom" || len(response.MessageRoute.Conversations) != 2 {
+		t.Fatalf("public message route = %#v", response.MessageRoute)
+	}
+}
+
+func TestDingTalkAccountConfigDefaultsLegacyRowsToDirectOnly(t *testing.T) {
+	raw := []byte(`{
+		"schema_version":1,
+		"dispatch_endpoint_id":"v1_AAECAwQFBgcICQoLDA0ODw",
+		"dispatch_key_id":"v1",
+		"dispatch_url":"https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw"
+	}`)
+	config, err := ParseDingTalkAccountConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseDingTalkAccountConfig: %v", err)
+	}
+	publicJSON, err := json.Marshal(config.PublicBinding(
+		"installation-1",
+		"workspace-1",
+		"agent-1",
+		"active",
+		PublicDingTalkBindingOutcome{Status: "unbound"},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(publicJSON), `"message_scope":"direct_only"`) {
+		t.Fatalf("legacy public binding did not default to direct_only: %s", publicJSON)
+	}
+}
+
 func TestCallbackTokenUsesOnlyHashForVerification(t *testing.T) {
 	raw, hash, err := GenerateCallbackToken(strings.NewReader(strings.Repeat("x", 32)))
 	if err != nil {

@@ -6,12 +6,27 @@ export interface DingTalkAccountBindingOutcome {
   boundAt?: string | null;
 }
 
+export type DingTalkMessageScope = "direct_only" | "custom" | "all";
+
+export interface DingTalkConversationSummary {
+  cid: string;
+  name: string;
+  avatarMediaId?: string | null;
+  avatarUrl?: string | null;
+}
+
+export interface DingTalkMessageRouteOutcome
+  extends DingTalkAccountBindingOutcome {
+  messageScope: DingTalkMessageScope;
+  conversations: DingTalkConversationSummary[];
+}
+
 export interface DingTalkAccountBinding {
   id: string;
   workspaceId: string;
   agentId: string;
   dwsIdentity: DingTalkAccountBindingOutcome;
-  messageRoute: DingTalkAccountBindingOutcome;
+  messageRoute: DingTalkMessageRouteOutcome;
 }
 
 export interface DingTalkAccountBindingsResponse {

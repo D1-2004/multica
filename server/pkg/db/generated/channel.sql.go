@@ -263,10 +263,10 @@ type CreateChannelChatSessionBindingParams struct {
 // =====================
 // channel_chat_id is the session-isolation key (one chat_session per
 // (installation_id, channel_chat_id)): Feishu passes the chat id; Slack passes
-// a stable key that, for channels, includes the thread root so each @bot thread
-// is its own session. config carries any platform-specific outbound routing the
-// key alone does not (e.g. Slack's real channel_id when the key is composite);
-// it is opaque to the shared session service.
+// a channel+thread key; DingTalk group chat passes a conversation+sender key.
+// config carries any platform-specific outbound routing the key alone does not
+// (e.g. the real channel/conversation id when the key is composite); it is
+// opaque to the shared session service.
 func (q *Queries) CreateChannelChatSessionBinding(ctx context.Context, arg CreateChannelChatSessionBindingParams) (ChannelChatSessionBinding, error) {
 	row := q.db.QueryRow(ctx, createChannelChatSessionBinding,
 		arg.ChatSessionID,

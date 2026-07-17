@@ -14,6 +14,10 @@ import (
 )
 
 func (s *Service) CompleteIdentityCallback(ctx context.Context, params IdentityCallbackParams) (PublicDingTalkAccountBinding, error) {
+	return s.completeIdentityCallback(ctx, params)
+}
+
+func (s *Service) completeIdentityCallback(ctx context.Context, params IdentityCallbackParams) (PublicDingTalkAccountBinding, error) {
 	if s == nil || s.identityStore == nil || s.store == nil {
 		return PublicDingTalkAccountBinding{}, ErrNotConfigured
 	}
