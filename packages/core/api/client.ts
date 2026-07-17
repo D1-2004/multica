@@ -267,6 +267,10 @@ import {
   DingTalkAccountBindingsResponseSchema,
   EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
   EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
+  FDEOnboardingStateSchema,
+  ProvisionFDEOnboardingResponseSchema,
+  EMPTY_FDE_ONBOARDING_STATE,
+  EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -1637,16 +1641,25 @@ export class ApiClient {
   }
 
   async getFDEOnboarding(): Promise<FDEOnboardingState> {
-    return this.fetch("/api/fde/onboarding");
+    const raw = await this.fetch<unknown>("/api/fde/onboarding");
+    return parseWithFallback(raw, FDEOnboardingStateSchema, EMPTY_FDE_ONBOARDING_STATE, {
+      endpoint: "GET /api/fde/onboarding",
+    });
   }
 
   async provisionFDEOnboarding(
     data: ProvisionFDEOnboardingRequest,
   ): Promise<ProvisionFDEOnboardingResponse> {
-    return this.fetch("/api/fde/onboarding", {
+    const raw = await this.fetch<unknown>("/api/fde/onboarding", {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseWithFallback(
+      raw,
+      ProvisionFDEOnboardingResponseSchema,
+      EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE,
+      { endpoint: "POST /api/fde/onboarding" },
+    );
   }
 
   async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: Record<string, unknown>; repos?: WorkspaceRepo[]; issue_prefix?: string; avatar_url?: string }): Promise<Workspace> {

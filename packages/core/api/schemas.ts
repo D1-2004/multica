@@ -23,6 +23,8 @@ import type {
   AgentSource,
   CreateGitHubAgentResponse,
   SyncAgentSourceResponse,
+  FDEOnboardingState,
+  ProvisionFDEOnboardingResponse,
   InboxWorkspaceUnread,
   Label,
   ListIssuesResponse,
@@ -106,6 +108,71 @@ export const EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE: BeginDingTalkAccount
   installationId: "",
   qrCodeUrl: "",
   expiresAt: "",
+};
+
+const FDEWorkspaceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  slug: z.string(),
+  description: z.string().nullable().default(null),
+  context: z.string().nullable().default(null),
+  settings: z.record(z.string(), z.unknown()).default({}),
+  repos: z.array(z.object({
+    url: z.string(),
+    description: z.string().optional(),
+  }).loose()).default([]),
+  issue_prefix: z.string().default(""),
+  avatar_url: z.string().nullable().default(null),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+const FDEInstallSchema = z.object({
+  session_id: z.string(),
+  qr_code_url: z.string(),
+  expires_in_seconds: z.number(),
+  poll_interval_seconds: z.number(),
+}).loose();
+
+export const FDEOnboardingStateSchema = z.object({
+  configured: z.boolean(),
+  dedicated: z.boolean().optional().default(false),
+  workspaces: z.array(FDEWorkspaceSchema).default([]),
+}).loose();
+
+export const EMPTY_FDE_ONBOARDING_STATE: FDEOnboardingState = {
+  configured: false,
+  dedicated: false,
+  workspaces: [],
+};
+
+export const ProvisionFDEOnboardingResponseSchema = z.object({
+  workspace: FDEWorkspaceSchema,
+  runtime_id: z.string(),
+  agent_id: z.string(),
+  agent_created: z.boolean(),
+  install_complete: z.boolean(),
+  install: FDEInstallSchema.optional(),
+}).loose();
+
+export const EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE: ProvisionFDEOnboardingResponse = {
+  workspace: {
+    id: "",
+    name: "",
+    slug: "",
+    description: null,
+    context: null,
+    settings: {},
+    repos: [],
+    issue_prefix: "",
+    avatar_url: null,
+    created_at: "",
+    updated_at: "",
+  },
+  runtime_id: "",
+  agent_id: "",
+  agent_created: false,
+  install_complete: false,
 };
 
 // Label responses are consumed by settings tables and resource pickers. Keep

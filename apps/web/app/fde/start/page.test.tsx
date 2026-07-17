@@ -1,9 +1,10 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   mockDingTalkLogin,
+  mockCloseDingTalkPage,
   mockGetConfig,
   mockGetDingTalkInstallStatus,
   mockGetFDEOnboarding,
@@ -15,6 +16,7 @@ const {
   mockSetUser,
 } = vi.hoisted(() => ({
   mockDingTalkLogin: vi.fn(),
+  mockCloseDingTalkPage: vi.fn(),
   mockGetConfig: vi.fn(),
   mockGetDingTalkInstallStatus: vi.fn(),
   mockGetFDEOnboarding: vi.fn(),
@@ -47,6 +49,7 @@ vi.mock("@multica/core/api", () => ({
 }));
 
 vi.mock("./navigation", () => ({
+  closeDingTalkPage: mockCloseDingTalkPage,
   openDingTalkInstallPage: mockOpenDingTalkInstallPage,
   replaceCurrentPage: mockReplaceCurrentPage,
 }));
@@ -80,6 +83,7 @@ describe("FDEStartPage DingTalk authentication", () => {
     });
     mockGetFDEOnboarding.mockResolvedValue({
       configured: true,
+      dedicated: true,
       workspaces: [
         workspace("workspace-1", "研发空间", "engineering"),
         workspace("workspace-2", "产品空间", "product"),
@@ -126,6 +130,7 @@ describe("FDEStartPage DingTalk installation navigation", () => {
     mockSearchParams.current = new URLSearchParams();
     mockGetFDEOnboarding.mockResolvedValue({
       configured: true,
+      dedicated: true,
       workspaces: [workspace("workspace-1", "研发空间", "engineering")],
     });
     mockProvisionFDEOnboarding.mockResolvedValue({
@@ -155,7 +160,7 @@ describe("FDEStartPage DingTalk installation navigation", () => {
   });
 });
 
-describe("FDEStartPage workspace selection", () => {
+describe("FDEStartPage dedicated workspace onboarding", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
@@ -164,30 +169,58 @@ describe("FDEStartPage workspace selection", () => {
     sessionStorage.setItem("multica_fde_dingtalk_authenticated", "1");
     mockGetFDEOnboarding.mockResolvedValue({
       configured: true,
-      workspaces: [
-        workspace("workspace-1", "研发空间", "engineering"),
-        workspace("workspace-2", "产品空间", "product"),
-      ],
+      dedicated: true,
+      workspaces: [],
+    });
+    mockProvisionFDEOnboarding.mockResolvedValue({
+      workspace: workspace("workspace-fde", "我的 FDE 工作区", "my-fde-workspace"),
+      runtime_id: "runtime-1",
+      agent_id: "agent-1",
+      agent_created: true,
+      install_complete: true,
     });
   });
 
-  it("shows a clear selected state after the user chooses a workspace", async () => {
+  it("always asks for a new dedicated workspace without rendering existing choices", async () => {
     const user = userEvent.setup();
     render(<FDEStartPage />);
 
-    const engineering = await screen.findByRole("radio", { name: /研发空间/ });
-    const product = screen.getByRole("radio", { name: /产品空间/ });
-    const continueButton = screen.getByRole("button", { name: "继续" });
+    expect(await screen.findByText("创建专属 FDE 开发者工作空间")).toBeVisible();
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    expect(screen.getByText(/不会修改你已有的工作区/)).toBeVisible();
 
-    expect(engineering).toHaveAttribute("aria-checked", "false");
-    expect(product).toHaveAttribute("aria-checked", "false");
-    expect(continueButton).toBeDisabled();
+    await user.type(screen.getByLabelText("工作区名称"), "我的 FDE 工作区");
+    await user.click(screen.getByRole("button", { name: "创建并继续" }));
 
-    await user.click(product);
+    await waitFor(() => expect(mockProvisionFDEOnboarding).toHaveBeenCalledWith({
+      workspace_name: "我的 FDE 工作区",
+    }));
+  });
 
-    await waitFor(() => expect(product).toHaveAttribute("aria-checked", "true"));
-    expect(engineering).toHaveAttribute("aria-checked", "false");
-    expect(within(product).getByText("已选择")).toBeVisible();
-    expect(continueButton).toBeEnabled();
+  it("resumes the recorded FDE workspace and only offers returning to DingTalk when complete", async () => {
+    const user = userEvent.setup();
+    const existing = workspace("workspace-fde", "之前创建的 FDE 工作区", "previous-fde");
+    mockGetFDEOnboarding.mockResolvedValue({
+      configured: true,
+      dedicated: true,
+      workspaces: [existing],
+    });
+    mockProvisionFDEOnboarding.mockResolvedValue({
+      workspace: existing,
+      runtime_id: "runtime-1",
+      agent_id: "agent-1",
+      agent_created: false,
+      install_complete: true,
+    });
+
+    render(<FDEStartPage />);
+
+    expect(await screen.findByText("初始化已完成")).toBeVisible();
+    expect(screen.getByText("之前创建的 FDE 工作区")).toBeVisible();
+    expect(screen.queryByText("进入 FDE 工作空间")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "返回钉钉" }));
+
+    expect(mockProvisionFDEOnboarding).toHaveBeenCalledWith({ workspace_id: "workspace-fde" });
+    expect(mockCloseDingTalkPage).toHaveBeenCalledOnce();
   });
 });

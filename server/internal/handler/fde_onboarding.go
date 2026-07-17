@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
@@ -18,6 +19,7 @@ import (
 
 type FDEOnboardingStateResponse struct {
 	Configured bool                `json:"configured"`
+	Dedicated  bool                `json:"dedicated"`
 	Workspaces []WorkspaceResponse `json:"workspaces"`
 }
 
@@ -40,17 +42,17 @@ func (h *Handler) GetFDEOnboarding(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.Queries.ListAdminWorkspacesForUser(r.Context(), parseUUID(userID))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list workspaces")
+	workspaces := []WorkspaceResponse{}
+	workspace, err := h.Queries.GetFDEOnboardingWorkspaceForUser(r.Context(), parseUUID(userID))
+	if err == nil {
+		workspaces = append(workspaces, workspaceToResponse(workspace))
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to inspect FDE onboarding workspace")
 		return
-	}
-	workspaces := make([]WorkspaceResponse, len(rows))
-	for i, row := range rows {
-		workspaces[i] = workspaceToResponse(row)
 	}
 	writeJSON(w, http.StatusOK, FDEOnboardingStateResponse{
 		Configured: h.fdeOnboardingConfigured(),
+		Dedicated:  true,
 		Workspaces: workspaces,
 	})
 }
@@ -165,8 +167,8 @@ func fdeDingTalkInstallParams(workspaceID, agentID, initiatorID pgtype.UUID) din
 }
 
 var (
-	errFDEWorkspaceInput            = errors.New("workspace name or workspace_id is required")
-	errFDEWorkspaceForbidden        = errors.New("workspace must be owned or administered by the current user")
+	errFDEWorkspaceInput            = errors.New("workspace name is required")
+	errFDEWorkspaceForbidden        = errors.New("workspace is not the current user's dedicated FDE workspace")
 	errFDEWorkspaceCreationDisabled = errors.New("workspace creation is disabled for this instance")
 )
 
@@ -176,18 +178,15 @@ func (h *Handler) resolveOrCreateFDEWorkspace(r *http.Request, userID pgtype.UUI
 		if err != nil {
 			return db.Workspace{}, errFDEWorkspaceInput
 		}
-		member, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{UserID: userID, WorkspaceID: workspaceID})
-		if err != nil || (member.Role != "owner" && member.Role != "admin") {
+		workspace, err := h.Queries.GetFDEOnboardingWorkspaceForUser(r.Context(), userID)
+		if err != nil || workspace.ID != workspaceID {
 			return db.Workspace{}, errFDEWorkspaceForbidden
 		}
-		return h.Queries.GetWorkspace(r.Context(), workspaceID)
+		return workspace, nil
 	}
 	name := strings.TrimSpace(req.WorkspaceName)
 	if name == "" {
 		return db.Workspace{}, errFDEWorkspaceInput
-	}
-	if h.cfg.DisableWorkspaceCreation {
-		return db.Workspace{}, errFDEWorkspaceCreationDisabled
 	}
 	base := runtimeSlug(name)
 	if base == "fc-hermes" || isReservedSlug(base) {
@@ -207,20 +206,33 @@ func (h *Handler) resolveOrCreateFDEWorkspace(r *http.Request, userID pgtype.UUI
 			_ = tx.Rollback(r.Context())
 			return db.Workspace{}, err
 		}
-		existing, err := qtx.ListAdminWorkspacesForUser(r.Context(), userID)
-		if err != nil {
+		if _, err := qtx.LockFDEOnboardingWorkspaceForUser(r.Context(), userID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			_ = tx.Rollback(r.Context())
 			return db.Workspace{}, err
 		}
-		if len(existing) > 0 {
+		existing, err := qtx.GetFDEOnboardingWorkspaceForUser(r.Context(), userID)
+		if err == nil {
 			_ = tx.Rollback(r.Context())
-			return existing[0], nil
+			return existing, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(r.Context())
+			return db.Workspace{}, err
+		}
+		if h.cfg.DisableWorkspaceCreation {
+			_ = tx.Rollback(r.Context())
+			return db.Workspace{}, errFDEWorkspaceCreationDisabled
 		}
 		workspace, err := qtx.CreateWorkspace(r.Context(), db.CreateWorkspaceParams{
 			Name: name, Slug: slug, IssuePrefix: generateIssuePrefix(name),
 		})
 		if err == nil {
 			_, err = qtx.CreateMember(r.Context(), db.CreateMemberParams{WorkspaceID: workspace.ID, UserID: userID, Role: "owner"})
+		}
+		if err == nil {
+			_, err = qtx.UpsertFDEOnboardingWorkspace(r.Context(), db.UpsertFDEOnboardingWorkspaceParams{
+				UserID: userID, WorkspaceID: workspace.ID,
+			})
 		}
 		if err == nil {
 			err = tx.Commit(r.Context())

@@ -11,6 +11,8 @@ type NativeOpenLink = (options: {
 }) => Promise<unknown>;
 
 type NativeOpenLinkLoader = () => Promise<NativeOpenLink>;
+type NativeClosePage = (options: Record<string, never>) => Promise<unknown>;
+type NativeClosePageLoader = () => Promise<NativeClosePage>;
 
 async function loadNativeOpenLink(): Promise<NativeOpenLink> {
   await import("dingtalk-jsapi/entry/mobile");
@@ -18,6 +20,14 @@ async function loadNativeOpenLink(): Promise<NativeOpenLink> {
     "dingtalk-jsapi/api/biz/util/openLink"
   );
   return openLink;
+}
+
+async function loadNativeClosePage(): Promise<NativeClosePage> {
+  await import("dingtalk-jsapi/entry/mobile");
+  const { default: closePage } = await import(
+    "dingtalk-jsapi/api/biz/navigation/close"
+  );
+  return closePage;
 }
 
 export function isIOSDingTalk(
@@ -56,4 +66,20 @@ export function replaceCurrentPage(
   browser: BrowserNavigation = window,
 ): void {
   browser.location.replace(url);
+}
+
+export async function closeDingTalkPage(
+  browser: Pick<Window, "close" | "history"> = window,
+  nativeClosePageLoader: NativeClosePageLoader = loadNativeClosePage,
+): Promise<void> {
+  try {
+    const nativeClosePage = await nativeClosePageLoader();
+    await nativeClosePage({});
+  } catch {
+    if (browser.history.length > 1) {
+      browser.history.back();
+    } else {
+      browser.close();
+    }
+  }
 }

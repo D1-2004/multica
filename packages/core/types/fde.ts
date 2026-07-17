@@ -3,6 +3,7 @@ import type { BeginDingTalkInstallResponse } from "./dingtalk";
 
 export interface FDEOnboardingState {
   configured: boolean;
+  dedicated: boolean;
   workspaces: Workspace[];
 }
 

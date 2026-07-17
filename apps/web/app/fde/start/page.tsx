@@ -7,7 +7,6 @@ import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import type {
   BeginDingTalkInstallResponse,
-  FDEOnboardingState,
   ProvisionFDEOnboardingResponse,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
@@ -19,21 +18,19 @@ import {
   CardTitle,
 } from "@multica/ui/components/ui/card";
 import { Input } from "@multica/ui/components/ui/input";
-import { openDingTalkInstallPage, replaceCurrentPage } from "./navigation";
+import { closeDingTalkPage, openDingTalkInstallPage, replaceCurrentPage } from "./navigation";
 
 const oauthStateKey = "multica_fde_oauth_state";
 const oauthCompleteKey = "multica_fde_dingtalk_authenticated";
 
-type Stage = "auth" | "loading" | "choose" | "provision" | "install" | "done" | "error";
+type Stage = "auth" | "loading" | "create" | "provision" | "install" | "done" | "error";
 
 function FDEStartContent() {
   const searchParams = useSearchParams();
   const setUser = useAuthStore((state) => state.setUser);
   const [stage, setStage] = useState<Stage>("auth");
   const [error, setError] = useState("");
-  const [state, setState] = useState<FDEOnboardingState | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
-  const [workspaceID, setWorkspaceID] = useState("");
   const [result, setResult] = useState<ProvisionFDEOnboardingResponse | null>(null);
   const [install, setInstall] = useState<BeginDingTalkInstallResponse | null>(null);
   const booted = useRef(false);
@@ -133,11 +130,12 @@ function FDEStartContent() {
       try {
         const onboarding = await api.getFDEOnboarding();
         if (!onboarding.configured) throw new Error("FDE 开通服务尚未配置完整");
-        setState(onboarding);
+        if (onboarding.dedicated !== true) throw new Error("FDE 开通服务正在升级，请稍后重试");
+        if (onboarding.workspaces.length > 1) throw new Error("FDE 开通状态异常，请稍后重试");
         if (onboarding.workspaces.length === 1) {
           await provision({ workspace_id: onboarding.workspaces[0]?.id });
         } else {
-          setStage("choose");
+          setStage("create");
         }
       } catch (cause) {
         fail(cause instanceof Error ? cause.message : "无法加载开通状态");
@@ -174,12 +172,8 @@ function FDEStartContent() {
   }, [stage]);
 
   const submit = () => {
-    if (state?.workspaces.length === 0) {
-      if (!workspaceName.trim()) return;
-      void provision({ workspace_name: workspaceName.trim() });
-      return;
-    }
-    if (workspaceID) void provision({ workspace_id: workspaceID });
+    if (!workspaceName.trim()) return;
+    void provision({ workspace_name: workspaceName.trim() });
   };
 
   return (
@@ -187,58 +181,21 @@ function FDEStartContent() {
       <Card className="mx-auto w-full max-w-md border-sky-100 shadow-lg shadow-sky-100/60">
         <CardHeader className="space-y-3 text-center">
           <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-sky-600 text-lg font-bold text-white">FDE</div>
-          <CardTitle className="text-2xl">开通 FDE 工作空间</CardTitle>
-          <CardDescription>使用当前钉钉身份完成工作空间、智能体和机器人的初始化。</CardDescription>
+          <CardTitle className="text-2xl">{stage === "done" ? "FDE 开发者工作空间已就绪" : "创建专属 FDE 开发者工作空间"}</CardTitle>
+          <CardDescription>{stage === "done" ? "本次 FDE 初始化已经完成。" : "我们将新建一个独立工作区，并自动创建 FDE 智能体、绑定钉钉机器人。不会修改你已有的工作区。"}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
           {(["auth", "loading", "provision"] as Stage[]).includes(stage) && (
-            <StatusLoading text={stage === "provision" ? "正在准备工作空间和智能体…" : stage === "auth" ? "正在验证钉钉身份…" : "正在加载开通状态…"} />
+            <StatusLoading text={stage === "provision" ? "正在准备工作区和智能体…" : stage === "auth" ? "正在验证钉钉身份…" : "正在加载开通状态…"} />
           )}
 
-          {stage === "choose" && state && state.workspaces.length === 0 && (
+          {stage === "create" && (
             <div className="space-y-4">
               <div>
-                <label htmlFor="workspace-name" className="mb-2 block text-sm font-medium">工作空间名称</label>
-                <Input id="workspace-name" value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="例如：研发效能工作空间" autoFocus />
+                <label htmlFor="workspace-name" className="mb-2 block text-sm font-medium">工作区名称</label>
+                <Input id="workspace-name" value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="例如：我的 FDE 工作区" autoFocus />
               </div>
               <Button className="h-12 w-full" disabled={!workspaceName.trim()} onClick={submit}>创建并继续</Button>
-            </div>
-          )}
-
-          {stage === "choose" && state && state.workspaces.length > 1 && (
-            <div className="space-y-4">
-              <p className="text-sm text-slate-600">请选择要开通 FDE 的工作空间：</p>
-              <div className="space-y-2" role="radiogroup" aria-label="FDE 工作空间">
-                {state.workspaces.map((workspace) => {
-                  const selected = workspaceID === workspace.id;
-                  return (
-                    <button
-                      key={workspace.id}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => setWorkspaceID(workspace.id)}
-                      className={`flex w-full items-center justify-between gap-3 rounded-xl border-2 px-4 py-3 text-left transition ${
-                        selected
-                          ? "border-sky-600 bg-sky-100 shadow-sm ring-2 ring-sky-200"
-                          : "border-slate-200 bg-white active:border-sky-300 active:bg-sky-50"
-                      }`}
-                    >
-                      <span className="min-w-0">
-                        <span className={`block font-medium ${selected ? "text-sky-950" : "text-slate-900"}`}>{workspace.name}</span>
-                        <span className={`mt-1 block truncate text-xs ${selected ? "text-sky-700" : "text-slate-500"}`}>{workspace.slug}</span>
-                      </span>
-                      <span className={`flex shrink-0 items-center gap-1.5 text-xs font-medium ${selected ? "text-sky-700" : "text-slate-400"}`}>
-                        <span className={`flex size-6 items-center justify-center rounded-full border-2 ${selected ? "border-sky-600 bg-sky-600 text-white" : "border-slate-300 bg-white"}`}>
-                          {selected && <CheckCircle2 className="size-4" aria-hidden="true" />}
-                        </span>
-                        {selected && <span>已选择</span>}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              <Button className="h-12 w-full" disabled={!workspaceID} onClick={submit}>继续</Button>
             </div>
           )}
 
@@ -250,11 +207,18 @@ function FDEStartContent() {
             </div>
           )}
 
-          {stage === "done" && (
-            <div className="py-4 text-center">
+          {stage === "done" && result && (
+            <div className="space-y-5 py-4 text-center">
               <CheckCircle2 className="mx-auto size-14 text-emerald-500" />
-              <h2 className="mt-4 text-xl font-semibold">创建完成</h2>
-              <p className="mt-2 text-sm text-slate-600">可以返回钉钉。</p>
+              <div>
+                <h2 className="text-xl font-semibold">初始化已完成</h2>
+                <p className="mt-2 text-sm text-slate-600">FDE 智能体和钉钉机器人已完成绑定。</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left">
+                <p className="text-xs text-slate-500">专属 FDE 开发者工作空间</p>
+                <p className="mt-1 font-medium text-slate-900">{result.workspace.name}</p>
+              </div>
+              <Button className="h-12 w-full" onClick={() => void closeDingTalkPage()}>返回钉钉</Button>
             </div>
           )}
 

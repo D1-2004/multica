@@ -15,7 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 )
 
-func TestGetFDEOnboardingListsOnlyAdminWorkspaces(t *testing.T) {
+func TestGetFDEOnboardingReturnsOnlyDedicatedWorkspace(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler database fixture unavailable")
 	}
@@ -36,7 +36,15 @@ func TestGetFDEOnboardingListsOnlyAdminWorkspaces(t *testing.T) {
 	`, memberWorkspaceID, testUserID); err != nil {
 		t.Fatalf("add member: %v", err)
 	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO fde_onboarding (user_id, workspace_id)
+		VALUES ($1, $2)
+		ON CONFLICT (user_id) DO UPDATE SET workspace_id = EXCLUDED.workspace_id
+	`, testUserID, testWorkspaceID); err != nil {
+		t.Fatalf("record dedicated workspace: %v", err)
+	}
 	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM fde_onboarding WHERE user_id = $1`, testUserID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, memberWorkspaceID)
 	})
 
@@ -52,8 +60,11 @@ func TestGetFDEOnboardingListsOnlyAdminWorkspaces(t *testing.T) {
 	if response.Configured {
 		t.Fatal("test handler without managed source must report configured=false")
 	}
+	if !response.Dedicated {
+		t.Fatal("FDE onboarding response must identify the dedicated workspace contract")
+	}
 	if len(response.Workspaces) != 1 || response.Workspaces[0].ID != testWorkspaceID {
-		t.Fatalf("admin workspaces = %#v, want only %s", response.Workspaces, testWorkspaceID)
+		t.Fatalf("FDE workspaces = %#v, want only %s", response.Workspaces, testWorkspaceID)
 	}
 }
 
@@ -86,7 +97,25 @@ func TestResolveOrCreateFDEWorkspaceIsIdempotentPerUser(t *testing.T) {
 	`, fmt.Sprintf("fde-new-user-%s@multica.test", suffix)).Scan(&userID); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID) })
+	var ordinaryWorkspaceID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workspace (name, slug, issue_prefix)
+		VALUES ('Existing Product Workspace', $1, 'EPW')
+		RETURNING id
+	`, "existing-product-workspace-"+suffix).Scan(&ordinaryWorkspaceID); err != nil {
+		t.Fatalf("create existing workspace: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO member (workspace_id, user_id, role)
+		VALUES ($1, $2, 'owner')
+	`, ordinaryWorkspaceID, userID); err != nil {
+		t.Fatalf("own existing workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM fde_onboarding WHERE user_id = $1`, userID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, ordinaryWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
+	})
 
 	parsedUserID := parseUUID(userID)
 	first, err := testHandler.resolveOrCreateFDEWorkspace(
@@ -98,6 +127,9 @@ func TestResolveOrCreateFDEWorkspaceIsIdempotentPerUser(t *testing.T) {
 		t.Fatalf("first create: %v", err)
 	}
 	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, first.ID) })
+	if uuidToString(first.ID) == ordinaryWorkspaceID {
+		t.Fatal("FDE onboarding reused an ordinary workspace")
+	}
 
 	second, err := testHandler.resolveOrCreateFDEWorkspace(
 		newRequestAs(userID, http.MethodPost, "/api/fde/onboarding", nil),
@@ -109,6 +141,68 @@ func TestResolveOrCreateFDEWorkspaceIsIdempotentPerUser(t *testing.T) {
 	}
 	if first.ID != second.ID {
 		t.Fatalf("second request created another workspace: first=%s second=%s", uuidToString(first.ID), uuidToString(second.ID))
+	}
+}
+
+func TestResolveOrCreateFDEWorkspaceRepairsDeletedDedicatedWorkspace(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler database fixture unavailable")
+	}
+
+	ctx := context.Background()
+	suffix := randomID()[:8]
+	var userID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user" (name, email)
+		VALUES ('FDE Repair User', $1)
+		RETURNING id
+	`, fmt.Sprintf("fde-repair-user-%s@multica.test", suffix)).Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM fde_onboarding WHERE user_id = $1`, userID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
+	})
+
+	parsedUserID := parseUUID(userID)
+	first, err := testHandler.resolveOrCreateFDEWorkspace(
+		newRequestAs(userID, http.MethodPost, "/api/fde/onboarding", nil),
+		parsedUserID,
+		FDEOnboardingProvisionRequest{WorkspaceName: "First FDE Workspace"},
+	)
+	if err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, first.ID); err != nil {
+		t.Fatalf("delete first dedicated workspace: %v", err)
+	}
+
+	second, err := testHandler.resolveOrCreateFDEWorkspace(
+		newRequestAs(userID, http.MethodPost, "/api/fde/onboarding", nil),
+		parsedUserID,
+		FDEOnboardingProvisionRequest{WorkspaceName: "Replacement FDE Workspace"},
+	)
+	if err != nil {
+		t.Fatalf("repair create: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, second.ID) })
+	if second.ID == first.ID {
+		t.Fatal("deleted FDE workspace was not replaced")
+	}
+}
+
+func TestResolveFDEWorkspaceRejectsUnmappedAdminWorkspace(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler database fixture unavailable")
+	}
+
+	_, err := testHandler.resolveOrCreateFDEWorkspace(
+		newRequest(http.MethodPost, "/api/fde/onboarding", nil),
+		parseUUID(testUserID),
+		FDEOnboardingProvisionRequest{WorkspaceID: testWorkspaceID},
+	)
+	if !errors.Is(err, errFDEWorkspaceForbidden) {
+		t.Fatalf("unmapped admin workspace error = %v, want forbidden", err)
 	}
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isIOSDingTalk, openDingTalkInstallPage } from "./navigation";
+import { closeDingTalkPage, isIOSDingTalk, openDingTalkInstallPage } from "./navigation";
 
 const installURL = "https://open-dev.dingtalk.com/fe/app-registration?user_code=abc";
 
@@ -103,5 +103,33 @@ describe("FDE DingTalk navigation", () => {
     );
     expect(browser.location.assign).not.toHaveBeenCalled();
     expect(loadNativeOpenLink).not.toHaveBeenCalled();
+  });
+
+  it("closes the onboarding WebView through the native DingTalk API", async () => {
+    const browser = {
+      close: vi.fn(),
+      history: { length: 2, back: vi.fn() },
+    };
+    const nativeClosePage = vi.fn().mockResolvedValue({});
+    const loadNativeClosePage = vi.fn().mockResolvedValue(nativeClosePage);
+
+    await closeDingTalkPage(browser as unknown as Pick<Window, "close" | "history">, loadNativeClosePage);
+
+    expect(nativeClosePage).toHaveBeenCalledWith({});
+    expect(browser.history.back).not.toHaveBeenCalled();
+    expect(browser.close).not.toHaveBeenCalled();
+  });
+
+  it("falls back to browser history when the native close API is unavailable", async () => {
+    const browser = {
+      close: vi.fn(),
+      history: { length: 2, back: vi.fn() },
+    };
+    const loadNativeClosePage = vi.fn().mockRejectedValue(new Error("unsupported"));
+
+    await closeDingTalkPage(browser as unknown as Pick<Window, "close" | "history">, loadNativeClosePage);
+
+    expect(browser.history.back).toHaveBeenCalledOnce();
+    expect(browser.close).not.toHaveBeenCalled();
   });
 });
