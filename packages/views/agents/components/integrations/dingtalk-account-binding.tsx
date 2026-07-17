@@ -202,9 +202,28 @@ export function DingTalkAccountBindingCard({
   const messageRouteActive = currentBinding?.messageRoute.status === "active";
   const hasConnectedBinding = dwsIdentityActive || messageRouteActive;
   const pendingBinding = currentBinding?.messageRoute.status === "pending";
+  const failedBinding =
+    currentBinding?.dwsIdentity.status === "failed" ||
+    currentBinding?.messageRoute.status === "failed";
+  const restartableBinding = pendingBinding || failedBinding;
   const accountOutcome = dwsIdentityActive
     ? currentBinding?.dwsIdentity
     : currentBinding?.messageRoute;
+
+  function statusLabel(status: string): string {
+    switch (status) {
+      case "active":
+        return t(($) => $.tab_body.integrations.dingtalk_account_status_active);
+      case "pending":
+        return t(($) => $.tab_body.integrations.dingtalk_account_status_pending);
+      case "failed":
+        return t(($) => $.tab_body.integrations.dingtalk_account_status_failed);
+      case "skipped":
+        return t(($) => $.tab_body.integrations.dingtalk_account_status_skipped);
+      default:
+        return t(($) => $.tab_body.integrations.dingtalk_account_status_unbound);
+    }
+  }
 
   useEffect(() => {
     if (!attempt) {
@@ -269,7 +288,7 @@ export function DingTalkAccountBindingCard({
     }
   }
 
-  const beginLabel = pendingBinding
+  const beginLabel = restartableBinding
     ? t(($) => $.tab_body.integrations.dingtalk_account_new_qr)
     : t(($) => $.tab_body.integrations.dingtalk_account_connect);
 
@@ -336,18 +355,14 @@ export function DingTalkAccountBindingCard({
                     ) : null}
                     <p>
                       {t(($) => $.tab_body.integrations.dingtalk_account_dws_identity)}: {" "}
-                      {dwsIdentityActive
-                        ? t(($) => $.tab_body.integrations.dingtalk_account_status_active)
-                        : t(($) => $.tab_body.integrations.dingtalk_account_status_unbound)}
+                      {statusLabel(currentBinding.dwsIdentity.status)}
                     </p>
                     {messageRouteActive ? (
                       <DingTalkMessageScopeSummary outcome={currentBinding.messageRoute} />
                     ) : (
                       <p>
                         {t(($) => $.tab_body.integrations.dingtalk_account_message_route)}: {" "}
-                        {currentBinding.messageRoute.status === "pending"
-                          ? t(($) => $.tab_body.integrations.dingtalk_account_status_pending)
-                          : t(($) => $.tab_body.integrations.dingtalk_account_status_unbound)}
+                        {statusLabel(currentBinding.messageRoute.status)}
                       </p>
                     )}
                   </div>
@@ -366,6 +381,18 @@ export function DingTalkAccountBindingCard({
           </div>
         ) : (
           <div className="space-y-3">
+            {currentBinding && failedBinding ? (
+              <div className="space-y-1 text-xs text-muted-foreground">
+                <p>
+                  {t(($) => $.tab_body.integrations.dingtalk_account_dws_identity)}: {" "}
+                  {statusLabel(currentBinding.dwsIdentity.status)}
+                </p>
+                <p>
+                  {t(($) => $.tab_body.integrations.dingtalk_account_message_route)}: {" "}
+                  {statusLabel(currentBinding.messageRoute.status)}
+                </p>
+              </div>
+            ) : null}
             {pendingBinding ? (
               <p className="text-xs text-muted-foreground">
                 {t(($) => $.tab_body.integrations.dingtalk_account_pending_restart)}
@@ -377,7 +404,7 @@ export function DingTalkAccountBindingCard({
               onClick={() => void startBinding()}
               disabled={beginBinding.isPending}
             >
-              {pendingBinding ? <RefreshCw className="h-3 w-3" /> : null}
+              {restartableBinding ? <RefreshCw className="h-3 w-3" /> : null}
               {beginBinding.isPending
                 ? t(($) => $.tab_body.integrations.dingtalk_account_starting)
                 : beginLabel}

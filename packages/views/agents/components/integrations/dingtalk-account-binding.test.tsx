@@ -102,6 +102,9 @@ const activeBinding = {
   },
 };
 
+const beginQRCodeURL =
+  "https://dbase.example/#bindingToken=router-secret&callbackToken=callback-secret&callbackUrl=https%3A%2F%2Fmultica.example.com%2Fapi%2Fintegrations%2Fdingtalk%2Faccount-bindings%2Finstallation-1%2Fcallback&expiresAt=1784032200&agentId=agent-1&dispatchUrl=https%3A%2F%2Fmultica.example.com%2Fapi%2Fwebhooks%2Fagent-dispatch%2Fv1_endpoint";
+
 beforeEach(() => {
   vi.clearAllMocks();
   mid2Url.mockImplementation(
@@ -115,8 +118,7 @@ beforeEach(() => {
   listBindings.mockResolvedValue({ bindings: [], configured: true });
   beginBinding.mockResolvedValue({
     installationId: "installation-1",
-    qrCodeUrl:
-      "https://dbase.example/#bindingToken=router-secret&callbackToken=callback-secret&identityCallbackToken=identity-secret",
+    qrCodeUrl: beginQRCodeURL,
     expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
   });
   deleteBinding.mockResolvedValue(undefined);
@@ -269,7 +271,7 @@ describe("DingTalkAccountBindingCard", () => {
     const qr = await screen.findByLabelText("Enterprise digital employee QR code");
     expect(qr).toHaveAttribute(
       "data-value",
-      "https://dbase.example/#bindingToken=router-secret&callbackToken=callback-secret&identityCallbackToken=identity-secret",
+      beginQRCodeURL,
     );
     expect(beginBinding).toHaveBeenCalledWith("workspace-1", "agent-1");
   });
@@ -355,6 +357,45 @@ describe("DingTalkAccountBindingCard", () => {
     expect(screen.getByText(/DWS identity:\s*Active/i)).toBeInTheDocument();
     expect(screen.getByText(/Direct message route:\s*Pending/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
+  });
+
+  it("shows that message listening was skipped after identity-only binding", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          messageRoute: { status: "skipped" },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard();
+
+    expect(await screen.findByText("Zhang San")).toBeInTheDocument();
+    expect(screen.getByText(/Direct message route:\s*Skipped/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
+  });
+
+  it("shows terminal task failures and allows a fresh binding attempt", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          dwsIdentity: { status: "failed" },
+          messageRoute: { status: "failed" },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard();
+
+    expect(await screen.findByText(/DWS identity:\s*Failed/i)).toBeInTheDocument();
+    expect(screen.getByText(/Direct message route:\s*Failed/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Generate a new QR code/i }),
+    ).toBeInTheDocument();
   });
 
   it("lets a member restart a pending association after reload", async () => {
