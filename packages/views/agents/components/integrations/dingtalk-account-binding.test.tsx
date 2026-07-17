@@ -11,6 +11,7 @@ import type { ApiClient } from "@multica/core/api/client";
 import { dingtalkAccountBindingKeys } from "@multica/core/dingtalk-account-bindings";
 import enCommon from "../../../locales/en/common.json";
 import enAgents from "../../../locales/en/agents.json";
+import zhHansAgents from "../../../locales/zh-Hans/agents.json";
 import { DingTalkAccountBindingCard } from "./dingtalk-account-binding";
 
 const listBindings = vi.fn();
@@ -127,8 +128,8 @@ afterEach(() => {
 
 describe("DingTalkAccountBindingCard", () => {
   it.each([
-    ["direct_only", "Bound to my direct messages"],
-    ["all", "Bound to all messages"],
+    ["direct_only", "Listening to my direct messages"],
+    ["all", "Listening to all messages"],
   ] as const)("shows the %s message scope summary", async (messageScope, summary) => {
     listBindings.mockResolvedValue({
       bindings: [
@@ -143,6 +144,16 @@ describe("DingTalkAccountBindingCard", () => {
     renderCard();
 
     expect(await screen.findByText(summary)).toBeInTheDocument();
+  });
+
+  it("uses the exact Chinese listening summaries", () => {
+    const integrations = zhHansAgents.tab_body.integrations;
+
+    expect(integrations.dingtalk_account_scope_direct_only).toBe("已监听我聊消息");
+    expect(integrations.dingtalk_account_scope_all).toBe("已监听全部消息");
+    expect(integrations.dingtalk_account_scope_custom_other).toBe(
+      "已监听 {{count}} 个对话的消息",
+    );
   });
 
   it("expands every custom conversation with media-id, URL, and initial fallbacks", async () => {
@@ -187,7 +198,7 @@ describe("DingTalkAccountBindingCard", () => {
     renderCard();
 
     const summary = await screen.findByRole("button", {
-      name: "Bound to messages from 4 conversations",
+      name: "Listening to messages from 4 conversations",
     });
     expect(summary).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Project Alpha")).not.toBeInTheDocument();
