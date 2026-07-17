@@ -537,6 +537,23 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		"template", template,
 	)
 
+	tasks, err := l.Queries.ListAgentTasks(ctx, task.AgentID)
+	if err != nil {
+		return fmt.Errorf("check FC/E2B launch serialization: %w", err)
+	}
+	if blocker, reason, blocked := fcE2BTaskLaunchBlocker(task, tasks); blocked {
+		slog.Info("FC/E2B launch deferred by serialized task",
+			"event", "fc_e2b_launch_deferred",
+			"task_id", taskID,
+			"runtime_id", runtimeID,
+			"agent_id", agentID,
+			"blocker_task_id", util.UUIDToString(blocker.ID),
+			"blocker_status", blocker.Status,
+			"defer_reason", reason,
+		)
+		return nil
+	}
+
 	scope, scoped := fcE2BScopeForTask(task)
 	sandboxID, coldStart, err := l.resolveSandbox(ctx, rt, scope, scoped, template)
 	if err != nil {
@@ -693,6 +710,39 @@ func fcE2BTaskHasActiveBlocker(target db.AgentTaskQueue, tasks []db.AgentTaskQue
 		}
 	}
 	return false
+}
+
+func fcE2BTaskLaunchBlocker(target db.AgentTaskQueue, tasks []db.AgentTaskQueue) (db.AgentTaskQueue, string, bool) {
+	for _, candidate := range tasks {
+		if candidate.ID == target.ID || candidate.AgentID != target.AgentID ||
+			!sameTaskSerializationGroup(target, candidate) {
+			continue
+		}
+		if fcE2BTaskStatusBlocksClaim(candidate.Status) {
+			return candidate, "active_task", true
+		}
+	}
+
+	for _, candidate := range tasks {
+		if candidate.ID == target.ID || candidate.AgentID != target.AgentID ||
+			candidate.Status != "queued" || !sameTaskSerializationGroup(target, candidate) {
+			continue
+		}
+		if fcE2BQueuedTaskPrecedes(candidate, target) {
+			return candidate, "queued_predecessor", true
+		}
+	}
+	return db.AgentTaskQueue{}, "", false
+}
+
+func fcE2BQueuedTaskPrecedes(candidate, target db.AgentTaskQueue) bool {
+	if candidate.Priority != target.Priority {
+		return candidate.Priority > target.Priority
+	}
+	if !candidate.CreatedAt.Valid || !target.CreatedAt.Valid {
+		return false
+	}
+	return candidate.CreatedAt.Time.Before(target.CreatedAt.Time)
 }
 
 func fcE2BTaskStatusBlocksClaim(status string) bool {
