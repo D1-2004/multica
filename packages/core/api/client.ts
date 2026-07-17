@@ -140,6 +140,9 @@ import type {
   RedeemDingTalkBindingTokenResponse,
   DingTalkAccountBindingsResponse,
   BeginDingTalkAccountBindingResponse,
+  AgentIdentityGitHubStatusResponse,
+  BeginAgentIdentityGitHubOAuthResponse,
+  TestAgentIdentityGitHubConnectionResponse,
   RegisterSlackBYORequest,
   RedeemSlackBindingTokenResponse,
   Squad,
@@ -274,6 +277,12 @@ import {
   ProvisionFDEOnboardingResponseSchema,
   EMPTY_FDE_ONBOARDING_STATE,
   EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE,
+  AgentIdentityGitHubStatusResponseSchema,
+  BeginAgentIdentityGitHubOAuthResponseSchema,
+  TestAgentIdentityGitHubConnectionResponseSchema,
+  EMPTY_AGENT_IDENTITY_GITHUB_STATUS_RESPONSE,
+  EMPTY_BEGIN_AGENT_IDENTITY_GITHUB_OAUTH_RESPONSE,
+  EMPTY_TEST_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -2773,6 +2782,64 @@ export class ApiClient {
         method: "PATCH",
         body: JSON.stringify({ surface_type: surfaceType }),
       },
+    );
+  }
+
+  // Agent Identity GitHub user identity for sandbox credentials.
+  async getAgentIdentityGitHubStatus(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<AgentIdentityGitHubStatusResponse> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/agent-identity/github/status?${search.toString()}`,
+    );
+    return parseWithFallback(
+      raw,
+      AgentIdentityGitHubStatusResponseSchema,
+      EMPTY_AGENT_IDENTITY_GITHUB_STATUS_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/agent-identity/github/status" },
+    );
+  }
+
+  async beginAgentIdentityGitHubOAuth(
+    workspaceId: string,
+    agentId: string,
+    returnUrl: string,
+  ): Promise<BeginAgentIdentityGitHubOAuthResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/agent-identity/github/oauth/start`,
+      {
+        method: "POST",
+        body: JSON.stringify({ agent_id: agentId, return_url: returnUrl }),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      BeginAgentIdentityGitHubOAuthResponseSchema,
+      EMPTY_BEGIN_AGENT_IDENTITY_GITHUB_OAUTH_RESPONSE,
+      {
+        endpoint: "POST /api/workspaces/:id/agent-identity/github/oauth/start",
+        includeReceived: false,
+      },
+    );
+  }
+
+  async testAgentIdentityGitHubConnection(
+    workspaceId: string,
+    agentId: string,
+    connectionId: string,
+  ): Promise<TestAgentIdentityGitHubConnectionResponse> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/agent-identity/github/${encodeURIComponent(connectionId)}/test?${search.toString()}`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      TestAgentIdentityGitHubConnectionResponseSchema,
+      EMPTY_TEST_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
+      { endpoint: "POST /api/workspaces/:id/agent-identity/github/:connectionId/test" },
     );
   }
 

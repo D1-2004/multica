@@ -19,6 +19,9 @@ import type {
   DingTalkAccountBindingsResponse,
   DingTalkMessageScope,
   DingTalkProcessingSurface,
+  AgentIdentityGitHubStatusResponse,
+  BeginAgentIdentityGitHubOAuthResponse,
+  TestAgentIdentityGitHubConnectionResponse,
   GroupedIssuesResponse,
   GitHubAgentPreview,
   ListGitHubAgentRepositoriesResponse,
@@ -244,6 +247,87 @@ export const EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE: ProvisionFDEOnboardingResp
   agent_id: "",
   agent_created: false,
   install_complete: false,
+};
+
+const AgentIdentityGitHubConnectionSchema = z
+  .object({
+    connection_id: z.string(),
+    account_login: z.string(),
+    account_id: z.string(),
+    status: z.string(),
+    granted_scopes: z.string().optional().default(""),
+    access_expires_at: z.number().nullable().optional(),
+    refresh_expires_at: z.number().nullable().optional(),
+    last_refresh_at: z.number().nullable().optional(),
+    last_test_at: z.number().nullable().optional(),
+  })
+  .loose()
+  .transform((connection) => ({
+    connectionId: connection.connection_id,
+    accountLogin: connection.account_login,
+    accountId: connection.account_id,
+    status: connection.status,
+    grantedScopes: connection.granted_scopes,
+    accessExpiresAt: connection.access_expires_at,
+    refreshExpiresAt: connection.refresh_expires_at,
+    lastRefreshAt: connection.last_refresh_at,
+    lastTestAt: connection.last_test_at,
+  }));
+
+export const AgentIdentityGitHubStatusResponseSchema = z
+  .object({
+    configured: z.boolean(),
+    connection: AgentIdentityGitHubConnectionSchema.nullable().optional(),
+  })
+  .loose()
+  .transform((response) => ({
+    configured: response.configured,
+    connection: response.connection ?? null,
+  }));
+
+export const EMPTY_AGENT_IDENTITY_GITHUB_STATUS_RESPONSE: AgentIdentityGitHubStatusResponse = {
+  configured: false,
+  connection: null,
+};
+
+export const BeginAgentIdentityGitHubOAuthResponseSchema = z
+  .object({
+    state: z.string(),
+    authorization_url: z.string(),
+  })
+  .loose()
+  .transform((response) => ({
+    state: response.state,
+    authorizationUrl: response.authorization_url,
+  }));
+
+export const EMPTY_BEGIN_AGENT_IDENTITY_GITHUB_OAUTH_RESPONSE: BeginAgentIdentityGitHubOAuthResponse = {
+  state: "",
+  authorizationUrl: "",
+};
+
+export const TestAgentIdentityGitHubConnectionResponseSchema = z
+  .object({
+    ok: z.boolean(),
+    refreshed: z.boolean().optional().default(false),
+    connection_id: z.string().optional(),
+    account_login: z.string().optional(),
+    account_id: z.string().optional(),
+    granted_scopes: z.string().optional(),
+  })
+  .loose()
+  .transform((response) => ({
+    ok: response.ok,
+    refreshed: response.refreshed,
+    connectionId: response.connection_id,
+    accountLogin: response.account_login,
+    accountId: response.account_id,
+    grantedScopes: response.granted_scopes,
+  }));
+
+export const EMPTY_TEST_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE: TestAgentIdentityGitHubConnectionResponse = {
+  ok: false,
+  refreshed: false,
 };
 
 // Label responses are consumed by settings tables and resource pickers. Keep
