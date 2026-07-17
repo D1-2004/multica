@@ -552,6 +552,8 @@
       "dingtalk_account_scope_custom_other": "{{count}}개 대화의 메시지 모니터링 중",
       "dingtalk_account_status_active": "활성",
       "dingtalk_account_status_pending": "대기 중",
+      "dingtalk_account_status_failed": "실패",
+      "dingtalk_account_status_skipped": "건너뜀",
       "dingtalk_account_status_unbound": "연결 안 됨",
       "dingtalk_account_fallback_name": "디지털 직원",
       "dingtalk_account_pending_restart": "이전 연결이 완료되지 않았습니다. 새 QR 코드를 생성해 다시 시도하세요.",

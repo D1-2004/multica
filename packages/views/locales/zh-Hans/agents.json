@@ -649,6 +649,8 @@
       "dingtalk_account_scope_custom_other": "已监听 {{count}} 个对话的消息",
       "dingtalk_account_status_active": "已生效",
       "dingtalk_account_status_pending": "等待完成",
+      "dingtalk_account_status_failed": "失败",
+      "dingtalk_account_status_skipped": "已跳过",
       "dingtalk_account_status_unbound": "未绑定",
       "dingtalk_account_fallback_name": "数字员工",
       "dingtalk_account_pending_restart": "上次数字员工绑定未完成。请生成新的二维码后重试。",

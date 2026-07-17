@@ -21,15 +21,13 @@ import (
 )
 
 const (
-	maxDingTalkAccountCallbackBodyBytes      = 16 << 10
-	maxDingTalkMessageRouteCallbackBodyBytes = 1 << 20
+	maxDingTalkAccountCallbackBodyBytes = 1 << 20
 )
 
 type dingTalkAccountBindingService interface {
 	Begin(context.Context, agentmessagerouter.BeginParams) (agentmessagerouter.BeginResult, error)
 	List(context.Context, pgtype.UUID) ([]agentmessagerouter.PublicDingTalkAccountBinding, error)
-	CompleteCallback(context.Context, agentmessagerouter.CallbackParams) (agentmessagerouter.PublicDingTalkAccountBinding, error)
-	CompleteIdentityCallback(context.Context, agentmessagerouter.IdentityCallbackParams) (agentmessagerouter.PublicDingTalkAccountBinding, error)
+	CompleteBinding(context.Context, agentmessagerouter.CompleteBindingParams) (agentmessagerouter.CompleteBindingResult, error)
 	Unbind(context.Context, agentmessagerouter.UnbindParams) (agentmessagerouter.PublicDingTalkAccountBinding, error)
 }
 
@@ -38,19 +36,9 @@ type beginDingTalkAccountBindingRequest struct {
 }
 
 type dingTalkAccountBindingCallbackRequest struct {
-	SourceID           string                                            `json:"source_id"`
-	AccountDisplayName string                                            `json:"account_display_name"`
-	AccountAvatarURL   string                                            `json:"account_avatar_url"`
-	MessageScope       string                                            `json:"message_scope"`
-	Conversations      []agentmessagerouter.DingTalkConversationSnapshot `json:"conversations"`
-}
-
-type dingTalkIdentityCallbackRequest struct {
-	AccountUID              string `json:"account_uid"`
-	AccountOrgID            string `json:"account_org_id"`
-	AccountOrganizationName string `json:"account_organization_name"`
-	AccountDisplayName      string `json:"account_display_name"`
-	AccountAvatarURL        string `json:"account_avatar_url"`
+	Status          string                                   `json:"status"`
+	IdentityBinding agentmessagerouter.IdentityBindingResult `json:"identity_binding"`
+	MessageBinding  agentmessagerouter.MessageBindingResult  `json:"message_binding"`
 }
 
 func (h *Handler) ListDingTalkAccountBindings(w http.ResponseWriter, r *http.Request) {
@@ -148,62 +136,15 @@ func (h *Handler) CompleteDingTalkAccountBindingCallback(w http.ResponseWriter, 
 		return
 	}
 	var request dingTalkAccountBindingCallbackRequest
-	if err := decodeLimitedJSON(w, r, maxDingTalkMessageRouteCallbackBodyBytes, &request, "invalid_binding_result"); err != nil {
-		return
-	}
-	result, err := h.DingTalkAccountBindings.CompleteCallback(r.Context(), agentmessagerouter.CallbackParams{
-		InstallationID:     installationID,
-		CallbackToken:      callbackToken,
-		SourceID:           request.SourceID,
-		AccountDisplayName: request.AccountDisplayName,
-		AccountAvatarURL:   request.AccountAvatarURL,
-		MessageScope:       request.MessageScope,
-		Conversations:      request.Conversations,
-	})
-	if err != nil {
-		writeDingTalkAccountBindingError(w, err)
-		return
-	}
-	h.publish(
-		protocol.EventDingTalkAccountBindingActivated,
-		result.WorkspaceID,
-		"system",
-		"dingtalk_account_binding",
-		map[string]any{"id": result.ID},
-	)
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (h *Handler) CompleteDingTalkIdentityCallback(w http.ResponseWriter, r *http.Request) {
-	if h.DingTalkAccountBindings == nil || strings.TrimSpace(h.DingTalkAccountBindingOrigin) == "" {
-		writeDingTalkAccountBindingAPIError(w, http.StatusServiceUnavailable, "binding_not_configured", "dingtalk account binding is not configured")
-		return
-	}
-	if r.Header.Get("Origin") != h.DingTalkAccountBindingOrigin {
-		writeDingTalkAccountBindingAPIError(w, http.StatusForbidden, "callback_origin_forbidden", "callback origin is not allowed")
-		return
-	}
-	callbackToken, ok := bearerToken(r.Header.Get("Authorization"))
-	if !ok {
-		writeDingTalkAccountBindingAPIError(w, http.StatusUnauthorized, "callback_auth_required", "callback authorization required")
-		return
-	}
-	attemptID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "attemptId"), "attempt id")
-	if !ok {
-		return
-	}
-	var request dingTalkIdentityCallbackRequest
 	if err := decodeLimitedJSON(w, r, maxDingTalkAccountCallbackBodyBytes, &request, "invalid_binding_result"); err != nil {
 		return
 	}
-	result, err := h.DingTalkAccountBindings.CompleteIdentityCallback(r.Context(), agentmessagerouter.IdentityCallbackParams{
-		AttemptID:               attemptID,
-		CallbackToken:           callbackToken,
-		AccountUID:              request.AccountUID,
-		AccountOrgID:            request.AccountOrgID,
-		AccountOrganizationName: request.AccountOrganizationName,
-		AccountDisplayName:      request.AccountDisplayName,
-		AccountAvatarURL:        request.AccountAvatarURL,
+	result, err := h.DingTalkAccountBindings.CompleteBinding(r.Context(), agentmessagerouter.CompleteBindingParams{
+		InstallationID: installationID,
+		CallbackToken:  callbackToken,
+		Status:         request.Status,
+		Identity:       request.IdentityBinding,
+		Message:        request.MessageBinding,
 	})
 	if err != nil {
 		writeDingTalkAccountBindingError(w, err)
@@ -211,10 +152,10 @@ func (h *Handler) CompleteDingTalkIdentityCallback(w http.ResponseWriter, r *htt
 	}
 	h.publish(
 		protocol.EventDingTalkAccountBindingActivated,
-		result.WorkspaceID,
+		result.Binding.WorkspaceID,
 		"system",
-		"dingtalk_identity_binding",
-		map[string]any{"id": result.ID},
+		"dingtalk_account_binding",
+		map[string]any{"id": result.Binding.ID},
 	)
 	writeJSON(w, http.StatusOK, result)
 }

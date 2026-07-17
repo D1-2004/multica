@@ -110,17 +110,12 @@ func dingTalkAccountCallbackCORSMiddleware(appOrigins []string, dbaseOrigin stri
 
 func isDingTalkAccountCallbackPath(path string) bool {
 	const suffix = "/callback"
-	for _, prefix := range []string{
-		"/api/integrations/dingtalk/account-bindings/",
-		"/api/integrations/dingtalk/account-identities/",
-	} {
-		if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
-			continue
-		}
-		id := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
-		return id != "" && !strings.Contains(id, "/")
+	const prefix = "/api/integrations/dingtalk/account-bindings/"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return false
 	}
-	return false
+	id := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	return id != "" && !strings.Contains(id, "/")
 }
 
 func dBaseBindingURLMatchesOrigin(bindingURL, expectedOrigin string) bool {
@@ -1177,7 +1172,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// this handler also requires that exact Origin and the per-attempt callback
 	// Bearer token before it verifies the Router subscription.
 	r.Post("/api/integrations/dingtalk/account-bindings/{installationId}/callback", h.CompleteDingTalkAccountBindingCallback)
-	r.Post("/api/integrations/dingtalk/account-identities/{attemptId}/callback", h.CompleteDingTalkIdentityCallback)
 	// GitHub App webhook (no Multica auth — requests are authenticated via
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)

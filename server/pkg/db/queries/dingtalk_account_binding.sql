@@ -101,6 +101,22 @@ WHERE id = sqlc.arg('id')
   AND config ->> 'callback_token_hash' = sqlc.arg('expected_callback_token_hash')::text
 RETURNING *;
 
+-- name: CompleteDingTalkAccountBindingResult :one
+-- Record a terminal result that did not create a Router source. The caller
+-- chooses active only for an identity-only skipped route; failures stay
+-- pending so a later begin can issue a fresh attempt.
+UPDATE channel_installation
+SET config = sqlc.arg('config'),
+    status = sqlc.arg('status'),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND agent_id = sqlc.arg('agent_id')
+  AND channel_type = 'dingtalk_account'
+  AND status = 'pending'
+  AND config ->> 'callback_token_hash' = sqlc.arg('expected_callback_token_hash')::text
+RETURNING *;
+
 -- name: RevokeDingTalkAccountBinding :one
 -- Router DELETE happens before this local transition. Retain only the stable
 -- dispatch endpoint fields needed by a later begin; remove all callback,

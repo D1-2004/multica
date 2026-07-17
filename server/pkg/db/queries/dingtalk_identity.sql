@@ -25,6 +25,17 @@ JOIN agent a
  AND a.workspace_id = attempt.workspace_id
 WHERE attempt.id = sqlc.arg('id');
 
+-- name: GetAgentDingTalkIdentityAttemptByAgent :one
+SELECT attempt.*
+FROM agent_dingtalk_identity_attempt attempt
+JOIN agent a
+  ON a.id = attempt.agent_id
+ AND a.workspace_id = attempt.workspace_id
+WHERE attempt.workspace_id = sqlc.arg('workspace_id')
+  AND attempt.agent_id = sqlc.arg('agent_id')
+ORDER BY attempt.created_at DESC
+LIMIT 1;
+
 -- name: CompleteAgentDingTalkIdentityAttempt :one
 WITH completed AS (
     UPDATE agent_dingtalk_identity_attempt

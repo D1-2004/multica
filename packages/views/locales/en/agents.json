@@ -662,6 +662,8 @@
       "dingtalk_account_scope_custom_other": "Listening to messages from {{count}} conversations",
       "dingtalk_account_status_active": "Active",
       "dingtalk_account_status_pending": "Pending",
+      "dingtalk_account_status_failed": "Failed",
+      "dingtalk_account_status_skipped": "Skipped",
       "dingtalk_account_status_unbound": "Not bound",
       "dingtalk_account_fallback_name": "Digital employee",
       "dingtalk_account_pending_restart": "The previous digital employee binding was not completed. Generate a new QR code to try again.",

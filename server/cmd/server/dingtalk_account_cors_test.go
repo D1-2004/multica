@@ -79,6 +79,15 @@ func TestDingTalkAccountCallbackCORSLeavesRegularAPIPolicyIntact(t *testing.T) {
 	}
 }
 
+func TestDingTalkAccountCallbackPathOnlyAcceptsUnifiedBindingRoute(t *testing.T) {
+	if !isDingTalkAccountCallbackPath("/api/integrations/dingtalk/account-bindings/01900000-0000-7000-8000-000000000000/callback") {
+		t.Fatal("unified account binding callback path was not recognized")
+	}
+	if isDingTalkAccountCallbackPath("/api/integrations/dingtalk/account-identities/01900000-0000-7000-8000-000000000000/callback") {
+		t.Fatal("legacy identity callback path is still recognized")
+	}
+}
+
 func TestDBaseBindingURLMustMatchCallbackOrigin(t *testing.T) {
 	if !dBaseBindingURLMatchesOrigin(
 		"https://dbase.example.internal/dingtalk/account-bind",
