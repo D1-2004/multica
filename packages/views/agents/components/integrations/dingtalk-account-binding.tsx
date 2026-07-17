@@ -300,8 +300,8 @@ export function DingTalkAccountBindingCard({
           </p>
         ) : currentBinding && hasConnectedBinding && accountOutcome ? (
           <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-3">
                 <Avatar>
                   {accountOutcome.accountAvatarUrl ? (
                     <AvatarImage
