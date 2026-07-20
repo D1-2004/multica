@@ -59,7 +59,7 @@ func (l *captureRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTask
 	return nil
 }
 
-func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndIgnoresRouterContextToken(t *testing.T) {
+func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndPropagatesExternalIdentity(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "test-bot-dispatch-issue", nil)
 	attachmentBody := []byte("fake-png-content")
 	files := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +100,8 @@ func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndIgnoresRouterContext
 				"expiresAt":%d
 			}]
 		},
-		"contextToken":"sealed-context",
+		"externalIdentity":{"contextToken":"sealed-context"},
+		"contextToken":"legacy-top-level-token-must-be-ignored",
 		"padding":%q
 	}`, agentID, len(attachmentBody), files.URL+"/diagram.png", time.Now().Add(time.Hour).UnixMilli(), strings.Repeat("x", maxWebhookBodyBytes+1))
 
@@ -146,7 +147,7 @@ func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndIgnoresRouterContext
 			t.Errorf("description missing %q:\n%s", want, description.String)
 		}
 	}
-	for _, forbidden := range []string{"sealed-context", "task-001", files.URL, "att-image-001"} {
+	for _, forbidden := range []string{"sealed-context", "legacy-top-level-token-must-be-ignored", "task-001", files.URL, "att-image-001"} {
 		if strings.Contains(description.String, forbidden) {
 			t.Errorf("description leaked %q:\n%s", forbidden, description.String)
 		}
@@ -189,24 +190,25 @@ func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndIgnoresRouterContext
 	`, resp.TaskID).Scan(&taskContext, &storedContextToken); err != nil {
 		t.Fatalf("load task context: %v", err)
 	}
-	if storedContextToken.Valid {
-		t.Fatalf("task context token = %q, want Router contextToken ignored", storedContextToken.String)
+	if !storedContextToken.Valid || storedContextToken.String != "sealed-context" {
+		t.Fatalf("task context token = %#v, want trusted Router externalIdentity.contextToken", storedContextToken)
 	}
 	if strings.Contains(string(taskContext), "task-001") {
 		t.Fatalf("task context leaked upstream dispatch identity: %s", taskContext)
 	}
 }
 
-func TestHandleAgentDispatchCreatesIssueWithoutRouterContextToken(t *testing.T) {
+func TestHandleAgentDispatchIgnoresLegacyTopLevelContextToken(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "test-bot-dispatch-no-context-token", nil)
 	body := fmt.Sprintf(`{
 		"agentId":%q,
+		"contextToken":"legacy-top-level-token-must-be-ignored",
 		"input":{"userPrompt":{"text":"Create an issue using the selected agent."},"attachments":[]}
 	}`, agentID)
 
 	w := postAgentDispatchForTest(t, body, agentID)
 	if w.Code != http.StatusCreated {
-		t.Fatalf("HandleAgentDispatch without contextToken: expected 201, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("HandleAgentDispatch with legacy top-level contextToken: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var resp AgentDispatchResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
@@ -307,7 +309,7 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 				"downloadUrl":%q
 			}]
 		},
-		"contextToken":"follow-up-context"
+		"externalIdentity":{"contextToken":"follow-up-context"}
 	}`, issueID, len(attachmentBody), files.URL+"/spec.pdf")
 
 	w := postAgentDispatchForTest(t, body, agentID)
@@ -346,8 +348,8 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 	if uuidToString(triggerCommentID) != resp.CommentID {
 		t.Fatalf("task trigger comment = %s, want %s", uuidToString(triggerCommentID), resp.CommentID)
 	}
-	if storedContextToken.Valid {
-		t.Fatalf("task context token = %q, want Router contextToken ignored", storedContextToken.String)
+	if !storedContextToken.Valid || storedContextToken.String != "follow-up-context" {
+		t.Fatalf("task context token = %#v, want trusted Router externalIdentity.contextToken", storedContextToken)
 	}
 	var attachmentCount int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM attachment WHERE comment_id = $1`, resp.CommentID).Scan(&attachmentCount); err != nil {

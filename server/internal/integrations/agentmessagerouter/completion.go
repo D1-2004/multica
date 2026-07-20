@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -56,11 +57,12 @@ type MessageBindingResult struct {
 }
 
 type CompleteBindingParams struct {
-	InstallationID pgtype.UUID
-	CallbackToken  string
-	Status         string
-	Identity       IdentityBindingResult
-	Message        MessageBindingResult
+	BindingID     pgtype.UUID
+	BindingMode   BindingMode
+	CallbackToken string
+	Status        string
+	Identity      IdentityBindingResult
+	Message       MessageBindingResult
 }
 
 type BindingTaskAcknowledgement struct {
@@ -85,23 +87,8 @@ func (s *Service) CompleteBinding(ctx context.Context, params CompleteBindingPar
 	if s == nil || s.store == nil || s.identityStore == nil || s.router == nil {
 		return CompleteBindingResult{}, ErrNotConfigured
 	}
-	if !params.InstallationID.Valid {
+	if !params.BindingID.Valid || !params.BindingMode.Valid() {
 		return CompleteBindingResult{}, ErrNotFound
-	}
-	row, err := s.store.GetDingTalkAccountBinding(ctx, params.InstallationID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return CompleteBindingResult{}, ErrNotFound
-		}
-		return CompleteBindingResult{}, fmt.Errorf("get dingtalk account binding: %w", err)
-	}
-	config, err := ParseDingTalkAccountConfig(row.Config)
-	if err != nil {
-		return CompleteBindingResult{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
-	}
-	if !VerifyCallbackToken(params.CallbackToken, config.CallbackTokenHash) ||
-		!s.now().Before(config.CallbackExpiresAt) {
-		return CompleteBindingResult{}, ErrCallbackExpired
 	}
 	messageScope, conversations, err := validateCompleteBindingParams(params)
 	if err != nil {
@@ -109,48 +96,68 @@ func (s *Service) CompleteBinding(ctx context.Context, params CompleteBindingPar
 	}
 
 	var binding PublicDingTalkAccountBinding
-	if params.Identity.Status == DingTalkBindingTaskStatusSuccess {
-		attempt, lookupErr := s.identityStore.GetAgentDingTalkIdentityAttemptByAgent(
-			ctx,
-			db.GetAgentDingTalkIdentityAttemptByAgentParams{
-				WorkspaceID: row.WorkspaceID,
-				AgentID:     row.AgentID,
-			},
-		)
-		if lookupErr != nil {
-			if errors.Is(lookupErr, pgx.ErrNoRows) {
-				return CompleteBindingResult{}, ErrNotFound
+	if params.BindingMode == BindingModeIdentity {
+		if params.Identity.Status == DingTalkBindingTaskStatusSuccess {
+			binding, err = s.completeCallback(ctx, CallbackParams{
+				BindingID:       params.BindingID,
+				BindingMode:     params.BindingMode,
+				CallbackToken:   params.CallbackToken,
+				IdentityBinding: params.Identity,
+				MessageBinding:  params.Message,
+			}, false)
+			if err != nil {
+				return CompleteBindingResult{}, err
 			}
-			return CompleteBindingResult{}, fmt.Errorf("get dingtalk identity attempt: %w", lookupErr)
+		} else {
+			attempt, lookupErr := s.identityStore.GetAgentDingTalkIdentityAttempt(ctx, params.BindingID)
+			if lookupErr != nil {
+				if errors.Is(lookupErr, pgx.ErrNoRows) {
+					return CompleteBindingResult{}, ErrNotFound
+				}
+				return CompleteBindingResult{}, fmt.Errorf("get dingtalk identity attempt: %w", lookupErr)
+			}
+			if !VerifyCallbackToken(params.CallbackToken, attempt.CallbackTokenHash) ||
+				!s.now().Before(attempt.ExpiresAt.Time) {
+				return CompleteBindingResult{}, ErrCallbackExpired
+			}
+			binding = PublicDingTalkAccountBinding{
+				ID:           util.UUIDToString(attempt.AgentID),
+				WorkspaceID:  util.UUIDToString(attempt.WorkspaceID),
+				AgentID:      util.UUIDToString(attempt.AgentID),
+				DWSIdentity:  PublicDingTalkBindingOutcome{Status: DingTalkBindingStatusFailed},
+				MessageRoute: PublicDingTalkBindingOutcome{Status: "unbound"},
+			}
 		}
-		binding, err = s.completeIdentityCallback(ctx, IdentityCallbackParams{
-			AttemptID:               attempt.ID,
-			CallbackToken:           params.CallbackToken,
-			AccountUID:              params.Identity.AccountUID,
-			AccountOrgID:            params.Identity.AccountOrgID,
-			AccountOrganizationName: params.Identity.AccountOrganizationName,
-			AccountDisplayName:      params.Identity.AccountDisplayName,
-			AccountAvatarURL:        params.Identity.AccountAvatarURL,
-		})
-		if err != nil {
-			return CompleteBindingResult{}, err
-		}
+		return completeBindingAcknowledgement(params, binding), nil
 	}
 
 	if params.Message.Status == DingTalkBindingTaskStatusSuccess {
 		binding, err = s.completeCallback(ctx, CallbackParams{
-			InstallationID:     params.InstallationID,
-			CallbackToken:      params.CallbackToken,
-			SourceID:           params.Message.SourceID,
-			AccountDisplayName: params.Identity.AccountDisplayName,
-			AccountAvatarURL:   params.Identity.AccountAvatarURL,
-			MessageScope:       messageScope,
-			Conversations:      conversations,
+			BindingID:       params.BindingID,
+			BindingMode:     params.BindingMode,
+			CallbackToken:   params.CallbackToken,
+			IdentityBinding: params.Identity,
+			MessageBinding:  params.Message,
 		}, false)
 		if err != nil {
 			return CompleteBindingResult{}, err
 		}
 	} else {
+		row, lookupErr := s.store.GetDingTalkAccountBinding(ctx, params.BindingID)
+		if lookupErr != nil {
+			if errors.Is(lookupErr, pgx.ErrNoRows) {
+				return CompleteBindingResult{}, ErrNotFound
+			}
+			return CompleteBindingResult{}, fmt.Errorf("get dingtalk account binding: %w", lookupErr)
+		}
+		config, configErr := ParseDingTalkAccountConfig(row.Config)
+		if configErr != nil {
+			return CompleteBindingResult{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
+		}
+		if !VerifyCallbackToken(params.CallbackToken, config.CallbackTokenHash) ||
+			!s.now().Before(config.CallbackExpiresAt) {
+			return CompleteBindingResult{}, ErrCallbackExpired
+		}
 		config.DWSIdentityStatus = ""
 		if params.Identity.Status == DingTalkBindingTaskStatusFailed {
 			config.DWSIdentityStatus = DingTalkBindingStatusFailed
@@ -162,16 +169,11 @@ func (s *Service) CompleteBinding(ctx context.Context, params CompleteBindingPar
 		if marshalErr != nil {
 			return CompleteBindingResult{}, fmt.Errorf("%w: terminal binding config", ErrInvalidResult)
 		}
-		rowStatus := "pending"
-		if params.Identity.Status == DingTalkBindingTaskStatusSuccess &&
-			params.Message.Status == DingTalkBindingTaskStatusSkipped {
-			rowStatus = "active"
-		}
 		completed, completeErr := s.store.CompleteDingTalkAccountBindingResult(
 			ctx,
 			db.CompleteDingTalkAccountBindingResultParams{
 				Config:                    rawConfig,
-				Status:                    rowStatus,
+				Status:                    "pending",
 				ID:                        row.ID,
 				WorkspaceID:               row.WorkspaceID,
 				AgentID:                   row.AgentID,
@@ -190,16 +192,20 @@ func (s *Service) CompleteBinding(ctx context.Context, params CompleteBindingPar
 		}
 	}
 
+	return completeBindingAcknowledgement(params, binding), nil
+}
+
+func completeBindingAcknowledgement(params CompleteBindingParams, binding PublicDingTalkAccountBinding) CompleteBindingResult {
 	return CompleteBindingResult{
 		Status:          DingTalkBindingCompletionStatus,
 		IdentityBinding: BindingTaskAcknowledgement{Status: params.Identity.Status},
 		MessageBinding:  BindingTaskAcknowledgement{Status: params.Message.Status},
 		Binding:         binding,
-	}, nil
+	}
 }
 
 func validateCompleteBindingParams(params CompleteBindingParams) (string, []DingTalkConversationSnapshot, error) {
-	if params.Status != DingTalkBindingCompletionStatus {
+	if params.Status != DingTalkBindingCompletionStatus || !params.BindingMode.Valid() {
 		return "", nil, ErrInvalidResult
 	}
 	switch params.Identity.Status {
@@ -217,6 +223,17 @@ func validateCompleteBindingParams(params CompleteBindingParams) (string, []Ding
 		}
 	default:
 		return "", nil, ErrInvalidResult
+	}
+	if params.BindingMode == BindingModeIdentity && params.Message.Status != DingTalkBindingTaskStatusSkipped {
+		return "", nil, ErrInvalidResult
+	}
+	if params.BindingMode == BindingModeMessage {
+		if params.Identity.Status == DingTalkBindingTaskStatusSuccess && params.Message.Status == DingTalkBindingTaskStatusSkipped {
+			return "", nil, ErrInvalidResult
+		}
+		if params.Identity.Status == DingTalkBindingTaskStatusFailed && params.Message.Status != DingTalkBindingTaskStatusSkipped {
+			return "", nil, ErrInvalidResult
+		}
 	}
 
 	switch params.Message.Status {

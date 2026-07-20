@@ -62,6 +62,125 @@ func (q *Queries) ActivateDingTalkAccountBinding(ctx context.Context, arg Activa
 	return i, err
 }
 
+const activateDingTalkAccountBindingWithIdentity = `-- name: ActivateDingTalkAccountBindingWithIdentity :one
+WITH activated AS (
+    UPDATE channel_installation AS installation
+    SET config = $1,
+        status = 'active',
+        updated_at = now()
+    WHERE installation.id = $2
+      AND installation.workspace_id = $3
+      AND installation.agent_id = $4
+      AND installation.channel_type = 'dingtalk_account'
+      AND installation.status = 'pending'
+      AND installation.config ->> 'callback_token_hash' = $5::text
+    RETURNING installation.id, installation.workspace_id, installation.agent_id, installation.channel_type, installation.config, installation.status, installation.ws_lease_token, installation.ws_lease_expires_at, installation.installer_user_id, installation.installed_at, installation.created_at, installation.updated_at
+), upserted_identity AS (
+    INSERT INTO agent_dingtalk_identity (
+        agent_id,
+        workspace_id,
+        dws_uid,
+        org_id,
+        organization_name,
+        account_display_name,
+        account_avatar_url,
+        bound_by,
+        bound_at,
+        updated_at
+    )
+    SELECT
+        activated.agent_id,
+        activated.workspace_id,
+        $6,
+        $7,
+        $8,
+        $9,
+        $10,
+        activated.installer_user_id,
+        now(),
+        now()
+    FROM activated
+    ON CONFLICT (agent_id) DO UPDATE SET
+        workspace_id = EXCLUDED.workspace_id,
+        dws_uid = EXCLUDED.dws_uid,
+        org_id = EXCLUDED.org_id,
+        organization_name = EXCLUDED.organization_name,
+        account_display_name = EXCLUDED.account_display_name,
+        account_avatar_url = EXCLUDED.account_avatar_url,
+        bound_by = EXCLUDED.bound_by,
+        bound_at = EXCLUDED.bound_at,
+        updated_at = EXCLUDED.updated_at
+    WHERE agent_dingtalk_identity.workspace_id = EXCLUDED.workspace_id
+    RETURNING agent_id
+)
+SELECT activated.id, activated.workspace_id, activated.agent_id, activated.channel_type, activated.config, activated.status, activated.ws_lease_token, activated.ws_lease_expires_at, activated.installer_user_id, activated.installed_at, activated.created_at, activated.updated_at
+FROM activated
+JOIN upserted_identity ON upserted_identity.agent_id = activated.agent_id
+`
+
+type ActivateDingTalkAccountBindingWithIdentityParams struct {
+	Config                    []byte      `json:"config"`
+	ID                        pgtype.UUID `json:"id"`
+	WorkspaceID               pgtype.UUID `json:"workspace_id"`
+	AgentID                   pgtype.UUID `json:"agent_id"`
+	ExpectedCallbackTokenHash string      `json:"expected_callback_token_hash"`
+	DwsUid                    string      `json:"dws_uid"`
+	OrgID                     string      `json:"org_id"`
+	OrganizationName          string      `json:"organization_name"`
+	AccountDisplayName        string      `json:"account_display_name"`
+	AccountAvatarUrl          string      `json:"account_avatar_url"`
+}
+
+type ActivateDingTalkAccountBindingWithIdentityRow struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	ChannelType      string             `json:"channel_type"`
+	Config           []byte             `json:"config"`
+	Status           string             `json:"status"`
+	WsLeaseToken     pgtype.Text        `json:"ws_lease_token"`
+	WsLeaseExpiresAt pgtype.Timestamptz `json:"ws_lease_expires_at"`
+	InstallerUserID  pgtype.UUID        `json:"installer_user_id"`
+	InstalledAt      pgtype.Timestamptz `json:"installed_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+// A message binding is not complete until both the Router subscription and
+// the Agent execution identity have been verified. Persist both in one
+// statement so an Agent can never expose an active message route without its
+// corresponding default execution identity.
+func (q *Queries) ActivateDingTalkAccountBindingWithIdentity(ctx context.Context, arg ActivateDingTalkAccountBindingWithIdentityParams) (ActivateDingTalkAccountBindingWithIdentityRow, error) {
+	row := q.db.QueryRow(ctx, activateDingTalkAccountBindingWithIdentity,
+		arg.Config,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.AgentID,
+		arg.ExpectedCallbackTokenHash,
+		arg.DwsUid,
+		arg.OrgID,
+		arg.OrganizationName,
+		arg.AccountDisplayName,
+		arg.AccountAvatarUrl,
+	)
+	var i ActivateDingTalkAccountBindingWithIdentityRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const beginDingTalkAccountBinding = `-- name: BeginDingTalkAccountBinding :one
 
 INSERT INTO channel_installation (
@@ -394,7 +513,7 @@ func (q *Queries) ListDingTalkAccountBindings(ctx context.Context, workspaceID p
 
 const revokeDingTalkAccountBinding = `-- name: RevokeDingTalkAccountBinding :one
 WITH target AS (
-    SELECT installation.id, installation.workspace_id, installation.agent_id
+    SELECT installation.id, installation.workspace_id, installation.agent_id, installation.status
     FROM channel_installation installation
     WHERE installation.id = $1
       AND installation.workspace_id = $2
@@ -406,6 +525,7 @@ WITH target AS (
     USING target
     WHERE identity.workspace_id = target.workspace_id
       AND identity.agent_id = target.agent_id
+      AND target.status = 'active'
 ), deleted_attempts AS (
     DELETE FROM agent_dingtalk_identity_attempt attempt
     USING target
@@ -435,8 +555,9 @@ type RevokeDingTalkAccountBindingParams struct {
 // Router DELETE happens before this local transition. Retain only the stable
 // dispatch endpoint fields needed by a later begin; remove all callback,
 // source, account, avatar, scope, conversation, and binding-time snapshots.
-// The Agent's DWS identity and pending identity attempts are removed in the
-// same database statement as the local route transition.
+// A successfully activated message binding owns the Agent's default identity,
+// so revoking it removes that identity. Revoking an abandoned pending route
+// preserves any independently completed identity-only binding.
 func (q *Queries) RevokeDingTalkAccountBinding(ctx context.Context, arg RevokeDingTalkAccountBindingParams) (ChannelInstallation, error) {
 	row := q.db.QueryRow(ctx, revokeDingTalkAccountBinding, arg.ID, arg.WorkspaceID, arg.AgentID)
 	var i ChannelInstallation

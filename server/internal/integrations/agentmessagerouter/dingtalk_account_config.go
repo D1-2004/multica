@@ -64,6 +64,7 @@ type PublicDingTalkAccountBinding struct {
 
 type PublicDingTalkBindingOutcome struct {
 	Status             string                         `json:"status"`
+	Source             string                         `json:"source,omitempty"`
 	OrganizationName   string                         `json:"organization_name,omitempty"`
 	AccountDisplayName string                         `json:"account_display_name,omitempty"`
 	AccountAvatarURL   string                         `json:"account_avatar_url,omitempty"`
@@ -206,7 +207,6 @@ func normalizeDingTalkConversationBinding(messageScope string, conversations []D
 }
 
 func (c DingTalkAccountConfig) PublicBinding(
-	id,
 	workspaceID,
 	agentID,
 	messageRouteStatus string,
@@ -216,7 +216,7 @@ func (c DingTalkAccountConfig) PublicBinding(
 		messageRouteStatus = c.MessageRouteStatus
 	}
 	return PublicDingTalkAccountBinding{
-		ID:          id,
+		ID:          agentID,
 		WorkspaceID: workspaceID,
 		AgentID:     agentID,
 		DWSIdentity: dwsIdentity,

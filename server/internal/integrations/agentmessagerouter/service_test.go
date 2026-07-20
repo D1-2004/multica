@@ -157,11 +157,50 @@ func (f *fakeBindingStore) CompleteDingTalkAccountBindingResult(_ context.Contex
 	return f.row, nil
 }
 
+func (f *fakeBindingStore) ActivateDingTalkAccountBindingWithIdentity(_ context.Context, arg db.ActivateDingTalkAccountBindingWithIdentityParams) (db.ActivateDingTalkAccountBindingWithIdentityRow, error) {
+	if f.activateHook != nil {
+		f.activateHook(f)
+	}
+	if f.activateErr != nil {
+		return db.ActivateDingTalkAccountBindingWithIdentityRow{}, f.activateErr
+	}
+	f.row.Config = append([]byte(nil), arg.Config...)
+	f.row.Status = "active"
+	f.activated = true
+	now := time.Now().UTC()
+	f.identity = db.AgentDingtalkIdentity{
+		AgentID:            f.row.AgentID,
+		WorkspaceID:        f.row.WorkspaceID,
+		DwsUid:             arg.DwsUid,
+		OrgID:              arg.OrgID,
+		OrganizationName:   arg.OrganizationName,
+		AccountDisplayName: arg.AccountDisplayName,
+		AccountAvatarUrl:   arg.AccountAvatarUrl,
+		BoundBy:            f.row.InstallerUserID,
+		BoundAt:            pgtype.Timestamptz{Time: now, Valid: true},
+	}
+	return db.ActivateDingTalkAccountBindingWithIdentityRow{
+		ID:               f.row.ID,
+		WorkspaceID:      f.row.WorkspaceID,
+		AgentID:          f.row.AgentID,
+		ChannelType:      f.row.ChannelType,
+		Config:           f.row.Config,
+		Status:           f.row.Status,
+		WsLeaseToken:     f.row.WsLeaseToken,
+		WsLeaseExpiresAt: f.row.WsLeaseExpiresAt,
+		InstallerUserID:  f.row.InstallerUserID,
+		InstalledAt:      f.row.InstalledAt,
+		CreatedAt:        f.row.CreatedAt,
+		UpdatedAt:        f.row.UpdatedAt,
+	}, nil
+}
+
 func (f *fakeBindingStore) RevokeDingTalkAccountBinding(_ context.Context, arg db.RevokeDingTalkAccountBindingParams) (db.ChannelInstallation, error) {
 	if f.revokeErr != nil {
 		return db.ChannelInstallation{}, f.revokeErr
 	}
 	f.revokeArg = arg
+	wasActive := f.row.Status == "active"
 	config, err := ParseDingTalkAccountConfig(f.row.Config)
 	if err != nil {
 		return db.ChannelInstallation{}, err
@@ -177,7 +216,9 @@ func (f *fakeBindingStore) RevokeDingTalkAccountBinding(_ context.Context, arg d
 	}
 	f.row.Status = "revoked"
 	f.identityAttempt = db.AgentDingtalkIdentityAttempt{}
-	f.identity = db.AgentDingtalkIdentity{}
+	if wasActive {
+		f.identity = db.AgentDingtalkIdentity{}
+	}
 	f.revoked = true
 	return f.row, nil
 }
@@ -244,6 +285,23 @@ func (f *fakeBindingStore) GetAgentDingTalkIdentity(_ context.Context, _ db.GetA
 	return f.identity, nil
 }
 
+func (f *fakeBindingStore) ListAgentDingTalkIdentities(_ context.Context, _ pgtype.UUID) ([]db.AgentDingtalkIdentity, error) {
+	if !f.identity.AgentID.Valid {
+		return nil, nil
+	}
+	return []db.AgentDingtalkIdentity{f.identity}, nil
+}
+
+func (f *fakeBindingStore) DeleteAgentDingTalkIdentity(_ context.Context, _ db.DeleteAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error) {
+	if !f.identity.AgentID.Valid {
+		return db.AgentDingtalkIdentity{}, pgx.ErrNoRows
+	}
+	deleted := f.identity
+	f.identity = db.AgentDingtalkIdentity{}
+	f.identityAttempt = db.AgentDingtalkIdentityAttempt{}
+	return deleted, nil
+}
+
 func (f *fakeBindingStore) DeleteAgentDingTalkIdentityAttempts(_ context.Context, _ db.DeleteAgentDingTalkIdentityAttemptsParams) error {
 	f.identityAttempt = db.AgentDingtalkIdentityAttempt{}
 	return nil
@@ -275,17 +333,21 @@ func (f *fakeBindingRouter) GetSubscription(_ context.Context, sourceID string) 
 	return f.subscription, f.getErr
 }
 
-func TestCompleteBindingRecordsIdentitySuccessAndSkippedMessage(t *testing.T) {
+func TestCompleteBindingStoresPureIdentityWithoutActivatingMessageRoute(t *testing.T) {
 	now := time.Date(2026, 7, 17, 9, 0, 0, 0, time.UTC)
-	store := pendingBindingStore(t, now, canonicalCallbackToken)
+	store := &fakeBindingStore{}
+	store.row.WorkspaceID = uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	store.row.AgentID = uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	store.row.InstallerUserID = uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc")
 	store.identityAttempt = identityAttemptForTest(t, store, canonicalCallbackToken, now.Add(time.Minute))
 	router := &fakeBindingRouter{}
 	service := newBindingServiceForTest(t, store, router, now)
 
 	result, err := service.CompleteBinding(context.Background(), CompleteBindingParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		Status:         DingTalkBindingCompletionStatus,
+		BindingID:     store.identityAttempt.ID,
+		BindingMode:   BindingModeIdentity,
+		CallbackToken: canonicalCallbackToken,
+		Status:        DingTalkBindingCompletionStatus,
 		Identity: IdentityBindingResult{
 			Status:                  DingTalkBindingTaskStatusSuccess,
 			AccountUID:              "24710833",
@@ -303,25 +365,26 @@ func TestCompleteBindingRecordsIdentitySuccessAndSkippedMessage(t *testing.T) {
 		result.IdentityBinding.Status != DingTalkBindingTaskStatusSuccess ||
 		result.MessageBinding.Status != DingTalkBindingTaskStatusSkipped ||
 		result.Binding.DWSIdentity.Status != "active" ||
-		result.Binding.MessageRoute.Status != DingTalkBindingStatusSkipped {
+		result.Binding.MessageRoute.Status != "unbound" {
 		t.Fatalf("result = %#v", result)
 	}
-	if store.row.Status != "active" || router.getCalls != 0 || store.identity.DwsUid != "24710833" {
+	if store.row.ID.Valid || store.activated || router.getCalls != 0 || store.identity.DwsUid != "24710833" {
 		t.Fatalf("row status=%q router GETs=%d identity=%#v", store.row.Status, router.getCalls, store.identity)
 	}
 	assertMetricCounter(t, service.metrics, "dingtalk_account_callback_total", map[string]string{"outcome": "success"}, 1)
 }
 
-func TestCompleteBindingRecordsBothTaskFailures(t *testing.T) {
+func TestCompleteBindingRecordsIdentityFailureAndSkippedMessage(t *testing.T) {
 	now := time.Date(2026, 7, 17, 9, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
 	router := &fakeBindingRouter{}
 	service := newBindingServiceForTest(t, store, router, now)
 
 	result, err := service.CompleteBinding(context.Background(), CompleteBindingParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		Status:         DingTalkBindingCompletionStatus,
+		BindingID:     store.row.ID,
+		BindingMode:   BindingModeMessage,
+		CallbackToken: canonicalCallbackToken,
+		Status:        DingTalkBindingCompletionStatus,
 		Identity: IdentityBindingResult{
 			Status: DingTalkBindingTaskStatusFailed,
 			Error: &BindingTaskError{
@@ -331,19 +394,14 @@ func TestCompleteBindingRecordsBothTaskFailures(t *testing.T) {
 			},
 		},
 		Message: MessageBindingResult{
-			Status: DingTalkBindingTaskStatusFailed,
-			Error: &BindingTaskError{
-				Code:      "identity_required",
-				Message:   "identity binding did not complete",
-				Retryable: false,
-			},
+			Status: DingTalkBindingTaskStatusSkipped,
 		},
 	})
 	if err != nil {
 		t.Fatalf("CompleteBinding() error = %v", err)
 	}
 	if result.Binding.DWSIdentity.Status != DingTalkBindingStatusFailed ||
-		result.Binding.MessageRoute.Status != DingTalkBindingStatusFailed ||
+		result.Binding.MessageRoute.Status != DingTalkBindingStatusSkipped ||
 		store.row.Status != "pending" || router.getCalls != 0 {
 		t.Fatalf("result=%#v row status=%q router GETs=%d", result, store.row.Status, router.getCalls)
 	}
@@ -366,9 +424,10 @@ func TestCompleteBindingCompletesIdentityAndMessageSubscription(t *testing.T) {
 	service := newBindingServiceForTest(t, store, router, now)
 
 	result, err := service.CompleteBinding(context.Background(), CompleteBindingParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		Status:         DingTalkBindingCompletionStatus,
+		BindingID:     store.row.ID,
+		BindingMode:   BindingModeMessage,
+		CallbackToken: canonicalCallbackToken,
+		Status:        DingTalkBindingCompletionStatus,
 		Identity: IdentityBindingResult{
 			Status:                  DingTalkBindingTaskStatusSuccess,
 			AccountUID:              "24710833",
@@ -438,7 +497,8 @@ func TestCompleteBindingRejectsMalformedTaskDetails(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := pendingBindingStore(t, now, canonicalCallbackToken)
-			tt.params.InstallationID = store.row.ID
+			tt.params.BindingID = store.row.ID
+			tt.params.BindingMode = BindingModeMessage
 			tt.params.CallbackToken = canonicalCallbackToken
 			service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
 
@@ -488,12 +548,13 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 		WorkspaceID: workspaceID,
 		AgentID:     agentID,
 		InitiatorID: initiatorID,
+		BindingMode: BindingModeMessage,
 	})
 	if err != nil {
 		t.Fatalf("Begin() error = %v", err)
 	}
-	if result.InstallationID != "11111111-1111-1111-1111-111111111111" {
-		t.Fatalf("installation id = %q", result.InstallationID)
+	if result.BindingID != "11111111-1111-1111-1111-111111111111" {
+		t.Fatalf("binding id = %q", result.BindingID)
 	}
 	if result.ExpiresAt != router.issued.ExpiresAt {
 		t.Fatalf("expires at = %v, want %v", result.ExpiresAt, router.issued.ExpiresAt)
@@ -513,7 +574,8 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fragment) != 6 || fragment.Get("bindingToken") != router.issued.BindingToken ||
+	if len(fragment) != 7 || fragment.Get("bindingMode") != "message" ||
+		fragment.Get("bindingToken") != router.issued.BindingToken ||
 		fragment.Get("callbackToken") == "" || fragment.Get("callbackUrl") == "" ||
 		fragment.Get("expiresAt") != strconv.FormatInt(router.issued.ExpiresAt.Unix(), 10) ||
 		fragment.Get("agentId") != uuidStringForTest(store.row.AgentID) ||
@@ -553,9 +615,6 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if fragment.Has("identityCallbackToken") || fragment.Has("identityCallbackUrl") {
 		t.Fatalf("legacy identity callback fields leaked into QR fragment: %#v", fragment)
 	}
-	if !VerifyCallbackToken(callbackToken, store.identityAttempt.CallbackTokenHash) {
-		t.Fatal("unified callback token hash does not match identity attempt")
-	}
 	if router.issueAgent != uuidStringForTest(agentID) || router.issueURL != config.DispatchURL {
 		t.Fatalf("Router issue request = agent %q url %q", router.issueAgent, router.issueURL)
 	}
@@ -575,6 +634,7 @@ func TestBeginDingTalkAccountBindingRejectsExpiredRouterToken(t *testing.T) {
 		WorkspaceID: uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
 		AgentID:     uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
 		InitiatorID: uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+		BindingMode: BindingModeMessage,
 	})
 	if !errors.Is(err, ErrInvalidResult) {
 		t.Fatalf("Begin() error = %v, want ErrInvalidResult", err)
@@ -630,6 +690,7 @@ func TestBeginDingTalkAccountBindingRejectsMismatchedInstallationOwnership(t *te
 				WorkspaceID: workspaceID,
 				AgentID:     agentID,
 				InitiatorID: uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+				BindingMode: BindingModeMessage,
 			})
 			if !errors.Is(err, ErrInvalidResult) {
 				t.Fatalf("Begin() error = %v, want ErrInvalidResult", err)
@@ -670,6 +731,7 @@ func TestBeginDingTalkAccountBindingRejectsActive(t *testing.T) {
 		WorkspaceID: store.row.WorkspaceID,
 		AgentID:     store.row.AgentID,
 		InitiatorID: uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+		BindingMode: BindingModeMessage,
 	})
 	if !errors.Is(err, ErrAlreadyActive) {
 		t.Fatalf("Begin() error = %v, want ErrAlreadyActive", err)
@@ -686,12 +748,7 @@ func TestCompleteCallbackRejectsMissingRouterSourceID(t *testing.T) {
 	router := &fakeBindingRouter{}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	_, err := service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID:     store.row.ID,
-		CallbackToken:      callbackToken,
-		AccountDisplayName: "Zhang San",
-		AccountAvatarURL:   "https://example.com/avatar.png",
-	})
+	_, err := service.CompleteCallback(context.Background(), messageCallbackParamsForTest(store.row.ID, ""))
 	if !errors.Is(err, ErrInvalidResult) {
 		t.Fatalf("CompleteCallback() error = %v, want ErrInvalidResult", err)
 	}
@@ -717,23 +774,21 @@ func TestCompleteCallbackVerifiesSubscriptionAndActivates(t *testing.T) {
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	binding, err := service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID:     store.row.ID,
-		CallbackToken:      callbackToken,
-		SourceID:           "source-1",
-		AccountDisplayName: "Zhang San",
-		AccountAvatarURL:   "https://example.com/avatar.png",
-		MessageScope:       DingTalkMessageScopeCustom,
-		Conversations: []DingTalkConversationSnapshot{
-			{
-				CID:           "cid-alpha",
-				Name:          "Project Alpha",
-				AvatarMediaID: "@media-alpha",
-				AvatarURL:     "https://example.com/alpha.png",
-			},
-			{CID: "cid-beta", Name: "Project Beta"},
+	params := messageCallbackParamsForTest(store.row.ID, "source-1")
+	params.CallbackToken = callbackToken
+	params.IdentityBinding.AccountDisplayName = "Zhang San"
+	params.IdentityBinding.AccountAvatarURL = "https://example.com/avatar.png"
+	params.MessageBinding.MessageScope = DingTalkMessageScopeCustom
+	params.MessageBinding.Conversations = []DingTalkConversationSnapshot{
+		{
+			CID:           "cid-alpha",
+			Name:          "Project Alpha",
+			AvatarMediaID: "@media-alpha",
+			AvatarURL:     "https://example.com/alpha.png",
 		},
-	})
+		{CID: "cid-beta", Name: "Project Beta"},
+	}
+	binding, err := service.CompleteCallback(context.Background(), params)
 	if err != nil {
 		t.Fatalf("CompleteCallback() error = %v", err)
 	}
@@ -778,11 +833,9 @@ func TestCompleteCallbackLegacyPayloadDefaultsToDirectOnly(t *testing.T) {
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	binding, err := service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		SourceID:       "source-1",
-	})
+	params := messageCallbackParamsForTest(store.row.ID, "source-1")
+	params.MessageBinding.MessageScope = ""
+	binding, err := service.CompleteCallback(context.Background(), params)
 	if err != nil {
 		t.Fatalf("CompleteCallback() error = %v", err)
 	}
@@ -820,13 +873,10 @@ func TestCompleteCallbackHasNoConversationCountLimit(t *testing.T) {
 		}
 	}
 
-	binding, err := service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		SourceID:       "source-1",
-		MessageScope:   DingTalkMessageScopeCustom,
-		Conversations:  conversations,
-	})
+	params := messageCallbackParamsForTest(store.row.ID, "source-1")
+	params.MessageBinding.MessageScope = DingTalkMessageScopeCustom
+	params.MessageBinding.Conversations = conversations
+	binding, err := service.CompleteCallback(context.Background(), params)
 	if err != nil {
 		t.Fatalf("CompleteCallback() error = %v", err)
 	}
@@ -867,13 +917,10 @@ func TestCompleteCallbackRejectsInvalidConversationSnapshots(t *testing.T) {
 			}}
 			service := newBindingServiceForTest(t, store, router, now)
 
-			_, err = service.CompleteCallback(context.Background(), CallbackParams{
-				InstallationID: store.row.ID,
-				CallbackToken:  canonicalCallbackToken,
-				SourceID:       "source-1",
-				MessageScope:   tt.messageScope,
-				Conversations:  tt.conversations,
-			})
+			params := messageCallbackParamsForTest(store.row.ID, "source-1")
+			params.MessageBinding.MessageScope = tt.messageScope
+			params.MessageBinding.Conversations = tt.conversations
+			_, err = service.CompleteCallback(context.Background(), params)
 			if !errors.Is(err, ErrInvalidResult) {
 				t.Fatalf("CompleteCallback() error = %v, want ErrInvalidResult", err)
 			}
@@ -899,11 +946,7 @@ func TestCompleteCallbackMismatchDeletesRouterSubscriptionWithoutActivating(t *t
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	_, err = service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		SourceID:       "source-1",
-	})
+	_, err = service.CompleteCallback(context.Background(), messageCallbackParamsForTest(store.row.ID, "source-1"))
 	if !errors.Is(err, ErrBindingConflict) {
 		t.Fatalf("CompleteCallback() error = %v, want ErrBindingConflict", err)
 	}
@@ -956,11 +999,7 @@ func TestCompleteCallbackRejectsTamperedRoutingWithoutDeleting(t *testing.T) {
 			router := &fakeBindingRouter{subscription: subscription}
 			service := newBindingServiceForTest(t, store, router, now)
 
-			_, err = service.CompleteCallback(context.Background(), CallbackParams{
-				InstallationID: store.row.ID,
-				CallbackToken:  canonicalCallbackToken,
-				SourceID:       "source-1",
-			})
+			_, err = service.CompleteCallback(context.Background(), messageCallbackParamsForTest(store.row.ID, "source-1"))
 			if !errors.Is(err, ErrBindingConflict) {
 				t.Fatalf("CompleteCallback() error = %v, want ErrBindingConflict", err)
 			}
@@ -991,11 +1030,7 @@ func TestCompleteCallbackCompensatesVerifiedSourceWhenActivationLosesPendingCAS(
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	_, err = service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		SourceID:       "source-1",
-	})
+	_, err = service.CompleteCallback(context.Background(), messageCallbackParamsForTest(store.row.ID, "source-1"))
 	if !errors.Is(err, ErrBindingConflict) {
 		t.Fatalf("CompleteCallback() error = %v, want ErrBindingConflict", err)
 	}
@@ -1030,11 +1065,7 @@ func TestCompleteCallbackCompensatesLosingSourceWhenAnotherCallbackActivates(t *
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	_, err = service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		SourceID:       "source-loser",
-	})
+	_, err = service.CompleteCallback(context.Background(), messageCallbackParamsForTest(store.row.ID, "source-loser"))
 
 	if !errors.Is(err, ErrBindingConflict) {
 		t.Fatalf("CompleteCallback() error = %v, want ErrBindingConflict", err)
@@ -1059,6 +1090,7 @@ func TestCompleteCallbackIsIdempotentAndRejectsDifferentSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.row.Status = "active"
+	setIdentityForTest(store)
 	router := &fakeBindingRouter{subscription: Subscription{
 		SourceID:    "source-1",
 		AgentID:     uuidStringForTest(store.row.AgentID),
@@ -1067,22 +1099,14 @@ func TestCompleteCallbackIsIdempotentAndRejectsDifferentSource(t *testing.T) {
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	if _, err := service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		SourceID:       "source-1",
-	}); err != nil {
+	if _, err := service.CompleteCallback(context.Background(), messageCallbackParamsForTest(store.row.ID, "source-1")); err != nil {
 		t.Fatalf("idempotent callback error = %v", err)
 	}
 	if store.activated {
 		t.Fatal("idempotent callback must not rewrite active row")
 	}
 
-	_, err = service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		SourceID:       "source-2",
-	})
+	_, err = service.CompleteCallback(context.Background(), messageCallbackParamsForTest(store.row.ID, "source-2"))
 	if !errors.Is(err, ErrBindingConflict) {
 		t.Fatalf("different-source callback error = %v", err)
 	}
@@ -1097,11 +1121,7 @@ func TestCompleteCallbackRejectsExpiredTokenBeforeRouterLookup(t *testing.T) {
 	router := &fakeBindingRouter{}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	_, err := service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		SourceID:       "source-1",
-	})
+	_, err := service.CompleteCallback(context.Background(), messageCallbackParamsForTest(store.row.ID, "source-1"))
 	if !errors.Is(err, ErrCallbackExpired) {
 		t.Fatalf("CompleteCallback() error = %v, want ErrCallbackExpired", err)
 	}
@@ -1116,11 +1136,7 @@ func TestCompleteCallbackMapsMissingRouterSubscriptionToConflict(t *testing.T) {
 	router := &fakeBindingRouter{getErr: ErrSubscriptionNotFound}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	_, err := service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		SourceID:       "source-1",
-	})
+	_, err := service.CompleteCallback(context.Background(), messageCallbackParamsForTest(store.row.ID, "source-1"))
 	if !errors.Is(err, ErrBindingConflict) {
 		t.Fatalf("CompleteCallback() error = %v, want ErrBindingConflict", err)
 	}
@@ -1132,35 +1148,24 @@ func TestCompleteCallbackRejectsOversizedSourceID(t *testing.T) {
 	router := &fakeBindingRouter{}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	_, err := service.CompleteCallback(context.Background(), CallbackParams{
-		InstallationID: store.row.ID,
-		CallbackToken:  canonicalCallbackToken,
-		SourceID:       strings.Repeat("s", 65),
-	})
+	_, err := service.CompleteCallback(context.Background(), messageCallbackParamsForTest(store.row.ID, strings.Repeat("s", 65)))
 	if !errors.Is(err, ErrInvalidResult) {
 		t.Fatalf("CompleteCallback() error = %v, want ErrInvalidResult", err)
 	}
 }
 
-func TestCompleteIdentityCallbackValidatesAndStoresIdentity(t *testing.T) {
+func TestCompleteCallbackIdentityModeValidatesAndStoresIdentity(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
 	identityToken := canonicalCallbackToken
 	store.identityAttempt = identityAttemptForTest(t, store, identityToken, now.Add(10*time.Minute))
 	service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
 
-	params := IdentityCallbackParams{
-		AttemptID:               store.identityAttempt.ID,
-		CallbackToken:           identityToken,
-		AccountUID:              "24710833",
-		AccountOrgID:            "439446171",
-		AccountOrganizationName: "Alibaba Group",
-		AccountDisplayName:      "Xu Mo",
-		AccountAvatarURL:        "https://example.com/avatar.png",
-	}
-	binding, err := service.CompleteIdentityCallback(context.Background(), params)
+	params := identityCallbackParamsForTest(store.identityAttempt.ID)
+	params.CallbackToken = identityToken
+	binding, err := service.CompleteCallback(context.Background(), params)
 	if err != nil {
-		t.Fatalf("CompleteIdentityCallback() error = %v", err)
+		t.Fatalf("CompleteCallback(identity) error = %v", err)
 	}
 	if binding.DWSIdentity.Status != "active" ||
 		binding.DWSIdentity.OrganizationName != "Alibaba Group" ||
@@ -1182,41 +1187,41 @@ func TestCompleteIdentityCallbackValidatesAndStoresIdentity(t *testing.T) {
 		}
 	}
 
-	if _, err := service.CompleteIdentityCallback(context.Background(), params); err != nil {
+	if _, err := service.CompleteCallback(context.Background(), params); err != nil {
 		t.Fatalf("idempotent identity callback error = %v", err)
 	}
 }
 
-func TestCompleteIdentityCallbackRejectsInvalidBackendUID(t *testing.T) {
+func TestCompleteCallbackIdentityModeRejectsInvalidBackendUID(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
 	store.identityAttempt = identityAttemptForTest(t, store, canonicalCallbackToken, now.Add(time.Minute))
 	service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
 	params := identityCallbackParamsForTest(store.identityAttempt.ID)
-	params.AccountUID = "not-a-uid"
+	params.IdentityBinding.AccountUID = "not-a-uid"
 
-	_, err := service.CompleteIdentityCallback(context.Background(), params)
+	_, err := service.CompleteCallback(context.Background(), params)
 	if !errors.Is(err, ErrInvalidResult) {
-		t.Fatalf("CompleteIdentityCallback() error = %v, want ErrInvalidResult", err)
+		t.Fatalf("CompleteCallback(identity) error = %v, want ErrInvalidResult", err)
 	}
 	if store.identity.AgentID.Valid {
 		t.Fatalf("mismatched identity was persisted: %#v", store.identity)
 	}
 }
 
-func TestCompleteIdentityCallbackRejectsExpiredAttempt(t *testing.T) {
+func TestCompleteCallbackIdentityModeRejectsExpiredAttempt(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
 	store.identityAttempt = identityAttemptForTest(t, store, canonicalCallbackToken, now.Add(-time.Second))
 	service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
 
-	_, err := service.CompleteIdentityCallback(context.Background(), identityCallbackParamsForTest(store.identityAttempt.ID))
+	_, err := service.CompleteCallback(context.Background(), identityCallbackParamsForTest(store.identityAttempt.ID))
 	if !errors.Is(err, ErrCallbackExpired) {
-		t.Fatalf("CompleteIdentityCallback() error = %v, want ErrCallbackExpired", err)
+		t.Fatalf("CompleteCallback(identity) error = %v, want ErrCallbackExpired", err)
 	}
 }
 
-func TestCompleteIdentityCallbackAllowsSameIdentityForMultipleAgents(t *testing.T) {
+func TestCompleteCallbackIdentityModeAllowsSameIdentityForMultipleAgents(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	for i, agentID := range []string{
 		"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
@@ -1226,7 +1231,7 @@ func TestCompleteIdentityCallbackAllowsSameIdentityForMultipleAgents(t *testing.
 		store.row.AgentID = uuidForTest(t, agentID)
 		store.identityAttempt = identityAttemptForTest(t, store, canonicalCallbackToken, now.Add(time.Minute))
 		service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
-		if _, err := service.CompleteIdentityCallback(context.Background(), identityCallbackParamsForTest(store.identityAttempt.ID)); err != nil {
+		if _, err := service.CompleteCallback(context.Background(), identityCallbackParamsForTest(store.identityAttempt.ID)); err != nil {
 			t.Fatalf("agent %d identity callback error = %v", i, err)
 		}
 		if store.identity.DwsUid != "24710833" || store.identity.AgentID != store.row.AgentID {
@@ -1260,8 +1265,9 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 	service := newBindingServiceForTest(t, store, router, now)
 
 	binding, err := service.Unbind(context.Background(), UnbindParams{
-		WorkspaceID:    store.row.WorkspaceID,
-		InstallationID: store.row.ID,
+		WorkspaceID: store.row.WorkspaceID,
+		AgentID:     store.row.AgentID,
+		BindingMode: BindingModeMessage,
 	})
 	if err != nil {
 		t.Fatalf("Unbind() error = %v", err)
@@ -1321,6 +1327,26 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 	}
 }
 
+func TestUnbindPendingMessageKeepsIndependentIdentity(t *testing.T) {
+	now := time.Date(2026, 7, 17, 10, 0, 0, 0, time.UTC)
+	store := pendingBindingStore(t, now, canonicalCallbackToken)
+	setIdentityForTest(store)
+	service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
+
+	binding, err := service.Unbind(context.Background(), UnbindParams{
+		WorkspaceID: store.row.WorkspaceID,
+		AgentID:     store.row.AgentID,
+		BindingMode: BindingModeMessage,
+	})
+	if err != nil {
+		t.Fatalf("Unbind(pending message) error = %v", err)
+	}
+	if !store.identity.AgentID.Valid || binding.DWSIdentity.Status != "active" ||
+		binding.DWSIdentity.Source != "identity" || binding.MessageRoute.Status != "revoked" {
+		t.Fatalf("independent identity was not preserved: store=%#v binding=%#v", store.identity, binding)
+	}
+}
+
 // activeBindingStoreForUnbind builds an ACTIVE binding row with a router
 // source id, the precondition every unbind test starts from.
 func activeBindingStoreForUnbind(t *testing.T, now time.Time) *fakeBindingStore {
@@ -1353,8 +1379,9 @@ func TestUnbindProceedsWhenRouterSubscriptionAlreadyGone(t *testing.T) {
 	service := newBindingServiceForTest(t, store, router, now)
 
 	binding, err := service.Unbind(context.Background(), UnbindParams{
-		WorkspaceID:    store.row.WorkspaceID,
-		InstallationID: store.row.ID,
+		WorkspaceID: store.row.WorkspaceID,
+		AgentID:     store.row.AgentID,
+		BindingMode: BindingModeMessage,
 	})
 	if err != nil {
 		t.Fatalf("Unbind() error = %v, want success on already-deleted subscription", err)
@@ -1375,8 +1402,9 @@ func TestUnbindStaysFailClosedOnOtherRouterErrors(t *testing.T) {
 	service := newBindingServiceForTest(t, store, router, now)
 
 	_, err := service.Unbind(context.Background(), UnbindParams{
-		WorkspaceID:    store.row.WorkspaceID,
-		InstallationID: store.row.ID,
+		WorkspaceID: store.row.WorkspaceID,
+		AgentID:     store.row.AgentID,
+		BindingMode: BindingModeMessage,
 	})
 	if !errors.Is(err, ErrRouterUnavailable) {
 		t.Fatalf("Unbind() error = %v, want ErrRouterUnavailable", err)
@@ -1496,15 +1524,41 @@ func identityAttemptForTest(t *testing.T, store *fakeBindingStore, callbackToken
 	}
 }
 
-func identityCallbackParamsForTest(attemptID pgtype.UUID) IdentityCallbackParams {
-	return IdentityCallbackParams{
-		AttemptID:               attemptID,
-		CallbackToken:           canonicalCallbackToken,
-		AccountUID:              "24710833",
-		AccountOrgID:            "439446171",
-		AccountOrganizationName: "Alibaba Group",
-		AccountDisplayName:      "Xu Mo",
-		AccountAvatarURL:        "https://example.com/avatar.png",
+func messageCallbackParamsForTest(bindingID pgtype.UUID, sourceID string) CallbackParams {
+	return CallbackParams{
+		BindingID:     bindingID,
+		BindingMode:   BindingModeMessage,
+		CallbackToken: canonicalCallbackToken,
+		IdentityBinding: IdentityBindingResult{
+			Status:                  "success",
+			AccountUID:              "24710833",
+			AccountOrgID:            "439446171",
+			AccountOrganizationName: "Alibaba Group",
+			AccountDisplayName:      "Xu Mo",
+			AccountAvatarURL:        "https://example.com/avatar.png",
+		},
+		MessageBinding: MessageBindingResult{Status: "success", SourceID: sourceID},
+	}
+}
+
+func identityCallbackParamsForTest(attemptID pgtype.UUID) CallbackParams {
+	params := messageCallbackParamsForTest(attemptID, "")
+	params.BindingMode = BindingModeIdentity
+	params.MessageBinding.Status = "skipped"
+	return params
+}
+
+func setIdentityForTest(store *fakeBindingStore) {
+	now := time.Now().UTC()
+	store.identity = db.AgentDingtalkIdentity{
+		AgentID:            store.row.AgentID,
+		WorkspaceID:        store.row.WorkspaceID,
+		DwsUid:             "24710833",
+		OrgID:              "439446171",
+		OrganizationName:   "Alibaba Group",
+		AccountDisplayName: "Xu Mo",
+		AccountAvatarUrl:   "https://example.com/avatar.png",
+		BoundAt:            pgtype.Timestamptz{Time: now, Valid: true},
 	}
 }
 

@@ -1268,6 +1268,12 @@ func (l *FCE2BLauncher) extraEnvForTask(
 	if err != nil {
 		return nil, err
 	}
+	if len(agentIdentityEnv) == 0 {
+		agentIdentityEnv, err = l.chatDWSIdentityEnv(ctx, task, runtime, sandboxID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	for key, value := range agentIdentityEnv {
 		env[key] = value
 	}
@@ -1333,7 +1339,7 @@ func (l *FCE2BLauncher) chatDWSIdentityEnv(
 	if uid == "" {
 		return nil, nil
 	}
-	slog.Info("FC/E2B chat DWS identity selected",
+	slog.Info("FC/E2B task DWS identity selected",
 		"task_id", util.UUIDToString(task.ID),
 		"identity_source", identitySource,
 	)
@@ -1341,24 +1347,27 @@ func (l *FCE2BLauncher) chatDWSIdentityEnv(
 		return nil, errors.New("Agent Identity HSF client is not configured")
 	}
 	taskID := util.UUIDToString(task.ID)
+	source := map[string]string{
+		"app":             "dt-fde-multica",
+		"identity_source": identitySource,
+	}
+	if task.ChatSessionID.Valid {
+		source["chat_session_id"] = util.UUIDToString(task.ChatSessionID)
+	}
 	result, err := l.AgentIdentity.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
-		RequestID:   "multica-chat-" + taskID,
+		RequestID:   "multica-task-" + taskID,
 		TaskID:      taskID,
 		AgentID:     util.UUIDToString(task.AgentID),
 		RuntimeType: "E2B",
 		RuntimeID:   sandboxID,
-		Reason:      "Multica chat DWS authorization",
-		Source: map[string]string{
-			"app":             "dt-fde-multica",
-			"chat_session_id": util.UUIDToString(task.ChatSessionID),
-			"identity_source": identitySource,
-		},
+		Reason:      "Multica Agent DWS authorization",
+		Source:      source,
 		UID:        uid,
 		OrgID:      orgID,
 		TTLSeconds: 900,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create Agent Identity context for chat: %w", err)
+		return nil, fmt.Errorf("create Agent Identity context for task: %w", err)
 	}
 	env, err := fcE2BAgentIdentityEnvForToken(result.ContextToken, l.Config)
 	if err != nil {
@@ -1402,7 +1411,7 @@ func (l *FCE2BLauncher) chatDWSIdentity(ctx context.Context, task db.AgentTaskQu
 		return "", "", "", nil
 	}
 	if err != nil {
-		return "", "", "", fmt.Errorf("load Agent DingTalk identity for web chat: %w", err)
+		return "", "", "", fmt.Errorf("load Agent DingTalk identity: %w", err)
 	}
 	return identity.DwsUid, identity.OrgID, "agent_binding", nil
 }

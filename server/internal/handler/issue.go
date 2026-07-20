@@ -1821,7 +1821,6 @@ type QuickCreateIssueRequest struct {
 	ProjectID                 string   `json:"project_id,omitempty"`
 	ParentIssueID             string   `json:"parent_issue_id,omitempty"`
 	AttachmentIDs             []string `json:"attachment_ids,omitempty"`
-	AgentIdentityContextToken string   `json:"agent_identity_context_token,omitempty"`
 }
 
 // QuickCreateIssueResponse echoes the queued task id so the frontend can
@@ -1934,8 +1933,6 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeAgentUnavailable(w, "agent's runtime is offline")
 		return
 	}
-	agentIdentityContextToken := strings.TrimSpace(req.AgentIdentityContextToken)
-
 	// Daemon CLI version gate. The agent-side prompt + create-flow rely on
 	// behaviors introduced in MinQuickCreateCLIVersion (URL attachment
 	// handling, quick-create attachment binding, no-retry on partial failure).
@@ -1996,7 +1993,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		parentIssueUUID = pid
 	}
 
-	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, projectUUID, parentIssueUUID, attachmentIDs, agentIdentityContextToken)
+	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, projectUUID, parentIssueUUID, attachmentIDs, "")
 	if err != nil {
 		slog.Warn("quick-create enqueue failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to enqueue quick-create task")
@@ -2107,7 +2104,6 @@ type CreateIssueRequest struct {
 	StartDate                 *string  `json:"start_date"`
 	DueDate                   *string  `json:"due_date"`
 	AttachmentIDs             []string `json:"attachment_ids,omitempty"`
-	AgentIdentityContextToken string   `json:"agent_identity_context_token,omitempty"`
 	// OriginType / OriginID stamp the new issue with its provenance so
 	// platform-internal flows can deterministically locate it later. Only
 	// trusted callers should set these — currently the daemon CLI passes
@@ -2183,8 +2179,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, msg)
 		return
 	}
-
-	agentIdentityContextToken := strings.TrimSpace(req.AgentIdentityContextToken)
 
 	var parentIssueID pgtype.UUID
 	var projectID pgtype.UUID
@@ -2331,7 +2325,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		Stage:                     ptrToInt4(req.Stage),
 		AttachmentIDs:             attachmentIDs,
 		AllowDuplicate:            req.AllowDuplicate,
-		AgentIdentityContextToken: agentIdentityContextToken,
 	}, service.IssueCreateOpts{
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,

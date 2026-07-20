@@ -1174,7 +1174,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// The path-aware CORS policy above admits only the configured DBase origin;
 	// this handler also requires that exact Origin and the per-attempt callback
 	// Bearer token before it verifies the Router subscription.
-	r.Post("/api/integrations/dingtalk/account-bindings/{installationId}/callback", h.CompleteDingTalkAccountBindingCallback)
+	r.Post("/api/integrations/dingtalk/account-bindings/{bindingId}/callback", h.CompleteDingTalkAccountBindingCallback)
 	// GitHub App webhook (no Multica auth — requests are authenticated via
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
@@ -1385,7 +1385,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/dingtalk/installations", h.ListDingTalkInstallations)
 					r.Get("/dingtalk/account-bindings", h.ListDingTalkAccountBindings)
 					r.Post("/dingtalk/account-bindings/begin", h.BeginDingTalkAccountBinding)
-					r.Delete("/dingtalk/account-bindings/{installationId}", h.UnbindDingTalkAccountBinding)
+					r.Delete("/dingtalk/account-bindings/{agentId}", h.UnbindDingTalkAccountBinding)
 				})
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))

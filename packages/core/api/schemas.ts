@@ -43,6 +43,7 @@ import type { CreateFeedbackResponse } from "../feedback/types";
 const DingTalkAccountBindingOutcomeSchema = z
   .object({
     status: z.string(),
+    source: z.enum(["message", "identity"]).nullable().optional(),
     organization_name: z.string().nullable().optional(),
     account_display_name: z.string().nullable().optional(),
     account_avatar_url: z.string().nullable().optional(),
@@ -51,6 +52,7 @@ const DingTalkAccountBindingOutcomeSchema = z
   .loose()
   .transform((outcome) => ({
     status: outcome.status,
+    source: outcome.source,
     organizationName: outcome.organization_name,
     accountDisplayName: outcome.account_display_name,
     accountAvatarUrl: outcome.account_avatar_url,
@@ -149,19 +151,19 @@ export const EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE: DingTalkAccountBindingsRe
 
 export const BeginDingTalkAccountBindingResponseSchema = z
   .object({
-    installation_id: z.string(),
+    binding_id: z.string(),
     qr_code_url: z.string(),
     expires_at: z.string(),
   })
   .loose()
   .transform((response) => ({
-    installationId: response.installation_id,
+    bindingId: response.binding_id,
     qrCodeUrl: response.qr_code_url,
     expiresAt: response.expires_at,
   }));
 
 export const EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE: BeginDingTalkAccountBindingResponse = {
-  installationId: "",
+  bindingId: "",
   qrCodeUrl: "",
   expiresAt: "",
 };

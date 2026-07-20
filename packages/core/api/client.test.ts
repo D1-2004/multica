@@ -76,7 +76,7 @@ describe("ApiClient", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            installation_id: "installation-1",
+            binding_id: "agent-1",
             qr_code_url: "https://dbase.example/#bindingToken=secret",
             expires_at: "2026-07-14T09:35:00Z",
           }),
@@ -94,14 +94,14 @@ describe("ApiClient", () => {
       configured: true,
     });
     await expect(
-      client.beginDingTalkAccountBinding("workspace-1", "agent-1"),
+      client.beginDingTalkAccountBinding("workspace-1", "agent-1", "message"),
     ).resolves.toEqual({
-      installationId: "installation-1",
+      bindingId: "agent-1",
       qrCodeUrl: "https://dbase.example/#bindingToken=secret",
       expiresAt: "2026-07-14T09:35:00Z",
     });
     await expect(
-      client.deleteDingTalkAccountBinding("workspace-1", "installation-1"),
+      client.deleteDingTalkAccountBinding("workspace-1", "agent-1", "message"),
     ).resolves.toBeUndefined();
 
     expect(fetchMock.mock.calls.map(([url, init]) => ({
@@ -117,10 +117,10 @@ describe("ApiClient", () => {
       {
         url: "https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/begin",
         method: "POST",
-        body: JSON.stringify({ agent_id: "agent-1" }),
+        body: JSON.stringify({ agent_id: "agent-1", binding_mode: "message" }),
       },
       {
-        url: "https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/installation-1",
+        url: "https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/agent-1?binding_mode=message",
         method: "DELETE",
         body: undefined,
       },
@@ -145,8 +145,8 @@ describe("ApiClient", () => {
 
     const client = new ApiClient("https://api.example.test");
     await expect(
-      client.beginDingTalkAccountBinding("workspace-1", "agent-1"),
-    ).resolves.toEqual({ installationId: "", qrCodeUrl: "", expiresAt: "" });
+      client.beginDingTalkAccountBinding("workspace-1", "agent-1", "identity"),
+    ).resolves.toEqual({ bindingId: "", qrCodeUrl: "", expiresAt: "" });
 
     expect(JSON.stringify(warn.mock.calls)).not.toContain("router-secret");
     expect(JSON.stringify(warn.mock.calls)).not.toContain("callback-secret");

@@ -43,10 +43,15 @@ type AgentDispatchContinuation struct {
 	IssueID string `json:"issueId"`
 }
 
+type AgentDispatchExternalIdentity struct {
+	ContextToken string `json:"contextToken"`
+}
+
 type AgentDispatchRequest struct {
-	Continuation *AgentDispatchContinuation `json:"continuation,omitempty"`
-	AgentID      string                     `json:"agentId,omitempty"`
-	Input        AgentDispatchInput         `json:"input"`
+	Continuation     *AgentDispatchContinuation     `json:"continuation,omitempty"`
+	AgentID          string                         `json:"agentId,omitempty"`
+	ExternalIdentity *AgentDispatchExternalIdentity `json:"externalIdentity,omitempty"`
+	Input            AgentDispatchInput             `json:"input"`
 }
 
 type AgentDispatchResponse struct {
@@ -62,9 +67,9 @@ type AgentDispatchResponse struct {
 // New issues still require a body-level agentId and it must match the endpoint;
 // continuations resolve the issue while remaining scoped to the same agent.
 // schemaVersion is intentionally not gated and the request body has no
-// handler-level size cap. Agent identity credentials remain agent-owned;
-// contextToken and dispatchTaskId from legacy router payloads are ignored by
-// the JSON decoder and never enter issue/comment content or task context.
+// handler-level size cap. externalIdentity.contextToken is accepted only here,
+// after the endpoint-specific Bearer credential has authenticated the internal
+// caller; it enters server-private task context and never issue/comment content.
 func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	dispatchContext, ok := h.resolveAgentDispatchContext(w, r)
 	if !ok {
@@ -79,6 +84,14 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.Input.UserPrompt.Text) == "" {
 		writeError(w, http.StatusBadRequest, "input.userPrompt.text is required")
 		return
+	}
+	if req.ExternalIdentity != nil {
+		contextToken := strings.TrimSpace(req.ExternalIdentity.ContextToken)
+		if contextToken == "" || contextToken != req.ExternalIdentity.ContextToken || len(contextToken) > 8192 {
+			writeError(w, http.StatusBadRequest, "externalIdentity.contextToken is invalid")
+			return
+		}
+		req.ExternalIdentity.ContextToken = contextToken
 	}
 	for _, attachment := range req.Input.Attachments {
 		if strings.TrimSpace(attachment.Name) == "" || strings.TrimSpace(attachment.DownloadURL) == "" {
@@ -112,6 +125,13 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.createAgentDispatchComment(w, r, req, dispatchContext)
+}
+
+func agentDispatchContextToken(req AgentDispatchRequest) string {
+	if req.ExternalIdentity == nil {
+		return ""
+	}
+	return req.ExternalIdentity.ContextToken
 }
 
 type agentDispatchContext struct {
@@ -223,6 +243,7 @@ func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Reques
 		CreatorID:      userID,
 		AttachmentIDs:  attachmentIDs(imported),
 		AllowDuplicate: true,
+		AgentIdentityContextToken: agentDispatchContextToken(req),
 	}, service.IssueCreateOpts{
 		ActorID:          uuidToString(userID),
 		AnalyticsAgentID: uuidToString(agent.ID),
@@ -301,6 +322,7 @@ func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Requ
 		AuthorID:      dispatchContext.UserID,
 		Content:       buildAgentDispatchContent(req.Input),
 		AttachmentIDs: attachmentIDs(imported),
+		AgentIdentityContextToken: agentDispatchContextToken(req),
 	}, service.IssueCommentCreateOpts{
 		BroadcastPayload: func(comment db.Comment, attachments []db.Attachment) map[string]any {
 			responses := make([]AttachmentResponse, 0, len(attachments))

@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Link2, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Link2, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { QRCode } from "react-qr-code";
 import { mid2Url } from "@ali/ding-mediaid";
 import type {
   BeginDingTalkAccountBindingResponse,
   DingTalkAccountBindingOutcome,
+  DingTalkAccountBindingsResponse,
+  DingTalkBindingMode,
   DingTalkConversationSummary,
   DingTalkMessageRouteOutcome,
 } from "@multica/core/types";
@@ -18,11 +20,7 @@ import {
   useDeleteDingTalkAccountBinding,
 } from "@multica/core/dingtalk-account-bindings";
 import { Button } from "@multica/ui/components/ui/button";
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@multica/ui/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@multica/ui/components/ui/avatar";
 import {
   Dialog,
   DialogContent,
@@ -48,8 +46,7 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 function displayName(outcome: DingTalkAccountBindingOutcome, fallback: string): string {
-  const name = outcome.accountDisplayName?.trim();
-  return name || fallback;
+  return outcome.accountDisplayName?.trim() || fallback;
 }
 
 function conversationAvatarUrls(
@@ -118,11 +115,7 @@ function DingTalkMessageScopeSummary({
 
   switch (outcome.messageScope) {
     case "all":
-      return (
-        <p>
-          {t(($) => $.tab_body.integrations.dingtalk_account_scope_all)}
-        </p>
-      );
+      return <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_all)}</p>;
     case "custom": {
       const summary = t(
         ($) => $.tab_body.integrations.dingtalk_account_scope_custom,
@@ -145,16 +138,14 @@ function DingTalkMessageScopeSummary({
           </button>
           {expanded ? (
             <ul className="mt-2 space-y-2 pl-4">
-              {outcome.conversations.map((conversation) => {
-                return (
-                  <li key={conversation.cid} className="flex items-center gap-2">
-                    <DingTalkConversationAvatar conversation={conversation} />
-                    <span className="leading-relaxed text-foreground">
-                      {conversation.name}
-                    </span>
-                  </li>
-                );
-              })}
+              {outcome.conversations.map((conversation) => (
+                <li key={conversation.cid} className="flex items-center gap-2">
+                  <DingTalkConversationAvatar conversation={conversation} />
+                  <span className="leading-relaxed text-foreground">
+                    {conversation.name}
+                  </span>
+                </li>
+              ))}
             </ul>
           ) : null}
         </div>
@@ -177,38 +168,91 @@ export function DingTalkAccountBindingCard({
   agentId: string;
   agentName: string;
 }) {
-  const { t } = useT("agents");
   const wsId = useWorkspaceId();
-  const { data, isPending: listingPending } = useQuery({
+  const { data, isPending } = useQuery({
     ...dingtalkAccountBindingsOptions(wsId),
     enabled: !!wsId,
   });
+
+  return (
+    <div className="space-y-4">
+      <DingTalkBindingModeCard
+        agentId={agentId}
+        agentName={agentName}
+        bindingMode="message"
+        data={data}
+        listingPending={isPending}
+      />
+      <DingTalkBindingModeCard
+        agentId={agentId}
+        agentName={agentName}
+        bindingMode="identity"
+        data={data}
+        listingPending={isPending}
+      />
+    </div>
+  );
+}
+
+function DingTalkBindingModeCard({
+  agentId,
+  agentName,
+  bindingMode,
+  data,
+  listingPending,
+}: {
+  agentId: string;
+  agentName: string;
+  bindingMode: DingTalkBindingMode;
+  data?: DingTalkAccountBindingsResponse;
+  listingPending: boolean;
+}) {
+  const { t } = useT("agents");
+  const wsId = useWorkspaceId();
   const beginBinding = useBeginDingTalkAccountBinding(wsId);
   const deleteBinding = useDeleteDingTalkAccountBinding(wsId);
-  const [attempt, setAttempt] =
-    useState<BeginDingTalkAccountBindingResponse | null>(null);
+  const [attempt, setAttempt] = useState<BeginDingTalkAccountBindingResponse | null>(null);
   const [expired, setExpired] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const currentBinding = useMemo(
-    () =>
-      data?.bindings.find(
-        (binding) => binding.agentId === agentId,
-      ) ?? null,
+    () => data?.bindings.find((binding) => binding.agentId === agentId) ?? null,
     [agentId, data?.bindings],
   );
-  const dwsIdentityActive = currentBinding?.dwsIdentity.status === "active";
   const messageRouteActive = currentBinding?.messageRoute.status === "active";
-  const hasConnectedBinding = dwsIdentityActive || messageRouteActive;
-  const pendingBinding = currentBinding?.messageRoute.status === "pending";
-  const failedBinding =
-    currentBinding?.dwsIdentity.status === "failed" ||
-    currentBinding?.messageRoute.status === "failed";
-  const restartableBinding = pendingBinding || failedBinding;
-  const accountOutcome = dwsIdentityActive
-    ? currentBinding?.dwsIdentity
-    : currentBinding?.messageRoute;
+  const messageRoutePending = currentBinding?.messageRoute.status === "pending";
+  const messageBindingFailed = bindingMode === "message" &&
+    (currentBinding?.messageRoute.status === "failed" || currentBinding?.dwsIdentity.status === "failed");
+  const retryMessageBinding = bindingMode === "message" &&
+    (messageRoutePending || messageBindingFailed);
+  const identityActive = currentBinding?.dwsIdentity.status === "active";
+  const identitySource = currentBinding?.dwsIdentity.source;
+  const managedByMessage = bindingMode === "identity" &&
+    (messageRouteActive || identitySource === "message");
+  const connected = bindingMode === "message"
+    ? messageRouteActive && identityActive
+    : identityActive && identitySource === "identity";
+  const accountOutcome = currentBinding?.dwsIdentity;
+
+  const title = bindingMode === "message"
+    ? t(($) => $.tab_body.integrations.dingtalk_account_title)
+    : t(($) => $.tab_body.integrations.dingtalk_identity_title);
+  const description = bindingMode === "message"
+    ? t(($) => $.tab_body.integrations.dingtalk_account_description)
+    : t(($) => $.tab_body.integrations.dingtalk_identity_description);
+  const connectLabel = bindingMode === "message"
+    ? t(($) => $.tab_body.integrations.dingtalk_account_connect)
+    : t(($) => $.tab_body.integrations.dingtalk_identity_connect);
+  const startingLabel = bindingMode === "message"
+    ? t(($) => $.tab_body.integrations.dingtalk_account_starting)
+    : t(($) => $.tab_body.integrations.dingtalk_identity_starting);
+  const beginFailed = bindingMode === "message"
+    ? t(($) => $.tab_body.integrations.dingtalk_account_begin_failed)
+    : t(($) => $.tab_body.integrations.dingtalk_identity_begin_failed);
+  const fallbackName = bindingMode === "message"
+    ? t(($) => $.tab_body.integrations.dingtalk_account_fallback_name)
+    : t(($) => $.tab_body.integrations.dingtalk_identity_fallback_name);
 
   function statusLabel(status: string): string {
     switch (status) {
@@ -242,69 +286,51 @@ export function DingTalkAccountBindingCard({
   }, [attempt]);
 
   useEffect(() => {
-    if (!dwsIdentityActive) return;
+    if (!connected) return;
     setAttempt(null);
     setExpired(false);
-  }, [dwsIdentityActive]);
+  }, [connected]);
 
   async function startBinding() {
     setActionError(null);
     try {
-      const nextAttempt = await beginBinding.mutateAsync(agentId);
-      if (
-        !nextAttempt.installationId ||
-        !nextAttempt.qrCodeUrl ||
-        !nextAttempt.expiresAt
-      ) {
-        setActionError(
-          t(($) => $.tab_body.integrations.dingtalk_account_begin_failed),
-        );
+      const nextAttempt = await beginBinding.mutateAsync({ agentId, bindingMode });
+      if (!nextAttempt.bindingId || !nextAttempt.qrCodeUrl || !nextAttempt.expiresAt) {
+        setActionError(beginFailed);
         return;
       }
       setAttempt(nextAttempt);
     } catch (error) {
-      setActionError(
-        errorMessage(
-          error,
-          t(($) => $.tab_body.integrations.dingtalk_account_begin_failed),
-        ),
-      );
+      setActionError(errorMessage(error, beginFailed));
     }
   }
 
   async function unbind() {
-    if (!currentBinding || !hasConnectedBinding) return;
+    if (!connected) return;
     setActionError(null);
     try {
-      await deleteBinding.mutateAsync(currentBinding.id);
+      await deleteBinding.mutateAsync({ agentId, bindingMode });
       setConfirmOpen(false);
     } catch (error) {
-      setActionError(
-        errorMessage(
-          error,
-          t(($) => $.tab_body.integrations.dingtalk_account_unbind_failed),
-        ),
-      );
+      const fallback = bindingMode === "message"
+        ? t(($) => $.tab_body.integrations.dingtalk_account_unbind_failed)
+        : t(($) => $.tab_body.integrations.dingtalk_identity_unbind_failed);
+      setActionError(errorMessage(error, fallback));
     }
   }
 
-  const beginLabel = restartableBinding
-    ? t(($) => $.tab_body.integrations.dingtalk_account_new_qr)
-    : t(($) => $.tab_body.integrations.dingtalk_account_connect);
-
   return (
-    <section className="rounded-lg border" data-testid="dingtalk-account-binding-card">
+    <section
+      className="rounded-lg border"
+      data-testid={bindingMode === "message" ? "dingtalk-account-binding-card" : "dingtalk-identity-binding-card"}
+    >
       <div className="flex items-start gap-3 p-4">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-          <Link2 className="h-4 w-4" />
+          {bindingMode === "message" ? <Link2 className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
         </span>
         <div className="min-w-0 flex-1 space-y-1">
-          <h3 className="text-sm font-medium">
-            {t(($) => $.tab_body.integrations.dingtalk_account_title)}
-          </h3>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {t(($) => $.tab_body.integrations.dingtalk_account_description)}
-          </p>
+          <h3 className="text-sm font-medium">{title}</h3>
+          <p className="text-xs leading-relaxed text-muted-foreground">{description}</p>
         </div>
       </div>
 
@@ -317,71 +343,53 @@ export function DingTalkAccountBindingCard({
           <p className="text-xs text-muted-foreground">
             {t(($) => $.tab_body.integrations.dingtalk_account_not_configured)}
           </p>
-        ) : currentBinding && hasConnectedBinding && accountOutcome ? (
-          <div className="space-y-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-start gap-3">
-                <Avatar>
-                  {accountOutcome.accountAvatarUrl ? (
-                    <AvatarImage
-                      src={accountOutcome.accountAvatarUrl}
-                      alt={displayName(
-                        accountOutcome,
-                        t(($) => $.tab_body.integrations.dingtalk_account_fallback_name),
-                      )}
-                    />
-                  ) : null}
-                  <AvatarFallback>
-                    {displayName(
-                      accountOutcome,
-                      t(($) => $.tab_body.integrations.dingtalk_account_fallback_name),
-                    ).slice(0, 1)}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">
-                    {displayName(
-                      accountOutcome,
-                      t(($) => $.tab_body.integrations.dingtalk_account_fallback_name),
-                    )}
-                  </p>
-                  <div className="mt-1 space-y-1 text-xs text-muted-foreground">
-                    {dwsIdentityActive &&
-                    currentBinding.dwsIdentity.organizationName?.trim() ? (
-                      <p>
-                        {t(($) => $.tab_body.integrations.dingtalk_account_organization)}:{" "}
-                        {currentBinding.dwsIdentity.organizationName}
-                      </p>
-                    ) : null}
-                    <p>
-                      {t(($) => $.tab_body.integrations.dingtalk_account_dws_identity)}: {" "}
-                      {statusLabel(currentBinding.dwsIdentity.status)}
-                    </p>
-                    {messageRouteActive ? (
-                      <DingTalkMessageScopeSummary outcome={currentBinding.messageRoute} />
-                    ) : (
-                      <p>
-                        {t(($) => $.tab_body.integrations.dingtalk_account_message_route)}: {" "}
-                        {statusLabel(currentBinding.messageRoute.status)}
-                      </p>
-                    )}
-                  </div>
+        ) : managedByMessage ? (
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {t(($) => $.tab_body.integrations.dingtalk_identity_managed_by_message)}
+          </p>
+        ) : connected && accountOutcome ? (
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <Avatar>
+                {accountOutcome.accountAvatarUrl ? (
+                  <AvatarImage src={accountOutcome.accountAvatarUrl} alt={displayName(accountOutcome, fallbackName)} />
+                ) : null}
+                <AvatarFallback>{displayName(accountOutcome, fallbackName).slice(0, 1)}</AvatarFallback>
+              </Avatar>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{displayName(accountOutcome, fallbackName)}</p>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {bindingMode === "message" && currentBinding ? (
+                    <DingTalkMessageScopeSummary outcome={currentBinding.messageRoute} />
+                  ) : (
+                    <p>{t(($) => $.tab_body.integrations.dingtalk_identity_connected)}</p>
+                  )}
                 </div>
+                {accountOutcome.organizationName?.trim() ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t(($) => $.tab_body.integrations.dingtalk_account_organization)}: {accountOutcome.organizationName}
+                  </p>
+                ) : null}
               </div>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setConfirmOpen(true)}
-                disabled={deleteBinding.isPending}
-              >
-                <Trash2 className="h-3 w-3" />
-                {t(($) => $.tab_body.integrations.dingtalk_account_unbind)}
-              </Button>
             </div>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setConfirmOpen(true)}
+              disabled={deleteBinding.isPending}
+            >
+              <Trash2 className="h-3 w-3" />
+              {t(($) => $.tab_body.integrations.dingtalk_account_unbind)}
+            </Button>
           </div>
         ) : (
           <div className="space-y-3">
-            {currentBinding && failedBinding ? (
+            {bindingMode === "message" && messageRoutePending ? (
+              <p className="text-xs text-muted-foreground">
+                {t(($) => $.tab_body.integrations.dingtalk_account_pending_restart)}
+              </p>
+            ) : null}
+            {messageBindingFailed && currentBinding ? (
               <div className="space-y-1 text-xs text-muted-foreground">
                 <p>
                   {t(($) => $.tab_body.integrations.dingtalk_account_dws_identity)}: {" "}
@@ -393,49 +401,37 @@ export function DingTalkAccountBindingCard({
                 </p>
               </div>
             ) : null}
-            {pendingBinding ? (
-              <p className="text-xs text-muted-foreground">
-                {t(($) => $.tab_body.integrations.dingtalk_account_pending_restart)}
-              </p>
-            ) : null}
             <Button
               variant="outline"
               size="sm"
               onClick={() => void startBinding()}
               disabled={beginBinding.isPending}
             >
-              {restartableBinding ? <RefreshCw className="h-3 w-3" /> : null}
-              {beginBinding.isPending
-                ? t(($) => $.tab_body.integrations.dingtalk_account_starting)
-                : beginLabel}
+              {retryMessageBinding ? <RefreshCw className="h-3 w-3" /> : null}
+              {beginBinding.isPending ? startingLabel :
+                retryMessageBinding
+                  ? t(($) => $.tab_body.integrations.dingtalk_account_new_qr)
+                  : connectLabel}
             </Button>
           </div>
         )}
 
-        {actionError ? (
-          <p className="mt-3 text-xs text-destructive" role="alert">
-            {actionError}
-          </p>
-        ) : null}
+        {actionError ? <p className="mt-3 text-xs text-destructive" role="alert">{actionError}</p> : null}
       </div>
 
       {attempt ? (
-        <Dialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setAttempt(null);
-          }}
-        >
+        <Dialog open onOpenChange={(open) => { if (!open) setAttempt(null); }}>
           <DialogContent className="max-w-sm">
             <DialogHeader>
               <DialogTitle>
-                {t(($) => $.tab_body.integrations.dingtalk_account_dialog_title)}
+                {bindingMode === "message"
+                  ? t(($) => $.tab_body.integrations.dingtalk_account_dialog_title)
+                  : t(($) => $.tab_body.integrations.dingtalk_identity_dialog_title)}
               </DialogTitle>
               <DialogDescription>
-                {t(
-                  ($) => $.tab_body.integrations.dingtalk_account_dialog_description,
-                  { agent: agentName },
-                )}
+                {bindingMode === "message"
+                  ? t(($) => $.tab_body.integrations.dingtalk_account_dialog_description, { agent: agentName })
+                  : t(($) => $.tab_body.integrations.dingtalk_identity_dialog_description, { agent: agentName })}
               </DialogDescription>
             </DialogHeader>
             <div className="flex flex-col items-center gap-4 py-2">
@@ -454,11 +450,15 @@ export function DingTalkAccountBindingCard({
                     <QRCode
                       value={attempt.qrCodeUrl}
                       size={192}
-                      aria-label={t(($) => $.tab_body.integrations.dingtalk_account_qr_label)}
+                      aria-label={bindingMode === "message"
+                        ? t(($) => $.tab_body.integrations.dingtalk_account_qr_label)
+                        : t(($) => $.tab_body.integrations.dingtalk_identity_qr_label)}
                     />
                   </div>
                   <p className="text-center text-xs text-muted-foreground">
-                    {t(($) => $.tab_body.integrations.dingtalk_account_scan_hint)}
+                    {bindingMode === "message"
+                      ? t(($) => $.tab_body.integrations.dingtalk_account_scan_hint)
+                      : t(($) => $.tab_body.integrations.dingtalk_identity_scan_hint)}
                   </p>
                 </>
               )}
@@ -468,11 +468,7 @@ export function DingTalkAccountBindingCard({
                 {t(($) => $.tab_body.integrations.dingtalk_account_close)}
               </Button>
               {expired ? (
-                <Button
-                  size="sm"
-                  onClick={() => void startBinding()}
-                  disabled={beginBinding.isPending}
-                >
+                <Button size="sm" onClick={() => void startBinding()} disabled={beginBinding.isPending}>
                   <RefreshCw className="h-3 w-3" />
                   {t(($) => $.tab_body.integrations.dingtalk_account_new_qr)}
                 </Button>
@@ -486,10 +482,14 @@ export function DingTalkAccountBindingCard({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {t(($) => $.tab_body.integrations.dingtalk_account_confirm_title)}
+              {bindingMode === "message"
+                ? t(($) => $.tab_body.integrations.dingtalk_account_confirm_title)
+                : t(($) => $.tab_body.integrations.dingtalk_identity_confirm_title)}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {t(($) => $.tab_body.integrations.dingtalk_account_confirm_description)}
+              {bindingMode === "message"
+                ? t(($) => $.tab_body.integrations.dingtalk_account_confirm_description)
+                : t(($) => $.tab_body.integrations.dingtalk_identity_confirm_description)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

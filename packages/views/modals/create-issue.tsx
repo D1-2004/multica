@@ -35,7 +35,6 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@multica/ui/components/ui/tooltip";
 import { Button } from "@multica/ui/components/ui/button";
 import { Switch } from "@multica/ui/components/ui/switch";
-import { Textarea } from "@multica/ui/components/ui/textarea";
 import { ContentEditor, type ContentEditorRef, TitleEditor, useFileDropZone, FileDropOverlay } from "../editor";
 import { StatusIcon, StatusPicker, PriorityPicker, StagePicker, AssigneePicker, StartDatePicker, DueDatePicker, LabelPicker } from "../issues/components";
 import { maxSiblingStage } from "../issues/components/pickers/stage-picker";
@@ -212,8 +211,6 @@ export function ManualCreatePanel({
   const [status, setStatus] = useState<IssueStatus>((data?.status as IssueStatus) || draft.status);
   const [priority, setPriority] = useState<IssuePriority>(draft.priority);
   const [submitting, setSubmitting] = useState(false);
-  const [extensionsOpen, setExtensionsOpen] = useState(false);
-  const [agentIdentityContextToken, setAgentIdentityContextToken] = useState("");
   const [assigneeType, setAssigneeType] = useState<IssueAssigneeType | undefined>(() => {
     if (data && "assignee_type" in data) {
       return (data.assignee_type as IssueAssigneeType | null) ?? undefined;
@@ -326,8 +323,6 @@ export function ManualCreatePanel({
     setParentIssueId(undefined);
     setStage(null);
     setChildIssues([]);
-    setAgentIdentityContextToken("");
-    setExtensionsOpen(false);
     setDraft({
       title: "",
       description: "",
@@ -349,7 +344,6 @@ export function ManualCreatePanel({
     setSubmitting(true);
     try {
       const description = descEditorRef.current?.getMarkdown()?.trim() || undefined;
-      const trimmedAgentIdentityContextToken = agentIdentityContextToken.trim();
       const activeAttachmentIds = draftAttachments
         .filter((a) => contentReferencesAttachment(description ?? "", a))
         .map((a) => a.id);
@@ -367,9 +361,6 @@ export function ManualCreatePanel({
         // Stage is only meaningful for a sub-issue (relative to its siblings).
         stage: parentIssueId && stage != null ? stage : undefined,
         project_id: projectId,
-        ...(trimmedAgentIdentityContextToken
-          ? { agent_identity_context_token: trimmedAgentIdentityContextToken }
-          : {}),
       });
 
       // Link queued children to the new parent. Deferred to after create
@@ -868,42 +859,6 @@ export function ManualCreatePanel({
                 );
               }}
             />
-
-            <div className="border-t px-4 py-2">
-              <button
-                type="button"
-                className="flex w-full items-center justify-between rounded-md py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-expanded={extensionsOpen}
-                onClick={() => setExtensionsOpen((open) => !open)}
-              >
-                <span>{t(($) => $.create_issue.extensions.title)}</span>
-                <ChevronRight
-                  className={cn(
-                    "size-3.5 transition-transform",
-                    extensionsOpen && "rotate-90",
-                  )}
-                />
-              </button>
-              {extensionsOpen && (
-                <div className="mt-2 space-y-1.5">
-                  <label
-                    htmlFor="create-issue-agent-identity-context-token"
-                    className="text-xs font-medium text-foreground"
-                  >
-                    {t(($) => $.create_issue.extensions.context_token_label)}
-                  </label>
-                  <Textarea
-                    id="create-issue-agent-identity-context-token"
-                    value={agentIdentityContextToken}
-                    onChange={(event) => setAgentIdentityContextToken(event.target.value)}
-                    placeholder={t(($) => $.create_issue.extensions.context_token_placeholder)}
-                    spellCheck={false}
-                    className="min-h-20 resize-y font-mono text-xs"
-                  />
-                </div>
-              )}
-            </div>
-
             {/* Footer */}
             <div className="flex flex-col gap-2 border-t px-4 py-3 shrink-0 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-h-7 items-center gap-2">

@@ -40,6 +40,7 @@ describe("DingTalk account binding schemas", () => {
           agent_id: "agent-1",
           dws_identity: {
             status: "active",
+            source: "identity",
             organization_name: "Alibaba Group",
             account_display_name: "Zhang San",
             account_avatar_url: "https://example.test/avatar.png",
@@ -75,6 +76,7 @@ describe("DingTalk account binding schemas", () => {
           agentId: "agent-1",
           dwsIdentity: {
             status: "active",
+            source: "identity",
             organizationName: "Alibaba Group",
             accountDisplayName: "Zhang San",
             accountAvatarUrl: "https://example.test/avatar.png",
@@ -137,12 +139,12 @@ describe("DingTalk account binding schemas", () => {
   it("parses begin and falls back when a credential-bearing response drifts", () => {
     expect(
       BeginDingTalkAccountBindingResponseSchema.parse({
-        installation_id: "installation-1",
+        binding_id: "agent-1",
         qr_code_url: "https://dbase.example/#bindingToken=secret",
         expires_at: "2026-07-14T09:35:00Z",
       }),
     ).toEqual({
-      installationId: "installation-1",
+      bindingId: "agent-1",
       qrCodeUrl: "https://dbase.example/#bindingToken=secret",
       expiresAt: "2026-07-14T09:35:00Z",
     });
@@ -156,7 +158,7 @@ describe("DingTalk account binding schemas", () => {
           includeReceived: false,
         },
       ),
-    ).toEqual({ installationId: "", qrCodeUrl: "", expiresAt: "" });
+    ).toEqual({ bindingId: "", qrCodeUrl: "", expiresAt: "" });
   });
 });
 

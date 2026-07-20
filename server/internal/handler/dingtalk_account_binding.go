@@ -32,10 +32,12 @@ type dingTalkAccountBindingService interface {
 }
 
 type beginDingTalkAccountBindingRequest struct {
-	AgentID string `json:"agent_id"`
+	AgentID     string                          `json:"agent_id"`
+	BindingMode agentmessagerouter.BindingMode `json:"binding_mode"`
 }
 
 type dingTalkAccountBindingCallbackRequest struct {
+	BindingMode     agentmessagerouter.BindingMode          `json:"binding_mode"`
 	Status          string                                   `json:"status"`
 	IdentityBinding agentmessagerouter.IdentityBindingResult `json:"identity_binding"`
 	MessageBinding  agentmessagerouter.MessageBindingResult  `json:"message_binding"`
@@ -85,6 +87,10 @@ func (h *Handler) BeginDingTalkAccountBinding(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	if !request.BindingMode.Valid() {
+		writeDingTalkAccountBindingAPIError(w, http.StatusBadRequest, "invalid_binding_mode", "binding_mode must be message or identity")
+		return
+	}
 	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 		ID:          agentID,
 		WorkspaceID: workspaceID,
@@ -109,6 +115,7 @@ func (h *Handler) BeginDingTalkAccountBinding(w http.ResponseWriter, r *http.Req
 		WorkspaceID: workspaceID,
 		AgentID:     agentID,
 		InitiatorID: initiatorID,
+		BindingMode: request.BindingMode,
 	})
 	if err != nil {
 		writeDingTalkAccountBindingError(w, err)
@@ -131,7 +138,7 @@ func (h *Handler) CompleteDingTalkAccountBindingCallback(w http.ResponseWriter, 
 		writeDingTalkAccountBindingAPIError(w, http.StatusUnauthorized, "callback_auth_required", "callback authorization required")
 		return
 	}
-	installationID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "installationId"), "installation id")
+	bindingID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "bindingId"), "binding id")
 	if !ok {
 		return
 	}
@@ -140,23 +147,26 @@ func (h *Handler) CompleteDingTalkAccountBindingCallback(w http.ResponseWriter, 
 		return
 	}
 	result, err := h.DingTalkAccountBindings.CompleteBinding(r.Context(), agentmessagerouter.CompleteBindingParams{
-		InstallationID: installationID,
-		CallbackToken:  callbackToken,
-		Status:         request.Status,
-		Identity:       request.IdentityBinding,
-		Message:        request.MessageBinding,
+		BindingID:     bindingID,
+		BindingMode:   request.BindingMode,
+		CallbackToken: callbackToken,
+		Status:        request.Status,
+		Identity:      request.IdentityBinding,
+		Message:       request.MessageBinding,
 	})
 	if err != nil {
 		writeDingTalkAccountBindingError(w, err)
 		return
 	}
-	h.publish(
-		protocol.EventDingTalkAccountBindingActivated,
-		result.Binding.WorkspaceID,
-		"system",
-		"dingtalk_account_binding",
-		map[string]any{"id": result.Binding.ID},
-	)
+	if result.Binding.DWSIdentity.Status == "active" || result.Binding.MessageRoute.Status == "active" {
+		h.publish(
+			protocol.EventDingTalkAccountBindingActivated,
+			result.Binding.WorkspaceID,
+			"system",
+			"dingtalk_"+string(request.BindingMode)+"_binding",
+			map[string]any{"id": result.Binding.ID},
+		)
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -173,13 +183,19 @@ func (h *Handler) UnbindDingTalkAccountBinding(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	installationID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "installationId"), "installation id")
+	agentID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "agentId"), "agent id")
 	if !ok {
 		return
 	}
+	bindingMode := agentmessagerouter.BindingMode(strings.TrimSpace(r.URL.Query().Get("binding_mode")))
+	if !bindingMode.Valid() {
+		writeDingTalkAccountBindingAPIError(w, http.StatusBadRequest, "invalid_binding_mode", "binding_mode must be message or identity")
+		return
+	}
 	result, err := h.DingTalkAccountBindings.Unbind(r.Context(), agentmessagerouter.UnbindParams{
-		WorkspaceID:    workspaceID,
-		InstallationID: installationID,
+		WorkspaceID: workspaceID,
+		AgentID:     agentID,
+		BindingMode: bindingMode,
 	})
 	if err != nil {
 		writeDingTalkAccountBindingError(w, err)
