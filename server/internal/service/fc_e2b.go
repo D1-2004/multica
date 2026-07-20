@@ -46,6 +46,7 @@ const (
 	fcE2BRunnerClaimPollInterval    = 500 * time.Millisecond
 	fcE2BRunOnceHealthPortBase      = 20000
 	fcE2BRunOnceHealthPortSpan      = 30000
+	fcE2BRunnerInstallDir           = "/usr/local/libexec"
 )
 
 type fcE2BRunnerClaimState string
@@ -290,15 +291,15 @@ func FCE2BProviderForTemplate(refs ...string) string {
 	return FCE2BProvider
 }
 
-// FCE2BRunnerCommandForProvider returns the in-sandbox runner wrapper for a
-// provider, following the multica-fc-<provider>-runner convention the
-// template images ship on PATH.
+// FCE2BRunnerCommandForProvider returns the fixed root entrypoint shipped by
+// every supported FC/E2B image. Older images intentionally do not contain this
+// path and cannot accidentally run their shell runner as root.
 func FCE2BRunnerCommandForProvider(provider string) string {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "" {
 		provider = FCE2BProvider
 	}
-	return "multica-fc-" + provider + "-runner"
+	return "multica-fc-" + provider + "-container-log-entry"
 }
 
 // FCE2BRuntimeProvider returns the agent provider recorded on an FC/E2B
@@ -312,19 +313,16 @@ func FCE2BRuntimeProvider(rt db.AgentRuntime) string {
 	return FCE2BProvider
 }
 
-// fcE2BRunnerForRuntime resolves the runner command for a runtime: the
-// metadata recorded at creation wins, then the provider-derived convention.
-func fcE2BRunnerForRuntime(rt db.AgentRuntime) string {
-	var metadata struct {
-		Runner string `json:"runner"`
+// fcE2BRootRunnerForRuntime resolves the only command that may be started as
+// root in a sandbox. The root launch is required solely so this image-owned
+// wrapper can attach to FC PID 1 stdout before permanently dropping to uid
+// 1000. Runtime metadata cannot choose the executable or search PATH.
+func fcE2BRootRunnerForRuntime(rt db.AgentRuntime) (string, error) {
+	provider := FCE2BRuntimeProvider(rt)
+	if !IsFCE2BSupportedProvider(provider) {
+		return "", fmt.Errorf("unsupported FC/E2B runtime provider %q", provider)
 	}
-	if len(rt.Metadata) > 0 {
-		_ = json.Unmarshal(rt.Metadata, &metadata)
-	}
-	if runner := strings.TrimSpace(metadata.Runner); runner != "" {
-		return runner
-	}
-	return FCE2BRunnerCommandForProvider(FCE2BRuntimeProvider(rt))
+	return fcE2BRunnerInstallDir + "/" + FCE2BRunnerCommandForProvider(provider), nil
 }
 
 func FCE2BRuntimeHasCapability(rt db.AgentRuntime, capability string) bool {
@@ -1210,20 +1208,38 @@ func (l *FCE2BLauncher) waitSandboxReady(ctx context.Context, sandboxID string) 
 func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db.AgentRuntime, taskID pgtype.UUID, token string, coldStart bool, extraEnv map[string]string) error {
 	runtimeID := util.UUIDToString(rt.ID)
 	healthPort := fcE2BHealthPortForTask(taskID)
+	runnerCommand, err := fcE2BRootRunnerForRuntime(rt)
+	if err != nil {
+		return err
+	}
+	for key := range extraEnv {
+		if !isAllowedFCE2BRootRunnerExtraEnv(key) {
+			return fmt.Errorf("FC/E2B root runner environment key %q is not allowed", key)
+		}
+	}
 	args := []string{
 		"sandbox", "exec",
 		"--background",
-		"-e", "MULTICA_SERVER_URL=" + l.Config.ServerURL,
-		"-e", "MULTICA_DAEMON_TOKEN=" + token,
-		"-e", "MULTICA_RUNTIME_ID=" + runtimeID,
-		"-e", "MULTICA_TASK_ID=" + util.UUIDToString(taskID),
-		"-e", "MULTICA_DAEMON_ID=" + rt.DaemonID.String,
-		"-e", "MULTICA_AGENT_RUNTIME_NAME=" + rt.Name,
-		"-e", "HOME=/home/user",
-		"-e", "DWS_CONFIG_DIR=/home/user/.dws",
-		"-e", "OPENAI_BASE_URL=" + l.Config.LLMBaseURL,
-		"-e", "OPENAI_API_KEY=" + l.Config.LLMAPIKey,
+		"--user", "root",
+		"-e", "LD_PRELOAD=",
+		"-e", "LD_LIBRARY_PATH=",
+		"-e", "LD_AUDIT=",
+		"-e", "GCONV_PATH=",
+		"-e", "BASH_ENV=",
+		"-e", "ENV=",
 	}
+	args = append(args,
+		"-e", "MULTICA_SERVER_URL="+l.Config.ServerURL,
+		"-e", "MULTICA_DAEMON_TOKEN="+token,
+		"-e", "MULTICA_RUNTIME_ID="+runtimeID,
+		"-e", "MULTICA_TASK_ID="+util.UUIDToString(taskID),
+		"-e", "MULTICA_DAEMON_ID="+rt.DaemonID.String,
+		"-e", "MULTICA_AGENT_RUNTIME_NAME="+rt.Name,
+		"-e", "HOME=/root",
+		"-e", "DWS_CONFIG_DIR=/home/user/.dws",
+		"-e", "OPENAI_BASE_URL="+l.Config.LLMBaseURL,
+		"-e", "OPENAI_API_KEY="+l.Config.LLMAPIKey,
+	)
 	if coldStart {
 		args = append(args, "-e", "MULTICA_FC_E2B_COLD_START=true")
 	}
@@ -1233,7 +1249,7 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 	args = append(args,
 		sandboxID,
 		"--",
-		fcE2BRunnerForRuntime(rt),
+		runnerCommand,
 		"--runtime-id", runtimeID,
 		"--provider", FCE2BRuntimeProvider(rt),
 		"--health-port", strconv.Itoa(healthPort),
@@ -1281,6 +1297,23 @@ func sortedEnvKeys(env map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func isAllowedFCE2BRootRunnerExtraEnv(key string) bool {
+	switch key {
+	case "OPENAI_MODEL",
+		protocol.SandboxSourceHostnameEnvKey,
+		protocol.DingTalkStreamHostnameEnvKey,
+		protocol.DingTalkStreamNodeIDEnvKey,
+		protocol.DingTalkStreamConnectionIDEnvKey,
+		protocol.AgentIdentityContextTokenEnvKey,
+		"MULTICA_AGENT_IDENTITY_BASE_URL",
+		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS",
+		"DWS_CLIENT_SECRET":
+		return true
+	default:
+		return false
+	}
 }
 
 func fcE2BTemplateForRuntime(rt db.AgentRuntime, configuredTemplate string) (string, error) {
