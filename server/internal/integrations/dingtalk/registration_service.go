@@ -43,12 +43,13 @@ const (
 // Reason codes the service stores on a failed session. Stable strings
 // so the frontend can switch on them without parsing prose.
 const (
-	RegistrationReasonExpired                = "expired"
-	RegistrationReasonInstallFailed          = "install_failed"
-	RegistrationReasonProtocol               = "dingtalk_protocol_error"
-	RegistrationReasonCredentialsCheckFailed = "credentials_check_failed"
-	RegistrationReasonInstallationConflict   = "installation_conflict"
-	RegistrationReasonInternalError          = "internal_error"
+	RegistrationReasonExpired                  = "expired"
+	RegistrationReasonInstallFailed            = "install_failed"
+	RegistrationReasonProtocol                 = "dingtalk_protocol_error"
+	RegistrationReasonCredentialsCheckFailed   = "credentials_check_failed"
+	RegistrationReasonInstallationConflict     = "installation_conflict"
+	RegistrationReasonRouterRegistrationFailed = "router_registration_failed"
+	RegistrationReasonInternalError            = "internal_error"
 )
 
 // AppCredentialVerifier validates a freshly minted (client_id,
@@ -491,7 +492,14 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 	if err != nil {
 		s.cfg.Logger.Warn("dingtalk registration: upsert installation",
 			"session_id", sess.id, "err", err)
-		s.recordError(sess, RegistrationReasonInstallationConflict, err.Error())
+		reason := RegistrationReasonInternalError
+		switch {
+		case errors.Is(err, ErrRouterUnavailable):
+			reason = RegistrationReasonRouterRegistrationFailed
+		case errors.Is(err, ErrAppOwnedByAnotherWorkspace), errors.Is(err, ErrAgentAlreadyConnected):
+			reason = RegistrationReasonInstallationConflict
+		}
+		s.recordError(sess, reason, err.Error())
 		return
 	}
 

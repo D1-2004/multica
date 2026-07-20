@@ -611,42 +611,25 @@ func createAgentDispatchEndpointForTest(t *testing.T, actorUserID, agentID strin
 	if err != nil {
 		t.Fatalf("derive dispatch credential: %v", err)
 	}
-	_, callbackHash, err := agentmessagerouter.GenerateCallbackToken(rand.Reader)
-	if err != nil {
-		t.Fatalf("generate callback credential: %v", err)
-	}
 	dispatchURL, err := agentmessagerouter.BuildDispatchURL("https://multica.example", endpointID)
 	if err != nil {
 		t.Fatalf("build dispatch URL: %v", err)
 	}
-	config := agentmessagerouter.NewPendingDingTalkAccountConfig(
-		endpointID,
-		dispatchURL,
-		callbackHash,
-		time.Now().Add(10*time.Minute),
-	)
-	boundAt := time.Now().UTC()
-	config.RouterSourceID = "source-" + endpointID
-	config.BoundAt = &boundAt
-	configJSON, err := config.Marshal()
-	if err != nil {
-		t.Fatalf("marshal dispatch binding config: %v", err)
-	}
-	var installationID string
+	var dispatchEndpointID string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO channel_installation (
-			workspace_id, agent_id, channel_type, config, status, installer_user_id
+		INSERT INTO agent_dispatch_endpoint (
+			workspace_id, agent_id, actor_user_id, endpoint_id, dispatch_url
 		)
-		VALUES ($1, $2, 'dingtalk_account', $3, 'active', $4)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, testWorkspaceID, agentID, configJSON, actorUserID).Scan(&installationID); err != nil {
+	`, testWorkspaceID, agentID, actorUserID, endpointID, dispatchURL).Scan(&dispatchEndpointID); err != nil {
 		t.Fatalf("create agent dispatch endpoint: %v", err)
 	}
 	previousKeyring := testHandler.AgentDispatchKeys
 	testHandler.AgentDispatchKeys = keyring
 	t.Cleanup(func() {
 		testHandler.AgentDispatchKeys = previousKeyring
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM channel_installation WHERE id = $1`, installationID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_dispatch_endpoint WHERE id = $1`, dispatchEndpointID)
 	})
 	return endpointID, deliverySecret
 }

@@ -69,6 +69,163 @@ type Router interface {
 	DeleteSubscription(ctx context.Context, sourceID string) error
 }
 
+type DispatchEndpoint struct {
+	WorkspaceID pgtype.UUID
+	AgentID     pgtype.UUID
+	ActorUserID pgtype.UUID
+	EndpointID  string
+	DispatchURL string
+}
+
+type DispatchEndpointStore interface {
+	EnsureAgentDispatchEndpoint(context.Context, DispatchEndpoint) (DispatchEndpoint, error)
+	GetAgentDispatchEndpoint(context.Context, pgtype.UUID) (DispatchEndpoint, error)
+}
+
+type DispatchEndpointServiceConfig struct {
+	PublicBaseURL string
+	Keyring       *DispatchKeyring
+	Random        io.Reader
+}
+
+type DispatchEndpointService struct {
+	store        DispatchEndpointStore
+	publicOrigin *url.URL
+	keyring      *DispatchKeyring
+	random       io.Reader
+}
+
+type DBDispatchEndpointStore struct {
+	queries *db.Queries
+}
+
+func NewDBDispatchEndpointStore(queries *db.Queries) *DBDispatchEndpointStore {
+	return &DBDispatchEndpointStore{queries: queries}
+}
+
+func (s *DBDispatchEndpointStore) EnsureAgentDispatchEndpoint(
+	ctx context.Context,
+	candidate DispatchEndpoint,
+) (DispatchEndpoint, error) {
+	if s == nil || s.queries == nil {
+		return DispatchEndpoint{}, errors.New("agent dispatch endpoint store is not configured")
+	}
+	row, err := s.queries.EnsureAgentDispatchEndpoint(ctx, db.EnsureAgentDispatchEndpointParams{
+		WorkspaceID: candidate.WorkspaceID,
+		AgentID:     candidate.AgentID,
+		ActorUserID: candidate.ActorUserID,
+		EndpointID:  candidate.EndpointID,
+		DispatchUrl: candidate.DispatchURL,
+	})
+	if err != nil {
+		return DispatchEndpoint{}, err
+	}
+	return dispatchEndpointFromRow(row), nil
+}
+
+func (s *DBDispatchEndpointStore) GetAgentDispatchEndpoint(
+	ctx context.Context,
+	agentID pgtype.UUID,
+) (DispatchEndpoint, error) {
+	if s == nil || s.queries == nil {
+		return DispatchEndpoint{}, errors.New("agent dispatch endpoint store is not configured")
+	}
+	row, err := s.queries.GetAgentDispatchEndpoint(ctx, agentID)
+	if err != nil {
+		return DispatchEndpoint{}, err
+	}
+	return dispatchEndpointFromRow(row), nil
+}
+
+func dispatchEndpointFromRow(row db.AgentDispatchEndpoint) DispatchEndpoint {
+	return DispatchEndpoint{
+		WorkspaceID: row.WorkspaceID,
+		AgentID:     row.AgentID,
+		ActorUserID: row.ActorUserID,
+		EndpointID:  row.EndpointID,
+		DispatchURL: row.DispatchUrl,
+	}
+}
+
+func NewDispatchEndpointService(store DispatchEndpointStore, config DispatchEndpointServiceConfig) (*DispatchEndpointService, error) {
+	if store == nil || config.Keyring == nil || config.Random == nil {
+		return nil, errors.New("agent dispatch endpoint service is not configured")
+	}
+	publicOrigin, err := canonicalHTTPSOrigin(config.PublicBaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("agent dispatch endpoint service is not configured: %w", err)
+	}
+	return &DispatchEndpointService{
+		store:        store,
+		publicOrigin: publicOrigin,
+		keyring:      config.Keyring,
+		random:       config.Random,
+	}, nil
+}
+
+func (s *DispatchEndpointService) Ensure(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	agentID pgtype.UUID,
+	actorUserID pgtype.UUID,
+) (DispatchEndpoint, error) {
+	if s == nil || s.store == nil || s.publicOrigin == nil || s.keyring == nil || s.random == nil {
+		return DispatchEndpoint{}, errors.New("agent dispatch endpoint service is not configured")
+	}
+	if !workspaceID.Valid || !agentID.Valid || !actorUserID.Valid {
+		return DispatchEndpoint{}, errors.New("agent dispatch endpoint ownership is invalid")
+	}
+	endpointID, err := s.keyring.GenerateEndpointID(s.random)
+	if err != nil {
+		return DispatchEndpoint{}, err
+	}
+	dispatchURL, err := BuildDispatchURL(s.publicOrigin.String(), endpointID)
+	if err != nil {
+		return DispatchEndpoint{}, err
+	}
+	result, err := s.store.EnsureAgentDispatchEndpoint(ctx, DispatchEndpoint{
+		WorkspaceID: workspaceID,
+		AgentID:     agentID,
+		ActorUserID: actorUserID,
+		EndpointID:  endpointID,
+		DispatchURL: dispatchURL,
+	})
+	if err != nil {
+		return DispatchEndpoint{}, fmt.Errorf("ensure agent dispatch endpoint: %w", err)
+	}
+	if err := validateDispatchEndpoint(result, workspaceID, agentID, s.publicOrigin); err != nil {
+		return DispatchEndpoint{}, err
+	}
+	return result, nil
+}
+
+func (s *DispatchEndpointService) Get(ctx context.Context, agentID pgtype.UUID) (DispatchEndpoint, error) {
+	if s == nil || s.store == nil || !agentID.Valid {
+		return DispatchEndpoint{}, errors.New("agent dispatch endpoint service is not configured")
+	}
+	result, err := s.store.GetAgentDispatchEndpoint(ctx, agentID)
+	if err != nil {
+		return DispatchEndpoint{}, err
+	}
+	if err := validateDispatchEndpoint(result, result.WorkspaceID, agentID, s.publicOrigin); err != nil {
+		return DispatchEndpoint{}, err
+	}
+	return result, nil
+}
+
+func validateDispatchEndpoint(endpoint DispatchEndpoint, workspaceID, agentID pgtype.UUID, publicOrigin *url.URL) error {
+	if endpoint.WorkspaceID != workspaceID || endpoint.AgentID != agentID ||
+		!endpoint.ActorUserID.Valid || !isTrimmedNonEmpty(endpoint.EndpointID) ||
+		!isTrimmedNonEmpty(endpoint.DispatchURL) || publicOrigin == nil {
+		return errors.New("agent dispatch endpoint response is invalid")
+	}
+	expectedURL, err := BuildDispatchURL(publicOrigin.String(), endpoint.EndpointID)
+	if err != nil || endpoint.DispatchURL != expectedURL {
+		return errors.New("agent dispatch endpoint response is invalid")
+	}
+	return nil
+}
+
 type ServiceConfig struct {
 	PublicBaseURL   string
 	DBaseBindingURL string
@@ -77,6 +234,7 @@ type ServiceConfig struct {
 	Random          io.Reader
 	Now             func() time.Time
 	IdentityStore   IdentityStore
+	Endpoints       *DispatchEndpointService
 	Metrics         *obsmetrics.BusinessMetrics
 }
 
@@ -90,6 +248,7 @@ type Service struct {
 	random          io.Reader
 	now             func() time.Time
 	identityStore   IdentityStore
+	endpoints       *DispatchEndpointService
 	metrics         *obsmetrics.BusinessMetrics
 }
 
@@ -133,7 +292,7 @@ type UnbindParams struct {
 
 func NewService(store Store, router Router, config ServiceConfig) (*Service, error) {
 	if store == nil || router == nil || config.Keyring == nil || config.Random == nil ||
-		config.IdentityStore == nil {
+		config.IdentityStore == nil || config.Endpoints == nil {
 		return nil, ErrNotConfigured
 	}
 	publicOrigin, err := canonicalHTTPSOrigin(config.PublicBaseURL)
@@ -162,6 +321,7 @@ func NewService(store Store, router Router, config ServiceConfig) (*Service, err
 		random:          config.Random,
 		now:             now,
 		identityStore:   config.IdentityStore,
+		endpoints:       config.Endpoints,
 		metrics:         config.Metrics,
 	}, nil
 }
@@ -178,17 +338,16 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		!params.BindingMode.Valid() {
 		return BeginResult{}, ErrNotFound
 	}
-	if s == nil || s.store == nil || s.router == nil || s.identityStore == nil || s.keyring == nil || s.random == nil {
+	if s == nil || s.store == nil || s.router == nil || s.identityStore == nil || s.keyring == nil ||
+		s.random == nil || s.endpoints == nil {
 		return BeginResult{}, ErrNotConfigured
 	}
-	endpointID, err := s.keyring.GenerateEndpointID(s.random)
+	endpoint, err := s.endpoints.Ensure(ctx, params.WorkspaceID, params.AgentID, params.InitiatorID)
 	if err != nil {
-		return BeginResult{}, fmt.Errorf("%w: endpoint generation failed", ErrNotConfigured)
+		return BeginResult{}, fmt.Errorf("%w: endpoint resolution failed", ErrNotConfigured)
 	}
-	dispatchURL, err := BuildDispatchURL(s.publicOrigin.String(), endpointID)
-	if err != nil {
-		return BeginResult{}, fmt.Errorf("%w: dispatch URL generation failed", ErrNotConfigured)
-	}
+	endpointID := endpoint.EndpointID
+	dispatchURL := endpoint.DispatchURL
 	callbackToken, callbackHash, err := GenerateCallbackToken(s.random)
 	if err != nil {
 		return BeginResult{}, fmt.Errorf("%w: callback credential generation failed", ErrNotConfigured)
@@ -238,6 +397,9 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		storedConfig, parseErr := ParseDingTalkAccountConfig(row.Config)
 		if parseErr != nil {
 			return BeginResult{}, fmt.Errorf("%w: stored pending config", ErrInvalidResult)
+		}
+		if storedConfig.DispatchEndpointID != endpointID || storedConfig.DispatchURL != dispatchURL {
+			return BeginResult{}, fmt.Errorf("%w: stored endpoint mismatch", ErrInvalidResult)
 		}
 		bindingID = row.ID
 		storedDispatchURL = storedConfig.DispatchURL

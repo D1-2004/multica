@@ -40,19 +40,23 @@ const channelTypeDingTalk = "dingtalk"
 // calls client_id (the app's AppKey); it is stored under the config key
 // "app_id" — see the file comment.
 type Installation struct {
-	ID                 pgtype.UUID
-	WorkspaceID        pgtype.UUID
-	AgentID            pgtype.UUID
-	ClientID           string
-	AppSecretEncrypted []byte
-	InstallerUserID    pgtype.UUID
-	Status             string
+	ID                       pgtype.UUID
+	WorkspaceID              pgtype.UUID
+	AgentID                  pgtype.UUID
+	ClientID                 string
+	AppSecretEncrypted       []byte
+	InstallerUserID          pgtype.UUID
+	Status                   string
 	// AllowUnbound serves unbound / non-member senders as the installer
 	// rather than prompting them to bind — the "connect to customers" mode.
-	AllowUnbound bool
-	InstalledAt  pgtype.Timestamptz
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	AllowUnbound             bool
+	RouterSourceID           string
+	RouterAgentID            string
+	RouterRegistrationStatus RouterRegistrationStatus
+	IngressCutoverState      IngressCutoverState
+	InstalledAt              pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
 }
 
 // InstallationStatus mirrors the channel_installation status column
@@ -61,7 +65,25 @@ type InstallationStatus string
 
 const (
 	InstallationActive  InstallationStatus = "active"
+	InstallationPending InstallationStatus = "pending"
 	InstallationRevoked InstallationStatus = "revoked"
+)
+
+type RouterRegistrationStatus string
+
+const (
+	RouterRegistrationPending       RouterRegistrationStatus = "router_pending"
+	RouterRegistrationActive        RouterRegistrationStatus = "router_active"
+	RouterRegistrationInactive      RouterRegistrationStatus = "router_inactive"
+	RouterRegistrationRevokePending RouterRegistrationStatus = "revoke_pending"
+)
+
+type IngressCutoverState string
+
+const (
+	IngressLegacyStream    IngressCutoverState = "legacy_stream"
+	IngressCallbackPending IngressCutoverState = "callback_pending"
+	IngressGatewayCallback IngressCutoverState = "gateway_callback"
 )
 
 // ChannelStore wraps *db.Queries so the dingtalk package's DB seams
@@ -78,8 +100,12 @@ func NewChannelStore(q *db.Queries) *ChannelStore {
 // dingtalkInstallConfig is the JSON shape of channel_installation.config
 // for the dingtalk channel.
 type dingtalkInstallConfig struct {
-	AppID              string `json:"app_id"`
-	AppSecretEncrypted string `json:"app_secret_encrypted,omitempty"`
+	AppID                    string                   `json:"app_id"`
+	AppSecretEncrypted       string                   `json:"app_secret_encrypted,omitempty"`
+	RouterSourceID           string                   `json:"router_source_id,omitempty"`
+	RouterAgentID            string                   `json:"router_agent_id,omitempty"`
+	RouterRegistrationStatus RouterRegistrationStatus `json:"router_registration_status,omitempty"`
+	IngressCutoverState      IngressCutoverState      `json:"ingress_cutover_state,omitempty"`
 	// AllowUnbound opts this installation out of the per-sender identity
 	// check: an unbound / non-member sender is served as the installer
 	// instead of the "click to bind" prompt. The operator accepts that
@@ -172,17 +198,21 @@ func installationFromRow(row db.ChannelInstallation) (Installation, error) {
 		return Installation{}, fmt.Errorf("decode app_secret_encrypted: %w", err)
 	}
 	return Installation{
-		ID:                 row.ID,
-		WorkspaceID:        row.WorkspaceID,
-		AgentID:            row.AgentID,
-		ClientID:           cfg.AppID,
-		AppSecretEncrypted: secret,
-		InstallerUserID:    row.InstallerUserID,
-		Status:             row.Status,
-		AllowUnbound:       cfg.AllowUnbound,
-		InstalledAt:        row.InstalledAt,
-		CreatedAt:          row.CreatedAt,
-		UpdatedAt:          row.UpdatedAt,
+		ID:                       row.ID,
+		WorkspaceID:              row.WorkspaceID,
+		AgentID:                  row.AgentID,
+		ClientID:                 cfg.AppID,
+		AppSecretEncrypted:       secret,
+		InstallerUserID:          row.InstallerUserID,
+		Status:                   row.Status,
+		AllowUnbound:             cfg.AllowUnbound,
+		RouterSourceID:           cfg.RouterSourceID,
+		RouterAgentID:            cfg.RouterAgentID,
+		RouterRegistrationStatus: cfg.RouterRegistrationStatus,
+		IngressCutoverState:      cfg.IngressCutoverState,
+		InstalledAt:              row.InstalledAt,
+		CreatedAt:                row.CreatedAt,
+		UpdatedAt:                row.UpdatedAt,
 	}, nil
 }
 
@@ -190,7 +220,14 @@ func installationFromRow(row db.ChannelInstallation) (Installation, error) {
 // the dingtalk fields of an Installation. The secret is emitted as
 // unwrapped base64.
 func encodeInstallConfig(inst Installation) ([]byte, error) {
-	cfg := dingtalkInstallConfig{AppID: inst.ClientID, AllowUnbound: inst.AllowUnbound}
+	cfg := dingtalkInstallConfig{
+		AppID:                    inst.ClientID,
+		AllowUnbound:             inst.AllowUnbound,
+		RouterSourceID:           inst.RouterSourceID,
+		RouterAgentID:            inst.RouterAgentID,
+		RouterRegistrationStatus: inst.RouterRegistrationStatus,
+		IngressCutoverState:      inst.IngressCutoverState,
+	}
 	if len(inst.AppSecretEncrypted) > 0 {
 		cfg.AppSecretEncrypted = base64.StdEncoding.EncodeToString(inst.AppSecretEncrypted)
 	}

@@ -120,6 +120,10 @@ func (h *Handler) RevokeDingTalkInstallation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := h.DingTalkInstallations.Revoke(r.Context(), instUUID); err != nil {
+		if errors.Is(err, dingtalk.ErrRouterUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "agent message router is temporarily unavailable")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to revoke installation")
 		return
 	}
@@ -365,6 +369,8 @@ func (h *Handler) ManualInstallDingTalk(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, dingtalk.ErrAgentAlreadyConnected):
 			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, dingtalk.ErrRouterUnavailable):
+			writeError(w, http.StatusServiceUnavailable, "agent message router is temporarily unavailable")
 		default:
 			writeError(w, http.StatusInternalServerError, "failed to save dingtalk installation")
 		}

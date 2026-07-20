@@ -684,6 +684,18 @@ func (s *TaskService) EnqueueTaskForIssueWithAgentIdentityContext(ctx context.Co
 	return s.enqueueIssueTask(ctx, issue, commentID, false, "", strings.TrimSpace(agentIdentityContextToken))
 }
 
+// EnqueueTaskForIssueWithDispatchContext is the structured-dispatch variant.
+// dispatchContext is server-private JSON (for example the RuntimePrompt and
+// outbound routing metadata); it is merged into the task context alongside
+// the short-lived identity token and never copied into the issue/comment.
+func (s *TaskService) EnqueueTaskForIssueWithDispatchContext(ctx context.Context, issue db.Issue, agentIdentityContextToken string, dispatchContext []byte, triggerCommentID ...pgtype.UUID) (db.AgentTaskQueue, error) {
+	var commentID pgtype.UUID
+	if len(triggerCommentID) > 0 {
+		commentID = triggerCommentID[0]
+	}
+	return s.enqueueIssueTaskWithDispatchContext(ctx, issue, commentID, false, "", strings.TrimSpace(agentIdentityContextToken), dispatchContext)
+}
+
 // EnqueueTaskForIssueWithHandoff is the assign/promote variant that carries a
 // handoff note into the run's opening context (MUL-3375). The note rides a
 // dedicated task column; the daemon renders it via the assignment-handoff
@@ -746,7 +758,15 @@ func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, trig
 	return s.enqueueIssueTaskWithCommentPlan(ctx, issue, triggerCommentID, nil, forceFreshSession, handoffNote, agentIdentityContextToken)
 }
 
+func (s *TaskService) enqueueIssueTaskWithDispatchContext(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, forceFreshSession bool, handoffNote, agentIdentityContextToken string, dispatchContext []byte) (db.AgentTaskQueue, error) {
+	return s.enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx, issue, triggerCommentID, nil, forceFreshSession, handoffNote, agentIdentityContextToken, dispatchContext)
+}
+
 func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, forceFreshSession bool, handoffNote, agentIdentityContextToken string) (db.AgentTaskQueue, error) {
+	return s.enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx, issue, triggerCommentID, coalescedCommentIDs, forceFreshSession, handoffNote, agentIdentityContextToken, nil)
+}
+
+func (s *TaskService) enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, forceFreshSession bool, handoffNote, agentIdentityContextToken string, dispatchContext []byte) (db.AgentTaskQueue, error) {
 	if !issue.AssigneeID.Valid {
 		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", "issue has no assignee")
 		return db.AgentTaskQueue{}, fmt.Errorf("issue has no assignee")
@@ -785,6 +805,7 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue
 		// from a later request against a new HEAD (TEN-356).
 		HeadSha:                   headShaText(s.ResolveIssueReviewSHA(ctx, issue.ID)),
 		AgentIdentityContextToken: agentIdentityContextTokenText(agentIdentityContextToken),
+		DispatchContext:           dispatchContext,
 	})
 	if err != nil {
 		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
@@ -3696,23 +3717,7 @@ func (s *TaskService) notifyRuntimeMayHaveWork(runtimeID pgtype.UUID, taskID str
 }
 
 func (s *TaskService) broadcastTaskDispatch(ctx context.Context, task db.AgentTaskQueue) {
-	var payload map[string]any
-	if task.Context != nil {
-		json.Unmarshal(task.Context, &payload)
-	}
-	if payload == nil {
-		payload = map[string]any{}
-	}
-	payload["task_id"] = util.UUIDToString(task.ID)
-	payload["runtime_id"] = util.UUIDToString(task.RuntimeID)
-	payload["issue_id"] = util.UUIDToString(task.IssueID)
-	payload["agent_id"] = util.UUIDToString(task.AgentID)
-	// chat_session_id is the routing key the chat window uses to writethrough
-	// `chatKeys.pendingTask` to status="running" the moment the daemon claims
-	// the task. Without it the pill stays stuck at "Queued" until completion.
-	if task.ChatSessionID.Valid {
-		payload["chat_session_id"] = util.UUIDToString(task.ChatSessionID)
-	}
+	payload := taskDispatchBroadcastPayload(task)
 
 	workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
 	if workspaceID == "" {
@@ -3727,6 +3732,84 @@ func (s *TaskService) broadcastTaskDispatch(ctx context.Context, task db.AgentTa
 	})
 }
 
+// taskDispatchBroadcastPayload deliberately starts from an allowlist instead
+// of copying agent_task_queue.context. That context may contain short-lived
+// identity credentials, private PromptBuilder instructions and other sandbox
+// state. Workspace events only need task identifiers plus the narrow DingTalk
+// routing references consumed by the robot outbound subscriber.
+func taskDispatchBroadcastPayload(task db.AgentTaskQueue) map[string]any {
+	payload := map[string]any{
+		"task_id":    util.UUIDToString(task.ID),
+		"runtime_id": util.UUIDToString(task.RuntimeID),
+		"issue_id":   util.UUIDToString(task.IssueID),
+		"agent_id":   util.UUIDToString(task.AgentID),
+	}
+	appendSafeDispatchMetadata(payload, task.Context)
+	// chat_session_id is the routing key the chat window uses to writethrough
+	// `chatKeys.pendingTask` to status="running" the moment the daemon claims
+	// the task. Without it the pill stays stuck at "Queued" until completion.
+	if task.ChatSessionID.Valid {
+		payload["chat_session_id"] = util.UUIDToString(task.ChatSessionID)
+	}
+	return payload
+}
+
+func appendSafeDispatchMetadata(payload map[string]any, taskContext []byte) {
+	if len(taskContext) == 0 {
+		return
+	}
+	var private map[string]any
+	if json.Unmarshal(taskContext, &private) != nil {
+		return
+	}
+	if key, ok := private["dispatch_idempotency_key"].(string); ok && strings.TrimSpace(key) != "" {
+		payload["dispatch_idempotency_key"] = key
+	}
+	if source, ok := private["dispatch_source"].(map[string]any); ok {
+		payload["dispatch_source"] = map[string]any{
+			"platform": source["platform"],
+			"type":     source["type"],
+		}
+	}
+	if outbound, ok := private["dispatch_outbound"].(map[string]any); ok {
+		payload["dispatch_outbound"] = map[string]any{
+			"mode":    outbound["mode"],
+			"replyTo": outbound["replyTo"],
+		}
+	}
+	if data, ok := private["dispatch_event_data"].(map[string]any); ok {
+		payload["dispatch_event_data"] = safeDispatchEventData(data)
+	}
+}
+
+func safeDispatchEventData(data map[string]any) map[string]any {
+	safe := make(map[string]any, 3)
+	if conversation, ok := data["conversation"].(map[string]any); ok {
+		safe["conversation"] = map[string]any{
+			"openConversationId": conversation["openConversationId"],
+			"type":               conversation["type"],
+		}
+	}
+	if sender, ok := data["sender"].(map[string]any); ok {
+		safe["sender"] = map[string]any{"staffId": sender["staffId"]}
+	}
+	if messages, ok := data["messages"].([]any); ok {
+		refs := make([]any, 0, len(messages))
+		for _, value := range messages {
+			message, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			refs = append(refs, map[string]any{
+				"openMsgId":  message["openMsgId"],
+				"occurredAt": message["occurredAt"],
+			})
+		}
+		safe["messages"] = refs
+	}
+	return safe
+}
+
 func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, task db.AgentTaskQueue) {
 	workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
 	if workspaceID == "" {
@@ -3738,6 +3821,8 @@ func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, 
 		"issue_id": util.UUIDToString(task.IssueID),
 		"status":   task.Status,
 	}
+	payload["workspace_id"] = workspaceID
+	appendSafeDispatchMetadata(payload, task.Context)
 	if task.ChatSessionID.Valid {
 		payload["chat_session_id"] = util.UUIDToString(task.ChatSessionID)
 	}

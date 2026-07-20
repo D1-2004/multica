@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -41,11 +42,13 @@ const taskFailedText = "⚠️ 本次处理失败了，请稍后重试；详情�
 // with no DingTalk binding are ignored, so it coexists with the Feishu
 // Patcher and the Slack Outbound on the shared event bus.
 type Outbound struct {
-	q         outboundQueries
-	decrypt   Decrypter
-	messenger *RobotMessenger
-	typing    *TypingIndicatorManager
-	logger    *slog.Logger
+	q          outboundQueries
+	decrypt    Decrypter
+	messenger  *RobotMessenger
+	typing     *TypingIndicatorManager
+	logger     *slog.Logger
+	dispatchMu sync.Mutex
+	dispatched map[string]struct{}
 }
 
 // NewOutbound builds the DingTalk outbound subscriber. typing is the
@@ -55,15 +58,18 @@ func NewOutbound(q outboundQueries, decrypt Decrypter, messenger *RobotMessenger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Outbound{q: q, decrypt: decrypt, messenger: messenger, typing: typing, logger: logger}
+	return &Outbound{q: q, decrypt: decrypt, messenger: messenger, typing: typing, logger: logger, dispatched: make(map[string]struct{})}
 }
 
-// Register subscribes to the chat-done and task-failed events on the bus:
-// chat-done delivers the reply, task-failed only clears the "processing"
-// emotion (there is no failure reply on this channel).
+// Register covers both ingress generations. Legacy Stream sessions settle on
+// chat-done/task-failed through TypingIndicatorManager. Dispatch Command 2.0
+// issue tasks use task:queued for the processing emotion and terminal task
+// events for recall plus robot_sdk reply.
 func (o *Outbound) Register(bus *events.Bus) {
 	bus.Subscribe(protocol.EventChatDone, o.handleEvent)
+	bus.Subscribe(protocol.EventTaskQueued, o.handleEvent)
 	bus.Subscribe(protocol.EventTaskFailed, o.handleEvent)
+	bus.Subscribe(protocol.EventTaskCompleted, o.handleEvent)
 }
 
 func (o *Outbound) handleEvent(e events.Event) {
@@ -88,6 +94,9 @@ func (o *Outbound) handleEvent(e events.Event) {
 }
 
 func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
+	if handled, err := o.processDispatchEvent(ctx, e); handled {
+		return err
+	}
 	sessionID := sessionIDFromEvent(e)
 	if !sessionID.Valid {
 		// Issue / autopilot tasks carry no chat_session.
@@ -198,6 +207,241 @@ func summarizePendingMessage(content string) string {
 		return text
 	}
 	return string(runes[:pendingQueuePreviewRuneLimit]) + "…"
+}
+
+// dispatchInstallationResolver is optional to preserve the existing chat
+// outbound test seam. The generated DingTalk binding query resolves the
+// installation from (workspace, agent), which is the stable locator carried
+// by an issue-backed Dispatch Command.
+type dispatchInstallationResolver interface {
+	GetDingTalkAccountBindingByAgent(context.Context, db.GetDingTalkAccountBindingByAgentParams) (db.ChannelInstallation, error)
+}
+
+type dispatchOutboundClaimStore interface {
+	ClaimDispatchOutbound(context.Context, pgtype.UUID) (bool, error)
+}
+
+type dispatchProcessingReactionClaimStore interface {
+	ClaimDispatchProcessingReaction(context.Context, pgtype.UUID) (bool, error)
+}
+
+type dispatchProcessingRecallClaimStore interface {
+	ClaimDispatchProcessingRecall(context.Context, pgtype.UUID) (bool, error)
+}
+
+type dispatchTaskResultResolver interface {
+	GetAgentTask(context.Context, pgtype.UUID) (db.AgentTaskQueue, error)
+}
+
+type dispatchRobotRoute struct {
+	credentials channelCredentials
+	reply       RobotTarget
+	emotion     EmotionTarget
+}
+
+const (
+	dispatchPhaseProcessing = "processing"
+	dispatchPhaseRecall     = "recall"
+	dispatchPhaseOutbound   = "outbound"
+)
+
+// processDispatchEvent owns only the issue-backed Dispatch Command 2.0 robot
+// lifecycle. It returns handled=false for legacy chat events and for DWS
+// digital-employee commands, which perform outbound inside the sandbox.
+func (o *Outbound) processDispatchEvent(ctx context.Context, e events.Event) (bool, error) {
+	payload, ok := e.Payload.(map[string]any)
+	if !ok {
+		return false, nil
+	}
+	source, _ := payload["dispatch_source"].(map[string]any)
+	if source["type"] != "robot" {
+		return false, nil
+	}
+	outbound, _ := payload["dispatch_outbound"].(map[string]any)
+	if outbound["mode"] != "robot_sdk" {
+		return false, nil
+	}
+	if e.Type != protocol.EventTaskQueued && e.Type != protocol.EventTaskCompleted && e.Type != protocol.EventTaskFailed {
+		return false, nil
+	}
+	taskID, _ := payload["task_id"].(string)
+	taskUUID, err := util.ParseUUID(taskID)
+	if err != nil {
+		return true, fmt.Errorf("parse dispatch task id: %w", err)
+	}
+	idempotencyKey, _ := payload["dispatch_idempotency_key"].(string)
+	if idempotencyKey == "" {
+		idempotencyKey = taskID
+	}
+	if idempotencyKey == "" {
+		return true, errors.New("dingtalk dispatch outbound: missing idempotency key")
+	}
+
+	wantProcessing := false
+	wantRecall := false
+	wantReply := false
+	content := ""
+	switch e.Type {
+	case protocol.EventTaskQueued:
+		wantProcessing, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseProcessing)
+	case protocol.EventTaskCompleted:
+		wantRecall, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseRecall)
+		content = o.dispatchCompletionContent(ctx, taskUUID, payload)
+		if strings.TrimSpace(content) != "" {
+			wantReply, err = o.claimDispatchPhaseAfter(ctx, taskUUID, idempotencyKey, dispatchPhaseOutbound, err)
+		}
+	case protocol.EventTaskFailed:
+		wantRecall, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseRecall)
+		content = taskFailedText
+		wantReply, err = o.claimDispatchPhaseAfter(ctx, taskUUID, idempotencyKey, dispatchPhaseOutbound, err)
+	}
+	if err != nil {
+		return true, err
+	}
+	if !wantProcessing && !wantRecall && !wantReply {
+		return true, nil
+	}
+
+	route, err := o.resolveDispatchRobotRoute(ctx, payload)
+	if err != nil {
+		return true, err
+	}
+	var lifecycleErr error
+	if wantProcessing {
+		if err := o.messenger.AddEmotionReply(ctx, route.credentials, route.emotion); err != nil {
+			lifecycleErr = errors.Join(lifecycleErr, fmt.Errorf("add dingtalk dispatch processing reaction: %w", err))
+		}
+	}
+	if wantRecall {
+		if err := o.messenger.RecallEmotionReply(ctx, route.credentials, route.emotion); err != nil {
+			lifecycleErr = errors.Join(lifecycleErr, fmt.Errorf("recall dingtalk dispatch processing reaction: %w", err))
+		}
+	}
+	if wantReply {
+		if err := o.messenger.SendMarkdown(ctx, route.credentials, route.reply, content); err != nil {
+			lifecycleErr = errors.Join(lifecycleErr, fmt.Errorf("post dingtalk dispatch reply: %w", err))
+		}
+	}
+	return true, lifecycleErr
+}
+
+func (o *Outbound) dispatchCompletionContent(ctx context.Context, taskID pgtype.UUID, payload map[string]any) string {
+	output, _ := payload["output"].(string)
+	if strings.TrimSpace(output) != "" {
+		return output
+	}
+	resolver, ok := o.q.(dispatchTaskResultResolver)
+	if !ok {
+		return ""
+	}
+	task, err := resolver.GetAgentTask(ctx, taskID)
+	if err != nil {
+		return ""
+	}
+	var result protocol.TaskCompletedPayload
+	if json.Unmarshal(task.Result, &result) != nil {
+		return ""
+	}
+	return result.Output
+}
+
+func (o *Outbound) resolveDispatchRobotRoute(ctx context.Context, payload map[string]any) (dispatchRobotRoute, error) {
+	resolver, ok := o.q.(dispatchInstallationResolver)
+	if !ok {
+		return dispatchRobotRoute{}, errors.New("dingtalk dispatch outbound: installation resolver is not configured")
+	}
+	workspaceID, err := util.ParseUUID(fmt.Sprint(payload["workspace_id"]))
+	if err != nil {
+		return dispatchRobotRoute{}, fmt.Errorf("parse dispatch workspace id: %w", err)
+	}
+	agentID, err := util.ParseUUID(fmt.Sprint(payload["agent_id"]))
+	if err != nil {
+		return dispatchRobotRoute{}, fmt.Errorf("parse dispatch agent id: %w", err)
+	}
+	inst, err := resolver.GetDingTalkAccountBindingByAgent(ctx, db.GetDingTalkAccountBindingByAgentParams{WorkspaceID: workspaceID, AgentID: agentID})
+	if err != nil {
+		return dispatchRobotRoute{}, fmt.Errorf("lookup dispatch DingTalk installation: %w", err)
+	}
+	if inst.Status != "active" {
+		return dispatchRobotRoute{}, errors.New("dingtalk dispatch outbound: installation is not active")
+	}
+	creds, err := decodeChannelCredentials(inst.Config, o.decrypt)
+	if err != nil {
+		return dispatchRobotRoute{}, fmt.Errorf("decode dispatch DingTalk credentials: %w", err)
+	}
+	data, _ := payload["dispatch_event_data"].(map[string]any)
+	conversation, _ := data["conversation"].(map[string]any)
+	cid, _ := conversation["openConversationId"].(string)
+	if strings.TrimSpace(cid) == "" {
+		return dispatchRobotRoute{}, errors.New("dingtalk dispatch outbound: missing openConversationId")
+	}
+	messages, _ := data["messages"].([]any)
+	if len(messages) == 0 {
+		return dispatchRobotRoute{}, errors.New("dingtalk dispatch outbound: missing messages")
+	}
+	latest, _ := messages[len(messages)-1].(map[string]any)
+	latestOpenMsgID, _ := latest["openMsgId"].(string)
+	if strings.TrimSpace(latestOpenMsgID) == "" {
+		return dispatchRobotRoute{}, errors.New("dingtalk dispatch outbound: latest message has no openMsgId")
+	}
+	reply := RobotTarget{OpenConversationID: cid, ReplyToOpenMsgID: latestOpenMsgID}
+	if kind, _ := conversation["type"].(string); kind == "single" || kind == "p2p" || kind == "private" || kind == "direct" {
+		sender, _ := data["sender"].(map[string]any)
+		if staffID, _ := sender["staffId"].(string); strings.TrimSpace(staffID) != "" {
+			reply = RobotTarget{UserStaffID: staffID, ReplyToOpenMsgID: latestOpenMsgID}
+		} else {
+			return dispatchRobotRoute{}, errors.New("dingtalk dispatch outbound: private conversation sender has no staffId")
+		}
+	}
+	return dispatchRobotRoute{
+		credentials: creds,
+		reply:       reply,
+		emotion:     EmotionTarget{OpenConversationID: cid, OpenMsgID: latestOpenMsgID},
+	}, nil
+}
+
+func (o *Outbound) claimDispatchPhaseAfter(ctx context.Context, taskID pgtype.UUID, idempotencyKey, phase string, previous error) (bool, error) {
+	if previous != nil {
+		return false, previous
+	}
+	return o.claimDispatchPhase(ctx, taskID, idempotencyKey, phase)
+}
+
+func (o *Outbound) claimDispatchPhase(ctx context.Context, taskID pgtype.UUID, idempotencyKey, phase string) (bool, error) {
+	switch phase {
+	case dispatchPhaseProcessing:
+		if store, ok := o.q.(dispatchProcessingReactionClaimStore); ok {
+			claimed, err := store.ClaimDispatchProcessingReaction(ctx, taskID)
+			if err != nil {
+				return false, fmt.Errorf("claim dispatch processing reaction: %w", err)
+			}
+			return claimed, nil
+		}
+	case dispatchPhaseRecall:
+		if store, ok := o.q.(dispatchProcessingRecallClaimStore); ok {
+			claimed, err := store.ClaimDispatchProcessingRecall(ctx, taskID)
+			if err != nil {
+				return false, fmt.Errorf("claim dispatch processing recall: %w", err)
+			}
+			return claimed, nil
+		}
+	case dispatchPhaseOutbound:
+		if store, ok := o.q.(dispatchOutboundClaimStore); ok {
+			claimed, err := store.ClaimDispatchOutbound(ctx, taskID)
+			if err != nil {
+				return false, fmt.Errorf("claim dispatch outbound: %w", err)
+			}
+			return claimed, nil
+		}
+	}
+	key := phase + ":" + idempotencyKey
+	o.dispatchMu.Lock()
+	defer o.dispatchMu.Unlock()
+	if _, exists := o.dispatched[key]; exists {
+		return false, nil
+	}
+	o.dispatched[key] = struct{}{}
+	return true, nil
 }
 
 // outboundTarget recovers the robot-API send target from the chat binding:

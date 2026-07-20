@@ -1,6 +1,7 @@
 package agentmessagerouter
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -649,6 +650,13 @@ func TestBeginDingTalkAccountBindingRejectsMismatchedInstallationOwnership(t *te
 				ExpiresAt:    now.Add(5 * time.Minute),
 			}}
 			service := newBindingServiceForTest(t, store, router, now)
+			service.endpoints.store.(*fakeDispatchEndpointStore).record = DispatchEndpoint{
+				WorkspaceID: workspaceID,
+				AgentID:     agentID,
+				ActorUserID: uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+				EndpointID:  "v1_EREREREREREREREREREREQ",
+				DispatchURL: "https://multica.example/api/webhooks/agent-dispatch/v1_EREREREREREREREREREREQ",
+			}
 
 			_, err := service.Begin(context.Background(), BeginParams{
 				WorkspaceID: workspaceID,
@@ -1437,7 +1445,38 @@ func newBindingServiceForTest(t *testing.T, store *fakeBindingStore, router Rout
 		Random:          rand.Reader,
 		Now:             func() time.Time { return now },
 		IdentityStore:   store,
+		Endpoints:       newBindingEndpointServiceForTest(t, store, keyring),
 		Metrics:         obsmetrics.NewBusinessMetrics(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
+}
+
+func newBindingEndpointServiceForTest(t *testing.T, store *fakeBindingStore, keyring *DispatchKeyring) *DispatchEndpointService {
+	t.Helper()
+	endpointStore := &fakeDispatchEndpointStore{}
+	if store.row.ID.Valid {
+		config, err := ParseDingTalkAccountConfig(store.row.Config)
+		if err == nil {
+			actorUserID := store.row.InstallerUserID
+			if !actorUserID.Valid {
+				actorUserID = mustUUIDForTest("cccccccc-cccc-cccc-cccc-cccccccccccc")
+			}
+			endpointStore.record = DispatchEndpoint{
+				WorkspaceID: store.row.WorkspaceID,
+				AgentID:     store.row.AgentID,
+				ActorUserID: actorUserID,
+				EndpointID:  config.DispatchEndpointID,
+				DispatchURL: config.DispatchURL,
+			}
+		}
+	}
+	service, err := NewDispatchEndpointService(endpointStore, DispatchEndpointServiceConfig{
+		PublicBaseURL: "https://multica.example",
+		Keyring:       keyring,
+		Random:        bytes.NewReader(bytes.Repeat([]byte{0x33}, 4096)),
 	})
 	if err != nil {
 		t.Fatal(err)

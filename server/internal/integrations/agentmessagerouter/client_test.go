@@ -54,6 +54,88 @@ func TestClientIssuesBindingTokenWithServiceCredential(t *testing.T) {
 	}
 }
 
+func TestClientRegistersRobotWithServiceCredentialAndServerOwnedPolicy(t *testing.T) {
+	dispatchURL := "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/subscriptions/robots" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer service-credential" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if len(body) != 4 || body["tenantId"] != "tenant-1" ||
+			body["robotCode"] != "robot-code-1" || body["agentId"] != "agent-1" ||
+			body["dispatchUrl"] != dispatchURL {
+			t.Fatalf("request body = %#v", body)
+		}
+		if _, exists := body["sourceType"]; exists {
+			t.Fatal("request must not declare sourceType")
+		}
+		if _, exists := body["outboundMode"]; exists {
+			t.Fatal("request must not declare outboundMode")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"code":    "success",
+			"data": map[string]any{
+				"sourceId":    "source-1",
+				"agentId":     "agent-1",
+				"dispatchUrl": dispatchURL,
+				"status":      "active",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := mustTestClient(t, server)
+	got, err := client.RegisterRobot(context.Background(), RobotRegistration{
+		TenantID:    "tenant-1",
+		RobotCode:   "robot-code-1",
+		AgentID:     "agent-1",
+		DispatchURL: dispatchURL,
+	})
+	if err != nil {
+		t.Fatalf("RegisterRobot: %v", err)
+	}
+	if got.SourceID != "source-1" || got.AgentID != "agent-1" ||
+		got.DispatchURL != dispatchURL || got.Status != "active" {
+		t.Fatalf("subscription = %#v", got)
+	}
+}
+
+func TestClientRejectsRobotRegistrationResponseOutsideRequest(t *testing.T) {
+	dispatchURL := "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint"
+	tests := []struct {
+		name string
+		data map[string]any
+	}{
+		{name: "missing source", data: map[string]any{"agentId": "agent-1", "dispatchUrl": dispatchURL, "status": "active"}},
+		{name: "different agent", data: map[string]any{"sourceId": "source-1", "agentId": "agent-2", "dispatchUrl": dispatchURL, "status": "active"}},
+		{name: "different endpoint", data: map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": "https://other.example/dispatch", "status": "active"}},
+		{name: "inactive", data: map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": dispatchURL, "status": "inactive"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "code": "success", "data": tt.data})
+			}))
+			defer server.Close()
+
+			client := mustTestClient(t, server)
+			_, err := client.RegisterRobot(context.Background(), RobotRegistration{
+				RobotCode: "robot-code-1", AgentID: "agent-1", DispatchURL: dispatchURL,
+			})
+			if err == nil {
+				t.Fatal("expected invalid robot registration response")
+			}
+		})
+	}
+}
+
 func TestClientGetsAndDeletesSubscription(t *testing.T) {
 	var deleteCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
