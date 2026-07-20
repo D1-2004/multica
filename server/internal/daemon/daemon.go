@@ -2861,8 +2861,17 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	d.mu.Unlock()
 	provider := rt.Provider
 
-	// Task-scoped logger with short ID for readable concurrent logs.
-	taskLog := d.logger.With("task", shortID(task.ID))
+	// Keep the complete task and trace identifiers on every daemon/provider
+	// record. These logs are shipped independently from the Multica server, so
+	// shortening the task ID makes an exact SLS join impossible.
+	taskLog := d.logger.With(
+		"task_id", task.ID,
+		"trace_id", task.TraceID,
+		"trace_started_at_unix_ms", task.TraceStartedAtUnixMS,
+		"runtime_id", task.RuntimeID,
+		"chat_session_id", task.ChatSessionID,
+		"provider", provider,
+	)
 	agentName := "agent"
 	if task.Agent != nil {
 		agentName = task.Agent.Name
@@ -3158,8 +3167,15 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 	switch result.Status {
 	case "completed":
 		taskLog.Info("task completed", "status", result.Status)
+		completeCallbackStartedAt := time.Now()
 		err := d.client.CompleteTask(ctx, taskID, result.Comment, result.BranchName, result.SessionID, result.WorkDir)
 		if err == nil {
+			taskLog.Info("complete callback acknowledged",
+				"event", "complete_callback_acknowledged",
+				"stage", "complete_callback",
+				"stage_elapsed_ms", time.Since(completeCallbackStartedAt).Milliseconds(),
+				"status", result.Status,
+			)
 			return
 		}
 		// CompleteTask retries transient errors internally. A transient
@@ -3801,6 +3817,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"TMP":                  taskTempDir,
 		"TEMP":                 taskTempDir,
 	}
+	if task.TraceID != "" {
+		agentEnv["MULTICA_TRACE_ID"] = task.TraceID
+	}
+	if task.TraceStartedAtUnixMS > 0 {
+		agentEnv["MULTICA_TRACE_STARTED_AT_UNIX_MS"] = strconv.FormatInt(task.TraceStartedAtUnixMS, 10)
+	}
 	if task.AutopilotRunID != "" {
 		agentEnv["MULTICA_AUTOPILOT_RUN_ID"] = task.AutopilotRunID
 	}
@@ -3874,7 +3896,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	backend, err := agent.New(provider, agent.Config{
 		ExecutablePath: entry.Path,
 		Env:            agentEnv,
-		Logger:         d.logger,
+		Logger:         taskLog,
 	})
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("create agent backend: %w", err)
@@ -4221,9 +4243,21 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	agentCtx, agentCancel := context.WithCancel(ctx)
 	defer agentCancel()
 
+	providerExecuteStartedAt := time.Now()
+	taskLog.Info("provider execute started",
+		"event", "provider_execute_started",
+		"stage", "provider_execute",
+		"stage_elapsed_ms", int64(0),
+		"resume_session", opts.ResumeSessionID != "",
+	)
 	session, err := backend.Execute(agentCtx, prompt, opts)
 	if err != nil {
-		taskLog.Debug("backend execute returned error", "error", err)
+		taskLog.Debug("backend execute returned error",
+			"event", "provider_execute_failed",
+			"stage", "provider_execute",
+			"stage_elapsed_ms", time.Since(providerExecuteStartedAt).Milliseconds(),
+			"error", err,
+		)
 		return agent.Result{}, 0, err
 	}
 	taskLog.Debug("backend started, draining messages")
@@ -4246,6 +4280,8 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	defer drainCancel()
 
 	var toolCount atomic.Int32
+	var firstEventLogged atomic.Bool
+	var firstTextLogged atomic.Bool
 	// lastActivityAt records (as unix nanos) when the drain loop most
 	// recently received a message from the backend. The idle watchdog
 	// reads this to decide whether the agent has gone silent for too long.
@@ -4347,7 +4383,16 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				// gone silent — stamping before processing makes sure a
 				// slow downstream call (mu.Lock contention, batch resize)
 				// can't be misattributed to backend silence.
-				lastActivityAt.Store(time.Now().UnixNano())
+				messageObservedAt := time.Now()
+				lastActivityAt.Store(messageObservedAt.UnixNano())
+				if !firstEventLogged.Swap(true) {
+					taskLog.Info("provider first event",
+						"event", "provider_first_event",
+						"stage", "provider_first_event",
+						"stage_elapsed_ms", messageObservedAt.Sub(providerExecuteStartedAt).Milliseconds(),
+						"message_type", string(msg.Type),
+					)
+				}
 				switch msg.Type {
 				case agent.MessageStatus:
 					// Persist the session/work_dir as soon as the backend
@@ -4426,6 +4471,14 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					}
 				case agent.MessageText:
 					if msg.Content != "" {
+						if !firstTextLogged.Swap(true) {
+							taskLog.Info("provider first text",
+								"event", "provider_first_text",
+								"stage", "provider_first_text",
+								"stage_elapsed_ms", messageObservedAt.Sub(providerExecuteStartedAt).Milliseconds(),
+								"content_bytes", len(msg.Content),
+							)
+						}
 						taskLog.Debug("agent", "text", truncateLog(msg.Content, 200))
 						mu.Lock()
 						pendingText.WriteString(msg.Content)
@@ -4480,6 +4533,13 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 
 	select {
 	case result := <-session.Result:
+		taskLog.Info("provider result received",
+			"event", "provider_result_received",
+			"stage", "provider_execute",
+			"stage_elapsed_ms", time.Since(providerExecuteStartedAt).Milliseconds(),
+			"status", result.Status,
+			"session_id", result.SessionID,
+		)
 		waitForDrain()
 		if idleWatchdogFired.Load() {
 			// The backend's wait goroutine (e.g. claude.go) translates the
