@@ -25,6 +25,7 @@ type typingQueries interface {
 	GetChannelChatSessionBindingBySession(ctx context.Context, arg db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error)
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
 	AddChannelTypingIndicator(ctx context.Context, arg db.AddChannelTypingIndicatorParams) error
+	TakeChannelTypingIndicatorsByTask(ctx context.Context, arg db.TakeChannelTypingIndicatorsByTaskParams) ([]db.ChannelTypingIndicator, error)
 	TakeChannelTypingIndicators(ctx context.Context, arg db.TakeChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error)
 }
 
@@ -35,6 +36,7 @@ type typingQueries interface {
 type typingIndicatorTarget struct {
 	OpenConversationID string `json:"open_conversation_id"`
 	OpenMsgID          string `json:"open_msg_id"`
+	TaskID             string `json:"task_id"`
 }
 
 // TypingIndicatorManager owns the "processing" emotion lifecycle for
@@ -73,8 +75,8 @@ func NewTypingIndicatorManager(messenger *RobotMessenger, decrypt Decrypter, q t
 // createAtMs is the callback's epoch-millisecond send time; callbacks
 // older than typingIndicatorMaxAge are skipped so redelivered events do
 // not surface misleading "processing" badges.
-func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.ChannelInstallation, chatSessionID pgtype.UUID, target EmotionTarget, createAtMs int64) {
-	if target.OpenConversationID == "" || target.OpenMsgID == "" {
+func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.ChannelInstallation, chatSessionID, taskID pgtype.UUID, target EmotionTarget, createAtMs int64) {
+	if !taskID.Valid || target.OpenConversationID == "" || target.OpenMsgID == "" {
 		return
 	}
 	if createAtMs > 0 && time.Since(time.UnixMilli(createAtMs)) > typingIndicatorMaxAge {
@@ -99,6 +101,7 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.ChannelInstall
 	payload, err := json.Marshal(typingIndicatorTarget{
 		OpenConversationID: target.OpenConversationID,
 		OpenMsgID:          target.OpenMsgID,
+		TaskID:             util.UUIDToString(taskID),
 	})
 	if err != nil {
 		m.log.Warn("dingtalk typing indicator: encode target failed",
@@ -117,6 +120,27 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.ChannelInstall
 			"chat_session_id", util.UUIDToString(chatSessionID),
 			"open_msg_id", target.OpenMsgID, "err", err)
 	}
+}
+
+// ClearTask recalls only the indicators owned by one completed task. Messages
+// coalesced into the same durable debounce batch share a task id and therefore
+// settle together; later queued turns in the same chat keep their indicators.
+func (m *TypingIndicatorManager) ClearTask(ctx context.Context, chatSessionID, taskID pgtype.UUID) {
+	if !taskID.Valid {
+		return
+	}
+	key := util.UUIDToString(chatSessionID)
+	rows, err := m.q.TakeChannelTypingIndicatorsByTask(ctx, db.TakeChannelTypingIndicatorsByTaskParams{
+		ChatSessionID: chatSessionID,
+		ChannelType:   string(TypeDingtalk),
+		TaskID:        util.UUIDToString(taskID),
+	})
+	if err != nil {
+		m.log.Warn("dingtalk typing indicator: take task targets failed",
+			"chat_session_id", key, "task_id", util.UUIDToString(taskID), "err", err)
+		return
+	}
+	m.clearRows(ctx, chatSessionID, rows)
 }
 
 // Clear recalls every tracked "processing" emotion for the chat session
@@ -138,6 +162,14 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype
 	if len(rows) == 0 {
 		return
 	}
+	m.clearRows(ctx, chatSessionID, rows)
+}
+
+func (m *TypingIndicatorManager) clearRows(ctx context.Context, chatSessionID pgtype.UUID, rows []db.ChannelTypingIndicator) {
+	if len(rows) == 0 {
+		return
+	}
+	key := util.UUIDToString(chatSessionID)
 
 	binding, err := m.q.GetChannelChatSessionBindingBySession(ctx, db.GetChannelChatSessionBindingBySessionParams{
 		ChatSessionID: chatSessionID,

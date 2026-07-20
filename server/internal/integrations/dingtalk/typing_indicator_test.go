@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -74,6 +75,7 @@ type fakeTypingQueries struct {
 	inst       db.ChannelInstallation
 	calls      int
 	indicators []db.ChannelTypingIndicator
+	pending    []db.ListPendingChatMessagePreviewsAfterTaskRow
 }
 
 func (f *fakeTypingQueries) GetChannelChatSessionBindingBySession(_ context.Context, _ db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error) {
@@ -83,6 +85,10 @@ func (f *fakeTypingQueries) GetChannelChatSessionBindingBySession(_ context.Cont
 
 func (f *fakeTypingQueries) GetChannelInstallation(_ context.Context, _ db.GetChannelInstallationParams) (db.ChannelInstallation, error) {
 	return f.inst, nil
+}
+
+func (f *fakeTypingQueries) ListPendingChatMessagePreviewsAfterTask(_ context.Context, _ pgtype.UUID) ([]db.ListPendingChatMessagePreviewsAfterTaskRow, error) {
+	return append([]db.ListPendingChatMessagePreviewsAfterTaskRow(nil), f.pending...), nil
 }
 
 func typingTestUUID(b byte) pgtype.UUID {
@@ -104,8 +110,9 @@ func TestTypingIndicatorAddAndClear(t *testing.T) {
 	mgr := NewTypingIndicatorManager(messenger, plaintextDecrypter, q, nil)
 
 	session := typingTestUUID(2)
+	task := typingTestUUID(3)
 	target := EmotionTarget{OpenConversationID: "cid_1", OpenMsgID: "msg_1"}
-	mgr.Add(context.Background(), instRow, session, target, time.Now().UnixMilli())
+	mgr.Add(context.Background(), instRow, session, task, target, time.Now().UnixMilli())
 
 	if len(rec.replies) != 1 {
 		t.Fatalf("expected 1 emotion reply, got %d", len(rec.replies))
@@ -141,7 +148,7 @@ func TestTypingIndicatorSkipsStaleMessages(t *testing.T) {
 	mgr := NewTypingIndicatorManager(messenger, plaintextDecrypter, &fakeTypingQueries{}, nil)
 
 	stale := time.Now().Add(-3 * time.Minute).UnixMilli()
-	mgr.Add(context.Background(), instRow, typingTestUUID(2), EmotionTarget{OpenConversationID: "cid", OpenMsgID: "m"}, stale)
+	mgr.Add(context.Background(), instRow, typingTestUUID(2), typingTestUUID(3), EmotionTarget{OpenConversationID: "cid", OpenMsgID: "m"}, stale)
 
 	if len(rec.replies) != 0 {
 		t.Fatalf("stale message must not get an emotion, got %d", len(rec.replies))
@@ -154,8 +161,8 @@ func TestTypingIndicatorSkipsEmptyTarget(t *testing.T) {
 	instRow := testInstallationRow(t, typingTestUUID(1), "client_a")
 	mgr := NewTypingIndicatorManager(messenger, plaintextDecrypter, &fakeTypingQueries{}, nil)
 
-	mgr.Add(context.Background(), instRow, typingTestUUID(2), EmotionTarget{OpenMsgID: "m"}, 0)
-	mgr.Add(context.Background(), instRow, typingTestUUID(2), EmotionTarget{OpenConversationID: "cid"}, 0)
+	mgr.Add(context.Background(), instRow, typingTestUUID(2), typingTestUUID(3), EmotionTarget{OpenMsgID: "m"}, 0)
+	mgr.Add(context.Background(), instRow, typingTestUUID(2), typingTestUUID(3), EmotionTarget{OpenConversationID: "cid"}, 0)
 
 	if len(rec.replies) != 0 {
 		t.Fatalf("empty target must not get an emotion, got %d", len(rec.replies))
@@ -187,6 +194,56 @@ func (f *fakeTypingQueries) TakeChannelTypingIndicators(_ context.Context, arg d
 	return taken, nil
 }
 
+func (f *fakeTypingQueries) TakeChannelTypingIndicatorsByTask(_ context.Context, arg db.TakeChannelTypingIndicatorsByTaskParams) ([]db.ChannelTypingIndicator, error) {
+	var taken, kept []db.ChannelTypingIndicator
+	for _, row := range f.indicators {
+		var target typingIndicatorTarget
+		_ = json.Unmarshal(row.Target, &target)
+		if row.ChatSessionID == arg.ChatSessionID && row.ChannelType == arg.ChannelType && target.TaskID == arg.TaskID {
+			taken = append(taken, row)
+			continue
+		}
+		kept = append(kept, row)
+	}
+	f.indicators = kept
+	return taken, nil
+}
+
+func TestTypingIndicatorClearTaskKeepsLaterTurn(t *testing.T) {
+	rec, srv := newEmotionAPIServer(t)
+	messenger := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
+	instID := typingTestUUID(1)
+	instRow := testInstallationRow(t, instID, "client_a")
+	q := &fakeTypingQueries{
+		binding: db.ChannelChatSessionBinding{InstallationID: instID},
+		inst:    instRow,
+	}
+	mgr := NewTypingIndicatorManager(messenger, plaintextDecrypter, q, nil)
+	session := typingTestUUID(2)
+	firstTask := typingTestUUID(3)
+	secondTask := typingTestUUID(4)
+
+	mgr.Add(context.Background(), instRow, session, firstTask,
+		EmotionTarget{OpenConversationID: "cid", OpenMsgID: "m1"}, 0)
+	mgr.Add(context.Background(), instRow, session, secondTask,
+		EmotionTarget{OpenConversationID: "cid", OpenMsgID: "m2"}, 0)
+	mgr.ClearTask(context.Background(), session, firstTask)
+
+	if len(rec.recalls) != 1 || rec.recalls[0]["openMsgId"] != "m1" {
+		t.Fatalf("first task clear recalled %v, want only m1", rec.recalls)
+	}
+	if len(q.indicators) != 1 {
+		t.Fatalf("later task indicator count = %d, want 1", len(q.indicators))
+	}
+	var remaining typingIndicatorTarget
+	if err := json.Unmarshal(q.indicators[0].Target, &remaining); err != nil {
+		t.Fatalf("decode remaining indicator: %v", err)
+	}
+	if remaining.OpenMsgID != "m2" || remaining.TaskID != util.UUIDToString(secondTask) {
+		t.Fatalf("remaining indicator = %+v, want second turn", remaining)
+	}
+}
+
 // The regression this table exists for: the emotion is added by the replica the
 // WS lease pinned the ingest to, but it is cleared by whichever replica served
 // the daemon's completion POST — a plain load-balanced call. Two managers over
@@ -206,7 +263,8 @@ func TestTypingIndicatorClearsFromAnotherReplica(t *testing.T) {
 	replicaB := NewTypingIndicatorManager(messenger, plaintextDecrypter, shared, nil)
 
 	session := typingTestUUID(2)
-	replicaA.Add(context.Background(), instRow, session,
+	task := typingTestUUID(3)
+	replicaA.Add(context.Background(), instRow, session, task,
 		EmotionTarget{OpenConversationID: "cid_1", OpenMsgID: "msg_1"}, 0)
 	rec.mu.Lock()
 	adds := len(rec.replies)
@@ -216,7 +274,7 @@ func TestTypingIndicatorClearsFromAnotherReplica(t *testing.T) {
 	}
 
 	// The run completes; the daemon's POST lands on the other replica.
-	replicaB.Clear(context.Background(), session)
+	replicaB.ClearTask(context.Background(), session, task)
 
 	rec.mu.Lock()
 	recalls := append([]map[string]any(nil), rec.recalls...)
@@ -229,7 +287,7 @@ func TestTypingIndicatorClearsFromAnotherReplica(t *testing.T) {
 	}
 
 	// The take is the claim: a racing clear on replica A finds nothing left.
-	replicaA.Clear(context.Background(), session)
+	replicaA.ClearTask(context.Background(), session, task)
 	rec.mu.Lock()
 	total := len(rec.recalls)
 	rec.mu.Unlock()

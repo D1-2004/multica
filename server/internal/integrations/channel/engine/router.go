@@ -187,7 +187,7 @@ func (r *Router) Handle(ctx context.Context, msg channel.InboundMessage) error {
 		go func() {
 			tctx, cancel := context.WithTimeout(context.Background(), r.replyTimeout)
 			defer cancel()
-			set.Typing.OnIngested(tctx, inst, msg, res.ChatSessionID)
+			set.Typing.OnIngested(tctx, inst, msg, res.ChatSessionID, res.TaskID)
 		}()
 	}
 	r.scheduleReply(set, inst, msg, res)
@@ -456,6 +456,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		Outcome:        durableOutcome,
 		InstallationID: inst.ID,
 		ChatSessionID:  sessionID,
+		TaskID:         appendRes.TaskID,
 		Sender:         msg.Source.SenderID,
 	}
 	if set.DurableRuns && preparedTask == nil && durableFresh {

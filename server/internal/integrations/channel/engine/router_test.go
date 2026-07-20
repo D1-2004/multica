@@ -146,7 +146,7 @@ type fakeTyping struct {
 	settled int
 }
 
-func (f *fakeTyping) OnIngested(_ context.Context, _ ResolvedInstallation, _ channel.InboundMessage, _ pgtype.UUID) {
+func (f *fakeTyping) OnIngested(_ context.Context, _ ResolvedInstallation, _ channel.InboundMessage, _, _ pgtype.UUID) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.count++
