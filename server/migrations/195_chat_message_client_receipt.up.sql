@@ -2,4 +2,4 @@
 -- multiple tabs, and multiple server replicas. The timestamp is set by the
 -- server; client-reported timing remains diagnostic metadata in SLS.
 ALTER TABLE chat_message
-ADD COLUMN client_receipt_recorded_at TIMESTAMPTZ;
+ADD COLUMN IF NOT EXISTS client_receipt_recorded_at TIMESTAMPTZ;

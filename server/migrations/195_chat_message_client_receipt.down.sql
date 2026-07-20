@@ -1,2 +1,2 @@
 ALTER TABLE chat_message
-DROP COLUMN client_receipt_recorded_at;
+DROP COLUMN IF EXISTS client_receipt_recorded_at;
