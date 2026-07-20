@@ -324,6 +324,29 @@ func fcE2BLegacyRunnerCommandForProvider(provider string) string {
 	return "multica-fc-" + provider + "-runner"
 }
 
+func fcE2BRunnerLaunchForMode(provider string, mode fcE2BRunnerLaunchMode) (fcE2BRunnerLaunch, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if !IsFCE2BSupportedProvider(provider) {
+		return fcE2BRunnerLaunch{}, fmt.Errorf("unsupported FC/E2B runtime provider %q", provider)
+	}
+	switch mode {
+	case fcE2BRunnerLaunchRootLog:
+		return fcE2BRunnerLaunch{
+			Mode:    mode,
+			Command: fcE2BRootRunnerInstallDir + "/" + FCE2BRunnerCommandForProvider(provider),
+			Home:    "/root",
+		}, nil
+	case fcE2BRunnerLaunchLegacyUser:
+		return fcE2BRunnerLaunch{
+			Mode:    mode,
+			Command: fcE2BLegacyRunnerInstallDir + "/" + fcE2BLegacyRunnerCommandForProvider(provider),
+			Home:    "/home/user",
+		}, nil
+	default:
+		return fcE2BRunnerLaunch{}, fmt.Errorf("unsupported FC/E2B runner launch mode %q", mode)
+	}
+}
+
 // FCE2BRuntimeProvider returns the agent provider recorded on an FC/E2B
 // runtime row. Legacy rows created before providers were derived from the
 // template carry the provider column already ("hermes"), so the fallback only
@@ -361,11 +384,7 @@ func fcE2BRunnerLaunchForRuntime(rt db.AgentRuntime) (fcE2BRunnerLaunch, error) 
 	legacyMarker := fcE2BLegacyRunnerCommandForProvider(provider)
 	rootMarker := FCE2BRunnerCommandForProvider(provider)
 	if len(metadata.Runner) == 0 {
-		return fcE2BRunnerLaunch{
-			Mode:    fcE2BRunnerLaunchLegacyUser,
-			Command: fcE2BLegacyRunnerInstallDir + "/" + legacyMarker,
-			Home:    "/home/user",
-		}, nil
+		return fcE2BRunnerLaunchForMode(provider, fcE2BRunnerLaunchLegacyUser)
 	}
 	if bytes.Equal(bytes.TrimSpace(metadata.Runner), []byte("null")) {
 		return fcE2BRunnerLaunch{}, errors.New("invalid FC/E2B runner protocol marker")
@@ -376,20 +395,70 @@ func fcE2BRunnerLaunchForRuntime(rt db.AgentRuntime) (fcE2BRunnerLaunch, error) 
 	}
 	switch runnerMarker {
 	case legacyMarker:
-		return fcE2BRunnerLaunch{
-			Mode:    fcE2BRunnerLaunchLegacyUser,
-			Command: fcE2BLegacyRunnerInstallDir + "/" + legacyMarker,
-			Home:    "/home/user",
-		}, nil
+		return fcE2BRunnerLaunchForMode(provider, fcE2BRunnerLaunchLegacyUser)
 	case rootMarker:
-		return fcE2BRunnerLaunch{
-			Mode:    fcE2BRunnerLaunchRootLog,
-			Command: fcE2BRootRunnerInstallDir + "/" + rootMarker,
-			Home:    "/root",
-		}, nil
+		return fcE2BRunnerLaunchForMode(provider, fcE2BRunnerLaunchRootLog)
 	default:
 		return fcE2BRunnerLaunch{}, fmt.Errorf("unsupported FC/E2B runner protocol %q for provider %q", runnerMarker, provider)
 	}
+}
+
+// detectFCE2BRunnerLaunch validates the stored protocol marker, then selects
+// the image-owned entrypoint that is actually executable in this sandbox. The
+// capability checks run as the sandbox user and inspect only server-derived,
+// fixed absolute paths. Metadata can neither provide a path nor make a command
+// run as root.
+func (l *FCE2BLauncher) detectFCE2BRunnerLaunch(ctx context.Context, sandboxID string, rt db.AgentRuntime) (fcE2BRunnerLaunch, error) {
+	hint, err := fcE2BRunnerLaunchForRuntime(rt)
+	if err != nil {
+		return fcE2BRunnerLaunch{}, err
+	}
+
+	provider := FCE2BRuntimeProvider(rt)
+	rootLaunch, err := fcE2BRunnerLaunchForMode(provider, fcE2BRunnerLaunchRootLog)
+	if err != nil {
+		return fcE2BRunnerLaunch{}, err
+	}
+	legacyLaunch, err := fcE2BRunnerLaunchForMode(provider, fcE2BRunnerLaunchLegacyUser)
+	if err != nil {
+		return fcE2BRunnerLaunch{}, err
+	}
+	candidates := []fcE2BRunnerLaunch{rootLaunch, legacyLaunch}
+	if hint.Mode == fcE2BRunnerLaunchLegacyUser {
+		candidates[0], candidates[1] = candidates[1], candidates[0]
+	}
+
+	probeErrors := make([]error, 0, len(candidates))
+	for _, candidate := range candidates {
+		_, err = l.runE2BCommand(ctx, []string{
+			"sandbox", "exec",
+			"--user", "user",
+			sandboxID,
+			"--",
+			"/usr/bin/test", "-x", candidate.Command,
+		})
+		if err == nil {
+			if candidate.Mode != hint.Mode {
+				slog.Warn("FC/E2B runner protocol adjusted to sandbox capability",
+					"sandbox_id", sandboxID,
+					"provider", provider,
+					"metadata_protocol", string(hint.Mode),
+					"selected_protocol", string(candidate.Mode),
+					"unavailable_error", probeErrors[0],
+				)
+			}
+			return candidate, nil
+		}
+		probeErrors = append(probeErrors, err)
+	}
+
+	slog.Error("FC/E2B runner capability probe failed",
+		"sandbox_id", sandboxID,
+		"provider", provider,
+		"first_probe_error", probeErrors[0],
+		"second_probe_error", probeErrors[1],
+	)
+	return fcE2BRunnerLaunch{}, fmt.Errorf("FC/E2B sandbox %s has no executable runner entrypoint for provider %s", sandboxID, provider)
 }
 
 func FCE2BRuntimeHasCapability(rt db.AgentRuntime, capability string) bool {
@@ -713,6 +782,10 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		"scope_type", scopeType,
 		"scope_id", scopeID,
 	)
+	launch, err := l.detectFCE2BRunnerLaunch(ctx, sandboxID, rt)
+	if err != nil {
+		return l.failLaunch(ctx, task, err.Error())
+	}
 	extraEnv, err := l.extraEnvForTask(ctx, task, rt, sandboxID)
 	if err != nil {
 		return l.failLaunch(ctx, task, err.Error())
@@ -729,7 +802,7 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	}); err != nil {
 		return l.failLaunch(ctx, task, "failed to persist FC/E2B daemon token")
 	}
-	if err := l.execRunOnce(ctx, sandboxID, rt, task.ID, token, coldStart, extraEnv); err != nil {
+	if err := l.execRunOnce(ctx, sandboxID, rt, launch.Mode, task.ID, token, coldStart, extraEnv); err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
 	slog.Info("FC/E2B run-once submitted",
@@ -1272,10 +1345,10 @@ func (l *FCE2BLauncher) waitSandboxReady(ctx context.Context, sandboxID string) 
 	}
 }
 
-func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db.AgentRuntime, taskID pgtype.UUID, token string, coldStart bool, extraEnv map[string]string) error {
+func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db.AgentRuntime, launchMode fcE2BRunnerLaunchMode, taskID pgtype.UUID, token string, coldStart bool, extraEnv map[string]string) error {
 	runtimeID := util.UUIDToString(rt.ID)
 	healthPort := fcE2BHealthPortForTask(taskID)
-	launch, err := fcE2BRunnerLaunchForRuntime(rt)
+	launch, err := fcE2BRunnerLaunchForMode(FCE2BRuntimeProvider(rt), launchMode)
 	if err != nil {
 		return err
 	}
