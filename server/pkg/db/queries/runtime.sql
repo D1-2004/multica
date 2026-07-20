@@ -93,7 +93,15 @@ DO UPDATE SET
     runtime_mode = EXCLUDED.runtime_mode,
     status = EXCLUDED.status,
     device_info = EXCLUDED.device_info,
-    metadata = EXCLUDED.metadata,
+    -- FDE onboarding retries must not undo an explicit FC/E2B template
+    -- rotation by replaying the process-level default template. Other cloud
+    -- runtime upserts retain their existing replace-on-conflict semantics.
+    metadata = CASE
+        WHEN agent_runtime.metadata->>'managed_source_key' = 'fde-agent'
+          OR EXCLUDED.metadata->>'managed_source_key' = 'fde-agent'
+        THEN agent_runtime.metadata
+        ELSE EXCLUDED.metadata
+    END,
     owner_id = EXCLUDED.owner_id,
     visibility = EXCLUDED.visibility,
     last_seen_at = now(),
@@ -148,6 +156,15 @@ RETURNING *, (xmax = 0) AS inserted;
 -- admin only.
 UPDATE agent_runtime
 SET visibility = @visibility, updated_at = now()
+WHERE id = @id
+RETURNING *;
+
+-- name: UpdateFCE2BRuntimeMetadata :one
+-- Replaces only the metadata document after the FC/E2B template-rotation
+-- service has locked and re-read the runtime. Provider, ownership, visibility,
+-- daemon identity, and agent bindings remain unchanged.
+UPDATE agent_runtime
+SET metadata = @metadata, updated_at = now()
 WHERE id = @id
 RETURNING *;
 

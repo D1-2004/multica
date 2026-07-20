@@ -630,6 +630,51 @@ describe("ApiClient", () => {
     });
   });
 
+  it("uses the FC/E2B runtime template update API contract", async () => {
+    const runtime = {
+      id: "rt-fc",
+      workspace_id: "ws-1",
+      daemon_id: "fc-e2b:ws-1:fc-hermes",
+      name: "FC-Hermes",
+      runtime_mode: "cloud",
+      provider: "hermes",
+      launch_header: "",
+      status: "online",
+      device_info: "FC/E2B one-shot sandbox",
+      metadata: {
+        kind: "fc-e2b",
+        template: "multica-fc-team-v2",
+        template_id: "tpl-v2",
+      },
+      owner_id: "user-1",
+      visibility: "private",
+      last_seen_at: null,
+      created_at: "2026-07-08T00:00:00Z",
+      updated_at: "2026-07-20T00:00:00Z",
+    };
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify(runtime), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    const updated = await client.updateFCE2BRuntimeTemplate("rt-fc", {
+      template_id: "tpl-v2",
+    });
+
+    expect(updated.id).toBe("rt-fc");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/runtimes/rt-fc/fc-e2b-template",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ template_id: "tpl-v2" }),
+      }),
+    );
+  });
+
   it("falls back when Cloud Runtime node responses drift", async () => {
     const fetchMock = vi
       .fn()

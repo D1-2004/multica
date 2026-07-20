@@ -164,6 +164,7 @@ import type {
   CreateCloudRuntimeNodeRequest,
   FCE2BTemplate,
   ListCloudRuntimeNodesParams,
+  UpdateFCE2BRuntimeTemplateRequest,
 } from "../runtimes/cloud-runtime";
 import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
@@ -1011,6 +1012,19 @@ export class ApiClient {
 
   async listFCE2BTemplates(): Promise<FCE2BTemplate[]> {
     return this.fetch("/api/runtimes/fc-e2b/templates");
+  }
+
+  async updateFCE2BRuntimeTemplate(
+    runtimeId: string,
+    data: UpdateFCE2BRuntimeTemplateRequest,
+  ): Promise<AgentRuntime> {
+    return this.fetch<AgentRuntime>(
+      `/api/runtimes/${runtimeId}/fc-e2b-template`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    );
   }
 
   async listCloudRuntimeNodes(

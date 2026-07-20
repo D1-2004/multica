@@ -139,6 +139,7 @@ type Handler struct {
 	DaemonWorkspaceRefresh  WorkspaceSetRefreshNotifier
 	Bus                     *events.Bus
 	TaskService             *service.TaskService
+	FCE2BLauncher           *service.FCE2BLauncher
 	IssueService            *service.IssueService
 	IssueCommentService     *service.IssueCommentService
 	AutopilotService        *service.AutopilotService
@@ -340,6 +341,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		DaemonWorkspaceRefresh:       daemonWorkspaceRefresh,
 		Bus:                          bus,
 		TaskService:                  taskSvc,
+		FCE2BLauncher:                fcLauncher,
 		IssueService:                 service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
 		IssueCommentService:          service.NewIssueCommentService(queries, bus, taskSvc),
 		AutopilotService:             service.NewAutopilotService(queries, txStarter, bus, taskSvc),

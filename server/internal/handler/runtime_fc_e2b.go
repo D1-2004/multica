@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -20,6 +22,10 @@ type createFCE2BRuntimeRequest struct {
 	Template   string `json:"template"`
 	Provider   string `json:"provider"`
 	Visibility string `json:"visibility"`
+}
+
+type updateFCE2BRuntimeTemplateRequest struct {
+	TemplateID string `json:"template_id"`
 }
 
 func (h *Handler) ListFCE2BTemplates(w http.ResponseWriter, r *http.Request) {
@@ -148,6 +154,101 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, runtimeToResponse(rt))
 }
 
+func (h *Handler) UpdateFCE2BRuntimeTemplate(w http.ResponseWriter, r *http.Request) {
+	if !h.cfg.FCE2B.Enabled {
+		writeError(w, http.StatusServiceUnavailable, "FC/E2B runtime is disabled")
+		return
+	}
+	if err := h.cfg.FCE2B.ValidateTemplateAPI(); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if h.FCE2BLauncher == nil {
+		writeError(w, http.StatusServiceUnavailable, "FC/E2B runtime launcher is unavailable")
+		return
+	}
+
+	runtimeID := chi.URLParam(r, "runtimeId")
+	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	if !ok {
+		return
+	}
+	runtime, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "runtime not found")
+		return
+	}
+	member, ok := h.requireWorkspaceRole(w, r, uuidToString(runtime.WorkspaceID), "runtime not found", "owner", "admin")
+	if !ok {
+		return
+	}
+	if !service.IsFCE2BRuntime(runtime) {
+		writeError(w, http.StatusBadRequest, service.ErrFCE2BRuntimeRequired.Error())
+		return
+	}
+
+	var req updateFCE2BRuntimeTemplateRequest
+	if r.Body == nil || json.NewDecoder(r.Body).Decode(&req) != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	templateID := strings.TrimSpace(req.TemplateID)
+	if templateID == "" {
+		writeError(w, http.StatusBadRequest, "template_id is required")
+		return
+	}
+
+	templates, err := service.ListFCE2BTemplates(r.Context(), h.cfg.FCE2B, h.FCE2BLauncher.Runner)
+	if err != nil {
+		slog.Error("FC/E2B template validation failed during runtime update", "error", err, "runtime_id", runtimeID)
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	selected, ok := selectFCE2BTemplateByID(templates, templateID)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "template_id does not match an available FC/E2B template ID")
+		return
+	}
+	if !service.IsFCE2BTemplateReady(selected) {
+		writeError(w, http.StatusBadRequest, "FC/E2B template is not ready")
+		return
+	}
+
+	result, err := h.FCE2BLauncher.UpdateRuntimeTemplate(r.Context(), runtimeUUID, selected)
+	if err != nil {
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			writeError(w, http.StatusNotFound, "runtime not found")
+		case errors.Is(err, service.ErrFCE2BRuntimeRequired):
+			writeError(w, http.StatusBadRequest, err.Error())
+		default:
+			slog.Error("FC/E2B runtime template update failed", "error", err, "runtime_id", runtimeID)
+			writeError(w, http.StatusInternalServerError, "failed to update FC/E2B runtime template")
+		}
+		return
+	}
+
+	slog.Info("FC/E2B runtime template update completed",
+		"event", "fc_e2b_runtime_template_updated",
+		"actor_id", uuidToString(member.UserID),
+		"workspace_id", uuidToString(result.Runtime.WorkspaceID),
+		"runtime_id", runtimeID,
+		"provider", result.Runtime.Provider,
+		"previous_template", result.PreviousTemplate,
+		"previous_template_id", result.PreviousTemplateID,
+		"template", selected.Template,
+		"template_id", selected.ID,
+		"invalidated_sandbox_count", result.InvalidatedSandboxCount,
+		"changed", result.Changed,
+	)
+	if result.Changed {
+		h.publish(protocol.EventDaemonRegister, uuidToString(result.Runtime.WorkspaceID), "member", uuidToString(member.UserID), map[string]any{
+			"action": "update",
+		})
+	}
+	writeJSON(w, http.StatusOK, runtimeToResponse(result.Runtime))
+}
+
 func selectFCE2BTemplate(templates []service.FCE2BTemplate, ref string) (service.FCE2BTemplate, bool) {
 	ref = strings.TrimSpace(ref)
 	for _, t := range templates {
@@ -155,6 +256,19 @@ func selectFCE2BTemplate(templates []service.FCE2BTemplate, ref string) (service
 			if strings.TrimSpace(candidate) == ref {
 				return t, true
 			}
+		}
+	}
+	return service.FCE2BTemplate{}, false
+}
+
+func selectFCE2BTemplateByID(templates []service.FCE2BTemplate, id string) (service.FCE2BTemplate, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return service.FCE2BTemplate{}, false
+	}
+	for _, template := range templates {
+		if strings.TrimSpace(template.ID) == id && strings.TrimSpace(template.ID) != "" {
+			return template, true
 		}
 	}
 	return service.FCE2BTemplate{}, false
@@ -213,12 +327,7 @@ func defaultFCE2BRuntimeName(provider string, t service.FCE2BTemplate) string {
 }
 
 func fcE2BTemplateCapabilities(provider string, t service.FCE2BTemplate) []string {
-	capabilities := []string{provider}
-	haystack := strings.ToLower(strings.Join([]string{t.Template, t.ID, t.Name}, " "))
-	if strings.Contains(haystack, "dws") {
-		capabilities = append(capabilities, "dws")
-	}
-	return capabilities
+	return service.FCE2BTemplateCapabilities(provider, t)
 }
 
 func runtimeSlug(name string) string {
