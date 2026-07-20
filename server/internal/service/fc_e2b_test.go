@@ -119,33 +119,71 @@ func TestFCE2BRuntimeProvider(t *testing.T) {
 	}
 }
 
-func TestFCE2BRootRunnerForRuntimeUsesFixedProviderEntry(t *testing.T) {
-	hermesPath, err := fcE2BRootRunnerForRuntime(db.AgentRuntime{
-		Provider: "hermes",
-	})
-	if err != nil {
-		t.Fatalf("resolve Hermes root runner: %v", err)
+func TestFCE2BRunnerLaunchForRuntime(t *testing.T) {
+	legacyHermes := fcE2BRunnerLaunch{
+		Mode:    fcE2BRunnerLaunchLegacyUser,
+		Command: "/usr/local/bin/multica-fc-hermes-runner",
+		Home:    "/home/user",
 	}
-	if hermesPath != "/usr/local/libexec/multica-fc-hermes-container-log-entry" {
-		t.Fatalf("Hermes root runner = %q", hermesPath)
+	legacyOpenCode := fcE2BRunnerLaunch{
+		Mode:    fcE2BRunnerLaunchLegacyUser,
+		Command: "/usr/local/bin/multica-fc-opencode-runner",
+		Home:    "/home/user",
+	}
+	rootHermes := fcE2BRunnerLaunch{
+		Mode:    fcE2BRunnerLaunchRootLog,
+		Command: "/usr/local/libexec/multica-fc-hermes-container-log-entry",
+		Home:    "/root",
+	}
+	rootOpenCode := fcE2BRunnerLaunch{
+		Mode:    fcE2BRunnerLaunchRootLog,
+		Command: "/usr/local/libexec/multica-fc-opencode-container-log-entry",
+		Home:    "/root",
 	}
 
-	opencodePath, err := fcE2BRootRunnerForRuntime(db.AgentRuntime{
-		Provider: "opencode",
-		Metadata: []byte(`{"runner":"custom-runner"}`),
-	})
-	if err != nil {
-		t.Fatalf("resolve OpenCode root runner: %v", err)
-	}
-	if opencodePath != "/usr/local/libexec/multica-fc-opencode-container-log-entry" {
-		t.Fatalf("OpenCode root runner = %q", opencodePath)
+	cases := []struct {
+		name     string
+		provider string
+		metadata string
+		want     fcE2BRunnerLaunch
+		wantErr  bool
+	}{
+		{name: "pre-provider legacy row", want: legacyHermes},
+		{name: "legacy Hermes", provider: "hermes", metadata: `{"runner":"multica-fc-hermes-runner"}`, want: legacyHermes},
+		{name: "legacy OpenCode", provider: "opencode", metadata: `{"runner":"multica-fc-opencode-runner"}`, want: legacyOpenCode},
+		{name: "root Hermes", provider: "hermes", metadata: `{"runner":"multica-fc-hermes-container-log-entry"}`, want: rootHermes},
+		{name: "root OpenCode", provider: "opencode", metadata: `{"runner":"multica-fc-opencode-container-log-entry"}`, want: rootOpenCode},
+		{name: "provider mismatch", provider: "hermes", metadata: `{"runner":"multica-fc-opencode-container-log-entry"}`, wantErr: true},
+		{name: "custom command", provider: "opencode", metadata: `{"runner":"/tmp/custom-runner"}`, wantErr: true},
+		{name: "shell command", provider: "hermes", metadata: `{"runner":"sh -c id"}`, wantErr: true},
+		{name: "whitespace marker", provider: "hermes", metadata: `{"runner":" multica-fc-hermes-runner "}`, wantErr: true},
+		{name: "empty marker", provider: "hermes", metadata: `{"runner":""}`, wantErr: true},
+		{name: "null marker", provider: "hermes", metadata: `{"runner":null}`, wantErr: true},
+		{name: "non-string marker", provider: "hermes", metadata: `{"runner":42}`, wantErr: true},
+		{name: "invalid metadata", provider: "hermes", metadata: `{`, wantErr: true},
+		{name: "unsupported provider", provider: "custom", metadata: `{}`, wantErr: true},
 	}
 
-	_, err = fcE2BRootRunnerForRuntime(db.AgentRuntime{
-		Provider: "custom",
-	})
-	if err == nil {
-		t.Fatal("unsupported provider unexpectedly accepted")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := db.AgentRuntime{Provider: tc.provider}
+			if tc.metadata != "" {
+				rt.Metadata = []byte(tc.metadata)
+			}
+			got, err := fcE2BRunnerLaunchForRuntime(rt)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("launch = %#v, want error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolve launch: %v", err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("launch = %#v, want %#v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -310,6 +348,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		ID:       runtimeID,
 		Name:     "FC-Hermes",
 		DaemonID: pgtype.Text{String: "fc-e2b:ws:fc-hermes", Valid: true},
+		Metadata: []byte(`{"runner":"multica-fc-hermes-container-log-entry"}`),
 	}
 	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
 	if err := launcher.execRunOnce(context.Background(), sandboxID, rt, taskID, "mdt_test_token", true, map[string]string{
@@ -382,7 +421,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 	}
 }
 
-func TestFCE2BExecRunOnceUsesRuntimeProviderAndRunner(t *testing.T) {
+func TestFCE2BExecRunOnceUsesRootLogProtocol(t *testing.T) {
 	runner := &fakeCommandRunner{}
 	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{
 		ServerURL:  "https://api.multica.test",
@@ -400,7 +439,7 @@ func TestFCE2BExecRunOnceUsesRuntimeProviderAndRunner(t *testing.T) {
 		RuntimeMode: "cloud",
 		Provider:    "opencode",
 		DaemonID:    pgtype.Text{String: "fc-e2b:ws:fc-opencode", Valid: true},
-		Metadata:    []byte(`{"kind":"fc-e2b","template":"multica-fc-opencode-v1","runner":"ignored-custom-runner"}`),
+		Metadata:    []byte(`{"kind":"fc-e2b","template":"multica-fc-opencode-v1","runner":"multica-fc-opencode-container-log-entry"}`),
 	}
 
 	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
@@ -433,6 +472,68 @@ func TestFCE2BExecRunOnceUsesRuntimeProviderAndRunner(t *testing.T) {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("root exec args missing sanitized environment %q: %#v", expected, args)
 		}
+	}
+}
+
+func TestFCE2BExecRunOnceUsesLegacyUserProtocol(t *testing.T) {
+	runner := &fakeCommandRunner{}
+	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{
+		ServerURL:  "https://api.multica.test",
+		APIKey:     "e2b_secret",
+		APIURL:     "https://api.cn-beijing.e2b.fc.aliyuncs.com",
+		Domain:     "cn-beijing.e2b.fc.aliyuncs.com",
+		LLMBaseURL: "https://api-deap.dingtalk.com/deapai",
+		LLMAPIKey:  "maas_secret",
+		LLMModels:  []string{"qwen3.5-plus"},
+		CLIPath:    "/usr/local/bin/e2b",
+	}, runner)
+	rt := db.AgentRuntime{
+		ID:          util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		Name:        "FC-Hermes-Legacy",
+		RuntimeMode: "cloud",
+		Provider:    "hermes",
+		DaemonID:    pgtype.Text{String: "fc-e2b:ws:fc-hermes-legacy", Valid: true},
+		Metadata:    []byte(`{"kind":"fc-e2b","runner":"multica-fc-hermes-runner"}`),
+	}
+
+	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	if err := launcher.execRunOnce(context.Background(), "sbx_legacy", rt, taskID, "mdt_test_token", true, nil); err != nil {
+		t.Fatalf("execRunOnce returned error: %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("runner calls = %d, want 1", len(runner.calls))
+	}
+	joined := strings.Join(runner.calls[0].args, " ")
+	if strings.Contains(joined, "--user root") {
+		t.Fatalf("legacy exec must use the sandbox user: %#v", runner.calls[0].args)
+	}
+	if !strings.Contains(joined, "HOME=/home/user") {
+		t.Fatalf("legacy exec must preserve the user home: %#v", runner.calls[0].args)
+	}
+	if !strings.Contains(joined, "-- /usr/local/bin/multica-fc-hermes-runner ") {
+		t.Fatalf("legacy exec must use the fixed legacy path: %#v", runner.calls[0].args)
+	}
+	for _, rootOnly := range []string{"LD_PRELOAD=", "LD_LIBRARY_PATH=", "LD_AUDIT=", "GCONV_PATH=", "BASH_ENV=", "ENV="} {
+		if strings.Contains(joined, rootOnly) {
+			t.Fatalf("legacy exec unexpectedly contains root-only environment %q: %#v", rootOnly, runner.calls[0].args)
+		}
+	}
+}
+
+func TestFCE2BExecRunOnceRejectsUnknownRunnerProtocolBeforeE2B(t *testing.T) {
+	runner := &fakeCommandRunner{}
+	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{}, runner)
+	rt := db.AgentRuntime{
+		ID:       util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		Provider: "hermes",
+		Metadata: []byte(`{"runner":"/tmp/untrusted; id"}`),
+	}
+	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	if err := launcher.execRunOnce(context.Background(), "sbx_unknown", rt, taskID, "mdt_test_token", false, nil); err == nil {
+		t.Fatal("unknown runner protocol unexpectedly accepted")
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("unknown runner protocol reached E2B: %#v", runner.calls)
 	}
 }
 
@@ -512,25 +613,29 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	}
 }
 
-func TestFCE2BExecRunOnceRejectsUnsafeRootEnvironment(t *testing.T) {
-	runner := &fakeCommandRunner{}
-	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{}, runner)
+func TestFCE2BExecRunOnceRejectsUnsafeRunnerEnvironment(t *testing.T) {
 	rt := db.AgentRuntime{
 		ID:          util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		RuntimeMode: "cloud",
 		Provider:    "hermes",
 		DaemonID:    pgtype.Text{String: "fc-e2b:ws:fc-hermes", Valid: true},
-		Metadata:    []byte(`{"kind":"fc-e2b"}`),
+		Metadata:    []byte(`{"kind":"fc-e2b","runner":"multica-fc-hermes-container-log-entry"}`),
 	}
 	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
-	err := launcher.execRunOnce(context.Background(), "sbx_unsafe", rt, taskID, "mdt_test_token", false, map[string]string{
-		"BASH_ENV": "/workspace/untrusted.sh",
-	})
-	if err == nil {
-		t.Fatal("unsafe root environment unexpectedly accepted")
-	}
-	if len(runner.calls) != 0 {
-		t.Fatalf("unsafe environment reached E2B command: %#v", runner.calls)
+	for _, key := range []string{"BASH_ENV", "LD_PRELOAD", "LD_AUDIT", "PATH", "HOME", "MULTICA_RUNNER_PROVIDER"} {
+		t.Run(key, func(t *testing.T) {
+			runner := &fakeCommandRunner{}
+			launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{}, runner)
+			err := launcher.execRunOnce(context.Background(), "sbx_unsafe", rt, taskID, "mdt_test_token", false, map[string]string{
+				key: "/workspace/untrusted",
+			})
+			if err == nil {
+				t.Fatal("unsafe runner environment unexpectedly accepted")
+			}
+			if len(runner.calls) != 0 {
+				t.Fatalf("unsafe environment reached E2B command: %#v", runner.calls)
+			}
+		})
 	}
 }
 
