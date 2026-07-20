@@ -43,7 +43,7 @@ import type { CreateFeedbackResponse } from "../feedback/types";
 const DingTalkAccountBindingOutcomeSchema = z
   .object({
     status: z.string(),
-    source: z.enum(["message", "identity"]).nullable().optional(),
+    source: z.literal("identity").nullable().optional(),
     organization_name: z.string().nullable().optional(),
     account_display_name: z.string().nullable().optional(),
     account_avatar_url: z.string().nullable().optional(),

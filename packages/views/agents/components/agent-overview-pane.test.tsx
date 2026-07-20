@@ -45,6 +45,9 @@ vi.mock("./tabs/mcp-config-tab", () => ({
 vi.mock("./tabs/integrations-tab", () => ({
   IntegrationsTab: () => <div>integrations-tab</div>,
 }));
+vi.mock("./tabs/identity-tab", () => ({
+  IdentityTab: () => <div>identity-tab</div>,
+}));
 vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
 }));
@@ -259,6 +262,41 @@ describe("AgentOverviewPane Integrations tab visibility", () => {
     openCapabilities();
     expect(
       screen.queryByRole("tab", { name: /^Integrations$/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("AgentOverviewPane Identity tab", () => {
+  it("places Identity after Integrations and opens the identity-only page", async () => {
+    dingtalkAccountListingRef.current = { bindings: [], configured: true };
+    renderPane([makeRuntime("claude")]);
+
+    openCapabilities();
+
+    await screen.findByRole("tab", { name: /^Integrations$/i });
+    const capabilityTabs = screen.getAllByRole("tab");
+    expect(capabilityTabs.map((tab) => tab.textContent)).toEqual([
+      "Overview",
+      "Work",
+      "Capabilities",
+      "Settings",
+      "Instructions",
+      "Skills",
+      "MCP",
+      "Integrations",
+      "Identity",
+    ]);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^Identity$/i }));
+    expect(screen.getByText("identity-tab")).toBeInTheDocument();
+  });
+
+  it("hides Identity when account binding is not configured", () => {
+    renderPane([makeRuntime("claude")]);
+    openCapabilities();
+
+    expect(
+      screen.queryByRole("tab", { name: /^Identity$/i }),
     ).not.toBeInTheDocument();
   });
 });

@@ -164,9 +164,11 @@ function DingTalkMessageScopeSummary({
 export function DingTalkAccountBindingCard({
   agentId,
   agentName,
+  bindingMode = "message",
 }: {
   agentId: string;
   agentName: string;
+  bindingMode?: DingTalkBindingMode;
 }) {
   const wsId = useWorkspaceId();
   const { data, isPending } = useQuery({
@@ -175,22 +177,13 @@ export function DingTalkAccountBindingCard({
   });
 
   return (
-    <div className="space-y-4">
-      <DingTalkBindingModeCard
-        agentId={agentId}
-        agentName={agentName}
-        bindingMode="message"
-        data={data}
-        listingPending={isPending}
-      />
-      <DingTalkBindingModeCard
-        agentId={agentId}
-        agentName={agentName}
-        bindingMode="identity"
-        data={data}
-        listingPending={isPending}
-      />
-    </div>
+    <DingTalkBindingModeCard
+      agentId={agentId}
+      agentName={agentName}
+      bindingMode={bindingMode}
+      data={data}
+      listingPending={isPending}
+    />
   );
 }
 
@@ -223,17 +216,16 @@ function DingTalkBindingModeCard({
   const messageRouteActive = currentBinding?.messageRoute.status === "active";
   const messageRoutePending = currentBinding?.messageRoute.status === "pending";
   const messageBindingFailed = bindingMode === "message" &&
-    (currentBinding?.messageRoute.status === "failed" || currentBinding?.dwsIdentity.status === "failed");
+    currentBinding?.messageRoute.status === "failed";
   const retryMessageBinding = bindingMode === "message" &&
     (messageRoutePending || messageBindingFailed);
   const identityActive = currentBinding?.dwsIdentity.status === "active";
-  const identitySource = currentBinding?.dwsIdentity.source;
-  const managedByMessage = bindingMode === "identity" &&
-    (messageRouteActive || identitySource === "message");
   const connected = bindingMode === "message"
-    ? messageRouteActive && identityActive
-    : identityActive && identitySource === "identity";
-  const accountOutcome = currentBinding?.dwsIdentity;
+    ? messageRouteActive
+    : identityActive;
+  const accountOutcome = bindingMode === "message"
+    ? currentBinding?.messageRoute
+    : currentBinding?.dwsIdentity;
 
   const title = bindingMode === "message"
     ? t(($) => $.tab_body.integrations.dingtalk_account_title)
@@ -343,10 +335,6 @@ function DingTalkBindingModeCard({
           <p className="text-xs text-muted-foreground">
             {t(($) => $.tab_body.integrations.dingtalk_account_not_configured)}
           </p>
-        ) : managedByMessage ? (
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {t(($) => $.tab_body.integrations.dingtalk_identity_managed_by_message)}
-          </p>
         ) : connected && accountOutcome ? (
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
@@ -391,10 +379,6 @@ function DingTalkBindingModeCard({
             ) : null}
             {messageBindingFailed && currentBinding ? (
               <div className="space-y-1 text-xs text-muted-foreground">
-                <p>
-                  {t(($) => $.tab_body.integrations.dingtalk_account_dws_identity)}: {" "}
-                  {statusLabel(currentBinding.dwsIdentity.status)}
-                </p>
                 <p>
                   {t(($) => $.tab_body.integrations.dingtalk_account_message_route)}: {" "}
                   {statusLabel(currentBinding.messageRoute.status)}

@@ -158,10 +158,6 @@ func (s *Service) CompleteBinding(ctx context.Context, params CompleteBindingPar
 			!s.now().Before(config.CallbackExpiresAt) {
 			return CompleteBindingResult{}, ErrCallbackExpired
 		}
-		config.DWSIdentityStatus = ""
-		if params.Identity.Status == DingTalkBindingTaskStatusFailed {
-			config.DWSIdentityStatus = DingTalkBindingStatusFailed
-		}
 		config.MessageRouteStatus = params.Message.Status
 		config.MessageScope = messageScope
 		config.Conversations = conversations
@@ -221,24 +217,26 @@ func validateCompleteBindingParams(params CompleteBindingParams) (string, []Ding
 		if !emptyIdentityResult(params.Identity) || !validBindingTaskError(params.Identity.Error) {
 			return "", nil, ErrInvalidResult
 		}
+	case DingTalkBindingTaskStatusSkipped:
+		if !emptyIdentityResult(params.Identity) || params.Identity.Error != nil {
+			return "", nil, ErrInvalidResult
+		}
 	default:
 		return "", nil, ErrInvalidResult
 	}
-	if params.BindingMode == BindingModeIdentity && params.Message.Status != DingTalkBindingTaskStatusSkipped {
+	if params.BindingMode == BindingModeIdentity {
+		if params.Identity.Status == DingTalkBindingTaskStatusSkipped ||
+			params.Message.Status != DingTalkBindingTaskStatusSkipped {
+			return "", nil, ErrInvalidResult
+		}
+	} else if params.Identity.Status != DingTalkBindingTaskStatusSkipped ||
+		params.Message.Status == DingTalkBindingTaskStatusSkipped {
 		return "", nil, ErrInvalidResult
-	}
-	if params.BindingMode == BindingModeMessage {
-		if params.Identity.Status == DingTalkBindingTaskStatusSuccess && params.Message.Status == DingTalkBindingTaskStatusSkipped {
-			return "", nil, ErrInvalidResult
-		}
-		if params.Identity.Status == DingTalkBindingTaskStatusFailed && params.Message.Status != DingTalkBindingTaskStatusSkipped {
-			return "", nil, ErrInvalidResult
-		}
 	}
 
 	switch params.Message.Status {
 	case DingTalkBindingTaskStatusSuccess:
-		if params.Identity.Status != DingTalkBindingTaskStatusSuccess || params.Message.Error != nil ||
+		if params.Message.Error != nil ||
 			!validSourceID(params.Message.SourceID) || !validBindingSubscriptions(params.Message.Subscriptions) {
 			return "", nil, ErrInvalidResult
 		}

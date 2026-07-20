@@ -170,7 +170,7 @@ func TestDingTalkAccountCallbackForwardsMessageScopeAndConversations(t *testing.
 	service := &fakeDingTalkAccountBindingService{
 		completeResult: agentmessagerouter.CompleteBindingResult{
 			Status:          agentmessagerouter.DingTalkBindingCompletionStatus,
-			IdentityBinding: agentmessagerouter.BindingTaskAcknowledgement{Status: agentmessagerouter.DingTalkBindingTaskStatusSuccess},
+			IdentityBinding: agentmessagerouter.BindingTaskAcknowledgement{Status: agentmessagerouter.DingTalkBindingTaskStatusSkipped},
 			MessageBinding:  agentmessagerouter.BindingTaskAcknowledgement{Status: agentmessagerouter.DingTalkBindingTaskStatusSuccess},
 			Binding: agentmessagerouter.PublicDingTalkAccountBinding{
 				ID:          "11111111-1111-1111-1111-111111111111",
@@ -190,12 +190,12 @@ func TestDingTalkAccountCallbackForwardsMessageScopeAndConversations(t *testing.
 			"binding_mode":"message",
 			"status":"completed",
 			"identity_binding":{
-				"status":"success",
-				"account_uid":"24710833",
-				"account_org_id":"439446171",
-				"account_organization_name":"Alibaba Group",
-				"account_display_name":"Xu Mo",
-				"account_avatar_url":"https://example.com/avatar.png",
+				"status":"skipped",
+				"account_uid":null,
+				"account_org_id":null,
+				"account_organization_name":null,
+				"account_display_name":null,
+				"account_avatar_url":null,
 				"error":null
 			},
 			"message_binding":{
@@ -230,7 +230,7 @@ func TestDingTalkAccountCallbackForwardsMessageScopeAndConversations(t *testing.
 		t.Fatal(err)
 	}
 	identity, ok := forwarded["Identity"].(map[string]any)
-	if !ok || identity["status"] != "success" || identity["account_uid"] != "24710833" {
+	if !ok || identity["status"] != "skipped" || identity["account_uid"] != "" {
 		t.Fatalf("forwarded identity = %#v params=%s", forwarded["Identity"], encoded)
 	}
 	if forwarded["BindingMode"] != string(agentmessagerouter.BindingModeMessage) {
@@ -256,7 +256,7 @@ func TestDingTalkAccountCallbackForwardsMessageScopeAndConversations(t *testing.
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode normalized response: %v body=%s", err, w.Body.String())
 	}
-	if response.Status != "completed" || response.IdentityBinding.Status != "success" || response.MessageBinding.Status != "success" {
+	if response.Status != "completed" || response.IdentityBinding.Status != "skipped" || response.MessageBinding.Status != "success" {
 		t.Fatalf("normalized response = %#v body=%s", response, w.Body.String())
 	}
 }
@@ -282,7 +282,7 @@ func TestDingTalkAccountCallbackAcceptsFailedIdentityAndSkippedMessageAsTerminal
 		http.MethodPost,
 		"/api/integrations/dingtalk/account-bindings/11111111-1111-1111-1111-111111111111/callback",
 		strings.NewReader(`{
-			"binding_mode":"message",
+			"binding_mode":"identity",
 			"status":"completed",
 			"identity_binding":{
 				"status":"failed",
@@ -337,11 +337,7 @@ func TestDingTalkAccountCallbackHasNoConversationCountLimit(t *testing.T) {
 		"binding_mode": "message",
 		"status":       "completed",
 		"identity_binding": map[string]any{
-			"status":                    "success",
-			"account_uid":               "24710833",
-			"account_org_id":            "439446171",
-			"account_organization_name": "Alibaba Group",
-			"account_display_name":      "Xu Mo",
+			"status": "skipped",
 		},
 		"message_binding": map[string]any{
 			"status":        "success",
@@ -462,11 +458,15 @@ func TestNormalizeDingTalkAccountBindingOrigin(t *testing.T) {
 }
 
 func validDingTalkBindingCallbackBody(bindingMode, messageStatus, sourceID string) string {
+	identity := `{"status":"skipped","account_uid":"","account_org_id":"","account_organization_name":"","account_display_name":"","account_avatar_url":"","error":null}`
+	if bindingMode == "identity" {
+		identity = `{"status":"success","account_uid":"24710833","account_org_id":"439446171","account_organization_name":"Alibaba Group","account_display_name":"Xu Mo","account_avatar_url":"https://example.com/avatar.png","error":null}`
+	}
 	message := `{"status":"skipped","message_scope":"","conversations":[],"source_id":"","subscriptions":[],"error":null}`
 	if messageStatus == "success" {
 		message = `{"status":"success","message_scope":"direct_only","conversations":[],"source_id":"` + sourceID + `","subscriptions":[{"domain":"channel","source_id":"` + sourceID + `","status":"active"}],"error":null}`
 	}
-	return `{"binding_mode":"` + bindingMode + `","status":"completed","identity_binding":{"status":"success","account_uid":"24710833","account_org_id":"439446171","account_organization_name":"Alibaba Group","account_display_name":"Xu Mo","account_avatar_url":"https://example.com/avatar.png","error":null},"message_binding":` + message + `}`
+	return `{"binding_mode":"` + bindingMode + `","status":"completed","identity_binding":` + identity + `,"message_binding":` + message + `}`
 }
 
 func assertDingTalkAccountBindingErrorCode(t *testing.T, recorder *httptest.ResponseRecorder, want string) {

@@ -67,7 +67,7 @@ function createWrapper(queryClient: QueryClient) {
   };
 }
 
-function renderCard() {
+function renderCard(bindingMode: "message" | "identity" = "message") {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -75,7 +75,11 @@ function renderCard() {
     },
   });
   const result = render(
-    <DingTalkAccountBindingCard agentId="agent-1" agentName="Planner" />,
+    <DingTalkAccountBindingCard
+      agentId="agent-1"
+      agentName="Planner"
+      bindingMode={bindingMode}
+    />,
     { wrapper: createWrapper(queryClient) },
   );
   return { ...result, queryClient };
@@ -87,7 +91,7 @@ const activeBinding = {
   agentId: "agent-1",
   dwsIdentity: {
     status: "active",
-    source: "message",
+    source: "identity",
     organizationName: "Alibaba Group",
     accountDisplayName: "Zhang San",
     accountAvatarUrl: "https://example.test/avatar.png",
@@ -130,6 +134,17 @@ afterEach(() => {
 });
 
 describe("DingTalkAccountBindingCard", () => {
+  it("keeps the execution identity entry out of the Integrations card", async () => {
+    renderCard();
+
+    expect(
+      await screen.findByRole("button", { name: /Bind digital employee/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Bind execution identity/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it.each([
     ["direct_only", "Listening to my direct messages"],
     ["all", "Listening to all messages"],
@@ -254,8 +269,8 @@ describe("DingTalkAccountBindingCard", () => {
     renderCard();
 
     expect(
-      await screen.findAllByText(/Enterprise digital employee binding is not configured/i),
-    ).toHaveLength(2);
+      await screen.findByText(/Enterprise digital employee binding is not configured/i),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Bind digital employee/i }),
     ).not.toBeInTheDocument();
@@ -280,7 +295,7 @@ describe("DingTalkAccountBindingCard", () => {
   it("starts the independent execution identity mode", async () => {
     const user = userEvent.setup();
 
-    renderCard();
+    renderCard("identity");
     await user.click(
       await screen.findByRole("button", { name: /Bind execution identity/i }),
     );
@@ -333,6 +348,31 @@ describe("DingTalkAccountBindingCard", () => {
     });
   });
 
+  it("treats an active message route as connected without an execution identity", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          dwsIdentity: { status: "unbound" },
+          messageRoute: {
+            ...activeBinding.messageRoute,
+            accountDisplayName: "Digital Worker Zhang",
+          },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard("message");
+
+    expect(await screen.findByText("Digital Worker Zhang")).toBeInTheDocument();
+    expect(screen.getByText("Listening to my direct messages")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Bind digital employee/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps the active account visible when unbinding fails", async () => {
     listBindings.mockResolvedValue({
       bindings: [activeBinding],
@@ -352,13 +392,19 @@ describe("DingTalkAccountBindingCard", () => {
     expect(screen.getByText("Zhang San")).toBeInTheDocument();
   });
 
-  it("does not offer a conflicting identity binding when the digital employee is active", async () => {
+  it("shows and can unbind the execution identity while the digital employee is active", async () => {
     listBindings.mockResolvedValue({ bindings: [activeBinding], configured: true });
 
-    renderCard();
+    const user = userEvent.setup();
 
-    expect(await screen.findByText(/digital employee supplies this agent's default execution identity/i)).toBeInTheDocument();
+    renderCard("identity");
+
+    expect(await screen.findByText("Zhang San")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Bind execution identity/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Unbind$/i }));
+    await user.click(screen.getAllByRole("button", { name: /^Unbind$/i }).at(-1)!);
+
+    expect(deleteBinding).toHaveBeenCalledWith("workspace-1", "agent-1", "identity");
   });
 
   it("keeps DWS identity active when the message route is still pending", async () => {
@@ -373,7 +419,7 @@ describe("DingTalkAccountBindingCard", () => {
       configured: true,
     });
 
-    renderCard();
+    renderCard("identity");
 
     expect(await screen.findByText("Zhang San")).toBeInTheDocument();
     expect(screen.getByText(/Organization:\s*Alibaba Group/i)).toBeInTheDocument();
@@ -381,24 +427,29 @@ describe("DingTalkAccountBindingCard", () => {
     expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
   });
 
-  it("shows that message listening was skipped after identity-only binding", async () => {
+  it("keeps message listening unbound after identity-only binding", async () => {
     listBindings.mockResolvedValue({
       bindings: [
         {
           ...activeBinding,
           dwsIdentity: { ...activeBinding.dwsIdentity, source: "identity" },
-          messageRoute: { status: "skipped" },
+          messageRoute: { status: "unbound" },
         },
       ],
       configured: true,
     });
 
-    renderCard();
+    const { unmount } = renderCard("identity");
 
     expect(await screen.findByText("Zhang San")).toBeInTheDocument();
     expect(screen.getByText(/Default execution identity bound/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Bind digital employee/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
+
+    unmount();
+    renderCard("message");
+    expect(
+      await screen.findByRole("button", { name: /Bind digital employee/i }),
+    ).toBeInTheDocument();
   });
 
   it("shows terminal task failures and allows a fresh binding attempt", async () => {
@@ -406,7 +457,7 @@ describe("DingTalkAccountBindingCard", () => {
       bindings: [
         {
           ...activeBinding,
-          dwsIdentity: { status: "failed" },
+          dwsIdentity: { status: "unbound" },
           messageRoute: { status: "failed" },
         },
       ],
@@ -415,8 +466,8 @@ describe("DingTalkAccountBindingCard", () => {
 
     renderCard();
 
-    expect(await screen.findByText(/DWS identity:\s*Failed/i)).toBeInTheDocument();
-    expect(screen.getByText(/Direct message route:\s*Failed/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Direct message route:\s*Failed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/DWS identity/i)).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Generate a new QR code/i }),
     ).toBeInTheDocument();

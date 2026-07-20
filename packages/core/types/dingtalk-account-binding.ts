@@ -1,6 +1,6 @@
 export interface DingTalkAccountBindingOutcome {
   status: string;
-  source?: "message" | "identity" | null;
+  source?: "identity" | null;
   organizationName?: string | null;
   accountDisplayName?: string | null;
   accountAvatarUrl?: string | null;
