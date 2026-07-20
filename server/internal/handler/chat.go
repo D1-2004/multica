@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/chattrace"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -545,6 +547,7 @@ type SendChatMessageRequest struct {
 type SendChatMessageResponse struct {
 	MessageID string `json:"message_id"`
 	TaskID    string `json:"task_id"`
+	TraceID   string `json:"trace_id"`
 	// AttachmentIDs are the attachment rows actually bound to this message by
 	// the server. The client diffs these against the ids it requested so it
 	// can warn the user when an attachment silently failed to bind — no extra
@@ -564,6 +567,11 @@ type SendChatMessageResponse struct {
 }
 
 func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
+	trace := chattrace.New("web")
+	chattrace.LogStage(slog.Default(), trace, "web_message_received", "started",
+		"chat_session_id", chi.URLParam(r, "sessionId"),
+	)
+	w.Header().Set("X-Trace-ID", trace.TraceID)
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
@@ -646,7 +654,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// creator-only), so they are the task initiator — surfaced to the agent
 	// under `## Task Initiator`.
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	sent, err := h.TaskService.SendDirectChatMessage(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID))
+	sent, err := h.TaskService.SendDirectChatMessage(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID), trace)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to send chat message: "+err.Error())
 		return
@@ -686,6 +694,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		Content:       req.Content,
 		TaskID:        uuidToString(task.ID),
 		CreatedAt:     timestampToString(msg.CreatedAt),
+		TraceID:       trace.TraceID,
 	})
 
 	// First user message → kick off best-effort LLM auto-titling (MUL-4295).
@@ -698,12 +707,179 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		h.maybeGenerateChatTitleAsync(workspaceID, userID, session.ID, session.Title, req.Content)
 	}
 
+	chattrace.LogStage(slog.Default(), trace, "web_send_response", "succeeded",
+		"chat_session_id", resolvedSessionID,
+		"task_id", uuidToString(task.ID),
+		"message_id", uuidToString(msg.ID),
+	)
 	writeJSON(w, http.StatusCreated, SendChatMessageResponse{
 		MessageID:     uuidToString(msg.ID),
 		TaskID:        uuidToString(task.ID),
+		TraceID:       trace.TraceID,
 		CreatedAt:     timestampToString(task.CreatedAt),
 		AttachmentIDs: boundAttachmentIDs,
 	})
+}
+
+type AcknowledgeChatMessageReceivedRequest struct {
+	TaskID             string `json:"task_id"`
+	TraceID            string `json:"trace_id"`
+	WSReceivedAtUnixMS int64  `json:"ws_received_at_unix_ms"`
+	RenderedAtUnixMS   int64  `json:"rendered_at_unix_ms"`
+	ClientReceivedAt   string `json:"client_received_at"`
+	ElapsedMS          int64  `json:"elapsed_ms"`
+}
+
+// AcknowledgeChatMessageReceived records the browser's application-level
+// receipt boundary. A successful WebSocket write only proves bytes reached the
+// socket; this endpoint proves an authorized client consumed the assistant
+// message event. The receipt is intentionally log-only and does not mutate
+// database state.
+func (h *Handler) AcknowledgeChatMessageReceived(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req AcknowledgeChatMessageReceivedRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "request body must contain one JSON object")
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	sessionID := chi.URLParam(r, "sessionId")
+	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	if !ok {
+		return
+	}
+	messageID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "messageId"), "message id")
+	if !ok {
+		return
+	}
+	message, err := h.Queries.GetChatMessage(r.Context(), messageID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "chat message not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load chat message")
+		return
+	}
+	if message.ChatSessionID != session.ID {
+		writeError(w, http.StatusNotFound, "chat message not found")
+		return
+	}
+	if message.Role != "assistant" || !message.TaskID.Valid {
+		writeError(w, http.StatusConflict, "only task-owned assistant messages can be acknowledged")
+		return
+	}
+	reportedTaskID, ok := parseUUIDOrBadRequest(w, req.TaskID, "task_id")
+	if !ok {
+		return
+	}
+	if reportedTaskID != message.TaskID {
+		writeError(w, http.StatusBadRequest, "task_id does not own this message")
+		return
+	}
+	task, err := h.Queries.GetAgentTask(r.Context(), message.TaskID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "chat task not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load chat task")
+		return
+	}
+	if !task.ChatSessionID.Valid || task.ChatSessionID != session.ID {
+		writeError(w, http.StatusConflict, "chat task does not own this message")
+		return
+	}
+	trace, present, err := chattrace.Parse(task.Context)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "chat task trace is invalid")
+		return
+	}
+	if !present {
+		writeError(w, http.StatusConflict, "chat task has no trace")
+		return
+	}
+	if req.TraceID != trace.TraceID {
+		writeError(w, http.StatusBadRequest, "trace_id does not match the message trace")
+		return
+	}
+	if req.WSReceivedAtUnixMS <= 0 || req.RenderedAtUnixMS <= 0 {
+		writeError(w, http.StatusBadRequest, "client receipt millisecond timestamps must be positive")
+		return
+	}
+	wsReceivedAt := time.UnixMilli(req.WSReceivedAtUnixMS)
+	renderedAt := time.UnixMilli(req.RenderedAtUnixMS)
+	clientReceivedAt, err := time.Parse(time.RFC3339Nano, req.ClientReceivedAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "client_received_at must be RFC3339")
+		return
+	}
+	traceStartedAt := time.UnixMilli(trace.StartedAtUnixMS)
+	if wsReceivedAt.Before(traceStartedAt) || renderedAt.Before(wsReceivedAt) || clientReceivedAt.Before(renderedAt) {
+		writeError(w, http.StatusBadRequest, "client receipt timestamps are out of order")
+		return
+	}
+	const (
+		maxClientReceiptElapsed = 24 * time.Hour
+		receiptElapsedTolerance = 2 * time.Second
+		receiptClockSkew        = 5 * time.Minute
+		maxRenderReportDelay    = 10 * time.Second
+	)
+	if req.ElapsedMS <= 0 || req.ElapsedMS > maxClientReceiptElapsed.Milliseconds() {
+		writeError(w, http.StatusBadRequest, "elapsed_ms is out of range")
+		return
+	}
+	reportedRenderElapsed := renderedAt.Sub(traceStartedAt)
+	if delta := reportedRenderElapsed - time.Duration(req.ElapsedMS)*time.Millisecond; delta < -receiptElapsedTolerance || delta > receiptElapsedTolerance {
+		writeError(w, http.StatusBadRequest, "elapsed_ms does not match rendered_at")
+		return
+	}
+	if clientReceivedAt.Sub(renderedAt) > maxRenderReportDelay {
+		writeError(w, http.StatusBadRequest, "client_received_at is too far from rendered_at")
+		return
+	}
+	validationAt := time.Now().UTC()
+	if delta := validationAt.Sub(clientReceivedAt); delta < -receiptClockSkew || delta > receiptClockSkew {
+		writeError(w, http.StatusBadRequest, "client_received_at is too far from server time")
+		return
+	}
+	recordedAt, err := h.Queries.RecordChatMessageClientReceipt(r.Context(), message.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The first valid report already recorded and logged this message. Treat
+		// retries and multi-tab races as an idempotent success.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record chat message receipt")
+		return
+	}
+	serverReceiptAt := recordedAt.Time.UTC()
+	clientPlatform, clientVersion, clientOS := middleware.ClientMetadataFromContext(r.Context())
+	chattrace.LogStage(slog.Default(), trace, "web_client_received", "acknowledged",
+		"chat_session_id", uuidToString(session.ID),
+		"task_id", uuidToString(task.ID),
+		"message_id", uuidToString(message.ID),
+		"user_id", userID,
+		"client_reported_ws_received_at_unix_ms", req.WSReceivedAtUnixMS,
+		"client_reported_rendered_at_unix_ms", req.RenderedAtUnixMS,
+		"client_reported_client_received_at", clientReceivedAt.UTC().Format(time.RFC3339Nano),
+		"client_reported_elapsed_ms", req.ElapsedMS,
+		"server_receipt_at", serverReceiptAt.Format(time.RFC3339Nano),
+		"client_platform", clientPlatform,
+		"client_version", clientVersion,
+		"client_os", clientOS,
+	)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type ChatMessagesCursorResponse struct {

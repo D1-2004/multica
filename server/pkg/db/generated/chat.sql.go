@@ -34,7 +34,7 @@ func (q *Queries) ChatSessionHasUserMessage(ctx context.Context, chatSessionID p
 const createChatMessage = `-- name: CreateChatMessage :one
 INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms, message_kind)
 VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::text, 'message'))
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at
 `
 
 type CreateChatMessageParams struct {
@@ -71,6 +71,7 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		&i.FailureReason,
 		&i.ElapsedMs,
 		&i.MessageKind,
+		&i.ClientReceiptRecordedAt,
 	)
 	return i, err
 }
@@ -232,7 +233,7 @@ func (q *Queries) DeleteChatSession(ctx context.Context, arg DeleteChatSessionPa
 const deleteUserChatMessageByTask = `-- name: DeleteUserChatMessageByTask :one
 DELETE FROM chat_message
 WHERE task_id = $1 AND role = 'user'
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at
 `
 
 func (q *Queries) DeleteUserChatMessageByTask(ctx context.Context, taskID pgtype.UUID) (ChatMessage, error) {
@@ -248,12 +249,13 @@ func (q *Queries) DeleteUserChatMessageByTask(ctx context.Context, taskID pgtype
 		&i.FailureReason,
 		&i.ElapsedMs,
 		&i.MessageKind,
+		&i.ClientReceiptRecordedAt,
 	)
 	return i, err
 }
 
 const getChatMessage = `-- name: GetChatMessage :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at FROM chat_message
 WHERE id = $1
 `
 
@@ -270,6 +272,7 @@ func (q *Queries) GetChatMessage(ctx context.Context, id pgtype.UUID) (ChatMessa
 		&i.FailureReason,
 		&i.ElapsedMs,
 		&i.MessageKind,
+		&i.ClientReceiptRecordedAt,
 	)
 	return i, err
 }
@@ -372,7 +375,7 @@ func (q *Queries) GetLastChatTaskSession(ctx context.Context, chatSessionID pgty
 }
 
 const getMostRecentUserChatMessage = `-- name: GetMostRecentUserChatMessage :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at FROM chat_message
 WHERE chat_session_id = $1 AND role = 'user'
 ORDER BY created_at DESC
 LIMIT 1
@@ -396,6 +399,7 @@ func (q *Queries) GetMostRecentUserChatMessage(ctx context.Context, chatSessionI
 		&i.FailureReason,
 		&i.ElapsedMs,
 		&i.MessageKind,
+		&i.ClientReceiptRecordedAt,
 	)
 	return i, err
 }
@@ -580,7 +584,7 @@ func (q *Queries) ListAllChatSessionsByCreator(ctx context.Context, arg ListAllC
 }
 
 const listChatInputMessages = `-- name: ListChatInputMessages :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at FROM chat_message
 WHERE task_id = $1 AND role = 'user'
 ORDER BY created_at ASC, id ASC
 `
@@ -611,6 +615,7 @@ func (q *Queries) ListChatInputMessages(ctx context.Context, taskID pgtype.UUID)
 			&i.FailureReason,
 			&i.ElapsedMs,
 			&i.MessageKind,
+			&i.ClientReceiptRecordedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -623,7 +628,7 @@ func (q *Queries) ListChatInputMessages(ctx context.Context, taskID pgtype.UUID)
 }
 
 const listChatMessages = `-- name: ListChatMessages :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at FROM chat_message
 WHERE chat_session_id = $1
 ORDER BY created_at ASC
 `
@@ -647,6 +652,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUI
 			&i.FailureReason,
 			&i.ElapsedMs,
 			&i.MessageKind,
+			&i.ClientReceiptRecordedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -659,7 +665,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUI
 }
 
 const listChatMessagesPage = `-- name: ListChatMessagesPage :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at FROM chat_message
 WHERE chat_session_id = $1
   AND (
     $3::timestamptz IS NULL
@@ -700,6 +706,7 @@ func (q *Queries) ListChatMessagesPage(ctx context.Context, arg ListChatMessages
 			&i.FailureReason,
 			&i.ElapsedMs,
 			&i.MessageKind,
+			&i.ClientReceiptRecordedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -938,6 +945,22 @@ WHERE id = $1
 func (q *Queries) MarkChatSessionRead(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, markChatSessionRead, id)
 	return err
+}
+
+const recordChatMessageClientReceipt = `-- name: RecordChatMessageClientReceipt :one
+UPDATE chat_message
+SET client_receipt_recorded_at = now()
+WHERE id = $1 AND client_receipt_recorded_at IS NULL
+RETURNING client_receipt_recorded_at
+`
+
+// The first authorized browser receipt wins. Retries return no row, so only
+// one server replica emits the SLS terminal-stage event for this message.
+func (q *Queries) RecordChatMessageClientReceipt(ctx context.Context, id pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, recordChatMessageClientReceipt, id)
+	var client_receipt_recorded_at pgtype.Timestamptz
+	err := row.Scan(&client_receipt_recorded_at)
+	return client_receipt_recorded_at, err
 }
 
 const setChatSessionArchived = `-- name: SetChatSessionArchived :one

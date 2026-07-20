@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -588,6 +589,14 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	if !IsFCE2BRuntime(rt) {
 		return nil
 	}
+	trace, traceErr := chattrace.ForTask(task.Context, taskID, task.CreatedAt.Time)
+	if traceErr != nil {
+		return l.failLaunch(ctx, task, "invalid task trace: "+traceErr.Error())
+	}
+	chattrace.LogStage(slog.Default(), trace, "fc_e2b_launch", "started",
+		"task_id", taskID,
+		"runtime_id", runtimeID,
+	)
 	if !l.Config.Enabled {
 		return l.failLaunch(ctx, task, "FC/E2B runtime is disabled")
 	}
@@ -605,6 +614,11 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		return l.failLaunch(ctx, task, err.Error())
 	}
 	slog.Info("FC/E2B launch template resolved",
+		"task_id", taskID,
+		"runtime_id", runtimeID,
+		"template", template,
+	)
+	chattrace.LogStage(slog.Default(), trace, "fc_e2b_template", "resolved",
 		"task_id", taskID,
 		"runtime_id", runtimeID,
 		"template", template,
@@ -628,8 +642,15 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	}
 
 	scope, scoped := fcE2BScopeForTask(task)
-	sandboxID, coldStart, err := l.resolveSandbox(ctx, rt, scope, scoped, template)
+	sandboxResolveStarted := time.Now()
+	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_resolve", "started", "task_id", taskID)
+	sandboxID, coldStart, err := l.resolveSandbox(ctx, rt, scope, scoped, template, trace)
 	if err != nil {
+		chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_resolve", "failed",
+			"task_id", taskID,
+			"stage_elapsed_ms", time.Since(sandboxResolveStarted).Milliseconds(),
+			"error", err,
+		)
 		return l.failLaunch(ctx, task, err.Error())
 	}
 	scopeType := ""
@@ -645,6 +666,12 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		"cold_start", coldStart,
 		"scope_type", scopeType,
 		"scope_id", scopeID,
+	)
+	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_resolve", "succeeded",
+		"task_id", taskID,
+		"sandbox_id", sandboxID,
+		"cold_start", coldStart,
+		"stage_elapsed_ms", time.Since(sandboxResolveStarted).Milliseconds(),
 	)
 	extraEnv, err := l.extraEnvForTask(ctx, task, rt, sandboxID)
 	if err != nil {
@@ -662,7 +689,18 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	}); err != nil {
 		return l.failLaunch(ctx, task, "failed to persist FC/E2B daemon token")
 	}
+	runOnceStarted := time.Now()
+	chattrace.LogStage(slog.Default(), trace, "fc_e2b_run_once", "started",
+		"task_id", taskID,
+		"sandbox_id", sandboxID,
+	)
 	if err := l.execRunOnce(ctx, sandboxID, rt, task.ID, token, coldStart, extraEnv); err != nil {
+		chattrace.LogStage(slog.Default(), trace, "fc_e2b_run_once", "failed",
+			"task_id", taskID,
+			"sandbox_id", sandboxID,
+			"stage_elapsed_ms", time.Since(runOnceStarted).Milliseconds(),
+			"error", err,
+		)
 		return l.failLaunch(ctx, task, err.Error())
 	}
 	slog.Info("FC/E2B run-once submitted",
@@ -671,6 +709,11 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		"sandbox_id", sandboxID,
 		"cold_start", coldStart,
 		"duration", time.Since(started).String(),
+	)
+	chattrace.LogStage(slog.Default(), trace, "fc_e2b_run_once", "submitted",
+		"task_id", taskID,
+		"sandbox_id", sandboxID,
+		"stage_elapsed_ms", time.Since(runOnceStarted).Milliseconds(),
 	)
 	claimState, err := l.waitForRunOnceClaim(ctx, task)
 	if err != nil {
@@ -683,10 +726,18 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 			"runtime_id", runtimeID,
 			"sandbox_id", sandboxID,
 		)
+		chattrace.LogStage(slog.Default(), trace, "fc_e2b_claim", "observed",
+			"task_id", taskID,
+			"sandbox_id", sandboxID,
+		)
 	case fcE2BRunnerClaimBlocked:
 		slog.Info("FC/E2B run-once claim blocked by active task",
 			"task_id", taskID,
 			"runtime_id", runtimeID,
+			"sandbox_id", sandboxID,
+		)
+		chattrace.LogStage(slog.Default(), trace, "fc_e2b_claim", "blocked",
+			"task_id", taskID,
 			"sandbox_id", sandboxID,
 		)
 	case fcE2BRunnerClaimStalled:
@@ -846,6 +897,13 @@ func (l *FCE2BLauncher) extraEnvForTask(
 		return nil, err
 	}
 	env["OPENAI_MODEL"] = model
+	traceEnv, err := fcE2BTaskTraceEnv(task)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range traceEnv {
+		env[key] = value
+	}
 	var agentIdentityEnv map[string]string
 	if task.ChatSessionID.Valid {
 		agentIdentityEnv, err = l.chatDWSIdentityEnv(ctx, task, runtime, sandboxID)
@@ -867,6 +925,17 @@ func (l *FCE2BLauncher) extraEnvForTask(
 		"dingtalk_stream_connection_id", env[protocol.DingTalkStreamConnectionIDEnvKey],
 	)
 	return env, nil
+}
+
+func fcE2BTaskTraceEnv(task db.AgentTaskQueue) (map[string]string, error) {
+	trace, err := chattrace.ForTask(task.Context, util.UUIDToString(task.ID), task.CreatedAt.Time)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		chattrace.TraceIDEnvKey:              trace.TraceID,
+		chattrace.TraceStartedAtUnixMSEnvKey: strconv.FormatInt(trace.StartedAtUnixMS, 10),
+	}, nil
 }
 
 func sandboxSourceEnv(taskContext []byte) (map[string]string, error) {
@@ -1101,7 +1170,7 @@ func fcE2BAgentIdentityEnvForToken(token string, cfg FCE2BConfig) (map[string]st
 	}, nil
 }
 
-func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool, template string) (string, bool, error) {
+func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool, template string, trace chattrace.Trace) (string, bool, error) {
 	if scoped {
 		// Serialize the lookup-or-create with the other replicas before reading:
 		// a check outside the lock is exactly the race that orphans sandboxes.
@@ -1117,7 +1186,10 @@ func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, 
 			ScopeID:   scope.id,
 		})
 		if err == nil {
+			readyStarted := time.Now()
+			chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "checking", "sandbox_id", session.SandboxID, "cold_start", false)
 			if err := l.checkSandboxReady(ctx, session.SandboxID); err != nil {
+				chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "failed", "sandbox_id", session.SandboxID, "cold_start", false, "stage_elapsed_ms", time.Since(readyStarted).Milliseconds(), "error", err)
 				_ = l.Queries.MarkFCE2BSandboxSessionStale(ctx, db.MarkFCE2BSandboxSessionStaleParams{
 					RuntimeID: rt.ID,
 					ScopeType: scope.typ,
@@ -1126,6 +1198,7 @@ func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, 
 				})
 				return "", false, fmt.Errorf("FC/E2B warm sandbox %s is unavailable: %w", session.SandboxID, err)
 			}
+			chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "succeeded", "sandbox_id", session.SandboxID, "cold_start", false, "stage_elapsed_ms", time.Since(readyStarted).Milliseconds())
 			return session.SandboxID, false, nil
 		}
 		if err != pgx.ErrNoRows {
@@ -1133,13 +1206,21 @@ func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, 
 		}
 	}
 
+	createStarted := time.Now()
+	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_create", "started", "template", template)
 	sandboxID, err := l.createSandbox(ctx, template)
 	if err != nil {
+		chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_create", "failed", "template", template, "stage_elapsed_ms", time.Since(createStarted).Milliseconds(), "error", err)
 		return "", true, err
 	}
+	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_create", "succeeded", "sandbox_id", sandboxID, "template", template, "stage_elapsed_ms", time.Since(createStarted).Milliseconds())
+	readyStarted := time.Now()
+	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "waiting", "sandbox_id", sandboxID, "cold_start", true)
 	if err := l.waitSandboxReady(ctx, sandboxID); err != nil {
+		chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "failed", "sandbox_id", sandboxID, "cold_start", true, "stage_elapsed_ms", time.Since(readyStarted).Milliseconds(), "error", err)
 		return "", true, err
 	}
+	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "succeeded", "sandbox_id", sandboxID, "cold_start", true, "stage_elapsed_ms", time.Since(readyStarted).Milliseconds())
 	if scoped {
 		_, err = l.Queries.UpsertFCE2BSandboxSession(ctx, db.UpsertFCE2BSandboxSessionParams{
 			WorkspaceID: rt.WorkspaceID,
@@ -1302,6 +1383,8 @@ func sortedEnvKeys(env map[string]string) []string {
 func isAllowedFCE2BRootRunnerExtraEnv(key string) bool {
 	switch key {
 	case "OPENAI_MODEL",
+		chattrace.TraceIDEnvKey,
+		chattrace.TraceStartedAtUnixMSEnvKey,
 		protocol.SandboxSourceHostnameEnvKey,
 		protocol.DingTalkStreamHostnameEnvKey,
 		protocol.DingTalkStreamNodeIDEnvKey,

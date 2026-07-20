@@ -164,6 +164,7 @@ type ChatMessagePayload struct {
 	Content       string `json:"content"`
 	TaskID        string `json:"task_id,omitempty"`
 	CreatedAt     string `json:"created_at"`
+	TraceID       string `json:"trace_id,omitempty"`
 }
 
 // Chat message kinds (chat_message.message_kind). Additive: unknown values
@@ -191,13 +192,15 @@ const (
 // the omitempty tags only elide fields for the legacy paths that broadcast
 // without a row.
 type ChatDonePayload struct {
-	ChatSessionID string `json:"chat_session_id"`
-	TaskID        string `json:"task_id"`
-	MessageID     string `json:"message_id,omitempty"`
-	Content       string `json:"content,omitempty"`
-	ElapsedMs     int64  `json:"elapsed_ms,omitempty"`
-	CreatedAt     string `json:"created_at,omitempty"`
-	MessageKind   string `json:"message_kind,omitempty"`
+	ChatSessionID        string `json:"chat_session_id"`
+	TaskID               string `json:"task_id"`
+	MessageID            string `json:"message_id,omitempty"`
+	Content              string `json:"content,omitempty"`
+	ElapsedMs            int64  `json:"elapsed_ms,omitempty"`
+	CreatedAt            string `json:"created_at,omitempty"`
+	MessageKind          string `json:"message_kind,omitempty"`
+	TraceID              string `json:"trace_id,omitempty"`
+	TraceStartedAtUnixMS int64  `json:"trace_started_at_unix_ms,omitempty"`
 }
 
 // ChatSessionReadPayload is broadcast when the creator marks a session as read.

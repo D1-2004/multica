@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -607,14 +608,15 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 		ID:            util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		AgentID:       util.MustParseUUID(agentID),
 		ChatSessionID: util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		CreatedAt:     pgtype.Timestamptz{Time: time.UnixMilli(1_721_000_100_456), Valid: true},
 		Context:       []byte(`{"agent_identity_context_token":"caller_token_must_be_ignored"}`),
 	}
 	env, err := launcher.extraEnvForTask(ctx, task, runtime, "sbx-no-identity")
 	if err != nil {
 		t.Fatalf("extraEnvForTask returned error: %v", err)
 	}
-	if !reflect.DeepEqual(env, map[string]string{"OPENAI_MODEL": "qwen3.5-plus"}) {
-		t.Fatalf("extra env = %#v, want default FC model only", env)
+	if env["OPENAI_MODEL"] != "qwen3.5-plus" || env[chattrace.TraceIDEnvKey] != util.UUIDToString(task.ID) {
+		t.Fatalf("extra env = %#v, want default FC model and task trace", env)
 	}
 	if len(identityClient.requests) != 0 {
 		t.Fatalf("unbound chat made Agent Identity requests: %#v", identityClient.requests)
@@ -628,8 +630,8 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extraEnvForTask with selected model returned error: %v", err)
 	}
-	if !reflect.DeepEqual(env, map[string]string{"OPENAI_MODEL": "qwen3.7-plus"}) {
-		t.Fatalf("extra env = %#v, want selected FC model", env)
+	if env["OPENAI_MODEL"] != "qwen3.7-plus" || env[chattrace.TraceIDEnvKey] != util.UUIDToString(task.ID) {
+		t.Fatalf("extra env = %#v, want selected FC model and task trace", env)
 	}
 
 	if _, err := pool.Exec(ctx, `
@@ -675,7 +677,7 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("non-DWS runtime chat returned error: %v", err)
 	}
-	if len(identityClient.requests) != requestCount || !reflect.DeepEqual(env, map[string]string{"OPENAI_MODEL": "qwen3.7-plus"}) {
+	if len(identityClient.requests) != requestCount || env["OPENAI_MODEL"] != "qwen3.7-plus" || env[chattrace.TraceIDEnvKey] != util.UUIDToString(task.ID) {
 		t.Fatalf("non-DWS runtime used Agent Identity: requests=%d env=%#v", len(identityClient.requests), env)
 	}
 }
@@ -767,6 +769,46 @@ func TestFCE2BExtraEnvIncludesAgentIdentityContextToken(t *testing.T) {
 	}
 	if got["DWS_CLIENT_SECRET"] != "dws-client-secret" {
 		t.Fatal("DWS_CLIENT_SECRET was not forwarded")
+	}
+}
+
+func TestFCE2BTaskTraceEnv(t *testing.T) {
+	trace, err := chattrace.From("37d0871a-3657-4c74-91fa-39e846fa90a0", "web", 1_721_000_000_123)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextJSON, err := chattrace.Merge([]byte(`{"other":true}`), trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID := "cc22f8e5-c591-43bb-8757-699bd98f5797"
+	task := db.AgentTaskQueue{
+		ID:        util.MustParseUUID(taskID),
+		CreatedAt: pgtype.Timestamptz{Time: time.UnixMilli(1_721_000_000_999), Valid: true},
+		Context:   contextJSON,
+	}
+	env, err := fcE2BTaskTraceEnv(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env[chattrace.TraceIDEnvKey] != trace.TraceID || env[chattrace.TraceStartedAtUnixMSEnvKey] != "1721000000123" {
+		t.Fatalf("trace env = %#v", env)
+	}
+	if !isAllowedFCE2BRootRunnerExtraEnv(chattrace.TraceIDEnvKey) || !isAllowedFCE2BRootRunnerExtraEnv(chattrace.TraceStartedAtUnixMSEnvKey) {
+		t.Fatal("trace env keys are not allowed through the fixed root entrypoint")
+	}
+
+	createdAt := time.UnixMilli(1_721_000_100_456)
+	env, err = fcE2BTaskTraceEnv(db.AgentTaskQueue{
+		ID:        util.MustParseUUID(taskID),
+		CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+		Context:   []byte(`{"non_chat_task":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env[chattrace.TraceIDEnvKey] != taskID || env[chattrace.TraceStartedAtUnixMSEnvKey] != strconv.FormatInt(createdAt.UnixMilli(), 10) {
+		t.Fatalf("non-chat trace env = %#v", env)
 	}
 }
 

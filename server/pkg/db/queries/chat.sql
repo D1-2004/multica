@@ -160,6 +160,14 @@ UPDATE chat_message
 SET task_id = $2
 WHERE id = $1 AND role = 'user';
 
+-- name: RecordChatMessageClientReceipt :one
+-- The first authorized browser receipt wins. Retries return no row, so only
+-- one server replica emits the SLS terminal-stage event for this message.
+UPDATE chat_message
+SET client_receipt_recorded_at = now()
+WHERE id = $1 AND client_receipt_recorded_at IS NULL
+RETURNING client_receipt_recorded_at;
+
 -- name: DeleteUserChatMessageByTask :one
 DELETE FROM chat_message
 WHERE task_id = $1 AND role = 'user'

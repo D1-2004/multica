@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -2582,6 +2583,14 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	resp.DeliveredCommentIDs = uuidStringsOrEmpty(receipt)
 
 	slog.Info("task claimed by runtime", "task_id", uuidToString(task.ID), "runtime_id", runtimeID, "agent_id", uuidToString(task.AgentID), "prior_session", resp.PriorSessionID)
+	if trace, err := chattrace.ForTask(task.Context, uuidToString(task.ID), task.CreatedAt.Time); err != nil {
+		slog.Error("claimed task has invalid task trace", "task_id", uuidToString(task.ID), "error", err)
+	} else {
+		chattrace.LogStage(slog.Default(), trace, "task_claimed", "succeeded",
+			"task_id", uuidToString(task.ID),
+			"runtime_id", runtimeID,
+		)
+	}
 	if resp.Agent != nil && len(resp.Agent.Skills) > 0 {
 		if skillPayload, err := json.Marshal(resp.Agent.Skills); err == nil {
 			skillPayloadBytes = len(skillPayload)

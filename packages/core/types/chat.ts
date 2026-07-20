@@ -138,6 +138,16 @@ export interface SendChatMessageResponse {
   attachment_ids?: string[];
 }
 
+/** Browser acknowledgement emitted after a live assistant reply is rendered. */
+export interface ChatReplyReceivedRequest {
+  task_id: string;
+  trace_id: string;
+  ws_received_at_unix_ms: number;
+  rendered_at_unix_ms: number;
+  client_received_at: string;
+  elapsed_ms: number;
+}
+
 export interface CancelledChatMessage {
   chat_session_id: string;
   message_id: string;

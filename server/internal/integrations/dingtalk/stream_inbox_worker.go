@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	channelengine "github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
@@ -82,6 +83,7 @@ type StreamInboxReceipt struct {
 	InstallationID string
 	Status         string
 	DeliveryCount  int32
+	ReceivedAt     time.Time
 }
 
 // StreamInbox is the transport-facing contract. PersistFrame returns only
@@ -259,14 +261,20 @@ func (w *StreamInboxWorker) PersistFrame(
 		)
 		return StreamInboxReceipt{}, fmt.Errorf("dingtalk stream inbox: commit callback: %w", err)
 	}
+	if !row.ID.Valid || !row.ReceivedAt.Valid {
+		return StreamInboxReceipt{}, errors.New("dingtalk stream inbox: admitted row has no trace identity")
+	}
 	receipt := StreamInboxReceipt{
 		ID:             util.UUIDToString(row.ID),
 		InstallationID: util.UUIDToString(row.InstallationID),
 		Status:         row.Status,
 		DeliveryCount:  row.DeliveryCount,
+		ReceivedAt:     row.ReceivedAt.Time,
 	}
 	traceLog.Info("dingtalk stream inbox admitted",
 		"event", "dingtalk_stream_inbox_admitted",
+		"trace_id", receipt.ID,
+		"trace_started_at_unix_ms", receipt.ReceivedAt.UnixMilli(),
 		"inbox_id", receipt.ID,
 		"dedupe_kind", dedupeKind,
 		"status", receipt.Status,
@@ -479,6 +487,21 @@ func (w *StreamInboxWorker) ProcessNext(ctx context.Context) (bool, error) {
 	if !ok {
 		return true, w.complete(ctx, row, streamInboxStatusDiscarded, "payload_unusable", "callback has no message id", traceHash)
 	}
+	if !row.ReceivedAt.Valid {
+		return true, w.complete(ctx, row, streamInboxStatusDead, "invalid_ingress_time", "inbox received_at is missing", traceHash)
+	}
+	msg.TraceID = util.UUIDToString(row.ID)
+	msg.TraceChannel = "dingtalk_stream"
+	msg.TraceStartedAtUnixMS = row.ReceivedAt.Time.UnixMilli()
+	trace, err := chattrace.From(msg.TraceID, msg.TraceChannel, msg.TraceStartedAtUnixMS)
+	if err != nil {
+		return true, w.complete(ctx, row, streamInboxStatusDead, "invalid_chat_trace", "inbox chat trace is invalid", traceHash)
+	}
+	chattrace.LogStage(w.logger, trace, "stream_inbox_processing", "started",
+		"inbox_id", msg.TraceID,
+		"queue_latency_ms", queueLatency,
+		"attempt_count", row.AttemptCount+1,
+	)
 	handlerCtx, handlerCancel := context.WithTimeout(ctx, streamInboxHandlerTimeout)
 	handlerErr := w.handler(handlerCtx, msg)
 	handlerCancel()
