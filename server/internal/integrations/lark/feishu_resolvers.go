@@ -269,7 +269,7 @@ func dispatchResultFromEngine(res engine.Result) DispatchResult {
 
 type feishuTypingNotifier struct{ mgr *TypingIndicatorManager }
 
-func (r *feishuTypingNotifier) OnIngested(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, sessionID pgtype.UUID) {
+func (r *feishuTypingNotifier) OnIngested(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, sessionID, _ pgtype.UUID) {
 	larkInst, ok := inst.Platform.(Installation)
 	if !ok {
 		return

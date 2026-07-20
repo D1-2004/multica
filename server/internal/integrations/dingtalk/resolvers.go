@@ -551,13 +551,13 @@ func NewTypingNotifier(mgr *TypingIndicatorManager) engine.TypingNotifier {
 	return &dingtalkTypingNotifier{mgr: mgr}
 }
 
-func (n *dingtalkTypingNotifier) OnIngested(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, sessionID pgtype.UUID) {
+func (n *dingtalkTypingNotifier) OnIngested(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, sessionID, taskID pgtype.UUID) {
 	instRow, ok := inst.Platform.(db.ChannelInstallation)
 	if !ok {
 		return
 	}
 	raw, _ := decodeDingTalkRaw(msg) // best-effort; a decode miss just skips the age guard
-	n.mgr.Add(ctx, instRow, sessionID, EmotionTarget{
+	n.mgr.Add(ctx, instRow, sessionID, taskID, EmotionTarget{
 		OpenConversationID: msg.Source.ChatID,
 		OpenMsgID:          msg.MessageID,
 	}, raw.CreateAt)

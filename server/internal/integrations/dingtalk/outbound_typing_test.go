@@ -124,14 +124,15 @@ func TestOutboundTaskFailedClearsTypingAndNotifies(t *testing.T) {
 	out, mgr, q := outboundFixture(t, srv)
 
 	session := typingTestUUID(2)
-	mgr.Add(context.Background(), q.inst, session, EmotionTarget{OpenConversationID: "cid", OpenMsgID: "m1"}, time.Now().UnixMilli())
+	task := typingTestUUID(3)
+	mgr.Add(context.Background(), q.inst, session, task, EmotionTarget{OpenConversationID: "cid", OpenMsgID: "m1"}, time.Now().UnixMilli())
 
 	// Production shape: broadcastTaskEvent carries chat_session_id only in
 	// the payload map — the top-level ChatSessionID scope hint stays empty.
 	err := out.processEvent(context.Background(), events.Event{
 		Type: protocol.EventTaskFailed,
 		Payload: map[string]any{
-			"task_id":         "t1",
+			"task_id":         util.UUIDToString(task),
 			"chat_session_id": util.UUIDToString(session),
 			"status":          "failed",
 		},
@@ -158,23 +159,42 @@ func TestOutboundChatDoneClearsTypingBeforeReply(t *testing.T) {
 	out, mgr, q := outboundFixture(t, srv)
 
 	session := typingTestUUID(2)
-	mgr.Add(context.Background(), q.inst, session, EmotionTarget{OpenConversationID: "cid", OpenMsgID: "m1"}, time.Now().UnixMilli())
+	firstTask := typingTestUUID(3)
+	secondTask := typingTestUUID(4)
+	mgr.Add(context.Background(), q.inst, session, firstTask, EmotionTarget{OpenConversationID: "cid", OpenMsgID: "m1"}, time.Now().UnixMilli())
+	mgr.Add(context.Background(), q.inst, session, secondTask, EmotionTarget{OpenConversationID: "cid", OpenMsgID: "m2"}, time.Now().UnixMilli())
+	q.pending = []db.ListPendingChatMessagePreviewsAfterTaskRow{
+		{Content: "看看你的 MULTICA_SANDBOX_SOURCE_HOSTNAME 和 MULTICA_DINGTALK_STREAM_HOSTNAME"},
+		{Content: "再确认一下连接 ID 是否生效"},
+	}
 
 	err := out.processEvent(context.Background(), events.Event{
 		Type:          protocol.EventChatDone,
 		ChatSessionID: util.UUIDToString(session),
-		Payload:       protocol.ChatDonePayload{Content: "done!"},
+		Payload: protocol.ChatDonePayload{
+			TaskID:  util.UUIDToString(firstTask),
+			Content: "done!",
+		},
 	})
 	if err != nil {
 		t.Fatalf("processEvent: %v", err)
 	}
 	if rec.recalls != 1 {
-		t.Fatalf("expected the processing emotion to be recalled, got %d", rec.recalls)
+		t.Fatalf("expected only the completed turn emotion to be recalled, got %d", rec.recalls)
+	}
+	if len(q.indicators) != 1 {
+		t.Fatalf("later turn indicator count = %d, want 1", len(q.indicators))
 	}
 	if len(rec.sends) != 1 {
 		t.Fatalf("expected the reply to be sent, got %d", len(rec.sends))
 	}
 	if got, _ := rec.sends[0]["openConversationId"].(string); got != "cid" {
 		t.Fatalf("reply target = %q, want real group conversation id", got)
+	}
+	msgParam, _ := rec.sends[0]["msgParam"].(string)
+	if !strings.Contains(msgParam, "后续待处理（2 条）") ||
+		!strings.Contains(msgParam, "看看你的 MULTICA_SANDBOX_SOURCE_HOSTNAME") ||
+		!strings.Contains(msgParam, "再确认一下连接 ID 是否生效") {
+		t.Fatalf("queued message summary missing from reply: %q", msgParam)
 	}
 }

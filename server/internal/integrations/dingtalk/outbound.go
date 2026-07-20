@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,6 +24,7 @@ import (
 type outboundQueries interface {
 	GetChannelChatSessionBindingBySession(ctx context.Context, arg db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error)
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
+	ListPendingChatMessagePreviewsAfterTask(ctx context.Context, taskID pgtype.UUID) ([]db.ListPendingChatMessagePreviewsAfterTaskRow, error)
 }
 
 // taskFailedText is the user-visible notice for a failed chat run. The
@@ -80,11 +82,9 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 		// Issue / autopilot tasks carry no chat_session.
 		return nil
 	}
-	// Clear the "processing" emotion before the reply is visible so the
-	// user sees a clean transition. Best-effort and a no-op for sessions
-	// with no tracked emotion (other channels, task-failed after settle).
-	if o.typing != nil {
-		o.typing.Clear(ctx, sessionID)
+	taskID := taskIDFromEvent(e)
+	if !taskID.Valid {
+		return fmt.Errorf("dingtalk outbound event has no task id")
 	}
 	binding, err := o.q.GetChannelChatSessionBindingBySession(ctx, db.GetChannelChatSessionBindingBySessionParams{
 		ChatSessionID: sessionID,
@@ -96,6 +96,11 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 		}
 		return fmt.Errorf("lookup dingtalk chat binding: %w", err)
 	}
+	// Clear only this task's "processing" emotions before the reply is visible.
+	// Later queued turns in the same chat keep their own per-message indicators.
+	if o.typing != nil {
+		o.typing.ClearTask(ctx, sessionID, taskID)
+	}
 	// task-failed delivers the failure notice; chat-done delivers the reply.
 	// Without the notice a failed run is indistinguishable from a silent
 	// success — the processing emotion just vanishes (the Lark channel
@@ -106,6 +111,15 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 		if content == "" {
 			return nil // nothing to say (empty completion)
 		}
+	}
+	pending, err := o.q.ListPendingChatMessagePreviewsAfterTask(ctx, taskID)
+	if err != nil {
+		o.logger.WarnContext(ctx, "dingtalk outbound: pending message summary lookup failed",
+			"chat_session_id", util.UUIDToString(sessionID),
+			"task_id", util.UUIDToString(taskID),
+			"error", err)
+	} else {
+		content = appendPendingQueueSummary(content, pending)
 	}
 	inst, err := o.q.GetChannelInstallation(ctx, db.GetChannelInstallationParams{
 		ID:          binding.InstallationID,
@@ -125,6 +139,43 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 		return fmt.Errorf("post dingtalk reply: %w", err)
 	}
 	return nil
+}
+
+const (
+	pendingQueuePreviewLimit     = 10
+	pendingQueuePreviewRuneLimit = 60
+)
+
+func appendPendingQueueSummary(content string, pending []db.ListPendingChatMessagePreviewsAfterTaskRow) string {
+	if len(pending) == 0 {
+		return content
+	}
+	var b strings.Builder
+	b.WriteString(strings.TrimSpace(content))
+	fmt.Fprintf(&b, "\n\n---\n\n**后续待处理（%d 条）**\n", len(pending))
+	visible := len(pending)
+	if visible > pendingQueuePreviewLimit {
+		visible = pendingQueuePreviewLimit
+	}
+	for i := 0; i < visible; i++ {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, summarizePendingMessage(pending[i].Content))
+	}
+	if remaining := len(pending) - visible; remaining > 0 {
+		fmt.Fprintf(&b, "\n另外还有 %d 条待处理。", remaining)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func summarizePendingMessage(content string) string {
+	text := strings.Join(strings.Fields(content), " ")
+	if text == "" {
+		return "（空消息）"
+	}
+	runes := []rune(text)
+	if len(runes) <= pendingQueuePreviewRuneLimit {
+		return text
+	}
+	return string(runes[:pendingQueuePreviewRuneLimit]) + "…"
 }
 
 // outboundTarget recovers the robot-API send target from the chat binding:
@@ -167,6 +218,22 @@ func sessionIDFromEvent(e events.Event) pgtype.UUID {
 		}
 	case protocol.ChatDonePayload:
 		if id, err := util.ParseUUID(p.ChatSessionID); err == nil {
+			return id
+		}
+	}
+	return pgtype.UUID{}
+}
+
+func taskIDFromEvent(e events.Event) pgtype.UUID {
+	switch p := e.Payload.(type) {
+	case map[string]any:
+		if s, _ := p["task_id"].(string); s != "" {
+			if id, err := util.ParseUUID(s); err == nil {
+				return id
+			}
+		}
+	case protocol.ChatDonePayload:
+		if id, err := util.ParseUUID(p.TaskID); err == nil {
 			return id
 		}
 	}

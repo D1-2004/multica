@@ -68,6 +68,9 @@ type Result struct {
 	DropReason     DropReason
 	InstallationID pgtype.UUID
 	ChatSessionID  pgtype.UUID
+	// TaskID is the durable task atomically committed with this inbound
+	// message. Channels without durable inbound runs leave it unset.
+	TaskID pgtype.UUID
 	// Sender is the platform-native sender id (e.g. Lark open_id), so the
 	// replier can target a binding prompt back to the sender.
 	Sender          string
@@ -244,7 +247,7 @@ type OutboundReplier interface {
 // it.
 type TypingNotifier interface {
 	// OnIngested shows the indicator for a successfully ingested message.
-	OnIngested(ctx context.Context, inst ResolvedInstallation, msg channel.InboundMessage, sessionID pgtype.UUID)
+	OnIngested(ctx context.Context, inst ResolvedInstallation, msg channel.InboundMessage, sessionID, taskID pgtype.UUID)
 	// OnSettled clears the indicator for a session whose run trigger produced no
 	// task (agent offline / archived, or an enqueue failure). In that case no
 	// task lifecycle event is ever published, so the platform's own bus-driven

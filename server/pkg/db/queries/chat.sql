@@ -182,6 +182,21 @@ SELECT * FROM chat_message
 WHERE task_id = $1 AND role = 'user'
 ORDER BY created_at ASC, id ASC;
 
+-- name: ListPendingChatMessagePreviewsAfterTask :many
+-- Lists the exact user messages owned by later active turns in the same chat.
+-- The completed task's input owner is excluded so an automatic retry of the
+-- just-finished turn is never presented as a separate queued user message.
+SELECT m.id, m.content, m.created_at
+FROM agent_task_queue pending
+JOIN agent_task_queue completed ON completed.id = sqlc.arg(task_id)
+JOIN chat_message m ON m.task_id = COALESCE(pending.chat_input_task_id, pending.id)
+WHERE pending.chat_session_id = completed.chat_session_id
+  AND pending.status IN ('deferred', 'queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND COALESCE(pending.chat_input_task_id, pending.id)
+      <> COALESCE(completed.chat_input_task_id, completed.id)
+  AND m.role = 'user'
+ORDER BY pending.created_at ASC, m.created_at ASC, m.id ASC;
+
 -- name: ListChatMessagesPage :many
 SELECT * FROM chat_message
 WHERE chat_session_id = $1
