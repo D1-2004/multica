@@ -107,6 +107,44 @@ WHERE workspace_id = $1
   AND provider = $3
   AND profile_id IS NULL;
 
+-- name: UpsertManagedCloudAgentRuntime :one
+-- Managed runtimes may be reconciled repeatedly as ownership changes. Keep the
+-- existing runner protocol while the configured template is unchanged, then
+-- atomically move template and protocol together when the template changes.
+INSERT INTO agent_runtime (
+    workspace_id,
+    daemon_id,
+    name,
+    runtime_mode,
+    provider,
+    status,
+    device_info,
+    metadata,
+    owner_id,
+    visibility,
+    last_seen_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+ON CONFLICT (workspace_id, daemon_id, provider) WHERE profile_id IS NULL
+DO UPDATE SET
+    name = EXCLUDED.name,
+    runtime_mode = EXCLUDED.runtime_mode,
+    status = EXCLUDED.status,
+    device_info = EXCLUDED.device_info,
+    metadata = CASE
+        WHEN agent_runtime.metadata->>'template' = EXCLUDED.metadata->>'template' THEN
+            CASE
+                WHEN agent_runtime.metadata ? 'runner' THEN
+                    jsonb_set(EXCLUDED.metadata, '{runner}', agent_runtime.metadata->'runner', true)
+                ELSE EXCLUDED.metadata - 'runner'
+            END
+        ELSE EXCLUDED.metadata
+    END,
+    owner_id = EXCLUDED.owner_id,
+    visibility = EXCLUDED.visibility,
+    last_seen_at = now(),
+    updated_at = now()
+RETURNING *;
+
 -- name: UpsertAgentRuntimeWithProfile :one
 -- Custom-runtime registration: a daemon resolved a workspace runtime_profile's
 -- command_name on PATH and is registering an instance of it. The arbiter is the

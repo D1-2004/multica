@@ -1474,3 +1474,91 @@ func (q *Queries) UpsertCloudAgentRuntime(ctx context.Context, arg UpsertCloudAg
 	)
 	return i, err
 }
+
+const upsertManagedCloudAgentRuntime = `-- name: UpsertManagedCloudAgentRuntime :one
+INSERT INTO agent_runtime (
+    workspace_id,
+    daemon_id,
+    name,
+    runtime_mode,
+    provider,
+    status,
+    device_info,
+    metadata,
+    owner_id,
+    visibility,
+    last_seen_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+ON CONFLICT (workspace_id, daemon_id, provider) WHERE profile_id IS NULL
+DO UPDATE SET
+    name = EXCLUDED.name,
+    runtime_mode = EXCLUDED.runtime_mode,
+    status = EXCLUDED.status,
+    device_info = EXCLUDED.device_info,
+    metadata = CASE
+        WHEN agent_runtime.metadata->>'template' = EXCLUDED.metadata->>'template' THEN
+            CASE
+                WHEN agent_runtime.metadata ? 'runner' THEN
+                    jsonb_set(EXCLUDED.metadata, '{runner}', agent_runtime.metadata->'runner', true)
+                ELSE EXCLUDED.metadata - 'runner'
+            END
+        ELSE EXCLUDED.metadata
+    END,
+    owner_id = EXCLUDED.owner_id,
+    visibility = EXCLUDED.visibility,
+    last_seen_at = now(),
+    updated_at = now()
+RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, visibility, profile_id, custom_name
+`
+
+type UpsertManagedCloudAgentRuntimeParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	DaemonID    pgtype.Text `json:"daemon_id"`
+	Name        string      `json:"name"`
+	RuntimeMode string      `json:"runtime_mode"`
+	Provider    string      `json:"provider"`
+	Status      string      `json:"status"`
+	DeviceInfo  string      `json:"device_info"`
+	Metadata    []byte      `json:"metadata"`
+	OwnerID     pgtype.UUID `json:"owner_id"`
+	Visibility  string      `json:"visibility"`
+}
+
+// Managed runtimes may be reconciled repeatedly as ownership changes. Keep the
+// existing runner protocol while the configured template is unchanged, then
+// atomically move template and protocol together when the template changes.
+func (q *Queries) UpsertManagedCloudAgentRuntime(ctx context.Context, arg UpsertManagedCloudAgentRuntimeParams) (AgentRuntime, error) {
+	row := q.db.QueryRow(ctx, upsertManagedCloudAgentRuntime,
+		arg.WorkspaceID,
+		arg.DaemonID,
+		arg.Name,
+		arg.RuntimeMode,
+		arg.Provider,
+		arg.Status,
+		arg.DeviceInfo,
+		arg.Metadata,
+		arg.OwnerID,
+		arg.Visibility,
+	)
+	var i AgentRuntime
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.DaemonID,
+		&i.Name,
+		&i.RuntimeMode,
+		&i.Provider,
+		&i.Status,
+		&i.DeviceInfo,
+		&i.Metadata,
+		&i.LastSeenAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerID,
+		&i.LegacyDaemonID,
+		&i.Visibility,
+		&i.ProfileID,
+		&i.CustomName,
+	)
+	return i, err
+}

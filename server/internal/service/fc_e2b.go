@@ -46,7 +46,22 @@ const (
 	fcE2BRunnerClaimPollInterval    = 500 * time.Millisecond
 	fcE2BRunOnceHealthPortBase      = 20000
 	fcE2BRunOnceHealthPortSpan      = 30000
+	fcE2BRootRunnerInstallDir       = "/usr/local/libexec"
+	fcE2BLegacyRunnerInstallDir     = "/usr/local/bin"
 )
+
+type fcE2BRunnerLaunchMode string
+
+const (
+	fcE2BRunnerLaunchLegacyUser fcE2BRunnerLaunchMode = "legacy-user-v1"
+	fcE2BRunnerLaunchRootLog    fcE2BRunnerLaunchMode = "root-log-v1"
+)
+
+type fcE2BRunnerLaunch struct {
+	Mode    fcE2BRunnerLaunchMode
+	Command string
+	Home    string
+}
 
 type fcE2BRunnerClaimState string
 
@@ -290,15 +305,46 @@ func FCE2BProviderForTemplate(refs ...string) string {
 	return FCE2BProvider
 }
 
-// FCE2BRunnerCommandForProvider returns the in-sandbox runner wrapper for a
-// provider, following the multica-fc-<provider>-runner convention the
-// template images ship on PATH.
+// FCE2BRunnerCommandForProvider returns the protocol marker recorded for images
+// that contain the fixed root log entrypoint. The stored value is never
+// executed directly; the launcher maps an exact marker to a fixed path.
 func FCE2BRunnerCommandForProvider(provider string) string {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "" {
 		provider = FCE2BProvider
 	}
+	return "multica-fc-" + provider + "-container-log-entry"
+}
+
+func fcE2BLegacyRunnerCommandForProvider(provider string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		provider = FCE2BProvider
+	}
 	return "multica-fc-" + provider + "-runner"
+}
+
+func fcE2BRunnerLaunchForMode(provider string, mode fcE2BRunnerLaunchMode) (fcE2BRunnerLaunch, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if !IsFCE2BSupportedProvider(provider) {
+		return fcE2BRunnerLaunch{}, fmt.Errorf("unsupported FC/E2B runtime provider %q", provider)
+	}
+	switch mode {
+	case fcE2BRunnerLaunchRootLog:
+		return fcE2BRunnerLaunch{
+			Mode:    mode,
+			Command: fcE2BRootRunnerInstallDir + "/" + FCE2BRunnerCommandForProvider(provider),
+			Home:    "/root",
+		}, nil
+	case fcE2BRunnerLaunchLegacyUser:
+		return fcE2BRunnerLaunch{
+			Mode:    mode,
+			Command: fcE2BLegacyRunnerInstallDir + "/" + fcE2BLegacyRunnerCommandForProvider(provider),
+			Home:    "/home/user",
+		}, nil
+	default:
+		return fcE2BRunnerLaunch{}, fmt.Errorf("unsupported FC/E2B runner launch mode %q", mode)
+	}
 }
 
 // FCE2BRuntimeProvider returns the agent provider recorded on an FC/E2B
@@ -312,19 +358,107 @@ func FCE2BRuntimeProvider(rt db.AgentRuntime) string {
 	return FCE2BProvider
 }
 
-// fcE2BRunnerForRuntime resolves the runner command for a runtime: the
-// metadata recorded at creation wins, then the provider-derived convention.
-func fcE2BRunnerForRuntime(rt db.AgentRuntime) string {
+// fcE2BRunnerLaunchForRuntime maps the runtime's exact, server-written protocol
+// marker to one of two fixed commands. Legacy images run their shell entrypoint
+// as the sandbox user. New images start the root-owned log entrypoint as root so
+// it can attach to FC PID 1 stdout before permanently dropping to uid 1000.
+// Runtime metadata can select only a known protocol; it can never choose the
+// executable path or inject command arguments.
+func fcE2BRunnerLaunchForRuntime(rt db.AgentRuntime) (fcE2BRunnerLaunch, error) {
+	provider := FCE2BRuntimeProvider(rt)
+	if !IsFCE2BSupportedProvider(provider) {
+		return fcE2BRunnerLaunch{}, fmt.Errorf("unsupported FC/E2B runtime provider %q", provider)
+	}
+
 	var metadata struct {
-		Runner string `json:"runner"`
+		Runner json.RawMessage `json:"runner"`
 	}
 	if len(rt.Metadata) > 0 {
-		_ = json.Unmarshal(rt.Metadata, &metadata)
+		if err := json.Unmarshal(rt.Metadata, &metadata); err != nil {
+			return fcE2BRunnerLaunch{}, errors.New("invalid FC/E2B runtime metadata")
+		}
 	}
-	if runner := strings.TrimSpace(metadata.Runner); runner != "" {
-		return runner
+
+	// Rows created before runner markers were introduced used the legacy user
+	// entrypoint, so an absent marker is an explicit legacy protocol value.
+	legacyMarker := fcE2BLegacyRunnerCommandForProvider(provider)
+	rootMarker := FCE2BRunnerCommandForProvider(provider)
+	if len(metadata.Runner) == 0 {
+		return fcE2BRunnerLaunchForMode(provider, fcE2BRunnerLaunchLegacyUser)
 	}
-	return FCE2BRunnerCommandForProvider(FCE2BRuntimeProvider(rt))
+	if bytes.Equal(bytes.TrimSpace(metadata.Runner), []byte("null")) {
+		return fcE2BRunnerLaunch{}, errors.New("invalid FC/E2B runner protocol marker")
+	}
+	var runnerMarker string
+	if err := json.Unmarshal(metadata.Runner, &runnerMarker); err != nil || runnerMarker == "" {
+		return fcE2BRunnerLaunch{}, errors.New("invalid FC/E2B runner protocol marker")
+	}
+	switch runnerMarker {
+	case legacyMarker:
+		return fcE2BRunnerLaunchForMode(provider, fcE2BRunnerLaunchLegacyUser)
+	case rootMarker:
+		return fcE2BRunnerLaunchForMode(provider, fcE2BRunnerLaunchRootLog)
+	default:
+		return fcE2BRunnerLaunch{}, fmt.Errorf("unsupported FC/E2B runner protocol %q for provider %q", runnerMarker, provider)
+	}
+}
+
+// detectFCE2BRunnerLaunch validates the stored protocol marker, then selects
+// the image-owned entrypoint that is actually executable in this sandbox. The
+// capability checks run as the sandbox user and inspect only server-derived,
+// fixed absolute paths. Metadata can neither provide a path nor make a command
+// run as root.
+func (l *FCE2BLauncher) detectFCE2BRunnerLaunch(ctx context.Context, sandboxID string, rt db.AgentRuntime) (fcE2BRunnerLaunch, error) {
+	hint, err := fcE2BRunnerLaunchForRuntime(rt)
+	if err != nil {
+		return fcE2BRunnerLaunch{}, err
+	}
+
+	provider := FCE2BRuntimeProvider(rt)
+	rootLaunch, err := fcE2BRunnerLaunchForMode(provider, fcE2BRunnerLaunchRootLog)
+	if err != nil {
+		return fcE2BRunnerLaunch{}, err
+	}
+	legacyLaunch, err := fcE2BRunnerLaunchForMode(provider, fcE2BRunnerLaunchLegacyUser)
+	if err != nil {
+		return fcE2BRunnerLaunch{}, err
+	}
+	candidates := []fcE2BRunnerLaunch{rootLaunch, legacyLaunch}
+	if hint.Mode == fcE2BRunnerLaunchLegacyUser {
+		candidates[0], candidates[1] = candidates[1], candidates[0]
+	}
+
+	probeErrors := make([]error, 0, len(candidates))
+	for _, candidate := range candidates {
+		_, err = l.runE2BCommand(ctx, []string{
+			"sandbox", "exec",
+			"--user", "user",
+			sandboxID,
+			"--",
+			"/usr/bin/test", "-x", candidate.Command,
+		})
+		if err == nil {
+			if candidate.Mode != hint.Mode {
+				slog.Warn("FC/E2B runner protocol adjusted to sandbox capability",
+					"sandbox_id", sandboxID,
+					"provider", provider,
+					"metadata_protocol", string(hint.Mode),
+					"selected_protocol", string(candidate.Mode),
+					"unavailable_error", probeErrors[0],
+				)
+			}
+			return candidate, nil
+		}
+		probeErrors = append(probeErrors, err)
+	}
+
+	slog.Error("FC/E2B runner capability probe failed",
+		"sandbox_id", sandboxID,
+		"provider", provider,
+		"first_probe_error", probeErrors[0],
+		"second_probe_error", probeErrors[1],
+	)
+	return fcE2BRunnerLaunch{}, fmt.Errorf("FC/E2B sandbox %s has no executable runner entrypoint for provider %s", sandboxID, provider)
 }
 
 func FCE2BRuntimeHasCapability(rt db.AgentRuntime, capability string) bool {
@@ -648,6 +782,10 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		"scope_type", scopeType,
 		"scope_id", scopeID,
 	)
+	launch, err := l.detectFCE2BRunnerLaunch(ctx, sandboxID, rt)
+	if err != nil {
+		return l.failLaunch(ctx, task, err.Error())
+	}
 	extraEnv, err := l.extraEnvForTask(ctx, task, rt, sandboxID)
 	if err != nil {
 		return l.failLaunch(ctx, task, err.Error())
@@ -664,7 +802,7 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	}); err != nil {
 		return l.failLaunch(ctx, task, "failed to persist FC/E2B daemon token")
 	}
-	if err := l.execRunOnce(ctx, sandboxID, rt, task.ID, token, coldStart, extraEnv); err != nil {
+	if err := l.execRunOnce(ctx, sandboxID, rt, launch.Mode, task.ID, token, coldStart, extraEnv); err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
 	slog.Info("FC/E2B run-once submitted",
@@ -1207,23 +1345,45 @@ func (l *FCE2BLauncher) waitSandboxReady(ctx context.Context, sandboxID string) 
 	}
 }
 
-func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db.AgentRuntime, taskID pgtype.UUID, token string, coldStart bool, extraEnv map[string]string) error {
+func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db.AgentRuntime, launchMode fcE2BRunnerLaunchMode, taskID pgtype.UUID, token string, coldStart bool, extraEnv map[string]string) error {
 	runtimeID := util.UUIDToString(rt.ID)
 	healthPort := fcE2BHealthPortForTask(taskID)
+	launch, err := fcE2BRunnerLaunchForMode(FCE2BRuntimeProvider(rt), launchMode)
+	if err != nil {
+		return err
+	}
+	for key := range extraEnv {
+		if !isAllowedFCE2BRunnerExtraEnv(key) {
+			return fmt.Errorf("FC/E2B runner environment key %q is not allowed", key)
+		}
+	}
 	args := []string{
 		"sandbox", "exec",
 		"--background",
-		"-e", "MULTICA_SERVER_URL=" + l.Config.ServerURL,
-		"-e", "MULTICA_DAEMON_TOKEN=" + token,
-		"-e", "MULTICA_RUNTIME_ID=" + runtimeID,
-		"-e", "MULTICA_TASK_ID=" + util.UUIDToString(taskID),
-		"-e", "MULTICA_DAEMON_ID=" + rt.DaemonID.String,
-		"-e", "MULTICA_AGENT_RUNTIME_NAME=" + rt.Name,
-		"-e", "HOME=/home/user",
-		"-e", "DWS_CONFIG_DIR=/home/user/.dws",
-		"-e", "OPENAI_BASE_URL=" + l.Config.LLMBaseURL,
-		"-e", "OPENAI_API_KEY=" + l.Config.LLMAPIKey,
 	}
+	if launch.Mode == fcE2BRunnerLaunchRootLog {
+		args = append(args,
+			"--user", "root",
+			"-e", "LD_PRELOAD=",
+			"-e", "LD_LIBRARY_PATH=",
+			"-e", "LD_AUDIT=",
+			"-e", "GCONV_PATH=",
+			"-e", "BASH_ENV=",
+			"-e", "ENV=",
+		)
+	}
+	args = append(args,
+		"-e", "MULTICA_SERVER_URL="+l.Config.ServerURL,
+		"-e", "MULTICA_DAEMON_TOKEN="+token,
+		"-e", "MULTICA_RUNTIME_ID="+runtimeID,
+		"-e", "MULTICA_TASK_ID="+util.UUIDToString(taskID),
+		"-e", "MULTICA_DAEMON_ID="+rt.DaemonID.String,
+		"-e", "MULTICA_AGENT_RUNTIME_NAME="+rt.Name,
+		"-e", "HOME="+launch.Home,
+		"-e", "DWS_CONFIG_DIR=/home/user/.dws",
+		"-e", "OPENAI_BASE_URL="+l.Config.LLMBaseURL,
+		"-e", "OPENAI_API_KEY="+l.Config.LLMAPIKey,
+	)
 	if coldStart {
 		args = append(args, "-e", "MULTICA_FC_E2B_COLD_START=true")
 	}
@@ -1233,10 +1393,17 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 	args = append(args,
 		sandboxID,
 		"--",
-		fcE2BRunnerForRuntime(rt),
+		launch.Command,
 		"--runtime-id", runtimeID,
 		"--provider", FCE2BRuntimeProvider(rt),
 		"--health-port", strconv.Itoa(healthPort),
+	)
+	slog.Info("FC/E2B runner launch selected",
+		"task_id", util.UUIDToString(taskID),
+		"runtime_id", runtimeID,
+		"sandbox_id", sandboxID,
+		"provider", FCE2BRuntimeProvider(rt),
+		"runner_protocol", string(launch.Mode),
 	)
 	if _, err := l.runE2BCommand(ctx, args); err != nil {
 		return fmt.Errorf("FC/E2B runner exec failed: %w", err)
@@ -1281,6 +1448,23 @@ func sortedEnvKeys(env map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func isAllowedFCE2BRunnerExtraEnv(key string) bool {
+	switch key {
+	case "OPENAI_MODEL",
+		protocol.SandboxSourceHostnameEnvKey,
+		protocol.DingTalkStreamHostnameEnvKey,
+		protocol.DingTalkStreamNodeIDEnvKey,
+		protocol.DingTalkStreamConnectionIDEnvKey,
+		protocol.AgentIdentityContextTokenEnvKey,
+		"MULTICA_AGENT_IDENTITY_BASE_URL",
+		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS",
+		"DWS_CLIENT_SECRET":
+		return true
+	default:
+		return false
+	}
 }
 
 func fcE2BTemplateForRuntime(rt db.AgentRuntime, configuredTemplate string) (string, error) {
