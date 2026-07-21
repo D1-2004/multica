@@ -76,6 +76,7 @@ import type {
   PendingChatTasksResponse,
   HasPendingChatTasksResponse,
   SendChatMessageResponse,
+  ChatReplyReceivedRequest,
   CancelTaskResponse,
   Project,
   CreateProjectRequest,
@@ -2026,6 +2027,20 @@ export class ApiClient {
 
   async markChatSessionRead(sessionId: string): Promise<void> {
     await this.fetch(`/api/chat/sessions/${sessionId}/read`, { method: "POST" });
+  }
+
+  async reportChatReplyReceived(
+    sessionId: string,
+    messageId: string,
+    data: ChatReplyReceivedRequest,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/chat/sessions/${sessionId}/messages/${messageId}/received`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
   }
 
   async cancelTaskById(taskId: string): Promise<CancelTaskResponse> {

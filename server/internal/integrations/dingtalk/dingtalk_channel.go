@@ -13,6 +13,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 )
 
@@ -245,9 +246,26 @@ func (c *dingtalkChannel) handleFrame(ctx context.Context, conn *websocket.Conn,
 			)
 			return false, fmt.Errorf("dingtalk stream: persist callback before ack: %w", err)
 		}
+		trace, err := chattrace.From(receipt.ID, "dingtalk_stream", receipt.ReceivedAt.UnixMilli())
+		if err != nil {
+			return false, fmt.Errorf("dingtalk stream: invalid admitted chat trace: %w", err)
+		}
+		ackStarted := time.Now()
+		chattrace.LogStage(c.logger, trace, "stream_callback_ack", "started",
+			"inbox_id", receipt.ID,
+			"delivery_count", receipt.DeliveryCount,
+		)
 		if err := writeStreamResponse(conn, newStreamAck(frame, `{"response":{}}`)); err != nil {
+			chattrace.LogStage(c.logger, trace, "stream_callback_ack", "failed",
+				"inbox_id", receipt.ID,
+				"delivery_count", receipt.DeliveryCount,
+				"stage_elapsed_ms", time.Since(ackStarted).Milliseconds(),
+				"error", err,
+			)
 			traceLog.Error("dingtalk stream callback ack write failed after admission",
 				"event", "dingtalk_stream_callback_ack_failed",
+				"trace_id", receipt.ID,
+				"trace_started_at_unix_ms", receipt.ReceivedAt.UnixMilli(),
 				"inbox_id", receipt.ID,
 				"error_class", "stream_write",
 				"inbox_status", receipt.Status,
@@ -257,8 +275,15 @@ func (c *dingtalkChannel) handleFrame(ctx context.Context, conn *websocket.Conn,
 			return false, fmt.Errorf("dingtalk stream: ack callback: %w", err)
 		}
 		c.inbox.Notify()
+		chattrace.LogStage(c.logger, trace, "stream_callback_ack", "succeeded",
+			"inbox_id", receipt.ID,
+			"delivery_count", receipt.DeliveryCount,
+			"stage_elapsed_ms", time.Since(ackStarted).Milliseconds(),
+		)
 		traceLog.Info("dingtalk stream callback acknowledged",
 			"event", "dingtalk_stream_callback_acknowledged",
+			"trace_id", receipt.ID,
+			"trace_started_at_unix_ms", receipt.ReceivedAt.UnixMilli(),
 			"inbox_id", receipt.ID,
 			"inbox_status", receipt.Status,
 			"delivery_count", receipt.DeliveryCount,

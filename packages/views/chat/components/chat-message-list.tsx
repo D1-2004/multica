@@ -36,6 +36,7 @@ import { TaskStatusPill } from "./task-status-pill";
 import { formatElapsedMs } from "../lib/format";
 import { splitTimeline, extractCopyText } from "../lib/copy-text";
 import { useT } from "../../i18n";
+import { ChatReplyReceipt } from "./chat-reply-receipt";
 
 // ─── Public component ────────────────────────────────────────────────────
 
@@ -54,6 +55,8 @@ interface ChatMessageListProps {
   onLoadOlderMessages?: () => void;
   /** Transform assistant task text for embedded chat protocols before render/copy. */
   transformContent?: (content: string) => string;
+  /** Whether this mounted chat surface may acknowledge rendered live replies. */
+  receiptEnabled?: boolean;
 }
 
 // ─── Virtuoso chrome ─────────────────────────────────────────────────────
@@ -125,6 +128,7 @@ export function ChatMessageList({
   isFetchingOlderMessages = false,
   onLoadOlderMessages,
   transformContent,
+  receiptEnabled = false,
 }: ChatMessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollContainerEl, setScrollContainerEl] = useState<HTMLDivElement | null>(null);
@@ -212,6 +216,7 @@ export function ChatMessageList({
               message={msg}
               isPending={!!pendingTaskId && msg.task_id === pendingTaskId}
               transformContent={transformContent}
+              receiptEnabled={receiptEnabled}
             />
           </div>
         )}
@@ -259,10 +264,12 @@ const MessageBubble = memo(function MessageBubble({
   message,
   isPending,
   transformContent,
+  receiptEnabled,
 }: {
   message: ChatMessage;
   isPending: boolean;
   transformContent?: (content: string) => string;
+  receiptEnabled: boolean;
 }) {
   if (message.role === "user") {
     return (
@@ -286,11 +293,17 @@ const MessageBubble = memo(function MessageBubble({
   }
 
   return (
-    <AssistantMessage
-      message={message}
-      isPending={isPending}
-      transformContent={transformContent}
-    />
+    <>
+      <ChatReplyReceipt
+        messageId={message.id}
+        receiptEnabled={receiptEnabled}
+      />
+      <AssistantMessage
+        message={message}
+        isPending={isPending}
+        transformContent={transformContent}
+      />
+    </>
   );
 });
 

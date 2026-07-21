@@ -892,6 +892,41 @@ describe("ApiClient", () => {
     });
   });
 
+  describe("reportChatReplyReceived", () => {
+    it("posts the rendered reply timing to the message receipt endpoint", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(new Response(null, { status: 204 }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      await client.reportChatReplyReceived("session-1", "message-1", {
+        task_id: "task-1",
+        trace_id: "trace-1",
+        ws_received_at_unix_ms: 2_000,
+        rendered_at_unix_ms: 2_250,
+        client_received_at: "1970-01-01T00:00:02.250Z",
+        elapsed_ms: 1_250,
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]).toMatchObject([
+        "https://api.example.test/api/chat/sessions/session-1/messages/message-1/received",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            task_id: "task-1",
+            trace_id: "trace-1",
+            ws_received_at_unix_ms: 2_000,
+            rendered_at_unix_ms: 2_250,
+            client_received_at: "1970-01-01T00:00:02.250Z",
+            elapsed_ms: 1_250,
+          }),
+        },
+      ]);
+    });
+  });
+
   describe("cancelTaskById response parsing", () => {
     const taskResponse = {
       id: "task-1",

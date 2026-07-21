@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import { chatKeys } from "../chat/queries";
+import {
+  clearLiveChatRepliesForTests,
+  peekLiveChatReply,
+} from "../chat/reply-receipt";
 import { inboxKeys } from "../inbox/queries";
 import { issueKeys } from "../issues/queries";
 import { notificationPreferenceKeys } from "../notification-preferences/queries";
@@ -23,6 +27,7 @@ import {
   handleInboxNew,
   invalidateChatMessageQueries,
   refetchPendingChatAggregate,
+  receiveChatDone,
   resolveInboxSourceSlug,
 } from "./use-realtime-sync";
 
@@ -54,6 +59,8 @@ function donePayload(overrides: Partial<ChatDonePayload> = {}): ChatDonePayload 
   return {
     chat_session_id: sessionId,
     task_id: taskId,
+    trace_id: "trace-1",
+    trace_started_at_unix_ms: 1_000,
     message_id: "msg-assistant",
     content: "done",
     elapsed_ms: 1234,
@@ -61,6 +68,10 @@ function donePayload(overrides: Partial<ChatDonePayload> = {}): ChatDonePayload 
     ...overrides,
   };
 }
+
+afterEach(() => {
+  clearLiveChatRepliesForTests();
+});
 
 describe("applyChatDoneToCache", () => {
   it("writes the assistant message before clearing pending task", () => {
@@ -152,6 +163,25 @@ describe("applyChatDoneToCache", () => {
       userMessage(),
     ]);
     expect(qc.getQueryData<ChatPendingTask>(pendingKey)).toEqual({});
+  });
+});
+
+describe("receiveChatDone", () => {
+  it("registers the websocket arrival before applying the assistant message", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatMessage[]>(messagesKey, [userMessage()]);
+
+    receiveChatDone(qc, donePayload(), 2_000);
+
+    expect(peekLiveChatReply("msg-assistant", 2_000)).toMatchObject({
+      messageId: "msg-assistant",
+      taskId,
+      traceId: "trace-1",
+      wsReceivedAtUnixMs: 2_000,
+    });
+    expect(qc.getQueryData<ChatMessage[]>(messagesKey)?.at(-1)?.id).toBe(
+      "msg-assistant",
+    );
   });
 });
 

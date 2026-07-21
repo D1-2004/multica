@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/multica-ai/multica/server/internal/chattrace"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -196,7 +197,12 @@ func TestResolveSandboxIsSerializedAcrossReplicas(t *testing.T) {
 		go func(i int, l *FCE2BLauncher) {
 			defer wg.Done()
 			<-start // both replicas enter the lookup-or-create together
-			id, _, err := l.resolveSandbox(ctx, runtime, scope, true, "tpl_test")
+			trace, traceErr := chattrace.From("37d0871a-3657-4c74-91fa-39e846fa90a0", "task", time.Now().UnixMilli())
+			if traceErr != nil {
+				errs[i] = traceErr
+				return
+			}
+			id, _, err := l.resolveSandbox(ctx, runtime, scope, true, "tpl_test", trace)
 			ids[i], errs[i] = id, err
 		}(i, l)
 	}
@@ -237,7 +243,7 @@ func TestResolveSandboxUnderRuntimeLockUsesSinglePoolConnection(t *testing.T) {
 	lockedLauncher := *launcher
 	lockedLauncher.Queries = db.New(conn)
 	scope := fcE2BTaskScope{typ: fcE2BScopeTypeChat, id: workspaceID}
-	sandboxID, coldStart, err := lockedLauncher.resolveSandboxOnConnection(ctx, runtime, scope, true, "tpl_new", conn)
+	sandboxID, coldStart, err := lockedLauncher.resolveSandboxOnConnection(ctx, runtime, scope, true, "tpl_new", conn, chattrace.New("task"))
 	release()
 	if err != nil {
 		t.Fatalf("resolve sandbox with one pool connection: %v", err)
@@ -358,7 +364,7 @@ func TestResolveSandboxNeverReusesDifferentTemplate(t *testing.T) {
 	runner := &countingRunner{}
 	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{TimeoutSeconds: 300}, runner)
 	launcher.SetPool(pool)
-	sandboxID, coldStart, err := launcher.resolveSandbox(context.Background(), runtime, fcE2BTaskScope{typ: fcE2BScopeTypeChat, id: workspaceID}, true, "tpl_new")
+	sandboxID, coldStart, err := launcher.resolveSandbox(context.Background(), runtime, fcE2BTaskScope{typ: fcE2BScopeTypeChat, id: workspaceID}, true, "tpl_new", chattrace.New("task"))
 	if err != nil {
 		t.Fatalf("resolve new-template sandbox: %v", err)
 	}
@@ -379,7 +385,7 @@ func TestResolveSandboxNeverReusesDifferentTemplate(t *testing.T) {
 	seedSession(userID, "sbx_old_failure")
 	failing := NewFCE2BLauncher(queries, nil, FCE2BConfig{TimeoutSeconds: 300}, &countingRunner{createErr: errors.New("create failed")})
 	failing.SetPool(pool)
-	failedID, _, err := failing.resolveSandbox(context.Background(), runtime, fcE2BTaskScope{typ: fcE2BScopeTypeChat, id: userID}, true, "tpl_new")
+	failedID, _, err := failing.resolveSandbox(context.Background(), runtime, fcE2BTaskScope{typ: fcE2BScopeTypeChat, id: userID}, true, "tpl_new", chattrace.New("task"))
 	if err == nil {
 		t.Fatal("new-template sandbox creation must fail")
 	}

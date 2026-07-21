@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -262,6 +263,17 @@ const (
 // processClaimed runs the post-dedup pipeline. Mirrors
 // lark.Dispatcher.processClaimed; see its boundary contract per step.
 func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channel.InboundMessage, inst ResolvedInstallation, claimToken pgtype.UUID) (Result, dedupFinalize, error) {
+	trace := chattrace.New(string(msg.Source.ChannelType))
+	if msg.TraceID != "" || msg.TraceChannel != "" || msg.TraceStartedAtUnixMS != 0 {
+		var traceErr error
+		trace, traceErr = chattrace.From(msg.TraceID, msg.TraceChannel, msg.TraceStartedAtUnixMS)
+		if traceErr != nil {
+			return Result{}, finalizeRelease, fmt.Errorf("validate inbound chat trace: %w", traceErr)
+		}
+	}
+	chattrace.LogStage(r.logger, trace, "channel_message_received", "started",
+		"installation_id", uuidString(inst.ID),
+	)
 	// 3. Group-mention filter (group chats only), before identity so an
 	//    unbound user's idle group chatter never spams a binding card.
 	if msg.Source.ChatType == channel.ChatTypeGroup && !msg.AddressedToBot {
@@ -353,6 +365,17 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			}
 			return Result{}, finalizeRelease, fmt.Errorf("resolve chat task context: %w", err)
 		}
+	}
+	{
+		var traceErr error
+		taskContext, traceErr = chattrace.Merge(taskContext, trace)
+		if traceErr != nil {
+			return Result{}, finalizeRelease, fmt.Errorf("persist inbound chat trace: %w", traceErr)
+		}
+		chattrace.LogStage(r.logger, trace, "channel_task_context", "resolved",
+			"installation_id", uuidString(inst.ID),
+			"chat_session_id", uuidString(sessionID),
+		)
 	}
 	r.logger.Info("channel router: chat task context resolved",
 		"channel_type", string(msg.Source.ChannelType),
@@ -514,6 +537,12 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 
 	if set.DurableRuns {
 		if preparedTask != nil {
+			chattrace.LogStage(r.logger, trace, "channel_task_persisted", "succeeded",
+				"installation_id", uuidString(inst.ID),
+				"chat_session_id", uuidString(sessionID),
+				"task_id", uuidString(appendRes.TaskID),
+				"message_id", uuidString(appendRes.MessageID),
+			)
 			r.logger.Info("channel chat task persisted with inbound message",
 				"event", "channel_chat_task_persisted",
 				"channel_type", string(msg.Source.ChannelType),

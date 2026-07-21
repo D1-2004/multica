@@ -235,6 +235,7 @@ export function ChatPage() {
           hasOlderMessages={c.hasOlderMessages}
           isFetchingOlderMessages={c.isFetchingOlderMessages}
           onLoadOlderMessages={() => void c.fetchOlderMessages()}
+          receiptEnabled
         />
       ) : (
         <EmptyState agent={c.activeAgent} />

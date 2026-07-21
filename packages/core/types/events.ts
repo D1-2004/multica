@@ -337,6 +337,10 @@ export interface ChatMessageEventPayload {
 export interface ChatDonePayload {
   chat_session_id: string;
   task_id: string;
+  /** Stable end-to-end trace identifier created when the chat turn starts. */
+  trace_id?: string;
+  /** Server-side start of the trace, expressed as Unix epoch milliseconds. */
+  trace_started_at_unix_ms?: number;
   /**
    * Server populates these from the freshly-persisted assistant ChatMessage
    * row so the WS handler can write it into the messages cache inline. Older
