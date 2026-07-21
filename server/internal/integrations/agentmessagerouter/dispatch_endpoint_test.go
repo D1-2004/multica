@@ -39,19 +39,6 @@ func (f *fakeDispatchEndpointStore) GetAgentDispatchEndpoint(_ context.Context, 
 	return f.record, nil
 }
 
-func (f *fakeDispatchEndpointStore) UpdateAgentDispatchEndpointDispatchURL(_ context.Context, candidate DispatchEndpoint) (DispatchEndpoint, error) {
-	if f.err != nil {
-		return DispatchEndpoint{}, f.err
-	}
-	if !f.record.AgentID.Valid || f.record.WorkspaceID != candidate.WorkspaceID ||
-		f.record.AgentID != candidate.AgentID || f.record.ActorUserID != candidate.ActorUserID ||
-		f.record.EndpointID != candidate.EndpointID {
-		return DispatchEndpoint{}, pgx.ErrNoRows
-	}
-	f.record.DispatchURL = candidate.DispatchURL
-	return f.record, nil
-}
-
 func TestDispatchEndpointServiceReusesOneEndpointPerAgent(t *testing.T) {
 	keyring, err := ParseDispatchKeyring(
 		"v1:ERERERERERERERERERERERERERERERERERERERERERE", "v1")
@@ -116,7 +103,7 @@ func TestDispatchEndpointServiceFailsClosedOnInvalidOwnershipAndStorage(t *testi
 	}
 }
 
-func TestDispatchEndpointServiceAcceptsStoredEndpointOutsideConfiguredOrigin(t *testing.T) {
+func TestDispatchEndpointServiceRejectsStoredEndpointOutsideConfiguredOrigin(t *testing.T) {
 	keyring, err := ParseDispatchKeyring(
 		"v1:ERERERERERERERERERERERERERERERERERERERERERE", "v1")
 	if err != nil {
@@ -140,11 +127,7 @@ func TestDispatchEndpointServiceAcceptsStoredEndpointOutsideConfiguredOrigin(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint, err := service.Ensure(context.Background(), workspaceID, agentID, actorID)
-	if err != nil {
-		t.Fatalf("Ensure() error = %v", err)
-	}
-	if endpoint.EndpointID != store.record.EndpointID || endpoint.DispatchURL != store.record.DispatchURL {
-		t.Fatalf("endpoint = %#v, want stored history %#v", endpoint, store.record)
+	if _, err := service.Ensure(context.Background(), workspaceID, agentID, actorID); err == nil {
+		t.Fatal("expected a stored endpoint outside the configured Multica origin to fail")
 	}
 }

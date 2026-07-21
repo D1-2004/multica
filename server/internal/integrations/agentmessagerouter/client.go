@@ -30,7 +30,6 @@ type Client struct {
 type BindingToken struct {
 	BindingToken string    `json:"bindingToken"`
 	ExpiresAt    time.Time `json:"expiresAt"`
-	DispatchURL  string    `json:"dispatchUrl"`
 }
 
 type Subscription struct {
@@ -107,7 +106,7 @@ func NewClient(config ClientConfig) (*Client, error) {
 
 func (c *Client) IssueBindingToken(ctx context.Context, agentID, dispatchPath string) (BindingToken, error) {
 	agentID = strings.TrimSpace(agentID)
-	endpointID, err := endpointIDFromDispatchPath(dispatchPath)
+	_, err := endpointIDFromDispatchPath(dispatchPath)
 	if agentID == "" || err != nil {
 		return BindingToken{}, errors.New("agent message router token issue request is invalid")
 	}
@@ -130,8 +129,7 @@ func (c *Client) IssueBindingToken(ctx context.Context, agentID, dispatchPath st
 	if err != nil {
 		return BindingToken{}, err
 	}
-	if result.BindingToken == "" || result.ExpiresAt.IsZero() ||
-		!isCanonicalDispatchURLForEndpoint(result.DispatchURL, endpointID) {
+	if result.BindingToken == "" || result.ExpiresAt.IsZero() {
 		return BindingToken{}, errors.New("agent message router token issue response is invalid")
 	}
 	return result, nil

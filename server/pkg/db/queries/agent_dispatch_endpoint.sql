@@ -44,13 +44,3 @@ JOIN member m
   ON m.workspace_id = ep.workspace_id
  AND m.user_id = ep.actor_user_id
 WHERE ep.endpoint_id = sqlc.arg('endpoint_id')::text;
-
--- name: UpdateAgentDispatchEndpointDispatchURL :one
-UPDATE agent_dispatch_endpoint
-SET dispatch_url = sqlc.arg('dispatch_url'),
-    updated_at = now()
-WHERE workspace_id = sqlc.arg('workspace_id')
-  AND agent_id = sqlc.arg('agent_id')
-  AND actor_user_id = sqlc.arg('actor_user_id')
-  AND endpoint_id = sqlc.arg('endpoint_id')::text
-RETURNING *;

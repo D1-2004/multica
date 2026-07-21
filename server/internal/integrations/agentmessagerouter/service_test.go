@@ -500,7 +500,7 @@ func (f *fakeBindingRouter) DeleteSubscription(_ context.Context, sourceID strin
 	return f.deleteErr
 }
 
-func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t *testing.T) {
+func TestBeginDingTalkAccountBindingUsesDispatchPathWithoutPersistingRouterToken(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	workspaceID := uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	agentID := uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
@@ -526,7 +526,6 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	router := &fakeBindingRouter{issued: BindingToken{
 		BindingToken: "bat_v1.router-secret-must-not-be-persisted",
 		ExpiresAt:    now.Add(5 * time.Minute),
-		DispatchURL:  "https://router.example/api/webhooks/agent-dispatch/" + oldEndpoint,
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 
@@ -560,12 +559,13 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantDispatchPath := "/api/webhooks/agent-dispatch/" + oldEndpoint
 	if len(fragment) != 7 || fragment.Get("bindingMode") != "message" ||
 		fragment.Get("bindingToken") != router.issued.BindingToken ||
 		fragment.Get("callbackToken") == "" || fragment.Get("callbackUrl") == "" ||
 		fragment.Get("expiresAt") != strconv.FormatInt(router.issued.ExpiresAt.Unix(), 10) ||
 		fragment.Get("agentId") != uuidStringForTest(store.row.AgentID) ||
-		fragment.Get("dispatchUrl") != router.issued.DispatchURL {
+		fragment.Get("dispatchPath") != wantDispatchPath {
 		t.Fatalf("unexpected QR fragment: %#v", fragment)
 	}
 	for key, values := range fragment {
@@ -574,8 +574,8 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 		}
 	}
 	if strings.Contains(rawFragment, oldConfig.DispatchURL) ||
-		!strings.Contains(rawFragment, "dispatchUrl=https%3A%2F%2F") {
-		t.Fatalf("dispatch URL was not encoded exactly once: %q", rawFragment)
+		!strings.Contains(rawFragment, "dispatchPath=%2Fapi%2Fwebhooks%2Fagent-dispatch%2F") {
+		t.Fatalf("dispatch path was not encoded exactly once: %q", rawFragment)
 	}
 	wantCallbackURL := "https://multica.example/api/integrations/dingtalk/account-bindings/11111111-1111-1111-1111-111111111111/callback"
 	if got := fragment.Get("callbackUrl"); got != wantCallbackURL {
@@ -595,8 +595,8 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if config.DispatchEndpointID != oldEndpoint {
 		t.Fatalf("endpoint = %q, want reused %q", config.DispatchEndpointID, oldEndpoint)
 	}
-	if config.DispatchURL != router.issued.DispatchURL {
-		t.Fatalf("persisted dispatch URL = %q, want Router canonical %q", config.DispatchURL, router.issued.DispatchURL)
+	if config.DispatchURL != wantDispatchPath {
+		t.Fatalf("persisted dispatch target = %q, want canonical path %q", config.DispatchURL, wantDispatchPath)
 	}
 	if !VerifyCallbackToken(callbackToken, config.CallbackTokenHash) {
 		t.Fatal("persisted callback hash does not match returned token")
@@ -604,7 +604,6 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if fragment.Has("identityCallbackToken") || fragment.Has("identityCallbackUrl") {
 		t.Fatalf("legacy identity callback fields leaked into QR fragment: %#v", fragment)
 	}
-	wantDispatchPath := "/api/webhooks/agent-dispatch/" + oldEndpoint
 	if router.issueAgent != uuidStringForTest(agentID) || router.issueURL != wantDispatchPath {
 		t.Fatalf("Router issue request = agent %q path %q", router.issueAgent, router.issueURL)
 	}
@@ -1485,6 +1484,10 @@ func newBindingEndpointServiceForTest(t *testing.T, store *fakeBindingStore, key
 	if store.row.ID.Valid {
 		config, err := ParseDingTalkAccountConfig(store.row.Config)
 		if err == nil {
+			dispatchURL, buildErr := BuildDispatchURL("https://multica.example", config.DispatchEndpointID)
+			if buildErr != nil {
+				t.Fatal(buildErr)
+			}
 			actorUserID := store.row.InstallerUserID
 			if !actorUserID.Valid {
 				actorUserID = mustUUIDForTest("cccccccc-cccc-cccc-cccc-cccccccccccc")
@@ -1494,7 +1497,7 @@ func newBindingEndpointServiceForTest(t *testing.T, store *fakeBindingStore, key
 				AgentID:     store.row.AgentID,
 				ActorUserID: actorUserID,
 				EndpointID:  config.DispatchEndpointID,
-				DispatchURL: config.DispatchURL,
+				DispatchURL: dispatchURL,
 			}
 		}
 	}

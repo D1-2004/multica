@@ -65,7 +65,7 @@ type IdentityStore interface {
 // Router is the existing subscription contract used to issue a QR credential,
 // verify the DBase callback, and proxy unbind. *Client satisfies it.
 type Router interface {
-	IssueBindingToken(ctx context.Context, agentID, dispatchURL string) (BindingToken, error)
+	IssueBindingToken(ctx context.Context, agentID, dispatchPath string) (BindingToken, error)
 	GetSubscription(ctx context.Context, sourceID string) (Subscription, error)
 	DeleteSubscription(ctx context.Context, sourceID string) error
 }
@@ -81,7 +81,6 @@ type DispatchEndpoint struct {
 type DispatchEndpointStore interface {
 	EnsureAgentDispatchEndpoint(context.Context, DispatchEndpoint) (DispatchEndpoint, error)
 	GetAgentDispatchEndpoint(context.Context, pgtype.UUID) (DispatchEndpoint, error)
-	UpdateAgentDispatchEndpointDispatchURL(context.Context, DispatchEndpoint) (DispatchEndpoint, error)
 }
 
 type DispatchEndpointServiceConfig struct {
@@ -133,26 +132,6 @@ func (s *DBDispatchEndpointStore) GetAgentDispatchEndpoint(
 		return DispatchEndpoint{}, errors.New("agent dispatch endpoint store is not configured")
 	}
 	row, err := s.queries.GetAgentDispatchEndpoint(ctx, agentID)
-	if err != nil {
-		return DispatchEndpoint{}, err
-	}
-	return dispatchEndpointFromRow(row), nil
-}
-
-func (s *DBDispatchEndpointStore) UpdateAgentDispatchEndpointDispatchURL(
-	ctx context.Context,
-	candidate DispatchEndpoint,
-) (DispatchEndpoint, error) {
-	if s == nil || s.queries == nil {
-		return DispatchEndpoint{}, errors.New("agent dispatch endpoint store is not configured")
-	}
-	row, err := s.queries.UpdateAgentDispatchEndpointDispatchURL(ctx, db.UpdateAgentDispatchEndpointDispatchURLParams{
-		WorkspaceID: candidate.WorkspaceID,
-		AgentID:     candidate.AgentID,
-		ActorUserID: candidate.ActorUserID,
-		EndpointID:  candidate.EndpointID,
-		DispatchUrl: candidate.DispatchURL,
-	})
 	if err != nil {
 		return DispatchEndpoint{}, err
 	}
@@ -215,7 +194,7 @@ func (s *DispatchEndpointService) Ensure(
 	if err != nil {
 		return DispatchEndpoint{}, fmt.Errorf("ensure agent dispatch endpoint: %w", err)
 	}
-	if err := validateDispatchEndpoint(result, workspaceID, agentID); err != nil {
+	if err := validateDispatchEndpoint(result, workspaceID, agentID, s.publicOrigin); err != nil {
 		return DispatchEndpoint{}, err
 	}
 	return result, nil
@@ -229,36 +208,20 @@ func (s *DispatchEndpointService) Get(ctx context.Context, agentID pgtype.UUID) 
 	if err != nil {
 		return DispatchEndpoint{}, err
 	}
-	if err := validateDispatchEndpoint(result, result.WorkspaceID, agentID); err != nil {
+	if err := validateDispatchEndpoint(result, result.WorkspaceID, agentID, s.publicOrigin); err != nil {
 		return DispatchEndpoint{}, err
 	}
 	return result, nil
 }
 
-func (s *DispatchEndpointService) UpdateDispatchURL(
-	ctx context.Context,
-	endpoint DispatchEndpoint,
-	dispatchURL string,
-) (DispatchEndpoint, error) {
-	if s == nil || s.store == nil || !isCanonicalDispatchURLForEndpoint(dispatchURL, endpoint.EndpointID) {
-		return DispatchEndpoint{}, errors.New("agent dispatch endpoint response is invalid")
-	}
-	endpoint.DispatchURL = dispatchURL
-	result, err := s.store.UpdateAgentDispatchEndpointDispatchURL(ctx, endpoint)
-	if err != nil {
-		return DispatchEndpoint{}, fmt.Errorf("update agent dispatch endpoint: %w", err)
-	}
-	if err := validateDispatchEndpoint(result, endpoint.WorkspaceID, endpoint.AgentID); err != nil ||
-		result.ActorUserID != endpoint.ActorUserID || result.DispatchURL != dispatchURL {
-		return DispatchEndpoint{}, errors.New("agent dispatch endpoint response is invalid")
-	}
-	return result, nil
-}
-
-func validateDispatchEndpoint(endpoint DispatchEndpoint, workspaceID, agentID pgtype.UUID) error {
+func validateDispatchEndpoint(endpoint DispatchEndpoint, workspaceID, agentID pgtype.UUID, publicOrigin *url.URL) error {
 	if endpoint.WorkspaceID != workspaceID || endpoint.AgentID != agentID ||
 		!endpoint.ActorUserID.Valid || !isTrimmedNonEmpty(endpoint.EndpointID) ||
-		!isDispatchURLForEndpoint(endpoint.DispatchURL, endpoint.EndpointID) {
+		!isTrimmedNonEmpty(endpoint.DispatchURL) || publicOrigin == nil {
+		return errors.New("agent dispatch endpoint response is invalid")
+	}
+	expectedURL, err := BuildDispatchURL(publicOrigin.String(), endpoint.EndpointID)
+	if err != nil || endpoint.DispatchURL != expectedURL {
 		return errors.New("agent dispatch endpoint response is invalid")
 	}
 	return nil
@@ -385,7 +348,10 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		return BeginResult{}, fmt.Errorf("%w: endpoint resolution failed", ErrNotConfigured)
 	}
 	endpointID := endpoint.EndpointID
-	dispatchURL := endpoint.DispatchURL
+	dispatchPath, err := dispatchPathForEndpointID(endpointID)
+	if err != nil {
+		return BeginResult{}, fmt.Errorf("%w: dispatch path", ErrInvalidResult)
+	}
 	callbackToken, callbackHash, err := GenerateCallbackToken(s.random)
 	if err != nil {
 		return BeginResult{}, fmt.Errorf("%w: callback credential generation failed", ErrNotConfigured)
@@ -395,7 +361,7 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 	if params.BindingMode == BindingModeMessage {
 		pendingConfig, marshalErr := NewPendingDingTalkAccountConfig(
 			endpointID,
-			dispatchURL,
+			dispatchPath,
 			callbackHash,
 			callbackExpiresAt,
 		).Marshal()
@@ -452,21 +418,12 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		}
 	}
 
-	dispatchPath, err := dispatchPathForEndpointID(endpointID)
-	if err != nil {
-		return BeginResult{}, fmt.Errorf("%w: dispatch path", ErrInvalidResult)
-	}
 	issued, err := s.router.IssueBindingToken(ctx, util.UUIDToString(params.AgentID), dispatchPath)
 	if err != nil {
 		return BeginResult{}, ErrRouterUnavailable
 	}
-	if strings.TrimSpace(issued.BindingToken) == "" || !issued.ExpiresAt.After(s.now()) ||
-		!isCanonicalDispatchURLForEndpoint(issued.DispatchURL, endpointID) {
+	if strings.TrimSpace(issued.BindingToken) == "" || !issued.ExpiresAt.After(s.now()) {
 		return BeginResult{}, ErrInvalidResult
-	}
-	updatedEndpoint, updateErr := s.endpoints.UpdateDispatchURL(ctx, endpoint, issued.DispatchURL)
-	if updateErr != nil || updatedEndpoint.EndpointID != endpointID {
-		return BeginResult{}, fmt.Errorf("%w: dispatch endpoint update", ErrInvalidResult)
 	}
 	if params.BindingMode == BindingModeMessage {
 		row, updateErr := s.store.UpdateDingTalkAccountBindingDispatchURL(ctx, db.UpdateDingTalkAccountBindingDispatchURLParams{
@@ -474,7 +431,7 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 			WorkspaceID:        params.WorkspaceID,
 			AgentID:            params.AgentID,
 			DispatchEndpointID: endpointID,
-			DispatchUrl:        issued.DispatchURL,
+			DispatchUrl:        dispatchPath,
 		})
 		if updateErr != nil {
 			return BeginResult{}, fmt.Errorf("update dingtalk account binding dispatch URL: %w", updateErr)
@@ -482,8 +439,8 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		storedConfig, parseErr := ParseDingTalkAccountConfig(row.Config)
 		if parseErr != nil || row.ID != bindingID || row.WorkspaceID != params.WorkspaceID ||
 			row.AgentID != params.AgentID || storedConfig.DispatchEndpointID != endpointID ||
-			storedConfig.DispatchURL != issued.DispatchURL {
-			return BeginResult{}, fmt.Errorf("%w: stored dispatch URL mismatch", ErrInvalidResult)
+			storedConfig.DispatchURL != dispatchPath {
+			return BeginResult{}, fmt.Errorf("%w: stored dispatch path mismatch", ErrInvalidResult)
 		}
 	}
 	expiresAt := issued.ExpiresAt.UTC()
@@ -521,7 +478,7 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		"callbackToken": {callbackToken},
 		"expiresAt":     {strconv.FormatInt(expiresAt.Unix(), 10)},
 		"agentId":       {util.UUIDToString(params.AgentID)},
-		"dispatchUrl":   {issued.DispatchURL},
+		"dispatchPath":  {dispatchPath},
 	}
 	qrCodeURL := s.dbaseBindingURL.String() + "#" + fragment.Encode()
 	return BeginResult{

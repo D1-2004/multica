@@ -14,7 +14,6 @@ import (
 func TestClientIssuesBindingTokenWithServiceCredential(t *testing.T) {
 	expiresAt := time.Date(2026, 7, 14, 10, 5, 0, 0, time.UTC)
 	dispatchPath := "/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw"
-	dispatchURL := "https://router.example" + dispatchPath
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/account-binding-tokens" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
@@ -35,7 +34,6 @@ func TestClientIssuesBindingTokenWithServiceCredential(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"bindingToken": "bat_v1.secret-value",
 			"expiresAt":    expiresAt.Format(time.RFC3339),
-			"dispatchUrl":   dispatchURL,
 		})
 	}))
 	defer server.Close()
@@ -52,7 +50,7 @@ func TestClientIssuesBindingTokenWithServiceCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueBindingToken: %v", err)
 	}
-	if got.BindingToken != "bat_v1.secret-value" || !got.ExpiresAt.Equal(expiresAt) || got.DispatchURL != dispatchURL {
+	if got.BindingToken != "bat_v1.secret-value" || !got.ExpiresAt.Equal(expiresAt) {
 		t.Fatalf("result = %#v", got)
 	}
 }
@@ -344,7 +342,7 @@ func TestClientDeleteRequiresSuccessfulInactiveEnvelope(t *testing.T) {
 }
 
 func TestClientRejectsTrailingAndOversizedRouterResponses(t *testing.T) {
-	valid := `{"bindingToken":"bat_v1.secret-value","expiresAt":"2026-07-14T10:05:00Z","dispatchUrl":"https://router.example/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw"}`
+	valid := `{"bindingToken":"bat_v1.secret-value","expiresAt":"2026-07-14T10:05:00Z"}`
 	tests := []struct {
 		name string
 		body string
