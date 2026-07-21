@@ -21,7 +21,6 @@ type staticFCE2BTemplateRunner struct {
 	output string
 	err    error
 	calls  int
-	tags   map[string][]service.FCE2BTemplateTag
 }
 
 func (r *staticFCE2BTemplateRunner) Run(context.Context, string, []string, []string) (string, error) {
@@ -29,33 +28,11 @@ func (r *staticFCE2BTemplateRunner) Run(context.Context, string, []string, []str
 	return r.output, r.err
 }
 
-func (r *staticFCE2BTemplateRunner) ListTemplateTags(_ context.Context, templateID string) ([]service.FCE2BTemplateTag, error) {
-	return append([]service.FCE2BTemplateTag(nil), r.tags[templateID]...), nil
-}
-
-func publishedFCE2BTags(buildID string, capabilities ...string) []service.FCE2BTemplateTag {
-	names := []string{
-		"multica-manifest-v1",
-		"multica-provider-hermes",
-		"multica-provider-opencode",
-		"multica-provider-pi",
-		"multica-runner-root-log-v1",
-		"multica-version-hermes-0.19.0",
-		"multica-version-opencode-v1.18.4",
-		"multica-version-pi-0.80.10",
-	}
-	for _, capability := range capabilities {
-		names = append(names, "multica-capability-"+capability)
-		if capability == "dws" {
-			names = append(names, "multica-version-dws-v1.0.53-beta.4")
-		}
-	}
-	tags := make([]service.FCE2BTemplateTag, 0, len(names))
-	for _, name := range names {
-		tags = append(tags, service.FCE2BTemplateTag{BuildID: buildID, Tag: name})
-	}
-	return tags
-}
+const (
+	testOldFCE2BManifestAlias     = "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa"
+	testNewFCE2BManifestAlias     = "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-bbbbbb"
+	testPendingFCE2BManifestAlias = "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-cccccc"
+)
 
 func TestFCE2BTemplateCapabilities(t *testing.T) {
 	cases := []struct {
@@ -157,27 +134,21 @@ func fce2bTemplateRotationHandler(t *testing.T) (*Handler, *staticFCE2BTemplateR
 	}
 	runner := &staticFCE2BTemplateRunner{
 		output: `[
-			{"id":"tpl_old_id","buildID":"build_old","name":"Old Template","template":"tpl_old","status":"ready"},
-			{"id":"tpl_new_id","buildID":"build_new","name":"New DWS Template","template":"tpl_new_dws","status":"READY"},
-			{"id":"tpl_pending_id","buildID":"build_pending","name":"Pending Template","template":"tpl_pending","status":"building"}
+			{"id":"tpl_old_id","buildID":"build_old","aliases":["multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa"],"status":"ready"},
+			{"id":"tpl_new_id","buildID":"build_new","aliases":["multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-bbbbbb"],"status":"READY"},
+			{"id":"tpl_pending_id","buildID":"build_pending","aliases":["multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-cccccc"],"status":"building"}
 		]`,
-		tags: map[string][]service.FCE2BTemplateTag{
-			"tpl_old_id":     publishedFCE2BTags("build_old"),
-			"tpl_new_id":     publishedFCE2BTags("build_new", "dws", "dws.im_event"),
-			"tpl_pending_id": publishedFCE2BTags("build_pending"),
-		},
 	}
 	h := *testHandler
 	launcher := *testHandler.FCE2BLauncher
 	launcher.Runner = runner
 	h.FCE2BLauncher = &launcher
 	h.cfg.FCE2B = service.FCE2BConfig{
-		Enabled:           true,
-		APIKey:            "test-api-key",
-		APIURL:            "https://fc-e2b.test",
-		Domain:            "fc-e2b.test",
-		CLIPath:           "e2b-test",
-		TemplateTagReader: runner,
+		Enabled: true,
+		APIKey:  "test-api-key",
+		APIURL:  "https://fc-e2b.test",
+		Domain:  "fc-e2b.test",
+		CLIPath: "e2b-test",
 	}
 	return &h, runner
 }
@@ -335,7 +306,7 @@ func TestUpdateFCE2BRuntimeTemplatePreservesRuntimeAndIsIdempotent(t *testing.T)
 	if err := json.Unmarshal(runtime.Metadata, &metadata); err != nil {
 		t.Fatalf("decode runtime metadata: %v", err)
 	}
-	if metadata["template"] != "tpl_new_dws" || metadata["template_id"] != "tpl_new_id" || metadata["template_build_id"] != "build_new" || metadata["template_name"] != "New DWS Template" || metadata["template_status"] != "READY" {
+	if metadata["template"] != testNewFCE2BManifestAlias || metadata["template_id"] != "tpl_new_id" || metadata["template_build_id"] != "build_new" || metadata["template_name"] != testNewFCE2BManifestAlias || metadata["template_status"] != "READY" {
 		t.Fatalf("template metadata = %#v", metadata)
 	}
 	if metadata["preserved"] != "yes" || metadata["runner"] != "multica-fc-hermes-container-log-entry" || metadata["runner_protocol"] != "root-log-v1" {
@@ -369,7 +340,7 @@ func TestUpdateFCE2BRuntimeTemplatePreservesRuntimeAndIsIdempotent(t *testing.T)
 		ScopeType:   "chat",
 		ScopeID:     scopeID,
 		SandboxID:   "sbx_new_template",
-		Template:    "tpl_new_dws",
+		Template:    testNewFCE2BManifestAlias,
 		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 	}); err != nil {
 		t.Fatalf("seed current-template sandbox: %v", err)
