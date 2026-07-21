@@ -9,15 +9,12 @@ import (
 	"hash/fnv"
 	"io"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -30,13 +27,12 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
 	FCE2BMetadataKind = "fc-e2b"
-	// FCE2BProvider is the default agent provider for sandbox templates that
-	// do not name another supported provider (see FCE2BProviderForTemplate).
+	// FCE2BProvider is the first provider selected when a verified template
+	// manifest declares Hermes support and the request omits a provider.
 	FCE2BProvider = "hermes"
 
 	fcE2BScopeTypeChat  = "chat"
@@ -54,13 +50,6 @@ const (
 	fcE2BRootRunnerInstallDir       = "/usr/local/libexec"
 	fcE2BLegacyRunnerInstallDir     = "/usr/local/bin"
 	fcE2BTemplateManifestVersion    = 1
-	fcE2BTemplateManifestTag        = "multica-manifest-v1"
-	fcE2BTemplateProviderTagPrefix  = "multica-provider-"
-	fcE2BTemplateCapabilityPrefix   = "multica-capability-"
-	fcE2BTemplateVersionPrefix      = "multica-version-"
-	fcE2BTemplateRunnerPrefix       = "multica-runner-"
-	fcE2BTemplateTagRequestTimeout  = 15 * time.Second
-	fcE2BTemplateTagConcurrency     = 8
 )
 
 type fcE2BRunnerLaunchMode string
@@ -101,7 +90,6 @@ type FCE2BConfig struct {
 	TimeoutSeconds       int
 	SandboxReadyTimeout  time.Duration
 	ParseError           error
-	TemplateTagReader    FCE2BTemplateTagReader
 }
 
 func FCE2BConfigFromEnv() FCE2BConfig {
@@ -372,8 +360,8 @@ func IsFCE2BTemplateReady(template FCE2BTemplate) bool {
 	return strings.EqualFold(strings.TrimSpace(template.Status), "ready")
 }
 
-// IsFCE2BTemplatePublished reports whether the current build has the complete
-// manifest-v1 tag set required for safe runtime creation and rotation.
+// IsFCE2BTemplatePublished reports whether the current build carries a valid
+// manifest-v1 alias required for safe runtime creation and rotation.
 func IsFCE2BTemplatePublished(template FCE2BTemplate) bool {
 	return template.ManifestVersion == fcE2BTemplateManifestVersion &&
 		strings.TrimSpace(template.BuildID) != "" &&
@@ -550,16 +538,6 @@ type CommandRunner interface {
 	Run(ctx context.Context, name string, args []string, env []string) (string, error)
 }
 
-type FCE2BTemplateTag struct {
-	BuildID   string `json:"buildID"`
-	CreatedAt string `json:"createdAt"`
-	Tag       string `json:"tag"`
-}
-
-type FCE2BTemplateTagReader interface {
-	ListTemplateTags(ctx context.Context, templateID string) ([]FCE2BTemplateTag, error)
-}
-
 type FCE2BTemplate struct {
 	ID                string            `json:"id,omitempty"`
 	BuildID           string            `json:"build_id,omitempty"`
@@ -574,40 +552,6 @@ type FCE2BTemplate struct {
 	ComponentVersions map[string]string `json:"component_versions"`
 	RunnerProtocol    string            `json:"runner_protocol"`
 	Metadata          map[string]any    `json:"metadata,omitempty"`
-}
-
-type httpFCE2BTemplateTagReader struct {
-	apiURL string
-	apiKey string
-	client *http.Client
-}
-
-func (r *httpFCE2BTemplateTagReader) ListTemplateTags(ctx context.Context, templateID string) ([]FCE2BTemplateTag, error) {
-	templateID = strings.TrimSpace(templateID)
-	if templateID == "" {
-		return nil, errors.New("FC/E2B template tag request requires template ID")
-	}
-	endpoint := strings.TrimRight(r.apiURL, "/") + "/templates/" + url.PathEscape(templateID) + "/tags"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create FC/E2B template tag request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-API-KEY", r.apiKey)
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("FC/E2B template tag request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("FC/E2B template tag request returned %s: %s", resp.Status, redact.Text(string(body)))
-	}
-	var tags []FCE2BTemplateTag
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tags); err != nil {
-		return nil, fmt.Errorf("decode FC/E2B template tags: %w", err)
-	}
-	return tags, nil
 }
 
 type OSCommandRunner struct{}
@@ -639,51 +583,10 @@ func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunn
 	if err != nil {
 		return nil, err
 	}
-	reader := cfg.TemplateTagReader
-	if reader == nil {
-		reader = &httpFCE2BTemplateTagReader{
-			apiURL: cfg.APIURL,
-			apiKey: cfg.APIKey,
-			client: &http.Client{Timeout: fcE2BTemplateTagRequestTimeout},
-		}
-	}
-
-	var mu sync.Mutex
-	verified := make([]FCE2BTemplate, 0, len(templates))
-	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(fcE2BTemplateTagConcurrency)
-	for index := range templates {
-		template := templates[index]
-		// A manifest is tied to one concrete build. Entries without either
-		// identifier cannot be verified and must not make the whole catalog
-		// unavailable (some CLI versions still emit alias-only rows).
-		if strings.TrimSpace(template.ID) == "" || strings.TrimSpace(template.BuildID) == "" {
-			continue
-		}
-		group.Go(func() error {
-			tags, err := reader.ListTemplateTags(groupCtx, template.ID)
-			if err != nil {
-				return fmt.Errorf("list tags for FC/E2B template %s: %w", template.ID, err)
-			}
-			published, err := applyFCE2BTemplateTags(&template, tags)
-			if err != nil {
-				return fmt.Errorf("parse tags for FC/E2B template %s: %w", template.ID, err)
-			}
-			if published {
-				mu.Lock()
-				verified = append(verified, template)
-				mu.Unlock()
-			}
-			return nil
-		})
-	}
-	if err := group.Wait(); err != nil {
-		return nil, err
-	}
-	sort.Slice(verified, func(i, j int) bool {
-		return verified[i].UpdatedAt > verified[j].UpdatedAt
+	sort.Slice(templates, func(i, j int) bool {
+		return templates[i].UpdatedAt > templates[j].UpdatedAt
 	})
-	return verified, nil
+	return templates, nil
 }
 
 func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
@@ -724,14 +627,28 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 		t := FCE2BTemplate{
 			ID:        firstString(obj, "id", "template_id", "templateID"),
 			BuildID:   firstString(obj, "build_id", "buildID"),
-			Name:      firstString(obj, "name", "template_name", "templateName", "alias", "aliases", "names"),
 			Status:    firstString(obj, "status", "state", "buildStatus", "build_status"),
 			CreatedAt: firstString(obj, "created_at", "createdAt", "create_time", "createTime"),
 			UpdatedAt: firstString(obj, "updated_at", "updatedAt", "update_time", "updateTime"),
 			Metadata:  obj,
 		}
-		t.Template = firstString(obj, "template", "templateName", "name", "alias", "aliases", "names", "id", "template_id", "templateID")
-		if strings.TrimSpace(t.Template) == "" {
+		var manifestAlias string
+		for _, alias := range stringValues(obj, "aliases", "names") {
+			candidate := t
+			published, err := applyFCE2BTemplateManifestAlias(&candidate, alias)
+			if err != nil {
+				return nil, err
+			}
+			if !published {
+				continue
+			}
+			if manifestAlias != "" && manifestAlias != alias {
+				return nil, fmt.Errorf("FC/E2B template %s has multiple manifest aliases", t.ID)
+			}
+			manifestAlias = alias
+			t = candidate
+		}
+		if manifestAlias == "" {
 			continue
 		}
 		templates = append(templates, t)
@@ -739,134 +656,101 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 	return templates, nil
 }
 
-var fcE2BTemplateTagValuePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m1-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-cdi-r1-([0-9a-f]{6})$`)
 
-func applyFCE2BTemplateTags(template *FCE2BTemplate, tags []FCE2BTemplateTag) (bool, error) {
+func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (bool, error) {
 	if template == nil {
 		return false, errors.New("FC/E2B template is nil")
 	}
-	buildID := strings.TrimSpace(template.BuildID)
-	if buildID == "" {
+	if strings.TrimSpace(template.BuildID) == "" {
 		return false, nil
 	}
-	current := make(map[string]struct{})
-	for _, item := range tags {
-		if strings.TrimSpace(item.BuildID) != buildID {
-			continue
-		}
-		tag := strings.ToLower(strings.TrimSpace(item.Tag))
-		if tag != "" {
-			current[tag] = struct{}{}
-		}
-	}
-	if _, ok := current[fcE2BTemplateManifestTag]; !ok {
+	alias = strings.TrimSpace(alias)
+	matches := fcE2BTemplateManifestAliasPattern.FindStringSubmatch(alias)
+	if matches == nil {
 		return false, nil
 	}
-
-	providers := make([]string, 0, len(FCE2BSupportedProviders))
-	capabilities := make([]string, 0)
-	componentVersions := make(map[string]string)
-	runnerProtocol := ""
-	for tag := range current {
-		switch {
-		case tag == fcE2BTemplateManifestTag || tag == "multica-verification":
-			continue
-		case strings.HasPrefix(tag, fcE2BTemplateProviderTagPrefix):
-			provider := strings.TrimPrefix(tag, fcE2BTemplateProviderTagPrefix)
-			if !fcE2BTemplateTagValuePattern.MatchString(provider) {
-				return false, fmt.Errorf("invalid provider tag %q", tag)
-			}
-			providers = append(providers, provider)
-		case strings.HasPrefix(tag, fcE2BTemplateCapabilityPrefix):
-			capability := strings.TrimPrefix(tag, fcE2BTemplateCapabilityPrefix)
-			if !fcE2BTemplateTagValuePattern.MatchString(capability) {
-				return false, fmt.Errorf("invalid capability tag %q", tag)
-			}
-			capabilities = append(capabilities, capability)
-		case strings.HasPrefix(tag, fcE2BTemplateVersionPrefix):
-			component, version, ok := parseFCE2BTemplateVersionTag(tag)
-			if !ok {
-				return false, fmt.Errorf("invalid component version tag %q", tag)
-			}
-			if previous, exists := componentVersions[component]; exists && previous != version {
-				return false, fmt.Errorf("conflicting versions for component %q", component)
-			}
-			componentVersions[component] = version
-		case strings.HasPrefix(tag, fcE2BTemplateRunnerPrefix):
-			protocol := strings.TrimPrefix(tag, fcE2BTemplateRunnerPrefix)
-			if protocol != string(fcE2BRunnerLaunchRootLog) {
-				return false, fmt.Errorf("unsupported runner protocol %q", protocol)
-			}
-			if runnerProtocol != "" && runnerProtocol != protocol {
-				return false, errors.New("conflicting FC/E2B runner protocols")
-			}
-			runnerProtocol = protocol
-		case strings.HasPrefix(tag, "multica-"):
-			return false, fmt.Errorf("unknown Multica template tag %q", tag)
-		}
+	hermesVersion, hermesOK := parseFCE2BUnderscoreSemver(matches[1])
+	opencodeVersion, opencodeOK := parseFCE2BUnderscoreSemver(matches[2])
+	piVersion, piOK := parseFCE2BUnderscoreSemver(matches[3])
+	dwsVersion, dwsOK := parseFCE2BUnderscoreSemver(matches[4])
+	if !hermesOK || !opencodeOK || !piOK || !dwsOK || !isCanonicalNumericIdentifier(matches[5]) {
+		return false, nil
 	}
-	providers = uniqueSortedStrings(providers)
-	capabilities = uniqueSortedStrings(capabilities)
-	if len(providers) == 0 {
-		return false, errors.New("template manifest declares no providers")
-	}
-	if runnerProtocol == "" {
-		return false, errors.New("template manifest declares no runner protocol")
-	}
-	if slicesContain(capabilities, "dws.im_event") && !slicesContain(capabilities, "dws") {
-		return false, errors.New("template manifest declares dws.im_event without dws")
-	}
-	for _, provider := range providers {
-		if _, ok := componentVersions[provider]; !ok {
-			return false, fmt.Errorf("template manifest has no %s component version", provider)
-		}
-	}
-	if slicesContain(capabilities, "dws") {
-		if _, ok := componentVersions["dws"]; !ok {
-			return false, errors.New("template manifest has no dws component version")
-		}
-	}
+	template.Name = alias
+	template.Template = alias
 	template.ManifestVersion = fcE2BTemplateManifestVersion
-	template.Providers = providers
-	template.Capabilities = capabilities
-	template.ComponentVersions = componentVersions
-	template.RunnerProtocol = runnerProtocol
+	template.Providers = []string{"hermes", "opencode", "pi"}
+	template.Capabilities = []string{"dws", "dws.im_event"}
+	template.ComponentVersions = map[string]string{
+		"hermes":   hermesVersion,
+		"opencode": "v" + opencodeVersion,
+		"pi":       piVersion,
+		"dws":      "v" + dwsVersion + "-beta." + matches[5],
+	}
+	template.RunnerProtocol = string(fcE2BRunnerLaunchRootLog)
 	return true, nil
 }
 
-func parseFCE2BTemplateVersionTag(tag string) (string, string, bool) {
-	remainder := strings.TrimPrefix(tag, fcE2BTemplateVersionPrefix)
-	for _, component := range []string{"hermes", "opencode", "pi", "dws"} {
-		prefix := component + "-"
-		if !strings.HasPrefix(remainder, prefix) {
-			continue
-		}
-		version := strings.TrimPrefix(remainder, prefix)
-		return component, version, fcE2BTemplateTagValuePattern.MatchString(version)
+func parseFCE2BUnderscoreSemver(value string) (string, bool) {
+	parts := strings.Split(value, "_")
+	if len(parts) != 3 {
+		return "", false
 	}
-	return "", "", false
+	for _, part := range parts {
+		if !isCanonicalNumericIdentifier(part) {
+			return "", false
+		}
+	}
+	return strings.Join(parts, "."), true
 }
 
-func uniqueSortedStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
+func isCanonicalNumericIdentifier(value string) bool {
+	if value == "0" {
+		return true
+	}
+	if value == "" || value[0] < '1' || value[0] > '9' {
+		return false
+	}
+	for _, digit := range value[1:] {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func stringValues(obj map[string]any, keys ...string) []string {
+	values := make([]string, 0)
+	seen := make(map[string]struct{})
+	appendValue := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
 		seen[value] = struct{}{}
+		values = append(values, value)
 	}
-	result := make([]string, 0, len(seen))
-	for value := range seen {
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
-}
-
-func slicesContain(values []string, expected string) bool {
-	for _, value := range values {
-		if value == expected {
-			return true
+	for _, key := range keys {
+		switch value := obj[key].(type) {
+		case string:
+			appendValue(value)
+		case []string:
+			for _, item := range value {
+				appendValue(item)
+			}
+		case []any:
+			for _, item := range value {
+				if text, ok := item.(string); ok {
+					appendValue(text)
+				}
+			}
 		}
 	}
-	return false
+	return values
 }
 
 func firstString(obj map[string]any, keys ...string) string {
