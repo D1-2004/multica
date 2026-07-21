@@ -804,9 +804,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				dingtalk.NewOutbound(queries, box.Open, dtMessenger, dtTyping, slog.Default()).Register(bus)
 				streamInbox := dingtalk.NewStreamInboxWorker(
 					pool,
-					channelRouter.Handle,
+					channelRouter.HandleResult,
 					box.Seal,
 					box.Open,
+					dtTyping,
 					slog.Default(),
 				)
 				h.DingTalkStreamInbox = streamInbox

@@ -15,6 +15,24 @@ WHERE chat_session_id = sqlc.arg(chat_session_id)
   AND target->>'task_id' = sqlc.arg(task_id)::text
 RETURNING *;
 
+-- name: ListChannelTypingIndicatorsByTask :many
+-- Recall first and delete only after DingTalk accepted the recall.  Concurrent
+-- replicas may issue the same idempotent recall, but a transient API failure
+-- can no longer destroy the only durable cleanup record.
+SELECT *
+FROM channel_typing_indicator
+WHERE chat_session_id = sqlc.arg(chat_session_id)
+  AND channel_type = sqlc.arg(channel_type)
+  AND target->>'task_id' = sqlc.arg(task_id)::text;
+
+-- name: ListChannelTypingIndicators :many
+SELECT *
+FROM channel_typing_indicator
+WHERE chat_session_id = $1 AND channel_type = $2;
+
+-- name: DeleteChannelTypingIndicator :exec
+DELETE FROM channel_typing_indicator WHERE id = $1;
+
 -- name: TakeChannelTypingIndicators :many
 -- Atomically claims every pending indicator for a session and hands them back.
 -- DELETE ... RETURNING is the claim: if two replicas race to clear the same

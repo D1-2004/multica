@@ -36,6 +36,97 @@ func (q *Queries) AddChannelTypingIndicator(ctx context.Context, arg AddChannelT
 	return err
 }
 
+const deleteChannelTypingIndicator = `-- name: DeleteChannelTypingIndicator :exec
+DELETE FROM channel_typing_indicator WHERE id = $1
+`
+
+func (q *Queries) DeleteChannelTypingIndicator(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteChannelTypingIndicator, id)
+	return err
+}
+
+const listChannelTypingIndicators = `-- name: ListChannelTypingIndicators :many
+SELECT id, chat_session_id, channel_type, installation_id, target, created_at
+FROM channel_typing_indicator
+WHERE chat_session_id = $1 AND channel_type = $2
+`
+
+type ListChannelTypingIndicatorsParams struct {
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	ChannelType   string      `json:"channel_type"`
+}
+
+func (q *Queries) ListChannelTypingIndicators(ctx context.Context, arg ListChannelTypingIndicatorsParams) ([]ChannelTypingIndicator, error) {
+	rows, err := q.db.Query(ctx, listChannelTypingIndicators, arg.ChatSessionID, arg.ChannelType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChannelTypingIndicator{}
+	for rows.Next() {
+		var i ChannelTypingIndicator
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChatSessionID,
+			&i.ChannelType,
+			&i.InstallationID,
+			&i.Target,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChannelTypingIndicatorsByTask = `-- name: ListChannelTypingIndicatorsByTask :many
+SELECT id, chat_session_id, channel_type, installation_id, target, created_at
+FROM channel_typing_indicator
+WHERE chat_session_id = $1
+  AND channel_type = $2
+  AND target->>'task_id' = $3::text
+`
+
+type ListChannelTypingIndicatorsByTaskParams struct {
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	ChannelType   string      `json:"channel_type"`
+	TaskID        string      `json:"task_id"`
+}
+
+// Recall first and delete only after DingTalk accepted the recall.  Concurrent
+// replicas may issue the same idempotent recall, but a transient API failure
+// can no longer destroy the only durable cleanup record.
+func (q *Queries) ListChannelTypingIndicatorsByTask(ctx context.Context, arg ListChannelTypingIndicatorsByTaskParams) ([]ChannelTypingIndicator, error) {
+	rows, err := q.db.Query(ctx, listChannelTypingIndicatorsByTask, arg.ChatSessionID, arg.ChannelType, arg.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChannelTypingIndicator{}
+	for rows.Next() {
+		var i ChannelTypingIndicator
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChatSessionID,
+			&i.ChannelType,
+			&i.InstallationID,
+			&i.Target,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const takeChannelTypingIndicators = `-- name: TakeChannelTypingIndicators :many
 DELETE FROM channel_typing_indicator
 WHERE chat_session_id = $1 AND channel_type = $2

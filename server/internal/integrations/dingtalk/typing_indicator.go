@@ -26,8 +26,9 @@ type typingQueries interface {
 	GetChannelChatSessionBindingBySession(ctx context.Context, arg db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error)
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
 	AddChannelTypingIndicator(ctx context.Context, arg db.AddChannelTypingIndicatorParams) error
-	TakeChannelTypingIndicatorsByTask(ctx context.Context, arg db.TakeChannelTypingIndicatorsByTaskParams) ([]db.ChannelTypingIndicator, error)
-	TakeChannelTypingIndicators(ctx context.Context, arg db.TakeChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error)
+	ListChannelTypingIndicatorsByTask(ctx context.Context, arg db.ListChannelTypingIndicatorsByTaskParams) ([]db.ChannelTypingIndicator, error)
+	ListChannelTypingIndicators(ctx context.Context, arg db.ListChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error)
+	DeleteChannelTypingIndicator(ctx context.Context, id pgtype.UUID) error
 }
 
 // typingIndicatorTarget is the persisted shape of one pending emotion. It is
@@ -157,7 +158,11 @@ func (m *TypingIndicatorManager) ClearTask(ctx context.Context, chatSessionID, t
 		return
 	}
 	key := util.UUIDToString(chatSessionID)
-	rows, err := m.q.TakeChannelTypingIndicatorsByTask(ctx, db.TakeChannelTypingIndicatorsByTaskParams{
+	// Stream reactions use their dedicated durable lifecycle so an in-flight
+	// add can handshake with a terminal event. Keep clearing the shared-table
+	// rows too for HTTP Callback and rows written by an older rolling replica.
+	m.settleStreamTask(ctx, chatSessionID, taskID)
+	rows, err := m.q.ListChannelTypingIndicatorsByTask(ctx, db.ListChannelTypingIndicatorsByTaskParams{
 		ChatSessionID: chatSessionID,
 		ChannelType:   string(TypeDingtalk),
 		TaskID:        util.UUIDToString(taskID),
@@ -175,9 +180,10 @@ func (m *TypingIndicatorManager) ClearTask(ctx context.Context, chatSessionID, t
 // agent's reply lands. Individual recall failures are logged, not fatal.
 func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype.UUID) {
 	key := util.UUIDToString(chatSessionID)
-	// DELETE ... RETURNING claims the pending emotions: if two replicas race to
-	// clear the same run, exactly one gets the rows and only it recalls.
-	rows, err := m.q.TakeChannelTypingIndicators(ctx, db.TakeChannelTypingIndicatorsParams{
+	// Recall before deleting. If two replicas race they may issue the same
+	// idempotent recall, but neither can lose the durable row before DingTalk
+	// accepts the cleanup.
+	rows, err := m.q.ListChannelTypingIndicators(ctx, db.ListChannelTypingIndicatorsParams{
 		ChatSessionID: chatSessionID,
 		ChannelType:   string(TypeDingtalk),
 	})
@@ -252,6 +258,14 @@ func (m *TypingIndicatorManager) clearRows(ctx context.Context, chatSessionID pg
 		if err := m.messenger.RecallEmotionReply(ctx, rowCreds, target); err != nil {
 			m.log.Warn("dingtalk typing indicator: recall emotion failed",
 				"event", "dingtalk_typing_indicator_recall_failed",
+				"chat_session_id", key,
+				"task_id", t.TaskID,
+				"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID), "err", err)
+			continue
+		}
+		if err := m.q.DeleteChannelTypingIndicator(ctx, row.ID); err != nil {
+			m.log.Warn("dingtalk typing indicator: delete recalled target failed",
+				"event", "dingtalk_typing_indicator_delete_failed",
 				"chat_session_id", key,
 				"task_id", t.TaskID,
 				"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID), "err", err)

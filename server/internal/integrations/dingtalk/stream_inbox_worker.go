@@ -106,13 +106,15 @@ type streamInboxStore interface {
 // Postgres is the source of truth; the in-memory channel only avoids waiting
 // for the next recovery poll after a local admission.
 type StreamInboxWorker struct {
-	store   streamInboxStore
-	handler channel.InboundHandler
-	encrypt Encrypter
-	decrypt Decrypter
-	logger  *slog.Logger
-	notify  chan struct{}
-	done    chan struct{}
+	store         streamInboxStore
+	handler       channel.InboundHandler
+	resultHandler func(context.Context, channel.InboundMessage) (channelengine.Result, error)
+	typing        *TypingIndicatorManager
+	encrypt       Encrypter
+	decrypt       Decrypter
+	logger        *slog.Logger
+	notify        chan struct{}
+	done          chan struct{}
 	// Purge timing is stored on the worker so tests can exercise the lifecycle
 	// without waiting for the production six-hour cadence.
 	purgeInterval time.Duration
@@ -122,21 +124,25 @@ type StreamInboxWorker struct {
 
 func NewStreamInboxWorker(
 	pool *pgxpool.Pool,
-	handler channel.InboundHandler,
+	handler func(context.Context, channel.InboundMessage) (channelengine.Result, error),
 	encrypt Encrypter,
 	decrypt Decrypter,
+	typing *TypingIndicatorManager,
 	logger *slog.Logger,
 ) *StreamInboxWorker {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return newStreamInboxWorker(
+	worker := newStreamInboxWorker(
 		&postgresStreamInboxStore{pool: pool, queries: db.New(pool), logger: logger},
-		handler,
+		nil,
 		encrypt,
 		decrypt,
 		logger,
 	)
+	worker.resultHandler = handler
+	worker.typing = typing
+	return worker
 }
 
 func newStreamInboxWorker(
@@ -313,7 +319,13 @@ func (w *StreamInboxWorker) Run(ctx context.Context) {
 		defer close(purgeDone)
 		w.runPurgeLoop(ctx)
 	}()
-
+	reconcileDone := make(chan struct{})
+	go func() {
+		defer close(reconcileDone)
+		if w.typing != nil {
+			w.typing.runStreamEmotionReconciler(ctx)
+		}
+	}()
 	var workers sync.WaitGroup
 	workers.Add(streamInboxConcurrency)
 	for range streamInboxConcurrency {
@@ -324,6 +336,7 @@ func (w *StreamInboxWorker) Run(ctx context.Context) {
 	}
 	workers.Wait()
 	<-purgeDone
+	<-reconcileDone
 }
 
 func (w *StreamInboxWorker) runPurgeLoop(ctx context.Context) {
@@ -381,7 +394,7 @@ func (w *StreamInboxWorker) validateProcessor() error {
 	switch {
 	case w.store == nil:
 		return errors.New("store not configured")
-	case w.handler == nil:
+	case w.handler == nil && w.resultHandler == nil:
 		return errors.New("inbound handler not configured")
 	case w.decrypt == nil:
 		return errors.New("decrypter not configured")
@@ -507,7 +520,29 @@ func (w *StreamInboxWorker) ProcessNext(ctx context.Context) (bool, error) {
 		"attempt_count", row.AttemptCount+1,
 	)
 	handlerCtx, handlerCancel := context.WithTimeout(ctx, streamInboxHandlerTimeout)
-	handlerErr := w.handler(handlerCtx, msg)
+	if w.typing != nil {
+		w.typing.beginStreamEmotion(handlerCtx, row.InstallationID, data.MsgID, EmotionTarget{
+			OpenConversationID: data.ConversationID,
+			OpenMsgID:          data.MsgID,
+			RobotCode:          strings.TrimSpace(data.RobotCode),
+		}, data.CreateAt)
+	}
+	var result channelengine.Result
+	var handlerErr error
+	if w.resultHandler != nil {
+		result, handlerErr = w.resultHandler(handlerCtx, msg)
+	} else {
+		handlerErr = w.handler(handlerCtx, msg)
+	}
+	if w.typing != nil {
+		stateCtx, stateCancel := context.WithTimeout(context.Background(), streamInboxMutationTimeout)
+		if handlerErr == nil && result.Outcome == channelengine.OutcomeIngested && result.TaskID.Valid {
+			w.typing.bindStreamEmotion(stateCtx, row.InstallationID, data.MsgID, result.ChatSessionID, result.TaskID)
+		} else {
+			w.typing.settleStreamSource(stateCtx, row.InstallationID, data.MsgID)
+		}
+		stateCancel()
+	}
 	handlerCancel()
 	if handlerErr != nil {
 		errorClass := classifyStreamInboxError(handlerErr)
