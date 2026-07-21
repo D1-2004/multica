@@ -304,3 +304,53 @@ func TestTypingIndicatorClearsFromAnotherReplica(t *testing.T) {
 		t.Errorf("a second clear must not recall again, got %d recalls", total)
 	}
 }
+
+func TestHistoricalStreamTypingUsesCallbackRobotCodeAcrossReplicas(t *testing.T) {
+	rec, srv := newEmotionAPIServer(t)
+	messenger := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
+
+	instID := typingTestUUID(11)
+	config, err := json.Marshal(dingtalkInstallConfig{
+		AppID:              "legacy-stream-client",
+		AppSecretEncrypted: base64.StdEncoding.EncodeToString([]byte("legacy-stream-secret")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instRow := db.ChannelInstallation{
+		ID: instID, ChannelType: string(TypeDingtalk), Status: "active", Config: config,
+	}
+	shared := &fakeTypingQueries{
+		binding: db.ChannelChatSessionBinding{InstallationID: instID},
+		inst:    instRow,
+	}
+	replicaA := NewTypingIndicatorManager(messenger, plaintextDecrypter, shared, nil)
+	replicaB := NewTypingIndicatorManager(messenger, plaintextDecrypter, shared, nil)
+
+	session := typingTestUUID(12)
+	task := typingTestUUID(13)
+	replicaA.Add(context.Background(), instRow, session, task, EmotionTarget{
+		OpenConversationID: "legacy-cid",
+		OpenMsgID:          "legacy-msg",
+		RobotCode:          "robot-from-stream-callback",
+	}, time.Now().UnixMilli())
+
+	if len(rec.replies) != 1 || rec.replies[0]["robotCode"] != "robot-from-stream-callback" {
+		t.Fatalf("stream emotion reply = %#v", rec.replies)
+	}
+	if len(shared.indicators) != 1 {
+		t.Fatalf("persisted indicators = %d", len(shared.indicators))
+	}
+	var persisted typingIndicatorTarget
+	if err := json.Unmarshal(shared.indicators[0].Target, &persisted); err != nil {
+		t.Fatalf("decode persisted target: %v", err)
+	}
+	if persisted.RobotCode != "robot-from-stream-callback" {
+		t.Fatalf("persisted robot code = %q", persisted.RobotCode)
+	}
+
+	replicaB.ClearTask(context.Background(), session, task)
+	if len(rec.recalls) != 1 || rec.recalls[0]["robotCode"] != "robot-from-stream-callback" {
+		t.Fatalf("stream emotion recall = %#v", rec.recalls)
+	}
+}

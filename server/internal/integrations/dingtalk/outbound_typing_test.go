@@ -267,61 +267,117 @@ func TestOutboundChatDoneLeavesDWSDeliveryToSandbox(t *testing.T) {
 	}
 }
 
-func TestOutboundHistoricalStreamUsesTaskSessionWebhookWithoutRobotCode(t *testing.T) {
-	var posted map[string]any
-	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/session-reply" {
-			t.Fatalf("unexpected webhook path %q", r.URL.Path)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
-			t.Fatalf("decode webhook body: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
-	}))
-	defer webhook.Close()
+func TestOutboundHistoricalStreamRecallsTypingBeforeSessionWebhookReply(t *testing.T) {
+	for _, eventType := range []string{protocol.EventChatDone, protocol.EventTaskFailed} {
+		t.Run(eventType, func(t *testing.T) {
+			var mu sync.Mutex
+			var order []string
+			var posted map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/v1.0/oauth2/accessToken":
+					_, _ = w.Write([]byte(`{"accessToken":"tok_test","expireIn":7200}`))
+				case "/v1.0/robot/emotion/reply":
+					mu.Lock()
+					order = append(order, "add")
+					mu.Unlock()
+					_, _ = w.Write([]byte(`{}`))
+				case "/v1.0/robot/emotion/recall":
+					var body map[string]any
+					_ = json.NewDecoder(r.Body).Decode(&body)
+					if body["robotCode"] != "robot-from-stream-callback" {
+						t.Errorf("recall robotCode = %v", body["robotCode"])
+					}
+					mu.Lock()
+					order = append(order, "recall")
+					mu.Unlock()
+					_, _ = w.Write([]byte(`{}`))
+				case "/session-reply":
+					if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+						t.Errorf("decode webhook body: %v", err)
+					}
+					mu.Lock()
+					order = append(order, "reply")
+					mu.Unlock()
+					_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
+				default:
+					t.Errorf("unexpected path %q", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
 
-	instID := typingTestUUID(1)
-	sessionID := typingTestUUID(2)
-	taskID := typingTestUUID(3)
-	config, err := json.Marshal(dingtalkInstallConfig{
-		AppID:              "legacy-stream-client",
-		AppSecretEncrypted: "bGVnYWN5LXNlY3JldA==",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	taskContext, err := json.Marshal(map[string]any{
-		dingtalkSessionReplyContextKey: dingtalkSessionReplyContext{Webhook: webhook.URL + "/session-reply"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := &fakeTypingQueries{
-		binding: db.ChannelChatSessionBinding{
-			InstallationID: instID,
-			ChannelChatID:  "legacy-conversation",
-			ChatType:       string(channel.ChatTypeGroup),
-		},
-		inst: db.ChannelInstallation{
-			ID: instID, ChannelType: string(TypeDingtalk), Status: "active", Config: config,
-		},
-		tasks: map[pgtype.UUID]db.AgentTaskQueue{
-			taskID: {ID: taskID, Context: taskContext},
-		},
-	}
-	out := NewOutbound(q, plaintextDecrypter, NewRobotMessenger(webhook.URL, webhook.URL, webhook.Client()), nil, nil)
-	if err := out.processEvent(context.Background(), events.Event{
-		Type:          protocol.EventChatDone,
-		ChatSessionID: util.UUIDToString(sessionID),
-		Payload: protocol.ChatDonePayload{
-			TaskID: util.UUIDToString(taskID), Content: "legacy stream reply",
-		},
-	}); err != nil {
-		t.Fatalf("processEvent: %v", err)
-	}
-	markdown, _ := posted["markdown"].(map[string]any)
-	if got, _ := markdown["text"].(string); got != "legacy stream reply" {
-		t.Fatalf("session webhook text = %q", got)
+			instID := typingTestUUID(1)
+			sessionID := typingTestUUID(2)
+			taskID := typingTestUUID(3)
+			config, err := json.Marshal(dingtalkInstallConfig{
+				AppID:              "legacy-stream-client",
+				AppSecretEncrypted: "bGVnYWN5LXNlY3JldA==",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			taskContext, err := json.Marshal(map[string]any{
+				dingtalkSessionReplyContextKey: dingtalkSessionReplyContext{Webhook: server.URL + "/session-reply"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := &fakeTypingQueries{
+				binding: db.ChannelChatSessionBinding{
+					InstallationID: instID,
+					ChannelChatID:  "legacy-conversation",
+					ChatType:       string(channel.ChatTypeGroup),
+				},
+				inst: db.ChannelInstallation{
+					ID: instID, ChannelType: string(TypeDingtalk), Status: "active", Config: config,
+				},
+				tasks: map[pgtype.UUID]db.AgentTaskQueue{
+					taskID: {ID: taskID, Context: taskContext},
+				},
+			}
+			messenger := NewRobotMessenger(server.URL, server.URL, server.Client())
+			mgr := NewTypingIndicatorManager(messenger, plaintextDecrypter, q, nil)
+			out := NewOutbound(q, plaintextDecrypter, messenger, mgr, nil)
+			mgr.Add(context.Background(), q.inst, sessionID, taskID, EmotionTarget{
+				OpenConversationID: "legacy-conversation",
+				OpenMsgID:          "legacy-message",
+				RobotCode:          "robot-from-stream-callback",
+			}, time.Now().UnixMilli())
+
+			event := events.Event{
+				Type:          eventType,
+				ChatSessionID: util.UUIDToString(sessionID),
+				Payload: protocol.ChatDonePayload{
+					TaskID: util.UUIDToString(taskID), Content: "legacy stream reply",
+				},
+			}
+			if eventType == protocol.EventTaskFailed {
+				event.Payload = map[string]any{
+					"task_id":         util.UUIDToString(taskID),
+					"chat_session_id": util.UUIDToString(sessionID),
+					"status":          "failed",
+				}
+			}
+			if err := out.processEvent(context.Background(), event); err != nil {
+				t.Fatalf("processEvent: %v", err)
+			}
+
+			mu.Lock()
+			gotOrder := append([]string(nil), order...)
+			mu.Unlock()
+			if strings.Join(gotOrder, ",") != "add,recall,reply" {
+				t.Fatalf("operation order = %v", gotOrder)
+			}
+			markdown, _ := posted["markdown"].(map[string]any)
+			text, _ := markdown["text"].(string)
+			if eventType == protocol.EventChatDone && text != "legacy stream reply" {
+				t.Fatalf("session webhook text = %q", text)
+			}
+			if eventType == protocol.EventTaskFailed && !strings.Contains(text, "处理失败") {
+				t.Fatalf("failure webhook text = %q", text)
+			}
+		})
 	}
 }

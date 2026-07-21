@@ -639,6 +639,7 @@ func (n *dingtalkTypingNotifier) OnIngested(ctx context.Context, inst engine.Res
 	n.mgr.Add(ctx, instRow, sessionID, taskID, EmotionTarget{
 		OpenConversationID: msg.Source.ChatID,
 		OpenMsgID:          msg.MessageID,
+		RobotCode:          raw.RobotCode,
 	}, raw.CreateAt)
 }
 

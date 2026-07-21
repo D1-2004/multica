@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -36,6 +37,7 @@ type typingQueries interface {
 type typingIndicatorTarget struct {
 	OpenConversationID string `json:"open_conversation_id"`
 	OpenMsgID          string `json:"open_msg_id"`
+	RobotCode          string `json:"robot_code"`
 	TaskID             string `json:"task_id"`
 }
 
@@ -90,22 +92,42 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.ChannelInstall
 			"chat_session_id", util.UUIDToString(chatSessionID), "err", err)
 		return
 	}
-	if creds.RobotCode == "" {
-		// Historical Stream installations reply through sessionWebhook and do
-		// not have the robot API identity needed for cosmetic emotions.
+	robotCodeSource := "installation"
+	if callbackRobotCode := strings.TrimSpace(target.RobotCode); callbackRobotCode != "" {
+		creds.RobotCode = callbackRobotCode
+		robotCodeSource = "stream_callback"
+	}
+	if strings.TrimSpace(creds.RobotCode) == "" {
+		m.log.Warn("dingtalk typing indicator: robot code missing",
+			"event", "dingtalk_typing_indicator_skipped",
+			"reason", "robot_code_missing",
+			"chat_session_id", util.UUIDToString(chatSessionID),
+			"task_id", util.UUIDToString(taskID),
+			"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID))
 		return
 	}
+	target.RobotCode = creds.RobotCode
 	if err := m.messenger.AddEmotionReply(ctx, creds, target); err != nil {
 		m.log.Warn("dingtalk typing indicator: add emotion failed",
-			"chat_session_id", util.UUIDToString(chatSessionID), "open_msg_id", target.OpenMsgID, "err", err)
+			"event", "dingtalk_typing_indicator_add_failed",
+			"chat_session_id", util.UUIDToString(chatSessionID),
+			"task_id", util.UUIDToString(taskID),
+			"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID), "err", err)
 		return
 	}
+	m.log.Info("dingtalk typing indicator added",
+		"event", "dingtalk_typing_indicator_added",
+		"chat_session_id", util.UUIDToString(chatSessionID),
+		"task_id", util.UUIDToString(taskID),
+		"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID),
+		"robot_code_source", robotCodeSource)
 	// Persist, do not remember: the replica that clears this emotion is the one
 	// that serves the daemon's completion POST, which the load balancer picks
 	// independently of the WS lease that pinned the ingest here.
 	payload, err := json.Marshal(typingIndicatorTarget{
 		OpenConversationID: target.OpenConversationID,
 		OpenMsgID:          target.OpenMsgID,
+		RobotCode:          target.RobotCode,
 		TaskID:             util.UUIDToString(taskID),
 	})
 	if err != nil {
@@ -202,9 +224,6 @@ func (m *TypingIndicatorManager) clearRows(ctx context.Context, chatSessionID pg
 			"chat_session_id", key, "err", err)
 		return
 	}
-	if creds.RobotCode == "" {
-		return
-	}
 	for _, row := range rows {
 		var t typingIndicatorTarget
 		if err := json.Unmarshal(row.Target, &t); err != nil {
@@ -212,10 +231,36 @@ func (m *TypingIndicatorManager) clearRows(ctx context.Context, chatSessionID pg
 				"chat_session_id", key, "err", err)
 			continue
 		}
-		target := EmotionTarget{OpenConversationID: t.OpenConversationID, OpenMsgID: t.OpenMsgID}
-		if err := m.messenger.RecallEmotionReply(ctx, creds, target); err != nil {
-			m.log.Warn("dingtalk typing indicator: recall emotion failed",
-				"chat_session_id", key, "open_msg_id", target.OpenMsgID, "err", err)
+		target := EmotionTarget{
+			OpenConversationID: t.OpenConversationID,
+			OpenMsgID:          t.OpenMsgID,
+			RobotCode:          strings.TrimSpace(t.RobotCode),
 		}
+		rowCreds := creds
+		if target.RobotCode != "" {
+			rowCreds.RobotCode = target.RobotCode
+		}
+		if strings.TrimSpace(rowCreds.RobotCode) == "" {
+			m.log.Warn("dingtalk typing indicator: robot code missing for recall",
+				"event", "dingtalk_typing_indicator_recall_skipped",
+				"reason", "robot_code_missing",
+				"chat_session_id", key,
+				"task_id", t.TaskID,
+				"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID))
+			continue
+		}
+		if err := m.messenger.RecallEmotionReply(ctx, rowCreds, target); err != nil {
+			m.log.Warn("dingtalk typing indicator: recall emotion failed",
+				"event", "dingtalk_typing_indicator_recall_failed",
+				"chat_session_id", key,
+				"task_id", t.TaskID,
+				"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID), "err", err)
+			continue
+		}
+		m.log.Info("dingtalk typing indicator recalled",
+			"event", "dingtalk_typing_indicator_recalled",
+			"chat_session_id", key,
+			"task_id", t.TaskID,
+			"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID))
 	}
 }

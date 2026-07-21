@@ -18,7 +18,11 @@ import (
 // the official SDK's BotCallbackDataModel; unknown fields are ignored.
 type botCallbackData struct {
 	ConversationID string `json:"conversationId"`
-	AtUsers        []struct {
+	// RobotCode is present on live Stream callbacks even though older SDK
+	// models omitted it. It is the authoritative robot identity for APIs that
+	// address the receiving bot, including processing-emotion reply/recall.
+	RobotCode string `json:"robotCode"`
+	AtUsers   []struct {
 		DingtalkID string `json:"dingtalkId"`
 		StaffID    string `json:"staffId"`
 	} `json:"atUsers"`
@@ -149,6 +153,10 @@ type dingtalkRawEvent struct {
 	// rather than read from the payload, mirroring how each Slack
 	// connection only ever delivers its own app's events.
 	ClientID string `json:"client_id"`
+	// RobotCode comes from the authenticated Stream callback payload. Keep it
+	// with the message because historical Stream installations predate
+	// robot_code persistence and client_id is a different identifier.
+	RobotCode string `json:"robot_code,omitempty"`
 	// InstallationID is the immutable admission-time routing fence. Durable
 	// inbox callbacks must resolve this exact row instead of following an app_id
 	// that may have been reclaimed by another workspace before processing.
@@ -170,9 +178,9 @@ type dingtalkRawEvent struct {
 	AgentIdentityContextToken string          `json:"agent_identity_context_token,omitempty"`
 	DispatchContext           json.RawMessage `json:"dispatch_context,omitempty"`
 	SenderCorpID              string          `json:"sender_corp_id,omitempty"`
-	SenderNick                string `json:"sender_nick,omitempty"`
-	ConversationTitle         string `json:"conversation_title,omitempty"`
-	Msgtype                   string `json:"msgtype,omitempty"`
+	SenderNick                string          `json:"sender_nick,omitempty"`
+	ConversationTitle         string          `json:"conversation_title,omitempty"`
+	Msgtype                   string          `json:"msgtype,omitempty"`
 	// MessageDownloadCode is a short-lived credential used only by the
 	// DingTalk attachment importer. It must never be logged or persisted as an
 	// attachment URL.
@@ -297,6 +305,7 @@ func inboundFromBotCallbackForInstallationWithSource(data botCallbackData, clien
 	}
 	raw, _ := json.Marshal(dingtalkRawEvent{
 		ClientID:                  clientID,
+		RobotCode:                 strings.TrimSpace(data.RobotCode),
 		InstallationID:            installationID,
 		SessionWebhook:            data.SessionWebhook,
 		SessionWebhookExpiredTime: data.SessionWebhookExpiredTime,
