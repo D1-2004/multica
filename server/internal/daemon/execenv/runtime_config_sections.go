@@ -547,13 +547,26 @@ func writeDispatchWorkflowPrompt(b *strings.Builder, kind taskKind, ctx TaskCont
 		return
 	}
 	b.WriteString("#### Dispatch Outbound Delivery\n\n")
-	if strings.TrimSpace(ctx.DispatchSurfaceType) == protocol.DispatchSurfaceTypeIssue {
+	b.WriteString(BuildDispatchWorkflowContent(ctx.DispatchSurfaceType, prompt))
+}
+
+// BuildDispatchWorkflowContent renders the canonical private DWS delivery
+// workflow. It is shared by the sandbox runtime file and the current-turn
+// fallback used by providers whose resumed sessions cache project context.
+func BuildDispatchWorkflowContent(surfaceType, prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return ""
+	}
+	var b strings.Builder
+	if strings.TrimSpace(surfaceType) == protocol.DispatchSurfaceTypeIssue {
 		b.WriteString("This Issue workflow has two required delivery destinations. Before beginning the requested work, perform the acknowledgement reaction described below. For final delivery, prepare the user-facing content once. Post the final result as the required Multica Issue comment using that content, and only after the comment succeeds send exactly the same content as the DingTalk DWS reply. The run is not fully delivered until both the Issue comment and the DingTalk DWS reply have been attempted truthfully. Do not post a second Issue comment merely to report a DWS failure.\n\n")
 	} else {
 		b.WriteString("This chat workflow uses DingTalk DWS for outbound delivery. Before beginning the requested work, perform the acknowledgement reaction described below. Before finishing, send the final user-facing content as the DingTalk DWS reply described below.\n\n")
 	}
 	b.WriteString(prompt)
 	b.WriteString("\n\n")
+	return b.String()
 }
 
 // buildMetaSkillContentSlim is the post-MUL-3560 brief assembler.
