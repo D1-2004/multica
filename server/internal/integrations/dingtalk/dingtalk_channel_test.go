@@ -172,7 +172,7 @@ func newTestChannel(t *testing.T, srvURL string, inbox StreamInbox) *dingtalkCha
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
-	cfg, err := encodeInstallConfig(Installation{ClientID: "ding_client", AppSecretEncrypted: sealed})
+	cfg, err := encodeInstallConfig(Installation{ClientID: "ding_client", RobotCode: "robot_client", AppSecretEncrypted: sealed})
 	if err != nil {
 		t.Fatalf("encode config: %v", err)
 	}

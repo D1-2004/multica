@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -28,10 +29,13 @@ import (
 //
 //  3. poll — POST /app/registration/poll with the device_code. The
 //     response's `status` field is the discriminator:
-//       - "WAITING"  — keep polling at the suggested interval.
-//       - "SUCCESS"  — terminal; client_id + client_secret are set.
-//       - "FAIL"     — terminal failure; fail_reason is prose.
-//       - "EXPIRED"  — the device_code lapsed; terminal.
+//       - "WAITING", "SCANNED", "CREATING", "SELECTING", "PUBLISHING"
+//         — keep polling at the suggested interval.
+//       - "APPROVING" — terminal; credentials are issued once, but the robot
+//         cannot send or receive messages until DingTalk approves it.
+//       - "SUCCESS" — terminal; credentials are set and the robot is enabled.
+//       - "FAIL" — terminal failure; fail_reason is prose.
+//       - "EXPIRED" — the device_code lapsed; terminal.
 //
 // Every response additionally carries the classic oapi errcode/errmsg
 // envelope; errcode != 0 means a server-side error and is terminal.
@@ -45,6 +49,7 @@ import (
 
 const (
 	registrationDefaultBase = "https://oapi.dingtalk.com"
+	registrationSource      = "FDE_AGENT"
 
 	registrationInitPath  = "/app/registration/init"
 	registrationBeginPath = "/app/registration/begin"
@@ -65,10 +70,15 @@ const (
 	// a slow scan-and-authorize round trip.
 	registrationMaxPollWindow = 15 * time.Minute
 
-	registrationStatusWaiting = "WAITING"
-	registrationStatusSuccess = "SUCCESS"
-	registrationStatusFail    = "FAIL"
-	registrationStatusExpired = "EXPIRED"
+	registrationStatusWaiting    = "WAITING"
+	registrationStatusScanned    = "SCANNED"
+	registrationStatusCreating   = "CREATING"
+	registrationStatusSelecting  = "SELECTING"
+	registrationStatusPublishing = "PUBLISHING"
+	registrationStatusApproving  = "APPROVING"
+	registrationStatusSuccess    = "SUCCESS"
+	registrationStatusFail       = "FAIL"
+	registrationStatusExpired    = "EXPIRED"
 )
 
 // RegistrationConfig configures the device-flow client. All fields are
@@ -84,11 +94,10 @@ type RegistrationConfig struct {
 	// Empty defaults to a fresh *http.Client with a 30s timeout.
 	HTTPClient *http.Client
 
-	// Source is the DingTalk-assigned label forwarded on init so the
-	// authorize page renders partner-specific copy. It is optional and
-	// requires manual allocation from DingTalk; empty omits the field,
-	// which the doc explicitly supports.
-	Source string
+	// OutgoingURL is the fixed server-owned callback target used when a
+	// registration is opened in HTTP_CALLBACK mode. It is never accepted
+	// from an API caller.
+	OutgoingURL string
 }
 
 func (c RegistrationConfig) withDefaults() RegistrationConfig {
@@ -113,6 +122,45 @@ type RegistrationClient struct {
 // NewRegistrationClient constructs the device-flow client.
 func NewRegistrationClient(cfg RegistrationConfig) *RegistrationClient {
 	return &RegistrationClient{cfg: cfg.withDefaults()}
+}
+
+// TransportMode controls only how DingTalk delivers inbound robot messages.
+// Outbound replies continue to use the Robot OpenAPI in both modes.
+type TransportMode string
+
+const (
+	TransportModeStream       TransportMode = "STREAM"
+	TransportModeHTTPCallback TransportMode = "HTTP_CALLBACK"
+)
+
+func normalizeTransportMode(mode TransportMode) (TransportMode, error) {
+	switch TransportMode(strings.ToUpper(strings.TrimSpace(string(mode)))) {
+	case "", TransportModeStream:
+		return TransportModeStream, nil
+	case TransportModeHTTPCallback:
+		return TransportModeHTTPCallback, nil
+	default:
+		return "", &RegistrationError{Code: "invalid_transport_mode", Description: "transport_mode must be STREAM or HTTP_CALLBACK"}
+	}
+}
+
+func transportModeFromPoll(mode string) (TransportMode, error) {
+	switch strings.ToUpper(strings.TrimSpace(mode)) {
+	case "", "STREAM":
+		return TransportModeStream, nil
+	case "HTTPS":
+		return TransportModeHTTPCallback, nil
+	default:
+		return "", &RegistrationError{Code: "invalid_response", Description: "poll: unknown mode"}
+	}
+}
+
+func validateOutgoingURL(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return &RegistrationError{Code: "http_callback_unavailable", Description: "a valid server-owned https outgoing URL is required"}
+	}
+	return nil
 }
 
 // RegistrationBeginResult is what Begin returns to RegistrationService.
@@ -142,8 +190,13 @@ type RegistrationBeginResult struct {
 type RegistrationPollResult struct {
 	ClientID     string
 	ClientSecret string
-	Pending      bool
-	Err          *RegistrationError
+	RobotCode    string
+	Mode         string
+	// ApprovalPending means DingTalk issued the credentials once but the robot
+	// is still under review and cannot send or receive messages yet.
+	ApprovalPending bool
+	Pending         bool
+	Err             *RegistrationError
 }
 
 // RegistrationError is the typed protocol error. `Code` is a stable
@@ -187,15 +240,31 @@ func (e registrationEnvelope) err() *RegistrationError {
 // this pairing (5-minute TTL, single use) — no caller ever needs to
 // hold one across requests.
 func (c *RegistrationClient) Begin(ctx context.Context) (*RegistrationBeginResult, error) {
+	return c.BeginWithTransport(ctx, TransportModeStream)
+}
+
+// BeginWithTransport opens a fresh registration generation. STREAM keeps the
+// legacy begin payload byte-for-byte compatible; HTTP_CALLBACK adds the
+// DingTalk protocol's HTTPS mode and the fixed callback URL.
+func (c *RegistrationClient) BeginWithTransport(ctx context.Context, requested TransportMode) (*RegistrationBeginResult, error) {
+	mode, err := normalizeTransportMode(requested)
+	if err != nil {
+		return nil, err
+	}
+	if mode == TransportModeHTTPCallback {
+		if err := validateOutgoingURL(c.cfg.OutgoingURL); err != nil {
+			return nil, err
+		}
+	}
 	var initResp struct {
 		registrationEnvelope
 		Nonce     string `json:"nonce"`
 		ExpiresIn int    `json:"expires_in"`
 	}
-	initReq := map[string]string{}
-	if c.cfg.Source != "" {
-		initReq["source"] = c.cfg.Source
-	}
+	// FDE_AGENT is the DingTalk-allocated product source for every Multica
+	// scan-to-create flow. Keep this stable across deployments so the
+	// authorization page always renders the FDE robot identity and copy.
+	initReq := map[string]string{"source": registrationSource}
 	if err := c.doJSON(ctx, registrationInitPath, initReq, &initResp); err != nil {
 		return nil, err
 	}
@@ -215,7 +284,12 @@ func (c *RegistrationClient) Begin(ctx context.Context) (*RegistrationBeginResul
 		ExpiresIn               int    `json:"expires_in"`
 		Interval                int    `json:"interval"`
 	}
-	if err := c.doJSON(ctx, registrationBeginPath, map[string]string{"nonce": initResp.Nonce}, &beginResp); err != nil {
+	beginReq := map[string]string{"nonce": initResp.Nonce}
+	if mode == TransportModeHTTPCallback {
+		beginReq["mode"] = "HTTPS"
+		beginReq["outgoing_url"] = strings.TrimSpace(c.cfg.OutgoingURL)
+	}
+	if err := c.doJSON(ctx, registrationBeginPath, beginReq, &beginResp); err != nil {
 		return nil, err
 	}
 	if err := beginResp.err(); err != nil {
@@ -259,6 +333,8 @@ func (c *RegistrationClient) Poll(ctx context.Context, deviceCode string) (*Regi
 		Status       string `json:"status"`
 		ClientID     string `json:"client_id"`
 		ClientSecret string `json:"client_secret"`
+		RobotCode    string `json:"robot_code"`
+		Mode         string `json:"mode"`
 		FailReason   string `json:"fail_reason"`
 	}
 	if err := c.doJSON(ctx, registrationPollPath, map[string]string{"device_code": deviceCode}, &resp); err != nil {
@@ -269,18 +345,32 @@ func (c *RegistrationClient) Poll(ctx context.Context, deviceCode string) (*Regi
 	}
 
 	switch resp.Status {
-	case registrationStatusWaiting:
+	case registrationStatusWaiting,
+		registrationStatusScanned,
+		registrationStatusCreating,
+		registrationStatusSelecting,
+		registrationStatusPublishing:
 		return &RegistrationPollResult{Pending: true}, nil
-	case registrationStatusSuccess:
+	case registrationStatusApproving, registrationStatusSuccess:
 		// Partial success payloads are treated as a protocol error so
 		// RegistrationService never writes a half-populated installation.
 		if resp.ClientID == "" || resp.ClientSecret == "" {
 			return nil, &RegistrationError{
 				Code:        "invalid_response",
-				Description: "poll: SUCCESS without client_id/client_secret",
+				Description: "poll: " + resp.Status + " without client_id/client_secret",
 			}
 		}
-		return &RegistrationPollResult{ClientID: resp.ClientID, ClientSecret: resp.ClientSecret}, nil
+		if strings.TrimSpace(resp.RobotCode) == "" {
+			return nil, &RegistrationError{
+				Code:        "invalid_response",
+				Description: "poll: " + resp.Status + " without robot_code",
+			}
+		}
+		return &RegistrationPollResult{
+			ClientID: resp.ClientID, ClientSecret: resp.ClientSecret,
+			RobotCode: resp.RobotCode, Mode: resp.Mode,
+			ApprovalPending: resp.Status == registrationStatusApproving,
+		}, nil
 	case registrationStatusFail:
 		return &RegistrationPollResult{
 			Err: &RegistrationError{Code: "fail", Description: resp.FailReason},

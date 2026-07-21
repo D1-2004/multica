@@ -37,7 +37,12 @@ import { memberListOptions } from "@multica/core/workspace/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { dingtalkInstallationsOptions, dingtalkKeys } from "@multica/core/dingtalk";
 import { api, ApiError } from "@multica/core/api";
-import type { DingTalkInstallation, DingTalkInstallStatusResponse } from "@multica/core/types";
+import type {
+  DingTalkInstallation,
+  DingTalkInstallCapabilities,
+  DingTalkInstallStatusResponse,
+  DingTalkTransportMode,
+} from "@multica/core/types";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 
@@ -49,6 +54,10 @@ import { useT } from "../../i18n";
  * console's numeric appId, which the device flow does not return, so the
  * list page is the closest stable target. */
 const DINGTALK_DEV_CONSOLE = "https://open-dev.dingtalk.com/fe/app#/corp/app";
+
+function isDingTalkInstallationApproving(installation: DingTalkInstallation): boolean {
+  return installation.registration_status === "APPROVING";
+}
 
 // DingTalkTab is the workspace settings panel for DingTalk enterprise bot
 // installations, created through the scan-to-create device flow
@@ -81,6 +90,7 @@ export function DingTalkTab() {
 
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [retryingRouter, setRetryingRouter] = useState<string | null>(null);
 
   async function handleDisconnect() {
     if (!disconnectTarget || disconnecting) return;
@@ -94,6 +104,20 @@ export function DingTalkTab() {
       toast.error(e instanceof Error ? e.message : t(($) => $.dingtalk.toast_disconnect_failed));
     } finally {
       setDisconnecting(false);
+    }
+  }
+
+  async function handleRetryRouter(installationId: string) {
+    if (retryingRouter) return;
+    setRetryingRouter(installationId);
+    try {
+      await api.retryDingTalkRouterRegistration(wsId, installationId);
+      await qc.invalidateQueries({ queryKey: dingtalkKeys.installations(wsId) });
+      toast.success(t(($) => $.dingtalk.toast_router_retry_succeeded));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t(($) => $.dingtalk.toast_router_retry_failed));
+    } finally {
+      setRetryingRouter(null);
     }
   }
 
@@ -147,6 +171,8 @@ export function DingTalkTab() {
                     key={inst.id}
                     installation={inst}
                     canManage={canManage}
+                    retryingRouter={retryingRouter === inst.id}
+                    onRetryRouter={() => void handleRetryRouter(inst.id)}
                     onDisconnect={() => setDisconnectTarget(inst.id)}
                   />
                 ))}
@@ -190,10 +216,14 @@ export function DingTalkTab() {
 function InstallationRow({
   installation,
   canManage,
+  retryingRouter,
+  onRetryRouter,
   onDisconnect,
 }: {
   installation: DingTalkInstallation;
   canManage: boolean;
+  retryingRouter: boolean;
+  onRetryRouter: () => void;
   onDisconnect: () => void;
 }) {
   const { t } = useT("settings");
@@ -202,6 +232,7 @@ function InstallationRow({
   // product users.
   const { getAgentName } = useActorName();
   const isActive = installation.status === "active";
+  const isApproving = isDingTalkInstallationApproving(installation);
   const agentName = getAgentName(installation.agent_id);
   return (
     <div className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0">
@@ -227,13 +258,39 @@ function InstallationRow({
               when: new Date(installation.installed_at).toLocaleString(),
             })}
           </p>
+          {isApproving && (
+            <p className="text-[10px] text-amber-700 dark:text-amber-400">
+              {t(($) => $.dingtalk.approving_hint)}
+            </p>
+          )}
+          {installation.transport_mode === "HTTP_CALLBACK" && (
+            <p className="text-[10px] text-muted-foreground">
+              {installation.router_status === "registered"
+                ? t(($) => $.dingtalk.router_registered)
+                : t(($) => $.dingtalk.router_registration_failed)}
+            </p>
+          )}
         </div>
       </div>
       {canManage && isActive && (
-        <Button variant="outline" size="sm" onClick={onDisconnect}>
-          <Trash2 className="h-3 w-3" />
-          {t(($) => $.dingtalk.disconnect)}
-        </Button>
+        <div className="flex items-center gap-2">
+          {installation.transport_mode === "HTTP_CALLBACK" &&
+            installation.router_status !== "registered" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onRetryRouter}
+                disabled={retryingRouter}
+              >
+                <RefreshCw className={cn("h-3 w-3", retryingRouter && "animate-spin")} />
+                {t(($) => $.dingtalk.router_retry)}
+              </Button>
+            )}
+          <Button variant="outline" size="sm" onClick={onDisconnect}>
+            <Trash2 className="h-3 w-3" />
+            {t(($) => $.dingtalk.disconnect)}
+          </Button>
+        </div>
       )}
     </div>
   );
@@ -295,6 +352,7 @@ export function DingTalkAgentBindButton({
     return onShowConnectedDetails ? (
       <DingTalkAgentBotStatusRow
         onClick={onShowConnectedDetails}
+        installation={existing}
         className={className}
       />
     ) : (
@@ -328,6 +386,7 @@ export function DingTalkAgentBindButton({
           agentId={agentId}
           agentName={agentName}
           installSupported={installSupported}
+          capabilities={listing?.capabilities}
           onClose={() => setDialogOpen(false)}
         />
       )}
@@ -340,12 +399,15 @@ export function DingTalkAgentBindButton({
 // a single full-width button deep-linking into the Integrations tab.
 function DingTalkAgentBotStatusRow({
   onClick,
+  installation,
   className,
 }: {
   onClick: () => void;
+  installation: DingTalkInstallation;
   className?: string;
 }) {
   const { t } = useT("settings");
+  const isApproving = isDingTalkInstallationApproving(installation);
   return (
     <button
       type="button"
@@ -356,8 +418,17 @@ function DingTalkAgentBotStatusRow({
       )}
       data-testid="dingtalk-agent-bot-status"
     >
-      <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-      <span className="truncate">{t(($) => $.dingtalk.agent_bot_connected_label)}</span>
+      <span
+        className={cn(
+          "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+          isApproving ? "bg-amber-500" : "bg-emerald-500",
+        )}
+      />
+      <span className="truncate">
+        {isApproving
+          ? t(($) => $.dingtalk.agent_bot_approving_label)
+          : t(($) => $.dingtalk.agent_bot_connected_label)}
+      </span>
       <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0" />
     </button>
   );
@@ -378,6 +449,7 @@ function DingTalkAgentBotConnectedBadge({
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
+  const isApproving = isDingTalkInstallationApproving(installation);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -406,8 +478,17 @@ function DingTalkAgentBotConnectedBadge({
     >
       <div className="flex items-center justify-between gap-3">
         <span className="inline-flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-          <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-          <span className="truncate">{t(($) => $.dingtalk.agent_bot_connected_label)}</span>
+          <span
+            className={cn(
+              "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+              isApproving ? "bg-amber-500" : "bg-emerald-500",
+            )}
+          />
+          <span className="truncate">
+            {isApproving
+              ? t(($) => $.dingtalk.agent_bot_approving_label)
+              : t(($) => $.dingtalk.agent_bot_connected_label)}
+          </span>
         </span>
         <Button
           variant="destructive"
@@ -493,6 +574,7 @@ function DingTalkInstallDialog({
   agentId,
   agentName,
   installSupported,
+  capabilities,
   onClose,
 }: {
   wsId: string;
@@ -501,6 +583,7 @@ function DingTalkInstallDialog({
   /** Whether the scan-to-create device flow is wired. When false the
    * dialog starts in — and stays on — the manual form. */
   installSupported: boolean;
+  capabilities?: DingTalkInstallCapabilities;
   onClose: () => void;
 }) {
   const { t } = useT("settings");
@@ -524,26 +607,31 @@ function DingTalkInstallDialog({
   const [beginning, setBeginning] = useState(false);
   const closedRef = useRef(false);
 
-  // allowUnbound is baked into the QR session at begin time (the flag is
-  // persisted when the scan completes), so toggling it re-begins the
-  // session with a fresh device code. Default off = the standard
-  // bind-first bot. The manual form reuses the same flag.
+  // Transport and allowUnbound are chosen before the first registration
+  // request. Once a QR exists, changing either option replaces that session
+  // with a fresh device code. Default off = the standard bind-first bot.
   const [allowUnbound, setAllowUnbound] = useState(false);
+  const httpCallbackAvailable = capabilities?.http_callback.available === true;
+  const [transportMode, setTransportMode] = useState<DingTalkTransportMode>("STREAM");
 
   // Manual-form state.
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [robotCode, setRobotCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
 
-  async function beginSession(allow = allowUnbound) {
+  async function beginSession(
+    allow = allowUnbound,
+    transport: DingTalkTransportMode = transportMode,
+  ) {
     setBeginning(true);
     setStatus("pending");
     setErrorReason(null);
     setErrorMessage(null);
     setSession(null);
     try {
-      const res = await api.beginDingTalkInstall(wsId, agentId, allow);
+      const res = await api.beginDingTalkInstall(wsId, agentId, allow, transport);
       if (closedRef.current) return;
       setSession({
         sessionId: res.session_id,
@@ -568,17 +656,17 @@ function DingTalkInstallDialog({
     setManualError(null);
   }
 
-  // Switch (back) to the scan flow, minting a fresh session if none is in
-  // flight yet (e.g. the dialog opened straight into the manual form).
+  // Switch (back) to the scan configuration. The user still explicitly
+  // starts registration after choosing the transport.
   function switchToScan() {
     setMode("scan");
-    if (!session && !beginning) void beginSession();
   }
 
   async function submitManual() {
     const key = clientId.trim();
     const secret = clientSecret.trim();
-    if (!key || !secret) {
+    const robot = robotCode.trim();
+    if (!key || !secret || !robot) {
       setManualError(t(($) => $.dingtalk.install_manual_missing_fields));
       return;
     }
@@ -588,6 +676,7 @@ function DingTalkInstallDialog({
       await api.manualInstallDingTalk(wsId, agentId, {
         clientId: key,
         clientSecret: secret,
+        robotCode: robot,
         allowUnbound,
       });
       if (closedRef.current) return;
@@ -606,13 +695,9 @@ function DingTalkInstallDialog({
 
   useEffect(() => {
     closedRef.current = false;
-    // Only the scan path talks to the begin endpoint; when the device flow
-    // is unavailable the dialog opens on the manual form and must not.
-    if (installSupported) void beginSession();
     return () => {
       closedRef.current = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -633,6 +718,11 @@ function DingTalkInstallDialog({
           setTimeout(() => {
             if (!cancelled) onClose();
           }, 800);
+          return;
+        }
+        if (res.status === "approving") {
+          await qc.invalidateQueries({ queryKey: dingtalkKeys.installations(wsId) });
+          toast.message(t(($) => $.dingtalk.install_approving_toast));
           return;
         }
         if (res.status === "error") {
@@ -695,12 +785,38 @@ function DingTalkInstallDialog({
         <div className="flex flex-col items-center gap-4 py-2">
           {mode === "scan" ? (
             <>
-              {beginning && !session && (
-                <p className="text-sm text-muted-foreground">{t(($) => $.dingtalk.install_starting)}</p>
-              )}
-
-              {session && status === "pending" && (
+              {(status === "pending" || !session) && (
                 <>
+                  <div className="grid w-full grid-cols-2 gap-2" data-testid="dingtalk-transport-mode">
+                    {(["STREAM", "HTTP_CALLBACK"] as const).map((transport) => {
+                      const disabled = transport === "HTTP_CALLBACK" && !httpCallbackAvailable;
+                      const selected = transportMode === transport;
+                      return (
+                        <Button
+                          key={transport}
+                          type="button"
+                          size="sm"
+                          variant={selected ? "default" : "outline"}
+                          aria-pressed={selected}
+                          disabled={beginning || disabled}
+                          title={
+                            disabled
+                              ? t(($) => $.dingtalk.install_transport_http_unavailable)
+                              : undefined
+                          }
+                          onClick={() => {
+                            if (selected) return;
+                            setTransportMode(transport);
+                            if (session) void beginSession(allowUnbound, transport);
+                          }}
+                        >
+                          {transport === "STREAM"
+                            ? t(($) => $.dingtalk.install_transport_stream)
+                            : t(($) => $.dingtalk.install_transport_http)}
+                        </Button>
+                      );
+                    })}
+                  </div>
                   <div className="flex w-full items-start gap-3 rounded-md border p-3">
                     <Switch
                       id="dingtalk-allow-unbound"
@@ -708,7 +824,7 @@ function DingTalkInstallDialog({
                       disabled={beginning}
                       onCheckedChange={(checked) => {
                         setAllowUnbound(checked);
-                        void beginSession(checked);
+                        if (session) void beginSession(checked);
                       }}
                     />
                     <label htmlFor="dingtalk-allow-unbound" className="flex-1 cursor-pointer">
@@ -720,6 +836,15 @@ function DingTalkInstallDialog({
                       </span>
                     </label>
                   </div>
+                </>
+              )}
+
+              {beginning && !session && (
+                <p className="text-sm text-muted-foreground">{t(($) => $.dingtalk.install_starting)}</p>
+              )}
+
+              {session && status === "pending" && (
+                <>
                   <div className="rounded-md border bg-white p-3">
                     <QRCode value={session.qrCodeURL} size={192} />
                   </div>
@@ -741,6 +866,17 @@ function DingTalkInstallDialog({
                 <p className="text-sm font-medium">{t(($) => $.dingtalk.install_success)}</p>
               )}
 
+              {status === "approving" && (
+                <div className="space-y-2 text-center" data-testid="dingtalk-install-approving">
+                  <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                    {t(($) => $.dingtalk.install_approving)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {t(($) => $.dingtalk.install_approving_hint)}
+                  </p>
+                </div>
+              )}
+
               {status === "error" && (
                 <div className="space-y-2 text-center">
                   <p className="text-sm font-medium text-destructive">
@@ -756,6 +892,8 @@ function DingTalkInstallDialog({
                           return t(($) => $.dingtalk.install_error_credentials);
                         case "installation_conflict":
                           return t(($) => $.dingtalk.install_error_conflict);
+                        case "superseded":
+                          return t(($) => $.dingtalk.install_error_superseded);
                         case "session_lost":
                           return t(($) => $.dingtalk.install_error_session_lost);
                         case "forbidden":
@@ -773,7 +911,7 @@ function DingTalkInstallDialog({
                 </div>
               )}
 
-              {status !== "success" && (
+              {status !== "success" && status !== "approving" && (
                 <button
                   type="button"
                   onClick={switchToManual}
@@ -822,6 +960,20 @@ function DingTalkInstallDialog({
                   value={clientSecret}
                   onChange={(e) => setClientSecret(e.target.value)}
                   placeholder={t(($) => $.dingtalk.install_manual_appsecret_placeholder)}
+                  disabled={submitting}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="dingtalk-manual-robot-code">
+                  {t(($) => $.dingtalk.install_manual_robot_code_label)}
+                </Label>
+                <Input
+                  id="dingtalk-manual-robot-code"
+                  value={robotCode}
+                  onChange={(e) => setRobotCode(e.target.value)}
+                  placeholder={t(($) => $.dingtalk.install_manual_robot_code_placeholder)}
                   disabled={submitting}
                   autoComplete="off"
                   spellCheck={false}
@@ -889,6 +1041,22 @@ function DingTalkInstallDialog({
               <Button size="sm" onClick={() => beginSession()} disabled={beginning}>
                 <RefreshCw className="h-3 w-3" />
                 {t(($) => $.dingtalk.install_retry)}
+              </Button>
+            </>
+          ) : !session ? (
+            <>
+              <Button variant="outline" size="sm" onClick={onClose} disabled={beginning}>
+                {t(($) => $.dingtalk.install_close)}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void beginSession()}
+                disabled={beginning}
+                data-testid="dingtalk-install-start"
+              >
+                {beginning
+                  ? t(($) => $.dingtalk.install_starting)
+                  : t(($) => $.dingtalk.install_start)}
               </Button>
             </>
           ) : (

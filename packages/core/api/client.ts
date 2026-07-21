@@ -2651,9 +2651,11 @@ export class ApiClient {
     workspaceId: string,
     agentId: string,
     allowUnbound = false,
+    transportMode: "STREAM" | "HTTP_CALLBACK" = "STREAM",
   ): Promise<BeginDingTalkInstallResponse> {
     const search = new URLSearchParams({ agent_id: agentId });
     if (allowUnbound) search.set("allow_unbound", "true");
+    search.set("transport_mode", transportMode);
     return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/install/begin?${search.toString()}`, {
       method: "POST",
     });
@@ -2673,7 +2675,7 @@ export class ApiClient {
   async manualInstallDingTalk(
     workspaceId: string,
     agentId: string,
-    params: { clientId: string; clientSecret: string; allowUnbound?: boolean },
+    params: { clientId: string; clientSecret: string; robotCode: string; allowUnbound?: boolean },
   ): Promise<DingTalkInstallation> {
     return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/install/manual`, {
       method: "POST",
@@ -2681,6 +2683,7 @@ export class ApiClient {
         agent_id: agentId,
         client_id: params.clientId,
         client_secret: params.clientSecret,
+        robot_code: params.robotCode,
         allow_unbound: params.allowUnbound ?? false,
       }),
     });
@@ -2690,6 +2693,16 @@ export class ApiClient {
     await this.fetch(`/api/workspaces/${workspaceId}/dingtalk/installations/${installationId}`, {
       method: "DELETE",
     });
+  }
+
+  async retryDingTalkRouterRegistration(
+    workspaceId: string,
+    installationId: string,
+  ): Promise<DingTalkInstallation> {
+    return this.fetch(
+      `/api/workspaces/${workspaceId}/dingtalk/installations/${installationId}/router/retry`,
+      { method: "POST" },
+    );
   }
 
   async redeemDingTalkBindingToken(token: string): Promise<RedeemDingTalkBindingTokenResponse> {

@@ -643,6 +643,123 @@ func (q *Queries) FindReusableChannelUserBinding(ctx context.Context, arg FindRe
 	return i, err
 }
 
+const getActiveDingTalkBotInstallationByAgent = `-- name: GetActiveDingTalkBotInstallationByAgent :one
+SELECT ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.status, ci.ws_lease_token, ci.ws_lease_expires_at, ci.installer_user_id, ci.installed_at, ci.created_at, ci.updated_at
+FROM channel_installation ci
+WHERE ci.workspace_id = $1
+  AND ci.agent_id = $2
+  AND ci.channel_type = 'dingtalk'
+  AND ci.status = 'active'
+`
+
+type GetActiveDingTalkBotInstallationByAgentParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+}
+
+func (q *Queries) GetActiveDingTalkBotInstallationByAgent(ctx context.Context, arg GetActiveDingTalkBotInstallationByAgentParams) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, getActiveDingTalkBotInstallationByAgent, arg.WorkspaceID, arg.AgentID)
+	var i ChannelInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getActiveDingTalkBotInstallationByEndpoint = `-- name: GetActiveDingTalkBotInstallationByEndpoint :one
+SELECT ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.status, ci.ws_lease_token, ci.ws_lease_expires_at, ci.installer_user_id, ci.installed_at, ci.created_at, ci.updated_at
+FROM channel_installation ci
+JOIN workspace w ON w.id = ci.workspace_id
+JOIN agent a ON a.id = ci.agent_id AND a.workspace_id = ci.workspace_id
+JOIN member m ON m.workspace_id = ci.workspace_id AND m.user_id = ci.installer_user_id
+WHERE ci.channel_type = 'dingtalk'
+  AND ci.status = 'active'
+  AND ci.config ->> 'transport_mode' = 'HTTP_CALLBACK'
+  AND ci.config ->> 'dispatch_endpoint_id' = $1::text
+`
+
+// Robot-only dispatch endpoint resolution. The same endpoint may also be
+// present on a dingtalk_account row for the agent; this query is the fallback
+// that lets an HTTP_CALLBACK robot authenticate without a digital-employee
+// binding. Membership and ownership checks match the legacy endpoint query.
+func (q *Queries) GetActiveDingTalkBotInstallationByEndpoint(ctx context.Context, dispatchEndpointID string) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, getActiveDingTalkBotInstallationByEndpoint, dispatchEndpointID)
+	var i ChannelInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getActiveDingTalkHTTPInstallationForDispatch = `-- name: GetActiveDingTalkHTTPInstallationForDispatch :one
+SELECT ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.status, ci.ws_lease_token, ci.ws_lease_expires_at, ci.installer_user_id, ci.installed_at, ci.created_at, ci.updated_at
+FROM channel_installation ci
+WHERE ci.workspace_id = $1
+  AND ci.agent_id = $2
+  AND ci.channel_type = 'dingtalk'
+  AND ci.status = 'active'
+  AND ci.config ->> 'transport_mode' = 'HTTP_CALLBACK'
+  AND ci.config ->> 'dispatch_endpoint_id' = $3::text
+  AND ci.config ->> 'robot_code' = $4::text
+`
+
+type GetActiveDingTalkHTTPInstallationForDispatchParams struct {
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	AgentID            pgtype.UUID `json:"agent_id"`
+	DispatchEndpointID string      `json:"dispatch_endpoint_id"`
+	RobotCode          string      `json:"robot_code"`
+}
+
+// The callback account is robot_code, not app_id/client_id. Scope the lookup
+// to the endpoint-resolved workspace and agent so a global robot identifier
+// can never redirect delivery across an authenticated dispatch boundary.
+func (q *Queries) GetActiveDingTalkHTTPInstallationForDispatch(ctx context.Context, arg GetActiveDingTalkHTTPInstallationForDispatchParams) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, getActiveDingTalkHTTPInstallationForDispatch,
+		arg.WorkspaceID,
+		arg.AgentID,
+		arg.DispatchEndpointID,
+		arg.RobotCode,
+	)
+	var i ChannelInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getChannelChatSessionBinding = `-- name: GetChannelChatSessionBinding :one
 SELECT id, chat_session_id, installation_id, channel_type, channel_chat_id, chat_type, last_message_id, last_thread_id, config, created_at FROM channel_chat_session_binding
 WHERE installation_id = $1 AND channel_chat_id = $2
@@ -704,6 +821,27 @@ func (q *Queries) GetChannelChatSessionBindingBySession(ctx context.Context, arg
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getChannelInboundDedupStatus = `-- name: GetChannelInboundDedupStatus :one
+SELECT processed_at
+FROM channel_inbound_message_dedup
+WHERE installation_id = $1
+  AND message_id = $2
+`
+
+type GetChannelInboundDedupStatusParams struct {
+	InstallationID pgtype.UUID `json:"installation_id"`
+	MessageID      string      `json:"message_id"`
+}
+
+// HTTP adapters use the terminal marker to distinguish a committed replay
+// from a second delivery that merely collided with an in-flight owner.
+func (q *Queries) GetChannelInboundDedupStatus(ctx context.Context, arg GetChannelInboundDedupStatusParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getChannelInboundDedupStatus, arg.InstallationID, arg.MessageID)
+	var processed_at pgtype.Timestamptz
+	err := row.Scan(&processed_at)
+	return processed_at, err
 }
 
 const getChannelInstallation = `-- name: GetChannelInstallation :one
@@ -913,6 +1051,7 @@ JOIN workspace w ON w.id = ci.workspace_id
 JOIN agent a ON a.id = ci.agent_id
 WHERE ci.status = 'active'
   AND ci.channel_type = $1
+  AND COALESCE(ci.config ->> 'connection_managed', 'true') <> 'false'
   AND (
         ci.channel_type <> 'dingtalk'
         OR COALESCE(ci.config ->> 'ingress_cutover_state', 'legacy_stream') = 'legacy_stream'
@@ -970,6 +1109,7 @@ SELECT ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.statu
 JOIN workspace w ON w.id = ci.workspace_id
 JOIN agent a ON a.id = ci.agent_id
 WHERE ci.status = 'active'
+  AND COALESCE(ci.config ->> 'connection_managed', 'true') <> 'false'
   AND (
         ci.channel_type <> 'dingtalk'
         OR COALESCE(ci.config ->> 'ingress_cutover_state', 'legacy_stream') = 'legacy_stream'
@@ -1502,6 +1642,38 @@ type UpdateChannelChatSessionBindingReplyTargetParams struct {
 func (q *Queries) UpdateChannelChatSessionBindingReplyTarget(ctx context.Context, arg UpdateChannelChatSessionBindingReplyTargetParams) error {
 	_, err := q.db.Exec(ctx, updateChannelChatSessionBindingReplyTarget, arg.ChatSessionID, arg.LastMessageID, arg.LastThreadID)
 	return err
+}
+
+const updateChannelInstallationConfig = `-- name: UpdateChannelInstallationConfig :one
+UPDATE channel_installation
+SET config = $1, updated_at = now()
+WHERE id = $2
+RETURNING id, workspace_id, agent_id, channel_type, config, status, ws_lease_token, ws_lease_expires_at, installer_user_id, installed_at, created_at, updated_at
+`
+
+type UpdateChannelInstallationConfigParams struct {
+	Config []byte      `json:"config"`
+	ID     pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateChannelInstallationConfig(ctx context.Context, arg UpdateChannelInstallationConfigParams) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, updateChannelInstallationConfig, arg.Config, arg.ID)
+	var i ChannelInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateChannelOutboundCardStatus = `-- name: UpdateChannelOutboundCardStatus :exec

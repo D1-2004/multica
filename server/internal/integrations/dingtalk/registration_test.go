@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -88,7 +89,7 @@ func newFakeRegistration(t *testing.T) (*fakeRegistrationServer, *RegistrationCl
 	f := &fakeRegistrationServer{t: t}
 	srv := httptest.NewServer(f.handler())
 	t.Cleanup(srv.Close)
-	client := NewRegistrationClient(RegistrationConfig{BaseURL: srv.URL, Source: "multica-test"})
+	client := NewRegistrationClient(RegistrationConfig{BaseURL: srv.URL})
 	return f, client
 }
 
@@ -115,16 +116,66 @@ func TestRegistrationBeginHappyPath(t *testing.T) {
 	if res.ExpiresIn != registrationMaxPollWindow {
 		t.Errorf("ExpiresIn = %v, want capped %v", res.ExpiresIn, registrationMaxPollWindow)
 	}
-	// init carried the configured source, begin consumed the nonce.
-	if len(f.initReqs) != 1 || f.initReqs[0]["source"] != "multica-test" {
+	// Every Multica scan uses the DingTalk-allocated FDE product source.
+	if len(f.initReqs) != 1 || f.initReqs[0]["source"] != "FDE_AGENT" {
 		t.Errorf("init requests = %v", f.initReqs)
 	}
 	if len(f.beginReqs) != 1 || f.beginReqs[0]["nonce"] != "nr_test" {
 		t.Errorf("begin requests = %v", f.beginReqs)
 	}
+	if _, ok := f.beginReqs[0]["mode"]; ok {
+		t.Errorf("stream begin unexpectedly carried mode: %v", f.beginReqs[0])
+	}
+	if _, ok := f.beginReqs[0]["outgoing_url"]; ok {
+		t.Errorf("stream begin unexpectedly carried outgoing_url: %v", f.beginReqs[0])
+	}
 }
 
-func TestRegistrationBeginOmitsEmptySource(t *testing.T) {
+func TestRegistrationBeginHTTPCallbackUsesFixedOutgoingURL(t *testing.T) {
+	f := &fakeRegistrationServer{t: t}
+	srv := httptest.NewServer(f.handler())
+	t.Cleanup(srv.Close)
+	client := NewRegistrationClient(RegistrationConfig{
+		BaseURL:     srv.URL,
+		OutgoingURL: "https://gateway.example.test/robot/callback",
+	})
+
+	if _, err := client.BeginWithTransport(context.Background(), TransportModeHTTPCallback); err != nil {
+		t.Fatalf("BeginWithTransport: %v", err)
+	}
+	if got := f.beginReqs[0]["mode"]; got != "HTTPS" {
+		t.Errorf("mode = %v, want HTTPS", got)
+	}
+	if got := f.beginReqs[0]["outgoing_url"]; got != "https://gateway.example.test/robot/callback" {
+		t.Errorf("outgoing_url = %v", got)
+	}
+}
+
+func TestRegistrationBeginHTTPCallbackRejectsUnavailableURL(t *testing.T) {
+	for _, raw := range []string{"", "http://gateway.example.test/callback", "://bad"} {
+		t.Run(raw, func(t *testing.T) {
+			client := NewRegistrationClient(RegistrationConfig{OutgoingURL: raw})
+			_, err := client.BeginWithTransport(context.Background(), TransportModeHTTPCallback)
+			var re *RegistrationError
+			if !errors.As(err, &re) || re.Code != "http_callback_unavailable" {
+				t.Fatalf("err = %v, want http_callback_unavailable", err)
+			}
+		})
+	}
+}
+
+func TestTransportModeFromPollKeepsClientAndRobotIdentityIndependent(t *testing.T) {
+	httpMode, err := transportModeFromPoll("HTTPS")
+	if err != nil || httpMode != TransportModeHTTPCallback {
+		t.Fatalf("HTTPS mode = %q, err=%v", httpMode, err)
+	}
+	streamMode, err := transportModeFromPoll("")
+	if err != nil || streamMode != TransportModeStream {
+		t.Fatalf("empty mode = %q, err=%v", streamMode, err)
+	}
+}
+
+func TestRegistrationBeginAlwaysUsesFDEAgentSource(t *testing.T) {
 	f := &fakeRegistrationServer{t: t}
 	srv := httptest.NewServer(f.handler())
 	t.Cleanup(srv.Close)
@@ -132,8 +183,8 @@ func TestRegistrationBeginOmitsEmptySource(t *testing.T) {
 	if _, err := client.Begin(context.Background()); err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
-	if _, ok := f.initReqs[0]["source"]; ok {
-		t.Errorf("init request carried a source field: %v", f.initReqs[0])
+	if got := f.initReqs[0]["source"]; got != "FDE_AGENT" {
+		t.Errorf("source = %q, want FDE_AGENT", got)
 	}
 }
 
@@ -219,6 +270,15 @@ func TestRegistrationPollOutcomes(t *testing.T) {
 			},
 		},
 		{
+			name: "documented progress statuses stay pending",
+			body: map[string]any{"errcode": 0, "errmsg": "ok", "status": "SELECTING"},
+			check: func(t *testing.T, res *RegistrationPollResult) {
+				if !res.Pending {
+					t.Errorf("Pending = false, want true")
+				}
+			},
+		},
+		{
 			name: "empty status tolerated as pending",
 			body: map[string]any{"errcode": 0, "errmsg": "ok"},
 			check: func(t *testing.T, res *RegistrationPollResult) {
@@ -231,10 +291,26 @@ func TestRegistrationPollOutcomes(t *testing.T) {
 			name: "success",
 			body: map[string]any{
 				"errcode": 0, "errmsg": "ok", "status": "SUCCESS",
-				"client_id": "dingabc", "client_secret": "s3cret",
+				"client_id": "dingabc", "client_secret": "s3cret", "robot_code": "robotabc",
 			},
 			check: func(t *testing.T, res *RegistrationPollResult) {
-				if res.ClientID != "dingabc" || res.ClientSecret != "s3cret" {
+				if res.ClientID != "dingabc" || res.ClientSecret != "s3cret" || res.RobotCode != "robotabc" {
+					t.Errorf("res = %+v", res)
+				}
+			},
+		},
+		{
+			name: "approving returns one-time credentials and review marker",
+			body: map[string]any{
+				"errcode": 0, "errmsg": "ok", "status": "APPROVING",
+				"client_id": "dingreview", "client_secret": "review-secret",
+				"robot_code": "robot-review", "mode": "HTTPS",
+			},
+			check: func(t *testing.T, res *RegistrationPollResult) {
+				if !res.ApprovalPending || res.Pending {
+					t.Errorf("result = %+v, want terminal approval pending", res)
+				}
+				if res.ClientID != "dingreview" || res.ClientSecret != "review-secret" || res.RobotCode != "robot-review" {
 					t.Errorf("res = %+v", res)
 				}
 			},
@@ -266,6 +342,22 @@ func TestRegistrationPollOutcomes(t *testing.T) {
 			errFmt: "invalid_response",
 		},
 		{
+			name: "success without robot code is a protocol error",
+			body: map[string]any{
+				"errcode": 0, "errmsg": "ok", "status": "SUCCESS",
+				"client_id": "dingabc", "client_secret": "s3cret",
+			},
+			errFmt: "invalid_response",
+		},
+		{
+			name: "approving without credentials is a protocol error",
+			body: map[string]any{
+				"errcode": 0, "errmsg": "ok", "status": "APPROVING",
+				"robot_code": "robot-review",
+			},
+			errFmt: "invalid_response",
+		},
+		{
 			name:   "unknown status is a protocol error",
 			body:   map[string]any{"errcode": 0, "errmsg": "ok", "status": "SOMETHING_NEW"},
 			errFmt: "invalid_response",
@@ -294,6 +386,20 @@ func TestRegistrationPollOutcomes(t *testing.T) {
 			tc.check(t, res)
 			if f.pollReqs[0]["device_code"] != "dc_test" {
 				t.Errorf("poll request = %v", f.pollReqs[0])
+			}
+		})
+	}
+
+	for _, status := range []string{"SCANNED", "CREATING", "PUBLISHING"} {
+		t.Run(strings.ToLower(status)+" stays pending", func(t *testing.T) {
+			f, client := newFakeRegistration(t)
+			f.pollBody = map[string]any{"errcode": 0, "errmsg": "ok", "status": status}
+			res, err := client.Poll(context.Background(), "dc_test")
+			if err != nil {
+				t.Fatalf("Poll: %v", err)
+			}
+			if !res.Pending {
+				t.Errorf("Pending = false for %s", status)
 			}
 		})
 	}

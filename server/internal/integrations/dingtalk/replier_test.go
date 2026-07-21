@@ -12,6 +12,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 type fakeMinter struct{ lastUserID string }
@@ -85,6 +86,119 @@ func TestReplierBindingPromptPostsSessionWebhook(t *testing.T) {
 	text, _ := md["text"].(string)
 	if !strings.Contains(text, "https://app.example/dingtalk/bind?token=tok_raw") {
 		t.Errorf("binding prompt text = %q", text)
+	}
+}
+
+func TestReplierBindingPromptUsesRobotAPIForHTTPCallback(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch req.URL.Path {
+		case "/v1.0/oauth2/accessToken":
+			_, _ = w.Write([]byte(`{"accessToken":"tok_test","expireIn":7200}`))
+		case "/v1.0/robot/oToMessages/batchSend":
+			_ = json.NewDecoder(req.Body).Decode(&got)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected path %s", req.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	config, err := encodeInstallConfig(Installation{
+		ClientID:           "ding-client",
+		AppSecretEncrypted: []byte("client-secret"),
+		RobotCode:          "robot-code",
+		TransportMode:      TransportModeHTTPCallback,
+		ConnectionManaged:  false,
+	})
+	if err != nil {
+		t.Fatalf("encode install config: %v", err)
+	}
+	message, err := InboundFromHTTPCallback(HTTPCallbackMessage{
+		ConversationID:   "cid-direct",
+		ConversationType: "single",
+		MessageID:        "msg-http-1",
+		SenderID:         "open-sender",
+		SenderStaffID:    "staff-1",
+		Text:             "hello",
+	}, "ding-client", "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatalf("map HTTP callback: %v", err)
+	}
+	minter := &fakeMinter{}
+	replier := NewOutboundReplier(OutboundReplierConfig{
+		Binding:   minter,
+		AppURL:    "https://app.example",
+		Messenger: NewRobotMessenger(srv.URL, srv.URL, srv.Client()),
+		Decrypt: func(ciphertext []byte) ([]byte, error) {
+			return ciphertext, nil
+		},
+	})
+	replier.Reply(context.Background(), engine.ResolvedInstallation{
+		Platform: db.ChannelInstallation{Config: config},
+	}, message, engine.Result{
+		Outcome: engine.OutcomeNeedsBinding,
+		Sender:  "open-sender",
+	})
+
+	if minter.lastUserID != "open-sender" {
+		t.Fatalf("minted for %q, want route sender", minter.lastUserID)
+	}
+	users, _ := got["userIds"].([]any)
+	if len(users) != 1 || users[0] != "staff-1" {
+		t.Fatalf("robot API userIds = %#v", got["userIds"])
+	}
+	msgParam, _ := got["msgParam"].(string)
+	if !strings.Contains(msgParam, "https://app.example/dingtalk/bind?token=tok_raw") {
+		t.Fatalf("robot API msgParam = %q", msgParam)
+	}
+}
+
+func TestReplierDoesNotFallbackStreamToRobotAPI(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	config, err := encodeInstallConfig(Installation{
+		ClientID:           "ding-client",
+		AppSecretEncrypted: []byte("client-secret"),
+		RobotCode:          "robot-code",
+		TransportMode:      TransportModeStream,
+		ConnectionManaged:  true,
+	})
+	if err != nil {
+		t.Fatalf("encode install config: %v", err)
+	}
+	message, err := InboundFromHTTPCallback(HTTPCallbackMessage{
+		ConversationID:   "cid-direct",
+		ConversationType: "single",
+		MessageID:        "msg-stream-without-webhook",
+		SenderID:         "open-sender",
+		SenderStaffID:    "staff-1",
+		Text:             "hello",
+	}, "ding-client", "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatalf("map callback: %v", err)
+	}
+	replier := NewOutboundReplier(OutboundReplierConfig{
+		Messenger: NewRobotMessenger(srv.URL, srv.URL, srv.Client()),
+		Decrypt: func(ciphertext []byte) ([]byte, error) {
+			return ciphertext, nil
+		},
+	})
+	err = replier.post(context.Background(), engine.ResolvedInstallation{
+		Platform: db.ChannelInstallation{Config: config},
+	}, message, "must stay on the Stream reply path")
+	if err == nil || !strings.Contains(err.Error(), "stream inbound message carries no session webhook") {
+		t.Fatalf("Stream fallback error = %v", err)
+	}
+	if called {
+		t.Fatal("Stream install unexpectedly called the Robot API")
 	}
 }
 

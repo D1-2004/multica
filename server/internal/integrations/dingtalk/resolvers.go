@@ -76,6 +76,17 @@ type robotTaskContextResolver struct {
 	employees RobotEmployeeResolver
 }
 
+const dingtalkSessionReplyContextKey = "dingtalk_session_reply"
+
+// dingtalkSessionReplyContext carries the per-message Stream reply locator.
+// It belongs to the queued task rather than the installation: historical
+// Stream installations did not persist robot_code, and concurrent messages
+// can each carry a different short-lived session webhook.
+type dingtalkSessionReplyContext struct {
+	Webhook   string `json:"webhook"`
+	ExpiresAt int64  `json:"expires_at,omitempty"`
+}
+
 func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) ([]byte, error) {
 	startedAt := time.Now()
 	log := slog.With(
@@ -83,13 +94,6 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		"message_id_hash", dingtalkTraceHash(msg.MessageID),
 		"sender_id_hash", dingtalkTraceHash(msg.Source.SenderID),
 	)
-	if r == nil || r.q == nil || r.employees == nil {
-		log.Error("dingtalk robot DWS identity resolver unavailable",
-			"event", "dingtalk_dws_identity_failed",
-			"error_class", "configuration",
-		)
-		return nil, errors.New("DingTalk robot DWS identity resolver is not configured")
-	}
 	raw, err := decodeDingTalkRaw(msg)
 	if err != nil {
 		log.Warn("dingtalk robot task context payload decode failed",
@@ -101,6 +105,42 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		return nil, fmt.Errorf("decode DingTalk robot task context: %w", err)
 	}
 	taskContext := make(map[string]any)
+	if len(raw.DispatchContext) > 0 {
+		var dispatchContext map[string]any
+		if err := json.Unmarshal(raw.DispatchContext, &dispatchContext); err != nil {
+			return nil, fmt.Errorf("decode DingTalk dispatch context: %w", err)
+		}
+		for key, value := range dispatchContext {
+			taskContext[key] = value
+		}
+	}
+	if webhook := strings.TrimSpace(raw.SessionWebhook); webhook != "" {
+		taskContext[dingtalkSessionReplyContextKey] = dingtalkSessionReplyContext{
+			Webhook:   webhook,
+			ExpiresAt: raw.SessionWebhookExpiredTime,
+		}
+	}
+	if raw.AgentIdentityContextToken != "" {
+		taskContext[protocol.AgentIdentityContextTokenJSONKey] = raw.AgentIdentityContextToken
+		return marshalDingTalkTaskContext(taskContext)
+	}
+	if r.q == nil || r.employees == nil {
+		log.Error("dingtalk robot DWS identity resolver unavailable",
+			"event", "dingtalk_dws_identity_failed",
+			"error_class", "configuration",
+		)
+		return nil, errors.New("DingTalk robot DWS identity resolver is not configured")
+	}
+	if raw.SenderUID != "" || raw.SenderOrgID != "" {
+		if !positiveDecimalIdentifier(raw.SenderUID) || !positiveDecimalIdentifier(raw.SenderOrgID) {
+			return nil, errors.New("invalid trusted DingTalk HTTP sender identity")
+		}
+		taskContext[protocol.DingTalkRobotIdentityJSONKey] = protocol.DingTalkRobotIdentity{
+			UID:   raw.SenderUID,
+			OrgID: raw.SenderOrgID,
+		}
+		return marshalDingTalkTaskContext(taskContext)
+	}
 	if raw.StreamSource != nil {
 		source := protocol.DingTalkStreamSource{
 			Hostname:     strings.TrimSpace(raw.StreamSource.Hostname),
@@ -227,6 +267,19 @@ func dingtalkTraceHash(raw string) string {
 	return fmt.Sprintf("%x", sum[:8])
 }
 
+func positiveDecimalIdentifier(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || value[0] == '0' {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 var (
 	_ engine.InstallationResolver = (*installationResolver)(nil)
 	_ engine.IdentityResolver     = (*identityResolver)(nil)
@@ -266,6 +319,14 @@ func dingtalkSessionRouting(msg channel.InboundMessage) (bindingKey string, conf
 	bindingKey = fmt.Sprintf("%s:sender:v1:%x", msg.Source.ChatID, senderHash)
 	out, _ := json.Marshal(cfg)
 	return bindingKey, out
+}
+
+// SessionBindingKey returns the durable Multica chat binding key for a
+// normalized DingTalk message. HTTP dispatch replay recovery uses the same key
+// as the ingest path so it can return the already committed continuation.
+func SessionBindingKey(msg channel.InboundMessage) string {
+	bindingKey, _ := dingtalkSessionRouting(msg)
+	return bindingKey
 }
 
 func nullText(s string) pgtype.Text {

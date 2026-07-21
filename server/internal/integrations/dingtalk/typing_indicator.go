@@ -90,6 +90,11 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.ChannelInstall
 			"chat_session_id", util.UUIDToString(chatSessionID), "err", err)
 		return
 	}
+	if creds.RobotCode == "" {
+		// Historical Stream installations reply through sessionWebhook and do
+		// not have the robot API identity needed for cosmetic emotions.
+		return
+	}
 	if err := m.messenger.AddEmotionReply(ctx, creds, target); err != nil {
 		m.log.Warn("dingtalk typing indicator: add emotion failed",
 			"chat_session_id", util.UUIDToString(chatSessionID), "open_msg_id", target.OpenMsgID, "err", err)
@@ -195,6 +200,9 @@ func (m *TypingIndicatorManager) clearRows(ctx context.Context, chatSessionID pg
 	if err != nil {
 		m.log.Warn("dingtalk typing indicator: decode credentials for clear failed",
 			"chat_session_id", key, "err", err)
+		return
+	}
+	if creds.RobotCode == "" {
 		return
 	}
 	for _, row := range rows {

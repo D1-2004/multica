@@ -11,30 +11,55 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createDingTalkInstallSession = `-- name: CreateDingTalkInstallSession :exec
+const createDingTalkInstallSession = `-- name: CreateDingTalkInstallSession :one
+WITH generation_lock AS (
+    SELECT pg_advisory_xact_lock(
+        hashtextextended(
+            $2::uuid::text || ':' ||
+            $3::uuid::text,
+            0
+        )
+    )
+), next_generation AS (
+    SELECT COALESCE(MAX(s.generation), 0) + 1 AS generation
+    FROM dingtalk_install_session s, generation_lock
+    WHERE s.workspace_id = $2::uuid
+      AND s.agent_id = $3::uuid
+)
 INSERT INTO dingtalk_install_session (
-    id, workspace_id, agent_id, expires_at
-) VALUES ($1, $2, $3, $4)
+    id, workspace_id, agent_id, expires_at,
+    transport_mode, allow_unbound, generation
+)
+SELECT $1, $2::uuid, $3::uuid, $4,
+       $5, $6, next_generation.generation
+FROM next_generation
+RETURNING generation
 `
 
 type CreateDingTalkInstallSessionParams struct {
-	ID          string             `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	AgentID     pgtype.UUID        `json:"agent_id"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	ID            string             `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	AgentID       pgtype.UUID        `json:"agent_id"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	TransportMode string             `json:"transport_mode"`
+	AllowUnbound  bool               `json:"allow_unbound"`
 }
 
 // Opens a device-flow install session. Written by the pod that served
 // /install/begin; readable from every pod, which is the whole point (see
 // migration 181).
-func (q *Queries) CreateDingTalkInstallSession(ctx context.Context, arg CreateDingTalkInstallSessionParams) error {
-	_, err := q.db.Exec(ctx, createDingTalkInstallSession,
+func (q *Queries) CreateDingTalkInstallSession(ctx context.Context, arg CreateDingTalkInstallSessionParams) (int64, error) {
+	row := q.db.QueryRow(ctx, createDingTalkInstallSession,
 		arg.ID,
 		arg.WorkspaceID,
 		arg.AgentID,
 		arg.ExpiresAt,
+		arg.TransportMode,
+		arg.AllowUnbound,
 	)
-	return err
+	var generation int64
+	err := row.Scan(&generation)
+	return generation, err
 }
 
 const finishDingTalkInstallSessionError = `-- name: FinishDingTalkInstallSessionError :exec
@@ -87,7 +112,7 @@ func (q *Queries) FinishDingTalkInstallSessionSuccess(ctx context.Context, arg F
 }
 
 const getDingTalkInstallSession = `-- name: GetDingTalkInstallSession :one
-SELECT id, workspace_id, agent_id, status, installation_id, error_reason, error_message, expires_at, gc_after, created_at, updated_at FROM dingtalk_install_session WHERE id = $1
+SELECT id, workspace_id, agent_id, status, installation_id, error_reason, error_message, expires_at, gc_after, created_at, updated_at, transport_mode, allow_unbound, generation FROM dingtalk_install_session WHERE id = $1
 `
 
 func (q *Queries) GetDingTalkInstallSession(ctx context.Context, id string) (DingtalkInstallSession, error) {
@@ -105,8 +130,34 @@ func (q *Queries) GetDingTalkInstallSession(ctx context.Context, id string) (Din
 		&i.GcAfter,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TransportMode,
+		&i.AllowUnbound,
+		&i.Generation,
 	)
 	return i, err
+}
+
+const isCurrentDingTalkInstallSession = `-- name: IsCurrentDingTalkInstallSession :one
+SELECT NOT EXISTS (
+    SELECT 1
+    FROM dingtalk_install_session newer
+    WHERE newer.workspace_id = $1
+      AND newer.agent_id = $2
+      AND newer.generation > $3
+) AS is_current
+`
+
+type IsCurrentDingTalkInstallSessionParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	Generation  int64       `json:"generation"`
+}
+
+func (q *Queries) IsCurrentDingTalkInstallSession(ctx context.Context, arg IsCurrentDingTalkInstallSessionParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isCurrentDingTalkInstallSession, arg.WorkspaceID, arg.AgentID, arg.Generation)
+	var is_current bool
+	err := row.Scan(&is_current)
+	return is_current, err
 }
 
 const sweepDingTalkInstallSessions = `-- name: SweepDingTalkInstallSessions :exec
