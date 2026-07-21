@@ -96,9 +96,13 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "template_id does not match an available FC/E2B template")
 		return
 	}
+	if !service.IsFCE2BTemplateReady(selected) || !service.IsFCE2BTemplatePublished(selected) {
+		writeError(w, http.StatusBadRequest, "FC/E2B template is not ready with a verified manifest")
+		return
+	}
 	provider, ok := resolveFCE2BProvider(req.Provider, selected)
 	if !ok {
-		writeError(w, http.StatusBadRequest, "provider must be one of: "+strings.Join(service.FCE2BSupportedProviders, ", "))
+		writeError(w, http.StatusBadRequest, "provider must be declared by the selected template: "+strings.Join(selected.Providers, ", "))
 		return
 	}
 	name := strings.TrimSpace(req.Name)
@@ -115,15 +119,19 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	metadata, err := json.Marshal(map[string]any{
-		"kind":            service.FCE2BMetadataKind,
-		"template":        selected.Template,
-		"template_id":     selected.ID,
-		"template_name":   selected.Name,
-		"template_status": selected.Status,
-		"capabilities":    fcE2BTemplateCapabilities(provider, selected),
-		"timeout_seconds": h.cfg.FCE2B.TimeoutSeconds,
-		"created_by":      uuidToString(member.UserID),
-		"runner":          service.FCE2BRunnerCommandForProvider(provider),
+		"kind":               service.FCE2BMetadataKind,
+		"template":           selected.Template,
+		"template_id":        selected.ID,
+		"template_build_id":  selected.BuildID,
+		"template_name":      selected.Name,
+		"template_status":    selected.Status,
+		"manifest_version":   selected.ManifestVersion,
+		"capabilities":       fcE2BTemplateCapabilities(provider, selected),
+		"component_versions": selected.ComponentVersions,
+		"runner_protocol":    selected.RunnerProtocol,
+		"timeout_seconds":    h.cfg.FCE2B.TimeoutSeconds,
+		"created_by":         uuidToString(member.UserID),
+		"runner":             service.FCE2BRunnerCommandForProvider(provider),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to encode runtime metadata")
@@ -221,6 +229,8 @@ func (h *Handler) UpdateFCE2BRuntimeTemplate(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusNotFound, "runtime not found")
 		case errors.Is(err, service.ErrFCE2BRuntimeRequired):
 			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, service.ErrFCE2BTemplateProviderUnsupported):
+			writeError(w, http.StatusBadRequest, err.Error())
 		default:
 			slog.Error("FC/E2B runtime template update failed", "error", err, "runtime_id", runtimeID)
 			writeError(w, http.StatusInternalServerError, "failed to update FC/E2B runtime template")
@@ -236,8 +246,10 @@ func (h *Handler) UpdateFCE2BRuntimeTemplate(w http.ResponseWriter, r *http.Requ
 		"provider", result.Runtime.Provider,
 		"previous_template", result.PreviousTemplate,
 		"previous_template_id", result.PreviousTemplateID,
+		"previous_template_build_id", result.PreviousTemplateBuildID,
 		"template", selected.Template,
 		"template_id", selected.ID,
+		"template_build_id", selected.BuildID,
 		"invalidated_sandbox_count", result.InvalidatedSandboxCount,
 		"changed", result.Changed,
 	)
@@ -274,15 +286,15 @@ func selectFCE2BTemplateByID(templates []service.FCE2BTemplate, id string) (serv
 	return service.FCE2BTemplate{}, false
 }
 
-// resolveFCE2BProvider picks the agent provider for a new runtime: an explicit
-// request value wins (a template image may ship several agent CLIs), otherwise
-// the template name decides. Returns ok=false for unsupported values.
+// resolveFCE2BProvider picks an explicit provider only when the verified
+// template manifest declares it. With no explicit value, the first supported
+// provider in the manifest is selected.
 func resolveFCE2BProvider(requested string, t service.FCE2BTemplate) (string, bool) {
 	requested = strings.ToLower(strings.TrimSpace(requested))
 	if requested == "" {
-		return service.FCE2BProviderForTemplate(t.Template, t.ID, t.Name), true
+		return service.FCE2BProviderForTemplate(t)
 	}
-	if !service.IsFCE2BSupportedProvider(requested) {
+	if !service.FCE2BTemplateSupportsProvider(t, requested) {
 		return "", false
 	}
 	return requested, true

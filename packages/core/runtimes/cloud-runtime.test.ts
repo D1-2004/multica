@@ -6,6 +6,7 @@ import {
   isReadyFCE2BTemplate,
   parseFCE2BRuntimeMetadata,
 } from "./cloud-runtime";
+import type { FCE2BTemplate } from "./cloud-runtime";
 
 function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
   return {
@@ -28,6 +29,26 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
   };
 }
 
+function makeTemplate(overrides: Partial<FCE2BTemplate> = {}): FCE2BTemplate {
+  return {
+    id: "tpl-v2",
+    build_id: "build-v2",
+    template: "multica-fc-team-v2",
+    status: "ready",
+    manifest_version: 1,
+    providers: ["hermes", "opencode", "pi"],
+    capabilities: ["dws", "dws.im_event"],
+    component_versions: {
+      hermes: "0.19.0",
+      opencode: "v1.18.4",
+      pi: "0.80.10",
+      dws: "v1.0.53-beta.4",
+    },
+    runner_protocol: "root-log-v1",
+    ...overrides,
+  };
+}
+
 describe("isFCE2BRuntime", () => {
   it("matches only FC/E2B cloud runtimes", () => {
     expect(isFCE2BRuntime(makeRuntime())).toBe(true);
@@ -45,6 +66,7 @@ describe("parseFCE2BRuntimeMetadata", () => {
             kind: "fc-e2b",
             template: "multica-fc-team-v2",
             template_id: "tpl-v2",
+            template_build_id: "build-v2",
             template_name: "Team v2",
             template_status: "ready",
           },
@@ -54,6 +76,7 @@ describe("parseFCE2BRuntimeMetadata", () => {
       kind: "fc-e2b",
       template: "multica-fc-team-v2",
       templateId: "tpl-v2",
+      templateBuildId: "build-v2",
       templateName: "Team v2",
       templateStatus: "ready",
     });
@@ -76,42 +99,30 @@ describe("parseFCE2BRuntimeMetadata", () => {
 describe("isReadyFCE2BTemplate", () => {
   it("requires both a real template ID and ready status", () => {
     expect(
-      isReadyFCE2BTemplate({
-        id: "tpl-v2",
-        template: "multica-fc-team-v2",
-        status: "READY",
-      }),
+      isReadyFCE2BTemplate(makeTemplate({ status: "READY" })),
     ).toBe(true);
     expect(
-      isReadyFCE2BTemplate({
-        template: "multica-fc-team-v2",
-        status: "ready",
-      }),
+      isReadyFCE2BTemplate(makeTemplate({ id: undefined })),
     ).toBe(false);
     expect(
-      isReadyFCE2BTemplate({
-        id: "tpl-v2",
-        template: "multica-fc-team-v2",
-        status: "building",
-      }),
+      isReadyFCE2BTemplate(makeTemplate({ status: "building" })),
+    ).toBe(false);
+    expect(
+      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 0 })),
     ).toBe(false);
   });
 });
 
 describe("fcE2BProviderForTemplate", () => {
-  it("preselects the provider named by the template, defaulting to hermes", () => {
-    expect(fcE2BProviderForTemplate({ template: "multica-fc-hermes-v1" })).toBe(
-      "hermes",
-    );
+  it("preselects only providers declared by the manifest", () => {
     expect(
-      fcE2BProviderForTemplate({ template: "multica-fc-opencode-v1" }),
+      fcE2BProviderForTemplate(makeTemplate({ providers: ["opencode", "pi"] })),
     ).toBe("opencode");
     expect(
-      fcE2BProviderForTemplate({ template: "tpl_1", name: "OpenCode Team" }),
-    ).toBe("opencode");
-    // Dual-CLI templates that name no provider preselect the default.
-    expect(fcE2BProviderForTemplate({ template: "multica-fc-team-v1" })).toBe(
-      "hermes",
-    );
+      fcE2BProviderForTemplate(makeTemplate({ providers: ["pi"] })),
+    ).toBe("pi");
+    expect(
+      fcE2BProviderForTemplate(makeTemplate({ providers: ["unknown"] })),
+    ).toBeNull();
   });
 });
