@@ -111,11 +111,13 @@ func (m *RobotMessenger) SendMarkdown(ctx context.Context, creds channelCredenti
 	return m.post(ctx, path, token, body)
 }
 
-// EmotionTarget addresses one inbound message for an emotion reaction:
-// the conversation it lives in plus the message's openMsgId.
+// EmotionTarget addresses one inbound message for an emotion reaction. The
+// Stream callback's authoritative RobotCode travels with the target because
+// historical Stream installations did not persist it.
 type EmotionTarget struct {
 	OpenConversationID string
 	OpenMsgID          string
+	RobotCode          string
 }
 
 // Processing emotion payload. The emotionId/backgroundId pair is the

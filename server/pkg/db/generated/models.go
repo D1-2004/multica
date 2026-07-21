@@ -508,6 +508,24 @@ type DingtalkInstallSession struct {
 	Generation     int64              `json:"generation"`
 }
 
+type DingtalkProcessingEmotion struct {
+	ID                 pgtype.UUID        `json:"id"`
+	InstallationID     pgtype.UUID        `json:"installation_id"`
+	SourceMessageID    string             `json:"source_message_id"`
+	OpenConversationID string             `json:"open_conversation_id"`
+	OpenMsgID          string             `json:"open_msg_id"`
+	RobotCode          string             `json:"robot_code"`
+	ChatSessionID      pgtype.UUID        `json:"chat_session_id"`
+	TaskID             pgtype.UUID        `json:"task_id"`
+	State              string             `json:"state"`
+	AddCompleted       bool               `json:"add_completed"`
+	AttemptCount       int32              `json:"attempt_count"`
+	NextAttemptAt      pgtype.Timestamptz `json:"next_attempt_at"`
+	LeaseUntil         pgtype.Timestamptz `json:"lease_until"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
 type DingtalkStreamInbox struct {
 	ID               pgtype.UUID        `json:"id"`
 	InstallationID   pgtype.UUID        `json:"installation_id"`

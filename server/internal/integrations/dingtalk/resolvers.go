@@ -636,9 +636,16 @@ func (n *dingtalkTypingNotifier) OnIngested(ctx context.Context, inst engine.Res
 		return
 	}
 	raw, _ := decodeDingTalkRaw(msg) // best-effort; a decode miss just skips the age guard
+	// Stream attaches and durably tracks the emotion in StreamInboxWorker,
+	// before identity/runtime resolution. The generic post-dispatch notifier is
+	// retained only for HTTP Callback messages, which do not carry StreamSource.
+	if raw.StreamSource != nil {
+		return
+	}
 	n.mgr.Add(ctx, instRow, sessionID, taskID, EmotionTarget{
 		OpenConversationID: msg.Source.ChatID,
 		OpenMsgID:          msg.MessageID,
+		RobotCode:          raw.RobotCode,
 	}, raw.CreateAt)
 }
 

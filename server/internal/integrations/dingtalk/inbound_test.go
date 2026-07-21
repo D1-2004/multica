@@ -272,6 +272,24 @@ func TestPictureDownloadCodeFromCallbackJSON(t *testing.T) {
 	}
 }
 
+func TestStreamRobotCodeFromCallbackJSON(t *testing.T) {
+	var data botCallbackData
+	if err := json.Unmarshal([]byte(`{"conversationId":"cid","msgId":"m-robot","robotCode":"robot-from-stream","senderStaffId":"staff","conversationType":"2","msgtype":"text","text":{"content":"hello"}}`), &data); err != nil {
+		t.Fatalf("unmarshal callback: %v", err)
+	}
+	msg, ok := inboundFromBotCallback(data, "client-id")
+	if !ok {
+		t.Fatal("stream callback was rejected")
+	}
+	raw, err := decodeDingTalkRaw(msg)
+	if err != nil {
+		t.Fatalf("decode raw: %v", err)
+	}
+	if raw.RobotCode != "robot-from-stream" {
+		t.Fatalf("RobotCode = %q", raw.RobotCode)
+	}
+}
+
 func TestFileMetadataFromCallbackJSON(t *testing.T) {
 	var data botCallbackData
 	if err := json.Unmarshal([]byte(`{"conversationId":"cid","msgId":"m-file","senderStaffId":"staff","conversationType":"1","msgtype":"file","content":{"spaceId":"223573","fileName":"invoice.pdf","downloadCode":"live-file-download-code","fileId":"117848"}}`), &data); err != nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -25,8 +26,9 @@ type typingQueries interface {
 	GetChannelChatSessionBindingBySession(ctx context.Context, arg db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error)
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
 	AddChannelTypingIndicator(ctx context.Context, arg db.AddChannelTypingIndicatorParams) error
-	TakeChannelTypingIndicatorsByTask(ctx context.Context, arg db.TakeChannelTypingIndicatorsByTaskParams) ([]db.ChannelTypingIndicator, error)
-	TakeChannelTypingIndicators(ctx context.Context, arg db.TakeChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error)
+	ListChannelTypingIndicatorsByTask(ctx context.Context, arg db.ListChannelTypingIndicatorsByTaskParams) ([]db.ChannelTypingIndicator, error)
+	ListChannelTypingIndicators(ctx context.Context, arg db.ListChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error)
+	DeleteChannelTypingIndicator(ctx context.Context, id pgtype.UUID) error
 }
 
 // typingIndicatorTarget is the persisted shape of one pending emotion. It is
@@ -36,6 +38,7 @@ type typingQueries interface {
 type typingIndicatorTarget struct {
 	OpenConversationID string `json:"open_conversation_id"`
 	OpenMsgID          string `json:"open_msg_id"`
+	RobotCode          string `json:"robot_code"`
 	TaskID             string `json:"task_id"`
 }
 
@@ -90,22 +93,42 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.ChannelInstall
 			"chat_session_id", util.UUIDToString(chatSessionID), "err", err)
 		return
 	}
-	if creds.RobotCode == "" {
-		// Historical Stream installations reply through sessionWebhook and do
-		// not have the robot API identity needed for cosmetic emotions.
+	robotCodeSource := "installation"
+	if callbackRobotCode := strings.TrimSpace(target.RobotCode); callbackRobotCode != "" {
+		creds.RobotCode = callbackRobotCode
+		robotCodeSource = "stream_callback"
+	}
+	if strings.TrimSpace(creds.RobotCode) == "" {
+		m.log.Warn("dingtalk typing indicator: robot code missing",
+			"event", "dingtalk_typing_indicator_skipped",
+			"reason", "robot_code_missing",
+			"chat_session_id", util.UUIDToString(chatSessionID),
+			"task_id", util.UUIDToString(taskID),
+			"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID))
 		return
 	}
+	target.RobotCode = creds.RobotCode
 	if err := m.messenger.AddEmotionReply(ctx, creds, target); err != nil {
 		m.log.Warn("dingtalk typing indicator: add emotion failed",
-			"chat_session_id", util.UUIDToString(chatSessionID), "open_msg_id", target.OpenMsgID, "err", err)
+			"event", "dingtalk_typing_indicator_add_failed",
+			"chat_session_id", util.UUIDToString(chatSessionID),
+			"task_id", util.UUIDToString(taskID),
+			"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID), "err", err)
 		return
 	}
+	m.log.Info("dingtalk typing indicator added",
+		"event", "dingtalk_typing_indicator_added",
+		"chat_session_id", util.UUIDToString(chatSessionID),
+		"task_id", util.UUIDToString(taskID),
+		"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID),
+		"robot_code_source", robotCodeSource)
 	// Persist, do not remember: the replica that clears this emotion is the one
 	// that serves the daemon's completion POST, which the load balancer picks
 	// independently of the WS lease that pinned the ingest here.
 	payload, err := json.Marshal(typingIndicatorTarget{
 		OpenConversationID: target.OpenConversationID,
 		OpenMsgID:          target.OpenMsgID,
+		RobotCode:          target.RobotCode,
 		TaskID:             util.UUIDToString(taskID),
 	})
 	if err != nil {
@@ -135,7 +158,11 @@ func (m *TypingIndicatorManager) ClearTask(ctx context.Context, chatSessionID, t
 		return
 	}
 	key := util.UUIDToString(chatSessionID)
-	rows, err := m.q.TakeChannelTypingIndicatorsByTask(ctx, db.TakeChannelTypingIndicatorsByTaskParams{
+	// Stream reactions use their dedicated durable lifecycle so an in-flight
+	// add can handshake with a terminal event. Keep clearing the shared-table
+	// rows too for HTTP Callback and rows written by an older rolling replica.
+	m.settleStreamTask(ctx, chatSessionID, taskID)
+	rows, err := m.q.ListChannelTypingIndicatorsByTask(ctx, db.ListChannelTypingIndicatorsByTaskParams{
 		ChatSessionID: chatSessionID,
 		ChannelType:   string(TypeDingtalk),
 		TaskID:        util.UUIDToString(taskID),
@@ -153,9 +180,10 @@ func (m *TypingIndicatorManager) ClearTask(ctx context.Context, chatSessionID, t
 // agent's reply lands. Individual recall failures are logged, not fatal.
 func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype.UUID) {
 	key := util.UUIDToString(chatSessionID)
-	// DELETE ... RETURNING claims the pending emotions: if two replicas race to
-	// clear the same run, exactly one gets the rows and only it recalls.
-	rows, err := m.q.TakeChannelTypingIndicators(ctx, db.TakeChannelTypingIndicatorsParams{
+	// Recall before deleting. If two replicas race they may issue the same
+	// idempotent recall, but neither can lose the durable row before DingTalk
+	// accepts the cleanup.
+	rows, err := m.q.ListChannelTypingIndicators(ctx, db.ListChannelTypingIndicatorsParams{
 		ChatSessionID: chatSessionID,
 		ChannelType:   string(TypeDingtalk),
 	})
@@ -202,9 +230,6 @@ func (m *TypingIndicatorManager) clearRows(ctx context.Context, chatSessionID pg
 			"chat_session_id", key, "err", err)
 		return
 	}
-	if creds.RobotCode == "" {
-		return
-	}
 	for _, row := range rows {
 		var t typingIndicatorTarget
 		if err := json.Unmarshal(row.Target, &t); err != nil {
@@ -212,10 +237,44 @@ func (m *TypingIndicatorManager) clearRows(ctx context.Context, chatSessionID pg
 				"chat_session_id", key, "err", err)
 			continue
 		}
-		target := EmotionTarget{OpenConversationID: t.OpenConversationID, OpenMsgID: t.OpenMsgID}
-		if err := m.messenger.RecallEmotionReply(ctx, creds, target); err != nil {
-			m.log.Warn("dingtalk typing indicator: recall emotion failed",
-				"chat_session_id", key, "open_msg_id", target.OpenMsgID, "err", err)
+		target := EmotionTarget{
+			OpenConversationID: t.OpenConversationID,
+			OpenMsgID:          t.OpenMsgID,
+			RobotCode:          strings.TrimSpace(t.RobotCode),
 		}
+		rowCreds := creds
+		if target.RobotCode != "" {
+			rowCreds.RobotCode = target.RobotCode
+		}
+		if strings.TrimSpace(rowCreds.RobotCode) == "" {
+			m.log.Warn("dingtalk typing indicator: robot code missing for recall",
+				"event", "dingtalk_typing_indicator_recall_skipped",
+				"reason", "robot_code_missing",
+				"chat_session_id", key,
+				"task_id", t.TaskID,
+				"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID))
+			continue
+		}
+		if err := m.messenger.RecallEmotionReply(ctx, rowCreds, target); err != nil {
+			m.log.Warn("dingtalk typing indicator: recall emotion failed",
+				"event", "dingtalk_typing_indicator_recall_failed",
+				"chat_session_id", key,
+				"task_id", t.TaskID,
+				"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID), "err", err)
+			continue
+		}
+		if err := m.q.DeleteChannelTypingIndicator(ctx, row.ID); err != nil {
+			m.log.Warn("dingtalk typing indicator: delete recalled target failed",
+				"event", "dingtalk_typing_indicator_delete_failed",
+				"chat_session_id", key,
+				"task_id", t.TaskID,
+				"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID), "err", err)
+			continue
+		}
+		m.log.Info("dingtalk typing indicator recalled",
+			"event", "dingtalk_typing_indicator_recalled",
+			"chat_session_id", key,
+			"task_id", t.TaskID,
+			"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID))
 	}
 }
