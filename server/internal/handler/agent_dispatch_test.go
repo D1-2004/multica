@@ -366,6 +366,45 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 	}
 }
 
+func TestHandleAgentDispatchRecreatesMissingContinuationIssue(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-bot-dispatch-missing-continuation", nil)
+	const missingIssueID = "00000000-0000-4000-8000-000000000001"
+	body := fmt.Sprintf(`{
+		"continuation":{"kind":"issue","issueId":%q},
+		"input":{
+			"systemPrompt":{"text":"External input."},
+			"userPrompt":{"text":"Continue after the original issue was deleted."},
+			"attachments":[]
+		}
+	}`, missingIssueID)
+
+	w := postAgentDispatchForTest(t, body, agentID)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("HandleAgentDispatch missing continuation: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp AgentDispatchResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.TaskID == "" || resp.Continuation.Kind != "issue" || resp.Continuation.IssueID == "" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if resp.Continuation.IssueID == missingIssueID {
+		t.Fatalf("continuation issue id was not refreshed: %+v", resp.Continuation)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, resp.Continuation.IssueID)
+	})
+
+	var issueExists bool
+	if err := testPool.QueryRow(context.Background(), `SELECT EXISTS (SELECT 1 FROM issue WHERE id = $1)`, resp.Continuation.IssueID).Scan(&issueExists); err != nil {
+		t.Fatalf("check recreated issue: %v", err)
+	}
+	if !issueExists {
+		t.Fatal("recreated continuation issue does not exist")
+	}
+}
+
 func TestHandleAgentDispatchContinuationRejectsRunningIssueTask(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "test-bot-dispatch-running", nil)
 	created, err := testHandler.IssueService.Create(context.Background(), service.IssueCreateParams{

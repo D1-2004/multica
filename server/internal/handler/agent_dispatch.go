@@ -349,10 +349,20 @@ func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Requ
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "continuation issue not found")
-		} else {
-			writeError(w, http.StatusInternalServerError, "failed to load continuation issue")
+			agent, ok := h.resolveAgentDispatchAgent(
+				w,
+				r,
+				dispatchContext.UserID,
+				dispatchContext.WorkspaceID,
+				dispatchContext.AgentID,
+			)
+			if !ok {
+				return
+			}
+			h.createAgentDispatchIssue(w, r, req, dispatchContext.UserID, dispatchContext.WorkspaceID, agent)
+			return
 		}
+		writeError(w, http.StatusInternalServerError, "failed to load continuation issue")
 		return
 	}
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
