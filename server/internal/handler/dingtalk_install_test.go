@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 )
 
 // DingTalk-install handler unit tests focus on the no-config
@@ -22,6 +25,21 @@ func TestRevokeDingTalkInstallation_NotConfigured(t *testing.T) {
 	h.RevokeDingTalkInstallation(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestDingTalkInstallStatusToResponseMarksApproving(t *testing.T) {
+	installationID := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	resp := dingTalkInstallStatusToResponse(dingtalk.RegistrationSessionState{
+		Status:             dingtalk.RegistrationStatusSuccess,
+		InstallationID:     installationID,
+		RegistrationStatus: "APPROVING",
+	})
+	if resp.Status != "approving" {
+		t.Fatalf("status = %q, want approving", resp.Status)
+	}
+	if resp.InstallationID == "" {
+		t.Fatal("approving response must retain installation_id")
 	}
 }
 

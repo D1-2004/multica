@@ -163,6 +163,8 @@ export type {
 } from "./slack";
 export type {
   DingTalkInstallation,
+  DingTalkTransportMode,
+  DingTalkInstallCapabilities,
   ListDingTalkInstallationsResponse,
   BeginDingTalkInstallResponse,
   DingTalkInstallStatusResponse,

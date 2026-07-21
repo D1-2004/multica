@@ -99,7 +99,8 @@ Bot 需要知道「钉钉里的你」对应哪个 Multica 账号。识别按两�
 - `DINGTALK_OPENAPI_BASE` —— 钉钉新版 OpenAPI 主机（默认 `https://api.dingtalk.com`）。
 - `DINGTALK_OAPI_BASE` —— 钉钉旧版 OAPI 主机（默认 `https://oapi.dingtalk.com`）。
 - `MULTICA_DINGTALK_REGISTRATION_BASE_URL` —— 扫码创建（device flow）注册端点覆盖，用于 staging 或 mock。
-- `MULTICA_DINGTALK_REGISTRATION_SOURCE` —— 钉钉分配的合作方来源标识；留空则不上报。
+- 扫码创建请求固定使用钉钉已分配的 `FDE_AGENT` 来源标识。
+- `MULTICA_DINGTALK_REGISTRATION_OUTGOING_URL` —— 启用 HTTP 回调模式的服务端固定 HTTPS Gateway 地址；客户端不能覆盖。
 </Callout>
 
 ## 排查

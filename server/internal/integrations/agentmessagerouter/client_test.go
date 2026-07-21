@@ -54,6 +54,64 @@ func TestClientIssuesBindingTokenWithServiceCredential(t *testing.T) {
 	}
 }
 
+func TestClientGetsAgentDeliveryTargetWithServiceCredential(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/agent-delivery-targets/agent-1" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer service-credential" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"agentId":     "agent-1",
+			"dispatchUrl": "https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
+		})
+	}))
+	defer server.Close()
+
+	client := mustTestClient(t, server)
+	target, err := client.GetAgentDeliveryTarget(context.Background(), "agent-1")
+	if err != nil {
+		t.Fatalf("GetAgentDeliveryTarget: %v", err)
+	}
+	if target.AgentID != "agent-1" || target.DispatchURL == "" {
+		t.Fatalf("target = %#v", target)
+	}
+}
+
+func TestClientMapsOnlyStableDeliveryTarget404ToSentinel(t *testing.T) {
+	tests := []struct {
+		name         string
+		body         map[string]any
+		wantNotFound bool
+	}{
+		{
+			name:         "stable not found",
+			body:         map[string]any{"code": "delivery_target_not_found", "message": "delivery target not found"},
+			wantNotFound: true,
+		},
+		{
+			name: "old router route missing",
+			body: map[string]any{"code": "not_found", "message": "not found"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(tt.body)
+			}))
+			defer server.Close()
+
+			client := mustTestClient(t, server)
+			_, err := client.GetAgentDeliveryTarget(context.Background(), "agent-1")
+			if got := errors.Is(err, ErrDeliveryTargetNotFound); got != tt.wantNotFound {
+				t.Fatalf("errors.Is(ErrDeliveryTargetNotFound) = %v, error = %v", got, err)
+			}
+		})
+	}
+}
+
 func TestClientRegistersRobotWithServiceCredentialAndServerOwnedPolicy(t *testing.T) {
 	dispatchURL := "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +256,51 @@ func TestClientGetsAndDeletesSubscription(t *testing.T) {
 	}
 }
 
+func TestClientCreatesHTTPCallbackSubscriptionWithoutInventingTenant(t *testing.T) {
+	dispatchURL := "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/subscriptions" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		source := body["source"].(map[string]any)
+		if source["accountId"] != "robot-code-1" || source["tenantId"] != "" {
+			t.Fatalf("source = %#v", source)
+		}
+		config := source["subscriptionConfig"].(map[string]any)
+		if config["upstreamMode"] != "HTTP_CALLBACK" {
+			t.Fatalf("subscription config = %#v", config)
+		}
+		if body["replaceExistingBinding"] != true {
+			t.Fatalf("replaceExistingBinding = %#v", body["replaceExistingBinding"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true, "code": "success", "data": map[string]any{
+				"sourceId": "source-robot", "agentId": "agent-1",
+				"dispatchUrl": dispatchURL, "status": "active",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := mustTestClient(t, server)
+	result, err := client.CreateHTTPCallbackSubscription(context.Background(), CreateSubscriptionParams{
+		AccountID: "robot-code-1", AgentID: "agent-1", DispatchURL: dispatchURL,
+		BindingToken:       "bat_v1.token",
+		SubscriptionConfig: map[string]any{"upstreamMode": "HTTP_CALLBACK"},
+		ReplaceExisting:    true,
+	})
+	if err != nil {
+		t.Fatalf("CreateHTTPCallbackSubscription: %v", err)
+	}
+	if result.SourceID != "source-robot" {
+		t.Fatalf("source = %#v", result)
+	}
+}
+
 func TestClientMapsHTTP200SubscriptionNotFoundToSentinel(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -287,7 +390,7 @@ func TestClientDeleteRequiresSuccessfulInactiveEnvelope(t *testing.T) {
 			response: map[string]any{
 				"success": true,
 				"code":    "success",
-				"data": map[string]any{"sourceId": "source-2", "agentId": nil, "dispatchUrl": nil, "status": "inactive"},
+				"data":    map[string]any{"sourceId": "source-2", "agentId": nil, "dispatchUrl": nil, "status": "inactive"},
 			},
 		},
 		{
@@ -295,7 +398,7 @@ func TestClientDeleteRequiresSuccessfulInactiveEnvelope(t *testing.T) {
 			response: map[string]any{
 				"success": true,
 				"code":    "success",
-				"data": map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": "https://multica.example.com/dispatch", "status": "active"},
+				"data":    map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": "https://multica.example.com/dispatch", "status": "active"},
 			},
 		},
 		{
@@ -303,7 +406,7 @@ func TestClientDeleteRequiresSuccessfulInactiveEnvelope(t *testing.T) {
 			response: map[string]any{
 				"success": true,
 				"code":    "success",
-				"data": map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": nil, "status": "inactive"},
+				"data":    map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": nil, "status": "inactive"},
 			},
 		},
 		{
@@ -311,7 +414,7 @@ func TestClientDeleteRequiresSuccessfulInactiveEnvelope(t *testing.T) {
 			response: map[string]any{
 				"success": true,
 				"code":    "success",
-				"data": map[string]any{"sourceId": "source-1", "agentId": " ", "dispatchUrl": "\t", "status": "inactive"},
+				"data":    map[string]any{"sourceId": "source-1", "agentId": " ", "dispatchUrl": "\t", "status": "inactive"},
 			},
 		},
 	}

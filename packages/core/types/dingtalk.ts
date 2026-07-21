@@ -11,11 +11,28 @@ export interface DingTalkInstallation {
   agent_id: string;
   /** The DingTalk app's client_id (AppKey) the device flow minted. */
   client_id: string;
+  robot_code?: string;
   installer_user_id: string;
   status: "active" | "revoked" | string;
   installed_at: string;
   created_at: string;
   updated_at: string;
+  transport_mode?: DingTalkTransportMode;
+  connection_managed?: boolean;
+  router_status?: string;
+  router_last_error?: string;
+  /** Last meaningful terminal state from registration. APPROVING means
+   * credentials were saved but DingTalk has not enabled robot messaging. */
+  registration_status?: "APPROVING" | string;
+}
+
+export type DingTalkTransportMode = "STREAM" | "HTTP_CALLBACK";
+
+export interface DingTalkInstallCapabilities {
+  http_callback: {
+    available: boolean;
+    reason?: string;
+  };
 }
 
 export interface ListDingTalkInstallationsResponse {
@@ -30,6 +47,7 @@ export interface ListDingTalkInstallationsResponse {
    * desktop builds receiving a server that does not yet emit the field
    * default to `undefined`, treated as not supported. */
   install_supported?: boolean;
+  capabilities?: DingTalkInstallCapabilities;
 }
 
 /** First half of the device-flow install: the server has opened a
@@ -46,14 +64,14 @@ export interface BeginDingTalkInstallResponse {
 
 /** Status polling result. `status` is the discriminator. */
 export interface DingTalkInstallStatusResponse {
-  status: "pending" | "success" | "error" | string;
+  status: "pending" | "approving" | "success" | "error" | string;
   /** Populated when status === "success". The frontend invalidates the
    * installations cache so the new row appears in the Settings tab. */
   installation_id?: string;
   /** Stable code on error — switch on this (NOT error_message) to pick
    * the right copy. Common values: "expired", "install_failed",
    * "dingtalk_protocol_error", "credentials_check_failed",
-   * "installation_conflict", "internal_error". */
+   * "installation_conflict", "superseded", "internal_error". */
   error_reason?: string;
   /** Human-readable error tail for debugging; the production UI should
    * surface the copy keyed off error_reason and use this only as a

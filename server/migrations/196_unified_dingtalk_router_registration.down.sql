@@ -13,24 +13,4 @@ WHERE ci.channel_type = 'dingtalk_account'
   AND ci.agent_id = ep.agent_id
   AND ci.workspace_id = ep.workspace_id;
 
--- The old binary knows only legacy Stream ingress. Pending Router work that
--- never left legacy Stream becomes active again. A callback-pending or fully
--- switched robot is revoked instead: the down migration cannot safely undo
--- DingTalk's external callback configuration, so fail closed rather than let
--- the old Stream engine create a second ingress.
-UPDATE channel_installation
-SET config = config
-        - 'router_source_id'
-        - 'router_agent_id'
-        - 'router_registration_status'
-        - 'ingress_cutover_state',
-    status = CASE
-        WHEN config ->> 'ingress_cutover_state' IN ('callback_pending', 'gateway_callback')
-            THEN 'revoked'
-        WHEN status = 'pending' THEN 'active'
-        ELSE status
-    END,
-    updated_at = now()
-WHERE channel_type = 'dingtalk';
-
 DROP TABLE IF EXISTS agent_dispatch_endpoint;

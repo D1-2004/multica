@@ -16,7 +16,7 @@ func installerID() pgtype.UUID {
 
 func resolvedInstallation(t *testing.T, allowUnbound bool, installer pgtype.UUID) engine.ResolvedInstallation {
 	t.Helper()
-	cfg, err := encodeInstallConfig(Installation{ClientID: "app-1", AllowUnbound: allowUnbound})
+	cfg, err := encodeInstallConfig(Installation{ClientID: "app-1", RobotCode: "robot-1", AllowUnbound: allowUnbound})
 	if err != nil {
 		t.Fatalf("encode config: %v", err)
 	}

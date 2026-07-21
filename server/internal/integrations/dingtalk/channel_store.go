@@ -40,17 +40,35 @@ const channelTypeDingTalk = "dingtalk"
 // calls client_id (the app's AppKey); it is stored under the config key
 // "app_id" — see the file comment.
 type Installation struct {
-	ID                       pgtype.UUID
-	WorkspaceID              pgtype.UUID
-	AgentID                  pgtype.UUID
-	ClientID                 string
-	AppSecretEncrypted       []byte
-	InstallerUserID          pgtype.UUID
-	Status                   string
+	ID                 pgtype.UUID
+	WorkspaceID        pgtype.UUID
+	AgentID            pgtype.UUID
+	ClientID           string
+	AppSecretEncrypted []byte
+	InstallerUserID    pgtype.UUID
+	Status             string
 	// AllowUnbound serves unbound / non-member senders as the installer
 	// rather than prompting them to bind — the "connect to customers" mode.
-	AllowUnbound             bool
-	RouterSourceID           string
+	AllowUnbound bool
+	// TransportMode is the inbound delivery mode selected at registration.
+	// Historical rows omit it and decode as STREAM.
+	TransportMode TransportMode
+	// ConnectionManaged controls whether the Stream supervisor owns a live
+	// connection. HTTP callback installations keep credentials/outbound active
+	// while setting this false.
+	ConnectionManaged bool
+	// RobotCode is the callback receiver identity returned independently by the
+	// registration contract. It must never be inferred from ClientID.
+	RobotCode          string
+	DispatchEndpointID string
+	RouterSourceID     string
+	RouterStatus       string
+	RouterLastError    string
+	// RegistrationStatus records the last terminal status returned by the
+	// DingTalk device flow when it carries product meaning after credentials
+	// are persisted. It is currently set only to APPROVING; empty means the
+	// flow completed with SUCCESS or predates this field.
+	RegistrationStatus       string
 	RouterAgentID            string
 	RouterRegistrationStatus RouterRegistrationStatus
 	IngressCutoverState      IngressCutoverState
@@ -111,7 +129,14 @@ type dingtalkInstallConfig struct {
 	// instead of the "click to bind" prompt. The operator accepts that
 	// anyone who can message the bot drives the agent under the installer's
 	// workspace identity. Omitted (false) = default bind-first behavior.
-	AllowUnbound bool `json:"allow_unbound,omitempty"`
+	AllowUnbound       bool          `json:"allow_unbound,omitempty"`
+	TransportMode      TransportMode `json:"transport_mode,omitempty"`
+	ConnectionManaged  *bool         `json:"connection_managed,omitempty"`
+	RobotCode          string        `json:"robot_code,omitempty"`
+	DispatchEndpointID string        `json:"dispatch_endpoint_id,omitempty"`
+	RouterStatus       string        `json:"router_status,omitempty"`
+	RouterLastError    string        `json:"router_last_error,omitempty"`
+	RegistrationStatus string        `json:"registration_status,omitempty"`
 }
 
 // UpsertInstallationParams is the write shape for
@@ -121,6 +146,7 @@ type UpsertInstallationParams struct {
 	WorkspaceID        pgtype.UUID
 	AgentID            pgtype.UUID
 	ClientID           string
+	RobotCode          string
 	AppSecretEncrypted []byte
 	InstallerUserID    pgtype.UUID
 }
@@ -128,6 +154,7 @@ type UpsertInstallationParams struct {
 func (s *ChannelStore) UpsertDingTalkInstallation(ctx context.Context, arg UpsertInstallationParams) (Installation, error) {
 	cfg, err := encodeInstallConfig(Installation{
 		ClientID:           arg.ClientID,
+		RobotCode:          arg.RobotCode,
 		AppSecretEncrypted: arg.AppSecretEncrypted,
 	})
 	if err != nil {
@@ -184,6 +211,20 @@ func (s *ChannelStore) SetDingTalkInstallationStatus(ctx context.Context, id pgt
 	})
 }
 
+func (s *ChannelStore) UpdateDingTalkInstallationConfig(ctx context.Context, inst Installation) (Installation, error) {
+	cfg, err := encodeInstallConfig(inst)
+	if err != nil {
+		return Installation{}, err
+	}
+	row, err := s.Queries.UpdateChannelInstallationConfig(ctx, db.UpdateChannelInstallationConfigParams{
+		ID: inst.ID, Config: cfg,
+	})
+	if err != nil {
+		return Installation{}, err
+	}
+	return installationFromRow(row)
+}
+
 // installationFromRow decodes a channel_installation row (flat columns +
 // JSONB config) into the flat Installation domain struct.
 func installationFromRow(row db.ChannelInstallation) (Installation, error) {
@@ -197,6 +238,14 @@ func installationFromRow(row db.ChannelInstallation) (Installation, error) {
 	if err != nil {
 		return Installation{}, fmt.Errorf("decode app_secret_encrypted: %w", err)
 	}
+	mode, err := normalizeTransportMode(cfg.TransportMode)
+	if err != nil {
+		return Installation{}, fmt.Errorf("decode transport_mode: %w", err)
+	}
+	connectionManaged := mode == TransportModeStream
+	if cfg.ConnectionManaged != nil {
+		connectionManaged = *cfg.ConnectionManaged
+	}
 	return Installation{
 		ID:                       row.ID,
 		WorkspaceID:              row.WorkspaceID,
@@ -206,7 +255,14 @@ func installationFromRow(row db.ChannelInstallation) (Installation, error) {
 		InstallerUserID:          row.InstallerUserID,
 		Status:                   row.Status,
 		AllowUnbound:             cfg.AllowUnbound,
+		TransportMode:            mode,
+		ConnectionManaged:        connectionManaged,
+		RobotCode:                strings.TrimSpace(cfg.RobotCode),
+		DispatchEndpointID:       cfg.DispatchEndpointID,
 		RouterSourceID:           cfg.RouterSourceID,
+		RouterStatus:             cfg.RouterStatus,
+		RouterLastError:          cfg.RouterLastError,
+		RegistrationStatus:       strings.TrimSpace(cfg.RegistrationStatus),
 		RouterAgentID:            cfg.RouterAgentID,
 		RouterRegistrationStatus: cfg.RouterRegistrationStatus,
 		IngressCutoverState:      cfg.IngressCutoverState,
@@ -220,10 +276,23 @@ func installationFromRow(row db.ChannelInstallation) (Installation, error) {
 // the dingtalk fields of an Installation. The secret is emitted as
 // unwrapped base64.
 func encodeInstallConfig(inst Installation) ([]byte, error) {
+	mode, err := normalizeTransportMode(inst.TransportMode)
+	if err != nil {
+		return nil, err
+	}
+	connectionManaged := mode == TransportModeStream
+	robotCode := strings.TrimSpace(inst.RobotCode)
+	if robotCode == "" {
+		return nil, fmt.Errorf("robot_code is required")
+	}
 	cfg := dingtalkInstallConfig{
-		AppID:                    inst.ClientID,
-		AllowUnbound:             inst.AllowUnbound,
+		AppID: inst.ClientID, AllowUnbound: inst.AllowUnbound,
+		TransportMode: mode, ConnectionManaged: &connectionManaged,
+		RobotCode: robotCode, DispatchEndpointID: inst.DispatchEndpointID,
 		RouterSourceID:           inst.RouterSourceID,
+		RouterStatus:             inst.RouterStatus,
+		RouterLastError:          inst.RouterLastError,
+		RegistrationStatus:       inst.RegistrationStatus,
 		RouterAgentID:            inst.RouterAgentID,
 		RouterRegistrationStatus: inst.RouterRegistrationStatus,
 		IngressCutoverState:      inst.IngressCutoverState,

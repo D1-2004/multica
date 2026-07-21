@@ -26,6 +26,7 @@ import (
 type outboundQueries interface {
 	GetChannelChatSessionBindingBySession(ctx context.Context, arg db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error)
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
+	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
 	ListPendingChatMessagePreviewsAfterTask(ctx context.Context, taskID pgtype.UUID) ([]db.ListPendingChatMessagePreviewsAfterTaskRow, error)
 }
 
@@ -156,6 +157,16 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 		return fmt.Errorf("decode dingtalk credentials: %w", err)
 	}
 	sendStarted := time.Now()
+	// Stream callbacks carry a per-message session webhook. Prefer it whenever
+	// present: legacy Stream installations predate robot_code persistence, and
+	// client_id must never be guessed as the robot identity. HTTP callbacks do
+	// not carry this locator and continue through the robot API below.
+	if reply, ok := o.sessionReplyContext(ctx, taskID); ok {
+		if err := postSessionWebhook(ctx, o.messenger.httpClient, reply.Webhook, content); err != nil {
+			return fmt.Errorf("post dingtalk Stream reply: %w", err)
+		}
+		return nil
+	}
 	if err := o.messenger.SendMarkdown(ctx, creds, outboundTarget(binding), content); err != nil {
 		return fmt.Errorf("post dingtalk reply: %w", err)
 	}
@@ -170,6 +181,23 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 		)
 	}
 	return nil
+}
+
+func (o *Outbound) sessionReplyContext(ctx context.Context, taskID pgtype.UUID) (dingtalkSessionReplyContext, bool) {
+	task, err := o.q.GetAgentTask(ctx, taskID)
+	if err != nil || len(task.Context) == 0 {
+		return dingtalkSessionReplyContext{}, false
+	}
+	var private map[string]json.RawMessage
+	if err := json.Unmarshal(task.Context, &private); err != nil {
+		return dingtalkSessionReplyContext{}, false
+	}
+	var reply dingtalkSessionReplyContext
+	if err := json.Unmarshal(private[dingtalkSessionReplyContextKey], &reply); err != nil {
+		return dingtalkSessionReplyContext{}, false
+	}
+	reply.Webhook = strings.TrimSpace(reply.Webhook)
+	return reply, reply.Webhook != ""
 }
 
 const (

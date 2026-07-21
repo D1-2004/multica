@@ -503,6 +503,9 @@ type DingtalkInstallSession struct {
 	GcAfter        pgtype.Timestamptz `json:"gc_after"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	TransportMode  string             `json:"transport_mode"`
+	AllowUnbound   bool               `json:"allow_unbound"`
+	Generation     int64              `json:"generation"`
 }
 
 type DingtalkStreamInbox struct {

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -196,5 +198,64 @@ func TestOutboundChatDoneClearsTypingBeforeReply(t *testing.T) {
 		!strings.Contains(msgParam, "看看你的 MULTICA_SANDBOX_SOURCE_HOSTNAME") ||
 		!strings.Contains(msgParam, "再确认一下连接 ID 是否生效") {
 		t.Fatalf("queued message summary missing from reply: %q", msgParam)
+	}
+}
+
+func TestOutboundHistoricalStreamUsesTaskSessionWebhookWithoutRobotCode(t *testing.T) {
+	var posted map[string]any
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/session-reply" {
+			t.Fatalf("unexpected webhook path %q", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+			t.Fatalf("decode webhook body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
+	}))
+	defer webhook.Close()
+
+	instID := typingTestUUID(1)
+	sessionID := typingTestUUID(2)
+	taskID := typingTestUUID(3)
+	config, err := json.Marshal(dingtalkInstallConfig{
+		AppID:              "legacy-stream-client",
+		AppSecretEncrypted: "bGVnYWN5LXNlY3JldA==",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskContext, err := json.Marshal(map[string]any{
+		dingtalkSessionReplyContextKey: dingtalkSessionReplyContext{Webhook: webhook.URL + "/session-reply"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := &fakeTypingQueries{
+		binding: db.ChannelChatSessionBinding{
+			InstallationID: instID,
+			ChannelChatID:  "legacy-conversation",
+			ChatType:       string(channel.ChatTypeGroup),
+		},
+		inst: db.ChannelInstallation{
+			ID: instID, ChannelType: string(TypeDingtalk), Status: "active", Config: config,
+		},
+		tasks: map[pgtype.UUID]db.AgentTaskQueue{
+			taskID: {ID: taskID, Context: taskContext},
+		},
+	}
+	out := NewOutbound(q, plaintextDecrypter, NewRobotMessenger(webhook.URL, webhook.URL, webhook.Client()), nil, nil)
+	if err := out.processEvent(context.Background(), events.Event{
+		Type:          protocol.EventChatDone,
+		ChatSessionID: util.UUIDToString(sessionID),
+		Payload: protocol.ChatDonePayload{
+			TaskID: util.UUIDToString(taskID), Content: "legacy stream reply",
+		},
+	}); err != nil {
+		t.Fatalf("processEvent: %v", err)
+	}
+	markdown, _ := posted["markdown"].(map[string]any)
+	if got, _ := markdown["text"].(string); got != "legacy stream reply" {
+		t.Fatalf("session webhook text = %q", got)
 	}
 }

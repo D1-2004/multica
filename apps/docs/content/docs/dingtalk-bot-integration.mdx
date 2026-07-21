@@ -99,7 +99,8 @@ Every other environment variable is an optional override; leave them unset for n
 - `DINGTALK_OPENAPI_BASE` — the new-style DingTalk OpenAPI host (default `https://api.dingtalk.com`).
 - `DINGTALK_OAPI_BASE` — the legacy DingTalk OAPI host (default `https://oapi.dingtalk.com`).
 - `MULTICA_DINGTALK_REGISTRATION_BASE_URL` — overrides the scan-to-create (device flow) registration endpoint, for staging or mocks.
-- `MULTICA_DINGTALK_REGISTRATION_SOURCE` — a DingTalk-assigned partner source label; empty omits it.
+- Scan-to-create requests always use the DingTalk-assigned `FDE_AGENT` source.
+- `MULTICA_DINGTALK_REGISTRATION_OUTGOING_URL` — the server-owned HTTPS Gateway callback that enables HTTP callback mode; clients cannot override it.
 </Callout>
 
 ## Troubleshooting

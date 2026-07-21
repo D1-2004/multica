@@ -12,6 +12,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -39,8 +41,31 @@ type AgentDispatchInput struct {
 // router. The current endpoint is intentionally issue-only: a nil continuation
 // creates an issue and an issue continuation creates a follow-up comment.
 type AgentDispatchContinuation struct {
-	Kind    string `json:"kind"`
-	IssueID string `json:"issueId"`
+	Kind          string `json:"kind"`
+	IssueID       string `json:"issueId,omitempty"`
+	ChatSessionID string `json:"chatSessionId,omitempty"`
+}
+
+type AgentDispatchChannelContext struct {
+	Platform     string `json:"platform"`
+	AccountID    string `json:"accountId"`
+	TenantID     string `json:"tenantId"`
+	Conversation struct {
+		ID    string `json:"id"`
+		Type  string `json:"type"`
+		Title string `json:"title"`
+	} `json:"conversation"`
+	Sender struct {
+		ID       string `json:"id"`
+		TenantID string `json:"tenantId"`
+		StaffID  string `json:"staffId"`
+		Name     string `json:"name"`
+	} `json:"sender"`
+	Message struct {
+		ID        string `json:"id"`
+		CreatedAt int64  `json:"createdAt"`
+		Text      string `json:"text"`
+	} `json:"message"`
 }
 
 type AgentDispatchExternalIdentity struct {
@@ -52,6 +77,7 @@ type AgentDispatchRequest struct {
 	AgentID          string                         `json:"agentId,omitempty"`
 	ExternalIdentity *AgentDispatchExternalIdentity `json:"externalIdentity,omitempty"`
 	Input            AgentDispatchInput             `json:"input"`
+	ChannelContext   *AgentDispatchChannelContext   `json:"channelContext,omitempty"`
 }
 
 type AgentDispatchResponse struct {
@@ -59,6 +85,11 @@ type AgentDispatchResponse struct {
 	IssueIdentifier string                    `json:"issueIdentifier,omitempty"`
 	CommentID       string                    `json:"commentId,omitempty"`
 	TaskID          string                    `json:"taskId"`
+}
+
+type AgentChatDispatchResponse struct {
+	Continuation AgentDispatchContinuation `json:"continuation"`
+	TaskID       string                    `json:"taskId,omitempty"`
 }
 
 // HandleAgentDispatch consumes an authenticated message-router delivery. The
@@ -111,6 +142,10 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.ChannelContext != nil {
+		h.handleAgentChatDispatch(w, r, req, dispatchContext)
+		return
+	}
 
 	if req.Continuation == nil {
 		if strings.TrimSpace(req.AgentID) == "" {
@@ -139,24 +174,34 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	h.createAgentDispatchComment(w, r, req, dispatchContext)
 }
 
-func (h *Handler) handleAgentDispatchV2(w http.ResponseWriter, r *http.Request, raw []byte, dispatchContext agentDispatchContext) {
-	var cmd AgentDispatchV2Request
-	if err := json.Unmarshal(raw, &cmd); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid dispatch command")
+func (h *Handler) handleAgentChatDispatch(
+	w http.ResponseWriter,
+	r *http.Request,
+	req AgentDispatchRequest,
+	dispatchContext agentDispatchContext,
+) {
+	ctx := req.ChannelContext
+	if h.ChannelRouter == nil || h.DingTalkInstallations == nil {
+		writeError(w, http.StatusServiceUnavailable, "dingtalk chat dispatch not configured")
 		return
 	}
-	command := cmd.DispatchCommand()
-	if err := command.validate(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if !strings.EqualFold(strings.TrimSpace(ctx.Platform), "dingtalk") ||
+		strings.TrimSpace(ctx.AccountID) == "" ||
+		strings.TrimSpace(ctx.TenantID) == "" ||
+		strings.TrimSpace(ctx.Conversation.ID) == "" ||
+		(strings.TrimSpace(ctx.Conversation.Type) != "single" && strings.TrimSpace(ctx.Conversation.Type) != "group") ||
+		strings.TrimSpace(ctx.Sender.ID) == "" ||
+		strings.TrimSpace(ctx.Sender.TenantID) != strings.TrimSpace(ctx.TenantID) ||
+		strings.TrimSpace(ctx.Message.ID) == "" {
+		writeError(w, http.StatusBadRequest, "invalid channelContext")
 		return
 	}
-	prompt, err := BuildDispatchPrompt(command)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to build dispatch prompt")
+	if strings.TrimSpace(ctx.Conversation.Type) == "single" && strings.TrimSpace(ctx.Sender.StaffID) == "" {
+		writeError(w, http.StatusBadRequest, "channelContext.sender.staffId is required for single chat")
 		return
 	}
-	if command.AgentID != "" {
-		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(command.AgentID), "agentId")
+	if req.Continuation == nil {
+		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(req.AgentID), "agentId")
 		if !ok {
 			return
 		}
@@ -164,35 +209,76 @@ func (h *Handler) handleAgentDispatchV2(w http.ResponseWriter, r *http.Request, 
 			writeError(w, http.StatusForbidden, "agentId does not match dispatch endpoint")
 			return
 		}
-		agent, ok := h.resolveAgentDispatchAgent(w, r, dispatchContext.UserID, dispatchContext.WorkspaceID, agentID)
-		if !ok {
-			return
+	} else if req.Continuation.Kind != "chat" || strings.TrimSpace(req.Continuation.ChatSessionID) == "" {
+		writeError(w, http.StatusBadRequest, "continuation must identify a chat")
+		return
+	}
+
+	installation, err := h.Queries.GetActiveDingTalkHTTPInstallationForDispatch(r.Context(), db.GetActiveDingTalkHTTPInstallationForDispatchParams{
+		WorkspaceID:        dispatchContext.WorkspaceID,
+		AgentID:            dispatchContext.AgentID,
+		DispatchEndpointID: dispatchContext.EndpointID,
+		RobotCode:          strings.TrimSpace(ctx.AccountID),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "dingtalk robot installation not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to resolve dingtalk robot installation")
 		}
-		h.createAgentDispatchIssueV2(w, r, command, prompt, dispatchContext, agent)
 		return
 	}
-	if command.Continuation == nil || command.Continuation.Kind != "issue" || strings.TrimSpace(command.Continuation.IssueID) == "" {
-		writeError(w, http.StatusBadRequest, "continuation must identify an issue")
+	if installation.Status != "active" ||
+		installation.WorkspaceID != dispatchContext.WorkspaceID ||
+		installation.AgentID != dispatchContext.AgentID {
+		writeError(w, http.StatusForbidden, "dingtalk robot installation does not match dispatch endpoint")
 		return
 	}
-	h.createAgentDispatchCommentV2(w, r, command, prompt, dispatchContext)
-}
+	robotInstallation, err := h.DingTalkInstallations.GetInWorkspace(r.Context(), installation.ID, dispatchContext.WorkspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load dingtalk robot installation")
+		return
+	}
+	if robotInstallation.TransportMode != dingtalk.TransportModeHTTPCallback ||
+		!strings.EqualFold(strings.TrimSpace(robotInstallation.RobotCode), strings.TrimSpace(ctx.AccountID)) {
+		writeError(w, http.StatusForbidden, "dingtalk robot installation is not an HTTP callback source")
+		return
+	}
 
-// AgentDispatchV2Request is an alias-shaped envelope so the public JSON keeps
-// the exact Router contract while validation and execution remain in Multica.
-type AgentDispatchV2Request struct {
-	SchemaVersion    string                        `json:"schemaVersion"`
-	AgentID          string                        `json:"agentId,omitempty"`
-	Continuation     *AgentDispatchContinuation    `json:"continuation"`
-	Source           DispatchSource                `json:"source"`
-	Event            DispatchEvent                 `json:"event"`
-	Surface          DispatchSurface               `json:"surface"`
-	Outbound         DispatchOutbound              `json:"outbound"`
-	ExternalIdentity AgentDispatchExternalIdentity `json:"externalIdentity"`
-}
-
-func (r AgentDispatchV2Request) DispatchCommand() DispatchCommand {
-	return DispatchCommand{SchemaVersion: r.SchemaVersion, AgentID: r.AgentID, Continuation: r.Continuation, Source: r.Source, Event: r.Event, Surface: r.Surface, Outbound: r.Outbound, ExternalIdentity: r.ExternalIdentity}
+	message, err := dingtalk.InboundFromHTTPCallback(dingtalk.HTTPCallbackMessage{
+		ConversationID:       ctx.Conversation.ID,
+		ConversationType:     ctx.Conversation.Type,
+		ConversationTitle:    ctx.Conversation.Title,
+		MessageID:            ctx.Message.ID,
+		CreatedAt:            ctx.Message.CreatedAt,
+		SenderUID:            ctx.Sender.ID,
+		SenderOrgID:          ctx.Sender.TenantID,
+		SenderStaffID:        ctx.Sender.StaffID,
+		SenderName:           ctx.Sender.Name,
+		Text:                 ctx.Message.Text,
+		IdentityContextToken: agentDispatchContextToken(req),
+	}, robotInstallation.ClientID, uuidToString(installation.ID))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := h.ChannelRouter.HandleResult(r.Context(), message)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to dispatch dingtalk chat")
+		return
+	}
+	if result.Outcome == engine.OutcomeNeedsBinding {
+		writeError(w, http.StatusForbidden, "dingtalk sender is not bound")
+		return
+	}
+	chatSessionID := uuidToString(result.ChatSessionID)
+	if chatSessionID == "" && req.Continuation != nil {
+		chatSessionID = req.Continuation.ChatSessionID
+	}
+	writeJSON(w, http.StatusAccepted, AgentChatDispatchResponse{
+		Continuation: AgentDispatchContinuation{Kind: "chat", ChatSessionID: chatSessionID},
+		TaskID:       uuidToString(result.TaskID),
+	})
 }
 
 func agentDispatchContextToken(req AgentDispatchRequest) string {
@@ -203,6 +289,7 @@ func agentDispatchContextToken(req AgentDispatchRequest) string {
 }
 
 type agentDispatchContext struct {
+	EndpointID  string
 	UserID      pgtype.UUID
 	WorkspaceID pgtype.UUID
 	AgentID     pgtype.UUID
@@ -222,6 +309,24 @@ func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Req
 		return agentDispatchContext{}, false
 	}
 	endpoint, err := h.Queries.GetAgentDispatchEndpointByEndpointID(r.Context(), endpointID)
+	if err == nil {
+		h.Metrics.RecordDispatchAuth("success")
+		return agentDispatchContext{
+			EndpointID: endpointID,
+			UserID:     endpoint.ActorUserID, WorkspaceID: endpoint.WorkspaceID, AgentID: endpoint.AgentID,
+		}, true
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		h.Metrics.RecordDispatchAuth("storage_error")
+		writeError(w, http.StatusInternalServerError, "failed to resolve dispatch endpoint")
+		return agentDispatchContext{}, false
+	}
+	// Rolling-upgrade fallback for endpoints created before the Agent-scoped
+	// endpoint table. New HTTP_CALLBACK installs always resolve above.
+	legacy, err := h.Queries.GetActiveDingTalkAccountBindingByEndpoint(r.Context(), endpointID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		legacy, err = h.Queries.GetActiveDingTalkBotInstallationByEndpoint(r.Context(), endpointID)
+	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			h.Metrics.RecordDispatchAuth("endpoint_not_found")
@@ -234,9 +339,10 @@ func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Req
 	}
 	h.Metrics.RecordDispatchAuth("success")
 	return agentDispatchContext{
-		UserID:      endpoint.ActorUserID,
-		WorkspaceID: endpoint.WorkspaceID,
-		AgentID:     endpoint.AgentID,
+		EndpointID:  endpointID,
+		UserID:      legacy.InstallerUserID,
+		WorkspaceID: legacy.WorkspaceID,
+		AgentID:     legacy.AgentID,
 	}, true
 }
 
@@ -481,6 +587,12 @@ func agentDispatchIssueTitle(userPrompt string) string {
 
 func buildAgentDispatchContent(input AgentDispatchInput) string {
 	var b strings.Builder
+	if systemPrompt := strings.TrimSpace(input.SystemPrompt.Text); systemPrompt != "" {
+		b.WriteString("## System prompt\n\n")
+		b.WriteString(systemPrompt)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("## User prompt\n\n")
 	b.WriteString(strings.TrimSpace(input.UserPrompt.Text))
 	if len(input.Attachments) > 0 {
 		b.WriteString("\n\n## Attachments\n")

@@ -41,24 +41,3 @@ WHERE ci.channel_type = 'dingtalk_account'
   AND NULLIF(ci.config ->> 'dispatch_endpoint_id', '') IS NOT NULL
   AND NULLIF(ci.config ->> 'dispatch_url', '') IS NOT NULL
 ON CONFLICT (agent_id) DO NOTHING;
-
--- Existing robot installations predate Router trusted-source registration.
--- Make that gap explicit and stop legacy Stream consumption until the
--- idempotent startup reconciliation has registered the source. No credential
--- or delivery secret is added to config.
-UPDATE channel_installation
-SET config = jsonb_set(
-        jsonb_set(
-            config,
-            '{router_registration_status}',
-            '"router_pending"'::jsonb,
-            true
-        ),
-        '{ingress_cutover_state}',
-        '"legacy_stream"'::jsonb,
-        true
-    ),
-    status = CASE WHEN status = 'active' THEN 'pending' ELSE status END,
-    updated_at = now()
-WHERE channel_type = 'dingtalk'
-  AND NULLIF(config ->> 'router_registration_status', '') IS NULL;

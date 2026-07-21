@@ -2,6 +2,7 @@ package dingtalk
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -29,14 +30,7 @@ func newInstallationServiceForTest(t *testing.T) *InstallationService {
 	if err != nil {
 		t.Fatalf("secretbox.New: %v", err)
 	}
-	svc, err := NewInstallationService(
-		&db.Queries{},
-		&fakeTxStarter{tx: &fakeTx{}},
-		box,
-		&fakeRobotRouter{},
-		&fakeRobotEndpointProvider{},
-		InstallationCutoverConfig{},
-	)
+	svc, err := NewInstallationService(&db.Queries{}, &fakeTxStarter{tx: &fakeTx{}}, box)
 	if err != nil {
 		t.Fatalf("NewInstallationService: %v", err)
 	}
@@ -75,6 +69,43 @@ func (s stubAuthQueries) GetAgentInWorkspace(context.Context, db.GetAgentInWorks
 type stubVerifier struct{ err error }
 
 func (s stubVerifier) VerifyAppCredentials(context.Context, string, string) error { return s.err }
+
+type countingVerifier struct {
+	calls int
+	err   error
+}
+
+func (s *countingVerifier) VerifyAppCredentials(context.Context, string, string) error {
+	s.calls++
+	return s.err
+}
+
+type stubHTTPCallbackRouter struct{}
+
+func (stubHTTPCallbackRouter) PrepareEndpoint(context.Context, pgtype.UUID, pgtype.UUID, pgtype.UUID) (HTTPCallbackEndpoint, error) {
+	return HTTPCallbackEndpoint{}, nil
+}
+func (stubHTTPCallbackRouter) Register(context.Context, HTTPCallbackEndpoint, pgtype.UUID, string) (string, error) {
+	return "source-1", nil
+}
+
+func TestRegistrationCapabilitiesRequireURLAndRouter(t *testing.T) {
+	client := NewRegistrationClient(RegistrationConfig{OutgoingURL: "https://gateway.example.test/callback"})
+	svc, err := NewRegistrationService(
+		RegistrationServiceConfig{sessionStore: newMemSessionStore()},
+		client, newInstallationServiceForTest(t), &db.Queries{}, nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRegistrationService: %v", err)
+	}
+	if svc.Capabilities().HTTPCallbackAvailable {
+		t.Fatal("HTTP callback must stay unavailable without Router wiring")
+	}
+	svc.SetHTTPCallbackRouter(stubHTTPCallbackRouter{})
+	if !svc.Capabilities().HTTPCallbackAvailable {
+		t.Fatal("HTTP callback should be available with URL and Router wiring")
+	}
+}
 
 func TestRegistrationServiceConstructorValidatesDeps(t *testing.T) {
 	client := NewRegistrationClient(RegistrationConfig{})
@@ -126,7 +157,7 @@ func TestRegistrationGetSessionNotFound(t *testing.T) {
 	// Plant a session by hand for the cross-workspace test (BeginInstall
 	// requires a live registration endpoint; we are only exercising the
 	// lookup boundary).
-	if err := s.store.Create(context.Background(), sessionRecord{
+	if _, err := s.store.Create(context.Background(), sessionRecord{
 		ID:          "plant-1",
 		WorkspaceID: ws,
 		Status:      RegistrationStatusPending,
@@ -162,7 +193,7 @@ func TestRegistrationGetSessionGCsExpiredEntries(t *testing.T) {
 		{"expired", now.Add(-1 * time.Minute)},
 		{"live", now.Add(10 * time.Minute)},
 	} {
-		if err := s.store.Create(ctx, sessionRecord{
+		if _, err := s.store.Create(ctx, sessionRecord{
 			ID:          plant.id,
 			WorkspaceID: ws,
 			Status:      RegistrationStatusPending,
@@ -271,6 +302,15 @@ func beginInstallForTest(t *testing.T, f *fakeRegistrationServer, svc *Registrat
 	if err != nil {
 		t.Fatalf("BeginInstall: %v", err)
 	}
+	if len(f.beginReqs) != 1 {
+		t.Fatalf("begin requests = %v, want one request", f.beginReqs)
+	}
+	if _, ok := f.beginReqs[0]["mode"]; ok {
+		t.Errorf("default Stream begin unexpectedly carried mode: %v", f.beginReqs[0])
+	}
+	if _, ok := f.beginReqs[0]["outgoing_url"]; ok {
+		t.Errorf("default Stream begin unexpectedly carried outgoing_url: %v", f.beginReqs[0])
+	}
 	if res.QRCodeURL != "https://x.example/qr" {
 		t.Errorf("QRCodeURL = %q", res.QRCodeURL)
 	}
@@ -304,7 +344,7 @@ func TestRegistrationPollingVerifierRejectionEndsSession(t *testing.T) {
 	f, client := newFakeRegistration(t)
 	f.pollBody = map[string]any{
 		"errcode": 0, "errmsg": "ok", "status": "SUCCESS",
-		"client_id": "dingabc", "client_secret": "s3cret",
+		"client_id": "dingabc", "client_secret": "s3cret", "robot_code": "robotabc",
 	}
 	svc, err := NewRegistrationService(
 		RegistrationServiceConfig{sessionStore: newMemSessionStore()},
@@ -325,6 +365,48 @@ func TestRegistrationPollingVerifierRejectionEndsSession(t *testing.T) {
 	}
 	if state.ErrorReason != RegistrationReasonCredentialsCheckFailed {
 		t.Errorf("reason = %q, want %q", state.ErrorReason, RegistrationReasonCredentialsCheckFailed)
+	}
+}
+
+func TestRegistrationPollingApprovingPersistsCredentialsWithoutAvailabilityProbe(t *testing.T) {
+	f, client := newFakeRegistration(t)
+	f.pollBody = map[string]any{
+		"errcode": 0, "errmsg": "ok", "status": "APPROVING",
+		"client_id": "dingreview", "client_secret": "review-secret",
+		"robot_code": "robot-review", "mode": "STREAM",
+	}
+	queries := &fakeInstallQueries{prevErr: pgx.ErrNoRows}
+	installs, _ := newUpsertServiceForTest(t, queries)
+	verifier := &countingVerifier{err: errors.New("app is not enabled during review")}
+	svc, err := NewRegistrationService(
+		RegistrationServiceConfig{sessionStore: newMemSessionStore()},
+		client,
+		installs,
+		&db.Queries{},
+		verifier,
+	)
+	if err != nil {
+		t.Fatalf("NewRegistrationService: %v", err)
+	}
+	ws := uuidFromStringSvc(t, "11111111-1111-1111-1111-111111111111")
+	sessionID := beginInstallForTest(t, f, svc)
+
+	state := waitForTerminal(t, svc, ws, sessionID)
+	if state.Status != RegistrationStatusSuccess {
+		t.Fatalf("status = %q, want persisted terminal success", state.Status)
+	}
+	if verifier.calls != 0 {
+		t.Fatalf("availability verifier calls = %d, want 0 while approving", verifier.calls)
+	}
+	if len(queries.upsertCalls) != 1 {
+		t.Fatalf("upsert calls = %d, want 1", len(queries.upsertCalls))
+	}
+	var cfg dingtalkInstallConfig
+	if err := json.Unmarshal(queries.upsertCalls[0].Config, &cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if cfg.RegistrationStatus != registrationStatusApproving {
+		t.Errorf("registration_status = %q, want APPROVING", cfg.RegistrationStatus)
 	}
 }
 
@@ -359,56 +441,5 @@ func TestRegistrationPollingFailEndsSession(t *testing.T) {
 	}
 	if !strings.Contains(state.ErrorMessage, "用户拒绝授权") {
 		t.Errorf("message %q should retain fail_reason", state.ErrorMessage)
-	}
-}
-
-func TestRegistrationReportsRouterFailureWithoutLosingReplayableInstallation(t *testing.T) {
-	q := &fakeInstallQueries{prevErr: pgx.ErrNoRows}
-	installSvc, _ := newUpsertServiceWithRouterForTest(t, q, &fakeRobotRouter{
-		registerErr: errors.New("router unavailable"),
-	})
-	store := newMemSessionStore()
-	svc, err := NewRegistrationService(
-		RegistrationServiceConfig{sessionStore: store},
-		NewRegistrationClient(RegistrationConfig{BaseURL: "http://127.0.0.1:0"}),
-		installSvc,
-		&db.Queries{},
-		nil,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := &registrationSession{
-		id:          "router-failure",
-		workspaceID: instTestWorkspace,
-		agentID:     instTestAgentA,
-		initiatorID: instTestInstaller,
-		status:      RegistrationStatusPending,
-	}
-	if err := store.Create(context.Background(), sessionRecord{
-		ID:          sess.id,
-		WorkspaceID: sess.workspaceID,
-		Status:      RegistrationStatusPending,
-		ExpiresAt:   time.Now().Add(time.Minute),
-	}, sess.agentID); err != nil {
-		t.Fatal(err)
-	}
-
-	svc.finishSuccess(context.Background(), sess, &RegistrationPollResult{
-		ClientID: "ding-client-x", ClientSecret: "s3cret",
-	})
-	state, err := svc.GetSession(context.Background(), sess.workspaceID, sess.id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.ErrorReason != RegistrationReasonRouterRegistrationFailed {
-		t.Fatalf("error reason = %q", state.ErrorReason)
-	}
-	pending, err := installationFromRow(q.current)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pending.Status != "pending" || pending.RouterRegistrationStatus != RouterRegistrationPending {
-		t.Fatalf("replayable installation = %#v", pending)
 	}
 }

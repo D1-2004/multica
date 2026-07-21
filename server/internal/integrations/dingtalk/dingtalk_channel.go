@@ -35,6 +35,7 @@ var errEmptyRaw = errors.New("dingtalk: inbound message Raw is empty")
 type channelCredentials struct {
 	ClientID     string
 	ClientSecret string
+	RobotCode    string
 }
 
 // decodeChannelCredentials reads the installation config blob (the same
@@ -61,7 +62,7 @@ func decodeChannelCredentials(raw json.RawMessage, decrypt Decrypter) (channelCr
 	if err != nil {
 		return channelCredentials{}, fmt.Errorf("dingtalk: decrypt client_secret: %w", err)
 	}
-	return channelCredentials{ClientID: cfg.AppID, ClientSecret: string(plain)}, nil
+	return channelCredentials{ClientID: cfg.AppID, ClientSecret: string(plain), RobotCode: strings.TrimSpace(cfg.RobotCode)}, nil
 }
 
 // dingtalkChannel is ONE installation's Stream Mode connection. Every

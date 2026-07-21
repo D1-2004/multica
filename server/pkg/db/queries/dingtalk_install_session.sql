@@ -1,13 +1,41 @@
--- name: CreateDingTalkInstallSession :exec
+-- name: CreateDingTalkInstallSession :one
 -- Opens a device-flow install session. Written by the pod that served
 -- /install/begin; readable from every pod, which is the whole point (see
 -- migration 181).
+WITH generation_lock AS (
+    SELECT pg_advisory_xact_lock(
+        hashtextextended(
+            sqlc.arg('workspace_id')::uuid::text || ':' ||
+            sqlc.arg('agent_id')::uuid::text,
+            0
+        )
+    )
+), next_generation AS (
+    SELECT COALESCE(MAX(s.generation), 0) + 1 AS generation
+    FROM dingtalk_install_session s, generation_lock
+    WHERE s.workspace_id = sqlc.arg('workspace_id')::uuid
+      AND s.agent_id = sqlc.arg('agent_id')::uuid
+)
 INSERT INTO dingtalk_install_session (
-    id, workspace_id, agent_id, expires_at
-) VALUES ($1, $2, $3, $4);
+    id, workspace_id, agent_id, expires_at,
+    transport_mode, allow_unbound, generation
+)
+SELECT sqlc.arg('id'), sqlc.arg('workspace_id')::uuid, sqlc.arg('agent_id')::uuid, sqlc.arg('expires_at'),
+       sqlc.arg('transport_mode'), sqlc.arg('allow_unbound'), next_generation.generation
+FROM next_generation
+RETURNING generation;
 
 -- name: GetDingTalkInstallSession :one
 SELECT * FROM dingtalk_install_session WHERE id = $1;
+
+-- name: IsCurrentDingTalkInstallSession :one
+SELECT NOT EXISTS (
+    SELECT 1
+    FROM dingtalk_install_session newer
+    WHERE newer.workspace_id = sqlc.arg('workspace_id')
+      AND newer.agent_id = sqlc.arg('agent_id')
+      AND newer.generation > sqlc.arg('generation')
+) AS is_current;
 
 -- name: FinishDingTalkInstallSessionSuccess :exec
 -- Terminal transition; only a still-pending row moves, so a late poll result

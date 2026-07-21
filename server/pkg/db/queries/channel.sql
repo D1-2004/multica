@@ -98,6 +98,43 @@ SELECT * FROM channel_installation
 WHERE channel_type = sqlc.arg('channel_type')
   AND config ->> 'app_id' = sqlc.arg('app_id')::text;
 
+-- name: GetActiveDingTalkBotInstallationByEndpoint :one
+-- Robot-only dispatch endpoint resolution. The same endpoint may also be
+-- present on a dingtalk_account row for the agent; this query is the fallback
+-- that lets an HTTP_CALLBACK robot authenticate without a digital-employee
+-- binding. Membership and ownership checks match the legacy endpoint query.
+SELECT ci.*
+FROM channel_installation ci
+JOIN workspace w ON w.id = ci.workspace_id
+JOIN agent a ON a.id = ci.agent_id AND a.workspace_id = ci.workspace_id
+JOIN member m ON m.workspace_id = ci.workspace_id AND m.user_id = ci.installer_user_id
+WHERE ci.channel_type = 'dingtalk'
+  AND ci.status = 'active'
+  AND ci.config ->> 'transport_mode' = 'HTTP_CALLBACK'
+  AND ci.config ->> 'dispatch_endpoint_id' = sqlc.arg('dispatch_endpoint_id')::text;
+
+-- name: GetActiveDingTalkBotInstallationByAgent :one
+SELECT ci.*
+FROM channel_installation ci
+WHERE ci.workspace_id = sqlc.arg('workspace_id')
+  AND ci.agent_id = sqlc.arg('agent_id')
+  AND ci.channel_type = 'dingtalk'
+  AND ci.status = 'active';
+
+-- name: GetActiveDingTalkHTTPInstallationForDispatch :one
+-- The callback account is robot_code, not app_id/client_id. Scope the lookup
+-- to the endpoint-resolved workspace and agent so a global robot identifier
+-- can never redirect delivery across an authenticated dispatch boundary.
+SELECT ci.*
+FROM channel_installation ci
+WHERE ci.workspace_id = sqlc.arg('workspace_id')
+  AND ci.agent_id = sqlc.arg('agent_id')
+  AND ci.channel_type = 'dingtalk'
+  AND ci.status = 'active'
+  AND ci.config ->> 'transport_mode' = 'HTTP_CALLBACK'
+  AND ci.config ->> 'dispatch_endpoint_id' = sqlc.arg('dispatch_endpoint_id')::text
+  AND ci.config ->> 'robot_code' = sqlc.arg('robot_code')::text;
+
 -- name: GetChannelInstallationOwnerByAppID :one
 -- Identifies the LIVE owner of a (channel_type, config->>'app_id') routing slot
 -- so the install path can refuse a rebind with an ACCURATE message instead of the
@@ -315,6 +352,7 @@ JOIN workspace w ON w.id = ci.workspace_id
 JOIN agent a ON a.id = ci.agent_id
 WHERE ci.status = 'active'
   AND ci.channel_type = sqlc.arg('channel_type')
+  AND COALESCE(ci.config ->> 'connection_managed', 'true') <> 'false'
   AND (
         ci.channel_type <> 'dingtalk'
         OR COALESCE(ci.config ->> 'ingress_cutover_state', 'legacy_stream') = 'legacy_stream'
@@ -335,6 +373,7 @@ SELECT ci.* FROM channel_installation ci
 JOIN workspace w ON w.id = ci.workspace_id
 JOIN agent a ON a.id = ci.agent_id
 WHERE ci.status = 'active'
+  AND COALESCE(ci.config ->> 'connection_managed', 'true') <> 'false'
   AND (
         ci.channel_type <> 'dingtalk'
         OR COALESCE(ci.config ->> 'ingress_cutover_state', 'legacy_stream') = 'legacy_stream'
@@ -345,6 +384,12 @@ ORDER BY ci.created_at ASC;
 UPDATE channel_installation
 SET status = $2, updated_at = now()
 WHERE id = $1;
+
+-- name: UpdateChannelInstallationConfig :one
+UPDATE channel_installation
+SET config = sqlc.arg('config'), updated_at = now()
+WHERE id = sqlc.arg('id')
+RETURNING *;
 
 -- name: SetChannelInstallationConfig :exec
 -- Replaces the whole config blob for one installation. Used by the
@@ -559,6 +604,14 @@ ON CONFLICT (installation_id, message_id) DO UPDATE
     WHERE channel_inbound_message_dedup.processed_at IS NULL
       AND channel_inbound_message_dedup.received_at < now() - INTERVAL '60 seconds'
 RETURNING installation_id, message_id, received_at, processed_at, claim_token;
+
+-- name: GetChannelInboundDedupStatus :one
+-- HTTP adapters use the terminal marker to distinguish a committed replay
+-- from a second delivery that merely collided with an in-flight owner.
+SELECT processed_at
+FROM channel_inbound_message_dedup
+WHERE installation_id = $1
+  AND message_id = $2;
 
 -- name: MarkChannelInboundDedupProcessed :execrows
 -- Locks a claim in as permanently processed after a durable outcome.

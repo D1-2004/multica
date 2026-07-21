@@ -1,10 +1,37 @@
 package handler
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+type fakeAgentDispatchDuplicateQueries struct {
+	processedAt pgtype.Timestamptz
+	binding     db.ChannelChatSessionBinding
+	bindingKey  string
+}
+
+func (f *fakeAgentDispatchDuplicateQueries) GetChannelInboundDedupStatus(
+	context.Context,
+	db.GetChannelInboundDedupStatusParams,
+) (pgtype.Timestamptz, error) {
+	return f.processedAt, nil
+}
+
+func (f *fakeAgentDispatchDuplicateQueries) GetChannelChatSessionBinding(
+	_ context.Context,
+	params db.GetChannelChatSessionBindingParams,
+) (db.ChannelChatSessionBinding, error) {
+	f.bindingKey = params.ChannelChatID
+	return f.binding, nil
+}
 
 func TestBuildDispatchPromptSeparatesDisplayAndRuntime(t *testing.T) {
 	c := DispatchCommand{
@@ -255,6 +282,60 @@ func TestDispatchIssueTitleFallsBackToAttachmentThenGeneric(t *testing.T) {
 
 	if got := dispatchIssueTitle(DispatchCommand{}); got != "钉钉消息" {
 		t.Fatalf("generic title = %q", got)
+	}
+}
+
+func TestRecoverDuplicateAgentChatDispatchReturnsExistingContinuation(t *testing.T) {
+	chatSessionID := parseUUID("11111111-1111-1111-1111-111111111111")
+	queries := &fakeAgentDispatchDuplicateQueries{
+		processedAt: pgtype.Timestamptz{Valid: true},
+		binding: db.ChannelChatSessionBinding{
+			ChatSessionID: chatSessionID,
+		},
+	}
+	message := channel.InboundMessage{Source: channel.Source{
+		ChannelType: "dingtalk",
+		ChatID:      "conversation-1",
+		ChatType:    channel.ChatTypeP2P,
+		SenderID:    "sender-1",
+	}}
+
+	response, err := recoverDuplicateAgentChatDispatch(
+		context.Background(),
+		queries,
+		parseUUID("22222222-2222-2222-2222-222222222222"),
+		"message-1",
+		message,
+	)
+	if err != nil {
+		t.Fatalf("recover duplicate dispatch: %v", err)
+	}
+	if response.Continuation.Kind != "chat" || response.Continuation.ChatSessionID != uuidToString(chatSessionID) {
+		t.Fatalf("continuation = %+v", response.Continuation)
+	}
+	if queries.bindingKey != "conversation-1" {
+		t.Fatalf("binding key = %q", queries.bindingKey)
+	}
+}
+
+func TestRecoverDuplicateAgentChatDispatchWaitsForCommittedResult(t *testing.T) {
+	queries := &fakeAgentDispatchDuplicateQueries{}
+	message := channel.InboundMessage{Source: channel.Source{
+		ChannelType: "dingtalk",
+		ChatID:      "conversation-1",
+		ChatType:    channel.ChatTypeP2P,
+		SenderID:    "sender-1",
+	}}
+
+	_, err := recoverDuplicateAgentChatDispatch(
+		context.Background(),
+		queries,
+		parseUUID("22222222-2222-2222-2222-222222222222"),
+		"message-1",
+		message,
+	)
+	if !errors.Is(err, errAgentDispatchDuplicateNotReady) {
+		t.Fatalf("error = %v", err)
 	}
 }
 

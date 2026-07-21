@@ -39,11 +39,65 @@ type Subscription struct {
 	Status      string `json:"status"`
 }
 
-type RobotRegistration struct {
-	TenantID    string `json:"tenantId"`
-	RobotCode   string `json:"robotCode"`
+type AgentDeliveryTarget struct {
 	AgentID     string `json:"agentId"`
 	DispatchURL string `json:"dispatchUrl"`
+}
+
+type RobotRegistration struct {
+	TenantID               string `json:"tenantId,omitempty"`
+	RobotCode              string `json:"robotCode"`
+	AgentID                string `json:"agentId"`
+	DispatchURL            string `json:"dispatchUrl"`
+	ReplaceExistingBinding bool   `json:"replaceExistingBinding,omitempty"`
+}
+
+type CreateSubscriptionParams struct {
+	TenantID           string
+	AccountID          string
+	AgentID            string
+	DispatchURL        string
+	BindingToken       string
+	SubscriptionConfig map[string]any
+	ReplaceExisting    bool
+}
+
+func (c *Client) CreateHTTPCallbackSubscription(ctx context.Context, p CreateSubscriptionParams) (Subscription, error) {
+	body, err := json.Marshal(map[string]any{
+		"source": map[string]any{
+			"platform": "dingtalk", "domain": "channel",
+			"tenantId":           strings.TrimSpace(p.TenantID),
+			"accountId":          strings.TrimSpace(p.AccountID),
+			"subscriptionConfig": p.SubscriptionConfig,
+		},
+		"agent": map[string]string{
+			"agentId":     strings.TrimSpace(p.AgentID),
+			"dispatchUrl": strings.TrimSpace(p.DispatchURL),
+		},
+		"bindingToken":           strings.TrimSpace(p.BindingToken),
+		"enabledDomains":         []string{"channel"},
+		"replaceExistingBinding": p.ReplaceExisting,
+	})
+	if err != nil {
+		return Subscription{}, errors.New("encode HTTP callback subscription request")
+	}
+	response, err := c.do(ctx, http.MethodPost, "/api/subscriptions", bytes.NewReader(body))
+	if err != nil {
+		return Subscription{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return Subscription{}, decodeRouterHTTPError(response.Body, response.StatusCode)
+	}
+	result, err := decodeRouterResponse[Subscription](response.Body)
+	if err != nil {
+		return Subscription{}, err
+	}
+	if result.Status != "active" || !isTrimmedNonEmpty(result.SourceID) ||
+		result.AgentID != strings.TrimSpace(p.AgentID) || result.DispatchURL != strings.TrimSpace(p.DispatchURL) {
+		return Subscription{}, errors.New("agent message router subscription response is invalid")
+	}
+	return result, nil
 }
 
 type routerResponse[T any] struct {
@@ -58,8 +112,9 @@ type routerErrorResponse struct {
 }
 
 var (
-	ErrRouterAPI            = errors.New("agent message router returned a business error")
-	ErrSubscriptionNotFound = errors.New("agent message router subscription not found")
+	ErrRouterAPI              = errors.New("agent message router returned a business error")
+	ErrSubscriptionNotFound   = errors.New("agent message router subscription not found")
+	ErrDeliveryTargetNotFound = errors.New("agent message router delivery target not found")
 )
 
 type RouterAPIError struct {
@@ -77,6 +132,9 @@ func (e *RouterAPIError) Error() string {
 func (e *RouterAPIError) Is(target error) bool {
 	if target == ErrRouterAPI {
 		return true
+	}
+	if target == ErrDeliveryTargetNotFound {
+		return e != nil && e.Code == "delivery_target_not_found"
 	}
 	return target == ErrSubscriptionNotFound && e != nil && e.subscriptionNotFound
 }
@@ -126,6 +184,29 @@ func (c *Client) IssueBindingToken(ctx context.Context, agentID, dispatchURL str
 	}
 	if result.BindingToken == "" || result.ExpiresAt.IsZero() {
 		return BindingToken{}, errors.New("agent message router token issue response is invalid")
+	}
+	return result, nil
+}
+
+func (c *Client) GetAgentDeliveryTarget(ctx context.Context, agentID string) (AgentDeliveryTarget, error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return AgentDeliveryTarget{}, errors.New("agent message router delivery target agent id is required")
+	}
+	response, err := c.do(ctx, http.MethodGet, "/api/agent-delivery-targets/"+url.PathEscape(agentID), nil)
+	if err != nil {
+		return AgentDeliveryTarget{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return AgentDeliveryTarget{}, decodeRouterHTTPError(response.Body, response.StatusCode)
+	}
+	result, err := decodeDirectRouterResponse[AgentDeliveryTarget](response.Body)
+	if err != nil {
+		return AgentDeliveryTarget{}, err
+	}
+	if result.AgentID != agentID || !isTrimmedNonEmpty(result.DispatchURL) {
+		return AgentDeliveryTarget{}, errors.New("agent message router delivery target response is invalid")
 	}
 	return result, nil
 }

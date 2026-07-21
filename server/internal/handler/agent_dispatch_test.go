@@ -26,6 +26,48 @@ type captureRuntimeLauncher struct {
 	calls chan capturedRuntimeLaunch
 }
 
+func TestDingTalkHTTPDispatchLookupUsesRobotCodeNotClientID(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler integration database is unavailable")
+	}
+	agentID := createHandlerTestAgent(t, "test-http-dispatch-robot-code", nil)
+	const clientID = "ding-client-distinct"
+	const robotCode = "robot-code-distinct"
+	const endpointID = "v1_http_dispatch_distinct"
+	var installationID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO channel_installation (
+			workspace_id, agent_id, channel_type, config, status, installer_user_id
+		) VALUES ($1, $2, 'dingtalk', jsonb_build_object(
+			'app_id', $3::text,
+			'robot_code', $4::text,
+			'transport_mode', 'HTTP_CALLBACK',
+			'dispatch_endpoint_id', $5::text
+		), 'active', $6)
+		RETURNING id
+	`, testWorkspaceID, agentID, clientID, robotCode, endpointID, testUserID).Scan(&installationID); err != nil {
+		t.Fatalf("insert HTTP callback installation: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM channel_installation WHERE id = $1`, installationID)
+	})
+
+	base := db.GetActiveDingTalkHTTPInstallationForDispatchParams{
+		WorkspaceID:        parseUUID(testWorkspaceID),
+		AgentID:            parseUUID(agentID),
+		DispatchEndpointID: endpointID,
+		RobotCode:          robotCode,
+	}
+	row, err := testHandler.Queries.GetActiveDingTalkHTTPInstallationForDispatch(context.Background(), base)
+	if err != nil || uuidToString(row.ID) != installationID {
+		t.Fatalf("lookup by robot_code = (%s, %v), want %s", uuidToString(row.ID), err, installationID)
+	}
+	base.RobotCode = clientID
+	if _, err := testHandler.Queries.GetActiveDingTalkHTTPInstallationForDispatch(context.Background(), base); err == nil {
+		t.Fatal("client_id unexpectedly matched robot_code lookup")
+	}
+}
+
 func TestHandleAgentDispatchRecordsMissingCredential(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("handler integration database is unavailable")

@@ -31,7 +31,7 @@ func TestLookupUserUnionID(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	m := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
-	unionID, email, err := m.LookupUserUnionID(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs"}, "staff_9")
+	unionID, email, err := m.LookupUserUnionID(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs", RobotCode: "robot"}, "staff_9")
 	if err != nil {
 		t.Fatalf("LookupUserUnionID: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestLookupUserUnionIDLegacyError(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	m := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
-	if _, _, err := m.LookupUserUnionID(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs"}, "staff_9"); err == nil {
+	if _, _, err := m.LookupUserUnionID(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs", RobotCode: "robot"}, "staff_9"); err == nil {
 		t.Fatal("expected a legacy envelope error")
 	}
 }
@@ -146,7 +146,7 @@ func TestSendMarkdownCarriesDomainReplyLocator(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	m := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
-	err := m.SendMarkdown(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs"}, RobotTarget{OpenConversationID: "cid", ReplyToOpenMsgID: "msg"}, "reply")
+	err := m.SendMarkdown(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs", RobotCode: "robot"}, RobotTarget{OpenConversationID: "cid", ReplyToOpenMsgID: "msg"}, "reply")
 	if err != nil {
 		t.Fatalf("SendMarkdown: %v", err)
 	}
