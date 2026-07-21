@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
+	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -24,6 +25,24 @@ type capturedRuntimeLaunch struct {
 
 type captureRuntimeLauncher struct {
 	calls chan capturedRuntimeLaunch
+}
+
+func TestWriteAgentChatNeedsBindingACK(t *testing.T) {
+	w := httptest.NewRecorder()
+	if !writeAgentChatNeedsBindingACK(w, engine.Result{Outcome: engine.OutcomeNeedsBinding}) {
+		t.Fatal("needs_binding result was not acknowledged")
+	}
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("needs_binding status = %d, want %d: %s", w.Code, http.StatusAccepted, w.Body.String())
+	}
+	if w.Body.Len() != 0 {
+		t.Fatalf("needs_binding ACK must not overwrite Router continuation: %s", w.Body.String())
+	}
+
+	untouched := httptest.NewRecorder()
+	if writeAgentChatNeedsBindingACK(untouched, engine.Result{Outcome: engine.OutcomeIngested}) {
+		t.Fatal("ingested result was handled as needs_binding")
+	}
 }
 
 func TestDingTalkHTTPDispatchLookupUsesRobotCodeNotClientID(t *testing.T) {

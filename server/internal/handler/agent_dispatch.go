@@ -267,8 +267,7 @@ func (h *Handler) handleAgentChatDispatch(
 		writeError(w, http.StatusInternalServerError, "failed to dispatch dingtalk chat")
 		return
 	}
-	if result.Outcome == engine.OutcomeNeedsBinding {
-		writeError(w, http.StatusForbidden, "dingtalk sender is not bound")
+	if writeAgentChatNeedsBindingACK(w, result) {
 		return
 	}
 	chatSessionID := uuidToString(result.ChatSessionID)
@@ -279,6 +278,17 @@ func (h *Handler) handleAgentChatDispatch(
 		Continuation: AgentDispatchContinuation{Kind: "chat", ChatSessionID: chatSessionID},
 		TaskID:       uuidToString(result.TaskID),
 	})
+}
+
+func writeAgentChatNeedsBindingACK(w http.ResponseWriter, result engine.Result) bool {
+	if result.Outcome != engine.OutcomeNeedsBinding {
+		return false
+	}
+	// The binding prompt is sent asynchronously by the DingTalk replier.
+	// Router only needs a successful delivery ACK; an error makes it retry an
+	// event that Multica has already accepted and handled.
+	w.WriteHeader(http.StatusAccepted)
+	return true
 }
 
 func agentDispatchContextToken(req AgentDispatchRequest) string {

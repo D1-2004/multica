@@ -205,8 +205,7 @@ func (h *Handler) createAgentDispatchChatV2(
 		writeError(w, http.StatusInternalServerError, "failed to dispatch dingtalk chat")
 		return
 	}
-	if result.Outcome == engine.OutcomeNeedsBinding {
-		writeError(w, http.StatusForbidden, "dingtalk sender is not bound")
+	if writeAgentChatNeedsBindingACK(w, result) {
 		return
 	}
 	if result.Outcome == engine.OutcomeDropped && result.DropReason == engine.DropReasonDuplicate {

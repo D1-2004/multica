@@ -22,11 +22,9 @@ import (
 )
 
 // This file is the DingTalk OutboundReplier — the engine seam that delivers
-// a verdict-driven reply back to the user. Unlike the Slack/Lark repliers it
-// posts through the inbound message's sessionWebhook (carried in Raw): the
-// webhook needs no access token and no API permission, and a verdict reply
-// always follows an inbound message, so the webhook is guaranteed fresh
-// (~90-minute validity, minted per message).
+// a verdict-driven reply back to the user. Stream messages keep using the
+// inbound message's sessionWebhook. HTTP Callback messages do not carry that
+// webhook, so they use the installation's Robot API credentials instead.
 //
 // Outcomes handled:
 //   - NeedsBinding: mint a single-use binding token and reply with a
@@ -60,6 +58,8 @@ type agentNamer interface {
 type OutboundReplier struct {
 	binding     bindingMinter
 	agentNamer  agentNamer
+	messenger   *RobotMessenger
+	decrypt     Decrypter
 	httpClient  *http.Client
 	appURL      string
 	bindingPath string
@@ -74,6 +74,10 @@ type OutboundReplierConfig struct {
 	// AgentNamer resolves the bot's name for the bind prompt. Optional; nil
 	// keeps the generic "bind to Multica" copy.
 	AgentNamer agentNamer
+	// Messenger + Decrypt deliver product notices for HTTP Callback installs.
+	// Stream installs continue to use only the inbound sessionWebhook.
+	Messenger *RobotMessenger
+	Decrypt   Decrypter
 	// AppURL is the Multica web app host the user clicks into to redeem the
 	// binding token (MULTICA_APP_URL ?? FRONTEND_ORIGIN — the bind page
 	// /dingtalk/bind is served by the web app, not the API host).
@@ -105,6 +109,8 @@ func NewOutboundReplier(cfg OutboundReplierConfig) *OutboundReplier {
 	return &OutboundReplier{
 		binding:     cfg.Binding,
 		agentNamer:  cfg.AgentNamer,
+		messenger:   cfg.Messenger,
+		decrypt:     cfg.Decrypt,
 		httpClient:  httpClient,
 		appURL:      strings.TrimRight(cfg.AppURL, "/"),
 		bindingPath: bindingPath,
@@ -122,17 +128,17 @@ func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstall
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
 	case engine.OutcomeAgentOffline:
-		if err := r.post(ctx, msg, agentOfflineText); err != nil {
+		if err := r.post(ctx, inst, msg, agentOfflineText); err != nil {
 			r.logger.WarnContext(ctx, "dingtalk replier: offline notice failed",
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
 	case engine.OutcomeAgentArchived:
-		if err := r.post(ctx, msg, agentArchivedText); err != nil {
+		if err := r.post(ctx, inst, msg, agentArchivedText); err != nil {
 			r.logger.WarnContext(ctx, "dingtalk replier: archived notice failed",
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
 	case engine.OutcomeAgentBusy:
-		if err := r.post(ctx, msg, agentBusyText); err != nil {
+		if err := r.post(ctx, inst, msg, agentBusyText); err != nil {
 			r.logger.WarnContext(ctx, "dingtalk replier: busy notice failed",
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
@@ -141,12 +147,12 @@ func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstall
 		if !res.UnbindExisted {
 			text = unboundMissText
 		}
-		if err := r.post(ctx, msg, text); err != nil {
+		if err := r.post(ctx, inst, msg, text); err != nil {
 			r.logger.WarnContext(ctx, "dingtalk replier: unbind confirmation failed",
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
 	case engine.OutcomeFreshSession:
-		if err := r.post(ctx, msg, freshSessionText); err != nil {
+		if err := r.post(ctx, inst, msg, freshSessionText); err != nil {
 			r.logger.WarnContext(ctx, "dingtalk replier: fresh-session confirmation failed",
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
@@ -154,7 +160,7 @@ func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstall
 		// Only a /issue-created message warrants a confirmation; a plain chat
 		// message stays silent (the agent's own reply lands via EventChatDone).
 		if res.IssueID.Valid {
-			if err := r.post(ctx, msg, issueCreatedText(res)); err != nil {
+			if err := r.post(ctx, inst, msg, issueCreatedText(res)); err != nil {
 				r.logger.WarnContext(ctx, "dingtalk replier: issue-created confirmation failed",
 					"installation_id", util.UUIDToString(inst.ID), "error", err)
 			}
@@ -187,7 +193,7 @@ func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.Res
 		intro = "👋 要开始与「" + botName + "」对话，请先将你的钉钉账号绑定到 Multica"
 	}
 	text := intro + "：[点击绑定](" + bindURL + ")\n\n（链接 15 分钟内有效）"
-	return r.post(ctx, msg, text)
+	return r.post(ctx, inst, msg, text)
 }
 
 // botName resolves the bot's display name for the bind prompt. Best effort:
@@ -206,16 +212,52 @@ func (r *OutboundReplier) botName(ctx context.Context, inst engine.ResolvedInsta
 	return strings.TrimSpace(agent.Name)
 }
 
-// post delivers text through the inbound message's session webhook.
-func (r *OutboundReplier) post(ctx context.Context, msg channel.InboundMessage, text string) error {
+// post preserves the legacy Stream session-webhook path and uses the Robot API
+// only for installations explicitly configured as HTTP Callback.
+func (r *OutboundReplier) post(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, text string) error {
 	raw, err := decodeDingTalkRaw(msg)
 	if err != nil {
 		return fmt.Errorf("decode raw: %w", err)
 	}
-	if raw.SessionWebhook == "" {
-		return errors.New("inbound message carries no session webhook")
+	if raw.SessionWebhook != "" {
+		return postSessionWebhook(ctx, r.httpClient, raw.SessionWebhook, text)
 	}
-	return postSessionWebhook(ctx, r.httpClient, raw.SessionWebhook, text)
+
+	installation, ok := inst.Platform.(db.ChannelInstallation)
+	if !ok {
+		return errors.New("http callback reply has no channel installation")
+	}
+	var cfg dingtalkInstallConfig
+	if err := json.Unmarshal(installation.Config, &cfg); err != nil {
+		return fmt.Errorf("decode installation transport: %w", err)
+	}
+	mode, err := normalizeTransportMode(cfg.TransportMode)
+	if err != nil {
+		return fmt.Errorf("decode installation transport: %w", err)
+	}
+	if mode != TransportModeHTTPCallback {
+		return errors.New("stream inbound message carries no session webhook")
+	}
+	if r.messenger == nil {
+		return errors.New("http callback robot messenger not configured")
+	}
+	credentials, err := decodeChannelCredentials(installation.Config, r.decrypt)
+	if err != nil {
+		return err
+	}
+
+	target := RobotTarget{
+		OpenConversationID: strings.TrimSpace(msg.Source.ChatID),
+		ReplyToOpenMsgID:   strings.TrimSpace(msg.MessageID),
+	}
+	if msg.Source.ChatType == channel.ChatTypeP2P {
+		target.OpenConversationID = ""
+		target.UserStaffID = strings.TrimSpace(raw.SenderStaffID)
+		if target.UserStaffID == "" {
+			return errors.New("http callback direct sender has no staff id")
+		}
+	}
+	return r.messenger.SendMarkdown(ctx, credentials, target, text)
 }
 
 // postSessionWebhook posts a markdown message to a bot-message session

@@ -773,7 +773,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				dtBindingSvc := dingtalk.NewBindingTokenService(queries, pool)
 				h.DingTalkBindingTokens = dtBindingSvc
 				dtReplier := dingtalk.NewOutboundReplier(dingtalk.OutboundReplierConfig{
-					Binding: dtBindingSvc,
+					Binding:   dtBindingSvc,
+					Messenger: dtMessenger,
+					Decrypt:   box.Open,
 					// Names the bot in the bind prompt ("要开始与「<bot>」对话…").
 					AgentNamer: queries,
 					// The bind link (/dingtalk/bind) is a web-app page, so it must
