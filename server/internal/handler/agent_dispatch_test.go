@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,6 +53,74 @@ func TestHandleAgentDispatchRecordsMissingCredential(t *testing.T) {
 	if len(metric.GetLabel()) != 1 || metric.GetLabel()[0].GetName() != "outcome" ||
 		metric.GetLabel()[0].GetValue() != "missing_credential" || metric.GetCounter().GetValue() != 1 {
 		t.Fatalf("dispatch auth metric = %#v", metric)
+	}
+}
+
+func TestHandleAgentDispatchLogsInvalidCredentialWithoutSecrets(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler integration database is unavailable")
+	}
+	agentID := createHandlerTestAgent(t, "test-bot-dispatch-auth-log", nil)
+	endpointID, _ := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer wrong-secret")
+	req = withURLParams(req, "endpointId", endpointID)
+	w := httptest.NewRecorder()
+	testHandler.HandleAgentDispatch(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "MULTICA_AGENT_DISPATCH_AUTH") ||
+		!strings.Contains(out, "outcome=invalid_credential") ||
+		!strings.Contains(out, "endpointKeyId=v1") ||
+		!strings.Contains(out, "endpointFingerprint=") {
+		t.Fatalf("missing structured dispatch auth log: %s", out)
+	}
+	if strings.Contains(out, "wrong-secret") || strings.Contains(out, endpointID) {
+		t.Fatalf("dispatch auth log leaked a credential or endpoint id: %s", out)
+	}
+}
+
+func TestHandleAgentDispatchLabelsEmptyAuthenticatedBodyAsLegacyPromptProbe(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler integration database is unavailable")
+	}
+	agentID := createHandlerTestAgent(t, "test-bot-dispatch-legacy-probe-log", nil)
+	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+deliverySecret)
+	req = withURLParams(req, "endpointId", endpointID)
+	w := httptest.NewRecorder()
+	testHandler.HandleAgentDispatch(w, req)
+
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "input.userPrompt.text is required") {
+		t.Fatalf("legacy probe response = %d %s", w.Code, w.Body.String())
+	}
+	out := logs.String()
+	for _, field := range []string{
+		"MULTICA_AGENT_DISPATCH_REQUEST",
+		"protocol=legacy",
+		"schemaVersion=missing",
+		"failureCode=user_prompt_required",
+	} {
+		if !strings.Contains(out, field) {
+			t.Fatalf("legacy probe log missing %q: %s", field, out)
+		}
+	}
+	if strings.Contains(out, deliverySecret) || strings.Contains(out, endpointID) {
+		t.Fatalf("legacy probe log leaked a credential or endpoint id: %s", out)
 	}
 }
 

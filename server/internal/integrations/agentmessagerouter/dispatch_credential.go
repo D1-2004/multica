@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -80,6 +81,26 @@ func (k *DispatchKeyring) CurrentKeyID() string {
 		return ""
 	}
 	return k.currentKeyID
+}
+
+// KeyFingerprints returns non-secret key summaries for operational comparison
+// with Router. The raw key material and derived delivery credentials stay hidden.
+func (k *DispatchKeyring) KeyFingerprints() []string {
+	if k == nil {
+		return nil
+	}
+	keyIDs := make([]string, 0, len(k.keys))
+	for keyID := range k.keys {
+		keyIDs = append(keyIDs, keyID)
+	}
+	sort.Strings(keyIDs)
+	fingerprints := make([]string, 0, len(keyIDs))
+	for _, keyID := range keyIDs {
+		digest := sha256.Sum256(k.keys[keyID])
+		fingerprints = append(fingerprints,
+			keyID+"="+base64.RawURLEncoding.EncodeToString(digest[:])[:12])
+	}
+	return fingerprints
 }
 
 func (k *DispatchKeyring) SetMetrics(businessMetrics *obsmetrics.BusinessMetrics) {

@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,6 +14,11 @@ import (
 )
 
 func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
 	agentID := createHandlerTestAgent(t, "test-v2-safe-issue", nil)
 	body := fmt.Sprintf(`{
 		"schemaVersion":"2.0",
@@ -38,9 +45,32 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 	if w.Code != http.StatusCreated {
 		t.Fatalf("HandleAgentDispatch v2: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
+	logOutput := logs.String()
+	for _, field := range []string{
+		"MULTICA_AGENT_DISPATCH_REQUEST",
+		"outcome=validated",
+		"outcome=created_issue",
+		"protocol=dispatch_command_v2",
+		"schemaVersion=2.0",
+		"eventType=message.created",
+		"messageCount=2",
+		"promptBuilder=multica",
+	} {
+		if !strings.Contains(logOutput, field) {
+			t.Fatalf("dispatch request log missing %q: %s", field, logOutput)
+		}
+	}
+	for _, private := range []string{"帮我看一下线上告警", "cid-private", "msg-private-1"} {
+		if strings.Contains(logOutput, private) {
+			t.Fatalf("dispatch request log leaked %q: %s", private, logOutput)
+		}
+	}
 	var response AgentDispatchResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(logOutput, response.Continuation.IssueID) || strings.Contains(logOutput, response.TaskID) {
+		t.Fatalf("dispatch request log leaked issue or task id: %s", logOutput)
 	}
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, response.Continuation.IssueID)
@@ -85,6 +115,54 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 		if !strings.Contains(string(taskContext), privateRuntimeValue) {
 			t.Errorf("task private context missing %q: %s", privateRuntimeValue, taskContext)
 		}
+	}
+}
+
+func TestHandleAgentDispatchV2RecreatesMissingContinuationIssue(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-v2-missing-continuation", nil)
+	const missingIssueID = "00000000-0000-4000-8000-000000000002"
+	body := fmt.Sprintf(`{
+		"schemaVersion":"2.0",
+		"agentId":%q,
+		"continuation":{"kind":"issue","issueId":%q},
+		"source":{"platform":"dingtalk","type":"digital_employee"},
+		"event":{
+			"domain":"channel",
+			"type":"message.created",
+			"data":{
+				"conversation":{"openConversationId":"cid-recreated","type":"single"},
+				"sender":{"displayName":"张三"},
+				"messages":[{"openMsgId":"msg-recreated","occurredAt":1784512800000,"text":"原续接 Issue 已删除，请继续处理"}]
+			}
+		},
+		"surface":{"type":"issue"},
+		"outbound":{"mode":"dws","replyTo":"latest_message"}
+	}`, agentID, missingIssueID)
+
+	w := postAgentDispatchForTest(t, body, agentID)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("HandleAgentDispatch v2 missing continuation: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var response AgentDispatchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.TaskID == "" || response.Continuation.Kind != "issue" || response.Continuation.IssueID == "" {
+		t.Fatalf("unexpected response: %+v", response)
+	}
+	if response.Continuation.IssueID == missingIssueID {
+		t.Fatalf("continuation issue id was not refreshed: %+v", response.Continuation)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, response.Continuation.IssueID)
+	})
+
+	var issueExists bool
+	if err := testPool.QueryRow(context.Background(), `SELECT EXISTS (SELECT 1 FROM issue WHERE id = $1)`, response.Continuation.IssueID).Scan(&issueExists); err != nil {
+		t.Fatalf("check recreated issue: %v", err)
+	}
+	if !issueExists {
+		t.Fatal("recreated continuation issue does not exist")
 	}
 }
 

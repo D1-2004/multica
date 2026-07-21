@@ -3,6 +3,7 @@ package agentmessagerouter
 import (
 	"bytes"
 	"encoding/base64"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -48,6 +49,26 @@ func TestDispatchCredentialFixedFixture(t *testing.T) {
 	}
 	if crossProjectSecret != "pEeIt_zWCxX49ucBJrRyF3aWxApicrHnC2WULexyMW8" {
 		t.Fatalf("Router fixture secret = %q", crossProjectSecret)
+	}
+}
+
+func TestDispatchKeyringFingerprintsDoNotExposeRawKeyMaterial(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	raw := "v1:" + base64.RawStdEncoding.EncodeToString(key)
+	keyring, err := ParseDispatchKeyring(raw, "v1")
+	if err != nil {
+		t.Fatalf("ParseDispatchKeyring: %v", err)
+	}
+
+	fingerprints := keyring.KeyFingerprints()
+	if got, want := fingerprints, []string{"v1=Yw3NKWbEM2aR"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("KeyFingerprints = %#v, want %#v", got, want)
+	}
+	if strings.Contains(strings.Join(fingerprints, ","), raw) {
+		t.Fatalf("KeyFingerprints leaked key material: %#v", fingerprints)
 	}
 }
 

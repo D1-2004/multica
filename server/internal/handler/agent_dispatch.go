@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -88,12 +91,27 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 		h.handleAgentDispatchV2(w, r, raw, dispatchContext)
 		return
 	}
+	legacySchemaVersion := strings.TrimSpace(version.SchemaVersion)
+	if legacySchemaVersion == "" {
+		legacySchemaVersion = "missing"
+	}
+	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+		"outcome", "received",
+		"protocol", "legacy",
+		"schemaVersion", legacySchemaVersion,
+	)
 	var req AgentDispatchRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if strings.TrimSpace(req.Input.UserPrompt.Text) == "" {
+		slog.Warn("MULTICA_AGENT_DISPATCH_REQUEST",
+			"outcome", "rejected",
+			"protocol", "legacy",
+			"schemaVersion", legacySchemaVersion,
+			"failureCode", "user_prompt_required",
+		)
 		writeError(w, http.StatusBadRequest, "input.userPrompt.text is required")
 		return
 	}
@@ -147,14 +165,45 @@ func (h *Handler) handleAgentDispatchV2(w http.ResponseWriter, r *http.Request, 
 	}
 	command := cmd.DispatchCommand()
 	if err := command.validate(); err != nil {
+		slog.Warn("MULTICA_AGENT_DISPATCH_REQUEST",
+			"outcome", "rejected",
+			"protocol", "dispatch_command_v2",
+			"schemaVersion", command.SchemaVersion,
+			"failureCode", "invalid_dispatch_command",
+			"validationError", err,
+		)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	prompt, err := BuildDispatchPrompt(command)
 	if err != nil {
+		slog.Error("MULTICA_AGENT_DISPATCH_REQUEST",
+			"outcome", "failed",
+			"protocol", "dispatch_command_v2",
+			"schemaVersion", command.SchemaVersion,
+			"failureCode", "prompt_build_failed",
+			"error", err,
+		)
 		writeError(w, http.StatusInternalServerError, "failed to build dispatch prompt")
 		return
 	}
+	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+		"outcome", "validated",
+		"protocol", "dispatch_command_v2",
+		"schemaVersion", command.SchemaVersion,
+		"sourcePlatform", command.Source.Platform,
+		"sourceType", command.Source.Type,
+		"domain", command.Event.Domain,
+		"eventType", command.Event.Type,
+		"surfaceType", command.Surface.Type,
+		"outboundMode", command.Outbound.Mode,
+		"messageCount", len(command.Event.Data.Messages),
+		"continuationPresent", command.Continuation != nil,
+		"promptBuilder", "multica",
+		"displayBytes", len(prompt.DisplayContent),
+		"runtimeBytes", len(prompt.RuntimePrompt),
+		"workflowBytes", len(prompt.WorkflowPrompt),
+	)
 	if command.AgentID != "" {
 		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(command.AgentID), "agentId")
 		if !ok {
@@ -209,15 +258,17 @@ type agentDispatchContext struct {
 }
 
 func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Request) (agentDispatchContext, bool) {
+	endpointID := strings.TrimSpace(chi.URLParam(r, "endpointId"))
 	deliverySecret, ok := agentDispatchBearerSecret(r.Header.Get("Authorization"))
 	if !ok {
 		h.Metrics.RecordDispatchAuth("missing_credential")
+		logAgentDispatchAuthFailure("missing_credential", endpointID)
 		writeError(w, http.StatusUnauthorized, "invalid dispatch credentials")
 		return agentDispatchContext{}, false
 	}
-	endpointID := strings.TrimSpace(chi.URLParam(r, "endpointId"))
 	if h.AgentDispatchKeys == nil || !h.AgentDispatchKeys.VerifyDeliverySecret(endpointID, deliverySecret) {
 		h.Metrics.RecordDispatchAuth("invalid_credential")
+		logAgentDispatchAuthFailure("invalid_credential", endpointID)
 		writeError(w, http.StatusUnauthorized, "invalid dispatch credentials")
 		return agentDispatchContext{}, false
 	}
@@ -225,9 +276,13 @@ func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			h.Metrics.RecordDispatchAuth("endpoint_not_found")
+			logAgentDispatchAuthFailure("endpoint_not_found", endpointID)
 			writeError(w, http.StatusUnauthorized, "invalid dispatch credentials")
 		} else {
 			h.Metrics.RecordDispatchAuth("storage_error")
+			slog.Error("MULTICA_AGENT_DISPATCH_AUTH", "outcome", "storage_error",
+				"endpointKeyId", agentDispatchEndpointKeyID(endpointID),
+				"endpointFingerprint", agentDispatchEndpointFingerprint(endpointID), "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to resolve dispatch endpoint")
 		}
 		return agentDispatchContext{}, false
@@ -238,6 +293,31 @@ func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Req
 		WorkspaceID: endpoint.WorkspaceID,
 		AgentID:     endpoint.AgentID,
 	}, true
+}
+
+func logAgentDispatchAuthFailure(outcome, endpointID string) {
+	slog.Warn("MULTICA_AGENT_DISPATCH_AUTH",
+		"outcome", outcome,
+		"endpointKeyId", agentDispatchEndpointKeyID(endpointID),
+		"endpointFingerprint", agentDispatchEndpointFingerprint(endpointID),
+	)
+}
+
+func agentDispatchEndpointKeyID(endpointID string) string {
+	keyID, suffix, ok := strings.Cut(strings.TrimSpace(endpointID), "_")
+	if !ok || keyID == "" || suffix == "" {
+		return "invalid"
+	}
+	return keyID
+}
+
+func agentDispatchEndpointFingerprint(endpointID string) string {
+	return agentDispatchIdentifierFingerprint(endpointID)
+}
+
+func agentDispatchIdentifierFingerprint(identifier string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(identifier)))
+	return base64.RawURLEncoding.EncodeToString(digest[:])[:12]
 }
 
 func agentDispatchBearerSecret(authorization string) (string, bool) {
