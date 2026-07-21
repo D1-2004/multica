@@ -34,10 +34,11 @@ type ExternalAttachmentSource struct {
 }
 
 type ExternalAttachmentImportParams struct {
-	WorkspaceID pgtype.UUID
-	UploaderID  pgtype.UUID
-	IssueID     pgtype.UUID
-	Sources     []ExternalAttachmentSource
+	WorkspaceID   pgtype.UUID
+	UploaderID    pgtype.UUID
+	IssueID       pgtype.UUID
+	ChatSessionID pgtype.UUID
+	Sources       []ExternalAttachmentSource
 }
 
 // ExternalAttachmentService imports short-lived upstream URLs into Multica's
@@ -129,15 +130,16 @@ func (s *ExternalAttachmentService) importOne(ctx context.Context, params Extern
 		return db.Attachment{}, fmt.Errorf("store external attachment %s: %w", name, err)
 	}
 	attachment, err := s.Queries.CreateAttachment(ctx, db.CreateAttachmentParams{
-		ID:           attachmentID,
-		WorkspaceID:  params.WorkspaceID,
-		IssueID:      params.IssueID,
-		UploaderType: "member",
-		UploaderID:   params.UploaderID,
-		Filename:     name,
-		Url:          link,
-		ContentType:  contentType,
-		SizeBytes:    int64(len(data)),
+		ID:            attachmentID,
+		WorkspaceID:   params.WorkspaceID,
+		IssueID:       params.IssueID,
+		ChatSessionID: params.ChatSessionID,
+		UploaderType:  "member",
+		UploaderID:    params.UploaderID,
+		Filename:      name,
+		Url:           link,
+		ContentType:   contentType,
+		SizeBytes:     int64(len(data)),
 	})
 	if err != nil {
 		s.Storage.Delete(ctx, key)

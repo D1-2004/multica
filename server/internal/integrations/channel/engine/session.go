@@ -44,6 +44,7 @@ type SessionQueries interface {
 	CreateChannelChatSessionBinding(ctx context.Context, arg db.CreateChannelChatSessionBindingParams) (db.ChannelChatSessionBinding, error)
 	UpsertDeferredChannelChatTask(ctx context.Context, arg db.UpsertDeferredChannelChatTaskParams) (db.AgentTaskQueue, error)
 	CreateChatMessage(ctx context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error)
+	LinkAttachmentsToChatMessage(ctx context.Context, arg db.LinkAttachmentsToChatMessageParams) ([]pgtype.UUID, error)
 	TouchChatSession(ctx context.Context, id pgtype.UUID) error
 	GetMostRecentUserChatMessage(ctx context.Context, chatSessionID pgtype.UUID) (db.ChatMessage, error)
 	UpdateChannelChatSessionBindingReplyTarget(ctx context.Context, arg db.UpdateChannelChatSessionBindingReplyTargetParams) error
@@ -72,6 +73,9 @@ func (a dbSessionQueries) UpsertDeferredChannelChatTask(ctx context.Context, arg
 }
 func (a dbSessionQueries) CreateChatMessage(ctx context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error) {
 	return a.q.CreateChatMessage(ctx, arg)
+}
+func (a dbSessionQueries) LinkAttachmentsToChatMessage(ctx context.Context, arg db.LinkAttachmentsToChatMessageParams) ([]pgtype.UUID, error) {
+	return a.q.LinkAttachmentsToChatMessage(ctx, arg)
 }
 func (a dbSessionQueries) TouchChatSession(ctx context.Context, id pgtype.UUID) error {
 	return a.q.TouchChatSession(ctx, id)
@@ -256,6 +260,7 @@ type AppendInput struct {
 	ThreadID       string
 	ClaimToken     pgtype.UUID
 	PreparedTask   *service.PreparedChannelChatTask
+	AttachmentIDs  []pgtype.UUID
 }
 
 // AppendUserMessage writes the user message into the chat_session (touching it
@@ -319,6 +324,22 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	})
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("create chat message: %w", err)
+	}
+	if len(in.AttachmentIDs) > 0 {
+		linked, err := qtx.LinkAttachmentsToChatMessage(ctx, db.LinkAttachmentsToChatMessageParams{
+			ChatMessageID: msg.ID,
+			ChatSessionID: in.SessionID,
+			WorkspaceID:   in.WorkspaceID,
+			UploaderType:  "member",
+			UploaderID:    in.Sender,
+			AttachmentIds: in.AttachmentIDs,
+		})
+		if err != nil {
+			return AppendResult{}, fmt.Errorf("link message attachments: %w", err)
+		}
+		if len(linked) != len(in.AttachmentIDs) {
+			return AppendResult{}, fmt.Errorf("link message attachments: linked %d of %d", len(linked), len(in.AttachmentIDs))
+		}
 	}
 	if err := qtx.TouchChatSession(ctx, in.SessionID); err != nil {
 		return AppendResult{}, fmt.Errorf("touch chat session: %w", err)

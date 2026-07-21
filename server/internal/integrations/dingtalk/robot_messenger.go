@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -237,6 +238,56 @@ func (m *RobotMessenger) post(ctx context.Context, path, token string, body map[
 		}
 	}
 	return nil
+}
+
+// resolveMessageFileURL exchanges a picture callback's short-lived download
+// code for the HTTPS URL consumed immediately by the attachment importer.
+// Neither value is included in returned errors.
+func (m *RobotMessenger) resolveMessageFileURL(ctx context.Context, creds channelCredentials, downloadCode string) (string, error) {
+	downloadCode = strings.TrimSpace(downloadCode)
+	if downloadCode == "" {
+		return "", errors.New("dingtalk robot: picture download code is empty")
+	}
+	token, err := m.accessToken(ctx, creds)
+	if err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(map[string]string{
+		"robotCode":    creds.ClientID,
+		"downloadCode": downloadCode,
+	})
+	if err != nil {
+		return "", fmt.Errorf("dingtalk robot: marshal message file request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.openAPIBase+"/v1.0/robot/messageFiles/download", bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("dingtalk robot: new message file request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-acs-dingtalk-access-token", token)
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("dingtalk robot: message file request: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("dingtalk robot: read message file response: %w", err)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", &APIError{Status: resp.StatusCode, Code: "message_file_download_failed", Message: "DingTalk rejected the message file request"}
+	}
+	var result struct {
+		DownloadURL string `json:"downloadUrl"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", errors.New("dingtalk robot: decode message file response")
+	}
+	resolved, err := url.Parse(strings.TrimSpace(result.DownloadURL))
+	if err != nil || resolved.Scheme != "https" || resolved.Host == "" {
+		return "", errors.New("dingtalk robot: message file response has no valid HTTPS URL")
+	}
+	return resolved.String(), nil
 }
 
 // accessToken exchanges (and caches) the app access token for creds.
