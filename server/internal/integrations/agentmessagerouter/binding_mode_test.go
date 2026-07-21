@@ -16,6 +16,7 @@ func TestBeginIdentityBindingUsesUnifiedPageWithoutCreatingMessageInstallation(t
 	router := &fakeBindingRouter{issued: BindingToken{
 		BindingToken: "bat_v1.identity-binding-token",
 		ExpiresAt:    now.Add(5 * time.Minute),
+		DispatchURL:  "https://router.example/api/webhooks/agent-dispatch/v1_MzMzMzMzMzMzMzMzMzMzMw",
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 
@@ -104,6 +105,7 @@ func TestBeginIdentityBindingAllowsExistingMessageRoute(t *testing.T) {
 	router := &fakeBindingRouter{issued: BindingToken{
 		BindingToken: "bat_v1.identity-binding-token",
 		ExpiresAt:    now.Add(5 * time.Minute),
+		DispatchURL:  "https://router.example/api/webhooks/agent-dispatch/v1_EREREREREREREREREREREQ",
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 

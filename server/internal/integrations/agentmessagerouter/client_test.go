@@ -13,6 +13,8 @@ import (
 
 func TestClientIssuesBindingTokenWithServiceCredential(t *testing.T) {
 	expiresAt := time.Date(2026, 7, 14, 10, 5, 0, 0, time.UTC)
+	dispatchPath := "/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw"
+	dispatchURL := "https://router.example" + dispatchPath
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/account-binding-tokens" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
@@ -20,19 +22,20 @@ func TestClientIssuesBindingTokenWithServiceCredential(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer service-credential" {
 			t.Fatalf("Authorization = %q", got)
 		}
-		var body struct {
-			AgentID     string `json:"agentId"`
-			DispatchURL string `json:"dispatchUrl"`
-		}
+		var body map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if body.AgentID != "agent-1" || body.DispatchURL != "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint" {
+		if len(body) != 2 || body["agentId"] != "agent-1" || body["dispatchPath"] != dispatchPath {
 			t.Fatalf("request body = %#v", body)
+		}
+		if _, found := body["dispatchUrl"]; found {
+			t.Fatalf("request must not contain full dispatch URL: %#v", body)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"bindingToken": "bat_v1.secret-value",
 			"expiresAt":    expiresAt.Format(time.RFC3339),
+			"dispatchUrl":   dispatchURL,
 		})
 	}))
 	defer server.Close()
@@ -45,11 +48,11 @@ func TestClientIssuesBindingTokenWithServiceCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	got, err := client.IssueBindingToken(context.Background(), "agent-1", "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint")
+	got, err := client.IssueBindingToken(context.Background(), "agent-1", dispatchPath)
 	if err != nil {
 		t.Fatalf("IssueBindingToken: %v", err)
 	}
-	if got.BindingToken != "bat_v1.secret-value" || !got.ExpiresAt.Equal(expiresAt) {
+	if got.BindingToken != "bat_v1.secret-value" || !got.ExpiresAt.Equal(expiresAt) || got.DispatchURL != dispatchURL {
 		t.Fatalf("result = %#v", got)
 	}
 }
@@ -231,7 +234,7 @@ func TestClientPreservesTypedBindingTokenBusinessErrorWithoutLeakingMessage(t *t
 	defer server.Close()
 
 	client := mustTestClient(t, server)
-	_, err := client.IssueBindingToken(context.Background(), "agent-1", "https://multica.example.com/dispatch")
+	_, err := client.IssueBindingToken(context.Background(), "agent-1", "/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw")
 	var routerError *RouterAPIError
 	if !errors.As(err, &routerError) || routerError.Code != "service_auth_not_configured" {
 		t.Fatalf("error = %#v, want service_auth_not_configured", err)
@@ -341,7 +344,7 @@ func TestClientDeleteRequiresSuccessfulInactiveEnvelope(t *testing.T) {
 }
 
 func TestClientRejectsTrailingAndOversizedRouterResponses(t *testing.T) {
-	valid := `{"bindingToken":"bat_v1.secret-value","expiresAt":"2026-07-14T10:05:00Z"}`
+	valid := `{"bindingToken":"bat_v1.secret-value","expiresAt":"2026-07-14T10:05:00Z","dispatchUrl":"https://router.example/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw"}`
 	tests := []struct {
 		name string
 		body string
@@ -357,7 +360,7 @@ func TestClientRejectsTrailingAndOversizedRouterResponses(t *testing.T) {
 			defer server.Close()
 
 			client := mustTestClient(t, server)
-			if _, err := client.IssueBindingToken(context.Background(), "agent-1", "https://multica.example.com/dispatch"); err == nil {
+			if _, err := client.IssueBindingToken(context.Background(), "agent-1", "/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw"); err == nil {
 				t.Fatal("expected malformed router response")
 			}
 		})
@@ -379,7 +382,7 @@ func TestClientRejectsInvalidOrFailedResponsesWithoutLeakingCredential(t *testin
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	_, err = client.IssueBindingToken(context.Background(), "agent-1", "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint")
+	_, err = client.IssueBindingToken(context.Background(), "agent-1", "/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw")
 	if err == nil {
 		t.Fatal("expected upstream error")
 	}

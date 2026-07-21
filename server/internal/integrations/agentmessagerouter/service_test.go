@@ -78,6 +78,26 @@ func (f *fakeBindingStore) BeginDingTalkAccountBinding(_ context.Context, arg db
 	return f.row, nil
 }
 
+func (f *fakeBindingStore) UpdateDingTalkAccountBindingDispatchURL(_ context.Context, arg db.UpdateDingTalkAccountBindingDispatchURLParams) (db.ChannelInstallation, error) {
+	if !f.row.ID.Valid || f.row.ID != arg.ID || f.row.WorkspaceID != arg.WorkspaceID ||
+		f.row.AgentID != arg.AgentID || f.row.ChannelType != ChannelTypeDingTalkAccount || f.row.Status != "pending" {
+		return db.ChannelInstallation{}, pgx.ErrNoRows
+	}
+	config, err := ParseDingTalkAccountConfig(f.row.Config)
+	if err != nil {
+		return db.ChannelInstallation{}, err
+	}
+	if config.DispatchEndpointID != arg.DispatchEndpointID {
+		return db.ChannelInstallation{}, pgx.ErrNoRows
+	}
+	config.DispatchURL = arg.DispatchUrl
+	f.row.Config, err = config.Marshal()
+	if err != nil {
+		return db.ChannelInstallation{}, err
+	}
+	return f.row, nil
+}
+
 func (f *fakeBindingStore) GetDingTalkAccountBinding(_ context.Context, _ pgtype.UUID) (db.ChannelInstallation, error) {
 	if f.getErr != nil {
 		return db.ChannelInstallation{}, f.getErr
@@ -488,7 +508,7 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	oldEndpoint := "v1_EREREREREREREREREREREQ"
 	oldConfig := NewPendingDingTalkAccountConfig(
 		oldEndpoint,
-		"https://multica.example/api/webhooks/agent-dispatch/"+oldEndpoint,
+		"http://legacy-multica.example/api/webhooks/agent-dispatch/"+oldEndpoint,
 		HashCallbackToken(canonicalCallbackToken),
 		now.Add(time.Minute),
 	)
@@ -506,6 +526,7 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	router := &fakeBindingRouter{issued: BindingToken{
 		BindingToken: "bat_v1.router-secret-must-not-be-persisted",
 		ExpiresAt:    now.Add(5 * time.Minute),
+		DispatchURL:  "https://router.example/api/webhooks/agent-dispatch/" + oldEndpoint,
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 
@@ -544,7 +565,7 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 		fragment.Get("callbackToken") == "" || fragment.Get("callbackUrl") == "" ||
 		fragment.Get("expiresAt") != strconv.FormatInt(router.issued.ExpiresAt.Unix(), 10) ||
 		fragment.Get("agentId") != uuidStringForTest(store.row.AgentID) ||
-		fragment.Get("dispatchUrl") != oldConfig.DispatchURL {
+		fragment.Get("dispatchUrl") != router.issued.DispatchURL {
 		t.Fatalf("unexpected QR fragment: %#v", fragment)
 	}
 	for key, values := range fragment {
@@ -574,14 +595,18 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if config.DispatchEndpointID != oldEndpoint {
 		t.Fatalf("endpoint = %q, want reused %q", config.DispatchEndpointID, oldEndpoint)
 	}
+	if config.DispatchURL != router.issued.DispatchURL {
+		t.Fatalf("persisted dispatch URL = %q, want Router canonical %q", config.DispatchURL, router.issued.DispatchURL)
+	}
 	if !VerifyCallbackToken(callbackToken, config.CallbackTokenHash) {
 		t.Fatal("persisted callback hash does not match returned token")
 	}
 	if fragment.Has("identityCallbackToken") || fragment.Has("identityCallbackUrl") {
 		t.Fatalf("legacy identity callback fields leaked into QR fragment: %#v", fragment)
 	}
-	if router.issueAgent != uuidStringForTest(agentID) || router.issueURL != config.DispatchURL {
-		t.Fatalf("Router issue request = agent %q url %q", router.issueAgent, router.issueURL)
+	wantDispatchPath := "/api/webhooks/agent-dispatch/" + oldEndpoint
+	if router.issueAgent != uuidStringForTest(agentID) || router.issueURL != wantDispatchPath {
+		t.Fatalf("Router issue request = agent %q path %q", router.issueAgent, router.issueURL)
 	}
 	assertMetricCounter(t, service.metrics, "dingtalk_account_begin_total", map[string]string{"outcome": "success"}, 1)
 }
