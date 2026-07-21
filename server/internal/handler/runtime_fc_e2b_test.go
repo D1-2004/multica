@@ -30,8 +30,8 @@ func (r *staticFCE2BTemplateRunner) Run(context.Context, string, []string, []str
 
 const (
 	testOldFCE2BManifestAlias     = "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa"
-	testNewFCE2BManifestAlias     = "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-bbbbbb"
-	testPendingFCE2BManifestAlias = "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-cccccc"
+	testNewFCE2BManifestAlias     = "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-bbbbbb"
+	testPendingFCE2BManifestAlias = "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-cccccc"
 )
 
 func TestFCE2BTemplateCapabilities(t *testing.T) {
@@ -135,8 +135,8 @@ func fce2bTemplateRotationHandler(t *testing.T) (*Handler, *staticFCE2BTemplateR
 	runner := &staticFCE2BTemplateRunner{
 		output: `[
 			{"id":"tpl_old_id","buildID":"build_old","aliases":["multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa"],"status":"ready"},
-			{"id":"tpl_new_id","buildID":"build_new","aliases":["multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-bbbbbb"],"status":"READY"},
-			{"id":"tpl_pending_id","buildID":"build_pending","aliases":["multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-cccccc"],"status":"building"}
+			{"id":"tpl_new_id","buildID":"build_new","aliases":["multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-bbbbbb"],"status":"READY"},
+			{"id":"tpl_pending_id","buildID":"build_pending","aliases":["multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-cccccc"],"status":"building"}
 		]`,
 	}
 	h := *testHandler
@@ -312,7 +312,7 @@ func TestUpdateFCE2BRuntimeTemplatePreservesRuntimeAndIsIdempotent(t *testing.T)
 	if metadata["preserved"] != "yes" || metadata["runner"] != "multica-fc-hermes-container-log-entry" || metadata["runner_protocol"] != "root-log-v1" {
 		t.Fatalf("unrelated metadata was not preserved: %#v", metadata)
 	}
-	if got := metadata["capabilities"]; !reflect.DeepEqual(got, []any{"hermes", "dws", "dws.im_event"}) {
+	if got := metadata["capabilities"]; !reflect.DeepEqual(got, []any{"hermes", "dws", "dws.im_event", "mcp"}) {
 		t.Fatalf("capabilities were not refreshed during template rotation: %#v", got)
 	}
 	versions, ok := metadata["component_versions"].(map[string]any)

@@ -15,6 +15,7 @@ const MCP_SUPPORTED_PROVIDERS = new Set([
   "kiro",
   "opencode",
   "openclaw",
+  "pi",
   "qoder",
   "traecli",
 ]);
@@ -22,4 +23,14 @@ const MCP_SUPPORTED_PROVIDERS = new Set([
 export function providerSupportsMcpConfig(provider: string | undefined | null): boolean {
   if (!provider) return false;
   return MCP_SUPPORTED_PROVIDERS.has(provider);
+}
+
+export function runtimeSupportsMcpConfig(
+  provider: string | undefined | null,
+  metadata: Record<string, unknown> | undefined | null,
+): boolean {
+  if (!providerSupportsMcpConfig(provider)) return false;
+  if (provider !== "pi") return true;
+  const capabilities = metadata?.capabilities;
+  return Array.isArray(capabilities) && capabilities.includes("mcp");
 }

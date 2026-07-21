@@ -43,3 +43,22 @@ func TestTaskToResponseSurfacesTaskTraceForNonChatTask(t *testing.T) {
 		t.Fatalf("non-chat trace response = id %q started %d", response.TraceID, response.TraceStartedAtUnixMS)
 	}
 }
+
+func TestTaskToResponseOmitsServerPrivateAgentIdentityContextToken(t *testing.T) {
+	fixture := taskResponseFixture([]byte(`{"agent_identity_context_token":"context-secret"}`))
+	response := taskToResponse(fixture, "")
+	if response.AgentIdentityContextToken != "" {
+		t.Fatal("user-facing task response exposed server-private Agent Identity ContextToken")
+	}
+	claimResponse := taskToClaimResponse(fixture, "", db.AgentRuntime{})
+	if claimResponse.AgentIdentityContextToken != "context-secret" {
+		t.Fatal("daemon claim response did not receive server-private Agent Identity ContextToken")
+	}
+	fcClaimResponse := taskToClaimResponse(fixture, "", db.AgentRuntime{
+		RuntimeMode: "cloud",
+		Metadata:    []byte(`{"kind":"fc-e2b"}`),
+	})
+	if fcClaimResponse.AgentIdentityContextToken != "" {
+		t.Fatal("FC/E2B daemon claim response exposed already-redeemed ContextToken")
+	}
+}

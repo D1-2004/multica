@@ -496,7 +496,6 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		DeliveredCommentIDs:            uuidStringsOrEmpty(t.DeliveredCommentIds),
 		TriggerSummary:                 textToPtr(t.TriggerSummary),
 		HandoffNote:                    handoffNote,
-		AgentIdentityContextToken:      taskContextString(t.Context, protocol.AgentIdentityContextTokenJSONKey),
 		DingTalkDWSIdentityUnavailable: taskContextHasKey(t.Context, protocol.DingTalkRobotIdentityUnavailableJSONKey),
 		WorkDir:                        workDir,
 		RelativeWorkDir:                relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
@@ -507,6 +506,20 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		AutopilotRunID: uuidToString(t.AutopilotRunID),
 		Kind:           computeTaskKind(t),
 	}
+}
+
+// taskToClaimResponse is the only mapper allowed to surface server-private
+// task context. It is used exclusively by the authenticated daemon claim
+// endpoint; all user-facing task endpoints use taskToResponse.
+func taskToClaimResponse(t db.AgentTaskQueue, workspaceID string, runtime db.AgentRuntime) AgentTaskResponse {
+	resp := taskToResponse(t, workspaceID)
+	// FC/E2B receives and redeems the token in its root runner before the
+	// daemon starts. Sending it again in the subsequent claim would put the
+	// spent server-private bearer token back into the sandbox daemon memory.
+	if !service.IsFCE2BRuntime(runtime) {
+		resp.AgentIdentityContextToken = taskContextString(t.Context, protocol.AgentIdentityContextTokenJSONKey)
+	}
+	return resp
 }
 
 func taskContextString(raw []byte, key string) string {

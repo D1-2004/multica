@@ -159,6 +159,13 @@ func TestIsBlockedEnvKey(t *testing.T) {
 		{key: "CURSOR_MCP_AUTH_SOURCE", want: true},
 		{key: "OPENCLAW_CONFIG_PATH", want: true},
 		{key: "OPENCLAW_INCLUDE_ROOTS", want: true},
+		{key: "AGENT_IDENTITY_CONTEXT_TOKEN", want: true},
+		{key: "DWS_CONFIG_DIR", want: true},
+		{key: "DWS_CLIENT_ID", want: true},
+		{key: "DWS_CLIENT_SECRET", want: true},
+		{key: "DWS_UID", want: true},
+		{key: "DWS_AUTH_CODE", want: true},
+		{key: "DWS_SERVERS_URL", want: true},
 		{key: "ANTHROPIC_API_KEY", want: false},
 		{key: "CURSOR_AGENT", want: false},
 		// HERMES_HOME is intentionally NOT blocked: a skill-less Hermes task
@@ -175,6 +182,16 @@ func TestIsBlockedEnvKey(t *testing.T) {
 				t.Fatalf("isBlockedEnvKey(%q) = %v, want %v", tt.key, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestChildAgentIdentityContextToken(t *testing.T) {
+	t.Parallel()
+	if got := childAgentIdentityContextToken("fc-e2b", " context-secret "); got != "" {
+		t.Fatalf("FC/E2B child received ContextToken: %q", got)
+	}
+	if got := childAgentIdentityContextToken("", " context-secret "); got != "context-secret" {
+		t.Fatalf("standalone child token = %q, want trimmed token", got)
 	}
 }
 

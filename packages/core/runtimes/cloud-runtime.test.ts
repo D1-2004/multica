@@ -35,9 +35,9 @@ function makeTemplate(overrides: Partial<FCE2BTemplate> = {}): FCE2BTemplate {
     build_id: "build-v2",
     template: "multica-fc-team-v2",
     status: "ready",
-    manifest_version: 1,
+    manifest_version: 2,
     providers: ["hermes", "opencode", "pi"],
-    capabilities: ["dws", "dws.im_event"],
+    capabilities: ["dws", "dws.im_event", "mcp"],
     component_versions: {
       hermes: "0.19.0",
       opencode: "v1.18.4",
@@ -109,6 +109,9 @@ describe("isReadyFCE2BTemplate", () => {
     ).toBe(false);
     expect(
       isReadyFCE2BTemplate(makeTemplate({ manifest_version: 0 })),
+    ).toBe(false);
+    expect(
+      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 1 })),
     ).toBe(false);
   });
 });

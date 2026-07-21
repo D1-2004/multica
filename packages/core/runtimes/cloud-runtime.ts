@@ -123,7 +123,7 @@ export function isReadyFCE2BTemplate(template: FCE2BTemplate): boolean {
     typeof template.build_id === "string" &&
     template.build_id.trim().length > 0 &&
     template.status?.trim().toLowerCase() === "ready" &&
-    template.manifest_version === 1 &&
+    template.manifest_version === 2 &&
     template.runner_protocol === "root-log-v1" &&
     template.providers.some((provider) =>
       (FC_E2B_RUNTIME_PROVIDERS as readonly string[]).includes(provider),
