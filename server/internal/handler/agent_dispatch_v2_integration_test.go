@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -81,9 +82,65 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 	if hasIdentityToken {
 		t.Fatalf("identity-less dispatch fabricated a context token: %s", taskContext)
 	}
-	for _, privateRuntimeValue := range []string{"dispatch_runtime_prompt", "dispatch_workflow_prompt", "DWS", "dispatch_outbound", "latest_message"} {
-		if !strings.Contains(string(taskContext), privateRuntimeValue) {
-			t.Errorf("task private context missing %q: %s", privateRuntimeValue, taskContext)
+	for _, structuredValue := range []string{"dispatch_schema_version", "dispatch_event_data", "cid-private", "msg-private-2", "dispatch_outbound", "latest_message"} {
+		if !strings.Contains(string(taskContext), structuredValue) {
+			t.Errorf("task structured context missing %q: %s", structuredValue, taskContext)
+		}
+	}
+	for _, generatedPromptField := range []string{"dispatch_runtime_prompt", "dispatch_workflow_prompt"} {
+		if strings.Contains(string(taskContext), generatedPromptField) {
+			t.Errorf("task context persisted generated prompt field %q: %s", generatedPromptField, taskContext)
+		}
+	}
+
+	var runtimeID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT runtime_id
+		FROM agent_task_queue
+		WHERE id = $1
+	`, response.TaskID).Scan(&runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	claimW := httptest.NewRecorder()
+	claimReq := newDaemonTokenRequest(
+		http.MethodPost,
+		"/api/daemon/runtimes/"+runtimeID+"/tasks/claim",
+		map[string]any{"target_task_id": response.TaskID},
+		testWorkspaceID,
+		"dispatch-v2-claim",
+	)
+	claimReq = withURLParam(claimReq, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(claimW, claimReq)
+	if claimW.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: expected 200, got %d: %s", claimW.Code, claimW.Body.String())
+	}
+	var claim struct {
+		Task *struct {
+			ID          string `json:"id"`
+			HandoffNote string `json:"handoff_note"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(claimW.Body.Bytes(), &claim); err != nil {
+		t.Fatal(err)
+	}
+	if claim.Task == nil || claim.Task.ID != response.TaskID {
+		t.Fatalf("claim returned wrong task: %s", claimW.Body.String())
+	}
+	for _, required := range []string{
+		"## Trusted DingTalk Dispatch",
+		`"openConversationId":"cid-private"`,
+		`"openMsgId":"msg-private-2"`,
+		"dws chat message add-emoji",
+		"at most 4 visible characters",
+		"dws chat message reply",
+	} {
+		if !strings.Contains(claim.Task.HandoffNote, required) {
+			t.Errorf("claim handoff_note missing %q: %s", required, claim.Task.HandoffNote)
+		}
+	}
+	for _, forbidden := range []string{"dispatch_runtime_prompt", "dispatch_workflow_prompt", "dispatch_surface_type", "dispatch_outbound_mode"} {
+		if strings.Contains(claimW.Body.String(), forbidden) {
+			t.Errorf("claim response introduced dispatch wire field %q: %s", forbidden, claimW.Body.String())
 		}
 	}
 }

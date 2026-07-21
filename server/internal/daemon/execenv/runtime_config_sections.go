@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // This file holds the runtime brief assembler — the post-MUL-3560 path
@@ -487,18 +486,8 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 		b.WriteString("- Print exactly one final line: `Created <identifier-or-id>: <title>` after a successful `multica issue create`. Use the created issue's `identifier` from JSON output when available; otherwise use its `id`. Do not assume any workspace issue prefix such as `MUL-`; workspaces can use custom prefixes.\n")
 		b.WriteString("- On CLI failure, exit with the CLI error as the only output. The platform translates that into a `quick_create_failed` inbox item carrying the original prompt for the user.\n")
 	case kindChat:
-		if dispatchDWSWorkflowApplies(kind, ctx) {
-			b.WriteString("This is a DingTalk DWS chat dispatch. The DingTalk DWS reply required by the workflow is the external delivery; keep any final assistant output concise and consistent with it.\n")
-		} else {
-			b.WriteString("This is a chat session. Your reply is delivered directly to the chat window the user is reading.\n")
-		}
+		b.WriteString("This is a chat session. Your reply is delivered directly to the chat window the user is reading.\n")
 	default:
-		if dispatchDWSWorkflowApplies(kind, ctx) {
-			b.WriteString("⚠️ **Final results MUST be delivered to both the Multica Issue and DingTalk.** Prepare one final user-facing result, post it as the required Issue comment, then send exactly the same content as the DingTalk DWS reply specified in the workflow.\n\n")
-			b.WriteString("**Post exactly ONE comment per run — your final result, before this turn exits.** Do NOT post progress updates, plans, or \"here's what I'm about to do next\" as comments while you work; keep all planning and progress in your own reasoning.\n\n")
-			b.WriteString("Keep the shared Issue/DingTalk result concise and natural — state the outcome, not the process.\n")
-			return
-		}
 		if ctx.IsSquadLeader {
 			b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`** — unless your outcome is `no_action`. When you evaluate a trigger and decide no action is needed, calling `multica squad activity <issue-id> no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment that announces no_action, acknowledges another agent, or says you are exiting silently — such comments are noise. For all other outcomes (`action`, `failed`), a comment is still mandatory.\n\n")
 		} else {
@@ -515,58 +504,6 @@ func writeDingTalkDWSIdentityAvailability(b *strings.Builder, ctx TaskContextFor
 	}
 	b.WriteString("## DingTalk DWS Identity\n\n")
 	b.WriteString("The current DingTalk sender has no usable DWS identity. Continue the task with every capability that does not require DWS, and do not use the robot creator's or another group member's DWS identity. In the final reply, explicitly tell the user: 无法获取您的身份信息，可能是由于不是群归属组织的成员。\n\n")
-}
-
-func writeDispatchRuntimePrompt(b *strings.Builder, ctx TaskContextForEnv) {
-	prompt := strings.TrimSpace(ctx.DispatchRuntimePrompt)
-	if prompt == "" {
-		return
-	}
-	b.WriteString("## Dispatch Runtime Instructions\n\n")
-	b.WriteString(prompt)
-	b.WriteString("\n\n")
-}
-
-func dispatchDWSWorkflowApplies(kind taskKind, ctx TaskContextForEnv) bool {
-	if strings.TrimSpace(ctx.DispatchOutboundMode) != protocol.DispatchOutboundModeDWS {
-		return false
-	}
-	switch strings.TrimSpace(ctx.DispatchSurfaceType) {
-	case protocol.DispatchSurfaceTypeIssue:
-		return kind == kindAssignmentTriggered || kind == kindCommentTriggered
-	case protocol.DispatchSurfaceTypeChat:
-		return kind == kindChat
-	default:
-		return false
-	}
-}
-
-func writeDispatchWorkflowPrompt(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
-	prompt := strings.TrimSpace(ctx.DispatchWorkflowPrompt)
-	if prompt == "" || !dispatchDWSWorkflowApplies(kind, ctx) {
-		return
-	}
-	b.WriteString("#### Dispatch Outbound Delivery\n\n")
-	b.WriteString(BuildDispatchWorkflowContent(ctx.DispatchSurfaceType, prompt))
-}
-
-// BuildDispatchWorkflowContent renders the canonical private DWS delivery
-// workflow. It is shared by the sandbox runtime file and the current-turn
-// fallback used by providers whose resumed sessions cache project context.
-func BuildDispatchWorkflowContent(surfaceType, prompt string) string {
-	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
-		return ""
-	}
-	var b strings.Builder
-	if strings.TrimSpace(surfaceType) == protocol.DispatchSurfaceTypeIssue {
-		b.WriteString("This Issue workflow has two required delivery destinations. Before beginning the requested work, perform the acknowledgement reaction described below. For final delivery, prepare the user-facing content once. Post the final result as the required Multica Issue comment using that content, and only after the comment succeeds send exactly the same content as the DingTalk DWS reply. The run is not fully delivered until both the Issue comment and the DingTalk DWS reply have been attempted truthfully. Do not post a second Issue comment merely to report a DWS failure.\n\n")
-	} else {
-		b.WriteString("This chat workflow uses DingTalk DWS for outbound delivery. Before beginning the requested work, perform the acknowledgement reaction described below. Before finishing, send the final user-facing content as the DingTalk DWS reply described below.\n\n")
-	}
-	b.WriteString(prompt)
-	b.WriteString("\n\n")
-	return b.String()
 }
 
 // buildMetaSkillContentSlim is the post-MUL-3560 brief assembler.
@@ -604,7 +541,6 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	writeTaskInitiator(&b, ctx)
 	writeWorkspaceContext(&b, ctx)
 	writeConnectedApps(&b, ctx)
-	writeDispatchRuntimePrompt(&b, ctx)
 	writeDingTalkDWSIdentityAvailability(&b, ctx)
 
 	switch kind {
@@ -644,7 +580,6 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	case kindAssignmentTriggered:
 		writeWorkflowAssignment(&b, ctx)
 	}
-	writeDispatchWorkflowPrompt(&b, kind, ctx)
 
 	if kind.hasIssueContext() && ctx.IssueID != "" {
 		writeSubIssueCreation(&b)
