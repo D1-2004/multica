@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
@@ -264,11 +265,13 @@ type ProjectResourceData struct {
 type ConnectedAppData = runtimeapps.ConnectedApp
 
 type AgentTaskResponse struct {
-	ID          string `json:"id"`
-	AgentID     string `json:"agent_id"`
-	RuntimeID   string `json:"runtime_id"`
-	IssueID     string `json:"issue_id"`
-	WorkspaceID string `json:"workspace_id"`
+	ID                   string `json:"id"`
+	AgentID              string `json:"agent_id"`
+	RuntimeID            string `json:"runtime_id"`
+	IssueID              string `json:"issue_id"`
+	WorkspaceID          string `json:"workspace_id"`
+	TraceID              string `json:"trace_id,omitempty"`
+	TraceStartedAtUnixMS int64  `json:"trace_started_at_unix_ms,omitempty"`
 	// WorkspaceContext is the workspace-level system prompt set in workspace
 	// settings (`workspace.context` DB column). Injected into the agent brief
 	// as `## Workspace Context` so every agent running in this workspace —
@@ -457,12 +460,24 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	if t.HandoffNote.Valid {
 		handoffNote = t.HandoffNote.String
 	}
+	trace, traceErr := chattrace.ForTask(t.Context, uuidToString(t.ID), t.CreatedAt.Time)
+	if traceErr != nil {
+		slog.Error("task response has invalid task trace", "task_id", uuidToString(t.ID), "error", traceErr)
+	}
+	traceID := ""
+	var traceStartedAtUnixMS int64
+	if traceErr == nil {
+		traceID = trace.TraceID
+		traceStartedAtUnixMS = trace.StartedAtUnixMS
+	}
 	return AgentTaskResponse{
 		ID:                             uuidToString(t.ID),
 		AgentID:                        uuidToString(t.AgentID),
 		RuntimeID:                      uuidToString(t.RuntimeID),
 		IssueID:                        uuidToString(t.IssueID),
 		WorkspaceID:                    workspaceID,
+		TraceID:                        traceID,
+		TraceStartedAtUnixMS:           traceStartedAtUnixMS,
 		Status:                         t.Status,
 		Priority:                       t.Priority,
 		DispatchedAt:                   timestampToPtr(t.DispatchedAt),

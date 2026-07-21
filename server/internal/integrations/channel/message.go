@@ -118,6 +118,14 @@ type InboundMessage struct {
 	EventID   string
 	MessageID string
 
+	// TraceID and TraceStartedAtUnixMS identify the durable chat ingress.
+	// Transport adapters set them from their admission record; the shared
+	// router persists them into task.context after platform task context has
+	// been resolved.
+	TraceID              string
+	TraceChannel         string
+	TraceStartedAtUnixMS int64
+
 	// Source is the routing identity (chat, sender, thread).
 	Source Source
 

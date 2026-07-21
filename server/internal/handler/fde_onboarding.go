@@ -257,7 +257,7 @@ func (h *Handler) upsertFDERuntime(r *http.Request, workspaceID, ownerID pgtype.
 	if err != nil {
 		return db.AgentRuntime{}, err
 	}
-	return h.Queries.UpsertCloudAgentRuntime(r.Context(), db.UpsertCloudAgentRuntimeParams{
+	return h.Queries.UpsertManagedCloudAgentRuntime(r.Context(), db.UpsertManagedCloudAgentRuntimeParams{
 		WorkspaceID: workspaceID,
 		DaemonID:    daemonID,
 		Name:        name, RuntimeMode: "cloud", Provider: provider,

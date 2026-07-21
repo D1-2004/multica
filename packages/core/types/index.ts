@@ -103,6 +103,7 @@ export type {
   PendingChatTasksResponse,
   HasPendingChatTasksResponse,
   SendChatMessageResponse,
+  ChatReplyReceivedRequest,
   CancelledChatMessage,
   CancelTaskResponse,
 } from "./chat";

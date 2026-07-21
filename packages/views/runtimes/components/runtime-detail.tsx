@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   Trash2,
   ChevronRight,
+  Cloud,
   Cpu,
   Globe,
   Lock,
@@ -22,6 +23,7 @@ import { memberListOptions, agentListOptions } from "@multica/core/workspace/que
 import { useUpdateRuntime } from "@multica/core/runtimes/mutations";
 import {
   deriveRuntimeHealth,
+  parseFCE2BRuntimeMetadata,
   runtimeDisplayName,
   runtimeProfileListOptions,
 } from "@multica/core/runtimes";
@@ -46,6 +48,7 @@ import { UpdateSection } from "./update-section";
 import { UsageSection } from "./usage-section";
 import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import { DeleteRuntimeProfileDialog } from "./delete-runtime-profile-dialog";
+import { UpdateFCE2BRuntimeTemplateDialog } from "./update-fc-e2b-runtime-template-dialog";
 import { useT, useTimeAgo } from "../../i18n";
 
 function getCliVersion(metadata: Record<string, unknown>): string | null {
@@ -119,6 +122,7 @@ export function RuntimeDetail({
   const now = useNowTick();
 
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [templateUpdateOpen, setTemplateUpdateOpen] = useState(false);
 
   const health = deriveRuntimeHealth(runtime, now);
   const ownerMember = runtime.owner_id
@@ -218,7 +222,9 @@ export function RuntimeDetail({
               cliVersion={cliVersion}
               launchedBy={launchedBy}
               canEdit={!!canEditRuntime}
+              canManageTemplate={isAdmin}
               canDelete={!!canDelete}
+              onChangeTemplate={() => setTemplateUpdateOpen(true)}
               onDelete={() => setDeleteOpen(true)}
             />
           </div>
@@ -240,6 +246,12 @@ export function RuntimeDetail({
           runtime={runtime}
           wsId={wsId}
           onDeleted={handleRuntimeDeleted}
+        />
+      )}
+      {isAdmin && templateUpdateOpen && parseFCE2BRuntimeMetadata(runtime) && (
+        <UpdateFCE2BRuntimeTemplateDialog
+          runtime={runtime}
+          onClose={() => setTemplateUpdateOpen(false)}
         />
       )}
     </div>
@@ -487,18 +499,34 @@ function DiagnosticsCard({
   cliVersion,
   launchedBy,
   canEdit,
+  canManageTemplate,
   canDelete,
+  onChangeTemplate,
   onDelete,
 }: {
   runtime: AgentRuntime;
   cliVersion: string | null;
   launchedBy: string | null;
   canEdit: boolean;
+  canManageTemplate: boolean;
   canDelete: boolean;
+  onChangeTemplate: () => void;
   onDelete: () => void;
 }) {
   const { t } = useT("runtimes");
   const isLocal = runtime.runtime_mode === "local";
+  const fcE2BMetadata = parseFCE2BRuntimeMetadata(runtime);
+  const currentTemplate =
+    fcE2BMetadata?.templateName ||
+    fcE2BMetadata?.template ||
+    fcE2BMetadata?.templateId ||
+    t(($) => $.detail.cloud_image.unknown_template);
+  const provider =
+    runtime.provider.toLowerCase() === "opencode"
+      ? "OpenCode"
+      : runtime.provider.toLowerCase() === "hermes"
+        ? "Hermes"
+        : runtime.provider;
   return (
     <div className="rounded-lg border">
       <div className="border-b px-4 py-2.5">
@@ -526,6 +554,40 @@ function DiagnosticsCard({
               isOnline={runtime.status === "online"}
               launchedBy={launchedBy}
             />
+          </div>
+        )}
+        {fcE2BMetadata && (
+          <div className="border-t pt-3">
+            <div className="mb-2 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+              <Cloud className="h-3 w-3" />
+              {t(($) => $.detail.cloud_image.title)}
+            </div>
+            <dl className="space-y-2 rounded-md border bg-muted/30 px-3 py-2.5">
+              <div className="min-w-0">
+                <dt className="text-[11px] text-muted-foreground">
+                  {t(($) => $.detail.cloud_image.template)}
+                </dt>
+                <dd className="mt-0.5 truncate font-mono text-xs" title={currentTemplate}>
+                  {currentTemplate}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 border-t pt-2">
+                <dt className="text-[11px] text-muted-foreground">
+                  {t(($) => $.detail.cloud_image.provider)}
+                </dt>
+                <dd className="truncate text-xs font-medium">{provider}</dd>
+              </div>
+            </dl>
+            {canManageTemplate && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-2 h-8 w-full"
+                onClick={onChangeTemplate}
+              >
+                {t(($) => $.detail.cloud_image.change_template)}
+              </Button>
+            )}
           </div>
         )}
         {canDelete && (

@@ -49,6 +49,7 @@ import {
 import type { Workspace } from "../types/workspace";
 import { chatKeys, mergeTaskMessagesBySeq, sortChatSessions } from "../chat/queries";
 import { useChatStore } from "../chat";
+import { rememberLiveChatReply } from "../chat/reply-receipt";
 import { resolvePostAuthDestination, useHasOnboarded } from "../paths";
 import type {
   MemberAddedPayload,
@@ -166,6 +167,15 @@ export function applyChatDoneToCache(
   // that took the fallback branch above.
   invalidateChatMessageQueries(qc, sessionId);
   qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
+}
+
+export function receiveChatDone(
+  qc: QueryClient,
+  payload: ChatDonePayload,
+  wsReceivedAtUnixMs = Date.now(),
+) {
+  rememberLiveChatReply(payload, wsReceivedAtUnixMs);
+  applyChatDoneToCache(qc, payload);
 }
 
 function patchLatestChatMessagePage(
@@ -1044,7 +1054,7 @@ export function useRealtimeSync(
       // payload (older builds). Older clients hitting a newer server also
       // work: they ignore the extra fields and rely on the invalidate
       // below, which keeps the old behavior alive.
-      applyChatDoneToCache(qc, payload);
+      receiveChatDone(qc, payload);
       // NOTE: the pending aggregate is left to the task:completed / task:failed
       // handlers (which carry the task_id needed to remove the right entry).
       // chat:done no longer invalidates it, so a chatty session doesn't refetch

@@ -114,6 +114,13 @@
     "diagnostics_title": "診断",
     "diagnostics_cli": "CLI",
     "diagnostics_visibility": "公開範囲",
+    "cloud_image": {
+      "title": "クラウドサンドボックスイメージ",
+      "template": "テンプレート",
+      "provider": "実行エンジン",
+      "unknown_template": "不明なテンプレート",
+      "change_template": "テンプレートを変更"
+    },
     "visibility_label": {
       "private": "非公開",
       "public": "公開"
@@ -259,6 +266,22 @@
       "name": "名前",
       "visibility": "可視性"
     }
+  },
+  "fc_e2b_template_update": {
+    "title": "クラウドサンドボックスイメージを変更",
+    "description": "実行エンジンとエージェントの紐付けを変えずに、このランタイムを別の準備済み FC/E2B テンプレートへ切り替えます。",
+    "current_template": "現在のテンプレート",
+    "provider": "実行エンジン",
+    "new_template": "新しいテンプレート",
+    "cutover_notice": "実行中のタスクは現在のサンドボックスを使い続けます。以降のタスクと新しいメッセージでは、新しいイメージからサンドボックスを作成します。",
+    "template_current": "現在",
+    "template_unavailable": "利用不可",
+    "template_missing_id": "テンプレート ID がありません",
+    "update": "テンプレートを変更",
+    "updating": "変更中...",
+    "cancel": "キャンセル",
+    "toast_updated": "クラウドサンドボックスイメージを更新しました",
+    "toast_failed": "クラウドサンドボックスイメージを更新できませんでした"
   },
   "update": {
     "cli_version_label": "CLI バージョン:",

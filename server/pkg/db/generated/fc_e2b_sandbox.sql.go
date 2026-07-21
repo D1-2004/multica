@@ -16,6 +16,7 @@ SELECT id, workspace_id, runtime_id, scope_type, scope_id, sandbox_id, template,
 WHERE runtime_id = $1
   AND scope_type = $2
   AND scope_id = $3
+  AND template = $4
   AND status = 'running'
   AND expires_at > now()
 ORDER BY updated_at DESC
@@ -26,10 +27,16 @@ type GetActiveFCE2BSandboxSessionParams struct {
 	RuntimeID pgtype.UUID `json:"runtime_id"`
 	ScopeType string      `json:"scope_type"`
 	ScopeID   pgtype.UUID `json:"scope_id"`
+	Template  string      `json:"template"`
 }
 
 func (q *Queries) GetActiveFCE2BSandboxSession(ctx context.Context, arg GetActiveFCE2BSandboxSessionParams) (FcE2bSandboxSession, error) {
-	row := q.db.QueryRow(ctx, getActiveFCE2BSandboxSession, arg.RuntimeID, arg.ScopeType, arg.ScopeID)
+	row := q.db.QueryRow(ctx, getActiveFCE2BSandboxSession,
+		arg.RuntimeID,
+		arg.ScopeType,
+		arg.ScopeID,
+		arg.Template,
+	)
 	var i FcE2bSandboxSession
 	err := row.Scan(
 		&i.ID,
@@ -72,6 +79,21 @@ func (q *Queries) MarkFCE2BSandboxSessionStale(ctx context.Context, arg MarkFCE2
 		arg.SandboxID,
 	)
 	return err
+}
+
+const markFCE2BSandboxSessionsStaleByRuntime = `-- name: MarkFCE2BSandboxSessionsStaleByRuntime :execrows
+UPDATE fc_e2b_sandbox_session
+SET status = 'stale', updated_at = now()
+WHERE runtime_id = $1
+  AND status = 'running'
+`
+
+func (q *Queries) MarkFCE2BSandboxSessionsStaleByRuntime(ctx context.Context, runtimeID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markFCE2BSandboxSessionsStaleByRuntime, runtimeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const touchFCE2BSandboxSession = `-- name: TouchFCE2BSandboxSession :exec

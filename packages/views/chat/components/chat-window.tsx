@@ -843,6 +843,7 @@ export function ChatWindow() {
           hasOlderMessages={!!hasOlderMessages}
           isFetchingOlderMessages={isFetchingOlderMessages}
           onLoadOlderMessages={() => void fetchOlderMessages()}
+          receiptEnabled={isOpen}
         />
       ) : (
         <EmptyState

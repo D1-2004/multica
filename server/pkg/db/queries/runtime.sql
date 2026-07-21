@@ -93,7 +93,15 @@ DO UPDATE SET
     runtime_mode = EXCLUDED.runtime_mode,
     status = EXCLUDED.status,
     device_info = EXCLUDED.device_info,
-    metadata = EXCLUDED.metadata,
+    -- FDE onboarding retries must not undo an explicit FC/E2B template
+    -- rotation by replaying the process-level default template. Other cloud
+    -- runtime upserts retain their existing replace-on-conflict semantics.
+    metadata = CASE
+        WHEN agent_runtime.metadata->>'managed_source_key' = 'fde-agent'
+          OR EXCLUDED.metadata->>'managed_source_key' = 'fde-agent'
+        THEN agent_runtime.metadata
+        ELSE EXCLUDED.metadata
+    END,
     owner_id = EXCLUDED.owner_id,
     visibility = EXCLUDED.visibility,
     last_seen_at = now(),
@@ -106,6 +114,44 @@ WHERE workspace_id = $1
   AND daemon_id = $2
   AND provider = $3
   AND profile_id IS NULL;
+
+-- name: UpsertManagedCloudAgentRuntime :one
+-- Managed runtimes may be reconciled repeatedly as ownership changes. Keep the
+-- existing runner protocol while the configured template is unchanged, then
+-- atomically move template and protocol together when the template changes.
+INSERT INTO agent_runtime (
+    workspace_id,
+    daemon_id,
+    name,
+    runtime_mode,
+    provider,
+    status,
+    device_info,
+    metadata,
+    owner_id,
+    visibility,
+    last_seen_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+ON CONFLICT (workspace_id, daemon_id, provider) WHERE profile_id IS NULL
+DO UPDATE SET
+    name = EXCLUDED.name,
+    runtime_mode = EXCLUDED.runtime_mode,
+    status = EXCLUDED.status,
+    device_info = EXCLUDED.device_info,
+    metadata = CASE
+        WHEN agent_runtime.metadata->>'template' = EXCLUDED.metadata->>'template' THEN
+            CASE
+                WHEN agent_runtime.metadata ? 'runner' THEN
+                    jsonb_set(EXCLUDED.metadata, '{runner}', agent_runtime.metadata->'runner', true)
+                ELSE EXCLUDED.metadata - 'runner'
+            END
+        ELSE EXCLUDED.metadata
+    END,
+    owner_id = EXCLUDED.owner_id,
+    visibility = EXCLUDED.visibility,
+    last_seen_at = now(),
+    updated_at = now()
+RETURNING *;
 
 -- name: UpsertAgentRuntimeWithProfile :one
 -- Custom-runtime registration: a daemon resolved a workspace runtime_profile's
@@ -148,6 +194,15 @@ RETURNING *, (xmax = 0) AS inserted;
 -- admin only.
 UPDATE agent_runtime
 SET visibility = @visibility, updated_at = now()
+WHERE id = @id
+RETURNING *;
+
+-- name: UpdateFCE2BRuntimeMetadata :one
+-- Replaces only the metadata document after the FC/E2B template-rotation
+-- service has locked and re-read the runtime. Provider, ownership, visibility,
+-- daemon identity, and agent bindings remain unchanged.
+UPDATE agent_runtime
+SET metadata = @metadata, updated_at = now()
 WHERE id = @id
 RETURNING *;
 

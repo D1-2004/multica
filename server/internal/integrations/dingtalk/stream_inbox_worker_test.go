@@ -152,6 +152,7 @@ func TestStreamInboxPersistEncryptsPayloadAndUsesBotMessageID(t *testing.T) {
 		InstallationID: util.MustParseUUID("00000000-0000-0000-0000-000000000002"),
 		Status:         "queued",
 		DeliveryCount:  1,
+		ReceivedAt:     pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	}}
 	worker := newStreamInboxWorker(store, nil, box.Seal, box.Open, logger)
 	payload := `{"msgId":"bot-message-1","senderStaffId":"staff-secret","sessionWebhook":"https://example.test/send?session=secret"}`
@@ -202,7 +203,12 @@ func TestStreamInboxPersistUsesStreamIDForMalformedPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("secretbox.New: %v", err)
 	}
-	store := &fakeStreamInboxStore{admitRow: db.DingtalkStreamInbox{Status: "queued"}}
+	store := &fakeStreamInboxStore{admitRow: db.DingtalkStreamInbox{
+		ID:             util.MustParseUUID("00000000-0000-0000-0000-000000000003"),
+		InstallationID: util.MustParseUUID("00000000-0000-0000-0000-000000000002"),
+		Status:         "queued",
+		ReceivedAt:     pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}}
 	worker := newStreamInboxWorker(store, nil, box.Seal, box.Open, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
 
 	if _, err := worker.PersistFrame(context.Background(), "client", StreamFrameAdmission{
@@ -280,6 +286,9 @@ func TestStreamInboxProcessNextDispatchesAndFinalizes(t *testing.T) {
 	}
 	if len(received) != 1 || received[0].MessageID != "m1" || received[0].Text != "hello" {
 		t.Fatalf("received = %+v", received)
+	}
+	if received[0].TraceID != "00000000-0000-0000-0000-000000000010" || received[0].TraceChannel != "dingtalk_stream" || received[0].TraceStartedAtUnixMS != row.ReceivedAt.Time.UnixMilli() {
+		t.Fatalf("received trace = id %q channel %q started %d", received[0].TraceID, received[0].TraceChannel, received[0].TraceStartedAtUnixMS)
 	}
 	raw, err := decodeDingTalkRaw(received[0])
 	if err != nil || raw.InstallationID != "00000000-0000-0000-0000-000000000020" {
@@ -569,5 +578,6 @@ func testStreamInboxRow(t *testing.T, box *secretbox.Box, attemptCount int32, pa
 		Status:           "processing",
 		AttemptCount:     attemptCount,
 		LeaseToken:       pgtype.UUID{Bytes: [16]byte{1, 2, 3}, Valid: true},
+		ReceivedAt:       pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true},
 	}
 }

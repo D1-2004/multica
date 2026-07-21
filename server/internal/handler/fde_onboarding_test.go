@@ -175,10 +175,28 @@ func TestUpsertFDERuntimeAlignsOwnerOnRetry(t *testing.T) {
 	})
 
 	h := *testHandler
-	h.cfg.FCE2B = service.FCE2BConfig{Template: "fde-runtime-test", TimeoutSeconds: 900}
+	h.cfg.FCE2B = service.FCE2BConfig{Template: "legacy-template", TimeoutSeconds: 900}
 	req := newRequestAs(uuidToString(secondOwnerID), http.MethodPost, "/api/fde/onboarding", nil)
 	if _, err := h.upsertFDERuntime(req, workspaceID, firstOwnerID); err != nil {
 		t.Fatalf("create runtime: %v", err)
+	}
+	rotatedMetadata := []byte(`{
+		"kind":"fc-e2b",
+		"template":"fde-runtime-rotated",
+		"template_id":"tpl_rotated_id",
+		"template_name":"Rotated Runtime",
+		"template_status":"ready",
+		"capabilities":["hermes","dws"],
+		"runner":"multica-fc-hermes-runner",
+		"managed_source_key":"fde-agent",
+		"operator_note":"preserve-me"
+	}`)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_runtime
+		SET metadata = $1::jsonb
+		WHERE workspace_id = $2 AND daemon_id = $3
+	`, string(rotatedMetadata), workspaceID, "fc-e2b:fde:"+uuidToString(workspaceID)); err != nil {
+		t.Fatalf("rotate runtime metadata: %v", err)
 	}
 	runtime, err := h.upsertFDERuntime(req, workspaceID, secondOwnerID)
 	if err != nil {
@@ -186,6 +204,13 @@ func TestUpsertFDERuntimeAlignsOwnerOnRetry(t *testing.T) {
 	}
 	if runtime.OwnerID != secondOwnerID {
 		t.Fatalf("runtime owner = %s, want scanner/Agent owner %s", uuidToString(runtime.OwnerID), uuidToString(secondOwnerID))
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(runtime.Metadata, &metadata); err != nil {
+		t.Fatalf("decode retried runtime metadata: %v", err)
+	}
+	if metadata["template"] != "fde-runtime-rotated" || metadata["template_id"] != "tpl_rotated_id" || metadata["operator_note"] != "preserve-me" || metadata["runner"] != "multica-fc-hermes-runner" {
+		t.Fatalf("FDE retry overwrote rotated metadata: %#v", metadata)
 	}
 }
 

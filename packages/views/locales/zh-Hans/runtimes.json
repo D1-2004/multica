@@ -114,6 +114,13 @@
     "diagnostics_title": "诊断",
     "diagnostics_cli": "CLI",
     "diagnostics_visibility": "可见性",
+    "cloud_image": {
+      "title": "云沙箱镜像",
+      "template": "模板",
+      "provider": "执行引擎",
+      "unknown_template": "未知模板",
+      "change_template": "修改模板"
+    },
     "visibility_label": {
       "private": "私有",
       "public": "公开"
@@ -259,6 +266,22 @@
       "name": "名称",
       "visibility": "可见性"
     }
+  },
+  "fc_e2b_template_update": {
+    "title": "修改云沙箱镜像",
+    "description": "将这个运行时切换到另一个已就绪的 FC/E2B 模板，不修改执行引擎和智能体绑定。",
+    "current_template": "当前模板",
+    "provider": "执行引擎",
+    "new_template": "新模板",
+    "cutover_notice": "运行中的任务继续使用当前沙箱。后续任务和新消息会从新镜像创建沙箱。",
+    "template_current": "当前模板",
+    "template_unavailable": "不可用",
+    "template_missing_id": "缺少模板 ID",
+    "update": "修改模板",
+    "updating": "修改中...",
+    "cancel": "取消",
+    "toast_updated": "云沙箱镜像已更新",
+    "toast_failed": "无法更新云沙箱镜像"
   },
   "update": {
     "cli_version_label": "CLI 版本：",

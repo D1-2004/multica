@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -71,6 +72,16 @@ func (o *Outbound) handleEvent(e events.Event) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := o.processEvent(ctx, e); err != nil {
+		if trace, present, traceErr := chatTraceFromEvent(e); traceErr != nil {
+			o.logger.Error("dingtalk outbound event has invalid chat trace", "task_id", util.UUIDToString(taskIDFromEvent(e)), "error", traceErr)
+		} else if present {
+			chattrace.LogStage(o.logger, trace, "dingtalk_api", "failed",
+				"task_id", util.UUIDToString(taskIDFromEvent(e)),
+				"chat_session_id", util.UUIDToString(sessionIDFromEvent(e)),
+				"delivery_boundary", "api_response",
+				"error", err,
+			)
+		}
 		o.logger.WarnContext(ctx, "dingtalk outbound: reply delivery failed",
 			"error", err, "chat_session_id", e.ChatSessionID)
 	}
@@ -135,8 +146,19 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 	if err != nil {
 		return fmt.Errorf("decode dingtalk credentials: %w", err)
 	}
+	sendStarted := time.Now()
 	if err := o.messenger.SendMarkdown(ctx, creds, outboundTarget(binding), content); err != nil {
 		return fmt.Errorf("post dingtalk reply: %w", err)
+	}
+	if trace, present, err := chatTraceFromEvent(e); err != nil {
+		return err
+	} else if present {
+		chattrace.LogStage(o.logger, trace, "dingtalk_api", "accepted",
+			"task_id", util.UUIDToString(taskID),
+			"chat_session_id", util.UUIDToString(sessionID),
+			"stage_elapsed_ms", time.Since(sendStarted).Milliseconds(),
+			"delivery_boundary", "api_accepted",
+		)
 	}
 	return nil
 }
@@ -252,4 +274,33 @@ func chatDoneContent(payload any) string {
 		}
 	}
 	return ""
+}
+
+func chatTraceFromEvent(e events.Event) (chattrace.Trace, bool, error) {
+	if e.Type != protocol.EventChatDone {
+		return chattrace.Trace{}, false, nil
+	}
+	var traceID string
+	var startedAtUnixMS int64
+	switch p := e.Payload.(type) {
+	case protocol.ChatDonePayload:
+		traceID = p.TraceID
+		startedAtUnixMS = p.TraceStartedAtUnixMS
+	case map[string]any:
+		traceID, _ = p["trace_id"].(string)
+		switch value := p["trace_started_at_unix_ms"].(type) {
+		case int64:
+			startedAtUnixMS = value
+		case float64:
+			startedAtUnixMS = int64(value)
+		}
+	}
+	if traceID == "" && startedAtUnixMS == 0 {
+		return chattrace.Trace{}, false, nil
+	}
+	trace, err := chattrace.From(traceID, "dingtalk_stream", startedAtUnixMS)
+	if err != nil {
+		return chattrace.Trace{}, true, err
+	}
+	return trace, true, nil
 }

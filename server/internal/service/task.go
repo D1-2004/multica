@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -1183,7 +1184,11 @@ type DirectChatSendResult struct {
 // The caller must have already gated the session and preflighted the agent
 // (archived / no-runtime), passing the loaded agent in; this method trusts those
 // checks and does no further agent validation.
-func (s *TaskService) SendDirectChatMessage(ctx context.Context, session db.ChatSession, agent db.Agent, initiatorUserID pgtype.UUID, content string, attachmentIDs []pgtype.UUID, uploaderType string, uploaderID pgtype.UUID) (*DirectChatSendResult, error) {
+func (s *TaskService) SendDirectChatMessage(ctx context.Context, session db.ChatSession, agent db.Agent, initiatorUserID pgtype.UUID, content string, attachmentIDs []pgtype.UUID, uploaderType string, uploaderID pgtype.UUID, trace chattrace.Trace) (*DirectChatSendResult, error) {
+	taskContext, err := chattrace.Merge(nil, trace)
+	if err != nil {
+		return nil, fmt.Errorf("build direct chat trace context: %w", err)
+	}
 	// Build the per-task Composio overlay before the transaction — it can do
 	// network I/O and must not run with a DB transaction open.
 	overlay := s.buildRuntimeMCPOverlay(ctx, initiatorUserID, agent)
@@ -1200,6 +1205,7 @@ func (s *TaskService) SendDirectChatMessage(ctx context.Context, session db.Chat
 			ForceFreshSession:    pgtype.Bool{Bool: false, Valid: true},
 			RuntimeMcpOverlay:    overlay.Overlay,
 			RuntimeConnectedApps: overlay.ConnectedApps,
+			TaskContext:          taskContext,
 		})
 		if err != nil {
 			return fmt.Errorf("create direct chat task: %w", err)
@@ -1256,6 +1262,11 @@ func (s *TaskService) SendDirectChatMessage(ctx context.Context, session db.Chat
 		"task_id", util.UUIDToString(out.Task.ID),
 		"chat_session_id", util.UUIDToString(session.ID),
 		"agent_id", util.UUIDToString(session.AgentID))
+	chattrace.LogStage(slog.Default(), trace, "direct_chat_persisted", "succeeded",
+		"task_id", util.UUIDToString(out.Task.ID),
+		"chat_session_id", util.UUIDToString(session.ID),
+		"message_id", util.UUIDToString(out.Message.ID),
+	)
 	// Notify only after commit. See EnqueueTaskForIssue for ordering rationale.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, out.Task)
 	s.NotifyTaskEnqueued(ctx, out.Task)
@@ -2063,6 +2074,14 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	s.cancelDeferredEscalationsForTask(ctx, task.ID)
 
 	slog.Info("task started", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
+	if trace, err := chattrace.ForTask(task.Context, util.UUIDToString(task.ID), task.CreatedAt.Time); err != nil {
+		slog.Error("started task has invalid task trace", "task_id", util.UUIDToString(task.ID), "error", err)
+	} else {
+		chattrace.LogStage(slog.Default(), trace, "task_started", "succeeded",
+			"task_id", util.UUIDToString(task.ID),
+			"runtime_id", util.UUIDToString(task.RuntimeID),
+		)
+	}
 	s.captureTaskStarted(ctx, task)
 	// Tell every connected workspace WS client that this task transitioned
 	// (dispatched | waiting_local_directory) → running. Without this, the
@@ -2243,6 +2262,19 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	}
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
+	if trace, present, err := chattrace.Parse(task.Context); err != nil {
+		slog.Error("completed task has invalid chat trace", "task_id", util.UUIDToString(task.ID), "error", err)
+	} else if present {
+		messageID := ""
+		if chatAssistantMsg != nil {
+			messageID = util.UUIDToString(chatAssistantMsg.ID)
+		}
+		chattrace.LogStage(slog.Default(), trace, "assistant_message_persisted", "succeeded",
+			"task_id", util.UUIDToString(task.ID),
+			"chat_session_id", util.UUIDToString(task.ChatSessionID),
+			"message_id", messageID,
+		)
+	}
 	s.captureTaskCompleted(ctx, task)
 
 	// Invariant: every completed issue task must have at least one agent
@@ -3336,6 +3368,14 @@ func priorityToInt(p string) int32 {
 // cache and kicks the daemon WS so the new task is claimed without
 // waiting for the next poll.
 func (s *TaskService) NotifyTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
+	if trace, err := chattrace.ForTask(task.Context, util.UUIDToString(task.ID), task.CreatedAt.Time); err != nil {
+		slog.Error("queued task has invalid task trace", "task_id", util.UUIDToString(task.ID), "error", err)
+	} else {
+		chattrace.LogStage(slog.Default(), trace, "task_enqueued", "succeeded",
+			"task_id", util.UUIDToString(task.ID),
+			"runtime_id", util.UUIDToString(task.RuntimeID),
+		)
+	}
 	s.captureTaskQueued(ctx, task)
 	s.notifyTaskAvailable(task)
 	s.launchRuntimeForTask(task)
@@ -3348,10 +3388,17 @@ func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 	taskCopy := task
 	go func() {
 		taskKey := util.UUIDToString(taskCopy.ID)
+		trace, traceErr := chattrace.ForTask(taskCopy.Context, taskKey, taskCopy.CreatedAt.Time)
+		if traceErr != nil {
+			slog.Error("runtime launcher task has invalid task trace", "task_id", taskKey, "error", traceErr)
+		}
 		acquireCtx, acquireCancel := context.WithTimeout(context.Background(), runtimeLaunchLeaseDBTimeout)
 		lease, acquired, err := s.runtimeLaunchLeases.Acquire(acquireCtx, taskCopy.ID, runtimeLaunchLeaseDuration)
 		acquireCancel()
 		if err != nil {
+			if traceErr == nil {
+				chattrace.LogStage(slog.Default(), trace, "runtime_launch_lease", "failed", "task_id", taskKey, "error", err)
+			}
 			slog.Warn("runtime launcher lease acquisition failed",
 				"task_id", taskKey,
 				"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
@@ -3361,6 +3408,9 @@ func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 			return
 		}
 		if !acquired {
+			if traceErr == nil {
+				chattrace.LogStage(slog.Default(), trace, "runtime_launch_lease", "already_held", "task_id", taskKey)
+			}
 			slog.Debug("runtime launcher lease already held",
 				"task_id", taskKey,
 				"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
@@ -3378,6 +3428,12 @@ func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 			"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
 			"agent_id", util.UUIDToString(taskCopy.AgentID),
 		)
+		if traceErr == nil {
+			chattrace.LogStage(slog.Default(), trace, "runtime_launcher", "started",
+				"task_id", taskKey,
+				"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
+			)
+		}
 		started := time.Now()
 		err = s.RuntimeLauncher.LaunchTask(launchCtx, taskCopy)
 		cancelLaunch(context.Canceled)
@@ -3396,6 +3452,14 @@ func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 		}
 
 		if err != nil {
+			if traceErr == nil {
+				chattrace.LogStage(slog.Default(), trace, "runtime_launcher", "failed",
+					"task_id", taskKey,
+					"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
+					"stage_elapsed_ms", time.Since(started).Milliseconds(),
+					"error", err,
+				)
+			}
 			slog.Warn("runtime launcher failed for task",
 				"task_id", util.UUIDToString(taskCopy.ID),
 				"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
@@ -3411,6 +3475,13 @@ func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 			"agent_id", util.UUIDToString(taskCopy.AgentID),
 			"duration", time.Since(started).String(),
 		)
+		if traceErr == nil {
+			chattrace.LogStage(slog.Default(), trace, "runtime_launcher", "succeeded",
+				"task_id", taskKey,
+				"runtime_id", util.UUIDToString(taskCopy.RuntimeID),
+				"stage_elapsed_ms", time.Since(started).Milliseconds(),
+			)
+		}
 	}()
 }
 
@@ -3721,6 +3792,16 @@ func (s *TaskService) broadcastChatDone(ctx context.Context, task db.AgentTaskQu
 		ChatSessionID: util.UUIDToString(task.ChatSessionID),
 		TaskID:        util.UUIDToString(task.ID),
 	}
+	var chatTrace chattrace.Trace
+	tracePresent := false
+	if trace, present, err := chattrace.Parse(task.Context); err != nil {
+		slog.Error("chat done task has invalid chat trace", "task_id", util.UUIDToString(task.ID), "error", err)
+	} else if present {
+		chatTrace = trace
+		tracePresent = true
+		payload.TraceID = trace.TraceID
+		payload.TraceStartedAtUnixMS = trace.StartedAtUnixMS
+	}
 	if msg != nil {
 		payload.MessageID = util.UUIDToString(msg.ID)
 		payload.Content = msg.Content
@@ -3738,8 +3819,15 @@ func (s *TaskService) broadcastChatDone(ctx context.Context, task db.AgentTaskQu
 		ActorType:     "system",
 		ActorID:       "",
 		ChatSessionID: util.UUIDToString(task.ChatSessionID),
+		TaskID:        util.UUIDToString(task.ID),
 		Payload:       payload,
 	})
+	if tracePresent {
+		chattrace.LogStage(slog.Default(), chatTrace, "chat_done_published", "succeeded",
+			"task_id", util.UUIDToString(task.ID),
+			"chat_session_id", util.UUIDToString(task.ChatSessionID),
+		)
+	}
 }
 
 // broadcastIssueUpdated publishes the issue:updated event the frontend's

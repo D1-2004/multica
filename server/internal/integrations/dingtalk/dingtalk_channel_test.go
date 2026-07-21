@@ -212,10 +212,11 @@ func TestChannelConnectHandlesPingCallbackAndDisconnect(t *testing.T) {
 	f, srv := newFakeStreamServer(t)
 	inbox := &fakeStreamInbox{
 		receipt: StreamInboxReceipt{
-			ID:             "inbox-1",
+			ID:             "00000000-0000-0000-0000-000000000001",
 			InstallationID: "installation-1",
 			Status:         "queued",
 			DeliveryCount:  1,
+			ReceivedAt:     time.Now(),
 		},
 	}
 	ch := newTestChannel(t, srv.URL, inbox)
@@ -377,7 +378,7 @@ func TestChannelDoesNotAckWhenInboxCommitFails(t *testing.T) {
 func TestChannelCommitsBeforeCallbackAck(t *testing.T) {
 	f, srv := newFakeStreamServer(t)
 	inbox := &fakeStreamInbox{
-		receipt: StreamInboxReceipt{InstallationID: "installation-1", Status: "queued", DeliveryCount: 1},
+		receipt: StreamInboxReceipt{ID: "00000000-0000-0000-0000-000000000001", InstallationID: "installation-1", Status: "queued", DeliveryCount: 1, ReceivedAt: time.Now()},
 		entered: make(chan struct{}, 1),
 		release: make(chan struct{}),
 	}

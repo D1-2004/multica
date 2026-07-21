@@ -52,6 +52,10 @@ export interface CreateFCE2BRuntimeRequest {
   visibility?: RuntimeVisibility;
 }
 
+export interface UpdateFCE2BRuntimeTemplateRequest {
+  template_id: string;
+}
+
 export interface FCE2BTemplate {
   id?: string;
   name?: string;
@@ -60,6 +64,56 @@ export interface FCE2BTemplate {
   created_at?: string;
   updated_at?: string;
   metadata?: Record<string, unknown>;
+}
+
+export interface FCE2BRuntimeMetadata {
+  kind: "fc-e2b";
+  template: string | null;
+  templateId: string | null;
+  templateName: string | null;
+  templateStatus: string | null;
+}
+
+function metadataString(
+  metadata: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = metadata[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/**
+ * Parses the FC/E2B fields carried in a runtime's open-ended metadata map.
+ * The returned shape uses camelCase so views never read wire keys directly.
+ */
+export function parseFCE2BRuntimeMetadata(
+  runtime: Pick<AgentRuntime, "runtime_mode" | "metadata"> | null | undefined,
+): FCE2BRuntimeMetadata | null {
+  if (runtime?.runtime_mode !== "cloud") return null;
+  const metadata = runtime.metadata;
+  if (
+    !metadata ||
+    typeof metadata !== "object" ||
+    Array.isArray(metadata) ||
+    metadataString(metadata, "kind") !== "fc-e2b"
+  ) {
+    return null;
+  }
+  return {
+    kind: "fc-e2b",
+    template: metadataString(metadata, "template"),
+    templateId: metadataString(metadata, "template_id"),
+    templateName: metadataString(metadata, "template_name"),
+    templateStatus: metadataString(metadata, "template_status"),
+  };
+}
+
+export function isReadyFCE2BTemplate(template: FCE2BTemplate): boolean {
+  return (
+    typeof template.id === "string" &&
+    template.id.trim().length > 0 &&
+    template.status?.trim().toLowerCase() === "ready"
+  );
 }
 
 /**
@@ -154,7 +208,7 @@ export function useDeleteCloudRuntimeNode(wsId: string) {
 export function isFCE2BRuntime(
   runtime: Pick<AgentRuntime, "runtime_mode" | "metadata"> | null | undefined,
 ): boolean {
-  return runtime?.runtime_mode === "cloud" && runtime.metadata?.kind === "fc-e2b";
+  return parseFCE2BRuntimeMetadata(runtime) !== null;
 }
 
 export function useCreateFCE2BRuntime(wsId: string) {
@@ -164,6 +218,22 @@ export function useCreateFCE2BRuntime(wsId: string) {
       api.createFCE2BRuntime(data),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
+    },
+  });
+}
+
+export function useUpdateFCE2BRuntimeTemplate(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      runtimeId,
+      data,
+    }: {
+      runtimeId: string;
+      data: UpdateFCE2BRuntimeTemplateRequest;
+    }) => api.updateFCE2BRuntimeTemplate(runtimeId, data),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
     },
   });
 }

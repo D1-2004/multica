@@ -630,6 +630,51 @@ describe("ApiClient", () => {
     });
   });
 
+  it("uses the FC/E2B runtime template update API contract", async () => {
+    const runtime = {
+      id: "rt-fc",
+      workspace_id: "ws-1",
+      daemon_id: "fc-e2b:ws-1:fc-hermes",
+      name: "FC-Hermes",
+      runtime_mode: "cloud",
+      provider: "hermes",
+      launch_header: "",
+      status: "online",
+      device_info: "FC/E2B one-shot sandbox",
+      metadata: {
+        kind: "fc-e2b",
+        template: "multica-fc-team-v2",
+        template_id: "tpl-v2",
+      },
+      owner_id: "user-1",
+      visibility: "private",
+      last_seen_at: null,
+      created_at: "2026-07-08T00:00:00Z",
+      updated_at: "2026-07-20T00:00:00Z",
+    };
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify(runtime), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    const updated = await client.updateFCE2BRuntimeTemplate("rt-fc", {
+      template_id: "tpl-v2",
+    });
+
+    expect(updated.id).toBe("rt-fc");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/runtimes/rt-fc/fc-e2b-template",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ template_id: "tpl-v2" }),
+      }),
+    );
+  });
+
   it("falls back when Cloud Runtime node responses drift", async () => {
     const fetchMock = vi
       .fn()
@@ -844,6 +889,41 @@ describe("ApiClient", () => {
         status: 500,
       });
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("reportChatReplyReceived", () => {
+    it("posts the rendered reply timing to the message receipt endpoint", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(new Response(null, { status: 204 }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      await client.reportChatReplyReceived("session-1", "message-1", {
+        task_id: "task-1",
+        trace_id: "trace-1",
+        ws_received_at_unix_ms: 2_000,
+        rendered_at_unix_ms: 2_250,
+        client_received_at: "1970-01-01T00:00:02.250Z",
+        elapsed_ms: 1_250,
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]).toMatchObject([
+        "https://api.example.test/api/chat/sessions/session-1/messages/message-1/received",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            task_id: "task-1",
+            trace_id: "trace-1",
+            ws_received_at_unix_ms: 2_000,
+            rendered_at_unix_ms: 2_250,
+            client_received_at: "1970-01-01T00:00:02.250Z",
+            elapsed_ms: 1_250,
+          }),
+        },
+      ]);
     });
   });
 
