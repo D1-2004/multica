@@ -119,6 +119,13 @@
     "diagnostics_title": "Diagnostics",
     "diagnostics_cli": "CLI",
     "diagnostics_visibility": "Visibility",
+    "cloud_image": {
+      "title": "Cloud sandbox image",
+      "template": "Template",
+      "provider": "Provider",
+      "unknown_template": "Unknown template",
+      "change_template": "Change template"
+    },
     "visibility_label": {
       "private": "Private",
       "public": "Public"
@@ -271,6 +278,22 @@
       "name": "Name",
       "visibility": "Visibility"
     }
+  },
+  "fc_e2b_template_update": {
+    "title": "Change cloud sandbox image",
+    "description": "Switch this runtime to another ready FC/E2B template without changing its provider or agent bindings.",
+    "current_template": "Current template",
+    "provider": "Provider",
+    "new_template": "New template",
+    "cutover_notice": "Running tasks stay on their current sandbox. Later tasks and new messages will create a sandbox from the new image.",
+    "template_current": "Current",
+    "template_unavailable": "Unavailable",
+    "template_missing_id": "Missing template ID",
+    "update": "Change template",
+    "updating": "Changing...",
+    "cancel": "Cancel",
+    "toast_updated": "Cloud sandbox image updated",
+    "toast_failed": "Failed to update cloud sandbox image"
   },
   "update": {
     "cli_version_label": "CLI Version:",

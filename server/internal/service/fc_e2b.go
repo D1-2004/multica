@@ -324,6 +324,23 @@ func fcE2BLegacyRunnerCommandForProvider(provider string) string {
 	return "multica-fc-" + provider + "-runner"
 }
 
+// FCE2BTemplateCapabilities derives the capabilities persisted on an FC/E2B
+// runtime from its immutable provider and the selected template identifiers.
+func FCE2BTemplateCapabilities(provider string, template FCE2BTemplate) []string {
+	capabilities := []string{strings.ToLower(strings.TrimSpace(provider))}
+	haystack := strings.ToLower(strings.Join([]string{template.Template, template.ID, template.Name}, " "))
+	if strings.Contains(haystack, "dws") {
+		capabilities = append(capabilities, "dws")
+	}
+	return capabilities
+}
+
+// IsFCE2BTemplateReady reports whether the template catalog has completed the
+// build. Template rotation never submits a sandbox from a transitional state.
+func IsFCE2BTemplateReady(template FCE2BTemplate) bool {
+	return strings.EqualFold(strings.TrimSpace(template.Status), "ready")
+}
+
 func fcE2BRunnerLaunchForMode(provider string, mode fcE2BRunnerLaunchMode) (fcE2BRunnerLaunch, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if !IsFCE2BSupportedProvider(provider) {
@@ -618,19 +635,31 @@ type FCE2BLauncher struct {
 	Runner        CommandRunner
 	AgentIdentity AgentIdentityContextCreator
 
-	// Pool backs the cross-replica sandbox lock. Optional: without it the
-	// launcher serializes nothing, which is only safe in a single-process
-	// deployment (see resolveSandbox).
+	// Pool backs the cross-replica runtime and sandbox advisory locks.
 	Pool *pgxpool.Pool
+}
+
+var ErrFCE2BRuntimeRequired = errors.New("runtime is not an FC/E2B cloud runtime")
+
+type FCE2BRuntimeTemplateUpdateResult struct {
+	Runtime                 db.AgentRuntime
+	PreviousTemplate        string
+	PreviousTemplateID      string
+	InvalidatedSandboxCount int64
+	Changed                 bool
 }
 
 type AgentIdentityContextCreator interface {
 	CreateContext(context.Context, agentidentityhsf.CreateContextRequest) (agentidentityhsf.CreateContextResult, error)
 }
 
-// fcE2BSandboxLockClass namespaces the advisory lock so it cannot collide with
-// the migration loop's lock or the usage-rollup lock. "FCE2" as an int32.
-const fcE2BSandboxLockClass int32 = 0x46434532
+// Advisory lock classes keep runtime rotation and per-scope sandbox creation
+// separate from other process-wide coordination. The runtime lock must always
+// be acquired before the scope lock.
+const (
+	fcE2BSandboxLockClass int32 = 0x46434532 // "FCE2"
+	fcE2BRuntimeLockClass int32 = 0x46525432 // "FRT2"
+)
 
 // lockSandboxScope serializes the read-then-create in resolveSandbox across
 // replicas. The launch is driven by whichever replica served the enqueue (or
@@ -643,29 +672,73 @@ const fcE2BSandboxLockClass int32 = 0x46434532
 // connection for that long. The loser blocks, then re-reads and reuses the
 // winner's sandbox.
 func (l *FCE2BLauncher) lockSandboxScope(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope) (func(), error) {
-	if l.Pool == nil {
-		return func() {}, nil
+	return l.lockSandboxScopeOnConnection(ctx, rt, scope, nil)
+}
+
+func (l *FCE2BLauncher) lockSandboxScopeOnConnection(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, existing *pgxpool.Conn) (func(), error) {
+	if l == nil || l.Pool == nil {
+		return nil, errors.New("FC/E2B sandbox coordination requires a database pool")
 	}
 	key := fcE2BScopeLockKey(rt.ID, scope)
-	conn, err := l.Pool.Acquire(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("acquire connection for sandbox lock: %w", err)
+	conn := existing
+	owned := conn == nil
+	if owned {
+		var err error
+		conn, err = l.Pool.Acquire(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("acquire connection for sandbox lock: %w", err)
+		}
 	}
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1, $2)", fcE2BSandboxLockClass, key); err != nil {
-		conn.Release()
+		if owned {
+			conn.Release()
+		}
 		return nil, fmt.Errorf("acquire sandbox lock: %w", err)
 	}
 	return func() {
-		// Unlock on a background context: the caller's ctx may already be done
-		// (a cancelled launch), and a lock left held would wedge every later
-		// launch for this scope until the connection is recycled.
-		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if _, err := conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1, $2)", fcE2BSandboxLockClass, key); err != nil {
-			slog.Warn("fc/e2b: release sandbox lock failed", "err", err)
+		releaseFCE2BAdvisoryLock(conn, false, fcE2BSandboxLockClass, key, "sandbox")
+		if owned {
+			conn.Release()
 		}
+	}, nil
+}
+
+func (l *FCE2BLauncher) lockRuntimeShared(ctx context.Context, runtimeID pgtype.UUID) (*pgxpool.Conn, func(), error) {
+	if l == nil || l.Pool == nil {
+		return nil, nil, errors.New("FC/E2B runtime coordination requires a database pool")
+	}
+	key := fcE2BRuntimeLockKey(runtimeID)
+	conn, err := l.Pool.Acquire(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("acquire connection for FC/E2B runtime lock: %w", err)
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock_shared($1, $2)", fcE2BRuntimeLockClass, key); err != nil {
+		conn.Release()
+		return nil, nil, fmt.Errorf("acquire FC/E2B runtime read lock: %w", err)
+	}
+	return conn, func() {
+		releaseFCE2BAdvisoryLock(conn, true, fcE2BRuntimeLockClass, key, "runtime read")
 		conn.Release()
 	}, nil
+}
+
+func releaseFCE2BAdvisoryLock(conn *pgxpool.Conn, shared bool, class, key int32, name string) {
+	if conn == nil {
+		return
+	}
+	unlockFunction := "pg_advisory_unlock"
+	if shared {
+		unlockFunction = "pg_advisory_unlock_shared"
+	}
+	unlocked := false
+	unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := conn.QueryRow(unlockCtx, "SELECT "+unlockFunction+"($1, $2)", class, key).Scan(&unlocked)
+	if err == nil && unlocked {
+		return
+	}
+	slog.Error("FC/E2B advisory lock release failed", "lock", name, "error", err, "unlocked", unlocked)
+	_ = conn.Conn().Close(unlockCtx)
 }
 
 func fcE2BScopeLockKey(runtimeID pgtype.UUID, scope fcE2BTaskScope) int32 {
@@ -673,6 +746,12 @@ func fcE2BScopeLockKey(runtimeID pgtype.UUID, scope fcE2BTaskScope) int32 {
 	_, _ = h.Write(runtimeID.Bytes[:])
 	_, _ = io.WriteString(h, scope.typ)
 	_, _ = h.Write(scope.id.Bytes[:])
+	return int32(h.Sum32())
+}
+
+func fcE2BRuntimeLockKey(runtimeID pgtype.UUID) int32 {
+	h := fnv.New32a()
+	_, _ = h.Write(runtimeID.Bytes[:])
 	return int32(h.Sum32())
 }
 
@@ -694,14 +773,115 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 	}
 }
 
-// SetPool wires the connection the cross-replica sandbox lock needs. Left nil
-// (tests, single-process runs) the launcher serializes nothing — which is the
-// pre-existing behavior, and the reason two replicas could each boot a sandbox
-// for the same scope.
+// SetPool wires the database pool required for cross-replica runtime rotation
+// and sandbox creation coordination.
 func (l *FCE2BLauncher) SetPool(pool *pgxpool.Pool) {
 	if l != nil {
 		l.Pool = pool
 	}
+}
+
+// UpdateRuntimeTemplate atomically rotates an FC/E2B runtime to a catalogued,
+// ready template and makes every previously reusable sandbox session stale.
+// The exclusive runtime advisory lock conflicts with LaunchTask's shared lock,
+// so the returned runtime is the cutover boundary for later launches.
+func (l *FCE2BLauncher) UpdateRuntimeTemplate(ctx context.Context, runtimeID pgtype.UUID, selected FCE2BTemplate) (FCE2BRuntimeTemplateUpdateResult, error) {
+	if l == nil || l.Queries == nil || l.Pool == nil {
+		return FCE2BRuntimeTemplateUpdateResult{}, errors.New("FC/E2B runtime coordination requires a database pool")
+	}
+	selected.ID = strings.TrimSpace(selected.ID)
+	selected.Template = strings.TrimSpace(selected.Template)
+	selected.Name = strings.TrimSpace(selected.Name)
+	selected.Status = strings.TrimSpace(selected.Status)
+	if selected.ID == "" {
+		return FCE2BRuntimeTemplateUpdateResult{}, errors.New("FC/E2B template has no template ID")
+	}
+	if selected.Template == "" {
+		return FCE2BRuntimeTemplateUpdateResult{}, errors.New("FC/E2B template has no launch template")
+	}
+	if !IsFCE2BTemplateReady(selected) {
+		return FCE2BRuntimeTemplateUpdateResult{}, errors.New("FC/E2B template is not ready")
+	}
+
+	conn, err := l.Pool.Acquire(ctx)
+	if err != nil {
+		return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("acquire connection for FC/E2B template update: %w", err)
+	}
+	defer conn.Release()
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("begin FC/E2B template update: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1, $2)", fcE2BRuntimeLockClass, fcE2BRuntimeLockKey(runtimeID)); err != nil {
+		return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("acquire FC/E2B runtime write lock: %w", err)
+	}
+	qtx := l.Queries.WithTx(tx)
+	runtime, err := qtx.LockAgentRuntime(ctx, runtimeID)
+	if err != nil {
+		return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("lock FC/E2B runtime row: %w", err)
+	}
+	if !IsFCE2BRuntime(runtime) {
+		return FCE2BRuntimeTemplateUpdateResult{}, ErrFCE2BRuntimeRequired
+	}
+
+	var metadata map[string]any
+	if err := json.Unmarshal(runtime.Metadata, &metadata); err != nil {
+		return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("decode FC/E2B runtime metadata: %w", err)
+	}
+	if metadata == nil {
+		return FCE2BRuntimeTemplateUpdateResult{}, errors.New("FC/E2B runtime metadata is empty")
+	}
+	previousTemplate, _ := metadata["template"].(string)
+	previousTemplateID, _ := metadata["template_id"].(string)
+	result := FCE2BRuntimeTemplateUpdateResult{
+		Runtime:            runtime,
+		PreviousTemplate:   strings.TrimSpace(previousTemplate),
+		PreviousTemplateID: strings.TrimSpace(previousTemplateID),
+	}
+	if result.PreviousTemplateID == selected.ID {
+		if err := tx.Commit(ctx); err != nil {
+			return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("commit idempotent FC/E2B template update: %w", err)
+		}
+		return result, nil
+	}
+
+	metadata["template"] = selected.Template
+	metadata["template_id"] = selected.ID
+	metadata["template_name"] = selected.Name
+	metadata["template_status"] = selected.Status
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("encode FC/E2B runtime metadata: %w", err)
+	}
+	updated, err := qtx.UpdateFCE2BRuntimeMetadata(ctx, db.UpdateFCE2BRuntimeMetadataParams{
+		ID:       runtimeID,
+		Metadata: encoded,
+	})
+	if err != nil {
+		return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("update FC/E2B runtime metadata: %w", err)
+	}
+	invalidated, err := qtx.MarkFCE2BSandboxSessionsStaleByRuntime(ctx, runtimeID)
+	if err != nil {
+		return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("invalidate FC/E2B sandbox sessions: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("commit FC/E2B template update: %w", err)
+	}
+	result.Runtime = updated
+	result.InvalidatedSandboxCount = invalidated
+	result.Changed = true
+	return result, nil
+}
+
+type fcE2BLaunchSubmission struct {
+	runtime   db.AgentRuntime
+	sandboxID string
+	coldStart bool
+	scope     fcE2BTaskScope
+	scoped    bool
 }
 
 func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) error {
@@ -712,16 +892,15 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	runtimeID := util.UUIDToString(task.RuntimeID)
 	agentID := util.UUIDToString(task.AgentID)
 	started := time.Now()
-	slog.Info("FC/E2B launch started",
-		"task_id", taskID,
-		"runtime_id", runtimeID,
-		"agent_id", agentID,
-	)
-	rt, err := l.Queries.GetAgentRuntime(ctx, task.RuntimeID)
+	slog.Info("FC/E2B launch started", "task_id", taskID, "runtime_id", runtimeID, "agent_id", agentID)
+
+	// Avoid taking a runtime lock for local runtimes. The authoritative launch
+	// snapshot is loaded again from the lock connection below.
+	runtime, err := l.Queries.GetAgentRuntime(ctx, task.RuntimeID)
 	if err != nil {
 		return fmt.Errorf("load runtime for FC/E2B launch: %w", err)
 	}
-	if !IsFCE2BRuntime(rt) {
+	if !IsFCE2BRuntime(runtime) {
 		return nil
 	}
 	if !l.Config.Enabled {
@@ -730,25 +909,89 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	if err := l.Config.Validate(); err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
-	if !rt.DaemonID.Valid || strings.TrimSpace(rt.DaemonID.String) == "" {
-		return l.failLaunch(ctx, task, "FC/E2B runtime has no daemon_id")
-	}
-	if !rt.OwnerID.Valid {
-		return l.failLaunch(ctx, task, "FC/E2B runtime has no owner_id")
-	}
-	template, err := fcE2BTemplateForRuntime(rt, l.Config.Template)
+
+	runtimeLockConn, releaseRuntimeLock, err := l.lockRuntimeShared(ctx, task.RuntimeID)
 	if err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
-	slog.Info("FC/E2B launch template resolved",
+	runtimeLockHeld := true
+	defer func() {
+		if runtimeLockHeld {
+			releaseRuntimeLock()
+		}
+	}()
+
+	// Every database operation before sandbox exec uses the same connection
+	// that owns the runtime lock. This prevents a pool-exhaustion deadlock when
+	// several launches each reserve one connection for their shared lock.
+	lockedLauncher := *l
+	lockedLauncher.Queries = db.New(runtimeLockConn)
+	submission, deferred, submitErr := lockedLauncher.submitTaskUnderRuntimeLock(ctx, task, runtimeLockConn)
+	releaseRuntimeLock()
+	runtimeLockHeld = false
+	if submitErr != nil {
+		return l.failLaunch(ctx, task, submitErr.Error())
+	}
+	if deferred {
+		return nil
+	}
+
+	slog.Info("FC/E2B run-once submitted",
 		"task_id", taskID,
 		"runtime_id", runtimeID,
-		"template", template,
+		"sandbox_id", submission.sandboxID,
+		"cold_start", submission.coldStart,
+		"duration", time.Since(started).String(),
 	)
+	claimState, err := l.waitForRunOnceClaim(ctx, task)
+	if err != nil {
+		return l.failLaunch(ctx, task, err.Error())
+	}
+	switch claimState {
+	case fcE2BRunnerClaimObserved:
+		slog.Info("FC/E2B run-once claim observed", "task_id", taskID, "runtime_id", runtimeID, "sandbox_id", submission.sandboxID)
+	case fcE2BRunnerClaimBlocked:
+		slog.Info("FC/E2B run-once claim blocked by active task", "task_id", taskID, "runtime_id", runtimeID, "sandbox_id", submission.sandboxID)
+	case fcE2BRunnerClaimStalled:
+		return l.failLaunch(ctx, task, fmt.Sprintf("FC/E2B runner did not claim task within %s after sandbox exec", fcE2BRunnerClaimTimeout))
+	}
+	if submission.scoped {
+		_ = l.Queries.TouchFCE2BSandboxSession(ctx, db.TouchFCE2BSandboxSessionParams{
+			RuntimeID: submission.runtime.ID,
+			ScopeType: submission.scope.typ,
+			ScopeID:   submission.scope.id,
+			SandboxID: submission.sandboxID,
+		})
+	}
+	return nil
+}
+
+func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.AgentTaskQueue, runtimeLockConn *pgxpool.Conn) (fcE2BLaunchSubmission, bool, error) {
+	taskID := util.UUIDToString(task.ID)
+	runtimeID := util.UUIDToString(task.RuntimeID)
+	agentID := util.UUIDToString(task.AgentID)
+	runtime, err := l.Queries.GetAgentRuntime(ctx, task.RuntimeID)
+	if err != nil {
+		return fcE2BLaunchSubmission{}, false, fmt.Errorf("reload runtime under FC/E2B runtime lock: %w", err)
+	}
+	if !IsFCE2BRuntime(runtime) {
+		return fcE2BLaunchSubmission{}, false, ErrFCE2BRuntimeRequired
+	}
+	if !runtime.DaemonID.Valid || strings.TrimSpace(runtime.DaemonID.String) == "" {
+		return fcE2BLaunchSubmission{}, false, errors.New("FC/E2B runtime has no daemon_id")
+	}
+	if !runtime.OwnerID.Valid {
+		return fcE2BLaunchSubmission{}, false, errors.New("FC/E2B runtime has no owner_id")
+	}
+	template, err := fcE2BTemplateForRuntime(runtime, l.Config.Template)
+	if err != nil {
+		return fcE2BLaunchSubmission{}, false, err
+	}
+	slog.Info("FC/E2B launch template resolved", "task_id", taskID, "runtime_id", runtimeID, "template", template)
 
 	tasks, err := l.Queries.ListAgentTasks(ctx, task.AgentID)
 	if err != nil {
-		return fmt.Errorf("check FC/E2B launch serialization: %w", err)
+		return fcE2BLaunchSubmission{}, false, fmt.Errorf("check FC/E2B launch serialization: %w", err)
 	}
 	if blocker, reason, blocked := fcE2BTaskLaunchBlocker(task, tasks); blocked {
 		slog.Info("FC/E2B launch deferred by serialized task",
@@ -760,13 +1003,13 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 			"blocker_status", blocker.Status,
 			"defer_reason", reason,
 		)
-		return nil
+		return fcE2BLaunchSubmission{}, true, nil
 	}
 
 	scope, scoped := fcE2BScopeForTask(task)
-	sandboxID, coldStart, err := l.resolveSandbox(ctx, rt, scope, scoped, template)
+	sandboxID, coldStart, err := l.resolveSandboxOnConnection(ctx, runtime, scope, scoped, template, runtimeLockConn)
 	if err != nil {
-		return l.failLaunch(ctx, task, err.Error())
+		return fcE2BLaunchSubmission{}, false, err
 	}
 	scopeType := ""
 	scopeID := ""
@@ -778,69 +1021,35 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		"task_id", taskID,
 		"runtime_id", runtimeID,
 		"sandbox_id", sandboxID,
+		"template", template,
 		"cold_start", coldStart,
 		"scope_type", scopeType,
 		"scope_id", scopeID,
 	)
-	launch, err := l.detectFCE2BRunnerLaunch(ctx, sandboxID, rt)
+	launch, err := l.detectFCE2BRunnerLaunch(ctx, sandboxID, runtime)
 	if err != nil {
-		return l.failLaunch(ctx, task, err.Error())
+		return fcE2BLaunchSubmission{}, false, err
 	}
-	extraEnv, err := l.extraEnvForTask(ctx, task, rt, sandboxID)
+	extraEnv, err := l.extraEnvForTask(ctx, task, runtime, sandboxID)
 	if err != nil {
-		return l.failLaunch(ctx, task, err.Error())
+		return fcE2BLaunchSubmission{}, false, err
 	}
 	token, err := auth.GenerateDaemonToken()
 	if err != nil {
-		return l.failLaunch(ctx, task, "failed to mint FC/E2B daemon token")
+		return fcE2BLaunchSubmission{}, false, errors.New("failed to mint FC/E2B daemon token")
 	}
 	if _, err := l.Queries.CreateDaemonToken(ctx, db.CreateDaemonTokenParams{
 		TokenHash:   auth.HashToken(token),
-		WorkspaceID: rt.WorkspaceID,
-		DaemonID:    rt.DaemonID.String,
+		WorkspaceID: runtime.WorkspaceID,
+		DaemonID:    runtime.DaemonID.String,
 		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(fcE2BDaemonTokenTTL), Valid: true},
 	}); err != nil {
-		return l.failLaunch(ctx, task, "failed to persist FC/E2B daemon token")
+		return fcE2BLaunchSubmission{}, false, errors.New("failed to persist FC/E2B daemon token")
 	}
-	if err := l.execRunOnce(ctx, sandboxID, rt, launch.Mode, task.ID, token, coldStart, extraEnv); err != nil {
-		return l.failLaunch(ctx, task, err.Error())
+	if err := l.execRunOnce(ctx, sandboxID, runtime, launch.Mode, task.ID, token, coldStart, extraEnv); err != nil {
+		return fcE2BLaunchSubmission{}, false, err
 	}
-	slog.Info("FC/E2B run-once submitted",
-		"task_id", taskID,
-		"runtime_id", runtimeID,
-		"sandbox_id", sandboxID,
-		"cold_start", coldStart,
-		"duration", time.Since(started).String(),
-	)
-	claimState, err := l.waitForRunOnceClaim(ctx, task)
-	if err != nil {
-		return l.failLaunch(ctx, task, err.Error())
-	}
-	switch claimState {
-	case fcE2BRunnerClaimObserved:
-		slog.Info("FC/E2B run-once claim observed",
-			"task_id", taskID,
-			"runtime_id", runtimeID,
-			"sandbox_id", sandboxID,
-		)
-	case fcE2BRunnerClaimBlocked:
-		slog.Info("FC/E2B run-once claim blocked by active task",
-			"task_id", taskID,
-			"runtime_id", runtimeID,
-			"sandbox_id", sandboxID,
-		)
-	case fcE2BRunnerClaimStalled:
-		return l.failLaunch(ctx, task, fmt.Sprintf("FC/E2B runner did not claim task within %s after sandbox exec", fcE2BRunnerClaimTimeout))
-	}
-	if scoped {
-		_ = l.Queries.TouchFCE2BSandboxSession(ctx, db.TouchFCE2BSandboxSessionParams{
-			RuntimeID: rt.ID,
-			ScopeType: scope.typ,
-			ScopeID:   scope.id,
-			SandboxID: sandboxID,
-		})
-	}
-	return nil
+	return fcE2BLaunchSubmission{runtime: runtime, sandboxID: sandboxID, coldStart: coldStart, scope: scope, scoped: scoped}, false, nil
 }
 
 func fcE2BScopeForTask(task db.AgentTaskQueue) (fcE2BTaskScope, bool) {
@@ -1242,10 +1451,14 @@ func fcE2BAgentIdentityEnvForToken(token string, cfg FCE2BConfig) (map[string]st
 }
 
 func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool, template string) (string, bool, error) {
+	return l.resolveSandboxOnConnection(ctx, rt, scope, scoped, template, nil)
+}
+
+func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool, template string, runtimeLockConn *pgxpool.Conn) (string, bool, error) {
 	if scoped {
 		// Serialize the lookup-or-create with the other replicas before reading:
 		// a check outside the lock is exactly the race that orphans sandboxes.
-		release, err := l.lockSandboxScope(ctx, rt, scope)
+		release, err := l.lockSandboxScopeOnConnection(ctx, rt, scope, runtimeLockConn)
 		if err != nil {
 			return "", false, err
 		}
@@ -1255,6 +1468,7 @@ func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, 
 			RuntimeID: rt.ID,
 			ScopeType: scope.typ,
 			ScopeID:   scope.id,
+			Template:  template,
 		})
 		if err == nil {
 			if err := l.checkSandboxReady(ctx, session.SandboxID); err != nil {

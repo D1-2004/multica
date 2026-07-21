@@ -2,7 +2,13 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { AgentRuntime, RuntimeProfile } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
@@ -14,10 +20,24 @@ const TEST_RESOURCES = {
 };
 
 const mockUpdateRuntime = vi.hoisted(() => vi.fn());
+const mockUpdateFCE2BTemplate = vi.hoisted(() => vi.fn());
+const mockUseFCE2BTemplates = vi.hoisted(() => vi.fn());
 const mockDeleteRuntimeProfile = vi.hoisted(() => vi.fn());
 const mockQueryData = vi.hoisted(() => ({
   members: [] as Array<Record<string, unknown>>,
   profiles: [] as RuntimeProfile[],
+}));
+const mockTemplateQuery = vi.hoisted(() => ({
+  data: [] as Array<{
+    id?: string;
+    name?: string;
+    template: string;
+    status?: string;
+    updated_at?: string;
+  }>,
+  isLoading: false,
+  isError: false,
+  error: null as Error | null,
 }));
 
 vi.mock("@multica/core/hooks", () => ({
@@ -79,6 +99,37 @@ vi.mock("@multica/core/runtimes", () => ({
     rt.custom_name?.trim() || rt.name,
   runtimeProfileListOptions: (wsId: string) => ({
     queryKey: ["runtime-profiles", wsId],
+  }),
+  parseFCE2BRuntimeMetadata: (runtime: AgentRuntime) => {
+    if (
+      runtime.runtime_mode !== "cloud" ||
+      runtime.metadata.kind !== "fc-e2b"
+    ) {
+      return null;
+    }
+    const stringValue = (key: string) =>
+      typeof runtime.metadata[key] === "string"
+        ? (runtime.metadata[key] as string)
+        : null;
+    return {
+      kind: "fc-e2b",
+      template: stringValue("template"),
+      templateId: stringValue("template_id"),
+      templateName: stringValue("template_name"),
+      templateStatus: stringValue("template_status"),
+    };
+  },
+  isReadyFCE2BTemplate: (template: { id?: string; status?: string }) =>
+    Boolean(
+      template.id?.trim() && template.status?.trim().toLowerCase() === "ready",
+    ),
+  useFCE2BTemplates: () => {
+    mockUseFCE2BTemplates();
+    return mockTemplateQuery;
+  },
+  useUpdateFCE2BRuntimeTemplate: () => ({
+    mutateAsync: (...args: unknown[]) => mockUpdateFCE2BTemplate(...args),
+    isPending: false,
   }),
   parseRuntimeProfileBoundConflict: () => null,
   useDeleteRuntimeProfile: () => ({
@@ -191,6 +242,11 @@ describe("RuntimeDetail visibility section", () => {
     vi.clearAllMocks();
     mockQueryData.members = [];
     mockQueryData.profiles = [];
+    mockTemplateQuery.data = [];
+    mockTemplateQuery.isLoading = false;
+    mockTemplateQuery.isError = false;
+    mockTemplateQuery.error = null;
+    mockUpdateFCE2BTemplate.mockResolvedValue(undefined);
     mockDeleteRuntimeProfile.mockResolvedValue(undefined);
   });
 
@@ -293,5 +349,236 @@ describe("RuntimeDetail visibility section", () => {
     expect(
       screen.queryByRole("button", { name: /Delete runtime/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows FC/E2B image details and template controls to workspace admins", async () => {
+    mockQueryData.members = [
+      { user_id: "user-me", role: "admin", name: "Me" },
+    ];
+    mockTemplateQuery.data = [
+      {
+        id: "tpl-current",
+        name: "Team v1",
+        template: "multica-fc-team-v1",
+        status: "ready",
+      },
+      {
+        id: "tpl-new",
+        name: "Team v2",
+        template: "multica-fc-team-v2",
+        status: "ready",
+      },
+      {
+        id: "tpl-rebuilt",
+        name: "Team v1 rebuilt",
+        template: "multica-fc-team-v1",
+        status: "ready",
+      },
+      {
+        id: "tpl-building",
+        name: "Team v3 building",
+        template: "multica-fc-team-v3",
+        status: "building",
+      },
+      {
+        name: "Template without ID",
+        template: "multica-fc-team-no-id",
+        status: "ready",
+      },
+    ];
+
+    renderDetail(
+      makeRuntime({
+        owner_id: "someone-else",
+        runtime_mode: "cloud",
+        provider: "hermes",
+        metadata: {
+          kind: "fc-e2b",
+          template: "multica-fc-team-v1",
+          template_id: "tpl-current",
+          template_name: "Team v1",
+          template_status: "ready",
+        },
+      }),
+    );
+
+    expect(screen.getByText("Cloud sandbox image")).toBeInTheDocument();
+    expect(screen.getByText("Team v1")).toBeInTheDocument();
+    expect(screen.getByText("Hermes")).toBeInTheDocument();
+    expect(mockUseFCE2BTemplates).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Change template" }),
+    );
+    expect(mockUseFCE2BTemplates).toHaveBeenCalledTimes(1);
+    const dialog = screen.getByRole("dialog", {
+      name: "Change cloud sandbox image",
+    });
+    const current = within(dialog).getByRole("button", {
+      name: /Team v1tpl-currentCurrent/,
+    });
+    const rebuilt = within(dialog).getByRole("button", {
+      name: /Team v1 rebuilt/,
+    });
+    const building = within(dialog).getByRole("button", {
+      name: /Team v3 building/,
+    });
+    const missingId = within(dialog).getByRole("button", {
+      name: /Template without ID/,
+    });
+    expect(current).toBeDisabled();
+    expect(rebuilt).toBeEnabled();
+    expect(building).toBeDisabled();
+    expect(missingId).toBeDisabled();
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: /Team v2/ }),
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Change template" }),
+    );
+
+    await waitFor(() =>
+      expect(mockUpdateFCE2BTemplate).toHaveBeenCalledWith({
+        runtimeId: "rt-1",
+        data: { template_id: "tpl-new" },
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Change cloud sandbox image" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("keeps FC/E2B image details read-only for a non-admin runtime owner", () => {
+    renderDetail(
+      makeRuntime({
+        owner_id: "user-me",
+        runtime_mode: "cloud",
+        provider: "opencode",
+        metadata: {
+          kind: "fc-e2b",
+          template: "multica-fc-team-v1",
+          template_id: "tpl-current",
+          template_name: "Team v1",
+        },
+      }),
+    );
+
+    expect(screen.getByText("Cloud sandbox image")).toBeInTheDocument();
+    expect(screen.getByText("OpenCode")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Change template" }),
+    ).not.toBeInTheDocument();
+    expect(mockUseFCE2BTemplates).not.toHaveBeenCalled();
+  });
+
+  it("does not show cloud image controls for non-FC/E2B runtimes", () => {
+    mockQueryData.members = [
+      { user_id: "user-me", role: "owner", name: "Me" },
+    ];
+    renderDetail(makeRuntime({ runtime_mode: "cloud", metadata: {} }));
+
+    expect(screen.queryByText("Cloud sandbox image")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Change template" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("filters templates and reports an empty result", () => {
+    mockQueryData.members = [
+      { user_id: "user-me", role: "owner", name: "Me" },
+    ];
+    mockTemplateQuery.data = [
+      {
+        id: "tpl-new",
+        name: "Hermes Team v2",
+        template: "multica-fc-team-v2",
+        status: "ready",
+      },
+    ];
+    renderDetail(
+      makeRuntime({
+        runtime_mode: "cloud",
+        metadata: { kind: "fc-e2b", template_id: "tpl-current" },
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Change template" }),
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: "Change cloud sandbox image",
+    });
+    fireEvent.change(
+      within(dialog).getByPlaceholderText("Search template name or ID..."),
+      { target: { value: "OpenCode" } },
+    );
+
+    expect(within(dialog).queryByText("Hermes Team v2")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("No templates available")).toBeInTheDocument();
+  });
+
+  it("renders template catalog failures without closing the dialog", () => {
+    mockQueryData.members = [
+      { user_id: "user-me", role: "owner", name: "Me" },
+    ];
+    mockTemplateQuery.isError = true;
+    mockTemplateQuery.error = new Error("catalog unavailable");
+    renderDetail(
+      makeRuntime({
+        runtime_mode: "cloud",
+        metadata: { kind: "fc-e2b", template_id: "tpl-current" },
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Change template" }),
+    );
+
+    const dialog = screen.getByRole("dialog", {
+      name: "Change cloud sandbox image",
+    });
+    expect(within(dialog).getByText("catalog unavailable")).toBeInTheDocument();
+  });
+
+  it("keeps the selected template and dialog open when update fails", async () => {
+    mockQueryData.members = [
+      { user_id: "user-me", role: "owner", name: "Me" },
+    ];
+    mockTemplateQuery.data = [
+      {
+        id: "tpl-new",
+        name: "Team v2",
+        template: "multica-fc-team-v2",
+        status: "ready",
+      },
+    ];
+    mockUpdateFCE2BTemplate.mockRejectedValueOnce(new Error("cutover failed"));
+    renderDetail(
+      makeRuntime({
+        runtime_mode: "cloud",
+        metadata: { kind: "fc-e2b", template_id: "tpl-current" },
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Change template" }),
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: "Change cloud sandbox image",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /Team v2/ }));
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Change template" }),
+    );
+
+    await waitFor(() =>
+      expect(mockUpdateFCE2BTemplate).toHaveBeenCalledTimes(1),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "Change cloud sandbox image" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Change template" }),
+    ).toBeEnabled();
   });
 });

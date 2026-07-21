@@ -3,6 +3,7 @@ SELECT * FROM fc_e2b_sandbox_session
 WHERE runtime_id = $1
   AND scope_type = $2
   AND scope_id = $3
+  AND template = $4
   AND status = 'running'
   AND expires_at > now()
 ORDER BY updated_at DESC
@@ -41,3 +42,8 @@ WHERE runtime_id = $1
   AND scope_id = $3
   AND sandbox_id = $4;
 
+-- name: MarkFCE2BSandboxSessionsStaleByRuntime :execrows
+UPDATE fc_e2b_sandbox_session
+SET status = 'stale', updated_at = now()
+WHERE runtime_id = $1
+  AND status = 'running';

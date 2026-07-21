@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRuntime } from "../types";
-import { fcE2BProviderForTemplate, isFCE2BRuntime } from "./cloud-runtime";
+import {
+  fcE2BProviderForTemplate,
+  isFCE2BRuntime,
+  isReadyFCE2BTemplate,
+  parseFCE2BRuntimeMetadata,
+} from "./cloud-runtime";
 
 function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
   return {
@@ -28,6 +33,68 @@ describe("isFCE2BRuntime", () => {
     expect(isFCE2BRuntime(makeRuntime())).toBe(true);
     expect(isFCE2BRuntime(makeRuntime({ runtime_mode: "local" }))).toBe(false);
     expect(isFCE2BRuntime(makeRuntime({ metadata: { kind: "other" } }))).toBe(false);
+  });
+});
+
+describe("parseFCE2BRuntimeMetadata", () => {
+  it("parses FC/E2B wire metadata into a safe camelCase shape", () => {
+    expect(
+      parseFCE2BRuntimeMetadata(
+        makeRuntime({
+          metadata: {
+            kind: "fc-e2b",
+            template: "multica-fc-team-v2",
+            template_id: "tpl-v2",
+            template_name: "Team v2",
+            template_status: "ready",
+          },
+        }),
+      ),
+    ).toEqual({
+      kind: "fc-e2b",
+      template: "multica-fc-team-v2",
+      templateId: "tpl-v2",
+      templateName: "Team v2",
+      templateStatus: "ready",
+    });
+  });
+
+  it("rejects non-cloud and malformed metadata without exposing raw values", () => {
+    expect(
+      parseFCE2BRuntimeMetadata(
+        makeRuntime({ runtime_mode: "local" }),
+      ),
+    ).toBeNull();
+    expect(
+      parseFCE2BRuntimeMetadata(
+        makeRuntime({ metadata: { kind: 123, template_id: ["tpl-v2"] } }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("isReadyFCE2BTemplate", () => {
+  it("requires both a real template ID and ready status", () => {
+    expect(
+      isReadyFCE2BTemplate({
+        id: "tpl-v2",
+        template: "multica-fc-team-v2",
+        status: "READY",
+      }),
+    ).toBe(true);
+    expect(
+      isReadyFCE2BTemplate({
+        template: "multica-fc-team-v2",
+        status: "ready",
+      }),
+    ).toBe(false);
+    expect(
+      isReadyFCE2BTemplate({
+        id: "tpl-v2",
+        template: "multica-fc-team-v2",
+        status: "building",
+      }),
+    ).toBe(false);
   });
 });
 

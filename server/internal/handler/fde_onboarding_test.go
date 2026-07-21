@@ -180,13 +180,23 @@ func TestUpsertFDERuntimeAlignsOwnerOnRetry(t *testing.T) {
 	if _, err := h.upsertFDERuntime(req, workspaceID, firstOwnerID); err != nil {
 		t.Fatalf("create runtime: %v", err)
 	}
-	legacyMetadata := []byte(`{"kind":"fc-e2b","template":"legacy-template","runner":"multica-fc-hermes-runner"}`)
+	rotatedMetadata := []byte(`{
+		"kind":"fc-e2b",
+		"template":"fde-runtime-rotated",
+		"template_id":"tpl_rotated_id",
+		"template_name":"Rotated Runtime",
+		"template_status":"ready",
+		"capabilities":["hermes","dws"],
+		"runner":"multica-fc-hermes-runner",
+		"managed_source_key":"fde-agent",
+		"operator_note":"preserve-me"
+	}`)
 	if _, err := testPool.Exec(ctx, `
 		UPDATE agent_runtime
-		SET metadata = $1
-		WHERE workspace_id = $2 AND daemon_id = $3 AND provider = 'hermes'
-	`, legacyMetadata, workspaceID, "fc-e2b:fde:"+uuidToString(workspaceID)); err != nil {
-		t.Fatalf("pin legacy runtime contract: %v", err)
+		SET metadata = $1::jsonb
+		WHERE workspace_id = $2 AND daemon_id = $3
+	`, string(rotatedMetadata), workspaceID, "fc-e2b:fde:"+uuidToString(workspaceID)); err != nil {
+		t.Fatalf("rotate runtime metadata: %v", err)
 	}
 	runtime, err := h.upsertFDERuntime(req, workspaceID, secondOwnerID)
 	if err != nil {
@@ -195,25 +205,12 @@ func TestUpsertFDERuntimeAlignsOwnerOnRetry(t *testing.T) {
 	if runtime.OwnerID != secondOwnerID {
 		t.Fatalf("runtime owner = %s, want scanner/Agent owner %s", uuidToString(runtime.OwnerID), uuidToString(secondOwnerID))
 	}
-	var gotMetadata map[string]any
-	if err := json.Unmarshal(runtime.Metadata, &gotMetadata); err != nil {
-		t.Fatalf("decode runtime metadata: %v", err)
+	var metadata map[string]any
+	if err := json.Unmarshal(runtime.Metadata, &metadata); err != nil {
+		t.Fatalf("decode retried runtime metadata: %v", err)
 	}
-	if gotMetadata["template"] != "legacy-template" || gotMetadata["runner"] != "multica-fc-hermes-runner" {
-		t.Fatalf("runtime metadata = %#v, want preserved legacy template and runner protocol", gotMetadata)
-	}
-
-	h.cfg.FCE2B.Template = "new-template"
-	rotated, err := h.upsertFDERuntime(req, workspaceID, secondOwnerID)
-	if err != nil {
-		t.Fatalf("rotate runtime template: %v", err)
-	}
-	var rotatedMetadata map[string]any
-	if err := json.Unmarshal(rotated.Metadata, &rotatedMetadata); err != nil {
-		t.Fatalf("decode rotated runtime metadata: %v", err)
-	}
-	if rotatedMetadata["template"] != "new-template" || rotatedMetadata["runner"] != "multica-fc-hermes-container-log-entry" {
-		t.Fatalf("rotated runtime metadata = %#v, want new template and root runner protocol", rotatedMetadata)
+	if metadata["template"] != "fde-runtime-rotated" || metadata["template_id"] != "tpl_rotated_id" || metadata["operator_note"] != "preserve-me" || metadata["runner"] != "multica-fc-hermes-runner" {
+		t.Fatalf("FDE retry overwrote rotated metadata: %#v", metadata)
 	}
 }
 
