@@ -4098,7 +4098,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.AutopilotID != "" {
 		agentEnv["MULTICA_AUTOPILOT_ID"] = task.AutopilotID
 	}
-	if token := strings.TrimSpace(task.AgentIdentityContextToken); token != "" {
+	if token := childAgentIdentityContextToken(d.cfg.LaunchedBy, task.AgentIdentityContextToken); token != "" {
 		agentEnv[protocol.AgentIdentityContextTokenEnvKey] = token
 	}
 	// Quick-create marker — when set, the multica CLI's `issue create`
@@ -5145,14 +5145,28 @@ func socketSafeTempBaseDir() string {
 // daemon-internal variables and critical system paths.
 func isBlockedEnvKey(key string) bool {
 	upper := strings.ToUpper(key)
-	if strings.HasPrefix(upper, "MULTICA_") {
+	if strings.HasPrefix(upper, "MULTICA_") || strings.HasPrefix(upper, "DWS_") {
 		return true
 	}
 	switch upper {
-	case "HOME", "PATH", "USER", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "CODEX_HOME", "CURSOR_DATA_DIR", execenv.CursorMcpAuthSourceEnv, "OPENCLAW_CONFIG_PATH", "OPENCLAW_INCLUDE_ROOTS":
+	case "HOME", "PATH", "USER", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "CODEX_HOME", "CURSOR_DATA_DIR", execenv.CursorMcpAuthSourceEnv, "OPENCLAW_CONFIG_PATH", "OPENCLAW_INCLUDE_ROOTS",
+		protocol.AgentIdentityContextTokenEnvKey:
 		return true
 	}
 	return false
+}
+
+// childAgentIdentityContextToken keeps the ContextToken available to legacy
+// standalone runtimes that have no outer identity bootstrap, but never passes
+// it into an FC/E2B agent child. The FC runner redeems the token before the
+// daemon starts, stores only the resulting task-scoped DWS credentials, and
+// clears the original token. Re-injecting the claim copy here would undo that
+// credential boundary and expose a server-private bearer token to model tools.
+func childAgentIdentityContextToken(launchedBy, token string) string {
+	if strings.EqualFold(strings.TrimSpace(launchedBy), "fc-e2b") {
+		return ""
+	}
+	return strings.TrimSpace(token)
 }
 
 // layerCustomEnvAndHermesHome applies the agent's custom_env onto the child env

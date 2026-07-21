@@ -8,7 +8,7 @@ import type {
   AgentRuntime,
   MemberWithUser,
 } from "@multica/core/types";
-import { providerSupportsMcpConfig } from "@multica/core/agents";
+import { runtimeSupportsMcpConfig } from "@multica/core/agents";
 import { useFeatureEnabled } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -197,7 +197,7 @@ export function AgentOverviewPane({
 
   const visibleCapabilityTabs = useMemo(() => {
     const showMcp = runtime
-      ? providerSupportsMcpConfig(runtime.provider)
+      ? runtimeSupportsMcpConfig(runtime.provider, runtime.metadata)
       : true;
     const showComposioMcp =
       composioMCPAppsEnabled &&

@@ -49,7 +49,7 @@ const (
 	fcE2BRunOnceHealthPortSpan      = 30000
 	fcE2BRootRunnerInstallDir       = "/usr/local/libexec"
 	fcE2BLegacyRunnerInstallDir     = "/usr/local/bin"
-	fcE2BTemplateManifestVersion    = 1
+	fcE2BTemplateManifestVersion    = 2
 )
 
 type fcE2BRunnerLaunchMode string
@@ -361,7 +361,7 @@ func IsFCE2BTemplateReady(template FCE2BTemplate) bool {
 }
 
 // IsFCE2BTemplatePublished reports whether the current build carries a valid
-// manifest-v1 alias required for safe runtime creation and rotation.
+// current manifest alias required for safe runtime creation and rotation.
 func IsFCE2BTemplatePublished(template FCE2BTemplate) bool {
 	return template.ManifestVersion == fcE2BTemplateManifestVersion &&
 		strings.TrimSpace(template.BuildID) != "" &&
@@ -656,7 +656,7 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 	return templates, nil
 }
 
-var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m1-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-cdi-r1-([0-9a-f]{6})$`)
+var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([12])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(di|dim)-r1-([0-9a-f]{6})$`)
 
 func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (bool, error) {
 	if template == nil {
@@ -670,23 +670,34 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 	if matches == nil {
 		return false, nil
 	}
-	hermesVersion, hermesOK := parseFCE2BUnderscoreSemver(matches[1])
-	opencodeVersion, opencodeOK := parseFCE2BUnderscoreSemver(matches[2])
-	piVersion, piOK := parseFCE2BUnderscoreSemver(matches[3])
-	dwsVersion, dwsOK := parseFCE2BUnderscoreSemver(matches[4])
-	if !hermesOK || !opencodeOK || !piOK || !dwsOK || !isCanonicalNumericIdentifier(matches[5]) {
+	manifestVersion, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return false, nil
+	}
+	capabilityCode := matches[7]
+	if (manifestVersion == 1 && capabilityCode != "di") || (manifestVersion == 2 && capabilityCode != "dim") {
+		return false, nil
+	}
+	hermesVersion, hermesOK := parseFCE2BUnderscoreSemver(matches[2])
+	opencodeVersion, opencodeOK := parseFCE2BUnderscoreSemver(matches[3])
+	piVersion, piOK := parseFCE2BUnderscoreSemver(matches[4])
+	dwsVersion, dwsOK := parseFCE2BUnderscoreSemver(matches[5])
+	if !hermesOK || !opencodeOK || !piOK || !dwsOK || !isCanonicalNumericIdentifier(matches[6]) {
 		return false, nil
 	}
 	template.Name = alias
 	template.Template = alias
-	template.ManifestVersion = fcE2BTemplateManifestVersion
+	template.ManifestVersion = manifestVersion
 	template.Providers = []string{"hermes", "opencode", "pi"}
 	template.Capabilities = []string{"dws", "dws.im_event"}
+	if manifestVersion >= 2 {
+		template.Capabilities = append(template.Capabilities, "mcp")
+	}
 	template.ComponentVersions = map[string]string{
 		"hermes":   hermesVersion,
 		"opencode": "v" + opencodeVersion,
 		"pi":       piVersion,
-		"dws":      "v" + dwsVersion + "-beta." + matches[5],
+		"dws":      "v" + dwsVersion + "-beta." + matches[6],
 	}
 	template.RunnerProtocol = string(fcE2BRunnerLaunchRootLog)
 	return true, nil
