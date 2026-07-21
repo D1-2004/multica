@@ -450,6 +450,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		WorkspaceID:    inst.WorkspaceID,
 		Sender:         identity.UserID,
 		InstallationID: inst.ID,
+		Installation:   inst,
 		Message:        msg,
 		ClaimToken:     claimToken,
 		PreparedTask:   preparedTask,

@@ -35,15 +35,25 @@ type botCallbackData struct {
 	Text                      struct {
 		Content string `json:"content"`
 	} `json:"text"`
-	// Content carries the non-plain-text payloads. Only richText is
-	// flattened today (see flattenRichText); other media remain a
-	// follow-up.
+	// Content carries the non-plain-text payloads.
 	Content richTextContent `json:"content"`
 }
 
 // richTextContent is the content envelope of a richText callback.
 type richTextContent struct {
-	RichText []richTextNode `json:"richText"`
+	RichText     []richTextNode    `json:"richText"`
+	CardContent  []cardContentNode `json:"cardContent"`
+	DownloadCode string            `json:"downloadCode"`
+}
+
+// cardContentNode is one node of the interactiveCard callback's ordered
+// RICHTEXT tree. The live 2950 callback exposes readable runs as TEXT values
+// and destinations as LINK values; it does not expose the rendered link label
+// or an image resource.
+type cardContentNode struct {
+	ElementType string            `json:"elementType"`
+	Value       string            `json:"value"`
+	Children    []cardContentNode `json:"children"`
 }
 
 // richTextNode is one node of the richText list: a text run, or a media
@@ -105,6 +115,28 @@ func flattenRichText(data botCallbackData) string {
 	return strings.TrimSpace(b.String())
 }
 
+// flattenInteractiveCard preserves the callback tree's display order while
+// retaining only the two value-bearing node kinds observed in a 2950 card.
+func flattenInteractiveCard(data botCallbackData) string {
+	parts := make([]string, 0)
+	var visit func(cardContentNode)
+	visit = func(node cardContentNode) {
+		switch node.ElementType {
+		case "TEXT", "LINK":
+			if value := strings.TrimSpace(node.Value); value != "" {
+				parts = append(parts, value)
+			}
+		}
+		for _, child := range node.Children {
+			visit(child)
+		}
+	}
+	for _, root := range data.Content.CardContent {
+		visit(root)
+	}
+	return strings.Join(parts, "\n")
+}
+
 // dingtalkRawEvent carries the DingTalk-specific fields the cross-platform
 // envelope does not — read back only inside the dingtalk resolvers/replier
 // (the core never reads Raw).
@@ -128,6 +160,10 @@ type dingtalkRawEvent struct {
 	SenderNick                string `json:"sender_nick,omitempty"`
 	ConversationTitle         string `json:"conversation_title,omitempty"`
 	Msgtype                   string `json:"msgtype,omitempty"`
+	// MessageDownloadCode is a short-lived credential used only by the
+	// DingTalk attachment importer. It must never be logged or persisted as an
+	// attachment URL.
+	MessageDownloadCode string `json:"message_download_code,omitempty"`
 	// CreateAt is the callback's epoch-millisecond send time; the typing
 	// indicator uses it to skip stale redeliveries after a reconnect.
 	CreateAt int64 `json:"create_at,omitempty"`
@@ -174,6 +210,7 @@ func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, insta
 		SenderNick:                data.SenderNick,
 		ConversationTitle:         data.ConversationTitle,
 		Msgtype:                   data.Msgtype,
+		MessageDownloadCode:       data.Content.DownloadCode,
 		CreateAt:                  data.CreateAt,
 		StreamSource:              rawStreamSource,
 	})
@@ -190,10 +227,16 @@ func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, insta
 		if text == "" {
 			msgType = channel.MsgTypeUnknown
 		}
+	case data.Msgtype == "interactiveCard":
+		text = flattenInteractiveCard(data)
+		if text == "" {
+			msgType = channel.MsgTypeUnknown
+		}
+	case data.Msgtype == "picture":
+		text = "[图片]"
+		msgType = channel.MsgTypeImage
 	default:
-		// picture / audio / video / file — media ingestion is a follow-up;
-		// the core treats unknown as non-actionable but the message still
-		// lands in the session for context.
+		// audio / video / file callbacks are not ingested as attachments.
 		msgType = channel.MsgTypeUnknown
 	}
 	// Leading @-mentions hide a slash command from the first-token parsers

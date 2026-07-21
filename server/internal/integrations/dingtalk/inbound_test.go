@@ -68,14 +68,43 @@ func TestInboundFromBotCallback(t *testing.T) {
 			},
 		},
 		{
-			name: "non-text msgtype maps to unknown",
+			name: "picture maps to image and retains its download credential",
 			data: botCallbackData{
 				ConversationID: "cid", MsgID: "m3", SenderStaffID: "s", ConversationType: "1", Msgtype: "picture",
+				Content: richTextContent{DownloadCode: "short-lived-code"},
 			},
 			ok: true,
 			check: func(t *testing.T, msg channel.InboundMessage) {
-				if msg.Type != channel.MsgTypeUnknown {
-					t.Errorf("Type = %v, want unknown", msg.Type)
+				if msg.Type != channel.MsgTypeImage || msg.Text != "[图片]" {
+					t.Errorf("Type/Text = %v/%q, want image placeholder", msg.Type, msg.Text)
+				}
+				raw, err := decodeDingTalkRaw(msg)
+				if err != nil {
+					t.Fatalf("decode raw: %v", err)
+				}
+				if raw.MessageDownloadCode != "short-lived-code" {
+					t.Error("picture download credential was not retained")
+				}
+			},
+		},
+		{
+			name: "interactiveCard preserves ordered text and links",
+			data: botCallbackData{
+				ConversationID: "cid", MsgID: "m-card", SenderStaffID: "s", ConversationType: "1", Msgtype: "interactiveCard",
+				Content: richTextContent{CardContent: []cardContentNode{{
+					ElementType: "RICHTEXT",
+					Children: []cardContentNode{
+						{ElementType: "TEXT", Value: "Hunt Studio 日报"},
+						{ElementType: "LINK", Value: "https://example.com/article"},
+						{ElementType: "TEXT", Value: "文章说明"},
+					},
+				}}},
+			},
+			ok: true,
+			check: func(t *testing.T, msg channel.InboundMessage) {
+				want := "Hunt Studio 日报\nhttps://example.com/article\n文章说明"
+				if msg.Type != channel.MsgTypeText || msg.Text != want {
+					t.Errorf("Type/Text = %v/%q, want text/%q", msg.Type, msg.Text, want)
 				}
 			},
 		},
@@ -181,6 +210,24 @@ func TestInboundFromBotCallback(t *testing.T) {
 	}
 }
 
+func TestPictureDownloadCodeFromCallbackJSON(t *testing.T) {
+	var data botCallbackData
+	if err := json.Unmarshal([]byte(`{"conversationId":"cid","msgId":"m-picture","senderStaffId":"staff","conversationType":"1","msgtype":"picture","content":{"downloadCode":"live-download-code"}}`), &data); err != nil {
+		t.Fatalf("unmarshal callback: %v", err)
+	}
+	msg, ok := inboundFromBotCallback(data, "client-id")
+	if !ok {
+		t.Fatal("picture callback was rejected")
+	}
+	raw, err := decodeDingTalkRaw(msg)
+	if err != nil {
+		t.Fatalf("decode raw: %v", err)
+	}
+	if raw.MessageDownloadCode != "live-download-code" {
+		t.Fatalf("MessageDownloadCode = %q", raw.MessageDownloadCode)
+	}
+}
+
 func TestDingTalkSessionRouting(t *testing.T) {
 	dm, _ := inboundFromBotCallback(botCallbackData{
 		ConversationID: "cidDM==", MsgID: "m1", SenderStaffID: "staff1", ConversationType: "1", Msgtype: "text",
@@ -279,14 +326,14 @@ func TestDingtalkMessageBodyAndTitle(t *testing.T) {
 		t.Errorf("dm title = %q, want empty", got)
 	}
 
-	// Empty text (pure-media) must NOT gain a dangling speaker label —
-	// the daemon's prompt builder skips empty contents.
-	empty, _ := inboundFromBotCallback(botCallbackData{
+	// Pure picture messages carry a visible marker so the daemon keeps the
+	// task and presents the linked attachment to the Agent.
+	picture, _ := inboundFromBotCallback(botCallbackData{
 		ConversationID: "cidG==", MsgID: "m4", SenderStaffID: "s1",
 		ConversationType: "2", Msgtype: "picture", SenderNick: "张三", ConversationTitle: "项目群",
 	}, "c")
-	if got := dingtalkMessageBody(empty); got != "" {
-		t.Errorf("empty body = %q, want empty", got)
+	if got := dingtalkMessageBody(picture); got != "[张三 @ 项目群]: [图片]" {
+		t.Errorf("picture body = %q", got)
 	}
 }
 

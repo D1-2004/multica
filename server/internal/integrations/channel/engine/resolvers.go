@@ -123,6 +123,7 @@ type AppendParams struct {
 	WorkspaceID    pgtype.UUID
 	Sender         pgtype.UUID
 	InstallationID pgtype.UUID
+	Installation   ResolvedInstallation
 	Message        channel.InboundMessage
 	ClaimToken     pgtype.UUID
 	// PreparedTask is present for channels whose inbound run must be made

@@ -38,7 +38,7 @@ const originDingTalkChat = "dingtalk_chat"
 // notices; typing drives the "processing" emotion on ingested messages;
 // auto resolves unbound org members through the corp directory. Each is
 // optional — pass nil to disable.
-func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing engine.TypingNotifier, auto *AutoBinder, employees RobotEmployeeResolver) engine.ResolverSet {
+func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing engine.TypingNotifier, auto *AutoBinder, employees RobotEmployeeResolver, attachments *service.ExternalAttachmentService, decrypt Decrypter, messenger *RobotMessenger) engine.ResolverSet {
 	return engine.ResolverSet{
 		Installation: &installationResolver{q: q},
 		Identity:     &identityResolver{q: q, auto: auto},
@@ -48,7 +48,7 @@ func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.O
 			Group:    "DingTalk group chat",
 			Direct:   "DingTalk direct message",
 			Fallback: "DingTalk chat",
-		})},
+		}), attachments: &inboundAttachmentImporter{service: attachments, decrypt: decrypt, messenger: messenger}},
 		Audit:                  &auditor{q: q},
 		Replier:                replier,
 		Typing:                 typing,
@@ -444,7 +444,10 @@ func (r *deduper) Release(ctx context.Context, installationID pgtype.UUID, messa
 
 // ---- session bind / append ----
 
-type sessionBinder struct{ session *engine.ChatSession }
+type sessionBinder struct {
+	session     *engine.ChatSession
+	attachments *inboundAttachmentImporter
+}
 
 func (r *sessionBinder) EnsureSession(ctx context.Context, p engine.EnsureSessionParams) (pgtype.UUID, error) {
 	bindingKey, config := dingtalkSessionRouting(p.Message)
@@ -464,7 +467,15 @@ func (r *sessionBinder) EnsureSession(ctx context.Context, p engine.EnsureSessio
 }
 
 func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams) (engine.AppendResult, error) {
-	return r.session.AppendUserMessage(ctx, engine.AppendInput{
+	imported, err := r.attachments.Import(ctx, p)
+	if err != nil {
+		return engine.AppendResult{}, err
+	}
+	attachmentIDs := make([]pgtype.UUID, 0, len(imported))
+	for _, attachment := range imported {
+		attachmentIDs = append(attachmentIDs, attachment.ID)
+	}
+	result, err := r.session.AppendUserMessage(ctx, engine.AppendInput{
 		SessionID:      p.SessionID,
 		WorkspaceID:    p.WorkspaceID,
 		Sender:         p.Sender,
@@ -472,12 +483,18 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 		Body:           dingtalkMessageBody(p.Message),
 		// CommandText is the user's OWN typed text: the /issue parser must
 		// see the bare message, not the speaker-labelled body.
-		CommandText:  p.Message.Text,
-		MessageID:    p.Message.MessageID,
-		ThreadID:     p.Message.Source.ThreadID,
-		ClaimToken:   p.ClaimToken,
-		PreparedTask: p.PreparedTask,
+		CommandText:   p.Message.Text,
+		MessageID:     p.Message.MessageID,
+		ThreadID:      p.Message.Source.ThreadID,
+		ClaimToken:    p.ClaimToken,
+		PreparedTask:  p.PreparedTask,
+		AttachmentIDs: attachmentIDs,
 	})
+	if err != nil {
+		r.attachments.DeleteImported(context.WithoutCancel(ctx), imported)
+		return engine.AppendResult{}, err
+	}
+	return result, nil
 }
 
 // dingtalkSessionTitle derives the chat_session title override: the group's
