@@ -109,7 +109,9 @@ type ReplyCtx struct {
 // adapter translates its platform's raw payload into this struct; the
 // core's router, dedup, identity check, and persistence read ONLY these
 // fields. Per the boundary rule (MUL-3515 §2) the struct holds only
-// cross-platform-true fields; everything platform-specific lives in Raw.
+// cross-platform-true fields. Platform-specific routing credentials live in
+// Raw, while a separately sanitized source snapshot may be persisted for the
+// agent in SourcePayload.
 type InboundMessage struct {
 	// EventID is the platform's delivery/event identifier and MessageID
 	// is the platform's message identifier. Together they back the
@@ -156,6 +158,14 @@ type InboundMessage struct {
 	// affordance). The adapter normalizes its platform-specific trigger
 	// into this boolean; the core only reads the flag.
 	ForceFresh bool
+
+	// SourcePayload is a credential-free snapshot of the original platform
+	// callback that is safe to persist with the user message and expose to the
+	// agent. The core treats the JSON as opaque: each adapter owns its schema
+	// and MUST remove reply webhooks, download codes, tokens, secrets, signed
+	// URLs, and equivalent credentials before setting it. Nil means the adapter
+	// did not provide a source snapshot.
+	SourcePayload json.RawMessage
 
 	// Raw is the untouched platform payload. Adapters stash platform-
 	// specific fields here (Lark raw msg_type / parent_id / root_id /

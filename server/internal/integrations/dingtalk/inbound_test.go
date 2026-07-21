@@ -68,6 +68,18 @@ func TestInboundFromBotCallback(t *testing.T) {
 			},
 		},
 		{
+			name: "empty text callback stays actionable",
+			data: botCallbackData{
+				ConversationID: "cid", MsgID: "m-empty", SenderStaffID: "s", ConversationType: "1", Msgtype: "text",
+			},
+			ok: true,
+			check: func(t *testing.T, msg channel.InboundMessage) {
+				if msg.Type != channel.MsgTypeText || msg.Text != "[文本消息]" {
+					t.Errorf("Type/Text = %v/%q", msg.Type, msg.Text)
+				}
+			},
+		},
+		{
 			name: "picture maps to image and retains its download credential",
 			data: botCallbackData{
 				ConversationID: "cid", MsgID: "m3", SenderStaffID: "s", ConversationType: "1", Msgtype: "picture",
@@ -84,6 +96,26 @@ func TestInboundFromBotCallback(t *testing.T) {
 				}
 				if raw.MessageDownloadCode != "short-lived-code" {
 					t.Error("picture download credential was not retained")
+				}
+			},
+		},
+		{
+			name: "file maps to attachment and retains its filename and download credential",
+			data: botCallbackData{
+				ConversationID: "cid", MsgID: "m-file", SenderStaffID: "s", ConversationType: "1", Msgtype: "file",
+				Content: richTextContent{FileName: "invoice.pdf", DownloadCode: "file-download-code"},
+			},
+			ok: true,
+			check: func(t *testing.T, msg channel.InboundMessage) {
+				if msg.Type != channel.MsgTypeFile || msg.Text != "[文件] invoice.pdf" {
+					t.Errorf("Type/Text = %v/%q, want file placeholder", msg.Type, msg.Text)
+				}
+				raw, err := decodeDingTalkRaw(msg)
+				if err != nil {
+					t.Fatalf("decode raw: %v", err)
+				}
+				if raw.MessageDownloadCode != "file-download-code" || raw.MessageFileName != "invoice.pdf" {
+					t.Errorf("file metadata = %#v", raw)
 				}
 			},
 		},
@@ -148,7 +180,7 @@ func TestInboundFromBotCallback(t *testing.T) {
 			},
 		},
 		{
-			name: "richText with no extractable text maps to unknown",
+			name: "richText with no extractable text stays actionable",
 			data: botCallbackData{
 				ConversationID: "cid", MsgID: "m6", SenderStaffID: "s", ConversationType: "1", Msgtype: "richText",
 			},
@@ -157,8 +189,20 @@ func TestInboundFromBotCallback(t *testing.T) {
 				if msg.Type != channel.MsgTypeUnknown {
 					t.Errorf("Type = %v, want unknown", msg.Type)
 				}
-				if msg.Text != "" {
-					t.Errorf("Text = %q, want empty", msg.Text)
+				if msg.Text != "[富文本消息]" {
+					t.Errorf("Text = %q, want an actionable placeholder", msg.Text)
+				}
+			},
+		},
+		{
+			name: "future message type stays actionable",
+			data: botCallbackData{
+				ConversationID: "cid", MsgID: "m-future", SenderStaffID: "s", ConversationType: "1", Msgtype: "newNativeType",
+			},
+			ok: true,
+			check: func(t *testing.T, msg channel.InboundMessage) {
+				if msg.Type != channel.MsgTypeUnknown || msg.Text != "[消息类型: newNativeType]" {
+					t.Errorf("Type/Text = %v/%q", msg.Type, msg.Text)
 				}
 			},
 		},
@@ -225,6 +269,27 @@ func TestPictureDownloadCodeFromCallbackJSON(t *testing.T) {
 	}
 	if raw.MessageDownloadCode != "live-download-code" {
 		t.Fatalf("MessageDownloadCode = %q", raw.MessageDownloadCode)
+	}
+}
+
+func TestFileMetadataFromCallbackJSON(t *testing.T) {
+	var data botCallbackData
+	if err := json.Unmarshal([]byte(`{"conversationId":"cid","msgId":"m-file","senderStaffId":"staff","conversationType":"1","msgtype":"file","content":{"spaceId":"223573","fileName":"invoice.pdf","downloadCode":"live-file-download-code","fileId":"117848"}}`), &data); err != nil {
+		t.Fatalf("unmarshal callback: %v", err)
+	}
+	msg, ok := inboundFromBotCallback(data, "client-id")
+	if !ok {
+		t.Fatal("file callback was rejected")
+	}
+	if msg.Type != channel.MsgTypeFile || msg.Text != "[文件] invoice.pdf" {
+		t.Fatalf("Type/Text = %v/%q", msg.Type, msg.Text)
+	}
+	raw, err := decodeDingTalkRaw(msg)
+	if err != nil {
+		t.Fatalf("decode raw: %v", err)
+	}
+	if raw.MessageDownloadCode != "live-file-download-code" || raw.MessageFileName != "invoice.pdf" {
+		t.Fatalf("file metadata = %#v", raw)
 	}
 }
 

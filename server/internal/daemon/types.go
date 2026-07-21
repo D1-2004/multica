@@ -90,7 +90,7 @@ type Task struct {
 	NewCommentCount          int                    `json:"new_comment_count,omitempty"`           // issue-wide comments since this agent's last run (excludes its own and the injected trigger); 0/omitted for old daemons or cold start
 	NewCommentsSince         string                 `json:"new_comments_since,omitempty"`          // RFC3339 anchor (last run's started_at) the count is measured from; empty on cold start
 	ChatSessionID            string                 `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
-	ChatChannelType          string                 `json:"chat_channel_type,omitempty"`           // "slack" when the chat session is backed by an IM channel; empty for a web-only chat. Drives the channel-awareness block in the prompt
+	ChatChannelType          string                 `json:"chat_channel_type,omitempty"`           // backing IM channel type (for example "slack" or "dingtalk"); empty for web-only chat
 	ChatInThread             bool                   `json:"chat_in_thread,omitempty"`              // true when the latest @mention was a thread reply; selects which read command the prompt tells the agent to start with
 	ChatHistory              string                 `json:"chat_history,omitempty"`                // bounded prior chat transcript injected by the server for FC/E2B cold starts
 	ChatMessage              string                 `json:"chat_message,omitempty"`                // user message content for chat tasks
@@ -105,6 +105,9 @@ type Task struct {
 	QuickCreatePrompt        string                 `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
 	QuickCreateAttachmentIDs []string               `json:"quick_create_attachment_ids,omitempty"` // attachments uploaded in the quick-create prompt and bound by issue create
 	HandoffNote              string                 `json:"handoff_note,omitempty"`                // assignment handoff instruction; rendered into the opening prompt + issue_context.md
+
+	// Sanitized original channel callbacks for the current input batch.
+	ChatMessageSourcePayloads []ChatMessageSourcePayload `json:"chat_message_source_payloads,omitempty"`
 
 	SquadID               string `json:"squad_id,omitempty"`                // when the picker was a squad, the squad's UUID; Agent is still the resolved leader
 	SquadName             string `json:"squad_name,omitempty"`              // display name for the picker squad, used in prompt text
@@ -156,6 +159,13 @@ type ChatAttachmentMeta struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type,omitempty"`
+}
+
+// ChatMessageSourcePayload mirrors handler.ChatMessageSourcePayload. Payload
+// contains the credential-free original callback structure for one message.
+type ChatMessageSourcePayload struct {
+	MessageID string          `json:"message_id"`
+	Payload   json.RawMessage `json:"payload"`
 }
 
 // CoalescedCommentData mirrors the server-side struct (handler.CoalescedCommentData):

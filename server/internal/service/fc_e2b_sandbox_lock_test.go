@@ -294,7 +294,21 @@ func TestUpdateRuntimeTemplateWaitsForLaunchAndInvalidatesSessions(t *testing.T)
 	done := make(chan updateOutcome, 1)
 	go func() {
 		result, err := launcher.UpdateRuntimeTemplate(context.Background(), runtimeID, FCE2BTemplate{
-			ID: "tpl_new_id", Template: "tpl_new", Name: "New Template", Status: "READY",
+			ID:              "tpl_new_id",
+			BuildID:         "build_new",
+			Template:        "tpl_new",
+			Name:            "New Template",
+			Status:          "READY",
+			ManifestVersion: 1,
+			Providers:       []string{"hermes", "opencode", "pi"},
+			Capabilities:    []string{"dws"},
+			ComponentVersions: map[string]string{
+				"hermes":   "0.19.0",
+				"opencode": "v1.18.4",
+				"pi":       "0.80.10",
+				"dws":      "v1.0.53-beta.4",
+			},
+			RunnerProtocol: "root-log-v1",
 		})
 		done <- updateOutcome{result: result, err: err}
 	}()

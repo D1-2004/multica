@@ -475,6 +475,10 @@ func (w *StreamInboxWorker) ProcessNext(ctx context.Context) (bool, error) {
 	if err := json.Unmarshal(plain, &data); err != nil {
 		return true, w.complete(ctx, row, streamInboxStatusDiscarded, "payload_invalid", "callback payload invalid", traceHash)
 	}
+	sourcePayload, err := sanitizeDingTalkAgentSourcePayload(plain)
+	if err != nil {
+		return true, w.complete(ctx, row, streamInboxStatusDiscarded, "payload_invalid", "callback payload invalid", traceHash)
+	}
 	var streamSource protocol.DingTalkStreamSource
 	if row.ReceiverHostname.Valid && strings.TrimSpace(row.ReceiverHostname.String) != "" {
 		streamSource = protocol.DingTalkStreamSource{
@@ -483,7 +487,7 @@ func (w *StreamInboxWorker) ProcessNext(ctx context.Context) (bool, error) {
 			ConnectionID: row.ConnectionID,
 		}
 	}
-	msg, ok := inboundFromBotCallbackForInstallation(data, row.ClientID, util.UUIDToString(row.InstallationID), streamSource)
+	msg, ok := inboundFromBotCallbackForInstallationWithSource(data, row.ClientID, util.UUIDToString(row.InstallationID), streamSource, sourcePayload)
 	if !ok {
 		return true, w.complete(ctx, row, streamInboxStatusDiscarded, "payload_unusable", "callback has no message id", traceHash)
 	}

@@ -247,13 +247,13 @@ func (m *RobotMessenger) post(ctx context.Context, path, token string, body map[
 	return nil
 }
 
-// resolveMessageFileURL exchanges a picture callback's short-lived download
-// code for the HTTP(S) URL consumed immediately by the attachment importer.
+// resolveMessageFileURL exchanges an attachment callback's short-lived
+// download code for the HTTP(S) URL consumed immediately by the importer.
 // Neither value is included in returned errors.
 func (m *RobotMessenger) resolveMessageFileURL(ctx context.Context, creds channelCredentials, downloadCode string) (string, error) {
 	downloadCode = strings.TrimSpace(downloadCode)
 	if downloadCode == "" {
-		return "", errors.New("dingtalk robot: picture download code is empty")
+		return "", errors.New("dingtalk robot: message file download code is empty")
 	}
 	token, err := m.accessToken(ctx, creds)
 	if err != nil {

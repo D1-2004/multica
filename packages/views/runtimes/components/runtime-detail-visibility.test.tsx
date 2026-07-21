@@ -30,10 +30,13 @@ const mockQueryData = vi.hoisted(() => ({
 const mockTemplateQuery = vi.hoisted(() => ({
   data: [] as Array<{
     id?: string;
+    build_id?: string;
     name?: string;
     template: string;
     status?: string;
     updated_at?: string;
+    providers: string[];
+    capabilities: string[];
   }>,
   isLoading: false,
   isError: false,
@@ -115,6 +118,7 @@ vi.mock("@multica/core/runtimes", () => ({
       kind: "fc-e2b",
       template: stringValue("template"),
       templateId: stringValue("template_id"),
+      templateBuildId: stringValue("template_build_id"),
       templateName: stringValue("template_name"),
       templateStatus: stringValue("template_status"),
     };
@@ -358,32 +362,47 @@ describe("RuntimeDetail visibility section", () => {
     mockTemplateQuery.data = [
       {
         id: "tpl-current",
+        build_id: "build-current",
         name: "Team v1",
         template: "multica-fc-team-v1",
         status: "ready",
+        providers: ["hermes"],
+        capabilities: [],
       },
       {
         id: "tpl-new",
+        build_id: "build-new",
         name: "Team v2",
         template: "multica-fc-team-v2",
         status: "ready",
+        providers: ["hermes", "pi"],
+        capabilities: ["dws"],
       },
       {
         id: "tpl-rebuilt",
+        build_id: "build-rebuilt",
         name: "Team v1 rebuilt",
         template: "multica-fc-team-v1",
         status: "ready",
+        providers: ["hermes"],
+        capabilities: [],
       },
       {
         id: "tpl-building",
+        build_id: "build-building",
         name: "Team v3 building",
         template: "multica-fc-team-v3",
         status: "building",
+        providers: ["hermes"],
+        capabilities: [],
       },
       {
+        build_id: "build-no-id",
         name: "Template without ID",
         template: "multica-fc-team-no-id",
         status: "ready",
+        providers: ["hermes"],
+        capabilities: [],
       },
     ];
 
@@ -396,6 +415,7 @@ describe("RuntimeDetail visibility section", () => {
           kind: "fc-e2b",
           template: "multica-fc-team-v1",
           template_id: "tpl-current",
+          template_build_id: "build-current",
           template_name: "Team v1",
           template_status: "ready",
         },
@@ -493,14 +513,18 @@ describe("RuntimeDetail visibility section", () => {
     mockTemplateQuery.data = [
       {
         id: "tpl-new",
+        build_id: "build-new",
         name: "Hermes Team v2",
         template: "multica-fc-team-v2",
         status: "ready",
+        providers: ["hermes"],
+        capabilities: [],
       },
     ];
     renderDetail(
       makeRuntime({
         runtime_mode: "cloud",
+        provider: "hermes",
         metadata: { kind: "fc-e2b", template_id: "tpl-current" },
       }),
     );
@@ -528,6 +552,7 @@ describe("RuntimeDetail visibility section", () => {
     renderDetail(
       makeRuntime({
         runtime_mode: "cloud",
+        provider: "hermes",
         metadata: { kind: "fc-e2b", template_id: "tpl-current" },
       }),
     );
@@ -548,15 +573,19 @@ describe("RuntimeDetail visibility section", () => {
     mockTemplateQuery.data = [
       {
         id: "tpl-new",
+        build_id: "build-new",
         name: "Team v2",
         template: "multica-fc-team-v2",
         status: "ready",
+        providers: ["hermes"],
+        capabilities: [],
       },
     ];
     mockUpdateFCE2BTemplate.mockRejectedValueOnce(new Error("cutover failed"));
     renderDetail(
       makeRuntime({
         runtime_mode: "cloud",
+        provider: "hermes",
         metadata: { kind: "fc-e2b", template_id: "tpl-current" },
       }),
     );

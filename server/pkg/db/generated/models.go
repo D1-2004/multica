@@ -397,6 +397,7 @@ type ChatMessage struct {
 	ElapsedMs               pgtype.Int8        `json:"elapsed_ms"`
 	MessageKind             string             `json:"message_kind"`
 	ClientReceiptRecordedAt pgtype.Timestamptz `json:"client_receipt_recorded_at"`
+	SourcePayload           []byte             `json:"source_payload"`
 }
 
 type ChatPinnedAgent struct {

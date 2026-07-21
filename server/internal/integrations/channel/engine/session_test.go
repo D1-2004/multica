@@ -42,6 +42,7 @@ type fakeSessionQueries struct {
 	createdSessions int
 	messages        []string
 	messageTaskIDs  []pgtype.UUID
+	messageSources  [][]byte
 	touched         int
 	replyTargets    int
 	lastConfig      []byte // config of the most recent CreateChannelChatSessionBinding
@@ -111,6 +112,7 @@ func (f *fakeSessionQueries) UpsertDeferredChannelChatTask(_ context.Context, ar
 func (f *fakeSessionQueries) CreateChatMessage(_ context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error) {
 	f.messages = append(f.messages, arg.Content)
 	f.messageTaskIDs = append(f.messageTaskIDs, arg.TaskID)
+	f.messageSources = append(f.messageSources, append([]byte(nil), arg.SourcePayload...))
 	return db.ChatMessage{ID: uid(90), Content: arg.Content}, nil
 }
 
@@ -282,6 +284,7 @@ func TestAppendUserMessage_PlainText(t *testing.T) {
 	s := newTestSession(f)
 	res, err := s.AppendUserMessage(context.Background(), AppendInput{
 		SessionID: uid(1), Sender: uid(7), Body: "hello there", MessageID: "m1",
+		SourcePayload: []byte(`{"schema_version":1,"platform":"dingtalk","payload":{"msgId":"m1"}}`),
 	})
 	if err != nil {
 		t.Fatalf("AppendUserMessage: %v", err)
@@ -291,6 +294,9 @@ func TestAppendUserMessage_PlainText(t *testing.T) {
 	}
 	if len(f.messages) != 1 || f.messages[0] != "hello there" {
 		t.Errorf("messages = %v", f.messages)
+	}
+	if len(f.messageSources) != 1 || string(f.messageSources[0]) != `{"schema_version":1,"platform":"dingtalk","payload":{"msgId":"m1"}}` {
+		t.Errorf("source payloads = %s", f.messageSources)
 	}
 	if f.touched != 1 || f.replyTargets != 1 {
 		t.Errorf("touched=%d replyTargets=%d, want 1/1", f.touched, f.replyTargets)

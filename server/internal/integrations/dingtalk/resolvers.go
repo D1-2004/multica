@@ -489,6 +489,7 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 		ClaimToken:    p.ClaimToken,
 		PreparedTask:  p.PreparedTask,
 		AttachmentIDs: attachmentIDs,
+		SourcePayload: p.Message.SourcePayload,
 	})
 	if err != nil {
 		r.attachments.DeleteImported(context.WithoutCancel(ctx), imported)

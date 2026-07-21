@@ -50,7 +50,7 @@ func TestDispatchRuntimePromptOnlyEntersPrivateClaimResponse(t *testing.T) {
 	const runtimePrompt = "private runtime instruction"
 	const workflowPrompt = "private outbound workflow instruction"
 	const contextToken = "private context token"
-	task := db.AgentTaskQueue{Context: []byte(`{"agent_identity_context_token":"` + contextToken + `","dispatch_runtime_prompt":"` + runtimePrompt + `","dispatch_workflow_prompt":"` + workflowPrompt + `","dispatch_surface":{"type":"issue"},"dispatch_outbound":{"mode":"dws","replyTo":"latest_message"}}`)}
+	task := taskResponseFixture([]byte(`{"agent_identity_context_token":"` + contextToken + `","dispatch_runtime_prompt":"` + runtimePrompt + `","dispatch_workflow_prompt":"` + workflowPrompt + `","dispatch_surface":{"type":"issue"},"dispatch_outbound":{"mode":"dws","replyTo":"latest_message"}}`))
 	response := taskToResponse(task, "")
 	if response.DispatchRuntimePrompt != "" {
 		t.Fatalf("ordinary task response exposed runtime prompt: %q", response.DispatchRuntimePrompt)
@@ -69,17 +69,17 @@ func TestDispatchRuntimePromptOnlyEntersPrivateClaimResponse(t *testing.T) {
 		t.Fatalf("ordinary task response leaked private dispatch context: %s", ordinary)
 	}
 
-	populatePrivateTaskClaimContext(&response, task.Context)
-	if response.DispatchRuntimePrompt != runtimePrompt {
-		t.Fatalf("claim runtime prompt = %q, want %q", response.DispatchRuntimePrompt, runtimePrompt)
+	claimResponse := taskToClaimResponse(task, "", db.AgentRuntime{})
+	if claimResponse.DispatchRuntimePrompt != runtimePrompt {
+		t.Fatalf("claim runtime prompt = %q, want %q", claimResponse.DispatchRuntimePrompt, runtimePrompt)
 	}
-	if response.AgentIdentityContextToken != contextToken {
-		t.Fatalf("claim context token = %q, want %q", response.AgentIdentityContextToken, contextToken)
+	if claimResponse.AgentIdentityContextToken != contextToken {
+		t.Fatalf("claim context token = %q, want %q", claimResponse.AgentIdentityContextToken, contextToken)
 	}
-	if response.DispatchWorkflowPrompt != workflowPrompt || response.DispatchSurfaceType != "issue" || response.DispatchOutboundMode != "dws" {
-		t.Fatalf("claim workflow policy = prompt %q surface %q mode %q", response.DispatchWorkflowPrompt, response.DispatchSurfaceType, response.DispatchOutboundMode)
+	if claimResponse.DispatchWorkflowPrompt != workflowPrompt || claimResponse.DispatchSurfaceType != "issue" || claimResponse.DispatchOutboundMode != "dws" {
+		t.Fatalf("claim workflow policy = prompt %q surface %q mode %q", claimResponse.DispatchWorkflowPrompt, claimResponse.DispatchSurfaceType, claimResponse.DispatchOutboundMode)
 	}
-	encoded, err := json.Marshal(response)
+	encoded, err := json.Marshal(claimResponse)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,5 +90,24 @@ func TestDispatchRuntimePromptOnlyEntersPrivateClaimResponse(t *testing.T) {
 		if !strings.Contains(string(encoded), want) {
 			t.Fatalf("private claim response missing %s: %s", want, encoded)
 		}
+	}
+}
+
+func TestTaskToResponseOmitsServerPrivateAgentIdentityContextToken(t *testing.T) {
+	fixture := taskResponseFixture([]byte(`{"agent_identity_context_token":"context-secret"}`))
+	response := taskToResponse(fixture, "")
+	if response.AgentIdentityContextToken != "" {
+		t.Fatal("user-facing task response exposed server-private Agent Identity ContextToken")
+	}
+	claimResponse := taskToClaimResponse(fixture, "", db.AgentRuntime{})
+	if claimResponse.AgentIdentityContextToken != "context-secret" {
+		t.Fatal("daemon claim response did not receive server-private Agent Identity ContextToken")
+	}
+	fcClaimResponse := taskToClaimResponse(fixture, "", db.AgentRuntime{
+		RuntimeMode: "cloud",
+		Metadata:    []byte(`{"kind":"fc-e2b"}`),
+	})
+	if fcClaimResponse.AgentIdentityContextToken != "" {
+		t.Fatal("FC/E2B daemon claim response exposed already-redeemed ContextToken")
 	}
 }

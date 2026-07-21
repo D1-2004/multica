@@ -123,7 +123,7 @@ const baseAgent: Agent = {
   archived_by: null,
 };
 
-function makeRuntime(provider: string): AgentRuntime {
+function makeRuntime(provider: string, capabilities?: string[]): AgentRuntime {
   return {
     id: "runtime-1",
     workspace_id: "ws-1",
@@ -134,7 +134,7 @@ function makeRuntime(provider: string): AgentRuntime {
     launch_header: "",
     status: "online",
     device_info: "",
-    metadata: {},
+	metadata: capabilities ? { capabilities } : {},
     owner_id: null,
     visibility: "private",
     last_seen_at: null,
@@ -205,7 +205,7 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
   });
 
-  it("hides the MCP tab for providers whose backend does not read mcp_config", () => {
+	it("hides the MCP tab for providers whose backend does not read mcp_config", () => {
     // Saving an MCP config on e.g. Gemini would be a silent no-op at run
     // time — that's the bug this hiding logic is meant to prevent.
     renderPane([makeRuntime("gemini")]);
@@ -213,7 +213,18 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     expect(
       screen.queryByRole("tab", { name: /^MCP$/i }),
     ).not.toBeInTheDocument();
-  });
+	});
+
+	it("shows MCP only for Pi runtimes whose template declares the capability", () => {
+		const { unmount } = renderPane([makeRuntime("pi", ["pi", "mcp"])]);
+		openCapabilities();
+		expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
+		unmount();
+
+		renderPane([makeRuntime("pi", ["pi", "dws"])]);
+		openCapabilities();
+		expect(screen.queryByRole("tab", { name: /^MCP$/i })).not.toBeInTheDocument();
+	});
 
   it("keeps the MCP tab visible when the runtime row hasn't loaded yet", () => {
     // Empty runtimes[] mimics the brief window between the page mounting and
