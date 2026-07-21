@@ -44,6 +44,7 @@ type richTextContent struct {
 	RichText     []richTextNode    `json:"richText"`
 	CardContent  []cardContentNode `json:"cardContent"`
 	DownloadCode string            `json:"downloadCode"`
+	FileName     string            `json:"fileName"`
 }
 
 // cardContentNode is one node of the interactiveCard callback's ordered
@@ -164,6 +165,10 @@ type dingtalkRawEvent struct {
 	// DingTalk attachment importer. It must never be logged or persisted as an
 	// attachment URL.
 	MessageDownloadCode string `json:"message_download_code,omitempty"`
+	// MessageFileName is the original display name of a file callback. Unlike
+	// the short-lived download code, it is safe and necessary to preserve on the
+	// imported attachment.
+	MessageFileName string `json:"message_file_name,omitempty"`
 	// CreateAt is the callback's epoch-millisecond send time; the typing
 	// indicator uses it to skip stale redeliveries after a reconnect.
 	CreateAt int64 `json:"create_at,omitempty"`
@@ -211,6 +216,7 @@ func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, insta
 		ConversationTitle:         data.ConversationTitle,
 		Msgtype:                   data.Msgtype,
 		MessageDownloadCode:       data.Content.DownloadCode,
+		MessageFileName:           data.Content.FileName,
 		CreateAt:                  data.CreateAt,
 		StreamSource:              rawStreamSource,
 	})
@@ -235,8 +241,14 @@ func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, insta
 	case data.Msgtype == "picture":
 		text = "[图片]"
 		msgType = channel.MsgTypeImage
+	case data.Msgtype == "file":
+		text = "[文件]"
+		if name := strings.TrimSpace(data.Content.FileName); name != "" {
+			text += " " + name
+		}
+		msgType = channel.MsgTypeFile
 	default:
-		// audio / video / file callbacks are not ingested as attachments.
+		// Audio and video callbacks are not ingested as attachments.
 		msgType = channel.MsgTypeUnknown
 	}
 	// Leading @-mentions hide a slash command from the first-token parsers

@@ -88,6 +88,26 @@ func TestInboundFromBotCallback(t *testing.T) {
 			},
 		},
 		{
+			name: "file maps to attachment and retains its filename and download credential",
+			data: botCallbackData{
+				ConversationID: "cid", MsgID: "m-file", SenderStaffID: "s", ConversationType: "1", Msgtype: "file",
+				Content: richTextContent{FileName: "invoice.pdf", DownloadCode: "file-download-code"},
+			},
+			ok: true,
+			check: func(t *testing.T, msg channel.InboundMessage) {
+				if msg.Type != channel.MsgTypeFile || msg.Text != "[文件] invoice.pdf" {
+					t.Errorf("Type/Text = %v/%q, want file placeholder", msg.Type, msg.Text)
+				}
+				raw, err := decodeDingTalkRaw(msg)
+				if err != nil {
+					t.Fatalf("decode raw: %v", err)
+				}
+				if raw.MessageDownloadCode != "file-download-code" || raw.MessageFileName != "invoice.pdf" {
+					t.Errorf("file metadata = %#v", raw)
+				}
+			},
+		},
+		{
 			name: "interactiveCard preserves ordered text and links",
 			data: botCallbackData{
 				ConversationID: "cid", MsgID: "m-card", SenderStaffID: "s", ConversationType: "1", Msgtype: "interactiveCard",
@@ -225,6 +245,27 @@ func TestPictureDownloadCodeFromCallbackJSON(t *testing.T) {
 	}
 	if raw.MessageDownloadCode != "live-download-code" {
 		t.Fatalf("MessageDownloadCode = %q", raw.MessageDownloadCode)
+	}
+}
+
+func TestFileMetadataFromCallbackJSON(t *testing.T) {
+	var data botCallbackData
+	if err := json.Unmarshal([]byte(`{"conversationId":"cid","msgId":"m-file","senderStaffId":"staff","conversationType":"1","msgtype":"file","content":{"spaceId":"223573","fileName":"invoice.pdf","downloadCode":"live-file-download-code","fileId":"117848"}}`), &data); err != nil {
+		t.Fatalf("unmarshal callback: %v", err)
+	}
+	msg, ok := inboundFromBotCallback(data, "client-id")
+	if !ok {
+		t.Fatal("file callback was rejected")
+	}
+	if msg.Type != channel.MsgTypeFile || msg.Text != "[文件] invoice.pdf" {
+		t.Fatalf("Type/Text = %v/%q", msg.Type, msg.Text)
+	}
+	raw, err := decodeDingTalkRaw(msg)
+	if err != nil {
+		t.Fatalf("decode raw: %v", err)
+	}
+	if raw.MessageDownloadCode != "live-file-download-code" || raw.MessageFileName != "invoice.pdf" {
+		t.Fatalf("file metadata = %#v", raw)
 	}
 }
 
