@@ -241,7 +241,7 @@ func (m *RobotMessenger) post(ctx context.Context, path, token string, body map[
 }
 
 // resolveMessageFileURL exchanges a picture callback's short-lived download
-// code for the HTTPS URL consumed immediately by the attachment importer.
+// code for the HTTP(S) URL consumed immediately by the attachment importer.
 // Neither value is included in returned errors.
 func (m *RobotMessenger) resolveMessageFileURL(ctx context.Context, creds channelCredentials, downloadCode string) (string, error) {
 	downloadCode = strings.TrimSpace(downloadCode)
@@ -284,8 +284,8 @@ func (m *RobotMessenger) resolveMessageFileURL(ctx context.Context, creds channe
 		return "", errors.New("dingtalk robot: decode message file response")
 	}
 	resolved, err := url.Parse(strings.TrimSpace(result.DownloadURL))
-	if err != nil || resolved.Scheme != "https" || resolved.Host == "" {
-		return "", errors.New("dingtalk robot: message file response has no valid HTTPS URL")
+	if err != nil || (resolved.Scheme != "http" && resolved.Scheme != "https") || resolved.Host == "" {
+		return "", errors.New("dingtalk robot: message file response has no valid HTTP URL")
 	}
 	return resolved.String(), nil
 }

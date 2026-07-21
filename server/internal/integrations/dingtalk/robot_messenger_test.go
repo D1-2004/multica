@@ -118,7 +118,7 @@ func TestResolveMessageFileURL(t *testing.T) {
 	}
 }
 
-func TestResolveMessageFileURLRejectsNonHTTPS(t *testing.T) {
+func TestResolveMessageFileURLAcceptsDingTalkHTTPURL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/v1.0/oauth2/accessToken" {
@@ -129,7 +129,27 @@ func TestResolveMessageFileURLRejectsNonHTTPS(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	m := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
+	resolved, err := m.resolveMessageFileURL(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs"}, "download-code")
+	if err != nil {
+		t.Fatalf("resolveMessageFileURL: %v", err)
+	}
+	if resolved != "http://files.example.test/card.png" {
+		t.Fatalf("resolved URL = %q", resolved)
+	}
+}
+
+func TestResolveMessageFileURLRejectsNonHTTPURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1.0/oauth2/accessToken" {
+			_, _ = w.Write([]byte(`{"accessToken":"tok_test","expireIn":7200}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"downloadUrl":"file:///tmp/card.png"}`))
+	}))
+	t.Cleanup(srv.Close)
+	m := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
 	if _, err := m.resolveMessageFileURL(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs"}, "download-code"); err == nil {
-		t.Fatal("expected non-HTTPS download URL to be rejected")
+		t.Fatal("expected non-HTTP download URL to be rejected")
 	}
 }
