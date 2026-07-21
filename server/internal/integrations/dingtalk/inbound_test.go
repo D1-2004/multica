@@ -68,6 +68,18 @@ func TestInboundFromBotCallback(t *testing.T) {
 			},
 		},
 		{
+			name: "empty text callback stays actionable",
+			data: botCallbackData{
+				ConversationID: "cid", MsgID: "m-empty", SenderStaffID: "s", ConversationType: "1", Msgtype: "text",
+			},
+			ok: true,
+			check: func(t *testing.T, msg channel.InboundMessage) {
+				if msg.Type != channel.MsgTypeText || msg.Text != "[文本消息]" {
+					t.Errorf("Type/Text = %v/%q", msg.Type, msg.Text)
+				}
+			},
+		},
+		{
 			name: "picture maps to image and retains its download credential",
 			data: botCallbackData{
 				ConversationID: "cid", MsgID: "m3", SenderStaffID: "s", ConversationType: "1", Msgtype: "picture",
@@ -168,7 +180,7 @@ func TestInboundFromBotCallback(t *testing.T) {
 			},
 		},
 		{
-			name: "richText with no extractable text maps to unknown",
+			name: "richText with no extractable text stays actionable",
 			data: botCallbackData{
 				ConversationID: "cid", MsgID: "m6", SenderStaffID: "s", ConversationType: "1", Msgtype: "richText",
 			},
@@ -177,8 +189,20 @@ func TestInboundFromBotCallback(t *testing.T) {
 				if msg.Type != channel.MsgTypeUnknown {
 					t.Errorf("Type = %v, want unknown", msg.Type)
 				}
-				if msg.Text != "" {
-					t.Errorf("Text = %q, want empty", msg.Text)
+				if msg.Text != "[富文本消息]" {
+					t.Errorf("Text = %q, want an actionable placeholder", msg.Text)
+				}
+			},
+		},
+		{
+			name: "future message type stays actionable",
+			data: botCallbackData{
+				ConversationID: "cid", MsgID: "m-future", SenderStaffID: "s", ConversationType: "1", Msgtype: "newNativeType",
+			},
+			ok: true,
+			check: func(t *testing.T, msg channel.InboundMessage) {
+				if msg.Type != channel.MsgTypeUnknown || msg.Text != "[消息类型: newNativeType]" {
+					t.Errorf("Type/Text = %v/%q", msg.Type, msg.Text)
 				}
 			},
 		},

@@ -2168,6 +2168,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				if strings.TrimSpace(m.Content) != "" {
 					parts = append(parts, m.Content)
 				}
+				if len(m.SourcePayload) > 0 {
+					resp.ChatMessageSourcePayloads = append(resp.ChatMessageSourcePayloads, ChatMessageSourcePayload{
+						MessageID: uuidToString(m.ID),
+						Payload:   json.RawMessage(m.SourcePayload),
+					})
+				}
 				if atts, attErr := h.Queries.ListAttachmentsByChatMessage(r.Context(), db.ListAttachmentsByChatMessageParams{
 					ChatMessageID: m.ID,
 					WorkspaceID:   parseUUID(resp.WorkspaceID),

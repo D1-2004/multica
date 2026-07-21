@@ -32,9 +32,9 @@ func (q *Queries) ChatSessionHasUserMessage(ctx context.Context, chatSessionID p
 }
 
 const createChatMessage = `-- name: CreateChatMessage :one
-INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms, message_kind)
-VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::text, 'message'))
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at
+INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms, message_kind, source_payload)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::text, 'message'), $8)
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at, source_payload
 `
 
 type CreateChatMessageParams struct {
@@ -45,6 +45,7 @@ type CreateChatMessageParams struct {
 	FailureReason pgtype.Text `json:"failure_reason"`
 	ElapsedMs     pgtype.Int8 `json:"elapsed_ms"`
 	MessageKind   pgtype.Text `json:"message_kind"`
+	SourcePayload []byte      `json:"source_payload"`
 }
 
 // message_kind defaults to 'message' via COALESCE so every existing caller
@@ -59,6 +60,7 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		arg.FailureReason,
 		arg.ElapsedMs,
 		arg.MessageKind,
+		arg.SourcePayload,
 	)
 	var i ChatMessage
 	err := row.Scan(
@@ -72,6 +74,7 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		&i.ElapsedMs,
 		&i.MessageKind,
 		&i.ClientReceiptRecordedAt,
+		&i.SourcePayload,
 	)
 	return i, err
 }
@@ -233,7 +236,7 @@ func (q *Queries) DeleteChatSession(ctx context.Context, arg DeleteChatSessionPa
 const deleteUserChatMessageByTask = `-- name: DeleteUserChatMessageByTask :one
 DELETE FROM chat_message
 WHERE task_id = $1 AND role = 'user'
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at, source_payload
 `
 
 func (q *Queries) DeleteUserChatMessageByTask(ctx context.Context, taskID pgtype.UUID) (ChatMessage, error) {
@@ -250,12 +253,13 @@ func (q *Queries) DeleteUserChatMessageByTask(ctx context.Context, taskID pgtype
 		&i.ElapsedMs,
 		&i.MessageKind,
 		&i.ClientReceiptRecordedAt,
+		&i.SourcePayload,
 	)
 	return i, err
 }
 
 const getChatMessage = `-- name: GetChatMessage :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at, source_payload FROM chat_message
 WHERE id = $1
 `
 
@@ -273,6 +277,7 @@ func (q *Queries) GetChatMessage(ctx context.Context, id pgtype.UUID) (ChatMessa
 		&i.ElapsedMs,
 		&i.MessageKind,
 		&i.ClientReceiptRecordedAt,
+		&i.SourcePayload,
 	)
 	return i, err
 }
@@ -375,7 +380,7 @@ func (q *Queries) GetLastChatTaskSession(ctx context.Context, chatSessionID pgty
 }
 
 const getMostRecentUserChatMessage = `-- name: GetMostRecentUserChatMessage :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at, source_payload FROM chat_message
 WHERE chat_session_id = $1 AND role = 'user'
 ORDER BY created_at DESC
 LIMIT 1
@@ -400,6 +405,7 @@ func (q *Queries) GetMostRecentUserChatMessage(ctx context.Context, chatSessionI
 		&i.ElapsedMs,
 		&i.MessageKind,
 		&i.ClientReceiptRecordedAt,
+		&i.SourcePayload,
 	)
 	return i, err
 }
@@ -584,7 +590,7 @@ func (q *Queries) ListAllChatSessionsByCreator(ctx context.Context, arg ListAllC
 }
 
 const listChatInputMessages = `-- name: ListChatInputMessages :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at, source_payload FROM chat_message
 WHERE task_id = $1 AND role = 'user'
 ORDER BY created_at ASC, id ASC
 `
@@ -616,6 +622,7 @@ func (q *Queries) ListChatInputMessages(ctx context.Context, taskID pgtype.UUID)
 			&i.ElapsedMs,
 			&i.MessageKind,
 			&i.ClientReceiptRecordedAt,
+			&i.SourcePayload,
 		); err != nil {
 			return nil, err
 		}
@@ -628,7 +635,7 @@ func (q *Queries) ListChatInputMessages(ctx context.Context, taskID pgtype.UUID)
 }
 
 const listChatMessages = `-- name: ListChatMessages :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at, source_payload FROM chat_message
 WHERE chat_session_id = $1
 ORDER BY created_at ASC
 `
@@ -653,6 +660,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUI
 			&i.ElapsedMs,
 			&i.MessageKind,
 			&i.ClientReceiptRecordedAt,
+			&i.SourcePayload,
 		); err != nil {
 			return nil, err
 		}
@@ -665,7 +673,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUI
 }
 
 const listChatMessagesPage = `-- name: ListChatMessagesPage :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, client_receipt_recorded_at, source_payload FROM chat_message
 WHERE chat_session_id = $1
   AND (
     $3::timestamptz IS NULL
@@ -707,6 +715,7 @@ func (q *Queries) ListChatMessagesPage(ctx context.Context, arg ListChatMessages
 			&i.ElapsedMs,
 			&i.MessageKind,
 			&i.ClientReceiptRecordedAt,
+			&i.SourcePayload,
 		); err != nil {
 			return nil, err
 		}

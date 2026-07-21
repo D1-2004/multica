@@ -182,10 +182,10 @@ type dingtalkRawEvent struct {
 // drops payloads that must not reach the core (no message id — nothing
 // to dedup on).
 func inboundFromBotCallback(data botCallbackData, clientID string) (channel.InboundMessage, bool) {
-	return inboundFromBotCallbackForInstallation(data, clientID, "", protocol.DingTalkStreamSource{})
+	return inboundFromBotCallbackForInstallation(data, clientID, "", protocol.DingTalkStreamSource{}, nil)
 }
 
-func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, installationID string, streamSource protocol.DingTalkStreamSource) (channel.InboundMessage, bool) {
+func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, installationID string, streamSource protocol.DingTalkStreamSource, sourcePayload json.RawMessage) (channel.InboundMessage, bool) {
 	if data.MsgID == "" {
 		return channel.InboundMessage{}, false
 	}
@@ -225,17 +225,22 @@ func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, insta
 	switch {
 	case data.Msgtype == "text" || data.Msgtype == "":
 		// Plain text — already extracted above.
+		if text == "" {
+			text = "[文本消息]"
+		}
 	case data.Msgtype == msgtypeRichText:
 		// Formatted messages carry their content in content.richText and
 		// leave text.content empty; flatten so they don't ingest as empty
 		// messages (which read to the agent as "your message is blank").
 		text = flattenRichText(data)
 		if text == "" {
+			text = "[富文本消息]"
 			msgType = channel.MsgTypeUnknown
 		}
 	case data.Msgtype == "interactiveCard":
 		text = flattenInteractiveCard(data)
 		if text == "" {
+			text = "[互动卡片]"
 			msgType = channel.MsgTypeUnknown
 		}
 	case data.Msgtype == "picture":
@@ -247,8 +252,14 @@ func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, insta
 			text += " " + name
 		}
 		msgType = channel.MsgTypeFile
+	case data.Msgtype == "audio":
+		text = "[语音消息]"
+		msgType = channel.MsgTypeAudio
+	case data.Msgtype == "video":
+		text = "[视频消息]"
+		msgType = channel.MsgTypeVideo
 	default:
-		// Audio and video callbacks are not ingested as attachments.
+		text = "[消息类型: " + data.Msgtype + "]"
 		msgType = channel.MsgTypeUnknown
 	}
 	// Leading @-mentions hide a slash command from the first-token parsers
@@ -272,6 +283,7 @@ func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, insta
 		// DingTalk only delivers group messages that @-mention the robot,
 		// so every callback is, by construction, addressed to the bot.
 		AddressedToBot: true,
+		SourcePayload:  sourcePayload,
 		Source: channel.Source{
 			ChannelType: TypeDingtalk,
 			ChatID:      data.ConversationID,

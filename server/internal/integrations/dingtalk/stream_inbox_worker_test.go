@@ -267,12 +267,12 @@ func TestStreamInboxPersistFailureLogsSafeSourceMetadata(t *testing.T) {
 	}
 }
 
-func TestStreamInboxProcessNextDispatchesAndFinalizes(t *testing.T) {
+func TestStreamInboxProcessNextDispatchesSanitizedSourcePayloadAndFinalizes(t *testing.T) {
 	box, err := secretbox.New(bytes.Repeat([]byte{0x11}, 32))
 	if err != nil {
 		t.Fatalf("secretbox.New: %v", err)
 	}
-	row := testStreamInboxRow(t, box, 0, `{"msgId":"m1","conversationId":"cid","senderStaffId":"staff","conversationType":"1","msgtype":"text","text":{"content":" hello "}}`)
+	row := testStreamInboxRow(t, box, 0, `{"msgId":"m1","conversationId":"cid","senderStaffId":"staff","conversationType":"1","msgtype":"text","sessionWebhook":"https://example.test/secret-reply","text":{"content":" hello "},"content":{"downloadCode":"secret-download","futureField":{"label":"preserved"}}}`)
 	store := &fakeStreamInboxStore{claims: []db.DingtalkStreamInbox{row}}
 	var received []channel.InboundMessage
 	worker := newStreamInboxWorker(store, func(_ context.Context, msg channel.InboundMessage) error {
@@ -289,6 +289,17 @@ func TestStreamInboxProcessNextDispatchesAndFinalizes(t *testing.T) {
 	}
 	if received[0].TraceID != "00000000-0000-0000-0000-000000000010" || received[0].TraceChannel != "dingtalk_stream" || received[0].TraceStartedAtUnixMS != row.ReceivedAt.Time.UnixMilli() {
 		t.Fatalf("received trace = id %q channel %q started %d", received[0].TraceID, received[0].TraceChannel, received[0].TraceStartedAtUnixMS)
+	}
+	if len(received[0].SourcePayload) == 0 {
+		t.Fatal("sanitized source payload was not attached to the inbound message")
+	}
+	if strings.Contains(string(received[0].SourcePayload), "secret-reply") || strings.Contains(string(received[0].SourcePayload), "secret-download") {
+		t.Fatalf("source payload contains a callback credential: %s", received[0].SourcePayload)
+	}
+	for _, want := range []string{"futureField", "preserved", "$.content.downloadCode", "$.sessionWebhook"} {
+		if !strings.Contains(string(received[0].SourcePayload), want) {
+			t.Errorf("source payload missing %q: %s", want, received[0].SourcePayload)
+		}
 	}
 	raw, err := decodeDingTalkRaw(received[0])
 	if err != nil || raw.InstallationID != "00000000-0000-0000-0000-000000000020" {
