@@ -15,6 +15,7 @@ const (
 const (
 	AgentIdentityContextTokenJSONKey            = "agent_identity_context_token"
 	AgentIdentityContextTokenEnvKey             = "AGENT_IDENTITY_CONTEXT_TOKEN"
+	DispatchRuntimePromptJSONKey                = "dispatch_runtime_prompt"
 	DingTalkRobotIdentityJSONKey                = "dingtalk_robot_identity"
 	DingTalkRobotIdentityUnavailableJSONKey     = "dingtalk_robot_identity_unavailable"
 	DingTalkRobotIdentityUnavailableMissingOrg  = "missing_organization_identity"

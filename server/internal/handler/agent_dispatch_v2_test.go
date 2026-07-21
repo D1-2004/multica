@@ -3,6 +3,7 @@ package handler
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestBuildDispatchPromptSeparatesDisplayAndRuntime(t *testing.T) {
@@ -16,7 +17,7 @@ func TestBuildDispatchPromptSeparatesDisplayAndRuntime(t *testing.T) {
 		}},
 		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
 	}
-	p := BuildDispatchPrompt(c)
+	p := mustBuildDispatchPrompt(t, c)
 	if !strings.Contains(p.DisplayContent, "请查看告警") || !strings.Contains(p.DisplayContent, "log.txt") {
 		t.Fatalf("display content missing message: %q", p.DisplayContent)
 	}
@@ -45,8 +46,136 @@ func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 	if err := c.validate(); err != nil {
 		t.Fatalf("valid command rejected: %v", err)
 	}
-	c.ExternalIdentity.ContextToken = ""
-	if err := c.validate(); err == nil {
-		t.Fatal("missing context token accepted")
+
+	t.Run("robot without context token", func(t *testing.T) {
+		command := c
+		command.ExternalIdentity.ContextToken = ""
+		if err := command.validate(); err != nil {
+			t.Fatalf("robot command without context token rejected: %v", err)
+		}
+	})
+
+	t.Run("digital employee without sender platform identifiers", func(t *testing.T) {
+		command := c
+		command.Source.Type = "digital_employee"
+		command.Outbound.Mode = "dws"
+		command.Event.Data.Sender = DispatchSender{DisplayName: "张三"}
+		command.ExternalIdentity.ContextToken = ""
+		if err := command.validate(); err != nil {
+			t.Fatalf("digital employee command without sender ids or context token rejected: %v", err)
+		}
+	})
+
+	t.Run("robot still requires stable sender identity", func(t *testing.T) {
+		command := c
+		command.Event.Data.Sender = DispatchSender{DisplayName: "张三"}
+		if err := command.validate(); err == nil || !strings.Contains(err.Error(), "sender identity") {
+			t.Fatalf("robot command without stable sender identity error = %v", err)
+		}
+	})
+
+	t.Run("present context token is strictly validated", func(t *testing.T) {
+		for _, invalid := range []string{" token-with-spaces ", "token\nwith-newline", strings.Repeat("x", 8193)} {
+			command := c
+			command.ExternalIdentity.ContextToken = invalid
+			if err := command.validate(); err == nil || !strings.Contains(err.Error(), "externalIdentity.contextToken is invalid") {
+				t.Fatalf("invalid context token error = %v", err)
+			}
+		}
+	})
+}
+
+func TestBuildDispatchPromptRetainsAllMessagesAndSafeAttachmentDisplay(t *testing.T) {
+	c := DispatchCommand{
+		Source: DispatchSource{Platform: "dingtalk", Type: "robot"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Sender: DispatchSender{DisplayName: "张三", OpenDingTalkID: "open-secret"},
+			Messages: []DispatchMessage{
+				{OpenMsgID: "msg-secret-1", Text: "第一条消息", Attachments: []DispatchAttachment{{Name: "log.txt", DownloadURL: "https://private.example/log"}}},
+				{OpenMsgID: "msg-secret-2", Text: "第二条消息", Attachments: []DispatchAttachment{{ContentType: "application/pdf", DownloadURL: "https://private.example/pdf"}}},
+			},
+		}},
 	}
+
+	display := mustBuildDispatchPrompt(t, c).DisplayContent
+	for _, visible := range []string{"张三", "第一条消息", "第二条消息", "附件：log.txt", "附件（application/pdf）"} {
+		if !strings.Contains(display, visible) {
+			t.Errorf("display content missing %q: %q", visible, display)
+		}
+	}
+	for _, private := range []string{"open-secret", "msg-secret-1", "msg-secret-2", "https://private.example"} {
+		if strings.Contains(display, private) {
+			t.Errorf("display content leaked %q: %q", private, display)
+		}
+	}
+}
+
+func TestDispatchPromptBuilderRoutesRuntimePolicyBySource(t *testing.T) {
+	base := DispatchCommand{
+		Source: DispatchSource{Platform: "dingtalk", Type: "robot"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Sender:   DispatchSender{DisplayName: "张三"},
+			Messages: []DispatchMessage{{Text: "处理告警"}},
+		}},
+		Outbound: DispatchOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
+	}
+
+	robotPrompt := mustBuildDispatchPrompt(t, base)
+	if strings.Contains(robotPrompt.RuntimePrompt, "DWS") || strings.Contains(robotPrompt.RuntimePrompt, "robot_sdk") {
+		t.Fatalf("robot runtime prompt must not own outbound: %q", robotPrompt.RuntimePrompt)
+	}
+
+	digitalEmployee := base
+	digitalEmployee.Source.Type = "digital_employee"
+	digitalEmployee.Outbound.Mode = "dws"
+	digitalPrompt := mustBuildDispatchPrompt(t, digitalEmployee)
+	for _, want := range []string{"DWS", "mode=dws", "replyTo=latest_message"} {
+		if !strings.Contains(digitalPrompt.RuntimePrompt, want) {
+			t.Errorf("digital employee runtime prompt missing %q: %q", want, digitalPrompt.RuntimePrompt)
+		}
+	}
+
+	unsupported := base
+	unsupported.Event.Domain = "calendar"
+	if _, err := BuildDispatchPrompt(unsupported); err == nil {
+		t.Fatal("unregistered prompt strategy was accepted")
+	}
+}
+
+func TestDispatchIssueTitleUsesFirstUserMessage(t *testing.T) {
+	longMessage := strings.Repeat("界", 170)
+	c := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{Messages: []DispatchMessage{
+		{Text: "  \n\t"},
+		{Text: longMessage},
+	}}}}
+
+	title := dispatchIssueTitle(c)
+	if utf8.RuneCountInString(title) != 160 {
+		t.Fatalf("title rune count = %d, want 160", utf8.RuneCountInString(title))
+	}
+	if title != strings.Repeat("界", 160) {
+		t.Fatalf("title = %q", title)
+	}
+}
+
+func TestDispatchIssueTitleFallsBackToAttachmentThenGeneric(t *testing.T) {
+	withAttachment := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{Messages: []DispatchMessage{{
+		Attachments: []DispatchAttachment{{Name: "告警截图.png"}},
+	}}}}}
+	if got := dispatchIssueTitle(withAttachment); got != "附件：告警截图.png" {
+		t.Fatalf("attachment title = %q", got)
+	}
+
+	if got := dispatchIssueTitle(DispatchCommand{}); got != "钉钉消息" {
+		t.Fatalf("generic title = %q", got)
+	}
+}
+
+func mustBuildDispatchPrompt(t *testing.T, command DispatchCommand) DispatchPrompt {
+	t.Helper()
+	prompt, err := BuildDispatchPrompt(command)
+	if err != nil {
+		t.Fatalf("BuildDispatchPrompt: %v", err)
+	}
+	return prompt
 }

@@ -150,6 +150,11 @@ func (h *Handler) handleAgentDispatchV2(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	prompt, err := BuildDispatchPrompt(command)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to build dispatch prompt")
+		return
+	}
 	if command.AgentID != "" {
 		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(command.AgentID), "agentId")
 		if !ok {
@@ -163,14 +168,14 @@ func (h *Handler) handleAgentDispatchV2(w http.ResponseWriter, r *http.Request, 
 		if !ok {
 			return
 		}
-		h.createAgentDispatchIssueV2(w, r, command, dispatchContext, agent)
+		h.createAgentDispatchIssueV2(w, r, command, prompt, dispatchContext, agent)
 		return
 	}
 	if command.Continuation == nil || command.Continuation.Kind != "issue" || strings.TrimSpace(command.Continuation.IssueID) == "" {
 		writeError(w, http.StatusBadRequest, "continuation must identify an issue")
 		return
 	}
-	h.createAgentDispatchCommentV2(w, r, command, dispatchContext)
+	h.createAgentDispatchCommentV2(w, r, command, prompt, dispatchContext)
 }
 
 // AgentDispatchV2Request is an alias-shaped envelope so the public JSON keeps
@@ -476,12 +481,6 @@ func agentDispatchIssueTitle(userPrompt string) string {
 
 func buildAgentDispatchContent(input AgentDispatchInput) string {
 	var b strings.Builder
-	if systemPrompt := strings.TrimSpace(input.SystemPrompt.Text); systemPrompt != "" {
-		b.WriteString("## System prompt\n\n")
-		b.WriteString(systemPrompt)
-		b.WriteString("\n\n")
-	}
-	b.WriteString("## User prompt\n\n")
 	b.WriteString(strings.TrimSpace(input.UserPrompt.Text))
 	if len(input.Attachments) > 0 {
 		b.WriteString("\n\n## Attachments\n")

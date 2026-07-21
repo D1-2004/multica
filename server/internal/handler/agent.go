@@ -380,6 +380,9 @@ type AgentTaskResponse struct {
 	// MUL-3292.
 	AuthToken                 string `json:"auth_token,omitempty"`
 	AgentIdentityContextToken string `json:"agent_identity_context_token,omitempty"`
+	// DispatchRuntimePrompt is populated only by the daemon claim builder.
+	// taskToResponse deliberately leaves it empty for ordinary task APIs.
+	DispatchRuntimePrompt string `json:"dispatch_runtime_prompt,omitempty"`
 	// DingTalkDWSIdentityUnavailable tells compatible daemons to inject a
 	// user-visible explanation while still running the chat task normally.
 	DingTalkDWSIdentityUnavailable bool `json:"dingtalk_dws_identity_unavailable,omitempty"`
@@ -496,7 +499,6 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		DeliveredCommentIDs:            uuidStringsOrEmpty(t.DeliveredCommentIds),
 		TriggerSummary:                 textToPtr(t.TriggerSummary),
 		HandoffNote:                    handoffNote,
-		AgentIdentityContextToken:      taskContextString(t.Context, protocol.AgentIdentityContextTokenJSONKey),
 		DingTalkDWSIdentityUnavailable: taskContextHasKey(t.Context, protocol.DingTalkRobotIdentityUnavailableJSONKey),
 		WorkDir:                        workDir,
 		RelativeWorkDir:                relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
@@ -519,6 +521,11 @@ func taskContextString(raw []byte, key string) string {
 	}
 	value, _ := payload[key].(string)
 	return strings.TrimSpace(value)
+}
+
+func populatePrivateTaskClaimContext(response *AgentTaskResponse, taskContext []byte) {
+	response.AgentIdentityContextToken = taskContextString(taskContext, protocol.AgentIdentityContextTokenJSONKey)
+	response.DispatchRuntimePrompt = taskContextString(taskContext, protocol.DispatchRuntimePromptJSONKey)
 }
 
 func taskContextHasKey(raw []byte, key string) bool {

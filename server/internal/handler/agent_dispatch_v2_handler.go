@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func textValue(s string) pgtype.Text {
@@ -29,7 +30,7 @@ func dispatchRuntimeContext(c DispatchCommand, prompt DispatchPrompt, idempotenc
 		"dispatch_event_data":      c.Event.Data,
 		"dispatch_surface":         c.Surface,
 		"dispatch_outbound":        c.Outbound,
-		"dispatch_runtime_prompt":  prompt.RuntimePrompt,
+		protocol.DispatchRuntimePromptJSONKey: prompt.RuntimePrompt,
 		"dispatch_idempotency_key": idempotencyKey,
 	}
 	raw, _ := json.Marshal(payload)
@@ -43,8 +44,7 @@ func dispatchIdempotencyKey(r *http.Request, c DispatchCommand) string {
 	return dispatchWindowIdempotencyKey(c)
 }
 
-func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, dispatchContext agentDispatchContext, agent db.Agent) {
-	prompt := BuildDispatchPrompt(c)
+func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext, agent db.Agent) {
 	attachments := make([]AgentDispatchAttachment, 0)
 	for _, m := range c.Event.Data.Messages {
 		for _, a := range m.Attachments {
@@ -70,7 +70,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 
 	result, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
 		WorkspaceID:               dispatchContext.WorkspaceID,
-		Title:                     dispatchIssueTitle(prompt.DisplayContent),
+		Title:                     dispatchIssueTitle(c),
 		Description:               textValue(prompt.DisplayContent),
 		Status:                    "todo",
 		Priority:                  "none",
@@ -108,7 +108,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, dispatchContext agentDispatchContext) {
+func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext) {
 	issueID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(c.Continuation.IssueID), "continuation.issueId")
 	if !ok {
 		return
@@ -126,7 +126,6 @@ func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusForbidden, "continuation issue does not match dispatch endpoint")
 		return
 	}
-	prompt := BuildDispatchPrompt(c)
 	attachments := make([]AgentDispatchAttachment, 0)
 	for _, m := range c.Event.Data.Messages {
 		for _, a := range m.Attachments {
