@@ -40,7 +40,7 @@ func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 			Sender:       DispatchSender{StaffID: "staff"},
 			Messages:     []DispatchMessage{{OpenMsgID: "msg", Text: "hello"}},
 		}},
-		Surface: DispatchSurface{Type: "issue"}, Outbound: DispatchOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
+		Surface: DispatchSurface{Type: "chat"}, Outbound: DispatchOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
 		ExternalIdentity: AgentDispatchExternalIdentity{ContextToken: "opaque"},
 	}
 	if err := c.validate(); err != nil {
@@ -58,11 +58,28 @@ func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 	t.Run("digital employee without sender platform identifiers", func(t *testing.T) {
 		command := c
 		command.Source.Type = "digital_employee"
+		command.Surface.Type = "issue"
 		command.Outbound.Mode = "dws"
 		command.Event.Data.Sender = DispatchSender{DisplayName: "张三"}
 		command.ExternalIdentity.ContextToken = ""
 		if err := command.validate(); err != nil {
 			t.Fatalf("digital employee command without sender ids or context token rejected: %v", err)
+		}
+	})
+
+	t.Run("source surface combinations are exact", func(t *testing.T) {
+		robotWithIssue := c
+		robotWithIssue.Surface.Type = "issue"
+		if err := robotWithIssue.validate(); err == nil || !strings.Contains(err.Error(), "surface.type must be chat") {
+			t.Fatalf("robot issue surface error = %v", err)
+		}
+
+		digitalEmployeeWithChat := c
+		digitalEmployeeWithChat.Source.Type = "digital_employee"
+		digitalEmployeeWithChat.Surface.Type = "chat"
+		digitalEmployeeWithChat.Outbound.Mode = "dws"
+		if err := digitalEmployeeWithChat.validate(); err == nil || !strings.Contains(err.Error(), "surface.type must be issue") {
+			t.Fatalf("digital employee chat surface error = %v", err)
 		}
 	})
 
@@ -114,8 +131,9 @@ func TestDispatchPromptBuilderRoutesRuntimePolicyBySource(t *testing.T) {
 	base := DispatchCommand{
 		Source: DispatchSource{Platform: "dingtalk", Type: "robot"},
 		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
-			Sender:   DispatchSender{DisplayName: "张三"},
-			Messages: []DispatchMessage{{Text: "处理告警"}},
+			Conversation: DispatchConversation{OpenConversationID: "cid-1"},
+			Sender:       DispatchSender{DisplayName: "张三", OpenDingTalkID: "open-user-1"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-1", Text: "处理告警"}},
 		}},
 		Outbound: DispatchOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
 	}
@@ -139,6 +157,70 @@ func TestDispatchPromptBuilderRoutesRuntimePolicyBySource(t *testing.T) {
 	unsupported.Event.Domain = "calendar"
 	if _, err := BuildDispatchPrompt(unsupported); err == nil {
 		t.Fatal("unregistered prompt strategy was accepted")
+	}
+}
+
+func TestDigitalEmployeePromptRequiresDWSOutboundLifecycle(t *testing.T) {
+	c := DispatchCommand{
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+			Sender:       DispatchSender{DisplayName: "张三", OpenDingTalkID: "open-sender-trusted"},
+			Messages: []DispatchMessage{
+				{OpenMsgID: "msg-older", Text: "第一条"},
+				{OpenMsgID: "msg-latest", Text: "第二条"},
+			},
+		}},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	}
+
+	runtimePrompt := mustBuildDispatchPrompt(t, c).RuntimePrompt
+	for _, required := range []string{
+		`"openConversationId":"cid-trusted"`,
+		`"openMsgId":"msg-latest"`,
+		`"senderOpenDingTalkId":"open-sender-trusted"`,
+		"dws chat message add-emoji",
+		`--emoji "收到"`,
+		"dws chat message reply",
+		"--ref-sender",
+		"--format json",
+		"before doing the requested work",
+		"success, partial success, blocked, or failed",
+		"does not count as the DingTalk reply",
+		"Do not use the robot SDK",
+	} {
+		if !strings.Contains(runtimePrompt, required) {
+			t.Errorf("digital employee runtime prompt missing %q: %q", required, runtimePrompt)
+		}
+	}
+	if strings.Contains(runtimePrompt, "msg-older") {
+		t.Fatalf("runtime prompt must target only the latest message: %q", runtimePrompt)
+	}
+}
+
+func TestDigitalEmployeePromptResolvesMissingReplySenderWithoutGuessing(t *testing.T) {
+	c := DispatchCommand{
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+			Sender:       DispatchSender{DisplayName: "张三", StaffID: "staff-not-open-id"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-latest", Text: "处理告警"}},
+		}},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	}
+
+	runtimePrompt := mustBuildDispatchPrompt(t, c).RuntimePrompt
+	for _, required := range []string{
+		"dws chat message list-by-ids",
+		"sender openDingTalkId",
+		"Do not infer or invent",
+	} {
+		if !strings.Contains(runtimePrompt, required) {
+			t.Errorf("missing-sender runtime prompt missing %q: %q", required, runtimePrompt)
+		}
+	}
+	if strings.Contains(runtimePrompt, "staff-not-open-id") {
+		t.Fatalf("runtime prompt must not substitute staffId for openDingTalkId: %q", runtimePrompt)
 	}
 }
 

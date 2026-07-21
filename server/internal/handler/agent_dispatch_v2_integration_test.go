@@ -87,3 +87,48 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 		}
 	}
 }
+
+func TestHandleAgentDispatchV2AcceptsRobotChatSurface(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-v2-robot-chat", nil)
+	body := fmt.Sprintf(`{
+		"schemaVersion":"2.0",
+		"agentId":%q,
+		"continuation":null,
+		"source":{"platform":"dingtalk","type":"robot"},
+		"event":{
+			"domain":"channel",
+			"type":"message.created",
+			"data":{
+				"conversation":{"openConversationId":"cid-robot","type":"group","title":"机器人群"},
+				"sender":{"displayName":"张三","openDingTalkId":"open-sender"},
+				"messages":[{"openMsgId":"msg-robot","occurredAt":1784512800000,"text":"处理机器人消息"}]
+			}
+		},
+		"surface":{"type":"chat"},
+		"outbound":{"mode":"robot_sdk","replyTo":"latest_message"}
+	}`, agentID)
+
+	w := postAgentDispatchForTest(t, body, agentID)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("HandleAgentDispatch v2 robot/chat: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var response AgentDispatchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, response.Continuation.IssueID)
+	})
+
+	var surfaceType string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT context->'dispatch_surface'->>'type'
+		FROM agent_task_queue
+		WHERE id = $1
+	`, response.TaskID).Scan(&surfaceType); err != nil {
+		t.Fatal(err)
+	}
+	if surfaceType != "chat" {
+		t.Fatalf("dispatch surface type = %q, want chat", surfaceType)
+	}
+}
