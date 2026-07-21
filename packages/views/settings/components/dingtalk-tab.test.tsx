@@ -29,6 +29,7 @@ const mockBeginInstall = vi.hoisted(() => vi.fn());
 const mockGetStatus = vi.hoisted(() => vi.fn());
 const mockManualInstall = vi.hoisted(() => vi.fn());
 const mockDeleteInstallation = vi.hoisted(() => vi.fn());
+const mockRetryRouter = vi.hoisted(() => vi.fn());
 const mockInvalidate = vi.hoisted(() => vi.fn());
 
 type MemberRole = "owner" | "admin" | "member" | "guest";
@@ -41,6 +42,13 @@ const installationsRef = vi.hoisted(() => ({
     installations: [] as unknown[],
     configured: true,
     install_supported: true,
+  } as {
+    installations: unknown[];
+    configured: boolean;
+    install_supported: boolean;
+    capabilities?: {
+      http_callback: { available: boolean; reason?: string };
+    };
   },
 }));
 
@@ -103,6 +111,7 @@ vi.mock("@multica/core/api", () => ({
     getDingTalkInstallStatus: mockGetStatus,
     manualInstallDingTalk: mockManualInstall,
     deleteDingTalkInstallation: mockDeleteInstallation,
+    retryDingTalkRouterRegistration: mockRetryRouter,
   },
   ApiError,
 }));
@@ -283,10 +292,44 @@ describe("DingTalkInstallDialog (device flow)", () => {
       wrapper: I18nWrapper,
     });
     await user.click(screen.getByRole("button", { name: /Create enterprise bot/i }));
+    await user.click(screen.getByTestId("dingtalk-install-start"));
     await waitFor(() => {
       expect(screen.getByTestId("qr-code")).toBeTruthy();
     });
   }
+
+  it("chooses transport and organization access before starting registration", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    installationsRef.current.capabilities = {
+      http_callback: { available: true },
+    };
+    render(<DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />, {
+      wrapper: I18nWrapper,
+    });
+    await user.click(screen.getByRole("button", { name: /Create enterprise bot/i }));
+
+    expect(mockBeginInstall).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Stream mode/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /HTTP callback/i })).toBeTruthy();
+    expect(
+      screen.getByText(/Allow other organization members to use this bot/i),
+    ).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: /HTTP callback/i }));
+    await user.click(screen.getByRole("switch"));
+    expect(mockBeginInstall).not.toHaveBeenCalled();
+    await user.click(screen.getByTestId("dingtalk-install-start"));
+
+    await waitFor(() => {
+      expect(mockBeginInstall).toHaveBeenCalledTimes(1);
+      expect(mockBeginInstall).toHaveBeenCalledWith(
+        "workspace-1",
+        "agent-1",
+        true,
+        "HTTP_CALLBACK",
+      );
+    });
+  });
 
   it("renders the QR from the begin response and completes on a success poll", async () => {
     mockGetStatus.mockResolvedValue({ status: "success", installation_id: "inst-1" });
@@ -295,11 +338,12 @@ describe("DingTalkInstallDialog (device flow)", () => {
     expect(screen.getByTestId("qr-code").getAttribute("data-value")).toBe(
       "https://open-dev.dingtalk.com/fe/app-registration?user_code=MUEU",
     );
-    // The third arg is the allow_unbound opt-in, which defaults to off.
+    // The transport is explicit even for the legacy/default Stream path.
     expect(mockBeginInstall).toHaveBeenCalledWith(
       "workspace-1",
       "agent-1",
       false,
+      "STREAM",
     );
     expect(
       screen.getByText(/Allow other organization members to use this bot/i),
@@ -321,6 +365,50 @@ describe("DingTalkInstallDialog (device flow)", () => {
     await waitFor(() => {
       expect(mockInvalidate).toHaveBeenCalled();
       expect(toast.success).toHaveBeenCalled();
+    });
+  });
+
+  it("stops polling and warns that an approving bot cannot exchange messages yet", async () => {
+    mockGetStatus.mockResolvedValue({
+      status: "approving",
+      installation_id: "inst-review",
+    });
+
+    await openDialog();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+
+    expect(await screen.findByTestId("dingtalk-install-approving")).toBeTruthy();
+    expect(
+      screen.getByText(/cannot send or receive messages until DingTalk approves/i),
+    ).toBeTruthy();
+    expect(mockInvalidate).toHaveBeenCalled();
+    expect(toast.message).toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts registration with HTTP_CALLBACK when the capability is available", async () => {
+    const user = userEvent.setup();
+    installationsRef.current.capabilities = {
+      http_callback: { available: true },
+    };
+
+    await openDialog();
+    await user.click(screen.getByRole("button", { name: /HTTP callback/i }));
+
+    await waitFor(() => {
+      expect(mockBeginInstall).toHaveBeenLastCalledWith(
+        "workspace-1",
+        "agent-1",
+        false,
+        "HTTP_CALLBACK",
+      );
     });
   });
 
@@ -376,6 +464,7 @@ describe("DingTalkInstallDialog (device flow)", () => {
       wrapper: StrictModeWrapper,
     });
     await user.click(screen.getByRole("button", { name: /Create enterprise bot/i }));
+    await user.click(screen.getByTestId("dingtalk-install-start"));
 
     await waitFor(
       () => {
@@ -414,12 +503,14 @@ describe("DingTalkInstallDialog (manual credential flow)", () => {
 
     await user.type(screen.getByLabelText(/AppKey/i), "dingkey123");
     await user.type(screen.getByLabelText(/AppSecret/i), "secret456");
+    await user.type(screen.getByLabelText(/Robot Code/i), "robot789");
     await user.click(screen.getByTestId("dingtalk-install-manual-submit"));
 
     await waitFor(() => {
       expect(mockManualInstall).toHaveBeenCalledWith("workspace-1", "agent-1", {
         clientId: "dingkey123",
         clientSecret: "secret456",
+        robotCode: "robot789",
         allowUnbound: false,
       });
       expect(mockInvalidate).toHaveBeenCalled();
@@ -466,7 +557,8 @@ describe("DingTalkInstallDialog (manual credential flow)", () => {
     });
     await user.click(screen.getByRole("button", { name: /Create enterprise bot/i }));
 
-    // Scan view first (QR from begin), then switch to the manual form.
+    // Scan configuration first, then generate the QR and switch to the manual form.
+    await user.click(screen.getByTestId("dingtalk-install-start"));
     await waitFor(() => expect(screen.getByTestId("qr-code")).toBeTruthy());
     await user.click(screen.getByTestId("dingtalk-install-manual-link"));
     expect(screen.getByTestId("dingtalk-install-manual-form")).toBeTruthy();
@@ -523,6 +615,33 @@ describe("DingTalkTab (settings panel)", () => {
       expect(mockDeleteInstallation).toHaveBeenCalledWith("workspace-1", "inst-1");
       expect(mockInvalidate).toHaveBeenCalled();
       expect(toast.success).toHaveBeenCalled();
+    });
+  });
+
+  it("retries Router registration without starting a new DingTalk scan", async () => {
+    const user = userEvent.setup();
+    installationsRef.current = {
+      installations: [{
+        ...activeInstallation,
+        transport_mode: "HTTP_CALLBACK",
+        router_status: "failed",
+      }],
+      configured: true,
+      install_supported: true,
+    };
+    mockRetryRouter.mockResolvedValue({
+      ...activeInstallation,
+      transport_mode: "HTTP_CALLBACK",
+      router_status: "registered",
+    });
+
+    render(<DingTalkTab />, { wrapper: I18nWrapper });
+    await user.click(screen.getByRole("button", { name: /Retry Router/i }));
+
+    await waitFor(() => {
+      expect(mockRetryRouter).toHaveBeenCalledWith("workspace-1", "inst-1");
+      expect(mockBeginInstall).not.toHaveBeenCalled();
+      expect(mockInvalidate).toHaveBeenCalled();
     });
   });
 });

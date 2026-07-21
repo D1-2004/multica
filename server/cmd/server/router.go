@@ -758,17 +758,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		box, err := secretbox.New(dtKey)
 		if err != nil {
 			slog.Error("dingtalk: secretbox.New failed; dingtalk bot integration disabled", "error", err)
-		} else if agentMessageRouterClient == nil || agentDispatchEndpoints == nil {
-			slog.Error("dingtalk: Router registration dependencies unavailable; dingtalk bot integration disabled")
 		} else {
-			installSvc, ierr := dingtalk.NewInstallationService(
-				queries,
-				pool,
-				box,
-				agentMessageRouterClient,
-				agentDispatchEndpoints,
-				dingtalk.InstallationCutoverConfig{StateChanged: h.ChannelSupervisor.Kick},
-			)
+			installSvc, ierr := dingtalk.NewInstallationService(queries, pool, box)
 			if ierr != nil {
 				slog.Error("dingtalk: InstallationService init failed; dingtalk bot integration disabled", "error", ierr)
 			} else {
@@ -782,7 +773,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				dtBindingSvc := dingtalk.NewBindingTokenService(queries, pool)
 				h.DingTalkBindingTokens = dtBindingSvc
 				dtReplier := dingtalk.NewOutboundReplier(dingtalk.OutboundReplierConfig{
-					Binding: dtBindingSvc,
+					Binding:   dtBindingSvc,
+					Messenger: dtMessenger,
+					Decrypt:   box.Open,
 					// Names the bot in the bind prompt ("要开始与「<bot>」对话…").
 					AgentNamer: queries,
 					// The bind link (/dingtalk/bind) is a web-app page, so it must
@@ -838,12 +831,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				)
 
 				// Device-flow registration. The base URL override exists for
-				// staging/mock endpoints; the optional source label is a
-				// DingTalk-assigned partner value (empty omits it, which the
-				// protocol supports).
+				// staging/mock endpoints. The DingTalk product source is fixed
+				// by the registration client so deployments cannot drift.
 				regClient := dingtalk.NewRegistrationClient(dingtalk.RegistrationConfig{
-					BaseURL: strings.TrimSpace(os.Getenv("MULTICA_DINGTALK_REGISTRATION_BASE_URL")),
-					Source:  strings.TrimSpace(os.Getenv("MULTICA_DINGTALK_REGISTRATION_SOURCE")),
+					BaseURL:     strings.TrimSpace(os.Getenv("MULTICA_DINGTALK_REGISTRATION_BASE_URL")),
+					OutgoingURL: strings.TrimSpace(os.Getenv("MULTICA_DINGTALK_REGISTRATION_OUTGOING_URL")),
 				})
 				// Verifier: exchange the freshly minted credentials for an app
 				// access token before committing them, so a half-created app
@@ -856,7 +848,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// fails to construct.
 				h.DingTalkCredentialVerifier = verifier
 				regSvc, rerr := dingtalk.NewRegistrationService(
-					dingtalk.RegistrationServiceConfig{Logger: slog.Default()},
+					dingtalk.RegistrationServiceConfig{
+						Logger: slog.Default(),
+					},
 					regClient,
 					installSvc,
 					queries,
@@ -865,6 +859,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				if rerr != nil {
 					slog.Error("dingtalk: RegistrationService init failed; install disabled", "error", rerr)
 				} else {
+					if agentMessageRouterClient != nil && agentDispatchEndpoints != nil {
+						httpCallbackRouter, callbackRouterErr := agentmessagerouter.NewHTTPCallbackRouterService(
+							agentMessageRouterClient,
+							agentDispatchEndpoints,
+						)
+						if callbackRouterErr != nil {
+							slog.Error("dingtalk HTTP callback router disabled", "error", callbackRouterErr)
+						} else {
+							regSvc.SetHTTPCallbackRouter(httpCallbackRouter)
+						}
+					}
 					// Publish dingtalk_installation:created at row-commit time so
 					// the connection badge refreshes on every workspace client, not
 					// just the tab that polls the install status to success.
@@ -872,22 +877,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					h.DingTalkRegistration = regSvc
 					slog.Info("dingtalk device-flow install enabled")
 				}
-
-				go func() {
-					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer cancel()
-					completed, reconcileErr := installSvc.ReconcilePending(ctx)
-					if reconcileErr != nil {
-						slog.Warn("dingtalk: startup Router reconciliation incomplete",
-							"completed", completed,
-							"error", reconcileErr,
-						)
-						return
-					}
-					if completed > 0 {
-						slog.Info("dingtalk: startup Router reconciliation complete", "completed", completed)
-					}
-				}()
 			}
 		}
 	} else {
@@ -1431,6 +1420,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
 					r.Delete("/dingtalk/installations/{installationId}", h.RevokeDingTalkInstallation)
+					r.Post("/dingtalk/installations/{installationId}/router/retry", h.RetryDingTalkRouterRegistration)
 					// Scan-to-create device flow. Begin opens a new
 					// registration session against DingTalk and returns
 					// the QR-code URL; the frontend dialog then polls

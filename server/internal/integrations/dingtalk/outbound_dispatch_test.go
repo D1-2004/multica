@@ -102,6 +102,7 @@ func newDispatchRobotServer(t *testing.T) (*dispatchRobotRecorder, *httptest.Ser
 func dispatchLifecyclePayload(taskID, workspaceID, agentID, conversationType string) map[string]any {
 	return map[string]any{
 		"task_id":      taskID,
+		"issue_id":     "11111111-1111-1111-1111-111111111111",
 		"workspace_id": workspaceID,
 		"agent_id":     agentID,
 		"dispatch_idempotency_key": "dispatch-window:window-1",
@@ -133,6 +134,7 @@ func TestDispatchRobotLifecycleAddsRecallsThenRepliesExactlyOnce(t *testing.T) {
 	}
 	outbound := NewOutbound(queries, plaintextDecrypter, NewRobotMessenger(server.URL, server.URL, server.Client()), nil, nil)
 	payload := dispatchLifecyclePayload(util.UUIDToString(taskID), util.UUIDToString(workspaceID), util.UUIDToString(agentID), "group")
+	payload["dispatch_source"] = map[string]any{"platform": "dingtalk", "type": "digital_employee"}
 
 	for range 2 {
 		if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskQueued, Payload: payload}); err != nil {
@@ -169,6 +171,29 @@ func TestDispatchRobotLifecycleAddsRecallsThenRepliesExactlyOnce(t *testing.T) {
 	reply := recorder.bodies["/v1.0/robot/groupMessages/send"][0]
 	if reply["openConversationId"] != "cid-1" || reply["openMsgId"] != "msg-2" {
 		t.Fatalf("reply target = %#v, want latest group message", reply)
+	}
+}
+
+func TestDispatchRobotLifecycleLeavesChatTasksToChatOutbound(t *testing.T) {
+	recorder, server := newDispatchRobotServer(t)
+	taskID := typingTestUUID(31)
+	queries := &dispatchLifecycleQueries{
+		inst: testInstallationRow(t, typingTestUUID(32), "client_c"),
+		task: db.AgentTaskQueue{ID: taskID},
+	}
+	outbound := NewOutbound(queries, plaintextDecrypter, NewRobotMessenger(server.URL, server.URL, server.Client()), nil, nil)
+	payload := dispatchLifecyclePayload(util.UUIDToString(taskID), util.UUIDToString(typingTestUUID(33)), util.UUIDToString(typingTestUUID(34)), "group")
+	delete(payload, "issue_id")
+	payload["chat_session_id"] = util.UUIDToString(typingTestUUID(35))
+
+	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskQueued, Payload: payload}); err != nil {
+		t.Fatalf("queued chat lifecycle: %v", err)
+	}
+
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	if len(recorder.sequence) != 0 {
+		t.Fatalf("chat task used issue outbound lifecycle: %v", recorder.sequence)
 	}
 }
 

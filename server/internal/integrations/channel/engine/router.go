@@ -146,6 +146,14 @@ var ErrNoResolverSet = errors.New("channel router: no resolver set for channel t
 // infrastructure failures (the adapter reconnects). Product outcomes (dropped,
 // needs-binding, …) are not errors.
 func (r *Router) Handle(ctx context.Context, msg channel.InboundMessage) error {
+	_, err := r.HandleResult(ctx, msg)
+	return err
+}
+
+// HandleResult runs the same inbound pipeline as Handle and returns the
+// committed routing result to synchronous HTTP adapters. Stream/Socket
+// connectors should continue to call Handle when they only need an error.
+func (r *Router) HandleResult(ctx context.Context, msg channel.InboundMessage) (Result, error) {
 	r.mu.RLock()
 	set, ok := r.sets[msg.Source.ChannelType]
 	r.mu.RUnlock()
@@ -156,7 +164,7 @@ func (r *Router) Handle(ctx context.Context, msg channel.InboundMessage) error {
 			"message_id_hash", inboundTraceHash(msg.MessageID),
 			"event_id_hash", inboundTraceHash(msg.EventID),
 		)
-		return ErrNoResolverSet
+		return Result{}, ErrNoResolverSet
 	}
 
 	res, inst, err := r.dispatch(ctx, set, msg)
@@ -169,7 +177,7 @@ func (r *Router) Handle(ctx context.Context, msg channel.InboundMessage) error {
 			"event_id_hash", inboundTraceHash(msg.EventID),
 			"error", err,
 		)
-		return err
+		return Result{}, err
 	}
 	r.logger.Info("channel router: dispatch outcome",
 		"event", "channel_inbound_dispatched",
@@ -192,7 +200,7 @@ func (r *Router) Handle(ctx context.Context, msg channel.InboundMessage) error {
 		}()
 	}
 	r.scheduleReply(set, inst, msg, res)
-	return nil
+	return res, nil
 }
 
 // dispatch runs the pipeline and returns the typed result plus the resolved

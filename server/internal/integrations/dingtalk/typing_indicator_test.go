@@ -59,6 +59,7 @@ func testInstallationRow(t *testing.T, id pgtype.UUID, clientID string) db.Chann
 	t.Helper()
 	cfg, err := json.Marshal(dingtalkInstallConfig{
 		AppID:              clientID,
+		RobotCode:          "robot_" + clientID,
 		AppSecretEncrypted: base64.StdEncoding.EncodeToString([]byte("secret_" + clientID)),
 	})
 	if err != nil {
@@ -76,6 +77,14 @@ type fakeTypingQueries struct {
 	calls      int
 	indicators []db.ChannelTypingIndicator
 	pending    []db.ListPendingChatMessagePreviewsAfterTaskRow
+	tasks      map[pgtype.UUID]db.AgentTaskQueue
+}
+
+func (f *fakeTypingQueries) GetAgentTask(_ context.Context, id pgtype.UUID) (db.AgentTaskQueue, error) {
+	if task, ok := f.tasks[id]; ok {
+		return task, nil
+	}
+	return db.AgentTaskQueue{ID: id}, nil
 }
 
 func (f *fakeTypingQueries) GetChannelChatSessionBindingBySession(_ context.Context, _ db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error) {
@@ -118,7 +127,7 @@ func TestTypingIndicatorAddAndClear(t *testing.T) {
 		t.Fatalf("expected 1 emotion reply, got %d", len(rec.replies))
 	}
 	reply := rec.replies[0]
-	if reply["robotCode"] != "client_a" || reply["openMsgId"] != "msg_1" || reply["openConversationId"] != "cid_1" {
+	if reply["robotCode"] != "robot_client_a" || reply["openMsgId"] != "msg_1" || reply["openConversationId"] != "cid_1" {
 		t.Fatalf("unexpected reply payload: %v", reply)
 	}
 	if reply["emotionType"] != float64(2) || reply["textEmotion"] == nil {

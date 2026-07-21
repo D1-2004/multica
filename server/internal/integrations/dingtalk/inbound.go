@@ -2,6 +2,8 @@ package dingtalk
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -157,7 +159,17 @@ type dingtalkRawEvent struct {
 	SessionWebhook            string `json:"session_webhook,omitempty"`
 	SessionWebhookExpiredTime int64  `json:"session_webhook_expired_time,omitempty"`
 	SenderStaffID             string `json:"sender_staff_id,omitempty"`
-	SenderCorpID              string `json:"sender_corp_id,omitempty"`
+	// SenderUID and SenderOrgID are trusted Gateway projections used by the
+	// HTTP Callback transport. Stream callbacks leave them empty and resolve
+	// the same identity from senderCorpId + senderStaffId through OrgEmp HSF.
+	SenderUID   string `json:"sender_uid,omitempty"`
+	SenderOrgID string `json:"sender_org_id,omitempty"`
+	// AgentIdentityContextToken is a short-lived opaque credential supplied by
+	// the authenticated Agent Message Router callback. Stream callbacks leave
+	// it empty and use the local sender resolution path instead.
+	AgentIdentityContextToken string          `json:"agent_identity_context_token,omitempty"`
+	DispatchContext           json.RawMessage `json:"dispatch_context,omitempty"`
+	SenderCorpID              string          `json:"sender_corp_id,omitempty"`
 	SenderNick                string `json:"sender_nick,omitempty"`
 	ConversationTitle         string `json:"conversation_title,omitempty"`
 	Msgtype                   string `json:"msgtype,omitempty"`
@@ -176,6 +188,76 @@ type dingtalkRawEvent struct {
 	// callback. The durable inbox stamps it after decrypting the callback so it
 	// can follow the task without exposing the callback payload.
 	StreamSource *protocol.DingTalkStreamSource `json:"stream_source,omitempty"`
+}
+
+// HTTPCallbackMessage is the trusted, normalized callback context projected
+// by Agent Message Router. It intentionally excludes user-controlled prompt
+// fields: Text is supplied separately by the dispatch input while every
+// routing and identity field comes from Gateway's server-side event model.
+type HTTPCallbackMessage struct {
+	ConversationID    string
+	ConversationType  string
+	ConversationTitle string
+	MessageID         string
+	CreatedAt         int64
+	// SenderID is the platform sender identifier used only for chat routing
+	// and per-sender session isolation. SenderUID/SenderOrgID are reserved for
+	// the trusted numeric DWS identity pair.
+	SenderID             string
+	SenderUID            string
+	SenderOrgID          string
+	SenderStaffID        string
+	SenderName           string
+	Text                 string
+	IdentityContextToken string
+	DispatchContext      json.RawMessage
+}
+
+// InboundFromHTTPCallback adapts a Router callback into the same channel
+// message consumed by DingTalk Stream. installationID is resolved from the
+// authenticated Agent + robot account before this function is called.
+func InboundFromHTTPCallback(in HTTPCallbackMessage, clientID, installationID string) (channel.InboundMessage, error) {
+	if strings.TrimSpace(clientID) == "" || strings.TrimSpace(installationID) == "" {
+		return channel.InboundMessage{}, errors.New("dingtalk: HTTP callback installation is required")
+	}
+	conversationType := "2"
+	if strings.EqualFold(strings.TrimSpace(in.ConversationType), "single") {
+		conversationType = "1"
+	}
+	routeSenderID := strings.TrimSpace(in.SenderID)
+	if routeSenderID == "" {
+		routeSenderID = strings.TrimSpace(in.SenderUID)
+	}
+	msg, ok := inboundFromBotCallbackForInstallation(botCallbackData{
+		ConversationID:    strings.TrimSpace(in.ConversationID),
+		MsgID:             strings.TrimSpace(in.MessageID),
+		SenderNick:        strings.TrimSpace(in.SenderName),
+		SenderStaffID:     strings.TrimSpace(in.SenderStaffID),
+		CreateAt:          in.CreatedAt,
+		ConversationType:  conversationType,
+		SenderID:          routeSenderID,
+		ConversationTitle: strings.TrimSpace(in.ConversationTitle),
+		Msgtype:           "text",
+		Text: struct {
+			Content string `json:"content"`
+		}{Content: in.Text},
+	}, strings.TrimSpace(clientID), strings.TrimSpace(installationID), protocol.DingTalkStreamSource{})
+	if !ok {
+		return channel.InboundMessage{}, errors.New("dingtalk: HTTP callback message id is required")
+	}
+	raw, err := decodeDingTalkRaw(msg)
+	if err != nil {
+		return channel.InboundMessage{}, err
+	}
+	raw.SenderUID = strings.TrimSpace(in.SenderUID)
+	raw.SenderOrgID = strings.TrimSpace(in.SenderOrgID)
+	raw.AgentIdentityContextToken = strings.TrimSpace(in.IdentityContextToken)
+	raw.DispatchContext = append(json.RawMessage(nil), in.DispatchContext...)
+	msg.Raw, err = json.Marshal(raw)
+	if err != nil {
+		return channel.InboundMessage{}, fmt.Errorf("dingtalk: encode HTTP callback context: %w", err)
+	}
+	return msg, nil
 }
 
 // inboundFromBotCallback normalizes one bot-message callback. ok=false

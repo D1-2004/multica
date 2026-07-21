@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -22,28 +23,55 @@ import (
 // consumer that needs the plaintext is the (future) inbound transport,
 // which decrypts server-side.
 type DingTalkInstallationResponse struct {
-	ID              string `json:"id"`
-	WorkspaceID     string `json:"workspace_id"`
-	AgentID         string `json:"agent_id"`
-	ClientID        string `json:"client_id"`
-	InstallerUserID string `json:"installer_user_id"`
-	Status          string `json:"status"`
-	InstalledAt     string `json:"installed_at"`
-	CreatedAt       string `json:"created_at"`
-	UpdatedAt       string `json:"updated_at"`
+	ID                 string `json:"id"`
+	WorkspaceID        string `json:"workspace_id"`
+	AgentID            string `json:"agent_id"`
+	ClientID           string `json:"client_id"`
+	RobotCode          string `json:"robot_code"`
+	InstallerUserID    string `json:"installer_user_id"`
+	Status             string `json:"status"`
+	InstalledAt        string `json:"installed_at"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
+	TransportMode      string `json:"transport_mode"`
+	ConnectionManaged  bool   `json:"connection_managed"`
+	RouterStatus       string `json:"router_status,omitempty"`
+	RouterLastError    string `json:"router_last_error,omitempty"`
+	RegistrationStatus string `json:"registration_status,omitempty"`
 }
 
 func dingTalkInstallationToResponse(row dingtalk.Installation) DingTalkInstallationResponse {
 	return DingTalkInstallationResponse{
-		ID:              uuidToString(row.ID),
-		WorkspaceID:     uuidToString(row.WorkspaceID),
-		AgentID:         uuidToString(row.AgentID),
-		ClientID:        row.ClientID,
-		InstallerUserID: uuidToString(row.InstallerUserID),
-		Status:          row.Status,
-		InstalledAt:     row.InstalledAt.Time.UTC().Format(time.RFC3339),
-		CreatedAt:       row.CreatedAt.Time.UTC().Format(time.RFC3339),
-		UpdatedAt:       row.UpdatedAt.Time.UTC().Format(time.RFC3339),
+		ID:                 uuidToString(row.ID),
+		WorkspaceID:        uuidToString(row.WorkspaceID),
+		AgentID:            uuidToString(row.AgentID),
+		ClientID:           row.ClientID,
+		RobotCode:          row.RobotCode,
+		InstallerUserID:    uuidToString(row.InstallerUserID),
+		Status:             row.Status,
+		InstalledAt:        row.InstalledAt.Time.UTC().Format(time.RFC3339),
+		CreatedAt:          row.CreatedAt.Time.UTC().Format(time.RFC3339),
+		UpdatedAt:          row.UpdatedAt.Time.UTC().Format(time.RFC3339),
+		TransportMode:      string(row.TransportMode),
+		ConnectionManaged:  row.ConnectionManaged,
+		RouterStatus:       row.RouterStatus,
+		RouterLastError:    row.RouterLastError,
+		RegistrationStatus: row.RegistrationStatus,
+	}
+}
+
+func dingTalkInstallCapabilities(registration *dingtalk.RegistrationService) map[string]any {
+	if registration == nil {
+		return map[string]any{
+			"http_callback": map[string]any{"available": false, "reason": "install_not_configured"},
+		}
+	}
+	caps := registration.Capabilities()
+	return map[string]any{
+		"http_callback": map[string]any{
+			"available": caps.HTTPCallbackAvailable,
+			"reason":    caps.HTTPCallbackReason,
+		},
 	}
 }
 
@@ -66,6 +94,7 @@ func (h *Handler) ListDingTalkInstallations(w http.ResponseWriter, r *http.Reque
 			"installations":     []DingTalkInstallationResponse{},
 			"configured":        false,
 			"install_supported": false,
+			"capabilities":      dingTalkInstallCapabilities(nil),
 		})
 		return
 	}
@@ -86,6 +115,7 @@ func (h *Handler) ListDingTalkInstallations(w http.ResponseWriter, r *http.Reque
 		"installations":     out,
 		"configured":        true,
 		"install_supported": h.DingTalkRegistration != nil,
+		"capabilities":      dingTalkInstallCapabilities(h.DingTalkRegistration),
 	})
 }
 
@@ -131,6 +161,34 @@ func (h *Handler) RevokeDingTalkInstallation(w http.ResponseWriter, r *http.Requ
 		"id": uuidToString(instUUID),
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// RetryDingTalkRouterRegistration retries only the Multica -> Router source
+// registration for an existing HTTP callback installation. It never starts a
+// new DingTalk scan and never changes robot credentials or transport.
+func (h *Handler) RetryDingTalkRouterRegistration(w http.ResponseWriter, r *http.Request) {
+	if h.DingTalkRegistration == nil {
+		writeError(w, http.StatusServiceUnavailable, "dingtalk install not configured")
+		return
+	}
+	wsUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
+	if !ok {
+		return
+	}
+	instUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "installationId"), "installation id")
+	if !ok {
+		return
+	}
+	inst, err := h.DingTalkRegistration.RetryHTTPCallbackRouter(r.Context(), wsUUID, instUUID)
+	if err != nil {
+		if errors.Is(err, dingtalk.ErrInstallationNotFound) {
+			writeError(w, http.StatusNotFound, "dingtalk installation not found")
+		} else {
+			writeError(w, http.StatusBadGateway, "failed to register dingtalk router source")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, dingTalkInstallationToResponse(inst))
 }
 
 // BeginDingTalkInstallResponse is the payload the QR-code dialog
@@ -194,14 +252,35 @@ func (h *Handler) BeginDingTalkInstall(w http.ResponseWriter, r *http.Request) {
 	// unbound / non-member sender is served as the installer rather than
 	// prompted to bind. Absent / non-"true" = the default bind-first bot.
 	allowUnbound := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("allow_unbound")), "true")
+	transportMode := dingtalk.TransportMode(strings.TrimSpace(r.URL.Query().Get("transport_mode")))
 
 	res, err := h.DingTalkRegistration.BeginInstall(r.Context(), dingtalk.BeginInstallParams{
-		WorkspaceID:  wsUUID,
-		AgentID:      agentUUID,
-		InitiatorID:  initiatorUUID,
-		AllowUnbound: allowUnbound,
+		WorkspaceID:   wsUUID,
+		AgentID:       agentUUID,
+		InitiatorID:   initiatorUUID,
+		AllowUnbound:  allowUnbound,
+		TransportMode: transportMode,
 	})
 	if err != nil {
+		slog.Warn("dingtalk install begin failed",
+			"workspace_id", uuidToString(wsUUID),
+			"agent_id", uuidToString(agentUUID),
+			"transport_mode", string(transportMode),
+			"allow_unbound", allowUnbound,
+			"error", err,
+		)
+		var registrationErr *dingtalk.RegistrationError
+		if errors.As(err, &registrationErr) {
+			switch registrationErr.Code {
+			case "invalid_transport_mode":
+				writeError(w, http.StatusBadRequest, registrationErr.Error())
+			case "http_callback_unavailable":
+				writeError(w, http.StatusServiceUnavailable, registrationErr.Error())
+			default:
+				writeError(w, http.StatusBadGateway, "failed to start install: "+err.Error())
+			}
+			return
+		}
 		writeError(w, http.StatusBadGateway, "failed to start install: "+err.Error())
 		return
 	}
@@ -214,14 +293,30 @@ func (h *Handler) BeginDingTalkInstall(w http.ResponseWriter, r *http.Request) {
 }
 
 // DingTalkInstallStatusResponse is the polling payload. `status` is one
-// of "pending" | "success" | "error"; on success `installation_id` is
-// populated, on error `error_reason` is a stable code (see
+// of "pending" | "approving" | "success" | "error"; on success or
+// approving `installation_id` is populated, on error `error_reason` is a stable code (see
 // dingtalk.RegistrationReason*).
 type DingTalkInstallStatusResponse struct {
 	Status         string `json:"status"`
 	InstallationID string `json:"installation_id,omitempty"`
 	ErrorReason    string `json:"error_reason,omitempty"`
 	ErrorMessage   string `json:"error_message,omitempty"`
+}
+
+func dingTalkInstallStatusToResponse(state dingtalk.RegistrationSessionState) DingTalkInstallStatusResponse {
+	status := string(state.Status)
+	if state.Status == dingtalk.RegistrationStatusSuccess && state.RegistrationStatus == "APPROVING" {
+		status = "approving"
+	}
+	resp := DingTalkInstallStatusResponse{
+		Status:       status,
+		ErrorReason:  state.ErrorReason,
+		ErrorMessage: state.ErrorMessage,
+	}
+	if state.InstallationID.Valid {
+		resp.InstallationID = uuidToString(state.InstallationID)
+	}
+	return resp
 }
 
 // GetDingTalkInstallStatus (GET /api/workspaces/{id}/dingtalk/install/{sessionId}/status)
@@ -251,16 +346,9 @@ func (h *Handler) GetDingTalkInstallStatus(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to load install session")
 		return
 	}
-	resp := DingTalkInstallStatusResponse{
-		Status:       string(state.Status),
-		ErrorReason:  state.ErrorReason,
-		ErrorMessage: state.ErrorMessage,
-	}
-	if state.InstallationID.Valid {
-		resp.InstallationID = uuidToString(state.InstallationID)
-		// The dingtalk_installation:created event is published by the
-		// RegistrationService at the row-commit point, not here.
-	}
+	// The dingtalk_installation:created event is published by the
+	// RegistrationService at the row-commit point, not here.
+	resp := dingTalkInstallStatusToResponse(state)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -279,6 +367,9 @@ type ManualInstallDingTalkRequest struct {
 	// ClientSecret is the DingTalk AppSecret; encrypted at rest inside
 	// InstallationService.Upsert, so it never persists as plaintext.
 	ClientSecret string `json:"client_secret"`
+	// RobotCode is the distinct robot receiver identifier; it must not be
+	// inferred from client_id.
+	RobotCode string `json:"robot_code"`
 	// AllowUnbound opts the bot into "serve unbound senders as the
 	// installer" mode — same semantics as the device-flow toggle.
 	AllowUnbound bool `json:"allow_unbound"`
@@ -315,6 +406,7 @@ func (h *Handler) ManualInstallDingTalk(w http.ResponseWriter, r *http.Request) 
 	agentIDStr := strings.TrimSpace(req.AgentID)
 	clientID := strings.TrimSpace(req.ClientID)
 	clientSecret := strings.TrimSpace(req.ClientSecret)
+	robotCode := strings.TrimSpace(req.RobotCode)
 	if agentIDStr == "" {
 		writeError(w, http.StatusBadRequest, "agent_id is required")
 		return
@@ -325,6 +417,10 @@ func (h *Handler) ManualInstallDingTalk(w http.ResponseWriter, r *http.Request) 
 	}
 	if clientSecret == "" {
 		writeError(w, http.StatusBadRequest, "client_secret is required")
+		return
+	}
+	if robotCode == "" {
+		writeError(w, http.StatusBadRequest, "robot_code is required")
 		return
 	}
 	agentUUID, ok := parseUUIDOrBadRequest(w, agentIDStr, "agent_id")
@@ -360,6 +456,7 @@ func (h *Handler) ManualInstallDingTalk(w http.ResponseWriter, r *http.Request) 
 		AgentID:         agentUUID,
 		ClientID:        clientID,
 		ClientSecret:    clientSecret,
+		RobotCode:       robotCode,
 		InstallerUserID: initiatorUUID,
 		AllowUnbound:    req.AllowUnbound,
 	})

@@ -13,6 +13,7 @@ func newDingTalkTestCommand(use string) *cobra.Command {
 	cmd := &cobra.Command{Use: use}
 	addDingTalkTestFlags(cmd)
 	cmd.Flags().Bool("allow-unbound", false, "")
+	cmd.Flags().String("transport", "STREAM", "")
 	cmd.Flags().String("output", "json", "")
 	return cmd
 }
@@ -44,14 +45,18 @@ func TestDingTalkInstallCommandsRegistered(t *testing.T) {
 	if flag := dingtalkInstallBeginCmd.Flags().Lookup("allow-unbound"); flag == nil {
 		t.Fatal("dingtalk install begin --allow-unbound flag not registered")
 	}
+	if flag := dingtalkInstallBeginCmd.Flags().Lookup("transport"); flag == nil {
+		t.Fatal("dingtalk install begin --transport flag not registered")
+	}
 }
 
 func TestRunDingTalkInstallBegin(t *testing.T) {
-	var gotMethod, gotPath, gotAgentID, gotAllowUnbound string
+	var gotMethod, gotPath, gotAgentID, gotAllowUnbound, gotTransport string
 	server := dingTalkTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
 		gotAgentID = r.URL.Query().Get("agent_id")
 		gotAllowUnbound = r.URL.Query().Get("allow_unbound")
+		gotTransport = r.URL.Query().Get("transport_mode")
 		_ = json.NewEncoder(w).Encode(map[string]any{"session_id": "session-1", "qr_code_url": "https://example.test/qr"})
 	})
 	defer server.Close()
@@ -67,6 +72,29 @@ func TestRunDingTalkInstallBegin(t *testing.T) {
 	}
 	if gotAllowUnbound != "" {
 		t.Fatalf("allow_unbound = %q, want omitted", gotAllowUnbound)
+	}
+	if gotTransport != "STREAM" {
+		t.Fatalf("transport_mode = %q, want STREAM", gotTransport)
+	}
+}
+
+func TestRunDingTalkInstallBeginHTTPCallback(t *testing.T) {
+	var gotTransport string
+	server := dingTalkTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
+		gotTransport = r.URL.Query().Get("transport_mode")
+		_ = json.NewEncoder(w).Encode(map[string]any{"session_id": "session-1", "qr_code_url": "https://example.test/qr"})
+	})
+	defer server.Close()
+
+	cmd := newDingTalkTestCommand("begin")
+	cmd.Flags().String("agent-id", "", "")
+	_ = cmd.Flags().Set("agent-id", "agent-1")
+	_ = cmd.Flags().Set("transport", "HTTP_CALLBACK")
+	if err := runDingTalkInstallBegin(cmd, nil); err != nil {
+		t.Fatalf("runDingTalkInstallBegin: %v", err)
+	}
+	if gotTransport != "HTTP_CALLBACK" {
+		t.Fatalf("transport_mode = %q", gotTransport)
 	}
 }
 

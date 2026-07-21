@@ -42,6 +42,7 @@ func init() {
 
 	dingtalkInstallBeginCmd.Flags().String("agent-id", "", "Agent ID to bind to the DingTalk bot (required)")
 	dingtalkInstallBeginCmd.Flags().Bool("allow-unbound", false, "Allow external users to use the bot without binding a Multica account")
+	dingtalkInstallBeginCmd.Flags().String("transport", "STREAM", "Inbound transport: STREAM or HTTP_CALLBACK")
 	dingtalkInstallBeginCmd.Flags().String("output", "json", "Output format: json")
 	dingtalkInstallStatusCmd.Flags().String("output", "json", "Output format: json")
 }
@@ -63,6 +64,11 @@ func runDingTalkInstallBegin(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	allowUnbound, _ := cmd.Flags().GetBool("allow-unbound")
+	transport, _ := cmd.Flags().GetString("transport")
+	transport = strings.ToUpper(strings.TrimSpace(transport))
+	if transport != "STREAM" && transport != "HTTP_CALLBACK" {
+		return fmt.Errorf("invalid --transport %q: must be STREAM or HTTP_CALLBACK", transport)
+	}
 
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
@@ -70,6 +76,7 @@ func runDingTalkInstallBegin(cmd *cobra.Command, _ []string) error {
 	if allowUnbound {
 		query.Set("allow_unbound", "true")
 	}
+	query.Set("transport_mode", transport)
 	path := fmt.Sprintf("/api/workspaces/%s/dingtalk/install/begin?%s", url.PathEscape(workspaceID), query.Encode())
 	var result map[string]any
 	if err := client.PostJSON(ctx, path, map[string]any{}, &result); err != nil {

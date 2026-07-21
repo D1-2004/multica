@@ -63,6 +63,34 @@ func taskContextMessage(t *testing.T, corpID, staffID string) channel.InboundMes
 	return channel.InboundMessage{Raw: raw}
 }
 
+func TestRobotTaskContextResolverCarriesStreamSessionReplyLocator(t *testing.T) {
+	raw, err := json.Marshal(dingtalkRawEvent{
+		AgentIdentityContextToken: "trusted-token",
+		SessionWebhook:            "https://oapi.example/session-reply",
+		SessionWebhookExpiredTime: 123456789,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextJSON, err := (&robotTaskContextResolver{}).ResolveTaskContext(
+		context.Background(), engine.ResolvedInstallation{}, channel.InboundMessage{Raw: raw},
+	)
+	if err != nil {
+		t.Fatalf("ResolveTaskContext: %v", err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(contextJSON, &payload); err != nil {
+		t.Fatal(err)
+	}
+	var reply dingtalkSessionReplyContext
+	if err := json.Unmarshal(payload[dingtalkSessionReplyContextKey], &reply); err != nil {
+		t.Fatalf("decode Stream reply context: %v", err)
+	}
+	if reply.Webhook != "https://oapi.example/session-reply" || reply.ExpiresAt != 123456789 {
+		t.Fatalf("Stream reply context = %#v", reply)
+	}
+}
+
 func TestRobotTaskContextResolverContinuesWithoutMissingOrganizationIdentity(t *testing.T) {
 	employee := &robotEmployeeResolverStub{}
 	resolver := newRobotTaskContextResolver(employee)
@@ -74,6 +102,70 @@ func TestRobotTaskContextResolverContinuesWithoutMissingOrganizationIdentity(t *
 	if employee.corpID != "" || employee.staffID != "" {
 		t.Fatalf("employee resolver must not run without organization identity: corp=%q staff=%q", employee.corpID, employee.staffID)
 	}
+}
+
+func TestRobotTaskContextResolverPrefersTrustedExternalIdentityToken(t *testing.T) {
+	message, err := InboundFromHTTPCallback(HTTPCallbackMessage{
+		ConversationID:       "conversation-1",
+		ConversationType:     "single",
+		MessageID:            "message-1",
+		SenderUID:            "123456",
+		SenderOrgID:          "654321",
+		Text:                 "hello",
+		IdentityContextToken: "sealed-router-context",
+	}, "client-1", "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatalf("InboundFromHTTPCallback: %v", err)
+	}
+
+	contextJSON, err := (&robotTaskContextResolver{}).ResolveTaskContext(
+		context.Background(),
+		engine.ResolvedInstallation{},
+		message,
+	)
+	if err != nil {
+		t.Fatalf("ResolveTaskContext: %v", err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(contextJSON, &payload); err != nil {
+		t.Fatalf("decode task context: %v", err)
+	}
+	var token string
+	if err := json.Unmarshal(payload[protocol.AgentIdentityContextTokenJSONKey], &token); err != nil {
+		t.Fatalf("decode external identity token: %v", err)
+	}
+	if token != "sealed-router-context" {
+		t.Fatalf("external identity token = %q", token)
+	}
+	if _, present := payload[protocol.DingTalkRobotIdentityJSONKey]; present {
+		t.Fatal("local robot identity must not override external identity")
+	}
+}
+
+func TestRobotTaskContextResolverKeepsRouteSenderOutOfTrustedIdentity(t *testing.T) {
+	message, err := InboundFromHTTPCallback(HTTPCallbackMessage{
+		ConversationID:   "conversation-1",
+		ConversationType: "single",
+		MessageID:        "message-1",
+		SenderID:         "$:opaque-open-dingtalk-id",
+		Text:             "hello",
+	}, "client-1", "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatalf("InboundFromHTTPCallback: %v", err)
+	}
+	if message.Source.SenderID != "$:opaque-open-dingtalk-id" {
+		t.Fatalf("route sender id = %q", message.Source.SenderID)
+	}
+
+	contextJSON, err := newRobotTaskContextResolver(&robotEmployeeResolverStub{}).ResolveTaskContext(
+		context.Background(),
+		engine.ResolvedInstallation{},
+		message,
+	)
+	if err != nil {
+		t.Fatalf("ResolveTaskContext: %v", err)
+	}
+	assertDingTalkIdentityUnavailable(t, contextJSON, protocol.DingTalkRobotIdentityUnavailableMissingOrg)
 }
 
 func TestRobotTaskContextResolverContinuesWithoutIdentityAfterValidationError(t *testing.T) {

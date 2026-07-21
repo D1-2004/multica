@@ -26,6 +26,7 @@ import (
 type outboundQueries interface {
 	GetChannelChatSessionBindingBySession(ctx context.Context, arg db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error)
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
+	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
 	ListPendingChatMessagePreviewsAfterTask(ctx context.Context, taskID pgtype.UUID) ([]db.ListPendingChatMessagePreviewsAfterTaskRow, error)
 }
 
@@ -97,6 +98,14 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 	if handled, err := o.processDispatchEvent(ctx, e); handled {
 		return err
 	}
+	// Legacy Stream chats publish their reply on chat:done and their terminal
+	// failure notice on task:failed. The dispatch-only queued/completed events
+	// must not fall through to the legacy failure-message path.
+	switch e.Type {
+	case protocol.EventChatDone, protocol.EventTaskFailed:
+	default:
+		return nil
+	}
 	sessionID := sessionIDFromEvent(e)
 	if !sessionID.Valid {
 		// Issue / autopilot tasks carry no chat_session.
@@ -120,6 +129,9 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 	// Later queued turns in the same chat keep their own per-message indicators.
 	if o.typing != nil {
 		o.typing.ClearTask(ctx, sessionID, taskID)
+	}
+	if o.dispatchOutboundMode(ctx, taskID) == protocol.DispatchOutboundModeDWS {
+		return nil
 	}
 	// task-failed delivers the failure notice; chat-done delivers the reply.
 	// Without the notice a failed run is indistinguishable from a silent
@@ -156,6 +168,16 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 		return fmt.Errorf("decode dingtalk credentials: %w", err)
 	}
 	sendStarted := time.Now()
+	// Stream callbacks carry a per-message session webhook. Prefer it whenever
+	// present: legacy Stream installations predate robot_code persistence, and
+	// client_id must never be guessed as the robot identity. HTTP callbacks do
+	// not carry this locator and continue through the robot API below.
+	if reply, ok := o.sessionReplyContext(ctx, taskID); ok {
+		if err := postSessionWebhook(ctx, o.messenger.httpClient, reply.Webhook, content); err != nil {
+			return fmt.Errorf("post dingtalk Stream reply: %w", err)
+		}
+		return nil
+	}
 	if err := o.messenger.SendMarkdown(ctx, creds, outboundTarget(binding), content); err != nil {
 		return fmt.Errorf("post dingtalk reply: %w", err)
 	}
@@ -170,6 +192,41 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 		)
 	}
 	return nil
+}
+
+func (o *Outbound) sessionReplyContext(ctx context.Context, taskID pgtype.UUID) (dingtalkSessionReplyContext, bool) {
+	task, err := o.q.GetAgentTask(ctx, taskID)
+	if err != nil || len(task.Context) == 0 {
+		return dingtalkSessionReplyContext{}, false
+	}
+	var private map[string]json.RawMessage
+	if err := json.Unmarshal(task.Context, &private); err != nil {
+		return dingtalkSessionReplyContext{}, false
+	}
+	var reply dingtalkSessionReplyContext
+	if err := json.Unmarshal(private[dingtalkSessionReplyContextKey], &reply); err != nil {
+		return dingtalkSessionReplyContext{}, false
+	}
+	reply.Webhook = strings.TrimSpace(reply.Webhook)
+	return reply, reply.Webhook != ""
+}
+
+func (o *Outbound) dispatchOutboundMode(ctx context.Context, taskID pgtype.UUID) string {
+	task, err := o.q.GetAgentTask(ctx, taskID)
+	if err != nil || len(task.Context) == 0 {
+		return ""
+	}
+	var private map[string]json.RawMessage
+	if err := json.Unmarshal(task.Context, &private); err != nil {
+		return ""
+	}
+	var outbound struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal(private[protocol.DispatchOutboundJSONKey], &outbound); err != nil {
+		return ""
+	}
+	return outbound.Mode
 }
 
 const (
@@ -245,16 +302,20 @@ const (
 	dispatchPhaseOutbound   = "outbound"
 )
 
-// processDispatchEvent owns only the issue-backed Dispatch Command 2.0 robot
-// lifecycle. It returns handled=false for legacy chat events and for DWS
-// digital-employee commands, which perform outbound inside the sandbox.
+// processDispatchEvent owns only issue-backed Dispatch Command 2.0 requests
+// whose binding selected robot_sdk. Source account type does not select the
+// outbound strategy.
 func (o *Outbound) processDispatchEvent(ctx context.Context, e events.Event) (bool, error) {
 	payload, ok := e.Payload.(map[string]any)
 	if !ok {
 		return false, nil
 	}
+	issueID, _ := payload["issue_id"].(string)
+	if strings.TrimSpace(issueID) == "" {
+		return false, nil
+	}
 	source, _ := payload["dispatch_source"].(map[string]any)
-	if source["type"] != "robot" {
+	if source["platform"] != "dingtalk" {
 		return false, nil
 	}
 	outbound, _ := payload["dispatch_outbound"].(map[string]any)

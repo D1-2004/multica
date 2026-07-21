@@ -43,13 +43,13 @@ const (
 // Reason codes the service stores on a failed session. Stable strings
 // so the frontend can switch on them without parsing prose.
 const (
-	RegistrationReasonExpired                  = "expired"
-	RegistrationReasonInstallFailed            = "install_failed"
-	RegistrationReasonProtocol                 = "dingtalk_protocol_error"
-	RegistrationReasonCredentialsCheckFailed   = "credentials_check_failed"
-	RegistrationReasonInstallationConflict     = "installation_conflict"
-	RegistrationReasonRouterRegistrationFailed = "router_registration_failed"
-	RegistrationReasonInternalError            = "internal_error"
+	RegistrationReasonExpired                = "expired"
+	RegistrationReasonInstallFailed          = "install_failed"
+	RegistrationReasonProtocol               = "dingtalk_protocol_error"
+	RegistrationReasonCredentialsCheckFailed = "credentials_check_failed"
+	RegistrationReasonInstallationConflict   = "installation_conflict"
+	RegistrationReasonInternalError          = "internal_error"
+	RegistrationReasonSuperseded             = "superseded"
 )
 
 // AppCredentialVerifier validates a freshly minted (client_id,
@@ -59,6 +59,16 @@ const (
 // check (tests, offline deployments).
 type AppCredentialVerifier interface {
 	VerifyAppCredentials(ctx context.Context, clientID, clientSecret string) error
+}
+
+type HTTPCallbackEndpoint struct {
+	EndpointID  string
+	DispatchURL string
+}
+
+type HTTPCallbackRouter interface {
+	PrepareEndpoint(ctx context.Context, workspaceID, agentID, actorUserID pgtype.UUID) (HTTPCallbackEndpoint, error)
+	Register(ctx context.Context, endpoint HTTPCallbackEndpoint, agentID pgtype.UUID, robotCode string) (sourceID string, err error)
 }
 
 // RegistrationServiceConfig configures the service.
@@ -114,11 +124,12 @@ func (c RegistrationServiceConfig) withDefaults() RegistrationServiceConfig {
 // process: this deployment runs several replicas, and a status poll may
 // be served by any of them, not just the one that opened the session.
 type RegistrationService struct {
-	cfg         RegistrationServiceConfig
-	client      *RegistrationClient
-	installs    *InstallationService
-	verifier    AppCredentialVerifier
-	authQueries authQueriesAdapter
+	cfg                RegistrationServiceConfig
+	client             *RegistrationClient
+	installs           *InstallationService
+	verifier           AppCredentialVerifier
+	authQueries        authQueriesAdapter
+	httpCallbackRouter HTTPCallbackRouter
 
 	// bus is optional. When wired (SetEventBus), a successful install
 	// publishes dingtalk_installation:created the moment the row
@@ -187,6 +198,42 @@ func (s *RegistrationService) SetEventBus(bus *events.Bus) {
 	s.bus = bus
 }
 
+func (s *RegistrationService) SetHTTPCallbackRouter(router HTTPCallbackRouter) {
+	s.httpCallbackRouter = router
+}
+
+func (s *RegistrationService) RetryHTTPCallbackRouter(
+	ctx context.Context,
+	workspaceID, installationID pgtype.UUID,
+) (Installation, error) {
+	inst, err := s.installs.GetInWorkspace(ctx, installationID, workspaceID)
+	if err != nil {
+		return Installation{}, err
+	}
+	if inst.Status != string(InstallationActive) || inst.TransportMode != TransportModeHTTPCallback ||
+		strings.TrimSpace(inst.RobotCode) == "" {
+		return Installation{}, errors.New("dingtalk HTTP callback installation is not retryable")
+	}
+	if s.httpCallbackRouter == nil {
+		return Installation{}, errors.New("agent message router is not configured")
+	}
+	endpoint, err := s.httpCallbackRouter.PrepareEndpoint(ctx, inst.WorkspaceID, inst.AgentID, inst.InstallerUserID)
+	if err != nil || (inst.DispatchEndpointID != "" && endpoint.EndpointID != inst.DispatchEndpointID) {
+		if err == nil {
+			err = errors.New("dispatch endpoint changed")
+		}
+		updated, _ := s.installs.UpdateRouterState(ctx, inst, "", "failed", err.Error())
+		return updated, err
+	}
+	inst.DispatchEndpointID = endpoint.EndpointID
+	sourceID, err := s.httpCallbackRouter.Register(ctx, endpoint, inst.AgentID, inst.RobotCode)
+	if err != nil {
+		updated, _ := s.installs.UpdateRouterState(ctx, inst, "", "failed", err.Error())
+		return updated, err
+	}
+	return s.installs.UpdateRouterState(ctx, inst, sourceID, "registered", "")
+}
+
 // publishInstalled emits dingtalk_installation:created on the optional
 // bus. Both install and revoke broadcast to the whole workspace via the
 // SubscribeAll fanout; the frontend invalidates the dingtalk
@@ -205,11 +252,13 @@ func (s *RegistrationService) publishInstalled(workspaceID, installationID pgtyp
 
 // registrationSession is the in-memory state for one in-flight install.
 type registrationSession struct {
-	id           string
-	workspaceID  pgtype.UUID
-	agentID      pgtype.UUID
-	initiatorID  pgtype.UUID
-	allowUnbound bool
+	id            string
+	workspaceID   pgtype.UUID
+	agentID       pgtype.UUID
+	initiatorID   pgtype.UUID
+	allowUnbound  bool
+	transportMode TransportMode
+	generation    int64
 
 	deviceCode string
 	qrCodeURL  string
@@ -261,11 +310,12 @@ func (s *registrationSession) markError(reason, msg string, gcAfter time.Time) {
 // RegistrationSessionState is the read-only snapshot the handler
 // serializes to the frontend.
 type RegistrationSessionState struct {
-	ID             string
-	Status         RegistrationSessionStatus
-	InstallationID pgtype.UUID
-	ErrorReason    string
-	ErrorMessage   string
+	ID                 string
+	Status             RegistrationSessionStatus
+	InstallationID     pgtype.UUID
+	RegistrationStatus string
+	ErrorReason        string
+	ErrorMessage       string
 }
 
 // BeginInstallParams is the trusted input from the handler — the
@@ -279,6 +329,8 @@ type BeginInstallParams struct {
 	// AllowUnbound requests the "serve unbound senders as the installer"
 	// mode; persisted on the installation when the scan completes.
 	AllowUnbound bool
+	// TransportMode defaults to STREAM for backward compatibility.
+	TransportMode TransportMode
 }
 
 // BeginInstallResult is the public payload the handler echoes to the
@@ -290,6 +342,25 @@ type BeginInstallResult struct {
 	QRCodeURL           string
 	ExpiresInSeconds    int
 	PollIntervalSeconds int
+}
+
+type RegistrationCapabilities struct {
+	HTTPCallbackAvailable bool
+	HTTPCallbackReason    string
+}
+
+func (s *RegistrationService) Capabilities() RegistrationCapabilities {
+	result := RegistrationCapabilities{}
+	if err := validateOutgoingURL(s.client.cfg.OutgoingURL); err != nil {
+		result.HTTPCallbackReason = "callback_url_not_configured"
+		return result
+	}
+	if s.httpCallbackRouter == nil {
+		result.HTTPCallbackReason = "agent_message_router_not_configured"
+		return result
+	}
+	result.HTTPCallbackAvailable = true
+	return result
 }
 
 // BeginInstall opens a fresh device-flow session and kicks off the
@@ -313,7 +384,20 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 		return BeginInstallResult{}, fmt.Errorf("dingtalk registration: agent not in workspace: %w", err)
 	}
 
-	begin, err := s.client.Begin(ctx)
+	requestedMode := p.TransportMode
+	if strings.TrimSpace(string(requestedMode)) == "" {
+		requestedMode = TransportModeStream
+	}
+	mode, err := normalizeTransportMode(requestedMode)
+	if err != nil {
+		return BeginInstallResult{}, err
+	}
+	if mode == TransportModeHTTPCallback && !s.Capabilities().HTTPCallbackAvailable {
+		return BeginInstallResult{}, &RegistrationError{
+			Code: "http_callback_unavailable", Description: "HTTP callback transport is not fully configured",
+		}
+	}
+	begin, err := s.client.BeginWithTransport(ctx, mode)
 	if err != nil {
 		return BeginInstallResult{}, fmt.Errorf("dingtalk registration: begin: %w", err)
 	}
@@ -324,25 +408,30 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 		return BeginInstallResult{}, fmt.Errorf("dingtalk registration: mint session id: %w", err)
 	}
 	sess := &registrationSession{
-		id:           sessionID,
-		workspaceID:  p.WorkspaceID,
-		agentID:      p.AgentID,
-		initiatorID:  p.InitiatorID,
-		allowUnbound: p.AllowUnbound,
-		deviceCode:   begin.DeviceCode,
-		qrCodeURL:    begin.QRCodeURL,
-		interval:     begin.Interval,
-		expiresAt:    now.Add(begin.ExpiresIn),
-		status:       RegistrationStatusPending,
+		id:            sessionID,
+		workspaceID:   p.WorkspaceID,
+		agentID:       p.AgentID,
+		initiatorID:   p.InitiatorID,
+		allowUnbound:  p.AllowUnbound,
+		transportMode: mode,
+		deviceCode:    begin.DeviceCode,
+		qrCodeURL:     begin.QRCodeURL,
+		interval:      begin.Interval,
+		expiresAt:     now.Add(begin.ExpiresIn),
+		status:        RegistrationStatusPending,
 	}
-	if err := s.store.Create(ctx, sessionRecord{
-		ID:          sess.id,
-		WorkspaceID: sess.workspaceID,
-		Status:      RegistrationStatusPending,
-		ExpiresAt:   sess.expiresAt,
-	}, sess.agentID); err != nil {
+	generation, err := s.store.Create(ctx, sessionRecord{
+		ID:            sess.id,
+		WorkspaceID:   sess.workspaceID,
+		Status:        RegistrationStatusPending,
+		ExpiresAt:     sess.expiresAt,
+		TransportMode: sess.transportMode,
+		AllowUnbound:  sess.allowUnbound,
+	}, sess.agentID)
+	if err != nil {
 		return BeginInstallResult{}, fmt.Errorf("dingtalk registration: persist session: %w", err)
 	}
+	sess.generation = generation
 
 	// The polling goroutine outlives the request context, so we cannot
 	// reuse ctx here. Its own context is sized to the (capped) device
@@ -395,13 +484,24 @@ func (s *RegistrationService) GetSession(ctx context.Context, workspaceID pgtype
 			ErrorMessage: "QR expired before authorization",
 		}, nil
 	}
-	return RegistrationSessionState{
+	state := RegistrationSessionState{
 		ID:             rec.ID,
 		Status:         rec.Status,
 		InstallationID: rec.InstallationID,
 		ErrorReason:    rec.ErrorReason,
 		ErrorMessage:   rec.ErrorMessage,
-	}, nil
+	}
+	if rec.Status == RegistrationStatusSuccess && rec.InstallationID.Valid &&
+		s.installs != nil && s.installs.queries != nil {
+		inst, err := s.installs.GetInWorkspace(ctx, rec.InstallationID, workspaceID)
+		if err != nil {
+			s.cfg.Logger.Warn("dingtalk registration: load completed installation status failed",
+				"session_id", rec.ID, "installation_id", uuidString(rec.InstallationID), "err", err)
+			return RegistrationSessionState{}, fmt.Errorf("load completed installation: %w", err)
+		}
+		state.RegistrationStatus = inst.RegistrationStatus
+	}
+	return state, nil
 }
 
 // runPolling is the background loop: wait → poll → branch on result.
@@ -443,6 +543,11 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 
 		switch {
 		case res.ClientID != "" && res.ClientSecret != "":
+			pollMode, modeErr := transportModeFromPoll(res.Mode)
+			if modeErr != nil || pollMode != sess.transportMode {
+				s.recordError(sess, RegistrationReasonProtocol, "registration result transport does not match requested transport")
+				return
+			}
 			s.finishSuccess(ctx, sess, res)
 			return
 		case res.Err != nil:
@@ -472,7 +577,19 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 // an installer binding; DingTalk's poll payload has no installer
 // identity to bind).
 func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrationSession, res *RegistrationPollResult) {
-	if s.verifier != nil {
+	current, err := s.store.IsCurrent(ctx, sess.workspaceID, sess.agentID, sess.generation)
+	if err != nil {
+		s.recordError(sess, RegistrationReasonInternalError, "failed to verify registration generation")
+		return
+	}
+	if !current {
+		s.recordError(sess, RegistrationReasonSuperseded, "a newer registration session replaced this QR code")
+		return
+	}
+	// APPROVING credentials are issued once while DingTalk still rejects robot
+	// messaging. Persist them immediately instead of running an availability
+	// probe that is expected to fail before approval.
+	if s.verifier != nil && !res.ApprovalPending {
 		if err := s.verifier.VerifyAppCredentials(ctx, res.ClientID, res.ClientSecret); err != nil {
 			s.cfg.Logger.Warn("dingtalk registration: credentials check failed",
 				"session_id", sess.id, "err", err)
@@ -481,26 +598,67 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		}
 	}
 
+	endpoint := HTTPCallbackEndpoint{}
+	routerStatus := ""
+	routerLastError := ""
+	if sess.transportMode == TransportModeHTTPCallback {
+		routerStatus = "pending"
+		if s.httpCallbackRouter == nil {
+			routerStatus = "failed"
+			routerLastError = "agent message router is not configured"
+		} else if prepared, err := s.httpCallbackRouter.PrepareEndpoint(ctx, sess.workspaceID, sess.agentID, sess.initiatorID); err != nil {
+			routerStatus = "failed"
+			routerLastError = err.Error()
+		} else {
+			endpoint = prepared
+		}
+	}
+
 	inst, err := s.installs.Upsert(ctx, InstallationParams{
-		WorkspaceID:     sess.workspaceID,
-		AgentID:         sess.agentID,
-		ClientID:        res.ClientID,
-		ClientSecret:    res.ClientSecret,
-		InstallerUserID: sess.initiatorID,
-		AllowUnbound:    sess.allowUnbound,
+		WorkspaceID:        sess.workspaceID,
+		AgentID:            sess.agentID,
+		ClientID:           res.ClientID,
+		ClientSecret:       res.ClientSecret,
+		InstallerUserID:    sess.initiatorID,
+		AllowUnbound:       sess.allowUnbound,
+		TransportMode:      sess.transportMode,
+		RobotCode:          res.RobotCode,
+		DispatchEndpointID: endpoint.EndpointID,
+		RouterStatus:       routerStatus,
+		RouterLastError:    routerLastError,
+		RegistrationStatus: func() string {
+			if res.ApprovalPending {
+				return registrationStatusApproving
+			}
+			return ""
+		}(),
 	})
 	if err != nil {
 		s.cfg.Logger.Warn("dingtalk registration: upsert installation",
 			"session_id", sess.id, "err", err)
-		reason := RegistrationReasonInternalError
-		switch {
-		case errors.Is(err, ErrRouterUnavailable):
-			reason = RegistrationReasonRouterRegistrationFailed
-		case errors.Is(err, ErrAppOwnedByAnotherWorkspace), errors.Is(err, ErrAgentAlreadyConnected):
-			reason = RegistrationReasonInstallationConflict
-		}
-		s.recordError(sess, reason, err.Error())
+		s.recordError(sess, RegistrationReasonInstallationConflict, err.Error())
 		return
+	}
+
+	// Persist the HTTP installation and endpoint before creating the Router
+	// source. A Router delivery can then authenticate as soon as registration
+	// becomes active; a Router failure leaves a retryable installation instead
+	// of forcing the user to scan again.
+	if sess.transportMode == TransportModeHTTPCallback && routerStatus == "pending" {
+		sourceID, registerErr := s.httpCallbackRouter.Register(ctx, endpoint, sess.agentID, res.RobotCode)
+		if registerErr != nil {
+			routerStatus = "failed"
+			routerLastError = registerErr.Error()
+		} else {
+			routerStatus = "registered"
+		}
+		updated, updateErr := s.installs.UpdateRouterState(ctx, inst, sourceID, routerStatus, routerLastError)
+		if updateErr != nil {
+			s.cfg.Logger.Error("dingtalk registration: persist router state failed",
+				"session_id", sess.id, "installation_id", uuidString(inst.ID), "err", updateErr)
+		} else {
+			inst = updated
+		}
 	}
 
 	s.recordSuccess(sess, inst.ID)
@@ -512,7 +670,10 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		"session_id", sess.id,
 		"workspace_id", uuidString(sess.workspaceID),
 		"agent_id", uuidString(sess.agentID),
-		"installation_id", uuidString(inst.ID))
+		"installation_id", uuidString(inst.ID),
+		"transport_mode", inst.TransportMode,
+		"connection_managed", inst.ConnectionManaged,
+		"registration_status", inst.RegistrationStatus)
 }
 
 // recordSuccess / recordError commit a terminal outcome. They update the

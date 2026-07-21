@@ -27,8 +27,9 @@ import (
 // (/v1.0/robot/emotion/reply|recall) and the legacy-oapi directory
 // lookup the identity auto-binder needs (topapi/v2/user/get).
 //
-// robotCode equals the app's clientId for these org-internal apps. Access
-// tokens are cached per clientId (~2h TTL) so a chatty session does not
+// robotCode and clientId are distinct platform identifiers: clientId mints
+// access tokens while robotCode addresses the bot. Access tokens are cached
+// per clientId (~2h TTL) so a chatty session does not
 // re-mint on every reply; the v1.0 token doubles as the legacy oapi
 // access_token (same token pool, mirroring Client.postLegacy).
 type RobotMessenger struct {
@@ -74,6 +75,9 @@ type RobotTarget struct {
 // msgKey — is the first non-empty line, truncated; it shows in the
 // conversation list preview.
 func (m *RobotMessenger) SendMarkdown(ctx context.Context, creds channelCredentials, target RobotTarget, text string) error {
+	if strings.TrimSpace(creds.RobotCode) == "" {
+		return fmt.Errorf("dingtalk robot: robot_code is required")
+	}
 	msgParam, err := json.Marshal(map[string]string{
 		"title": markdownTitle(text),
 		"text":  text,
@@ -82,7 +86,7 @@ func (m *RobotMessenger) SendMarkdown(ctx context.Context, creds channelCredenti
 		return fmt.Errorf("dingtalk robot: marshal msgParam: %w", err)
 	}
 	body := map[string]any{
-		"robotCode": creds.ClientID,
+		"robotCode": creds.RobotCode,
 		"msgKey":    "sampleMarkdown",
 		"msgParam":  string(msgParam),
 	}
@@ -139,6 +143,9 @@ func (m *RobotMessenger) RecallEmotionReply(ctx context.Context, creds channelCr
 }
 
 func (m *RobotMessenger) postEmotion(ctx context.Context, creds channelCredentials, path string, target EmotionTarget) error {
+	if strings.TrimSpace(creds.RobotCode) == "" {
+		return fmt.Errorf("dingtalk robot: robot_code is required")
+	}
 	if target.OpenConversationID == "" || target.OpenMsgID == "" {
 		return fmt.Errorf("dingtalk robot: empty emotion target")
 	}
@@ -147,7 +154,7 @@ func (m *RobotMessenger) postEmotion(ctx context.Context, creds channelCredentia
 		return err
 	}
 	return m.post(ctx, path, token, map[string]any{
-		"robotCode":          creds.ClientID,
+		"robotCode":          creds.RobotCode,
 		"openMsgId":          target.OpenMsgID,
 		"openConversationId": target.OpenConversationID,
 		"emotionType":        processingEmotionType,

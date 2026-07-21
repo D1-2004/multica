@@ -99,7 +99,8 @@ Multica Cloud에서는 연동이 이미 사용 가능합니다 — 이 섹션은
 - `DINGTALK_OPENAPI_BASE` — 신형 DingTalk OpenAPI 호스트(기본값 `https://api.dingtalk.com`).
 - `DINGTALK_OAPI_BASE` — 레거시 DingTalk OAPI 호스트(기본값 `https://oapi.dingtalk.com`).
 - `MULTICA_DINGTALK_REGISTRATION_BASE_URL` — 스캔 생성(device flow) 등록 엔드포인트 오버라이드. 스테이징이나 mock용.
-- `MULTICA_DINGTALK_REGISTRATION_SOURCE` — DingTalk이 할당하는 파트너 소스 라벨. 비워 두면 전송되지 않습니다.
+- 스캔 생성 요청은 DingTalk에서 할당한 `FDE_AGENT` 소스를 항상 사용합니다.
+- `MULTICA_DINGTALK_REGISTRATION_OUTGOING_URL` — HTTP 콜백을 활성화하는 서버 소유의 고정 HTTPS Gateway URL이며 클라이언트가 변경할 수 없습니다.
 </Callout>
 
 ## 문제 해결

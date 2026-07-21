@@ -2,6 +2,7 @@ package agentmessagerouter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -48,6 +49,10 @@ type Store interface {
 	ActivateDingTalkAccountBinding(context.Context, db.ActivateDingTalkAccountBindingParams) (db.ChannelInstallation, error)
 	CompleteDingTalkAccountBindingResult(context.Context, db.CompleteDingTalkAccountBindingResultParams) (db.ChannelInstallation, error)
 	RevokeDingTalkAccountBinding(context.Context, db.RevokeDingTalkAccountBindingParams) (db.ChannelInstallation, error)
+}
+
+type robotEndpointStore interface {
+	GetActiveDingTalkBotInstallationByAgent(context.Context, db.GetActiveDingTalkBotInstallationByAgentParams) (db.ChannelInstallation, error)
 }
 
 type IdentityStore interface {
@@ -452,7 +457,7 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 	callbackURL := *s.publicOrigin
 	callbackURL.Path = "/api/integrations/dingtalk/account-bindings/" + util.UUIDToString(bindingID) + "/callback"
 	fragment := url.Values{
-		"bindingMode":  {string(params.BindingMode)},
+		"bindingMode":   {string(params.BindingMode)},
 		"bindingToken":  {issued.BindingToken},
 		"callbackUrl":   {callbackURL.String()},
 		"callbackToken": {callbackToken},
@@ -466,6 +471,38 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		QRCodeURL: qrCodeURL,
 		ExpiresAt: expiresAt,
 	}, nil
+}
+
+func (s *Service) dispatchEndpointForAgent(
+	ctx context.Context,
+	workspaceID, agentID pgtype.UUID,
+) (string, string, error) {
+	if store, ok := s.store.(robotEndpointStore); ok {
+		row, err := store.GetActiveDingTalkBotInstallationByAgent(ctx, db.GetActiveDingTalkBotInstallationByAgentParams{
+			WorkspaceID: workspaceID,
+			AgentID:     agentID,
+		})
+		if err == nil {
+			var cfg struct {
+				EndpointID string `json:"dispatch_endpoint_id"`
+			}
+			if json.Unmarshal(row.Config, &cfg) != nil {
+				return "", "", errors.New("invalid robot dispatch endpoint")
+			}
+			if strings.TrimSpace(cfg.EndpointID) != "" {
+				dispatchURL, err := BuildDispatchURL(s.publicOrigin.String(), cfg.EndpointID)
+				return cfg.EndpointID, dispatchURL, err
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return "", "", err
+		}
+	}
+	endpointID, err := s.keyring.GenerateEndpointID(s.random)
+	if err != nil {
+		return "", "", err
+	}
+	dispatchURL, err := BuildDispatchURL(s.publicOrigin.String(), endpointID)
+	return endpointID, dispatchURL, err
 }
 
 func (s *Service) List(ctx context.Context, workspaceID pgtype.UUID) ([]PublicDingTalkAccountBinding, error) {
@@ -541,12 +578,12 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 		}
 	}
 	messageScope, conversations, validationErr := validateCompleteBindingParams(CompleteBindingParams{
-		BindingID:      params.BindingID,
-		BindingMode:    params.BindingMode,
-		CallbackToken:  params.CallbackToken,
-		Status:         DingTalkBindingCompletionStatus,
-		Identity:       identity,
-		Message:        params.MessageBinding,
+		BindingID:     params.BindingID,
+		BindingMode:   params.BindingMode,
+		CallbackToken: params.CallbackToken,
+		Status:        DingTalkBindingCompletionStatus,
+		Identity:      identity,
+		Message:       params.MessageBinding,
 	})
 	if validationErr != nil {
 		return PublicDingTalkAccountBinding{}, ErrInvalidResult

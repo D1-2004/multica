@@ -13,6 +13,35 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+func TestMemSessionStoreFencesOlderRegistrationGeneration(t *testing.T) {
+	store := newMemSessionStore()
+	workspaceID := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	agentID := pgtype.UUID{Bytes: [16]byte{2}, Valid: true}
+	first, err := store.Create(context.Background(), sessionRecord{
+		ID: "stream", WorkspaceID: workspaceID, TransportMode: TransportModeStream,
+	}, agentID)
+	if err != nil {
+		t.Fatalf("create first: %v", err)
+	}
+	second, err := store.Create(context.Background(), sessionRecord{
+		ID: "http", WorkspaceID: workspaceID, TransportMode: TransportModeHTTPCallback,
+	}, agentID)
+	if err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+	if first != 1 || second != 2 {
+		t.Fatalf("generations = %d, %d", first, second)
+	}
+	current, err := store.IsCurrent(context.Background(), workspaceID, agentID, first)
+	if err != nil || current {
+		t.Fatalf("old generation current=%v err=%v", current, err)
+	}
+	current, err = store.IsCurrent(context.Background(), workspaceID, agentID, second)
+	if err != nil || !current {
+		t.Fatalf("new generation current=%v err=%v", current, err)
+	}
+}
+
 // newStoreTestFixture connects to the test database and seeds the workspace +
 // agent rows the session FKs require. Each store instance stands in for one
 // replica: the bug this file guards against is that a session opened by one
@@ -115,11 +144,12 @@ func TestDBSessionStoreIsVisibleAcrossReplicas(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM dingtalk_install_session WHERE id = $1`, sessionID)
 	})
 
-	if err := replicaA.Create(ctx, sessionRecord{
-		ID:          sessionID,
-		WorkspaceID: workspaceID,
-		Status:      RegistrationStatusPending,
-		ExpiresAt:   time.Now().Add(10 * time.Minute),
+	if _, err := replicaA.Create(ctx, sessionRecord{
+		ID:            sessionID,
+		WorkspaceID:   workspaceID,
+		Status:        RegistrationStatusPending,
+		ExpiresAt:     time.Now().Add(10 * time.Minute),
+		TransportMode: TransportModeStream,
 	}, agentID); err != nil {
 		t.Fatalf("replica A create: %v", err)
 	}
@@ -172,9 +202,9 @@ func TestDBSessionStoreTerminalIsWriteOnce(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM dingtalk_install_session WHERE id = $1`, sessionID)
 	})
-	if err := store.Create(ctx, sessionRecord{
+	if _, err := store.Create(ctx, sessionRecord{
 		ID: sessionID, WorkspaceID: workspaceID, Status: RegistrationStatusPending,
-		ExpiresAt: time.Now().Add(10 * time.Minute),
+		ExpiresAt: time.Now().Add(10 * time.Minute), TransportMode: TransportModeStream,
 	}, agentID); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -210,9 +240,9 @@ func TestDBSessionStoreSweep(t *testing.T) {
 	})
 
 	for _, id := range []string{staleID, liveID} {
-		if err := store.Create(ctx, sessionRecord{
+		if _, err := store.Create(ctx, sessionRecord{
 			ID: id, WorkspaceID: workspaceID, Status: RegistrationStatusPending,
-			ExpiresAt: now.Add(10 * time.Minute),
+			ExpiresAt: now.Add(10 * time.Minute), TransportMode: TransportModeStream,
 		}, agentID); err != nil {
 			t.Fatalf("create %s: %v", id, err)
 		}
@@ -234,5 +264,42 @@ func TestDBSessionStoreSweep(t *testing.T) {
 	}
 	if _, err := store.Get(ctx, liveID); err != nil {
 		t.Errorf("live session must survive the sweep: %v", err)
+	}
+}
+
+func TestDBSessionStoreFencesOlderRegistrationGeneration(t *testing.T) {
+	pool, workspaceID, agentID, _ := newStoreTestFixture(t)
+	ctx := context.Background()
+	store := &dbSessionStore{q: db.New(pool)}
+
+	streamID, _ := randomSessionID()
+	httpID, _ := randomSessionID()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM dingtalk_install_session WHERE id = ANY($1)`, []string{streamID, httpID})
+	})
+
+	first, err := store.Create(ctx, sessionRecord{
+		ID: streamID, WorkspaceID: workspaceID, Status: RegistrationStatusPending,
+		ExpiresAt: time.Now().Add(10 * time.Minute), TransportMode: TransportModeStream,
+	}, agentID)
+	if err != nil {
+		t.Fatalf("create Stream generation: %v", err)
+	}
+	second, err := store.Create(ctx, sessionRecord{
+		ID: httpID, WorkspaceID: workspaceID, Status: RegistrationStatusPending,
+		ExpiresAt: time.Now().Add(10 * time.Minute), TransportMode: TransportModeHTTPCallback,
+	}, agentID)
+	if err != nil {
+		t.Fatalf("create HTTP callback generation: %v", err)
+	}
+	if first != 1 || second != 2 {
+		t.Fatalf("generations = %d, %d; want 1, 2", first, second)
+	}
+	if current, err := store.IsCurrent(ctx, workspaceID, agentID, first); err != nil || current {
+		t.Fatalf("older generation current=%v err=%v", current, err)
+	}
+	if current, err := store.IsCurrent(ctx, workspaceID, agentID, second); err != nil || !current {
+		t.Fatalf("latest generation current=%v err=%v", current, err)
 	}
 }

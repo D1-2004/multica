@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-func TestUnifiedDingTalkEndpointMigrationIsReversibleAndFailClosed(t *testing.T) {
+func TestUnifiedDingTalkEndpointMigrationIsReversibleWithoutRewritingRobotStatus(t *testing.T) {
 	dir := realMigrationsDir(t)
-	up := readMigrationForTest(t, filepath.Join(dir, "196_unified_dingtalk_router_registration.up.sql"))
-	down := readMigrationForTest(t, filepath.Join(dir, "196_unified_dingtalk_router_registration.down.sql"))
+	up := readMigrationForTest(t, filepath.Join(dir, "198_unified_dingtalk_router_registration.up.sql"))
+	down := readMigrationForTest(t, filepath.Join(dir, "198_unified_dingtalk_router_registration.down.sql"))
 
 	for _, fragment := range []string{
 		"create table if not exists agent_dispatch_endpoint",
@@ -19,10 +19,6 @@ func TestUnifiedDingTalkEndpointMigrationIsReversibleAndFailClosed(t *testing.T)
 		"dispatch_url text not null",
 		"from channel_installation ci",
 		"ci.channel_type = 'dingtalk_account'",
-		"router_registration_status",
-		"ingress_cutover_state",
-		"router_pending",
-		"then 'pending'",
 	} {
 		if !strings.Contains(up, fragment) {
 			t.Errorf("up migration missing %q", fragment)
@@ -32,12 +28,41 @@ func TestUnifiedDingTalkEndpointMigrationIsReversibleAndFailClosed(t *testing.T)
 		"dispatch_endpoint_id",
 		"dispatch_url",
 		"drop table if exists agent_dispatch_endpoint",
-		"then 'active'",
-		"then 'revoked'",
 	} {
 		if !strings.Contains(down, fragment) {
 			t.Errorf("down migration missing %q", fragment)
 		}
+	}
+	for _, forbidden := range []string{"router_pending", "status = case", "then 'pending'"} {
+		if strings.Contains(up, forbidden) {
+			t.Errorf("up migration must not rewrite existing robot status via %q", forbidden)
+		}
+	}
+	if strings.Contains(down, "status =") || strings.Contains(down, "router_pending") {
+		t.Fatal("down migration must not rewrite robot status")
+	}
+}
+
+func TestLegacyDingTalkStreamRepairIsNarrowAndDoesNotRecreatePendingState(t *testing.T) {
+	dir := realMigrationsDir(t)
+	up := readMigrationForTest(t, filepath.Join(dir, "200_restore_legacy_dingtalk_stream_installations.up.sql"))
+	down := readMigrationForTest(t, filepath.Join(dir, "200_restore_legacy_dingtalk_stream_installations.down.sql"))
+
+	for _, required := range []string{
+		"channel_type = 'dingtalk'",
+		"status = 'pending'",
+		"router_registration_status' = 'router_pending'",
+		"ingress_cutover_state' = 'legacy_stream'",
+		"nullif(config ->> 'router_source_id', '') is null",
+		"nullif(config ->> 'router_agent_id', '') is null",
+		"status = 'active'",
+	} {
+		if !strings.Contains(up, required) {
+			t.Fatalf("repair migration missing guard %q", required)
+		}
+	}
+	if strings.Contains(down, "status = 'pending'") || strings.Contains(down, "router_pending") {
+		t.Fatal("down migration must not disconnect restored Stream robots")
 	}
 }
 

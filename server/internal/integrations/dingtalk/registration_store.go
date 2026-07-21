@@ -24,6 +24,10 @@ type sessionRecord struct {
 	ErrorReason    string
 	ErrorMessage   string
 	ExpiresAt      time.Time
+	AgentID        pgtype.UUID
+	TransportMode  TransportMode
+	AllowUnbound   bool
+	Generation     int64
 }
 
 // sessionStore persists that state so a status poll served by a different
@@ -31,8 +35,9 @@ type sessionRecord struct {
 // map cannot do this: the browser's polls are load-balanced across pods, so
 // every poll that misses the originating pod 404s.
 type sessionStore interface {
-	Create(ctx context.Context, rec sessionRecord, agentID pgtype.UUID) error
+	Create(ctx context.Context, rec sessionRecord, agentID pgtype.UUID) (int64, error)
 	Get(ctx context.Context, id string) (sessionRecord, error)
+	IsCurrent(ctx context.Context, workspaceID, agentID pgtype.UUID, generation int64) (bool, error)
 	FinishSuccess(ctx context.Context, id string, installationID pgtype.UUID, gcAfter time.Time) error
 	FinishError(ctx context.Context, id, reason, message string, gcAfter time.Time) error
 	Sweep(ctx context.Context, now time.Time) error
@@ -43,12 +48,14 @@ type dbSessionStore struct {
 	q *db.Queries
 }
 
-func (s *dbSessionStore) Create(ctx context.Context, rec sessionRecord, agentID pgtype.UUID) error {
+func (s *dbSessionStore) Create(ctx context.Context, rec sessionRecord, agentID pgtype.UUID) (int64, error) {
 	return s.q.CreateDingTalkInstallSession(ctx, db.CreateDingTalkInstallSessionParams{
-		ID:          rec.ID,
-		WorkspaceID: rec.WorkspaceID,
-		AgentID:     agentID,
-		ExpiresAt:   pgtype.Timestamptz{Time: rec.ExpiresAt, Valid: true},
+		ID:            rec.ID,
+		WorkspaceID:   rec.WorkspaceID,
+		AgentID:       agentID,
+		ExpiresAt:     pgtype.Timestamptz{Time: rec.ExpiresAt, Valid: true},
+		TransportMode: string(rec.TransportMode),
+		AllowUnbound:  rec.AllowUnbound,
 	})
 }
 
@@ -68,7 +75,17 @@ func (s *dbSessionStore) Get(ctx context.Context, id string) (sessionRecord, err
 		ErrorReason:    row.ErrorReason,
 		ErrorMessage:   row.ErrorMessage,
 		ExpiresAt:      row.ExpiresAt.Time,
+		AgentID:        row.AgentID,
+		TransportMode:  TransportMode(row.TransportMode),
+		AllowUnbound:   row.AllowUnbound,
+		Generation:     row.Generation,
 	}, nil
+}
+
+func (s *dbSessionStore) IsCurrent(ctx context.Context, workspaceID, agentID pgtype.UUID, generation int64) (bool, error) {
+	return s.q.IsCurrentDingTalkInstallSession(ctx, db.IsCurrentDingTalkInstallSessionParams{
+		WorkspaceID: workspaceID, AgentID: agentID, Generation: generation,
+	})
 }
 
 func (s *dbSessionStore) FinishSuccess(ctx context.Context, id string, installationID pgtype.UUID, gcAfter time.Time) error {
@@ -105,11 +122,20 @@ func newMemSessionStore() *memSessionStore {
 	return &memSessionStore{rows: map[string]sessionRecord{}, gc: map[string]time.Time{}}
 }
 
-func (s *memSessionStore) Create(_ context.Context, rec sessionRecord, _ pgtype.UUID) error {
+func (s *memSessionStore) Create(_ context.Context, rec sessionRecord, agentID pgtype.UUID) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, existing := range s.rows {
+		if existing.WorkspaceID == rec.WorkspaceID && existing.AgentID == agentID && existing.Generation >= rec.Generation {
+			rec.Generation = existing.Generation + 1
+		}
+	}
+	if rec.Generation <= 0 {
+		rec.Generation = 1
+	}
+	rec.AgentID = agentID
 	s.rows[rec.ID] = rec
-	return nil
+	return rec.Generation, nil
 }
 
 func (s *memSessionStore) Get(_ context.Context, id string) (sessionRecord, error) {
@@ -120,6 +146,17 @@ func (s *memSessionStore) Get(_ context.Context, id string) (sessionRecord, erro
 		return sessionRecord{}, ErrRegistrationSessionNotFound
 	}
 	return rec, nil
+}
+
+func (s *memSessionStore) IsCurrent(_ context.Context, workspaceID, agentID pgtype.UUID, generation int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, rec := range s.rows {
+		if rec.WorkspaceID == workspaceID && rec.AgentID == agentID && rec.Generation > generation {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (s *memSessionStore) FinishSuccess(_ context.Context, id string, installationID pgtype.UUID, gcAfter time.Time) error {
