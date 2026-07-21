@@ -154,6 +154,39 @@ func TestOutboundTaskFailedClearsTypingAndNotifies(t *testing.T) {
 	}
 }
 
+func TestOutboundLegacyTaskLifecycleIgnoresQueuedAndCompleted(t *testing.T) {
+	for _, eventType := range []string{protocol.EventTaskQueued, protocol.EventTaskCompleted} {
+		t.Run(eventType, func(t *testing.T) {
+			rec, srv := newRobotAPIServer(t)
+			out, mgr, q := outboundFixture(t, srv)
+
+			session := typingTestUUID(2)
+			task := typingTestUUID(3)
+			mgr.Add(context.Background(), q.inst, session, task, EmotionTarget{OpenConversationID: "cid", OpenMsgID: "m1"}, time.Now().UnixMilli())
+
+			err := out.processEvent(context.Background(), events.Event{
+				Type: eventType,
+				Payload: map[string]any{
+					"task_id":         util.UUIDToString(task),
+					"chat_session_id": util.UUIDToString(session),
+				},
+			})
+			if err != nil {
+				t.Fatalf("processEvent: %v", err)
+			}
+			if rec.recalls != 0 {
+				t.Fatalf("legacy %s must keep the processing emotion, got %d recalls", eventType, rec.recalls)
+			}
+			if len(q.indicators) != 1 {
+				t.Fatalf("legacy %s must retain the processing indicator, got %d rows", eventType, len(q.indicators))
+			}
+			if len(rec.sends) != 0 {
+				t.Fatalf("legacy %s must not send a reply, got %d sends", eventType, len(rec.sends))
+			}
+		})
+	}
+}
+
 func TestOutboundChatDoneClearsTypingBeforeReply(t *testing.T) {
 	rec, srv := newRobotAPIServer(t)
 	out, mgr, q := outboundFixture(t, srv)

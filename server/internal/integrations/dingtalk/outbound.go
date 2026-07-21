@@ -97,6 +97,14 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 	if handled, err := o.processDispatchEvent(ctx, e); handled {
 		return err
 	}
+	// Legacy Stream chats publish their reply on chat:done and their terminal
+	// failure notice on task:failed. The dispatch-only queued/completed events
+	// must not fall through to the legacy failure-message path.
+	switch e.Type {
+	case protocol.EventChatDone, protocol.EventTaskFailed:
+	default:
+		return nil
+	}
 	sessionID := sessionIDFromEvent(e)
 	if !sessionID.Valid {
 		// Issue / autopilot tasks carry no chat_session.
