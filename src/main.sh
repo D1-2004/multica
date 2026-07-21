@@ -412,10 +412,6 @@ fi
 
 stop_existing_processes
 
-echo "[multica][runtime] running migrations"
-"$APP_ROOT/bin/migrate" up
-echo "[multica][runtime] migrations completed"
-
 start_processes
 if ! wait_for_startup; then
   stop_current_processes
