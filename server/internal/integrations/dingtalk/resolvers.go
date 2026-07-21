@@ -105,6 +105,15 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		return nil, fmt.Errorf("decode DingTalk robot task context: %w", err)
 	}
 	taskContext := make(map[string]any)
+	if len(raw.DispatchContext) > 0 {
+		var dispatchContext map[string]any
+		if err := json.Unmarshal(raw.DispatchContext, &dispatchContext); err != nil {
+			return nil, fmt.Errorf("decode DingTalk dispatch context: %w", err)
+		}
+		for key, value := range dispatchContext {
+			taskContext[key] = value
+		}
+	}
 	if webhook := strings.TrimSpace(raw.SessionWebhook); webhook != "" {
 		taskContext[dingtalkSessionReplyContextKey] = dingtalkSessionReplyContext{
 			Webhook:   webhook,

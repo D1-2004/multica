@@ -167,8 +167,9 @@ type dingtalkRawEvent struct {
 	// AgentIdentityContextToken is a short-lived opaque credential supplied by
 	// the authenticated Agent Message Router callback. Stream callbacks leave
 	// it empty and use the local sender resolution path instead.
-	AgentIdentityContextToken string `json:"agent_identity_context_token,omitempty"`
-	SenderCorpID              string `json:"sender_corp_id,omitempty"`
+	AgentIdentityContextToken string          `json:"agent_identity_context_token,omitempty"`
+	DispatchContext           json.RawMessage `json:"dispatch_context,omitempty"`
+	SenderCorpID              string          `json:"sender_corp_id,omitempty"`
 	SenderNick                string `json:"sender_nick,omitempty"`
 	ConversationTitle         string `json:"conversation_title,omitempty"`
 	Msgtype                   string `json:"msgtype,omitempty"`
@@ -209,6 +210,7 @@ type HTTPCallbackMessage struct {
 	SenderName           string
 	Text                 string
 	IdentityContextToken string
+	DispatchContext      json.RawMessage
 }
 
 // InboundFromHTTPCallback adapts a Router callback into the same channel
@@ -250,6 +252,7 @@ func InboundFromHTTPCallback(in HTTPCallbackMessage, clientID, installationID st
 	raw.SenderUID = strings.TrimSpace(in.SenderUID)
 	raw.SenderOrgID = strings.TrimSpace(in.SenderOrgID)
 	raw.AgentIdentityContextToken = strings.TrimSpace(in.IdentityContextToken)
+	raw.DispatchContext = append(json.RawMessage(nil), in.DispatchContext...)
 	msg.Raw, err = json.Marshal(raw)
 	if err != nil {
 		return channel.InboundMessage{}, fmt.Errorf("dingtalk: encode HTTP callback context: %w", err)

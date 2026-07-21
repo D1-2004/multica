@@ -112,7 +112,7 @@ func TestClientMapsOnlyStableDeliveryTarget404ToSentinel(t *testing.T) {
 	}
 }
 
-func TestClientRegistersRobotWithServiceCredentialAndServerOwnedPolicy(t *testing.T) {
+func TestClientRegistersRobotWithExplicitDispatchPolicy(t *testing.T) {
 	dispatchURL := "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/subscriptions/robots" {
@@ -125,16 +125,18 @@ func TestClientRegistersRobotWithServiceCredentialAndServerOwnedPolicy(t *testin
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if len(body) != 4 || body["tenantId"] != "tenant-1" ||
+		if len(body) != 6 || body["tenantId"] != "tenant-1" ||
 			body["robotCode"] != "robot-code-1" || body["agentId"] != "agent-1" ||
 			body["dispatchUrl"] != dispatchURL {
 			t.Fatalf("request body = %#v", body)
 		}
-		if _, exists := body["sourceType"]; exists {
-			t.Fatal("request must not declare sourceType")
+		surface, _ := body["surface"].(map[string]any)
+		if surface["type"] != "chat" {
+			t.Fatalf("surface = %#v", surface)
 		}
-		if _, exists := body["outboundMode"]; exists {
-			t.Fatal("request must not declare outboundMode")
+		outbound, _ := body["outbound"].(map[string]any)
+		if outbound["mode"] != "robot_sdk" || outbound["replyTo"] != "latest_message" {
+			t.Fatalf("outbound = %#v", outbound)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"success": true,
@@ -143,6 +145,8 @@ func TestClientRegistersRobotWithServiceCredentialAndServerOwnedPolicy(t *testin
 				"sourceId":    "source-1",
 				"agentId":     "agent-1",
 				"dispatchUrl": dispatchURL,
+				"surface":     map[string]any{"type": "chat"},
+				"outbound":    map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"},
 				"status":      "active",
 			},
 		})
@@ -155,12 +159,16 @@ func TestClientRegistersRobotWithServiceCredentialAndServerOwnedPolicy(t *testin
 		RobotCode:   "robot-code-1",
 		AgentID:     "agent-1",
 		DispatchURL: dispatchURL,
+		Surface:     SubscriptionSurface{Type: "chat"},
+		Outbound:    SubscriptionOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
 	})
 	if err != nil {
 		t.Fatalf("RegisterRobot: %v", err)
 	}
 	if got.SourceID != "source-1" || got.AgentID != "agent-1" ||
-		got.DispatchURL != dispatchURL || got.Status != "active" {
+		got.DispatchURL != dispatchURL || got.Surface.Type != "chat" ||
+		got.Outbound.Mode != "robot_sdk" || got.Outbound.ReplyTo != "latest_message" ||
+		got.Status != "active" {
 		t.Fatalf("subscription = %#v", got)
 	}
 }
@@ -171,10 +179,12 @@ func TestClientRejectsRobotRegistrationResponseOutsideRequest(t *testing.T) {
 		name string
 		data map[string]any
 	}{
-		{name: "missing source", data: map[string]any{"agentId": "agent-1", "dispatchUrl": dispatchURL, "status": "active"}},
-		{name: "different agent", data: map[string]any{"sourceId": "source-1", "agentId": "agent-2", "dispatchUrl": dispatchURL, "status": "active"}},
-		{name: "different endpoint", data: map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": "https://other.example/dispatch", "status": "active"}},
-		{name: "inactive", data: map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": dispatchURL, "status": "inactive"}},
+		{name: "missing source", data: map[string]any{"agentId": "agent-1", "dispatchUrl": dispatchURL, "surface": map[string]any{"type": "chat"}, "outbound": map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"}, "status": "active"}},
+		{name: "different agent", data: map[string]any{"sourceId": "source-1", "agentId": "agent-2", "dispatchUrl": dispatchURL, "surface": map[string]any{"type": "chat"}, "outbound": map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"}, "status": "active"}},
+		{name: "different endpoint", data: map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": "https://other.example/dispatch", "surface": map[string]any{"type": "chat"}, "outbound": map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"}, "status": "active"}},
+		{name: "different surface", data: map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": dispatchURL, "surface": map[string]any{"type": "issue"}, "outbound": map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"}, "status": "active"}},
+		{name: "different outbound", data: map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": dispatchURL, "surface": map[string]any{"type": "chat"}, "outbound": map[string]any{"mode": "dws", "replyTo": "latest_message"}, "status": "active"}},
+		{name: "inactive", data: map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": dispatchURL, "surface": map[string]any{"type": "chat"}, "outbound": map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"}, "status": "inactive"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -186,6 +196,8 @@ func TestClientRejectsRobotRegistrationResponseOutsideRequest(t *testing.T) {
 			client := mustTestClient(t, server)
 			_, err := client.RegisterRobot(context.Background(), RobotRegistration{
 				RobotCode: "robot-code-1", AgentID: "agent-1", DispatchURL: dispatchURL,
+				Surface: SubscriptionSurface{Type: "chat"},
+				Outbound: SubscriptionOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
 			})
 			if err == nil {
 				t.Fatal("expected invalid robot registration response")
@@ -212,6 +224,8 @@ func TestClientGetsAndDeletesSubscription(t *testing.T) {
 					"sourceId":    "source-1",
 					"agentId":     "agent-1",
 					"dispatchUrl": "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint",
+					"surface":     map[string]any{"type": "issue"},
+					"outbound":    map[string]any{"mode": "dws", "replyTo": "latest_message"},
 					"status":      "active",
 				},
 			})
@@ -245,7 +259,9 @@ func TestClientGetsAndDeletesSubscription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSubscription: %v", err)
 	}
-	if subscription.SourceID != "source-1" || subscription.AgentID != "agent-1" || subscription.Status != "active" {
+	if subscription.SourceID != "source-1" || subscription.AgentID != "agent-1" ||
+		subscription.Surface.Type != "issue" || subscription.Outbound.Mode != "dws" ||
+		subscription.Status != "active" {
 		t.Fatalf("subscription = %#v", subscription)
 	}
 	if err := client.DeleteSubscription(context.Background(), "source-1"); err != nil {
@@ -277,10 +293,18 @@ func TestClientCreatesHTTPCallbackSubscriptionWithoutInventingTenant(t *testing.
 		if body["replaceExistingBinding"] != true {
 			t.Fatalf("replaceExistingBinding = %#v", body["replaceExistingBinding"])
 		}
+		surface, _ := body["surface"].(map[string]any)
+		outbound, _ := body["outbound"].(map[string]any)
+		if surface["type"] != "chat" || outbound["mode"] != "robot_sdk" || outbound["replyTo"] != "latest_message" {
+			t.Fatalf("dispatch policy = %#v %#v", surface, outbound)
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"success": true, "code": "success", "data": map[string]any{
 				"sourceId": "source-robot", "agentId": "agent-1",
-				"dispatchUrl": dispatchURL, "status": "active",
+				"dispatchUrl": dispatchURL,
+				"surface": map[string]any{"type": "chat"},
+				"outbound": map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"},
+				"status": "active",
 			},
 		})
 	}))
@@ -291,6 +315,8 @@ func TestClientCreatesHTTPCallbackSubscriptionWithoutInventingTenant(t *testing.
 		AccountID: "robot-code-1", AgentID: "agent-1", DispatchURL: dispatchURL,
 		BindingToken:       "bat_v1.token",
 		SubscriptionConfig: map[string]any{"upstreamMode": "HTTP_CALLBACK"},
+		Surface:            SubscriptionSurface{Type: "chat"},
+		Outbound:           SubscriptionOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
 		ReplaceExisting:    true,
 	})
 	if err != nil {

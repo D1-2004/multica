@@ -201,6 +201,39 @@ func TestOutboundChatDoneClearsTypingBeforeReply(t *testing.T) {
 	}
 }
 
+func TestOutboundChatDoneLeavesDWSDeliveryToSandbox(t *testing.T) {
+	rec, srv := newRobotAPIServer(t)
+	out, mgr, q := outboundFixture(t, srv)
+
+	session := typingTestUUID(42)
+	task := typingTestUUID(43)
+	q.tasks = map[pgtype.UUID]db.AgentTaskQueue{
+		task: {
+			ID:      task,
+			Context: []byte(`{"dispatch_outbound":{"mode":"dws","replyTo":"latest_message"}}`),
+		},
+	}
+	mgr.Add(context.Background(), q.inst, session, task, EmotionTarget{OpenConversationID: "cid", OpenMsgID: "m1"}, time.Now().UnixMilli())
+
+	err := out.processEvent(context.Background(), events.Event{
+		Type:          protocol.EventChatDone,
+		ChatSessionID: util.UUIDToString(session),
+		Payload: protocol.ChatDonePayload{
+			TaskID:  util.UUIDToString(task),
+			Content: "done by DWS",
+		},
+	})
+	if err != nil {
+		t.Fatalf("processEvent: %v", err)
+	}
+	if rec.recalls != 1 {
+		t.Fatalf("processing emotion recalls = %d", rec.recalls)
+	}
+	if len(rec.sends) != 0 {
+		t.Fatalf("robot SDK sent DWS-owned reply: %#v", rec.sends)
+	}
+}
+
 func TestOutboundHistoricalStreamUsesTaskSessionWebhookWithoutRobotCode(t *testing.T) {
 	var posted map[string]any
 	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

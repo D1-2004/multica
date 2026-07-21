@@ -72,6 +72,11 @@ func (h *Handler) handleAgentDispatchV2(
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	prompt, err := BuildDispatchPrompt(command)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to build dispatch prompt")
+		return
+	}
 	if command.AgentID != "" {
 		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(command.AgentID), "agentId")
 		if !ok {
@@ -89,7 +94,7 @@ func (h *Handler) handleAgentDispatchV2(
 			writeError(w, http.StatusBadRequest, "continuation must identify a chat")
 			return
 		}
-		h.createAgentDispatchChatV2(w, r, command, dispatchContext)
+		h.createAgentDispatchChatV2(w, r, command, prompt, dispatchContext)
 		return
 	}
 
@@ -99,7 +104,7 @@ func (h *Handler) handleAgentDispatchV2(
 		if !ok {
 			return
 		}
-		h.createAgentDispatchIssueV2(w, r, command, dispatchContext, agent)
+		h.createAgentDispatchIssueV2(w, r, command, prompt, dispatchContext, agent)
 		return
 	}
 	if command.Continuation == nil || command.Continuation.Kind != "issue" ||
@@ -107,7 +112,7 @@ func (h *Handler) handleAgentDispatchV2(
 		writeError(w, http.StatusBadRequest, "continuation must identify an issue")
 		return
 	}
-	h.createAgentDispatchCommentV2(w, r, command, dispatchContext)
+	h.createAgentDispatchCommentV2(w, r, command, prompt, dispatchContext)
 }
 
 // AgentDispatchV2Request preserves the exact Router JSON contract while the
@@ -135,6 +140,7 @@ func (h *Handler) createAgentDispatchChatV2(
 	w http.ResponseWriter,
 	r *http.Request,
 	command DispatchCommand,
+	prompt DispatchPrompt,
 	dispatchContext agentDispatchContext,
 ) {
 	if h.ChannelRouter == nil || h.DingTalkInstallations == nil {
@@ -195,6 +201,7 @@ func (h *Handler) createAgentDispatchChatV2(
 		SenderName:           command.Event.Data.Sender.DisplayName,
 		Text:                 strings.Join(textParts, "\n\n"),
 		IdentityContextToken: command.ExternalIdentity.ContextToken,
+		DispatchContext:      dispatchRuntimeContext(command, prompt, dispatchIdempotencyKey(r, command)),
 	}, installation.ClientID, uuidToString(installation.ID))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -257,12 +264,7 @@ func recoverDuplicateAgentChatDispatch(
 	}, nil
 }
 
-func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, dispatchContext agentDispatchContext, agent db.Agent) {
-	prompt, err := BuildDispatchPrompt(c)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to build dispatch prompt")
-		return
-	}
+func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext, agent db.Agent) {
 	attachments := make([]AgentDispatchAttachment, 0)
 	for _, m := range c.Event.Data.Messages {
 		for _, a := range m.Attachments {
@@ -326,7 +328,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, dispatchContext agentDispatchContext) {
+func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext) {
 	issueID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(c.Continuation.IssueID), "continuation.issueId")
 	if !ok {
 		return
@@ -342,11 +344,6 @@ func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Re
 	}
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || issue.AssigneeID != dispatchContext.AgentID {
 		writeError(w, http.StatusForbidden, "continuation issue does not match dispatch endpoint")
-		return
-	}
-	prompt, err := BuildDispatchPrompt(c)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to build dispatch prompt")
 		return
 	}
 	attachments := make([]AgentDispatchAttachment, 0)

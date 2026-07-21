@@ -122,6 +122,9 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 	if o.typing != nil {
 		o.typing.ClearTask(ctx, sessionID, taskID)
 	}
+	if o.dispatchOutboundMode(ctx, taskID) == protocol.DispatchOutboundModeDWS {
+		return nil
+	}
 	// task-failed delivers the failure notice; chat-done delivers the reply.
 	// Without the notice a failed run is indistinguishable from a silent
 	// success — the processing emotion just vanishes (the Lark channel
@@ -200,6 +203,24 @@ func (o *Outbound) sessionReplyContext(ctx context.Context, taskID pgtype.UUID) 
 	return reply, reply.Webhook != ""
 }
 
+func (o *Outbound) dispatchOutboundMode(ctx context.Context, taskID pgtype.UUID) string {
+	task, err := o.q.GetAgentTask(ctx, taskID)
+	if err != nil || len(task.Context) == 0 {
+		return ""
+	}
+	var private map[string]json.RawMessage
+	if err := json.Unmarshal(task.Context, &private); err != nil {
+		return ""
+	}
+	var outbound struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal(private[protocol.DispatchOutboundJSONKey], &outbound); err != nil {
+		return ""
+	}
+	return outbound.Mode
+}
+
 const (
 	pendingQueuePreviewLimit     = 10
 	pendingQueuePreviewRuneLimit = 60
@@ -273,16 +294,20 @@ const (
 	dispatchPhaseOutbound   = "outbound"
 )
 
-// processDispatchEvent owns only the issue-backed Dispatch Command 2.0 robot
-// lifecycle. It returns handled=false for legacy chat events and for DWS
-// digital-employee commands, which perform outbound inside the sandbox.
+// processDispatchEvent owns only issue-backed Dispatch Command 2.0 requests
+// whose binding selected robot_sdk. Source account type does not select the
+// outbound strategy.
 func (o *Outbound) processDispatchEvent(ctx context.Context, e events.Event) (bool, error) {
 	payload, ok := e.Payload.(map[string]any)
 	if !ok {
 		return false, nil
 	}
+	issueID, _ := payload["issue_id"].(string)
+	if strings.TrimSpace(issueID) == "" {
+		return false, nil
+	}
 	source, _ := payload["dispatch_source"].(map[string]any)
-	if source["type"] != "robot" {
+	if source["platform"] != "dingtalk" {
 		return false, nil
 	}
 	outbound, _ := payload["dispatch_outbound"].(map[string]any)

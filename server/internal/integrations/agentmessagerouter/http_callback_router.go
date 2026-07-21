@@ -58,6 +58,8 @@ func (s *HTTPCallbackRouterService) Register(
 		RobotCode:              robotCode,
 		AgentID:                util.UUIDToString(agentID),
 		DispatchURL:            endpoint.DispatchURL,
+		Surface:                SubscriptionSurface{Type: "chat"},
+		Outbound:               SubscriptionOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
 		ReplaceExistingBinding: true,
 	})
 	if err != nil {

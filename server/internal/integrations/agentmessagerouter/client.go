@@ -33,10 +33,21 @@ type BindingToken struct {
 }
 
 type Subscription struct {
-	SourceID    string `json:"sourceId"`
-	AgentID     string `json:"agentId"`
-	DispatchURL string `json:"dispatchUrl"`
-	Status      string `json:"status"`
+	SourceID    string               `json:"sourceId"`
+	AgentID     string               `json:"agentId"`
+	DispatchURL string               `json:"dispatchUrl"`
+	Surface     SubscriptionSurface  `json:"surface"`
+	Outbound    SubscriptionOutbound `json:"outbound"`
+	Status      string               `json:"status"`
+}
+
+type SubscriptionSurface struct {
+	Type string `json:"type"`
+}
+
+type SubscriptionOutbound struct {
+	Mode    string `json:"mode"`
+	ReplyTo string `json:"replyTo"`
 }
 
 type AgentDeliveryTarget struct {
@@ -45,11 +56,13 @@ type AgentDeliveryTarget struct {
 }
 
 type RobotRegistration struct {
-	TenantID               string `json:"tenantId,omitempty"`
-	RobotCode              string `json:"robotCode"`
-	AgentID                string `json:"agentId"`
-	DispatchURL            string `json:"dispatchUrl"`
-	ReplaceExistingBinding bool   `json:"replaceExistingBinding,omitempty"`
+	TenantID               string               `json:"tenantId,omitempty"`
+	RobotCode              string               `json:"robotCode"`
+	AgentID                string               `json:"agentId"`
+	DispatchURL            string               `json:"dispatchUrl"`
+	Surface                SubscriptionSurface  `json:"surface"`
+	Outbound               SubscriptionOutbound `json:"outbound"`
+	ReplaceExistingBinding bool                 `json:"replaceExistingBinding,omitempty"`
 }
 
 type CreateSubscriptionParams struct {
@@ -59,10 +72,15 @@ type CreateSubscriptionParams struct {
 	DispatchURL        string
 	BindingToken       string
 	SubscriptionConfig map[string]any
+	Surface            SubscriptionSurface
+	Outbound           SubscriptionOutbound
 	ReplaceExisting    bool
 }
 
 func (c *Client) CreateHTTPCallbackSubscription(ctx context.Context, p CreateSubscriptionParams) (Subscription, error) {
+	if !validSubscriptionSurface(p.Surface) || !validSubscriptionOutbound(p.Outbound) {
+		return Subscription{}, errors.New("agent message router subscription dispatch policy is invalid")
+	}
 	body, err := json.Marshal(map[string]any{
 		"source": map[string]any{
 			"platform": "dingtalk", "domain": "channel",
@@ -74,6 +92,8 @@ func (c *Client) CreateHTTPCallbackSubscription(ctx context.Context, p CreateSub
 			"agentId":     strings.TrimSpace(p.AgentID),
 			"dispatchUrl": strings.TrimSpace(p.DispatchURL),
 		},
+		"surface":               p.Surface,
+		"outbound":              p.Outbound,
 		"bindingToken":           strings.TrimSpace(p.BindingToken),
 		"enabledDomains":         []string{"channel"},
 		"replaceExistingBinding": p.ReplaceExisting,
@@ -94,7 +114,8 @@ func (c *Client) CreateHTTPCallbackSubscription(ctx context.Context, p CreateSub
 		return Subscription{}, err
 	}
 	if result.Status != "active" || !isTrimmedNonEmpty(result.SourceID) ||
-		result.AgentID != strings.TrimSpace(p.AgentID) || result.DispatchURL != strings.TrimSpace(p.DispatchURL) {
+		result.AgentID != strings.TrimSpace(p.AgentID) || result.DispatchURL != strings.TrimSpace(p.DispatchURL) ||
+		result.Surface != p.Surface || result.Outbound != p.Outbound {
 		return Subscription{}, errors.New("agent message router subscription response is invalid")
 	}
 	return result, nil
@@ -214,7 +235,8 @@ func (c *Client) GetAgentDeliveryTarget(ctx context.Context, agentID string) (Ag
 func (c *Client) RegisterRobot(ctx context.Context, registration RobotRegistration) (Subscription, error) {
 	registration.TenantID = strings.TrimSpace(registration.TenantID)
 	if !isTrimmedNonEmpty(registration.RobotCode) || !isTrimmedNonEmpty(registration.AgentID) ||
-		!isTrimmedNonEmpty(registration.DispatchURL) {
+		!isTrimmedNonEmpty(registration.DispatchURL) || !validSubscriptionSurface(registration.Surface) ||
+		!validSubscriptionOutbound(registration.Outbound) {
 		return Subscription{}, errors.New("agent message router robot registration is invalid")
 	}
 	body, err := json.Marshal(registration)
@@ -234,7 +256,8 @@ func (c *Client) RegisterRobot(ctx context.Context, registration RobotRegistrati
 		return Subscription{}, err
 	}
 	if !isTrimmedNonEmpty(result.SourceID) || result.AgentID != registration.AgentID ||
-		result.DispatchURL != registration.DispatchURL || result.Status != "active" {
+		result.DispatchURL != registration.DispatchURL || result.Surface != registration.Surface ||
+		result.Outbound != registration.Outbound || result.Status != "active" {
 		return Subscription{}, errors.New("agent message router robot registration response is invalid")
 	}
 	return result, nil
@@ -258,7 +281,8 @@ func (c *Client) GetSubscription(ctx context.Context, sourceID string) (Subscrip
 		return Subscription{}, err
 	}
 	if result.SourceID != sourceID || result.Status != "active" ||
-		!isTrimmedNonEmpty(result.AgentID) || !isTrimmedNonEmpty(result.DispatchURL) {
+		!isTrimmedNonEmpty(result.AgentID) || !isTrimmedNonEmpty(result.DispatchURL) ||
+		!validSubscriptionSurface(result.Surface) || !validSubscriptionOutbound(result.Outbound) {
 		return Subscription{}, errors.New("agent message router subscription response is invalid")
 	}
 	return result, nil
@@ -386,4 +410,13 @@ func safeRouterErrorCode(code string) string {
 
 func isTrimmedNonEmpty(value string) bool {
 	return value != "" && strings.TrimSpace(value) == value
+}
+
+func validSubscriptionSurface(surface SubscriptionSurface) bool {
+	return surface.Type == "chat" || surface.Type == "issue"
+}
+
+func validSubscriptionOutbound(outbound SubscriptionOutbound) bool {
+	return (outbound.Mode == "robot_sdk" || outbound.Mode == "dws") &&
+		outbound.ReplyTo == "latest_message"
 }

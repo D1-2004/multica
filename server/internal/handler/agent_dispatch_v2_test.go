@@ -100,19 +100,34 @@ func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 		}
 	})
 
-	t.Run("source surface combinations are exact", func(t *testing.T) {
+	t.Run("surface and outbound are independent from source type", func(t *testing.T) {
 		robotWithIssue := c
 		robotWithIssue.Surface.Type = "issue"
-		if err := robotWithIssue.validate(); err == nil || !strings.Contains(err.Error(), "surface.type must be chat") {
-			t.Fatalf("robot issue surface error = %v", err)
+		robotWithIssue.Outbound.Mode = "dws"
+		if err := robotWithIssue.validate(); err != nil {
+			t.Fatalf("robot issue+dws rejected: %v", err)
 		}
 
 		digitalEmployeeWithChat := c
 		digitalEmployeeWithChat.Source.Type = "digital_employee"
 		digitalEmployeeWithChat.Surface.Type = "chat"
-		digitalEmployeeWithChat.Outbound.Mode = "dws"
-		if err := digitalEmployeeWithChat.validate(); err == nil || !strings.Contains(err.Error(), "surface.type must be issue") {
-			t.Fatalf("digital employee chat surface error = %v", err)
+		digitalEmployeeWithChat.Outbound.Mode = "robot_sdk"
+		if err := digitalEmployeeWithChat.validate(); err != nil {
+			t.Fatalf("digital employee chat+robot_sdk rejected: %v", err)
+		}
+	})
+
+	t.Run("surface and outbound values remain closed", func(t *testing.T) {
+		invalidSurface := c
+		invalidSurface.Surface.Type = "ticket"
+		if err := invalidSurface.validate(); err == nil || !strings.Contains(err.Error(), "surface.type") {
+			t.Fatalf("invalid surface error = %v", err)
+		}
+
+		invalidOutbound := c
+		invalidOutbound.Outbound.Mode = "webhook"
+		if err := invalidOutbound.validate(); err == nil || !strings.Contains(err.Error(), "outbound.mode") {
+			t.Fatalf("invalid outbound error = %v", err)
 		}
 	})
 
@@ -160,7 +175,7 @@ func TestBuildDispatchPromptRetainsAllMessagesAndSafeAttachmentDisplay(t *testin
 	}
 }
 
-func TestDispatchPromptBuilderRoutesRuntimePolicyBySource(t *testing.T) {
+func TestDispatchPromptBuilderRoutesRuntimePolicyByOutboundMode(t *testing.T) {
 	base := DispatchCommand{
 		Source: DispatchSource{Platform: "dingtalk", Type: "robot"},
 		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
@@ -176,14 +191,19 @@ func TestDispatchPromptBuilderRoutesRuntimePolicyBySource(t *testing.T) {
 		t.Fatalf("robot workflow prompt must not own server-side outbound: %q", robotPrompt.WorkflowPrompt)
 	}
 
-	digitalEmployee := base
-	digitalEmployee.Source.Type = "digital_employee"
-	digitalEmployee.Outbound.Mode = "dws"
-	digitalPrompt := mustBuildDispatchPrompt(t, digitalEmployee)
+	robotDWS := base
+	robotDWS.Outbound.Mode = "dws"
+	digitalPrompt := mustBuildDispatchPrompt(t, robotDWS)
 	for _, want := range []string{"DWS", "mode=dws", "replyTo=latest_message"} {
 		if !strings.Contains(digitalPrompt.WorkflowPrompt, want) {
-			t.Errorf("digital employee workflow prompt missing %q: %q", want, digitalPrompt.WorkflowPrompt)
+			t.Errorf("DWS workflow prompt missing %q: %q", want, digitalPrompt.WorkflowPrompt)
 		}
+	}
+
+	digitalEmployeeRobotSDK := base
+	digitalEmployeeRobotSDK.Source.Type = "digital_employee"
+	if prompt := mustBuildDispatchPrompt(t, digitalEmployeeRobotSDK); prompt.WorkflowPrompt != "" {
+		t.Fatalf("robot_sdk workflow must stay server-side: %q", prompt.WorkflowPrompt)
 	}
 
 	unsupported := base

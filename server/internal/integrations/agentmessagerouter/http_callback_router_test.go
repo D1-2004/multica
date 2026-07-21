@@ -12,7 +12,7 @@ import (
 )
 
 func TestHTTPCallbackRouterRegisterUsesTrustedRobotAPI(t *testing.T) {
-	var body RobotRegistration
+	var body map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/subscriptions/robots" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
@@ -21,7 +21,7 @@ func TestHTTPCallbackRouterRegisterUsesTrustedRobotAPI(t *testing.T) {
 			t.Fatal(err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"code":"success","data":{"sourceId":"source-1","agentId":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","dispatchUrl":"https://multica.example/api/webhooks/agent-dispatch/v1_endpoint","status":"active"}}`))
+		_, _ = w.Write([]byte(`{"success":true,"code":"success","data":{"sourceId":"source-1","agentId":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","dispatchUrl":"https://multica.example/api/webhooks/agent-dispatch/v1_endpoint","surface":{"type":"chat"},"outbound":{"mode":"robot_sdk","replyTo":"latest_message"},"status":"active"}}`))
 	}))
 	defer server.Close()
 
@@ -41,8 +41,11 @@ func TestHTTPCallbackRouterRegisterUsesTrustedRobotAPI(t *testing.T) {
 	if sourceID != "source-1" {
 		t.Fatalf("source id = %q", sourceID)
 	}
-	if body.RobotCode != "robot-code-1" || body.AgentID != util.UUIDToString(agentID) ||
-		!body.ReplaceExistingBinding {
+	surface, _ := body["surface"].(map[string]any)
+	outbound, _ := body["outbound"].(map[string]any)
+	if body["robotCode"] != "robot-code-1" || body["agentId"] != util.UUIDToString(agentID) ||
+		body["replaceExistingBinding"] != true || surface["type"] != "chat" ||
+		outbound["mode"] != "robot_sdk" || outbound["replyTo"] != "latest_message" {
 		t.Fatalf("registration = %#v", body)
 	}
 }
