@@ -13,60 +13,67 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func (s *Service) CompleteIdentityCallback(ctx context.Context, params IdentityCallbackParams) (PublicDingTalkAccountBinding, error) {
-	return s.completeIdentityCallback(ctx, params)
+func normalizeIdentityBindingResult(result IdentityBindingResult) (IdentityBindingResult, error) {
+	result.Status = strings.TrimSpace(result.Status)
+	result.AccountUID = strings.TrimSpace(result.AccountUID)
+	result.AccountOrgID = strings.TrimSpace(result.AccountOrgID)
+	result.AccountOrganizationName = strings.TrimSpace(result.AccountOrganizationName)
+	result.AccountDisplayName = strings.TrimSpace(result.AccountDisplayName)
+	result.AccountAvatarURL = strings.TrimSpace(result.AccountAvatarURL)
+	if result.Status != DingTalkBindingTaskStatusSuccess || result.Error != nil ||
+		!isDecimalIdentifier(result.AccountUID) || !isDecimalIdentifier(result.AccountOrgID) ||
+		utf8.RuneCountInString(result.AccountOrganizationName) > maxOrganizationNameRunes ||
+		utf8.RuneCountInString(result.AccountDisplayName) > maxAccountNameRunes ||
+		!validAccountAvatarURL(result.AccountAvatarURL) {
+		return IdentityBindingResult{}, ErrInvalidResult
+	}
+	return result, nil
 }
 
-func (s *Service) completeIdentityCallback(ctx context.Context, params IdentityCallbackParams) (PublicDingTalkAccountBinding, error) {
+func (s *Service) completeIdentityBinding(
+	ctx context.Context,
+	attemptID pgtype.UUID,
+	callbackToken string,
+	identity IdentityBindingResult,
+) (PublicDingTalkAccountBinding, error) {
 	if s == nil || s.identityStore == nil || s.store == nil {
 		return PublicDingTalkAccountBinding{}, ErrNotConfigured
 	}
-	if !params.AttemptID.Valid {
+	if !attemptID.Valid {
 		return PublicDingTalkAccountBinding{}, ErrNotFound
 	}
-	uid := strings.TrimSpace(params.AccountUID)
-	orgID := strings.TrimSpace(params.AccountOrgID)
-	organizationName := strings.TrimSpace(params.AccountOrganizationName)
-	displayName := strings.TrimSpace(params.AccountDisplayName)
-	avatarURL := strings.TrimSpace(params.AccountAvatarURL)
-	if !isDecimalIdentifier(uid) || !isDecimalIdentifier(orgID) ||
-		utf8.RuneCountInString(organizationName) > maxOrganizationNameRunes ||
-		utf8.RuneCountInString(displayName) > maxAccountNameRunes || !validAccountAvatarURL(avatarURL) {
-		return PublicDingTalkAccountBinding{}, ErrInvalidResult
-	}
-
-	attempt, err := s.identityStore.GetAgentDingTalkIdentityAttempt(ctx, params.AttemptID)
+	attempt, err := s.identityStore.GetAgentDingTalkIdentityAttempt(ctx, attemptID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PublicDingTalkAccountBinding{}, ErrNotFound
 		}
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("get dingtalk identity attempt: %w", err)
 	}
-	if !VerifyCallbackToken(params.CallbackToken, attempt.CallbackTokenHash) ||
+	if !VerifyCallbackToken(callbackToken, attempt.CallbackTokenHash) ||
 		!s.now().Before(attempt.ExpiresAt.Time) {
 		return PublicDingTalkAccountBinding{}, ErrCallbackExpired
 	}
 	if attempt.UsedAt.Valid {
-		if !attemptMatchesIdentityCallback(attempt, uid, orgID) {
+		if !attemptMatchesIdentityCallback(attempt, identity.AccountUID, identity.AccountOrgID) {
 			return PublicDingTalkAccountBinding{}, ErrBindingConflict
 		}
 		return s.publicBindingForAgent(ctx, attempt.WorkspaceID, attempt.AgentID)
 	}
 
 	_, err = s.identityStore.CompleteAgentDingTalkIdentityAttempt(ctx, db.CompleteAgentDingTalkIdentityAttemptParams{
-		DwsUid:             pgtype.Text{String: uid, Valid: true},
-		OrgID:              pgtype.Text{String: orgID, Valid: true},
-		OrganizationName:   organizationName,
+		DwsUid:             pgtype.Text{String: identity.AccountUID, Valid: true},
+		OrgID:              pgtype.Text{String: identity.AccountOrgID, Valid: true},
+		OrganizationName:   identity.AccountOrganizationName,
 		AttemptID:          attempt.ID,
 		CallbackTokenHash:  attempt.CallbackTokenHash,
-		AccountDisplayName: displayName,
-		AccountAvatarUrl:   avatarURL,
+		AccountDisplayName: identity.AccountDisplayName,
+		AccountAvatarUrl:   identity.AccountAvatarURL,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			current, lookupErr := s.identityStore.GetAgentDingTalkIdentityAttempt(ctx, params.AttemptID)
+			current, lookupErr := s.identityStore.GetAgentDingTalkIdentityAttempt(ctx, attemptID)
 			if lookupErr == nil && current.UsedAt.Valid &&
-				attemptMatchesIdentityCallback(current, uid, orgID) {
+				attemptMatchesIdentityCallback(current, identity.AccountUID, identity.AccountOrgID) {
 				return s.publicBindingForAgent(ctx, current.WorkspaceID, current.AgentID)
 			}
 			return PublicDingTalkAccountBinding{}, ErrBindingConflict
@@ -81,13 +88,23 @@ func (s *Service) publicBindingForAgent(ctx context.Context, workspaceID, agentI
 		WorkspaceID: workspaceID,
 		AgentID:     agentID,
 	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return PublicDingTalkAccountBinding{}, ErrNotFound
-		}
+	if err == nil {
+		return s.publicBinding(ctx, row)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("get dingtalk account binding: %w", err)
 	}
-	return s.publicBinding(ctx, row)
+	identity, identityErr := s.identityStore.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+		WorkspaceID: workspaceID,
+		AgentID:     agentID,
+	})
+	if identityErr != nil {
+		if errors.Is(identityErr, pgx.ErrNoRows) {
+			return PublicDingTalkAccountBinding{}, ErrNotFound
+		}
+		return PublicDingTalkAccountBinding{}, fmt.Errorf("get dingtalk identity: %w", identityErr)
+	}
+	return publicIdentityBinding(identity), nil
 }
 
 func attemptMatchesIdentityCallback(attempt db.AgentDingtalkIdentityAttempt, uid, orgID string) bool {

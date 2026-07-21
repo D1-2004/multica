@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"testing"
@@ -266,6 +267,34 @@ func TestBuildChatPromptAttachmentIDsCanBeBoundToCreatedIssues(t *testing.T) {
 		"id=019ec09d-6222-722b-bdfa-427b105d80be",
 		"multica attachment download <id>",
 		"--attachment-id <id>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("chat prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+}
+
+func TestBuildChatPromptIncludesSanitizedOriginalMessagePayloads(t *testing.T) {
+	task := Task{
+		ChatSessionID:   "sess-1",
+		ChatChannelType: "dingtalk",
+		ChatMessage:     "[文件] invoice.pdf",
+		ChatMessageSourcePayloads: []ChatMessageSourcePayload{
+			{
+				MessageID: "message-1",
+				Payload:   json.RawMessage(`{"schema_version":1,"platform":"dingtalk","payload":{"msgtype":"file","content":{"fileName":"invoice.pdf","spaceId":"223573","futureField":{"label":"preserved"}}},"redacted_fields":["$.content.downloadCode","$.sessionWebhook"]}`),
+			},
+		},
+	}
+	out := BuildPrompt(task, "claude")
+	for _, want := range []string{
+		"DingTalk conversation",
+		"Credential-free original channel message payloads",
+		"message_id=message-1",
+		`"spaceId":"223573"`,
+		`"futureField":{"label":"preserved"}`,
+		`"$.content.downloadCode"`,
+		"must not be reconstructed or requested",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("chat prompt missing %q\n--- output ---\n%s", want, out)

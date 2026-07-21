@@ -22,7 +22,6 @@ const (
 	DingTalkMessageScopeCustom     = "custom"
 	DingTalkMessageScopeAll        = "all"
 	DingTalkBindingStatusFailed    = "failed"
-	DingTalkBindingStatusSkipped   = "skipped"
 	dingTalkAccountSchema          = 1
 	callbackTokenDomain            = "dingtalk-account-callback:v1:"
 	maxConversationCIDBytes        = 256
@@ -47,7 +46,6 @@ type DingTalkAccountConfig struct {
 	RouterSourceID     string                         `json:"router_source_id,omitempty"`
 	AccountDisplayName string                         `json:"account_display_name,omitempty"`
 	AccountAvatarURL   string                         `json:"account_avatar_url,omitempty"`
-	DWSIdentityStatus  string                         `json:"dws_identity_status,omitempty"`
 	MessageRouteStatus string                         `json:"message_route_status,omitempty"`
 	MessageScope       string                         `json:"message_scope"`
 	Conversations      []DingTalkConversationSnapshot `json:"conversations,omitempty"`
@@ -64,6 +62,7 @@ type PublicDingTalkAccountBinding struct {
 
 type PublicDingTalkBindingOutcome struct {
 	Status             string                         `json:"status"`
+	Source             string                         `json:"source,omitempty"`
 	OrganizationName   string                         `json:"organization_name,omitempty"`
 	AccountDisplayName string                         `json:"account_display_name,omitempty"`
 	AccountAvatarURL   string                         `json:"account_avatar_url,omitempty"`
@@ -147,12 +146,8 @@ func (c DingTalkAccountConfig) Validate() error {
 	if c.RouterSourceID != "" && c.BoundAt == nil {
 		return errors.New("dingtalk account bound time is required")
 	}
-	if c.DWSIdentityStatus != "" && c.DWSIdentityStatus != DingTalkBindingStatusFailed {
-		return errors.New("dingtalk identity result status is invalid")
-	}
 	if c.MessageRouteStatus != "" &&
-		c.MessageRouteStatus != DingTalkBindingStatusFailed &&
-		c.MessageRouteStatus != DingTalkBindingStatusSkipped {
+		c.MessageRouteStatus != DingTalkBindingStatusFailed {
 		return errors.New("dingtalk message result status is invalid")
 	}
 	if _, _, err := normalizeDingTalkConversationBinding(c.MessageScope, c.Conversations); err != nil {
@@ -206,7 +201,6 @@ func normalizeDingTalkConversationBinding(messageScope string, conversations []D
 }
 
 func (c DingTalkAccountConfig) PublicBinding(
-	id,
 	workspaceID,
 	agentID,
 	messageRouteStatus string,
@@ -216,7 +210,7 @@ func (c DingTalkAccountConfig) PublicBinding(
 		messageRouteStatus = c.MessageRouteStatus
 	}
 	return PublicDingTalkAccountBinding{
-		ID:          id,
+		ID:          agentID,
 		WorkspaceID: workspaceID,
 		AgentID:     agentID,
 		DWSIdentity: dwsIdentity,

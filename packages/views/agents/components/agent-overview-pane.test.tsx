@@ -45,6 +45,9 @@ vi.mock("./tabs/mcp-config-tab", () => ({
 vi.mock("./tabs/integrations-tab", () => ({
   IntegrationsTab: () => <div>integrations-tab</div>,
 }));
+vi.mock("./tabs/identity-tab", () => ({
+  IdentityTab: () => <div>identity-tab</div>,
+}));
 vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
 }));
@@ -120,7 +123,7 @@ const baseAgent: Agent = {
   archived_by: null,
 };
 
-function makeRuntime(provider: string): AgentRuntime {
+function makeRuntime(provider: string, capabilities?: string[]): AgentRuntime {
   return {
     id: "runtime-1",
     workspace_id: "ws-1",
@@ -131,7 +134,7 @@ function makeRuntime(provider: string): AgentRuntime {
     launch_header: "",
     status: "online",
     device_info: "",
-    metadata: {},
+	metadata: capabilities ? { capabilities } : {},
     owner_id: null,
     visibility: "private",
     last_seen_at: null,
@@ -202,7 +205,7 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
   });
 
-  it("hides the MCP tab for providers whose backend does not read mcp_config", () => {
+	it("hides the MCP tab for providers whose backend does not read mcp_config", () => {
     // Saving an MCP config on e.g. Gemini would be a silent no-op at run
     // time — that's the bug this hiding logic is meant to prevent.
     renderPane([makeRuntime("gemini")]);
@@ -210,7 +213,18 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     expect(
       screen.queryByRole("tab", { name: /^MCP$/i }),
     ).not.toBeInTheDocument();
-  });
+	});
+
+	it("shows MCP only for Pi runtimes whose template declares the capability", () => {
+		const { unmount } = renderPane([makeRuntime("pi", ["pi", "mcp"])]);
+		openCapabilities();
+		expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
+		unmount();
+
+		renderPane([makeRuntime("pi", ["pi", "dws"])]);
+		openCapabilities();
+		expect(screen.queryByRole("tab", { name: /^MCP$/i })).not.toBeInTheDocument();
+	});
 
   it("keeps the MCP tab visible when the runtime row hasn't loaded yet", () => {
     // Empty runtimes[] mimics the brief window between the page mounting and
@@ -259,6 +273,41 @@ describe("AgentOverviewPane Integrations tab visibility", () => {
     openCapabilities();
     expect(
       screen.queryByRole("tab", { name: /^Integrations$/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("AgentOverviewPane Identity tab", () => {
+  it("places Identity after Integrations and opens the identity-only page", async () => {
+    dingtalkAccountListingRef.current = { bindings: [], configured: true };
+    renderPane([makeRuntime("claude")]);
+
+    openCapabilities();
+
+    await screen.findByRole("tab", { name: /^Integrations$/i });
+    const capabilityTabs = screen.getAllByRole("tab");
+    expect(capabilityTabs.map((tab) => tab.textContent)).toEqual([
+      "Overview",
+      "Work",
+      "Capabilities",
+      "Settings",
+      "Instructions",
+      "Skills",
+      "MCP",
+      "Integrations",
+      "Identity",
+    ]);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^Identity$/i }));
+    expect(screen.getByText("identity-tab")).toBeInTheDocument();
+  });
+
+  it("hides Identity when account binding is not configured", () => {
+    renderPane([makeRuntime("claude")]);
+    openCapabilities();
+
+    expect(
+      screen.queryByRole("tab", { name: /^Identity$/i }),
     ).not.toBeInTheDocument();
   });
 });

@@ -30,6 +30,7 @@ type IssueCommentCreateParams struct {
 	Content                   string
 	AttachmentIDs             []pgtype.UUID
 	AgentIdentityContextToken string
+	DispatchContext           []byte
 }
 
 type IssueCommentCreateOpts struct {
@@ -107,7 +108,12 @@ func (s *IssueCommentService) CreateExternalFollowUp(ctx context.Context, params
 			Payload:     payload,
 		})
 	}
-	task, err := s.TaskService.EnqueueTaskForIssueWithAgentIdentityContext(ctx, issue, params.AgentIdentityContextToken, comment.ID)
+	var task db.AgentTaskQueue
+	if len(params.DispatchContext) > 0 {
+		task, err = s.TaskService.EnqueueTaskForIssueWithDispatchContext(ctx, issue, params.AgentIdentityContextToken, params.DispatchContext, comment.ID)
+	} else {
+		task, err = s.TaskService.EnqueueTaskForIssueWithAgentIdentityContext(ctx, issue, params.AgentIdentityContextToken, comment.ID)
+	}
 	if err != nil {
 		return IssueCommentCreateResult{Comment: comment, Attachments: attachments}, fmt.Errorf("enqueue issue follow-up: %w", err)
 	}

@@ -44,6 +44,7 @@ type richTextContent struct {
 	RichText     []richTextNode    `json:"richText"`
 	CardContent  []cardContentNode `json:"cardContent"`
 	DownloadCode string            `json:"downloadCode"`
+	FileName     string            `json:"fileName"`
 }
 
 // cardContentNode is one node of the interactiveCard callback's ordered
@@ -164,6 +165,10 @@ type dingtalkRawEvent struct {
 	// DingTalk attachment importer. It must never be logged or persisted as an
 	// attachment URL.
 	MessageDownloadCode string `json:"message_download_code,omitempty"`
+	// MessageFileName is the original display name of a file callback. Unlike
+	// the short-lived download code, it is safe and necessary to preserve on the
+	// imported attachment.
+	MessageFileName string `json:"message_file_name,omitempty"`
 	// CreateAt is the callback's epoch-millisecond send time; the typing
 	// indicator uses it to skip stale redeliveries after a reconnect.
 	CreateAt int64 `json:"create_at,omitempty"`
@@ -180,7 +185,15 @@ func inboundFromBotCallback(data botCallbackData, clientID string) (channel.Inbo
 	return inboundFromBotCallbackForInstallation(data, clientID, "", protocol.DingTalkStreamSource{})
 }
 
+// inboundFromBotCallbackForInstallation keeps the transport-neutral callback
+// entry point used by the HTTP callback adapter. Stream ingestion calls the
+// explicit WithSource variant below because it also has the decrypted original
+// callback available for credential stripping and Agent handoff.
 func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, installationID string, streamSource protocol.DingTalkStreamSource) (channel.InboundMessage, bool) {
+	return inboundFromBotCallbackForInstallationWithSource(data, clientID, installationID, streamSource, nil)
+}
+
+func inboundFromBotCallbackForInstallationWithSource(data botCallbackData, clientID, installationID string, streamSource protocol.DingTalkStreamSource, sourcePayload json.RawMessage) (channel.InboundMessage, bool) {
 	if data.MsgID == "" {
 		return channel.InboundMessage{}, false
 	}
@@ -211,6 +224,7 @@ func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, insta
 		ConversationTitle:         data.ConversationTitle,
 		Msgtype:                   data.Msgtype,
 		MessageDownloadCode:       data.Content.DownloadCode,
+		MessageFileName:           data.Content.FileName,
 		CreateAt:                  data.CreateAt,
 		StreamSource:              rawStreamSource,
 	})
@@ -219,24 +233,41 @@ func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, insta
 	switch {
 	case data.Msgtype == "text" || data.Msgtype == "":
 		// Plain text — already extracted above.
+		if text == "" {
+			text = "[文本消息]"
+		}
 	case data.Msgtype == msgtypeRichText:
 		// Formatted messages carry their content in content.richText and
 		// leave text.content empty; flatten so they don't ingest as empty
 		// messages (which read to the agent as "your message is blank").
 		text = flattenRichText(data)
 		if text == "" {
+			text = "[富文本消息]"
 			msgType = channel.MsgTypeUnknown
 		}
 	case data.Msgtype == "interactiveCard":
 		text = flattenInteractiveCard(data)
 		if text == "" {
+			text = "[互动卡片]"
 			msgType = channel.MsgTypeUnknown
 		}
 	case data.Msgtype == "picture":
 		text = "[图片]"
 		msgType = channel.MsgTypeImage
+	case data.Msgtype == "file":
+		text = "[文件]"
+		if name := strings.TrimSpace(data.Content.FileName); name != "" {
+			text += " " + name
+		}
+		msgType = channel.MsgTypeFile
+	case data.Msgtype == "audio":
+		text = "[语音消息]"
+		msgType = channel.MsgTypeAudio
+	case data.Msgtype == "video":
+		text = "[视频消息]"
+		msgType = channel.MsgTypeVideo
 	default:
-		// audio / video / file callbacks are not ingested as attachments.
+		text = "[消息类型: " + data.Msgtype + "]"
 		msgType = channel.MsgTypeUnknown
 	}
 	// Leading @-mentions hide a slash command from the first-token parsers
@@ -260,6 +291,7 @@ func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, insta
 		// DingTalk only delivers group messages that @-mention the robot,
 		// so every callback is, by construction, addressed to the bot.
 		AddressedToBot: true,
+		SourcePayload:  sourcePayload,
 		Source: channel.Source{
 			ChannelType: TypeDingtalk,
 			ChatID:      data.ConversationID,

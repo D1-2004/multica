@@ -3,12 +3,12 @@ import type { BeginDingTalkInstallResponse } from "./dingtalk";
 
 export interface FDEOnboardingState {
   configured: boolean;
+  create_only: boolean;
   workspaces: Workspace[];
 }
 
 export interface ProvisionFDEOnboardingRequest {
-  workspace_id?: string;
-  workspace_name?: string;
+  workspace_name: string;
 }
 
 export interface ProvisionFDEOnboardingResponse {

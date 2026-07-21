@@ -28,6 +28,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
+	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -1592,7 +1593,7 @@ type claimBuildFailure struct {
 // so it passes false.
 func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string, fcE2BColdStart bool) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
-	resp = taskToResponse(*task, runtimeWorkspaceID)
+	resp = taskToClaimResponse(*task, runtimeWorkspaceID, runtime)
 	supportsCoalescedComments := requestHasDaemonCapability(r, protocol.DaemonCapabilityCoalescedCommentsV1)
 	// Empty-but-non-nil so pgx persists '{}' rather than NULL for tasks without
 	// comment input. Comment tasks replace this with the ids actually embedded
@@ -1631,6 +1632,30 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				slog.Warn("daemon claim: merge runtime_mcp_overlay failed; falling back to agent mcp_config", "task_id", uuidToString(task.ID), "error", err)
 			} else {
 				mcpConfig = merged
+			}
+		}
+		// Pi itself intentionally has no native MCP client. FC/E2B Pi templates
+		// therefore must explicitly advertise the image-owned `mcp` extension
+		// before a managed config can be dispatched. The UI applies the same
+		// capability gate, but this server-side check also covers CLI/API-created
+		// agents and user-scoped runtime overlays. Fail closed and cancel the
+		// already-claimed task instead of launching Pi without the requested tools.
+		if service.IsFCE2BRuntime(runtime) &&
+			service.FCE2BRuntimeProvider(runtime) == "pi" &&
+			agentpkg.HasManagedMCPConfig(mcpConfig) &&
+			!service.FCE2BRuntimeHasCapability(runtime, "mcp") {
+			slog.Error("daemon claim: Pi runtime template lacks managed MCP capability; cancelling task",
+				"task_id", uuidToString(task.ID),
+				"runtime_id", runtimeID,
+			)
+			if _, cancelErr := h.TaskService.CancelTask(r.Context(), task.ID); cancelErr != nil {
+				slog.Error("daemon claim: cancel after Pi MCP capability mismatch failed",
+					"task_id", uuidToString(task.ID), "error", cancelErr)
+			}
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{
+				outcome: "error_runtime_capability",
+				status:  http.StatusConflict,
+				message: "Pi runtime template does not support managed MCP; rotate it to an MCP-capable template",
 			}
 		}
 		// runtime_config is stored as JSONB and may legitimately be the
@@ -2143,6 +2168,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				if strings.TrimSpace(m.Content) != "" {
 					parts = append(parts, m.Content)
 				}
+				if len(m.SourcePayload) > 0 {
+					resp.ChatMessageSourcePayloads = append(resp.ChatMessageSourcePayloads, ChatMessageSourcePayload{
+						MessageID: uuidToString(m.ID),
+						Payload:   json.RawMessage(m.SourcePayload),
+					})
+				}
 				if atts, attErr := h.Queries.ListAttachmentsByChatMessage(r.Context(), db.ListAttachmentsByChatMessageParams{
 					ChatMessageID: m.ID,
 					WorkspaceID:   parseUUID(resp.WorkspaceID),
@@ -2234,7 +2265,6 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.QuickCreateAttachmentIDs = append([]string(nil), qc.AttachmentIDs...)
 			resp.ThreadName = qc.Prompt
 			resp.WorkspaceID = qc.WorkspaceID
-			resp.AgentIdentityContextToken = qc.AgentIdentityContextToken
 
 			// When the user picked a project in the modal, surface its title
 			// and resources to the daemon so the agent has the same context

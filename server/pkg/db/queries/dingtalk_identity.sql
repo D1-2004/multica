@@ -97,6 +97,26 @@ JOIN agent a
 WHERE identity.workspace_id = sqlc.arg('workspace_id')
   AND identity.agent_id = sqlc.arg('agent_id');
 
+-- name: ListAgentDingTalkIdentities :many
+SELECT identity.*
+FROM agent_dingtalk_identity identity
+JOIN agent a
+  ON a.id = identity.agent_id
+ AND a.workspace_id = identity.workspace_id
+WHERE identity.workspace_id = sqlc.arg('workspace_id')
+ORDER BY identity.bound_at ASC, identity.agent_id ASC;
+
+-- name: DeleteAgentDingTalkIdentity :one
+WITH deleted_attempts AS (
+    DELETE FROM agent_dingtalk_identity_attempt
+    WHERE workspace_id = sqlc.arg('workspace_id')
+      AND agent_id = sqlc.arg('agent_id')
+)
+DELETE FROM agent_dingtalk_identity AS identity
+WHERE identity.workspace_id = sqlc.arg('workspace_id')
+  AND identity.agent_id = sqlc.arg('agent_id')
+RETURNING identity.*;
+
 -- name: DeleteAgentDingTalkIdentityAttempts :exec
 DELETE FROM agent_dingtalk_identity_attempt
 WHERE workspace_id = sqlc.arg('workspace_id')

@@ -261,8 +261,12 @@ pre-release environment provides shared PostgreSQL, Tair, and OSS:
 - Exercise concurrent state transitions with separate database transactions or
   connections, and review the old/new-binary rolling window before release.
 
-Migrations run at container start, so a failing migration means the pods never
-start:
+Database migrations are an explicit release phase. Container startup must never
+run migrations: execute the packaged `migrate up` binary in a dedicated one-off
+migration task before rolling out application pods. A failed migration blocks
+the release without coupling schema changes to replica startup.
+
+Migration rules:
 
 - Pre-release is managed Postgres (PolarDB). It refuses `CREATE EXTENSION` to the
   app role with SQLSTATE 42501 — even when the role owns the database and the

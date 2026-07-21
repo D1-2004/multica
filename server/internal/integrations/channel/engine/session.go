@@ -261,6 +261,7 @@ type AppendInput struct {
 	ClaimToken     pgtype.UUID
 	PreparedTask   *service.PreparedChannelChatTask
 	AttachmentIDs  []pgtype.UUID
+	SourcePayload  []byte
 }
 
 // AppendUserMessage writes the user message into the chat_session (touching it
@@ -321,6 +322,7 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 		Role:          "user",
 		Content:       in.Body,
 		TaskID:        task.ID,
+		SourcePayload: in.SourcePayload,
 	})
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("create chat message: %w", err)

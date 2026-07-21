@@ -18,11 +18,11 @@ import (
 
 type FDEOnboardingStateResponse struct {
 	Configured bool                `json:"configured"`
+	CreateOnly bool                `json:"create_only"`
 	Workspaces []WorkspaceResponse `json:"workspaces"`
 }
 
 type FDEOnboardingProvisionRequest struct {
-	WorkspaceID   string `json:"workspace_id"`
 	WorkspaceName string `json:"workspace_name"`
 }
 
@@ -40,17 +40,18 @@ func (h *Handler) GetFDEOnboarding(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.Queries.ListAdminWorkspacesForUser(r.Context(), parseUUID(userID))
+	rows, err := h.Queries.ListWorkspaces(r.Context(), parseUUID(userID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list workspaces")
 		return
 	}
 	workspaces := make([]WorkspaceResponse, len(rows))
-	for i, row := range rows {
-		workspaces[i] = workspaceToResponse(row)
+	for i, workspace := range rows {
+		workspaces[i] = workspaceToResponse(workspace)
 	}
 	writeJSON(w, http.StatusOK, FDEOnboardingStateResponse{
 		Configured: h.fdeOnboardingConfigured(),
+		CreateOnly: true,
 		Workspaces: workspaces,
 	})
 }
@@ -83,10 +84,10 @@ func (h *Handler) ProvisionFDEOnboarding(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ownerID := parseUUID(userID)
-	workspace, err := h.resolveOrCreateFDEWorkspace(r, ownerID, req)
+	workspace, err := h.createFDEWorkspace(r, ownerID, req)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, errFDEWorkspaceForbidden) || errors.Is(err, errFDEWorkspaceCreationDisabled) {
+		if errors.Is(err, errFDEWorkspaceCreationDisabled) {
 			status = http.StatusForbidden
 		} else if !errors.Is(err, errFDEWorkspaceInput) {
 			status = http.StatusInternalServerError
@@ -165,23 +166,11 @@ func fdeDingTalkInstallParams(workspaceID, agentID, initiatorID pgtype.UUID) din
 }
 
 var (
-	errFDEWorkspaceInput            = errors.New("workspace name or workspace_id is required")
-	errFDEWorkspaceForbidden        = errors.New("workspace must be owned or administered by the current user")
+	errFDEWorkspaceInput            = errors.New("workspace name is required")
 	errFDEWorkspaceCreationDisabled = errors.New("workspace creation is disabled for this instance")
 )
 
-func (h *Handler) resolveOrCreateFDEWorkspace(r *http.Request, userID pgtype.UUID, req FDEOnboardingProvisionRequest) (db.Workspace, error) {
-	if strings.TrimSpace(req.WorkspaceID) != "" {
-		workspaceID, err := parseUUIDValue(req.WorkspaceID)
-		if err != nil {
-			return db.Workspace{}, errFDEWorkspaceInput
-		}
-		member, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{UserID: userID, WorkspaceID: workspaceID})
-		if err != nil || (member.Role != "owner" && member.Role != "admin") {
-			return db.Workspace{}, errFDEWorkspaceForbidden
-		}
-		return h.Queries.GetWorkspace(r.Context(), workspaceID)
-	}
+func (h *Handler) createFDEWorkspace(r *http.Request, userID pgtype.UUID, req FDEOnboardingProvisionRequest) (db.Workspace, error) {
 	name := strings.TrimSpace(req.WorkspaceName)
 	if name == "" {
 		return db.Workspace{}, errFDEWorkspaceInput
@@ -203,19 +192,6 @@ func (h *Handler) resolveOrCreateFDEWorkspace(r *http.Request, userID pgtype.UUI
 			return db.Workspace{}, err
 		}
 		qtx := h.Queries.WithTx(tx)
-		if _, err := tx.Exec(r.Context(), "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "multica:fde-workspace:"+uuidToString(userID)); err != nil {
-			_ = tx.Rollback(r.Context())
-			return db.Workspace{}, err
-		}
-		existing, err := qtx.ListAdminWorkspacesForUser(r.Context(), userID)
-		if err != nil {
-			_ = tx.Rollback(r.Context())
-			return db.Workspace{}, err
-		}
-		if len(existing) > 0 {
-			_ = tx.Rollback(r.Context())
-			return existing[0], nil
-		}
 		workspace, err := qtx.CreateWorkspace(r.Context(), db.CreateWorkspaceParams{
 			Name: name, Slug: slug, IssuePrefix: generateIssuePrefix(name),
 		})
@@ -244,9 +220,9 @@ func (h *Handler) resolveOrCreateFDEWorkspace(r *http.Request, userID pgtype.UUI
 func (h *Handler) upsertFDERuntime(r *http.Request, workspaceID, ownerID pgtype.UUID) (db.AgentRuntime, error) {
 	name := "FDE Runtime"
 	daemonID := pgtype.Text{String: "fc-e2b:fde:" + uuidToString(workspaceID), Valid: true}
-	// The FDE template is DWS-enabled by contract, so "dws" is asserted here
-	// rather than sniffed from the template name.
-	provider := service.FCE2BProviderForTemplate(h.cfg.FCE2B.Template)
+	// The managed FDE runtime contract is explicitly Hermes + DWS. Catalogued
+	// user runtimes use the verified template manifest instead.
+	provider := service.FCE2BProvider
 	metadata, err := json.Marshal(map[string]any{
 		"kind": service.FCE2BMetadataKind, "template": h.cfg.FCE2B.Template,
 		"template_id": h.cfg.FCE2B.Template, "template_name": name,

@@ -8,6 +8,7 @@ import type { RuntimeVisibility } from "@multica/core/types/agent";
 import {
   FC_E2B_RUNTIME_PROVIDERS,
   fcE2BProviderForTemplate,
+  isReadyFCE2BTemplate,
   type FCE2BRuntimeProvider,
   type FCE2BTemplate,
   useCreateFCE2BRuntime,
@@ -37,6 +38,7 @@ import { useT } from "../../i18n";
 const PROVIDER_LABELS: Record<FCE2BRuntimeProvider, string> = {
   hermes: "Hermes",
   opencode: "OpenCode",
+  pi: "Pi",
 };
 
 // Mirrors the server-side default name: the provider is prefixed when the
@@ -85,12 +87,17 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
   const wsId = useWorkspaceId();
   const createRuntime = useCreateFCE2BRuntime(wsId);
   const templatesQuery = useFCE2BTemplates(wsId);
-  const templates = templatesQuery.data ?? [];
+  const templates = (templatesQuery.data ?? []).filter(isReadyFCE2BTemplate);
   const [query, setQuery] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<FCE2BTemplate | null>(null);
   const [provider, setProvider] = useState<FCE2BRuntimeProvider>("hermes");
   const [name, setName] = useState("");
   const [visibility, setVisibility] = useState<RuntimeVisibility>("private");
+  const availableProviders = selectedTemplate
+    ? FC_E2B_RUNTIME_PROVIDERS.filter((candidate) =>
+        selectedTemplate.providers.includes(candidate),
+      )
+    : [];
 
   const filteredTemplates = templates.filter((template) => {
     const haystack = [
@@ -99,6 +106,8 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
       template.template,
       template.status,
       template.updated_at,
+      ...template.providers,
+      ...template.capabilities,
     ]
       .filter(Boolean)
       .join(" ")
@@ -108,6 +117,7 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
 
   const pickTemplate = (template: FCE2BTemplate) => {
     const nextProvider = fcE2BProviderForTemplate(template);
+    if (!nextProvider) return;
     setSelectedTemplate(template);
     setProvider(nextProvider);
     if (!name.trim()) {
@@ -132,7 +142,7 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
     if (!selectedTemplate) return;
     try {
       await createRuntime.mutateAsync({
-        template_id: selectedTemplate.template || selectedTemplate.id || selectedTemplate.name || "",
+        template_id: selectedTemplate.id!,
         name: name.trim() || templateRuntimeName(selectedTemplate, provider),
         provider,
         visibility,
@@ -236,6 +246,22 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
                           {template.status && <span>{template.status}</span>}
                         </span>
                       )}
+                      <span className="block truncate text-muted-foreground">
+                        {template.providers
+                          .filter((item) =>
+                            (FC_E2B_RUNTIME_PROVIDERS as readonly string[]).includes(
+                              item,
+                            ),
+                          )
+                          .map(
+                            (item) =>
+                              PROVIDER_LABELS[item as FCE2BRuntimeProvider],
+                          )
+                          .join(" · ")}
+                        {template.capabilities.length > 0
+                          ? ` · ${template.capabilities.join(" · ")}`
+                          : ""}
+                      </span>
                     </span>
                     {selected && <Check className="mt-0.5 h-3.5 w-3.5" />}
                   </button>
@@ -256,7 +282,7 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {FC_E2B_RUNTIME_PROVIDERS.map((option) => (
+                {availableProviders.map((option) => (
                   <SelectItem key={option} value={option}>
                     {PROVIDER_LABELS[option]}
                   </SelectItem>
@@ -322,7 +348,11 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
           <Button
             type="submit"
             form="fc-e2b-runtime-form"
-            disabled={createRuntime.isPending || !selectedTemplate}
+            disabled={
+              createRuntime.isPending ||
+              !selectedTemplate ||
+              !availableProviders.includes(provider)
+            }
           >
             {createRuntime.isPending && (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />

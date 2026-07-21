@@ -1011,6 +1011,70 @@ func (q *Queries) ClaimAgentTaskByID(ctx context.Context, arg ClaimAgentTaskByID
 	return i, err
 }
 
+const claimDispatchOutbound = `-- name: ClaimDispatchOutbound :one
+WITH claimed AS (
+    UPDATE agent_task_queue
+    SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('dispatch_outbound_sent', true)
+    WHERE id = $1
+      AND context ? 'dispatch_idempotency_key'
+      AND NOT (context ? 'dispatch_outbound_sent')
+    RETURNING 1
+)
+SELECT EXISTS(SELECT 1 FROM claimed)
+`
+
+// Durable one-shot claim for external dispatch replies. The task context
+// carries the window-level idempotency key; the marker prevents duplicate
+// business replies after event redelivery or worker lease recovery.
+func (q *Queries) ClaimDispatchOutbound(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, claimDispatchOutbound, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const claimDispatchProcessingReaction = `-- name: ClaimDispatchProcessingReaction :one
+WITH claimed AS (
+    UPDATE agent_task_queue
+    SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('dispatch_processing_reaction_sent', true)
+    WHERE id = $1
+      AND context ? 'dispatch_idempotency_key'
+      AND NOT (context ? 'dispatch_processing_reaction_sent')
+    RETURNING 1
+)
+SELECT EXISTS(SELECT 1 FROM claimed)
+`
+
+// Durable one-shot claim for the Dispatch 2.0 "processing" emotion. Multiple
+// event deliveries or server replicas must not attach the same emotion twice.
+func (q *Queries) ClaimDispatchProcessingReaction(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, claimDispatchProcessingReaction, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const claimDispatchProcessingRecall = `-- name: ClaimDispatchProcessingRecall :one
+WITH claimed AS (
+    UPDATE agent_task_queue
+    SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('dispatch_processing_recall_sent', true)
+    WHERE id = $1
+      AND context ? 'dispatch_idempotency_key'
+      AND NOT (context ? 'dispatch_processing_recall_sent')
+    RETURNING 1
+)
+SELECT EXISTS(SELECT 1 FROM claimed)
+`
+
+// Completion and failure can both be replayed; only one replica recalls the
+// processing emotion for the task's latest openMsgId.
+func (q *Queries) ClaimDispatchProcessingRecall(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, claimDispatchProcessingRecall, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const claimPendingChannelChatTaskNotifications = `-- name: ClaimPendingChannelChatTaskNotifications :many
 WITH pending AS (
     SELECT id
@@ -1492,15 +1556,16 @@ VALUES (
     CASE
         WHEN COALESCE($12::text, '') <> ''
           OR COALESCE($13::text, '') <> ''
-        THEN jsonb_strip_nulls(jsonb_build_object(
+          OR COALESCE($14::jsonb, '{}'::jsonb) <> '{}'::jsonb
+        THEN jsonb_strip_nulls(COALESCE($14::jsonb, '{}'::jsonb) || jsonb_build_object(
             'head_sha', NULLIF($12::text, ''),
             'agent_identity_context_token', NULLIF($13::text, '')
         ))
         ELSE NULL
     END,
-    $14,
     $15,
-    $16
+    $16,
+    $17
 )
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, runtime_launch_lease_token, runtime_launch_lease_expires_at
 `
@@ -1519,12 +1584,14 @@ type CreateAgentTaskParams struct {
 	SquadID                   pgtype.UUID   `json:"squad_id"`
 	HeadSha                   pgtype.Text   `json:"head_sha"`
 	AgentIdentityContextToken pgtype.Text   `json:"agent_identity_context_token"`
+	DispatchContext           []byte        `json:"dispatch_context"`
 	OriginatorUserID          pgtype.UUID   `json:"originator_user_id"`
 	RuntimeMcpOverlay         []byte        `json:"runtime_mcp_overlay"`
 	RuntimeConnectedApps      []byte        `json:"runtime_connected_apps"`
 }
 
-// head_sha and agent_identity_context_token are server-private task context.
+// head_sha, agent_identity_context_token and dispatch_context are
+// server-private task context.
 // Neither is exposed by the task response. Empty values leave context NULL,
 // preserving the existing behavior for ordinary issue tasks.
 func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams) (AgentTaskQueue, error) {
@@ -1542,6 +1609,7 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 		arg.SquadID,
 		arg.HeadSha,
 		arg.AgentIdentityContextToken,
+		arg.DispatchContext,
 		arg.OriginatorUserID,
 		arg.RuntimeMcpOverlay,
 		arg.RuntimeConnectedApps,

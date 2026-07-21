@@ -24,6 +24,8 @@ import type {
   AgentSource,
   CreateGitHubAgentResponse,
   SyncAgentSourceResponse,
+  FDEOnboardingState,
+  ProvisionFDEOnboardingResponse,
   InboxWorkspaceUnread,
   Label,
   ListIssuesResponse,
@@ -43,6 +45,7 @@ import type { CreateFeedbackResponse } from "../feedback/types";
 const DingTalkAccountBindingOutcomeSchema = z
   .object({
     status: z.string(),
+    source: z.literal("identity").nullable().optional(),
     organization_name: z.string().nullable().optional(),
     account_display_name: z.string().nullable().optional(),
     account_avatar_url: z.string().nullable().optional(),
@@ -51,6 +54,7 @@ const DingTalkAccountBindingOutcomeSchema = z
   .loose()
   .transform((outcome) => ({
     status: outcome.status,
+    source: outcome.source,
     organizationName: outcome.organization_name,
     accountDisplayName: outcome.account_display_name,
     accountAvatarUrl: outcome.account_avatar_url,
@@ -149,21 +153,86 @@ export const EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE: DingTalkAccountBindingsRe
 
 export const BeginDingTalkAccountBindingResponseSchema = z
   .object({
-    installation_id: z.string(),
+    binding_id: z.string(),
     qr_code_url: z.string(),
     expires_at: z.string(),
   })
   .loose()
   .transform((response) => ({
-    installationId: response.installation_id,
+    bindingId: response.binding_id,
     qrCodeUrl: response.qr_code_url,
     expiresAt: response.expires_at,
   }));
 
 export const EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE: BeginDingTalkAccountBindingResponse = {
-  installationId: "",
+  bindingId: "",
   qrCodeUrl: "",
   expiresAt: "",
+};
+
+const FDEWorkspaceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  slug: z.string(),
+  description: z.string().nullable().default(null),
+  context: z.string().nullable().default(null),
+  settings: z.record(z.string(), z.unknown()).default({}),
+  repos: z.array(z.object({
+    url: z.string(),
+    description: z.string().optional(),
+  }).loose()).default([]),
+  issue_prefix: z.string().default(""),
+  avatar_url: z.string().nullable().default(null),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+const FDEInstallSchema = z.object({
+  session_id: z.string(),
+  qr_code_url: z.string(),
+  expires_in_seconds: z.number(),
+  poll_interval_seconds: z.number(),
+}).loose();
+
+export const FDEOnboardingStateSchema = z.object({
+  configured: z.boolean(),
+  create_only: z.boolean().optional().default(false),
+  workspaces: z.array(FDEWorkspaceSchema).default([]),
+}).loose();
+
+export const EMPTY_FDE_ONBOARDING_STATE: FDEOnboardingState = {
+  configured: false,
+  create_only: false,
+  workspaces: [],
+};
+
+export const ProvisionFDEOnboardingResponseSchema = z.object({
+  workspace: FDEWorkspaceSchema,
+  runtime_id: z.string(),
+  agent_id: z.string(),
+  agent_created: z.boolean(),
+  install_complete: z.boolean(),
+  install: FDEInstallSchema.optional(),
+}).loose();
+
+export const EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE: ProvisionFDEOnboardingResponse = {
+  workspace: {
+    id: "",
+    name: "",
+    slug: "",
+    description: null,
+    context: null,
+    settings: {},
+    repos: [],
+    issue_prefix: "",
+    avatar_url: null,
+    created_at: "",
+    updated_at: "",
+  },
+  runtime_id: "",
+  agent_id: "",
+  agent_created: false,
+  install_complete: false,
 };
 
 // Label responses are consumed by settings tables and resource pickers. Keep

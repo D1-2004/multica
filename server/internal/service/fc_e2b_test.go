@@ -76,30 +76,31 @@ func mustFCE2BRunnerLaunch(t *testing.T, rt db.AgentRuntime) fcE2BRunnerLaunch {
 
 func TestFCE2BProviderForTemplate(t *testing.T) {
 	cases := []struct {
-		refs []string
-		want string
+		providers []string
+		want      string
+		ok        bool
 	}{
-		{[]string{"multica-fc-hermes-v1", "", ""}, "hermes"},
-		{[]string{"multica-fc-hermes-dws-v1", "tpl_1", "multica-fc-hermes-dws-v1"}, "hermes"},
-		{[]string{"multica-fc-opencode-v1", "", ""}, "opencode"},
-		{[]string{"", "tpl_2", "multica-fc-OpenCode-dws"}, "opencode"},
-		{[]string{"custom-team-template", "", ""}, "hermes"},
-		{[]string{}, "hermes"},
+		{[]string{"hermes", "opencode", "pi"}, "hermes", true},
+		{[]string{"opencode", "pi"}, "opencode", true},
+		{[]string{"pi"}, "pi", true},
+		{[]string{"unknown"}, "", false},
+		{nil, "", false},
 	}
 	for _, tc := range cases {
-		if got := FCE2BProviderForTemplate(tc.refs...); got != tc.want {
-			t.Fatalf("FCE2BProviderForTemplate(%v) = %q, want %q", tc.refs, got, tc.want)
+		got, ok := FCE2BProviderForTemplate(FCE2BTemplate{Providers: tc.providers})
+		if got != tc.want || ok != tc.ok {
+			t.Fatalf("FCE2BProviderForTemplate(%v) = (%q, %v), want (%q, %v)", tc.providers, got, ok, tc.want, tc.ok)
 		}
 	}
 }
 
 func TestIsFCE2BSupportedProvider(t *testing.T) {
-	for _, provider := range []string{"hermes", "opencode", " Hermes ", "OPENCODE"} {
+	for _, provider := range []string{"hermes", "opencode", "pi", " Hermes ", "OPENCODE", " PI "} {
 		if !IsFCE2BSupportedProvider(provider) {
 			t.Fatalf("IsFCE2BSupportedProvider(%q) = false, want true", provider)
 		}
 	}
-	for _, provider := range []string{"", "codex", "claude", "pi"} {
+	for _, provider := range []string{"", "codex", "claude"} {
 		if IsFCE2BSupportedProvider(provider) {
 			t.Fatalf("IsFCE2BSupportedProvider(%q) = true, want false", provider)
 		}
@@ -113,6 +114,7 @@ func TestFCE2BRunnerCommandForProvider(t *testing.T) {
 	}{
 		{"hermes", "multica-fc-hermes-container-log-entry"},
 		{"opencode", "multica-fc-opencode-container-log-entry"},
+		{"pi", "multica-fc-pi-container-log-entry"},
 		{" OpenCode ", "multica-fc-opencode-container-log-entry"},
 		{"", "multica-fc-hermes-container-log-entry"},
 	}
@@ -156,6 +158,11 @@ func TestFCE2BRunnerLaunchForRuntime(t *testing.T) {
 		Command: "/usr/local/libexec/multica-fc-opencode-container-log-entry",
 		Home:    "/root",
 	}
+	rootPi := fcE2BRunnerLaunch{
+		Mode:    fcE2BRunnerLaunchRootLog,
+		Command: "/usr/local/libexec/multica-fc-pi-container-log-entry",
+		Home:    "/root",
+	}
 
 	cases := []struct {
 		name     string
@@ -169,6 +176,8 @@ func TestFCE2BRunnerLaunchForRuntime(t *testing.T) {
 		{name: "legacy OpenCode", provider: "opencode", metadata: `{"runner":"multica-fc-opencode-runner"}`, want: legacyOpenCode},
 		{name: "root Hermes", provider: "hermes", metadata: `{"runner":"multica-fc-hermes-container-log-entry"}`, want: rootHermes},
 		{name: "root OpenCode", provider: "opencode", metadata: `{"runner":"multica-fc-opencode-container-log-entry"}`, want: rootOpenCode},
+		{name: "root Pi", provider: "pi", metadata: `{"runner":"multica-fc-pi-container-log-entry"}`, want: rootPi},
+		{name: "Pi has no legacy runner", provider: "pi", metadata: `{}`, wantErr: true},
 		{name: "provider mismatch", provider: "hermes", metadata: `{"runner":"multica-fc-opencode-container-log-entry"}`, wantErr: true},
 		{name: "custom command", provider: "opencode", metadata: `{"runner":"/tmp/custom-runner"}`, wantErr: true},
 		{name: "shell command", provider: "hermes", metadata: `{"runner":"sh -c id"}`, wantErr: true},
@@ -294,12 +303,14 @@ func TestParseE2BSandboxIDStrictCreateOutput(t *testing.T) {
 	}
 }
 
-func TestParseFCE2BTemplatesUsesAliasesAndBuildStatus(t *testing.T) {
+func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
+	const alias = "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"
 	got, err := parseFCE2BTemplates(`[
 		{
 			"templateID": "idt7f6on323gsyuqjt59",
-			"aliases": ["multica-fc-hermes-dws-v1"],
-			"names": ["multica-fc-hermes-dws-v1"],
+			"buildID": "a4aa129e-ef89-4fce-9fc9-605a1015e0e1",
+			"aliases": ["default", "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"],
+			"names": ["multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"],
 			"buildStatus": "ready",
 			"createdAt": "2026-07-08T13:16:30.740524Z",
 			"updatedAt": "2026-07-08T13:19:01.365773Z"
@@ -314,10 +325,13 @@ func TestParseFCE2BTemplatesUsesAliasesAndBuildStatus(t *testing.T) {
 	if got[0].ID != "idt7f6on323gsyuqjt59" {
 		t.Fatalf("id = %q", got[0].ID)
 	}
-	if got[0].Name != "multica-fc-hermes-dws-v1" {
+	if got[0].BuildID != "a4aa129e-ef89-4fce-9fc9-605a1015e0e1" {
+		t.Fatalf("build_id = %q", got[0].BuildID)
+	}
+	if got[0].Name != alias {
 		t.Fatalf("name = %q", got[0].Name)
 	}
-	if got[0].Template != "multica-fc-hermes-dws-v1" {
+	if got[0].Template != alias {
 		t.Fatalf("template = %q", got[0].Template)
 	}
 	if got[0].Status != "ready" {
@@ -325,6 +339,96 @@ func TestParseFCE2BTemplatesUsesAliasesAndBuildStatus(t *testing.T) {
 	}
 	if got[0].UpdatedAt != "2026-07-08T13:19:01.365773Z" {
 		t.Fatalf("updated_at = %q", got[0].UpdatedAt)
+	}
+	if !IsFCE2BTemplatePublished(got[0]) {
+		t.Fatalf("template manifest was not published: %+v", got[0])
+	}
+	if want := []string{"hermes", "opencode", "pi"}; !reflect.DeepEqual(got[0].Providers, want) {
+		t.Fatalf("providers = %#v, want %#v", got[0].Providers, want)
+	}
+	if want := []string{"dws", "dws.im_event", "mcp"}; !reflect.DeepEqual(got[0].Capabilities, want) {
+		t.Fatalf("capabilities = %#v, want %#v", got[0].Capabilities, want)
+	}
+	if want := map[string]string{
+		"hermes": "0.19.0", "opencode": "v1.18.4", "pi": "0.80.10", "dws": "v1.0.53-beta.4",
+	}; !reflect.DeepEqual(got[0].ComponentVersions, want) {
+		t.Fatalf("component versions = %#v, want %#v", got[0].ComponentVersions, want)
+	}
+}
+
+func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
+	const validAlias = "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"
+	tests := []struct {
+		name          string
+		buildID       string
+		alias         string
+		wantApplied   bool
+		wantPublished bool
+	}{
+		{name: "valid current", buildID: "build-current", alias: validAlias, wantApplied: true, wantPublished: true},
+		{name: "valid legacy", buildID: "build-legacy", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa", wantApplied: true},
+		{name: "missing build ID", alias: validAlias},
+		{name: "old template name", buildID: "build-current", alias: "multica-fc-hermes-opencode-dws-v1"},
+		{name: "missing patch version", buildID: "build-current", alias: "multica-m2-h0_19-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
+		{name: "leading zero", buildID: "build-current", alias: "multica-m2-h00_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
+		{name: "current missing MCP marker", buildID: "build-current", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-9a6bfa"},
+		{name: "legacy falsely claims MCP", buildID: "build-current", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
+		{name: "wrong runner", buildID: "build-current", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r2-9a6bfa"},
+		{name: "uppercase SHA", buildID: "build-current", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9A6BFA"},
+		{name: "suffix", buildID: "build-current", alias: validAlias + "-extra"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			template := FCE2BTemplate{BuildID: test.buildID}
+			published, err := applyFCE2BTemplateManifestAlias(&template, test.alias)
+			if err != nil {
+				t.Fatalf("apply manifest alias: %v", err)
+			}
+			if published != test.wantApplied {
+				t.Fatalf("applied = %v, want %v", published, test.wantApplied)
+			}
+			if got := IsFCE2BTemplatePublished(template); got != test.wantPublished {
+				t.Fatalf("IsFCE2BTemplatePublished = %v, want %v: %+v", got, test.wantPublished, template)
+			}
+		})
+	}
+	if _, err := applyFCE2BTemplateManifestAlias(nil, validAlias); err == nil {
+		t.Fatal("nil template was accepted")
+	}
+}
+
+func TestListFCE2BTemplatesReadsOnlyManifestAliases(t *testing.T) {
+	runner := &fakeCommandRunner{out: []string{`[
+		{"id":"tpl-older","buildID":"build-older","aliases":["multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa"],"status":"ready","updatedAt":"2026-07-20T01:00:00Z"},
+		{"id":"tpl-current","buildID":"build-current","aliases":["default","multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"],"names":["multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"],"status":"ready","updatedAt":"2026-07-21T01:00:00Z"},
+		{"id":"tpl-old","buildID":"build-old","aliases":["multica-fc-hermes-opencode-dws-v1"],"status":"ready"},
+		{"id":"tpl-malformed","buildID":"build-malformed","aliases":["multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-9a6bfa"],"status":"ready"},
+		{"id":"tpl-no-build","aliases":["multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-bbbbbb"],"status":"ready"}
+	]`}}
+	templates, err := ListFCE2BTemplates(context.Background(), FCE2BConfig{
+		APIKey:  "test-key",
+		APIURL:  "https://fc-e2b.test",
+		Domain:  "fc-e2b.test",
+		CLIPath: "e2b-test",
+	}, runner)
+	if err != nil {
+		t.Fatalf("list templates: %v", err)
+	}
+	if len(templates) != 2 {
+		t.Fatalf("templates = %#v", templates)
+	}
+	got := templates[0]
+	if got.ID != "tpl-current" || got.BuildID != "build-current" || got.ManifestVersion != 2 {
+		t.Fatalf("verified template = %#v", got)
+	}
+	if want := []string{"hermes", "opencode", "pi"}; !reflect.DeepEqual(got.Providers, want) {
+		t.Fatalf("providers = %#v, want %#v", got.Providers, want)
+	}
+	if got.ComponentVersions["pi"] != "0.80.10" || got.ComponentVersions["dws"] != "v1.0.53-beta.4" {
+		t.Fatalf("component versions = %#v", got.ComponentVersions)
+	}
+	if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0].args, []string{"template", "list", "--format", "json"}) {
+		t.Fatalf("template list calls = %#v", runner.calls)
 	}
 }
 
@@ -835,8 +939,7 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extraEnvForTask with bound identity returned error: %v", err)
 	}
-	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" ||
-		env["AGENT_IDENTITY_CONTEXT_TOKEN"] == "caller_token_must_be_ignored" {
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" {
 		t.Fatalf("chat ContextToken env = %#v", env)
 	}
 	if _, present := env["DWS_UID"]; present {
@@ -851,6 +954,28 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 		request.Source["chat_session_id"] != util.UUIDToString(task.ChatSessionID) {
 		t.Fatalf("Agent Identity request = %#v", request)
 	}
+
+	task.Context = []byte(`{"dispatch_source":{"platform":"dingtalk","type":"digital_employee"},"agent_identity_context_token":"caller_external_token"}`)
+	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-external")
+	if err != nil {
+		t.Fatalf("extraEnvForTask with external identity returned error: %v", err)
+	}
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "caller_external_token" || len(identityClient.requests) != 1 {
+		t.Fatalf("external identity did not win over Agent binding: requests=%d env=%#v", len(identityClient.requests), env)
+	}
+	task.Context = []byte(`{"dispatch_source":{"platform":"dingtalk","type":"digital_employee"}}`)
+	task.ChatSessionID = pgtype.UUID{}
+	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-direct-task")
+	if err != nil {
+		t.Fatalf("extraEnvForTask direct task fallback returned error: %v", err)
+	}
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 2 {
+		t.Fatalf("direct task did not use Agent binding: requests=%d env=%#v", len(identityClient.requests), env)
+	}
+	if _, present := identityClient.requests[1].Source["chat_session_id"]; present {
+		t.Fatalf("direct task identity source contains chat session: %#v", identityClient.requests[1].Source)
+	}
+	task.ChatSessionID = util.MustParseUUID("22222222-2222-2222-2222-222222222222")
 
 	identityClient.err = errors.New("HSF unavailable")
 	if _, err := launcher.extraEnvForTask(ctx, task, runtime, "sbx-chat"); err == nil {
@@ -981,7 +1106,7 @@ func TestFCE2BTaskTraceEnv(t *testing.T) {
 	if env[chattrace.TraceIDEnvKey] != trace.TraceID || env[chattrace.TraceStartedAtUnixMSEnvKey] != "1721000000123" {
 		t.Fatalf("trace env = %#v", env)
 	}
-	if !isAllowedFCE2BRootRunnerExtraEnv(chattrace.TraceIDEnvKey) || !isAllowedFCE2BRootRunnerExtraEnv(chattrace.TraceStartedAtUnixMSEnvKey) {
+	if !isAllowedFCE2BRunnerExtraEnv(chattrace.TraceIDEnvKey) || !isAllowedFCE2BRunnerExtraEnv(chattrace.TraceStartedAtUnixMSEnvKey) {
 		t.Fatal("trace env keys are not allowed through the fixed root entrypoint")
 	}
 
@@ -996,6 +1121,19 @@ func TestFCE2BTaskTraceEnv(t *testing.T) {
 	}
 	if env[chattrace.TraceIDEnvKey] != taskID || env[chattrace.TraceStartedAtUnixMSEnvKey] != strconv.FormatInt(createdAt.UnixMilli(), 10) {
 		t.Fatalf("non-chat trace env = %#v", env)
+	}
+}
+
+func TestFCE2BExtraEnvDoesNotUseRuntimePromptEnvironmentVariable(t *testing.T) {
+	task := db.AgentTaskQueue{
+		Context: []byte(`{"dispatch_runtime_prompt":"private runtime instruction"}`),
+	}
+	got, err := fcE2BAgentIdentityExtraEnv(task, FCE2BConfig{})
+	if err != nil {
+		t.Fatalf("fcE2BAgentIdentityExtraEnv: %v", err)
+	}
+	if _, exists := got["MULTICA_DISPATCH_RUNTIME_PROMPT"]; exists {
+		t.Fatalf("runtime prompt left in an unconsumed environment variable: %#v", got)
 	}
 }
 

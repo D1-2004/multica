@@ -43,10 +43,15 @@ type AgentDispatchContinuation struct {
 	IssueID string `json:"issueId"`
 }
 
+type AgentDispatchExternalIdentity struct {
+	ContextToken string `json:"contextToken"`
+}
+
 type AgentDispatchRequest struct {
-	Continuation *AgentDispatchContinuation `json:"continuation,omitempty"`
-	AgentID      string                     `json:"agentId,omitempty"`
-	Input        AgentDispatchInput         `json:"input"`
+	Continuation     *AgentDispatchContinuation     `json:"continuation,omitempty"`
+	AgentID          string                         `json:"agentId,omitempty"`
+	ExternalIdentity *AgentDispatchExternalIdentity `json:"externalIdentity,omitempty"`
+	Input            AgentDispatchInput             `json:"input"`
 }
 
 type AgentDispatchResponse struct {
@@ -62,23 +67,43 @@ type AgentDispatchResponse struct {
 // New issues still require a body-level agentId and it must match the endpoint;
 // continuations resolve the issue while remaining scoped to the same agent.
 // schemaVersion is intentionally not gated and the request body has no
-// handler-level size cap. Agent identity credentials remain agent-owned;
-// contextToken and dispatchTaskId from legacy router payloads are ignored by
-// the JSON decoder and never enter issue/comment content or task context.
+// handler-level size cap. externalIdentity.contextToken is accepted only here,
+// after the endpoint-specific Bearer credential has authenticated the internal
+// caller; it enters server-private task context and never issue/comment content.
 func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	dispatchContext, ok := h.resolveAgentDispatchContext(w, r)
 	if !ok {
 		return
 	}
 
+	var raw json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	var version struct {
+		SchemaVersion string `json:"schemaVersion"`
+	}
+	if err := json.Unmarshal(raw, &version); err == nil && version.SchemaVersion == "2.0" {
+		h.handleAgentDispatchV2(w, r, raw, dispatchContext)
+		return
+	}
 	var req AgentDispatchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(raw, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if strings.TrimSpace(req.Input.UserPrompt.Text) == "" {
 		writeError(w, http.StatusBadRequest, "input.userPrompt.text is required")
 		return
+	}
+	if req.ExternalIdentity != nil {
+		contextToken := strings.TrimSpace(req.ExternalIdentity.ContextToken)
+		if contextToken == "" || contextToken != req.ExternalIdentity.ContextToken || len(contextToken) > 8192 {
+			writeError(w, http.StatusBadRequest, "externalIdentity.contextToken is invalid")
+			return
+		}
+		req.ExternalIdentity.ContextToken = contextToken
 	}
 	for _, attachment := range req.Input.Attachments {
 		if strings.TrimSpace(attachment.Name) == "" || strings.TrimSpace(attachment.DownloadURL) == "" {
@@ -114,6 +139,69 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	h.createAgentDispatchComment(w, r, req, dispatchContext)
 }
 
+func (h *Handler) handleAgentDispatchV2(w http.ResponseWriter, r *http.Request, raw []byte, dispatchContext agentDispatchContext) {
+	var cmd AgentDispatchV2Request
+	if err := json.Unmarshal(raw, &cmd); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid dispatch command")
+		return
+	}
+	command := cmd.DispatchCommand()
+	if err := command.validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	prompt, err := BuildDispatchPrompt(command)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to build dispatch prompt")
+		return
+	}
+	if command.AgentID != "" {
+		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(command.AgentID), "agentId")
+		if !ok {
+			return
+		}
+		if agentID != dispatchContext.AgentID {
+			writeError(w, http.StatusForbidden, "agentId does not match dispatch endpoint")
+			return
+		}
+		agent, ok := h.resolveAgentDispatchAgent(w, r, dispatchContext.UserID, dispatchContext.WorkspaceID, agentID)
+		if !ok {
+			return
+		}
+		h.createAgentDispatchIssueV2(w, r, command, prompt, dispatchContext, agent)
+		return
+	}
+	if command.Continuation == nil || command.Continuation.Kind != "issue" || strings.TrimSpace(command.Continuation.IssueID) == "" {
+		writeError(w, http.StatusBadRequest, "continuation must identify an issue")
+		return
+	}
+	h.createAgentDispatchCommentV2(w, r, command, prompt, dispatchContext)
+}
+
+// AgentDispatchV2Request is an alias-shaped envelope so the public JSON keeps
+// the exact Router contract while validation and execution remain in Multica.
+type AgentDispatchV2Request struct {
+	SchemaVersion    string                        `json:"schemaVersion"`
+	AgentID          string                        `json:"agentId,omitempty"`
+	Continuation     *AgentDispatchContinuation    `json:"continuation"`
+	Source           DispatchSource                `json:"source"`
+	Event            DispatchEvent                 `json:"event"`
+	Surface          DispatchSurface               `json:"surface"`
+	Outbound         DispatchOutbound              `json:"outbound"`
+	ExternalIdentity AgentDispatchExternalIdentity `json:"externalIdentity"`
+}
+
+func (r AgentDispatchV2Request) DispatchCommand() DispatchCommand {
+	return DispatchCommand{SchemaVersion: r.SchemaVersion, AgentID: r.AgentID, Continuation: r.Continuation, Source: r.Source, Event: r.Event, Surface: r.Surface, Outbound: r.Outbound, ExternalIdentity: r.ExternalIdentity}
+}
+
+func agentDispatchContextToken(req AgentDispatchRequest) string {
+	if req.ExternalIdentity == nil {
+		return ""
+	}
+	return req.ExternalIdentity.ContextToken
+}
+
 type agentDispatchContext struct {
 	UserID      pgtype.UUID
 	WorkspaceID pgtype.UUID
@@ -133,7 +221,7 @@ func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusUnauthorized, "invalid dispatch credentials")
 		return agentDispatchContext{}, false
 	}
-	endpoint, err := h.Queries.GetActiveDingTalkAccountBindingByEndpoint(r.Context(), endpointID)
+	endpoint, err := h.Queries.GetAgentDispatchEndpointByEndpointID(r.Context(), endpointID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			h.Metrics.RecordDispatchAuth("endpoint_not_found")
@@ -146,7 +234,7 @@ func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Req
 	}
 	h.Metrics.RecordDispatchAuth("success")
 	return agentDispatchContext{
-		UserID:      endpoint.InstallerUserID,
+		UserID:      endpoint.ActorUserID,
 		WorkspaceID: endpoint.WorkspaceID,
 		AgentID:     endpoint.AgentID,
 	}, true
@@ -212,17 +300,18 @@ func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Reques
 
 	prefix := h.getIssuePrefix(r.Context(), workspaceID)
 	result, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
-		WorkspaceID:    workspaceID,
-		Title:          agentDispatchIssueTitle(req.Input.UserPrompt.Text),
-		Description:    pgtype.Text{String: buildAgentDispatchContent(req.Input), Valid: true},
-		Status:         "todo",
-		Priority:       "none",
-		AssigneeType:   pgtype.Text{String: "agent", Valid: true},
-		AssigneeID:     agent.ID,
-		CreatorType:    "member",
-		CreatorID:      userID,
-		AttachmentIDs:  attachmentIDs(imported),
-		AllowDuplicate: true,
+		WorkspaceID:               workspaceID,
+		Title:                     agentDispatchIssueTitle(req.Input.UserPrompt.Text),
+		Description:               pgtype.Text{String: buildAgentDispatchContent(req.Input), Valid: true},
+		Status:                    "todo",
+		Priority:                  "none",
+		AssigneeType:              pgtype.Text{String: "agent", Valid: true},
+		AssigneeID:                agent.ID,
+		CreatorType:               "member",
+		CreatorID:                 userID,
+		AttachmentIDs:             attachmentIDs(imported),
+		AllowDuplicate:            true,
+		AgentIdentityContextToken: agentDispatchContextToken(req),
 	}, service.IssueCreateOpts{
 		ActorID:          uuidToString(userID),
 		AnalyticsAgentID: uuidToString(agent.ID),
@@ -297,10 +386,11 @@ func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Requ
 		}
 	}()
 	result, err := h.IssueCommentService.CreateExternalFollowUp(r.Context(), service.IssueCommentCreateParams{
-		Issue:         issue,
-		AuthorID:      dispatchContext.UserID,
-		Content:       buildAgentDispatchContent(req.Input),
-		AttachmentIDs: attachmentIDs(imported),
+		Issue:                     issue,
+		AuthorID:                  dispatchContext.UserID,
+		Content:                   buildAgentDispatchContent(req.Input),
+		AttachmentIDs:             attachmentIDs(imported),
+		AgentIdentityContextToken: agentDispatchContextToken(req),
 	}, service.IssueCommentCreateOpts{
 		BroadcastPayload: func(comment db.Comment, attachments []db.Attachment) map[string]any {
 			responses := make([]AttachmentResponse, 0, len(attachments))
@@ -391,12 +481,6 @@ func agentDispatchIssueTitle(userPrompt string) string {
 
 func buildAgentDispatchContent(input AgentDispatchInput) string {
 	var b strings.Builder
-	if systemPrompt := strings.TrimSpace(input.SystemPrompt.Text); systemPrompt != "" {
-		b.WriteString("## System prompt\n\n")
-		b.WriteString(systemPrompt)
-		b.WriteString("\n\n")
-	}
-	b.WriteString("## User prompt\n\n")
 	b.WriteString(strings.TrimSpace(input.UserPrompt.Text))
 	if len(input.Attachments) > 0 {
 		b.WriteString("\n\n## Attachments\n")

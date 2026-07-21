@@ -101,7 +101,11 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
         <p className="text-xs text-muted-foreground">
           {t(($) => $.tab_body.integrations.intro)}
         </p>
-        <DingTalkAccountBindingCard agentId={agent.id} agentName={agent.name} />
+        <DingTalkAccountBindingCard
+          agentId={agent.id}
+          agentName={agent.name}
+          bindingMode="message"
+        />
         <p className="text-xs text-muted-foreground">
           {t(($) => $.tab_body.integrations.members_note)}
         </p>
@@ -115,7 +119,11 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
         {t(($) => $.tab_body.integrations.intro)}
       </p>
 
-      <DingTalkAccountBindingCard agentId={agent.id} agentName={agent.name} />
+      <DingTalkAccountBindingCard
+        agentId={agent.id}
+        agentName={agent.name}
+        bindingMode="message"
+      />
 
       <section className="rounded-lg border">
         <div className="flex items-start gap-3 p-4">

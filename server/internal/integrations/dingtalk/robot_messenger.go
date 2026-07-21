@@ -63,6 +63,10 @@ func NewRobotMessenger(openAPIBase, oapiBase string, client *http.Client) *Robot
 type RobotTarget struct {
 	OpenConversationID string
 	UserStaffID        string
+	// ReplyToOpenMsgID optionally asks DingTalk to associate the outbound
+	// message with the inbound message. It is kept as a domain locator; no
+	// Multica issue/session identifier is sent to DingTalk.
+	ReplyToOpenMsgID string
 }
 
 // SendMarkdown delivers text (agent replies are Markdown-ish; DingTalk's
@@ -87,6 +91,9 @@ func (m *RobotMessenger) SendMarkdown(ctx context.Context, creds channelCredenti
 	case target.OpenConversationID != "":
 		path = "/v1.0/robot/groupMessages/send"
 		body["openConversationId"] = target.OpenConversationID
+		if target.ReplyToOpenMsgID != "" {
+			body["openMsgId"] = target.ReplyToOpenMsgID
+		}
 	case target.UserStaffID != "":
 		path = "/v1.0/robot/oToMessages/batchSend"
 		body["userIds"] = []string{target.UserStaffID}
@@ -240,13 +247,13 @@ func (m *RobotMessenger) post(ctx context.Context, path, token string, body map[
 	return nil
 }
 
-// resolveMessageFileURL exchanges a picture callback's short-lived download
-// code for the HTTP(S) URL consumed immediately by the attachment importer.
+// resolveMessageFileURL exchanges an attachment callback's short-lived
+// download code for the HTTP(S) URL consumed immediately by the importer.
 // Neither value is included in returned errors.
 func (m *RobotMessenger) resolveMessageFileURL(ctx context.Context, creds channelCredentials, downloadCode string) (string, error) {
 	downloadCode = strings.TrimSpace(downloadCode)
 	if downloadCode == "" {
-		return "", errors.New("dingtalk robot: picture download code is empty")
+		return "", errors.New("dingtalk robot: message file download code is empty")
 	}
 	token, err := m.accessToken(ctx, creds)
 	if err != nil {

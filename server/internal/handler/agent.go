@@ -325,7 +325,7 @@ type AgentTaskResponse struct {
 	NewCommentCount          int                    `json:"new_comment_count,omitempty"`           // trigger-thread comments since last run; excludes injected trigger + own comments; omitempty so old daemons ignore it
 	NewCommentsSince         string                 `json:"new_comments_since,omitempty"`          // RFC3339 anchor (last run's started_at) the count is measured from; omitempty so old daemons ignore it
 	ChatSessionID            string                 `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
-	ChatChannelType          string                 `json:"chat_channel_type,omitempty"`           // "slack" when the chat session is backed by an IM channel; empty for a web-only chat. Makes the agent channel-aware (read history from the channel, not Multica)
+	ChatChannelType          string                 `json:"chat_channel_type,omitempty"`           // backing IM channel type (for example "slack" or "dingtalk"); empty for web-only chat
 	ChatInThread             bool                   `json:"chat_in_thread,omitempty"`              // true when the latest @mention was a thread reply; tells the agent to start with `multica chat thread` vs `multica chat history`
 	ChatHistory              string                 `json:"chat_history,omitempty"`                // bounded prior chat transcript for FC/E2B cold starts
 	ChatMessage              string                 `json:"chat_message,omitempty"`                // user message for chat tasks
@@ -344,6 +344,11 @@ type AgentTaskResponse struct {
 	SquadName                string                 `json:"squad_name,omitempty"`                  // display name for the picker squad
 	ParentIssueID            string                 `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
 	ParentIssueIdentifier    string                 `json:"parent_issue_identifier,omitempty"`     // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
+
+	// Credential-free original channel callbacks, associated with each input
+	// message. Kept separate from the normalized message and attachments.
+	ChatMessageSourcePayloads []ChatMessageSourcePayload `json:"chat_message_source_payloads,omitempty"`
+
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
 	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
 	// from the runtime owner so they're populated for daemon runtimes and
@@ -380,6 +385,12 @@ type AgentTaskResponse struct {
 	// MUL-3292.
 	AuthToken                 string `json:"auth_token,omitempty"`
 	AgentIdentityContextToken string `json:"agent_identity_context_token,omitempty"`
+	// DispatchRuntimePrompt is populated only by the daemon claim builder.
+	// taskToResponse deliberately leaves it empty for ordinary task APIs.
+	DispatchRuntimePrompt  string `json:"dispatch_runtime_prompt,omitempty"`
+	DispatchWorkflowPrompt string `json:"dispatch_workflow_prompt,omitempty"`
+	DispatchSurfaceType    string `json:"dispatch_surface_type,omitempty"`
+	DispatchOutboundMode   string `json:"dispatch_outbound_mode,omitempty"`
 	// DingTalkDWSIdentityUnavailable tells compatible daemons to inject a
 	// user-visible explanation while still running the chat task normally.
 	DingTalkDWSIdentityUnavailable bool `json:"dingtalk_dws_identity_unavailable,omitempty"`
@@ -395,6 +406,14 @@ type ChatAttachmentMeta struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type,omitempty"`
+}
+
+// ChatMessageSourcePayload associates one sanitized platform callback with the
+// stored chat message produced from it. Payload is adapter-owned JSON and is
+// passed through without the handler interpreting platform-specific fields.
+type ChatMessageSourcePayload struct {
+	MessageID string          `json:"message_id"`
+	Payload   json.RawMessage `json:"payload"`
 }
 
 // CoalescedCommentData carries the full detail of a comment that was folded
@@ -496,7 +515,6 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		DeliveredCommentIDs:            uuidStringsOrEmpty(t.DeliveredCommentIds),
 		TriggerSummary:                 textToPtr(t.TriggerSummary),
 		HandoffNote:                    handoffNote,
-		AgentIdentityContextToken:      taskContextString(t.Context, protocol.AgentIdentityContextTokenJSONKey),
 		DingTalkDWSIdentityUnavailable: taskContextHasKey(t.Context, protocol.DingTalkRobotIdentityUnavailableJSONKey),
 		WorkDir:                        workDir,
 		RelativeWorkDir:                relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
@@ -509,6 +527,20 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	}
 }
 
+// taskToClaimResponse is the only mapper allowed to surface server-private
+// task context. It is used exclusively by the authenticated daemon claim
+// endpoint; all user-facing task endpoints use taskToResponse.
+func taskToClaimResponse(t db.AgentTaskQueue, workspaceID string, runtime db.AgentRuntime) AgentTaskResponse {
+	resp := taskToResponse(t, workspaceID)
+	// FC/E2B receives and redeems the token in its root runner before the
+	// daemon starts. Sending it again in the subsequent claim would put the
+	// spent server-private bearer token back into the sandbox daemon memory.
+	if !service.IsFCE2BRuntime(runtime) {
+		resp.AgentIdentityContextToken = taskContextString(t.Context, protocol.AgentIdentityContextTokenJSONKey)
+	}
+	return resp
+}
+
 func taskContextString(raw []byte, key string) string {
 	if len(raw) == 0 {
 		return ""
@@ -519,6 +551,27 @@ func taskContextString(raw []byte, key string) string {
 	}
 	value, _ := payload[key].(string)
 	return strings.TrimSpace(value)
+}
+
+func populatePrivateTaskClaimContext(response *AgentTaskResponse, taskContext []byte) {
+	response.AgentIdentityContextToken = taskContextString(taskContext, protocol.AgentIdentityContextTokenJSONKey)
+	response.DispatchRuntimePrompt = taskContextString(taskContext, protocol.DispatchRuntimePromptJSONKey)
+	response.DispatchWorkflowPrompt = taskContextString(taskContext, protocol.DispatchWorkflowPromptJSONKey)
+	response.DispatchSurfaceType, response.DispatchOutboundMode = taskContextDispatchPolicy(taskContext)
+}
+
+func taskContextDispatchPolicy(raw []byte) (surfaceType, outboundMode string) {
+	if len(raw) == 0 {
+		return "", ""
+	}
+	var payload struct {
+		Surface  DispatchSurface  `json:"dispatch_surface"`
+		Outbound DispatchOutbound `json:"dispatch_outbound"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(payload.Surface.Type), strings.TrimSpace(payload.Outbound.Mode)
 }
 
 func taskContextHasKey(raw []byte, key string) bool {

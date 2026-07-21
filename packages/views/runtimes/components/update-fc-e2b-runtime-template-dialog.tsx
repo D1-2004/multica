@@ -48,6 +48,8 @@ function providerDisplayName(provider: string): string {
       return "Hermes";
     case "opencode":
       return "OpenCode";
+    case "pi":
+      return "Pi";
     default:
       return provider;
   }
@@ -80,6 +82,8 @@ export function UpdateFCE2BRuntimeTemplateDialog({
         template.template,
         template.status,
         template.updated_at,
+        ...template.providers,
+        ...template.capabilities,
       ]
         .filter(Boolean)
         .join(" ")
@@ -90,14 +94,24 @@ export function UpdateFCE2BRuntimeTemplateDialog({
 
   const isCurrentTemplate = (template: FCE2BTemplate): boolean => {
     const templateId = template.id?.trim();
-    return Boolean(templateId && metadata?.templateId === templateId);
+    const buildId = template.build_id?.trim();
+    return Boolean(
+      templateId &&
+        buildId &&
+        metadata?.templateId === templateId &&
+        metadata.templateBuildId === buildId,
+    );
   };
+
+  const supportsRuntimeProvider = (template: FCE2BTemplate): boolean =>
+    template.providers.includes(runtime.provider.trim().toLowerCase());
 
   const selectedTemplateId = selectedTemplate?.id?.trim() ?? "";
   const canSubmit = Boolean(
     selectedTemplate &&
       selectedTemplateId &&
       isReadyFCE2BTemplate(selectedTemplate) &&
+      supportsRuntimeProvider(selectedTemplate) &&
       !isCurrentTemplate(selectedTemplate),
   );
   const currentTemplateName =
@@ -207,8 +221,9 @@ export function UpdateFCE2BRuntimeTemplateDialog({
               {filteredTemplates.map((template) => {
                 const templateId = template.id?.trim() ?? "";
                 const ready = isReadyFCE2BTemplate(template);
+                const compatible = supportsRuntimeProvider(template);
                 const current = isCurrentTemplate(template);
-                const selectable = ready && !current;
+                const selectable = ready && compatible && !current;
                 const selected = selectedTemplate === template;
                 const displayName = templateDisplayName(template);
                 const updatedAt = formatTemplateUpdatedAt(template.updated_at);
@@ -216,7 +231,7 @@ export function UpdateFCE2BRuntimeTemplateDialog({
                   ? t(($) => $.fc_e2b_template_update.template_current)
                   : !templateId
                     ? t(($) => $.fc_e2b_template_update.template_missing_id)
-                    : !ready
+                    : !ready || !compatible
                       ? t(($) => $.fc_e2b_template_update.template_unavailable)
                       : template.status;
                 return (

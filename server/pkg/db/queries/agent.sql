@@ -191,7 +191,8 @@ WHERE agent_id = $1
 ORDER BY created_at DESC;
 
 -- name: CreateAgentTask :one
--- head_sha and agent_identity_context_token are server-private task context.
+-- head_sha, agent_identity_context_token and dispatch_context are
+-- server-private task context.
 -- Neither is exposed by the task response. Empty values leave context NULL,
 -- preserving the existing behavior for ordinary issue tasks.
 INSERT INTO agent_task_queue (
@@ -210,7 +211,8 @@ VALUES (
     CASE
         WHEN COALESCE(sqlc.narg('head_sha')::text, '') <> ''
           OR COALESCE(sqlc.narg('agent_identity_context_token')::text, '') <> ''
-        THEN jsonb_strip_nulls(jsonb_build_object(
+          OR COALESCE(sqlc.narg('dispatch_context')::jsonb, '{}'::jsonb) <> '{}'::jsonb
+        THEN jsonb_strip_nulls(COALESCE(sqlc.narg('dispatch_context')::jsonb, '{}'::jsonb) || jsonb_build_object(
             'head_sha', NULLIF(sqlc.narg('head_sha')::text, ''),
             'agent_identity_context_token', NULLIF(sqlc.narg('agent_identity_context_token')::text, '')
         ))
@@ -237,6 +239,46 @@ VALUES (
     sqlc.narg(runtime_connected_apps)
 )
 RETURNING *;
+
+-- name: ClaimDispatchOutbound :one
+-- Durable one-shot claim for external dispatch replies. The task context
+-- carries the window-level idempotency key; the marker prevents duplicate
+-- business replies after event redelivery or worker lease recovery.
+WITH claimed AS (
+    UPDATE agent_task_queue
+    SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('dispatch_outbound_sent', true)
+    WHERE id = $1
+      AND context ? 'dispatch_idempotency_key'
+      AND NOT (context ? 'dispatch_outbound_sent')
+    RETURNING 1
+)
+SELECT EXISTS(SELECT 1 FROM claimed);
+
+-- name: ClaimDispatchProcessingReaction :one
+-- Durable one-shot claim for the Dispatch 2.0 "processing" emotion. Multiple
+-- event deliveries or server replicas must not attach the same emotion twice.
+WITH claimed AS (
+    UPDATE agent_task_queue
+    SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('dispatch_processing_reaction_sent', true)
+    WHERE id = $1
+      AND context ? 'dispatch_idempotency_key'
+      AND NOT (context ? 'dispatch_processing_reaction_sent')
+    RETURNING 1
+)
+SELECT EXISTS(SELECT 1 FROM claimed);
+
+-- name: ClaimDispatchProcessingRecall :one
+-- Completion and failure can both be replayed; only one replica recalls the
+-- processing emotion for the task's latest openMsgId.
+WITH claimed AS (
+    UPDATE agent_task_queue
+    SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('dispatch_processing_recall_sent', true)
+    WHERE id = $1
+      AND context ? 'dispatch_idempotency_key'
+      AND NOT (context ? 'dispatch_processing_recall_sent')
+    RETURNING 1
+)
+SELECT EXISTS(SELECT 1 FROM claimed);
 
 -- name: CreateDeferredAgentTask :one
 -- Deferred tasks are inert until PromoteDueDeferredTasksForRuntime flips them

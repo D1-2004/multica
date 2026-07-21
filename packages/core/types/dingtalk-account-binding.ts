@@ -1,5 +1,6 @@
 export interface DingTalkAccountBindingOutcome {
   status: string;
+  source?: "identity" | null;
   organizationName?: string | null;
   accountDisplayName?: string | null;
   accountAvatarUrl?: string | null;
@@ -35,7 +36,9 @@ export interface DingTalkAccountBindingsResponse {
 }
 
 export interface BeginDingTalkAccountBindingResponse {
-  installationId: string;
+  bindingId: string;
   qrCodeUrl: string;
   expiresAt: string;
 }
+
+export type DingTalkBindingMode = "message" | "identity";

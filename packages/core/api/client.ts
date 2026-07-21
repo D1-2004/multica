@@ -269,6 +269,10 @@ import {
   DingTalkAccountBindingsResponseSchema,
   EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
   EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
+  FDEOnboardingStateSchema,
+  ProvisionFDEOnboardingResponseSchema,
+  EMPTY_FDE_ONBOARDING_STATE,
+  EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -686,7 +690,6 @@ export class ApiClient {
     project_id?: string | null;
     parent_issue_id?: string | null;
     attachment_ids?: string[];
-    agent_identity_context_token?: string;
   }): Promise<{ task_id: string }> {
     return this.fetch("/api/issues/quick-create", {
       method: "POST",
@@ -1652,16 +1655,25 @@ export class ApiClient {
   }
 
   async getFDEOnboarding(): Promise<FDEOnboardingState> {
-    return this.fetch("/api/fde/onboarding");
+    const raw = await this.fetch<unknown>("/api/fde/onboarding");
+    return parseWithFallback(raw, FDEOnboardingStateSchema, EMPTY_FDE_ONBOARDING_STATE, {
+      endpoint: "GET /api/fde/onboarding",
+    });
   }
 
   async provisionFDEOnboarding(
     data: ProvisionFDEOnboardingRequest,
   ): Promise<ProvisionFDEOnboardingResponse> {
-    return this.fetch("/api/fde/onboarding", {
+    const raw = await this.fetch<unknown>("/api/fde/onboarding", {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseWithFallback(
+      raw,
+      ProvisionFDEOnboardingResponseSchema,
+      EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE,
+      { endpoint: "POST /api/fde/onboarding" },
+    );
   }
 
   async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: Record<string, unknown>; repos?: WorkspaceRepo[]; issue_prefix?: string; avatar_url?: string }): Promise<Workspace> {
@@ -2705,12 +2717,13 @@ export class ApiClient {
   async beginDingTalkAccountBinding(
     workspaceId: string,
     agentId: string,
+    bindingMode: "message" | "identity",
   ): Promise<BeginDingTalkAccountBindingResponse> {
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/dingtalk/account-bindings/begin`,
       {
         method: "POST",
-        body: JSON.stringify({ agent_id: agentId }),
+        body: JSON.stringify({ agent_id: agentId, binding_mode: bindingMode }),
       },
     );
     return parseWithFallback(
@@ -2726,10 +2739,11 @@ export class ApiClient {
 
   async deleteDingTalkAccountBinding(
     workspaceId: string,
-    installationId: string,
+    agentId: string,
+    bindingMode: "message" | "identity",
   ): Promise<void> {
     await this.fetch(
-      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${installationId}`,
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${agentId}?binding_mode=${bindingMode}`,
       { method: "DELETE" },
     );
   }

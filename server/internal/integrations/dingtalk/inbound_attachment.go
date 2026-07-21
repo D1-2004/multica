@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"mime"
 	"net/url"
 	"path"
 	"strings"
@@ -21,32 +22,32 @@ type inboundAttachmentImporter struct {
 }
 
 func (i *inboundAttachmentImporter) Import(ctx context.Context, params engine.AppendParams) ([]db.Attachment, error) {
-	if params.Message.Type != channel.MsgTypeImage {
+	if params.Message.Type != channel.MsgTypeImage && params.Message.Type != channel.MsgTypeFile {
 		return nil, nil
 	}
 	if i == nil || i.service == nil || i.messenger == nil || i.decrypt == nil {
-		return nil, errors.New("dingtalk: picture attachment importer is not configured")
+		return nil, errors.New("dingtalk: attachment importer is not configured")
 	}
 	raw, err := decodeDingTalkRaw(params.Message)
 	if err != nil {
-		return nil, fmt.Errorf("dingtalk: decode picture callback metadata: %w", err)
+		return nil, fmt.Errorf("dingtalk: decode attachment callback metadata: %w", err)
 	}
 	if strings.TrimSpace(raw.MessageDownloadCode) == "" {
-		return nil, errors.New("dingtalk: picture callback has no download code")
+		return nil, errors.New("dingtalk: attachment callback has no download code")
 	}
 	installation, ok := params.Installation.Platform.(db.ChannelInstallation)
 	if !ok {
-		return nil, errors.New("dingtalk: picture installation payload has an invalid type")
+		return nil, errors.New("dingtalk: attachment installation payload has an invalid type")
 	}
 	creds, err := decodeChannelCredentials(installation.Config, i.decrypt)
 	if err != nil {
-		return nil, fmt.Errorf("dingtalk: decode picture installation credentials: %w", err)
+		return nil, fmt.Errorf("dingtalk: decode attachment installation credentials: %w", err)
 	}
 	downloadURL, err := i.messenger.resolveMessageFileURL(ctx, creds, raw.MessageDownloadCode)
 	if err != nil {
-		return nil, fmt.Errorf("dingtalk: resolve picture download URL: %w", err)
+		return nil, fmt.Errorf("dingtalk: resolve attachment download URL: %w", err)
 	}
-	name, contentType, err := dingtalkPictureName(downloadURL)
+	source, err := dingtalkAttachmentSource(params.Message.Type, raw, downloadURL)
 	if err != nil {
 		return nil, err
 	}
@@ -54,11 +55,7 @@ func (i *inboundAttachmentImporter) Import(ctx context.Context, params engine.Ap
 		WorkspaceID:   params.WorkspaceID,
 		UploaderID:    params.Sender,
 		ChatSessionID: params.SessionID,
-		Sources: []service.ExternalAttachmentSource{{
-			Name:        name,
-			ContentType: contentType,
-			DownloadURL: downloadURL,
-		}},
+		Sources:       []service.ExternalAttachmentSource{source},
 	})
 }
 
@@ -88,4 +85,27 @@ func dingtalkPictureName(downloadURL string) (string, string, error) {
 	default:
 		return "", "", errors.New("dingtalk: picture download URL has an unsupported image extension")
 	}
+}
+
+func dingtalkAttachmentSource(msgType channel.MsgType, raw dingtalkRawEvent, downloadURL string) (service.ExternalAttachmentSource, error) {
+	source := service.ExternalAttachmentSource{DownloadURL: downloadURL}
+	switch msgType {
+	case channel.MsgTypeImage:
+		name, contentType, err := dingtalkPictureName(downloadURL)
+		if err != nil {
+			return service.ExternalAttachmentSource{}, err
+		}
+		source.Name = name
+		source.ContentType = contentType
+	case channel.MsgTypeFile:
+		name := strings.TrimSpace(raw.MessageFileName)
+		if name == "" {
+			return service.ExternalAttachmentSource{}, errors.New("dingtalk: file callback has no filename")
+		}
+		source.Name = name
+		source.ContentType = mime.TypeByExtension(strings.ToLower(path.Ext(name)))
+	default:
+		return service.ExternalAttachmentSource{}, fmt.Errorf("dingtalk: unsupported attachment type %q", msgType)
+	}
+	return source, nil
 }

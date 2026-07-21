@@ -11,12 +11,15 @@ import {
   DuplicateIssueErrorBodySchema,
   EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
   EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
+  EMPTY_FDE_ONBOARDING_STATE,
+  EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE,
   EMPTY_CREATE_FEEDBACK_RESPONSE,
   EMPTY_INBOX_UNREAD_SUMMARY,
   EMPTY_SEARCH_PROJECTS_RESPONSE,
   EMPTY_USER,
   InboxUnreadSummarySchema,
   IssueTriggerPreviewSchema,
+  FDEOnboardingStateSchema,
   ListIssuesResponseSchema,
   SearchProjectsResponseSchema,
   RuntimeHourlyActivityListSchema,
@@ -27,6 +30,7 @@ import {
   SquadSchema,
   TimelineEntriesSchema,
   UserSchema,
+  ProvisionFDEOnboardingResponseSchema,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
 
@@ -40,6 +44,7 @@ describe("DingTalk account binding schemas", () => {
           agent_id: "agent-1",
           dws_identity: {
             status: "active",
+            source: "identity",
             organization_name: "Alibaba Group",
             account_display_name: "Zhang San",
             account_avatar_url: "https://example.test/avatar.png",
@@ -75,6 +80,7 @@ describe("DingTalk account binding schemas", () => {
           agentId: "agent-1",
           dwsIdentity: {
             status: "active",
+            source: "identity",
             organizationName: "Alibaba Group",
             accountDisplayName: "Zhang San",
             accountAvatarUrl: "https://example.test/avatar.png",
@@ -137,12 +143,12 @@ describe("DingTalk account binding schemas", () => {
   it("parses begin and falls back when a credential-bearing response drifts", () => {
     expect(
       BeginDingTalkAccountBindingResponseSchema.parse({
-        installation_id: "installation-1",
+        binding_id: "agent-1",
         qr_code_url: "https://dbase.example/#bindingToken=secret",
         expires_at: "2026-07-14T09:35:00Z",
       }),
     ).toEqual({
-      installationId: "installation-1",
+      bindingId: "agent-1",
       qrCodeUrl: "https://dbase.example/#bindingToken=secret",
       expiresAt: "2026-07-14T09:35:00Z",
     });
@@ -156,7 +162,57 @@ describe("DingTalk account binding schemas", () => {
           includeReceived: false,
         },
       ),
-    ).toEqual({ installationId: "", qrCodeUrl: "", expiresAt: "" });
+    ).toEqual({ bindingId: "", qrCodeUrl: "", expiresAt: "" });
+  });
+});
+
+describe("FDE onboarding schemas", () => {
+  const workspace = {
+    id: "workspace-fde",
+    name: "My FDE Workspace",
+    slug: "my-fde-workspace",
+    description: null,
+    context: null,
+    settings: {},
+    repos: [],
+    issue_prefix: "FDE",
+    avatar_url: null,
+    created_at: "2026-07-17T00:00:00Z",
+    updated_at: "2026-07-17T00:00:00Z",
+  };
+
+  it("defaults the create-only marker to false for an older backend", () => {
+    expect(FDEOnboardingStateSchema.parse({ configured: true, workspaces: [] })).toEqual({
+      configured: true,
+      create_only: false,
+      workspaces: [],
+    });
+  });
+
+  it("falls back safely when the create-only workspace response is malformed", () => {
+    expect(parseWithFallback(
+      { configured: true, create_only: true, workspaces: [{ id: 42 }] },
+      FDEOnboardingStateSchema,
+      EMPTY_FDE_ONBOARDING_STATE,
+      { endpoint: "GET /api/fde/onboarding" },
+    )).toBe(EMPTY_FDE_ONBOARDING_STATE);
+  });
+
+  it("parses provisioning and falls back when its workspace is malformed", () => {
+    expect(ProvisionFDEOnboardingResponseSchema.parse({
+      workspace,
+      runtime_id: "runtime-1",
+      agent_id: "agent-1",
+      agent_created: true,
+      install_complete: true,
+    }).workspace.name).toBe("My FDE Workspace");
+
+    expect(parseWithFallback(
+      { workspace: { id: 42 } },
+      ProvisionFDEOnboardingResponseSchema,
+      EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE,
+      { endpoint: "POST /api/fde/onboarding" },
+    )).toBe(EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE);
   });
 });
 

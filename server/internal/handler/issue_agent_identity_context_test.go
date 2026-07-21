@@ -11,7 +11,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 )
 
-func TestCreateIssueStoresAgentIdentityContextOnlyOnTask(t *testing.T) {
+func TestCreateIssueIgnoresAgentIdentityContextToken(t *testing.T) {
 	ctx := context.Background()
 	runtimeID := handlerTestRuntimeID(t)
 
@@ -81,8 +81,8 @@ func TestCreateIssueStoresAgentIdentityContextOnlyOnTask(t *testing.T) {
 	if err := json.Unmarshal(taskContext, &stored); err != nil {
 		t.Fatalf("decode task context: %v", err)
 	}
-	if stored["agent_identity_context_token"] != contextToken {
-		t.Fatalf("task context token = %#v", stored["agent_identity_context_token"])
+	if token, present := stored["agent_identity_context_token"]; present {
+		t.Fatalf("public request injected task context token = %#v", token)
 	}
 
 	var persistedOnIssue bool

@@ -19,6 +19,10 @@ SET ws_lease_token       = $1,
 WHERE id = $3
   AND status = 'active'
   AND (
+        channel_type <> 'dingtalk'
+        OR COALESCE(config ->> 'ingress_cutover_state', 'legacy_stream') = 'legacy_stream'
+  )
+  AND (
         ws_lease_token IS NULL
         OR ws_lease_expires_at < now()
         OR ws_lease_token = $1
@@ -909,6 +913,10 @@ JOIN workspace w ON w.id = ci.workspace_id
 JOIN agent a ON a.id = ci.agent_id
 WHERE ci.status = 'active'
   AND ci.channel_type = $1
+  AND (
+        ci.channel_type <> 'dingtalk'
+        OR COALESCE(ci.config ->> 'ingress_cutover_state', 'legacy_stream') = 'legacy_stream'
+  )
 ORDER BY ci.created_at ASC
 `
 
@@ -962,6 +970,10 @@ SELECT ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.statu
 JOIN workspace w ON w.id = ci.workspace_id
 JOIN agent a ON a.id = ci.agent_id
 WHERE ci.status = 'active'
+  AND (
+        ci.channel_type <> 'dingtalk'
+        OR COALESCE(ci.config ->> 'ingress_cutover_state', 'legacy_stream') = 'legacy_stream'
+  )
 ORDER BY ci.created_at ASC
 `
 

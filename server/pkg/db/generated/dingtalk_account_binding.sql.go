@@ -176,8 +176,7 @@ type CompleteDingTalkAccountBindingResultParams struct {
 }
 
 // Record a terminal result that did not create a Router source. The caller
-// chooses active only for an identity-only skipped route; failures stay
-// pending so a later begin can issue a fresh attempt.
+// keeps failures pending so a later begin can issue a fresh attempt.
 func (q *Queries) CompleteDingTalkAccountBindingResult(ctx context.Context, arg CompleteDingTalkAccountBindingResultParams) (ChannelInstallation, error) {
 	row := q.db.QueryRow(ctx, completeDingTalkAccountBindingResult,
 		arg.Config,
@@ -393,37 +392,21 @@ func (q *Queries) ListDingTalkAccountBindings(ctx context.Context, workspaceID p
 }
 
 const revokeDingTalkAccountBinding = `-- name: RevokeDingTalkAccountBinding :one
-WITH target AS (
-    SELECT installation.id, installation.workspace_id, installation.agent_id
-    FROM channel_installation installation
-    WHERE installation.id = $1
-      AND installation.workspace_id = $2
-      AND installation.agent_id = $3
-      AND installation.channel_type = 'dingtalk_account'
-      AND installation.status IN ('pending', 'active', 'revoked')
-), deleted_identity AS (
-    DELETE FROM agent_dingtalk_identity identity
-    USING target
-    WHERE identity.workspace_id = target.workspace_id
-      AND identity.agent_id = target.agent_id
-), deleted_attempts AS (
-    DELETE FROM agent_dingtalk_identity_attempt attempt
-    USING target
-    WHERE attempt.workspace_id = target.workspace_id
-      AND attempt.agent_id = target.agent_id
-)
-UPDATE channel_installation installation
+UPDATE channel_installation
 SET config = jsonb_build_object(
-        'schema_version', installation.config -> 'schema_version',
-        'dispatch_endpoint_id', installation.config -> 'dispatch_endpoint_id',
-        'dispatch_key_id', installation.config -> 'dispatch_key_id',
-        'dispatch_url', installation.config -> 'dispatch_url'
+        'schema_version', config -> 'schema_version',
+        'dispatch_endpoint_id', config -> 'dispatch_endpoint_id',
+        'dispatch_key_id', config -> 'dispatch_key_id',
+        'dispatch_url', config -> 'dispatch_url'
     ),
     status = 'revoked',
     updated_at = now()
-FROM target
-WHERE installation.id = target.id
-RETURNING installation.id, installation.workspace_id, installation.agent_id, installation.channel_type, installation.config, installation.status, installation.ws_lease_token, installation.ws_lease_expires_at, installation.installer_user_id, installation.installed_at, installation.created_at, installation.updated_at
+WHERE id = $1
+  AND workspace_id = $2
+  AND agent_id = $3
+  AND channel_type = 'dingtalk_account'
+  AND status IN ('pending', 'active', 'revoked')
+RETURNING id, workspace_id, agent_id, channel_type, config, status, ws_lease_token, ws_lease_expires_at, installer_user_id, installed_at, created_at, updated_at
 `
 
 type RevokeDingTalkAccountBindingParams struct {
@@ -435,8 +418,8 @@ type RevokeDingTalkAccountBindingParams struct {
 // Router DELETE happens before this local transition. Retain only the stable
 // dispatch endpoint fields needed by a later begin; remove all callback,
 // source, account, avatar, scope, conversation, and binding-time snapshots.
-// The Agent's DWS identity and pending identity attempts are removed in the
-// same database statement as the local route transition.
+// Message routes and execution identities have independent lifecycles, so this
+// statement never mutates agent_dingtalk_identity or its in-flight attempts.
 func (q *Queries) RevokeDingTalkAccountBinding(ctx context.Context, arg RevokeDingTalkAccountBindingParams) (ChannelInstallation, error) {
 	row := q.db.QueryRow(ctx, revokeDingTalkAccountBinding, arg.ID, arg.WorkspaceID, arg.AgentID)
 	var i ChannelInstallation

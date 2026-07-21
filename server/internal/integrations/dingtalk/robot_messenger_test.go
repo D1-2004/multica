@@ -128,3 +128,29 @@ func TestResolveMessageFileURLRejectsNonHTTPURL(t *testing.T) {
 		t.Fatal("expected non-HTTP download URL to be rejected")
 	}
 }
+
+func TestSendMarkdownCarriesDomainReplyLocator(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1.0/oauth2/accessToken":
+			_, _ = w.Write([]byte(`{"accessToken":"tok_test","expireIn":7200}`))
+		case "/v1.0/robot/groupMessages/send":
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	m := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
+	err := m.SendMarkdown(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs"}, RobotTarget{OpenConversationID: "cid", ReplyToOpenMsgID: "msg"}, "reply")
+	if err != nil {
+		t.Fatalf("SendMarkdown: %v", err)
+	}
+	if got["openConversationId"] != "cid" || got["openMsgId"] != "msg" {
+		t.Fatalf("domain reply target = %#v", got)
+	}
+}
