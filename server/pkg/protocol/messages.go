@@ -16,6 +16,9 @@ const (
 	AgentIdentityContextTokenJSONKey            = "agent_identity_context_token"
 	AgentIdentityContextTokenEnvKey             = "AGENT_IDENTITY_CONTEXT_TOKEN"
 	DispatchRuntimePromptJSONKey                = "dispatch_runtime_prompt"
+	DispatchWorkflowPromptJSONKey               = "dispatch_workflow_prompt"
+	DispatchSurfaceJSONKey                      = "dispatch_surface"
+	DispatchOutboundJSONKey                     = "dispatch_outbound"
 	DingTalkRobotIdentityJSONKey                = "dingtalk_robot_identity"
 	DingTalkRobotIdentityUnavailableJSONKey     = "dingtalk_robot_identity_unavailable"
 	DingTalkRobotIdentityUnavailableMissingOrg  = "missing_organization_identity"
@@ -25,6 +28,14 @@ const (
 	DingTalkStreamHostnameEnvKey                = "MULTICA_DINGTALK_STREAM_HOSTNAME"
 	DingTalkStreamNodeIDEnvKey                  = "MULTICA_DINGTALK_STREAM_NODE_ID"
 	DingTalkStreamConnectionIDEnvKey            = "MULTICA_DINGTALK_STREAM_CONNECTION_ID"
+)
+
+const (
+	DispatchSurfaceTypeIssue     = "issue"
+	DispatchSurfaceTypeChat      = "chat"
+	DispatchOutboundModeDWS      = "dws"
+	DispatchOutboundModeRobotSDK = "robot_sdk"
+	DispatchReplyToLatestMessage = "latest_message"
 )
 
 // DingTalkRobotIdentity is resolved from the current inbound bot message.

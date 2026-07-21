@@ -48,14 +48,18 @@ func TestTaskToResponseSurfacesTaskTraceForNonChatTask(t *testing.T) {
 
 func TestDispatchRuntimePromptOnlyEntersPrivateClaimResponse(t *testing.T) {
 	const runtimePrompt = "private runtime instruction"
+	const workflowPrompt = "private outbound workflow instruction"
 	const contextToken = "private context token"
-	task := db.AgentTaskQueue{Context: []byte(`{"agent_identity_context_token":"` + contextToken + `","dispatch_runtime_prompt":"` + runtimePrompt + `"}`)}
+	task := db.AgentTaskQueue{Context: []byte(`{"agent_identity_context_token":"` + contextToken + `","dispatch_runtime_prompt":"` + runtimePrompt + `","dispatch_workflow_prompt":"` + workflowPrompt + `","dispatch_surface":{"type":"issue"},"dispatch_outbound":{"mode":"dws","replyTo":"latest_message"}}`)}
 	response := taskToResponse(task, "")
 	if response.DispatchRuntimePrompt != "" {
 		t.Fatalf("ordinary task response exposed runtime prompt: %q", response.DispatchRuntimePrompt)
 	}
 	if response.AgentIdentityContextToken != "" {
 		t.Fatalf("ordinary task response exposed context token: %q", response.AgentIdentityContextToken)
+	}
+	if response.DispatchWorkflowPrompt != "" || response.DispatchSurfaceType != "" || response.DispatchOutboundMode != "" {
+		t.Fatalf("ordinary task response exposed dispatch workflow policy: %+v", response)
 	}
 	ordinary, err := json.Marshal(response)
 	if err != nil {
@@ -72,11 +76,19 @@ func TestDispatchRuntimePromptOnlyEntersPrivateClaimResponse(t *testing.T) {
 	if response.AgentIdentityContextToken != contextToken {
 		t.Fatalf("claim context token = %q, want %q", response.AgentIdentityContextToken, contextToken)
 	}
+	if response.DispatchWorkflowPrompt != workflowPrompt || response.DispatchSurfaceType != "issue" || response.DispatchOutboundMode != "dws" {
+		t.Fatalf("claim workflow policy = prompt %q surface %q mode %q", response.DispatchWorkflowPrompt, response.DispatchSurfaceType, response.DispatchOutboundMode)
+	}
 	encoded, err := json.Marshal(response)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(encoded), `"dispatch_runtime_prompt":"`+runtimePrompt+`"`) {
 		t.Fatalf("private claim response did not carry runtime prompt: %s", encoded)
+	}
+	for _, want := range []string{`"dispatch_workflow_prompt":"` + workflowPrompt + `"`, `"dispatch_surface_type":"issue"`, `"dispatch_outbound_mode":"dws"`} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("private claim response missing %s: %s", want, encoded)
+		}
 	}
 }

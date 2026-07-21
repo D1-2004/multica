@@ -26,8 +26,14 @@ func TestBuildDispatchPromptSeparatesDisplayAndRuntime(t *testing.T) {
 			t.Fatalf("display content leaked %q: %q", secret, p.DisplayContent)
 		}
 	}
-	if !strings.Contains(p.RuntimePrompt, "DWS") || !strings.Contains(p.RuntimePrompt, "untrusted") {
-		t.Fatalf("runtime prompt missing private instructions: %q", p.RuntimePrompt)
+	if !strings.Contains(p.RuntimePrompt, "untrusted") {
+		t.Fatalf("runtime prompt missing private safety instructions: %q", p.RuntimePrompt)
+	}
+	if strings.Contains(p.RuntimePrompt, "DWS") {
+		t.Fatalf("runtime prompt must not carry outbound workflow instructions: %q", p.RuntimePrompt)
+	}
+	if !strings.Contains(p.WorkflowPrompt, "DWS") {
+		t.Fatalf("workflow prompt missing private outbound instructions: %q", p.WorkflowPrompt)
 	}
 }
 
@@ -139,8 +145,8 @@ func TestDispatchPromptBuilderRoutesRuntimePolicyBySource(t *testing.T) {
 	}
 
 	robotPrompt := mustBuildDispatchPrompt(t, base)
-	if strings.Contains(robotPrompt.RuntimePrompt, "DWS") || strings.Contains(robotPrompt.RuntimePrompt, "robot_sdk") {
-		t.Fatalf("robot runtime prompt must not own outbound: %q", robotPrompt.RuntimePrompt)
+	if robotPrompt.WorkflowPrompt != "" {
+		t.Fatalf("robot workflow prompt must not own server-side outbound: %q", robotPrompt.WorkflowPrompt)
 	}
 
 	digitalEmployee := base
@@ -148,8 +154,8 @@ func TestDispatchPromptBuilderRoutesRuntimePolicyBySource(t *testing.T) {
 	digitalEmployee.Outbound.Mode = "dws"
 	digitalPrompt := mustBuildDispatchPrompt(t, digitalEmployee)
 	for _, want := range []string{"DWS", "mode=dws", "replyTo=latest_message"} {
-		if !strings.Contains(digitalPrompt.RuntimePrompt, want) {
-			t.Errorf("digital employee runtime prompt missing %q: %q", want, digitalPrompt.RuntimePrompt)
+		if !strings.Contains(digitalPrompt.WorkflowPrompt, want) {
+			t.Errorf("digital employee workflow prompt missing %q: %q", want, digitalPrompt.WorkflowPrompt)
 		}
 	}
 
@@ -174,7 +180,7 @@ func TestDigitalEmployeePromptRequiresDWSOutboundLifecycle(t *testing.T) {
 		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
 	}
 
-	runtimePrompt := mustBuildDispatchPrompt(t, c).RuntimePrompt
+	workflowPrompt := mustBuildDispatchPrompt(t, c).WorkflowPrompt
 	for _, required := range []string{
 		`"openConversationId":"cid-trusted"`,
 		`"openMsgId":"msg-latest"`,
@@ -186,15 +192,14 @@ func TestDigitalEmployeePromptRequiresDWSOutboundLifecycle(t *testing.T) {
 		"--format json",
 		"before doing the requested work",
 		"success, partial success, blocked, or failed",
-		"does not count as the DingTalk reply",
 		"Do not use the robot SDK",
 	} {
-		if !strings.Contains(runtimePrompt, required) {
-			t.Errorf("digital employee runtime prompt missing %q: %q", required, runtimePrompt)
+		if !strings.Contains(workflowPrompt, required) {
+			t.Errorf("digital employee workflow prompt missing %q: %q", required, workflowPrompt)
 		}
 	}
-	if strings.Contains(runtimePrompt, "msg-older") {
-		t.Fatalf("runtime prompt must target only the latest message: %q", runtimePrompt)
+	if strings.Contains(workflowPrompt, "msg-older") {
+		t.Fatalf("workflow prompt must target only the latest message: %q", workflowPrompt)
 	}
 }
 
@@ -209,18 +214,18 @@ func TestDigitalEmployeePromptResolvesMissingReplySenderWithoutGuessing(t *testi
 		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
 	}
 
-	runtimePrompt := mustBuildDispatchPrompt(t, c).RuntimePrompt
+	workflowPrompt := mustBuildDispatchPrompt(t, c).WorkflowPrompt
 	for _, required := range []string{
 		"dws chat message list-by-ids",
 		"sender openDingTalkId",
 		"Do not infer or invent",
 	} {
-		if !strings.Contains(runtimePrompt, required) {
-			t.Errorf("missing-sender runtime prompt missing %q: %q", required, runtimePrompt)
+		if !strings.Contains(workflowPrompt, required) {
+			t.Errorf("missing-sender workflow prompt missing %q: %q", required, workflowPrompt)
 		}
 	}
-	if strings.Contains(runtimePrompt, "staff-not-open-id") {
-		t.Fatalf("runtime prompt must not substitute staffId for openDingTalkId: %q", runtimePrompt)
+	if strings.Contains(workflowPrompt, "staff-not-open-id") {
+		t.Fatalf("workflow prompt must not substitute staffId for openDingTalkId: %q", workflowPrompt)
 	}
 }
 

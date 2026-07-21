@@ -81,7 +81,7 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 	if hasIdentityToken {
 		t.Fatalf("identity-less dispatch fabricated a context token: %s", taskContext)
 	}
-	for _, privateRuntimeValue := range []string{"dispatch_runtime_prompt", "DWS", "dispatch_outbound", "latest_message"} {
+	for _, privateRuntimeValue := range []string{"dispatch_runtime_prompt", "dispatch_workflow_prompt", "DWS", "dispatch_outbound", "latest_message"} {
 		if !strings.Contains(string(taskContext), privateRuntimeValue) {
 			t.Errorf("task private context missing %q: %s", privateRuntimeValue, taskContext)
 		}

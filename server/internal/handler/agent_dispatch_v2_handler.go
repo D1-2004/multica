@@ -28,9 +28,10 @@ func dispatchRuntimeContext(c DispatchCommand, prompt DispatchPrompt, idempotenc
 		"dispatch_domain":          c.Event.Domain,
 		"dispatch_type":            c.Event.Type,
 		"dispatch_event_data":      c.Event.Data,
-		"dispatch_surface":         c.Surface,
-		"dispatch_outbound":        c.Outbound,
+		protocol.DispatchSurfaceJSONKey: c.Surface,
+		protocol.DispatchOutboundJSONKey: c.Outbound,
 		protocol.DispatchRuntimePromptJSONKey: prompt.RuntimePrompt,
+		protocol.DispatchWorkflowPromptJSONKey: prompt.WorkflowPrompt,
 		"dispatch_idempotency_key": idempotencyKey,
 	}
 	raw, _ := json.Marshal(payload)

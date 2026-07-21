@@ -3840,6 +3840,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		InitiatorEmail:                   task.InitiatorEmail,
 		WorkspaceContext:                 task.WorkspaceContext,
 		DispatchRuntimePrompt:            dispatchRuntimePromptForEnv(task),
+		DispatchWorkflowPrompt:           strings.TrimSpace(task.DispatchWorkflowPrompt),
+		DispatchSurfaceType:              strings.TrimSpace(task.DispatchSurfaceType),
+		DispatchOutboundMode:             strings.TrimSpace(task.DispatchOutboundMode),
 		ConnectedApps:                    task.ConnectedApps,
 	}
 

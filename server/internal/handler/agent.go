@@ -382,7 +382,10 @@ type AgentTaskResponse struct {
 	AgentIdentityContextToken string `json:"agent_identity_context_token,omitempty"`
 	// DispatchRuntimePrompt is populated only by the daemon claim builder.
 	// taskToResponse deliberately leaves it empty for ordinary task APIs.
-	DispatchRuntimePrompt string `json:"dispatch_runtime_prompt,omitempty"`
+	DispatchRuntimePrompt  string `json:"dispatch_runtime_prompt,omitempty"`
+	DispatchWorkflowPrompt string `json:"dispatch_workflow_prompt,omitempty"`
+	DispatchSurfaceType    string `json:"dispatch_surface_type,omitempty"`
+	DispatchOutboundMode   string `json:"dispatch_outbound_mode,omitempty"`
 	// DingTalkDWSIdentityUnavailable tells compatible daemons to inject a
 	// user-visible explanation while still running the chat task normally.
 	DingTalkDWSIdentityUnavailable bool `json:"dingtalk_dws_identity_unavailable,omitempty"`
@@ -526,6 +529,22 @@ func taskContextString(raw []byte, key string) string {
 func populatePrivateTaskClaimContext(response *AgentTaskResponse, taskContext []byte) {
 	response.AgentIdentityContextToken = taskContextString(taskContext, protocol.AgentIdentityContextTokenJSONKey)
 	response.DispatchRuntimePrompt = taskContextString(taskContext, protocol.DispatchRuntimePromptJSONKey)
+	response.DispatchWorkflowPrompt = taskContextString(taskContext, protocol.DispatchWorkflowPromptJSONKey)
+	response.DispatchSurfaceType, response.DispatchOutboundMode = taskContextDispatchPolicy(taskContext)
+}
+
+func taskContextDispatchPolicy(raw []byte) (surfaceType, outboundMode string) {
+	if len(raw) == 0 {
+		return "", ""
+	}
+	var payload struct {
+		Surface  DispatchSurface  `json:"dispatch_surface"`
+		Outbound DispatchOutbound `json:"dispatch_outbound"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(payload.Surface.Type), strings.TrimSpace(payload.Outbound.Mode)
 }
 
 func taskContextHasKey(raw []byte, key string) bool {
