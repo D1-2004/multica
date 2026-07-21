@@ -71,7 +71,7 @@ func TestInboundFromBotCallback(t *testing.T) {
 			name: "picture maps to image and retains its download credential",
 			data: botCallbackData{
 				ConversationID: "cid", MsgID: "m3", SenderStaffID: "s", ConversationType: "1", Msgtype: "picture",
-				Content: richTextContent{PictureDownloadCode: "short-lived-code"},
+				Content: richTextContent{DownloadCode: "short-lived-code"},
 			},
 			ok: true,
 			check: func(t *testing.T, msg channel.InboundMessage) {
@@ -207,6 +207,24 @@ func TestInboundFromBotCallback(t *testing.T) {
 			}
 			tc.check(t, msg)
 		})
+	}
+}
+
+func TestPictureDownloadCodeFromCallbackJSON(t *testing.T) {
+	var data botCallbackData
+	if err := json.Unmarshal([]byte(`{"conversationId":"cid","msgId":"m-picture","senderStaffId":"staff","conversationType":"1","msgtype":"picture","content":{"downloadCode":"live-download-code"}}`), &data); err != nil {
+		t.Fatalf("unmarshal callback: %v", err)
+	}
+	msg, ok := inboundFromBotCallback(data, "client-id")
+	if !ok {
+		t.Fatal("picture callback was rejected")
+	}
+	raw, err := decodeDingTalkRaw(msg)
+	if err != nil {
+		t.Fatalf("decode raw: %v", err)
+	}
+	if raw.MessageDownloadCode != "live-download-code" {
+		t.Fatalf("MessageDownloadCode = %q", raw.MessageDownloadCode)
 	}
 }
 

@@ -35,17 +35,15 @@ type botCallbackData struct {
 	Text                      struct {
 		Content string `json:"content"`
 	} `json:"text"`
-	// Content carries the non-plain-text payloads. Only richText is
-	// flattened today (see flattenRichText); other media remain a
-	// follow-up.
+	// Content carries the non-plain-text payloads.
 	Content richTextContent `json:"content"`
 }
 
 // richTextContent is the content envelope of a richText callback.
 type richTextContent struct {
-	RichText            []richTextNode    `json:"richText"`
-	CardContent         []cardContentNode `json:"cardContent"`
-	PictureDownloadCode string            `json:"pictureDownloadCode"`
+	RichText     []richTextNode    `json:"richText"`
+	CardContent  []cardContentNode `json:"cardContent"`
+	DownloadCode string            `json:"downloadCode"`
 }
 
 // cardContentNode is one node of the interactiveCard callback's ordered
@@ -212,7 +210,7 @@ func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, insta
 		SenderNick:                data.SenderNick,
 		ConversationTitle:         data.ConversationTitle,
 		Msgtype:                   data.Msgtype,
-		MessageDownloadCode:       data.Content.PictureDownloadCode,
+		MessageDownloadCode:       data.Content.DownloadCode,
 		CreateAt:                  data.CreateAt,
 		StreamSource:              rawStreamSource,
 	})
