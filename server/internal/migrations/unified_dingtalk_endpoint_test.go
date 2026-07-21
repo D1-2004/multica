@@ -9,8 +9,8 @@ import (
 
 func TestUnifiedDingTalkEndpointMigrationIsReversibleWithoutRewritingRobotStatus(t *testing.T) {
 	dir := realMigrationsDir(t)
-	up := readMigrationForTest(t, filepath.Join(dir, "196_unified_dingtalk_router_registration.up.sql"))
-	down := readMigrationForTest(t, filepath.Join(dir, "196_unified_dingtalk_router_registration.down.sql"))
+	up := readMigrationForTest(t, filepath.Join(dir, "198_unified_dingtalk_router_registration.up.sql"))
+	down := readMigrationForTest(t, filepath.Join(dir, "198_unified_dingtalk_router_registration.down.sql"))
 
 	for _, fragment := range []string{
 		"create table if not exists agent_dispatch_endpoint",
