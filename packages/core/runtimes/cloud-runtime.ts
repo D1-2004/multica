@@ -42,7 +42,7 @@ export interface CreateCloudRuntimeNodeRequest {
  * ship several of these CLIs; the runtime's provider is chosen at creation.
  * Mirrors the server-side `FCE2BSupportedProviders`.
  */
-export const FC_E2B_RUNTIME_PROVIDERS = ["hermes", "opencode"] as const;
+export const FC_E2B_RUNTIME_PROVIDERS = ["hermes", "opencode", "pi"] as const;
 export type FCE2BRuntimeProvider = (typeof FC_E2B_RUNTIME_PROVIDERS)[number];
 
 export interface CreateFCE2BRuntimeRequest {
@@ -58,11 +58,17 @@ export interface UpdateFCE2BRuntimeTemplateRequest {
 
 export interface FCE2BTemplate {
   id?: string;
+  build_id?: string;
   name?: string;
   template: string;
   status?: string;
   created_at?: string;
   updated_at?: string;
+  manifest_version: number;
+  providers: string[];
+  capabilities: string[];
+  component_versions: Record<string, string>;
+  runner_protocol: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -70,6 +76,7 @@ export interface FCE2BRuntimeMetadata {
   kind: "fc-e2b";
   template: string | null;
   templateId: string | null;
+  templateBuildId: string | null;
   templateName: string | null;
   templateStatus: string | null;
 }
@@ -103,6 +110,7 @@ export function parseFCE2BRuntimeMetadata(
     kind: "fc-e2b",
     template: metadataString(metadata, "template"),
     templateId: metadataString(metadata, "template_id"),
+    templateBuildId: metadataString(metadata, "template_build_id"),
     templateName: metadataString(metadata, "template_name"),
     templateStatus: metadataString(metadata, "template_status"),
   };
@@ -112,27 +120,29 @@ export function isReadyFCE2BTemplate(template: FCE2BTemplate): boolean {
   return (
     typeof template.id === "string" &&
     template.id.trim().length > 0 &&
-    template.status?.trim().toLowerCase() === "ready"
+    typeof template.build_id === "string" &&
+    template.build_id.trim().length > 0 &&
+    template.status?.trim().toLowerCase() === "ready" &&
+    template.manifest_version === 1 &&
+    template.runner_protocol === "root-log-v1" &&
+    template.providers.some((provider) =>
+      (FC_E2B_RUNTIME_PROVIDERS as readonly string[]).includes(provider),
+    )
   );
 }
 
 /**
- * Default provider for a template, sniffed from its identifiers the same way
- * the server does. Only a preselection — the user's explicit choice wins.
+ * First server-supported provider declared by the verified template manifest.
  */
 export function fcE2BProviderForTemplate(
   template: FCE2BTemplate,
-): FCE2BRuntimeProvider {
-  const haystack = [template.template, template.id, template.name]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+): FCE2BRuntimeProvider | null {
   for (const provider of FC_E2B_RUNTIME_PROVIDERS) {
-    if (provider !== "hermes" && haystack.includes(provider)) {
+    if (template.providers.includes(provider)) {
       return provider;
     }
   }
-  return "hermes";
+  return null;
 }
 
 export const cloudRuntimeKeys = {

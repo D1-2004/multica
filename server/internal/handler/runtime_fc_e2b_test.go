@@ -21,6 +21,7 @@ type staticFCE2BTemplateRunner struct {
 	output string
 	err    error
 	calls  int
+	tags   map[string][]service.FCE2BTemplateTag
 }
 
 func (r *staticFCE2BTemplateRunner) Run(context.Context, string, []string, []string) (string, error) {
@@ -28,20 +29,50 @@ func (r *staticFCE2BTemplateRunner) Run(context.Context, string, []string, []str
 	return r.output, r.err
 }
 
+func (r *staticFCE2BTemplateRunner) ListTemplateTags(_ context.Context, templateID string) ([]service.FCE2BTemplateTag, error) {
+	return append([]service.FCE2BTemplateTag(nil), r.tags[templateID]...), nil
+}
+
+func publishedFCE2BTags(buildID string, capabilities ...string) []service.FCE2BTemplateTag {
+	names := []string{
+		"multica-manifest-v1",
+		"multica-provider-hermes",
+		"multica-provider-opencode",
+		"multica-provider-pi",
+		"multica-runner-root-log-v1",
+		"multica-version-hermes-0.19.0",
+		"multica-version-opencode-v1.18.4",
+		"multica-version-pi-0.80.10",
+	}
+	for _, capability := range capabilities {
+		names = append(names, "multica-capability-"+capability)
+		if capability == "dws" {
+			names = append(names, "multica-version-dws-v1.0.53-beta.4")
+		}
+	}
+	tags := make([]service.FCE2BTemplateTag, 0, len(names))
+	for _, name := range names {
+		tags = append(tags, service.FCE2BTemplateTag{BuildID: buildID, Tag: name})
+	}
+	return tags
+}
+
 func TestFCE2BTemplateCapabilities(t *testing.T) {
 	cases := []struct {
 		template service.FCE2BTemplate
 		want     []string
 	}{
-		{service.FCE2BTemplate{Template: "multica-fc-hermes-v1"}, []string{"hermes"}},
-		{service.FCE2BTemplate{Template: "multica-fc-hermes-dws-v1"}, []string{"hermes", "dws"}},
-		{service.FCE2BTemplate{Template: "multica-fc-opencode-v1"}, []string{"opencode"}},
-		{service.FCE2BTemplate{Template: "multica-fc-opencode-dws-v1"}, []string{"opencode", "dws"}},
-		{service.FCE2BTemplate{Template: "custom-team-template", Name: "OpenCode Team"}, []string{"opencode"}},
+		{service.FCE2BTemplate{Providers: []string{"hermes"}}, []string{"hermes"}},
+		{service.FCE2BTemplate{Providers: []string{"hermes"}, Capabilities: []string{"dws", "dws.im_event"}}, []string{"hermes", "dws", "dws.im_event"}},
+		{service.FCE2BTemplate{Providers: []string{"opencode"}}, []string{"opencode"}},
+		{service.FCE2BTemplate{Providers: []string{"pi"}, Capabilities: []string{"dws"}}, []string{"pi", "dws"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.template.Template, func(t *testing.T) {
-			provider := service.FCE2BProviderForTemplate(tc.template.Template, tc.template.ID, tc.template.Name)
+			provider, ok := service.FCE2BProviderForTemplate(tc.template)
+			if !ok {
+				t.Fatal("template had no provider")
+			}
 			if got := fcE2BTemplateCapabilities(provider, tc.template); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("fcE2BTemplateCapabilities(%q) = %#v, want %#v", tc.template.Template, got, tc.want)
 			}
@@ -50,7 +81,7 @@ func TestFCE2BTemplateCapabilities(t *testing.T) {
 }
 
 func TestResolveFCE2BProvider(t *testing.T) {
-	dual := service.FCE2BTemplate{Template: "multica-fc-team-v1"}
+	dual := service.FCE2BTemplate{Template: "multica-fc-team-v1", Providers: []string{"hermes", "opencode", "pi"}}
 	cases := []struct {
 		requested string
 		template  service.FCE2BTemplate
@@ -58,12 +89,12 @@ func TestResolveFCE2BProvider(t *testing.T) {
 		ok        bool
 	}{
 		{"", dual, "hermes", true},
-		{"", service.FCE2BTemplate{Template: "multica-fc-opencode-v1"}, "opencode", true},
+		{"", service.FCE2BTemplate{Providers: []string{"opencode", "pi"}}, "opencode", true},
 		{"hermes", dual, "hermes", true},
 		{"opencode", dual, "opencode", true},
 		{" OpenCode ", dual, "opencode", true},
-		// An explicit provider wins over the template-name default.
-		{"hermes", service.FCE2BTemplate{Template: "multica-fc-opencode-v1"}, "hermes", true},
+		{"pi", dual, "pi", true},
+		{"hermes", service.FCE2BTemplate{Providers: []string{"opencode"}}, "", false},
 		{"codex", dual, "", false},
 		{"claude", dual, "", false},
 	}
@@ -84,6 +115,7 @@ func TestDefaultFCE2BRuntimeName(t *testing.T) {
 	}{
 		{"hermes", service.FCE2BTemplate{Template: "multica-fc-hermes-v1"}, "FC-Hermes-V1"},
 		{"opencode", service.FCE2BTemplate{Template: "multica-fc-opencode-v1"}, "FC-Opencode-V1"},
+		{"pi", service.FCE2BTemplate{Template: "multica-fc-pi-v1"}, "FC-Pi-V1"},
 		// Dual-CLI template: the provider is prefixed so the two default
 		// names cannot collide.
 		{"hermes", service.FCE2BTemplate{Template: "multica-fc-team-v1"}, "FC-Hermes-Team-V1"},
@@ -123,21 +155,29 @@ func fce2bTemplateRotationHandler(t *testing.T) (*Handler, *staticFCE2BTemplateR
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler database fixture unavailable")
 	}
-	runner := &staticFCE2BTemplateRunner{output: `[
-		{"id":"tpl_old_id","name":"Old Template","template":"tpl_old","status":"ready"},
-		{"id":"tpl_new_id","name":"New DWS Template","template":"tpl_new_dws","status":"READY"},
-		{"id":"tpl_pending_id","name":"Pending Template","template":"tpl_pending","status":"building"}
-	]`}
+	runner := &staticFCE2BTemplateRunner{
+		output: `[
+			{"id":"tpl_old_id","buildID":"build_old","name":"Old Template","template":"tpl_old","status":"ready"},
+			{"id":"tpl_new_id","buildID":"build_new","name":"New DWS Template","template":"tpl_new_dws","status":"READY"},
+			{"id":"tpl_pending_id","buildID":"build_pending","name":"Pending Template","template":"tpl_pending","status":"building"}
+		]`,
+		tags: map[string][]service.FCE2BTemplateTag{
+			"tpl_old_id":     publishedFCE2BTags("build_old"),
+			"tpl_new_id":     publishedFCE2BTags("build_new", "dws", "dws.im_event"),
+			"tpl_pending_id": publishedFCE2BTags("build_pending"),
+		},
+	}
 	h := *testHandler
 	launcher := *testHandler.FCE2BLauncher
 	launcher.Runner = runner
 	h.FCE2BLauncher = &launcher
 	h.cfg.FCE2B = service.FCE2BConfig{
-		Enabled: true,
-		APIKey:  "test-api-key",
-		APIURL:  "https://fc-e2b.test",
-		Domain:  "fc-e2b.test",
-		CLIPath: "e2b-test",
+		Enabled:           true,
+		APIKey:            "test-api-key",
+		APIURL:            "https://fc-e2b.test",
+		Domain:            "fc-e2b.test",
+		CLIPath:           "e2b-test",
+		TemplateTagReader: runner,
 	}
 	return &h, runner
 }
@@ -295,14 +335,18 @@ func TestUpdateFCE2BRuntimeTemplatePreservesRuntimeAndIsIdempotent(t *testing.T)
 	if err := json.Unmarshal(runtime.Metadata, &metadata); err != nil {
 		t.Fatalf("decode runtime metadata: %v", err)
 	}
-	if metadata["template"] != "tpl_new_dws" || metadata["template_id"] != "tpl_new_id" || metadata["template_name"] != "New DWS Template" || metadata["template_status"] != "READY" {
+	if metadata["template"] != "tpl_new_dws" || metadata["template_id"] != "tpl_new_id" || metadata["template_build_id"] != "build_new" || metadata["template_name"] != "New DWS Template" || metadata["template_status"] != "READY" {
 		t.Fatalf("template metadata = %#v", metadata)
 	}
-	if metadata["preserved"] != "yes" || metadata["runner"] != "multica-fc-hermes-runner" {
+	if metadata["preserved"] != "yes" || metadata["runner"] != "multica-fc-hermes-container-log-entry" || metadata["runner_protocol"] != "root-log-v1" {
 		t.Fatalf("unrelated metadata was not preserved: %#v", metadata)
 	}
-	if got := metadata["capabilities"]; !reflect.DeepEqual(got, []any{"hermes"}) {
-		t.Fatalf("capabilities changed during template rotation: %#v", got)
+	if got := metadata["capabilities"]; !reflect.DeepEqual(got, []any{"hermes", "dws", "dws.im_event"}) {
+		t.Fatalf("capabilities were not refreshed during template rotation: %#v", got)
+	}
+	versions, ok := metadata["component_versions"].(map[string]any)
+	if !ok || versions["hermes"] != "0.19.0" || versions["dws"] != "v1.0.53-beta.4" {
+		t.Fatalf("component versions were not refreshed: %#v", metadata["component_versions"])
 	}
 	var boundRuntimeID string
 	if err := testPool.QueryRow(context.Background(), `SELECT runtime_id FROM agent WHERE id = $1`, agentID).Scan(&boundRuntimeID); err != nil {

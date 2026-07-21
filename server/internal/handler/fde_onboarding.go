@@ -244,9 +244,9 @@ func (h *Handler) resolveOrCreateFDEWorkspace(r *http.Request, userID pgtype.UUI
 func (h *Handler) upsertFDERuntime(r *http.Request, workspaceID, ownerID pgtype.UUID) (db.AgentRuntime, error) {
 	name := "FDE Runtime"
 	daemonID := pgtype.Text{String: "fc-e2b:fde:" + uuidToString(workspaceID), Valid: true}
-	// The FDE template is DWS-enabled by contract, so "dws" is asserted here
-	// rather than sniffed from the template name.
-	provider := service.FCE2BProviderForTemplate(h.cfg.FCE2B.Template)
+	// The managed FDE runtime contract is explicitly Hermes + DWS. Catalogued
+	// user runtimes use the verified template manifest instead.
+	provider := service.FCE2BProvider
 	metadata, err := json.Marshal(map[string]any{
 		"kind": service.FCE2BMetadataKind, "template": h.cfg.FCE2B.Template,
 		"template_id": h.cfg.FCE2B.Template, "template_name": name,

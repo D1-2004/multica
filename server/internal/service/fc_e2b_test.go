@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -76,30 +80,31 @@ func mustFCE2BRunnerLaunch(t *testing.T, rt db.AgentRuntime) fcE2BRunnerLaunch {
 
 func TestFCE2BProviderForTemplate(t *testing.T) {
 	cases := []struct {
-		refs []string
-		want string
+		providers []string
+		want      string
+		ok        bool
 	}{
-		{[]string{"multica-fc-hermes-v1", "", ""}, "hermes"},
-		{[]string{"multica-fc-hermes-dws-v1", "tpl_1", "multica-fc-hermes-dws-v1"}, "hermes"},
-		{[]string{"multica-fc-opencode-v1", "", ""}, "opencode"},
-		{[]string{"", "tpl_2", "multica-fc-OpenCode-dws"}, "opencode"},
-		{[]string{"custom-team-template", "", ""}, "hermes"},
-		{[]string{}, "hermes"},
+		{[]string{"hermes", "opencode", "pi"}, "hermes", true},
+		{[]string{"opencode", "pi"}, "opencode", true},
+		{[]string{"pi"}, "pi", true},
+		{[]string{"unknown"}, "", false},
+		{nil, "", false},
 	}
 	for _, tc := range cases {
-		if got := FCE2BProviderForTemplate(tc.refs...); got != tc.want {
-			t.Fatalf("FCE2BProviderForTemplate(%v) = %q, want %q", tc.refs, got, tc.want)
+		got, ok := FCE2BProviderForTemplate(FCE2BTemplate{Providers: tc.providers})
+		if got != tc.want || ok != tc.ok {
+			t.Fatalf("FCE2BProviderForTemplate(%v) = (%q, %v), want (%q, %v)", tc.providers, got, ok, tc.want, tc.ok)
 		}
 	}
 }
 
 func TestIsFCE2BSupportedProvider(t *testing.T) {
-	for _, provider := range []string{"hermes", "opencode", " Hermes ", "OPENCODE"} {
+	for _, provider := range []string{"hermes", "opencode", "pi", " Hermes ", "OPENCODE", " PI "} {
 		if !IsFCE2BSupportedProvider(provider) {
 			t.Fatalf("IsFCE2BSupportedProvider(%q) = false, want true", provider)
 		}
 	}
-	for _, provider := range []string{"", "codex", "claude", "pi"} {
+	for _, provider := range []string{"", "codex", "claude"} {
 		if IsFCE2BSupportedProvider(provider) {
 			t.Fatalf("IsFCE2BSupportedProvider(%q) = true, want false", provider)
 		}
@@ -113,6 +118,7 @@ func TestFCE2BRunnerCommandForProvider(t *testing.T) {
 	}{
 		{"hermes", "multica-fc-hermes-container-log-entry"},
 		{"opencode", "multica-fc-opencode-container-log-entry"},
+		{"pi", "multica-fc-pi-container-log-entry"},
 		{" OpenCode ", "multica-fc-opencode-container-log-entry"},
 		{"", "multica-fc-hermes-container-log-entry"},
 	}
@@ -156,6 +162,11 @@ func TestFCE2BRunnerLaunchForRuntime(t *testing.T) {
 		Command: "/usr/local/libexec/multica-fc-opencode-container-log-entry",
 		Home:    "/root",
 	}
+	rootPi := fcE2BRunnerLaunch{
+		Mode:    fcE2BRunnerLaunchRootLog,
+		Command: "/usr/local/libexec/multica-fc-pi-container-log-entry",
+		Home:    "/root",
+	}
 
 	cases := []struct {
 		name     string
@@ -169,6 +180,8 @@ func TestFCE2BRunnerLaunchForRuntime(t *testing.T) {
 		{name: "legacy OpenCode", provider: "opencode", metadata: `{"runner":"multica-fc-opencode-runner"}`, want: legacyOpenCode},
 		{name: "root Hermes", provider: "hermes", metadata: `{"runner":"multica-fc-hermes-container-log-entry"}`, want: rootHermes},
 		{name: "root OpenCode", provider: "opencode", metadata: `{"runner":"multica-fc-opencode-container-log-entry"}`, want: rootOpenCode},
+		{name: "root Pi", provider: "pi", metadata: `{"runner":"multica-fc-pi-container-log-entry"}`, want: rootPi},
+		{name: "Pi has no legacy runner", provider: "pi", metadata: `{}`, wantErr: true},
 		{name: "provider mismatch", provider: "hermes", metadata: `{"runner":"multica-fc-opencode-container-log-entry"}`, wantErr: true},
 		{name: "custom command", provider: "opencode", metadata: `{"runner":"/tmp/custom-runner"}`, wantErr: true},
 		{name: "shell command", provider: "hermes", metadata: `{"runner":"sh -c id"}`, wantErr: true},
@@ -298,6 +311,7 @@ func TestParseFCE2BTemplatesUsesAliasesAndBuildStatus(t *testing.T) {
 	got, err := parseFCE2BTemplates(`[
 		{
 			"templateID": "idt7f6on323gsyuqjt59",
+			"buildID": "a4aa129e-ef89-4fce-9fc9-605a1015e0e1",
 			"aliases": ["multica-fc-hermes-dws-v1"],
 			"names": ["multica-fc-hermes-dws-v1"],
 			"buildStatus": "ready",
@@ -314,6 +328,9 @@ func TestParseFCE2BTemplatesUsesAliasesAndBuildStatus(t *testing.T) {
 	if got[0].ID != "idt7f6on323gsyuqjt59" {
 		t.Fatalf("id = %q", got[0].ID)
 	}
+	if got[0].BuildID != "a4aa129e-ef89-4fce-9fc9-605a1015e0e1" {
+		t.Fatalf("build_id = %q", got[0].BuildID)
+	}
 	if got[0].Name != "multica-fc-hermes-dws-v1" {
 		t.Fatalf("name = %q", got[0].Name)
 	}
@@ -325,6 +342,208 @@ func TestParseFCE2BTemplatesUsesAliasesAndBuildStatus(t *testing.T) {
 	}
 	if got[0].UpdatedAt != "2026-07-08T13:19:01.365773Z" {
 		t.Fatalf("updated_at = %q", got[0].UpdatedAt)
+	}
+}
+
+func TestApplyFCE2BTemplateTagsUsesOnlyCurrentBuild(t *testing.T) {
+	template := FCE2BTemplate{BuildID: "build-current"}
+	tags := []FCE2BTemplateTag{
+		{BuildID: "build-old", Tag: "multica-manifest-v1"},
+		{BuildID: "build-old", Tag: "multica-provider-unknown"},
+		{BuildID: "build-current", Tag: "multica-manifest-v1"},
+		{BuildID: "build-current", Tag: "multica-provider-hermes"},
+		{BuildID: "build-current", Tag: "multica-provider-opencode"},
+		{BuildID: "build-current", Tag: "multica-provider-pi"},
+		{BuildID: "build-current", Tag: "multica-capability-dws"},
+		{BuildID: "build-current", Tag: "multica-capability-dws.im_event"},
+		{BuildID: "build-current", Tag: "multica-runner-root-log-v1"},
+		{BuildID: "build-current", Tag: "multica-version-hermes-0.19.0"},
+		{BuildID: "build-current", Tag: "multica-version-opencode-v1.18.4"},
+		{BuildID: "build-current", Tag: "multica-version-pi-0.80.10"},
+		{BuildID: "build-current", Tag: "multica-version-dws-v1.0.53-beta.4"},
+	}
+	published, err := applyFCE2BTemplateTags(&template, tags)
+	if err != nil {
+		t.Fatalf("apply tags: %v", err)
+	}
+	if !published || !IsFCE2BTemplatePublished(template) {
+		t.Fatalf("template was not published: %+v", template)
+	}
+	if want := []string{"hermes", "opencode", "pi"}; !reflect.DeepEqual(template.Providers, want) {
+		t.Fatalf("providers = %#v, want %#v", template.Providers, want)
+	}
+	if want := []string{"dws", "dws.im_event"}; !reflect.DeepEqual(template.Capabilities, want) {
+		t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, want)
+	}
+	if template.ComponentVersions["pi"] != "0.80.10" || template.ComponentVersions["dws"] != "v1.0.53-beta.4" {
+		t.Fatalf("component versions = %#v", template.ComponentVersions)
+	}
+}
+
+func TestApplyFCE2BTemplateTagsRequiresVerifiedManifest(t *testing.T) {
+	template := FCE2BTemplate{BuildID: "build-current"}
+	published, err := applyFCE2BTemplateTags(&template, []FCE2BTemplateTag{
+		{BuildID: "build-current", Tag: "default"},
+		{BuildID: "build-old", Tag: "multica-manifest-v1"},
+	})
+	if err != nil {
+		t.Fatalf("unpublished template returned error: %v", err)
+	}
+	if published {
+		t.Fatal("template without a current-build manifest marker was published")
+	}
+
+	_, err = applyFCE2BTemplateTags(&template, []FCE2BTemplateTag{
+		{BuildID: "build-current", Tag: "multica-manifest-v1"},
+		{BuildID: "build-current", Tag: "multica-provider-pi"},
+		{BuildID: "build-current", Tag: "multica-runner-root-log-v1"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "pi component version") {
+		t.Fatalf("missing Pi version error = %v", err)
+	}
+
+	_, err = applyFCE2BTemplateTags(&template, []FCE2BTemplateTag{
+		{BuildID: "build-current", Tag: "multica-manifest-v1"},
+		{BuildID: "build-current", Tag: "multica-provider-pi"},
+		{BuildID: "build-current", Tag: "multica-capability-dws.im_event"},
+		{BuildID: "build-current", Tag: "multica-runner-root-log-v1"},
+		{BuildID: "build-current", Tag: "multica-version-pi-0.80.10"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "dws.im_event without dws") {
+		t.Fatalf("orphan DWS IM event capability error = %v", err)
+	}
+}
+
+func TestHTTPFCE2BTemplateTagReader(t *testing.T) {
+	const apiKey = "test-template-api-key"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/templates/tpl-current/tags" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if got := r.Header.Get("X-API-KEY"); got != apiKey {
+			t.Errorf("X-API-KEY = %q", got)
+		}
+		if got := r.Header.Get("Accept"); got != "application/json" {
+			t.Errorf("Accept = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"buildID":"build-current","createdAt":"2026-07-21T00:00:00Z","tag":"multica-manifest-v1"}]`))
+	}))
+	defer server.Close()
+
+	reader := &httpFCE2BTemplateTagReader{
+		apiURL: server.URL + "/api/",
+		apiKey: apiKey,
+		client: server.Client(),
+	}
+	tags, err := reader.ListTemplateTags(context.Background(), " tpl-current ")
+	if err != nil {
+		t.Fatalf("list template tags: %v", err)
+	}
+	if want := []FCE2BTemplateTag{{
+		BuildID:   "build-current",
+		CreatedAt: "2026-07-21T00:00:00Z",
+		Tag:       "multica-manifest-v1",
+	}}; !reflect.DeepEqual(tags, want) {
+		t.Fatalf("tags = %#v, want %#v", tags, want)
+	}
+}
+
+func TestHTTPFCE2BTemplateTagReaderRejectsBadResponses(t *testing.T) {
+	t.Run("non-success status", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("upstream unavailable"))
+		}))
+		defer server.Close()
+
+		reader := &httpFCE2BTemplateTagReader{apiURL: server.URL, client: server.Client()}
+		_, err := reader.ListTemplateTags(context.Background(), "tpl-current")
+		if err == nil || !strings.Contains(err.Error(), "502 Bad Gateway") {
+			t.Fatalf("status error = %v", err)
+		}
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"tags":[]}`))
+		}))
+		defer server.Close()
+
+		reader := &httpFCE2BTemplateTagReader{apiURL: server.URL, client: server.Client()}
+		_, err := reader.ListTemplateTags(context.Background(), "tpl-current")
+		if err == nil || !strings.Contains(err.Error(), "decode FC/E2B template tags") {
+			t.Fatalf("decode error = %v", err)
+		}
+	})
+}
+
+func TestListFCE2BTemplatesVerifiesCurrentBuildManifest(t *testing.T) {
+	var requestedMu sync.Mutex
+	var requested []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedMu.Lock()
+		requested = append(requested, r.URL.Path)
+		requestedMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/templates/tpl-current/tags":
+			_, _ = w.Write([]byte(`[
+				{"buildID":"build-old","createdAt":"2026-07-20T00:00:00Z","tag":"multica-provider-unknown"},
+				{"buildID":"build-current","createdAt":"2026-07-21T00:00:00Z","tag":"multica-manifest-v1"},
+				{"buildID":"build-current","createdAt":"2026-07-21T00:00:00Z","tag":"multica-provider-pi"},
+				{"buildID":"build-current","createdAt":"2026-07-21T00:00:00Z","tag":"multica-capability-dws"},
+				{"buildID":"build-current","createdAt":"2026-07-21T00:00:00Z","tag":"multica-runner-root-log-v1"},
+				{"buildID":"build-current","createdAt":"2026-07-21T00:00:00Z","tag":"multica-version-pi-0.80.10"},
+				{"buildID":"build-current","createdAt":"2026-07-21T00:00:00Z","tag":"multica-version-dws-v1.0.53-beta.4"}
+			]`))
+		case "/templates/tpl-old/tags":
+			// A manifest attached only to a previous build must not publish the
+			// current build.
+			_, _ = w.Write([]byte(`[{"buildID":"build-previous","createdAt":"2026-07-20T00:00:00Z","tag":"multica-manifest-v1"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	runner := &fakeCommandRunner{out: []string{`[
+		{"id":"tpl-current","buildID":"build-current","template":"pi-current","status":"ready","updatedAt":"2026-07-21T01:00:00Z"},
+		{"id":"tpl-old","buildID":"build-old","template":"old-current","status":"ready","updatedAt":"2026-07-20T01:00:00Z"},
+		{"buildID":"build-alias","template":"alias-only","status":"ready"},
+		{"id":"tpl-no-build","template":"missing-build","status":"ready"}
+	]`}}
+	templates, err := ListFCE2BTemplates(context.Background(), FCE2BConfig{
+		APIKey:  "test-key",
+		APIURL:  server.URL,
+		Domain:  "fc-e2b.test",
+		CLIPath: "e2b-test",
+	}, runner)
+	if err != nil {
+		t.Fatalf("list templates: %v", err)
+	}
+	if len(templates) != 1 {
+		t.Fatalf("templates = %#v", templates)
+	}
+	got := templates[0]
+	if got.ID != "tpl-current" || got.BuildID != "build-current" || got.ManifestVersion != 1 {
+		t.Fatalf("verified template = %#v", got)
+	}
+	if want := []string{"pi"}; !reflect.DeepEqual(got.Providers, want) {
+		t.Fatalf("providers = %#v, want %#v", got.Providers, want)
+	}
+	if got.ComponentVersions["pi"] != "0.80.10" || got.ComponentVersions["dws"] != "v1.0.53-beta.4" {
+		t.Fatalf("component versions = %#v", got.ComponentVersions)
+	}
+	requestedMu.Lock()
+	paths := append([]string(nil), requested...)
+	requestedMu.Unlock()
+	sort.Strings(paths)
+	if want := []string{"/templates/tpl-current/tags", "/templates/tpl-old/tags"}; !reflect.DeepEqual(paths, want) {
+		t.Fatalf("tag request paths = %#v, want %#v", paths, want)
 	}
 }
 
@@ -981,7 +1200,7 @@ func TestFCE2BTaskTraceEnv(t *testing.T) {
 	if env[chattrace.TraceIDEnvKey] != trace.TraceID || env[chattrace.TraceStartedAtUnixMSEnvKey] != "1721000000123" {
 		t.Fatalf("trace env = %#v", env)
 	}
-	if !isAllowedFCE2BRootRunnerExtraEnv(chattrace.TraceIDEnvKey) || !isAllowedFCE2BRootRunnerExtraEnv(chattrace.TraceStartedAtUnixMSEnvKey) {
+	if !isAllowedFCE2BRunnerExtraEnv(chattrace.TraceIDEnvKey) || !isAllowedFCE2BRunnerExtraEnv(chattrace.TraceStartedAtUnixMSEnvKey) {
 		t.Fatal("trace env keys are not allowed through the fixed root entrypoint")
 	}
 
