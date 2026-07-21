@@ -11,12 +11,15 @@ import {
   DuplicateIssueErrorBodySchema,
   EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
   EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
+  EMPTY_FDE_ONBOARDING_STATE,
+  EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE,
   EMPTY_CREATE_FEEDBACK_RESPONSE,
   EMPTY_INBOX_UNREAD_SUMMARY,
   EMPTY_SEARCH_PROJECTS_RESPONSE,
   EMPTY_USER,
   InboxUnreadSummarySchema,
   IssueTriggerPreviewSchema,
+  FDEOnboardingStateSchema,
   ListIssuesResponseSchema,
   SearchProjectsResponseSchema,
   RuntimeHourlyActivityListSchema,
@@ -27,6 +30,7 @@ import {
   SquadSchema,
   TimelineEntriesSchema,
   UserSchema,
+  ProvisionFDEOnboardingResponseSchema,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
 
@@ -157,6 +161,56 @@ describe("DingTalk account binding schemas", () => {
         },
       ),
     ).toEqual({ installationId: "", qrCodeUrl: "", expiresAt: "" });
+  });
+});
+
+describe("FDE onboarding schemas", () => {
+  const workspace = {
+    id: "workspace-fde",
+    name: "My FDE Workspace",
+    slug: "my-fde-workspace",
+    description: null,
+    context: null,
+    settings: {},
+    repos: [],
+    issue_prefix: "FDE",
+    avatar_url: null,
+    created_at: "2026-07-17T00:00:00Z",
+    updated_at: "2026-07-17T00:00:00Z",
+  };
+
+  it("defaults the create-only marker to false for an older backend", () => {
+    expect(FDEOnboardingStateSchema.parse({ configured: true, workspaces: [] })).toEqual({
+      configured: true,
+      create_only: false,
+      workspaces: [],
+    });
+  });
+
+  it("falls back safely when the create-only workspace response is malformed", () => {
+    expect(parseWithFallback(
+      { configured: true, create_only: true, workspaces: [{ id: 42 }] },
+      FDEOnboardingStateSchema,
+      EMPTY_FDE_ONBOARDING_STATE,
+      { endpoint: "GET /api/fde/onboarding" },
+    )).toBe(EMPTY_FDE_ONBOARDING_STATE);
+  });
+
+  it("parses provisioning and falls back when its workspace is malformed", () => {
+    expect(ProvisionFDEOnboardingResponseSchema.parse({
+      workspace,
+      runtime_id: "runtime-1",
+      agent_id: "agent-1",
+      agent_created: true,
+      install_complete: true,
+    }).workspace.name).toBe("My FDE Workspace");
+
+    expect(parseWithFallback(
+      { workspace: { id: 42 } },
+      ProvisionFDEOnboardingResponseSchema,
+      EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE,
+      { endpoint: "POST /api/fde/onboarding" },
+    )).toBe(EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE);
   });
 });
 

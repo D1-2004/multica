@@ -536,6 +536,13 @@ type FcE2bSandboxSession struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type FdeOnboarding struct {
+	UserID      pgtype.UUID        `json:"user_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Feedback struct {
 	ID          pgtype.UUID        `json:"id"`
 	UserID      pgtype.UUID        `json:"user_id"`
