@@ -68,6 +68,7 @@ type IssueCreateParams struct {
 	AttachmentIDs             []pgtype.UUID
 	AllowDuplicate            bool
 	AgentIdentityContextToken string
+	DispatchContext           []byte
 	// Stage groups this issue into an ordered barrier group under its parent
 	// (NULL = unstaged). See issue_child_done.go for the staged-barrier wake.
 	Stage pgtype.Int4
@@ -283,7 +284,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 
 	s.publishIssueCreated(issue, attachments, p.CreatorType, actorID, opts)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
-	enqueuedTask := s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, p.AgentIdentityContextToken)
+	enqueuedTask := s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, p.AgentIdentityContextToken, p.DispatchContext)
 
 	return IssueCreateResult{Issue: issue, Attachments: attachments, EnqueuedTask: enqueuedTask}, nil
 }
@@ -390,12 +391,18 @@ func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autop
 	}
 }
 
-func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID, agentIdentityContextToken string) *db.AgentTaskQueue {
+func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID, agentIdentityContextToken string, dispatchContext []byte) *db.AgentTaskQueue {
 	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
 		return nil
 	}
 	if s.shouldEnqueueAgentTask(ctx, issue) {
-		task, err := s.TaskService.EnqueueTaskForIssueWithAgentIdentityContext(ctx, issue, agentIdentityContextToken)
+		var task db.AgentTaskQueue
+		var err error
+		if len(dispatchContext) > 0 {
+			task, err = s.TaskService.EnqueueTaskForIssueWithDispatchContext(ctx, issue, agentIdentityContextToken, dispatchContext)
+		} else {
+			task, err = s.TaskService.EnqueueTaskForIssueWithAgentIdentityContext(ctx, issue, agentIdentityContextToken)
+		}
 		if err != nil {
 			slog.Warn("enqueue agent task on create failed",
 				"issue_id", util.UUIDToString(issue.ID),

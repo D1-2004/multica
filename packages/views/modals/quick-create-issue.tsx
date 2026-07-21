@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import { DialogTitle } from "@multica/ui/components/ui/dialog";
 import { Button } from "@multica/ui/components/ui/button";
 import { Switch } from "@multica/ui/components/ui/switch";
-import { Textarea } from "@multica/ui/components/ui/textarea";
 import { api, ApiError } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
@@ -261,8 +260,6 @@ export function AgentCreatePanel({
   const [sentCount, setSentCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
-  const [extensionsOpen, setExtensionsOpen] = useState(false);
-  const [agentIdentityContextToken, setAgentIdentityContextToken] = useState("");
 
   // Image paste/drop support: route uploads through the same helper Advanced
   // uses, so users can paste screenshots straight into the prompt and the
@@ -303,7 +300,6 @@ export function AgentCreatePanel({
     const activeAttachmentIds = pendingAttachments
       .filter((a) => contentReferencesAttachment(md, a))
       .map((a) => a.id);
-    const trimmedAgentIdentityContextToken = agentIdentityContextToken.trim();
     setSubmitting(true);
     setError(null);
     try {
@@ -315,9 +311,6 @@ export function AgentCreatePanel({
         project_id: projectId ?? undefined,
         parent_issue_id: parentIssueId,
         ...(activeAttachmentIds.length > 0 ? { attachment_ids: activeAttachmentIds } : {}),
-        ...(trimmedAgentIdentityContextToken
-          ? { agent_identity_context_token: trimmedAgentIdentityContextToken }
-          : {}),
       });
       setLastActor(actor.type, actor.id);
       setLastProjectId(projectId);
@@ -331,8 +324,6 @@ export function AgentCreatePanel({
         // user can immediately type the next prompt.
         editorRef.current?.clearContent();
         setPendingAttachments([]);
-        setAgentIdentityContextToken("");
-        setExtensionsOpen(false);
         setHasContent(false);
         setSentCount((c) => c + 1);
         setJustSent(true);
@@ -544,39 +535,6 @@ export function AgentCreatePanel({
             </span>
           )}
         </div>
-
-        <div className="border-t px-4 py-2">
-          <button
-            type="button"
-            className="flex w-full items-center justify-between rounded-md py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-expanded={extensionsOpen}
-            onClick={() => setExtensionsOpen((open) => !open)}
-          >
-            <span>{t(($) => $.create_issue.extensions.title)}</span>
-            <ChevronRight
-              className={`size-3.5 transition-transform ${extensionsOpen ? "rotate-90" : ""}`}
-            />
-          </button>
-          {extensionsOpen && (
-            <div className="mt-2 space-y-1.5">
-              <label
-                htmlFor="quick-create-agent-identity-context-token"
-                className="text-xs font-medium text-foreground"
-              >
-                {t(($) => $.create_issue.extensions.context_token_label)}
-              </label>
-              <Textarea
-                id="quick-create-agent-identity-context-token"
-                value={agentIdentityContextToken}
-                onChange={(event) => setAgentIdentityContextToken(event.target.value)}
-                placeholder={t(($) => $.create_issue.extensions.context_token_placeholder)}
-                spellCheck={false}
-                className="min-h-20 resize-y font-mono text-xs"
-              />
-            </div>
-          )}
-        </div>
-
         {/* Footer */}
         <div className="flex flex-col gap-2 border-t px-4 py-3 shrink-0 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-h-7 items-center gap-2">

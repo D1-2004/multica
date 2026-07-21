@@ -301,6 +301,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.ManagedAgent = managed
 	}
 	h.Metrics = opts.BusinessMetrics
+	var agentMessageRouterClient *agentmessagerouter.Client
+	var agentDispatchEndpoints *agentmessagerouter.DispatchEndpointService
 	dispatchKeysRaw := strings.TrimSpace(os.Getenv("MULTICA_AGENT_DISPATCH_KEYS"))
 	dispatchCurrentKeyID := strings.TrimSpace(os.Getenv("MULTICA_AGENT_DISPATCH_CURRENT_KEY_ID"))
 	if dispatchKeysRaw == "" && dispatchCurrentKeyID == "" {
@@ -318,19 +320,33 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			BaseURL:           strings.TrimSpace(os.Getenv("AGENT_MESSAGE_ROUTER_INTERNAL_URL")),
 			ServiceCredential: strings.TrimSpace(os.Getenv("AGENT_MESSAGE_ROUTER_SERVICE_CREDENTIAL")),
 		})
+		endpointService, endpointErr := agentmessagerouter.NewDispatchEndpointService(
+			agentmessagerouter.NewDBDispatchEndpointStore(queries),
+			agentmessagerouter.DispatchEndpointServiceConfig{
+				PublicBaseURL: signupConfig.PublicURL,
+				Keyring:       keyring,
+				Random:        rand.Reader,
+			},
+		)
+		if clientErr == nil && endpointErr == nil {
+			agentMessageRouterClient = routerClient
+			agentDispatchEndpoints = endpointService
+		}
 		bindingService, serviceErr := agentmessagerouter.NewService(queries, routerClient, agentmessagerouter.ServiceConfig{
 			PublicBaseURL:   signupConfig.PublicURL,
 			DBaseBindingURL: dbaseBindingURL,
 			Keyring:         keyring,
 			Random:          rand.Reader,
 			IdentityStore:   queries,
+			Endpoints:       endpointService,
 			Metrics:         opts.BusinessMetrics,
 		})
-		if originErr != nil || clientErr != nil || serviceErr != nil ||
+		if originErr != nil || clientErr != nil || endpointErr != nil || serviceErr != nil ||
 			!dBaseBindingURLMatchesOrigin(dbaseBindingURL, dbaseOrigin) {
 			slog.Error("dingtalk account binding disabled due to invalid configuration",
 				"origin_error", originErr,
 				"router_error", clientErr,
+				"endpoint_error", endpointErr,
 				"service_error", serviceErr,
 			)
 		} else {
@@ -742,8 +758,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		box, err := secretbox.New(dtKey)
 		if err != nil {
 			slog.Error("dingtalk: secretbox.New failed; dingtalk bot integration disabled", "error", err)
+		} else if agentMessageRouterClient == nil || agentDispatchEndpoints == nil {
+			slog.Error("dingtalk: Router registration dependencies unavailable; dingtalk bot integration disabled")
 		} else {
-			installSvc, ierr := dingtalk.NewInstallationService(queries, pool, box)
+			installSvc, ierr := dingtalk.NewInstallationService(
+				queries,
+				pool,
+				box,
+				agentMessageRouterClient,
+				agentDispatchEndpoints,
+				dingtalk.InstallationCutoverConfig{StateChanged: h.ChannelSupervisor.Kick},
+			)
 			if ierr != nil {
 				slog.Error("dingtalk: InstallationService init failed; dingtalk bot integration disabled", "error", ierr)
 			} else {
@@ -847,6 +872,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					h.DingTalkRegistration = regSvc
 					slog.Info("dingtalk device-flow install enabled")
 				}
+
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					completed, reconcileErr := installSvc.ReconcilePending(ctx)
+					if reconcileErr != nil {
+						slog.Warn("dingtalk: startup Router reconciliation incomplete",
+							"completed", completed,
+							"error", reconcileErr,
+						)
+						return
+					}
+					if completed > 0 {
+						slog.Info("dingtalk: startup Router reconciliation complete", "completed", completed)
+					}
+				}()
 			}
 		}
 	} else {
@@ -1174,7 +1215,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// The path-aware CORS policy above admits only the configured DBase origin;
 	// this handler also requires that exact Origin and the per-attempt callback
 	// Bearer token before it verifies the Router subscription.
-	r.Post("/api/integrations/dingtalk/account-bindings/{installationId}/callback", h.CompleteDingTalkAccountBindingCallback)
+	r.Post("/api/integrations/dingtalk/account-bindings/{bindingId}/callback", h.CompleteDingTalkAccountBindingCallback)
 	// GitHub App webhook (no Multica auth — requests are authenticated via
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
@@ -1385,7 +1426,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/dingtalk/installations", h.ListDingTalkInstallations)
 					r.Get("/dingtalk/account-bindings", h.ListDingTalkAccountBindings)
 					r.Post("/dingtalk/account-bindings/begin", h.BeginDingTalkAccountBinding)
-					r.Delete("/dingtalk/account-bindings/{installationId}", h.UnbindDingTalkAccountBinding)
+					r.Delete("/dingtalk/account-bindings/{agentId}", h.UnbindDingTalkAccountBinding)
 				})
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))

@@ -35,6 +35,7 @@ import { CustomArgsTab } from "./tabs/custom-args-tab";
 import { McpConfigTab } from "./tabs/mcp-config-tab";
 import { AgentMcpTab } from "./tabs/agent-mcp-tab";
 import { IntegrationsTab } from "./tabs/integrations-tab";
+import { IdentityTab } from "./tabs/identity-tab";
 import { RuntimeConfigTab } from "./tabs/runtime-config-tab";
 import { AgentDetailInspector } from "./agent-detail-inspector";
 import { AgentAccessSettings } from "./agent-access-settings";
@@ -53,6 +54,7 @@ export type DetailTab =
   | "mcp_config"
   | "composio_mcp"
   | "integrations"
+  | "identity"
   | "general"
   | "access"
   | "env"
@@ -67,6 +69,7 @@ type SecondaryTab = {
     | "mcp_config"
     | "composio_mcp"
     | "integrations"
+    | "identity"
     | "general"
     | "access"
     | "environment"
@@ -80,6 +83,7 @@ const CAPABILITY_TABS: SecondaryTab[] = [
   { id: "mcp_config", labelKey: "mcp_config" },
   { id: "composio_mcp", labelKey: "composio_mcp" },
   { id: "integrations", labelKey: "integrations" },
+  { id: "identity", labelKey: "identity" },
 ];
 
 const SETTINGS_TABS: SecondaryTab[] = [
@@ -209,12 +213,16 @@ export function AgentOverviewPane({
       if (tab.id === "mcp_config") return showMcp;
       if (tab.id === "composio_mcp") return showComposioMcp;
       if (tab.id === "integrations") return integrationsConfigured;
+      if (tab.id === "identity") {
+        return dingtalkAccountListing?.configured === true;
+      }
       return true;
     });
   }, [
     agent.owner_id,
     composioMCPAppsEnabled,
     currentUserId,
+    dingtalkAccountListing?.configured,
     integrationsConfigured,
     runtime,
   ]);
@@ -452,6 +460,9 @@ export function AgentOverviewPane({
                   )}
                   {effectiveView === "integrations" && (
                     <IntegrationsTab agent={agent} />
+                  )}
+                  {effectiveView === "identity" && (
+                    <IdentityTab agent={agent} />
                   )}
                   {effectiveView === "general" && (
                     <AgentDetailInspector

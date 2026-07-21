@@ -176,6 +176,7 @@ export type {
   DingTalkMessageScope,
   DingTalkAccountBindingsResponse,
   BeginDingTalkAccountBindingResponse,
+  DingTalkBindingMode,
 } from "./dingtalk-account-binding";
 export type {
   Autopilot,

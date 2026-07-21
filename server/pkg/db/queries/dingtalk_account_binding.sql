@@ -103,8 +103,7 @@ RETURNING *;
 
 -- name: CompleteDingTalkAccountBindingResult :one
 -- Record a terminal result that did not create a Router source. The caller
--- chooses active only for an identity-only skipped route; failures stay
--- pending so a later begin can issue a fresh attempt.
+-- keeps failures pending so a later begin can issue a fresh attempt.
 UPDATE channel_installation
 SET config = sqlc.arg('config'),
     status = sqlc.arg('status'),
@@ -121,39 +120,23 @@ RETURNING *;
 -- Router DELETE happens before this local transition. Retain only the stable
 -- dispatch endpoint fields needed by a later begin; remove all callback,
 -- source, account, avatar, scope, conversation, and binding-time snapshots.
--- The Agent's DWS identity and pending identity attempts are removed in the
--- same database statement as the local route transition.
-WITH target AS (
-    SELECT installation.id, installation.workspace_id, installation.agent_id
-    FROM channel_installation installation
-    WHERE installation.id = sqlc.arg('id')
-      AND installation.workspace_id = sqlc.arg('workspace_id')
-      AND installation.agent_id = sqlc.arg('agent_id')
-      AND installation.channel_type = 'dingtalk_account'
-      AND installation.status IN ('pending', 'active', 'revoked')
-), deleted_identity AS (
-    DELETE FROM agent_dingtalk_identity identity
-    USING target
-    WHERE identity.workspace_id = target.workspace_id
-      AND identity.agent_id = target.agent_id
-), deleted_attempts AS (
-    DELETE FROM agent_dingtalk_identity_attempt attempt
-    USING target
-    WHERE attempt.workspace_id = target.workspace_id
-      AND attempt.agent_id = target.agent_id
-)
-UPDATE channel_installation installation
+-- Message routes and execution identities have independent lifecycles, so this
+-- statement never mutates agent_dingtalk_identity or its in-flight attempts.
+UPDATE channel_installation
 SET config = jsonb_build_object(
-        'schema_version', installation.config -> 'schema_version',
-        'dispatch_endpoint_id', installation.config -> 'dispatch_endpoint_id',
-        'dispatch_key_id', installation.config -> 'dispatch_key_id',
-        'dispatch_url', installation.config -> 'dispatch_url'
+        'schema_version', config -> 'schema_version',
+        'dispatch_endpoint_id', config -> 'dispatch_endpoint_id',
+        'dispatch_key_id', config -> 'dispatch_key_id',
+        'dispatch_url', config -> 'dispatch_url'
     ),
     status = 'revoked',
     updated_at = now()
-FROM target
-WHERE installation.id = target.id
-RETURNING installation.*;
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND agent_id = sqlc.arg('agent_id')
+  AND channel_type = 'dingtalk_account'
+  AND status IN ('pending', 'active', 'revoked')
+RETURNING *;
 
 -- name: GetActiveDingTalkAccountBindingByEndpoint :one
 -- Public dispatch resolution must fail closed when the workspace or agent was

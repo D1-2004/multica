@@ -166,6 +166,41 @@ func (q *Queries) CompleteAgentDingTalkIdentityAttempt(ctx context.Context, arg 
 	return i, err
 }
 
+const deleteAgentDingTalkIdentity = `-- name: DeleteAgentDingTalkIdentity :one
+WITH deleted_attempts AS (
+    DELETE FROM agent_dingtalk_identity_attempt
+    WHERE workspace_id = $1
+      AND agent_id = $2
+)
+DELETE FROM agent_dingtalk_identity AS identity
+WHERE identity.workspace_id = $1
+  AND identity.agent_id = $2
+RETURNING identity.agent_id, identity.workspace_id, identity.dws_uid, identity.org_id, identity.account_display_name, identity.account_avatar_url, identity.bound_by, identity.bound_at, identity.updated_at, identity.organization_name
+`
+
+type DeleteAgentDingTalkIdentityParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+}
+
+func (q *Queries) DeleteAgentDingTalkIdentity(ctx context.Context, arg DeleteAgentDingTalkIdentityParams) (AgentDingtalkIdentity, error) {
+	row := q.db.QueryRow(ctx, deleteAgentDingTalkIdentity, arg.WorkspaceID, arg.AgentID)
+	var i AgentDingtalkIdentity
+	err := row.Scan(
+		&i.AgentID,
+		&i.WorkspaceID,
+		&i.DwsUid,
+		&i.OrgID,
+		&i.AccountDisplayName,
+		&i.AccountAvatarUrl,
+		&i.BoundBy,
+		&i.BoundAt,
+		&i.UpdatedAt,
+		&i.OrganizationName,
+	)
+	return i, err
+}
+
 const deleteAgentDingTalkIdentityAttempts = `-- name: DeleteAgentDingTalkIdentityAttempts :exec
 DELETE FROM agent_dingtalk_identity_attempt
 WHERE workspace_id = $1
@@ -277,4 +312,45 @@ func (q *Queries) GetAgentDingTalkIdentityAttemptByAgent(ctx context.Context, ar
 		&i.CompletedUid,
 	)
 	return i, err
+}
+
+const listAgentDingTalkIdentities = `-- name: ListAgentDingTalkIdentities :many
+SELECT identity.agent_id, identity.workspace_id, identity.dws_uid, identity.org_id, identity.account_display_name, identity.account_avatar_url, identity.bound_by, identity.bound_at, identity.updated_at, identity.organization_name
+FROM agent_dingtalk_identity identity
+JOIN agent a
+  ON a.id = identity.agent_id
+ AND a.workspace_id = identity.workspace_id
+WHERE identity.workspace_id = $1
+ORDER BY identity.bound_at ASC, identity.agent_id ASC
+`
+
+func (q *Queries) ListAgentDingTalkIdentities(ctx context.Context, workspaceID pgtype.UUID) ([]AgentDingtalkIdentity, error) {
+	rows, err := q.db.Query(ctx, listAgentDingTalkIdentities, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentDingtalkIdentity{}
+	for rows.Next() {
+		var i AgentDingtalkIdentity
+		if err := rows.Scan(
+			&i.AgentID,
+			&i.WorkspaceID,
+			&i.DwsUid,
+			&i.OrgID,
+			&i.AccountDisplayName,
+			&i.AccountAvatarUrl,
+			&i.BoundBy,
+			&i.BoundAt,
+			&i.UpdatedAt,
+			&i.OrganizationName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

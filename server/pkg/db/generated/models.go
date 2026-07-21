@@ -79,6 +79,17 @@ type AgentDingtalkIdentityAttempt struct {
 	CompletedUid      pgtype.Text        `json:"completed_uid"`
 }
 
+type AgentDispatchEndpoint struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	ActorUserID pgtype.UUID        `json:"actor_user_id"`
+	EndpointID  string             `json:"endpoint_id"`
+	DispatchUrl string             `json:"dispatch_url"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 // Allow-list of who may invoke a public_to agent (MUL-3963). One row per (agent, target_type, target); targets stack and canInvokeAgent OR-matches. workspace rows store the agent workspace_id in target_id; member rows store the user id; team rows are reserved and inert in V1. Rows only matter when agent.permission_mode = public_to. No DB foreign keys: agent_id / created_by / member target_id relationships are maintained in the application layer (see migration comment).
 type AgentInvocationTarget struct {
 	ID         pgtype.UUID        `json:"id"`

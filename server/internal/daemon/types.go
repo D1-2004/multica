@@ -140,6 +140,10 @@ type Task struct {
 	// daemon must not fall back to its own token. See MUL-3292.
 	AuthToken                      string `json:"auth_token,omitempty"`
 	AgentIdentityContextToken      string `json:"agent_identity_context_token,omitempty"`
+	DispatchRuntimePrompt          string `json:"dispatch_runtime_prompt,omitempty"`
+	DispatchWorkflowPrompt         string `json:"dispatch_workflow_prompt,omitempty"`
+	DispatchSurfaceType            string `json:"dispatch_surface_type,omitempty"`
+	DispatchOutboundMode           string `json:"dispatch_outbound_mode,omitempty"`
 	DingTalkDWSIdentityUnavailable bool   `json:"dingtalk_dws_identity_unavailable,omitempty"`
 }
 

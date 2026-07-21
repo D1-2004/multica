@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -28,7 +29,14 @@ func newInstallationServiceForTest(t *testing.T) *InstallationService {
 	if err != nil {
 		t.Fatalf("secretbox.New: %v", err)
 	}
-	svc, err := NewInstallationService(&db.Queries{}, &fakeTxStarter{tx: &fakeTx{}}, box)
+	svc, err := NewInstallationService(
+		&db.Queries{},
+		&fakeTxStarter{tx: &fakeTx{}},
+		box,
+		&fakeRobotRouter{},
+		&fakeRobotEndpointProvider{},
+		InstallationCutoverConfig{},
+	)
 	if err != nil {
 		t.Fatalf("NewInstallationService: %v", err)
 	}
@@ -351,5 +359,56 @@ func TestRegistrationPollingFailEndsSession(t *testing.T) {
 	}
 	if !strings.Contains(state.ErrorMessage, "用户拒绝授权") {
 		t.Errorf("message %q should retain fail_reason", state.ErrorMessage)
+	}
+}
+
+func TestRegistrationReportsRouterFailureWithoutLosingReplayableInstallation(t *testing.T) {
+	q := &fakeInstallQueries{prevErr: pgx.ErrNoRows}
+	installSvc, _ := newUpsertServiceWithRouterForTest(t, q, &fakeRobotRouter{
+		registerErr: errors.New("router unavailable"),
+	})
+	store := newMemSessionStore()
+	svc, err := NewRegistrationService(
+		RegistrationServiceConfig{sessionStore: store},
+		NewRegistrationClient(RegistrationConfig{BaseURL: "http://127.0.0.1:0"}),
+		installSvc,
+		&db.Queries{},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := &registrationSession{
+		id:          "router-failure",
+		workspaceID: instTestWorkspace,
+		agentID:     instTestAgentA,
+		initiatorID: instTestInstaller,
+		status:      RegistrationStatusPending,
+	}
+	if err := store.Create(context.Background(), sessionRecord{
+		ID:          sess.id,
+		WorkspaceID: sess.workspaceID,
+		Status:      RegistrationStatusPending,
+		ExpiresAt:   time.Now().Add(time.Minute),
+	}, sess.agentID); err != nil {
+		t.Fatal(err)
+	}
+
+	svc.finishSuccess(context.Background(), sess, &RegistrationPollResult{
+		ClientID: "ding-client-x", ClientSecret: "s3cret",
+	})
+	state, err := svc.GetSession(context.Background(), sess.workspaceID, sess.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ErrorReason != RegistrationReasonRouterRegistrationFailed {
+		t.Fatalf("error reason = %q", state.ErrorReason)
+	}
+	pending, err := installationFromRow(q.current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.Status != "pending" || pending.RouterRegistrationStatus != RouterRegistrationPending {
+		t.Fatalf("replayable installation = %#v", pending)
 	}
 }

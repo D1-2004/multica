@@ -63,6 +63,10 @@ func NewRobotMessenger(openAPIBase, oapiBase string, client *http.Client) *Robot
 type RobotTarget struct {
 	OpenConversationID string
 	UserStaffID        string
+	// ReplyToOpenMsgID optionally asks DingTalk to associate the outbound
+	// message with the inbound message. It is kept as a domain locator; no
+	// Multica issue/session identifier is sent to DingTalk.
+	ReplyToOpenMsgID string
 }
 
 // SendMarkdown delivers text (agent replies are Markdown-ish; DingTalk's
@@ -87,6 +91,9 @@ func (m *RobotMessenger) SendMarkdown(ctx context.Context, creds channelCredenti
 	case target.OpenConversationID != "":
 		path = "/v1.0/robot/groupMessages/send"
 		body["openConversationId"] = target.OpenConversationID
+		if target.ReplyToOpenMsgID != "" {
+			body["openMsgId"] = target.ReplyToOpenMsgID
+		}
 	case target.UserStaffID != "":
 		path = "/v1.0/robot/oToMessages/batchSend"
 		body["userIds"] = []string{target.UserStaffID}

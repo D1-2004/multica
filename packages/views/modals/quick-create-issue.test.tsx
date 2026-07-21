@@ -402,36 +402,6 @@ describe("AgentCreatePanel", () => {
     });
   });
 
-  it("forwards the extension ContextToken when quick-creating an issue", async () => {
-    const user = userEvent.setup();
-
-    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
-
-    await user.click(screen.getByRole("button", { name: "More extensions" }));
-    await user.type(
-      screen.getByLabelText("Agent Identity ContextToken"),
-      "  ctx_quick_create_token  ",
-    );
-
-    const editor = screen.getByPlaceholderText(
-      'Tell the agent what to do, e.g. "let Bohan fix the inbox loading slowness in the Web project"',
-    );
-    await user.clear(editor);
-    await user.type(editor, "Create with dws identity");
-
-    await user.click(screen.getByRole("button", { name: /^Create$/i }));
-
-    await waitFor(() => {
-      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
-        agent_id: "agent-1",
-        prompt: "Create with dws identity",
-        project_id: undefined,
-        parent_issue_id: undefined,
-        agent_identity_context_token: "ctx_quick_create_token",
-      });
-    });
-  });
-
   // Picking a squad routes the submission through `squad_id` (not
   // `agent_id`) so the backend can resolve the squad's leader agent and
   // inject the squad-leader briefing on dispatch. The persisted preference

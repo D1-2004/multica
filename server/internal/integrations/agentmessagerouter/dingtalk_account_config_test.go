@@ -37,12 +37,14 @@ func TestDingTalkAccountConfigRoundTripAndPublicProjection(t *testing.T) {
 	}
 
 	public := got.PublicBinding(
-		"installation-1",
 		"workspace-1",
 		"agent-1",
 		"active",
 		PublicDingTalkBindingOutcome{Status: "unbound"},
 	)
+	if public.ID != "agent-1" {
+		t.Fatalf("public binding id = %q, want agent id", public.ID)
+	}
 	encoded, err := json.Marshal(public)
 	if err != nil {
 		t.Fatalf("marshal public binding: %v", err)
@@ -93,7 +95,6 @@ func TestDingTalkAccountConfigPreservesConversationSnapshots(t *testing.T) {
 	}
 
 	public := config.PublicBinding(
-		"installation-1",
 		"workspace-1",
 		"agent-1",
 		"active",
@@ -129,7 +130,6 @@ func TestDingTalkAccountConfigDefaultsLegacyRowsToDirectOnly(t *testing.T) {
 		t.Fatalf("ParseDingTalkAccountConfig: %v", err)
 	}
 	publicJSON, err := json.Marshal(config.PublicBinding(
-		"installation-1",
 		"workspace-1",
 		"agent-1",
 		"active",

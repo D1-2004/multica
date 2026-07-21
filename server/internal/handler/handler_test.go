@@ -2986,7 +2986,7 @@ func TestBacklogNoTriggerOnCreate(t *testing.T) {
 	testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
 }
 
-func TestCreateIssuePropagatesAgentIdentityContextTokenToQueuedTask(t *testing.T) {
+func TestCreateIssueDoesNotAcceptAgentIdentityContextToken(t *testing.T) {
 	ctx := context.Background()
 
 	var agentID string
@@ -3022,16 +3022,16 @@ func TestCreateIssuePropagatesAgentIdentityContextTokenToQueuedTask(t *testing.T
 		testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
 	})
 
-	var got string
+	var present bool
 	err = testPool.QueryRow(ctx,
-		`SELECT context->>'agent_identity_context_token' FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2`,
+		`SELECT COALESCE(context ? 'agent_identity_context_token', false) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2`,
 		created.ID, agentID,
-	).Scan(&got)
+	).Scan(&present)
 	if err != nil {
 		t.Fatalf("load task context token: %v", err)
 	}
-	if got != "ctx_test_token" {
-		t.Fatalf("agent_identity_context_token = %q, want ctx_test_token", got)
+	if present {
+		t.Fatal("public CreateIssue accepted agent_identity_context_token")
 	}
 }
 

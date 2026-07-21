@@ -39,6 +39,13 @@ type Subscription struct {
 	Status      string `json:"status"`
 }
 
+type RobotRegistration struct {
+	TenantID    string `json:"tenantId"`
+	RobotCode   string `json:"robotCode"`
+	AgentID     string `json:"agentId"`
+	DispatchURL string `json:"dispatchUrl"`
+}
+
 type routerResponse[T any] struct {
 	Success bool   `json:"success"`
 	Code    string `json:"code"`
@@ -119,6 +126,35 @@ func (c *Client) IssueBindingToken(ctx context.Context, agentID, dispatchURL str
 	}
 	if result.BindingToken == "" || result.ExpiresAt.IsZero() {
 		return BindingToken{}, errors.New("agent message router token issue response is invalid")
+	}
+	return result, nil
+}
+
+func (c *Client) RegisterRobot(ctx context.Context, registration RobotRegistration) (Subscription, error) {
+	registration.TenantID = strings.TrimSpace(registration.TenantID)
+	if !isTrimmedNonEmpty(registration.RobotCode) || !isTrimmedNonEmpty(registration.AgentID) ||
+		!isTrimmedNonEmpty(registration.DispatchURL) {
+		return Subscription{}, errors.New("agent message router robot registration is invalid")
+	}
+	body, err := json.Marshal(registration)
+	if err != nil {
+		return Subscription{}, errors.New("encode agent message router robot registration")
+	}
+	response, err := c.do(ctx, http.MethodPost, "/api/subscriptions/robots", bytes.NewReader(body))
+	if err != nil {
+		return Subscription{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return Subscription{}, decodeRouterHTTPError(response.Body, response.StatusCode)
+	}
+	result, err := decodeRouterResponse[Subscription](response.Body)
+	if err != nil {
+		return Subscription{}, err
+	}
+	if !isTrimmedNonEmpty(result.SourceID) || result.AgentID != registration.AgentID ||
+		result.DispatchURL != registration.DispatchURL || result.Status != "active" {
+		return Subscription{}, errors.New("agent message router robot registration response is invalid")
 	}
 	return result, nil
 }

@@ -315,6 +315,10 @@ JOIN workspace w ON w.id = ci.workspace_id
 JOIN agent a ON a.id = ci.agent_id
 WHERE ci.status = 'active'
   AND ci.channel_type = sqlc.arg('channel_type')
+  AND (
+        ci.channel_type <> 'dingtalk'
+        OR COALESCE(ci.config ->> 'ingress_cutover_state', 'legacy_stream') = 'legacy_stream'
+  )
 ORDER BY ci.created_at ASC;
 
 -- name: ListAllActiveChannelInstallations :many
@@ -331,6 +335,10 @@ SELECT ci.* FROM channel_installation ci
 JOIN workspace w ON w.id = ci.workspace_id
 JOIN agent a ON a.id = ci.agent_id
 WHERE ci.status = 'active'
+  AND (
+        ci.channel_type <> 'dingtalk'
+        OR COALESCE(ci.config ->> 'ingress_cutover_state', 'legacy_stream') = 'legacy_stream'
+  )
 ORDER BY ci.created_at ASC;
 
 -- name: SetChannelInstallationStatus :exec
@@ -365,6 +373,10 @@ SET ws_lease_token       = sqlc.arg('new_token'),
     updated_at           = now()
 WHERE id = sqlc.arg('id')
   AND status = 'active'
+  AND (
+        channel_type <> 'dingtalk'
+        OR COALESCE(config ->> 'ingress_cutover_state', 'legacy_stream') = 'legacy_stream'
+  )
   AND (
         ws_lease_token IS NULL
         OR ws_lease_expires_at < now()

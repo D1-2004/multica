@@ -835,8 +835,7 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extraEnvForTask with bound identity returned error: %v", err)
 	}
-	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" ||
-		env["AGENT_IDENTITY_CONTEXT_TOKEN"] == "caller_token_must_be_ignored" {
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" {
 		t.Fatalf("chat ContextToken env = %#v", env)
 	}
 	if _, present := env["DWS_UID"]; present {
@@ -851,6 +850,28 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 		request.Source["chat_session_id"] != util.UUIDToString(task.ChatSessionID) {
 		t.Fatalf("Agent Identity request = %#v", request)
 	}
+
+	task.Context = []byte(`{"dispatch_source":{"platform":"dingtalk","type":"digital_employee"},"agent_identity_context_token":"caller_external_token"}`)
+	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-external")
+	if err != nil {
+		t.Fatalf("extraEnvForTask with external identity returned error: %v", err)
+	}
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "caller_external_token" || len(identityClient.requests) != 1 {
+		t.Fatalf("external identity did not win over Agent binding: requests=%d env=%#v", len(identityClient.requests), env)
+	}
+	task.Context = []byte(`{"dispatch_source":{"platform":"dingtalk","type":"digital_employee"}}`)
+	task.ChatSessionID = pgtype.UUID{}
+	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-direct-task")
+	if err != nil {
+		t.Fatalf("extraEnvForTask direct task fallback returned error: %v", err)
+	}
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 2 {
+		t.Fatalf("direct task did not use Agent binding: requests=%d env=%#v", len(identityClient.requests), env)
+	}
+	if _, present := identityClient.requests[1].Source["chat_session_id"]; present {
+		t.Fatalf("direct task identity source contains chat session: %#v", identityClient.requests[1].Source)
+	}
+	task.ChatSessionID = util.MustParseUUID("22222222-2222-2222-2222-222222222222")
 
 	identityClient.err = errors.New("HSF unavailable")
 	if _, err := launcher.extraEnvForTask(ctx, task, runtime, "sbx-chat"); err == nil {
@@ -981,7 +1002,7 @@ func TestFCE2BTaskTraceEnv(t *testing.T) {
 	if env[chattrace.TraceIDEnvKey] != trace.TraceID || env[chattrace.TraceStartedAtUnixMSEnvKey] != "1721000000123" {
 		t.Fatalf("trace env = %#v", env)
 	}
-	if !isAllowedFCE2BRootRunnerExtraEnv(chattrace.TraceIDEnvKey) || !isAllowedFCE2BRootRunnerExtraEnv(chattrace.TraceStartedAtUnixMSEnvKey) {
+	if !isAllowedFCE2BRunnerExtraEnv(chattrace.TraceIDEnvKey) || !isAllowedFCE2BRunnerExtraEnv(chattrace.TraceStartedAtUnixMSEnvKey) {
 		t.Fatal("trace env keys are not allowed through the fixed root entrypoint")
 	}
 
@@ -996,6 +1017,19 @@ func TestFCE2BTaskTraceEnv(t *testing.T) {
 	}
 	if env[chattrace.TraceIDEnvKey] != taskID || env[chattrace.TraceStartedAtUnixMSEnvKey] != strconv.FormatInt(createdAt.UnixMilli(), 10) {
 		t.Fatalf("non-chat trace env = %#v", env)
+	}
+}
+
+func TestFCE2BExtraEnvDoesNotUseRuntimePromptEnvironmentVariable(t *testing.T) {
+	task := db.AgentTaskQueue{
+		Context: []byte(`{"dispatch_runtime_prompt":"private runtime instruction"}`),
+	}
+	got, err := fcE2BAgentIdentityExtraEnv(task, FCE2BConfig{})
+	if err != nil {
+		t.Fatalf("fcE2BAgentIdentityExtraEnv: %v", err)
+	}
+	if _, exists := got["MULTICA_DISPATCH_RUNTIME_PROMPT"]; exists {
+		t.Fatalf("runtime prompt left in an unconsumed environment variable: %#v", got)
 	}
 }
 

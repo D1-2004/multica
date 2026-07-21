@@ -1593,6 +1593,7 @@ type claimBuildFailure struct {
 func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string, fcE2BColdStart bool) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
+	populatePrivateTaskClaimContext(&resp, task.Context)
 	supportsCoalescedComments := requestHasDaemonCapability(r, protocol.DaemonCapabilityCoalescedCommentsV1)
 	// Empty-but-non-nil so pgx persists '{}' rather than NULL for tasks without
 	// comment input. Comment tasks replace this with the ids actually embedded

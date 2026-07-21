@@ -690,7 +690,6 @@ export class ApiClient {
     project_id?: string | null;
     parent_issue_id?: string | null;
     attachment_ids?: string[];
-    agent_identity_context_token?: string;
   }): Promise<{ task_id: string }> {
     return this.fetch("/api/issues/quick-create", {
       method: "POST",
@@ -2718,12 +2717,13 @@ export class ApiClient {
   async beginDingTalkAccountBinding(
     workspaceId: string,
     agentId: string,
+    bindingMode: "message" | "identity",
   ): Promise<BeginDingTalkAccountBindingResponse> {
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/dingtalk/account-bindings/begin`,
       {
         method: "POST",
-        body: JSON.stringify({ agent_id: agentId }),
+        body: JSON.stringify({ agent_id: agentId, binding_mode: bindingMode }),
       },
     );
     return parseWithFallback(
@@ -2739,10 +2739,11 @@ export class ApiClient {
 
   async deleteDingTalkAccountBinding(
     workspaceId: string,
-    installationId: string,
+    agentId: string,
+    bindingMode: "message" | "identity",
   ): Promise<void> {
     await this.fetch(
-      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${installationId}`,
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${agentId}?binding_mode=${bindingMode}`,
       { method: "DELETE" },
     );
   }
