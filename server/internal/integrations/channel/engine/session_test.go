@@ -47,13 +47,15 @@ type fakeSessionQueries struct {
 	lastConfig      []byte // config of the most recent CreateChannelChatSessionBinding
 	lastTitle       string // title of the most recent CreateChatSession
 
-	prevMessage      *string // GetMostRecentUserChatMessage result; nil → ErrNoRows
-	markRows         int64   // MarkChannelInboundDedupProcessed result
-	createBindingErr error   // simulate a unique violation on create
-	raceWinner       pgtype.UUID
-	upsertedTask     db.AgentTaskQueue
-	upsertTaskCalls  int
-	upsertTaskErr    error
+	prevMessage       *string // GetMostRecentUserChatMessage result; nil → ErrNoRows
+	markRows          int64   // MarkChannelInboundDedupProcessed result
+	createBindingErr  error   // simulate a unique violation on create
+	raceWinner        pgtype.UUID
+	upsertedTask      db.AgentTaskQueue
+	upsertTaskCalls   int
+	upsertTaskErr     error
+	linkedAttachments []pgtype.UUID
+	lastLinkParams    db.LinkAttachmentsToChatMessageParams
 }
 
 func newFake() *fakeSessionQueries {
@@ -109,7 +111,13 @@ func (f *fakeSessionQueries) UpsertDeferredChannelChatTask(_ context.Context, ar
 func (f *fakeSessionQueries) CreateChatMessage(_ context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error) {
 	f.messages = append(f.messages, arg.Content)
 	f.messageTaskIDs = append(f.messageTaskIDs, arg.TaskID)
-	return db.ChatMessage{}, nil
+	return db.ChatMessage{ID: uid(90), Content: arg.Content}, nil
+}
+
+func (f *fakeSessionQueries) LinkAttachmentsToChatMessage(_ context.Context, arg db.LinkAttachmentsToChatMessageParams) ([]pgtype.UUID, error) {
+	f.lastLinkParams = arg
+	f.linkedAttachments = append([]pgtype.UUID(nil), arg.AttachmentIds...)
+	return append([]pgtype.UUID(nil), arg.AttachmentIds...), nil
 }
 
 func (f *fakeSessionQueries) TouchChatSession(context.Context, pgtype.UUID) error {
@@ -286,6 +294,33 @@ func TestAppendUserMessage_PlainText(t *testing.T) {
 	}
 	if f.touched != 1 || f.replyTargets != 1 {
 		t.Errorf("touched=%d replyTargets=%d, want 1/1", f.touched, f.replyTargets)
+	}
+}
+
+func TestAppendUserMessage_LinksAttachmentsInMessageTransaction(t *testing.T) {
+	f := newFake()
+	s := newTestSession(f)
+	attachments := []pgtype.UUID{uid(31), uid(32)}
+	_, err := s.AppendUserMessage(context.Background(), AppendInput{
+		SessionID:      uid(1),
+		WorkspaceID:    uid(2),
+		Sender:         uid(3),
+		InstallationID: uid(4),
+		Body:           "[图片]",
+		MessageID:      "m-picture",
+		AttachmentIDs:  attachments,
+	})
+	if err != nil {
+		t.Fatalf("AppendUserMessage: %v", err)
+	}
+	if f.lastLinkParams.ChatMessageID != uid(90) || f.lastLinkParams.ChatSessionID != uid(1) {
+		t.Fatalf("link params message/session = %#v", f.lastLinkParams)
+	}
+	if f.lastLinkParams.WorkspaceID != uid(2) || f.lastLinkParams.UploaderID != uid(3) || f.lastLinkParams.UploaderType != "member" {
+		t.Fatalf("link ownership params = %#v", f.lastLinkParams)
+	}
+	if len(f.linkedAttachments) != 2 || f.linkedAttachments[0] != uid(31) || f.linkedAttachments[1] != uid(32) {
+		t.Fatalf("linked attachments = %#v", f.linkedAttachments)
 	}
 }
 

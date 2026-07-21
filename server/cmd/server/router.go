@@ -779,6 +779,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					dingtalk.NewTypingNotifier(dtTyping),
 					dtAutoBinder,
 					orgemphsf.NewClient(),
+					service.NewExternalAttachmentService(queries, store, nil),
+					box.Open,
+					dtMessenger,
 				))
 				dingtalk.NewOutbound(queries, box.Open, dtMessenger, dtTyping, slog.Default()).Register(bus)
 				streamInbox := dingtalk.NewStreamInboxWorker(

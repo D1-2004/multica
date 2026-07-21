@@ -60,3 +60,71 @@ func TestLookupUserUnionIDLegacyError(t *testing.T) {
 		t.Fatal("expected a legacy envelope error")
 	}
 }
+
+func TestResolveMessageFileURL(t *testing.T) {
+	var got map[string]string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1.0/oauth2/accessToken":
+			_, _ = w.Write([]byte(`{"accessToken":"tok_test","expireIn":7200}`))
+		case "/v1.0/robot/messageFiles/download":
+			if r.Header.Get("x-acs-dingtalk-access-token") != "tok_test" {
+				t.Error("message file request did not carry the app access token")
+			}
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			_, _ = w.Write([]byte(`{"downloadUrl":"https://files.example.test/card.png"}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	m := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
+	resolved, err := m.resolveMessageFileURL(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs"}, "download-code")
+	if err != nil {
+		t.Fatalf("resolveMessageFileURL: %v", err)
+	}
+	if resolved != "https://files.example.test/card.png" {
+		t.Fatalf("resolved URL = %q", resolved)
+	}
+	if got["robotCode"] != "ck" || got["downloadCode"] != "download-code" {
+		t.Fatalf("message file request = %#v", got)
+	}
+}
+
+func TestResolveMessageFileURLAcceptsDingTalkHTTPURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1.0/oauth2/accessToken" {
+			_, _ = w.Write([]byte(`{"accessToken":"tok_test","expireIn":7200}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"downloadUrl":"http://files.example.test/card.png"}`))
+	}))
+	t.Cleanup(srv.Close)
+	m := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
+	resolved, err := m.resolveMessageFileURL(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs"}, "download-code")
+	if err != nil {
+		t.Fatalf("resolveMessageFileURL: %v", err)
+	}
+	if resolved != "http://files.example.test/card.png" {
+		t.Fatalf("resolved URL = %q", resolved)
+	}
+}
+
+func TestResolveMessageFileURLRejectsNonHTTPURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1.0/oauth2/accessToken" {
+			_, _ = w.Write([]byte(`{"accessToken":"tok_test","expireIn":7200}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"downloadUrl":"file:///tmp/card.png"}`))
+	}))
+	t.Cleanup(srv.Close)
+	m := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
+	if _, err := m.resolveMessageFileURL(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs"}, "download-code"); err == nil {
+		t.Fatal("expected non-HTTP download URL to be rejected")
+	}
+}
