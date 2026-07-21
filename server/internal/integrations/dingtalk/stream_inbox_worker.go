@@ -487,7 +487,7 @@ func (w *StreamInboxWorker) ProcessNext(ctx context.Context) (bool, error) {
 			ConnectionID: row.ConnectionID,
 		}
 	}
-	msg, ok := inboundFromBotCallbackForInstallation(data, row.ClientID, util.UUIDToString(row.InstallationID), streamSource, sourcePayload)
+	msg, ok := inboundFromBotCallbackForInstallationWithSource(data, row.ClientID, util.UUIDToString(row.InstallationID), streamSource, sourcePayload)
 	if !ok {
 		return true, w.complete(ctx, row, streamInboxStatusDiscarded, "payload_unusable", "callback has no message id", traceHash)
 	}

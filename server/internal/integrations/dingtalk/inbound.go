@@ -182,10 +182,18 @@ type dingtalkRawEvent struct {
 // drops payloads that must not reach the core (no message id — nothing
 // to dedup on).
 func inboundFromBotCallback(data botCallbackData, clientID string) (channel.InboundMessage, bool) {
-	return inboundFromBotCallbackForInstallation(data, clientID, "", protocol.DingTalkStreamSource{}, nil)
+	return inboundFromBotCallbackForInstallation(data, clientID, "", protocol.DingTalkStreamSource{})
 }
 
-func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, installationID string, streamSource protocol.DingTalkStreamSource, sourcePayload json.RawMessage) (channel.InboundMessage, bool) {
+// inboundFromBotCallbackForInstallation keeps the transport-neutral callback
+// entry point used by the HTTP callback adapter. Stream ingestion calls the
+// explicit WithSource variant below because it also has the decrypted original
+// callback available for credential stripping and Agent handoff.
+func inboundFromBotCallbackForInstallation(data botCallbackData, clientID, installationID string, streamSource protocol.DingTalkStreamSource) (channel.InboundMessage, bool) {
+	return inboundFromBotCallbackForInstallationWithSource(data, clientID, installationID, streamSource, nil)
+}
+
+func inboundFromBotCallbackForInstallationWithSource(data botCallbackData, clientID, installationID string, streamSource protocol.DingTalkStreamSource, sourcePayload json.RawMessage) (channel.InboundMessage, bool) {
 	if data.MsgID == "" {
 		return channel.InboundMessage{}, false
 	}
