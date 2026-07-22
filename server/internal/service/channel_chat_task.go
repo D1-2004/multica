@@ -24,6 +24,16 @@ const (
 	channelChatTaskPromoteBatch    = 64
 )
 
+// ChatTaskIdentity keeps the Multica principal that authorizes a chat task
+// distinct from the person attributed as its initiator. Bound senders set both
+// fields to the same user. Allow-unbound channels set PrincipalUserID to their
+// installer and leave InitiatorUserID invalid; their external display identity
+// travels in server-private task context instead.
+type ChatTaskIdentity struct {
+	PrincipalUserID pgtype.UUID
+	InitiatorUserID pgtype.UUID
+}
+
 // PreparedChannelChatTask is the side-effect-free task envelope the channel
 // engine carries into its append transaction. Runtime/agent validation and the
 // optional Composio overlay are resolved before the transaction because the
@@ -50,7 +60,7 @@ type PreparedChannelChatTask struct {
 func (s *TaskService) PrepareChannelChatTask(
 	ctx context.Context,
 	session db.ChatSession,
-	initiatorUserID pgtype.UUID,
+	identity ChatTaskIdentity,
 	forceFreshSession bool,
 	taskContext []byte,
 ) (PreparedChannelChatTask, error) {
@@ -71,14 +81,14 @@ func (s *TaskService) PrepareChannelChatTask(
 		return PreparedChannelChatTask{}, ErrChatTaskAgentNoRuntime
 	}
 
-	overlay := s.buildRuntimeMCPOverlay(ctx, initiatorUserID, agent)
+	overlay := s.buildRuntimeMCPOverlay(ctx, identity.PrincipalUserID, agent)
 	taskID := uuid.New()
 	return PreparedChannelChatTask{
 		ID:                   pgtype.UUID{Bytes: [16]byte(taskID), Valid: true},
 		AgentID:              session.AgentID,
 		RuntimeID:            agent.RuntimeID,
-		InitiatorUserID:      initiatorUserID,
-		OriginatorUserID:     initiatorUserID,
+		InitiatorUserID:      identity.InitiatorUserID,
+		OriginatorUserID:     identity.PrincipalUserID,
 		ForceFreshSession:    forceFreshSession,
 		TaskContext:          append([]byte(nil), taskContext...),
 		RuntimeMCPOverlay:    append([]byte(nil), overlay.Overlay...),

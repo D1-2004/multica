@@ -128,6 +128,10 @@ func (f durableChannelTaskFixture) session(t *testing.T) db.ChatSession {
 	return session
 }
 
+func memberChatTaskIdentity(userID pgtype.UUID) ChatTaskIdentity {
+	return ChatTaskIdentity{PrincipalUserID: userID, InitiatorUserID: userID}
+}
+
 func preparedUpsertParams(sessionID pgtype.UUID, p PreparedChannelChatTask) db.UpsertDeferredChannelChatTaskParams {
 	return db.UpsertDeferredChannelChatTaskParams{
 		ID:                   p.ID,
@@ -161,7 +165,7 @@ func TestPrepareChannelChatTaskPreservesRuntimeEnvelope(t *testing.T) {
 	svc.FeatureFlags = composioMCPAppsTestFlags(true)
 	taskContext := []byte(`{"agent_identity_context_token":"test-context"}`)
 
-	prepared, err := svc.PrepareChannelChatTask(context.Background(), f.session(t), f.userID, true, taskContext)
+	prepared, err := svc.PrepareChannelChatTask(context.Background(), f.session(t), memberChatTaskIdentity(f.userID), true, taskContext)
 	if err != nil {
 		t.Fatalf("prepare channel task: %v", err)
 	}
@@ -196,14 +200,38 @@ func TestPrepareChannelChatTaskPreservesRuntimeEnvelope(t *testing.T) {
 	if _, err := f.pool.Exec(context.Background(), `UPDATE agent SET archived_at = now() WHERE id = $1`, f.agentID); err != nil {
 		t.Fatalf("archive agent: %v", err)
 	}
-	if _, err := svc.PrepareChannelChatTask(context.Background(), f.session(t), f.userID, false, nil); !errors.Is(err, ErrChatTaskAgentArchived) {
+	if _, err := svc.PrepareChannelChatTask(context.Background(), f.session(t), memberChatTaskIdentity(f.userID), false, nil); !errors.Is(err, ErrChatTaskAgentArchived) {
 		t.Fatalf("archived prepare error = %v, want ErrChatTaskAgentArchived", err)
 	}
 	if _, err := f.pool.Exec(context.Background(), `UPDATE agent SET archived_at = NULL, runtime_id = NULL WHERE id = $1`, f.agentID); err != nil {
 		t.Fatalf("clear agent runtime: %v", err)
 	}
-	if _, err := svc.PrepareChannelChatTask(context.Background(), f.session(t), f.userID, false, nil); !errors.Is(err, ErrChatTaskAgentNoRuntime) {
+	if _, err := svc.PrepareChannelChatTask(context.Background(), f.session(t), memberChatTaskIdentity(f.userID), false, nil); !errors.Is(err, ErrChatTaskAgentNoRuntime) {
 		t.Fatalf("runtime-less prepare error = %v, want ErrChatTaskAgentNoRuntime", err)
+	}
+}
+
+func TestPrepareChannelChatTaskSeparatesPrincipalFromInitiator(t *testing.T) {
+	f := newDurableChannelTaskFixture(t)
+	builder := &stubOverlayBuilder{resp: json.RawMessage(`{"mcpServers":{}}`)}
+	svc := NewTaskService(db.New(f.pool), f.pool, nil, events.New())
+	svc.Composio = builder
+	svc.FeatureFlags = composioMCPAppsTestFlags(true)
+
+	prepared, err := svc.PrepareChannelChatTask(context.Background(), f.session(t), ChatTaskIdentity{
+		PrincipalUserID: f.userID,
+	}, false, []byte(`{"dingtalk_conversation_initiator":{"display_name":"当前对话者"}}`))
+	if err != nil {
+		t.Fatalf("prepare channel task: %v", err)
+	}
+	if prepared.InitiatorUserID.Valid {
+		t.Fatalf("initiator = %v, want invalid for unbound sender", prepared.InitiatorUserID)
+	}
+	if prepared.OriginatorUserID != f.userID {
+		t.Fatalf("originator principal = %v, want %v", prepared.OriginatorUserID, f.userID)
+	}
+	if builder.lastUser != f.userID {
+		t.Fatalf("overlay principal = %v, want %v", builder.lastUser, f.userID)
 	}
 }
 
@@ -216,7 +244,7 @@ func TestUpsertDeferredChannelChatTaskConcurrentCoalesces(t *testing.T) {
 	const workers = 20
 	prepared := make([]PreparedChannelChatTask, workers)
 	for i := range workers {
-		p, err := svc.PrepareChannelChatTask(context.Background(), session, f.userID, i == workers-1, []byte(fmt.Sprintf(`{"seq":%d}`, i)))
+		p, err := svc.PrepareChannelChatTask(context.Background(), session, memberChatTaskIdentity(f.userID), i == workers-1, []byte(fmt.Sprintf(`{"seq":%d}`, i)))
 		if err != nil {
 			t.Fatalf("prepare %d: %v", i, err)
 		}
@@ -315,7 +343,7 @@ func (r *safeWakeupRecorder) count() int {
 func seedDueDeferredChannelTask(t *testing.T, f durableChannelTaskFixture) db.AgentTaskQueue {
 	t.Helper()
 	svc := NewTaskService(db.New(f.pool), f.pool, nil, events.New())
-	prepared, err := svc.PrepareChannelChatTask(context.Background(), f.session(t), f.userID, false, []byte(`{"trace":"durable"}`))
+	prepared, err := svc.PrepareChannelChatTask(context.Background(), f.session(t), memberChatTaskIdentity(f.userID), false, []byte(`{"trace":"durable"}`))
 	if err != nil {
 		t.Fatalf("prepare due task: %v", err)
 	}
@@ -502,7 +530,7 @@ func TestDeferredIssueTasksDoNotConflictWithChannelUniqueIndex(t *testing.T) {
 	}
 
 	svc := NewTaskService(db.New(f.pool), f.pool, nil, events.New())
-	prepared, err := svc.PrepareChannelChatTask(ctx, f.session(t), f.userID, false, nil)
+	prepared, err := svc.PrepareChannelChatTask(ctx, f.session(t), memberChatTaskIdentity(f.userID), false, nil)
 	if err != nil {
 		t.Fatalf("prepare channel task: %v", err)
 	}

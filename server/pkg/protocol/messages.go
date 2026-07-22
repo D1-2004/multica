@@ -17,15 +17,18 @@ const (
 	AgentIdentityContextTokenEnvKey             = "AGENT_IDENTITY_CONTEXT_TOKEN"
 	DispatchSurfaceJSONKey                      = "dispatch_surface"
 	DispatchOutboundJSONKey                     = "dispatch_outbound"
+	DispatchWorkflowPromptJSONKey               = "dispatch_workflow_prompt"
 	DingTalkRobotIdentityJSONKey                = "dingtalk_robot_identity"
 	DingTalkRobotIdentityUnavailableJSONKey     = "dingtalk_robot_identity_unavailable"
 	DingTalkRobotIdentityUnavailableMissingOrg  = "missing_organization_identity"
 	DingTalkRobotIdentityUnavailableLookupError = "employee_lookup_failed"
 	DingTalkStreamSourceJSONKey                 = "dingtalk_stream_source"
+	DingTalkConversationInitiatorJSONKey        = "dingtalk_conversation_initiator"
 	SandboxSourceHostnameEnvKey                 = "MULTICA_SANDBOX_SOURCE_HOSTNAME"
 	DingTalkStreamHostnameEnvKey                = "MULTICA_DINGTALK_STREAM_HOSTNAME"
 	DingTalkStreamNodeIDEnvKey                  = "MULTICA_DINGTALK_STREAM_NODE_ID"
 	DingTalkStreamConnectionIDEnvKey            = "MULTICA_DINGTALK_STREAM_CONNECTION_ID"
+	TaskInitiatorTypeDingTalkUser               = "dingtalk_user"
 )
 
 const (
@@ -49,6 +52,14 @@ type DingTalkRobotIdentity struct {
 // task context, and so the daemon can tell the agent to explain the limitation.
 type DingTalkRobotIdentityUnavailable struct {
 	Reason string `json:"reason"`
+}
+
+// DingTalkConversationInitiator is the current message sender's display
+// identity. It is server-private task context used only when the sender has no
+// Multica user binding; bound senders remain authoritative through
+// agent_task_queue.initiator_user_id.
+type DingTalkConversationInitiator struct {
+	DisplayName string `json:"display_name"`
 }
 
 // DingTalkStreamSource identifies the backend process that received one

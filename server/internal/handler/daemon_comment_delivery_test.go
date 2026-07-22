@@ -618,15 +618,16 @@ func TestCreateRetryTask_PreservesCommentPlanAndResetsReceipt(t *testing.T) {
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id, status, priority,
 			trigger_comment_id, coalesced_comment_ids, delivered_comment_ids,
-			attempt, max_attempts, failure_reason
+			attempt, max_attempts, failure_reason, initiator_user_id, context
 		)
 		VALUES (
 			$1, $2, $3, 'failed', 0,
 			$4, ARRAY[$5::uuid, $6::uuid], ARRAY[$4::uuid, $5::uuid, $6::uuid],
-			1, 3, 'timeout'
+			1, 3, 'timeout', $7,
+			'{"dingtalk_conversation_initiator":{"display_name":"当前对话者"}}'::jsonb
 		)
 		RETURNING id
-	`, agentID, runtimeID, issueID, commentIDs[2], commentIDs[0], commentIDs[1]).Scan(&parentID); err != nil {
+	`, agentID, runtimeID, issueID, commentIDs[2], commentIDs[0], commentIDs[1], testUserID).Scan(&parentID); err != nil {
 		t.Fatalf("insert retry parent: %v", err)
 	}
 	t.Cleanup(func() {
@@ -649,6 +650,12 @@ func TestCreateRetryTask_PreservesCommentPlanAndResetsReceipt(t *testing.T) {
 	}
 	if len(child.DeliveredCommentIds) != 0 {
 		t.Fatalf("retry child inherited delivery receipt: %v", uuidsToStrings(child.DeliveredCommentIds))
+	}
+	if uuidToString(child.InitiatorUserID) != testUserID {
+		t.Fatalf("retry child initiator = %s, want %s", uuidToString(child.InitiatorUserID), testUserID)
+	}
+	if !strings.Contains(string(child.Context), "当前对话者") {
+		t.Fatalf("retry child lost task context: %s", child.Context)
 	}
 }
 

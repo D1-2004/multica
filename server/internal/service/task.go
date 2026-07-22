@@ -1128,18 +1128,16 @@ var ErrChatTaskAgentNoRuntime = errors.New("chat task: agent has no runtime")
 //     as ordinary errors. The caller should treat them as retryable
 //     or page-worthy, NOT as user-facing state.
 //
-// initiatorUserID is the user who actually sent the triggering message — the
-// real requester behind this run. Callers pass it explicitly because
-// chat_session.creator_id is not a reliable source: Lark group sessions set the
-// creator to the installer, not the sender (see the lark dispatcher). Web chat
-// passes the request user; the lark dispatcher passes the inbound sender of the
-// latest message in the silence window. Stored on the task so the daemon brief
-// can attribute the run to the right person. See MUL-2645.
+// identity separates the Multica principal that authorizes this task from the
+// real requester attributed in the daemon brief. Bound senders use the same
+// user for both. Allow-unbound channels retain the installer only as the
+// principal and leave InitiatorUserID invalid; their conversation identity is
+// carried in server-private task context. See MUL-2645.
 //
 // forceFreshSession applies only to the task created by this call. The daemon
 // uses it to skip prior chat-session resume for this dispatch without clearing
 // the chat session's stored resume pointer for future normal messages.
-func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSession, initiatorUserID pgtype.UUID, forceFreshSession bool, taskContext []byte) (db.AgentTaskQueue, error) {
+func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSession, identity ChatTaskIdentity, forceFreshSession bool, taskContext []byte) (db.AgentTaskQueue, error) {
 	agent, err := s.Queries.GetAgent(ctx, chatSession.AgentID)
 	if err != nil {
 		slog.Error("chat task enqueue failed", "chat_session_id", util.UUIDToString(chatSession.ID), "error", err)
@@ -1152,14 +1150,14 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 		return db.AgentTaskQueue{}, ErrChatTaskAgentNoRuntime
 	}
 
-	runtimeMCPOverlay := s.buildRuntimeMCPOverlay(ctx, initiatorUserID, agent)
+	runtimeMCPOverlay := s.buildRuntimeMCPOverlay(ctx, identity.PrincipalUserID, agent)
 	task, err := s.Queries.CreateChatTask(ctx, db.CreateChatTaskParams{
 		AgentID:          chatSession.AgentID,
 		RuntimeID:        agent.RuntimeID,
 		Priority:         2, // medium priority for chat
 		ChatSessionID:    chatSession.ID,
-		InitiatorUserID:  initiatorUserID,
-		OriginatorUserID: initiatorUserID,
+		InitiatorUserID:  identity.InitiatorUserID,
+		OriginatorUserID: identity.PrincipalUserID,
 		ForceFreshSession: pgtype.Bool{
 			Bool:  forceFreshSession,
 			Valid: true,

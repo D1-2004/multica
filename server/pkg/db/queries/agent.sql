@@ -327,6 +327,9 @@ WHERE id = $1 AND issue_id IS NULL;
 -- run has not changed. The Composio overlay follows the agent's invocation
 -- permission and uses the agent owner's connection (MUL-3963); originator is
 -- carried for A2A/audit, not as an originator == agent.owner_id gate.
+-- initiator_user_id is inherited independently: it is the bound conversation
+-- participant attributed in the daemon brief. Unbound channel tasks keep it
+-- NULL and retain their external display identity in the copied context.
 --
 -- chat_input_task_id is inherited straight from the parent so the whole retry
 -- chain keeps consuming the ORIGINAL root input batch (MUL-4351): the root
@@ -345,6 +348,7 @@ WHERE id = $1 AND issue_id IS NULL;
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, chat_session_id, autopilot_run_id,
     status, priority, trigger_comment_id, coalesced_comment_ids, trigger_summary, context,
+    initiator_user_id,
     session_id, work_dir,
     attempt, max_attempts, parent_task_id, force_fresh_session, is_leader_task,
     squad_id, originator_user_id, runtime_mcp_overlay, runtime_connected_apps,
@@ -355,6 +359,7 @@ SELECT
     'queued',
     CASE WHEN p.chat_session_id IS NOT NULL THEN GREATEST(p.priority, 3) ELSE p.priority END,
     p.trigger_comment_id, p.coalesced_comment_ids, p.trigger_summary, p.context,
+    p.initiator_user_id,
     CASE WHEN p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity' THEN NULL ELSE p.session_id END,
     CASE WHEN p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity' THEN NULL ELSE p.work_dir END,
     p.attempt + 1, p.max_attempts, p.id,

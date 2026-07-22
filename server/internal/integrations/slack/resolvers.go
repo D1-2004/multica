@@ -247,7 +247,10 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 			return engine.ResolvedIdentity{}, fmt.Errorf("materialize reused slack binding: %w", err)
 		}
 	}
-	return engine.ResolvedIdentity{UserID: binding.MulticaUserID}, nil
+	return engine.ResolvedIdentity{
+		PrincipalUserID: binding.MulticaUserID,
+		InitiatorUserID: binding.MulticaUserID,
+	}, nil
 }
 
 // reusableBinding looks for a link the same Slack user already made to ANOTHER

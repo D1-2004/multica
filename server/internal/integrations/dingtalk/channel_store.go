@@ -47,8 +47,9 @@ type Installation struct {
 	AppSecretEncrypted []byte
 	InstallerUserID    pgtype.UUID
 	Status             string
-	// AllowUnbound serves unbound / non-member senders as the installer
-	// rather than prompting them to bind — the "connect to customers" mode.
+	// AllowUnbound uses the installer as the workspace principal for unbound /
+	// non-member senders rather than prompting them to bind. Each current
+	// sender remains the task initiator — the "connect to customers" mode.
 	AllowUnbound bool
 	// TransportMode is the inbound delivery mode selected at registration.
 	// Historical rows omit it and decode as STREAM.
@@ -124,11 +125,10 @@ type dingtalkInstallConfig struct {
 	RouterAgentID            string                   `json:"router_agent_id,omitempty"`
 	RouterRegistrationStatus RouterRegistrationStatus `json:"router_registration_status,omitempty"`
 	IngressCutoverState      IngressCutoverState      `json:"ingress_cutover_state,omitempty"`
-	// AllowUnbound opts this installation out of the per-sender identity
-	// check: an unbound / non-member sender is served as the installer
-	// instead of the "click to bind" prompt. The operator accepts that
-	// anyone who can message the bot drives the agent under the installer's
-	// workspace identity. Omitted (false) = default bind-first behavior.
+	// AllowUnbound opts this installation out of the per-sender binding gate:
+	// an unbound / non-member sender uses the installer as the workspace
+	// principal instead of seeing the "click to bind" prompt. The current
+	// sender remains the task initiator. Omitted (false) = bind-first.
 	AllowUnbound       bool          `json:"allow_unbound,omitempty"`
 	TransportMode      TransportMode `json:"transport_mode,omitempty"`
 	ConnectionManaged  *bool         `json:"connection_managed,omitempty"`

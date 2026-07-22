@@ -93,8 +93,8 @@ func TestAutoBinderBindsDirectoryMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if identity.UserID != user.ID {
-		t.Fatalf("bound wrong user: %v", identity.UserID)
+	if identity.PrincipalUserID != user.ID || identity.InitiatorUserID != user.ID {
+		t.Fatalf("bound identity = %+v, want user %v", identity, user.ID)
 	}
 	if len(q.created) != 1 {
 		t.Fatalf("expected 1 binding row, got %d", len(q.created))
@@ -118,8 +118,8 @@ func TestAutoBinderFallsBackToContactEmail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if identity.UserID != user.ID {
-		t.Fatalf("bound wrong user: %v", identity.UserID)
+	if identity.PrincipalUserID != user.ID || identity.InitiatorUserID != user.ID {
+		t.Fatalf("bound identity = %+v, want user %v", identity, user.ID)
 	}
 }
 
@@ -234,8 +234,8 @@ func TestIdentityResolverUsesAutoBinderWhenUnbound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveSender: %v", err)
 	}
-	if identity.UserID != user.ID {
-		t.Fatalf("resolved wrong user: %v", identity.UserID)
+	if identity.PrincipalUserID != user.ID || identity.InitiatorUserID != user.ID {
+		t.Fatalf("resolved identity = %+v, want user %v", identity, user.ID)
 	}
 }
 
