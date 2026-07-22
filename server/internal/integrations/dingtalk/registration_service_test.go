@@ -85,7 +85,7 @@ type stubHTTPCallbackRouter struct{}
 func (stubHTTPCallbackRouter) PrepareEndpoint(context.Context, pgtype.UUID, pgtype.UUID, pgtype.UUID) (HTTPCallbackEndpoint, error) {
 	return HTTPCallbackEndpoint{}, nil
 }
-func (stubHTTPCallbackRouter) Register(context.Context, HTTPCallbackEndpoint, pgtype.UUID, string) (string, error) {
+func (stubHTTPCallbackRouter) Register(context.Context, HTTPCallbackEndpoint, pgtype.UUID, string, string, string) (string, error) {
 	return "source-1", nil
 }
 
