@@ -65,6 +65,44 @@ func TestBuildDispatchPromptSeparatesDisplayAndRuntime(t *testing.T) {
 	}
 }
 
+func TestCalendarStartedDispatchUsesIssueWithoutOutboundReply(t *testing.T) {
+	start := int64(1784217600000)
+	c := DispatchCommand{
+		SchemaVersion: "2.0", AgentID: "agent",
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "calendar", Type: "calendar.started", Data: DispatchEventData{
+			CalendarID: "calendar-1", Subject: "项目评审会", StartTime: &start,
+			Attendees:         []DispatchCalendarAttendee{{UID: "uid-secret"}},
+			AIReadableContent: "日程「项目评审会」已经开始。\n请检查设计方案并推进待办。",
+		}},
+		Surface:          DispatchSurface{Type: "issue"},
+		Outbound:         DispatchOutbound{Mode: "none"},
+		ExternalIdentity: AgentDispatchExternalIdentity{ContextToken: "context-token"},
+	}
+	if err := c.validate(); err != nil {
+		t.Fatalf("valid calendar dispatch rejected: %v", err)
+	}
+	prompt := mustBuildDispatchPrompt(t, c)
+	if !strings.Contains(prompt.DisplayContent, "项目评审会") || strings.Contains(prompt.DisplayContent, "uid-secret") {
+		t.Fatalf("calendar display content = %q", prompt.DisplayContent)
+	}
+	if !strings.Contains(prompt.RuntimePrompt, "untrusted") || prompt.WorkflowPrompt != "" {
+		t.Fatalf("calendar prompt must be safe and have no outbound workflow: %#v", prompt)
+	}
+	if got := dispatchWindowIdempotencyKey(c); got != "calendar:calendar-1:1784217600000" {
+		t.Fatalf("calendar idempotency key = %q", got)
+	}
+	if got := dispatchIssueTitle(c); got != "日程开始：项目评审会" {
+		t.Fatalf("calendar issue title = %q", got)
+	}
+
+	missingToken := c
+	missingToken.ExternalIdentity.ContextToken = ""
+	if err := missingToken.validate(); err == nil || !strings.Contains(err.Error(), "contextToken") {
+		t.Fatalf("calendar dispatch without context token error = %v", err)
+	}
+}
+
 func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 	c := DispatchCommand{
 		SchemaVersion: "2.0", AgentID: "agent",
@@ -293,8 +331,8 @@ func TestApplyDingTalkDispatchPromptReusesExistingTaskFields(t *testing.T) {
 		{
 			name: "issue continuation uses trigger comment content",
 			response: AgentTaskResponse{
-				IssueID:              "issue-1",
-				TriggerCommentID:     &commentID,
+				IssueID:               "issue-1",
+				TriggerCommentID:      &commentID,
 				TriggerCommentContent: "起来打球",
 			},
 			content:  func(response AgentTaskResponse) string { return response.TriggerCommentContent },
@@ -362,6 +400,39 @@ func TestApplyDingTalkDispatchPromptKeepsRobotSDKSafetyWithoutAgentOutbound(t *t
 	for _, forbidden := range []string{"dws chat message add-emoji", "dws chat message reply", "two required final delivery destinations"} {
 		if strings.Contains(response.ChatMessage, forbidden) {
 			t.Fatalf("robot_sdk task received agent-owned outbound instruction %q: %s", forbidden, response.ChatMessage)
+		}
+	}
+}
+
+func TestApplyDingTalkDispatchPromptKeepsCalendarTaskOutboundFree(t *testing.T) {
+	start := int64(1784217600000)
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "calendar", Type: "calendar.started", Data: DispatchEventData{
+			CalendarID: "calendar-1", Subject: "项目评审会", StartTime: &start,
+			AIReadableContent: "日程「项目评审会」已经开始。\n请检查设计方案并推进待办。",
+		}},
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "none"},
+	})
+	response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "保留已有交接说明"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	for _, want := range []string{
+		"## Trusted DingTalk Dispatch",
+		"untrusted input",
+		"## External DingTalk Calendar Event",
+		"保留已有交接说明",
+	} {
+		if !strings.Contains(response.HandoffNote, want) {
+			t.Errorf("calendar task handoff missing %q: %s", want, response.HandoffNote)
+		}
+	}
+	for _, forbidden := range []string{"dws chat message add-emoji", "dws chat message reply", "two required final delivery destinations"} {
+		if strings.Contains(response.HandoffNote, forbidden) {
+			t.Fatalf("calendar task received outbound workflow %q: %s", forbidden, response.HandoffNote)
 		}
 	}
 }

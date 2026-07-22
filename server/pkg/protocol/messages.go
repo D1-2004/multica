@@ -33,6 +33,7 @@ const (
 	DispatchSurfaceTypeChat      = "chat"
 	DispatchOutboundModeDWS      = "dws"
 	DispatchOutboundModeRobotSDK = "robot_sdk"
+	DispatchOutboundModeNone     = "none"
 	DispatchReplyToLatestMessage = "latest_message"
 )
 
