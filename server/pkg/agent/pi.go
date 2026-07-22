@@ -183,6 +183,28 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		return nil, fmt.Errorf("pi executable not found at %q: %w", execName, err)
 	}
 
+	var mcpConfigPath string
+	var mcpExtensionPath string
+	var mcpFileCleanup func()
+	if hasManagedMcpConfig(opts.McpConfig) {
+		mcpExtensionPath, err = validatePiMCPExtensionPath(envValue(b.cfg.Env, piMCPExtensionPathEnv))
+		if err != nil {
+			return nil, err
+		}
+		mcpConfigPath, err = writePiMCPConfigToTemp(opts.McpConfig, b.cfg.Env["TMPDIR"])
+		if err != nil {
+			return nil, err
+		}
+		mcpFileCleanup = func() { cleanupPiMCPConfigTemp(mcpConfigPath) }
+	}
+	// Clean up the task-local config if execution fails before the child
+	// starts and the result goroutine takes ownership.
+	defer func() {
+		if mcpFileCleanup != nil {
+			mcpFileCleanup()
+		}
+	}()
+
 	timeout := opts.Timeout
 
 	// Pi's --session flag expects a file path where events are appended.
@@ -203,6 +225,9 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 	runCtx, cancel := runContext(ctx, timeout)
 
 	args := buildPiArgs(prompt, sessionPath, opts, b.cfg.Logger)
+	if mcpExtensionPath != "" {
+		args = addPiManagedExtensionArg(args, mcpExtensionPath)
+	}
 	argv0, cmdArgs := choosePiInvocation(execName, lookedUp, args, b.cfg.Logger)
 
 	cmd := exec.CommandContext(runCtx, argv0, cmdArgs...)
@@ -212,7 +237,9 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	// Never inherit a stale task's config path. Managed MCP replaces it with
+	// this run's 0600 file; unmanaged runs receive no Pi MCP config path.
+	cmd.Env = replaceEnvValue(buildEnv(b.cfg.Env), piMCPConfigPathEnv, mcpConfigPath)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -239,6 +266,8 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		return nil, fmt.Errorf("start pi: %w", err)
 	}
 	_ = stdin.Close()
+	// cmd.Start succeeded: the result goroutine now owns config cleanup.
+	mcpFileCleanup = nil
 
 	b.cfg.Logger.Info("pi started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
 
@@ -255,6 +284,9 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		defer cancel()
 		defer close(msgCh)
 		defer close(resCh)
+		if mcpConfigPath != "" {
+			defer cleanupPiMCPConfigTemp(mcpConfigPath)
+		}
 
 		startTime := time.Now()
 		var output strings.Builder
@@ -377,6 +409,12 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		}
 
 		b.cfg.Logger.Info("pi finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
+		// The result is the observable completion boundary. Remove the
+		// credential-bearing task file before publishing that completion so a
+		// caller can never observe a finished run with live MCP credentials.
+		if mcpConfigPath != "" {
+			cleanupPiMCPConfigTemp(mcpConfigPath)
+		}
 
 		resCh <- Result{
 			Status:     finalStatus,
@@ -482,6 +520,17 @@ var piBlockedArgs = map[string]blockedArgMode{
 	"--session": blockedWithValue,  // daemon manages the session path
 }
 
+var piManagedMCPBlockedArgs = map[string]blockedArgMode{
+	"-p":              blockedStandalone,
+	"--print":         blockedStandalone,
+	"--mode":          blockedWithValue,
+	"--session":       blockedWithValue,
+	"-e":              blockedWithValue,
+	"--extension":     blockedWithValue,
+	"-ne":             blockedStandalone,
+	"--no-extensions": blockedStandalone,
+}
+
 // buildPiArgs assembles the argv for a one-shot Pi invocation.
 //
 // Flags:
@@ -520,7 +569,14 @@ func buildPiArgs(prompt, sessionPath string, opts ExecOptions, logger *slog.Logg
 	if opts.SystemPrompt != "" {
 		args = append(args, "--append-system-prompt", opts.SystemPrompt)
 	}
-	args = append(args, filterCustomArgs(opts.CustomArgs, piBlockedArgs, logger)...)
+	blockedArgs := piBlockedArgs
+	if hasManagedMcpConfig(opts.McpConfig) {
+		// Managed MCP runs execute exactly one root-owned extension. Automatic
+		// discovery and custom extension flags would run same-UID code that can
+		// read the task-local credential file before the trusted extension does.
+		blockedArgs = piManagedMCPBlockedArgs
+	}
+	args = append(args, filterCustomArgs(opts.CustomArgs, blockedArgs, logger)...)
 	args = append(args, prompt)
 	return args
 }
