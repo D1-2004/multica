@@ -328,7 +328,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 
 	// 5. Resolve the chat_session. Shared group sessions are created by the
 	//    installer; p2p and sender-isolated group sessions by the sole human.
-	sessionCreator := identity.UserID
+	sessionCreator := identity.PrincipalUserID
 	if msg.Source.ChatType == channel.ChatTypeGroup && !set.GroupSessionsPerSender {
 		sessionCreator = inst.InstallerUserID
 	}
@@ -430,7 +430,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			ctx,
 			inst,
 			set.OriginType,
-			identity.UserID,
+			identity.PrincipalUserID,
 			msg.MessageID,
 			resolvedCommand,
 		)
@@ -455,7 +455,10 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			return Result{}, finalizeRelease, fmt.Errorf("load chat session for durable task: %w", err)
 		}
 		durableFresh = msg.ForceFresh
-		prepared, err := r.tasks.PrepareChannelChatTask(ctx, session, identity.UserID, durableFresh, taskContext)
+		prepared, err := r.tasks.PrepareChannelChatTask(ctx, session, service.ChatTaskIdentity{
+			PrincipalUserID: identity.PrincipalUserID,
+			InitiatorUserID: identity.InitiatorUserID,
+		}, durableFresh, taskContext)
 		if err != nil {
 			switch {
 			case errors.Is(err, service.ErrChatTaskAgentNoRuntime):
@@ -474,7 +477,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	appendRes, err := set.Session.AppendMessage(ctx, AppendParams{
 		SessionID:         sessionID,
 		WorkspaceID:       inst.WorkspaceID,
-		Sender:            identity.UserID,
+		Sender:            identity.PrincipalUserID,
 		InstallationID:    inst.ID,
 		Installation:      inst,
 		Message:           msg,
@@ -483,7 +486,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		PreparedTask:      preparedTask,
 	})
 	if err == nil {
-		r.publishInboundMessage(inst.WorkspaceID, sessionID, identity.UserID, appendRes)
+		r.publishInboundMessage(inst.WorkspaceID, sessionID, identity.PrincipalUserID, appendRes)
 	}
 	if err != nil {
 		if errors.Is(err, ErrClaimLost) {
@@ -515,7 +518,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		if durableIssueResult != nil {
 			issueRes = *durableIssueResult
 		} else {
-			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.UserID, sessionID, *appendRes.IssueCommand)
+			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.PrincipalUserID, sessionID, *appendRes.IssueCommand)
 		}
 		if err != nil {
 			r.logger.Error("channel issue command failed",
@@ -586,30 +589,34 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	}
 
 	// 8. Debounce the run trigger. The synchronous outcome is OutcomeIngested
-	//    with no TaskID — the task row is created at flush. identity.UserID is
+	//    with no TaskID — the task row is created at flush. The resolved task
+	//    identity keeps its authorization principal separate from attribution.
 	//    THIS message's sender (the task initiator), deliberately not the
 	//    session creator (group sessions are creator=installer). Latest sender
 	//    in a window wins (MUL-2645).
-	r.scheduleRun(set, inst, msg, sessionID, identity.UserID, taskContext)
+	r.scheduleRun(set, inst, msg, sessionID, service.ChatTaskIdentity{
+		PrincipalUserID: identity.PrincipalUserID,
+		InitiatorUserID: identity.InitiatorUserID,
+	}, taskContext)
 	return res, postAppendFinalize, nil
 }
 
 // scheduleRun hands the per-session run trigger to the debouncer (or fires it
 // inline when batching is disabled).
-func (r *Router) scheduleRun(set ResolverSet, inst ResolvedInstallation, msg channel.InboundMessage, sessionID, initiatorUserID pgtype.UUID, taskContext []byte) {
+func (r *Router) scheduleRun(set ResolverSet, inst ResolvedInstallation, msg channel.InboundMessage, sessionID pgtype.UUID, identity service.ChatTaskIdentity, taskContext []byte) {
 	key := keyForSession(sessionID)
 	fresh := msg.ForceFresh
 	if r.batcher == nil {
 		// Merge any pending bare-/new mark so the directive is honored even
 		// when batching is disabled.
-		r.flushChatRun(set, inst, msg, sessionID, initiatorUserID, r.takePendingFresh(key, fresh), taskContext)
+		r.flushChatRun(set, inst, msg, sessionID, identity, r.takePendingFresh(key, fresh), taskContext)
 		return
 	}
 	if fresh {
 		r.markPendingFresh(key)
 	}
 	flush := func() {
-		r.flushChatRun(set, inst, msg, sessionID, initiatorUserID, r.takePendingFresh(key, fresh), taskContext)
+		r.flushChatRun(set, inst, msg, sessionID, identity, r.takePendingFresh(key, fresh), taskContext)
 	}
 	r.batcher.Schedule(key, flush)
 }
@@ -621,7 +628,7 @@ const chatRunFlushTimeout = 10 * time.Second
 // flushChatRun is the debounced run-trigger: reload session, enqueue exactly
 // one chat task for the window, and emit the offline/archived notice (only
 // known here now) via the replier. Errors are logged, not returned.
-func (r *Router) flushChatRun(set ResolverSet, inst ResolvedInstallation, msg channel.InboundMessage, sessionID, initiatorUserID pgtype.UUID, forceFresh bool, taskContext []byte) {
+func (r *Router) flushChatRun(set ResolverSet, inst ResolvedInstallation, msg channel.InboundMessage, sessionID pgtype.UUID, identity service.ChatTaskIdentity, forceFresh bool, taskContext []byte) {
 	ctx, cancel := context.WithTimeout(context.Background(), chatRunFlushTimeout)
 	defer cancel()
 
@@ -637,7 +644,7 @@ func (r *Router) flushChatRun(set ResolverSet, inst ResolvedInstallation, msg ch
 		r.clearTyping(ctx, set, sessionID)
 		return
 	}
-	if _, err := r.tasks.EnqueueChatTask(ctx, session, initiatorUserID, forceFresh, taskContext); err != nil {
+	if _, err := r.tasks.EnqueueChatTask(ctx, session, identity, forceFresh, taskContext); err != nil {
 		// No task was enqueued, so no task lifecycle event will ever publish and
 		// the platform's bus-driven typing clear can never fire. Clear the
 		// indicator here (before any notice) so the "processing" reaction does

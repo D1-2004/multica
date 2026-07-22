@@ -80,6 +80,8 @@ type robotTaskContextResolver struct {
 
 const dingtalkSessionReplyContextKey = "dingtalk_session_reply"
 
+const maxDingTalkInitiatorDisplayNameRunes = 128
+
 // dingtalkSessionReplyContext carries the per-message Stream reply locator.
 // It belongs to the queued task rather than the installation: historical
 // Stream installations did not persist robot_code, and concurrent messages
@@ -115,6 +117,13 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		for key, value := range dispatchContext {
 			taskContext[key] = value
 		}
+	}
+	// Project the sender display identity from the adapter-owned callback after
+	// copying dispatch context so no caller-supplied key can override it. This
+	// metadata is used only when the sender has no valid Multica binding; bound
+	// user identity remains authoritative through initiator_user_id.
+	taskContext[protocol.DingTalkConversationInitiatorJSONKey] = protocol.DingTalkConversationInitiator{
+		DisplayName: truncateRunes(strings.TrimSpace(raw.SenderNick), maxDingTalkInitiatorDisplayNameRunes),
 	}
 	if webhook := strings.TrimSpace(raw.SessionWebhook); webhook != "" {
 		taskContext[dingtalkSessionReplyContextKey] = dingtalkSessionReplyContext{
@@ -414,9 +423,9 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 				// A directory match keeps the sender's own identity; the
 				// customer-mode fallthrough only overrides the failures.
 				id, autoErr := r.auto.Resolve(ctx, inst, msg)
-				return r.applyAllowUnbound(inst, id, autoErr)
+				return r.applyAllowUnbound(ctx, inst, msg, id, autoErr)
 			}
-			return r.applyAllowUnbound(inst, engine.ResolvedIdentity{}, engine.ErrSenderUnbound)
+			return r.applyAllowUnbound(ctx, inst, msg, engine.ResolvedIdentity{}, engine.ErrSenderUnbound)
 		}
 		return engine.ResolvedIdentity{}, err
 	}
@@ -426,22 +435,33 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 		WorkspaceID: inst.WorkspaceID,
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return r.applyAllowUnbound(inst, engine.ResolvedIdentity{}, engine.ErrSenderNotMember)
+			return r.applyAllowUnbound(ctx, inst, msg, engine.ResolvedIdentity{}, engine.ErrSenderNotMember)
 		}
 		return engine.ResolvedIdentity{}, err
 	}
-	return engine.ResolvedIdentity{UserID: binding.MulticaUserID}, nil
+	slog.InfoContext(ctx, "dingtalk sender identity resolved",
+		"event", "dingtalk_sender_identity_resolved",
+		"installation_id", util.UUIDToString(inst.ID),
+		"sender_id_hash", dingtalkTraceHash(msg.Source.SenderID),
+		"binding_state", "bound",
+		"principal_source", "channel_binding",
+		"initiator_source", "channel_binding",
+	)
+	return engine.ResolvedIdentity{
+		PrincipalUserID: binding.MulticaUserID,
+		InitiatorUserID: binding.MulticaUserID,
+	}, nil
 }
 
 // applyAllowUnbound is the "connect an agent to external customers"
 // fallthrough. When identity resolution ends in the two product-outcome
 // sentinels (ErrSenderUnbound / ErrSenderNotMember) AND the installation
-// opted into allow_unbound, the sender is served as the installer instead
-// of being bounced to the bind prompt. Every other error (and the success
-// case) passes through untouched, so a bound member always keeps their own
-// identity and audit trail. The installer is by construction a workspace
-// member, so this cannot smuggle in a non-member identity.
-func (r *identityResolver) applyAllowUnbound(inst engine.ResolvedInstallation, id engine.ResolvedIdentity, err error) (engine.ResolvedIdentity, error) {
+// opted into allow_unbound, the installer remains the workspace principal so
+// existing authorization and persistence behavior is preserved. The task
+// initiator stays invalid: the current DingTalk conversation identity is
+// carried separately in task context and must never be replaced by the
+// installer. Every other error (and the success case) passes through untouched.
+func (r *identityResolver) applyAllowUnbound(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, id engine.ResolvedIdentity, err error) (engine.ResolvedIdentity, error) {
 	if err == nil {
 		return id, nil
 	}
@@ -451,7 +471,19 @@ func (r *identityResolver) applyAllowUnbound(inst engine.ResolvedInstallation, i
 	if !installationAllowsUnbound(inst) || !inst.InstallerUserID.Valid {
 		return engine.ResolvedIdentity{}, err
 	}
-	return engine.ResolvedIdentity{UserID: inst.InstallerUserID}, nil
+	bindingState := "unbound"
+	if errors.Is(err, engine.ErrSenderNotMember) {
+		bindingState = "not_member"
+	}
+	slog.InfoContext(ctx, "dingtalk sender identity resolved",
+		"event", "dingtalk_sender_identity_resolved",
+		"installation_id", util.UUIDToString(inst.ID),
+		"sender_id_hash", dingtalkTraceHash(msg.Source.SenderID),
+		"binding_state", bindingState,
+		"principal_source", "installer",
+		"initiator_source", "conversation_sender",
+	)
+	return engine.ResolvedIdentity{PrincipalUserID: inst.InstallerUserID}, nil
 }
 
 // installationAllowsUnbound reports whether the installation config carries

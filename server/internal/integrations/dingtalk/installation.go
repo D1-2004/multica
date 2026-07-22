@@ -26,8 +26,8 @@ type InstallationParams struct {
 	ClientID        string
 	ClientSecret    string // plaintext; encrypted at the service boundary
 	InstallerUserID pgtype.UUID
-	// AllowUnbound persists the "serve unbound senders as the installer"
-	// mode on the installation config (see dingtalkInstallConfig).
+	// AllowUnbound persists customer mode: installer as workspace principal,
+	// current DingTalk sender as task initiator (see dingtalkInstallConfig).
 	AllowUnbound       bool
 	TransportMode      TransportMode
 	RobotCode          string

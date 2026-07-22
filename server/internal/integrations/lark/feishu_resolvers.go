@@ -110,7 +110,10 @@ func (r *feishuIdentityResolver) ResolveSender(ctx context.Context, inst engine.
 	if !isMember {
 		return engine.ResolvedIdentity{}, engine.ErrSenderNotMember
 	}
-	return engine.ResolvedIdentity{UserID: binding.MulticaUserID}, nil
+	return engine.ResolvedIdentity{
+		PrincipalUserID: binding.MulticaUserID,
+		InitiatorUserID: binding.MulticaUserID,
+	}, nil
 }
 
 // ---- dedup ----

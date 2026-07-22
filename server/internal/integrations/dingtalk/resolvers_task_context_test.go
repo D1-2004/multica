@@ -56,7 +56,11 @@ func newRobotTaskContextResolver(employee *robotEmployeeResolverStub) *robotTask
 
 func taskContextMessage(t *testing.T, corpID, staffID string) channel.InboundMessage {
 	t.Helper()
-	raw, err := json.Marshal(dingtalkRawEvent{SenderCorpID: corpID, SenderStaffID: staffID})
+	raw, err := json.Marshal(dingtalkRawEvent{
+		SenderCorpID:  corpID,
+		SenderStaffID: staffID,
+		SenderNick:    "当前对话者",
+	})
 	if err != nil {
 		t.Fatalf("marshal raw message: %v", err)
 	}
@@ -111,6 +115,7 @@ func TestRobotTaskContextResolverPrefersTrustedExternalIdentityToken(t *testing.
 		MessageID:            "message-1",
 		SenderUID:            "123456",
 		SenderOrgID:          "654321",
+		SenderName:           "黄谣",
 		Text:                 "hello",
 		IdentityContextToken: "sealed-router-context",
 	}, "client-1", "11111111-1111-1111-1111-111111111111")
@@ -140,6 +145,49 @@ func TestRobotTaskContextResolverPrefersTrustedExternalIdentityToken(t *testing.
 	if _, present := payload[protocol.DingTalkRobotIdentityJSONKey]; present {
 		t.Fatal("local robot identity must not override external identity")
 	}
+	assertDingTalkConversationInitiator(t, contextJSON, "黄谣")
+}
+
+func TestRobotTaskContextResolverOverridesDispatchInitiatorWithCurrentSender(t *testing.T) {
+	fakeInitiator, err := json.Marshal(map[string]any{
+		protocol.DingTalkConversationInitiatorJSONKey: map[string]string{"display_name": "机器人创建者"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := InboundFromHTTPCallback(HTTPCallbackMessage{
+		ConversationID:       "conversation-1",
+		ConversationType:     "single",
+		MessageID:            "message-1",
+		SenderUID:            "123456",
+		SenderOrgID:          "654321",
+		SenderName:           "当前对话者",
+		Text:                 "hello",
+		IdentityContextToken: "sealed-router-context",
+		DispatchContext:      fakeInitiator,
+	}, "client-1", "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatalf("InboundFromHTTPCallback: %v", err)
+	}
+	contextJSON, err := (&robotTaskContextResolver{}).ResolveTaskContext(context.Background(), engine.ResolvedInstallation{}, message)
+	if err != nil {
+		t.Fatalf("ResolveTaskContext: %v", err)
+	}
+	assertDingTalkConversationInitiator(t, contextJSON, "当前对话者")
+}
+
+func TestRobotTaskContextResolverKeepsExplicitEmptyConversationInitiator(t *testing.T) {
+	raw, err := json.Marshal(dingtalkRawEvent{AgentIdentityContextToken: "trusted-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextJSON, err := (&robotTaskContextResolver{}).ResolveTaskContext(
+		context.Background(), engine.ResolvedInstallation{}, channel.InboundMessage{Raw: raw},
+	)
+	if err != nil {
+		t.Fatalf("ResolveTaskContext: %v", err)
+	}
+	assertDingTalkConversationInitiator(t, contextJSON, "")
 }
 
 func TestRobotTaskContextResolverKeepsRouteSenderOutOfTrustedIdentity(t *testing.T) {
@@ -281,5 +329,24 @@ func assertDingTalkIdentityUnavailable(t *testing.T, contextJSON []byte, wantRea
 	}
 	if unavailable.Reason != wantReason {
 		t.Fatalf("identity unavailable reason = %q, want %q", unavailable.Reason, wantReason)
+	}
+}
+
+func assertDingTalkConversationInitiator(t *testing.T, contextJSON []byte, wantName string) {
+	t.Helper()
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(contextJSON, &payload); err != nil {
+		t.Fatalf("decode task context: %v", err)
+	}
+	encoded, present := payload[protocol.DingTalkConversationInitiatorJSONKey]
+	if !present {
+		t.Fatal("DingTalk conversation initiator missing from task context")
+	}
+	var initiator protocol.DingTalkConversationInitiator
+	if err := json.Unmarshal(encoded, &initiator); err != nil {
+		t.Fatalf("decode DingTalk conversation initiator: %v", err)
+	}
+	if initiator.DisplayName != wantName {
+		t.Fatalf("conversation initiator = %q, want %q", initiator.DisplayName, wantName)
 	}
 }

@@ -361,10 +361,11 @@ type AgentTaskResponse struct {
 	// requester behind the current comment/mention or chat message — as
 	// distinct from the runtime owner whose credentials the agent runs with.
 	// Resolved at claim time: comment-triggered tasks use the triggering
-	// comment's author; chat tasks use the chat session creator. Empty for
-	// task kinds with no attributable human initiator (on-assign, autopilot,
-	// quick-create). InitiatorEmail is set only for member initiators
-	// ("member"); agent initiators ("agent") carry a name but no email. The
+	// comment's author; chat tasks use the bound sender or the current unbound
+	// DingTalk conversation participant. Empty for task kinds with no
+	// attributable human initiator (on-assign, autopilot, quick-create).
+	// InitiatorEmail is set only for member initiators ("member"); agent
+	// initiators ("agent") carry a name but no email. The
 	// daemon emits these into the brief under `## Task Initiator` so a
 	// workspace-visible, multi-user agent can attribute the request and apply
 	// per-person privacy / access rules instead of seeing every requester as
@@ -526,6 +527,16 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 // endpoint; all user-facing task endpoints use taskToResponse.
 func taskToClaimResponse(t db.AgentTaskQueue, workspaceID string, runtime db.AgentRuntime) AgentTaskResponse {
 	resp := taskToResponse(t, workspaceID)
+	// Unbound DingTalk senders deliberately have no initiator_user_id: their
+	// installer is only the Multica authorization principal. Surface the
+	// adapter-attested current conversation display identity to the daemon.
+	// A valid initiator_user_id is resolved later and remains authoritative.
+	if !t.InitiatorUserID.Valid && t.ChatSessionID.Valid {
+		if initiator, present := taskContextDingTalkInitiator(t.Context); present {
+			resp.InitiatorType = protocol.TaskInitiatorTypeDingTalkUser
+			resp.InitiatorName = strings.TrimSpace(initiator.DisplayName)
+		}
+	}
 	// FC/E2B receives and redeems the token in its root runner before the
 	// daemon starts. Sending it again in the subsequent claim would put the
 	// spent server-private bearer token back into the sandbox daemon memory.
@@ -533,6 +544,26 @@ func taskToClaimResponse(t db.AgentTaskQueue, workspaceID string, runtime db.Age
 		resp.AgentIdentityContextToken = taskContextString(t.Context, protocol.AgentIdentityContextTokenJSONKey)
 	}
 	return resp
+}
+
+func taskContextDingTalkInitiator(raw []byte) (protocol.DingTalkConversationInitiator, bool) {
+	if len(raw) == 0 {
+		return protocol.DingTalkConversationInitiator{}, false
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return protocol.DingTalkConversationInitiator{}, false
+	}
+	encoded, present := payload[protocol.DingTalkConversationInitiatorJSONKey]
+	trimmed := bytes.TrimSpace(encoded)
+	if !present || len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return protocol.DingTalkConversationInitiator{}, false
+	}
+	var initiator protocol.DingTalkConversationInitiator
+	if err := json.Unmarshal(trimmed, &initiator); err != nil {
+		return protocol.DingTalkConversationInitiator{}, false
+	}
+	return initiator, true
 }
 
 func taskContextString(raw []byte, key string) string {
@@ -1167,7 +1198,11 @@ func (h *Handler) sendAgentWelcomeChat(ctx context.Context, agent db.Agent, crea
 		return
 	}
 
-	if _, err := h.TaskService.EnqueueChatTask(ctx, session, parseUUID(creatorID), false, nil); err != nil {
+	creator := parseUUID(creatorID)
+	if _, err := h.TaskService.EnqueueChatTask(ctx, session, service.ChatTaskIdentity{
+		PrincipalUserID: creator,
+		InitiatorUserID: creator,
+	}, false, nil); err != nil {
 		slog.Warn("agent welcome: enqueue task failed", "chat_session_id", uuidToString(session.ID), "error", err)
 	}
 }

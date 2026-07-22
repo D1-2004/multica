@@ -331,8 +331,8 @@ type BeginInstallParams struct {
 	WorkspaceID pgtype.UUID
 	AgentID     pgtype.UUID
 	InitiatorID pgtype.UUID
-	// AllowUnbound requests the "serve unbound senders as the installer"
-	// mode; persisted on the installation when the scan completes.
+	// AllowUnbound requests customer mode: installer as workspace principal,
+	// current DingTalk sender as task initiator. Persisted after the scan.
 	AllowUnbound bool
 	// TransportMode defaults to STREAM for backward compatibility.
 	TransportMode TransportMode
