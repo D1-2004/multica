@@ -54,12 +54,16 @@ func (s *HTTPCallbackRouterService) Register(
 	if robotCode == "" {
 		return "", errors.New("register robot source: robot_code is required")
 	}
+	dispatchPath, err := dispatchPathForEndpointID(endpoint.EndpointID)
+	if err != nil {
+		return "", fmt.Errorf("register robot source: %w", err)
+	}
 	subscription, err := s.client.RegisterRobot(ctx, RobotRegistration{
 		RobotCode:              robotCode,
 		ClientID:               clientID,
 		ClientSecret:           clientSecret,
 		AgentID:                util.UUIDToString(agentID),
-		DispatchURL:            endpoint.DispatchURL,
+		DispatchURL:            dispatchPath,
 		Surface:                SubscriptionSurface{Type: "chat"},
 		Outbound:               SubscriptionOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
 		ReplaceExistingBinding: true,
