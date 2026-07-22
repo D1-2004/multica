@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -269,6 +270,36 @@ func TestOpencodeHandleErrorEvent(t *testing.T) {
 	}
 }
 
+func TestOpencodeProcessEventsPreservesErrorReference(t *testing.T) {
+	t.Parallel()
+
+	var logBuf bytes.Buffer
+	b := &opencodeBackend{cfg: Config{Logger: slog.New(slog.NewTextHandler(&logBuf, nil))}}
+	ch := make(chan Message, 10)
+	lines := `{"type":"error","timestamp":1001,"sessionID":"ses_err","error":{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_01JXYZ"}}}`
+
+	result := b.processEvents(strings.NewReader(lines), ch)
+
+	want := "Unexpected server error. Check server logs for details. (ref: err_01JXYZ)"
+	if result.errMsg != want {
+		t.Fatalf("errMsg: got %q, want %q", result.errMsg, want)
+	}
+
+	close(ch)
+	var errorMessage string
+	for msg := range ch {
+		if msg.Type == MessageError {
+			errorMessage = msg.Content
+		}
+	}
+	if errorMessage != want {
+		t.Fatalf("error message: got %q, want %q", errorMessage, want)
+	}
+	if got := logBuf.String(); !strings.Contains(got, "error_ref=err_01JXYZ") {
+		t.Fatalf("structured log must retain the OpenCode error reference, got %q", got)
+	}
+}
+
 func TestOpencodeHandleErrorEventNameOnly(t *testing.T) {
 	t.Parallel()
 
@@ -470,9 +501,22 @@ func TestOpencodeErrorMessage(t *testing.T) {
 			want: "details",
 		},
 		{
+			name: "data message and reference",
+			err: &opencodeError{Name: "UnknownError", Data: &opencodeErrData{
+				Message: "Unexpected server error",
+				Ref:     "err_01JXYZ",
+			}},
+			want: "Unexpected server error (ref: err_01JXYZ)",
+		},
+		{
 			name: "name only",
 			err:  &opencodeError{Name: "RateLimitError"},
 			want: "RateLimitError",
+		},
+		{
+			name: "reference only",
+			err:  &opencodeError{Data: &opencodeErrData{Ref: "err_01JXYZ"}},
+			want: "unknown opencode error (ref: err_01JXYZ)",
 		},
 		{
 			name: "empty",
