@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -112,6 +114,74 @@ func TestHandleAgentDispatchRecordsMissingCredential(t *testing.T) {
 	if len(metric.GetLabel()) != 1 || metric.GetLabel()[0].GetName() != "outcome" ||
 		metric.GetLabel()[0].GetValue() != "missing_credential" || metric.GetCounter().GetValue() != 1 {
 		t.Fatalf("dispatch auth metric = %#v", metric)
+	}
+}
+
+func TestHandleAgentDispatchLogsInvalidCredentialWithoutSecrets(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler integration database is unavailable")
+	}
+	agentID := createHandlerTestAgent(t, "test-bot-dispatch-auth-log", nil)
+	endpointID, _ := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer wrong-secret")
+	req = withURLParams(req, "endpointId", endpointID)
+	w := httptest.NewRecorder()
+	testHandler.HandleAgentDispatch(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "MULTICA_AGENT_DISPATCH_AUTH") ||
+		!strings.Contains(out, "outcome=invalid_credential") ||
+		!strings.Contains(out, "endpointKeyId=v1") ||
+		!strings.Contains(out, "endpointFingerprint=") {
+		t.Fatalf("missing structured dispatch auth log: %s", out)
+	}
+	if strings.Contains(out, "wrong-secret") || strings.Contains(out, endpointID) {
+		t.Fatalf("dispatch auth log leaked a credential or endpoint id: %s", out)
+	}
+}
+
+func TestHandleAgentDispatchLabelsEmptyAuthenticatedBodyAsLegacyPromptProbe(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler integration database is unavailable")
+	}
+	agentID := createHandlerTestAgent(t, "test-bot-dispatch-legacy-probe-log", nil)
+	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+deliverySecret)
+	req = withURLParams(req, "endpointId", endpointID)
+	w := httptest.NewRecorder()
+	testHandler.HandleAgentDispatch(w, req)
+
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "input.userPrompt.text is required") {
+		t.Fatalf("legacy probe response = %d %s", w.Code, w.Body.String())
+	}
+	out := logs.String()
+	for _, field := range []string{
+		"MULTICA_AGENT_DISPATCH_REQUEST",
+		"protocol=legacy",
+		"schemaVersion=missing",
+		"failureCode=user_prompt_required",
+	} {
+		if !strings.Contains(out, field) {
+			t.Fatalf("legacy probe log missing %q: %s", field, out)
+		}
+	}
+	if strings.Contains(out, deliverySecret) || strings.Contains(out, endpointID) {
+		t.Fatalf("legacy probe log leaked a credential or endpoint id: %s", out)
 	}
 }
 
@@ -424,6 +494,45 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 	case <-launcher.calls:
 	case <-time.After(time.Second):
 		t.Fatal("runtime launcher was not called for follow-up")
+	}
+}
+
+func TestHandleAgentDispatchRecreatesMissingContinuationIssue(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-bot-dispatch-missing-continuation", nil)
+	const missingIssueID = "00000000-0000-4000-8000-000000000001"
+	body := fmt.Sprintf(`{
+		"continuation":{"kind":"issue","issueId":%q},
+		"input":{
+			"systemPrompt":{"text":"External input."},
+			"userPrompt":{"text":"Continue after the original issue was deleted."},
+			"attachments":[]
+		}
+	}`, missingIssueID)
+
+	w := postAgentDispatchForTest(t, body, agentID)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("HandleAgentDispatch missing continuation: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp AgentDispatchResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.TaskID == "" || resp.Continuation.Kind != "issue" || resp.Continuation.IssueID == "" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if resp.Continuation.IssueID == missingIssueID {
+		t.Fatalf("continuation issue id was not refreshed: %+v", resp.Continuation)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, resp.Continuation.IssueID)
+	})
+
+	var issueExists bool
+	if err := testPool.QueryRow(context.Background(), `SELECT EXISTS (SELECT 1 FROM issue WHERE id = $1)`, resp.Continuation.IssueID).Scan(&issueExists); err != nil {
+		t.Fatalf("check recreated issue: %v", err)
+	}
+	if !issueExists {
+		t.Fatal("recreated continuation issue does not exist")
 	}
 }
 

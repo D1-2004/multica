@@ -177,7 +177,7 @@ func TestCallbackTokenRejectsNonCanonicalRawValuesBeforeHashing(t *testing.T) {
 	}
 }
 
-func TestDingTalkAccountConfigRequiresCanonicalMatchingDispatchURL(t *testing.T) {
+func TestDingTalkAccountConfigRequiresMatchingDispatchPath(t *testing.T) {
 	base := DingTalkAccountConfig{
 		SchemaVersion:      1,
 		DispatchEndpointID: "v1_AAECAwQFBgcICQoLDA0ODw",
@@ -192,15 +192,23 @@ func TestDingTalkAccountConfigRequiresCanonicalMatchingDispatchURL(t *testing.T)
 
 	for _, dispatchURL := range []string{
 		"https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODx",
-		"https://MULTICA.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
 		"https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw/",
 		"https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw?token=secret",
-		"http://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
 	} {
 		config := base
 		config.DispatchURL = dispatchURL
 		if err := config.Validate(); err == nil {
 			t.Fatalf("expected dispatch URL %q to fail", dispatchURL)
+		}
+	}
+	for _, dispatchURL := range []string{
+		"https://MULTICA.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
+		"http://legacy-multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
+	} {
+		config := base
+		config.DispatchURL = dispatchURL
+		if err := config.Validate(); err != nil {
+			t.Fatalf("historical dispatch URL %q should remain readable: %v", dispatchURL, err)
 		}
 	}
 }

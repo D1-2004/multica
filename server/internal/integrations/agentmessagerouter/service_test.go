@@ -78,6 +78,26 @@ func (f *fakeBindingStore) BeginDingTalkAccountBinding(_ context.Context, arg db
 	return f.row, nil
 }
 
+func (f *fakeBindingStore) UpdateDingTalkAccountBindingDispatchURL(_ context.Context, arg db.UpdateDingTalkAccountBindingDispatchURLParams) (db.ChannelInstallation, error) {
+	if !f.row.ID.Valid || f.row.ID != arg.ID || f.row.WorkspaceID != arg.WorkspaceID ||
+		f.row.AgentID != arg.AgentID || f.row.ChannelType != ChannelTypeDingTalkAccount || f.row.Status != "pending" {
+		return db.ChannelInstallation{}, pgx.ErrNoRows
+	}
+	config, err := ParseDingTalkAccountConfig(f.row.Config)
+	if err != nil {
+		return db.ChannelInstallation{}, err
+	}
+	if config.DispatchEndpointID != arg.DispatchEndpointID {
+		return db.ChannelInstallation{}, pgx.ErrNoRows
+	}
+	config.DispatchURL = arg.DispatchUrl
+	f.row.Config, err = config.Marshal()
+	if err != nil {
+		return db.ChannelInstallation{}, err
+	}
+	return f.row, nil
+}
+
 func (f *fakeBindingStore) GetDingTalkAccountBinding(_ context.Context, _ pgtype.UUID) (db.ChannelInstallation, error) {
 	if f.getErr != nil {
 		return db.ChannelInstallation{}, f.getErr
@@ -480,7 +500,7 @@ func (f *fakeBindingRouter) DeleteSubscription(_ context.Context, sourceID strin
 	return f.deleteErr
 }
 
-func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t *testing.T) {
+func TestBeginDingTalkAccountBindingUsesDispatchPathWithoutPersistingRouterToken(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	workspaceID := uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	agentID := uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
@@ -488,7 +508,7 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	oldEndpoint := "v1_EREREREREREREREREREREQ"
 	oldConfig := NewPendingDingTalkAccountConfig(
 		oldEndpoint,
-		"https://multica.example/api/webhooks/agent-dispatch/"+oldEndpoint,
+		"http://legacy-multica.example/api/webhooks/agent-dispatch/"+oldEndpoint,
 		HashCallbackToken(canonicalCallbackToken),
 		now.Add(time.Minute),
 	)
@@ -539,12 +559,13 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantDispatchPath := "/api/webhooks/agent-dispatch/" + oldEndpoint
 	if len(fragment) != 7 || fragment.Get("bindingMode") != "message" ||
 		fragment.Get("bindingToken") != router.issued.BindingToken ||
 		fragment.Get("callbackToken") == "" || fragment.Get("callbackUrl") == "" ||
 		fragment.Get("expiresAt") != strconv.FormatInt(router.issued.ExpiresAt.Unix(), 10) ||
 		fragment.Get("agentId") != uuidStringForTest(store.row.AgentID) ||
-		fragment.Get("dispatchUrl") != oldConfig.DispatchURL {
+		fragment.Get("dispatchPath") != wantDispatchPath {
 		t.Fatalf("unexpected QR fragment: %#v", fragment)
 	}
 	for key, values := range fragment {
@@ -553,8 +574,8 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 		}
 	}
 	if strings.Contains(rawFragment, oldConfig.DispatchURL) ||
-		!strings.Contains(rawFragment, "dispatchUrl=https%3A%2F%2F") {
-		t.Fatalf("dispatch URL was not encoded exactly once: %q", rawFragment)
+		!strings.Contains(rawFragment, "dispatchPath=%2Fapi%2Fwebhooks%2Fagent-dispatch%2F") {
+		t.Fatalf("dispatch path was not encoded exactly once: %q", rawFragment)
 	}
 	wantCallbackURL := "https://multica.example/api/integrations/dingtalk/account-bindings/11111111-1111-1111-1111-111111111111/callback"
 	if got := fragment.Get("callbackUrl"); got != wantCallbackURL {
@@ -574,14 +595,17 @@ func TestBeginDingTalkAccountBindingReusesEndpointAndDoesNotPersistRouterToken(t
 	if config.DispatchEndpointID != oldEndpoint {
 		t.Fatalf("endpoint = %q, want reused %q", config.DispatchEndpointID, oldEndpoint)
 	}
+	if config.DispatchURL != wantDispatchPath {
+		t.Fatalf("persisted dispatch target = %q, want canonical path %q", config.DispatchURL, wantDispatchPath)
+	}
 	if !VerifyCallbackToken(callbackToken, config.CallbackTokenHash) {
 		t.Fatal("persisted callback hash does not match returned token")
 	}
 	if fragment.Has("identityCallbackToken") || fragment.Has("identityCallbackUrl") {
 		t.Fatalf("legacy identity callback fields leaked into QR fragment: %#v", fragment)
 	}
-	if router.issueAgent != uuidStringForTest(agentID) || router.issueURL != config.DispatchURL {
-		t.Fatalf("Router issue request = agent %q url %q", router.issueAgent, router.issueURL)
+	if router.issueAgent != uuidStringForTest(agentID) || router.issueURL != wantDispatchPath {
+		t.Fatalf("Router issue request = agent %q path %q", router.issueAgent, router.issueURL)
 	}
 	assertMetricCounter(t, service.metrics, "dingtalk_account_begin_total", map[string]string{"outcome": "success"}, 1)
 }
@@ -1460,6 +1484,10 @@ func newBindingEndpointServiceForTest(t *testing.T, store *fakeBindingStore, key
 	if store.row.ID.Valid {
 		config, err := ParseDingTalkAccountConfig(store.row.Config)
 		if err == nil {
+			dispatchURL, buildErr := BuildDispatchURL("https://multica.example", config.DispatchEndpointID)
+			if buildErr != nil {
+				t.Fatal(buildErr)
+			}
 			actorUserID := store.row.InstallerUserID
 			if !actorUserID.Valid {
 				actorUserID = mustUUIDForTest("cccccccc-cccc-cccc-cccc-cccccccccccc")
@@ -1469,7 +1497,7 @@ func newBindingEndpointServiceForTest(t *testing.T, store *fakeBindingStore, key
 				AgentID:     store.row.AgentID,
 				ActorUserID: actorUserID,
 				EndpointID:  config.DispatchEndpointID,
-				DispatchURL: config.DispatchURL,
+				DispatchURL: dispatchURL,
 			}
 		}
 	}

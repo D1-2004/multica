@@ -128,6 +128,58 @@ func (q *Queries) BeginDingTalkAccountBinding(ctx context.Context, arg BeginDing
 	return i, err
 }
 
+const updateDingTalkAccountBindingDispatchURL = `-- name: UpdateDingTalkAccountBindingDispatchURL :one
+UPDATE channel_installation
+SET config = jsonb_set(
+        config,
+        '{dispatch_url}',
+        to_jsonb($1::text),
+        true
+    ),
+    updated_at = now()
+WHERE id = $2
+  AND workspace_id = $3
+  AND agent_id = $4
+  AND channel_type = 'dingtalk_account'
+  AND status = 'pending'
+  AND config ->> 'dispatch_endpoint_id' = $5::text
+RETURNING id, workspace_id, agent_id, channel_type, config, status, ws_lease_token, ws_lease_expires_at, installer_user_id, installed_at, created_at, updated_at
+`
+
+type UpdateDingTalkAccountBindingDispatchURLParams struct {
+	DispatchUrl        string      `json:"dispatch_url"`
+	ID                 pgtype.UUID `json:"id"`
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	AgentID            pgtype.UUID `json:"agent_id"`
+	DispatchEndpointID string      `json:"dispatch_endpoint_id"`
+}
+
+func (q *Queries) UpdateDingTalkAccountBindingDispatchURL(ctx context.Context, arg UpdateDingTalkAccountBindingDispatchURLParams) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, updateDingTalkAccountBindingDispatchURL,
+		arg.DispatchUrl,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.AgentID,
+		arg.DispatchEndpointID,
+	)
+	var i ChannelInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const clearExpiredDingTalkAccountCallbackCredentials = `-- name: ClearExpiredDingTalkAccountCallbackCredentials :exec
 UPDATE channel_installation
 SET config = config - 'callback_token_hash' - 'callback_expires_at',

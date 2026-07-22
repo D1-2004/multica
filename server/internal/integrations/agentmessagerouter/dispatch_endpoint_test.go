@@ -128,6 +128,6 @@ func TestDispatchEndpointServiceRejectsStoredEndpointOutsideConfiguredOrigin(t *
 		t.Fatal(err)
 	}
 	if _, err := service.Ensure(context.Background(), workspaceID, agentID, actorID); err == nil {
-		t.Fatal("expected stored foreign-origin endpoint to fail closed")
+		t.Fatal("expected a stored endpoint outside the configured Multica origin to fail")
 	}
 }

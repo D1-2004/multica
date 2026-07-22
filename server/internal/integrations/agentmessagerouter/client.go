@@ -183,10 +183,15 @@ func NewClient(config ClientConfig) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) IssueBindingToken(ctx context.Context, agentID, dispatchURL string) (BindingToken, error) {
+func (c *Client) IssueBindingToken(ctx context.Context, agentID, dispatchPath string) (BindingToken, error) {
+	agentID = strings.TrimSpace(agentID)
+	_, err := endpointIDFromDispatchPath(dispatchPath)
+	if agentID == "" || err != nil {
+		return BindingToken{}, errors.New("agent message router token issue request is invalid")
+	}
 	body, err := json.Marshal(map[string]string{
-		"agentId":     agentID,
-		"dispatchUrl": dispatchURL,
+		"agentId":      agentID,
+		"dispatchPath": dispatchPath,
 	})
 	if err != nil {
 		return BindingToken{}, errors.New("encode account binding token request")
