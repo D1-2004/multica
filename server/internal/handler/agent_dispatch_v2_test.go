@@ -233,6 +233,8 @@ func TestDigitalEmployeePromptRequiresDWSOutboundLifecycle(t *testing.T) {
 		`"openConversationId":"cid-trusted"`,
 		`"openMsgId":"msg-latest"`,
 		`"senderOpenDingTalkId":"open-sender-trusted"`,
+		"mark the exact target message as read",
+		"Do not substitute a read-status query",
 		"dws chat message add-emoji",
 		"add-emoji --group <openConversationId>",
 		"DingTalk-supported default emoji name",
@@ -258,6 +260,11 @@ func TestDigitalEmployeePromptRequiresDWSOutboundLifecycle(t *testing.T) {
 	}
 	if strings.Contains(workflowPrompt, `--emoji "收到"`) {
 		t.Fatalf("workflow prompt must not hard-code one acknowledgement emoji: %q", workflowPrompt)
+	}
+	readReceipt := strings.Index(workflowPrompt, "mark the exact target message as read")
+	reaction := strings.Index(workflowPrompt, "dws chat message add-emoji")
+	if readReceipt == -1 || reaction == -1 || readReceipt > reaction {
+		t.Fatalf("workflow prompt must send the read receipt before adding a reaction: %q", workflowPrompt)
 	}
 }
 
