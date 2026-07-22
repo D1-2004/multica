@@ -1484,10 +1484,6 @@ func newBindingEndpointServiceForTest(t *testing.T, store *fakeBindingStore, key
 	if store.row.ID.Valid {
 		config, err := ParseDingTalkAccountConfig(store.row.Config)
 		if err == nil {
-			dispatchURL, buildErr := BuildDispatchURL("https://multica.example", config.DispatchEndpointID)
-			if buildErr != nil {
-				t.Fatal(buildErr)
-			}
 			actorUserID := store.row.InstallerUserID
 			if !actorUserID.Valid {
 				actorUserID = mustUUIDForTest("cccccccc-cccc-cccc-cccc-cccccccccccc")
@@ -1497,7 +1493,7 @@ func newBindingEndpointServiceForTest(t *testing.T, store *fakeBindingStore, key
 				AgentID:     store.row.AgentID,
 				ActorUserID: actorUserID,
 				EndpointID:  config.DispatchEndpointID,
-				DispatchURL: dispatchURL,
+				DispatchURL: config.DispatchURL,
 			}
 		}
 	}

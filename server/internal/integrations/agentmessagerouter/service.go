@@ -185,24 +185,23 @@ func (s *DispatchEndpointService) Ensure(
 	if err != nil {
 		return DispatchEndpoint{}, err
 	}
-	dispatchURL, err := BuildDispatchURL(s.publicOrigin.String(), endpointID)
+	dispatchPath, err := dispatchPathForEndpointID(endpointID)
 	if err != nil {
 		return DispatchEndpoint{}, err
 	}
+	// dispatch_url is a legacy column name. New endpoint mappings persist only
+	// the environment-neutral path; runtime callers receive a URL rebuilt below.
 	result, err := s.store.EnsureAgentDispatchEndpoint(ctx, DispatchEndpoint{
 		WorkspaceID: workspaceID,
 		AgentID:     agentID,
 		ActorUserID: actorUserID,
 		EndpointID:  endpointID,
-		DispatchURL: dispatchURL,
+		DispatchURL: dispatchPath,
 	})
 	if err != nil {
 		return DispatchEndpoint{}, fmt.Errorf("ensure agent dispatch endpoint: %w", err)
 	}
-	if err := validateDispatchEndpoint(result, workspaceID, agentID, s.publicOrigin); err != nil {
-		return DispatchEndpoint{}, err
-	}
-	return result, nil
+	return normalizeDispatchEndpoint(result, workspaceID, agentID, s.publicOrigin)
 }
 
 func (s *DispatchEndpointService) Get(ctx context.Context, agentID pgtype.UUID) (DispatchEndpoint, error) {
@@ -213,23 +212,27 @@ func (s *DispatchEndpointService) Get(ctx context.Context, agentID pgtype.UUID) 
 	if err != nil {
 		return DispatchEndpoint{}, err
 	}
-	if err := validateDispatchEndpoint(result, result.WorkspaceID, agentID, s.publicOrigin); err != nil {
-		return DispatchEndpoint{}, err
-	}
-	return result, nil
+	return normalizeDispatchEndpoint(result, result.WorkspaceID, agentID, s.publicOrigin)
 }
 
-func validateDispatchEndpoint(endpoint DispatchEndpoint, workspaceID, agentID pgtype.UUID, publicOrigin *url.URL) error {
+func normalizeDispatchEndpoint(
+	endpoint DispatchEndpoint,
+	workspaceID, agentID pgtype.UUID,
+	publicOrigin *url.URL,
+) (DispatchEndpoint, error) {
 	if endpoint.WorkspaceID != workspaceID || endpoint.AgentID != agentID ||
-		!endpoint.ActorUserID.Valid || !isTrimmedNonEmpty(endpoint.EndpointID) ||
-		!isTrimmedNonEmpty(endpoint.DispatchURL) || publicOrigin == nil {
-		return errors.New("agent dispatch endpoint response is invalid")
+		!endpoint.ActorUserID.Valid || !isTrimmedNonEmpty(endpoint.EndpointID) || publicOrigin == nil {
+		return DispatchEndpoint{}, errors.New("agent dispatch endpoint response is invalid")
 	}
-	expectedURL, err := BuildDispatchURL(publicOrigin.String(), endpoint.EndpointID)
-	if err != nil || endpoint.DispatchURL != expectedURL {
-		return errors.New("agent dispatch endpoint response is invalid")
+	// Historical rows may contain a pre-release or production origin. The
+	// endpoint mapping is identified by endpoint_id, so never trust that stored
+	// origin when constructing a callback for the current runtime.
+	dispatchURL, err := BuildDispatchURL(publicOrigin.String(), endpoint.EndpointID)
+	if err != nil {
+		return DispatchEndpoint{}, errors.New("agent dispatch endpoint response is invalid")
 	}
-	return nil
+	endpoint.DispatchURL = dispatchURL
+	return endpoint, nil
 }
 
 type ServiceConfig struct {
