@@ -22,18 +22,15 @@ type inboundAttachmentImporter struct {
 }
 
 func (i *inboundAttachmentImporter) Import(ctx context.Context, params engine.AppendParams) ([]db.Attachment, error) {
-	if params.Message.Type != channel.MsgTypeImage && params.Message.Type != channel.MsgTypeFile {
-		return nil, nil
-	}
-	if i == nil || i.service == nil || i.messenger == nil || i.decrypt == nil {
-		return nil, errors.New("dingtalk: attachment importer is not configured")
-	}
 	raw, err := decodeDingTalkRaw(params.Message)
 	if err != nil {
 		return nil, fmt.Errorf("dingtalk: decode attachment callback metadata: %w", err)
 	}
-	if strings.TrimSpace(raw.MessageDownloadCode) == "" {
-		return nil, errors.New("dingtalk: attachment callback has no download code")
+	if len(raw.MessageAttachments) == 0 {
+		return nil, nil
+	}
+	if i == nil || i.service == nil || i.messenger == nil || i.decrypt == nil {
+		return nil, errors.New("dingtalk: attachment importer is not configured")
 	}
 	installation, ok := params.Installation.Platform.(db.ChannelInstallation)
 	if !ok {
@@ -43,19 +40,30 @@ func (i *inboundAttachmentImporter) Import(ctx context.Context, params engine.Ap
 	if err != nil {
 		return nil, fmt.Errorf("dingtalk: decode attachment installation credentials: %w", err)
 	}
-	downloadURL, err := i.messenger.resolveMessageFileURL(ctx, creds, raw.MessageDownloadCode)
-	if err != nil {
-		return nil, fmt.Errorf("dingtalk: resolve attachment download URL: %w", err)
+	creds.RobotCode = strings.TrimSpace(raw.RobotCode)
+	if creds.RobotCode == "" {
+		return nil, errors.New("dingtalk: attachment callback has no robot code")
 	}
-	source, err := dingtalkAttachmentSource(params.Message.Type, raw, downloadURL)
-	if err != nil {
-		return nil, err
+	sources := make([]service.ExternalAttachmentSource, 0, len(raw.MessageAttachments))
+	for _, attachment := range raw.MessageAttachments {
+		if strings.TrimSpace(attachment.DownloadCode) == "" {
+			return nil, errors.New("dingtalk: attachment callback has no download code")
+		}
+		downloadURL, err := i.messenger.resolveMessageFileURL(ctx, creds, attachment.DownloadCode)
+		if err != nil {
+			return nil, fmt.Errorf("dingtalk: resolve attachment download URL: %w", err)
+		}
+		source, err := dingtalkAttachmentSource(attachment.Type, attachment.FileName, downloadURL)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, source)
 	}
 	return i.service.Import(ctx, service.ExternalAttachmentImportParams{
 		WorkspaceID:   params.WorkspaceID,
 		UploaderID:    params.Sender,
 		ChatSessionID: params.SessionID,
-		Sources:       []service.ExternalAttachmentSource{source},
+		Sources:       sources,
 	})
 }
 
@@ -87,7 +95,7 @@ func dingtalkPictureName(downloadURL string) (string, string, error) {
 	}
 }
 
-func dingtalkAttachmentSource(msgType channel.MsgType, raw dingtalkRawEvent, downloadURL string) (service.ExternalAttachmentSource, error) {
+func dingtalkAttachmentSource(msgType channel.MsgType, fileName, downloadURL string) (service.ExternalAttachmentSource, error) {
 	source := service.ExternalAttachmentSource{DownloadURL: downloadURL}
 	switch msgType {
 	case channel.MsgTypeImage:
@@ -98,7 +106,7 @@ func dingtalkAttachmentSource(msgType channel.MsgType, raw dingtalkRawEvent, dow
 		source.Name = name
 		source.ContentType = contentType
 	case channel.MsgTypeFile:
-		name := strings.TrimSpace(raw.MessageFileName)
+		name := strings.TrimSpace(fileName)
 		if name == "" {
 			return service.ExternalAttachmentSource{}, errors.New("dingtalk: file callback has no filename")
 		}

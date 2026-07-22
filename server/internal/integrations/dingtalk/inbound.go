@@ -66,8 +66,10 @@ type cardContentNode struct {
 // richTextNode is one node of the richText list: a text run, or a media
 // node discriminated by `type` (text runs carry no type).
 type richTextNode struct {
-	Text string `json:"text"`
-	Type string `json:"type"`
+	Text         string `json:"text"`
+	Type         string `json:"type"`
+	DownloadCode string `json:"downloadCode"`
+	FileName     string `json:"fileName"`
 }
 
 // msgtypeRichText is the callback msgtype for formatted messages. A
@@ -106,9 +108,8 @@ func commandView(text string) string {
 
 // flattenRichText renders a richText callback's node list to plain text.
 // Text runs are concatenated verbatim (DingTalk encodes line breaks
-// inside the runs); picture nodes degrade to the bracketed placeholder
-// the lark flattener uses, so the agent sees something was attached
-// without us downloading the binary.
+// inside the runs); media nodes retain a readable placeholder while their
+// download credentials are imported separately.
 func flattenRichText(data botCallbackData) string {
 	var b strings.Builder
 	for _, node := range data.Content.RichText {
@@ -120,6 +121,43 @@ func flattenRichText(data botCallbackData) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+type dingtalkRawAttachment struct {
+	Type         channel.MsgType `json:"type"`
+	DownloadCode string          `json:"download_code"`
+	FileName     string          `json:"file_name,omitempty"`
+}
+
+func callbackAttachments(data botCallbackData) []dingtalkRawAttachment {
+	attachments := make([]dingtalkRawAttachment, 0)
+	if data.Msgtype == msgtypeRichText {
+		for _, node := range data.Content.RichText {
+			code := strings.TrimSpace(node.DownloadCode)
+			if code == "" {
+				continue
+			}
+			switch node.Type {
+			case "picture":
+				attachments = append(attachments, dingtalkRawAttachment{Type: channel.MsgTypeImage, DownloadCode: code})
+			case "file":
+				attachments = append(attachments, dingtalkRawAttachment{Type: channel.MsgTypeFile, DownloadCode: code, FileName: strings.TrimSpace(node.FileName)})
+			}
+		}
+		return attachments
+	}
+
+	code := strings.TrimSpace(data.Content.DownloadCode)
+	if code == "" {
+		return attachments
+	}
+	switch data.Msgtype {
+	case "picture":
+		attachments = append(attachments, dingtalkRawAttachment{Type: channel.MsgTypeImage, DownloadCode: code})
+	case "file":
+		attachments = append(attachments, dingtalkRawAttachment{Type: channel.MsgTypeFile, DownloadCode: code, FileName: strings.TrimSpace(data.Content.FileName)})
+	}
+	return attachments
 }
 
 // flattenInteractiveCard preserves the callback tree's display order while
@@ -181,14 +219,9 @@ type dingtalkRawEvent struct {
 	SenderNick                string          `json:"sender_nick,omitempty"`
 	ConversationTitle         string          `json:"conversation_title,omitempty"`
 	Msgtype                   string          `json:"msgtype,omitempty"`
-	// MessageDownloadCode is a short-lived credential used only by the
-	// DingTalk attachment importer. It must never be logged or persisted as an
-	// attachment URL.
-	MessageDownloadCode string `json:"message_download_code,omitempty"`
-	// MessageFileName is the original display name of a file callback. Unlike
-	// the short-lived download code, it is safe and necessary to preserve on the
-	// imported attachment.
-	MessageFileName string `json:"message_file_name,omitempty"`
+	// MessageAttachments carry short-lived credentials only to the DingTalk
+	// attachment importer. They must never be logged or persisted as URLs.
+	MessageAttachments []dingtalkRawAttachment `json:"message_attachments,omitempty"`
 	// CreateAt is the callback's epoch-millisecond send time; the typing
 	// indicator uses it to skip stale redeliveries after a reconnect.
 	CreateAt int64 `json:"create_at,omitempty"`
@@ -314,8 +347,7 @@ func inboundFromBotCallbackForInstallationWithSource(data botCallbackData, clien
 		SenderNick:                data.SenderNick,
 		ConversationTitle:         data.ConversationTitle,
 		Msgtype:                   data.Msgtype,
-		MessageDownloadCode:       data.Content.DownloadCode,
-		MessageFileName:           data.Content.FileName,
+		MessageAttachments:        callbackAttachments(data),
 		CreateAt:                  data.CreateAt,
 		StreamSource:              rawStreamSource,
 	})

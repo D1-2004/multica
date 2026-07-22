@@ -20,9 +20,7 @@ func TestDingTalkPictureName(t *testing.T) {
 }
 
 func TestDingTalkFileAttachmentSource(t *testing.T) {
-	source, err := dingtalkAttachmentSource(channel.MsgTypeFile, dingtalkRawEvent{
-		MessageFileName: "invoice.pdf",
-	}, "https://files.example.test/download?token=secret")
+	source, err := dingtalkAttachmentSource(channel.MsgTypeFile, "invoice.pdf", "https://files.example.test/download?token=secret")
 	if err != nil {
 		t.Fatalf("dingtalkAttachmentSource: %v", err)
 	}
@@ -35,7 +33,7 @@ func TestDingTalkFileAttachmentSource(t *testing.T) {
 }
 
 func TestDingTalkFileAttachmentSourceRequiresName(t *testing.T) {
-	if _, err := dingtalkAttachmentSource(channel.MsgTypeFile, dingtalkRawEvent{}, "https://files.example.test/download"); err == nil {
+	if _, err := dingtalkAttachmentSource(channel.MsgTypeFile, "", "https://files.example.test/download"); err == nil {
 		t.Fatal("expected a file callback without a filename to be rejected")
 	}
 }
