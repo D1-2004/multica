@@ -385,14 +385,26 @@ func buildChatPrompt(task Task) string {
 	// time and is the only reliable path.
 	if len(task.ChatMessageAttachments) > 0 {
 		b.WriteString("\nAttachments on this message:\n")
+		hasImages := false
+		hasFiles := false
 		for _, a := range task.ChatMessageAttachments {
 			if a.ContentType != "" {
 				fmt.Fprintf(&b, "- id=%s filename=%q content_type=%s\n", a.ID, a.Filename, a.ContentType)
 			} else {
 				fmt.Fprintf(&b, "- id=%s filename=%q\n", a.ID, a.Filename)
 			}
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(a.ContentType)), "image/") {
+				hasImages = true
+			} else {
+				hasFiles = true
+			}
 		}
-		b.WriteString("Use `multica attachment download <id>` to fetch each file locally before referring to it.\n")
+		if hasImages {
+			b.WriteString("Image attachments are already included as native visual input for this turn; inspect them directly.\n")
+		}
+		if hasFiles {
+			b.WriteString("Use `multica attachment download <id>` to fetch each non-image file locally before referring to it.\n")
+		}
 		b.WriteString("When creating an issue that should preserve one of these attachments, pass `--attachment-id <id>` to `multica issue create` in addition to keeping the attachment markdown inline.\n")
 	}
 	// Outbound attachments: how the agent puts an image/file INTO its reply.

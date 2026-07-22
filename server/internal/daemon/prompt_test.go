@@ -265,12 +265,29 @@ func TestBuildChatPromptAttachmentIDsCanBeBoundToCreatedIssues(t *testing.T) {
 	for _, want := range []string{
 		"Attachments on this message:",
 		"id=019ec09d-6222-722b-bdfa-427b105d80be",
-		"multica attachment download <id>",
+		"already included as native visual input",
 		"--attachment-id <id>",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("chat prompt missing %q\n--- output ---\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "multica attachment download <id>") {
+		t.Fatalf("image-only chat prompt must not tell the agent to download an already attached native image:\n%s", out)
+	}
+}
+
+func TestBuildChatPromptNonImageAttachmentUsesDownloadCommand(t *testing.T) {
+	task := Task{
+		ChatSessionID: "sess-1",
+		ChatMessage:   "summarize this report",
+		ChatMessageAttachments: []ChatAttachmentMeta{
+			{ID: "attachment-1", Filename: "report.pdf", ContentType: "application/pdf"},
+		},
+	}
+	out := BuildPrompt(task, "claude")
+	if !strings.Contains(out, "multica attachment download <id>") {
+		t.Fatalf("non-image attachment prompt missing download command:\n%s", out)
 	}
 }
 

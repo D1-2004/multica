@@ -577,6 +577,9 @@ func buildPiArgs(prompt, sessionPath string, opts ExecOptions, logger *slog.Logg
 		blockedArgs = piManagedMCPBlockedArgs
 	}
 	args = append(args, filterCustomArgs(opts.CustomArgs, blockedArgs, logger)...)
+	for _, image := range opts.InputImages {
+		args = append(args, "@"+image.Path)
+	}
 	args = append(args, prompt)
 	return args
 }
