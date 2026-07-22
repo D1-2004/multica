@@ -308,26 +308,35 @@ func TestBuildChatPromptNonImageAttachmentUsesDownloadCommand(t *testing.T) {
 	}
 }
 
-func TestBuildChatPromptIncludesSanitizedOriginalMessagePayloads(t *testing.T) {
-	task := Task{
-		ChatSessionID:   "sess-1",
-		ChatChannelType: "dingtalk",
-		ChatMessage:     "[文件] invoice.pdf",
-		ChatMessageSourcePayloads: []ChatMessageSourcePayload{
-			{
-				MessageID: "message-1",
-				Payload:   json.RawMessage(`{"schema_version":1,"platform":"dingtalk","payload":{"msgtype":"file","content":{"fileName":"invoice.pdf","spaceId":"223573","futureField":{"label":"preserved"}}},"redacted_fields":["$.content.downloadCode","$.sessionWebhook"]}`),
-			},
-		},
+func TestBuildChatPromptDecodesArbitrarySanitizedSourcePayloads(t *testing.T) {
+	const claimResponse = `{
+		"chat_session_id":"sess-1",
+		"chat_message":"[消息类型: futureNativeType]",
+		"chat_message_source_payloads":[{
+			"message_id":"message-1",
+			"payload":{
+				"schema_version":1,
+				"platform":"dingtalk",
+				"payload":{
+					"msgtype":"futureNativeType",
+					"content":{"nested":{"sentinel":"preserved-for-model"}}
+				},
+				"redacted_fields":["$.sessionWebhook"]
+			}
+		}]
+	}`
+	var task Task
+	if err := json.Unmarshal([]byte(claimResponse), &task); err != nil {
+		t.Fatalf("decode task claim response: %v", err)
 	}
-	out := BuildPrompt(task, "claude")
+
+	out := BuildPrompt(task, "pi")
 	for _, want := range []string{
-		"DingTalk conversation",
 		"Credential-free original channel message payloads",
 		"message_id=message-1",
-		`"spaceId":"223573"`,
-		`"futureField":{"label":"preserved"}`,
-		`"$.content.downloadCode"`,
+		`"msgtype":"futureNativeType"`,
+		`"sentinel":"preserved-for-model"`,
+		`"$.sessionWebhook"`,
 		"must not be reconstructed or requested",
 	} {
 		if !strings.Contains(out, want) {
