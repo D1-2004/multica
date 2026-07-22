@@ -267,10 +267,11 @@ type AppendInput struct {
 	MessageID         string
 	ThreadID          string
 	ClaimToken        pgtype.UUID
-	ForceFreshSession bool
-	PreparedTask      *service.PreparedChannelChatTask
-	AttachmentIDs     []pgtype.UUID
-	SourcePayload     []byte
+	ForceFreshSession   bool
+	PreparedTask        *service.PreparedChannelChatTask
+	DisableIssueCommand bool
+	AttachmentIDs       []pgtype.UUID
+	SourcePayload       []byte
 }
 
 // PersistPendingFreshSession stores a bare fresh-session directive and, when
@@ -339,11 +340,14 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 
 	// Parse before the insert so the bare-`/issue` previous-message fallback
 	// queries the message set that does NOT yet include this message.
-	commandSource := in.CommandText
-	if commandSource == "" {
-		commandSource = in.Body
+	var cmd *IssueCommand
+	if !in.DisableIssueCommand {
+		commandSource := in.CommandText
+		if commandSource == "" {
+			commandSource = in.Body
+		}
+		cmd, _ = ParseIssueCommand(commandSource)
 	}
-	cmd, _ := ParseIssueCommand(commandSource)
 	if cmd != nil && cmd.Title == "" {
 		prev, err := qtx.GetMostRecentUserChatMessage(ctx, in.SessionID)
 		if err == nil {

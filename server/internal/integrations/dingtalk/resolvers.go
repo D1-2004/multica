@@ -578,14 +578,15 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 		Body:           dingtalkMessageBody(p.Message),
 		// CommandText is the user's OWN typed text: the /issue parser must
 		// see the bare message, not the speaker-labelled body.
-		CommandText:       p.Message.Text,
-		MessageID:         p.Message.MessageID,
-		ThreadID:          p.Message.Source.ThreadID,
-		ClaimToken:        p.ClaimToken,
-		ForceFreshSession: p.ForceFreshSession,
-		PreparedTask:      p.PreparedTask,
-		AttachmentIDs:     attachmentIDs,
-		SourcePayload:     p.Message.SourcePayload,
+		CommandText:         p.Message.Text,
+		MessageID:           p.Message.MessageID,
+		ThreadID:            p.Message.Source.ThreadID,
+		ClaimToken:          p.ClaimToken,
+		ForceFreshSession:   p.ForceFreshSession,
+		PreparedTask:        p.PreparedTask,
+		DisableIssueCommand: p.DisableIssueCommand,
+		AttachmentIDs:       attachmentIDs,
+		SourcePayload:       p.Message.SourcePayload,
 	})
 	if err != nil {
 		r.attachments.DeleteImported(context.WithoutCancel(ctx), imported)

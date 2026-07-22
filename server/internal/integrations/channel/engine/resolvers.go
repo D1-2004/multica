@@ -139,7 +139,10 @@ type AppendParams struct {
 	// durable in the same transaction as the message and dedup Mark. It is
 	// prepared outside the transaction because building the runtime overlay may
 	// perform network I/O.
-	PreparedTask *service.PreparedChannelChatTask
+	PreparedTask        *service.PreparedChannelChatTask
+	// DisableIssueCommand preserves slash-prefixed content as a chat prompt
+	// when an authenticated dispatcher has already selected the surface.
+	DisableIssueCommand bool
 }
 
 // AppendResult reports what AppendMessage decided.
