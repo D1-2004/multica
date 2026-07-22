@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // This file holds the runtime brief assembler — the post-MUL-3560 path
@@ -114,6 +115,16 @@ func writeRequestingUser(b *strings.Builder, ctx TaskContextForEnv) {
 // rules" and "credentials stay scoped to the runtime owner") are kept.
 func writeTaskInitiator(b *strings.Builder, ctx TaskContextForEnv) {
 	safeInitiator := sanitizeNameForBriefMarkdown(ctx.InitiatorName)
+	if ctx.InitiatorType == protocol.TaskInitiatorTypeDingTalkUser {
+		b.WriteString("## Task Initiator\n\n")
+		if safeInitiator == "" {
+			b.WriteString("This task was initiated by the current participant in the connected DingTalk conversation.\n\n")
+		} else {
+			fmt.Fprintf(b, "This task was initiated by **%s**, the current participant in the connected DingTalk conversation.\n\n", safeInitiator)
+		}
+		b.WriteString("Attribute this request to that person and apply any per-person privacy or access rules your instructions define — in a workspace many people can reach, the initiator (not the runtime owner) is who you are answering. Your Multica credentials stay scoped to the runtime owner, so this attribution does not widen what you can read or write — do not assume the initiator can see everything you can.\n\n")
+		return
+	}
 	if safeInitiator == "" {
 		return
 	}

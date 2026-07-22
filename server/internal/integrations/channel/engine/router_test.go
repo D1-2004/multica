@@ -205,31 +205,31 @@ type fakeTasks struct {
 	called       bool
 	prepared     bool
 	forceFresh   bool
-	initiator    pgtype.UUID
+	identity     service.ChatTaskIdentity
 	taskContext  []byte
 	err          error
 	prepareErr   error
 	preparedTask service.PreparedChannelChatTask
 }
 
-func (f *fakeTasks) EnqueueChatTask(_ context.Context, _ db.ChatSession, initiator pgtype.UUID, forceFresh bool, taskContext []byte) (db.AgentTaskQueue, error) {
+func (f *fakeTasks) EnqueueChatTask(_ context.Context, _ db.ChatSession, identity service.ChatTaskIdentity, forceFresh bool, taskContext []byte) (db.AgentTaskQueue, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.called = true
 	f.forceFresh = forceFresh
-	f.initiator = initiator
+	f.identity = identity
 	f.taskContext = append([]byte(nil), taskContext...)
 	return db.AgentTaskQueue{}, f.err
 }
 func (f *fakeTasks) wasCalled() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.called }
 func (f *fakeTasks) freshArg() bool  { f.mu.Lock(); defer f.mu.Unlock(); return f.forceFresh }
 
-func (f *fakeTasks) PrepareChannelChatTask(_ context.Context, _ db.ChatSession, initiator pgtype.UUID, forceFresh bool, taskContext []byte) (service.PreparedChannelChatTask, error) {
+func (f *fakeTasks) PrepareChannelChatTask(_ context.Context, _ db.ChatSession, identity service.ChatTaskIdentity, forceFresh bool, taskContext []byte) (service.PreparedChannelChatTask, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prepared = true
 	f.forceFresh = forceFresh
-	f.initiator = initiator
+	f.identity = identity
 	f.taskContext = append([]byte(nil), taskContext...)
 	return f.preparedTask, f.prepareErr
 }
@@ -331,8 +331,11 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{
-		inst:     &fakeInstaller{inst: activeResolved(t)},
-		ident:    &fakeIdentity{id: ResolvedIdentity{UserID: uuidFromString(t, "44444444-4444-4444-4444-444444444444")}},
+		inst: &fakeInstaller{inst: activeResolved(t)},
+		ident: &fakeIdentity{id: func() ResolvedIdentity {
+			userID := uuidFromString(t, "44444444-4444-4444-4444-444444444444")
+			return ResolvedIdentity{PrincipalUserID: userID, InitiatorUserID: userID}
+		}()},
 		taskCtx:  &fakeTaskContext{},
 		dedup:    &fakeDedup{token: uuidFromString(t, "55555555-5555-5555-5555-555555555555")},
 		binder:   &fakeBinder{ensureID: uuidFromString(t, "66666666-6666-6666-6666-666666666666"), appendResult: AppendResult{DedupMarked: true}},
@@ -566,7 +569,7 @@ func TestRouter_DurableRunIsPreparedAndCommittedByAppend(t *testing.T) {
 	taskID := uuidFromString(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	h.tasks.preparedTask = service.PreparedChannelChatTask{
 		ID: taskID, AgentID: h.inst.inst.AgentID, RuntimeID: uuidFromString(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
-		InitiatorUserID: h.ident.id.UserID, OriginatorUserID: h.ident.id.UserID, DebounceSeconds: 3,
+		InitiatorUserID: h.ident.id.InitiatorUserID, OriginatorUserID: h.ident.id.PrincipalUserID, DebounceSeconds: 3,
 	}
 	h.binder.appendResult = AppendResult{DedupMarked: true, TaskID: taskID}
 	h.reader.session = db.ChatSession{ID: h.binder.ensureID, AgentID: h.inst.inst.AgentID}
@@ -807,7 +810,7 @@ func TestRouter_GroupSessionCreatorIsInstaller(t *testing.T) {
 		t.Fatalf("group session creator must be the installer")
 	}
 	// And the run initiator is the sender, not the installer.
-	if h.tasks.initiator != h.ident.id.UserID {
+	if h.tasks.identity.InitiatorUserID != h.ident.id.InitiatorUserID {
 		t.Fatalf("run initiator must be the message sender")
 	}
 }
@@ -826,7 +829,7 @@ func TestRouter_SenderIsolatedGroupSessionCreatorIsSender(t *testing.T) {
 	if err := h.router.Handle(context.Background(), msg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if h.binder.lastEnsure.Sender != h.ident.id.UserID {
+	if h.binder.lastEnsure.Sender != h.ident.id.PrincipalUserID {
 		t.Fatalf("sender-isolated group session creator must be the sender")
 	}
 }
@@ -836,8 +839,29 @@ func TestRouter_P2PSessionCreatorIsSender(t *testing.T) {
 	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if h.binder.lastEnsure.Sender != h.ident.id.UserID {
+	if h.binder.lastEnsure.Sender != h.ident.id.PrincipalUserID {
 		t.Fatalf("p2p session creator must be the sender")
+	}
+}
+
+func TestRouter_UnboundIdentityKeepsInstallerOnlyAsPrincipal(t *testing.T) {
+	h := newHarness(t)
+	h.ident.id = ResolvedIdentity{PrincipalUserID: h.inst.inst.InstallerUserID}
+
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if h.binder.lastEnsure.Sender != h.inst.inst.InstallerUserID {
+		t.Fatalf("session principal = %v, want installer %v", h.binder.lastEnsure.Sender, h.inst.inst.InstallerUserID)
+	}
+	if h.binder.lastAppend.Sender != h.inst.inst.InstallerUserID {
+		t.Fatalf("message principal = %v, want installer %v", h.binder.lastAppend.Sender, h.inst.inst.InstallerUserID)
+	}
+	if h.tasks.identity.PrincipalUserID != h.inst.inst.InstallerUserID {
+		t.Fatalf("task principal = %v, want installer %v", h.tasks.identity.PrincipalUserID, h.inst.inst.InstallerUserID)
+	}
+	if h.tasks.identity.InitiatorUserID.Valid {
+		t.Fatalf("unbound task initiator = %v, want invalid", h.tasks.identity.InitiatorUserID)
 	}
 }
 

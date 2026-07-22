@@ -97,9 +97,14 @@ type ResolvedInstallation struct {
 	Platform        any
 }
 
-// ResolvedIdentity is the sender mapped to a Multica user.
+// ResolvedIdentity separates the workspace principal used for authorization,
+// persistence, and capability overlays from the real task initiator. They are
+// the same user for a bound sender. An allow-unbound channel uses the installer
+// as PrincipalUserID while leaving InitiatorUserID invalid so the installer is
+// never presented to the agent as the person speaking.
 type ResolvedIdentity struct {
-	UserID pgtype.UUID
+	PrincipalUserID pgtype.UUID
+	InitiatorUserID pgtype.UUID
 }
 
 // EnsureSessionParams carries the inputs for SessionBinder.EnsureSession.
@@ -314,8 +319,8 @@ type IssueCreator interface {
 // TaskEnqueuer is the narrow subset of service.TaskService the Router needs to
 // trigger a chat run. Shared across platforms.
 type TaskEnqueuer interface {
-	EnqueueChatTask(ctx context.Context, session db.ChatSession, initiatorUserID pgtype.UUID, forceFreshSession bool, taskContext []byte) (db.AgentTaskQueue, error)
-	PrepareChannelChatTask(ctx context.Context, session db.ChatSession, initiatorUserID pgtype.UUID, forceFreshSession bool, taskContext []byte) (service.PreparedChannelChatTask, error)
+	EnqueueChatTask(ctx context.Context, session db.ChatSession, identity service.ChatTaskIdentity, forceFreshSession bool, taskContext []byte) (db.AgentTaskQueue, error)
+	PrepareChannelChatTask(ctx context.Context, session db.ChatSession, identity service.ChatTaskIdentity, forceFreshSession bool, taskContext []byte) (service.PreparedChannelChatTask, error)
 }
 
 // SessionReader reads the rows the debounced flush + /issue identifier need.

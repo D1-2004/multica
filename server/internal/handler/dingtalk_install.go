@@ -249,8 +249,9 @@ func (h *Handler) BeginDingTalkInstall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// allow_unbound opts the new bot into "connect to customers" mode: an
-	// unbound / non-member sender is served as the installer rather than
-	// prompted to bind. Absent / non-"true" = the default bind-first bot.
+	// unbound / non-member sender uses the installer only as the workspace
+	// principal rather than being prompted to bind. The current DingTalk sender
+	// remains the task initiator. Absent / non-"true" = bind-first.
 	allowUnbound := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("allow_unbound")), "true")
 	transportMode := dingtalk.TransportMode(strings.TrimSpace(r.URL.Query().Get("transport_mode")))
 
@@ -370,8 +371,8 @@ type ManualInstallDingTalkRequest struct {
 	// RobotCode is the distinct robot receiver identifier; it must not be
 	// inferred from client_id.
 	RobotCode string `json:"robot_code"`
-	// AllowUnbound opts the bot into "serve unbound senders as the
-	// installer" mode — same semantics as the device-flow toggle.
+	// AllowUnbound opts the bot into customer mode: the installer authorizes
+	// unbound access while each current sender remains the task initiator.
 	AllowUnbound bool `json:"allow_unbound"`
 }
 

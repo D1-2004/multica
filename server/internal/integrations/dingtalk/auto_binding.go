@@ -131,7 +131,7 @@ func (b *AutoBinder) Resolve(ctx context.Context, inst engine.ResolvedInstallati
 	b.logger.InfoContext(ctx, "dingtalk auto-bind: sender bound via directory",
 		"installation_id", util.UUIDToString(inst.ID),
 		"user_id", util.UUIDToString(user.ID))
-	return engine.ResolvedIdentity{UserID: user.ID}, nil
+	return engine.ResolvedIdentity{PrincipalUserID: user.ID, InitiatorUserID: user.ID}, nil
 }
 
 // findUser tries the unionid synthetic email first (the canonical DingTalk

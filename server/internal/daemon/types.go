@@ -125,9 +125,10 @@ type Task struct {
 	// requester behind the current comment/mention or chat message) as
 	// distinct from the runtime owner whose credentials the agent runs with.
 	// Comment-triggered tasks resolve to the triggering comment's author;
-	// chat tasks resolve to the chat session creator. Empty for task kinds
-	// with no attributable human initiator (on-assign, autopilot,
-	// quick-create). InitiatorEmail is set only for member initiators. The
+	// chat tasks resolve to the bound sender or the current unbound DingTalk
+	// conversation participant. Empty for task kinds with no attributable
+	// human initiator (on-assign, autopilot, quick-create). InitiatorEmail is
+	// set only for member initiators. The
 	// daemon emits these into the brief under `## Task Initiator` so a
 	// workspace-visible agent can attribute the request per person. The
 	// agent's effective credentials stay owner-scoped — this is an attested

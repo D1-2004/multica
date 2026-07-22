@@ -136,8 +136,9 @@ type TaskContextForEnv struct {
 	RequestingUserProfileDescription string
 	// Initiator* identify the actor who triggered THIS task (the real
 	// requester) as distinct from the runtime owner. Rendered into the brief
-	// as `## Task Initiator` when a name is present; InitiatorEmail is shown
-	// only for member initiators. Empty for on-assign / autopilot /
+	// as `## Task Initiator` when a member/agent name is present or when the
+	// task carries the explicit DingTalk conversation-user type. InitiatorEmail
+	// is shown only for member initiators. Empty for on-assign / autopilot /
 	// quick-create tasks, which have no attributable human initiator. See
 	// MUL-2645.
 	InitiatorType  string

@@ -3696,8 +3696,14 @@ func TestClaimTask_ChatPopulatesInitiator(t *testing.T) {
 	}
 	// initiator_user_id = the real sender (testUserID), distinct from creator.
 	if _, err := testPool.Exec(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority, initiator_user_id)
-		VALUES ($1, $2, $3, 'queued', 2, $4)
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, chat_session_id, status, priority,
+			initiator_user_id, context
+		)
+		VALUES (
+			$1, $2, $3, 'queued', 2, $4,
+			'{"dingtalk_conversation_initiator":{"display_name":"Installer User"}}'::jsonb
+		)
 	`, agentID, runtimeID, sessionID, testUserID); err != nil {
 		t.Fatalf("setup: create chat task: %v", err)
 	}
@@ -3728,6 +3734,71 @@ func TestClaimTask_ChatPopulatesInitiator(t *testing.T) {
 		t.Errorf("chat initiator = {type:%q id:%q name:%q email:%q}, want {member %q %q %q}",
 			resp.Task.InitiatorType, resp.Task.InitiatorID, resp.Task.InitiatorName, resp.Task.InitiatorEmail,
 			testUserID, handlerTestName, handlerTestEmail)
+	}
+}
+
+func TestClaimTask_UnboundDingTalkChatUsesConversationInitiator(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
+
+	var sessionID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title)
+		VALUES ($1, $2, $3, 'unbound DingTalk initiator chat')
+		RETURNING id
+	`, testWorkspaceID, agentID, testUserID).Scan(&sessionID); err != nil {
+		t.Fatalf("setup: create chat session: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID) })
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO chat_message (chat_session_id, role, content)
+		VALUES ($1, 'user', '你好')
+	`, sessionID); err != nil {
+		t.Fatalf("setup: insert user message: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, chat_session_id, status, priority,
+			initiator_user_id, originator_user_id, context
+		)
+		VALUES (
+			$1, $2, $3, 'queued', 2, NULL, $4,
+			'{"dingtalk_conversation_initiator":{"display_name":"黄谣"}}'::jsonb
+		)
+	`, agentID, runtimeID, sessionID, testUserID); err != nil {
+		t.Fatalf("setup: create unbound DingTalk chat task: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, daemonID)
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task *struct {
+			InitiatorType  string `json:"initiator_type"`
+			InitiatorID    string `json:"initiator_id"`
+			InitiatorName  string `json:"initiator_name"`
+			InitiatorEmail string `json:"initiator_email"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode claim response: %v", err)
+	}
+	if resp.Task == nil {
+		t.Fatalf("expected a claimed task, got %s", w.Body.String())
+	}
+	if resp.Task.InitiatorType != protocol.TaskInitiatorTypeDingTalkUser || resp.Task.InitiatorName != "黄谣" {
+		t.Fatalf("DingTalk initiator = {type:%q name:%q}", resp.Task.InitiatorType, resp.Task.InitiatorName)
+	}
+	if resp.Task.InitiatorID != "" || resp.Task.InitiatorEmail != "" {
+		t.Fatalf("unbound DingTalk initiator carried Multica identity: %+v", resp.Task)
 	}
 }
 

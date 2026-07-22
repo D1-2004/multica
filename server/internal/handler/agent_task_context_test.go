@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func taskResponseFixture(context []byte) db.AgentTaskQueue {
@@ -101,5 +102,37 @@ func TestTaskToResponseOmitsServerPrivateAgentIdentityContextToken(t *testing.T)
 	})
 	if fcClaimResponse.AgentIdentityContextToken != "" {
 		t.Fatal("FC/E2B daemon claim response exposed already-redeemed ContextToken")
+	}
+}
+
+func TestTaskClaimResponseSurfacesUnboundDingTalkConversationInitiator(t *testing.T) {
+	fixture := taskResponseFixture([]byte(`{
+		"dingtalk_conversation_initiator":{"display_name":"黄谣"}
+	}`))
+	fixture.ChatSessionID = parseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+	ordinary := taskToResponse(fixture, "")
+	if ordinary.InitiatorType != "" || ordinary.InitiatorName != "" {
+		t.Fatalf("ordinary task response exposed private initiator: %+v", ordinary)
+	}
+	claim := taskToClaimResponse(fixture, "", db.AgentRuntime{})
+	if claim.InitiatorType != protocol.TaskInitiatorTypeDingTalkUser || claim.InitiatorName != "黄谣" {
+		t.Fatalf("claim initiator = {%q %q}", claim.InitiatorType, claim.InitiatorName)
+	}
+	if claim.InitiatorID != "" || claim.InitiatorEmail != "" {
+		t.Fatalf("unbound initiator must not carry Multica id/email: %+v", claim)
+	}
+}
+
+func TestTaskClaimResponseKeepsBoundInitiatorAuthoritative(t *testing.T) {
+	fixture := taskResponseFixture([]byte(`{
+		"dingtalk_conversation_initiator":{"display_name":"伪造昵称"}
+	}`))
+	fixture.ChatSessionID = parseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	fixture.InitiatorUserID = parseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+	claim := taskToClaimResponse(fixture, "", db.AgentRuntime{})
+	if claim.InitiatorType != "" || claim.InitiatorName != "" {
+		t.Fatalf("bound initiator must be resolved from user row, not task context: %+v", claim)
 	}
 }

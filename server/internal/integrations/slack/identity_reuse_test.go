@@ -78,8 +78,8 @@ func TestResolveSenderReuse(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveSender err = %v", err)
 		}
-		if got.UserID != userID {
-			t.Errorf("UserID = %v, want %v", got.UserID, userID)
+		if got.PrincipalUserID != userID || got.InitiatorUserID != userID {
+			t.Errorf("identity = %+v, want bound user %v", got, userID)
 		}
 		if f.findCalls != 0 || f.createCalls != 0 {
 			t.Errorf("directly-bound sender must not trigger reuse (find=%d create=%d)", f.findCalls, f.createCalls)
@@ -95,8 +95,8 @@ func TestResolveSenderReuse(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveSender err = %v", err)
 		}
-		if got.UserID != userID {
-			t.Errorf("UserID = %v, want reused %v", got.UserID, userID)
+		if got.PrincipalUserID != userID || got.InitiatorUserID != userID {
+			t.Errorf("identity = %+v, want reused user %v", got, userID)
 		}
 		if f.findCalls != 1 {
 			t.Fatalf("reuse lookup must run exactly once, ran %d", f.findCalls)
