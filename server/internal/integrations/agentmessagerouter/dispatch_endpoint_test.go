@@ -72,9 +72,13 @@ func TestDispatchEndpointServiceReusesOneEndpointPerAgent(t *testing.T) {
 	if store.ensureCalls != 2 || first.AgentID != agentID || first.WorkspaceID != workspaceID {
 		t.Fatalf("stored endpoint = %#v, calls=%d", first, store.ensureCalls)
 	}
+	wantPath := "/api/webhooks/agent-dispatch/" + first.EndpointID
+	if store.record.DispatchURL != wantPath {
+		t.Fatalf("persisted dispatch target = %q, want path %q", store.record.DispatchURL, wantPath)
+	}
 	wantURL := "https://multica.example/api/webhooks/agent-dispatch/" + first.EndpointID
 	if first.DispatchURL != wantURL {
-		t.Fatalf("dispatch URL = %q, want %q", first.DispatchURL, wantURL)
+		t.Fatalf("runtime dispatch URL = %q, want %q", first.DispatchURL, wantURL)
 	}
 }
 
@@ -103,7 +107,7 @@ func TestDispatchEndpointServiceFailsClosedOnInvalidOwnershipAndStorage(t *testi
 	}
 }
 
-func TestDispatchEndpointServiceRejectsStoredEndpointOutsideConfiguredOrigin(t *testing.T) {
+func TestDispatchEndpointServiceReusesStoredEndpointAcrossConfiguredOrigins(t *testing.T) {
 	keyring, err := ParseDispatchKeyring(
 		"v1:ERERERERERERERERERERERERERERERERERERERERERE", "v1")
 	if err != nil {
@@ -117,7 +121,7 @@ func TestDispatchEndpointServiceRejectsStoredEndpointOutsideConfiguredOrigin(t *
 		AgentID:     agentID,
 		ActorUserID: actorID,
 		EndpointID:  "v1_EREREREREREREREREREREQ",
-		DispatchURL: "https://attacker.example/api/webhooks/agent-dispatch/v1_EREREREREREREREREREREQ",
+		DispatchURL: "https://pre-multica.example/api/webhooks/agent-dispatch/v1_EREREREREREREREREREREQ",
 	}}
 	service, err := NewDispatchEndpointService(store, DispatchEndpointServiceConfig{
 		PublicBaseURL: "https://multica.example",
@@ -127,7 +131,12 @@ func TestDispatchEndpointServiceRejectsStoredEndpointOutsideConfiguredOrigin(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Ensure(context.Background(), workspaceID, agentID, actorID); err == nil {
-		t.Fatal("expected a stored endpoint outside the configured Multica origin to fail")
+	endpoint, err := service.Ensure(context.Background(), workspaceID, agentID, actorID)
+	if err != nil {
+		t.Fatalf("Ensure() error = %v", err)
+	}
+	wantURL := "https://multica.example/api/webhooks/agent-dispatch/v1_EREREREREREREREREREREQ"
+	if endpoint.DispatchURL != wantURL {
+		t.Fatalf("runtime dispatch URL = %q, want %q", endpoint.DispatchURL, wantURL)
 	}
 }
