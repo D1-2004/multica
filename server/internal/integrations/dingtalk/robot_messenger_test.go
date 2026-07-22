@@ -81,14 +81,14 @@ func TestResolveMessageFileURL(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	m := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
-	resolved, err := m.resolveMessageFileURL(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs"}, "download-code")
+	resolved, err := m.resolveMessageFileURL(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs", RobotCode: "robot-from-callback"}, "download-code")
 	if err != nil {
 		t.Fatalf("resolveMessageFileURL: %v", err)
 	}
 	if resolved != "https://files.example.test/card.png" {
 		t.Fatalf("resolved URL = %q", resolved)
 	}
-	if got["robotCode"] != "ck" || got["downloadCode"] != "download-code" {
+	if got["robotCode"] != "robot-from-callback" || got["downloadCode"] != "download-code" {
 		t.Fatalf("message file request = %#v", got)
 	}
 }
@@ -104,7 +104,7 @@ func TestResolveMessageFileURLAcceptsDingTalkHTTPURL(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	m := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
-	resolved, err := m.resolveMessageFileURL(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs"}, "download-code")
+	resolved, err := m.resolveMessageFileURL(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs", RobotCode: "robot-from-callback"}, "download-code")
 	if err != nil {
 		t.Fatalf("resolveMessageFileURL: %v", err)
 	}
@@ -124,8 +124,15 @@ func TestResolveMessageFileURLRejectsNonHTTPURL(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	m := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
-	if _, err := m.resolveMessageFileURL(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs"}, "download-code"); err == nil {
+	if _, err := m.resolveMessageFileURL(context.Background(), channelCredentials{ClientID: "ck", ClientSecret: "cs", RobotCode: "robot-from-callback"}, "download-code"); err == nil {
 		t.Fatal("expected non-HTTP download URL to be rejected")
+	}
+}
+
+func TestResolveMessageFileURLRequiresRobotCode(t *testing.T) {
+	m := NewRobotMessenger("https://api.dingtalk.test", "https://oapi.dingtalk.test", http.DefaultClient)
+	if _, err := m.resolveMessageFileURL(context.Background(), channelCredentials{ClientID: "client-id", ClientSecret: "secret"}, "download-code"); err == nil {
+		t.Fatal("expected missing robot code to be rejected")
 	}
 }
 

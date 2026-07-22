@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -168,6 +169,10 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	}
 	if _, err := exec.LookPath(execPath); err != nil {
 		return nil, fmt.Errorf("hermes executable not found at %q: %w", execPath, err)
+	}
+	promptBlocks, err := buildHermesPromptBlocks(prompt, opts.InputImages)
+	if err != nil {
+		return nil, err
 	}
 
 	// Translate the agent's mcp_config (Claude-style object of objects)
@@ -458,9 +463,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		streamingCurrentTurn.Store(true)
 		_, err = c.request(runCtx, "session/prompt", map[string]any{
 			"sessionId": sessionID,
-			"prompt": []map[string]any{
-				{"type": "text", "text": prompt},
-			},
+			"prompt":    promptBlocks,
 		})
 		if err != nil {
 			// If the request itself failed (not just context cancelled),
@@ -567,6 +570,22 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	}()
 
 	return &Session{Messages: msgCh, Result: resCh}, nil
+}
+
+func buildHermesPromptBlocks(prompt string, images []InputImage) ([]map[string]any, error) {
+	blocks := []map[string]any{{"type": "text", "text": prompt}}
+	for _, image := range images {
+		data, err := os.ReadFile(image.Path)
+		if err != nil {
+			return nil, fmt.Errorf("hermes: read native image %q: %w", image.Name, err)
+		}
+		blocks = append(blocks, map[string]any{
+			"type":     "image",
+			"data":     base64.StdEncoding.EncodeToString(data),
+			"mimeType": image.ContentType,
+		})
+	}
+	return blocks, nil
 }
 
 // ── hermesClient: ACP JSON-RPC 2.0 transport ──

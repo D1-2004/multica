@@ -16,7 +16,7 @@ import (
 // against is not specific to any one provider or host (MUL-2904, #4182).
 func BuildPrompt(task Task, provider string) string {
 	if task.ChatSessionID != "" {
-		return buildChatPrompt(task)
+		return buildChatPromptForProvider(task, provider)
 	}
 	if task.TriggerCommentID != "" {
 		return buildCommentPrompt(task, provider)
@@ -296,6 +296,10 @@ func commentReplyThreads(task Task) []execenv.ThreadReplyTarget {
 
 // buildChatPrompt constructs a prompt for interactive chat tasks.
 func buildChatPrompt(task Task) string {
+	return buildChatPromptForProvider(task, "")
+}
+
+func buildChatPromptForProvider(task Task, provider string) string {
 	// Proactive self-introduction: the agent was just created and is opening the
 	// conversation. There is no user message to reply to — the agent sends the
 	// first message so the thread reads as the agent messaging its creator, not
@@ -385,14 +389,27 @@ func buildChatPrompt(task Task) string {
 	// time and is the only reliable path.
 	if len(task.ChatMessageAttachments) > 0 {
 		b.WriteString("\nAttachments on this message:\n")
+		hasNativeImages := false
+		hasDownloadAttachments := false
+		nativeImageInput := providerSupportsNativeImageInput(provider)
 		for _, a := range task.ChatMessageAttachments {
 			if a.ContentType != "" {
 				fmt.Fprintf(&b, "- id=%s filename=%q content_type=%s\n", a.ID, a.Filename, a.ContentType)
 			} else {
 				fmt.Fprintf(&b, "- id=%s filename=%q\n", a.ID, a.Filename)
 			}
+			if nativeImageInput && strings.HasPrefix(strings.ToLower(strings.TrimSpace(a.ContentType)), "image/") {
+				hasNativeImages = true
+			} else {
+				hasDownloadAttachments = true
+			}
 		}
-		b.WriteString("Use `multica attachment download <id>` to fetch each file locally before referring to it.\n")
+		if hasNativeImages {
+			b.WriteString("Image attachments are already included as native visual input for this turn; inspect them directly.\n")
+		}
+		if hasDownloadAttachments {
+			b.WriteString("Use `multica attachment download <id>` to fetch each attachment that is not included as native visual input before referring to it.\n")
+		}
 		b.WriteString("When creating an issue that should preserve one of these attachments, pass `--attachment-id <id>` to `multica issue create` in addition to keeping the attachment markdown inline.\n")
 	}
 	// Outbound attachments: how the agent puts an image/file INTO its reply.

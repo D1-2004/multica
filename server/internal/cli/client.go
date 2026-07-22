@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -693,6 +694,58 @@ func (c *APIClient) DownloadFile(ctx context.Context, downloadURL string) ([]byt
 
 	const maxDownloadSize = 100 << 20 // 100 MB
 	return io.ReadAll(io.LimitReader(resp.Body, maxDownloadSize))
+}
+
+// DownloadFileLimited downloads at most maxBytes without ever including the
+// supplied URL in an error. Attachment download URLs may carry short-lived
+// signatures, so callers must be able to report failures without leaking the
+// query string into task errors or logs.
+func (c *APIClient) DownloadFileLimited(ctx context.Context, downloadURL string, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, errors.New("attachment download limit must be positive")
+	}
+	isRelative := !strings.HasPrefix(downloadURL, "http://") && !strings.HasPrefix(downloadURL, "https://")
+	if isRelative {
+		if c.BaseURL == "" {
+			return nil, errors.New("relative attachment download URL cannot be resolved")
+		}
+		downloadURL = c.BaseURL + downloadURL
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return nil, errors.New("attachment download URL is invalid")
+	}
+	if isRelative {
+		c.setHeaders(req)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, context.Canceled
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, context.DeadlineExceeded
+		}
+		return nil, errors.New("attachment download request failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("attachment download returned HTTP %d", resp.StatusCode)
+	}
+	if resp.ContentLength > maxBytes {
+		return nil, fmt.Errorf("attachment download exceeds %d bytes", maxBytes)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, errors.New("attachment download body read failed")
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("attachment download exceeds %d bytes", maxBytes)
+	}
+	return data, nil
 }
 
 // HealthCheck hits the /health endpoint and returns the response body.
