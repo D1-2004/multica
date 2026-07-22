@@ -34,7 +34,7 @@ func TestHTTPCallbackRouterRegisterUsesTrustedRobotAPI(t *testing.T) {
 	sourceID, err := service.Register(context.Background(), dingtalk.HTTPCallbackEndpoint{
 		EndpointID:  "v1_endpoint",
 		DispatchURL: "https://multica.example/api/webhooks/agent-dispatch/v1_endpoint",
-	}, agentID, "robot-code-1")
+	}, agentID, "robot-code-1", "client-id-1", "client-secret-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,8 @@ func TestHTTPCallbackRouterRegisterUsesTrustedRobotAPI(t *testing.T) {
 	}
 	surface, _ := body["surface"].(map[string]any)
 	outbound, _ := body["outbound"].(map[string]any)
-	if body["robotCode"] != "robot-code-1" || body["agentId"] != util.UUIDToString(agentID) ||
+	if body["robotCode"] != "robot-code-1" || body["clientId"] != "client-id-1" ||
+		body["clientSecret"] != "client-secret-1" || body["agentId"] != util.UUIDToString(agentID) ||
 		body["replaceExistingBinding"] != true || surface["type"] != "chat" ||
 		outbound["mode"] != "robot_sdk" || outbound["replyTo"] != "latest_message" {
 		t.Fatalf("registration = %#v", body)
@@ -52,7 +53,7 @@ func TestHTTPCallbackRouterRegisterUsesTrustedRobotAPI(t *testing.T) {
 
 func TestHTTPCallbackRouterRegisterRequiresRobotCode(t *testing.T) {
 	service := &HTTPCallbackRouterService{}
-	if _, err := service.Register(context.Background(), dingtalk.HTTPCallbackEndpoint{}, util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), " "); err == nil {
+	if _, err := service.Register(context.Background(), dingtalk.HTTPCallbackEndpoint{}, util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), " ", "client-id", "client-secret"); err == nil {
 		t.Fatal("expected missing robot code to fail")
 	}
 }

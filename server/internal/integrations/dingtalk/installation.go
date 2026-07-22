@@ -282,11 +282,10 @@ func (s *InstallationService) Revoke(ctx context.Context, id pgtype.UUID) error 
 	return s.queries.SetDingTalkInstallationStatus(ctx, id, InstallationRevoked)
 }
 
-// DecryptClientSecret returns the plaintext client_secret for the
-// supplied installation row. Reserved for the future inbound transport
-// (DingTalk Stream Mode) that must authenticate on behalf of an
-// installation; the plaintext value must never round-trip through an
-// HTTP response.
+// DecryptClientSecret returns the plaintext client_secret for operations that
+// authenticate on behalf of an installation, including Router registration
+// retries and DingTalk Stream connections. The plaintext value must never
+// round-trip through an HTTP response.
 func (s *InstallationService) DecryptClientSecret(inst Installation) (string, error) {
 	plain, err := s.box.Open(inst.AppSecretEncrypted)
 	if err != nil {

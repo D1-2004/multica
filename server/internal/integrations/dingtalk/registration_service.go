@@ -68,7 +68,7 @@ type HTTPCallbackEndpoint struct {
 
 type HTTPCallbackRouter interface {
 	PrepareEndpoint(ctx context.Context, workspaceID, agentID, actorUserID pgtype.UUID) (HTTPCallbackEndpoint, error)
-	Register(ctx context.Context, endpoint HTTPCallbackEndpoint, agentID pgtype.UUID, robotCode string) (sourceID string, err error)
+	Register(ctx context.Context, endpoint HTTPCallbackEndpoint, agentID pgtype.UUID, robotCode, clientID, clientSecret string) (sourceID string, err error)
 }
 
 // RegistrationServiceConfig configures the service.
@@ -226,7 +226,12 @@ func (s *RegistrationService) RetryHTTPCallbackRouter(
 		return updated, err
 	}
 	inst.DispatchEndpointID = endpoint.EndpointID
-	sourceID, err := s.httpCallbackRouter.Register(ctx, endpoint, inst.AgentID, inst.RobotCode)
+	clientSecret, err := s.installs.DecryptClientSecret(inst)
+	if err != nil {
+		updated, _ := s.installs.UpdateRouterState(ctx, inst, "", "failed", err.Error())
+		return updated, err
+	}
+	sourceID, err := s.httpCallbackRouter.Register(ctx, endpoint, inst.AgentID, inst.RobotCode, inst.ClientID, clientSecret)
 	if err != nil {
 		updated, _ := s.installs.UpdateRouterState(ctx, inst, "", "failed", err.Error())
 		return updated, err
@@ -645,7 +650,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 	// becomes active; a Router failure leaves a retryable installation instead
 	// of forcing the user to scan again.
 	if sess.transportMode == TransportModeHTTPCallback && routerStatus == "pending" {
-		sourceID, registerErr := s.httpCallbackRouter.Register(ctx, endpoint, sess.agentID, res.RobotCode)
+		sourceID, registerErr := s.httpCallbackRouter.Register(ctx, endpoint, sess.agentID, res.RobotCode, res.ClientID, res.ClientSecret)
 		if registerErr != nil {
 			routerStatus = "failed"
 			routerLastError = registerErr.Error()
