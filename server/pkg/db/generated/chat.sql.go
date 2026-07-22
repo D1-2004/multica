@@ -945,6 +945,22 @@ func (q *Queries) LockChatSessionForDelete(ctx context.Context, id pgtype.UUID) 
 	return id_2, err
 }
 
+const lockChatSessionForPendingFresh = `-- name: LockChatSessionForPendingFresh :one
+SELECT id FROM chat_session
+WHERE id = $1
+FOR UPDATE
+`
+
+// Serializes a channel /reset transaction with the next runnable message.
+// Without this shared row lock, a DELETE in the message transaction can miss
+// an uncommitted pending-fresh INSERT and delay the reset by one more message.
+func (q *Queries) LockChatSessionForPendingFresh(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockChatSessionForPendingFresh, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const markChatSessionRead = `-- name: MarkChatSessionRead :exec
 UPDATE chat_session SET last_read_at = now()
 WHERE id = $1
@@ -953,6 +969,17 @@ WHERE id = $1
 // Advances the read cursor to now, dropping the session's unread_count to 0.
 func (q *Queries) MarkChatSessionRead(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, markChatSessionRead, id)
+	return err
+}
+
+const putChatSessionPendingFresh = `-- name: PutChatSessionPendingFresh :exec
+INSERT INTO chat_session_pending_fresh (chat_session_id)
+VALUES ($1)
+ON CONFLICT (chat_session_id) DO NOTHING
+`
+
+func (q *Queries) PutChatSessionPendingFresh(ctx context.Context, chatSessionID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, putChatSessionPendingFresh, chatSessionID)
 	return err
 }
 
@@ -1232,6 +1259,11 @@ func (q *Queries) UpdateChatSessionTitleIfCurrent(ctx context.Context, arg Updat
 }
 
 const upsertDeferredChannelChatTask = `-- name: UpsertDeferredChannelChatTask :one
+WITH consumed_pending_fresh AS (
+    DELETE FROM chat_session_pending_fresh
+    WHERE chat_session_id = $4
+    RETURNING chat_session_id
+)
 INSERT INTO agent_task_queue (
     id, agent_id, runtime_id, issue_id, status, priority, chat_session_id,
     initiator_user_id, originator_user_id, force_fresh_session,
@@ -1241,7 +1273,8 @@ INSERT INTO agent_task_queue (
 VALUES (
     $1, $2, $3, NULL, 'deferred', 2, $4,
     $5, $6,
-    COALESCE($7::boolean, FALSE),
+    COALESCE($7::boolean, FALSE)
+        OR EXISTS (SELECT 1 FROM consumed_pending_fresh),
     $8, $9,
     $10, $1,
     now() + make_interval(secs => $11::double precision)

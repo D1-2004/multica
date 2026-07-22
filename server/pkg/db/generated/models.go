@@ -427,6 +427,11 @@ type ChatSession struct {
 	PinnedAt     pgtype.Timestamptz `json:"pinned_at"`
 }
 
+type ChatSessionPendingFresh struct {
+	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type Comment struct {
 	ID             pgtype.UUID        `json:"id"`
 	IssueID        pgtype.UUID        `json:"issue_id"`

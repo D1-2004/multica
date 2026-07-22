@@ -132,6 +132,14 @@ SELECT id FROM chat_session
 WHERE id = $1
 FOR UPDATE;
 
+-- name: LockChatSessionForPendingFresh :one
+-- Serializes a channel /reset transaction with the next runnable message.
+-- Without this shared row lock, a DELETE in the message transaction can miss
+-- an uncommitted pending-fresh INSERT and delay the reset by one more message.
+SELECT id FROM chat_session
+WHERE id = $1
+FOR UPDATE;
+
 -- name: DeleteChatSession :exec
 -- Hard delete. chat_message rows cascade via FK ON DELETE CASCADE; the
 -- chat_session_id on agent_task_queue is set NULL by FK so completed/failed
@@ -235,6 +243,11 @@ VALUES (
 )
 RETURNING *;
 
+-- name: PutChatSessionPendingFresh :exec
+INSERT INTO chat_session_pending_fresh (chat_session_id)
+VALUES ($1)
+ON CONFLICT (chat_session_id) DO NOTHING;
+
 -- name: UpsertDeferredChannelChatTask :one
 -- Persists the channel chat's silence-window batch before the inbound handler
 -- may report success. A partial unique index permits one open deferred batch
@@ -242,6 +255,11 @@ RETURNING *;
 -- create the next batch. Every message in the batch is tagged with the returned
 -- task id, and chat_input_task_id makes that exact set the daemon's immutable
 -- input instead of relying on the legacy trailing-message scan.
+WITH consumed_pending_fresh AS (
+    DELETE FROM chat_session_pending_fresh
+    WHERE chat_session_id = @chat_session_id
+    RETURNING chat_session_id
+)
 INSERT INTO agent_task_queue (
     id, agent_id, runtime_id, issue_id, status, priority, chat_session_id,
     initiator_user_id, originator_user_id, force_fresh_session,
@@ -251,7 +269,8 @@ INSERT INTO agent_task_queue (
 VALUES (
     @id, @agent_id, @runtime_id, NULL, 'deferred', 2, @chat_session_id,
     @initiator_user_id, @originator_user_id,
-    COALESCE(sqlc.narg('force_fresh_session')::boolean, FALSE),
+    COALESCE(sqlc.narg('force_fresh_session')::boolean, FALSE)
+        OR EXISTS (SELECT 1 FROM consumed_pending_fresh),
     sqlc.narg(runtime_mcp_overlay), sqlc.narg(runtime_connected_apps),
     sqlc.narg(task_context), @id,
     now() + make_interval(secs => @debounce_seconds::double precision)
