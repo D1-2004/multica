@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,17 @@ func TestNewReturnsOpencodeBackend(t *testing.T) {
 	}
 	if _, ok := b.(*opencodeBackend); !ok {
 		t.Fatalf("expected *opencodeBackend, got %T", b)
+	}
+}
+
+func TestAppendOpenCodeImageArgs(t *testing.T) {
+	got := appendOpenCodeImageArgs([]string{"run", "--format", "json"}, []InputImage{
+		{Path: "/tmp/one.png", Name: "one.png", ContentType: "image/png"},
+		{Path: "/tmp/two.jpg", Name: "two.jpg", ContentType: "image/jpeg"},
+	})
+	want := []string{"run", "--format", "json", "--file", "/tmp/one.png", "--file", "/tmp/two.jpg"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("args = %#v, want %#v", got, want)
 	}
 }
 
@@ -269,6 +281,36 @@ func TestOpencodeHandleErrorEvent(t *testing.T) {
 	}
 }
 
+func TestOpencodeProcessEventsPreservesErrorReference(t *testing.T) {
+	t.Parallel()
+
+	var logBuf bytes.Buffer
+	b := &opencodeBackend{cfg: Config{Logger: slog.New(slog.NewTextHandler(&logBuf, nil))}}
+	ch := make(chan Message, 10)
+	lines := `{"type":"error","timestamp":1001,"sessionID":"ses_err","error":{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_01JXYZ"}}}`
+
+	result := b.processEvents(strings.NewReader(lines), ch)
+
+	want := "Unexpected server error. Check server logs for details. (ref: err_01JXYZ)"
+	if result.errMsg != want {
+		t.Fatalf("errMsg: got %q, want %q", result.errMsg, want)
+	}
+
+	close(ch)
+	var errorMessage string
+	for msg := range ch {
+		if msg.Type == MessageError {
+			errorMessage = msg.Content
+		}
+	}
+	if errorMessage != want {
+		t.Fatalf("error message: got %q, want %q", errorMessage, want)
+	}
+	if got := logBuf.String(); !strings.Contains(got, "error_ref=err_01JXYZ") {
+		t.Fatalf("structured log must retain the OpenCode error reference, got %q", got)
+	}
+}
+
 func TestOpencodeHandleErrorEventNameOnly(t *testing.T) {
 	t.Parallel()
 
@@ -375,7 +417,7 @@ func TestOpencodeEventParsingToolUseFixture(t *testing.T) {
 func TestOpencodeEventParsingErrorFixture(t *testing.T) {
 	t.Parallel()
 
-	line := `{"type":"error","timestamp":1775117233612,"sessionID":"ses_abc","error":{"name":"UnknownError","data":{"message":"Model not found: definitely/not-a-model."}}}`
+	line := `{"type":"error","timestamp":1775117233612,"sessionID":"ses_abc","error":{"name":"UnknownError","data":{"message":"Model not found: definitely/not-a-model.","ref":"err_01JTESTREFERENCE"}}}`
 
 	var event opencodeEvent
 	if err := json.Unmarshal([]byte(line), &event); err != nil {
@@ -390,8 +432,11 @@ func TestOpencodeEventParsingErrorFixture(t *testing.T) {
 	if event.Error.Name != "UnknownError" {
 		t.Errorf("error.name: got %q", event.Error.Name)
 	}
-	if got := event.Error.Message(); got != "Model not found: definitely/not-a-model." {
+	if got := event.Error.Message(); got != "Model not found: definitely/not-a-model. (ref: err_01JTESTREFERENCE)" {
 		t.Errorf("error.Message(): got %q", got)
+	}
+	if event.Error.Data.Ref != "err_01JTESTREFERENCE" {
+		t.Errorf("error.data.ref: got %q", event.Error.Data.Ref)
 	}
 }
 
@@ -470,9 +515,22 @@ func TestOpencodeErrorMessage(t *testing.T) {
 			want: "details",
 		},
 		{
+			name: "data message and reference",
+			err: &opencodeError{Name: "UnknownError", Data: &opencodeErrData{
+				Message: "Unexpected server error",
+				Ref:     "err_01JXYZ",
+			}},
+			want: "Unexpected server error (ref: err_01JXYZ)",
+		},
+		{
 			name: "name only",
 			err:  &opencodeError{Name: "RateLimitError"},
 			want: "RateLimitError",
+		},
+		{
+			name: "reference only",
+			err:  &opencodeError{Data: &opencodeErrData{Ref: "err_01JXYZ"}},
+			want: "unknown opencode error (ref: err_01JXYZ)",
 		},
 		{
 			name: "empty",

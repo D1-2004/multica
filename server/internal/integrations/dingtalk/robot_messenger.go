@@ -264,12 +264,16 @@ func (m *RobotMessenger) resolveMessageFileURL(ctx context.Context, creds channe
 	if downloadCode == "" {
 		return "", errors.New("dingtalk robot: message file download code is empty")
 	}
+	robotCode := strings.TrimSpace(creds.RobotCode)
+	if robotCode == "" {
+		return "", errors.New("dingtalk robot: message file robot code is empty")
+	}
 	token, err := m.accessToken(ctx, creds)
 	if err != nil {
 		return "", err
 	}
 	payload, err := json.Marshal(map[string]string{
-		"robotCode":    creds.ClientID,
+		"robotCode":    robotCode,
 		"downloadCode": downloadCode,
 	})
 	if err != nil {

@@ -281,6 +281,42 @@ func TestDownloadFile(t *testing.T) {
 	})
 }
 
+func TestDownloadFileLimitedBoundsAndRedactsSignedURL(t *testing.T) {
+	t.Run("reads no more than limit plus sentinel byte", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", "6")
+			_, _ = io.WriteString(w, "123456")
+		}))
+		defer srv.Close()
+
+		client := NewAPIClient("", "", "")
+		_, err := client.DownloadFileLimited(context.Background(), srv.URL+"/file?signature=secret", 5)
+		if err == nil || !strings.Contains(err.Error(), "exceeds 5 bytes") {
+			t.Fatalf("error = %v", err)
+		}
+		if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), srv.URL) {
+			t.Fatalf("signed URL leaked through error: %v", err)
+		}
+	})
+
+	t.Run("HTTP error omits URL and body", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, "credential detail")
+		}))
+		defer srv.Close()
+
+		client := NewAPIClient("", "", "")
+		_, err := client.DownloadFileLimited(context.Background(), srv.URL+"/file?signature=secret", 10)
+		if err == nil || err.Error() != "attachment download returned HTTP 403" {
+			t.Fatalf("error = %v", err)
+		}
+		if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "credential detail") {
+			t.Fatalf("download credential leaked through error: %v", err)
+		}
+	})
+}
+
 func TestUploadFileWithURL(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

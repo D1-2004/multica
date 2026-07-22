@@ -94,8 +94,8 @@ func TestInboundFromBotCallback(t *testing.T) {
 				if err != nil {
 					t.Fatalf("decode raw: %v", err)
 				}
-				if raw.MessageDownloadCode != "short-lived-code" {
-					t.Error("picture download credential was not retained")
+				if len(raw.MessageAttachments) != 1 || raw.MessageAttachments[0].Type != channel.MsgTypeImage || raw.MessageAttachments[0].DownloadCode != "short-lived-code" {
+					t.Errorf("picture attachment metadata = %#v", raw.MessageAttachments)
 				}
 			},
 		},
@@ -114,7 +114,7 @@ func TestInboundFromBotCallback(t *testing.T) {
 				if err != nil {
 					t.Fatalf("decode raw: %v", err)
 				}
-				if raw.MessageDownloadCode != "file-download-code" || raw.MessageFileName != "invoice.pdf" {
+				if len(raw.MessageAttachments) != 1 || raw.MessageAttachments[0].DownloadCode != "file-download-code" || raw.MessageAttachments[0].FileName != "invoice.pdf" {
 					t.Errorf("file metadata = %#v", raw)
 				}
 			},
@@ -166,7 +166,7 @@ func TestInboundFromBotCallback(t *testing.T) {
 				ConversationID: "cid", MsgID: "m5", SenderStaffID: "s", ConversationType: "1", Msgtype: "richText",
 				Content: richTextContent{RichText: []richTextNode{
 					{Text: "看下这个报错"},
-					{Type: "picture"},
+					{Type: "picture", DownloadCode: "rich-image-code"},
 				}},
 			},
 			ok: true,
@@ -176,6 +176,13 @@ func TestInboundFromBotCallback(t *testing.T) {
 				}
 				if msg.Text != "看下这个报错[Image]" {
 					t.Errorf("Text = %q", msg.Text)
+				}
+				raw, err := decodeDingTalkRaw(msg)
+				if err != nil {
+					t.Fatalf("decode raw: %v", err)
+				}
+				if len(raw.MessageAttachments) != 1 || raw.MessageAttachments[0].Type != channel.MsgTypeImage || raw.MessageAttachments[0].DownloadCode != "rich-image-code" {
+					t.Errorf("richText attachments = %#v", raw.MessageAttachments)
 				}
 			},
 		},
@@ -267,8 +274,8 @@ func TestPictureDownloadCodeFromCallbackJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode raw: %v", err)
 	}
-	if raw.MessageDownloadCode != "live-download-code" {
-		t.Fatalf("MessageDownloadCode = %q", raw.MessageDownloadCode)
+	if len(raw.MessageAttachments) != 1 || raw.MessageAttachments[0].DownloadCode != "live-download-code" {
+		t.Fatalf("MessageAttachments = %#v", raw.MessageAttachments)
 	}
 }
 
@@ -306,8 +313,33 @@ func TestFileMetadataFromCallbackJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode raw: %v", err)
 	}
-	if raw.MessageDownloadCode != "live-file-download-code" || raw.MessageFileName != "invoice.pdf" {
+	if len(raw.MessageAttachments) != 1 || raw.MessageAttachments[0].DownloadCode != "live-file-download-code" || raw.MessageAttachments[0].FileName != "invoice.pdf" {
 		t.Fatalf("file metadata = %#v", raw)
+	}
+}
+
+func TestRichTextPictureMetadataFromCallbackJSON(t *testing.T) {
+	var data botCallbackData
+	if err := json.Unmarshal([]byte(`{"conversationId":"cid","msgId":"m-rich-picture","robotCode":"robot-from-callback","senderStaffId":"staff","conversationType":"2","msgtype":"richText","content":{"richText":[{"text":"看下这张图"},{"type":"picture","downloadCode":"live-rich-picture-code"}]}}`), &data); err != nil {
+		t.Fatalf("unmarshal callback: %v", err)
+	}
+	msg, ok := inboundFromBotCallback(data, "client-id")
+	if !ok {
+		t.Fatal("callback was dropped")
+	}
+	if msg.Text != "看下这张图[Image]" {
+		t.Fatalf("Text = %q", msg.Text)
+	}
+	raw, err := decodeDingTalkRaw(msg)
+	if err != nil {
+		t.Fatalf("decode raw: %v", err)
+	}
+	if raw.RobotCode != "robot-from-callback" || len(raw.MessageAttachments) != 1 {
+		t.Fatalf("raw = %#v", raw)
+	}
+	attachment := raw.MessageAttachments[0]
+	if attachment.Type != channel.MsgTypeImage || attachment.DownloadCode != "live-rich-picture-code" {
+		t.Fatalf("attachment = %#v", attachment)
 	}
 }
 

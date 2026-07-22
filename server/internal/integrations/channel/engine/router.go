@@ -346,17 +346,38 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	//     consumed here: mark the session so the NEXT message starts a fresh
 	//     agent session, and skip the append + run trigger — an empty prompt
 	//     would burn a run on nothing (and some providers reject empty input
-	//     outright). The pending mark is in-process state; a restart drops it,
-	//     which degrades to "the next message resumes the old session" and the
-	//     user can re-issue the command.
+	//     outright). Durable channels persist the mark and dedup finalization in
+	//     one transaction so any replica can consume it after a restart.
 	if msg.ForceFresh && strings.TrimSpace(msg.Text) == "" {
-		r.markPendingFresh(keyForSession(sessionID))
+		finalize := finalizeMark
+		if set.DurableRuns {
+			if set.PendingFresh == nil {
+				return Result{}, finalizeRelease, fmt.Errorf("durable channel missing pending fresh session store")
+			}
+			markedInTx, err := set.PendingFresh.PersistPendingFreshSession(ctx, PendingFreshSessionParams{
+				SessionID:      sessionID,
+				InstallationID: inst.ID,
+				MessageID:      msg.MessageID,
+				ClaimToken:     claimToken,
+			})
+			if err != nil {
+				if errors.Is(err, ErrClaimLost) {
+					return Result{}, finalizeNone, err
+				}
+				return Result{}, finalizeRelease, fmt.Errorf("persist pending fresh session: %w", err)
+			}
+			if markedInTx {
+				finalize = finalizeNone
+			}
+		} else {
+			r.markPendingFresh(keyForSession(sessionID))
+		}
 		return Result{
 			Outcome:        OutcomeFreshSession,
 			InstallationID: inst.ID,
 			ChatSessionID:  sessionID,
 			Sender:         msg.Source.SenderID,
-		}, finalizeMark, nil
+		}, finalize, nil
 	}
 
 	var taskContext []byte
@@ -433,7 +454,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		if err != nil {
 			return Result{}, finalizeRelease, fmt.Errorf("load chat session for durable task: %w", err)
 		}
-		durableFresh = r.takePendingFresh(keyForSession(sessionID), msg.ForceFresh)
+		durableFresh = msg.ForceFresh
 		prepared, err := r.tasks.PrepareChannelChatTask(ctx, session, identity.UserID, durableFresh, taskContext)
 		if err != nil {
 			switch {
@@ -442,9 +463,6 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			case errors.Is(err, service.ErrChatTaskAgentArchived):
 				durableOutcome = OutcomeAgentArchived
 			default:
-				if durableFresh {
-					r.markPendingFresh(keyForSession(sessionID))
-				}
 				return Result{}, finalizeRelease, fmt.Errorf("prepare durable chat task: %w", err)
 			}
 		} else {
@@ -454,22 +472,20 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 
 	// 6. Append message + in-tx dedup Mark — the durable transition point.
 	appendRes, err := set.Session.AppendMessage(ctx, AppendParams{
-		SessionID:      sessionID,
-		WorkspaceID:    inst.WorkspaceID,
-		Sender:         identity.UserID,
-		InstallationID: inst.ID,
-		Installation:   inst,
-		Message:        msg,
-		ClaimToken:     claimToken,
-		PreparedTask:   preparedTask,
+		SessionID:         sessionID,
+		WorkspaceID:       inst.WorkspaceID,
+		Sender:            identity.UserID,
+		InstallationID:    inst.ID,
+		Installation:      inst,
+		Message:           msg,
+		ClaimToken:        claimToken,
+		ForceFreshSession: set.DurableRuns && durableFresh,
+		PreparedTask:      preparedTask,
 	})
 	if err == nil {
 		r.publishInboundMessage(inst.WorkspaceID, sessionID, identity.UserID, appendRes)
 	}
 	if err != nil {
-		if set.DurableRuns && durableFresh {
-			r.markPendingFresh(keyForSession(sessionID))
-		}
 		if errors.Is(err, ErrClaimLost) {
 			return Result{}, finalizeNone, err
 		}
@@ -490,12 +506,6 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		ChatSessionID:  sessionID,
 		TaskID:         appendRes.TaskID,
 		Sender:         msg.Source.SenderID,
-	}
-	if set.DurableRuns && preparedTask == nil && durableFresh {
-		// A product state (archived/no runtime) intentionally commits the
-		// message without a task. Preserve the fresh-session request for the next
-		// message that can actually create one.
-		r.markPendingFresh(keyForSession(sessionID))
 	}
 
 	// 7. /issue command, if present. chat_message is already durable; all

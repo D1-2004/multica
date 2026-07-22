@@ -412,7 +412,7 @@ func (q *Queries) ListAttachmentURLsByIssueOrComments(ctx context.Context, issue
 const listAttachmentsByChatMessage = `-- name: ListAttachmentsByChatMessage :many
 SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id FROM attachment
 WHERE chat_message_id = $1 AND workspace_id = $2
-ORDER BY created_at ASC
+ORDER BY created_at ASC, id ASC
 `
 
 type ListAttachmentsByChatMessageParams struct {
@@ -458,7 +458,7 @@ func (q *Queries) ListAttachmentsByChatMessage(ctx context.Context, arg ListAtta
 const listAttachmentsByChatMessageIDs = `-- name: ListAttachmentsByChatMessageIDs :many
 SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id FROM attachment
 WHERE chat_message_id = ANY($1::uuid[]) AND workspace_id = $2
-ORDER BY created_at ASC
+ORDER BY created_at ASC, id ASC
 `
 
 type ListAttachmentsByChatMessageIDsParams struct {

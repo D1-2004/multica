@@ -225,12 +225,29 @@ func TestBuildPromptSquadLeaderNoActionForMemberTrigger(t *testing.T) {
 			Instructions: "Some instructions\n\n## Squad Operating Protocol\n\nYou are the LEADER...",
 		},
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task, "hermes")
 	if !strings.Contains(out, "Squad leader no_action rule") {
 		t.Errorf("buildCommentPrompt must inject squad leader no_action rule for member-triggered comments, got:\n%s", out)
 	}
 	if !strings.Contains(out, "DO NOT post any comment") {
 		t.Errorf("buildCommentPrompt must contain DO NOT post prohibition for member-triggered squad leader, got:\n%s", out)
+	}
+}
+
+func TestBuildChatPromptUnsupportedProviderKeepsImageDownloadCommand(t *testing.T) {
+	task := Task{
+		ChatSessionID: "sess-1",
+		ChatMessage:   "describe this image",
+		ChatMessageAttachments: []ChatAttachmentMeta{
+			{ID: "image-1", Filename: "shot.png", ContentType: "image/png"},
+		},
+	}
+	out := BuildPrompt(task, "claude")
+	if strings.Contains(out, "already included as native visual input") {
+		t.Fatalf("unsupported provider must not claim native image input:\n%s", out)
+	}
+	if !strings.Contains(out, "multica attachment download <id>") {
+		t.Fatalf("unsupported provider must retain the attachment download instruction:\n%s", out)
 	}
 }
 
@@ -261,16 +278,33 @@ func TestBuildChatPromptAttachmentIDsCanBeBoundToCreatedIssues(t *testing.T) {
 			{ID: "019ec09d-6222-722b-bdfa-427b105d80be", Filename: "shot.png", ContentType: "image/png"},
 		},
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task, "hermes")
 	for _, want := range []string{
 		"Attachments on this message:",
 		"id=019ec09d-6222-722b-bdfa-427b105d80be",
-		"multica attachment download <id>",
+		"already included as native visual input",
 		"--attachment-id <id>",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("chat prompt missing %q\n--- output ---\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "multica attachment download <id>") {
+		t.Fatalf("image-only chat prompt must not tell the agent to download an already attached native image:\n%s", out)
+	}
+}
+
+func TestBuildChatPromptNonImageAttachmentUsesDownloadCommand(t *testing.T) {
+	task := Task{
+		ChatSessionID: "sess-1",
+		ChatMessage:   "summarize this report",
+		ChatMessageAttachments: []ChatAttachmentMeta{
+			{ID: "attachment-1", Filename: "report.pdf", ContentType: "application/pdf"},
+		},
+	}
+	out := BuildPrompt(task, "claude")
+	if !strings.Contains(out, "multica attachment download <id>") {
+		t.Fatalf("non-image attachment prompt missing download command:\n%s", out)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -237,5 +238,227 @@ func TestAppendUserMessageDurableTransactionRollbackAndBatchSeal(t *testing.T) {
 	}
 	if thirdTaskID != third.TaskID {
 		t.Fatalf("post-seal message task = %v, want %v", thirdTaskID, third.TaskID)
+	}
+}
+
+func pendingFreshCount(t *testing.T, f durableSessionFixture) int {
+	t.Helper()
+	var count int
+	if err := f.pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM chat_session_pending_fresh WHERE chat_session_id = $1
+	`, f.sessionID).Scan(&count); err != nil {
+		t.Fatalf("count pending fresh session: %v", err)
+	}
+	return count
+}
+
+func TestPendingFreshSessionCrossReplicaRollbackAndSingleConsumption(t *testing.T) {
+	f := newDurableSessionFixture(t)
+	ctx := context.Background()
+	q := db.New(f.pool)
+	replicaA := NewChatSession(q, f.pool, channel.Type("dingtalk"), SessionTitles{Direct: "direct"})
+	replicaB := NewChatSession(q, f.pool, channel.Type("dingtalk"), SessionTitles{Direct: "direct"})
+
+	resetClaim := claimDurableSessionMessage(t, f, "pending-reset")
+	marked, err := replicaA.PersistPendingFreshSession(ctx, PendingFreshSessionParams{
+		SessionID:      f.sessionID,
+		InstallationID: f.installationID,
+		MessageID:      "pending-reset",
+		ClaimToken:     resetClaim.ClaimToken,
+	})
+	if err != nil || !marked {
+		t.Fatalf("persist pending reset = marked %t, err %v", marked, err)
+	}
+	if count := pendingFreshCount(t, f); count != 1 {
+		t.Fatalf("pending rows = %d, want 1", count)
+	}
+
+	badClaim := claimDurableSessionMessage(t, f, "pending-rollback")
+	wrongToken := badClaim.ClaimToken
+	wrongToken.Bytes[0] ^= 0xff
+	if _, err := replicaB.AppendUserMessage(ctx, AppendInput{
+		SessionID: f.sessionID, WorkspaceID: f.workspaceID, Sender: f.userID,
+		InstallationID: f.installationID, Body: "must roll back pending", MessageID: "pending-rollback",
+		ClaimToken: wrongToken, PreparedTask: newPreparedDurableSessionTask(f, "must roll back pending"),
+	}); err != ErrClaimLost {
+		t.Fatalf("wrong claim error = %v, want ErrClaimLost", err)
+	}
+	if count := pendingFreshCount(t, f); count != 1 {
+		t.Fatalf("rollback cleared pending rows: got %d, want 1", count)
+	}
+
+	goodClaim := claimDurableSessionMessage(t, f, "pending-consume")
+	first, err := replicaB.AppendUserMessage(ctx, AppendInput{
+		SessionID: f.sessionID, WorkspaceID: f.workspaceID, Sender: f.userID,
+		InstallationID: f.installationID, Body: "consume pending", MessageID: "pending-consume",
+		ClaimToken: goodClaim.ClaimToken, PreparedTask: newPreparedDurableSessionTask(f, "consume pending"),
+	})
+	if err != nil {
+		t.Fatalf("consume pending: %v", err)
+	}
+	firstTask, err := q.GetAgentTask(ctx, first.TaskID)
+	if err != nil {
+		t.Fatalf("load first task: %v", err)
+	}
+	if !firstTask.ForceFreshSession || pendingFreshCount(t, f) != 0 {
+		t.Fatalf("first task fresh/pending = %t/%d, want true/0", firstTask.ForceFreshSession, pendingFreshCount(t, f))
+	}
+
+	if _, err := f.pool.Exec(ctx, `UPDATE agent_task_queue SET status = 'queued' WHERE id = $1`, first.TaskID); err != nil {
+		t.Fatalf("seal first task: %v", err)
+	}
+	thirdClaim := claimDurableSessionMessage(t, f, "pending-third")
+	third, err := replicaA.AppendUserMessage(ctx, AppendInput{
+		SessionID: f.sessionID, WorkspaceID: f.workspaceID, Sender: f.userID,
+		InstallationID: f.installationID, Body: "third", MessageID: "pending-third",
+		ClaimToken: thirdClaim.ClaimToken, PreparedTask: newPreparedDurableSessionTask(f, "third"),
+	})
+	if err != nil {
+		t.Fatalf("append third: %v", err)
+	}
+	thirdTask, err := q.GetAgentTask(ctx, third.TaskID)
+	if err != nil {
+		t.Fatalf("load third task: %v", err)
+	}
+	if thirdTask.ForceFreshSession {
+		t.Fatal("pending fresh request was consumed more than once")
+	}
+}
+
+func TestPendingFreshSessionConcurrentMessagesKeepFreshOnSharedBatch(t *testing.T) {
+	f := newDurableSessionFixture(t)
+	ctx := context.Background()
+	q := db.New(f.pool)
+	replicaA := NewChatSession(q, f.pool, channel.Type("dingtalk"), SessionTitles{Direct: "direct"})
+	replicaB := NewChatSession(q, f.pool, channel.Type("dingtalk"), SessionTitles{Direct: "direct"})
+
+	resetClaim := claimDurableSessionMessage(t, f, "concurrent-reset")
+	if _, err := replicaA.PersistPendingFreshSession(ctx, PendingFreshSessionParams{
+		SessionID: f.sessionID, InstallationID: f.installationID,
+		MessageID: "concurrent-reset", ClaimToken: resetClaim.ClaimToken,
+	}); err != nil {
+		t.Fatalf("persist reset: %v", err)
+	}
+
+	type pendingAppend struct {
+		session   *ChatSession
+		messageID string
+		body      string
+		claim     db.ChannelInboundMessageDedup
+	}
+	appends := []pendingAppend{
+		{session: replicaA, messageID: "concurrent-one", body: "one", claim: claimDurableSessionMessage(t, f, "concurrent-one")},
+		{session: replicaB, messageID: "concurrent-two", body: "two", claim: claimDurableSessionMessage(t, f, "concurrent-two")},
+	}
+	start := make(chan struct{})
+	results := make(chan AppendResult, len(appends))
+	errs := make(chan error, len(appends))
+	var wg sync.WaitGroup
+	for _, appendCall := range appends {
+		appendCall := appendCall
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			result, err := appendCall.session.AppendUserMessage(ctx, AppendInput{
+				SessionID: f.sessionID, WorkspaceID: f.workspaceID, Sender: f.userID,
+				InstallationID: f.installationID, Body: appendCall.body, MessageID: appendCall.messageID,
+				ClaimToken: appendCall.claim.ClaimToken, PreparedTask: newPreparedDurableSessionTask(f, appendCall.body),
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- result
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent append: %v", err)
+		}
+	}
+	var taskID pgtype.UUID
+	for result := range results {
+		if !taskID.Valid {
+			taskID = result.TaskID
+		} else if result.TaskID != taskID {
+			t.Fatalf("concurrent messages used different deferred tasks: %v vs %v", taskID, result.TaskID)
+		}
+	}
+	task, err := q.GetAgentTask(ctx, taskID)
+	if err != nil {
+		t.Fatalf("load shared task: %v", err)
+	}
+	if !task.ForceFreshSession || pendingFreshCount(t, f) != 0 {
+		t.Fatalf("shared task fresh/pending = %t/%d, want true/0", task.ForceFreshSession, pendingFreshCount(t, f))
+	}
+}
+
+func TestPendingFreshSessionUncommittedResetSerializesNextRunnableMessage(t *testing.T) {
+	f := newDurableSessionFixture(t)
+	ctx := context.Background()
+	q := db.New(f.pool)
+	replica := NewChatSession(q, f.pool, channel.Type("dingtalk"), SessionTitles{Direct: "direct"})
+
+	resetTx, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin reset transaction: %v", err)
+	}
+	defer resetTx.Rollback(ctx)
+	if _, err := resetTx.Exec(ctx, `SELECT id FROM chat_session WHERE id = $1 FOR UPDATE`, f.sessionID); err != nil {
+		t.Fatalf("lock reset session: %v", err)
+	}
+	if _, err := resetTx.Exec(ctx, `
+		INSERT INTO chat_session_pending_fresh (chat_session_id)
+		VALUES ($1)
+		ON CONFLICT (chat_session_id) DO NOTHING
+	`, f.sessionID); err != nil {
+		t.Fatalf("insert uncommitted reset: %v", err)
+	}
+
+	claim := claimDurableSessionMessage(t, f, "uncommitted-reset-next")
+	type appendOutcome struct {
+		result AppendResult
+		err    error
+	}
+	started := make(chan struct{})
+	done := make(chan appendOutcome, 1)
+	go func() {
+		close(started)
+		result, err := replica.AppendUserMessage(ctx, AppendInput{
+			SessionID: f.sessionID, WorkspaceID: f.workspaceID, Sender: f.userID,
+			InstallationID: f.installationID, Body: "next after reset", MessageID: "uncommitted-reset-next",
+			ClaimToken: claim.ClaimToken, PreparedTask: newPreparedDurableSessionTask(f, "next after reset"),
+		})
+		done <- appendOutcome{result: result, err: err}
+	}()
+	<-started
+	select {
+	case outcome := <-done:
+		t.Fatalf("next runnable message bypassed the uncommitted reset lock: result=%+v err=%v", outcome.result, outcome.err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	if err := resetTx.Commit(ctx); err != nil {
+		t.Fatalf("commit reset transaction: %v", err)
+	}
+	select {
+	case outcome := <-done:
+		if outcome.err != nil {
+			t.Fatalf("append after reset commit: %v", outcome.err)
+		}
+		task, err := q.GetAgentTask(ctx, outcome.result.TaskID)
+		if err != nil {
+			t.Fatalf("load task after reset commit: %v", err)
+		}
+		if !task.ForceFreshSession || pendingFreshCount(t, f) != 0 {
+			t.Fatalf("task fresh/pending = %t/%d, want true/0", task.ForceFreshSession, pendingFreshCount(t, f))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("next runnable message stayed blocked after reset commit")
 	}
 }

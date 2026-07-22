@@ -39,16 +39,18 @@ const originDingTalkChat = "dingtalk_chat"
 // auto resolves unbound org members through the corp directory. Each is
 // optional — pass nil to disable.
 func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing engine.TypingNotifier, auto *AutoBinder, employees RobotEmployeeResolver, attachments *service.ExternalAttachmentService, decrypt Decrypter, messenger *RobotMessenger) engine.ResolverSet {
+	chatSession := engine.NewChatSession(q, tx, TypeDingtalk, engine.SessionTitles{
+		Group:    "DingTalk group chat",
+		Direct:   "DingTalk direct message",
+		Fallback: "DingTalk chat",
+	})
 	return engine.ResolverSet{
-		Installation: &installationResolver{q: q},
-		Identity:     &identityResolver{q: q, auto: auto},
-		TaskContext:  &robotTaskContextResolver{q: q, employees: employees},
-		Dedup:        &deduper{q: q},
-		Session: &sessionBinder{session: engine.NewChatSession(q, tx, TypeDingtalk, engine.SessionTitles{
-			Group:    "DingTalk group chat",
-			Direct:   "DingTalk direct message",
-			Fallback: "DingTalk chat",
-		}), attachments: &inboundAttachmentImporter{service: attachments, decrypt: decrypt, messenger: messenger}},
+		Installation:           &installationResolver{q: q},
+		Identity:               &identityResolver{q: q, auto: auto},
+		TaskContext:            &robotTaskContextResolver{q: q, employees: employees},
+		Dedup:                  &deduper{q: q},
+		Session:                &sessionBinder{session: chatSession, attachments: &inboundAttachmentImporter{service: attachments, decrypt: decrypt, messenger: messenger}},
+		PendingFresh:           chatSession,
 		Audit:                  &auditor{q: q},
 		Replier:                replier,
 		Typing:                 typing,
@@ -544,13 +546,14 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 		Body:           dingtalkMessageBody(p.Message),
 		// CommandText is the user's OWN typed text: the /issue parser must
 		// see the bare message, not the speaker-labelled body.
-		CommandText:   p.Message.Text,
-		MessageID:     p.Message.MessageID,
-		ThreadID:      p.Message.Source.ThreadID,
-		ClaimToken:    p.ClaimToken,
-		PreparedTask:  p.PreparedTask,
-		AttachmentIDs: attachmentIDs,
-		SourcePayload: p.Message.SourcePayload,
+		CommandText:       p.Message.Text,
+		MessageID:         p.Message.MessageID,
+		ThreadID:          p.Message.Source.ThreadID,
+		ClaimToken:        p.ClaimToken,
+		ForceFreshSession: p.ForceFreshSession,
+		PreparedTask:      p.PreparedTask,
+		AttachmentIDs:     attachmentIDs,
+		SourcePayload:     p.Message.SourcePayload,
 	})
 	if err != nil {
 		r.attachments.DeleteImported(context.WithoutCancel(ctx), imported)

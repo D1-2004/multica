@@ -58,6 +58,21 @@ func TestBuildPiArgsCustomArgsAppended(t *testing.T) {
 	}
 }
 
+func TestBuildPiArgsAddsNativeImageInputs(t *testing.T) {
+	args := buildPiArgs("describe the image", "/tmp/s.jsonl", ExecOptions{
+		InputImages: []InputImage{
+			{Path: "/tmp/one.png", Name: "one.png", ContentType: "image/png"},
+			{Path: "/tmp/two.jpg", Name: "two.jpg", ContentType: "image/jpeg"},
+		},
+	}, slog.Default())
+
+	wantTail := []string{"@/tmp/one.png", "@/tmp/two.jpg", "describe the image"}
+	gotTail := args[len(args)-len(wantTail):]
+	if strings.Join(gotTail, "\n") != strings.Join(wantTail, "\n") {
+		t.Fatalf("args tail = %#v, want %#v", gotTail, wantTail)
+	}
+}
+
 // TestPiExecuteAttachesStdinPipe verifies that the Pi backend spawns the
 // child with an explicit stdin pipe (FIFO) instead of leaving cmd.Stdin
 // nil. Without an explicit pipe, Pi has been observed to block under

@@ -59,6 +59,10 @@ separate configuration values with opposite communication directions.
 
 ## History
 
+- 2026-07-22: Multica now persists canonical dispatch paths for new Agent
+  endpoint mappings and ignores the origin in historical full-URL rows. Legacy
+  callers that still require a full URL receive one rebuilt from the current
+  Multica runtime origin.
 - 2026-07-22: Removed the incorrect `dispatchUrl` field from the Router token
   response contract and changed the QR binding payload to carry
   `dispatchPath`. Router now resolves the full callback URL only when it
@@ -73,4 +77,7 @@ address with the environment-specific Router-to-Multica callback address. Since
 pre-release and production Router deployments share a database, persisting a
 full callback URL can route production traffic to an isolated pre-release host.
 Persisting only the path and resolving the current environment origin at
-dispatch time prevents that cross-environment leak.
+dispatch time prevents that cross-environment leak. Treating historical
+Multica endpoint origins as authoritative also blocked QR generation before the
+Router token request, so endpoint mappings now use the endpoint ID and canonical
+path as their environment-neutral identity.

@@ -104,6 +104,34 @@ func (f *fakeBinder) AppendMessage(_ context.Context, p AppendParams) (AppendRes
 	return f.appendResult, f.appendErr
 }
 
+type fakePendingFreshStore struct {
+	mu          sync.Mutex
+	markedInTx  bool
+	err         error
+	calls       int
+	lastPersist PendingFreshSessionParams
+}
+
+func (f *fakePendingFreshStore) PersistPendingFreshSession(_ context.Context, p PendingFreshSessionParams) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.lastPersist = p
+	return f.markedInTx, f.err
+}
+
+func (f *fakePendingFreshStore) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func (f *fakePendingFreshStore) last() PendingFreshSessionParams {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastPersist
+}
+
 type fakeAuditor struct {
 	mu    sync.Mutex
 	drops []DropReason
@@ -290,6 +318,7 @@ type harness struct {
 	taskCtx  *fakeTaskContext
 	dedup    *fakeDedup
 	binder   *fakeBinder
+	pending  *fakePendingFreshStore
 	audit    *fakeAuditor
 	replier  *fakeReplier
 	typing   *fakeTyping
@@ -307,6 +336,7 @@ func newHarness(t *testing.T) *harness {
 		taskCtx:  &fakeTaskContext{},
 		dedup:    &fakeDedup{token: uuidFromString(t, "55555555-5555-5555-5555-555555555555")},
 		binder:   &fakeBinder{ensureID: uuidFromString(t, "66666666-6666-6666-6666-666666666666"), appendResult: AppendResult{DedupMarked: true}},
+		pending:  &fakePendingFreshStore{markedInTx: true},
 		audit:    &fakeAuditor{},
 		replier:  &fakeReplier{},
 		typing:   &fakeTyping{},
@@ -322,6 +352,7 @@ func newHarness(t *testing.T) *harness {
 		TaskContext:  h.taskCtx,
 		Dedup:        h.dedup,
 		Session:      h.binder,
+		PendingFresh: h.pending,
 		Audit:        h.audit,
 		Replier:      h.replier,
 		Typing:       h.typing,
@@ -602,6 +633,26 @@ func TestRouter_DurableNoRuntimeCommitsMessageAndRepliesOffline(t *testing.T) {
 	}
 	if h.typing.calls() != 0 {
 		t.Fatal("offline message must not leave a processing indicator")
+	}
+}
+
+func TestRouter_DurableForceFreshWithoutRuntimePersistsThroughAppend(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	h.reader.session = db.ChatSession{ID: h.binder.ensureID, AgentID: h.inst.inst.AgentID}
+	h.tasks.prepareErr = service.ErrChatTaskAgentNoRuntime
+	msg := p2pMessage(t)
+	msg.ForceFresh = true
+	msg.Text = "start over with this prompt"
+
+	if err := h.router.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if h.binder.appendCalls != 1 || h.binder.lastAppend.PreparedTask != nil {
+		t.Fatalf("append calls/prepared = %d/%+v", h.binder.appendCalls, h.binder.lastAppend.PreparedTask)
+	}
+	if !h.binder.lastAppend.ForceFreshSession {
+		t.Fatal("a fresh prompt without a runnable task must persist the request in the append transaction")
 	}
 }
 
@@ -938,6 +989,67 @@ func TestRouter_BareFreshCommand_ConsumedWithoutRun(t *testing.T) {
 	h.router.Drain()
 	if h.tasks.freshArg() {
 		t.Error("pending fresh must be consumed by the previous run")
+	}
+}
+
+func TestRouter_DurableBareFreshCommandPersistsAndMarksDedupInOneTransaction(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	msg := p2pMessage(t)
+	msg.Text = ""
+	msg.ForceFresh = true
+
+	if err := h.router.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if h.pending.callCount() != 1 {
+		t.Fatalf("pending fresh persists = %d, want 1", h.pending.callCount())
+	}
+	got := h.pending.last()
+	if got.SessionID != h.binder.ensureID || got.InstallationID != h.inst.inst.ID || got.MessageID != msg.MessageID || got.ClaimToken != h.dedup.token {
+		t.Fatalf("persist params = %+v", got)
+	}
+	if h.binder.appendCalls != 0 || h.tasks.wasPrepared() || h.tasks.wasCalled() {
+		t.Fatalf("bare reset appended/prepared/enqueued = %d/%t/%t", h.binder.appendCalls, h.tasks.wasPrepared(), h.tasks.wasCalled())
+	}
+	if h.dedup.marks() != 0 || h.dedup.releases() != 0 {
+		t.Fatalf("dedup must be finalized in the persistence transaction; marks=%d releases=%d", h.dedup.marks(), h.dedup.releases())
+	}
+}
+
+func TestRouter_DurableBareFreshPersistFailureReleasesClaim(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	h.pending.err = errors.New("database unavailable")
+	msg := p2pMessage(t)
+	msg.Text = ""
+	msg.ForceFresh = true
+
+	err := h.router.Handle(context.Background(), msg)
+	if err == nil || !strings.Contains(err.Error(), "persist pending fresh session") {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if h.dedup.releases() != 1 || h.dedup.marks() != 0 {
+		t.Fatalf("failed persistence must release the claim; marks=%d releases=%d", h.dedup.marks(), h.dedup.releases())
+	}
+}
+
+func TestRouter_DurableBareFreshClaimLostDropsAsDuplicate(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	h.pending.err = ErrClaimLost
+	msg := p2pMessage(t)
+	msg.Text = ""
+	msg.ForceFresh = true
+
+	if err := h.router.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("ErrClaimLost must be a duplicate outcome: %v", err)
+	}
+	if reason, _ := h.audit.last(); reason != DropReasonDuplicate {
+		t.Fatalf("drop reason = %q, want duplicate", reason)
+	}
+	if h.dedup.releases() != 0 || h.dedup.marks() != 0 {
+		t.Fatalf("lost claim must not be finalized by this worker; marks=%d releases=%d", h.dedup.marks(), h.dedup.releases())
 	}
 }
 
