@@ -677,6 +677,7 @@ func TestRouter_ClaimLost_Drops(t *testing.T) {
 
 func TestRouter_IssueCommand_Creates(t *testing.T) {
 	h := newHarness(t)
+	h.taskCtx.value = []byte(`{"agent_identity_context_token":"prepared-context-token","dispatch_outbound":{"mode":"dws"}}`)
 	h.binder.appendResult = AppendResult{DedupMarked: true, IssueCommand: &IssueCommand{Title: "Fix login", Description: "details"}}
 	h.issues.result = service.IssueCreateResult{Issue: db.Issue{ID: uuidFromString(t, "77777777-7777-7777-7777-777777777777"), Number: 42, Title: "Fix login"}}
 	msg := p2pMessage(t)
@@ -690,6 +691,12 @@ func TestRouter_IssueCommand_Creates(t *testing.T) {
 	if h.issues.params.OriginType.String != "lark_chat" {
 		t.Fatalf("origin_type must come from the resolver set, got %q", h.issues.params.OriginType.String)
 	}
+	if h.issues.params.AgentIdentityContextToken != "prepared-context-token" {
+		t.Fatalf("issue task ContextToken = %q", h.issues.params.AgentIdentityContextToken)
+	}
+	if !strings.Contains(string(h.issues.params.DispatchContext), `"dispatch_outbound":{"mode":"dws"}`) {
+		t.Fatalf("issue dispatch context lost prepared input: %s", h.issues.params.DispatchContext)
+	}
 	if h.tasks.wasCalled() {
 		t.Fatal("/issue must use the issue task only, not enqueue a second chat task")
 	}
@@ -702,6 +709,18 @@ func TestRouter_IssueCommand_Creates(t *testing.T) {
 		return false
 	}) {
 		t.Fatalf("expected an issue-created reply with the workspace-qualified identifier")
+	}
+}
+
+func TestTaskIdentityContextTokenRejectsInvalidPreparedToken(t *testing.T) {
+	for _, taskContext := range []string{
+		`{"agent_identity_context_token":42}`,
+		`{"agent_identity_context_token":""}`,
+		`{"agent_identity_context_token":null}`,
+	} {
+		if _, err := taskIdentityContextToken([]byte(taskContext)); err == nil {
+			t.Fatalf("invalid prepared ContextToken was treated as absent: %s", taskContext)
+		}
 	}
 }
 

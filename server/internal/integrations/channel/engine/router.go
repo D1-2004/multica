@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -470,6 +471,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			identity.PrincipalUserID,
 			msg.MessageID,
 			resolvedCommand,
+			taskContext,
 		)
 		if err != nil {
 			return Result{}, finalizeRelease, fmt.Errorf("create durable issue command: %w", err)
@@ -556,7 +558,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		if durableIssueResult != nil {
 			issueRes = *durableIssueResult
 		} else {
-			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.PrincipalUserID, sessionID, *appendRes.IssueCommand)
+			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.PrincipalUserID, sessionID, *appendRes.IssueCommand, taskContext)
 		}
 		if err != nil {
 			r.logger.Error("channel issue command failed",
@@ -862,9 +864,13 @@ func (r *Router) drop(ctx context.Context, set ResolverSet, msg channel.InboundM
 	return Result{Outcome: OutcomeDropped, DropReason: reason, InstallationID: instID}
 }
 
-func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, originType string, creatorUserID, originID pgtype.UUID, cmd IssueCommand) (service.IssueCreateResult, error) {
+func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, originType string, creatorUserID, originID pgtype.UUID, cmd IssueCommand, taskContext []byte) (service.IssueCreateResult, error) {
 	if cmd.Title == "" {
 		return service.IssueCreateResult{}, ErrEmptyIssueTitle
+	}
+	identityContextToken, err := taskIdentityContextToken(taskContext)
+	if err != nil {
+		return service.IssueCreateResult{}, fmt.Errorf("resolve task identity ContextToken: %w", err)
 	}
 	params := service.IssueCreateParams{
 		WorkspaceID:  inst.WorkspaceID,
@@ -878,6 +884,8 @@ func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, ori
 		CreatorID:    creatorUserID,
 		OriginType:   pgtype.Text{String: originType, Valid: originType != ""},
 		OriginID:     originID,
+		AgentIdentityContextToken: identityContextToken,
+		DispatchContext:           append([]byte(nil), taskContext...),
 	}
 	return r.issues.Create(ctx, params, service.IssueCreateOpts{})
 }
@@ -911,6 +919,7 @@ func (r *Router) createOrRecoverDurableIssue(
 	creatorUserID pgtype.UUID,
 	messageID string,
 	cmd IssueCommand,
+	taskContext []byte,
 ) (service.IssueCreateResult, bool, error) {
 	if strings.TrimSpace(messageID) == "" {
 		return service.IssueCreateResult{}, false, errors.New("durable issue command has no message id")
@@ -931,8 +940,31 @@ func (r *Router) createOrRecoverDurableIssue(
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return service.IssueCreateResult{}, false, fmt.Errorf("lookup issue by durable origin: %w", err)
 	}
-	created, err := r.createIssue(ctx, inst, originType, creatorUserID, originID, cmd)
+	created, err := r.createIssue(ctx, inst, originType, creatorUserID, originID, cmd, taskContext)
 	return created, false, err
+}
+
+func taskIdentityContextToken(taskContext []byte) (string, error) {
+	if len(taskContext) == 0 {
+		return "", nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(taskContext, &payload); err != nil {
+		return "", fmt.Errorf("decode task context: %w", err)
+	}
+	raw, present := payload[protocol.AgentIdentityContextTokenJSONKey]
+	if !present {
+		return "", nil
+	}
+	var token string
+	if err := json.Unmarshal(raw, &token); err != nil {
+		return "", fmt.Errorf("decode Agent Identity ContextToken: %w", err)
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", errors.New("Agent Identity ContextToken is empty")
+	}
+	return token, nil
 }
 
 // durableIssueCommandOriginID is stable across retries and replicas while

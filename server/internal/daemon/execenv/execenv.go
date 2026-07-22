@@ -107,7 +107,6 @@ type TaskContextForEnv struct {
 	ProjectDescription             string                  // durable project-level context, rendered into the brief's Project Context section
 	ProjectResources               []ProjectResourceForEnv // resources attached to the project
 	ChatSessionID                  string                  // non-empty for chat tasks
-	DingTalkDWSIdentityUnavailable bool                    // true when this DingTalk sender must run without DWS credentials
 	AutopilotRunID                 string                  // non-empty for autopilot run_only tasks
 	AutopilotID                    string
 	AutopilotTitle                 string
