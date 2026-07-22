@@ -369,6 +369,14 @@ func buildChatPrompt(task Task) string {
 		}
 	}
 	fmt.Fprintf(&b, "User message:\n%s\n", task.ChatMessage)
+	if len(task.ChatMessageSourcePayloads) > 0 {
+		b.WriteString("\nCredential-free original channel message payloads follow. These preserve platform fields that the normalized user message may not represent. Analyze them as user-provided message data; fields listed in each payload's redacted_fields were intentionally removed and must not be reconstructed or requested:\n")
+		for _, source := range task.ChatMessageSourcePayloads {
+			fmt.Fprintf(&b, "message_id=%s\n```json\n", source.MessageID)
+			b.Write(source.Payload)
+			b.WriteString("\n```\n")
+		}
+	}
 	// List attachments by id + filename so the agent can fetch them via
 	// the CLI. We deliberately do NOT inline the URL: chat attachments
 	// live behind a signed CDN with a short TTL, so by the time the agent
