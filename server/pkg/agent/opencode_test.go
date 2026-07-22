@@ -25,12 +25,12 @@ func TestNewReturnsOpencodeBackend(t *testing.T) {
 	}
 }
 
-func TestAppendOpenCodeImageArgs(t *testing.T) {
-	got := appendOpenCodeImageArgs([]string{"run", "--format", "json"}, []InputImage{
+func TestAppendOpenCodePromptAndImages(t *testing.T) {
+	got := appendOpenCodePromptAndImages([]string{"run", "--format", "json"}, "describe the image", []InputImage{
 		{Path: "/tmp/one.png", Name: "one.png", ContentType: "image/png"},
 		{Path: "/tmp/two.jpg", Name: "two.jpg", ContentType: "image/jpeg"},
 	})
-	want := []string{"run", "--format", "json", "--file", "/tmp/one.png", "--file", "/tmp/two.jpg"}
+	want := []string{"run", "--format", "json", "describe the image", "--file", "/tmp/one.png", "--file", "/tmp/two.jpg"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("args = %#v, want %#v", got, want)
 	}

@@ -95,8 +95,7 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		args = append(args, "--session", opts.ResumeSessionID)
 	}
 	args = append(args, filterCustomArgs(opts.CustomArgs, opencodeBlockedArgs, b.cfg.Logger)...)
-	args = appendOpenCodeImageArgs(args, opts.InputImages)
-	args = append(args, prompt)
+	args = appendOpenCodePromptAndImages(args, prompt, opts.InputImages)
 
 	cmd := exec.CommandContext(runCtx, execPath, args...)
 	hideAgentWindow(cmd)
@@ -257,7 +256,11 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	return &Session{Messages: msgCh, Result: resCh}, nil
 }
 
-func appendOpenCodeImageArgs(args []string, images []InputImage) []string {
+// appendOpenCodePromptAndImages keeps the prompt before every --file flag.
+// OpenCode v1.18.4 defines --file as an array option; placing the prompt after
+// the first --file makes the CLI consume the prompt as another file path.
+func appendOpenCodePromptAndImages(args []string, prompt string, images []InputImage) []string {
+	args = append(args, prompt)
 	for _, image := range images {
 		args = append(args, "--file", image.Path)
 	}
