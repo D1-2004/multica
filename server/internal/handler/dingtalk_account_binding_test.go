@@ -14,6 +14,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
+	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -21,7 +22,14 @@ type fakeDingTalkAccountBindingService struct {
 	completeCalls  int
 	completeParams agentmessagerouter.CompleteBindingParams
 	completeResult agentmessagerouter.CompleteBindingResult
+	updateParams   agentmessagerouter.UpdateSurfaceParams
+	updateResult   agentmessagerouter.PublicDingTalkAccountBinding
 	unbindResult   agentmessagerouter.PublicDingTalkAccountBinding
+}
+
+func (f *fakeDingTalkAccountBindingService) UpdateSurface(_ context.Context, params agentmessagerouter.UpdateSurfaceParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
+	f.updateParams = params
+	return f.updateResult, nil
 }
 
 func (f *fakeDingTalkAccountBindingService) Begin(context.Context, agentmessagerouter.BeginParams) (agentmessagerouter.BeginResult, error) {
@@ -200,6 +208,8 @@ func TestDingTalkAccountCallbackForwardsMessageScopeAndConversations(t *testing.
 			},
 			"message_binding":{
 				"status":"success",
+				"account_display_name":"Digital Worker Zhang",
+				"account_avatar_url":"https://example.com/digital-worker.png",
 				"source_id":"source-1",
 				"message_scope":"custom",
 				"conversations":[
@@ -237,7 +247,9 @@ func TestDingTalkAccountCallbackForwardsMessageScopeAndConversations(t *testing.
 		t.Fatalf("forwarded binding mode = %#v params=%s", forwarded["BindingMode"], encoded)
 	}
 	message, ok := forwarded["Message"].(map[string]any)
-	if !ok || message["message_scope"] != "custom" {
+	if !ok || message["message_scope"] != "custom" ||
+		message["account_display_name"] != "Digital Worker Zhang" ||
+		message["account_avatar_url"] != "https://example.com/digital-worker.png" {
 		t.Fatalf("forwarded message = %#v params=%s", forwarded["Message"], encoded)
 	}
 	conversations, ok := message["conversations"].([]any)
@@ -258,6 +270,38 @@ func TestDingTalkAccountCallbackForwardsMessageScopeAndConversations(t *testing.
 	}
 	if response.Status != "completed" || response.IdentityBinding.Status != "skipped" || response.MessageBinding.Status != "success" {
 		t.Fatalf("normalized response = %#v body=%s", response, w.Body.String())
+	}
+}
+
+func TestUpdateDingTalkAccountBindingSurfaceForwardsOwnedBinding(t *testing.T) {
+	service := &fakeDingTalkAccountBindingService{
+		updateResult: agentmessagerouter.PublicDingTalkAccountBinding{
+			WorkspaceID: "22222222-2222-2222-2222-222222222222",
+			AgentID:     "33333333-3333-3333-3333-333333333333",
+		},
+	}
+	h := &Handler{DingTalkAccountBindings: service}
+	req := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/workspaces/22222222-2222-2222-2222-222222222222/dingtalk/account-bindings/33333333-3333-3333-3333-333333333333/surface",
+		strings.NewReader(`{"surface_type":"chat"}`),
+	)
+	req = withURLParams(req,
+		"id", "22222222-2222-2222-2222-222222222222",
+		"agentId", "33333333-3333-3333-3333-333333333333",
+	)
+	req.Header.Set("X-User-ID", "44444444-4444-4444-4444-444444444444")
+	w := httptest.NewRecorder()
+
+	h.UpdateDingTalkAccountBindingSurface(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if util.UUIDToString(service.updateParams.WorkspaceID) != "22222222-2222-2222-2222-222222222222" ||
+		util.UUIDToString(service.updateParams.AgentID) != "33333333-3333-3333-3333-333333333333" ||
+		service.updateParams.SurfaceType != agentmessagerouter.DingTalkSurfaceChat {
+		t.Fatalf("update params = %#v", service.updateParams)
 	}
 }
 

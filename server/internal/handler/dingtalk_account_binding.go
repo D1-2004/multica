@@ -28,6 +28,7 @@ type dingTalkAccountBindingService interface {
 	Begin(context.Context, agentmessagerouter.BeginParams) (agentmessagerouter.BeginResult, error)
 	List(context.Context, pgtype.UUID) ([]agentmessagerouter.PublicDingTalkAccountBinding, error)
 	CompleteBinding(context.Context, agentmessagerouter.CompleteBindingParams) (agentmessagerouter.CompleteBindingResult, error)
+	UpdateSurface(context.Context, agentmessagerouter.UpdateSurfaceParams) (agentmessagerouter.PublicDingTalkAccountBinding, error)
 	Unbind(context.Context, agentmessagerouter.UnbindParams) (agentmessagerouter.PublicDingTalkAccountBinding, error)
 }
 
@@ -41,6 +42,10 @@ type dingTalkAccountBindingCallbackRequest struct {
 	Status          string                                   `json:"status"`
 	IdentityBinding agentmessagerouter.IdentityBindingResult `json:"identity_binding"`
 	MessageBinding  agentmessagerouter.MessageBindingResult  `json:"message_binding"`
+}
+
+type updateDingTalkAccountBindingSurfaceRequest struct {
+	SurfaceType string `json:"surface_type"`
 }
 
 func (h *Handler) ListDingTalkAccountBindings(w http.ResponseWriter, r *http.Request) {
@@ -208,6 +213,44 @@ func (h *Handler) UnbindDingTalkAccountBinding(w http.ResponseWriter, r *http.Re
 		userID,
 		map[string]any{"id": result.ID},
 	)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) UpdateDingTalkAccountBindingSurface(w http.ResponseWriter, r *http.Request) {
+	if h.DingTalkAccountBindings == nil {
+		writeError(w, http.StatusServiceUnavailable, "dingtalk account binding is not configured")
+		return
+	}
+	if _, ok := requireUserID(w, r); !ok {
+		return
+	}
+	workspaceID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
+	if !ok {
+		return
+	}
+	agentID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "agentId"), "agent id")
+	if !ok {
+		return
+	}
+	var request updateDingTalkAccountBindingSurfaceRequest
+	if err := decodeLimitedJSON(w, r, 4<<10, &request, "invalid_surface_type"); err != nil {
+		return
+	}
+	request.SurfaceType = strings.TrimSpace(request.SurfaceType)
+	if request.SurfaceType != agentmessagerouter.DingTalkSurfaceIssue &&
+		request.SurfaceType != agentmessagerouter.DingTalkSurfaceChat {
+		writeDingTalkAccountBindingAPIError(w, http.StatusBadRequest, "invalid_surface_type", "surface_type must be issue or chat")
+		return
+	}
+	_, err := h.DingTalkAccountBindings.UpdateSurface(r.Context(), agentmessagerouter.UpdateSurfaceParams{
+		WorkspaceID: workspaceID,
+		AgentID:     agentID,
+		SurfaceType: request.SurfaceType,
+	})
+	if err != nil {
+		writeDingTalkAccountBindingError(w, err)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

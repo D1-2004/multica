@@ -176,6 +176,7 @@ export type {
   DingTalkConversationSummary,
   DingTalkMessageRouteOutcome,
   DingTalkMessageScope,
+  DingTalkProcessingSurface,
   DingTalkAccountBindingsResponse,
   BeginDingTalkAccountBindingResponse,
   DingTalkBindingMode,

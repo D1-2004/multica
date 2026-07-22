@@ -49,6 +49,7 @@ type Store interface {
 	ActivateDingTalkAccountBinding(context.Context, db.ActivateDingTalkAccountBindingParams) (db.ChannelInstallation, error)
 	CompleteDingTalkAccountBindingResult(context.Context, db.CompleteDingTalkAccountBindingResultParams) (db.ChannelInstallation, error)
 	UpdateDingTalkAccountBindingDispatchURL(context.Context, db.UpdateDingTalkAccountBindingDispatchURLParams) (db.ChannelInstallation, error)
+	UpdateDingTalkAccountBindingSurface(context.Context, db.UpdateDingTalkAccountBindingSurfaceParams) (db.ChannelInstallation, error)
 	RevokeDingTalkAccountBinding(context.Context, db.RevokeDingTalkAccountBindingParams) (db.ChannelInstallation, error)
 }
 
@@ -72,6 +73,7 @@ type IdentityStore interface {
 type Router interface {
 	IssueBindingToken(ctx context.Context, agentID, dispatchPath string) (BindingToken, error)
 	GetSubscription(ctx context.Context, sourceID string) (Subscription, error)
+	UpdateSubscriptionSurface(ctx context.Context, sourceID, agentID, surfaceType string) (Subscription, error)
 	DeleteSubscription(ctx context.Context, sourceID string) error
 }
 
@@ -297,6 +299,12 @@ type UnbindParams struct {
 	WorkspaceID pgtype.UUID
 	AgentID     pgtype.UUID
 	BindingMode BindingMode
+}
+
+type UpdateSurfaceParams struct {
+	WorkspaceID pgtype.UUID
+	AgentID     pgtype.UUID
+	SurfaceType string
 }
 
 func NewService(store Store, router Router, config ServiceConfig) (*Service, error) {
@@ -555,6 +563,21 @@ func (s *Service) List(ctx context.Context, workspaceID pgtype.UUID) ([]PublicDi
 	bindings := make([]PublicDingTalkAccountBinding, 0, len(rows)+len(identities))
 	seenAgents := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
+		config, parseErr := ParseDingTalkAccountConfig(row.Config)
+		if parseErr != nil {
+			return nil, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
+		}
+		if row.Status == "active" && config.SurfaceType == "" && config.RouterSourceID != "" {
+			subscription, verifyErr := s.verifySubscription(ctx, config.RouterSourceID, row, config)
+			if verifyErr != nil {
+				return nil, verifyErr
+			}
+			config.SurfaceType = subscription.Surface.Type
+			row.Config, parseErr = config.Marshal()
+			if parseErr != nil {
+				return nil, fmt.Errorf("%w: current binding surface", ErrInvalidResult)
+			}
+		}
 		binding, err := s.publicBinding(ctx, row)
 		if err != nil {
 			return nil, err
@@ -663,6 +686,9 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 	}
 	boundAt := s.now().UTC()
 	config.RouterSourceID = sourceID
+	config.AccountDisplayName = strings.TrimSpace(params.MessageBinding.AccountDisplayName)
+	config.AccountAvatarURL = strings.TrimSpace(params.MessageBinding.AccountAvatarURL)
+	config.SurfaceType = subscription.Surface.Type
 	config.MessageRouteStatus = ""
 	config.MessageScope = messageScope
 	config.Conversations = conversations
@@ -703,6 +729,76 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("activate dingtalk account binding: %w", err)
 	}
 	return s.publicBinding(ctx, activated)
+}
+
+func (s *Service) UpdateSurface(ctx context.Context, params UpdateSurfaceParams) (PublicDingTalkAccountBinding, error) {
+	if s == nil || s.store == nil || s.router == nil || s.identityStore == nil {
+		return PublicDingTalkAccountBinding{}, ErrNotConfigured
+	}
+	if !params.WorkspaceID.Valid || !params.AgentID.Valid {
+		return PublicDingTalkAccountBinding{}, ErrNotFound
+	}
+	params.SurfaceType = strings.TrimSpace(params.SurfaceType)
+	if !validDingTalkSurfaceType(params.SurfaceType) {
+		return PublicDingTalkAccountBinding{}, ErrInvalidResult
+	}
+	row, err := s.store.GetDingTalkAccountBindingByAgent(ctx, db.GetDingTalkAccountBindingByAgentParams{
+		WorkspaceID: params.WorkspaceID,
+		AgentID:     params.AgentID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PublicDingTalkAccountBinding{}, ErrNotFound
+		}
+		return PublicDingTalkAccountBinding{}, fmt.Errorf("get dingtalk account binding: %w", err)
+	}
+	if row.Status != "active" {
+		return PublicDingTalkAccountBinding{}, ErrBindingConflict
+	}
+	config, err := ParseDingTalkAccountConfig(row.Config)
+	if err != nil || strings.TrimSpace(config.RouterSourceID) == "" {
+		return PublicDingTalkAccountBinding{}, ErrInvalidResult
+	}
+	current, err := s.verifySubscription(ctx, config.RouterSourceID, row, config)
+	if err != nil {
+		return PublicDingTalkAccountBinding{}, err
+	}
+	updated, err := s.router.UpdateSubscriptionSurface(
+		ctx,
+		config.RouterSourceID,
+		util.UUIDToString(row.AgentID),
+		params.SurfaceType,
+	)
+	if err != nil {
+		return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+	}
+	if subscriptionVerificationOutcome(updated, config.RouterSourceID, row, config) != "success" ||
+		updated.Surface.Type != params.SurfaceType || updated.Outbound != current.Outbound {
+		return PublicDingTalkAccountBinding{}, ErrBindingConflict
+	}
+	stored, err := s.store.UpdateDingTalkAccountBindingSurface(ctx, db.UpdateDingTalkAccountBindingSurfaceParams{
+		WorkspaceID:            row.WorkspaceID,
+		AgentID:                row.AgentID,
+		SurfaceType:            params.SurfaceType,
+		ExpectedRouterSourceID: config.RouterSourceID,
+	})
+	if err != nil {
+		if validDingTalkSurfaceType(current.Surface.Type) {
+			if _, restoreErr := s.router.UpdateSubscriptionSurface(
+				ctx,
+				config.RouterSourceID,
+				util.UUIDToString(row.AgentID),
+				current.Surface.Type,
+			); restoreErr != nil {
+				return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+			}
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PublicDingTalkAccountBinding{}, ErrBindingConflict
+		}
+		return PublicDingTalkAccountBinding{}, fmt.Errorf("update dingtalk account binding surface: %w", err)
+	}
+	return s.publicBinding(ctx, stored)
 }
 
 func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding PublicDingTalkAccountBinding, err error) {

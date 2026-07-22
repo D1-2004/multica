@@ -12,12 +12,14 @@ import type {
   DingTalkBindingMode,
   DingTalkConversationSummary,
   DingTalkMessageRouteOutcome,
+  DingTalkProcessingSurface,
 } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
   dingtalkAccountBindingsOptions,
   useBeginDingTalkAccountBinding,
   useDeleteDingTalkAccountBinding,
+  useUpdateDingTalkAccountBindingSurface,
 } from "@multica/core/dingtalk-account-bindings";
 import { Button } from "@multica/ui/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@multica/ui/components/ui/avatar";
@@ -204,6 +206,7 @@ function DingTalkBindingModeCard({
   const wsId = useWorkspaceId();
   const beginBinding = useBeginDingTalkAccountBinding(wsId);
   const deleteBinding = useDeleteDingTalkAccountBinding(wsId);
+  const updateBindingSurface = useUpdateDingTalkAccountBindingSurface(wsId);
   const [attempt, setAttempt] = useState<BeginDingTalkAccountBindingResponse | null>(null);
   const [expired, setExpired] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -311,6 +314,21 @@ function DingTalkBindingModeCard({
     }
   }
 
+  async function updateSurface(surfaceType: DingTalkProcessingSurface) {
+    if (bindingMode !== "message" || currentBinding?.messageRoute.surfaceType === surfaceType) {
+      return;
+    }
+    setActionError(null);
+    try {
+      await updateBindingSurface.mutateAsync({ agentId, surfaceType });
+    } catch (error) {
+      setActionError(errorMessage(
+        error,
+        t(($) => $.tab_body.integrations.dingtalk_account_surface_update_failed),
+      ));
+    }
+  }
+
   return (
     <section
       className="rounded-lg border"
@@ -336,8 +354,13 @@ function DingTalkBindingModeCard({
             {t(($) => $.tab_body.integrations.dingtalk_account_not_configured)}
           </p>
         ) : connected && accountOutcome ? (
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
+          <div
+            className="flex items-start justify-between gap-3"
+            data-testid={bindingMode === "message"
+              ? "dingtalk-account-binding-active-row"
+              : "dingtalk-identity-binding-active-row"}
+          >
+            <div className="flex min-w-0 items-start gap-3">
               <Avatar>
                 {accountOutcome.accountAvatarUrl ? (
                   <AvatarImage src={accountOutcome.accountAvatarUrl} alt={displayName(accountOutcome, fallbackName)} />
@@ -358,13 +381,44 @@ function DingTalkBindingModeCard({
                     {t(($) => $.tab_body.integrations.dingtalk_account_organization)}: {accountOutcome.organizationName}
                   </p>
                 ) : null}
+                {bindingMode === "message" && currentBinding?.messageRoute.surfaceType ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      {t(($) => $.tab_body.integrations.dingtalk_account_run_mode)}
+                    </span>
+                    <div
+                      role="group"
+                      aria-label={t(($) => $.tab_body.integrations.dingtalk_account_run_mode)}
+                      className="inline-flex rounded-lg border bg-muted/30 p-0.5"
+                    >
+                      {(["issue", "chat"] as const).map((surfaceType) => {
+                        const selected = currentBinding?.messageRoute.surfaceType === surfaceType;
+                        return (
+                          <Button
+                            key={surfaceType}
+                            type="button"
+                            size="xs"
+                            variant={selected ? "secondary" : "ghost"}
+                            className="min-w-12"
+                            aria-pressed={selected}
+                            disabled={updateBindingSurface.isPending}
+                            onClick={() => void updateSurface(surfaceType)}
+                          >
+                            {surfaceType}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
             <Button
               variant="destructive"
               size="sm"
               onClick={() => setConfirmOpen(true)}
-              disabled={deleteBinding.isPending}
+              className="shrink-0"
+              disabled={deleteBinding.isPending || updateBindingSurface.isPending}
             >
               <Trash2 className="h-3 w-3" />
               {t(($) => $.tab_body.integrations.dingtalk_account_unbind)}

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -17,6 +17,7 @@ import { DingTalkAccountBindingCard } from "./dingtalk-account-binding";
 const listBindings = vi.fn();
 const beginBinding = vi.fn();
 const deleteBinding = vi.fn();
+const updateBindingSurface = vi.fn();
 const mid2Url = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/hooks", () => ({
@@ -102,6 +103,7 @@ const activeBinding = {
     accountDisplayName: "Zhang San",
     accountAvatarUrl: "https://example.test/avatar.png",
     boundAt: "2026-07-14T09:30:00Z",
+    surfaceType: "issue",
     messageScope: "direct_only",
     conversations: [],
   },
@@ -119,6 +121,7 @@ beforeEach(() => {
     listDingTalkAccountBindings: listBindings,
     beginDingTalkAccountBinding: beginBinding,
     deleteDingTalkAccountBinding: deleteBinding,
+    updateDingTalkAccountBindingSurface: updateBindingSurface,
   } as unknown as ApiClient);
   listBindings.mockResolvedValue({ bindings: [], configured: true });
   beginBinding.mockResolvedValue({
@@ -127,6 +130,7 @@ beforeEach(() => {
     expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
   });
   deleteBinding.mockResolvedValue(undefined);
+  updateBindingSurface.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -366,11 +370,40 @@ describe("DingTalkAccountBindingCard", () => {
     renderCard("message");
 
     expect(await screen.findByText("Digital Worker Zhang")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Digital Worker Zhang" })).toHaveAttribute(
+      "src",
+      "https://example.test/avatar.png",
+    );
     expect(screen.getByText("Listening to my direct messages")).toBeInTheDocument();
+    const accountRow = screen.getByTestId("dingtalk-account-binding-active-row");
+    expect(accountRow).toHaveClass("items-start");
     expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
+    const modeGroup = screen.getByRole("group", { name: "Run mode" });
+    expect(within(modeGroup).getByRole("button", { name: "issue" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(
       screen.queryByRole("button", { name: /Bind digital employee/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("switches an active digital employee from issue to chat without rebinding", async () => {
+    listBindings.mockResolvedValue({ bindings: [activeBinding], configured: true });
+    const user = userEvent.setup();
+
+    renderCard("message");
+
+    const modeGroup = await screen.findByRole("group", { name: "Run mode" });
+    await user.click(within(modeGroup).getByRole("button", { name: "chat" }));
+
+    expect(updateBindingSurface).toHaveBeenCalledWith(
+      "workspace-1",
+      "agent-1",
+      "chat",
+    );
+    expect(beginBinding).not.toHaveBeenCalled();
+    expect(deleteBinding).not.toHaveBeenCalled();
   });
 
   it("keeps the active account visible when unbinding fails", async () => {

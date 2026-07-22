@@ -18,6 +18,7 @@ import type {
   BeginDingTalkAccountBindingResponse,
   DingTalkAccountBindingsResponse,
   DingTalkMessageScope,
+  DingTalkProcessingSurface,
   GroupedIssuesResponse,
   GitHubAgentPreview,
   ListGitHubAgentRepositoriesResponse,
@@ -91,12 +92,19 @@ function normalizeDingTalkMessageScope(scope?: string): DingTalkMessageScope {
   }
 }
 
+function normalizeDingTalkProcessingSurface(
+  surface?: string | null,
+): DingTalkProcessingSurface | undefined {
+  return surface === "issue" || surface === "chat" ? surface : undefined;
+}
+
 const DingTalkMessageRouteOutcomeSchema = z
   .object({
     status: z.string(),
     organization_name: z.string().nullable().optional(),
     account_display_name: z.string().nullable().optional(),
     account_avatar_url: z.string().nullable().optional(),
+    surface_type: z.string().nullable().optional(),
     bound_at: z.string().nullable().optional(),
     message_scope: z.string().optional(),
     conversations: z.array(DingTalkConversationSummarySchema).optional().default([]),
@@ -112,6 +120,9 @@ const DingTalkMessageRouteOutcomeSchema = z
       : {}),
     ...(outcome.account_avatar_url !== undefined
       ? { accountAvatarUrl: outcome.account_avatar_url }
+      : {}),
+    ...(normalizeDingTalkProcessingSurface(outcome.surface_type)
+      ? { surfaceType: normalizeDingTalkProcessingSurface(outcome.surface_type) }
       : {}),
     ...(outcome.bound_at !== undefined ? { boundAt: outcome.bound_at } : {}),
     messageScope: normalizeDingTalkMessageScope(outcome.message_scope),

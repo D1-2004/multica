@@ -20,6 +20,8 @@ const (
 	DingTalkMessageScopeDirectOnly = "direct_only"
 	DingTalkMessageScopeCustom     = "custom"
 	DingTalkMessageScopeAll        = "all"
+	DingTalkSurfaceIssue           = "issue"
+	DingTalkSurfaceChat            = "chat"
 	DingTalkBindingStatusFailed    = "failed"
 	dingTalkAccountSchema          = 1
 	callbackTokenDomain            = "dingtalk-account-callback:v1:"
@@ -52,6 +54,7 @@ type DingTalkAccountConfig struct {
 	RouterSourceID     string                         `json:"router_source_id,omitempty"`
 	AccountDisplayName string                         `json:"account_display_name,omitempty"`
 	AccountAvatarURL   string                         `json:"account_avatar_url,omitempty"`
+	SurfaceType        string                         `json:"surface_type,omitempty"`
 	MessageRouteStatus string                         `json:"message_route_status,omitempty"`
 	MessageScope       string                         `json:"message_scope"`
 	Conversations      []DingTalkConversationSnapshot `json:"conversations,omitempty"`
@@ -72,6 +75,7 @@ type PublicDingTalkBindingOutcome struct {
 	OrganizationName   string                         `json:"organization_name,omitempty"`
 	AccountDisplayName string                         `json:"account_display_name,omitempty"`
 	AccountAvatarURL   string                         `json:"account_avatar_url,omitempty"`
+	SurfaceType        string                         `json:"surface_type,omitempty"`
 	MessageScope       string                         `json:"message_scope,omitempty"`
 	Conversations      []DingTalkConversationSnapshot `json:"conversations,omitempty"`
 	BoundAt            *time.Time                     `json:"bound_at,omitempty"`
@@ -146,6 +150,13 @@ func (c DingTalkAccountConfig) Validate() error {
 	if c.RouterSourceID != "" && c.BoundAt == nil {
 		return errors.New("dingtalk account bound time is required")
 	}
+	if c.SurfaceType != "" && !validDingTalkSurfaceType(c.SurfaceType) {
+		return errors.New("dingtalk account surface type is invalid")
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(c.AccountDisplayName)) > maxAccountNameRunes ||
+		!validAccountAvatarURL(strings.TrimSpace(c.AccountAvatarURL)) {
+		return errors.New("dingtalk account snapshot is invalid")
+	}
 	if c.MessageRouteStatus != "" &&
 		c.MessageRouteStatus != DingTalkBindingStatusFailed {
 		return errors.New("dingtalk message result status is invalid")
@@ -218,11 +229,16 @@ func (c DingTalkAccountConfig) PublicBinding(
 			Status:             messageRouteStatus,
 			AccountDisplayName: c.AccountDisplayName,
 			AccountAvatarURL:   c.AccountAvatarURL,
+			SurfaceType:        c.SurfaceType,
 			MessageScope:       c.MessageScope,
 			Conversations:      append([]DingTalkConversationSnapshot(nil), c.Conversations...),
 			BoundAt:            c.BoundAt,
 		},
 	}
+}
+
+func validDingTalkSurfaceType(surfaceType string) bool {
+	return surfaceType == DingTalkSurfaceIssue || surfaceType == DingTalkSurfaceChat
 }
 
 func GenerateCallbackToken(random io.Reader) (string, string, error) {

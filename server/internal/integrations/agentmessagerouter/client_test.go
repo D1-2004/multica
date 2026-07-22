@@ -233,13 +233,15 @@ func TestClientRejectsRobotRegistrationResponseOutsideRequest(t *testing.T) {
 	}
 }
 
-func TestClientGetsAndDeletesSubscription(t *testing.T) {
+func TestClientGetsUpdatesAndDeletesSubscription(t *testing.T) {
 	var deleteCalls int
+	var patchCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer service-credential" {
 			t.Fatal("missing service credential")
 		}
-		if r.URL.Path != "/api/subscriptions/source-1" {
+		if r.URL.Path != "/api/subscriptions/source-1" &&
+			r.URL.Path != "/api/subscriptions/source-1/surface" {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
 		switch r.Method {
@@ -268,6 +270,30 @@ func TestClientGetsAndDeletesSubscription(t *testing.T) {
 					"status":      "inactive",
 				},
 			})
+		case http.MethodPatch:
+			patchCalls++
+			var body struct {
+				AgentID string              `json:"agentId"`
+				Surface SubscriptionSurface `json:"surface"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode patch: %v", err)
+			}
+			if body.AgentID != "agent-1" || body.Surface.Type != "chat" {
+				t.Fatalf("patch body = %#v", body)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"code":    "success",
+				"data": map[string]any{
+					"sourceId":    "source-1",
+					"agentId":     "agent-1",
+					"dispatchUrl": "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint",
+					"surface":     map[string]any{"type": "chat"},
+					"outbound":    map[string]any{"mode": "dws", "replyTo": "latest_message"},
+					"status":      "active",
+				},
+			})
 		default:
 			t.Fatalf("method = %s", r.Method)
 		}
@@ -291,11 +317,18 @@ func TestClientGetsAndDeletesSubscription(t *testing.T) {
 		subscription.Status != "active" {
 		t.Fatalf("subscription = %#v", subscription)
 	}
+	updated, err := client.UpdateSubscriptionSurface(context.Background(), "source-1", "agent-1", "chat")
+	if err != nil {
+		t.Fatalf("UpdateSubscriptionSurface: %v", err)
+	}
+	if updated.Surface.Type != "chat" || updated.AgentID != "agent-1" || updated.Outbound.Mode != "dws" {
+		t.Fatalf("updated subscription = %#v", updated)
+	}
 	if err := client.DeleteSubscription(context.Background(), "source-1"); err != nil {
 		t.Fatalf("DeleteSubscription should treat missing as success: %v", err)
 	}
-	if deleteCalls != 1 {
-		t.Fatalf("delete calls = %d", deleteCalls)
+	if deleteCalls != 1 || patchCalls != 1 {
+		t.Fatalf("delete calls = %d patch calls = %d", deleteCalls, patchCalls)
 	}
 }
 

@@ -52,6 +52,9 @@ describe("DingTalk account binding schemas", () => {
           },
           message_route: {
             status: "active",
+            account_display_name: "Digital Worker Zhang",
+            account_avatar_url: "https://example.test/digital-worker.png",
+            surface_type: "chat",
             message_scope: "custom",
             conversations: [
               {
@@ -88,6 +91,9 @@ describe("DingTalk account binding schemas", () => {
           },
           messageRoute: {
             status: "active",
+            accountDisplayName: "Digital Worker Zhang",
+            accountAvatarUrl: "https://example.test/digital-worker.png",
+            surfaceType: "chat",
             messageScope: "custom",
             conversations: [
               {
