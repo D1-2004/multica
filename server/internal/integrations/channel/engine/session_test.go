@@ -57,6 +57,10 @@ type fakeSessionQueries struct {
 	upsertTaskErr     error
 	linkedAttachments []pgtype.UUID
 	lastLinkParams    db.LinkAttachmentsToChatMessageParams
+	pendingFresh      bool
+	lockPendingCalls  int
+	putPendingCalls   int
+	putPendingErr     error
 }
 
 func newFake() *fakeSessionQueries {
@@ -97,16 +101,36 @@ func (f *fakeSessionQueries) UpsertDeferredChannelChatTask(_ context.Context, ar
 	if f.upsertTaskErr != nil {
 		return db.AgentTaskQueue{}, f.upsertTaskErr
 	}
+	forceFresh := arg.ForceFreshSession.Valid && arg.ForceFreshSession.Bool
+	if f.pendingFresh {
+		forceFresh = true
+		f.pendingFresh = false
+	}
 	task := db.AgentTaskQueue{
-		ID:            arg.ID,
-		AgentID:       arg.AgentID,
-		RuntimeID:     arg.RuntimeID,
-		ChatSessionID: arg.ChatSessionID,
-		Status:        "deferred",
-		FireAt:        pgtype.Timestamptz{Time: time.Now().Add(3 * time.Second), Valid: true},
+		ID:                arg.ID,
+		AgentID:           arg.AgentID,
+		RuntimeID:         arg.RuntimeID,
+		ChatSessionID:     arg.ChatSessionID,
+		Status:            "deferred",
+		FireAt:            pgtype.Timestamptz{Time: time.Now().Add(3 * time.Second), Valid: true},
+		ForceFreshSession: forceFresh,
 	}
 	f.upsertedTask = task
 	return task, nil
+}
+
+func (f *fakeSessionQueries) PutChatSessionPendingFresh(_ context.Context, _ pgtype.UUID) error {
+	f.putPendingCalls++
+	if f.putPendingErr != nil {
+		return f.putPendingErr
+	}
+	f.pendingFresh = true
+	return nil
+}
+
+func (f *fakeSessionQueries) LockChatSessionForPendingFresh(_ context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	f.lockPendingCalls++
+	return id, nil
 }
 
 func (f *fakeSessionQueries) CreateChatMessage(_ context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error) {
@@ -365,6 +389,60 @@ func TestAppendUserMessage_DurableTaskAndMessageShareTransaction(t *testing.T) {
 	}
 	if res.TaskID != prepared.ID || !res.TaskFireAt.Valid {
 		t.Fatalf("append result task = (%v, %v), want durable task and fire_at", res.TaskID, res.TaskFireAt)
+	}
+}
+
+func TestPersistPendingFreshSessionMarksDedupInSameTransaction(t *testing.T) {
+	f := newFake()
+	s := newTestSession(f)
+	marked, err := s.PersistPendingFreshSession(context.Background(), PendingFreshSessionParams{
+		SessionID:      uid(1),
+		InstallationID: uid(2),
+		MessageID:      "reset-message",
+		ClaimToken:     uid(3),
+	})
+	if err != nil {
+		t.Fatalf("PersistPendingFreshSession: %v", err)
+	}
+	if !marked || !f.pendingFresh || f.lockPendingCalls != 1 || f.putPendingCalls != 1 {
+		t.Fatalf("marked/pending/locks/puts = %t/%t/%d/%d", marked, f.pendingFresh, f.lockPendingCalls, f.putPendingCalls)
+	}
+}
+
+func TestAppendUserMessageFreshRequestWaitsForRunnableTask(t *testing.T) {
+	f := newFake()
+	s := newTestSession(f)
+
+	if _, err := s.AppendUserMessage(context.Background(), AppendInput{
+		SessionID:         uid(1),
+		Body:              "offline fresh prompt",
+		ForceFreshSession: true,
+	}); err != nil {
+		t.Fatalf("append without task: %v", err)
+	}
+	if !f.pendingFresh || f.putPendingCalls != 1 || f.upsertTaskCalls != 0 {
+		t.Fatalf("pending/puts/upserts = %t/%d/%d", f.pendingFresh, f.putPendingCalls, f.upsertTaskCalls)
+	}
+
+	prepared := &service.PreparedChannelChatTask{
+		ID: uid(9), AgentID: uid(2), RuntimeID: uid(3),
+		InitiatorUserID: uid(7), OriginatorUserID: uid(7), DebounceSeconds: 3,
+	}
+	if _, err := s.AppendUserMessage(context.Background(), AppendInput{
+		SessionID:    uid(1),
+		Body:         "now runnable",
+		PreparedTask: prepared,
+	}); err != nil {
+		t.Fatalf("append runnable task: %v", err)
+	}
+	if f.pendingFresh {
+		t.Fatal("the runnable task must consume the pending fresh request")
+	}
+	if f.lockPendingCalls != 2 {
+		t.Fatalf("pending-fresh session locks = %d, want 2", f.lockPendingCalls)
+	}
+	if !f.upsertedTask.ForceFreshSession {
+		t.Fatal("the first runnable task must carry force_fresh_session=true")
 	}
 }
 

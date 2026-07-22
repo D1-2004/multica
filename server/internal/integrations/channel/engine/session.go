@@ -42,6 +42,8 @@ type SessionQueries interface {
 	GetChannelChatSessionBinding(ctx context.Context, arg db.GetChannelChatSessionBindingParams) (db.ChannelChatSessionBinding, error)
 	CreateChatSession(ctx context.Context, arg db.CreateChatSessionParams) (db.ChatSession, error)
 	CreateChannelChatSessionBinding(ctx context.Context, arg db.CreateChannelChatSessionBindingParams) (db.ChannelChatSessionBinding, error)
+	LockChatSessionForPendingFresh(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error)
+	PutChatSessionPendingFresh(ctx context.Context, chatSessionID pgtype.UUID) error
 	UpsertDeferredChannelChatTask(ctx context.Context, arg db.UpsertDeferredChannelChatTaskParams) (db.AgentTaskQueue, error)
 	CreateChatMessage(ctx context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error)
 	LinkAttachmentsToChatMessage(ctx context.Context, arg db.LinkAttachmentsToChatMessageParams) ([]pgtype.UUID, error)
@@ -67,6 +69,12 @@ func (a dbSessionQueries) CreateChatSession(ctx context.Context, arg db.CreateCh
 }
 func (a dbSessionQueries) CreateChannelChatSessionBinding(ctx context.Context, arg db.CreateChannelChatSessionBindingParams) (db.ChannelChatSessionBinding, error) {
 	return a.q.CreateChannelChatSessionBinding(ctx, arg)
+}
+func (a dbSessionQueries) LockChatSessionForPendingFresh(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	return a.q.LockChatSessionForPendingFresh(ctx, id)
+}
+func (a dbSessionQueries) PutChatSessionPendingFresh(ctx context.Context, chatSessionID pgtype.UUID) error {
+	return a.q.PutChatSessionPendingFresh(ctx, chatSessionID)
 }
 func (a dbSessionQueries) UpsertDeferredChannelChatTask(ctx context.Context, arg db.UpsertDeferredChannelChatTaskParams) (db.AgentTaskQueue, error) {
 	return a.q.UpsertDeferredChannelChatTask(ctx, arg)
@@ -250,18 +258,59 @@ func (s *ChatSession) createSessionAndBinding(ctx context.Context, in EnsureSess
 // its own binding row, recording the real thread here per session does not clash
 // across sibling threads.
 type AppendInput struct {
-	SessionID      pgtype.UUID
-	WorkspaceID    pgtype.UUID
-	Sender         pgtype.UUID
-	InstallationID pgtype.UUID
-	Body           string
-	CommandText    string
-	MessageID      string
-	ThreadID       string
-	ClaimToken     pgtype.UUID
-	PreparedTask   *service.PreparedChannelChatTask
-	AttachmentIDs  []pgtype.UUID
-	SourcePayload  []byte
+	SessionID         pgtype.UUID
+	WorkspaceID       pgtype.UUID
+	Sender            pgtype.UUID
+	InstallationID    pgtype.UUID
+	Body              string
+	CommandText       string
+	MessageID         string
+	ThreadID          string
+	ClaimToken        pgtype.UUID
+	ForceFreshSession bool
+	PreparedTask      *service.PreparedChannelChatTask
+	AttachmentIDs     []pgtype.UUID
+	SourcePayload     []byte
+}
+
+// PersistPendingFreshSession stores a bare fresh-session directive and, when
+// present, finalizes its inbound dedup claim in the same transaction. A claim
+// token mismatch rolls the pending row back so another worker can retry it.
+func (s *ChatSession) PersistPendingFreshSession(ctx context.Context, in PendingFreshSessionParams) (bool, error) {
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.q.WithTx(tx)
+
+	if _, err := qtx.LockChatSessionForPendingFresh(ctx, in.SessionID); err != nil {
+		return false, fmt.Errorf("lock pending fresh session: %w", err)
+	}
+	if err := qtx.PutChatSessionPendingFresh(ctx, in.SessionID); err != nil {
+		return false, fmt.Errorf("put pending fresh session: %w", err)
+	}
+
+	markedInTx := false
+	if in.ClaimToken.Valid && in.MessageID != "" {
+		rows, err := qtx.MarkChannelInboundDedupProcessed(ctx, db.MarkChannelInboundDedupProcessedParams{
+			InstallationID: in.InstallationID,
+			MessageID:      in.MessageID,
+			ClaimToken:     in.ClaimToken,
+		})
+		if err != nil {
+			return false, fmt.Errorf("mark dedup processed: %w", err)
+		}
+		if rows == 0 {
+			return false, ErrClaimLost
+		}
+		markedInTx = true
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit: %w", err)
+	}
+	return markedInTx, nil
 }
 
 // AppendUserMessage writes the user message into the chat_session (touching it
@@ -276,6 +325,17 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.q.WithTx(tx)
+
+	if in.ForceFreshSession || in.PreparedTask != nil {
+		if _, err := qtx.LockChatSessionForPendingFresh(ctx, in.SessionID); err != nil {
+			return AppendResult{}, fmt.Errorf("lock pending fresh session: %w", err)
+		}
+	}
+	if in.ForceFreshSession {
+		if err := qtx.PutChatSessionPendingFresh(ctx, in.SessionID); err != nil {
+			return AppendResult{}, fmt.Errorf("put pending fresh session: %w", err)
+		}
+	}
 
 	// Parse before the insert so the bare-`/issue` previous-message fallback
 	// queries the message set that does NOT yet include this message.

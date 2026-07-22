@@ -126,6 +126,10 @@ type AppendParams struct {
 	Installation   ResolvedInstallation
 	Message        channel.InboundMessage
 	ClaimToken     pgtype.UUID
+	// ForceFreshSession persists an explicit fresh-session request in the
+	// append transaction. If no runnable task is available yet, the request
+	// remains pending for the next task instead of being lost with this process.
+	ForceFreshSession bool
 	// PreparedTask is present for channels whose inbound run must be made
 	// durable in the same transaction as the message and dedup Mark. It is
 	// prepared outside the transaction because building the runtime overlay may
@@ -221,6 +225,22 @@ type SessionBinder interface {
 	AppendMessage(ctx context.Context, p AppendParams) (AppendResult, error)
 }
 
+// PendingFreshSessionParams carries a bare fresh-session directive and its
+// inbound dedup fence into one database transaction.
+type PendingFreshSessionParams struct {
+	SessionID      pgtype.UUID
+	InstallationID pgtype.UUID
+	MessageID      string
+	ClaimToken     pgtype.UUID
+}
+
+// PendingFreshSessionStore durably records a bare /reset for the next runnable
+// task. The implementation also finalizes the inbound dedup claim in the same
+// transaction when a valid claim is supplied.
+type PendingFreshSessionStore interface {
+	PersistPendingFreshSession(ctx context.Context, p PendingFreshSessionParams) (dedupMarked bool, err error)
+}
+
 // Auditor records a dropped inbound event (no message body — drop-audit
 // policy). instID may be the zero UUID for installation-less events.
 type Auditor interface {
@@ -268,6 +288,7 @@ type ResolverSet struct {
 	TaskContext  TaskContextResolver
 	Dedup        Deduper
 	Session      SessionBinder
+	PendingFresh PendingFreshSessionStore
 	Audit        Auditor
 	Replier      OutboundReplier
 	Typing       TypingNotifier
