@@ -24,6 +24,10 @@ type Backend interface {
 type ExecOptions struct {
 	Cwd   string
 	Model string
+	// InputImages are task-local image files that must be delivered to the
+	// provider as native multimodal input for this turn. Paths are absolute and
+	// remain valid until the returned Session finishes.
+	InputImages []InputImage
 	// SystemPrompt is consumed only by providers that can pass or safely inline
 	// developer/system instructions. Hermes ACP intentionally ignores it and
 	// relies on cwd-scoped context files such as AGENTS.md instead.
@@ -57,6 +61,15 @@ type ExecOptions struct {
 	// ignore this field, mirroring ThinkingLevel's renderer-side fall-through
 	// pattern. See issue #3260.
 	OpenclawMode string
+}
+
+// InputImage describes one image already materialized in the task sandbox.
+// The daemon owns download/authentication; provider backends only translate
+// this stable local file into their native input protocol.
+type InputImage struct {
+	Path        string
+	Name        string
+	ContentType string
 }
 
 // runContext derives the execution context for an agent subprocess from the

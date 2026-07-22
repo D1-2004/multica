@@ -25,6 +25,17 @@ func TestNewReturnsOpencodeBackend(t *testing.T) {
 	}
 }
 
+func TestAppendOpenCodeImageArgs(t *testing.T) {
+	got := appendOpenCodeImageArgs([]string{"run", "--format", "json"}, []InputImage{
+		{Path: "/tmp/one.png", Name: "one.png", ContentType: "image/png"},
+		{Path: "/tmp/two.jpg", Name: "two.jpg", ContentType: "image/jpeg"},
+	})
+	want := []string{"run", "--format", "json", "--file", "/tmp/one.png", "--file", "/tmp/two.jpg"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
 // ── Text event tests ──
 
 func TestOpencodeHandleTextEvent(t *testing.T) {

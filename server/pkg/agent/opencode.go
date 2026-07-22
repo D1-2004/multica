@@ -95,6 +95,7 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		args = append(args, "--session", opts.ResumeSessionID)
 	}
 	args = append(args, filterCustomArgs(opts.CustomArgs, opencodeBlockedArgs, b.cfg.Logger)...)
+	args = appendOpenCodeImageArgs(args, opts.InputImages)
 	args = append(args, prompt)
 
 	cmd := exec.CommandContext(runCtx, execPath, args...)
@@ -254,6 +255,13 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	}()
 
 	return &Session{Messages: msgCh, Result: resCh}, nil
+}
+
+func appendOpenCodeImageArgs(args []string, images []InputImage) []string {
+	for _, image := range images {
+		args = append(args, "--file", image.Path)
+	}
+	return args
 }
 
 // ── Event handlers ──
