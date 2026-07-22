@@ -16,9 +16,18 @@ import (
 )
 
 type inboundAttachmentImporter struct {
-	service   *service.ExternalAttachmentService
+	service   externalAttachmentImporter
 	decrypt   Decrypter
-	messenger *RobotMessenger
+	messenger messageFileURLResolver
+}
+
+type externalAttachmentImporter interface {
+	Import(context.Context, service.ExternalAttachmentImportParams) ([]db.Attachment, error)
+	DeleteImported(context.Context, []db.Attachment)
+}
+
+type messageFileURLResolver interface {
+	resolveMessageFileURL(context.Context, channelCredentials, string) (string, error)
 }
 
 func (i *inboundAttachmentImporter) Import(ctx context.Context, params engine.AppendParams) ([]db.Attachment, error) {
