@@ -98,6 +98,9 @@ type Task struct {
 	QuickCreateAttachmentIDs []string               `json:"quick_create_attachment_ids,omitempty"` // attachments uploaded in the quick-create prompt and bound by issue create
 	HandoffNote              string                 `json:"handoff_note,omitempty"`                // assignment handoff instruction; rendered into the opening prompt + issue_context.md
 
+	// Sanitized original channel callbacks for the current input batch.
+	ChatMessageSourcePayloads []ChatMessageSourcePayload `json:"chat_message_source_payloads,omitempty"`
+
 	SquadID               string `json:"squad_id,omitempty"`                // when the picker was a squad, the squad's UUID; Agent is still the resolved leader
 	SquadName             string `json:"squad_name,omitempty"`              // display name for the picker squad, used in prompt text
 	ParentIssueID         string `json:"parent_issue_id,omitempty"`         // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
@@ -142,6 +145,13 @@ type ChatAttachmentMeta struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type,omitempty"`
+}
+
+// ChatMessageSourcePayload mirrors the server claim response. Payload contains
+// the credential-free original callback structure for one channel message.
+type ChatMessageSourcePayload struct {
+	MessageID string          `json:"message_id"`
+	Payload   json.RawMessage `json:"payload"`
 }
 
 // CoalescedCommentData mirrors the server-side struct (handler.CoalescedCommentData):
