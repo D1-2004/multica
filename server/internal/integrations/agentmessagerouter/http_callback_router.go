@@ -48,7 +48,7 @@ func (s *HTTPCallbackRouterService) Register(
 	ctx context.Context,
 	endpoint dingtalk.HTTPCallbackEndpoint,
 	agentID pgtype.UUID,
-	robotCode string,
+	robotCode, clientID, clientSecret string,
 ) (string, error) {
 	robotCode = strings.TrimSpace(robotCode)
 	if robotCode == "" {
@@ -56,6 +56,8 @@ func (s *HTTPCallbackRouterService) Register(
 	}
 	subscription, err := s.client.RegisterRobot(ctx, RobotRegistration{
 		RobotCode:              robotCode,
+		ClientID:               clientID,
+		ClientSecret:           clientSecret,
 		AgentID:                util.UUIDToString(agentID),
 		DispatchURL:            endpoint.DispatchURL,
 		Surface:                SubscriptionSurface{Type: "chat"},

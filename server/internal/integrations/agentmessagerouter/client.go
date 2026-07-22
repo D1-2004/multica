@@ -58,6 +58,8 @@ type AgentDeliveryTarget struct {
 type RobotRegistration struct {
 	TenantID               string               `json:"tenantId,omitempty"`
 	RobotCode              string               `json:"robotCode"`
+	ClientID               string               `json:"clientId"`
+	ClientSecret           string               `json:"clientSecret"`
 	AgentID                string               `json:"agentId"`
 	DispatchURL            string               `json:"dispatchUrl"`
 	Surface                SubscriptionSurface  `json:"surface"`
@@ -239,7 +241,8 @@ func (c *Client) GetAgentDeliveryTarget(ctx context.Context, agentID string) (Ag
 
 func (c *Client) RegisterRobot(ctx context.Context, registration RobotRegistration) (Subscription, error) {
 	registration.TenantID = strings.TrimSpace(registration.TenantID)
-	if !isTrimmedNonEmpty(registration.RobotCode) || !isTrimmedNonEmpty(registration.AgentID) ||
+	if !isTrimmedNonEmpty(registration.RobotCode) || !isTrimmedNonEmpty(registration.ClientID) ||
+		!isTrimmedNonEmpty(registration.ClientSecret) || !isTrimmedNonEmpty(registration.AgentID) ||
 		!isTrimmedNonEmpty(registration.DispatchURL) || !validSubscriptionSurface(registration.Surface) ||
 		!validSubscriptionOutbound(registration.Outbound) {
 		return Subscription{}, errors.New("agent message router robot registration is invalid")

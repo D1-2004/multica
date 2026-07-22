@@ -126,8 +126,9 @@ func TestClientRegistersRobotWithExplicitDispatchPolicy(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if len(body) != 6 || body["tenantId"] != "tenant-1" ||
+		if len(body) != 8 || body["tenantId"] != "tenant-1" ||
 			body["robotCode"] != "robot-code-1" || body["agentId"] != "agent-1" ||
+			body["clientId"] != "client-id-1" || body["clientSecret"] != "client-secret-1" ||
 			body["dispatchUrl"] != dispatchURL {
 			t.Fatalf("request body = %#v", body)
 		}
@@ -146,9 +147,9 @@ func TestClientRegistersRobotWithExplicitDispatchPolicy(t *testing.T) {
 				"sourceId":    "source-1",
 				"agentId":     "agent-1",
 				"dispatchUrl": dispatchURL,
-				"surface":     map[string]any{"type": "chat"},
-				"outbound":    map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"},
-				"status":      "active",
+				"surface": map[string]any{"type": "chat"},
+				"outbound": map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"},
+				"status": "active",
 			},
 		})
 	}))
@@ -156,12 +157,14 @@ func TestClientRegistersRobotWithExplicitDispatchPolicy(t *testing.T) {
 
 	client := mustTestClient(t, server)
 	got, err := client.RegisterRobot(context.Background(), RobotRegistration{
-		TenantID:    "tenant-1",
-		RobotCode:   "robot-code-1",
-		AgentID:     "agent-1",
-		DispatchURL: dispatchURL,
-		Surface:     SubscriptionSurface{Type: "chat"},
-		Outbound:    SubscriptionOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
+		TenantID:     "tenant-1",
+		RobotCode:    "robot-code-1",
+		ClientID:     "client-id-1",
+		ClientSecret: "client-secret-1",
+		AgentID:      "agent-1",
+		DispatchURL:  dispatchURL,
+		Surface:      SubscriptionSurface{Type: "chat"},
+		Outbound:     SubscriptionOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
 	})
 	if err != nil {
 		t.Fatalf("RegisterRobot: %v", err)
@@ -171,6 +174,28 @@ func TestClientRegistersRobotWithExplicitDispatchPolicy(t *testing.T) {
 		got.Outbound.Mode != "robot_sdk" || got.Outbound.ReplyTo != "latest_message" ||
 		got.Status != "active" {
 		t.Fatalf("subscription = %#v", got)
+	}
+}
+
+func TestClientRejectsRobotRegistrationWithoutAppCredentials(t *testing.T) {
+	base := RobotRegistration{
+		RobotCode:    "robot-code-1",
+		ClientID:     "client-id-1",
+		ClientSecret: "client-secret-1",
+		AgentID:      "agent-1",
+		DispatchURL:  "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint",
+		Surface:      SubscriptionSurface{Type: "chat"},
+		Outbound:     SubscriptionOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
+	}
+	for _, mutate := range []func(*RobotRegistration){
+		func(r *RobotRegistration) { r.ClientID = "" },
+		func(r *RobotRegistration) { r.ClientSecret = "" },
+	} {
+		registration := base
+		mutate(&registration)
+		if _, err := (&Client{}).RegisterRobot(context.Background(), registration); err == nil {
+			t.Fatal("expected missing app credential to fail")
+		}
 	}
 }
 
@@ -196,8 +221,9 @@ func TestClientRejectsRobotRegistrationResponseOutsideRequest(t *testing.T) {
 
 			client := mustTestClient(t, server)
 			_, err := client.RegisterRobot(context.Background(), RobotRegistration{
-				RobotCode: "robot-code-1", AgentID: "agent-1", DispatchURL: dispatchURL,
-				Surface: SubscriptionSurface{Type: "chat"},
+				RobotCode: "robot-code-1", ClientID: "client-id-1", ClientSecret: "client-secret-1",
+				AgentID: "agent-1", DispatchURL: dispatchURL,
+				Surface:  SubscriptionSurface{Type: "chat"},
 				Outbound: SubscriptionOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
 			})
 			if err == nil {
@@ -303,9 +329,9 @@ func TestClientCreatesHTTPCallbackSubscriptionWithoutInventingTenant(t *testing.
 			"success": true, "code": "success", "data": map[string]any{
 				"sourceId": "source-robot", "agentId": "agent-1",
 				"dispatchUrl": dispatchURL,
-				"surface": map[string]any{"type": "chat"},
-				"outbound": map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"},
-				"status": "active",
+				"surface":     map[string]any{"type": "chat"},
+				"outbound":    map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"},
+				"status":      "active",
 			},
 		})
 	}))
