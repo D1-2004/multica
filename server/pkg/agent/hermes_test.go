@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -1329,6 +1331,35 @@ func TestHermesProviderErrorSnifferBoundedBuffer(t *testing.T) {
 	}
 	if len(s.lines) > acpMaxErrorLines {
 		t.Errorf("sniffer kept %d lines, limit is %d", len(s.lines), acpMaxErrorLines)
+	}
+}
+
+func TestBuildHermesPromptBlocksAddsNativeImageContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "image with space.png")
+	imageBytes := bytes.Repeat([]byte("image-bytes"), 60_000)
+	if err := os.WriteFile(path, imageBytes, 0o600); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	blocks, err := buildHermesPromptBlocks("describe the image", []InputImage{{
+		Path:        path,
+		Name:        "screen.png",
+		ContentType: "image/png",
+	}})
+	if err != nil {
+		t.Fatalf("buildHermesPromptBlocks: %v", err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %#v", blocks)
+	}
+	if blocks[0]["type"] != "text" || blocks[0]["text"] != "describe the image" {
+		t.Fatalf("text block = %#v", blocks[0])
+	}
+	image := blocks[1]
+	if image["type"] != "image" || image["mimeType"] != "image/png" {
+		t.Fatalf("image block = %#v", image)
+	}
+	if image["data"] != base64.StdEncoding.EncodeToString(imageBytes) {
+		t.Fatal("image data does not contain the complete base64 payload")
 	}
 }
 
