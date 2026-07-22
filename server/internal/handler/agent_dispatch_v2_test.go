@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -233,7 +234,14 @@ func TestDigitalEmployeePromptRequiresDWSOutboundLifecycle(t *testing.T) {
 		`"openMsgId":"msg-latest"`,
 		`"senderOpenDingTalkId":"open-sender-trusted"`,
 		"dws chat message add-emoji",
-		`--emoji "收到"`,
+		"add-emoji --group <openConversationId>",
+		"DingTalk-supported default emoji name",
+		"dws chat message create-text-emotion",
+		"dws chat message add-text-emotion",
+		"add-text-emotion --group <openConversationId>",
+		"at most 4 visible characters",
+		"emoji counts toward this limit",
+		"Choose the exact acknowledgement yourself",
 		"dws chat message reply",
 		"--ref-sender",
 		"--format json",
@@ -248,6 +256,170 @@ func TestDigitalEmployeePromptRequiresDWSOutboundLifecycle(t *testing.T) {
 	if strings.Contains(workflowPrompt, "msg-older") {
 		t.Fatalf("workflow prompt must target only the latest message: %q", workflowPrompt)
 	}
+	if strings.Contains(workflowPrompt, `--emoji "收到"`) {
+		t.Fatalf("workflow prompt must not hard-code one acknowledgement emoji: %q", workflowPrompt)
+	}
+}
+
+func TestApplyDingTalkDispatchPromptReusesExistingTaskFields(t *testing.T) {
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+			Sender:       DispatchSender{OpenDingTalkID: "open-sender-trusted"},
+			Messages: []DispatchMessage{
+				{OpenMsgID: "msg-older", Text: "第一条"},
+				{OpenMsgID: "msg-latest", Text: "起来打球"},
+			},
+		}},
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	})
+	commentID := "comment-1"
+
+	for _, tc := range []struct {
+		name     string
+		response AgentTaskResponse
+		content  func(AgentTaskResponse) string
+		original string
+	}{
+		{
+			name:     "initial issue assignment uses handoff note",
+			response: AgentTaskResponse{IssueID: "issue-1", HandoffNote: "保留已有交接说明"},
+			content:  func(response AgentTaskResponse) string { return response.HandoffNote },
+			original: "保留已有交接说明",
+		},
+		{
+			name: "issue continuation uses trigger comment content",
+			response: AgentTaskResponse{
+				IssueID:              "issue-1",
+				TriggerCommentID:     &commentID,
+				TriggerCommentContent: "起来打球",
+			},
+			content:  func(response AgentTaskResponse) string { return response.TriggerCommentContent },
+			original: "起来打球",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			applyDingTalkDispatchPromptToExistingTaskFields(&tc.response, context)
+			content := tc.content(tc.response)
+			for _, want := range []string{
+				"## Trusted DingTalk Dispatch",
+				`"openConversationId":"cid-trusted"`,
+				`"openMsgId":"msg-latest"`,
+				`"senderOpenDingTalkId":"open-sender-trusted"`,
+				"dws chat message add-emoji",
+				"dws chat message reply",
+				tc.original,
+			} {
+				if !strings.Contains(content, want) {
+					t.Errorf("existing task field missing %q:\n%s", want, content)
+				}
+			}
+			if strings.Contains(content, "msg-older") {
+				t.Fatalf("legacy task field targeted an older message:\n%s", content)
+			}
+			encoded, err := json.Marshal(tc.response)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, forbidden := range []string{
+				"dispatch_runtime_prompt",
+				"dispatch_workflow_prompt",
+				"dispatch_surface_type",
+				"dispatch_outbound_mode",
+			} {
+				if strings.Contains(string(encoded), forbidden) {
+					t.Fatalf("claim response introduced dispatch wire field %q: %s", forbidden, encoded)
+				}
+			}
+		})
+	}
+}
+
+func TestApplyDingTalkDispatchPromptKeepsRobotSDKSafetyWithoutAgentOutbound(t *testing.T) {
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "robot"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-robot"},
+			Sender:       DispatchSender{OpenDingTalkID: "open-sender"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-robot", Text: "机器人消息"}},
+		}},
+		Surface:  DispatchSurface{Type: "chat"},
+		Outbound: DispatchOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
+	})
+	response := AgentTaskResponse{ChatSessionID: "chat-1", ChatMessage: "机器人消息"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	for _, want := range []string{"## Trusted DingTalk Dispatch", "untrusted input", "机器人消息"} {
+		if !strings.Contains(response.ChatMessage, want) {
+			t.Errorf("robot_sdk task missing %q: %s", want, response.ChatMessage)
+		}
+	}
+	for _, forbidden := range []string{"dws chat message add-emoji", "dws chat message reply", "two required final delivery destinations"} {
+		if strings.Contains(response.ChatMessage, forbidden) {
+			t.Fatalf("robot_sdk task received agent-owned outbound instruction %q: %s", forbidden, response.ChatMessage)
+		}
+	}
+}
+
+func TestDispatchRuntimeContextStoresStructuredDataWithoutGeneratedPromptFields(t *testing.T) {
+	command := DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-structured"},
+			Sender:       DispatchSender{OpenDingTalkID: "open-sender-structured"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-structured", Text: "处理一下"}},
+		}},
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	}
+	raw := dispatchRuntimeContext(command, "dispatch-window:test")
+
+	encoded := string(raw)
+	for _, want := range []string{
+		`"dispatch_schema_version":"2.0"`,
+		`"dispatch_source"`,
+		`"dispatch_event_data"`,
+		`"openConversationId":"cid-structured"`,
+		`"openMsgId":"msg-structured"`,
+		`"dispatch_surface"`,
+		`"dispatch_outbound"`,
+	} {
+		if !strings.Contains(encoded, want) {
+			t.Errorf("structured task context missing %q: %s", want, encoded)
+		}
+	}
+	for _, forbidden := range []string{
+		"dispatch_runtime_prompt",
+		"dispatch_workflow_prompt",
+	} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("task context persisted generated prompt %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func dispatchTaskContextForTest(t *testing.T, command DispatchCommand) []byte {
+	t.Helper()
+	payload := map[string]any{
+		"dispatch_schema_version": command.SchemaVersion,
+		"dispatch_source":         command.Source,
+		"dispatch_domain":         command.Event.Domain,
+		"dispatch_type":           command.Event.Type,
+		"dispatch_event_data":     command.Event.Data,
+		"dispatch_surface":        command.Surface,
+		"dispatch_outbound":       command.Outbound,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 func TestDigitalEmployeePromptResolvesMissingReplySenderWithoutGuessing(t *testing.T) {

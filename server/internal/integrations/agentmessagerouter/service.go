@@ -48,6 +48,7 @@ type Store interface {
 	ClearExpiredDingTalkAccountCallbackCredentials(context.Context, db.ClearExpiredDingTalkAccountCallbackCredentialsParams) error
 	ActivateDingTalkAccountBinding(context.Context, db.ActivateDingTalkAccountBindingParams) (db.ChannelInstallation, error)
 	CompleteDingTalkAccountBindingResult(context.Context, db.CompleteDingTalkAccountBindingResultParams) (db.ChannelInstallation, error)
+	UpdateDingTalkAccountBindingDispatchURL(context.Context, db.UpdateDingTalkAccountBindingDispatchURLParams) (db.ChannelInstallation, error)
 	RevokeDingTalkAccountBinding(context.Context, db.RevokeDingTalkAccountBindingParams) (db.ChannelInstallation, error)
 }
 
@@ -69,7 +70,7 @@ type IdentityStore interface {
 // Router is the existing subscription contract used to issue a QR credential,
 // verify the DBase callback, and proxy unbind. *Client satisfies it.
 type Router interface {
-	IssueBindingToken(ctx context.Context, agentID, dispatchURL string) (BindingToken, error)
+	IssueBindingToken(ctx context.Context, agentID, dispatchPath string) (BindingToken, error)
 	GetSubscription(ctx context.Context, sourceID string) (Subscription, error)
 	DeleteSubscription(ctx context.Context, sourceID string) error
 }
@@ -352,18 +353,20 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		return BeginResult{}, fmt.Errorf("%w: endpoint resolution failed", ErrNotConfigured)
 	}
 	endpointID := endpoint.EndpointID
-	dispatchURL := endpoint.DispatchURL
+	dispatchPath, err := dispatchPathForEndpointID(endpointID)
+	if err != nil {
+		return BeginResult{}, fmt.Errorf("%w: dispatch path", ErrInvalidResult)
+	}
 	callbackToken, callbackHash, err := GenerateCallbackToken(s.random)
 	if err != nil {
 		return BeginResult{}, fmt.Errorf("%w: callback credential generation failed", ErrNotConfigured)
 	}
 	callbackExpiresAt := s.now().UTC().Add(s.callbackTTL)
 	bindingID := pgtype.UUID{}
-	storedDispatchURL := dispatchURL
 	if params.BindingMode == BindingModeMessage {
 		pendingConfig, marshalErr := NewPendingDingTalkAccountConfig(
 			endpointID,
-			dispatchURL,
+			dispatchPath,
 			callbackHash,
 			callbackExpiresAt,
 		).Marshal()
@@ -403,11 +406,10 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		if parseErr != nil {
 			return BeginResult{}, fmt.Errorf("%w: stored pending config", ErrInvalidResult)
 		}
-		if storedConfig.DispatchEndpointID != endpointID || storedConfig.DispatchURL != dispatchURL {
+		if storedConfig.DispatchEndpointID != endpointID {
 			return BeginResult{}, fmt.Errorf("%w: stored endpoint mismatch", ErrInvalidResult)
 		}
 		bindingID = row.ID
-		storedDispatchURL = storedConfig.DispatchURL
 	} else {
 		_, identityErr := s.identityStore.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
 			WorkspaceID: params.WorkspaceID,
@@ -421,12 +423,30 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		}
 	}
 
-	issued, err := s.router.IssueBindingToken(ctx, util.UUIDToString(params.AgentID), storedDispatchURL)
+	issued, err := s.router.IssueBindingToken(ctx, util.UUIDToString(params.AgentID), dispatchPath)
 	if err != nil {
 		return BeginResult{}, ErrRouterUnavailable
 	}
 	if strings.TrimSpace(issued.BindingToken) == "" || !issued.ExpiresAt.After(s.now()) {
 		return BeginResult{}, ErrInvalidResult
+	}
+	if params.BindingMode == BindingModeMessage {
+		row, updateErr := s.store.UpdateDingTalkAccountBindingDispatchURL(ctx, db.UpdateDingTalkAccountBindingDispatchURLParams{
+			ID:                 bindingID,
+			WorkspaceID:        params.WorkspaceID,
+			AgentID:            params.AgentID,
+			DispatchEndpointID: endpointID,
+			DispatchUrl:        dispatchPath,
+		})
+		if updateErr != nil {
+			return BeginResult{}, fmt.Errorf("update dingtalk account binding dispatch URL: %w", updateErr)
+		}
+		storedConfig, parseErr := ParseDingTalkAccountConfig(row.Config)
+		if parseErr != nil || row.ID != bindingID || row.WorkspaceID != params.WorkspaceID ||
+			row.AgentID != params.AgentID || storedConfig.DispatchEndpointID != endpointID ||
+			storedConfig.DispatchURL != dispatchPath {
+			return BeginResult{}, fmt.Errorf("%w: stored dispatch path mismatch", ErrInvalidResult)
+		}
 	}
 	expiresAt := issued.ExpiresAt.UTC()
 	if callbackExpiresAt.Before(expiresAt) {
@@ -463,7 +483,7 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		"callbackToken": {callbackToken},
 		"expiresAt":     {strconv.FormatInt(expiresAt.Unix(), 10)},
 		"agentId":       {util.UUIDToString(params.AgentID)},
-		"dispatchUrl":   {storedDispatchURL},
+		"dispatchPath":  {dispatchPath},
 	}
 	qrCodeURL := s.dbaseBindingURL.String() + "#" + fragment.Encode()
 	return BeginResult{

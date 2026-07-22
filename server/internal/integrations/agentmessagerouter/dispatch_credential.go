@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -82,6 +83,26 @@ func (k *DispatchKeyring) CurrentKeyID() string {
 	return k.currentKeyID
 }
 
+// KeyFingerprints returns non-secret key summaries for operational comparison
+// with Router. The raw key material and derived delivery credentials stay hidden.
+func (k *DispatchKeyring) KeyFingerprints() []string {
+	if k == nil {
+		return nil
+	}
+	keyIDs := make([]string, 0, len(k.keys))
+	for keyID := range k.keys {
+		keyIDs = append(keyIDs, keyID)
+	}
+	sort.Strings(keyIDs)
+	fingerprints := make([]string, 0, len(keyIDs))
+	for _, keyID := range keyIDs {
+		digest := sha256.Sum256(k.keys[keyID])
+		fingerprints = append(fingerprints,
+			keyID+"="+base64.RawURLEncoding.EncodeToString(digest[:])[:12])
+	}
+	return fingerprints
+}
+
 func (k *DispatchKeyring) SetMetrics(businessMetrics *obsmetrics.BusinessMetrics) {
 	if k == nil {
 		return
@@ -141,6 +162,46 @@ func BuildDispatchURL(publicOrigin, endpointID string) (string, error) {
 	}
 	origin.Path = "/api/webhooks/agent-dispatch/" + endpointID
 	return origin.String(), nil
+}
+
+func dispatchPathForEndpointID(endpointID string) (string, error) {
+	if _, err := parseEndpointID(endpointID); err != nil {
+		return "", err
+	}
+	return "/api/webhooks/agent-dispatch/" + endpointID, nil
+}
+
+func endpointIDFromDispatchPath(dispatchPath string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(dispatchPath))
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.User != nil || parsed.RawPath != "" ||
+		parsed.RawQuery != "" || parsed.Fragment != "" || parsed.ForceQuery || parsed.Opaque != "" {
+		return "", errors.New("agent dispatch path is invalid")
+	}
+	const prefix = "/api/webhooks/agent-dispatch/"
+	if !strings.HasPrefix(parsed.Path, prefix) {
+		return "", errors.New("agent dispatch path is invalid")
+	}
+	endpointID := strings.TrimPrefix(parsed.Path, prefix)
+	expectedPath, err := dispatchPathForEndpointID(endpointID)
+	if err != nil || parsed.Path != expectedPath {
+		return "", errors.New("agent dispatch path is invalid")
+	}
+	return endpointID, nil
+}
+
+func isDispatchURLForEndpoint(dispatchURL, endpointID string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(dispatchURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil ||
+		parsed.RawPath != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.ForceQuery || parsed.Opaque != "" {
+		return false
+	}
+	expectedPath, err := dispatchPathForEndpointID(endpointID)
+	return err == nil && parsed.Path == expectedPath
+}
+
+func isCanonicalDispatchURLForEndpoint(dispatchURL, endpointID string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(dispatchURL))
+	return err == nil && parsed.Scheme == "https" && isDispatchURLForEndpoint(dispatchURL, endpointID)
 }
 
 func canonicalHTTPSOrigin(raw string) (*url.URL, error) {

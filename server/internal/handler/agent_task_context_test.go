@@ -46,49 +46,41 @@ func TestTaskToResponseSurfacesTaskTraceForNonChatTask(t *testing.T) {
 	}
 }
 
-func TestDispatchRuntimePromptOnlyEntersPrivateClaimResponse(t *testing.T) {
-	const runtimePrompt = "private runtime instruction"
-	const workflowPrompt = "private outbound workflow instruction"
+func TestTaskClaimResponseDoesNotAddGeneratedDispatchPromptFields(t *testing.T) {
 	const contextToken = "private context token"
-	task := taskResponseFixture([]byte(`{"agent_identity_context_token":"` + contextToken + `","dispatch_runtime_prompt":"` + runtimePrompt + `","dispatch_workflow_prompt":"` + workflowPrompt + `","dispatch_surface":{"type":"issue"},"dispatch_outbound":{"mode":"dws","replyTo":"latest_message"}}`))
+	task := taskResponseFixture([]byte(`{
+		"agent_identity_context_token":"` + contextToken + `",
+		"dispatch_schema_version":"2.0",
+		"dispatch_source":{"platform":"dingtalk","type":"digital_employee"},
+		"dispatch_domain":"channel",
+		"dispatch_type":"message.created",
+		"dispatch_event_data":{"conversation":{"openConversationId":"cid-private"},"messages":[{"openMsgId":"msg-private","text":"处理一下"}]},
+		"dispatch_surface":{"type":"issue"},
+		"dispatch_outbound":{"mode":"dws","replyTo":"latest_message"}
+	}`))
 	response := taskToResponse(task, "")
-	if response.DispatchRuntimePrompt != "" {
-		t.Fatalf("ordinary task response exposed runtime prompt: %q", response.DispatchRuntimePrompt)
-	}
 	if response.AgentIdentityContextToken != "" {
 		t.Fatalf("ordinary task response exposed context token: %q", response.AgentIdentityContextToken)
-	}
-	if response.DispatchWorkflowPrompt != "" || response.DispatchSurfaceType != "" || response.DispatchOutboundMode != "" {
-		t.Fatalf("ordinary task response exposed dispatch workflow policy: %+v", response)
 	}
 	ordinary, err := json.Marshal(response)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(ordinary), runtimePrompt) || strings.Contains(string(ordinary), contextToken) {
+	if strings.Contains(string(ordinary), contextToken) || strings.Contains(string(ordinary), "cid-private") {
 		t.Fatalf("ordinary task response leaked private dispatch context: %s", ordinary)
 	}
 
 	claimResponse := taskToClaimResponse(task, "", db.AgentRuntime{})
-	if claimResponse.DispatchRuntimePrompt != runtimePrompt {
-		t.Fatalf("claim runtime prompt = %q, want %q", claimResponse.DispatchRuntimePrompt, runtimePrompt)
-	}
 	if claimResponse.AgentIdentityContextToken != contextToken {
 		t.Fatalf("claim context token = %q, want %q", claimResponse.AgentIdentityContextToken, contextToken)
-	}
-	if claimResponse.DispatchWorkflowPrompt != workflowPrompt || claimResponse.DispatchSurfaceType != "issue" || claimResponse.DispatchOutboundMode != "dws" {
-		t.Fatalf("claim workflow policy = prompt %q surface %q mode %q", claimResponse.DispatchWorkflowPrompt, claimResponse.DispatchSurfaceType, claimResponse.DispatchOutboundMode)
 	}
 	encoded, err := json.Marshal(claimResponse)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(encoded), `"dispatch_runtime_prompt":"`+runtimePrompt+`"`) {
-		t.Fatalf("private claim response did not carry runtime prompt: %s", encoded)
-	}
-	for _, want := range []string{`"dispatch_workflow_prompt":"` + workflowPrompt + `"`, `"dispatch_surface_type":"issue"`, `"dispatch_outbound_mode":"dws"`} {
-		if !strings.Contains(string(encoded), want) {
-			t.Fatalf("private claim response missing %s: %s", want, encoded)
+	for _, forbidden := range []string{"dispatch_runtime_prompt", "dispatch_workflow_prompt", "dispatch_surface_type", "dispatch_outbound_mode", "cid-private", "msg-private"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("claim response introduced dispatch wire data %q: %s", forbidden, encoded)
 		}
 	}
 }

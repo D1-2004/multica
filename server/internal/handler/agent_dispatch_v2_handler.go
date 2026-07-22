@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -30,20 +31,18 @@ func textValue(s string) pgtype.Text {
 }
 func formatIssueNumber(n int32) string { return fmt.Sprint(n) }
 
-func dispatchRuntimeContext(c DispatchCommand, prompt DispatchPrompt, idempotencyKey string) []byte {
+func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 	// Do not include ExternalIdentity: the token has its own dedicated private
 	// task-context field and must never be duplicated in a JSON snapshot.
 	payload := map[string]any{
-		"dispatch_schema_version":              c.SchemaVersion,
-		"dispatch_source":                      c.Source,
-		"dispatch_domain":                      c.Event.Domain,
-		"dispatch_type":                        c.Event.Type,
-		"dispatch_event_data":                  c.Event.Data,
-		protocol.DispatchSurfaceJSONKey:        c.Surface,
-		protocol.DispatchOutboundJSONKey:       c.Outbound,
-		protocol.DispatchRuntimePromptJSONKey:  prompt.RuntimePrompt,
-		protocol.DispatchWorkflowPromptJSONKey: prompt.WorkflowPrompt,
-		"dispatch_idempotency_key":             idempotencyKey,
+		"dispatch_schema_version":         c.SchemaVersion,
+		"dispatch_source":                 c.Source,
+		"dispatch_domain":                 c.Event.Domain,
+		"dispatch_type":                   c.Event.Type,
+		"dispatch_event_data":             c.Event.Data,
+		protocol.DispatchSurfaceJSONKey: c.Surface,
+		protocol.DispatchOutboundJSONKey: c.Outbound,
+		"dispatch_idempotency_key":        idempotencyKey,
 	}
 	raw, _ := json.Marshal(payload)
 	return raw
@@ -69,14 +68,45 @@ func (h *Handler) handleAgentDispatchV2(
 	}
 	command := request.DispatchCommand()
 	if err := command.validate(); err != nil {
+		slog.Warn("MULTICA_AGENT_DISPATCH_REQUEST",
+			"outcome", "rejected",
+			"protocol", "dispatch_command_v2",
+			"schemaVersion", command.SchemaVersion,
+			"failureCode", "invalid_dispatch_command",
+			"validationError", err,
+		)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	prompt, err := BuildDispatchPrompt(command)
 	if err != nil {
+		slog.Error("MULTICA_AGENT_DISPATCH_REQUEST",
+			"outcome", "failed",
+			"protocol", "dispatch_command_v2",
+			"schemaVersion", command.SchemaVersion,
+			"failureCode", "prompt_build_failed",
+			"error", err,
+		)
 		writeError(w, http.StatusInternalServerError, "failed to build dispatch prompt")
 		return
 	}
+	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+		"outcome", "validated",
+		"protocol", "dispatch_command_v2",
+		"schemaVersion", command.SchemaVersion,
+		"sourcePlatform", command.Source.Platform,
+		"sourceType", command.Source.Type,
+		"domain", command.Event.Domain,
+		"eventType", command.Event.Type,
+		"surfaceType", command.Surface.Type,
+		"outboundMode", command.Outbound.Mode,
+		"messageCount", len(command.Event.Data.Messages),
+		"continuationPresent", command.Continuation != nil,
+		"promptBuilder", "multica",
+		"displayBytes", len(prompt.DisplayContent),
+		"runtimeBytes", len(prompt.RuntimePrompt),
+		"workflowBytes", len(prompt.WorkflowPrompt),
+	)
 	if command.AgentID != "" {
 		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(command.AgentID), "agentId")
 		if !ok {
@@ -201,7 +231,7 @@ func (h *Handler) createAgentDispatchChatV2(
 		SenderName:           command.Event.Data.Sender.DisplayName,
 		Text:                 strings.Join(textParts, "\n\n"),
 		IdentityContextToken: command.ExternalIdentity.ContextToken,
-		DispatchContext:      dispatchRuntimeContext(command, prompt, dispatchIdempotencyKey(r, command)),
+		DispatchContext:      dispatchRuntimeContext(command, dispatchIdempotencyKey(r, command)),
 	}, installation.ClientID, uuidToString(installation.ID))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -301,7 +331,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		AttachmentIDs:             attachmentIDs(imported),
 		AllowDuplicate:            false,
 		AgentIdentityContextToken: c.ExternalIdentity.ContextToken,
-		DispatchContext:           dispatchRuntimeContext(c, prompt, dispatchIdempotencyKey(r, c)),
+		DispatchContext:           dispatchRuntimeContext(c, dispatchIdempotencyKey(r, c)),
 	}, service.IssueCreateOpts{
 		ActorID:          uuidToString(dispatchContext.UserID),
 		AnalyticsAgentID: uuidToString(agent.ID),
@@ -321,10 +351,20 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	prefix := h.getIssuePrefix(r.Context(), dispatchContext.WorkspaceID)
+	issueID := uuidToString(result.Issue.ID)
+	taskID := uuidToString(result.EnqueuedTask.ID)
+	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+		"outcome", "created_issue",
+		"protocol", "dispatch_command_v2",
+		"httpStatus", http.StatusCreated,
+		"continuationReturned", true,
+		"continuationFingerprint", agentDispatchIdentifierFingerprint(issueID),
+		"taskFingerprint", agentDispatchIdentifierFingerprint(taskID),
+	)
 	writeJSON(w, http.StatusCreated, AgentDispatchResponse{
-		Continuation:    AgentDispatchContinuation{Kind: "issue", IssueID: uuidToString(result.Issue.ID)},
+		Continuation:    AgentDispatchContinuation{Kind: "issue", IssueID: issueID},
 		IssueIdentifier: prefix + "-" + formatIssueNumber(result.Issue.Number),
-		TaskID:          uuidToString(result.EnqueuedTask.ID),
+		TaskID:          taskID,
 	})
 }
 
@@ -336,7 +376,21 @@ func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Re
 	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: dispatchContext.WorkspaceID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "continuation issue not found")
+			slog.Warn("MULTICA_AGENT_DISPATCH_CONTINUATION",
+				"outcome", "recreated_missing_issue",
+				"previousIssueFingerprint", agentDispatchIdentifierFingerprint(c.Continuation.IssueID),
+			)
+			agent, resolved := h.resolveAgentDispatchAgent(
+				w,
+				r,
+				dispatchContext.UserID,
+				dispatchContext.WorkspaceID,
+				dispatchContext.AgentID,
+			)
+			if !resolved {
+				return
+			}
+			h.createAgentDispatchIssueV2(w, r, c, prompt, dispatchContext, agent)
 		} else {
 			writeError(w, http.StatusInternalServerError, "failed to load continuation issue")
 		}
@@ -367,7 +421,7 @@ func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Re
 	result, err := h.IssueCommentService.CreateExternalFollowUp(r.Context(), service.IssueCommentCreateParams{
 		Issue: issue, AuthorID: dispatchContext.UserID, Content: prompt.DisplayContent,
 		AttachmentIDs: attachmentIDs(imported), AgentIdentityContextToken: c.ExternalIdentity.ContextToken,
-		DispatchContext: dispatchRuntimeContext(c, prompt, dispatchIdempotencyKey(r, c)),
+		DispatchContext: dispatchRuntimeContext(c, dispatchIdempotencyKey(r, c)),
 	}, service.IssueCommentCreateOpts{})
 	if errors.Is(err, service.ErrIssueDispatchPending) {
 		writeError(w, http.StatusConflict, "issue already has a pending agent task")
@@ -378,5 +432,17 @@ func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Re
 		return
 	}
 	keepAttachments = true
-	writeJSON(w, http.StatusCreated, AgentDispatchResponse{Continuation: AgentDispatchContinuation{Kind: "issue", IssueID: uuidToString(issue.ID)}, CommentID: uuidToString(result.Comment.ID), TaskID: uuidToString(result.Task.ID)})
+	issueIDString := uuidToString(issue.ID)
+	commentID := uuidToString(result.Comment.ID)
+	taskID := uuidToString(result.Task.ID)
+	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+		"outcome", "created_follow_up",
+		"protocol", "dispatch_command_v2",
+		"httpStatus", http.StatusCreated,
+		"continuationReturned", true,
+		"continuationFingerprint", agentDispatchIdentifierFingerprint(issueIDString),
+		"commentFingerprint", agentDispatchIdentifierFingerprint(commentID),
+		"taskFingerprint", agentDispatchIdentifierFingerprint(taskID),
+	)
+	writeJSON(w, http.StatusCreated, AgentDispatchResponse{Continuation: AgentDispatchContinuation{Kind: "issue", IssueID: issueIDString}, CommentID: commentID, TaskID: taskID})
 }

@@ -312,6 +312,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	} else {
 		keyring.SetMetrics(opts.BusinessMetrics)
 		h.AgentDispatchKeys = keyring
+		slog.Info("MULTICA_AGENT_DISPATCH_KEYRING",
+			"currentKeyID", keyring.CurrentKeyID(),
+			"keyFingerprints", keyring.KeyFingerprints())
 		dbaseBindingURL := strings.TrimSpace(os.Getenv("DINGTALK_DBASE_BINDING_PAGE_URL"))
 		dbaseOrigin, originErr := handler.NormalizeDingTalkAccountBindingOrigin(
 			os.Getenv("DINGTALK_DBASE_BINDING_ORIGIN"),

@@ -44,6 +44,7 @@ func TestBeginIdentityBindingUsesUnifiedPageWithoutCreatingMessageInstallation(t
 	}
 	if len(fragment) != 7 || fragment.Get("bindingMode") != "identity" ||
 		fragment.Get("bindingToken") != router.issued.BindingToken ||
+		fragment.Get("dispatchPath") != "/api/webhooks/agent-dispatch/v1_MzMzMzMzMzMzMzMzMzMzMw" ||
 		fragment.Get("callbackUrl") != "https://multica.example/api/integrations/dingtalk/account-bindings/22222222-2222-2222-2222-222222222222/callback" {
 		t.Fatalf("identity QR fragment = %#v", fragment)
 	}

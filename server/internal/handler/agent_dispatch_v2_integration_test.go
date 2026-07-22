@@ -1,10 +1,13 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -12,6 +15,11 @@ import (
 )
 
 func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
 	agentID := createHandlerTestAgent(t, "test-v2-safe-issue", nil)
 	body := fmt.Sprintf(`{
 		"schemaVersion":"2.0",
@@ -38,9 +46,32 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 	if w.Code != http.StatusCreated {
 		t.Fatalf("HandleAgentDispatch v2: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
+	logOutput := logs.String()
+	for _, field := range []string{
+		"MULTICA_AGENT_DISPATCH_REQUEST",
+		"outcome=validated",
+		"outcome=created_issue",
+		"protocol=dispatch_command_v2",
+		"schemaVersion=2.0",
+		"eventType=message.created",
+		"messageCount=2",
+		"promptBuilder=multica",
+	} {
+		if !strings.Contains(logOutput, field) {
+			t.Fatalf("dispatch request log missing %q: %s", field, logOutput)
+		}
+	}
+	for _, private := range []string{"帮我看一下线上告警", "cid-private", "msg-private-1"} {
+		if strings.Contains(logOutput, private) {
+			t.Fatalf("dispatch request log leaked %q: %s", private, logOutput)
+		}
+	}
 	var response AgentDispatchResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(logOutput, response.Continuation.IssueID) || strings.Contains(logOutput, response.TaskID) {
+		t.Fatalf("dispatch request log leaked issue or task id: %s", logOutput)
 	}
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, response.Continuation.IssueID)
@@ -81,10 +112,114 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 	if hasIdentityToken {
 		t.Fatalf("identity-less dispatch fabricated a context token: %s", taskContext)
 	}
-	for _, privateRuntimeValue := range []string{"dispatch_runtime_prompt", "dispatch_workflow_prompt", "DWS", "dispatch_outbound", "latest_message"} {
-		if !strings.Contains(string(taskContext), privateRuntimeValue) {
-			t.Errorf("task private context missing %q: %s", privateRuntimeValue, taskContext)
+	for _, structuredValue := range []string{"dispatch_schema_version", "dispatch_event_data", "cid-private", "msg-private-2", "dispatch_outbound", "latest_message"} {
+		if !strings.Contains(string(taskContext), structuredValue) {
+			t.Errorf("task structured context missing %q: %s", structuredValue, taskContext)
 		}
+	}
+	for _, generatedPromptField := range []string{"dispatch_runtime_prompt", "dispatch_workflow_prompt"} {
+		if strings.Contains(string(taskContext), generatedPromptField) {
+			t.Errorf("task context persisted generated prompt field %q: %s", generatedPromptField, taskContext)
+		}
+	}
+
+	var runtimeID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT runtime_id
+		FROM agent_task_queue
+		WHERE id = $1
+	`, response.TaskID).Scan(&runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	claimW := httptest.NewRecorder()
+	claimReq := newDaemonTokenRequest(
+		http.MethodPost,
+		"/api/daemon/runtimes/"+runtimeID+"/tasks/claim",
+		map[string]any{"target_task_id": response.TaskID},
+		testWorkspaceID,
+		"dispatch-v2-claim",
+	)
+	claimReq = withURLParam(claimReq, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(claimW, claimReq)
+	if claimW.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: expected 200, got %d: %s", claimW.Code, claimW.Body.String())
+	}
+	var claim struct {
+		Task *struct {
+			ID          string `json:"id"`
+			HandoffNote string `json:"handoff_note"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(claimW.Body.Bytes(), &claim); err != nil {
+		t.Fatal(err)
+	}
+	if claim.Task == nil || claim.Task.ID != response.TaskID {
+		t.Fatalf("claim returned wrong task: %s", claimW.Body.String())
+	}
+	for _, required := range []string{
+		"## Trusted DingTalk Dispatch",
+		`"openConversationId":"cid-private"`,
+		`"openMsgId":"msg-private-2"`,
+		"dws chat message add-emoji",
+		"at most 4 visible characters",
+		"dws chat message reply",
+	} {
+		if !strings.Contains(claim.Task.HandoffNote, required) {
+			t.Errorf("claim handoff_note missing %q: %s", required, claim.Task.HandoffNote)
+		}
+	}
+	for _, forbidden := range []string{"dispatch_runtime_prompt", "dispatch_workflow_prompt", "dispatch_surface_type", "dispatch_outbound_mode"} {
+		if strings.Contains(claimW.Body.String(), forbidden) {
+			t.Errorf("claim response introduced dispatch wire field %q: %s", forbidden, claimW.Body.String())
+		}
+	}
+}
+
+func TestHandleAgentDispatchV2RecreatesMissingContinuationIssue(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-v2-missing-continuation", nil)
+	const missingIssueID = "00000000-0000-4000-8000-000000000002"
+	body := fmt.Sprintf(`{
+		"schemaVersion":"2.0",
+		"agentId":%q,
+		"continuation":{"kind":"issue","issueId":%q},
+		"source":{"platform":"dingtalk","type":"digital_employee"},
+		"event":{
+			"domain":"channel",
+			"type":"message.created",
+			"data":{
+				"conversation":{"openConversationId":"cid-recreated","type":"single"},
+				"sender":{"displayName":"张三"},
+				"messages":[{"openMsgId":"msg-recreated","occurredAt":1784512800000,"text":"原续接 Issue 已删除，请继续处理"}]
+			}
+		},
+		"surface":{"type":"issue"},
+		"outbound":{"mode":"dws","replyTo":"latest_message"}
+	}`, agentID, missingIssueID)
+
+	w := postAgentDispatchForTest(t, body, agentID)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("HandleAgentDispatch v2 missing continuation: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var response AgentDispatchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.TaskID == "" || response.Continuation.Kind != "issue" || response.Continuation.IssueID == "" {
+		t.Fatalf("unexpected response: %+v", response)
+	}
+	if response.Continuation.IssueID == missingIssueID {
+		t.Fatalf("continuation issue id was not refreshed: %+v", response.Continuation)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, response.Continuation.IssueID)
+	})
+
+	var issueExists bool
+	if err := testPool.QueryRow(context.Background(), `SELECT EXISTS (SELECT 1 FROM issue WHERE id = $1)`, response.Continuation.IssueID).Scan(&issueExists); err != nil {
+		t.Fatalf("check recreated issue: %v", err)
+	}
+	if !issueExists {
+		t.Fatal("recreated continuation issue does not exist")
 	}
 }
 
