@@ -182,6 +182,7 @@ func TestTypingIndicatorSkipsEmptyTarget(t *testing.T) {
 // semantics the real query has: a take claims the rows and empties the set.
 func (f *fakeTypingQueries) AddChannelTypingIndicator(_ context.Context, arg db.AddChannelTypingIndicatorParams) error {
 	f.indicators = append(f.indicators, db.ChannelTypingIndicator{
+		ID:             typingTestUUID(byte(100 + len(f.indicators))),
 		ChatSessionID:  arg.ChatSessionID,
 		ChannelType:    arg.ChannelType,
 		InstallationID: arg.InstallationID,
@@ -190,32 +191,37 @@ func (f *fakeTypingQueries) AddChannelTypingIndicator(_ context.Context, arg db.
 	return nil
 }
 
-func (f *fakeTypingQueries) TakeChannelTypingIndicators(_ context.Context, arg db.TakeChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error) {
-	var taken, kept []db.ChannelTypingIndicator
+func (f *fakeTypingQueries) ListChannelTypingIndicators(_ context.Context, arg db.ListChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error) {
+	var listed []db.ChannelTypingIndicator
 	for _, row := range f.indicators {
 		if row.ChatSessionID == arg.ChatSessionID && row.ChannelType == arg.ChannelType {
-			taken = append(taken, row)
-			continue
+			listed = append(listed, row)
 		}
-		kept = append(kept, row)
 	}
-	f.indicators = kept
-	return taken, nil
+	return listed, nil
 }
 
-func (f *fakeTypingQueries) TakeChannelTypingIndicatorsByTask(_ context.Context, arg db.TakeChannelTypingIndicatorsByTaskParams) ([]db.ChannelTypingIndicator, error) {
-	var taken, kept []db.ChannelTypingIndicator
+func (f *fakeTypingQueries) ListChannelTypingIndicatorsByTask(_ context.Context, arg db.ListChannelTypingIndicatorsByTaskParams) ([]db.ChannelTypingIndicator, error) {
+	var listed []db.ChannelTypingIndicator
 	for _, row := range f.indicators {
 		var target typingIndicatorTarget
 		_ = json.Unmarshal(row.Target, &target)
 		if row.ChatSessionID == arg.ChatSessionID && row.ChannelType == arg.ChannelType && target.TaskID == arg.TaskID {
-			taken = append(taken, row)
-			continue
+			listed = append(listed, row)
 		}
-		kept = append(kept, row)
+	}
+	return listed, nil
+}
+
+func (f *fakeTypingQueries) DeleteChannelTypingIndicator(_ context.Context, id pgtype.UUID) error {
+	kept := f.indicators[:0]
+	for _, row := range f.indicators {
+		if row.ID != id {
+			kept = append(kept, row)
+		}
 	}
 	f.indicators = kept
-	return taken, nil
+	return nil
 }
 
 func TestTypingIndicatorClearTaskKeepsLaterTurn(t *testing.T) {
@@ -302,5 +308,55 @@ func TestTypingIndicatorClearsFromAnotherReplica(t *testing.T) {
 	rec.mu.Unlock()
 	if total != 1 {
 		t.Errorf("a second clear must not recall again, got %d recalls", total)
+	}
+}
+
+func TestHistoricalStreamTypingUsesCallbackRobotCodeAcrossReplicas(t *testing.T) {
+	rec, srv := newEmotionAPIServer(t)
+	messenger := NewRobotMessenger(srv.URL, srv.URL, srv.Client())
+
+	instID := typingTestUUID(11)
+	config, err := json.Marshal(dingtalkInstallConfig{
+		AppID:              "legacy-stream-client",
+		AppSecretEncrypted: base64.StdEncoding.EncodeToString([]byte("legacy-stream-secret")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instRow := db.ChannelInstallation{
+		ID: instID, ChannelType: string(TypeDingtalk), Status: "active", Config: config,
+	}
+	shared := &fakeTypingQueries{
+		binding: db.ChannelChatSessionBinding{InstallationID: instID},
+		inst:    instRow,
+	}
+	replicaA := NewTypingIndicatorManager(messenger, plaintextDecrypter, shared, nil)
+	replicaB := NewTypingIndicatorManager(messenger, plaintextDecrypter, shared, nil)
+
+	session := typingTestUUID(12)
+	task := typingTestUUID(13)
+	replicaA.Add(context.Background(), instRow, session, task, EmotionTarget{
+		OpenConversationID: "legacy-cid",
+		OpenMsgID:          "legacy-msg",
+		RobotCode:          "robot-from-stream-callback",
+	}, time.Now().UnixMilli())
+
+	if len(rec.replies) != 1 || rec.replies[0]["robotCode"] != "robot-from-stream-callback" {
+		t.Fatalf("stream emotion reply = %#v", rec.replies)
+	}
+	if len(shared.indicators) != 1 {
+		t.Fatalf("persisted indicators = %d", len(shared.indicators))
+	}
+	var persisted typingIndicatorTarget
+	if err := json.Unmarshal(shared.indicators[0].Target, &persisted); err != nil {
+		t.Fatalf("decode persisted target: %v", err)
+	}
+	if persisted.RobotCode != "robot-from-stream-callback" {
+		t.Fatalf("persisted robot code = %q", persisted.RobotCode)
+	}
+
+	replicaB.ClearTask(context.Background(), session, task)
+	if len(rec.recalls) != 1 || rec.recalls[0]["robotCode"] != "robot-from-stream-callback" {
+		t.Fatalf("stream emotion recall = %#v", rec.recalls)
 	}
 }
