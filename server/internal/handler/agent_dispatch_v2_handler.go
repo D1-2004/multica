@@ -30,20 +30,18 @@ func textValue(s string) pgtype.Text {
 }
 func formatIssueNumber(n int32) string { return fmt.Sprint(n) }
 
-func dispatchRuntimeContext(c DispatchCommand, prompt DispatchPrompt, idempotencyKey string) []byte {
+func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 	// Do not include ExternalIdentity: the token has its own dedicated private
 	// task-context field and must never be duplicated in a JSON snapshot.
 	payload := map[string]any{
-		"dispatch_schema_version":              c.SchemaVersion,
-		"dispatch_source":                      c.Source,
-		"dispatch_domain":                      c.Event.Domain,
-		"dispatch_type":                        c.Event.Type,
-		"dispatch_event_data":                  c.Event.Data,
-		protocol.DispatchSurfaceJSONKey:        c.Surface,
-		protocol.DispatchOutboundJSONKey:       c.Outbound,
-		protocol.DispatchRuntimePromptJSONKey:  prompt.RuntimePrompt,
-		protocol.DispatchWorkflowPromptJSONKey: prompt.WorkflowPrompt,
-		"dispatch_idempotency_key":             idempotencyKey,
+		"dispatch_schema_version":         c.SchemaVersion,
+		"dispatch_source":                 c.Source,
+		"dispatch_domain":                 c.Event.Domain,
+		"dispatch_type":                   c.Event.Type,
+		"dispatch_event_data":             c.Event.Data,
+		protocol.DispatchSurfaceJSONKey: c.Surface,
+		protocol.DispatchOutboundJSONKey: c.Outbound,
+		"dispatch_idempotency_key":        idempotencyKey,
 	}
 	raw, _ := json.Marshal(payload)
 	return raw
@@ -201,7 +199,7 @@ func (h *Handler) createAgentDispatchChatV2(
 		SenderName:           command.Event.Data.Sender.DisplayName,
 		Text:                 strings.Join(textParts, "\n\n"),
 		IdentityContextToken: command.ExternalIdentity.ContextToken,
-		DispatchContext:      dispatchRuntimeContext(command, prompt, dispatchIdempotencyKey(r, command)),
+		DispatchContext:      dispatchRuntimeContext(command, dispatchIdempotencyKey(r, command)),
 	}, installation.ClientID, uuidToString(installation.ID))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -301,7 +299,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		AttachmentIDs:             attachmentIDs(imported),
 		AllowDuplicate:            false,
 		AgentIdentityContextToken: c.ExternalIdentity.ContextToken,
-		DispatchContext:           dispatchRuntimeContext(c, prompt, dispatchIdempotencyKey(r, c)),
+		DispatchContext:           dispatchRuntimeContext(c, dispatchIdempotencyKey(r, c)),
 	}, service.IssueCreateOpts{
 		ActorID:          uuidToString(dispatchContext.UserID),
 		AnalyticsAgentID: uuidToString(agent.ID),
@@ -367,7 +365,7 @@ func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Re
 	result, err := h.IssueCommentService.CreateExternalFollowUp(r.Context(), service.IssueCommentCreateParams{
 		Issue: issue, AuthorID: dispatchContext.UserID, Content: prompt.DisplayContent,
 		AttachmentIDs: attachmentIDs(imported), AgentIdentityContextToken: c.ExternalIdentity.ContextToken,
-		DispatchContext: dispatchRuntimeContext(c, prompt, dispatchIdempotencyKey(r, c)),
+		DispatchContext: dispatchRuntimeContext(c, dispatchIdempotencyKey(r, c)),
 	}, service.IssueCommentCreateOpts{})
 	if errors.Is(err, service.ErrIssueDispatchPending) {
 		writeError(w, http.StatusConflict, "issue already has a pending agent task")
