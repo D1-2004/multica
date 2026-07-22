@@ -3804,14 +3804,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		taskLog.Error("task auth token invalid; refusing to start agent", "error", err)
 		return TaskResult{}, err
 	}
-	inputImages, err := materializeChatImages(
-		ctx,
-		cli.NewAPIClient(d.cfg.ServerBaseURL, task.WorkspaceID, agentToken),
-		task.ChatMessageAttachments,
-		taskTempDir,
-	)
-	if err != nil {
-		return TaskResult{}, fmt.Errorf("materialize chat images: %w", err)
+	var inputImages []agent.InputImage
+	if providerSupportsNativeImageInput(provider) {
+		inputImages, err = materializeChatImages(
+			ctx,
+			cli.NewAPIClient(d.cfg.ServerBaseURL, task.WorkspaceID, agentToken),
+			task.ChatMessageAttachments,
+			taskTempDir,
+		)
+		if err != nil {
+			return TaskResult{}, fmt.Errorf("materialize chat images: %w", err)
+		}
 	}
 	agentEnv := map[string]string{
 		"MULTICA_TOKEN":        agentToken,
