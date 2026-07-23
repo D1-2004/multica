@@ -799,6 +799,7 @@
       "preview_failed": "この GitHub エージェントをプレビューできませんでした。",
       "preview_ready": "検証済み",
       "repository_skills": "リポジトリ管理のスキル",
+      "managed_badge": "GitHub",
       "managed_fields_hint": "指示とリポジトリスキルは GitHub で管理されます。名前と説明は作成時の既定値で Multica から変更でき、ワークスペーススキルも追加できます。",
       "runtime_incompatible": "このリポジトリは選択した {{provider}} ランタイムに対応していません。"
     },

@@ -93,7 +93,7 @@ GitHub App 拥有 **Contents: Read-only** 权限且服务端配置了 App 凭证
 
 `agent.skillsRoot` 是必填字段。包括 `dingtalk-basic-behavior` 在内的所有声明 skill 都位于 `<skillsRoot>/<name>`；在这个例子中对应 `agent/skills/dingtalk-basic-behavior` 和 `agent/skills/code-review`。每个目录都包含 `SKILL.md` 和可选配套文件，并且 frontmatter 的 `name` 必须与声明名称一致。根目录 `AGENTS.md` 可以保存仓库开发规则，只有 `agent.definition` 指向的文件会作为智能体本体导入。
 
-Multica 校验 `project@1` 的稳定字段后，把所选 commit 编译为数据库快照；DTA 新增的扩展字段可以存在，`workspaces` 内部配置不会由 Multica 解释。display name 只作为创建默认值，后续同步更新本体和仓库 skill，并保留在 Multica 中修改的名称和描述。runtime、model、访问权限和额外工作区 skill 也仍由 Multica 管理。GitHub 导入不会回退读取旧的 `multica-agent.yaml`。
+Multica 校验 `project@1` 的稳定字段后，把所选 commit 编译为数据库快照；DTA 新增的扩展字段可以存在，`workspaces` 内部配置不会由 Multica 解释。display name 作为名称的创建默认值；由于 `project@1` 没有独立的智能体描述字段，Multica 使用第一个非 Basic Role Skill 的 description 作为描述的创建默认值。创建表单会把仓库 skill 直接显示为已勾选，并由 GitHub Source 自动物化，不会把它们当作普通工作区 skill 选择。后续同步更新本体和仓库 skill，并保留在 Multica 中修改的名称和描述。runtime、model、访问权限和额外工作区 skill 也仍由 Multica 管理。GitHub 导入不会回退读取旧的 `multica-agent.yaml`。
 
 仓库发生修改后**不会自动生效**。在智能体 Overview 点击 **立即同步**，Multica 才会解析配置的 ref 并原子替换 GitHub 管理的快照。已经派发的任务继续使用派发时的快照。断开 installation 后，最后一次有效快照仍可运行，但不能继续同步。
 

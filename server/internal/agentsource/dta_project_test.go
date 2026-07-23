@@ -162,6 +162,12 @@ func TestCompileDTAProjectMapsDefinitionAndSkillLocations(t *testing.T) {
 	if bundle.Manifest.Metadata.Name != "FDE Development Manager" {
 		t.Fatalf("name = %q", bundle.Manifest.Metadata.Name)
 	}
+	if bundle.Manifest.Metadata.Description != "Manage Multica" {
+		t.Fatalf("description = %q", bundle.Manifest.Metadata.Description)
+	}
+	if err := ValidateBundle(bundle); err != nil {
+		t.Fatalf("compiled bundle failed validation: %v", err)
+	}
 	if bundle.Manifest.Spec.Instructions != "agent/AGENTS.md" || bundle.Instructions != "Manage work" {
 		t.Fatalf("unexpected instructions: %+v", bundle)
 	}

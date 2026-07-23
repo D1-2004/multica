@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { ChevronDown, Plus, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChevronDown, FileText, Plus, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import type { SkillSummary } from "@multica/core/types";
+import type { GitHubAgentSkillPreview, SkillSummary } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { skillListOptions } from "@multica/core/workspace/queries";
 import { Button } from "@multica/ui/components/ui/button";
+import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { useT } from "../../i18n";
 import { SkillPickerList } from "./skill-picker-list";
 
@@ -15,6 +16,9 @@ interface SkillMultiSelectProps {
   selectedIds: ReadonlySet<string>;
   /** Replaces the selection on every toggle. */
   onChange: (next: Set<string>) => void;
+  /** Repository-managed skills are materialized by the GitHub source.
+   *  They are shown selected but never submitted as workspace skill IDs. */
+  managedSkills?: readonly GitHubAgentSkillPreview[];
 }
 
 /**
@@ -29,13 +33,21 @@ interface SkillMultiSelectProps {
 export function SkillMultiSelect({
   selectedIds,
   onChange,
+  managedSkills = [],
 }: SkillMultiSelectProps) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const { data: workspaceSkills = [], isLoading } = useQuery(skillListOptions(wsId));
-  const [expanded, setExpanded] = useState(selectedIds.size > 0);
+  const [expanded, setExpanded] = useState(
+    selectedIds.size > 0 || managedSkills.length > 0,
+  );
+
+  useEffect(() => {
+    if (managedSkills.length > 0) setExpanded(true);
+  }, [managedSkills.length]);
 
   const label = t(($) => $.create_dialog.skills_section.label);
+  const selectedCount = selectedIds.size + managedSkills.length;
 
   const toggle = (skill: SkillSummary) => {
     const next = new Set(selectedIds);
@@ -57,9 +69,9 @@ export function SkillMultiSelect({
         >
           <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
-            {selectedIds.size > 0
+            {selectedCount > 0
               ? t(($) => $.create_dialog.skills_section.selected, {
-                  count: selectedIds.size,
+                  count: selectedCount,
                 })
               : t(($) => $.create_dialog.skills_section.placeholder)}
           </div>
@@ -74,8 +86,8 @@ export function SkillMultiSelect({
       <div className="flex items-center justify-between">
         <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           {label}
-          {selectedIds.size > 0 ? (
-            <span className="ml-2 text-foreground/60">({selectedIds.size})</span>
+          {selectedCount > 0 ? (
+            <span className="ml-2 text-foreground/60">({selectedCount})</span>
           ) : null}
         </div>
         <Button
@@ -90,7 +102,41 @@ export function SkillMultiSelect({
         </Button>
       </div>
 
-      <div className="mt-1.5">
+      <div className="mt-1.5 space-y-2">
+        {managedSkills.length > 0 && (
+          <div className="overflow-hidden rounded-lg border bg-card">
+            <div className="space-y-0.5 p-1.5">
+              {managedSkills.map((skill) => (
+                <button
+                  key={skill.source_path}
+                  type="button"
+                  disabled
+                  aria-pressed="true"
+                  className="flex w-full items-center gap-2.5 rounded-md bg-accent px-2.5 py-2 text-left disabled:cursor-default disabled:opacity-100"
+                >
+                  <Checkbox
+                    checked
+                    disabled
+                    tabIndex={-1}
+                    className="pointer-events-none"
+                  />
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{skill.name}</div>
+                    {skill.description ? (
+                      <div className="truncate text-xs text-muted-foreground">
+                        {skill.description}
+                      </div>
+                    ) : null}
+                  </div>
+                  <span className="rounded border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                    {t(($) => $.creation_studio.github.managed_badge)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <SkillPickerList
           skills={workspaceSkills}
           selectedIds={selectedIds}

@@ -60,7 +60,7 @@ GitHub App に **Contents: Read-only** 権限があり、App の認証情報が�
 
 ルートには `dingtalk-agent/project@1` の DTA `dingtalk-agent.json` が必要です。`agent.definition` は配信する定義ファイルを指し、`agent.skillsRoot` は必須で、`agent.skills` は `dingtalk-basic-behavior` を明示的に含めます。Basic を含むすべてのスキルは `<skillsRoot>/<name>` に配置し、各 `SKILL.md` の frontmatter `name` を宣言名と一致させます。ルートの `AGENTS.md` はリポジトリ開発ルールに利用でき、インポートされるのは `agent.definition` が指すファイルだけです。
 
-Multica は `project@1` の安定フィールドを検証し、追加の DTA 拡張フィールドと `workspaces` の内部定義は解釈しません。選択した commit の定義とリポジトリスキルをスナップショット化しますが、作成後に Multica で編集した名前と説明は同期時も保持します。従来の `multica-agent.yaml` にはフォールバックしません。変更は自動反映されず、エージェント Overview の **今すぐ同期**で明示的に同期します。
+Multica は `project@1` の安定フィールドを検証し、追加の DTA 拡張フィールドと `workspaces` の内部定義は解釈しません。display name は名前の作成時既定値です。`project@1` には独立したエージェント説明フィールドがないため、最初に宣言された Basic 以外の Role Skill の description を説明の作成時既定値として使用します。リポジトリスキルは作成フォームに選択済みとして表示され、通常のワークスペーススキル選択ではなく GitHub Source によって自動的に実体化されます。作成後に Multica で編集した名前と説明は同期時も保持します。従来の `multica-agent.yaml` にはフォールバックしません。変更は自動反映されず、エージェント Overview の **今すぐ同期**で明示的に同期します。
 
 ## 連携解除
 

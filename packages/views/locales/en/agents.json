@@ -311,6 +311,7 @@
       "preview_failed": "Could not preview this GitHub agent.",
       "preview_ready": "Validated",
       "repository_skills": "Repository-managed skills",
+      "managed_badge": "GitHub",
       "managed_fields_hint": "Instructions and repository skills are managed by GitHub. Name and description are creation defaults and can be changed in Multica; you can also attach workspace skills here.",
       "runtime_incompatible": "This repository does not support the selected {{provider}} runtime."
     },

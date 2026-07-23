@@ -302,6 +302,7 @@
       "preview_failed": "无法预览此 GitHub 智能体。",
       "preview_ready": "校验通过",
       "repository_skills": "仓库管理的 skill",
+      "managed_badge": "GitHub",
       "managed_fields_hint": "指令和仓库 skill 由 GitHub 管理；名称和描述仅作为创建默认值，可在 Multica 中修改；你仍可附加额外的工作区 skill。",
       "runtime_incompatible": "此仓库不支持所选的 {{provider}} runtime。"
     },
