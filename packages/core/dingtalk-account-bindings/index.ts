@@ -5,4 +5,5 @@ export {
 export {
   useBeginDingTalkAccountBinding,
   useDeleteDingTalkAccountBinding,
+  useUpdateDingTalkAccountBindingSurface,
 } from "./mutations";

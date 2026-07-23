@@ -343,10 +343,11 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 		InstallationID: p.InstallationID,
 		Body:           p.Message.Text,
 		// Slack text is not enriched, so the command source is the body itself.
-		CommandText: p.Message.Text,
-		MessageID:   p.Message.MessageID,
-		ThreadID:    replyThread,
-		ClaimToken:  p.ClaimToken,
+		CommandText:         p.Message.Text,
+		MessageID:           p.Message.MessageID,
+		ThreadID:            replyThread,
+		ClaimToken:          p.ClaimToken,
+		DisableIssueCommand: p.DisableIssueCommand,
 	})
 }
 

@@ -32,11 +32,13 @@ func (f *fakeInstaller) ResolveInstallation(_ context.Context, _ channel.Inbound
 }
 
 type fakeIdentity struct {
-	id  ResolvedIdentity
-	err error
+	id    ResolvedIdentity
+	err   error
+	calls int
 }
 
 func (f *fakeIdentity) ResolveSender(_ context.Context, _ ResolvedInstallation, _ channel.InboundMessage) (ResolvedIdentity, error) {
+	f.calls++
 	return f.id, f.err
 }
 
@@ -675,6 +677,7 @@ func TestRouter_ClaimLost_Drops(t *testing.T) {
 
 func TestRouter_IssueCommand_Creates(t *testing.T) {
 	h := newHarness(t)
+	h.taskCtx.value = []byte(`{"agent_identity_context_token":"prepared-context-token","dispatch_outbound":{"mode":"dws"}}`)
 	h.binder.appendResult = AppendResult{DedupMarked: true, IssueCommand: &IssueCommand{Title: "Fix login", Description: "details"}}
 	h.issues.result = service.IssueCreateResult{Issue: db.Issue{ID: uuidFromString(t, "77777777-7777-7777-7777-777777777777"), Number: 42, Title: "Fix login"}}
 	msg := p2pMessage(t)
@@ -688,6 +691,12 @@ func TestRouter_IssueCommand_Creates(t *testing.T) {
 	if h.issues.params.OriginType.String != "lark_chat" {
 		t.Fatalf("origin_type must come from the resolver set, got %q", h.issues.params.OriginType.String)
 	}
+	if h.issues.params.AgentIdentityContextToken != "prepared-context-token" {
+		t.Fatalf("issue task ContextToken = %q", h.issues.params.AgentIdentityContextToken)
+	}
+	if !strings.Contains(string(h.issues.params.DispatchContext), `"dispatch_outbound":{"mode":"dws"}`) {
+		t.Fatalf("issue dispatch context lost prepared input: %s", h.issues.params.DispatchContext)
+	}
 	if h.tasks.wasCalled() {
 		t.Fatal("/issue must use the issue task only, not enqueue a second chat task")
 	}
@@ -700,6 +709,18 @@ func TestRouter_IssueCommand_Creates(t *testing.T) {
 		return false
 	}) {
 		t.Fatalf("expected an issue-created reply with the workspace-qualified identifier")
+	}
+}
+
+func TestTaskIdentityContextTokenRejectsInvalidPreparedToken(t *testing.T) {
+	for _, taskContext := range []string{
+		`{"agent_identity_context_token":42}`,
+		`{"agent_identity_context_token":""}`,
+		`{"agent_identity_context_token":null}`,
+	} {
+		if _, err := taskIdentityContextToken([]byte(taskContext)); err == nil {
+			t.Fatalf("invalid prepared ContextToken was treated as absent: %s", taskContext)
+		}
 	}
 }
 
@@ -842,6 +863,98 @@ func TestRouter_P2PSessionCreatorIsSender(t *testing.T) {
 	if h.binder.lastEnsure.Sender != h.ident.id.PrincipalUserID {
 		t.Fatalf("p2p session creator must be the sender")
 	}
+}
+
+func TestRouter_TrustedIdentityBypassesSenderBinding(t *testing.T) {
+	h := newHarness(t)
+	h.ident.err = errors.New("sender binding must not run")
+	trustedUserID := uuidFromString(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+	_, err := h.router.HandleResultWithOptions(context.Background(), p2pMessage(t), HandleOptions{
+		IdentityOverride: &ResolvedIdentity{PrincipalUserID: trustedUserID},
+	})
+	if err != nil {
+		t.Fatalf("trusted dispatch failed: %v", err)
+	}
+	if h.ident.calls != 0 {
+		t.Fatalf("trusted dispatch resolved the channel sender %d times", h.ident.calls)
+	}
+	if h.binder.lastEnsure.Sender != trustedUserID {
+		t.Fatalf("session principal = %v, want %v", h.binder.lastEnsure.Sender, trustedUserID)
+	}
+	if h.binder.lastAppend.Sender != trustedUserID {
+		t.Fatalf("message principal = %v, want %v", h.binder.lastAppend.Sender, trustedUserID)
+	}
+	if h.tasks.identity.PrincipalUserID != trustedUserID || h.tasks.identity.InitiatorUserID.Valid {
+		t.Fatalf("task identity = %+v, want trusted principal without sender initiator", h.tasks.identity)
+	}
+}
+
+func TestRouter_DWSOutboundSuppressesServerOutbound(t *testing.T) {
+	h := newHarness(t)
+	trustedUserID := uuidFromString(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+	_, err := h.router.HandleResultWithOptions(context.Background(), p2pMessage(t), HandleOptions{
+		IdentityOverride:       &ResolvedIdentity{PrincipalUserID: trustedUserID},
+		SuppressServerOutbound: true,
+	})
+	if err != nil {
+		t.Fatalf("DWS-owned dispatch failed: %v", err)
+	}
+	h.router.Drain()
+
+	if !h.tasks.wasCalled() {
+		t.Fatal("DWS-owned outbound suppressed chat task creation")
+	}
+	if h.typing.calls() != 0 || h.typing.settledCalls() != 0 {
+		t.Fatalf("DWS-owned outbound invoked server typing: ingested=%d settled=%d", h.typing.calls(), h.typing.settledCalls())
+	}
+	if calls := h.replier.calls(); len(calls) != 0 {
+		t.Fatalf("DWS-owned outbound invoked robot replier: %+v", calls)
+	}
+}
+
+func TestRouter_TrustedDispatchTreatsSlashCommandsAsContent(t *testing.T) {
+	t.Run("unbind", func(t *testing.T) {
+		h := newHarness(t)
+		trustedUserID := uuidFromString(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+		msg := p2pMessage(t)
+		msg.Text = "/unbind"
+
+		_, err := h.router.HandleResultWithOptions(context.Background(), msg, HandleOptions{
+			IdentityOverride:       &ResolvedIdentity{PrincipalUserID: trustedUserID},
+			DisableControlCommands: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.unbinder.calls() != 0 || !h.tasks.wasCalled() {
+			t.Fatalf("trusted /unbind was treated as a channel command: unbind=%d task=%t", h.unbinder.calls(), h.tasks.wasCalled())
+		}
+	})
+
+	t.Run("issue", func(t *testing.T) {
+		h := newHarness(t)
+		enableDurableRuns(h)
+		h.reader.session = db.ChatSession{ID: h.binder.ensureID, AgentID: h.inst.inst.AgentID}
+		trustedUserID := uuidFromString(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+		msg := p2pMessage(t)
+		msg.Text = "/issue 这只是提示词"
+
+		_, err := h.router.HandleResultWithOptions(context.Background(), msg, HandleOptions{
+			IdentityOverride:       &ResolvedIdentity{PrincipalUserID: trustedUserID},
+			DisableControlCommands: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.issues.called || !h.tasks.wasPrepared() {
+			t.Fatalf("trusted /issue changed the selected chat surface: issue=%t prepared=%t", h.issues.called, h.tasks.wasPrepared())
+		}
+		if !h.binder.lastAppend.DisableIssueCommand {
+			t.Fatal("chat binder was not told to preserve /issue as message content")
+		}
+	})
 }
 
 func TestRouter_UnboundIdentityKeepsInstallerOnlyAsPrincipal(t *testing.T) {

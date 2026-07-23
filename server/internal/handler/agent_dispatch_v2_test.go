@@ -233,6 +233,8 @@ func TestDigitalEmployeePromptRequiresDWSOutboundLifecycle(t *testing.T) {
 		`"openConversationId":"cid-trusted"`,
 		`"openMsgId":"msg-latest"`,
 		`"senderOpenDingTalkId":"open-sender-trusted"`,
+		"mark the exact target message as read",
+		"Do not substitute a read-status query",
 		"dws chat message add-emoji",
 		"add-emoji --group <openConversationId>",
 		"DingTalk-supported default emoji name",
@@ -258,6 +260,11 @@ func TestDigitalEmployeePromptRequiresDWSOutboundLifecycle(t *testing.T) {
 	}
 	if strings.Contains(workflowPrompt, `--emoji "收到"`) {
 		t.Fatalf("workflow prompt must not hard-code one acknowledgement emoji: %q", workflowPrompt)
+	}
+	readReceipt := strings.Index(workflowPrompt, "mark the exact target message as read")
+	reaction := strings.Index(workflowPrompt, "dws chat message add-emoji")
+	if readReceipt == -1 || reaction == -1 || readReceipt > reaction {
+		t.Fatalf("workflow prompt must send the read receipt before adding a reaction: %q", workflowPrompt)
 	}
 }
 
@@ -362,6 +369,55 @@ func TestApplyDingTalkDispatchPromptKeepsRobotSDKSafetyWithoutAgentOutbound(t *t
 	for _, forbidden := range []string{"dws chat message add-emoji", "dws chat message reply", "two required final delivery destinations"} {
 		if strings.Contains(response.ChatMessage, forbidden) {
 			t.Fatalf("robot_sdk task received agent-owned outbound instruction %q: %s", forbidden, response.ChatMessage)
+		}
+	}
+}
+
+func TestApplyDingTalkDispatchPromptSupportsDWSChatSurface(t *testing.T) {
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-chat"},
+			Sender:       DispatchSender{OpenDingTalkID: "open-sender"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-chat", Text: "创建会话"}},
+		}},
+		Surface:  DispatchSurface{Type: "chat"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	})
+	response := AgentTaskResponse{ChatSessionID: "chat-1", ChatMessage: "创建会话"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	for _, want := range []string{"## Trusted DingTalk Dispatch", "dws chat message reply", "创建会话"} {
+		if !strings.Contains(response.ChatMessage, want) {
+			t.Errorf("DWS chat task missing %q: %s", want, response.ChatMessage)
+		}
+	}
+	if strings.Contains(response.ChatMessage, "two required final delivery destinations") {
+		t.Fatalf("chat task received issue-only dual-delivery instruction: %s", response.ChatMessage)
+	}
+}
+
+func TestApplyDingTalkDispatchPromptSupportsRobotIssueThroughDWS(t *testing.T) {
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "robot"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-issue"},
+			Sender:       DispatchSender{OpenDingTalkID: "open-sender"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-issue", Text: "创建问题"}},
+		}},
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	})
+	response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "已有交接"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	for _, want := range []string{"## Trusted DingTalk Dispatch", "two required final delivery destinations", "dws chat message reply", "已有交接"} {
+		if !strings.Contains(response.HandoffNote, want) {
+			t.Errorf("robot issue+DWS task missing %q: %s", want, response.HandoffNote)
 		}
 	}
 }

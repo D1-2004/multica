@@ -41,6 +41,56 @@ Multica keeps `dispatchPath` in the pending binding and places the same path in
 the QR-code fragment. It does not replace its local dispatch endpoint with a
 URL supplied by Router.
 
+### Inspecting and changing the processing surface
+
+For an active message binding, Multica reads the Router subscription with the
+same service credential:
+
+```http
+GET /api/subscriptions/<sourceId>
+Authorization: Bearer <service credential>
+```
+
+The successful response includes the current processing surface and outbound
+policy. `surface.type` is either `issue` or `chat`; the DBase-created message
+binding keeps `outbound` fixed to `dws` / `latest_message`.
+
+Multica changes only the processing surface through the owner-checked Router
+endpoint:
+
+```http
+PATCH /api/subscriptions/<sourceId>/surface
+Authorization: Bearer <service credential>
+Content-Type: application/json
+
+{
+  "agentId": "<agent UUID>",
+  "surface": { "type": "chat" }
+}
+```
+
+Router returns the complete active subscription. Multica verifies that the
+source, Agent, dispatch target, status, requested surface, and existing
+outbound policy are unchanged before persisting the local surface snapshot.
+This operation updates the existing subscription and does not issue a new
+binding credential.
+
+### Message-account display snapshot
+
+The DBase completion callback may include these optional fields under
+`message_binding`:
+
+```json
+{
+  "account_display_name": "<DingTalk account nickname>",
+  "account_avatar_url": "https://..."
+}
+```
+
+They describe the DingTalk account listening for messages. Multica stores them
+with the message route for display only; they do not populate
+`identity_binding` and do not become the Agent execution identity.
+
 ## Router to Multica
 
 `dispatchPath` identifies the Multica webhook but deliberately contains no
@@ -59,6 +109,15 @@ separate configuration values with opposite communication directions.
 
 ## History
 
+- 2026-07-23: Stopped treating the legacy account-binding `dispatch_url`
+  snapshot as authoritative. Subscription verification now derives the
+  expected target from `dispatch_endpoint_id`, accepting the canonical path or
+  the full URL built from the current Multica origin. Compatibility writes
+  remain during the rolling rollout; physical storage cleanup is a separate
+  post-rollout change.
+- 2026-07-23: Added message-account nickname/avatar snapshots, exposed the
+  active `issue`/`chat` surface, and added an owner-checked surface update that
+  reuses the existing Router subscription.
 - 2026-07-22: Multica now persists canonical dispatch paths for new Agent
   endpoint mappings and ignores the origin in historical full-URL rows. Legacy
   callers that still require a full URL receive one rebuilt from the current
@@ -80,4 +139,15 @@ Persisting only the path and resolving the current environment origin at
 dispatch time prevents that cross-environment leak. Treating historical
 Multica endpoint origins as authoritative also blocked QR generation before the
 Router token request, so endpoint mappings now use the endpoint ID and canonical
-path as their environment-neutral identity.
+path as their environment-neutral identity. The account-binding list, callback,
+and surface-update flows therefore validate the Router target against that
+endpoint identity instead of comparing it with a redundant database URL
+snapshot.
+
+The binding page also needs to show which DingTalk account owns the message
+listener and which processing surface is active. Carrying a display-only
+account snapshot fixes that presentation without confusing the listener with
+the Agent execution identity. Updating only the Router binding's surface lets
+operators switch between `issue` and `chat` without deleting and recreating the
+subscription, while the Agent ownership and outbound-policy checks prevent the
+update from widening into a different binding change.

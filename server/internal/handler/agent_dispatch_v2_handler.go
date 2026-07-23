@@ -78,7 +78,7 @@ func (h *Handler) handleAgentDispatchV2(
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	prompt, err := BuildDispatchPrompt(command)
+	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext)
 	if err != nil {
 		slog.Error("MULTICA_AGENT_DISPATCH_REQUEST",
 			"outcome", "failed",
@@ -103,9 +103,11 @@ func (h *Handler) handleAgentDispatchV2(
 		"messageCount", len(command.Event.Data.Messages),
 		"continuationPresent", command.Continuation != nil,
 		"promptBuilder", "multica",
-		"displayBytes", len(prompt.DisplayContent),
-		"runtimeBytes", len(prompt.RuntimePrompt),
-		"workflowBytes", len(prompt.WorkflowPrompt),
+		"identityMode", "dispatch_endpoint_actor",
+		"serverOutboundSuppressed", plan.SuppressServerOutbound,
+		"displayBytes", len(plan.Prompt.DisplayContent),
+		"runtimeBytes", len(plan.Prompt.RuntimePrompt),
+		"workflowBytes", len(plan.Prompt.WorkflowPrompt),
 	)
 	if command.AgentID != "" {
 		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(command.AgentID), "agentId")
@@ -118,13 +120,13 @@ func (h *Handler) handleAgentDispatchV2(
 		}
 	}
 
-	if command.Surface.Type == "chat" {
+	if plan.SurfaceType == "chat" {
 		if command.Continuation != nil &&
 			(command.Continuation.Kind != "chat" || strings.TrimSpace(command.Continuation.ChatSessionID) == "") {
 			writeError(w, http.StatusBadRequest, "continuation must identify a chat")
 			return
 		}
-		h.createAgentDispatchChatV2(w, r, command, prompt, dispatchContext)
+		h.createAgentDispatchChatV2(w, r, command, plan, dispatchContext)
 		return
 	}
 
@@ -134,7 +136,7 @@ func (h *Handler) handleAgentDispatchV2(
 		if !ok {
 			return
 		}
-		h.createAgentDispatchIssueV2(w, r, command, prompt, dispatchContext, agent)
+		h.createAgentDispatchIssueV2(w, r, command, plan.Prompt, dispatchContext, agent)
 		return
 	}
 	if command.Continuation == nil || command.Continuation.Kind != "issue" ||
@@ -142,7 +144,7 @@ func (h *Handler) handleAgentDispatchV2(
 		writeError(w, http.StatusBadRequest, "continuation must identify an issue")
 		return
 	}
-	h.createAgentDispatchCommentV2(w, r, command, prompt, dispatchContext)
+	h.createAgentDispatchCommentV2(w, r, command, plan.Prompt, dispatchContext)
 }
 
 // AgentDispatchV2Request preserves the exact Router JSON contract while the
@@ -170,7 +172,7 @@ func (h *Handler) createAgentDispatchChatV2(
 	w http.ResponseWriter,
 	r *http.Request,
 	command DispatchCommand,
-	prompt DispatchPrompt,
+	plan agentDispatchExecutionPlan,
 	dispatchContext agentDispatchContext,
 ) {
 	if h.ChannelRouter == nil || h.DingTalkInstallations == nil {
@@ -220,6 +222,7 @@ func (h *Handler) createAgentDispatchChatV2(
 	if senderID == "" {
 		senderID = strings.TrimSpace(command.Event.Data.Sender.SenderOpenDingTalkID)
 	}
+	dispatchText := strings.Join(textParts, "\n\n")
 	message, err := dingtalk.InboundFromHTTPCallback(dingtalk.HTTPCallbackMessage{
 		ConversationID:       command.Event.Data.Conversation.OpenConversationID,
 		ConversationType:     command.Event.Data.Conversation.Type,
@@ -229,7 +232,7 @@ func (h *Handler) createAgentDispatchChatV2(
 		SenderID:             senderID,
 		SenderStaffID:        command.Event.Data.Sender.StaffID,
 		SenderName:           command.Event.Data.Sender.DisplayName,
-		Text:                 strings.Join(textParts, "\n\n"),
+		Text:                 dispatchText,
 		IdentityContextToken: command.ExternalIdentity.ContextToken,
 		DispatchContext:      dispatchRuntimeContext(command, dispatchIdempotencyKey(r, command)),
 	}, installation.ClientID, uuidToString(installation.ID))
@@ -237,7 +240,12 @@ func (h *Handler) createAgentDispatchChatV2(
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := h.ChannelRouter.HandleResult(r.Context(), message)
+	// Dispatch Command V2 already selected the surface. Preserve slash-prefixed
+	// input as prompt content instead of letting the channel adapter reinterpret
+	// it as /new, /reset, /issue, or /unbind.
+	message.Text = dispatchText
+	message.ForceFresh = false
+	result, err := h.ChannelRouter.HandleResultWithOptions(r.Context(), message, plan.channelHandleOptions())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to dispatch dingtalk chat")
 		return

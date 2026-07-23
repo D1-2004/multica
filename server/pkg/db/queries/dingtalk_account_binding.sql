@@ -31,23 +31,6 @@ WHERE channel_installation.channel_type = 'dingtalk_account'
   AND channel_installation.status IN ('pending', 'revoked')
 RETURNING channel_installation.*;
 
--- name: UpdateDingTalkAccountBindingDispatchURL :one
-UPDATE channel_installation
-SET config = jsonb_set(
-        config,
-        '{dispatch_url}',
-        to_jsonb(sqlc.arg('dispatch_url')::text),
-        true
-    ),
-    updated_at = now()
-WHERE id = sqlc.arg('id')
-  AND workspace_id = sqlc.arg('workspace_id')
-  AND agent_id = sqlc.arg('agent_id')
-  AND channel_type = 'dingtalk_account'
-  AND status = 'pending'
-  AND config ->> 'dispatch_endpoint_id' = sqlc.arg('dispatch_endpoint_id')::text
-RETURNING *;
-
 -- name: GetDingTalkAccountBinding :one
 -- The callback route is public and only has an installation id. The agent join
 -- makes an orphaned row inert before token verification.
@@ -116,6 +99,25 @@ WHERE id = sqlc.arg('id')
   AND channel_type = 'dingtalk_account'
   AND status = 'pending'
   AND config ->> 'callback_token_hash' = sqlc.arg('expected_callback_token_hash')::text
+RETURNING *;
+
+-- name: UpdateDingTalkAccountBindingSurface :one
+-- Persist the Router's authoritative processing surface without rebuilding or
+-- changing any other message-route snapshots. The source id is a CAS guard so
+-- an update for an older binding cannot overwrite a replacement binding.
+UPDATE channel_installation
+SET config = jsonb_set(
+        config,
+        '{surface_type}',
+        to_jsonb(sqlc.arg('surface_type')::text),
+        true
+    ),
+    updated_at = now()
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND agent_id = sqlc.arg('agent_id')
+  AND channel_type = 'dingtalk_account'
+  AND status = 'active'
+  AND config ->> 'router_source_id' = sqlc.arg('expected_router_source_id')::text
 RETURNING *;
 
 -- name: CompleteDingTalkAccountBindingResult :one

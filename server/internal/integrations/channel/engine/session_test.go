@@ -519,6 +519,34 @@ func TestAppendUserMessage_IssueCommand(t *testing.T) {
 	}
 }
 
+func TestAppendUserMessage_DisableIssueCommandPreservesContent(t *testing.T) {
+	f := newFake()
+	s := newTestSession(f)
+	res, err := s.AppendUserMessage(context.Background(), AppendInput{
+		SessionID:          uid(1),
+		Body:               "/issue 这只是提示词",
+		CommandText:        "/issue 这只是提示词",
+		DisableIssueCommand: true,
+		MessageID:          "m1",
+		PreparedTask: &service.PreparedChannelChatTask{
+			ID: uid(9), AgentID: uid(2), RuntimeID: uid(3),
+			InitiatorUserID: uid(7), OriginatorUserID: uid(7), DebounceSeconds: 3,
+		},
+	})
+	if err != nil {
+		t.Fatalf("AppendUserMessage: %v", err)
+	}
+	if res.IssueCommand != nil {
+		t.Fatalf("trusted content parsed as issue command: %+v", res.IssueCommand)
+	}
+	if f.upsertTaskCalls != 1 || !res.TaskID.Valid {
+		t.Fatalf("trusted content did not create the selected chat task: calls=%d task=%v", f.upsertTaskCalls, res.TaskID)
+	}
+	if len(f.messages) != 1 || f.messages[0] != "/issue 这只是提示词" {
+		t.Fatalf("stored messages = %v", f.messages)
+	}
+}
+
 func TestAppendUserMessage_CommandTextOverridesEnrichedBody(t *testing.T) {
 	f := newFake()
 	s := newTestSession(f)

@@ -414,24 +414,6 @@ func TestOutputForbidsMidRunProgressComments(t *testing.T) {
 	run(t, "brief")
 }
 
-func TestDingTalkDWSIdentityUnavailableReachesAgentBrief(t *testing.T) {
-	out := buildMetaSkillContent("hermes", TaskContextForEnv{
-		ChatSessionID:                  "chat-1",
-		DingTalkDWSIdentityUnavailable: true,
-	})
-	wants := []string{
-		"## DingTalk DWS Identity",
-		"Continue the task with every capability that does not require DWS",
-		"do not use the robot creator's or another group member's DWS identity",
-		"无法获取您的身份信息，可能是由于不是群归属组织的成员。",
-	}
-	for _, want := range wants {
-		if !strings.Contains(out, want) {
-			t.Fatalf("agent brief missing %q\n---\n%s", want, out)
-		}
-	}
-}
-
 func TestDingTalkDWSIdentityNoticeOmittedForNormalChat(t *testing.T) {
 	out := buildMetaSkillContent("hermes", TaskContextForEnv{ChatSessionID: "chat-1"})
 	if strings.Contains(out, "## DingTalk DWS Identity") {

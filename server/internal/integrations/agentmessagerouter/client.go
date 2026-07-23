@@ -296,6 +296,48 @@ func (c *Client) GetSubscription(ctx context.Context, sourceID string) (Subscrip
 	return result, nil
 }
 
+func (c *Client) UpdateSubscriptionSurface(
+	ctx context.Context,
+	sourceID, agentID, surfaceType string,
+) (Subscription, error) {
+	sourceID = strings.TrimSpace(sourceID)
+	agentID = strings.TrimSpace(agentID)
+	surface := SubscriptionSurface{Type: strings.TrimSpace(surfaceType)}
+	if sourceID == "" || agentID == "" || !validSubscriptionSurface(surface) {
+		return Subscription{}, errors.New("agent message router subscription surface update is invalid")
+	}
+	body, err := json.Marshal(map[string]any{
+		"agentId": agentID,
+		"surface": surface,
+	})
+	if err != nil {
+		return Subscription{}, errors.New("encode agent message router subscription surface update")
+	}
+	response, err := c.do(
+		ctx,
+		http.MethodPatch,
+		"/api/subscriptions/"+url.PathEscape(sourceID)+"/surface",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return Subscription{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return Subscription{}, decodeRouterHTTPError(response.Body, response.StatusCode)
+	}
+	result, err := decodeRouterResponse[Subscription](response.Body)
+	if err != nil {
+		return Subscription{}, err
+	}
+	if result.SourceID != sourceID || result.AgentID != agentID || result.Status != "active" ||
+		!isTrimmedNonEmpty(result.DispatchURL) || result.Surface != surface ||
+		!validSubscriptionOutbound(result.Outbound) {
+		return Subscription{}, errors.New("agent message router subscription surface response is invalid")
+	}
+	return result, nil
+}
+
 func (c *Client) DeleteSubscription(ctx context.Context, sourceID string) error {
 	sourceID = strings.TrimSpace(sourceID)
 	if sourceID == "" {

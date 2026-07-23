@@ -30,15 +30,38 @@ type fakeBindingStore struct {
 	activateErr     error
 	activateHook    func(*fakeBindingStore)
 	revokeErr       error
+	updateSurfaceErr error
 	listErr         error
 	beginConfig     []byte
 	revokeArg       db.RevokeDingTalkAccountBindingParams
 	activated       bool
 	revoked         bool
+	updatedSurface  bool
 	identityAttempt db.AgentDingtalkIdentityAttempt
 	identity        db.AgentDingtalkIdentity
 	cleanupErr      error
 	cleanupCalls    int
+}
+
+func (f *fakeBindingStore) UpdateDingTalkAccountBindingSurface(_ context.Context, arg db.UpdateDingTalkAccountBindingSurfaceParams) (db.ChannelInstallation, error) {
+	if f.updateSurfaceErr != nil {
+		return db.ChannelInstallation{}, f.updateSurfaceErr
+	}
+	if !f.row.ID.Valid || f.row.WorkspaceID != arg.WorkspaceID || f.row.AgentID != arg.AgentID ||
+		f.row.ChannelType != ChannelTypeDingTalkAccount || f.row.Status != "active" {
+		return db.ChannelInstallation{}, pgx.ErrNoRows
+	}
+	config, err := ParseDingTalkAccountConfig(f.row.Config)
+	if err != nil || config.RouterSourceID != arg.ExpectedRouterSourceID {
+		return db.ChannelInstallation{}, pgx.ErrNoRows
+	}
+	config.SurfaceType = arg.SurfaceType
+	f.row.Config, err = config.Marshal()
+	if err != nil {
+		return db.ChannelInstallation{}, err
+	}
+	f.updatedSurface = true
+	return f.row, nil
 }
 
 func (f *fakeBindingStore) BeginDingTalkAccountBinding(_ context.Context, arg db.BeginDingTalkAccountBindingParams) (db.ChannelInstallation, error) {
@@ -75,26 +98,6 @@ func (f *fakeBindingStore) BeginDingTalkAccountBinding(_ context.Context, arg db
 		arg.Config,
 	)
 	f.row.InstallerUserID = arg.InstallerUserID
-	return f.row, nil
-}
-
-func (f *fakeBindingStore) UpdateDingTalkAccountBindingDispatchURL(_ context.Context, arg db.UpdateDingTalkAccountBindingDispatchURLParams) (db.ChannelInstallation, error) {
-	if !f.row.ID.Valid || f.row.ID != arg.ID || f.row.WorkspaceID != arg.WorkspaceID ||
-		f.row.AgentID != arg.AgentID || f.row.ChannelType != ChannelTypeDingTalkAccount || f.row.Status != "pending" {
-		return db.ChannelInstallation{}, pgx.ErrNoRows
-	}
-	config, err := ParseDingTalkAccountConfig(f.row.Config)
-	if err != nil {
-		return db.ChannelInstallation{}, err
-	}
-	if config.DispatchEndpointID != arg.DispatchEndpointID {
-		return db.ChannelInstallation{}, pgx.ErrNoRows
-	}
-	config.DispatchURL = arg.DispatchUrl
-	f.row.Config, err = config.Marshal()
-	if err != nil {
-		return db.ChannelInstallation{}, err
-	}
 	return f.row, nil
 }
 
@@ -291,10 +294,12 @@ type fakeBindingRouter struct {
 	subscription Subscription
 	getErr       error
 	deleteErr    error
+	updateErr    error
 	issueAgent   string
 	issueURL     string
 	getCalls     int
 	deleted      []string
+	updated      []string
 }
 
 func (f *fakeBindingRouter) IssueBindingToken(_ context.Context, agentID, dispatchURL string) (BindingToken, error) {
@@ -309,6 +314,17 @@ func (f *fakeBindingRouter) GetSubscription(_ context.Context, sourceID string) 
 		f.subscription.SourceID = sourceID
 	}
 	return f.subscription, f.getErr
+}
+
+func (f *fakeBindingRouter) UpdateSubscriptionSurface(_ context.Context, sourceID, agentID, surfaceType string) (Subscription, error) {
+	f.updated = append(f.updated, sourceID+":"+agentID+":"+surfaceType)
+	if f.updateErr != nil {
+		return Subscription{}, f.updateErr
+	}
+	f.subscription.SourceID = sourceID
+	f.subscription.AgentID = agentID
+	f.subscription.Surface.Type = surfaceType
+	return f.subscription, nil
 }
 
 func TestCompleteBindingStoresPureIdentityWithoutActivatingMessageRoute(t *testing.T) {
@@ -396,6 +412,8 @@ func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *
 		SourceID:    "source-channel",
 		AgentID:     uuidStringForTest(store.row.AgentID),
 		DispatchURL: config.DispatchURL,
+		Surface:     SubscriptionSurface{Type: DingTalkSurfaceIssue},
+		Outbound:    SubscriptionOutbound{Mode: "dws", ReplyTo: "latest_message"},
 		Status:      "active",
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
@@ -409,9 +427,11 @@ func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *
 			Status: DingTalkBindingTaskStatusSkipped,
 		},
 		Message: MessageBindingResult{
-			Status:       DingTalkBindingTaskStatusSuccess,
-			MessageScope: DingTalkMessageScopeDirectOnly,
-			SourceID:     "source-channel",
+			Status:             DingTalkBindingTaskStatusSuccess,
+			AccountDisplayName: "Digital Worker Zhang",
+			AccountAvatarURL:   "https://example.com/digital-worker.png",
+			MessageScope:       DingTalkMessageScopeDirectOnly,
+			SourceID:           "source-channel",
 			Subscriptions: []BindingSubscriptionResult{
 				{Domain: "channel", SourceID: "source-channel", Status: "active"},
 			},
@@ -421,8 +441,67 @@ func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *
 		t.Fatalf("CompleteBinding() error = %v", err)
 	}
 	if result.Binding.DWSIdentity.Status != "unbound" || result.Binding.MessageRoute.Status != "active" ||
+		result.Binding.MessageRoute.AccountDisplayName != "Digital Worker Zhang" ||
+		result.Binding.MessageRoute.AccountAvatarURL != "https://example.com/digital-worker.png" ||
+		result.Binding.MessageRoute.SurfaceType != DingTalkSurfaceIssue ||
 		store.row.Status != "active" || store.identity.AgentID.Valid || router.getCalls != 1 {
 		t.Fatalf("result=%#v row status=%q router GETs=%d", result, store.row.Status, router.getCalls)
+	}
+	stored, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.AccountDisplayName != "Digital Worker Zhang" ||
+		stored.AccountAvatarURL != "https://example.com/digital-worker.png" ||
+		stored.SurfaceType != DingTalkSurfaceIssue {
+		t.Fatalf("stored config = %#v", stored)
+	}
+}
+
+func TestUpdateDingTalkAccountBindingSurfacePreservesAccountSnapshot(t *testing.T) {
+	now := time.Date(2026, 7, 23, 9, 0, 0, 0, time.UTC)
+	store := pendingBindingStore(t, now, canonicalCallbackToken)
+	config, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.RouterSourceID = "source-channel"
+	config.AccountDisplayName = "Digital Worker Zhang"
+	config.AccountAvatarURL = "https://example.com/digital-worker.png"
+	config.SurfaceType = DingTalkSurfaceIssue
+	config.MessageScope = DingTalkMessageScopeDirectOnly
+	config.BoundAt = &now
+	store.row.Config, err = config.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.row.Status = "active"
+	router := &fakeBindingRouter{subscription: Subscription{
+		SourceID:    "source-channel",
+		AgentID:     uuidStringForTest(store.row.AgentID),
+		DispatchURL: config.DispatchURL,
+		Surface:     SubscriptionSurface{Type: DingTalkSurfaceIssue},
+		Outbound:    SubscriptionOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		Status:      "active",
+	}}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	result, err := service.UpdateSurface(context.Background(), UpdateSurfaceParams{
+		WorkspaceID: store.row.WorkspaceID,
+		AgentID:     store.row.AgentID,
+		SurfaceType: DingTalkSurfaceChat,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSurface() error = %v", err)
+	}
+	if len(router.updated) != 1 || router.updated[0] != "source-channel:"+uuidStringForTest(store.row.AgentID)+":"+DingTalkSurfaceChat {
+		t.Fatalf("router updates = %#v", router.updated)
+	}
+	if !store.updatedSurface || result.MessageRoute.SurfaceType != DingTalkSurfaceChat ||
+		result.MessageRoute.AccountDisplayName != "Digital Worker Zhang" ||
+		result.MessageRoute.AccountAvatarURL != "https://example.com/digital-worker.png" ||
+		result.MessageRoute.MessageScope != DingTalkMessageScopeDirectOnly {
+		t.Fatalf("result = %#v", result)
 	}
 }
 
@@ -595,8 +674,8 @@ func TestBeginDingTalkAccountBindingUsesDispatchPathWithoutPersistingRouterToken
 	if config.DispatchEndpointID != oldEndpoint {
 		t.Fatalf("endpoint = %q, want reused %q", config.DispatchEndpointID, oldEndpoint)
 	}
-	if config.DispatchURL != wantDispatchPath {
-		t.Fatalf("persisted dispatch target = %q, want canonical path %q", config.DispatchURL, wantDispatchPath)
+	if config.DispatchURL != oldConfig.DispatchURL {
+		t.Fatalf("compatibility dispatch URL was rewritten: got %q, want %q", config.DispatchURL, oldConfig.DispatchURL)
 	}
 	if !VerifyCallbackToken(callbackToken, config.CallbackTokenHash) {
 		t.Fatal("persisted callback hash does not match returned token")
@@ -1284,6 +1363,7 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 		"router_source_id",
 		"account_display_name",
 		"account_avatar_url",
+		"surface_type",
 		"message_scope",
 		"conversations",
 		"bound_at",
@@ -1452,6 +1532,68 @@ func TestListClearsExpiredCallbackCredentialBeforeReturningBindings(t *testing.T
 	}
 	if config.CallbackTokenHash != "" || !config.CallbackExpiresAt.IsZero() {
 		t.Fatalf("expired callback credential was retained: %#v", config)
+	}
+}
+
+func TestListLoadsCurrentSurfaceForExistingActiveBinding(t *testing.T) {
+	now := time.Date(2026, 7, 23, 9, 0, 0, 0, time.UTC)
+	store := activeBindingStoreForUnbind(t, now)
+	config, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := &fakeBindingRouter{subscription: Subscription{
+		SourceID:    config.RouterSourceID,
+		AgentID:     uuidStringForTest(store.row.AgentID),
+		DispatchURL: config.DispatchURL,
+		Surface:     SubscriptionSurface{Type: DingTalkSurfaceChat},
+		Outbound:    SubscriptionOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		Status:      "active",
+	}}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	listed, err := service.List(context.Background(), store.row.WorkspaceID)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(listed) != 1 || listed[0].MessageRoute.SurfaceType != DingTalkSurfaceChat || router.getCalls != 1 {
+		t.Fatalf("listed = %#v router GETs = %d", listed, router.getCalls)
+	}
+}
+
+func TestListAcceptsHistoricalDispatchURLWhenRouterReturnsEndpointPath(t *testing.T) {
+	now := time.Date(2026, 7, 23, 9, 0, 0, 0, time.UTC)
+	store := pendingBindingStore(t, now, canonicalCallbackToken)
+	config, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundAt := now.Add(-time.Hour)
+	config.DispatchURL = "https://pre-fde-workbench.dingtalk.com/api/webhooks/agent-dispatch/" + config.DispatchEndpointID
+	config.RouterSourceID = "source-legacy"
+	config.SurfaceType = ""
+	config.BoundAt = &boundAt
+	store.row.Config, err = config.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.row.Status = "active"
+
+	router := &fakeBindingRouter{subscription: Subscription{
+		SourceID:    "source-legacy",
+		AgentID:     uuidStringForTest(store.row.AgentID),
+		DispatchURL: "/api/webhooks/agent-dispatch/" + config.DispatchEndpointID,
+		Surface:     SubscriptionSurface{Type: DingTalkSurfaceIssue},
+		Status:      "active",
+	}}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	listed, err := service.List(context.Background(), store.row.WorkspaceID)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(listed) != 1 || listed[0].MessageRoute.SurfaceType != DingTalkSurfaceIssue || router.getCalls != 1 {
+		t.Fatalf("listed = %#v router GETs = %d", listed, router.getCalls)
 	}
 }
 

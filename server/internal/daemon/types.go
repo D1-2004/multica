@@ -142,9 +142,8 @@ type Task struct {
 	// agent never sees the daemon's own (often workspace-owner) credential.
 	// Empty or non-task-scoped values are fatal for writable agent tasks; the
 	// daemon must not fall back to its own token. See MUL-3292.
-	AuthToken                      string `json:"auth_token,omitempty"`
-	AgentIdentityContextToken      string `json:"agent_identity_context_token,omitempty"`
-	DingTalkDWSIdentityUnavailable bool   `json:"dingtalk_dws_identity_unavailable,omitempty"`
+	AuthToken                 string `json:"auth_token,omitempty"`
+	AgentIdentityContextToken string `json:"agent_identity_context_token,omitempty"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata the daemon

@@ -83,6 +83,7 @@ describe("ApiClient", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
       )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -101,6 +102,9 @@ describe("ApiClient", () => {
       expiresAt: "2026-07-14T09:35:00Z",
     });
     await expect(
+      client.updateDingTalkAccountBindingSurface("workspace-1", "agent-1", "chat"),
+    ).resolves.toBeUndefined();
+    await expect(
       client.deleteDingTalkAccountBinding("workspace-1", "agent-1", "message"),
     ).resolves.toBeUndefined();
 
@@ -118,6 +122,11 @@ describe("ApiClient", () => {
         url: "https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/begin",
         method: "POST",
         body: JSON.stringify({ agent_id: "agent-1", binding_mode: "message" }),
+      },
+      {
+        url: "https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/agent-1/surface",
+        method: "PATCH",
+        body: JSON.stringify({ surface_type: "chat" }),
       },
       {
         url: "https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/agent-1?binding_mode=message",

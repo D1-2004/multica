@@ -189,21 +189,6 @@ func endpointIDFromDispatchPath(dispatchPath string) (string, error) {
 	return endpointID, nil
 }
 
-func isDispatchURLForEndpoint(dispatchURL, endpointID string) bool {
-	parsed, err := url.Parse(strings.TrimSpace(dispatchURL))
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil ||
-		parsed.RawPath != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.ForceQuery || parsed.Opaque != "" {
-		return false
-	}
-	expectedPath, err := dispatchPathForEndpointID(endpointID)
-	return err == nil && parsed.Path == expectedPath
-}
-
-func isCanonicalDispatchURLForEndpoint(dispatchURL, endpointID string) bool {
-	parsed, err := url.Parse(strings.TrimSpace(dispatchURL))
-	return err == nil && parsed.Scheme == "https" && isDispatchURLForEndpoint(dispatchURL, endpointID)
-}
-
 func canonicalHTTPSOrigin(raw string) (*url.URL, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Hostname() == "" ||

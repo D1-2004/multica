@@ -18,10 +18,6 @@ const (
 	DispatchSurfaceJSONKey                      = "dispatch_surface"
 	DispatchOutboundJSONKey                     = "dispatch_outbound"
 	DispatchWorkflowPromptJSONKey               = "dispatch_workflow_prompt"
-	DingTalkRobotIdentityJSONKey                = "dingtalk_robot_identity"
-	DingTalkRobotIdentityUnavailableJSONKey     = "dingtalk_robot_identity_unavailable"
-	DingTalkRobotIdentityUnavailableMissingOrg  = "missing_organization_identity"
-	DingTalkRobotIdentityUnavailableLookupError = "employee_lookup_failed"
 	DingTalkStreamSourceJSONKey                 = "dingtalk_stream_source"
 	DingTalkConversationInitiatorJSONKey        = "dingtalk_conversation_initiator"
 	SandboxSourceHostnameEnvKey                 = "MULTICA_SANDBOX_SOURCE_HOSTNAME"
@@ -38,21 +34,6 @@ const (
 	DispatchOutboundModeRobotSDK = "robot_sdk"
 	DispatchReplyToLatestMessage = "latest_message"
 )
-
-// DingTalkRobotIdentity is resolved from the current inbound bot message.
-// It is server-private task context and is never accepted from chat clients.
-type DingTalkRobotIdentity struct {
-	UID   string `json:"uid"`
-	OrgID string `json:"org_id"`
-}
-
-// DingTalkRobotIdentityUnavailable marks a robot chat task that must run
-// without DWS credentials. The marker is explicit so the FC/E2B launcher does
-// not mistake an intentionally identity-less external sender for corrupted
-// task context, and so the daemon can tell the agent to explain the limitation.
-type DingTalkRobotIdentityUnavailable struct {
-	Reason string `json:"reason"`
-}
 
 // DingTalkConversationInitiator is the current message sender's display
 // identity. It is server-private task context used only when the sender has no
