@@ -19,17 +19,14 @@ func taskResponseFixture(context []byte) db.AgentTaskQueue {
 	}
 }
 
-func TestTaskToResponseSurfacesDingTalkDWSIdentityUnavailable(t *testing.T) {
+func TestTaskToResponseIgnoresLegacyDingTalkIdentityMarker(t *testing.T) {
 	response := taskToResponse(taskResponseFixture([]byte(`{"dingtalk_robot_identity_unavailable":{"reason":"missing_organization_identity"}}`)), "")
-	if !response.DingTalkDWSIdentityUnavailable {
-		t.Fatal("DingTalk DWS identity unavailable marker was not surfaced to the daemon")
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestTaskToResponseOmitsDingTalkDWSIdentityUnavailableForOtherTasks(t *testing.T) {
-	response := taskToResponse(taskResponseFixture([]byte(`{"some_other_context":true}`)), "")
-	if response.DingTalkDWSIdentityUnavailable {
-		t.Fatal("unrelated task context was classified as DingTalk DWS identity unavailable")
+	if strings.Contains(string(encoded), "dingtalk_dws_identity_unavailable") {
+		t.Fatalf("legacy DingTalk identity marker leaked into daemon response: %s", encoded)
 	}
 }
 

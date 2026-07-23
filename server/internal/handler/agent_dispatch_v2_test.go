@@ -373,6 +373,55 @@ func TestApplyDingTalkDispatchPromptKeepsRobotSDKSafetyWithoutAgentOutbound(t *t
 	}
 }
 
+func TestApplyDingTalkDispatchPromptSupportsDWSChatSurface(t *testing.T) {
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-chat"},
+			Sender:       DispatchSender{OpenDingTalkID: "open-sender"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-chat", Text: "创建会话"}},
+		}},
+		Surface:  DispatchSurface{Type: "chat"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	})
+	response := AgentTaskResponse{ChatSessionID: "chat-1", ChatMessage: "创建会话"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	for _, want := range []string{"## Trusted DingTalk Dispatch", "dws chat message reply", "创建会话"} {
+		if !strings.Contains(response.ChatMessage, want) {
+			t.Errorf("DWS chat task missing %q: %s", want, response.ChatMessage)
+		}
+	}
+	if strings.Contains(response.ChatMessage, "two required final delivery destinations") {
+		t.Fatalf("chat task received issue-only dual-delivery instruction: %s", response.ChatMessage)
+	}
+}
+
+func TestApplyDingTalkDispatchPromptSupportsRobotIssueThroughDWS(t *testing.T) {
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "robot"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-issue"},
+			Sender:       DispatchSender{OpenDingTalkID: "open-sender"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-issue", Text: "创建问题"}},
+		}},
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	})
+	response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "已有交接"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	for _, want := range []string{"## Trusted DingTalk Dispatch", "two required final delivery destinations", "dws chat message reply", "已有交接"} {
+		if !strings.Contains(response.HandoffNote, want) {
+			t.Errorf("robot issue+DWS task missing %q: %s", want, response.HandoffNote)
+		}
+	}
+}
+
 func TestDispatchRuntimeContextStoresStructuredDataWithoutGeneratedPromptFields(t *testing.T) {
 	command := DispatchCommand{
 		SchemaVersion: "2.0",

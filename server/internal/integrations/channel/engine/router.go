@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -154,6 +155,23 @@ func (r *Router) Handle(ctx context.Context, msg channel.InboundMessage) error {
 // committed routing result to synchronous HTTP adapters. Stream/Socket
 // connectors should continue to call Handle when they only need an error.
 func (r *Router) HandleResult(ctx context.Context, msg channel.InboundMessage) (Result, error) {
+	return r.HandleResultWithOptions(ctx, msg, HandleOptions{})
+}
+
+// HandleOptions changes only the independently selected execution policies for
+// one inbound message. Direct channel adapters use the zero value. Authenticated
+// internal dispatchers may supply a trusted workspace principal and delegate
+// user-visible outbound delivery to another capability.
+type HandleOptions struct {
+	IdentityOverride       *ResolvedIdentity
+	SuppressServerOutbound bool
+	DisableControlCommands bool
+}
+
+// HandleResultWithOptions runs the inbound pipeline with caller-selected
+// identity and outbound policies. The message still owns its channel routing,
+// session-isolation, attribution, and task-context data.
+func (r *Router) HandleResultWithOptions(ctx context.Context, msg channel.InboundMessage, options HandleOptions) (Result, error) {
 	r.mu.RLock()
 	set, ok := r.sets[msg.Source.ChannelType]
 	r.mu.RUnlock()
@@ -167,7 +185,7 @@ func (r *Router) HandleResult(ctx context.Context, msg channel.InboundMessage) (
 		return Result{}, ErrNoResolverSet
 	}
 
-	res, inst, err := r.dispatch(ctx, set, msg)
+	res, inst, err := r.dispatch(ctx, set, msg, options)
 	if err != nil {
 		r.logger.Error("channel router: dispatch error",
 			"event", "channel_inbound_dispatch_failed",
@@ -192,20 +210,22 @@ func (r *Router) HandleResult(ctx context.Context, msg channel.InboundMessage) (
 
 	// Typing indicator on ingest, detached so the reaction HTTP call never
 	// blocks the connector ACK path.
-	if res.Outcome == OutcomeIngested && set.Typing != nil {
+	if !options.SuppressServerOutbound && res.Outcome == OutcomeIngested && set.Typing != nil {
 		go func() {
 			tctx, cancel := context.WithTimeout(context.Background(), r.replyTimeout)
 			defer cancel()
 			set.Typing.OnIngested(tctx, inst, msg, res.ChatSessionID, res.TaskID)
 		}()
 	}
-	r.scheduleReply(set, inst, msg, res)
+	if !options.SuppressServerOutbound {
+		r.scheduleReply(set, inst, msg, res)
+	}
 	return res, nil
 }
 
 // dispatch runs the pipeline and returns the typed result plus the resolved
 // installation (needed by the outbound side). Mirrors lark.Dispatcher.Handle.
-func (r *Router) dispatch(ctx context.Context, set ResolverSet, msg channel.InboundMessage) (Result, ResolvedInstallation, error) {
+func (r *Router) dispatch(ctx context.Context, set ResolverSet, msg channel.InboundMessage, options HandleOptions) (Result, ResolvedInstallation, error) {
 	// 1. Route to installation. The adapter maps the platform routing key
 	//    (carried on the message) to its installation row. These drop
 	//    branches run BEFORE the dedup claim because they have no valid
@@ -240,7 +260,7 @@ func (r *Router) dispatch(ctx context.Context, set ResolverSet, msg channel.Inbo
 		claimed = true
 	}
 
-	res, finalize, err := r.processClaimed(ctx, set, msg, inst, claimToken)
+	res, finalize, err := r.processClaimed(ctx, set, msg, inst, claimToken, options)
 
 	if claimed {
 		if finalizeErr := r.applyFinalize(ctx, set, inst.ID, msg.MessageID, claimToken, finalize); finalizeErr != nil {
@@ -270,7 +290,10 @@ const (
 
 // processClaimed runs the post-dedup pipeline. Mirrors
 // lark.Dispatcher.processClaimed; see its boundary contract per step.
-func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channel.InboundMessage, inst ResolvedInstallation, claimToken pgtype.UUID) (Result, dedupFinalize, error) {
+func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channel.InboundMessage, inst ResolvedInstallation, claimToken pgtype.UUID, options HandleOptions) (Result, dedupFinalize, error) {
+	if options.DisableControlCommands {
+		msg.ForceFresh = false
+	}
 	trace := chattrace.New(string(msg.Source.ChannelType))
 	if msg.TraceID != "" || msg.TraceChannel != "" || msg.TraceStartedAtUnixMS != 0 {
 		var traceErr error
@@ -293,7 +316,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	//     and auto-binding someone who is asking to be unbound would be
 	//     absurd. The command consumes the message: no session write, no
 	//     run trigger, dedup marked processed.
-	if set.Unbind != nil && ParseUnbindCommand(msg.Text) {
+	if !options.DisableControlCommands && set.Unbind != nil && ParseUnbindCommand(msg.Text) {
 		existed, err := set.Unbind.UnbindSender(ctx, inst, msg)
 		if err != nil {
 			return Result{}, finalizeRelease, fmt.Errorf("unbind sender: %w", err)
@@ -306,30 +329,41 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		}, finalizeMark, nil
 	}
 
-	// 4. Identity check: map the platform sender to a Multica user and
-	//    re-verify workspace membership (no binding->member FK; MUL-3515 §4).
-	identity, err := set.Identity.ResolveSender(ctx, inst, msg)
-	if err != nil {
-		switch {
-		case errors.Is(err, ErrSenderUnbound):
-			_ = set.Audit.RecordDrop(ctx, inst.ID, msg, DropReasonUnboundUser)
-			return Result{
-				Outcome:        OutcomeNeedsBinding,
-				DropReason:     DropReasonUnboundUser,
-				InstallationID: inst.ID,
-				Sender:         msg.Source.SenderID,
-			}, finalizeMark, nil
-		case errors.Is(err, ErrSenderNotMember):
-			return r.drop(ctx, set, msg, inst.ID, DropReasonNonWorkspaceMember), finalizeMark, nil
-		default:
-			return Result{}, finalizeRelease, fmt.Errorf("resolve sender: %w", err)
+	// 4. Resolve the Multica authorization identity. Direct channel ingress maps
+	//    the platform sender and re-verifies workspace membership. Authenticated
+	//    internal dispatch may instead provide a trusted endpoint principal.
+	identity := ResolvedIdentity{}
+	if options.IdentityOverride != nil {
+		identity = *options.IdentityOverride
+		if !identity.PrincipalUserID.Valid {
+			return Result{}, finalizeRelease, errors.New("channel router: identity override has no principal")
 		}
+	} else {
+		resolvedIdentity, resolveErr := set.Identity.ResolveSender(ctx, inst, msg)
+		if resolveErr != nil {
+			switch {
+			case errors.Is(resolveErr, ErrSenderUnbound):
+				_ = set.Audit.RecordDrop(ctx, inst.ID, msg, DropReasonUnboundUser)
+				return Result{
+					Outcome:        OutcomeNeedsBinding,
+					DropReason:     DropReasonUnboundUser,
+					InstallationID: inst.ID,
+					Sender:         msg.Source.SenderID,
+				}, finalizeMark, nil
+			case errors.Is(resolveErr, ErrSenderNotMember):
+				return r.drop(ctx, set, msg, inst.ID, DropReasonNonWorkspaceMember), finalizeMark, nil
+			default:
+				return Result{}, finalizeRelease, fmt.Errorf("resolve sender: %w", resolveErr)
+			}
+		}
+		identity = resolvedIdentity
 	}
 
-	// 5. Resolve the chat_session. Shared group sessions are created by the
-	//    installer; p2p and sender-isolated group sessions by the sole human.
+	// 5. Resolve the chat_session. Direct shared group ingress uses the installer;
+	//    authenticated dispatch and sender-isolated sessions use their resolved
+	//    principal.
 	sessionCreator := identity.PrincipalUserID
-	if msg.Source.ChatType == channel.ChatTypeGroup && !set.GroupSessionsPerSender {
+	if options.IdentityOverride == nil && msg.Source.ChatType == channel.ChatTypeGroup && !set.GroupSessionsPerSender {
 		sessionCreator = inst.InstallerUserID
 	}
 	sessionID, err := set.Session.EnsureSession(ctx, EnsureSessionParams{
@@ -419,7 +453,11 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	var preparedTask *service.PreparedChannelChatTask
 	durableOutcome := OutcomeIngested
 	durableFresh := false
-	issueCommand, issueCommandRequested := ParseIssueCommand(msg.Text)
+	var issueCommand *IssueCommand
+	issueCommandRequested := false
+	if !options.DisableControlCommands {
+		issueCommand, issueCommandRequested = ParseIssueCommand(msg.Text)
+	}
 	var durableIssueResult *service.IssueCreateResult
 	if set.DurableRuns && issueCommandRequested {
 		resolvedCommand, err := r.resolveDurableIssueCommand(ctx, sessionID, *issueCommand)
@@ -433,6 +471,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			identity.PrincipalUserID,
 			msg.MessageID,
 			resolvedCommand,
+			taskContext,
 		)
 		if err != nil {
 			return Result{}, finalizeRelease, fmt.Errorf("create durable issue command: %w", err)
@@ -475,15 +514,16 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 
 	// 6. Append message + in-tx dedup Mark — the durable transition point.
 	appendRes, err := set.Session.AppendMessage(ctx, AppendParams{
-		SessionID:         sessionID,
-		WorkspaceID:       inst.WorkspaceID,
-		Sender:            identity.PrincipalUserID,
-		InstallationID:    inst.ID,
-		Installation:      inst,
-		Message:           msg,
-		ClaimToken:        claimToken,
-		ForceFreshSession: set.DurableRuns && durableFresh,
-		PreparedTask:      preparedTask,
+		SessionID:           sessionID,
+		WorkspaceID:         inst.WorkspaceID,
+		Sender:              identity.PrincipalUserID,
+		InstallationID:      inst.ID,
+		Installation:        inst,
+		Message:             msg,
+		ClaimToken:          claimToken,
+		ForceFreshSession:   set.DurableRuns && durableFresh,
+		PreparedTask:        preparedTask,
+		DisableIssueCommand: options.DisableControlCommands,
 	})
 	if err == nil {
 		r.publishInboundMessage(inst.WorkspaceID, sessionID, identity.PrincipalUserID, appendRes)
@@ -518,7 +558,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		if durableIssueResult != nil {
 			issueRes = *durableIssueResult
 		} else {
-			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.PrincipalUserID, sessionID, *appendRes.IssueCommand)
+			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.PrincipalUserID, sessionID, *appendRes.IssueCommand, taskContext)
 		}
 		if err != nil {
 			r.logger.Error("channel issue command failed",
@@ -597,26 +637,26 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	r.scheduleRun(set, inst, msg, sessionID, service.ChatTaskIdentity{
 		PrincipalUserID: identity.PrincipalUserID,
 		InitiatorUserID: identity.InitiatorUserID,
-	}, taskContext)
+	}, taskContext, options.SuppressServerOutbound)
 	return res, postAppendFinalize, nil
 }
 
 // scheduleRun hands the per-session run trigger to the debouncer (or fires it
 // inline when batching is disabled).
-func (r *Router) scheduleRun(set ResolverSet, inst ResolvedInstallation, msg channel.InboundMessage, sessionID pgtype.UUID, identity service.ChatTaskIdentity, taskContext []byte) {
+func (r *Router) scheduleRun(set ResolverSet, inst ResolvedInstallation, msg channel.InboundMessage, sessionID pgtype.UUID, identity service.ChatTaskIdentity, taskContext []byte, suppressServerOutbound bool) {
 	key := keyForSession(sessionID)
 	fresh := msg.ForceFresh
 	if r.batcher == nil {
 		// Merge any pending bare-/new mark so the directive is honored even
 		// when batching is disabled.
-		r.flushChatRun(set, inst, msg, sessionID, identity, r.takePendingFresh(key, fresh), taskContext)
+		r.flushChatRun(set, inst, msg, sessionID, identity, r.takePendingFresh(key, fresh), taskContext, suppressServerOutbound)
 		return
 	}
 	if fresh {
 		r.markPendingFresh(key)
 	}
 	flush := func() {
-		r.flushChatRun(set, inst, msg, sessionID, identity, r.takePendingFresh(key, fresh), taskContext)
+		r.flushChatRun(set, inst, msg, sessionID, identity, r.takePendingFresh(key, fresh), taskContext, suppressServerOutbound)
 	}
 	r.batcher.Schedule(key, flush)
 }
@@ -628,7 +668,7 @@ const chatRunFlushTimeout = 10 * time.Second
 // flushChatRun is the debounced run-trigger: reload session, enqueue exactly
 // one chat task for the window, and emit the offline/archived notice (only
 // known here now) via the replier. Errors are logged, not returned.
-func (r *Router) flushChatRun(set ResolverSet, inst ResolvedInstallation, msg channel.InboundMessage, sessionID pgtype.UUID, identity service.ChatTaskIdentity, forceFresh bool, taskContext []byte) {
+func (r *Router) flushChatRun(set ResolverSet, inst ResolvedInstallation, msg channel.InboundMessage, sessionID pgtype.UUID, identity service.ChatTaskIdentity, forceFresh bool, taskContext []byte, suppressServerOutbound bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), chatRunFlushTimeout)
 	defer cancel()
 
@@ -641,7 +681,9 @@ func (r *Router) flushChatRun(set ResolverSet, inst ResolvedInstallation, msg ch
 			"message_id_hash", inboundTraceHash(msg.MessageID),
 			"error", err,
 		)
-		r.clearTyping(ctx, set, sessionID)
+		if !suppressServerOutbound {
+			r.clearTyping(ctx, set, sessionID)
+		}
 		return
 	}
 	if _, err := r.tasks.EnqueueChatTask(ctx, session, identity, forceFresh, taskContext); err != nil {
@@ -649,12 +691,18 @@ func (r *Router) flushChatRun(set ResolverSet, inst ResolvedInstallation, msg ch
 		// the platform's bus-driven typing clear can never fire. Clear the
 		// indicator here (before any notice) so the "processing" reaction does
 		// not stick on the user's message.
-		r.clearTyping(ctx, set, sessionID)
+		if !suppressServerOutbound {
+			r.clearTyping(ctx, set, sessionID)
+		}
 		switch {
 		case errors.Is(err, service.ErrChatTaskAgentNoRuntime):
-			r.emitFlushReply(ctx, set, inst, msg, sessionID, OutcomeAgentOffline)
+			if !suppressServerOutbound {
+				r.emitFlushReply(ctx, set, inst, msg, sessionID, OutcomeAgentOffline)
+			}
 		case errors.Is(err, service.ErrChatTaskAgentArchived):
-			r.emitFlushReply(ctx, set, inst, msg, sessionID, OutcomeAgentArchived)
+			if !suppressServerOutbound {
+				r.emitFlushReply(ctx, set, inst, msg, sessionID, OutcomeAgentArchived)
+			}
 		default:
 			r.logger.Error("channel router: flush enqueue chat task failed",
 				"event", "channel_chat_run_enqueue_failed",
@@ -678,7 +726,7 @@ func (r *Router) flushChatRun(set ResolverSet, inst ResolvedInstallation, msg ch
 	// the reply will not start until a slot frees, which can read as "the
 	// bot ignored me". Send a rate-limited "queued" notice so the wait is
 	// explained. Best-effort: a failed capacity read just skips the notice.
-	if r.agentAtCapacity(ctx, session.AgentID) && r.markBusyNotified(sessionID) {
+	if !suppressServerOutbound && r.agentAtCapacity(ctx, session.AgentID) && r.markBusyNotified(sessionID) {
 		r.emitFlushReply(ctx, set, inst, msg, sessionID, OutcomeAgentBusy)
 	}
 }
@@ -816,9 +864,13 @@ func (r *Router) drop(ctx context.Context, set ResolverSet, msg channel.InboundM
 	return Result{Outcome: OutcomeDropped, DropReason: reason, InstallationID: instID}
 }
 
-func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, originType string, creatorUserID, originID pgtype.UUID, cmd IssueCommand) (service.IssueCreateResult, error) {
+func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, originType string, creatorUserID, originID pgtype.UUID, cmd IssueCommand, taskContext []byte) (service.IssueCreateResult, error) {
 	if cmd.Title == "" {
 		return service.IssueCreateResult{}, ErrEmptyIssueTitle
+	}
+	identityContextToken, err := taskIdentityContextToken(taskContext)
+	if err != nil {
+		return service.IssueCreateResult{}, fmt.Errorf("resolve task identity ContextToken: %w", err)
 	}
 	params := service.IssueCreateParams{
 		WorkspaceID:  inst.WorkspaceID,
@@ -832,6 +884,8 @@ func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, ori
 		CreatorID:    creatorUserID,
 		OriginType:   pgtype.Text{String: originType, Valid: originType != ""},
 		OriginID:     originID,
+		AgentIdentityContextToken: identityContextToken,
+		DispatchContext:           append([]byte(nil), taskContext...),
 	}
 	return r.issues.Create(ctx, params, service.IssueCreateOpts{})
 }
@@ -865,6 +919,7 @@ func (r *Router) createOrRecoverDurableIssue(
 	creatorUserID pgtype.UUID,
 	messageID string,
 	cmd IssueCommand,
+	taskContext []byte,
 ) (service.IssueCreateResult, bool, error) {
 	if strings.TrimSpace(messageID) == "" {
 		return service.IssueCreateResult{}, false, errors.New("durable issue command has no message id")
@@ -885,8 +940,31 @@ func (r *Router) createOrRecoverDurableIssue(
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return service.IssueCreateResult{}, false, fmt.Errorf("lookup issue by durable origin: %w", err)
 	}
-	created, err := r.createIssue(ctx, inst, originType, creatorUserID, originID, cmd)
+	created, err := r.createIssue(ctx, inst, originType, creatorUserID, originID, cmd, taskContext)
 	return created, false, err
+}
+
+func taskIdentityContextToken(taskContext []byte) (string, error) {
+	if len(taskContext) == 0 {
+		return "", nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(taskContext, &payload); err != nil {
+		return "", fmt.Errorf("decode task context: %w", err)
+	}
+	raw, present := payload[protocol.AgentIdentityContextTokenJSONKey]
+	if !present {
+		return "", nil
+	}
+	var token string
+	if err := json.Unmarshal(raw, &token); err != nil {
+		return "", fmt.Errorf("decode Agent Identity ContextToken: %w", err)
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", errors.New("Agent Identity ContextToken is empty")
+	}
+	return token, nil
 }
 
 // durableIssueCommandOriginID is stable across retries and replicas while

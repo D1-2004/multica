@@ -795,11 +795,12 @@ func firstString(obj map[string]any, keys ...string) string {
 }
 
 type FCE2BLauncher struct {
-	Queries       *db.Queries
-	Tasks         *TaskService
-	Config        FCE2BConfig
-	Runner        CommandRunner
-	AgentIdentity AgentIdentityContextCreator
+	Queries          *db.Queries
+	Tasks            *TaskService
+	Config           FCE2BConfig
+	Runner           CommandRunner
+	AgentIdentity    AgentIdentityContextCreator
+	IdentityBindings AgentIdentityBindingReader
 
 	// Pool backs the cross-replica runtime and sandbox advisory locks.
 	Pool *pgxpool.Pool
@@ -819,6 +820,10 @@ type FCE2BRuntimeTemplateUpdateResult struct {
 
 type AgentIdentityContextCreator interface {
 	CreateContext(context.Context, agentidentityhsf.CreateContextRequest) (agentidentityhsf.CreateContextResult, error)
+}
+
+type AgentIdentityBindingReader interface {
+	GetAgentDingTalkIdentity(context.Context, db.GetAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error)
 }
 
 // Advisory lock classes keep runtime rotation and per-scope sandbox creation
@@ -933,11 +938,12 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 		runner = OSCommandRunner{}
 	}
 	return &FCE2BLauncher{
-		Queries:       q,
-		Tasks:         tasks,
-		Config:        cfg,
-		Runner:        runner,
-		AgentIdentity: agentidentityhsf.NewClient(),
+		Queries:          q,
+		Tasks:            tasks,
+		Config:           cfg,
+		Runner:           runner,
+		AgentIdentity:    agentidentityhsf.NewClient(),
+		IdentityBindings: q,
 	}
 }
 
@@ -1441,20 +1447,9 @@ func (l *FCE2BLauncher) extraEnvForTask(
 	for key, value := range traceEnv {
 		env[key] = value
 	}
-	var agentIdentityEnv map[string]string
-	if task.ChatSessionID.Valid {
-		agentIdentityEnv, err = l.chatDWSIdentityEnv(ctx, task, runtime, sandboxID)
-	} else {
-		agentIdentityEnv, err = fcE2BAgentIdentityExtraEnv(task, l.Config)
-	}
+	agentIdentityEnv, err := l.identityEnvForTask(ctx, task, runtime, sandboxID)
 	if err != nil {
 		return nil, err
-	}
-	if len(agentIdentityEnv) == 0 {
-		agentIdentityEnv, err = l.chatDWSIdentityEnv(ctx, task, runtime, sandboxID)
-		if err != nil {
-			return nil, err
-		}
 	}
 	for key, value := range agentIdentityEnv {
 		env[key] = value
@@ -1468,6 +1463,68 @@ func (l *FCE2BLauncher) extraEnvForTask(
 		"dingtalk_stream_connection_id", env[protocol.DingTalkStreamConnectionIDEnvKey],
 	)
 	return env, nil
+}
+
+func (l *FCE2BLauncher) identityEnvForTask(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	runtime db.AgentRuntime,
+	sandboxID string,
+) (map[string]string, error) {
+	prepared, err := fcE2BAgentIdentityExtraEnv(task, l.Config)
+	if err != nil {
+		return nil, err
+	}
+	if len(prepared) > 0 {
+		slog.Info("FC/E2B task identity selected",
+			"task_id", util.UUIDToString(task.ID),
+			"identity_source", "prepared_context_token",
+		)
+		return prepared, nil
+	}
+	if !FCE2BRuntimeHasCapability(runtime, "dws") {
+		return nil, nil
+	}
+	if l.IdentityBindings == nil {
+		return nil, errors.New("Agent identity binding reader is not configured")
+	}
+	identity, err := l.IdentityBindings.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+		WorkspaceID: runtime.WorkspaceID,
+		AgentID:     task.AgentID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load Agent DingTalk identity: %w", err)
+	}
+	if l.AgentIdentity == nil {
+		return nil, errors.New("Agent Identity HSF client is not configured")
+	}
+	taskID := util.UUIDToString(task.ID)
+	result, err := l.AgentIdentity.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
+		RequestID:   "multica-task-" + taskID,
+		TaskID:      taskID,
+		AgentID:     util.UUIDToString(task.AgentID),
+		RuntimeType: "E2B",
+		RuntimeID:   sandboxID,
+		Reason:      "Multica Agent DWS authorization",
+		Source: map[string]string{
+			"app":             "dt-fde-multica",
+			"identity_source": "agent_binding_fallback",
+		},
+		UID:        identity.DwsUid,
+		OrgID:      identity.OrgID,
+		TTLSeconds: 900,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create Agent Identity context for task: %w", err)
+	}
+	slog.Info("FC/E2B task identity selected",
+		"task_id", taskID,
+		"identity_source", "agent_binding_fallback",
+	)
+	return fcE2BAgentIdentityEnvForToken(result.ContextToken, l.Config)
 }
 
 func fcE2BTaskTraceEnv(task db.AgentTaskQueue) (map[string]string, error) {
@@ -1505,137 +1562,6 @@ func sandboxSourceEnv(taskContext []byte) (map[string]string, error) {
 	return env, nil
 }
 
-func (l *FCE2BLauncher) chatDWSIdentityEnv(
-	ctx context.Context,
-	task db.AgentTaskQueue,
-	runtime db.AgentRuntime,
-	sandboxID string,
-) (map[string]string, error) {
-	if !FCE2BRuntimeHasCapability(runtime, "dws") {
-		return nil, nil
-	}
-	uid, orgID, identitySource, err := l.chatDWSIdentity(ctx, task, runtime)
-	if err != nil {
-		return nil, err
-	}
-	if uid == "" {
-		return nil, nil
-	}
-	slog.Info("FC/E2B task DWS identity selected",
-		"task_id", util.UUIDToString(task.ID),
-		"identity_source", identitySource,
-	)
-	if l.AgentIdentity == nil {
-		return nil, errors.New("Agent Identity HSF client is not configured")
-	}
-	taskID := util.UUIDToString(task.ID)
-	source := map[string]string{
-		"app":             "dt-fde-multica",
-		"identity_source": identitySource,
-	}
-	if task.ChatSessionID.Valid {
-		source["chat_session_id"] = util.UUIDToString(task.ChatSessionID)
-	}
-	result, err := l.AgentIdentity.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
-		RequestID:   "multica-task-" + taskID,
-		TaskID:      taskID,
-		AgentID:     util.UUIDToString(task.AgentID),
-		RuntimeType: "E2B",
-		RuntimeID:   sandboxID,
-		Reason:      "Multica Agent DWS authorization",
-		Source:      source,
-		UID:         uid,
-		OrgID:       orgID,
-		TTLSeconds:  900,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create Agent Identity context for task: %w", err)
-	}
-	env, err := fcE2BAgentIdentityEnvForToken(result.ContextToken, l.Config)
-	if err != nil {
-		return nil, err
-	}
-	return env, nil
-}
-
-func (l *FCE2BLauncher) chatDWSIdentity(ctx context.Context, task db.AgentTaskQueue, runtime db.AgentRuntime) (uid, orgID, source string, err error) {
-	robotIdentity, present, err := dingTalkRobotIdentityFromTask(task.Context)
-	if err != nil {
-		return "", "", "", err
-	}
-	if present {
-		return robotIdentity.UID, robotIdentity.OrgID, "dingtalk_robot_sender", nil
-	}
-	identityUnavailable, err := dingTalkRobotIdentityUnavailableFromTask(task.Context)
-	if err != nil {
-		return "", "", "", err
-	}
-	if identityUnavailable {
-		return "", "", "dingtalk_robot_sender_unavailable", nil
-	}
-	if task.ChatSessionID.Valid {
-		_, bindingErr := l.Queries.GetChannelChatSessionBindingBySession(ctx, db.GetChannelChatSessionBindingBySessionParams{
-			ChatSessionID: task.ChatSessionID,
-			ChannelType:   "dingtalk",
-		})
-		switch {
-		case bindingErr == nil:
-			return "", "", "", errors.New("DingTalk robot identity is missing from chat task context")
-		case !errors.Is(bindingErr, pgx.ErrNoRows):
-			return "", "", "", fmt.Errorf("detect DingTalk robot chat identity source: %w", bindingErr)
-		}
-	}
-	identity, err := l.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
-		WorkspaceID: runtime.WorkspaceID,
-		AgentID:     task.AgentID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", "", nil
-	}
-	if err != nil {
-		return "", "", "", fmt.Errorf("load Agent DingTalk identity: %w", err)
-	}
-	return identity.DwsUid, identity.OrgID, "agent_binding", nil
-}
-
-func dingTalkRobotIdentityFromTask(taskContext []byte) (protocol.DingTalkRobotIdentity, bool, error) {
-	if len(bytes.TrimSpace(taskContext)) == 0 {
-		return protocol.DingTalkRobotIdentity{}, false, nil
-	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(taskContext, &payload); err != nil {
-		return protocol.DingTalkRobotIdentity{}, false, errors.New("decode chat task context")
-	}
-	raw, present := payload[protocol.DingTalkRobotIdentityJSONKey]
-	if !present {
-		return protocol.DingTalkRobotIdentity{}, false, nil
-	}
-	var identity protocol.DingTalkRobotIdentity
-	if err := json.Unmarshal(raw, &identity); err != nil || !isPositiveDecimalIdentifier(identity.UID) || !isPositiveDecimalIdentifier(identity.OrgID) {
-		return protocol.DingTalkRobotIdentity{}, true, errors.New("invalid DingTalk robot identity in task context")
-	}
-	return identity, true, nil
-}
-
-func dingTalkRobotIdentityUnavailableFromTask(taskContext []byte) (bool, error) {
-	if len(bytes.TrimSpace(taskContext)) == 0 {
-		return false, nil
-	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(taskContext, &payload); err != nil {
-		return false, errors.New("decode chat task context")
-	}
-	raw, present := payload[protocol.DingTalkRobotIdentityUnavailableJSONKey]
-	if !present {
-		return false, nil
-	}
-	var unavailable protocol.DingTalkRobotIdentityUnavailable
-	if err := json.Unmarshal(raw, &unavailable); err != nil || strings.TrimSpace(unavailable.Reason) == "" {
-		return false, errors.New("invalid DingTalk robot identity unavailable marker in task context")
-	}
-	return true, nil
-}
-
 func dingTalkStreamSourceFromTask(taskContext []byte) (protocol.DingTalkStreamSource, bool, error) {
 	if len(bytes.TrimSpace(taskContext)) == 0 {
 		return protocol.DingTalkStreamSource{}, false, nil
@@ -1661,37 +1587,23 @@ func dingTalkStreamSourceFromTask(taskContext []byte) (protocol.DingTalkStreamSo
 	return source, true, nil
 }
 
-func isPositiveDecimalIdentifier(value string) bool {
-	if value == "" || value == "0" {
-		return false
-	}
-	for _, r := range value {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
-
 func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue, cfg FCE2BConfig) (map[string]string, error) {
 	if len(bytes.TrimSpace(task.Context)) == 0 {
 		return nil, nil
 	}
-	var payload map[string]any
+	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(task.Context, &payload); err != nil {
 		return nil, fmt.Errorf("parse task context for Agent Identity: %w", err)
 	}
-	token, _ := payload[protocol.AgentIdentityContextTokenJSONKey].(string)
-	token = strings.TrimSpace(token)
-	var env map[string]string
-	var err error
-	if token != "" {
-		env, err = fcE2BAgentIdentityEnvForToken(token, cfg)
-		if err != nil {
-			return nil, err
-		}
+	raw, present := payload[protocol.AgentIdentityContextTokenJSONKey]
+	if !present {
+		return nil, nil
 	}
-	return env, nil
+	var token string
+	if err := json.Unmarshal(raw, &token); err != nil {
+		return nil, fmt.Errorf("parse Agent Identity ContextToken: %w", err)
+	}
+	return fcE2BAgentIdentityEnvForToken(token, cfg)
 }
 
 func fcE2BAgentIdentityEnvForToken(token string, cfg FCE2BConfig) (map[string]string, error) {

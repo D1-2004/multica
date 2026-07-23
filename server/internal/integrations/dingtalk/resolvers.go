@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
@@ -38,7 +39,7 @@ const originDingTalkChat = "dingtalk_chat"
 // notices; typing drives the "processing" emotion on ingested messages;
 // auto resolves unbound org members through the corp directory. Each is
 // optional — pass nil to disable.
-func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing engine.TypingNotifier, auto *AutoBinder, employees RobotEmployeeResolver, attachments *service.ExternalAttachmentService, decrypt Decrypter, messenger *RobotMessenger) engine.ResolverSet {
+func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing engine.TypingNotifier, auto *AutoBinder, employees RobotEmployeeResolver, identityContexts RobotIdentityContextCreator, attachments *service.ExternalAttachmentService, decrypt Decrypter, messenger *RobotMessenger) engine.ResolverSet {
 	chatSession := engine.NewChatSession(q, tx, TypeDingtalk, engine.SessionTitles{
 		Group:    "DingTalk group chat",
 		Direct:   "DingTalk direct message",
@@ -47,7 +48,7 @@ func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.O
 	return engine.ResolverSet{
 		Installation:           &installationResolver{q: q},
 		Identity:               &identityResolver{q: q, auto: auto},
-		TaskContext:            &robotTaskContextResolver{q: q, employees: employees},
+		TaskContext:            &robotTaskContextResolver{q: q, employees: employees, identityContexts: identityContexts},
 		Dedup:                  &deduper{q: q},
 		Session:                &sessionBinder{session: chatSession, attachments: &inboundAttachmentImporter{service: attachments, decrypt: decrypt, messenger: messenger}},
 		PendingFresh:           chatSession,
@@ -68,14 +69,19 @@ type RobotEmployeeResolver interface {
 	ResolveEmployeeByCorpID(ctx context.Context, corpID, staffID string) (orgemphsf.Employee, error)
 }
 
+type RobotIdentityContextCreator interface {
+	CreateContext(context.Context, agentidentityhsf.CreateContextRequest) (agentidentityhsf.CreateContextResult, error)
+}
+
 type robotTaskContextQueries interface {
 	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
 	GetAgentRuntime(ctx context.Context, id pgtype.UUID) (db.AgentRuntime, error)
 }
 
 type robotTaskContextResolver struct {
-	q         robotTaskContextQueries
-	employees RobotEmployeeResolver
+	q                robotTaskContextQueries
+	employees        RobotEmployeeResolver
+	identityContexts RobotIdentityContextCreator
 }
 
 const dingtalkSessionReplyContextKey = "dingtalk_session_reply"
@@ -142,16 +148,6 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		)
 		return nil, errors.New("DingTalk robot DWS identity resolver is not configured")
 	}
-	if raw.SenderUID != "" || raw.SenderOrgID != "" {
-		if !positiveDecimalIdentifier(raw.SenderUID) || !positiveDecimalIdentifier(raw.SenderOrgID) {
-			return nil, errors.New("invalid trusted DingTalk HTTP sender identity")
-		}
-		taskContext[protocol.DingTalkRobotIdentityJSONKey] = protocol.DingTalkRobotIdentity{
-			UID:   raw.SenderUID,
-			OrgID: raw.SenderOrgID,
-		}
-		return marshalDingTalkTaskContext(taskContext)
-	}
 	if raw.StreamSource != nil {
 		source := protocol.DingTalkStreamSource{
 			Hostname:     strings.TrimSpace(raw.StreamSource.Hostname),
@@ -162,6 +158,9 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 			return nil, errors.New("invalid DingTalk Stream source in task context")
 		}
 		taskContext[protocol.DingTalkStreamSourceJSONKey] = source
+	}
+	if raw.StreamSource == nil {
+		return marshalDingTalkTaskContext(taskContext)
 	}
 	agent, err := r.q.GetAgent(ctx, inst.AgentID)
 	if err != nil {
@@ -209,41 +208,32 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		"has_corp_id", strings.TrimSpace(raw.SenderCorpID) != "",
 	)
 	if strings.TrimSpace(raw.SenderStaffID) == "" || strings.TrimSpace(raw.SenderCorpID) == "" {
-		log.Info("dingtalk robot DWS identity unavailable; continuing without DWS",
+		log.Info("dingtalk robot DWS identity unavailable; launcher will use Agent binding fallback",
 			"event", "dingtalk_dws_identity_unavailable",
 			"error_class", "missing_organization_identity",
 			"latency_ms", time.Since(startedAt).Milliseconds(),
 		)
-		taskContext[protocol.DingTalkRobotIdentityUnavailableJSONKey] = protocol.DingTalkRobotIdentityUnavailable{
-			Reason: protocol.DingTalkRobotIdentityUnavailableMissingOrg,
-		}
 		return marshalDingTalkTaskContext(taskContext)
 	}
 	employee, err := r.employees.ResolveEmployeeByCorpID(ctx, raw.SenderCorpID, raw.SenderStaffID)
 	if err != nil {
 		var validationErr *orgemphsf.ValidationError
 		if errors.As(err, &validationErr) {
-			log.Warn("dingtalk robot DWS identity unavailable; continuing without DWS",
+			log.Warn("dingtalk robot DWS identity unavailable; launcher will use Agent binding fallback",
 				"event", "dingtalk_dws_identity_unavailable",
 				"error_class", "validation",
 				"latency_ms", time.Since(startedAt).Milliseconds(),
 				"error", err,
 			)
-			taskContext[protocol.DingTalkRobotIdentityUnavailableJSONKey] = protocol.DingTalkRobotIdentityUnavailable{
-				Reason: protocol.DingTalkRobotIdentityUnavailableLookupError,
-			}
 			return marshalDingTalkTaskContext(taskContext)
 		}
-		log.Error("dingtalk robot DWS identity lookup failed; continuing without DWS",
-			"event", "dingtalk_dws_identity_unavailable",
+		log.Error("dingtalk robot DWS identity lookup failed",
+			"event", "dingtalk_dws_identity_failed",
 			"error_class", "employee_resolver",
 			"latency_ms", time.Since(startedAt).Milliseconds(),
 			"error", err,
 		)
-		taskContext[protocol.DingTalkRobotIdentityUnavailableJSONKey] = protocol.DingTalkRobotIdentityUnavailable{
-			Reason: protocol.DingTalkRobotIdentityUnavailableLookupError,
-		}
-		return marshalDingTalkTaskContext(taskContext)
+		return nil, fmt.Errorf("resolve DingTalk Stream sender identity: %w", err)
 	}
 	log.Info("dingtalk robot DWS identity resolved",
 		"event", "dingtalk_dws_identity_resolved",
@@ -251,10 +241,39 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		"org_id_hash", dingtalkTraceHash(employee.OrgID),
 		"latency_ms", time.Since(startedAt).Milliseconds(),
 	)
-	taskContext[protocol.DingTalkRobotIdentityJSONKey] = protocol.DingTalkRobotIdentity{
-		UID:   employee.UID,
-		OrgID: employee.OrgID,
+	if r.identityContexts == nil {
+		return nil, errors.New("DingTalk Stream Agent Identity context creator is not configured")
 	}
+	messageKey := dingtalkTraceHash(msg.MessageID)
+	result, err := r.identityContexts.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
+		RequestID:   "multica-dingtalk-stream-" + util.UUIDToString(inst.ID) + "-" + messageKey,
+		TaskID:      "dingtalk-stream:" + util.UUIDToString(inst.ID) + ":" + messageKey,
+		AgentID:     util.UUIDToString(inst.AgentID),
+		RuntimeType: "E2B",
+		RuntimeID:   util.UUIDToString(agent.RuntimeID),
+		Reason:      "Multica DingTalk Stream DWS authorization",
+		Source: map[string]string{
+			"app":             "dt-fde-multica",
+			"identity_source": "dingtalk_stream_sender",
+		},
+		UID:        employee.UID,
+		OrgID:      employee.OrgID,
+		TTLSeconds: 900,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create DingTalk Stream Agent Identity context: %w", err)
+	}
+	contextToken := strings.TrimSpace(result.ContextToken)
+	if contextToken == "" {
+		return nil, errors.New("DingTalk Stream Agent Identity returned an empty ContextToken")
+	}
+	log.Info("dingtalk robot DWS identity context prepared",
+		"event", "dingtalk_dws_identity_context_prepared",
+		"context_id_hash", dingtalkTraceHash(result.ContextID),
+		"expires_at", result.ExpiresAt,
+		"latency_ms", time.Since(startedAt).Milliseconds(),
+	)
+	taskContext[protocol.AgentIdentityContextTokenJSONKey] = contextToken
 	return marshalDingTalkTaskContext(taskContext)
 }
 
@@ -276,19 +295,6 @@ func dingtalkTraceHash(raw string) string {
 	}
 	sum := sha256.Sum256([]byte(raw))
 	return fmt.Sprintf("%x", sum[:8])
-}
-
-func positiveDecimalIdentifier(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" || value[0] == '0' {
-		return false
-	}
-	for _, r := range value {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 var (
@@ -578,14 +584,15 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 		Body:           dingtalkMessageBody(p.Message),
 		// CommandText is the user's OWN typed text: the /issue parser must
 		// see the bare message, not the speaker-labelled body.
-		CommandText:       p.Message.Text,
-		MessageID:         p.Message.MessageID,
-		ThreadID:          p.Message.Source.ThreadID,
-		ClaimToken:        p.ClaimToken,
-		ForceFreshSession: p.ForceFreshSession,
-		PreparedTask:      p.PreparedTask,
-		AttachmentIDs:     attachmentIDs,
-		SourcePayload:     p.Message.SourcePayload,
+		CommandText:         p.Message.Text,
+		MessageID:           p.Message.MessageID,
+		ThreadID:            p.Message.Source.ThreadID,
+		ClaimToken:          p.ClaimToken,
+		ForceFreshSession:   p.ForceFreshSession,
+		PreparedTask:        p.PreparedTask,
+		DisableIssueCommand: p.DisableIssueCommand,
+		AttachmentIDs:       attachmentIDs,
+		SourcePayload:       p.Message.SourcePayload,
 	})
 	if err != nil {
 		r.attachments.DeleteImported(context.WithoutCancel(ctx), imported)
