@@ -2916,10 +2916,11 @@ func (h *Handler) ReportTaskProgress(w http.ResponseWriter, r *http.Request) {
 
 // CompleteTask marks a running task as completed.
 type TaskCompleteRequest struct {
-	PRURL     string `json:"pr_url"`
-	Output    string `json:"output"`
-	SessionID string `json:"session_id"` // Claude session ID for future resumption
-	WorkDir   string `json:"work_dir"`   // working directory used during execution
+	PRURL         string `json:"pr_url"`
+	Output        string `json:"output"`
+	ResultMessage string `json:"result_message,omitempty"`
+	SessionID     string `json:"session_id"` // Claude session ID for future resumption
+	WorkDir       string `json:"work_dir"`   // working directory used during execution
 }
 
 func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
@@ -3522,6 +3523,7 @@ func (h *Handler) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 // FailTask marks a running task as failed.
 type TaskFailRequest struct {
 	Error         string `json:"error"`
+	ResultMessage string `json:"result_message,omitempty"`
 	SessionID     string `json:"session_id,omitempty"`
 	WorkDir       string `json:"work_dir,omitempty"`
 	FailureReason string `json:"failure_reason,omitempty"`
@@ -3542,7 +3544,15 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.TaskService.FailTask(r.Context(), parseUUID(taskID), req.Error, req.SessionID, req.WorkDir, req.FailureReason)
+	task, err := h.TaskService.FailTaskWithResultMessage(
+		r.Context(),
+		parseUUID(taskID),
+		req.Error,
+		req.ResultMessage,
+		req.SessionID,
+		req.WorkDir,
+		req.FailureReason,
+	)
 	if err != nil {
 		slog.Warn("fail task failed", "task_id", taskID, "error", err)
 		// Terminal persistence now includes the completion Outbox in the same

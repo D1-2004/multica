@@ -773,6 +773,7 @@ LIMIT 1;
 UPDATE agent_task_queue
 SET status = 'failed',
     completed_at = now(),
+    result = COALESCE(sqlc.narg('result'), result),
     error = $2,
     failure_reason = COALESCE(sqlc.narg('failure_reason'), 'agent_error'),
     session_id = COALESCE(sqlc.narg('session_id'), session_id),

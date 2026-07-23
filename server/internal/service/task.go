@@ -2515,7 +2515,27 @@ func (s *TaskService) writeChatCompletionOutcome(ctx context.Context, qtx *db.Qu
 // coarse bucket. Daemon callers that already produced a refined reason
 // (via classifyPoisonedError, the timeout / runtime classifier, etc.)
 // will have their value preserved untouched.
-func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, sessionID, workDir, failureReason string) (*db.AgentTaskQueue, error) {
+func (s *TaskService) FailTask(
+	ctx context.Context,
+	taskID pgtype.UUID,
+	errMsg, sessionID, workDir, failureReason string,
+) (*db.AgentTaskQueue, error) {
+	return s.FailTaskWithResultMessage(
+		ctx,
+		taskID,
+		errMsg,
+		"",
+		sessionID,
+		workDir,
+		failureReason,
+	)
+}
+
+func (s *TaskService) FailTaskWithResultMessage(
+	ctx context.Context,
+	taskID pgtype.UUID,
+	errMsg, resultMessage, sessionID, workDir, failureReason string,
+) (*db.AgentTaskQueue, error) {
 	// MUL-2946: synthesise a refined reason from the error text whenever the
 	// caller didn't supply one. This is the last write-path guard against
 	// "agent_error" coarse rows ending up in agent_task_queue.failure_reason
@@ -2538,11 +2558,11 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		wantRetry    bool
 		retryOverlay runtimeMCPOverlayData
 	)
-	if retryableReasons[failureReason] {
+	if strings.TrimSpace(resultMessage) == "" && retryableReasons[failureReason] {
 		if parent, perr := s.Queries.GetAgentTask(ctx, taskID); perr != nil {
 			slog.Warn("fail task auto-retry: load parent failed",
 				"task_id", util.UUIDToString(taskID), "error", perr)
-		} else if retryEligible(failureReason, parent) {
+		} else if retryEligibleForReportedFailure(failureReason, parent, resultMessage) {
 			wantRetry = true
 			if agent, aerr := s.Queries.GetAgent(ctx, parent.AgentID); aerr != nil {
 				// Best-effort: a missing overlay is not retry-fatal — the child
@@ -2559,9 +2579,14 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	var task db.AgentTaskQueue
 	var retried *db.AgentTaskQueue
 	var completionQueued bool
+	var failureResult []byte
+	if strings.TrimSpace(resultMessage) != "" {
+		failureResult, _ = json.Marshal(failedCompletionPayload{ResultMessage: resultMessage})
+	}
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
 			ID:            taskID,
+			Result:        failureResult,
 			Error:         pgtype.Text{String: errMsg, Valid: true},
 			FailureReason: pgtype.Text{String: failureReason, Valid: failureReason != ""},
 			SessionID:     pgtype.Text{String: sessionID, Valid: sessionID != ""},
@@ -2612,7 +2637,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 				qtx,
 				t,
 				"failed",
-				nil,
+				failureResult,
 				errMsg,
 				failureReason,
 			)
@@ -2750,9 +2775,18 @@ func resumeUnsafeFailureReason(reason string) bool {
 // so both agree on which failures re-run.
 func retryEligible(failureReason string, t db.AgentTaskQueue) bool {
 	return retryableReasons[failureReason] &&
+		strings.TrimSpace(failedCompletionResultMessage(t.Result)) == "" &&
 		t.Attempt < t.MaxAttempts &&
 		!t.AutopilotRunID.Valid &&
 		(t.IssueID.Valid || t.ChatSessionID.Valid)
+}
+
+func retryEligibleForReportedFailure(
+	failureReason string,
+	task db.AgentTaskQueue,
+	resultMessage string,
+) bool {
+	return strings.TrimSpace(resultMessage) == "" && retryEligible(failureReason, task)
 }
 
 // MaybeRetryFailedTask spawns a fresh queued attempt for a recently-failed
