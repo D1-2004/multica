@@ -793,7 +793,6 @@ export function AgentCreationStudio() {
             {githubPreview && (
               <ConfigurationPanel
                 sourceManaged
-                managedSkills={githubPreview.skills}
                 draft={draft}
                 onChange={setDraft}
                 runtimes={runtimes}
@@ -1153,7 +1152,6 @@ function ConfigurationPanel({
   createError,
   compact = false,
   sourceManaged = false,
-  managedSkills = [],
 }: {
   draft: AgentDraft;
   onChange: (draft: AgentDraft) => void;
@@ -1164,7 +1162,6 @@ function ConfigurationPanel({
   createError: string | null;
   compact?: boolean;
   sourceManaged?: boolean;
-  managedSkills?: GitHubAgentPreview["skills"];
 }) {
   const { t } = useT("agents");
   const selectedRuntime = runtimes.find((runtime) => runtime.id === draft.runtimeId) ?? null;
@@ -1261,7 +1258,6 @@ function ConfigurationPanel({
             <SkillMultiSelect
               selectedIds={draft.skillIds}
               onChange={(ids) => set("skillIds", ids)}
-              managedSkills={managedSkills}
             />
           </div>
         </SettingsCard>

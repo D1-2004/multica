@@ -184,7 +184,7 @@ func CompileDTAProject(ctx context.Context, client RepositoryClient, source Sour
 		manifest.Spec.Skills = append(manifest.Spec.Skills, ManifestSkill{Path: skillPath})
 		expectedSkillNames[skillPath] = skillName
 	}
-	bundle, err := compileBundle(
+	return compileBundle(
 		ctx,
 		client,
 		source,
@@ -193,30 +193,8 @@ func CompileDTAProject(ctx context.Context, client RepositoryClient, source Sour
 		manifest,
 		expectedSkillNames,
 	)
-	if err != nil {
-		return Bundle{}, err
-	}
-	bundle.Manifest.Metadata.Description = dtaAgentDescription(project.Agent.Skills, bundle.Skills)
-	bundle.Hash = hashBundle(bundle)
-	return bundle, nil
 }
 
 func dtaSkillPath(skillsRoot, skillName string) string {
 	return skillsRoot + "/" + skillName
-}
-
-func dtaAgentDescription(declaredSkills []string, compiledSkills []Skill) string {
-	descriptions := make(map[string]string, len(compiledSkills))
-	for _, compiled := range compiledSkills {
-		descriptions[compiled.Name] = strings.TrimSpace(compiled.Description)
-	}
-	for _, name := range declaredSkills {
-		if name == DTABasicSkill {
-			continue
-		}
-		if description := descriptions[name]; description != "" {
-			return description
-		}
-	}
-	return ""
 }

@@ -11,7 +11,7 @@
 > 原始工作区：`/Users/fanqi/test/code/ding-fde-agent/dt-fde-multica`
 > Worktree 路径：不使用
 > Worktree 来源：不使用
-> 交付状态：DTA `skillsRoot` 适配及预发实测问题修复已完成并通过范围内验证，准备重新预发
+> 交付状态：DTA `skillsRoot` 适配已完成并通过范围内验证，准备推送与重新预发
 > 收尾状态：不适用
 > 当前里程碑：DTA 单一源码布局适配完成
 
@@ -227,20 +227,6 @@ Multica 接受的最小合法输入如下：
 | 前端和文档 | 已完成 |  | core/views typecheck；目标 Vitest；四份 locale `jq empty` | API fallback、四语种入口文案和四份 GitHub 导入文档已更新 |
 | 完成验证 | 已完成 |  | `git diff --check`; 零变更目录检查 | migrations、sqlc、managedagent、FDE onboarding 均无 diff |
 | DTA 单一源码布局增量 | 已完成 |  | `go test -count=1 ./internal/agentsource ./internal/handler ./internal/managedagent`; `go vet ./internal/agentsource ./internal/handler` | `agent.skillsRoot` 必填，全部 Skill 从统一根目录编译；不保留旧路径 fallback |
-| 预发实测问题修复 | 已完成 |  | `go test -count=1 ./internal/agentsource ./internal/handler ./internal/managedagent`; `go vet ./internal/agentsource ./internal/handler`; `pnpm --filter @multica/views typecheck`; `pnpm --filter @multica/views test`; 目标 ESLint | Role Skill description 成为描述默认值；GitHub 仓库 Skill 直接显示为只读勾选；views 192 个文件、1995 项测试通过 |
-
-## 预发实测问题调试记录（2026-07-23）
-
-| 假设 | 验证方式 | 结果 |
-| --- | --- | --- |
-| 描述在 DTA Project 解析时已经存在，但 preview 响应遗漏 | 对照 `ParseDTAProject()`、`CompileDTAProject()` 与 `PreviewGitHubAgent()` | 否。`project@1` 没有 Agent description；适配器只设置 `Manifest.Metadata.Name`，preview 正确返回了空 description |
-| 仓库 Skill 没有进入 preview 响应 | 对照 `sourceSkillPreviews()` 与创建页 `GitHubSourcePicker` | 否。preview 已返回并在来源卡片显示仓库 Skill 标签 |
-| 创建表单没有消费 preview Skills | 对照 `ConfigurationPanel` 与 `SkillMultiSelect` 数据源 | 是。表单只传入 `sourceManaged` 布尔值；选择器只查询工作区 Skill，且空 `draft.skillIds` 使其默认折叠 |
-
-最小修复决定：
-
-- DTA 未提供独立 Agent description 时，Multica 使用 `agent.skills` 中第一个非 `dingtalk-basic-behavior` Role Skill 的 frontmatter description 作为创建默认值；不解析或猜测 Agent Definition 正文。
-- 创建表单把 preview 中的仓库 Skill 直接显示为已勾选、只读；它们继续由 GitHub Source 后端原子物化和绑定，不写入普通 `skill_ids`。工作区 Skill 仍为可选附加项。
 
 ## 验证策略
 

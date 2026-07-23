@@ -799,7 +799,6 @@
       "preview_failed": "이 GitHub 에이전트를 미리 볼 수 없습니다.",
       "preview_ready": "검증됨",
       "repository_skills": "저장소에서 관리하는 스킬",
-      "managed_badge": "GitHub",
       "managed_fields_hint": "지침과 저장소 스킬은 GitHub에서 관리합니다. 이름과 설명은 생성 기본값이며 Multica에서 변경할 수 있고, 추가 워크스페이스 스킬도 연결할 수 있습니다.",
       "runtime_incompatible": "이 저장소는 선택한 {{provider}} 런타임을 지원하지 않습니다."
     },
