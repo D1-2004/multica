@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { completeOnboarding } from "@multica/core/onboarding";
 import { paths } from "@multica/core/paths";
@@ -34,7 +34,6 @@ import { Input } from "@multica/ui/components/ui/input";
 import { openDingTalkInstallPage, replaceCurrentPage } from "./navigation";
 
 const oauthStateKey = "multica_fde_oauth_state";
-const oauthCompleteKey = "multica_fde_dingtalk_authenticated";
 
 type Stage = "auth" | "loading" | "create" | "provision" | "install" | "finalize" | "done" | "error";
 
@@ -89,7 +88,9 @@ function FDEStartContent() {
     if (booted.current) return;
     booted.current = true;
     const run = async () => {
+      let completedOAuth = false;
       const beginOAuth = async () => {
+        setStage("auth");
         const config = await api.getConfig();
         if (!config.dingtalk_client_id) throw new Error("钉钉登录尚未配置");
         const stateValue = crypto.randomUUID();
@@ -136,18 +137,10 @@ function FDEStartContent() {
           setUser(login.user);
           sessionStorage.removeItem(oauthStateKey);
           localStorage.removeItem(oauthStateKey);
-          sessionStorage.setItem(oauthCompleteKey, "1");
           window.history.replaceState({}, "", "/fde/start");
+          completedOAuth = true;
         } catch (cause) {
           fail(cause instanceof Error ? cause.message : "钉钉登录失败");
-          return;
-        }
-      } else if (sessionStorage.getItem(oauthCompleteKey) !== "1") {
-        try {
-          await beginOAuth();
-          return;
-        } catch (cause) {
-          fail(cause instanceof Error ? cause.message : "无法启动钉钉登录");
           return;
         }
       }
@@ -160,6 +153,18 @@ function FDEStartContent() {
         setState(onboarding);
         setStage("create");
       } catch (cause) {
+        if (
+          !completedOAuth
+          && cause instanceof ApiError
+          && (cause.status === 401 || cause.status === 403)
+        ) {
+          try {
+            await beginOAuth();
+          } catch (oauthCause) {
+            fail(oauthCause instanceof Error ? oauthCause.message : "无法启动钉钉登录");
+          }
+          return;
+        }
         fail(cause instanceof Error ? cause.message : "无法加载开通状态");
       }
     };
@@ -188,10 +193,6 @@ function FDEStartContent() {
     }, Math.max(2, install.poll_interval_seconds) * 1000);
     return () => window.clearInterval(interval);
   }, [fail, finishOnboarding, install, result, stage]);
-
-  useEffect(() => {
-    if (stage === "done") sessionStorage.removeItem(oauthCompleteKey);
-  }, [stage]);
 
   const submit = () => {
     if (!workspaceName.trim()) return;
@@ -243,7 +244,7 @@ function FDEStartContent() {
   );
 
   return (
-    <main className="min-h-dvh bg-gradient-to-b from-sky-50 to-white px-4 py-8 text-slate-950 sm:flex sm:items-center sm:justify-center">
+    <main className="h-full min-h-dvh overflow-y-auto bg-gradient-to-b from-sky-50 to-white px-4 py-8 text-slate-950 sm:flex sm:items-start sm:justify-center">
       <Card className="mx-auto w-full max-w-md border-sky-100 shadow-lg shadow-sky-100/60">
         <CardHeader className="space-y-3 text-center">
           <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-sky-600 text-lg font-bold text-white">FDE</div>
@@ -257,24 +258,6 @@ function FDEStartContent() {
 
           {stage === "create" && (
             <div className="space-y-6">
-              <section className="space-y-3" aria-labelledby="existing-workspaces-title">
-                <div>
-                  <h2 id="existing-workspaces-title" className="text-sm font-medium text-slate-900">已有工作区（仅展示）</h2>
-                  <p className="mt-1 text-xs text-slate-500">已有工作区不会被选择、修改或用于本次初始化。</p>
-                </div>
-                {state && state.workspaces.length > 0 ? (
-                  <div className="space-y-2">
-                    {state.workspaces.map((workspace) => (
-                      <div key={workspace.id} className="rounded-xl border border-slate-200 bg-slate-100/80 px-4 py-3 opacity-70">
-                        <p className="font-medium text-slate-700">{workspace.name}</p>
-                        <p className="mt-1 truncate text-xs text-slate-500">{workspace.slug}</p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">暂无已有工作区</div>
-                )}
-              </section>
               <section className="space-y-4" aria-labelledby="new-workspace-title">
                 <h2 id="new-workspace-title" className="text-sm font-medium text-slate-900">新建专属 FDE 开发者工作空间</h2>
                 <div>
@@ -282,6 +265,28 @@ function FDEStartContent() {
                   <Input id="workspace-name" value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="例如：我的 FDE 工作区" autoFocus />
                 </div>
                 <Button className="h-12 w-full" disabled={!workspaceName.trim()} onClick={submit}>创建并继续</Button>
+              </section>
+              <section className="space-y-3" aria-labelledby="existing-workspaces-title">
+                <div>
+                  <h2 id="existing-workspaces-title" className="text-sm font-medium text-slate-900">已有工作区（仅展示）</h2>
+                  <p className="mt-1 text-xs text-slate-500">已有工作区不会被选择、修改或用于本次初始化。</p>
+                </div>
+                {state && state.workspaces.length > 0 ? (
+                  <ul
+                    aria-label="已有工作区"
+                    className="max-h-64 space-y-2 overflow-y-auto overscroll-contain pr-1"
+                    tabIndex={0}
+                  >
+                    {state.workspaces.map((workspace) => (
+                      <li key={workspace.id} className="rounded-xl border border-slate-200 bg-slate-100/80 px-4 py-3 opacity-70">
+                        <p className="font-medium text-slate-700">{workspace.name}</p>
+                        <p className="mt-1 truncate text-xs text-slate-500">{workspace.slug}</p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">暂无已有工作区</div>
+                )}
               </section>
               {createConfirmation}
             </div>

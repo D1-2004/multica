@@ -41,6 +41,16 @@ vi.mock("@multica/core/auth", () => ({
 }));
 
 vi.mock("@multica/core/api", () => ({
+  ApiError: class ApiError extends Error {
+    status: number;
+    statusText: string;
+
+    constructor(message: string, status: number, statusText: string) {
+      super(message);
+      this.status = status;
+      this.statusText = statusText;
+    }
+  },
   api: {
     fdeDingtalkLogin: mockDingTalkLogin,
     getConfig: mockGetConfig,
@@ -60,6 +70,7 @@ vi.mock("./navigation", () => ({
   replaceCurrentPage: mockReplaceCurrentPage,
 }));
 
+import { ApiError } from "@multica/core/api";
 import FDEStartPage from "./page";
 
 const workspace = (id: string, name: string, slug: string) => ({
@@ -98,6 +109,44 @@ describe("FDEStartPage DingTalk authentication", () => {
     });
   });
 
+  it("reuses an existing DingTalk-authenticated platform session without OAuth", async () => {
+    render(<FDEStartPage />);
+
+    expect(await screen.findByLabelText("工作区名称")).toBeVisible();
+    expect(mockGetFDEOnboarding).toHaveBeenCalledOnce();
+    expect(mockGetConfig).not.toHaveBeenCalled();
+    expect(mockDingTalkLogin).not.toHaveBeenCalled();
+    expect(mockReplaceCurrentPage).not.toHaveBeenCalled();
+  });
+
+  it.each([401, 403])(
+    "starts OAuth when the existing platform session is rejected with %s",
+    async (status) => {
+      mockGetFDEOnboarding.mockRejectedValueOnce(
+        new ApiError("DingTalk authentication required", status, "Unauthorized"),
+      );
+
+      render(<FDEStartPage />);
+
+      await waitFor(() => expect(mockGetConfig).toHaveBeenCalledOnce());
+      expect(mockReplaceCurrentPage).toHaveBeenCalledWith(
+        expect.stringContaining("https://login.dingtalk.com/oauth2/auth?"),
+      );
+    },
+  );
+
+  it("shows non-authentication failures without starting OAuth", async () => {
+    mockGetFDEOnboarding.mockRejectedValueOnce(
+      new ApiError("service temporarily unavailable", 503, "Service Unavailable"),
+    );
+
+    render(<FDEStartPage />);
+
+    expect(await screen.findByText("service temporarily unavailable")).toBeVisible();
+    expect(mockGetConfig).not.toHaveBeenCalled();
+    expect(mockReplaceCurrentPage).not.toHaveBeenCalled();
+  });
+
   it("restarts OAuth instead of rejecting a quick-init callback without local state", async () => {
     mockSearchParams.current = new URLSearchParams(
       "authCode=external-code&code=external-code&state=external-state",
@@ -133,7 +182,6 @@ describe("FDEStartPage DingTalk installation navigation", () => {
     vi.clearAllMocks();
     localStorage.clear();
     sessionStorage.clear();
-    sessionStorage.setItem("multica_fde_dingtalk_authenticated", "1");
     mockSearchParams.current = new URLSearchParams();
     mockCompleteOnboarding.mockResolvedValue(undefined);
     mockGetFDEOnboarding.mockResolvedValue({
@@ -217,7 +265,6 @@ describe("FDEStartPage create-only workspace onboarding", () => {
     localStorage.clear();
     sessionStorage.clear();
     mockSearchParams.current = new URLSearchParams();
-    sessionStorage.setItem("multica_fde_dingtalk_authenticated", "1");
     mockCompleteOnboarding.mockResolvedValue(undefined);
     mockGetFDEOnboarding.mockResolvedValue({
       configured: true,
@@ -279,6 +326,34 @@ describe("FDEStartPage create-only workspace onboarding", () => {
       workspace_name: "本次新建的 FDE 工作区",
     }));
     expect(mockProvisionFDEOnboarding).not.toHaveBeenCalledWith({ workspace_id: "workspace-fde" });
+  });
+
+  it("keeps creation controls ahead of a bounded workspace list on scrollable pages", async () => {
+    mockGetFDEOnboarding.mockResolvedValue({
+      configured: true,
+      create_only: true,
+      workspaces: Array.from({ length: 12 }, (_, index) =>
+        workspace(`workspace-${index}`, `已有工作区 ${index + 1}`, `existing-${index + 1}`),
+      ),
+    });
+
+    render(<FDEStartPage />);
+
+    const main = screen.getByRole("main");
+    const createHeading = await screen.findByRole("heading", {
+      name: "新建专属 FDE 开发者工作空间",
+    });
+    const existingHeading = screen.getByRole("heading", {
+      name: "已有工作区（仅展示）",
+    });
+    const workspaceList = screen.getByRole("list", { name: "已有工作区" });
+
+    expect(main).toHaveClass("h-full", "overflow-y-auto");
+    expect(createHeading.compareDocumentPosition(existingHeading)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(workspaceList).toHaveClass("max-h-64", "overflow-y-auto");
+    expect(screen.getAllByRole("listitem")).toHaveLength(12);
   });
 
   it("completes FDE onboarding and enters the new workspace", async () => {
