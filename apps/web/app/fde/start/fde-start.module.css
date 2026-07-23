@@ -1,0 +1,23 @@
+.confirmationDialog {
+  width: calc(100vw - 2rem) !important;
+  max-width: 20rem !important;
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (min-width: 40rem) {
+  .confirmationDialog {
+    max-width: 24rem !important;
+  }
+}
+
+@supports not (translate: 0) {
+  .confirmationDialog {
+    animation: none !important;
+    transform: translate(-50%, -50%);
+  }
+}

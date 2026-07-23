@@ -32,6 +32,7 @@ import {
 } from "@multica/ui/components/ui/card";
 import { Input } from "@multica/ui/components/ui/input";
 import { openDingTalkInstallPage, replaceCurrentPage } from "./navigation";
+import styles from "./fde-start.module.css";
 
 const oauthStateKey = "multica_fde_oauth_state";
 
@@ -223,7 +224,10 @@ function FDEStartContent() {
 
   const createConfirmation = (
     <AlertDialog open={confirmationOpen} onOpenChange={setConfirmationOpen}>
-      <AlertDialogContent>
+      <AlertDialogContent
+        className={styles.confirmationDialog}
+        data-fde-confirmation-dialog=""
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>确认创建 FDE 工作区？</AlertDialogTitle>
           <AlertDialogDescription className="space-y-3 text-left text-pretty">

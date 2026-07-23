@@ -213,7 +213,10 @@ describe("FDEStartPage DingTalk installation navigation", () => {
     await user.click(screen.getByRole("button", { name: "创建并继续" }));
 
     expect(mockProvisionFDEOnboarding).not.toHaveBeenCalled();
-    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+    const confirmationDialog = screen.getByRole("alertdialog");
+    expect(confirmationDialog).toHaveAttribute("data-fde-confirmation-dialog");
+    expect(confirmationDialog.className).toMatch(/confirmationDialog/);
+    expect(confirmationDialog).toHaveTextContent(
       "确认后，系统将创建新的工作区",
     );
     await user.click(screen.getByRole("button", { name: "确认创建并前往钉钉" }));
