@@ -143,6 +143,30 @@ func TestDingTalkAccountConfigDefaultsLegacyRowsToDirectOnly(t *testing.T) {
 	}
 }
 
+func TestDingTalkAccountConfigDoesNotRequireDispatchURL(t *testing.T) {
+	for _, raw := range [][]byte{
+		[]byte(`{
+			"schema_version":1,
+			"dispatch_endpoint_id":"v1_AAECAwQFBgcICQoLDA0ODw",
+			"dispatch_key_id":"v1"
+		}`),
+		[]byte(`{
+			"schema_version":1,
+			"dispatch_endpoint_id":"v1_AAECAwQFBgcICQoLDA0ODw",
+			"dispatch_key_id":"v1",
+			"dispatch_url":"https://legacy.example.invalid/not-the-endpoint"
+		}`),
+	} {
+		config, err := ParseDingTalkAccountConfig(raw)
+		if err != nil {
+			t.Fatalf("ParseDingTalkAccountConfig: %v", err)
+		}
+		if config.DispatchEndpointID != "v1_AAECAwQFBgcICQoLDA0ODw" {
+			t.Fatalf("dispatch endpoint id = %q", config.DispatchEndpointID)
+		}
+	}
+}
+
 func TestCallbackTokenUsesOnlyHashForVerification(t *testing.T) {
 	raw, hash, err := GenerateCallbackToken(strings.NewReader(strings.Repeat("x", 32)))
 	if err != nil {
@@ -177,12 +201,11 @@ func TestCallbackTokenRejectsNonCanonicalRawValuesBeforeHashing(t *testing.T) {
 	}
 }
 
-func TestDingTalkAccountConfigRequiresMatchingDispatchPath(t *testing.T) {
+func TestDingTalkAccountConfigRequiresValidDispatchEndpoint(t *testing.T) {
 	base := DingTalkAccountConfig{
 		SchemaVersion:      1,
 		DispatchEndpointID: "v1_AAECAwQFBgcICQoLDA0ODw",
 		DispatchKeyID:      "v1",
-		DispatchURL:        "https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
 		CallbackTokenHash:  strings.Repeat("a", 64),
 		CallbackExpiresAt:  time.Date(2026, 7, 14, 10, 10, 0, 0, time.UTC),
 	}
@@ -190,25 +213,30 @@ func TestDingTalkAccountConfigRequiresMatchingDispatchPath(t *testing.T) {
 		t.Fatalf("valid config: %v", err)
 	}
 
-	for _, dispatchURL := range []string{
-		"https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODx",
-		"https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw/",
-		"https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw?token=secret",
+	for _, config := range []DingTalkAccountConfig{
+		{
+			SchemaVersion:     1,
+			DispatchKeyID:     "v1",
+			CallbackTokenHash: base.CallbackTokenHash,
+			CallbackExpiresAt: base.CallbackExpiresAt,
+		},
+		{
+			SchemaVersion:      1,
+			DispatchEndpointID: "not-an-endpoint",
+			DispatchKeyID:      "v1",
+			CallbackTokenHash:  base.CallbackTokenHash,
+			CallbackExpiresAt:  base.CallbackExpiresAt,
+		},
+		{
+			SchemaVersion:      1,
+			DispatchEndpointID: base.DispatchEndpointID,
+			DispatchKeyID:      "v2",
+			CallbackTokenHash:  base.CallbackTokenHash,
+			CallbackExpiresAt:  base.CallbackExpiresAt,
+		},
 	} {
-		config := base
-		config.DispatchURL = dispatchURL
 		if err := config.Validate(); err == nil {
-			t.Fatalf("expected dispatch URL %q to fail", dispatchURL)
-		}
-	}
-	for _, dispatchURL := range []string{
-		"https://MULTICA.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
-		"http://legacy-multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
-	} {
-		config := base
-		config.DispatchURL = dispatchURL
-		if err := config.Validate(); err != nil {
-			t.Fatalf("historical dispatch URL %q should remain readable: %v", dispatchURL, err)
+			t.Fatalf("expected dispatch endpoint %#v to fail", config)
 		}
 	}
 }

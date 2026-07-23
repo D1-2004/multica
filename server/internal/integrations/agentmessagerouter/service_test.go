@@ -101,26 +101,6 @@ func (f *fakeBindingStore) BeginDingTalkAccountBinding(_ context.Context, arg db
 	return f.row, nil
 }
 
-func (f *fakeBindingStore) UpdateDingTalkAccountBindingDispatchURL(_ context.Context, arg db.UpdateDingTalkAccountBindingDispatchURLParams) (db.ChannelInstallation, error) {
-	if !f.row.ID.Valid || f.row.ID != arg.ID || f.row.WorkspaceID != arg.WorkspaceID ||
-		f.row.AgentID != arg.AgentID || f.row.ChannelType != ChannelTypeDingTalkAccount || f.row.Status != "pending" {
-		return db.ChannelInstallation{}, pgx.ErrNoRows
-	}
-	config, err := ParseDingTalkAccountConfig(f.row.Config)
-	if err != nil {
-		return db.ChannelInstallation{}, err
-	}
-	if config.DispatchEndpointID != arg.DispatchEndpointID {
-		return db.ChannelInstallation{}, pgx.ErrNoRows
-	}
-	config.DispatchURL = arg.DispatchUrl
-	f.row.Config, err = config.Marshal()
-	if err != nil {
-		return db.ChannelInstallation{}, err
-	}
-	return f.row, nil
-}
-
 func (f *fakeBindingStore) GetDingTalkAccountBinding(_ context.Context, _ pgtype.UUID) (db.ChannelInstallation, error) {
 	if f.getErr != nil {
 		return db.ChannelInstallation{}, f.getErr
@@ -694,8 +674,8 @@ func TestBeginDingTalkAccountBindingUsesDispatchPathWithoutPersistingRouterToken
 	if config.DispatchEndpointID != oldEndpoint {
 		t.Fatalf("endpoint = %q, want reused %q", config.DispatchEndpointID, oldEndpoint)
 	}
-	if config.DispatchURL != wantDispatchPath {
-		t.Fatalf("persisted dispatch target = %q, want canonical path %q", config.DispatchURL, wantDispatchPath)
+	if config.DispatchURL != oldConfig.DispatchURL {
+		t.Fatalf("compatibility dispatch URL was rewritten: got %q, want %q", config.DispatchURL, oldConfig.DispatchURL)
 	}
 	if !VerifyCallbackToken(callbackToken, config.CallbackTokenHash) {
 		t.Fatal("persisted callback hash does not match returned token")
@@ -1577,6 +1557,42 @@ func TestListLoadsCurrentSurfaceForExistingActiveBinding(t *testing.T) {
 		t.Fatalf("List() error = %v", err)
 	}
 	if len(listed) != 1 || listed[0].MessageRoute.SurfaceType != DingTalkSurfaceChat || router.getCalls != 1 {
+		t.Fatalf("listed = %#v router GETs = %d", listed, router.getCalls)
+	}
+}
+
+func TestListAcceptsHistoricalDispatchURLWhenRouterReturnsEndpointPath(t *testing.T) {
+	now := time.Date(2026, 7, 23, 9, 0, 0, 0, time.UTC)
+	store := pendingBindingStore(t, now, canonicalCallbackToken)
+	config, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundAt := now.Add(-time.Hour)
+	config.DispatchURL = "https://pre-fde-workbench.dingtalk.com/api/webhooks/agent-dispatch/" + config.DispatchEndpointID
+	config.RouterSourceID = "source-legacy"
+	config.SurfaceType = ""
+	config.BoundAt = &boundAt
+	store.row.Config, err = config.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.row.Status = "active"
+
+	router := &fakeBindingRouter{subscription: Subscription{
+		SourceID:    "source-legacy",
+		AgentID:     uuidStringForTest(store.row.AgentID),
+		DispatchURL: "/api/webhooks/agent-dispatch/" + config.DispatchEndpointID,
+		Surface:     SubscriptionSurface{Type: DingTalkSurfaceIssue},
+		Status:      "active",
+	}}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	listed, err := service.List(context.Background(), store.row.WorkspaceID)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(listed) != 1 || listed[0].MessageRoute.SurfaceType != DingTalkSurfaceIssue || router.getCalls != 1 {
 		t.Fatalf("listed = %#v router GETs = %d", listed, router.getCalls)
 	}
 }
