@@ -109,6 +109,12 @@ separate configuration values with opposite communication directions.
 
 ## History
 
+- 2026-07-23: Stopped treating the legacy account-binding `dispatch_url`
+  snapshot as authoritative. Subscription verification now derives the
+  expected target from `dispatch_endpoint_id`, accepting the canonical path or
+  the full URL built from the current Multica origin. Compatibility writes
+  remain during the rolling rollout; physical storage cleanup is a separate
+  post-rollout change.
 - 2026-07-23: Added message-account nickname/avatar snapshots, exposed the
   active `issue`/`chat` surface, and added an owner-checked surface update that
   reuses the existing Router subscription.
@@ -133,7 +139,10 @@ Persisting only the path and resolving the current environment origin at
 dispatch time prevents that cross-environment leak. Treating historical
 Multica endpoint origins as authoritative also blocked QR generation before the
 Router token request, so endpoint mappings now use the endpoint ID and canonical
-path as their environment-neutral identity.
+path as their environment-neutral identity. The account-binding list, callback,
+and surface-update flows therefore validate the Router target against that
+endpoint identity instead of comparing it with a redundant database URL
+snapshot.
 
 The binding page also needs to show which DingTalk account owns the message
 listener and which processing surface is active. Carrying a display-only

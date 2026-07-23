@@ -37,17 +37,12 @@ type DingTalkConversationSnapshot struct {
 	AvatarURL     string `json:"avatar_url,omitempty"`
 }
 
-func isDispatchTargetForEndpoint(dispatchTarget, endpointID string) bool {
-	if pathEndpointID, err := endpointIDFromDispatchPath(dispatchTarget); err == nil {
-		return pathEndpointID == endpointID
-	}
-	return isDispatchURLForEndpoint(dispatchTarget, endpointID)
-}
-
 type DingTalkAccountConfig struct {
 	SchemaVersion      int                            `json:"schema_version"`
 	DispatchEndpointID string                         `json:"dispatch_endpoint_id"`
 	DispatchKeyID      string                         `json:"dispatch_key_id"`
+	// DispatchURL is retained only for old binaries during a rolling rollout.
+	// Current routing and ownership checks use DispatchEndpointID.
 	DispatchURL        string                         `json:"dispatch_url"`
 	CallbackTokenHash  string                         `json:"callback_token_hash,omitempty"`
 	CallbackExpiresAt  time.Time                      `json:"callback_expires_at,omitempty"`
@@ -134,9 +129,6 @@ func (c DingTalkAccountConfig) Validate() error {
 	keyID, err := parseEndpointID(c.DispatchEndpointID)
 	if err != nil || keyID != c.DispatchKeyID {
 		return errors.New("dingtalk account dispatch endpoint is invalid")
-	}
-	if !isDispatchTargetForEndpoint(c.DispatchURL, c.DispatchEndpointID) {
-		return errors.New("dingtalk account dispatch target is invalid")
 	}
 	if (c.CallbackTokenHash == "") != c.CallbackExpiresAt.IsZero() {
 		return errors.New("dingtalk account callback credential is invalid")
