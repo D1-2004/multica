@@ -175,36 +175,49 @@ func (h *Handler) createAgentDispatchChatV2(
 	plan agentDispatchExecutionPlan,
 	dispatchContext agentDispatchContext,
 ) {
-	if h.ChannelRouter == nil || h.DingTalkInstallations == nil {
+	if h.ChannelRouter == nil {
 		writeError(w, http.StatusServiceUnavailable, "dingtalk chat dispatch not configured")
 		return
 	}
-	row, err := h.Queries.GetActiveDingTalkBotInstallationByAgent(
-		r.Context(),
-		db.GetActiveDingTalkBotInstallationByAgentParams{
-			WorkspaceID: dispatchContext.WorkspaceID,
-			AgentID:     dispatchContext.AgentID,
-		},
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "dingtalk robot installation not found")
-		} else {
-			writeError(w, http.StatusInternalServerError, "failed to resolve dingtalk robot installation")
+
+	var namespaceID pgtype.UUID
+	var robotClientID string
+	if plan.InstallationOverride != nil {
+		namespaceID = plan.InstallationOverride.ID
+	} else {
+		if h.DingTalkInstallations == nil {
+			writeError(w, http.StatusServiceUnavailable, "dingtalk chat dispatch not configured")
+			return
 		}
-		return
-	}
-	installation, err := h.DingTalkInstallations.GetInWorkspace(
-		r.Context(), row.ID, dispatchContext.WorkspaceID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load dingtalk robot installation")
-		return
-	}
-	if installation.Status != "active" ||
-		installation.TransportMode != dingtalk.TransportModeHTTPCallback ||
-		strings.TrimSpace(installation.DispatchEndpointID) != dispatchContext.EndpointID {
-		writeError(w, http.StatusForbidden, "dingtalk robot installation is not an HTTP callback source")
-		return
+		row, err := h.Queries.GetActiveDingTalkBotInstallationByAgent(
+			r.Context(),
+			db.GetActiveDingTalkBotInstallationByAgentParams{
+				WorkspaceID: dispatchContext.WorkspaceID,
+				AgentID:     dispatchContext.AgentID,
+			},
+		)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "dingtalk robot installation not found")
+			} else {
+				writeError(w, http.StatusInternalServerError, "failed to resolve dingtalk robot installation")
+			}
+			return
+		}
+		installation, err := h.DingTalkInstallations.GetInWorkspace(
+			r.Context(), row.ID, dispatchContext.WorkspaceID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load dingtalk robot installation")
+			return
+		}
+		if installation.Status != "active" ||
+			installation.TransportMode != dingtalk.TransportModeHTTPCallback ||
+			strings.TrimSpace(installation.DispatchEndpointID) != dispatchContext.EndpointID {
+			writeError(w, http.StatusForbidden, "dingtalk robot installation is not an HTTP callback source")
+			return
+		}
+		namespaceID = row.ID
+		robotClientID = installation.ClientID
 	}
 
 	var textParts []string
@@ -223,7 +236,7 @@ func (h *Handler) createAgentDispatchChatV2(
 		senderID = strings.TrimSpace(command.Event.Data.Sender.SenderOpenDingTalkID)
 	}
 	dispatchText := strings.Join(textParts, "\n\n")
-	message, err := dingtalk.InboundFromHTTPCallback(dingtalk.HTTPCallbackMessage{
+	dispatchMessage := dingtalk.AgentDispatchMessage{
 		ConversationID:       command.Event.Data.Conversation.OpenConversationID,
 		ConversationType:     command.Event.Data.Conversation.Type,
 		ConversationTitle:    command.Event.Data.Conversation.Title,
@@ -235,7 +248,18 @@ func (h *Handler) createAgentDispatchChatV2(
 		Text:                 dispatchText,
 		IdentityContextToken: command.ExternalIdentity.ContextToken,
 		DispatchContext:      dispatchRuntimeContext(command, dispatchIdempotencyKey(r, command)),
-	}, installation.ClientID, uuidToString(installation.ID))
+	}
+	var message channel.InboundMessage
+	var err error
+	if plan.InstallationOverride != nil {
+		message, err = dingtalk.InboundFromAgentDispatch(dispatchMessage)
+	} else {
+		message, err = dingtalk.InboundFromHTTPCallback(
+			dingtalk.HTTPCallbackMessage(dispatchMessage),
+			robotClientID,
+			uuidToString(namespaceID),
+		)
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -255,7 +279,7 @@ func (h *Handler) createAgentDispatchChatV2(
 	}
 	if result.Outcome == engine.OutcomeDropped && result.DropReason == engine.DropReasonDuplicate {
 		response, recoverErr := recoverDuplicateAgentChatDispatch(
-			r.Context(), h.Queries, row.ID, latest.OpenMsgID, message)
+			r.Context(), h.Queries, namespaceID, latest.OpenMsgID, message)
 		if recoverErr != nil {
 			writeError(w, http.StatusServiceUnavailable, errAgentDispatchDuplicateNotReady.Error())
 			return

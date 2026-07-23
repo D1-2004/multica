@@ -12,6 +12,9 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 )
 
 func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.T) {
@@ -223,47 +226,258 @@ func TestHandleAgentDispatchV2RecreatesMissingContinuationIssue(t *testing.T) {
 	}
 }
 
-func TestHandleAgentDispatchV2AcceptsRobotChatSurface(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "test-v2-robot-chat", nil)
+func TestHandleAgentDispatchV2DigitalEmployeeChatDWSIgnoresRobotInstallation(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-v2-digital-employee-chat-dws", nil)
+	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+	installations := configureDingTalkChatDispatchForTest(t)
+	robotInstallation, err := installations.Upsert(context.Background(), dingtalk.InstallationParams{
+		WorkspaceID:        parseUUID(testWorkspaceID),
+		AgentID:            parseUUID(agentID),
+		ClientID:           "test-v2-digital-employee-stream-client",
+		ClientSecret:       "test-v2-digital-employee-stream-secret",
+		InstallerUserID:    parseUUID(testUserID),
+		TransportMode:      dingtalk.TransportModeStream,
+		RobotCode:          "test-v2-digital-employee-stream-robot",
+		DispatchEndpointID: endpointID,
+	})
+	if err != nil {
+		t.Fatalf("create unrelated Stream installation: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM channel_installation WHERE id = $1`, robotInstallation.ID)
+	})
+
 	body := fmt.Sprintf(`{
 		"schemaVersion":"2.0",
 		"agentId":%q,
 		"continuation":null,
-		"source":{"platform":"dingtalk","type":"robot"},
+		"source":{"platform":"dingtalk","type":"digital_employee"},
 		"event":{
 			"domain":"channel",
 			"type":"message.created",
 			"data":{
-				"conversation":{"openConversationId":"cid-robot","type":"group","title":"机器人群"},
-				"sender":{"displayName":"张三","openDingTalkId":"open-sender"},
-				"messages":[{"openMsgId":"msg-robot","occurredAt":1784512800000,"text":"处理机器人消息"}]
+				"conversation":{"openConversationId":"cid-digital-employee","type":"group","title":"数字员工群"},
+				"sender":{"displayName":"张三","openDingTalkId":"open-digital-employee-sender"},
+				"messages":[{"openMsgId":"msg-digital-employee","occurredAt":1784512800000,"text":"处理数字员工消息"}]
 			}
 		},
 		"surface":{"type":"chat"},
-		"outbound":{"mode":"robot_sdk","replyTo":"latest_message"}
+		"outbound":{"mode":"dws","replyTo":"latest_message"},
+		"externalIdentity":{"contextToken":"sealed-digital-employee-context"}
 	}`, agentID)
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+deliverySecret)
+	req = withURLParams(req, "endpointId", endpointID)
+	w := httptest.NewRecorder()
 
-	w := postAgentDispatchForTest(t, body, agentID)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("HandleAgentDispatch v2 robot/chat: expected 201, got %d: %s", w.Code, w.Body.String())
+	testHandler.HandleAgentDispatch(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("digital employee chat+DWS: expected 202, got %d: %s", w.Code, w.Body.String())
 	}
-	var response AgentDispatchResponse
+	var response AgentChatDispatchResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, response.Continuation.IssueID)
-	})
+	if response.Continuation.Kind != "chat" || response.Continuation.ChatSessionID == "" || response.TaskID == "" {
+		t.Fatalf("unexpected response: %+v", response)
+	}
+	replayReq := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+	replayReq.Header.Set("Content-Type", "application/json")
+	replayReq.Header.Set("Authorization", "Bearer "+deliverySecret)
+	replayReq = withURLParams(replayReq, "endpointId", endpointID)
+	replayWriter := httptest.NewRecorder()
 
-	var surfaceType string
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT context->'dispatch_surface'->>'type'
-		FROM agent_task_queue
-		WHERE id = $1
-	`, response.TaskID).Scan(&surfaceType); err != nil {
+	testHandler.HandleAgentDispatch(replayWriter, replayReq)
+
+	if replayWriter.Code != http.StatusAccepted {
+		t.Fatalf("digital employee duplicate: expected 202, got %d: %s", replayWriter.Code, replayWriter.Body.String())
+	}
+	var replayResponse AgentChatDispatchResponse
+	if err := json.Unmarshal(replayWriter.Body.Bytes(), &replayResponse); err != nil {
 		t.Fatal(err)
 	}
-	if surfaceType != "chat" {
-		t.Fatalf("dispatch surface type = %q, want chat", surfaceType)
+	if replayResponse.Continuation.Kind != "chat" ||
+		replayResponse.Continuation.ChatSessionID != response.Continuation.ChatSessionID {
+		t.Fatalf("duplicate continuation = %+v, want original %+v", replayResponse.Continuation, response.Continuation)
+	}
+
+	endpoint, err := testHandler.Queries.GetAgentDispatchEndpointByEndpointID(context.Background(), endpointID)
+	if err != nil {
+		t.Fatalf("load authenticated dispatch endpoint: %v", err)
+	}
+	var namespaceID, workspaceID, sessionAgentID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT binding.installation_id, session.workspace_id, session.agent_id
+		FROM channel_chat_session_binding binding
+		JOIN chat_session session ON session.id = binding.chat_session_id
+		WHERE binding.chat_session_id = $1
+	`, response.Continuation.ChatSessionID).Scan(&namespaceID, &workspaceID, &sessionAgentID); err != nil {
+		t.Fatalf("load digital employee chat namespace: %v", err)
+	}
+	if namespaceID != uuidToString(endpoint.ID) {
+		t.Fatalf("chat namespace = %s, want authenticated endpoint %s", namespaceID, uuidToString(endpoint.ID))
+	}
+	if namespaceID == uuidToString(robotInstallation.ID) {
+		t.Fatalf("digital employee chat reused robot installation namespace %s", namespaceID)
+	}
+	if workspaceID != testWorkspaceID || sessionAgentID != agentID {
+		t.Fatalf("chat scope = workspace %s agent %s, want %s/%s", workspaceID, sessionAgentID, testWorkspaceID, agentID)
+	}
+	var processed bool
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT processed_at IS NOT NULL
+		FROM channel_inbound_message_dedup
+		WHERE installation_id = $1 AND message_id = $2
+	`, endpoint.ID, "msg-digital-employee").Scan(&processed); err != nil {
+		t.Fatalf("load digital employee dedup row: %v", err)
+	}
+	if !processed {
+		t.Fatal("digital employee dedup row was not finalized")
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM channel_inbound_message_dedup WHERE installation_id = $1`, endpoint.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM channel_chat_session_binding WHERE installation_id = $1`, endpoint.ID)
+	})
+}
+
+func configureDingTalkChatDispatchForTest(t *testing.T) *dingtalk.InstallationService {
+	t.Helper()
+	box, err := secretbox.New(make([]byte, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installations, err := dingtalk.NewInstallationService(testHandler.Queries, testPool, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := engine.NewRouter(
+		testHandler.IssueService,
+		testHandler.TaskService,
+		testHandler.Queries,
+		engine.RouterConfig{},
+	)
+	router.Register(dingtalk.TypeDingtalk, dingtalk.NewDingTalkResolverSet(
+		testHandler.Queries,
+		testPool,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	))
+	previousRouter := testHandler.ChannelRouter
+	previousInstallations := testHandler.DingTalkInstallations
+	testHandler.ChannelRouter = router
+	testHandler.DingTalkInstallations = installations
+	t.Cleanup(func() {
+		testHandler.ChannelRouter = previousRouter
+		testHandler.DingTalkInstallations = previousInstallations
+	})
+	return installations
+}
+
+func TestHandleAgentDispatchV2RobotSDKChatKeepsInstallationGuards(t *testing.T) {
+	for _, tc := range []struct {
+		name                        string
+		sourceType                  string
+		transportMode               dingtalk.TransportMode
+		installationEndpointMatches bool
+		wantStatus                  int
+	}{
+		{name: "robot rejects Stream installation", sourceType: "robot", transportMode: dingtalk.TransportModeStream, installationEndpointMatches: true, wantStatus: http.StatusForbidden},
+		{name: "robot rejects different dispatch endpoint", sourceType: "robot", transportMode: dingtalk.TransportModeHTTPCallback, wantStatus: http.StatusForbidden},
+		{name: "digital employee robot SDK rejects Stream installation", sourceType: "digital_employee", transportMode: dingtalk.TransportModeStream, installationEndpointMatches: true, wantStatus: http.StatusForbidden},
+		{name: "robot accepts matching HTTP callback installation", sourceType: "robot", transportMode: dingtalk.TransportModeHTTPCallback, installationEndpointMatches: true, wantStatus: http.StatusAccepted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agentID := createHandlerTestAgent(t, "test-v2-robot-sdk-"+strings.ReplaceAll(tc.name, " ", "-"), nil)
+			endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+			installations := configureDingTalkChatDispatchForTest(t)
+			installationEndpointID := "v1_different_dispatch_endpoint"
+			if tc.installationEndpointMatches {
+				installationEndpointID = endpointID
+			}
+			robotInstallation, err := installations.Upsert(context.Background(), dingtalk.InstallationParams{
+				WorkspaceID:        parseUUID(testWorkspaceID),
+				AgentID:            parseUUID(agentID),
+				ClientID:           "client-" + strings.ReplaceAll(tc.name, " ", "-"),
+				ClientSecret:       "secret-" + tc.name,
+				InstallerUserID:    parseUUID(testUserID),
+				TransportMode:      tc.transportMode,
+				RobotCode:          "robot-" + strings.ReplaceAll(tc.name, " ", "-"),
+				DispatchEndpointID: installationEndpointID,
+			})
+			if err != nil {
+				t.Fatalf("create robot installation: %v", err)
+			}
+			t.Cleanup(func() {
+				_, _ = testPool.Exec(context.Background(), `DELETE FROM channel_installation WHERE id = $1`, robotInstallation.ID)
+			})
+
+			messageID := "msg-" + strings.ReplaceAll(tc.name, " ", "-")
+			body := fmt.Sprintf(`{
+				"schemaVersion":"2.0",
+				"agentId":%q,
+				"continuation":null,
+				"source":{"platform":"dingtalk","type":%q},
+				"event":{
+					"domain":"channel",
+					"type":"message.created",
+					"data":{
+						"conversation":{"openConversationId":"cid-robot","type":"group","title":"机器人群"},
+						"sender":{"displayName":"张三","openDingTalkId":"open-robot-sender"},
+						"messages":[{"openMsgId":%q,"occurredAt":1784512800000,"text":"处理机器人消息"}]
+					}
+				},
+				"surface":{"type":"chat"},
+				"outbound":{"mode":"robot_sdk","replyTo":"latest_message"},
+				"externalIdentity":{"contextToken":"sealed-robot-context"}
+			}`, agentID, tc.sourceType, messageID)
+			req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+deliverySecret)
+			req = withURLParams(req, "endpointId", endpointID)
+			w := httptest.NewRecorder()
+
+			testHandler.HandleAgentDispatch(w, req)
+
+			if w.Code != tc.wantStatus {
+				t.Fatalf("robot SDK chat: expected %d, got %d: %s", tc.wantStatus, w.Code, w.Body.String())
+			}
+			if tc.wantStatus == http.StatusForbidden {
+				if !strings.Contains(w.Body.String(), "dingtalk robot installation is not an HTTP callback source") {
+					t.Fatalf("unexpected robot installation rejection: %s", w.Body.String())
+				}
+				return
+			}
+
+			var response AgentChatDispatchResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Continuation.Kind != "chat" || response.Continuation.ChatSessionID == "" || response.TaskID == "" {
+				t.Fatalf("unexpected robot chat response: %+v", response)
+			}
+			var namespaceID string
+			if err := testPool.QueryRow(context.Background(), `
+				SELECT installation_id
+				FROM channel_chat_session_binding
+				WHERE chat_session_id = $1
+			`, response.Continuation.ChatSessionID).Scan(&namespaceID); err != nil {
+				t.Fatalf("load robot chat namespace: %v", err)
+			}
+			if namespaceID != uuidToString(robotInstallation.ID) {
+				t.Fatalf("robot chat namespace = %s, want installation %s", namespaceID, uuidToString(robotInstallation.ID))
+			}
+			t.Cleanup(func() {
+				_, _ = testPool.Exec(context.Background(), `DELETE FROM channel_inbound_message_dedup WHERE installation_id = $1`, robotInstallation.ID)
+				_, _ = testPool.Exec(context.Background(), `DELETE FROM channel_chat_session_binding WHERE installation_id = $1`, robotInstallation.ID)
+			})
+		})
 	}
 }
