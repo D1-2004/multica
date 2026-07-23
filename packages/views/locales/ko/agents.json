@@ -777,12 +777,12 @@
       },
       "github": {
         "title": "GitHub에서 가져오기",
-        "description": "multica-agent.yaml, 지침, 스킬 및 보조 파일이 포함된 버전 관리 저장소에서 만듭니다."
+        "description": "dingtalk-agent.json, 에이전트 정의, 스킬 및 보조 파일이 포함된 버전 관리 DTA Agent Project에서 만듭니다."
       }
     },
     "github": {
       "source_title": "GitHub 소스",
-      "source_hint": "저장소와 ref를 선택한 후 만들기 전에 multica-agent.yaml을 검증하고 미리 봅니다.",
+      "source_hint": "저장소와 ref를 선택한 후 만들기 전에 dingtalk-agent.json을 검증하고 미리 봅니다.",
       "not_configured": "GitHub 에이전트 소스가 설정되지 않았습니다",
       "admin_required": "워크스페이스 관리자 권한이 필요합니다",
       "admin_required_hint": "비공개 저장소 미리 보기와 GitHub 기반 에이전트 생성은 owner 또는 admin만 사용할 수 있습니다.",

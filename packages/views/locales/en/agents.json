@@ -290,11 +290,11 @@
       "blank": { "title": "Start blank", "description": "Configure every field yourself. Best when you already know exactly how this agent should work." },
       "template": { "title": "Use a template", "description": "Start from curated instructions and skills, then adapt every detail to your workspace." },
       "ai": { "title": "Build with AI", "description": "Describe the outcome you want. An Agent Builder will ask focused questions and prepare a live draft." },
-      "github": { "title": "Import from GitHub", "description": "Create from a versioned repository containing multica-agent.yaml, instructions, skills, and supporting files." }
+      "github": { "title": "Import from GitHub", "description": "Create from a versioned DTA Agent Project containing dingtalk-agent.json, its definition, skills, and supporting files." }
     },
     "github": {
       "source_title": "GitHub source",
-      "source_hint": "Select a repository and ref, then validate its multica-agent.yaml before creating the agent.",
+      "source_hint": "Select a repository and ref, then validate its dingtalk-agent.json before creating the agent.",
       "not_configured": "GitHub agent sources are not configured",
       "admin_required": "Workspace admin access is required",
       "admin_required_hint": "Only workspace owners and admins can preview private repository contents or create GitHub-backed agents.",

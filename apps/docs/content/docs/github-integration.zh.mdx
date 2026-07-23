@@ -71,23 +71,28 @@ PR **关闭但没合并**——只更新 PR 卡片的状态为 `Closed`，issue 
 
 GitHub App 拥有 **Contents: Read-only** 权限且服务端配置了 App 凭证后，工作区 owner/admin 可以通过 **Agents → 创建智能体 → 从 GitHub 导入**，从 installation 可访问的仓库创建智能体。仓库列表、预览和创建保持 admin-only，避免连接 App 后把私有仓库名称和内容暴露给所有成员。仓库是智能体定义的版本化来源，不是智能体运行时的工作目录。
 
-仓库根目录必须包含 `multica-agent.yaml`：
+仓库根目录必须包含使用 `dingtalk-agent/project@1` 协议的 DTA `dingtalk-agent.json`：
 
-```yaml
-apiVersion: multica.ai/v1alpha1
-kind: Agent
-metadata:
-  name: Repository agent
-  description: 使用仓库内维护的规范审查代码变更。
-spec:
-  instructions: AGENT.md
-  skills:
-    - path: skills/code-review
-  compatibility:
-    providers: [claude, codex]
+```json
+{
+  "$schema": "dingtalk-agent/project@1",
+  "name": "repository-agent",
+  "dtaVersion": "^0.1.5",
+  "agent": {
+    "displayName": "Repository Agent",
+    "definition": "AGENT.md",
+    "skills": [
+      "dingtalk-basic-behavior",
+      "code-review"
+    ]
+  },
+  "workspaces": {}
+}
 ```
 
-每个 skill path 指向一个包含 `SKILL.md` 和可选配套文件的目录。Multica 校验清单后，把所选 commit 编译为数据库快照。名称、描述、指令和仓库 skill 由 GitHub 管理；runtime、model、访问权限和额外工作区 skill 仍由 Multica 管理。
+公共 `dingtalk-basic-behavior` 位于 `.agents/skills/dingtalk-basic-behavior`，其他声明的 skill 位于 `skills/<name>`。每个目录都包含 `SKILL.md` 和可选配套文件，并且 frontmatter 的 `name` 必须与声明名称一致。
+
+Multica 校验 `project@1` 的稳定字段后，把所选 commit 编译为数据库快照；DTA 新增的扩展字段可以存在，`workspaces` 内部配置不会由 Multica 解释。display name 只作为创建默认值，后续同步更新本体和仓库 skill，并保留在 Multica 中修改的名称和描述。runtime、model、访问权限和额外工作区 skill 也仍由 Multica 管理。GitHub 导入不会回退读取旧的 `multica-agent.yaml`。
 
 仓库发生修改后**不会自动生效**。在智能体 Overview 点击 **立即同步**，Multica 才会解析配置的 ref 并原子替换 GitHub 管理的快照。已经派发的任务继续使用派发时的快照。断开 installation 后，最后一次有效快照仍可运行，但不能继续同步。
 

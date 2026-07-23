@@ -2,6 +2,9 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -55,5 +58,14 @@ func TestSourceManagedSkillNameIsIsolatedPerAgentSource(t *testing.T) {
 	second := sourceManagedSkillName("repository-audit", pgtype.UUID{Bytes: [16]byte{0xab, 0xcd, 0xef, 0x01, 0x23}, Valid: true})
 	if first == second || !strings.HasPrefix(first, "repository-audit--") || !strings.HasPrefix(second, "repository-audit--") {
 		t.Fatalf("source-scoped names = %q, %q", first, second)
+	}
+}
+
+func TestWriteGitHubSourceErrorTreatsDTAProjectFailuresAsUnprocessable(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeGitHubSourceError(recorder, errors.New(`compile dingtalk-agent.json: agent.definition contains an unsafe path`))
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
 	}
 }

@@ -777,12 +777,12 @@
       },
       "github": {
         "title": "GitHub からインポート",
-        "description": "multica-agent.yaml、指示、スキル、補助ファイルを含むバージョン管理されたリポジトリから作成します。"
+        "description": "dingtalk-agent.json、エージェント定義、スキル、補助ファイルを含むバージョン管理された DTA Agent Project から作成します。"
       }
     },
     "github": {
       "source_title": "GitHub ソース",
-      "source_hint": "リポジトリと ref を選択し、作成前に multica-agent.yaml を検証してプレビューします。",
+      "source_hint": "リポジトリと ref を選択し、作成前に dingtalk-agent.json を検証してプレビューします。",
       "not_configured": "GitHub エージェントソースが設定されていません",
       "admin_required": "ワークスペース admin 権限が必要です",
       "admin_required_hint": "非公開リポジトリのプレビューと GitHub ベースのエージェント作成は owner または admin のみ利用できます。",

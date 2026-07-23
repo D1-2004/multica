@@ -71,23 +71,28 @@ The action is attributed to the `system` actor on the timeline. Subscribers of t
 
 When the GitHub App has **Contents: Read-only** permission and App credentials are configured, workspace owners and admins can use **Agents → Create agent → Import from GitHub** to build an agent from an installed repository. Repository listing, preview, and creation stay admin-only so connecting an App does not expose private repository names or contents to every workspace member. The repository is the versioned source of the definition; it is not the agent's runtime working directory.
 
-The repository root must contain `multica-agent.yaml`:
+The repository root must contain a DTA `dingtalk-agent.json` using the `dingtalk-agent/project@1` protocol:
 
-```yaml
-apiVersion: multica.ai/v1alpha1
-kind: Agent
-metadata:
-  name: Repository agent
-  description: Reviews changes using repository-owned guidance.
-spec:
-  instructions: AGENT.md
-  skills:
-    - path: skills/code-review
-  compatibility:
-    providers: [claude, codex]
+```json
+{
+  "$schema": "dingtalk-agent/project@1",
+  "name": "repository-agent",
+  "dtaVersion": "^0.1.5",
+  "agent": {
+    "displayName": "Repository Agent",
+    "definition": "AGENT.md",
+    "skills": [
+      "dingtalk-basic-behavior",
+      "code-review"
+    ]
+  },
+  "workspaces": {}
+}
 ```
 
-Each skill path is a directory containing `SKILL.md` plus optional supporting files. Multica validates the manifest and materializes the selected commit into its database as a snapshot. Name, description, instructions, and repository skills are GitHub-managed; runtime, model, access, and additional workspace skills remain Multica-managed.
+The shared `dingtalk-basic-behavior` skill lives at `.agents/skills/dingtalk-basic-behavior`; each other declared skill lives at `skills/<name>`. Every skill directory contains a `SKILL.md` whose frontmatter `name` matches the declared name, plus optional supporting files.
+
+Multica validates the stable `project@1` fields and materializes the selected commit into its database as a snapshot. It accepts additional DTA extension fields and does not interpret workspace definitions. The display name is only the creation default; later syncs update the definition and repository skills while preserving the name and description edited in Multica. Runtime, model, access, and additional workspace skills also remain Multica-managed. GitHub import does not fall back to the legacy `multica-agent.yaml` format.
 
 Repository changes are **not applied automatically**. Use **Sync now** on the agent overview to resolve the configured ref and atomically replace the GitHub-managed snapshot. Existing runs keep the snapshot with which they were dispatched. Disconnecting the installation leaves the last valid snapshot runnable but disables further syncs.
 

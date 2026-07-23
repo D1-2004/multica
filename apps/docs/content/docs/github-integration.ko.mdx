@@ -58,9 +58,9 @@ PR을 머지하지 **않고** 닫으면 PR 카드의 상태만 `Closed`로 업�
 
 GitHub App에 **Contents: Read-only** 권한이 있고 App 자격 증명이 설정되어 있으면 **Agents → 에이전트 만들기 → GitHub에서 가져오기**를 사용할 수 있습니다. 저장소는 정의의 버전 관리 소스이며 런타임 작업 디렉터리가 아닙니다.
 
-루트의 `multica-agent.yaml`에서 `apiVersion: multica.ai/v1alpha1`, `kind: Agent`, 이름, 설명, 지침 파일, 스킬 디렉터리 및 선택적 호환 provider를 선언합니다. 각 스킬 디렉터리에는 `SKILL.md`와 선택적 보조 파일을 둡니다.
+루트에는 `dingtalk-agent/project@1` 형식의 DTA `dingtalk-agent.json`이 필요합니다. `agent.definition`은 정의 파일을 가리키고 `agent.skills`에는 `dingtalk-basic-behavior`를 명시적으로 포함해야 합니다. Basic은 `.agents/skills/dingtalk-basic-behavior`, 그 외 스킬은 `skills/<name>`에 두며 각 `SKILL.md`의 frontmatter `name`은 선언한 이름과 일치해야 합니다.
 
-Multica는 선택한 commit을 검증하고 데이터베이스 스냅샷으로 저장합니다. 이름, 설명, 지침 및 저장소 스킬은 GitHub에서 관리하고 런타임, 모델, 접근 권한 및 추가 스킬은 Multica에서 관리합니다. 변경 사항은 자동 적용되지 않으며 에이전트 Overview의 **지금 동기화**로 명시적으로 동기화합니다.
+Multica는 `project@1`의 안정 필드를 검증하고 추가 DTA 확장 필드와 `workspaces` 내부 정의는 해석하지 않습니다. 선택한 commit의 정의와 저장소 스킬을 스냅샷으로 저장하지만, 생성 후 Multica에서 편집한 이름과 설명은 동기화할 때 유지합니다. 기존 `multica-agent.yaml`로는 폴백하지 않습니다. 변경 사항은 자동 적용되지 않으며 에이전트 Overview의 **지금 동기화**로 명시적으로 동기화합니다.
 
 ## 연결 해제
 
