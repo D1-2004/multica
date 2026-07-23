@@ -285,6 +285,44 @@ func TestDigitalEmployeePromptRequiresDWSOutboundLifecycle(t *testing.T) {
 	}
 }
 
+func TestRouterDispatchPromptDelegatesAcknowledgementReactionToRouter(t *testing.T) {
+	c := DispatchCommand{
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+			Sender:       DispatchSender{OpenDingTalkID: "open-sender-trusted"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-latest", Text: "在吗"}},
+		}},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		CompletionCallback: &DispatchCompletionCallback{
+			URL: "/api/v1/dispatch-tasks/router-task-reaction/execution-result",
+		},
+	}
+
+	workflowPrompt := mustBuildDispatchPrompt(t, c).WorkflowPrompt
+	for _, required := range []string{
+		"mark the exact target message as read",
+		"Do not substitute a read-status query",
+		"dws chat message reply",
+		"success, partial success, blocked, or failed",
+	} {
+		if !strings.Contains(workflowPrompt, required) {
+			t.Errorf("Router dispatch workflow prompt missing %q: %q", required, workflowPrompt)
+		}
+	}
+	for _, forbidden := range []string{
+		"dws chat message add-emoji",
+		"dws chat message create-text-emotion",
+		"dws chat message add-text-emotion",
+		"acknowledge it with exactly one reaction",
+		"acknowledgement reaction",
+	} {
+		if strings.Contains(workflowPrompt, forbidden) {
+			t.Errorf("Router dispatch workflow prompt retained acknowledgement reaction %q: %q", forbidden, workflowPrompt)
+		}
+	}
+}
+
 func TestApplyDingTalkDispatchPromptReusesExistingTaskFields(t *testing.T) {
 	context := dispatchTaskContextForTest(t, DispatchCommand{
 		SchemaVersion: "2.0",
@@ -359,6 +397,45 @@ func TestApplyDingTalkDispatchPromptReusesExistingTaskFields(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestApplyRouterDispatchPromptDoesNotRestoreAgentAcknowledgementReaction(t *testing.T) {
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+			Sender:       DispatchSender{OpenDingTalkID: "open-sender-trusted"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-latest", Text: "在吗"}},
+		}},
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		CompletionCallback: &DispatchCompletionCallback{
+			URL: "/api/v1/dispatch-tasks/router-task-reaction/execution-result",
+		},
+	})
+	response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "处理消息"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	for _, required := range []string{
+		"mark the exact target message as read",
+		"dws chat message reply",
+		"处理消息",
+	} {
+		if !strings.Contains(response.HandoffNote, required) {
+			t.Errorf("Router task prompt missing %q: %s", required, response.HandoffNote)
+		}
+	}
+	for _, forbidden := range []string{
+		"dws chat message add-emoji",
+		"dws chat message create-text-emotion",
+		"dws chat message add-text-emotion",
+	} {
+		if strings.Contains(response.HandoffNote, forbidden) {
+			t.Errorf("Router task prompt restored acknowledgement reaction %q: %s", forbidden, response.HandoffNote)
+		}
 	}
 }
 
@@ -487,6 +564,9 @@ func dispatchTaskContextForTest(t *testing.T, command DispatchCommand) []byte {
 		"dispatch_event_data":     command.Event.Data,
 		"dispatch_surface":        command.Surface,
 		"dispatch_outbound":       command.Outbound,
+	}
+	if command.CompletionCallback != nil {
+		payload["completion_callback"] = command.CompletionCallback
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
