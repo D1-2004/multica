@@ -231,11 +231,11 @@ type dingtalkRawEvent struct {
 	StreamSource *protocol.DingTalkStreamSource `json:"stream_source,omitempty"`
 }
 
-// HTTPCallbackMessage is the trusted, normalized callback context projected
-// by Agent Message Router. It intentionally excludes user-controlled prompt
-// fields: Text is supplied separately by the dispatch input while every
-// routing and identity field comes from Gateway's server-side event model.
-type HTTPCallbackMessage struct {
+// AgentDispatchMessage is trusted DingTalk context projected by Agent Message
+// Router. It intentionally excludes transport credentials: robot callbacks add
+// their installation routing separately, while digital-employee dispatch uses
+// the authenticated endpoint namespace selected by the channel engine caller.
+type AgentDispatchMessage struct {
 	ConversationID    string
 	ConversationType  string
 	ConversationTitle string
@@ -254,6 +254,31 @@ type HTTPCallbackMessage struct {
 	DispatchContext      json.RawMessage
 }
 
+// HTTPCallbackMessage keeps the robot callback transport explicit at call
+// sites. Its installation is validated before normalization.
+type HTTPCallbackMessage AgentDispatchMessage
+
+var errAgentDispatchMessageIDRequired = errors.New("dingtalk: agent dispatch message id is required")
+
+type agentDispatchContextEncodingError struct {
+	cause error
+}
+
+func (e *agentDispatchContextEncodingError) Error() string {
+	return fmt.Sprintf("dingtalk: encode agent dispatch context: %v", e.cause)
+}
+
+func (e *agentDispatchContextEncodingError) Unwrap() error {
+	return e.cause
+}
+
+// InboundFromAgentDispatch normalizes trusted non-robot dispatch context. The
+// authenticated caller supplies the durable endpoint namespace separately via
+// engine.HandleOptions.InstallationOverride.
+func InboundFromAgentDispatch(in AgentDispatchMessage) (channel.InboundMessage, error) {
+	return inboundFromAgentDispatch(in, "", "")
+}
+
 // InboundFromHTTPCallback adapts a Router callback into the same channel
 // message consumed by DingTalk Stream. installationID is resolved from the
 // authenticated Agent + robot account before this function is called.
@@ -261,6 +286,21 @@ func InboundFromHTTPCallback(in HTTPCallbackMessage, clientID, installationID st
 	if strings.TrimSpace(clientID) == "" || strings.TrimSpace(installationID) == "" {
 		return channel.InboundMessage{}, errors.New("dingtalk: HTTP callback installation is required")
 	}
+	message, err := inboundFromAgentDispatch(AgentDispatchMessage(in), clientID, installationID)
+	if err == nil {
+		return message, nil
+	}
+	if errors.Is(err, errAgentDispatchMessageIDRequired) {
+		return channel.InboundMessage{}, errors.New("dingtalk: HTTP callback message id is required")
+	}
+	var encodingErr *agentDispatchContextEncodingError
+	if errors.As(err, &encodingErr) {
+		return channel.InboundMessage{}, fmt.Errorf("dingtalk: encode HTTP callback context: %w", encodingErr.cause)
+	}
+	return channel.InboundMessage{}, err
+}
+
+func inboundFromAgentDispatch(in AgentDispatchMessage, clientID, installationID string) (channel.InboundMessage, error) {
 	conversationType := "2"
 	if strings.EqualFold(strings.TrimSpace(in.ConversationType), "single") {
 		conversationType = "1"
@@ -284,7 +324,7 @@ func InboundFromHTTPCallback(in HTTPCallbackMessage, clientID, installationID st
 		}{Content: in.Text},
 	}, strings.TrimSpace(clientID), strings.TrimSpace(installationID), protocol.DingTalkStreamSource{})
 	if !ok {
-		return channel.InboundMessage{}, errors.New("dingtalk: HTTP callback message id is required")
+		return channel.InboundMessage{}, errAgentDispatchMessageIDRequired
 	}
 	raw, err := decodeDingTalkRaw(msg)
 	if err != nil {
@@ -296,7 +336,7 @@ func InboundFromHTTPCallback(in HTTPCallbackMessage, clientID, installationID st
 	raw.DispatchContext = append(json.RawMessage(nil), in.DispatchContext...)
 	msg.Raw, err = json.Marshal(raw)
 	if err != nil {
-		return channel.InboundMessage{}, fmt.Errorf("dingtalk: encode HTTP callback context: %w", err)
+		return channel.InboundMessage{}, &agentDispatchContextEncodingError{cause: err}
 	}
 	return msg, nil
 }
