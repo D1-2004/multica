@@ -31,6 +31,7 @@ type DTAProject struct {
 type DTAProjectAgent struct {
 	DisplayName string
 	Definition  string
+	SkillsRoot  string
 	Skills      []string
 }
 
@@ -45,6 +46,7 @@ type dtaProjectDocument struct {
 type dtaProjectAgentDocument struct {
 	DisplayName json.RawMessage `json:"displayName"`
 	Definition  string          `json:"definition"`
+	SkillsRoot  string          `json:"skillsRoot"`
 	Skills      []string        `json:"skills"`
 }
 
@@ -93,6 +95,9 @@ func ParseDTAProject(content []byte) (DTAProject, error) {
 	if err := validateRepositoryPath(agentDocument.Definition, "agent.definition"); err != nil {
 		return DTAProject{}, err
 	}
+	if err := validateRepositoryPath(agentDocument.SkillsRoot, "agent.skillsRoot"); err != nil {
+		return DTAProject{}, err
+	}
 	if len(agentDocument.DisplayName) > 0 &&
 		(displayName == "" ||
 			utf8.RuneCountInString(displayName) > MaxDTADisplayNameLength ||
@@ -139,6 +144,7 @@ func ParseDTAProject(content []byte) (DTAProject, error) {
 		Agent: DTAProjectAgent{
 			DisplayName: displayName,
 			Definition:  agentDocument.Definition,
+			SkillsRoot:  agentDocument.SkillsRoot,
 			Skills:      append([]string(nil), agentDocument.Skills...),
 		},
 	}, nil
@@ -174,7 +180,7 @@ func CompileDTAProject(ctx context.Context, client RepositoryClient, source Sour
 	}
 	expectedSkillNames := make(map[string]string, len(project.Agent.Skills))
 	for _, skillName := range project.Agent.Skills {
-		skillPath := dtaSkillPath(skillName)
+		skillPath := dtaSkillPath(project.Agent.SkillsRoot, skillName)
 		manifest.Spec.Skills = append(manifest.Spec.Skills, ManifestSkill{Path: skillPath})
 		expectedSkillNames[skillPath] = skillName
 	}
@@ -189,9 +195,6 @@ func CompileDTAProject(ctx context.Context, client RepositoryClient, source Sour
 	)
 }
 
-func dtaSkillPath(skillName string) string {
-	if skillName == DTABasicSkill {
-		return ".agents/skills/" + skillName
-	}
-	return "skills/" + skillName
+func dtaSkillPath(skillsRoot, skillName string) string {
+	return skillsRoot + "/" + skillName
 }

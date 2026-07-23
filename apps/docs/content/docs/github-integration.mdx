@@ -80,7 +80,8 @@ The repository root must contain a DTA `dingtalk-agent.json` using the `dingtalk
   "dtaVersion": "^0.1.5",
   "agent": {
     "displayName": "Repository Agent",
-    "definition": "AGENT.md",
+    "definition": "agent/AGENTS.md",
+    "skillsRoot": "agent/skills",
     "skills": [
       "dingtalk-basic-behavior",
       "code-review"
@@ -90,7 +91,7 @@ The repository root must contain a DTA `dingtalk-agent.json` using the `dingtalk
 }
 ```
 
-The shared `dingtalk-basic-behavior` skill lives at `.agents/skills/dingtalk-basic-behavior`; each other declared skill lives at `skills/<name>`. Every skill directory contains a `SKILL.md` whose frontmatter `name` matches the declared name, plus optional supporting files.
+`agent.skillsRoot` is required. Every declared skill, including `dingtalk-basic-behavior`, lives at `<skillsRoot>/<name>`. In this example the paths are `agent/skills/dingtalk-basic-behavior` and `agent/skills/code-review`. Every skill directory contains a `SKILL.md` whose frontmatter `name` matches the declared name, plus optional supporting files. Root `AGENTS.md` may contain repository development rules; only the file selected by `agent.definition` becomes the imported Agent definition.
 
 Multica validates the stable `project@1` fields and materializes the selected commit into its database as a snapshot. It accepts additional DTA extension fields and does not interpret workspace definitions. The display name is only the creation default; later syncs update the definition and repository skills while preserving the name and description edited in Multica. Runtime, model, access, and additional workspace skills also remain Multica-managed. GitHub import does not fall back to the legacy `multica-agent.yaml` format.
 

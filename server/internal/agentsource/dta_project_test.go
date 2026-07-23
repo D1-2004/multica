@@ -14,7 +14,8 @@ const validDTAProject = `{
   "dtaVersion": "^0.1.5",
   "agent": {
     "displayName": "FDE Development Manager",
-    "definition": "AGENT.md",
+    "definition": "agent/AGENTS.md",
+    "skillsRoot": "agent/skills",
     "skills": [
       "dingtalk-basic-behavior",
       "multica-development-manager"
@@ -34,8 +35,8 @@ func TestParseDTAProjectValidatesStableCoreAndIgnoresExtensions(t *testing.T) {
 	)
 	content = strings.Replace(
 		content,
-		`"definition": "AGENT.md",`,
-		`"definition": "AGENT.md",
+		`"definition": "agent/AGENTS.md",`,
+		`"definition": "agent/AGENTS.md",
     "futureAgentField": true,`,
 		1,
 	)
@@ -48,7 +49,8 @@ func TestParseDTAProjectValidatesStableCoreAndIgnoresExtensions(t *testing.T) {
 		t.Fatalf("unexpected project: %+v", project)
 	}
 	if project.Agent.DisplayName != "FDE Development Manager" ||
-		project.Agent.Definition != "AGENT.md" ||
+		project.Agent.Definition != "agent/AGENTS.md" ||
+		project.Agent.SkillsRoot != "agent/skills" ||
 		len(project.Agent.Skills) != 2 {
 		t.Fatalf("unexpected agent: %+v", project.Agent)
 	}
@@ -77,7 +79,22 @@ func TestParseDTAProjectRejectsInvalidStableCore(t *testing.T) {
 		},
 		{
 			name:    "unsafe definition",
-			content: strings.Replace(validDTAProject, "AGENT.md", "../AGENT.md", 1),
+			content: strings.Replace(validDTAProject, "agent/AGENTS.md", "../AGENTS.md", 1),
+			want:    "unsafe path",
+		},
+		{
+			name: "missing skills root",
+			content: strings.Replace(
+				validDTAProject,
+				`    "skillsRoot": "agent/skills",`+"\n",
+				"",
+				1,
+			),
+			want: "agent.skillsRoot",
+		},
+		{
+			name:    "unsafe skills root",
+			content: strings.Replace(validDTAProject, `"agent/skills"`, `"../skills"`, 1),
 			want:    "unsafe path",
 		},
 		{
@@ -120,10 +137,10 @@ func TestCompileDTAProjectMapsDefinitionAndSkillLocations(t *testing.T) {
 	repository := fakeRepository{
 		tree: githubapp.Tree{Entries: []githubapp.TreeEntry{
 			{Path: DTAProjectPath, Type: "blob", Mode: "100644", SHA: "project", Size: int64(len(validDTAProject))},
-			{Path: "AGENT.md", Type: "blob", Mode: "100644", SHA: "definition", Size: 12},
-			{Path: ".agents/skills/dingtalk-basic-behavior/SKILL.md", Type: "blob", Mode: "100644", SHA: "basic", Size: 80},
-			{Path: "skills/multica-development-manager/SKILL.md", Type: "blob", Mode: "100644", SHA: "role", Size: 80},
-			{Path: "skills/multica-development-manager/references/process.md", Type: "blob", Mode: "100644", SHA: "reference", Size: 20},
+			{Path: "agent/AGENTS.md", Type: "blob", Mode: "100644", SHA: "definition", Size: 12},
+			{Path: "agent/skills/dingtalk-basic-behavior/SKILL.md", Type: "blob", Mode: "100644", SHA: "basic", Size: 80},
+			{Path: "agent/skills/multica-development-manager/SKILL.md", Type: "blob", Mode: "100644", SHA: "role", Size: 80},
+			{Path: "agent/skills/multica-development-manager/references/process.md", Type: "blob", Mode: "100644", SHA: "reference", Size: 20},
 		}},
 		blobs: map[string][]byte{
 			"project":    []byte(validDTAProject),
@@ -145,7 +162,7 @@ func TestCompileDTAProjectMapsDefinitionAndSkillLocations(t *testing.T) {
 	if bundle.Manifest.Metadata.Name != "FDE Development Manager" {
 		t.Fatalf("name = %q", bundle.Manifest.Metadata.Name)
 	}
-	if bundle.Manifest.Spec.Instructions != "AGENT.md" || bundle.Instructions != "Manage work" {
+	if bundle.Manifest.Spec.Instructions != "agent/AGENTS.md" || bundle.Instructions != "Manage work" {
 		t.Fatalf("unexpected instructions: %+v", bundle)
 	}
 	if len(bundle.Manifest.Spec.Compatibility.Providers) != 0 {
@@ -154,8 +171,8 @@ func TestCompileDTAProjectMapsDefinitionAndSkillLocations(t *testing.T) {
 	if len(bundle.Skills) != 2 {
 		t.Fatalf("skills = %+v", bundle.Skills)
 	}
-	if bundle.Skills[0].SourcePath != ".agents/skills/dingtalk-basic-behavior" ||
-		bundle.Skills[1].SourcePath != "skills/multica-development-manager" {
+	if bundle.Skills[0].SourcePath != "agent/skills/dingtalk-basic-behavior" ||
+		bundle.Skills[1].SourcePath != "agent/skills/multica-development-manager" {
 		t.Fatalf("unexpected skill paths: %+v", bundle.Skills)
 	}
 	if len(bundle.Skills[1].Files) != 1 || bundle.Skills[1].Files[0].Path != "references/process.md" {
@@ -173,8 +190,8 @@ func TestCompileDTAProjectRequiresDeclaredSkillNameToMatchFrontmatter(t *testing
 	repository := fakeRepository{
 		tree: githubapp.Tree{Entries: []githubapp.TreeEntry{
 			{Path: DTAProjectPath, Type: "blob", Mode: "100644", SHA: "project", Size: int64(len(project))},
-			{Path: "AGENT.md", Type: "blob", Mode: "100644", SHA: "definition", Size: 12},
-			{Path: ".agents/skills/dingtalk-basic-behavior/SKILL.md", Type: "blob", Mode: "100644", SHA: "basic", Size: 80},
+			{Path: "agent/AGENTS.md", Type: "blob", Mode: "100644", SHA: "definition", Size: 12},
+			{Path: "agent/skills/dingtalk-basic-behavior/SKILL.md", Type: "blob", Mode: "100644", SHA: "basic", Size: 80},
 		}},
 		blobs: map[string][]byte{
 			"project":    []byte(project),

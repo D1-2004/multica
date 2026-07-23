@@ -4,16 +4,16 @@
 > 状态：已完成
 > 创建日期：2026-07-22
 > 计划 ID：20260722-dta-github-agent-project-import
-> 最后更新时间：2026-07-23 16:44 +0800
+> 最后更新时间：2026-07-23 18:15 +0800
 > 当前分支：`codex/dta-agent-format-sync`
 > 目标执行分支：`codex/dta-agent-format-sync`
 > 基线 Commit：`origin/develop@eb8b12677055cc7a7dd2c2680a0c9a8d28149e95`
 > 原始工作区：`/Users/fanqi/test/code/ding-fde-agent/dt-fde-multica`
 > Worktree 路径：不使用
 > Worktree 来源：不使用
-> 交付状态：本地已提交（见 Git 历史）
+> 交付状态：DTA `skillsRoot` 适配已完成并通过范围内验证，准备推送与重新预发
 > 收尾状态：不适用
-> 当前里程碑：实现与范围内验证完成
+> 当前里程碑：DTA 单一源码布局适配完成
 
 ## 背景与现状证据
 
@@ -55,7 +55,8 @@ Multica 接受的最小合法输入如下：
   "dtaVersion": "^0.1.5",
   "agent": {
     "displayName": "FDE Development Manager",
-    "definition": "AGENT.md",
+    "definition": "agent/AGENTS.md",
+    "skillsRoot": "agent/skills",
     "skills": [
       "dingtalk-basic-behavior",
       "multica-development-manager"
@@ -83,9 +84,9 @@ Multica 接受的最小合法输入如下：
 | `name` | Project 机器名及 Agent 名称 fallback | `project@1` 内保持稳定机器名语义 |
 | `agent.displayName` | 新建 Agent 的默认展示名称 | 可选；存在时优先于 `name` |
 | `agent.definition` | 读取 Agent instructions | 仓库内安全相对路径、UTF-8 文本、满足大小限制 |
+| `agent.skillsRoot` | 所有声明 Skill 的单一源码根 | 必填、安全仓库相对路径 |
 | `agent.skills[]` | 声明来源 Skill 身份集合 | 非空、去重、显式包含 Basic |
-| `dingtalk-basic-behavior` | Basic Skill 源目录 | `project@1` 固定读取 `.agents/skills/dingtalk-basic-behavior/` |
-| 其他 Skill 名 | 岗位 Skill 源目录 | `project@1` 固定读取 `skills/<name>/` |
+| 所有 Skill 名 | Skill 源目录 | 固定读取 `<agent.skillsRoot>/<name>/` |
 | 每个 `SKILL.md` | Skill name/description/content | 唯一存在；frontmatter name 与声明名一致 |
 
 ### 4. 可以变化或被忽略的内容
@@ -119,7 +120,7 @@ Multica 接受的最小合法输入如下：
 
 ### 2. 只严格校验消费字段，不复制整个 DTA strict schema
 
-- 必须严格验证 `$schema`、`name`、`dtaVersion`、`agent.definition`、`agent.skills` 及其类型、必填性和安全约束。
+- 必须严格验证 `$schema`、`name`、`dtaVersion`、`agent.definition`、`agent.skillsRoot`、`agent.skills` 及其类型、必填性和安全约束。
 - `agent.skills` 必须非空、名称合法且去重，并显式包含 `dingtalk-basic-behavior`。
 - `workspaces` 必须存在且为对象，但内部字段由 Multica 忽略；`agentPlatform`、`multicaEndpoint` 和其他非核心可选字段不参与编译。
 - 不使用全局 `DisallowUnknownFields` 拒绝 DTA 新增的非核心字段；核心字段拼写错误仍会因真正的必填字段缺失或类型错误而失败。
@@ -130,8 +131,7 @@ Multica 接受的最小合法输入如下：
 - Agent 默认名称：`agent.displayName ?? name`。
 - Agent description：DTA 当前没有对应字段，新建时为空；不从 Definition 标题或正文猜测。
 - Instructions：读取 `agent.definition` 指向的完整文本。
-- Basic Skill：读取 `.agents/skills/dingtalk-basic-behavior/`。
-- 其他 Skill：读取 `skills/<name>/`。
+- Basic 与岗位 Skill：统一读取 `<agent.skillsRoot>/<name>/`。
 - `dtaVersion`、`workspaces`、`agentPlatform`、`multicaEndpoint` 不影响 runtime provider 或权限。
 - 删除旧 YAML `spec.compatibility.providers` 只发生在 GitHub DTA 导入路径；managed YAML provider compatibility 保持原样。
 
@@ -226,6 +226,7 @@ Multica 接受的最小合法输入如下：
 | GitHub 导入链路切换 | 已完成 |  | `go test ./internal/handler -count=1`; handler 接线静态检查 | preview/create 与 sync 均调用 DTA 入口；新 source 显式保存 `dingtalk-agent.json` |
 | 前端和文档 | 已完成 |  | core/views typecheck；目标 Vitest；四份 locale `jq empty` | API fallback、四语种入口文案和四份 GitHub 导入文档已更新 |
 | 完成验证 | 已完成 |  | `git diff --check`; 零变更目录检查 | migrations、sqlc、managedagent、FDE onboarding 均无 diff |
+| DTA 单一源码布局增量 | 已完成 |  | `go test -count=1 ./internal/agentsource ./internal/handler ./internal/managedagent`; `go vet ./internal/agentsource ./internal/handler` | `agent.skillsRoot` 必填，全部 Skill 从统一根目录编译；不保留旧路径 fallback |
 
 ## 验证策略
 
@@ -264,9 +265,9 @@ git diff --check
 ## 发布边界
 
 - 当前计划已获用户确认并完成本地实现。
-- Push：本地 commit 后告知“已提交，准备 push”；用户明确同意后直接执行。
-- PR / 合并 / 部署 / 发布：未授权，除非用户另行明确确认。
-- 不修改 Aone 环境变量，不触发预发或正式流水线，不访问或写入 GitHub/Gitee source。
+- 用户已明确授权本次实现完成后 push 并部署预发。
+- 只重新提交现有 CR 到预发流水线并停在人工预发验证，不完成验证、不发布正式环境。
+- 不修改 Aone 环境变量和数据库，不触发正式流水线。
 
 ## 计划变更记录
 
@@ -275,12 +276,13 @@ git diff --check
 | 2026-07-22 | 初版同时迁移 GitHub import 与 FDE managed source，并包含数据库默认值迁移 | 希望两条入口统一使用 DTA Project | 是 |
 | 2026-07-23 | 范围收敛为只切换无人使用的 GitHub import；managed YAML、FDE onboarding、共享数据库和远端同步全部保持不变 | 预发/正式共享数据库，managed source 在线持续同步；用户明确本次先不处理初始化模板 | 是，已确认 |
 | 2026-07-23 | 将稳定边界从“完整 DTA strict schema”调整为“版本化核心字段 adapter”；兼容新增非核心字段，不兼容变化升级 `$schema` | DTA 仍在开发，Multica 只应依赖稳定的 Agent/Skill 语义 | 是，已确认 |
+| 2026-07-23 | DTA `main` 在 `project@1` 新增 `agent.skillsRoot` 并把新项目切到 `agent/AGENTS.md + agent/skills` 单一源码布局；Multica 将 `skillsRoot` 设为 GitHub 导入必填且不保留旧路径 fallback | 用户确认当前不存在旧 GitHub Agent，无需兼容旧布局 | 是，已确认 |
 
 ## 最终验证结果
 
 | 验收项 | 验证命令或检查 | 结果 | 证据摘要 |
 | --- | --- | --- | --- |
-| GitHub import 接受 DTA `project@1` | `go test ./internal/agentsource ./internal/handler -count=1` | 通过 | 合法 Project 编译出 Definition、Basic 与岗位 Skill；DTA 校验错误返回 422 |
+| GitHub import 接受 DTA `project@1` 单一源码布局 | `go test -count=1 ./internal/agentsource ./internal/handler ./internal/managedagent` | 通过 | `agent.skillsRoot` 必填；Definition、Basic 与岗位 Skill 均从新布局编译，DTA 校验错误返回 422 |
 | GitHub import 不再要求 YAML | `TestCompileDTAProjectDoesNotFallBackToLegacyManifest`; handler 接线检查 | 通过 | 仅有旧 YAML 时明确缺少 `dingtalk-agent.json`；preview/create/sync 全部调用 DTA 入口 |
 | managed YAML/CompileFS 无回归 | `go test ./internal/agentsource ./internal/managedagent -count=1` | 通过 | `CompileFS()`、managed service 和旧 `ManifestPath` 保持原实现 |
 | 数据库与 migration 无变更 | `git diff --name-only -- server/migrations server/pkg/db/generated` | 通过 | 无输出；没有 migration、sqlc 或数据更新 |
@@ -291,10 +293,10 @@ git diff --check
 
 - 原始工作区与分支：`/Users/fanqi/test/code/ding-fde-agent/dt-fde-multica`，`codex/dta-agent-format-sync`
 - 最终工作区与分支：`/Users/fanqi/test/code/ding-fde-agent/dt-fde-multica`，`codex/dta-agent-format-sync`
-- 交付状态：本地已提交；未 push、未创建 PR、未部署
+- 交付状态：增量实现与范围内验证完成，准备提交、push 并重新部署预发
 - Worktree 收尾：不适用
-- 当前未提交改动：无
-- 未执行的验证：未连接真实 GitHub installation 做端到端导入；未发布到预发或正式环境
+- 当前未提交改动：本次 `skillsRoot` 增量，随实现提交
+- 未执行的验证：待新提交部署后使用真实 GitHub installation 做预发导入；不发布正式环境
 
 ## 遗留风险
 
