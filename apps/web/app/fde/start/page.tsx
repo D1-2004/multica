@@ -1,15 +1,27 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
+import { completeOnboarding } from "@multica/core/onboarding";
+import { paths } from "@multica/core/paths";
 import type {
   BeginDingTalkInstallResponse,
   FDEOnboardingState,
   ProvisionFDEOnboardingResponse,
 } from "@multica/core/types";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@multica/ui/components/ui/alert-dialog";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   Card,
@@ -19,14 +31,15 @@ import {
   CardTitle,
 } from "@multica/ui/components/ui/card";
 import { Input } from "@multica/ui/components/ui/input";
-import { closeDingTalkPage, openDingTalkInstallPage, replaceCurrentPage } from "./navigation";
+import { openDingTalkInstallPage, replaceCurrentPage } from "./navigation";
 
 const oauthStateKey = "multica_fde_oauth_state";
 const oauthCompleteKey = "multica_fde_dingtalk_authenticated";
 
-type Stage = "auth" | "loading" | "create" | "provision" | "install" | "done" | "error";
+type Stage = "auth" | "loading" | "create" | "provision" | "install" | "finalize" | "done" | "error";
 
 function FDEStartContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const setUser = useAuthStore((state) => state.setUser);
   const [stage, setStage] = useState<Stage>("auth");
@@ -35,6 +48,7 @@ function FDEStartContent() {
   const [workspaceName, setWorkspaceName] = useState("");
   const [result, setResult] = useState<ProvisionFDEOnboardingResponse | null>(null);
   const [install, setInstall] = useState<BeginDingTalkInstallResponse | null>(null);
+  const [confirmationOpen, setConfirmationOpen] = useState(false);
   const booted = useRef(false);
   const openedInstall = useRef(false);
 
@@ -43,6 +57,16 @@ function FDEStartContent() {
     setStage("error");
   }, []);
 
+  const finishOnboarding = useCallback(async (response: ProvisionFDEOnboardingResponse) => {
+    setStage("finalize");
+    try {
+      await completeOnboarding("fde", response.workspace.id);
+      setStage("done");
+    } catch {
+      fail("工作区和机器人已经创建，但初始化状态更新失败，请重试");
+    }
+  }, [fail]);
+
   const provision = useCallback(async (workspaceNameInput: string) => {
     setStage("provision");
     setError("");
@@ -50,7 +74,7 @@ function FDEStartContent() {
       const response = await api.provisionFDEOnboarding({ workspace_name: workspaceNameInput });
       setResult(response);
       if (response.install_complete) {
-        setStage("done");
+        await finishOnboarding(response);
         return;
       }
       if (!response.install) throw new Error("未能启动钉钉机器人创建流程");
@@ -59,7 +83,7 @@ function FDEStartContent() {
     } catch (cause) {
       fail(cause instanceof Error ? cause.message : "开通失败，请重试");
     }
-  }, [fail]);
+  }, [fail, finishOnboarding]);
 
   useEffect(() => {
     if (booted.current) return;
@@ -153,7 +177,7 @@ function FDEStartContent() {
         const status = await api.getDingTalkInstallStatus(result.workspace.id, install.session_id);
         if (status.status === "success") {
           window.clearInterval(interval);
-          setStage("done");
+          await finishOnboarding(result);
         } else if (status.status === "error") {
           window.clearInterval(interval);
           fail(status.error_message || "钉钉机器人创建失败，请重试");
@@ -163,7 +187,7 @@ function FDEStartContent() {
       }
     }, Math.max(2, install.poll_interval_seconds) * 1000);
     return () => window.clearInterval(interval);
-  }, [fail, install, result, stage]);
+  }, [fail, finishOnboarding, install, result, stage]);
 
   useEffect(() => {
     if (stage === "done") sessionStorage.removeItem(oauthCompleteKey);
@@ -171,8 +195,52 @@ function FDEStartContent() {
 
   const submit = () => {
     if (!workspaceName.trim()) return;
-    void provision(workspaceName.trim());
+    setConfirmationOpen(true);
   };
+
+  const confirmCreation = () => {
+    const name = workspaceName.trim();
+    if (!name) return;
+    setConfirmationOpen(false);
+    void provision(name);
+  };
+
+  const enterWorkspace = () => {
+    if (!result) return;
+    router.push(paths.workspace(result.workspace.slug).issues());
+  };
+
+  const loadingText = stage === "provision"
+    ? "正在准备工作区和智能体…"
+    : stage === "finalize"
+      ? "正在完成初始化…"
+      : stage === "auth"
+        ? "正在验证钉钉身份…"
+        : "正在加载开通状态…";
+
+  const confirmationWorkspaceName = workspaceName.trim();
+
+  const createConfirmation = (
+    <AlertDialog open={confirmationOpen} onOpenChange={setConfirmationOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>确认创建 FDE 工作区？</AlertDialogTitle>
+          <AlertDialogDescription className="space-y-3 text-left text-pretty">
+            <span className="block">
+              确认后，系统将创建新的工作区“{confirmationWorkspaceName}”，并配置 FDE 智能体和云端运行时。随后会打开钉钉开放平台，请继续完成机器人的创建与发布。
+            </span>
+            <span className="block">
+              移动端完成后可直接进入机器人会话；PC 端完成后请返回本页面查看结果。已有工作区不会被修改。
+            </span>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>取消</AlertDialogCancel>
+          <AlertDialogAction onClick={confirmCreation}>确认创建并前往钉钉</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 
   return (
     <main className="min-h-dvh bg-gradient-to-b from-sky-50 to-white px-4 py-8 text-slate-950 sm:flex sm:items-center sm:justify-center">
@@ -180,11 +248,11 @@ function FDEStartContent() {
         <CardHeader className="space-y-3 text-center">
           <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-sky-600 text-lg font-bold text-white">FDE</div>
           <CardTitle className="text-2xl">{stage === "done" ? "FDE 开发者工作空间已就绪" : "创建专属 FDE 开发者工作空间"}</CardTitle>
-          <CardDescription>{stage === "done" ? "本次 FDE 初始化已经完成。" : "我们将新建一个独立工作区，并自动创建 FDE 智能体、绑定钉钉机器人。不会修改你已有的工作区。"}</CardDescription>
+          <CardDescription>{stage === "done" ? "工作区、FDE 智能体和钉钉机器人均已完成配置。" : "我们将新建一个独立工作区，并自动创建 FDE 智能体、绑定钉钉机器人。不会修改你已有的工作区。"}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-          {(["auth", "loading", "provision"] as Stage[]).includes(stage) && (
-            <StatusLoading text={stage === "provision" ? "正在准备工作区和智能体…" : stage === "auth" ? "正在验证钉钉身份…" : "正在加载开通状态…"} />
+          {(["auth", "loading", "provision", "finalize"] as Stage[]).includes(stage) && (
+            <StatusLoading text={loadingText} />
           )}
 
           {stage === "create" && (
@@ -215,13 +283,14 @@ function FDEStartContent() {
                 </div>
                 <Button className="h-12 w-full" disabled={!workspaceName.trim()} onClick={submit}>创建并继续</Button>
               </section>
+              {createConfirmation}
             </div>
           )}
 
           {stage === "install" && install && (
             <div className="space-y-4 text-center">
               <StatusLoading text="等待钉钉机器人创建完成…" />
-              <p className="text-sm text-slate-600">如果钉钉创建页面没有自动打开，请点击下面的按钮。</p>
+              <p className="text-sm text-slate-600">请在钉钉开放平台完成机器人的创建与发布。如果页面没有自动打开，请点击下方按钮。PC 端完成后请返回本页面，本页会自动检测创建结果。</p>
               <Button className="h-12 w-full" onClick={() => void openDingTalkInstallPage(install.qr_code_url)}>前往创建钉钉机器人</Button>
             </div>
           )}
@@ -230,14 +299,21 @@ function FDEStartContent() {
             <div className="space-y-5 py-4 text-center">
               <CheckCircle2 className="mx-auto size-14 text-emerald-500" />
               <div>
-                <h2 className="text-xl font-semibold">初始化已完成</h2>
-                <p className="mt-2 text-sm text-slate-600">FDE 智能体和钉钉机器人已完成绑定。</p>
+                <h2 className="text-xl font-semibold">FDE 工作区和钉钉机器人已准备就绪</h2>
+                <p className="mt-2 text-sm text-slate-600">已为你完成以下配置：</p>
               </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left">
-                <p className="text-xs text-slate-500">专属 FDE 开发者工作空间</p>
-                <p className="mt-1 font-medium text-slate-900">{result.workspace.name}</p>
+              <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-4 text-left">
+                <div>
+                  <p className="text-xs text-slate-500">工作区</p>
+                  <p className="mt-1 font-medium text-slate-900">{result.workspace.name}</p>
+                </div>
+                <ul className="space-y-2 text-sm text-slate-700">
+                  <li className="flex gap-2"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />创建 FDE 智能体和云端运行时</li>
+                  <li className="flex gap-2"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />创建并绑定钉钉机器人</li>
+                </ul>
               </div>
-              <Button className="h-12 w-full" onClick={() => void closeDingTalkPage()}>返回钉钉</Button>
+              <p className="text-sm text-slate-600">现在你可以在钉钉中向机器人发送消息，也可以进入工作区管理 issue、智能体和运行时。</p>
+              <Button className="h-12 w-full" onClick={enterWorkspace}>进入工作区</Button>
             </div>
           )}
 

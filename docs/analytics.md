@@ -497,7 +497,7 @@ which exit the user took.
 | Property | Type | Description |
 |---|---|---|
 | `workspace_id` | string (UUID) | Present for workspace-linked onboarding completions. |
-| `completion_path` | string | One of `full` / `runtime_skipped` / `cloud_waitlist` / `skip_existing` / `invite_accept` / `unknown`. See below. |
+| `completion_path` | string | One of `full` / `runtime_skipped` / `cloud_waitlist` / `skip_existing` / `invite_accept` / `fde` / `unknown`. See below. |
 | `joined_cloud_waitlist` | bool | Derived from `user.cloud_waitlist_email`. Orthogonal to `completion_path` — a user may submit the waitlist form and still pick CLI. |
 
 Person properties set with `$set_once`:
@@ -513,6 +513,7 @@ Person properties set with `$set_once`:
 - `cloud_waitlist` — Submitted the cloud waitlist form and skipped Step 3.
 - `skip_existing` — "I've done this before" from Welcome. The user already had a workspace.
 - `invite_accept` — Accepted at least one workspace invitation.
+- `fde` — Completed through the DingTalk FDE quick-start flow.
 - `unknown` — Legacy fallback when the client didn't send a path. Should stay near zero after rollout.
 
 ### `cloud_waitlist_joined`
