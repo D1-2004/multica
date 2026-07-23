@@ -2946,7 +2946,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		// 5xx so the daemon retries the terminal callback and the completion —
 		// including the single chat outcome row — lands exactly once (MUL-4351).
 		slog.Warn("complete task failed", "task_id", taskID, "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "complete task persistence failed")
 		return
 	}
 
@@ -3545,7 +3545,10 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 	task, err := h.TaskService.FailTask(r.Context(), parseUUID(taskID), req.Error, req.SessionID, req.WorkDir, req.FailureReason)
 	if err != nil {
 		slog.Warn("fail task failed", "task_id", taskID, "error", err)
-		writeError(w, http.StatusBadRequest, err.Error())
+		// Terminal persistence now includes the completion Outbox in the same
+		// transaction. A database/CAS failure is transient infrastructure, not
+		// a bad daemon report; 5xx keeps it in the daemon retry queue.
+		writeError(w, http.StatusInternalServerError, "fail task persistence failed")
 		return
 	}
 	if h.ManagedAgent != nil {

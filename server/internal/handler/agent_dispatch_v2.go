@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -78,15 +79,22 @@ type DispatchOutbound struct {
 	ReplyTo string `json:"replyTo,omitempty"`
 }
 
+type DispatchCompletionCallback struct {
+	URL    string `json:"url"`
+	Target string `json:"-"`
+}
+
 type DispatchCommand struct {
-	SchemaVersion    string                        `json:"schemaVersion"`
-	AgentID          string                        `json:"agentId,omitempty"`
-	Continuation     *AgentDispatchContinuation    `json:"continuation"`
-	Source           DispatchSource                `json:"source"`
-	Event            DispatchEvent                 `json:"event"`
-	Surface          DispatchSurface               `json:"surface"`
-	Outbound         DispatchOutbound              `json:"outbound"`
-	ExternalIdentity AgentDispatchExternalIdentity `json:"externalIdentity"`
+	SchemaVersion      string                        `json:"schemaVersion"`
+	AgentID            string                        `json:"agentId,omitempty"`
+	Continuation       *AgentDispatchContinuation    `json:"continuation"`
+	Source             DispatchSource                `json:"source"`
+	Event              DispatchEvent                 `json:"event"`
+	Surface            DispatchSurface               `json:"surface"`
+	Outbound           DispatchOutbound              `json:"outbound"`
+	ExternalIdentity   AgentDispatchExternalIdentity `json:"externalIdentity"`
+	CompletionCallback *DispatchCompletionCallback   `json:"completionCallback,omitempty"`
+	DispatchEndpointID string                        `json:"-"`
 }
 
 type DispatchPrompt struct {
@@ -134,6 +142,8 @@ func (b *DispatchPromptBuilder) Build(c DispatchCommand) (DispatchPrompt, error)
 }
 
 var defaultDispatchPromptBuilder = NewDispatchPromptBuilder()
+var routerCompletionCallbackPattern = regexp.MustCompile(`^/api/v1/dispatch-tasks/[A-Za-z0-9_-]{1,128}/execution-result$`)
+var routerCompletionTargetPattern = regexp.MustCompile(`^router-target:v1:sha256:[a-f0-9]{64}$`)
 
 func (c DispatchCommand) validate() error {
 	if c.SchemaVersion != "2.0" {
@@ -167,6 +177,14 @@ func (c DispatchCommand) validate() error {
 	}
 	if !validDispatchContextToken(c.ExternalIdentity.ContextToken) {
 		return errors.New("externalIdentity.contextToken is invalid")
+	}
+	// Callback presence alone selects durable terminal delivery. An absent
+	// callback keeps the direct Streaming and rolling legacy behavior; source
+	// type and outbound mode do not select completion semantics.
+	if c.CompletionCallback != nil {
+		if !routerCompletionCallbackPattern.MatchString(c.CompletionCallback.URL) {
+			return errors.New("completionCallback.url is invalid")
+		}
 	}
 	if c.Continuation == nil && strings.TrimSpace(c.AgentID) == "" {
 		return errors.New("agentId is required for first dispatch")
@@ -254,13 +272,14 @@ func buildDingTalkDWSWorkflowPrompt(c DispatchCommand) string {
 }
 
 type persistedDispatchContext struct {
-	SchemaVersion string            `json:"dispatch_schema_version"`
-	Source        DispatchSource    `json:"dispatch_source"`
-	Domain        string            `json:"dispatch_domain"`
-	Type          string            `json:"dispatch_type"`
-	EventData     DispatchEventData `json:"dispatch_event_data"`
-	Surface       DispatchSurface   `json:"dispatch_surface"`
-	Outbound      DispatchOutbound  `json:"dispatch_outbound"`
+	SchemaVersion      string                      `json:"dispatch_schema_version"`
+	Source             DispatchSource              `json:"dispatch_source"`
+	Domain             string                      `json:"dispatch_domain"`
+	Type               string                      `json:"dispatch_type"`
+	EventData          DispatchEventData           `json:"dispatch_event_data"`
+	Surface            DispatchSurface             `json:"dispatch_surface"`
+	Outbound           DispatchOutbound            `json:"dispatch_outbound"`
+	CompletionCallback *DispatchCompletionCallback `json:"completion_callback,omitempty"`
 }
 
 // applyDingTalkDispatchPromptToExistingTaskFields keeps the daemon claim wire

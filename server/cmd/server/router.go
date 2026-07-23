@@ -303,6 +303,20 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.Metrics = opts.BusinessMetrics
 	var agentMessageRouterClient *agentmessagerouter.Client
 	var agentDispatchEndpoints *agentmessagerouter.DispatchEndpointService
+	routerClient, routerClientErr := agentmessagerouter.NewClient(agentmessagerouter.ClientConfig{
+		BaseURL:           strings.TrimSpace(os.Getenv("AGENT_MESSAGE_ROUTER_INTERNAL_URL")),
+		ServiceCredential: strings.TrimSpace(os.Getenv("AGENT_MESSAGE_ROUTER_SERVICE_CREDENTIAL")),
+	})
+	if routerClientErr == nil {
+		agentMessageRouterClient = routerClient
+		h.TaskCompletionWorker = agentmessagerouter.NewCompletionWorker(
+			queries,
+			routerClient,
+			h.TaskService,
+		)
+		h.TaskCompletionTargetIdentity = routerClient.TargetIdentity()
+		h.TaskService.CompletionNotifier = h.TaskCompletionWorker
+	}
 	dispatchKeysRaw := strings.TrimSpace(os.Getenv("MULTICA_AGENT_DISPATCH_KEYS"))
 	dispatchCurrentKeyID := strings.TrimSpace(os.Getenv("MULTICA_AGENT_DISPATCH_CURRENT_KEY_ID"))
 	if dispatchKeysRaw == "" && dispatchCurrentKeyID == "" {
@@ -319,10 +333,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		dbaseOrigin, originErr := handler.NormalizeDingTalkAccountBindingOrigin(
 			os.Getenv("DINGTALK_DBASE_BINDING_ORIGIN"),
 		)
-		routerClient, clientErr := agentmessagerouter.NewClient(agentmessagerouter.ClientConfig{
-			BaseURL:           strings.TrimSpace(os.Getenv("AGENT_MESSAGE_ROUTER_INTERNAL_URL")),
-			ServiceCredential: strings.TrimSpace(os.Getenv("AGENT_MESSAGE_ROUTER_SERVICE_CREDENTIAL")),
-		})
 		endpointService, endpointErr := agentmessagerouter.NewDispatchEndpointService(
 			agentmessagerouter.NewDBDispatchEndpointStore(queries),
 			agentmessagerouter.DispatchEndpointServiceConfig{
@@ -331,8 +341,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				Random:        rand.Reader,
 			},
 		)
-		if clientErr == nil && endpointErr == nil {
-			agentMessageRouterClient = routerClient
+		if routerClientErr == nil && endpointErr == nil {
 			agentDispatchEndpoints = endpointService
 		}
 		bindingService, serviceErr := agentmessagerouter.NewService(queries, routerClient, agentmessagerouter.ServiceConfig{
@@ -344,11 +353,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			Endpoints:       endpointService,
 			Metrics:         opts.BusinessMetrics,
 		})
-		if originErr != nil || clientErr != nil || endpointErr != nil || serviceErr != nil ||
+		if originErr != nil || routerClientErr != nil || endpointErr != nil || serviceErr != nil ||
 			!dBaseBindingURLMatchesOrigin(dbaseBindingURL, dbaseOrigin) {
 			slog.Error("dingtalk account binding disabled due to invalid configuration",
 				"origin_error", originErr,
-				"router_error", clientErr,
+				"router_error", routerClientErr,
 				"endpoint_error", endpointErr,
 				"service_error", serviceErr,
 			)
