@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -378,11 +378,13 @@ describe("DingTalkAccountBindingCard", () => {
     const accountRow = screen.getByTestId("dingtalk-account-binding-active-row");
     expect(accountRow).toHaveClass("items-start");
     expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
-    const modeGroup = screen.getByRole("group", { name: "Run mode" });
-    expect(within(modeGroup).getByRole("button", { name: "issue" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    const modeTrigger = screen.getByRole("button", {
+      name: "Run mode: Task mode",
+    });
+    expect(modeTrigger).toHaveTextContent("Task mode");
+    expect(
+      screen.queryByRole("radio", { name: /Conversation mode/i }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Bind digital employee/i }),
     ).not.toBeInTheDocument();
@@ -394,8 +396,14 @@ describe("DingTalkAccountBindingCard", () => {
 
     renderCard("message");
 
-    const modeGroup = await screen.findByRole("group", { name: "Run mode" });
-    await user.click(within(modeGroup).getByRole("button", { name: "chat" }));
+    await user.click(await screen.findByRole("button", {
+      name: "Run mode: Task mode",
+    }));
+    await user.click(screen.getByRole("radio", { name: /Conversation mode/i }));
+
+    expect(updateBindingSurface).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
 
     expect(updateBindingSurface).toHaveBeenCalledWith(
       "workspace-1",
@@ -404,6 +412,26 @@ describe("DingTalkAccountBindingCard", () => {
     );
     expect(beginBinding).not.toHaveBeenCalled();
     expect(deleteBinding).not.toHaveBeenCalled();
+  });
+
+  it("keeps the current run mode when the popover selection is cancelled", async () => {
+    listBindings.mockResolvedValue({ bindings: [activeBinding], configured: true });
+    const user = userEvent.setup();
+
+    renderCard("message");
+
+    const modeTrigger = await screen.findByRole("button", {
+      name: "Run mode: Task mode",
+    });
+    await user.click(modeTrigger);
+    await user.click(screen.getByRole("radio", { name: /Conversation mode/i }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(updateBindingSurface).not.toHaveBeenCalled();
+    expect(modeTrigger).toHaveTextContent("Task mode");
+    expect(
+      screen.queryByRole("radio", { name: /Conversation mode/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the active account visible when unbinding fails", async () => {

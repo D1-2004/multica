@@ -24,6 +24,15 @@ import {
 import { Button } from "@multica/ui/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@multica/ui/components/ui/avatar";
 import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@multica/ui/components/ui/popover";
+import { RadioGroup, RadioGroupItem } from "@multica/ui/components/ui/radio-group";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -161,6 +170,118 @@ function DingTalkMessageScopeSummary({
         </p>
       );
   }
+}
+
+export function DingTalkRunModePicker({
+  value,
+  disabled,
+  onConfirm,
+}: {
+  value: DingTalkProcessingSurface;
+  disabled?: boolean;
+  onConfirm: (surfaceType: DingTalkProcessingSurface) => Promise<boolean>;
+}) {
+  const { t } = useT("agents");
+  const [open, setOpen] = useState(false);
+  const [draftValue, setDraftValue] = useState<DingTalkProcessingSurface>(value);
+
+  function surfaceLabel(surfaceType: DingTalkProcessingSurface): string {
+    return surfaceType === "issue"
+      ? t(($) => $.tab_body.integrations.dingtalk_account_surface_issue)
+      : t(($) => $.tab_body.integrations.dingtalk_account_surface_chat);
+  }
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) setDraftValue(value);
+    setOpen(nextOpen);
+  }
+
+  async function commit() {
+    if (await onConfirm(draftValue)) setOpen(false);
+  }
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger
+        render={(
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            aria-label={`${t(($) => $.tab_body.integrations.dingtalk_account_run_mode)}: ${surfaceLabel(value)}`}
+            disabled={disabled}
+          >
+            {surfaceLabel(value)}
+            <ChevronDown className="size-3 text-muted-foreground" />
+          </Button>
+        )}
+      />
+      <PopoverContent align="start" className="w-80 gap-0 p-0">
+        <PopoverHeader className="border-b px-4 py-3">
+          <PopoverTitle>
+            {t(($) => $.tab_body.integrations.dingtalk_account_run_mode)}
+          </PopoverTitle>
+          <PopoverDescription className="text-xs leading-relaxed">
+            {t(($) => $.tab_body.integrations.dingtalk_account_surface_picker_description)}
+          </PopoverDescription>
+        </PopoverHeader>
+        <RadioGroup
+          value={draftValue}
+          onValueChange={(nextValue) => setDraftValue(nextValue)}
+          aria-label={t(($) => $.tab_body.integrations.dingtalk_account_run_mode)}
+          className="gap-1 p-2"
+        >
+          {(["issue", "chat"] as const).map((surfaceType) => {
+            const selected = draftValue === surfaceType;
+            const optionDescription = surfaceType === "issue"
+              ? t(($) => $.tab_body.integrations.dingtalk_account_surface_issue_description)
+              : t(($) => $.tab_body.integrations.dingtalk_account_surface_chat_description);
+            return (
+              <label
+                key={surfaceType}
+                className={`flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5 transition-colors ${selected
+                  ? "border-primary/40 bg-primary/5"
+                  : "border-transparent hover:bg-muted/60"}`}
+              >
+                <RadioGroupItem
+                  value={surfaceType}
+                  aria-label={surfaceLabel(surfaceType)}
+                  className="mt-0.5"
+                />
+                <span className="min-w-0 space-y-1">
+                  <span className="block text-sm font-medium text-foreground">
+                    {surfaceLabel(surfaceType)}
+                  </span>
+                  <span className="block text-xs leading-relaxed text-muted-foreground">
+                    {optionDescription}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+        </RadioGroup>
+        <div className="flex items-center justify-end gap-2 border-t px-3 py-2.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={disabled}
+            onClick={() => handleOpenChange(false)}
+          >
+            {t(($) => $.tab_body.integrations.dingtalk_account_cancel)}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={disabled || draftValue === value}
+            onClick={() => void commit()}
+          >
+            {t(($) => $.tab_body.integrations.dingtalk_account_surface_confirm)}
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export function DingTalkAccountBindingCard({
@@ -314,18 +435,20 @@ function DingTalkBindingModeCard({
     }
   }
 
-  async function updateSurface(surfaceType: DingTalkProcessingSurface) {
+  async function updateSurface(surfaceType: DingTalkProcessingSurface): Promise<boolean> {
     if (bindingMode !== "message" || currentBinding?.messageRoute.surfaceType === surfaceType) {
-      return;
+      return true;
     }
     setActionError(null);
     try {
       await updateBindingSurface.mutateAsync({ agentId, surfaceType });
+      return true;
     } catch (error) {
       setActionError(errorMessage(
         error,
         t(($) => $.tab_body.integrations.dingtalk_account_surface_update_failed),
       ));
+      return false;
     }
   }
 
@@ -386,29 +509,11 @@ function DingTalkBindingModeCard({
                     <span className="text-xs text-muted-foreground">
                       {t(($) => $.tab_body.integrations.dingtalk_account_run_mode)}
                     </span>
-                    <div
-                      role="group"
-                      aria-label={t(($) => $.tab_body.integrations.dingtalk_account_run_mode)}
-                      className="inline-flex rounded-lg border bg-muted/30 p-0.5"
-                    >
-                      {(["issue", "chat"] as const).map((surfaceType) => {
-                        const selected = currentBinding?.messageRoute.surfaceType === surfaceType;
-                        return (
-                          <Button
-                            key={surfaceType}
-                            type="button"
-                            size="xs"
-                            variant={selected ? "secondary" : "ghost"}
-                            className="min-w-12"
-                            aria-pressed={selected}
-                            disabled={updateBindingSurface.isPending}
-                            onClick={() => void updateSurface(surfaceType)}
-                          >
-                            {surfaceType}
-                          </Button>
-                        );
-                      })}
-                    </div>
+                    <DingTalkRunModePicker
+                      value={currentBinding.messageRoute.surfaceType}
+                      disabled={updateBindingSurface.isPending}
+                      onConfirm={updateSurface}
+                    />
                   </div>
                 ) : null}
               </div>
