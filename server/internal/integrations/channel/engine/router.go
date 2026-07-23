@@ -163,6 +163,10 @@ func (r *Router) HandleResult(ctx context.Context, msg channel.InboundMessage) (
 // internal dispatchers may supply a trusted workspace principal and delegate
 // user-visible outbound delivery to another capability.
 type HandleOptions struct {
+	// InstallationOverride is reserved for authenticated internal dispatchers
+	// whose durable namespace is not a platform installation. Callers must also
+	// provide IdentityOverride; direct channel adapters always leave both nil.
+	InstallationOverride   *ResolvedInstallation
 	IdentityOverride       *ResolvedIdentity
 	SuppressServerOutbound bool
 	DisableControlCommands bool
@@ -230,13 +234,31 @@ func (r *Router) dispatch(ctx context.Context, set ResolverSet, msg channel.Inbo
 	//    (carried on the message) to its installation row. These drop
 	//    branches run BEFORE the dedup claim because they have no valid
 	//    installation to attach a claim to.
-	inst, err := set.Installation.ResolveInstallation(ctx, msg)
-	if err != nil {
-		if errors.Is(err, ErrInstallationNotFound) {
-			_ = set.Audit.RecordDrop(ctx, pgtype.UUID{}, msg, DropReasonInvalidEvent)
-			return Result{Outcome: OutcomeDropped, DropReason: DropReasonInvalidEvent}, ResolvedInstallation{}, nil
+	var inst ResolvedInstallation
+	if options.InstallationOverride != nil {
+		inst = *options.InstallationOverride
+		if !inst.ID.Valid || !inst.WorkspaceID.Valid || !inst.AgentID.Valid || !inst.InstallerUserID.Valid {
+			return Result{}, ResolvedInstallation{}, errors.New("channel router: installation override is incomplete")
 		}
-		return Result{}, ResolvedInstallation{}, fmt.Errorf("resolve installation: %w", err)
+		if options.IdentityOverride == nil {
+			return Result{}, ResolvedInstallation{}, errors.New("channel router: installation override requires identity override")
+		}
+		if !options.IdentityOverride.PrincipalUserID.Valid {
+			return Result{}, ResolvedInstallation{}, errors.New("channel router: installation override identity has no principal")
+		}
+		if options.IdentityOverride.PrincipalUserID != inst.InstallerUserID {
+			return Result{}, ResolvedInstallation{}, errors.New("channel router: installation override identity does not match installer")
+		}
+	} else {
+		resolved, err := set.Installation.ResolveInstallation(ctx, msg)
+		if err != nil {
+			if errors.Is(err, ErrInstallationNotFound) {
+				_ = set.Audit.RecordDrop(ctx, pgtype.UUID{}, msg, DropReasonInvalidEvent)
+				return Result{Outcome: OutcomeDropped, DropReason: DropReasonInvalidEvent}, ResolvedInstallation{}, nil
+			}
+			return Result{}, ResolvedInstallation{}, fmt.Errorf("resolve installation: %w", err)
+		}
+		inst = resolved
 	}
 	if !inst.Active {
 		return r.drop(ctx, set, msg, inst.ID, DropReasonRevokedInstallation), inst, nil

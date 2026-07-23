@@ -23,11 +23,13 @@ import (
 // ---- fakes ----
 
 type fakeInstaller struct {
-	inst ResolvedInstallation
-	err  error
+	inst  ResolvedInstallation
+	err   error
+	calls int
 }
 
 func (f *fakeInstaller) ResolveInstallation(_ context.Context, _ channel.InboundMessage) (ResolvedInstallation, error) {
+	f.calls++
 	return f.inst, f.err
 }
 
@@ -52,20 +54,22 @@ func (f *fakeTaskContext) ResolveTaskContext(_ context.Context, _ ResolvedInstal
 }
 
 type fakeDedup struct {
-	mu         sync.Mutex
-	token      pgtype.UUID
-	claimErr   error
-	markCalls  int
-	relCalls   int
-	claimCalls int
-	markErr    error
-	releaseErr error
+	mu              sync.Mutex
+	token           pgtype.UUID
+	claimErr        error
+	markCalls       int
+	relCalls        int
+	claimCalls      int
+	claimNamespace  pgtype.UUID
+	markErr         error
+	releaseErr      error
 }
 
-func (f *fakeDedup) Claim(_ context.Context, _ pgtype.UUID, _ string) (pgtype.UUID, error) {
+func (f *fakeDedup) Claim(_ context.Context, installationID pgtype.UUID, _ string) (pgtype.UUID, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.claimCalls++
+	f.claimNamespace = installationID
 	if f.claimErr != nil {
 		return pgtype.UUID{}, f.claimErr
 	}
@@ -395,6 +399,120 @@ func TestRouter_InstallationNotFound_Drops(t *testing.T) {
 	}
 	if h.dedup.claimCalls != 0 {
 		t.Fatalf("must not claim dedup before installation routing")
+	}
+}
+
+func TestRouter_InstallationOverrideSkipsPlatformResolver(t *testing.T) {
+	h := newHarness(t)
+	h.inst.err = errors.New("platform installation resolver must not run")
+	override := ResolvedInstallation{
+		ID:              uuidFromString(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+		WorkspaceID:     uuidFromString(t, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+		AgentID:         uuidFromString(t, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+		InstallerUserID: uuidFromString(t, "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+		Active:          true,
+	}
+	identity := ResolvedIdentity{PrincipalUserID: override.InstallerUserID}
+
+	if _, err := h.router.HandleResultWithOptions(context.Background(), p2pMessage(t), HandleOptions{
+		InstallationOverride: &override,
+		IdentityOverride:     &identity,
+	}); err != nil {
+		t.Fatalf("trusted installation override: %v", err)
+	}
+	if h.inst.calls != 0 {
+		t.Fatalf("platform installation resolver calls = %d, want 0", h.inst.calls)
+	}
+	if h.dedup.claimNamespace != override.ID {
+		t.Fatalf("dedup namespace = %+v, want authenticated override %+v", h.dedup.claimNamespace, override.ID)
+	}
+	if h.binder.lastEnsure.Installation != override {
+		t.Fatalf("session installation = %+v, want authenticated override %+v", h.binder.lastEnsure.Installation, override)
+	}
+}
+
+func TestRouter_InstallationOverrideRejectsIncompleteScope(t *testing.T) {
+	h := newHarness(t)
+	override := ResolvedInstallation{
+		ID:              uuidFromString(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+		WorkspaceID:     uuidFromString(t, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+		InstallerUserID: uuidFromString(t, "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+		Active:          true,
+	}
+	identity := ResolvedIdentity{PrincipalUserID: override.InstallerUserID}
+
+	_, err := h.router.HandleResultWithOptions(context.Background(), p2pMessage(t), HandleOptions{
+		InstallationOverride: &override,
+		IdentityOverride:     &identity,
+	})
+	if err == nil || !strings.Contains(err.Error(), "installation override is incomplete") {
+		t.Fatalf("incomplete installation override error = %v", err)
+	}
+	if h.inst.calls != 0 || h.dedup.claimCalls != 0 {
+		t.Fatalf("incomplete override reached resolver/dedup: resolver=%d dedup=%d", h.inst.calls, h.dedup.claimCalls)
+	}
+}
+
+func TestRouter_InstallationOverrideRequiresIdentityOverride(t *testing.T) {
+	h := newHarness(t)
+	override := ResolvedInstallation{
+		ID:              uuidFromString(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+		WorkspaceID:     uuidFromString(t, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+		AgentID:         uuidFromString(t, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+		InstallerUserID: uuidFromString(t, "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+		Active:          true,
+	}
+
+	_, err := h.router.HandleResultWithOptions(context.Background(), p2pMessage(t), HandleOptions{
+		InstallationOverride: &override,
+	})
+	if err == nil || !strings.Contains(err.Error(), "installation override requires identity override") {
+		t.Fatalf("missing identity override error = %v", err)
+	}
+	if h.inst.calls != 0 || h.dedup.claimCalls != 0 {
+		t.Fatalf("missing identity override reached resolver/dedup: resolver=%d dedup=%d", h.inst.calls, h.dedup.claimCalls)
+	}
+}
+
+func TestRouter_InstallationOverrideRejectsUntrustedIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		principal pgtype.UUID
+		wantError string
+	}{
+		{
+			name:      "missing principal",
+			principal: pgtype.UUID{},
+			wantError: "installation override identity has no principal",
+		},
+		{
+			name:      "different principal",
+			principal: uuidFromString(t, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+			wantError: "installation override identity does not match installer",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			override := ResolvedInstallation{
+				ID:              uuidFromString(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+				WorkspaceID:     uuidFromString(t, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+				AgentID:         uuidFromString(t, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+				InstallerUserID: uuidFromString(t, "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+				Active:          true,
+			}
+			identity := ResolvedIdentity{PrincipalUserID: tc.principal}
+
+			_, err := h.router.HandleResultWithOptions(context.Background(), p2pMessage(t), HandleOptions{
+				InstallationOverride: &override,
+				IdentityOverride:     &identity,
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("untrusted identity error = %v, want %q", err, tc.wantError)
+			}
+			if h.inst.calls != 0 || h.dedup.claimCalls != 0 {
+				t.Fatalf("untrusted identity reached resolver/dedup: resolver=%d dedup=%d", h.inst.calls, h.dedup.claimCalls)
+			}
+		})
 	}
 }
 
