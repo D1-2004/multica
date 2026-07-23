@@ -48,12 +48,14 @@ type BindingSubscriptionResult struct {
 }
 
 type MessageBindingResult struct {
-	Status        string                         `json:"status"`
-	MessageScope  string                         `json:"message_scope"`
-	Conversations []DingTalkConversationSnapshot `json:"conversations"`
-	SourceID      string                         `json:"source_id"`
-	Subscriptions []BindingSubscriptionResult    `json:"subscriptions"`
-	Error         *BindingTaskError              `json:"error"`
+	Status             string                         `json:"status"`
+	AccountDisplayName string                         `json:"account_display_name"`
+	AccountAvatarURL   string                         `json:"account_avatar_url"`
+	MessageScope       string                         `json:"message_scope"`
+	Conversations      []DingTalkConversationSnapshot `json:"conversations"`
+	SourceID           string                         `json:"source_id"`
+	Subscriptions      []BindingSubscriptionResult    `json:"subscriptions"`
+	Error              *BindingTaskError              `json:"error"`
 }
 
 type CompleteBindingParams struct {
@@ -237,18 +239,22 @@ func validateCompleteBindingParams(params CompleteBindingParams) (string, []Ding
 	switch params.Message.Status {
 	case DingTalkBindingTaskStatusSuccess:
 		if params.Message.Error != nil ||
-			!validSourceID(params.Message.SourceID) || !validBindingSubscriptions(params.Message.Subscriptions) {
+			!validSourceID(params.Message.SourceID) || !validBindingSubscriptions(params.Message.Subscriptions) ||
+			utf8.RuneCountInString(strings.TrimSpace(params.Message.AccountDisplayName)) > maxAccountNameRunes ||
+			!validAccountAvatarURL(strings.TrimSpace(params.Message.AccountAvatarURL)) {
 			return "", nil, ErrInvalidResult
 		}
 		return normalizeDingTalkConversationBinding(params.Message.MessageScope, params.Message.Conversations)
 	case DingTalkBindingTaskStatusSkipped:
 		if params.Message.Error != nil || params.Message.SourceID != "" || params.Message.MessageScope != "" ||
+			params.Message.AccountDisplayName != "" || params.Message.AccountAvatarURL != "" ||
 			len(params.Message.Conversations) != 0 || len(params.Message.Subscriptions) != 0 {
 			return "", nil, ErrInvalidResult
 		}
 		return DingTalkMessageScopeDirectOnly, nil, nil
 	case DingTalkBindingTaskStatusFailed:
 		if params.Message.SourceID != "" || len(params.Message.Subscriptions) != 0 ||
+			params.Message.AccountDisplayName != "" || params.Message.AccountAvatarURL != "" ||
 			!validBindingTaskError(params.Message.Error) {
 			return "", nil, ErrInvalidResult
 		}

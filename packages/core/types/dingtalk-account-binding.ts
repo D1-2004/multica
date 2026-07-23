@@ -8,6 +8,7 @@ export interface DingTalkAccountBindingOutcome {
 }
 
 export type DingTalkMessageScope = "direct_only" | "custom" | "all";
+export type DingTalkProcessingSurface = "issue" | "chat";
 
 export interface DingTalkConversationSummary {
   cid: string;
@@ -18,6 +19,7 @@ export interface DingTalkConversationSummary {
 
 export interface DingTalkMessageRouteOutcome
   extends DingTalkAccountBindingOutcome {
+  surfaceType?: DingTalkProcessingSurface | null;
   messageScope: DingTalkMessageScope;
   conversations: DingTalkConversationSummary[];
 }

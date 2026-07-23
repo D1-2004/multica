@@ -17,6 +17,7 @@ import { DingTalkAccountBindingCard } from "./dingtalk-account-binding";
 const listBindings = vi.fn();
 const beginBinding = vi.fn();
 const deleteBinding = vi.fn();
+const updateBindingSurface = vi.fn();
 const mid2Url = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/hooks", () => ({
@@ -102,6 +103,7 @@ const activeBinding = {
     accountDisplayName: "Zhang San",
     accountAvatarUrl: "https://example.test/avatar.png",
     boundAt: "2026-07-14T09:30:00Z",
+    surfaceType: "issue",
     messageScope: "direct_only",
     conversations: [],
   },
@@ -119,6 +121,7 @@ beforeEach(() => {
     listDingTalkAccountBindings: listBindings,
     beginDingTalkAccountBinding: beginBinding,
     deleteDingTalkAccountBinding: deleteBinding,
+    updateDingTalkAccountBindingSurface: updateBindingSurface,
   } as unknown as ApiClient);
   listBindings.mockResolvedValue({ bindings: [], configured: true });
   beginBinding.mockResolvedValue({
@@ -127,6 +130,7 @@ beforeEach(() => {
     expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
   });
   deleteBinding.mockResolvedValue(undefined);
+  updateBindingSurface.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -366,10 +370,67 @@ describe("DingTalkAccountBindingCard", () => {
     renderCard("message");
 
     expect(await screen.findByText("Digital Worker Zhang")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Digital Worker Zhang" })).toHaveAttribute(
+      "src",
+      "https://example.test/avatar.png",
+    );
     expect(screen.getByText("Listening to my direct messages")).toBeInTheDocument();
+    const accountRow = screen.getByTestId("dingtalk-account-binding-active-row");
+    expect(accountRow).toHaveClass("items-start");
     expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
+    const modeTrigger = screen.getByRole("button", {
+      name: "Run mode: Task mode",
+    });
+    expect(modeTrigger).toHaveTextContent("Task mode");
+    expect(
+      screen.queryByRole("radio", { name: /Conversation mode/i }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Bind digital employee/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("switches an active digital employee from issue to chat without rebinding", async () => {
+    listBindings.mockResolvedValue({ bindings: [activeBinding], configured: true });
+    const user = userEvent.setup();
+
+    renderCard("message");
+
+    await user.click(await screen.findByRole("button", {
+      name: "Run mode: Task mode",
+    }));
+    await user.click(screen.getByRole("radio", { name: /Conversation mode/i }));
+
+    expect(updateBindingSurface).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+
+    expect(updateBindingSurface).toHaveBeenCalledWith(
+      "workspace-1",
+      "agent-1",
+      "chat",
+    );
+    expect(beginBinding).not.toHaveBeenCalled();
+    expect(deleteBinding).not.toHaveBeenCalled();
+  });
+
+  it("keeps the current run mode when the popover selection is cancelled", async () => {
+    listBindings.mockResolvedValue({ bindings: [activeBinding], configured: true });
+    const user = userEvent.setup();
+
+    renderCard("message");
+
+    const modeTrigger = await screen.findByRole("button", {
+      name: "Run mode: Task mode",
+    });
+    await user.click(modeTrigger);
+    await user.click(screen.getByRole("radio", { name: /Conversation mode/i }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(updateBindingSurface).not.toHaveBeenCalled();
+    expect(modeTrigger).toHaveTextContent("Task mode");
+    expect(
+      screen.queryByRole("radio", { name: /Conversation mode/i }),
     ).not.toBeInTheDocument();
   });
 

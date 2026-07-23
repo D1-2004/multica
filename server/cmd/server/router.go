@@ -1420,6 +1420,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/dingtalk/installations", h.ListDingTalkInstallations)
 					r.Get("/dingtalk/account-bindings", h.ListDingTalkAccountBindings)
 					r.Post("/dingtalk/account-bindings/begin", h.BeginDingTalkAccountBinding)
+					r.Patch("/dingtalk/account-bindings/{agentId}/surface", h.UpdateDingTalkAccountBindingSurface)
 					r.Delete("/dingtalk/account-bindings/{agentId}", h.UnbindDingTalkAccountBinding)
 				})
 				r.Group(func(r chi.Router) {

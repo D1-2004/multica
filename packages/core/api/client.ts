@@ -10,6 +10,7 @@ import type {
   CreateMemberRequest,
   UpdateMemberRequest,
   DingTalkUser,
+  DingTalkProcessingSurface,
   AddDingTalkGroupMembersRequest,
   AddDingTalkGroupMembersResponse,
   AddDingTalkWorkspaceMembersRequest,
@@ -2758,6 +2759,20 @@ export class ApiClient {
     await this.fetch(
       `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${agentId}?binding_mode=${bindingMode}`,
       { method: "DELETE" },
+    );
+  }
+
+  async updateDingTalkAccountBindingSurface(
+    workspaceId: string,
+    agentId: string,
+    surfaceType: DingTalkProcessingSurface,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${agentId}/surface`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ surface_type: surfaceType }),
+      },
     );
   }
 
