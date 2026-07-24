@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -43,6 +44,26 @@ func TestPendingReportStoreRoundtrip(t *testing.T) {
 	}
 }
 
+func TestPendingReportStoreRoundtripPreservesResultMessage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pending_reports.json")
+	store := loadPendingReportStore(path, nil)
+	store.Enqueue(pendingTerminalReport{
+		Kind:          pendingReportKindComplete,
+		TaskID:        "task-result-message",
+		Output:        "agent execution summary",
+		ResultMessage: "最终回复正文",
+	})
+
+	reloaded := loadPendingReportStore(path, nil)
+	snapshot := reloaded.Snapshot()
+	if len(snapshot) != 1 {
+		t.Fatalf("snapshot length = %d", len(snapshot))
+	}
+	if snapshot[0].ResultMessage != "最终回复正文" {
+		t.Fatalf("result message = %q", snapshot[0].ResultMessage)
+	}
+}
+
 func TestPendingReportStoreCorruptFileDropped(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pending_reports.json")
 	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
@@ -65,8 +86,22 @@ func TestDrainPendingReportsRedelivers(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/daemon/tasks/task-a/complete":
 			completeCalls.Add(1)
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["result_message"] != "最终回复正文" {
+				t.Fatalf("result_message = %#v", body["result_message"])
+			}
 		case "/api/daemon/tasks/task-b/fail":
 			failCalls.Add(1)
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["result_message"] != "已向用户说明失败" {
+				t.Fatalf("failed result_message = %#v", body["result_message"])
+			}
 		default:
 			t.Errorf("unexpected request path %s", r.URL.Path)
 		}
@@ -76,8 +111,19 @@ func TestDrainPendingReportsRedelivers(t *testing.T) {
 	defer srv.Close()
 
 	store := loadPendingReportStore(filepath.Join(t.TempDir(), "q.json"), nil)
-	store.Enqueue(pendingTerminalReport{Kind: pendingReportKindComplete, TaskID: "task-a", Output: "done"})
-	store.Enqueue(pendingTerminalReport{Kind: pendingReportKindFail, TaskID: "task-b", Error: "boom", FailureReason: "cancelled"})
+	store.Enqueue(pendingTerminalReport{
+		Kind:          pendingReportKindComplete,
+		TaskID:        "task-a",
+		Output:        "done",
+		ResultMessage: "最终回复正文",
+	})
+	store.Enqueue(pendingTerminalReport{
+		Kind:          pendingReportKindFail,
+		TaskID:        "task-b",
+		Error:         "boom",
+		ResultMessage: "已向用户说明失败",
+		FailureReason: "cancelled",
+	})
 
 	d := testPendingDaemon(t, srv.URL, store)
 	d.drainPendingReports(context.Background())
@@ -124,11 +170,15 @@ func TestDrainPendingReportsStopsOnTransient(t *testing.T) {
 }
 
 func TestDrainPendingReportsConvertsPermanentComplete(t *testing.T) {
+	var failedBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/daemon/tasks/task-a/complete":
 			w.WriteHeader(http.StatusConflict) // permanent 4xx
 		case "/api/daemon/tasks/task-a/fail":
+			if err := json.NewDecoder(r.Body).Decode(&failedBody); err != nil {
+				t.Fatal(err)
+			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{}`))
 		default:
@@ -138,7 +188,12 @@ func TestDrainPendingReportsConvertsPermanentComplete(t *testing.T) {
 	defer srv.Close()
 
 	store := loadPendingReportStore(filepath.Join(t.TempDir(), "q.json"), nil)
-	store.Enqueue(pendingTerminalReport{Kind: pendingReportKindComplete, TaskID: "task-a", Output: "done"})
+	store.Enqueue(pendingTerminalReport{
+		Kind:          pendingReportKindComplete,
+		TaskID:        "task-a",
+		Output:        "done",
+		ResultMessage: "已完成并回复用户",
+	})
 
 	d := testPendingDaemon(t, srv.URL, store)
 
@@ -153,6 +208,9 @@ func TestDrainPendingReportsConvertsPermanentComplete(t *testing.T) {
 	d.drainPendingReports(context.Background())
 	if got := store.Len(); got != 0 {
 		t.Fatalf("queue not drained after fail replay, %d entries left", got)
+	}
+	if failedBody["result_message"] != "已完成并回复用户" {
+		t.Fatalf("converted fail result_message = %#v", failedBody["result_message"])
 	}
 }
 

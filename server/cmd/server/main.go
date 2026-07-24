@@ -396,6 +396,7 @@ func main() {
 	// orphaned and billed until it times out.
 	fcLauncher.SetPool(pool)
 	taskSvc.RuntimeLauncher = fcLauncher
+	taskSvc.CompletionNotifier = h.TaskCompletionWorker
 	// NewRouterWithOptions owns the request-path TaskService and wires its
 	// Redis-backed empty-claim cache there. This background TaskService owns the
 	// FC/E2B launcher; share the same cache so a promoted durable channel task
@@ -421,6 +422,9 @@ func main() {
 	go runDBStatsLogger(sweepCtx, pool)
 	if h.WebhookDeliveryWorker != nil {
 		go h.WebhookDeliveryWorker.Run(sweepCtx)
+	}
+	if h.TaskCompletionWorker != nil {
+		go h.TaskCompletionWorker.Run(sweepCtx)
 	}
 	if h.DingTalkStreamInbox != nil {
 		go h.DingTalkStreamInbox.Run(sweepCtx)
@@ -527,6 +531,9 @@ func main() {
 	heartbeatScheduler.Stop()
 	if h.WebhookDeliveryWorker != nil && !h.WebhookDeliveryWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("webhook delivery worker did not exit within shutdown timeout")
+	}
+	if h.TaskCompletionWorker != nil && !h.TaskCompletionWorker.WaitWithTimeout(5*time.Second) {
+		slog.Warn("task completion worker did not exit within shutdown timeout")
 	}
 	if h.DingTalkStreamInbox != nil && !h.DingTalkStreamInbox.WaitWithTimeout(5*time.Second) {
 		slog.Warn("dingtalk stream inbox worker did not exit within shutdown timeout",

@@ -371,7 +371,7 @@ RETURNING id, workspace_id, owner_id, daemon_id, provider;
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
 WHERE (runtime_id = ANY(@runtime_ids::uuid[]) OR agent_id = ANY(@agent_ids::uuid[]))
-  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
 RETURNING *;
 
 -- name: DeleteAgentRuntime :exec

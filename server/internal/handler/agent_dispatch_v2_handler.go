@@ -24,6 +24,7 @@ var errAgentDispatchDuplicateNotReady = errors.New("duplicate agent chat dispatc
 type agentDispatchDuplicateQueries interface {
 	GetChannelInboundDedupStatus(context.Context, db.GetChannelInboundDedupStatusParams) (pgtype.Timestamptz, error)
 	GetChannelChatSessionBinding(context.Context, db.GetChannelChatSessionBindingParams) (db.ChannelChatSessionBinding, error)
+	GetAgentDispatchTaskIDByMessage(context.Context, db.GetAgentDispatchTaskIDByMessageParams) (pgtype.UUID, error)
 }
 
 func textValue(s string) pgtype.Text {
@@ -43,6 +44,15 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 		protocol.DispatchSurfaceJSONKey: c.Surface,
 		protocol.DispatchOutboundJSONKey: c.Outbound,
 		"dispatch_idempotency_key":        idempotencyKey,
+	}
+	if c.DispatchEndpointID != "" {
+		payload["dispatch_endpoint_id"] = c.DispatchEndpointID
+	}
+	if c.CompletionCallback != nil {
+		payload["completion_callback"] = map[string]string{
+			"url":    c.CompletionCallback.URL,
+			"target": c.CompletionCallback.Target,
+		}
 	}
 	raw, _ := json.Marshal(payload)
 	return raw
@@ -78,6 +88,12 @@ func (h *Handler) handleAgentDispatchV2(
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	command, err := bindDispatchCompletionTarget(command, h.TaskCompletionTargetIdentity)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "task completion delivery is not configured")
+		return
+	}
+	command.DispatchEndpointID = uuidToString(dispatchContext.EndpointNamespaceID)
 	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext)
 	if err != nil {
 		slog.Error("MULTICA_AGENT_DISPATCH_REQUEST",
@@ -120,6 +136,72 @@ func (h *Handler) handleAgentDispatchV2(
 		}
 	}
 
+	if command.CompletionCallback == nil {
+		h.executeAgentDispatchV2(w, r, command, plan, dispatchContext)
+		return
+	}
+	idempotencyKey := dispatchIdempotencyKey(r, command)
+	acceptance, replay, err := h.claimAgentDispatchAcceptance(
+		r.Context(),
+		command,
+		dispatchContext,
+		idempotencyKey,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, errAgentDispatchAcceptanceConflict):
+			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, errAgentDispatchAcceptancePending):
+			writeError(w, http.StatusConflict, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to persist dispatch acceptance")
+		}
+		return
+	}
+	if replay {
+		writeAgentDispatchAcceptanceReplay(w, acceptance)
+		return
+	}
+	recovered, ok, err := h.recoverAgentDispatchAcceptance(
+		r.Context(),
+		command,
+		dispatchContext,
+		acceptance,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to recover dispatch acceptance")
+		return
+	}
+	if ok {
+		if err := h.completeAgentDispatchAcceptance(r.Context(), acceptance, recovered); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to finalize dispatch acceptance")
+			return
+		}
+		recovered.Forward(w)
+		return
+	}
+
+	buffered := newBufferedDispatchResponse()
+	h.executeAgentDispatchV2(buffered, r, command, plan, dispatchContext)
+	if buffered.Status() >= http.StatusOK && buffered.Status() < http.StatusMultipleChoices {
+		if err := h.completeAgentDispatchAcceptance(r.Context(), acceptance, buffered); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to finalize dispatch acceptance")
+			return
+		}
+	} else if buffered.Status() >= http.StatusBadRequest &&
+		buffered.Status() < http.StatusInternalServerError {
+		h.releaseAgentDispatchAcceptance(r.Context(), acceptance)
+	}
+	buffered.Forward(w)
+}
+
+func (h *Handler) executeAgentDispatchV2(
+	w http.ResponseWriter,
+	r *http.Request,
+	command DispatchCommand,
+	plan agentDispatchExecutionPlan,
+	dispatchContext agentDispatchContext,
+) {
 	if plan.SurfaceType == "chat" {
 		if command.Continuation != nil &&
 			(command.Continuation.Kind != "chat" || strings.TrimSpace(command.Continuation.ChatSessionID) == "") {
@@ -147,24 +229,42 @@ func (h *Handler) handleAgentDispatchV2(
 	h.createAgentDispatchCommentV2(w, r, command, plan.Prompt, dispatchContext)
 }
 
+func bindDispatchCompletionTarget(
+	command DispatchCommand,
+	targetIdentity string,
+) (DispatchCommand, error) {
+	if command.CompletionCallback == nil {
+		return command, nil
+	}
+	targetIdentity = strings.TrimSpace(targetIdentity)
+	if !routerCompletionTargetPattern.MatchString(targetIdentity) {
+		return DispatchCommand{}, errors.New("task completion target is not configured")
+	}
+	callback := *command.CompletionCallback
+	callback.Target = targetIdentity
+	command.CompletionCallback = &callback
+	return command, nil
+}
+
 // AgentDispatchV2Request preserves the exact Router JSON contract while the
 // internal DispatchCommand owns validation and execution semantics.
 type AgentDispatchV2Request struct {
-	SchemaVersion    string                        `json:"schemaVersion"`
-	AgentID          string                        `json:"agentId,omitempty"`
-	Continuation     *AgentDispatchContinuation    `json:"continuation"`
-	Source           DispatchSource                `json:"source"`
-	Event            DispatchEvent                 `json:"event"`
-	Surface          DispatchSurface               `json:"surface"`
-	Outbound         DispatchOutbound              `json:"outbound"`
-	ExternalIdentity AgentDispatchExternalIdentity `json:"externalIdentity"`
+	SchemaVersion      string                        `json:"schemaVersion"`
+	AgentID            string                        `json:"agentId,omitempty"`
+	Continuation       *AgentDispatchContinuation    `json:"continuation"`
+	Source             DispatchSource                `json:"source"`
+	Event              DispatchEvent                 `json:"event"`
+	Surface            DispatchSurface               `json:"surface"`
+	Outbound           DispatchOutbound              `json:"outbound"`
+	ExternalIdentity   AgentDispatchExternalIdentity `json:"externalIdentity"`
+	CompletionCallback *DispatchCompletionCallback   `json:"completionCallback,omitempty"`
 }
 
 func (r AgentDispatchV2Request) DispatchCommand() DispatchCommand {
 	return DispatchCommand{
 		SchemaVersion: r.SchemaVersion, AgentID: r.AgentID, Continuation: r.Continuation,
 		Source: r.Source, Event: r.Event, Surface: r.Surface, Outbound: r.Outbound,
-		ExternalIdentity: r.ExternalIdentity,
+		ExternalIdentity: r.ExternalIdentity, CompletionCallback: r.CompletionCallback,
 	}
 }
 
@@ -274,10 +374,14 @@ func (h *Handler) createAgentDispatchChatV2(
 		writeError(w, http.StatusInternalServerError, "failed to dispatch dingtalk chat")
 		return
 	}
-	if writeAgentChatNeedsBindingACK(w, result) {
+	if h.writeAgentChatNeedsBindingACKV2(w, r.Context(), command, dispatchContext, result) {
 		return
 	}
 	if result.Outcome == engine.OutcomeDropped && result.DropReason == engine.DropReasonDuplicate {
+		if command.CompletionCallback != nil {
+			writeError(w, http.StatusConflict, "message was already accepted under another dispatch")
+			return
+		}
 		response, recoverErr := recoverDuplicateAgentChatDispatch(
 			r.Context(), h.Queries, namespaceID, latest.OpenMsgID, message)
 		if recoverErr != nil {
@@ -285,6 +389,9 @@ func (h *Handler) createAgentDispatchChatV2(
 			return
 		}
 		writeJSON(w, http.StatusAccepted, response)
+		return
+	}
+	if h.writeAgentChatNoTaskOutcomeV2(w, r.Context(), command, dispatchContext, result) {
 		return
 	}
 	chatSessionID := uuidToString(result.ChatSessionID)
@@ -295,6 +402,79 @@ func (h *Handler) createAgentDispatchChatV2(
 		Continuation: AgentDispatchContinuation{Kind: "chat", ChatSessionID: chatSessionID},
 		TaskID:       uuidToString(result.TaskID),
 	})
+}
+
+func (h *Handler) writeAgentChatNoTaskOutcomeV2(
+	w http.ResponseWriter,
+	ctx context.Context,
+	command DispatchCommand,
+	dispatchContext agentDispatchContext,
+	result engine.Result,
+) bool {
+	if command.CompletionCallback == nil || result.TaskID.Valid {
+		return false
+	}
+	var errMessage, failureReason string
+	switch result.Outcome {
+	case engine.OutcomeAgentOffline:
+		errMessage = "agent is offline"
+		failureReason = string(engine.OutcomeAgentOffline)
+	case engine.OutcomeAgentArchived:
+		errMessage = "agent is archived"
+		failureReason = string(engine.OutcomeAgentArchived)
+	default:
+		writeError(w, http.StatusUnprocessableEntity, "dispatch did not create a task")
+		return true
+	}
+	if h.TaskService == nil {
+		writeError(w, http.StatusInternalServerError, "task completion callback is not configured")
+		return true
+	}
+	if err := h.TaskService.EnqueueSynchronousTaskCompletion(
+		ctx,
+		command.CompletionCallback.URL,
+		command.CompletionCallback.Target,
+		dispatchContext.AgentID,
+		errMessage,
+		failureReason,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to persist task completion")
+		return true
+	}
+	w.WriteHeader(http.StatusAccepted)
+	return true
+}
+
+func (h *Handler) writeAgentChatNeedsBindingACKV2(
+	w http.ResponseWriter,
+	ctx context.Context,
+	command DispatchCommand,
+	dispatchContext agentDispatchContext,
+	result engine.Result,
+) bool {
+	if result.Outcome != engine.OutcomeNeedsBinding {
+		return false
+	}
+	if command.CompletionCallback == nil {
+		return writeAgentChatNeedsBindingACK(w, result)
+	}
+	if h.TaskService == nil {
+		writeError(w, http.StatusInternalServerError, "task completion callback is not configured")
+		return true
+	}
+	if err := h.TaskService.EnqueueSynchronousTaskCompletion(
+		ctx,
+		command.CompletionCallback.URL,
+		command.CompletionCallback.Target,
+		dispatchContext.AgentID,
+		"dingtalk account binding required",
+		"needs_binding",
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to persist task completion")
+		return true
+	}
+	w.WriteHeader(http.StatusAccepted)
+	return true
 }
 
 func recoverDuplicateAgentChatDispatch(
@@ -318,11 +498,19 @@ func recoverDuplicateAgentChatDispatch(
 	if err != nil || !binding.ChatSessionID.Valid {
 		return AgentChatDispatchResponse{}, errAgentDispatchDuplicateNotReady
 	}
+	taskID, err := queries.GetAgentDispatchTaskIDByMessage(ctx, db.GetAgentDispatchTaskIDByMessageParams{
+		ChatSessionID: binding.ChatSessionID,
+		MessageID:     messageID,
+	})
+	if err != nil || !taskID.Valid {
+		return AgentChatDispatchResponse{}, errAgentDispatchDuplicateNotReady
+	}
 	return AgentChatDispatchResponse{
 		Continuation: AgentDispatchContinuation{
 			Kind:          "chat",
 			ChatSessionID: uuidToString(binding.ChatSessionID),
 		},
+		TaskID: uuidToString(taskID),
 	}, nil
 }
 

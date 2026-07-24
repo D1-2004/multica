@@ -168,6 +168,8 @@ type Handler struct {
 	WebhookIPRateLimiter         WebhookRateLimiter
 	WebhookAbsoluteIPRateLimiter WebhookRateLimiter
 	WebhookDeliveryWorker        *WebhookDeliveryWorker
+	TaskCompletionWorker         *agentmessagerouter.CompletionWorker
+	TaskCompletionTargetIdentity string
 	CloudRuntime                 cloudRuntimeProxy
 	GitHubApp                    *githubapp.Client
 	ManagedAgent                 *managedagent.Service

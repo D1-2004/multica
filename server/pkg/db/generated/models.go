@@ -79,6 +79,24 @@ type AgentDingtalkIdentityAttempt struct {
 	CompletedUid      pgtype.Text        `json:"completed_uid"`
 }
 
+type AgentDispatchAcceptance struct {
+	ID                  pgtype.UUID        `json:"id"`
+	EndpointID          pgtype.UUID        `json:"endpoint_id"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	TargetIdentity      string             `json:"target_identity"`
+	IdempotencyKey      string             `json:"idempotency_key"`
+	RequestFingerprint  string             `json:"request_fingerprint"`
+	Status              string             `json:"status"`
+	LeaseToken          pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt      pgtype.Timestamptz `json:"lease_expires_at"`
+	ResponseStatus      pgtype.Int4        `json:"response_status"`
+	ResponseContentType pgtype.Text        `json:"response_content_type"`
+	ResponseBody        []byte             `json:"response_body"`
+	RootTaskID          pgtype.UUID        `json:"root_task_id"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentDispatchEndpoint struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
@@ -1008,6 +1026,30 @@ type SysCronExecution struct {
 	ErrorMsg     pgtype.Text        `json:"error_msg"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TaskCompletionOutbox struct {
+	ID                pgtype.UUID        `json:"id"`
+	RootTaskID        pgtype.UUID        `json:"root_task_id"`
+	TerminalTaskID    pgtype.UUID        `json:"terminal_task_id"`
+	CallbackUrl       string             `json:"callback_url"`
+	TargetIdentity    string             `json:"target_identity"`
+	RequestID         string             `json:"request_id"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	ExternalSessionID pgtype.Text        `json:"external_session_id"`
+	ExecutionStatus   string             `json:"execution_status"`
+	ResultMessage     string             `json:"result_message"`
+	Error             pgtype.Text        `json:"error"`
+	FailureReason     pgtype.Text        `json:"failure_reason"`
+	Status            string             `json:"status"`
+	AvailableAt       pgtype.Timestamptz `json:"available_at"`
+	AttemptCount      int32              `json:"attempt_count"`
+	LeaseToken        pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError         pgtype.Text        `json:"last_error"`
+	DeliveredAt       pgtype.Timestamptz `json:"delivered_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type TaskMessage struct {

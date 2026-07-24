@@ -299,6 +299,20 @@ VALUES (
 )
 RETURNING *;
 
+-- name: GetAgentTaskForCompletionFinalization :one
+-- Serializes the retry-vs-terminal-receipt decision for raw SQL failure paths.
+-- Every contender locks the same failed parent before checking for a child,
+-- creating a retry, or enqueueing the final completion.
+SELECT * FROM agent_task_queue
+WHERE id = $1
+FOR UPDATE;
+
+-- name: GetRetryChildByParent :one
+SELECT * FROM agent_task_queue
+WHERE parent_task_id = $1
+ORDER BY created_at ASC
+LIMIT 1;
+
 -- name: LinkTaskToIssue :exec
 -- Attaches the issue a quick-create task produced back to the task row, once
 -- the agent has finished and the issue exists. Guarded by `issue_id IS NULL`
@@ -759,6 +773,7 @@ LIMIT 1;
 UPDATE agent_task_queue
 SET status = 'failed',
     completed_at = now(),
+    result = COALESCE(sqlc.narg('result'), result),
     error = $2,
     failure_reason = COALESCE(sqlc.narg('failure_reason'), 'agent_error'),
     session_id = COALESCE(sqlc.narg('session_id'), session_id),
