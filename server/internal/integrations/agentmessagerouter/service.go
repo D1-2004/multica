@@ -837,23 +837,18 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding Publ
 		}
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("get dingtalk account binding: %w", err)
 	}
-	config, err := ParseDingTalkAccountConfig(row.Config)
-	if err != nil {
+	if _, err := ParseDingTalkAccountConfig(row.Config); err != nil {
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
 	}
-	if config.RouterSourceID != "" {
-		// A calendar-enabled account owns multiple Router sources. Router
-		// resolves every active DingTalk digital-employee source for this
-		// agent and returns an empty success on retries, so local revoke only
-		// follows after the whole remote binding has converged to inactive.
-		if err := s.router.DeleteDigitalEmployeeSubscriptions(
-			ctx,
-			util.UUIDToString(row.AgentID),
-		); err != nil {
-			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
-		}
-	} else if row.Status == "active" {
-		return PublicDingTalkAccountBinding{}, ErrInvalidResult
+	// A calendar-enabled account owns multiple Router sources. Resolve them
+	// from the stable agent ID, rather than the mutable local source ID, so a
+	// retry also heals calendar sources orphaned by the legacy single-source
+	// unbind path. Router returns an empty success when nothing remains.
+	if err := s.router.DeleteDigitalEmployeeSubscriptions(
+		ctx,
+		util.UUIDToString(row.AgentID),
+	); err != nil {
+		return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
 	}
 	revoked, err := s.store.RevokeDingTalkAccountBinding(ctx, db.RevokeDingTalkAccountBindingParams{
 		ID:          row.ID,

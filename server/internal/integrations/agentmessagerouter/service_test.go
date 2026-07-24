@@ -1499,6 +1499,39 @@ func TestUnbindProceedsWhenRouterHasNoRemainingDigitalEmployeeSubscriptions(t *t
 	assertMetricCounter(t, service.metrics, "dingtalk_account_unbind_total", map[string]string{"outcome": "success"}, 1)
 }
 
+func TestUnbindRevokedMessageClearsOrphanedDigitalEmployeeSubscriptions(t *testing.T) {
+	// The legacy single-source delete could revoke the local row while leaving
+	// a calendar source active. A repeated message unbind must repair that
+	// state through the agent-scoped Router cleanup.
+	now := time.Date(2026, 7, 25, 0, 11, 0, 0, time.UTC)
+	store := activeBindingStoreForUnbind(t, now)
+	if _, err := store.RevokeDingTalkAccountBinding(context.Background(),
+		db.RevokeDingTalkAccountBindingParams{
+			ID:          store.row.ID,
+			WorkspaceID: store.row.WorkspaceID,
+			AgentID:     store.row.AgentID,
+		}); err != nil {
+		t.Fatalf("legacy revoke: %v", err)
+	}
+	router := &fakeBindingRouter{}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	binding, err := service.Unbind(context.Background(), UnbindParams{
+		WorkspaceID: store.row.WorkspaceID,
+		AgentID:     store.row.AgentID,
+		BindingMode: BindingModeMessage,
+	})
+
+	if err != nil {
+		t.Fatalf("Unbind(revoked message) error = %v", err)
+	}
+	if len(router.deletedDigitalEmployeeAgents) != 1 ||
+		router.deletedDigitalEmployeeAgents[0] != uuidStringForTest(store.row.AgentID) ||
+		binding.MessageRoute.Status != "revoked" {
+		t.Fatalf("delete=%#v binding=%#v", router.deletedDigitalEmployeeAgents, binding)
+	}
+}
+
 func TestUnbindStaysFailClosedOnOtherRouterErrors(t *testing.T) {
 	// Anything but the explicit not-found signal (transport failure, 5xx,
 	// auth error) must still abort BEFORE the local transition, or a live
