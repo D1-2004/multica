@@ -58,7 +58,7 @@ PR をマージ**せずに**クローズした場合は、PR カードの状態�
 
 GitHub App に **Contents: Read-only** 権限があり、App の認証情報が設定されている場合、**Agents → エージェントを作成 → GitHub からインポート**を利用できます。リポジトリは定義のバージョン管理されたソースであり、ランタイムの作業ディレクトリではありません。
 
-ルートには `dingtalk-agent/project@1` の DTA `dingtalk-agent.json` が必要です。`agent.definition` は配信する定義ファイルを指し、`agent.skillsRoot` は必須で、`agent.skills` は `dingtalk-basic-behavior` を明示的に含めます。Basic を含むすべてのスキルは `<skillsRoot>/<name>` に配置し、各 `SKILL.md` の frontmatter `name` を宣言名と一致させます。ルートの `AGENTS.md` はリポジトリ開発ルールに利用でき、インポートされるのは `agent.definition` が指すファイルだけです。
+ルートには `dingtalk-agent/project@1` の DTA `dingtalk-agent.json` が必要です。`agent.definition` は配信する定義ファイルを指し、`agent.skillsRoot` は必須で、`agent.skills` は `dta-basic-behavior` を明示的に含めます。Basic を含むすべてのスキルは `<skillsRoot>/<name>` に配置し、各 `SKILL.md` の frontmatter `name` を宣言名と一致させます。ルートの `AGENTS.md` はリポジトリ開発ルールに利用でき、インポートされるのは `agent.definition` が指すファイルだけです。
 
 Multica は `project@1` の安定フィールドを検証し、追加の DTA 拡張フィールドと `workspaces` の内部定義は解釈しません。選択した commit の定義とリポジトリスキルをスナップショット化しますが、作成後に Multica で編集した名前と説明は同期時も保持します。従来の `multica-agent.yaml` にはフォールバックしません。変更は自動反映されず、エージェント Overview の **今すぐ同期**で明示的に同期します。
 

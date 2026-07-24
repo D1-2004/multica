@@ -4,16 +4,16 @@
 > 状态：已完成
 > 创建日期：2026-07-22
 > 计划 ID：20260722-dta-github-agent-project-import
-> 最后更新时间：2026-07-23 18:15 +0800
+> 最后更新时间：2026-07-24
 > 当前分支：`codex/dta-agent-format-sync`
 > 目标执行分支：`codex/dta-agent-format-sync`
-> 基线 Commit：`origin/develop@eb8b12677055cc7a7dd2c2680a0c9a8d28149e95`
+> 基线 Commit：`origin/develop@c11dabababa4fa1cec411ab178534b0c5193094b`
 > 原始工作区：`/Users/fanqi/test/code/ding-fde-agent/dt-fde-multica`
 > Worktree 路径：不使用
 > Worktree 来源：不使用
-> 交付状态：DTA `skillsRoot` 适配已完成并通过范围内验证，准备推送与重新预发
+> 交付状态：DTA Basic Skill 更名适配与范围内验证已完成，准备提交、推送并重新预发
 > 收尾状态：不适用
-> 当前里程碑：DTA 单一源码布局适配完成
+> 当前里程碑：DTA Basic Skill 更名兼容
 
 ## 背景与现状证据
 
@@ -58,7 +58,7 @@ Multica 接受的最小合法输入如下：
     "definition": "agent/AGENTS.md",
     "skillsRoot": "agent/skills",
     "skills": [
-      "dingtalk-basic-behavior",
+      "dta-basic-behavior",
       "multica-development-manager"
     ]
   },
@@ -85,7 +85,7 @@ Multica 接受的最小合法输入如下：
 | `agent.displayName` | 新建 Agent 的默认展示名称 | 可选；存在时优先于 `name` |
 | `agent.definition` | 读取 Agent instructions | 仓库内安全相对路径、UTF-8 文本、满足大小限制 |
 | `agent.skillsRoot` | 所有声明 Skill 的单一源码根 | 必填、安全仓库相对路径 |
-| `agent.skills[]` | 声明来源 Skill 身份集合 | 非空、去重、显式包含 Basic |
+| `agent.skills[]` | 声明来源 Skill 身份集合 | 非空、去重、显式包含规范 Basic `dta-basic-behavior` |
 | 所有 Skill 名 | Skill 源目录 | 固定读取 `<agent.skillsRoot>/<name>/` |
 | 每个 `SKILL.md` | Skill name/description/content | 唯一存在；frontmatter name 与声明名一致 |
 
@@ -109,6 +109,13 @@ Multica 接受的最小合法输入如下：
 - 现有 `agentsource.Skill`、文件限制、排序和安全检查可继续作为两种来源格式的共享底层能力，但 DTA GitHub 编译不复用 YAML Manifest parser。
 - GitHub source sync 仍只更新 instructions 和来源 Skill，不用 Git 内容覆盖用户在 Multica 中管理的其他字段。
 
+## 调试假设记录
+
+| 假设 | 证据与探针 | 结论 |
+| --- | --- | --- |
+| 新 DTA 仓库无法预览是因为 Multica 仍按旧 Basic Skill 名称做精确校验 | 对照 DTA `main@aa70b294` 的 loader/schema/changelog 与 Multica `ParseDTAProject()`；把规范 fixture 改为 `dta-basic-behavior` 并增加旧名称拒绝用例 | 已确认；根因是 Multica 的 `DTABasicSkill` 仍为 `dingtalk-basic-behavior` 且只接受精确相等 |
+| 是否需要兼容旧名称 `dingtalk-basic-behavior` | 当前 GitHub Agent 导入没有旧 Agent 存量；用户明确要求不兼容旧名称 | 不兼容；Multica 只接受规范名称 `dta-basic-behavior` |
+
 ## 关键设计决定
 
 ### 1. 拆分来源 parser，保留 managed YAML 链路
@@ -121,7 +128,7 @@ Multica 接受的最小合法输入如下：
 ### 2. 只严格校验消费字段，不复制整个 DTA strict schema
 
 - 必须严格验证 `$schema`、`name`、`dtaVersion`、`agent.definition`、`agent.skillsRoot`、`agent.skills` 及其类型、必填性和安全约束。
-- `agent.skills` 必须非空、名称合法且去重，并显式包含 `dingtalk-basic-behavior`。
+- `agent.skills` 必须非空、名称合法且去重，并显式包含规范名称 `dta-basic-behavior`；旧名称 `dingtalk-basic-behavior` 不兼容。
 - `workspaces` 必须存在且为对象，但内部字段由 Multica 忽略；`agentPlatform`、`multicaEndpoint` 和其他非核心可选字段不参与编译。
 - 不使用全局 `DisallowUnknownFields` 拒绝 DTA 新增的非核心字段；核心字段拼写错误仍会因真正的必填字段缺失或类型错误而失败。
 - 未支持的 `$schema` 明确失败，不做 schema fallback、文件猜测或自动降级。
@@ -227,6 +234,7 @@ Multica 接受的最小合法输入如下：
 | 前端和文档 | 已完成 |  | core/views typecheck；目标 Vitest；四份 locale `jq empty` | API fallback、四语种入口文案和四份 GitHub 导入文档已更新 |
 | 完成验证 | 已完成 |  | `git diff --check`; 零变更目录检查 | migrations、sqlc、managedagent、FDE onboarding 均无 diff |
 | DTA 单一源码布局增量 | 已完成 |  | `go test -count=1 ./internal/agentsource ./internal/handler ./internal/managedagent`; `go vet ./internal/agentsource ./internal/handler` | `agent.skillsRoot` 必填，全部 Skill 从统一根目录编译；不保留旧路径 fallback |
+| DTA Basic Skill 更名适配 | 已完成 |  | `go test -count=1 ./internal/agentsource ./internal/handler ./internal/managedagent`; `go vet ./internal/agentsource ./internal/handler`; `git diff --check` | 规范名称切换为 `dta-basic-behavior`，旧名称明确拒绝；GitHub 导入、managed YAML 与静态检查均通过 |
 
 ## 验证策略
 
@@ -277,6 +285,7 @@ git diff --check
 | 2026-07-23 | 范围收敛为只切换无人使用的 GitHub import；managed YAML、FDE onboarding、共享数据库和远端同步全部保持不变 | 预发/正式共享数据库，managed source 在线持续同步；用户明确本次先不处理初始化模板 | 是，已确认 |
 | 2026-07-23 | 将稳定边界从“完整 DTA strict schema”调整为“版本化核心字段 adapter”；兼容新增非核心字段，不兼容变化升级 `$schema` | DTA 仍在开发，Multica 只应依赖稳定的 Agent/Skill 语义 | 是，已确认 |
 | 2026-07-23 | DTA `main` 在 `project@1` 新增 `agent.skillsRoot` 并把新项目切到 `agent/AGENTS.md + agent/skills` 单一源码布局；Multica 将 `skillsRoot` 设为 GitHub 导入必填且不保留旧路径 fallback | 用户确认当前不存在旧 GitHub Agent，无需兼容旧布局 | 是，已确认 |
+| 2026-07-24 | DTA `main` 把 Basic Skill 规范名称从 `dingtalk-basic-behavior` 改为 `dta-basic-behavior`；Multica 只接受新名称，不兼容旧名称 | Multica 预览原先只接受旧名称，导致新格式仓库校验失败；当前无旧 GitHub Agent 存量，用户明确要求不兼容 | 是，已确认 |
 
 ## 最终验证结果
 
@@ -288,14 +297,15 @@ git diff --check
 | 数据库与 migration 无变更 | `git diff --name-only -- server/migrations server/pkg/db/generated` | 通过 | 无输出；没有 migration、sqlc 或数据更新 |
 | 前端和文档只更新 GitHub import | core/views typecheck、19 个目标 Vitest、locale JSON 校验、范围 diff | 通过 | core 4 tests、views 15 tests 通过；只修改 GitHub import API fallback、文案和文档 |
 | 全量 Go 套件 | `go test ./...` | 范围外失败 | `server/pkg/agent` 的 Codex app-server 72ms semantic inactivity 时序测试失败；本次未修改该包，相关目标包均独立通过 |
+| DTA Basic Skill 名称 | `go test -count=1 ./internal/agentsource ./internal/handler ./internal/managedagent`; `go vet ./internal/agentsource ./internal/handler` | 通过 | 新名称 `dta-basic-behavior` 作为规范 fixture 完成 preview/compiler 回归；旧名称有明确拒绝测试 |
 
 ### 最终工作区
 
 - 原始工作区与分支：`/Users/fanqi/test/code/ding-fde-agent/dt-fde-multica`，`codex/dta-agent-format-sync`
 - 最终工作区与分支：`/Users/fanqi/test/code/ding-fde-agent/dt-fde-multica`，`codex/dta-agent-format-sync`
-- 交付状态：增量实现与范围内验证完成，准备提交、push 并重新部署预发
+- 交付状态：Basic Skill 更名增量实现与范围内验证完成，准备提交、push 并重新部署预发
 - Worktree 收尾：不适用
-- 当前未提交改动：本次 `skillsRoot` 增量，随实现提交
+- 当前未提交改动：本次 Basic Skill 更名兼容增量，随实现提交
 - 未执行的验证：待新提交部署后使用真实 GitHub installation 做预发导入；不发布正式环境
 
 ## 遗留风险

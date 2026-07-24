@@ -15,7 +15,7 @@ import (
 const (
 	DTAProjectPath          = "dingtalk-agent.json"
 	DTAProjectSchema        = "dingtalk-agent/project@1"
-	DTABasicSkill           = "dingtalk-basic-behavior"
+	DTABasicSkill           = "dta-basic-behavior"
 	MaxDTADisplayNameLength = 128
 )
 
