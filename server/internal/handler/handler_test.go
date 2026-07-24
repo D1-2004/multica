@@ -59,6 +59,7 @@ func TestMain(m *testing.M) {
 	bus := events.New()
 	emailSvc := service.NewEmailService()
 	testHandler = New(queries, pool, hub, bus, emailSvc, nil, nil, analytics.NoopClient{}, Config{AllowSignup: true})
+	testHandler.TaskCompletionTargetIdentity = testRouterTargetIdentity
 	// httptest.NewRequest defaults RemoteAddr to 192.0.2.1, so every webhook
 	// test in the suite shares one IP bucket. With the production default
 	// (30/min) the budget runs out partway through the suite and unrelated
@@ -156,6 +157,18 @@ func setupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) (string, s
 }
 
 func cleanupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) error {
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM agent_dispatch_acceptance
+		WHERE agent_id IN (
+			SELECT id
+			FROM agent
+			WHERE workspace_id IN (
+				SELECT id FROM workspace WHERE slug = $1
+			)
+		)
+	`, handlerTestWorkspaceSlug); err != nil {
+		return err
+	}
 	if _, err := pool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, handlerTestWorkspaceSlug); err != nil {
 		return err
 	}

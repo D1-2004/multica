@@ -112,6 +112,9 @@ func TestRobotTaskContextResolverCarriesStreamSessionReplyLocator(t *testing.T) 
 	if err := json.Unmarshal(contextJSON, &payload); err != nil {
 		t.Fatal(err)
 	}
+	if _, present := payload["completion_callback"]; present {
+		t.Fatalf("direct Stream task context unexpectedly contains completion_callback: %s", contextJSON)
+	}
 	var reply dingtalkSessionReplyContext
 	if err := json.Unmarshal(payload[dingtalkSessionReplyContextKey], &reply); err != nil {
 		t.Fatalf("decode Stream reply context: %v", err)

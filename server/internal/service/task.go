@@ -49,6 +49,7 @@ type TaskService struct {
 	// RuntimeLauncher is optional. When set, it may start server-managed
 	// runtimes for a newly queued task; local runtimes simply no-op there.
 	RuntimeLauncher     TaskRuntimeLauncher
+	CompletionNotifier  TaskCompletionNotifier
 	runtimeLaunchLeases taskRuntimeLaunchLeaseStore
 	// Composio computes the per-task MCP overlay (Stage 3 of the Composio
 	// epic, MUL-3721) — the integration's "current user's connected apps
@@ -2189,6 +2190,15 @@ func (s *TaskService) MarkTaskWaitingLocalDirectory(ctx context.Context, taskID 
 	return &task, nil
 }
 
+func isTerminalAgentTaskStatus(status string) bool {
+	switch status {
+	case "completed", "failed", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
 // CompleteTask marks a task as completed.
 // Issue status is NOT changed here — the agent manages it via the CLI.
 //
@@ -2199,6 +2209,7 @@ func (s *TaskService) MarkTaskWaitingLocalDirectory(ctx context.Context, taskID 
 // causing the new task to resume against a stale (or NULL) session.
 func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string) (*db.AgentTaskQueue, error) {
 	var task db.AgentTaskQueue
+	var completionQueued bool
 	// chatAssistantMsg is the single assistant outcome row written for a chat
 	// task inside the completion transaction below. It is broadcast (chat:done)
 	// only after the transaction commits.
@@ -2248,6 +2259,11 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 			}
 			chatAssistantMsg = msg
 		}
+		queued, err := s.enqueueTaskCompletionInTx(ctx, qtx, t, "completed", result, "", "")
+		if err != nil {
+			return fmt.Errorf("enqueue task completion: %w", err)
+		}
+		completionQueued = queued
 		return nil
 	}); err != nil {
 		// When parallel agents race, a task may already be completed,
@@ -2255,7 +2271,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		// … WHERE status = 'running' returns no rows in that case.
 		// Treat it as an idempotent success — same pattern as CancelTask.
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if errors.Is(err, pgx.ErrNoRows) && isTerminalAgentTaskStatus(existing.Status) {
 				slog.Info("complete task: already finalized",
 					"task_id", util.UUIDToString(taskID),
 					"current_status", existing.Status,
@@ -2295,6 +2311,9 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		)
 	}
 	s.captureTaskCompleted(ctx, task)
+	if completionQueued && s.CompletionNotifier != nil {
+		s.CompletionNotifier.NotifyTaskCompletion()
+	}
 
 	// Invariant: every completed issue task must have at least one agent
 	// comment on the issue, so the user always sees something when a run
@@ -2496,7 +2515,27 @@ func (s *TaskService) writeChatCompletionOutcome(ctx context.Context, qtx *db.Qu
 // coarse bucket. Daemon callers that already produced a refined reason
 // (via classifyPoisonedError, the timeout / runtime classifier, etc.)
 // will have their value preserved untouched.
-func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, sessionID, workDir, failureReason string) (*db.AgentTaskQueue, error) {
+func (s *TaskService) FailTask(
+	ctx context.Context,
+	taskID pgtype.UUID,
+	errMsg, sessionID, workDir, failureReason string,
+) (*db.AgentTaskQueue, error) {
+	return s.FailTaskWithResultMessage(
+		ctx,
+		taskID,
+		errMsg,
+		"",
+		sessionID,
+		workDir,
+		failureReason,
+	)
+}
+
+func (s *TaskService) FailTaskWithResultMessage(
+	ctx context.Context,
+	taskID pgtype.UUID,
+	errMsg, resultMessage, sessionID, workDir, failureReason string,
+) (*db.AgentTaskQueue, error) {
 	// MUL-2946: synthesise a refined reason from the error text whenever the
 	// caller didn't supply one. This is the last write-path guard against
 	// "agent_error" coarse rows ending up in agent_task_queue.failure_reason
@@ -2519,11 +2558,11 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		wantRetry    bool
 		retryOverlay runtimeMCPOverlayData
 	)
-	if retryableReasons[failureReason] {
+	if strings.TrimSpace(resultMessage) == "" && retryableReasons[failureReason] {
 		if parent, perr := s.Queries.GetAgentTask(ctx, taskID); perr != nil {
 			slog.Warn("fail task auto-retry: load parent failed",
 				"task_id", util.UUIDToString(taskID), "error", perr)
-		} else if retryEligible(failureReason, parent) {
+		} else if retryEligibleForReportedFailure(failureReason, parent, resultMessage) {
 			wantRetry = true
 			if agent, aerr := s.Queries.GetAgent(ctx, parent.AgentID); aerr != nil {
 				// Best-effort: a missing overlay is not retry-fatal — the child
@@ -2539,9 +2578,15 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 	var task db.AgentTaskQueue
 	var retried *db.AgentTaskQueue
+	var completionQueued bool
+	var failureResult []byte
+	if strings.TrimSpace(resultMessage) != "" {
+		failureResult, _ = json.Marshal(failedCompletionPayload{ResultMessage: resultMessage})
+	}
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
 			ID:            taskID,
+			Result:        failureResult,
 			Error:         pgtype.Text{String: errMsg, Valid: true},
 			FailureReason: pgtype.Text{String: failureReason, Valid: failureReason != ""},
 			SessionID:     pgtype.Text{String: sessionID, Valid: sessionID != ""},
@@ -2586,11 +2631,25 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 				return fmt.Errorf("create retry task: %w", cerr)
 			}
 			retried = &child
+		} else {
+			queued, completionErr := s.enqueueTaskCompletionInTx(
+				ctx,
+				qtx,
+				t,
+				"failed",
+				failureResult,
+				errMsg,
+				failureReason,
+			)
+			if completionErr != nil {
+				return fmt.Errorf("enqueue task completion: %w", completionErr)
+			}
+			completionQueued = queued
 		}
 		return nil
 	}); err != nil {
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if errors.Is(err, pgx.ErrNoRows) && isTerminalAgentTaskStatus(existing.Status) {
 				slog.Info("fail task: already finalized",
 					"task_id", util.UUIDToString(taskID),
 					"current_status", existing.Status,
@@ -2617,6 +2676,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)
 	s.captureTaskFailed(ctx, task)
+	if completionQueued && s.CompletionNotifier != nil {
+		s.CompletionNotifier.NotifyTaskCompletion()
+	}
 
 	// The auto-retry child (if any) was created inside the transaction above so
 	// no newer chat task could jump ahead of it. Surface it now: broadcast
@@ -2713,9 +2775,18 @@ func resumeUnsafeFailureReason(reason string) bool {
 // so both agree on which failures re-run.
 func retryEligible(failureReason string, t db.AgentTaskQueue) bool {
 	return retryableReasons[failureReason] &&
+		strings.TrimSpace(failedCompletionResultMessage(t.Result)) == "" &&
 		t.Attempt < t.MaxAttempts &&
 		!t.AutopilotRunID.Valid &&
 		(t.IssueID.Valid || t.ChatSessionID.Valid)
+}
+
+func retryEligibleForReportedFailure(
+	failureReason string,
+	task db.AgentTaskQueue,
+	resultMessage string,
+) bool {
+	return strings.TrimSpace(resultMessage) == "" && retryEligible(failureReason, task)
 }
 
 // MaybeRetryFailedTask spawns a fresh queued attempt for a recently-failed
@@ -2732,69 +2803,15 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 	if parent.Status != "failed" {
 		return nil, nil
 	}
-	reason := ""
-	if parent.FailureReason.Valid {
-		reason = parent.FailureReason.String
-	}
-	if !retryableReasons[reason] {
-		return nil, nil
-	}
-	if parent.Attempt >= parent.MaxAttempts {
-		slog.Info("task auto-retry skipped: budget exhausted",
-			"task_id", util.UUIDToString(parent.ID),
-			"attempt", parent.Attempt,
-			"max_attempts", parent.MaxAttempts,
-		)
-		return nil, nil
-	}
-	// Autopilot has its own retry semantics (don't double-trigger) and a task
-	// with no issue/chat link has nowhere to report its retry — retryEligible
-	// covers both, keeping this sweeper path in sync with FailTask's in-tx retry.
-	if !retryEligible(reason, parent) {
-		return nil, nil
-	}
-
-	var runtimeMCPOverlay runtimeMCPOverlayData
-	agent, agentErr := s.Queries.GetAgent(ctx, parent.AgentID)
-	if agentErr != nil {
-		// Best-effort: failing to resolve the agent for the overlay is not
-		// retry-fatal. Log and continue — the daemon will reject the claim
-		// later if the agent is genuinely gone.
-		slog.Warn("task auto-retry: load agent for overlay failed",
-			"parent_task_id", util.UUIDToString(parent.ID),
-			"agent_id", util.UUIDToString(parent.AgentID),
-			"error", agentErr,
-		)
-	} else {
-		runtimeMCPOverlay = s.buildRuntimeMCPOverlay(ctx, parent.OriginatorUserID, agent)
-	}
-	child, err := s.Queries.CreateRetryTask(ctx, db.CreateRetryTaskParams{
-		ID:                   parent.ID,
-		RuntimeMcpOverlay:    runtimeMCPOverlay.Overlay,
-		RuntimeConnectedApps: runtimeMCPOverlay.ConnectedApps,
-	})
+	finalized, err := s.finalizeFailedTask(ctx, parent.ID)
 	if err != nil {
 		slog.Warn("task auto-retry failed",
 			"parent_task_id", util.UUIDToString(parent.ID),
-			"reason", reason,
 			"error", err,
 		)
 		return nil, err
 	}
-	slog.Info("task auto-retry enqueued",
-		"parent_task_id", util.UUIDToString(parent.ID),
-		"child_task_id", util.UUIDToString(child.ID),
-		"reason", reason,
-		"attempt", child.Attempt,
-		"max_attempts", child.MaxAttempts,
-	)
-	// Retry creates a fresh queued row, same status transition (∅ → queued)
-	// as EnqueueTaskFor*. Broadcast queued first, then notify the daemon —
-	// see EnqueueTaskForIssue for ordering rationale.
-	//
-	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, child)
-	s.NotifyTaskEnqueued(ctx, child)
-	return &child, nil
+	return finalized.Retry, nil
 }
 
 // RerunIssue creates a fresh queued task for an agent on the issue. Used by
@@ -3006,7 +3023,14 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 	for _, t := range tasks {
 		// Auto-retry first so the issue stays in_progress rather than
 		// flapping todo → in_progress within a tick.
-		if child, _ := s.MaybeRetryFailedTask(ctx, t); child != nil {
+		child, finalizeErr := s.MaybeRetryFailedTask(ctx, t)
+		if finalizeErr != nil {
+			slog.Error("handle failed tasks: finalize retry or completion failed",
+				"task_id", util.UUIDToString(t.ID),
+				"error", finalizeErr,
+			)
+		}
+		if child != nil {
 			retried++
 			if t.IssueID.Valid {
 				retriedIssues[util.UUIDToString(t.IssueID)] = true

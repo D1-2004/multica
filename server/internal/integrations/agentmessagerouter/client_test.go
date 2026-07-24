@@ -6,10 +6,60 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestClientTargetIdentityCanonicalizesRouterBase(t *testing.T) {
+	var identities []string
+	for _, rawURL := range []string{
+		"https://ROUTER.internal:443/api/",
+		"https://router.internal/api",
+	} {
+		client, err := NewClient(ClientConfig{
+			BaseURL:           rawURL,
+			ServiceCredential: "service-secret",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		identities = append(identities, client.TargetIdentity())
+	}
+	if identities[0] != identities[1] {
+		t.Fatalf("equivalent Router bases have different targets: %q != %q", identities[0], identities[1])
+	}
+	if !regexp.MustCompile(`^router-target:v1:sha256:[a-f0-9]{64}$`).MatchString(identities[0]) {
+		t.Fatalf("target identity = %q", identities[0])
+	}
+
+	other, err := NewClient(ClientConfig{
+		BaseURL:           "https://router-prepub.internal/api",
+		ServiceCredential: "service-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.TargetIdentity() == identities[0] {
+		t.Fatal("different Router bases share a target identity")
+	}
+}
+
+func TestClientRejectsAmbiguousRouterBasePath(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://router.internal/api/../formal",
+		"https://router.internal/api%2Fformal",
+		"https://router.internal/api//formal",
+	} {
+		if _, err := NewClient(ClientConfig{
+			BaseURL:           rawURL,
+			ServiceCredential: "service-secret",
+		}); err == nil {
+			t.Fatalf("ambiguous Router base %q accepted", rawURL)
+		}
+	}
+}
 
 func TestClientIssuesBindingTokenWithServiceCredential(t *testing.T) {
 	expiresAt := time.Date(2026, 7, 14, 10, 5, 0, 0, time.UTC)

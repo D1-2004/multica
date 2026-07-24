@@ -760,6 +760,34 @@ func (q *Queries) GetActiveDingTalkHTTPInstallationForDispatch(ctx context.Conte
 	return i, err
 }
 
+const getAgentDispatchTaskIDByMessage = `-- name: GetAgentDispatchTaskIDByMessage :one
+SELECT task.id
+FROM agent_task_queue task
+WHERE task.chat_session_id = $1
+  AND task.parent_task_id IS NULL
+  AND COALESCE(
+      task.context #> '{dispatch_event_data,messages}',
+      '[]'::jsonb
+  ) @> jsonb_build_array(jsonb_build_object(
+      'openMsgId',
+      $2::text
+  ))
+ORDER BY task.created_at DESC
+LIMIT 1
+`
+
+type GetAgentDispatchTaskIDByMessageParams struct {
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	MessageID     string      `json:"message_id"`
+}
+
+func (q *Queries) GetAgentDispatchTaskIDByMessage(ctx context.Context, arg GetAgentDispatchTaskIDByMessageParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getAgentDispatchTaskIDByMessage, arg.ChatSessionID, arg.MessageID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getChannelChatSessionBinding = `-- name: GetChannelChatSessionBinding :one
 SELECT id, chat_session_id, installation_id, channel_type, channel_chat_id, chat_type, last_message_id, last_thread_id, config, created_at FROM channel_chat_session_binding
 WHERE installation_id = $1 AND channel_chat_id = $2

@@ -613,6 +613,21 @@ FROM channel_inbound_message_dedup
 WHERE installation_id = $1
   AND message_id = $2;
 
+-- name: GetAgentDispatchTaskIDByMessage :one
+SELECT task.id
+FROM agent_task_queue task
+WHERE task.chat_session_id = sqlc.arg('chat_session_id')
+  AND task.parent_task_id IS NULL
+  AND COALESCE(
+      task.context #> '{dispatch_event_data,messages}',
+      '[]'::jsonb
+  ) @> jsonb_build_array(jsonb_build_object(
+      'openMsgId',
+      sqlc.arg('message_id')::text
+  ))
+ORDER BY task.created_at DESC
+LIMIT 1;
+
 -- name: MarkChannelInboundDedupProcessed :execrows
 -- Locks a claim in as permanently processed after a durable outcome.
 -- Invoked inside the chat_message tx (via qtx) on the ingest path so the

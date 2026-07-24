@@ -100,6 +100,86 @@ func TestClient_VersionOmittedWhenUnset(t *testing.T) {
 	}
 }
 
+func TestClientCompleteTaskIncludesResultMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/daemon/tasks/task-1/complete" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["output"] != "agent execution summary" {
+			t.Fatalf("output = %#v", body["output"])
+		}
+		if body["result_message"] != "最终回复正文" {
+			t.Fatalf("result_message = %#v", body["result_message"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	if err := c.CompleteTask(
+		context.Background(),
+		"task-1",
+		"agent execution summary",
+		"最终回复正文",
+		"",
+		"",
+		"",
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientFailTaskWithResultMessageIncludesResultMessage(t *testing.T) {
+	requests := make(chan map[string]any, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		requests <- body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	if err := c.FailTaskWithResultMessage(
+		context.Background(),
+		"task-1",
+		"runtime timed out",
+		"已向用户说明任务超时",
+		"",
+		"",
+		"timeout",
+	); err != nil {
+		t.Fatal(err)
+	}
+	withResultMessage := <-requests
+	if withResultMessage["result_message"] != "已向用户说明任务超时" {
+		t.Fatalf("result_message = %#v", withResultMessage["result_message"])
+	}
+
+	if err := c.FailTask(
+		context.Background(),
+		"task-2",
+		"runtime timed out",
+		"",
+		"",
+		"timeout",
+	); err != nil {
+		t.Fatal(err)
+	}
+	legacy := <-requests
+	if _, ok := legacy["result_message"]; ok {
+		t.Fatalf("legacy FailTask unexpectedly sent result_message: %#v", legacy)
+	}
+}
+
 func TestClient_ListWorkspacesUsesDaemonEndpointAndETag(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

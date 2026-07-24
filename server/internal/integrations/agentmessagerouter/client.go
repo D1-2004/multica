@@ -3,12 +3,15 @@ package agentmessagerouter
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	pathpkg "path"
 	"strings"
 	"time"
 )
@@ -23,6 +26,7 @@ type ClientConfig struct {
 
 type Client struct {
 	baseURL           *url.URL
+	targetIdentity    string
 	serviceCredential string
 	httpClient        *http.Client
 }
@@ -166,9 +170,36 @@ func NewClient(config ClientConfig) (*Client, error) {
 	baseURL, err := url.Parse(strings.TrimSpace(config.BaseURL))
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" ||
 		(baseURL.Scheme != "http" && baseURL.Scheme != "https") ||
-		baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
+		baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" ||
+		baseURL.RawPath != "" {
 		return nil, errors.New("agent message router base url is invalid")
 	}
+	scheme := strings.ToLower(baseURL.Scheme)
+	hostname := strings.ToLower(baseURL.Hostname())
+	port := baseURL.Port()
+	if hostname == "" {
+		return nil, errors.New("agent message router base url is invalid")
+	}
+	if (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
+		port = ""
+	}
+	host := hostname
+	if port != "" {
+		host = net.JoinHostPort(hostname, port)
+	} else if strings.Contains(hostname, ":") {
+		host = "[" + hostname + "]"
+	}
+	basePath := strings.TrimRight(baseURL.Path, "/")
+	if basePath == "/" {
+		basePath = ""
+	}
+	if basePath != "" &&
+		(!strings.HasPrefix(basePath, "/") || pathpkg.Clean(basePath) != basePath) {
+		return nil, errors.New("agent message router base url is invalid")
+	}
+	baseURL.Scheme = scheme
+	baseURL.Host = host
+	baseURL.Path = basePath
 	credential := strings.TrimSpace(config.ServiceCredential)
 	if credential == "" || strings.ContainsAny(credential, " \t\r\n") {
 		return nil, errors.New("agent message router service credential is required")
@@ -177,12 +208,28 @@ func NewClient(config ClientConfig) (*Client, error) {
 	httpClient := config.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 10 * time.Second}
+	} else {
+		cloned := *httpClient
+		httpClient = &cloned
 	}
+	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	canonicalTarget := scheme + "://" + host + basePath
+	targetDigest := sha256.Sum256([]byte(canonicalTarget))
 	return &Client{
 		baseURL:           baseURL,
+		targetIdentity:    fmt.Sprintf("router-target:v1:sha256:%x", targetDigest),
 		serviceCredential: credential,
 		httpClient:        httpClient,
 	}, nil
+}
+
+func (c *Client) TargetIdentity() string {
+	if c == nil {
+		return ""
+	}
+	return c.targetIdentity
 }
 
 func (c *Client) IssueBindingToken(ctx context.Context, agentID, dispatchPath string) (BindingToken, error) {

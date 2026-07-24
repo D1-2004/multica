@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -122,5 +123,85 @@ func TestTerminalTransitionsNotifyRuntime(t *testing.T) {
 	}
 	if got := len(recorder.calls); got != 1 || recorder.calls[0].runtimeID != runtimeID || recorder.calls[0].taskID != "" {
 		t.Fatalf("unexpected cancellation wakeups: %#v", recorder.calls)
+	}
+}
+
+func TestFailTaskReturnsFiveHundredWhenCompletionOutboxConflicts(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 AND runtime_id IS NOT NULL LIMIT 1`,
+		testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_id, creator_type,
+			number, position, assignee_type, assignee_id
+		)
+		VALUES ($1, 'completion outbox conflict', 'in_progress', 'none', $2, 'member',
+		        999098, 0, 'agent', $3)
+		RETURNING id
+	`, testWorkspaceID, testUserID, agentID).Scan(&issueID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority, started_at, context
+		)
+		VALUES (
+			$1, $2, $3, 'running', 0, now(),
+			jsonb_build_object(
+				'completion_callback',
+				jsonb_build_object(
+					'url', '/api/v1/dispatch-tasks/router-handler-conflict/execution-result',
+					'target', $4::text
+				)
+			)
+		)
+		RETURNING id
+	`, agentID, runtimeID, issueID, testRouterTargetIdentity).Scan(&taskID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO task_completion_outbox (
+			root_task_id, terminal_task_id, callback_url, target_identity,
+			request_id, agent_id, execution_status, failure_reason
+		)
+		VALUES (
+			$1::uuid, gen_random_uuid(),
+			'/api/v1/dispatch-tasks/router-handler-conflict/execution-result',
+			$2, 'multica-terminal:' || ($1::uuid)::text, $3, 'completed', 'stale'
+		)
+	`, taskID, testRouterTargetIdentity, agentID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM task_completion_outbox WHERE root_task_id = $1`, taskID)
+	})
+
+	w := failTaskViaHandler(t, taskID)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("FailTask status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "fail task persistence failed") ||
+		strings.Contains(w.Body.String(), "enqueue task completion") {
+		t.Fatalf("FailTask exposed an unstable infrastructure error: %s", w.Body.String())
+	}
+	var status string
+	if err := testPool.QueryRow(ctx, `
+		SELECT status FROM agent_task_queue WHERE id = $1
+	`, taskID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "running" {
+		t.Fatalf("rolled-back task status = %q", status)
 	}
 }

@@ -1079,6 +1079,53 @@ func TestMergeUsage(t *testing.T) {
 	}
 }
 
+func TestMergeResumeRetryResultPreservesLastSuccessfulDWSReply(t *testing.T) {
+	first := agent.Result{
+		Status:        "failed",
+		ResultMessage: "首轮已发送回复",
+		Usage: map[string]agent.TokenUsage{
+			"m1": {InputTokens: 5},
+		},
+	}
+	retryWithoutReply := agent.Result{
+		Status: "completed",
+		Output: "done",
+		Usage: map[string]agent.TokenUsage{
+			"m1": {InputTokens: 10},
+		},
+	}
+	merged := mergeResumeRetryResult(first, retryWithoutReply)
+	if merged.ResultMessage != "首轮已发送回复" {
+		t.Fatalf("result message = %q", merged.ResultMessage)
+	}
+	if merged.Usage["m1"].InputTokens != 15 {
+		t.Fatalf("usage = %+v", merged.Usage)
+	}
+
+	retryWithReply := agent.Result{
+		Status:        "completed",
+		ResultMessage: "重试后新回复",
+	}
+	merged = mergeResumeRetryResult(first, retryWithReply)
+	if merged.ResultMessage != "重试后新回复" {
+		t.Fatalf("newer retry result message = %q", merged.ResultMessage)
+	}
+}
+
+func TestTaskResultWithAgentReplyPreservesBlockedReplyButNotCancelled(t *testing.T) {
+	agentResult := agent.Result{ResultMessage: "已发送给用户的失败说明"}
+
+	blocked := taskResultWithAgentReply(agentResult, TaskResult{Status: "blocked"})
+	if blocked.ResultMessage != "已发送给用户的失败说明" {
+		t.Fatalf("blocked result message = %q", blocked.ResultMessage)
+	}
+
+	cancelled := taskResultWithAgentReply(agentResult, TaskResult{Status: "cancelled"})
+	if cancelled.ResultMessage != "" {
+		t.Fatalf("cancelled result message = %q", cancelled.ResultMessage)
+	}
+}
+
 // fakeBackend is a test double for agent.Backend that returns preconfigured
 // results. Each call to Execute pops the next entry from the results slice.
 type fakeBackend struct {
@@ -1228,14 +1275,13 @@ func TestExecuteAndDrain_ResumeFailureFallback(t *testing.T) {
 
 	// Simulate the retry logic from runTask.
 	if result.Status == "failed" && result.SessionID == "" {
-		firstUsage := result.Usage
+		firstResult := result
 		opts.ResumeSessionID = ""
 		retryResult, _, retryErr := d.executeAndDrain(ctx, fb, "prompt", opts, taskLog, "task-1", &msgSeq)
 		if retryErr != nil {
 			t.Fatalf("retry error: %v", retryErr)
 		}
-		result = retryResult
-		result.Usage = mergeUsage(firstUsage, result.Usage)
+		result = mergeResumeRetryResult(firstResult, retryResult)
 	}
 
 	if result.Status != "completed" || result.Output != "done" {
@@ -2237,11 +2283,12 @@ func TestReportTaskResult_CompletedHitsCompleteEndpoint(t *testing.T) {
 
 	d := &Daemon{client: NewClient(srv.URL), logger: slog.Default()}
 	d.reportTaskResult(context.Background(), "task-1", TaskResult{
-		Status:     "completed",
-		Comment:    "all good",
-		BranchName: "agent/foo",
-		SessionID:  "ses-1",
-		WorkDir:    "/tmp/foo",
+		Status:        "completed",
+		Comment:       "all good",
+		ResultMessage: "最终回复正文",
+		BranchName:    "agent/foo",
+		SessionID:     "ses-1",
+		WorkDir:       "/tmp/foo",
 	}, slog.Default())
 
 	rec.mu.Lock()
@@ -2252,11 +2299,37 @@ func TestReportTaskResult_CompletedHitsCompleteEndpoint(t *testing.T) {
 	if rec.payload["output"] != "all good" {
 		t.Errorf("output: got %v", rec.payload["output"])
 	}
+	if rec.payload["result_message"] != "最终回复正文" {
+		t.Errorf("result_message: got %v", rec.payload["result_message"])
+	}
 	if rec.payload["branch_name"] != "agent/foo" {
 		t.Errorf("branch_name: got %v", rec.payload["branch_name"])
 	}
 	if rec.payload["session_id"] != "ses-1" {
 		t.Errorf("session_id: got %v", rec.payload["session_id"])
+	}
+}
+
+func TestReportTaskResult_BlockedIncludesResultMessage(t *testing.T) {
+	rec := &reportTaskResultRecorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	d := &Daemon{client: NewClient(srv.URL), logger: slog.Default()}
+	d.reportTaskResult(context.Background(), "task-failed-reply", TaskResult{
+		Status:        "blocked",
+		Comment:       "runtime timed out",
+		ResultMessage: "已向用户说明任务超时",
+		FailureReason: "timeout",
+	}, slog.Default())
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if rec.path != "/api/daemon/tasks/task-failed-reply/fail" {
+		t.Fatalf("path = %q", rec.path)
+	}
+	if rec.payload["result_message"] != "已向用户说明任务超时" {
+		t.Fatalf("result_message = %#v", rec.payload["result_message"])
 	}
 }
 
@@ -2418,10 +2491,12 @@ func TestReportTaskResult_TransientCompleteExhaustedDoesNotFallback(t *testing.T
 	}))
 	t.Cleanup(srv.Close)
 
-	d := &Daemon{client: NewClient(srv.URL), logger: slog.Default()}
+	pending := loadPendingReportStore("", nil)
+	d := &Daemon{client: NewClient(srv.URL), logger: slog.Default(), pendingReports: pending}
 	d.reportTaskResult(context.Background(), "task-stuck", TaskResult{
-		Status:  "completed",
-		Comment: "ok",
+		Status:        "completed",
+		Comment:       "agent execution summary",
+		ResultMessage: "最终回复正文",
 	}, slog.Default())
 
 	if got := completeCalls.Load(); got != int32(len(defaultTerminalRetrySchedule)+1) {
@@ -2429,6 +2504,10 @@ func TestReportTaskResult_TransientCompleteExhaustedDoesNotFallback(t *testing.T
 	}
 	if got := failCalls.Load(); got != 0 {
 		t.Fatalf("exhausted transient retries must NOT fall back to /fail; got %d /fail calls", got)
+	}
+	queued := pending.Snapshot()
+	if len(queued) != 1 || queued[0].ResultMessage != "最终回复正文" {
+		t.Fatalf("pending report lost result message: %+v", queued)
 	}
 }
 
@@ -2439,6 +2518,7 @@ func TestReportTaskResult_PermanentCompleteFallsBackToFail(t *testing.T) {
 	defer noSleepRetry(t)()
 
 	var completeCalls, failCalls atomic.Int32
+	var failedBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch {
 		case strings.HasSuffix(req.URL.Path, "/complete"):
@@ -2446,6 +2526,9 @@ func TestReportTaskResult_PermanentCompleteFallsBackToFail(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 		case strings.HasSuffix(req.URL.Path, "/fail"):
 			failCalls.Add(1)
+			if err := json.NewDecoder(req.Body).Decode(&failedBody); err != nil {
+				t.Fatal(err)
+			}
 			w.WriteHeader(http.StatusOK)
 		default:
 			w.WriteHeader(http.StatusOK)
@@ -2455,8 +2538,9 @@ func TestReportTaskResult_PermanentCompleteFallsBackToFail(t *testing.T) {
 
 	d := &Daemon{client: NewClient(srv.URL), logger: slog.Default()}
 	d.reportTaskResult(context.Background(), "task-bad", TaskResult{
-		Status:  "completed",
-		Comment: "ok",
+		Status:        "completed",
+		Comment:       "ok",
+		ResultMessage: "已向用户回复完成",
 	}, slog.Default())
 
 	if got := completeCalls.Load(); got != 1 {
@@ -2464,6 +2548,9 @@ func TestReportTaskResult_PermanentCompleteFallsBackToFail(t *testing.T) {
 	}
 	if got := failCalls.Load(); got != 1 {
 		t.Fatalf("permanent /complete should fall back to /fail exactly once, got %d", got)
+	}
+	if failedBody["result_message"] != "已向用户回复完成" {
+		t.Fatalf("fallback fail result_message = %#v", failedBody["result_message"])
 	}
 }
 
