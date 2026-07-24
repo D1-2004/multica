@@ -11,6 +11,7 @@ import (
 // prompt projection, and outbound ownership independent after wire validation.
 type agentDispatchExecutionPlan struct {
 	SurfaceType            string
+	InstallationOverride   *engine.ResolvedInstallation
 	Identity               engine.ResolvedIdentity
 	Prompt                 DispatchPrompt
 	SuppressServerOutbound bool
@@ -25,8 +26,26 @@ func buildAgentDispatchExecutionPlan(command DispatchCommand, dispatchContext ag
 	if err != nil {
 		return agentDispatchExecutionPlan{}, err
 	}
+	var installationOverride *engine.ResolvedInstallation
+	if command.Source.Type == "digital_employee" &&
+		command.Surface.Type == protocol.DispatchSurfaceTypeChat &&
+		command.Outbound.Mode == protocol.DispatchOutboundModeDWS {
+		if !dispatchContext.EndpointNamespaceID.Valid ||
+			!dispatchContext.WorkspaceID.Valid ||
+			!dispatchContext.AgentID.Valid {
+			return agentDispatchExecutionPlan{}, errors.New("digital employee chat dispatch endpoint has no durable namespace")
+		}
+		installationOverride = &engine.ResolvedInstallation{
+			ID:              dispatchContext.EndpointNamespaceID,
+			WorkspaceID:     dispatchContext.WorkspaceID,
+			AgentID:         dispatchContext.AgentID,
+			InstallerUserID: dispatchContext.UserID,
+			Active:          true,
+		}
+	}
 	return agentDispatchExecutionPlan{
-		SurfaceType: command.Surface.Type,
+		SurfaceType:          command.Surface.Type,
+		InstallationOverride: installationOverride,
 		Identity: engine.ResolvedIdentity{
 			PrincipalUserID: dispatchContext.UserID,
 		},
@@ -38,7 +57,13 @@ func buildAgentDispatchExecutionPlan(command DispatchCommand, dispatchContext ag
 
 func (p agentDispatchExecutionPlan) channelHandleOptions() engine.HandleOptions {
 	identity := p.Identity
+	var installation *engine.ResolvedInstallation
+	if p.InstallationOverride != nil {
+		copied := *p.InstallationOverride
+		installation = &copied
+	}
 	return engine.HandleOptions{
+		InstallationOverride:   installation,
 		IdentityOverride:       &identity,
 		SuppressServerOutbound: p.SuppressServerOutbound,
 		DisableControlCommands: p.DisableControlCommands,

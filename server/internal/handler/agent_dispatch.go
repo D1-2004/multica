@@ -317,10 +317,11 @@ func agentDispatchContextToken(req AgentDispatchRequest) string {
 }
 
 type agentDispatchContext struct {
-	EndpointID  string
-	UserID      pgtype.UUID
-	WorkspaceID pgtype.UUID
-	AgentID     pgtype.UUID
+	EndpointID          string
+	EndpointNamespaceID pgtype.UUID
+	UserID              pgtype.UUID
+	WorkspaceID         pgtype.UUID
+	AgentID             pgtype.UUID
 }
 
 func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Request) (agentDispatchContext, bool) {
@@ -342,8 +343,11 @@ func (h *Handler) resolveAgentDispatchContext(w http.ResponseWriter, r *http.Req
 	if err == nil {
 		h.Metrics.RecordDispatchAuth("success")
 		return agentDispatchContext{
-			EndpointID: endpointID,
-			UserID:     endpoint.ActorUserID, WorkspaceID: endpoint.WorkspaceID, AgentID: endpoint.AgentID,
+			EndpointID:          endpointID,
+			EndpointNamespaceID: endpoint.ID,
+			UserID:              endpoint.ActorUserID,
+			WorkspaceID:         endpoint.WorkspaceID,
+			AgentID:             endpoint.AgentID,
 		}, true
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
