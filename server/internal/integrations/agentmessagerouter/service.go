@@ -672,6 +672,7 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 	config.SurfaceType = subscription.Surface.Type
 	config.MessageRouteStatus = ""
 	config.MessageScope = messageScope
+	config.CalendarStartEnabled = hasActiveCalendarSubscription(params.MessageBinding.Subscriptions)
 	config.Conversations = conversations
 	config.BoundAt = &boundAt
 	activeConfig, err := config.Marshal()

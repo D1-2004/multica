@@ -563,6 +563,7 @@
       "dingtalk_account_surface_update_failed": "実行モードを更新できませんでした。",
       "dingtalk_account_scope_direct_only": "自分とのチャットメッセージを監視中",
       "dingtalk_account_scope_all": "すべてのメッセージを監視中",
+      "dingtalk_account_scope_calendar_start": "カレンダー開始を監視中",
       "dingtalk_account_scope_custom_other": "{{count}} 件の会話のメッセージを監視中",
       "dingtalk_account_status_active": "有効",
       "dingtalk_account_status_pending": "処理中",

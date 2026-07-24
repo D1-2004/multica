@@ -56,6 +56,7 @@ describe("DingTalk account binding schemas", () => {
             account_avatar_url: "https://example.test/digital-worker.png",
             surface_type: "chat",
             message_scope: "custom",
+            calendar_start_enabled: true,
             conversations: [
               {
                 cid: "cid-group-1",
@@ -95,6 +96,7 @@ describe("DingTalk account binding schemas", () => {
             accountAvatarUrl: "https://example.test/digital-worker.png",
             surfaceType: "chat",
             messageScope: "custom",
+            calendarStartEnabled: true,
             conversations: [
               {
                 cid: "cid-group-1",
@@ -131,6 +133,7 @@ describe("DingTalk account binding schemas", () => {
     expect(parsed.bindings[0]?.messageRoute).toEqual({
       status: "active",
       messageScope: "direct_only",
+      calendarStartEnabled: false,
       conversations: [],
     });
   });

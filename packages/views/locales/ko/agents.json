@@ -571,6 +571,7 @@
       "dingtalk_account_surface_update_failed": "실행 모드를 업데이트하지 못했습니다.",
       "dingtalk_account_scope_direct_only": "나와의 대화 메시지 모니터링 중",
       "dingtalk_account_scope_all": "모든 메시지 모니터링 중",
+      "dingtalk_account_scope_calendar_start": "일정 시작을 수신 중",
       "dingtalk_account_scope_custom_other": "{{count}}개 대화의 메시지 모니터링 중",
       "dingtalk_account_status_active": "활성",
       "dingtalk_account_status_pending": "대기 중",

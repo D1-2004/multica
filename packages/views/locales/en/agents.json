@@ -680,6 +680,7 @@
       "dingtalk_account_surface_update_failed": "Unable to update the run mode.",
       "dingtalk_account_scope_direct_only": "Listening to my direct messages",
       "dingtalk_account_scope_all": "Listening to all messages",
+      "dingtalk_account_scope_calendar_start": "Listening for calendar starts",
       "dingtalk_account_scope_custom_one": "Listening to messages from {{count}} conversation",
       "dingtalk_account_scope_custom_other": "Listening to messages from {{count}} conversations",
       "dingtalk_account_status_active": "Active",
