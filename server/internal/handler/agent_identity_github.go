@@ -2,12 +2,14 @@ package handler
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
+	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -68,6 +70,7 @@ func (h *Handler) GetAgentIdentityGitHubStatus(w http.ResponseWriter, r *http.Re
 			})
 			return
 		}
+		logAgentIdentityGitHubError(r, "status", err, workspaceID, uuidToString(agent.ID))
 		writeAgentIdentityGitHubError(w, err)
 		return
 	}
@@ -102,6 +105,7 @@ func (h *Handler) BeginAgentIdentityGitHubOAuth(w http.ResponseWriter, r *http.R
 		ReturnURL:   returnURL,
 	})
 	if err != nil {
+		logAgentIdentityGitHubError(r, "oauth_start", err, workspaceID, uuidToString(agent.ID))
 		writeAgentIdentityGitHubError(w, err)
 		return
 	}
@@ -131,6 +135,7 @@ func (h *Handler) TestAgentIdentityGitHubConnection(w http.ResponseWriter, r *ht
 	}
 	status, err := client.GetStatus(r.Context(), workspaceID, uuidToString(agent.ID), userID)
 	if err != nil {
+		logAgentIdentityGitHubError(r, "test_status", err, workspaceID, uuidToString(agent.ID))
 		writeAgentIdentityGitHubError(w, err)
 		return
 	}
@@ -140,6 +145,7 @@ func (h *Handler) TestAgentIdentityGitHubConnection(w http.ResponseWriter, r *ht
 	}
 	result, err := client.TestConnection(r.Context(), connectionID)
 	if err != nil {
+		logAgentIdentityGitHubError(r, "test_connection", err, workspaceID, uuidToString(agent.ID))
 		writeAgentIdentityGitHubError(w, err)
 		return
 	}
@@ -295,6 +301,24 @@ func writeAgentIdentityGitHubError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusBadGateway, "agent identity GitHub request failed")
+}
+
+func logAgentIdentityGitHubError(r *http.Request, operation string, err error, workspaceID string, agentID string) {
+	attrs := append(logger.RequestAttrs(r),
+		"operation", operation,
+		"workspace_id", workspaceID,
+		"agent_id", agentID,
+		"error", err,
+	)
+	var svcErr *agentidentitygithub.ServiceError
+	if errors.As(err, &svcErr) {
+		attrs = append(attrs,
+			"upstream_status", svcErr.StatusCode,
+			"upstream_code", svcErr.Code,
+			"upstream_message", svcErr.Message,
+		)
+	}
+	slog.Warn("agent identity github request failed", attrs...)
 }
 
 func nonEmpty(value, fallback string) string {

@@ -117,22 +117,6 @@ vi.mock("../integrations/dingtalk-account-binding", () => ({
   ),
 }));
 
-vi.mock("../integrations/github-identity-binding", () => ({
-  GitHubIdentityBindingCard: ({
-    agentId,
-    canManage,
-  }: {
-    agentId: string;
-    canManage: boolean;
-  }) => (
-    <section
-      aria-label="GitHub sandbox identity"
-      data-agent-id={agentId}
-      data-can-manage={canManage ? "true" : "false"}
-    />
-  ),
-}));
-
 import { IntegrationsTab } from "./integrations-tab";
 
 const TEST_RESOURCES = {
@@ -193,19 +177,10 @@ describe("IntegrationsTab", () => {
     const digitalEmployee = screen.getByRole("region", {
       name: /Enterprise digital employee/i,
     });
-    const githubIdentity = screen.getByRole("region", {
-      name: /GitHub sandbox identity/i,
-    });
     const enterpriseBot = screen.getByText("Enterprise bot");
     const lark = screen.getByText("Lark");
     const slack = screen.getByText("Slack");
-    expect(githubIdentity).toHaveAttribute("data-agent-id", "agent-1");
-    expect(githubIdentity).toHaveAttribute("data-can-manage", "true");
     expect(digitalEmployee).toHaveAttribute("data-agent-id", "agent-1");
-    expect(
-      githubIdentity.compareDocumentPosition(digitalEmployee) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
     expect(
       digitalEmployee.compareDocumentPosition(enterpriseBot) &
         Node.DOCUMENT_POSITION_FOLLOWING,
@@ -260,9 +235,6 @@ describe("IntegrationsTab", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     renderTab(<IntegrationsTab agent={{ ...agent, owner_id: "user-2" }} />);
     expect(
-      screen.getByRole("region", { name: /GitHub sandbox identity/i }),
-    ).toHaveAttribute("data-can-manage", "false");
-    expect(
       screen.getByRole("region", { name: /Enterprise digital employee/i }),
     ).toBeInTheDocument();
     expect(
@@ -280,9 +252,6 @@ describe("IntegrationsTab", () => {
     // admin-only, so they show the read-only note instead of a CTA (MUL-4213).
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     renderTab(<IntegrationsTab agent={agent} />);
-    expect(
-      screen.getByRole("region", { name: /GitHub sandbox identity/i }),
-    ).toHaveAttribute("data-can-manage", "true");
     const larkButton = screen.getByTestId("lark-bind-button");
     expect(larkButton.getAttribute("data-agent-id")).toBe("agent-1");
     expect(larkButton.getAttribute("data-agent-owner-id")).toBe("user-1");
