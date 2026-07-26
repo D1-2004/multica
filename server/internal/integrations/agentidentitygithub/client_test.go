@@ -2,7 +2,6 @@ package agentidentitygithub
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,16 +9,14 @@ import (
 	"time"
 )
 
-func TestStartOAuthPostsAgentContext(t *testing.T) {
+func TestStartOAuthUsesAgentIdentityQueryContract(t *testing.T) {
 	var gotPath string
-	var gotBody OAuthStartRequest
+	var gotQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
-		if r.Method != http.MethodPost {
-			t.Fatalf("method = %s, want POST", r.Method)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-			t.Fatalf("decode body: %v", err)
+		gotQuery = r.URL.RawQuery
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true,"state":"state-1","authorizationUrl":"https://github.com/login/oauth/authorize"}`))
@@ -39,8 +36,11 @@ func TestStartOAuthPostsAgentContext(t *testing.T) {
 	if gotPath != "/api/agent-identity/v1/connections/github/oauth/start" {
 		t.Fatalf("path = %q", gotPath)
 	}
-	if gotBody.WorkspaceID != "workspace-1" || gotBody.AgentID != "agent-1" || gotBody.UserID != "user-1" {
-		t.Fatalf("unexpected body: %#v", gotBody)
+	if !strings.Contains(gotQuery, "workspaceId=workspace-1") ||
+		!strings.Contains(gotQuery, "agentId=agent-1") ||
+		!strings.Contains(gotQuery, "userId=user-1") ||
+		!strings.Contains(gotQuery, "returnUrl=https%3A%2F%2Fapp.example.test%2Fws%2Fagents%2Fagent-1") {
+		t.Fatalf("unexpected query = %q", gotQuery)
 	}
 	if !result.OK || result.State != "state-1" || !strings.Contains(result.AuthorizationURL, "github.com") {
 		t.Fatalf("unexpected result: %#v", result)

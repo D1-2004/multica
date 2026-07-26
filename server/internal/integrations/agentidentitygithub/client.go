@@ -104,8 +104,15 @@ func (e *ServiceError) Error() string {
 }
 
 func (c *Client) StartOAuth(ctx context.Context, req OAuthStartRequest) (OAuthStartResponse, error) {
+	query := url.Values{}
+	query.Set("workspaceId", req.WorkspaceID)
+	query.Set("agentId", req.AgentID)
+	query.Set("userId", req.UserID)
+	if req.ReturnURL != "" {
+		query.Set("returnUrl", req.ReturnURL)
+	}
 	var out OAuthStartResponse
-	err := c.doJSON(ctx, http.MethodPost, "/api/agent-identity/v1/connections/github/oauth/start", nil, req, &out)
+	err := c.doJSON(ctx, http.MethodGet, "/api/agent-identity/v1/connections/github/oauth/start", query, nil, &out)
 	return out, err
 }
 
