@@ -901,7 +901,7 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 		result: agentidentityhsf.CreateContextResult{ContextToken: "ctx_from_agent_binding"},
 	}
 	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{
-		LLMModels:           []string{"qwen3.5-plus"},
+		LLMModels:            []string{"qwen3.5-plus"},
 		AgentIdentityBaseURL: "https://pre-agent-identity.dingtalk.com",
 		AgentIdentityTimeout: 2 * time.Second,
 		DWSClientSecret:      "dws-client-secret",
@@ -1274,6 +1274,24 @@ func TestFCE2BConfigFromEnvAgentIdentity(t *testing.T) {
 	}
 	if cfg.DWSClientSecret != "dws-client-secret" {
 		t.Fatal("DWS client secret was not loaded")
+	}
+}
+
+func TestFCE2BConfigFromEnvRewritesAgentIdentityProductionURLInPrePublish(t *testing.T) {
+	t.Setenv("APP_ENV", "staging")
+	t.Setenv("MULTICA_AGENT_IDENTITY_BASE_URL", "https://agent-identity.dingtalk.com/")
+	cfg := FCE2BConfigFromEnv()
+	if cfg.AgentIdentityBaseURL != "https://pre-agent-identity.dingtalk.com" {
+		t.Fatalf("base url = %q", cfg.AgentIdentityBaseURL)
+	}
+}
+
+func TestFCE2BConfigFromEnvKeepsAgentIdentityProductionURLInProduction(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("MULTICA_AGENT_IDENTITY_BASE_URL", "https://agent-identity.dingtalk.com/")
+	cfg := FCE2BConfigFromEnv()
+	if cfg.AgentIdentityBaseURL != "https://agent-identity.dingtalk.com" {
+		t.Fatalf("base url = %q", cfg.AgentIdentityBaseURL)
 	}
 }
 

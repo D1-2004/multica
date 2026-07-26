@@ -102,7 +102,7 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		Domain:               strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),
 		LLMBaseURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_BASE_URL")), "/"),
 		LLMAPIKey:            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_API_KEY")),
-		AgentIdentityBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_BASE_URL")), "/"),
+		AgentIdentityBaseURL: agentIdentityBaseURLFromEnv(),
 		AgentIdentityTimeout: defaultAgentIdentityTimeout,
 		DWSClientSecret:      strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET")),
 		CLIPath:              strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_CLI_PATH")),
@@ -143,6 +143,24 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		}
 	}
 	return cfg
+}
+
+func agentIdentityBaseURLFromEnv() string {
+	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_BASE_URL")), "/")
+	if baseURL == "https://agent-identity.dingtalk.com" && isPrePublishEnv() {
+		return "https://pre-agent-identity.dingtalk.com"
+	}
+	return baseURL
+}
+
+func isPrePublishEnv() bool {
+	for _, name := range []string{"APP_ENV", "AONE_ENV_TYPE"} {
+		switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+		case "staging", "pre", "prepub", "pre_publish", "pre-publish":
+			return true
+		}
+	}
+	return false
 }
 
 func envBool(name string) bool {
