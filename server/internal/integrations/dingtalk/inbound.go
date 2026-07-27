@@ -213,8 +213,9 @@ type dingtalkRawEvent struct {
 	// AgentIdentityContextToken is a short-lived opaque credential supplied by
 	// the authenticated Agent Message Router callback. Stream callbacks leave
 	// it empty and use the local sender resolution path instead.
-	AgentIdentityContextToken string          `json:"agent_identity_context_token,omitempty"`
-	DispatchContext           json.RawMessage `json:"dispatch_context,omitempty"`
+	AgentIdentityContextToken          string          `json:"agent_identity_context_token,omitempty"`
+	AgentIdentityContextTokenExpiresAt int64           `json:"agent_identity_context_token_expires_at,omitempty"`
+	DispatchContext                    json.RawMessage `json:"dispatch_context,omitempty"`
 	SenderCorpID              string          `json:"sender_corp_id,omitempty"`
 	SenderNick                string          `json:"sender_nick,omitempty"`
 	ConversationTitle         string          `json:"conversation_title,omitempty"`
@@ -250,8 +251,9 @@ type AgentDispatchMessage struct {
 	SenderStaffID        string
 	SenderName           string
 	Text                 string
-	IdentityContextToken string
-	DispatchContext      json.RawMessage
+	IdentityContextToken          string
+	IdentityContextTokenExpiresAt int64
+	DispatchContext               json.RawMessage
 }
 
 // HTTPCallbackMessage keeps the robot callback transport explicit at call
@@ -333,6 +335,7 @@ func inboundFromAgentDispatch(in AgentDispatchMessage, clientID, installationID 
 	raw.SenderUID = strings.TrimSpace(in.SenderUID)
 	raw.SenderOrgID = strings.TrimSpace(in.SenderOrgID)
 	raw.AgentIdentityContextToken = strings.TrimSpace(in.IdentityContextToken)
+	raw.AgentIdentityContextTokenExpiresAt = in.IdentityContextTokenExpiresAt
 	raw.DispatchContext = append(json.RawMessage(nil), in.DispatchContext...)
 	msg.Raw, err = json.Marshal(raw)
 	if err != nil {

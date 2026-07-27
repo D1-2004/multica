@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
@@ -898,7 +899,10 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	})
 
 	identityClient := &fakeAgentIdentityContextCreator{
-		result: agentidentityhsf.CreateContextResult{ContextToken: "ctx_from_agent_binding"},
+		result: agentidentityhsf.CreateContextResult{
+			ContextToken: "ctx_from_agent_binding",
+			ExpiresAt:    time.Now().Add(15 * time.Minute).UnixMilli(),
+		},
 	}
 	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{
 		LLMModels:           []string{"qwen3.5-plus"},
@@ -970,24 +974,24 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 		t.Fatalf("launcher fallback is aware of chat source: %#v", request.Source)
 	}
 
-	task.Context = []byte(`{"dispatch_source":{"platform":"dingtalk","type":"digital_employee"},"agent_identity_context_token":"caller_external_token"}`)
+	task.Context = []byte(`{"dispatch_source":{"platform":"dingtalk","type":"digital_employee"},"agent_identity_context_token":"caller_external_token","agent_identity_context_token_expires_at":4102444800000}`)
 	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-external")
 	if err != nil {
 		t.Fatalf("extraEnvForTask with external identity returned error: %v", err)
 	}
-	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "caller_external_token" || len(identityClient.requests) != 1 {
-		t.Fatalf("external identity did not win over Agent binding: requests=%d env=%#v", len(identityClient.requests), env)
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 2 {
+		t.Fatalf("Agent binding did not win over external identity: requests=%d env=%#v", len(identityClient.requests), env)
 	}
 	task.Context = []byte(`{"dingtalk_robot_identity":{"uid":"99999999","org_id":"88888888"}}`)
 	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-legacy-context")
 	if err != nil {
 		t.Fatalf("extraEnvForTask legacy task context fallback returned error: %v", err)
 	}
-	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 2 {
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 3 {
 		t.Fatalf("legacy channel identity bypassed Agent binding fallback: requests=%d env=%#v", len(identityClient.requests), env)
 	}
-	if identityClient.requests[1].UID != "24710833" || identityClient.requests[1].OrgID != "439446171" {
-		t.Fatalf("launcher consumed channel identity: %#v", identityClient.requests[1])
+	if identityClient.requests[2].UID != "24710833" || identityClient.requests[2].OrgID != "439446171" {
+		t.Fatalf("launcher consumed channel identity: %#v", identityClient.requests[2])
 	}
 	task.Context = []byte(`{"dispatch_source":{"platform":"dingtalk","type":"digital_employee"}}`)
 	task.ChatSessionID = pgtype.UUID{}
@@ -995,11 +999,11 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extraEnvForTask direct task fallback returned error: %v", err)
 	}
-	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 3 {
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 4 {
 		t.Fatalf("direct task did not use Agent binding: requests=%d env=%#v", len(identityClient.requests), env)
 	}
-	if _, present := identityClient.requests[2].Source["chat_session_id"]; present {
-		t.Fatalf("direct task identity source contains chat session: %#v", identityClient.requests[2].Source)
+	if _, present := identityClient.requests[3].Source["chat_session_id"]; present {
+		t.Fatalf("direct task identity source contains chat session: %#v", identityClient.requests[3].Source)
 	}
 	task.ChatSessionID = util.MustParseUUID("22222222-2222-2222-2222-222222222222")
 
@@ -1012,7 +1016,7 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	identityClient.err = nil
 	requestCount := len(identityClient.requests)
 	runtime.Metadata = []byte(`{"kind":"fc-e2b","capabilities":["hermes"]}`)
-	task.Context = []byte(`{"agent_identity_context_token":"external-on-non-dws"}`)
+	task.Context = []byte(`{"agent_identity_context_token":"external-on-non-dws","agent_identity_context_token_expires_at":4102444800000}`)
 	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-no-dws")
 	if err != nil {
 		t.Fatalf("non-DWS runtime chat returned error: %v", err)
@@ -1042,13 +1046,59 @@ func TestParseFCE2BModels(t *testing.T) {
 	}
 }
 
+func TestFCE2BIdentityEnvPrefersAgentBindingOverExternalContextToken(t *testing.T) {
+	bindings := &fakeAgentIdentityBindingReader{identity: db.AgentDingtalkIdentity{
+		DwsUid: "24710833",
+		OrgID:  "439446171",
+	}}
+	identityContexts := &fakeAgentIdentityContextCreator{
+		result: agentidentityhsf.CreateContextResult{
+			ContextToken: "agent-binding-context-token",
+			ExpiresAt:    time.Now().Add(15 * time.Minute).UnixMilli(),
+		},
+	}
+	launcher := &FCE2BLauncher{
+		Config: FCE2BConfig{
+			AgentIdentityBaseURL: "https://pre-agent-identity.dingtalk.com",
+			AgentIdentityTimeout: 7 * time.Second,
+			DWSClientSecret:      "dws-client-secret",
+		},
+		IdentityBindings: bindings,
+		AgentIdentity:    identityContexts,
+	}
+	task := db.AgentTaskQueue{
+		ID:      util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID: util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		Context: []byte(`{"agent_identity_context_token":"external-context-token","agent_identity_context_token_expires_at":4102444800000,"agent_identity_context_token_source":"external"}`),
+	}
+	runtime := db.AgentRuntime{
+		WorkspaceID: util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+		RuntimeMode: "cloud",
+		Metadata:    []byte(`{"kind":"fc-e2b","capabilities":["dws"]}`),
+	}
+
+	env, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-binding-priority")
+	if err != nil {
+		t.Fatalf("identityEnvForTask: %v", err)
+	}
+	if env[protocol.AgentIdentityContextTokenEnvKey] != "agent-binding-context-token" {
+		t.Fatalf("identity env = %#v, want Agent binding token", env)
+	}
+	if len(bindings.requests) != 1 || len(identityContexts.requests) != 1 {
+		t.Fatalf("binding requests = %d, context requests = %d", len(bindings.requests), len(identityContexts.requests))
+	}
+}
+
 func TestFCE2BIdentityEnvUsesOnlyPreparedTokenOrAgentBindingFallback(t *testing.T) {
 	bindings := &fakeAgentIdentityBindingReader{identity: db.AgentDingtalkIdentity{
 		DwsUid: "24710833",
 		OrgID:  "439446171",
 	}}
 	identityContexts := &fakeAgentIdentityContextCreator{
-		result: agentidentityhsf.CreateContextResult{ContextToken: "agent-binding-context-token"},
+		result: agentidentityhsf.CreateContextResult{
+			ContextToken: "agent-binding-context-token",
+			ExpiresAt:    time.Now().Add(15 * time.Minute).UnixMilli(),
+		},
 	}
 	launcher := &FCE2BLauncher{
 		Config: FCE2BConfig{
@@ -1085,7 +1135,7 @@ func TestFCE2BIdentityEnvUsesOnlyPreparedTokenOrAgentBindingFallback(t *testing.
 		t.Fatalf("Agent Identity request = %#v", request)
 	}
 
-	task.Context = []byte(`{"agent_identity_context_token":"prepared-context-token","dingtalk_robot_identity":{"uid":"99999999","org_id":"88888888"}}`)
+	task.Context = []byte(`{"agent_identity_context_token":"prepared-context-token","agent_identity_context_token_expires_at":4102444800000,"dingtalk_robot_identity":{"uid":"99999999","org_id":"88888888"}}`)
 	runtime.Metadata = []byte(`{"kind":"fc-e2b","capabilities":["hermes"]}`)
 	env, err = launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-2")
 	if err != nil {
@@ -1095,22 +1145,90 @@ func TestFCE2BIdentityEnvUsesOnlyPreparedTokenOrAgentBindingFallback(t *testing.
 		t.Fatalf("prepared identity env = %#v", env)
 	}
 	if len(bindings.requests) != 1 || len(identityContexts.requests) != 1 {
-		t.Fatal("prepared ContextToken must bypass Agent binding fallback")
+		t.Fatal("usable task-context cache must bypass Agent binding fallback")
+	}
+
+	task.Context = []byte(`{"agent_identity_context_token":"external-context-token","agent_identity_context_token_expires_at":4102444800000,"agent_identity_context_token_source":"external"}`)
+	env, err = launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-external")
+	if err != nil {
+		t.Fatalf("external identityEnvForTask: %v", err)
+	}
+	if env[protocol.AgentIdentityContextTokenEnvKey] != "external-context-token" {
+		t.Fatalf("external identity env = %#v", env)
+	}
+	if len(bindings.requests) != 1 || len(identityContexts.requests) != 1 {
+		t.Fatal("external ContextToken must bypass Agent binding fallback")
 	}
 
 	runtime.Metadata = []byte(`{"kind":"fc-e2b","capabilities":["dws"]}`)
+	bindings.err = pgx.ErrNoRows
+	bindings.requests = nil
+	identityContexts.requests = nil
 	for _, invalidContext := range []string{
 		`{"agent_identity_context_token":42}`,
 		`{"agent_identity_context_token":""}`,
 		`{"agent_identity_context_token":null}`,
+		`{"agent_identity_context_token":"missing-expiry"}`,
+		`{"agent_identity_context_token_expires_at":4102444800000}`,
+		`{"agent_identity_context_token":"","agent_identity_context_token_expires_at":1}`,
+		`{"agent_identity_context_token":null,"agent_identity_context_token_expires_at":1}`,
 	} {
 		task.Context = []byte(invalidContext)
 		if _, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-invalid"); err == nil {
 			t.Fatalf("invalid prepared ContextToken silently used Agent binding fallback: %s", invalidContext)
 		}
 	}
-	if len(bindings.requests) != 1 || len(identityContexts.requests) != 1 {
-		t.Fatal("invalid prepared ContextToken must not reach Agent binding fallback")
+	if len(identityContexts.requests) != 0 {
+		t.Fatal("invalid prepared ContextToken must not invoke Agent Identity HSF without an Agent binding")
+	}
+
+	bindings.err = nil
+	bindings.requests = nil
+	for _, cachedContext := range []string{
+		`{"agent_identity_context_token":"expired-cache","agent_identity_context_token_expires_at":1}`,
+		fmt.Sprintf(
+			`{"agent_identity_context_token":"near-expiry-cache","agent_identity_context_token_expires_at":%d}`,
+			time.Now().Add(30*time.Second).UnixMilli(),
+		),
+	} {
+		task.Context = []byte(cachedContext)
+		identityContexts.result.ExpiresAt = time.Now().Add(15 * time.Minute).UnixMilli()
+		env, err = launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-refresh-cache")
+		if err != nil {
+			t.Fatalf("refresh cached ContextToken: %v", err)
+		}
+		if env[protocol.AgentIdentityContextTokenEnvKey] != "agent-binding-context-token" {
+			t.Fatalf("refreshed cache env = %#v", env)
+		}
+	}
+	if len(bindings.requests) != 2 || len(identityContexts.requests) != 2 {
+		t.Fatalf("expired/near-expiry cache did not refresh from Agent binding: bindings=%d contexts=%d",
+			len(bindings.requests), len(identityContexts.requests))
+	}
+
+	bindings.err = pgx.ErrNoRows
+	task.Context = []byte(`{"agent_identity_context_token":"expired-cache","agent_identity_context_token_expires_at":1}`)
+	if _, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-refresh-without-binding"); err == nil {
+		t.Fatal("expired cache without a Multica Agent binding must not run without identity")
+	}
+
+	task.Context = []byte(`{"agent_identity_context_token":"expired-external","agent_identity_context_token_expires_at":1,"agent_identity_context_token_source":"external"}`)
+	if _, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-expired-external"); err == nil {
+		t.Fatal("expired external ContextToken must fail instead of changing execution identity")
+	}
+	if len(identityContexts.requests) != 2 {
+		t.Fatal("expired external ContextToken invoked HSF without an Agent binding")
+	}
+
+	bindings.err = nil
+	task.Context = nil
+	identityContexts.result.ExpiresAt = 1
+	env, err = launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-fresh-token")
+	if err != nil {
+		t.Fatalf("freshly acquired ContextToken must trust the HSF response: %v", err)
+	}
+	if env[protocol.AgentIdentityContextTokenEnvKey] != "agent-binding-context-token" {
+		t.Fatalf("freshly acquired identity env = %#v", env)
 	}
 }
 
@@ -1129,7 +1247,7 @@ func TestFCE2BModelForAgent(t *testing.T) {
 
 func TestFCE2BExtraEnvIncludesAgentIdentityContextToken(t *testing.T) {
 	task := db.AgentTaskQueue{
-		Context: []byte(`{"agent_identity_context_token":"ctx_sandbox_token"}`),
+		Context: []byte(`{"agent_identity_context_token":"ctx_sandbox_token","agent_identity_context_token_expires_at":4102444800000}`),
 	}
 	got, err := fcE2BAgentIdentityExtraEnv(task, FCE2BConfig{
 		AgentIdentityBaseURL: "https://pre-agent-identity.dingtalk.com",
@@ -1150,6 +1268,35 @@ func TestFCE2BExtraEnvIncludesAgentIdentityContextToken(t *testing.T) {
 	}
 	if got["DWS_CLIENT_SECRET"] != "dws-client-secret" {
 		t.Fatal("DWS_CLIENT_SECRET was not forwarded")
+	}
+}
+
+func TestFCE2BExtraEnvRejectsContextTokenWithoutUsableExpiry(t *testing.T) {
+	cfg := FCE2BConfig{
+		AgentIdentityBaseURL: "https://pre-agent-identity.dingtalk.com",
+		DWSClientSecret:      "dws-client-secret",
+	}
+	tests := []struct {
+		name    string
+		context string
+	}{
+		{name: "missing expiry", context: `{"agent_identity_context_token":"ctx-token"}`},
+		{name: "expiry without token", context: `{"agent_identity_context_token_expires_at":4102444800000}`},
+		{name: "expired external", context: `{"agent_identity_context_token":"ctx-token","agent_identity_context_token_expires_at":1,"agent_identity_context_token_source":"external"}`},
+		{
+			name: "external inside one minute safety window",
+			context: fmt.Sprintf(
+				`{"agent_identity_context_token":"ctx-token","agent_identity_context_token_expires_at":%d,"agent_identity_context_token_source":"external"}`,
+				time.Now().Add(30*time.Second).UnixMilli(),
+			),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := fcE2BAgentIdentityExtraEnv(db.AgentTaskQueue{Context: []byte(tc.context)}, cfg); err == nil {
+				t.Fatalf("context %s was accepted", tc.context)
+			}
+		})
 	}
 }
 

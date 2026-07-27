@@ -575,7 +575,7 @@ func TestHandleAgentDispatchV2DigitalEmployeeChatDWSIgnoresRobotInstallation(t *
 		},
 		"surface":{"type":"chat"},
 		"outbound":{"mode":"dws","replyTo":"latest_message"},
-		"externalIdentity":{"contextToken":"sealed-digital-employee-context"}
+		"externalIdentity":{"contextToken":"sealed-digital-employee-context","expiresAt":4102444800000}
 	}`, agentID)
 	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -772,7 +772,7 @@ func TestHandleAgentDispatchV2RecoversSynchronousCompletionAfterAcceptanceFinali
 		},
 		"surface":{"type":"chat"},
 		"outbound":{"mode":"dws","replyTo":"latest_message"},
-		"externalIdentity":{"contextToken":"sealed-sync-acceptance-recovery"}
+		"externalIdentity":{"contextToken":"sealed-sync-acceptance-recovery","expiresAt":4102444800000}
 	}`, agentID, dispatchTaskID)
 	dispatch := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
@@ -935,7 +935,7 @@ func TestHandleAgentDispatchV2RobotSDKCompletionDependsOnlyOnCallbackPresence(t 
 				},
 				"surface":{"type":"chat"},
 				"outbound":{"mode":"robot_sdk","replyTo":"latest_message"},
-				"externalIdentity":{"contextToken":"sealed-robot-context"}
+				"externalIdentity":{"contextToken":"sealed-robot-context","expiresAt":4102444800000}
 			}`, agentID, callbackJSON, suffix, suffix)
 			req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
@@ -1131,7 +1131,7 @@ func TestHandleAgentDispatchV2RobotSDKChatKeepsInstallationGuards(t *testing.T) 
 				},
 				"surface":{"type":"chat"},
 				"outbound":{"mode":"robot_sdk","replyTo":"latest_message"},
-				"externalIdentity":{"contextToken":"sealed-robot-context"}
+				"externalIdentity":{"contextToken":"sealed-robot-context","expiresAt":4102444800000}
 			}`, agentID, completionCallback, tc.sourceType, messageID)
 			req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")

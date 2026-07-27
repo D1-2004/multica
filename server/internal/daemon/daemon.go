@@ -4128,7 +4128,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.AutopilotID != "" {
 		agentEnv["MULTICA_AUTOPILOT_ID"] = task.AutopilotID
 	}
-	if token := childAgentIdentityContextToken(d.cfg.LaunchedBy, task.AgentIdentityContextToken); token != "" {
+	token, err := childAgentIdentityContextToken(
+		d.cfg.LaunchedBy,
+		task.AgentIdentityContextToken,
+		task.AgentIdentityContextTokenExpiresAt,
+		time.Now(),
+	)
+	if err != nil {
+		return TaskResult{}, fmt.Errorf("resolve Agent Identity ContextToken: %w", err)
+	}
+	if token != "" {
 		agentEnv[protocol.AgentIdentityContextTokenEnvKey] = token
 	}
 	// Quick-create marker — when set, the multica CLI's `issue create`
@@ -5213,11 +5222,28 @@ func isBlockedEnvKey(key string) bool {
 // daemon starts, stores only the resulting task-scoped DWS credentials, and
 // clears the original token. Re-injecting the claim copy here would undo that
 // credential boundary and expose a server-private bearer token to model tools.
-func childAgentIdentityContextToken(launchedBy, token string) string {
+func childAgentIdentityContextToken(launchedBy, token string, expiresAt int64, now time.Time) (string, error) {
 	if strings.EqualFold(strings.TrimSpace(launchedBy), "fc-e2b") {
-		return ""
+		return "", nil
 	}
-	return strings.TrimSpace(token)
+	token = strings.TrimSpace(token)
+	if token == "" {
+		if expiresAt != 0 {
+			return "", errors.New("Agent Identity ContextToken expiry is present without a ContextToken")
+		}
+		return "", nil
+	}
+	if expiresAt <= 0 {
+		return "", errors.New("Agent Identity ContextToken expiry is missing")
+	}
+	expiry := time.UnixMilli(expiresAt)
+	if !expiry.After(now) {
+		return "", fmt.Errorf("Agent Identity ContextToken expired at %s", expiry.UTC().Format(time.RFC3339Nano))
+	}
+	if expiry.Sub(now) <= time.Minute {
+		return "", fmt.Errorf("Agent Identity ContextToken expires within the one-minute execution safety window at %s", expiry.UTC().Format(time.RFC3339Nano))
+	}
+	return token, nil
 }
 
 // layerCustomEnvAndHermesHome applies the agent's custom_env onto the child env

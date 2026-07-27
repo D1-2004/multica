@@ -52,6 +52,8 @@ const (
 	fcE2BTemplateManifestVersion    = 2
 )
 
+var errAgentIdentityContextTokenRefreshRequired = errors.New("Agent Identity ContextToken refresh required")
+
 type fcE2BRunnerLaunchMode string
 
 const (
@@ -1471,8 +1473,51 @@ func (l *FCE2BLauncher) identityEnvForTask(
 	runtime db.AgentRuntime,
 	sandboxID string,
 ) (map[string]string, error) {
+	hasDWSCapability := FCE2BRuntimeHasCapability(runtime, "dws")
+	if hasDWSCapability {
+		if l.IdentityBindings == nil {
+			return nil, errors.New("Agent identity binding reader is not configured")
+		}
+		identity, err := l.IdentityBindings.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+			WorkspaceID: runtime.WorkspaceID,
+			AgentID:     task.AgentID,
+		})
+		if err == nil {
+			if l.AgentIdentity == nil {
+				return nil, errors.New("Agent Identity HSF client is not configured")
+			}
+			taskID := util.UUIDToString(task.ID)
+			result, err := l.AgentIdentity.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
+				RequestID:   "multica-task-" + taskID,
+				TaskID:      taskID,
+				AgentID:     util.UUIDToString(task.AgentID),
+				RuntimeType: "E2B",
+				RuntimeID:   sandboxID,
+				Reason:      "Multica Agent DWS authorization",
+				Source: map[string]string{
+					"app":             "dt-fde-multica",
+					"identity_source": "agent_binding_fallback",
+				},
+				UID:        identity.DwsUid,
+				OrgID:      identity.OrgID,
+				TTLSeconds: 900,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("create Agent Identity context for task: %w", err)
+			}
+			slog.Info("FC/E2B task identity selected",
+				"task_id", taskID,
+				"identity_source", "agent_binding_fallback",
+			)
+			return fcE2BAgentIdentityEnvForToken(result.ContextToken, l.Config)
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("load Agent DingTalk identity: %w", err)
+		}
+	}
+
 	prepared, err := fcE2BAgentIdentityExtraEnv(task, l.Config)
-	if err != nil {
+	if err != nil && !errors.Is(err, errAgentIdentityContextTokenRefreshRequired) {
 		return nil, err
 	}
 	if len(prepared) > 0 {
@@ -1482,49 +1527,23 @@ func (l *FCE2BLauncher) identityEnvForTask(
 		)
 		return prepared, nil
 	}
-	if !FCE2BRuntimeHasCapability(runtime, "dws") {
+	refreshRequired := errors.Is(err, errAgentIdentityContextTokenRefreshRequired)
+	if refreshRequired {
+		slog.Info("FC/E2B cached task identity requires refresh",
+			"task_id", util.UUIDToString(task.ID),
+			"identity_source", "task_context_cache",
+		)
+	}
+	if !hasDWSCapability {
+		if refreshRequired {
+			return nil, errors.New("DWS capability is required to refresh the cached Agent Identity ContextToken")
+		}
 		return nil, nil
 	}
-	if l.IdentityBindings == nil {
-		return nil, errors.New("Agent identity binding reader is not configured")
+	if refreshRequired {
+		return nil, errors.New("Multica Agent DingTalk identity binding is required to refresh the cached ContextToken")
 	}
-	identity, err := l.IdentityBindings.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
-		WorkspaceID: runtime.WorkspaceID,
-		AgentID:     task.AgentID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("load Agent DingTalk identity: %w", err)
-	}
-	if l.AgentIdentity == nil {
-		return nil, errors.New("Agent Identity HSF client is not configured")
-	}
-	taskID := util.UUIDToString(task.ID)
-	result, err := l.AgentIdentity.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
-		RequestID:   "multica-task-" + taskID,
-		TaskID:      taskID,
-		AgentID:     util.UUIDToString(task.AgentID),
-		RuntimeType: "E2B",
-		RuntimeID:   sandboxID,
-		Reason:      "Multica Agent DWS authorization",
-		Source: map[string]string{
-			"app":             "dt-fde-multica",
-			"identity_source": "agent_binding_fallback",
-		},
-		UID:        identity.DwsUid,
-		OrgID:      identity.OrgID,
-		TTLSeconds: 900,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create Agent Identity context for task: %w", err)
-	}
-	slog.Info("FC/E2B task identity selected",
-		"task_id", taskID,
-		"identity_source", "agent_binding_fallback",
-	)
-	return fcE2BAgentIdentityEnvForToken(result.ContextToken, l.Config)
+	return nil, nil
 }
 
 func fcE2BTaskTraceEnv(task db.AgentTaskQueue) (map[string]string, error) {
@@ -1595,15 +1614,65 @@ func fcE2BAgentIdentityExtraEnv(task db.AgentTaskQueue, cfg FCE2BConfig) (map[st
 	if err := json.Unmarshal(task.Context, &payload); err != nil {
 		return nil, fmt.Errorf("parse task context for Agent Identity: %w", err)
 	}
-	raw, present := payload[protocol.AgentIdentityContextTokenJSONKey]
-	if !present {
+	rawToken, tokenPresent := payload[protocol.AgentIdentityContextTokenJSONKey]
+	rawExpiresAt, expiresAtPresent := payload[protocol.AgentIdentityContextTokenExpiresAtJSONKey]
+	rawSource, sourcePresent := payload[protocol.AgentIdentityContextTokenSourceJSONKey]
+	source := ""
+	if sourcePresent {
+		if err := json.Unmarshal(rawSource, &source); err != nil {
+			return nil, fmt.Errorf("parse Agent Identity ContextToken source: %w", err)
+		}
+		source = strings.TrimSpace(source)
+		if source != protocol.AgentIdentityContextTokenSourceExternal {
+			return nil, fmt.Errorf("Agent Identity ContextToken source %q is invalid", source)
+		}
+	}
+	if !tokenPresent && !expiresAtPresent {
+		if sourcePresent {
+			return nil, errors.New("Agent Identity ContextToken source is present without a ContextToken")
+		}
 		return nil, nil
 	}
+	if !tokenPresent {
+		return nil, errors.New("Agent Identity ContextToken expiry is present without a ContextToken")
+	}
+	if !expiresAtPresent {
+		return nil, errors.New("Agent Identity ContextToken expiry is missing")
+	}
 	var token string
-	if err := json.Unmarshal(raw, &token); err != nil {
+	if err := json.Unmarshal(rawToken, &token); err != nil {
 		return nil, fmt.Errorf("parse Agent Identity ContextToken: %w", err)
 	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, errors.New("Agent Identity ContextToken is empty")
+	}
+	var expiresAt int64
+	if err := json.Unmarshal(rawExpiresAt, &expiresAt); err != nil {
+		return nil, fmt.Errorf("parse Agent Identity ContextToken expiry: %w", err)
+	}
+	now := time.Now()
+	if err := validateAgentIdentityContextExpiry(expiresAt, now); err != nil {
+		if source != protocol.AgentIdentityContextTokenSourceExternal {
+			return nil, fmt.Errorf("%w: %v", errAgentIdentityContextTokenRefreshRequired, err)
+		}
+		return nil, err
+	}
 	return fcE2BAgentIdentityEnvForToken(token, cfg)
+}
+
+func validateAgentIdentityContextExpiry(expiresAt int64, now time.Time) error {
+	if expiresAt <= 0 {
+		return errors.New("Agent Identity ContextToken expiry is invalid")
+	}
+	expiry := time.UnixMilli(expiresAt)
+	if !expiry.After(now) {
+		return fmt.Errorf("Agent Identity ContextToken expired at %s", expiry.UTC().Format(time.RFC3339Nano))
+	}
+	if expiry.Sub(now) <= time.Minute {
+		return fmt.Errorf("Agent Identity ContextToken expires within the one-minute execution safety window at %s", expiry.UTC().Format(time.RFC3339Nano))
+	}
+	return nil
 }
 
 func fcE2BAgentIdentityEnvForToken(token string, cfg FCE2BConfig) (map[string]string, error) {

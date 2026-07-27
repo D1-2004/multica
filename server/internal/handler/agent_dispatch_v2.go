@@ -178,6 +178,13 @@ func (c DispatchCommand) validate() error {
 	if !validDispatchContextToken(c.ExternalIdentity.ContextToken) {
 		return errors.New("externalIdentity.contextToken is invalid")
 	}
+	if c.ExternalIdentity.ContextToken == "" {
+		if c.ExternalIdentity.ExpiresAt != 0 {
+			return errors.New("externalIdentity.contextToken is required when expiresAt is present")
+		}
+	} else if c.ExternalIdentity.ExpiresAt <= 0 {
+		return errors.New("externalIdentity.expiresAt is invalid")
+	}
 	// Callback presence alone selects durable terminal delivery. An absent
 	// callback keeps the direct Streaming and rolling legacy behavior; source
 	// type and outbound mode do not select completion semantics.

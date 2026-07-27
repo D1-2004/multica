@@ -70,7 +70,10 @@ func newRobotTaskContextResolver(employee *robotEmployeeResolverStub) *robotTask
 		},
 		employees: employee,
 		identityContexts: &robotIdentityContextCreatorStub{
-			result: agentidentityhsf.CreateContextResult{ContextToken: "stream-context-token"},
+			result: agentidentityhsf.CreateContextResult{
+				ContextToken: "stream-context-token",
+				ExpiresAt:    4102444800000,
+			},
 		},
 	}
 }
@@ -95,9 +98,10 @@ func taskContextMessage(t *testing.T, corpID, staffID string) channel.InboundMes
 
 func TestRobotTaskContextResolverCarriesStreamSessionReplyLocator(t *testing.T) {
 	raw, err := json.Marshal(dingtalkRawEvent{
-		AgentIdentityContextToken: "trusted-token",
-		SessionWebhook:            "https://oapi.example/session-reply",
-		SessionWebhookExpiredTime: 123456789,
+		AgentIdentityContextToken:          "trusted-token",
+		AgentIdentityContextTokenExpiresAt: 4102444800000,
+		SessionWebhook:                     "https://oapi.example/session-reply",
+		SessionWebhookExpiredTime:          123456789,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -151,14 +155,15 @@ func TestRobotTaskContextResolverContinuesWithoutMissingOrganizationIdentity(t *
 
 func TestRobotTaskContextResolverPrefersTrustedExternalIdentityToken(t *testing.T) {
 	message, err := InboundFromHTTPCallback(HTTPCallbackMessage{
-		ConversationID:       "conversation-1",
-		ConversationType:     "single",
-		MessageID:            "message-1",
-		SenderUID:            "123456",
-		SenderOrgID:          "654321",
-		SenderName:           "黄谣",
-		Text:                 "hello",
-		IdentityContextToken: "sealed-router-context",
+		ConversationID:                 "conversation-1",
+		ConversationType:               "single",
+		MessageID:                      "message-1",
+		SenderUID:                      "123456",
+		SenderOrgID:                    "654321",
+		SenderName:                     "黄谣",
+		Text:                           "hello",
+		IdentityContextToken:           "sealed-router-context",
+		IdentityContextTokenExpiresAt:  4102444800000,
 	}, "client-1", "11111111-1111-1111-1111-111111111111")
 	if err != nil {
 		t.Fatalf("InboundFromHTTPCallback: %v", err)
@@ -183,6 +188,20 @@ func TestRobotTaskContextResolverPrefersTrustedExternalIdentityToken(t *testing.
 	if token != "sealed-router-context" {
 		t.Fatalf("external identity token = %q", token)
 	}
+	var expiresAt int64
+	if err := json.Unmarshal(payload[protocol.AgentIdentityContextTokenExpiresAtJSONKey], &expiresAt); err != nil {
+		t.Fatalf("decode external identity expiry: %v", err)
+	}
+	if expiresAt != 4102444800000 {
+		t.Fatalf("external identity expiry = %d", expiresAt)
+	}
+	var source string
+	if err := json.Unmarshal(payload[protocol.AgentIdentityContextTokenSourceJSONKey], &source); err != nil {
+		t.Fatalf("decode external identity source: %v", err)
+	}
+	if source != protocol.AgentIdentityContextTokenSourceExternal {
+		t.Fatalf("external identity source = %q", source)
+	}
 	if _, present := payload[legacyDingTalkRobotIdentityJSONKey]; present {
 		t.Fatal("local robot identity must not override external identity")
 	}
@@ -201,11 +220,12 @@ func TestRobotTaskContextResolverOverridesDispatchInitiatorWithCurrentSender(t *
 		ConversationType:     "single",
 		MessageID:            "message-1",
 		SenderUID:            "123456",
-		SenderOrgID:          "654321",
-		SenderName:           "当前对话者",
-		Text:                 "hello",
-		IdentityContextToken: "sealed-router-context",
-		DispatchContext:      fakeInitiator,
+			SenderOrgID:          "654321",
+			SenderName:           "当前对话者",
+			Text:                 "hello",
+			IdentityContextToken: "sealed-router-context",
+			IdentityContextTokenExpiresAt: 4102444800000,
+			DispatchContext:      fakeInitiator,
 	}, "client-1", "11111111-1111-1111-1111-111111111111")
 	if err != nil {
 		t.Fatalf("InboundFromHTTPCallback: %v", err)
@@ -218,7 +238,10 @@ func TestRobotTaskContextResolverOverridesDispatchInitiatorWithCurrentSender(t *
 }
 
 func TestRobotTaskContextResolverKeepsExplicitEmptyConversationInitiator(t *testing.T) {
-	raw, err := json.Marshal(dingtalkRawEvent{AgentIdentityContextToken: "trusted-token"})
+	raw, err := json.Marshal(dingtalkRawEvent{
+		AgentIdentityContextToken:          "trusted-token",
+		AgentIdentityContextTokenExpiresAt: 4102444800000,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +354,10 @@ func TestRobotTaskContextResolverExchangesStreamSenderForContextToken(t *testing
 		StaffID: "Staff-A_106201",
 	}}
 	identityContexts := &robotIdentityContextCreatorStub{
-		result: agentidentityhsf.CreateContextResult{ContextToken: "stream-context-token"},
+		result: agentidentityhsf.CreateContextResult{
+			ContextToken: "stream-context-token",
+			ExpiresAt:    1,
+		},
 	}
 	runtimeID := pgtype.UUID{Bytes: [16]byte{2}, Valid: true}
 	resolver := &robotTaskContextResolver{
@@ -378,6 +404,16 @@ func TestRobotTaskContextResolverExchangesStreamSenderForContextToken(t *testing
 	}
 	if token != "stream-context-token" {
 		t.Fatalf("ContextToken = %q", token)
+	}
+	var expiresAt int64
+	if err := json.Unmarshal(payload[protocol.AgentIdentityContextTokenExpiresAtJSONKey], &expiresAt); err != nil {
+		t.Fatalf("decode ContextToken expiry: %v", err)
+	}
+	if expiresAt != 1 {
+		t.Fatalf("ContextToken expiry = %d", expiresAt)
+	}
+	if _, present := payload[protocol.AgentIdentityContextTokenSourceJSONKey]; present {
+		t.Fatal("task-context cache token was incorrectly marked as external")
 	}
 	if _, present := payload[legacyDingTalkRobotIdentityJSONKey]; present {
 		t.Fatal("resolved sender identity leaked past task preparation")
@@ -442,6 +478,8 @@ func assertNoTaskIdentityToken(t *testing.T, contextJSON []byte) {
 	}
 	for _, key := range []string{
 		protocol.AgentIdentityContextTokenJSONKey,
+		protocol.AgentIdentityContextTokenExpiresAtJSONKey,
+		protocol.AgentIdentityContextTokenSourceJSONKey,
 		legacyDingTalkRobotIdentityJSONKey,
 		legacyDingTalkRobotIdentityUnavailableJSONKey,
 	} {
