@@ -671,6 +671,7 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 	config.AccountAvatarURL = strings.TrimSpace(params.MessageBinding.AccountAvatarURL)
 	config.SurfaceType = subscription.Surface.Type
 	config.MessageRouteStatus = ""
+	config.MessageRouteError = nil
 	config.MessageScope = messageScope
 	config.Conversations = conversations
 	config.BoundAt = &boundAt

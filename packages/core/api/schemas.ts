@@ -43,6 +43,14 @@ import type {
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
 
+const DingTalkBindingErrorSchema = z
+  .object({
+    code: z.string(),
+    message: z.string(),
+    retryable: z.boolean(),
+  })
+  .loose();
+
 const DingTalkAccountBindingOutcomeSchema = z
   .object({
     status: z.string(),
@@ -51,6 +59,7 @@ const DingTalkAccountBindingOutcomeSchema = z
     account_display_name: z.string().nullable().optional(),
     account_avatar_url: z.string().nullable().optional(),
     bound_at: z.string().nullable().optional(),
+    error: DingTalkBindingErrorSchema.nullable().optional().catch(undefined),
   })
   .loose()
   .transform((outcome) => ({
@@ -60,6 +69,7 @@ const DingTalkAccountBindingOutcomeSchema = z
     accountDisplayName: outcome.account_display_name,
     accountAvatarUrl: outcome.account_avatar_url,
     boundAt: outcome.bound_at,
+    error: outcome.error,
   }));
 
 const DingTalkConversationSummarySchema = z
@@ -108,6 +118,7 @@ const DingTalkMessageRouteOutcomeSchema = z
     bound_at: z.string().nullable().optional(),
     message_scope: z.string().optional(),
     conversations: z.array(DingTalkConversationSummarySchema).optional().default([]),
+    error: DingTalkBindingErrorSchema.nullable().optional().catch(undefined),
   })
   .loose()
   .transform((outcome) => ({
@@ -125,6 +136,7 @@ const DingTalkMessageRouteOutcomeSchema = z
       ? { surfaceType: normalizeDingTalkProcessingSurface(outcome.surface_type) }
       : {}),
     ...(outcome.bound_at !== undefined ? { boundAt: outcome.bound_at } : {}),
+    ...(outcome.error !== undefined ? { error: outcome.error } : {}),
     messageScope: normalizeDingTalkMessageScope(outcome.message_scope),
     conversations: outcome.conversations,
   }));

@@ -91,6 +91,31 @@ They describe the DingTalk account listening for messages. Multica stores them
 with the message route for display only; they do not populate
 `identity_binding` and do not become the Agent execution identity.
 
+### Binding failure details
+
+When the DBase completion callback reports a failed message binding, it includes
+a safe, user-facing error:
+
+```json
+{
+  "message_binding": {
+    "status": "failed",
+    "error": {
+      "code": "source_already_bound",
+      "message": "消息源已绑定给其他 Agent，请解绑后重试",
+      "retryable": false
+    }
+  }
+}
+```
+
+Multica persists this error with the pending binding and exposes it as
+`message_route.error` from the binding-list API. The UI renders `message`
+instead of collapsing every terminal result into a generic failed status.
+`code` remains the stable diagnostic and automation key; `message` must already
+be safe to display, and callback validation rejects invalid codes, empty or
+oversized messages, and control characters.
+
 ## Router to Multica
 
 `dispatchPath` identifies the Multica webhook but deliberately contains no
@@ -109,6 +134,9 @@ separate configuration values with opposite communication directions.
 
 ## History
 
+- 2026-07-23: Preserved validated DBase task errors on failed message bindings
+  and exposed `message_route.error = {code,message,retryable}` so Multica can
+  display the actual failure instead of only `status=failed`.
 - 2026-07-23: Stopped treating the legacy account-binding `dispatch_url`
   snapshot as authoritative. Subscription verification now derives the
   expected target from `dispatch_endpoint_id`, accepting the canonical path or
@@ -151,3 +179,10 @@ the Agent execution identity. Updating only the Router binding's surface lets
 operators switch between `issue` and `chat` without deleting and recreating the
 subscription, while the Agent ownership and outbound-policy checks prevent the
 update from widening into a different binding change.
+
+Failed callbacks previously validated a structured task error and then
+discarded it, leaving only `message_route_status=failed` in the stored config.
+That made distinct causes such as an existing source binding or an incompatible
+client environment indistinguishable in Multica. Persisting the already
+validated error preserves the failure boundary without exposing callback
+credentials or raw upstream exceptions.

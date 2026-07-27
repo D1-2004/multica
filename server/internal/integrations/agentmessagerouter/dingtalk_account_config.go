@@ -51,6 +51,7 @@ type DingTalkAccountConfig struct {
 	AccountAvatarURL   string                         `json:"account_avatar_url,omitempty"`
 	SurfaceType        string                         `json:"surface_type,omitempty"`
 	MessageRouteStatus string                         `json:"message_route_status,omitempty"`
+	MessageRouteError  *BindingTaskError              `json:"message_route_error,omitempty"`
 	MessageScope       string                         `json:"message_scope"`
 	Conversations      []DingTalkConversationSnapshot `json:"conversations,omitempty"`
 	BoundAt            *time.Time                     `json:"bound_at,omitempty"`
@@ -74,6 +75,7 @@ type PublicDingTalkBindingOutcome struct {
 	MessageScope       string                         `json:"message_scope,omitempty"`
 	Conversations      []DingTalkConversationSnapshot `json:"conversations,omitempty"`
 	BoundAt            *time.Time                     `json:"bound_at,omitempty"`
+	Error              *BindingTaskError              `json:"error,omitempty"`
 }
 
 func NewPendingDingTalkAccountConfig(endpointID, dispatchURL, callbackHash string, callbackExpiresAt time.Time) DingTalkAccountConfig {
@@ -153,6 +155,11 @@ func (c DingTalkAccountConfig) Validate() error {
 		c.MessageRouteStatus != DingTalkBindingStatusFailed {
 		return errors.New("dingtalk message result status is invalid")
 	}
+	if c.MessageRouteError != nil &&
+		(c.MessageRouteStatus != DingTalkBindingStatusFailed ||
+			!validBindingTaskError(c.MessageRouteError)) {
+		return errors.New("dingtalk message result error is invalid")
+	}
 	if _, _, err := normalizeDingTalkConversationBinding(c.MessageScope, c.Conversations); err != nil {
 		return err
 	}
@@ -225,6 +232,7 @@ func (c DingTalkAccountConfig) PublicBinding(
 			MessageScope:       c.MessageScope,
 			Conversations:      append([]DingTalkConversationSnapshot(nil), c.Conversations...),
 			BoundAt:            c.BoundAt,
+			Error:              c.MessageRouteError,
 		},
 	}
 }

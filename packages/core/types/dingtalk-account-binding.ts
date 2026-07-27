@@ -1,3 +1,9 @@
+export interface DingTalkBindingError {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
 export interface DingTalkAccountBindingOutcome {
   status: string;
   source?: "identity" | null;
@@ -5,6 +11,7 @@ export interface DingTalkAccountBindingOutcome {
   accountDisplayName?: string | null;
   accountAvatarUrl?: string | null;
   boundAt?: string | null;
+  error?: DingTalkBindingError | null;
 }
 
 export type DingTalkMessageScope = "direct_only" | "custom" | "all";
