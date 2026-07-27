@@ -542,6 +542,11 @@ function DingTalkBindingModeCard({
                   {t(($) => $.tab_body.integrations.dingtalk_account_message_route)}: {" "}
                   {statusLabel(currentBinding.messageRoute.status)}
                 </p>
+                {currentBinding.messageRoute.error?.message ? (
+                  <p className="text-destructive" role="alert">
+                    {currentBinding.messageRoute.error.message}
+                  </p>
+                ) : null}
               </div>
             ) : null}
             <Button

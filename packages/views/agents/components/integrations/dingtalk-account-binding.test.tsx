@@ -519,7 +519,14 @@ describe("DingTalkAccountBindingCard", () => {
         {
           ...activeBinding,
           dwsIdentity: { status: "unbound" },
-          messageRoute: { status: "failed" },
+          messageRoute: {
+            status: "failed",
+            error: {
+              code: "source_already_bound",
+              message: "Message source is already bound to another agent. Unbind it and try again.",
+              retryable: false,
+            },
+          },
         },
       ],
       configured: true,
@@ -528,6 +535,11 @@ describe("DingTalkAccountBindingCard", () => {
     renderCard();
 
     expect(await screen.findByText(/Direct message route:\s*Failed/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Message source is already bound to another agent. Unbind it and try again.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/DWS identity/i)).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Generate a new QR code/i }),

@@ -397,6 +397,20 @@ func TestCompleteBindingRecordsMessageFailureWithoutChangingIdentity(t *testing.
 		store.row.Status != "pending" || router.getCalls != 0 {
 		t.Fatalf("result=%#v row status=%q router GETs=%d", result, store.row.Status, router.getCalls)
 	}
+	if result.Binding.MessageRoute.Error == nil ||
+		result.Binding.MessageRoute.Error.Code != "subscription_failed" ||
+		result.Binding.MessageRoute.Error.Message != "unable to create subscription" ||
+		!result.Binding.MessageRoute.Error.Retryable {
+		t.Fatalf("message route error = %#v", result.Binding.MessageRoute.Error)
+	}
+	storedConfig, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedConfig.MessageRouteError == nil ||
+		storedConfig.MessageRouteError.Code != "subscription_failed" {
+		t.Fatalf("stored message route error = %#v", storedConfig.MessageRouteError)
+	}
 }
 
 func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *testing.T) {
