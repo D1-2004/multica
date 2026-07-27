@@ -1,6 +1,6 @@
 # FDE 移动端开通
 
-FDE 开通入口是 `/fde/start`。它使用独立的钉钉 OAuth 入口验证当前用户；后端 onboarding API 只接受带签名 `auth_method=dingtalk` 的用户 JWT，拒绝普通 PAT、其他登录方式 JWT、Agent task token 和 cloud PAT。随后在用户全程可见的页面中完成：
+FDE 开通入口是 `/fde/start`。页面会先用现有平台会话请求 onboarding API：带签名 `auth_method=dingtalk` 的用户 JWT 可以直接复用，只有未登录或现有会话不是钉钉认证时才启动独立的钉钉 OAuth。后端仍拒绝普通 PAT、其他登录方式 JWT、Agent task token 和 cloud PAT。随后在用户全程可见的页面中完成：
 
 1. 读取当前用户拥有或可管理的工作空间；没有工作空间时要求输入名称，一个工作空间时直接使用，多个工作空间时要求选择。
 2. 为目标工作空间创建或复用平台固定的 FC Agent Sandbox runtime。

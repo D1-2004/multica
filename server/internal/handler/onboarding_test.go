@@ -44,6 +44,12 @@ func newWaitlistRequest(userID string, body map[string]string) *http.Request {
 	return req
 }
 
+func TestValidCompletionPathsIncludesFDE(t *testing.T) {
+	if _, ok := validCompletionPaths["fde"]; !ok {
+		t.Fatal("FDE quick-start completion path is not accepted")
+	}
+}
+
 func TestJoinCloudWaitlistRecordsEmailAndReason(t *testing.T) {
 	userID := newWaitlistTestUser(t, "waitlist-ok@multica.ai")
 
