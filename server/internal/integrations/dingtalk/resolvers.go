@@ -138,8 +138,16 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		}
 	}
 	if raw.AgentIdentityContextToken != "" {
+		if raw.AgentIdentityContextTokenExpiresAt <= 0 {
+			return nil, errors.New("DingTalk external Agent Identity ContextToken expiry is missing")
+		}
 		taskContext[protocol.AgentIdentityContextTokenJSONKey] = raw.AgentIdentityContextToken
+		taskContext[protocol.AgentIdentityContextTokenExpiresAtJSONKey] = raw.AgentIdentityContextTokenExpiresAt
+		taskContext[protocol.AgentIdentityContextTokenSourceJSONKey] = protocol.AgentIdentityContextTokenSourceExternal
 		return marshalDingTalkTaskContext(taskContext)
+	}
+	if raw.AgentIdentityContextTokenExpiresAt != 0 {
+		return nil, errors.New("DingTalk external Agent Identity ContextToken expiry is present without a ContextToken")
 	}
 	if r.q == nil || r.employees == nil {
 		log.Error("dingtalk robot DWS identity resolver unavailable",
@@ -274,6 +282,7 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		"latency_ms", time.Since(startedAt).Milliseconds(),
 	)
 	taskContext[protocol.AgentIdentityContextTokenJSONKey] = contextToken
+	taskContext[protocol.AgentIdentityContextTokenExpiresAtJSONKey] = result.ExpiresAt
 	return marshalDingTalkTaskContext(taskContext)
 }
 

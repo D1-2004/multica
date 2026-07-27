@@ -795,7 +795,7 @@ func TestRouter_ClaimLost_Drops(t *testing.T) {
 
 func TestRouter_IssueCommand_Creates(t *testing.T) {
 	h := newHarness(t)
-	h.taskCtx.value = []byte(`{"agent_identity_context_token":"prepared-context-token","dispatch_outbound":{"mode":"dws"}}`)
+	h.taskCtx.value = []byte(`{"agent_identity_context_token":"prepared-context-token","agent_identity_context_token_expires_at":4102444800000,"dispatch_outbound":{"mode":"dws"}}`)
 	h.binder.appendResult = AppendResult{DedupMarked: true, IssueCommand: &IssueCommand{Title: "Fix login", Description: "details"}}
 	h.issues.result = service.IssueCreateResult{Issue: db.Issue{ID: uuidFromString(t, "77777777-7777-7777-7777-777777777777"), Number: 42, Title: "Fix login"}}
 	msg := p2pMessage(t)
@@ -814,6 +814,9 @@ func TestRouter_IssueCommand_Creates(t *testing.T) {
 	}
 	if !strings.Contains(string(h.issues.params.DispatchContext), `"dispatch_outbound":{"mode":"dws"}`) {
 		t.Fatalf("issue dispatch context lost prepared input: %s", h.issues.params.DispatchContext)
+	}
+	if !strings.Contains(string(h.issues.params.DispatchContext), `"agent_identity_context_token_expires_at":4102444800000`) {
+		t.Fatalf("issue dispatch context lost ContextToken expiry: %s", h.issues.params.DispatchContext)
 	}
 	if h.tasks.wasCalled() {
 		t.Fatal("/issue must use the issue task only, not enqueue a second chat task")
@@ -835,6 +838,8 @@ func TestTaskIdentityContextTokenRejectsInvalidPreparedToken(t *testing.T) {
 		`{"agent_identity_context_token":42}`,
 		`{"agent_identity_context_token":""}`,
 		`{"agent_identity_context_token":null}`,
+		`{"agent_identity_context_token":"missing-expiry"}`,
+		`{"agent_identity_context_token_expires_at":4102444800000}`,
 	} {
 		if _, err := taskIdentityContextToken([]byte(taskContext)); err == nil {
 			t.Fatalf("invalid prepared ContextToken was treated as absent: %s", taskContext)

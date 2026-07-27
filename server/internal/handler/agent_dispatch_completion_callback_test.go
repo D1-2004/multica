@@ -108,7 +108,10 @@ func TestDispatchRequestFingerprintExcludesOnlyTransientIdentityContext(t *testi
 		},
 		Surface:            DispatchSurface{Type: "chat"},
 		Outbound:           DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
-		ExternalIdentity:   AgentDispatchExternalIdentity{ContextToken: "token-one"},
+		ExternalIdentity: AgentDispatchExternalIdentity{
+			ContextToken: "token-one",
+			ExpiresAt:    4102444800000,
+		},
 		CompletionCallback: &DispatchCompletionCallback{
 			URL:    "/api/v1/dispatch-tasks/router-task-1/execution-result",
 			Target: testRouterTargetIdentity,

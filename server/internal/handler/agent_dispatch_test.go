@@ -231,7 +231,7 @@ func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndPropagatesExternalId
 				"expiresAt":%d
 			}]
 		},
-		"externalIdentity":{"contextToken":"sealed-context"},
+		"externalIdentity":{"contextToken":"sealed-context","expiresAt":4102444800000},
 		"contextToken":"legacy-top-level-token-must-be-ignored",
 		"padding":%q
 	}`, agentID, len(attachmentBody), files.URL+"/diagram.png", time.Now().Add(time.Hour).UnixMilli(), strings.Repeat("x", maxWebhookBodyBytes+1))
@@ -314,15 +314,21 @@ func TestHandleAgentDispatchCreatesIssueImportsAttachmentAndPropagatesExternalId
 
 	var taskContext []byte
 	var storedContextToken pgtype.Text
+	var storedContextTokenExpiresAt pgtype.Int8
 	if err := testPool.QueryRow(context.Background(), `
-		SELECT context, context->>'agent_identity_context_token'
+		SELECT context,
+		       context->>'agent_identity_context_token',
+		       (context->>'agent_identity_context_token_expires_at')::bigint
 		FROM agent_task_queue
 		WHERE id = $1
-	`, resp.TaskID).Scan(&taskContext, &storedContextToken); err != nil {
+	`, resp.TaskID).Scan(&taskContext, &storedContextToken, &storedContextTokenExpiresAt); err != nil {
 		t.Fatalf("load task context: %v", err)
 	}
 	if !storedContextToken.Valid || storedContextToken.String != "sealed-context" {
 		t.Fatalf("task context token = %#v, want trusted Router externalIdentity.contextToken", storedContextToken)
+	}
+	if !storedContextTokenExpiresAt.Valid || storedContextTokenExpiresAt.Int64 != 4102444800000 {
+		t.Fatalf("task context token expiry = %#v", storedContextTokenExpiresAt)
 	}
 	if strings.Contains(string(taskContext), "task-001") {
 		t.Fatalf("task context leaked upstream dispatch identity: %s", taskContext)
@@ -440,7 +446,7 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 				"downloadUrl":%q
 			}]
 		},
-		"externalIdentity":{"contextToken":"follow-up-context"}
+		"externalIdentity":{"contextToken":"follow-up-context","expiresAt":4102444800000}
 	}`, issueID, len(attachmentBody), files.URL+"/spec.pdf")
 
 	w := postAgentDispatchForTest(t, body, agentID)
@@ -458,6 +464,7 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 	var content string
 	var triggerCommentID pgtype.UUID
 	var storedContextToken pgtype.Text
+	var storedContextTokenExpiresAt pgtype.Int8
 	if err := testPool.QueryRow(context.Background(), `SELECT content FROM comment WHERE id = $1`, resp.CommentID).Scan(&content); err != nil {
 		t.Fatalf("load created comment: %v", err)
 	}
@@ -470,10 +477,12 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 		}
 	}
 	if err := testPool.QueryRow(context.Background(), `
-		SELECT trigger_comment_id, context->>'agent_identity_context_token'
+		SELECT trigger_comment_id,
+		       context->>'agent_identity_context_token',
+		       (context->>'agent_identity_context_token_expires_at')::bigint
 		FROM agent_task_queue
 		WHERE id = $1
-	`, resp.TaskID).Scan(&triggerCommentID, &storedContextToken); err != nil {
+	`, resp.TaskID).Scan(&triggerCommentID, &storedContextToken, &storedContextTokenExpiresAt); err != nil {
 		t.Fatalf("load follow-up task: %v", err)
 	}
 	if uuidToString(triggerCommentID) != resp.CommentID {
@@ -481,6 +490,9 @@ func TestHandleAgentDispatchContinuationCreatesIssueComment(t *testing.T) {
 	}
 	if !storedContextToken.Valid || storedContextToken.String != "follow-up-context" {
 		t.Fatalf("task context token = %#v, want trusted Router externalIdentity.contextToken", storedContextToken)
+	}
+	if !storedContextTokenExpiresAt.Valid || storedContextTokenExpiresAt.Int64 != 4102444800000 {
+		t.Fatalf("task context token expiry = %#v", storedContextTokenExpiresAt)
 	}
 	var attachmentCount int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM attachment WHERE comment_id = $1`, resp.CommentID).Scan(&attachmentCount); err != nil {

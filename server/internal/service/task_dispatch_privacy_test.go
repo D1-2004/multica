@@ -18,9 +18,11 @@ func TestTaskDispatchBroadcastOnlyCarriesSafeDispatchMetadata(t *testing.T) {
 		RuntimeID:     typingIndependentUUID(33),
 		IssueID:       typingIndependentUUID(34),
 		ChatSessionID: typingIndependentUUID(35),
-		Context: []byte(`{
-			"agent_identity_context_token":"ctx-secret",
-			"dingtalk_session_reply":{"webhook":"https://secret.example/session"},
+			Context: []byte(`{
+				"agent_identity_context_token":"ctx-secret",
+				"agent_identity_context_token_expires_at":4102444800000,
+				"agent_identity_context_token_source":"external",
+				"dingtalk_session_reply":{"webhook":"https://secret.example/session"},
 			"dispatch_runtime_prompt":"private prompt",
 			"other_private_state":"must not broadcast",
 			"dispatch_idempotency_key":"dispatch-window:window-1",
@@ -31,7 +33,7 @@ func TestTaskDispatchBroadcastOnlyCarriesSafeDispatchMetadata(t *testing.T) {
 	}
 
 	payload := taskDispatchBroadcastPayload(task)
-	for _, forbidden := range []string{"agent_identity_context_token", "dingtalk_session_reply", "dispatch_runtime_prompt", "other_private_state"} {
+	for _, forbidden := range []string{"agent_identity_context_token", "agent_identity_context_token_expires_at", "agent_identity_context_token_source", "dingtalk_session_reply", "dispatch_runtime_prompt", "other_private_state"} {
 		if _, present := payload[forbidden]; present {
 			t.Fatalf("task:dispatch leaked private key %q: %#v", forbidden, payload)
 		}

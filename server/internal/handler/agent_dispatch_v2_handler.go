@@ -45,6 +45,10 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 		protocol.DispatchOutboundJSONKey: c.Outbound,
 		"dispatch_idempotency_key":        idempotencyKey,
 	}
+	if c.ExternalIdentity.ContextToken != "" {
+		payload[protocol.AgentIdentityContextTokenExpiresAtJSONKey] = c.ExternalIdentity.ExpiresAt
+		payload[protocol.AgentIdentityContextTokenSourceJSONKey] = protocol.AgentIdentityContextTokenSourceExternal
+	}
 	if c.DispatchEndpointID != "" {
 		payload["dispatch_endpoint_id"] = c.DispatchEndpointID
 	}
@@ -347,6 +351,7 @@ func (h *Handler) createAgentDispatchChatV2(
 		SenderName:           command.Event.Data.Sender.DisplayName,
 		Text:                 dispatchText,
 		IdentityContextToken: command.ExternalIdentity.ContextToken,
+		IdentityContextTokenExpiresAt: command.ExternalIdentity.ExpiresAt,
 		DispatchContext:      dispatchRuntimeContext(command, dispatchIdempotencyKey(r, command)),
 	}
 	var message channel.InboundMessage
