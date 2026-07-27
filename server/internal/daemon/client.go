@@ -208,6 +208,24 @@ func (c *Client) ClaimTaskWithOptions(ctx context.Context, runtimeID string, opt
 	return resp.Task, nil
 }
 
+// ReportRuntimeStartFailure reports a closed-vocabulary FC/E2B runner failure
+// that happened before task claim. The server validates the launch lease and
+// generates the persisted reader-facing error text.
+func (c *Client) ReportRuntimeStartFailure(
+	ctx context.Context,
+	runtimeID, taskID string,
+	report protocol.RuntimeStartFailureReport,
+) (protocol.RuntimeStartFailureReportResponse, error) {
+	var response protocol.RuntimeStartFailureReportResponse
+	err := c.postJSON(
+		ctx,
+		fmt.Sprintf("/api/daemon/runtimes/%s/tasks/%s/runtime-start-failure", runtimeID, taskID),
+		report,
+		&response,
+	)
+	return response, err
+}
+
 // ResolveSkillBundle downloads a single skill bundle. It uses bundleClient (no
 // fixed timeout) so the deadline is governed entirely by ctx, which the daemon
 // scales to the bundle's size, and retries transient transport blips within

@@ -126,6 +126,52 @@ func TestClient_ClaimTaskWithRunOnceOptions(t *testing.T) {
 	}
 }
 
+func TestClient_ReportRuntimeStartFailure(t *testing.T) {
+	t.Parallel()
+
+	want := protocol.RuntimeStartFailureReport{
+		LaunchLeaseToken: "11111111-1111-1111-1111-111111111111",
+		Stage:            protocol.RuntimeStartFailureStageAgentIdentityRedeem,
+		Code:             protocol.RuntimeStartFailureCodeAgentIdentityRedeemTimeout,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if got := r.URL.Path; got != "/api/daemon/runtimes/runtime-1/tasks/task-1/runtime-start-failure" {
+			t.Errorf("path = %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer daemon-secret" {
+			t.Errorf("Authorization = %q", got)
+		}
+		var got protocol.RuntimeStartFailureReport
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if got != want {
+			t.Errorf("body = %+v, want %+v", got, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"failed","accepted":true}`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	client.SetToken("daemon-secret")
+	response, err := client.ReportRuntimeStartFailure(
+		context.Background(),
+		"runtime-1",
+		"task-1",
+		want,
+	)
+	if err != nil {
+		t.Fatalf("ReportRuntimeStartFailure: %v", err)
+	}
+	if response.Status != "failed" || !response.Accepted {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
 // noSleepRetry replaces retrySleep with an immediate no-op so tests don't
 // actually wait the 4s/8s/16s/... backoffs. Returns a restore func.
 func noSleepRetry(t *testing.T) func() {
