@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"testing"
@@ -266,6 +267,43 @@ func TestBuildChatPromptAttachmentIDsCanBeBoundToCreatedIssues(t *testing.T) {
 		"id=019ec09d-6222-722b-bdfa-427b105d80be",
 		"multica attachment download <id>",
 		"--attachment-id <id>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("chat prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+}
+
+func TestBuildChatPromptDecodesArbitrarySanitizedSourcePayloads(t *testing.T) {
+	const claimResponse = `{
+		"chat_session_id":"sess-1",
+		"chat_message":"[消息类型: futureNativeType]",
+		"chat_message_source_payloads":[{
+			"message_id":"message-1",
+			"payload":{
+				"schema_version":1,
+				"platform":"dingtalk",
+				"payload":{
+					"msgtype":"futureNativeType",
+					"content":{"nested":{"sentinel":"preserved-for-model"}}
+				},
+				"redacted_fields":["$.sessionWebhook"]
+			}
+		}]
+	}`
+	var task Task
+	if err := json.Unmarshal([]byte(claimResponse), &task); err != nil {
+		t.Fatalf("decode task claim response: %v", err)
+	}
+
+	out := BuildPrompt(task, "pi")
+	for _, want := range []string{
+		"Credential-free original channel message payloads",
+		"message_id=message-1",
+		`"msgtype":"futureNativeType"`,
+		`"sentinel":"preserved-for-model"`,
+		`"$.sessionWebhook"`,
+		"must not be reconstructed or requested",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("chat prompt missing %q\n--- output ---\n%s", want, out)
