@@ -448,6 +448,32 @@ func TestClientGetsUpdatesAndDeletesSubscription(t *testing.T) {
 	}
 }
 
+func TestClientDeletesAllDigitalEmployeeSubscriptionsForAgent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete ||
+			r.URL.Path != "/api/subscriptions/digital-employees/agent-1" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer service-credential" {
+			t.Fatal("missing service credential")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"code":    "success",
+			"data": []map[string]any{
+				{"sourceId": "source-channel", "agentId": "agent-1", "status": "inactive"},
+				{"sourceId": "source-calendar", "agentId": "agent-1", "status": "inactive"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := mustTestClient(t, server)
+	if err := client.DeleteDigitalEmployeeSubscriptions(context.Background(), "agent-1"); err != nil {
+		t.Fatalf("DeleteDigitalEmployeeSubscriptions: %v", err)
+	}
+}
+
 func TestClientCreatesHTTPCallbackSubscriptionWithoutInventingTenant(t *testing.T) {
 	dispatchURL := "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -74,6 +74,7 @@ type Router interface {
 	GetSubscription(ctx context.Context, sourceID string) (Subscription, error)
 	UpdateSubscriptionSurface(ctx context.Context, sourceID, agentID, surfaceType string) (Subscription, error)
 	DeleteSubscription(ctx context.Context, sourceID string) error
+	DeleteDigitalEmployeeSubscriptions(ctx context.Context, agentID string) error
 }
 
 type DispatchEndpoint struct {
@@ -706,6 +707,7 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 	config.MessageRouteStatus = ""
 	config.MessageRouteError = nil
 	config.MessageScope = messageScope
+	config.CalendarStartEnabled = hasActiveCalendarSubscription(params.MessageBinding.Subscriptions)
 	config.Conversations = conversations
 	config.BoundAt = &boundAt
 	activeConfig, err := config.Marshal()
@@ -870,29 +872,18 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding Publ
 		}
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("get dingtalk account binding: %w", err)
 	}
-	config, err := ParseDingTalkAccountConfig(row.Config)
-	if err != nil {
+	if _, err := ParseDingTalkAccountConfig(row.Config); err != nil {
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
 	}
-	if config.RouterSourceID != "" {
-		// Remote delete stays fail-closed EXCEPT for the router's explicit
-		// "subscription_not_found" business error: the subscription is
-		// already gone, which is exactly the state this delete wants. This
-		// is the multi-replica recovery path — a pod that crashed between
-		// the router delete and the local revoke, or a concurrent unbind on
-		// another replica, leaves the remote side deleted while the local
-		// row is still active; without this tolerance every retry 502s
-		// forever and the binding can never be unbound (re-begin then 409s
-		// on the active row). Transport failures and other router errors
-		// still abort before the local transition, so a live subscription
-		// is never orphaned. Revoke itself is idempotent (status IN
-		// pending/active/revoked), so double unbinds converge.
-		if err := s.router.DeleteSubscription(ctx, config.RouterSourceID); err != nil &&
-			!errors.Is(err, ErrSubscriptionNotFound) {
-			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
-		}
-	} else if row.Status == "active" {
-		return PublicDingTalkAccountBinding{}, ErrInvalidResult
+	// A calendar-enabled account owns multiple Router sources. Resolve them
+	// from the stable agent ID, rather than the mutable local source ID, so a
+	// retry also heals calendar sources orphaned by the legacy single-source
+	// unbind path. Router returns an empty success when nothing remains.
+	if err := s.router.DeleteDigitalEmployeeSubscriptions(
+		ctx,
+		util.UUIDToString(row.AgentID),
+	); err != nil {
+		return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
 	}
 	revoked, err := s.store.RevokeDingTalkAccountBinding(ctx, db.RevokeDingTalkAccountBindingParams{
 		ID:          row.ID,

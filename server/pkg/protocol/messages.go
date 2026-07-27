@@ -13,21 +13,21 @@ const (
 )
 
 const (
-	AgentIdentityContextTokenJSONKey            = "agent_identity_context_token"
-	AgentIdentityContextTokenExpiresAtJSONKey   = "agent_identity_context_token_expires_at"
-	AgentIdentityContextTokenSourceJSONKey      = "agent_identity_context_token_source"
-	AgentIdentityContextTokenSourceExternal     = "external"
-	AgentIdentityContextTokenEnvKey             = "AGENT_IDENTITY_CONTEXT_TOKEN"
-	DispatchSurfaceJSONKey                      = "dispatch_surface"
-	DispatchOutboundJSONKey                     = "dispatch_outbound"
-	DispatchWorkflowPromptJSONKey               = "dispatch_workflow_prompt"
-	DingTalkStreamSourceJSONKey                 = "dingtalk_stream_source"
-	DingTalkConversationInitiatorJSONKey        = "dingtalk_conversation_initiator"
-	SandboxSourceHostnameEnvKey                 = "MULTICA_SANDBOX_SOURCE_HOSTNAME"
-	DingTalkStreamHostnameEnvKey                = "MULTICA_DINGTALK_STREAM_HOSTNAME"
-	DingTalkStreamNodeIDEnvKey                  = "MULTICA_DINGTALK_STREAM_NODE_ID"
-	DingTalkStreamConnectionIDEnvKey            = "MULTICA_DINGTALK_STREAM_CONNECTION_ID"
-	TaskInitiatorTypeDingTalkUser               = "dingtalk_user"
+	AgentIdentityContextTokenJSONKey          = "agent_identity_context_token"
+	AgentIdentityContextTokenExpiresAtJSONKey = "agent_identity_context_token_expires_at"
+	AgentIdentityContextTokenSourceJSONKey    = "agent_identity_context_token_source"
+	AgentIdentityContextTokenSourceExternal   = "external"
+	AgentIdentityContextTokenEnvKey           = "AGENT_IDENTITY_CONTEXT_TOKEN"
+	DispatchSurfaceJSONKey                    = "dispatch_surface"
+	DispatchOutboundJSONKey                   = "dispatch_outbound"
+	DispatchWorkflowPromptJSONKey             = "dispatch_workflow_prompt"
+	DingTalkStreamSourceJSONKey               = "dingtalk_stream_source"
+	DingTalkConversationInitiatorJSONKey      = "dingtalk_conversation_initiator"
+	SandboxSourceHostnameEnvKey               = "MULTICA_SANDBOX_SOURCE_HOSTNAME"
+	DingTalkStreamHostnameEnvKey              = "MULTICA_DINGTALK_STREAM_HOSTNAME"
+	DingTalkStreamNodeIDEnvKey                = "MULTICA_DINGTALK_STREAM_NODE_ID"
+	DingTalkStreamConnectionIDEnvKey          = "MULTICA_DINGTALK_STREAM_CONNECTION_ID"
+	TaskInitiatorTypeDingTalkUser             = "dingtalk_user"
 )
 
 const (
@@ -35,6 +35,7 @@ const (
 	DispatchSurfaceTypeChat      = "chat"
 	DispatchOutboundModeDWS      = "dws"
 	DispatchOutboundModeRobotSDK = "robot_sdk"
+	DispatchOutboundModeNone     = "none"
 	DispatchReplyToLatestMessage = "latest_message"
 )
 

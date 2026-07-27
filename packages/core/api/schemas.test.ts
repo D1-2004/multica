@@ -6,10 +6,14 @@ import {
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
   BeginDingTalkAccountBindingResponseSchema,
+  AgentIdentityGitHubStatusResponseSchema,
+  BeginAgentIdentityGitHubOAuthResponseSchema,
+  TestAgentIdentityGitHubConnectionResponseSchema,
   CreateFeedbackResponseSchema,
   DingTalkAccountBindingsResponseSchema,
   DuplicateIssueErrorBodySchema,
   EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
+  EMPTY_AGENT_IDENTITY_GITHUB_STATUS_RESPONSE,
   EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
   EMPTY_FDE_ONBOARDING_STATE,
   EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE,
@@ -56,6 +60,7 @@ describe("DingTalk account binding schemas", () => {
             account_avatar_url: "https://example.test/digital-worker.png",
             surface_type: "chat",
             message_scope: "custom",
+            calendar_start_enabled: true,
             conversations: [
               {
                 cid: "cid-group-1",
@@ -95,6 +100,7 @@ describe("DingTalk account binding schemas", () => {
             accountAvatarUrl: "https://example.test/digital-worker.png",
             surfaceType: "chat",
             messageScope: "custom",
+            calendarStartEnabled: true,
             conversations: [
               {
                 cid: "cid-group-1",
@@ -131,6 +137,7 @@ describe("DingTalk account binding schemas", () => {
     expect(parsed.bindings[0]?.messageRoute).toEqual({
       status: "active",
       messageScope: "direct_only",
+      calendarStartEnabled: false,
       conversations: [],
     });
   });
@@ -247,6 +254,77 @@ describe("FDE onboarding schemas", () => {
       EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE,
       { endpoint: "POST /api/fde/onboarding" },
     )).toBe(EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE);
+  });
+});
+
+describe("Agent Identity GitHub schemas", () => {
+  it("parses status, OAuth start, and test wire shapes", () => {
+    expect(
+      AgentIdentityGitHubStatusResponseSchema.parse({
+        configured: true,
+        connection: {
+          connection_id: "connection-1",
+          account_login: "octocat",
+          account_id: "42",
+          status: "ACTIVE",
+          granted_scopes: "repo",
+          access_expires_at: 1783600000000,
+          refresh_expires_at: 1799200000000,
+          last_refresh_at: 1783590000000,
+          last_test_at: 1783595000000,
+        },
+      }),
+    ).toEqual({
+      configured: true,
+      connection: {
+        connectionId: "connection-1",
+        accountLogin: "octocat",
+        accountId: "42",
+        status: "ACTIVE",
+        grantedScopes: "repo",
+        accessExpiresAt: 1783600000000,
+        refreshExpiresAt: 1799200000000,
+        lastRefreshAt: 1783590000000,
+        lastTestAt: 1783595000000,
+      },
+    });
+
+    expect(
+      BeginAgentIdentityGitHubOAuthResponseSchema.parse({
+        state: "state-1",
+        authorization_url: "https://github.com/login/oauth/authorize",
+      }),
+    ).toEqual({
+      state: "state-1",
+      authorizationUrl: "https://github.com/login/oauth/authorize",
+    });
+
+    expect(
+      TestAgentIdentityGitHubConnectionResponseSchema.parse({
+        ok: true,
+        refreshed: true,
+        connection_id: "connection-1",
+        account_login: "octocat",
+        account_id: "42",
+        granted_scopes: "repo",
+      }),
+    ).toMatchObject({
+      ok: true,
+      refreshed: true,
+      connectionId: "connection-1",
+      accountLogin: "octocat",
+    });
+  });
+
+  it("falls back safely when status drifts", () => {
+    expect(
+      parseWithFallback(
+        { configured: true, connection: "not-an-object" },
+        AgentIdentityGitHubStatusResponseSchema,
+        EMPTY_AGENT_IDENTITY_GITHUB_STATUS_RESPONSE,
+        { endpoint: "GET /api/workspaces/:id/agent-identity/github/status" },
+      ),
+    ).toEqual({ configured: false, connection: null });
   });
 });
 

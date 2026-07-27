@@ -905,7 +905,7 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 		},
 	}
 	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{
-		LLMModels:           []string{"qwen3.5-plus"},
+		LLMModels:            []string{"qwen3.5-plus"},
 		AgentIdentityBaseURL: "https://pre-agent-identity.dingtalk.com",
 		AgentIdentityTimeout: 2 * time.Second,
 		DWSClientSecret:      "dws-client-secret",
@@ -1271,6 +1271,25 @@ func TestFCE2BExtraEnvIncludesAgentIdentityContextToken(t *testing.T) {
 	}
 }
 
+func TestFCE2BExtraEnvAllowsGithubOnlyAgentIdentityWithoutDWSSecret(t *testing.T) {
+	task := db.AgentTaskQueue{
+		Context: []byte(`{"agent_identity_context_token":"ctx_github_token","agent_identity_context_token_expires_at":4102444800000}`),
+	}
+	got, err := fcE2BAgentIdentityExtraEnv(task, FCE2BConfig{
+		AgentIdentityBaseURL: "https://pre-agent-identity.dingtalk.com",
+		AgentIdentityTimeout: 7 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("fcE2BAgentIdentityExtraEnv: %v", err)
+	}
+	if got["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_github_token" {
+		t.Fatalf("AGENT_IDENTITY_CONTEXT_TOKEN = %q, want ctx_github_token", got["AGENT_IDENTITY_CONTEXT_TOKEN"])
+	}
+	if _, ok := got["DWS_CLIENT_SECRET"]; ok {
+		t.Fatal("DWS_CLIENT_SECRET should be omitted when not configured")
+	}
+}
+
 func TestFCE2BExtraEnvRejectsContextTokenWithoutUsableExpiry(t *testing.T) {
 	cfg := FCE2BConfig{
 		AgentIdentityBaseURL: "https://pre-agent-identity.dingtalk.com",
@@ -1402,6 +1421,25 @@ func TestFCE2BConfigFromEnvAgentIdentity(t *testing.T) {
 	}
 	if cfg.DWSClientSecret != "dws-client-secret" {
 		t.Fatal("DWS client secret was not loaded")
+	}
+}
+
+func TestFCE2BConfigFromEnvKeepsConfiguredAgentIdentityURLInPrePublish(t *testing.T) {
+	t.Setenv("APP_ENV", "staging")
+	t.Setenv("AONE_ENV_TYPE", "prepub")
+	t.Setenv("MULTICA_AGENT_IDENTITY_BASE_URL", "https://agent-identity.dingtalk.com/")
+	cfg := FCE2BConfigFromEnv()
+	if cfg.AgentIdentityBaseURL != "https://agent-identity.dingtalk.com" {
+		t.Fatalf("base url = %q", cfg.AgentIdentityBaseURL)
+	}
+}
+
+func TestFCE2BConfigFromEnvKeepsAgentIdentityProductionURLInProduction(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("MULTICA_AGENT_IDENTITY_BASE_URL", "https://agent-identity.dingtalk.com/")
+	cfg := FCE2BConfigFromEnv()
+	if cfg.AgentIdentityBaseURL != "https://agent-identity.dingtalk.com" {
+		t.Fatalf("base url = %q", cfg.AgentIdentityBaseURL)
 	}
 }
 

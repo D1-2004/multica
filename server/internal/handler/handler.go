@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/githubapp"
+	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
@@ -172,6 +173,7 @@ type Handler struct {
 	TaskCompletionTargetIdentity string
 	CloudRuntime                 cloudRuntimeProxy
 	GitHubApp                    *githubapp.Client
+	AgentIdentityGitHub          *agentidentitygithub.Client
 	ManagedAgent                 *managedagent.Service
 	// Lark integration. All three are nil when the Lark master key
 	// (MULTICA_LARK_SECRET_KEY) is unset; the corresponding HTTP
@@ -368,6 +370,10 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 			Timeout: cfg.CloudRuntimeFleetTimeout,
 		}),
 		GitHubApp: githubClient,
+		AgentIdentityGitHub: agentidentitygithub.NewClient(agentidentitygithub.Config{
+			BaseURL: cfg.FCE2B.AgentIdentityBaseURL,
+			Timeout: cfg.FCE2B.AgentIdentityTimeout,
+		}),
 		LLM: llm.New(llm.Config{
 			APIKey:       cfg.LLMAPIKey,
 			BaseURL:      cfg.LLMBaseURL,

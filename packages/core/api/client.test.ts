@@ -136,6 +136,100 @@ describe("ApiClient", () => {
     ]);
   });
 
+  it("uses the Agent Identity GitHub HTTP contract", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            configured: true,
+            connection: {
+              connection_id: "connection-1",
+              account_login: "octocat",
+              account_id: "42",
+              status: "ACTIVE",
+              granted_scopes: "repo",
+              refresh_expires_at: 1799200000000,
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            state: "state-1",
+            authorization_url: "https://github.com/login/oauth/authorize",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            refreshed: true,
+            connection_id: "connection-1",
+            account_login: "octocat",
+            account_id: "42",
+            granted_scopes: "repo",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(
+      client.getAgentIdentityGitHubStatus("workspace-1", "agent-1"),
+    ).resolves.toMatchObject({
+      configured: true,
+      connection: { connectionId: "connection-1", accountLogin: "octocat" },
+    });
+    await expect(
+      client.beginAgentIdentityGitHubOAuth(
+        "workspace-1",
+        "agent-1",
+        "/ws/agents/agent-1?tab=integrations",
+      ),
+    ).resolves.toEqual({
+      state: "state-1",
+      authorizationUrl: "https://github.com/login/oauth/authorize",
+    });
+    await expect(
+      client.testAgentIdentityGitHubConnection("workspace-1", "agent-1", "connection-1"),
+    ).resolves.toMatchObject({
+      ok: true,
+      refreshed: true,
+      connectionId: "connection-1",
+    });
+
+    expect(fetchMock.mock.calls.map(([url, init]) => ({
+      url,
+      method: init?.method ?? "GET",
+      body: init?.body,
+    }))).toEqual([
+      {
+        url: "https://api.example.test/api/workspaces/workspace-1/agent-identity/github/status?agent_id=agent-1",
+        method: "GET",
+        body: undefined,
+      },
+      {
+        url: "https://api.example.test/api/workspaces/workspace-1/agent-identity/github/oauth/start",
+        method: "POST",
+        body: JSON.stringify({
+          agent_id: "agent-1",
+          return_url: "/ws/agents/agent-1?tab=integrations",
+        }),
+      },
+      {
+        url: "https://api.example.test/api/workspaces/workspace-1/agent-identity/github/connection-1/test?agent_id=agent-1",
+        method: "POST",
+        body: undefined,
+      },
+    ]);
+  });
+
   it("does not log the credential-bearing begin payload when parsing fails", async () => {
     const warn = vi.fn();
     setSchemaLogger({ ...noopLogger, warn });

@@ -58,16 +58,36 @@ type DispatchMessage struct {
 	Attachments []DispatchAttachment `json:"attachments,omitempty"`
 }
 
+type DispatchCalendarAttendee struct {
+	UID            string `json:"uid"`
+	ResponseStatus *int   `json:"responseStatus,omitempty"`
+	Optional       *bool  `json:"optional,omitempty"`
+}
+
 // DispatchEventData keeps all platform routing locators in domain data. The
 // optional fields are intentionally opaque to PromptBuilder and are only used
 // by outbound strategies; they are never rendered into Issue/Comment content.
 type DispatchEventData struct {
-	Conversation DispatchConversation `json:"conversation"`
-	Sender       DispatchSender       `json:"sender"`
-	Messages     []DispatchMessage    `json:"messages"`
-	Reply        json.RawMessage      `json:"reply,omitempty"`
-	Reference    json.RawMessage      `json:"reference,omitempty"`
-	Reaction     json.RawMessage      `json:"reaction,omitempty"`
+	Conversation       DispatchConversation       `json:"conversation"`
+	Sender             DispatchSender             `json:"sender"`
+	Messages           []DispatchMessage          `json:"messages"`
+	CalendarID         string                     `json:"calendarId,omitempty"`
+	Subject            string                     `json:"subject,omitempty"`
+	Comment            string                     `json:"comment,omitempty"`
+	StartTime          *int64                     `json:"startTime,omitempty"`
+	EndTime            *int64                     `json:"endTime,omitempty"`
+	Timezone           string                     `json:"timezone,omitempty"`
+	AllDayEvent        bool                       `json:"allDayEvent,omitempty"`
+	BelongOrgID        string                     `json:"belongOrgId,omitempty"`
+	Organizers         []string                   `json:"organizers,omitempty"`
+	Attendees          []DispatchCalendarAttendee `json:"attendees,omitempty"`
+	Location           string                     `json:"location,omitempty"`
+	DetailURL          string                     `json:"detailUrl,omitempty"`
+	VideoConferenceURL string                     `json:"videoConferenceUrl,omitempty"`
+	AIReadableContent  string                     `json:"aiReadableContent,omitempty"`
+	Reply              json.RawMessage            `json:"reply,omitempty"`
+	Reference          json.RawMessage            `json:"reference,omitempty"`
+	Reaction           json.RawMessage            `json:"reaction,omitempty"`
 }
 
 type DispatchSurface struct {
@@ -122,6 +142,7 @@ func NewDispatchPromptBuilder() *DispatchPromptBuilder {
 	builder := &DispatchPromptBuilder{strategies: make(map[dispatchPromptBuilderKey]dispatchPromptStrategy)}
 	builder.register("channel", "message.created", "robot", buildDingTalkRobotPrompt)
 	builder.register("channel", "message.created", "digital_employee", buildDingTalkDigitalEmployeePrompt)
+	builder.register("calendar", "calendar.started", "digital_employee", buildDingTalkCalendarStartedPrompt)
 	return builder
 }
 
@@ -152,28 +173,12 @@ func (c DispatchCommand) validate() error {
 	if c.Source.Platform != "dingtalk" || (c.Source.Type != "robot" && c.Source.Type != "digital_employee") {
 		return errors.New("source must be dingtalk robot or digital_employee")
 	}
-	if c.Event.Domain != "channel" || c.Event.Type != "message.created" {
-		return errors.New("event must be channel/message.created")
-	}
-	if strings.TrimSpace(c.Event.Data.Conversation.OpenConversationID) == "" || len(c.Event.Data.Messages) == 0 {
-		return errors.New("event.data conversation and messages are required")
-	}
-	if c.Source.Type == "robot" && strings.TrimSpace(c.Event.Data.Sender.OpenDingTalkID) == "" && strings.TrimSpace(c.Event.Data.Sender.SenderOpenDingTalkID) == "" && strings.TrimSpace(c.Event.Data.Sender.StaffID) == "" {
-		return errors.New("event.data.sender identity is required")
-	}
-	for _, m := range c.Event.Data.Messages {
-		if strings.TrimSpace(m.OpenMsgID) == "" || strings.TrimSpace(m.Text) == "" && len(m.Attachments) == 0 {
-			return errors.New("each message needs openMsgId and text or attachment")
+	if c.Event.Domain == "calendar" && c.Event.Type == "calendar.started" {
+		if err := c.validateCalendarStarted(); err != nil {
+			return err
 		}
-	}
-	if c.Surface.Type != protocol.DispatchSurfaceTypeIssue && c.Surface.Type != protocol.DispatchSurfaceTypeChat {
-		return errors.New("surface.type must be issue or chat")
-	}
-	if c.Outbound.Mode != protocol.DispatchOutboundModeDWS && c.Outbound.Mode != protocol.DispatchOutboundModeRobotSDK {
-		return errors.New("outbound.mode must be dws or robot_sdk")
-	}
-	if c.Outbound.ReplyTo != protocol.DispatchReplyToLatestMessage {
-		return errors.New("outbound.replyTo must be latest_message")
+	} else if err := c.validateChannelMessageCreated(); err != nil {
+		return err
 	}
 	if !validDispatchContextToken(c.ExternalIdentity.ContextToken) {
 		return errors.New("externalIdentity.contextToken is invalid")
@@ -198,6 +203,52 @@ func (c DispatchCommand) validate() error {
 	}
 	if c.Continuation != nil && strings.TrimSpace(c.AgentID) != "" {
 		return errors.New("agentId and continuation are mutually exclusive")
+	}
+	return nil
+}
+
+func (c DispatchCommand) validateChannelMessageCreated() error {
+	if c.Event.Domain != "channel" || c.Event.Type != "message.created" {
+		return errors.New("event must be channel/message.created or calendar/calendar.started")
+	}
+	if strings.TrimSpace(c.Event.Data.Conversation.OpenConversationID) == "" || len(c.Event.Data.Messages) == 0 {
+		return errors.New("event.data conversation and messages are required")
+	}
+	if c.Source.Type == "robot" && strings.TrimSpace(c.Event.Data.Sender.OpenDingTalkID) == "" && strings.TrimSpace(c.Event.Data.Sender.SenderOpenDingTalkID) == "" && strings.TrimSpace(c.Event.Data.Sender.StaffID) == "" {
+		return errors.New("event.data.sender identity is required")
+	}
+	for _, m := range c.Event.Data.Messages {
+		if strings.TrimSpace(m.OpenMsgID) == "" || strings.TrimSpace(m.Text) == "" && len(m.Attachments) == 0 {
+			return errors.New("each message needs openMsgId and text or attachment")
+		}
+	}
+	if c.Surface.Type != protocol.DispatchSurfaceTypeIssue && c.Surface.Type != protocol.DispatchSurfaceTypeChat {
+		return errors.New("surface.type must be issue or chat")
+	}
+	if c.Outbound.Mode != protocol.DispatchOutboundModeDWS && c.Outbound.Mode != protocol.DispatchOutboundModeRobotSDK {
+		return errors.New("outbound.mode must be dws or robot_sdk")
+	}
+	if c.Outbound.ReplyTo != protocol.DispatchReplyToLatestMessage {
+		return errors.New("outbound.replyTo must be latest_message")
+	}
+	return nil
+}
+
+func (c DispatchCommand) validateCalendarStarted() error {
+	if c.Source.Type != "digital_employee" {
+		return errors.New("calendar.started source must be digital_employee")
+	}
+	if strings.TrimSpace(c.Event.Data.CalendarID) == "" || strings.TrimSpace(c.Event.Data.Subject) == "" || c.Event.Data.StartTime == nil || strings.TrimSpace(c.Event.Data.AIReadableContent) == "" {
+		return errors.New("calendar.started requires calendarId, subject, startTime and aiReadableContent")
+	}
+	if c.Surface.Type != protocol.DispatchSurfaceTypeIssue {
+		return errors.New("calendar.started surface.type must be issue")
+	}
+	if c.Outbound.Mode != protocol.DispatchOutboundModeNone || strings.TrimSpace(c.Outbound.ReplyTo) != "" {
+		return errors.New("calendar.started outbound must be none without replyTo")
+	}
+	if strings.TrimSpace(c.ExternalIdentity.ContextToken) == "" {
+		return errors.New("calendar.started externalIdentity.contextToken is required")
 	}
 	return nil
 }
@@ -229,6 +280,13 @@ func buildDingTalkRobotPrompt(c DispatchCommand) DispatchPrompt {
 
 func buildDingTalkDigitalEmployeePrompt(c DispatchCommand) DispatchPrompt {
 	return buildDingTalkPrompt(c)
+}
+
+func buildDingTalkCalendarStartedPrompt(c DispatchCommand) DispatchPrompt {
+	return DispatchPrompt{
+		DisplayContent: strings.TrimSpace(c.Event.Data.AIReadableContent) + "\n",
+		RuntimePrompt:  dispatchExternalInputSafetyPrompt(),
+	}
 }
 
 func buildDingTalkPrompt(c DispatchCommand) DispatchPrompt {
@@ -283,7 +341,7 @@ func buildDingTalkDWSWorkflowPrompt(c DispatchCommand) string {
 		)
 	}
 	instructions = append(instructions,
-		"For final delivery, quote the same latest inbound message with `dws chat message reply --conversation-id <openConversationId> --ref-msg-id <openMsgId> --ref-sender <senderOpenDingTalkId> --text <result> --format json`. " + senderInstruction,
+		"For final delivery, quote the same latest inbound message with `dws chat message reply --conversation-id <openConversationId> --ref-msg-id <openMsgId> --ref-sender <senderOpenDingTalkId> --text <result> --format json`. "+senderInstruction,
 		"The final DingTalk reply is required whether the work is a success, partial success, blocked, or failed. State the real outcome concisely and never claim an outbound action succeeded when DWS returned an error.",
 	)
 	if c.CompletionCallback != nil {
@@ -317,17 +375,22 @@ func applyDingTalkDispatchPromptToExistingTaskFields(response *AgentTaskResponse
 	if err := json.Unmarshal(rawContext, &stored); err != nil {
 		return
 	}
-	if stored.Source.Platform != "dingtalk" ||
-		stored.Domain != "channel" || stored.Type != "message.created" ||
-		stored.Outbound.ReplyTo != protocol.DispatchReplyToLatestMessage {
+	if stored.Source.Platform != "dingtalk" {
 		return
 	}
-	if stored.Surface.Type != protocol.DispatchSurfaceTypeIssue &&
-		stored.Surface.Type != protocol.DispatchSurfaceTypeChat {
-		return
-	}
-	if stored.Outbound.Mode != protocol.DispatchOutboundModeDWS &&
-		stored.Outbound.Mode != protocol.DispatchOutboundModeRobotSDK {
+	channelMessage := stored.Domain == "channel" &&
+		stored.Type == "message.created" &&
+		stored.Outbound.ReplyTo == protocol.DispatchReplyToLatestMessage &&
+		(stored.Surface.Type == protocol.DispatchSurfaceTypeIssue ||
+			stored.Surface.Type == protocol.DispatchSurfaceTypeChat) &&
+		(stored.Outbound.Mode == protocol.DispatchOutboundModeDWS ||
+			stored.Outbound.Mode == protocol.DispatchOutboundModeRobotSDK)
+	calendarIssue := stored.Source.Type == "digital_employee" &&
+		stored.Domain == "calendar" && stored.Type == "calendar.started" &&
+		stored.Surface.Type == protocol.DispatchSurfaceTypeIssue &&
+		stored.Outbound.Mode == protocol.DispatchOutboundModeNone &&
+		strings.TrimSpace(stored.Outbound.ReplyTo) == ""
+	if !channelMessage && !calendarIssue {
 		return
 	}
 
@@ -369,16 +432,20 @@ func applyDingTalkDispatchPromptToExistingTaskFields(response *AgentTaskResponse
 	}
 	trusted.WriteString("---\n\n")
 
+	inputLabel := "## External DingTalk Message\n\n"
+	if calendarIssue {
+		inputLabel = "## External DingTalk Calendar Event\n\n"
+	}
 	if response.TriggerCommentID != nil {
-		response.TriggerCommentContent = trusted.String() + "## External DingTalk Message\n\n" + response.TriggerCommentContent
+		response.TriggerCommentContent = trusted.String() + inputLabel + response.TriggerCommentContent
 		return
 	}
 	if response.ChatSessionID != "" {
-		response.ChatMessage = trusted.String() + "## External DingTalk Message\n\n" + response.ChatMessage
+		response.ChatMessage = trusted.String() + inputLabel + response.ChatMessage
 		return
 	}
 	if response.IssueID != "" && response.ChatSessionID == "" {
-		response.HandoffNote = trusted.String() + "## Existing Assignment Handoff\n\n" + response.HandoffNote
+		response.HandoffNote = trusted.String() + inputLabel + response.HandoffNote
 	}
 }
 
@@ -429,6 +496,13 @@ func dispatchAttachmentDisplay(a DispatchAttachment) string {
 }
 
 func dispatchWindowIdempotencyKey(c DispatchCommand) string {
+	if c.Event.Domain == "calendar" && c.Event.Type == "calendar.started" {
+		startTime := int64(0)
+		if c.Event.Data.StartTime != nil {
+			startTime = *c.Event.Data.StartTime
+		}
+		return fmt.Sprintf("calendar:%s:%d", strings.TrimSpace(c.Event.Data.CalendarID), startTime)
+	}
 	// The router intentionally keeps window IDs internal. Stable message IDs
 	// provide the same key across transport retries without leaking IDs into
 	// the visible issue/comment text.
@@ -438,6 +512,9 @@ func dispatchWindowIdempotencyKey(c DispatchCommand) string {
 }
 
 func dispatchIssueTitle(c DispatchCommand) string {
+	if c.Event.Domain == "calendar" && c.Event.Type == "calendar.started" {
+		return truncateDispatchTitle("日程开始：" + strings.TrimSpace(c.Event.Data.Subject))
+	}
 	for _, message := range c.Event.Data.Messages {
 		if text := strings.TrimSpace(message.Text); text != "" {
 			return truncateDispatchTitle(strings.Join(strings.Fields(text), " "))

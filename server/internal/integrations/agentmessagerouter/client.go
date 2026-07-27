@@ -469,6 +469,37 @@ func (c *Client) DeleteSubscription(ctx context.Context, sourceID string) error 
 	return nil
 }
 
+func (c *Client) DeleteDigitalEmployeeSubscriptions(ctx context.Context, agentID string) error {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return errors.New("agent message router digital employee agent id is required")
+	}
+	response, err := c.do(
+		ctx,
+		http.MethodDelete,
+		"/api/subscriptions/digital-employees/"+url.PathEscape(agentID),
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return decodeRouterHTTPError(response.Body, response.StatusCode)
+	}
+	result, err := decodeRouterResponse[[]Subscription](response.Body)
+	if err != nil {
+		return err
+	}
+	for _, subscription := range result {
+		if !isTrimmedNonEmpty(subscription.SourceID) || subscription.AgentID != agentID ||
+			subscription.Status != "inactive" {
+			return errors.New("agent message router digital employee delete response is invalid")
+		}
+	}
+	return nil
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
 	if c == nil || c.baseURL == nil || c.httpClient == nil {
 		return nil, errors.New("agent message router client is not configured")

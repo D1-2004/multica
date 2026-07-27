@@ -105,6 +105,7 @@ const activeBinding = {
     boundAt: "2026-07-14T09:30:00Z",
     surfaceType: "issue",
     messageScope: "direct_only",
+    calendarStartEnabled: false,
     conversations: [],
   },
 };
@@ -166,6 +167,25 @@ describe("DingTalkAccountBindingCard", () => {
     renderCard();
 
     expect(await screen.findByText(summary)).toBeInTheDocument();
+  });
+
+  it("shows calendar listening when the binding enables calendar starts", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          messageRoute: {
+            ...activeBinding.messageRoute,
+            calendarStartEnabled: true,
+          },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard();
+
+    expect(await screen.findByText("Listening for calendar starts")).toBeInTheDocument();
   });
 
   it("uses the exact Chinese listening summaries", () => {

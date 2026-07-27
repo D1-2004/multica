@@ -124,52 +124,63 @@ function DingTalkMessageScopeSummary({
   const { t } = useT("agents");
   const [expanded, setExpanded] = useState(false);
 
-  switch (outcome.messageScope) {
-    case "all":
-      return <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_all)}</p>;
-    case "custom": {
-      const summary = t(
-        ($) => $.tab_body.integrations.dingtalk_account_scope_custom,
-        { count: outcome.conversations.length },
-      );
-      return (
-        <div>
-          <button
-            type="button"
-            className="flex items-center gap-1 text-left hover:text-foreground"
-            aria-expanded={expanded}
-            onClick={() => setExpanded((open) => !open)}
-          >
+  const messageScopeSummary = (() => {
+    switch (outcome.messageScope) {
+      case "all":
+        return <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_all)}</p>;
+      case "custom": {
+        const summary = t(
+          ($) => $.tab_body.integrations.dingtalk_account_scope_custom,
+          { count: outcome.conversations.length },
+        );
+        return (
+          <div>
+            <button
+              type="button"
+              className="flex items-center gap-1 text-left hover:text-foreground"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((open) => !open)}
+            >
+              {expanded ? (
+                <ChevronDown className="size-3 shrink-0" />
+              ) : (
+                <ChevronRight className="size-3 shrink-0" />
+              )}
+              <span>{summary}</span>
+            </button>
             {expanded ? (
-              <ChevronDown className="size-3 shrink-0" />
-            ) : (
-              <ChevronRight className="size-3 shrink-0" />
-            )}
-            <span>{summary}</span>
-          </button>
-          {expanded ? (
-            <ul className="mt-2 space-y-2 pl-4">
-              {outcome.conversations.map((conversation) => (
-                <li key={conversation.cid} className="flex items-center gap-2">
-                  <DingTalkConversationAvatar conversation={conversation} />
-                  <span className="leading-relaxed text-foreground">
-                    {conversation.name}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      );
+              <ul className="mt-2 space-y-2 pl-4">
+                {outcome.conversations.map((conversation) => (
+                  <li key={conversation.cid} className="flex items-center gap-2">
+                    <DingTalkConversationAvatar conversation={conversation} />
+                    <span className="leading-relaxed text-foreground">
+                      {conversation.name}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        );
+      }
+      case "direct_only":
+      default:
+        return (
+          <p>
+            {t(($) => $.tab_body.integrations.dingtalk_account_scope_direct_only)}
+          </p>
+        );
     }
-    case "direct_only":
-    default:
-      return (
-        <p>
-          {t(($) => $.tab_body.integrations.dingtalk_account_scope_direct_only)}
-        </p>
-      );
-  }
+  })();
+
+  return (
+    <div className="space-y-1">
+      {messageScopeSummary}
+      {outcome.calendarStartEnabled ? (
+        <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_calendar_start)}</p>
+      ) : null}
+    </div>
+  );
 }
 
 export function DingTalkRunModePicker({
