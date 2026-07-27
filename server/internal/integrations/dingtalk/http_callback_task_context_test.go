@@ -24,10 +24,11 @@ func TestHTTPCallbackTaskContextCarriesDispatchPolicyAndExternalIdentity(t *test
 		ConversationType:     "single",
 		MessageID:            "message-1",
 		SenderID:             "sender-1",
-		SenderStaffID:        "staff-1",
-		Text:                 "hello",
-		IdentityContextToken: "sealed-router-context",
-		DispatchContext:      dispatchContext,
+			SenderStaffID:        "staff-1",
+			Text:                 "hello",
+			IdentityContextToken: "sealed-router-context",
+			IdentityContextTokenExpiresAt: 4102444800000,
+			DispatchContext:      dispatchContext,
 	}
 	message, err := InboundFromHTTPCallback(input, "client-1", "11111111-1111-1111-1111-111111111111")
 	if err != nil {
@@ -50,6 +51,13 @@ func TestHTTPCallbackTaskContextCarriesDispatchPolicyAndExternalIdentity(t *test
 	}
 	if token != "sealed-router-context" {
 		t.Fatalf("context token = %q", token)
+	}
+	var expiresAt int64
+	if err := json.Unmarshal(payload[protocol.AgentIdentityContextTokenExpiresAtJSONKey], &expiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if expiresAt != 4102444800000 {
+		t.Fatalf("context token expires at = %d", expiresAt)
 	}
 	for _, key := range []string{
 		protocol.DispatchSurfaceJSONKey,
@@ -75,10 +83,11 @@ func TestAgentDispatchNormalizationDoesNotRequireRobotInstallation(t *testing.T)
 		ConversationTitle:    "数字员工群",
 		MessageID:            "message-digital-employee",
 		SenderID:             "sender-digital-employee",
-		SenderName:           "张三",
-		Text:                 "hello",
-		IdentityContextToken: "sealed-digital-employee-context",
-		DispatchContext:      dispatchContext,
+			SenderName:           "张三",
+			Text:                 "hello",
+			IdentityContextToken: "sealed-digital-employee-context",
+			IdentityContextTokenExpiresAt: 4102444800000,
+			DispatchContext:      dispatchContext,
 	})
 	if err != nil {
 		t.Fatalf("InboundFromAgentDispatch: %v", err)
@@ -92,6 +101,9 @@ func TestAgentDispatchNormalizationDoesNotRequireRobotInstallation(t *testing.T)
 	}
 	if raw.AgentIdentityContextToken != "sealed-digital-employee-context" {
 		t.Fatalf("identity context token = %q", raw.AgentIdentityContextToken)
+	}
+	if raw.AgentIdentityContextTokenExpiresAt != 4102444800000 {
+		t.Fatalf("identity context token expires at = %d", raw.AgentIdentityContextTokenExpiresAt)
 	}
 	var gotContext, wantContext any
 	if err := json.Unmarshal(raw.DispatchContext, &gotContext); err != nil {

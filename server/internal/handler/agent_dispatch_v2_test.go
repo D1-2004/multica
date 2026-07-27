@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type fakeAgentDispatchDuplicateQueries struct {
@@ -73,6 +74,44 @@ func TestBuildDispatchPromptSeparatesDisplayAndRuntime(t *testing.T) {
 	}
 }
 
+func TestCalendarStartedDispatchUsesIssueWithoutOutboundReply(t *testing.T) {
+	start := int64(1784217600000)
+	c := DispatchCommand{
+		SchemaVersion: "2.0", AgentID: "agent",
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "calendar", Type: "calendar.started", Data: DispatchEventData{
+			CalendarID: "calendar-1", Subject: "项目评审会", StartTime: &start,
+			Attendees:         []DispatchCalendarAttendee{{UID: "uid-secret"}},
+			AIReadableContent: "日程「项目评审会」已经开始。\n请检查设计方案并推进待办。",
+		}},
+		Surface:          DispatchSurface{Type: "issue"},
+		Outbound:         DispatchOutbound{Mode: "none"},
+		ExternalIdentity: AgentDispatchExternalIdentity{ContextToken: "context-token"},
+	}
+	if err := c.validate(); err != nil {
+		t.Fatalf("valid calendar dispatch rejected: %v", err)
+	}
+	prompt := mustBuildDispatchPrompt(t, c)
+	if !strings.Contains(prompt.DisplayContent, "项目评审会") || strings.Contains(prompt.DisplayContent, "uid-secret") {
+		t.Fatalf("calendar display content = %q", prompt.DisplayContent)
+	}
+	if !strings.Contains(prompt.RuntimePrompt, "untrusted") || prompt.WorkflowPrompt != "" {
+		t.Fatalf("calendar prompt must be safe and have no outbound workflow: %#v", prompt)
+	}
+	if got := dispatchWindowIdempotencyKey(c); got != "calendar:calendar-1:1784217600000" {
+		t.Fatalf("calendar idempotency key = %q", got)
+	}
+	if got := dispatchIssueTitle(c); got != "日程开始：项目评审会" {
+		t.Fatalf("calendar issue title = %q", got)
+	}
+
+	missingToken := c
+	missingToken.ExternalIdentity.ContextToken = ""
+	if err := missingToken.validate(); err == nil || !strings.Contains(err.Error(), "contextToken") {
+		t.Fatalf("calendar dispatch without context token error = %v", err)
+	}
+}
+
 func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 	c := DispatchCommand{
 		SchemaVersion: "2.0", AgentID: "agent",
@@ -83,7 +122,10 @@ func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 			Messages:     []DispatchMessage{{OpenMsgID: "msg", Text: "hello"}},
 		}},
 		Surface: DispatchSurface{Type: "chat"}, Outbound: DispatchOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
-		ExternalIdentity: AgentDispatchExternalIdentity{ContextToken: "opaque"},
+		ExternalIdentity: AgentDispatchExternalIdentity{
+			ContextToken: "opaque",
+			ExpiresAt:    4102444800000,
+		},
 	}
 	if err := c.validate(); err != nil {
 		t.Fatalf("valid command rejected: %v", err)
@@ -92,6 +134,7 @@ func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 	t.Run("robot without context token", func(t *testing.T) {
 		command := c
 		command.ExternalIdentity.ContextToken = ""
+		command.ExternalIdentity.ExpiresAt = 0
 		if err := command.validate(); err != nil {
 			t.Fatalf("robot command without context token rejected: %v", err)
 		}
@@ -107,6 +150,7 @@ func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 		command.Outbound.Mode = "dws"
 		command.Event.Data.Sender = DispatchSender{DisplayName: "张三"}
 		command.ExternalIdentity.ContextToken = ""
+		command.ExternalIdentity.ExpiresAt = 0
 		if err := command.validate(); err != nil {
 			t.Fatalf("digital employee command without sender ids or context token rejected: %v", err)
 		}
@@ -166,6 +210,51 @@ func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("context token and expiry must be present together", func(t *testing.T) {
+		missingExpiry := c
+		missingExpiry.ExternalIdentity.ExpiresAt = 0
+		if err := missingExpiry.validate(); err == nil || !strings.Contains(err.Error(), "externalIdentity.expiresAt") {
+			t.Fatalf("missing expiry error = %v", err)
+		}
+
+		missingToken := c
+		missingToken.ExternalIdentity.ContextToken = ""
+		if err := missingToken.validate(); err == nil || !strings.Contains(err.Error(), "externalIdentity.contextToken") {
+			t.Fatalf("missing token error = %v", err)
+		}
+	})
+}
+
+func TestDispatchRuntimeContextCarriesIdentityExpiryWithoutDuplicatingToken(t *testing.T) {
+	contextJSON := dispatchRuntimeContext(DispatchCommand{
+		SchemaVersion: "2.0",
+		ExternalIdentity: AgentDispatchExternalIdentity{
+			ContextToken: "secret-context-token",
+			ExpiresAt:    4102444800000,
+		},
+	}, "dispatch-key")
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(contextJSON, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := payload[protocol.AgentIdentityContextTokenJSONKey]; present {
+		t.Fatalf("dispatch context duplicated ContextToken: %s", contextJSON)
+	}
+	var expiresAt int64
+	if err := json.Unmarshal(payload[protocol.AgentIdentityContextTokenExpiresAtJSONKey], &expiresAt); err != nil {
+		t.Fatalf("decode ContextToken expiry: %v", err)
+	}
+	if expiresAt != 4102444800000 {
+		t.Fatalf("ContextToken expiry = %d", expiresAt)
+	}
+	var source string
+	if err := json.Unmarshal(payload[protocol.AgentIdentityContextTokenSourceJSONKey], &source); err != nil {
+		t.Fatalf("decode ContextToken source: %v", err)
+	}
+	if source != "external" {
+		t.Fatalf("ContextToken source = %q", source)
+	}
 }
 
 func TestBuildDispatchPromptRetainsAllMessagesAndSafeAttachmentDisplay(t *testing.T) {
@@ -355,8 +444,8 @@ func TestApplyDingTalkDispatchPromptReusesExistingTaskFields(t *testing.T) {
 		{
 			name: "issue continuation uses trigger comment content",
 			response: AgentTaskResponse{
-				IssueID:              "issue-1",
-				TriggerCommentID:     &commentID,
+				IssueID:               "issue-1",
+				TriggerCommentID:      &commentID,
 				TriggerCommentContent: "起来打球",
 			},
 			content:  func(response AgentTaskResponse) string { return response.TriggerCommentContent },
@@ -512,6 +601,39 @@ func TestApplyDingTalkDispatchPromptSupportsRobotIssueThroughDWS(t *testing.T) {
 	for _, want := range []string{"## Trusted DingTalk Dispatch", "two required final delivery destinations", "dws chat message reply", "已有交接"} {
 		if !strings.Contains(response.HandoffNote, want) {
 			t.Errorf("robot issue+DWS task missing %q: %s", want, response.HandoffNote)
+		}
+	}
+}
+
+func TestApplyDingTalkDispatchPromptKeepsCalendarTaskOutboundFree(t *testing.T) {
+	start := int64(1784217600000)
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "calendar", Type: "calendar.started", Data: DispatchEventData{
+			CalendarID: "calendar-1", Subject: "项目评审会", StartTime: &start,
+			AIReadableContent: "日程「项目评审会」已经开始。\n请检查设计方案并推进待办。",
+		}},
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "none"},
+	})
+	response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "保留已有交接说明"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	for _, want := range []string{
+		"## Trusted DingTalk Dispatch",
+		"untrusted input",
+		"## External DingTalk Calendar Event",
+		"保留已有交接说明",
+	} {
+		if !strings.Contains(response.HandoffNote, want) {
+			t.Errorf("calendar task handoff missing %q: %s", want, response.HandoffNote)
+		}
+	}
+	for _, forbidden := range []string{"dws chat message add-emoji", "dws chat message reply", "two required final delivery destinations"} {
+		if strings.Contains(response.HandoffNote, forbidden) {
+			t.Fatalf("calendar task received outbound workflow %q: %s", forbidden, response.HandoffNote)
 		}
 	}
 }

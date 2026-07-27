@@ -163,7 +163,7 @@ func TestPrepareChannelChatTaskPreservesRuntimeEnvelope(t *testing.T) {
 	svc := NewTaskService(q, f.pool, nil, events.New())
 	svc.Composio = builder
 	svc.FeatureFlags = composioMCPAppsTestFlags(true)
-	taskContext := []byte(`{"agent_identity_context_token":"test-context"}`)
+	taskContext := []byte(`{"agent_identity_context_token":"test-context","agent_identity_context_token_expires_at":4102444800000}`)
 
 	prepared, err := svc.PrepareChannelChatTask(context.Background(), f.session(t), memberChatTaskIdentity(f.userID), true, taskContext)
 	if err != nil {
@@ -193,7 +193,7 @@ func TestPrepareChannelChatTaskPreservesRuntimeEnvelope(t *testing.T) {
 		t.Fatal("runtime connected-app metadata was not preserved")
 	}
 	taskContext[0] = 'x'
-	if string(prepared.TaskContext) != `{"agent_identity_context_token":"test-context"}` {
+	if string(prepared.TaskContext) != `{"agent_identity_context_token":"test-context","agent_identity_context_token_expires_at":4102444800000}` {
 		t.Fatal("prepared task context must not alias the caller's buffer")
 	}
 

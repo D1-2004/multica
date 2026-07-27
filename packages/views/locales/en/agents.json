@@ -290,11 +290,11 @@
       "blank": { "title": "Start blank", "description": "Configure every field yourself. Best when you already know exactly how this agent should work." },
       "template": { "title": "Use a template", "description": "Start from curated instructions and skills, then adapt every detail to your workspace." },
       "ai": { "title": "Build with AI", "description": "Describe the outcome you want. An Agent Builder will ask focused questions and prepare a live draft." },
-      "github": { "title": "Import from GitHub", "description": "Create from a versioned repository containing multica-agent.yaml, instructions, skills, and supporting files." }
+      "github": { "title": "Import from GitHub", "description": "Create from a versioned DTA Agent Project containing dingtalk-agent.json, its definition, skills, and supporting files." }
     },
     "github": {
       "source_title": "GitHub source",
-      "source_hint": "Select a repository and ref, then validate its multica-agent.yaml before creating the agent.",
+      "source_hint": "Select a repository and ref, then validate its dingtalk-agent.json before creating the agent.",
       "not_configured": "GitHub agent sources are not configured",
       "admin_required": "Workspace admin access is required",
       "admin_required_hint": "Only workspace owners and admins can preview private repository contents or create GitHub-backed agents.",
@@ -680,6 +680,7 @@
       "dingtalk_account_surface_update_failed": "Unable to update the run mode.",
       "dingtalk_account_scope_direct_only": "Listening to my direct messages",
       "dingtalk_account_scope_all": "Listening to all messages",
+      "dingtalk_account_scope_calendar_start": "Listening for calendar starts",
       "dingtalk_account_scope_custom_one": "Listening to messages from {{count}} conversation",
       "dingtalk_account_scope_custom_other": "Listening to messages from {{count}} conversations",
       "dingtalk_account_status_active": "Active",
@@ -694,7 +695,28 @@
       "dingtalk_account_unbind_failed": "Unable to unbind the enterprise digital employee.",
       "dingtalk_account_confirm_title": "Unbind enterprise digital employee?",
       "dingtalk_account_confirm_description": "This removes only the digital employee message listener and does not affect the execution identity.",
-      "dingtalk_account_cancel": "Cancel"
+      "dingtalk_account_cancel": "Cancel",
+      "github_identity_title": "GitHub sandbox identity",
+      "github_identity_description": "Connect your GitHub account so this agent can receive a temporary GitHub identity when it runs in a sandbox.",
+      "github_identity_members_note": "Only the agent owner and workspace owners/admins can connect GitHub sandbox identity for this agent.",
+      "github_identity_loading": "Loading GitHub identity...",
+      "github_identity_not_configured": "GitHub sandbox identity is not configured for this deployment.",
+      "github_identity_connect": "Connect GitHub",
+      "github_identity_connecting": "Connecting...",
+      "github_identity_reconnect": "Reconnect GitHub",
+      "github_identity_connect_failed": "Unable to start GitHub authorization.",
+      "github_identity_connected": "GitHub identity connected.",
+      "github_identity_status": "Status",
+      "github_identity_status_active": "Active",
+      "github_identity_status_reauth": "Needs reauthorization",
+      "github_identity_scopes": "Scopes",
+      "github_identity_refresh_expires": "Refresh token expires",
+      "github_identity_last_test": "Last tested",
+      "github_identity_test": "Test",
+      "github_identity_testing": "Testing...",
+      "github_identity_test_ok": "GitHub identity test succeeded.",
+      "github_identity_test_refreshed": "GitHub identity test succeeded and refreshed the token.",
+      "github_identity_test_failed": "Unable to test GitHub identity."
     },
     "activity": {
       "status": {

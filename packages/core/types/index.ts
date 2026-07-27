@@ -182,6 +182,12 @@ export type {
   DingTalkBindingMode,
 } from "./dingtalk-account-binding";
 export type {
+  AgentIdentityGitHubConnection,
+  AgentIdentityGitHubStatusResponse,
+  BeginAgentIdentityGitHubOAuthResponse,
+  TestAgentIdentityGitHubConnectionResponse,
+} from "./agent-identity-github";
+export type {
   Autopilot,
   AutopilotStatus,
   AutopilotExecutionMode,

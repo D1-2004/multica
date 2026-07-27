@@ -48,6 +48,7 @@ func TestTaskClaimResponseDoesNotAddGeneratedDispatchPromptFields(t *testing.T) 
 	const contextToken = "private context token"
 	task := taskResponseFixture([]byte(`{
 		"agent_identity_context_token":"` + contextToken + `",
+		"agent_identity_context_token_expires_at":4102444800000,
 		"dispatch_schema_version":"2.0",
 		"dispatch_source":{"platform":"dingtalk","type":"digital_employee"},
 		"dispatch_domain":"channel",
@@ -72,6 +73,9 @@ func TestTaskClaimResponseDoesNotAddGeneratedDispatchPromptFields(t *testing.T) 
 	if claimResponse.AgentIdentityContextToken != contextToken {
 		t.Fatalf("claim context token = %q, want %q", claimResponse.AgentIdentityContextToken, contextToken)
 	}
+	if claimResponse.AgentIdentityContextTokenExpiresAt != 4102444800000 {
+		t.Fatalf("claim context token expires at = %d", claimResponse.AgentIdentityContextTokenExpiresAt)
+	}
 	encoded, err := json.Marshal(claimResponse)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +88,7 @@ func TestTaskClaimResponseDoesNotAddGeneratedDispatchPromptFields(t *testing.T) 
 }
 
 func TestTaskToResponseOmitsServerPrivateAgentIdentityContextToken(t *testing.T) {
-	fixture := taskResponseFixture([]byte(`{"agent_identity_context_token":"context-secret"}`))
+	fixture := taskResponseFixture([]byte(`{"agent_identity_context_token":"context-secret","agent_identity_context_token_expires_at":4102444800000}`))
 	response := taskToResponse(fixture, "")
 	if response.AgentIdentityContextToken != "" {
 		t.Fatal("user-facing task response exposed server-private Agent Identity ContextToken")
@@ -93,12 +97,18 @@ func TestTaskToResponseOmitsServerPrivateAgentIdentityContextToken(t *testing.T)
 	if claimResponse.AgentIdentityContextToken != "context-secret" {
 		t.Fatal("daemon claim response did not receive server-private Agent Identity ContextToken")
 	}
+	if claimResponse.AgentIdentityContextTokenExpiresAt != 4102444800000 {
+		t.Fatal("daemon claim response did not receive server-private Agent Identity ContextToken expiry")
+	}
 	fcClaimResponse := taskToClaimResponse(fixture, "", db.AgentRuntime{
 		RuntimeMode: "cloud",
 		Metadata:    []byte(`{"kind":"fc-e2b"}`),
 	})
 	if fcClaimResponse.AgentIdentityContextToken != "" {
 		t.Fatal("FC/E2B daemon claim response exposed already-redeemed ContextToken")
+	}
+	if fcClaimResponse.AgentIdentityContextTokenExpiresAt != 0 {
+		t.Fatal("FC/E2B daemon claim response exposed already-redeemed ContextToken expiry")
 	}
 }
 

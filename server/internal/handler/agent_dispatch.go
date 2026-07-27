@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type AgentDispatchPrompt struct {
@@ -73,6 +74,7 @@ type AgentDispatchChannelContext struct {
 
 type AgentDispatchExternalIdentity struct {
 	ContextToken string `json:"contextToken"`
+	ExpiresAt    int64  `json:"expiresAt"`
 }
 
 type AgentDispatchRequest struct {
@@ -150,6 +152,10 @@ func (h *Handler) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 		contextToken := strings.TrimSpace(req.ExternalIdentity.ContextToken)
 		if contextToken == "" || contextToken != req.ExternalIdentity.ContextToken || len(contextToken) > 8192 {
 			writeError(w, http.StatusBadRequest, "externalIdentity.contextToken is invalid")
+			return
+		}
+		if req.ExternalIdentity.ExpiresAt <= 0 {
+			writeError(w, http.StatusBadRequest, "externalIdentity.expiresAt is invalid")
 			return
 		}
 		req.ExternalIdentity.ContextToken = contextToken
@@ -275,6 +281,7 @@ func (h *Handler) handleAgentChatDispatch(
 		SenderName:           ctx.Sender.Name,
 		Text:                 ctx.Message.Text,
 		IdentityContextToken: agentDispatchContextToken(req),
+		IdentityContextTokenExpiresAt: agentDispatchContextTokenExpiresAt(req),
 	}, robotInstallation.ClientID, uuidToString(installation.ID))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -314,6 +321,25 @@ func agentDispatchContextToken(req AgentDispatchRequest) string {
 		return ""
 	}
 	return req.ExternalIdentity.ContextToken
+}
+
+func agentDispatchContextTokenExpiresAt(req AgentDispatchRequest) int64 {
+	if req.ExternalIdentity == nil {
+		return 0
+	}
+	return req.ExternalIdentity.ExpiresAt
+}
+
+func agentDispatchIdentityExpiryContext(req AgentDispatchRequest) []byte {
+	expiresAt := agentDispatchContextTokenExpiresAt(req)
+	if expiresAt <= 0 {
+		return nil
+	}
+	raw, _ := json.Marshal(map[string]any{
+		protocol.AgentIdentityContextTokenExpiresAtJSONKey: expiresAt,
+		protocol.AgentIdentityContextTokenSourceJSONKey:    protocol.AgentIdentityContextTokenSourceExternal,
+	})
+	return raw
 }
 
 type agentDispatchContext struct {
@@ -484,6 +510,7 @@ func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Reques
 		AttachmentIDs:             attachmentIDs(imported),
 		AllowDuplicate:            true,
 		AgentIdentityContextToken: agentDispatchContextToken(req),
+		DispatchContext:           agentDispatchIdentityExpiryContext(req),
 	}, service.IssueCreateOpts{
 		ActorID:          uuidToString(userID),
 		AnalyticsAgentID: uuidToString(agent.ID),
@@ -573,6 +600,7 @@ func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Requ
 		Content:                   buildAgentDispatchContent(req.Input),
 		AttachmentIDs:             attachmentIDs(imported),
 		AgentIdentityContextToken: agentDispatchContextToken(req),
+		DispatchContext:           agentDispatchIdentityExpiryContext(req),
 	}, service.IssueCommentCreateOpts{
 		BroadcastPayload: func(comment db.Comment, attachments []db.Attachment) map[string]any {
 			responses := make([]AttachmentResponse, 0, len(attachments))

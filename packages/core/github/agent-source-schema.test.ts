@@ -69,7 +69,7 @@ describe("GitHub agent source API schemas", () => {
     );
     expect(parsed.github_connected).toBe(false);
     expect(parsed.installation_id).toBeNull();
-    expect(parsed.manifest_path).toBe("multica-agent.yaml");
+    expect(parsed.manifest_path).toBe("dingtalk-agent.json");
   });
 
   it("falls back when source identity is malformed", () => {

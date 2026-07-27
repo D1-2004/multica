@@ -295,16 +295,17 @@ type fakeBindingRouter struct {
 	getErr       error
 	deleteErr    error
 	updateErr    error
-	issueAgent   string
-	issueURL     string
+	issueAgent   AgentDescriptor
 	getCalls     int
 	deleted      []string
 	updated      []string
+
+	deleteDigitalEmployeeErr     error
+	deletedDigitalEmployeeAgents []string
 }
 
-func (f *fakeBindingRouter) IssueBindingToken(_ context.Context, agentID, dispatchURL string) (BindingToken, error) {
-	f.issueAgent = agentID
-	f.issueURL = dispatchURL
+func (f *fakeBindingRouter) IssueBindingToken(_ context.Context, descriptor AgentDescriptor) (BindingToken, error) {
+	f.issueAgent = descriptor
 	return f.issued, f.issueErr
 }
 
@@ -399,6 +400,20 @@ func TestCompleteBindingRecordsMessageFailureWithoutChangingIdentity(t *testing.
 		store.row.Status != "pending" || router.getCalls != 0 {
 		t.Fatalf("result=%#v row status=%q router GETs=%d", result, store.row.Status, router.getCalls)
 	}
+	if result.Binding.MessageRoute.Error == nil ||
+		result.Binding.MessageRoute.Error.Code != "subscription_failed" ||
+		result.Binding.MessageRoute.Error.Message != "unable to create subscription" ||
+		!result.Binding.MessageRoute.Error.Retryable {
+		t.Fatalf("message route error = %#v", result.Binding.MessageRoute.Error)
+	}
+	storedConfig, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedConfig.MessageRouteError == nil ||
+		storedConfig.MessageRouteError.Code != "subscription_failed" {
+		t.Fatalf("stored message route error = %#v", storedConfig.MessageRouteError)
+	}
 }
 
 func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *testing.T) {
@@ -434,6 +449,7 @@ func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *
 			SourceID:           "source-channel",
 			Subscriptions: []BindingSubscriptionResult{
 				{Domain: "channel", SourceID: "source-channel", Status: "active"},
+				{Domain: "calendar", SourceID: "source-calendar", Status: "active"},
 			},
 		},
 	})
@@ -444,6 +460,7 @@ func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *
 		result.Binding.MessageRoute.AccountDisplayName != "Digital Worker Zhang" ||
 		result.Binding.MessageRoute.AccountAvatarURL != "https://example.com/digital-worker.png" ||
 		result.Binding.MessageRoute.SurfaceType != DingTalkSurfaceIssue ||
+		!result.Binding.MessageRoute.CalendarStartEnabled ||
 		store.row.Status != "active" || store.identity.AgentID.Valid || router.getCalls != 1 {
 		t.Fatalf("result=%#v row status=%q router GETs=%d", result, store.row.Status, router.getCalls)
 	}
@@ -453,7 +470,7 @@ func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *
 	}
 	if stored.AccountDisplayName != "Digital Worker Zhang" ||
 		stored.AccountAvatarURL != "https://example.com/digital-worker.png" ||
-		stored.SurfaceType != DingTalkSurfaceIssue {
+		stored.SurfaceType != DingTalkSurfaceIssue || !stored.CalendarStartEnabled {
 		t.Fatalf("stored config = %#v", stored)
 	}
 }
@@ -579,6 +596,14 @@ func (f *fakeBindingRouter) DeleteSubscription(_ context.Context, sourceID strin
 	return f.deleteErr
 }
 
+func (f *fakeBindingRouter) DeleteDigitalEmployeeSubscriptions(
+	_ context.Context,
+	agentID string,
+) error {
+	f.deletedDigitalEmployeeAgents = append(f.deletedDigitalEmployeeAgents, agentID)
+	return f.deleteDigitalEmployeeErr
+}
+
 func TestBeginDingTalkAccountBindingUsesDispatchPathWithoutPersistingRouterToken(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	workspaceID := uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
@@ -608,12 +633,10 @@ func TestBeginDingTalkAccountBindingUsesDispatchPathWithoutPersistingRouterToken
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	result, err := service.Begin(context.Background(), BeginParams{
-		WorkspaceID: workspaceID,
-		AgentID:     agentID,
-		InitiatorID: initiatorID,
-		BindingMode: BindingModeMessage,
-	})
+	params := beginParamsForTest(workspaceID, agentID, initiatorID, BindingModeMessage)
+	params.Agent.Name = "  R&D + 中文/Agent?#  "
+	params.Agent.Workspace.Name = "  研发 & Ops/一组?  "
+	result, err := service.Begin(context.Background(), params)
 	if err != nil {
 		t.Fatalf("Begin() error = %v", err)
 	}
@@ -639,11 +662,16 @@ func TestBeginDingTalkAccountBindingUsesDispatchPathWithoutPersistingRouterToken
 		t.Fatal(err)
 	}
 	wantDispatchPath := "/api/webhooks/agent-dispatch/" + oldEndpoint
-	if len(fragment) != 7 || fragment.Get("bindingMode") != "message" ||
+	wantAgentName := "R&D + 中文/Agent?#"
+	wantWorkspaceName := "研发 & Ops/一组?"
+	if len(fragment) != 10 || fragment.Get("bindingMode") != "message" ||
 		fragment.Get("bindingToken") != router.issued.BindingToken ||
 		fragment.Get("callbackToken") == "" || fragment.Get("callbackUrl") == "" ||
 		fragment.Get("expiresAt") != strconv.FormatInt(router.issued.ExpiresAt.Unix(), 10) ||
 		fragment.Get("agentId") != uuidStringForTest(store.row.AgentID) ||
+		fragment.Get("agentName") != wantAgentName ||
+		fragment.Get("workspaceId") != uuidStringForTest(workspaceID) ||
+		fragment.Get("workspaceName") != wantWorkspaceName ||
 		fragment.Get("dispatchPath") != wantDispatchPath {
 		t.Fatalf("unexpected QR fragment: %#v", fragment)
 	}
@@ -655,6 +683,10 @@ func TestBeginDingTalkAccountBindingUsesDispatchPathWithoutPersistingRouterToken
 	if strings.Contains(rawFragment, oldConfig.DispatchURL) ||
 		!strings.Contains(rawFragment, "dispatchPath=%2Fapi%2Fwebhooks%2Fagent-dispatch%2F") {
 		t.Fatalf("dispatch path was not encoded exactly once: %q", rawFragment)
+	}
+	if !strings.Contains(rawFragment, "agentName=R%26D+%2B+%E4%B8%AD%E6%96%87%2FAgent%3F%23") ||
+		!strings.Contains(rawFragment, "workspaceName=%E7%A0%94%E5%8F%91+%26+Ops%2F%E4%B8%80%E7%BB%84%3F") {
+		t.Fatalf("display names were not URL-encoded by field: %q", rawFragment)
 	}
 	wantCallbackURL := "https://multica.example/api/integrations/dingtalk/account-bindings/11111111-1111-1111-1111-111111111111/callback"
 	if got := fragment.Get("callbackUrl"); got != wantCallbackURL {
@@ -683,10 +715,80 @@ func TestBeginDingTalkAccountBindingUsesDispatchPathWithoutPersistingRouterToken
 	if fragment.Has("identityCallbackToken") || fragment.Has("identityCallbackUrl") {
 		t.Fatalf("legacy identity callback fields leaked into QR fragment: %#v", fragment)
 	}
-	if router.issueAgent != uuidStringForTest(agentID) || router.issueURL != wantDispatchPath {
-		t.Fatalf("Router issue request = agent %q path %q", router.issueAgent, router.issueURL)
+	if router.issueAgent.AgentID != uuidStringForTest(agentID) ||
+		router.issueAgent.Name != wantAgentName ||
+		router.issueAgent.Workspace.ID != uuidStringForTest(workspaceID) ||
+		router.issueAgent.Workspace.Name != wantWorkspaceName ||
+		router.issueAgent.DispatchPath != wantDispatchPath {
+		t.Fatalf("Router issue request = %#v", router.issueAgent)
 	}
 	assertMetricCounter(t, service.metrics, "dingtalk_account_begin_total", map[string]string{"outcome": "success"}, 1)
+}
+
+func TestBeginDingTalkAccountBindingRejectsInvalidAuthoritativeDisplayNames(t *testing.T) {
+	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name          string
+		agentName     string
+		workspaceName string
+		wantField     string
+	}{
+		{name: "blank agent name", agentName: " \t ", workspaceName: "Workspace", wantField: "agent name"},
+		{name: "agent name exceeds 256 code points", agentName: strings.Repeat("界", 257), workspaceName: "Workspace", wantField: "agent name"},
+		{name: "agent name contains C0 control", agentName: "Agent\x00Name", workspaceName: "Workspace", wantField: "agent name"},
+		{name: "blank workspace name", agentName: "Agent", workspaceName: " \n ", wantField: "workspace name"},
+		{name: "workspace name exceeds 256 code points", agentName: "Agent", workspaceName: strings.Repeat("W", 257), wantField: "workspace name"},
+		{name: "workspace name contains C1 control", agentName: "Agent", workspaceName: "Work\u0085space", wantField: "workspace name"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeBindingStore{}
+			router := &fakeBindingRouter{issued: BindingToken{
+				BindingToken: "bat_v1.must-not-be-returned",
+				ExpiresAt:    now.Add(5 * time.Minute),
+			}}
+			service := newBindingServiceForTest(t, store, router, now)
+			params := beginParamsForTest(
+				uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+				uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+				uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+				BindingModeMessage,
+			)
+			params.Agent.Name = tt.agentName
+			params.Agent.Workspace.Name = tt.workspaceName
+
+			result, err := service.Begin(context.Background(), params)
+
+			if !errors.Is(err, ErrInvalidResult) || !strings.Contains(err.Error(), tt.wantField) {
+				t.Fatalf("Begin() error = %v, want explicit ErrInvalidResult for %s", err, tt.wantField)
+			}
+			endpointCalls := service.endpoints.store.(*fakeDispatchEndpointStore).ensureCalls
+			if result != (BeginResult{}) || router.issueAgent.AgentID != "" || store.row.ID.Valid || endpointCalls != 0 {
+				t.Fatalf("invalid metadata produced side effects: result=%#v request=%#v row=%#v endpoint calls=%d", result, router.issueAgent, store.row, endpointCalls)
+			}
+		})
+	}
+}
+
+func TestBeginDingTalkAccountBindingMapsRouterIssueErrorWithoutLeakingIt(t *testing.T) {
+	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	store := &fakeBindingStore{}
+	router := &fakeBindingRouter{issueErr: errors.New("router failed with bat_v1.raw-secret")}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	result, err := service.Begin(context.Background(), beginParamsForTest(
+		uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+		uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+		uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+		BindingModeMessage,
+	))
+
+	if !errors.Is(err, ErrRouterUnavailable) || strings.Contains(err.Error(), "bat_v1.raw-secret") {
+		t.Fatalf("Begin() error = %v, want redacted ErrRouterUnavailable", err)
+	}
+	if result != (BeginResult{}) {
+		t.Fatalf("result = %#v, want empty", result)
+	}
 }
 
 func TestBeginDingTalkAccountBindingRejectsExpiredRouterToken(t *testing.T) {
@@ -698,12 +800,12 @@ func TestBeginDingTalkAccountBindingRejectsExpiredRouterToken(t *testing.T) {
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	_, err := service.Begin(context.Background(), BeginParams{
-		WorkspaceID: uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-		AgentID:     uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
-		InitiatorID: uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
-		BindingMode: BindingModeMessage,
-	})
+	_, err := service.Begin(context.Background(), beginParamsForTest(
+		uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+		uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+		uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+		BindingModeMessage,
+	))
 	if !errors.Is(err, ErrInvalidResult) {
 		t.Fatalf("Begin() error = %v, want ErrInvalidResult", err)
 	}
@@ -761,17 +863,17 @@ func TestBeginDingTalkAccountBindingRejectsMismatchedInstallationOwnership(t *te
 				DispatchURL: "https://multica.example/api/webhooks/agent-dispatch/v1_EREREREREREREREREREREQ",
 			}
 
-			_, err := service.Begin(context.Background(), BeginParams{
-				WorkspaceID: workspaceID,
-				AgentID:     agentID,
-				InitiatorID: uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
-				BindingMode: BindingModeMessage,
-			})
+			_, err := service.Begin(context.Background(), beginParamsForTest(
+				workspaceID,
+				agentID,
+				uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+				BindingModeMessage,
+			))
 			if !errors.Is(err, ErrInvalidResult) {
 				t.Fatalf("Begin() error = %v, want ErrInvalidResult", err)
 			}
-			if router.issueAgent != "" {
-				t.Fatalf("mismatched installation issued Router token for agent %q", router.issueAgent)
+			if router.issueAgent.AgentID != "" {
+				t.Fatalf("mismatched installation issued Router token for agent %q", router.issueAgent.AgentID)
 			}
 		})
 	}
@@ -802,16 +904,16 @@ func TestBeginDingTalkAccountBindingRejectsActive(t *testing.T) {
 	router := &fakeBindingRouter{}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	_, err = service.Begin(context.Background(), BeginParams{
-		WorkspaceID: store.row.WorkspaceID,
-		AgentID:     store.row.AgentID,
-		InitiatorID: uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
-		BindingMode: BindingModeMessage,
-	})
+	_, err = service.Begin(context.Background(), beginParamsForTest(
+		store.row.WorkspaceID,
+		store.row.AgentID,
+		uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+		BindingModeMessage,
+	))
 	if !errors.Is(err, ErrAlreadyActive) {
 		t.Fatalf("Begin() error = %v, want ErrAlreadyActive", err)
 	}
-	if router.issueAgent != "" {
+	if router.issueAgent.AgentID != "" {
 		t.Fatal("active binding must not issue a Router token")
 	}
 }
@@ -1345,10 +1447,13 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unbind() error = %v", err)
 	}
-	if len(router.deleted) != 1 || router.deleted[0] != "source-1" || !store.revoked ||
+	if len(router.deletedDigitalEmployeeAgents) != 1 ||
+		router.deletedDigitalEmployeeAgents[0] != uuidStringForTest(store.row.AgentID) ||
+		len(router.deleted) != 0 || !store.revoked ||
 		binding.MessageRoute.Status != "revoked" || binding.DWSIdentity.Status != "active" ||
 		binding.DWSIdentity.Source != "identity" || !store.identity.AgentID.Valid {
-		t.Fatalf("delete=%#v revoked=%v binding=%#v", router.deleted, store.revoked, binding)
+		t.Fatalf("digital employee delete=%#v source delete=%#v revoked=%v binding=%#v",
+			router.deletedDigitalEmployeeAgents, router.deleted, store.revoked, binding)
 	}
 	if store.revokeArg.AgentID != store.row.AgentID {
 		t.Fatalf("revoke agent = %v, want %v", store.revokeArg.AgentID, store.row.AgentID)
@@ -1463,15 +1568,12 @@ func activeBindingStoreForUnbind(t *testing.T, now time.Time) *fakeBindingStore 
 	return store
 }
 
-func TestUnbindProceedsWhenRouterSubscriptionAlreadyGone(t *testing.T) {
-	// Multi-replica recovery: a crash between the router delete and the
-	// local revoke (or a concurrent unbind on another pod) leaves the
-	// subscription already deleted remotely. The router reports that as its
-	// subscription_not_found business error — the retry must treat it as
-	// "already deleted" and complete the local revoke, not 502 forever.
+func TestUnbindProceedsWhenRouterHasNoRemainingDigitalEmployeeSubscriptions(t *testing.T) {
+	// Router returns an empty successful batch when a previous attempt already
+	// disabled every subscription. The local revoke must still converge.
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := activeBindingStoreForUnbind(t, now)
-	router := &fakeBindingRouter{deleteErr: newRouterAPIError("business_error", "subscription_not_found")}
+	router := &fakeBindingRouter{}
 	service := newBindingServiceForTest(t, store, router, now)
 
 	binding, err := service.Unbind(context.Background(), UnbindParams{
@@ -1480,12 +1582,45 @@ func TestUnbindProceedsWhenRouterSubscriptionAlreadyGone(t *testing.T) {
 		BindingMode: BindingModeMessage,
 	})
 	if err != nil {
-		t.Fatalf("Unbind() error = %v, want success on already-deleted subscription", err)
+		t.Fatalf("Unbind() error = %v, want success on already-deleted subscriptions", err)
 	}
 	if !store.revoked || binding.MessageRoute.Status != "revoked" {
 		t.Fatalf("revoked=%v binding=%#v", store.revoked, binding)
 	}
 	assertMetricCounter(t, service.metrics, "dingtalk_account_unbind_total", map[string]string{"outcome": "success"}, 1)
+}
+
+func TestUnbindRevokedMessageClearsOrphanedDigitalEmployeeSubscriptions(t *testing.T) {
+	// The legacy single-source delete could revoke the local row while leaving
+	// a calendar source active. A repeated message unbind must repair that
+	// state through the agent-scoped Router cleanup.
+	now := time.Date(2026, 7, 25, 0, 11, 0, 0, time.UTC)
+	store := activeBindingStoreForUnbind(t, now)
+	if _, err := store.RevokeDingTalkAccountBinding(context.Background(),
+		db.RevokeDingTalkAccountBindingParams{
+			ID:          store.row.ID,
+			WorkspaceID: store.row.WorkspaceID,
+			AgentID:     store.row.AgentID,
+		}); err != nil {
+		t.Fatalf("legacy revoke: %v", err)
+	}
+	router := &fakeBindingRouter{}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	binding, err := service.Unbind(context.Background(), UnbindParams{
+		WorkspaceID: store.row.WorkspaceID,
+		AgentID:     store.row.AgentID,
+		BindingMode: BindingModeMessage,
+	})
+
+	if err != nil {
+		t.Fatalf("Unbind(revoked message) error = %v", err)
+	}
+	if len(router.deletedDigitalEmployeeAgents) != 1 ||
+		router.deletedDigitalEmployeeAgents[0] != uuidStringForTest(store.row.AgentID) ||
+		binding.MessageRoute.Status != "revoked" {
+		t.Fatalf("delete=%#v binding=%#v", router.deletedDigitalEmployeeAgents, binding)
+	}
 }
 
 func TestUnbindStaysFailClosedOnOtherRouterErrors(t *testing.T) {
@@ -1494,7 +1629,7 @@ func TestUnbindStaysFailClosedOnOtherRouterErrors(t *testing.T) {
 	// router subscription would keep dispatching into a revoked binding.
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := activeBindingStoreForUnbind(t, now)
-	router := &fakeBindingRouter{deleteErr: errors.New("router transport failure")}
+	router := &fakeBindingRouter{deleteDigitalEmployeeErr: errors.New("router transport failure")}
 	service := newBindingServiceForTest(t, store, router, now)
 
 	_, err := service.Unbind(context.Background(), UnbindParams{
@@ -1787,4 +1922,22 @@ func uuidStringForTest(value pgtype.UUID) string {
 		return ""
 	}
 	return value.String()
+}
+
+func beginParamsForTest(
+	workspaceID, agentID, initiatorID pgtype.UUID,
+	bindingMode BindingMode,
+) BeginParams {
+	return BeginParams{
+		Agent: BeginAgent{
+			ID:   agentID,
+			Name: "Database Agent",
+			Workspace: BeginWorkspace{
+				ID:   workspaceID,
+				Name: "Database Workspace",
+			},
+		},
+		InitiatorID: initiatorID,
+		BindingMode: bindingMode,
+	}
 }

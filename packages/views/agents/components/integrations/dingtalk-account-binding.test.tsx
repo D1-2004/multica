@@ -105,6 +105,7 @@ const activeBinding = {
     boundAt: "2026-07-14T09:30:00Z",
     surfaceType: "issue",
     messageScope: "direct_only",
+    calendarStartEnabled: false,
     conversations: [],
   },
 };
@@ -166,6 +167,25 @@ describe("DingTalkAccountBindingCard", () => {
     renderCard();
 
     expect(await screen.findByText(summary)).toBeInTheDocument();
+  });
+
+  it("shows calendar listening when the binding enables calendar starts", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          messageRoute: {
+            ...activeBinding.messageRoute,
+            calendarStartEnabled: true,
+          },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard();
+
+    expect(await screen.findByText("Listening for calendar starts")).toBeInTheDocument();
   });
 
   it("uses the exact Chinese listening summaries", () => {
@@ -519,7 +539,14 @@ describe("DingTalkAccountBindingCard", () => {
         {
           ...activeBinding,
           dwsIdentity: { status: "unbound" },
-          messageRoute: { status: "failed" },
+          messageRoute: {
+            status: "failed",
+            error: {
+              code: "source_already_bound",
+              message: "Message source is already bound to another agent. Unbind it and try again.",
+              retryable: false,
+            },
+          },
         },
       ],
       configured: true,
@@ -528,6 +555,11 @@ describe("DingTalkAccountBindingCard", () => {
     renderCard();
 
     expect(await screen.findByText(/Direct message route:\s*Failed/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Message source is already bound to another agent. Unbind it and try again.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/DWS identity/i)).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Generate a new QR code/i }),

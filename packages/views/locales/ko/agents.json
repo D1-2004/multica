@@ -571,6 +571,7 @@
       "dingtalk_account_surface_update_failed": "실행 모드를 업데이트하지 못했습니다.",
       "dingtalk_account_scope_direct_only": "나와의 대화 메시지 모니터링 중",
       "dingtalk_account_scope_all": "모든 메시지 모니터링 중",
+      "dingtalk_account_scope_calendar_start": "일정 시작을 수신 중",
       "dingtalk_account_scope_custom_other": "{{count}}개 대화의 메시지 모니터링 중",
       "dingtalk_account_status_active": "활성",
       "dingtalk_account_status_pending": "대기 중",
@@ -584,7 +585,28 @@
       "dingtalk_account_unbind_failed": "DingTalk 계정 연결을 해제하지 못했습니다.",
       "dingtalk_account_confirm_title": "DingTalk 계정 연결을 해제할까요?",
       "dingtalk_account_confirm_description": "디지털 직원의 메시지 수신만 제거하며 실행 신원에는 영향을 주지 않습니다.",
-      "dingtalk_account_cancel": "취소"
+      "dingtalk_account_cancel": "취소",
+      "github_identity_title": "GitHub 샌드박스 신원",
+      "github_identity_description": "GitHub 계정을 연결하면 이 에이전트가 샌드박스에서 실행될 때 임시 GitHub 신원을 받을 수 있습니다.",
+      "github_identity_members_note": "에이전트 소유자와 워크스페이스 소유자/관리자만 이 에이전트의 GitHub 샌드박스 신원을 연결할 수 있습니다.",
+      "github_identity_loading": "GitHub 신원을 불러오는 중...",
+      "github_identity_not_configured": "현재 배포에는 GitHub 샌드박스 신원이 설정되어 있지 않습니다.",
+      "github_identity_connect": "GitHub 연결",
+      "github_identity_connecting": "연결 중...",
+      "github_identity_reconnect": "GitHub 다시 인증",
+      "github_identity_connect_failed": "GitHub 인증을 시작하지 못했습니다.",
+      "github_identity_connected": "GitHub 신원이 연결되었습니다.",
+      "github_identity_status": "상태",
+      "github_identity_status_active": "활성",
+      "github_identity_status_reauth": "재인증 필요",
+      "github_identity_scopes": "권한 범위",
+      "github_identity_refresh_expires": "Refresh token 만료",
+      "github_identity_last_test": "마지막 테스트",
+      "github_identity_test": "테스트",
+      "github_identity_testing": "테스트 중...",
+      "github_identity_test_ok": "GitHub 신원 테스트에 성공했습니다.",
+      "github_identity_test_refreshed": "GitHub 신원 테스트에 성공했고 token을 갱신했습니다.",
+      "github_identity_test_failed": "GitHub 신원을 테스트하지 못했습니다."
     },
     "activity": {
       "status": {
@@ -777,12 +799,12 @@
       },
       "github": {
         "title": "GitHub에서 가져오기",
-        "description": "multica-agent.yaml, 지침, 스킬 및 보조 파일이 포함된 버전 관리 저장소에서 만듭니다."
+        "description": "dingtalk-agent.json, 에이전트 정의, 스킬 및 보조 파일이 포함된 버전 관리 DTA Agent Project에서 만듭니다."
       }
     },
     "github": {
       "source_title": "GitHub 소스",
-      "source_hint": "저장소와 ref를 선택한 후 만들기 전에 multica-agent.yaml을 검증하고 미리 봅니다.",
+      "source_hint": "저장소와 ref를 선택한 후 만들기 전에 dingtalk-agent.json을 검증하고 미리 봅니다.",
       "not_configured": "GitHub 에이전트 소스가 설정되지 않았습니다",
       "admin_required": "워크스페이스 관리자 권한이 필요합니다",
       "admin_required_hint": "비공개 저장소 미리 보기와 GitHub 기반 에이전트 생성은 owner 또는 admin만 사용할 수 있습니다.",

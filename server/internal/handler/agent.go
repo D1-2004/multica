@@ -384,8 +384,9 @@ type AgentTaskResponse struct {
 	// env-management endpoint. Claim fails closed when the runtime has no
 	// owning user; the daemon must not fall back to its own credential. See
 	// MUL-3292.
-	AuthToken                 string `json:"auth_token,omitempty"`
-	AgentIdentityContextToken string `json:"agent_identity_context_token,omitempty"`
+	AuthToken                          string `json:"auth_token,omitempty"`
+	AgentIdentityContextToken          string `json:"agent_identity_context_token,omitempty"`
+	AgentIdentityContextTokenExpiresAt int64  `json:"agent_identity_context_token_expires_at,omitempty"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata embedded in
@@ -538,6 +539,7 @@ func taskToClaimResponse(t db.AgentTaskQueue, workspaceID string, runtime db.Age
 	// spent server-private bearer token back into the sandbox daemon memory.
 	if !service.IsFCE2BRuntime(runtime) {
 		resp.AgentIdentityContextToken = taskContextString(t.Context, protocol.AgentIdentityContextTokenJSONKey)
+		resp.AgentIdentityContextTokenExpiresAt = taskContextInt64(t.Context, protocol.AgentIdentityContextTokenExpiresAtJSONKey)
 	}
 	return resp
 }
@@ -572,6 +574,25 @@ func taskContextString(raw []byte, key string) string {
 	}
 	value, _ := payload[key].(string)
 	return strings.TrimSpace(value)
+}
+
+func taskContextInt64(raw []byte, key string) int64 {
+	if len(raw) == 0 {
+		return 0
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return 0
+	}
+	value, present := payload[key]
+	if !present {
+		return 0
+	}
+	var result int64
+	if err := json.Unmarshal(value, &result); err != nil {
+		return 0
+	}
+	return result
 }
 
 // relativeWorkDir produces a privacy-safe display form of the daemon-reported

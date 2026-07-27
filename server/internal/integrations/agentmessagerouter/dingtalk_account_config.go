@@ -38,22 +38,24 @@ type DingTalkConversationSnapshot struct {
 }
 
 type DingTalkAccountConfig struct {
-	SchemaVersion      int                            `json:"schema_version"`
-	DispatchEndpointID string                         `json:"dispatch_endpoint_id"`
-	DispatchKeyID      string                         `json:"dispatch_key_id"`
+	SchemaVersion      int    `json:"schema_version"`
+	DispatchEndpointID string `json:"dispatch_endpoint_id"`
+	DispatchKeyID      string `json:"dispatch_key_id"`
 	// DispatchURL is retained only for old binaries during a rolling rollout.
 	// Current routing and ownership checks use DispatchEndpointID.
-	DispatchURL        string                         `json:"dispatch_url"`
-	CallbackTokenHash  string                         `json:"callback_token_hash,omitempty"`
-	CallbackExpiresAt  time.Time                      `json:"callback_expires_at,omitempty"`
-	RouterSourceID     string                         `json:"router_source_id,omitempty"`
-	AccountDisplayName string                         `json:"account_display_name,omitempty"`
-	AccountAvatarURL   string                         `json:"account_avatar_url,omitempty"`
-	SurfaceType        string                         `json:"surface_type,omitempty"`
-	MessageRouteStatus string                         `json:"message_route_status,omitempty"`
-	MessageScope       string                         `json:"message_scope"`
-	Conversations      []DingTalkConversationSnapshot `json:"conversations,omitempty"`
-	BoundAt            *time.Time                     `json:"bound_at,omitempty"`
+	DispatchURL          string                         `json:"dispatch_url"`
+	CallbackTokenHash    string                         `json:"callback_token_hash,omitempty"`
+	CallbackExpiresAt    time.Time                      `json:"callback_expires_at,omitempty"`
+	RouterSourceID       string                         `json:"router_source_id,omitempty"`
+	AccountDisplayName   string                         `json:"account_display_name,omitempty"`
+	AccountAvatarURL     string                         `json:"account_avatar_url,omitempty"`
+	SurfaceType          string                         `json:"surface_type,omitempty"`
+	MessageRouteStatus   string                         `json:"message_route_status,omitempty"`
+	MessageRouteError    *BindingTaskError              `json:"message_route_error,omitempty"`
+	MessageScope         string                         `json:"message_scope"`
+	CalendarStartEnabled bool                           `json:"calendar_start_enabled,omitempty"`
+	Conversations        []DingTalkConversationSnapshot `json:"conversations,omitempty"`
+	BoundAt              *time.Time                     `json:"bound_at,omitempty"`
 }
 
 type PublicDingTalkAccountBinding struct {
@@ -65,15 +67,17 @@ type PublicDingTalkAccountBinding struct {
 }
 
 type PublicDingTalkBindingOutcome struct {
-	Status             string                         `json:"status"`
-	Source             string                         `json:"source,omitempty"`
-	OrganizationName   string                         `json:"organization_name,omitempty"`
-	AccountDisplayName string                         `json:"account_display_name,omitempty"`
-	AccountAvatarURL   string                         `json:"account_avatar_url,omitempty"`
-	SurfaceType        string                         `json:"surface_type,omitempty"`
-	MessageScope       string                         `json:"message_scope,omitempty"`
-	Conversations      []DingTalkConversationSnapshot `json:"conversations,omitempty"`
-	BoundAt            *time.Time                     `json:"bound_at,omitempty"`
+	Status               string                         `json:"status"`
+	Source               string                         `json:"source,omitempty"`
+	OrganizationName     string                         `json:"organization_name,omitempty"`
+	AccountDisplayName   string                         `json:"account_display_name,omitempty"`
+	AccountAvatarURL     string                         `json:"account_avatar_url,omitempty"`
+	SurfaceType          string                         `json:"surface_type,omitempty"`
+	MessageScope         string                         `json:"message_scope,omitempty"`
+	CalendarStartEnabled bool                           `json:"calendar_start_enabled,omitempty"`
+	Conversations        []DingTalkConversationSnapshot `json:"conversations,omitempty"`
+	BoundAt              *time.Time                     `json:"bound_at,omitempty"`
+	Error                *BindingTaskError              `json:"error,omitempty"`
 }
 
 func NewPendingDingTalkAccountConfig(endpointID, dispatchURL, callbackHash string, callbackExpiresAt time.Time) DingTalkAccountConfig {
@@ -153,6 +157,11 @@ func (c DingTalkAccountConfig) Validate() error {
 		c.MessageRouteStatus != DingTalkBindingStatusFailed {
 		return errors.New("dingtalk message result status is invalid")
 	}
+	if c.MessageRouteError != nil &&
+		(c.MessageRouteStatus != DingTalkBindingStatusFailed ||
+			!validBindingTaskError(c.MessageRouteError)) {
+		return errors.New("dingtalk message result error is invalid")
+	}
 	if _, _, err := normalizeDingTalkConversationBinding(c.MessageScope, c.Conversations); err != nil {
 		return err
 	}
@@ -218,13 +227,15 @@ func (c DingTalkAccountConfig) PublicBinding(
 		AgentID:     agentID,
 		DWSIdentity: dwsIdentity,
 		MessageRoute: PublicDingTalkBindingOutcome{
-			Status:             messageRouteStatus,
-			AccountDisplayName: c.AccountDisplayName,
-			AccountAvatarURL:   c.AccountAvatarURL,
-			SurfaceType:        c.SurfaceType,
-			MessageScope:       c.MessageScope,
-			Conversations:      append([]DingTalkConversationSnapshot(nil), c.Conversations...),
-			BoundAt:            c.BoundAt,
+			Status:               messageRouteStatus,
+			AccountDisplayName:   c.AccountDisplayName,
+			AccountAvatarURL:     c.AccountAvatarURL,
+			SurfaceType:          c.SurfaceType,
+			MessageScope:         c.MessageScope,
+			CalendarStartEnabled: c.CalendarStartEnabled,
+			Conversations:        append([]DingTalkConversationSnapshot(nil), c.Conversations...),
+			BoundAt:              c.BoundAt,
+			Error:                c.MessageRouteError,
 		},
 	}
 }

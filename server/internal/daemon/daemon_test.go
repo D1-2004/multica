@@ -187,11 +187,26 @@ func TestIsBlockedEnvKey(t *testing.T) {
 
 func TestChildAgentIdentityContextToken(t *testing.T) {
 	t.Parallel()
-	if got := childAgentIdentityContextToken("fc-e2b", " context-secret "); got != "" {
+	now := time.UnixMilli(1_785_000_000_000)
+	if got, err := childAgentIdentityContextToken("fc-e2b", " context-secret ", 0, now); err != nil || got != "" {
 		t.Fatalf("FC/E2B child received ContextToken: %q", got)
 	}
-	if got := childAgentIdentityContextToken("", " context-secret "); got != "context-secret" {
+	if got, err := childAgentIdentityContextToken("", " context-secret ", now.Add(2*time.Minute).UnixMilli(), now); err != nil || got != "context-secret" {
 		t.Fatalf("standalone child token = %q, want trimmed token", got)
+	}
+	for _, tc := range []struct {
+		name      string
+		expiresAt int64
+	}{
+		{name: "missing expiry"},
+		{name: "expired", expiresAt: now.Add(-time.Second).UnixMilli()},
+		{name: "inside one minute safety window", expiresAt: now.Add(30 * time.Second).UnixMilli()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := childAgentIdentityContextToken("", "context-secret", tc.expiresAt, now); err == nil {
+				t.Fatalf("expiresAt %d was accepted", tc.expiresAt)
+			}
+		})
 	}
 }
 

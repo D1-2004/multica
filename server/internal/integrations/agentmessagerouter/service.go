@@ -70,10 +70,11 @@ type IdentityStore interface {
 // Router is the existing subscription contract used to issue a QR credential,
 // verify the DBase callback, and proxy unbind. *Client satisfies it.
 type Router interface {
-	IssueBindingToken(ctx context.Context, agentID, dispatchPath string) (BindingToken, error)
+	IssueBindingToken(ctx context.Context, descriptor AgentDescriptor) (BindingToken, error)
 	GetSubscription(ctx context.Context, sourceID string) (Subscription, error)
 	UpdateSubscriptionSurface(ctx context.Context, sourceID, agentID, surfaceType string) (Subscription, error)
 	DeleteSubscription(ctx context.Context, sourceID string) error
+	DeleteDigitalEmployeeSubscriptions(ctx context.Context, agentID string) error
 }
 
 type DispatchEndpoint struct {
@@ -262,9 +263,19 @@ type Service struct {
 	metrics         *obsmetrics.BusinessMetrics
 }
 
+type BeginWorkspace struct {
+	ID   pgtype.UUID
+	Name string
+}
+
+type BeginAgent struct {
+	ID        pgtype.UUID
+	Name      string
+	Workspace BeginWorkspace
+}
+
 type BeginParams struct {
-	WorkspaceID pgtype.UUID
-	AgentID     pgtype.UUID
+	Agent       BeginAgent
 	InitiatorID pgtype.UUID
 	BindingMode BindingMode
 }
@@ -350,7 +361,7 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 	defer func() {
 		businessMetrics.RecordDingTalkAccountBegin(dingTalkAccountOperationOutcome(err))
 	}()
-	if !params.WorkspaceID.Valid || !params.AgentID.Valid || !params.InitiatorID.Valid ||
+	if !params.Agent.Workspace.ID.Valid || !params.Agent.ID.Valid || !params.InitiatorID.Valid ||
 		!params.BindingMode.Valid() {
 		return BeginResult{}, ErrNotFound
 	}
@@ -358,7 +369,15 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		s.random == nil || s.endpoints == nil {
 		return BeginResult{}, ErrNotConfigured
 	}
-	endpoint, err := s.endpoints.Ensure(ctx, params.WorkspaceID, params.AgentID, params.InitiatorID)
+	agentName, err := normalizeBindingDisplayName("agent name", params.Agent.Name)
+	if err != nil {
+		return BeginResult{}, fmt.Errorf("%w: begin agent descriptor: %v", ErrInvalidResult, err)
+	}
+	workspaceName, err := normalizeBindingDisplayName("workspace name", params.Agent.Workspace.Name)
+	if err != nil {
+		return BeginResult{}, fmt.Errorf("%w: begin agent descriptor: %v", ErrInvalidResult, err)
+	}
+	endpoint, err := s.endpoints.Ensure(ctx, params.Agent.Workspace.ID, params.Agent.ID, params.InitiatorID)
 	if err != nil {
 		return BeginResult{}, fmt.Errorf("%w: endpoint resolution failed", ErrNotConfigured)
 	}
@@ -366,6 +385,18 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 	dispatchPath, err := dispatchPathForEndpointID(endpointID)
 	if err != nil {
 		return BeginResult{}, fmt.Errorf("%w: dispatch path", ErrInvalidResult)
+	}
+	descriptor, err := normalizeAgentDescriptor(AgentDescriptor{
+		AgentID: util.UUIDToString(params.Agent.ID),
+		Name:    agentName,
+		Workspace: WorkspaceDescriptor{
+			ID:   util.UUIDToString(params.Agent.Workspace.ID),
+			Name: workspaceName,
+		},
+		DispatchPath: dispatchPath,
+	})
+	if err != nil {
+		return BeginResult{}, fmt.Errorf("%w: begin agent descriptor: %v", ErrInvalidResult, err)
 	}
 	callbackToken, callbackHash, err := GenerateCallbackToken(s.random)
 	if err != nil {
@@ -384,8 +415,8 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 			return BeginResult{}, fmt.Errorf("%w: pending config", ErrInvalidResult)
 		}
 		row, beginErr := s.store.BeginDingTalkAccountBinding(ctx, db.BeginDingTalkAccountBindingParams{
-			WorkspaceID:     params.WorkspaceID,
-			AgentID:         params.AgentID,
+			WorkspaceID:     params.Agent.Workspace.ID,
+			AgentID:         params.Agent.ID,
 			Config:          pendingConfig,
 			InstallerUserID: params.InitiatorID,
 		})
@@ -394,8 +425,8 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 				return BeginResult{}, fmt.Errorf("begin dingtalk account binding: %w", beginErr)
 			}
 			existing, lookupErr := s.store.GetDingTalkAccountBindingByAgent(ctx, db.GetDingTalkAccountBindingByAgentParams{
-				WorkspaceID: params.WorkspaceID,
-				AgentID:     params.AgentID,
+				WorkspaceID: params.Agent.Workspace.ID,
+				AgentID:     params.Agent.ID,
 			})
 			if lookupErr == nil && existing.Status == "active" {
 				return BeginResult{}, ErrAlreadyActive
@@ -409,7 +440,7 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 			return BeginResult{}, ErrBindingConflict
 		}
 		if row.Status != "pending" || row.ChannelType != ChannelTypeDingTalkAccount ||
-			row.WorkspaceID != params.WorkspaceID || row.AgentID != params.AgentID {
+			row.WorkspaceID != params.Agent.Workspace.ID || row.AgentID != params.Agent.ID {
 			return BeginResult{}, ErrInvalidResult
 		}
 		storedConfig, parseErr := ParseDingTalkAccountConfig(row.Config)
@@ -422,8 +453,8 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		bindingID = row.ID
 	} else {
 		_, identityErr := s.identityStore.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
-			WorkspaceID: params.WorkspaceID,
-			AgentID:     params.AgentID,
+			WorkspaceID: params.Agent.Workspace.ID,
+			AgentID:     params.Agent.ID,
 		})
 		if identityErr == nil {
 			return BeginResult{}, ErrAlreadyActive
@@ -433,7 +464,7 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		}
 	}
 
-	issued, err := s.router.IssueBindingToken(ctx, util.UUIDToString(params.AgentID), dispatchPath)
+	issued, err := s.router.IssueBindingToken(ctx, descriptor)
 	if err != nil {
 		return BeginResult{}, ErrRouterUnavailable
 	}
@@ -446,14 +477,14 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 	}
 	if params.BindingMode == BindingModeIdentity {
 		if err := s.identityStore.DeleteAgentDingTalkIdentityAttempts(ctx, db.DeleteAgentDingTalkIdentityAttemptsParams{
-			WorkspaceID: params.WorkspaceID,
-			AgentID:     params.AgentID,
+			WorkspaceID: params.Agent.Workspace.ID,
+			AgentID:     params.Agent.ID,
 		}); err != nil {
 			return BeginResult{}, fmt.Errorf("prepare dingtalk identity attempt: %w", err)
 		}
 		identityAttempt, attemptErr := s.identityStore.BeginAgentDingTalkIdentityAttempt(ctx, db.BeginAgentDingTalkIdentityAttemptParams{
-			WorkspaceID:       params.WorkspaceID,
-			AgentID:           params.AgentID,
+			WorkspaceID:       params.Agent.Workspace.ID,
+			AgentID:           params.Agent.ID,
 			InitiatorUserID:   params.InitiatorID,
 			CallbackTokenHash: callbackHash,
 			ExpiresAt:         pgtype.Timestamptz{Time: expiresAt, Valid: true},
@@ -474,8 +505,11 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		"callbackUrl":   {callbackURL.String()},
 		"callbackToken": {callbackToken},
 		"expiresAt":     {strconv.FormatInt(expiresAt.Unix(), 10)},
-		"agentId":       {util.UUIDToString(params.AgentID)},
-		"dispatchPath":  {dispatchPath},
+		"agentId":       {descriptor.AgentID},
+		"agentName":     {descriptor.Name},
+		"workspaceId":   {descriptor.Workspace.ID},
+		"workspaceName": {descriptor.Workspace.Name},
+		"dispatchPath":  {descriptor.DispatchPath},
 	}
 	qrCodeURL := s.dbaseBindingURL.String() + "#" + fragment.Encode()
 	return BeginResult{
@@ -671,7 +705,9 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 	config.AccountAvatarURL = strings.TrimSpace(params.MessageBinding.AccountAvatarURL)
 	config.SurfaceType = subscription.Surface.Type
 	config.MessageRouteStatus = ""
+	config.MessageRouteError = nil
 	config.MessageScope = messageScope
+	config.CalendarStartEnabled = hasActiveCalendarSubscription(params.MessageBinding.Subscriptions)
 	config.Conversations = conversations
 	config.BoundAt = &boundAt
 	activeConfig, err := config.Marshal()
@@ -836,29 +872,18 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding Publ
 		}
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("get dingtalk account binding: %w", err)
 	}
-	config, err := ParseDingTalkAccountConfig(row.Config)
-	if err != nil {
+	if _, err := ParseDingTalkAccountConfig(row.Config); err != nil {
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
 	}
-	if config.RouterSourceID != "" {
-		// Remote delete stays fail-closed EXCEPT for the router's explicit
-		// "subscription_not_found" business error: the subscription is
-		// already gone, which is exactly the state this delete wants. This
-		// is the multi-replica recovery path — a pod that crashed between
-		// the router delete and the local revoke, or a concurrent unbind on
-		// another replica, leaves the remote side deleted while the local
-		// row is still active; without this tolerance every retry 502s
-		// forever and the binding can never be unbound (re-begin then 409s
-		// on the active row). Transport failures and other router errors
-		// still abort before the local transition, so a live subscription
-		// is never orphaned. Revoke itself is idempotent (status IN
-		// pending/active/revoked), so double unbinds converge.
-		if err := s.router.DeleteSubscription(ctx, config.RouterSourceID); err != nil &&
-			!errors.Is(err, ErrSubscriptionNotFound) {
-			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
-		}
-	} else if row.Status == "active" {
-		return PublicDingTalkAccountBinding{}, ErrInvalidResult
+	// A calendar-enabled account owns multiple Router sources. Resolve them
+	// from the stable agent ID, rather than the mutable local source ID, so a
+	// retry also heals calendar sources orphaned by the legacy single-source
+	// unbind path. Router returns an empty success when nothing remains.
+	if err := s.router.DeleteDigitalEmployeeSubscriptions(
+		ctx,
+		util.UUIDToString(row.AgentID),
+	); err != nil {
+		return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
 	}
 	revoked, err := s.store.RevokeDingTalkAccountBinding(ctx, db.RevokeDingTalkAccountBindingParams{
 		ID:          row.ID,

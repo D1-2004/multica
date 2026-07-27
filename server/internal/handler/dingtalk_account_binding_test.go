@@ -15,10 +15,15 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type fakeDingTalkAccountBindingService struct {
+	beginCalls      int
+	beginParams     agentmessagerouter.BeginParams
+	beginResult     agentmessagerouter.BeginResult
+	beginErr        error
 	completeCalls  int
 	completeParams agentmessagerouter.CompleteBindingParams
 	completeResult agentmessagerouter.CompleteBindingResult
@@ -32,8 +37,10 @@ func (f *fakeDingTalkAccountBindingService) UpdateSurface(_ context.Context, par
 	return f.updateResult, nil
 }
 
-func (f *fakeDingTalkAccountBindingService) Begin(context.Context, agentmessagerouter.BeginParams) (agentmessagerouter.BeginResult, error) {
-	return agentmessagerouter.BeginResult{}, nil
+func (f *fakeDingTalkAccountBindingService) Begin(_ context.Context, params agentmessagerouter.BeginParams) (agentmessagerouter.BeginResult, error) {
+	f.beginCalls++
+	f.beginParams = params
+	return f.beginResult, f.beginErr
 }
 
 func (f *fakeDingTalkAccountBindingService) List(context.Context, pgtype.UUID) ([]agentmessagerouter.PublicDingTalkAccountBinding, error) {
@@ -61,6 +68,94 @@ func TestListDingTalkAccountBindingsReportsUnconfiguredWithoutSecrets(t *testing
 	if got := w.Body.String(); got != "{\"bindings\":[],\"configured\":false}\n" {
 		t.Fatalf("body = %s", got)
 	}
+}
+
+func TestBeginDingTalkAccountBindingUsesDatabaseAgentAndWorkspaceNames(t *testing.T) {
+	workspaceID := util.MustParseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	agentID := util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	initiatorID := util.MustParseUUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+	metadataDB := &beginBindingMetadataDB{
+		agent: db.Agent{
+			ID:          agentID,
+			WorkspaceID: workspaceID,
+			Name:        "  Database Agent & 中文  ",
+		},
+		workspace: db.Workspace{
+			ID:   workspaceID,
+			Name: "  Database Workspace + 研发  ",
+		},
+	}
+	service := &fakeDingTalkAccountBindingService{
+		beginResult: agentmessagerouter.BeginResult{
+			BindingID: "11111111-1111-1111-1111-111111111111",
+		},
+	}
+	h := &Handler{
+		DingTalkAccountBindings:           service,
+		dingTalkAccountBindingMetadata: metadataDB,
+	}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/workspaces/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/dingtalk/account-bindings",
+		strings.NewReader(`{
+			"agent_id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+			"binding_mode":"message",
+			"agentName":"Forged Frontend Agent",
+			"workspaceName":"Forged Frontend Workspace"
+		}`),
+	)
+	req.Header.Set("X-User-ID", util.UUIDToString(initiatorID))
+	req = withURLParams(req, "id", util.UUIDToString(workspaceID))
+	w := httptest.NewRecorder()
+
+	h.BeginDingTalkAccountBinding(w, req)
+
+	if w.Code != http.StatusOK || service.beginCalls != 1 {
+		t.Fatalf("status = %d begin calls = %d body=%s", w.Code, service.beginCalls, w.Body.String())
+	}
+	got := service.beginParams
+	if got.Agent.ID != metadataDB.agent.ID ||
+		got.Agent.Name != metadataDB.agent.Name ||
+		got.Agent.Workspace.ID != metadataDB.workspace.ID ||
+		got.Agent.Workspace.Name != metadataDB.workspace.Name ||
+		got.InitiatorID != initiatorID ||
+		got.BindingMode != agentmessagerouter.BindingModeMessage {
+		t.Fatalf("Begin params = %#v", got)
+	}
+	if len(metadataDB.queries) != 2 ||
+		metadataDB.queries[0] != "GetAgentInWorkspace" ||
+		metadataDB.queries[1] != "GetWorkspace" ||
+		metadataDB.agentParams.ID != agentID ||
+		metadataDB.agentParams.WorkspaceID != workspaceID ||
+		metadataDB.workspaceID != workspaceID {
+		t.Fatalf("metadata queries = %#v agent params=%#v workspace id=%v", metadataDB.queries, metadataDB.agentParams, metadataDB.workspaceID)
+	}
+}
+
+type beginBindingMetadataDB struct {
+	agent       db.Agent
+	workspace   db.Workspace
+	queries     []string
+	agentParams db.GetAgentInWorkspaceParams
+	workspaceID pgtype.UUID
+}
+
+func (f *beginBindingMetadataDB) GetAgentInWorkspace(
+	_ context.Context,
+	params db.GetAgentInWorkspaceParams,
+) (db.Agent, error) {
+	f.queries = append(f.queries, "GetAgentInWorkspace")
+	f.agentParams = params
+	return f.agent, nil
+}
+
+func (f *beginBindingMetadataDB) GetWorkspace(
+	_ context.Context,
+	workspaceID pgtype.UUID,
+) (db.Workspace, error) {
+	f.queries = append(f.queries, "GetWorkspace")
+	f.workspaceID = workspaceID
+	return f.workspace, nil
 }
 
 func TestDingTalkAccountCallbackRequiresExactOriginAndBearer(t *testing.T) {

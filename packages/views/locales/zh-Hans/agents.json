@@ -281,11 +281,11 @@
       "blank": { "title": "从空白开始", "description": "自己配置每个字段。适合已经明确知道智能体应该如何工作的用户。" },
       "template": { "title": "使用模板", "description": "从整理好的指令和 skill 开始，再根据工作区需要修改每个细节。" },
       "ai": { "title": "通过 AI 创建", "description": "描述你想要的结果。Agent Builder 会提出关键问题并实时生成草稿。" },
-      "github": { "title": "从 GitHub 导入", "description": "从包含 multica-agent.yaml、指令、skill 和配套文件的版本化仓库创建。" }
+      "github": { "title": "从 GitHub 导入", "description": "从包含 dingtalk-agent.json、本体、skill 和配套文件的版本化 DTA Agent Project 创建。" }
     },
     "github": {
       "source_title": "GitHub 来源",
-      "source_hint": "选择仓库和 ref，在创建智能体前校验并预览 multica-agent.yaml。",
+      "source_hint": "选择仓库和 ref，在创建智能体前校验并预览 dingtalk-agent.json。",
       "not_configured": "尚未配置 GitHub 智能体来源",
       "admin_required": "需要工作区管理员权限",
       "admin_required_hint": "只有工作区 owner 或 admin 可以预览私有仓库内容并创建 GitHub 来源智能体。",
@@ -668,6 +668,7 @@
       "dingtalk_account_surface_update_failed": "无法更新运行模式。",
       "dingtalk_account_scope_direct_only": "已监听我聊消息",
       "dingtalk_account_scope_all": "已监听全部消息",
+      "dingtalk_account_scope_calendar_start": "已监听日程开始",
       "dingtalk_account_scope_custom_other": "已监听 {{count}} 个对话的消息",
       "dingtalk_account_status_active": "已生效",
       "dingtalk_account_status_pending": "等待完成",
@@ -681,7 +682,28 @@
       "dingtalk_account_unbind_failed": "无法解除企业数字员工绑定。",
       "dingtalk_account_confirm_title": "解除企业数字员工绑定？",
       "dingtalk_account_confirm_description": "这只会移除数字员工的消息监听，不影响执行身份。",
-      "dingtalk_account_cancel": "取消"
+      "dingtalk_account_cancel": "取消",
+      "github_identity_title": "GitHub 沙箱身份",
+      "github_identity_description": "连接你的 GitHub 账号，让这个智能体在沙箱中执行任务时可以获得临时 GitHub 身份。",
+      "github_identity_members_note": "只有智能体所有者、工作区所有者和管理员可以为此智能体连接 GitHub 沙箱身份。",
+      "github_identity_loading": "正在加载 GitHub 身份...",
+      "github_identity_not_configured": "当前部署尚未配置 GitHub 沙箱身份。",
+      "github_identity_connect": "连接 GitHub",
+      "github_identity_connecting": "正在连接...",
+      "github_identity_reconnect": "重新授权 GitHub",
+      "github_identity_connect_failed": "无法发起 GitHub 授权。",
+      "github_identity_connected": "GitHub 身份已连接。",
+      "github_identity_status": "状态",
+      "github_identity_status_active": "已生效",
+      "github_identity_status_reauth": "需要重新授权",
+      "github_identity_scopes": "授权范围",
+      "github_identity_refresh_expires": "Refresh token 过期时间",
+      "github_identity_last_test": "上次测试",
+      "github_identity_test": "测试",
+      "github_identity_testing": "测试中...",
+      "github_identity_test_ok": "GitHub 身份测试成功。",
+      "github_identity_test_refreshed": "GitHub 身份测试成功，并完成了一次 token 刷新。",
+      "github_identity_test_failed": "无法测试 GitHub 身份。"
     },
     "activity": {
       "status": {

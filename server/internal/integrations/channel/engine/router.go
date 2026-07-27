@@ -975,8 +975,15 @@ func taskIdentityContextToken(taskContext []byte) (string, error) {
 		return "", fmt.Errorf("decode task context: %w", err)
 	}
 	raw, present := payload[protocol.AgentIdentityContextTokenJSONKey]
-	if !present {
+	rawExpiresAt, expiresAtPresent := payload[protocol.AgentIdentityContextTokenExpiresAtJSONKey]
+	if !present && !expiresAtPresent {
 		return "", nil
+	}
+	if !present {
+		return "", errors.New("Agent Identity ContextToken expiry is present without a ContextToken")
+	}
+	if !expiresAtPresent {
+		return "", errors.New("Agent Identity ContextToken expiry is missing")
 	}
 	var token string
 	if err := json.Unmarshal(raw, &token); err != nil {
@@ -985,6 +992,13 @@ func taskIdentityContextToken(taskContext []byte) (string, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return "", errors.New("Agent Identity ContextToken is empty")
+	}
+	var expiresAt int64
+	if err := json.Unmarshal(rawExpiresAt, &expiresAt); err != nil {
+		return "", fmt.Errorf("decode Agent Identity ContextToken expiry: %w", err)
+	}
+	if expiresAt <= 0 {
+		return "", errors.New("Agent Identity ContextToken expiry is invalid")
 	}
 	return token, nil
 }

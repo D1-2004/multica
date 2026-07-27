@@ -19,6 +19,9 @@ import type {
   DingTalkAccountBindingsResponse,
   DingTalkMessageScope,
   DingTalkProcessingSurface,
+  AgentIdentityGitHubStatusResponse,
+  BeginAgentIdentityGitHubOAuthResponse,
+  TestAgentIdentityGitHubConnectionResponse,
   GroupedIssuesResponse,
   GitHubAgentPreview,
   ListGitHubAgentRepositoriesResponse,
@@ -43,6 +46,14 @@ import type {
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
 
+const DingTalkBindingErrorSchema = z
+  .object({
+    code: z.string(),
+    message: z.string(),
+    retryable: z.boolean(),
+  })
+  .loose();
+
 const DingTalkAccountBindingOutcomeSchema = z
   .object({
     status: z.string(),
@@ -51,6 +62,7 @@ const DingTalkAccountBindingOutcomeSchema = z
     account_display_name: z.string().nullable().optional(),
     account_avatar_url: z.string().nullable().optional(),
     bound_at: z.string().nullable().optional(),
+    error: DingTalkBindingErrorSchema.nullable().optional().catch(undefined),
   })
   .loose()
   .transform((outcome) => ({
@@ -60,6 +72,7 @@ const DingTalkAccountBindingOutcomeSchema = z
     accountDisplayName: outcome.account_display_name,
     accountAvatarUrl: outcome.account_avatar_url,
     boundAt: outcome.bound_at,
+    error: outcome.error,
   }));
 
 const DingTalkConversationSummarySchema = z
@@ -107,7 +120,9 @@ const DingTalkMessageRouteOutcomeSchema = z
     surface_type: z.string().nullable().optional(),
     bound_at: z.string().nullable().optional(),
     message_scope: z.string().optional(),
+    calendar_start_enabled: z.boolean().optional(),
     conversations: z.array(DingTalkConversationSummarySchema).optional().default([]),
+    error: DingTalkBindingErrorSchema.nullable().optional().catch(undefined),
   })
   .loose()
   .transform((outcome) => ({
@@ -125,7 +140,9 @@ const DingTalkMessageRouteOutcomeSchema = z
       ? { surfaceType: normalizeDingTalkProcessingSurface(outcome.surface_type) }
       : {}),
     ...(outcome.bound_at !== undefined ? { boundAt: outcome.bound_at } : {}),
+    ...(outcome.error !== undefined ? { error: outcome.error } : {}),
     messageScope: normalizeDingTalkMessageScope(outcome.message_scope),
+    calendarStartEnabled: outcome.calendar_start_enabled ?? false,
     conversations: outcome.conversations,
   }));
 
@@ -244,6 +261,87 @@ export const EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE: ProvisionFDEOnboardingResp
   agent_id: "",
   agent_created: false,
   install_complete: false,
+};
+
+const AgentIdentityGitHubConnectionSchema = z
+  .object({
+    connection_id: z.string(),
+    account_login: z.string(),
+    account_id: z.string(),
+    status: z.string(),
+    granted_scopes: z.string().optional().default(""),
+    access_expires_at: z.number().nullable().optional(),
+    refresh_expires_at: z.number().nullable().optional(),
+    last_refresh_at: z.number().nullable().optional(),
+    last_test_at: z.number().nullable().optional(),
+  })
+  .loose()
+  .transform((connection) => ({
+    connectionId: connection.connection_id,
+    accountLogin: connection.account_login,
+    accountId: connection.account_id,
+    status: connection.status,
+    grantedScopes: connection.granted_scopes,
+    accessExpiresAt: connection.access_expires_at,
+    refreshExpiresAt: connection.refresh_expires_at,
+    lastRefreshAt: connection.last_refresh_at,
+    lastTestAt: connection.last_test_at,
+  }));
+
+export const AgentIdentityGitHubStatusResponseSchema = z
+  .object({
+    configured: z.boolean(),
+    connection: AgentIdentityGitHubConnectionSchema.nullable().optional(),
+  })
+  .loose()
+  .transform((response) => ({
+    configured: response.configured,
+    connection: response.connection ?? null,
+  }));
+
+export const EMPTY_AGENT_IDENTITY_GITHUB_STATUS_RESPONSE: AgentIdentityGitHubStatusResponse = {
+  configured: false,
+  connection: null,
+};
+
+export const BeginAgentIdentityGitHubOAuthResponseSchema = z
+  .object({
+    state: z.string(),
+    authorization_url: z.string(),
+  })
+  .loose()
+  .transform((response) => ({
+    state: response.state,
+    authorizationUrl: response.authorization_url,
+  }));
+
+export const EMPTY_BEGIN_AGENT_IDENTITY_GITHUB_OAUTH_RESPONSE: BeginAgentIdentityGitHubOAuthResponse = {
+  state: "",
+  authorizationUrl: "",
+};
+
+export const TestAgentIdentityGitHubConnectionResponseSchema = z
+  .object({
+    ok: z.boolean(),
+    refreshed: z.boolean().optional().default(false),
+    connection_id: z.string().optional(),
+    account_login: z.string().optional(),
+    account_id: z.string().optional(),
+    granted_scopes: z.string().optional(),
+  })
+  .loose()
+  .transform((response) => ({
+    ok: response.ok,
+    refreshed: response.refreshed,
+    connectionId: response.connection_id,
+    accountLogin: response.account_login,
+    accountId: response.account_id,
+    grantedScopes: response.granted_scopes,
+  }));
+
+export const EMPTY_TEST_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE: TestAgentIdentityGitHubConnectionResponse = {
+  ok: false,
+  refreshed: false,
 };
 
 // Label responses are consumed by settings tables and resource pickers. Keep
@@ -1003,7 +1101,7 @@ export const AgentSourceSchema = z.object({
   installation_id: z.string().nullable().default(null),
   repository: z.string(),
   ref: z.string(),
-  manifest_path: z.string().default("multica-agent.yaml"),
+  manifest_path: z.string().default("dingtalk-agent.json"),
   synced_commit_sha: z.string(),
   sync_status: z.string(),
   last_sync_error: z.string().nullable().default(null),
@@ -1018,7 +1116,7 @@ export const EMPTY_AGENT_SOURCE: AgentSource = {
   installation_id: null,
   repository: "",
   ref: "",
-  manifest_path: "multica-agent.yaml",
+  manifest_path: "dingtalk-agent.json",
   synced_commit_sha: "",
   sync_status: "disconnected",
   last_sync_error: null,

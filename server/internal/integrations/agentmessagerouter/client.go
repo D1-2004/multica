@@ -14,9 +14,15 @@ import (
 	pathpkg "path"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
 )
 
-const maxRouterResponseBytes = 1 << 20
+const (
+	maxRouterResponseBytes          = 1 << 20
+	maxBindingDisplayNameCodePoints = 256
+)
 
 type ClientConfig struct {
 	BaseURL           string
@@ -34,6 +40,18 @@ type Client struct {
 type BindingToken struct {
 	BindingToken string    `json:"bindingToken"`
 	ExpiresAt    time.Time `json:"expiresAt"`
+}
+
+type WorkspaceDescriptor struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type AgentDescriptor struct {
+	AgentID      string              `json:"agentId"`
+	Name         string              `json:"name"`
+	Workspace    WorkspaceDescriptor `json:"workspace"`
+	DispatchPath string              `json:"dispatchPath"`
 }
 
 type Subscription struct {
@@ -232,16 +250,12 @@ func (c *Client) TargetIdentity() string {
 	return c.targetIdentity
 }
 
-func (c *Client) IssueBindingToken(ctx context.Context, agentID, dispatchPath string) (BindingToken, error) {
-	agentID = strings.TrimSpace(agentID)
-	_, err := endpointIDFromDispatchPath(dispatchPath)
-	if agentID == "" || err != nil {
-		return BindingToken{}, errors.New("agent message router token issue request is invalid")
+func (c *Client) IssueBindingToken(ctx context.Context, descriptor AgentDescriptor) (BindingToken, error) {
+	descriptor, err := normalizeAgentDescriptor(descriptor)
+	if err != nil {
+		return BindingToken{}, fmt.Errorf("agent message router token issue request is invalid: %w", err)
 	}
-	body, err := json.Marshal(map[string]string{
-		"agentId":      agentID,
-		"dispatchPath": dispatchPath,
-	})
+	body, err := json.Marshal(descriptor)
 	if err != nil {
 		return BindingToken{}, errors.New("encode account binding token request")
 	}
@@ -261,6 +275,47 @@ func (c *Client) IssueBindingToken(ctx context.Context, agentID, dispatchPath st
 		return BindingToken{}, errors.New("agent message router token issue response is invalid")
 	}
 	return result, nil
+}
+
+func normalizeAgentDescriptor(descriptor AgentDescriptor) (AgentDescriptor, error) {
+	descriptor.AgentID = strings.TrimSpace(descriptor.AgentID)
+	descriptor.Workspace.ID = strings.TrimSpace(descriptor.Workspace.ID)
+	descriptor.DispatchPath = strings.TrimSpace(descriptor.DispatchPath)
+	workspaceID, workspaceIDErr := uuid.Parse(descriptor.Workspace.ID)
+	_, dispatchPathErr := endpointIDFromDispatchPath(descriptor.DispatchPath)
+	if descriptor.AgentID == "" || workspaceIDErr != nil ||
+		workspaceID.String() != descriptor.Workspace.ID || dispatchPathErr != nil {
+		return AgentDescriptor{}, errors.New("agent binding descriptor identifiers are invalid")
+	}
+	var err error
+	descriptor.Name, err = normalizeBindingDisplayName("agent name", descriptor.Name)
+	if err != nil {
+		return AgentDescriptor{}, err
+	}
+	descriptor.Workspace.Name, err = normalizeBindingDisplayName("workspace name", descriptor.Workspace.Name)
+	if err != nil {
+		return AgentDescriptor{}, err
+	}
+	return descriptor, nil
+}
+
+func normalizeBindingDisplayName(field, value string) (string, error) {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" {
+		return "", fmt.Errorf("agent binding descriptor has invalid %s: empty", field)
+	}
+	if !utf8.ValidString(normalized) {
+		return "", fmt.Errorf("agent binding descriptor has invalid %s: invalid UTF-8", field)
+	}
+	if utf8.RuneCountInString(normalized) > maxBindingDisplayNameCodePoints {
+		return "", fmt.Errorf("agent binding descriptor has invalid %s: exceeds 256 code points", field)
+	}
+	for _, codePoint := range normalized {
+		if codePoint <= '\u001f' || (codePoint >= '\u007f' && codePoint <= '\u009f') {
+			return "", fmt.Errorf("agent binding descriptor has invalid %s: contains a control character", field)
+		}
+	}
+	return normalized, nil
 }
 
 func (c *Client) GetAgentDeliveryTarget(ctx context.Context, agentID string) (AgentDeliveryTarget, error) {
@@ -410,6 +465,37 @@ func (c *Client) DeleteSubscription(ctx context.Context, sourceID string) error 
 	}
 	if result.AgentID != "" && (!isTrimmedNonEmpty(result.AgentID) || !isTrimmedNonEmpty(result.DispatchURL)) {
 		return errors.New("agent message router subscription delete response is invalid")
+	}
+	return nil
+}
+
+func (c *Client) DeleteDigitalEmployeeSubscriptions(ctx context.Context, agentID string) error {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return errors.New("agent message router digital employee agent id is required")
+	}
+	response, err := c.do(
+		ctx,
+		http.MethodDelete,
+		"/api/subscriptions/digital-employees/"+url.PathEscape(agentID),
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return decodeRouterHTTPError(response.Body, response.StatusCode)
+	}
+	result, err := decodeRouterResponse[[]Subscription](response.Body)
+	if err != nil {
+		return err
+	}
+	for _, subscription := range result {
+		if !isTrimmedNonEmpty(subscription.SourceID) || subscription.AgentID != agentID ||
+			subscription.Status != "inactive" {
+			return errors.New("agent message router digital employee delete response is invalid")
+		}
 	}
 	return nil
 }

@@ -182,10 +182,7 @@ func Compile(ctx context.Context, client RepositoryClient, source Source) (Bundl
 	if err != nil {
 		return Bundle{}, err
 	}
-	entries := make(map[string]githubapp.TreeEntry, len(tree.Entries))
-	for _, entry := range tree.Entries {
-		entries[entry.Path] = entry
-	}
+	entries := repositoryEntries(tree)
 	manifestBytes, err := loadRequiredText(ctx, client, source, entries, ManifestPath)
 	if err != nil {
 		return Bundle{}, err
@@ -194,6 +191,26 @@ func Compile(ctx context.Context, client RepositoryClient, source Source) (Bundl
 	if err != nil {
 		return Bundle{}, err
 	}
+	return compileBundle(ctx, client, source, entries, len(manifestBytes), manifest, nil)
+}
+
+func repositoryEntries(tree githubapp.Tree) map[string]githubapp.TreeEntry {
+	entries := make(map[string]githubapp.TreeEntry, len(tree.Entries))
+	for _, entry := range tree.Entries {
+		entries[entry.Path] = entry
+	}
+	return entries
+}
+
+func compileBundle(
+	ctx context.Context,
+	client RepositoryClient,
+	source Source,
+	entries map[string]githubapp.TreeEntry,
+	manifestSize int,
+	manifest Manifest,
+	expectedSkillNames map[string]string,
+) (Bundle, error) {
 	instructionsBytes, err := loadRequiredText(ctx, client, source, entries, manifest.Spec.Instructions)
 	if err != nil {
 		return Bundle{}, err
@@ -205,12 +222,20 @@ func Compile(ctx context.Context, client RepositoryClient, source Source) (Bundl
 		Skills:       make([]Skill, 0, len(manifest.Spec.Skills)),
 		Warnings:     []string{},
 	}
-	totalSize := len(manifestBytes) + len(instructionsBytes)
+	totalSize := manifestSize + len(instructionsBytes)
 	seenSkillNames := make(map[string]string, len(manifest.Spec.Skills))
 	for _, skillRef := range manifest.Spec.Skills {
 		compiled, warnings, size, err := compileSkill(ctx, client, source, entries, skillRef.Path)
 		if err != nil {
 			return Bundle{}, err
+		}
+		if expectedName := expectedSkillNames[skillRef.Path]; expectedName != "" && compiled.Name != expectedName {
+			return Bundle{}, fmt.Errorf(
+				"skill %q declares name %q in SKILL.md; expected %q from dingtalk-agent.json",
+				skillRef.Path,
+				compiled.Name,
+				expectedName,
+			)
 		}
 		if previousPath, exists := seenSkillNames[compiled.Name]; exists {
 			return Bundle{}, fmt.Errorf("skills %q and %q use the same name %q", previousPath, compiled.SourcePath, compiled.Name)
