@@ -19,12 +19,12 @@ func TestBeginIdentityBindingUsesUnifiedPageWithoutCreatingMessageInstallation(t
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	result, err := service.Begin(context.Background(), BeginParams{
-		WorkspaceID: uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-		AgentID:     uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
-		InitiatorID: uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
-		BindingMode: BindingModeIdentity,
-	})
+	result, err := service.Begin(context.Background(), beginParamsForTest(
+		uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+		uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+		uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+		BindingModeIdentity,
+	))
 	if err != nil {
 		t.Fatalf("Begin(identity) error = %v", err)
 	}
@@ -42,8 +42,11 @@ func TestBeginIdentityBindingUsesUnifiedPageWithoutCreatingMessageInstallation(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fragment) != 7 || fragment.Get("bindingMode") != "identity" ||
+	if len(fragment) != 10 || fragment.Get("bindingMode") != "identity" ||
 		fragment.Get("bindingToken") != router.issued.BindingToken ||
+		fragment.Get("agentName") != "Database Agent" ||
+		fragment.Get("workspaceId") != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" ||
+		fragment.Get("workspaceName") != "Database Workspace" ||
 		fragment.Get("dispatchPath") != "/api/webhooks/agent-dispatch/v1_MzMzMzMzMzMzMzMzMzMzMw" ||
 		fragment.Get("callbackUrl") != "https://multica.example/api/integrations/dingtalk/account-bindings/22222222-2222-2222-2222-222222222222/callback" {
 		t.Fatalf("identity QR fragment = %#v", fragment)
@@ -108,12 +111,12 @@ func TestBeginIdentityBindingAllowsExistingMessageRoute(t *testing.T) {
 	}}
 	service := newBindingServiceForTest(t, store, router, now)
 
-	result, err := service.Begin(context.Background(), BeginParams{
-		WorkspaceID: store.row.WorkspaceID,
-		AgentID:     store.row.AgentID,
-		InitiatorID: uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
-		BindingMode: BindingModeIdentity,
-	})
+	result, err := service.Begin(context.Background(), beginParamsForTest(
+		store.row.WorkspaceID,
+		store.row.AgentID,
+		uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+		BindingModeIdentity,
+	))
 	if err != nil {
 		t.Fatalf("Begin(identity with active message route) error = %v", err)
 	}

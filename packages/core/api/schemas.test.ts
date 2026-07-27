@@ -135,6 +135,34 @@ describe("DingTalk account binding schemas", () => {
     });
   });
 
+  it("parses a safe message-route failure for user-visible diagnostics", () => {
+    const parsed = DingTalkAccountBindingsResponseSchema.parse({
+      bindings: [
+        {
+          id: "installation-1",
+          workspace_id: "workspace-1",
+          agent_id: "agent-1",
+          dws_identity: { status: "unbound" },
+          message_route: {
+            status: "failed",
+            error: {
+              code: "source_already_bound",
+              message: "消息源已绑定给其他 Agent，请解绑后重试",
+              retryable: false,
+            },
+          },
+        },
+      ],
+      configured: true,
+    });
+
+    expect(parsed.bindings[0]?.messageRoute.error).toEqual({
+      code: "source_already_bound",
+      message: "消息源已绑定给其他 Agent，请解绑后重试",
+      retryable: false,
+    });
+  });
+
   it("falls back safely when the binding list is malformed", () => {
     expect(
       parseWithFallback(

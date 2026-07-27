@@ -32,6 +32,11 @@ type dingTalkAccountBindingService interface {
 	Unbind(context.Context, agentmessagerouter.UnbindParams) (agentmessagerouter.PublicDingTalkAccountBinding, error)
 }
 
+type dingTalkAccountBindingMetadataStore interface {
+	GetAgentInWorkspace(context.Context, db.GetAgentInWorkspaceParams) (db.Agent, error)
+	GetWorkspace(context.Context, pgtype.UUID) (db.Workspace, error)
+}
+
 type beginDingTalkAccountBindingRequest struct {
 	AgentID     string                          `json:"agent_id"`
 	BindingMode agentmessagerouter.BindingMode `json:"binding_mode"`
@@ -96,7 +101,11 @@ func (h *Handler) BeginDingTalkAccountBinding(w http.ResponseWriter, r *http.Req
 		writeDingTalkAccountBindingAPIError(w, http.StatusBadRequest, "invalid_binding_mode", "binding_mode must be message or identity")
 		return
 	}
-	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+	metadataStore := h.dingTalkAccountBindingMetadata
+	if metadataStore == nil {
+		metadataStore = h.Queries
+	}
+	agent, err := metadataStore.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 		ID:          agentID,
 		WorkspaceID: workspaceID,
 	})
@@ -112,13 +121,28 @@ func (h *Handler) BeginDingTalkAccountBinding(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusConflict, "agent is archived")
 		return
 	}
+	workspace, err := metadataStore.GetWorkspace(r.Context(), workspaceID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "workspace not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to load workspace")
+		}
+		return
+	}
 	initiatorID, ok := parseUUIDOrBadRequest(w, userID, "user id")
 	if !ok {
 		return
 	}
 	result, err := h.DingTalkAccountBindings.Begin(r.Context(), agentmessagerouter.BeginParams{
-		WorkspaceID: workspaceID,
-		AgentID:     agentID,
+		Agent: agentmessagerouter.BeginAgent{
+			ID:   agent.ID,
+			Name: agent.Name,
+			Workspace: agentmessagerouter.BeginWorkspace{
+				ID:   workspace.ID,
+				Name: workspace.Name,
+			},
+		},
 		InitiatorID: initiatorID,
 		BindingMode: request.BindingMode,
 	})
