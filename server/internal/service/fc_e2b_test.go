@@ -1277,11 +1277,12 @@ func TestFCE2BConfigFromEnvAgentIdentity(t *testing.T) {
 	}
 }
 
-func TestFCE2BConfigFromEnvRewritesAgentIdentityProductionURLInPrePublish(t *testing.T) {
+func TestFCE2BConfigFromEnvKeepsConfiguredAgentIdentityURLInPrePublish(t *testing.T) {
 	t.Setenv("APP_ENV", "staging")
+	t.Setenv("AONE_ENV_TYPE", "prepub")
 	t.Setenv("MULTICA_AGENT_IDENTITY_BASE_URL", "https://agent-identity.dingtalk.com/")
 	cfg := FCE2BConfigFromEnv()
-	if cfg.AgentIdentityBaseURL != "https://pre-agent-identity.dingtalk.com" {
+	if cfg.AgentIdentityBaseURL != "https://agent-identity.dingtalk.com" {
 		t.Fatalf("base url = %q", cfg.AgentIdentityBaseURL)
 	}
 }
