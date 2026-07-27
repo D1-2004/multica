@@ -339,7 +339,7 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		source, createErr = qtx.CreateAgentSource(r.Context(), db.CreateAgentSourceParams{
 			AgentID: created.ID, WorkspaceID: wsUUID, GithubInstallationID: resolved.installation.ID,
 			RepoOwner: ownerFromFullName(resolved.repository.FullName), RepoName: repoFromFullName(resolved.repository.FullName),
-			Ref: resolved.ref, ManifestPath: agentsource.ManifestPath, SyncedCommitSha: resolved.sha, CreatedBy: ownerUUID,
+			Ref: resolved.ref, ManifestPath: agentsource.DTAProjectPath, SyncedCommitSha: resolved.sha, CreatedBy: ownerUUID,
 		})
 		if createErr != nil {
 			return createErr
@@ -459,7 +459,7 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 		writeGitHubSourceError(w, err)
 		return
 	}
-	bundle, err := agentsource.Compile(r.Context(), h.GitHubApp, agentsource.Source{InstallationID: installation.InstallationID, Owner: source.RepoOwner, Repository: source.RepoName, CommitSHA: sha})
+	bundle, err := agentsource.CompileDTAProject(r.Context(), h.GitHubApp, agentsource.Source{InstallationID: installation.InstallationID, Owner: source.RepoOwner, Repository: source.RepoName, CommitSHA: sha})
 	if err != nil {
 		h.recordAgentSourceFailure(r.Context(), source.ID, err)
 		writeGitHubSourceError(w, err)
@@ -661,7 +661,7 @@ func (h *Handler) resolveAndCompileGitHubAgent(ctx context.Context, workspaceID 
 	} else if !immutableGitSHA.MatchString(sha) {
 		return resolvedGitHubAgentSource{}, errors.New("resolved_sha must be an immutable Git commit SHA")
 	}
-	bundle, err := agentsource.Compile(ctx, h.GitHubApp, agentsource.Source{
+	bundle, err := agentsource.CompileDTAProject(ctx, h.GitHubApp, agentsource.Source{
 		InstallationID: installation.InstallationID,
 		Owner:          ownerFromFullName(repository.FullName), Repository: repoFromFullName(repository.FullName), CommitSHA: sha,
 	})
@@ -814,7 +814,12 @@ func writeGitHubSourceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "GitHub installation cannot access this repository")
 	case errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests:
 		writeError(w, http.StatusTooManyRequests, "GitHub rate limit exceeded")
-	case strings.Contains(err.Error(), "manifest") || strings.Contains(err.Error(), "skill") || strings.Contains(err.Error(), "required file") || strings.Contains(err.Error(), "bundle"):
+	case strings.Contains(err.Error(), "manifest") ||
+		strings.Contains(err.Error(), "dingtalk-agent.json") ||
+		strings.Contains(err.Error(), "project protocol") ||
+		strings.Contains(err.Error(), "skill") ||
+		strings.Contains(err.Error(), "required file") ||
+		strings.Contains(err.Error(), "bundle"):
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	default:
 		writeError(w, http.StatusBadGateway, err.Error())

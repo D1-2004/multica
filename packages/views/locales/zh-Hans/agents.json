@@ -281,11 +281,11 @@
       "blank": { "title": "从空白开始", "description": "自己配置每个字段。适合已经明确知道智能体应该如何工作的用户。" },
       "template": { "title": "使用模板", "description": "从整理好的指令和 skill 开始，再根据工作区需要修改每个细节。" },
       "ai": { "title": "通过 AI 创建", "description": "描述你想要的结果。Agent Builder 会提出关键问题并实时生成草稿。" },
-      "github": { "title": "从 GitHub 导入", "description": "从包含 multica-agent.yaml、指令、skill 和配套文件的版本化仓库创建。" }
+      "github": { "title": "从 GitHub 导入", "description": "从包含 dingtalk-agent.json、本体、skill 和配套文件的版本化 DTA Agent Project 创建。" }
     },
     "github": {
       "source_title": "GitHub 来源",
-      "source_hint": "选择仓库和 ref，在创建智能体前校验并预览 multica-agent.yaml。",
+      "source_hint": "选择仓库和 ref，在创建智能体前校验并预览 dingtalk-agent.json。",
       "not_configured": "尚未配置 GitHub 智能体来源",
       "admin_required": "需要工作区管理员权限",
       "admin_required_hint": "只有工作区 owner 或 admin 可以预览私有仓库内容并创建 GitHub 来源智能体。",
