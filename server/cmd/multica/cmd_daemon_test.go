@@ -2,12 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/daemon"
+	"github.com/multica-ai/multica/server/pkg/protocol"
+	"github.com/spf13/cobra"
 )
 
 // TestDaemonAlive locks in the liveness predicate the lifecycle commands rely
@@ -36,6 +42,56 @@ func TestDaemonAlive(t *testing.T) {
 	// A response with no status key at all (e.g. malformed) is not alive.
 	if daemonAlive(map[string]any{}) {
 		t.Errorf("daemonAlive(no status) = true, want false")
+	}
+}
+
+func TestDaemonReportRuntimeStartFailureUsesEnvOnlySecrets(t *testing.T) {
+	if flag := daemonReportRuntimeStartFailureCmd.Flags().Lookup("daemon-token"); flag != nil {
+		t.Fatal("report-runtime-start-failure must not accept --daemon-token")
+	}
+	if flag := daemonReportRuntimeStartFailureCmd.Flags().Lookup("launch-lease-token"); flag != nil {
+		t.Fatal("report-runtime-start-failure must not accept --launch-lease-token")
+	}
+
+	var got protocol.RuntimeStartFailureReport
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/daemon/runtimes/runtime-1/tasks/task-1/runtime-start-failure" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if authorization := r.Header.Get("Authorization"); authorization != "Bearer daemon-secret" {
+			t.Errorf("Authorization = %q", authorization)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode report: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"failed","accepted":true}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_RUNTIME_ID", "runtime-1")
+	t.Setenv("MULTICA_TASK_ID", "task-1")
+	t.Setenv("MULTICA_DAEMON_TOKEN", "daemon-secret")
+	t.Setenv("MULTICA_RUNTIME_LAUNCH_LEASE_TOKEN", "11111111-1111-1111-1111-111111111111")
+	t.Setenv("MULTICA_RUNTIME_START_FAILURE_STAGE", protocol.RuntimeStartFailureStageAgentIdentityRedeem)
+	t.Setenv("MULTICA_RUNTIME_START_FAILURE_CODE", protocol.RuntimeStartFailureCodeAgentIdentityRedeemTimeout)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	if err := runDaemonReportRuntimeStartFailure(cmd, nil); err != nil {
+		t.Fatalf("runDaemonReportRuntimeStartFailure: %v", err)
+	}
+	want := protocol.RuntimeStartFailureReport{
+		LaunchLeaseToken: "11111111-1111-1111-1111-111111111111",
+		Stage:            protocol.RuntimeStartFailureStageAgentIdentityRedeem,
+		Code:             protocol.RuntimeStartFailureCodeAgentIdentityRedeemTimeout,
+	}
+	if got != want {
+		t.Fatalf("report = %+v, want %+v", got, want)
 	}
 }
 

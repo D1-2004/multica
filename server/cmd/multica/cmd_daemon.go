@@ -23,6 +23,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon"
 	logger_pkg "github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 var daemonCmd = &cobra.Command{
@@ -54,6 +55,13 @@ var daemonRunOnceCmd = &cobra.Command{
 	Short:  "Claim and run one task without registering or heartbeating",
 	Hidden: true,
 	RunE:   runDaemonRunOnce,
+}
+
+var daemonReportRuntimeStartFailureCmd = &cobra.Command{
+	Use:    "report-runtime-start-failure",
+	Short:  "Report an FC/E2B runner failure before task claim",
+	Hidden: true,
+	RunE:   runDaemonReportRuntimeStartFailure,
 }
 
 var daemonRestartCmd = &cobra.Command{
@@ -112,6 +120,12 @@ func init() {
 	rof.String("runtime-name", "", "Runtime display name (env: MULTICA_AGENT_RUNTIME_NAME)")
 	rof.Int("health-port", 0, "Health server port")
 
+	rsff := daemonReportRuntimeStartFailureCmd.Flags()
+	rsff.String("runtime-id", "", "Runtime ID (env: MULTICA_RUNTIME_ID)")
+	rsff.String("task-id", "", "Task ID (env: MULTICA_TASK_ID)")
+	rsff.String("stage", "", "Fixed runtime start failure stage (env: MULTICA_RUNTIME_START_FAILURE_STAGE)")
+	rsff.String("code", "", "Fixed runtime start failure code (env: MULTICA_RUNTIME_START_FAILURE_CODE)")
+
 	// restart shares all the same flags as start
 	rf := daemonRestartCmd.Flags()
 	rf.Bool("foreground", false, "Run in the foreground instead of background")
@@ -139,6 +153,7 @@ func init() {
 	daemonCmd.AddCommand(daemonRestartCmd)
 	daemonCmd.AddCommand(daemonStatusCmd)
 	daemonCmd.AddCommand(daemonRunOnceCmd)
+	daemonCmd.AddCommand(daemonReportRuntimeStartFailureCmd)
 	daemonCmd.AddCommand(daemonLogsCmd)
 	daemonCmd.AddCommand(daemonDiskUsageCmd)
 }
@@ -656,6 +671,47 @@ func runDaemonRunOnce(cmd *cobra.Command, _ []string) error {
 		FCE2BColdStart: strings.EqualFold(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_COLD_START")), "true") || strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_COLD_START")) == "1",
 		TargetTaskID:   targetTaskID,
 	})
+}
+
+const runtimeStartFailureReportTimeout = 5 * time.Second
+
+func runDaemonReportRuntimeStartFailure(cmd *cobra.Command, _ []string) error {
+	serverURL := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL", "")
+	if serverURL == "" {
+		return fmt.Errorf("MULTICA_SERVER_URL is required")
+	}
+	runtimeID := cli.FlagOrEnv(cmd, "runtime-id", "MULTICA_RUNTIME_ID", "")
+	if runtimeID == "" {
+		return fmt.Errorf("MULTICA_RUNTIME_ID is required")
+	}
+	taskID := cli.FlagOrEnv(cmd, "task-id", "MULTICA_TASK_ID", "")
+	if taskID == "" {
+		return fmt.Errorf("MULTICA_TASK_ID is required")
+	}
+	daemonToken := strings.TrimSpace(os.Getenv("MULTICA_DAEMON_TOKEN"))
+	if daemonToken == "" {
+		return fmt.Errorf("MULTICA_DAEMON_TOKEN is required")
+	}
+	launchLeaseToken := strings.TrimSpace(os.Getenv("MULTICA_RUNTIME_LAUNCH_LEASE_TOKEN"))
+	if launchLeaseToken == "" {
+		return fmt.Errorf("MULTICA_RUNTIME_LAUNCH_LEASE_TOKEN is required")
+	}
+	stage := cli.FlagOrEnv(cmd, "stage", "MULTICA_RUNTIME_START_FAILURE_STAGE", "")
+	code := cli.FlagOrEnv(cmd, "code", "MULTICA_RUNTIME_START_FAILURE_CODE", "")
+	if _, ok := protocol.RuntimeStartFailureMessage(stage, code); !ok {
+		return fmt.Errorf("invalid runtime start failure stage/code")
+	}
+
+	client := daemon.NewClient(serverURL)
+	client.SetToken(daemonToken)
+	reportCtx, cancel := context.WithTimeout(cmd.Context(), runtimeStartFailureReportTimeout)
+	defer cancel()
+	_, err := client.ReportRuntimeStartFailure(reportCtx, runtimeID, taskID, protocol.RuntimeStartFailureReport{
+		LaunchLeaseToken: launchLeaseToken,
+		Stage:            stage,
+		Code:             code,
+	})
+	return err
 }
 
 // --- daemon restart ---
