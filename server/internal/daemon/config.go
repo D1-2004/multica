@@ -15,6 +15,7 @@ import (
 	"github.com/mattn/go-shellwords"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -73,6 +74,7 @@ var DefaultGCArtifactPatterns = []string{"node_modules", ".next", ".turbo"}
 // Config holds all daemon configuration.
 type Config struct {
 	ServerBaseURL                  string
+	SandboxRelayToken              string
 	DaemonID                       string
 	LegacyDaemonIDs                []string // historical daemon_ids this machine may have registered under; reported at register time so the server can merge old runtime rows
 	DeviceName                     string
@@ -507,6 +509,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 
 	return Config{
 		ServerBaseURL:                  serverBaseURL,
+		SandboxRelayToken:              strings.TrimSpace(os.Getenv(protocol.SandboxRelayTokenEnvKey)),
 		DaemonID:                       daemonID,
 		LegacyDaemonIDs:                legacyDaemonIDs,
 		DeviceName:                     deviceName,

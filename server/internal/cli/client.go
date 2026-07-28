@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // ClientVersion is the CLI version sent on every request as X-Client-Version.
@@ -47,12 +49,13 @@ func normalizeGOOS(goos string) string {
 // Used by ctrl subcommands (agent, runtime, status, etc.). Requests
 // automatically include auth and execution context headers when configured.
 type APIClient struct {
-	BaseURL     string
-	WorkspaceID string
-	Token       string
-	AgentID     string // When set, requests are attributed to this agent instead of the user.
-	TaskID      string // When set, sent as X-Task-ID for agent-task validation.
-	HTTPClient  *http.Client
+	BaseURL           string
+	WorkspaceID       string
+	Token             string
+	AgentID           string // When set, requests are attributed to this agent instead of the user.
+	TaskID            string // When set, sent as X-Task-ID for agent-task validation.
+	SandboxRelayToken string
+	HTTPClient        *http.Client
 
 	// Identity overrides. Empty values fall back to the package-level
 	// ClientPlatform / ClientVersion / ClientOS.
@@ -154,14 +157,18 @@ func APIContext(parent context.Context) (context.Context, context.CancelFunc) {
 // NewAPIClient creates a new API client for ctrl commands.
 func NewAPIClient(baseURL, workspaceID, token string) *APIClient {
 	return &APIClient{
-		BaseURL:     strings.TrimRight(baseURL, "/"),
-		WorkspaceID: workspaceID,
-		Token:       token,
-		HTTPClient:  &http.Client{Timeout: httpTimeout()},
+		BaseURL:           strings.TrimRight(baseURL, "/"),
+		WorkspaceID:       workspaceID,
+		Token:             token,
+		SandboxRelayToken: strings.TrimSpace(os.Getenv(protocol.SandboxRelayTokenEnvKey)),
+		HTTPClient:        &http.Client{Timeout: httpTimeout()},
 	}
 }
 
 func (c *APIClient) setHeaders(req *http.Request) {
+	if c.SandboxRelayToken != "" {
+		req.Header.Set(protocol.SandboxRelayTokenHeader, c.SandboxRelayToken)
+	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}

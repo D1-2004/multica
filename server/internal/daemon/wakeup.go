@@ -97,6 +97,9 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 	}
 
 	headers := http.Header{}
+	if d.cfg.SandboxRelayToken != "" {
+		headers.Set(protocol.SandboxRelayTokenHeader, d.cfg.SandboxRelayToken)
+	}
 	if token := d.client.Token(); token != "" {
 		headers.Set("Authorization", "Bearer "+token)
 	}

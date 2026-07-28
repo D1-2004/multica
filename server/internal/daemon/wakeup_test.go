@@ -57,6 +57,35 @@ func TestTaskWakeupURL(t *testing.T) {
 	}
 }
 
+func TestTaskWakeupWebSocketIncludesSandboxRelayHeader(t *testing.T) {
+	received := make(chan string, 1)
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- r.Header.Get(protocol.SandboxRelayTokenHeader)
+		connection, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		_ = connection.Close()
+	}))
+	defer server.Close()
+	daemon := New(Config{
+		ServerBaseURL:     server.URL,
+		SandboxRelayToken: "signed-route-token",
+	}, slog.Default())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _ = daemon.runTaskWakeupConnection(ctx, []string{"runtime-1"}, make(chan taskWakeup, 1), nil)
+	select {
+	case got := <-received:
+		if got != "signed-route-token" {
+			t.Fatalf("%s = %q", protocol.SandboxRelayTokenHeader, got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("websocket handshake was not received")
+	}
+}
+
 // TestWSHeartbeatFreshnessSuppressesHTTP pins the WS-vs-HTTP coordination:
 // once a runtime acked over WS within the freshness window the HTTP
 // heartbeat loop must skip it to avoid duplicate DB writes.

@@ -55,6 +55,34 @@ func TestClient_IdentityHeaders_PostJSON(t *testing.T) {
 	}
 }
 
+func TestClient_SandboxRelayHeaderIsOptional(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		token string
+		want  string
+	}{
+		{name: "absent"},
+		{name: "present", token: "signed-route-token", want: "signed-route-token"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.Header.Get(protocol.SandboxRelayTokenHeader); got != test.want {
+					t.Errorf("%s = %q, want %q", protocol.SandboxRelayTokenHeader, got, test.want)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer server.Close()
+			client := NewClient(server.URL)
+			client.SetToken("mdt_daemon")
+			client.SetSandboxRelayToken(test.token)
+			if err := client.postJSON(context.Background(), "/api/daemon/test", nil, nil); err != nil {
+				t.Fatalf("postJSON: %v", err)
+			}
+		})
+	}
+}
+
 func TestClient_IdentityHeaders_GetJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("X-Client-Platform"); got != "daemon" {

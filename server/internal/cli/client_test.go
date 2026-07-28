@@ -9,7 +9,37 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+func TestAPIClientSandboxRelayHeaderIsOptional(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		env  string
+		want string
+	}{
+		{name: "absent", env: "", want: ""},
+		{name: "present", env: "signed-route-token", want: "signed-route-token"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv(protocol.SandboxRelayTokenEnvKey, test.env)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.Header.Get(protocol.SandboxRelayTokenHeader); got != test.want {
+					t.Errorf("%s = %q, want %q", protocol.SandboxRelayTokenHeader, got, test.want)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{}`)
+			}))
+			defer server.Close()
+			client := NewAPIClient(server.URL, "", "mat_task")
+			var response map[string]any
+			if err := client.GetJSON(context.Background(), "/api/test", &response); err != nil {
+				t.Fatalf("GetJSON: %v", err)
+			}
+		})
+	}
+}
 
 func TestPostJSON(t *testing.T) {
 	type reqBody struct {

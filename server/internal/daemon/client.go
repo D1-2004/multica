@@ -88,9 +88,10 @@ func isRuntimeNotFoundError(err error) bool {
 
 // Client handles HTTP communication with the Multica server daemon API.
 type Client struct {
-	baseURL string
-	token   string
-	client  *http.Client
+	baseURL           string
+	token             string
+	sandboxRelayToken string
+	client            *http.Client
 
 	// bundleClient downloads skill bundles. Unlike client it carries no fixed
 	// Timeout: bundles can be large and slow on jittery links, so the caller
@@ -157,6 +158,9 @@ func (c *Client) SetVersion(v string) {
 
 // setIdentityHeaders attaches X-Client-Platform/Version/OS to req when set.
 func (c *Client) setIdentityHeaders(req *http.Request) {
+	if c.sandboxRelayToken != "" {
+		req.Header.Set(protocol.SandboxRelayTokenHeader, c.sandboxRelayToken)
+	}
 	if c.platform != "" {
 		req.Header.Set("X-Client-Platform", c.platform)
 	}
@@ -175,6 +179,10 @@ func (c *Client) setIdentityHeaders(req *http.Request) {
 // SetToken sets the auth token for authenticated requests.
 func (c *Client) SetToken(token string) {
 	c.token = token
+}
+
+func (c *Client) SetSandboxRelayToken(token string) {
+	c.sandboxRelayToken = strings.TrimSpace(token)
 }
 
 // Token returns the current auth token.

@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/skillbundle"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
@@ -254,6 +255,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	cacheRoot := filepath.Join(cfg.WorkspacesRoot, ".repos")
 	skillCacheRoot := filepath.Join(cfg.WorkspacesRoot, ".skill-cache", "v1")
 	client := NewClient(cfg.ServerBaseURL)
+	client.SetSandboxRelayToken(cfg.SandboxRelayToken)
 	// Tag every daemon HTTP request with the daemon's CLI version so the
 	// server can split logs/metrics by client version (parallel to the CLI).
 	client.SetVersion(cfg.CLIVersion)
@@ -3816,6 +3818,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"TMPDIR":               taskTempDir,
 		"TMP":                  taskTempDir,
 		"TEMP":                 taskTempDir,
+	}
+	if d.cfg.SandboxRelayToken != "" {
+		agentEnv[protocol.SandboxRelayTokenEnvKey] = d.cfg.SandboxRelayToken
 	}
 	if task.TraceID != "" {
 		agentEnv["MULTICA_TRACE_ID"] = task.TraceID
