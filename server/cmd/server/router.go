@@ -42,6 +42,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -231,6 +232,10 @@ type RouterOptions struct {
 	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
 	// tests leave this nil and get the legacy synchronous behavior.
 	HeartbeatScheduler handler.HeartbeatScheduler
+	// SandboxRelaySigner is configured only by pre-release. It must be shared
+	// with the request-path FC/E2B launcher so synchronous chat sends mint the
+	// same task-scoped routing assertion as background launches.
+	SandboxRelaySigner *sandboxrelay.Signer
 	// SandboxRelay is nil on ordinary deployments. Production injects the
 	// signed pre-release sandbox relay here so requests carrying the routing
 	// assertion are intercepted before local authentication and routing.
@@ -307,6 +312,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		LLMDefaultModel:               strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	h.FCE2BLauncher.SetSandboxRelaySigner(opts.SandboxRelaySigner)
 	if managed, managedErr := managedagent.New(queries, pool, managedagent.ConfigFromEnv(), slog.Default()); managedErr != nil {
 		slog.Error("managed FDE Agent source disabled due to invalid configuration", "error", managedErr)
 	} else {
