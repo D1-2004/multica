@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -82,6 +83,23 @@ func TestStableRuntimeProviderPreservesLegacyHermesDefault(t *testing.T) {
 		if got := stableRuntimeProvider(input); got != want {
 			t.Fatalf("stableRuntimeProvider(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestStableRuntimeOwnedByDeveloperUsesOnlyConfiguredOwnerUUID(t *testing.T) {
+	allowed := util.MustParseUUID("410d0a06-a026-449b-b7ab-64c9d92481bd")
+	other := util.MustParseUUID("2c508db5-5410-41f9-ad69-d3d527529c20")
+	developers := map[string]struct{}{
+		util.UUIDToString(allowed): {},
+	}
+	if !stableRuntimeOwnedByDeveloper(allowed, developers) {
+		t.Fatal("configured runtime owner was not included in developer rollout")
+	}
+	if stableRuntimeOwnedByDeveloper(other, developers) {
+		t.Fatal("unconfigured runtime owner was included in developer rollout")
+	}
+	if stableRuntimeOwnedByDeveloper(pgtype.UUID{}, developers) {
+		t.Fatal("runtime without an owner was included in developer rollout")
 	}
 }
 

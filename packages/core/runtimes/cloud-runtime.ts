@@ -92,13 +92,23 @@ export interface FCE2BStableTemplateBinding {
 
 export type FCE2BStableReleaseStatus =
   | "validating"
+  | "developer_rollout"
+  | "awaiting_rollout"
   | "rolling_out"
   | "observing"
   | "completed"
   | "paused"
   | "rolling_back"
   | "rolled_back"
+  | "terminated"
   | "failed";
+
+export type FCE2BStableReleaseAction =
+  | "pause"
+  | "resume"
+  | "start-rollout"
+  | "terminate"
+  | "rollback";
 
 export interface FCE2BStableRelease {
   id: string;
@@ -119,6 +129,10 @@ export interface FCE2BStableRelease {
   total_targets: number;
   updated_targets: number;
   failed_targets: number;
+  developer_targets: number;
+  developer_updated_targets: number;
+  developer_rollout_started_at?: string;
+  developer_rollout_completed_at?: string;
   rollout_started_at?: string;
   batch_started_at?: string;
   next_batch_at?: string;
@@ -132,6 +146,23 @@ export interface FCE2BStableChannel {
   current: FCE2BStableTemplateBinding | null;
   active_release: FCE2BStableRelease | null;
   can_publish: boolean;
+}
+
+export interface FCE2BStableRuntimeOverview {
+  runtime_id: string;
+  workspace_id: string;
+  workspace_name: string;
+  runtime_name: string;
+  provider: string;
+  status: string;
+  template_channel: "stable" | "candidate";
+  template_alias: string;
+  template_id: string;
+  template_build_id: string;
+  matches_current_stable: boolean;
+  matches_active_release: boolean;
+  active_release_target_status: string;
+  updated_at: string;
 }
 
 export interface CreateFCE2BStableReleaseRequest {
@@ -216,6 +247,7 @@ export const cloudRuntimeKeys = {
   fcE2BStableChannel: () => ["fc-e2b-stable-channel"] as const,
   fcE2BStableRelease: (releaseId: string) =>
     ["fc-e2b-stable-release", releaseId] as const,
+  fcE2BStableRuntimes: () => ["fc-e2b-stable-runtimes"] as const,
 };
 
 const PENDING_NODE_STATUSES = new Set([
@@ -266,6 +298,16 @@ export function useFCE2BStableChannel() {
     queryFn: () => api.getFCE2BStableChannel(),
     refetchInterval: (query) => (query.state.data?.active_release ? 5000 : false),
     staleTime: 15 * 1000,
+  });
+}
+
+export function useFCE2BStableRuntimes(enabled = true) {
+  return useQuery({
+    queryKey: cloudRuntimeKeys.fcE2BStableRuntimes(),
+    queryFn: () => api.listFCE2BStableRuntimes(),
+    enabled,
+    refetchInterval: 5000,
+    staleTime: 5 * 1000,
   });
 }
 
@@ -336,6 +378,7 @@ export function useCreateFCE2BStableRelease() {
     onSuccess: async (release) => {
       await Promise.all([
         qc.invalidateQueries({ queryKey: cloudRuntimeKeys.fcE2BStableChannel() }),
+        qc.invalidateQueries({ queryKey: cloudRuntimeKeys.fcE2BStableRuntimes() }),
         qc.invalidateQueries({
           queryKey: cloudRuntimeKeys.fcE2BStableRelease(release.id),
         }),
@@ -345,7 +388,7 @@ export function useCreateFCE2BStableRelease() {
 }
 
 export function useMutateFCE2BStableRelease(
-  action: "pause" | "resume" | "rollback",
+  action: FCE2BStableReleaseAction,
 ) {
   const qc = useQueryClient();
   return useMutation({
@@ -354,6 +397,7 @@ export function useMutateFCE2BStableRelease(
     onSuccess: async (release) => {
       await Promise.all([
         qc.invalidateQueries({ queryKey: cloudRuntimeKeys.fcE2BStableChannel() }),
+        qc.invalidateQueries({ queryKey: cloudRuntimeKeys.fcE2BStableRuntimes() }),
         qc.invalidateQueries({
           queryKey: cloudRuntimeKeys.fcE2BStableRelease(release.id),
         }),

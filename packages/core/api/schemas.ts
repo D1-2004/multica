@@ -804,12 +804,15 @@ export const FCE2BStableReleaseSchema = z.object({
   bootstrap: z.boolean(),
   status: z.enum([
     "validating",
+    "developer_rollout",
+    "awaiting_rollout",
     "rolling_out",
     "observing",
     "completed",
     "paused",
     "rolling_back",
     "rolled_back",
+    "terminated",
     "failed",
   ]),
   current_batch: z.number(),
@@ -821,6 +824,10 @@ export const FCE2BStableReleaseSchema = z.object({
   total_targets: z.number(),
   updated_targets: z.number(),
   failed_targets: z.number(),
+  developer_targets: z.number().default(0),
+  developer_updated_targets: z.number().default(0),
+  developer_rollout_started_at: z.string().optional(),
+  developer_rollout_completed_at: z.string().optional(),
   rollout_started_at: z.string().optional(),
   batch_started_at: z.string().optional(),
   next_batch_at: z.string().optional(),
@@ -829,6 +836,27 @@ export const FCE2BStableReleaseSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
 }).loose();
+
+export const FCE2BStableRuntimeOverviewSchema = z.object({
+  runtime_id: z.string(),
+  workspace_id: z.string(),
+  workspace_name: z.string(),
+  runtime_name: z.string(),
+  provider: z.string(),
+  status: z.string(),
+  template_channel: z.enum(["stable", "candidate"]),
+  template_alias: z.string(),
+  template_id: z.string(),
+  template_build_id: z.string(),
+  matches_current_stable: z.boolean(),
+  matches_active_release: z.boolean(),
+  active_release_target_status: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const FCE2BStableRuntimeOverviewListSchema = z.array(
+  FCE2BStableRuntimeOverviewSchema,
+);
 
 export const FCE2BStableTemplateBindingSchema = z.object({
   template_id: z.string(),
@@ -861,6 +889,8 @@ export const EMPTY_FC_E2B_STABLE_RELEASE: FCE2BStableRelease = {
   total_targets: 0,
   updated_targets: 0,
   failed_targets: 0,
+  developer_targets: 0,
+  developer_updated_targets: 0,
   created_at: "",
   updated_at: "",
 };

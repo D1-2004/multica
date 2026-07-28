@@ -11,6 +11,13 @@ const TEST_RESOURCES = {
 };
 
 const mockCreateRelease = vi.hoisted(() => vi.fn());
+const mockMutateRelease = vi.hoisted(() => ({
+  pause: vi.fn(),
+  resume: vi.fn(),
+  "start-rollout": vi.fn(),
+  terminate: vi.fn(),
+  rollback: vi.fn(),
+}));
 const mockChannelQuery = vi.hoisted(() => ({
   data: {
     current: null as null | {
@@ -19,9 +26,15 @@ const mockChannelQuery = vi.hoisted(() => ({
       template_alias: string;
       release_id: string;
     },
-    active_release: null,
+    active_release: null as null | Record<string, unknown>,
     can_publish: true,
   },
+}));
+const mockStableRuntimesQuery = vi.hoisted(() => ({
+  data: [] as Array<Record<string, unknown>>,
+  isLoading: false,
+  isError: false,
+  error: null as Error | null,
 }));
 const mockTemplatesQuery = vi.hoisted(() => ({
   data: [] as Array<{
@@ -51,13 +64,14 @@ vi.mock("@multica/core/runtimes", () => ({
         template.status?.toLowerCase() === "ready",
     ),
   useFCE2BStableChannel: () => mockChannelQuery,
+  useFCE2BStableRuntimes: () => mockStableRuntimesQuery,
   useFCE2BTemplates: () => mockTemplatesQuery,
   useCreateFCE2BStableRelease: () => ({
     mutateAsync: (...args: unknown[]) => mockCreateRelease(...args),
     isPending: false,
   }),
-  useMutateFCE2BStableRelease: () => ({
-    mutateAsync: vi.fn(),
+  useMutateFCE2BStableRelease: (action: keyof typeof mockMutateRelease) => ({
+    mutateAsync: (...args: unknown[]) => mockMutateRelease[action](...args),
     isPending: false,
   }),
 }));
@@ -98,7 +112,15 @@ describe("StableFCE2BReleaseDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCreateRelease.mockResolvedValue(undefined);
+    Object.values(mockMutateRelease).forEach((mutation) =>
+      mutation.mockResolvedValue(undefined),
+    );
     mockChannelQuery.data.current = null;
+    mockChannelQuery.data.active_release = null;
+    mockStableRuntimesQuery.data = [];
+    mockStableRuntimesQuery.isLoading = false;
+    mockStableRuntimesQuery.isError = false;
+    mockStableRuntimesQuery.error = null;
     mockTemplatesQuery.data = [
       template("template-current", "build-current", "Current image", "2026-07-28T04:30:00Z"),
     ];
@@ -134,7 +156,7 @@ describe("StableFCE2BReleaseDialog", () => {
     );
   });
 
-  it("shows the current stable build as disabled and offers another build", () => {
+  it("shows the current stable build separately and allows publishing it again", async () => {
     mockChannelQuery.data.current = {
       template_id: "template-current",
       template_build_id: "build-current",
@@ -151,15 +173,62 @@ describe("StableFCE2BReleaseDialog", () => {
     const currentTemplate = screen.getByRole("button", { name: /Current image/ });
     const nextTemplate = screen.getByRole("button", { name: /Next image/ });
     const publish = screen.getByRole("button", {
-      name: "Verify and start rollout",
+      name: "Verify and update developers",
     });
 
-    expect(currentTemplate).toBeDisabled();
-    expect(screen.getByText("Current stable version")).toBeInTheDocument();
+    expect(currentTemplate).toBeEnabled();
+    expect(screen.getByText("Currently published stable version")).toBeInTheDocument();
     expect(nextTemplate).toBeEnabled();
     expect(publish).toBeDisabled();
 
-    fireEvent.click(nextTemplate);
+    fireEvent.click(currentTemplate);
     expect(publish).toBeEnabled();
+    fireEvent.click(publish);
+
+    await waitFor(() =>
+      expect(mockCreateRelease).toHaveBeenCalledWith({
+        idempotencyKey: expect.any(String),
+        data: {
+          template_id: "template-current",
+          expected_build_id: "build-current",
+          note: "",
+        },
+      }),
+    );
+  });
+
+  it("waits for developer approval before manually starting the 24-hour rollout", async () => {
+    mockChannelQuery.data.current = {
+      template_id: "template-current",
+      template_build_id: "build-current",
+      template_alias: "Current image",
+      release_id: "release-current",
+    };
+    mockChannelQuery.data.active_release = {
+      id: "release-next",
+      template_alias: "Next image",
+      status: "awaiting_rollout",
+      bootstrap: false,
+      developer_targets: 4,
+      developer_updated_targets: 4,
+      updated_targets: 4,
+      total_targets: 60,
+      target_percentage: 0,
+      validation_error: "",
+    };
+
+    renderDialog();
+
+    expect(screen.getByText("Awaiting developer approval")).toBeInTheDocument();
+    expect(screen.getByText("Updated 4 / 4")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Start 24-hour rollout" }),
+    );
+
+    await waitFor(() =>
+      expect(mockMutateRelease["start-rollout"]).toHaveBeenCalledWith(
+        "release-next",
+      ),
+    );
   });
 });

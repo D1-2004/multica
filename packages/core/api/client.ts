@@ -170,6 +170,8 @@ import type {
   FCE2BTemplate,
   FCE2BStableChannel,
   FCE2BStableRelease,
+  FCE2BStableReleaseAction,
+  FCE2BStableRuntimeOverview,
   CreateFCE2BStableReleaseRequest,
   ListCloudRuntimeNodesParams,
   UpdateFCE2BRuntimeTemplateRequest,
@@ -190,6 +192,7 @@ import {
   CloudRuntimeNodeSchema,
   FCE2BStableChannelSchema,
   FCE2BStableReleaseSchema,
+  FCE2BStableRuntimeOverviewListSchema,
   EMPTY_FC_E2B_STABLE_CHANNEL,
   EMPTY_FC_E2B_STABLE_RELEASE,
   AddDingTalkGroupMembersResponseSchema,
@@ -1074,9 +1077,21 @@ export class ApiClient {
     );
   }
 
+  async listFCE2BStableRuntimes(): Promise<FCE2BStableRuntimeOverview[]> {
+    const raw = await this.fetch<unknown>(
+      "/api/runtimes/fc-e2b/stable-runtimes",
+    );
+    return parseWithFallback(
+      raw,
+      FCE2BStableRuntimeOverviewListSchema,
+      [],
+      { endpoint: "GET /api/runtimes/fc-e2b/stable-runtimes" },
+    );
+  }
+
   async mutateFCE2BStableRelease(
     releaseId: string,
-    action: "pause" | "resume" | "rollback",
+    action: FCE2BStableReleaseAction,
   ): Promise<FCE2BStableRelease> {
     const raw = await this.fetch<unknown>(
       `/api/runtimes/fc-e2b/stable-releases/${releaseId}/${action}`,

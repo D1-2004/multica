@@ -66,6 +66,22 @@ func (h *Handler) GetFCE2BStableChannel(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (h *Handler) ListFCE2BStableRuntimes(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireFCE2BStablePublisher(w, r); !ok {
+		return
+	}
+	if h.FCE2BStable == nil {
+		writeError(w, http.StatusServiceUnavailable, "FC/E2B stable channel is unavailable")
+		return
+	}
+	runtimes, err := h.FCE2BStable.ListRuntimeOverview(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load FC/E2B stable runtimes")
+		return
+	}
+	writeJSON(w, http.StatusOK, runtimes)
+}
+
 func (h *Handler) CreateFCE2BStableRelease(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.requireFCE2BStablePublisher(w, r)
 	if !ok {
@@ -158,6 +174,22 @@ func (h *Handler) ResumeFCE2BStableRelease(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	h.mutateFCE2BStableRelease(w, r, h.FCE2BStable.Resume)
+}
+
+func (h *Handler) StartFCE2BStableRollout(w http.ResponseWriter, r *http.Request) {
+	if h.FCE2BStable == nil {
+		writeError(w, http.StatusServiceUnavailable, "FC/E2B stable channel is unavailable")
+		return
+	}
+	h.mutateFCE2BStableRelease(w, r, h.FCE2BStable.StartRollout)
+}
+
+func (h *Handler) TerminateFCE2BStableRelease(w http.ResponseWriter, r *http.Request) {
+	if h.FCE2BStable == nil {
+		writeError(w, http.StatusServiceUnavailable, "FC/E2B stable channel is unavailable")
+		return
+	}
+	h.mutateFCE2BStableRelease(w, r, h.FCE2BStable.Terminate)
 }
 
 func (h *Handler) RollbackFCE2BStableRelease(w http.ResponseWriter, r *http.Request) {

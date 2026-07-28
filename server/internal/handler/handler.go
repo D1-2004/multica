@@ -386,7 +386,11 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg: cfg,
 	}
 	if pool, ok := txStarter.(*pgxpool.Pool); ok {
-		h.FCE2BStable = service.NewFCE2BStableService(pool, fcLauncher)
+		h.FCE2BStable = service.NewFCE2BStableService(
+			pool,
+			fcLauncher,
+			cfg.StableRuntimePublisherUserIDs,
+		)
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
 	return h
