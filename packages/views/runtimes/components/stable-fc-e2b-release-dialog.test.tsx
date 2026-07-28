@@ -134,7 +134,7 @@ describe("StableFCE2BReleaseDialog", () => {
     );
   });
 
-  it("excludes the current stable build and offers to start a rollout", () => {
+  it("shows the current stable build as disabled and offers another build", () => {
     mockChannelQuery.data.current = {
       template_id: "template-current",
       template_build_id: "build-current",
@@ -148,10 +148,18 @@ describe("StableFCE2BReleaseDialog", () => {
 
     renderDialog();
 
-    expect(screen.queryByText("Current image")).not.toBeInTheDocument();
-    expect(screen.getByText("Next image")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Verify and start rollout" }),
-    ).toBeDisabled();
+    const currentTemplate = screen.getByRole("button", { name: /Current image/ });
+    const nextTemplate = screen.getByRole("button", { name: /Next image/ });
+    const publish = screen.getByRole("button", {
+      name: "Verify and start rollout",
+    });
+
+    expect(currentTemplate).toBeDisabled();
+    expect(screen.getByText("Current stable version")).toBeInTheDocument();
+    expect(nextTemplate).toBeEnabled();
+    expect(publish).toBeDisabled();
+
+    fireEvent.click(nextTemplate);
+    expect(publish).toBeEnabled();
   });
 });

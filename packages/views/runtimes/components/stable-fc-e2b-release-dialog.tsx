@@ -60,18 +60,15 @@ export function StableFCE2BReleaseDialog({
   const active = channelQuery.data?.active_release ?? null;
   const current = channelQuery.data?.current ?? null;
   const bootstrap = current == null;
-  const templates = (templatesQuery.data ?? [])
-    .filter(isReadyFCE2BTemplate)
-    .filter(
-      (template) =>
-        bootstrap ||
-        template.id !== current.template_id ||
-        template.build_id !== current.template_build_id,
-    );
+  const templates = (templatesQuery.data ?? []).filter(isReadyFCE2BTemplate);
+  const selectedIsCurrent =
+    current != null &&
+    selected?.id === current.template_id &&
+    selected?.build_id === current.template_build_id;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selected?.id || !selected.build_id) return;
+    if (!selected?.id || !selected.build_id || selectedIsCurrent) return;
     try {
       await createRelease.mutateAsync({
         idempotencyKey: crypto.randomUUID(),
@@ -224,7 +221,12 @@ export function StableFCE2BReleaseDialog({
                     </div>
                   )}
                 {templates.map((template) => {
+                  const isCurrent =
+                    current != null &&
+                    template.id === current.template_id &&
+                    template.build_id === current.template_build_id;
                   const isSelected =
+                    !isCurrent &&
                     selected?.id === template.id &&
                     selected?.build_id === template.build_id;
                   const updatedAt = formatTemplateUpdatedAt(template.updated_at);
@@ -232,8 +234,9 @@ export function StableFCE2BReleaseDialog({
                     <button
                       key={`${template.id}:${template.build_id}`}
                       type="button"
+                      disabled={isCurrent}
                       onClick={() => setSelected(template)}
-                      className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-xs last:border-b-0 hover:bg-muted/50"
+                      className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-xs last:border-b-0 enabled:hover:bg-muted/50 disabled:cursor-not-allowed disabled:bg-muted/20 disabled:opacity-60"
                     >
                       <span className="min-w-0 space-y-1">
                         <span className="block truncate font-medium">
@@ -250,7 +253,13 @@ export function StableFCE2BReleaseDialog({
                           </span>
                         )}
                       </span>
-                      {isSelected && <Check className="h-3.5 w-3.5 shrink-0" />}
+                      {isCurrent ? (
+                        <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-muted-foreground">
+                          {t(($) => $.fc_e2b_stable.template_current)}
+                        </span>
+                      ) : (
+                        isSelected && <Check className="h-3.5 w-3.5 shrink-0" />
+                      )}
                     </button>
                   );
                 })}
@@ -281,7 +290,8 @@ export function StableFCE2BReleaseDialog({
               disabled={
                 createRelease.isPending ||
                 !selected?.id ||
-                !selected.build_id
+                !selected.build_id ||
+                selectedIsCurrent
               }
             >
               {createRelease.isPending && (
