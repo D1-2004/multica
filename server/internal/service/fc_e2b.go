@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
+	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -819,12 +820,13 @@ func firstString(obj map[string]any, keys ...string) string {
 }
 
 type FCE2BLauncher struct {
-	Queries          *db.Queries
-	Tasks            *TaskService
-	Config           FCE2BConfig
-	Runner           CommandRunner
-	AgentIdentity    AgentIdentityContextCreator
-	IdentityBindings AgentIdentityBindingReader
+	Queries            *db.Queries
+	Tasks              *TaskService
+	Config             FCE2BConfig
+	Runner             CommandRunner
+	AgentIdentity      AgentIdentityContextCreator
+	IdentityBindings   AgentIdentityBindingReader
+	SandboxRelaySigner SandboxRelayTokenSigner
 
 	// Pool backs the cross-replica runtime and sandbox advisory locks.
 	Pool *pgxpool.Pool
@@ -848,6 +850,10 @@ type AgentIdentityContextCreator interface {
 
 type AgentIdentityBindingReader interface {
 	GetAgentDingTalkIdentity(context.Context, db.GetAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error)
+}
+
+type SandboxRelayTokenSigner interface {
+	Mint(sandboxrelay.MintRequest) (string, error)
 }
 
 // Advisory lock classes keep runtime rotation and per-scope sandbox creation
@@ -976,6 +982,12 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 func (l *FCE2BLauncher) SetPool(pool *pgxpool.Pool) {
 	if l != nil {
 		l.Pool = pool
+	}
+}
+
+func (l *FCE2BLauncher) SetSandboxRelaySigner(signer SandboxRelayTokenSigner) {
+	if l != nil {
+		l.SandboxRelaySigner = signer
 	}
 }
 
@@ -1409,11 +1421,24 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	if err != nil {
 		return fcE2BLaunchSubmission{}, false, errors.New("failed to mint FC/E2B daemon token")
 	}
+	tokenExpiresAt := time.Now().Add(fcE2BDaemonTokenTTL)
+	extraEnv, err = l.withSandboxRelayToken(
+		extraEnv,
+		task.ID,
+		task.AgentID,
+		runtime.ID,
+		sandboxID,
+		token,
+		tokenExpiresAt,
+	)
+	if err != nil {
+		return fcE2BLaunchSubmission{}, false, err
+	}
 	if _, err := l.Queries.CreateDaemonToken(ctx, db.CreateDaemonTokenParams{
 		TokenHash:   auth.HashToken(token),
 		WorkspaceID: runtime.WorkspaceID,
 		DaemonID:    runtime.DaemonID.String,
-		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(fcE2BDaemonTokenTTL), Valid: true},
+		ExpiresAt:   pgtype.Timestamptz{Time: tokenExpiresAt, Valid: true},
 	}); err != nil {
 		return fcE2BLaunchSubmission{}, false, errors.New("failed to persist FC/E2B daemon token")
 	}
@@ -1429,6 +1454,37 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		return fcE2BLaunchSubmission{}, false, err
 	}
 	return fcE2BLaunchSubmission{runtime: runtime, sandboxID: sandboxID, coldStart: coldStart, scope: scope, scoped: scoped}, false, nil
+}
+
+func (l *FCE2BLauncher) withSandboxRelayToken(
+	extraEnv map[string]string,
+	taskID pgtype.UUID,
+	agentID pgtype.UUID,
+	runtimeID pgtype.UUID,
+	sandboxID string,
+	daemonToken string,
+	expiresAt time.Time,
+) (map[string]string, error) {
+	if l == nil || l.SandboxRelaySigner == nil {
+		return extraEnv, nil
+	}
+	relayToken, err := l.SandboxRelaySigner.Mint(sandboxrelay.MintRequest{
+		TaskID:             util.UUIDToString(taskID),
+		AgentID:            util.UUIDToString(agentID),
+		RuntimeID:          util.UUIDToString(runtimeID),
+		SandboxID:          sandboxID,
+		DaemonToken:        daemonToken,
+		AgentIdentityToken: extraEnv[protocol.AgentIdentityContextTokenEnvKey],
+		ExpiresAt:          expiresAt,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mint FC/E2B sandbox relay token: %w", err)
+	}
+	if extraEnv == nil {
+		extraEnv = make(map[string]string)
+	}
+	extraEnv[protocol.SandboxRelayTokenEnvKey] = relayToken
+	return extraEnv, nil
 }
 
 func fcE2BScopeForTask(task db.AgentTaskQueue) (fcE2BTaskScope, bool) {
@@ -2070,6 +2126,7 @@ func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 		protocol.DingTalkStreamNodeIDEnvKey,
 		protocol.DingTalkStreamConnectionIDEnvKey,
 		protocol.AgentIdentityContextTokenEnvKey,
+		protocol.SandboxRelayTokenEnvKey,
 		"MULTICA_AGENT_IDENTITY_BASE_URL",
 		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS",
 		"DWS_CLIENT_SECRET":
