@@ -1632,6 +1632,16 @@ func TestFCE2BWithSandboxRelayToken(t *testing.T) {
 	}
 }
 
+func TestFCE2BSetSandboxRelaySignerKeepsNilInterface(t *testing.T) {
+	launcher := &FCE2BLauncher{}
+
+	launcher.SetSandboxRelaySigner(nil)
+
+	if launcher.SandboxRelaySigner != nil {
+		t.Fatalf("nil concrete signer became a non-nil interface: %#v", launcher.SandboxRelaySigner)
+	}
+}
+
 func TestFCE2BWithSandboxRelayTokenDisabled(t *testing.T) {
 	extraEnv := map[string]string{"EXISTING": "value"}
 	launcher := &FCE2BLauncher{}
