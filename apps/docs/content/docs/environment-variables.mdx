@@ -209,8 +209,24 @@ These variables enable the self-hosted server to create a cloud Hermes runtime b
 | `MULTICA_AGENT_IDENTITY_BASE_URL` | empty | Agent Identity service used by ContextToken tasks. The server forwards this URL and the task token to the FC/E2B sandbox; credential redemption happens inside the sandbox |
 | `MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS` | `10` | Timeout for the sandbox Agent Identity credential redemption request |
 | `MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET` | empty | DWS OAuth client secret injected only into ContextToken sandbox startup and cleared immediately after AuthCode exchange |
+| `MULTICA_SANDBOX_RELAY_SIGNING_KEY_ID` | empty | Pre-release-only Ed25519 key identifier. Must be configured together with `MULTICA_SANDBOX_RELAY_SIGNING_PRIVATE_KEY` |
+| `MULTICA_SANDBOX_RELAY_SIGNING_PRIVATE_KEY` | empty | Pre-release-only standard-base64 PKCS#8 DER Ed25519 private key used to sign the task-scoped routing assertion |
+| `MULTICA_SANDBOX_RELAY_VERIFY_KEYS` | empty | Production-only JSON object mapping key IDs to standard-base64 PKIX DER Ed25519 public keys |
+| `MULTICA_SANDBOX_RELAY_MULTICA_UPSTREAM_URL` | empty | Production-only fixed HTTPS origin for the pre-release Multica service |
+| `MULTICA_SANDBOX_RELAY_AGENT_IDENTITY_UPSTREAM_URL` | empty | Production-only fixed HTTPS origin for the pre-release Agent Identity service |
+| `MULTICA_SANDBOX_RELAY_MAX_INFLIGHT` | `128` | Maximum concurrent signed relay requests on each production API replica |
 
 Stable candidates must provide `multica`, Hermes, OpenCode, Pi, the declared capabilities, and one root-owned entry per provider at `/usr/local/libexec/multica-fc-<provider>-container-log-entry`. Multica starts that fixed path as root so it can attach stdout/stderr to the FC container log stream; the entry then permanently drops to uid/gid 1000 before running the shared task runner. Existing Hermes and OpenCode runtimes created from older images remain launchable during service rollout: when the root entry is absent, the server probes and uses the fixed legacy user entry under `/usr/local/bin`. The stable publisher never accepts those legacy images as a new stable candidate because candidate validation requires the `root-log-v1` manifest and a fresh native smoke test. Each runtime's provider is chosen at creation through the `provider` field on `POST /api/runtimes/fc-e2b` or the runtime selector in the creation dialog. An FC agent may pin one model from `MULTICA_FC_E2B_OPENAI_MODELS`; agents without a pinned model use the first item. The runner writes the resolved model into the agent's own config so the agent keeps using its custom provider credentials. When a task carries `agent_identity_context_token`, the runner exchanges it once during sandbox startup and DWS refreshes the resulting login with its refresh token for the rest of the task.
+
+The relay roles are mutually exclusive. A pre-release server signs a short-lived
+assertion and injects it into only the sandbox it launched. A production server
+verifies that assertion before local authentication and forwards only daemon
+requests authenticated with the bound `mdt_` token, agent requests authenticated
+with a `mat_` token, and the exact Agent Identity credential-redeem endpoint
+bound to the original ContextToken. The assertion is removed before forwarding.
+Requests without the relay header use the original local path unchanged, so
+existing production sandbox images remain compatible. A present but invalid
+header is rejected and never retried against production data.
 
 ### Default agent arguments (`MULTICA_<PROVIDER>_ARGS`)
 
