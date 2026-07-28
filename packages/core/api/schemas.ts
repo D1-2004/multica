@@ -43,7 +43,11 @@ import type {
   User,
   WebhookDelivery,
 } from "../types";
-import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
+import type {
+  CloudRuntimeNode,
+  FCE2BStableChannel,
+  FCE2BStableRelease,
+} from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
 
 const DingTalkBindingErrorSchema = z
@@ -788,6 +792,114 @@ export const CloudRuntimeNodeSchema = z.object({
 }).loose();
 
 export const CloudRuntimeNodeListSchema = z.array(CloudRuntimeNodeSchema);
+
+export const FCE2BStableReleaseSchema = z.object({
+  id: z.string(),
+  template_id: z.string(),
+  template_build_id: z.string(),
+  template_alias: z.string(),
+  source_revision: z.string().default(""),
+  note: z.string(),
+  actor_user_id: z.string(),
+  bootstrap: z.boolean(),
+  status: z.enum([
+    "validating",
+    "developer_rollout",
+    "awaiting_rollout",
+    "rolling_out",
+    "observing",
+    "completed",
+    "paused",
+    "rolling_back",
+    "rolled_back",
+    "terminated",
+    "failed",
+  ]),
+  current_batch: z.number(),
+  target_percentage: z.number(),
+  previous_template_id: z.string(),
+  previous_template_build_id: z.string(),
+  previous_template_alias: z.string(),
+  manifest: z.record(z.string(), z.unknown()).optional(),
+  total_targets: z.number(),
+  updated_targets: z.number(),
+  failed_targets: z.number(),
+  developer_targets: z.number().default(0),
+  developer_updated_targets: z.number().default(0),
+  developer_rollout_started_at: z.string().optional(),
+  developer_rollout_completed_at: z.string().optional(),
+  rollout_started_at: z.string().optional(),
+  batch_started_at: z.string().optional(),
+  next_batch_at: z.string().optional(),
+  completed_at: z.string().optional(),
+  validation_error: z.string().optional(),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const FCE2BStableRuntimeOverviewSchema = z.object({
+  runtime_id: z.string(),
+  workspace_id: z.string(),
+  workspace_name: z.string(),
+  runtime_name: z.string(),
+  provider: z.string(),
+  status: z.string(),
+  template_channel: z.enum(["stable", "candidate"]),
+  template_alias: z.string(),
+  template_id: z.string(),
+  template_build_id: z.string(),
+  matches_current_stable: z.boolean(),
+  matches_active_release: z.boolean(),
+  active_release_target_status: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const FCE2BStableRuntimeOverviewListSchema = z.array(
+  FCE2BStableRuntimeOverviewSchema,
+);
+
+export const FCE2BStableTemplateBindingSchema = z.object({
+  template_id: z.string(),
+  template_build_id: z.string(),
+  template_alias: z.string(),
+  release_id: z.string(),
+}).loose();
+
+export const FCE2BStableChannelSchema = z.object({
+  current: FCE2BStableTemplateBindingSchema.nullable(),
+  active_release: FCE2BStableReleaseSchema.nullable(),
+  can_publish: z.boolean(),
+}).loose();
+
+export const EMPTY_FC_E2B_STABLE_RELEASE: FCE2BStableRelease = {
+  id: "",
+  template_id: "",
+  template_build_id: "",
+  template_alias: "",
+  source_revision: "",
+  note: "",
+  actor_user_id: "",
+  bootstrap: false,
+  status: "failed",
+  current_batch: 0,
+  target_percentage: 0,
+  previous_template_id: "",
+  previous_template_build_id: "",
+  previous_template_alias: "",
+  total_targets: 0,
+  updated_targets: 0,
+  failed_targets: 0,
+  developer_targets: 0,
+  developer_updated_targets: 0,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_FC_E2B_STABLE_CHANNEL: FCE2BStableChannel = {
+  current: null,
+  active_release: null,
+  can_publish: false,
+};
 
 export const EMPTY_CLOUD_RUNTIME_NODE_LIST: CloudRuntimeNode[] = [];
 

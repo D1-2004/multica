@@ -7,6 +7,7 @@ import {
   Monitor,
   Plus,
   Server,
+  ShieldCheck,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
@@ -14,6 +15,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { runtimeProfileListOptions } from "@multica/core/runtimes";
+import { useFCE2BStableChannel } from "@multica/core/runtimes";
 import { runtimeListOptions, runtimeKeys } from "@multica/core/runtimes/queries";
 import { useWSEvent } from "@multica/core/realtime";
 import {
@@ -32,6 +34,7 @@ import { AppLink } from "../../navigation";
 import { ConnectRemoteDialog } from "./connect-remote-dialog";
 import { CloudRuntimeDialog } from "./cloud-runtime-dialog";
 import { FCE2BRuntimeDialog } from "./fc-e2b-runtime-dialog";
+import { StableFCE2BReleaseDialog } from "./stable-fc-e2b-release-dialog";
 import { ProviderLogo } from "./provider-logo";
 import { buildWorkloadIndex, RuntimeList } from "./runtime-list";
 import { pendingRuntimeFromProfile } from "./pending-runtime";
@@ -76,6 +79,8 @@ export function RuntimesPage({
   const [showConnectDialog, setShowConnectDialog] = useState(false);
   const [showCloudRuntimeDialog, setShowCloudRuntimeDialog] = useState(false);
   const [showFCE2BRuntimeDialog, setShowFCE2BRuntimeDialog] = useState(false);
+  const [showStableReleaseDialog, setShowStableReleaseDialog] = useState(false);
+  const stableChannelQuery = useFCE2BStableChannel();
 
   const { data: runtimes = [], isLoading: runtimesLoading } = useQuery(
     runtimeListOptions(wsId),
@@ -156,6 +161,8 @@ export function RuntimesPage({
         onOpenCloudRuntime={() => setShowCloudRuntimeDialog(true)}
         canManageFCE2B={canManageFCE2B}
         onOpenFCE2BRuntime={() => setShowFCE2BRuntimeDialog(true)}
+        canPublishStable={stableChannelQuery.data?.can_publish === true}
+        onOpenStableRelease={() => setShowStableReleaseDialog(true)}
       />
 
       {showEmpty ? (
@@ -189,7 +196,15 @@ export function RuntimesPage({
         <CloudRuntimeDialog onClose={() => setShowCloudRuntimeDialog(false)} />
       )}
       {canManageFCE2B && showFCE2BRuntimeDialog && (
-        <FCE2BRuntimeDialog onClose={() => setShowFCE2BRuntimeDialog(false)} />
+        <FCE2BRuntimeDialog
+          canPublish={stableChannelQuery.data?.can_publish === true}
+          onClose={() => setShowFCE2BRuntimeDialog(false)}
+        />
+      )}
+      {stableChannelQuery.data?.can_publish && showStableReleaseDialog && (
+        <StableFCE2BReleaseDialog
+          onClose={() => setShowStableReleaseDialog(false)}
+        />
       )}
     </div>
   );
@@ -229,6 +244,8 @@ function PageHeaderBar({
   onOpenCloudRuntime,
   canManageFCE2B,
   onOpenFCE2BRuntime,
+  canPublishStable,
+  onOpenStableRelease,
 }: {
   totalCount: number;
   onConnectRemote: () => void;
@@ -236,6 +253,8 @@ function PageHeaderBar({
   onOpenCloudRuntime: () => void;
   canManageFCE2B: boolean;
   onOpenFCE2BRuntime: () => void;
+  canPublishStable: boolean;
+  onOpenStableRelease: () => void;
 }) {
   const { t, i18n } = useT("runtimes");
   return (
@@ -250,6 +269,13 @@ function PageHeaderBar({
       }}
       actions={
         <>
+          {canPublishStable && (
+            <CollectionPageHeaderAction
+              icon={ShieldCheck}
+              label={t(($) => $.fc_e2b_stable.action)}
+              onClick={onOpenStableRelease}
+            />
+          )}
           {canManageFCE2B && (
             <CollectionPageHeaderAction
               icon={Cloud}

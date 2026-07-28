@@ -121,6 +121,10 @@ vi.mock("@multica/core/runtimes", () => ({
       templateBuildId: stringValue("template_build_id"),
       templateName: stringValue("template_name"),
       templateStatus: stringValue("template_status"),
+      templateChannel:
+        stringValue("template_channel") === "candidate"
+          ? "candidate"
+          : "stable",
     };
   },
   isReadyFCE2BTemplate: (template: { id?: string; status?: string }) =>
@@ -131,6 +135,9 @@ vi.mock("@multica/core/runtimes", () => ({
     mockUseFCE2BTemplates();
     return mockTemplateQuery;
   },
+  useFCE2BStableChannel: () => ({
+    data: { current: null, active_release: null, can_publish: true },
+  }),
   useUpdateFCE2BRuntimeTemplate: () => ({
     mutateAsync: (...args: unknown[]) => mockUpdateFCE2BTemplate(...args),
     isPending: false,
@@ -418,6 +425,7 @@ describe("RuntimeDetail visibility section", () => {
           template_build_id: "build-current",
           template_name: "Team v1",
           template_status: "ready",
+          template_channel: "candidate",
         },
       }),
     );
@@ -525,7 +533,11 @@ describe("RuntimeDetail visibility section", () => {
       makeRuntime({
         runtime_mode: "cloud",
         provider: "hermes",
-        metadata: { kind: "fc-e2b", template_id: "tpl-current" },
+        metadata: {
+          kind: "fc-e2b",
+          template_id: "tpl-current",
+          template_channel: "candidate",
+        },
       }),
     );
     fireEvent.click(
@@ -553,7 +565,11 @@ describe("RuntimeDetail visibility section", () => {
       makeRuntime({
         runtime_mode: "cloud",
         provider: "hermes",
-        metadata: { kind: "fc-e2b", template_id: "tpl-current" },
+        metadata: {
+          kind: "fc-e2b",
+          template_id: "tpl-current",
+          template_channel: "candidate",
+        },
       }),
     );
     fireEvent.click(
@@ -586,7 +602,11 @@ describe("RuntimeDetail visibility section", () => {
       makeRuntime({
         runtime_mode: "cloud",
         provider: "hermes",
-        metadata: { kind: "fc-e2b", template_id: "tpl-current" },
+        metadata: {
+          kind: "fc-e2b",
+          template_id: "tpl-current",
+          template_channel: "candidate",
+        },
       }),
     );
     fireEvent.click(

@@ -149,6 +149,31 @@ func TestFCE2BRuntimeProvider(t *testing.T) {
 	}
 }
 
+func TestLegacyFCE2BRuntimeRemainsStableManagedAndLaunchable(t *testing.T) {
+	runtime := db.AgentRuntime{
+		RuntimeMode: "cloud",
+		Provider:    "hermes",
+		Metadata: []byte(`{
+			"kind":"fc-e2b",
+			"template":"multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa",
+			"template_id":"legacy-template",
+			"runner":"multica-fc-hermes-runner"
+		}`),
+	}
+	if channel := FCE2BRuntimeTemplateChannel(runtime); channel != "stable" {
+		t.Fatalf("legacy runtime channel = %q, want stable", channel)
+	}
+	launch, err := fcE2BRunnerLaunchForRuntime(runtime)
+	if err != nil {
+		t.Fatalf("legacy runtime launch contract rejected: %v", err)
+	}
+	if launch.Mode != fcE2BRunnerLaunchLegacyUser ||
+		launch.Command != "/usr/local/bin/multica-fc-hermes-runner" ||
+		launch.Home != "/home/user" {
+		t.Fatalf("legacy runtime launch = %#v", launch)
+	}
+}
+
 func TestFCE2BRunnerLaunchForRuntime(t *testing.T) {
 	legacyHermes := fcE2BRunnerLaunch{
 		Mode:    fcE2BRunnerLaunchLegacyUser,
@@ -365,6 +390,9 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 		"hermes": "0.19.0", "opencode": "v1.18.4", "pi": "0.80.10", "dws": "v1.0.53-beta.4",
 	}; !reflect.DeepEqual(got[0].ComponentVersions, want) {
 		t.Fatalf("component versions = %#v, want %#v", got[0].ComponentVersions, want)
+	}
+	if got[0].SourceRevision != "9a6bfa" {
+		t.Fatalf("source revision = %q, want 9a6bfa", got[0].SourceRevision)
 	}
 }
 
