@@ -260,12 +260,37 @@
     "template_updated": "更新于 {{time}}",
     "name_placeholder": "例如 FC-Hermes-DWS",
     "provider_hint": "该运行时使用的 agent CLI，需已包含在所选模板中。",
+    "channel_stable": "稳定版本",
+    "channel_candidate": "候选测试",
+    "stable_uninitialized": "稳定通道尚未初始化，暂时不能创建稳定运行时。",
+    "candidate_hint": "候选运行时不会跟随稳定版本自动升级，仅用于发布前验证。",
     "fields": {
+      "channel": "模板通道",
       "template": "模板",
       "provider": "运行时",
       "name": "名称",
       "visibility": "可见性"
     }
+  },
+  "fc_e2b_stable": {
+    "action": "稳定版本",
+    "title": "FC/E2B 稳定版本",
+    "description": "验证一个不可变候选模板，并在 24 小时内按 5%、25%、50%、100% 逐步更新全部稳定云沙箱运行时。",
+    "template": "候选模板",
+    "git_commit": "Runtime Git 提交",
+    "acr_digest": "ACR 镜像摘要",
+    "note": "发布说明",
+    "bootstrap_notice": "稳定通道尚未初始化。本次只会验证并登记当前稳定模板，不会切换任何运行时。",
+    "progress": "已更新 {{updated}} / {{total}}",
+    "initialize": "初始化稳定通道",
+    "publish": "发布稳定版本",
+    "pause": "暂停",
+    "resume": "继续",
+    "rollback": "回滚",
+    "close": "关闭",
+    "toast_submitted": "稳定版本发布已提交",
+    "toast_updated": "发布状态已更新",
+    "toast_failed": "稳定版本操作失败"
   },
   "fc_e2b_template_update": {
     "title": "修改云沙箱镜像",

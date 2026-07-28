@@ -276,23 +276,31 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	cfSigner := auth.NewCloudFrontSignerFromEnv()
 	origins := allowedOrigins()
+	stableRuntimePublishers, err := parseStableRuntimePublisherUserIDs(
+		os.Getenv("MULTICA_FC_E2B_STABLE_PUBLISHER_USER_IDS"),
+	)
+	if err != nil {
+		slog.Error("FC/E2B stable publisher configuration failed", "error", err)
+		os.Exit(1)
+	}
 
 	signupConfig := handler.Config{
-		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
-		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
-		AllowedEmailDomains:      splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
-		DisableWorkspaceCreation: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
-		PublicURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
-		TrustedProxies:           parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
-		CloudRuntimeFleetURL:     cloudRuntimeFleetURLFromEnv(),
-		CloudRuntimeFleetTimeout: envDuration("MULTICA_CLOUD_FLEET_TIMEOUT", 35*time.Second),
-		FCE2B:                    service.FCE2BConfigFromEnv(),
-		AttachmentDownloadMode:   os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
-		AttachmentDownloadURLTTL: envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
-		AttachmentFrameAncestors: origins,
-		LLMAPIKey:                strings.TrimSpace(os.Getenv("MULTICA_LLM_API_KEY")),
-		LLMBaseURL:               strings.TrimSpace(os.Getenv("MULTICA_LLM_BASE_URL")),
-		LLMDefaultModel:          strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
+		AllowSignup:                   os.Getenv("ALLOW_SIGNUP") != "false",
+		AllowedEmails:                 splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
+		AllowedEmailDomains:           splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
+		StableRuntimePublisherUserIDs: stableRuntimePublishers,
+		DisableWorkspaceCreation:      os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+		PublicURL:                     strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+		TrustedProxies:                parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
+		CloudRuntimeFleetURL:          cloudRuntimeFleetURLFromEnv(),
+		CloudRuntimeFleetTimeout:      envDuration("MULTICA_CLOUD_FLEET_TIMEOUT", 35*time.Second),
+		FCE2B:                         service.FCE2BConfigFromEnv(),
+		AttachmentDownloadMode:        os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
+		AttachmentDownloadURLTTL:      envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
+		AttachmentFrameAncestors:      origins,
+		LLMAPIKey:                     strings.TrimSpace(os.Getenv("MULTICA_LLM_API_KEY")),
+		LLMBaseURL:                    strings.TrimSpace(os.Getenv("MULTICA_LLM_BASE_URL")),
+		LLMDefaultModel:               strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	if managed, managedErr := managedagent.New(queries, pool, managedagent.ConfigFromEnv(), slog.Default()); managedErr != nil {
@@ -1312,6 +1320,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
+		r.Get("/api/runtimes/fc-e2b/stable-channel", h.GetFCE2BStableChannel)
+		r.Post("/api/runtimes/fc-e2b/stable-releases", h.CreateFCE2BStableRelease)
+		r.Get("/api/runtimes/fc-e2b/stable-releases/{releaseId}", h.GetFCE2BStableRelease)
+		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/pause", h.PauseFCE2BStableRelease)
+		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/resume", h.ResumeFCE2BStableRelease)
+		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/rollback", h.RollbackFCE2BStableRelease)
 		r.With(handler.RequireDingTalkHumanActor).Get("/api/fde/onboarding", h.GetFDEOnboarding)
 		r.With(handler.RequireDingTalkHumanActor).Post("/api/fde/onboarding", h.ProvisionFDEOnboarding)
 
@@ -2035,6 +2049,23 @@ func splitAndTrim(s string) []string {
 		}
 	}
 	return res
+}
+
+func parseStableRuntimePublisherUserIDs(raw string) (map[string]struct{}, error) {
+	values := splitAndTrim(raw)
+	publishers := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		id, err := util.ParseUUID(value)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"invalid MULTICA_FC_E2B_STABLE_PUBLISHER_USER_IDS entry %q: %w",
+				value,
+				err,
+			)
+		}
+		publishers[util.UUIDToString(id)] = struct{}{}
+	}
+	return publishers, nil
 }
 
 func cloudRuntimeFleetURLFromEnv() string {

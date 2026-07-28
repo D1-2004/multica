@@ -168,6 +168,9 @@ import type {
   CreateFCE2BRuntimeRequest,
   CreateCloudRuntimeNodeRequest,
   FCE2BTemplate,
+  FCE2BStableChannel,
+  FCE2BStableRelease,
+  CreateFCE2BStableReleaseRequest,
   ListCloudRuntimeNodesParams,
   UpdateFCE2BRuntimeTemplateRequest,
 } from "../runtimes/cloud-runtime";
@@ -185,6 +188,10 @@ import {
   IssueTriggerPreviewSchema,
   CloudRuntimeNodeListSchema,
   CloudRuntimeNodeSchema,
+  FCE2BStableChannelSchema,
+  FCE2BStableReleaseSchema,
+  EMPTY_FC_E2B_STABLE_CHANNEL,
+  EMPTY_FC_E2B_STABLE_RELEASE,
   AddDingTalkGroupMembersResponseSchema,
   AddDingTalkWorkspaceMembersResponseSchema,
   DingTalkUserSearchResponseSchema,
@@ -1026,6 +1033,61 @@ export class ApiClient {
 
   async listFCE2BTemplates(): Promise<FCE2BTemplate[]> {
     return this.fetch("/api/runtimes/fc-e2b/templates");
+  }
+
+  async getFCE2BStableChannel(): Promise<FCE2BStableChannel> {
+    const raw = await this.fetch<unknown>("/api/runtimes/fc-e2b/stable-channel");
+    return parseWithFallback(
+      raw,
+      FCE2BStableChannelSchema,
+      EMPTY_FC_E2B_STABLE_CHANNEL,
+      { endpoint: "GET /api/runtimes/fc-e2b/stable-channel" },
+    );
+  }
+
+  async createFCE2BStableRelease(
+    data: CreateFCE2BStableReleaseRequest,
+    idempotencyKey: string,
+  ): Promise<FCE2BStableRelease> {
+    const raw = await this.fetch<unknown>("/api/runtimes/fc-e2b/stable-releases", {
+      method: "POST",
+      body: JSON.stringify(data),
+      headers: { "Idempotency-Key": idempotencyKey },
+    });
+    return parseWithFallback(
+      raw,
+      FCE2BStableReleaseSchema,
+      EMPTY_FC_E2B_STABLE_RELEASE,
+      { endpoint: "POST /api/runtimes/fc-e2b/stable-releases" },
+    );
+  }
+
+  async getFCE2BStableRelease(releaseId: string): Promise<FCE2BStableRelease> {
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/fc-e2b/stable-releases/${releaseId}`,
+    );
+    return parseWithFallback(
+      raw,
+      FCE2BStableReleaseSchema,
+      EMPTY_FC_E2B_STABLE_RELEASE,
+      { endpoint: "GET /api/runtimes/fc-e2b/stable-releases/:id" },
+    );
+  }
+
+  async mutateFCE2BStableRelease(
+    releaseId: string,
+    action: "pause" | "resume" | "rollback",
+  ): Promise<FCE2BStableRelease> {
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/fc-e2b/stable-releases/${releaseId}/${action}`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      FCE2BStableReleaseSchema,
+      EMPTY_FC_E2B_STABLE_RELEASE,
+      { endpoint: `POST /api/runtimes/fc-e2b/stable-releases/:id/${action}` },
+    );
   }
 
   async updateFCE2BRuntimeTemplate(

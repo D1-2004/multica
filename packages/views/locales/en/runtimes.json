@@ -272,12 +272,37 @@
     "template_updated": "Updated {{time}}",
     "name_placeholder": "For example FC-Hermes-DWS",
     "provider_hint": "The agent CLI this runtime runs. The selected template must include it.",
+    "channel_stable": "Stable",
+    "channel_candidate": "Candidate test",
+    "stable_uninitialized": "The stable channel is not initialized yet.",
+    "candidate_hint": "Candidate runtimes do not follow stable upgrades and are only for pre-release validation.",
     "fields": {
+      "channel": "Template channel",
       "template": "Template",
       "provider": "Runtime",
       "name": "Name",
       "visibility": "Visibility"
     }
+  },
+  "fc_e2b_stable": {
+    "action": "Stable version",
+    "title": "FC/E2B stable version",
+    "description": "Verify an immutable candidate and update all stable cloud sandbox runtimes over 24 hours at 5%, 25%, 50%, and 100%.",
+    "template": "Candidate template",
+    "git_commit": "Runtime Git commit",
+    "acr_digest": "ACR image digest",
+    "note": "Release note",
+    "bootstrap_notice": "The stable channel is not initialized. This validates and records the current stable template without changing runtimes.",
+    "progress": "Updated {{updated}} / {{total}}",
+    "initialize": "Initialize stable channel",
+    "publish": "Publish stable version",
+    "pause": "Pause",
+    "resume": "Resume",
+    "rollback": "Rollback",
+    "close": "Close",
+    "toast_submitted": "Stable release submitted",
+    "toast_updated": "Release state updated",
+    "toast_failed": "Stable release action failed"
   },
   "fc_e2b_template_update": {
     "title": "Change cloud sandbox image",

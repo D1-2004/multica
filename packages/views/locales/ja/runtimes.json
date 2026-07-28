@@ -260,12 +260,37 @@
     "template_updated": "Updated {{time}}",
     "name_placeholder": "For example FC-Hermes-DWS",
     "provider_hint": "このランタイムが実行するエージェント CLI。選択したテンプレートに含まれている必要があります。",
+    "channel_stable": "安定版",
+    "channel_candidate": "候補テスト",
+    "stable_uninitialized": "安定版チャネルはまだ初期化されていません。",
+    "candidate_hint": "候補ランタイムは安定版の自動更新に追従せず、リリース前の検証専用です。",
     "fields": {
+      "channel": "テンプレートチャネル",
       "template": "Template",
       "provider": "ランタイム",
       "name": "名前",
       "visibility": "可視性"
     }
+  },
+  "fc_e2b_stable": {
+    "action": "安定版",
+    "title": "FC/E2B 安定版",
+    "description": "不変の候補テンプレートを検証し、24 時間で 5%、25%、50%、100% の順に安定版ランタイムを更新します。",
+    "template": "候補テンプレート",
+    "git_commit": "Runtime Git コミット",
+    "acr_digest": "ACR イメージダイジェスト",
+    "note": "リリースノート",
+    "bootstrap_notice": "安定版チャネルは未初期化です。今回はランタイムを変更せず、現在の安定版を検証して登録します。",
+    "progress": "更新済み {{updated}} / {{total}}",
+    "initialize": "安定版チャネルを初期化",
+    "publish": "安定版を公開",
+    "pause": "一時停止",
+    "resume": "再開",
+    "rollback": "ロールバック",
+    "close": "閉じる",
+    "toast_submitted": "安定版リリースを送信しました",
+    "toast_updated": "リリース状態を更新しました",
+    "toast_failed": "安定版リリースの操作に失敗しました"
   },
   "fc_e2b_template_update": {
     "title": "クラウドサンドボックスイメージを変更",

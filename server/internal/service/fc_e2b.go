@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -536,6 +537,25 @@ func FCE2BRuntimeHasCapability(rt db.AgentRuntime, capability string) bool {
 	return false
 }
 
+// FCE2BRuntimeTemplateChannel treats rows created before stable-channel
+// metadata existed as stable-managed.
+func FCE2BRuntimeTemplateChannel(rt db.AgentRuntime) string {
+	if !IsFCE2BRuntime(rt) {
+		return ""
+	}
+	var metadata struct {
+		TemplateChannel string `json:"template_channel"`
+	}
+	if json.Unmarshal(rt.Metadata, &metadata) != nil {
+		return ""
+	}
+	channel := strings.ToLower(strings.TrimSpace(metadata.TemplateChannel))
+	if channel == "" {
+		return "stable"
+	}
+	return channel
+}
+
 type CommandRunner interface {
 	Run(ctx context.Context, name string, args []string, env []string) (string, error)
 }
@@ -543,6 +563,7 @@ type CommandRunner interface {
 type FCE2BTemplate struct {
 	ID                string            `json:"id,omitempty"`
 	BuildID           string            `json:"build_id,omitempty"`
+	SourceRevision    string            `json:"source_revision,omitempty"`
 	Name              string            `json:"name,omitempty"`
 	Template          string            `json:"template"`
 	Status            string            `json:"status,omitempty"`
@@ -702,6 +723,7 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 		"dws":      "v" + dwsVersion + "-beta." + matches[6],
 	}
 	template.RunnerProtocol = string(fcE2BRunnerLaunchRootLog)
+	template.SourceRevision = matches[8]
 	return true, nil
 }
 
@@ -962,6 +984,32 @@ func (l *FCE2BLauncher) SetPool(pool *pgxpool.Pool) {
 // The exclusive runtime advisory lock conflicts with LaunchTask's shared lock,
 // so the returned runtime is the cutover boundary for later launches.
 func (l *FCE2BLauncher) UpdateRuntimeTemplate(ctx context.Context, runtimeID pgtype.UUID, selected FCE2BTemplate) (FCE2BRuntimeTemplateUpdateResult, error) {
+	return l.updateRuntimeTemplate(ctx, runtimeID, selected, nil)
+}
+
+// UpdateRuntimeTemplateForStableRelease uses the same atomic rotation boundary
+// as an ordinary template update and records which stable release owns the
+// resulting binding.
+func (l *FCE2BLauncher) UpdateRuntimeTemplateForStableRelease(
+	ctx context.Context,
+	runtimeID pgtype.UUID,
+	selected FCE2BTemplate,
+	releaseID string,
+	batchIndex int,
+) (FCE2BRuntimeTemplateUpdateResult, error) {
+	return l.updateRuntimeTemplate(ctx, runtimeID, selected, map[string]any{
+		"template_channel":  "stable",
+		"stable_release_id": strings.TrimSpace(releaseID),
+		"stable_batch":      batchIndex,
+	})
+}
+
+func (l *FCE2BLauncher) updateRuntimeTemplate(
+	ctx context.Context,
+	runtimeID pgtype.UUID,
+	selected FCE2BTemplate,
+	managedMetadata map[string]any,
+) (FCE2BRuntimeTemplateUpdateResult, error) {
 	if l == nil || l.Queries == nil || l.Pool == nil {
 		return FCE2BRuntimeTemplateUpdateResult{}, errors.New("FC/E2B runtime coordination requires a database pool")
 	}
@@ -1026,7 +1074,14 @@ func (l *FCE2BLauncher) UpdateRuntimeTemplate(ctx context.Context, runtimeID pgt
 		PreviousTemplateID:      strings.TrimSpace(previousTemplateID),
 		PreviousTemplateBuildID: strings.TrimSpace(previousTemplateBuildID),
 	}
-	if result.PreviousTemplateID == selected.ID && result.PreviousTemplateBuildID == selected.BuildID {
+	managedMetadataChanged := false
+	for key, value := range managedMetadata {
+		if metadata[key] != value {
+			managedMetadataChanged = true
+			break
+		}
+	}
+	if result.PreviousTemplateID == selected.ID && result.PreviousTemplateBuildID == selected.BuildID && !managedMetadataChanged {
 		if err := tx.Commit(ctx); err != nil {
 			return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("commit idempotent FC/E2B template update: %w", err)
 		}
@@ -1043,6 +1098,9 @@ func (l *FCE2BLauncher) UpdateRuntimeTemplate(ctx context.Context, runtimeID pgt
 	metadata["component_versions"] = selected.ComponentVersions
 	metadata["runner_protocol"] = selected.RunnerProtocol
 	metadata["runner"] = FCE2BRunnerCommandForProvider(provider)
+	for key, value := range managedMetadata {
+		metadata[key] = value
+	}
 	encoded, err := json.Marshal(metadata)
 	if err != nil {
 		return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("encode FC/E2B runtime metadata: %w", err)
@@ -1064,6 +1122,80 @@ func (l *FCE2BLauncher) UpdateRuntimeTemplate(ctx context.Context, runtimeID pgt
 	result.Runtime = updated
 	result.InvalidatedSandboxCount = invalidated
 	result.Changed = true
+	return result, nil
+}
+
+// VerifyStableTemplate rebuilds trust in a catalog entry from a fresh native
+// sandbox. A READY catalog status is insufficient because the smoke test runs
+// after the E2B build becomes ready.
+func (l *FCE2BLauncher) VerifyStableTemplate(ctx context.Context, selected FCE2BTemplate) (map[string]any, error) {
+	if l == nil {
+		return nil, errors.New("FC/E2B launcher is unavailable")
+	}
+	if !IsFCE2BTemplateReady(selected) || !IsFCE2BTemplatePublished(selected) {
+		return nil, errors.New("FC/E2B template is not ready with a verified manifest alias")
+	}
+	sandboxID, err := l.createSandbox(ctx, selected.Template)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_, killErr := l.runE2BCommand(context.Background(), []string{"sandbox", "kill", sandboxID})
+		if killErr != nil {
+			slog.Warn("failed to kill FC/E2B stable validation sandbox", "sandbox_id", sandboxID, "error", killErr)
+		}
+	}()
+	if err := l.waitSandboxReady(ctx, sandboxID); err != nil {
+		return nil, err
+	}
+	if _, err := l.runE2BCommand(ctx, []string{
+		"sandbox", "exec",
+		"--user", "user",
+		sandboxID,
+		"--",
+		"/usr/local/bin/runtime-smoke-test",
+	}); err != nil {
+		return nil, fmt.Errorf("runtime-smoke-test failed: %w", err)
+	}
+	out, err := l.runE2BCommand(ctx, []string{
+		"sandbox", "exec",
+		"--user", "user",
+		sandboxID,
+		"--",
+		"/bin/cat", "/usr/local/share/multica/runtime-manifest.json",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read runtime manifest: %w", err)
+	}
+	var manifest struct {
+		SchemaVersion     int               `json:"schema_version"`
+		Providers         []string          `json:"providers"`
+		Capabilities      []string          `json:"capabilities"`
+		ComponentVersions map[string]string `json:"component_versions"`
+		RunnerProtocol    string            `json:"runner_protocol"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &manifest); err != nil {
+		return nil, fmt.Errorf("decode runtime manifest: %w", err)
+	}
+	if manifest.SchemaVersion != 1 ||
+		!slices.Equal(manifest.Providers, []string{"hermes", "opencode", "pi"}) ||
+		!slices.Equal(manifest.Capabilities, []string{"dws", "dws.im_event", "mcp"}) ||
+		manifest.RunnerProtocol != string(fcE2BRunnerLaunchRootLog) {
+		return nil, errors.New("runtime manifest does not satisfy the stable channel contract")
+	}
+	for component, expected := range selected.ComponentVersions {
+		if manifest.ComponentVersions[component] != expected {
+			return nil, fmt.Errorf("runtime manifest component %s does not match catalog alias", component)
+		}
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("encode verified runtime manifest: %w", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return nil, fmt.Errorf("normalize verified runtime manifest: %w", err)
+	}
 	return result, nil
 }
 
