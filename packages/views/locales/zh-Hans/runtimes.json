@@ -317,6 +317,80 @@
     "toast_updated": "发布状态已更新",
     "toast_failed": "稳定版本操作失败"
   },
+  "fc_e2b_stable_overview": {
+    "action": "全空间总览",
+    "title": "全空间 Runtime 总览",
+    "heading": "全空间 Runtime 总览",
+    "description": "集中查看所有空间的 FC/E2B Runtime、模板版本、运行状态及稳定通道收敛情况。",
+    "last_updated": "更新于 {{time}}",
+    "refresh": "刷新",
+    "publish_action": "稳定版本",
+    "load_failed_title": "无法加载 Runtime 总览",
+    "load_failed_description": "稳定通道或 Runtime 数据加载失败。",
+    "forbidden_title": "没有查看权限",
+    "forbidden_description": "只有稳定版本开发者白名单中的用户可以查看全空间 Runtime 总览。",
+    "retry": "重试",
+    "metrics": {
+      "total": "全部 Runtime",
+      "workspaces": "{{count}} 个空间",
+      "online": "在线",
+      "current": "最新稳定版",
+      "active": "本次候选",
+      "outdated": "待更新",
+      "candidate": "候选通道"
+    },
+    "current_stable_title": "当前线上稳定版本",
+    "current_stable_description": "稳定通道已完成并对所有稳定 Runtime 生效的模板指针。",
+    "stable_coverage": "稳定 Runtime 收敛率",
+    "current_stable_empty": "稳定通道尚未初始化。",
+    "active_release_title": "当前发布进度",
+    "active_release_description": "开发者推送或 24 小时滚动发布的实时状态。",
+    "next_batch": "下一批：{{time}}",
+    "no_active_release": "当前没有进行中的稳定版本发布。",
+    "templates_title": "模板版本分布",
+    "templates_description": "当前共使用 {{count}} 个模板版本，点击版本可筛选 Runtime。",
+    "empty": "暂无模板分布数据。",
+    "template_scope": "在线 {{online}} · {{workspaces}} 个空间",
+    "runtime_list_title": "Runtime 明细",
+    "showing": "显示 {{shown}} / {{total}} 个 Runtime",
+    "clear_filters": "清除筛选",
+    "search_placeholder": "搜索空间、Runtime、模板或 build ID...",
+    "filters": {
+      "all_workspaces": "全部空间",
+      "all_providers": "全部运行时",
+      "all_health": "全部状态",
+      "all_alignment": "全部版本状态"
+    },
+    "alignment": {
+      "current": "最新稳定版",
+      "active": "本次候选",
+      "outdated": "待更新",
+      "candidate": "候选通道"
+    },
+    "channel": {
+      "stable": "稳定",
+      "candidate": "候选"
+    },
+    "table": {
+      "runtime": "空间 / Runtime",
+      "provider": "运行时",
+      "health": "状态",
+      "channel": "通道",
+      "template": "模板版本",
+      "alignment": "版本状态",
+      "updated": "更新时间"
+    },
+    "target_status": {
+      "pending": "等待本批更新",
+      "updating": "正在更新",
+      "updated": "本批已更新",
+      "failed": "更新失败",
+      "rolling_back": "正在回滚",
+      "rolled_back": "已回滚"
+    },
+    "no_matches": "没有符合条件的 Runtime",
+    "no_matches_hint": "调整搜索词或清除筛选条件后重试。"
+  },
   "fc_e2b_template_update": {
     "title": "修改云沙箱镜像",
     "description": "将这个运行时切换到另一个已就绪的 FC/E2B 模板，不修改执行引擎和智能体绑定。",

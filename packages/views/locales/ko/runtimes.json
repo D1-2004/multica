@@ -317,6 +317,80 @@
     "toast_updated": "릴리스 상태를 업데이트했습니다",
     "toast_failed": "안정 버전 작업에 실패했습니다"
   },
+  "fc_e2b_stable_overview": {
+    "action": "전체 워크스페이스 개요",
+    "title": "전체 워크스페이스 Runtime 개요",
+    "heading": "전체 워크스페이스 Runtime 개요",
+    "description": "모든 워크스페이스의 FC/E2B Runtime, 템플릿 버전, 상태 및 안정 채널 수렴 현황을 한곳에서 확인합니다.",
+    "last_updated": "{{time}}에 업데이트",
+    "refresh": "새로고침",
+    "publish_action": "안정 버전",
+    "load_failed_title": "Runtime 개요를 불러올 수 없습니다",
+    "load_failed_description": "안정 채널 또는 Runtime 데이터를 불러오지 못했습니다.",
+    "forbidden_title": "보기 권한이 없습니다",
+    "forbidden_description": "안정 버전 개발자 허용 목록의 사용자만 전체 워크스페이스 Runtime 개요를 볼 수 있습니다.",
+    "retry": "다시 시도",
+    "metrics": {
+      "total": "전체 Runtime",
+      "workspaces": "{{count}}개 워크스페이스",
+      "online": "온라인",
+      "current": "최신 안정 버전",
+      "active": "현재 후보",
+      "outdated": "업데이트 필요",
+      "candidate": "후보 채널"
+    },
+    "current_stable_title": "현재 운영 안정 버전",
+    "current_stable_description": "완료된 안정 채널에서 안정 Runtime에 적용되는 템플릿입니다.",
+    "stable_coverage": "안정 Runtime 수렴률",
+    "current_stable_empty": "안정 채널이 아직 초기화되지 않았습니다.",
+    "active_release_title": "현재 릴리스 진행률",
+    "active_release_description": "개발자 업데이트 또는 24시간 롤아웃의 실시간 상태입니다.",
+    "next_batch": "다음 배치: {{time}}",
+    "no_active_release": "진행 중인 안정 버전 릴리스가 없습니다.",
+    "templates_title": "템플릿 버전 분포",
+    "templates_description": "{{count}}개 템플릿 버전을 사용 중입니다. 선택하면 Runtime을 필터링합니다.",
+    "empty": "템플릿 분포 데이터가 없습니다.",
+    "template_scope": "온라인 {{online}} · {{workspaces}}개 워크스페이스",
+    "runtime_list_title": "Runtime 상세",
+    "showing": "전체 {{total}}개 중 {{shown}}개 표시",
+    "clear_filters": "필터 지우기",
+    "search_placeholder": "워크스페이스, Runtime, 템플릿 또는 build ID 검색...",
+    "filters": {
+      "all_workspaces": "모든 워크스페이스",
+      "all_providers": "모든 Runtime",
+      "all_health": "모든 상태",
+      "all_alignment": "모든 버전 상태"
+    },
+    "alignment": {
+      "current": "최신 안정 버전",
+      "active": "현재 후보",
+      "outdated": "업데이트 필요",
+      "candidate": "후보 채널"
+    },
+    "channel": {
+      "stable": "안정",
+      "candidate": "후보"
+    },
+    "table": {
+      "runtime": "워크스페이스 / Runtime",
+      "provider": "Runtime",
+      "health": "상태",
+      "channel": "채널",
+      "template": "템플릿 버전",
+      "alignment": "버전 상태",
+      "updated": "업데이트"
+    },
+    "target_status": {
+      "pending": "배치 대기",
+      "updating": "업데이트 중",
+      "updated": "배치 업데이트 완료",
+      "failed": "업데이트 실패",
+      "rolling_back": "롤백 중",
+      "rolled_back": "롤백 완료"
+    },
+    "no_matches": "조건에 맞는 Runtime이 없습니다",
+    "no_matches_hint": "검색어를 변경하거나 필터를 지우고 다시 시도하세요."
+  },
   "fc_e2b_template_update": {
     "title": "클라우드 샌드박스 이미지 변경",
     "description": "실행 엔진과 에이전트 연결을 바꾸지 않고 이 런타임을 준비된 다른 FC/E2B 템플릿으로 전환합니다.",

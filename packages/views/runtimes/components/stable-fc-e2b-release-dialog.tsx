@@ -9,7 +9,6 @@ import {
   type FCE2BTemplate,
   useCreateFCE2BStableRelease,
   useFCE2BStableChannel,
-  useFCE2BStableRuntimes,
   useFCE2BTemplates,
   useMutateFCE2BStableRelease,
   type FCE2BStableReleaseAction,
@@ -52,9 +51,6 @@ export function StableFCE2BReleaseDialog({
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();
   const channelQuery = useFCE2BStableChannel();
-  const stableRuntimesQuery = useFCE2BStableRuntimes(
-    channelQuery.data?.can_publish === true,
-  );
   const templatesQuery = useFCE2BTemplates(wsId);
   const createRelease = useCreateFCE2BStableRelease();
   const pauseRelease = useMutateFCE2BStableRelease("pause");
@@ -68,13 +64,6 @@ export function StableFCE2BReleaseDialog({
   const current = channelQuery.data?.current ?? null;
   const bootstrap = current == null;
   const templates = (templatesQuery.data ?? []).filter(isReadyFCE2BTemplate);
-  const stableRuntimes = stableRuntimesQuery.data ?? [];
-  const currentStableRuntimes = stableRuntimes.filter(
-    (runtime) => runtime.matches_current_stable,
-  ).length;
-  const activeCandidateRuntimes = stableRuntimes.filter(
-    (runtime) => runtime.matches_active_release,
-  ).length;
   const developerProgress =
     active?.status === "developer_rollout" ||
     active?.status === "awaiting_rollout";
@@ -385,93 +374,6 @@ export function StableFCE2BReleaseDialog({
             </div>
           </form>
         )}
-
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Label className="text-xs">
-              {t(($) => $.fc_e2b_stable.runtime_overview)}
-            </Label>
-            <span className="text-xs text-muted-foreground">
-              {t(($) => $.fc_e2b_stable.runtime_summary, {
-                current: currentStableRuntimes,
-                active: activeCandidateRuntimes,
-                total: stableRuntimes.length,
-              })}
-            </span>
-          </div>
-          <div className="max-h-52 overflow-y-auto rounded-md border">
-            {stableRuntimesQuery.isLoading && (
-              <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {t(($) => $.fc_e2b_stable.runtime_loading)}
-              </div>
-            )}
-            {stableRuntimesQuery.isError && (
-              <div className="p-3 text-xs text-destructive">
-                {stableRuntimesQuery.error instanceof Error
-                  ? stableRuntimesQuery.error.message
-                  : t(($) => $.fc_e2b_stable.runtime_failed)}
-              </div>
-            )}
-            {!stableRuntimesQuery.isLoading &&
-              !stableRuntimesQuery.isError &&
-              stableRuntimes.length === 0 && (
-                <div className="p-3 text-xs text-muted-foreground">
-                  {t(($) => $.fc_e2b_stable.runtime_empty)}
-                </div>
-              )}
-            {stableRuntimes.map((runtime) => (
-              <div
-                key={runtime.runtime_id}
-                className="space-y-1 border-b p-3 text-xs last:border-b-0"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="min-w-0 truncate font-medium">
-                    {runtime.workspace_name} / {runtime.runtime_name}
-                  </span>
-                  <span
-                    className={
-                      runtime.status === "online"
-                        ? "shrink-0 text-emerald-600"
-                        : "shrink-0 text-muted-foreground"
-                    }
-                  >
-                    {runtime.status === "online"
-                      ? t(($) => $.fc_e2b_stable.runtime_online)
-                      : t(($) => $.fc_e2b_stable.runtime_offline)}
-                  </span>
-                </div>
-                <p
-                  className="truncate text-muted-foreground"
-                  title={`${runtime.template_alias} · ${runtime.template_id} · ${runtime.template_build_id}`}
-                >
-                  {runtime.provider} · {runtime.template_alias || "-"} ·{" "}
-                  {runtime.template_build_id || "-"}
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {runtime.matches_current_stable && (
-                    <span className="rounded bg-primary/10 px-2 py-0.5 text-primary">
-                      {t(($) => $.fc_e2b_stable.runtime_current)}
-                    </span>
-                  )}
-                  {runtime.matches_active_release && (
-                    <span className="rounded bg-amber-500/10 px-2 py-0.5 text-amber-700 dark:text-amber-400">
-                      {t(($) => $.fc_e2b_stable.runtime_active)}
-                    </span>
-                  )}
-                  {!runtime.matches_current_stable &&
-                    !runtime.matches_active_release && (
-                      <span className="rounded bg-muted px-2 py-0.5 text-muted-foreground">
-                        {runtime.template_channel === "candidate"
-                          ? t(($) => $.fc_e2b_stable.runtime_candidate)
-                          : t(($) => $.fc_e2b_stable.runtime_outdated)}
-                      </span>
-                    )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>

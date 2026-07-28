@@ -18,6 +18,7 @@ describe("paths.workspace(slug)", () => {
     expect(ws.inbox()).toBe("/acme/inbox");
     expect(ws.myIssues()).toBe("/acme/my-issues");
     expect(ws.runtimes()).toBe("/acme/runtimes");
+    expect(ws.stableRuntimes()).toBe("/acme/runtimes/stable");
     expect(ws.runtimeSettings("machine/runtime", "runtime one")).toBe(
       "/acme/runtimes/machine%2Fruntime/runtime/runtime%20one",
     );

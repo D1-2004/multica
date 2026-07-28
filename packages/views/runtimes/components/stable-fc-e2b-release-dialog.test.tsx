@@ -30,12 +30,6 @@ const mockChannelQuery = vi.hoisted(() => ({
     can_publish: true,
   },
 }));
-const mockStableRuntimesQuery = vi.hoisted(() => ({
-  data: [] as Array<Record<string, unknown>>,
-  isLoading: false,
-  isError: false,
-  error: null as Error | null,
-}));
 const mockTemplatesQuery = vi.hoisted(() => ({
   data: [] as Array<{
     id: string;
@@ -62,9 +56,8 @@ vi.mock("@multica/core/runtimes", () => ({
       template.id?.trim() &&
         template.build_id?.trim() &&
         template.status?.toLowerCase() === "ready",
-    ),
+  ),
   useFCE2BStableChannel: () => mockChannelQuery,
-  useFCE2BStableRuntimes: () => mockStableRuntimesQuery,
   useFCE2BTemplates: () => mockTemplatesQuery,
   useCreateFCE2BStableRelease: () => ({
     mutateAsync: (...args: unknown[]) => mockCreateRelease(...args),
@@ -117,10 +110,6 @@ describe("StableFCE2BReleaseDialog", () => {
     );
     mockChannelQuery.data.current = null;
     mockChannelQuery.data.active_release = null;
-    mockStableRuntimesQuery.data = [];
-    mockStableRuntimesQuery.isLoading = false;
-    mockStableRuntimesQuery.isError = false;
-    mockStableRuntimesQuery.error = null;
     mockTemplatesQuery.data = [
       template("template-current", "build-current", "Current image", "2026-07-28T04:30:00Z"),
     ];
@@ -134,6 +123,9 @@ describe("StableFCE2BReleaseDialog", () => {
 
     expect(screen.queryByText("Runtime Git commit")).not.toBeInTheDocument();
     expect(screen.queryByText("ACR image digest")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Runtime status across all workspaces"),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Release note (optional)")).toBeInTheDocument();
     expect(screen.getByText(/Updated/)).toBeInTheDocument();
 

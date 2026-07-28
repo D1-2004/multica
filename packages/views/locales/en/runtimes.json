@@ -329,6 +329,80 @@
     "toast_updated": "Release state updated",
     "toast_failed": "Stable release action failed"
   },
+  "fc_e2b_stable_overview": {
+    "action": "All-workspace overview",
+    "title": "All-workspace Runtime overview",
+    "heading": "All-workspace Runtime overview",
+    "description": "See every workspace's FC/E2B runtimes, template versions, health, and stable-channel convergence in one place.",
+    "last_updated": "Updated {{time}}",
+    "refresh": "Refresh",
+    "publish_action": "Stable version",
+    "load_failed_title": "Unable to load Runtime overview",
+    "load_failed_description": "The stable channel or Runtime data could not be loaded.",
+    "forbidden_title": "Access denied",
+    "forbidden_description": "Only users in the stable-release developer allow-list can view the all-workspace Runtime overview.",
+    "retry": "Retry",
+    "metrics": {
+      "total": "All runtimes",
+      "workspaces": "{{count}} workspaces",
+      "online": "Online",
+      "current": "Latest stable",
+      "active": "Active candidate",
+      "outdated": "Needs update",
+      "candidate": "Candidate channel"
+    },
+    "current_stable_title": "Current production stable version",
+    "current_stable_description": "The completed stable-channel template pointer applied to stable runtimes.",
+    "stable_coverage": "Stable Runtime convergence",
+    "current_stable_empty": "The stable channel has not been initialized.",
+    "active_release_title": "Active release progress",
+    "active_release_description": "Live status for the developer update or 24-hour rollout.",
+    "next_batch": "Next batch: {{time}}",
+    "no_active_release": "No stable release is currently active.",
+    "templates_title": "Template distribution",
+    "templates_description": "{{count}} template versions are in use. Select one to filter runtimes.",
+    "empty": "No template distribution data.",
+    "template_scope": "{{online}} online · {{workspaces}} workspaces",
+    "runtime_list_title": "Runtime details",
+    "showing": "Showing {{shown}} of {{total}} runtimes",
+    "clear_filters": "Clear filters",
+    "search_placeholder": "Search workspace, Runtime, template, or build ID...",
+    "filters": {
+      "all_workspaces": "All workspaces",
+      "all_providers": "All runtimes",
+      "all_health": "All health states",
+      "all_alignment": "All version states"
+    },
+    "alignment": {
+      "current": "Latest stable",
+      "active": "Active candidate",
+      "outdated": "Needs update",
+      "candidate": "Candidate channel"
+    },
+    "channel": {
+      "stable": "Stable",
+      "candidate": "Candidate"
+    },
+    "table": {
+      "runtime": "Workspace / Runtime",
+      "provider": "Runtime",
+      "health": "Health",
+      "channel": "Channel",
+      "template": "Template version",
+      "alignment": "Version state",
+      "updated": "Updated"
+    },
+    "target_status": {
+      "pending": "Waiting for batch",
+      "updating": "Updating",
+      "updated": "Updated in batch",
+      "failed": "Update failed",
+      "rolling_back": "Rolling back",
+      "rolled_back": "Rolled back"
+    },
+    "no_matches": "No runtimes match these filters",
+    "no_matches_hint": "Change the search query or clear filters and try again."
+  },
   "fc_e2b_template_update": {
     "title": "Change cloud sandbox image",
     "description": "Switch this runtime to another ready FC/E2B template without changing its provider or agent bindings.",

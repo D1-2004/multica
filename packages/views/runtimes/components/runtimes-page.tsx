@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ChevronRight,
   Cloud,
+  LayoutDashboard,
   Monitor,
   Plus,
   Server,
@@ -81,6 +82,7 @@ export function RuntimesPage({
   const [showFCE2BRuntimeDialog, setShowFCE2BRuntimeDialog] = useState(false);
   const [showStableReleaseDialog, setShowStableReleaseDialog] = useState(false);
   const stableChannelQuery = useFCE2BStableChannel();
+  const paths = useWorkspacePaths();
 
   const { data: runtimes = [], isLoading: runtimesLoading } = useQuery(
     runtimeListOptions(wsId),
@@ -162,6 +164,7 @@ export function RuntimesPage({
         canManageFCE2B={canManageFCE2B}
         onOpenFCE2BRuntime={() => setShowFCE2BRuntimeDialog(true)}
         canPublishStable={stableChannelQuery.data?.can_publish === true}
+        stableOverviewHref={paths.stableRuntimes()}
         onOpenStableRelease={() => setShowStableReleaseDialog(true)}
       />
 
@@ -245,6 +248,7 @@ function PageHeaderBar({
   canManageFCE2B,
   onOpenFCE2BRuntime,
   canPublishStable,
+  stableOverviewHref,
   onOpenStableRelease,
 }: {
   totalCount: number;
@@ -254,6 +258,7 @@ function PageHeaderBar({
   canManageFCE2B: boolean;
   onOpenFCE2BRuntime: () => void;
   canPublishStable: boolean;
+  stableOverviewHref: string;
   onOpenStableRelease: () => void;
 }) {
   const { t, i18n } = useT("runtimes");
@@ -270,11 +275,18 @@ function PageHeaderBar({
       actions={
         <>
           {canPublishStable && (
-            <CollectionPageHeaderAction
-              icon={ShieldCheck}
-              label={t(($) => $.fc_e2b_stable.action)}
-              onClick={onOpenStableRelease}
-            />
+            <>
+              <CollectionPageHeaderAction
+                icon={LayoutDashboard}
+                label={t(($) => $.fc_e2b_stable_overview.action)}
+                render={<AppLink href={stableOverviewHref} />}
+              />
+              <CollectionPageHeaderAction
+                icon={ShieldCheck}
+                label={t(($) => $.fc_e2b_stable.action)}
+                onClick={onOpenStableRelease}
+              />
+            </>
           )}
           {canManageFCE2B && (
             <CollectionPageHeaderAction

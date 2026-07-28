@@ -24,6 +24,7 @@ import { AutopilotsPage } from "@multica/views/autopilots/components";
 import { MyIssuesPage } from "@multica/views/my-issues";
 import { SkillsPage } from "@multica/views/skills";
 import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
+import { StableFCE2BRuntimeOverviewPage } from "@multica/views/runtimes";
 import { DesktopAgentsPage } from "./components/desktop-agents-page";
 import { AgentCreationStudio } from "@multica/views/agents";
 import { SquadsPage, SquadDetailPage as SquadDetailPageView } from "@multica/views/squads/components";
@@ -161,6 +162,11 @@ export const appRoutes: RouteObject[] = [
             path: "runtimes",
             element: <DesktopRuntimesPage />,
             handle: { title: "Runtimes" },
+          },
+          {
+            path: "runtimes/stable",
+            element: <StableFCE2BRuntimeOverviewPage />,
+            handle: { title: "Stable runtimes" },
           },
           {
             path: "runtimes/:id",
