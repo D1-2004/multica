@@ -79,6 +79,7 @@ describe("parseFCE2BRuntimeMetadata", () => {
       templateBuildId: "build-v2",
       templateName: "Team v2",
       templateStatus: "ready",
+      templateChannel: "stable",
     });
   });
 

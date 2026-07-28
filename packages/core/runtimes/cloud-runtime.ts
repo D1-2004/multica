@@ -47,7 +47,8 @@ export type FCE2BRuntimeProvider = (typeof FC_E2B_RUNTIME_PROVIDERS)[number];
 
 export interface CreateFCE2BRuntimeRequest {
   name?: string;
-  template_id: string;
+  template_id?: string;
+  template_channel?: "stable" | "candidate";
   provider?: FCE2BRuntimeProvider;
   visibility?: RuntimeVisibility;
 }
@@ -79,6 +80,95 @@ export interface FCE2BRuntimeMetadata {
   templateBuildId: string | null;
   templateName: string | null;
   templateStatus: string | null;
+  templateChannel: "stable" | "candidate";
+}
+
+export interface FCE2BStableTemplateBinding {
+  template_id: string;
+  template_build_id: string;
+  template_alias: string;
+  release_id: string;
+}
+
+export type FCE2BStableReleaseStatus =
+  | "validating"
+  | "developer_rollout"
+  | "awaiting_rollout"
+  | "rolling_out"
+  | "observing"
+  | "completed"
+  | "paused"
+  | "rolling_back"
+  | "rolled_back"
+  | "terminated"
+  | "failed";
+
+export type FCE2BStableReleaseAction =
+  | "pause"
+  | "resume"
+  | "start-rollout"
+  | "terminate"
+  | "rollback";
+
+export interface FCE2BStableRelease {
+  id: string;
+  template_id: string;
+  template_build_id: string;
+  template_alias: string;
+  source_revision: string;
+  note: string;
+  actor_user_id: string;
+  bootstrap: boolean;
+  status: FCE2BStableReleaseStatus;
+  current_batch: number;
+  target_percentage: number;
+  previous_template_id: string;
+  previous_template_build_id: string;
+  previous_template_alias: string;
+  manifest?: Record<string, unknown>;
+  total_targets: number;
+  updated_targets: number;
+  failed_targets: number;
+  developer_targets: number;
+  developer_updated_targets: number;
+  developer_rollout_started_at?: string;
+  developer_rollout_completed_at?: string;
+  rollout_started_at?: string;
+  batch_started_at?: string;
+  next_batch_at?: string;
+  completed_at?: string;
+  validation_error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FCE2BStableChannel {
+  current: FCE2BStableTemplateBinding | null;
+  active_release: FCE2BStableRelease | null;
+  can_publish: boolean;
+}
+
+export interface FCE2BStableRuntimeOverview {
+  runtime_id: string;
+  workspace_id: string;
+  workspace_name: string;
+  runtime_name: string;
+  provider: string;
+  status: string;
+  template_channel: "stable" | "candidate";
+  template_alias: string;
+  template_id: string;
+  template_build_id: string;
+  matches_current_stable: boolean;
+  matches_active_release: boolean;
+  active_release_target_status: string;
+  updated_at: string;
+}
+
+export interface CreateFCE2BStableReleaseRequest {
+  template_id: string;
+  expected_build_id: string;
+  note?: string;
 }
 
 function metadataString(
@@ -113,6 +203,10 @@ export function parseFCE2BRuntimeMetadata(
     templateBuildId: metadataString(metadata, "template_build_id"),
     templateName: metadataString(metadata, "template_name"),
     templateStatus: metadataString(metadata, "template_status"),
+    templateChannel:
+      metadataString(metadata, "template_channel") === "candidate"
+        ? "candidate"
+        : "stable",
   };
 }
 
@@ -150,6 +244,10 @@ export const cloudRuntimeKeys = {
   nodes: (wsId: string) => [...cloudRuntimeKeys.all(wsId), "nodes"] as const,
   fcE2BTemplates: (wsId: string) =>
     [...cloudRuntimeKeys.all(wsId), "fc-e2b-templates"] as const,
+  fcE2BStableChannel: () => ["fc-e2b-stable-channel"] as const,
+  fcE2BStableRelease: (releaseId: string) =>
+    ["fc-e2b-stable-release", releaseId] as const,
+  fcE2BStableRuntimes: () => ["fc-e2b-stable-runtimes"] as const,
 };
 
 const PENDING_NODE_STATUSES = new Set([
@@ -192,6 +290,25 @@ export function fcE2BTemplateListOptions(wsId: string) {
 
 export function useFCE2BTemplates(wsId: string) {
   return useQuery(fcE2BTemplateListOptions(wsId));
+}
+
+export function useFCE2BStableChannel() {
+  return useQuery({
+    queryKey: cloudRuntimeKeys.fcE2BStableChannel(),
+    queryFn: () => api.getFCE2BStableChannel(),
+    refetchInterval: (query) => (query.state.data?.active_release ? 5000 : false),
+    staleTime: 15 * 1000,
+  });
+}
+
+export function useFCE2BStableRuntimes(enabled = true) {
+  return useQuery({
+    queryKey: cloudRuntimeKeys.fcE2BStableRuntimes(),
+    queryFn: () => api.listFCE2BStableRuntimes(),
+    enabled,
+    refetchInterval: 5000,
+    staleTime: 5 * 1000,
+  });
 }
 
 export function useCreateCloudRuntimeNode(wsId: string) {
@@ -244,6 +361,47 @@ export function useUpdateFCE2BRuntimeTemplate(wsId: string) {
     }) => api.updateFCE2BRuntimeTemplate(runtimeId, data),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
+    },
+  });
+}
+
+export function useCreateFCE2BStableRelease() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      data,
+      idempotencyKey,
+    }: {
+      data: CreateFCE2BStableReleaseRequest;
+      idempotencyKey: string;
+    }) => api.createFCE2BStableRelease(data, idempotencyKey),
+    onSuccess: async (release) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: cloudRuntimeKeys.fcE2BStableChannel() }),
+        qc.invalidateQueries({ queryKey: cloudRuntimeKeys.fcE2BStableRuntimes() }),
+        qc.invalidateQueries({
+          queryKey: cloudRuntimeKeys.fcE2BStableRelease(release.id),
+        }),
+      ]);
+    },
+  });
+}
+
+export function useMutateFCE2BStableRelease(
+  action: FCE2BStableReleaseAction,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (releaseId: string) =>
+      api.mutateFCE2BStableRelease(releaseId, action),
+    onSuccess: async (release) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: cloudRuntimeKeys.fcE2BStableChannel() }),
+        qc.invalidateQueries({ queryKey: cloudRuntimeKeys.fcE2BStableRuntimes() }),
+        qc.invalidateQueries({
+          queryKey: cloudRuntimeKeys.fcE2BStableRelease(release.id),
+        }),
+      ]);
     },
   });
 }

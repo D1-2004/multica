@@ -17,11 +17,12 @@ import (
 )
 
 type createFCE2BRuntimeRequest struct {
-	Name       string `json:"name"`
-	TemplateID string `json:"template_id"`
-	Template   string `json:"template"`
-	Provider   string `json:"provider"`
-	Visibility string `json:"visibility"`
+	Name            string `json:"name"`
+	TemplateID      string `json:"template_id"`
+	Template        string `json:"template"`
+	TemplateChannel string `json:"template_channel"`
+	Provider        string `json:"provider"`
+	Visibility      string `json:"visibility"`
 }
 
 type updateFCE2BRuntimeTemplateRequest struct {
@@ -77,13 +78,48 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	templateChannel := strings.ToLower(strings.TrimSpace(req.TemplateChannel))
+	if templateChannel == "" {
+		templateChannel = "stable"
+	}
+	if templateChannel != "stable" && templateChannel != "candidate" {
+		writeError(w, http.StatusBadRequest, "template_channel must be 'stable' or 'candidate'")
+		return
+	}
 	templateRef := strings.TrimSpace(req.TemplateID)
+	expectedStableBuildID := ""
 	if templateRef == "" {
 		templateRef = strings.TrimSpace(req.Template)
 	}
-	if templateRef == "" {
-		writeError(w, http.StatusBadRequest, "template_id is required")
-		return
+	if templateChannel == "candidate" {
+		if !h.canPublishFCE2BStable(r) {
+			writeError(w, http.StatusForbidden, "candidate FC/E2B runtimes are restricted to stable publishers")
+			return
+		}
+		if templateRef == "" {
+			writeError(w, http.StatusBadRequest, "template_id is required for a candidate runtime")
+			return
+		}
+	} else {
+		if templateRef != "" {
+			writeError(w, http.StatusBadRequest, "stable runtimes resolve their template from the stable channel")
+			return
+		}
+		if h.FCE2BStable == nil {
+			writeError(w, http.StatusServiceUnavailable, "FC/E2B stable channel is unavailable")
+			return
+		}
+		current, err := h.FCE2BStable.CurrentTemplate(r.Context())
+		if errors.Is(err, service.ErrFCE2BStableChannelUninitialized) {
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to resolve FC/E2B stable template")
+			return
+		}
+		templateRef = current.TemplateID
+		expectedStableBuildID = current.TemplateBuildID
 	}
 	templates, err := service.ListFCE2BTemplates(r.Context(), h.cfg.FCE2B, nil)
 	if err != nil {
@@ -94,6 +130,10 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 	selected, ok := selectFCE2BTemplate(templates, templateRef)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "template_id does not match an available FC/E2B template")
+		return
+	}
+	if expectedStableBuildID != "" && selected.BuildID != expectedStableBuildID {
+		writeError(w, http.StatusServiceUnavailable, "stable template build no longer matches the verified catalog")
 		return
 	}
 	if !service.IsFCE2BTemplateReady(selected) || !service.IsFCE2BTemplatePublished(selected) {
@@ -129,6 +169,7 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 		"capabilities":       fcE2BTemplateCapabilities(provider, selected),
 		"component_versions": selected.ComponentVersions,
 		"runner_protocol":    selected.RunnerProtocol,
+		"template_channel":   templateChannel,
 		"timeout_seconds":    h.cfg.FCE2B.TimeoutSeconds,
 		"created_by":         uuidToString(member.UserID),
 		"runner":             service.FCE2BRunnerCommandForProvider(provider),
@@ -192,6 +233,14 @@ func (h *Handler) UpdateFCE2BRuntimeTemplate(w http.ResponseWriter, r *http.Requ
 	}
 	if !service.IsFCE2BRuntime(runtime) {
 		writeError(w, http.StatusBadRequest, service.ErrFCE2BRuntimeRequired.Error())
+		return
+	}
+	if service.FCE2BRuntimeTemplateChannel(runtime) != "candidate" {
+		writeError(w, http.StatusConflict, "stable-managed runtime templates can only be changed by a stable release")
+		return
+	}
+	if !h.canPublishFCE2BStable(r) {
+		writeError(w, http.StatusForbidden, "candidate FC/E2B runtime updates are restricted to stable publishers")
 		return
 	}
 

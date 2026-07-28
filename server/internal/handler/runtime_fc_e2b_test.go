@@ -150,6 +150,7 @@ func fce2bTemplateRotationHandler(t *testing.T) (*Handler, *staticFCE2BTemplateR
 		Domain:  "fc-e2b.test",
 		CLIPath: "e2b-test",
 	}
+	h.cfg.StableRuntimePublisherUserIDs = map[string]struct{}{testUserID: {}}
 	return &h, runner
 }
 
@@ -177,7 +178,7 @@ func fce2bTemplateRotationFixture(t *testing.T) (runtimeID, runtimeOwnerID, agen
 		) VALUES (
 			$1, $2, 'FC Template Rotation Runtime', 'cloud', 'hermes', 'online',
 			'template rotation',
-			'{"kind":"fc-e2b","template":"tpl_old","template_id":"tpl_old_id","template_name":"Old Template","template_status":"ready","capabilities":["hermes"],"runner":"multica-fc-hermes-runner","preserved":"yes"}'::jsonb,
+			'{"kind":"fc-e2b","template_channel":"candidate","template":"tpl_old","template_id":"tpl_old_id","template_name":"Old Template","template_status":"ready","capabilities":["hermes"],"runner":"multica-fc-hermes-runner","preserved":"yes"}'::jsonb,
 			$3, 'private', now()
 		) RETURNING id
 	`, testWorkspaceID, "fc-e2b:rotation:"+suffix, runtimeOwnerID).Scan(&runtimeID); err != nil {
@@ -235,8 +236,25 @@ func TestUpdateFCE2BRuntimeTemplateRequiresWorkspaceOwnerOrAdmin(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM member WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, adminID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, adminID)
 	})
+	h.cfg.StableRuntimePublisherUserIDs[adminID] = struct{}{}
 	if w := patchFCE2BRuntimeTemplate(h, adminID, runtimeID, "tpl_new_id"); w.Code != http.StatusOK {
 		t.Fatalf("workspace admin status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUpdateFCE2BRuntimeTemplateRejectsStableManagedRuntime(t *testing.T) {
+	h, _ := fce2bTemplateRotationHandler(t)
+	runtimeID, _, _ := fce2bTemplateRotationFixture(t)
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_runtime
+		SET metadata = metadata - 'template_channel'
+		WHERE id = $1
+	`, runtimeID); err != nil {
+		t.Fatalf("make runtime legacy stable-managed: %v", err)
+	}
+	w := patchFCE2BRuntimeTemplate(h, testUserID, runtimeID, "tpl_new_id")
+	if w.Code != http.StatusConflict {
+		t.Fatalf("stable-managed update status = %d, want 409: %s", w.Code, w.Body.String())
 	}
 }
 

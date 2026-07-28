@@ -12,6 +12,7 @@ import {
   type FCE2BRuntimeProvider,
   type FCE2BTemplate,
   useCreateFCE2BRuntime,
+  useFCE2BStableChannel,
   useFCE2BTemplates,
 } from "@multica/core/runtimes";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -82,22 +83,35 @@ function formatTemplateUpdatedAt(value?: string): string {
   }).format(date);
 }
 
-export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
+export function FCE2BRuntimeDialog({
+  onClose,
+  canPublish,
+}: {
+  onClose: () => void;
+  canPublish: boolean;
+}) {
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();
   const createRuntime = useCreateFCE2BRuntime(wsId);
   const templatesQuery = useFCE2BTemplates(wsId);
+  const stableChannelQuery = useFCE2BStableChannel();
   const templates = (templatesQuery.data ?? []).filter(isReadyFCE2BTemplate);
+  const [templateChannel, setTemplateChannel] = useState<"stable" | "candidate">(
+    "stable",
+  );
   const [query, setQuery] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<FCE2BTemplate | null>(null);
   const [provider, setProvider] = useState<FCE2BRuntimeProvider>("hermes");
   const [name, setName] = useState("");
   const [visibility, setVisibility] = useState<RuntimeVisibility>("private");
-  const availableProviders = selectedTemplate
-    ? FC_E2B_RUNTIME_PROVIDERS.filter((candidate) =>
-        selectedTemplate.providers.includes(candidate),
-      )
-    : [];
+  const availableProviders =
+    templateChannel === "stable"
+      ? [...FC_E2B_RUNTIME_PROVIDERS]
+      : selectedTemplate
+        ? FC_E2B_RUNTIME_PROVIDERS.filter((candidate) =>
+            selectedTemplate.providers.includes(candidate),
+          )
+        : [];
 
   const filteredTemplates = templates.filter((template) => {
     const haystack = [
@@ -139,11 +153,18 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selectedTemplate) return;
+    if (templateChannel === "candidate" && !selectedTemplate) return;
     try {
       await createRuntime.mutateAsync({
-        template_id: selectedTemplate.id!,
-        name: name.trim() || templateRuntimeName(selectedTemplate, provider),
+        ...(templateChannel === "candidate"
+          ? { template_id: selectedTemplate!.id }
+          : {}),
+        template_channel: templateChannel,
+        name:
+          name.trim() ||
+          (selectedTemplate
+            ? templateRuntimeName(selectedTemplate, provider)
+            : `FC-${PROVIDER_LABELS[provider]}-Stable`),
         provider,
         visibility,
       });
@@ -176,6 +197,40 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
           onSubmit={handleSubmit}
           className="space-y-4"
         >
+          <div className="space-y-1.5">
+            <Label className="text-xs">
+              {t(($) => $.fc_e2b_runtime.fields.channel)}
+            </Label>
+            <Select
+              value={templateChannel}
+              onValueChange={(value) =>
+                setTemplateChannel(value as "stable" | "candidate")
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="stable">
+                  {t(($) => $.fc_e2b_runtime.channel_stable)}
+                </SelectItem>
+                {canPublish && (
+                  <SelectItem value="candidate">
+                    {t(($) => $.fc_e2b_runtime.channel_candidate)}
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {templateChannel === "stable"
+                ? stableChannelQuery.data?.current
+                  ? stableChannelQuery.data.current.template_alias
+                  : t(($) => $.fc_e2b_runtime.stable_uninitialized)
+                : t(($) => $.fc_e2b_runtime.candidate_hint)}
+            </p>
+          </div>
+
+          {templateChannel === "candidate" && (
           <div className="space-y-2">
             <Label htmlFor="fc-e2b-template-search" className="text-xs">
               {t(($) => $.fc_e2b_runtime.fields.template)}
@@ -269,6 +324,7 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
               })}
             </div>
           </div>
+          )}
 
           <div className="space-y-1.5">
             <Label className="text-xs">
@@ -305,7 +361,9 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
               placeholder={
                 selectedTemplate
                   ? templateRuntimeName(selectedTemplate, provider)
-                  : t(($) => $.fc_e2b_runtime.name_placeholder)
+                  : templateChannel === "stable"
+                    ? `FC-${PROVIDER_LABELS[provider]}-Stable`
+                    : t(($) => $.fc_e2b_runtime.name_placeholder)
               }
             />
           </div>
@@ -350,7 +408,9 @@ export function FCE2BRuntimeDialog({ onClose }: { onClose: () => void }) {
             form="fc-e2b-runtime-form"
             disabled={
               createRuntime.isPending ||
-              !selectedTemplate ||
+              (templateChannel === "stable"
+                ? !stableChannelQuery.data?.current
+                : !selectedTemplate) ||
               !availableProviders.includes(provider)
             }
           >

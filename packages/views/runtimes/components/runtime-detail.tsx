@@ -26,6 +26,7 @@ import {
   parseFCE2BRuntimeMetadata,
   runtimeDisplayName,
   runtimeProfileListOptions,
+  useFCE2BStableChannel,
 } from "@multica/core/runtimes";
 import {
   type AgentPresenceDetail,
@@ -118,6 +119,7 @@ export function RuntimeDetail({
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: profiles = [] } = useQuery(runtimeProfileListOptions(wsId));
+  const stableChannelQuery = useFCE2BStableChannel();
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
   const now = useNowTick();
 
@@ -222,7 +224,12 @@ export function RuntimeDetail({
               cliVersion={cliVersion}
               launchedBy={launchedBy}
               canEdit={!!canEditRuntime}
-              canManageTemplate={isAdmin}
+              canManageTemplate={
+                isAdmin &&
+                stableChannelQuery.data?.can_publish === true &&
+                parseFCE2BRuntimeMetadata(runtime)?.templateChannel ===
+                  "candidate"
+              }
               canDelete={!!canDelete}
               onChangeTemplate={() => setTemplateUpdateOpen(true)}
               onDelete={() => setDeleteOpen(true)}

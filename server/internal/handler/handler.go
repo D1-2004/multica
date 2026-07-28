@@ -65,6 +65,9 @@ type Config struct {
 	AllowSignup         bool
 	AllowedEmails       []string
 	AllowedEmailDomains []string
+	// StableRuntimePublisherUserIDs is the deployment-owned UUID allow-list for
+	// promoting immutable FC/E2B templates and controlling their rollout.
+	StableRuntimePublisherUserIDs map[string]struct{}
 	// DisableWorkspaceCreation, when true, makes POST /api/workspaces return
 	// 403 for every caller. There is no role/owner exception because the repo
 	// has no platform-admin concept; operators bootstrap the workspace with
@@ -141,6 +144,7 @@ type Handler struct {
 	Bus                     *events.Bus
 	TaskService             *service.TaskService
 	FCE2BLauncher           *service.FCE2BLauncher
+	FCE2BStable             *service.FCE2BStableService
 	IssueService            *service.IssueService
 	IssueCommentService     *service.IssueCommentService
 	AutopilotService        *service.AutopilotService
@@ -380,6 +384,13 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 			DefaultModel: cfg.LLMDefaultModel,
 		}),
 		cfg: cfg,
+	}
+	if pool, ok := txStarter.(*pgxpool.Pool); ok {
+		h.FCE2BStable = service.NewFCE2BStableService(
+			pool,
+			fcLauncher,
+			cfg.StableRuntimePublisherUserIDs,
+		)
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
 	return h

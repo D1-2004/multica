@@ -418,6 +418,9 @@ func main() {
 	go runRuntimeSweeper(sweepCtx, queries, liveness, taskSvc, bus)
 	go taskSvc.RunDeferredChannelTaskPromoter(sweepCtx)
 	go heartbeatScheduler.Run(sweepCtx)
+	if h.FCE2BStable != nil {
+		go h.FCE2BStable.Run(sweepCtx)
+	}
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
 	go runDBStatsLogger(sweepCtx, pool)
 	if h.WebhookDeliveryWorker != nil {
