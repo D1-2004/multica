@@ -176,6 +176,15 @@ describe("ApiClient", () => {
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            connection_id: "connection-1",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
       );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -203,6 +212,12 @@ describe("ApiClient", () => {
       refreshed: true,
       connectionId: "connection-1",
     });
+    await expect(
+      client.disconnectAgentIdentityGitHubConnection("workspace-1", "agent-1", "connection-1"),
+    ).resolves.toMatchObject({
+      ok: true,
+      connectionId: "connection-1",
+    });
 
     expect(fetchMock.mock.calls.map(([url, init]) => ({
       url,
@@ -225,6 +240,11 @@ describe("ApiClient", () => {
       {
         url: "https://api.example.test/api/workspaces/workspace-1/agent-identity/github/connection-1/test?agent_id=agent-1",
         method: "POST",
+        body: undefined,
+      },
+      {
+        url: "https://api.example.test/api/workspaces/workspace-1/agent-identity/github/connection-1?agent_id=agent-1",
+        method: "DELETE",
         body: undefined,
       },
     ]);

@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { GitFork, RefreshCw, ShieldCheck } from "lucide-react";
+import { GitFork, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
   agentIdentityGithubStatusOptions,
   useBeginAgentIdentityGitHubOAuth,
+  useDisconnectAgentIdentityGitHubConnection,
   useTestAgentIdentityGitHubConnection,
 } from "@multica/core/agent-identity-github";
 import { Button } from "@multica/ui/components/ui/button";
@@ -69,6 +70,7 @@ export function GitHubIdentityBindingCard({
   });
   const beginOAuth = useBeginAgentIdentityGitHubOAuth(wsId);
   const testConnection = useTestAgentIdentityGitHubConnection(wsId);
+  const disconnectConnection = useDisconnectAgentIdentityGitHubConnection(wsId);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -90,6 +92,8 @@ export function GitHubIdentityBindingCard({
     [connection?.lastTestAt],
   );
   const isReauth = connection?.status?.trim().toUpperCase() === "NEEDS_REAUTH";
+  const actionPending =
+    testConnection.isPending || beginOAuth.isPending || disconnectConnection.isPending;
 
   async function connect() {
     setActionError(null);
@@ -133,6 +137,27 @@ export function GitHubIdentityBindingCard({
         errorMessage(
           error,
           t(($) => $.tab_body.integrations.github_identity_test_failed),
+        ),
+      );
+    }
+  }
+
+  async function disconnect() {
+    if (!connection) return;
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      await disconnectConnection.mutateAsync({
+        agentId,
+        connectionId: connection.connectionId,
+      });
+      setActionMessage(t(($) => $.tab_body.integrations.github_identity_disconnected));
+      void refetch();
+    } catch (error) {
+      setActionError(
+        errorMessage(
+          error,
+          t(($) => $.tab_body.integrations.github_identity_disconnect_failed),
         ),
       );
     }
@@ -208,7 +233,7 @@ export function GitHubIdentityBindingCard({
                   size="sm"
                   variant="outline"
                   onClick={test}
-                  disabled={testConnection.isPending || isReauth}
+                  disabled={actionPending || isReauth}
                 >
                   <ShieldCheck className="mr-2 h-4 w-4" />
                   {testConnection.isPending
@@ -220,12 +245,24 @@ export function GitHubIdentityBindingCard({
                   size="sm"
                   variant={isReauth ? "default" : "outline"}
                   onClick={connect}
-                  disabled={beginOAuth.isPending}
+                  disabled={actionPending}
                 >
                   <RefreshCw className="mr-2 h-4 w-4" />
                   {beginOAuth.isPending
                     ? t(($) => $.tab_body.integrations.github_identity_connecting)
                     : t(($) => $.tab_body.integrations.github_identity_reconnect)}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={disconnect}
+                  disabled={actionPending}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  {disconnectConnection.isPending
+                    ? t(($) => $.tab_body.integrations.github_identity_disconnecting)
+                    : t(($) => $.tab_body.integrations.github_identity_disconnect)}
                 </Button>
               </div>
             </div>

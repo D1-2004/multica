@@ -4,5 +4,6 @@ export {
 } from "./queries";
 export {
   useBeginAgentIdentityGitHubOAuth,
+  useDisconnectAgentIdentityGitHubConnection,
   useTestAgentIdentityGitHubConnection,
 } from "./mutations";

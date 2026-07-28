@@ -133,6 +133,17 @@ func (c *Client) TestConnection(ctx context.Context, connectionID string) (TestR
 	return out, err
 }
 
+func (c *Client) Disconnect(ctx context.Context, connectionID, workspaceID, agentID, userID string) (Connection, error) {
+	query := url.Values{}
+	query.Set("workspaceId", workspaceID)
+	query.Set("agentId", agentID)
+	query.Set("userId", userID)
+	path := "/api/agent-identity/v1/connections/github/" + url.PathEscape(connectionID)
+	var out Connection
+	err := c.doJSON(ctx, http.MethodDelete, path, query, nil, &out)
+	return out, err
+}
+
 func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, body any, out any) error {
 	if !c.Enabled() {
 		return &ServiceError{StatusCode: http.StatusServiceUnavailable, Code: "NOT_CONFIGURED", Message: "agent identity github is not configured"}
