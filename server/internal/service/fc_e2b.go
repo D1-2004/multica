@@ -985,10 +985,15 @@ func (l *FCE2BLauncher) SetPool(pool *pgxpool.Pool) {
 	}
 }
 
-func (l *FCE2BLauncher) SetSandboxRelaySigner(signer SandboxRelayTokenSigner) {
-	if l != nil {
-		l.SandboxRelaySigner = signer
+func (l *FCE2BLauncher) SetSandboxRelaySigner(signer *sandboxrelay.Signer) {
+	if l == nil {
+		return
 	}
+	if signer == nil {
+		l.SandboxRelaySigner = nil
+		return
+	}
+	l.SandboxRelaySigner = signer
 }
 
 // UpdateRuntimeTemplate atomically rotates an FC/E2B runtime to a catalogued,
