@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/scheduler"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -176,6 +177,29 @@ func main() {
 		os.Exit(1)
 	}
 	_ = flags // adopted by the router (opts.FeatureFlags) and server-side toggle points; see docs/feature-flags.md
+
+	sandboxRelaySigner, err := sandboxrelay.LoadSignerFromEnv()
+	if err != nil {
+		slog.Error("sandbox relay signing configuration failed", "error", err)
+		os.Exit(1)
+	}
+	sandboxHTTPRelay, err := sandboxrelay.LoadRelayFromEnv()
+	if err != nil {
+		slog.Error("sandbox relay forwarding configuration failed", "error", err)
+		os.Exit(1)
+	}
+	if sandboxRelaySigner != nil && sandboxHTTPRelay != nil {
+		slog.Error("sandbox relay signer and forwarding relay must not be enabled on the same deployment")
+		os.Exit(1)
+	}
+	if sandboxRelaySigner != nil {
+		slog.Info("sandbox relay signing enabled")
+	}
+	var sandboxRelayMiddleware func(http.Handler) http.Handler
+	if sandboxHTTPRelay != nil {
+		sandboxRelayMiddleware = sandboxHTTPRelay.Middleware
+		slog.Info("sandbox relay forwarding enabled")
+	}
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -377,6 +401,7 @@ func main() {
 		DaemonWakeup:       daemonWakeup,
 		FeatureFlags:       flags,
 		HeartbeatScheduler: heartbeatScheduler,
+		SandboxRelay:       sandboxRelayMiddleware,
 	})
 
 	srv := &http.Server{
@@ -391,6 +416,7 @@ func main() {
 	taskSvc.Analytics = analyticsClient
 	taskSvc.Metrics = businessMetrics
 	fcLauncher := service.NewFCE2BLauncher(queries, taskSvc, service.FCE2BConfigFromEnv(), nil)
+	fcLauncher.SetSandboxRelaySigner(sandboxRelaySigner)
 	// The pool backs the cross-replica sandbox lock: without it two replicas
 	// can each boot a sandbox for the same chat, and the loser's microVM is
 	// orphaned and billed until it times out.

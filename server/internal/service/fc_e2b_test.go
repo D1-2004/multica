@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
+	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -41,6 +42,17 @@ type fakeAgentIdentityBindingReader struct {
 func (f *fakeAgentIdentityBindingReader) GetAgentDingTalkIdentity(_ context.Context, request db.GetAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error) {
 	f.requests = append(f.requests, request)
 	return f.identity, f.err
+}
+
+type fakeSandboxRelaySigner struct {
+	requests []sandboxrelay.MintRequest
+	token    string
+	err      error
+}
+
+func (f *fakeSandboxRelaySigner) Mint(request sandboxrelay.MintRequest) (string, error) {
+	f.requests = append(f.requests, request)
+	return f.token, f.err
 }
 
 type fakeCommandRunner struct {
@@ -1574,5 +1586,91 @@ func TestIsFCE2BRuntime(t *testing.T) {
 	}
 	if IsFCE2BRuntime(db.AgentRuntime{RuntimeMode: "cloud", Metadata: []byte(`{"kind":"other"}`)}) {
 		t.Fatal("other cloud runtime must not match")
+	}
+}
+
+func TestFCE2BWithSandboxRelayToken(t *testing.T) {
+	taskID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
+	agentID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	runtimeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	expiresAt := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	signer := &fakeSandboxRelaySigner{token: "signed-relay-token"}
+	launcher := &FCE2BLauncher{SandboxRelaySigner: signer}
+	extraEnv := map[string]string{
+		protocol.AgentIdentityContextTokenEnvKey: "identity-context-token",
+	}
+
+	got, err := launcher.withSandboxRelayToken(
+		extraEnv,
+		taskID,
+		agentID,
+		runtimeID,
+		"sandbox-123",
+		"mdt_daemon-secret",
+		expiresAt,
+	)
+	if err != nil {
+		t.Fatalf("mint relay token: %v", err)
+	}
+	if got[protocol.SandboxRelayTokenEnvKey] != "signed-relay-token" {
+		t.Fatalf("unexpected relay token: %q", got[protocol.SandboxRelayTokenEnvKey])
+	}
+	if len(signer.requests) != 1 {
+		t.Fatalf("expected one mint request, got %d", len(signer.requests))
+	}
+	want := sandboxrelay.MintRequest{
+		TaskID:             util.UUIDToString(taskID),
+		AgentID:            util.UUIDToString(agentID),
+		RuntimeID:          util.UUIDToString(runtimeID),
+		SandboxID:          "sandbox-123",
+		DaemonToken:        "mdt_daemon-secret",
+		AgentIdentityToken: "identity-context-token",
+		ExpiresAt:          expiresAt,
+	}
+	if !reflect.DeepEqual(signer.requests[0], want) {
+		t.Fatalf("unexpected mint request: got %#v want %#v", signer.requests[0], want)
+	}
+}
+
+func TestFCE2BWithSandboxRelayTokenDisabled(t *testing.T) {
+	extraEnv := map[string]string{"EXISTING": "value"}
+	launcher := &FCE2BLauncher{}
+
+	got, err := launcher.withSandboxRelayToken(
+		extraEnv,
+		pgtype.UUID{},
+		pgtype.UUID{},
+		pgtype.UUID{},
+		"",
+		"",
+		time.Time{},
+	)
+	if err != nil {
+		t.Fatalf("disabled relay signer returned error: %v", err)
+	}
+	if !reflect.DeepEqual(got, extraEnv) {
+		t.Fatalf("disabled relay signer changed environment: got %#v want %#v", got, extraEnv)
+	}
+}
+
+func TestFCE2BWithSandboxRelayTokenFailure(t *testing.T) {
+	launcher := &FCE2BLauncher{
+		SandboxRelaySigner: &fakeSandboxRelaySigner{err: errors.New("signing failed")},
+	}
+
+	got, err := launcher.withSandboxRelayToken(
+		nil,
+		pgtype.UUID{},
+		pgtype.UUID{},
+		pgtype.UUID{},
+		"sandbox-123",
+		"mdt_daemon-secret",
+		time.Now().Add(time.Hour),
+	)
+	if err == nil || !strings.Contains(err.Error(), "mint FC/E2B sandbox relay token") {
+		t.Fatalf("expected wrapped signing error, got %v", err)
+	}
+	if got != nil {
+		t.Fatalf("signing failure returned environment: %#v", got)
 	}
 }

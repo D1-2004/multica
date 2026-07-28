@@ -231,6 +231,10 @@ type RouterOptions struct {
 	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
 	// tests leave this nil and get the legacy synchronous behavior.
 	HeartbeatScheduler handler.HeartbeatScheduler
+	// SandboxRelay is nil on ordinary deployments. Production injects the
+	// signed pre-release sandbox relay here so requests carrying the routing
+	// assertion are intercepted before local authentication and routing.
+	SandboxRelay func(http.Handler) http.Handler
 }
 
 // NewRouterWithOptions builds the fully-configured Chi router and
@@ -1107,6 +1111,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Use(opts.HTTPMetrics.Middleware)
 	}
 	r.Use(chimw.Recoverer)
+	if opts.SandboxRelay != nil {
+		r.Use(opts.SandboxRelay)
+	}
 	r.Use(middleware.ContentSecurityPolicy)
 
 	// Share allowed origins with WebSocket origin checker.
