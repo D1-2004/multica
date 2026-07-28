@@ -124,6 +124,32 @@ func TestStableFailureRate(t *testing.T) {
 	}
 }
 
+func TestStableSourceRevisionRequiresCanonicalAliasRevision(t *testing.T) {
+	for _, valid := range []string{"000000", "b90849", "abcdef"} {
+		if !isStableSourceRevision(valid) {
+			t.Fatalf("valid source revision %q was rejected", valid)
+		}
+	}
+	for _, invalid := range []string{"", "b9084", "b908490", "B90849", "zzzzzz"} {
+		if isStableSourceRevision(invalid) {
+			t.Fatalf("invalid source revision %q was accepted", invalid)
+		}
+	}
+}
+
+func TestStableReleaseFingerprintDoesNotDependOnDerivedBootstrapState(t *testing.T) {
+	input := CreateFCE2BStableReleaseInput{
+		TemplateID:      "template-1",
+		ExpectedBuildID: "build-1",
+		Note:            "release note",
+	}
+	first := stableReleaseFingerprint(input)
+	input.Bootstrap = true
+	if got := stableReleaseFingerprint(input); got != first {
+		t.Fatalf("server-derived bootstrap state changed request fingerprint: %q != %q", got, first)
+	}
+}
+
 func TestRuntimeUsesTemplateRequiresTemplateAndBuild(t *testing.T) {
 	runtime := db.AgentRuntime{Metadata: []byte(`{
 		"template_id":"template-1",

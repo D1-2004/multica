@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -14,11 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
-)
-
-var (
-	stableGitCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	stableACRDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
 
 type stableChannelResponse struct {
@@ -30,10 +24,7 @@ type stableChannelResponse struct {
 type createStableReleaseRequest struct {
 	TemplateID      string `json:"template_id"`
 	ExpectedBuildID string `json:"expected_build_id"`
-	GitCommit       string `json:"git_commit"`
-	ACRDigest       string `json:"acr_digest"`
 	Note            string `json:"note"`
-	Bootstrap       bool   `json:"bootstrap"`
 }
 
 func (h *Handler) canPublishFCE2BStable(r *http.Request) bool {
@@ -102,19 +93,9 @@ func (h *Handler) CreateFCE2BStableRelease(w http.ResponseWriter, r *http.Reques
 	}
 	req.TemplateID = strings.TrimSpace(req.TemplateID)
 	req.ExpectedBuildID = strings.TrimSpace(req.ExpectedBuildID)
-	req.GitCommit = strings.ToLower(strings.TrimSpace(req.GitCommit))
-	req.ACRDigest = strings.ToLower(strings.TrimSpace(req.ACRDigest))
 	req.Note = strings.TrimSpace(req.Note)
 	if req.TemplateID == "" || req.ExpectedBuildID == "" {
 		writeError(w, http.StatusBadRequest, "template_id and expected_build_id are required")
-		return
-	}
-	if !stableGitCommitPattern.MatchString(req.GitCommit) {
-		writeError(w, http.StatusBadRequest, "git_commit must be a full lowercase Git SHA")
-		return
-	}
-	if !stableACRDigestPattern.MatchString(req.ACRDigest) {
-		writeError(w, http.StatusBadRequest, "acr_digest must be an immutable sha256 digest")
 		return
 	}
 	if len(req.Note) > 2000 {
@@ -125,11 +106,8 @@ func (h *Handler) CreateFCE2BStableRelease(w http.ResponseWriter, r *http.Reques
 		IdempotencyKey:  idempotencyKey,
 		TemplateID:      req.TemplateID,
 		ExpectedBuildID: req.ExpectedBuildID,
-		GitCommit:       req.GitCommit,
-		ACRDigest:       req.ACRDigest,
 		Note:            req.Note,
 		ActorUserID:     actor,
-		Bootstrap:       req.Bootstrap,
 	})
 	if err != nil {
 		switch {

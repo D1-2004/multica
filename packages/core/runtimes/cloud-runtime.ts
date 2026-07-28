@@ -105,8 +105,7 @@ export interface FCE2BStableRelease {
   template_id: string;
   template_build_id: string;
   template_alias: string;
-  git_commit: string;
-  acr_digest: string;
+  source_revision: string;
   note: string;
   actor_user_id: string;
   bootstrap: boolean;
@@ -138,10 +137,7 @@ export interface FCE2BStableChannel {
 export interface CreateFCE2BStableReleaseRequest {
   template_id: string;
   expected_build_id: string;
-  git_commit: string;
-  acr_digest: string;
   note?: string;
-  bootstrap?: boolean;
 }
 
 function metadataString(

@@ -22,13 +22,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
-import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { useT } from "../../i18n";
 
 function displayTemplate(template: FCE2BTemplate): string {
   return template.name || template.template || template.id || "";
+}
+
+function formatTemplateUpdatedAt(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 export function StableFCE2BReleaseDialog({
@@ -44,13 +55,19 @@ export function StableFCE2BReleaseDialog({
   const pauseRelease = useMutateFCE2BStableRelease("pause");
   const resumeRelease = useMutateFCE2BStableRelease("resume");
   const rollbackRelease = useMutateFCE2BStableRelease("rollback");
-  const templates = (templatesQuery.data ?? []).filter(isReadyFCE2BTemplate);
   const [selected, setSelected] = useState<FCE2BTemplate | null>(null);
-  const [gitCommit, setGitCommit] = useState("");
-  const [acrDigest, setACRDigest] = useState("");
   const [note, setNote] = useState("");
   const active = channelQuery.data?.active_release ?? null;
-  const bootstrap = channelQuery.data?.current == null;
+  const current = channelQuery.data?.current ?? null;
+  const bootstrap = current == null;
+  const templates = (templatesQuery.data ?? [])
+    .filter(isReadyFCE2BTemplate)
+    .filter(
+      (template) =>
+        bootstrap ||
+        template.id !== current.template_id ||
+        template.build_id !== current.template_build_id,
+    );
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -61,10 +78,7 @@ export function StableFCE2BReleaseDialog({
         data: {
           template_id: selected.id,
           expected_build_id: selected.build_id,
-          git_commit: gitCommit.trim().toLowerCase(),
-          acr_digest: acrDigest.trim().toLowerCase(),
           note: note.trim(),
-          bootstrap,
         },
       });
       toast.success(t(($) => $.fc_e2b_stable.toast_submitted));
@@ -183,6 +197,9 @@ export function StableFCE2BReleaseDialog({
                 {t(($) => $.fc_e2b_stable.bootstrap_notice)}
               </p>
             )}
+            <p className="text-xs text-muted-foreground">
+              {t(($) => $.fc_e2b_stable.validation_notice)}
+            </p>
             <div className="space-y-1.5">
               <Label className="text-xs">{t(($) => $.fc_e2b_stable.template)}</Label>
               <div className="max-h-44 overflow-y-auto rounded-md border">
@@ -192,10 +209,25 @@ export function StableFCE2BReleaseDialog({
                     {t(($) => $.fc_e2b_runtime.templates_loading)}
                   </div>
                 )}
+                {templatesQuery.isError && (
+                  <div className="p-3 text-xs text-destructive">
+                    {templatesQuery.error instanceof Error
+                      ? templatesQuery.error.message
+                      : t(($) => $.fc_e2b_runtime.templates_failed)}
+                  </div>
+                )}
+                {!templatesQuery.isLoading &&
+                  !templatesQuery.isError &&
+                  templates.length === 0 && (
+                    <div className="p-3 text-xs text-muted-foreground">
+                      {t(($) => $.fc_e2b_runtime.templates_empty)}
+                    </div>
+                  )}
                 {templates.map((template) => {
                   const isSelected =
                     selected?.id === template.id &&
                     selected?.build_id === template.build_id;
+                  const updatedAt = formatTemplateUpdatedAt(template.updated_at);
                   return (
                     <button
                       key={`${template.id}:${template.build_id}`}
@@ -203,45 +235,26 @@ export function StableFCE2BReleaseDialog({
                       onClick={() => setSelected(template)}
                       className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-xs last:border-b-0 hover:bg-muted/50"
                     >
-                      <span className="min-w-0">
+                      <span className="min-w-0 space-y-1">
                         <span className="block truncate font-medium">
                           {displayTemplate(template)}
                         </span>
                         <span className="block truncate text-muted-foreground">
                           {template.id} · {template.build_id}
                         </span>
+                        {updatedAt && (
+                          <span className="block truncate text-muted-foreground">
+                            {t(($) => $.fc_e2b_runtime.template_updated, {
+                              time: updatedAt,
+                            })}
+                          </span>
+                        )}
                       </span>
                       {isSelected && <Check className="h-3.5 w-3.5 shrink-0" />}
                     </button>
                   );
                 })}
               </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="stable-git-commit" className="text-xs">
-                {t(($) => $.fc_e2b_stable.git_commit)}
-              </Label>
-              <Input
-                id="stable-git-commit"
-                value={gitCommit}
-                onChange={(event) => setGitCommit(event.target.value)}
-                placeholder="40-character Git SHA"
-                pattern="[0-9a-fA-F]{40}"
-                required
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="stable-acr-digest" className="text-xs">
-                {t(($) => $.fc_e2b_stable.acr_digest)}
-              </Label>
-              <Input
-                id="stable-acr-digest"
-                value={acrDigest}
-                onChange={(event) => setACRDigest(event.target.value)}
-                placeholder="sha256:..."
-                pattern="sha256:[0-9a-fA-F]{64}"
-                required
-              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="stable-release-note" className="text-xs">
@@ -268,9 +281,7 @@ export function StableFCE2BReleaseDialog({
               disabled={
                 createRelease.isPending ||
                 !selected?.id ||
-                !selected.build_id ||
-                gitCommit.trim().length !== 40 ||
-                !/^sha256:[0-9a-fA-F]{64}$/.test(acrDigest.trim())
+                !selected.build_id
               }
             >
               {createRelease.isPending && (

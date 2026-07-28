@@ -64,6 +64,7 @@ type FCE2BStableRelease struct {
 	TemplateAlias           string         `json:"template_alias"`
 	GitCommit               string         `json:"git_commit"`
 	ACRDigest               string         `json:"acr_digest"`
+	SourceRevision          string         `json:"source_revision"`
 	Note                    string         `json:"note"`
 	ActorUserID             string         `json:"actor_user_id"`
 	Bootstrap               bool           `json:"bootstrap"`
@@ -90,8 +91,6 @@ type CreateFCE2BStableReleaseInput struct {
 	IdempotencyKey  string
 	TemplateID      string
 	ExpectedBuildID string
-	GitCommit       string
-	ACRDigest       string
 	Note            string
 	ActorUserID     pgtype.UUID
 	Bootstrap       bool
@@ -198,8 +197,6 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.TemplateID = strings.TrimSpace(input.TemplateID)
 	input.ExpectedBuildID = strings.TrimSpace(input.ExpectedBuildID)
-	input.GitCommit = strings.ToLower(strings.TrimSpace(input.GitCommit))
-	input.ACRDigest = strings.ToLower(strings.TrimSpace(input.ACRDigest))
 	input.Note = strings.TrimSpace(input.Note)
 	if input.IdempotencyKey == "" || input.TemplateID == "" || input.ExpectedBuildID == "" {
 		return FCE2BStableRelease{}, false, errors.New("idempotency key, template_id and expected_build_id are required")
@@ -207,13 +204,18 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 	if !input.ActorUserID.Valid {
 		return FCE2BStableRelease{}, false, errors.New("actor user ID is required")
 	}
-	fingerprint := stableReleaseFingerprint(input)
-
 	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return FCE2BStableRelease{}, false, fmt.Errorf("begin stable release: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	var channelExists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM fc_e2b_stable_channel WHERE channel = 'stable')`).Scan(&channelExists); err != nil {
+		return FCE2BStableRelease{}, false, fmt.Errorf("check stable channel: %w", err)
+	}
+	input.Bootstrap = !channelExists
+	fingerprint := stableReleaseFingerprint(input)
 
 	existing, found, err := s.findExistingRelease(ctx, tx, input, fingerprint)
 	if err != nil {
@@ -226,17 +228,6 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 		return existing, false, nil
 	}
 
-	var channelExists bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM fc_e2b_stable_channel WHERE channel = 'stable')`).Scan(&channelExists); err != nil {
-		return FCE2BStableRelease{}, false, fmt.Errorf("check stable channel: %w", err)
-	}
-	if input.Bootstrap != !channelExists {
-		if !channelExists {
-			return FCE2BStableRelease{}, false, errors.New("the first stable release must explicitly initialize the channel")
-		}
-		return FCE2BStableRelease{}, false, errors.New("bootstrap is only allowed before the stable channel is initialized")
-	}
-
 	var releaseID pgtype.UUID
 	err = tx.QueryRow(ctx, `
 		INSERT INTO fc_e2b_stable_release (
@@ -244,15 +235,13 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 			request_fingerprint,
 			template_id,
 			template_build_id,
-			git_commit,
-			acr_digest,
 			note,
 			actor_user_id,
 			bootstrap
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id
 	`, input.IdempotencyKey, fingerprint, input.TemplateID, input.ExpectedBuildID,
-		input.GitCommit, input.ACRDigest, input.Note, input.ActorUserID, input.Bootstrap,
+		input.Note, input.ActorUserID, input.Bootstrap,
 	).Scan(&releaseID)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -473,19 +462,17 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 	if !found {
 		return s.failValidation(ctx, release.ID, token, errors.New("template_id and expected_build_id do not match a READY catalog entry"))
 	}
-	if len(release.GitCommit) < 6 {
-		return s.failValidation(ctx, release.ID, token, errors.New("git_commit is not a full Git SHA"))
-	}
 	if !IsFCE2BTemplateReady(selected) || !IsFCE2BTemplatePublished(selected) {
 		return s.failValidation(ctx, release.ID, token, errors.New("candidate template is not READY with a published manifest"))
 	}
-	if selected.SourceRevision != release.GitCommit[:6] {
-		return s.failValidation(ctx, release.ID, token, errors.New("candidate template source revision does not match git_commit"))
+	if !isStableSourceRevision(selected.SourceRevision) {
+		return s.failValidation(ctx, release.ID, token, errors.New("candidate template has no valid source revision"))
 	}
 	manifest, err := s.Launcher.VerifyStableTemplate(ctx, selected)
 	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
 	}
+	manifest["source_revision"] = selected.SourceRevision
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
@@ -496,12 +483,13 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 				UPDATE fc_e2b_stable_release
 				SET template_alias = $1,
 				    manifest = $2::jsonb,
+				    source_revision = $3,
 				    status = 'completed',
 				    completed_at = now(),
 				    lease_token = NULL,
 				    lease_expires_at = NULL,
 				    updated_at = now()
-				WHERE id = $3 AND lease_token = $4
+				WHERE id = $4 AND lease_token = $5
 				RETURNING id
 			)
 			INSERT INTO fc_e2b_stable_channel (
@@ -512,9 +500,9 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 				current_release_id,
 				active_release_id
 			)
-			SELECT 'stable', $5, $6, $1, id, NULL
+			SELECT 'stable', $6, $7, $1, id, NULL
 			FROM completed
-		`, selected.Template, string(manifestJSON), release.ID, token, selected.ID, selected.BuildID)
+		`, selected.Template, string(manifestJSON), selected.SourceRevision, release.ID, token, selected.ID, selected.BuildID)
 		return err
 	}
 	current, err := s.CurrentTemplate(ctx)
@@ -554,22 +542,23 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 		UPDATE fc_e2b_stable_release
 		SET template_alias = $1,
 		    manifest = $2::jsonb,
-		    previous_template_id = $3,
-		    previous_template_build_id = $4,
-		    previous_template_alias = $5,
+		    source_revision = $3,
+		    previous_template_id = $4,
+		    previous_template_build_id = $5,
+		    previous_template_alias = $6,
 		    status = 'rolling_out',
 		    current_batch = 1,
 		    target_percentage = 5,
-		    total_targets = $6,
-		    rollout_started_at = $7,
-		    batch_started_at = $7,
-		    next_batch_at = $7,
+		    total_targets = $7,
+		    rollout_started_at = $8,
+		    batch_started_at = $8,
+		    next_batch_at = $8,
 		    lease_token = NULL,
 		    lease_expires_at = NULL,
 		    updated_at = now()
-		WHERE id = $8 AND lease_token = $9
-	`, selected.Template, string(manifestJSON), current.TemplateID, current.TemplateBuildID,
-		current.TemplateAlias, len(targets), startedAt, release.ID, token)
+		WHERE id = $9 AND lease_token = $10
+	`, selected.Template, string(manifestJSON), selected.SourceRevision, current.TemplateID,
+		current.TemplateBuildID, current.TemplateAlias, len(targets), startedAt, release.ID, token)
 	if err != nil {
 		return err
 	}
@@ -1384,6 +1373,7 @@ func (s *FCE2BStableService) scanRelease(row rowScanner) (FCE2BStableRelease, er
 		&release.TemplateAlias,
 		&release.GitCommit,
 		&release.ACRDigest,
+		&release.SourceRevision,
 		&release.Note,
 		&actor,
 		&release.Bootstrap,
@@ -1431,12 +1421,17 @@ func stableReleaseFingerprint(input CreateFCE2BStableReleaseInput) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
 		input.TemplateID,
 		input.ExpectedBuildID,
-		input.GitCommit,
-		input.ACRDigest,
 		input.Note,
-		fmt.Sprintf("%t", input.Bootstrap),
 	}, "\x00")))
 	return hex.EncodeToString(sum[:])
+}
+
+func isStableSourceRevision(value string) bool {
+	if len(value) != 6 || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func releaseTemplate(release FCE2BStableRelease) FCE2BTemplate {
@@ -1491,6 +1486,7 @@ const stableReleaseColumns = `
 	release.template_alias,
 	release.git_commit,
 	release.acr_digest,
+	release.source_revision,
 	release.note,
 	release.actor_user_id,
 	release.bootstrap,
