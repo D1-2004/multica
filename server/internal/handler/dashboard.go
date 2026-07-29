@@ -51,12 +51,13 @@ func parseProjectIDParam(w http.ResponseWriter, r *http.Request) (pgtype.UUID, b
 	return u, true
 }
 
-// DashboardUsageDailyResponse is one (date, provider, model) bucket. Cost-side
-// math happens on the client from a per-model pricing table; provider + model
-// stay on the wire so the client can disambiguate bare model ids that collide
-// across providers (e.g. Cursor's `auto`).
+// DashboardUsageDailyResponse is one (date, agent, provider, model) bucket.
+// Cost-side math happens on the client from a per-model pricing table;
+// agent_id supports the leaderboard comparison chart, while provider + model
+// let the client disambiguate bare model ids that collide across providers.
 type DashboardUsageDailyResponse struct {
 	Date             string `json:"date"`
+	AgentID          string `json:"agent_id"`
 	Provider         string `json:"provider"`
 	Model            string `json:"model"`
 	InputTokens      int64  `json:"input_tokens"`
@@ -66,7 +67,7 @@ type DashboardUsageDailyResponse struct {
 	TaskCount        int32  `json:"task_count"`
 }
 
-// GetDashboardUsageDaily returns per-(date, model) token rows for the
+// GetDashboardUsageDaily returns per-(date, agent, model) token rows for the
 // workspace, optionally scoped to a project. Backed by task_usage_hourly,
 // sliced into calendar days under the viewer's tz.
 func (h *Handler) GetDashboardUsageDaily(w http.ResponseWriter, r *http.Request) {
@@ -109,6 +110,7 @@ func (h *Handler) listDashboardUsageDaily(
 	for i, row := range rows {
 		resp[i] = DashboardUsageDailyResponse{
 			Date:             row.Date.Time.Format("2006-01-02"),
+			AgentID:          uuidToString(row.AgentID),
 			Provider:         row.Provider,
 			Model:            row.Model,
 			InputTokens:      row.InputTokens,
@@ -241,17 +243,18 @@ func (h *Handler) GetDashboardAgentRunTime(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// DashboardRunTimeDailyResponse is one (date) bucket of terminal-task run
-// time and counts. Powers the workspace dashboard's daily Time and Tasks
-// charts — same toggle as Tokens / Cost, different metric.
+// DashboardRunTimeDailyResponse is one (date, agent) bucket of terminal-task
+// run time and counts. Powers the workspace dashboard's daily Time and Tasks
+// charts and the leaderboard comparison chart.
 type DashboardRunTimeDailyResponse struct {
 	Date         string `json:"date"`
+	AgentID      string `json:"agent_id"`
 	TotalSeconds int64  `json:"total_seconds"`
 	TaskCount    int32  `json:"task_count"`
 	FailedCount  int32  `json:"failed_count"`
 }
 
-// GetDashboardRunTimeDaily returns per-date total task run time and task
+// GetDashboardRunTimeDaily returns per-(date, agent) task run time and task
 // counts for the workspace, optionally scoped to a project. Only terminal
 // tasks (completed or failed) with both started_at and completed_at
 // populated contribute. Bucketed by completed_at so the day boundaries
@@ -285,6 +288,7 @@ func (h *Handler) GetDashboardRunTimeDaily(w http.ResponseWriter, r *http.Reques
 	for i, row := range rows {
 		resp[i] = DashboardRunTimeDailyResponse{
 			Date:         row.Date.Time.Format("2006-01-02"),
+			AgentID:      uuidToString(row.AgentID),
 			TotalSeconds: row.TotalSeconds,
 			TaskCount:    row.TaskCount,
 			FailedCount:  row.FailedCount,
