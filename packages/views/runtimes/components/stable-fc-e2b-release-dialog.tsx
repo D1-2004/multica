@@ -74,6 +74,9 @@ export function StableFCE2BReleaseDialog({
   const resumeRelease = useMutateFCE2BStableRelease("resume");
   const startRollout = useMutateFCE2BStableRelease("start-rollout");
   const advanceRollout = useMutateFCE2BStableRelease("advance-rollout");
+  const completeObservation = useMutateFCE2BStableRelease(
+    "complete-observation",
+  );
   const terminateRelease = useMutateFCE2BStableRelease("terminate");
   const rollbackRelease = useMutateFCE2BStableRelease("rollback");
   const [selected, setSelected] = useState<FCE2BTemplate | null>(null);
@@ -169,6 +172,7 @@ export function StableFCE2BReleaseDialog({
       resume: resumeRelease,
       "start-rollout": startRollout,
       "advance-rollout": advanceRollout,
+      "complete-observation": completeObservation,
       terminate: terminateRelease,
       rollback: rollbackRelease,
     }[action];
@@ -323,6 +327,11 @@ export function StableFCE2BReleaseDialog({
                 </ol>
               </section>
             )}
+            {active.status === "observing" && (
+              <p className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] leading-4 text-muted-foreground">
+                {t(($) => $.fc_e2b_stable.complete_observation_notice)}
+              </p>
+            )}
             {canRollback && (
               <p className="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-[11px] leading-4 text-muted-foreground">
                 {t(($) => $.fc_e2b_stable.rollback_notice, {
@@ -375,6 +384,16 @@ export function StableFCE2BReleaseDialog({
                   {t(($) => $.fc_e2b_stable.advance_rollout, {
                     percentage: nextRolloutMilestone.percentage,
                   })}
+                </Button>
+              )}
+              {active.status === "observing" && (
+                <Button
+                  size="sm"
+                  onClick={() => mutate("complete-observation", active.id)}
+                  disabled={completeObservation.isPending}
+                >
+                  <Check className="mr-1.5 h-3.5 w-3.5" />
+                  {t(($) => $.fc_e2b_stable.complete_observation)}
                 </Button>
               )}
               {canRollback && (

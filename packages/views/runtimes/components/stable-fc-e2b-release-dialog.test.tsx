@@ -16,6 +16,7 @@ const mockMutateRelease = vi.hoisted(() => ({
   resume: vi.fn(),
   "start-rollout": vi.fn(),
   "advance-rollout": vi.fn(),
+  "complete-observation": vi.fn(),
   terminate: vi.fn(),
   rollback: vi.fn(),
 }));
@@ -317,5 +318,42 @@ describe("StableFCE2BReleaseDialog", () => {
         element.getAttribute("datetime"),
       ),
     ).toEqual(scheduledTimes);
+  });
+
+  it("completes final observation and exits the active release", async () => {
+    mockChannelQuery.data.current = {
+      template_id: "template-current",
+      template_build_id: "build-current",
+      template_alias: "Current image",
+      release_id: "release-current",
+    };
+    mockChannelQuery.data.active_release = {
+      id: "release-next",
+      template_alias: "Next image",
+      status: "observing",
+      bootstrap: false,
+      current_batch: 4,
+      target_percentage: 100,
+      previous_template_alias: "Current image",
+      updated_targets: 3,
+      total_targets: 3,
+      validation_error: "",
+    };
+
+    renderDialog();
+
+    expect(screen.getByText("Final observation")).toBeInTheDocument();
+    expect(
+      screen.getByText(/marks this template as the current stable version/),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Complete observation" }),
+    );
+
+    await waitFor(() =>
+      expect(mockMutateRelease["complete-observation"]).toHaveBeenCalledWith(
+        "release-next",
+      ),
+    );
   });
 });

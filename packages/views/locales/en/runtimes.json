@@ -305,6 +305,8 @@
     "rollout_schedule_percentage": "Roll out to {{percentage}}%",
     "rollout_schedule_complete": "Complete final observation",
     "advance_rollout": "Advance now to {{percentage}}%",
+    "complete_observation": "Complete observation",
+    "complete_observation_notice": "Complete the release after final checks. The server rechecks every Runtime and health gate, then marks this template as the current stable version and exits the active release.",
     "pause": "Pause",
     "resume": "Resume",
     "terminate": "Terminate rollout",

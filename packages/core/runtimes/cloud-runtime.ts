@@ -108,6 +108,7 @@ export type FCE2BStableReleaseAction =
   | "resume"
   | "start-rollout"
   | "advance-rollout"
+  | "complete-observation"
   | "terminate"
   | "rollback";
 

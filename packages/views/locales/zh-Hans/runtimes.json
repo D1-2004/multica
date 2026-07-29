@@ -293,6 +293,8 @@
     "rollout_schedule_percentage": "推送至 {{percentage}}%",
     "rollout_schedule_complete": "完成最终观察",
     "advance_rollout": "立即推进至 {{percentage}}%",
+    "complete_observation": "完成观察",
+    "complete_observation_notice": "确认最终观察无异常后完成发布。后台会再次校验全部 Runtime 和健康门禁，通过后将本次模板登记为当前稳定版并退出发布中状态。",
     "pause": "暂停",
     "resume": "继续",
     "terminate": "终止滚动更新",

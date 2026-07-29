@@ -288,6 +288,8 @@
     "publish_developers": "検証して開発者へ更新",
     "start_rollout": "24 時間更新を開始",
     "awaiting_rollout_notice": "開発者ランタイムは更新済みです。実際の会話を確認してから、24 時間更新を手動で開始してください。",
+    "complete_observation": "監視を完了",
+    "complete_observation_notice": "最終確認後にリリースを完了します。サーバーはすべての Runtime とヘルスゲートを再確認し、このテンプレートを現在の安定版として登録してリリース中の状態を終了します。",
     "pause": "一時停止",
     "resume": "再開",
     "terminate": "段階的更新を終了",

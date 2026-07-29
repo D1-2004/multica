@@ -47,6 +47,7 @@ var (
 	ErrFCE2BStableIdempotencyConflict  = errors.New("idempotency key was already used with different release parameters")
 	ErrFCE2BStableReleaseState         = errors.New("FC/E2B stable release does not allow this operation")
 	ErrFCE2BStableAdvanceBlocked       = errors.New("FC/E2B stable release cannot advance until the current stage passes its gates")
+	ErrFCE2BStableObservationBlocked   = errors.New("FC/E2B stable release cannot complete observation until its final gates pass")
 )
 
 type FCE2BStableTemplateBinding struct {
@@ -635,6 +636,71 @@ func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtyp
 	return s.GetRelease(ctx, releaseID)
 }
 
+func (s *FCE2BStableService) CompleteObservation(
+	ctx context.Context,
+	releaseID pgtype.UUID,
+) (FCE2BStableRelease, error) {
+	token := uuid.New()
+	release, err := s.scanRelease(s.Pool.QueryRow(ctx, `
+		UPDATE fc_e2b_stable_release release
+		SET lease_token = $2,
+		    lease_expires_at = now() + $3::interval,
+		    updated_at = now()
+		WHERE id = $1
+		  AND status = 'observing'
+		  AND (
+		      lease_token IS NULL
+		      OR lease_expires_at IS NULL
+		      OR lease_expires_at < now()
+		  )
+		RETURNING `+stableReleaseColumns,
+		releaseID,
+		token,
+		stableReleaseLeaseDuration.String(),
+	))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return FCE2BStableRelease{}, ErrFCE2BStableReleaseState
+		}
+		return FCE2BStableRelease{}, fmt.Errorf("claim stable observation completion: %w", err)
+	}
+	defer func() {
+		_, _ = s.Pool.Exec(context.Background(), `
+			UPDATE fc_e2b_stable_release
+			SET lease_token = NULL, lease_expires_at = NULL, updated_at = now()
+			WHERE id = $1 AND lease_token = $2
+		`, releaseID, token)
+	}()
+
+	if err := s.reconcileTargets(ctx, release); err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("reconcile stable observation targets: %w", err)
+	}
+	var missing, failed int
+	if err := s.Pool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE status <> 'updated'),
+			count(*) FILTER (WHERE status = 'failed')
+		FROM fc_e2b_stable_release_target
+		WHERE release_id = $1
+	`, release.ID).Scan(&missing, &failed); err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("check stable observation targets: %w", err)
+	}
+	if err := stableObservationTargetsError(missing, failed); err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("%w: %v", ErrFCE2BStableObservationBlocked, err)
+	}
+	if err := s.stableLaunchHealthGate(ctx, release); err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("%w: %v", ErrFCE2BStableObservationBlocked, err)
+	}
+	completed, err := s.finalizeObservation(ctx, release, token, false)
+	if err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("complete stable observation: %w", err)
+	}
+	if !completed {
+		return FCE2BStableRelease{}, ErrFCE2BStableReleaseState
+	}
+	return s.GetRelease(ctx, releaseID)
+}
+
 func (s *FCE2BStableService) Terminate(ctx context.Context, releaseID pgtype.UUID) (FCE2BStableRelease, error) {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
@@ -1108,24 +1174,44 @@ func (s *FCE2BStableService) observeRelease(ctx context.Context, release FCE2BSt
 	if err := s.stableLaunchHealthGate(ctx, release); err != nil {
 		return s.pauseForGate(ctx, release.ID, token, FCE2BStableReleaseObserving, err)
 	}
-	tx, err := s.Pool.Begin(ctx)
+	completed, err := s.finalizeObservation(ctx, release, token, true)
 	if err != nil {
 		return err
+	}
+	if !completed {
+		return s.releaseLease(ctx, release.ID, token, nil)
+	}
+	return nil
+}
+
+func (s *FCE2BStableService) finalizeObservation(
+	ctx context.Context,
+	release FCE2BStableRelease,
+	token uuid.UUID,
+	requireScheduledTime bool,
+) (bool, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return false, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	tag, err := tx.Exec(ctx, `
 		UPDATE fc_e2b_stable_release
 		SET status = 'completed', completed_at = now(), updated_targets = total_targets,
+		    next_batch_at = NULL, validation_error = '',
 		    lease_token = NULL, lease_expires_at = NULL, updated_at = now()
-		WHERE id = $1 AND lease_token = $2 AND rollout_started_at + interval '24 hours' <= now()
-	`, release.ID, token)
+		WHERE id = $1
+		  AND status = 'observing'
+		  AND lease_token = $2
+		  AND ($3 = false OR rollout_started_at + interval '24 hours' <= now())
+	`, release.ID, token, requireScheduledTime)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if tag.RowsAffected() != 1 {
-		return s.releaseLease(ctx, release.ID, token, nil)
+		return false, nil
 	}
-	if _, err := tx.Exec(ctx, `
+	channelTag, err := tx.Exec(ctx, `
 		UPDATE fc_e2b_stable_channel
 		SET current_template_id = $1,
 		    current_template_build_id = $2,
@@ -1134,10 +1220,17 @@ func (s *FCE2BStableService) observeRelease(ctx context.Context, release FCE2BSt
 		    active_release_id = NULL,
 		    updated_at = now()
 		WHERE channel = 'stable' AND active_release_id = $4
-	`, release.TemplateID, release.TemplateBuildID, release.TemplateAlias, release.ID); err != nil {
-		return err
+	`, release.TemplateID, release.TemplateBuildID, release.TemplateAlias, release.ID)
+	if err != nil {
+		return false, err
 	}
-	return tx.Commit(ctx)
+	if channelTag.RowsAffected() != 1 {
+		return false, errors.New("stable channel no longer points to the observed release")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *FCE2BStableService) rollbackRelease(ctx context.Context, release FCE2BStableRelease, token uuid.UUID) error {
@@ -1703,6 +1796,16 @@ func (s *FCE2BStableService) currentBatchHasCutovers(
 
 func stableTargetNeedsBatchHealthGate(completedAt, batchStartedAt time.Time) bool {
 	return !completedAt.Before(batchStartedAt)
+}
+
+func stableObservationTargetsError(missing, failed int) error {
+	if failed > 0 {
+		return fmt.Errorf("%d runtime targets failed", failed)
+	}
+	if missing > 0 {
+		return fmt.Errorf("%d runtime targets are not updated", missing)
+	}
+	return nil
 }
 
 func failureRate(failed, total int) float64 {

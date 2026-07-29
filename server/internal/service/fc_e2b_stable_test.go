@@ -210,6 +210,20 @@ func TestStableBatchHealthWindowExcludesDeveloperPreRolloutCutovers(t *testing.T
 	}
 }
 
+func TestStableObservationTargetsError(t *testing.T) {
+	if err := stableObservationTargetsError(0, 0); err != nil {
+		t.Fatalf("fully updated observation was blocked: %v", err)
+	}
+	if err := stableObservationTargetsError(2, 0); err == nil ||
+		!strings.Contains(err.Error(), "2 runtime targets are not updated") {
+		t.Fatalf("missing targets error = %v", err)
+	}
+	if err := stableObservationTargetsError(2, 1); err == nil ||
+		!strings.Contains(err.Error(), "1 runtime targets failed") {
+		t.Fatalf("failed targets error = %v", err)
+	}
+}
+
 func TestStableSourceRevisionRequiresCanonicalAliasRevision(t *testing.T) {
 	for _, valid := range []string{"000000", "b90849", "abcdef"} {
 		if !isStableSourceRevision(valid) {
