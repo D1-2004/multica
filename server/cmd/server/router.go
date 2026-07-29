@@ -1235,6 +1235,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// resolves binding context server-side; a separate Bearer delivery secret
 	// authenticates the caller and is never embedded in the callback URL.
 	r.Post("/api/webhooks/agent-dispatch/{endpointId}", h.HandleAgentDispatch)
+	r.Get("/api/webhooks/agent-dispatch/{endpointId}/tasks/{taskId}/summary", h.GetAgentDispatchTaskSummary)
+	r.Get("/api/webhooks/agent-dispatch/{endpointId}/tasks/{taskId}/messages", h.ListAgentDispatchTaskMessages)
 	// DBase completes a DingTalk account binding without a Multica session.
 	// The path-aware CORS policy above admits only the configured DBase origin;
 	// this handler also requires that exact Origin and the per-attempt callback
