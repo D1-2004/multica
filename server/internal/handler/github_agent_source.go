@@ -440,7 +440,7 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "agent source not found")
 		return
 	}
-	if source.SourceType == "managed_git" {
+	if source.ManagedSourceKey.Valid {
 		writeError(w, http.StatusConflict, "this Agent source is updated automatically by Multica")
 		return
 	}
@@ -755,7 +755,7 @@ func (h *Handler) recordAgentSourceFailure(ctx context.Context, sourceID pgtype.
 func agentSourceToResponse(source db.AgentSource) AgentSourceResponse {
 	status := source.SyncStatus
 	connected := source.GithubInstallationID.Valid
-	if source.SourceType == "github" && !connected {
+	if source.SourceType == "github" && !source.ManagedSourceKey.Valid && !connected {
 		status = "disconnected"
 	}
 	var installationID *string

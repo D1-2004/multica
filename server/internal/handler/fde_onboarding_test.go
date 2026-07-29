@@ -294,8 +294,8 @@ func TestManagedAgentProvisionReassignsExistingAgentToScanner(t *testing.T) {
 		INSERT INTO agent_source (
 			agent_id, workspace_id, source_type, managed_source_key, repo_owner,
 			repo_name, ref, manifest_path, synced_commit_sha, sync_status, created_by
-		) VALUES ($1, $2, 'managed_git', $4, 'keeperqaq', 'fde-agent',
-			'master', 'multica-agent.yaml', 'test-sha', 'ready', $3)
+		) VALUES ($1, $2, 'github', $4, 'keeperqaq', 'fde-agent',
+			'master', 'dingtalk-agent.json', 'test-sha', 'ready', $3)
 	`, agentID, workspaceID, firstOwnerID, sourceKey); err != nil {
 		t.Fatalf("create managed source: %v", err)
 	}

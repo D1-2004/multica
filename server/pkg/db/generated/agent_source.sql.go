@@ -143,7 +143,7 @@ INSERT INTO agent_source (
     ref, manifest_path, synced_commit_sha, sync_status, last_sync_attempt_at,
     last_synced_at, created_by
 ) VALUES (
-    $1, $2, 'managed_git', $3, $4, $5,
+    $1, $2, 'github', $3, $4, $5,
     $6, $7, $8, 'ready', now(), now(), $9
 )
 RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key
@@ -377,8 +377,7 @@ func (q *Queries) ListAgentSourceSkills(ctx context.Context, agentSourceID pgtyp
 const listOutdatedIdleManagedAgentSources = `-- name: ListOutdatedIdleManagedAgentSources :many
 SELECT source.id, source.agent_id, source.source_type, source.github_installation_id, source.repo_owner, source.repo_name, source.ref, source.manifest_path, source.synced_commit_sha, source.sync_status, source.last_sync_error, source.last_sync_attempt_at, source.last_synced_at, source.created_by, source.created_at, source.updated_at, source.workspace_id, source.managed_source_key
 FROM agent_source AS source
-WHERE source.source_type = 'managed_git'
-  AND source.managed_source_key = $1
+WHERE source.managed_source_key = $1
   AND source.synced_commit_sha <> $2
   AND source.id > $3
   AND NOT EXISTS (
@@ -477,6 +476,7 @@ func (q *Queries) LockAgentSourceByAgentID(ctx context.Context, agentID pgtype.U
 const markAgentSourceSyncFailed = `-- name: MarkAgentSourceSyncFailed :one
 UPDATE agent_source
 SET sync_status = CASE
+        WHEN managed_source_key IS NOT NULL THEN 'failed'
         WHEN github_installation_id IS NULL THEN 'disconnected'
         ELSE 'failed'
     END,
@@ -575,6 +575,80 @@ func (q *Queries) MarkAgentSourcesDisconnectedByInstallation(ctx context.Context
 	return err
 }
 
+const markManagedAgentSourceSyncSucceeded = `-- name: MarkManagedAgentSourceSyncSucceeded :one
+UPDATE agent_source
+SET synced_commit_sha = $1,
+    manifest_path = $2,
+    sync_status = 'ready',
+    last_sync_error = NULL,
+    last_sync_attempt_at = now(),
+    last_synced_at = now(),
+    updated_at = now()
+WHERE id = $3
+  AND managed_source_key IS NOT NULL
+RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key
+`
+
+type MarkManagedAgentSourceSyncSucceededParams struct {
+	SyncedCommitSha string      `json:"synced_commit_sha"`
+	ManifestPath    string      `json:"manifest_path"`
+	ID              pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) MarkManagedAgentSourceSyncSucceeded(ctx context.Context, arg MarkManagedAgentSourceSyncSucceededParams) (AgentSource, error) {
+	row := q.db.QueryRow(ctx, markManagedAgentSourceSyncSucceeded, arg.SyncedCommitSha, arg.ManifestPath, arg.ID)
+	var i AgentSource
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.SourceType,
+		&i.GithubInstallationID,
+		&i.RepoOwner,
+		&i.RepoName,
+		&i.Ref,
+		&i.ManifestPath,
+		&i.SyncedCommitSha,
+		&i.SyncStatus,
+		&i.LastSyncError,
+		&i.LastSyncAttemptAt,
+		&i.LastSyncedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.WorkspaceID,
+		&i.ManagedSourceKey,
+	)
+	return i, err
+}
+
+const updateAgentSourceSkillPath = `-- name: UpdateAgentSourceSkillPath :one
+UPDATE agent_source_skill
+SET source_path = $1,
+    updated_at = now()
+WHERE agent_source_id = $2
+  AND skill_id = $3
+RETURNING agent_source_id, skill_id, source_path, created_at, updated_at
+`
+
+type UpdateAgentSourceSkillPathParams struct {
+	SourcePath    string      `json:"source_path"`
+	AgentSourceID pgtype.UUID `json:"agent_source_id"`
+	SkillID       pgtype.UUID `json:"skill_id"`
+}
+
+func (q *Queries) UpdateAgentSourceSkillPath(ctx context.Context, arg UpdateAgentSourceSkillPathParams) (AgentSourceSkill, error) {
+	row := q.db.QueryRow(ctx, updateAgentSourceSkillPath, arg.SourcePath, arg.AgentSourceID, arg.SkillID)
+	var i AgentSourceSkill
+	err := row.Scan(
+		&i.AgentSourceID,
+		&i.SkillID,
+		&i.SourcePath,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateManagedAgentOwner = `-- name: UpdateManagedAgentOwner :one
 UPDATE agent AS target
 SET owner_id = $1,
@@ -585,7 +659,6 @@ WHERE target.id = $2
       SELECT 1
       FROM agent_source
       WHERE agent_source.agent_id = target.id
-        AND agent_source.source_type = 'managed_git'
         AND agent_source.managed_source_key = $4
   )
 RETURNING target.id, target.workspace_id, target.name, target.avatar_url, target.runtime_mode, target.runtime_config, target.visibility, target.status, target.max_concurrent_tasks, target.owner_id, target.created_at, target.updated_at, target.description, target.runtime_id, target.instructions, target.archived_at, target.archived_by, target.custom_env, target.custom_args, target.mcp_config, target.model, target.thinking_level, target.composio_toolkit_allowlist, target.permission_mode, target.kind, target.system_key

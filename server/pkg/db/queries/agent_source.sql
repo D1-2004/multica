@@ -43,7 +43,7 @@ INSERT INTO agent_source (
     ref, manifest_path, synced_commit_sha, sync_status, last_sync_attempt_at,
     last_synced_at, created_by
 ) VALUES (
-    $1, $2, 'managed_git', $3, $4, $5,
+    $1, $2, 'github', $3, $4, $5,
     $6, $7, $8, 'ready', now(), now(), $9
 )
 RETURNING *;
@@ -63,7 +63,6 @@ WHERE target.id = sqlc.arg(agent_id)
       SELECT 1
       FROM agent_source
       WHERE agent_source.agent_id = target.id
-        AND agent_source.source_type = 'managed_git'
         AND agent_source.managed_source_key = sqlc.arg(managed_source_key)
   )
 RETURNING target.*;
@@ -71,8 +70,7 @@ RETURNING target.*;
 -- name: ListOutdatedIdleManagedAgentSources :many
 SELECT source.*
 FROM agent_source AS source
-WHERE source.source_type = 'managed_git'
-  AND source.managed_source_key = sqlc.arg(source_key)
+WHERE source.managed_source_key = sqlc.arg(source_key)
   AND source.synced_commit_sha <> sqlc.arg(target_commit_sha)
   AND source.id > sqlc.arg(after_id)
   AND NOT EXISTS (
@@ -103,9 +101,23 @@ SET synced_commit_sha = $2,
 WHERE id = $1
 RETURNING *;
 
+-- name: MarkManagedAgentSourceSyncSucceeded :one
+UPDATE agent_source
+SET synced_commit_sha = sqlc.arg(synced_commit_sha),
+    manifest_path = sqlc.arg(manifest_path),
+    sync_status = 'ready',
+    last_sync_error = NULL,
+    last_sync_attempt_at = now(),
+    last_synced_at = now(),
+    updated_at = now()
+WHERE id = sqlc.arg(id)
+  AND managed_source_key IS NOT NULL
+RETURNING *;
+
 -- name: MarkAgentSourceSyncFailed :one
 UPDATE agent_source
 SET sync_status = CASE
+        WHEN managed_source_key IS NOT NULL THEN 'failed'
         WHEN github_installation_id IS NULL THEN 'disconnected'
         ELSE 'failed'
     END,
@@ -129,6 +141,14 @@ VALUES ($1, $2, $3)
 ON CONFLICT (agent_source_id, source_path) DO UPDATE SET
     skill_id = EXCLUDED.skill_id,
     updated_at = now()
+RETURNING *;
+
+-- name: UpdateAgentSourceSkillPath :one
+UPDATE agent_source_skill
+SET source_path = sqlc.arg(source_path),
+    updated_at = now()
+WHERE agent_source_id = sqlc.arg(agent_source_id)
+  AND skill_id = sqlc.arg(skill_id)
 RETURNING *;
 
 -- name: ListAgentSourceSkills :many

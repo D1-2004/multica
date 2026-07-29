@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/agentsource"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestGitAgentInstanceProfileUsesManifestDefaultsAndRequestOverrides(t *testing.T) {
@@ -58,6 +59,29 @@ func TestSourceManagedSkillNameIsIsolatedPerAgentSource(t *testing.T) {
 	second := sourceManagedSkillName("repository-audit", pgtype.UUID{Bytes: [16]byte{0xab, 0xcd, 0xef, 0x01, 0x23}, Valid: true})
 	if first == second || !strings.HasPrefix(first, "repository-audit--") || !strings.HasPrefix(second, "repository-audit--") {
 		t.Fatalf("source-scoped names = %q, %q", first, second)
+	}
+}
+
+func TestAgentSourceResponseKeepsPlatformGitSourceReadyWithoutInstallation(t *testing.T) {
+	response := agentSourceToResponse(db.AgentSource{
+		SourceType:       "github",
+		ManagedSourceKey: pgtype.Text{String: "fde-agent", Valid: true},
+		RepoOwner:        "keeperqaq",
+		RepoName:         "fde-agent",
+		SyncStatus:       "ready",
+	})
+	if response.SyncStatus != "ready" {
+		t.Fatalf("platform Git source status = %q, want ready", response.SyncStatus)
+	}
+	if response.GitHubConnected || response.InstallationID != nil {
+		t.Fatalf("platform Git source must not invent a GitHub installation: %#v", response)
+	}
+
+	disconnected := agentSourceToResponse(db.AgentSource{
+		SourceType: "github", RepoOwner: "acme", RepoName: "agent", SyncStatus: "ready",
+	})
+	if disconnected.SyncStatus != "disconnected" {
+		t.Fatalf("ordinary source without installation status = %q", disconnected.SyncStatus)
 	}
 }
 
