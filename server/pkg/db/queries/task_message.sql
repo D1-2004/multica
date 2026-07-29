@@ -13,6 +13,19 @@ SELECT * FROM task_message
 WHERE task_id = $1 AND seq > $2
 ORDER BY seq ASC;
 
+-- name: GetTaskMessageSummary :one
+SELECT
+    COUNT(*)::int AS message_count,
+    COUNT(*) FILTER (WHERE type = 'tool_use')::int AS tool_call_count
+FROM task_message
+WHERE task_id = $1;
+
+-- name: ListTaskMessagesPage :many
+SELECT * FROM task_message
+WHERE task_id = $1 AND seq > $2
+ORDER BY seq ASC
+LIMIT $3;
+
 -- name: DeleteTaskMessages :exec
 DELETE FROM task_message
 WHERE task_id = $1;
