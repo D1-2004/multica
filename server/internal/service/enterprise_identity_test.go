@@ -255,9 +255,7 @@ func (f *fakeEnterpriseAnchor) Delete(_ context.Context, sandboxID string) error
 type fakeBUCOAuthClient struct {
 	tokens        BUCIdentityTokens
 	claims        bucIDTokenClaims
-	userInfo      BUCUserInfo
 	verifiedToken string
-	fetchedAccess string
 	verifyErr     error
 }
 
@@ -273,11 +271,6 @@ func (f *fakeBUCOAuthClient) VerifyIDToken(
 ) (bucIDTokenClaims, error) {
 	f.verifiedToken = token
 	return f.claims, f.verifyErr
-}
-
-func (f *fakeBUCOAuthClient) FetchUserInfo(_ context.Context, accessToken string) (BUCUserInfo, error) {
-	f.fetchedAccess = accessToken
-	return f.userInfo, nil
 }
 
 func TestEnterpriseIdentityStartBindingStoresOnlyHashedStateAndNonce(t *testing.T) {
@@ -390,10 +383,10 @@ func TestEnterpriseIdentityCompleteBindingRequiresRevokeBeforeChangingEmployee(t
 		tokens: BUCIdentityTokens{IDToken: "signed-buc-id-token"},
 		claims: bucIDTokenClaims{
 			RegisteredClaims: jwt.RegisteredClaims{Subject: "openid-2"},
+			EmployeeID:       "67890",
 			Nonce:            "oauth-nonce",
 			Name:             "另一位员工",
 		},
-		userInfo: BUCUserInfo{EmployeeID: "67890", OpenID: "openid-2"},
 	}
 	authX := &fakeEnterpriseAuthX{}
 	serviceUnderTest := newTestEnterpriseIdentityService(
@@ -482,10 +475,10 @@ func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *t
 		},
 		claims: bucIDTokenClaims{
 			RegisteredClaims: jwt.RegisteredClaims{Subject: "openid-1"},
+			EmployeeID:       "12345",
 			Nonce:            nonce,
 			Name:             "测试员工",
 		},
-		userInfo: BUCUserInfo{EmployeeID: "12345", OpenID: "openid-1"},
 	}
 	authX := &fakeEnterpriseAuthX{issueResult: EnterpriseOIDCToken{
 		IDToken:          "authx-id",
@@ -506,9 +499,6 @@ func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *t
 	}
 	if buc.verifiedToken != bucIDToken {
 		t.Fatal("BUC ID token was not verified before binding")
-	}
-	if buc.fetchedAccess != "buc-access" {
-		t.Fatal("BUC user info was not fetched with the exchanged access token")
 	}
 	if anchor.createdEmployee != "12345" ||
 		anchor.createdTokens.RefreshToken != "buc-refresh" ||
@@ -734,13 +724,12 @@ func TestEnterpriseIdentityRevokeRetiresActiveASBSandboxes(t *testing.T) {
 	}
 }
 
-func TestHTTPBUCOAuthClientVerifyIDTokenRejectsForgedSignatureAndMissingSubject(t *testing.T) {
+func TestHTTPBUCOAuthClientVerifyIDTokenRejectsForgedSignatureAndMissingIdentityClaims(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 29, 7, 0, 0, 0, time.UTC)
 	client, err := NewHTTPBUCOAuthClient(
 		defaultBUCTokenURL,
-		defaultBUCUserInfoURL,
 		defaultBUCIssuer,
 		defaultBUCJWKSURL,
 		"buc-client-1",
@@ -769,6 +758,23 @@ func TestHTTPBUCOAuthClientVerifyIDTokenRejectsForgedSignatureAndMissingSubject(
 	); err == nil {
 		t.Fatal("expected missing subject to fail")
 	}
+	missingEmployeeClaims := testBUCIDTokenClaims(now, defaultBUCIssuer, "nonce-1")
+	missingEmployeeClaims.EmployeeID = ""
+	missingEmployeeToken, err := jwt.NewWithClaims(
+		jwt.SigningMethodHS256,
+		missingEmployeeClaims,
+	).SignedString([]byte("test-only-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.VerifyIDToken(
+		context.Background(),
+		missingEmployeeToken,
+		sha256Bytes("nonce-1"),
+		now,
+	); err == nil {
+		t.Fatal("expected missing employee identity to fail")
+	}
 	forgedToken := signedTestBUCHMACToken(t, now, "nonce-1", "openid-1", []byte("attacker-key"))
 	if _, err := client.VerifyIDToken(
 		context.Background(),
@@ -777,56 +783,6 @@ func TestHTTPBUCOAuthClientVerifyIDTokenRejectsForgedSignatureAndMissingSubject(
 		now,
 	); err == nil {
 		t.Fatal("expected forged token signature to fail")
-	}
-}
-
-func TestHTTPBUCOAuthClientFetchUserInfoUsesExchangedAccessToken(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/user-info" || r.Method != http.MethodPost {
-			http.NotFound(w, r)
-			return
-		}
-		if err := r.ParseForm(); err != nil {
-			t.Errorf("parse user info form: %v", err)
-			http.Error(w, "invalid form", http.StatusBadRequest)
-			return
-		}
-		if r.Form.Get("access_token") != "exchanged-access-token" {
-			t.Error("user info request did not contain the exchanged access token")
-			http.Error(w, "invalid token", http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]any{
-			"empId":  "12345",
-			"openid": "openid-1",
-		}); err != nil {
-			t.Errorf("encode user info response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	client, err := NewHTTPBUCOAuthClient(
-		server.URL+"/token",
-		server.URL+"/user-info",
-		server.URL+"/issuer",
-		server.URL+"/jwks",
-		"buc-client-1",
-		"test-only-key",
-		server.URL+"/callback",
-		server.Client(),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	userInfo, err := client.FetchUserInfo(context.Background(), "exchanged-access-token")
-	if err != nil {
-		t.Fatalf("FetchUserInfo: %v", err)
-	}
-	if userInfo.EmployeeID != "12345" || userInfo.OpenID != "openid-1" {
-		t.Fatalf("user info = %#v", userInfo)
 	}
 }
 
@@ -862,7 +818,6 @@ func TestHTTPBUCOAuthClientVerifyIDTokenUsesBUCJWKSForRSA(t *testing.T) {
 	issuer = server.URL + "/issuer"
 	client, err := NewHTTPBUCOAuthClient(
 		server.URL+"/token",
-		server.URL+"/user-info",
 		issuer,
 		server.URL+"/jwks",
 		"buc-client-1",
@@ -908,7 +863,6 @@ func newTestEnterpriseIdentityService(
 			Enabled:             true,
 			BUCAuthorizeURL:     defaultBUCAuthorizeURL,
 			BUCTokenURL:         defaultBUCTokenURL,
-			BUCUserInfoURL:      defaultBUCUserInfoURL,
 			BUCIssuer:           defaultBUCIssuer,
 			BUCJWKSURL:          defaultBUCJWKSURL,
 			BUCClientID:         "buc-client-1",
@@ -950,8 +904,9 @@ func testBUCIDTokenClaims(now time.Time, issuer, nonce string) bucIDTokenClaims 
 			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(now),
 		},
-		Nonce: nonce,
-		Name:  "测试员工",
+		EmployeeID: "12345",
+		Nonce:      nonce,
+		Name:       "测试员工",
 	}
 }
 
