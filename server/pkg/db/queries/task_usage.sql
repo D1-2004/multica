@@ -30,11 +30,11 @@ JOIN agent_task_queue atq ON atq.id = tu.task_id
 WHERE atq.issue_id = $1;
 
 -- name: ListDashboardUsageDaily :many
--- Daily per-(date, provider, model) token aggregates for the workspace, served
+-- Daily per-(date, agent, provider, model) token aggregates for the workspace, served
 -- from the UTC-bucketed `task_usage_hourly` table and
 -- sliced to calendar days under the caller-supplied @tz. Optionally
 -- scoped to a single project via sqlc.narg('project_id'). Powers the
--- workspace dashboard's daily cost chart.
+-- workspace dashboard's daily cost chart and per-agent comparison chart.
 -- The viewer's tz is applied here at query time, so a viewer in
 -- Asia/Shanghai gets their "today" cut at +08 and one in
 -- America/Los_Angeles gets theirs at -08 against the same UTC rows.
@@ -49,6 +49,7 @@ WHERE atq.issue_id = $1;
 -- instead of forming a separate case-variant bucket.
 SELECT
     DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text) AS date,
+    agent_id,
     LOWER(provider) AS provider,
     model,
     SUM(input_tokens)::bigint        AS input_tokens,
@@ -60,8 +61,8 @@ FROM task_usage_hourly
 WHERE workspace_id = $1
   AND bucket_hour >= sqlc.arg('since')::timestamptz
   AND (sqlc.narg('project_id')::uuid IS NULL OR project_id = sqlc.narg('project_id'))
-GROUP BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text), LOWER(provider), model
-ORDER BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text) DESC, LOWER(provider), model;
+GROUP BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text), agent_id, LOWER(provider), model
+ORDER BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text) DESC, agent_id, LOWER(provider), model;
 
 -- name: ListDashboardUsageByAgent :many
 -- Per-(agent, provider, model) token aggregates from `task_usage_hourly`. No
@@ -95,9 +96,10 @@ GROUP BY agent_id, LOWER(provider), model
 ORDER BY agent_id, LOWER(provider), model;
 
 -- name: ListDashboardRunTimeDaily :many
--- Daily per-date run time + task counts for the workspace, optionally
+-- Daily per-(date, agent) run time + task counts for the workspace, optionally
 -- scoped to a single project. Powers the workspace dashboard's "Time"
--- and "Tasks" metrics on the same toggle as Tokens / Cost. Bucketed by
+-- and "Tasks" metrics on the same toggle as Tokens / Cost, plus the
+-- per-agent comparison chart. Bucketed by
 -- completed_at (terminal time) sliced into calendar days under the
 -- caller-supplied @tz — same Viewing-tz treatment as ListDashboardUsageDaily
 -- so the Time / Tasks tabs cut their day boundary identically to the
@@ -109,6 +111,7 @@ ORDER BY agent_id, LOWER(provider), model;
 -- — passed straight through, NOT re-truncated; see ListDashboardUsageDaily.
 SELECT
     DATE(atq.completed_at AT TIME ZONE sqlc.arg('tz')::text) AS date,
+    atq.agent_id,
     COALESCE(
         SUM(EXTRACT(EPOCH FROM (atq.completed_at - atq.started_at)))::bigint,
         0
@@ -124,8 +127,8 @@ WHERE a.workspace_id = $1
   AND atq.completed_at IS NOT NULL
   AND atq.completed_at >= sqlc.arg('since')::timestamptz
   AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
-GROUP BY DATE(atq.completed_at AT TIME ZONE sqlc.arg('tz')::text)
-ORDER BY DATE(atq.completed_at AT TIME ZONE sqlc.arg('tz')::text) DESC;
+GROUP BY DATE(atq.completed_at AT TIME ZONE sqlc.arg('tz')::text), atq.agent_id
+ORDER BY DATE(atq.completed_at AT TIME ZONE sqlc.arg('tz')::text) DESC, atq.agent_id;
 
 -- name: ListDashboardAgentRunTime :many
 -- Per-agent total task run time and task count for the workspace, optionally

@@ -3,6 +3,7 @@ import {
   AppConfigSchema,
   AgentTaskListSchema,
   DashboardAgentRunTimeListSchema,
+  DashboardRunTimeDailyListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
   BeginDingTalkAccountBindingResponseSchema,
@@ -761,6 +762,18 @@ describe("dashboard + runtime usage schema drift", () => {
     ]);
     expect(parsed).toHaveLength(1);
     expect(parsed[0]?.agent_id).toBe("");
+  });
+
+  it("defaults agent_id on daily dashboard rows for older servers", () => {
+    const usage = DashboardUsageDailyListSchema.parse([
+      { date: "2026-05-19", input_tokens: 5 },
+    ]);
+    const runtime = DashboardRunTimeDailyListSchema.parse([
+      { date: "2026-05-19", total_seconds: 42 },
+    ]);
+
+    expect(usage[0]?.agent_id).toBe("");
+    expect(runtime[0]?.agent_id).toBe("");
   });
 
   it("coerces a missing agent_id key to \"\" for the usage-by-agent panel", () => {
