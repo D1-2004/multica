@@ -172,6 +172,41 @@ func TestStableFailureRate(t *testing.T) {
 	}
 }
 
+func TestStableProviderProbeCoverageAllowsInsufficientSamples(t *testing.T) {
+	for _, completed := range []int{0, 1} {
+		if err := stableProviderProbeCoverageError("hermes", completed, 0, 0); err != nil {
+			t.Fatalf("completed=%d was blocked as a failed probe gate: %v", completed, err)
+		}
+	}
+}
+
+func TestStableProviderProbeCoverageRequiresBothSessionKindsOnceSampled(t *testing.T) {
+	tests := []struct {
+		name                   string
+		rotatedExistingSession int
+		newSession             int
+		wantErr                bool
+	}{
+		{name: "neither session kind", wantErr: true},
+		{name: "existing session only", rotatedExistingSession: 1, wantErr: true},
+		{name: "new conversation only", newSession: 1, wantErr: true},
+		{name: "both session kinds", rotatedExistingSession: 1, newSession: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := stableProviderProbeCoverageError(
+				"hermes",
+				2,
+				test.rotatedExistingSession,
+				test.newSession,
+			)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("stableProviderProbeCoverageError() error = %v, wantErr %t", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestStableBatchHealthWindowExcludesDeveloperPreRolloutCutovers(t *testing.T) {
 	batchStartedAt := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
