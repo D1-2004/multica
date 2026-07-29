@@ -33,7 +33,6 @@ type agentEnterpriseIdentityConnection struct {
 
 type startAgentEnterpriseIdentityRequest struct {
 	AgentID      string `json:"agent_id"`
-	EmployeeID   string `json:"employee_id"`
 	RedirectPath string `json:"redirect_path"`
 }
 
@@ -125,7 +124,6 @@ func (h *Handler) BeginAgentEnterpriseIdentityBinding(w http.ResponseWriter, r *
 		WorkspaceID:  workspaceID,
 		AgentID:      agent.ID,
 		ActorUserID:  actorUserID,
-		EmployeeID:   request.EmployeeID,
 		RedirectPath: request.RedirectPath,
 	})
 	if err != nil {

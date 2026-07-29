@@ -7,17 +7,14 @@ export function useBeginAgentEnterpriseIdentityBinding(wsId: string) {
   return useMutation({
     mutationFn: ({
       agentId,
-      employeeId,
       redirectPath,
     }: {
       agentId: string;
-      employeeId: string;
       redirectPath: string;
     }) =>
       api.beginAgentEnterpriseIdentityBinding(
         wsId,
         agentId,
-        employeeId,
         redirectPath,
       ),
     onSettled: (_data, _error, variables) =>

@@ -130,7 +130,7 @@ SELECT
     sqlc.arg('workspace_id'),
     sqlc.arg('agent_id'),
     sqlc.arg('actor_user_id'),
-    sqlc.arg('requested_raw_emp_id'),
+    sqlc.narg('requested_raw_emp_id'),
     sqlc.arg('state_hash'),
     sqlc.arg('nonce_hash'),
     sqlc.narg('pkce_verifier_encrypted'),

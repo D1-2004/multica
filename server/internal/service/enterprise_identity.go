@@ -275,7 +275,6 @@ type StartEnterpriseIdentityBindingInput struct {
 	WorkspaceID  pgtype.UUID
 	AgentID      pgtype.UUID
 	ActorUserID  pgtype.UUID
-	EmployeeID   string
 	RedirectPath string
 }
 
@@ -288,14 +287,7 @@ func (s *EnterpriseIdentityService) StartBinding(
 	ctx context.Context,
 	input StartEnterpriseIdentityBindingInput,
 ) (StartEnterpriseIdentityBindingResult, error) {
-	employeeID := strings.TrimSpace(input.EmployeeID)
-	if !enterpriseEmployeeIDPattern.MatchString(employeeID) {
-		return StartEnterpriseIdentityBindingResult{}, errors.New("employee ID must contain digits without a leading zero")
-	}
 	if err := validateEnterpriseRedirectPath(input.RedirectPath); err != nil {
-		return StartEnterpriseIdentityBindingResult{}, err
-	}
-	if _, _, err := s.loadReplaceableIdentity(ctx, input.WorkspaceID, input.AgentID, employeeID); err != nil {
 		return StartEnterpriseIdentityBindingResult{}, err
 	}
 	state, err := randomEnterpriseToken()
@@ -312,7 +304,7 @@ func (s *EnterpriseIdentityService) StartBinding(
 		WorkspaceID:       input.WorkspaceID,
 		AgentID:           input.AgentID,
 		ActorUserID:       input.ActorUserID,
-		RequestedRawEmpID: employeeID,
+		RequestedRawEmpID: pgtype.Text{},
 		StateHash:         sha256Bytes(state),
 		NonceHash:         sha256Bytes(nonce),
 		RedirectPath:      input.RedirectPath,
@@ -372,7 +364,6 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	claims, err := s.BUC.VerifyIDToken(
 		ctx,
 		bucTokens.IDToken,
-		attempt.RequestedRawEmpID,
 		s.Config.BUCAgentID,
 		attempt.NonceHash,
 		s.Now(),
@@ -380,6 +371,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	if err != nil {
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
+	employeeID := claims.EmployeeID
 	agent, err := s.Store.GetAgent(ctx, attempt.AgentID)
 	if err != nil || agent.WorkspaceID != attempt.WorkspaceID {
 		return CompleteEnterpriseIdentityBindingResult{}, errors.New("enterprise identity target agent no longer exists")
@@ -388,7 +380,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		ctx,
 		attempt.WorkspaceID,
 		attempt.AgentID,
-		attempt.RequestedRawEmpID,
+		employeeID,
 	)
 	if err != nil {
 		return CompleteEnterpriseIdentityBindingResult{}, err
@@ -401,7 +393,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	if err != nil {
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
-	operatorSPIFFEID, err := s.operatorSPIFFEID(attempt.RequestedRawEmpID)
+	operatorSPIFFEID, err := s.operatorSPIFFEID(employeeID)
 	if err != nil {
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
@@ -412,7 +404,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	aipID, aipCreated, err := s.Idem.EnsureAgent(ctx, EnterpriseAgentRegistration{
 		SPIFFEID:    agentSPIFFEID,
 		OperatorID:  operatorSPIFFEID,
-		EmployeeID:  attempt.RequestedRawEmpID,
+		EmployeeID:  employeeID,
 		DisplayName: agent.Name,
 		AgentModel:  model,
 		BindingAt:   s.Now(),
@@ -435,7 +427,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		ctx,
 		attempt.WorkspaceID,
 		attempt.AgentID,
-		attempt.RequestedRawEmpID,
+		employeeID,
 		bucTokens,
 	)
 	if err != nil {
@@ -456,7 +448,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	identity, err := s.Store.UpsertAgentEnterpriseIdentity(ctx, db.UpsertAgentEnterpriseIdentityParams{
 		WorkspaceID:                attempt.WorkspaceID,
 		AgentID:                    attempt.AgentID,
-		RawEmpID:                   attempt.RequestedRawEmpID,
+		RawEmpID:                   employeeID,
 		DisplayName:                strings.TrimSpace(claims.Name),
 		BucAgentID:                 s.Config.BUCAgentID,
 		AgentSpiffeID:              agentSPIFFEID,

@@ -3100,7 +3100,6 @@ export class ApiClient {
   async beginAgentEnterpriseIdentityBinding(
     workspaceId: string,
     agentId: string,
-    employeeId: string,
     redirectPath: string,
   ): Promise<BeginAgentEnterpriseIdentityBindingResponse> {
     const raw = await this.fetch<unknown>(
@@ -3109,7 +3108,6 @@ export class ApiClient {
         method: "POST",
         body: JSON.stringify({
           agent_id: agentId,
-          employee_id: employeeId,
           redirect_path: redirectPath,
         }),
       },

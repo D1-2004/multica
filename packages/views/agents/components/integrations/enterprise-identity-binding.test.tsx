@@ -106,5 +106,21 @@ describe("EnterpriseIdentityBindingCard", () => {
     expect(screen.getByRole("button", { name: "Test" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reauthorize" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Unbind" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("lets an owner start BUC binding without entering an employee ID", async () => {
+    getStatus.mockResolvedValue({
+      configured: true,
+      canManage: true,
+      identity: null,
+    });
+
+    renderCard(true);
+
+    expect(
+      await screen.findByRole("button", { name: "Bind identity" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 });

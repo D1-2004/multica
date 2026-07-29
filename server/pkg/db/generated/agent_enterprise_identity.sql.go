@@ -134,7 +134,7 @@ type CreateAgentEnterpriseIdentityAttemptParams struct {
 	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
 	AgentID               pgtype.UUID        `json:"agent_id"`
 	ActorUserID           pgtype.UUID        `json:"actor_user_id"`
-	RequestedRawEmpID     string             `json:"requested_raw_emp_id"`
+	RequestedRawEmpID     pgtype.Text        `json:"requested_raw_emp_id"`
 	StateHash             []byte             `json:"state_hash"`
 	NonceHash             []byte             `json:"nonce_hash"`
 	PkceVerifierEncrypted []byte             `json:"pkce_verifier_encrypted"`

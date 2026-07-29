@@ -267,7 +267,6 @@ func (f *fakeBUCOAuthClient) VerifyIDToken(
 	_ context.Context,
 	token string,
 	_ string,
-	_ string,
 	_ []byte,
 	_ time.Time,
 ) (bucIDTokenClaims, error) {
@@ -285,7 +284,6 @@ func TestEnterpriseIdentityStartBindingStoresOnlyHashedStateAndNonce(t *testing.
 		WorkspaceID:  util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		AgentID:      util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
 		ActorUserID:  util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
-		EmployeeID:   "12345",
 		RedirectPath: "/agents/222/settings",
 	})
 	if err != nil {
@@ -308,8 +306,11 @@ func TestEnterpriseIdentityStartBindingStoresOnlyHashedStateAndNonce(t *testing.
 		!bytes.Equal(store.createAttempt.NonceHash, sha256Bytes(nonce)) {
 		t.Fatal("OAuth state or nonce hash mismatch")
 	}
+	if store.createAttempt.RequestedRawEmpID.Valid {
+		t.Fatal("OAuth attempt must not persist an unverified employee ID")
+	}
 	if authorizeURL.Query().Get("agent_id") != "buc-agent-1" ||
-		authorizeURL.Query().Get("authorize_app") != "a1,mw" ||
+		authorizeURL.Query().Get("authorize_app") != "authorized-app-1,authorized-app-2" ||
 		authorizeURL.Query().Get("scope") != "profile openid employee user_authorize" {
 		t.Fatalf("authorize query = %v", authorizeURL.Query())
 	}
@@ -334,7 +335,6 @@ func TestEnterpriseIdentityStartBindingWithoutPreauthorizedApplications(t *testi
 		WorkspaceID:  util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		AgentID:      util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
 		ActorUserID:  util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
-		EmployeeID:   "12345",
 		RedirectPath: "/agents/222/settings",
 	})
 	if err != nil {
@@ -352,13 +352,26 @@ func TestEnterpriseIdentityStartBindingWithoutPreauthorizedApplications(t *testi
 	}
 }
 
-func TestEnterpriseIdentityBindingRequiresRevokeBeforeChangingEmployee(t *testing.T) {
+func TestEnterpriseIdentityCompleteBindingRequiresRevokeBeforeChangingEmployee(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 29, 7, 0, 0, 0, time.UTC)
 	workspaceID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
 	agentID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	state := "oauth-state"
 	store := &fakeEnterpriseIdentityStore{
+		attempt: db.AgentEnterpriseIdentityAttempt{
+			WorkspaceID:  workspaceID,
+			AgentID:      agentID,
+			ActorUserID:  util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+			StateHash:    sha256Bytes(state),
+			NonceHash:    sha256Bytes("oauth-nonce"),
+			RedirectPath: "/agents/222/settings",
+		},
+		agent: db.Agent{
+			ID:          agentID,
+			WorkspaceID: workspaceID,
+		},
 		current: db.AgentEnterpriseIdentity{
 			ID:          util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
 			WorkspaceID: workspaceID,
@@ -367,28 +380,32 @@ func TestEnterpriseIdentityBindingRequiresRevokeBeforeChangingEmployee(t *testin
 			Status:      "active",
 		},
 	}
+	buc := &fakeBUCOAuthClient{
+		tokens: BUCIdentityTokens{IDToken: "signed-buc-id-token"},
+		claims: bucIDTokenClaims{
+			EmployeeID: "67890",
+			AgentID:    "buc-agent-1",
+			Nonce:      "oauth-nonce",
+			Name:       "另一位员工",
+		},
+	}
+	authX := &fakeEnterpriseAuthX{}
 	serviceUnderTest := newTestEnterpriseIdentityService(
 		t,
 		store,
-		&fakeBUCOAuthClient{},
-		&fakeEnterpriseAuthX{},
+		buc,
+		authX,
 		&fakeEnterpriseIdem{},
 		&fakeEnterpriseAnchor{},
 		now,
 	)
 
-	_, err := serviceUnderTest.StartBinding(context.Background(), StartEnterpriseIdentityBindingInput{
-		WorkspaceID:  workspaceID,
-		AgentID:      agentID,
-		ActorUserID:  util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
-		EmployeeID:   "67890",
-		RedirectPath: "/agents/222/settings",
-	})
+	_, err := serviceUnderTest.CompleteBinding(context.Background(), state, "oauth-code")
 	if !errors.Is(err, ErrEnterpriseIdentityEmployeeConflict) {
-		t.Fatalf("StartBinding error = %v", err)
+		t.Fatalf("CompleteBinding error = %v", err)
 	}
-	if len(store.createAttempt.StateHash) != 0 {
-		t.Fatal("OAuth attempt was created for a conflicting employee binding")
+	if authX.issuedFrom != "" {
+		t.Fatal("AuthX exchange ran before employee conflict validation")
 	}
 }
 
@@ -436,13 +453,12 @@ func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *t
 	bucIDToken := "signed-buc-id-token"
 	store := &fakeEnterpriseIdentityStore{
 		attempt: db.AgentEnterpriseIdentityAttempt{
-			WorkspaceID:       workspaceID,
-			AgentID:           agentID,
-			ActorUserID:       actorID,
-			RequestedRawEmpID: "12345",
-			StateHash:         sha256Bytes(state),
-			NonceHash:         sha256Bytes(nonce),
-			RedirectPath:      "/agents/222/settings",
+			WorkspaceID:  workspaceID,
+			AgentID:      agentID,
+			ActorUserID:  actorID,
+			StateHash:    sha256Bytes(state),
+			NonceHash:    sha256Bytes(nonce),
+			RedirectPath: "/agents/222/settings",
 		},
 		agent: db.Agent{
 			ID:          agentID,
@@ -489,6 +505,10 @@ func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *t
 		anchor.createdTokens.RefreshToken != "buc-refresh" ||
 		anchor.createdTokens.IDToken != bucIDToken {
 		t.Fatalf("anchor input = %#v", anchor)
+	}
+	if store.upsert.RawEmpID != "12345" ||
+		idem.registration.EmployeeID != "12345" {
+		t.Fatalf("BUC employee identity was not used for binding")
 	}
 	if bytes.Contains(store.upsert.AuthxRefreshTokenEncrypted, []byte("authx-refresh")) ||
 		bytes.Contains(store.upsert.AuthxRefreshTokenEncrypted, []byte("buc-refresh")) {
@@ -705,7 +725,7 @@ func TestEnterpriseIdentityRevokeRetiresActiveASBSandboxes(t *testing.T) {
 	}
 }
 
-func TestHTTPBUCOAuthClientVerifyIDTokenRejectsForgedSignatureAndEmployeeMismatch(t *testing.T) {
+func TestHTTPBUCOAuthClientVerifyIDTokenRejectsForgedSignatureAndInvalidEmployee(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 29, 7, 0, 0, 0, time.UTC)
@@ -721,32 +741,30 @@ func TestHTTPBUCOAuthClientVerifyIDTokenRejectsForgedSignatureAndEmployeeMismatc
 	if err != nil {
 		t.Fatal(err)
 	}
-	validToken := signedTestBUCHMACToken(t, now, "nonce-1", []byte("test-only-key"))
+	validToken := signedTestBUCHMACToken(t, now, "nonce-1", "12345", []byte("test-only-key"))
 	if _, err := client.VerifyIDToken(
 		context.Background(),
 		validToken,
-		"12345",
 		"buc-agent-1",
 		sha256Bytes("nonce-1"),
 		now,
 	); err != nil {
 		t.Fatalf("verify valid HMAC token: %v", err)
 	}
+	invalidEmployeeToken := signedTestBUCHMACToken(t, now, "nonce-1", "employee-123", []byte("test-only-key"))
 	if _, err := client.VerifyIDToken(
 		context.Background(),
-		validToken,
-		"99999",
+		invalidEmployeeToken,
 		"buc-agent-1",
 		sha256Bytes("nonce-1"),
 		now,
 	); err == nil {
-		t.Fatal("expected employee mismatch to fail")
+		t.Fatal("expected invalid employee ID to fail")
 	}
-	forgedToken := signedTestBUCHMACToken(t, now, "nonce-1", []byte("attacker-key"))
+	forgedToken := signedTestBUCHMACToken(t, now, "nonce-1", "12345", []byte("attacker-key"))
 	if _, err := client.VerifyIDToken(
 		context.Background(),
 		forgedToken,
-		"12345",
 		"buc-agent-1",
 		sha256Bytes("nonce-1"),
 		now,
@@ -801,7 +819,6 @@ func TestHTTPBUCOAuthClientVerifyIDTokenUsesBUCJWKSForRSA(t *testing.T) {
 	claims, err := client.VerifyIDToken(
 		context.Background(),
 		token,
-		"12345",
 		"buc-agent-1",
 		sha256Bytes("nonce-1"),
 		now,
@@ -840,7 +857,7 @@ func newTestEnterpriseIdentityService(
 			BUCClientSecret:     "buc-secret",
 			BUCAgentID:          "buc-agent-1",
 			BUCRedirectURL:      "https://multica.example/api/agent-enterprise-identity/buc/callback",
-			BUCAuthorizeApps:    []string{"a1", "mw"},
+			BUCAuthorizeApps:    []string{"authorized-app-1", "authorized-app-2"},
 			AuthXServiceID:      "multica",
 			AuthXAudience:       "https://authx.alibaba-inc.com",
 			AuthXTTL:            3600,
@@ -881,11 +898,13 @@ func testBUCIDTokenClaims(now time.Time, issuer, nonce string) bucIDTokenClaims 
 	}
 }
 
-func signedTestBUCHMACToken(t *testing.T, now time.Time, nonce string, key []byte) string {
+func signedTestBUCHMACToken(t *testing.T, now time.Time, nonce, employeeID string, key []byte) string {
 	t.Helper()
+	claims := testBUCIDTokenClaims(now, defaultBUCIssuer, nonce)
+	claims.EmployeeID = employeeID
 	token, err := jwt.NewWithClaims(
 		jwt.SigningMethodHS256,
-		testBUCIDTokenClaims(now, defaultBUCIssuer, nonce),
+		claims,
 	).SignedString(key)
 	if err != nil {
 		t.Fatal(err)

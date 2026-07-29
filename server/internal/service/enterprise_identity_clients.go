@@ -311,7 +311,7 @@ type BUCIdentityTokens struct {
 
 type BUCOAuthClient interface {
 	ExchangeCode(context.Context, string) (BUCIdentityTokens, error)
-	VerifyIDToken(context.Context, string, string, string, []byte, time.Time) (bucIDTokenClaims, error)
+	VerifyIDToken(context.Context, string, string, []byte, time.Time) (bucIDTokenClaims, error)
 }
 
 type HTTPBUCOAuthClient struct {
@@ -440,7 +440,6 @@ type bucIDTokenClaims struct {
 func (c *HTTPBUCOAuthClient) VerifyIDToken(
 	ctx context.Context,
 	rawToken string,
-	expectedEmployeeID string,
 	expectedAgentID string,
 	expectedNonceHash []byte,
 	now time.Time,
@@ -482,7 +481,7 @@ func (c *HTTPBUCOAuthClient) VerifyIDToken(
 	if err != nil || token == nil || !token.Valid {
 		return bucIDTokenClaims{}, errors.New("BUC ID token signature or registered claims are invalid")
 	}
-	if claims.EmployeeID != expectedEmployeeID ||
+	if !enterpriseEmployeeIDPattern.MatchString(claims.EmployeeID) ||
 		claims.AgentID != expectedAgentID ||
 		strings.TrimSpace(claims.Name) == "" {
 		return claims, errors.New("BUC ID token claims do not match the binding request")

@@ -11,8 +11,6 @@ import {
 } from "@multica/core/agent-enterprise-identity";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { Button } from "@multica/ui/components/ui/button";
-import { Input } from "@multica/ui/components/ui/input";
-import { Label } from "@multica/ui/components/ui/label";
 import { useT } from "../../../i18n";
 
 function currentReturnPath(): string {
@@ -50,7 +48,6 @@ export function EnterpriseIdentityBindingCard({
 }) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
-  const [employeeId, setEmployeeId] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const { data, isPending, refetch } = useQuery({
@@ -100,19 +97,11 @@ export function EnterpriseIdentityBindingCard({
   }
 
   async function connect() {
-    const normalizedEmployeeId = employeeId.trim();
-    if (!/^[1-9][0-9]*$/.test(normalizedEmployeeId)) {
-      setActionError(
-        t(($) => $.tab_body.integrations.enterprise_identity_employee_invalid),
-      );
-      return;
-    }
     setActionError(null);
     setActionMessage(null);
     try {
       const response = await beginBinding.mutateAsync({
         agentId,
-        employeeId: normalizedEmployeeId,
         redirectPath: currentReturnPath(),
       });
       if (!response.authorizationUrl) {
@@ -155,7 +144,6 @@ export function EnterpriseIdentityBindingCard({
     setActionMessage(null);
     try {
       await revokeIdentity.mutateAsync(agentId);
-      setEmployeeId("");
       setActionMessage(
         t(($) => $.tab_body.integrations.enterprise_identity_revoked),
       );
@@ -273,105 +261,69 @@ export function EnterpriseIdentityBindingCard({
                 </p>
               ) : null}
             </div>
-            {canMutate && needsReauth ? (
-              <div className="space-y-1.5">
-                <Label htmlFor="enterprise-identity-employee-id" className="text-xs">
-                  {t(
-                    ($) =>
-                      $.tab_body.integrations.enterprise_identity_employee_id,
-                  )}
-                </Label>
-                <Input
-                  id="enterprise-identity-employee-id"
-                  inputMode="numeric"
-                  value={employeeId}
-                  onChange={(event) => setEmployeeId(event.target.value)}
-                />
-              </div>
-            ) : null}
             {canMutate ? (
               <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={test}
-                disabled={testIdentity.isPending || needsReauth}
-              >
-                <ShieldCheck className="mr-2 h-4 w-4" />
-                {testIdentity.isPending
-                  ? t(
-                      ($) =>
-                        $.tab_body.integrations.enterprise_identity_testing,
-                    )
-                  : t(($) => $.tab_body.integrations.enterprise_identity_test)}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={needsReauth ? "default" : "outline"}
-                onClick={connect}
-                disabled={beginBinding.isPending}
-              >
-                <RefreshCw className="mr-2 h-4 w-4" />
-                {beginBinding.isPending
-                  ? t(
-                      ($) =>
-                        $.tab_body.integrations.enterprise_identity_connecting,
-                    )
-                  : t(
-                      ($) =>
-                        $.tab_body.integrations.enterprise_identity_reconnect,
-                    )}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={revoke}
-                disabled={revokeIdentity.isPending}
-              >
-                <Unplug className="mr-2 h-4 w-4" />
-                {t(($) => $.tab_body.integrations.enterprise_identity_revoke)}
-              </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={test}
+                  disabled={testIdentity.isPending || needsReauth}
+                >
+                  <ShieldCheck className="mr-2 h-4 w-4" />
+                  {testIdentity.isPending
+                    ? t(
+                        ($) =>
+                          $.tab_body.integrations.enterprise_identity_testing,
+                      )
+                    : t(($) => $.tab_body.integrations.enterprise_identity_test)}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={needsReauth ? "default" : "outline"}
+                  onClick={connect}
+                  disabled={beginBinding.isPending}
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {beginBinding.isPending
+                    ? t(
+                        ($) =>
+                          $.tab_body.integrations.enterprise_identity_connecting,
+                      )
+                    : t(
+                        ($) =>
+                          $.tab_body.integrations.enterprise_identity_reconnect,
+                      )}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={revoke}
+                  disabled={revokeIdentity.isPending}
+                >
+                  <Unplug className="mr-2 h-4 w-4" />
+                  {t(($) => $.tab_body.integrations.enterprise_identity_revoke)}
+                </Button>
               </div>
             ) : null}
           </>
         ) : canMutate ? (
-          <>
-            <div className="space-y-1.5">
-              <Label htmlFor="enterprise-identity-employee-id" className="text-xs">
-                {t(
-                  ($) => $.tab_body.integrations.enterprise_identity_employee_id,
-                )}
-              </Label>
-              <Input
-                id="enterprise-identity-employee-id"
-                inputMode="numeric"
-                value={employeeId}
-                onChange={(event) => setEmployeeId(event.target.value)}
-                placeholder={t(
+          <Button
+            type="button"
+            size="sm"
+            onClick={connect}
+            disabled={beginBinding.isPending}
+          >
+            <Building2 className="mr-2 h-4 w-4" />
+            {beginBinding.isPending
+              ? t(
                   ($) =>
-                    $.tab_body.integrations
-                      .enterprise_identity_employee_placeholder,
-                )}
-              />
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              onClick={connect}
-              disabled={beginBinding.isPending}
-            >
-              <Building2 className="mr-2 h-4 w-4" />
-              {beginBinding.isPending
-                ? t(
-                    ($) =>
-                      $.tab_body.integrations.enterprise_identity_connecting,
-                  )
-                : t(($) => $.tab_body.integrations.enterprise_identity_connect)}
-            </Button>
-          </>
+                    $.tab_body.integrations.enterprise_identity_connecting,
+                )
+              : t(($) => $.tab_body.integrations.enterprise_identity_connect)}
+          </Button>
         ) : (
           <>
             <p className="text-xs text-muted-foreground">

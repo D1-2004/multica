@@ -221,7 +221,6 @@ describe("ApiClient", () => {
       client.beginAgentEnterpriseIdentityBinding(
         "workspace-1",
         "agent-1",
-        "12345",
         "/ws/workspace-1/agents/agent-1?tab=identity",
       ),
     ).resolves.toEqual({
@@ -253,7 +252,6 @@ describe("ApiClient", () => {
         method: "POST",
         body: JSON.stringify({
           agent_id: "agent-1",
-          employee_id: "12345",
           redirect_path: "/ws/workspace-1/agents/agent-1?tab=identity",
         }),
       },
