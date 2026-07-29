@@ -26,7 +26,7 @@ BEGIN
         HAVING count(*) > 1
     ) THEN
         RAISE EXCEPTION
-            'cannot roll back migration 252 while ASB runtime or enterprise identity data exists';
+            'cannot roll back migration 253 while ASB runtime or enterprise identity data exists';
     END IF;
 END
 $$;
