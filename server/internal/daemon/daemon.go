@@ -4025,6 +4025,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ExtraArgs:                 extraArgs,
 		CustomArgs:                customArgs,
 		McpConfig:                 mcpConfig,
+		SkillPaths:                env.ManagedSkillPaths,
 		ThinkingLevel:             thinkingLevel,
 		OpenclawMode:              openclawMode,
 	}
@@ -4060,6 +4061,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"custom_args", len(customArgs),
 		"extra_args", len(extraArgs),
 		"mcp_config", len(mcpConfig) > 0,
+		"managed_skills", len(execOpts.SkillPaths),
 		"inline_system_prompt", execOpts.SystemPrompt != "",
 		"resume_session", execOpts.ResumeSessionID != "",
 		"timeout", execOpts.Timeout,

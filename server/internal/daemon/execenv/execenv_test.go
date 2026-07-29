@@ -538,6 +538,102 @@ func TestWriteContextFilesClaudeNativeSkills(t *testing.T) {
 	}
 }
 
+func TestPreparePiReturnsExactManagedSkillPaths(t *testing.T) {
+	t.Parallel()
+
+	workspacesRoot := t.TempDir()
+	task := TaskContextForEnv{
+		IssueID: "pi-managed-skills",
+		AgentSkills: []SkillContextForEnv{
+			{Name: "visualize", Content: "Create an interactive visualization."},
+			{Name: "visualize-data", Content: "Design data charts."},
+		},
+	}
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: workspacesRoot,
+		WorkspaceID:    "ws-pi-managed-skills",
+		TaskID:         "11112222-3333-4444-5555-666677778888",
+		Provider:       "pi",
+		Task:           task,
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer env.Cleanup(true)
+
+	want := []string{
+		filepath.Join(env.WorkDir, ".pi", "skills", "visualize", "SKILL.md"),
+		filepath.Join(env.WorkDir, ".pi", "skills", "visualize-data", "SKILL.md"),
+	}
+	if strings.Join(env.ManagedSkillPaths, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("ManagedSkillPaths = %v, want %v", env.ManagedSkillPaths, want)
+	}
+	for _, path := range env.ManagedSkillPaths {
+		if !filepath.IsAbs(path) {
+			t.Errorf("managed skill path is not absolute: %q", path)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("managed skill path is not readable: %s: %v", path, err)
+		}
+	}
+
+	reused := Reuse(ReuseParams{
+		WorkspacesRoot: workspacesRoot,
+		WorkDir:        env.WorkDir,
+		Provider:       "pi",
+		Task:           task,
+	}, testLogger())
+	if reused == nil {
+		t.Fatal("Reuse returned nil")
+	}
+	if strings.Join(reused.ManagedSkillPaths, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("reused ManagedSkillPaths = %v, want %v", reused.ManagedSkillPaths, want)
+	}
+}
+
+func TestPreparePiManagedSkillPathTracksCollisionSafeSlug(t *testing.T) {
+	t.Parallel()
+
+	localWorkDir := t.TempDir()
+	userSkillPath := filepath.Join(localWorkDir, ".pi", "skills", "visualize", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(userSkillPath), 0o755); err != nil {
+		t.Fatalf("create user skill dir: %v", err)
+	}
+	if err := os.WriteFile(userSkillPath, []byte("user-owned"), 0o644); err != nil {
+		t.Fatalf("write user skill: %v", err)
+	}
+
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: t.TempDir(),
+		WorkspaceID:    "ws-pi-collision",
+		TaskID:         "aaaabbbb-cccc-dddd-eeee-ffff00001111",
+		Provider:       "pi",
+		LocalWorkDir:   localWorkDir,
+		Task: TaskContextForEnv{
+			IssueID: "pi-collision",
+			AgentSkills: []SkillContextForEnv{
+				{Name: "visualize", Content: "multica-managed"},
+			},
+		},
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer env.Cleanup(true)
+
+	want := filepath.Join(localWorkDir, ".pi", "skills", "visualize-multica", "SKILL.md")
+	if len(env.ManagedSkillPaths) != 1 || env.ManagedSkillPaths[0] != want {
+		t.Fatalf("ManagedSkillPaths = %v, want [%s]", env.ManagedSkillPaths, want)
+	}
+	body, err := os.ReadFile(userSkillPath)
+	if err != nil {
+		t.Fatalf("read user skill: %v", err)
+	}
+	if string(body) != "user-owned" {
+		t.Fatalf("user skill was overwritten: %q", body)
+	}
+}
+
 // TestReuseRefreshesSkillsWithoutDuplicating is the regression guard for
 // GitHub #3684: re-dispatching the same agent on the same issue goes through
 // the Reuse path, which must refresh skills in place rather than pile up

@@ -140,6 +140,17 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 // cloud-mode tasks whose envRoot is wiped wholesale by the GC loop — may
 // pass nil to skip the bookkeeping entirely.
 func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
+	return writeContextFilesWithManagedSkillPaths(workDir, provider, ctx, manifest, nil)
+}
+
+// writeContextFilesWithManagedSkillPaths writes the normal task context and,
+// for Pi, returns the exact managed SKILL.md paths chosen by the collision-safe
+// writer. Pi needs those paths on its command line because non-interactive runs
+// cannot approve project-local skill discovery.
+func writeContextFilesWithManagedSkillPaths(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest, managedSkillPaths *[]string) error {
+	if managedSkillPaths != nil {
+		*managedSkillPaths = nil
+	}
 	if err := writeTaskContextMarker(workDir, ctx, manifest); err != nil {
 		return err
 	}
@@ -177,8 +188,12 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 			}
 			// Codex skills are written to codex-home in Prepare; skip here.
 			if provider != "codex" {
-				if err := writeSkillFiles(skillsDir, ctx.AgentSkills, manifest); err != nil {
+				skillPaths, err := writeSkillFilesWithPaths(skillsDir, ctx.AgentSkills, manifest)
+				if err != nil {
 					return fmt.Errorf("write skill files: %w", err)
+				}
+				if provider == "pi" && managedSkillPaths != nil {
+					*managedSkillPaths = append(*managedSkillPaths, skillPaths...)
 				}
 			}
 		}
@@ -589,18 +604,28 @@ func sanitizeSkillName(name string) string {
 // skill entirely (which would silently drop a Multica skill the agent
 // expects to see).
 func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *sidecarManifest) error {
+	_, err := writeSkillFilesWithPaths(skillsDir, skills, manifest)
+	return err
+}
+
+// writeSkillFilesWithPaths writes the skill tree and returns the exact
+// SKILL.md path selected for each skill. The returned paths matter when a
+// provider must load managed skills explicitly and a user-owned directory
+// forced allocateCollisionFreeSkillDir to choose a -multica sibling.
+func writeSkillFilesWithPaths(skillsDir string, skills []SkillContextForEnv, manifest *sidecarManifest) ([]string, error) {
 	if err := recordMkdirAll(skillsDir, 0o755, manifest); err != nil {
-		return fmt.Errorf("create skills dir: %w", err)
+		return nil, fmt.Errorf("create skills dir: %w", err)
 	}
 
+	skillPaths := make([]string, 0, len(skills))
 	for _, skill := range skills {
 		baseSlug := sanitizeSkillName(skill.Name)
 		slug, dir, err := allocateCollisionFreeSkillDir(skillsDir, baseSlug)
 		if err != nil {
-			return fmt.Errorf("allocate skill dir for %q: %w", skill.Name, err)
+			return nil, fmt.Errorf("allocate skill dir for %q: %w", skill.Name, err)
 		}
 		if err := recordMkdirAll(dir, 0o755, manifest); err != nil {
-			return err
+			return nil, err
 		}
 
 		// ensureSkillFrontmatter synthesises a `name:` value when the
@@ -609,9 +634,11 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 		// matches the directory name; runtimes that key on either
 		// stay consistent.
 		body := ensureSkillFrontmatter(skill.Content, slug, skill.Description)
-		if err := recordWriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644, manifest); err != nil {
-			return err
+		skillPath := filepath.Join(dir, "SKILL.md")
+		if err := recordWriteFile(skillPath, []byte(body), 0o644, manifest); err != nil {
+			return nil, err
 		}
+		skillPaths = append(skillPaths, skillPath)
 
 		// Write supporting files. The skill directory is collision-
 		// free by construction, so a recordWriteFile collision under
@@ -632,15 +659,15 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 			}
 			fpath := filepath.Join(dir, f.Path)
 			if err := recordMkdirAll(filepath.Dir(fpath), 0o755, manifest); err != nil {
-				return err
+				return nil, err
 			}
 			if err := recordWriteFile(fpath, []byte(f.Content), 0o644, manifest); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
 
-	return nil
+	return skillPaths, nil
 }
 
 // renderIssueContext builds the markdown content for issue_context.md.

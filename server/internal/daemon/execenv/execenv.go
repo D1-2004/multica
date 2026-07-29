@@ -202,6 +202,11 @@ type Environment struct {
 	// .agent_context/skills/ fallback was never read (issue #5242). See
 	// hermes_home.go.
 	HermesHome string
+	// ManagedSkillPaths contains exact SKILL.md files written for providers
+	// that cannot rely on project-level discovery. Pi uses these paths as
+	// repeatable --skill arguments because its non-interactive mode cannot
+	// approve the task workdir as trusted.
+	ManagedSkillPaths []string
 
 	logger *slog.Logger // for cleanup logging
 }
@@ -281,7 +286,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// and avoids a conditional that would silently disable cleanup if the
 	// local_directory detection logic ever drifts.
 	manifest := &sidecarManifest{}
-	if err := writeContextFiles(workDir, params.Provider, params.Task, manifest); err != nil {
+	if err := writeContextFilesWithManagedSkillPaths(workDir, params.Provider, params.Task, manifest, &env.ManagedSkillPaths); err != nil {
 		return nil, fmt.Errorf("execenv: write context files: %w", err)
 	}
 
@@ -472,8 +477,14 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// legacy local_directory Reuse fallback — skip the persist in that
 	// case to avoid creating a stray manifest at the filesystem root.
 	manifest := &sidecarManifest{}
-	if err := writeContextFiles(params.WorkDir, params.Provider, params.Task, manifest); err != nil {
+	if err := writeContextFilesWithManagedSkillPaths(params.WorkDir, params.Provider, params.Task, manifest, &env.ManagedSkillPaths); err != nil {
 		logger.Warn("execenv: refresh context files failed", "error", err)
+		if params.Provider == "pi" {
+			// A Pi run with bound skills must not continue after hydration
+			// failed: its explicit --skill contract would otherwise degrade
+			// into the exact silent omission this path is meant to prevent.
+			return nil
+		}
 	}
 
 	// Restore CodexHome for Codex provider — the per-task codex-home directory
