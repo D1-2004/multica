@@ -108,7 +108,5 @@ ALTER TABLE fc_e2b_stable_release
     DROP COLUMN previous_artifact_ref,
     DROP COLUMN previous_artifact_build_id,
     DROP COLUMN previous_artifact_digest,
-    ADD CONSTRAINT fc_e2b_stable_release_template_id_template_build_id_key
-        UNIQUE (template_id, template_build_id),
     ALTER COLUMN template_id DROP DEFAULT,
     ALTER COLUMN template_build_id DROP DEFAULT;

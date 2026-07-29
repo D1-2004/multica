@@ -1,5 +1,4 @@
 ALTER TABLE fc_e2b_stable_release
-    DROP CONSTRAINT fc_e2b_stable_release_template_id_template_build_id_key,
     ALTER COLUMN template_id SET DEFAULT '',
     ALTER COLUMN template_build_id SET DEFAULT '',
     ADD COLUMN sandbox_backend TEXT NOT NULL DEFAULT 'aliyun_fc',
