@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,83 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+type fakeASBTaskIdentityResolver struct {
+	identity ASBResolvedIdentity
+	err      error
+}
+
+func (resolver fakeASBTaskIdentityResolver) ResolveASBTaskIdentity(
+	context.Context,
+	pgtype.UUID,
+	pgtype.UUID,
+) (ASBResolvedIdentity, error) {
+	return resolver.identity, resolver.err
+}
+
+func TestASBLaunchIdentityAllowsExplicitUnboundMode(t *testing.T) {
+	t.Parallel()
+
+	launcher := &ASBLauncher{
+		Identity: fakeASBTaskIdentityResolver{err: ErrEnterpriseIdentityNeedsReauth},
+	}
+	identity, err := launcher.resolveTaskIdentity(context.Background(), pgtype.UUID{}, pgtype.UUID{})
+	if err != nil {
+		t.Fatalf("resolveTaskIdentity: %v", err)
+	}
+	if identity.Mode != asbIdentityModeUnbound ||
+		identity.Fingerprint != asbUnboundIdentityFingerprint {
+		t.Fatalf("unbound identity = %#v", identity)
+	}
+	if extensions := identity.sandboxExtensions("unused"); len(extensions) != 0 {
+		t.Fatalf("unbound sandbox extensions = %#v", extensions)
+	}
+}
+
+func TestASBLaunchIdentityDoesNotHideResolverFailure(t *testing.T) {
+	t.Parallel()
+
+	resolverErr := errors.New("identity store unavailable")
+	launcher := &ASBLauncher{
+		Identity: fakeASBTaskIdentityResolver{err: resolverErr},
+	}
+	if _, err := launcher.resolveTaskIdentity(
+		context.Background(),
+		pgtype.UUID{},
+		pgtype.UUID{},
+	); !errors.Is(err, resolverErr) {
+		t.Fatalf("resolveTaskIdentity error = %v, want %v", err, resolverErr)
+	}
+}
+
+func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
+	t.Parallel()
+
+	identity := ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:              "aip-1",
+		AnchorSandboxID:    "sandbox-anchor",
+		AgentIdentityToken: "ait",
+		Fingerprint:        strings.Repeat("a", 64),
+	}
+	if err := identity.validate(); err != nil {
+		t.Fatalf("validate bound identity: %v", err)
+	}
+	extensions := identity.sandboxExtensions("wireguard-credentials")
+	for key, expected := range map[string]string{
+		"spiffe.lazyAuth":          "true",
+		"wireguard.worker":         "12345",
+		"wireguard.uemCredentials": "wireguard-credentials",
+		"buc.originalSandboxID":    "sandbox-anchor",
+	} {
+		if extensions[key] != expected {
+			t.Fatalf("bound sandbox extension %s = %q, want %q", key, extensions[key], expected)
+		}
+	}
+}
 
 func TestASBRunnerCommandUsesExecdUserCore(t *testing.T) {
 	t.Parallel()

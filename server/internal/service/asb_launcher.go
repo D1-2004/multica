@@ -31,6 +31,14 @@ const (
 	defaultASBResourceCPU         = "2"
 	defaultASBResourceMemory      = "4Gi"
 	asbRunnerHome                 = "/home/user"
+	asbUnboundIdentityFingerprint = "7a5d3e85306c71a48596592e43c235dc5f8c9e3f96eeb52b9e6637a04356b1da"
+)
+
+type asbIdentityMode string
+
+const (
+	asbIdentityModeBound   asbIdentityMode = "bound"
+	asbIdentityModeUnbound asbIdentityMode = "unbound"
 )
 
 // ASBConfig is the deployment-owned configuration for the Aone Sandbox
@@ -194,6 +202,7 @@ func (c ASBConfig) ModelForAgent(model string) (string, error) {
 // ASBResolvedIdentity contains only the short-lived AIT needed for one launch
 // plus stable, non-secret identity coordinates.
 type ASBResolvedIdentity struct {
+	Mode               asbIdentityMode
 	RawEmployeeID      string
 	BUCAgentID         string
 	AgentSPIFFEID      string
@@ -201,6 +210,51 @@ type ASBResolvedIdentity struct {
 	AnchorSandboxID    string
 	AgentIdentityToken string
 	Fingerprint        string
+}
+
+func (identity ASBResolvedIdentity) validate() error {
+	switch identity.Mode {
+	case asbIdentityModeBound:
+		for _, value := range []string{
+			identity.RawEmployeeID,
+			identity.BUCAgentID,
+			identity.AgentSPIFFEID,
+			identity.AIPID,
+			identity.AnchorSandboxID,
+			identity.AgentIdentityToken,
+			identity.Fingerprint,
+		} {
+			if strings.TrimSpace(value) == "" {
+				return errors.New("Agent enterprise identity is incomplete")
+			}
+		}
+		return nil
+	case asbIdentityModeUnbound:
+		if identity.Fingerprint != asbUnboundIdentityFingerprint ||
+			identity.RawEmployeeID != "" ||
+			identity.BUCAgentID != "" ||
+			identity.AgentSPIFFEID != "" ||
+			identity.AIPID != "" ||
+			identity.AnchorSandboxID != "" ||
+			identity.AgentIdentityToken != "" {
+			return errors.New("unbound ASB identity is invalid")
+		}
+		return nil
+	default:
+		return errors.New("ASB identity mode is invalid")
+	}
+}
+
+func (identity ASBResolvedIdentity) sandboxExtensions(wireGuardCredentials string) map[string]string {
+	if identity.Mode == asbIdentityModeUnbound {
+		return nil
+	}
+	return map[string]string{
+		"spiffe.lazyAuth":          "true",
+		"wireguard.worker":         identity.RawEmployeeID,
+		"wireguard.uemCredentials": wireGuardCredentials,
+		"buc.originalSandboxID":    identity.AnchorSandboxID,
+	}
 }
 
 type ASBArtifact struct {
@@ -344,7 +398,7 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 		return l.failLaunch(ctx, task, "Agent enterprise identity service is unavailable")
 	}
 
-	identity, err := l.Identity.ResolveASBTaskIdentity(ctx, runtime.WorkspaceID, task.AgentID)
+	identity, err := l.resolveTaskIdentity(ctx, runtime.WorkspaceID, task.AgentID)
 	if err != nil {
 		return l.failLaunch(ctx, task, err.Error())
 	}
@@ -412,6 +466,27 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 		})
 	}
 	return nil
+}
+
+func (l *ASBLauncher) resolveTaskIdentity(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	agentID pgtype.UUID,
+) (ASBResolvedIdentity, error) {
+	identity, err := l.Identity.ResolveASBTaskIdentity(ctx, workspaceID, agentID)
+	if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+		return ASBResolvedIdentity{
+			Mode:        asbIdentityModeUnbound,
+			Fingerprint: asbUnboundIdentityFingerprint,
+		}, nil
+	}
+	if err != nil {
+		return ASBResolvedIdentity{}, err
+	}
+	if err := identity.validate(); err != nil {
+		return ASBResolvedIdentity{}, err
+	}
+	return identity, nil
 }
 
 func (l *ASBLauncher) submitTaskUnderRuntimeLock(
@@ -518,8 +593,8 @@ func (l *ASBLauncher) resolveSandbox(
 	runtimeLockConn *pgxpool.Conn,
 	trace chattrace.Trace,
 ) (string, bool, error) {
-	if identity.Fingerprint == "" || identity.AnchorSandboxID == "" {
-		return "", false, errors.New("Agent enterprise identity is incomplete")
+	if err := identity.validate(); err != nil {
+		return "", false, err
 	}
 	if scoped {
 		release, err := l.lockSandboxScopeOnConnection(ctx, runtime, scope, runtimeLockConn)
@@ -536,16 +611,18 @@ func (l *ASBLauncher) resolveSandbox(
 			ArtifactRef:         metadata.ArtifactRef,
 		})
 		if err == nil {
-			if err := l.ensureSandboxIdentityReady(ctx, session.SandboxID, identity); err != nil {
-				_ = l.Queries.MarkCloudSandboxSessionStale(ctx, db.MarkCloudSandboxSessionStaleParams{
-					RuntimeID:           runtime.ID,
-					ScopeType:           scope.typ,
-					ScopeID:             scope.id,
-					SandboxID:           session.SandboxID,
-					SandboxBackend:      string(SandboxBackendASB),
-					IdentityFingerprint: identity.Fingerprint,
-				})
-				return "", false, fmt.Errorf("ASB warm sandbox is unavailable: %w", err)
+			if identity.Mode == asbIdentityModeBound {
+				if err := l.ensureSandboxIdentityReady(ctx, session.SandboxID, identity); err != nil {
+					_ = l.Queries.MarkCloudSandboxSessionStale(ctx, db.MarkCloudSandboxSessionStaleParams{
+						RuntimeID:           runtime.ID,
+						ScopeType:           scope.typ,
+						ScopeID:             scope.id,
+						SandboxID:           session.SandboxID,
+						SandboxBackend:      string(SandboxBackendASB),
+						IdentityFingerprint: identity.Fingerprint,
+					})
+					return "", false, fmt.Errorf("ASB warm sandbox is unavailable: %w", err)
+				}
 			}
 			return session.SandboxID, false, nil
 		}
@@ -567,12 +644,7 @@ func (l *ASBLauncher) resolveSandbox(
 			"multica.runtime_id": util.UUIDToString(runtime.ID),
 			"multica.backend":    string(SandboxBackendASB),
 		},
-		Extensions: map[string]string{
-			"spiffe.lazyAuth":          "true",
-			"wireguard.worker":         identity.RawEmployeeID,
-			"wireguard.uemCredentials": l.Config.WireGuardCredentials,
-			"buc.originalSandboxID":    identity.AnchorSandboxID,
-		},
+		Extensions: identity.sandboxExtensions(l.Config.WireGuardCredentials),
 	})
 	if err != nil {
 		return "", true, fmt.Errorf("create ASB sandbox: %w", err)
@@ -588,8 +660,10 @@ func (l *ASBLauncher) resolveSandbox(
 	if err := l.waitSandboxRunning(ctx, sandbox.ID); err != nil {
 		return "", true, err
 	}
-	if err := l.ensureSandboxIdentityReady(ctx, sandbox.ID, identity); err != nil {
-		return "", true, err
+	if identity.Mode == asbIdentityModeBound {
+		if err := l.ensureSandboxIdentityReady(ctx, sandbox.ID, identity); err != nil {
+			return "", true, err
+		}
 	}
 	if scoped {
 		if _, err := l.Queries.UpsertCloudSandboxSession(ctx, db.UpsertCloudSandboxSessionParams{

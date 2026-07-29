@@ -23,7 +23,8 @@ Related:
 4. 用户在 Agent 设置页绑定集团员工身份。新 ASB 任务沙箱得到：
    - BUC 零信任网络身份，用于集团应用免登；
    - AuthX Agent Identity，用于 `a1`、`mw` 等工具的 Agent 身份访问。
-5. 身份和权限失败时关闭执行，不允许静默降级为平台账号、共享账号或匿名访问。
+5. 未绑定或需要重新授权时，以明确的无员工身份模式启动；已绑定身份的解析或注入失败时
+   关闭执行，不允许切换为平台账号或共享账号。
 6. 第一阶段只开放只读能力；权限由 AuthX AIP 能力和下游授权控制，不依赖提示词。
 
 ## 2. 已验证事实
@@ -154,8 +155,9 @@ type EnterpriseIdentityBackend interface {
 }
 ```
 
-当 Runtime 要求 `a1`、`mw` 或 `buc`，但后端不实现身份接口、Agent 未绑定、令牌已过期
-或注入失败时，任务在启动边界失败，并记录不含凭证的错误分类。
+Agent 未绑定或绑定已进入 `needs_reauth` 时，Launcher 选择独立的无员工身份模式，不请求
+SPIFFE/BUC 注入，`a1`、`mw` 等工具在实际调用时返回未登录或未授权。数据库读取、Idem
+签发、ASB 身份注入等系统错误仍在启动边界失败，并记录不含凭证的错误分类。
 
 ### 3.3 会话隔离
 
@@ -232,7 +234,8 @@ BUC 身份锚点每 24 小时检查和续期一次：
 4. 使用 `token_version` 比较交换；
 5. 清零内存中的明文字节。
 
-轮转连续失败或已过期后标记 `needs_reauth`。任务启动明确返回“员工身份需要重新授权”。
+轮转连续失败或已过期后标记 `needs_reauth`。后续任务以无员工身份模式创建或复用沙箱；
+重新授权后身份指纹变化，任务会创建新的已绑定身份沙箱。
 
 ### 4.4 AIP 权限
 
@@ -276,7 +279,8 @@ sequenceDiagram
   M->>M: wait for run-once task claim
 ```
 
-固定顺序不可交换：只有两个身份都成功注入后才能执行 Runner。任一步失败都终止新沙箱。
+已绑定模式的固定顺序不可交换：只有两个身份都成功注入后才能执行 Runner，任一步失败都
+终止新沙箱。无员工身份模式不执行上述注入和探针，直接在无身份沙箱中启动 Runner。
 
 ### 5.2 ASB 配置
 
@@ -304,7 +308,8 @@ sequenceDiagram
 - `MULTICA_BUC_AGENT_ID`
 - `MULTICA_BUC_REDIRECT_URL`
 - `MULTICA_BUC_JWKS_URL`
-- `MULTICA_AUTHX_SERVICE_ID`
+- `MULTICA_AUTHX_SERVICE_ID`（必须使用 Idem 接入工单申请的 OIDC 兑换服务标识；
+  Aone 应用 `dt-fde-multica` 对应 `com.alibaba.dt-fde-multica`）
 - `MULTICA_AUTHX_AUDIENCE`
 - `MULTICA_IDEM_BASE_URL`
 - `MULTICA_IDEM_OPERATOR_TRUST_DOMAIN`
@@ -491,8 +496,8 @@ ASB API Key、OAuth code、state、nonce、WireGuard 凭证。
 | 边界 | 行为 |
 | --- | --- |
 | ASB 未配置 | 创建 ASB Runtime 返回 503；UI 标记不可用 |
-| Agent 未绑定 | 任务启动失败，提示绑定集团员工身份 |
-| AuthX 需重授权 | 任务启动失败，提示重新授权 |
+| Agent 未绑定 | 以无员工身份模式启动；身份工具调用时返回未登录或未授权 |
+| AuthX 需重授权 | 标记 `needs_reauth`，后续任务以无员工身份模式启动 |
 | BUC 锚点失效 | 绑定标记需重授权，不用共享账号继续 |
 | SPIFFE/BUC 注入失败 | 终止新沙箱，任务失败 |
 | 镜像 manifest 不匹配 | 候选验证失败，禁止发布 |

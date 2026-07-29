@@ -567,6 +567,7 @@ func (s *EnterpriseIdentityService) ResolveASBTaskIdentity(
 			return ASBResolvedIdentity{}, err
 		}
 		return ASBResolvedIdentity{
+			Mode:               asbIdentityModeBound,
 			RawEmployeeID:      updated.RawEmpID,
 			BUCAgentID:         updated.BucAgentID,
 			AgentSPIFFEID:      updated.AgentSpiffeID,
