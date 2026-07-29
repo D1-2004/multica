@@ -24,6 +24,12 @@ import (
 
 const enterpriseIdentityMaxResponseBytes = 1 << 20
 
+const (
+	idemEnterpriseAgentType        = "multica"
+	idemEnterpriseFrameworkName    = "Aone Sandbox"
+	idemEnterpriseFrameworkVersion = "1.0.0"
+)
+
 type EnterpriseOIDCToken struct {
 	IDToken          string
 	RefreshToken     string
@@ -201,12 +207,13 @@ func (c *IdemEnterpriseClient) EnsureAgent(
 	}
 	registered, err := c.client.AgentIdentityClient.RegisterAgentIdentity(&idemapi.AgentIdentityRegistry{
 		AgentId:      registration.SPIFFEID,
-		AgentType:    "agent",
+		AgentType:    idemEnterpriseAgentType,
 		AipAgentType: "assistant",
 		DisplayName:  registration.DisplayName,
 		AgentModel:   registration.AgentModel,
 		Framework: &idemapi.AgentIdentityProfileFramework{
-			Name: "multica",
+			Name:    idemEnterpriseFrameworkName,
+			Version: idemEnterpriseFrameworkVersion,
 		},
 		OwnerBinding: &idemapi.OwnerBinding{
 			OwnerType:    "user",
@@ -237,10 +244,11 @@ func validateExistingIdemAgent(
 ) error {
 	owner := profile.Spec.OwnerBinding
 	if profile.Spec.AgentId != registration.SPIFFEID ||
-		profile.Spec.AgentType != "agent" ||
+		profile.Spec.AgentType != idemEnterpriseAgentType ||
 		profile.Spec.AipAgentType != "assistant" ||
 		profile.Spec.Framework == nil ||
-		profile.Spec.Framework.Name != "multica" ||
+		profile.Spec.Framework.Name != idemEnterpriseFrameworkName ||
+		profile.Spec.Framework.Version != idemEnterpriseFrameworkVersion ||
 		owner == nil ||
 		owner.OwnerType != "user" ||
 		owner.OwnerEmpId != registration.EmployeeID ||

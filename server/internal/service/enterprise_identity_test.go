@@ -402,10 +402,11 @@ func TestValidateExistingIdemAgentRejectsDifferentOwner(t *testing.T) {
 	profile := idemapi.AgentIdentityProfile{
 		Spec: idemapi.AgentIdentityProfileSpec{
 			AgentId:      registration.SPIFFEID,
-			AgentType:    "agent",
+			AgentType:    idemEnterpriseAgentType,
 			AipAgentType: "assistant",
 			Framework: &idemapi.AgentIdentityProfileFramework{
-				Name: "multica",
+				Name:    idemEnterpriseFrameworkName,
+				Version: idemEnterpriseFrameworkVersion,
 			},
 			OwnerBinding: &idemapi.OwnerBinding{
 				OwnerType:    "user",
