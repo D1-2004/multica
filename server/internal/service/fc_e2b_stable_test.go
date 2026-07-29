@@ -133,12 +133,94 @@ func TestStableNextBatchSchedule(t *testing.T) {
 	}
 }
 
+func TestStableRolloutScheduleKeepsOriginalAnchor(t *testing.T) {
+	started := time.Date(2026, 7, 29, 10, 0, 0, 0, time.UTC)
+	schedule := stableRolloutSchedule(started)
+	want := []FCE2BStableRolloutMilestone{
+		{Batch: 1, Percentage: 5, ScheduledAt: started, Kind: "rollout"},
+		{Batch: 2, Percentage: 25, ScheduledAt: started.Add(2 * time.Hour), Kind: "rollout"},
+		{Batch: 3, Percentage: 50, ScheduledAt: started.Add(8 * time.Hour), Kind: "rollout"},
+		{Batch: 4, Percentage: 100, ScheduledAt: started.Add(20 * time.Hour), Kind: "rollout"},
+		{Batch: 5, Percentage: 100, ScheduledAt: started.Add(24 * time.Hour), Kind: "complete"},
+	}
+	if len(schedule) != len(want) {
+		t.Fatalf("stableRolloutSchedule() returned %d milestones, want %d", len(schedule), len(want))
+	}
+	for index := range want {
+		if schedule[index] != want[index] {
+			t.Fatalf("milestone %d = %#v, want %#v", index, schedule[index], want[index])
+		}
+	}
+
+	nextBatch, percentage, due := stableNextBatch(2, started)
+	if nextBatch != 3 || percentage != 50 || !due.Equal(want[2].ScheduledAt) {
+		t.Fatalf(
+			"manual stage progression changed the fixed schedule: got (%d, %d, %s)",
+			nextBatch,
+			percentage,
+			due,
+		)
+	}
+}
+
 func TestStableFailureRate(t *testing.T) {
 	if got := failureRate(0, 0); got != 0 {
 		t.Fatalf("failureRate(0, 0) = %v, want 0", got)
 	}
 	if got := failureRate(1, 20); got != 0.05 {
 		t.Fatalf("failureRate(1, 20) = %v, want 0.05", got)
+	}
+}
+
+func TestStableBatchHealthWindowExcludesDeveloperPreRolloutCutovers(t *testing.T) {
+	batchStartedAt := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name        string
+		completedAt time.Time
+		want        bool
+	}{
+		{
+			name:        "developer cutover before percentage stage",
+			completedAt: batchStartedAt.Add(-time.Minute),
+			want:        false,
+		},
+		{
+			name:        "cutover at percentage stage boundary",
+			completedAt: batchStartedAt,
+			want:        true,
+		},
+		{
+			name:        "cutover during percentage stage",
+			completedAt: batchStartedAt.Add(time.Minute),
+			want:        true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := stableTargetNeedsBatchHealthGate(test.completedAt, batchStartedAt); got != test.want {
+				t.Fatalf(
+					"stableTargetNeedsBatchHealthGate(%s, %s) = %t, want %t",
+					test.completedAt,
+					batchStartedAt,
+					got,
+					test.want,
+				)
+			}
+		})
+	}
+}
+
+func TestStableObservationTargetsError(t *testing.T) {
+	if err := stableObservationTargetsError(0, 0); err != nil {
+		t.Fatalf("fully updated observation was blocked: %v", err)
+	}
+	if err := stableObservationTargetsError(2, 0); err == nil ||
+		!strings.Contains(err.Error(), "2 runtime targets are not updated") {
+		t.Fatalf("missing targets error = %v", err)
+	}
+	if err := stableObservationTargetsError(2, 1); err == nil ||
+		!strings.Contains(err.Error(), "1 runtime targets failed") {
+		t.Fatalf("failed targets error = %v", err)
 	}
 }
 
