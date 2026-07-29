@@ -36,6 +36,11 @@ type ExecOptions struct {
 	ExtraArgs                 []string        // daemon-wide default CLI arguments appended before CustomArgs; currently read by claude and codex backends only
 	CustomArgs                []string        // per-agent CLI arguments appended after ExtraArgs
 	McpConfig                 json.RawMessage // if non-nil, MCP server config to pass via --mcp-config
+	// SkillPaths contains exact managed SKILL.md paths that the backend must
+	// load explicitly. Pi consumes this via repeatable --skill flags because
+	// its non-interactive mode does not trust project-local .pi/skills
+	// discovery by default. Other backends ignore the field.
+	SkillPaths []string
 	// ThinkingLevel is the runtime-native reasoning/effort value (e.g.
 	// Claude's "low|medium|high|xhigh|max", Codex's "none|minimal|low|
 	// medium|high|xhigh", OpenCode's model variant names). Empty means

@@ -58,6 +58,34 @@ func TestBuildPiArgsCustomArgsAppended(t *testing.T) {
 	}
 }
 
+func TestBuildPiArgsExplicitManagedSkills(t *testing.T) {
+	t.Parallel()
+
+	skillPaths := []string{
+		"/tmp/workdir/.pi/skills/visualize/SKILL.md",
+		"/tmp/workdir/.pi/skills/visualize-data/SKILL.md",
+	}
+	args := buildPiArgs("render the chart", "/tmp/s.jsonl", ExecOptions{
+		SkillPaths: skillPaths,
+	}, slog.Default())
+
+	var got []string
+	for i, arg := range args {
+		if arg == "--skill" {
+			if i+1 >= len(args) {
+				t.Fatalf("--skill missing value in args: %v", args)
+			}
+			got = append(got, args[i+1])
+		}
+	}
+	if strings.Join(got, "\n") != strings.Join(skillPaths, "\n") {
+		t.Fatalf("managed skill paths = %v, want %v; args=%v", got, skillPaths, args)
+	}
+	if args[len(args)-1] != "render the chart" {
+		t.Fatalf("prompt should remain the last arg, got %q", args[len(args)-1])
+	}
+}
+
 // TestPiExecuteAttachesStdinPipe verifies that the Pi backend spawns the
 // child with an explicit stdin pipe (FIFO) instead of leaving cmd.Stdin
 // nil. Without an explicit pipe, Pi has been observed to block under

@@ -541,6 +541,7 @@ var piManagedMCPBlockedArgs = map[string]blockedArgMode{
 //	--provider <name>           provider, when Model is "provider/id"
 //	--model <id>                model identifier
 //	--append-system-prompt <s>  extra system instructions
+//	--skill <path>              exact managed SKILL.md path (repeatable)
 //
 // Custom args appended before the positional prompt. The prompt is a
 // positional argument and must be last.
@@ -568,6 +569,14 @@ func buildPiArgs(prompt, sessionPath string, opts ExecOptions, logger *slog.Logg
 	// Users who want to restrict tools can do so via custom_args.
 	if opts.SystemPrompt != "" {
 		args = append(args, "--append-system-prompt", opts.SystemPrompt)
+	}
+	// Pi only discovers project-local .pi/skills after the project has been
+	// trusted. Daemon runs are non-interactive, so Pi cannot ask for that
+	// decision and silently omits the bound skills. Pass only the exact
+	// SKILL.md files materialized by execenv; Pi documents --skill as an
+	// explicit, additive load path that does not require project trust.
+	for _, skillPath := range opts.SkillPaths {
+		args = append(args, "--skill", skillPath)
 	}
 	blockedArgs := piBlockedArgs
 	if hasManagedMcpConfig(opts.McpConfig) {

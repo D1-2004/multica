@@ -538,6 +538,102 @@ func TestWriteContextFilesClaudeNativeSkills(t *testing.T) {
 	}
 }
 
+func TestPreparePiReturnsExactManagedSkillPaths(t *testing.T) {
+	t.Parallel()
+
+	workspacesRoot := t.TempDir()
+	task := TaskContextForEnv{
+		IssueID: "pi-managed-skills",
+		AgentSkills: []SkillContextForEnv{
+			{Name: "visualize", Content: "Create an interactive visualization."},
+			{Name: "visualize-data", Content: "Design data charts."},
+		},
+	}
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: workspacesRoot,
+		WorkspaceID:    "ws-pi-managed-skills",
+		TaskID:         "11112222-3333-4444-5555-666677778888",
+		Provider:       "pi",
+		Task:           task,
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer env.Cleanup(true)
+
+	want := []string{
+		filepath.Join(env.WorkDir, ".pi", "skills", "visualize", "SKILL.md"),
+		filepath.Join(env.WorkDir, ".pi", "skills", "visualize-data", "SKILL.md"),
+	}
+	if strings.Join(env.ManagedSkillPaths, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("ManagedSkillPaths = %v, want %v", env.ManagedSkillPaths, want)
+	}
+	for _, path := range env.ManagedSkillPaths {
+		if !filepath.IsAbs(path) {
+			t.Errorf("managed skill path is not absolute: %q", path)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("managed skill path is not readable: %s: %v", path, err)
+		}
+	}
+
+	reused := Reuse(ReuseParams{
+		WorkspacesRoot: workspacesRoot,
+		WorkDir:        env.WorkDir,
+		Provider:       "pi",
+		Task:           task,
+	}, testLogger())
+	if reused == nil {
+		t.Fatal("Reuse returned nil")
+	}
+	if strings.Join(reused.ManagedSkillPaths, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("reused ManagedSkillPaths = %v, want %v", reused.ManagedSkillPaths, want)
+	}
+}
+
+func TestPreparePiManagedSkillPathTracksCollisionSafeSlug(t *testing.T) {
+	t.Parallel()
+
+	localWorkDir := t.TempDir()
+	userSkillPath := filepath.Join(localWorkDir, ".pi", "skills", "visualize", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(userSkillPath), 0o755); err != nil {
+		t.Fatalf("create user skill dir: %v", err)
+	}
+	if err := os.WriteFile(userSkillPath, []byte("user-owned"), 0o644); err != nil {
+		t.Fatalf("write user skill: %v", err)
+	}
+
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: t.TempDir(),
+		WorkspaceID:    "ws-pi-collision",
+		TaskID:         "aaaabbbb-cccc-dddd-eeee-ffff00001111",
+		Provider:       "pi",
+		LocalWorkDir:   localWorkDir,
+		Task: TaskContextForEnv{
+			IssueID: "pi-collision",
+			AgentSkills: []SkillContextForEnv{
+				{Name: "visualize", Content: "multica-managed"},
+			},
+		},
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer env.Cleanup(true)
+
+	want := filepath.Join(localWorkDir, ".pi", "skills", "visualize-multica", "SKILL.md")
+	if len(env.ManagedSkillPaths) != 1 || env.ManagedSkillPaths[0] != want {
+		t.Fatalf("ManagedSkillPaths = %v, want [%s]", env.ManagedSkillPaths, want)
+	}
+	body, err := os.ReadFile(userSkillPath)
+	if err != nil {
+		t.Fatalf("read user skill: %v", err)
+	}
+	if string(body) != "user-owned" {
+		t.Fatalf("user skill was overwritten: %q", body)
+	}
+}
+
 // TestReuseRefreshesSkillsWithoutDuplicating is the regression guard for
 // GitHub #3684: re-dispatching the same agent on the same issue goes through
 // the Reuse path, which must refresh skills in place rather than pile up
@@ -1863,14 +1959,15 @@ func TestInjectRuntimeConfigHermes(t *testing.T) {
 	if !strings.Contains(s, "Coding") {
 		t.Error("AGENTS.md missing skill name")
 	}
-	// Hermes has no native skill discovery path wired up, so AGENTS.md must
-	// point the agent at the .agent_context/skills/ fallback — NOT claim that
-	// skills are "discovered automatically".
-	if strings.Contains(s, "discovered automatically") {
-		t.Error("AGENTS.md for Hermes should not claim native skill discovery")
+	// Hermes now discovers skills from the daemon-seeded per-task
+	// HERMES_HOME/skills (see hermes_home.go), so AGENTS.md must use the
+	// "discovered automatically" framing and must NOT point the agent at the
+	// old .agent_context/skills/ fallback it never read (issue #5242).
+	if !strings.Contains(s, "discovered automatically") {
+		t.Error("AGENTS.md for Hermes should describe skills as discovered automatically")
 	}
-	if !strings.Contains(s, ".agent_context/skills/") {
-		t.Error("AGENTS.md for Hermes should reference .agent_context/skills/ fallback path")
+	if strings.Contains(s, ".agent_context/skills/") {
+		t.Error("AGENTS.md for Hermes should not reference the .agent_context/skills/ fallback path")
 	}
 
 	// CLAUDE.md should NOT exist.
@@ -1879,7 +1976,13 @@ func TestInjectRuntimeConfigHermes(t *testing.T) {
 	}
 }
 
-func TestWriteContextFilesHermesFallbackSkills(t *testing.T) {
+// TestWriteContextFilesHermesSkipsWorkdirSkills asserts that Hermes skills are
+// NOT materialized into the workdir. Hermes has no workspace-relative skill
+// discovery; the daemon seeds them into a per-task HERMES_HOME/skills instead
+// (see prepareHermesHome / TestPrepareHermesHome). Writing the old
+// .agent_context/skills/ fallback was pure dead weight the CLI never read
+// (issue #5242).
+func TestWriteContextFilesHermesSkipsWorkdirSkills(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
@@ -1894,14 +1997,15 @@ func TestWriteContextFilesHermesFallbackSkills(t *testing.T) {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
-	// Skills should be in the fallback .agent_context/skills/ path since
-	// Hermes has no native skills discovery directory.
-	skillMd, err := os.ReadFile(filepath.Join(dir, ".agent_context", "skills", "go-conventions", "SKILL.md"))
-	if err != nil {
-		t.Fatalf("failed to read .agent_context/skills/go-conventions/SKILL.md: %v", err)
+	// No skills dir should be created in the workdir for Hermes — not the old
+	// fallback, and not an empty leftover directory either.
+	if _, err := os.Stat(filepath.Join(dir, ".agent_context", "skills")); !os.IsNotExist(err) {
+		t.Errorf("expected no .agent_context/skills/ for Hermes, got err=%v", err)
 	}
-	if !strings.Contains(string(skillMd), "Follow Go conventions.") {
-		t.Error("SKILL.md missing content")
+
+	// issue_context.md should still be written under .agent_context/.
+	if _, err := os.Stat(filepath.Join(dir, ".agent_context", "issue_context.md")); err != nil {
+		t.Errorf("expected .agent_context/issue_context.md to exist: %v", err)
 	}
 }
 
