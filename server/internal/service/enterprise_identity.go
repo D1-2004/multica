@@ -387,7 +387,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	if err != nil {
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
-	authXToken, err := s.AuthX.IssueFromBUCIDToken(ctx, bucTokens.IDToken)
+	authXToken, err := s.AuthX.IssueForVerifiedEmployee(ctx, employeeID)
 	if err != nil {
 		logEnterpriseIdentityBindingStageFailure("issue_authx_token")
 		return CompleteEnterpriseIdentityBindingResult{}, err

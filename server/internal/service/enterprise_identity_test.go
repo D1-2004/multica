@@ -169,14 +169,17 @@ func (f *fakeEnterpriseIdentityStore) MarkCloudSandboxSessionStale(
 }
 
 type fakeEnterpriseAuthX struct {
-	issuedFrom  string
-	renewedFrom string
-	issueResult EnterpriseOIDCToken
-	renewResult EnterpriseOIDCToken
+	issuedEmployee string
+	renewedFrom    string
+	issueResult    EnterpriseOIDCToken
+	renewResult    EnterpriseOIDCToken
 }
 
-func (f *fakeEnterpriseAuthX) IssueFromBUCIDToken(_ context.Context, token string) (EnterpriseOIDCToken, error) {
-	f.issuedFrom = token
+func (f *fakeEnterpriseAuthX) IssueForVerifiedEmployee(
+	_ context.Context,
+	employeeID string,
+) (EnterpriseOIDCToken, error) {
+	f.issuedEmployee = employeeID
 	return f.issueResult, nil
 }
 
@@ -403,7 +406,7 @@ func TestEnterpriseIdentityCompleteBindingRequiresRevokeBeforeChangingEmployee(t
 	if !errors.Is(err, ErrEnterpriseIdentityEmployeeConflict) {
 		t.Fatalf("CompleteBinding error = %v", err)
 	}
-	if authX.issuedFrom != "" {
+	if authX.issuedEmployee != "" {
 		t.Fatal("AuthX exchange ran before employee conflict validation")
 	}
 }
@@ -508,6 +511,9 @@ func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *t
 	if store.upsert.RawEmpID != "12345" ||
 		idem.registration.EmployeeID != "12345" {
 		t.Fatalf("BUC employee identity was not used for binding")
+	}
+	if authX.issuedEmployee != "12345" {
+		t.Fatalf("AuthX verified employee = %q", authX.issuedEmployee)
 	}
 	if bytes.Contains(store.upsert.AuthxRefreshTokenEncrypted, []byte("authx-refresh")) ||
 		bytes.Contains(store.upsert.AuthxRefreshTokenEncrypted, []byte("buc-refresh")) {

@@ -49,7 +49,7 @@ Related:
 - SPIFFE 注入接口：
   `POST /v1/sandboxes/{id}/identity/spiffe?sync=false`
 - 请求包含员工工号、Agent SPIFFE ID 和一次性 Initial Token。
-- Initial Token 由当前员工的 BUC OIDC ID Token 向 AuthX/Idem 签发，短时有效，
+- Initial Token 由已校验的当前员工身份向 AuthX/Idem 签发，短时有效，
   仅交给 ASB 控制面；Multica 不持久化 Initial Token。
 - ASB Egress 用 Initial Token 换取正式 AIT，并在 Agent 出站请求上签名。沙箱进程看不到
   AIT、APT 或私钥。
@@ -73,8 +73,11 @@ Related:
 1. 校验 `state`、OIDC `nonce`、`iss`、`aud`、`exp`；随后用同次换取的
    Access Token 调用 BUC `user_info`，校验其 `openid` 与 ID Token `sub`
    一致，并从受信响应的 `empId` 取得员工工号。
-2. 用 BUC OIDC ID Token 调用 Normandy OIDC SDK 的
-   `NewBucOidcIdTokenSpec`，签发 AuthX 专用 ID Token 和可轮换 Refresh Token。
+2. Multica 完成 BUC ID Token 的签名、时效、nonce 和员工工号校验后，用该已验证
+   工号调用 Normandy OIDC SDK 的 `NewSubjectSpec(NewBucUser(...))`，并设置
+   `forceRefresh=true`，签发 AuthX 专用 ID Token 和可轮换 Refresh Token。
+   `NewBucOidcIdTokenSpec` 只返回短期 ID Token，不返回 Refresh Token，不能用于
+   这条需要长期轮换的绑定链路。
 3. 用原始 BUC 三件套创建并注入一个 BUC 身份锚点沙箱。
 4. ASB 确认注入成功后，立即丢弃原始 BUC ID/Access/Refresh Token。
 5. 只加密持久化 Normandy 返回的 AuthX Refresh Token；它不是 ASB 使用的 BUC
@@ -269,7 +272,7 @@ sequenceDiagram
   M->>A: POST /v1/sandboxes (immutable image digest, matching identity extensions)
   A-->>M: sandbox id
   M->>A: wait Ready
-  M->>I: issue Initial Token from current AuthX OIDC ID token
+  M->>I: issue Initial Token for verified employee identity
   I-->>M: short-lived Initial Token
   M->>A: attach SPIFFE identity
   M->>A: attach BUC identity by originalSandboxId

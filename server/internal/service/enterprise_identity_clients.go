@@ -19,6 +19,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	idemapi "gitlab.alibaba-inc.com/idem/idem-api-client-golang"
 	authconfig "gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang/auth/config"
+	authidentity "gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang/auth/identity"
 	authoidc "gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang/auth/oidc"
 )
 
@@ -38,7 +39,7 @@ type EnterpriseOIDCToken struct {
 }
 
 type EnterpriseAuthX interface {
-	IssueFromBUCIDToken(context.Context, string) (EnterpriseOIDCToken, error)
+	IssueForVerifiedEmployee(context.Context, string) (EnterpriseOIDCToken, error)
 	Renew(context.Context, string) (EnterpriseOIDCToken, error)
 }
 
@@ -96,14 +97,23 @@ func parseNormandyEnvironment(raw string) (authconfig.EnvType, error) {
 	}
 }
 
-func (c *NormandyAuthXClient) IssueFromBUCIDToken(ctx context.Context, bucIDToken string) (EnterpriseOIDCToken, error) {
+func (c *NormandyAuthXClient) IssueForVerifiedEmployee(
+	ctx context.Context,
+	employeeID string,
+) (EnterpriseOIDCToken, error) {
 	if err := ctx.Err(); err != nil {
 		return EnterpriseOIDCToken{}, err
 	}
-	if strings.TrimSpace(bucIDToken) == "" {
-		return EnterpriseOIDCToken{}, errors.New("BUC ID token is required")
+	employeeID = strings.TrimSpace(employeeID)
+	if !enterpriseEmployeeIDPattern.MatchString(employeeID) {
+		return EnterpriseOIDCToken{}, errors.New("verified employee ID is invalid")
 	}
-	token, err := c.client.IssueToken(authoidc.NewBucOidcIdTokenSpec(bucIDToken, c.audience, c.ttl))
+	spec := authoidc.NewSubjectSpec(
+		authidentity.NewBucUser(employeeID),
+		c.audience,
+		c.ttl,
+	).WithForceRefresh(true)
+	token, err := c.client.IssueToken(spec)
 	if err != nil {
 		return EnterpriseOIDCToken{}, fmt.Errorf("issue AuthX OIDC token: %w", err)
 	}
