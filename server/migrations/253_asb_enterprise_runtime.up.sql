@@ -59,13 +59,15 @@ CREATE INDEX fc_e2b_stable_release_backend_worker_idx
         created_at
     );
 
-CREATE UNIQUE INDEX fc_e2b_stable_release_artifact_idx
+CREATE INDEX fc_e2b_stable_release_artifact_idx
     ON fc_e2b_stable_release (
         sandbox_backend,
         artifact_ref,
-        artifact_build_id
+        artifact_build_id,
+        artifact_digest,
+        completed_at DESC
     )
-    WHERE status <> 'failed';
+    WHERE status = 'completed';
 
 ALTER TABLE fc_e2b_stable_channel
     ADD COLUMN sandbox_backend TEXT NOT NULL DEFAULT 'aliyun_fc',
