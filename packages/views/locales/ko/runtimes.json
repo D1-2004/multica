@@ -288,6 +288,8 @@
     "publish_developers": "검증 후 개발자 업데이트",
     "start_rollout": "24시간 배포 시작",
     "awaiting_rollout_notice": "개발자 런타임 업데이트가 완료되었습니다. 실제 대화를 검증한 후 24시간 배포를 수동으로 시작하세요.",
+    "complete_observation": "관찰 완료",
+    "complete_observation_notice": "최종 확인 후 릴리스를 완료합니다. 서버가 모든 Runtime과 상태 게이트를 다시 확인한 뒤 이 템플릿을 현재 안정 버전으로 등록하고 진행 중인 릴리스 상태를 종료합니다.",
     "pause": "일시 중지",
     "resume": "계속",
     "terminate": "점진적 업데이트 종료",

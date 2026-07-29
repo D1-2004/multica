@@ -46,6 +46,8 @@ var (
 	ErrFCE2BStableReleaseConflict      = errors.New("another FC/E2B stable release is active")
 	ErrFCE2BStableIdempotencyConflict  = errors.New("idempotency key was already used with different release parameters")
 	ErrFCE2BStableReleaseState         = errors.New("FC/E2B stable release does not allow this operation")
+	ErrFCE2BStableAdvanceBlocked       = errors.New("FC/E2B stable release cannot advance until the current stage passes its gates")
+	ErrFCE2BStableObservationBlocked   = errors.New("FC/E2B stable release cannot complete observation until its final gates pass")
 )
 
 type FCE2BStableTemplateBinding struct {
@@ -60,38 +62,46 @@ type FCE2BStableChannel struct {
 	ActiveRelease *FCE2BStableRelease         `json:"active_release"`
 }
 
+type FCE2BStableRolloutMilestone struct {
+	Batch       int       `json:"batch"`
+	Percentage  int       `json:"percentage"`
+	ScheduledAt time.Time `json:"scheduled_at"`
+	Kind        string    `json:"kind"`
+}
+
 type FCE2BStableRelease struct {
-	ID                          string         `json:"id"`
-	TemplateID                  string         `json:"template_id"`
-	TemplateBuildID             string         `json:"template_build_id"`
-	TemplateAlias               string         `json:"template_alias"`
-	GitCommit                   string         `json:"git_commit"`
-	ACRDigest                   string         `json:"acr_digest"`
-	SourceRevision              string         `json:"source_revision"`
-	Note                        string         `json:"note"`
-	ActorUserID                 string         `json:"actor_user_id"`
-	Bootstrap                   bool           `json:"bootstrap"`
-	Status                      string         `json:"status"`
-	CurrentBatch                int            `json:"current_batch"`
-	TargetPercentage            int            `json:"target_percentage"`
-	PreviousTemplateID          string         `json:"previous_template_id"`
-	PreviousTemplateBuildID     string         `json:"previous_template_build_id"`
-	PreviousTemplateAlias       string         `json:"previous_template_alias"`
-	Manifest                    map[string]any `json:"manifest,omitempty"`
-	TotalTargets                int            `json:"total_targets"`
-	UpdatedTargets              int            `json:"updated_targets"`
-	FailedTargets               int            `json:"failed_targets"`
-	DeveloperTargets            int            `json:"developer_targets"`
-	DeveloperUpdatedTargets     int            `json:"developer_updated_targets"`
-	DeveloperRolloutStartedAt   *time.Time     `json:"developer_rollout_started_at,omitempty"`
-	DeveloperRolloutCompletedAt *time.Time     `json:"developer_rollout_completed_at,omitempty"`
-	RolloutStartedAt            *time.Time     `json:"rollout_started_at,omitempty"`
-	BatchStartedAt              *time.Time     `json:"batch_started_at,omitempty"`
-	NextBatchAt                 *time.Time     `json:"next_batch_at,omitempty"`
-	CompletedAt                 *time.Time     `json:"completed_at,omitempty"`
-	ValidationError             string         `json:"validation_error,omitempty"`
-	CreatedAt                   time.Time      `json:"created_at"`
-	UpdatedAt                   time.Time      `json:"updated_at"`
+	ID                          string                        `json:"id"`
+	TemplateID                  string                        `json:"template_id"`
+	TemplateBuildID             string                        `json:"template_build_id"`
+	TemplateAlias               string                        `json:"template_alias"`
+	GitCommit                   string                        `json:"git_commit"`
+	ACRDigest                   string                        `json:"acr_digest"`
+	SourceRevision              string                        `json:"source_revision"`
+	Note                        string                        `json:"note"`
+	ActorUserID                 string                        `json:"actor_user_id"`
+	Bootstrap                   bool                          `json:"bootstrap"`
+	Status                      string                        `json:"status"`
+	CurrentBatch                int                           `json:"current_batch"`
+	TargetPercentage            int                           `json:"target_percentage"`
+	PreviousTemplateID          string                        `json:"previous_template_id"`
+	PreviousTemplateBuildID     string                        `json:"previous_template_build_id"`
+	PreviousTemplateAlias       string                        `json:"previous_template_alias"`
+	Manifest                    map[string]any                `json:"manifest,omitempty"`
+	TotalTargets                int                           `json:"total_targets"`
+	UpdatedTargets              int                           `json:"updated_targets"`
+	FailedTargets               int                           `json:"failed_targets"`
+	DeveloperTargets            int                           `json:"developer_targets"`
+	DeveloperUpdatedTargets     int                           `json:"developer_updated_targets"`
+	DeveloperRolloutStartedAt   *time.Time                    `json:"developer_rollout_started_at,omitempty"`
+	DeveloperRolloutCompletedAt *time.Time                    `json:"developer_rollout_completed_at,omitempty"`
+	RolloutStartedAt            *time.Time                    `json:"rollout_started_at,omitempty"`
+	BatchStartedAt              *time.Time                    `json:"batch_started_at,omitempty"`
+	NextBatchAt                 *time.Time                    `json:"next_batch_at,omitempty"`
+	RolloutSchedule             []FCE2BStableRolloutMilestone `json:"rollout_schedule,omitempty"`
+	CompletedAt                 *time.Time                    `json:"completed_at,omitempty"`
+	ValidationError             string                        `json:"validation_error,omitempty"`
+	CreatedAt                   time.Time                     `json:"created_at"`
+	UpdatedAt                   time.Time                     `json:"updated_at"`
 }
 
 type CreateFCE2BStableReleaseInput struct {
@@ -513,6 +523,181 @@ func (s *FCE2BStableService) StartRollout(ctx context.Context, releaseID pgtype.
 		return FCE2BStableRelease{}, ErrFCE2BStableReleaseState
 	}
 	s.Notify()
+	return s.GetRelease(ctx, releaseID)
+}
+
+func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtype.UUID) (FCE2BStableRelease, error) {
+	token := uuid.New()
+	var release FCE2BStableRelease
+	var rolloutStartedAt, batchStartedAt pgtype.Timestamptz
+	if err := s.Pool.QueryRow(ctx, `
+		UPDATE fc_e2b_stable_release
+		SET lease_token = $2,
+		    lease_expires_at = now() + $3::interval,
+		    updated_at = now()
+		WHERE id = $1
+		  AND status = 'rolling_out'
+		  AND current_batch BETWEEN 1 AND 3
+		  AND (
+		      lease_token IS NULL
+		      OR lease_expires_at IS NULL
+		      OR lease_expires_at < now()
+		  )
+		RETURNING id::text, template_alias, status, current_batch,
+		          target_percentage, rollout_started_at, batch_started_at
+	`, releaseID, token, stableReleaseLeaseDuration.String()).Scan(
+		&release.ID,
+		&release.TemplateAlias,
+		&release.Status,
+		&release.CurrentBatch,
+		&release.TargetPercentage,
+		&rolloutStartedAt,
+		&batchStartedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return FCE2BStableRelease{}, fmt.Errorf(
+				"%w: the rollout worker is updating the current stage or no next stage is available",
+				ErrFCE2BStableReleaseState,
+			)
+		}
+		return FCE2BStableRelease{}, fmt.Errorf("claim stable rollout for advance: %w", err)
+	}
+	defer func() {
+		_, _ = s.Pool.Exec(context.Background(), `
+			UPDATE fc_e2b_stable_release
+			SET lease_token = NULL, lease_expires_at = NULL, updated_at = now()
+			WHERE id = $1 AND lease_token = $2
+		`, releaseID, token)
+	}()
+	if !rolloutStartedAt.Valid || !batchStartedAt.Valid {
+		return FCE2BStableRelease{}, fmt.Errorf("%w: rollout timing is incomplete", ErrFCE2BStableReleaseState)
+	}
+	release.RolloutStartedAt = &rolloutStartedAt.Time
+	release.BatchStartedAt = &batchStartedAt.Time
+
+	var pending, failed int
+	if err := s.Pool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE status IN ('pending', 'updating')),
+			count(*) FILTER (WHERE status = 'failed')
+		FROM fc_e2b_stable_release_target
+		WHERE release_id = $1 AND batch_index <= $2
+	`, releaseID, release.CurrentBatch).Scan(&pending, &failed); err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("check stable rollout stage targets: %w", err)
+	}
+	if pending > 0 {
+		return FCE2BStableRelease{}, fmt.Errorf(
+			"%w: %d runtime targets are still updating",
+			ErrFCE2BStableAdvanceBlocked,
+			pending,
+		)
+	}
+	if failed > 0 {
+		return FCE2BStableRelease{}, fmt.Errorf(
+			"%w: %d runtime targets failed",
+			ErrFCE2BStableAdvanceBlocked,
+			failed,
+		)
+	}
+	if err := s.stableLaunchHealthGate(ctx, release); err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("%w: %v", ErrFCE2BStableAdvanceBlocked, err)
+	}
+
+	nextBatch, percentage, _ := stableNextBatch(release.CurrentBatch, rolloutStartedAt.Time)
+	if nextBatch == 0 {
+		return FCE2BStableRelease{}, ErrFCE2BStableReleaseState
+	}
+	now := time.Now()
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE fc_e2b_stable_release
+		SET current_batch = $1,
+		    target_percentage = $2,
+		    batch_started_at = $3,
+		    next_batch_at = $3,
+		    updated_targets = (
+		        SELECT count(*) FROM fc_e2b_stable_release_target
+		        WHERE release_id = $4 AND status = 'updated'
+		    ),
+		    lease_token = NULL,
+		    lease_expires_at = NULL,
+		    updated_at = now()
+		WHERE id = $4
+		  AND status = 'rolling_out'
+		  AND current_batch = $5
+		  AND lease_token = $6
+	`, nextBatch, percentage, now, releaseID, release.CurrentBatch, token)
+	if err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("advance stable rollout stage: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return FCE2BStableRelease{}, ErrFCE2BStableReleaseState
+	}
+	s.Notify()
+	return s.GetRelease(ctx, releaseID)
+}
+
+func (s *FCE2BStableService) CompleteObservation(
+	ctx context.Context,
+	releaseID pgtype.UUID,
+) (FCE2BStableRelease, error) {
+	token := uuid.New()
+	release, err := s.scanRelease(s.Pool.QueryRow(ctx, `
+		UPDATE fc_e2b_stable_release release
+		SET lease_token = $2,
+		    lease_expires_at = now() + $3::interval,
+		    updated_at = now()
+		WHERE id = $1
+		  AND status = 'observing'
+		  AND (
+		      lease_token IS NULL
+		      OR lease_expires_at IS NULL
+		      OR lease_expires_at < now()
+		  )
+		RETURNING `+stableReleaseColumns,
+		releaseID,
+		token,
+		stableReleaseLeaseDuration.String(),
+	))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return FCE2BStableRelease{}, ErrFCE2BStableReleaseState
+		}
+		return FCE2BStableRelease{}, fmt.Errorf("claim stable observation completion: %w", err)
+	}
+	defer func() {
+		_, _ = s.Pool.Exec(context.Background(), `
+			UPDATE fc_e2b_stable_release
+			SET lease_token = NULL, lease_expires_at = NULL, updated_at = now()
+			WHERE id = $1 AND lease_token = $2
+		`, releaseID, token)
+	}()
+
+	if err := s.reconcileTargets(ctx, release); err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("reconcile stable observation targets: %w", err)
+	}
+	var missing, failed int
+	if err := s.Pool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE status <> 'updated'),
+			count(*) FILTER (WHERE status = 'failed')
+		FROM fc_e2b_stable_release_target
+		WHERE release_id = $1
+	`, release.ID).Scan(&missing, &failed); err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("check stable observation targets: %w", err)
+	}
+	if err := stableObservationTargetsError(missing, failed); err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("%w: %v", ErrFCE2BStableObservationBlocked, err)
+	}
+	if err := s.stableLaunchHealthGate(ctx, release); err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("%w: %v", ErrFCE2BStableObservationBlocked, err)
+	}
+	completed, err := s.finalizeObservation(ctx, release, token, false)
+	if err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("complete stable observation: %w", err)
+	}
+	if !completed {
+		return FCE2BStableRelease{}, ErrFCE2BStableReleaseState
+	}
 	return s.GetRelease(ctx, releaseID)
 }
 
@@ -989,24 +1174,44 @@ func (s *FCE2BStableService) observeRelease(ctx context.Context, release FCE2BSt
 	if err := s.stableLaunchHealthGate(ctx, release); err != nil {
 		return s.pauseForGate(ctx, release.ID, token, FCE2BStableReleaseObserving, err)
 	}
-	tx, err := s.Pool.Begin(ctx)
+	completed, err := s.finalizeObservation(ctx, release, token, true)
 	if err != nil {
 		return err
+	}
+	if !completed {
+		return s.releaseLease(ctx, release.ID, token, nil)
+	}
+	return nil
+}
+
+func (s *FCE2BStableService) finalizeObservation(
+	ctx context.Context,
+	release FCE2BStableRelease,
+	token uuid.UUID,
+	requireScheduledTime bool,
+) (bool, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return false, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	tag, err := tx.Exec(ctx, `
 		UPDATE fc_e2b_stable_release
 		SET status = 'completed', completed_at = now(), updated_targets = total_targets,
+		    next_batch_at = NULL, validation_error = '',
 		    lease_token = NULL, lease_expires_at = NULL, updated_at = now()
-		WHERE id = $1 AND lease_token = $2 AND rollout_started_at + interval '24 hours' <= now()
-	`, release.ID, token)
+		WHERE id = $1
+		  AND status = 'observing'
+		  AND lease_token = $2
+		  AND ($3 = false OR rollout_started_at + interval '24 hours' <= now())
+	`, release.ID, token, requireScheduledTime)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if tag.RowsAffected() != 1 {
-		return s.releaseLease(ctx, release.ID, token, nil)
+		return false, nil
 	}
-	if _, err := tx.Exec(ctx, `
+	channelTag, err := tx.Exec(ctx, `
 		UPDATE fc_e2b_stable_channel
 		SET current_template_id = $1,
 		    current_template_build_id = $2,
@@ -1015,10 +1220,17 @@ func (s *FCE2BStableService) observeRelease(ctx context.Context, release FCE2BSt
 		    active_release_id = NULL,
 		    updated_at = now()
 		WHERE channel = 'stable' AND active_release_id = $4
-	`, release.TemplateID, release.TemplateBuildID, release.TemplateAlias, release.ID); err != nil {
-		return err
+	`, release.TemplateID, release.TemplateBuildID, release.TemplateAlias, release.ID)
+	if err != nil {
+		return false, err
 	}
-	return tx.Commit(ctx)
+	if channelTag.RowsAffected() != 1 {
+		return false, errors.New("stable channel no longer points to the observed release")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *FCE2BStableService) rollbackRelease(ctx context.Context, release FCE2BStableRelease, token uuid.UUID) error {
@@ -1326,6 +1538,16 @@ func stableNextBatch(currentBatch int, startedAt time.Time) (int, int, time.Time
 	}
 }
 
+func stableRolloutSchedule(startedAt time.Time) []FCE2BStableRolloutMilestone {
+	return []FCE2BStableRolloutMilestone{
+		{Batch: 1, Percentage: 5, ScheduledAt: startedAt, Kind: "rollout"},
+		{Batch: 2, Percentage: 25, ScheduledAt: startedAt.Add(2 * time.Hour), Kind: "rollout"},
+		{Batch: 3, Percentage: 50, ScheduledAt: startedAt.Add(8 * time.Hour), Kind: "rollout"},
+		{Batch: 4, Percentage: 100, ScheduledAt: startedAt.Add(20 * time.Hour), Kind: "rollout"},
+		{Batch: 5, Percentage: 100, ScheduledAt: startedAt.Add(24 * time.Hour), Kind: "complete"},
+	}
+}
+
 func (s *FCE2BStableService) claimTarget(
 	ctx context.Context,
 	releaseID string,
@@ -1377,6 +1599,13 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 	if release.RolloutStartedAt == nil || release.BatchStartedAt == nil {
 		return errors.New("stable release has no rollout or batch start time")
 	}
+	currentBatchHasCutovers, err := s.currentBatchHasCutovers(ctx, release)
+	if err != nil {
+		return err
+	}
+	if !currentBatchHasCutovers {
+		return nil
+	}
 	type providerHealth struct {
 		total                  int
 		failed                 int
@@ -1386,19 +1615,24 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 	}
 	candidate := make(map[string]providerHealth)
 	rows, err := s.Pool.Query(ctx, `
+		WITH current_batch_target AS (
+			SELECT runtime_id, provider, completed_at
+			FROM fc_e2b_stable_release_target
+			WHERE release_id = $1
+			  AND batch_index = $2
+			  AND status = 'updated'
+			  AND completed_at >= $3
+		)
 		SELECT target.provider,
 		       count(task.id),
 		       count(task.id) FILTER (WHERE task.failure_reason = 'runtime_start_failed'),
 		       count(task.id) FILTER (WHERE task.status = 'completed')
-		FROM fc_e2b_stable_release_target target
+		FROM current_batch_target target
 		LEFT JOIN agent_task_queue task
 		  ON task.runtime_id = target.runtime_id
 		 AND task.created_at >= target.completed_at
-		WHERE target.release_id = $1
-		  AND target.batch_index = $2
-		  AND target.status = 'updated'
 		GROUP BY target.provider
-	`, release.ID, release.CurrentBatch)
+	`, release.ID, release.CurrentBatch, *release.BatchStartedAt)
 	if err != nil {
 		return fmt.Errorf("load stable candidate launch health: %w", err)
 	}
@@ -1416,6 +1650,14 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 		return err
 	}
 	sessionRows, err := s.Pool.Query(ctx, `
+			WITH current_batch_target AS (
+				SELECT runtime_id, provider, completed_at
+				FROM fc_e2b_stable_release_target
+				WHERE release_id = $1
+				  AND batch_index = $2
+				  AND status = 'updated'
+				  AND completed_at >= $3
+			)
 			SELECT target.provider,
 			       count(DISTINCT session.sandbox_id) FILTER (
 			           WHERE session.created_at < target.completed_at
@@ -1423,16 +1665,13 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 			       count(DISTINCT session.sandbox_id) FILTER (
 			           WHERE session.created_at >= target.completed_at
 			       )
-			FROM fc_e2b_stable_release_target target
+			FROM current_batch_target target
 			LEFT JOIN fc_e2b_sandbox_session session
 			  ON session.runtime_id = target.runtime_id
-			 AND session.template = $3
+			 AND session.template = $4
 			 AND session.updated_at >= target.completed_at
-		WHERE target.release_id = $1
-		  AND target.batch_index = $2
-		  AND target.status = 'updated'
-		GROUP BY target.provider
-		`, release.ID, release.CurrentBatch, release.TemplateAlias)
+			GROUP BY target.provider
+		`, release.ID, release.CurrentBatch, *release.BatchStartedAt, release.TemplateAlias)
 	if err != nil {
 		return fmt.Errorf("load stable candidate sandbox health: %w", err)
 	}
@@ -1480,6 +1719,7 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 			WHERE release_id = $1
 			  AND batch_index = $2
 			  AND status = 'updated'
+			  AND completed_at >= $3
 		)
 		SELECT
 			count(*) FILTER (WHERE task.created_at >= selected.completed_at),
@@ -1498,7 +1738,7 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 			)
 		FROM agent_task_queue task
 		JOIN selected_runtimes selected ON selected.runtime_id = task.runtime_id
-	`, release.ID, release.CurrentBatch).Scan(
+	`, release.ID, release.CurrentBatch, *release.BatchStartedAt).Scan(
 		&candidateTotal,
 		&candidateFailed,
 		&baselineTotal,
@@ -1517,6 +1757,53 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 			candidateRate*100,
 			baselineRate*100,
 		)
+	}
+	return nil
+}
+
+func (s *FCE2BStableService) currentBatchHasCutovers(
+	ctx context.Context,
+	release FCE2BStableRelease,
+) (bool, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT completed_at
+		FROM fc_e2b_stable_release_target
+		WHERE release_id = $1
+		  AND batch_index = $2
+		  AND status = 'updated'
+	`, release.ID, release.CurrentBatch)
+	if err != nil {
+		return false, fmt.Errorf("load stable current-batch cutovers: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var completedAt pgtype.Timestamptz
+		if err := rows.Scan(&completedAt); err != nil {
+			return false, err
+		}
+		if !completedAt.Valid {
+			return false, errors.New("stable release target is updated without a completion time")
+		}
+		if stableTargetNeedsBatchHealthGate(completedAt.Time, *release.BatchStartedAt) {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func stableTargetNeedsBatchHealthGate(completedAt, batchStartedAt time.Time) bool {
+	return !completedAt.Before(batchStartedAt)
+}
+
+func stableObservationTargetsError(missing, failed int) error {
+	if failed > 0 {
+		return fmt.Errorf("%d runtime targets failed", failed)
+	}
+	if missing > 0 {
+		return fmt.Errorf("%d runtime targets are not updated", missing)
 	}
 	return nil
 }
@@ -1730,6 +2017,7 @@ func (s *FCE2BStableService) scanRelease(row rowScanner) (FCE2BStableRelease, er
 	}
 	if rolloutStartedAt.Valid {
 		release.RolloutStartedAt = &rolloutStartedAt.Time
+		release.RolloutSchedule = stableRolloutSchedule(rolloutStartedAt.Time)
 	}
 	if batchStartedAt.Valid {
 		release.BatchStartedAt = &batchStartedAt.Time

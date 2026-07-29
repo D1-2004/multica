@@ -793,6 +793,13 @@ export const CloudRuntimeNodeSchema = z.object({
 
 export const CloudRuntimeNodeListSchema = z.array(CloudRuntimeNodeSchema);
 
+export const FCE2BStableRolloutMilestoneSchema = z.object({
+  batch: z.number(),
+  percentage: z.number(),
+  scheduled_at: z.string(),
+  kind: z.enum(["rollout", "complete"]),
+});
+
 export const FCE2BStableReleaseSchema = z.object({
   id: z.string(),
   template_id: z.string(),
@@ -831,6 +838,7 @@ export const FCE2BStableReleaseSchema = z.object({
   rollout_started_at: z.string().optional(),
   batch_started_at: z.string().optional(),
   next_batch_at: z.string().optional(),
+  rollout_schedule: z.array(FCE2BStableRolloutMilestoneSchema).optional(),
   completed_at: z.string().optional(),
   validation_error: z.string().optional(),
   created_at: z.string(),
