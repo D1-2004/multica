@@ -316,6 +316,48 @@ func TestHermesOverlayReconcilesDeletedSharedEntry(t *testing.T) {
 	}
 }
 
+// TestHermesOverlayPreservesTaskSessionDBAcrossReuse pins the warm-sandbox
+// conversation contract. Hermes creates its ACP state.db only after the first
+// prompt. A later overlay refresh must keep that task-local database instead
+// of reconciling it away as an entry absent from the shared home, otherwise the
+// next run cannot resume the session and completes immediately with no text.
+func TestHermesOverlayPreservesTaskSessionDBAcrossReuse(t *testing.T) {
+	t.Parallel()
+	sharedHome := t.TempDir()
+	mustWrite(t, filepath.Join(sharedHome, "config.yaml"), "model: hermes-4\n")
+
+	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
+	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+		t.Fatalf("prepareHermesHome failed: %v", err)
+	}
+
+	for name, content := range map[string]string{
+		"state.db":     "session database",
+		"state.db-shm": "shared memory",
+		"state.db-wal": "write-ahead log",
+	} {
+		mustWrite(t, filepath.Join(hermesHome, name), content)
+	}
+
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+		t.Fatalf("prepareHermesHome (reuse) failed: %v", err)
+	}
+	for name, want := range map[string]string{
+		"state.db":     "session database",
+		"state.db-shm": "shared memory",
+		"state.db-wal": "write-ahead log",
+	} {
+		got, err := os.ReadFile(filepath.Join(hermesHome, name))
+		if err != nil {
+			t.Fatalf("%s missing after reuse: %v", name, err)
+		}
+		if string(got) != want {
+			t.Errorf("%s content = %q, want %q", name, string(got), want)
+		}
+	}
+}
+
 // TestPrepareHermesHomeFailsClosed asserts prepareHermesHome returns an error
 // when required overlay state can't be built (here an unreadable shared config).
 func TestPrepareHermesHomeFailsClosed(t *testing.T) {
