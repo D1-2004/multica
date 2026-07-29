@@ -675,13 +675,15 @@ func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtyp
 			progress.Updated,
 		)
 	}
-	if err := s.stableLaunchHealthGate(ctx, release); err != nil {
-		return FCE2BStableRelease{}, fmt.Errorf("%w: %v", ErrFCE2BStableAdvanceBlocked, err)
-	}
 
 	nextBatch, percentage, _ := stableNextBatch(release.CurrentBatch, rolloutStartedAt.Time)
 	if nextBatch == 0 {
 		return FCE2BStableRelease{}, ErrFCE2BStableReleaseState
+	}
+	if stableCurrentStageHealthGateRequired(progress.Total, progress.Updated, nextBatch) {
+		if err := s.stableLaunchHealthGate(ctx, release); err != nil {
+			return FCE2BStableRelease{}, fmt.Errorf("%w: %v", ErrFCE2BStableAdvanceBlocked, err)
+		}
 	}
 	if err := s.advanceStableRolloutStage(
 		ctx,
@@ -1217,8 +1219,10 @@ func (s *FCE2BStableService) rolloutRelease(ctx context.Context, release FCE2BSt
 		`, release.ID, progress.Updated, due, token)
 		return err
 	}
-	if err := s.stableLaunchHealthGate(ctx, release); err != nil {
-		return s.pauseForGate(ctx, release.ID, token, FCE2BStableReleaseRollingOut, err)
+	if stableCurrentStageHealthGateRequired(progress.Total, progress.Updated, nextBatch) {
+		if err := s.stableLaunchHealthGate(ctx, release); err != nil {
+			return s.pauseForGate(ctx, release.ID, token, FCE2BStableReleaseRollingOut, err)
+		}
 	}
 	if err := s.advanceStableRolloutStage(
 		ctx,
@@ -1656,6 +1660,10 @@ func stableBatchCovered(total, updated, batch int) bool {
 	return updated >= stableBatchTarget(total, batch)
 }
 
+func stableCurrentStageHealthGateRequired(total, updated, nextBatch int) bool {
+	return !stableBatchCovered(total, updated, nextBatch)
+}
+
 func stableTargetHash(releaseID string, target stableRuntimeTarget) string {
 	sum := sha256.Sum256([]byte(releaseID + ":" + util.UUIDToString(target.WorkspaceID) + ":" + util.UUIDToString(target.RuntimeID)))
 	return hex.EncodeToString(sum[:])
@@ -1916,13 +1924,25 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 		if !present {
 			continue
 		}
-		if err := stableProviderProbeCoverageError(
-			provider,
+		if stableProviderProbeCoverageIncomplete(
 			health.completed,
 			health.rotatedExistingSession,
 			health.newSession,
-		); err != nil {
-			return err
+		) {
+			slog.WarnContext(
+				ctx,
+				"FC/E2B stable release provider session coverage is incomplete",
+				"release_id",
+				release.ID,
+				"provider",
+				provider,
+				"completed_tasks",
+				health.completed,
+				"existing_session_rotations",
+				health.rotatedExistingSession,
+				"new_conversation_sandboxes",
+				health.newSession,
+			)
 		}
 	}
 
@@ -1976,22 +1996,15 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 	return nil
 }
 
-func stableProviderProbeCoverageError(
-	provider string,
+func stableProviderProbeCoverageIncomplete(
 	completed,
 	rotatedExistingSession,
 	newSession int,
-) error {
+) bool {
 	if completed < 2 {
-		return nil
+		return false
 	}
-	if rotatedExistingSession < 1 || newSession < 1 {
-		return fmt.Errorf(
-			"provider %s has not proven both an existing-session rotation and a new-conversation sandbox",
-			provider,
-		)
-	}
-	return nil
+	return rotatedExistingSession < 1 || newSession < 1
 }
 
 func (s *FCE2BStableService) currentBatchHasCutovers(
