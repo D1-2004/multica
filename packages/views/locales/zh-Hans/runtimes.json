@@ -292,6 +292,7 @@
     "rollout_schedule_hint": "所有时间都以启动滚动发布的时刻为基准。手动推进只会提前进入下一阶段，不会改变以下原定时间。",
     "rollout_schedule_percentage": "推送至 {{percentage}}%",
     "rollout_schedule_complete": "完成最终观察",
+    "rollout_stage_target": "当前阶段累计目标：{{percentage}}%（{{target}} 个 Runtime）。超过该数量的已更新 Runtime 会直接计入后续阶段。",
     "advance_rollout": "立即推进至 {{percentage}}%",
     "complete_observation": "完成观察",
     "complete_observation_notice": "确认最终观察无异常后完成发布。后台会再次校验全部 Runtime 和健康门禁，通过后将本次模板登记为当前稳定版并退出发布中状态。",

@@ -60,6 +60,17 @@ const rolloutOffsetByBatch: Record<number, string> = {
   5: "T+24h",
 };
 
+function rolloutStageTarget(total: number, batch: number): number {
+  if (total <= 0 || batch < 1 || batch > 4) return 0;
+  const first = Math.min(
+    total,
+    Math.max(Math.ceil(total * 0.05), total >= 3 ? 3 : 1),
+  );
+  const second = Math.min(total, Math.max(first, Math.ceil(total * 0.25)));
+  const third = Math.min(total, Math.max(second, Math.ceil(total * 0.5)));
+  return [first, second, third, total][batch - 1] ?? 0;
+}
+
 export function StableFCE2BReleaseDialog({
   onClose,
 }: {
@@ -98,7 +109,14 @@ export function StableFCE2BReleaseDialog({
     ? progressTotal > 0
       ? Math.round((progressUpdated / progressTotal) * 100)
       : 100
-    : active?.target_percentage ?? 0;
+    : progressTotal > 0
+      ? Math.round((progressUpdated / progressTotal) * 100)
+      : 0;
+  const showRolloutStage =
+    active != null &&
+    active.current_batch >= 1 &&
+    active.current_batch <= 4 &&
+    ["rolling_out", "paused"].includes(active.status);
   const nextRolloutMilestone =
     active?.status === "rolling_out"
       ? active.rollout_schedule?.find(
@@ -245,6 +263,17 @@ export function StableFCE2BReleaseDialog({
                 </span>
                 <span>{progressPercentage}%</span>
               </div>
+              {showRolloutStage && (
+                <p className="text-muted-foreground">
+                  {t(($) => $.fc_e2b_stable.rollout_stage_target, {
+                    percentage: active.target_percentage,
+                    target: rolloutStageTarget(
+                      active.total_targets,
+                      active.current_batch,
+                    ),
+                  })}
+                </p>
+              )}
               {active.status === "awaiting_rollout" && (
                 <p className="text-muted-foreground">
                   {t(($) => $.fc_e2b_stable.awaiting_rollout_notice)}
@@ -461,8 +490,7 @@ export function StableFCE2BReleaseDialog({
                 {templates.map((template) => {
                   const isCurrent =
                     current != null &&
-                    template.id === current.template_id &&
-                    template.build_id === current.template_build_id;
+                    template.id === current.template_id;
                   const isSelected =
                     selected?.id === template.id &&
                     selected?.build_id === template.build_id;

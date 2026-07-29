@@ -32,6 +32,42 @@ func TestStableBatchCutoffs(t *testing.T) {
 	}
 }
 
+func TestStableRolloutCoverageUsesCumulativeUpdatedTargets(t *testing.T) {
+	tests := []struct {
+		name    string
+		total   int
+		updated int
+		batch   int
+		target  int
+		covered bool
+	}{
+		{name: "developer coverage skips 5 percent work", total: 61, updated: 35, batch: 1, target: 4, covered: true},
+		{name: "developer coverage skips 25 percent work", total: 61, updated: 35, batch: 2, target: 16, covered: true},
+		{name: "developer coverage skips 50 percent work", total: 61, updated: 35, batch: 3, target: 31, covered: true},
+		{name: "100 percent still requires every runtime", total: 61, updated: 35, batch: 4, target: 61, covered: false},
+		{name: "new runtimes can raise an active stage target", total: 80, updated: 35, batch: 3, target: 40, covered: false},
+		{name: "new runtime during final stage must be updated", total: 62, updated: 61, batch: 4, target: 62, covered: false},
+		{name: "new runtime completes final stage after update", total: 62, updated: 62, batch: 4, target: 62, covered: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := stableBatchTarget(test.total, test.batch); got != test.target {
+				t.Fatalf("stableBatchTarget(%d, %d) = %d, want %d", test.total, test.batch, got, test.target)
+			}
+			if got := stableBatchCovered(test.total, test.updated, test.batch); got != test.covered {
+				t.Fatalf(
+					"stableBatchCovered(%d, %d, %d) = %t, want %t",
+					test.total,
+					test.updated,
+					test.batch,
+					got,
+					test.covered,
+				)
+			}
+		})
+	}
+}
+
 func TestAssignStableBatchesCoversProvidersAndIsDeterministic(t *testing.T) {
 	targets := make([]stableRuntimeTarget, 0, 60)
 	providers := []string{"hermes", "opencode", "pi"}
