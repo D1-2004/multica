@@ -68,6 +68,70 @@ func TestStableRolloutCoverageUsesCumulativeUpdatedTargets(t *testing.T) {
 	}
 }
 
+func TestStableRolloutSkipsCoveredStagesBeforeHealthGate(t *testing.T) {
+	tests := []struct {
+		name         string
+		total        int
+		updated      int
+		nextBatch    int
+		gateRequired bool
+	}{
+		{
+			name:         "current five percent only",
+			total:        52,
+			updated:      3,
+			nextBatch:    2,
+			gateRequired: true,
+		},
+		{
+			name:         "already covers twenty five percent",
+			total:        52,
+			updated:      13,
+			nextBatch:    2,
+			gateRequired: false,
+		},
+		{
+			name:         "developer rollout already covers fifty percent",
+			total:        52,
+			updated:      26,
+			nextBatch:    3,
+			gateRequired: false,
+		},
+		{
+			name:         "fifty percent still needs one runtime",
+			total:        52,
+			updated:      25,
+			nextBatch:    3,
+			gateRequired: true,
+		},
+		{
+			name:         "new runtime makes final stage incomplete",
+			total:        53,
+			updated:      52,
+			nextBatch:    4,
+			gateRequired: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := stableCurrentStageHealthGateRequired(
+				test.total,
+				test.updated,
+				test.nextBatch,
+			); got != test.gateRequired {
+				t.Fatalf(
+					"stableCurrentStageHealthGateRequired(%d, %d, %d) = %t, want %t",
+					test.total,
+					test.updated,
+					test.nextBatch,
+					got,
+					test.gateRequired,
+				)
+			}
+		})
+	}
+}
+
 func TestAssignStableBatchesCoversProvidersAndIsDeterministic(t *testing.T) {
 	targets := make([]stableRuntimeTarget, 0, 60)
 	providers := []string{"hermes", "opencode", "pi"}
@@ -208,36 +272,39 @@ func TestStableFailureRate(t *testing.T) {
 	}
 }
 
-func TestStableProviderProbeCoverageAllowsInsufficientSamples(t *testing.T) {
+func TestStableProviderProbeCoverageDoesNotRequireInsufficientSamples(t *testing.T) {
 	for _, completed := range []int{0, 1} {
-		if err := stableProviderProbeCoverageError("hermes", completed, 0, 0); err != nil {
-			t.Fatalf("completed=%d was blocked as a failed probe gate: %v", completed, err)
+		if stableProviderProbeCoverageIncomplete(completed, 0, 0) {
+			t.Fatalf("completed=%d was treated as incomplete provider session coverage", completed)
 		}
 	}
 }
 
-func TestStableProviderProbeCoverageRequiresBothSessionKindsOnceSampled(t *testing.T) {
+func TestStableProviderProbeCoverageReportsMissingSessionKindsOnceSampled(t *testing.T) {
 	tests := []struct {
 		name                   string
 		rotatedExistingSession int
 		newSession             int
-		wantErr                bool
+		wantIncomplete         bool
 	}{
-		{name: "neither session kind", wantErr: true},
-		{name: "existing session only", rotatedExistingSession: 1, wantErr: true},
-		{name: "new conversation only", newSession: 1, wantErr: true},
+		{name: "neither session kind", wantIncomplete: true},
+		{name: "existing session only", rotatedExistingSession: 1, wantIncomplete: true},
+		{name: "new conversation only", newSession: 1, wantIncomplete: true},
 		{name: "both session kinds", rotatedExistingSession: 1, newSession: 1},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := stableProviderProbeCoverageError(
-				"hermes",
+			incomplete := stableProviderProbeCoverageIncomplete(
 				2,
 				test.rotatedExistingSession,
 				test.newSession,
 			)
-			if (err != nil) != test.wantErr {
-				t.Fatalf("stableProviderProbeCoverageError() error = %v, wantErr %t", err, test.wantErr)
+			if incomplete != test.wantIncomplete {
+				t.Fatalf(
+					"stableProviderProbeCoverageIncomplete() = %t, want %t",
+					incomplete,
+					test.wantIncomplete,
+				)
 			}
 		})
 	}
