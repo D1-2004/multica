@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -341,6 +342,15 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	if githubErr != nil && !errors.Is(githubErr, githubapp.ErrUnavailable) {
 		slog.Warn("github agent sources disabled", "error", githubErr)
 	}
+	agentIdentityControlBaseURL := cfg.FCE2B.AgentIdentityControlBaseURL
+	if strings.TrimSpace(agentIdentityControlBaseURL) == "" {
+		agentIdentityControlBaseURL = cfg.FCE2B.AgentIdentityBaseURL
+	}
+	agentIdentityGitHub := agentidentitygithub.NewClient(agentidentitygithub.Config{
+		BaseURL: agentIdentityControlBaseURL,
+		Timeout: cfg.FCE2B.AgentIdentityTimeout,
+	})
+	fcLauncher.GitHubIdentity = agentIdentityGitHub
 
 	h := &Handler{
 		Queries:                      queries,
@@ -373,11 +383,8 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 			BaseURL: cfg.CloudRuntimeFleetURL,
 			Timeout: cfg.CloudRuntimeFleetTimeout,
 		}),
-		GitHubApp: githubClient,
-		AgentIdentityGitHub: agentidentitygithub.NewClient(agentidentitygithub.Config{
-			BaseURL: cfg.FCE2B.AgentIdentityBaseURL,
-			Timeout: cfg.FCE2B.AgentIdentityTimeout,
-		}),
+		GitHubApp:           githubClient,
+		AgentIdentityGitHub: agentIdentityGitHub,
 		LLM: llm.New(llm.Config{
 			APIKey:       cfg.LLMAPIKey,
 			BaseURL:      cfg.LLMBaseURL,
