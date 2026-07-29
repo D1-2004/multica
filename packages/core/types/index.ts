@@ -190,6 +190,12 @@ export type {
   TestAgentIdentityGitHubConnectionResponse,
 } from "./agent-identity-github";
 export type {
+  AgentEnterpriseIdentityConnection,
+  AgentEnterpriseIdentityStatusResponse,
+  BeginAgentEnterpriseIdentityBindingResponse,
+  TestAgentEnterpriseIdentityResponse,
+} from "./agent-enterprise-identity";
+export type {
   Autopilot,
   AutopilotStatus,
   AutopilotExecutionMode,

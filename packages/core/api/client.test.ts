@@ -48,6 +48,230 @@ describe("ApiClient label response schemas", () => {
 });
 
 describe("ApiClient", () => {
+  it("uses the generic cloud sandbox HTTP contract for ASB", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "runtime-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            current: null,
+            active_release: null,
+            can_publish: true,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "runtime-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.createCloudSandboxRuntime({
+      sandbox_backend: "asb",
+      name: "ASB Explorer",
+      artifact_ref: "registry.example.test/multica/asb@sha256:abc",
+      artifact_build_id: "build-42",
+      artifact_alias: "asb-candidate",
+      artifact_digest: "sha256:abc",
+      artifact_channel: "candidate",
+      provider: "opencode",
+      visibility: "private",
+    });
+    await expect(
+      client.getCloudSandboxStableChannel("asb"),
+    ).resolves.toMatchObject({ current: null, can_publish: true });
+    await expect(
+      client.listCloudSandboxStableRuntimes("asb"),
+    ).resolves.toEqual([]);
+    await client.updateCloudSandboxRuntimeArtifact("runtime/1", {
+      artifact_ref: "registry.example.test/multica/asb@sha256:def",
+      artifact_build_id: "build-43",
+      artifact_alias: "asb-next",
+      artifact_digest: "sha256:def",
+    });
+
+    expect(fetchMock.mock.calls.map(([url, init]) => ({
+      url,
+      method: init?.method ?? "GET",
+      body: init?.body,
+    }))).toEqual([
+      {
+        url: "https://api.example.test/api/runtimes/cloud-sandbox",
+        method: "POST",
+        body: JSON.stringify({
+          sandbox_backend: "asb",
+          name: "ASB Explorer",
+          artifact_ref: "registry.example.test/multica/asb@sha256:abc",
+          artifact_build_id: "build-42",
+          artifact_alias: "asb-candidate",
+          artifact_digest: "sha256:abc",
+          artifact_channel: "candidate",
+          provider: "opencode",
+          visibility: "private",
+        }),
+      },
+      {
+        url:
+          "https://api.example.test/api/runtimes/cloud-sandbox/stable-channel?sandbox_backend=asb",
+        method: "GET",
+        body: undefined,
+      },
+      {
+        url:
+          "https://api.example.test/api/runtimes/cloud-sandbox/stable-runtimes?sandbox_backend=asb",
+        method: "GET",
+        body: undefined,
+      },
+      {
+        url:
+          "https://api.example.test/api/runtimes/runtime%2F1/cloud-sandbox-artifact",
+        method: "PATCH",
+        body: JSON.stringify({
+          artifact_ref: "registry.example.test/multica/asb@sha256:def",
+          artifact_build_id: "build-43",
+          artifact_alias: "asb-next",
+          artifact_digest: "sha256:def",
+        }),
+      },
+    ]);
+  });
+
+  it("uses the enterprise employee identity HTTP contract", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            configured: true,
+            can_manage: true,
+            identity: {
+              employee_id: "*2345",
+              display_name: "Zhang San",
+              status: "active",
+              aip_id: "aip-1",
+              agent_spiffe_id: "spiffe://agents.example/ns/multica/agents/agent-1",
+              buc_status: "active",
+              agent_identity_status: "active",
+              refresh_expires_at: 1799200000,
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            authorization_url:
+              "https://login.alibaba-inc.com/oauth2/auth.htm?state=opaque",
+            expires_at: 1799200000,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(
+      client.getAgentEnterpriseIdentityStatus("workspace-1", "agent-1"),
+    ).resolves.toMatchObject({
+      configured: true,
+      canManage: true,
+      identity: {
+        employeeId: "*2345",
+        displayName: "Zhang San",
+        status: "active",
+        aipId: "aip-1",
+        bucStatus: "active",
+        agentIdentityStatus: "active",
+      },
+    });
+    await expect(
+      client.beginAgentEnterpriseIdentityBinding(
+        "workspace-1",
+        "agent-1",
+        "12345",
+        "/ws/workspace-1/agents/agent-1?tab=identity",
+      ),
+    ).resolves.toEqual({
+      authorizationUrl:
+        "https://login.alibaba-inc.com/oauth2/auth.htm?state=opaque",
+      expiresAt: 1799200000,
+    });
+    await expect(
+      client.testAgentEnterpriseIdentity("workspace-1", "agent-1"),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      client.revokeAgentEnterpriseIdentity("workspace-1", "agent-1"),
+    ).resolves.toBeUndefined();
+
+    expect(fetchMock.mock.calls.map(([url, init]) => ({
+      url,
+      method: init?.method ?? "GET",
+      body: init?.body,
+    }))).toEqual([
+      {
+        url:
+          "https://api.example.test/api/workspaces/workspace-1/agent-identity/enterprise/status?agent_id=agent-1",
+        method: "GET",
+        body: undefined,
+      },
+      {
+        url:
+          "https://api.example.test/api/workspaces/workspace-1/agent-identity/enterprise/oauth/start",
+        method: "POST",
+        body: JSON.stringify({
+          agent_id: "agent-1",
+          employee_id: "12345",
+          redirect_path: "/ws/workspace-1/agents/agent-1?tab=identity",
+        }),
+      },
+      {
+        url:
+          "https://api.example.test/api/workspaces/workspace-1/agent-identity/enterprise/test?agent_id=agent-1",
+        method: "POST",
+        body: undefined,
+      },
+      {
+        url:
+          "https://api.example.test/api/workspaces/workspace-1/agent-identity/enterprise?agent_id=agent-1",
+        method: "DELETE",
+        body: undefined,
+      },
+    ]);
+  });
+
   it("uses the DingTalk account binding HTTP contract", async () => {
     const fetchMock = vi
       .fn()

@@ -14,6 +14,12 @@ const TEST_RESOURCES = {
 const mockChannelQuery = vi.hoisted(() => ({
   data: {
     current: {
+      sandbox_backend: "aliyun_fc",
+      artifact_kind: "e2b_template",
+      artifact_ref: "template-stable",
+      artifact_build_id: "build-stable",
+      artifact_alias: "stable-image",
+      artifact_digest: "",
       template_id: "template-stable",
       template_build_id: "build-stable",
       template_alias: "stable-image",
@@ -21,6 +27,12 @@ const mockChannelQuery = vi.hoisted(() => ({
     },
     active_release: {
       id: "release-next",
+      sandbox_backend: "aliyun_fc",
+      artifact_kind: "e2b_template",
+      artifact_ref: "template-next",
+      artifact_build_id: "build-next",
+      artifact_alias: "next-image",
+      artifact_digest: "",
       template_id: "template-next",
       template_build_id: "build-next",
       template_alias: "next-image",
@@ -59,8 +71,14 @@ const mockRuntimesQuery = vi.hoisted(() => ({
       workspace_id: "workspace-a",
       workspace_name: "Workspace Alpha",
       runtime_name: "Runtime Alpha",
+      sandbox_backend: "aliyun_fc",
       provider: "hermes",
       status: "online",
+      artifact_channel: "stable",
+      artifact_alias: "stable-image",
+      artifact_ref: "template-stable",
+      artifact_build_id: "build-stable",
+      artifact_digest: "",
       template_channel: "stable",
       template_alias: "stable-image",
       template_id: "template-stable",
@@ -75,8 +93,14 @@ const mockRuntimesQuery = vi.hoisted(() => ({
       workspace_id: "workspace-b",
       workspace_name: "Workspace Beta",
       runtime_name: "Runtime Beta",
+      sandbox_backend: "aliyun_fc",
       provider: "opencode",
       status: "online",
+      artifact_channel: "stable",
+      artifact_alias: "next-image",
+      artifact_ref: "template-next",
+      artifact_build_id: "build-next",
+      artifact_digest: "",
       template_channel: "stable",
       template_alias: "next-image",
       template_id: "template-next",
@@ -91,8 +115,14 @@ const mockRuntimesQuery = vi.hoisted(() => ({
       workspace_id: "workspace-b",
       workspace_name: "Workspace Beta",
       runtime_name: "Runtime Gamma",
+      sandbox_backend: "aliyun_fc",
       provider: "pi",
       status: "offline",
+      artifact_channel: "stable",
+      artifact_alias: "old-image",
+      artifact_ref: "template-old",
+      artifact_build_id: "build-old",
+      artifact_digest: "",
       template_channel: "stable",
       template_alias: "old-image",
       template_id: "template-old",
@@ -118,8 +148,8 @@ vi.mock("@multica/core/paths", () => ({
 }));
 
 vi.mock("@multica/core/runtimes", () => ({
-  useFCE2BStableChannel: () => mockChannelQuery,
-  useFCE2BStableRuntimes: () => mockRuntimesQuery,
+  useCloudSandboxStableChannel: () => mockChannelQuery,
+  useCloudSandboxStableRuntimes: () => mockRuntimesQuery,
 }));
 
 vi.mock("./stable-fc-e2b-release-dialog", () => ({
@@ -176,7 +206,7 @@ describe("StableFCE2BRuntimeOverviewPage", () => {
 
     fireEvent.change(
       screen.getByPlaceholderText(
-        "Search workspace, Runtime, template, or build ID...",
+        "Search workspace, Runtime, artifact, or build ID...",
       ),
       { target: { value: "Runtime Beta" } },
     );
