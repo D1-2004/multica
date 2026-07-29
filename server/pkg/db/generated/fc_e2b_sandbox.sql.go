@@ -12,11 +12,13 @@ import (
 )
 
 const getActiveFCE2BSandboxSession = `-- name: GetActiveFCE2BSandboxSession :one
-SELECT id, workspace_id, runtime_id, scope_type, scope_id, sandbox_id, template, status, last_used_at, expires_at, created_at, updated_at FROM fc_e2b_sandbox_session
+SELECT id, workspace_id, runtime_id, scope_type, scope_id, sandbox_id, template, status, last_used_at, expires_at, created_at, updated_at, sandbox_backend, identity_fingerprint, artifact_ref FROM fc_e2b_sandbox_session
 WHERE runtime_id = $1
   AND scope_type = $2
   AND scope_id = $3
   AND template = $4
+  AND sandbox_backend = 'aliyun_fc'
+  AND identity_fingerprint = ''
   AND status = 'running'
   AND expires_at > now()
 ORDER BY updated_at DESC
@@ -51,6 +53,9 @@ func (q *Queries) GetActiveFCE2BSandboxSession(ctx context.Context, arg GetActiv
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SandboxBackend,
+		&i.IdentityFingerprint,
+		&i.ArtifactRef,
 	)
 	return i, err
 }
@@ -62,6 +67,8 @@ WHERE runtime_id = $1
   AND scope_type = $2
   AND scope_id = $3
   AND sandbox_id = $4
+  AND sandbox_backend = 'aliyun_fc'
+  AND identity_fingerprint = ''
 `
 
 type MarkFCE2BSandboxSessionStaleParams struct {
@@ -85,6 +92,7 @@ const markFCE2BSandboxSessionsStaleByRuntime = `-- name: MarkFCE2BSandboxSession
 UPDATE fc_e2b_sandbox_session
 SET status = 'stale', updated_at = now()
 WHERE runtime_id = $1
+  AND sandbox_backend = 'aliyun_fc'
   AND status = 'running'
 `
 
@@ -103,6 +111,8 @@ WHERE runtime_id = $1
   AND scope_type = $2
   AND scope_id = $3
   AND sandbox_id = $4
+  AND sandbox_backend = 'aliyun_fc'
+  AND identity_fingerprint = ''
   AND status = 'running'
 `
 
@@ -126,10 +136,20 @@ func (q *Queries) TouchFCE2BSandboxSession(ctx context.Context, arg TouchFCE2BSa
 const upsertFCE2BSandboxSession = `-- name: UpsertFCE2BSandboxSession :one
 INSERT INTO fc_e2b_sandbox_session (
     workspace_id, runtime_id, scope_type, scope_id,
-    sandbox_id, template, status, last_used_at, expires_at
+    sandbox_id, template, status, last_used_at, expires_at,
+    sandbox_backend, identity_fingerprint, artifact_ref
 )
-VALUES ($1, $2, $3, $4, $5, $6, 'running', now(), $7)
-ON CONFLICT (runtime_id, scope_type, scope_id)
+VALUES (
+    $1, $2, $3, $4, $5, $6, 'running', now(), $7,
+    'aliyun_fc', '', $6
+)
+ON CONFLICT (
+    runtime_id,
+    scope_type,
+    scope_id,
+    sandbox_backend,
+    identity_fingerprint
+)
 DO UPDATE SET
     sandbox_id = EXCLUDED.sandbox_id,
     template = EXCLUDED.template,
@@ -137,7 +157,7 @@ DO UPDATE SET
     last_used_at = now(),
     expires_at = EXCLUDED.expires_at,
     updated_at = now()
-RETURNING id, workspace_id, runtime_id, scope_type, scope_id, sandbox_id, template, status, last_used_at, expires_at, created_at, updated_at
+RETURNING id, workspace_id, runtime_id, scope_type, scope_id, sandbox_id, template, status, last_used_at, expires_at, created_at, updated_at, sandbox_backend, identity_fingerprint, artifact_ref
 `
 
 type UpsertFCE2BSandboxSessionParams struct {
@@ -174,6 +194,9 @@ func (q *Queries) UpsertFCE2BSandboxSession(ctx context.Context, arg UpsertFCE2B
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SandboxBackend,
+		&i.IdentityFingerprint,
+		&i.ArtifactRef,
 	)
 	return i, err
 }

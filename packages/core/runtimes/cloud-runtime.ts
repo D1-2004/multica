@@ -44,6 +44,8 @@ export interface CreateCloudRuntimeNodeRequest {
  */
 export const FC_E2B_RUNTIME_PROVIDERS = ["hermes", "opencode", "pi"] as const;
 export type FCE2BRuntimeProvider = (typeof FC_E2B_RUNTIME_PROVIDERS)[number];
+export type SandboxBackend = "aliyun_fc" | "asb";
+export type CloudSandboxArtifactChannel = "stable" | "candidate";
 
 export interface CreateFCE2BRuntimeRequest {
   name?: string;
@@ -53,8 +55,28 @@ export interface CreateFCE2BRuntimeRequest {
   visibility?: RuntimeVisibility;
 }
 
+export interface CreateCloudSandboxRuntimeRequest {
+  sandbox_backend: SandboxBackend;
+  name?: string;
+  artifact_ref?: string;
+  artifact_build_id?: string;
+  artifact_alias?: string;
+  artifact_digest?: string;
+  artifact_channel?: CloudSandboxArtifactChannel;
+  template_id?: string;
+  provider?: FCE2BRuntimeProvider;
+  visibility?: RuntimeVisibility;
+}
+
 export interface UpdateFCE2BRuntimeTemplateRequest {
   template_id: string;
+}
+
+export interface UpdateCloudSandboxRuntimeArtifactRequest {
+  artifact_ref: string;
+  artifact_build_id: string;
+  artifact_alias?: string;
+  artifact_digest: string;
 }
 
 export interface FCE2BTemplate {
@@ -74,7 +96,7 @@ export interface FCE2BTemplate {
 }
 
 export interface FCE2BRuntimeMetadata {
-  kind: "fc-e2b";
+  kind: "fc-e2b" | "cloud-sandbox";
   template: string | null;
   templateId: string | null;
   templateBuildId: string | null;
@@ -83,7 +105,26 @@ export interface FCE2BRuntimeMetadata {
   templateChannel: "stable" | "candidate";
 }
 
+export interface CloudSandboxRuntimeMetadata {
+  kind: "fc-e2b" | "cloud-sandbox";
+  sandboxBackend: SandboxBackend;
+  provider: string | null;
+  artifactKind: "e2b_template" | "oci_image";
+  artifactChannel: CloudSandboxArtifactChannel;
+  artifactRef: string | null;
+  artifactBuildId: string | null;
+  artifactAlias: string | null;
+  artifactDigest: string | null;
+  capabilities: string[];
+}
+
 export interface FCE2BStableTemplateBinding {
+  sandbox_backend: SandboxBackend;
+  artifact_kind: "e2b_template" | "oci_image";
+  artifact_ref: string;
+  artifact_build_id: string;
+  artifact_alias: string;
+  artifact_digest: string;
   template_id: string;
   template_build_id: string;
   template_alias: string;
@@ -120,6 +161,12 @@ export interface FCE2BStableRolloutMilestone {
 }
 
 export interface FCE2BStableRelease {
+  sandbox_backend: SandboxBackend;
+  artifact_kind: "e2b_template" | "oci_image";
+  artifact_ref: string;
+  artifact_build_id: string;
+  artifact_alias: string;
+  artifact_digest: string;
   id: string;
   template_id: string;
   template_build_id: string;
@@ -134,6 +181,9 @@ export interface FCE2BStableRelease {
   previous_template_id: string;
   previous_template_build_id: string;
   previous_template_alias: string;
+  previous_artifact_ref: string;
+  previous_artifact_build_id: string;
+  previous_artifact_digest: string;
   manifest?: Record<string, unknown>;
   total_targets: number;
   updated_targets: number;
@@ -163,8 +213,14 @@ export interface FCE2BStableRuntimeOverview {
   workspace_id: string;
   workspace_name: string;
   runtime_name: string;
+  sandbox_backend: SandboxBackend;
   provider: string;
   status: string;
+  artifact_channel: CloudSandboxArtifactChannel;
+  artifact_alias: string;
+  artifact_ref: string;
+  artifact_build_id: string;
+  artifact_digest: string;
   template_channel: "stable" | "candidate";
   template_alias: string;
   template_id: string;
@@ -181,6 +237,17 @@ export interface CreateFCE2BStableReleaseRequest {
   note?: string;
 }
 
+export interface CreateCloudSandboxStableReleaseRequest {
+  sandbox_backend: SandboxBackend;
+  artifact_ref?: string;
+  artifact_build_id?: string;
+  artifact_digest?: string;
+  git_commit?: string;
+  template_id?: string;
+  expected_build_id?: string;
+  note?: string;
+}
+
 function metadataString(
   metadata: Record<string, unknown>,
   key: string,
@@ -194,30 +261,102 @@ function metadataString(
  * The returned shape uses camelCase so views never read wire keys directly.
  */
 export function parseFCE2BRuntimeMetadata(
-  runtime: Pick<AgentRuntime, "runtime_mode" | "metadata"> | null | undefined,
+  runtime:
+    | Pick<AgentRuntime, "runtime_mode" | "provider" | "metadata">
+    | null
+    | undefined,
 ): FCE2BRuntimeMetadata | null {
   if (runtime?.runtime_mode !== "cloud") return null;
-  const metadata = runtime.metadata;
-  if (
-    !metadata ||
-    typeof metadata !== "object" ||
-    Array.isArray(metadata) ||
-    metadataString(metadata, "kind") !== "fc-e2b"
-  ) {
+  const cloudMetadata = parseCloudSandboxRuntimeMetadata(runtime);
+  if (!cloudMetadata || cloudMetadata.sandboxBackend !== "aliyun_fc") {
     return null;
   }
+  const metadata = runtime?.metadata as Record<string, unknown>;
   return {
-    kind: "fc-e2b",
+    kind: cloudMetadata.kind,
     template: metadataString(metadata, "template"),
     templateId: metadataString(metadata, "template_id"),
     templateBuildId: metadataString(metadata, "template_build_id"),
     templateName: metadataString(metadata, "template_name"),
     templateStatus: metadataString(metadata, "template_status"),
     templateChannel:
-      metadataString(metadata, "template_channel") === "candidate"
+      metadataString(metadata, "template_channel") === "candidate" ||
+      cloudMetadata.artifactChannel === "candidate"
         ? "candidate"
         : "stable",
   };
+}
+
+export function parseCloudSandboxRuntimeMetadata(
+  runtime: Pick<AgentRuntime, "runtime_mode" | "provider" | "metadata"> | null | undefined,
+): CloudSandboxRuntimeMetadata | null {
+  if (runtime?.runtime_mode !== "cloud") return null;
+  const metadata = runtime.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return null;
+  }
+  const kind = metadataString(metadata, "kind");
+  if (kind === "fc-e2b") {
+    return {
+      kind,
+      sandboxBackend: "aliyun_fc",
+      provider: runtime.provider?.trim() || null,
+      artifactKind: "e2b_template",
+      artifactChannel:
+        metadataString(metadata, "template_channel") === "candidate"
+          ? "candidate"
+          : "stable",
+      artifactRef:
+        metadataString(metadata, "template_id") ??
+        metadataString(metadata, "template"),
+      artifactBuildId: metadataString(metadata, "template_build_id"),
+      artifactAlias: metadataString(metadata, "template"),
+      artifactDigest: null,
+      capabilities: metadataStringArray(metadata, "capabilities"),
+    };
+  }
+  if (kind !== "cloud-sandbox") return null;
+  const sandboxBackend = metadataString(metadata, "sandbox_backend");
+  const artifactKind = metadataString(metadata, "artifact_kind");
+  if (
+    (sandboxBackend !== "aliyun_fc" && sandboxBackend !== "asb") ||
+    (artifactKind !== "e2b_template" && artifactKind !== "oci_image")
+  ) {
+    return null;
+  }
+  if (
+    (sandboxBackend === "aliyun_fc" && artifactKind !== "e2b_template") ||
+    (sandboxBackend === "asb" && artifactKind !== "oci_image")
+  ) {
+    return null;
+  }
+  return {
+    kind,
+    sandboxBackend,
+    provider:
+      metadataString(metadata, "provider") ?? runtime.provider?.trim() ?? null,
+    artifactKind,
+    artifactChannel:
+      metadataString(metadata, "artifact_channel") === "candidate"
+        ? "candidate"
+        : "stable",
+    artifactRef: metadataString(metadata, "artifact_ref"),
+    artifactBuildId: metadataString(metadata, "artifact_build_id"),
+    artifactAlias: metadataString(metadata, "artifact_alias"),
+    artifactDigest: metadataString(metadata, "artifact_digest"),
+    capabilities: metadataStringArray(metadata, "capabilities"),
+  };
+}
+
+function metadataStringArray(
+  metadata: Record<string, unknown>,
+  key: string,
+): string[] {
+  const value = metadata[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (entry): entry is string => typeof entry === "string" && entry.trim().length > 0,
+  );
 }
 
 export function isReadyFCE2BTemplate(template: FCE2BTemplate): boolean {
@@ -258,6 +397,12 @@ export const cloudRuntimeKeys = {
   fcE2BStableRelease: (releaseId: string) =>
     ["fc-e2b-stable-release", releaseId] as const,
   fcE2BStableRuntimes: () => ["fc-e2b-stable-runtimes"] as const,
+  cloudSandboxStableChannel: (backend: SandboxBackend) =>
+    ["cloud-sandbox-stable-channel", backend] as const,
+  cloudSandboxStableRelease: (releaseId: string) =>
+    ["cloud-sandbox-stable-release", releaseId] as const,
+  cloudSandboxStableRuntimes: (backend: SandboxBackend) =>
+    ["cloud-sandbox-stable-runtimes", backend] as const,
 };
 
 const PENDING_NODE_STATUSES = new Set([
@@ -311,10 +456,32 @@ export function useFCE2BStableChannel() {
   });
 }
 
+export function useCloudSandboxStableChannel(backend: SandboxBackend) {
+  return useQuery({
+    queryKey: cloudRuntimeKeys.cloudSandboxStableChannel(backend),
+    queryFn: () => api.getCloudSandboxStableChannel(backend),
+    refetchInterval: (query) => (query.state.data?.active_release ? 5000 : false),
+    staleTime: 15 * 1000,
+  });
+}
+
 export function useFCE2BStableRuntimes(enabled = true) {
   return useQuery({
     queryKey: cloudRuntimeKeys.fcE2BStableRuntimes(),
     queryFn: () => api.listFCE2BStableRuntimes(),
+    enabled,
+    refetchInterval: 5000,
+    staleTime: 5 * 1000,
+  });
+}
+
+export function useCloudSandboxStableRuntimes(
+  backend: SandboxBackend,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: cloudRuntimeKeys.cloudSandboxStableRuntimes(backend),
+    queryFn: () => api.listCloudSandboxStableRuntimes(backend),
     enabled,
     refetchInterval: 5000,
     staleTime: 5 * 1000,
@@ -343,9 +510,30 @@ export function useDeleteCloudRuntimeNode(wsId: string) {
 }
 
 export function isFCE2BRuntime(
-  runtime: Pick<AgentRuntime, "runtime_mode" | "metadata"> | null | undefined,
+  runtime:
+    | Pick<AgentRuntime, "runtime_mode" | "provider" | "metadata">
+    | null
+    | undefined,
 ): boolean {
   return parseFCE2BRuntimeMetadata(runtime) !== null;
+}
+
+export function isCloudSandboxRuntime(
+  runtime:
+    | Pick<AgentRuntime, "runtime_mode" | "provider" | "metadata">
+    | null
+    | undefined,
+): boolean {
+  return parseCloudSandboxRuntimeMetadata(runtime) !== null;
+}
+
+export function isASBRuntime(
+  runtime:
+    | Pick<AgentRuntime, "runtime_mode" | "provider" | "metadata">
+    | null
+    | undefined,
+): boolean {
+  return parseCloudSandboxRuntimeMetadata(runtime)?.sandboxBackend === "asb";
 }
 
 export function useCreateFCE2BRuntime(wsId: string) {
@@ -353,6 +541,17 @@ export function useCreateFCE2BRuntime(wsId: string) {
   return useMutation({
     mutationFn: (data: CreateFCE2BRuntimeRequest) =>
       api.createFCE2BRuntime(data),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
+    },
+  });
+}
+
+export function useCreateCloudSandboxRuntime(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateCloudSandboxRuntimeRequest) =>
+      api.createCloudSandboxRuntime(data),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
     },
@@ -369,6 +568,22 @@ export function useUpdateFCE2BRuntimeTemplate(wsId: string) {
       runtimeId: string;
       data: UpdateFCE2BRuntimeTemplateRequest;
     }) => api.updateFCE2BRuntimeTemplate(runtimeId, data),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
+    },
+  });
+}
+
+export function useUpdateCloudSandboxRuntimeArtifact(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      runtimeId,
+      data,
+    }: {
+      runtimeId: string;
+      data: UpdateCloudSandboxRuntimeArtifactRequest;
+    }) => api.updateCloudSandboxRuntimeArtifact(runtimeId, data),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
     },
@@ -397,6 +612,32 @@ export function useCreateFCE2BStableRelease() {
   });
 }
 
+export function useCreateCloudSandboxStableRelease(backend: SandboxBackend) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      data,
+      idempotencyKey,
+    }: {
+      data: CreateCloudSandboxStableReleaseRequest;
+      idempotencyKey: string;
+    }) => api.createCloudSandboxStableRelease(data, idempotencyKey),
+    onSuccess: async (release) => {
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: cloudRuntimeKeys.cloudSandboxStableChannel(backend),
+        }),
+        qc.invalidateQueries({
+          queryKey: cloudRuntimeKeys.cloudSandboxStableRuntimes(backend),
+        }),
+        qc.invalidateQueries({
+          queryKey: cloudRuntimeKeys.cloudSandboxStableRelease(release.id),
+        }),
+      ]);
+    },
+  });
+}
+
 export function useMutateFCE2BStableRelease(
   action: FCE2BStableReleaseAction,
 ) {
@@ -410,6 +651,30 @@ export function useMutateFCE2BStableRelease(
         qc.invalidateQueries({ queryKey: cloudRuntimeKeys.fcE2BStableRuntimes() }),
         qc.invalidateQueries({
           queryKey: cloudRuntimeKeys.fcE2BStableRelease(release.id),
+        }),
+      ]);
+    },
+  });
+}
+
+export function useMutateCloudSandboxStableRelease(
+  backend: SandboxBackend,
+  action: FCE2BStableReleaseAction,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (releaseId: string) =>
+      api.mutateCloudSandboxStableRelease(releaseId, action),
+    onSuccess: async (release) => {
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: cloudRuntimeKeys.cloudSandboxStableChannel(backend),
+        }),
+        qc.invalidateQueries({
+          queryKey: cloudRuntimeKeys.cloudSandboxStableRuntimes(backend),
+        }),
+        qc.invalidateQueries({
+          queryKey: cloudRuntimeKeys.cloudSandboxStableRelease(release.id),
         }),
       ]);
     },

@@ -22,6 +22,9 @@ import type {
   AgentIdentityGitHubStatusResponse,
   BeginAgentIdentityGitHubOAuthResponse,
   TestAgentIdentityGitHubConnectionResponse,
+  AgentEnterpriseIdentityStatusResponse,
+  BeginAgentEnterpriseIdentityBindingResponse,
+  TestAgentEnterpriseIdentityResponse,
   GroupedIssuesResponse,
   GitHubAgentPreview,
   ListGitHubAgentRepositoriesResponse,
@@ -346,6 +349,74 @@ export const TestAgentIdentityGitHubConnectionResponseSchema = z
 export const EMPTY_TEST_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE: TestAgentIdentityGitHubConnectionResponse = {
   ok: false,
   refreshed: false,
+};
+
+const AgentEnterpriseIdentityConnectionSchema = z
+  .object({
+    employee_id: z.string().default(""),
+    display_name: z.string().default(""),
+    status: z.string(),
+    aip_id: z.string().default(""),
+    agent_spiffe_id: z.string().default(""),
+    buc_status: z.string().default(""),
+    agent_identity_status: z.string().default(""),
+    refresh_expires_at: z.number().optional(),
+  })
+  .loose()
+  .transform((identity) => ({
+    employeeId: identity.employee_id,
+    displayName: identity.display_name,
+    status: identity.status,
+    aipId: identity.aip_id,
+    agentSpiffeId: identity.agent_spiffe_id,
+    bucStatus: identity.buc_status,
+    agentIdentityStatus: identity.agent_identity_status,
+    refreshExpiresAt: identity.refresh_expires_at,
+  }));
+
+export const AgentEnterpriseIdentityStatusResponseSchema = z
+  .object({
+    configured: z.boolean(),
+    can_manage: z.boolean().default(false),
+    identity: AgentEnterpriseIdentityConnectionSchema.nullable().optional(),
+  })
+  .loose()
+  .transform((response) => ({
+    configured: response.configured,
+    canManage: response.can_manage,
+    identity: response.identity ?? null,
+  }));
+
+export const EMPTY_AGENT_ENTERPRISE_IDENTITY_STATUS_RESPONSE: AgentEnterpriseIdentityStatusResponse = {
+  configured: false,
+  canManage: false,
+  identity: null,
+};
+
+export const BeginAgentEnterpriseIdentityBindingResponseSchema = z
+  .object({
+    authorization_url: z.string(),
+    expires_at: z.number(),
+  })
+  .loose()
+  .transform((response) => ({
+    authorizationUrl: response.authorization_url,
+    expiresAt: response.expires_at,
+  }));
+
+export const EMPTY_BEGIN_AGENT_ENTERPRISE_IDENTITY_BINDING_RESPONSE: BeginAgentEnterpriseIdentityBindingResponse = {
+  authorizationUrl: "",
+  expiresAt: 0,
+};
+
+export const TestAgentEnterpriseIdentityResponseSchema = z
+  .object({
+    ok: z.boolean(),
+  })
+  .loose();
+
+export const EMPTY_TEST_AGENT_ENTERPRISE_IDENTITY_RESPONSE: TestAgentEnterpriseIdentityResponse = {
+  ok: false,
 };
 
 // Label responses are consumed by settings tables and resource pickers. Keep
@@ -801,6 +872,12 @@ export const FCE2BStableRolloutMilestoneSchema = z.object({
 });
 
 export const FCE2BStableReleaseSchema = z.object({
+  sandbox_backend: z.enum(["aliyun_fc", "asb"]).default("aliyun_fc"),
+  artifact_kind: z.enum(["e2b_template", "oci_image"]).default("e2b_template"),
+  artifact_ref: z.string().default(""),
+  artifact_build_id: z.string().default(""),
+  artifact_alias: z.string().default(""),
+  artifact_digest: z.string().default(""),
   id: z.string(),
   template_id: z.string(),
   template_build_id: z.string(),
@@ -827,6 +904,9 @@ export const FCE2BStableReleaseSchema = z.object({
   previous_template_id: z.string(),
   previous_template_build_id: z.string(),
   previous_template_alias: z.string(),
+  previous_artifact_ref: z.string().default(""),
+  previous_artifact_build_id: z.string().default(""),
+  previous_artifact_digest: z.string().default(""),
   manifest: z.record(z.string(), z.unknown()).optional(),
   total_targets: z.number(),
   updated_targets: z.number(),
@@ -850,8 +930,14 @@ export const FCE2BStableRuntimeOverviewSchema = z.object({
   workspace_id: z.string(),
   workspace_name: z.string(),
   runtime_name: z.string(),
+  sandbox_backend: z.enum(["aliyun_fc", "asb"]).default("aliyun_fc"),
   provider: z.string(),
   status: z.string(),
+  artifact_channel: z.enum(["stable", "candidate"]).default("stable"),
+  artifact_alias: z.string().default(""),
+  artifact_ref: z.string().default(""),
+  artifact_build_id: z.string().default(""),
+  artifact_digest: z.string().default(""),
   template_channel: z.enum(["stable", "candidate"]),
   template_alias: z.string(),
   template_id: z.string(),
@@ -867,6 +953,12 @@ export const FCE2BStableRuntimeOverviewListSchema = z.array(
 );
 
 export const FCE2BStableTemplateBindingSchema = z.object({
+  sandbox_backend: z.enum(["aliyun_fc", "asb"]).default("aliyun_fc"),
+  artifact_kind: z.enum(["e2b_template", "oci_image"]).default("e2b_template"),
+  artifact_ref: z.string().default(""),
+  artifact_build_id: z.string().default(""),
+  artifact_alias: z.string().default(""),
+  artifact_digest: z.string().default(""),
   template_id: z.string(),
   template_build_id: z.string(),
   template_alias: z.string(),
@@ -880,6 +972,12 @@ export const FCE2BStableChannelSchema = z.object({
 }).loose();
 
 export const EMPTY_FC_E2B_STABLE_RELEASE: FCE2BStableRelease = {
+  sandbox_backend: "aliyun_fc",
+  artifact_kind: "e2b_template",
+  artifact_ref: "",
+  artifact_build_id: "",
+  artifact_alias: "",
+  artifact_digest: "",
   id: "",
   template_id: "",
   template_build_id: "",
@@ -894,6 +992,9 @@ export const EMPTY_FC_E2B_STABLE_RELEASE: FCE2BStableRelease = {
   previous_template_id: "",
   previous_template_build_id: "",
   previous_template_alias: "",
+  previous_artifact_ref: "",
+  previous_artifact_build_id: "",
+  previous_artifact_digest: "",
   total_targets: 0,
   updated_targets: 0,
   failed_targets: 0,

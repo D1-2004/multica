@@ -143,6 +143,9 @@ import type {
   AgentIdentityGitHubStatusResponse,
   BeginAgentIdentityGitHubOAuthResponse,
   TestAgentIdentityGitHubConnectionResponse,
+  AgentEnterpriseIdentityStatusResponse,
+  BeginAgentEnterpriseIdentityBindingResponse,
+  TestAgentEnterpriseIdentityResponse,
   RegisterSlackBYORequest,
   RedeemSlackBindingTokenResponse,
   Squad,
@@ -165,6 +168,8 @@ import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
 import type {
   CloudRuntimeNode,
+  CreateCloudSandboxRuntimeRequest,
+  CreateCloudSandboxStableReleaseRequest,
   CreateFCE2BRuntimeRequest,
   CreateCloudRuntimeNodeRequest,
   FCE2BTemplate,
@@ -174,6 +179,8 @@ import type {
   FCE2BStableRuntimeOverview,
   CreateFCE2BStableReleaseRequest,
   ListCloudRuntimeNodesParams,
+  SandboxBackend,
+  UpdateCloudSandboxRuntimeArtifactRequest,
   UpdateFCE2BRuntimeTemplateRequest,
 } from "../runtimes/cloud-runtime";
 import { type Logger, noopLogger } from "../logger";
@@ -195,6 +202,12 @@ import {
   FCE2BStableRuntimeOverviewListSchema,
   EMPTY_FC_E2B_STABLE_CHANNEL,
   EMPTY_FC_E2B_STABLE_RELEASE,
+  AgentEnterpriseIdentityStatusResponseSchema,
+  BeginAgentEnterpriseIdentityBindingResponseSchema,
+  TestAgentEnterpriseIdentityResponseSchema,
+  EMPTY_AGENT_ENTERPRISE_IDENTITY_STATUS_RESPONSE,
+  EMPTY_BEGIN_AGENT_ENTERPRISE_IDENTITY_BINDING_RESPONSE,
+  EMPTY_TEST_AGENT_ENTERPRISE_IDENTITY_RESPONSE,
   AddDingTalkGroupMembersResponseSchema,
   AddDingTalkWorkspaceMembersResponseSchema,
   DingTalkUserSearchResponseSchema,
@@ -1034,6 +1047,15 @@ export class ApiClient {
     });
   }
 
+  async createCloudSandboxRuntime(
+    data: CreateCloudSandboxRuntimeRequest,
+  ): Promise<AgentRuntime> {
+    return this.fetch("/api/runtimes/cloud-sandbox", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
   async listFCE2BTemplates(): Promise<FCE2BTemplate[]> {
     return this.fetch("/api/runtimes/fc-e2b/templates");
   }
@@ -1045,6 +1067,21 @@ export class ApiClient {
       FCE2BStableChannelSchema,
       EMPTY_FC_E2B_STABLE_CHANNEL,
       { endpoint: "GET /api/runtimes/fc-e2b/stable-channel" },
+    );
+  }
+
+  async getCloudSandboxStableChannel(
+    backend: SandboxBackend,
+  ): Promise<FCE2BStableChannel> {
+    const search = new URLSearchParams({ sandbox_backend: backend });
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/cloud-sandbox/stable-channel?${search.toString()}`,
+    );
+    return parseWithFallback(
+      raw,
+      FCE2BStableChannelSchema,
+      EMPTY_FC_E2B_STABLE_CHANNEL,
+      { endpoint: "GET /api/runtimes/cloud-sandbox/stable-channel" },
     );
   }
 
@@ -1062,6 +1099,26 @@ export class ApiClient {
       FCE2BStableReleaseSchema,
       EMPTY_FC_E2B_STABLE_RELEASE,
       { endpoint: "POST /api/runtimes/fc-e2b/stable-releases" },
+    );
+  }
+
+  async createCloudSandboxStableRelease(
+    data: CreateCloudSandboxStableReleaseRequest,
+    idempotencyKey: string,
+  ): Promise<FCE2BStableRelease> {
+    const raw = await this.fetch<unknown>(
+      "/api/runtimes/cloud-sandbox/stable-releases",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+        headers: { "Idempotency-Key": idempotencyKey },
+      },
+    );
+    return parseWithFallback(
+      raw,
+      FCE2BStableReleaseSchema,
+      EMPTY_FC_E2B_STABLE_RELEASE,
+      { endpoint: "POST /api/runtimes/cloud-sandbox/stable-releases" },
     );
   }
 
@@ -1089,6 +1146,21 @@ export class ApiClient {
     );
   }
 
+  async listCloudSandboxStableRuntimes(
+    backend: SandboxBackend,
+  ): Promise<FCE2BStableRuntimeOverview[]> {
+    const search = new URLSearchParams({ sandbox_backend: backend });
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/cloud-sandbox/stable-runtimes?${search.toString()}`,
+    );
+    return parseWithFallback(
+      raw,
+      FCE2BStableRuntimeOverviewListSchema,
+      [],
+      { endpoint: "GET /api/runtimes/cloud-sandbox/stable-runtimes" },
+    );
+  }
+
   async mutateFCE2BStableRelease(
     releaseId: string,
     action: FCE2BStableReleaseAction,
@@ -1105,12 +1177,43 @@ export class ApiClient {
     );
   }
 
+  async mutateCloudSandboxStableRelease(
+    releaseId: string,
+    action: FCE2BStableReleaseAction,
+  ): Promise<FCE2BStableRelease> {
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/cloud-sandbox/stable-releases/${encodeURIComponent(releaseId)}/${action}`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      FCE2BStableReleaseSchema,
+      EMPTY_FC_E2B_STABLE_RELEASE,
+      {
+        endpoint: `POST /api/runtimes/cloud-sandbox/stable-releases/:id/${action}`,
+      },
+    );
+  }
+
   async updateFCE2BRuntimeTemplate(
     runtimeId: string,
     data: UpdateFCE2BRuntimeTemplateRequest,
   ): Promise<AgentRuntime> {
     return this.fetch<AgentRuntime>(
       `/api/runtimes/${runtimeId}/fc-e2b-template`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    );
+  }
+
+  async updateCloudSandboxRuntimeArtifact(
+    runtimeId: string,
+    data: UpdateCloudSandboxRuntimeArtifactRequest,
+  ): Promise<AgentRuntime> {
+    return this.fetch<AgentRuntime>(
+      `/api/runtimes/${encodeURIComponent(runtimeId)}/cloud-sandbox-artifact`,
       {
         method: "PATCH",
         body: JSON.stringify(data),
@@ -2917,6 +3020,86 @@ export class ApiClient {
       TestAgentIdentityGitHubConnectionResponseSchema,
       EMPTY_TEST_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
       { endpoint: "POST /api/workspaces/:id/agent-identity/github/:connectionId/test" },
+    );
+  }
+
+  async getAgentEnterpriseIdentityStatus(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<AgentEnterpriseIdentityStatusResponse> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/agent-identity/enterprise/status?${search.toString()}`,
+    );
+    return parseWithFallback(
+      raw,
+      AgentEnterpriseIdentityStatusResponseSchema,
+      EMPTY_AGENT_ENTERPRISE_IDENTITY_STATUS_RESPONSE,
+      {
+        endpoint:
+          "GET /api/workspaces/:id/agent-identity/enterprise/status",
+        includeReceived: false,
+      },
+    );
+  }
+
+  async beginAgentEnterpriseIdentityBinding(
+    workspaceId: string,
+    agentId: string,
+    employeeId: string,
+    redirectPath: string,
+  ): Promise<BeginAgentEnterpriseIdentityBindingResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/agent-identity/enterprise/oauth/start`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          agent_id: agentId,
+          employee_id: employeeId,
+          redirect_path: redirectPath,
+        }),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      BeginAgentEnterpriseIdentityBindingResponseSchema,
+      EMPTY_BEGIN_AGENT_ENTERPRISE_IDENTITY_BINDING_RESPONSE,
+      {
+        endpoint:
+          "POST /api/workspaces/:id/agent-identity/enterprise/oauth/start",
+        includeReceived: false,
+      },
+    );
+  }
+
+  async testAgentEnterpriseIdentity(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<TestAgentEnterpriseIdentityResponse> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/agent-identity/enterprise/test?${search.toString()}`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      TestAgentEnterpriseIdentityResponseSchema,
+      EMPTY_TEST_AGENT_ENTERPRISE_IDENTITY_RESPONSE,
+      {
+        endpoint: "POST /api/workspaces/:id/agent-identity/enterprise/test",
+        includeReceived: false,
+      },
+    );
+  }
+
+  async revokeAgentEnterpriseIdentity(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<void> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/agent-identity/enterprise?${search.toString()}`,
+      { method: "DELETE" },
     );
   }
 

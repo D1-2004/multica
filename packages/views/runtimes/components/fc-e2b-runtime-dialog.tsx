@@ -11,8 +11,9 @@ import {
   isReadyFCE2BTemplate,
   type FCE2BRuntimeProvider,
   type FCE2BTemplate,
-  useCreateFCE2BRuntime,
-  useFCE2BStableChannel,
+  type SandboxBackend,
+  useCloudSandboxStableChannel,
+  useCreateCloudSandboxRuntime,
   useFCE2BTemplates,
 } from "@multica/core/runtimes";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -92,9 +93,14 @@ export function FCE2BRuntimeDialog({
 }) {
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();
-  const createRuntime = useCreateFCE2BRuntime(wsId);
+  const createRuntime = useCreateCloudSandboxRuntime(wsId);
   const templatesQuery = useFCE2BTemplates(wsId);
-  const stableChannelQuery = useFCE2BStableChannel();
+  const [sandboxBackend, setSandboxBackend] =
+    useState<SandboxBackend>("aliyun_fc");
+  const fcStableChannelQuery = useCloudSandboxStableChannel("aliyun_fc");
+  const asbStableChannelQuery = useCloudSandboxStableChannel("asb");
+  const stableChannelQuery =
+    sandboxBackend === "asb" ? asbStableChannelQuery : fcStableChannelQuery;
   const templates = (templatesQuery.data ?? []).filter(isReadyFCE2BTemplate);
   const [templateChannel, setTemplateChannel] = useState<"stable" | "candidate">(
     "stable",
@@ -104,14 +110,26 @@ export function FCE2BRuntimeDialog({
   const [provider, setProvider] = useState<FCE2BRuntimeProvider>("hermes");
   const [name, setName] = useState("");
   const [visibility, setVisibility] = useState<RuntimeVisibility>("private");
+  const [artifactRef, setArtifactRef] = useState("");
+  const [artifactBuildId, setArtifactBuildId] = useState("");
+  const [artifactAlias, setArtifactAlias] = useState("");
+  const [artifactDigest, setArtifactDigest] = useState("");
   const availableProviders =
-    templateChannel === "stable"
+    sandboxBackend === "asb" || templateChannel === "stable"
       ? [...FC_E2B_RUNTIME_PROVIDERS]
       : selectedTemplate
         ? FC_E2B_RUNTIME_PROVIDERS.filter((candidate) =>
             selectedTemplate.providers.includes(candidate),
           )
         : [];
+
+  const pickBackend = (nextBackend: SandboxBackend) => {
+    setSandboxBackend(nextBackend);
+    setSelectedTemplate(null);
+    setQuery("");
+    setProvider("hermes");
+    setName("");
+  };
 
   const filteredTemplates = templates.filter((template) => {
     const haystack = [
@@ -153,16 +171,43 @@ export function FCE2BRuntimeDialog({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (templateChannel === "candidate" && !selectedTemplate) return;
+    if (
+      sandboxBackend === "aliyun_fc" &&
+      templateChannel === "candidate" &&
+      !selectedTemplate
+    ) {
+      return;
+    }
+    if (
+      sandboxBackend === "asb" &&
+      templateChannel === "candidate" &&
+      (!artifactRef.trim() ||
+        !artifactBuildId.trim() ||
+        !artifactDigest.trim())
+    ) {
+      return;
+    }
     try {
       await createRuntime.mutateAsync({
-        ...(templateChannel === "candidate"
+        sandbox_backend: sandboxBackend,
+        ...(sandboxBackend === "aliyun_fc" &&
+        templateChannel === "candidate"
           ? { template_id: selectedTemplate!.id }
           : {}),
-        template_channel: templateChannel,
+        ...(sandboxBackend === "asb" && templateChannel === "candidate"
+          ? {
+              artifact_ref: artifactRef.trim(),
+              artifact_build_id: artifactBuildId.trim(),
+              artifact_alias: artifactAlias.trim() || undefined,
+              artifact_digest: artifactDigest.trim(),
+            }
+          : {}),
+        artifact_channel: templateChannel,
         name:
           name.trim() ||
-          (selectedTemplate
+          (sandboxBackend === "asb"
+            ? `ASB-${PROVIDER_LABELS[provider]}`
+            : selectedTemplate
             ? templateRuntimeName(selectedTemplate, provider)
             : `FC-${PROVIDER_LABELS[provider]}-Stable`),
         provider,
@@ -199,6 +244,33 @@ export function FCE2BRuntimeDialog({
         >
           <div className="space-y-1.5">
             <Label className="text-xs">
+              {t(($) => $.fc_e2b_runtime.fields.backend)}
+            </Label>
+            <Select
+              value={sandboxBackend}
+              onValueChange={(value) => pickBackend(value as SandboxBackend)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="aliyun_fc">
+                  {t(($) => $.fc_e2b_runtime.backend_aliyun_fc)}
+                </SelectItem>
+                <SelectItem value="asb">
+                  {t(($) => $.fc_e2b_runtime.backend_asb)}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {sandboxBackend === "asb"
+                ? t(($) => $.fc_e2b_runtime.backend_asb_hint)
+                : t(($) => $.fc_e2b_runtime.backend_aliyun_fc_hint)}
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">
               {t(($) => $.fc_e2b_runtime.fields.channel)}
             </Label>
             <Select
@@ -224,13 +296,17 @@ export function FCE2BRuntimeDialog({
             <p className="text-xs text-muted-foreground">
               {templateChannel === "stable"
                 ? stableChannelQuery.data?.current
-                  ? stableChannelQuery.data.current.template_alias
+                  ? stableChannelQuery.data.current.artifact_alias ||
+                    stableChannelQuery.data.current.template_alias
                   : t(($) => $.fc_e2b_runtime.stable_uninitialized)
-                : t(($) => $.fc_e2b_runtime.candidate_hint)}
+                : sandboxBackend === "asb"
+                  ? t(($) => $.fc_e2b_runtime.candidate_asb_hint)
+                  : t(($) => $.fc_e2b_runtime.candidate_hint)}
             </p>
           </div>
 
-          {templateChannel === "candidate" && (
+          {sandboxBackend === "aliyun_fc" &&
+            templateChannel === "candidate" && (
           <div className="space-y-2">
             <Label htmlFor="fc-e2b-template-search" className="text-xs">
               {t(($) => $.fc_e2b_runtime.fields.template)}
@@ -326,6 +402,55 @@ export function FCE2BRuntimeDialog({
           </div>
           )}
 
+          {sandboxBackend === "asb" && templateChannel === "candidate" ? (
+            <div className="space-y-3 rounded-md border p-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="asb-artifact-ref" className="text-xs">
+                  {t(($) => $.fc_e2b_runtime.fields.artifact_ref)}
+                </Label>
+                <Input
+                  id="asb-artifact-ref"
+                  value={artifactRef}
+                  onChange={(event) => setArtifactRef(event.target.value)}
+                  placeholder="registry/repository@sha256:..."
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="asb-artifact-build-id" className="text-xs">
+                  {t(($) => $.fc_e2b_runtime.fields.artifact_build_id)}
+                </Label>
+                <Input
+                  id="asb-artifact-build-id"
+                  value={artifactBuildId}
+                  onChange={(event) => setArtifactBuildId(event.target.value)}
+                  placeholder="asb-abcdef0"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="asb-artifact-digest" className="text-xs">
+                  {t(($) => $.fc_e2b_runtime.fields.artifact_digest)}
+                </Label>
+                <Input
+                  id="asb-artifact-digest"
+                  value={artifactDigest}
+                  onChange={(event) => setArtifactDigest(event.target.value)}
+                  placeholder="sha256:..."
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="asb-artifact-alias" className="text-xs">
+                  {t(($) => $.fc_e2b_runtime.fields.artifact_alias)}
+                </Label>
+                <Input
+                  id="asb-artifact-alias"
+                  value={artifactAlias}
+                  onChange={(event) => setArtifactAlias(event.target.value)}
+                  placeholder="multica-asb-runtime:build"
+                />
+              </div>
+            </div>
+          ) : null}
+
           <div className="space-y-1.5">
             <Label className="text-xs">
               {t(($) => $.fc_e2b_runtime.fields.provider)}
@@ -359,7 +484,9 @@ export function FCE2BRuntimeDialog({
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder={
-                selectedTemplate
+                sandboxBackend === "asb"
+                  ? `ASB-${PROVIDER_LABELS[provider]}`
+                  : selectedTemplate
                   ? templateRuntimeName(selectedTemplate, provider)
                   : templateChannel === "stable"
                     ? `FC-${PROVIDER_LABELS[provider]}-Stable`
@@ -410,7 +537,11 @@ export function FCE2BRuntimeDialog({
               createRuntime.isPending ||
               (templateChannel === "stable"
                 ? !stableChannelQuery.data?.current
-                : !selectedTemplate) ||
+                : sandboxBackend === "aliyun_fc"
+                  ? !selectedTemplate
+                  : !artifactRef.trim() ||
+                    !artifactBuildId.trim() ||
+                    !artifactDigest.trim()) ||
               !availableProviders.includes(provider)
             }
           >

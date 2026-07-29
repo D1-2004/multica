@@ -19,10 +19,11 @@ import type {
   FCE2BStableRelease,
   FCE2BStableRuntimeOverview,
   FCE2BStableTemplateBinding,
+  SandboxBackend,
 } from "@multica/core/runtimes";
 import {
-  useFCE2BStableChannel,
-  useFCE2BStableRuntimes,
+  useCloudSandboxStableChannel,
+  useCloudSandboxStableRuntimes,
 } from "@multica/core/runtimes";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -79,13 +80,13 @@ interface TemplateDistribution {
 }
 
 function templateKey(runtime: FCE2BStableRuntimeOverview): string {
-  return `${runtime.template_id}:${runtime.template_build_id}`;
+  return `${runtime.artifact_ref}:${runtime.artifact_build_id}`;
 }
 
 function runtimeAlignment(
   runtime: FCE2BStableRuntimeOverview,
 ): Alignment {
-  if (runtime.template_channel === "candidate") return "candidate";
+  if (runtime.artifact_channel === "candidate") return "candidate";
   if (runtime.matches_active_release) return "active";
   if (runtime.matches_current_stable) return "current";
   return "outdated";
@@ -131,9 +132,14 @@ function releaseProgress(release: FCE2BStableRelease | null): {
 export function StableFCE2BRuntimeOverviewPage() {
   const { t, i18n } = useT("runtimes");
   const paths = useWorkspacePaths();
-  const channelQuery = useFCE2BStableChannel();
+  const [sandboxBackend, setSandboxBackend] =
+    useState<SandboxBackend>("aliyun_fc");
+  const channelQuery = useCloudSandboxStableChannel(sandboxBackend);
   const canPublish = channelQuery.data?.can_publish === true;
-  const runtimesQuery = useFCE2BStableRuntimes(canPublish);
+  const runtimesQuery = useCloudSandboxStableRuntimes(
+    sandboxBackend,
+    canPublish,
+  );
   const [releaseDialogOpen, setReleaseDialogOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [workspaceFilter, setWorkspaceFilter] = useState(ALL);
@@ -171,7 +177,7 @@ export function StableFCE2BRuntimeOverviewPage() {
 
   const metrics = useMemo(() => {
     const stableManaged = runtimes.filter(
-      (runtime) => runtime.template_channel === "stable",
+      (runtime) => runtime.artifact_channel === "stable",
     );
     return {
       total: runtimes.length,
@@ -193,7 +199,7 @@ export function StableFCE2BRuntimeOverviewPage() {
           !runtime.matches_active_release,
       ).length,
       candidate: runtimes.filter(
-        (runtime) => runtime.template_channel === "candidate",
+        (runtime) => runtime.artifact_channel === "candidate",
       ).length,
     };
   }, [runtimes]);
@@ -212,9 +218,9 @@ export function StableFCE2BRuntimeOverviewPage() {
       const key = templateKey(runtime);
       const item = grouped.get(key) ?? {
         key,
-        alias: runtime.template_alias,
-        templateId: runtime.template_id,
-        buildId: runtime.template_build_id,
+        alias: runtime.artifact_alias,
+        templateId: runtime.artifact_ref,
+        buildId: runtime.artifact_build_id,
         runtimeCount: 0,
         onlineCount: 0,
         workspaceCount: 0,
@@ -262,9 +268,10 @@ export function StableFCE2BRuntimeOverviewPage() {
           runtime.workspace_name,
           runtime.runtime_name,
           runtime.provider,
-          runtime.template_alias,
-          runtime.template_id,
-          runtime.template_build_id,
+          runtime.artifact_alias,
+          runtime.artifact_ref,
+          runtime.artifact_build_id,
+          runtime.artifact_digest,
         ].some((value) => value.toLowerCase().includes(normalizedSearch))
       ) {
         return false;
@@ -318,6 +325,12 @@ export function StableFCE2BRuntimeOverviewPage() {
     setTemplateFilter(ALL);
   };
 
+  const changeBackend = (backend: SandboxBackend) => {
+    setSandboxBackend(backend);
+    setReleaseDialogOpen(false);
+    clearFilters();
+  };
+
   const hasFilters =
     search.trim() !== "" ||
     workspaceFilter !== ALL ||
@@ -343,6 +356,24 @@ export function StableFCE2BRuntimeOverviewPage() {
         }
         actions={
           <>
+            <Select
+              value={sandboxBackend}
+              onValueChange={(value) =>
+                changeBackend(value as SandboxBackend)
+              }
+            >
+              <SelectTrigger size="sm" className="w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="aliyun_fc">
+                  {t(($) => $.fc_e2b_runtime.backend_aliyun_fc)}
+                </SelectItem>
+                <SelectItem value="asb">
+                  {t(($) => $.fc_e2b_runtime.backend_asb)}
+                </SelectItem>
+              </SelectContent>
+            </Select>
             {lastUpdatedAt > 0 && (
               <span className="hidden text-xs text-muted-foreground lg:inline">
                 {t(($) => $.fc_e2b_stable_overview.last_updated, {
@@ -583,6 +614,7 @@ export function StableFCE2BRuntimeOverviewPage() {
 
       {releaseDialogOpen && (
         <StableFCE2BReleaseDialog
+          sandboxBackend={sandboxBackend}
           onClose={() => setReleaseDialogOpen(false)}
         />
       )}
@@ -623,14 +655,20 @@ function CurrentStableCard({
         {current ? (
           <>
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold" title={current.template_alias}>
-                {current.template_alias}
+              <p
+                className="truncate text-sm font-semibold"
+                title={current.artifact_alias}
+              >
+                {current.artifact_alias}
               </p>
               <p
                 className="mt-1 truncate font-mono text-[11px] text-muted-foreground"
-                title={`${current.template_id} · ${current.template_build_id}`}
+                title={`${current.artifact_ref} · ${current.artifact_build_id}`}
               >
-                {current.template_id} · {current.template_build_id}
+                {current.artifact_build_id}
+                {current.artifact_digest
+                  ? ` · ${current.artifact_digest.slice(0, 19)}…`
+                  : ""}
               </p>
             </div>
             <div className="space-y-2">
@@ -683,14 +721,20 @@ function ActiveReleaseCard({
         {release ? (
           <>
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold" title={release.template_alias}>
-                {release.template_alias}
+              <p
+                className="truncate text-sm font-semibold"
+                title={release.artifact_alias}
+              >
+                {release.artifact_alias}
               </p>
               <p
                 className="mt-1 truncate font-mono text-[11px] text-muted-foreground"
-                title={`${release.template_id} · ${release.template_build_id}`}
+                title={`${release.artifact_ref} · ${release.artifact_build_id}`}
               >
-                {release.template_id} · {release.template_build_id}
+                {release.artifact_build_id}
+                {release.artifact_digest
+                  ? ` · ${release.artifact_digest.slice(0, 19)}…`
+                  : ""}
               </p>
             </div>
             <div className="space-y-2">
@@ -1103,7 +1147,7 @@ function RuntimeOverviewTable({
                 </TableCell>
                 <TableCell>
                   <Badge variant="outline" className="text-[10px]">
-                    {runtime.template_channel === "candidate"
+                    {runtime.artifact_channel === "candidate"
                       ? t(($) => $.fc_e2b_stable_overview.channel.candidate)
                       : t(($) => $.fc_e2b_stable_overview.channel.stable)}
                   </Badge>
@@ -1112,17 +1156,18 @@ function RuntimeOverviewTable({
                   <div className="max-w-80 min-w-0">
                     <p
                       className="truncate text-xs font-medium"
-                      title={runtime.template_alias}
+                      title={runtime.artifact_alias}
                     >
-                      {runtime.template_alias || "—"}
+                      {runtime.artifact_alias}
                     </p>
                     <p
                       className="mt-1 truncate font-mono text-[10px] text-muted-foreground"
-                      title={`${runtime.template_id} · ${runtime.template_build_id}`}
+                      title={`${runtime.artifact_ref} · ${runtime.artifact_build_id}`}
                     >
-                      {runtime.template_build_id ||
-                        runtime.template_id ||
-                        "—"}
+                      {runtime.artifact_build_id}
+                      {runtime.artifact_digest
+                        ? ` · ${runtime.artifact_digest.slice(0, 19)}…`
+                        : ""}
                     </p>
                   </div>
                 </TableCell>

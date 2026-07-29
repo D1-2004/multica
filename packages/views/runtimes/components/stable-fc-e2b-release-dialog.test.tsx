@@ -23,6 +23,10 @@ const mockMutateRelease = vi.hoisted(() => ({
 const mockChannelQuery = vi.hoisted(() => ({
   data: {
     current: null as null | {
+      artifact_ref: string;
+      artifact_build_id: string;
+      artifact_alias: string;
+      artifact_digest: string;
       template_id: string;
       template_build_id: string;
       template_alias: string;
@@ -59,16 +63,19 @@ vi.mock("@multica/core/runtimes", () => ({
         template.build_id?.trim() &&
         template.status?.toLowerCase() === "ready",
   ),
-  useFCE2BStableChannel: () => mockChannelQuery,
+  useCloudSandboxStableChannel: () => mockChannelQuery,
   useFCE2BTemplates: () => mockTemplatesQuery,
-  useCreateFCE2BStableRelease: () => ({
+  useCreateCloudSandboxStableRelease: () => ({
     mutateAsync: (...args: unknown[]) => mockCreateRelease(...args),
     isPending: false,
   }),
-  useMutateFCE2BStableRelease: (action: keyof typeof mockMutateRelease) => ({
-    mutateAsync: (...args: unknown[]) => mockMutateRelease[action](...args),
-    isPending: false,
-  }),
+  useMutateCloudSandboxStableRelease: (
+    _backend: string,
+    action: keyof typeof mockMutateRelease,
+  ) => ({
+      mutateAsync: (...args: unknown[]) => mockMutateRelease[action](...args),
+      isPending: false,
+    }),
 }));
 
 vi.mock("sonner", () => ({
@@ -77,10 +84,13 @@ vi.mock("sonner", () => ({
 
 import { StableFCE2BReleaseDialog } from "./stable-fc-e2b-release-dialog";
 
-function renderDialog() {
+function renderDialog(sandboxBackend: "aliyun_fc" | "asb" = "aliyun_fc") {
   return render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
-      <StableFCE2BReleaseDialog onClose={vi.fn()} />
+      <StableFCE2BReleaseDialog
+        sandboxBackend={sandboxBackend}
+        onClose={vi.fn()}
+      />
     </I18nProvider>,
   );
 }
@@ -142,6 +152,7 @@ describe("StableFCE2BReleaseDialog", () => {
       expect(mockCreateRelease).toHaveBeenCalledWith({
         idempotencyKey: expect.any(String),
         data: {
+          sandbox_backend: "aliyun_fc",
           template_id: "template-current",
           expected_build_id: "build-current",
           note: "",
@@ -152,6 +163,10 @@ describe("StableFCE2BReleaseDialog", () => {
 
   it("shows the current stable build separately and allows publishing it again", async () => {
     mockChannelQuery.data.current = {
+      artifact_ref: "template-current",
+      artifact_build_id: "build-current",
+      artifact_alias: "Current image",
+      artifact_digest: "",
       template_id: "template-current",
       template_build_id: "build-current",
       template_alias: "Current image",
@@ -183,6 +198,7 @@ describe("StableFCE2BReleaseDialog", () => {
       expect(mockCreateRelease).toHaveBeenCalledWith({
         idempotencyKey: expect.any(String),
         data: {
+          sandbox_backend: "aliyun_fc",
           template_id: "template-current",
           expected_build_id: "build-current",
           note: "",
@@ -193,6 +209,10 @@ describe("StableFCE2BReleaseDialog", () => {
 
   it("waits for developer approval before manually starting the 24-hour rollout", async () => {
     mockChannelQuery.data.current = {
+      artifact_ref: "template-current",
+      artifact_build_id: "build-current",
+      artifact_alias: "Current image",
+      artifact_digest: "",
       template_id: "template-current",
       template_build_id: "build-current",
       template_alias: "Current image",
@@ -200,6 +220,7 @@ describe("StableFCE2BReleaseDialog", () => {
     };
     mockChannelQuery.data.active_release = {
       id: "release-next",
+      artifact_alias: "Next image",
       template_alias: "Next image",
       status: "awaiting_rollout",
       bootstrap: false,
@@ -228,6 +249,10 @@ describe("StableFCE2BReleaseDialog", () => {
 
   it("shows the fixed rollout schedule and advances without changing its timestamps", async () => {
     mockChannelQuery.data.current = {
+      artifact_ref: "template-current",
+      artifact_build_id: "build-current",
+      artifact_alias: "Current image",
+      artifact_digest: "",
       template_id: "template-current",
       template_build_id: "build-current",
       template_alias: "Current image",
@@ -322,6 +347,10 @@ describe("StableFCE2BReleaseDialog", () => {
 
   it("completes final observation and exits the active release", async () => {
     mockChannelQuery.data.current = {
+      artifact_ref: "template-current",
+      artifact_build_id: "build-current",
+      artifact_alias: "Current image",
+      artifact_digest: "",
       template_id: "template-current",
       template_build_id: "build-current",
       template_alias: "Current image",
@@ -354,6 +383,50 @@ describe("StableFCE2BReleaseDialog", () => {
       expect(mockMutateRelease["complete-observation"]).toHaveBeenCalledWith(
         "release-next",
       ),
+    );
+  });
+
+  it("submits an immutable ASB image with Aone and source evidence", async () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    const commit = "b".repeat(40);
+    renderDialog("asb");
+
+    fireEvent.change(
+      screen.getByLabelText("Immutable OCI image reference"),
+      {
+        target: {
+          value: `hub.docker.alibaba-inc.com/aone-base-global/multica-asb-runtime@${digest}`,
+        },
+      },
+    );
+    fireEvent.change(screen.getByLabelText("Aone build ID"), {
+      target: { value: "56309841" },
+    });
+    fireEvent.change(screen.getByLabelText("Image digest"), {
+      target: { value: digest },
+    });
+    fireEvent.change(screen.getByLabelText("Source commit"), {
+      target: { value: commit },
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Verify and initialize stable channel",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(mockCreateRelease).toHaveBeenCalledWith({
+        idempotencyKey: expect.any(String),
+        data: {
+          sandbox_backend: "asb",
+          artifact_ref: `hub.docker.alibaba-inc.com/aone-base-global/multica-asb-runtime@${digest}`,
+          artifact_build_id: "56309841",
+          artifact_digest: digest,
+          git_commit: commit,
+          note: "",
+        },
+      }),
     );
   });
 });

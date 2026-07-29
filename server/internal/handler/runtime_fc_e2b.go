@@ -17,7 +17,13 @@ import (
 )
 
 type createFCE2BRuntimeRequest struct {
+	SandboxBackend  string `json:"sandbox_backend"`
 	Name            string `json:"name"`
+	ArtifactRef     string `json:"artifact_ref"`
+	ArtifactBuildID string `json:"artifact_build_id"`
+	ArtifactAlias   string `json:"artifact_alias"`
+	ArtifactDigest  string `json:"artifact_digest"`
+	ArtifactChannel string `json:"artifact_channel"`
 	TemplateID      string `json:"template_id"`
 	Template        string `json:"template"`
 	TemplateChannel string `json:"template_channel"`
@@ -27,6 +33,13 @@ type createFCE2BRuntimeRequest struct {
 
 type updateFCE2BRuntimeTemplateRequest struct {
 	TemplateID string `json:"template_id"`
+}
+
+type updateCloudSandboxArtifactRequest struct {
+	ArtifactRef     string `json:"artifact_ref"`
+	ArtifactBuildID string `json:"artifact_build_id"`
+	ArtifactAlias   string `json:"artifact_alias"`
+	ArtifactDigest  string `json:"artifact_digest"`
 }
 
 func (h *Handler) ListFCE2BTemplates(w http.ResponseWriter, r *http.Request) {
@@ -56,21 +69,18 @@ func (h *Handler) ListFCE2BTemplates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
-	if !h.cfg.FCE2B.Enabled {
-		writeError(w, http.StatusServiceUnavailable, "FC/E2B runtime is disabled")
-		return
-	}
-	if err := h.cfg.FCE2B.Validate(); err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
-		return
-	}
+	h.createCloudSandboxRuntime(w, r, service.SandboxBackendAliyunFC)
+}
 
-	workspaceID := h.resolveWorkspaceID(r)
-	member, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin")
-	if !ok {
-		return
-	}
+func (h *Handler) CreateCloudSandboxRuntime(w http.ResponseWriter, r *http.Request) {
+	h.createCloudSandboxRuntime(w, r, "")
+}
 
+func (h *Handler) createCloudSandboxRuntime(
+	w http.ResponseWriter,
+	r *http.Request,
+	forcedBackend service.SandboxBackendKind,
+) {
 	var req createFCE2BRuntimeRequest
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
@@ -78,20 +88,81 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	templateChannel := strings.ToLower(strings.TrimSpace(req.TemplateChannel))
-	if templateChannel == "" {
-		templateChannel = "stable"
+	backend := service.SandboxBackendKind(strings.ToLower(strings.TrimSpace(req.SandboxBackend)))
+	if forcedBackend != "" {
+		if backend != "" && backend != forcedBackend {
+			writeError(w, http.StatusBadRequest, "sandbox_backend does not match this endpoint")
+			return
+		}
+		backend = forcedBackend
 	}
-	if templateChannel != "stable" && templateChannel != "candidate" {
+	switch backend {
+	case service.SandboxBackendAliyunFC:
+		if !h.cfg.FCE2B.Enabled {
+			writeError(w, http.StatusServiceUnavailable, "FC/E2B runtime is disabled")
+			return
+		}
+		if err := h.cfg.FCE2B.Validate(); err != nil {
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+	case service.SandboxBackendASB:
+		if !h.cfg.ASB.Enabled || h.ASBLauncher == nil {
+			writeError(w, http.StatusServiceUnavailable, "Aone Sandbox runtime is disabled")
+			return
+		}
+		if err := h.cfg.ASB.Validate(); err != nil {
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+	default:
+		writeError(w, http.StatusBadRequest, "sandbox_backend must be 'aliyun_fc' or 'asb'")
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	member, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin")
+	if !ok {
+		return
+	}
+	switch backend {
+	case service.SandboxBackendAliyunFC:
+		h.createAliyunFCRuntime(w, r, workspaceID, member, req)
+	case service.SandboxBackendASB:
+		h.createASBRuntime(w, r, workspaceID, member, req)
+	}
+}
+
+func (h *Handler) createAliyunFCRuntime(
+	w http.ResponseWriter,
+	r *http.Request,
+	workspaceID string,
+	member db.Member,
+	req createFCE2BRuntimeRequest,
+) {
+	templateChannel := strings.ToLower(strings.TrimSpace(req.TemplateChannel))
+	artifactChannel := strings.ToLower(strings.TrimSpace(req.ArtifactChannel))
+	if templateChannel != "" && artifactChannel != "" && templateChannel != artifactChannel {
+		writeError(w, http.StatusBadRequest, "artifact_channel and template_channel must match")
+		return
+	}
+	if templateChannel == "" {
+		templateChannel = artifactChannel
+	}
+	if templateChannel == "" {
+		templateChannel = service.CloudSandboxChannelStable
+	}
+	if templateChannel != service.CloudSandboxChannelStable &&
+		templateChannel != service.CloudSandboxChannelCandidate {
 		writeError(w, http.StatusBadRequest, "template_channel must be 'stable' or 'candidate'")
 		return
 	}
 	templateRef := strings.TrimSpace(req.TemplateID)
 	expectedStableBuildID := ""
+	expectedStableDigest := ""
 	if templateRef == "" {
 		templateRef = strings.TrimSpace(req.Template)
 	}
-	if templateChannel == "candidate" {
+	if templateChannel == service.CloudSandboxChannelCandidate {
 		if !h.canPublishFCE2BStable(r) {
 			writeError(w, http.StatusForbidden, "candidate FC/E2B runtimes are restricted to stable publishers")
 			return
@@ -109,7 +180,7 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "FC/E2B stable channel is unavailable")
 			return
 		}
-		current, err := h.FCE2BStable.CurrentTemplate(r.Context())
+		current, err := h.FCE2BStable.CurrentArtifact(r.Context(), service.SandboxBackendAliyunFC)
 		if errors.Is(err, service.ErrFCE2BStableChannelUninitialized) {
 			writeError(w, http.StatusServiceUnavailable, err.Error())
 			return
@@ -120,6 +191,7 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 		templateRef = current.TemplateID
 		expectedStableBuildID = current.TemplateBuildID
+		expectedStableDigest = current.ArtifactDigest
 	}
 	templates, err := service.ListFCE2BTemplates(r.Context(), h.cfg.FCE2B, nil)
 	if err != nil {
@@ -159,10 +231,20 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	metadata, err := json.Marshal(map[string]any{
-		"kind":               service.FCE2BMetadataKind,
+		"kind":               service.CloudSandboxMetadataKind,
+		"sandbox_backend":    string(service.SandboxBackendAliyunFC),
+		"provider":           provider,
+		"artifact_kind":      service.CloudSandboxArtifactE2BTemplate,
+		"artifact_channel":   templateChannel,
+		"artifact_ref":       selected.ID,
+		"artifact_build_id":  selected.BuildID,
+		"artifact_alias":     selected.Template,
+		"artifact_digest":    expectedStableDigest,
+		"artifact_status":    selected.Status,
 		"template":           selected.Template,
 		"template_id":        selected.ID,
 		"template_build_id":  selected.BuildID,
+		"template_alias":     selected.Template,
 		"template_name":      selected.Name,
 		"template_status":    selected.Status,
 		"manifest_version":   selected.ManifestVersion,
@@ -201,6 +283,253 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 		"action": "create",
 	})
 	writeJSON(w, http.StatusCreated, runtimeToResponse(rt))
+}
+
+func (h *Handler) createASBRuntime(
+	w http.ResponseWriter,
+	r *http.Request,
+	workspaceID string,
+	member db.Member,
+	req createFCE2BRuntimeRequest,
+) {
+	artifactChannel := strings.ToLower(strings.TrimSpace(req.ArtifactChannel))
+	if artifactChannel == "" {
+		artifactChannel = strings.ToLower(strings.TrimSpace(req.TemplateChannel))
+	}
+	if artifactChannel == "" {
+		artifactChannel = service.CloudSandboxChannelStable
+	}
+	if artifactChannel != service.CloudSandboxChannelStable &&
+		artifactChannel != service.CloudSandboxChannelCandidate {
+		writeError(w, http.StatusBadRequest, "artifact_channel must be 'stable' or 'candidate'")
+		return
+	}
+	artifact := service.ASBArtifact{
+		Ref:     strings.TrimSpace(req.ArtifactRef),
+		BuildID: strings.TrimSpace(req.ArtifactBuildID),
+		Alias:   strings.TrimSpace(req.ArtifactAlias),
+		Digest:  strings.ToLower(strings.TrimSpace(req.ArtifactDigest)),
+	}
+	switch artifactChannel {
+	case service.CloudSandboxChannelStable:
+		if artifact.Ref != "" || artifact.BuildID != "" || artifact.Digest != "" ||
+			strings.TrimSpace(req.TemplateID) != "" || strings.TrimSpace(req.Template) != "" {
+			writeError(w, http.StatusBadRequest, "stable runtimes resolve their artifact from the ASB stable channel")
+			return
+		}
+		if h.FCE2BStable == nil {
+			writeError(w, http.StatusServiceUnavailable, "ASB stable channel is unavailable")
+			return
+		}
+		current, err := h.FCE2BStable.CurrentASBArtifact(r.Context())
+		if errors.Is(err, service.ErrFCE2BStableChannelUninitialized) {
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		if err != nil {
+			slog.Error("ASB stable artifact resolution failed", "error", err)
+			writeError(w, http.StatusServiceUnavailable, "failed to resolve the verified ASB stable artifact")
+			return
+		}
+		artifact = current
+	case service.CloudSandboxChannelCandidate:
+		if !h.canPublishFCE2BStable(r) {
+			writeError(w, http.StatusForbidden, "candidate ASB runtimes are restricted to stable publishers")
+			return
+		}
+		if artifact.Ref == "" || artifact.BuildID == "" || artifact.Digest == "" {
+			writeError(w, http.StatusBadRequest, "artifact_ref, artifact_build_id and artifact_digest are required for a candidate runtime")
+			return
+		}
+		manifest, err := h.ASBLauncher.VerifyStableArtifact(r.Context(), artifact)
+		if err != nil {
+			slog.Error("ASB candidate artifact validation failed", "error", err)
+			writeError(w, http.StatusBadRequest, "ASB candidate artifact validation failed")
+			return
+		}
+		artifact.Manifest = manifest
+	}
+
+	metadataValues, err := service.BuildASBRuntimeMetadata(
+		artifact,
+		req.Provider,
+		artifactChannel,
+	)
+	if errors.Is(err, service.ErrFCE2BTemplateProviderUnsupported) {
+		writeError(w, http.StatusBadRequest, "provider is not declared by the ASB runtime manifest")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	provider, _ := metadataValues["provider"].(string)
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "ASB-" + cloudSandboxProviderDisplayName(provider)
+	}
+	visibility := strings.TrimSpace(req.Visibility)
+	if visibility == "" {
+		visibility = "private"
+	}
+	if visibility != "private" && visibility != "public" {
+		writeError(w, http.StatusBadRequest, "visibility must be 'private' or 'public'")
+		return
+	}
+	metadataValues["timeout_seconds"] = h.cfg.ASB.TimeoutSeconds
+	metadataValues["created_by"] = uuidToString(member.UserID)
+	metadata, err := json.Marshal(metadataValues)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode runtime metadata")
+		return
+	}
+	daemonID := "cloud-sandbox:" + workspaceID + ":asb:" + runtimeSlug(provider) + ":" +
+		runtimeSlug(name) + ":" + randomID()[:8]
+	rt, err := h.Queries.UpsertCloudAgentRuntime(r.Context(), db.UpsertCloudAgentRuntimeParams{
+		WorkspaceID: parseUUID(workspaceID),
+		DaemonID:    pgtype.Text{String: daemonID, Valid: true},
+		Name:        name,
+		RuntimeMode: "cloud",
+		Provider:    provider,
+		Status:      "online",
+		DeviceInfo:  name,
+		Metadata:    metadata,
+		OwnerID:     member.UserID,
+		Visibility:  visibility,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create ASB runtime")
+		return
+	}
+	h.publish(protocol.EventDaemonRegister, workspaceID, "member", uuidToString(member.UserID), map[string]any{
+		"action": "create",
+	})
+	writeJSON(w, http.StatusCreated, runtimeToResponse(rt))
+}
+
+func cloudSandboxProviderDisplayName(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "hermes":
+		return "Hermes"
+	case "opencode":
+		return "OpenCode"
+	case "pi":
+		return "Pi"
+	default:
+		return provider
+	}
+}
+
+func (h *Handler) UpdateCloudSandboxRuntimeArtifact(w http.ResponseWriter, r *http.Request) {
+	if !h.cfg.ASB.Enabled || h.ASBLauncher == nil {
+		writeError(w, http.StatusServiceUnavailable, "Aone Sandbox runtime is disabled")
+		return
+	}
+	if err := h.cfg.ASB.Validate(); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	runtimeID := chi.URLParam(r, "runtimeId")
+	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	if !ok {
+		return
+	}
+	runtime, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "runtime not found")
+		return
+	}
+	member, ok := h.requireWorkspaceRole(
+		w,
+		r,
+		uuidToString(runtime.WorkspaceID),
+		"runtime not found",
+		"owner",
+		"admin",
+	)
+	if !ok {
+		return
+	}
+	if !service.IsASBRuntime(runtime) {
+		writeError(w, http.StatusBadRequest, service.ErrCloudSandboxRuntimeRequired.Error())
+		return
+	}
+	if service.CloudSandboxRuntimeChannel(runtime) != service.CloudSandboxChannelCandidate {
+		writeError(w, http.StatusConflict, "stable-managed runtime artifacts can only be changed by a stable release")
+		return
+	}
+	if !h.canPublishFCE2BStable(r) {
+		writeError(w, http.StatusForbidden, "candidate ASB runtime updates are restricted to stable publishers")
+		return
+	}
+	var req updateCloudSandboxArtifactRequest
+	if r.Body == nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	artifact := service.ASBArtifact{
+		Ref:     strings.TrimSpace(req.ArtifactRef),
+		BuildID: strings.TrimSpace(req.ArtifactBuildID),
+		Alias:   strings.TrimSpace(req.ArtifactAlias),
+		Digest:  strings.ToLower(strings.TrimSpace(req.ArtifactDigest)),
+	}
+	manifest, err := h.ASBLauncher.VerifyStableArtifact(r.Context(), artifact)
+	if err != nil {
+		slog.Error("ASB candidate artifact update validation failed",
+			"error", err,
+			"runtime_id", runtimeID,
+		)
+		writeError(w, http.StatusBadRequest, "ASB candidate artifact validation failed")
+		return
+	}
+	artifact.Manifest = manifest
+	result, err := h.ASBLauncher.UpdateRuntimeArtifact(r.Context(), runtimeUUID, artifact)
+	if err != nil {
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			writeError(w, http.StatusNotFound, "runtime not found")
+		case errors.Is(err, service.ErrCloudSandboxRuntimeRequired):
+			writeError(w, http.StatusBadRequest, err.Error())
+		default:
+			slog.Error("ASB runtime artifact update failed",
+				"error", err,
+				"runtime_id", runtimeID,
+			)
+			writeError(w, http.StatusInternalServerError, "failed to update ASB runtime artifact")
+		}
+		return
+	}
+	slog.Info("ASB runtime artifact update completed",
+		"event", "cloud_sandbox_runtime_artifact_updated",
+		"actor_id", uuidToString(member.UserID),
+		"workspace_id", uuidToString(result.Runtime.WorkspaceID),
+		"runtime_id", runtimeID,
+		"sandbox_backend", string(service.SandboxBackendASB),
+		"previous_artifact_ref", result.PreviousArtifactRef,
+		"previous_artifact_build_id", result.PreviousArtifactBuildID,
+		"previous_artifact_digest", result.PreviousArtifactDigest,
+		"artifact_ref", artifact.Ref,
+		"artifact_build_id", artifact.BuildID,
+		"artifact_digest", artifact.Digest,
+		"invalidated_sandbox_count", result.InvalidatedSandboxCount,
+		"changed", result.Changed,
+	)
+	if result.Changed {
+		h.publish(
+			protocol.EventDaemonRegister,
+			uuidToString(result.Runtime.WorkspaceID),
+			"member",
+			uuidToString(member.UserID),
+			map[string]any{"action": "update"},
+		)
+	}
+	writeJSON(w, http.StatusOK, runtimeToResponse(result.Runtime))
 }
 
 func (h *Handler) UpdateFCE2BRuntimeTemplate(w http.ResponseWriter, r *http.Request) {

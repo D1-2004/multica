@@ -22,6 +22,11 @@ type stableChannelResponse struct {
 }
 
 type createStableReleaseRequest struct {
+	SandboxBackend  string `json:"sandbox_backend"`
+	ArtifactRef     string `json:"artifact_ref"`
+	ArtifactBuildID string `json:"artifact_build_id"`
+	ArtifactDigest  string `json:"artifact_digest"`
+	GitCommit       string `json:"git_commit"`
 	TemplateID      string `json:"template_id"`
 	ExpectedBuildID string `json:"expected_build_id"`
 	Note            string `json:"note"`
@@ -50,13 +55,29 @@ func (h *Handler) requireFCE2BStablePublisher(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) GetFCE2BStableChannel(w http.ResponseWriter, r *http.Request) {
-	if h.FCE2BStable == nil {
-		writeError(w, http.StatusServiceUnavailable, "FC/E2B stable channel is unavailable")
+	h.getCloudSandboxStableChannel(w, r, service.SandboxBackendAliyunFC)
+}
+
+func (h *Handler) GetCloudSandboxStableChannel(w http.ResponseWriter, r *http.Request) {
+	backend, ok := parseCloudSandboxBackendQuery(w, r)
+	if !ok {
 		return
 	}
-	channel, err := h.FCE2BStable.GetChannel(r.Context())
+	h.getCloudSandboxStableChannel(w, r, backend)
+}
+
+func (h *Handler) getCloudSandboxStableChannel(
+	w http.ResponseWriter,
+	r *http.Request,
+	backend service.SandboxBackendKind,
+) {
+	if h.FCE2BStable == nil {
+		writeError(w, http.StatusServiceUnavailable, "cloud sandbox stable channel is unavailable")
+		return
+	}
+	channel, err := h.FCE2BStable.GetChannel(r.Context(), backend)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load FC/E2B stable channel")
+		writeError(w, http.StatusInternalServerError, "failed to load cloud sandbox stable channel")
 		return
 	}
 	writeJSON(w, http.StatusOK, stableChannelResponse{
@@ -67,22 +88,50 @@ func (h *Handler) GetFCE2BStableChannel(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) ListFCE2BStableRuntimes(w http.ResponseWriter, r *http.Request) {
+	h.listCloudSandboxStableRuntimes(w, r, service.SandboxBackendAliyunFC)
+}
+
+func (h *Handler) ListCloudSandboxStableRuntimes(w http.ResponseWriter, r *http.Request) {
+	backend, ok := parseCloudSandboxBackendQuery(w, r)
+	if !ok {
+		return
+	}
+	h.listCloudSandboxStableRuntimes(w, r, backend)
+}
+
+func (h *Handler) listCloudSandboxStableRuntimes(
+	w http.ResponseWriter,
+	r *http.Request,
+	backend service.SandboxBackendKind,
+) {
 	if _, ok := h.requireFCE2BStablePublisher(w, r); !ok {
 		return
 	}
 	if h.FCE2BStable == nil {
-		writeError(w, http.StatusServiceUnavailable, "FC/E2B stable channel is unavailable")
+		writeError(w, http.StatusServiceUnavailable, "cloud sandbox stable channel is unavailable")
 		return
 	}
-	runtimes, err := h.FCE2BStable.ListRuntimeOverview(r.Context())
+	runtimes, err := h.FCE2BStable.ListRuntimeOverview(r.Context(), backend)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load FC/E2B stable runtimes")
+		writeError(w, http.StatusInternalServerError, "failed to load cloud sandbox stable runtimes")
 		return
 	}
 	writeJSON(w, http.StatusOK, runtimes)
 }
 
 func (h *Handler) CreateFCE2BStableRelease(w http.ResponseWriter, r *http.Request) {
+	h.createCloudSandboxStableRelease(w, r, service.SandboxBackendAliyunFC)
+}
+
+func (h *Handler) CreateCloudSandboxStableRelease(w http.ResponseWriter, r *http.Request) {
+	h.createCloudSandboxStableRelease(w, r, "")
+}
+
+func (h *Handler) createCloudSandboxStableRelease(
+	w http.ResponseWriter,
+	r *http.Request,
+	forcedBackend service.SandboxBackendKind,
+) {
 	actor, ok := h.requireFCE2BStablePublisher(w, r)
 	if !ok {
 		return
@@ -107,21 +156,42 @@ func (h *Handler) CreateFCE2BStableRelease(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	req.SandboxBackend = strings.ToLower(strings.TrimSpace(req.SandboxBackend))
+	req.ArtifactRef = strings.TrimSpace(req.ArtifactRef)
+	req.ArtifactBuildID = strings.TrimSpace(req.ArtifactBuildID)
+	req.ArtifactDigest = strings.ToLower(strings.TrimSpace(req.ArtifactDigest))
+	req.GitCommit = strings.ToLower(strings.TrimSpace(req.GitCommit))
 	req.TemplateID = strings.TrimSpace(req.TemplateID)
 	req.ExpectedBuildID = strings.TrimSpace(req.ExpectedBuildID)
 	req.Note = strings.TrimSpace(req.Note)
-	if req.TemplateID == "" || req.ExpectedBuildID == "" {
-		writeError(w, http.StatusBadRequest, "template_id and expected_build_id are required")
+	backend := service.SandboxBackendKind(req.SandboxBackend)
+	if forcedBackend != "" {
+		if backend != "" && backend != forcedBackend {
+			writeError(w, http.StatusBadRequest, "sandbox_backend does not match this endpoint")
+			return
+		}
+		backend = forcedBackend
+	}
+	if backend != service.SandboxBackendAliyunFC && backend != service.SandboxBackendASB {
+		writeError(w, http.StatusBadRequest, "sandbox_backend must be 'aliyun_fc' or 'asb'")
 		return
 	}
 	if len(req.Note) > 2000 {
 		writeError(w, http.StatusBadRequest, "note is too long")
 		return
 	}
+	expectedBuildID := req.ArtifactBuildID
+	if expectedBuildID == "" {
+		expectedBuildID = req.ExpectedBuildID
+	}
 	release, _, err := h.FCE2BStable.CreateRelease(r.Context(), service.CreateFCE2BStableReleaseInput{
 		IdempotencyKey:  idempotencyKey,
+		SandboxBackend:  backend,
+		ArtifactRef:     req.ArtifactRef,
+		ExpectedBuildID: expectedBuildID,
+		ArtifactDigest:  req.ArtifactDigest,
+		GitCommit:       req.GitCommit,
 		TemplateID:      req.TemplateID,
-		ExpectedBuildID: req.ExpectedBuildID,
 		Note:            req.Note,
 		ActorUserID:     actor,
 	})
@@ -137,6 +207,22 @@ func (h *Handler) CreateFCE2BStableRelease(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusAccepted, release)
+}
+
+func parseCloudSandboxBackendQuery(
+	w http.ResponseWriter,
+	r *http.Request,
+) (service.SandboxBackendKind, bool) {
+	backend := service.SandboxBackendKind(
+		strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sandbox_backend"))),
+	)
+	switch backend {
+	case service.SandboxBackendAliyunFC, service.SandboxBackendASB:
+		return backend, true
+	default:
+		writeError(w, http.StatusBadRequest, "sandbox_backend must be 'aliyun_fc' or 'asb'")
+		return "", false
+	}
 }
 
 func (h *Handler) GetFCE2BStableRelease(w http.ResponseWriter, r *http.Request) {

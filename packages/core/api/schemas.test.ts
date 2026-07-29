@@ -7,6 +7,7 @@ import {
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
   BeginDingTalkAccountBindingResponseSchema,
+  AgentEnterpriseIdentityStatusResponseSchema,
   AgentIdentityGitHubStatusResponseSchema,
   BeginAgentIdentityGitHubOAuthResponseSchema,
   TestAgentIdentityGitHubConnectionResponseSchema,
@@ -14,6 +15,7 @@ import {
   DingTalkAccountBindingsResponseSchema,
   DuplicateIssueErrorBodySchema,
   EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
+  EMPTY_AGENT_ENTERPRISE_IDENTITY_STATUS_RESPONSE,
   EMPTY_AGENT_IDENTITY_GITHUB_STATUS_RESPONSE,
   EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
   EMPTY_FDE_ONBOARDING_STATE,
@@ -326,6 +328,87 @@ describe("Agent Identity GitHub schemas", () => {
         { endpoint: "GET /api/workspaces/:id/agent-identity/github/status" },
       ),
     ).toEqual({ configured: false, connection: null });
+  });
+});
+
+describe("Agent enterprise identity schemas", () => {
+  it("parses manager-visible masked identity fields", () => {
+    expect(
+      AgentEnterpriseIdentityStatusResponseSchema.parse({
+        configured: true,
+        can_manage: true,
+        identity: {
+          employee_id: "*2345",
+          display_name: "Zhang San",
+          status: "active",
+          aip_id: "aip-1",
+          agent_spiffe_id:
+            "spiffe://agents.example/ns/multica/agents/agent-1",
+          buc_status: "active",
+          agent_identity_status: "active",
+          refresh_expires_at: 1799200000,
+        },
+      }),
+    ).toEqual({
+      configured: true,
+      canManage: true,
+      identity: {
+        employeeId: "*2345",
+        displayName: "Zhang San",
+        status: "active",
+        aipId: "aip-1",
+        agentSpiffeId:
+          "spiffe://agents.example/ns/multica/agents/agent-1",
+        bucStatus: "active",
+        agentIdentityStatus: "active",
+        refreshExpiresAt: 1799200000,
+      },
+    });
+  });
+
+  it("parses member-visible status without identity identifiers", () => {
+    expect(
+      AgentEnterpriseIdentityStatusResponseSchema.parse({
+        configured: true,
+        can_manage: false,
+        identity: {
+          status: "needs_reauth",
+          buc_status: "needs_reauth",
+          agent_identity_status: "needs_reauth",
+        },
+      }),
+    ).toEqual({
+      configured: true,
+      canManage: false,
+      identity: {
+        employeeId: "",
+        displayName: "",
+        status: "needs_reauth",
+        aipId: "",
+        agentSpiffeId: "",
+        bucStatus: "needs_reauth",
+        agentIdentityStatus: "needs_reauth",
+        refreshExpiresAt: undefined,
+      },
+    });
+  });
+
+  it("falls back safely when identity status drifts", () => {
+    expect(
+      parseWithFallback(
+        { configured: true, can_manage: true, identity: "not-an-object" },
+        AgentEnterpriseIdentityStatusResponseSchema,
+        EMPTY_AGENT_ENTERPRISE_IDENTITY_STATUS_RESPONSE,
+        {
+          endpoint:
+            "GET /api/workspaces/:id/agent-identity/enterprise/status",
+        },
+      ),
+    ).toEqual({
+      configured: false,
+      canManage: false,
+      identity: null,
+    });
   });
 });
 

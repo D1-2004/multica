@@ -60,6 +60,22 @@ vi.mock("../integrations/github-identity-binding", () => ({
   ),
 }));
 
+vi.mock("../integrations/enterprise-identity-binding", () => ({
+  EnterpriseIdentityBindingCard: ({
+    agentId,
+    canManage,
+  }: {
+    agentId: string;
+    canManage: boolean;
+  }) => (
+    <section
+      aria-label="Alibaba employee identity"
+      data-agent-id={agentId}
+      data-can-manage={canManage ? "true" : "false"}
+    />
+  ),
+}));
+
 import { IdentityTab } from "./identity-tab";
 
 const agent: Agent = {
@@ -97,19 +113,28 @@ describe("IdentityTab", () => {
     membersRef.current = [{ user_id: "user-1", role: "owner" }];
   });
 
-  it("renders GitHub sandbox identity before DingTalk digital employee identity", () => {
+  it("renders sandbox identities before DingTalk digital employee identity", () => {
     renderTab(<IdentityTab agent={agent} />);
     const githubIdentity = screen.getByRole("region", {
       name: /GitHub sandbox identity/i,
+    });
+    const enterpriseIdentity = screen.getByRole("region", {
+      name: /Alibaba employee identity/i,
     });
     const digitalEmployee = screen.getByRole("region", {
       name: /Enterprise digital employee/i,
     });
     expect(githubIdentity).toHaveAttribute("data-agent-id", "agent-1");
     expect(githubIdentity).toHaveAttribute("data-can-manage", "true");
+    expect(enterpriseIdentity).toHaveAttribute("data-agent-id", "agent-1");
+    expect(enterpriseIdentity).toHaveAttribute("data-can-manage", "true");
     expect(digitalEmployee).toHaveAttribute("data-binding-mode", "identity");
     expect(
-      githubIdentity.compareDocumentPosition(digitalEmployee) &
+      githubIdentity.compareDocumentPosition(enterpriseIdentity) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      enterpriseIdentity.compareDocumentPosition(digitalEmployee) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });

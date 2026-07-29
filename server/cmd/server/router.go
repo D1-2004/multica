@@ -304,6 +304,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		CloudRuntimeFleetURL:          cloudRuntimeFleetURLFromEnv(),
 		CloudRuntimeFleetTimeout:      envDuration("MULTICA_CLOUD_FLEET_TIMEOUT", 35*time.Second),
 		FCE2B:                         service.FCE2BConfigFromEnv(),
+		ASB:                           service.ASBConfigFromEnv(),
+		EnterpriseIdentity:            service.EnterpriseIdentityConfigFromEnv(),
 		AttachmentDownloadMode:        os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
 		AttachmentDownloadURLTTL:      envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
 		AttachmentFrameAncestors:      origins,
@@ -313,6 +315,33 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	h.FCE2BLauncher.SetSandboxRelaySigner(opts.SandboxRelaySigner)
+	asbRuntime, err := service.NewASBEnterpriseRuntimeFromConfig(
+		queries,
+		h.TaskService,
+		h.FCE2BLauncher,
+		pool,
+		signupConfig.ASB,
+		signupConfig.EnterpriseIdentity,
+	)
+	if err != nil {
+		slog.Error("ASB enterprise runtime configuration failed", "error", err)
+		os.Exit(1)
+	}
+	if asbRuntime != nil {
+		h.ASBLauncher = asbRuntime.Launcher
+		h.EnterpriseIdentity = asbRuntime.Identity
+	}
+	h.FCE2BStable = service.NewFCE2BStableService(
+		pool,
+		h.FCE2BLauncher,
+		stableRuntimePublishers,
+		h.ASBLauncher,
+	)
+	h.TaskService.RuntimeLauncher = service.NewCloudSandboxLauncher(
+		queries,
+		h.FCE2BLauncher,
+		h.ASBLauncher,
+	)
 	if managed, managedErr := managedagent.New(queries, pool, managedagent.ConfigFromEnv(), slog.Default()); managedErr != nil {
 		slog.Error("managed FDE Agent source disabled due to invalid configuration", "error", managedErr)
 	} else {
@@ -1265,6 +1294,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Auth group made a missing cookie a hard 401, breaking the flow for exactly
 	// the browsers above; the other four composio endpoints stay session-gated.
 	r.Get("/api/integrations/composio/callback", h.ComposioCallback)
+	// BUC redirects here after employee consent. The one-time, hashed OAuth
+	// state resolves workspace, agent, actor, and the validated relative return
+	// path; the callback never trusts identity coordinates from query params.
+	r.Get("/api/agent-enterprise-identity/buc/callback", h.CompleteAgentEnterpriseIdentityBinding)
 
 	// Daemon API routes (require daemon token or valid user token)
 	r.Route("/api/daemon", func(r chi.Router) {
@@ -1344,6 +1377,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/complete-observation", h.CompleteFCE2BStableObservation)
 		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/terminate", h.TerminateFCE2BStableRelease)
 		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/rollback", h.RollbackFCE2BStableRelease)
+		r.Get("/api/runtimes/cloud-sandbox/stable-channel", h.GetCloudSandboxStableChannel)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases", h.CreateCloudSandboxStableRelease)
+		r.Get("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}", h.GetFCE2BStableRelease)
+		r.Get("/api/runtimes/cloud-sandbox/stable-runtimes", h.ListCloudSandboxStableRuntimes)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/pause", h.PauseFCE2BStableRelease)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/resume", h.ResumeFCE2BStableRelease)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/start-rollout", h.StartFCE2BStableRollout)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/advance-rollout", h.AdvanceFCE2BStableRollout)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/complete-observation", h.CompleteFCE2BStableObservation)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/terminate", h.TerminateFCE2BStableRelease)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/rollback", h.RollbackFCE2BStableRelease)
 		r.With(handler.RequireDingTalkHumanActor).Get("/api/fde/onboarding", h.GetFDEOnboarding)
 		r.With(handler.RequireDingTalkHumanActor).Post("/api/fde/onboarding", h.ProvisionFDEOnboarding)
 
@@ -1466,6 +1510,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/agent-identity/github/status", h.GetAgentIdentityGitHubStatus)
 					r.Post("/agent-identity/github/oauth/start", h.BeginAgentIdentityGitHubOAuth)
 					r.Post("/agent-identity/github/{connectionId}/test", h.TestAgentIdentityGitHubConnection)
+					r.Get("/agent-identity/enterprise/status", h.GetAgentEnterpriseIdentityStatus)
+					r.Post("/agent-identity/enterprise/oauth/start", h.BeginAgentEnterpriseIdentityBinding)
+					r.Post("/agent-identity/enterprise/test", h.TestAgentEnterpriseIdentity)
+					r.Delete("/agent-identity/enterprise", h.RevokeAgentEnterpriseIdentity)
 				})
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
@@ -1799,9 +1847,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/", h.ListAgentRuntimes)
 				r.Get("/fc-e2b/templates", h.ListFCE2BTemplates)
 				r.Post("/fc-e2b", h.CreateFCE2BRuntime)
+				r.Post("/cloud-sandbox", h.CreateCloudSandboxRuntime)
 				r.Route("/{runtimeId}", func(r chi.Router) {
 					r.Patch("/", h.UpdateAgentRuntime)
 					r.Patch("/fc-e2b-template", h.UpdateFCE2BRuntimeTemplate)
+					r.Patch("/cloud-sandbox-artifact", h.UpdateCloudSandboxRuntimeArtifact)
 					r.Get("/usage", h.GetRuntimeUsage)
 					r.Get("/usage/by-agent", h.GetRuntimeUsageByAgent)
 					r.Get("/usage/by-hour", h.GetRuntimeUsageByHour)

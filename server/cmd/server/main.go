@@ -422,7 +422,27 @@ func main() {
 	// can each boot a sandbox for the same chat, and the loser's microVM is
 	// orphaned and billed until it times out.
 	fcLauncher.SetPool(pool)
-	taskSvc.RuntimeLauncher = fcLauncher
+	backgroundASBRuntime, asbRuntimeErr := service.NewASBEnterpriseRuntimeFromConfig(
+		queries,
+		taskSvc,
+		fcLauncher,
+		pool,
+		service.ASBConfigFromEnv(),
+		service.EnterpriseIdentityConfigFromEnv(),
+	)
+	if asbRuntimeErr != nil {
+		slog.Error("background ASB enterprise runtime configuration failed", "error", asbRuntimeErr)
+		os.Exit(1)
+	}
+	var backgroundASBLauncher service.TaskRuntimeLauncher
+	if backgroundASBRuntime != nil {
+		backgroundASBLauncher = backgroundASBRuntime.Launcher
+	}
+	taskSvc.RuntimeLauncher = service.NewCloudSandboxLauncher(
+		queries,
+		fcLauncher,
+		backgroundASBLauncher,
+	)
 	taskSvc.CompletionNotifier = h.TaskCompletionWorker
 	// NewRouterWithOptions owns the request-path TaskService and wires its
 	// Redis-backed empty-claim cache there. This background TaskService owns the
@@ -447,6 +467,9 @@ func main() {
 	go heartbeatScheduler.Run(sweepCtx)
 	if h.FCE2BStable != nil {
 		go h.FCE2BStable.Run(sweepCtx)
+	}
+	if backgroundASBRuntime != nil {
+		go backgroundASBRuntime.Identity.Run(sweepCtx)
 	}
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
 	go runDBStatsLogger(sweepCtx, pool)
