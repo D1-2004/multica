@@ -309,8 +309,46 @@ func TestEnterpriseIdentityStartBindingStoresOnlyHashedStateAndNonce(t *testing.
 		t.Fatal("OAuth state or nonce hash mismatch")
 	}
 	if authorizeURL.Query().Get("agent_id") != "buc-agent-1" ||
-		authorizeURL.Query().Get("authorize_app") != "a1,mw" {
+		authorizeURL.Query().Get("authorize_app") != "a1,mw" ||
+		authorizeURL.Query().Get("scope") != "profile openid employee user_authorize" {
 		t.Fatalf("authorize query = %v", authorizeURL.Query())
+	}
+}
+
+func TestEnterpriseIdentityStartBindingWithoutPreauthorizedApplications(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 29, 7, 0, 0, 0, time.UTC)
+	store := &fakeEnterpriseIdentityStore{}
+	serviceUnderTest := newTestEnterpriseIdentityService(t, store, &fakeBUCOAuthClient{}, &fakeEnterpriseAuthX{}, &fakeEnterpriseIdem{}, &fakeEnterpriseAnchor{}, now)
+	serviceUnderTest.Config.BUCAuthorizeApps = nil
+
+	if err := serviceUnderTest.Config.Validate(ASBConfig{
+		IdentityAnchorImageRef: "registry.example/anchor@sha256:" + strings.Repeat("a", 64),
+		IdentityAnchorTimeout:  time.Minute,
+	}); err != nil {
+		t.Fatalf("Validate without preauthorized applications: %v", err)
+	}
+
+	result, err := serviceUnderTest.StartBinding(context.Background(), StartEnterpriseIdentityBindingInput{
+		WorkspaceID:  util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID:      util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		ActorUserID:  util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+		EmployeeID:   "12345",
+		RedirectPath: "/agents/222/settings",
+	})
+	if err != nil {
+		t.Fatalf("StartBinding: %v", err)
+	}
+	authorizeURL, err := url.Parse(result.AuthorizeURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authorizeURL.Query().Get("scope") != "profile openid employee" {
+		t.Fatalf("scope = %q", authorizeURL.Query().Get("scope"))
+	}
+	if _, ok := authorizeURL.Query()["authorize_app"]; ok {
+		t.Fatalf("authorize_app must be omitted: %v", authorizeURL.Query())
 	}
 }
 

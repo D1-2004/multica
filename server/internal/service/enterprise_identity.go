@@ -178,8 +178,8 @@ func (c EnterpriseIdentityConfig) Validate(asb ASBConfig) error {
 			return fmt.Errorf("%s must be an absolute HTTPS URL", name)
 		}
 	}
-	if len(c.BUCAuthorizeApps) == 0 || len(c.BUCAuthorizeApps) > 40 {
-		return errors.New("MULTICA_BUC_AUTHORIZE_APPS must contain between 1 and 40 applications")
+	if len(c.BUCAuthorizeApps) > 40 {
+		return errors.New("MULTICA_BUC_AUTHORIZE_APPS must contain at most 40 applications")
 	}
 	for _, app := range c.BUCAuthorizeApps {
 		if strings.TrimSpace(app) == "" || strings.ContainsAny(app, "\r\n") {
@@ -322,7 +322,12 @@ func (s *EnterpriseIdentityService) StartBinding(
 	}
 	authorize := *s.Authorize
 	query := authorize.Query()
-	query.Set("scope", "profile openid employee user_authorize")
+	scope := "profile openid employee"
+	if len(s.Config.BUCAuthorizeApps) > 0 {
+		scope += " user_authorize"
+		query.Set("authorize_app", strings.Join(s.Config.BUCAuthorizeApps, ","))
+	}
+	query.Set("scope", scope)
 	query.Set("prompt", "consent")
 	query.Set("response_type", "code")
 	query.Set("client_id", s.Config.BUCClientID)
@@ -331,7 +336,6 @@ func (s *EnterpriseIdentityService) StartBinding(
 	query.Set("version", "1.0")
 	query.Set("state", state)
 	query.Set("nonce", nonce)
-	query.Set("authorize_app", strings.Join(s.Config.BUCAuthorizeApps, ","))
 	authorize.RawQuery = query.Encode()
 	return StartEnterpriseIdentityBindingResult{
 		AuthorizeURL: authorize.String(),
