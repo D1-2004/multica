@@ -37,8 +37,10 @@ const (
 	// Candidate validation creates a native sandbox and executes multiple E2B
 	// commands. Each command may use the configured sandbox-ready timeout, so
 	// the release lease must outlive the complete validation sequence.
-	stableReleaseLeaseDuration = 10 * time.Minute
-	stableWorkerPollInterval   = 5 * time.Second
+	stableReleaseLeaseDuration        = 10 * time.Minute
+	stableWorkerPollInterval          = 5 * time.Second
+	fcE2BStableChannelLockClass int32 = 0x46534332 // "FSC2"
+	fcE2BStableChannelLockKey   int32 = 1
 )
 
 var (
@@ -234,6 +236,46 @@ func (s *FCE2BStableService) CurrentTemplate(ctx context.Context) (FCE2BStableTe
 		return FCE2BStableTemplateBinding{}, ErrFCE2BStableChannelUninitialized
 	}
 	return *channel.Current, nil
+}
+
+// LockCurrentTemplateForRuntimeCreation keeps the stable-channel pointer from
+// changing between resolving it and inserting a new stable Runtime. The final
+// release transition takes the matching exclusive lock and performs one last
+// consistency check before publishing the new pointer.
+func (s *FCE2BStableService) LockCurrentTemplateForRuntimeCreation(
+	ctx context.Context,
+	tx pgx.Tx,
+) (FCE2BStableTemplateBinding, error) {
+	if s == nil || tx == nil {
+		return FCE2BStableTemplateBinding{}, errors.New("FC/E2B stable channel service is unavailable")
+	}
+	if _, err := tx.Exec(
+		ctx,
+		"SELECT pg_advisory_xact_lock_shared($1, $2)",
+		fcE2BStableChannelLockClass,
+		fcE2BStableChannelLockKey,
+	); err != nil {
+		return FCE2BStableTemplateBinding{}, fmt.Errorf("lock FC/E2B stable channel for runtime creation: %w", err)
+	}
+	var current FCE2BStableTemplateBinding
+	err := tx.QueryRow(ctx, `
+		SELECT current_template_id, current_template_build_id,
+		       current_template_alias, current_release_id::text
+		FROM fc_e2b_stable_channel
+		WHERE channel = 'stable'
+	`).Scan(
+		&current.TemplateID,
+		&current.TemplateBuildID,
+		&current.TemplateAlias,
+		&current.ReleaseID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return FCE2BStableTemplateBinding{}, ErrFCE2BStableChannelUninitialized
+	}
+	if err != nil {
+		return FCE2BStableTemplateBinding{}, fmt.Errorf("load locked FC/E2B stable channel: %w", err)
+	}
+	return current, nil
 }
 
 func (s *FCE2BStableService) ListRuntimeOverview(ctx context.Context) ([]FCE2BStableRuntimeOverview, error) {
@@ -530,6 +572,9 @@ func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtyp
 	token := uuid.New()
 	var release FCE2BStableRelease
 	var rolloutStartedAt, batchStartedAt pgtype.Timestamptz
+	// Manual advance may supersede a worker that is only evaluating a covered
+	// stage. A target update remains exclusive: while any Runtime is actively
+	// changing templates, the manual request waits for that work to finish.
 	if err := s.Pool.QueryRow(ctx, `
 		UPDATE fc_e2b_stable_release
 		SET lease_token = $2,
@@ -538,10 +583,11 @@ func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtyp
 		WHERE id = $1
 		  AND status = 'rolling_out'
 		  AND current_batch BETWEEN 1 AND 3
-		  AND (
-		      lease_token IS NULL
-		      OR lease_expires_at IS NULL
-		      OR lease_expires_at < now()
+		  AND NOT EXISTS (
+		      SELECT 1
+		      FROM fc_e2b_stable_release_target target
+		      WHERE target.release_id = fc_e2b_stable_release.id
+		        AND target.status = 'updating'
 		  )
 		RETURNING id::text, template_alias, status, current_batch,
 		          target_percentage, rollout_started_at, batch_started_at
@@ -555,8 +601,31 @@ func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtyp
 		&batchStartedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			current, loadErr := s.GetRelease(ctx, releaseID)
+			if loadErr != nil {
+				return FCE2BStableRelease{}, loadErr
+			}
+			if current.Status == FCE2BStableReleaseRollingOut &&
+				current.CurrentBatch >= 1 &&
+				current.CurrentBatch <= 3 {
+				progress, progressErr := s.loadStableRolloutProgress(
+					ctx,
+					current.ID,
+					current.CurrentBatch,
+				)
+				if progressErr != nil {
+					return FCE2BStableRelease{}, progressErr
+				}
+				if progress.Updating > 0 {
+					return FCE2BStableRelease{}, fmt.Errorf(
+						"%w: %d runtime targets are still updating",
+						ErrFCE2BStableAdvanceBlocked,
+						progress.Updating,
+					)
+				}
+			}
 			return FCE2BStableRelease{}, fmt.Errorf(
-				"%w: the rollout worker is updating the current stage or no next stage is available",
+				"%w: no next rollout stage is available",
 				ErrFCE2BStableReleaseState,
 			)
 		}
@@ -575,28 +644,35 @@ func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtyp
 	release.RolloutStartedAt = &rolloutStartedAt.Time
 	release.BatchStartedAt = &batchStartedAt.Time
 
-	var pending, failed int
-	if err := s.Pool.QueryRow(ctx, `
-		SELECT
-			count(*) FILTER (WHERE status IN ('pending', 'updating')),
-			count(*) FILTER (WHERE status = 'failed')
-		FROM fc_e2b_stable_release_target
-		WHERE release_id = $1 AND batch_index <= $2
-	`, releaseID, release.CurrentBatch).Scan(&pending, &failed); err != nil {
-		return FCE2BStableRelease{}, fmt.Errorf("check stable rollout stage targets: %w", err)
+	if err := s.reconcileTargets(ctx, release); err != nil {
+		return FCE2BStableRelease{}, fmt.Errorf("reconcile stable rollout targets before advance: %w", err)
 	}
-	if pending > 0 {
+	progress, err := s.loadStableRolloutProgress(ctx, release.ID, release.CurrentBatch)
+	if err != nil {
+		return FCE2BStableRelease{}, err
+	}
+	if progress.Updating > 0 {
 		return FCE2BStableRelease{}, fmt.Errorf(
 			"%w: %d runtime targets are still updating",
 			ErrFCE2BStableAdvanceBlocked,
-			pending,
+			progress.Updating,
 		)
 	}
-	if failed > 0 {
+	if progress.Failed > 0 {
 		return FCE2BStableRelease{}, fmt.Errorf(
 			"%w: %d runtime targets failed",
 			ErrFCE2BStableAdvanceBlocked,
-			failed,
+			progress.Failed,
+		)
+	}
+	stageTarget := stableBatchTarget(progress.Total, release.CurrentBatch)
+	if !stableBatchCovered(progress.Total, progress.Updated, release.CurrentBatch) {
+		return FCE2BStableRelease{}, fmt.Errorf(
+			"%w: the %d%% stage requires %d updated runtime targets, but only %d are updated",
+			ErrFCE2BStableAdvanceBlocked,
+			release.TargetPercentage,
+			stageTarget,
+			progress.Updated,
 		)
 	}
 	if err := s.stableLaunchHealthGate(ctx, release); err != nil {
@@ -607,30 +683,16 @@ func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtyp
 	if nextBatch == 0 {
 		return FCE2BStableRelease{}, ErrFCE2BStableReleaseState
 	}
-	now := time.Now()
-	tag, err := s.Pool.Exec(ctx, `
-		UPDATE fc_e2b_stable_release
-		SET current_batch = $1,
-		    target_percentage = $2,
-		    batch_started_at = $3,
-		    next_batch_at = $3,
-		    updated_targets = (
-		        SELECT count(*) FROM fc_e2b_stable_release_target
-		        WHERE release_id = $4 AND status = 'updated'
-		    ),
-		    lease_token = NULL,
-		    lease_expires_at = NULL,
-		    updated_at = now()
-		WHERE id = $4
-		  AND status = 'rolling_out'
-		  AND current_batch = $5
-		  AND lease_token = $6
-	`, nextBatch, percentage, now, releaseID, release.CurrentBatch, token)
-	if err != nil {
-		return FCE2BStableRelease{}, fmt.Errorf("advance stable rollout stage: %w", err)
-	}
-	if tag.RowsAffected() != 1 {
-		return FCE2BStableRelease{}, ErrFCE2BStableReleaseState
+	if err := s.advanceStableRolloutStage(
+		ctx,
+		release.ID,
+		token,
+		release.CurrentBatch,
+		nextBatch,
+		percentage,
+		time.Now(),
+	); err != nil {
+		return FCE2BStableRelease{}, err
 	}
 	s.Notify()
 	return s.GetRelease(ctx, releaseID)
@@ -779,6 +841,13 @@ func (s *FCE2BStableService) runOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		_, _ = s.Pool.Exec(context.Background(), `
+			UPDATE fc_e2b_stable_release
+			SET lease_token = NULL, lease_expires_at = NULL, updated_at = now()
+			WHERE id = $1 AND lease_token = $2
+		`, release.ID, token)
+	}()
 	switch release.Status {
 	case FCE2BStableReleaseValidating:
 		return s.validateRelease(ctx, release, token)
@@ -1036,12 +1105,62 @@ func (s *FCE2BStableService) developerRolloutRelease(
 }
 
 func (s *FCE2BStableService) rolloutRelease(ctx context.Context, release FCE2BStableRelease, token uuid.UUID) error {
+	if release.CurrentBatch < 1 ||
+		release.CurrentBatch > 4 ||
+		release.RolloutStartedAt == nil ||
+		release.BatchStartedAt == nil {
+		return s.pauseForGate(
+			ctx,
+			release.ID,
+			token,
+			FCE2BStableReleaseRollingOut,
+			errors.New("stable rollout stage or timing is incomplete"),
+		)
+	}
 	if err := s.reconcileTargets(ctx, release); err != nil {
 		return s.releaseLease(ctx, release.ID, token, err)
 	}
-	selected := releaseTemplate(release)
-	target, err := s.claimTarget(ctx, release.ID, release.CurrentBatch, false)
-	if err == nil {
+	progress, err := s.loadStableRolloutProgress(ctx, release.ID, release.CurrentBatch)
+	if err != nil {
+		return s.releaseLease(ctx, release.ID, token, err)
+	}
+	release.TotalTargets = progress.Total
+	release.UpdatedTargets = progress.Updated
+	if progress.Failed > 0 {
+		_, err := s.Pool.Exec(ctx, `
+			UPDATE fc_e2b_stable_release
+			SET status = 'paused', paused_from_status = 'rolling_out',
+			    failed_targets = $1, lease_token = NULL, lease_expires_at = NULL,
+			    updated_at = now()
+			WHERE id = $2 AND lease_token = $3
+		`, progress.Failed, release.ID, token)
+		return err
+	}
+	if progress.ActiveUpdating > 0 {
+		return s.releaseLease(ctx, release.ID, token, nil)
+	}
+
+	stageTarget := stableBatchTarget(progress.Total, release.CurrentBatch)
+	if !stableBatchCovered(progress.Total, progress.Updated, release.CurrentBatch) {
+		selected := releaseTemplate(release)
+		target, claimErr := s.claimTarget(ctx, release.ID, release.CurrentBatch, false)
+		if errors.Is(claimErr, pgx.ErrNoRows) {
+			return s.pauseForGate(
+				ctx,
+				release.ID,
+				token,
+				FCE2BStableReleaseRollingOut,
+				fmt.Errorf(
+					"the %d%% stage requires %d updated runtime targets, but only %d are updated and no eligible target remains",
+					release.TargetPercentage,
+					stageTarget,
+					progress.Updated,
+				),
+			)
+		}
+		if claimErr != nil {
+			return s.releaseLease(ctx, release.ID, token, claimErr)
+		}
 		result, updateErr := s.Launcher.UpdateRuntimeTemplateForStableRelease(
 			ctx,
 			target.RuntimeID,
@@ -1071,82 +1190,49 @@ func (s *FCE2BStableService) rolloutRelease(ctx context.Context, release FCE2BSt
 		}
 		return s.releaseLease(ctx, release.ID, token, nil)
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return s.releaseLease(ctx, release.ID, token, err)
-	}
-
-	var pending, failed int
-	if err := s.Pool.QueryRow(ctx, `
-		SELECT
-			count(*) FILTER (WHERE status IN ('pending', 'updating')),
-			count(*) FILTER (WHERE status = 'failed')
-		FROM fc_e2b_stable_release_target
-		WHERE release_id = $1 AND batch_index <= $2
-	`, release.ID, release.CurrentBatch).Scan(&pending, &failed); err != nil {
-		return s.releaseLease(ctx, release.ID, token, err)
-	}
-	if failed > 0 {
-		_, err := s.Pool.Exec(ctx, `
-			UPDATE fc_e2b_stable_release
-			SET status = 'paused', paused_from_status = 'rolling_out',
-			    failed_targets = $1, lease_token = NULL, lease_expires_at = NULL,
-			    updated_at = now()
-			WHERE id = $2 AND lease_token = $3
-		`, failed, release.ID, token)
-		return err
-	}
-	if pending > 0 {
-		return s.releaseLease(ctx, release.ID, token, nil)
-	}
 
 	nextBatch, percentage, due := stableNextBatch(release.CurrentBatch, *release.RolloutStartedAt)
 	if nextBatch == 0 {
 		_, err := s.Pool.Exec(ctx, `
 			UPDATE fc_e2b_stable_release
 			SET status = 'observing',
-			    updated_targets = total_targets,
+			    updated_targets = $2,
 			    next_batch_at = rollout_started_at + interval '24 hours',
 			    lease_token = NULL,
 			    lease_expires_at = NULL,
 			    updated_at = now()
-			WHERE id = $1 AND lease_token = $2
-		`, release.ID, token)
+			WHERE id = $1 AND lease_token = $3
+		`, release.ID, progress.Updated, token)
 		return err
 	}
 	if time.Now().Before(due) {
 		_, err := s.Pool.Exec(ctx, `
 			UPDATE fc_e2b_stable_release
-			SET updated_targets = (
-			        SELECT count(*) FROM fc_e2b_stable_release_target
-			        WHERE release_id = $1 AND status = 'updated'
-			    ),
-			    next_batch_at = $2,
+			SET updated_targets = $2,
+			    next_batch_at = $3,
 			    lease_token = NULL,
 			    lease_expires_at = NULL,
 			    updated_at = now()
-			WHERE id = $1 AND lease_token = $3
-		`, release.ID, due, token)
+			WHERE id = $1 AND lease_token = $4
+		`, release.ID, progress.Updated, due, token)
 		return err
 	}
 	if err := s.stableLaunchHealthGate(ctx, release); err != nil {
 		return s.pauseForGate(ctx, release.ID, token, FCE2BStableReleaseRollingOut, err)
 	}
-	_, err = s.Pool.Exec(ctx, `
-		UPDATE fc_e2b_stable_release
-		SET current_batch = $1,
-		    target_percentage = $2,
-		    batch_started_at = now(),
-		    updated_targets = (
-		        SELECT count(*) FROM fc_e2b_stable_release_target
-		        WHERE release_id = $3 AND status = 'updated'
-		    ),
-		    next_batch_at = $4,
-		    lease_token = NULL,
-		    lease_expires_at = NULL,
-		    updated_at = now()
-		WHERE id = $3 AND lease_token = $5
-	`, nextBatch, percentage, due, release.ID, token)
-	return err
+	if err := s.advanceStableRolloutStage(
+		ctx,
+		release.ID,
+		token,
+		release.CurrentBatch,
+		nextBatch,
+		percentage,
+		time.Now(),
+	); err != nil {
+		return err
+	}
+	s.Notify()
+	return nil
 }
 
 func (s *FCE2BStableService) observeRelease(ctx context.Context, release FCE2BStableRelease, token uuid.UUID) error {
@@ -1195,6 +1281,50 @@ func (s *FCE2BStableService) finalizeObservation(
 		return false, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(
+		ctx,
+		"SELECT pg_advisory_xact_lock($1, $2)",
+		fcE2BStableChannelLockClass,
+		fcE2BStableChannelLockKey,
+	); err != nil {
+		return false, fmt.Errorf("lock FC/E2B stable channel for finalization: %w", err)
+	}
+	var missingTargets int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*)
+		FROM agent_runtime runtime
+		LEFT JOIN fc_e2b_stable_release_target target
+		  ON target.release_id = $1
+		 AND target.runtime_id = runtime.id
+		WHERE runtime.runtime_mode = 'cloud'
+		  AND runtime.metadata->>'kind' = 'fc-e2b'
+		  AND COALESCE(NULLIF(runtime.metadata->>'template_channel', ''), 'stable') = 'stable'
+		  AND (target.id IS NULL OR target.status <> 'updated')
+	`, release.ID).Scan(&missingTargets); err != nil {
+		return false, fmt.Errorf("check final stable rollout consistency: %w", err)
+	}
+	if missingTargets > 0 {
+		if _, err := tx.Exec(ctx, `
+			UPDATE fc_e2b_stable_release
+			SET status = 'rolling_out',
+			    current_batch = 4,
+			    target_percentage = 100,
+			    next_batch_at = now(),
+			    lease_token = NULL,
+			    lease_expires_at = NULL,
+			    updated_at = now()
+			WHERE id = $1
+			  AND status = 'observing'
+			  AND lease_token = $2
+		`, release.ID, token); err != nil {
+			return false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return false, err
+		}
+		s.Notify()
+		return false, nil
+	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE fc_e2b_stable_release
 		SET status = 'completed', completed_at = now(), updated_targets = total_targets,
@@ -1515,6 +1645,17 @@ func stableBatchCutoffs(total int) [4]int {
 	}
 }
 
+func stableBatchTarget(total, batch int) int {
+	if batch < 1 || batch > 4 {
+		return 0
+	}
+	return stableBatchCutoffs(total)[batch-1]
+}
+
+func stableBatchCovered(total, updated, batch int) bool {
+	return updated >= stableBatchTarget(total, batch)
+}
+
 func stableTargetHash(releaseID string, target stableRuntimeTarget) string {
 	sum := sha256.Sum256([]byte(releaseID + ":" + util.UUIDToString(target.WorkspaceID) + ":" + util.UUIDToString(target.RuntimeID)))
 	return hex.EncodeToString(sum[:])
@@ -1548,6 +1689,87 @@ func stableRolloutSchedule(startedAt time.Time) []FCE2BStableRolloutMilestone {
 	}
 }
 
+type stableRolloutProgress struct {
+	Total          int
+	Updated        int
+	Updating       int
+	ActiveUpdating int
+	Failed         int
+}
+
+func (s *FCE2BStableService) loadStableRolloutProgress(
+	ctx context.Context,
+	releaseID string,
+	currentBatch int,
+) (stableRolloutProgress, error) {
+	var progress stableRolloutProgress
+	err := s.Pool.QueryRow(ctx, `
+		SELECT
+			count(*),
+			count(*) FILTER (WHERE status = 'updated'),
+			count(*) FILTER (
+			    WHERE status = 'updating' AND batch_index <= $2
+			),
+			count(*) FILTER (
+			    WHERE status = 'updating'
+			      AND batch_index <= $2
+			      AND (lease_expires_at IS NULL OR lease_expires_at >= now())
+			),
+			count(*) FILTER (
+			    WHERE status = 'failed' AND batch_index <= $2
+			)
+		FROM fc_e2b_stable_release_target
+		WHERE release_id = $1
+	`, releaseID, currentBatch).Scan(
+		&progress.Total,
+		&progress.Updated,
+		&progress.Updating,
+		&progress.ActiveUpdating,
+		&progress.Failed,
+	)
+	if err != nil {
+		return stableRolloutProgress{}, fmt.Errorf("load stable rollout progress: %w", err)
+	}
+	return progress, nil
+}
+
+func (s *FCE2BStableService) advanceStableRolloutStage(
+	ctx context.Context,
+	releaseID string,
+	token uuid.UUID,
+	currentBatch,
+	nextBatch,
+	percentage int,
+	startedAt time.Time,
+) error {
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE fc_e2b_stable_release
+		SET current_batch = $1,
+		    target_percentage = $2,
+		    batch_started_at = $3,
+		    next_batch_at = $3,
+		    updated_targets = (
+		        SELECT count(*) FROM fc_e2b_stable_release_target
+		        WHERE release_id = $4 AND status = 'updated'
+		    ),
+		    validation_error = '',
+		    lease_token = NULL,
+		    lease_expires_at = NULL,
+		    updated_at = now()
+		WHERE id = $4
+		  AND status = 'rolling_out'
+		  AND current_batch = $5
+		  AND lease_token = $6
+	`, nextBatch, percentage, startedAt, releaseID, currentBatch, token)
+	if err != nil {
+		return fmt.Errorf("advance stable rollout stage: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrFCE2BStableReleaseState
+	}
+	return nil
+}
+
 func (s *FCE2BStableService) claimTarget(
 	ctx context.Context,
 	releaseID string,
@@ -1560,10 +1782,7 @@ func (s *FCE2BStableService) claimTarget(
 			SELECT id
 			FROM fc_e2b_stable_release_target
 			WHERE release_id = $1
-			  AND (
-			      ($3 = true AND is_developer = true)
-			      OR ($3 = false AND batch_index <= $2)
-			  )
+			  AND ($3 = false OR is_developer = true)
 			  AND (
 			      status = 'pending'
 			      OR (status = 'updating' AND lease_expires_at < now())
@@ -1574,6 +1793,7 @@ func (s *FCE2BStableService) claimTarget(
 		)
 		UPDATE fc_e2b_stable_release_target target
 		SET status = 'updating',
+		    batch_index = CASE WHEN $3 THEN batch_index ELSE $2 END,
 		    attempt_count = attempt_count + 1,
 		    lease_token = gen_random_uuid(),
 		    lease_expires_at = now() + interval '2 minutes',

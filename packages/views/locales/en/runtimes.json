@@ -304,6 +304,7 @@
     "rollout_schedule_hint": "All times stay anchored to rollout start. Manual advance opens the next stage early without moving any scheduled time.",
     "rollout_schedule_percentage": "Roll out to {{percentage}}%",
     "rollout_schedule_complete": "Complete final observation",
+    "rollout_stage_target": "Current cumulative stage target: {{percentage}}% ({{target}} Runtimes). Updates above this count carry into later stages.",
     "advance_rollout": "Advance now to {{percentage}}%",
     "complete_observation": "Complete observation",
     "complete_observation_notice": "Complete the release after final checks. The server rechecks every Runtime and health gate, then marks this template as the current stable version and exits the active release.",

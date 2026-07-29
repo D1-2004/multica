@@ -241,7 +241,7 @@ describe("StableFCE2BReleaseDialog", () => {
       current_batch: 1,
       target_percentage: 5,
       previous_template_alias: "Current image",
-      updated_targets: 4,
+      updated_targets: 35,
       total_targets: 61,
       validation_error: "",
       rollout_schedule: [
@@ -281,6 +281,13 @@ describe("StableFCE2BReleaseDialog", () => {
     renderDialog();
 
     expect(screen.getByText("24-hour rollout schedule")).toBeInTheDocument();
+    expect(screen.getByText("Updated 35 / 61")).toBeInTheDocument();
+    expect(screen.getByText("57%")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Current cumulative stage target: 5% (4 Runtimes). Updates above this count carry into later stages.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("Roll out to 5%")).toBeInTheDocument();
     expect(screen.getByText("Roll out to 25%")).toBeInTheDocument();
     expect(screen.getByText("Roll out to 50%")).toBeInTheDocument();
