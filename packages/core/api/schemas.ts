@@ -932,6 +932,7 @@ export const EMPTY_CLOUD_RUNTIME_NODE: CloudRuntimeNode = {
 
 const DashboardUsageDailySchema = z.object({
   date: z.string().default(""),
+  agent_id: z.string().default(""),
   provider: z.string().default(""),
   model: z.string().default(""),
   input_tokens: z.number().default(0),
@@ -967,6 +968,7 @@ export const DashboardAgentRunTimeListSchema = z.array(DashboardAgentRunTimeSche
 
 const DashboardRunTimeDailySchema = z.object({
   date: z.string().default(""),
+  agent_id: z.string().default(""),
   total_seconds: z.number().default(0),
   task_count: z.number().default(0),
   failed_count: z.number().default(0),

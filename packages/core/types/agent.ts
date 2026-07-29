@@ -649,14 +649,16 @@ export interface RuntimeUsageByHour {
   task_count: number;
 }
 
-// One (date, provider, model) bucket of token usage for the workspace
+// One (date, agent, provider, model) bucket of token usage for the workspace
 // dashboard. Workspace-scoped (no runtime_id) and optionally narrowed to a
-// single project on the server side. `provider` is kept on the wire so the
+// single project on the server side. `agent_id` supports per-agent trend
+// comparison; `provider` is kept on the wire so the
 // client can disambiguate bare model ids that collide across providers
 // (e.g. Cursor's `auto` vs another provider's `auto`) when pricing. Cost
 // stays client-side via the model pricing table.
 export interface DashboardUsageDaily {
   date: string;
+  agent_id?: string;
   provider: string;
   model: string;
   input_tokens: number;
@@ -691,12 +693,13 @@ export interface DashboardAgentRunTime {
   failed_count: number;
 }
 
-// One (date) bucket of terminal-task run-time + counts for the workspace
-// dashboard. Powers the Time and Tasks metrics on the daily-trend toggle
-// — same toggle as Tokens / Cost, anchored on completed_at so day buckets
-// line up with the per-agent run-time card.
+// One (date, agent) bucket of terminal-task run-time + counts for the
+// workspace dashboard. Powers the Time and Tasks metrics on the daily-trend
+// toggle and per-agent comparison chart, anchored on completed_at so day
+// buckets line up with the per-agent run-time card.
 export interface DashboardRunTimeDaily {
   date: string;
+  agent_id?: string;
   total_seconds: number;
   task_count: number;
   failed_count: number;

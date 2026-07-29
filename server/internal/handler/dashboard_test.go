@@ -111,6 +111,7 @@ func TestDashboardEndpoints(t *testing.T) {
 
 	type dailyRow struct {
 		Date        string `json:"date"`
+		AgentID     string `json:"agent_id"`
 		Model       string `json:"model"`
 		InputTokens int64  `json:"input_tokens"`
 	}
@@ -135,13 +136,20 @@ func TestDashboardEndpoints(t *testing.T) {
 		var rows []dailyRow
 		_ = json.NewDecoder(w.Body).Decode(&rows)
 		var total int64
+		foundAgentBucket := false
 		for _, r := range rows {
 			if r.Model == "claude-3-5-sonnet" {
 				total += r.InputTokens
+				if r.AgentID == agentID {
+					foundAgentBucket = true
+				}
 			}
 		}
 		if total < 1500 {
 			t.Errorf("daily ws: expected >=1500 tokens (1000+500), got %d", total)
+		}
+		if !foundAgentBucket {
+			t.Errorf("daily ws: expected agent_id %s on trend rows; got %v", agentID, rows)
 		}
 	}
 

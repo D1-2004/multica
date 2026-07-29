@@ -50,6 +50,7 @@ import {
   todayIso,
 } from "../../runtimes/utils";
 import { useT } from "../../i18n";
+import { AgentComparisonDialog } from "./agent-comparison-dialog";
 import {
   aggregateAgentTokens,
   aggregateDailyCost,
@@ -63,6 +64,7 @@ import {
   DELETED_AGENTS_ROW_ID,
   formatDuration,
   mergeAgentDashboardRows,
+  type AgentComparisonMetric,
   type AgentDashboardRow,
 } from "../utils";
 
@@ -503,6 +505,11 @@ export function DashboardPage() {
               <Leaderboard
                 rows={visibleAgentRows}
                 agents={agents}
+                usage={dailyUsage}
+                runTime={runTimeDailyRows}
+                dimension={dim}
+                days={days}
+                tz={viewTZ}
                 deletedAgentCount={deletedAgentCount}
                 lessThanMinuteLabel={t(($) => $.duration.less_than_minute)}
               />
@@ -701,7 +708,7 @@ function TrendBlock({
 // Which metric ranks the leaderboard. Drives row order, progress bar
 // width, and which column header is emphasised — keeping the three in
 // lockstep so the user always sees what the ranking actually measures.
-type LeaderboardSort = "tokens" | "cost" | "time" | "tasks";
+type LeaderboardSort = AgentComparisonMetric;
 
 const SORT_METRIC: Record<LeaderboardSort, (r: AgentDashboardRow) => number> = {
   tokens: (r) => r.tokens,
@@ -713,11 +720,21 @@ const SORT_METRIC: Record<LeaderboardSort, (r: AgentDashboardRow) => number> = {
 function Leaderboard({
   rows,
   agents,
+  usage,
+  runTime,
+  dimension,
+  days,
+  tz,
   deletedAgentCount,
   lessThanMinuteLabel,
 }: {
   rows: AgentDashboardRow[];
   agents: { id: string; name: string }[];
+  usage: import("@multica/core/types").DashboardUsageDaily[];
+  runTime: import("@multica/core/types").DashboardRunTimeDaily[];
+  dimension: Dim;
+  days: TimeRange;
+  tz: string;
   deletedAgentCount: number;
   lessThanMinuteLabel: string;
 }) {
@@ -746,6 +763,18 @@ function Leaderboard({
     const metric = SORT_METRIC[sortBy];
     return sortedRows.reduce((m, r) => Math.max(m, metric(r)), 0);
   }, [sortedRows, sortBy]);
+  const comparisonAgents = useMemo(
+    () =>
+      sortedRows.map((row) => ({
+        id: row.agentId,
+        name:
+          row.agentId === DELETED_AGENTS_ROW_ID
+            ? t(($) => $.leaderboard.deleted_agents)
+            : agents.find((agent) => agent.id === row.agentId)?.name ??
+              row.agentId,
+      })),
+    [sortedRows, agents, t],
+  );
 
   // Active column gets foreground text; others stay muted. Helps the user
   // see "this is what the bar is measuring" at a glance.
@@ -756,7 +785,18 @@ function Leaderboard({
     <div className="rounded-lg border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 pt-4 pb-3">
         <h4 className="text-sm font-semibold">{t(($) => $.leaderboard.title)}</h4>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <AgentComparisonDialog
+            agents={comparisonAgents}
+            usage={usage}
+            runTime={runTime}
+            defaultAgentId={sortedRows[0]?.agentId}
+            defaultMetric={sortBy}
+            dimension={dimension}
+            days={days}
+            tz={tz}
+            lessThanMinuteLabel={lessThanMinuteLabel}
+          />
           <Segmented value={sortBy} onChange={setSortBy} options={sortOptions} />
           <span className="text-xs text-muted-foreground">
             {deletedAgentCount > 0

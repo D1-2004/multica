@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithI18n } from "../../test/i18n";
 
 // The viewing timezone flows: auth store `user.timezone` → useViewingTimezone()
@@ -26,12 +27,26 @@ vi.mock("@tanstack/react-query", async () => {
     useQuery: (opts: { queryKey: unknown[] }) => {
       queryKeys.push(opts.queryKey);
       if (dashboardDataRef.current) {
+        if (
+          opts.queryKey[0] === "workspaces" &&
+          opts.queryKey[2] === "agents"
+        ) {
+          return {
+            data: [
+              { id: "agent-1", name: "Alpha" },
+              { id: "agent-2", name: "Bravo" },
+            ],
+            isLoading: false,
+            isSuccess: true,
+          };
+        }
         const kind = opts.queryKey[2];
         const data =
           kind === "daily"
             ? [
                 {
                   date: todayIso(),
+                  agent_id: "agent-1",
                   provider: "anthropic",
                   model: "claude-sonnet-4-6",
                   input_tokens: 1_000,
@@ -41,6 +56,29 @@ vi.mock("@tanstack/react-query", async () => {
                   task_count: 2,
                 },
               ]
+            : kind === "by-agent"
+              ? [
+                  {
+                    agent_id: "agent-1",
+                    provider: "anthropic",
+                    model: "claude-sonnet-4-6",
+                    input_tokens: 1_000,
+                    output_tokens: 2_000,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                    task_count: 2,
+                  },
+                  {
+                    agent_id: "agent-2",
+                    provider: "anthropic",
+                    model: "claude-sonnet-4-6",
+                    input_tokens: 500,
+                    output_tokens: 1_000,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                    task_count: 1,
+                  },
+                ]
             : kind === "agent-runtime"
               ? [
                   {
@@ -54,6 +92,7 @@ vi.mock("@tanstack/react-query", async () => {
                 ? [
                     {
                       date: todayIso(),
+                      agent_id: "agent-1",
                       total_seconds: 3 * 3_600 + 17 * 60,
                       task_count: 12,
                       failed_count: 1,
@@ -92,6 +131,12 @@ vi.mock("@multica/core/runtimes/custom-pricing-store", () => {
   );
   return { useCustomPricingStore };
 });
+
+vi.mock("../../common/actor-avatar", () => ({
+  ActorAvatar: ({ actorId }: { actorId: string }) => (
+    <span data-testid={`actor-${actorId}`} />
+  ),
+}));
 
 import { DashboardPage } from "./dashboard-page";
 
@@ -162,5 +207,36 @@ describe("DashboardPage — viewing timezone drives the query key", () => {
             .respectMotionPreference === true,
       ),
     ).toBe(true);
+  });
+
+  it("opens Agent comparison with the highest-usage Agent selected and supports multi-select", async () => {
+    dashboardDataRef.current = true;
+    tzRef.current = "UTC";
+    const user = userEvent.setup();
+
+    renderWithI18n(<DashboardPage />);
+    await user.click(
+      screen.getByRole("button", { name: "View detailed usage" }),
+    );
+
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByRole("button", { name: "Remove Alpha" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("button", { name: "Remove Bravo" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Select agents" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Bravo" }));
+
+    expect(
+      within(dialog).getByRole("button", { name: "Remove Alpha" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Remove Bravo" }),
+    ).toBeInTheDocument();
   });
 });
