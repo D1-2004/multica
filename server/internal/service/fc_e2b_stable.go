@@ -1696,18 +1696,13 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 		if !present {
 			continue
 		}
-		if health.completed < 2 {
-			return fmt.Errorf(
-				"provider %s has %d completed post-cutover tasks; both old-session and new-conversation probes are required",
-				provider,
-				health.completed,
-			)
-		}
-		if health.rotatedExistingSession < 1 || health.newSession < 1 {
-			return fmt.Errorf(
-				"provider %s has not proven both an existing-session rotation and a new-conversation sandbox",
-				provider,
-			)
+		if err := stableProviderProbeCoverageError(
+			provider,
+			health.completed,
+			health.rotatedExistingSession,
+			health.newSession,
+		); err != nil {
+			return err
 		}
 	}
 
@@ -1756,6 +1751,24 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 			"candidate runtime-start failure rate %.2f%% exceeds the 24-hour baseline %.2f%% by more than 3 percentage points",
 			candidateRate*100,
 			baselineRate*100,
+		)
+	}
+	return nil
+}
+
+func stableProviderProbeCoverageError(
+	provider string,
+	completed,
+	rotatedExistingSession,
+	newSession int,
+) error {
+	if completed < 2 {
+		return nil
+	}
+	if rotatedExistingSession < 1 || newSession < 1 {
+		return fmt.Errorf(
+			"provider %s has not proven both an existing-session rotation and a new-conversation sandbox",
+			provider,
 		)
 	}
 	return nil
