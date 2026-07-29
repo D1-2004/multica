@@ -490,8 +490,7 @@ export function StableFCE2BReleaseDialog({
                 {templates.map((template) => {
                   const isCurrent =
                     current != null &&
-                    template.id === current.template_id &&
-                    template.build_id === current.template_build_id;
+                    template.id === current.template_id;
                   const isSelected =
                     selected?.id === template.id &&
                     selected?.build_id === template.build_id;

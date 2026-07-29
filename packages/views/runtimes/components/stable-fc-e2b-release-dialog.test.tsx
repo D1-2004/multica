@@ -150,10 +150,10 @@ describe("StableFCE2BReleaseDialog", () => {
     );
   });
 
-  it("shows the current stable build separately and allows publishing it again", async () => {
+  it("labels the current stable template even when its build changed", async () => {
     mockChannelQuery.data.current = {
       template_id: "template-current",
-      template_build_id: "build-current",
+      template_build_id: "build-current-before-log-config",
       template_alias: "Current image",
       release_id: "release-current",
     };
@@ -172,6 +172,7 @@ describe("StableFCE2BReleaseDialog", () => {
 
     expect(currentTemplate).toBeEnabled();
     expect(screen.getByText("Currently published stable version")).toBeInTheDocument();
+    expect(screen.getByText("Current stable version")).toBeInTheDocument();
     expect(nextTemplate).toBeEnabled();
     expect(publish).toBeDisabled();
 
