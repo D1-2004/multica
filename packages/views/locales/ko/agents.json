@@ -567,6 +567,8 @@
       "dingtalk_account_surface_issue_description": "수신 메시지를 추적 가능한 작업으로 처리합니다.",
       "dingtalk_account_surface_chat": "대화 모드",
       "dingtalk_account_surface_chat_description": "작업을 만들지 않고 대화를 이어서 처리합니다.",
+      "dingtalk_account_surface_auto": "자동 모드",
+      "dingtalk_account_surface_auto_description": "먼저 채팅으로 받은 뒤 에이전트가 직접 답변할지, issue를 만들어 백그라운드에서 처리할지 결정합니다.",
       "dingtalk_account_surface_confirm": "확인",
       "dingtalk_account_surface_update_failed": "실행 모드를 업데이트하지 못했습니다.",
       "dingtalk_account_scope_direct_only": "나와의 대화 메시지 모니터링 중",

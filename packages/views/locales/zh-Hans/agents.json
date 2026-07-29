@@ -664,6 +664,8 @@
       "dingtalk_account_surface_issue_description": "将收到的消息作为任务执行并跟踪进度。",
       "dingtalk_account_surface_chat": "对话模式",
       "dingtalk_account_surface_chat_description": "以连续对话方式处理消息，不创建任务。",
+      "dingtalk_account_surface_auto": "自动模式",
+      "dingtalk_account_surface_auto_description": "先进入 Chat，由智能体决定直接回答，或创建 issue 转入后台处理。",
       "dingtalk_account_surface_confirm": "确认",
       "dingtalk_account_surface_update_failed": "无法更新运行模式。",
       "dingtalk_account_scope_direct_only": "已监听我聊消息",

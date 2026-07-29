@@ -197,9 +197,25 @@ export function DingTalkRunModePicker({
   const [draftValue, setDraftValue] = useState<DingTalkProcessingSurface>(value);
 
   function surfaceLabel(surfaceType: DingTalkProcessingSurface): string {
-    return surfaceType === "issue"
-      ? t(($) => $.tab_body.integrations.dingtalk_account_surface_issue)
-      : t(($) => $.tab_body.integrations.dingtalk_account_surface_chat);
+    switch (surfaceType) {
+      case "issue":
+        return t(($) => $.tab_body.integrations.dingtalk_account_surface_issue);
+      case "chat":
+        return t(($) => $.tab_body.integrations.dingtalk_account_surface_chat);
+      case "auto":
+        return t(($) => $.tab_body.integrations.dingtalk_account_surface_auto);
+    }
+  }
+
+  function surfaceDescription(surfaceType: DingTalkProcessingSurface): string {
+    switch (surfaceType) {
+      case "issue":
+        return t(($) => $.tab_body.integrations.dingtalk_account_surface_issue_description);
+      case "chat":
+        return t(($) => $.tab_body.integrations.dingtalk_account_surface_chat_description);
+      case "auto":
+        return t(($) => $.tab_body.integrations.dingtalk_account_surface_auto_description);
+    }
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -242,11 +258,8 @@ export function DingTalkRunModePicker({
           aria-label={t(($) => $.tab_body.integrations.dingtalk_account_run_mode)}
           className="gap-1 p-2"
         >
-          {(["issue", "chat"] as const).map((surfaceType) => {
+          {(["issue", "chat", "auto"] as const).map((surfaceType) => {
             const selected = draftValue === surfaceType;
-            const optionDescription = surfaceType === "issue"
-              ? t(($) => $.tab_body.integrations.dingtalk_account_surface_issue_description)
-              : t(($) => $.tab_body.integrations.dingtalk_account_surface_chat_description);
             return (
               <label
                 key={surfaceType}
@@ -264,7 +277,7 @@ export function DingTalkRunModePicker({
                     {surfaceLabel(surfaceType)}
                   </span>
                   <span className="block text-xs leading-relaxed text-muted-foreground">
-                    {optionDescription}
+                    {surfaceDescription(surfaceType)}
                   </span>
                 </span>
               </label>

@@ -120,6 +120,26 @@ describe("DingTalk account binding schemas", () => {
     });
   });
 
+  it("preserves the auto processing surface from binding responses", () => {
+    const parsed = DingTalkAccountBindingsResponseSchema.parse({
+      bindings: [
+        {
+          id: "installation-1",
+          workspace_id: "workspace-1",
+          agent_id: "agent-1",
+          dws_identity: { status: "unbound" },
+          message_route: {
+            status: "active",
+            surface_type: "auto",
+          },
+        },
+      ],
+      configured: true,
+    });
+
+    expect(parsed.bindings[0]?.messageRoute.surfaceType).toBe("auto");
+  });
+
   it("defaults old message-route responses to direct-only with no conversations", () => {
     const parsed = DingTalkAccountBindingsResponseSchema.parse({
       bindings: [

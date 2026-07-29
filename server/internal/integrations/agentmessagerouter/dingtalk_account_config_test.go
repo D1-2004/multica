@@ -59,6 +59,27 @@ func TestDingTalkAccountConfigRoundTripAndPublicProjection(t *testing.T) {
 	}
 }
 
+func TestDingTalkAccountConfigAcceptsAutoSurface(t *testing.T) {
+	config := DingTalkAccountConfig{
+		SchemaVersion:      1,
+		DispatchEndpointID: "v1_AAECAwQFBgcICQoLDA0ODw",
+		DispatchKeyID:      "v1",
+		SurfaceType:        "auto",
+	}
+
+	raw, err := config.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	parsed, err := ParseDingTalkAccountConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseDingTalkAccountConfig: %v", err)
+	}
+	if parsed.SurfaceType != "auto" {
+		t.Fatalf("surface type = %q, want auto", parsed.SurfaceType)
+	}
+}
+
 func TestDingTalkAccountConfigPreservesConversationSnapshots(t *testing.T) {
 	raw := []byte(`{
 		"schema_version":1,

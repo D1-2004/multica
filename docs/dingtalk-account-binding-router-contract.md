@@ -95,8 +95,11 @@ Authorization: Bearer <service credential>
 ```
 
 The successful response includes the current processing surface and outbound
-policy. `surface.type` is either `issue` or `chat`; the DBase-created message
-binding keeps `outbound` fixed to `dws` / `latest_message`.
+policy. `surface.type` is `issue`, `chat`, or `auto`; the DBase-created message
+binding keeps `outbound` fixed to `dws` / `latest_message`. Multica preserves
+and displays `auto` as the binding fact. Router materializes inbound `auto`
+messages through its `chat` dispatch path, where the Agent decides whether to
+answer directly or create an issue for background work.
 
 Multica changes only the processing surface through the owner-checked Router
 endpoint:
@@ -108,7 +111,7 @@ Content-Type: application/json
 
 {
   "agentId": "<agent UUID>",
-  "surface": { "type": "chat" }
+  "surface": { "type": "auto" }
 }
 ```
 
@@ -177,6 +180,9 @@ separate configuration values with opposite communication directions.
 
 ## History
 
+- 2026-07-29: Added `auto` as a processing-surface binding value. Multica now
+  preserves it in the local binding snapshot, exposes it through the binding
+  API, and lets operators display or select it without rewriting it to `chat`.
 - 2026-07-27: Extended the existing binding-token request with the
   database-authoritative Agent name and Workspace `{id,name}` snapshot. Added
   `agentName`, `workspaceId`, and `workspaceName` to the QR fragment, with one
@@ -223,9 +229,11 @@ The binding page also needs to show which DingTalk account owns the message
 listener and which processing surface is active. Carrying a display-only
 account snapshot fixes that presentation without confusing the listener with
 the Agent execution identity. Updating only the Router binding's surface lets
-operators switch between `issue` and `chat` without deleting and recreating the
-subscription, while the Agent ownership and outbound-policy checks prevent the
-update from widening into a different binding change.
+operators switch among `issue`, `chat`, and `auto` without deleting and
+recreating the subscription, while the Agent ownership and outbound-policy
+checks prevent the update from widening into a different binding change.
+Keeping `auto` intact in Multica makes the selected policy observable even
+though Router deliberately uses the existing `chat` materialization path.
 
 The downstream binding page also needs to identify which Multica Agent and
 Workspace the QR code represents. Reading those names from Multica's database

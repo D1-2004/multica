@@ -559,6 +559,8 @@
       "dingtalk_account_surface_issue_description": "受信メッセージを追跡可能なタスクとして処理します。",
       "dingtalk_account_surface_chat": "会話モード",
       "dingtalk_account_surface_chat_description": "タスクを作成せず、会話を継続して処理します。",
+      "dingtalk_account_surface_auto": "自動モード",
+      "dingtalk_account_surface_auto_description": "まずチャットで受け付け、エージェントが直接回答するか、issue を作成してバックグラウンドで処理するかを判断します。",
       "dingtalk_account_surface_confirm": "確認",
       "dingtalk_account_surface_update_failed": "実行モードを更新できませんでした。",
       "dingtalk_account_scope_direct_only": "自分とのチャットメッセージを監視中",

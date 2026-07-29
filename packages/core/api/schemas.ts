@@ -112,7 +112,9 @@ function normalizeDingTalkMessageScope(scope?: string): DingTalkMessageScope {
 function normalizeDingTalkProcessingSurface(
   surface?: string | null,
 ): DingTalkProcessingSurface | undefined {
-  return surface === "issue" || surface === "chat" ? surface : undefined;
+  return surface === "issue" || surface === "chat" || surface === "auto"
+    ? surface
+    : undefined;
 }
 
 const DingTalkMessageRouteOutcomeSchema = z
