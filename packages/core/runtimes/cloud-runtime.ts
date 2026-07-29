@@ -107,8 +107,16 @@ export type FCE2BStableReleaseAction =
   | "pause"
   | "resume"
   | "start-rollout"
+  | "advance-rollout"
   | "terminate"
   | "rollback";
+
+export interface FCE2BStableRolloutMilestone {
+  batch: number;
+  percentage: number;
+  scheduled_at: string;
+  kind: "rollout" | "complete";
+}
 
 export interface FCE2BStableRelease {
   id: string;
@@ -136,6 +144,7 @@ export interface FCE2BStableRelease {
   rollout_started_at?: string;
   batch_started_at?: string;
   next_batch_at?: string;
+  rollout_schedule?: FCE2BStableRolloutMilestone[];
   completed_at?: string;
   validation_error?: string;
   created_at: string;

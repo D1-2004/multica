@@ -184,6 +184,14 @@ func (h *Handler) StartFCE2BStableRollout(w http.ResponseWriter, r *http.Request
 	h.mutateFCE2BStableRelease(w, r, h.FCE2BStable.StartRollout)
 }
 
+func (h *Handler) AdvanceFCE2BStableRollout(w http.ResponseWriter, r *http.Request) {
+	if h.FCE2BStable == nil {
+		writeError(w, http.StatusServiceUnavailable, "FC/E2B stable channel is unavailable")
+		return
+	}
+	h.mutateFCE2BStableRelease(w, r, h.FCE2BStable.AdvanceRollout)
+}
+
 func (h *Handler) TerminateFCE2BStableRelease(w http.ResponseWriter, r *http.Request) {
 	if h.FCE2BStable == nil {
 		writeError(w, http.StatusServiceUnavailable, "FC/E2B stable channel is unavailable")
@@ -218,7 +226,8 @@ func (h *Handler) mutateFCE2BStableRelease(
 	}
 	release, err := mutate(r.Context(), releaseID)
 	if err != nil {
-		if errors.Is(err, service.ErrFCE2BStableReleaseState) {
+		if errors.Is(err, service.ErrFCE2BStableReleaseState) ||
+			errors.Is(err, service.ErrFCE2BStableAdvanceBlocked) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}

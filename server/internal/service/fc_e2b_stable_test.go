@@ -133,6 +133,36 @@ func TestStableNextBatchSchedule(t *testing.T) {
 	}
 }
 
+func TestStableRolloutScheduleKeepsOriginalAnchor(t *testing.T) {
+	started := time.Date(2026, 7, 29, 10, 0, 0, 0, time.UTC)
+	schedule := stableRolloutSchedule(started)
+	want := []FCE2BStableRolloutMilestone{
+		{Batch: 1, Percentage: 5, ScheduledAt: started, Kind: "rollout"},
+		{Batch: 2, Percentage: 25, ScheduledAt: started.Add(2 * time.Hour), Kind: "rollout"},
+		{Batch: 3, Percentage: 50, ScheduledAt: started.Add(8 * time.Hour), Kind: "rollout"},
+		{Batch: 4, Percentage: 100, ScheduledAt: started.Add(20 * time.Hour), Kind: "rollout"},
+		{Batch: 5, Percentage: 100, ScheduledAt: started.Add(24 * time.Hour), Kind: "complete"},
+	}
+	if len(schedule) != len(want) {
+		t.Fatalf("stableRolloutSchedule() returned %d milestones, want %d", len(schedule), len(want))
+	}
+	for index := range want {
+		if schedule[index] != want[index] {
+			t.Fatalf("milestone %d = %#v, want %#v", index, schedule[index], want[index])
+		}
+	}
+
+	nextBatch, percentage, due := stableNextBatch(2, started)
+	if nextBatch != 3 || percentage != 50 || !due.Equal(want[2].ScheduledAt) {
+		t.Fatalf(
+			"manual stage progression changed the fixed schedule: got (%d, %d, %s)",
+			nextBatch,
+			percentage,
+			due,
+		)
+	}
+}
+
 func TestStableFailureRate(t *testing.T) {
 	if got := failureRate(0, 0); got != 0 {
 		t.Fatalf("failureRate(0, 0) = %v, want 0", got)

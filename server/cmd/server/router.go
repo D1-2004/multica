@@ -1334,6 +1334,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/pause", h.PauseFCE2BStableRelease)
 		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/resume", h.ResumeFCE2BStableRelease)
 		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/start-rollout", h.StartFCE2BStableRollout)
+		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/advance-rollout", h.AdvanceFCE2BStableRollout)
 		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/terminate", h.TerminateFCE2BStableRelease)
 		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/rollback", h.RollbackFCE2BStableRelease)
 		r.With(handler.RequireDingTalkHumanActor).Get("/api/fde/onboarding", h.GetFDEOnboarding)
