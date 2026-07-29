@@ -84,3 +84,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250127172529-29210b9bc287 // indirect
 	google.golang.org/grpc v1.70.0 // indirect
 )
+
+// Aone GOPROXY publishes the Idem Go SDK from the Code repository path.
+replace gitlab.alibaba-inc.com/idem/idem-api-client-golang => gitlab.alibaba-inc.com/idem/idem-api-client v1.0.0

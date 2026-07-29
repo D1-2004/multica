@@ -190,6 +190,8 @@ github.com/zeebo/xxh3 v1.0.2/go.mod h1:5NWz9Sef7zIDm2JHfFlcQvNekmcEl9ekUZQQKCYaD
 gitlab.alibaba-inc.com/cmms-package/cmmsdkgo v1.1.0/go.mod h1:aYjHGrmcAMqgPlZYT8Mzml2SQl6b3GW02syC9XV5hlA=
 gitlab.alibaba-inc.com/cmms-package/cmmsdkgo v1.1.1 h1:llIMSBiUeRl+ZdDPUrprFvXh0lPG7KBVB+tgCz63LEw=
 gitlab.alibaba-inc.com/cmms-package/cmmsdkgo v1.1.1/go.mod h1:aYjHGrmcAMqgPlZYT8Mzml2SQl6b3GW02syC9XV5hlA=
+gitlab.alibaba-inc.com/idem/idem-api-client v1.0.0 h1:ooY2X5cHc8fpa2V143v8LC5r/2DnJWmhLxXbZbK8qo8=
+gitlab.alibaba-inc.com/idem/idem-api-client v1.0.0/go.mod h1:/i3lVE76iaAwuU0UUWh24qM8O5YDd1wJKj+4OUXbdgg=
 gitlab.alibaba-inc.com/idem/idem-api-client-golang v1.0.0 h1:SFhpfCU6Q7R4j+WyiDR2dPXUDWva8bK8b7jXsvWXouY=
 gitlab.alibaba-inc.com/idem/idem-api-client-golang v1.0.0/go.mod h1:/i3lVE76iaAwuU0UUWh24qM8O5YDd1wJKj+4OUXbdgg=
 gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang v1.2.21 h1:IHo+k7DCpHZQOVOAp6gQf32h09vjYKPokBpIFKlrhMM=
