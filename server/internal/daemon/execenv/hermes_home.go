@@ -44,6 +44,10 @@ import (
 //     the shared home: Hermes loads and writes back MEMORY.md/USER.md there, and
 //     per-agent memory is a Multica product concern — the host's local Hermes
 //     memory must not bleed into a task, nor task memory back out to the host;
+//   - preserves Hermes' runtime-created SQLite session store (`state.db` plus
+//     its WAL/SHM/journal sidecars) across Reuse. If the shared home already has
+//     that store it remains mirrored; if Hermes creates it inside the overlay,
+//     the next overlay reconciliation must not erase the resumable session;
 //   - disables the external `memory.provider` in the derived config so a
 //     host-configured Supermemory/Hindsight/etc. backend isn't shared across
 //     tasks. This is the on-disk + external-backend memory isolation; a managed,
@@ -87,6 +91,38 @@ var hermesOverriddenEntries = map[string]struct{}{
 	"active_profile": {},
 	"profiles":       {},
 	".env":           {},
+}
+
+// hermesRuntimeStateEntries are created lazily by Hermes under HERMES_HOME.
+// They are deliberately separate from hermesOverriddenEntries:
+//
+//   - when the shared home already contains state.db, the overlay should keep
+//     mirroring it so a session created before skill assignment remains usable;
+//   - when the shared home does not contain it, Hermes creates a task-local
+//     state.db in the overlay. Reuse must preserve that local file (and SQLite
+//     sidecars), otherwise the very next `session/resume` loses the prior turn.
+//
+// A task-local file wins if the shared home later gains an entry with the same
+// name. Replacing the live task store at that point would also break continuity.
+var hermesRuntimeStateEntries = map[string]struct{}{
+	"state.db":         {},
+	"state.db-wal":     {},
+	"state.db-shm":     {},
+	"state.db-journal": {},
+}
+
+// hasTaskLocalHermesRuntimeState reports whether Hermes has materialized any
+// part of its SQLite store directly in the overlay rather than through a shared
+// home symlink. The store is one unit: once any local member exists, mixing in a
+// later shared-home DB or sidecar would pair unrelated SQLite files.
+func hasTaskLocalHermesRuntimeState(hermesHome string) bool {
+	for name := range hermesRuntimeStateEntries {
+		fi, err := os.Lstat(filepath.Join(hermesHome, name))
+		if err == nil && fi.Mode()&os.ModeSymlink == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // platformDefaultHermesHome returns Hermes' platform-native default home:
@@ -467,9 +503,16 @@ func mirrorSharedHermesHome(sharedHome, hermesHome string, logger *slog.Logger) 
 		return fmt.Errorf("read shared home: %w", err)
 	}
 	mirrored := make(map[string]struct{}, len(entries))
+	taskLocalRuntimeState := hasTaskLocalHermesRuntimeState(hermesHome)
 	for _, entry := range entries {
 		name := entry.Name()
 		if _, overridden := hermesOverriddenEntries[name]; overridden {
+			continue
+		}
+		if _, runtimeState := hermesRuntimeStateEntries[name]; runtimeState && taskLocalRuntimeState {
+			// SQLite's database and sidecars form one store. Once Hermes has
+			// materialized any member locally for this task, do not mix in a
+			// shared-home member that appeared later.
 			continue
 		}
 		src := filepath.Join(sharedHome, name)
@@ -490,12 +533,19 @@ func reconcileMirroredEntries(hermesHome string, mirrored map[string]struct{}) e
 	if err != nil {
 		return fmt.Errorf("read overlay home: %w", err)
 	}
+	taskLocalRuntimeState := hasTaskLocalHermesRuntimeState(hermesHome)
 	for _, entry := range entries {
 		name := entry.Name()
 		if _, owned := hermesOverriddenEntries[name]; owned {
 			continue
 		}
 		if _, keep := mirrored[name]; keep {
+			continue
+		}
+		if _, runtimeState := hermesRuntimeStateEntries[name]; runtimeState && taskLocalRuntimeState {
+			// Hermes may have created this lazily inside the overlay because the
+			// shared home had no database yet. It is live task state, not stale
+			// mirror residue, and is required by the next session/resume.
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(hermesHome, name)); err != nil {

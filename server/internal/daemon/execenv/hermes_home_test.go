@@ -62,6 +62,7 @@ func TestPrepareHermesHomeOverlay(t *testing.T) {
 	mustWrite(t, filepath.Join(sharedHome, "plugins", "custom-provider", "plugin.py"), "# provider plugin")
 	mustWrite(t, filepath.Join(sharedHome, "oauth_state.json"), `{"nous":"tok"}`)
 	mustWrite(t, filepath.Join(sharedHome, "skills", "personal-notes", "SKILL.md"), "My personal notes skill.")
+	mustWrite(t, filepath.Join(sharedHome, "state.db"), "shared session store")
 
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "Help review code."}}
@@ -69,7 +70,7 @@ func TestPrepareHermesHomeOverlay(t *testing.T) {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 
-	for _, name := range []string{"auth.json", "plugins", "oauth_state.json"} {
+	for _, name := range []string{"auth.json", "plugins", "oauth_state.json", "state.db"} {
 		fi, err := os.Lstat(filepath.Join(hermesHome, name))
 		if err != nil {
 			t.Fatalf("%s not mirrored into overlay: %v", name, err)
@@ -115,6 +116,128 @@ func TestPrepareHermesHomeOverlay(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(hermesHome, "skills", "personal-notes")); !os.IsNotExist(err) {
 		t.Error("user global skill should be referenced via external_dirs, not copied into the task-local skills/")
+	}
+
+	// SQLite may place WAL/SHM files beside a mirrored database symlink. Those
+	// local sidecars are part of the same live store and must survive Reuse.
+	mustWrite(t, filepath.Join(hermesHome, "state.db-wal"), "local wal")
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+		t.Fatalf("prepareHermesHome (reuse with local WAL) failed: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(hermesHome, "state.db-wal")); err != nil {
+		t.Fatalf("local WAL beside mirrored state.db missing after reuse: %v", err)
+	} else if string(data) != "local wal" {
+		t.Errorf("local WAL changed across reuse: %q", data)
+	}
+	if fi, err := os.Lstat(filepath.Join(hermesHome, "state.db")); err != nil {
+		t.Fatalf("mirrored state.db missing after reuse: %v", err)
+	} else if fi.Mode()&os.ModeSymlink == 0 {
+		t.Error("existing shared state.db should remain mirrored after reuse")
+	}
+}
+
+// TestHermesOverlayPreservesRuntimeSessionStateAcrossReuse is the regression
+// for a bound-skill chat losing its Hermes ACP session on the second turn.
+// Runtime images start with no shared state.db, so Hermes creates the database
+// inside the per-task overlay during turn one. Rebuilding that overlay for a
+// warm Reuse must retain both the database and its SQLite sidecars.
+func TestHermesOverlayPreservesRuntimeSessionStateAcrossReuse(t *testing.T) {
+	t.Parallel()
+	sharedHome := t.TempDir()
+	mustWrite(t, filepath.Join(sharedHome, "config.yaml"), "model: hermes-4\n")
+
+	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
+	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+		t.Fatalf("prepareHermesHome failed: %v", err)
+	}
+
+	runtimeState := map[string]string{
+		"state.db":         "task session",
+		"state.db-wal":     "committed wal frames",
+		"state.db-shm":     "wal coordination",
+		"state.db-journal": "delete-mode journal",
+	}
+	for name, content := range runtimeState {
+		mustWrite(t, filepath.Join(hermesHome, name), content)
+	}
+
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+		t.Fatalf("prepareHermesHome (reuse) failed: %v", err)
+	}
+	for name, want := range runtimeState {
+		path := filepath.Join(hermesHome, name)
+		if data, err := os.ReadFile(path); err != nil {
+			t.Fatalf("%s missing after reuse: %v", name, err)
+		} else if string(data) != want {
+			t.Errorf("%s = %q after reuse, want %q", name, data, want)
+		}
+		if fi, err := os.Lstat(path); err != nil {
+			t.Fatalf("lstat %s after reuse: %v", name, err)
+		} else if fi.Mode()&os.ModeSymlink != 0 {
+			t.Errorf("%s created by the task should remain task-local", name)
+		}
+		if _, err := os.Stat(filepath.Join(sharedHome, name)); !os.IsNotExist(err) {
+			t.Errorf("%s should not be copied back into the shared home", name)
+		}
+	}
+
+	// If another task later creates a shared state.db, this task's already-live
+	// local database must still win; swapping stores would lose its ACP session.
+	mustWrite(t, filepath.Join(sharedHome, "state.db"), "unrelated shared session")
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+		t.Fatalf("prepareHermesHome (shared state appeared) failed: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(hermesHome, "state.db")); err != nil {
+		t.Fatalf("read task-local state.db after shared state appeared: %v", err)
+	} else if string(data) != runtimeState["state.db"] {
+		t.Errorf("task-local state.db was replaced: got %q", data)
+	}
+}
+
+// TestReuseHermesPreservesRuntimeSessionState covers the public execenv reuse
+// path used by warm task dispatches, not just the overlay helper in isolation.
+func TestReuseHermesPreservesRuntimeSessionState(t *testing.T) {
+	t.Parallel()
+	sharedHome := t.TempDir()
+	mustWrite(t, filepath.Join(sharedHome, "config.yaml"), "model: hermes-4\n")
+
+	task := TaskContextForEnv{
+		IssueID:     "hermes-session-reuse",
+		AgentSkills: []SkillContextForEnv{{Name: "Review Helper", Content: "Help review."}},
+	}
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot:   t.TempDir(),
+		WorkspaceID:      "ws-hermes-session-reuse",
+		TaskID:           "cccc1111-2222-3333-4444-555566667777",
+		Provider:         "hermes",
+		HermesSourceHome: sharedHome,
+		Task:             task,
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer env.Cleanup(true)
+
+	statePath := filepath.Join(env.HermesHome, "state.db")
+	mustWrite(t, statePath, "turn-one session")
+
+	reused := Reuse(ReuseParams{
+		WorkDir:          env.WorkDir,
+		Provider:         "hermes",
+		HermesSourceHome: sharedHome,
+		Task:             task,
+	}, testLogger())
+	if reused == nil {
+		t.Fatal("Reuse returned nil")
+	}
+	if reused.HermesHome != env.HermesHome {
+		t.Fatalf("reused HERMES_HOME = %q, want %q", reused.HermesHome, env.HermesHome)
+	}
+	if data, err := os.ReadFile(statePath); err != nil {
+		t.Fatalf("state.db missing after Reuse: %v", err)
+	} else if string(data) != "turn-one session" {
+		t.Errorf("state.db changed after Reuse: %q", data)
 	}
 }
 
