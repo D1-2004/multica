@@ -69,8 +69,9 @@ Related:
 
 同一次 BUC OIDC 授权回调按固定顺序处理：
 
-1. 校验 `state`、OIDC `nonce`、`iss`、`aud`、`exp`，并确认 ID Token 中员工工号
-   与用户选择的员工一致。
+1. 校验 `state`、OIDC `nonce`、`iss`、`aud`、`exp`；随后用同次换取的
+   Access Token 调用 BUC `user_info`，校验其 `openid` 与 ID Token `sub`
+   一致，并从受信响应的 `empId` 取得员工工号。
 2. 用 BUC OIDC ID Token 调用 Normandy OIDC SDK 的
    `NewBucOidcIdTokenSpec`，签发 AuthX 专用 ID Token 和可轮换 Refresh Token。
 3. 用原始 BUC 三件套创建并注入一个 BUC 身份锚点沙箱。

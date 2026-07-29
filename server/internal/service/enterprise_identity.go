@@ -27,6 +27,7 @@ import (
 const (
 	defaultBUCAuthorizeURL               = "https://login.alibaba-inc.com/oauth2/auth.htm"
 	defaultBUCTokenURL                   = "https://login.alibaba-inc.com/rpc/oauth2/access_token.json"
+	defaultBUCUserInfoURL                = "https://login.alibaba-inc.com/rpc/oauth2/user_info.json"
 	defaultBUCIssuer                     = "https://login.alibaba-inc.com/oauth2"
 	defaultBUCJWKSURL                    = "https://login.alibaba-inc.com/oauth2/v1/keys"
 	defaultEnterpriseAuthXTTL            = int64(3600)
@@ -55,6 +56,7 @@ type EnterpriseIdentityConfig struct {
 	Enabled             bool
 	BUCAuthorizeURL     string
 	BUCTokenURL         string
+	BUCUserInfoURL      string
 	BUCIssuer           string
 	BUCJWKSURL          string
 	BUCClientID         string
@@ -81,6 +83,7 @@ func EnterpriseIdentityConfigFromEnv() EnterpriseIdentityConfig {
 		Enabled:             envBool("MULTICA_ENTERPRISE_IDENTITY_ENABLED"),
 		BUCAuthorizeURL:     firstNonEmptyString(os.Getenv("MULTICA_BUC_AUTHORIZE_URL"), defaultBUCAuthorizeURL),
 		BUCTokenURL:         firstNonEmptyString(os.Getenv("MULTICA_BUC_TOKEN_URL"), defaultBUCTokenURL),
+		BUCUserInfoURL:      firstNonEmptyString(os.Getenv("MULTICA_BUC_USERINFO_URL"), defaultBUCUserInfoURL),
 		BUCIssuer:           firstNonEmptyString(os.Getenv("MULTICA_BUC_ISSUER"), defaultBUCIssuer),
 		BUCJWKSURL:          firstNonEmptyString(os.Getenv("MULTICA_BUC_JWKS_URL"), defaultBUCJWKSURL),
 		BUCClientID:         strings.TrimSpace(os.Getenv("MULTICA_BUC_CLIENT_ID")),
@@ -169,6 +172,7 @@ func (c EnterpriseIdentityConfig) Validate(asb ASBConfig) error {
 	for name, raw := range map[string]string{
 		"BUC authorize URL": c.BUCAuthorizeURL,
 		"BUC token URL":     c.BUCTokenURL,
+		"BUC user info URL": c.BUCUserInfoURL,
 		"BUC redirect URL":  c.BUCRedirectURL,
 		"BUC issuer":        c.BUCIssuer,
 		"BUC JWKS URL":      c.BUCJWKSURL,
@@ -352,6 +356,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	}
 	attempt, err := s.Store.ConsumeAgentEnterpriseIdentityAttempt(ctx, sha256Bytes(state))
 	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("consume_oauth_attempt")
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CompleteEnterpriseIdentityBindingResult{}, errors.New("enterprise identity OAuth attempt is invalid, expired, or already used")
 		}
@@ -359,19 +364,29 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	}
 	bucTokens, err := s.BUC.ExchangeCode(ctx, code)
 	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("exchange_buc_code")
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
 	claims, err := s.BUC.VerifyIDToken(
 		ctx,
 		bucTokens.IDToken,
-		s.Config.BUCAgentID,
 		attempt.NonceHash,
 		s.Now(),
 	)
 	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("verify_buc_id_token")
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
-	employeeID := claims.EmployeeID
+	userInfo, err := s.BUC.FetchUserInfo(ctx, bucTokens.AccessToken)
+	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("fetch_buc_user_info")
+		return CompleteEnterpriseIdentityBindingResult{}, err
+	}
+	if claims.Subject != userInfo.OpenID {
+		logEnterpriseIdentityBindingStageFailure("match_buc_subject")
+		return CompleteEnterpriseIdentityBindingResult{}, errors.New("BUC user info does not match the verified ID token")
+	}
+	employeeID := userInfo.EmployeeID
 	agent, err := s.Store.GetAgent(ctx, attempt.AgentID)
 	if err != nil || agent.WorkspaceID != attempt.WorkspaceID {
 		return CompleteEnterpriseIdentityBindingResult{}, errors.New("enterprise identity target agent no longer exists")
@@ -387,6 +402,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	}
 	authXToken, err := s.AuthX.IssueFromBUCIDToken(ctx, bucTokens.IDToken)
 	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("issue_authx_token")
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
 	agentSPIFFEID, err := s.agentSPIFFEID(attempt.AgentID)
@@ -410,6 +426,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		BindingAt:   s.Now(),
 	})
 	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("ensure_idem_agent")
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
 	cleanupAIP := func() {
@@ -420,6 +437,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		}
 	}
 	if _, err := s.Idem.IssueAIT(ctx, authXToken.IDToken, agentSPIFFEID, operatorSPIFFEID, s.Config.AITTTL); err != nil {
+		logEnterpriseIdentityBindingStageFailure("issue_idem_ait")
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
@@ -431,6 +449,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		bucTokens,
 	)
 	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("create_buc_anchor")
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
@@ -459,6 +478,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		BoundBy:                    attempt.ActorUserID,
 	})
 	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("persist_binding")
 		cleanupAnchor()
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, fmt.Errorf("persist enterprise identity binding: %w", err)
@@ -484,6 +504,10 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		Identity:     identity,
 		RedirectPath: attempt.RedirectPath,
 	}, nil
+}
+
+func logEnterpriseIdentityBindingStageFailure(stage string) {
+	slog.Warn("enterprise identity binding stage failed", "stage", stage)
 }
 
 func (s *EnterpriseIdentityService) loadReplaceableIdentity(

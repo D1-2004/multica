@@ -105,6 +105,7 @@ func NewASBEnterpriseRuntimeFromConfig(
 	}
 	bucClient, err := NewHTTPBUCOAuthClient(
 		identityConfig.BUCTokenURL,
+		identityConfig.BUCUserInfoURL,
 		identityConfig.BUCIssuer,
 		identityConfig.BUCJWKSURL,
 		identityConfig.BUCClientID,

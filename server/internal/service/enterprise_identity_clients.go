@@ -309,13 +309,20 @@ type BUCIdentityTokens struct {
 	ExpiresIn    int64
 }
 
+type BUCUserInfo struct {
+	EmployeeID string
+	OpenID     string
+}
+
 type BUCOAuthClient interface {
 	ExchangeCode(context.Context, string) (BUCIdentityTokens, error)
-	VerifyIDToken(context.Context, string, string, []byte, time.Time) (bucIDTokenClaims, error)
+	VerifyIDToken(context.Context, string, []byte, time.Time) (bucIDTokenClaims, error)
+	FetchUserInfo(context.Context, string) (BUCUserInfo, error)
 }
 
 type HTTPBUCOAuthClient struct {
 	tokenURL     *url.URL
+	userInfoURL  *url.URL
 	issuer       string
 	jwksURL      *url.URL
 	clientID     string
@@ -326,6 +333,7 @@ type HTTPBUCOAuthClient struct {
 
 func NewHTTPBUCOAuthClient(
 	tokenURL string,
+	userInfoURL string,
 	issuer string,
 	jwksURL string,
 	clientID string,
@@ -334,6 +342,10 @@ func NewHTTPBUCOAuthClient(
 	source *http.Client,
 ) (*HTTPBUCOAuthClient, error) {
 	parsedTokenURL, err := parseBUCHTTPEndpoint("token", tokenURL)
+	if err != nil {
+		return nil, err
+	}
+	parsedUserInfoURL, err := parseBUCHTTPEndpoint("user info", userInfoURL)
 	if err != nil {
 		return nil, err
 	}
@@ -362,6 +374,7 @@ func NewHTTPBUCOAuthClient(
 	}
 	return &HTTPBUCOAuthClient{
 		tokenURL:     parsedTokenURL,
+		userInfoURL:  parsedUserInfoURL,
 		issuer:       parsedIssuer.String(),
 		jwksURL:      parsedJWKSURL,
 		clientID:     clientID,
@@ -431,16 +444,13 @@ func (c *HTTPBUCOAuthClient) ExchangeCode(ctx context.Context, code string) (BUC
 
 type bucIDTokenClaims struct {
 	jwt.RegisteredClaims
-	EmployeeID string `json:"empid"`
-	AgentID    string `json:"agentid"`
-	Nonce      string `json:"nonce"`
-	Name       string `json:"name"`
+	Nonce string `json:"nonce"`
+	Name  string `json:"name"`
 }
 
 func (c *HTTPBUCOAuthClient) VerifyIDToken(
 	ctx context.Context,
 	rawToken string,
-	expectedAgentID string,
 	expectedNonceHash []byte,
 	now time.Time,
 ) (bucIDTokenClaims, error) {
@@ -481,9 +491,7 @@ func (c *HTTPBUCOAuthClient) VerifyIDToken(
 	if err != nil || token == nil || !token.Valid {
 		return bucIDTokenClaims{}, errors.New("BUC ID token signature or registered claims are invalid")
 	}
-	if !enterpriseEmployeeIDPattern.MatchString(claims.EmployeeID) ||
-		claims.AgentID != expectedAgentID ||
-		strings.TrimSpace(claims.Name) == "" {
+	if strings.TrimSpace(claims.Subject) == "" || strings.TrimSpace(claims.Name) == "" {
 		return claims, errors.New("BUC ID token claims do not match the binding request")
 	}
 	actualNonceHash := sha256Bytes(claims.Nonce)
@@ -492,6 +500,51 @@ func (c *HTTPBUCOAuthClient) VerifyIDToken(
 		return claims, errors.New("BUC ID token nonce does not match the binding request")
 	}
 	return claims, nil
+}
+
+func (c *HTTPBUCOAuthClient) FetchUserInfo(ctx context.Context, accessToken string) (BUCUserInfo, error) {
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return BUCUserInfo{}, errors.New("BUC access token is required")
+	}
+	form := url.Values{"access_token": {accessToken}}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.userInfoURL.String(),
+		strings.NewReader(form.Encode()),
+	)
+	if err != nil {
+		return BUCUserInfo{}, errors.New("build BUC user info request")
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return BUCUserInfo{}, fmt.Errorf("fetch BUC user info: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, enterpriseIdentityMaxResponseBytes))
+		return BUCUserInfo{}, fmt.Errorf("BUC user info endpoint returned HTTP %d", response.StatusCode)
+	}
+	var payload struct {
+		EmployeeID string `json:"empId"`
+		OpenID     string `json:"openid"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(response.Body, enterpriseIdentityMaxResponseBytes))
+	if err := decoder.Decode(&payload); err != nil {
+		return BUCUserInfo{}, errors.New("decode BUC user info response")
+	}
+	payload.EmployeeID = strings.TrimSpace(payload.EmployeeID)
+	payload.OpenID = strings.TrimSpace(payload.OpenID)
+	if !enterpriseEmployeeIDPattern.MatchString(payload.EmployeeID) || payload.OpenID == "" {
+		return BUCUserInfo{}, errors.New("BUC user info response is incomplete")
+	}
+	return BUCUserInfo{
+		EmployeeID: payload.EmployeeID,
+		OpenID:     payload.OpenID,
+	}, nil
 }
 
 type bucJWKSet struct {
