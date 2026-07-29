@@ -24,7 +24,9 @@ import type {
   TestAgentIdentityGitHubConnectionResponse,
   GroupedIssuesResponse,
   GitHubAgentPreview,
+  GitHubInstallation,
   ListGitHubAgentRepositoriesResponse,
+  ListGitHubInstallationsResponse,
   AgentSource,
   CreateGitHubAgentResponse,
   SyncAgentSourceResponse,
@@ -1168,6 +1170,49 @@ export const ListGitHubAgentRepositoriesResponseSchema = z.object({
 
 export const EMPTY_GITHUB_AGENT_REPOSITORIES: ListGitHubAgentRepositoriesResponse = {
   repositories: [],
+};
+
+export const GitHubInstallationSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  installation_id: z.number().int().positive().optional(),
+  account_login: z.string(),
+  account_type: z.enum(["User", "Organization"]).default("User"),
+  account_avatar_url: z.string().nullable().default(null),
+  created_at: z.string(),
+  connected_by: z.string().optional(),
+}).loose();
+
+export const GitHubReusableInstallationSchema = z.object({
+  id: z.string(),
+  account_login: z.string(),
+  account_type: z.enum(["User", "Organization"]).default("User"),
+  account_avatar_url: z.string().nullable().default(null),
+  source_workspace_id: z.string(),
+  source_workspace_name: z.string(),
+}).loose();
+
+export const ListGitHubInstallationsResponseSchema = z.object({
+  installations: z.array(GitHubInstallationSchema).default([]),
+  reusable_installations: z.array(GitHubReusableInstallationSchema).default([]),
+  configured: z.boolean().default(false),
+  can_manage: z.boolean().optional(),
+}).loose();
+
+export const EMPTY_GITHUB_INSTALLATION: GitHubInstallation = {
+  id: "",
+  workspace_id: "",
+  account_login: "",
+  account_type: "User",
+  account_avatar_url: null,
+  created_at: "",
+};
+
+export const EMPTY_GITHUB_INSTALLATIONS: ListGitHubInstallationsResponse = {
+  installations: [],
+  reusable_installations: [],
+  configured: false,
+  can_manage: false,
 };
 
 const GitHubAgentSkillPreviewSchema = z.object({

@@ -60,6 +60,7 @@ export function GitHubTab() {
     enabled: !!wsId && canView,
   });
   const installations = installationData?.installations ?? [];
+  const reusableInstallations = installationData?.reusable_installations ?? [];
   const configured = installationData?.configured ?? false;
   const canManage = installationData?.can_manage === true;
   const connected = installations.length > 0;
@@ -68,6 +69,7 @@ export function GitHubTab() {
   const flags = deriveGitHubSettings(workspace);
   const [savingKey, setSavingKey] = useState<SettingsKey | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [reusingId, setReusingId] = useState<string | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
 
@@ -106,6 +108,20 @@ export function GitHubTab() {
       toast.error(e instanceof Error ? e.message : t(($) => $.github.toast_open_failed));
     } finally {
       setConnecting(false);
+    }
+  }
+
+  async function handleReuse(sourceInstallationId: string) {
+    if (reusingId) return;
+    setReusingId(sourceInstallationId);
+    try {
+      await api.reuseGitHubInstallation(wsId, sourceInstallationId);
+      await qc.invalidateQueries({ queryKey: ["github", wsId] });
+      toast.success(t(($) => $.github.toast_reused));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t(($) => $.github.toast_reuse_failed));
+    } finally {
+      setReusingId(null);
     }
   }
 
@@ -235,6 +251,52 @@ export function GitHubTab() {
                 </div>
               )}
             </div>
+
+            {canManage && !connected && reusableInstallations.length > 0 && (
+              <div className="space-y-3 border-t pt-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">
+                    {t(($) => $.github.reusable_title)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {t(($) => $.github.reusable_description)}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  {reusableInstallations.map((installation) => (
+                    <div
+                      key={installation.id}
+                      className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">
+                          {installation.account_login}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {t(($) => $.github.reusable_from, {
+                            workspace: installation.source_workspace_name,
+                          })}
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleReuse(installation.id)}
+                        disabled={reusingId !== null || !configured}
+                        aria-label={t(($) => $.github.reuse_connection_aria, {
+                          login: installation.account_login,
+                          workspace: installation.source_workspace_name,
+                        })}
+                      >
+                        {reusingId === installation.id
+                          ? t(($) => $.github.reusing_connection)
+                          : t(($) => $.github.reuse_connection)}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {canManage && !configured && (
               <p className="text-xs text-muted-foreground">

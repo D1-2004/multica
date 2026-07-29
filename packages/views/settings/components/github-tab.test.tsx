@@ -8,11 +8,13 @@ import enSettings from "../../locales/en/settings.json";
 
 const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
 const mockDeleteInstallation = vi.hoisted(() => vi.fn());
+const mockReuseInstallation = vi.hoisted(() => vi.fn());
 const mockGetConnectURL = vi.hoisted(() => vi.fn());
 const mockInvalidate = vi.hoisted(() => vi.fn());
 const mockNavPush = vi.hoisted(() => vi.fn());
 const mockSetQueryData = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
+const mockToastError = vi.hoisted(() => vi.fn());
 
 const workspaceRef = vi.hoisted(() => ({
   current: {
@@ -27,17 +29,31 @@ type MemberRole = "owner" | "admin" | "member" | "guest";
 const membersRef = vi.hoisted(() => ({
   current: [{ user_id: "user-1", role: "owner" as MemberRole }],
 }));
+type InstallationDataFixture = {
+  installations: {
+    id: string;
+    account_login: string;
+    installation_id?: number;
+    connected_by?: string;
+  }[];
+  reusable_installations?: {
+    id: string;
+    account_login: string;
+    account_type: "User" | "Organization";
+    account_avatar_url: string | null;
+    source_workspace_id: string;
+    source_workspace_name: string;
+  }[];
+  configured: boolean;
+  can_manage: boolean;
+};
 const installationsRef = vi.hoisted(() => ({
   current: {
-    installations: [] as {
-      id: string;
-      account_login: string;
-      installation_id?: number;
-      connected_by?: string;
-    }[],
+    installations: [],
+    reusable_installations: [],
     configured: true,
-    can_manage: true as boolean,
-  },
+    can_manage: true,
+  } as InstallationDataFixture,
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -83,6 +99,7 @@ vi.mock("@multica/core/api", () => ({
   api: {
     updateWorkspace: mockUpdateWorkspace,
     deleteGitHubInstallation: mockDeleteInstallation,
+    reuseGitHubInstallation: mockReuseInstallation,
     getGitHubConnectURL: mockGetConnectURL,
   },
 }));
@@ -108,7 +125,7 @@ vi.mock("../../navigation", () => ({
 }));
 
 vi.mock("sonner", () => ({
-  toast: { success: mockToastSuccess, error: vi.fn() },
+  toast: { success: mockToastSuccess, error: mockToastError },
 }));
 
 import { GitHubTab } from "./github-tab";
@@ -135,7 +152,12 @@ function resetFixtures() {
     repos: [{ url: "https://github.com/acme/api" }],
   };
   membersRef.current = [{ user_id: "user-1", role: "owner" }];
-  installationsRef.current = { installations: [], configured: true, can_manage: true };
+  installationsRef.current = {
+    installations: [],
+    reusable_installations: [],
+    configured: true,
+    can_manage: true,
+  };
 }
 
 describe("GitHubTab", () => {
@@ -256,6 +278,81 @@ describe("GitHubTab", () => {
 
     expect(screen.getByText(/Ask an admin or owner/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^Connect GitHub$/ })).toBeNull();
+  });
+
+  it("explicitly reuses a connection from another managed workspace", async () => {
+    const user = userEvent.setup();
+    installationsRef.current = {
+      configured: true,
+      can_manage: true,
+      installations: [],
+      reusable_installations: [
+        {
+          id: "source-binding-1",
+          account_login: "acme",
+          account_type: "Organization",
+          account_avatar_url: null,
+          source_workspace_id: "workspace-source",
+          source_workspace_name: "Platform",
+        },
+      ],
+    };
+    mockReuseInstallation.mockResolvedValue({
+      id: "target-binding-1",
+      workspace_id: "workspace-1",
+      account_login: "acme",
+      account_type: "Organization",
+      account_avatar_url: null,
+      created_at: "2026-07-29T00:00:00Z",
+    });
+
+    render(<GitHubTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByText("Available connections")).toBeTruthy();
+    expect(screen.getByText("From Platform")).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Use acme connection from Platform" }),
+    );
+
+    await waitFor(() => {
+      expect(mockReuseInstallation).toHaveBeenCalledWith("workspace-1", "source-binding-1");
+      expect(mockInvalidate).toHaveBeenCalledWith({ queryKey: ["github", "workspace-1"] });
+      expect(mockToastSuccess).toHaveBeenCalledWith("GitHub connection added");
+    });
+  });
+
+  it("keeps the existing connection available when reuse fails", async () => {
+    const user = userEvent.setup();
+    installationsRef.current = {
+      configured: true,
+      can_manage: true,
+      installations: [],
+      reusable_installations: [
+        {
+          id: "source-binding-1",
+          account_login: "acme",
+          account_type: "Organization",
+          account_avatar_url: null,
+          source_workspace_id: "workspace-source",
+          source_workspace_name: "Platform",
+        },
+      ],
+    };
+    mockReuseInstallation.mockRejectedValue(new Error("reusable GitHub installation not found"));
+
+    render(<GitHubTab />, { wrapper: I18nWrapper });
+    const reuseButton = screen.getByRole("button", {
+      name: "Use acme connection from Platform",
+    });
+    await user.click(reuseButton);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(
+        "reusable GitHub installation not found",
+      );
+      expect(mockInvalidate).not.toHaveBeenCalled();
+      expect(reuseButton).not.toBeDisabled();
+    });
   });
 
   it("renders the connected_by line when the backend provides it", () => {

@@ -27,6 +27,10 @@ One GitHub App installation can be connected in **several** workspaces at once �
 - Each workspace mirrors the PR and auto-links it against **its own** [issue prefix](/workspaces) and GitHub feature switches. A PR that references `MUL-1` and `ENG-2` links `MUL-1` in the workspace whose prefix is `MUL` and `ENG-2` in the one whose prefix is `ENG` — neither sees the other's issues.
 - Disconnecting the installation from one workspace only stops **that** workspace from receiving events; the others keep working.
 
+When an installation is already connected to another workspace you manage, the new workspace's **Settings → GitHub** page shows it under **Available connections**. Choose **Use connection** to create a separate binding for the new workspace. You must be an owner/admin in both the source and target workspaces; the source workspace stays connected.
+
+Do **not** uninstall and reinstall the GitHub App to connect a second workspace. A GitHub-side uninstall revokes the account-level grant and removes every Multica workspace binding for that installation.
+
 Repository scope is whatever you granted the GitHub App (all repositories, or a chosen subset). Connecting the installation in a workspace is itself the subscription — there is no separate per-repository selection inside Multica.
 
 <Callout type="warning">

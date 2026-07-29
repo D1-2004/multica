@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -1978,6 +1979,7 @@ func TestListGitHubInstallations_RoleGating(t *testing.T) {
 	call := func(t *testing.T, role string) map[string]any {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/github/installations", nil)
+		req.Header.Set("X-User-ID", testUserID)
 		req = withURLParam(req, "id", testWorkspaceID)
 		req = req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, db.Member{Role: role}))
 		w := httptest.NewRecorder()
@@ -2143,6 +2145,7 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner", "admin"))
 			r.Get("/github/connect", testHandler.GitHubConnect)
+			r.With(RequireHumanActor).Post("/github/installations/reuse", testHandler.ReuseGitHubInstallation)
 			r.Delete("/github/installations/{installationId}", testHandler.DeleteGitHubInstallation)
 		})
 	})
@@ -2184,6 +2187,25 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)
 		}
 		if code := exercise(t, http.MethodGet, "/api/workspaces/"+wsID+"/github/connect", outsiderUserID); code != http.StatusNotFound {
 			t.Errorf("outsider GET connect: want 404, got %d", code)
+		}
+	})
+
+	t.Run("POST reuse remains human owner/admin only", func(t *testing.T) {
+		path := "/api/workspaces/" + wsID + "/github/installations/reuse"
+		if code := exercise(t, http.MethodPost, path, memberUserID); code != http.StatusForbidden {
+			t.Errorf("member POST reuse: want 403, got %d", code)
+		}
+		if code := exercise(t, http.MethodPost, path, outsiderUserID); code != http.StatusNotFound {
+			t.Errorf("outsider POST reuse: want 404, got %d", code)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		req.Header.Set("X-User-ID", adminUserID)
+		req.Header.Set("X-Actor-Source", "task_token")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("task token POST reuse: want 403, got %d", rec.Code)
 		}
 	})
 
@@ -3219,6 +3241,208 @@ func TestSecondWorkspaceBindDoesNotUnbindFirst(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("re-binding an existing (workspace, installation) must upsert, got %d rows", len(rows))
 	}
+}
+
+// TestReuseGitHubInstallationAcrossManagedWorkspaces covers the product path
+// that does not exist in GitHub's install callback: an App installation already
+// connected to one Multica workspace can be explicitly reused in another
+// workspace managed by the same human. The client only submits the source
+// binding UUID; the server resolves the numeric installation id after checking
+// source-workspace admin access.
+func TestReuseGitHubInstallationAcrossManagedWorkspaces(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	ctx := context.Background()
+
+	var userID string
+	if err := testPool.QueryRow(ctx, `
+INSERT INTO "user" (name, email)
+VALUES ('GitHub Reuse Admin', 'github-reuse-admin@multica.test')
+RETURNING id
+`).Scan(&userID); err != nil {
+		t.Fatalf("create reuse user: %v", err)
+	}
+
+	createWorkspace := func(name, slug, prefix, role string) string {
+		t.Helper()
+		var id string
+		if err := testPool.QueryRow(ctx, `
+INSERT INTO workspace (name, slug, description, issue_prefix)
+VALUES ($1, $2, '', $3)
+RETURNING id
+`, name, slug, prefix).Scan(&id); err != nil {
+			t.Fatalf("create workspace %s: %v", slug, err)
+		}
+		if _, err := testPool.Exec(ctx, `
+INSERT INTO member (workspace_id, user_id, role)
+VALUES ($1, $2, $3)
+`, id, userID, role); err != nil {
+			t.Fatalf("add %s membership to %s: %v", role, slug, err)
+		}
+		return id
+	}
+
+	targetWorkspaceID := createWorkspace("GitHub Reuse Target", "github-reuse-target", "GRT", "admin")
+	sourceWorkspaceID := createWorkspace("GitHub Reuse Source", "github-reuse-source", "GRS", "admin")
+	memberSourceWorkspaceID := createWorkspace("GitHub Reuse Member Source", "github-reuse-member-source", "GRM", "member")
+
+	const reusableNumericID int64 = 88001122
+	const forbiddenNumericID int64 = 88001123
+	reusable, err := testHandler.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
+		WorkspaceID:    parseUUID(sourceWorkspaceID),
+		InstallationID: reusableNumericID,
+		AccountLogin:   "shared-org",
+		AccountType:    "Organization",
+	})
+	if err != nil {
+		t.Fatalf("create reusable installation: %v", err)
+	}
+	forbidden, err := testHandler.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
+		WorkspaceID:    parseUUID(memberSourceWorkspaceID),
+		InstallationID: forbiddenNumericID,
+		AccountLogin:   "member-only-org",
+		AccountType:    "Organization",
+	})
+	if err != nil {
+		t.Fatalf("create member-only installation: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
+	})
+
+	router := chi.NewRouter()
+	router.Route("/api/workspaces/{id}", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequireWorkspaceMemberFromURL(testHandler.Queries, "id"))
+			r.Get("/github/installations", testHandler.ListGitHubInstallations)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner", "admin"))
+			r.With(RequireHumanActor).Post("/github/installations/reuse", testHandler.ReuseGitHubInstallation)
+		})
+	})
+
+	exercise := func(t *testing.T, method, path string, body any, actorSource string) *httptest.ResponseRecorder {
+		t.Helper()
+		var payload io.Reader
+		if body != nil {
+			raw, err := json.Marshal(body)
+			if err != nil {
+				t.Fatalf("marshal request: %v", err)
+			}
+			payload = bytes.NewReader(raw)
+		}
+		req := httptest.NewRequest(method, path, payload)
+		req.Header.Set("X-User-ID", userID)
+		req.Header.Set("Content-Type", "application/json")
+		if actorSource != "" {
+			req.Header.Set("X-Actor-Source", actorSource)
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("lists only installations from other admin-managed workspaces", func(t *testing.T) {
+		rec := exercise(t, http.MethodGet, "/api/workspaces/"+targetWorkspaceID+"/github/installations", nil, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list installations: got %d (%s)", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Reusable []GitHubReusableInstallationResponse `json:"reusable_installations"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode list response: %v", err)
+		}
+		if len(body.Reusable) != 1 {
+			t.Fatalf("reusable installations = %d, want 1: %#v", len(body.Reusable), body.Reusable)
+		}
+		got := body.Reusable[0]
+		if got.ID != uuidToString(reusable.ID) || got.AccountLogin != "shared-org" {
+			t.Fatalf("reusable installation = %#v, want source binding %s", got, uuidToString(reusable.ID))
+		}
+		if got.SourceWorkspaceID != sourceWorkspaceID || got.SourceWorkspaceName != "GitHub Reuse Source" {
+			t.Fatalf("source workspace = %s/%q, want %s/%q",
+				got.SourceWorkspaceID, got.SourceWorkspaceName, sourceWorkspaceID, "GitHub Reuse Source")
+		}
+	})
+
+	t.Run("does not expose cross-workspace choices to machine credentials", func(t *testing.T) {
+		rec := exercise(t, http.MethodGet, "/api/workspaces/"+targetWorkspaceID+"/github/installations", nil, "task_token")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("machine list installations: got %d (%s)", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Reusable []GitHubReusableInstallationResponse `json:"reusable_installations"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode machine list response: %v", err)
+		}
+		if len(body.Reusable) != 0 {
+			t.Fatalf("machine credentials saw reusable installations: %#v", body.Reusable)
+		}
+	})
+
+	t.Run("reuses the source binding without replacing it", func(t *testing.T) {
+		rec := exercise(t, http.MethodPost,
+			"/api/workspaces/"+targetWorkspaceID+"/github/installations/reuse",
+			map[string]any{"source_installation_id": uuidToString(reusable.ID)}, "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("reuse installation: got %d (%s)", rec.Code, rec.Body.String())
+		}
+
+		rows, err := testHandler.Queries.ListGitHubInstallationsByInstallationID(ctx, reusableNumericID)
+		if err != nil {
+			t.Fatalf("list reused bindings: %v", err)
+		}
+		if len(rows) != 2 {
+			t.Fatalf("bindings after reuse = %d, want source + target", len(rows))
+		}
+		seen := map[string]bool{}
+		for _, row := range rows {
+			seen[uuidToString(row.WorkspaceID)] = true
+		}
+		if !seen[sourceWorkspaceID] || !seen[targetWorkspaceID] {
+			t.Fatalf("reuse must preserve source and add target, got workspaces %#v", seen)
+		}
+
+		// Repeating the explicit action is idempotent because the target uses
+		// the existing (workspace_id, installation_id) upsert key.
+		rec = exercise(t, http.MethodPost,
+			"/api/workspaces/"+targetWorkspaceID+"/github/installations/reuse",
+			map[string]any{"source_installation_id": uuidToString(reusable.ID)}, "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("repeat reuse: got %d (%s)", rec.Code, rec.Body.String())
+		}
+		rows, err = testHandler.Queries.ListGitHubInstallationsByInstallationID(ctx, reusableNumericID)
+		if err != nil || len(rows) != 2 {
+			t.Fatalf("repeat reuse must keep two bindings, rows=%d err=%v", len(rows), err)
+		}
+	})
+
+	t.Run("rejects a source workspace where the caller is only a member", func(t *testing.T) {
+		rec := exercise(t, http.MethodPost,
+			"/api/workspaces/"+targetWorkspaceID+"/github/installations/reuse",
+			map[string]any{"source_installation_id": uuidToString(forbidden.ID)}, "")
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("member-only source: got %d (%s), want 404", rec.Code, rec.Body.String())
+		}
+		rows, err := testHandler.Queries.ListGitHubInstallationsByInstallationID(ctx, forbiddenNumericID)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("forbidden reuse changed bindings, rows=%d err=%v", len(rows), err)
+		}
+	})
+
+	t.Run("rejects machine credentials", func(t *testing.T) {
+		rec := exercise(t, http.MethodPost,
+			"/api/workspaces/"+targetWorkspaceID+"/github/installations/reuse",
+			map[string]any{"source_installation_id": uuidToString(reusable.ID)}, "task_token")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("task token reuse: got %d (%s), want 403", rec.Code, rec.Body.String())
+		}
+	})
 }
 
 // TestWebhook_UninstallDeletesAllBindings verifies a GitHub-side app uninstall

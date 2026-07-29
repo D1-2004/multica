@@ -30,6 +30,16 @@ export interface GitHubInstallation {
   connected_by?: string;
 }
 
+export interface GitHubReusableInstallation {
+  /** Internal UUID of the trusted binding in another managed workspace. */
+  id: string;
+  account_login: string;
+  account_type: "User" | "Organization";
+  account_avatar_url: string | null;
+  source_workspace_id: string;
+  source_workspace_name: string;
+}
+
 export interface GitHubPullRequest {
   id: string;
   workspace_id: string;
@@ -64,6 +74,9 @@ export interface GitHubPullRequest {
 
 export interface ListGitHubInstallationsResponse {
   installations: GitHubInstallation[];
+  /** Existing bindings from other workspaces the same caller can manage.
+   * Optional for compatibility with older servers. */
+  reusable_installations?: GitHubReusableInstallation[];
   /** Whether the deployment has GitHub App credentials configured. When false, the Connect button is hidden / disabled. */
   configured: boolean;
   /** Whether the caller can connect / disconnect installations. Non-admin

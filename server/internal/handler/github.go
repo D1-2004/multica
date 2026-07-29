@@ -99,6 +99,22 @@ type GitHubConnectResponse struct {
 	Configured bool   `json:"configured"`
 }
 
+// GitHubReusableInstallationResponse is a source-workspace binding the current
+// human may explicitly reuse in the target workspace. ID is the internal source
+// binding UUID, never GitHub's spoofable numeric installation_id.
+type GitHubReusableInstallationResponse struct {
+	ID                  string  `json:"id"`
+	AccountLogin        string  `json:"account_login"`
+	AccountType         string  `json:"account_type"`
+	AccountAvatarURL    *string `json:"account_avatar_url"`
+	SourceWorkspaceID   string  `json:"source_workspace_id"`
+	SourceWorkspaceName string  `json:"source_workspace_name"`
+}
+
+type ReuseGitHubInstallationRequest struct {
+	SourceInstallationID string `json:"source_installation_id"`
+}
+
 func githubInstallationToResponse(i db.GithubInstallation) GitHubInstallationResponse {
 	instID := i.InstallationID
 	return GitHubInstallationResponse{
@@ -525,11 +541,100 @@ func (h *Handler) ListGitHubInstallations(w http.ResponseWriter, r *http.Request
 		}
 		out = append(out, resp)
 	}
+	reusable := make([]GitHubReusableInstallationResponse, 0)
+	// Reusable rows carry account and source-workspace metadata across
+	// workspace boundaries. Machine credentials may keep the ordinary
+	// workspace-scoped read view, but only a human manager gets this
+	// cross-workspace connection picker.
+	if canManage && r.Header.Get("X-Actor-Source") == "" {
+		userID, err := parseStrictUUID(requestUserID(r))
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		rows, err := h.Queries.ListReusableGitHubInstallationsForUser(r.Context(), db.ListReusableGitHubInstallationsForUserParams{
+			UserID:            userID,
+			TargetWorkspaceID: wsUUID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list reusable installations")
+			return
+		}
+		reusable = make([]GitHubReusableInstallationResponse, 0, len(rows))
+		for _, row := range rows {
+			reusable = append(reusable, GitHubReusableInstallationResponse{
+				ID:                  uuidToString(row.ID),
+				AccountLogin:        row.AccountLogin,
+				AccountType:         row.AccountType,
+				AccountAvatarURL:    textToPtr(row.AccountAvatarUrl),
+				SourceWorkspaceID:   uuidToString(row.WorkspaceID),
+				SourceWorkspaceName: row.SourceWorkspaceName,
+			})
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"installations": out,
-		"configured":    isGitHubConfigured(),
-		"can_manage":    canManage,
+		"installations":          out,
+		"reusable_installations": reusable,
+		"configured":             isGitHubConfigured(),
+		"can_manage":             canManage,
 	})
+}
+
+// ReuseGitHubInstallation binds a GitHub App installation already trusted by
+// another workspace managed by the same human. The target workspace admin gate
+// lives at the router; this handler separately proves source-workspace admin
+// access before resolving the numeric installation id.
+func (h *Handler) ReuseGitHubInstallation(w http.ResponseWriter, r *http.Request) {
+	targetWorkspaceID := chi.URLParam(r, "id")
+	targetUUID, ok := parseUUIDOrBadRequest(w, targetWorkspaceID, "workspace id")
+	if !ok {
+		return
+	}
+	var request ReuseGitHubInstallationRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	sourceUUID, ok := parseUUIDOrBadRequest(w, request.SourceInstallationID, "source installation id")
+	if !ok {
+		return
+	}
+	userUUID, err := parseStrictUUID(requestUserID(r))
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	source, err := h.Queries.GetReusableGitHubInstallationForUser(r.Context(), db.GetReusableGitHubInstallationForUserParams{
+		SourceInstallationID: sourceUUID,
+		UserID:               userUUID,
+		TargetWorkspaceID:    targetUUID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "reusable GitHub installation not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to resolve reusable installation")
+		return
+	}
+	inst, err := h.Queries.CreateGitHubInstallation(r.Context(), db.CreateGitHubInstallationParams{
+		WorkspaceID:      targetUUID,
+		InstallationID:   source.InstallationID,
+		AccountLogin:     source.AccountLogin,
+		AccountType:      source.AccountType,
+		AccountAvatarUrl: source.AccountAvatarUrl,
+		ConnectedByID:    userUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reuse GitHub installation")
+		return
+	}
+	h.publish(protocol.EventGitHubInstallationCreated, targetWorkspaceID, requestUserID(r), "", map[string]any{
+		"installation": githubInstallationToBroadcast(inst),
+	})
+	writeJSON(w, http.StatusCreated, githubInstallationToResponse(inst))
 }
 
 func (h *Handler) DeleteGitHubInstallation(w http.ResponseWriter, r *http.Request) {
