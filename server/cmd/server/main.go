@@ -401,6 +401,7 @@ func main() {
 		DaemonWakeup:       daemonWakeup,
 		FeatureFlags:       flags,
 		HeartbeatScheduler: heartbeatScheduler,
+		SandboxRelaySigner: sandboxRelaySigner,
 		SandboxRelay:       sandboxRelayMiddleware,
 	})
 
