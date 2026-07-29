@@ -172,6 +172,44 @@ func TestStableFailureRate(t *testing.T) {
 	}
 }
 
+func TestStableBatchHealthWindowExcludesDeveloperPreRolloutCutovers(t *testing.T) {
+	batchStartedAt := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name        string
+		completedAt time.Time
+		want        bool
+	}{
+		{
+			name:        "developer cutover before percentage stage",
+			completedAt: batchStartedAt.Add(-time.Minute),
+			want:        false,
+		},
+		{
+			name:        "cutover at percentage stage boundary",
+			completedAt: batchStartedAt,
+			want:        true,
+		},
+		{
+			name:        "cutover during percentage stage",
+			completedAt: batchStartedAt.Add(time.Minute),
+			want:        true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := stableTargetNeedsBatchHealthGate(test.completedAt, batchStartedAt); got != test.want {
+				t.Fatalf(
+					"stableTargetNeedsBatchHealthGate(%s, %s) = %t, want %t",
+					test.completedAt,
+					batchStartedAt,
+					got,
+					test.want,
+				)
+			}
+		})
+	}
+}
+
 func TestStableSourceRevisionRequiresCanonicalAliasRevision(t *testing.T) {
 	for _, valid := range []string{"000000", "b90849", "abcdef"} {
 		if !isStableSourceRevision(valid) {

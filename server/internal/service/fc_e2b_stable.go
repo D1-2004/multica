@@ -1506,6 +1506,13 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 	if release.RolloutStartedAt == nil || release.BatchStartedAt == nil {
 		return errors.New("stable release has no rollout or batch start time")
 	}
+	currentBatchHasCutovers, err := s.currentBatchHasCutovers(ctx, release)
+	if err != nil {
+		return err
+	}
+	if !currentBatchHasCutovers {
+		return nil
+	}
 	type providerHealth struct {
 		total                  int
 		failed                 int
@@ -1515,19 +1522,24 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 	}
 	candidate := make(map[string]providerHealth)
 	rows, err := s.Pool.Query(ctx, `
+		WITH current_batch_target AS (
+			SELECT runtime_id, provider, completed_at
+			FROM fc_e2b_stable_release_target
+			WHERE release_id = $1
+			  AND batch_index = $2
+			  AND status = 'updated'
+			  AND completed_at >= $3
+		)
 		SELECT target.provider,
 		       count(task.id),
 		       count(task.id) FILTER (WHERE task.failure_reason = 'runtime_start_failed'),
 		       count(task.id) FILTER (WHERE task.status = 'completed')
-		FROM fc_e2b_stable_release_target target
+		FROM current_batch_target target
 		LEFT JOIN agent_task_queue task
 		  ON task.runtime_id = target.runtime_id
 		 AND task.created_at >= target.completed_at
-		WHERE target.release_id = $1
-		  AND target.batch_index = $2
-		  AND target.status = 'updated'
 		GROUP BY target.provider
-	`, release.ID, release.CurrentBatch)
+	`, release.ID, release.CurrentBatch, *release.BatchStartedAt)
 	if err != nil {
 		return fmt.Errorf("load stable candidate launch health: %w", err)
 	}
@@ -1545,6 +1557,14 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 		return err
 	}
 	sessionRows, err := s.Pool.Query(ctx, `
+			WITH current_batch_target AS (
+				SELECT runtime_id, provider, completed_at
+				FROM fc_e2b_stable_release_target
+				WHERE release_id = $1
+				  AND batch_index = $2
+				  AND status = 'updated'
+				  AND completed_at >= $3
+			)
 			SELECT target.provider,
 			       count(DISTINCT session.sandbox_id) FILTER (
 			           WHERE session.created_at < target.completed_at
@@ -1552,16 +1572,13 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 			       count(DISTINCT session.sandbox_id) FILTER (
 			           WHERE session.created_at >= target.completed_at
 			       )
-			FROM fc_e2b_stable_release_target target
+			FROM current_batch_target target
 			LEFT JOIN fc_e2b_sandbox_session session
 			  ON session.runtime_id = target.runtime_id
-			 AND session.template = $3
+			 AND session.template = $4
 			 AND session.updated_at >= target.completed_at
-		WHERE target.release_id = $1
-		  AND target.batch_index = $2
-		  AND target.status = 'updated'
-		GROUP BY target.provider
-		`, release.ID, release.CurrentBatch, release.TemplateAlias)
+			GROUP BY target.provider
+		`, release.ID, release.CurrentBatch, *release.BatchStartedAt, release.TemplateAlias)
 	if err != nil {
 		return fmt.Errorf("load stable candidate sandbox health: %w", err)
 	}
@@ -1609,6 +1626,7 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 			WHERE release_id = $1
 			  AND batch_index = $2
 			  AND status = 'updated'
+			  AND completed_at >= $3
 		)
 		SELECT
 			count(*) FILTER (WHERE task.created_at >= selected.completed_at),
@@ -1627,7 +1645,7 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 			)
 		FROM agent_task_queue task
 		JOIN selected_runtimes selected ON selected.runtime_id = task.runtime_id
-	`, release.ID, release.CurrentBatch).Scan(
+	`, release.ID, release.CurrentBatch, *release.BatchStartedAt).Scan(
 		&candidateTotal,
 		&candidateFailed,
 		&baselineTotal,
@@ -1648,6 +1666,43 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 		)
 	}
 	return nil
+}
+
+func (s *FCE2BStableService) currentBatchHasCutovers(
+	ctx context.Context,
+	release FCE2BStableRelease,
+) (bool, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT completed_at
+		FROM fc_e2b_stable_release_target
+		WHERE release_id = $1
+		  AND batch_index = $2
+		  AND status = 'updated'
+	`, release.ID, release.CurrentBatch)
+	if err != nil {
+		return false, fmt.Errorf("load stable current-batch cutovers: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var completedAt pgtype.Timestamptz
+		if err := rows.Scan(&completedAt); err != nil {
+			return false, err
+		}
+		if !completedAt.Valid {
+			return false, errors.New("stable release target is updated without a completion time")
+		}
+		if stableTargetNeedsBatchHealthGate(completedAt.Time, *release.BatchStartedAt) {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func stableTargetNeedsBatchHealthGate(completedAt, batchStartedAt time.Time) bool {
+	return !completedAt.Before(batchStartedAt)
 }
 
 func failureRate(failed, total int) float64 {
