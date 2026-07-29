@@ -150,10 +150,10 @@ describe("StableFCE2BReleaseDialog", () => {
     );
   });
 
-  it("shows the current stable build separately and allows publishing it again", async () => {
+  it("labels the current stable template even when its build changed", async () => {
     mockChannelQuery.data.current = {
       template_id: "template-current",
-      template_build_id: "build-current",
+      template_build_id: "build-current-before-log-config",
       template_alias: "Current image",
       release_id: "release-current",
     };
@@ -172,6 +172,7 @@ describe("StableFCE2BReleaseDialog", () => {
 
     expect(currentTemplate).toBeEnabled();
     expect(screen.getByText("Currently published stable version")).toBeInTheDocument();
+    expect(screen.getByText("Current stable version")).toBeInTheDocument();
     expect(nextTemplate).toBeEnabled();
     expect(publish).toBeDisabled();
 
@@ -241,7 +242,7 @@ describe("StableFCE2BReleaseDialog", () => {
       current_batch: 1,
       target_percentage: 5,
       previous_template_alias: "Current image",
-      updated_targets: 4,
+      updated_targets: 35,
       total_targets: 61,
       validation_error: "",
       rollout_schedule: [
@@ -281,6 +282,13 @@ describe("StableFCE2BReleaseDialog", () => {
     renderDialog();
 
     expect(screen.getByText("24-hour rollout schedule")).toBeInTheDocument();
+    expect(screen.getByText("Updated 35 / 61")).toBeInTheDocument();
+    expect(screen.getByText("57%")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Current cumulative stage target: 5% (4 Runtimes). Updates above this count carry into later stages.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("Roll out to 5%")).toBeInTheDocument();
     expect(screen.getByText("Roll out to 25%")).toBeInTheDocument();
     expect(screen.getByText("Roll out to 50%")).toBeInTheDocument();
