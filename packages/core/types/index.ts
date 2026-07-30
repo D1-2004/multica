@@ -186,6 +186,7 @@ export type {
   AgentIdentityGitHubConnection,
   AgentIdentityGitHubStatusResponse,
   BeginAgentIdentityGitHubOAuthResponse,
+  DisconnectAgentIdentityGitHubConnectionResponse,
   TestAgentIdentityGitHubConnectionResponse,
 } from "./agent-identity-github";
 export type {

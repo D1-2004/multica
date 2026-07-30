@@ -50,6 +50,11 @@ type agentIdentityGithubTestResponse struct {
 	GrantedScopes string `json:"granted_scopes,omitempty"`
 }
 
+type agentIdentityGithubDisconnectResponse struct {
+	OK           bool   `json:"ok"`
+	ConnectionID string `json:"connection_id,omitempty"`
+}
+
 func (h *Handler) GetAgentIdentityGitHubStatus(w http.ResponseWriter, r *http.Request) {
 	client, ok := h.requireAgentIdentityGitHub(w)
 	if !ok {
@@ -160,6 +165,46 @@ func (h *Handler) TestAgentIdentityGitHubConnection(w http.ResponseWriter, r *ht
 		AccountLogin:  result.AccountLogin,
 		AccountID:     result.AccountID,
 		GrantedScopes: result.GrantedScopes,
+	})
+}
+
+func (h *Handler) DisconnectAgentIdentityGitHubConnection(w http.ResponseWriter, r *http.Request) {
+	client, ok := h.requireAgentIdentityGitHub(w)
+	if !ok {
+		return
+	}
+	connectionID := strings.TrimSpace(chi.URLParam(r, "connectionId"))
+	if connectionID == "" {
+		writeError(w, http.StatusBadRequest, "connection_id is required")
+		return
+	}
+	workspaceID, agent, userID, ok := h.authorizeAgentIdentityGitHub(w, r, strings.TrimSpace(r.URL.Query().Get("agent_id")))
+	if !ok {
+		return
+	}
+	status, err := client.GetStatus(r.Context(), workspaceID, uuidToString(agent.ID), userID)
+	if err != nil {
+		logAgentIdentityGitHubError(r, "disconnect_status", err, workspaceID, uuidToString(agent.ID))
+		writeAgentIdentityGitHubError(w, err)
+		return
+	}
+	if status.ConnectionID != connectionID {
+		writeError(w, http.StatusNotFound, "GitHub identity connection not found")
+		return
+	}
+	result, err := client.Disconnect(r.Context(), connectionID, workspaceID, uuidToString(agent.ID), userID)
+	if err != nil {
+		logAgentIdentityGitHubError(r, "disconnect_connection", err, workspaceID, uuidToString(agent.ID))
+		writeAgentIdentityGitHubError(w, err)
+		return
+	}
+	if !result.OK {
+		writeError(w, http.StatusBadGateway, nonEmpty(result.ErrorMessage, "agent identity GitHub disconnect failed"))
+		return
+	}
+	writeJSON(w, http.StatusOK, agentIdentityGithubDisconnectResponse{
+		OK:           result.OK,
+		ConnectionID: result.ConnectionID,
 	})
 }
 

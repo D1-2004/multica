@@ -30,3 +30,20 @@ export function useTestAgentIdentityGitHubConnection(wsId: string) {
       }),
   });
 }
+
+export function useDisconnectAgentIdentityGitHubConnection(wsId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      agentId,
+      connectionId,
+    }: {
+      agentId: string;
+      connectionId: string;
+    }) => api.disconnectAgentIdentityGitHubConnection(wsId, agentId, connectionId),
+    onSettled: (_data, _error, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: agentIdentityGithubKeys.status(wsId, variables.agentId),
+      }),
+  });
+}

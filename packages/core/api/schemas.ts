@@ -21,6 +21,7 @@ import type {
   DingTalkProcessingSurface,
   AgentIdentityGitHubStatusResponse,
   BeginAgentIdentityGitHubOAuthResponse,
+  DisconnectAgentIdentityGitHubConnectionResponse,
   TestAgentIdentityGitHubConnectionResponse,
   GroupedIssuesResponse,
   GitHubAgentPreview,
@@ -350,6 +351,21 @@ export const TestAgentIdentityGitHubConnectionResponseSchema = z
 export const EMPTY_TEST_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE: TestAgentIdentityGitHubConnectionResponse = {
   ok: false,
   refreshed: false,
+};
+
+export const DisconnectAgentIdentityGitHubConnectionResponseSchema = z
+  .object({
+    ok: z.boolean(),
+    connection_id: z.string().optional(),
+  })
+  .loose()
+  .transform((response) => ({
+    ok: response.ok,
+    connectionId: response.connection_id,
+  }));
+
+export const EMPTY_DISCONNECT_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE: DisconnectAgentIdentityGitHubConnectionResponse = {
+  ok: false,
 };
 
 // Label responses are consumed by settings tables and resource pickers. Keep

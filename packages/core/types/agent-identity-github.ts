@@ -28,3 +28,8 @@ export interface TestAgentIdentityGitHubConnectionResponse {
   accountId?: string;
   grantedScopes?: string;
 }
+
+export interface DisconnectAgentIdentityGitHubConnectionResponse {
+  ok: boolean;
+  connectionId?: string;
+}

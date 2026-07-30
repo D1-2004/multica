@@ -206,7 +206,9 @@ These variables enable the self-hosted server to create a cloud Hermes runtime b
 | `MULTICA_FC_E2B_CLI_PATH` | `e2b` | Path to the `e2b` CLI executable on the server host |
 | `MULTICA_FC_E2B_TIMEOUT_SECONDS` | `3600` | Sandbox lifetime in seconds |
 | `MULTICA_FC_E2B_SANDBOX_READY_TIMEOUT` | `60s` | How long the server waits for a newly created sandbox to accept `exec` |
-| `MULTICA_AGENT_IDENTITY_BASE_URL` | empty | Agent Identity service used by ContextToken tasks. The server forwards this URL and the task token to the FC/E2B sandbox; credential redemption happens inside the sandbox |
+| `MULTICA_AGENT_IDENTITY_BASE_URL` | empty | Legacy Agent Identity base URL. Used as the default for control-plane calls and sandbox redemption when the split URLs below are not set |
+| `MULTICA_AGENT_IDENTITY_CONTROL_BASE_URL` | `MULTICA_AGENT_IDENTITY_BASE_URL` | Agent Identity service used by the Multica server and workbench UI for GitHub identity status, OAuth start, and ContextToken extension |
+| `MULTICA_AGENT_IDENTITY_SANDBOX_BASE_URL` | `MULTICA_AGENT_IDENTITY_BASE_URL` | Agent Identity service URL injected into FC/E2B sandboxes for ContextToken redemption. Pre-release Multica should keep this pointed at the production-reachable Agent Identity URL |
 | `MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS` | `10` | Timeout for the sandbox Agent Identity credential redemption request |
 | `MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET` | empty | DWS OAuth client secret injected only into ContextToken sandbox startup and cleared immediately after AuthCode exchange |
 | `MULTICA_SANDBOX_RELAY_SIGNING_KEY_ID` | empty | Pre-release-only Ed25519 key identifier. Must be configured together with `MULTICA_SANDBOX_RELAY_SIGNING_PRIVATE_KEY` |

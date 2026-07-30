@@ -143,6 +143,7 @@ import type {
   BeginDingTalkAccountBindingResponse,
   AgentIdentityGitHubStatusResponse,
   BeginAgentIdentityGitHubOAuthResponse,
+  DisconnectAgentIdentityGitHubConnectionResponse,
   TestAgentIdentityGitHubConnectionResponse,
   RegisterSlackBYORequest,
   RedeemSlackBindingTokenResponse,
@@ -294,9 +295,11 @@ import {
   EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE,
   AgentIdentityGitHubStatusResponseSchema,
   BeginAgentIdentityGitHubOAuthResponseSchema,
+  DisconnectAgentIdentityGitHubConnectionResponseSchema,
   TestAgentIdentityGitHubConnectionResponseSchema,
   EMPTY_AGENT_IDENTITY_GITHUB_STATUS_RESPONSE,
   EMPTY_BEGIN_AGENT_IDENTITY_GITHUB_OAUTH_RESPONSE,
+  EMPTY_DISCONNECT_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
   EMPTY_TEST_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
 } from "./schemas";
 
@@ -2947,6 +2950,24 @@ export class ApiClient {
       TestAgentIdentityGitHubConnectionResponseSchema,
       EMPTY_TEST_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
       { endpoint: "POST /api/workspaces/:id/agent-identity/github/:connectionId/test" },
+    );
+  }
+
+  async disconnectAgentIdentityGitHubConnection(
+    workspaceId: string,
+    agentId: string,
+    connectionId: string,
+  ): Promise<DisconnectAgentIdentityGitHubConnectionResponse> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/agent-identity/github/${encodeURIComponent(connectionId)}?${search.toString()}`,
+      { method: "DELETE" },
+    );
+    return parseWithFallback(
+      raw,
+      DisconnectAgentIdentityGitHubConnectionResponseSchema,
+      EMPTY_DISCONNECT_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
+      { endpoint: "DELETE /api/workspaces/:id/agent-identity/github/:connectionId" },
     );
   }
 

@@ -72,6 +72,36 @@ func TestGetStatusUsesAgentIdentityQueryContract(t *testing.T) {
 	}
 }
 
+func TestDisconnectUsesAgentIdentityQueryContract(t *testing.T) {
+	var gotPath string
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		if r.Method != http.MethodDelete {
+			t.Fatalf("method = %s, want DELETE", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"connectionId":"connection-1","accountLogin":"octocat","accountId":"42","status":"ACTIVE","grantedScopes":"repo"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{BaseURL: server.URL})
+	result, err := client.Disconnect(context.Background(), "connection-1", "workspace-1", "agent-1", "user-1")
+	if err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	if gotPath != "/api/agent-identity/v1/connections/github/connection-1" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if !strings.Contains(gotQuery, "workspaceId=workspace-1") || !strings.Contains(gotQuery, "agentId=agent-1") || !strings.Contains(gotQuery, "userId=user-1") {
+		t.Fatalf("unexpected query = %q", gotQuery)
+	}
+	if !result.OK || result.ConnectionID != "connection-1" || result.AccountLogin != "octocat" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
 func TestServiceErrorCarriesAgentIdentityErrorBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
