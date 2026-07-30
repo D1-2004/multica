@@ -1090,7 +1090,7 @@ func TestHTTPBUCOAuthClientGeneratesRepeatableSSOTicket(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(
 			w,
-			`{"success":true,"content":{"data":{"ssoTicket":"buc-sso-ticket","expiresIn":300}}}`,
+			`{"success":true,"error":"0","content":{"data":{"ssoTicket":"buc-sso-ticket","expiresIn":300}}}`,
 		)
 	}))
 	defer server.Close()

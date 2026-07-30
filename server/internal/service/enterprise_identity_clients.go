@@ -691,9 +691,10 @@ func (c *HTTPBUCOAuthClient) GenerateSSOTicket(ctx context.Context, accessToken 
 		return "", errors.New("decode BUC SSO ticket response")
 	}
 	providerCode := firstNonEmptyString(payload.ErrorCode, payload.Error)
+	providerReportedFailure := providerCode != "" && providerCode != "0"
 	if response.StatusCode != http.StatusOK ||
 		(payload.Success != nil && !*payload.Success) ||
-		providerCode != "" {
+		providerReportedFailure {
 		return "", newEnterpriseIdentityProviderError(
 			"buc",
 			"generate_sso_ticket",
