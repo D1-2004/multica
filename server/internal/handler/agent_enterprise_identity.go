@@ -1,11 +1,19 @@
 package handler
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"html"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -43,6 +51,16 @@ type startAgentEnterpriseIdentityResponse struct {
 
 type testAgentEnterpriseIdentityResponse struct {
 	OK bool `json:"ok"`
+}
+
+const (
+	enterpriseIdentityCallbackTimeout   = 5 * time.Minute
+	enterpriseIdentityCallbackHeartbeat = 2 * time.Second
+)
+
+type enterpriseIdentityCallbackResult struct {
+	result service.CompleteEnterpriseIdentityBindingResult
+	err    error
 }
 
 func (h *Handler) GetAgentEnterpriseIdentityStatus(w http.ResponseWriter, r *http.Request) {
@@ -143,21 +161,159 @@ func (h *Handler) CompleteAgentEnterpriseIdentityBinding(w http.ResponseWriter, 
 	}
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
-	result, err := h.EnterpriseIdentity.CompleteBinding(r.Context(), state, code)
-	if err != nil {
-		slog.Warn("enterprise identity OAuth callback failed")
+	if state == "" || code == "" {
 		writeError(w, http.StatusBadRequest, "enterprise identity authorization could not be completed")
 		return
 	}
-	target, err := url.Parse(result.RedirectPath)
-	if err != nil || target.IsAbs() || !strings.HasPrefix(target.Path, "/") {
-		writeError(w, http.StatusInternalServerError, "enterprise identity redirect is invalid")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "enterprise identity callback streaming is unavailable")
 		return
 	}
-	query := target.Query()
-	query.Set("enterprise_identity", "connected")
-	target.RawQuery = query.Encode()
-	http.Redirect(w, r, target.String(), http.StatusSeeOther)
+	nonce, err := enterpriseIdentityCallbackNonce()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "enterprise identity callback could not be initialized")
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", fmt.Sprintf(
+		"default-src 'none'; script-src 'nonce-%s'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+		nonce,
+	))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+
+	clientConnected := true
+	if _, err := io.WriteString(w, enterpriseIdentityCallbackOpeningPage(nonce)); err != nil {
+		clientConnected = false
+	} else {
+		flusher.Flush()
+	}
+
+	// BUC redirects are browser-facing, but creating and attaching the ASB
+	// identity anchor is a long-running control-plane operation. Do not let a
+	// mobile browser navigation or ingress timeout cancel an already consumed
+	// one-time OAuth callback.
+	bindingCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(r.Context()),
+		enterpriseIdentityCallbackTimeout,
+	)
+	defer cancel()
+	resultCh := make(chan enterpriseIdentityCallbackResult, 1)
+	go func() {
+		result, completeErr := h.EnterpriseIdentity.CompleteBinding(bindingCtx, state, code)
+		resultCh <- enterpriseIdentityCallbackResult{result: result, err: completeErr}
+	}()
+
+	heartbeat := time.NewTicker(enterpriseIdentityCallbackHeartbeat)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case outcome := <-resultCh:
+			if outcome.err != nil {
+				slog.Warn("enterprise identity OAuth callback failed")
+				if clientConnected {
+					_, _ = io.WriteString(w, enterpriseIdentityCallbackFailurePage(nonce))
+					flusher.Flush()
+				}
+				return
+			}
+			target, targetErr := url.Parse(outcome.result.RedirectPath)
+			if targetErr != nil || target.IsAbs() || !strings.HasPrefix(target.Path, "/") {
+				slog.Warn("enterprise identity OAuth callback produced invalid redirect")
+				if clientConnected {
+					_, _ = io.WriteString(w, enterpriseIdentityCallbackFailurePage(nonce))
+					flusher.Flush()
+				}
+				return
+			}
+			query := target.Query()
+			query.Set("enterprise_identity", "connected")
+			target.RawQuery = query.Encode()
+			if clientConnected {
+				_, _ = io.WriteString(w, enterpriseIdentityCallbackSuccessPage(nonce, target.String()))
+				flusher.Flush()
+			}
+			return
+		case <-heartbeat.C:
+			if !clientConnected {
+				continue
+			}
+			if _, err := io.WriteString(w, "<!-- enterprise-identity-callback-heartbeat -->\n"); err != nil {
+				clientConnected = false
+				continue
+			}
+			flusher.Flush()
+		case <-bindingCtx.Done():
+			slog.Warn("enterprise identity OAuth callback timed out")
+			if clientConnected {
+				_, _ = io.WriteString(w, enterpriseIdentityCallbackFailurePage(nonce))
+				flusher.Flush()
+			}
+			return
+		}
+	}
+}
+
+func enterpriseIdentityCallbackNonce() (string, error) {
+	var raw [18]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+func enterpriseIdentityCallbackOpeningPage(nonce string) string {
+	// The padding makes the first response chunk larger than common ingress
+	// proxy buffers, so the browser receives the progress page immediately.
+	padding := strings.Repeat(" ", 4096)
+	return fmt.Sprintf(`<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>正在绑定员工身份</title>
+<style>
+body{margin:0;background:#f7f8fa;color:#171a1f;font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:420px;margin:18vh auto;padding:32px 24px;text-align:center}
+.spinner{width:36px;height:36px;margin:0 auto 22px;border:3px solid #e5e7eb;border-top-color:#ff6a00;border-radius:50%%;animation:spin .8s linear infinite}
+h1{font-size:20px;margin:0 0 12px}p{color:#5f6672;margin:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<main>
+<div class="spinner" aria-hidden="true"></div>
+<h1 id="callback-title">正在绑定员工身份</h1>
+<p id="callback-message">授权已接收，正在创建企业沙箱身份，通常需要 1–2 分钟。请不要返回或重复点击。</p>
+</main>
+<script nonce="%s">window.history.replaceState(null,"",window.location.pathname);</script>
+<!-- %s -->
+`, nonce, padding)
+}
+
+func enterpriseIdentityCallbackFailurePage(nonce string) string {
+	return fmt.Sprintf(`<script nonce="%s">
+document.getElementById("callback-title").textContent="员工身份绑定未完成";
+document.getElementById("callback-message").textContent="请返回 Multica 后重新发起绑定。";
+</script>
+</body></html>`, nonce)
+}
+
+func enterpriseIdentityCallbackSuccessPage(nonce string, target string) string {
+	targetJSON, _ := json.Marshal(target)
+	return fmt.Sprintf(`<script nonce="%s">
+document.getElementById("callback-title").textContent="员工身份绑定成功";
+document.getElementById("callback-message").textContent="正在返回 Multica…";
+window.location.replace(%s);
+</script>
+<noscript><a href="%s">返回 Multica</a></noscript>
+</body></html>`, nonce, targetJSON, html.EscapeString(target))
 }
 
 func (h *Handler) TestAgentEnterpriseIdentity(w http.ResponseWriter, r *http.Request) {
