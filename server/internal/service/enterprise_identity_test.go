@@ -169,17 +169,17 @@ func (f *fakeEnterpriseIdentityStore) MarkCloudSandboxSessionStale(
 }
 
 type fakeEnterpriseAuthX struct {
-	issuedEmployee string
-	renewedFrom    string
-	issueResult    EnterpriseOIDCToken
-	renewResult    EnterpriseOIDCToken
+	issuedBUC   BUCIdentityTokens
+	renewedFrom string
+	issueResult EnterpriseOIDCToken
+	renewResult EnterpriseOIDCToken
 }
 
-func (f *fakeEnterpriseAuthX) IssueForVerifiedEmployee(
+func (f *fakeEnterpriseAuthX) IssueForBUCIdentity(
 	_ context.Context,
-	employeeID string,
+	tokens BUCIdentityTokens,
 ) (EnterpriseOIDCToken, error) {
-	f.issuedEmployee = employeeID
+	f.issuedBUC = tokens
 	return f.issueResult, nil
 }
 
@@ -257,6 +257,7 @@ func (f *fakeEnterpriseAnchor) Delete(_ context.Context, sandboxID string) error
 
 type fakeBUCOAuthClient struct {
 	tokens        BUCIdentityTokens
+	refreshResult BUCIdentityTokens
 	claims        bucIDTokenClaims
 	verifiedToken string
 	verifyErr     error
@@ -264,6 +265,10 @@ type fakeBUCOAuthClient struct {
 
 func (f *fakeBUCOAuthClient) ExchangeCode(context.Context, string) (BUCIdentityTokens, error) {
 	return f.tokens, nil
+}
+
+func (f *fakeBUCOAuthClient) Refresh(context.Context, string) (BUCIdentityTokens, error) {
+	return f.refreshResult, nil
 }
 
 func (f *fakeBUCOAuthClient) VerifyIDToken(
@@ -406,7 +411,7 @@ func TestEnterpriseIdentityCompleteBindingRequiresRevokeBeforeChangingEmployee(t
 	if !errors.Is(err, ErrEnterpriseIdentityEmployeeConflict) {
 		t.Fatalf("CompleteBinding error = %v", err)
 	}
-	if authX.issuedEmployee != "" {
+	if authX.issuedBUC.IDToken != "" {
 		t.Fatal("AuthX exchange ran before employee conflict validation")
 	}
 }
@@ -512,8 +517,8 @@ func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *t
 		idem.registration.EmployeeID != "12345" {
 		t.Fatalf("BUC employee identity was not used for binding")
 	}
-	if authX.issuedEmployee != "12345" {
-		t.Fatalf("AuthX verified employee = %q", authX.issuedEmployee)
+	if authX.issuedBUC.IDToken != bucIDToken {
+		t.Fatalf("BUC identity token = %q", authX.issuedBUC.IDToken)
 	}
 	if bytes.Contains(store.upsert.AuthxRefreshTokenEncrypted, []byte("authx-refresh")) ||
 		bytes.Contains(store.upsert.AuthxRefreshTokenEncrypted, []byte("buc-refresh")) {

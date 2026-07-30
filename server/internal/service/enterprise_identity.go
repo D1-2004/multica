@@ -36,6 +36,7 @@ const (
 	defaultEnterpriseIdentityProbePeriod = time.Second
 	defaultEnterpriseMaintenanceInterval = 5 * time.Minute
 	defaultEnterpriseRefreshBefore       = 30 * time.Minute
+	defaultEnterpriseBUCRefreshHorizon   = 24 * time.Hour
 	defaultEnterpriseAnchorRenewInterval = 24 * time.Hour
 	defaultEnterpriseMaintenanceBatch    = int32(50)
 )
@@ -387,11 +388,10 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	if err != nil {
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
-	authXToken, err := s.AuthX.IssueForVerifiedEmployee(ctx, employeeID)
+	authXToken, err := s.AuthX.IssueForBUCIdentity(ctx, bucTokens)
 	if err != nil {
 		slog.Warn("enterprise identity binding stage failed",
-			"stage", "issue_authx_token",
-			"authx_service_id", s.Config.AuthXServiceID,
+			"stage", "prepare_buc_oidc_token",
 			"error", err,
 		)
 		return CompleteEnterpriseIdentityBindingResult{}, err
@@ -453,7 +453,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	if err != nil {
 		cleanupAnchor()
 		cleanupAIP()
-		return CompleteEnterpriseIdentityBindingResult{}, errors.New("encrypt AuthX refresh token")
+		return CompleteEnterpriseIdentityBindingResult{}, errors.New("encrypt BUC refresh token")
 	}
 	identity, err := s.Store.UpsertAgentEnterpriseIdentity(ctx, db.UpsertAgentEnterpriseIdentityParams{
 		WorkspaceID:                attempt.WorkspaceID,
@@ -555,12 +555,12 @@ func (s *EnterpriseIdentityService) ResolveASBTaskIdentity(
 			}
 			return ASBResolvedIdentity{}, err
 		}
-		updated, refreshed, err := s.rotateAuthXToken(ctx, identity)
+		updated, refreshed, err := s.rotateBUCToken(ctx, identity)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
 		if err != nil {
-			return ASBResolvedIdentity{}, fmt.Errorf("rotate AuthX refresh token: %w", err)
+			return ASBResolvedIdentity{}, fmt.Errorf("rotate BUC refresh token: %w", err)
 		}
 		operatorSPIFFEID, err := s.operatorSPIFFEID(updated.RawEmpID)
 		if err != nil {
@@ -639,7 +639,7 @@ func (s *EnterpriseIdentityService) maintainActiveIdentities(ctx context.Context
 			continue
 		}
 		if !identity.AuthxRefreshExpiresAt.Time.After(now.Add(s.RefreshBefore)) {
-			if _, _, err := s.rotateAuthXToken(ctx, identity); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			if _, _, err := s.rotateBUCToken(ctx, identity); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				slog.Warn("enterprise identity token maintenance failed",
 					"agent_id", util.UUIDToString(identity.AgentID),
 					"error", err,
@@ -663,13 +663,13 @@ func (s *EnterpriseIdentityService) maintainActiveIdentities(ctx context.Context
 	return nil
 }
 
-func (s *EnterpriseIdentityService) rotateAuthXToken(
+func (s *EnterpriseIdentityService) rotateBUCToken(
 	ctx context.Context,
 	identity db.AgentEnterpriseIdentity,
 ) (db.AgentEnterpriseIdentity, EnterpriseOIDCToken, error) {
 	refreshToken, err := s.Secrets.Open(identity.AuthxRefreshTokenEncrypted)
 	if err != nil {
-		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, errors.New("decrypt AuthX refresh token")
+		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, errors.New("decrypt BUC refresh token")
 	}
 	defer clear(refreshToken)
 	refreshed, err := s.AuthX.Renew(ctx, string(refreshToken))
@@ -678,7 +678,7 @@ func (s *EnterpriseIdentityService) rotateAuthXToken(
 	}
 	sealedRefresh, err := s.Secrets.Seal([]byte(refreshed.RefreshToken))
 	if err != nil {
-		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, errors.New("encrypt renewed AuthX refresh token")
+		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, errors.New("encrypt renewed BUC refresh token")
 	}
 	updated, err := s.Store.CompareAndSwapAgentEnterpriseIdentityToken(ctx, db.CompareAndSwapAgentEnterpriseIdentityTokenParams{
 		AuthxRefreshTokenEncrypted: sealedRefresh,
@@ -687,7 +687,7 @@ func (s *EnterpriseIdentityService) rotateAuthXToken(
 		ExpectedTokenVersion:       identity.TokenVersion,
 	})
 	if err != nil {
-		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, fmt.Errorf("rotate AuthX refresh token: %w", err)
+		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, fmt.Errorf("rotate BUC refresh token: %w", err)
 	}
 	return updated, refreshed, nil
 }

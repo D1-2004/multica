@@ -194,8 +194,6 @@ gitlab.alibaba-inc.com/idem/idem-api-client v1.0.0 h1:ooY2X5cHc8fpa2V143v8LC5r/2
 gitlab.alibaba-inc.com/idem/idem-api-client v1.0.0/go.mod h1:/i3lVE76iaAwuU0UUWh24qM8O5YDd1wJKj+4OUXbdgg=
 gitlab.alibaba-inc.com/idem/idem-api-client-golang v1.0.0 h1:SFhpfCU6Q7R4j+WyiDR2dPXUDWva8bK8b7jXsvWXouY=
 gitlab.alibaba-inc.com/idem/idem-api-client-golang v1.0.0/go.mod h1:/i3lVE76iaAwuU0UUWh24qM8O5YDd1wJKj+4OUXbdgg=
-gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang v1.2.21 h1:IHo+k7DCpHZQOVOAp6gQf32h09vjYKPokBpIFKlrhMM=
-gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang v1.2.21/go.mod h1:N/GURdmOTLgsWWNFxPDLyE9SDsbnMisj5sfsuzxx5OQ=
 gitlab.alibaba-inc.com/koastline/normandy-credential-sdk-golang v1.1.4 h1:a/ZjvWPJtmBgQxA86tCTQTfjCuK/nNLy2kDUo4+WEr4=
 gitlab.alibaba-inc.com/koastline/normandy-credential-sdk-golang v1.1.4/go.mod h1:4DyqlR2W0YmIjdqCOl+rBZn9jWV44Qmsq+P8XunPr14=
 go.opentelemetry.io/auto/sdk v1.1.0 h1:cH53jehLUN6UFLY71z+NDOiNJqDdPRaXzTel0sJySYA=

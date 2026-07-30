@@ -31,7 +31,6 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
 	gitlab.alibaba-inc.com/idem/idem-api-client-golang v1.0.0
-	gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang v1.2.21
 	gitlab.alibaba-inc.com/koastline/normandy-credential-sdk-golang v1.1.4
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.35.0
