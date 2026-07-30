@@ -471,9 +471,9 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	if err != nil {
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
-	authXToken, err := s.AuthX.IssueForBUCIdentity(ctx, bucTokens)
+	authXToken, err := s.AuthX.IssueForVerifiedEmployee(ctx, employeeID)
 	if err != nil {
-		logEnterpriseIdentityBindingStageFailure("exchange_authx_oidc_token")
+		logEnterpriseIdentityBindingStageFailure("issue_authx_oidc_token")
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
 	agentSPIFFEID, err := s.agentSPIFFEID(attempt.AgentID)

@@ -167,6 +167,27 @@ func TestAgentEnterpriseIdentityStatusAllowsMemberWithoutIdentifiers(t *testing.
 	}
 }
 
+func TestAgentEnterpriseIdentityStatusTreatsRevokedBindingAsUnbound(t *testing.T) {
+	agentID, _ := createEnterpriseIdentityHandlerFixture(t)
+	if _, err := testPool.Exec(
+		context.Background(),
+		`UPDATE agent_enterprise_identity SET status = 'revoked' WHERE agent_id = $1`,
+		agentID,
+	); err != nil {
+		t.Fatalf("revoke enterprise identity fixture: %v", err)
+	}
+	handler := *testHandler
+	handler.EnterpriseIdentity = &service.EnterpriseIdentityService{}
+
+	response, payload := getEnterpriseIdentityStatusForUser(t, &handler, testUserID, agentID)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if !payload.Configured || !payload.CanManage || payload.Identity != nil {
+		t.Fatalf("revoked identity should be reported as unbound: %#v", payload)
+	}
+}
+
 func TestAgentEnterpriseIdentityMemberCannotTestBinding(t *testing.T) {
 	agentID, memberUserID := createEnterpriseIdentityHandlerFixture(t)
 	handler := *testHandler

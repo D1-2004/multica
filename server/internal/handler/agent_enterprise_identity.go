@@ -97,6 +97,14 @@ func (h *Handler) GetAgentEnterpriseIdentityStatus(w http.ResponseWriter, r *htt
 		writeEnterpriseIdentityError(w, r, "status", workspaceID, agent.ID, err)
 		return
 	}
+	if identity.Status == "revoked" {
+		writeJSON(w, http.StatusOK, agentEnterpriseIdentityStatusResponse{
+			Configured: true,
+			CanManage:  canManage,
+			Identity:   nil,
+		})
+		return
+	}
 	connection := &agentEnterpriseIdentityConnection{
 		Status:              identity.Status,
 		BUCStatus:           identity.Status,

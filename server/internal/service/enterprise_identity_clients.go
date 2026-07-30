@@ -19,6 +19,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	idemapi "gitlab.alibaba-inc.com/idem/idem-api-client-golang"
 	authconfig "gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang/auth/config"
+	authidentity "gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang/auth/identity"
 	authoidc "gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang/auth/oidc"
 )
 
@@ -38,7 +39,7 @@ type EnterpriseOIDCToken struct {
 }
 
 type EnterpriseAuthX interface {
-	IssueForBUCIdentity(context.Context, BUCIdentityTokens) (EnterpriseOIDCToken, error)
+	IssueForVerifiedEmployee(context.Context, string) (EnterpriseOIDCToken, error)
 	Renew(context.Context, string) (EnterpriseOIDCToken, error)
 }
 
@@ -101,22 +102,30 @@ func parseNormandyEnvironment(raw string) (authconfig.EnvType, error) {
 	}
 }
 
-func (c *NormandyAuthXClient) IssueForBUCIdentity(
+func (c *NormandyAuthXClient) IssueForVerifiedEmployee(
 	ctx context.Context,
-	tokens BUCIdentityTokens,
+	employeeID string,
 ) (EnterpriseOIDCToken, error) {
 	if err := ctx.Err(); err != nil {
 		return EnterpriseOIDCToken{}, err
 	}
-	idToken := strings.TrimSpace(tokens.IDToken)
-	if idToken == "" {
-		return EnterpriseOIDCToken{}, errors.New("verified BUC OIDC ID token is required")
+	employeeID = strings.TrimSpace(employeeID)
+	if !enterpriseEmployeeIDPattern.MatchString(employeeID) {
+		return EnterpriseOIDCToken{}, errors.New("verified employee ID is invalid")
 	}
+	// CompleteBinding calls this only after verifying the BUC ID Token
+	// signature, audience, expiry, and nonce. The subject issuance path is
+	// required here because Normandy's bucOidcIdToken exchange intentionally
+	// returns a short-lived ID Token without a renewable refresh-token pair.
 	token, err := c.client.IssueToken(
-		authoidc.NewBucOidcIdTokenSpec(idToken, c.audience, c.ttl).WithForceRefresh(true),
+		authoidc.NewSubjectSpec(
+			authidentity.NewBucUser(employeeID),
+			c.audience,
+			c.ttl,
+		).WithForceRefresh(true),
 	)
 	if err != nil {
-		return EnterpriseOIDCToken{}, fmt.Errorf("exchange BUC OIDC token for AuthX token: %w", err)
+		return EnterpriseOIDCToken{}, fmt.Errorf("issue renewable AuthX token for verified employee: %w", err)
 	}
 	return normalizeEnterpriseOIDCToken(token)
 }

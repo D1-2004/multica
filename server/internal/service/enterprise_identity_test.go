@@ -186,17 +186,17 @@ func (f *fakeEnterpriseIdentityStore) MarkCloudSandboxSessionStale(
 }
 
 type fakeEnterpriseAuthX struct {
-	issuedBUC   BUCIdentityTokens
-	renewedFrom string
-	issueResult EnterpriseOIDCToken
-	renewResult EnterpriseOIDCToken
+	issuedEmployee string
+	renewedFrom    string
+	issueResult    EnterpriseOIDCToken
+	renewResult    EnterpriseOIDCToken
 }
 
-func (f *fakeEnterpriseAuthX) IssueForBUCIdentity(
+func (f *fakeEnterpriseAuthX) IssueForVerifiedEmployee(
 	_ context.Context,
-	tokens BUCIdentityTokens,
+	employeeID string,
 ) (EnterpriseOIDCToken, error) {
-	f.issuedBUC = tokens
+	f.issuedEmployee = employeeID
 	return f.issueResult, nil
 }
 
@@ -313,9 +313,9 @@ type chainingEnterpriseAuthX struct {
 	calls []string
 }
 
-func (c *chainingEnterpriseAuthX) IssueForBUCIdentity(
+func (c *chainingEnterpriseAuthX) IssueForVerifiedEmployee(
 	context.Context,
-	BUCIdentityTokens,
+	string,
 ) (EnterpriseOIDCToken, error) {
 	return EnterpriseOIDCToken{}, errors.New("unexpected AuthX token issue")
 }
@@ -391,7 +391,7 @@ func (f *fakeBUCOAuthClient) VerifyIDToken(
 	return f.claims, f.verifyErr
 }
 
-func TestNormandyAuthXClientExchangesVerifiedBUCIDTokenAndRotatesRefresh(t *testing.T) {
+func TestNormandyAuthXClientIssuesForVerifiedEmployeeAndRotatesRefresh(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 30, 4, 0, 0, 0, time.UTC)
@@ -414,11 +414,9 @@ func TestNormandyAuthXClientExchangesVerifiedBUCIDTokenAndRotatesRefresh(t *test
 		audience: "https://authx.alibaba-inc.com",
 		ttl:      3600,
 	}
-	issued, err := client.IssueForBUCIdentity(context.Background(), BUCIdentityTokens{
-		IDToken: "verified-buc-id-token",
-	})
+	issued, err := client.IssueForVerifiedEmployee(context.Background(), "12345")
 	if err != nil {
-		t.Fatalf("IssueForBUCIdentity: %v", err)
+		t.Fatalf("IssueForVerifiedEmployee: %v", err)
 	}
 	if sdk.issueCalls != 1 ||
 		issued.IDToken != "authx-id-1" ||
@@ -436,11 +434,8 @@ func TestNormandyAuthXClientExchangesVerifiedBUCIDTokenAndRotatesRefresh(t *test
 		!renewed.RefreshExpiresAt.Equal(now.Add(8*24*time.Hour)) {
 		t.Fatalf("renewed token = %#v calls=%d", renewed, sdk.renewCalls)
 	}
-	if _, err := client.IssueForBUCIdentity(
-		context.Background(),
-		BUCIdentityTokens{RefreshToken: "buc-refresh-must-not-be-used"},
-	); err == nil {
-		t.Fatal("IssueForBUCIdentity accepted a missing verified BUC ID token")
+	if _, err := client.IssueForVerifiedEmployee(context.Background(), "not-an-employee"); err == nil {
+		t.Fatal("IssueForVerifiedEmployee accepted an invalid employee ID")
 	}
 	if sdk.issueCalls != 1 {
 		t.Fatalf("Normandy issue calls after invalid input = %d", sdk.issueCalls)
@@ -577,8 +572,8 @@ func TestEnterpriseIdentityCompleteBindingRequiresRevokeBeforeChangingEmployee(t
 	if !errors.Is(err, ErrEnterpriseIdentityEmployeeConflict) {
 		t.Fatalf("CompleteBinding error = %v", err)
 	}
-	if authX.issuedBUC.IDToken != "" {
-		t.Fatal("AuthX exchange ran before employee conflict validation")
+	if authX.issuedEmployee != "" {
+		t.Fatal("AuthX issuance ran before employee conflict validation")
 	}
 }
 
@@ -683,8 +678,8 @@ func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *t
 		idem.registration.EmployeeID != "12345" {
 		t.Fatalf("BUC employee identity was not used for binding")
 	}
-	if authX.issuedBUC.IDToken != bucIDToken {
-		t.Fatalf("BUC identity token = %q", authX.issuedBUC.IDToken)
+	if authX.issuedEmployee != "12345" {
+		t.Fatalf("verified employee = %q", authX.issuedEmployee)
 	}
 	if bytes.Contains(store.upsert.AuthxRefreshTokenEncrypted, []byte("authx-refresh")) ||
 		bytes.Contains(store.upsert.AuthxRefreshTokenEncrypted, []byte("buc-refresh")) {

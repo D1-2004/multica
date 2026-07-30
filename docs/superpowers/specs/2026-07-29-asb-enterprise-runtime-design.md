@@ -74,11 +74,13 @@ Related:
 1. 校验 `state`、OIDC `nonce`、`iss`、`aud`、`exp`；随后用同次换取的
    Access Token 调用 BUC `user_info`，校验其 `openid` 与 ID Token `sub`
    一致，并从受信响应的 `empId` 取得员工工号。
-2. Multica 完成 BUC ID Token 的签名、时效、nonce 和员工工号校验后，把该已验证
-   ID Token 交给 Normandy OIDC SDK 的 `NewBucOidcIdTokenSpec(...)`，并设置
-   `forceRefresh=true`，换取 AuthX 专用 ID Token 和可轮换 Refresh Token。
-   不使用仅凭工号构造的 `NewSubjectSpec(NewBucUser(...))`，避免平台越过本次用户
-   授权证明代签身份。
+2. Multica 完成 BUC ID Token 的签名、受众、时效、nonce 和员工工号校验后，才把
+   该次授权验出的员工主体交给 Normandy OIDC SDK 的
+   `NewSubjectSpec(NewBucUser(...))`，并设置 `forceRefresh=true`，换取 AuthX
+   专用 ID Token 和可轮换 Refresh Token。Normandy 的
+   `NewBucOidcIdTokenSpec(...)` 分支只签发短期 ID Token，不返回 Refresh Token，
+   因而不能承担无感续期。员工主体签发能力只封装在完成上述 BUC 验真的绑定流程内，
+   不对外提供任意工号换票入口。
 3. 用原始 BUC 三件套创建并注入一个 BUC 身份锚点沙箱。
 4. ASB 确认注入成功后，立即丢弃原始 BUC ID/Access/Refresh Token。
 5. 只加密持久化 Normandy 返回的 AuthX Refresh Token；它不是 ASB 使用的 BUC
