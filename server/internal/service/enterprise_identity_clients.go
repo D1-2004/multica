@@ -12,6 +12,8 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,17 +21,20 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	idemapi "gitlab.alibaba-inc.com/idem/idem-api-client-golang"
 	authconfig "gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang/auth/config"
-	authidentity "gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang/auth/identity"
 	authoidc "gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang/auth/oidc"
 )
 
 const enterpriseIdentityMaxResponseBytes = 1 << 20
 
 const (
-	idemEnterpriseAgentType        = "multica"
-	idemEnterpriseFrameworkName    = "Aone Sandbox"
-	idemEnterpriseFrameworkVersion = "1.0.0"
+	idemEnterpriseAgentType         = "multica"
+	idemEnterpriseFrameworkName     = "Aone Sandbox"
+	idemEnterpriseFrameworkVersion  = "1.0.0"
+	enterpriseBUCSSOTicketPath      = "/rpc/openapi/generate_ticket.json"
+	enterpriseBUCSSOTicketExpiresIn = int64(300)
 )
+
+var enterpriseIdentityHTTPStatusPattern = regexp.MustCompile(`status code:\s*([1-5][0-9]{2})`)
 
 type EnterpriseOIDCToken struct {
 	IDToken          string
@@ -39,8 +44,91 @@ type EnterpriseOIDCToken struct {
 }
 
 type EnterpriseAuthX interface {
-	IssueForVerifiedEmployee(context.Context, string) (EnterpriseOIDCToken, error)
+	IssueFromSSOTicket(context.Context, string) (EnterpriseOIDCToken, error)
 	Renew(context.Context, string) (EnterpriseOIDCToken, error)
+}
+
+type enterpriseIdentityProviderError struct {
+	Provider   string
+	Operation  string
+	Class      string
+	StatusCode int
+	Code       string
+	Cause      error
+}
+
+func (e *enterpriseIdentityProviderError) Error() string {
+	if e == nil {
+		return "enterprise identity provider request failed"
+	}
+	message := fmt.Sprintf("%s %s failed", e.Provider, e.Operation)
+	if e.StatusCode > 0 {
+		message += fmt.Sprintf(" with HTTP %d", e.StatusCode)
+	}
+	if e.Code != "" {
+		message += fmt.Sprintf(" (code=%s)", e.Code)
+	}
+	return message
+}
+
+func (e *enterpriseIdentityProviderError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+func newEnterpriseIdentityProviderError(
+	provider string,
+	operation string,
+	class string,
+	statusCode int,
+	code string,
+	cause error,
+) error {
+	return &enterpriseIdentityProviderError{
+		Provider:   provider,
+		Operation:  operation,
+		Class:      class,
+		StatusCode: statusCode,
+		Code:       sanitizeEnterpriseIdentityDiagnosticCode(code),
+		Cause:      cause,
+	}
+}
+
+func sanitizeEnterpriseIdentityDiagnosticCode(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 128 {
+		return ""
+	}
+	for _, current := range value {
+		if (current >= 'a' && current <= 'z') ||
+			(current >= 'A' && current <= 'Z') ||
+			(current >= '0' && current <= '9') ||
+			current == '.' ||
+			current == '_' ||
+			current == '-' ||
+			current == ':' {
+			continue
+		}
+		return ""
+	}
+	return value
+}
+
+func enterpriseIdentityHTTPStatus(err error) int {
+	if err == nil {
+		return 0
+	}
+	match := enterpriseIdentityHTTPStatusPattern.FindStringSubmatch(err.Error())
+	if len(match) != 2 {
+		return 0
+	}
+	statusCode, parseErr := strconv.Atoi(match[1])
+	if parseErr != nil {
+		return 0
+	}
+	return statusCode
 }
 
 type normandyOIDCTokenClient interface {
@@ -102,32 +190,46 @@ func parseNormandyEnvironment(raw string) (authconfig.EnvType, error) {
 	}
 }
 
-func (c *NormandyAuthXClient) IssueForVerifiedEmployee(
+func (c *NormandyAuthXClient) IssueFromSSOTicket(
 	ctx context.Context,
-	employeeID string,
+	ssoTicket string,
 ) (EnterpriseOIDCToken, error) {
 	if err := ctx.Err(); err != nil {
 		return EnterpriseOIDCToken{}, err
 	}
-	employeeID = strings.TrimSpace(employeeID)
-	if !enterpriseEmployeeIDPattern.MatchString(employeeID) {
-		return EnterpriseOIDCToken{}, errors.New("verified employee ID is invalid")
+	ssoTicket = strings.TrimSpace(ssoTicket)
+	if ssoTicket == "" {
+		return EnterpriseOIDCToken{}, errors.New("BUC SSO ticket is required")
 	}
-	// CompleteBinding calls this only after verifying the BUC ID Token
-	// signature, audience, expiry, and nonce. The subject issuance path is
-	// required here because Normandy's bucOidcIdToken exchange intentionally
-	// returns a short-lived ID Token without a renewable refresh-token pair.
 	token, err := c.client.IssueToken(
-		authoidc.NewSubjectSpec(
-			authidentity.NewBucUser(employeeID),
+		authoidc.NewSsoTokenSpec(
+			ssoTicket,
 			c.audience,
 			c.ttl,
 		).WithForceRefresh(true),
 	)
 	if err != nil {
-		return EnterpriseOIDCToken{}, fmt.Errorf("issue renewable AuthX token for verified employee: %w", err)
+		return EnterpriseOIDCToken{}, newEnterpriseIdentityProviderError(
+			"authx",
+			"issue_oidc_from_sso_ticket",
+			"authx_request_error",
+			enterpriseIdentityHTTPStatus(err),
+			"",
+			err,
+		)
 	}
-	return normalizeEnterpriseOIDCToken(token)
+	normalized, err := normalizeEnterpriseOIDCToken(token)
+	if err != nil {
+		return EnterpriseOIDCToken{}, newEnterpriseIdentityProviderError(
+			"authx",
+			"issue_oidc_from_sso_ticket",
+			"authx_incomplete_response",
+			0,
+			"",
+			err,
+		)
+	}
+	return normalized, nil
 }
 
 func (c *NormandyAuthXClient) Renew(ctx context.Context, refreshToken string) (EnterpriseOIDCToken, error) {
@@ -139,9 +241,27 @@ func (c *NormandyAuthXClient) Renew(ctx context.Context, refreshToken string) (E
 	}
 	token, err := c.client.RenewToken(authoidc.NewRenewSpec(refreshToken))
 	if err != nil {
-		return EnterpriseOIDCToken{}, fmt.Errorf("renew AuthX OIDC token: %w", err)
+		return EnterpriseOIDCToken{}, newEnterpriseIdentityProviderError(
+			"authx",
+			"renew_oidc_token",
+			"authx_request_error",
+			enterpriseIdentityHTTPStatus(err),
+			"",
+			err,
+		)
 	}
-	return normalizeEnterpriseOIDCToken(token)
+	normalized, err := normalizeEnterpriseOIDCToken(token)
+	if err != nil {
+		return EnterpriseOIDCToken{}, newEnterpriseIdentityProviderError(
+			"authx",
+			"renew_oidc_token",
+			"authx_incomplete_response",
+			0,
+			"",
+			err,
+		)
+	}
+	return normalized, nil
 }
 
 func normalizeEnterpriseOIDCToken(token *authoidc.OidcToken) (EnterpriseOIDCToken, error) {
@@ -332,11 +452,13 @@ type BUCIdentityTokens struct {
 type BUCOAuthClient interface {
 	ExchangeCode(context.Context, string) (BUCIdentityTokens, error)
 	Refresh(context.Context, string) (BUCIdentityTokens, error)
+	GenerateSSOTicket(context.Context, string) (string, error)
 	VerifyIDToken(context.Context, string, []byte, time.Time) (bucIDTokenClaims, error)
 }
 
 type HTTPBUCOAuthClient struct {
 	tokenURL     *url.URL
+	ticketURL    *url.URL
 	issuer       string
 	jwksURL      *url.URL
 	clientID     string
@@ -371,6 +493,11 @@ func NewHTTPBUCOAuthClient(
 		strings.TrimSpace(redirectURL) == "" {
 		return nil, errors.New("BUC OAuth client configuration is incomplete")
 	}
+	ticketURL := *parsedTokenURL
+	ticketURL.Path = enterpriseBUCSSOTicketPath
+	ticketURL.RawPath = ""
+	ticketURL.RawQuery = ""
+	ticketURL.Fragment = ""
 	client := &http.Client{Timeout: 20 * time.Second}
 	if source != nil {
 		*client = *source
@@ -383,6 +510,7 @@ func NewHTTPBUCOAuthClient(
 	}
 	return &HTTPBUCOAuthClient{
 		tokenURL:     parsedTokenURL,
+		ticketURL:    &ticketURL,
 		issuer:       parsedIssuer.String(),
 		jwksURL:      parsedJWKSURL,
 		clientID:     clientID,
@@ -445,24 +573,53 @@ func (c *HTTPBUCOAuthClient) requestTokens(
 		return BUCIdentityTokens{}, fmt.Errorf("%s: %w", operation, err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, enterpriseIdentityMaxResponseBytes))
-		return BUCIdentityTokens{}, fmt.Errorf("BUC token endpoint returned HTTP %d", response.StatusCode)
+	raw, err := readEnterpriseIdentityResponse(response.Body)
+	if err != nil {
+		return BUCIdentityTokens{}, err
 	}
 	var payload struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		IDToken      string `json:"id_token"`
 		ExpiresIn    int64  `json:"expires_in"`
+		Error        string `json:"error"`
+		ErrorCode    string `json:"error_code"`
 	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, enterpriseIdentityMaxResponseBytes))
-	if err := decoder.Decode(&payload); err != nil {
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		if response.StatusCode != http.StatusOK {
+			return BUCIdentityTokens{}, newEnterpriseIdentityProviderError(
+				"buc",
+				operation,
+				"buc_http_error",
+				response.StatusCode,
+				"",
+				err,
+			)
+		}
 		return BUCIdentityTokens{}, errors.New("decode BUC token response")
+	}
+	providerCode := firstNonEmptyString(payload.ErrorCode, payload.Error)
+	if response.StatusCode != http.StatusOK || providerCode != "" {
+		return BUCIdentityTokens{}, newEnterpriseIdentityProviderError(
+			"buc",
+			operation,
+			"buc_oauth_error",
+			response.StatusCode,
+			providerCode,
+			nil,
+		)
 	}
 	if strings.TrimSpace(payload.AccessToken) == "" ||
 		strings.TrimSpace(payload.RefreshToken) == "" ||
 		strings.TrimSpace(payload.IDToken) == "" {
-		return BUCIdentityTokens{}, errors.New("BUC token response is incomplete")
+		return BUCIdentityTokens{}, newEnterpriseIdentityProviderError(
+			"buc",
+			operation,
+			"buc_incomplete_response",
+			response.StatusCode,
+			"",
+			nil,
+		)
 	}
 	return BUCIdentityTokens{
 		AccessToken:  payload.AccessToken,
@@ -470,6 +627,105 @@ func (c *HTTPBUCOAuthClient) requestTokens(
 		IDToken:      payload.IDToken,
 		ExpiresIn:    payload.ExpiresIn,
 	}, nil
+}
+
+func (c *HTTPBUCOAuthClient) GenerateSSOTicket(ctx context.Context, accessToken string) (string, error) {
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return "", errors.New("BUC access token is required")
+	}
+	form := url.Values{
+		"access_token": {accessToken},
+		"expires_type": {"repeatable"},
+		"expires_in":   {strconv.FormatInt(enterpriseBUCSSOTicketExpiresIn, 10)},
+	}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.ticketURL.String(),
+		strings.NewReader(form.Encode()),
+	)
+	if err != nil {
+		return "", errors.New("build BUC SSO ticket request")
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return "", newEnterpriseIdentityProviderError(
+			"buc",
+			"generate_sso_ticket",
+			"buc_transport_error",
+			0,
+			"",
+			err,
+		)
+	}
+	defer response.Body.Close()
+	raw, err := readEnterpriseIdentityResponse(response.Body)
+	if err != nil {
+		return "", err
+	}
+	var payload struct {
+		Success   *bool  `json:"success"`
+		Error     string `json:"error"`
+		ErrorCode string `json:"errorCode"`
+		Content   struct {
+			Data struct {
+				SSOTicket string `json:"ssoTicket"`
+				ExpiresIn int64  `json:"expiresIn"`
+			} `json:"data"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		if response.StatusCode != http.StatusOK {
+			return "", newEnterpriseIdentityProviderError(
+				"buc",
+				"generate_sso_ticket",
+				"buc_http_error",
+				response.StatusCode,
+				"",
+				err,
+			)
+		}
+		return "", errors.New("decode BUC SSO ticket response")
+	}
+	providerCode := firstNonEmptyString(payload.ErrorCode, payload.Error)
+	if response.StatusCode != http.StatusOK ||
+		(payload.Success != nil && !*payload.Success) ||
+		providerCode != "" {
+		return "", newEnterpriseIdentityProviderError(
+			"buc",
+			"generate_sso_ticket",
+			"buc_ticket_error",
+			response.StatusCode,
+			providerCode,
+			nil,
+		)
+	}
+	ssoTicket := strings.TrimSpace(payload.Content.Data.SSOTicket)
+	if ssoTicket == "" {
+		return "", newEnterpriseIdentityProviderError(
+			"buc",
+			"generate_sso_ticket",
+			"buc_incomplete_response",
+			response.StatusCode,
+			"",
+			nil,
+		)
+	}
+	return ssoTicket, nil
+}
+
+func readEnterpriseIdentityResponse(source io.Reader) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(source, enterpriseIdentityMaxResponseBytes+1))
+	if err != nil {
+		return nil, errors.New("read enterprise identity provider response")
+	}
+	if len(raw) > enterpriseIdentityMaxResponseBytes {
+		return nil, errors.New("enterprise identity provider response is too large")
+	}
+	return raw, nil
 }
 
 type bucIDTokenClaims struct {

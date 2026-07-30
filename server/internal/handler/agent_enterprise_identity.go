@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -224,7 +225,14 @@ func (h *Handler) CompleteAgentEnterpriseIdentityBinding(w http.ResponseWriter, 
 		select {
 		case outcome := <-resultCh:
 			if outcome.err != nil {
-				slog.Warn("enterprise identity OAuth callback failed")
+				slog.Warn(
+					"enterprise identity OAuth callback failed",
+					append(
+						logger.RequestAttrs(r),
+						"error_type",
+						fmt.Sprintf("%T", outcome.err),
+					)...,
+				)
 				if clientConnected {
 					_, _ = io.WriteString(w, enterpriseIdentityCallbackFailurePage(nonce))
 					flusher.Flush()
@@ -233,7 +241,10 @@ func (h *Handler) CompleteAgentEnterpriseIdentityBinding(w http.ResponseWriter, 
 			}
 			target, targetErr := url.Parse(outcome.result.RedirectPath)
 			if targetErr != nil || target.IsAbs() || !strings.HasPrefix(target.Path, "/") {
-				slog.Warn("enterprise identity OAuth callback produced invalid redirect")
+				slog.Warn(
+					"enterprise identity OAuth callback produced invalid redirect",
+					logger.RequestAttrs(r)...,
+				)
 				if clientConnected {
 					_, _ = io.WriteString(w, enterpriseIdentityCallbackFailurePage(nonce))
 					flusher.Flush()
@@ -258,7 +269,14 @@ func (h *Handler) CompleteAgentEnterpriseIdentityBinding(w http.ResponseWriter, 
 			}
 			flusher.Flush()
 		case <-bindingCtx.Done():
-			slog.Warn("enterprise identity OAuth callback timed out")
+			slog.Warn(
+				"enterprise identity OAuth callback timed out",
+				append(
+					logger.RequestAttrs(r),
+					"timeout_seconds",
+					int64(enterpriseIdentityCallbackTimeout/time.Second),
+				)...,
+			)
 			if clientConnected {
 				_, _ = io.WriteString(w, enterpriseIdentityCallbackFailurePage(nonce))
 				flusher.Flush()

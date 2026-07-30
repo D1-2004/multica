@@ -429,24 +429,38 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	state string,
 	code string,
 ) (CompleteEnterpriseIdentityBindingResult, error) {
+	bindingStarted := time.Now()
 	state = strings.TrimSpace(state)
 	code = strings.TrimSpace(code)
 	if state == "" || code == "" {
-		return CompleteEnterpriseIdentityBindingResult{}, errors.New("enterprise identity OAuth callback is incomplete")
+		err := errors.New("enterprise identity OAuth callback is incomplete")
+		logEnterpriseIdentityBindingStageFailure("validate_oauth_callback", bindingStarted, err)
+		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
+	stageStarted := time.Now()
 	attempt, err := s.Store.ConsumeAgentEnterpriseIdentityAttempt(ctx, sha256Bytes(state))
 	if err != nil {
-		logEnterpriseIdentityBindingStageFailure("consume_oauth_attempt")
+		logEnterpriseIdentityBindingStageFailure("consume_oauth_attempt", stageStarted, err)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CompleteEnterpriseIdentityBindingResult{}, errors.New("enterprise identity OAuth attempt is invalid, expired, or already used")
 		}
 		return CompleteEnterpriseIdentityBindingResult{}, fmt.Errorf("consume enterprise identity OAuth attempt: %w", err)
 	}
+	bindingAttrs := []any{
+		"workspace_id", util.UUIDToString(attempt.WorkspaceID),
+		"agent_id", util.UUIDToString(attempt.AgentID),
+	}
+	logEnterpriseIdentityBindingStageSuccess("consume_oauth_attempt", stageStarted, bindingAttrs...)
+
+	stageStarted = time.Now()
 	bucTokens, err := s.BUC.ExchangeCode(ctx, code)
 	if err != nil {
-		logEnterpriseIdentityBindingStageFailure("exchange_buc_code")
+		logEnterpriseIdentityBindingStageFailure("exchange_buc_code", stageStarted, err, bindingAttrs...)
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
+	logEnterpriseIdentityBindingStageSuccess("exchange_buc_code", stageStarted, bindingAttrs...)
+
+	stageStarted = time.Now()
 	claims, err := s.BUC.VerifyIDToken(
 		ctx,
 		bucTokens.IDToken,
@@ -454,14 +468,25 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		s.Now(),
 	)
 	if err != nil {
-		logEnterpriseIdentityBindingStageFailure("verify_buc_id_token")
+		logEnterpriseIdentityBindingStageFailure("verify_buc_id_token", stageStarted, err, bindingAttrs...)
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
+	logEnterpriseIdentityBindingStageSuccess("verify_buc_id_token", stageStarted, bindingAttrs...)
+
 	employeeID := claims.EmployeeID
+	stageStarted = time.Now()
 	agent, err := s.Store.GetAgent(ctx, attempt.AgentID)
 	if err != nil || agent.WorkspaceID != attempt.WorkspaceID {
-		return CompleteEnterpriseIdentityBindingResult{}, errors.New("enterprise identity target agent no longer exists")
+		targetErr := errors.New("enterprise identity target agent no longer exists")
+		if err != nil {
+			targetErr = fmt.Errorf("load enterprise identity target agent: %w", err)
+		}
+		logEnterpriseIdentityBindingStageFailure("load_target_agent", stageStarted, targetErr, bindingAttrs...)
+		return CompleteEnterpriseIdentityBindingResult{}, targetErr
 	}
+	logEnterpriseIdentityBindingStageSuccess("load_target_agent", stageStarted, bindingAttrs...)
+
+	stageStarted = time.Now()
 	oldIdentity, oldIdentityFound, err := s.loadReplaceableIdentity(
 		ctx,
 		attempt.WorkspaceID,
@@ -469,25 +494,57 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		employeeID,
 	)
 	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("validate_existing_binding", stageStarted, err, bindingAttrs...)
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
-	authXToken, err := s.AuthX.IssueForVerifiedEmployee(ctx, employeeID)
+	logEnterpriseIdentityBindingStageSuccess("validate_existing_binding", stageStarted, bindingAttrs...)
+
+	stageStarted = time.Now()
+	ssoTicket, err := s.BUC.GenerateSSOTicket(ctx, bucTokens.AccessToken)
 	if err != nil {
-		logEnterpriseIdentityBindingStageFailure("issue_authx_oidc_token")
+		logEnterpriseIdentityBindingStageFailure("generate_buc_sso_ticket", stageStarted, err, bindingAttrs...)
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
+	logEnterpriseIdentityBindingStageSuccess(
+		"generate_buc_sso_ticket",
+		stageStarted,
+		append(bindingAttrs, "ticket_ttl_seconds", enterpriseBUCSSOTicketExpiresIn)...,
+	)
+
+	stageStarted = time.Now()
+	authXToken, err := s.AuthX.IssueFromSSOTicket(ctx, ssoTicket)
+	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("issue_authx_oidc_token", stageStarted, err, bindingAttrs...)
+		return CompleteEnterpriseIdentityBindingResult{}, err
+	}
+	logEnterpriseIdentityBindingStageSuccess(
+		"issue_authx_oidc_token",
+		stageStarted,
+		append(
+			bindingAttrs,
+			"id_token_ttl_seconds", enterpriseIdentityTTLSeconds(authXToken.ExpiresAt, s.Now()),
+			"refresh_token_ttl_seconds", enterpriseIdentityTTLSeconds(authXToken.RefreshExpiresAt, s.Now()),
+		)...,
+	)
+
+	stageStarted = time.Now()
 	agentSPIFFEID, err := s.agentSPIFFEID(attempt.AgentID)
 	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("derive_spiffe_identity", stageStarted, err, bindingAttrs...)
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
 	operatorSPIFFEID, err := s.operatorSPIFFEID(employeeID)
 	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("derive_spiffe_identity", stageStarted, err, bindingAttrs...)
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
+	logEnterpriseIdentityBindingStageSuccess("derive_spiffe_identity", stageStarted, bindingAttrs...)
+
 	model := ""
 	if agent.Model.Valid {
 		model = agent.Model.String
 	}
+	stageStarted = time.Now()
 	aipID, aipCreated, err := s.Idem.EnsureAgent(ctx, EnterpriseAgentRegistration{
 		SPIFFEID:    agentSPIFFEID,
 		OperatorID:  operatorSPIFFEID,
@@ -497,9 +554,14 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		BindingAt:   s.Now(),
 	})
 	if err != nil {
-		logEnterpriseIdentityBindingStageFailure("ensure_idem_agent")
+		logEnterpriseIdentityBindingStageFailure("ensure_idem_agent", stageStarted, err, bindingAttrs...)
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
+	logEnterpriseIdentityBindingStageSuccess(
+		"ensure_idem_agent",
+		stageStarted,
+		append(bindingAttrs, "idem_agent_created", aipCreated)...,
+	)
 	cleanupAIP := func() {
 		if aipCreated {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -507,11 +569,15 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 			_ = s.Idem.DeleteAgent(cleanupCtx, aipID, operatorSPIFFEID)
 		}
 	}
+	stageStarted = time.Now()
 	if _, err := s.Idem.IssueAIT(ctx, authXToken.IDToken, agentSPIFFEID, operatorSPIFFEID, s.Config.AITTTL); err != nil {
-		logEnterpriseIdentityBindingStageFailure("issue_idem_ait")
+		logEnterpriseIdentityBindingStageFailure("issue_idem_ait", stageStarted, err, bindingAttrs...)
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
+	logEnterpriseIdentityBindingStageSuccess("issue_idem_ait", stageStarted, bindingAttrs...)
+
+	stageStarted = time.Now()
 	anchorID, err := s.Anchor.Create(
 		ctx,
 		attempt.WorkspaceID,
@@ -520,21 +586,31 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		bucTokens,
 	)
 	if err != nil {
-		logEnterpriseIdentityBindingStageFailure("create_buc_anchor")
+		logEnterpriseIdentityBindingStageFailure("create_buc_anchor", stageStarted, err, bindingAttrs...)
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
+	logEnterpriseIdentityBindingStageSuccess(
+		"create_buc_anchor",
+		stageStarted,
+		append(bindingAttrs, "anchor_sandbox_id", anchorID)...,
+	)
 	cleanupAnchor := func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		_ = s.Anchor.Delete(cleanupCtx, anchorID)
 	}
+	stageStarted = time.Now()
 	sealedRefresh, err := s.Secrets.Seal([]byte(authXToken.RefreshToken))
 	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("encrypt_authx_refresh_token", stageStarted, err, bindingAttrs...)
 		cleanupAnchor()
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, errors.New("encrypt AuthX refresh token")
 	}
+	logEnterpriseIdentityBindingStageSuccess("encrypt_authx_refresh_token", stageStarted, bindingAttrs...)
+
+	stageStarted = time.Now()
 	identity, err := s.Store.UpsertAgentEnterpriseIdentity(ctx, db.UpsertAgentEnterpriseIdentityParams{
 		WorkspaceID:                attempt.WorkspaceID,
 		AgentID:                    attempt.AgentID,
@@ -549,11 +625,12 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		BoundBy:                    attempt.ActorUserID,
 	})
 	if err != nil {
-		logEnterpriseIdentityBindingStageFailure("persist_binding")
+		logEnterpriseIdentityBindingStageFailure("persist_binding", stageStarted, err, bindingAttrs...)
 		cleanupAnchor()
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, fmt.Errorf("persist enterprise identity binding: %w", err)
 	}
+	logEnterpriseIdentityBindingStageSuccess("persist_binding", stageStarted, bindingAttrs...)
 	if oldIdentityFound &&
 		oldIdentity.BucAnchorSandboxID.Valid &&
 		oldIdentity.BucAnchorSandboxID.String != anchorID {
@@ -571,14 +648,91 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 			)
 		}
 	}
+	slog.Info(
+		"enterprise identity binding completed",
+		append(
+			bindingAttrs,
+			"duration_ms", enterpriseIdentityDurationMilliseconds(bindingStarted),
+			"anchor_sandbox_id", anchorID,
+		)...,
+	)
 	return CompleteEnterpriseIdentityBindingResult{
 		Identity:     identity,
 		RedirectPath: attempt.RedirectPath,
 	}, nil
 }
 
-func logEnterpriseIdentityBindingStageFailure(stage string) {
-	slog.Warn("enterprise identity binding stage failed", "stage", stage)
+func logEnterpriseIdentityBindingStageSuccess(stage string, started time.Time, attributes ...any) {
+	base := []any{
+		"stage", stage,
+		"duration_ms", enterpriseIdentityDurationMilliseconds(started),
+	}
+	slog.Info("enterprise identity binding stage completed", append(base, attributes...)...)
+}
+
+func logEnterpriseIdentityBindingStageFailure(
+	stage string,
+	started time.Time,
+	err error,
+	attributes ...any,
+) {
+	base := []any{
+		"stage", stage,
+		"duration_ms", enterpriseIdentityDurationMilliseconds(started),
+		"error_class", enterpriseIdentityErrorClass(err),
+		"error_type", fmt.Sprintf("%T", err),
+	}
+	var providerErr *enterpriseIdentityProviderError
+	if errors.As(err, &providerErr) {
+		base = append(
+			base,
+			"provider", providerErr.Provider,
+			"operation", providerErr.Operation,
+		)
+		if providerErr.StatusCode > 0 {
+			base = append(base, "http_status", providerErr.StatusCode)
+		}
+		if providerErr.Code != "" {
+			base = append(base, "provider_error_code", providerErr.Code)
+		}
+	}
+	slog.Warn("enterprise identity binding stage failed", append(base, attributes...)...)
+}
+
+func enterpriseIdentityErrorClass(err error) string {
+	if err == nil {
+		return "none"
+	}
+	var providerErr *enterpriseIdentityProviderError
+	if errors.As(err, &providerErr) && providerErr.Class != "" {
+		return providerErr.Class
+	}
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		return "context_canceled"
+	case errors.Is(err, pgx.ErrNoRows):
+		return "not_found"
+	default:
+		return "internal_error"
+	}
+}
+
+func enterpriseIdentityDurationMilliseconds(started time.Time) int64 {
+	duration := time.Since(started)
+	if duration < 0 {
+		return 0
+	}
+	return duration.Milliseconds()
+}
+
+func enterpriseIdentityTTLSeconds(expiresAt time.Time, now time.Time) int64 {
+	remaining := expiresAt.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	return int64(remaining / time.Second)
 }
 
 func (s *EnterpriseIdentityService) loadReplaceableIdentity(

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -186,17 +187,17 @@ func (f *fakeEnterpriseIdentityStore) MarkCloudSandboxSessionStale(
 }
 
 type fakeEnterpriseAuthX struct {
-	issuedEmployee string
-	renewedFrom    string
-	issueResult    EnterpriseOIDCToken
-	renewResult    EnterpriseOIDCToken
+	issuedSSOTicket string
+	renewedFrom     string
+	issueResult     EnterpriseOIDCToken
+	renewResult     EnterpriseOIDCToken
 }
 
-func (f *fakeEnterpriseAuthX) IssueForVerifiedEmployee(
+func (f *fakeEnterpriseAuthX) IssueFromSSOTicket(
 	_ context.Context,
-	employeeID string,
+	ssoTicket string,
 ) (EnterpriseOIDCToken, error) {
-	f.issuedEmployee = employeeID
+	f.issuedSSOTicket = ssoTicket
 	return f.issueResult, nil
 }
 
@@ -313,7 +314,7 @@ type chainingEnterpriseAuthX struct {
 	calls []string
 }
 
-func (c *chainingEnterpriseAuthX) IssueForVerifiedEmployee(
+func (c *chainingEnterpriseAuthX) IssueFromSSOTicket(
 	context.Context,
 	string,
 ) (EnterpriseOIDCToken, error) {
@@ -366,11 +367,14 @@ func (f *fakeEnterpriseAnchor) Delete(_ context.Context, sandboxID string) error
 }
 
 type fakeBUCOAuthClient struct {
-	tokens        BUCIdentityTokens
-	refreshResult BUCIdentityTokens
-	claims        bucIDTokenClaims
-	verifiedToken string
-	verifyErr     error
+	tokens            BUCIdentityTokens
+	refreshResult     BUCIdentityTokens
+	claims            bucIDTokenClaims
+	verifiedToken     string
+	ticket            string
+	ticketAccessToken string
+	ticketErr         error
+	verifyErr         error
 }
 
 func (f *fakeBUCOAuthClient) ExchangeCode(context.Context, string) (BUCIdentityTokens, error) {
@@ -379,6 +383,20 @@ func (f *fakeBUCOAuthClient) ExchangeCode(context.Context, string) (BUCIdentityT
 
 func (f *fakeBUCOAuthClient) Refresh(context.Context, string) (BUCIdentityTokens, error) {
 	return f.refreshResult, nil
+}
+
+func (f *fakeBUCOAuthClient) GenerateSSOTicket(
+	_ context.Context,
+	accessToken string,
+) (string, error) {
+	f.ticketAccessToken = accessToken
+	if f.ticketErr != nil {
+		return "", f.ticketErr
+	}
+	if f.ticket == "" {
+		return "buc-sso-ticket", nil
+	}
+	return f.ticket, nil
 }
 
 func (f *fakeBUCOAuthClient) VerifyIDToken(
@@ -391,7 +409,7 @@ func (f *fakeBUCOAuthClient) VerifyIDToken(
 	return f.claims, f.verifyErr
 }
 
-func TestNormandyAuthXClientIssuesForVerifiedEmployeeAndRotatesRefresh(t *testing.T) {
+func TestNormandyAuthXClientIssuesFromSSOTicketAndRotatesRefresh(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 30, 4, 0, 0, 0, time.UTC)
@@ -414,9 +432,9 @@ func TestNormandyAuthXClientIssuesForVerifiedEmployeeAndRotatesRefresh(t *testin
 		audience: "https://authx.alibaba-inc.com",
 		ttl:      3600,
 	}
-	issued, err := client.IssueForVerifiedEmployee(context.Background(), "12345")
+	issued, err := client.IssueFromSSOTicket(context.Background(), "buc-sso-ticket")
 	if err != nil {
-		t.Fatalf("IssueForVerifiedEmployee: %v", err)
+		t.Fatalf("IssueFromSSOTicket: %v", err)
 	}
 	if sdk.issueCalls != 1 ||
 		issued.IDToken != "authx-id-1" ||
@@ -434,8 +452,8 @@ func TestNormandyAuthXClientIssuesForVerifiedEmployeeAndRotatesRefresh(t *testin
 		!renewed.RefreshExpiresAt.Equal(now.Add(8*24*time.Hour)) {
 		t.Fatalf("renewed token = %#v calls=%d", renewed, sdk.renewCalls)
 	}
-	if _, err := client.IssueForVerifiedEmployee(context.Background(), "not-an-employee"); err == nil {
-		t.Fatal("IssueForVerifiedEmployee accepted an invalid employee ID")
+	if _, err := client.IssueFromSSOTicket(context.Background(), ""); err == nil {
+		t.Fatal("IssueFromSSOTicket accepted an empty SSO ticket")
 	}
 	if sdk.issueCalls != 1 {
 		t.Fatalf("Normandy issue calls after invalid input = %d", sdk.issueCalls)
@@ -572,7 +590,7 @@ func TestEnterpriseIdentityCompleteBindingRequiresRevokeBeforeChangingEmployee(t
 	if !errors.Is(err, ErrEnterpriseIdentityEmployeeConflict) {
 		t.Fatalf("CompleteBinding error = %v", err)
 	}
-	if authX.issuedEmployee != "" {
+	if authX.issuedSSOTicket != "" {
 		t.Fatal("AuthX issuance ran before employee conflict validation")
 	}
 }
@@ -678,8 +696,11 @@ func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *t
 		idem.registration.EmployeeID != "12345" {
 		t.Fatalf("BUC employee identity was not used for binding")
 	}
-	if authX.issuedEmployee != "12345" {
-		t.Fatalf("verified employee = %q", authX.issuedEmployee)
+	if buc.ticketAccessToken != "buc-access" {
+		t.Fatalf("BUC SSO ticket access token = %q", buc.ticketAccessToken)
+	}
+	if authX.issuedSSOTicket != "buc-sso-ticket" {
+		t.Fatalf("AuthX SSO ticket = %q", authX.issuedSSOTicket)
 	}
 	if bytes.Contains(store.upsert.AuthxRefreshTokenEncrypted, []byte("authx-refresh")) ||
 		bytes.Contains(store.upsert.AuthxRefreshTokenEncrypted, []byte("buc-refresh")) {
@@ -1046,6 +1067,90 @@ func TestEnterpriseIdentityRevokeRetiresActiveASBSandboxes(t *testing.T) {
 	}
 	if store.current.Status != "revoked" {
 		t.Fatalf("identity status = %q", store.current.Status)
+	}
+}
+
+func TestHTTPBUCOAuthClientGeneratesRepeatableSSOTicket(t *testing.T) {
+	t.Parallel()
+
+	var requestSeen bool
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestSeen = true
+		if r.Method != http.MethodPost || r.URL.Path != enterpriseBUCSSOTicketPath {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm: %v", err)
+		}
+		if r.Form.Get("access_token") != "buc-access" ||
+			r.Form.Get("expires_type") != "repeatable" ||
+			r.Form.Get("expires_in") != "300" {
+			t.Errorf("ticket request form = %#v", r.Form)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(
+			w,
+			`{"success":true,"content":{"data":{"ssoTicket":"buc-sso-ticket","expiresIn":300}}}`,
+		)
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPBUCOAuthClient(
+		server.URL+"/rpc/oauth2/access_token.json",
+		server.URL+"/oauth2",
+		server.URL+"/oauth2/v1/keys",
+		"buc-client-1",
+		"buc-secret",
+		"https://multica.example/api/agent-enterprise-identity/buc/callback",
+		server.Client(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticket, err := client.GenerateSSOTicket(context.Background(), "buc-access")
+	if err != nil {
+		t.Fatalf("GenerateSSOTicket: %v", err)
+	}
+	if !requestSeen || ticket != "buc-sso-ticket" {
+		t.Fatalf("request seen=%v ticket=%q", requestSeen, ticket)
+	}
+}
+
+func TestHTTPBUCOAuthClientReportsSSOTicketProviderError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(
+			w,
+			`{"success":false,"errorCode":"240117","errorMsg":"access token expired"}`,
+		)
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPBUCOAuthClient(
+		server.URL+"/rpc/oauth2/access_token.json",
+		server.URL+"/oauth2",
+		server.URL+"/oauth2/v1/keys",
+		"buc-client-1",
+		"buc-secret",
+		"https://multica.example/api/agent-enterprise-identity/buc/callback",
+		server.Client(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.GenerateSSOTicket(context.Background(), "expired-buc-access")
+	var providerErr *enterpriseIdentityProviderError
+	if !errors.As(err, &providerErr) {
+		t.Fatalf("GenerateSSOTicket error = %v", err)
+	}
+	if providerErr.Provider != "buc" ||
+		providerErr.Operation != "generate_sso_ticket" ||
+		providerErr.Class != "buc_ticket_error" ||
+		providerErr.StatusCode != http.StatusOK ||
+		providerErr.Code != "240117" {
+		t.Fatalf("provider error = %#v", providerErr)
 	}
 }
 
