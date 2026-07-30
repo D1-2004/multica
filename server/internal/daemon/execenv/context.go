@@ -1,14 +1,17 @@
 package execenv
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
+	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 	"gopkg.in/yaml.v3"
 )
@@ -23,9 +26,95 @@ const TaskContextMarkerRelPath = ".multica/daemon_task_context.json"
 const TaskContextMarkerManagedBy = "multica-daemon-task"
 
 type taskContextMarkerFile struct {
-	ManagedBy string `json:"managed_by"`
-	AgentID   string `json:"agent_id,omitempty"`
-	IssueID   string `json:"issue_id,omitempty"`
+	ManagedBy         string `json:"managed_by"`
+	AgentID           string `json:"agent_id,omitempty"`
+	IssueID           string `json:"issue_id,omitempty"`
+	SessionContextSHA string `json:"session_context_sha256,omitempty"`
+}
+
+// taskSessionContextSHA fingerprints durable instructions that define who the
+// resumed provider session is and which long-lived capabilities it has. Task
+// fields that naturally change every turn (issue/comment IDs, chat messages,
+// initiators, handoff notes) are intentionally excluded.
+//
+// A provider transcript can retain an old agent name, persona, workspace
+// context, or skill contract even after the current runtime brief is refreshed.
+// Reusing that transcript after one of these fields changes gives the model two
+// conflicting identities. The daemon stores this digest beside the workdir and
+// starts a fresh provider session whenever the digest changes.
+func taskSessionContextSHA(ctx TaskContextForEnv) string {
+	skills := append([]SkillContextForEnv(nil), ctx.AgentSkills...)
+	for i := range skills {
+		skills[i].Files = append([]SkillFileContextForEnv(nil), skills[i].Files...)
+		sort.Slice(skills[i].Files, func(a, b int) bool {
+			if skills[i].Files[a].Path != skills[i].Files[b].Path {
+				return skills[i].Files[a].Path < skills[i].Files[b].Path
+			}
+			return skills[i].Files[a].Content < skills[i].Files[b].Content
+		})
+	}
+	sort.Slice(skills, func(i, j int) bool {
+		if skills[i].Name != skills[j].Name {
+			return skills[i].Name < skills[j].Name
+		}
+		if skills[i].Description != skills[j].Description {
+			return skills[i].Description < skills[j].Description
+		}
+		return skills[i].Content < skills[j].Content
+	})
+
+	connectedApps := append([]runtimeapps.ConnectedApp(nil), ctx.ConnectedApps...)
+	sort.Slice(connectedApps, func(i, j int) bool {
+		if connectedApps[i].Provider != connectedApps[j].Provider {
+			return connectedApps[i].Provider < connectedApps[j].Provider
+		}
+		if connectedApps[i].ServerName != connectedApps[j].ServerName {
+			return connectedApps[i].ServerName < connectedApps[j].ServerName
+		}
+		if connectedApps[i].ToolkitSlug != connectedApps[j].ToolkitSlug {
+			return connectedApps[i].ToolkitSlug < connectedApps[j].ToolkitSlug
+		}
+		return connectedApps[i].ToolkitName < connectedApps[j].ToolkitName
+	})
+
+	payload := struct {
+		Version                          int                        `json:"version"`
+		AgentID                          string                     `json:"agent_id"`
+		AgentName                        string                     `json:"agent_name"`
+		AgentInstructions                string                     `json:"agent_instructions"`
+		AgentSkills                      []SkillContextForEnv       `json:"agent_skills"`
+		WorkspaceContext                 string                     `json:"workspace_context"`
+		ConnectedApps                    []runtimeapps.ConnectedApp `json:"connected_apps"`
+		RequestingUserName               string                     `json:"requesting_user_name"`
+		RequestingUserProfileDescription string                     `json:"requesting_user_profile_description"`
+	}{
+		Version:                          1,
+		AgentID:                          ctx.AgentID,
+		AgentName:                        ctx.AgentName,
+		AgentInstructions:                ctx.AgentInstructions,
+		AgentSkills:                      skills,
+		WorkspaceContext:                 ctx.WorkspaceContext,
+		ConnectedApps:                    connectedApps,
+		RequestingUserName:               ctx.RequestingUserName,
+		RequestingUserProfileDescription: ctx.RequestingUserProfileDescription,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		panic(fmt.Sprintf("marshal task session context: %v", err))
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
+func readTaskSessionContextSHA(workDir string) string {
+	data, err := os.ReadFile(filepath.Join(workDir, TaskContextMarkerRelPath))
+	if err != nil {
+		return ""
+	}
+	var marker taskContextMarkerFile
+	if json.Unmarshal(data, &marker) != nil || marker.ManagedBy != TaskContextMarkerManagedBy {
+		return ""
+	}
+	return marker.SessionContextSHA
 }
 
 // EnsureWorkspacesRootMarker writes a persistent daemon-task marker at
@@ -220,9 +309,10 @@ func writeTaskContextMarker(workDir string, ctx TaskContextForEnv, manifest *sid
 	// cleanup. If a crash leaves it behind, the CLI intentionally treats it
 	// as daemon context and fails closed instead of using a user PAT.
 	payload := taskContextMarkerFile{
-		ManagedBy: TaskContextMarkerManagedBy,
-		AgentID:   ctx.AgentID,
-		IssueID:   ctx.IssueID,
+		ManagedBy:         TaskContextMarkerManagedBy,
+		AgentID:           ctx.AgentID,
+		IssueID:           ctx.IssueID,
+		SessionContextSHA: taskSessionContextSHA(ctx),
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {

@@ -207,6 +207,12 @@ type Environment struct {
 	// repeatable --skill arguments because its non-interactive mode cannot
 	// approve the task workdir as trusted.
 	ManagedSkillPaths []string
+	// ResumeContextCompatible reports whether the reused workdir was prepared
+	// with the same durable agent identity, instructions, skills, workspace
+	// context, connected apps, and requesting-user profile as this dispatch.
+	// A missing digest from an older daemon is incompatible by design so the
+	// first post-upgrade task replaces any stale provider transcript.
+	ResumeContextCompatible bool
 
 	logger *slog.Logger // for cleanup logging
 }
@@ -400,6 +406,8 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	if _, err := os.Stat(params.WorkDir); err != nil {
 		return nil
 	}
+	previousSessionContextSHA := readTaskSessionContextSHA(params.WorkDir)
+	currentSessionContextSHA := taskSessionContextSHA(params.Task)
 
 	// Self-heal the root-level daemon marker on the reuse path too, so a marker
 	// removed while the daemon runs is restored before a reused task spawns —
@@ -426,10 +434,11 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		rootDir = ""
 	}
 	env := &Environment{
-		RootDir:        rootDir,
-		WorkDir:        params.WorkDir,
-		LocalDirectory: params.LocalDirectory,
-		logger:         logger,
+		RootDir:                 rootDir,
+		WorkDir:                 params.WorkDir,
+		LocalDirectory:          params.LocalDirectory,
+		ResumeContextCompatible: previousSessionContextSHA != "" && previousSessionContextSHA == currentSessionContextSHA,
+		logger:                  logger,
 	}
 
 	// Roll back the previous dispatch's sidecar writes before refreshing.
