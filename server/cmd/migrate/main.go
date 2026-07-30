@@ -41,6 +41,26 @@ var preMigrationHooks = map[string]preMigrationHook{
 	"103_drop_legacy_daily_rollups": runTaskUsageHourlyHook,
 }
 
+type migrationVersionAlias struct {
+	Legacy  string
+	Current string
+}
+
+// migrationVersionAliases preserves databases that received the ASB
+// migrations from the prepub-only branch before that branch was rebased onto
+// the shared migration sequence. The SQL contents are unchanged: moving the
+// bookkeeping row prevents the same schema change from running twice.
+var migrationVersionAliases = []migrationVersionAlias{
+	{
+		Legacy:  "253_asb_enterprise_runtime",
+		Current: "257_asb_enterprise_runtime",
+	},
+	{
+		Legacy:  "254_buc_identity_from_callback",
+		Current: "258_buc_identity_from_callback",
+	},
+}
+
 func runTaskUsageHourlyHook(ctx context.Context, pool *pgxpool.Pool) error {
 	res, err := taskusagebackfill.Hook(ctx, pool, taskusagebackfill.HookOptions{})
 	if err != nil {
@@ -226,6 +246,11 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 	`, tableIdent)); err != nil {
 		return fmt.Errorf("create migrations table: %w", err)
 	}
+	if opts.Direction == "up" {
+		if err := reconcileMigrationVersionAliases(ctx, conn, tableIdent, opts.Files); err != nil {
+			return err
+		}
+	}
 
 	existsSQL := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE version = $1)", tableIdent)
 	insertSQL := fmt.Sprintf("INSERT INTO %s (version) VALUES ($1)", tableIdent)
@@ -287,6 +312,44 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 		fmt.Printf("  %s  %s\n", opts.Direction, version)
 	}
 
+	return nil
+}
+
+func reconcileMigrationVersionAliases(
+	ctx context.Context,
+	conn *pgxpool.Conn,
+	tableIdent string,
+	files []string,
+) error {
+	available := make(map[string]struct{}, len(files))
+	for _, file := range files {
+		available[migrations.ExtractVersion(file)] = struct{}{}
+	}
+
+	statement := fmt.Sprintf(`
+		WITH legacy AS (
+			DELETE FROM %s
+			WHERE version = $1
+			RETURNING applied_at
+		)
+		INSERT INTO %s (version, applied_at)
+		SELECT $2, applied_at
+		FROM legacy
+		ON CONFLICT (version) DO NOTHING
+	`, tableIdent, tableIdent)
+	for _, alias := range migrationVersionAliases {
+		if _, ok := available[alias.Current]; !ok {
+			continue
+		}
+		if _, err := conn.Exec(ctx, statement, alias.Legacy, alias.Current); err != nil {
+			return fmt.Errorf(
+				"reconcile migration version %q to %q: %w",
+				alias.Legacy,
+				alias.Current,
+				err,
+			)
+		}
+	}
 	return nil
 }
 

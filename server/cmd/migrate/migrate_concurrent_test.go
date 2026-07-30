@@ -318,6 +318,77 @@ func TestRunMigrationsConcurrentAlreadyApplied(t *testing.T) {
 	}
 }
 
+// TestRunMigrationsReconcilesRenumberedASBMigrations proves that databases
+// which already applied the ASB migrations under their pre-rebase versions
+// advance to the shared migration sequence without executing the same DDL a
+// second time. The replacement files contain SQL that must never run; a
+// successful migration therefore proves both the bookkeeping rename and the
+// skip path.
+func TestRunMigrationsReconcilesRenumberedASBMigrations(t *testing.T) {
+	f := newFixture(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), raceTestTimeout)
+	defer cancel()
+
+	tableIdent := pgx.Identifier{f.schema, "schema_migrations"}.Sanitize()
+	if _, err := f.pool.Exec(ctx, fmt.Sprintf(`
+		CREATE TABLE %s (
+			version TEXT PRIMARY KEY,
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)
+	`, tableIdent)); err != nil {
+		t.Fatalf("create schema_migrations: %v", err)
+	}
+
+	legacyVersions := make([]string, 0, len(migrationVersionAliases))
+	currentVersions := make([]string, 0, len(migrationVersionAliases))
+	files := make([]string, 0, len(migrationVersionAliases))
+	dir := t.TempDir()
+	for _, alias := range migrationVersionAliases {
+		if _, err := f.pool.Exec(ctx,
+			fmt.Sprintf(`INSERT INTO %s (version) VALUES ($1)`, tableIdent),
+			alias.Legacy,
+		); err != nil {
+			t.Fatalf("seed legacy migration %s: %v", alias.Legacy, err)
+		}
+
+		path := filepath.Join(dir, alias.Current+".up.sql")
+		if err := os.WriteFile(path, []byte("SELECT 1 / 0;\n"), 0o600); err != nil {
+			t.Fatalf("write replacement migration %s: %v", alias.Current, err)
+		}
+		legacyVersions = append(legacyVersions, alias.Legacy)
+		currentVersions = append(currentVersions, alias.Current)
+		files = append(files, path)
+	}
+	sort.Strings(files)
+	sort.Strings(currentVersions)
+
+	if err := runMigrations(ctx, f.pool, runOptions{
+		Direction:             "up",
+		Files:                 files,
+		SchemaMigrationsTable: f.tableFQN,
+		AdvisoryLockKey:       f.lockKey,
+	}); err != nil {
+		t.Fatalf("runMigrations with renumbered ASB migrations: %v", err)
+	}
+
+	if got := f.appliedVersions(t); !equalStrings(got, currentVersions) {
+		t.Fatalf("schema_migrations after renumbering = %v, want %v", got, currentVersions)
+	}
+	for _, legacy := range legacyVersions {
+		var exists bool
+		if err := f.pool.QueryRow(ctx,
+			fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE version = $1)`, tableIdent),
+			legacy,
+		).Scan(&exists); err != nil {
+			t.Fatalf("check legacy migration %s: %v", legacy, err)
+		}
+		if exists {
+			t.Fatalf("legacy migration %s still exists after renumbering", legacy)
+		}
+	}
+}
+
 // TestRunMigrationsAdvisoryLockSerializes proves the lock genuinely
 // blocks contenders. We acquire the same advisory key on a side
 // connection BEFORE spawning any runMigrations goroutine, then start N
