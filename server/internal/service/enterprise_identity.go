@@ -927,13 +927,15 @@ func (m *ASBIdentityAnchorManager) Create(
 		logEnterpriseIdentityAnchorFailure("wait_running", err)
 		return "", err
 	}
-	if err := m.Client.AttachBUCIdentity(ctx, sandbox.ID, ASBBUCIdentityGrant{
+	attachCtx, cancelAttach := context.WithTimeout(ctx, m.Config.IdentityProbeTimeout)
+	defer cancelAttach()
+	if err := m.Client.AttachBUCIdentity(attachCtx, sandbox.ID, ASBBUCIdentityGrant{
 		EmployeeID:           employeeID,
 		BUCAccessToken:       tokens.AccessToken,
 		BUCRefreshToken:      tokens.RefreshToken,
 		BUCIDToken:           tokens.IDToken,
 		WireGuardCredentials: m.Config.WireGuardCredentials,
-	}, false); err != nil {
+	}, true); err != nil {
 		logEnterpriseIdentityAnchorFailure("attach_buc_identity", err)
 		return "", fmt.Errorf("attach BUC identity to ASB anchor: %w", err)
 	}

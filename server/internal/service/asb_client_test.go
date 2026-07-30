@@ -185,7 +185,7 @@ func TestASBIdentityAnchorUsesCreateAndRenewalLimits(t *testing.T) {
 			response.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(response, `{"id":"sandbox-123","status":{"state":"Running"},"createdAt":"2026-07-29T05:00:00Z","entrypoint":["sleep infinity"]}`)
 		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes/"+testSandboxID+"/identity/wireguard":
-			if request.URL.Query().Get("sync") != "false" {
+			if request.URL.Query().Get("sync") != "true" {
 				t.Errorf("wireguard sync = %q", request.URL.Query().Get("sync"))
 			}
 			response.WriteHeader(http.StatusOK)
@@ -286,6 +286,8 @@ func TestASBClientIdentityInjection(t *testing.T) {
 			if grant.EmployeeID != "12345" || grant.BUCRefreshToken != testBUCRefresh || grant.OriginalSandboxID != "anchor-1" {
 				t.Errorf("BUC grant = %#v", grant)
 			}
+			response.WriteHeader(http.StatusOK)
+			return
 		default:
 			http.NotFound(response, request)
 			return
@@ -309,6 +311,40 @@ func TestASBClientIdentityInjection(t *testing.T) {
 		BUCIDToken:           "test-buc-id",
 		WireGuardCredentials: "test-wireguard",
 		OriginalSandboxID:    "anchor-1",
+	}, true); err != nil {
+		t.Fatalf("AttachBUCIdentity: %v", err)
+	}
+}
+
+func TestASBClientSynchronousBUCIdentityUsesCallerDeadline(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Query().Get("sync") != "true" {
+			t.Errorf("wireguard sync = %q", request.URL.Query().Get("sync"))
+		}
+		time.Sleep(80 * time.Millisecond)
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client, err := NewASBClient(ASBClientConfig{
+		BaseURL:    server.URL,
+		APIKey:     testASBAPIKey,
+		Timeout:    20 * time.Millisecond,
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("NewASBClient: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if err := client.AttachBUCIdentity(ctx, testSandboxID, ASBBUCIdentityGrant{
+		EmployeeID:           "12345",
+		BUCAccessToken:       "test-buc-access",
+		BUCRefreshToken:      testBUCRefresh,
+		BUCIDToken:           "test-buc-id",
+		WireGuardCredentials: "test-wireguard",
 	}, true); err != nil {
 		t.Fatalf("AttachBUCIdentity: %v", err)
 	}

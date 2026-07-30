@@ -52,6 +52,7 @@ type ASBClient struct {
 	baseURL         *url.URL
 	apiKey          string
 	lifecycleClient *http.Client
+	identityClient  *http.Client
 	execClient      *http.Client
 }
 
@@ -201,6 +202,11 @@ func NewASBClient(cfg ASBClientConfig) (*ASBClient, error) {
 
 	lifecycleClient := cloneASBHTTPClient(cfg.HTTPClient)
 	lifecycleClient.Timeout = timeout
+	identityClient := cloneASBHTTPClient(cfg.HTTPClient)
+	// A synchronous identity attachment waits for the sandbox-side identity
+	// service to finish. Its caller context is the authoritative deadline;
+	// the shorter generic lifecycle timeout must not cut that wait short.
+	identityClient.Timeout = 0
 	execClient := cloneASBHTTPClient(cfg.HTTPClient)
 	// The command endpoint streams until the command completes. The caller's
 	// context and the execd request timeout are the two authoritative limits.
@@ -210,6 +216,7 @@ func NewASBClient(cfg ASBClientConfig) (*ASBClient, error) {
 		baseURL:         baseURL,
 		apiKey:          cfg.APIKey,
 		lifecycleClient: lifecycleClient,
+		identityClient:  identityClient,
 		execClient:      execClient,
 	}, nil
 }
@@ -431,18 +438,22 @@ func (c *ASBClient) AttachBUCIdentity(ctx context.Context, sandboxID string, gra
 		}
 	}
 	query := url.Values{"sync": []string{strconv.FormatBool(sync)}}
-	return c.doLifecycleJSON(
+	httpClient := c.lifecycleClient
+	acceptedStatusCodes := []int{http.StatusAccepted}
+	if sync {
+		httpClient = c.identityClient
+		acceptedStatusCodes = []int{http.StatusOK}
+	}
+	return c.doLifecycleJSONVia(
 		ctx,
+		httpClient,
 		"attach_buc_identity",
 		http.MethodPost,
 		"/sandboxes/"+sandboxID+"/identity/wireguard",
 		query,
 		grant,
 		nil,
-		http.StatusOK,
-		http.StatusCreated,
-		http.StatusAccepted,
-		http.StatusNoContent,
+		acceptedStatusCodes...,
 	)
 }
 
@@ -623,8 +634,35 @@ func (c *ASBClient) doLifecycleJSON(
 	output any,
 	acceptedStatusCodes ...int,
 ) error {
+	return c.doLifecycleJSONVia(
+		ctx,
+		c.lifecycleClient,
+		operation,
+		method,
+		requestPath,
+		query,
+		input,
+		output,
+		acceptedStatusCodes...,
+	)
+}
+
+func (c *ASBClient) doLifecycleJSONVia(
+	ctx context.Context,
+	httpClient *http.Client,
+	operation string,
+	method string,
+	requestPath string,
+	query url.Values,
+	input any,
+	output any,
+	acceptedStatusCodes ...int,
+) error {
 	if c == nil || c.baseURL == nil {
 		return ErrASBDisabled
+	}
+	if httpClient == nil {
+		return errors.New("ASB HTTP client is unavailable")
 	}
 
 	var body io.Reader
@@ -650,7 +688,7 @@ func (c *ASBClient) doLifecycleJSON(
 		request.Header.Set("Content-Type", "application/json")
 	}
 
-	response, err := c.lifecycleClient.Do(request)
+	response, err := httpClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("ASB %s request failed: %w", operation, err)
 	}
