@@ -873,6 +873,12 @@ type ASBIdentityAnchorManager struct {
 	Config ASBConfig
 }
 
+const asbIdentityAnchorRenewalSafetyMargin = time.Minute
+
+func asbIdentityAnchorRenewalExpiration(now time.Time, timeout time.Duration) time.Time {
+	return now.Add(min(timeout, asbMaxRenewalDuration-asbIdentityAnchorRenewalSafetyMargin))
+}
+
 func (m *ASBIdentityAnchorManager) Create(
 	ctx context.Context,
 	workspaceID pgtype.UUID,
@@ -936,7 +942,8 @@ func (m *ASBIdentityAnchorManager) Create(
 		return "", err
 	}
 	if m.Config.IdentityAnchorTimeout > createTimeout {
-		if err := m.Client.RenewSandbox(ctx, sandbox.ID, time.Now().Add(m.Config.IdentityAnchorTimeout)); err != nil {
+		expiresAt := asbIdentityAnchorRenewalExpiration(time.Now(), m.Config.IdentityAnchorTimeout)
+		if err := m.Client.RenewSandbox(ctx, sandbox.ID, expiresAt); err != nil {
 			logEnterpriseIdentityAnchorFailure("renew_sandbox", err)
 			return "", fmt.Errorf("renew ASB identity anchor after BUC attachment: %w", err)
 		}
@@ -973,7 +980,8 @@ func (m *ASBIdentityAnchorManager) EnsureAvailable(ctx context.Context, sandboxI
 	if !strings.EqualFold(strings.TrimSpace(sandbox.Status.State), "running") {
 		return ErrEnterpriseIdentityAnchorUnavailable
 	}
-	if err := m.Client.RenewSandbox(ctx, sandboxID, time.Now().Add(m.Config.IdentityAnchorTimeout)); err != nil {
+	expiresAt := asbIdentityAnchorRenewalExpiration(time.Now(), m.Config.IdentityAnchorTimeout)
+	if err := m.Client.RenewSandbox(ctx, sandboxID, expiresAt); err != nil {
 		return fmt.Errorf("renew ASB identity anchor: %w", err)
 	}
 	return nil
