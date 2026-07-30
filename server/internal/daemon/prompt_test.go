@@ -928,7 +928,7 @@ func TestBuildPromptColdStartAfterUnreusedWorkdirReadsIssueThread(t *testing.T) 
 	}
 	taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
 
-	reused := gateResumeToReusedWorkdir(&task, &taskCtx, "/workspaces/ws/new-task/workdir", slog.Default())
+	reused := gateResumeToCompatibleWorkdir(&task, &taskCtx, "/workspaces/ws/new-task/workdir", true, slog.Default())
 	if reused {
 		t.Fatal("fresh FC/E2B sandbox workdir must not be treated as reused")
 	}

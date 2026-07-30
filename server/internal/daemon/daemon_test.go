@@ -1050,24 +1050,35 @@ func newRepoReadyTestDaemon(t *testing.T, handler http.HandlerFunc) *Daemon {
 	return d
 }
 
-func TestGateResumeToReusedWorkdir(t *testing.T) {
+func TestGateResumeToCompatibleWorkdir(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		sessionID   string
-		priorDir    string
-		envDir      string
-		wantSession string
-		wantReused  bool
+		name                    string
+		sessionID               string
+		priorDir                string
+		envDir                  string
+		resumeContextCompatible bool
+		wantSession             string
+		wantReused              bool
 	}{
 		{
-			name:        "same workdir keeps session",
-			sessionID:   "sess-1",
-			priorDir:    "/ws/task-a/workdir",
-			envDir:      "/ws/task-a/workdir",
-			wantSession: "sess-1",
-			wantReused:  true,
+			name:                    "same workdir and context keeps session",
+			sessionID:               "sess-1",
+			priorDir:                "/ws/task-a/workdir",
+			envDir:                  "/ws/task-a/workdir",
+			resumeContextCompatible: true,
+			wantSession:             "sess-1",
+			wantReused:              true,
+		},
+		{
+			name:                    "same workdir with renamed agent drops session",
+			sessionID:               "sess-1",
+			priorDir:                "/ws/task-a/workdir",
+			envDir:                  "/ws/task-a/workdir",
+			resumeContextCompatible: false,
+			wantSession:             "",
+			wantReused:              true,
 		},
 		{
 			name:        "fresh workdir drops session",
@@ -1100,7 +1111,7 @@ func TestGateResumeToReusedWorkdir(t *testing.T) {
 			task := Task{PriorSessionID: tt.sessionID, PriorWorkDir: tt.priorDir}
 			taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: tt.sessionID != ""}
 
-			reused := gateResumeToReusedWorkdir(&task, &taskCtx, tt.envDir, slog.Default())
+			reused := gateResumeToCompatibleWorkdir(&task, &taskCtx, tt.envDir, tt.resumeContextCompatible, slog.Default())
 
 			if reused != tt.wantReused {
 				t.Fatalf("reused = %v, want %v", reused, tt.wantReused)

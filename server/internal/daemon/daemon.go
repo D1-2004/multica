@@ -3320,22 +3320,27 @@ func providerNeedsInlineSystemPrompt(provider string) bool {
 	}
 }
 
-// gateResumeToReusedWorkdir clears the task's prior session unless the task
-// runs in the exact workdir the session was recorded against, and reports
-// whether that workdir was reused. CLI backends key their session stores to
-// the cwd (Claude Code looks sessions up under ~/.claude/projects/<encoded-cwd>/),
-// so a session id from a different workdir can never resolve: the CLI exits
-// within a second and the run fails before doing any work — permanently,
-// because the failed run records no session and the next claim serves the
-// same stale pointer again. This fires whenever the prior workdir no longer
-// exists (GC'd after the issue went done, daemon reinstall, manual cleanup)
-// and execenv.Reuse fell back to a fresh Prepare (GitHub #3854).
-func gateResumeToReusedWorkdir(task *Task, taskCtx *execenv.TaskContextForEnv, envWorkDir string, taskLog *slog.Logger) bool {
+// gateResumeToCompatibleWorkdir clears the task's prior provider session unless
+// both its workdir and durable runtime context are compatible, and reports
+// whether the workdir itself was reused.
+//
+// CLI backends key session stores to cwd, so a session from another workdir
+// cannot resolve. Even in the same workdir, a transcript created for an older
+// agent name/persona/skill set can preserve that obsolete identity and conflict
+// with the refreshed runtime brief. Both boundaries must match before resume.
+func gateResumeToCompatibleWorkdir(task *Task, taskCtx *execenv.TaskContextForEnv, envWorkDir string, resumeContextCompatible bool, taskLog *slog.Logger) bool {
 	reused := task.PriorWorkDir != "" && envWorkDir == task.PriorWorkDir
 	if !reused && task.PriorSessionID != "" {
 		taskLog.Info("dropping prior session: workdir not reused, per-cwd session cannot resolve",
 			"session_id", task.PriorSessionID,
 			"prior_workdir", task.PriorWorkDir,
+			"workdir", envWorkDir,
+		)
+		task.PriorSessionID = ""
+		taskCtx.PriorSessionResumed = false
+	} else if !resumeContextCompatible && task.PriorSessionID != "" {
+		taskLog.Info("dropping prior session: durable agent context changed",
+			"session_id", task.PriorSessionID,
 			"workdir", envWorkDir,
 		)
 		task.PriorSessionID = ""
@@ -3791,7 +3796,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	stopPrepareLease()
 	_ = d.client.ReportProgress(ctx, task.ID, fmt.Sprintf("Launching %s", provider), 1, 2)
 
-	reused := gateResumeToReusedWorkdir(&task, &taskCtx, env.WorkDir, taskLog)
+	reused := gateResumeToCompatibleWorkdir(&task, &taskCtx, env.WorkDir, env.ResumeContextCompatible, taskLog)
 
 	// Inject runtime-specific config (meta skill) so the agent discovers .agent_context/.
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
