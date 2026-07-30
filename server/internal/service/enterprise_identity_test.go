@@ -23,6 +23,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	idemapi "gitlab.alibaba-inc.com/idem/idem-api-client-golang"
+	authoidc "gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang/auth/oidc"
 )
 
 type fakeEnterpriseIdentityStore struct {
@@ -32,6 +33,7 @@ type fakeEnterpriseIdentityStore struct {
 	getCurrentErr   error
 	createAttempt   db.CreateAgentEnterpriseIdentityAttemptParams
 	upsert          db.UpsertAgentEnterpriseIdentityParams
+	anchorCAS       db.CompareAndSwapAgentEnterpriseIdentityAnchorParams
 	cas             db.CompareAndSwapAgentEnterpriseIdentityTokenParams
 	markNeedsReauth int
 	maintenance     []db.AgentEnterpriseIdentity
@@ -104,6 +106,20 @@ func (f *fakeEnterpriseIdentityStore) UpsertAgentEnterpriseIdentity(
 		Status:                     "active",
 		BoundBy:                    params.BoundBy,
 	}
+	return f.current, nil
+}
+
+func (f *fakeEnterpriseIdentityStore) CompareAndSwapAgentEnterpriseIdentityAnchor(
+	_ context.Context,
+	params db.CompareAndSwapAgentEnterpriseIdentityAnchorParams,
+) (db.AgentEnterpriseIdentity, error) {
+	f.anchorCAS = params
+	if params.ExpectedTokenVersion != f.current.TokenVersion ||
+		params.ExpectedBucAnchorSandboxID != f.current.BucAnchorSandboxID {
+		return db.AgentEnterpriseIdentity{}, pgx.ErrNoRows
+	}
+	f.current.BucAnchorSandboxID = params.BucAnchorSandboxID
+	f.current.TokenVersion++
 	return f.current, nil
 }
 
@@ -188,6 +204,27 @@ func (f *fakeEnterpriseAuthX) Renew(_ context.Context, token string) (Enterprise
 	return f.renewResult, nil
 }
 
+type fakeNormandyOIDCTokenClient struct {
+	issueCalls  int
+	renewCalls  int
+	issueResult *authoidc.OidcToken
+	renewResult *authoidc.OidcToken
+}
+
+func (f *fakeNormandyOIDCTokenClient) IssueToken(
+	*authoidc.OidcTokenSpec,
+) (*authoidc.OidcToken, error) {
+	f.issueCalls++
+	return f.issueResult, nil
+}
+
+func (f *fakeNormandyOIDCTokenClient) RenewToken(
+	*authoidc.OidcRenewSpec,
+) (*authoidc.OidcToken, error) {
+	f.renewCalls++
+	return f.renewResult, nil
+}
+
 type fakeEnterpriseIdem struct {
 	registration   EnterpriseAgentRegistration
 	issuedOIDC     string
@@ -228,6 +265,8 @@ type fakeEnterpriseAnchor struct {
 	createdEmployee string
 	createdTokens   BUCIdentityTokens
 	availableID     string
+	available       EnterpriseIdentityAnchorBinding
+	successorID     string
 	deletedID       string
 	deletedIDs      []string
 }
@@ -244,9 +283,16 @@ func (f *fakeEnterpriseAnchor) Create(
 	return "anchor-1", nil
 }
 
-func (f *fakeEnterpriseAnchor) EnsureAvailable(_ context.Context, sandboxID string) error {
-	f.availableID = sandboxID
-	return nil
+func (f *fakeEnterpriseAnchor) EnsureAvailable(
+	_ context.Context,
+	binding EnterpriseIdentityAnchorBinding,
+) (string, error) {
+	f.available = binding
+	f.availableID = binding.SandboxID
+	if f.successorID != "" {
+		return f.successorID, nil
+	}
+	return binding.SandboxID, nil
 }
 
 func (f *fakeEnterpriseAnchor) Delete(_ context.Context, sandboxID string) error {
@@ -279,6 +325,62 @@ func (f *fakeBUCOAuthClient) VerifyIDToken(
 ) (bucIDTokenClaims, error) {
 	f.verifiedToken = token
 	return f.claims, f.verifyErr
+}
+
+func TestNormandyAuthXClientExchangesVerifiedBUCIDTokenAndRotatesRefresh(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 30, 4, 0, 0, 0, time.UTC)
+	sdk := &fakeNormandyOIDCTokenClient{
+		issueResult: &authoidc.OidcToken{
+			IdToken:               "authx-id-1",
+			RefreshToken:          "authx-refresh-1",
+			ExpiresAt:             now.Add(time.Hour).Unix(),
+			RefreshTokenExpiresAt: now.Add(7 * 24 * time.Hour).Unix(),
+		},
+		renewResult: &authoidc.OidcToken{
+			IdToken:               "authx-id-2",
+			RefreshToken:          "authx-refresh-2",
+			ExpiresAt:             now.Add(2 * time.Hour).Unix(),
+			RefreshTokenExpiresAt: now.Add(8 * 24 * time.Hour).Unix(),
+		},
+	}
+	client := &NormandyAuthXClient{
+		client:   sdk,
+		audience: "https://authx.alibaba-inc.com",
+		ttl:      3600,
+	}
+	issued, err := client.IssueForBUCIdentity(context.Background(), BUCIdentityTokens{
+		IDToken: "verified-buc-id-token",
+	})
+	if err != nil {
+		t.Fatalf("IssueForBUCIdentity: %v", err)
+	}
+	if sdk.issueCalls != 1 ||
+		issued.IDToken != "authx-id-1" ||
+		issued.RefreshToken != "authx-refresh-1" ||
+		!issued.RefreshExpiresAt.Equal(now.Add(7*24*time.Hour)) {
+		t.Fatalf("issued token = %#v calls=%d", issued, sdk.issueCalls)
+	}
+	renewed, err := client.Renew(context.Background(), issued.RefreshToken)
+	if err != nil {
+		t.Fatalf("Renew: %v", err)
+	}
+	if sdk.renewCalls != 1 ||
+		renewed.IDToken != "authx-id-2" ||
+		renewed.RefreshToken != "authx-refresh-2" ||
+		!renewed.RefreshExpiresAt.Equal(now.Add(8*24*time.Hour)) {
+		t.Fatalf("renewed token = %#v calls=%d", renewed, sdk.renewCalls)
+	}
+	if _, err := client.IssueForBUCIdentity(
+		context.Background(),
+		BUCIdentityTokens{RefreshToken: "buc-refresh-must-not-be-used"},
+	); err == nil {
+		t.Fatal("IssueForBUCIdentity accepted a missing verified BUC ID token")
+	}
+	if sdk.issueCalls != 1 {
+		t.Fatalf("Normandy issue calls after invalid input = %d", sdk.issueCalls)
+	}
 }
 
 func TestEnterpriseIdentityStartBindingStoresOnlyHashedStateAndNonce(t *testing.T) {
@@ -601,6 +703,83 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 	}
 }
 
+func TestEnterpriseIdentityResolveReplacesExpiringAnchorWithoutChangingIdentity(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 30, 4, 0, 0, 0, time.UTC)
+	box, err := secretbox.New(bytes.Repeat([]byte{0x42}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := box.Seal([]byte("refresh-old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := db.AgentEnterpriseIdentity{
+		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+		WorkspaceID:                util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID:                    util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		RawEmpID:                   "12345",
+		BucAgentID:                 "buc-agent-1",
+		AgentSpiffeID:              "spiffe://agents.example/ns/multica/agents/222",
+		AipID:                      "aip-1",
+		BucAnchorSandboxID:         pgtype.Text{String: "anchor-1", Valid: true},
+		AuthxRefreshTokenEncrypted: sealed,
+		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(48 * time.Hour), Valid: true},
+		TokenVersion:               2,
+		Status:                     "active",
+	}
+	oldFingerprint := enterpriseIdentityFingerprint(identity)
+	store := &fakeEnterpriseIdentityStore{current: identity}
+	authX := &fakeEnterpriseAuthX{renewResult: EnterpriseOIDCToken{
+		IDToken:          "authx-id-new",
+		RefreshToken:     "refresh-new",
+		ExpiresAt:        now.Add(time.Hour),
+		RefreshExpiresAt: now.Add(7 * 24 * time.Hour),
+	}}
+	anchor := &fakeEnterpriseAnchor{successorID: "anchor-2"}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{},
+		authX,
+		&fakeEnterpriseIdem{ait: "ait-task"},
+		anchor,
+		now,
+	)
+	serviceUnderTest.Secrets = box
+
+	resolved, err := serviceUnderTest.ResolveASBTaskIdentity(
+		context.Background(),
+		identity.WorkspaceID,
+		identity.AgentID,
+	)
+	if err != nil {
+		t.Fatalf("ResolveASBTaskIdentity: %v", err)
+	}
+	if resolved.AnchorSandboxID != "anchor-2" ||
+		resolved.Fingerprint != oldFingerprint ||
+		enterpriseIdentityFingerprint(store.current) != oldFingerprint {
+		t.Fatalf("resolved identity changed across anchor replacement: %#v", resolved)
+	}
+	if store.anchorCAS.ExpectedTokenVersion != 2 ||
+		store.anchorCAS.ExpectedBucAnchorSandboxID.String != "anchor-1" ||
+		store.anchorCAS.BucAnchorSandboxID.String != "anchor-2" {
+		t.Fatalf("anchor compare-and-swap = %#v", store.anchorCAS)
+	}
+	if store.cas.ExpectedTokenVersion != 3 {
+		t.Fatalf("token rotation did not follow anchor compare-and-swap: %#v", store.cas)
+	}
+	if anchor.available.EmployeeID != "12345" ||
+		anchor.available.SandboxID != "anchor-1" ||
+		strings.Join(anchor.deletedIDs, ",") != "anchor-1" {
+		t.Fatalf("anchor handoff = %#v deleted=%#v", anchor.available, anchor.deletedIDs)
+	}
+	if len(store.markedStale) != 0 {
+		t.Fatalf("active task sandboxes were retired during transparent handoff: %#v", store.markedStale)
+	}
+}
+
 func TestEnterpriseIdentityMaintenanceRenewsAnchorAndRotatesRefresh(t *testing.T) {
 	t.Parallel()
 
@@ -687,8 +866,8 @@ func TestEnterpriseIdentityRevokeRetiresActiveASBSandboxes(t *testing.T) {
 	}
 	reboundIdentity := identity
 	reboundIdentity.BucAnchorSandboxID = pgtype.Text{String: "anchor-2", Valid: true}
-	if enterpriseIdentityFingerprint(identity) == enterpriseIdentityFingerprint(reboundIdentity) {
-		t.Fatal("identity fingerprint did not change with the binding anchor")
+	if enterpriseIdentityFingerprint(identity) != enterpriseIdentityFingerprint(reboundIdentity) {
+		t.Fatal("identity fingerprint changed during transparent anchor replacement")
 	}
 	store := &fakeEnterpriseIdentityStore{
 		current: identity,

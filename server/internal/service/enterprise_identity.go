@@ -25,20 +25,20 @@ import (
 )
 
 const (
-	defaultBUCAuthorizeURL               = "https://login.alibaba-inc.com/oauth2/auth.htm"
-	defaultBUCTokenURL                   = "https://login.alibaba-inc.com/rpc/oauth2/access_token.json"
-	defaultBUCIssuer                     = "https://login.alibaba-inc.com/oauth2"
-	defaultBUCJWKSURL                    = "https://login.alibaba-inc.com/oauth2/v1/keys"
-	defaultEnterpriseAuthXTTL            = int64(3600)
-	defaultEnterpriseAITTTL              = int64(900)
-	defaultEnterpriseIdemTimeout         = 15 * time.Second
-	defaultEnterpriseOAuthAttemptTTL     = 10 * time.Minute
-	defaultEnterpriseIdentityProbePeriod = time.Second
-	defaultEnterpriseMaintenanceInterval = 5 * time.Minute
-	defaultEnterpriseRefreshBefore       = 30 * time.Minute
-	defaultEnterpriseBUCRefreshHorizon   = 24 * time.Hour
-	defaultEnterpriseAnchorRenewInterval = 24 * time.Hour
-	defaultEnterpriseMaintenanceBatch    = int32(50)
+	defaultBUCAuthorizeURL                = "https://login.alibaba-inc.com/oauth2/auth.htm"
+	defaultBUCTokenURL                    = "https://login.alibaba-inc.com/rpc/oauth2/access_token.json"
+	defaultBUCIssuer                      = "https://login.alibaba-inc.com/oauth2"
+	defaultBUCJWKSURL                     = "https://login.alibaba-inc.com/oauth2/v1/keys"
+	defaultEnterpriseAuthXTTL             = int64(3600)
+	defaultEnterpriseAITTTL               = int64(900)
+	defaultEnterpriseIdemTimeout          = 15 * time.Second
+	defaultEnterpriseOAuthAttemptTTL      = 10 * time.Minute
+	defaultEnterpriseIdentityProbePeriod  = time.Second
+	defaultEnterpriseMaintenanceInterval  = 5 * time.Minute
+	defaultEnterpriseRefreshBefore        = 24 * time.Hour
+	defaultEnterpriseAnchorRenewInterval  = 24 * time.Hour
+	defaultEnterpriseAnchorRolloverBefore = 24 * time.Hour
+	defaultEnterpriseMaintenanceBatch     = int32(50)
 )
 
 var (
@@ -206,6 +206,7 @@ type enterpriseIdentityStore interface {
 	GetAgentEnterpriseIdentity(context.Context, db.GetAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
 	GetActiveAgentEnterpriseIdentity(context.Context, db.GetActiveAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
 	UpsertAgentEnterpriseIdentity(context.Context, db.UpsertAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
+	CompareAndSwapAgentEnterpriseIdentityAnchor(context.Context, db.CompareAndSwapAgentEnterpriseIdentityAnchorParams) (db.AgentEnterpriseIdentity, error)
 	CompareAndSwapAgentEnterpriseIdentityToken(context.Context, db.CompareAndSwapAgentEnterpriseIdentityTokenParams) (db.AgentEnterpriseIdentity, error)
 	ListAgentEnterpriseIdentitiesForMaintenance(context.Context, db.ListAgentEnterpriseIdentitiesForMaintenanceParams) ([]db.AgentEnterpriseIdentity, error)
 	TouchAgentEnterpriseIdentityMaintenance(context.Context, db.TouchAgentEnterpriseIdentityMaintenanceParams) (int64, error)
@@ -215,9 +216,16 @@ type enterpriseIdentityStore interface {
 	MarkCloudSandboxSessionStale(context.Context, db.MarkCloudSandboxSessionStaleParams) error
 }
 
+type EnterpriseIdentityAnchorBinding struct {
+	WorkspaceID pgtype.UUID
+	AgentID     pgtype.UUID
+	EmployeeID  string
+	SandboxID   string
+}
+
 type EnterpriseIdentityAnchor interface {
 	Create(context.Context, pgtype.UUID, pgtype.UUID, string, BUCIdentityTokens) (string, error)
-	EnsureAvailable(context.Context, string) error
+	EnsureAvailable(context.Context, EnterpriseIdentityAnchorBinding) (string, error)
 	Delete(context.Context, string) error
 }
 
@@ -390,10 +398,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	}
 	authXToken, err := s.AuthX.IssueForBUCIdentity(ctx, bucTokens)
 	if err != nil {
-		slog.Warn("enterprise identity binding stage failed",
-			"stage", "prepare_buc_oidc_token",
-			"error", err,
-		)
+		logEnterpriseIdentityBindingStageFailure("exchange_authx_oidc_token")
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
 	agentSPIFFEID, err := s.agentSPIFFEID(attempt.AgentID)
@@ -453,7 +458,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	if err != nil {
 		cleanupAnchor()
 		cleanupAIP()
-		return CompleteEnterpriseIdentityBindingResult{}, errors.New("encrypt BUC refresh token")
+		return CompleteEnterpriseIdentityBindingResult{}, errors.New("encrypt AuthX refresh token")
 	}
 	identity, err := s.Store.UpsertAgentEnterpriseIdentity(ctx, db.UpsertAgentEnterpriseIdentityParams{
 		WorkspaceID:                attempt.WorkspaceID,
@@ -548,19 +553,23 @@ func (s *EnterpriseIdentityService) ResolveASBTaskIdentity(
 			s.markNeedsReauth(ctx, identity)
 			return ASBResolvedIdentity{}, ErrEnterpriseIdentityNeedsReauth
 		}
-		if err := s.Anchor.EnsureAvailable(ctx, identity.BucAnchorSandboxID.String); err != nil {
+		identity, err = s.ensureIdentityAnchor(ctx, identity)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
 			if errors.Is(err, ErrEnterpriseIdentityAnchorUnavailable) {
 				s.markNeedsReauth(ctx, identity)
 				return ASBResolvedIdentity{}, ErrEnterpriseIdentityNeedsReauth
 			}
 			return ASBResolvedIdentity{}, err
 		}
-		updated, refreshed, err := s.rotateBUCToken(ctx, identity)
+		updated, refreshed, err := s.rotateAuthXToken(ctx, identity)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
 		if err != nil {
-			return ASBResolvedIdentity{}, fmt.Errorf("rotate BUC refresh token: %w", err)
+			return ASBResolvedIdentity{}, fmt.Errorf("rotate AuthX refresh token: %w", err)
 		}
 		operatorSPIFFEID, err := s.operatorSPIFFEID(updated.RawEmpID)
 		if err != nil {
@@ -627,7 +636,11 @@ func (s *EnterpriseIdentityService) maintainActiveIdentities(ctx context.Context
 			s.markNeedsReauth(ctx, identity)
 			continue
 		}
-		if err := s.Anchor.EnsureAvailable(ctx, identity.BucAnchorSandboxID.String); err != nil {
+		updated, err := s.ensureIdentityAnchor(ctx, identity)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
 			if errors.Is(err, ErrEnterpriseIdentityAnchorUnavailable) {
 				s.markNeedsReauth(ctx, identity)
 				continue
@@ -638,8 +651,9 @@ func (s *EnterpriseIdentityService) maintainActiveIdentities(ctx context.Context
 			)
 			continue
 		}
+		identity = updated
 		if !identity.AuthxRefreshExpiresAt.Time.After(now.Add(s.RefreshBefore)) {
-			if _, _, err := s.rotateBUCToken(ctx, identity); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			if _, _, err := s.rotateAuthXToken(ctx, identity); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				slog.Warn("enterprise identity token maintenance failed",
 					"agent_id", util.UUIDToString(identity.AgentID),
 					"error", err,
@@ -663,13 +677,62 @@ func (s *EnterpriseIdentityService) maintainActiveIdentities(ctx context.Context
 	return nil
 }
 
-func (s *EnterpriseIdentityService) rotateBUCToken(
+func (s *EnterpriseIdentityService) ensureIdentityAnchor(
+	ctx context.Context,
+	identity db.AgentEnterpriseIdentity,
+) (db.AgentEnterpriseIdentity, error) {
+	currentID := strings.TrimSpace(identity.BucAnchorSandboxID.String)
+	availableID, err := s.Anchor.EnsureAvailable(ctx, EnterpriseIdentityAnchorBinding{
+		WorkspaceID: identity.WorkspaceID,
+		AgentID:     identity.AgentID,
+		EmployeeID:  identity.RawEmpID,
+		SandboxID:   currentID,
+	})
+	if err != nil {
+		return identity, err
+	}
+	availableID = strings.TrimSpace(availableID)
+	if availableID == "" {
+		return identity, ErrEnterpriseIdentityAnchorUnavailable
+	}
+	if availableID == currentID {
+		return identity, nil
+	}
+	updated, err := s.Store.CompareAndSwapAgentEnterpriseIdentityAnchor(
+		ctx,
+		db.CompareAndSwapAgentEnterpriseIdentityAnchorParams{
+			BucAnchorSandboxID:         pgtype.Text{String: availableID, Valid: true},
+			ID:                         identity.ID,
+			ExpectedTokenVersion:       identity.TokenVersion,
+			ExpectedBucAnchorSandboxID: identity.BucAnchorSandboxID,
+		},
+	)
+	if err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = s.Anchor.Delete(cleanupCtx, availableID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return identity, pgx.ErrNoRows
+		}
+		return identity, fmt.Errorf("replace enterprise identity anchor: %w", err)
+	}
+	if err := s.Anchor.Delete(ctx, currentID); err != nil {
+		slog.Warn("failed to delete superseded enterprise identity anchor",
+			"agent_id", util.UUIDToString(identity.AgentID),
+			"sandbox_id", currentID,
+			"error", err,
+		)
+	}
+	return updated, nil
+}
+
+func (s *EnterpriseIdentityService) rotateAuthXToken(
 	ctx context.Context,
 	identity db.AgentEnterpriseIdentity,
 ) (db.AgentEnterpriseIdentity, EnterpriseOIDCToken, error) {
 	refreshToken, err := s.Secrets.Open(identity.AuthxRefreshTokenEncrypted)
 	if err != nil {
-		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, errors.New("decrypt BUC refresh token")
+		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, errors.New("decrypt AuthX refresh token")
 	}
 	defer clear(refreshToken)
 	refreshed, err := s.AuthX.Renew(ctx, string(refreshToken))
@@ -678,7 +741,7 @@ func (s *EnterpriseIdentityService) rotateBUCToken(
 	}
 	sealedRefresh, err := s.Secrets.Seal([]byte(refreshed.RefreshToken))
 	if err != nil {
-		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, errors.New("encrypt renewed BUC refresh token")
+		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, errors.New("encrypt renewed AuthX refresh token")
 	}
 	updated, err := s.Store.CompareAndSwapAgentEnterpriseIdentityToken(ctx, db.CompareAndSwapAgentEnterpriseIdentityTokenParams{
 		AuthxRefreshTokenEncrypted: sealedRefresh,
@@ -687,7 +750,7 @@ func (s *EnterpriseIdentityService) rotateBUCToken(
 		ExpectedTokenVersion:       identity.TokenVersion,
 	})
 	if err != nil {
-		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, fmt.Errorf("rotate BUC refresh token: %w", err)
+		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, fmt.Errorf("rotate AuthX refresh token: %w", err)
 	}
 	return updated, refreshed, nil
 }
@@ -850,17 +913,15 @@ func sha256Bytes(value string) []byte {
 
 func enterpriseIdentityFingerprint(identity db.AgentEnterpriseIdentity) string {
 	hasher := sha256.New()
-	anchorSandboxID := ""
-	if identity.BucAnchorSandboxID.Valid {
-		anchorSandboxID = identity.BucAnchorSandboxID.String
-	}
+	// The ASB anchor is a renewable transport for one stable user/Agent
+	// identity. Excluding its sandbox ID keeps active task sandboxes reusable
+	// when the platform replaces that transport before ASB's absolute limit.
 	for _, value := range []string{
 		util.UUIDToString(identity.WorkspaceID),
 		util.UUIDToString(identity.AgentID),
 		identity.RawEmpID,
 		identity.AgentSpiffeID,
 		identity.BucAgentID,
-		anchorSandboxID,
 	} {
 		_, _ = hasher.Write([]byte(value))
 		_, _ = hasher.Write([]byte{0})
@@ -869,8 +930,10 @@ func enterpriseIdentityFingerprint(identity db.AgentEnterpriseIdentity) string {
 }
 
 type ASBIdentityAnchorManager struct {
-	Client *ASBClient
-	Config ASBConfig
+	Client         *ASBClient
+	Config         ASBConfig
+	Now            func() time.Time
+	RolloverBefore time.Duration
 }
 
 const asbIdentityAnchorRenewalSafetyMargin = time.Minute
@@ -959,7 +1022,7 @@ func (m *ASBIdentityAnchorManager) Create(
 		return "", err
 	}
 	if m.Config.IdentityAnchorTimeout > createTimeout {
-		if expiresAt, renew := asbIdentityAnchorRenewal(sandbox, time.Now(), m.Config.IdentityAnchorTimeout); renew {
+		if expiresAt, renew := asbIdentityAnchorRenewal(sandbox, m.now(), m.Config.IdentityAnchorTimeout); renew {
 			if err := m.Client.RenewSandbox(ctx, sandbox.ID, expiresAt); err != nil {
 				logEnterpriseIdentityAnchorFailure("renew_sandbox", err)
 				return "", fmt.Errorf("renew ASB identity anchor after BUC attachment: %w", err)
@@ -986,24 +1049,146 @@ func logEnterpriseIdentityAnchorFailure(stage string, err error) {
 	slog.Warn("enterprise identity anchor stage failed", attributes...)
 }
 
-func (m *ASBIdentityAnchorManager) EnsureAvailable(ctx context.Context, sandboxID string) error {
+func (m *ASBIdentityAnchorManager) EnsureAvailable(
+	ctx context.Context,
+	binding EnterpriseIdentityAnchorBinding,
+) (string, error) {
+	if m == nil || m.Client == nil {
+		return "", errors.New("ASB identity anchor manager is unavailable")
+	}
+	sandboxID := strings.TrimSpace(binding.SandboxID)
+	if sandboxID == "" {
+		return "", ErrEnterpriseIdentityAnchorUnavailable
+	}
 	sandbox, err := m.Client.GetSandbox(ctx, sandboxID)
 	if err != nil {
 		var httpErr *ASBHTTPError
 		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
-			return ErrEnterpriseIdentityAnchorUnavailable
+			return "", ErrEnterpriseIdentityAnchorUnavailable
 		}
-		return fmt.Errorf("check ASB identity anchor: %w", err)
+		return "", fmt.Errorf("check ASB identity anchor: %w", err)
 	}
 	if !strings.EqualFold(strings.TrimSpace(sandbox.Status.State), "running") {
-		return ErrEnterpriseIdentityAnchorUnavailable
+		return "", ErrEnterpriseIdentityAnchorUnavailable
 	}
-	if expiresAt, renew := asbIdentityAnchorRenewal(sandbox, time.Now(), m.Config.IdentityAnchorTimeout); renew {
+	now := m.now()
+	if asbIdentityAnchorRequiresRollover(sandbox, now, m.rolloverBefore()) {
+		successorID, err := m.createInherited(
+			ctx,
+			binding.WorkspaceID,
+			binding.AgentID,
+			binding.EmployeeID,
+			sandboxID,
+		)
+		if err != nil {
+			return "", err
+		}
+		return successorID, nil
+	}
+	if expiresAt, renew := asbIdentityAnchorRenewal(sandbox, now, m.Config.IdentityAnchorTimeout); renew {
 		if err := m.Client.RenewSandbox(ctx, sandboxID, expiresAt); err != nil {
-			return fmt.Errorf("renew ASB identity anchor: %w", err)
+			return "", fmt.Errorf("renew ASB identity anchor: %w", err)
 		}
 	}
-	return nil
+	return sandboxID, nil
+}
+
+func (m *ASBIdentityAnchorManager) createInherited(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	agentID pgtype.UUID,
+	employeeID string,
+	originalSandboxID string,
+) (string, error) {
+	employeeID = strings.TrimSpace(employeeID)
+	originalSandboxID = strings.TrimSpace(originalSandboxID)
+	if m == nil || m.Client == nil {
+		return "", errors.New("ASB identity anchor manager is unavailable")
+	}
+	if !enterpriseEmployeeIDPattern.MatchString(employeeID) ||
+		originalSandboxID == "" ||
+		m.Config.IdentityAnchorTimeout < time.Duration(asbMinCreateTimeout)*time.Second ||
+		m.Config.IdentityAnchorTimeout > asbMaxRenewalDuration ||
+		!enterpriseOCIDigestPattern.MatchString(m.Config.IdentityAnchorImageRef) {
+		return "", errors.New("ASB inherited identity anchor configuration is invalid")
+	}
+	createTimeout := min(m.Config.IdentityAnchorTimeout, time.Duration(asbMaxCreateTimeout)*time.Second)
+	sandbox, err := m.Client.CreateSandbox(ctx, ASBCreateSandboxInput{
+		ImageURI:       m.Config.IdentityAnchorImageRef,
+		TimeoutSeconds: int(createTimeout / time.Second),
+		ResourceCPU:    m.Config.ResourceCPU,
+		ResourceMemory: m.Config.ResourceMemory,
+		Entrypoint:     []string{"sleep infinity"},
+		Metadata: map[string]string{
+			"multica.identity_anchor":        "true",
+			"multica.identity_anchor_source": originalSandboxID,
+			"multica.workspace_id":           util.UUIDToString(workspaceID),
+			"multica.agent_id":               util.UUIDToString(agentID),
+		},
+		Extensions: map[string]string{
+			"wireguard.worker":         employeeID,
+			"wireguard.uemCredentials": m.Config.WireGuardCredentials,
+			"buc.originalSandboxID":    originalSandboxID,
+		},
+	})
+	if err != nil {
+		logEnterpriseIdentityAnchorFailure("create_inherited_sandbox", err)
+		return "", fmt.Errorf("create inherited ASB identity anchor: %w", err)
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			_ = m.Client.DeleteSandbox(cleanupCtx, sandbox.ID)
+		}
+	}()
+	if err := waitForASBSandboxRunning(ctx, m.Client, sandbox.ID, m.Config.ReadyTimeout); err != nil {
+		logEnterpriseIdentityAnchorFailure("wait_inherited_running", err)
+		return "", err
+	}
+	if err := probeASBBUCIdentity(ctx, m.Client, sandbox.ID, m.Config.IdentityProbeTimeout); err != nil {
+		logEnterpriseIdentityAnchorFailure("probe_inherited_buc_identity", err)
+		return "", err
+	}
+	if m.Config.IdentityAnchorTimeout > createTimeout {
+		if expiresAt, renew := asbIdentityAnchorRenewal(sandbox, m.now(), m.Config.IdentityAnchorTimeout); renew {
+			if err := m.Client.RenewSandbox(ctx, sandbox.ID, expiresAt); err != nil {
+				logEnterpriseIdentityAnchorFailure("renew_inherited_sandbox", err)
+				return "", fmt.Errorf("renew inherited ASB identity anchor: %w", err)
+			}
+		}
+	}
+	keep = true
+	return sandbox.ID, nil
+}
+
+func (m *ASBIdentityAnchorManager) now() time.Time {
+	if m != nil && m.Now != nil {
+		return m.Now()
+	}
+	return time.Now()
+}
+
+func (m *ASBIdentityAnchorManager) rolloverBefore() time.Duration {
+	if m != nil && m.RolloverBefore > 0 {
+		return m.RolloverBefore
+	}
+	return defaultEnterpriseAnchorRolloverBefore
+}
+
+func asbIdentityAnchorRequiresRollover(
+	sandbox *ASBSandbox,
+	now time.Time,
+	rolloverBefore time.Duration,
+) bool {
+	if sandbox == nil || sandbox.CreatedAt.IsZero() || rolloverBefore <= 0 {
+		return false
+	}
+	absoluteExpiresAt := sandbox.CreatedAt.Add(
+		asbMaxRenewalDuration - asbIdentityAnchorRenewalSafetyMargin,
+	)
+	return !absoluteExpiresAt.After(now.Add(rolloverBefore))
 }
 
 func (m *ASBIdentityAnchorManager) Delete(ctx context.Context, sandboxID string) error {

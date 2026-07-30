@@ -13,10 +13,13 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	idemapi "gitlab.alibaba-inc.com/idem/idem-api-client-golang"
+	authconfig "gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang/auth/config"
+	authoidc "gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang/auth/oidc"
 )
 
 const enterpriseIdentityMaxResponseBytes = 1 << 20
@@ -39,62 +42,112 @@ type EnterpriseAuthX interface {
 	Renew(context.Context, string) (EnterpriseOIDCToken, error)
 }
 
-type BUCEnterpriseAuthXClient struct {
-	client         BUCOAuthClient
-	refreshHorizon time.Duration
-	now            func() time.Time
+type normandyOIDCTokenClient interface {
+	IssueToken(*authoidc.OidcTokenSpec) (*authoidc.OidcToken, error)
+	RenewToken(*authoidc.OidcRenewSpec) (*authoidc.OidcToken, error)
 }
 
-func NewBUCEnterpriseAuthXClient(
-	client BUCOAuthClient,
-	refreshHorizon time.Duration,
-) (*BUCEnterpriseAuthXClient, error) {
-	if client == nil || refreshHorizon <= 0 {
-		return nil, errors.New("BUC OIDC client and positive refresh horizon are required")
+type NormandyAuthXClient struct {
+	client   normandyOIDCTokenClient
+	audience string
+	ttl      int64
+}
+
+var normandyAuthXEnvironment struct {
+	sync.Mutex
+	configured bool
+	value      authconfig.EnvType
+}
+
+func NewNormandyAuthXClient(serviceID, audience string, ttl int64, environment string) (*NormandyAuthXClient, error) {
+	serviceID = strings.TrimSpace(serviceID)
+	audience = strings.TrimSpace(audience)
+	if serviceID == "" || audience == "" || ttl <= 0 {
+		return nil, errors.New("AuthX service ID, audience, and positive TTL are required")
 	}
-	return &BUCEnterpriseAuthXClient{
-		client:         client,
-		refreshHorizon: refreshHorizon,
-		now:            time.Now,
+	envType, err := parseNormandyEnvironment(environment)
+	if err != nil {
+		return nil, err
+	}
+	normandyAuthXEnvironment.Lock()
+	defer normandyAuthXEnvironment.Unlock()
+	if normandyAuthXEnvironment.configured && normandyAuthXEnvironment.value != envType {
+		return nil, errors.New("Normandy AuthX environment cannot change after initialization")
+	}
+	if !normandyAuthXEnvironment.configured {
+		authconfig.SetEnvType(envType)
+		normandyAuthXEnvironment.configured = true
+		normandyAuthXEnvironment.value = envType
+	}
+	return &NormandyAuthXClient{
+		client:   authoidc.NewOidcTokenClient(authconfig.AuthServiceOptions{ServiceId: serviceID}),
+		audience: audience,
+		ttl:      ttl,
 	}, nil
 }
 
-func (c *BUCEnterpriseAuthXClient) IssueForBUCIdentity(
+func parseNormandyEnvironment(raw string) (authconfig.EnvType, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "production":
+		return authconfig.Production, nil
+	case "staging":
+		return authconfig.Staging, nil
+	case "dailystable", "daily_stable":
+		return authconfig.DailyStable, nil
+	case "testing":
+		return authconfig.Testing, nil
+	default:
+		return "", errors.New("invalid Normandy AuthX environment")
+	}
+}
+
+func (c *NormandyAuthXClient) IssueForBUCIdentity(
 	ctx context.Context,
 	tokens BUCIdentityTokens,
 ) (EnterpriseOIDCToken, error) {
 	if err := ctx.Err(); err != nil {
 		return EnterpriseOIDCToken{}, err
 	}
-	return c.normalize(tokens)
+	idToken := strings.TrimSpace(tokens.IDToken)
+	if idToken == "" {
+		return EnterpriseOIDCToken{}, errors.New("verified BUC OIDC ID token is required")
+	}
+	token, err := c.client.IssueToken(
+		authoidc.NewBucOidcIdTokenSpec(idToken, c.audience, c.ttl).WithForceRefresh(true),
+	)
+	if err != nil {
+		return EnterpriseOIDCToken{}, fmt.Errorf("exchange BUC OIDC token for AuthX token: %w", err)
+	}
+	return normalizeEnterpriseOIDCToken(token)
 }
 
-func (c *BUCEnterpriseAuthXClient) Renew(ctx context.Context, refreshToken string) (EnterpriseOIDCToken, error) {
+func (c *NormandyAuthXClient) Renew(ctx context.Context, refreshToken string) (EnterpriseOIDCToken, error) {
 	if err := ctx.Err(); err != nil {
 		return EnterpriseOIDCToken{}, err
 	}
 	if strings.TrimSpace(refreshToken) == "" {
-		return EnterpriseOIDCToken{}, errors.New("BUC refresh token is required")
+		return EnterpriseOIDCToken{}, errors.New("AuthX refresh token is required")
 	}
-	tokens, err := c.client.Refresh(ctx, refreshToken)
+	token, err := c.client.RenewToken(authoidc.NewRenewSpec(refreshToken))
 	if err != nil {
-		return EnterpriseOIDCToken{}, err
+		return EnterpriseOIDCToken{}, fmt.Errorf("renew AuthX OIDC token: %w", err)
 	}
-	return c.normalize(tokens)
+	return normalizeEnterpriseOIDCToken(token)
 }
 
-func (c *BUCEnterpriseAuthXClient) normalize(tokens BUCIdentityTokens) (EnterpriseOIDCToken, error) {
-	if strings.TrimSpace(tokens.IDToken) == "" ||
-		strings.TrimSpace(tokens.RefreshToken) == "" ||
-		tokens.ExpiresIn <= 0 {
-		return EnterpriseOIDCToken{}, errors.New("BUC returned an incomplete OIDC token")
+func normalizeEnterpriseOIDCToken(token *authoidc.OidcToken) (EnterpriseOIDCToken, error) {
+	if token == nil ||
+		strings.TrimSpace(token.IdToken) == "" ||
+		strings.TrimSpace(token.RefreshToken) == "" ||
+		token.ExpiresAt <= 0 ||
+		token.RefreshTokenExpiresAt <= 0 {
+		return EnterpriseOIDCToken{}, errors.New("AuthX returned an incomplete OIDC token")
 	}
-	now := c.now()
 	return EnterpriseOIDCToken{
-		IDToken:          tokens.IDToken,
-		RefreshToken:     tokens.RefreshToken,
-		ExpiresAt:        now.Add(time.Duration(tokens.ExpiresIn) * time.Second),
-		RefreshExpiresAt: now.Add(c.refreshHorizon),
+		IDToken:          token.IdToken,
+		RefreshToken:     token.RefreshToken,
+		ExpiresAt:        time.Unix(token.ExpiresAt, 0),
+		RefreshExpiresAt: time.Unix(token.RefreshTokenExpiresAt, 0),
 	}, nil
 }
 

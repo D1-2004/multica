@@ -40,9 +40,10 @@ Related:
   和 `buc.originalSandboxID`。`wireguard.worker` 与 `wireguard.lazyAuth` 互斥，
   不能同时声明。
 - Agent Identity 和 BUC 隧道当前只支持 `ali-test`，不支持 `agent-vpc`。
-- 创建请求的 `timeout` 范围是 60 秒到 24 小时；续期后的到期时间最多为
-  当前时间后 7 天。身份锚点先按创建上限启动，BUC 注入和探针成功后再续至 7 天。
-  任务沙箱仍按 Multica 会话复用，但必须在到期前续期或重建。
+- 创建请求的 `timeout` 范围是 60 秒到 24 小时；单个沙箱的绝对寿命上限为
+  创建后 7 天。身份锚点先按创建上限启动，BUC 注入和探针成功后再续至绝对上限。
+  距绝对上限 24 小时时，平台创建一个通过 `originalSandboxId` 继承 BUC 身份的
+  后继锚点，探针通过后原子切换数据库引用并删除旧锚点，使这条身份链可持续接力。
 
 ### 2.2 Agent Identity
 
@@ -73,11 +74,11 @@ Related:
 1. 校验 `state`、OIDC `nonce`、`iss`、`aud`、`exp`；随后用同次换取的
    Access Token 调用 BUC `user_info`，校验其 `openid` 与 ID Token `sub`
    一致，并从受信响应的 `empId` 取得员工工号。
-2. Multica 完成 BUC ID Token 的签名、时效、nonce 和员工工号校验后，用该已验证
-   工号调用 Normandy OIDC SDK 的 `NewSubjectSpec(NewBucUser(...))`，并设置
-   `forceRefresh=true`，签发 AuthX 专用 ID Token 和可轮换 Refresh Token。
-   `NewBucOidcIdTokenSpec` 只返回短期 ID Token，不返回 Refresh Token，不能用于
-   这条需要长期轮换的绑定链路。
+2. Multica 完成 BUC ID Token 的签名、时效、nonce 和员工工号校验后，把该已验证
+   ID Token 交给 Normandy OIDC SDK 的 `NewBucOidcIdTokenSpec(...)`，并设置
+   `forceRefresh=true`，换取 AuthX 专用 ID Token 和可轮换 Refresh Token。
+   不使用仅凭工号构造的 `NewSubjectSpec(NewBucUser(...))`，避免平台越过本次用户
+   授权证明代签身份。
 3. 用原始 BUC 三件套创建并注入一个 BUC 身份锚点沙箱。
 4. ASB 确认注入成功后，立即丢弃原始 BUC ID/Access/Refresh Token。
 5. 只加密持久化 Normandy 返回的 AuthX Refresh Token；它不是 ASB 使用的 BUC
@@ -228,8 +229,9 @@ Agent/用户/工作区、回跳地址和过期时间。回调以事务消费，�
 
 ### 4.3 主动轮转
 
-后台工作器每 5 分钟扫描一次，并在 AuthX Refresh Token 距过期 30 分钟内主动轮换；
-BUC 身份锚点每 24 小时检查和续期一次：
+后台工作器每 5 分钟扫描一次，并在 AuthX Refresh Token 距过期 24 小时内主动轮换；
+BUC 身份锚点每 24 小时检查和续期一次，并在单沙箱 7 天绝对寿命仅剩 24 小时时
+创建继承身份的后继锚点：
 
 1. 解密当前令牌；
 2. 调 Normandy `RenewToken`；
@@ -237,8 +239,10 @@ BUC 身份锚点每 24 小时检查和续期一次：
 4. 使用 `token_version` 比较交换；
 5. 清零内存中的明文字节。
 
-轮转连续失败或已过期后标记 `needs_reauth`。后续任务以无员工身份模式创建或复用沙箱；
-重新授权后身份指纹变化，任务会创建新的已绑定身份沙箱。
+短暂轮转失败保持绑定状态并由下一轮巡检重试；只有 Refresh Token 已过期或身份锚点
+已经不可恢复时才标记 `needs_reauth`。后继锚点只是同一身份的基础设施接班，不进入
+身份指纹，因此不会中断正在复用的任务沙箱。用户主动重新授权或解绑时，平台显式清理
+原绑定对应的任务沙箱。
 
 ### 4.4 AIP 权限
 

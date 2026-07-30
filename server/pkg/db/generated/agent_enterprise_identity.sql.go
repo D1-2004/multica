@@ -11,6 +11,54 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const compareAndSwapAgentEnterpriseIdentityAnchor = `-- name: CompareAndSwapAgentEnterpriseIdentityAnchor :one
+UPDATE agent_enterprise_identity
+SET buc_anchor_sandbox_id = $1,
+    token_version = token_version + 1,
+    updated_at = now()
+WHERE id = $2
+  AND token_version = $3
+  AND buc_anchor_sandbox_id = $4
+  AND status = 'active'
+RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, buc_anchor_sandbox_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at
+`
+
+type CompareAndSwapAgentEnterpriseIdentityAnchorParams struct {
+	BucAnchorSandboxID         pgtype.Text `json:"buc_anchor_sandbox_id"`
+	ID                         pgtype.UUID `json:"id"`
+	ExpectedTokenVersion       int64       `json:"expected_token_version"`
+	ExpectedBucAnchorSandboxID pgtype.Text `json:"expected_buc_anchor_sandbox_id"`
+}
+
+func (q *Queries) CompareAndSwapAgentEnterpriseIdentityAnchor(ctx context.Context, arg CompareAndSwapAgentEnterpriseIdentityAnchorParams) (AgentEnterpriseIdentity, error) {
+	row := q.db.QueryRow(ctx, compareAndSwapAgentEnterpriseIdentityAnchor,
+		arg.BucAnchorSandboxID,
+		arg.ID,
+		arg.ExpectedTokenVersion,
+		arg.ExpectedBucAnchorSandboxID,
+	)
+	var i AgentEnterpriseIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.RawEmpID,
+		&i.DisplayName,
+		&i.BucAgentID,
+		&i.AgentSpiffeID,
+		&i.AipID,
+		&i.BucAnchorSandboxID,
+		&i.AuthxRefreshTokenEncrypted,
+		&i.AuthxRefreshExpiresAt,
+		&i.TokenVersion,
+		&i.Status,
+		&i.BoundBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const compareAndSwapAgentEnterpriseIdentityToken = `-- name: CompareAndSwapAgentEnterpriseIdentityToken :one
 UPDATE agent_enterprise_identity
 SET authx_refresh_token_encrypted = $1,

@@ -291,11 +291,132 @@ func TestASBIdentityAnchorEnsureAvailableSkipsRenewalAtTotalDurationLimit(t *tes
 			IdentityAnchorTimeout: asbMaxRenewalDuration,
 		},
 	}
-	if err := manager.EnsureAvailable(context.Background(), testSandboxID); err != nil {
+	availableID, err := manager.EnsureAvailable(context.Background(), EnterpriseIdentityAnchorBinding{
+		WorkspaceID: util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID:     util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		EmployeeID:  "12345",
+		SandboxID:   testSandboxID,
+	})
+	if err != nil {
 		t.Fatalf("EnsureAvailable: %v", err)
+	}
+	if availableID != testSandboxID {
+		t.Fatalf("available anchor = %q", availableID)
 	}
 	if renewCalls != 0 {
 		t.Fatalf("renew calls = %d, want 0", renewCalls)
+	}
+}
+
+func TestASBIdentityAnchorEnsureAvailableCreatesInheritedSuccessorBeforeAbsoluteLimit(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 30, 4, 0, 0, 0, time.UTC)
+	createdAt := now.Add(-asbMaxRenewalDuration + 12*time.Hour)
+	expiresAt := createdAt.Add(asbMaxRenewalDuration - asbIdentityAnchorRenewalSafetyMargin)
+	const successorID = "sandbox-successor"
+	var (
+		server          *httptest.Server
+		extensions      map[string]string
+		metadata        map[string]string
+		renewExpiration time.Time
+	)
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/"+testSandboxID:
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":         testSandboxID,
+				"status":     map[string]string{"state": "Running"},
+				"createdAt":  createdAt,
+				"expiresAt":  expiresAt,
+				"entrypoint": []string{"sleep infinity"},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes":
+			var payload asbCreateSandboxRequest
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode inherited anchor request: %v", err)
+			}
+			extensions = payload.Extensions
+			metadata = payload.Metadata
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":         successorID,
+				"status":     map[string]string{"state": "Pending"},
+				"createdAt":  now,
+				"entrypoint": []string{"sleep infinity"},
+			})
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/"+successorID:
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":         successorID,
+				"status":     map[string]string{"state": "Running"},
+				"createdAt":  now,
+				"entrypoint": []string{"sleep infinity"},
+			})
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/"+successorID+"/endpoints/44772":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/execd",
+				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes/"+successorID+"/renew-expiration":
+			var payload struct {
+				ExpiresAt time.Time `json:"expiresAt"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode inherited anchor renewal: %v", err)
+			}
+			renewExpiration = payload.ExpiresAt
+			response.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	manager := &ASBIdentityAnchorManager{
+		Client: newTestASBClient(t, server),
+		Config: ASBConfig{
+			IdentityAnchorTimeout:  asbMaxRenewalDuration,
+			ReadyTimeout:           time.Second,
+			IdentityProbeTimeout:   time.Second,
+			ResourceCPU:            "2",
+			ResourceMemory:         "4Gi",
+			WireGuardCredentials:   "test-wireguard",
+			IdentityAnchorImageRef: "registry.example/anchor@sha256:" + strings.Repeat("a", 64),
+		},
+		Now:            func() time.Time { return now },
+		RolloverBefore: 24 * time.Hour,
+	}
+	availableID, err := manager.EnsureAvailable(context.Background(), EnterpriseIdentityAnchorBinding{
+		WorkspaceID: util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID:     util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		EmployeeID:  "12345",
+		SandboxID:   testSandboxID,
+	})
+	if err != nil {
+		t.Fatalf("EnsureAvailable: %v", err)
+	}
+	if availableID != successorID {
+		t.Fatalf("available anchor = %q", availableID)
+	}
+	if extensions["wireguard.worker"] != "12345" ||
+		extensions["wireguard.uemCredentials"] != "test-wireguard" ||
+		extensions["buc.originalSandboxID"] != testSandboxID ||
+		extensions["wireguard.lazyAuth"] != "" {
+		t.Fatalf("inherited anchor extensions = %#v", extensions)
+	}
+	if metadata["multica.identity_anchor_source"] != testSandboxID {
+		t.Fatalf("inherited anchor metadata = %#v", metadata)
+	}
+	wantRenewal := now.Add(asbMaxRenewalDuration - asbIdentityAnchorRenewalSafetyMargin)
+	if !renewExpiration.Equal(wantRenewal) {
+		t.Fatalf("inherited anchor renewal = %s, want %s", renewExpiration, wantRenewal)
 	}
 }
 

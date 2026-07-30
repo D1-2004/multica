@@ -115,9 +115,11 @@ func NewASBEnterpriseRuntimeFromConfig(
 	if err != nil {
 		return nil, err
 	}
-	authXClient, err := NewBUCEnterpriseAuthXClient(
-		bucClient,
-		defaultEnterpriseBUCRefreshHorizon,
+	authXClient, err := NewNormandyAuthXClient(
+		identityConfig.AuthXServiceID,
+		identityConfig.AuthXAudience,
+		identityConfig.AuthXTTL,
+		identityConfig.AuthXEnvironment,
 	)
 	if err != nil {
 		return nil, err

@@ -114,6 +114,17 @@ WHERE id = sqlc.arg('id')
   AND status = 'active'
 RETURNING *;
 
+-- name: CompareAndSwapAgentEnterpriseIdentityAnchor :one
+UPDATE agent_enterprise_identity
+SET buc_anchor_sandbox_id = sqlc.arg('buc_anchor_sandbox_id'),
+    token_version = token_version + 1,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND token_version = sqlc.arg('expected_token_version')
+  AND buc_anchor_sandbox_id = sqlc.arg('expected_buc_anchor_sandbox_id')
+  AND status = 'active'
+RETURNING *;
+
 -- name: CreateAgentEnterpriseIdentityAttempt :one
 INSERT INTO agent_enterprise_identity_attempt (
     workspace_id,
