@@ -1,4 +1,4 @@
--- Migration 252: delegated Issue completion lineage.
+-- Migration 255: delegated Issue completion lineage.
 -- A delegated Issue task is linked to its source Chat task through
 -- agent_task_queue.parent_task_id. Cancelling a non-leaf task must not report
 -- terminal completion while a child owns the work. Cancelling the active leaf

@@ -1,4 +1,4 @@
--- Roll back migration 252 by restoring migration 203's cancellation snapshot.
+-- Roll back migration 255 by restoring migration 203's cancellation snapshot.
 CREATE OR REPLACE FUNCTION enqueue_cancelled_task_completion()
 RETURNS TRIGGER
 LANGUAGE plpgsql

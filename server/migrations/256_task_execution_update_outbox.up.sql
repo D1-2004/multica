@@ -1,3 +1,4 @@
+-- Migration 256: persist delegated task execution updates.
 CREATE TABLE IF NOT EXISTS task_execution_update_outbox (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     root_task_id        UUID NOT NULL,
