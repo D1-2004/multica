@@ -277,6 +277,104 @@ export function bucketUnknownAgentRows(
   return hasDeleted ? [...known, bucket] : known;
 }
 
+export type AgentComparisonMetric = "tokens" | "cost" | "time" | "tasks";
+export type AgentComparisonDimension = "daily" | "weekly";
+
+export interface AgentComparisonPoint {
+  bucket: string;
+  label: string;
+  values: Record<string, number>;
+}
+
+interface BuildAgentComparisonSeriesOptions {
+  usage: DashboardUsageDaily[];
+  runTime: DashboardRunTimeDaily[];
+  metric: AgentComparisonMetric;
+  dimension: AgentComparisonDimension;
+  days: number;
+  tz: string;
+  selectedAgentIds: readonly string[];
+  knownAgentIds: ReadonlySet<string>;
+}
+
+/**
+ * Builds a continuous daily or weekly series for the selected leaderboard
+ * rows. Daily API rows retain agent_id; the existing workspace totals keep
+ * folding those rows together while this helper preserves the agent axis.
+ */
+export function buildAgentComparisonSeries({
+  usage,
+  runTime,
+  metric,
+  dimension,
+  days,
+  tz,
+  selectedAgentIds,
+  knownAgentIds,
+}: BuildAgentComparisonSeriesOptions): AgentComparisonPoint[] {
+  const selected = new Set(selectedAgentIds);
+  const emptyValues = () =>
+    Object.fromEntries(selectedAgentIds.map((agentId) => [agentId, 0]));
+  const points =
+    dimension === "weekly"
+      ? buildWeekShells(tz, Math.max(1, Math.ceil(days / 7))).map((shell) => ({
+          bucket: shell.weekStart,
+          label: shell.rangeLabel,
+          values: emptyValues(),
+        }))
+      : Array.from({ length: Math.max(1, Math.floor(days)) }, (_, index) => {
+          const date = addDaysIso(
+            todayIso(tz),
+            index - (Math.max(1, Math.floor(days)) - 1),
+          );
+          return {
+            bucket: date,
+            label: formatDateLabel(date),
+            values: emptyValues(),
+          };
+        });
+  const pointByBucket = new Map(points.map((point) => [point.bucket, point]));
+
+  const visibleAgentId = (agentId: string | undefined) => {
+    if (!agentId) return "";
+    return knownAgentIds.has(agentId) ? agentId : DELETED_AGENTS_ROW_ID;
+  };
+  const addValue = (date: string, agentId: string, value: number) => {
+    if (!selected.has(agentId)) return;
+    const bucket = dimension === "weekly" ? weekStartIso(date) : date;
+    const point = pointByBucket.get(bucket);
+    if (!point) return;
+    point.values[agentId] = (point.values[agentId] ?? 0) + value;
+  };
+
+  if (metric === "tokens" || metric === "cost") {
+    for (const row of usage) {
+      const agentId = visibleAgentId(row.agent_id);
+      if (!agentId) continue;
+      const value =
+        metric === "cost"
+          ? estimateCost(row)
+          : row.input_tokens +
+            row.output_tokens +
+            row.cache_read_tokens +
+            row.cache_write_tokens;
+      addValue(row.date, agentId, value);
+    }
+  } else {
+    for (const row of runTime) {
+      const agentId = visibleAgentId(row.agent_id);
+      if (!agentId) continue;
+      addValue(
+        row.date,
+        agentId,
+        metric === "time" ? row.total_seconds : row.task_count,
+      );
+    }
+  }
+
+  return points;
+}
+
 // ---------------------------------------------------------------------------
 // Weekly fold for run-time + tasks. Mirrors `aggregateByWeek` in
 // `runtimes/utils.ts` which already covers cost / tokens — same calendar
@@ -378,11 +476,16 @@ export function aggregateWeeklyTasks(
 // DailyTimeChart. Sorted ascending so the x-axis reads oldest-to-newest,
 // matching the cost / tokens aggregators.
 export function aggregateDailyTime(rows: DashboardRunTimeDaily[]): DailyTimeData[] {
-  return rows.toSorted((a, b) => a.date.localeCompare(b.date))
-    .map((r) => ({
-      date: r.date,
-      label: formatDateLabel(r.date),
-      totalSeconds: r.total_seconds,
+  const totals = new Map<string, number>();
+  for (const row of rows) {
+    totals.set(row.date, (totals.get(row.date) ?? 0) + row.total_seconds);
+  }
+  return Array.from(totals.entries())
+    .toSorted(([a], [b]) => a.localeCompare(b))
+    .map(([date, totalSeconds]) => ({
+      date,
+      label: formatDateLabel(date),
+      totalSeconds,
     }));
 }
 
@@ -390,17 +493,21 @@ export function aggregateDailyTime(rows: DashboardRunTimeDaily[]): DailyTimeData
 // counts for the DailyTasksChart's stacked bar (failed_count is a subset
 // of task_count, so completed = task_count - failed_count).
 export function aggregateDailyTasks(rows: DashboardRunTimeDaily[]): DailyTasksData[] {
-  return rows.toSorted((a, b) => a.date.localeCompare(b.date))
-    .map((r) => {
-      const failed = r.failed_count;
-      const completed = Math.max(0, r.task_count - failed);
-      return {
-        date: r.date,
-        label: formatDateLabel(r.date),
-        completed,
-        failed,
-      };
-    });
+  const totals = new Map<string, { completed: number; failed: number }>();
+  for (const row of rows) {
+    const current = totals.get(row.date) ?? { completed: 0, failed: 0 };
+    current.failed += row.failed_count;
+    current.completed += Math.max(0, row.task_count - row.failed_count);
+    totals.set(row.date, current);
+  }
+  return Array.from(totals.entries())
+    .toSorted(([a], [b]) => a.localeCompare(b))
+    .map(([date, totalsForDate]) => ({
+      date,
+      label: formatDateLabel(date),
+      completed: totalsForDate.completed,
+      failed: totalsForDate.failed,
+    }));
 }
 
 // Compact human duration: "1h 23m" / "12m 30s" / "45s" / "<1m". Used for

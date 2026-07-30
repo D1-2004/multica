@@ -62,6 +62,26 @@ func (q *Queries) DeleteTaskMessages(ctx context.Context, taskID pgtype.UUID) er
 	return err
 }
 
+const getTaskMessageSummary = `-- name: GetTaskMessageSummary :one
+SELECT
+    COUNT(*)::int AS message_count,
+    COUNT(*) FILTER (WHERE type = 'tool_use')::int AS tool_call_count
+FROM task_message
+WHERE task_id = $1
+`
+
+type GetTaskMessageSummaryRow struct {
+	MessageCount  int32 `json:"message_count"`
+	ToolCallCount int32 `json:"tool_call_count"`
+}
+
+func (q *Queries) GetTaskMessageSummary(ctx context.Context, taskID pgtype.UUID) (GetTaskMessageSummaryRow, error) {
+	row := q.db.QueryRow(ctx, getTaskMessageSummary, taskID)
+	var i GetTaskMessageSummaryRow
+	err := row.Scan(&i.MessageCount, &i.ToolCallCount)
+	return i, err
+}
+
 const listTaskMessages = `-- name: ListTaskMessages :many
 SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM task_message
 WHERE task_id = $1
@@ -70,6 +90,49 @@ ORDER BY seq ASC
 
 func (q *Queries) ListTaskMessages(ctx context.Context, taskID pgtype.UUID) ([]TaskMessage, error) {
 	rows, err := q.db.Query(ctx, listTaskMessages, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaskMessage{}
+	for rows.Next() {
+		var i TaskMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.Seq,
+			&i.Type,
+			&i.Tool,
+			&i.Content,
+			&i.Input,
+			&i.Output,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskMessagesPage = `-- name: ListTaskMessagesPage :many
+SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM task_message
+WHERE task_id = $1 AND seq > $2
+ORDER BY seq ASC
+LIMIT $3
+`
+
+type ListTaskMessagesPageParams struct {
+	TaskID pgtype.UUID `json:"task_id"`
+	Seq    int32       `json:"seq"`
+	Limit  int32       `json:"limit"`
+}
+
+func (q *Queries) ListTaskMessagesPage(ctx context.Context, arg ListTaskMessagesPageParams) ([]TaskMessage, error) {
+	rows, err := q.db.Query(ctx, listTaskMessagesPage, arg.TaskID, arg.Seq, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

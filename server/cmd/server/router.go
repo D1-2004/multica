@@ -1235,6 +1235,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// resolves binding context server-side; a separate Bearer delivery secret
 	// authenticates the caller and is never embedded in the callback URL.
 	r.Post("/api/webhooks/agent-dispatch/{endpointId}", h.HandleAgentDispatch)
+	r.Get("/api/webhooks/agent-dispatch/{endpointId}/tasks/{taskId}/summary", h.GetAgentDispatchTaskSummary)
+	r.Get("/api/webhooks/agent-dispatch/{endpointId}/tasks/{taskId}/messages", h.ListAgentDispatchTaskMessages)
 	// DBase completes a DingTalk account binding without a Multica session.
 	// The path-aware CORS policy above admits only the configured DBase origin;
 	// this handler also requires that exact Origin and the per-attempt callback
@@ -1340,6 +1342,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/pause", h.PauseFCE2BStableRelease)
 		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/resume", h.ResumeFCE2BStableRelease)
 		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/start-rollout", h.StartFCE2BStableRollout)
+		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/advance-rollout", h.AdvanceFCE2BStableRollout)
+		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/complete-observation", h.CompleteFCE2BStableObservation)
 		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/terminate", h.TerminateFCE2BStableRelease)
 		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/rollback", h.RollbackFCE2BStableRelease)
 		r.With(handler.RequireDingTalkHumanActor).Get("/api/fde/onboarding", h.GetFDEOnboarding)

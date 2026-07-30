@@ -50,6 +50,16 @@
     "header_tasks": "任务数",
     "no_data": "所选时间范围内暂无智能体活动。"
   },
+  "comparison": {
+    "open": "查看详细用量",
+    "title": "智能体用量对比",
+    "description": "对比所选智能体在当前时间范围内的用量趋势。",
+    "select_agents": "选择智能体",
+    "search_agents": "搜索智能体",
+    "remove_agent": "移除 {{name}}",
+    "no_selection": "请至少选择一个智能体进行对比。",
+    "no_agents": "没有匹配的智能体。"
+  },
   "empty": {
     "title": "暂无消耗数据",
     "body": "当智能体在这里开始执行任务后，它们的 token 消耗和运行时长将出现在此处。"

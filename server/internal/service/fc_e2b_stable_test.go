@@ -32,6 +32,106 @@ func TestStableBatchCutoffs(t *testing.T) {
 	}
 }
 
+func TestStableRolloutCoverageUsesCumulativeUpdatedTargets(t *testing.T) {
+	tests := []struct {
+		name    string
+		total   int
+		updated int
+		batch   int
+		target  int
+		covered bool
+	}{
+		{name: "developer coverage skips 5 percent work", total: 61, updated: 35, batch: 1, target: 4, covered: true},
+		{name: "developer coverage skips 25 percent work", total: 61, updated: 35, batch: 2, target: 16, covered: true},
+		{name: "developer coverage skips 50 percent work", total: 61, updated: 35, batch: 3, target: 31, covered: true},
+		{name: "100 percent still requires every runtime", total: 61, updated: 35, batch: 4, target: 61, covered: false},
+		{name: "new runtimes can raise an active stage target", total: 80, updated: 35, batch: 3, target: 40, covered: false},
+		{name: "new runtime during final stage must be updated", total: 62, updated: 61, batch: 4, target: 62, covered: false},
+		{name: "new runtime completes final stage after update", total: 62, updated: 62, batch: 4, target: 62, covered: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := stableBatchTarget(test.total, test.batch); got != test.target {
+				t.Fatalf("stableBatchTarget(%d, %d) = %d, want %d", test.total, test.batch, got, test.target)
+			}
+			if got := stableBatchCovered(test.total, test.updated, test.batch); got != test.covered {
+				t.Fatalf(
+					"stableBatchCovered(%d, %d, %d) = %t, want %t",
+					test.total,
+					test.updated,
+					test.batch,
+					got,
+					test.covered,
+				)
+			}
+		})
+	}
+}
+
+func TestStableRolloutSkipsCoveredStagesBeforeHealthGate(t *testing.T) {
+	tests := []struct {
+		name         string
+		total        int
+		updated      int
+		nextBatch    int
+		gateRequired bool
+	}{
+		{
+			name:         "current five percent only",
+			total:        52,
+			updated:      3,
+			nextBatch:    2,
+			gateRequired: true,
+		},
+		{
+			name:         "already covers twenty five percent",
+			total:        52,
+			updated:      13,
+			nextBatch:    2,
+			gateRequired: false,
+		},
+		{
+			name:         "developer rollout already covers fifty percent",
+			total:        52,
+			updated:      26,
+			nextBatch:    3,
+			gateRequired: false,
+		},
+		{
+			name:         "fifty percent still needs one runtime",
+			total:        52,
+			updated:      25,
+			nextBatch:    3,
+			gateRequired: true,
+		},
+		{
+			name:         "new runtime makes final stage incomplete",
+			total:        53,
+			updated:      52,
+			nextBatch:    4,
+			gateRequired: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := stableCurrentStageHealthGateRequired(
+				test.total,
+				test.updated,
+				test.nextBatch,
+			); got != test.gateRequired {
+				t.Fatalf(
+					"stableCurrentStageHealthGateRequired(%d, %d, %d) = %t, want %t",
+					test.total,
+					test.updated,
+					test.nextBatch,
+					got,
+					test.gateRequired,
+				)
+			}
+		})
+	}
+}
+
 func TestAssignStableBatchesCoversProvidersAndIsDeterministic(t *testing.T) {
 	targets := make([]stableRuntimeTarget, 0, 60)
 	providers := []string{"hermes", "opencode", "pi"}
@@ -133,12 +233,132 @@ func TestStableNextBatchSchedule(t *testing.T) {
 	}
 }
 
+func TestStableRolloutScheduleKeepsOriginalAnchor(t *testing.T) {
+	started := time.Date(2026, 7, 29, 10, 0, 0, 0, time.UTC)
+	schedule := stableRolloutSchedule(started)
+	want := []FCE2BStableRolloutMilestone{
+		{Batch: 1, Percentage: 5, ScheduledAt: started, Kind: "rollout"},
+		{Batch: 2, Percentage: 25, ScheduledAt: started.Add(2 * time.Hour), Kind: "rollout"},
+		{Batch: 3, Percentage: 50, ScheduledAt: started.Add(8 * time.Hour), Kind: "rollout"},
+		{Batch: 4, Percentage: 100, ScheduledAt: started.Add(20 * time.Hour), Kind: "rollout"},
+		{Batch: 5, Percentage: 100, ScheduledAt: started.Add(24 * time.Hour), Kind: "complete"},
+	}
+	if len(schedule) != len(want) {
+		t.Fatalf("stableRolloutSchedule() returned %d milestones, want %d", len(schedule), len(want))
+	}
+	for index := range want {
+		if schedule[index] != want[index] {
+			t.Fatalf("milestone %d = %#v, want %#v", index, schedule[index], want[index])
+		}
+	}
+
+	nextBatch, percentage, due := stableNextBatch(2, started)
+	if nextBatch != 3 || percentage != 50 || !due.Equal(want[2].ScheduledAt) {
+		t.Fatalf(
+			"manual stage progression changed the fixed schedule: got (%d, %d, %s)",
+			nextBatch,
+			percentage,
+			due,
+		)
+	}
+}
+
 func TestStableFailureRate(t *testing.T) {
 	if got := failureRate(0, 0); got != 0 {
 		t.Fatalf("failureRate(0, 0) = %v, want 0", got)
 	}
 	if got := failureRate(1, 20); got != 0.05 {
 		t.Fatalf("failureRate(1, 20) = %v, want 0.05", got)
+	}
+}
+
+func TestStableProviderProbeCoverageDoesNotRequireInsufficientSamples(t *testing.T) {
+	for _, completed := range []int{0, 1} {
+		if stableProviderProbeCoverageIncomplete(completed, 0, 0) {
+			t.Fatalf("completed=%d was treated as incomplete provider session coverage", completed)
+		}
+	}
+}
+
+func TestStableProviderProbeCoverageReportsMissingSessionKindsOnceSampled(t *testing.T) {
+	tests := []struct {
+		name                   string
+		rotatedExistingSession int
+		newSession             int
+		wantIncomplete         bool
+	}{
+		{name: "neither session kind", wantIncomplete: true},
+		{name: "existing session only", rotatedExistingSession: 1, wantIncomplete: true},
+		{name: "new conversation only", newSession: 1, wantIncomplete: true},
+		{name: "both session kinds", rotatedExistingSession: 1, newSession: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			incomplete := stableProviderProbeCoverageIncomplete(
+				2,
+				test.rotatedExistingSession,
+				test.newSession,
+			)
+			if incomplete != test.wantIncomplete {
+				t.Fatalf(
+					"stableProviderProbeCoverageIncomplete() = %t, want %t",
+					incomplete,
+					test.wantIncomplete,
+				)
+			}
+		})
+	}
+}
+
+func TestStableBatchHealthWindowExcludesDeveloperPreRolloutCutovers(t *testing.T) {
+	batchStartedAt := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name        string
+		completedAt time.Time
+		want        bool
+	}{
+		{
+			name:        "developer cutover before percentage stage",
+			completedAt: batchStartedAt.Add(-time.Minute),
+			want:        false,
+		},
+		{
+			name:        "cutover at percentage stage boundary",
+			completedAt: batchStartedAt,
+			want:        true,
+		},
+		{
+			name:        "cutover during percentage stage",
+			completedAt: batchStartedAt.Add(time.Minute),
+			want:        true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := stableTargetNeedsBatchHealthGate(test.completedAt, batchStartedAt); got != test.want {
+				t.Fatalf(
+					"stableTargetNeedsBatchHealthGate(%s, %s) = %t, want %t",
+					test.completedAt,
+					batchStartedAt,
+					got,
+					test.want,
+				)
+			}
+		})
+	}
+}
+
+func TestStableObservationTargetsError(t *testing.T) {
+	if err := stableObservationTargetsError(0, 0); err != nil {
+		t.Fatalf("fully updated observation was blocked: %v", err)
+	}
+	if err := stableObservationTargetsError(2, 0); err == nil ||
+		!strings.Contains(err.Error(), "2 runtime targets are not updated") {
+		t.Fatalf("missing targets error = %v", err)
+	}
+	if err := stableObservationTargetsError(2, 1); err == nil ||
+		!strings.Contains(err.Error(), "1 runtime targets failed") {
+		t.Fatalf("failed targets error = %v", err)
 	}
 }
 

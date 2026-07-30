@@ -203,9 +203,10 @@ migration 101 同时建了两张配套表：
 Token 类报表查询从 `task_usage_hourly` 派生，按调用方传入的 `@tz` 在查询时折算日界。**成本不在 SQL 里算**——查询只 `SUM` token 列并保留 `model` 维度，成本由客户端按 per-model 定价表折算（所以按日期分组的查询会保留 `model`，按 agent 分组的也是）。
 
 ```sql
--- Workspace dashboard 趋势图 ListDashboardUsageDaily（按 viewer tz 切日，保留 model）
+-- Workspace dashboard 趋势图 ListDashboardUsageDaily
+-- （按 viewer tz 切日，保留 agent / provider / model）
 SELECT DATE(bucket_hour AT TIME ZONE @tz::text) AS date,
-       model,
+       agent_id, provider, model,
        SUM(input_tokens)::bigint       AS input_tokens,
        SUM(output_tokens)::bigint      AS output_tokens,
        SUM(cache_read_tokens)::bigint  AS cache_read_tokens,
@@ -215,8 +216,8 @@ FROM task_usage_hourly
 WHERE workspace_id = $1
   AND bucket_hour >= @since::timestamptz
   AND (@project_id::uuid IS NULL OR project_id = @project_id)
-GROUP BY DATE(bucket_hour AT TIME ZONE @tz::text), model
-ORDER BY DATE(bucket_hour AT TIME ZONE @tz::text) DESC, model;
+GROUP BY DATE(bucket_hour AT TIME ZONE @tz::text), agent_id, provider, model
+ORDER BY DATE(bucket_hour AT TIME ZONE @tz::text) DESC, agent_id, provider, model;
 
 -- Runtime detail 趋势图 ListRuntimeUsage（按 viewer tz 切日，tz 来自 user 不是 runtime）
 SELECT DATE(bucket_hour AT TIME ZONE @tz::text) AS date,
@@ -372,3 +373,11 @@ ORDER BY agent_id, model;
 | Rollup 表合并 | `task_usage_daily` + `task_usage_dashboard_daily` → `task_usage_hourly` |
 | 报表 tz 切换粒度 | 全局 per-user（Preferences），不做 per-view picker |
 | hour-of-day heatmap tz | viewer tz（不再用机器物理 tz） |
+
+---
+
+## 9. 变更历史
+
+| 日期 | 变更 | 原因 |
+|---|---|---|
+| 2026-07-29 | Workspace Usage 的 daily token 与 runtime 响应增加 `agent_id` 维度，分别按 `(date, agent, provider, model)` 和 `(date, agent)` 返回；原有顶部图表继续在客户端汇总。 | 排行榜的 Agent 对比折线图需要同时保留日期和 Agent 维度。该改动为向后兼容的字段与粒度扩展，不改变 viewing timezone 或时间窗口口径。 |

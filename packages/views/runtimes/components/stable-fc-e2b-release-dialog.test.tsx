@@ -15,6 +15,8 @@ const mockMutateRelease = vi.hoisted(() => ({
   pause: vi.fn(),
   resume: vi.fn(),
   "start-rollout": vi.fn(),
+  "advance-rollout": vi.fn(),
+  "complete-observation": vi.fn(),
   terminate: vi.fn(),
   rollback: vi.fn(),
 }));
@@ -148,10 +150,10 @@ describe("StableFCE2BReleaseDialog", () => {
     );
   });
 
-  it("shows the current stable build separately and allows publishing it again", async () => {
+  it("labels the current stable template even when its build changed", async () => {
     mockChannelQuery.data.current = {
       template_id: "template-current",
-      template_build_id: "build-current",
+      template_build_id: "build-current-before-log-config",
       template_alias: "Current image",
       release_id: "release-current",
     };
@@ -170,6 +172,7 @@ describe("StableFCE2BReleaseDialog", () => {
 
     expect(currentTemplate).toBeEnabled();
     expect(screen.getByText("Currently published stable version")).toBeInTheDocument();
+    expect(screen.getByText("Current stable version")).toBeInTheDocument();
     expect(nextTemplate).toBeEnabled();
     expect(publish).toBeDisabled();
 
@@ -219,6 +222,144 @@ describe("StableFCE2BReleaseDialog", () => {
 
     await waitFor(() =>
       expect(mockMutateRelease["start-rollout"]).toHaveBeenCalledWith(
+        "release-next",
+      ),
+    );
+  });
+
+  it("shows the fixed rollout schedule and advances without changing its timestamps", async () => {
+    mockChannelQuery.data.current = {
+      template_id: "template-current",
+      template_build_id: "build-current",
+      template_alias: "Current image",
+      release_id: "release-current",
+    };
+    mockChannelQuery.data.active_release = {
+      id: "release-next",
+      template_alias: "Next image",
+      status: "rolling_out",
+      bootstrap: false,
+      current_batch: 1,
+      target_percentage: 5,
+      previous_template_alias: "Current image",
+      updated_targets: 35,
+      total_targets: 61,
+      validation_error: "",
+      rollout_schedule: [
+        {
+          batch: 1,
+          percentage: 5,
+          scheduled_at: "2026-07-29T02:00:00Z",
+          kind: "rollout",
+        },
+        {
+          batch: 2,
+          percentage: 25,
+          scheduled_at: "2026-07-29T04:00:00Z",
+          kind: "rollout",
+        },
+        {
+          batch: 3,
+          percentage: 50,
+          scheduled_at: "2026-07-29T10:00:00Z",
+          kind: "rollout",
+        },
+        {
+          batch: 4,
+          percentage: 100,
+          scheduled_at: "2026-07-29T22:00:00Z",
+          kind: "rollout",
+        },
+        {
+          batch: 5,
+          percentage: 100,
+          scheduled_at: "2026-07-30T02:00:00Z",
+          kind: "complete",
+        },
+      ],
+    };
+
+    renderDialog();
+
+    expect(screen.getByText("24-hour rollout schedule")).toBeInTheDocument();
+    expect(screen.getByText("Updated 35 / 61")).toBeInTheDocument();
+    expect(screen.getByText("57%")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Current cumulative stage target: 5% (4 Runtimes). Updates above this count carry into later stages.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Roll out to 5%")).toBeInTheDocument();
+    expect(screen.getByText("Roll out to 25%")).toBeInTheDocument();
+    expect(screen.getByText("Roll out to 50%")).toBeInTheDocument();
+    expect(screen.getByText("Roll out to 100%")).toBeInTheDocument();
+    expect(screen.getByText("Complete final observation")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Manual advance opens the next stage early/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/switches only the runtimes updated/),
+    ).toBeInTheDocument();
+
+    const scheduledTimes = Array.from(document.querySelectorAll("time")).map(
+      (element) => element.getAttribute("datetime"),
+    );
+    expect(scheduledTimes).toEqual([
+      "2026-07-29T02:00:00Z",
+      "2026-07-29T04:00:00Z",
+      "2026-07-29T10:00:00Z",
+      "2026-07-29T22:00:00Z",
+      "2026-07-30T02:00:00Z",
+    ]);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Advance now to 25%" }),
+    );
+
+    await waitFor(() =>
+      expect(mockMutateRelease["advance-rollout"]).toHaveBeenCalledWith(
+        "release-next",
+      ),
+    );
+    expect(
+      Array.from(document.querySelectorAll("time")).map((element) =>
+        element.getAttribute("datetime"),
+      ),
+    ).toEqual(scheduledTimes);
+  });
+
+  it("completes final observation and exits the active release", async () => {
+    mockChannelQuery.data.current = {
+      template_id: "template-current",
+      template_build_id: "build-current",
+      template_alias: "Current image",
+      release_id: "release-current",
+    };
+    mockChannelQuery.data.active_release = {
+      id: "release-next",
+      template_alias: "Next image",
+      status: "observing",
+      bootstrap: false,
+      current_batch: 4,
+      target_percentage: 100,
+      previous_template_alias: "Current image",
+      updated_targets: 3,
+      total_targets: 3,
+      validation_error: "",
+    };
+
+    renderDialog();
+
+    expect(screen.getByText("Final observation")).toBeInTheDocument();
+    expect(
+      screen.getByText(/marks this template as the current stable version/),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Complete observation" }),
+    );
+
+    await waitFor(() =>
+      expect(mockMutateRelease["complete-observation"]).toHaveBeenCalledWith(
         "release-next",
       ),
     );

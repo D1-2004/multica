@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   aggregateAgentTokens,
   aggregateDailyCost,
+  aggregateDailyTasks,
+  aggregateDailyTime,
   aggregateWeeklyTasks,
   aggregateWeeklyTime,
+  buildAgentComparisonSeries,
   bucketUnknownAgentRows,
   computeDailyTotals,
   DELETED_AGENTS_ROW_ID,
@@ -59,6 +62,127 @@ describe("aggregateDailyCost", () => {
       },
     ]);
     expect(result[0]?.total).toBe(0);
+  });
+});
+
+describe("daily runtime totals", () => {
+  it("folds the new per-agent rows back into one workspace row per date", () => {
+    const rows = [
+      {
+        date: "2026-05-19",
+        agent_id: "agent-1",
+        total_seconds: 60,
+        task_count: 3,
+        failed_count: 1,
+      },
+      {
+        date: "2026-05-19",
+        agent_id: "agent-2",
+        total_seconds: 120,
+        task_count: 2,
+        failed_count: 0,
+      },
+    ];
+
+    expect(aggregateDailyTime(rows)).toEqual([
+      {
+        date: "2026-05-19",
+        label: "5/19",
+        totalSeconds: 180,
+      },
+    ]);
+    expect(aggregateDailyTasks(rows)).toEqual([
+      {
+        date: "2026-05-19",
+        label: "5/19",
+        completed: 4,
+        failed: 1,
+      },
+    ]);
+  });
+});
+
+describe("buildAgentComparisonSeries", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-19T12:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps every selected Agent as a separate daily line without a selection cap", () => {
+    const selectedAgentIds = Array.from(
+      { length: 8 },
+      (_, index) => `agent-${index + 1}`,
+    );
+    const result = buildAgentComparisonSeries({
+      usage: [
+        {
+          date: "2026-05-19",
+          agent_id: "agent-1",
+          provider: "anthropic",
+          model: "claude-sonnet-4-6",
+          input_tokens: 100,
+          output_tokens: 50,
+          cache_read_tokens: 25,
+          cache_write_tokens: 5,
+          task_count: 1,
+        },
+        {
+          date: "2026-05-19",
+          agent_id: "agent-8",
+          provider: "anthropic",
+          model: "claude-sonnet-4-6",
+          input_tokens: 10,
+          output_tokens: 0,
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+          task_count: 1,
+        },
+      ],
+      runTime: [],
+      metric: "tokens",
+      dimension: "daily",
+      days: 1,
+      tz: "UTC",
+      selectedAgentIds,
+      knownAgentIds: new Set(selectedAgentIds),
+    });
+
+    expect(result).toHaveLength(1);
+    expect(Object.keys(result[0]?.values ?? {})).toHaveLength(8);
+    expect(result[0]?.values).toMatchObject({
+      "agent-1": 180,
+      "agent-8": 10,
+    });
+  });
+
+  it("folds unknown Agent rows into the deleted leaderboard series", () => {
+    const result = buildAgentComparisonSeries({
+      usage: [
+        {
+          date: "2026-05-19",
+          agent_id: "removed-agent",
+          provider: "anthropic",
+          model: "claude-sonnet-4-6",
+          input_tokens: 12,
+          output_tokens: 3,
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+          task_count: 1,
+        },
+      ],
+      runTime: [],
+      metric: "tokens",
+      dimension: "daily",
+      days: 1,
+      tz: "UTC",
+      selectedAgentIds: [DELETED_AGENTS_ROW_ID],
+      knownAgentIds: new Set(),
+    });
+
+    expect(result[0]?.values[DELETED_AGENTS_ROW_ID]).toBe(15);
   });
 });
 

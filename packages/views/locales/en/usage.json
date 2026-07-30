@@ -50,6 +50,16 @@
     "header_tasks": "Tasks",
     "no_data": "No agent activity in this window."
   },
+  "comparison": {
+    "open": "View detailed usage",
+    "title": "Agent usage comparison",
+    "description": "Compare the selected agents over the current time range.",
+    "select_agents": "Select agents",
+    "search_agents": "Search agents",
+    "remove_agent": "Remove {{name}}",
+    "no_selection": "Select at least one agent to compare.",
+    "no_agents": "No matching agents."
+  },
   "empty": {
     "title": "No usage yet",
     "body": "Once agents start running tasks here, their token spend and run time will appear in this view."
