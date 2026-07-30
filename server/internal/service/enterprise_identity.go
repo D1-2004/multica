@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -39,6 +41,7 @@ const (
 	defaultEnterpriseAnchorRenewInterval  = 24 * time.Hour
 	defaultEnterpriseAnchorRolloverBefore = 24 * time.Hour
 	defaultEnterpriseMaintenanceBatch     = int32(50)
+	enterpriseIdentityTokenLockClass      = int32(0x4549544b) // "EITK"
 )
 
 var (
@@ -229,6 +232,69 @@ type EnterpriseIdentityAnchor interface {
 	Delete(context.Context, string) error
 }
 
+type EnterpriseIdentityTokenRotationLocker interface {
+	Lock(context.Context, pgtype.UUID) (func(), error)
+}
+
+type postgresEnterpriseIdentityTokenRotationLocker struct {
+	pool *pgxpool.Pool
+}
+
+func newPostgresEnterpriseIdentityTokenRotationLocker(
+	pool *pgxpool.Pool,
+) *postgresEnterpriseIdentityTokenRotationLocker {
+	return &postgresEnterpriseIdentityTokenRotationLocker{pool: pool}
+}
+
+func (l *postgresEnterpriseIdentityTokenRotationLocker) Lock(
+	ctx context.Context,
+	identityID pgtype.UUID,
+) (func(), error) {
+	if l == nil || l.pool == nil || !identityID.Valid {
+		return nil, errors.New("enterprise identity token rotation lock is unavailable")
+	}
+	conn, err := l.pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire connection for enterprise identity token rotation lock: %w", err)
+	}
+	key := enterpriseIdentityTokenRotationLockKey(identityID)
+	if _, err := conn.Exec(
+		ctx,
+		"SELECT pg_advisory_lock($1, $2)",
+		enterpriseIdentityTokenLockClass,
+		key,
+	); err != nil {
+		conn.Release()
+		return nil, fmt.Errorf("acquire enterprise identity token rotation lock: %w", err)
+	}
+	return func() {
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var unlocked bool
+		err := conn.QueryRow(
+			unlockCtx,
+			"SELECT pg_advisory_unlock($1, $2)",
+			enterpriseIdentityTokenLockClass,
+			key,
+		).Scan(&unlocked)
+		if err != nil || !unlocked {
+			slog.Error(
+				"enterprise identity token rotation lock release failed",
+				"error", err,
+				"unlocked", unlocked,
+			)
+			_ = conn.Conn().Close(unlockCtx)
+		}
+		conn.Release()
+	}, nil
+}
+
+func enterpriseIdentityTokenRotationLockKey(identityID pgtype.UUID) int32 {
+	hasher := fnv.New32a()
+	_, _ = hasher.Write(identityID.Bytes[:])
+	return int32(hasher.Sum32())
+}
+
 type EnterpriseIdentityService struct {
 	Store     enterpriseIdentityStore
 	Config    EnterpriseIdentityConfig
@@ -237,6 +303,7 @@ type EnterpriseIdentityService struct {
 	Idem      EnterpriseIdem
 	Anchor    EnterpriseIdentityAnchor
 	Secrets   *secretbox.Box
+	TokenLock EnterpriseIdentityTokenRotationLocker
 	Now       func() time.Time
 	Authorize *url.URL
 
@@ -254,8 +321,15 @@ func NewEnterpriseIdentityService(
 	idem EnterpriseIdem,
 	anchor EnterpriseIdentityAnchor,
 	secrets *secretbox.Box,
+	tokenLock EnterpriseIdentityTokenRotationLocker,
 ) (*EnterpriseIdentityService, error) {
-	if store == nil || buc == nil || authX == nil || idem == nil || anchor == nil || secrets == nil {
+	if store == nil ||
+		buc == nil ||
+		authX == nil ||
+		idem == nil ||
+		anchor == nil ||
+		secrets == nil ||
+		tokenLock == nil {
 		return nil, errors.New("enterprise identity service dependencies are incomplete")
 	}
 	authorizeURL, err := url.Parse(config.BUCAuthorizeURL)
@@ -270,6 +344,7 @@ func NewEnterpriseIdentityService(
 		Idem:      idem,
 		Anchor:    anchor,
 		Secrets:   secrets,
+		TokenLock: tokenLock,
 		Now:       time.Now,
 		Authorize: authorizeURL,
 
@@ -730,7 +805,35 @@ func (s *EnterpriseIdentityService) rotateAuthXToken(
 	ctx context.Context,
 	identity db.AgentEnterpriseIdentity,
 ) (db.AgentEnterpriseIdentity, EnterpriseOIDCToken, error) {
-	refreshToken, err := s.Secrets.Open(identity.AuthxRefreshTokenEncrypted)
+	unlock, err := s.TokenLock.Lock(ctx, identity.ID)
+	if err != nil {
+		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, err
+	}
+	defer unlock()
+
+	// Normandy refresh tokens are single-use and rotate on every renewal.
+	// Reload after taking the cross-replica lock so a waiter consumes the
+	// winner's newly persisted token instead of reusing the already consumed
+	// token and revoking the whole token family.
+	current, err := s.Store.GetAgentEnterpriseIdentity(
+		ctx,
+		db.GetAgentEnterpriseIdentityParams{
+			WorkspaceID: identity.WorkspaceID,
+			AgentID:     identity.AgentID,
+		},
+	)
+	if err != nil {
+		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, err
+	}
+	if current.ID != identity.ID ||
+		current.Status != "active" ||
+		!current.AuthxRefreshExpiresAt.Valid ||
+		!current.AuthxRefreshExpiresAt.Time.After(s.Now()) ||
+		len(current.AuthxRefreshTokenEncrypted) == 0 {
+		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, ErrEnterpriseIdentityNeedsReauth
+	}
+
+	refreshToken, err := s.Secrets.Open(current.AuthxRefreshTokenEncrypted)
 	if err != nil {
 		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, errors.New("decrypt AuthX refresh token")
 	}
@@ -746,8 +849,8 @@ func (s *EnterpriseIdentityService) rotateAuthXToken(
 	updated, err := s.Store.CompareAndSwapAgentEnterpriseIdentityToken(ctx, db.CompareAndSwapAgentEnterpriseIdentityTokenParams{
 		AuthxRefreshTokenEncrypted: sealedRefresh,
 		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: refreshed.RefreshExpiresAt, Valid: true},
-		ID:                         identity.ID,
-		ExpectedTokenVersion:       identity.TokenVersion,
+		ID:                         current.ID,
+		ExpectedTokenVersion:       current.TokenVersion,
 	})
 	if err != nil {
 		return db.AgentEnterpriseIdentity{}, EnterpriseOIDCToken{}, fmt.Errorf("rotate AuthX refresh token: %w", err)

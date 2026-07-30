@@ -145,6 +145,7 @@ func NewASBEnterpriseRuntimeFromConfig(
 		idemClient,
 		anchor,
 		secrets,
+		newPostgresEnterpriseIdentityTokenRotationLocker(pool),
 	)
 	if err != nil {
 		return nil, err

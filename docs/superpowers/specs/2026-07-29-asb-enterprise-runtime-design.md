@@ -234,10 +234,16 @@ BUC 身份锚点每 24 小时检查和续期一次，并在单沙箱 7 天绝对
 创建继承身份的后继锚点：
 
 1. 解密当前令牌；
-2. 调 Normandy `RenewToken`；
-3. 加密新 Refresh Token；
-4. 使用 `token_version` 比较交换；
-5. 清零内存中的明文字节。
+2. 以绑定记录 ID 获取 PostgreSQL 会话级 advisory lock，跨应用副本串行续期；
+3. 获锁后重新读取绑定，确保使用上一位续期者刚写入的新 Refresh Token；
+4. 调 Normandy `RenewToken`；
+5. 加密新 Refresh Token；
+6. 使用 `token_version` 比较交换；
+7. 清零内存中的明文字节。
+
+Normandy Refresh Token 是一次性轮换凭证；旧 Token 再次使用会触发凭证族撤销。因此仅在
+数据库写入时比较交换不够，调用 `RenewToken` 前必须先跨副本加锁，不能让两个任务或后台
+巡检同时消费同一个旧 Token。
 
 短暂轮转失败保持绑定状态并由下一轮巡检重试；只有 Refresh Token 已过期或身份锚点
 已经不可恢复时才标记 `needs_reauth`。后继锚点只是同一身份的基础设施接班，不进入

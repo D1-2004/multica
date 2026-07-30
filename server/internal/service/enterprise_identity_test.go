@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -269,6 +270,69 @@ type fakeEnterpriseAnchor struct {
 	successorID     string
 	deletedID       string
 	deletedIDs      []string
+}
+
+type fakeEnterpriseIdentityTokenRotationLocker struct {
+	mu sync.Mutex
+}
+
+func (f *fakeEnterpriseIdentityTokenRotationLocker) Lock(
+	_ context.Context,
+	_ pgtype.UUID,
+) (func(), error) {
+	f.mu.Lock()
+	return f.mu.Unlock, nil
+}
+
+type synchronizedEnterpriseIdentityStore struct {
+	*fakeEnterpriseIdentityStore
+	mu sync.Mutex
+}
+
+func (s *synchronizedEnterpriseIdentityStore) GetAgentEnterpriseIdentity(
+	ctx context.Context,
+	params db.GetAgentEnterpriseIdentityParams,
+) (db.AgentEnterpriseIdentity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fakeEnterpriseIdentityStore.GetAgentEnterpriseIdentity(ctx, params)
+}
+
+func (s *synchronizedEnterpriseIdentityStore) CompareAndSwapAgentEnterpriseIdentityToken(
+	ctx context.Context,
+	params db.CompareAndSwapAgentEnterpriseIdentityTokenParams,
+) (db.AgentEnterpriseIdentity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fakeEnterpriseIdentityStore.CompareAndSwapAgentEnterpriseIdentityToken(ctx, params)
+}
+
+type chainingEnterpriseAuthX struct {
+	mu    sync.Mutex
+	now   time.Time
+	calls []string
+}
+
+func (c *chainingEnterpriseAuthX) IssueForBUCIdentity(
+	context.Context,
+	BUCIdentityTokens,
+) (EnterpriseOIDCToken, error) {
+	return EnterpriseOIDCToken{}, errors.New("unexpected AuthX token issue")
+}
+
+func (c *chainingEnterpriseAuthX) Renew(
+	_ context.Context,
+	refreshToken string,
+) (EnterpriseOIDCToken, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, refreshToken)
+	return EnterpriseOIDCToken{
+		IDToken:          "id-" + refreshToken,
+		RefreshToken:     refreshToken + "-next",
+		ExpiresAt:        c.now.Add(time.Hour),
+		RefreshExpiresAt: c.now.Add(7 * 24 * time.Hour),
+	}, nil
 }
 
 func (f *fakeEnterpriseAnchor) Create(
@@ -703,6 +767,82 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 	}
 }
 
+func TestEnterpriseIdentityTokenRotationReloadsAfterSharedLock(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 30, 6, 0, 0, 0, time.UTC)
+	box, err := secretbox.New(bytes.Repeat([]byte{0x52}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := box.Seal([]byte("refresh-0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &synchronizedEnterpriseIdentityStore{
+		fakeEnterpriseIdentityStore: &fakeEnterpriseIdentityStore{
+			current: db.AgentEnterpriseIdentity{
+				ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+				WorkspaceID:                util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+				AgentID:                    util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+				AuthxRefreshTokenEncrypted: sealed,
+				AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(7 * 24 * time.Hour), Valid: true},
+				TokenVersion:               1,
+				Status:                     "active",
+			},
+		},
+	}
+	authX := &chainingEnterpriseAuthX{now: now}
+	locker := &fakeEnterpriseIdentityTokenRotationLocker{}
+	newReplica := func() *EnterpriseIdentityService {
+		serviceUnderTest := newTestEnterpriseIdentityService(
+			t,
+			store,
+			&fakeBUCOAuthClient{},
+			authX,
+			&fakeEnterpriseIdem{},
+			&fakeEnterpriseAnchor{},
+			now,
+		)
+		serviceUnderTest.Secrets = box
+		serviceUnderTest.TokenLock = locker
+		return serviceUnderTest
+	}
+	replicas := []*EnterpriseIdentityService{newReplica(), newReplica()}
+	initial := store.current
+
+	start := make(chan struct{})
+	errs := make(chan error, len(replicas))
+	var wait sync.WaitGroup
+	for _, replica := range replicas {
+		wait.Add(1)
+		go func(replica *EnterpriseIdentityService) {
+			defer wait.Done()
+			<-start
+			_, _, err := replica.rotateAuthXToken(context.Background(), initial)
+			errs <- err
+		}(replica)
+	}
+	close(start)
+	wait.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := strings.Join(authX.calls, ","); got != "refresh-0,refresh-0-next" {
+		t.Fatalf("refresh token rotation chain = %q", got)
+	}
+	finalToken, err := box.Open(store.current.AuthxRefreshTokenEncrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(finalToken) != "refresh-0-next-next" || store.current.TokenVersion != 3 {
+		t.Fatalf("final token/version = %q/%d", finalToken, store.current.TokenVersion)
+	}
+}
+
 func TestEnterpriseIdentityResolveReplacesExpiringAnchorWithoutChangingIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -1077,6 +1217,7 @@ func newTestEnterpriseIdentityService(
 		idem,
 		anchor,
 		box,
+		&fakeEnterpriseIdentityTokenRotationLocker{},
 	)
 	if err != nil {
 		t.Fatal(err)
