@@ -27,6 +27,10 @@ import { Callout } from "fumadocs-ui/components/callout";
 - 每个工作区各自镜像 PR，并按**自己的** [issue 前缀](/workspaces) 和 GitHub 功能开关做自动关联。一个同时引用 `MUL-1` 和 `ENG-2` 的 PR，会在前缀为 `MUL` 的工作区关联 `MUL-1`、在前缀为 `ENG` 的工作区关联 `ENG-2`，两边互不可见对方的 issue。
 - 从某个工作区断开连接，只会让**该**工作区停止接收事件，其它工作区照常工作。
 
+如果 installation 已连接到你管理的另一个工作区，新工作区的 **Settings → GitHub** 会在「可使用的已有连接」中展示它。点击「使用该连接」即可为新工作区创建独立 binding；你必须同时是来源和目标工作区的 owner/admin，来源工作区不会被断开。
+
+连接第二个工作区时，**不要**先到 GitHub 卸载再重装 App。GitHub 侧卸载会撤销账号级授权，并删除该 installation 在 Multica 中的全部工作区 binding。
+
 仓库范围由你授予 GitHub App 的权限决定（全部仓库或指定子集）。在工作区连接这个 installation 本身就是一次订阅——Multica 里不需要再单独逐仓库勾选。
 
 <Callout type="warning">

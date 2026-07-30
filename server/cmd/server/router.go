@@ -1423,6 +1423,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
 					r.Get("/github/connect", h.GitHubConnect)
+					r.With(handler.RequireHumanActor).Post("/github/installations/reuse", h.ReuseGitHubInstallation)
 					r.Delete("/github/installations/{installationId}", h.DeleteGitHubInstallation)
 				})
 
@@ -1634,6 +1635,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Task messages (user-facing, not daemon auth)
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+
+			// Task-scoped Chat -> Issue background handoff. The handler requires
+			// the server-stamped task_token actor and rejects ordinary member
+			// credentials even though this route lives in the workspace group.
+			r.Post("/api/issue-delegations", h.DelegateIssue)
 
 			// Labels
 			r.Route("/api/labels", func(r chi.Router) {

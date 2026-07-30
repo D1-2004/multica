@@ -448,6 +448,48 @@ func TestClientGetsUpdatesAndDeletesSubscription(t *testing.T) {
 	}
 }
 
+func TestClientUpdateSubscriptionSurfaceAcceptsAuto(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			AgentID string              `json:"agentId"`
+			Surface SubscriptionSurface `json:"surface"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode patch: %v", err)
+		}
+		if body.AgentID != "agent-1" || body.Surface.Type != "auto" {
+			t.Fatalf("patch body = %#v", body)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"code":    "success",
+			"data": map[string]any{
+				"sourceId":    "source-1",
+				"agentId":     "agent-1",
+				"dispatchUrl": "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint",
+				"surface":     map[string]any{"type": "auto"},
+				"outbound":    map[string]any{"mode": "dws", "replyTo": "latest_message"},
+				"status":      "active",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := mustTestClient(t, server)
+	updated, err := client.UpdateSubscriptionSurface(
+		context.Background(),
+		"source-1",
+		"agent-1",
+		"auto",
+	)
+	if err != nil {
+		t.Fatalf("UpdateSubscriptionSurface: %v", err)
+	}
+	if updated.Surface.Type != "auto" {
+		t.Fatalf("surface type = %q, want auto", updated.Surface.Type)
+	}
+}
+
 func TestClientDeletesAllDigitalEmployeeSubscriptionsForAgent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete ||

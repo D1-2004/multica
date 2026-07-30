@@ -186,7 +186,10 @@ func (s *Service) Snapshot(ctx context.Context) (db.ManagedAgentSourceSnapshot, 
 		return db.ManagedAgentSourceSnapshot{}, agentsource.Bundle{}, ErrSnapshotUnavailable
 	}
 	var bundle agentsource.Bundle
-	if err := json.Unmarshal(row.Bundle, &bundle); err != nil || bundle.Hash == "" || bundle.Hash != row.BundleHash.String {
+	if err := json.Unmarshal(row.Bundle, &bundle); err != nil ||
+		bundle.Hash == "" ||
+		bundle.Hash != row.BundleHash.String ||
+		!isManagedDTAProjectBundle(bundle) {
 		return db.ManagedAgentSourceSnapshot{}, agentsource.Bundle{}, ErrSnapshotUnavailable
 	}
 	return row, bundle, nil
@@ -236,7 +239,7 @@ func (s *Service) cloneAndCompile(ctx context.Context) (string, agentsource.Bund
 	if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
 		return "", agentsource.Bundle{}, fmt.Errorf("remove managed repository metadata: %w", err)
 	}
-	bundle, err := agentsource.CompileFS(ctx, os.DirFS(dir))
+	bundle, err := agentsource.CompileDTAProjectFS(ctx, os.DirFS(dir))
 	if err != nil {
 		return "", agentsource.Bundle{}, fmt.Errorf("compile managed repository: %w", err)
 	}
@@ -280,7 +283,7 @@ func (s *Service) Provision(ctx context.Context, workspaceID, ownerID, runtimeID
 	source, err := qtx.CreateManagedAgentSource(ctx, db.CreateManagedAgentSourceParams{
 		AgentID: agent.ID, WorkspaceID: workspaceID,
 		ManagedSourceKey: pgtype.Text{String: s.config.SourceKey, Valid: true},
-		RepoOwner:        owner, RepoName: repo, Ref: s.config.Ref, ManifestPath: agentsource.ManifestPath,
+		RepoOwner:        owner, RepoName: repo, Ref: s.config.Ref, ManifestPath: agentsource.DTAProjectPath,
 		SyncedCommitSha: snapshot.ResolvedCommitSha.String, CreatedBy: ownerID,
 	})
 	if err != nil {
@@ -343,7 +346,7 @@ func (s *Service) Rollout(ctx context.Context, sha string, bundle agentsource.Bu
 
 func (s *Service) ReconcileAgent(ctx context.Context, agentID pgtype.UUID) error {
 	source, err := s.queries.GetAgentSourceByAgentID(ctx, agentID)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && source.SourceType != "managed_git") {
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !isManagedSource(source, s.config.SourceKey)) {
 		return nil
 	}
 	if err != nil {
@@ -368,7 +371,7 @@ func (s *Service) rolloutOne(ctx context.Context, source db.AgentSource, sha str
 	defer tx.Rollback(ctx)
 	qtx := s.queries.WithTx(tx)
 	locked, err := qtx.LockAgentSourceByAgentID(ctx, source.AgentID)
-	if err != nil || locked.SourceType != "managed_git" || locked.SyncedCommitSha == sha {
+	if err != nil || !isManagedSource(locked, s.config.SourceKey) || locked.SyncedCommitSha == sha {
 		return err
 	}
 	active, err := qtx.AgentHasActiveTasks(ctx, source.AgentID)
@@ -398,6 +401,20 @@ func (s *Service) rolloutOne(ctx context.Context, source db.AgentSource, sha str
 			delete(byPath, compiled.SourcePath)
 			continue
 		}
+		if legacyPath := legacyManagedSkillPath(compiled.SourcePath); legacyPath != "" {
+			if mapping, ok := byPath[legacyPath]; ok {
+				if err := updateManagedSkill(ctx, qtx, mapping.SkillID, locked.ID, s.config, sha, compiled); err != nil {
+					return err
+				}
+				if _, err := qtx.UpdateAgentSourceSkillPath(ctx, db.UpdateAgentSourceSkillPathParams{
+					AgentSourceID: locked.ID, SkillID: mapping.SkillID, SourcePath: compiled.SourcePath,
+				}); err != nil {
+					return err
+				}
+				delete(byPath, legacyPath)
+				continue
+			}
+		}
 		created, err := createManagedSkill(ctx, qtx, agent.WorkspaceID, agent.OwnerID, locked.ID, s.config, sha, compiled)
 		if err != nil {
 			return err
@@ -420,7 +437,9 @@ func (s *Service) rolloutOne(ctx context.Context, source db.AgentSource, sha str
 			return err
 		}
 	}
-	if _, err := qtx.MarkAgentSourceSyncSucceeded(ctx, db.MarkAgentSourceSyncSucceededParams{ID: locked.ID, SyncedCommitSha: sha}); err != nil {
+	if _, err := qtx.MarkManagedAgentSourceSyncSucceeded(ctx, db.MarkManagedAgentSourceSyncSucceededParams{
+		ID: locked.ID, SyncedCommitSha: sha, ManifestPath: agentsource.DTAProjectPath,
+	}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -464,10 +483,35 @@ func updateManagedSkill(ctx context.Context, q *db.Queries, skillID, sourceID pg
 }
 
 func skillConfig(config Config, sha, sourcePath string) map[string]any {
+	owner, repo := repositoryParts(config.RepositoryURL)
 	return map[string]any{"origin": map[string]any{
-		"type": "managed_git", "source_key": config.SourceKey, "repository": config.RepositoryURL,
+		"type": "github_agent_source", "repository": owner + "/" + repo,
 		"ref": config.Ref, "commit_sha": sha, "path": sourcePath,
 	}}
+}
+
+func isManagedSource(source db.AgentSource, sourceKey string) bool {
+	return source.ManagedSourceKey.Valid &&
+		source.ManagedSourceKey.String == sourceKey
+}
+
+func legacyManagedSkillPath(sourcePath string) string {
+	const dtaSkillsRoot = "agent/skills/"
+	if !strings.HasPrefix(sourcePath, dtaSkillsRoot) {
+		return ""
+	}
+	return "skills/" + strings.TrimPrefix(sourcePath, dtaSkillsRoot)
+}
+
+func isManagedDTAProjectBundle(bundle agentsource.Bundle) bool {
+	hasBasicSkill := false
+	for _, skill := range bundle.Skills {
+		if !strings.HasPrefix(skill.SourcePath, "agent/skills/") {
+			return false
+		}
+		hasBasicSkill = hasBasicSkill || skill.Name == agentsource.DTABasicSkill
+	}
+	return hasBasicSkill
 }
 
 func managedSkillName(name string, sourceID pgtype.UUID) string {

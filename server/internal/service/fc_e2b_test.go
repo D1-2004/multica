@@ -835,19 +835,26 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	launch := mustFCE2BRunnerLaunch(t, rt)
 	if err := launcher.execRunOnce(context.Background(), "sbx_dws", rt, launch.Mode, taskID, "mdt_test_token", false, map[string]string{
 		"AGENT_IDENTITY_CONTEXT_TOKEN": "context_secret",
+		"MULTICA_CHAT_SESSION_ID":       "chat-session-1",
 	}); err != nil {
 		t.Fatalf("execRunOnce returned error: %v", err)
 	}
 	args := runner.calls[len(runner.calls)-1].args
-	found := false
+	foundIdentityToken := false
+	foundChatSessionID := false
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == "-e" && args[i+1] == "AGENT_IDENTITY_CONTEXT_TOKEN=context_secret" {
-			found = true
-			break
+			foundIdentityToken = true
+		}
+		if args[i] == "-e" && args[i+1] == "MULTICA_CHAT_SESSION_ID=chat-session-1" {
+			foundChatSessionID = true
 		}
 	}
-	if !found {
+	if !foundIdentityToken {
 		t.Fatal("exec args did not include DWS auth env")
+	}
+	if !foundChatSessionID {
+		t.Fatal("exec args did not include Chat Session ID env")
 	}
 }
 
@@ -875,6 +882,18 @@ func TestFCE2BExecRunOnceRejectsUnsafeRunnerEnvironment(t *testing.T) {
 				t.Fatalf("unsafe environment reached E2B command: %#v", runner.calls)
 			}
 		})
+	}
+}
+
+func TestFCE2BChatSessionID(t *testing.T) {
+	chatSessionID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	got, ok := fcE2BChatSessionID(db.AgentTaskQueue{ChatSessionID: chatSessionID})
+	if !ok || got != util.UUIDToString(chatSessionID) {
+		t.Fatalf("fcE2BChatSessionID() = %q, %v, want %q, true", got, ok, util.UUIDToString(chatSessionID))
+	}
+
+	if got, ok := fcE2BChatSessionID(db.AgentTaskQueue{}); ok || got != "" {
+		t.Fatalf("fcE2BChatSessionID() for non-Chat task = %q, %v, want empty, false", got, ok)
 	}
 }
 

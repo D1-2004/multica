@@ -115,6 +115,7 @@ import type {
   NotificationPreferenceResponse,
   NotificationPreferences,
   GitHubPullRequest,
+  GitHubInstallation,
   ListGitHubInstallationsResponse,
   GitHubConnectResponse,
   GitHubAgentPreviewRequest,
@@ -270,11 +271,15 @@ import {
   EMPTY_LIST_LABELS_RESPONSE,
   EMPTY_RESOURCE_LABELS_RESPONSE,
   GitHubAgentPreviewSchema,
+  GitHubInstallationSchema,
+  ListGitHubInstallationsResponseSchema,
   ListGitHubAgentRepositoriesResponseSchema,
   AgentSourceSchema,
   CreateGitHubAgentResponseSchema,
   SyncAgentSourceResponseSchema,
   EMPTY_GITHUB_AGENT_PREVIEW,
+  EMPTY_GITHUB_INSTALLATION,
+  EMPTY_GITHUB_INSTALLATIONS,
   EMPTY_GITHUB_AGENT_REPOSITORIES,
   EMPTY_AGENT_SOURCE,
   EMPTY_CREATE_GITHUB_AGENT_RESPONSE,
@@ -2612,7 +2617,32 @@ export class ApiClient {
   }
 
   async listGitHubInstallations(workspaceId: string): Promise<ListGitHubInstallationsResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/github/installations`);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/github/installations`);
+    return parseWithFallback(
+      raw,
+      ListGitHubInstallationsResponseSchema,
+      EMPTY_GITHUB_INSTALLATIONS,
+      { endpoint: "GET /api/workspaces/:id/github/installations" },
+    );
+  }
+
+  async reuseGitHubInstallation(
+    workspaceId: string,
+    sourceInstallationId: string,
+  ): Promise<GitHubInstallation> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/github/installations/reuse`,
+      {
+        method: "POST",
+        body: JSON.stringify({ source_installation_id: sourceInstallationId }),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      GitHubInstallationSchema,
+      EMPTY_GITHUB_INSTALLATION,
+      { endpoint: "POST /api/workspaces/:id/github/installations/reuse" },
+    );
   }
 
   async deleteGitHubInstallation(workspaceId: string, installationId: string): Promise<void> {

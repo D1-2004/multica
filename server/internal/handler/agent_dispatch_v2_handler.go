@@ -32,6 +32,80 @@ func textValue(s string) pgtype.Text {
 }
 func formatIssueNumber(n int32) string { return fmt.Sprint(n) }
 
+type agentDispatchIssueCreateOverrides struct {
+	Title                  string
+	DisplayContent         string
+	DispatchContext        []byte
+	Metadata               []byte
+	SystemLabelName        string
+	SystemLabelDescription string
+	SystemLabelColor       string
+	ParentTaskID           pgtype.UUID
+}
+
+func buildAgentDispatchIssueCreateParams(
+	command DispatchCommand,
+	prompt DispatchPrompt,
+	dispatchContext agentDispatchContext,
+	agent db.Agent,
+	idempotencyKey string,
+	overrides agentDispatchIssueCreateOverrides,
+) service.IssueCreateParams {
+	title := strings.TrimSpace(overrides.Title)
+	if title == "" {
+		title = dispatchIssueTitle(command)
+	}
+	displayContent := overrides.DisplayContent
+	if strings.TrimSpace(displayContent) == "" {
+		displayContent = prompt.DisplayContent
+	}
+	privateContext := overrides.DispatchContext
+	if len(privateContext) == 0 {
+		privateContext = dispatchRuntimeContext(command, idempotencyKey)
+	}
+	return service.IssueCreateParams{
+		WorkspaceID:               dispatchContext.WorkspaceID,
+		Title:                     title,
+		Description:               textValue(displayContent),
+		Status:                    "todo",
+		Priority:                  "none",
+		AssigneeType:              textValue("agent"),
+		AssigneeID:                agent.ID,
+		CreatorType:               "member",
+		CreatorID:                 dispatchContext.UserID,
+		AllowDuplicate:            false,
+		AgentIdentityContextToken: command.ExternalIdentity.ContextToken,
+		DispatchContext:           privateContext,
+		Metadata:                  overrides.Metadata,
+		SystemLabelName:           overrides.SystemLabelName,
+		SystemLabelDescription:    overrides.SystemLabelDescription,
+		SystemLabelColor:          overrides.SystemLabelColor,
+		ParentTaskID:               overrides.ParentTaskID,
+	}
+}
+
+func buildAgentDispatchIssueFollowUpParams(
+	command DispatchCommand,
+	prompt DispatchPrompt,
+	dispatchContext agentDispatchContext,
+	issue db.Issue,
+	idempotencyKey string,
+	privateContext []byte,
+	parentTaskID pgtype.UUID,
+) service.IssueCommentCreateParams {
+	if len(privateContext) == 0 {
+		privateContext = dispatchRuntimeContext(command, idempotencyKey)
+	}
+	return service.IssueCommentCreateParams{
+		Issue:                     issue,
+		AuthorID:                  dispatchContext.UserID,
+		Content:                   prompt.DisplayContent,
+		AgentIdentityContextToken: command.ExternalIdentity.ContextToken,
+		DispatchContext:           privateContext,
+		ParentTaskID:              parentTaskID,
+	}
+}
+
 func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 	// Do not include ExternalIdentity: the token has its own dedicated private
 	// task-context field and must never be duplicated in a JSON snapshot.
@@ -53,10 +127,14 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 		payload["dispatch_endpoint_id"] = c.DispatchEndpointID
 	}
 	if c.CompletionCallback != nil {
-		payload["completion_callback"] = map[string]string{
+		callback := map[string]string{
 			"url":    c.CompletionCallback.URL,
 			"target": c.CompletionCallback.Target,
 		}
+		if c.CompletionCallback.UpdateURL != "" {
+			callback["update_url"] = c.CompletionCallback.UpdateURL
+		}
+		payload["completion_callback"] = callback
 	}
 	raw, _ := json.Marshal(payload)
 	return raw
@@ -543,21 +621,16 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		}
 	}()
 
-	result, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
-		WorkspaceID:               dispatchContext.WorkspaceID,
-		Title:                     dispatchIssueTitle(c),
-		Description:               textValue(prompt.DisplayContent),
-		Status:                    "todo",
-		Priority:                  "none",
-		AssigneeType:              textValue("agent"),
-		AssigneeID:                agent.ID,
-		CreatorType:               "member",
-		CreatorID:                 dispatchContext.UserID,
-		AttachmentIDs:             attachmentIDs(imported),
-		AllowDuplicate:            false,
-		AgentIdentityContextToken: c.ExternalIdentity.ContextToken,
-		DispatchContext:           dispatchRuntimeContext(c, dispatchIdempotencyKey(r, c)),
-	}, service.IssueCreateOpts{
+	createParams := buildAgentDispatchIssueCreateParams(
+		c,
+		prompt,
+		dispatchContext,
+		agent,
+		dispatchIdempotencyKey(r, c),
+		agentDispatchIssueCreateOverrides{},
+	)
+	createParams.AttachmentIDs = attachmentIDs(imported)
+	result, err := h.IssueService.Create(r.Context(), createParams, service.IssueCreateOpts{
 		ActorID:          uuidToString(dispatchContext.UserID),
 		AnalyticsAgentID: uuidToString(agent.ID),
 		Platform:         "webhook",
@@ -643,11 +716,21 @@ func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Re
 			attachmentService.DeleteImported(r.Context(), imported)
 		}
 	}()
-	result, err := h.IssueCommentService.CreateExternalFollowUp(r.Context(), service.IssueCommentCreateParams{
-		Issue: issue, AuthorID: dispatchContext.UserID, Content: prompt.DisplayContent,
-		AttachmentIDs: attachmentIDs(imported), AgentIdentityContextToken: c.ExternalIdentity.ContextToken,
-		DispatchContext: dispatchRuntimeContext(c, dispatchIdempotencyKey(r, c)),
-	}, service.IssueCommentCreateOpts{})
+	followUpParams := buildAgentDispatchIssueFollowUpParams(
+		c,
+		prompt,
+		dispatchContext,
+		issue,
+		dispatchIdempotencyKey(r, c),
+		nil,
+		pgtype.UUID{},
+	)
+	followUpParams.AttachmentIDs = attachmentIDs(imported)
+	result, err := h.IssueCommentService.CreateExternalFollowUp(
+		r.Context(),
+		followUpParams,
+		service.IssueCommentCreateOpts{},
+	)
 	if errors.Is(err, service.ErrIssueDispatchPending) {
 		writeError(w, http.StatusConflict, "issue already has a pending agent task")
 		return

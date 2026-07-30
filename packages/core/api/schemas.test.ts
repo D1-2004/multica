@@ -20,9 +20,11 @@ import {
   EMPTY_PROVISION_FDE_ONBOARDING_RESPONSE,
   EMPTY_CREATE_FEEDBACK_RESPONSE,
   EMPTY_INBOX_UNREAD_SUMMARY,
+  EMPTY_GITHUB_INSTALLATIONS,
   EMPTY_SEARCH_PROJECTS_RESPONSE,
   EMPTY_USER,
   InboxUnreadSummarySchema,
+  ListGitHubInstallationsResponseSchema,
   IssueTriggerPreviewSchema,
   FDEOnboardingStateSchema,
   ListIssuesResponseSchema,
@@ -38,6 +40,43 @@ import {
   ProvisionFDEOnboardingResponseSchema,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
+
+describe("GitHub installation schemas", () => {
+  it("defaults reusable installations for older server responses", () => {
+    const parsed = ListGitHubInstallationsResponseSchema.parse({
+      installations: [
+        {
+          id: "binding-1",
+          workspace_id: "workspace-1",
+          installation_id: 42,
+          account_login: "acme",
+          account_type: "Organization",
+          account_avatar_url: null,
+          created_at: "2026-07-29T00:00:00Z",
+        },
+      ],
+      configured: true,
+      can_manage: true,
+    });
+
+    expect(parsed.reusable_installations).toEqual([]);
+  });
+
+  it("fails closed on a malformed reusable installation response", () => {
+    const parsed = parseWithFallback(
+      {
+        installations: [],
+        reusable_installations: [{ id: 42, account_login: "acme" }],
+        configured: true,
+      },
+      ListGitHubInstallationsResponseSchema,
+      EMPTY_GITHUB_INSTALLATIONS,
+      { endpoint: "test" },
+    );
+
+    expect(parsed).toEqual(EMPTY_GITHUB_INSTALLATIONS);
+  });
+});
 
 describe("DingTalk account binding schemas", () => {
   it("parses the list wire shape into camelCase domain values", () => {
@@ -119,6 +158,26 @@ describe("DingTalk account binding schemas", () => {
       ],
       configured: true,
     });
+  });
+
+  it("preserves the auto processing surface from binding responses", () => {
+    const parsed = DingTalkAccountBindingsResponseSchema.parse({
+      bindings: [
+        {
+          id: "installation-1",
+          workspace_id: "workspace-1",
+          agent_id: "agent-1",
+          dws_identity: { status: "unbound" },
+          message_route: {
+            status: "active",
+            surface_type: "auto",
+          },
+        },
+      ],
+      configured: true,
+    });
+
+    expect(parsed.bindings[0]?.messageRoute.surfaceType).toBe("auto");
   });
 
   it("defaults old message-route responses to direct-only with no conversations", () => {

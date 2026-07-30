@@ -760,14 +760,43 @@ func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, trig
 }
 
 func (s *TaskService) enqueueIssueTaskWithDispatchContext(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, forceFreshSession bool, handoffNote, agentIdentityContextToken string, dispatchContext []byte) (db.AgentTaskQueue, error) {
-	return s.enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx, issue, triggerCommentID, nil, forceFreshSession, handoffNote, agentIdentityContextToken, dispatchContext)
+	return s.enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx, issue, triggerCommentID, nil, forceFreshSession, handoffNote, agentIdentityContextToken, dispatchContext, pgtype.UUID{})
 }
 
 func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, forceFreshSession bool, handoffNote, agentIdentityContextToken string) (db.AgentTaskQueue, error) {
-	return s.enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx, issue, triggerCommentID, coalescedCommentIDs, forceFreshSession, handoffNote, agentIdentityContextToken, nil)
+	return s.enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx, issue, triggerCommentID, coalescedCommentIDs, forceFreshSession, handoffNote, agentIdentityContextToken, nil, pgtype.UUID{})
 }
 
-func (s *TaskService) enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, forceFreshSession bool, handoffNote, agentIdentityContextToken string, dispatchContext []byte) (db.AgentTaskQueue, error) {
+// EnqueueTaskForIssueWithDispatchContextAndParent is the structured dispatch
+// variant used when an existing task hands terminal responsibility to a new
+// Issue task. The parent link reuses the normal task lineage used by retries
+// and completion delivery; private dispatch context remains task-scoped.
+func (s *TaskService) EnqueueTaskForIssueWithDispatchContextAndParent(
+	ctx context.Context,
+	issue db.Issue,
+	agentIdentityContextToken string,
+	dispatchContext []byte,
+	parentTaskID pgtype.UUID,
+	triggerCommentID ...pgtype.UUID,
+) (db.AgentTaskQueue, error) {
+	var commentID pgtype.UUID
+	if len(triggerCommentID) > 0 {
+		commentID = triggerCommentID[0]
+	}
+	return s.enqueueIssueTaskWithCommentPlanAndDispatchContext(
+		ctx,
+		issue,
+		commentID,
+		nil,
+		false,
+		"",
+		strings.TrimSpace(agentIdentityContextToken),
+		dispatchContext,
+		parentTaskID,
+	)
+}
+
+func (s *TaskService) enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, forceFreshSession bool, handoffNote, agentIdentityContextToken string, dispatchContext []byte, parentTaskID pgtype.UUID) (db.AgentTaskQueue, error) {
 	if !issue.AssigneeID.Valid {
 		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", "issue has no assignee")
 		return db.AgentTaskQueue{}, fmt.Errorf("issue has no assignee")
@@ -802,6 +831,7 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx cont
 		OriginatorUserID:     originatorUserID,
 		RuntimeMcpOverlay:    runtimeMCPOverlay.Overlay,
 		RuntimeConnectedApps: runtimeMCPOverlay.ConnectedApps,
+		ParentTaskID:         parentTaskID,
 		// Stamp the reviewed head so dedup can distinguish this run's target
 		// from a later request against a new HEAD (TEN-356).
 		HeadSha:                   headShaText(s.ResolveIssueReviewSHA(ctx, issue.ID)),
@@ -813,11 +843,16 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx cont
 		return db.AgentTaskQueue{}, fmt.Errorf("create task: %w", err)
 	}
 
+	s.publishIssueTaskEnqueued(ctx, task)
+	return task, nil
+}
+
+func (s *TaskService) publishIssueTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
 	slog.Info("task enqueued",
 		"task_id", util.UUIDToString(task.ID),
-		"issue_id", util.UUIDToString(issue.ID),
-		"agent_id", util.UUIDToString(issue.AssigneeID),
-		"force_fresh_session", forceFreshSession,
+		"issue_id", util.UUIDToString(task.IssueID),
+		"agent_id", util.UUIDToString(task.AgentID),
+		"force_fresh_session", task.ForceFreshSession,
 	)
 	// Order matters: broadcast first, notify daemon second. notifyTaskAvailable
 	// kicks an in-process channel that the daemon picks up over HTTP and
@@ -827,7 +862,6 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx cont
 	// in the desired observe-order makes correctness independent of timing.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
-	return task, nil
 }
 
 // EnqueueTaskForMention creates a queued task for a mentioned agent on an issue.
@@ -1410,28 +1444,59 @@ func (s *TaskService) CancelTask(ctx context.Context, taskID pgtype.UUID) (*db.A
 // CancelTaskWithResult cancels a single task and returns any chat-specific
 // cleanup result needed by user-facing callers.
 func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UUID) (*CancelTaskResult, error) {
+	delegatedTargets, err := s.Queries.ListActiveDelegatedDescendantTasksByParent(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("list delegated target tasks: %w", err)
+	}
+
+	sourceTransitioned := false
 	task, err := s.Queries.CancelAgentTask(ctx, taskID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		existing, err := s.Queries.GetAgentTask(ctx, taskID)
+		task, err = s.Queries.GetAgentTask(ctx, taskID)
 		if err != nil {
 			return nil, fmt.Errorf("cancel task: %w", err)
 		}
-		return &CancelTaskResult{Task: existing}, nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return nil, fmt.Errorf("cancel task: %w", err)
+	} else {
+		sourceTransitioned = true
 	}
 
-	slog.Info("task cancelled", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
-	s.captureTaskCancelled(ctx, task)
-	cancelledChatMessage := s.finalizeCancelledChatMessage(ctx, task)
+	var cancelledChatMessage *CancelledChatMessageResult
+	if sourceTransitioned {
+		slog.Info("task cancelled", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
+		s.captureTaskCancelled(ctx, task)
+		cancelledChatMessage = s.finalizeCancelledChatMessage(ctx, task)
 
-	// Reconcile agent status
-	s.ReconcileAgentStatus(ctx, task.AgentID)
+		// Reconcile agent status
+		s.ReconcileAgentStatus(ctx, task.AgentID)
 
-	// Broadcast cancellation as a task:failed event so frontends clear the live card
-	s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, task)
-	s.NotifyTaskFinished(task)
+		// Broadcast cancellation as a task:failed event so frontends clear the live card
+		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, task)
+		s.NotifyTaskFinished(task)
+	}
+
+	cancelledTargets := make([]db.AgentTaskQueue, 0, len(delegatedTargets))
+	for _, target := range delegatedTargets {
+		cancelledTarget, cancelErr := s.Queries.CancelAgentTask(ctx, target.ID)
+		if errors.Is(cancelErr, pgx.ErrNoRows) {
+			continue
+		}
+		if cancelErr != nil {
+			return nil, fmt.Errorf(
+				"cancel delegated target task %s: %w",
+				util.UUIDToString(target.ID),
+				cancelErr,
+			)
+		}
+		cancelledTargets = append(cancelledTargets, cancelledTarget)
+	}
+	if len(cancelledTargets) > 0 {
+		s.BroadcastCancelledTasks(ctx, cancelledTargets)
+		if s.CompletionNotifier != nil {
+			s.CompletionNotifier.NotifyTaskCompletion()
+		}
+	}
 
 	return &CancelTaskResult{
 		Task:                 task,

@@ -255,6 +255,46 @@ func TestWorkingOnIssuesSkillCoversIssueLoopContracts(t *testing.T) {
 	}
 }
 
+func TestDelegatingToIssuesSkillCoversBackgroundTransferContract(t *testing.T) {
+	skill, ok := findSkill(t, "multica-delegating-to-issues")
+	if !ok {
+		t.Fatal("multica-delegating-to-issues skill is missing")
+	}
+	fm, body, _ := splitFrontmatter(skill.Content)
+
+	if got := strings.TrimSpace(fm["user-invocable"]); got != "false" {
+		t.Errorf("user-invocable = %q, want false (delegation guidance triggers from Chat task context)", got)
+	}
+	if got := strings.TrimSpace(fm["allowed-tools"]); got != "Bash(multica *)" {
+		t.Errorf("allowed-tools = %q, want Bash(multica *)", got)
+	}
+
+	for _, want := range []string{
+		"multica issue delegate",
+		"MULTICA_TASK_ID",
+		"Do not copy or print",
+		"callback",
+		"ContextToken",
+		"stable semantic title",
+		"Continue the existing Issue",
+		"stop the current Chat task",
+		"public information alone",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("delegating-to-issues skill missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"multica issue create",
+		"completion_callback",
+		"agent_identity_context_token",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("delegating-to-issues skill teaches unsafe or ordinary issue path %q", forbidden)
+		}
+	}
+}
+
 func TestSkillImportingSkillCoversWorkspaceImportContracts(t *testing.T) {
 	skill, ok := findSkill(t, "multica-skill-importing")
 	if !ok {

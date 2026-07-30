@@ -22,6 +22,7 @@ const (
 	DingTalkMessageScopeAll        = "all"
 	DingTalkSurfaceIssue           = "issue"
 	DingTalkSurfaceChat            = "chat"
+	DingTalkSurfaceAuto            = "auto"
 	DingTalkBindingStatusFailed    = "failed"
 	dingTalkAccountSchema          = 1
 	callbackTokenDomain            = "dingtalk-account-callback:v1:"
@@ -241,7 +242,9 @@ func (c DingTalkAccountConfig) PublicBinding(
 }
 
 func validDingTalkSurfaceType(surfaceType string) bool {
-	return surfaceType == DingTalkSurfaceIssue || surfaceType == DingTalkSurfaceChat
+	return surfaceType == DingTalkSurfaceIssue ||
+		surfaceType == DingTalkSurfaceChat ||
+		surfaceType == DingTalkSurfaceAuto
 }
 
 func GenerateCallbackToken(random io.Reader) (string, string, error) {

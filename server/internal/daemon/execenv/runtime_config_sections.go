@@ -205,12 +205,15 @@ func sanitizeBriefCodeToken(s string) string {
 // The fold-aware `--full` flag from MUL-3555 is documented inline on the
 // comment-list bullet so the slim brief preserves the same agent
 // behaviour as the legacy brief on that path.
-func writeAvailableCommands(b *strings.Builder) {
+func writeAvailableCommands(b *strings.Builder, includeIssueDelegation bool) {
 	b.WriteString("## Available Commands\n\n")
 	b.WriteString("Prefer `--output json` for structured data. The default brief lists only the core agent loop and common issue create/update tasks; for everything else run `multica --help` or `multica <command> --help`.\n\n")
 	b.WriteString("### Core\n")
 	b.WriteString("- `multica issue get <id> --output json` — full issue.\n")
 	b.WriteString("- `multica issue comment list <issue-id> [--thread <comment-id> [--tail N] | --recent N] [--before <ts> --before-id <uuid>] [--since <RFC3339>] [--full] --output json` — thread-aware comment reads. Resolved threads come back folded by default on complete-thread reads (default list, `--recent`, `--thread` without `--tail`); pass `--full` to expand. Page older replies / threads with `--before`/`--before-id` (stderr labels: `Next reply cursor`, `Next thread cursor`); `--help` for full semantics.\n")
+	if includeIssueDelegation {
+		b.WriteString("- `multica issue delegate [--issue <id> --content-file <path> | --title \"...\" --description-file <path> --assignee-id <uuid>] --output json` — from a task-scoped Chat run, transfer long or domain-specific work to the Issue queue while preserving private identity and completion context; task ID defaults to `MULTICA_TASK_ID`. After `release_parent: true`, stop doing the delegated work in Chat.\n")
+	}
 	b.WriteString("- `multica issue create --title \"...\" [--description-file <path>] [--priority X] [--status X] [--assignee X | --assignee-id <uuid>] [--parent <issue-id>] [--stage N] [--project <project-id>] [--due-date <RFC3339>] [--attachment <path>]` — create an issue. For agent-authored long descriptions prefer `--description-file <path>` (heredoc stdin can swallow trailing flags, #4182). Write that file inside your working directory (e.g. `./description.md`), never `/tmp` or shared paths, and treat a failed write as fatal — the CLI rejects a path outside the workdir so a stale file from another run can't leak in (MUL-4252).\n")
 	b.WriteString("- `multica issue update <id> [--title X] [--description-file <path>] [--priority X] [--status X] [--assignee X] [--parent <issue-id>] [--stage N] [--project <project-id>] [--due-date <RFC3339>]` — update fields; pass `--parent \"\"` to clear parent.\n")
 	b.WriteString("- `multica issue status <id> <status>` — flip status (todo / in_progress / in_review / done / blocked / backlog / cancelled).\n")
@@ -222,6 +225,14 @@ func writeAvailableCommands(b *strings.Builder) {
 	b.WriteString("- `multica repo checkout <url> [--ref <branch-or-sha>]` — git worktree on a dedicated branch.\n\n")
 	b.WriteString("### Squad maintenance\n")
 	b.WriteString("- `multica squad member set-role <squad-id> --member-id <id> --member-type <agent|member> --role <role> [--output json]` — change role in place (use this instead of remove+add).\n\n")
+}
+
+func writeBackgroundIssueDelegation(b *strings.Builder) {
+	b.WriteString("## Background Issue Delegation\n\n")
+	b.WriteString("In Chat, keep genuinely quick explanations, small lookups, and short answers in the foreground. Do not spend a separate long preflight turn classifying the request: start with a cheap step when useful, then delegate as soon as sustained execution, specialist domain work, code or repository changes, several dependent tool calls, external waiting, or coordinated side effects would occupy the Chat session. Public information alone does not make a task lightweight; collecting news, composing a card, sending it to people, and creating a todo is a background delivery job.\n\n")
+	b.WriteString("Before creating an Issue, list this Chat's prior delegations with `multica issue list --metadata \"multica.chat_session_id=$MULTICA_CHAT_SESSION_ID\" --limit 100 --output json`. Continue an existing Issue only when it represents the same subject and intended deliverable, including contextual follow-ups such as \"continue\", \"that is wrong\", or \"do not send it anymore\". Otherwise create a new Issue with a stable, self-contained title: subject or object + intended deliverable + necessary scope. Choose the Agent whose domain best matches the work.\n\n")
+	b.WriteString("Use `multica issue delegate --issue <id> --content-file <path> --output json` to continue, or `multica issue delegate --title \"...\" --description-file <path> --assignee-id <agent-id> --output json` to create. Do not use `multica issue create` or `multica issue comment add` as a substitute: only delegation transfers completion responsibility and does not expose callback URLs, callback tokens, or context tokens to the model. This server-managed transfer is not a sandbox background process and is the supported way to release Chat safely.\n\n")
+	b.WriteString("After success returns `release_parent: true`, briefly tell the user the work moved to the background and end the Chat turn. Do not continue the delegated business work in Chat.\n\n")
 }
 
 // writeAvailableCommandsQuickCreate emits a minimal Available Commands
@@ -519,6 +530,7 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 //	Section               | comment | assign | autopilot | quick_create | chat
 //	----------------------+---------+--------+-----------+--------------+------
 //	Available Commands    |   full  |  full  |   full    |   minimal    | full
+//	Issue Delegation      |    —    |   —    |     —     |      —       |  ✓
 //	Comment Formatting    |    ✓    |   ✓    |     —     |      —       |  —
 //	Repositories          |    △    |   △    |     △     |      —       |  △
 //	Project Context       |    △    |   △    |     —     |      —       |  —
@@ -549,7 +561,11 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	case kindQuickCreate:
 		writeAvailableCommandsQuickCreate(&b)
 	default:
-		writeAvailableCommands(&b)
+		writeAvailableCommands(&b, kind == kindChat)
+	}
+
+	if kind == kindChat {
+		writeBackgroundIssueDelegation(&b)
 	}
 
 	if kind == kindCommentTriggered || kind == kindAssignmentTriggered {

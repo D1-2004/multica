@@ -1,0 +1,89 @@
+-- =============================
+-- Task execution update outbox
+-- =============================
+
+-- name: EnqueueTaskExecutionUpdate :one
+INSERT INTO task_execution_update_outbox AS existing (
+    root_task_id,
+    target_task_id,
+    issue_id,
+    issue_identifier,
+    callback_url,
+    target_identity,
+    request_id,
+    agent_id,
+    target_agent_id,
+    update_type
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+)
+ON CONFLICT (root_task_id) DO UPDATE
+SET updated_at = existing.updated_at
+WHERE existing.target_task_id = EXCLUDED.target_task_id
+  AND existing.issue_id = EXCLUDED.issue_id
+  AND existing.issue_identifier = EXCLUDED.issue_identifier
+  AND existing.callback_url = EXCLUDED.callback_url
+  AND existing.target_identity = EXCLUDED.target_identity
+  AND existing.request_id = EXCLUDED.request_id
+  AND existing.agent_id = EXCLUDED.agent_id
+  AND existing.target_agent_id = EXCLUDED.target_agent_id
+  AND existing.update_type = EXCLUDED.update_type
+RETURNING *;
+
+-- name: ClaimTaskExecutionUpdate :one
+WITH candidate AS (
+    SELECT queued.id
+    FROM task_execution_update_outbox queued
+    WHERE queued.status = 'queued'
+      AND queued.target_identity = $1
+      AND queued.available_at <= now()
+      AND (queued.lease_expires_at IS NULL OR queued.lease_expires_at <= now())
+    ORDER BY queued.available_at ASC, queued.created_at ASC
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE task_execution_update_outbox AS execution_update
+SET lease_token = gen_random_uuid(),
+    lease_expires_at = now() + interval '30 seconds',
+    attempt_count = execution_update.attempt_count + 1,
+    updated_at = now()
+FROM candidate
+WHERE execution_update.id = candidate.id
+RETURNING execution_update.*;
+
+-- name: CompleteTaskExecutionUpdate :one
+UPDATE task_execution_update_outbox
+SET status = 'delivered',
+    delivered_at = now(),
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    last_error = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND lease_token = $2
+  AND status = 'queued'
+RETURNING *;
+
+-- name: RetryTaskExecutionUpdate :one
+UPDATE task_execution_update_outbox
+SET available_at = $3,
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    last_error = $4,
+    updated_at = now()
+WHERE id = $1
+  AND lease_token = $2
+  AND status = 'queued'
+RETURNING *;
+
+-- name: DeadLetterTaskExecutionUpdate :one
+UPDATE task_execution_update_outbox
+SET status = 'dead_letter',
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    last_error = $3,
+    updated_at = now()
+WHERE id = $1
+  AND lease_token = $2
+  AND status = 'queued'
+RETURNING *;

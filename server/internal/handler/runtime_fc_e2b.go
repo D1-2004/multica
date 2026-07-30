@@ -88,7 +88,6 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	templateRef := strings.TrimSpace(req.TemplateID)
-	expectedStableBuildID := ""
 	if templateRef == "" {
 		templateRef = strings.TrimSpace(req.Template)
 	}
@@ -141,15 +140,10 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 		runtimeQueries = h.Queries.WithTx(stableTx)
 		templateRef = current.TemplateID
-		expectedStableBuildID = current.TemplateBuildID
 	}
 	selected, ok := selectFCE2BTemplate(templates, templateRef)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "template_id does not match an available FC/E2B template")
-		return
-	}
-	if expectedStableBuildID != "" && selected.BuildID != expectedStableBuildID {
-		writeError(w, http.StatusServiceUnavailable, "stable template build no longer matches the verified catalog")
 		return
 	}
 	if !service.IsFCE2BTemplateReady(selected) || !service.IsFCE2BTemplatePublished(selected) {

@@ -19,7 +19,8 @@ const taskCompletionTestTarget = "router-target:v1:sha256:bbbbbbbbbbbbbbbbbbbbbb
 func TestBuildTaskCompletionUsesCanonicalFinalReply(t *testing.T) {
 	rootID := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
 	leafID := pgtype.UUID{Bytes: [16]byte{2}, Valid: true}
-	agentID := pgtype.UUID{Bytes: [16]byte{3}, Valid: true}
+	rootAgentID := pgtype.UUID{Bytes: [16]byte{3}, Valid: true}
+	leafAgentID := pgtype.UUID{Bytes: [16]byte{4}, Valid: true}
 	result, err := json.Marshal(map[string]any{"output": "第一行\\n第二行"})
 	if err != nil {
 		t.Fatal(err)
@@ -27,11 +28,12 @@ func TestBuildTaskCompletionUsesCanonicalFinalReply(t *testing.T) {
 
 	completion := buildTaskCompletion(
 		taskCompletionTarget{
-			RootTaskID:    rootID,
-			CallbackURL: "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			RootTaskID:     rootID,
+			AgentID:        rootAgentID,
+			CallbackURL:    "/api/v1/dispatch-tasks/router-task-1/execution-result",
 			TargetIdentity: taskCompletionTestTarget,
 		},
-		db.AgentTaskQueue{ID: leafID, AgentID: agentID, SessionID: pgtype.Text{String: "session-1", Valid: true}},
+		db.AgentTaskQueue{ID: leafID, AgentID: leafAgentID, SessionID: pgtype.Text{String: "session-1", Valid: true}},
 		"completed",
 		result,
 		"",
@@ -48,6 +50,12 @@ func TestBuildTaskCompletionUsesCanonicalFinalReply(t *testing.T) {
 	if completion.ExecutionStatus != "completed" ||
 		completion.CallbackURL != "/api/v1/dispatch-tasks/router-task-1/execution-result" {
 		t.Fatalf("completion = %#v", completion)
+	}
+	if completion.AgentID != rootAgentID {
+		t.Fatalf("completion agent = %s, want root agent %s",
+			util.UUIDToString(completion.AgentID),
+			util.UUIDToString(rootAgentID),
+		)
 	}
 }
 

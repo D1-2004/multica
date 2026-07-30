@@ -52,6 +52,7 @@ const (
 	fcE2BRootRunnerInstallDir       = "/usr/local/libexec"
 	fcE2BLegacyRunnerInstallDir     = "/usr/local/bin"
 	fcE2BTemplateManifestVersion    = 2
+	fcE2BChatSessionIDEnvKey        = "MULTICA_CHAT_SESSION_ID"
 )
 
 var errAgentIdentityContextTokenRefreshRequired = errors.New("Agent Identity ContextToken refresh required")
@@ -1098,13 +1099,32 @@ func (l *FCE2BLauncher) updateRuntimeTemplate(
 			break
 		}
 	}
-	if result.PreviousTemplateID == selected.ID && result.PreviousTemplateBuildID == selected.BuildID && !managedMetadataChanged {
+	legacyArtifactMetadataChanged := false
+	for key := range metadata {
+		if strings.HasPrefix(key, "artifact_") {
+			legacyArtifactMetadataChanged = true
+			break
+		}
+	}
+	if result.PreviousTemplateID == selected.ID &&
+		result.PreviousTemplateBuildID == selected.BuildID &&
+		!managedMetadataChanged &&
+		!legacyArtifactMetadataChanged {
 		if err := tx.Commit(ctx); err != nil {
 			return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("commit idempotent FC/E2B template update: %w", err)
 		}
 		return result, nil
 	}
 
+	// FC/E2B templates are represented by the template_* fields. Older
+	// generalized cloud-runtime migrations also wrote artifact_* aliases into
+	// some FC/E2B rows. Keeping both copies lets the aliases drift and makes a
+	// successfully rotated runtime appear pinned to its previous template.
+	for key := range metadata {
+		if strings.HasPrefix(key, "artifact_") {
+			delete(metadata, key)
+		}
+	}
 	metadata["template"] = selected.Template
 	metadata["template_id"] = selected.ID
 	metadata["template_build_id"] = selected.BuildID
@@ -1634,6 +1654,9 @@ func (l *FCE2BLauncher) extraEnvForTask(
 	if err != nil {
 		return nil, err
 	}
+	if chatSessionID, ok := fcE2BChatSessionID(task); ok {
+		env[fcE2BChatSessionIDEnvKey] = chatSessionID
+	}
 	env["OPENAI_MODEL"] = model
 	traceEnv, err := fcE2BTaskTraceEnv(task)
 	if err != nil {
@@ -1658,6 +1681,13 @@ func (l *FCE2BLauncher) extraEnvForTask(
 		"dingtalk_stream_connection_id", env[protocol.DingTalkStreamConnectionIDEnvKey],
 	)
 	return env, nil
+}
+
+func fcE2BChatSessionID(task db.AgentTaskQueue) (string, bool) {
+	if !task.ChatSessionID.Valid {
+		return "", false
+	}
+	return util.UUIDToString(task.ChatSessionID), true
 }
 
 func (l *FCE2BLauncher) identityEnvForTask(
@@ -2124,6 +2154,7 @@ func sortedEnvKeys(env map[string]string) []string {
 func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 	switch key {
 	case "OPENAI_MODEL",
+		fcE2BChatSessionIDEnvKey,
 		chattrace.TraceIDEnvKey,
 		chattrace.TraceStartedAtUnixMSEnvKey,
 		protocol.SandboxSourceHostnameEnvKey,

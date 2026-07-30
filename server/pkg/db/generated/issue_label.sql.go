@@ -724,3 +724,44 @@ func (q *Queries) UpdateLabel(ctx context.Context, arg UpdateLabelParams) (Issue
 	)
 	return i, err
 }
+
+const upsertIssueDelegationLabel = `-- name: UpsertIssueDelegationLabel :one
+INSERT INTO issue_label (workspace_id, resource_type, name, description, color)
+VALUES ($1, 'issue', $2, $3, $4)
+ON CONFLICT (workspace_id, resource_type, (LOWER(name)))
+DO UPDATE SET
+    description = EXCLUDED.description,
+    updated_at = now()
+RETURNING id, workspace_id, name, color, created_at, updated_at, resource_type, description
+`
+
+type UpsertIssueDelegationLabelParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Color       string      `json:"color"`
+}
+
+// Delegation labels are server-managed and keyed by a stable, shortened Chat
+// session hash. Refreshing the description is safe because the exact session
+// id is deterministic for a given label name.
+func (q *Queries) UpsertIssueDelegationLabel(ctx context.Context, arg UpsertIssueDelegationLabelParams) (IssueLabel, error) {
+	row := q.db.QueryRow(ctx, upsertIssueDelegationLabel,
+		arg.WorkspaceID,
+		arg.Name,
+		arg.Description,
+		arg.Color,
+	)
+	var i IssueLabel
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Color,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ResourceType,
+		&i.Description,
+	)
+	return i, err
+}

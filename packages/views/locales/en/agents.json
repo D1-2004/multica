@@ -676,6 +676,8 @@
       "dingtalk_account_surface_issue_description": "Turn incoming messages into tracked tasks.",
       "dingtalk_account_surface_chat": "Conversation mode",
       "dingtalk_account_surface_chat_description": "Continue in chat without creating a task.",
+      "dingtalk_account_surface_auto": "Automatic mode",
+      "dingtalk_account_surface_auto_description": "Start in chat, then let the agent answer directly or create an issue for background work.",
       "dingtalk_account_surface_confirm": "Confirm",
       "dingtalk_account_surface_update_failed": "Unable to update the run mode.",
       "dingtalk_account_scope_direct_only": "Listening to my direct messages",

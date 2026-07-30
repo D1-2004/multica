@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -77,6 +78,180 @@ func enqueueWorkerTestCompletion(
 		t.Fatal(err)
 	}
 	return row
+}
+
+func enqueueWorkerTestExecutionUpdate(
+	t *testing.T,
+	queries *db.Queries,
+	targetIdentity string,
+	suffix string,
+) db.TaskExecutionUpdateOutbox {
+	t.Helper()
+	now := time.Now().UnixNano()
+	row, err := queries.EnqueueTaskExecutionUpdate(context.Background(), db.EnqueueTaskExecutionUpdateParams{
+		RootTaskID:      pgtype.UUID{Bytes: [16]byte{byte(now), 11}, Valid: true},
+		TargetTaskID:    pgtype.UUID{Bytes: [16]byte{byte(now), 12}, Valid: true},
+		IssueID:         pgtype.UUID{Bytes: [16]byte{byte(now), 13}, Valid: true},
+		IssueIdentifier: "MUL-123",
+		CallbackUrl:     "/api/v1/dispatch-tasks/router-" + suffix + "/execution-update",
+		TargetIdentity:  targetIdentity,
+		RequestID:       fmt.Sprintf("worker-update-test:%s:%d", suffix, now),
+		AgentID:         pgtype.UUID{Bytes: [16]byte{byte(now), 14}, Valid: true},
+		TargetAgentID:   pgtype.UUID{Bytes: [16]byte{byte(now), 15}, Valid: true},
+		UpdateType:      "delegated_to_issue",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row
+}
+
+func TestCompletionWorkerDeliversExecutionUpdateBeforeTerminalWork(t *testing.T) {
+	pool := taskCompletionTestPool(t)
+	queries := db.New(pool)
+	var received map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/dispatch-tasks/router-update-success/execution-update" {
+			t.Errorf("callback path = %q", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"code":    "success",
+			"data": map[string]string{
+				"dispatchTaskId": "router-update-success",
+				"requestId":      received["requestId"].(string),
+				"updateType":     "delegated_to_issue",
+			},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(ClientConfig{BaseURL: server.URL, ServiceCredential: "service-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := enqueueWorkerTestExecutionUpdate(t, queries, client.TargetIdentity(), "update-success")
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM task_execution_update_outbox WHERE id = $1`, update.ID)
+	})
+
+	worker := NewCompletionWorker(queries, client, nil)
+	worked, err := worker.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !worked {
+		t.Fatal("execution update was not processed")
+	}
+	if received["requestId"] != update.RequestID ||
+		received["agentId"] != util.UUIDToString(update.AgentID) ||
+		received["externalTaskId"] != util.UUIDToString(update.RootTaskID) ||
+		received["updateType"] != "delegated_to_issue" {
+		t.Fatalf("execution update request = %#v", received)
+	}
+	if _, exists := received["externalRunId"]; exists {
+		t.Fatalf("execution update request leaked result-only externalRunId = %#v", received)
+	}
+	extension, ok := received["extension"].(map[string]any)
+	if !ok ||
+		extension["issueId"] != util.UUIDToString(update.IssueID) ||
+		extension["issueIdentifier"] != "MUL-123" ||
+		extension["targetTaskId"] != util.UUIDToString(update.TargetTaskID) ||
+		extension["targetAgentId"] != util.UUIDToString(update.TargetAgentID) {
+		t.Fatalf("execution update extension = %#v", received["extension"])
+	}
+	var status string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT status FROM task_execution_update_outbox WHERE id = $1
+	`, update.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "delivered" {
+		t.Fatalf("status = %q", status)
+	}
+}
+
+func TestCompletionWorkerDoesNotDeliverTerminalWhileExecutionUpdateRetries(t *testing.T) {
+	pool := taskCompletionTestPool(t)
+	queries := db.New(pool)
+	updateRequests := 0
+	terminalRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if executionUpdateCallbackPattern.MatchString(r.URL.Path) {
+			updateRequests++
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		terminalRequests++
+		writeCompletionWorkerSuccess(w, r)
+	}))
+	defer server.Close()
+	client, err := NewClient(ClientConfig{BaseURL: server.URL, ServiceCredential: "service-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := enqueueWorkerTestExecutionUpdate(t, queries, client.TargetIdentity(), "ordered-retry")
+	completion, err := queries.EnqueueTaskCompletion(context.Background(), db.EnqueueTaskCompletionParams{
+		RootTaskID:      update.RootTaskID,
+		TerminalTaskID:  update.TargetTaskID,
+		CallbackUrl:     "/api/v1/dispatch-tasks/router-ordered-retry/execution-result",
+		TargetIdentity:  client.TargetIdentity(),
+		RequestID:       "worker-terminal-after-update:" + update.RequestID,
+		AgentID:         update.AgentID,
+		ExecutionStatus: "completed",
+		ResultMessage:   "done",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM task_completion_outbox WHERE id = $1`, completion.ID)
+		pool.Exec(context.Background(), `DELETE FROM task_execution_update_outbox WHERE id = $1`, update.ID)
+	})
+
+	worker := NewCompletionWorker(queries, client, nil)
+	if worked, processErr := worker.ProcessNext(context.Background()); processErr != nil || !worked {
+		t.Fatalf("update worked=%v error=%v", worked, processErr)
+	}
+	if worked, processErr := worker.ProcessNext(context.Background()); processErr != nil || worked {
+		t.Fatalf("terminal while update retries worked=%v error=%v", worked, processErr)
+	}
+	if updateRequests != 1 || terminalRequests != 0 {
+		t.Fatalf("update requests=%d terminal requests=%d", updateRequests, terminalRequests)
+	}
+}
+
+func TestCompletionWorkerRetriesMissingExecutionUpdateEndpointDuringRouterRolling(t *testing.T) {
+	pool := taskCompletionTestPool(t)
+	queries := db.New(pool)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	client, err := NewClient(ClientConfig{BaseURL: server.URL, ServiceCredential: "service-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := enqueueWorkerTestExecutionUpdate(t, queries, client.TargetIdentity(), "rolling-endpoint")
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM task_execution_update_outbox WHERE id = $1`, update.ID)
+	})
+
+	worker := NewCompletionWorker(queries, client, nil)
+	if worked, processErr := worker.ProcessNext(context.Background()); processErr != nil || !worked {
+		t.Fatalf("update worked=%v error=%v", worked, processErr)
+	}
+	var status string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT status FROM task_execution_update_outbox WHERE id = $1
+	`, update.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "queued" {
+		t.Fatalf("rolling 404 moved execution update to %q, want queued", status)
+	}
 }
 
 func TestCompletionWorkerDeliversAndAcknowledgesOutbox(t *testing.T) {

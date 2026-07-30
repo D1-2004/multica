@@ -23,6 +23,49 @@ WHERE id = $1;
 SELECT * FROM github_installation
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: ListReusableGitHubInstallationsForUser :many
+-- A reusable installation must come from another workspace where the same
+-- Multica user is an owner/admin. Return one source binding per numeric GitHub
+-- installation and omit installations already bound to the target workspace.
+SELECT DISTINCT ON (gi.installation_id)
+    gi.id,
+    gi.workspace_id,
+    gi.installation_id,
+    gi.account_login,
+    gi.account_type,
+    gi.account_avatar_url,
+    gi.connected_by_id,
+    gi.created_at,
+    gi.updated_at,
+    source_workspace.name AS source_workspace_name
+FROM github_installation gi
+JOIN workspace source_workspace ON source_workspace.id = gi.workspace_id
+JOIN member source_member
+  ON source_member.workspace_id = gi.workspace_id
+ AND source_member.user_id = sqlc.arg('user_id')
+ AND source_member.role IN ('owner', 'admin')
+WHERE gi.workspace_id <> sqlc.arg('target_workspace_id')
+  AND NOT EXISTS (
+      SELECT 1
+      FROM github_installation target
+      WHERE target.workspace_id = sqlc.arg('target_workspace_id')
+        AND target.installation_id = gi.installation_id
+  )
+ORDER BY gi.installation_id, gi.created_at ASC, gi.id ASC;
+
+-- name: GetReusableGitHubInstallationForUser :one
+-- Resolve the source binding server-side so clients never get to assert a
+-- numeric installation_id. The target workspace role is enforced by router
+-- middleware; this query independently proves source-workspace management.
+SELECT gi.*
+FROM github_installation gi
+JOIN member source_member
+  ON source_member.workspace_id = gi.workspace_id
+ AND source_member.user_id = sqlc.arg('user_id')
+ AND source_member.role IN ('owner', 'admin')
+WHERE gi.id = sqlc.arg('source_installation_id')
+  AND gi.workspace_id <> sqlc.arg('target_workspace_id');
+
 -- name: CreateGitHubInstallation :one
 INSERT INTO github_installation (
     workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id

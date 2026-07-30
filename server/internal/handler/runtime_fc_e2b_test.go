@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -105,6 +108,135 @@ func TestDefaultFCE2BRuntimeName(t *testing.T) {
 			t.Fatalf("defaultFCE2BRuntimeName(%q, %q) = %q, want %q",
 				tc.provider, tc.template.Template, got, tc.want)
 		}
+	}
+}
+
+func TestCreateStableFCE2BRuntimeUsesCurrentCatalogBuild(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler database fixture unavailable")
+	}
+
+	suffix := randomID()[:8]
+	templateID := "tpl_stable_" + suffix
+	currentBuildID := "build_current_" + suffix
+	previousBuildID := "build_previous_" + suffix
+	alias := testNewFCE2BManifestAlias
+	catalog := fmt.Sprintf(
+		`[{"id":%q,"buildID":%q,"aliases":[%q],"status":"READY"}]`,
+		templateID,
+		currentBuildID,
+		alias,
+	)
+	cliPath := filepath.Join(t.TempDir(), "e2b-test")
+	if err := os.WriteFile(cliPath, []byte("#!/bin/sh\nprintf '%s\\n' '"+catalog+"'\n"), 0o755); err != nil {
+		t.Fatalf("write E2B template catalog fixture: %v", err)
+	}
+
+	var oldTemplateID, oldBuildID, oldAlias string
+	var oldCurrentReleaseID, oldActiveReleaseID pgtype.UUID
+	err := testPool.QueryRow(context.Background(), `
+		SELECT current_template_id, current_template_build_id, current_template_alias,
+		       current_release_id, active_release_id
+		FROM fc_e2b_stable_channel
+		WHERE channel = 'stable'
+	`).Scan(
+		&oldTemplateID,
+		&oldBuildID,
+		&oldAlias,
+		&oldCurrentReleaseID,
+		&oldActiveReleaseID,
+	)
+	hadStableChannel := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("load existing stable channel: %v", err)
+	}
+
+	var releaseID pgtype.UUID
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO fc_e2b_stable_release (
+			idempotency_key, request_fingerprint, template_id, template_build_id,
+			template_alias, git_commit, acr_digest, actor_user_id, status
+		) VALUES (
+			$1, $2, $3, $4, $5, repeat('0', 40),
+			'sha256:' || repeat('0', 64), $6, 'completed'
+		)
+		RETURNING id
+	`, "stable-create-"+suffix, "stable-create-"+suffix, templateID, previousBuildID, alias, testUserID).Scan(&releaseID); err != nil {
+		t.Fatalf("create stable release fixture: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO fc_e2b_stable_channel (
+			channel, current_template_id, current_template_build_id,
+			current_template_alias, current_release_id, active_release_id
+		) VALUES ('stable', $1, $2, $3, $4, NULL)
+		ON CONFLICT (channel) DO UPDATE SET
+			current_template_id = EXCLUDED.current_template_id,
+			current_template_build_id = EXCLUDED.current_template_build_id,
+			current_template_alias = EXCLUDED.current_template_alias,
+			current_release_id = EXCLUDED.current_release_id,
+			active_release_id = NULL
+	`, templateID, previousBuildID, alias, releaseID); err != nil {
+		t.Fatalf("set stable channel fixture: %v", err)
+	}
+
+	createdRuntimeID := ""
+	t.Cleanup(func() {
+		if createdRuntimeID != "" {
+			_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, createdRuntimeID)
+		}
+		if hadStableChannel {
+			_, _ = testPool.Exec(context.Background(), `
+				UPDATE fc_e2b_stable_channel
+				SET current_template_id = $1,
+				    current_template_build_id = $2,
+				    current_template_alias = $3,
+				    current_release_id = $4,
+				    active_release_id = $5
+				WHERE channel = 'stable'
+			`, oldTemplateID, oldBuildID, oldAlias, oldCurrentReleaseID, oldActiveReleaseID)
+		} else {
+			_, _ = testPool.Exec(context.Background(), `DELETE FROM fc_e2b_stable_channel WHERE channel = 'stable'`)
+		}
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM fc_e2b_stable_release WHERE id = $1`, releaseID)
+	})
+
+	h := *testHandler
+	h.cfg.FCE2B = service.FCE2BConfig{
+		Enabled:             true,
+		ServerURL:           "https://fc-e2b.test",
+		APIKey:              "test-api-key",
+		APIURL:              "https://fc-e2b.test",
+		Domain:              "fc-e2b.test",
+		LLMBaseURL:          "https://llm.test",
+		LLMAPIKey:           "test-llm-key",
+		LLMModels:           []string{"test-model"},
+		CLIPath:             cliPath,
+		TimeoutSeconds:      60,
+		SandboxReadyTimeout: time.Minute,
+	}
+	h.FCE2BStable = service.NewFCE2BStableService(testPool, h.FCE2BLauncher, nil)
+
+	w := httptest.NewRecorder()
+	h.CreateFCE2BRuntime(w, newRequest(http.MethodPost, "/api/runtimes/fc-e2b", map[string]any{
+		"name":             "Stable Current Catalog Build",
+		"template_channel": "stable",
+		"provider":         "hermes",
+	}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("stable runtime status = %d, want 201: %s", w.Code, w.Body.String())
+	}
+
+	var response AgentRuntimeResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode runtime response: %v", err)
+	}
+	createdRuntimeID = response.ID
+	metadata, ok := response.Metadata.(map[string]any)
+	if !ok {
+		t.Fatalf("runtime metadata = %#v", response.Metadata)
+	}
+	if metadata["template_id"] != templateID || metadata["template_build_id"] != currentBuildID {
+		t.Fatalf("runtime template metadata = %#v", metadata)
 	}
 }
 

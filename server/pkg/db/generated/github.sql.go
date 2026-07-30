@@ -352,6 +352,43 @@ func (q *Queries) GetPendingGitHubInstallation(ctx context.Context, installation
 	return i, err
 }
 
+const getReusableGitHubInstallationForUser = `-- name: GetReusableGitHubInstallationForUser :one
+SELECT gi.id, gi.workspace_id, gi.installation_id, gi.account_login, gi.account_type, gi.account_avatar_url, gi.connected_by_id, gi.created_at, gi.updated_at
+FROM github_installation gi
+JOIN member source_member
+  ON source_member.workspace_id = gi.workspace_id
+ AND source_member.user_id = $1
+ AND source_member.role IN ('owner', 'admin')
+WHERE gi.id = $2
+  AND gi.workspace_id <> $3
+`
+
+type GetReusableGitHubInstallationForUserParams struct {
+	UserID               pgtype.UUID `json:"user_id"`
+	SourceInstallationID pgtype.UUID `json:"source_installation_id"`
+	TargetWorkspaceID    pgtype.UUID `json:"target_workspace_id"`
+}
+
+// Resolve the source binding server-side so clients never get to assert a
+// numeric installation_id. The target workspace role is enforced by router
+// middleware; this query independently proves source-workspace management.
+func (q *Queries) GetReusableGitHubInstallationForUser(ctx context.Context, arg GetReusableGitHubInstallationForUserParams) (GithubInstallation, error) {
+	row := q.db.QueryRow(ctx, getReusableGitHubInstallationForUser, arg.UserID, arg.SourceInstallationID, arg.TargetWorkspaceID)
+	var i GithubInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.InstallationID,
+		&i.AccountLogin,
+		&i.AccountType,
+		&i.AccountAvatarUrl,
+		&i.ConnectedByID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const linkIssueToPullRequest = `-- name: LinkIssueToPullRequest :exec
 
 INSERT INTO issue_pull_request (
@@ -636,6 +673,86 @@ func (q *Queries) ListPullRequestsByIssue(ctx context.Context, issueID pgtype.UU
 			&i.ChecksPassed,
 			&i.ChecksFailed,
 			&i.ChecksPending,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReusableGitHubInstallationsForUser = `-- name: ListReusableGitHubInstallationsForUser :many
+SELECT DISTINCT ON (gi.installation_id)
+    gi.id,
+    gi.workspace_id,
+    gi.installation_id,
+    gi.account_login,
+    gi.account_type,
+    gi.account_avatar_url,
+    gi.connected_by_id,
+    gi.created_at,
+    gi.updated_at,
+    source_workspace.name AS source_workspace_name
+FROM github_installation gi
+JOIN workspace source_workspace ON source_workspace.id = gi.workspace_id
+JOIN member source_member
+  ON source_member.workspace_id = gi.workspace_id
+ AND source_member.user_id = $1
+ AND source_member.role IN ('owner', 'admin')
+WHERE gi.workspace_id <> $2
+  AND NOT EXISTS (
+      SELECT 1
+      FROM github_installation target
+      WHERE target.workspace_id = $2
+        AND target.installation_id = gi.installation_id
+  )
+ORDER BY gi.installation_id, gi.created_at ASC, gi.id ASC
+`
+
+type ListReusableGitHubInstallationsForUserParams struct {
+	UserID            pgtype.UUID `json:"user_id"`
+	TargetWorkspaceID pgtype.UUID `json:"target_workspace_id"`
+}
+
+type ListReusableGitHubInstallationsForUserRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	InstallationID      int64              `json:"installation_id"`
+	AccountLogin        string             `json:"account_login"`
+	AccountType         string             `json:"account_type"`
+	AccountAvatarUrl    pgtype.Text        `json:"account_avatar_url"`
+	ConnectedByID       pgtype.UUID        `json:"connected_by_id"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	SourceWorkspaceName string             `json:"source_workspace_name"`
+}
+
+// A reusable installation must come from another workspace where the same
+// Multica user is an owner/admin. Return one source binding per numeric GitHub
+// installation and omit installations already bound to the target workspace.
+func (q *Queries) ListReusableGitHubInstallationsForUser(ctx context.Context, arg ListReusableGitHubInstallationsForUserParams) ([]ListReusableGitHubInstallationsForUserRow, error) {
+	rows, err := q.db.Query(ctx, listReusableGitHubInstallationsForUser, arg.UserID, arg.TargetWorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListReusableGitHubInstallationsForUserRow{}
+	for rows.Next() {
+		var i ListReusableGitHubInstallationsForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.InstallationID,
+			&i.AccountLogin,
+			&i.AccountType,
+			&i.AccountAvatarUrl,
+			&i.ConnectedByID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SourceWorkspaceName,
 		); err != nil {
 			return nil, err
 		}

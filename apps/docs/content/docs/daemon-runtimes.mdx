@@ -176,6 +176,19 @@ When the daemon crashes or is force-killed, the tasks it had picked up are left 
 
 Even if this step fails due to a network issue, there's a server-side scan **every 30 seconds** as a backstop: any runtime without a heartbeat for over 45 seconds is marked missing, and its tasks are reclaimed along with it.
 
+## FC/E2B task context environment variables
+
+For cloud FC/E2B runtimes, the server passes the current task context through every `sandbox exec` invocation. The existing runtime entrypoint preserves these variables when it starts the agent, including when a warm sandbox is reused. They are not daemon deployment settings or sandbox template build-time variables:
+
+| Variable | Semantics |
+|---|---|
+| `MULTICA_TASK_ID` | ID of the current execution task. Every Chat message or Issue run gets a new Task ID, so use it for execution auditing rather than conversation identity |
+| `MULTICA_CHAT_SESSION_ID` | Stable ID of the current Multica Chat Session. It remains unchanged across later turns in the same Chat and is omitted for non-Chat tasks |
+
+Use `MULTICA_CHAT_SESSION_ID` when associating a background Issue with the Chat that created it. Do not use the per-turn `MULTICA_TASK_ID` or the underlying provider's resume session ID for that relationship.
+
+This contract currently applies only to server-managed FC/E2B cloud sandboxes. Local daemon runtimes do not receive `MULTICA_CHAT_SESSION_ID`.
+
 ## Troubleshooting agents that aren't working
 
 When you hit a "my agent isn't working" problem, run this three-step checklist first:
@@ -190,3 +203,9 @@ More scenarios in [Troubleshooting](/troubleshooting).
 
 - [Tasks](/tasks) — the full lifecycle of a task once the daemon picks it up
 - [Providers Matrix](/providers) — capability differences across the 15 AI coding tools
+
+## Change history
+
+| Date | Change | Reason |
+|---|---|---|
+| 2026-07-29 | Added per-task `MULTICA_CHAT_SESSION_ID` injection for FC/E2B cloud sandboxes | Allows Chat agents to route background Issues with stable conversation identity without rebuilding the runtime image or changing local daemons |
