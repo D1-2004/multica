@@ -1098,13 +1098,32 @@ func (l *FCE2BLauncher) updateRuntimeTemplate(
 			break
 		}
 	}
-	if result.PreviousTemplateID == selected.ID && result.PreviousTemplateBuildID == selected.BuildID && !managedMetadataChanged {
+	legacyArtifactMetadataChanged := false
+	for key := range metadata {
+		if strings.HasPrefix(key, "artifact_") {
+			legacyArtifactMetadataChanged = true
+			break
+		}
+	}
+	if result.PreviousTemplateID == selected.ID &&
+		result.PreviousTemplateBuildID == selected.BuildID &&
+		!managedMetadataChanged &&
+		!legacyArtifactMetadataChanged {
 		if err := tx.Commit(ctx); err != nil {
 			return FCE2BRuntimeTemplateUpdateResult{}, fmt.Errorf("commit idempotent FC/E2B template update: %w", err)
 		}
 		return result, nil
 	}
 
+	// FC/E2B templates are represented by the template_* fields. Older
+	// generalized cloud-runtime migrations also wrote artifact_* aliases into
+	// some FC/E2B rows. Keeping both copies lets the aliases drift and makes a
+	// successfully rotated runtime appear pinned to its previous template.
+	for key := range metadata {
+		if strings.HasPrefix(key, "artifact_") {
+			delete(metadata, key)
+		}
+	}
 	metadata["template"] = selected.Template
 	metadata["template_id"] = selected.ID
 	metadata["template_build_id"] = selected.BuildID

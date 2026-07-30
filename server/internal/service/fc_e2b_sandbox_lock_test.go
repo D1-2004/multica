@@ -351,6 +351,66 @@ func TestUpdateRuntimeTemplateWaitsForLaunchAndInvalidatesSessions(t *testing.T)
 	}
 }
 
+func TestUpdateRuntimeTemplateRemovesStaleArtifactAliases(t *testing.T) {
+	pool := newSandboxLockPool(t)
+	_, _, runtimeID := seedFCE2BSandboxRuntime(t, pool, "Template Artifact Compatibility")
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE agent_runtime
+		SET metadata = metadata || '{
+			"template":"tpl_current",
+			"template_id":"tpl_current_id",
+			"template_build_id":"build_current",
+			"artifact_kind":"e2b_template",
+			"artifact_ref":"tpl_previous_id",
+			"artifact_build_id":"build_previous",
+			"artifact_alias":"tpl_previous",
+			"artifact_channel":"stable"
+		}'::jsonb
+		WHERE id = $1
+	`, runtimeID); err != nil {
+		t.Fatalf("seed stale artifact aliases: %v", err)
+	}
+
+	launcher := NewFCE2BLauncher(db.New(pool), nil, FCE2BConfig{}, &countingRunner{})
+	launcher.SetPool(pool)
+	result, err := launcher.UpdateRuntimeTemplate(context.Background(), runtimeID, FCE2BTemplate{
+		ID:              "tpl_current_id",
+		BuildID:         "build_current",
+		Template:        "tpl_current",
+		Name:            "Current Template",
+		Status:          "READY",
+		ManifestVersion: 1,
+		Providers:       []string{"hermes", "opencode", "pi"},
+		Capabilities:    []string{"dws"},
+		ComponentVersions: map[string]string{
+			"hermes":   "0.19.0",
+			"opencode": "v1.18.4",
+			"pi":       "0.80.10",
+			"dws":      "v1.0.53-beta.4",
+		},
+		RunnerProtocol: "root-log-v1",
+	})
+	if err != nil {
+		t.Fatalf("repair stale artifact aliases: %v", err)
+	}
+	if !result.Changed {
+		t.Fatal("stale artifact aliases were treated as an idempotent template binding")
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(result.Runtime.Metadata, &metadata); err != nil {
+		t.Fatalf("decode repaired metadata: %v", err)
+	}
+	for key := range metadata {
+		if strings.HasPrefix(key, "artifact_") {
+			t.Fatalf("legacy artifact metadata %q remains after FC/E2B rotation", key)
+		}
+	}
+	if metadata["template_id"] != "tpl_current_id" ||
+		metadata["template_build_id"] != "build_current" {
+		t.Fatalf("template binding changed while repairing aliases: %#v", metadata)
+	}
+}
+
 func TestResolveSandboxNeverReusesDifferentTemplate(t *testing.T) {
 	pool := newSandboxLockPool(t)
 	workspaceID, userID, runtimeID := seedFCE2BSandboxRuntime(t, pool, "Template Mismatch Sandbox")
