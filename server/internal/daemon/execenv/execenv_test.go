@@ -914,6 +914,7 @@ func TestInjectRuntimeConfigAvailableCommandsCoreOnly(t *testing.T) {
 	for _, banned := range []string{
 		"multica issue list [--status",
 		"multica issue label list",
+		"multica issue delegate",
 		"multica issue subscriber list",
 		"multica label list",
 		"multica workspace member list",

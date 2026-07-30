@@ -20,6 +20,18 @@ INSERT INTO issue_label (workspace_id, resource_type, name, description, color)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
+-- name: UpsertIssueDelegationLabel :one
+-- Delegation labels are server-managed and keyed by a stable, shortened Chat
+-- session hash. Refreshing the description is safe because the exact session
+-- id is deterministic for a given label name.
+INSERT INTO issue_label (workspace_id, resource_type, name, description, color)
+VALUES ($1, 'issue', $2, $3, $4)
+ON CONFLICT (workspace_id, resource_type, (LOWER(name)))
+DO UPDATE SET
+    description = EXCLUDED.description,
+    updated_at = now()
+RETURNING *;
+
 -- name: UpdateLabel :one
 UPDATE issue_label SET
     name = COALESCE(sqlc.narg('name'), name),

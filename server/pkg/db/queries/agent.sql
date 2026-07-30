@@ -198,7 +198,7 @@ ORDER BY created_at DESC;
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,
     coalesced_comment_ids, trigger_summary, force_fresh_session, is_leader_task, handoff_note,
-    squad_id, context, originator_user_id, runtime_mcp_overlay, runtime_connected_apps
+    squad_id, parent_task_id, context, originator_user_id, runtime_mcp_overlay, runtime_connected_apps
 )
 VALUES (
     $1, $2, $3, 'queued', $4, sqlc.narg(trigger_comment_id),
@@ -208,6 +208,7 @@ VALUES (
     COALESCE(sqlc.narg('is_leader_task')::boolean, FALSE),
     sqlc.narg(handoff_note),
     sqlc.narg(squad_id),
+    sqlc.narg(parent_task_id),
     CASE
         WHEN COALESCE(sqlc.narg('head_sha')::text, '') <> ''
           OR COALESCE(sqlc.narg('agent_identity_context_token')::text, '') <> ''
@@ -312,6 +313,33 @@ SELECT * FROM agent_task_queue
 WHERE parent_task_id = $1
 ORDER BY created_at ASC
 LIMIT 1;
+
+-- name: GetDelegatedChildTaskByParent :one
+SELECT * FROM agent_task_queue
+WHERE parent_task_id = $1
+  AND context #>> '{dispatch_delegated_from_task_id}' = $1::text
+ORDER BY created_at ASC
+LIMIT 1;
+
+-- name: ListActiveDelegatedDescendantTasksByParent :many
+WITH RECURSIVE delegated_task_ids AS (
+    SELECT child.id
+    FROM agent_task_queue child
+    WHERE child.parent_task_id = $1
+      AND child.context #>> '{dispatch_delegated_from_task_id}' = $1::text
+
+    UNION ALL
+
+    SELECT child.id
+    FROM agent_task_queue child
+    JOIN delegated_task_ids parent ON child.parent_task_id = parent.id
+    WHERE child.context #>> '{dispatch_delegated_from_task_id}' = $1::text
+)
+SELECT task.*
+FROM agent_task_queue task
+JOIN delegated_task_ids delegated ON delegated.id = task.id
+WHERE task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+ORDER BY task.created_at ASC;
 
 -- name: LinkTaskToIssue :exec
 -- Attaches the issue a quick-create task produced back to the task row, once
@@ -489,6 +517,15 @@ WHERE id = @task_id
 SELECT atq.* FROM agent_task_queue atq
 JOIN agent a ON a.id = atq.agent_id
 WHERE atq.id = $1 AND a.workspace_id = $2;
+
+-- name: GetAgentTaskInWorkspaceForUpdate :one
+-- Serializes delegation with task completion, cancellation, timeout, and a
+-- concurrent delegation attempt. Callers must re-check active status after
+-- acquiring this lock before creating the delegated child.
+SELECT atq.* FROM agent_task_queue atq
+JOIN agent a ON a.id = atq.agent_id
+WHERE atq.id = $1 AND a.workspace_id = $2
+FOR UPDATE OF atq;
 
 -- name: ClaimAgentTask :one
 -- Claims the next queued task for an agent, enforcing per-(issue, agent) serialization:

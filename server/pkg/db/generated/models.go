@@ -1052,6 +1052,30 @@ type TaskCompletionOutbox struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
+type TaskExecutionUpdateOutbox struct {
+	ID              pgtype.UUID        `json:"id"`
+	RootTaskID      pgtype.UUID        `json:"root_task_id"`
+	TargetTaskID    pgtype.UUID        `json:"target_task_id"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	IssueIdentifier string             `json:"issue_identifier"`
+	CallbackUrl     string             `json:"callback_url"`
+	TargetIdentity  string             `json:"target_identity"`
+	RequestID       string             `json:"request_id"`
+	AgentID         pgtype.UUID        `json:"agent_id"`
+	TargetAgentID   pgtype.UUID        `json:"target_agent_id"`
+	UpdateType      string             `json:"update_type"`
+	OccurredAt      pgtype.Timestamptz `json:"occurred_at"`
+	Status          string             `json:"status"`
+	AvailableAt     pgtype.Timestamptz `json:"available_at"`
+	AttemptCount    int32              `json:"attempt_count"`
+	LeaseToken      pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt  pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError       pgtype.Text        `json:"last_error"`
+	DeliveredAt     pgtype.Timestamptz `json:"delivered_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type TaskMessage struct {
 	ID        pgtype.UUID        `json:"id"`
 	TaskID    pgtype.UUID        `json:"task_id"`

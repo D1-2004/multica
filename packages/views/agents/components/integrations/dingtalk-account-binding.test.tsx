@@ -434,6 +434,53 @@ describe("DingTalkAccountBindingCard", () => {
     expect(deleteBinding).not.toHaveBeenCalled();
   });
 
+  it("shows automatic mode for an active binding", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          messageRoute: {
+            ...activeBinding.messageRoute,
+            surfaceType: "auto",
+          },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard("message");
+
+    const modeTrigger = await screen.findByRole("button", {
+      name: "Run mode: Automatic mode",
+    });
+    expect(modeTrigger).toHaveTextContent("Automatic mode");
+  });
+
+  it("switches to automatic mode without rebinding", async () => {
+    listBindings.mockResolvedValue({ bindings: [activeBinding], configured: true });
+    const user = userEvent.setup();
+
+    renderCard("message");
+
+    const modeTrigger = await screen.findByRole("button", {
+      name: "Run mode: Task mode",
+    });
+    await user.click(modeTrigger);
+    expect(screen.getByText(
+      "Start in chat, then let the agent answer directly or create an issue for background work.",
+    )).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: /Automatic mode/i }));
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+
+    expect(updateBindingSurface).toHaveBeenCalledWith(
+      "workspace-1",
+      "agent-1",
+      "auto",
+    );
+    expect(beginBinding).not.toHaveBeenCalled();
+    expect(deleteBinding).not.toHaveBeenCalled();
+  });
+
   it("keeps the current run mode when the popover selection is cancelled", async () => {
     listBindings.mockResolvedValue({ bindings: [activeBinding], configured: true });
     const user = userEvent.setup();

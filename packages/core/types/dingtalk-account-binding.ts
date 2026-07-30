@@ -15,7 +15,7 @@ export interface DingTalkAccountBindingOutcome {
 }
 
 export type DingTalkMessageScope = "direct_only" | "custom" | "all";
-export type DingTalkProcessingSurface = "issue" | "chat";
+export type DingTalkProcessingSurface = "issue" | "chat" | "auto";
 
 export interface DingTalkConversationSummary {
   cid: string;

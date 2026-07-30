@@ -596,7 +596,9 @@ func isTrimmedNonEmpty(value string) bool {
 }
 
 func validSubscriptionSurface(surface SubscriptionSurface) bool {
-	return surface.Type == "chat" || surface.Type == "issue"
+	return surface.Type == DingTalkSurfaceChat ||
+		surface.Type == DingTalkSurfaceIssue ||
+		surface.Type == DingTalkSurfaceAuto
 }
 
 func validSubscriptionOutbound(outbound SubscriptionOutbound) bool {

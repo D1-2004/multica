@@ -262,8 +262,9 @@ func (h *Handler) UpdateDingTalkAccountBindingSurface(w http.ResponseWriter, r *
 	}
 	request.SurfaceType = strings.TrimSpace(request.SurfaceType)
 	if request.SurfaceType != agentmessagerouter.DingTalkSurfaceIssue &&
-		request.SurfaceType != agentmessagerouter.DingTalkSurfaceChat {
-		writeDingTalkAccountBindingAPIError(w, http.StatusBadRequest, "invalid_surface_type", "surface_type must be issue or chat")
+		request.SurfaceType != agentmessagerouter.DingTalkSurfaceChat &&
+		request.SurfaceType != agentmessagerouter.DingTalkSurfaceAuto {
+		writeDingTalkAccountBindingAPIError(w, http.StatusBadRequest, "invalid_surface_type", "surface_type must be issue, chat, or auto")
 		return
 	}
 	_, err := h.DingTalkAccountBindings.UpdateSurface(r.Context(), agentmessagerouter.UpdateSurfaceParams{

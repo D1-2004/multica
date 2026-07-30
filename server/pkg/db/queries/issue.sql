@@ -74,10 +74,10 @@ INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    stage
+    metadata, stage
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    sqlc.narg('stage')
+    COALESCE(sqlc.narg('metadata')::jsonb, '{}'::jsonb), sqlc.narg('stage')
 ) RETURNING *;
 
 -- name: GetIssueByNumber :one
@@ -115,10 +115,11 @@ INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    origin_type, origin_id, stage
+    origin_type, origin_id, metadata, stage
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    sqlc.narg('origin_type'), sqlc.narg('origin_id'), sqlc.narg('stage')
+    sqlc.narg('origin_type'), sqlc.narg('origin_id'),
+    COALESCE(sqlc.narg('metadata')::jsonb, '{}'::jsonb), sqlc.narg('stage')
 ) RETURNING *;
 
 -- name: LockIssueDuplicateKey :exec

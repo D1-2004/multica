@@ -36,8 +36,9 @@ type TaskCompletion struct {
 }
 
 type taskCompletionTarget struct {
-	RootTaskID  pgtype.UUID
-	CallbackURL string
+	RootTaskID     pgtype.UUID
+	AgentID        pgtype.UUID
+	CallbackURL    string
 	TargetIdentity string
 }
 
@@ -110,7 +111,7 @@ func buildTaskCompletion(
 		TargetIdentity:    target.TargetIdentity,
 		RootTaskID:        target.RootTaskID,
 		TerminalTaskID:    task.ID,
-		AgentID:           task.AgentID,
+		AgentID:           target.AgentID,
 		ExternalSessionID: task.SessionID.String,
 		ExecutionStatus:   status,
 		ResultMessage:     resultMessage,
@@ -145,8 +146,9 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 	}
 	completion := buildTaskCompletion(
 		taskCompletionTarget{
-			RootTaskID:  targetRow.RootTaskID,
-			CallbackURL: targetRow.CallbackUrl,
+			RootTaskID:     targetRow.RootTaskID,
+			AgentID:        targetRow.RootAgentID,
+			CallbackURL:    targetRow.CallbackUrl,
 			TargetIdentity: targetRow.TargetIdentity,
 		},
 		task,

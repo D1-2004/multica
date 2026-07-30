@@ -144,6 +144,19 @@ Multica 对并发有两层限额：
 
 即使这一步因网络问题没完成，还有**每 30 秒**一次的服务器端扫描作为后备：超过 45 秒没心跳的运行时会被统一标记为失联，上面的任务也一并回收。
 
+## FC/E2B 任务上下文环境变量
+
+对于 FC/E2B 云运行时，服务端会在每次 `sandbox exec` 时传入当前任务上下文。即使复用热沙箱，现有运行时入口也会保留这些变量并传递给 Agent。它们不是 Daemon 部署配置，也不是沙箱模板构建参数：
+
+| 环境变量 | 语义 |
+|---|---|
+| `MULTICA_TASK_ID` | 当前执行任务的 ID。每一轮 Chat 消息或 Issue 执行都会产生新的 Task ID，适合执行审计，不适合作为会话标识 |
+| `MULTICA_CHAT_SESSION_ID` | 当前 Multica Chat Session 的稳定 ID。同一 Chat 的后续轮次保持不变；非 Chat 任务不注入 |
+
+需要把 Chat 创建的后台 Issue 归属到原会话时，应使用 `MULTICA_CHAT_SESSION_ID`，不要使用每轮变化的 `MULTICA_TASK_ID`，也不要使用底层 provider 的会话恢复 ID。
+
+当前契约只覆盖服务端管理的 FC/E2B 云沙箱；本地 Daemon 运行时不会收到 `MULTICA_CHAT_SESSION_ID`。
+
 ## Agent 不工作怎么排查
 
 遇到「我的智能体不工作」类问题，先过一遍这三步：
@@ -158,3 +171,9 @@ Multica 对并发有两层限额：
 
 - [执行任务](/tasks) —— 守护进程领到任务后，它的完整生命周期
 - [Providers Matrix](/providers) —— 15 款 AI 编程工具的能力差异对照
+
+## 变更历史
+
+| 日期 | 变更 | 原因 |
+|---|---|---|
+| 2026-07-29 | 为 FC/E2B 云沙箱增加按任务注入的 `MULTICA_CHAT_SESSION_ID` | 让 Chat Agent 无需重建运行时镜像或升级本地 Daemon，即可使用稳定会话标识路由后台 Issue |

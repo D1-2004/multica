@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -69,9 +70,29 @@ type IssueCreateParams struct {
 	AllowDuplicate            bool
 	AgentIdentityContextToken string
 	DispatchContext           []byte
+	// Metadata and SystemLabel* are server-owned decorations used by
+	// protocol-specific create flows such as Issue Delegation. Public Issue
+	// CRUD does not expose them. They are written in the same transaction as
+	// the Issue row so a daemon can never claim the resulting task before the
+	// routing metadata exists.
+	Metadata               []byte
+	SystemLabelName        string
+	SystemLabelDescription string
+	SystemLabelColor       string
+	ParentTaskID           pgtype.UUID
+	Delegation             *IssueDelegationCreateParams
 	// Stage groups this issue into an ordered barrier group under its parent
 	// (NULL = unstaged). See issue_child_done.go for the staged-barrier wake.
 	Stage pgtype.Int4
+}
+
+// IssueDelegationCreateParams selects the transactional Chat-to-Issue path.
+// The source task is ParentTaskID. Callback fields are server-private routing
+// data recovered from that authenticated task; an absent callback keeps local
+// delegations atomic without creating an external update.
+type IssueDelegationCreateParams struct {
+	CallbackUpdateURL string
+	CallbackTarget    string
 }
 
 // IssueCreateOpts groups optional knobs for IssueService.Create. Most
@@ -126,6 +147,9 @@ var ErrParentIssueNotFound = errors.New("parent issue not found in this workspac
 // having to remember it. Callers translate this into 400.
 var ErrProjectNotFound = errors.New("project not found in this workspace")
 
+var ErrDelegationSourceInactive = errors.New("delegation source task is not active")
+var ErrDelegationAlreadyExists = errors.New("delegation source task already has a child")
+
 // IssueCreateResult is the typed return from IssueService.Create.
 //
 //   - On the happy path: Issue is the new row, Attachments lists the
@@ -139,19 +163,21 @@ type IssueCreateResult struct {
 	EnqueuedTask   *db.AgentTaskQueue
 }
 
-// Create runs the full issue-creation pipeline atomically end-to-end:
+// Create runs the shared issue-creation pipeline:
 //
 //  1. Begin transaction.
 //  2. Resolve & validate parent / project belong to the same workspace.
 //  3. Lock & check the duplicate guard.
 //  4. Increment the workspace issue counter.
 //  5. Insert the issue row (with optional origin stamping).
-//  6. Commit.
-//  7. Link any pre-uploaded attachments (post-commit, idempotent).
-//  8. Publish EventIssueCreated to the bus (payload via opts.BroadcastPayload).
-//  9. Capture the IssueCreated analytics event.
-//  10. Enqueue an agent task or trigger the squad leader when the issue is
-//     assigned and not in `backlog`.
+//  6. For Issue Delegation, atomically insert its label, target task, lineage,
+//     and execution-update outbox while the source Chat task is locked.
+//  7. Commit.
+//  8. Link any pre-uploaded attachments (post-commit, idempotent).
+//  9. Publish EventIssueCreated to the bus (payload via opts.BroadcastPayload).
+//  10. Capture the IssueCreated analytics event.
+//  11. Publish the already-committed delegated task, or enqueue the ordinary
+//      assigned Agent/squad task when the issue is not in `backlog`.
 //
 // Validation that lives in the service (parent existence, project
 // workspace membership, parent → project back-fill) is enforced here so
@@ -160,12 +186,51 @@ type IssueCreateResult struct {
 // Caller-owned validation is limited to transport-shaped checks: title
 // required, RFC3339 date format, assignee pair sanity.
 func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts IssueCreateOpts) (IssueCreateResult, error) {
+	var delegationOverlay runtimeMCPOverlayData
+	if p.Delegation != nil {
+		if !p.ParentTaskID.Valid {
+			return IssueCreateResult{}, errors.New("delegation parent task is required")
+		}
+		if s.TaskService == nil {
+			return IssueCreateResult{}, errors.New("task service is not configured")
+		}
+		agent, err := s.Queries.GetAgent(ctx, p.AssigneeID)
+		if err != nil {
+			return IssueCreateResult{}, fmt.Errorf("load delegation target agent: %w", err)
+		}
+		if agent.ArchivedAt.Valid {
+			return IssueCreateResult{}, errors.New("delegation target agent is archived")
+		}
+		if !agent.RuntimeID.Valid {
+			return IssueCreateResult{}, errors.New("delegation target agent has no runtime")
+		}
+		delegationOverlay = s.TaskService.buildRuntimeMCPOverlay(ctx, p.CreatorID, agent)
+	}
+
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
+	var delegationSource db.AgentTaskQueue
+	if p.Delegation != nil {
+		delegationSource, err = qtx.GetAgentTaskInWorkspaceForUpdate(ctx, db.GetAgentTaskInWorkspaceForUpdateParams{
+			ID:          p.ParentTaskID,
+			WorkspaceID: p.WorkspaceID,
+		})
+		if err != nil {
+			return IssueCreateResult{}, fmt.Errorf("lock delegation source task: %w", err)
+		}
+		if delegationSource.Status != "running" && delegationSource.Status != "dispatched" {
+			return IssueCreateResult{}, ErrDelegationSourceInactive
+		}
+		if _, childErr := qtx.GetDelegatedChildTaskByParent(ctx, delegationSource.ID); childErr == nil {
+			return IssueCreateResult{}, ErrDelegationAlreadyExists
+		} else if !errors.Is(childErr, pgx.ErrNoRows) {
+			return IssueCreateResult{}, fmt.Errorf("check delegated child task: %w", childErr)
+		}
+	}
 
 	// Resolve and validate parent / project before reading from the
 	// duplicate guard so a forged parent or project ID is rejected
@@ -245,6 +310,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			ProjectID:     projectID,
 			OriginType:    p.OriginType,
 			OriginID:      p.OriginID,
+			Metadata:      p.Metadata,
 			Stage:         p.Stage,
 		})
 	} else {
@@ -264,11 +330,85 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			DueDate:       p.DueDate,
 			Number:        issueNumber,
 			ProjectID:     projectID,
+			Metadata:      p.Metadata,
 			Stage:         p.Stage,
 		})
 	}
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("create issue: %w", err)
+	}
+
+	if p.SystemLabelName != "" {
+		color := p.SystemLabelColor
+		if color == "" {
+			color = "#64748B"
+		}
+		label, err := qtx.UpsertIssueDelegationLabel(ctx, db.UpsertIssueDelegationLabelParams{
+			WorkspaceID: p.WorkspaceID,
+			Name:        p.SystemLabelName,
+			Description: p.SystemLabelDescription,
+			Color:       color,
+		})
+		if err != nil {
+			return IssueCreateResult{}, fmt.Errorf("upsert system issue label: %w", err)
+		}
+		if err := qtx.AttachLabelToIssue(ctx, db.AttachLabelToIssueParams{
+			IssueID:     issue.ID,
+			LabelID:     label.ID,
+			WorkspaceID: p.WorkspaceID,
+		}); err != nil {
+			return IssueCreateResult{}, fmt.Errorf("attach system issue label: %w", err)
+		}
+	}
+
+	var enqueuedTask *db.AgentTaskQueue
+	if p.Delegation != nil {
+		agent, loadErr := qtx.GetAgent(ctx, issue.AssigneeID)
+		if loadErr != nil {
+			return IssueCreateResult{}, fmt.Errorf("reload delegation target agent: %w", loadErr)
+		}
+		if agent.ArchivedAt.Valid {
+			return IssueCreateResult{}, errors.New("delegation target agent is archived")
+		}
+		if !agent.RuntimeID.Valid {
+			return IssueCreateResult{}, errors.New("delegation target agent has no runtime")
+		}
+		task, taskErr := qtx.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+			AgentID:                   issue.AssigneeID,
+			RuntimeID:                 agent.RuntimeID,
+			IssueID:                   issue.ID,
+			Priority:                  priorityToInt(issue.Priority),
+			OriginatorUserID:          p.CreatorID,
+			RuntimeMcpOverlay:         delegationOverlay.Overlay,
+			RuntimeConnectedApps:      delegationOverlay.ConnectedApps,
+			ParentTaskID:              delegationSource.ID,
+			AgentIdentityContextToken: agentIdentityContextTokenText(p.AgentIdentityContextToken),
+			DispatchContext:           p.DispatchContext,
+		})
+		if taskErr != nil {
+			return IssueCreateResult{}, fmt.Errorf("create delegated task: %w", taskErr)
+		}
+		enqueuedTask = &task
+		if p.Delegation.CallbackUpdateURL != "" {
+			workspace, workspaceErr := qtx.GetWorkspace(ctx, p.WorkspaceID)
+			if workspaceErr != nil {
+				return IssueCreateResult{}, fmt.Errorf("load delegation workspace: %w", workspaceErr)
+			}
+			if _, updateErr := qtx.EnqueueTaskExecutionUpdate(ctx, db.EnqueueTaskExecutionUpdateParams{
+				RootTaskID:     delegationSource.ID,
+				TargetTaskID:   task.ID,
+				IssueID:        issue.ID,
+				IssueIdentifier: fmt.Sprintf("%s-%d", workspace.IssuePrefix, issue.Number),
+				CallbackUrl:    p.Delegation.CallbackUpdateURL,
+				TargetIdentity: p.Delegation.CallbackTarget,
+				RequestID:      "multica-handoff:" + util.UUIDToString(delegationSource.ID),
+				AgentID:        delegationSource.AgentID,
+				TargetAgentID:  task.AgentID,
+				UpdateType:     "delegated_to_issue",
+			}); updateErr != nil {
+				return IssueCreateResult{}, fmt.Errorf("enqueue delegation update: %w", updateErr)
+			}
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -284,7 +424,19 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 
 	s.publishIssueCreated(issue, attachments, p.CreatorType, actorID, opts)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
-	enqueuedTask := s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, p.AgentIdentityContextToken, p.DispatchContext)
+	if enqueuedTask != nil {
+		s.TaskService.publishIssueTaskEnqueued(ctx, *enqueuedTask)
+	} else {
+		enqueuedTask = s.maybeEnqueueOnAssign(
+			ctx,
+			issue,
+			p.CreatorType,
+			actorID,
+			p.AgentIdentityContextToken,
+			p.DispatchContext,
+			p.ParentTaskID,
+		)
+	}
 
 	return IssueCreateResult{Issue: issue, Attachments: attachments, EnqueuedTask: enqueuedTask}, nil
 }
@@ -391,14 +543,22 @@ func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autop
 	}
 }
 
-func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID, agentIdentityContextToken string, dispatchContext []byte) *db.AgentTaskQueue {
+func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID, agentIdentityContextToken string, dispatchContext []byte, parentTaskID pgtype.UUID) *db.AgentTaskQueue {
 	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
 		return nil
 	}
 	if s.shouldEnqueueAgentTask(ctx, issue) {
 		var task db.AgentTaskQueue
 		var err error
-		if len(dispatchContext) > 0 {
+		if parentTaskID.Valid {
+			task, err = s.TaskService.EnqueueTaskForIssueWithDispatchContextAndParent(
+				ctx,
+				issue,
+				agentIdentityContextToken,
+				dispatchContext,
+				parentTaskID,
+			)
+		} else if len(dispatchContext) > 0 {
 			task, err = s.TaskService.EnqueueTaskForIssueWithDispatchContext(ctx, issue, agentIdentityContextToken, dispatchContext)
 		} else {
 			task, err = s.TaskService.EnqueueTaskForIssueWithAgentIdentityContext(ctx, issue, agentIdentityContextToken)

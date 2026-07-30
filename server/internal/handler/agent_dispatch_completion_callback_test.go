@@ -32,7 +32,10 @@ func TestDispatchCommandValidateCompletionCallbackByPresence(t *testing.T) {
 		},
 		Surface:            DispatchSurface{Type: "chat"},
 		Outbound:           DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
-		CompletionCallback: &DispatchCompletionCallback{URL: "/api/v1/dispatch-tasks/router-task-1/execution-result"},
+		CompletionCallback: &DispatchCompletionCallback{
+			URL:       "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			UpdateURL: "/api/v1/dispatch-tasks/router-task-1/execution-update",
+		},
 	}
 	if err := valid.validate(); err != nil {
 		t.Fatalf("digital employee callback rejected: %v", err)
@@ -69,14 +72,23 @@ func TestDispatchCommandValidateCompletionCallbackByPresence(t *testing.T) {
 			}
 		})
 	}
+	mismatchedUpdate := valid
+	mismatchedUpdate.CompletionCallback = &DispatchCompletionCallback{
+		URL:       "/api/v1/dispatch-tasks/router-task-1/execution-result",
+		UpdateURL: "/api/v1/dispatch-tasks/router-task-2/execution-update",
+	}
+	if err := mismatchedUpdate.validate(); err == nil {
+		t.Fatal("completion and update callbacks accepted different dispatch task IDs")
+	}
 }
 
 func TestDispatchRuntimeContextPersistsCompletionCallback(t *testing.T) {
 	command := DispatchCommand{
 		SchemaVersion:      "2.0",
 		CompletionCallback: &DispatchCompletionCallback{
-			URL:    "/api/v1/dispatch-tasks/router-task-1/execution-result",
-			Target: testRouterTargetIdentity,
+			URL:       "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			UpdateURL: "/api/v1/dispatch-tasks/router-task-1/execution-update",
+			Target:    testRouterTargetIdentity,
 		},
 	}
 	raw := dispatchRuntimeContext(command, "dispatch-window:1")
@@ -88,6 +100,7 @@ func TestDispatchRuntimeContextPersistsCompletionCallback(t *testing.T) {
 	callback, ok := stored["completion_callback"].(map[string]any)
 	if !ok ||
 		callback["url"] != "/api/v1/dispatch-tasks/router-task-1/execution-result" ||
+		callback["update_url"] != "/api/v1/dispatch-tasks/router-task-1/execution-update" ||
 		callback["target"] != testRouterTargetIdentity {
 		t.Fatalf("stored callback = %#v", stored["completion_callback"])
 	}
@@ -113,8 +126,9 @@ func TestDispatchRequestFingerprintExcludesOnlyTransientIdentityContext(t *testi
 			ExpiresAt:    4102444800000,
 		},
 		CompletionCallback: &DispatchCompletionCallback{
-			URL:    "/api/v1/dispatch-tasks/router-task-1/execution-result",
-			Target: testRouterTargetIdentity,
+			URL:       "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			UpdateURL: "/api/v1/dispatch-tasks/router-task-1/execution-update",
+			Target:    testRouterTargetIdentity,
 		},
 		DispatchEndpointID: "endpoint-one",
 	}
@@ -140,6 +154,15 @@ func TestDispatchRequestFingerprintExcludesOnlyTransientIdentityContext(t *testi
 	}
 	if got := dispatchRequestFingerprint(changedCallback, "idempotency-one"); got == first {
 		t.Fatal("changed callback reused the original fingerprint")
+	}
+	changedUpdateCallback := command
+	changedUpdateCallback.CompletionCallback = &DispatchCompletionCallback{
+		URL:       command.CompletionCallback.URL,
+		UpdateURL: "/api/v1/dispatch-tasks/router-task-2/execution-update",
+		Target:    testRouterTargetIdentity,
+	}
+	if got := dispatchRequestFingerprint(changedUpdateCallback, "idempotency-one"); got == first {
+		t.Fatal("changed update callback reused the original fingerprint")
 	}
 }
 
