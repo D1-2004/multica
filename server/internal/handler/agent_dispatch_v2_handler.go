@@ -284,7 +284,7 @@ func (h *Handler) executeAgentDispatchV2(
 	plan agentDispatchExecutionPlan,
 	dispatchContext agentDispatchContext,
 ) {
-	if plan.SurfaceType == "chat" {
+	if plan.MaterializerType == protocol.DispatchSurfaceTypeChat {
 		if command.Continuation != nil &&
 			(command.Continuation.Kind != "chat" || strings.TrimSpace(command.Continuation.ChatSessionID) == "") {
 			writeError(w, http.StatusBadRequest, "continuation must identify a chat")
