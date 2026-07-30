@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -245,6 +246,52 @@ func (h *Handler) GetFCE2BStableRelease(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, release)
+}
+
+func (h *Handler) ListFCE2BStableReleases(w http.ResponseWriter, r *http.Request) {
+	h.listCloudSandboxStableReleases(w, r, service.SandboxBackendAliyunFC)
+}
+
+func (h *Handler) ListCloudSandboxStableReleases(w http.ResponseWriter, r *http.Request) {
+	backend, ok := parseCloudSandboxBackendQuery(w, r)
+	if !ok {
+		return
+	}
+	h.listCloudSandboxStableReleases(w, r, backend)
+}
+
+func (h *Handler) listCloudSandboxStableReleases(
+	w http.ResponseWriter,
+	r *http.Request,
+	backend service.SandboxBackendKind,
+) {
+	if _, ok := h.requireFCE2BStablePublisher(w, r); !ok {
+		return
+	}
+	if h.FCE2BStable == nil {
+		writeError(w, http.StatusServiceUnavailable, "cloud sandbox stable channel is unavailable")
+		return
+	}
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return
+		}
+		limit = parsed
+	}
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	if len(status) > 64 {
+		writeError(w, http.StatusBadRequest, "status is too long")
+		return
+	}
+	releases, err := h.FCE2BStable.ListReleases(r.Context(), backend, status, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load stable releases")
+		return
+	}
+	writeJSON(w, http.StatusOK, releases)
 }
 
 func (h *Handler) PauseFCE2BStableRelease(w http.ResponseWriter, r *http.Request) {

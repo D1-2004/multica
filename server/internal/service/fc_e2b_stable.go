@@ -285,6 +285,48 @@ func (s *FCE2BStableService) GetRelease(ctx context.Context, releaseID pgtype.UU
 	return s.scanRelease(s.Pool.QueryRow(ctx, stableReleaseSelect+` WHERE id = $1`, releaseID))
 }
 
+func (s *FCE2BStableService) ListReleases(
+	ctx context.Context,
+	backend SandboxBackendKind,
+	status string,
+	limit int,
+) ([]FCE2BStableRelease, error) {
+	if s == nil || s.Pool == nil {
+		return nil, errors.New("FC/E2B stable channel service is unavailable")
+	}
+	backend, err := stableSandboxBackend(backend)
+	if err != nil {
+		return nil, err
+	}
+	status = strings.TrimSpace(status)
+	if limit < 1 || limit > 100 {
+		return nil, errors.New("stable release list limit must be between 1 and 100")
+	}
+	rows, err := s.Pool.Query(ctx, stableReleaseSelect+`
+		WHERE release.sandbox_backend = $1
+		  AND ($2 = '' OR release.status = $2)
+		ORDER BY release.created_at DESC
+		LIMIT $3
+	`, backend, status, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list stable releases: %w", err)
+	}
+	defer rows.Close()
+
+	releases := make([]FCE2BStableRelease, 0, limit)
+	for rows.Next() {
+		release, scanErr := s.scanRelease(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan stable release: %w", scanErr)
+		}
+		releases = append(releases, release)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stable releases: %w", err)
+	}
+	return releases, nil
+}
+
 func (s *FCE2BStableService) CurrentTemplate(ctx context.Context) (FCE2BStableTemplateBinding, error) {
 	channel, err := s.GetChannel(ctx, SandboxBackendAliyunFC)
 	if err != nil {
@@ -2722,6 +2764,10 @@ func (s *FCE2BStableService) failTarget(ctx context.Context, releaseID string, r
 }
 
 func (s *FCE2BStableService) failValidation(ctx context.Context, releaseID string, token uuid.UUID, failure error) error {
+	slog.Error("cloud sandbox stable release validation failed",
+		"release_id", releaseID,
+		"error", failure,
+	)
 	_, err := s.Pool.Exec(ctx, `
 		UPDATE fc_e2b_stable_release
 		SET status = 'failed', validation_error = $1, lease_token = NULL,
