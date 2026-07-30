@@ -166,6 +166,7 @@ func TestASBIdentityAnchorUsesCreateAndRenewalLimits(t *testing.T) {
 		renewExpiration time.Time
 		calls           []string
 	)
+	createdAt := time.Date(2026, time.July, 29, 5, 0, 0, 0, time.UTC)
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		calls = append(calls, request.Method+" "+request.URL.RequestURI())
 		switch {
@@ -225,7 +226,6 @@ func TestASBIdentityAnchorUsesCreateAndRenewalLimits(t *testing.T) {
 			IdentityAnchorImageRef: "registry.example/anchor@sha256:" + strings.Repeat("a", 64),
 		},
 	}
-	startedAt := time.Now()
 	sandboxID, err := manager.Create(
 		context.Background(),
 		util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
@@ -246,13 +246,56 @@ func TestASBIdentityAnchorUsesCreateAndRenewalLimits(t *testing.T) {
 	if createTimeout != asbMaxCreateTimeout {
 		t.Fatalf("create timeout = %d, want %d", createTimeout, asbMaxCreateTimeout)
 	}
-	earliestRenewal := startedAt.Add(asbMaxRenewalDuration - time.Minute)
-	latestRenewal := time.Now().Add(asbMaxRenewalDuration + time.Minute)
-	if renewExpiration.Before(earliestRenewal) || renewExpiration.After(latestRenewal) {
-		t.Fatalf("renew expiration = %s, want approximately seven days", renewExpiration)
+	wantRenewal := createdAt.Add(asbMaxRenewalDuration - asbIdentityAnchorRenewalSafetyMargin)
+	if !renewExpiration.Equal(wantRenewal) {
+		t.Fatalf("renew expiration = %s, want %s", renewExpiration, wantRenewal)
 	}
 	if got := strings.Join(calls, "\n"); !strings.HasSuffix(got, "POST /v1/sandboxes/"+testSandboxID+"/renew-expiration") {
 		t.Fatalf("renewal was not the final lifecycle call:\n%s", got)
+	}
+}
+
+func TestASBIdentityAnchorEnsureAvailableSkipsRenewalAtTotalDurationLimit(t *testing.T) {
+	t.Parallel()
+
+	createdAt := time.Now().Add(-2 * time.Minute).UTC()
+	expiresAt := createdAt.Add(asbMaxRenewalDuration - 30*time.Second)
+	renewCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/"+testSandboxID:
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":        testSandboxID,
+				"status":    map[string]string{"state": "Running"},
+				"createdAt": createdAt,
+				"expiresAt": expiresAt,
+				"entrypoint": []string{
+					"sleep infinity",
+				},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes/"+testSandboxID+"/renew-expiration":
+			renewCalls++
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(response, `{"code":"BAD_REQUEST","message":"Total duration must be less than or equal to 168h"}`)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	manager := &ASBIdentityAnchorManager{
+		Client: newTestASBClient(t, server),
+		Config: ASBConfig{
+			IdentityAnchorTimeout: asbMaxRenewalDuration,
+		},
+	}
+	if err := manager.EnsureAvailable(context.Background(), testSandboxID); err != nil {
+		t.Fatalf("EnsureAvailable: %v", err)
+	}
+	if renewCalls != 0 {
+		t.Fatalf("renew calls = %d, want 0", renewCalls)
 	}
 }
 
