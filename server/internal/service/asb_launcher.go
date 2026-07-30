@@ -733,7 +733,7 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID 
 	defer ticker.Stop()
 	var lastErr error
 	for {
-		if err := l.probeSandboxIdentities(ctx, endpoint, identity.RawEmployeeID); err == nil {
+		if err := l.probeSandboxIdentities(ctx, endpoint); err == nil {
 			return nil
 		} else {
 			lastErr = err
@@ -751,14 +751,9 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID 
 func (l *ASBLauncher) probeSandboxIdentities(
 	ctx context.Context,
 	endpoint *ASBEndpoint,
-	employeeID string,
 ) error {
-	probe, err := asbIdentityProbeCommand(employeeID)
-	if err != nil {
-		return err
-	}
 	result, err := l.Client.Exec(ctx, endpoint, ASBExecInput{
-		Command: probe,
+		Command: asbIdentityProbeCommand(),
 		CWD:     "/",
 		Timeout: 25 * time.Second,
 		Envs: map[string]string{
@@ -776,25 +771,14 @@ func (l *ASBLauncher) probeSandboxIdentities(
 	return nil
 }
 
-func asbIdentityProbeCommand(employeeID string) (string, error) {
-	employeeID = strings.TrimSpace(employeeID)
-	if !enterpriseEmployeeIDPattern.MatchString(employeeID) {
-		return "", errors.New("ASB identity probe employee ID is invalid")
-	}
-	return fmt.Sprintf(
-		"set -eu; "+
-			"probe_dir=\"$(mktemp -d)\"; trap 'rm -rf \"$probe_dir\"' EXIT; "+
-			"curl -fsS --max-time 10 -H 'Agent-Proof-Token-Audience: https://authx.alibaba-inc.com' "+
-			"https://authx.alibaba-inc.com/ciap/sandbox/identity-info -d '' >/dev/null; "+
-			"curl -fsS --max-time 10 -X POST "+
-			"https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json >/dev/null; "+
-			"a1 --no-update-check -f json auth whoami >\"$probe_dir/a1.json\"; "+
-			"mw --no-update-check auth whoami --format json >\"$probe_dir/mw.json\"; "+
-			"jq -e --arg expected '%s' '(.emp_id | tostring) == $expected' \"$probe_dir/a1.json\" >/dev/null; "+
-			"jq -e --arg expected '%s' '(.employee_id | tostring) == $expected' \"$probe_dir/mw.json\" >/dev/null",
-		employeeID,
-		employeeID,
-	), nil
+func asbIdentityProbeCommand() string {
+	return "set -eu; " +
+		"curl -fsS --max-time 10 -H 'Agent-Proof-Token-Audience: https://authx.alibaba-inc.com' " +
+		"https://authx.alibaba-inc.com/ciap/sandbox/identity-info -d '' >/dev/null; " +
+		"curl -fsS --max-time 10 -X POST " +
+		"https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json >/dev/null; " +
+		"a1 --no-update-check -f json auth whoami >/dev/null; " +
+		"mw --no-update-check auth whoami --format json >/dev/null"
 }
 
 func (l *ASBLauncher) execRunOnce(

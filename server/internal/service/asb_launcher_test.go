@@ -112,25 +112,22 @@ func TestASBRunnerCommandUsesExecdUserCore(t *testing.T) {
 	}
 }
 
-func TestASBIdentityProbeUsesReadOnlyCLIsAndChecksEmployee(t *testing.T) {
+func TestASBIdentityProbeUsesReadOnlyCLIs(t *testing.T) {
 	t.Parallel()
 
-	command, err := asbIdentityProbeCommand("12345")
-	if err != nil {
-		t.Fatalf("asbIdentityProbeCommand: %v", err)
-	}
+	command := asbIdentityProbeCommand()
 	for _, expected := range []string{
 		"a1 --no-update-check -f json auth whoami",
 		"mw --no-update-check auth whoami --format json",
-		"(.emp_id | tostring) == $expected",
-		"(.employee_id | tostring) == $expected",
 	} {
 		if !strings.Contains(command, expected) {
 			t.Fatalf("ASB identity probe is missing %q: %s", expected, command)
 		}
 	}
-	if _, err := asbIdentityProbeCommand("12345; touch /tmp/unsafe"); err == nil {
-		t.Fatal("ASB identity probe accepted an unsafe employee ID")
+	for _, unexpected := range []string{"emp_id", "employee_id", "jq -e"} {
+		if strings.Contains(command, unexpected) {
+			t.Fatalf("ASB identity probe still checks %q: %s", unexpected, command)
+		}
 	}
 }
 
