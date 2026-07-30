@@ -40,6 +40,7 @@ type taskCompletionTarget struct {
 	AgentID        pgtype.UUID
 	CallbackURL    string
 	TargetIdentity string
+	CommentID      pgtype.UUID
 }
 
 type TaskCompletionNotifier interface {
@@ -92,21 +93,24 @@ func buildTaskCompletion(
 ) TaskCompletion {
 	resultMessage := redact.Text(util.UnescapeBackslashEscapes(lastReply))
 	if status == "completed" {
-		var payload protocol.TaskCompletedPayload
-		if json.Unmarshal(result, &payload) == nil {
-			completionMessage := payload.ResultMessage
-			if strings.TrimSpace(completionMessage) == "" {
-				completionMessage = payload.Output
+		if strings.TrimSpace(resultMessage) == "" {
+			var payload protocol.TaskCompletedPayload
+			if json.Unmarshal(result, &payload) == nil {
+				completionMessage := payload.ResultMessage
+				if strings.TrimSpace(completionMessage) == "" {
+					completionMessage = payload.Output
+				}
+				resultMessage = redact.Text(util.UnescapeBackslashEscapes(completionMessage))
 			}
-			resultMessage = redact.Text(util.UnescapeBackslashEscapes(completionMessage))
 		}
 	} else if status == "failed" {
-		if explicit := failedCompletionResultMessage(result); strings.TrimSpace(explicit) != "" {
+		if explicit := failedCompletionResultMessage(result); strings.TrimSpace(explicit) != "" &&
+			(!target.CommentID.Valid || strings.TrimSpace(resultMessage) == "") {
 			resultMessage = redact.Text(util.UnescapeBackslashEscapes(explicit))
 		}
 	}
 	return TaskCompletion{
-		RequestID:         "multica-terminal:" + util.UUIDToString(target.RootTaskID),
+		RequestID:         taskCompletionRequestID(target),
 		CallbackURL:       target.CallbackURL,
 		TargetIdentity:    target.TargetIdentity,
 		RootTaskID:        target.RootTaskID,
@@ -120,6 +124,13 @@ func buildTaskCompletion(
 	}
 }
 
+func taskCompletionRequestID(target taskCompletionTarget) string {
+	if target.CommentID.Valid {
+		return "multica-comment-terminal:" + util.UUIDToString(target.RootTaskID)
+	}
+	return "multica-terminal:" + util.UUIDToString(target.RootTaskID)
+}
+
 func (s *TaskService) enqueueTaskCompletionInTx(
 	ctx context.Context,
 	qtx *db.Queries,
@@ -129,55 +140,92 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 	errMessage string,
 	failureReason string,
 ) (bool, error) {
-	targetRow, err := qtx.GetTaskCompletionTarget(ctx, task.ID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
+	commentRows, err := qtx.ListTaskCommentCompletionTargets(ctx, task.ID)
 	if err != nil {
 		return false, err
 	}
-	lastReply := ""
+	targets := make([]taskCompletionTarget, 0, len(commentRows)+1)
+	commentRoots := make(map[string]struct{}, len(commentRows))
+	for _, row := range commentRows {
+		targets = append(targets, taskCompletionTarget{
+			RootTaskID:     row.RootTaskID,
+			AgentID:        row.RootAgentID,
+			CallbackURL:    row.CallbackUrl,
+			TargetIdentity: row.TargetIdentity,
+			CommentID:      row.CommentID,
+		})
+		commentRoots[util.UUIDToString(row.RootTaskID)] = struct{}{}
+	}
+	targetRow, rootErr := qtx.GetTaskCompletionTarget(ctx, task.ID)
+	if rootErr != nil && !errors.Is(rootErr, pgx.ErrNoRows) {
+		return false, rootErr
+	}
+	if rootErr == nil {
+		if _, delegated := commentRoots[util.UUIDToString(targetRow.RootTaskID)]; !delegated {
+			targets = append(targets, taskCompletionTarget{
+				RootTaskID:     targetRow.RootTaskID,
+				AgentID:        targetRow.RootAgentID,
+				CallbackURL:    targetRow.CallbackUrl,
+				TargetIdentity: targetRow.TargetIdentity,
+			})
+		}
+	}
+	if len(targets) == 0 {
+		return false, nil
+	}
+	fallbackReply := ""
 	if status == "failed" {
 		var replyErr error
-		lastReply, replyErr = resolveFailedCompletionReply(ctx, qtx, task.ID, result)
+		fallbackReply, replyErr = resolveFailedCompletionReply(ctx, qtx, task.ID, result)
 		if replyErr != nil {
 			return false, replyErr
 		}
 	}
-	completion := buildTaskCompletion(
-		taskCompletionTarget{
-			RootTaskID:     targetRow.RootTaskID,
-			AgentID:        targetRow.RootAgentID,
-			CallbackURL:    targetRow.CallbackUrl,
-			TargetIdentity: targetRow.TargetIdentity,
-		},
-		task,
-		status,
-		result,
-		lastReply,
-		errMessage,
-		failureReason,
-	)
-	_, err = qtx.EnqueueTaskCompletion(ctx, db.EnqueueTaskCompletionParams{
-		RootTaskID:        completion.RootTaskID,
-		TerminalTaskID:    completion.TerminalTaskID,
-		CallbackUrl:       completion.CallbackURL,
-		TargetIdentity:    completion.TargetIdentity,
-		RequestID:         completion.RequestID,
-		AgentID:           completion.AgentID,
-		ExecutionStatus:   completion.ExecutionStatus,
-		ResultMessage:     completion.ResultMessage,
-		ExternalSessionID: pgtype.Text{String: completion.ExternalSessionID, Valid: completion.ExternalSessionID != ""},
-		Error:             pgtype.Text{String: completion.Error, Valid: completion.Error != ""},
-		FailureReason:     pgtype.Text{String: completion.FailureReason, Valid: completion.FailureReason != ""},
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, ErrTaskCompletionConflict
+	queued := false
+	for _, target := range targets {
+		lastReply := fallbackReply
+		if target.CommentID.Valid {
+			reply, replyErr := qtx.GetTaskReplyForComment(ctx, db.GetTaskReplyForCommentParams{
+				TerminalTaskID: task.ID,
+				CommentID:      target.CommentID,
+			})
+			if replyErr == nil {
+				lastReply = reply
+			} else if !errors.Is(replyErr, pgx.ErrNoRows) {
+				return false, replyErr
+			}
+		}
+		completion := buildTaskCompletion(
+			target,
+			task,
+			status,
+			result,
+			lastReply,
+			errMessage,
+			failureReason,
+		)
+		_, enqueueErr := qtx.EnqueueTaskCompletion(ctx, db.EnqueueTaskCompletionParams{
+			RootTaskID:        completion.RootTaskID,
+			TerminalTaskID:    completion.TerminalTaskID,
+			CallbackUrl:       completion.CallbackURL,
+			TargetIdentity:    completion.TargetIdentity,
+			RequestID:         completion.RequestID,
+			AgentID:           completion.AgentID,
+			ExecutionStatus:   completion.ExecutionStatus,
+			ResultMessage:     completion.ResultMessage,
+			ExternalSessionID: pgtype.Text{String: completion.ExternalSessionID, Valid: completion.ExternalSessionID != ""},
+			Error:             pgtype.Text{String: completion.Error, Valid: completion.Error != ""},
+			FailureReason:     pgtype.Text{String: completion.FailureReason, Valid: completion.FailureReason != ""},
+		})
+		if errors.Is(enqueueErr, pgx.ErrNoRows) {
+			return false, ErrTaskCompletionConflict
+		}
+		if enqueueErr != nil {
+			return false, enqueueErr
+		}
+		queued = true
 	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+	return queued, nil
 }
 
 type failedTaskFinalization struct {

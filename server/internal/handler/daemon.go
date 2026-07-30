@@ -3561,6 +3561,7 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "fail task persistence failed")
 		return
 	}
+	h.reconcileCommentsOnCompletion(r.Context(), task)
 	if h.ManagedAgent != nil {
 		if err := h.ManagedAgent.ReconcileAgent(r.Context(), task.AgentID); err != nil {
 			slog.Warn("fail task: managed Agent reconciliation failed", "agent_id", uuidToString(task.AgentID), "error", err)

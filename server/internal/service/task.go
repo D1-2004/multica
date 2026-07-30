@@ -697,6 +697,74 @@ func (s *TaskService) EnqueueTaskForIssueWithDispatchContext(ctx context.Context
 	return s.enqueueIssueTaskWithDispatchContext(ctx, issue, commentID, false, "", strings.TrimSpace(agentIdentityContextToken), dispatchContext)
 }
 
+// EnqueueTaskForIssueFromTriggerComment preserves task-scoped delegation
+// context when completion reconciliation schedules a comment that arrived
+// after the previous Issue task had already been claimed. Ordinary comments
+// have no source_task_id and keep the normal enqueue behavior.
+func (s *TaskService) EnqueueTaskForIssueFromTriggerComment(
+	ctx context.Context,
+	issue db.Issue,
+	triggerCommentID pgtype.UUID,
+) (db.AgentTaskQueue, error) {
+	comment, err := s.Queries.GetCommentInWorkspace(ctx, db.GetCommentInWorkspaceParams{
+		ID:          triggerCommentID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return s.EnqueueTaskForIssue(ctx, issue, triggerCommentID)
+	}
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("load issue trigger comment: %w", err)
+	}
+	if !comment.SourceTaskID.Valid || comment.AuthorType != "member" {
+		return s.EnqueueTaskForIssue(ctx, issue, triggerCommentID)
+	}
+	sourceTask, err := s.Queries.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{
+		ID:          comment.SourceTaskID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("load delegated comment source task: %w", err)
+	}
+	var sourcePrivate struct {
+		AgentIdentityContextToken string `json:"agent_identity_context_token"`
+	}
+	if len(sourceTask.Context) > 0 {
+		if err := json.Unmarshal(sourceTask.Context, &sourcePrivate); err != nil {
+			return db.AgentTaskQueue{}, fmt.Errorf("decode delegated comment source context: %w", err)
+		}
+	}
+	dispatchContext := sourceTask.Context
+	rawContext := make(map[string]json.RawMessage)
+	if len(sourceTask.Context) > 0 {
+		if err := json.Unmarshal(sourceTask.Context, &rawContext); err != nil {
+			return db.AgentTaskQueue{}, fmt.Errorf("decode delegated comment dispatch context: %w", err)
+		}
+	}
+	issueSurface, err := json.Marshal(map[string]string{"type": protocol.DispatchSurfaceTypeIssue})
+	if err != nil {
+		return db.AgentTaskQueue{}, err
+	}
+	delegatedFromTaskID, err := json.Marshal(util.UUIDToString(sourceTask.ID))
+	if err != nil {
+		return db.AgentTaskQueue{}, err
+	}
+	rawContext[protocol.DispatchSurfaceJSONKey] = issueSurface
+	rawContext["dispatch_delegated_from_task_id"] = delegatedFromTaskID
+	dispatchContext, err = json.Marshal(rawContext)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("encode delegated comment dispatch context: %w", err)
+	}
+	return s.EnqueueTaskForIssueWithDispatchContextAndParent(
+		ctx,
+		issue,
+		sourcePrivate.AgentIdentityContextToken,
+		dispatchContext,
+		sourceTask.ID,
+		triggerCommentID,
+	)
+}
+
 // EnqueueTaskForIssueWithHandoff is the assign/promote variant that carries a
 // handoff note into the run's opening context (MUL-3375). The note rides a
 // dedicated task column; the daemon renders it via the assignment-handoff

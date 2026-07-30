@@ -135,6 +135,33 @@ func TestBuildTaskCompletionFailurePrefersExplicitResultMessage(t *testing.T) {
 	}
 }
 
+func TestBuildTaskCompletionDelegatedCommentPrefersThreadReplyOnFailure(t *testing.T) {
+	completion := buildTaskCompletion(
+		taskCompletionTarget{
+			RootTaskID:     pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
+			CallbackURL:    "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			TargetIdentity: taskCompletionTestTarget,
+			CommentID:      pgtype.UUID{Bytes: [16]byte{4}, Valid: true},
+		},
+		db.AgentTaskQueue{
+			ID:      pgtype.UUID{Bytes: [16]byte{2}, Valid: true},
+			AgentID: pgtype.UUID{Bytes: [16]byte{3}, Valid: true},
+		},
+		"failed",
+		[]byte(`{"result_message":"本轮任务失败"}`),
+		"该条评论对应的失败回复",
+		"runtime lost",
+		"runtime_offline",
+	)
+
+	if completion.ResultMessage != "该条评论对应的失败回复" {
+		t.Fatalf("result message = %q", completion.ResultMessage)
+	}
+	if completion.RequestID != "multica-comment-terminal:01000000-0000-0000-0000-000000000000" {
+		t.Fatalf("request id = %q", completion.RequestID)
+	}
+}
+
 type lastTaskReplyReaderStub struct {
 	reply pgtype.Text
 	err   error

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,6 +119,79 @@ func TestCompleteTask_ReconcilesMemberCommentPostedDuringRun(t *testing.T) {
 	// A follow-up run must now be queued for the agent.
 	if n := pendingTaskCountForAgentIssue(t, issueID, agentID); n != 1 {
 		t.Fatalf("expected exactly 1 follow-up task after reconciliation, got %d", n)
+	}
+}
+
+func TestFailTask_ReconcilesMemberCommentPostedDuringRun(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 AND runtime_id IS NOT NULL LIMIT 1`,
+		testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("setup: get agent: %v", err)
+	}
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_id, creator_type,
+			number, position, assignee_type, assignee_id
+		)
+		VALUES (
+			$1, 'failed reconcile fixture', 'in_progress', 'none',
+			$2, 'member', 999011, 0, 'agent', $3
+		)
+		RETURNING id
+	`, testWorkspaceID, testUserID, agentID).Scan(&issueID); err != nil {
+		t.Fatalf("setup: create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	var triggerCommentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO comment (
+			issue_id, workspace_id, author_type, author_id, content, type, created_at
+		)
+		VALUES (
+			$1, $2, 'member', $3, 'initial request', 'comment',
+			now() - interval '10 minutes'
+		)
+		RETURNING id
+	`, issueID, testWorkspaceID, testUserID).Scan(&triggerCommentID); err != nil {
+		t.Fatalf("setup: trigger comment: %v", err)
+	}
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, trigger_comment_id,
+			delivered_comment_ids, status, priority, created_at, started_at
+		)
+		VALUES (
+			$1, $2, $3, $4, ARRAY[$4::uuid], 'running', 0,
+			now() - interval '10 minutes', now() - interval '5 minutes'
+		)
+		RETURNING id
+	`, agentID, runtimeID, issueID, triggerCommentID).Scan(&taskID); err != nil {
+		t.Fatalf("setup: running task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO comment (
+			issue_id, workspace_id, author_type, author_id, content, type, created_at
+		)
+		VALUES (
+			$1, $2, 'member', $3, 'follow up before failure', 'comment',
+			now() - interval '1 minute'
+		)
+	`, issueID, testWorkspaceID, testUserID); err != nil {
+		t.Fatalf("setup: follow-up comment: %v", err)
+	}
+
+	if w := failTaskViaHandler(t, taskID); w.Code != http.StatusOK {
+		t.Fatalf("FailTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if n := pendingTaskCountForAgentIssue(t, issueID, agentID); n != 1 {
+		t.Fatalf("expected exactly 1 follow-up after failed task, got %d", n)
 	}
 }
 
@@ -674,6 +748,124 @@ func TestCompleteTask_ReconcilesDispatchedWindowComment(t *testing.T) {
 
 	if n := pendingTaskCountForAgentIssue(t, issueID, agentID); n != 1 {
 		t.Fatalf("expected exactly 1 follow-up for the dispatch-window comment, got %d", n)
+	}
+}
+
+func TestCompleteTask_ReconciledDelegationRetainsSourcePrivateContext(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 AND runtime_id IS NOT NULL LIMIT 1`,
+		testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("setup: get agent: %v", err)
+	}
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_id, creator_type,
+			number, position, assignee_type, assignee_id
+		)
+		VALUES (
+			$1, 'delegated reconcile private context', 'in_progress', 'none',
+			$2, 'member', 999010, 0, 'agent', $3
+		)
+		RETURNING id
+	`, testWorkspaceID, testUserID, agentID).Scan(&issueID); err != nil {
+		t.Fatalf("setup: create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	var originalCommentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO comment (
+			issue_id, workspace_id, author_type, author_id, content, type, created_at
+		)
+		VALUES (
+			$1, $2, 'member', $3, 'original task', 'comment',
+			now() - interval '10 minutes'
+		)
+		RETURNING id
+	`, issueID, testWorkspaceID, testUserID).Scan(&originalCommentID); err != nil {
+		t.Fatalf("setup: original comment: %v", err)
+	}
+	var activeTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, trigger_comment_id,
+			delivered_comment_ids, status, priority, created_at, started_at
+		)
+		VALUES (
+			$1, $2, $3, $4, ARRAY[$4::uuid], 'running', 0,
+			now() - interval '10 minutes', now() - interval '5 minutes'
+		)
+		RETURNING id
+	`, agentID, runtimeID, issueID, originalCommentID).Scan(&activeTaskID); err != nil {
+		t.Fatalf("setup: active issue task: %v", err)
+	}
+
+	var sourceTaskID string
+	sourceContext := `{
+		"agent_identity_context_token":"reconciled-private-token",
+		"parent_ref":{"type":"router_task","id":"router-reconciled"},
+		"completion_callback":{
+			"url":"/api/v1/dispatch-tasks/router-reconciled/execution-result",
+			"update_url":"/api/v1/dispatch-tasks/router-reconciled/execution-update",
+			"target":"` + testRouterTargetIdentity + `"
+		}
+	}`
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority,
+			initiator_user_id, originator_user_id, context, completed_at
+		)
+		VALUES ($1, $2, NULL, 'completed', 2, $3, $3, $4::jsonb, now())
+		RETURNING id
+	`, agentID, runtimeID, testUserID, sourceContext).Scan(&sourceTaskID); err != nil {
+		t.Fatalf("setup: source Chat task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM task_completion_outbox WHERE root_task_id = $1`, sourceTaskID)
+		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, sourceTaskID)
+	})
+
+	var delegatedCommentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO comment (
+			issue_id, workspace_id, author_type, author_id, content, type,
+			source_task_id, created_at
+		)
+		VALUES (
+			$1, $2, 'member', $3, 'delegated while claim was in flight',
+			'comment', $4, now() - interval '1 minute'
+		)
+		RETURNING id
+	`, issueID, testWorkspaceID, testUserID, sourceTaskID).Scan(&delegatedCommentID); err != nil {
+		t.Fatalf("setup: delegated comment: %v", err)
+	}
+
+	if w := completeTaskViaHandler(t, activeTaskID, "done"); w.Code != http.StatusOK {
+		t.Fatalf("CompleteTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var triggerCommentID, parentTaskID, followUpContext string
+	if err := testPool.QueryRow(ctx, `
+		SELECT trigger_comment_id::text, COALESCE(parent_task_id::text, ''), context::text
+		FROM agent_task_queue
+		WHERE issue_id = $1 AND status = 'queued'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, issueID).Scan(&triggerCommentID, &parentTaskID, &followUpContext); err != nil {
+		t.Fatal(err)
+	}
+	if triggerCommentID != delegatedCommentID ||
+		parentTaskID != sourceTaskID ||
+		!strings.Contains(followUpContext, "reconciled-private-token") ||
+		!strings.Contains(followUpContext, "router-reconciled") {
+		t.Fatalf("follow-up trigger=%s parent=%s context=%s",
+			triggerCommentID, parentTaskID, followUpContext)
 	}
 }
 
