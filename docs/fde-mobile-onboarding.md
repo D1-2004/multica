@@ -20,11 +20,11 @@ MULTICA_FDE_AGENT_SYNC_INTERVAL=30m
 MULTICA_FDE_AGENT_ROLLOUT_BATCH_SIZE=50
 ```
 
-仓库可位于任意 Git 托管平台，但必须使用不含凭据的 HTTPS URL 并且公开可读；公开性由无交互 `git clone` 实际验证。仓库还需包含可由现有 `agentsource` compiler 校验的 `multica-agent.yaml`、instructions 和 skills。服务启动后立即尝试同步，之后默认每 30 分钟检查一次。多节点通过 PostgreSQL advisory lock 串行同步；成功快照保存在 PostgreSQL，远端暂时不可用时继续使用 last-known-good 快照。
+仓库可位于任意 Git 托管平台，但必须使用不含凭据的 HTTPS URL 并且公开可读；公开性由无交互 `git clone` 实际验证。仓库必须是 DTA `dingtalk-agent/project@1`：根目录包含 `dingtalk-agent.json`，Definition 位于 `agent/AGENTS.md`，全部发布 Skill 位于 `agent/skills/`，并显式包含 `dta-basic-behavior`。服务启动后立即尝试同步，之后默认每 30 分钟检查一次。多节点通过 PostgreSQL advisory lock 串行同步；成功快照保存在 PostgreSQL，远端暂时不可用时继续使用 last-known-good 快照。
 
 还必须配置现有的钉钉 OAuth/机器人注册参数、FC E2B 参数和至少一个 FC 模型。最终运行镜像需要包含 `git`。
 
-平台托管 Agent 的仓库内容更新由服务自动应用：空闲 Agent 立即分批更新，运行中 Agent 跳过，任务终态后再安全对齐。显示名称、描述、用户手工添加的 skills、runtime、模型和钉钉绑定不由源同步覆盖。
+平台初始化 Agent 的仓库内容更新由服务自动应用：空闲 Agent 立即分批更新，运行中 Agent 跳过，任务终态后再安全对齐。数据库 Source 使用统一的 `source_type=github`；`managed_source_key` 只标识平台自动同步模式，不要求用户安装 GitHub App。来源 Skill 对外使用 DTA 可识别的 `github_agent_source` origin。显示名称、描述、用户手工添加的 skills、runtime、模型和钉钉绑定不由源同步覆盖。
 
 ## `--allow-unbound` 边界
 

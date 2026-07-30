@@ -15,6 +15,25 @@ import (
 // CompileFS compiles an Agent bundle from a local or embedded filesystem using
 // the same parser, limits, validation, and stable hash as GitHub sources.
 func CompileFS(ctx context.Context, sourceFS fs.FS) (Bundle, error) {
+	client, err := newFSRepositoryClient(sourceFS)
+	if err != nil {
+		return Bundle{}, err
+	}
+	return Compile(ctx, client, Source{})
+}
+
+// CompileDTAProjectFS compiles a DTA Project from a local or embedded
+// filesystem with the same parser and repository safety checks as GitHub
+// Agent Sources.
+func CompileDTAProjectFS(ctx context.Context, sourceFS fs.FS) (Bundle, error) {
+	client, err := newFSRepositoryClient(sourceFS)
+	if err != nil {
+		return Bundle{}, err
+	}
+	return CompileDTAProject(ctx, client, Source{})
+}
+
+func newFSRepositoryClient(sourceFS fs.FS) (*fsRepositoryClient, error) {
 	client := &fsRepositoryClient{sourceFS: sourceFS, blobs: make(map[string][]byte)}
 	if err := fs.WalkDir(sourceFS, ".", func(filePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -46,10 +65,10 @@ func CompileFS(ctx context.Context, sourceFS fs.FS) (Bundle, error) {
 		})
 		return nil
 	}); err != nil {
-		return Bundle{}, fmt.Errorf("scan local agent bundle: %w", err)
+		return nil, fmt.Errorf("scan local agent bundle: %w", err)
 	}
 	sort.Slice(client.entries, func(i, j int) bool { return client.entries[i].Path < client.entries[j].Path })
-	return Compile(ctx, client, Source{})
+	return client, nil
 }
 
 type fsRepositoryClient struct {
