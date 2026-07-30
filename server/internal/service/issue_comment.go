@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -31,6 +32,13 @@ type IssueCommentCreateParams struct {
 	AttachmentIDs             []pgtype.UUID
 	AgentIdentityContextToken string
 	DispatchContext           []byte
+	ParentTaskID              pgtype.UUID
+	Delegation                *IssueDelegationFollowUpParams
+}
+
+type IssueDelegationFollowUpParams struct {
+	CallbackUpdateURL string
+	CallbackTarget    string
 }
 
 type IssueCommentCreateOpts struct {
@@ -54,6 +62,9 @@ func (s *IssueCommentService) CreateExternalFollowUp(ctx context.Context, params
 	}
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
 		return IssueCommentCreateResult{}, errors.New("issue is not assigned to an agent")
+	}
+	if params.Delegation != nil {
+		return s.createDelegatedExternalFollowUp(ctx, params, opts)
 	}
 	active, err := s.Queries.HasActiveTaskForIssueAndAgent(ctx, db.HasActiveTaskForIssueAndAgentParams{
 		IssueID: issue.ID,
@@ -109,7 +120,16 @@ func (s *IssueCommentService) CreateExternalFollowUp(ctx context.Context, params
 		})
 	}
 	var task db.AgentTaskQueue
-	if len(params.DispatchContext) > 0 {
+	if params.ParentTaskID.Valid {
+		task, err = s.TaskService.EnqueueTaskForIssueWithDispatchContextAndParent(
+			ctx,
+			issue,
+			params.AgentIdentityContextToken,
+			params.DispatchContext,
+			params.ParentTaskID,
+			comment.ID,
+		)
+	} else if len(params.DispatchContext) > 0 {
 		task, err = s.TaskService.EnqueueTaskForIssueWithDispatchContext(ctx, issue, params.AgentIdentityContextToken, params.DispatchContext, comment.ID)
 	} else {
 		task, err = s.TaskService.EnqueueTaskForIssueWithAgentIdentityContext(ctx, issue, params.AgentIdentityContextToken, comment.ID)
@@ -118,4 +138,150 @@ func (s *IssueCommentService) CreateExternalFollowUp(ctx context.Context, params
 		return IssueCommentCreateResult{Comment: comment, Attachments: attachments}, fmt.Errorf("enqueue issue follow-up: %w", err)
 	}
 	return IssueCommentCreateResult{Comment: comment, Attachments: attachments, Task: task}, nil
+}
+
+func (s *IssueCommentService) createDelegatedExternalFollowUp(ctx context.Context, params IssueCommentCreateParams, opts IssueCommentCreateOpts) (IssueCommentCreateResult, error) {
+	if !params.ParentTaskID.Valid {
+		return IssueCommentCreateResult{}, errors.New("delegation parent task is required")
+	}
+	agent, err := s.Queries.GetAgent(ctx, params.Issue.AssigneeID)
+	if err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("load delegation target agent: %w", err)
+	}
+	if agent.ArchivedAt.Valid {
+		return IssueCommentCreateResult{}, errors.New("delegation target agent is archived")
+	}
+	if !agent.RuntimeID.Valid {
+		return IssueCommentCreateResult{}, errors.New("delegation target agent has no runtime")
+	}
+	overlay := s.TaskService.buildRuntimeMCPOverlay(ctx, params.AuthorID, agent)
+	tx, err := s.TaskService.TxStarter.Begin(ctx)
+	if err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("begin delegated follow-up: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.Queries.WithTx(tx)
+	sourceTask, err := qtx.GetAgentTaskInWorkspaceForUpdate(ctx, db.GetAgentTaskInWorkspaceForUpdateParams{
+		ID:          params.ParentTaskID,
+		WorkspaceID: params.Issue.WorkspaceID,
+	})
+	if err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("lock delegation source task: %w", err)
+	}
+	if sourceTask.Status != "running" && sourceTask.Status != "dispatched" {
+		return IssueCommentCreateResult{}, ErrDelegationSourceInactive
+	}
+	if _, childErr := qtx.GetDelegatedChildTaskByParent(ctx, sourceTask.ID); childErr == nil {
+		return IssueCommentCreateResult{}, ErrDelegationAlreadyExists
+	} else if !errors.Is(childErr, pgx.ErrNoRows) {
+		return IssueCommentCreateResult{}, fmt.Errorf("check delegated child task: %w", childErr)
+	}
+	active, err := qtx.HasActiveTaskForIssueAndAgent(ctx, db.HasActiveTaskForIssueAndAgentParams{
+		IssueID: params.Issue.ID,
+		AgentID: params.Issue.AssigneeID,
+	})
+	if err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("check active issue task: %w", err)
+	}
+	if active {
+		return IssueCommentCreateResult{}, ErrIssueDispatchPending
+	}
+	comment, err := qtx.CreateComment(ctx, db.CreateCommentParams{
+		IssueID:     params.Issue.ID,
+		WorkspaceID: params.Issue.WorkspaceID,
+		AuthorType:  "member",
+		AuthorID:    params.AuthorID,
+		Content:     params.Content,
+		Type:        "comment",
+	})
+	if err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("create issue comment: %w", err)
+	}
+	if len(params.AttachmentIDs) > 0 {
+		if err := qtx.LinkAttachmentsToComment(ctx, db.LinkAttachmentsToCommentParams{
+			CommentID: comment.ID,
+			IssueID:   params.Issue.ID,
+			Column3:   params.AttachmentIDs,
+		}); err != nil {
+			return IssueCommentCreateResult{}, fmt.Errorf("link comment attachments: %w", err)
+		}
+	}
+	attachments, err := qtx.ListAttachmentsByComment(ctx, db.ListAttachmentsByCommentParams{
+		CommentID:   comment.ID,
+		WorkspaceID: params.Issue.WorkspaceID,
+	})
+	if err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("list comment attachments: %w", err)
+	}
+	agent, err = qtx.GetAgent(ctx, params.Issue.AssigneeID)
+	if err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("reload delegation target agent: %w", err)
+	}
+	if agent.ArchivedAt.Valid {
+		return IssueCommentCreateResult{}, errors.New("delegation target agent is archived")
+	}
+	if !agent.RuntimeID.Valid {
+		return IssueCommentCreateResult{}, errors.New("delegation target agent has no runtime")
+	}
+	triggerSummary := truncateForSummary(params.Content, triggerSummaryMaxLen)
+	task, err := qtx.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+		AgentID:                   params.Issue.AssigneeID,
+		RuntimeID:                 agent.RuntimeID,
+		IssueID:                   params.Issue.ID,
+		Priority:                  priorityToInt(params.Issue.Priority),
+		TriggerCommentID:          comment.ID,
+		TriggerSummary:            pgtype.Text{String: triggerSummary, Valid: triggerSummary != ""},
+		OriginatorUserID:          params.AuthorID,
+		RuntimeMcpOverlay:         overlay.Overlay,
+		RuntimeConnectedApps:      overlay.ConnectedApps,
+		ParentTaskID:              sourceTask.ID,
+		AgentIdentityContextToken: agentIdentityContextTokenText(params.AgentIdentityContextToken),
+		DispatchContext:           params.DispatchContext,
+	})
+	if err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("create delegated follow-up task: %w", err)
+	}
+	if params.Delegation.CallbackUpdateURL != "" {
+		workspace, workspaceErr := qtx.GetWorkspace(ctx, params.Issue.WorkspaceID)
+		if workspaceErr != nil {
+			return IssueCommentCreateResult{}, fmt.Errorf("load delegation workspace: %w", workspaceErr)
+		}
+		if _, updateErr := qtx.EnqueueTaskExecutionUpdate(ctx, db.EnqueueTaskExecutionUpdateParams{
+			RootTaskID:      sourceTask.ID,
+			TargetTaskID:    task.ID,
+			IssueID:         params.Issue.ID,
+			IssueIdentifier: fmt.Sprintf("%s-%d", workspace.IssuePrefix, params.Issue.Number),
+			CallbackUrl:     params.Delegation.CallbackUpdateURL,
+			TargetIdentity:  params.Delegation.CallbackTarget,
+			RequestID:       "multica-handoff:" + util.UUIDToString(sourceTask.ID),
+			AgentID:         sourceTask.AgentID,
+			TargetAgentID:   task.AgentID,
+			UpdateType:      "delegated_to_issue",
+		}); updateErr != nil {
+			return IssueCommentCreateResult{}, fmt.Errorf("enqueue delegation update: %w", updateErr)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("commit delegated follow-up: %w", err)
+	}
+	s.publishExternalFollowUpComment(params, opts, comment, attachments)
+	s.TaskService.publishIssueTaskEnqueued(ctx, task)
+	return IssueCommentCreateResult{Comment: comment, Attachments: attachments, Task: task}, nil
+}
+
+func (s *IssueCommentService) publishExternalFollowUpComment(params IssueCommentCreateParams, opts IssueCommentCreateOpts, comment db.Comment, attachments []db.Attachment) {
+	if s.Bus == nil {
+		return
+	}
+	payload := map[string]any{"comment_id": util.UUIDToString(comment.ID), "issue_id": util.UUIDToString(params.Issue.ID)}
+	if opts.BroadcastPayload != nil {
+		payload = opts.BroadcastPayload(comment, attachments)
+	}
+	s.Bus.Publish(events.Event{
+		Type:        protocol.EventCommentCreated,
+		WorkspaceID: util.UUIDToString(params.Issue.WorkspaceID),
+		ActorType:   "member",
+		ActorID:     util.UUIDToString(params.AuthorID),
+		Payload:     payload,
+	})
 }

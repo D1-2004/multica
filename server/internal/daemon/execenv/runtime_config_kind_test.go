@@ -103,6 +103,7 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 		{"## Background Task Safety", allKinds},
 		{"## Agent Identity", allKinds},
 		{"## Available Commands", allKinds},
+		{"## Background Issue Delegation", map[taskKind]bool{kindChat: true}},
 		{"### Workflow", allKinds},
 		{"## Important: Always Use the `multica` CLI", allKinds},
 		{"## Output", allKinds},
@@ -148,6 +149,48 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 			if !want && present {
 				t.Errorf("kind=%d: heading %q should NOT be in slim brief (matrix gating regression)", kind, c.heading)
 			}
+		}
+	}
+}
+
+func TestChatIssueDelegationBrief(t *testing.T) {
+	chat := buildMetaSkillContent("claude", TaskContextForEnv{
+		ChatSessionID: "chat-1",
+		AgentName:     "Eve",
+		AgentID:       "eve-1",
+	})
+
+	for _, want := range []string{
+		"## Background Issue Delegation",
+		"Do not spend a separate long preflight turn classifying the request",
+		"Public information alone does not make a task lightweight",
+		`--metadata "multica.chat_session_id=$MULTICA_CHAT_SESSION_ID"`,
+		"same subject and intended deliverable",
+		"stable, self-contained title",
+		"multica issue delegate --issue <id>",
+		"multica issue delegate --title",
+		"Do not use `multica issue create` or `multica issue comment add`",
+		"does not expose callback URLs, callback tokens, or context tokens",
+		"release_parent: true",
+		"end the Chat turn",
+		"not a sandbox background process",
+	} {
+		if !strings.Contains(chat, want) {
+			t.Errorf("chat delegation brief missing %q\n---\n%s", want, chat)
+		}
+	}
+
+	for name, ctx := range map[string]TaskContextForEnv{
+		"comment":   {IssueID: "issue-1", TriggerCommentID: "comment-1"},
+		"assignment": {IssueID: "issue-1"},
+		"autopilot":  {AutopilotRunID: "run-1"},
+	} {
+		out := buildMetaSkillContent("claude", ctx)
+		if strings.Contains(out, "## Background Issue Delegation") {
+			t.Errorf("%s brief must not inject Chat delegation policy\n---\n%s", name, out)
+		}
+		if strings.Contains(out, "multica issue delegate") {
+			t.Errorf("%s brief must not advertise Chat-only delegation command\n---\n%s", name, out)
 		}
 	}
 }

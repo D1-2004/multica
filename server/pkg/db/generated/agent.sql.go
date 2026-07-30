@@ -1543,7 +1543,7 @@ const createAgentTask = `-- name: CreateAgentTask :one
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,
     coalesced_comment_ids, trigger_summary, force_fresh_session, is_leader_task, handoff_note,
-    squad_id, context, originator_user_id, runtime_mcp_overlay, runtime_connected_apps
+    squad_id, parent_task_id, context, originator_user_id, runtime_mcp_overlay, runtime_connected_apps
 )
 VALUES (
     $1, $2, $3, 'queued', $4, $5,
@@ -1553,19 +1553,20 @@ VALUES (
     COALESCE($9::boolean, FALSE),
     $10,
     $11,
+    $12,
     CASE
-        WHEN COALESCE($12::text, '') <> ''
-          OR COALESCE($13::text, '') <> ''
-          OR COALESCE($14::jsonb, '{}'::jsonb) <> '{}'::jsonb
-        THEN jsonb_strip_nulls(COALESCE($14::jsonb, '{}'::jsonb) || jsonb_build_object(
-            'head_sha', NULLIF($12::text, ''),
-            'agent_identity_context_token', NULLIF($13::text, '')
+        WHEN COALESCE($13::text, '') <> ''
+          OR COALESCE($14::text, '') <> ''
+          OR COALESCE($15::jsonb, '{}'::jsonb) <> '{}'::jsonb
+        THEN jsonb_strip_nulls(COALESCE($15::jsonb, '{}'::jsonb) || jsonb_build_object(
+            'head_sha', NULLIF($13::text, ''),
+            'agent_identity_context_token', NULLIF($14::text, '')
         ))
         ELSE NULL
     END,
-    $15,
     $16,
-    $17
+    $17,
+    $18
 )
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, runtime_launch_lease_token, runtime_launch_lease_expires_at
 `
@@ -1582,6 +1583,7 @@ type CreateAgentTaskParams struct {
 	IsLeaderTask              pgtype.Bool   `json:"is_leader_task"`
 	HandoffNote               pgtype.Text   `json:"handoff_note"`
 	SquadID                   pgtype.UUID   `json:"squad_id"`
+	ParentTaskID              pgtype.UUID   `json:"parent_task_id"`
 	HeadSha                   pgtype.Text   `json:"head_sha"`
 	AgentIdentityContextToken pgtype.Text   `json:"agent_identity_context_token"`
 	DispatchContext           []byte        `json:"dispatch_context"`
@@ -1607,6 +1609,7 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 		arg.IsLeaderTask,
 		arg.HandoffNote,
 		arg.SquadID,
+		arg.ParentTaskID,
 		arg.HeadSha,
 		arg.AgentIdentityContextToken,
 		arg.DispatchContext,
@@ -2809,6 +2812,125 @@ func (q *Queries) GetAgentTaskInWorkspace(ctx context.Context, arg GetAgentTaskI
 	return i, err
 }
 
+const getAgentTaskInWorkspaceForUpdate = `-- name: GetAgentTaskInWorkspaceForUpdate :one
+SELECT atq.id, atq.agent_id, atq.issue_id, atq.status, atq.priority, atq.dispatched_at, atq.started_at, atq.completed_at, atq.result, atq.error, atq.created_at, atq.context, atq.runtime_id, atq.session_id, atq.work_dir, atq.trigger_comment_id, atq.chat_session_id, atq.autopilot_run_id, atq.attempt, atq.max_attempts, atq.parent_task_id, atq.failure_reason, atq.trigger_summary, atq.force_fresh_session, atq.is_leader_task, atq.wait_reason, atq.initiator_user_id, atq.handoff_note, atq.prepare_lease_expires_at, atq.squad_id, atq.runtime_mcp_overlay, atq.escalation_for_task_id, atq.fire_at, atq.originator_user_id, atq.runtime_connected_apps, atq.coalesced_comment_ids, atq.delivered_comment_ids, atq.chat_input_task_id, atq.runtime_launch_lease_token, atq.runtime_launch_lease_expires_at FROM agent_task_queue atq
+JOIN agent a ON a.id = atq.agent_id
+WHERE atq.id = $1 AND a.workspace_id = $2
+FOR UPDATE OF atq
+`
+
+type GetAgentTaskInWorkspaceForUpdateParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Serializes delegation with task completion, cancellation, timeout, and a
+// concurrent delegation attempt. Callers must re-check active status after
+// acquiring this lock before creating the delegated child.
+func (q *Queries) GetAgentTaskInWorkspaceForUpdate(ctx context.Context, arg GetAgentTaskInWorkspaceForUpdateParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, getAgentTaskInWorkspaceForUpdate, arg.ID, arg.WorkspaceID)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.RuntimeLaunchLeaseToken,
+		&i.RuntimeLaunchLeaseExpiresAt,
+	)
+	return i, err
+}
+
+const getDelegatedChildTaskByParent = `-- name: GetDelegatedChildTaskByParent :one
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, runtime_launch_lease_token, runtime_launch_lease_expires_at FROM agent_task_queue
+WHERE parent_task_id = $1
+  AND context #>> '{dispatch_delegated_from_task_id}' = $1::text
+ORDER BY created_at ASC
+LIMIT 1
+`
+
+func (q *Queries) GetDelegatedChildTaskByParent(ctx context.Context, parentTaskID pgtype.UUID) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, getDelegatedChildTaskByParent, parentTaskID)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.RuntimeLaunchLeaseToken,
+		&i.RuntimeLaunchLeaseExpiresAt,
+	)
+	return i, err
+}
+
 const getLastTaskSession = `-- name: GetLastTaskSession :one
 SELECT session_id, work_dir, runtime_id FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
@@ -3339,6 +3461,88 @@ func (q *Queries) ListActiveAgentsByRuntimeForUpdate(ctx context.Context, runtim
 			&i.PermissionMode,
 			&i.Kind,
 			&i.SystemKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActiveDelegatedDescendantTasksByParent = `-- name: ListActiveDelegatedDescendantTasksByParent :many
+WITH RECURSIVE delegated_task_ids AS (
+    SELECT child.id
+    FROM agent_task_queue child
+    WHERE child.parent_task_id = $1
+      AND child.context #>> '{dispatch_delegated_from_task_id}' = $1::text
+
+    UNION ALL
+
+    SELECT child.id
+    FROM agent_task_queue child
+    JOIN delegated_task_ids parent ON child.parent_task_id = parent.id
+    WHERE child.context #>> '{dispatch_delegated_from_task_id}' = $1::text
+)
+SELECT task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.runtime_launch_lease_token, task.runtime_launch_lease_expires_at
+FROM agent_task_queue task
+JOIN delegated_task_ids delegated ON delegated.id = task.id
+WHERE task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+ORDER BY task.created_at ASC
+`
+
+func (q *Queries) ListActiveDelegatedDescendantTasksByParent(ctx context.Context, parentTaskID pgtype.UUID) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, listActiveDelegatedDescendantTasksByParent, parentTaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.RuntimeLaunchLeaseToken,
+			&i.RuntimeLaunchLeaseExpiresAt,
 		); err != nil {
 			return nil, err
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -26,12 +27,12 @@ type CompletionReconciler interface {
 }
 
 type CompletionWorker struct {
-	queries    *db.Queries
-	client     *Client
+	queries        *db.Queries
+	client         *Client
 	targetIdentity string
-	reconciler CompletionReconciler
-	notify     chan struct{}
-	done       chan struct{}
+	reconciler     CompletionReconciler
+	notify         chan struct{}
+	done           chan struct{}
 }
 
 func NewCompletionWorker(
@@ -40,12 +41,12 @@ func NewCompletionWorker(
 	reconciler CompletionReconciler,
 ) *CompletionWorker {
 	return &CompletionWorker{
-		queries:    queries,
-		client:     client,
+		queries:        queries,
+		client:         client,
 		targetIdentity: client.TargetIdentity(),
-		reconciler: reconciler,
-		notify:     make(chan struct{}, completionWorkerConcurrency),
-		done:       make(chan struct{}),
+		reconciler:     reconciler,
+		notify:         make(chan struct{}, completionWorkerConcurrency),
+		done:           make(chan struct{}),
 	}
 }
 
@@ -64,6 +65,10 @@ func (w *CompletionWorker) NotifyTaskCompletion() {
 	case w.notify <- struct{}{}:
 	default:
 	}
+}
+
+func (w *CompletionWorker) NotifyTaskExecutionUpdate() {
+	w.NotifyTaskCompletion()
 }
 
 func (w *CompletionWorker) Run(ctx context.Context) {
@@ -154,6 +159,99 @@ func (w *CompletionWorker) ProcessNext(ctx context.Context) (bool, error) {
 	if w == nil || w.queries == nil || w.client == nil || w.targetIdentity == "" {
 		return false, nil
 	}
+	worked, err := w.processNextExecutionUpdate(ctx)
+	if worked || err != nil {
+		return worked, err
+	}
+	return w.processNextCompletion(ctx)
+}
+
+func (w *CompletionWorker) processNextExecutionUpdate(ctx context.Context) (bool, error) {
+	executionUpdate, err := w.queries.ClaimTaskExecutionUpdate(ctx, w.targetIdentity)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	update := ExecutionUpdateRequest{
+		RequestID:      executionUpdate.RequestID,
+		AgentID:        util.UUIDToString(executionUpdate.AgentID),
+		ExternalTaskID: util.UUIDToString(executionUpdate.RootTaskID),
+		UpdateType:     executionUpdate.UpdateType,
+		OccurredAt:     executionUpdate.OccurredAt.Time.UnixMilli(),
+		Extension: ExecutionUpdateExtension{
+			IssueID:         util.UUIDToString(executionUpdate.IssueID),
+			IssueIdentifier: executionUpdate.IssueIdentifier,
+			TargetTaskID:    util.UUIDToString(executionUpdate.TargetTaskID),
+			TargetAgentID:   util.UUIDToString(executionUpdate.TargetAgentID),
+		},
+	}
+	err = w.client.SubmitExecutionUpdate(ctx, executionUpdate.CallbackUrl, update)
+	if err == nil {
+		_, completeErr := w.queries.CompleteTaskExecutionUpdate(ctx, db.CompleteTaskExecutionUpdateParams{
+			ID:         executionUpdate.ID,
+			LeaseToken: executionUpdate.LeaseToken,
+		})
+		if errors.Is(completeErr, pgx.ErrNoRows) {
+			return true, nil
+		}
+		return true, completeErr
+	}
+
+	var deliveryErr *ExecutionResultDeliveryError
+	if errors.As(err, &deliveryErr) && !executionUpdateDeliveryRetryable(deliveryErr) {
+		_, deadLetterErr := w.queries.DeadLetterTaskExecutionUpdate(ctx, db.DeadLetterTaskExecutionUpdateParams{
+			ID:         executionUpdate.ID,
+			LeaseToken: executionUpdate.LeaseToken,
+			LastError:  pgtype.Text{String: err.Error(), Valid: true},
+		})
+		if errors.Is(deadLetterErr, pgx.ErrNoRows) {
+			return true, nil
+		}
+		if deadLetterErr == nil {
+			slog.Error("task execution update moved to dead letter",
+				"execution_update_id", util.UUIDToString(executionUpdate.ID),
+				"request_id", executionUpdate.RequestID,
+				"error", err,
+			)
+		}
+		return true, deadLetterErr
+	}
+
+	backoff := time.Second * time.Duration(1<<min(executionUpdate.AttemptCount, 8))
+	_, retryErr := w.queries.RetryTaskExecutionUpdate(ctx, db.RetryTaskExecutionUpdateParams{
+		ID:          executionUpdate.ID,
+		LeaseToken:  executionUpdate.LeaseToken,
+		AvailableAt: pgtype.Timestamptz{Time: time.Now().Add(backoff), Valid: true},
+		LastError:   pgtype.Text{String: err.Error(), Valid: true},
+	})
+	if errors.Is(retryErr, pgx.ErrNoRows) {
+		return true, nil
+	}
+	if retryErr == nil {
+		slog.Warn("task execution update delivery deferred",
+			"execution_update_id", util.UUIDToString(executionUpdate.ID),
+			"request_id", executionUpdate.RequestID,
+			"attempt", executionUpdate.AttemptCount,
+			"backoff", backoff,
+			"error", err,
+		)
+	}
+	return true, retryErr
+}
+
+func executionUpdateDeliveryRetryable(deliveryErr *ExecutionResultDeliveryError) bool {
+	if deliveryErr == nil {
+		return false
+	}
+	// updateUrl is only emitted by a Router version that implements this
+	// endpoint, but a callback can still land on an older pod during a rolling
+	// deployment. Keep the durable handoff queued until that pod drains.
+	return deliveryErr.status == http.StatusNotFound || deliveryErr.Retryable()
+}
+
+func (w *CompletionWorker) processNextCompletion(ctx context.Context) (bool, error) {
 	completion, err := w.queries.ClaimTaskCompletion(ctx, w.targetIdentity)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil

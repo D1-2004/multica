@@ -1635,6 +1635,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Task messages (user-facing, not daemon auth)
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
 
+			// Task-scoped Chat -> Issue background handoff. The handler requires
+			// the server-stamped task_token actor and rejects ordinary member
+			// credentials even though this route lives in the workspace group.
+			r.Post("/api/issue-delegations", h.DelegateIssue)
+
 			// Labels
 			r.Route("/api/labels", func(r chi.Router) {
 				r.Get("/", h.ListLabels)

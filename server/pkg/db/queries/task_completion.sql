@@ -4,24 +4,48 @@
 
 -- name: GetTaskCompletionTarget :one
 WITH RECURSIVE lineage AS (
-    SELECT task.id, task.parent_task_id, task.context, 0 AS depth
+    SELECT
+        task.id,
+        task.id AS terminal_task_id,
+        task.parent_task_id,
+        task.agent_id,
+        task.context,
+        0 AS depth
     FROM agent_task_queue task
     WHERE task.id = $1
 
     UNION ALL
 
-    SELECT parent.id, parent.parent_task_id, parent.context, child.depth + 1
+    SELECT
+        parent.id,
+        child.terminal_task_id,
+        parent.parent_task_id,
+        parent.agent_id,
+        parent.context,
+        child.depth + 1
     FROM agent_task_queue parent
     JOIN lineage child ON parent.id = child.parent_task_id
 )
 SELECT
     lineage.id AS root_task_id,
+    lineage.agent_id AS root_agent_id,
     COALESCE(lineage.context #>> '{completion_callback,url}', '')::text AS callback_url,
     COALESCE(lineage.context #>> '{completion_callback,target}', '')::text AS target_identity
 FROM lineage
 WHERE lineage.parent_task_id IS NULL
   AND COALESCE(lineage.context #>> '{completion_callback,url}', '') <> ''
   AND COALESCE(lineage.context #>> '{completion_callback,target}', '') <> ''
+  -- Completing a root that already handed work to a child only releases the
+  -- foreground run. Completing the child walks back to this same root and is
+  -- allowed to produce the one terminal callback.
+  AND (
+      lineage.terminal_task_id <> lineage.id
+      OR NOT EXISTS (
+          SELECT 1
+          FROM agent_task_queue child
+          WHERE child.parent_task_id = lineage.id
+      )
+  )
 ORDER BY lineage.depth DESC
 LIMIT 1;
 
@@ -100,6 +124,12 @@ WITH candidate AS (
       AND queued.target_identity = sqlc.arg('worker_target_identity')
       AND queued.available_at <= now()
       AND (queued.lease_expires_at IS NULL OR queued.lease_expires_at <= now())
+      AND NOT EXISTS (
+          SELECT 1
+          FROM task_execution_update_outbox execution_update
+          WHERE execution_update.root_task_id = queued.root_task_id
+            AND execution_update.status = 'queued'
+      )
     ORDER BY queued.available_at, queued.created_at
     FOR UPDATE SKIP LOCKED
     LIMIT 1

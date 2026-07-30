@@ -100,8 +100,9 @@ type DispatchOutbound struct {
 }
 
 type DispatchCompletionCallback struct {
-	URL    string `json:"url"`
-	Target string `json:"-"`
+	URL       string `json:"url"`
+	UpdateURL string `json:"updateUrl,omitempty"`
+	Target    string `json:"-"`
 }
 
 type DispatchCommand struct {
@@ -163,7 +164,8 @@ func (b *DispatchPromptBuilder) Build(c DispatchCommand) (DispatchPrompt, error)
 }
 
 var defaultDispatchPromptBuilder = NewDispatchPromptBuilder()
-var routerCompletionCallbackPattern = regexp.MustCompile(`^/api/v1/dispatch-tasks/[A-Za-z0-9_-]{1,128}/execution-result$`)
+var routerCompletionCallbackPattern = regexp.MustCompile(`^/api/v1/dispatch-tasks/([A-Za-z0-9_-]{1,128})/execution-result$`)
+var routerExecutionUpdateCallbackPattern = regexp.MustCompile(`^/api/v1/dispatch-tasks/([A-Za-z0-9_-]{1,128})/execution-update$`)
 var routerCompletionTargetPattern = regexp.MustCompile(`^router-target:v1:sha256:[a-f0-9]{64}$`)
 
 func (c DispatchCommand) validate() error {
@@ -196,6 +198,17 @@ func (c DispatchCommand) validate() error {
 	if c.CompletionCallback != nil {
 		if !routerCompletionCallbackPattern.MatchString(c.CompletionCallback.URL) {
 			return errors.New("completionCallback.url is invalid")
+		}
+		if c.CompletionCallback.UpdateURL != "" &&
+			!routerExecutionUpdateCallbackPattern.MatchString(c.CompletionCallback.UpdateURL) {
+			return errors.New("completionCallback.updateUrl is invalid")
+		}
+		if c.CompletionCallback.UpdateURL != "" {
+			resultMatch := routerCompletionCallbackPattern.FindStringSubmatch(c.CompletionCallback.URL)
+			updateMatch := routerExecutionUpdateCallbackPattern.FindStringSubmatch(c.CompletionCallback.UpdateURL)
+			if len(resultMatch) != 2 || len(updateMatch) != 2 || resultMatch[1] != updateMatch[1] {
+				return errors.New("completionCallback urls must reference the same dispatch task")
+			}
 		}
 	}
 	if c.Continuation == nil && strings.TrimSpace(c.AgentID) == "" {
