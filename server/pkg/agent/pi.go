@@ -21,6 +21,8 @@ type piBackend struct {
 	cfg Config
 }
 
+const piDefaultProviderEnv = "MULTICA_PI_DEFAULT_PROVIDER"
+
 var (
 	piControlTokenRE = regexp.MustCompile(`<\|[A-Za-z0-9_-]+>[A-Za-z0-9_-]*|<[A-Za-z0-9_-]+\|>`)
 )
@@ -224,6 +226,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 
 	runCtx, cancel := runContext(ctx, timeout)
 
+	opts.Model = qualifyPiModel(opts.Model, envValue(b.cfg.Env, piDefaultProviderEnv))
 	args := buildPiArgs(prompt, sessionPath, opts, b.cfg.Logger)
 	if mcpExtensionPath != "" {
 		args = addPiManagedExtensionArg(args, mcpExtensionPath)
@@ -592,6 +595,15 @@ func splitPiModel(s string) (provider, model string) {
 		return strings.TrimSpace(s[:i]), strings.TrimSpace(s[i+1:])
 	}
 	return "", s
+}
+
+func qualifyPiModel(model, defaultProvider string) string {
+	model = strings.TrimSpace(model)
+	defaultProvider = strings.TrimSpace(defaultProvider)
+	if model == "" || defaultProvider == "" || strings.Contains(model, "/") {
+		return model
+	}
+	return defaultProvider + "/" + model
 }
 
 // ── Session path ──
