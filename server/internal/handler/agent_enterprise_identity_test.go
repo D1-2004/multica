@@ -68,17 +68,20 @@ func createEnterpriseIdentityHandlerFixture(t *testing.T) (agentID string, membe
 			buc_agent_id,
 			agent_spiffe_id,
 			aip_id,
-			buc_anchor_sandbox_id,
+			buc_tokens_encrypted,
+			buc_access_expires_at,
 			authx_refresh_token_encrypted,
 			authx_refresh_expires_at,
 			status,
 			bound_by
 		)
 		VALUES ($1, $2, '12345', 'Zhang San', 'buc-agent-1', $3, 'aip-1',
-			'anchor-1', $4, now() + interval '24 hours', 'active', $5)
+			$4, now() + interval '1 hour', $5, now() + interval '24 hours',
+			'active', $6)
 	`, testWorkspaceID, agentID,
 		"spiffe://agents.example/ns/multica/agents/"+agentID,
 		bytes.Repeat([]byte{0x42}, 32),
+		bytes.Repeat([]byte{0x43}, 32),
 		testUserID,
 	); err != nil {
 		t.Fatalf("create enterprise identity: %v", err)

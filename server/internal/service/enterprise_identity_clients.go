@@ -449,6 +449,34 @@ type BUCIdentityTokens struct {
 	ExpiresIn    int64
 }
 
+type enterpriseIdentityProviderCode string
+
+func (code *enterpriseIdentityProviderCode) UnmarshalJSON(raw []byte) error {
+	value := strings.TrimSpace(string(raw))
+	if value == "" || value == "null" {
+		*code = ""
+		return nil
+	}
+	if strings.HasPrefix(value, `"`) {
+		var text string
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return err
+		}
+		*code = enterpriseIdentityProviderCode(text)
+		return nil
+	}
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err != nil {
+		return err
+	}
+	*code = enterpriseIdentityProviderCode(number.String())
+	return nil
+}
+
+func (code enterpriseIdentityProviderCode) String() string {
+	return string(code)
+}
+
 type BUCOAuthClient interface {
 	ExchangeCode(context.Context, string) (BUCIdentityTokens, error)
 	Refresh(context.Context, string) (BUCIdentityTokens, error)
@@ -458,6 +486,7 @@ type BUCOAuthClient interface {
 
 type HTTPBUCOAuthClient struct {
 	tokenURL     *url.URL
+	refreshURL   *url.URL
 	ticketURL    *url.URL
 	issuer       string
 	jwksURL      *url.URL
@@ -498,6 +527,11 @@ func NewHTTPBUCOAuthClient(
 	ticketURL.RawPath = ""
 	ticketURL.RawQuery = ""
 	ticketURL.Fragment = ""
+	refreshURL := *parsedTokenURL
+	refreshURL.Path = "/rpc/oauth2/refresh_token.json"
+	refreshURL.RawPath = ""
+	refreshURL.RawQuery = ""
+	refreshURL.Fragment = ""
 	client := &http.Client{Timeout: 20 * time.Second}
 	if source != nil {
 		*client = *source
@@ -510,6 +544,7 @@ func NewHTTPBUCOAuthClient(
 	}
 	return &HTTPBUCOAuthClient{
 		tokenURL:     parsedTokenURL,
+		refreshURL:   &refreshURL,
 		ticketURL:    &ticketURL,
 		issuer:       parsedIssuer.String(),
 		jwksURL:      parsedJWKSURL,
@@ -540,7 +575,13 @@ func (c *HTTPBUCOAuthClient) ExchangeCode(ctx context.Context, code string) (BUC
 		"client_id":     {c.clientID},
 		"client_secret": {c.clientSecret},
 	}
-	return c.requestTokens(ctx, form, "exchange BUC authorization code")
+	return c.requestTokens(
+		ctx,
+		c.tokenURL,
+		form,
+		"exchange BUC authorization code",
+		true,
+	)
 }
 
 func (c *HTTPBUCOAuthClient) Refresh(ctx context.Context, refreshToken string) (BUCIdentityTokens, error) {
@@ -551,18 +592,29 @@ func (c *HTTPBUCOAuthClient) Refresh(ctx context.Context, refreshToken string) (
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
-		"client_id":     {c.clientID},
-		"client_secret": {c.clientSecret},
 	}
-	return c.requestTokens(ctx, form, "refresh BUC OIDC token")
+	return c.requestTokens(
+		ctx,
+		c.refreshURL,
+		form,
+		"refresh BUC OAuth token",
+		false,
+	)
 }
 
 func (c *HTTPBUCOAuthClient) requestTokens(
 	ctx context.Context,
+	endpoint *url.URL,
 	form url.Values,
 	operation string,
+	requireIDToken bool,
 ) (BUCIdentityTokens, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL.String(), strings.NewReader(form.Encode()))
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		endpoint.String(),
+		strings.NewReader(form.Encode()),
+	)
 	if err != nil {
 		return BUCIdentityTokens{}, errors.New("build BUC token request")
 	}
@@ -578,12 +630,12 @@ func (c *HTTPBUCOAuthClient) requestTokens(
 		return BUCIdentityTokens{}, err
 	}
 	var payload struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		IDToken      string `json:"id_token"`
-		ExpiresIn    int64  `json:"expires_in"`
-		Error        string `json:"error"`
-		ErrorCode    string `json:"error_code"`
+		AccessToken  string                         `json:"access_token"`
+		RefreshToken string                         `json:"refresh_token"`
+		IDToken      string                         `json:"id_token"`
+		ExpiresIn    int64                          `json:"expires_in"`
+		Error        string                         `json:"error"`
+		ErrorCode    enterpriseIdentityProviderCode `json:"error_code"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		if response.StatusCode != http.StatusOK {
@@ -598,7 +650,7 @@ func (c *HTTPBUCOAuthClient) requestTokens(
 		}
 		return BUCIdentityTokens{}, errors.New("decode BUC token response")
 	}
-	providerCode := firstNonEmptyString(payload.ErrorCode, payload.Error)
+	providerCode := firstNonEmptyString(payload.ErrorCode.String(), payload.Error)
 	if response.StatusCode != http.StatusOK || providerCode != "" {
 		return BUCIdentityTokens{}, newEnterpriseIdentityProviderError(
 			"buc",
@@ -611,7 +663,8 @@ func (c *HTTPBUCOAuthClient) requestTokens(
 	}
 	if strings.TrimSpace(payload.AccessToken) == "" ||
 		strings.TrimSpace(payload.RefreshToken) == "" ||
-		strings.TrimSpace(payload.IDToken) == "" {
+		payload.ExpiresIn <= 0 ||
+		(requireIDToken && strings.TrimSpace(payload.IDToken) == "") {
 		return BUCIdentityTokens{}, newEnterpriseIdentityProviderError(
 			"buc",
 			operation,
@@ -667,9 +720,9 @@ func (c *HTTPBUCOAuthClient) GenerateSSOTicket(ctx context.Context, accessToken 
 		return "", err
 	}
 	var payload struct {
-		Success   *bool  `json:"success"`
-		Error     string `json:"error"`
-		ErrorCode string `json:"errorCode"`
+		Success   *bool                          `json:"success"`
+		Error     string                         `json:"error"`
+		ErrorCode enterpriseIdentityProviderCode `json:"errorCode"`
 		Content   struct {
 			Data struct {
 				SSOTicket string `json:"ssoTicket"`
@@ -690,7 +743,7 @@ func (c *HTTPBUCOAuthClient) GenerateSSOTicket(ctx context.Context, accessToken 
 		}
 		return "", errors.New("decode BUC SSO ticket response")
 	}
-	providerCode := firstNonEmptyString(payload.ErrorCode, payload.Error)
+	providerCode := firstNonEmptyString(payload.ErrorCode.String(), payload.Error)
 	providerReportedFailure := providerCode != "" && providerCode != "0"
 	if response.StatusCode != http.StatusOK ||
 		(payload.Success != nil && !*payload.Success) ||

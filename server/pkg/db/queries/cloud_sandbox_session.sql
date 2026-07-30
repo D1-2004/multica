@@ -99,6 +99,14 @@ WHERE runtime_id = sqlc.arg('runtime_id')
   AND sandbox_backend = sqlc.arg('sandbox_backend')
   AND status = 'running';
 
+-- name: ListActiveCloudSandboxSessionsByRuntimeAndBackend :many
+SELECT *
+FROM fc_e2b_sandbox_session
+WHERE runtime_id = sqlc.arg('runtime_id')
+  AND sandbox_backend = sqlc.arg('sandbox_backend')
+  AND status = 'running'
+ORDER BY updated_at, sandbox_id;
+
 -- name: ListActiveCloudSandboxSessionsByAgentIdentity :many
 SELECT session.*
 FROM fc_e2b_sandbox_session session

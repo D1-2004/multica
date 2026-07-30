@@ -19,6 +19,7 @@ import (
 
 type createFCE2BRuntimeRequest struct {
 	SandboxBackend  string `json:"sandbox_backend"`
+	APIKey          string `json:"api_key"`
 	Name            string `json:"name"`
 	ArtifactRef     string `json:"artifact_ref"`
 	ArtifactBuildID string `json:"artifact_build_id"`
@@ -41,6 +42,10 @@ type updateCloudSandboxArtifactRequest struct {
 	ArtifactBuildID string `json:"artifact_build_id"`
 	ArtifactAlias   string `json:"artifact_alias"`
 	ArtifactDigest  string `json:"artifact_digest"`
+}
+
+type updateASBRuntimeCredentialRequest struct {
+	APIKey string `json:"api_key"`
 }
 
 func (h *Handler) ListFCE2BTemplates(w http.ResponseWriter, r *http.Request) {
@@ -312,6 +317,19 @@ func (h *Handler) createASBRuntime(
 	member db.Member,
 	req createFCE2BRuntimeRequest,
 ) {
+	apiKey := strings.TrimSpace(req.APIKey)
+	if err := service.ValidateASBAPIKey(apiKey); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if h.ASBLauncher.Credentials == nil {
+		writeError(w, http.StatusServiceUnavailable, "ASB Runtime credential service is unavailable")
+		return
+	}
+	if err := h.ASBLauncher.Credentials.ValidateAPIKey(r.Context(), apiKey); err != nil {
+		writeASBAPIKeyValidationError(w, "", err)
+		return
+	}
 	artifactChannel := strings.ToLower(strings.TrimSpace(req.ArtifactChannel))
 	if artifactChannel == "" {
 		artifactChannel = strings.ToLower(strings.TrimSpace(req.TemplateChannel))
@@ -331,7 +349,12 @@ func (h *Handler) createASBRuntime(
 		Digest:  strings.ToLower(strings.TrimSpace(req.ArtifactDigest)),
 	}
 	runtimeQueries := h.Queries
-	var stableTx pgx.Tx
+	var runtimeTx pgx.Tx
+	defer func() {
+		if runtimeTx != nil {
+			_ = runtimeTx.Rollback(context.Background())
+		}
+	}()
 	switch artifactChannel {
 	case service.CloudSandboxChannelStable:
 		if artifact.Ref != "" || artifact.BuildID != "" || artifact.Digest != "" ||
@@ -348,15 +371,14 @@ func (h *Handler) createASBRuntime(
 			return
 		}
 		var err error
-		stableTx, err = h.TxStarter.Begin(r.Context())
+		runtimeTx, err = h.TxStarter.Begin(r.Context())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to begin ASB stable runtime creation")
 			return
 		}
-		defer func() { _ = stableTx.Rollback(context.Background()) }()
 		if _, err := h.FCE2BStable.LockCurrentArtifactForRuntimeCreation(
 			r.Context(),
-			stableTx,
+			runtimeTx,
 			service.SandboxBackendASB,
 		); err != nil {
 			if errors.Is(err, service.ErrFCE2BStableChannelUninitialized) {
@@ -377,7 +399,7 @@ func (h *Handler) createASBRuntime(
 			return
 		}
 		artifact = current
-		runtimeQueries = h.Queries.WithTx(stableTx)
+		runtimeQueries = h.Queries.WithTx(runtimeTx)
 	case service.CloudSandboxChannelCandidate:
 		if !h.canPublishFCE2BStable(r) {
 			writeError(w, http.StatusForbidden, "candidate ASB runtimes are restricted to stable publishers")
@@ -387,7 +409,7 @@ func (h *Handler) createASBRuntime(
 			writeError(w, http.StatusBadRequest, "artifact_ref, artifact_build_id and artifact_digest are required for a candidate runtime")
 			return
 		}
-		manifest, err := h.ASBLauncher.VerifyStableArtifact(r.Context(), artifact)
+		manifest, err := h.ASBLauncher.VerifyArtifactWithAPIKey(r.Context(), artifact, apiKey)
 		if err != nil {
 			slog.Error("ASB candidate artifact validation failed", "error", err)
 			writeError(w, http.StatusBadRequest, "ASB candidate artifact validation failed")
@@ -429,6 +451,18 @@ func (h *Handler) createASBRuntime(
 		writeError(w, http.StatusInternalServerError, "failed to encode runtime metadata")
 		return
 	}
+	if runtimeTx == nil {
+		if h.TxStarter == nil {
+			writeError(w, http.StatusServiceUnavailable, "ASB Runtime credential coordination is unavailable")
+			return
+		}
+		runtimeTx, err = h.TxStarter.Begin(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to begin ASB Runtime creation")
+			return
+		}
+		runtimeQueries = h.Queries.WithTx(runtimeTx)
+	}
 	daemonID := "cloud-sandbox:" + workspaceID + ":asb:" + runtimeSlug(provider) + ":" +
 		runtimeSlug(name) + ":" + randomID()[:8]
 	rt, err := runtimeQueries.UpsertCloudAgentRuntime(r.Context(), db.UpsertCloudAgentRuntimeParams{
@@ -447,16 +481,164 @@ func (h *Handler) createASBRuntime(
 		writeError(w, http.StatusInternalServerError, "failed to create ASB runtime")
 		return
 	}
-	if stableTx != nil {
-		if err := stableTx.Commit(r.Context()); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to commit ASB stable runtime creation")
-			return
-		}
+	if _, err := h.ASBLauncher.Credentials.StoreRuntimeAPIKey(
+		r.Context(),
+		runtimeQueries,
+		rt.ID,
+		apiKey,
+	); err != nil {
+		slog.Error("ASB Runtime API key persistence failed", "runtime_id", uuidToString(rt.ID), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to store ASB Runtime API key")
+		return
+	}
+	if err := runtimeTx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit ASB Runtime creation")
+		return
 	}
 	h.publish(protocol.EventDaemonRegister, workspaceID, "member", uuidToString(member.UserID), map[string]any{
 		"action": "create",
 	})
 	writeJSON(w, http.StatusCreated, runtimeToResponse(rt))
+}
+
+func (h *Handler) GetASBRuntimeCredential(w http.ResponseWriter, r *http.Request) {
+	if !h.cfg.ASB.Enabled || h.ASBLauncher == nil || h.ASBLauncher.Credentials == nil {
+		writeError(w, http.StatusServiceUnavailable, "Aone Sandbox Runtime is disabled")
+		return
+	}
+	runtimeID := chi.URLParam(r, "runtimeId")
+	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	if !ok {
+		return
+	}
+	runtime, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "runtime not found")
+		return
+	}
+	if err != nil {
+		slog.Error("ASB Runtime lookup failed", "runtime_id", runtimeID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to load runtime")
+		return
+	}
+	if _, ok := h.requireWorkspaceRole(
+		w,
+		r,
+		uuidToString(runtime.WorkspaceID),
+		"runtime not found",
+		"owner",
+		"admin",
+	); !ok {
+		return
+	}
+	if !service.IsASBRuntime(runtime) {
+		writeError(w, http.StatusBadRequest, service.ErrCloudSandboxRuntimeRequired.Error())
+		return
+	}
+	credential, err := h.Queries.GetASBRuntimeCredential(r.Context(), runtimeUUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"configured":   false,
+			"api_key_hint": "",
+			"updated_at":   nil,
+		})
+		return
+	}
+	if err != nil {
+		slog.Error("ASB Runtime credential status lookup failed", "runtime_id", runtimeID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to load ASB Runtime credential status")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"configured":   true,
+		"api_key_hint": credential.ApiKeyHint,
+		"updated_at":   credential.UpdatedAt.Time.Unix(),
+	})
+}
+
+func (h *Handler) UpdateASBRuntimeCredential(w http.ResponseWriter, r *http.Request) {
+	if !h.cfg.ASB.Enabled || h.ASBLauncher == nil || h.ASBLauncher.Credentials == nil {
+		writeError(w, http.StatusServiceUnavailable, "Aone Sandbox Runtime is disabled")
+		return
+	}
+	runtimeID := chi.URLParam(r, "runtimeId")
+	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	if !ok {
+		return
+	}
+	runtime, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "runtime not found")
+		return
+	}
+	member, ok := h.requireWorkspaceRole(
+		w,
+		r,
+		uuidToString(runtime.WorkspaceID),
+		"runtime not found",
+		"owner",
+		"admin",
+	)
+	if !ok {
+		return
+	}
+	if !service.IsASBRuntime(runtime) {
+		writeError(w, http.StatusBadRequest, service.ErrCloudSandboxRuntimeRequired.Error())
+		return
+	}
+	var req updateASBRuntimeCredentialRequest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 8<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := service.ValidateASBAPIKey(req.APIKey); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := h.ASBLauncher.UpdateRuntimeAPIKey(r.Context(), runtimeUUID, req.APIKey)
+	if err != nil {
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			writeError(w, http.StatusNotFound, "runtime not found")
+		case errors.Is(err, service.ErrCloudSandboxRuntimeRequired):
+			writeError(w, http.StatusBadRequest, err.Error())
+		default:
+			var validationErr *service.ASBAPIKeyValidationError
+			if errors.As(err, &validationErr) {
+				writeASBAPIKeyValidationError(w, runtimeID, validationErr)
+				return
+			}
+			slog.Error("ASB Runtime API key update failed", "runtime_id", runtimeID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to update ASB Runtime API key")
+		}
+		return
+	}
+	slog.Info(
+		"ASB Runtime API key updated",
+		"event", "asb_runtime_api_key_updated",
+		"actor_id", uuidToString(member.UserID),
+		"workspace_id", uuidToString(runtime.WorkspaceID),
+		"runtime_id", runtimeID,
+		"invalidated_sandbox_count", result.InvalidatedSandboxCount,
+	)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"configured":                true,
+		"api_key_hint":              result.APIKeyHint,
+		"invalidated_sandbox_count": result.InvalidatedSandboxCount,
+	})
+}
+
+func writeASBAPIKeyValidationError(w http.ResponseWriter, runtimeID string, err error) {
+	var validationErr *service.ASBAPIKeyValidationError
+	if errors.As(err, &validationErr) && validationErr.Rejected {
+		slog.Info("ASB Runtime API key rejected", "runtime_id", runtimeID)
+		writeError(w, http.StatusBadRequest, "ASB API key was rejected")
+		return
+	}
+	slog.Error("ASB Runtime API key validation failed", "runtime_id", runtimeID, "error", err)
+	writeError(w, http.StatusBadGateway, "ASB API key could not be validated")
 }
 
 func cloudSandboxProviderDisplayName(provider string) string {

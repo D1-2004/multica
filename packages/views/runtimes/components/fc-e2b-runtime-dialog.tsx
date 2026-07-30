@@ -87,20 +87,17 @@ function formatTemplateUpdatedAt(value?: string): string {
 export function FCE2BRuntimeDialog({
   onClose,
   canPublish,
+  sandboxBackend,
 }: {
   onClose: () => void;
   canPublish: boolean;
+  sandboxBackend: SandboxBackend;
 }) {
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();
   const createRuntime = useCreateCloudSandboxRuntime(wsId);
   const templatesQuery = useFCE2BTemplates(wsId);
-  const [sandboxBackend, setSandboxBackend] =
-    useState<SandboxBackend>("aliyun_fc");
-  const fcStableChannelQuery = useCloudSandboxStableChannel("aliyun_fc");
-  const asbStableChannelQuery = useCloudSandboxStableChannel("asb");
-  const stableChannelQuery =
-    sandboxBackend === "asb" ? asbStableChannelQuery : fcStableChannelQuery;
+  const stableChannelQuery = useCloudSandboxStableChannel(sandboxBackend);
   const templates = (templatesQuery.data ?? []).filter(isReadyFCE2BTemplate);
   const [templateChannel, setTemplateChannel] = useState<"stable" | "candidate">(
     "stable",
@@ -114,6 +111,7 @@ export function FCE2BRuntimeDialog({
   const [artifactBuildId, setArtifactBuildId] = useState("");
   const [artifactAlias, setArtifactAlias] = useState("");
   const [artifactDigest, setArtifactDigest] = useState("");
+  const [apiKey, setAPIKey] = useState("");
   const availableProviders =
     sandboxBackend === "asb" || templateChannel === "stable"
       ? [...FC_E2B_RUNTIME_PROVIDERS]
@@ -122,14 +120,6 @@ export function FCE2BRuntimeDialog({
             selectedTemplate.providers.includes(candidate),
           )
         : [];
-
-  const pickBackend = (nextBackend: SandboxBackend) => {
-    setSandboxBackend(nextBackend);
-    setSelectedTemplate(null);
-    setQuery("");
-    setProvider("hermes");
-    setName("");
-  };
 
   const filteredTemplates = templates.filter((template) => {
     const haystack = [
@@ -180,6 +170,12 @@ export function FCE2BRuntimeDialog({
     }
     if (
       sandboxBackend === "asb" &&
+      !apiKey.trim()
+    ) {
+      return;
+    }
+    if (
+      sandboxBackend === "asb" &&
       templateChannel === "candidate" &&
       (!artifactRef.trim() ||
         !artifactBuildId.trim() ||
@@ -190,6 +186,7 @@ export function FCE2BRuntimeDialog({
     try {
       await createRuntime.mutateAsync({
         sandbox_backend: sandboxBackend,
+        ...(sandboxBackend === "asb" ? { api_key: apiKey.trim() } : {}),
         ...(sandboxBackend === "aliyun_fc" &&
         templateChannel === "candidate"
           ? { template_id: selectedTemplate!.id }
@@ -242,32 +239,30 @@ export function FCE2BRuntimeDialog({
           onSubmit={handleSubmit}
           className="space-y-4"
         >
-          <div className="space-y-1.5">
-            <Label className="text-xs">
-              {t(($) => $.fc_e2b_runtime.fields.backend)}
-            </Label>
-            <Select
-              value={sandboxBackend}
-              onValueChange={(value) => pickBackend(value as SandboxBackend)}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="aliyun_fc">
-                  {t(($) => $.fc_e2b_runtime.backend_aliyun_fc)}
-                </SelectItem>
-                <SelectItem value="asb">
-                  {t(($) => $.fc_e2b_runtime.backend_asb)}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              {sandboxBackend === "asb"
-                ? t(($) => $.fc_e2b_runtime.backend_asb_hint)
-                : t(($) => $.fc_e2b_runtime.backend_aliyun_fc_hint)}
-            </p>
-          </div>
+          <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            {sandboxBackend === "asb"
+              ? t(($) => $.fc_e2b_runtime.backend_asb_hint)
+              : t(($) => $.fc_e2b_runtime.backend_aliyun_fc_hint)}
+          </p>
+
+          {sandboxBackend === "asb" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="asb-api-key" className="text-xs">
+                {t(($) => $.fc_e2b_runtime.fields.api_key)}
+              </Label>
+              <Input
+                id="asb-api-key"
+                type="password"
+                autoComplete="off"
+                value={apiKey}
+                onChange={(event) => setAPIKey(event.target.value)}
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                {t(($) => $.fc_e2b_runtime.api_key_hint)}
+              </p>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label className="text-xs">
@@ -535,6 +530,7 @@ export function FCE2BRuntimeDialog({
             form="fc-e2b-runtime-form"
             disabled={
               createRuntime.isPending ||
+              (sandboxBackend === "asb" && !apiKey.trim()) ||
               (templateChannel === "stable"
                 ? !stableChannelQuery.data?.current
                 : sandboxBackend === "aliyun_fc"

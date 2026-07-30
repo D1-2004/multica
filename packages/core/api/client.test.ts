@@ -83,6 +83,32 @@ describe("ApiClient", () => {
         }),
       )
       .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            configured: true,
+            api_key_hint: "1234",
+            updated_at: 1799200000,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            configured: true,
+            api_key_hint: "5678",
+            invalidated_sandbox_count: 2,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
         new Response(JSON.stringify({ id: "runtime-1" }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -93,6 +119,7 @@ describe("ApiClient", () => {
     const client = new ApiClient("https://api.example.test");
     await client.createCloudSandboxRuntime({
       sandbox_backend: "asb",
+      api_key: "tenant-key-1234",
       name: "ASB Explorer",
       artifact_ref: "registry.example.test/multica/asb@sha256:abc",
       artifact_build_id: "build-42",
@@ -111,6 +138,21 @@ describe("ApiClient", () => {
     await expect(
       client.listCloudSandboxStableRuntimes("asb"),
     ).resolves.toEqual([]);
+    await expect(
+      client.getASBRuntimeCredential("runtime/1"),
+    ).resolves.toMatchObject({
+      configured: true,
+      api_key_hint: "1234",
+    });
+    await expect(
+      client.updateASBRuntimeCredential("runtime/1", {
+        api_key: "tenant-key-5678",
+      }),
+    ).resolves.toMatchObject({
+      configured: true,
+      api_key_hint: "5678",
+      invalidated_sandbox_count: 2,
+    });
     await client.updateCloudSandboxRuntimeArtifact("runtime/1", {
       artifact_ref: "registry.example.test/multica/asb@sha256:def",
       artifact_build_id: "build-43",
@@ -128,6 +170,7 @@ describe("ApiClient", () => {
         method: "POST",
         body: JSON.stringify({
           sandbox_backend: "asb",
+          api_key: "tenant-key-1234",
           name: "ASB Explorer",
           artifact_ref: "registry.example.test/multica/asb@sha256:abc",
           artifact_build_id: "build-42",
@@ -155,6 +198,20 @@ describe("ApiClient", () => {
           "https://api.example.test/api/runtimes/cloud-sandbox/stable-runtimes?sandbox_backend=asb",
         method: "GET",
         body: undefined,
+      },
+      {
+        url:
+          "https://api.example.test/api/runtimes/runtime%2F1/asb-credential",
+        method: "GET",
+        body: undefined,
+      },
+      {
+        url:
+          "https://api.example.test/api/runtimes/runtime%2F1/asb-credential",
+        method: "PATCH",
+        body: JSON.stringify({
+          api_key: "tenant-key-5678",
+        }),
       },
       {
         url:

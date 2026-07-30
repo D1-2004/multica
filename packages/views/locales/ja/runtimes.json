@@ -266,11 +266,13 @@
     "backend_asb": "Aone Sandbox（社内ネットワーク）",
     "backend_aliyun_fc_hint": "Alibaba Cloud FC で選択した E2B テンプレートを実行します。",
     "backend_asb_hint": "BUC SSO、a1、mw に対応します。エージェントには従業員 ID の連携が必要です。",
+    "api_key_hint": "自分の Aone Sandbox クォータを使用します。キーは暗号化され、ランタイムメタデータやサンドボックス環境には保存されません。",
     "stable_uninitialized": "安定版チャネルはまだ初期化されていません。",
     "candidate_hint": "候補ランタイムは安定版の自動更新に追従せず、リリース前の検証専用です。",
     "candidate_asb_hint": "Aone CI が生成した不変のイメージ参照と digest を使用します。作成前に ASB smoke test を実行します。",
     "fields": {
       "backend": "サンドボックスバックエンド",
+      "api_key": "ASB API Key",
       "channel": "テンプレートチャネル",
       "template": "Template",
       "artifact_ref": "不変のイメージ参照",

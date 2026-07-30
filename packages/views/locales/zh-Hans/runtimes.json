@@ -266,11 +266,13 @@
     "backend_asb": "Aone Sandbox（集团内网）",
     "backend_aliyun_fc_hint": "在阿里云 FC 上运行所选 E2B 模板。",
     "backend_asb_hint": "支持 BUC 免登、a1 和 mw。智能体需要先绑定集团员工身份。",
+    "api_key_hint": "使用你自己的 Aone Sandbox 配额。密钥会加密保存，不会写入运行时元数据或沙箱环境。",
     "stable_uninitialized": "稳定通道尚未初始化，暂时不能创建稳定运行时。",
     "candidate_hint": "候选运行时不会跟随稳定版本自动升级，仅用于发布前验证。",
     "candidate_asb_hint": "填写 Aone CI 产出的不可变镜像引用和摘要；创建前服务端会运行原生 ASB 冒烟测试。",
     "fields": {
       "backend": "沙箱后端",
+      "api_key": "ASB API Key",
       "channel": "模板通道",
       "template": "模板",
       "artifact_ref": "不可变镜像引用",

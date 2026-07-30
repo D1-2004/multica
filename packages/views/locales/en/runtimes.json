@@ -278,11 +278,13 @@
     "backend_asb": "Aone Sandbox (corporate network)",
     "backend_aliyun_fc_hint": "Runs the selected E2B template on Alibaba Cloud FC.",
     "backend_asb_hint": "Supports BUC single sign-on, a1, and mw. Agents must bind an Alibaba employee identity.",
+    "api_key_hint": "Uses your own Aone Sandbox quota. The key is encrypted and never written to runtime metadata or sandbox environments.",
     "stable_uninitialized": "The stable channel is not initialized yet.",
     "candidate_hint": "Candidate runtimes do not follow stable upgrades and are only for pre-release validation.",
     "candidate_asb_hint": "Use the immutable image ref and digest produced by Aone CI. The server runs a native ASB smoke test before creation.",
     "fields": {
       "backend": "Sandbox backend",
+      "api_key": "ASB API Key",
       "channel": "Template channel",
       "template": "Template",
       "artifact_ref": "Immutable image ref",

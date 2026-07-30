@@ -1,6 +1,7 @@
 # ASB 企业私有化 Runtime — 设计
 
 Date: 2026-07-29
+Updated: 2026-07-30
 Status: implementation-ready
 Owners: Multica Runtime / Identity
 Related:
@@ -35,15 +36,12 @@ Related:
 - 命令通过 sandbox 的 `44772` 端口执行，`POST /command` 返回
   Server-Sent Events（SSE）事件流。
 - Agent Identity 沙箱创建时必须声明 `spiffe.lazyAuth=true`。
-- 首次创建 BUC 身份锚点时声明 `wireguard.lazyAuth=true`。
-- 任务沙箱复用锚点身份时声明 `wireguard.worker`、`wireguard.uemCredentials`
-  和 `buc.originalSandboxID`。`wireguard.worker` 与 `wireguard.lazyAuth` 互斥，
-  不能同时声明。
+- 已绑定任务沙箱创建时声明 `wireguard.worker` 和
+  `wireguard.uemCredentials`；未绑定任务不声明员工身份扩展。
 - Agent Identity 和 BUC 隧道当前只支持 `ali-test`，不支持 `agent-vpc`。
 - 创建请求的 `timeout` 范围是 60 秒到 24 小时；单个沙箱的绝对寿命上限为
-  创建后 7 天。身份锚点先按创建上限启动，BUC 注入和探针成功后再续至绝对上限。
-  距绝对上限 24 小时时，平台创建一个通过 `originalSandboxId` 继承 BUC 身份的
-  后继锚点，探针通过后原子切换数据库引用并删除旧锚点，使这条身份链可持续接力。
+  创建后 7 天。Multica 不创建常驻身份锚点；每个任务沙箱按 Runtime 配置的任务时长
+  创建，到期或删除后由下一次任务创建新沙箱。
 
 ### 2.2 Agent Identity
 
@@ -62,9 +60,11 @@ Related:
   `POST /v1/sandboxes/{id}/identity/wireguard?sync=true`
 - 首次注入需要 BUC OIDC 的 ID Token、Access Token、Refresh Token、员工工号、
   BUC Agent ID 和 WireGuard 客户端凭证。
-- 注入完成后，平台不得继续持有或使用这套 BUC Refresh Token；它由 ASB/AliLang
-  独占维护。
-- 后续沙箱可通过 `originalSandboxId` 继承同租户内前一个沙箱的 BUC 身份目录。
+- Multica 以平台主密钥加密持久化这套 BUC Token，并在 Access Token 到期前通过
+  BUC 官方刷新接口轮换 Access/Refresh Token。明文只存在于一次绑定、刷新或任务注入
+  的调用栈中。
+- 每个新任务沙箱直接接收平台当前有效的 BUC Token，不依赖
+  `originalSandboxId`，也不继承任意旧沙箱目录；删除沙箱不会改变绑定状态。
 - BUC CLI 必须以 `CLI_HUB_INSTALL_DIR=/usr/local/bin` 安装。
 
 ### 2.4 两条令牌链可以安全拆开
@@ -81,10 +81,11 @@ Related:
    `NewBucOidcIdTokenSpec(...)` 分支只签发短期 ID Token，不返回 Refresh Token，
    因而不能承担无感续期。员工主体签发能力只封装在完成上述 BUC 验真的绑定流程内，
    不对外提供任意工号换票入口。
-3. 用原始 BUC 三件套创建并注入一个 BUC 身份锚点沙箱。
-4. ASB 确认注入成功后，立即丢弃原始 BUC ID/Access/Refresh Token。
-5. 只加密持久化 Normandy 返回的 AuthX Refresh Token；它不是 ASB 使用的 BUC
-   Refresh Token，不存在双写或竞争刷新。
+3. 加密持久化 BUC ID/Access/Refresh Token 和 Normandy 返回的 AuthX Refresh
+   Token，不在授权回调中创建任何 ASB 沙箱。
+4. 后台分别在 BUC Access Token 和 AuthX Refresh Token 到期前主动轮换；两条令牌链
+   使用同一个绑定代次和跨副本锁，避免并发消费一次性刷新令牌。
+5. 任务启动时签发一次性 AIT，并将当前 BUC Token 与 AIT 注入该次任务沙箱。
 
 Normandy 的 Refresh Token 每次续期都会轮换。数据库更新必须比较
 `token_version` 并原子写入新令牌，不能用后返回的旧版本覆盖已经落库的新版本。
@@ -176,12 +177,11 @@ SPIFFE/BUC 注入，`a1`、`mw` 等工具在实际调用时返回未登录或未
 `identity_fingerprint` 是以下稳定字段的 SHA-256：
 
 ```text
-workspace_id || agent_id || raw_emp_id || agent_spiffe_id || buc_agent_id || buc_anchor_sandbox_id
+workspace_id || agent_id || raw_emp_id || agent_spiffe_id || buc_agent_id
 ```
 
-不包含令牌。身份锚点 ID 表示一次具体绑定代次；同一员工重新授权也会更换锚点并创建
-新沙箱。任何一项变化都创建新沙箱并终止旧会话。ASB 沙箱绝不跨 Agent、跨员工、
-跨工作区或跨绑定代次共享。
+不包含令牌。凭证轮换不改变逻辑身份，因此允许继续复用同一身份的热沙箱；重新授权会在
+写入新凭证后显式终止旧会话。ASB 沙箱绝不跨 Agent、跨员工或跨工作区共享。
 
 ## 4. Agent 员工身份绑定
 
@@ -197,15 +197,17 @@ workspace_id || agent_id || raw_emp_id || agent_spiffe_id || buc_agent_id || buc
 | `buc_agent_id` | BUC OIDC/零信任 Agent ID |
 | `agent_spiffe_id` | AuthX 注册后的稳定 Agent SPIFFE ID |
 | `aip_id` | AuthX AIP ID |
-| `buc_anchor_sandbox_id` | BUC 身份锚点，只是非秘密标识 |
+| `buc_tokens_encrypted` | BUC ID/Access/Refresh Token 的平台密文 |
+| `buc_access_expires_at` | BUC Access Token 主动刷新门限 |
 | `authx_refresh_token_encrypted` | Normandy/AuthX Refresh Token 密文 |
 | `authx_refresh_expires_at` | 主动轮转门限 |
 | `token_version` | 并发轮转比较交换 |
 | `status` | `active`, `needs_reauth`, `revoked` |
 | `bound_by`, timestamps | 审计 |
 
-表中禁止出现 ASB BUC ID/Access/Refresh Token、Initial Token、AIT、APT、
-WireGuard 凭证或 ASB API Key。
+表中禁止出现任何明文 BUC Token、Initial Token、AIT、APT、WireGuard 凭证或
+ASB API Key。每个 ASB Runtime 的 API Key 单独加密保存在
+`asb_runtime_credential`，不进入 Runtime 元数据。
 
 `agent_enterprise_identity_attempt` 保存单次 OAuth 的随机 `state` 摘要、`nonce` 摘要、
 Agent/用户/工作区、回跳地址和过期时间。回调以事务消费，防重放。
@@ -224,22 +226,21 @@ Agent/用户/工作区、回跳地址和过期时间。回调以事务消费，�
 解绑时：
 
 1. 标记绑定 `revoked`；
-2. 清空 AuthX Refresh Token 密文；
+2. 清空 BUC Token 和 AuthX Refresh Token 密文；
 3. 终止该指纹的热沙箱；
-4. 删除 BUC 锚点沙箱；
+4. 删除 Idem AIP；
 5. 不在日志中记录任何令牌。
 
 ### 4.3 主动轮转
 
-后台工作器每 5 分钟扫描一次，并在 AuthX Refresh Token 距过期 24 小时内主动轮换；
-BUC 身份锚点每 24 小时检查和续期一次，并在单沙箱 7 天绝对寿命仅剩 24 小时时
-创建继承身份的后继锚点：
+后台工作器每 5 分钟扫描一次，并在 BUC Access Token 距过期 5 分钟、AuthX Refresh
+Token 距过期 24 小时内主动轮换：
 
 1. 解密当前令牌；
 2. 以绑定记录 ID 获取 PostgreSQL 会话级 advisory lock，跨应用副本串行续期；
 3. 获锁后重新读取绑定，确保使用上一位续期者刚写入的新 Refresh Token；
-4. 调 Normandy `RenewToken`；
-5. 加密新 Refresh Token；
+4. 分别调用 BUC 官方刷新接口或 Normandy `RenewToken`；
+5. 加密新 Token；
 6. 使用 `token_version` 比较交换；
 7. 清零内存中的明文字节。
 
@@ -247,10 +248,9 @@ Normandy Refresh Token 是一次性轮换凭证；旧 Token 再次使用会触�
 数据库写入时比较交换不够，调用 `RenewToken` 前必须先跨副本加锁，不能让两个任务或后台
 巡检同时消费同一个旧 Token。
 
-短暂轮转失败保持绑定状态并由下一轮巡检重试；只有 Refresh Token 已过期或身份锚点
-已经不可恢复时才标记 `needs_reauth`。后继锚点只是同一身份的基础设施接班，不进入
-身份指纹，因此不会中断正在复用的任务沙箱。用户主动重新授权或解绑时，平台显式清理
-原绑定对应的任务沙箱。
+短暂轮转失败保持绑定状态并由下一轮巡检重试；只有提供方明确拒绝 BUC Refresh Token
+或 Refresh Token 已过期时才标记 `needs_reauth`。用户主动重新授权或解绑时，平台显式
+清理原绑定对应的任务沙箱。
 
 ### 4.4 AIP 权限
 
@@ -281,13 +281,13 @@ sequenceDiagram
   participant I as AuthX/Idem
   participant S as Sandbox
 
-  M->>A: POST /v1/sandboxes (immutable image digest, matching identity extensions)
+  M->>A: POST /v1/sandboxes (per-Runtime API key, immutable image digest)
   A-->>M: sandbox id
   M->>A: wait Ready
   M->>I: issue Initial Token for verified employee identity
   I-->>M: short-lived Initial Token
+  M->>A: attach current platform-managed BUC tokens
   M->>A: attach SPIFFE identity
-  M->>A: attach BUC identity by originalSandboxId
   M->>A: resolve endpoint 44772
   M->>S: exec fixed multica-fc-runner core as uid 1000
   S-->>M: SSE init/stdout/stderr/complete
@@ -303,19 +303,16 @@ sequenceDiagram
 
 - `MULTICA_ASB_ENABLED`
 - `MULTICA_ASB_API_URL`
-- `MULTICA_ASB_API_KEY`
 - `MULTICA_ASB_SERVER_URL`
 - `MULTICA_ASB_OPENAI_BASE_URL`
 - `MULTICA_ASB_OPENAI_API_KEY`
 - `MULTICA_ASB_OPENAI_MODELS`
 - `MULTICA_ASB_TIMEOUT_SECONDS`
-- `MULTICA_ASB_IDENTITY_ANCHOR_TIMEOUT`
 - `MULTICA_ASB_READY_TIMEOUT`
 - `MULTICA_ASB_IDENTITY_PROBE_TIMEOUT`
 - `MULTICA_ASB_RESOURCE_CPU`
 - `MULTICA_ASB_RESOURCE_MEMORY`
 - `MULTICA_ASB_WG_CLIENT_CREDENTIALS`
-- `MULTICA_ASB_IDENTITY_ANCHOR_IMAGE`
 - `MULTICA_ASB_IDENTITY_SECRET_KEY`
 - `MULTICA_ENTERPRISE_IDENTITY_ENABLED`
 - `MULTICA_BUC_CLIENT_ID`
@@ -331,8 +328,10 @@ sequenceDiagram
 - `MULTICA_IDEM_AGENT_TRUST_DOMAIN`
 - `MULTICA_IDEM_AGENT_NAMESPACE`
 
-API Key、Client Secret、WireGuard 凭证和主密钥只通过 Aone 环境密文或服务凭据注入，
-不写仓库、Runtime 元数据、日志或前端配置。
+`MULTICA_ASB_STABLE_VALIDATION_API_KEY` 是可选的平台稳定制品验证 Key。任务使用的 ASB
+API Key 在创建 Runtime 时由用户提交，服务端校验后加密保存；Client Secret、
+WireGuard 凭证和主密钥仍只通过 Aone 环境密文或服务凭据注入。任何 Key 都不写
+Runtime 元数据、日志或前端回读响应。
 
 ### 5.3 命令执行
 
@@ -513,7 +512,7 @@ ASB API Key、OAuth code、state、nonce、WireGuard 凭证。
 | ASB 未配置 | 创建 ASB Runtime 返回 503；UI 标记不可用 |
 | Agent 未绑定 | 以无员工身份模式启动；身份工具调用时返回未登录或未授权 |
 | AuthX 需重授权 | 标记 `needs_reauth`，后续任务以无员工身份模式启动 |
-| BUC 锚点失效 | 绑定标记需重授权，不用共享账号继续 |
+| BUC Refresh Token 被拒绝 | 绑定标记需重授权，不用共享账号继续 |
 | SPIFFE/BUC 注入失败 | 终止新沙箱，任务失败 |
 | 镜像 manifest 不匹配 | 候选验证失败，禁止发布 |
 | SSE 中断但执行态未知 | 查询 command status；仍未知则失败，不重复提交 |
@@ -559,12 +558,13 @@ ASB API Key、OAuth code、state、nonce、WireGuard 凭证。
 7. 发起 ASB stable release，完成开发者目标和普通目标滚动。
 8. 验证 FC stable channel 与 ASB 发布并行且互不影响。
 9. 验证日志和数据库没有明文凭证。
+10. 删除当前任务沙箱，确认绑定仍为 `active`，随后新任务沙箱可重新注入同一身份。
 
 ## 13. 外部门禁
 
 以下对象需要平台审批或管理员配置，但不改变代码设计：
 
-- ASB tenant/service 集成和长期 API Key；
+- ASB tenant/service 集成和稳定制品验证 API Key；
 - BUC OIDC 应用、redirect URL、`user_authorize`/`authorize_app` 范围；
 - WireGuard 客户端凭证；
 - AuthX AIR/AIP、OIDC Token 兑换 service ID 和只读能力审批；

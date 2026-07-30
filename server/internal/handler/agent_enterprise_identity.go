@@ -200,10 +200,9 @@ func (h *Handler) CompleteAgentEnterpriseIdentityBinding(w http.ResponseWriter, 
 		flusher.Flush()
 	}
 
-	// BUC redirects are browser-facing, but creating and attaching the ASB
-	// identity anchor is a long-running control-plane operation. Do not let a
-	// mobile browser navigation or ingress timeout cancel an already consumed
-	// one-time OAuth callback.
+	// BUC redirects are browser-facing, while token exchange, AuthX rotation,
+	// and Idem registration are server-side operations. Do not let a mobile
+	// browser navigation cancel an already consumed one-time OAuth callback.
 	bindingCtx, cancel := context.WithTimeout(
 		context.WithoutCancel(r.Context()),
 		enterpriseIdentityCallbackTimeout,
@@ -312,7 +311,7 @@ h1{font-size:20px;margin:0 0 12px}p{color:#5f6672;margin:0}
 <main>
 <div class="spinner" aria-hidden="true"></div>
 <h1 id="callback-title">正在绑定员工身份</h1>
-<p id="callback-message">授权已接收，正在创建企业沙箱身份，通常需要 1–2 分钟。请不要返回或重复点击。</p>
+<p id="callback-message">授权已接收，正在安全保存并校验员工身份凭证，请不要返回或重复点击。</p>
 </main>
 <script nonce="%s">window.history.replaceState(null,"",window.location.pathname);</script>
 <!-- %s -->

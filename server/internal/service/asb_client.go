@@ -304,6 +304,23 @@ func (c *ASBClient) CreateSandbox(ctx context.Context, input ASBCreateSandboxInp
 	return &sandbox, nil
 }
 
+// ValidateCredential checks the tenant API key against the quota endpoint.
+// This endpoint is read-only and does not consume a sandbox slot, so Runtime
+// creation and credential rotation can fail fast without allocating a probe
+// sandbox.
+func (c *ASBClient) ValidateCredential(ctx context.Context) error {
+	return c.doLifecycleJSON(
+		ctx,
+		"validate_api_key",
+		http.MethodGet,
+		"/sandboxes/quotas",
+		nil,
+		nil,
+		nil,
+		http.StatusOK,
+	)
+}
+
 func (c *ASBClient) GetSandbox(ctx context.Context, sandboxID string) (*ASBSandbox, error) {
 	if err := validateASBSandboxID(sandboxID); err != nil {
 		return nil, err

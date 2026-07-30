@@ -16,7 +16,10 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { runtimeProfileListOptions } from "@multica/core/runtimes";
-import { useFCE2BStableChannel } from "@multica/core/runtimes";
+import {
+  type SandboxBackend,
+  useCloudSandboxStableChannel,
+} from "@multica/core/runtimes";
 import { runtimeListOptions, runtimeKeys } from "@multica/core/runtimes/queries";
 import { useWSEvent } from "@multica/core/realtime";
 import {
@@ -26,12 +29,19 @@ import {
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@multica/ui/components/ui/select";
+import {
   CollectionPageHeader,
   CollectionPageHeaderAction,
   CollectionPageState,
 } from "../../layout/collection-page";
 import { PageHeader } from "../../layout/page-header";
-import { AppLink } from "../../navigation";
+import { AppLink, useNavigation } from "../../navigation";
 import { ConnectRemoteDialog } from "./connect-remote-dialog";
 import { CloudRuntimeDialog } from "./cloud-runtime-dialog";
 import { FCE2BRuntimeDialog } from "./fc-e2b-runtime-dialog";
@@ -81,8 +91,18 @@ export function RuntimesPage({
   const [showCloudRuntimeDialog, setShowCloudRuntimeDialog] = useState(false);
   const [showFCE2BRuntimeDialog, setShowFCE2BRuntimeDialog] = useState(false);
   const [showStableReleaseDialog, setShowStableReleaseDialog] = useState(false);
-  const stableChannelQuery = useFCE2BStableChannel();
+  const navigation = useNavigation();
+  const sandboxBackend: SandboxBackend =
+    navigation.searchParams.get("backend") === "asb" ? "asb" : "aliyun_fc";
+  const stableChannelQuery = useCloudSandboxStableChannel(sandboxBackend);
   const paths = useWorkspacePaths();
+  const changeSandboxBackend = (backend: SandboxBackend) => {
+    const search = new URLSearchParams(navigation.searchParams);
+    search.set("backend", backend);
+    navigation.replace(`${navigation.pathname}?${search.toString()}`);
+    setShowFCE2BRuntimeDialog(false);
+    setShowStableReleaseDialog(false);
+  };
 
   const { data: runtimes = [], isLoading: runtimesLoading } = useQuery(
     runtimeListOptions(wsId),
@@ -163,8 +183,10 @@ export function RuntimesPage({
         onOpenCloudRuntime={() => setShowCloudRuntimeDialog(true)}
         canManageFCE2B={canManageFCE2B}
         onOpenFCE2BRuntime={() => setShowFCE2BRuntimeDialog(true)}
+        sandboxBackend={sandboxBackend}
+        onSandboxBackendChange={changeSandboxBackend}
         canPublishStable={stableChannelQuery.data?.can_publish === true}
-        stableOverviewHref={paths.stableRuntimes()}
+        stableOverviewHref={`${paths.stableRuntimes()}?backend=${sandboxBackend}`}
         onOpenStableRelease={() => setShowStableReleaseDialog(true)}
       />
 
@@ -201,11 +223,13 @@ export function RuntimesPage({
       {canManageFCE2B && showFCE2BRuntimeDialog && (
         <FCE2BRuntimeDialog
           canPublish={stableChannelQuery.data?.can_publish === true}
+          sandboxBackend={sandboxBackend}
           onClose={() => setShowFCE2BRuntimeDialog(false)}
         />
       )}
       {stableChannelQuery.data?.can_publish && showStableReleaseDialog && (
         <StableFCE2BReleaseDialog
+          sandboxBackend={sandboxBackend}
           onClose={() => setShowStableReleaseDialog(false)}
         />
       )}
@@ -247,6 +271,8 @@ function PageHeaderBar({
   onOpenCloudRuntime,
   canManageFCE2B,
   onOpenFCE2BRuntime,
+  sandboxBackend,
+  onSandboxBackendChange,
   canPublishStable,
   stableOverviewHref,
   onOpenStableRelease,
@@ -257,6 +283,8 @@ function PageHeaderBar({
   onOpenCloudRuntime: () => void;
   canManageFCE2B: boolean;
   onOpenFCE2BRuntime: () => void;
+  sandboxBackend: SandboxBackend;
+  onSandboxBackendChange: (backend: SandboxBackend) => void;
   canPublishStable: boolean;
   stableOverviewHref: string;
   onOpenStableRelease: () => void;
@@ -274,6 +302,26 @@ function PageHeaderBar({
       }}
       actions={
         <>
+          {canManageFCE2B && (
+            <Select
+              value={sandboxBackend}
+              onValueChange={(value) =>
+                onSandboxBackendChange(value as SandboxBackend)
+              }
+            >
+              <SelectTrigger size="sm" className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="aliyun_fc">
+                  {t(($) => $.fc_e2b_runtime.backend_aliyun_fc)}
+                </SelectItem>
+                <SelectItem value="asb">
+                  {t(($) => $.fc_e2b_runtime.backend_asb)}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          )}
           {canPublishStable && (
             <>
               <CollectionPageHeaderAction

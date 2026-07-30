@@ -119,6 +119,56 @@ func (q *Queries) ListActiveCloudSandboxSessionsByAgentIdentity(ctx context.Cont
 	return items, nil
 }
 
+const listActiveCloudSandboxSessionsByRuntimeAndBackend = `-- name: ListActiveCloudSandboxSessionsByRuntimeAndBackend :many
+SELECT id, workspace_id, runtime_id, scope_type, scope_id, sandbox_id, template, status, last_used_at, expires_at, created_at, updated_at, sandbox_backend, identity_fingerprint, artifact_ref
+FROM fc_e2b_sandbox_session
+WHERE runtime_id = $1
+  AND sandbox_backend = $2
+  AND status = 'running'
+ORDER BY updated_at, sandbox_id
+`
+
+type ListActiveCloudSandboxSessionsByRuntimeAndBackendParams struct {
+	RuntimeID      pgtype.UUID `json:"runtime_id"`
+	SandboxBackend string      `json:"sandbox_backend"`
+}
+
+func (q *Queries) ListActiveCloudSandboxSessionsByRuntimeAndBackend(ctx context.Context, arg ListActiveCloudSandboxSessionsByRuntimeAndBackendParams) ([]FcE2bSandboxSession, error) {
+	rows, err := q.db.Query(ctx, listActiveCloudSandboxSessionsByRuntimeAndBackend, arg.RuntimeID, arg.SandboxBackend)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FcE2bSandboxSession{}
+	for rows.Next() {
+		var i FcE2bSandboxSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.RuntimeID,
+			&i.ScopeType,
+			&i.ScopeID,
+			&i.SandboxID,
+			&i.Template,
+			&i.Status,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SandboxBackend,
+			&i.IdentityFingerprint,
+			&i.ArtifactRef,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markCloudSandboxSessionStale = `-- name: MarkCloudSandboxSessionStale :exec
 UPDATE fc_e2b_sandbox_session
 SET status = 'stale',

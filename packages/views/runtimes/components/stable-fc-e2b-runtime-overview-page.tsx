@@ -58,6 +58,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { CollectionPageState } from "../../layout/collection-page";
 import { useT } from "../../i18n";
+import { useNavigation } from "../../navigation";
 import { ProviderLogo } from "./provider-logo";
 import { StableFCE2BReleaseDialog } from "./stable-fc-e2b-release-dialog";
 
@@ -132,8 +133,9 @@ function releaseProgress(release: FCE2BStableRelease | null): {
 export function StableFCE2BRuntimeOverviewPage() {
   const { t, i18n } = useT("runtimes");
   const paths = useWorkspacePaths();
-  const [sandboxBackend, setSandboxBackend] =
-    useState<SandboxBackend>("aliyun_fc");
+  const navigation = useNavigation();
+  const sandboxBackend: SandboxBackend =
+    navigation.searchParams.get("backend") === "asb" ? "asb" : "aliyun_fc";
   const channelQuery = useCloudSandboxStableChannel(sandboxBackend);
   const canPublish = channelQuery.data?.can_publish === true;
   const runtimesQuery = useCloudSandboxStableRuntimes(
@@ -326,7 +328,9 @@ export function StableFCE2BRuntimeOverviewPage() {
   };
 
   const changeBackend = (backend: SandboxBackend) => {
-    setSandboxBackend(backend);
+    const search = new URLSearchParams(navigation.searchParams);
+    search.set("backend", backend);
+    navigation.replace(`${navigation.pathname}?${search.toString()}`);
     setReleaseDialogOpen(false);
     clearFilters();
   };
@@ -344,7 +348,7 @@ export function StableFCE2BRuntimeOverviewPage() {
       <BreadcrumbHeader
         segments={[
           {
-            href: paths.runtimes(),
+            href: `${paths.runtimes()}?backend=${sandboxBackend}`,
             label: t(($) => $.page.title),
           },
         ]}

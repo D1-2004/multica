@@ -68,12 +68,16 @@ func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
 	t.Parallel()
 
 	identity := ASBResolvedIdentity{
-		Mode:               asbIdentityModeBound,
-		RawEmployeeID:      "12345",
-		BUCAgentID:         "agent-multica-asb",
-		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
-		AIPID:              "aip-1",
-		AnchorSandboxID:    "sandbox-anchor",
+		Mode:          asbIdentityModeBound,
+		RawEmployeeID: "12345",
+		BUCAgentID:    "agent-multica-asb",
+		AgentSPIFFEID: "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:         "aip-1",
+		BUCTokens: BUCIdentityTokens{
+			AccessToken:  "buc-access",
+			RefreshToken: "buc-refresh",
+			IDToken:      "buc-id",
+		},
 		AgentIdentityToken: "ait",
 		Fingerprint:        strings.Repeat("a", 64),
 	}
@@ -85,11 +89,89 @@ func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
 		"spiffe.lazyAuth":          "true",
 		"wireguard.worker":         "12345",
 		"wireguard.uemCredentials": "wireguard-credentials",
-		"buc.originalSandboxID":    "sandbox-anchor",
 	} {
 		if extensions[key] != expected {
 			t.Fatalf("bound sandbox extension %s = %q, want %q", key, extensions[key], expected)
 		}
+	}
+}
+
+func TestASBLauncherInjectsPlatformCredentialsWithoutAnchorSandbox(t *testing.T) {
+	t.Parallel()
+
+	var wireguardGrant ASBBUCIdentityGrant
+	var spiffeGrant ASBAgentIdentityGrant
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/wireguard":
+			if err := json.NewDecoder(request.Body).Decode(&wireguardGrant); err != nil {
+				t.Fatalf("decode WireGuard identity: %v", err)
+			}
+			response.WriteHeader(http.StatusOK)
+		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/spiffe":
+			if err := json.NewDecoder(request.Body).Decode(&spiffeGrant); err != nil {
+				t.Fatalf("decode SPIFFE identity: %v", err)
+			}
+			response.WriteHeader(http.StatusNoContent)
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/sandbox-123/endpoints/44772":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/execd",
+				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	identity := ASBResolvedIdentity{
+		Mode:          asbIdentityModeBound,
+		RawEmployeeID: "12345",
+		BUCAgentID:    "agent-multica-asb",
+		AgentSPIFFEID: "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:         "aip-1",
+		BUCTokens: BUCIdentityTokens{
+			AccessToken:  "buc-access",
+			RefreshToken: "buc-refresh",
+			IDToken:      "buc-id",
+		},
+		AgentIdentityToken: "ait",
+		Fingerprint:        strings.Repeat("a", 64),
+	}
+	launcher := &ASBLauncher{
+		Client: newTestASBClient(t, server),
+		Config: ASBConfig{
+			IdentityProbeTimeout: time.Second,
+			WireGuardCredentials: "wireguard-credentials",
+		},
+	}
+	if err := launcher.ensureSandboxIdentityReady(
+		context.Background(),
+		"sandbox-123",
+		identity,
+	); err != nil {
+		t.Fatalf("ensureSandboxIdentityReady: %v", err)
+	}
+	if wireguardGrant.OriginalSandboxID != "" {
+		t.Fatalf("platform credential injection reused anchor sandbox %q", wireguardGrant.OriginalSandboxID)
+	}
+	if wireguardGrant.EmployeeID != identity.RawEmployeeID ||
+		wireguardGrant.BUCAccessToken != identity.BUCTokens.AccessToken ||
+		wireguardGrant.BUCRefreshToken != identity.BUCTokens.RefreshToken ||
+		wireguardGrant.BUCIDToken != identity.BUCTokens.IDToken {
+		t.Fatalf("WireGuard identity grant = %#v", wireguardGrant)
+	}
+	if spiffeGrant.RawEmployeeID != identity.RawEmployeeID ||
+		spiffeGrant.AgentToken != identity.AgentIdentityToken ||
+		spiffeGrant.AgentID != identity.AgentSPIFFEID {
+		t.Fatalf("SPIFFE identity grant = %#v", spiffeGrant)
 	}
 }
 

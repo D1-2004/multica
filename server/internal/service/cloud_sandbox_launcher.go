@@ -95,13 +95,17 @@ func NewASBEnterpriseRuntimeFromConfig(
 	if err := identityConfig.Validate(asbConfig); err != nil {
 		return nil, err
 	}
-	asbClient, err := NewASBClient(ASBClientConfig{
-		BaseURL: asbConfig.APIURL,
-		APIKey:  asbConfig.APIKey,
-		Timeout: 30 * time.Second,
-	})
-	if err != nil {
-		return nil, err
+	var stableValidationClient *ASBClient
+	if asbConfig.StableValidationAPIKey != "" {
+		var err error
+		stableValidationClient, err = NewASBClient(ASBClientConfig{
+			BaseURL: asbConfig.APIURL,
+			APIKey:  asbConfig.StableValidationAPIKey,
+			Timeout: 30 * time.Second,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	bucClient, err := NewHTTPBUCOAuthClient(
 		identityConfig.BUCTokenURL,
@@ -136,21 +140,33 @@ func NewASBEnterpriseRuntimeFromConfig(
 	if err != nil {
 		return nil, err
 	}
-	anchor := &ASBIdentityAnchorManager{Client: asbClient, Config: asbConfig}
+	credentials := &ASBRuntimeClientProvider{
+		Store:   queries,
+		Secrets: secrets,
+		Config:  asbConfig,
+	}
 	identity, err := NewEnterpriseIdentityService(
 		queries,
 		identityConfig,
 		bucClient,
 		authXClient,
 		idemClient,
-		anchor,
+		credentials,
 		secrets,
 		newPostgresEnterpriseIdentityTokenRotationLocker(pool),
 	)
 	if err != nil {
 		return nil, err
 	}
-	launcher := NewASBLauncher(queries, tasks, common, asbConfig, asbClient, identity)
+	launcher := NewASBLauncher(
+		queries,
+		tasks,
+		common,
+		asbConfig,
+		stableValidationClient,
+		identity,
+		credentials,
+	)
 	launcher.SetPool(pool)
 	return &ASBEnterpriseRuntime{
 		Launcher: launcher,

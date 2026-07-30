@@ -35,12 +35,11 @@ type fakeEnterpriseIdentityStore struct {
 	getCurrentErr   error
 	createAttempt   db.CreateAgentEnterpriseIdentityAttemptParams
 	upsert          db.UpsertAgentEnterpriseIdentityParams
-	anchorCAS       db.CompareAndSwapAgentEnterpriseIdentityAnchorParams
+	bucCAS          db.CompareAndSwapAgentEnterpriseIdentityBUCTokensParams
 	cas             db.CompareAndSwapAgentEnterpriseIdentityTokenParams
 	markNeedsReauth int
 	maintenance     []db.AgentEnterpriseIdentity
 	maintenanceArgs db.ListAgentEnterpriseIdentitiesForMaintenanceParams
-	maintenanceHits int
 	activeSessions  []db.FcE2bSandboxSession
 	markedStale     []db.MarkCloudSandboxSessionStaleParams
 }
@@ -101,7 +100,8 @@ func (f *fakeEnterpriseIdentityStore) UpsertAgentEnterpriseIdentity(
 		BucAgentID:                 params.BucAgentID,
 		AgentSpiffeID:              params.AgentSpiffeID,
 		AipID:                      params.AipID,
-		BucAnchorSandboxID:         params.BucAnchorSandboxID,
+		BucTokensEncrypted:         params.BucTokensEncrypted,
+		BucAccessExpiresAt:         params.BucAccessExpiresAt,
 		AuthxRefreshTokenEncrypted: params.AuthxRefreshTokenEncrypted,
 		AuthxRefreshExpiresAt:      params.AuthxRefreshExpiresAt,
 		TokenVersion:               1,
@@ -111,16 +111,16 @@ func (f *fakeEnterpriseIdentityStore) UpsertAgentEnterpriseIdentity(
 	return f.current, nil
 }
 
-func (f *fakeEnterpriseIdentityStore) CompareAndSwapAgentEnterpriseIdentityAnchor(
+func (f *fakeEnterpriseIdentityStore) CompareAndSwapAgentEnterpriseIdentityBUCTokens(
 	_ context.Context,
-	params db.CompareAndSwapAgentEnterpriseIdentityAnchorParams,
+	params db.CompareAndSwapAgentEnterpriseIdentityBUCTokensParams,
 ) (db.AgentEnterpriseIdentity, error) {
-	f.anchorCAS = params
-	if params.ExpectedTokenVersion != f.current.TokenVersion ||
-		params.ExpectedBucAnchorSandboxID != f.current.BucAnchorSandboxID {
+	f.bucCAS = params
+	if params.ExpectedTokenVersion != f.current.TokenVersion {
 		return db.AgentEnterpriseIdentity{}, pgx.ErrNoRows
 	}
-	f.current.BucAnchorSandboxID = params.BucAnchorSandboxID
+	f.current.BucTokensEncrypted = params.BucTokensEncrypted
+	f.current.BucAccessExpiresAt = params.BucAccessExpiresAt
 	f.current.TokenVersion++
 	return f.current, nil
 }
@@ -153,14 +153,6 @@ func (f *fakeEnterpriseIdentityStore) ListAgentEnterpriseIdentitiesForMaintenanc
 ) ([]db.AgentEnterpriseIdentity, error) {
 	f.maintenanceArgs = params
 	return f.maintenance, nil
-}
-
-func (f *fakeEnterpriseIdentityStore) TouchAgentEnterpriseIdentityMaintenance(
-	context.Context,
-	db.TouchAgentEnterpriseIdentityMaintenanceParams,
-) (int64, error) {
-	f.maintenanceHits++
-	return 1, nil
 }
 
 func (f *fakeEnterpriseIdentityStore) RevokeAgentEnterpriseIdentity(
@@ -263,14 +255,9 @@ func (f *fakeEnterpriseIdem) DeleteAgent(context.Context, string, string) error 
 	return nil
 }
 
-type fakeEnterpriseAnchor struct {
-	createdEmployee string
-	createdTokens   BUCIdentityTokens
-	availableID     string
-	available       EnterpriseIdentityAnchorBinding
-	successorID     string
-	deletedID       string
-	deletedIDs      []string
+type fakeEnterpriseSandboxes struct {
+	deletedRuntimeIDs []pgtype.UUID
+	deletedIDs        []string
 }
 
 type fakeEnterpriseIdentityTokenRotationLocker struct {
@@ -336,32 +323,12 @@ func (c *chainingEnterpriseAuthX) Renew(
 	}, nil
 }
 
-func (f *fakeEnterpriseAnchor) Create(
+func (f *fakeEnterpriseSandboxes) DeleteRuntimeSandbox(
 	_ context.Context,
-	_ pgtype.UUID,
-	_ pgtype.UUID,
-	employeeID string,
-	tokens BUCIdentityTokens,
-) (string, error) {
-	f.createdEmployee = employeeID
-	f.createdTokens = tokens
-	return "anchor-1", nil
-}
-
-func (f *fakeEnterpriseAnchor) EnsureAvailable(
-	_ context.Context,
-	binding EnterpriseIdentityAnchorBinding,
-) (EnterpriseIdentityAnchorAvailability, error) {
-	f.available = binding
-	f.availableID = binding.SandboxID
-	if f.successorID != "" {
-		return EnterpriseIdentityAnchorAvailability{SandboxID: f.successorID}, nil
-	}
-	return EnterpriseIdentityAnchorAvailability{SandboxID: binding.SandboxID}, nil
-}
-
-func (f *fakeEnterpriseAnchor) Delete(_ context.Context, sandboxID string) error {
-	f.deletedID = sandboxID
+	runtimeID pgtype.UUID,
+	sandboxID string,
+) error {
+	f.deletedRuntimeIDs = append(f.deletedRuntimeIDs, runtimeID)
 	f.deletedIDs = append(f.deletedIDs, sandboxID)
 	return nil
 }
@@ -465,7 +432,7 @@ func TestEnterpriseIdentityStartBindingStoresOnlyHashedStateAndNonce(t *testing.
 
 	now := time.Date(2026, 7, 29, 7, 0, 0, 0, time.UTC)
 	store := &fakeEnterpriseIdentityStore{}
-	serviceUnderTest := newTestEnterpriseIdentityService(t, store, &fakeBUCOAuthClient{}, &fakeEnterpriseAuthX{}, &fakeEnterpriseIdem{}, &fakeEnterpriseAnchor{}, now)
+	serviceUnderTest := newTestEnterpriseIdentityService(t, store, &fakeBUCOAuthClient{}, &fakeEnterpriseAuthX{}, &fakeEnterpriseIdem{}, &fakeEnterpriseSandboxes{}, now)
 	result, err := serviceUnderTest.StartBinding(context.Background(), StartEnterpriseIdentityBindingInput{
 		WorkspaceID:  util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		AgentID:      util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
@@ -507,13 +474,10 @@ func TestEnterpriseIdentityStartBindingWithoutPreauthorizedApplications(t *testi
 
 	now := time.Date(2026, 7, 29, 7, 0, 0, 0, time.UTC)
 	store := &fakeEnterpriseIdentityStore{}
-	serviceUnderTest := newTestEnterpriseIdentityService(t, store, &fakeBUCOAuthClient{}, &fakeEnterpriseAuthX{}, &fakeEnterpriseIdem{}, &fakeEnterpriseAnchor{}, now)
+	serviceUnderTest := newTestEnterpriseIdentityService(t, store, &fakeBUCOAuthClient{}, &fakeEnterpriseAuthX{}, &fakeEnterpriseIdem{}, &fakeEnterpriseSandboxes{}, now)
 	serviceUnderTest.Config.BUCAuthorizeApps = nil
 
-	if err := serviceUnderTest.Config.Validate(ASBConfig{
-		IdentityAnchorImageRef: "registry.example/anchor@sha256:" + strings.Repeat("a", 64),
-		IdentityAnchorTimeout:  time.Minute,
-	}); err != nil {
+	if err := serviceUnderTest.Config.Validate(ASBConfig{}); err != nil {
 		t.Fatalf("Validate without preauthorized applications: %v", err)
 	}
 
@@ -582,7 +546,7 @@ func TestEnterpriseIdentityCompleteBindingRequiresRevokeBeforeChangingEmployee(t
 		buc,
 		authX,
 		&fakeEnterpriseIdem{},
-		&fakeEnterpriseAnchor{},
+		&fakeEnterpriseSandboxes{},
 		now,
 	)
 
@@ -627,7 +591,7 @@ func TestValidateExistingIdemAgentRejectsDifferentOwner(t *testing.T) {
 	}
 }
 
-func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *testing.T) {
+func TestEnterpriseIdentityCompleteBindingPersistsEncryptedPlatformCredentials(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 29, 7, 0, 0, 0, time.UTC)
@@ -659,6 +623,7 @@ func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *t
 			AccessToken:  "buc-access",
 			RefreshToken: "buc-refresh",
 			IDToken:      bucIDToken,
+			ExpiresIn:    3600,
 		},
 		claims: bucIDTokenClaims{
 			RegisteredClaims: jwt.RegisteredClaims{Subject: "openid-1"},
@@ -674,8 +639,16 @@ func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *t
 		RefreshExpiresAt: now.Add(24 * time.Hour),
 	}}
 	idem := &fakeEnterpriseIdem{ait: "ait-1"}
-	anchor := &fakeEnterpriseAnchor{}
-	serviceUnderTest := newTestEnterpriseIdentityService(t, store, buc, authX, idem, anchor, now)
+	sandboxes := &fakeEnterpriseSandboxes{}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		buc,
+		authX,
+		idem,
+		sandboxes,
+		now,
+	)
 
 	result, err := serviceUnderTest.CompleteBinding(context.Background(), state, "oauth-code")
 	if err != nil {
@@ -686,11 +659,6 @@ func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *t
 	}
 	if buc.verifiedToken != bucIDToken {
 		t.Fatal("BUC ID token was not verified before binding")
-	}
-	if anchor.createdEmployee != "12345" ||
-		anchor.createdTokens.RefreshToken != "buc-refresh" ||
-		anchor.createdTokens.IDToken != bucIDToken {
-		t.Fatalf("anchor input = %#v", anchor)
 	}
 	if store.upsert.RawEmpID != "12345" ||
 		idem.registration.EmployeeID != "12345" {
@@ -703,7 +671,9 @@ func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *t
 		t.Fatalf("AuthX SSO ticket = %q", authX.issuedSSOTicket)
 	}
 	if bytes.Contains(store.upsert.AuthxRefreshTokenEncrypted, []byte("authx-refresh")) ||
-		bytes.Contains(store.upsert.AuthxRefreshTokenEncrypted, []byte("buc-refresh")) {
+		bytes.Contains(store.upsert.AuthxRefreshTokenEncrypted, []byte("buc-refresh")) ||
+		bytes.Contains(store.upsert.BucTokensEncrypted, []byte("buc-refresh")) ||
+		bytes.Contains(store.upsert.BucTokensEncrypted, []byte(bucIDToken)) {
 		t.Fatal("plaintext refresh token was persisted")
 	}
 	opened, err := serviceUnderTest.Secrets.Open(store.upsert.AuthxRefreshTokenEncrypted)
@@ -713,10 +683,26 @@ func TestEnterpriseIdentityCompleteBindingPersistsOnlyEncryptedAuthXRefresh(t *t
 	if string(opened) != "authx-refresh" {
 		t.Fatalf("stored refresh token = %q", opened)
 	}
-	if store.upsert.BucAnchorSandboxID.String != "anchor-1" ||
-		store.upsert.AgentSpiffeID == "" ||
+	bucRaw, err := serviceUnderTest.Secrets.Open(store.upsert.BucTokensEncrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted persistedBUCIdentityTokens
+	if err := json.Unmarshal(bucRaw, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.AccessToken != "buc-access" ||
+		persisted.RefreshToken != "buc-refresh" ||
+		persisted.IDToken != bucIDToken ||
+		!store.upsert.BucAccessExpiresAt.Time.Equal(now.Add(time.Hour)) {
+		t.Fatalf("persisted BUC credentials = %#v expires=%v", persisted, store.upsert.BucAccessExpiresAt)
+	}
+	if store.upsert.AgentSpiffeID == "" ||
 		store.upsert.AipID != "aip-1" {
 		t.Fatalf("persisted identity = %#v", store.upsert)
+	}
+	if len(sandboxes.deletedIDs) != 0 {
+		t.Fatalf("binding allocated or deleted sandbox state: %#v", sandboxes.deletedIDs)
 	}
 }
 
@@ -728,10 +714,15 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := box.Seal([]byte("refresh-old"))
+	sealedRefresh, err := box.Seal([]byte("refresh-old"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	sealedBUC := mustSealTestBUCTokens(t, box, persistedBUCIdentityTokens{
+		AccessToken:  "buc-access",
+		RefreshToken: "buc-refresh",
+		IDToken:      "buc-id",
+	})
 	store := &fakeEnterpriseIdentityStore{
 		current: db.AgentEnterpriseIdentity{
 			ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
@@ -741,8 +732,9 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 			BucAgentID:                 "buc-agent-1",
 			AgentSpiffeID:              "spiffe://agents.example/ns/multica/agents/222",
 			AipID:                      "aip-1",
-			BucAnchorSandboxID:         pgtype.Text{String: "anchor-1", Valid: true},
-			AuthxRefreshTokenEncrypted: sealed,
+			BucTokensEncrypted:         sealedBUC,
+			BucAccessExpiresAt:         pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
+			AuthxRefreshTokenEncrypted: sealedRefresh,
 			AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
 			TokenVersion:               2,
 			Status:                     "active",
@@ -755,8 +747,15 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 		RefreshExpiresAt: now.Add(24 * time.Hour),
 	}}
 	idem := &fakeEnterpriseIdem{ait: "ait-task"}
-	anchor := &fakeEnterpriseAnchor{}
-	serviceUnderTest := newTestEnterpriseIdentityService(t, store, &fakeBUCOAuthClient{}, authX, idem, anchor, now)
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{},
+		authX,
+		idem,
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
 	serviceUnderTest.Secrets = box
 
 	resolved, err := serviceUnderTest.ResolveASBTaskIdentity(
@@ -770,7 +769,7 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 	if authX.renewedFrom != "refresh-old" ||
 		idem.issuedOIDC != "authx-id-new" ||
 		resolved.AgentIdentityToken != "ait-task" ||
-		resolved.AnchorSandboxID != "anchor-1" ||
+		resolved.BUCTokens.RefreshToken != "buc-refresh" ||
 		len(resolved.Fingerprint) != 64 {
 		t.Fatalf("resolved = %#v", resolved)
 	}
@@ -778,8 +777,8 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(rotated) != "refresh-new" || anchor.availableID != "anchor-1" {
-		t.Fatalf("rotation = %q anchor=%q", rotated, anchor.availableID)
+	if string(rotated) != "refresh-new" {
+		t.Fatalf("rotation = %q", rotated)
 	}
 }
 
@@ -817,7 +816,7 @@ func TestEnterpriseIdentityTokenRotationReloadsAfterSharedLock(t *testing.T) {
 			&fakeBUCOAuthClient{},
 			authX,
 			&fakeEnterpriseIdem{},
-			&fakeEnterpriseAnchor{},
+			&fakeEnterpriseSandboxes{},
 			now,
 		)
 		serviceUnderTest.Secrets = box
@@ -859,7 +858,7 @@ func TestEnterpriseIdentityTokenRotationReloadsAfterSharedLock(t *testing.T) {
 	}
 }
 
-func TestEnterpriseIdentityResolveReplacesExpiringAnchorWithoutChangingIdentity(t *testing.T) {
+func TestEnterpriseIdentityResolveRefreshesExpiringBUCTokensWithoutChangingIdentity(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 30, 4, 0, 0, 0, time.UTC)
@@ -867,10 +866,15 @@ func TestEnterpriseIdentityResolveReplacesExpiringAnchorWithoutChangingIdentity(
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := box.Seal([]byte("refresh-old"))
+	sealedRefresh, err := box.Seal([]byte("authx-refresh-old"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	sealedBUC := mustSealTestBUCTokens(t, box, persistedBUCIdentityTokens{
+		AccessToken:  "buc-access-old",
+		RefreshToken: "buc-refresh-old",
+		IDToken:      "buc-id-old",
+	})
 	identity := db.AgentEnterpriseIdentity{
 		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
 		WorkspaceID:                util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
@@ -879,28 +883,34 @@ func TestEnterpriseIdentityResolveReplacesExpiringAnchorWithoutChangingIdentity(
 		BucAgentID:                 "buc-agent-1",
 		AgentSpiffeID:              "spiffe://agents.example/ns/multica/agents/222",
 		AipID:                      "aip-1",
-		BucAnchorSandboxID:         pgtype.Text{String: "anchor-1", Valid: true},
-		AuthxRefreshTokenEncrypted: sealed,
+		BucTokensEncrypted:         sealedBUC,
+		BucAccessExpiresAt:         pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
+		AuthxRefreshTokenEncrypted: sealedRefresh,
 		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(48 * time.Hour), Valid: true},
 		TokenVersion:               2,
 		Status:                     "active",
 	}
 	oldFingerprint := enterpriseIdentityFingerprint(identity)
 	store := &fakeEnterpriseIdentityStore{current: identity}
+	buc := &fakeBUCOAuthClient{refreshResult: BUCIdentityTokens{
+		AccessToken:  "buc-access-new",
+		RefreshToken: "buc-refresh-new",
+		ExpiresIn:    3600,
+	}}
 	authX := &fakeEnterpriseAuthX{renewResult: EnterpriseOIDCToken{
 		IDToken:          "authx-id-new",
-		RefreshToken:     "refresh-new",
+		RefreshToken:     "authx-refresh-new",
 		ExpiresAt:        now.Add(time.Hour),
 		RefreshExpiresAt: now.Add(7 * 24 * time.Hour),
 	}}
-	anchor := &fakeEnterpriseAnchor{successorID: "anchor-2"}
+	sandboxes := &fakeEnterpriseSandboxes{}
 	serviceUnderTest := newTestEnterpriseIdentityService(
 		t,
 		store,
-		&fakeBUCOAuthClient{},
+		buc,
 		authX,
 		&fakeEnterpriseIdem{ait: "ait-task"},
-		anchor,
+		sandboxes,
 		now,
 	)
 	serviceUnderTest.Secrets = box
@@ -913,30 +923,36 @@ func TestEnterpriseIdentityResolveReplacesExpiringAnchorWithoutChangingIdentity(
 	if err != nil {
 		t.Fatalf("ResolveASBTaskIdentity: %v", err)
 	}
-	if resolved.AnchorSandboxID != "anchor-2" ||
+	if resolved.BUCTokens.RefreshToken != "buc-refresh-new" ||
 		resolved.Fingerprint != oldFingerprint ||
 		enterpriseIdentityFingerprint(store.current) != oldFingerprint {
-		t.Fatalf("resolved identity changed across anchor replacement: %#v", resolved)
+		t.Fatalf("resolved identity changed across credential refresh: %#v", resolved)
 	}
-	if store.anchorCAS.ExpectedTokenVersion != 2 ||
-		store.anchorCAS.ExpectedBucAnchorSandboxID.String != "anchor-1" ||
-		store.anchorCAS.BucAnchorSandboxID.String != "anchor-2" {
-		t.Fatalf("anchor compare-and-swap = %#v", store.anchorCAS)
+	if store.bucCAS.ExpectedTokenVersion != 2 ||
+		!store.bucCAS.BucAccessExpiresAt.Time.Equal(now.Add(time.Hour)) {
+		t.Fatalf("BUC compare-and-swap = %#v", store.bucCAS)
 	}
 	if store.cas.ExpectedTokenVersion != 3 {
-		t.Fatalf("token rotation did not follow anchor compare-and-swap: %#v", store.cas)
+		t.Fatalf("AuthX rotation did not follow BUC compare-and-swap: %#v", store.cas)
 	}
-	if anchor.available.EmployeeID != "12345" ||
-		anchor.available.SandboxID != "anchor-1" ||
-		strings.Join(anchor.deletedIDs, ",") != "anchor-1" {
-		t.Fatalf("anchor handoff = %#v deleted=%#v", anchor.available, anchor.deletedIDs)
+	rotatedBUC, err := serviceUnderTest.openBUCTokens(store.current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotatedBUC.AccessToken != "buc-access-new" ||
+		rotatedBUC.RefreshToken != "buc-refresh-new" ||
+		rotatedBUC.IDToken != "buc-id-old" {
+		t.Fatalf("rotated BUC credentials = %#v", rotatedBUC)
+	}
+	if len(sandboxes.deletedIDs) != 0 {
+		t.Fatalf("task sandboxes were deleted during transparent credential refresh: %#v", sandboxes.deletedIDs)
 	}
 	if len(store.markedStale) != 0 {
-		t.Fatalf("active task sandboxes were retired during transparent handoff: %#v", store.markedStale)
+		t.Fatalf("active task sandboxes were retired during transparent credential refresh: %#v", store.markedStale)
 	}
 }
 
-func TestEnterpriseIdentityMaintenanceRenewsAnchorAndRotatesRefresh(t *testing.T) {
+func TestEnterpriseIdentityMaintenanceRefreshesPlatformCredentials(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 29, 7, 0, 0, 0, time.UTC)
@@ -944,17 +960,23 @@ func TestEnterpriseIdentityMaintenanceRenewsAnchorAndRotatesRefresh(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := box.Seal([]byte("refresh-old"))
+	sealedRefresh, err := box.Seal([]byte("authx-refresh-old"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	sealedBUC := mustSealTestBUCTokens(t, box, persistedBUCIdentityTokens{
+		AccessToken:  "buc-access-old",
+		RefreshToken: "buc-refresh-old",
+		IDToken:      "buc-id-old",
+	})
 	identity := db.AgentEnterpriseIdentity{
 		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
 		WorkspaceID:                util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		AgentID:                    util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
 		RawEmpID:                   "12345",
-		BucAnchorSandboxID:         pgtype.Text{String: "anchor-1", Valid: true},
-		AuthxRefreshTokenEncrypted: sealed,
+		BucTokensEncrypted:         sealedBUC,
+		BucAccessExpiresAt:         pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
+		AuthxRefreshTokenEncrypted: sealedRefresh,
 		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(10 * time.Minute), Valid: true},
 		TokenVersion:               2,
 		Status:                     "active",
@@ -963,20 +985,24 @@ func TestEnterpriseIdentityMaintenanceRenewsAnchorAndRotatesRefresh(t *testing.T
 		current:     identity,
 		maintenance: []db.AgentEnterpriseIdentity{identity},
 	}
+	buc := &fakeBUCOAuthClient{refreshResult: BUCIdentityTokens{
+		AccessToken:  "buc-access-new",
+		RefreshToken: "buc-refresh-new",
+		ExpiresIn:    3600,
+	}}
 	authX := &fakeEnterpriseAuthX{renewResult: EnterpriseOIDCToken{
 		IDToken:          "authx-id-new",
-		RefreshToken:     "refresh-new",
+		RefreshToken:     "authx-refresh-new",
 		ExpiresAt:        now.Add(time.Hour),
 		RefreshExpiresAt: now.Add(24 * time.Hour),
 	}}
-	anchor := &fakeEnterpriseAnchor{}
 	serviceUnderTest := newTestEnterpriseIdentityService(
 		t,
 		store,
-		&fakeBUCOAuthClient{},
+		buc,
 		authX,
 		&fakeEnterpriseIdem{},
-		anchor,
+		&fakeEnterpriseSandboxes{},
 		now,
 	)
 	serviceUnderTest.Secrets = box
@@ -984,20 +1010,105 @@ func TestEnterpriseIdentityMaintenanceRenewsAnchorAndRotatesRefresh(t *testing.T
 	if err := serviceUnderTest.maintainActiveIdentities(context.Background()); err != nil {
 		t.Fatalf("maintainActiveIdentities: %v", err)
 	}
-	if anchor.availableID != "anchor-1" || authX.renewedFrom != "refresh-old" {
-		t.Fatalf("anchor=%q renewed_from=%q", anchor.availableID, authX.renewedFrom)
+	if authX.renewedFrom != "authx-refresh-old" {
+		t.Fatalf("renewed_from=%q", authX.renewedFrom)
 	}
 	rotated, err := box.Open(store.cas.AuthxRefreshTokenEncrypted)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(rotated) != "refresh-new" {
+	if string(rotated) != "authx-refresh-new" {
 		t.Fatalf("rotated refresh token = %q", rotated)
 	}
+	rotatedBUC, err := serviceUnderTest.openBUCTokens(store.current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotatedBUC.RefreshToken != "buc-refresh-new" {
+		t.Fatalf("rotated BUC credentials = %#v", rotatedBUC)
+	}
 	if !store.maintenanceArgs.RotateBefore.Time.Equal(now.Add(defaultEnterpriseRefreshBefore)) ||
-		!store.maintenanceArgs.AnchorRenewBefore.Time.Equal(now.Add(-defaultEnterpriseAnchorMaintenanceInterval)) ||
+		!store.maintenanceArgs.BucRotateBefore.Time.Equal(now.Add(defaultEnterpriseBUCRefreshBefore)) ||
 		store.maintenanceArgs.BatchSize != defaultEnterpriseMaintenanceBatch {
 		t.Fatalf("maintenance query = %#v", store.maintenanceArgs)
+	}
+}
+
+func TestEnterpriseIdentityRequiresReauthOnlyForDocumentedBUCRefreshFailures(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "invalid refresh token",
+			err: newEnterpriseIdentityProviderError(
+				"buc",
+				"refresh BUC OAuth token",
+				"buc_oauth_error",
+				http.StatusBadRequest,
+				"240115",
+				nil,
+			),
+			want: true,
+		},
+		{
+			name: "interactive login required",
+			err: newEnterpriseIdentityProviderError(
+				"buc",
+				"refresh BUC OAuth token",
+				"buc_oauth_error",
+				http.StatusBadRequest,
+				"240116",
+				nil,
+			),
+			want: true,
+		},
+		{
+			name: "unauthorized",
+			err: newEnterpriseIdentityProviderError(
+				"buc",
+				"refresh BUC OAuth token",
+				"buc_http_error",
+				http.StatusUnauthorized,
+				"",
+				nil,
+			),
+			want: true,
+		},
+		{
+			name: "transient coded provider failure",
+			err: newEnterpriseIdentityProviderError(
+				"buc",
+				"refresh BUC OAuth token",
+				"buc_oauth_error",
+				http.StatusBadRequest,
+				"240199",
+				nil,
+			),
+			want: false,
+		},
+		{
+			name: "transient server failure",
+			err: newEnterpriseIdentityProviderError(
+				"buc",
+				"refresh BUC OAuth token",
+				"buc_http_error",
+				http.StatusBadGateway,
+				"",
+				nil,
+			),
+			want: false,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			if got := enterpriseIdentityRequiresReauth(testCase.err); got != testCase.want {
+				t.Fatalf("enterpriseIdentityRequiresReauth() = %v, want %v", got, testCase.want)
+			}
+		})
 	}
 }
 
@@ -1010,20 +1121,14 @@ func TestEnterpriseIdentityRevokeRetiresActiveASBSandboxes(t *testing.T) {
 	runtimeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
 	scopeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
 	identity := db.AgentEnterpriseIdentity{
-		ID:                 util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
-		WorkspaceID:        workspaceID,
-		AgentID:            agentID,
-		RawEmpID:           "12345",
-		BucAgentID:         "buc-agent-1",
-		AgentSpiffeID:      "spiffe://agents.example/ns/multica/agents/222",
-		AipID:              "aip-1",
-		BucAnchorSandboxID: pgtype.Text{String: "anchor-1", Valid: true},
-		Status:             "active",
-	}
-	reboundIdentity := identity
-	reboundIdentity.BucAnchorSandboxID = pgtype.Text{String: "anchor-2", Valid: true}
-	if enterpriseIdentityFingerprint(identity) != enterpriseIdentityFingerprint(reboundIdentity) {
-		t.Fatal("identity fingerprint changed during transparent anchor replacement")
+		ID:            util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+		WorkspaceID:   workspaceID,
+		AgentID:       agentID,
+		RawEmpID:      "12345",
+		BucAgentID:    "buc-agent-1",
+		AgentSpiffeID: "spiffe://agents.example/ns/multica/agents/222",
+		AipID:         "aip-1",
+		Status:        "active",
 	}
 	store := &fakeEnterpriseIdentityStore{
 		current: identity,
@@ -1038,14 +1143,14 @@ func TestEnterpriseIdentityRevokeRetiresActiveASBSandboxes(t *testing.T) {
 			Status:              "running",
 		}},
 	}
-	anchor := &fakeEnterpriseAnchor{}
+	sandboxes := &fakeEnterpriseSandboxes{}
 	serviceUnderTest := newTestEnterpriseIdentityService(
 		t,
 		store,
 		&fakeBUCOAuthClient{},
 		&fakeEnterpriseAuthX{},
 		&fakeEnterpriseIdem{},
-		anchor,
+		sandboxes,
 		now,
 	)
 
@@ -1062,11 +1167,103 @@ func TestEnterpriseIdentityRevokeRetiresActiveASBSandboxes(t *testing.T) {
 		marked.IdentityFingerprint != enterpriseIdentityFingerprint(identity) {
 		t.Fatalf("marked stale session = %#v", marked)
 	}
-	if got := strings.Join(anchor.deletedIDs, ","); got != "task-sandbox-1,anchor-1" {
+	if got := strings.Join(sandboxes.deletedIDs, ","); got != "task-sandbox-1" {
 		t.Fatalf("deleted sandboxes = %q", got)
+	}
+	if len(sandboxes.deletedRuntimeIDs) != 1 || sandboxes.deletedRuntimeIDs[0] != runtimeID {
+		t.Fatalf("deleted sandbox Runtime IDs = %#v", sandboxes.deletedRuntimeIDs)
 	}
 	if store.current.Status != "revoked" {
 		t.Fatalf("identity status = %q", store.current.Status)
+	}
+}
+
+func TestHTTPBUCOAuthClientRefreshUsesDocumentedEndpointAndResponse(t *testing.T) {
+	t.Parallel()
+
+	var requestSeen bool
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestSeen = true
+		if r.Method != http.MethodPost || r.URL.Path != "/rpc/oauth2/refresh_token.json" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm: %v", err)
+		}
+		if r.Form.Get("grant_type") != "refresh_token" ||
+			r.Form.Get("refresh_token") != "buc-refresh-old" {
+			t.Errorf("refresh request form = %#v", r.Form)
+		}
+		if r.Form.Get("client_id") != "" || r.Form.Get("client_secret") != "" {
+			t.Errorf("undocumented client credentials were sent: %#v", r.Form)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(
+			w,
+			`{"access_token":"buc-access-new","expires_in":259200,"refresh_token":"buc-refresh-new"}`,
+		)
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPBUCOAuthClient(
+		server.URL+"/rpc/oauth2/access_token.json",
+		server.URL+"/oauth2",
+		server.URL+"/oauth2/v1/keys",
+		"buc-client-1",
+		"buc-secret",
+		server.URL+"/callback",
+		server.Client(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens, err := client.Refresh(context.Background(), "buc-refresh-old")
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if !requestSeen {
+		t.Fatal("BUC refresh request was not sent")
+	}
+	if tokens.AccessToken != "buc-access-new" ||
+		tokens.RefreshToken != "buc-refresh-new" ||
+		tokens.IDToken != "" ||
+		tokens.ExpiresIn != 259200 {
+		t.Fatalf("refreshed BUC tokens = %#v", tokens)
+	}
+}
+
+func TestHTTPBUCOAuthClientRefreshClassifiesNumericProviderError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(
+			w,
+			`{"error_code":240115,"error":"invalid_refresh_token"}`,
+		)
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPBUCOAuthClient(
+		server.URL+"/rpc/oauth2/access_token.json",
+		server.URL+"/oauth2",
+		server.URL+"/oauth2/v1/keys",
+		"buc-client-1",
+		"buc-secret",
+		"https://multica.example/api/agent-enterprise-identity/buc/callback",
+		server.Client(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Refresh(context.Background(), "buc-refresh-old")
+	var providerErr *enterpriseIdentityProviderError
+	if !errors.As(err, &providerErr) {
+		t.Fatalf("Refresh error = %v", err)
+	}
+	if providerErr.Code != "240115" ||
+		!enterpriseIdentityRequiresReauth(providerErr) {
+		t.Fatalf("provider error = %#v", providerErr)
 	}
 }
 
@@ -1279,7 +1476,7 @@ func newTestEnterpriseIdentityService(
 	buc BUCOAuthClient,
 	authX EnterpriseAuthX,
 	idem EnterpriseIdem,
-	anchor EnterpriseIdentityAnchor,
+	sandboxes EnterpriseIdentitySandboxController,
 	now time.Time,
 ) *EnterpriseIdentityService {
 	t.Helper()
@@ -1315,7 +1512,7 @@ func newTestEnterpriseIdentityService(
 		buc,
 		authX,
 		idem,
-		anchor,
+		sandboxes,
 		box,
 		&fakeEnterpriseIdentityTokenRotationLocker{},
 	)
@@ -1324,6 +1521,23 @@ func newTestEnterpriseIdentityService(
 	}
 	serviceUnderTest.Now = func() time.Time { return now }
 	return serviceUnderTest
+}
+
+func mustSealTestBUCTokens(
+	t *testing.T,
+	box *secretbox.Box,
+	tokens persistedBUCIdentityTokens,
+) []byte {
+	t.Helper()
+	raw, err := json.Marshal(tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := box.Seal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sealed
 }
 
 func testBUCIDTokenClaims(now time.Time, issuer, nonce string) bucIDTokenClaims {

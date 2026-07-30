@@ -57,6 +57,7 @@ export interface CreateFCE2BRuntimeRequest {
 
 export interface CreateCloudSandboxRuntimeRequest {
   sandbox_backend: SandboxBackend;
+  api_key?: string;
   name?: string;
   artifact_ref?: string;
   artifact_build_id?: string;
@@ -77,6 +78,17 @@ export interface UpdateCloudSandboxRuntimeArtifactRequest {
   artifact_build_id: string;
   artifact_alias?: string;
   artifact_digest: string;
+}
+
+export interface UpdateASBRuntimeCredentialRequest {
+  api_key: string;
+}
+
+export interface ASBRuntimeCredentialResponse {
+  configured: boolean;
+  api_key_hint: string;
+  invalidated_sandbox_count?: number;
+  updated_at?: number | null;
 }
 
 export interface FCE2BTemplate {
@@ -601,6 +613,22 @@ export function useUpdateCloudSandboxRuntimeArtifact(wsId: string) {
       runtimeId: string;
       data: UpdateCloudSandboxRuntimeArtifactRequest;
     }) => api.updateCloudSandboxRuntimeArtifact(runtimeId, data),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
+    },
+  });
+}
+
+export function useUpdateASBRuntimeCredential(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      runtimeId,
+      data,
+    }: {
+      runtimeId: string;
+      data: UpdateASBRuntimeCredentialRequest;
+    }) => api.updateASBRuntimeCredential(runtimeId, data),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
     },

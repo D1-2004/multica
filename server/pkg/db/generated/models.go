@@ -117,7 +117,6 @@ type AgentEnterpriseIdentity struct {
 	BucAgentID                 string             `json:"buc_agent_id"`
 	AgentSpiffeID              string             `json:"agent_spiffe_id"`
 	AipID                      string             `json:"aip_id"`
-	BucAnchorSandboxID         pgtype.Text        `json:"buc_anchor_sandbox_id"`
 	AuthxRefreshTokenEncrypted []byte             `json:"authx_refresh_token_encrypted"`
 	AuthxRefreshExpiresAt      pgtype.Timestamptz `json:"authx_refresh_expires_at"`
 	TokenVersion               int64              `json:"token_version"`
@@ -125,7 +124,8 @@ type AgentEnterpriseIdentity struct {
 	BoundBy                    pgtype.UUID        `json:"bound_by"`
 	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
-	AnchorMaintainedAt         pgtype.Timestamptz `json:"anchor_maintained_at"`
+	BucTokensEncrypted         []byte             `json:"buc_tokens_encrypted"`
+	BucAccessExpiresAt         pgtype.Timestamptz `json:"buc_access_expires_at"`
 }
 
 type AgentEnterpriseIdentityAttempt struct {
@@ -259,6 +259,14 @@ type AgentToLabel struct {
 	AgentID   pgtype.UUID        `json:"agent_id"`
 	LabelID   pgtype.UUID        `json:"label_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type AsbRuntimeCredential struct {
+	RuntimeID       pgtype.UUID        `json:"runtime_id"`
+	ApiKeyEncrypted []byte             `json:"api_key_encrypted"`
+	ApiKeyHint      string             `json:"api_key_hint"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Attachment struct {

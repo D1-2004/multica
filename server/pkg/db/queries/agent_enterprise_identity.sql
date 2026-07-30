@@ -20,7 +20,8 @@ INSERT INTO agent_enterprise_identity (
     buc_agent_id,
     agent_spiffe_id,
     aip_id,
-    buc_anchor_sandbox_id,
+    buc_tokens_encrypted,
+    buc_access_expires_at,
     authx_refresh_token_encrypted,
     authx_refresh_expires_at,
     token_version,
@@ -35,7 +36,8 @@ SELECT
     sqlc.arg('buc_agent_id'),
     sqlc.arg('agent_spiffe_id'),
     sqlc.arg('aip_id'),
-    sqlc.arg('buc_anchor_sandbox_id'),
+    sqlc.arg('buc_tokens_encrypted'),
+    sqlc.arg('buc_access_expires_at'),
     sqlc.arg('authx_refresh_token_encrypted'),
     sqlc.arg('authx_refresh_expires_at'),
     1,
@@ -51,20 +53,21 @@ DO UPDATE SET
     buc_agent_id = EXCLUDED.buc_agent_id,
     agent_spiffe_id = EXCLUDED.agent_spiffe_id,
     aip_id = EXCLUDED.aip_id,
-    buc_anchor_sandbox_id = EXCLUDED.buc_anchor_sandbox_id,
+    buc_tokens_encrypted = EXCLUDED.buc_tokens_encrypted,
+    buc_access_expires_at = EXCLUDED.buc_access_expires_at,
     authx_refresh_token_encrypted = EXCLUDED.authx_refresh_token_encrypted,
     authx_refresh_expires_at = EXCLUDED.authx_refresh_expires_at,
     token_version = agent_enterprise_identity.token_version + 1,
     status = 'active',
     bound_by = EXCLUDED.bound_by,
-    anchor_maintained_at = now(),
     updated_at = now()
 RETURNING agent_enterprise_identity.*;
 
 -- name: RevokeAgentEnterpriseIdentity :one
 UPDATE agent_enterprise_identity
 SET status = 'revoked',
-    buc_anchor_sandbox_id = NULL,
+    buc_tokens_encrypted = NULL,
+    buc_access_expires_at = NULL,
     authx_refresh_token_encrypted = NULL,
     authx_refresh_expires_at = NULL,
     token_version = token_version + 1,
@@ -77,7 +80,8 @@ RETURNING *;
 -- name: MarkAgentEnterpriseIdentityNeedsReauth :execrows
 UPDATE agent_enterprise_identity
 SET status = 'needs_reauth',
-    buc_anchor_sandbox_id = NULL,
+    buc_tokens_encrypted = NULL,
+    buc_access_expires_at = NULL,
     authx_refresh_token_encrypted = NULL,
     authx_refresh_expires_at = NULL,
     token_version = token_version + 1,
@@ -92,17 +96,10 @@ FROM agent_enterprise_identity
 WHERE status = 'active'
   AND (
     authx_refresh_expires_at <= sqlc.arg('rotate_before')
-    OR anchor_maintained_at <= sqlc.arg('anchor_renew_before')
+    OR buc_access_expires_at <= sqlc.arg('buc_rotate_before')
   )
-ORDER BY LEAST(authx_refresh_expires_at, anchor_maintained_at), id
+ORDER BY LEAST(authx_refresh_expires_at, buc_access_expires_at), id
 LIMIT sqlc.arg('batch_size');
-
--- name: TouchAgentEnterpriseIdentityMaintenance :execrows
-UPDATE agent_enterprise_identity
-SET anchor_maintained_at = now()
-WHERE id = sqlc.arg('id')
-  AND token_version = sqlc.arg('expected_token_version')
-  AND status = 'active';
 
 -- name: CompareAndSwapAgentEnterpriseIdentityToken :one
 UPDATE agent_enterprise_identity
@@ -115,15 +112,14 @@ WHERE id = sqlc.arg('id')
   AND status = 'active'
 RETURNING *;
 
--- name: CompareAndSwapAgentEnterpriseIdentityAnchor :one
+-- name: CompareAndSwapAgentEnterpriseIdentityBUCTokens :one
 UPDATE agent_enterprise_identity
-SET buc_anchor_sandbox_id = sqlc.arg('buc_anchor_sandbox_id'),
-    anchor_maintained_at = now(),
+SET buc_tokens_encrypted = sqlc.arg('buc_tokens_encrypted'),
+    buc_access_expires_at = sqlc.arg('buc_access_expires_at'),
     token_version = token_version + 1,
     updated_at = now()
 WHERE id = sqlc.arg('id')
   AND token_version = sqlc.arg('expected_token_version')
-  AND buc_anchor_sandbox_id = sqlc.arg('expected_buc_anchor_sandbox_id')
   AND status = 'active'
 RETURNING *;
 

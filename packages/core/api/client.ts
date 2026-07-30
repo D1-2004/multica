@@ -181,7 +181,9 @@ import type {
   CreateFCE2BStableReleaseRequest,
   ListCloudRuntimeNodesParams,
   SandboxBackend,
+  ASBRuntimeCredentialResponse,
   UpdateCloudSandboxRuntimeArtifactRequest,
+  UpdateASBRuntimeCredentialRequest,
   UpdateFCE2BRuntimeTemplateRequest,
 } from "../runtimes/cloud-runtime";
 import { type Logger, noopLogger } from "../logger";
@@ -1240,6 +1242,27 @@ export class ApiClient {
         method: "PATCH",
         body: JSON.stringify(data),
       },
+    );
+  }
+
+  async updateASBRuntimeCredential(
+    runtimeId: string,
+    data: UpdateASBRuntimeCredentialRequest,
+  ): Promise<ASBRuntimeCredentialResponse> {
+    return this.fetch<ASBRuntimeCredentialResponse>(
+      `/api/runtimes/${encodeURIComponent(runtimeId)}/asb-credential`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    );
+  }
+
+  async getASBRuntimeCredential(
+    runtimeId: string,
+  ): Promise<ASBRuntimeCredentialResponse> {
+    return this.fetch<ASBRuntimeCredentialResponse>(
+      `/api/runtimes/${encodeURIComponent(runtimeId)}/asb-credential`,
     );
   }
 

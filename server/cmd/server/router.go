@@ -1862,6 +1862,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/", h.UpdateAgentRuntime)
 					r.Patch("/fc-e2b-template", h.UpdateFCE2BRuntimeTemplate)
 					r.Patch("/cloud-sandbox-artifact", h.UpdateCloudSandboxRuntimeArtifact)
+					r.Get("/asb-credential", h.GetASBRuntimeCredential)
+					r.Patch("/asb-credential", h.UpdateASBRuntimeCredential)
 					r.Get("/usage", h.GetRuntimeUsage)
 					r.Get("/usage/by-agent", h.GetRuntimeUsageByAgent)
 					r.Get("/usage/by-hour", h.GetRuntimeUsageByHour)
