@@ -185,7 +185,7 @@ func TestASBIdentityAnchorUsesCreateAndRenewalLimits(t *testing.T) {
 			response.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(response, `{"id":"sandbox-123","status":{"state":"Running"},"createdAt":"2026-07-29T05:00:00Z","entrypoint":["sleep infinity"]}`)
 		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes/"+testSandboxID+"/identity/wireguard":
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Errorf("wireguard sync = %q", request.URL.Query().Get("sync"))
 			}
 			response.WriteHeader(http.StatusOK)

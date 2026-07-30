@@ -906,6 +906,7 @@ func (m *ASBIdentityAnchorManager) Create(
 		},
 	})
 	if err != nil {
+		logEnterpriseIdentityAnchorFailure("create_sandbox", err)
 		return "", fmt.Errorf("create ASB identity anchor: %w", err)
 	}
 	keep := false
@@ -917,6 +918,7 @@ func (m *ASBIdentityAnchorManager) Create(
 		}
 	}()
 	if err := waitForASBSandboxRunning(ctx, m.Client, sandbox.ID, m.Config.ReadyTimeout); err != nil {
+		logEnterpriseIdentityAnchorFailure("wait_running", err)
 		return "", err
 	}
 	if err := m.Client.AttachBUCIdentity(ctx, sandbox.ID, ASBBUCIdentityGrant{
@@ -925,19 +927,38 @@ func (m *ASBIdentityAnchorManager) Create(
 		BUCRefreshToken:      tokens.RefreshToken,
 		BUCIDToken:           tokens.IDToken,
 		WireGuardCredentials: m.Config.WireGuardCredentials,
-	}, true); err != nil {
+	}, false); err != nil {
+		logEnterpriseIdentityAnchorFailure("attach_buc_identity", err)
 		return "", fmt.Errorf("attach BUC identity to ASB anchor: %w", err)
 	}
 	if err := probeASBBUCIdentity(ctx, m.Client, sandbox.ID, m.Config.IdentityProbeTimeout); err != nil {
+		logEnterpriseIdentityAnchorFailure("probe_buc_identity", err)
 		return "", err
 	}
 	if m.Config.IdentityAnchorTimeout > createTimeout {
 		if err := m.Client.RenewSandbox(ctx, sandbox.ID, time.Now().Add(m.Config.IdentityAnchorTimeout)); err != nil {
+			logEnterpriseIdentityAnchorFailure("renew_sandbox", err)
 			return "", fmt.Errorf("renew ASB identity anchor after BUC attachment: %w", err)
 		}
 	}
 	keep = true
 	return sandbox.ID, nil
+}
+
+func logEnterpriseIdentityAnchorFailure(stage string, err error) {
+	attributes := []any{
+		"stage", stage,
+		"error", err,
+	}
+	var httpErr *ASBHTTPError
+	if errors.As(err, &httpErr) {
+		attributes = append(attributes,
+			"operation", httpErr.Operation,
+			"status_code", httpErr.StatusCode,
+			"request_id", httpErr.RequestID,
+		)
+	}
+	slog.Warn("enterprise identity anchor stage failed", attributes...)
 }
 
 func (m *ASBIdentityAnchorManager) EnsureAvailable(ctx context.Context, sandboxID string) error {
