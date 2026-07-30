@@ -66,14 +66,22 @@ interface AgentComparisonDialogProps {
   lessThanMinuteLabel: string;
 }
 
-const LINE_COLORS = [
-  "var(--chart-1)",
-  "var(--chart-2)",
-  "var(--chart-3)",
-  "var(--chart-4)",
-  "var(--chart-5)",
-] as const;
+const GOLDEN_ANGLE = 137.50776405003785;
+const LINE_LIGHTNESS = [0.56, 0.68, 0.61] as const;
+const LINE_CHROMA = [0.22, 0.19, 0.23] as const;
 const LINE_DASHES = [undefined, "6 3", "2 3"] as const;
+
+/**
+ * Generates a perceptually spaced color sequence for an unbounded number of
+ * Agent lines. Golden-angle hue rotation avoids clusters as the selection
+ * grows, while alternating OKLCH lightness/chroma tiers separates lines whose
+ * hues eventually land near each other.
+ */
+export function generateAgentLineColor(index: number): string {
+  const tier = index % LINE_LIGHTNESS.length;
+  const hue = (230 + index * GOLDEN_ANGLE) % 360;
+  return `oklch(${LINE_LIGHTNESS[tier]} ${LINE_CHROMA[tier]} ${hue.toFixed(1)})`;
+}
 
 export function AgentComparisonDialog({
   agents,
@@ -150,9 +158,9 @@ export function AgentComparisonDialog({
   const series = selectedAgents.map((agent, index) => ({
     ...agent,
     key: `agent${index}`,
-    color: LINE_COLORS[index % LINE_COLORS.length],
+    color: generateAgentLineColor(index),
     strokeDasharray:
-      LINE_DASHES[Math.floor(index / LINE_COLORS.length) % LINE_DASHES.length],
+      LINE_DASHES[Math.floor(index / 12) % LINE_DASHES.length],
   }));
   const chartData = points.map((point) => {
     const row: Record<string, string | number> = {
@@ -317,8 +325,7 @@ export function AgentComparisonDialog({
                 <span
                   className="h-2 w-2 rounded-full"
                   style={{
-                    backgroundColor:
-                      LINE_COLORS[index % LINE_COLORS.length],
+                    backgroundColor: generateAgentLineColor(index),
                   }}
                 />
                 <span className="max-w-40 truncate">{agent.name}</span>

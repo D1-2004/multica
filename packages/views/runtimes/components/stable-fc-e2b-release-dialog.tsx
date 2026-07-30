@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Check, Loader2, ShieldCheck } from "lucide-react";
+import { Check, ChevronsRight, Clock3, Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import {
   isReadyFCE2BTemplate,
@@ -43,6 +43,34 @@ function formatTemplateUpdatedAt(value?: string): string {
   }).format(date);
 }
 
+function formatRolloutTime(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+const rolloutOffsetByBatch: Record<number, string> = {
+  1: "T+0",
+  2: "T+2h",
+  3: "T+8h",
+  4: "T+20h",
+  5: "T+24h",
+};
+
+function rolloutStageTarget(total: number, batch: number): number {
+  if (total <= 0 || batch < 1 || batch > 4) return 0;
+  const first = Math.min(
+    total,
+    Math.max(Math.ceil(total * 0.05), total >= 3 ? 3 : 1),
+  );
+  const second = Math.min(total, Math.max(first, Math.ceil(total * 0.25)));
+  const third = Math.min(total, Math.max(second, Math.ceil(total * 0.5)));
+  return [first, second, third, total][batch - 1] ?? 0;
+}
+
 export function StableFCE2BReleaseDialog({
   onClose,
 }: {
@@ -56,6 +84,10 @@ export function StableFCE2BReleaseDialog({
   const pauseRelease = useMutateFCE2BStableRelease("pause");
   const resumeRelease = useMutateFCE2BStableRelease("resume");
   const startRollout = useMutateFCE2BStableRelease("start-rollout");
+  const advanceRollout = useMutateFCE2BStableRelease("advance-rollout");
+  const completeObservation = useMutateFCE2BStableRelease(
+    "complete-observation",
+  );
   const terminateRelease = useMutateFCE2BStableRelease("terminate");
   const rollbackRelease = useMutateFCE2BStableRelease("rollback");
   const [selected, setSelected] = useState<FCE2BTemplate | null>(null);
@@ -77,7 +109,34 @@ export function StableFCE2BReleaseDialog({
     ? progressTotal > 0
       ? Math.round((progressUpdated / progressTotal) * 100)
       : 100
-    : active?.target_percentage ?? 0;
+    : progressTotal > 0
+      ? Math.round((progressUpdated / progressTotal) * 100)
+      : 0;
+  const showRolloutStage =
+    active != null &&
+    active.current_batch >= 1 &&
+    active.current_batch <= 4 &&
+    ["rolling_out", "paused"].includes(active.status);
+  const nextRolloutMilestone =
+    active?.status === "rolling_out"
+      ? active.rollout_schedule?.find(
+          (milestone) =>
+            milestone.kind === "rollout" &&
+            milestone.batch === active.current_batch + 1,
+        )
+      : undefined;
+  const canRollback =
+    active != null &&
+    !active.bootstrap &&
+    active.updated_targets > 0 &&
+    [
+      "developer_rollout",
+      "awaiting_rollout",
+      "rolling_out",
+      "observing",
+      "paused",
+      "failed",
+    ].includes(active.status);
 
   const activeStatusLabel = (() => {
     switch (active?.status) {
@@ -130,6 +189,8 @@ export function StableFCE2BReleaseDialog({
       pause: pauseRelease,
       resume: resumeRelease,
       "start-rollout": startRollout,
+      "advance-rollout": advanceRollout,
+      "complete-observation": completeObservation,
       terminate: terminateRelease,
       rollback: rollbackRelease,
     }[action];
@@ -202,6 +263,17 @@ export function StableFCE2BReleaseDialog({
                 </span>
                 <span>{progressPercentage}%</span>
               </div>
+              {showRolloutStage && (
+                <p className="text-muted-foreground">
+                  {t(($) => $.fc_e2b_stable.rollout_stage_target, {
+                    percentage: active.target_percentage,
+                    target: rolloutStageTarget(
+                      active.total_targets,
+                      active.current_batch,
+                    ),
+                  })}
+                </p>
+              )}
               {active.status === "awaiting_rollout" && (
                 <p className="text-muted-foreground">
                   {t(($) => $.fc_e2b_stable.awaiting_rollout_notice)}
@@ -211,6 +283,91 @@ export function StableFCE2BReleaseDialog({
                 <p className="text-destructive">{active.validation_error}</p>
               )}
             </div>
+            {active.rollout_schedule && active.rollout_schedule.length > 0 && (
+              <section className="space-y-3 rounded-md border bg-muted/20 p-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <h3 className="flex items-center gap-2 text-xs font-medium">
+                      <Clock3 className="h-3.5 w-3.5 text-muted-foreground" />
+                      {t(($) => $.fc_e2b_stable.rollout_schedule_title)}
+                    </h3>
+                    <p className="text-[11px] leading-4 text-muted-foreground">
+                      {t(($) => $.fc_e2b_stable.rollout_schedule_hint)}
+                    </p>
+                  </div>
+                </div>
+                <ol className="grid gap-2 sm:grid-cols-5">
+                  {active.rollout_schedule.map((milestone) => {
+                    const reached =
+                      milestone.kind === "rollout" &&
+                      (active.current_batch > milestone.batch ||
+                        active.status === "observing");
+                    const currentMilestone =
+                      (milestone.kind === "rollout" &&
+                        active.current_batch === milestone.batch &&
+                        active.status === "rolling_out") ||
+                      (milestone.kind === "complete" &&
+                        active.status === "observing");
+                    return (
+                      <li
+                        key={`${milestone.kind}:${milestone.batch}`}
+                        aria-current={currentMilestone ? "step" : undefined}
+                        className={[
+                          "space-y-1.5 rounded-md border px-2.5 py-2",
+                          currentMilestone
+                            ? "border-primary/50 bg-primary/5"
+                            : reached
+                              ? "border-emerald-500/25 bg-emerald-500/5"
+                              : "bg-background",
+                        ].join(" ")}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-medium text-muted-foreground">
+                            {rolloutOffsetByBatch[milestone.batch]}
+                          </span>
+                          {reached && (
+                            <Check className="h-3 w-3 text-emerald-600" />
+                          )}
+                          {currentMilestone && (
+                            <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                          )}
+                        </div>
+                        <p className="text-xs font-medium">
+                          {milestone.kind === "complete"
+                            ? t(
+                                ($) =>
+                                  $.fc_e2b_stable.rollout_schedule_complete,
+                              )
+                            : t(
+                                ($) =>
+                                  $.fc_e2b_stable.rollout_schedule_percentage,
+                                { percentage: milestone.percentage },
+                              )}
+                        </p>
+                        <time
+                          dateTime={milestone.scheduled_at}
+                          className="block text-[10px] leading-4 text-muted-foreground"
+                        >
+                          {formatRolloutTime(milestone.scheduled_at)}
+                        </time>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
+            )}
+            {active.status === "observing" && (
+              <p className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] leading-4 text-muted-foreground">
+                {t(($) => $.fc_e2b_stable.complete_observation_notice)}
+              </p>
+            )}
+            {canRollback && (
+              <p className="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-[11px] leading-4 text-muted-foreground">
+                {t(($) => $.fc_e2b_stable.rollback_notice, {
+                  template: active.previous_template_alias,
+                })}
+              </p>
+            )}
             <div className="flex flex-wrap justify-end gap-2">
               {active.status === "paused" ? (
                 <Button
@@ -246,25 +403,38 @@ export function StableFCE2BReleaseDialog({
                   {t(($) => $.fc_e2b_stable.start_rollout)}
                 </Button>
               )}
-              {!active.bootstrap &&
-                active.updated_targets > 0 &&
-                [
-                  "developer_rollout",
-                  "awaiting_rollout",
-                  "rolling_out",
-                  "observing",
-                  "paused",
-                  "failed",
-                ].includes(active.status) && (
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => mutate("rollback", active.id)}
-                    disabled={rollbackRelease.isPending}
-                  >
-                    {t(($) => $.fc_e2b_stable.rollback)}
-                  </Button>
-                )}
+              {nextRolloutMilestone && (
+                <Button
+                  size="sm"
+                  onClick={() => mutate("advance-rollout", active.id)}
+                  disabled={advanceRollout.isPending}
+                >
+                  <ChevronsRight className="mr-1.5 h-3.5 w-3.5" />
+                  {t(($) => $.fc_e2b_stable.advance_rollout, {
+                    percentage: nextRolloutMilestone.percentage,
+                  })}
+                </Button>
+              )}
+              {active.status === "observing" && (
+                <Button
+                  size="sm"
+                  onClick={() => mutate("complete-observation", active.id)}
+                  disabled={completeObservation.isPending}
+                >
+                  <Check className="mr-1.5 h-3.5 w-3.5" />
+                  {t(($) => $.fc_e2b_stable.complete_observation)}
+                </Button>
+              )}
+              {canRollback && (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => mutate("rollback", active.id)}
+                  disabled={rollbackRelease.isPending}
+                >
+                  {t(($) => $.fc_e2b_stable.rollback)}
+                </Button>
+              )}
               {[
                 "validating",
                 "developer_rollout",
@@ -320,8 +490,7 @@ export function StableFCE2BReleaseDialog({
                 {templates.map((template) => {
                   const isCurrent =
                     current != null &&
-                    template.id === current.template_id &&
-                    template.build_id === current.template_build_id;
+                    template.id === current.template_id;
                   const isSelected =
                     selected?.id === template.id &&
                     selected?.build_id === template.build_id;

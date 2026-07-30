@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -109,7 +110,27 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "FC/E2B stable channel is unavailable")
 			return
 		}
-		current, err := h.FCE2BStable.CurrentTemplate(r.Context())
+	}
+	templates, err := service.ListFCE2BTemplates(r.Context(), h.cfg.FCE2B, nil)
+	if err != nil {
+		slog.Error("FC/E2B template validation failed during runtime creation", "error", err)
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	runtimeQueries := h.Queries
+	var stableTx pgx.Tx
+	if templateChannel == "stable" {
+		if h.TxStarter == nil {
+			writeError(w, http.StatusServiceUnavailable, "FC/E2B stable runtime coordination is unavailable")
+			return
+		}
+		stableTx, err = h.TxStarter.Begin(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to begin FC/E2B stable runtime creation")
+			return
+		}
+		defer func() { _ = stableTx.Rollback(context.Background()) }()
+		current, err := h.FCE2BStable.LockCurrentTemplateForRuntimeCreation(r.Context(), stableTx)
 		if errors.Is(err, service.ErrFCE2BStableChannelUninitialized) {
 			writeError(w, http.StatusServiceUnavailable, err.Error())
 			return
@@ -118,14 +139,9 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to resolve FC/E2B stable template")
 			return
 		}
+		runtimeQueries = h.Queries.WithTx(stableTx)
 		templateRef = current.TemplateID
 		expectedStableBuildID = current.TemplateBuildID
-	}
-	templates, err := service.ListFCE2BTemplates(r.Context(), h.cfg.FCE2B, nil)
-	if err != nil {
-		slog.Error("FC/E2B template validation failed during runtime creation", "error", err)
-		writeError(w, http.StatusServiceUnavailable, err.Error())
-		return
 	}
 	selected, ok := selectFCE2BTemplate(templates, templateRef)
 	if !ok {
@@ -180,7 +196,7 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	daemonID := "fc-e2b:" + workspaceID + ":" + runtimeSlug(selected.Template) + ":" + runtimeSlug(name) + ":" + randomID()[:8]
-	rt, err := h.Queries.UpsertCloudAgentRuntime(r.Context(), db.UpsertCloudAgentRuntimeParams{
+	rt, err := runtimeQueries.UpsertCloudAgentRuntime(r.Context(), db.UpsertCloudAgentRuntimeParams{
 		WorkspaceID: parseUUID(workspaceID),
 		DaemonID:    pgtype.Text{String: daemonID, Valid: true},
 		Name:        name,
@@ -195,6 +211,12 @@ func (h *Handler) CreateFCE2BRuntime(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create FC/E2B runtime")
 		return
+	}
+	if stableTx != nil {
+		if err := stableTx.Commit(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to commit FC/E2B stable runtime creation")
+			return
+		}
 	}
 
 	h.publish(protocol.EventDaemonRegister, workspaceID, "member", uuidToString(member.UserID), map[string]any{
