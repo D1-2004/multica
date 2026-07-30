@@ -4,14 +4,90 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+type recordingStableReleaseQueryer struct {
+	query string
+	row   pgx.Row
+}
+
+func (q *recordingStableReleaseQueryer) QueryRow(
+	_ context.Context,
+	query string,
+	_ ...any,
+) pgx.Row {
+	q.query = query
+	return q.row
+}
+
+type completeStableReleaseRow struct {
+	at time.Time
+}
+
+func (row completeStableReleaseRow) Scan(dest ...any) error {
+	for _, target := range dest {
+		switch value := target.(type) {
+		case *string:
+			*value = "loaded"
+		case *bool:
+			*value = false
+		case *int:
+			*value = 1
+		case *[]byte:
+			*value = []byte(`{}`)
+		case *pgtype.UUID:
+			*value = util.MustParseUUID("410d0a06-a026-449b-b7ab-64c9d92481bd")
+		case *pgtype.Timestamptz:
+			*value = pgtype.Timestamptz{Time: row.at, Valid: true}
+		case *time.Time:
+			*value = row.at
+		default:
+			return fmt.Errorf("unsupported stable release scan target %T", target)
+		}
+	}
+	return nil
+}
+
+func TestClaimStableRolloutForAdvanceLoadsCanonicalReleaseProjection(t *testing.T) {
+	at := time.Date(2026, 7, 30, 15, 4, 0, 0, time.FixedZone("CST", 8*60*60))
+	queryer := &recordingStableReleaseQueryer{row: completeStableReleaseRow{at: at}}
+	service := &FCE2BStableService{}
+
+	release, err := service.claimStableRolloutForAdvance(
+		context.Background(),
+		queryer,
+		util.MustParseUUID("ca188cff-8c85-45ff-bd3f-4fd92f1a7f2e"),
+		uuid.MustParse("ea57d7c1-0000-4000-8000-000000000000"),
+	)
+	if err != nil {
+		t.Fatalf("claimStableRolloutForAdvance() error = %v", err)
+	}
+	if !strings.Contains(queryer.query, "RETURNING "+stableReleaseColumns) {
+		t.Fatal("advance claim did not use the canonical stable release projection")
+	}
+	if release.RolloutStartedAt == nil || !release.RolloutStartedAt.Equal(at) {
+		t.Fatalf("rollout_started_at = %v, want %s", release.RolloutStartedAt, at)
+	}
+	if release.BatchStartedAt == nil || !release.BatchStartedAt.Equal(at) {
+		t.Fatalf("batch_started_at = %v, want %s", release.BatchStartedAt, at)
+	}
+	// The multi-backend release adds SandboxBackend to the canonical
+	// projection. Keep this assertion reflective so this fix can originate on
+	// develop and still prove the field is populated when both CRs are merged.
+	if backend := reflect.ValueOf(release).FieldByName("SandboxBackend"); backend.IsValid() && backend.String() == "" {
+		t.Fatal("sandbox backend was omitted from the manual advance claim")
+	}
+}
 
 func TestStableBatchCutoffs(t *testing.T) {
 	tests := []struct {
