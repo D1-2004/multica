@@ -169,3 +169,159 @@ func TestReuse_SelfHealsWorkspacesRootMarker(t *testing.T) {
 		t.Fatalf("Reuse did not restore the root marker: %v", err)
 	}
 }
+
+func TestReuse_SessionContextCompatibility(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		first      TaskContextForEnv
+		next       TaskContextForEnv
+		compatible bool
+	}{
+		{
+			name: "same durable context remains compatible",
+			first: TaskContextForEnv{
+				AgentID:           "agent-1",
+				AgentName:         "须莫v6",
+				AgentInstructions: "Use first person.",
+				AgentSkills: []SkillContextForEnv{{
+					Name: "memory",
+					Files: []SkillFileContextForEnv{
+						{Path: "references/b.md", Content: "b"},
+						{Path: "references/a.md", Content: "a"},
+					},
+				}},
+				WorkspaceContext: "workspace rules",
+			},
+			next: TaskContextForEnv{
+				IssueID:           "a different per-turn issue",
+				TriggerCommentID:  "a different per-turn comment",
+				AgentID:           "agent-1",
+				AgentName:         "须莫v6",
+				AgentInstructions: "Use first person.",
+				AgentSkills: []SkillContextForEnv{{
+					Name: "memory",
+					Files: []SkillFileContextForEnv{
+						{Path: "references/a.md", Content: "a"},
+						{Path: "references/b.md", Content: "b"},
+					},
+				}},
+				WorkspaceContext: "workspace rules",
+			},
+			compatible: true,
+		},
+		{
+			name: "agent rename invalidates provider transcript",
+			first: TaskContextForEnv{
+				AgentID:   "agent-1",
+				AgentName: "须莫v4 Pi",
+			},
+			next: TaskContextForEnv{
+				AgentID:   "agent-1",
+				AgentName: "须莫v6",
+			},
+			compatible: false,
+		},
+		{
+			name: "skill content change invalidates provider transcript",
+			first: TaskContextForEnv{
+				AgentID: "agent-1",
+				AgentSkills: []SkillContextForEnv{{
+					Name:    "identity",
+					Content: "old identity",
+				}},
+			},
+			next: TaskContextForEnv{
+				AgentID: "agent-1",
+				AgentSkills: []SkillContextForEnv{{
+					Name:    "identity",
+					Content: "new identity",
+				}},
+			},
+			compatible: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			env, err := Prepare(PrepareParams{
+				WorkspacesRoot: root,
+				WorkspaceID:    "ws-context-compat",
+				TaskID:         "11111111-2222-3333-4444-555555555555",
+				Provider:       "pi",
+				Task:           tt.first,
+			}, testLogger())
+			if err != nil {
+				t.Fatalf("Prepare failed: %v", err)
+			}
+			defer env.Cleanup(true)
+
+			reused := Reuse(ReuseParams{
+				WorkspacesRoot: root,
+				WorkDir:        env.WorkDir,
+				Provider:       "pi",
+				Task:           tt.next,
+			}, testLogger())
+			if reused == nil {
+				t.Fatal("Reuse returned nil")
+			}
+			if reused.ResumeContextCompatible != tt.compatible {
+				t.Fatalf("ResumeContextCompatible = %v, want %v", reused.ResumeContextCompatible, tt.compatible)
+			}
+		})
+	}
+}
+
+func TestReuse_LegacyMarkerStartsFreshSession(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	task := TaskContextForEnv{
+		AgentID:   "agent-legacy",
+		AgentName: "Current Agent",
+	}
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: root,
+		WorkspaceID:    "ws-legacy-context",
+		TaskID:         "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+		Provider:       "pi",
+		Task:           task,
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer env.Cleanup(true)
+
+	markerPath := filepath.Join(env.WorkDir, TaskContextMarkerRelPath)
+	data, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	var marker map[string]any
+	if err := json.Unmarshal(data, &marker); err != nil {
+		t.Fatalf("unmarshal marker: %v", err)
+	}
+	delete(marker, "session_context_sha256")
+	data, err = json.Marshal(marker)
+	if err != nil {
+		t.Fatalf("marshal legacy marker: %v", err)
+	}
+	if err := os.WriteFile(markerPath, data, 0o644); err != nil {
+		t.Fatalf("write legacy marker: %v", err)
+	}
+
+	reused := Reuse(ReuseParams{
+		WorkspacesRoot: root,
+		WorkDir:        env.WorkDir,
+		Provider:       "pi",
+		Task:           task,
+	}, testLogger())
+	if reused == nil {
+		t.Fatal("Reuse returned nil")
+	}
+	if reused.ResumeContextCompatible {
+		t.Fatal("legacy marker without a context digest must start a fresh provider session")
+	}
+}

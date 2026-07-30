@@ -93,29 +93,29 @@ type TaskContextForEnv struct {
 	// telling it "one comment" and the other "one per thread". Same-thread
 	// follow-ups collapse to a single group upstream, so this stays empty and
 	// the single-parent path is used (no duplicate replies).
-	CommentReplyTargets            []ThreadReplyTarget
-	NewCommentCount                int    // issue-wide comments since this agent's last run (excludes its own and the injected trigger)
-	NewCommentsSince               string // RFC3339 anchor (last run's started_at) the count is measured from; empty on cold start
-	PriorSessionResumed            bool   // true when the daemon will resume an existing provider session for this task
-	AgentID                        string // unique ID of the dispatched agent
-	AgentName                      string
-	AgentInstructions              string // agent identity/persona instructions, injected into CLAUDE.md
-	AgentSkills                    []SkillContextForEnv
-	Repos                          []RepoContextForEnv     // workspace repos available for checkout
-	ProjectID                      string                  // issue's project, when present
-	ProjectTitle                   string                  // human-readable project title
-	ProjectDescription             string                  // durable project-level context, rendered into the brief's Project Context section
-	ProjectResources               []ProjectResourceForEnv // resources attached to the project
-	ChatSessionID                  string                  // non-empty for chat tasks
-	AutopilotRunID                 string                  // non-empty for autopilot run_only tasks
-	AutopilotID                    string
-	AutopilotTitle                 string
-	AutopilotDescription           string
-	AutopilotSource                string
-	AutopilotTriggerPayload        string
-	QuickCreatePrompt              string // non-empty for quick-create tasks
-	HandoffNote                    string // assignment handoff instruction; rendered into issue_context.md (MUL-3375)
-	IsSquadLeader                  bool   // true when the agent is acting as a squad leader (may exit silently on no_action)
+	CommentReplyTargets     []ThreadReplyTarget
+	NewCommentCount         int    // issue-wide comments since this agent's last run (excludes its own and the injected trigger)
+	NewCommentsSince        string // RFC3339 anchor (last run's started_at) the count is measured from; empty on cold start
+	PriorSessionResumed     bool   // true when the daemon will resume an existing provider session for this task
+	AgentID                 string // unique ID of the dispatched agent
+	AgentName               string
+	AgentInstructions       string // agent identity/persona instructions, injected into CLAUDE.md
+	AgentSkills             []SkillContextForEnv
+	Repos                   []RepoContextForEnv     // workspace repos available for checkout
+	ProjectID               string                  // issue's project, when present
+	ProjectTitle            string                  // human-readable project title
+	ProjectDescription      string                  // durable project-level context, rendered into the brief's Project Context section
+	ProjectResources        []ProjectResourceForEnv // resources attached to the project
+	ChatSessionID           string                  // non-empty for chat tasks
+	AutopilotRunID          string                  // non-empty for autopilot run_only tasks
+	AutopilotID             string
+	AutopilotTitle          string
+	AutopilotDescription    string
+	AutopilotSource         string
+	AutopilotTriggerPayload string
+	QuickCreatePrompt       string // non-empty for quick-create tasks
+	HandoffNote             string // assignment handoff instruction; rendered into issue_context.md (MUL-3375)
+	IsSquadLeader           bool   // true when the agent is acting as a squad leader (may exit silently on no_action)
 	// WorkspaceContext is the workspace-level system prompt (workspace.context
 	// in the DB). Rendered into the brief as `## Workspace Context` when
 	// non-empty so every agent in the workspace sees the same shared context,
@@ -203,6 +203,12 @@ type Environment struct {
 	// .agent_context/skills/ fallback was never read (issue #5242). See
 	// hermes_home.go.
 	HermesHome string
+	// ResumeContextCompatible reports whether the reused workdir was prepared
+	// with the same durable agent identity, instructions, skills, workspace
+	// context, connected apps, and requesting-user profile as this dispatch.
+	// A missing digest from an older daemon is incompatible by design so the
+	// first post-upgrade task replaces any stale provider transcript.
+	ResumeContextCompatible bool
 
 	logger *slog.Logger // for cleanup logging
 }
@@ -396,6 +402,8 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	if _, err := os.Stat(params.WorkDir); err != nil {
 		return nil
 	}
+	previousSessionContextSHA := readTaskSessionContextSHA(params.WorkDir)
+	currentSessionContextSHA := taskSessionContextSHA(params.Task)
 
 	// Self-heal the root-level daemon marker on the reuse path too, so a marker
 	// removed while the daemon runs is restored before a reused task spawns —
@@ -422,10 +430,11 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		rootDir = ""
 	}
 	env := &Environment{
-		RootDir:        rootDir,
-		WorkDir:        params.WorkDir,
-		LocalDirectory: params.LocalDirectory,
-		logger:         logger,
+		RootDir:                 rootDir,
+		WorkDir:                 params.WorkDir,
+		LocalDirectory:          params.LocalDirectory,
+		ResumeContextCompatible: previousSessionContextSHA != "" && previousSessionContextSHA == currentSessionContextSHA,
+		logger:                  logger,
 	}
 
 	// Roll back the previous dispatch's sidecar writes before refreshing.
