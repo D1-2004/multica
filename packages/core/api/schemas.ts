@@ -899,6 +899,7 @@ export const FCE2BStableReleaseSchema = z.object({
   artifact_kind: z.enum(["e2b_template", "oci_image"]).default("e2b_template"),
   artifact_ref: z.string().default(""),
   artifact_build_id: z.string().default(""),
+  artifact_built_at: z.string().optional(),
   artifact_alias: z.string().default(""),
   artifact_digest: z.string().default(""),
   id: z.string(),
@@ -947,6 +948,8 @@ export const FCE2BStableReleaseSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
 }).loose();
+
+export const FCE2BStableReleaseListSchema = z.array(FCE2BStableReleaseSchema);
 
 export const FCE2BStableRuntimeOverviewSchema = z.object({
   runtime_id: z.string(),

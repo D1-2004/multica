@@ -687,6 +687,7 @@ type FcE2bStableRelease struct {
 	PreviousArtifactRef         string             `json:"previous_artifact_ref"`
 	PreviousArtifactBuildID     string             `json:"previous_artifact_build_id"`
 	PreviousArtifactDigest      string             `json:"previous_artifact_digest"`
+	ArtifactBuiltAt             pgtype.Timestamptz `json:"artifact_built_at"`
 }
 
 type FcE2bStableReleaseTarget struct {

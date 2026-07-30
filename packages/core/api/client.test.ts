@@ -77,6 +77,12 @@ describe("ApiClient", () => {
         }),
       )
       .mockResolvedValueOnce(
+        new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
         new Response(JSON.stringify({ id: "runtime-1" }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -99,6 +105,9 @@ describe("ApiClient", () => {
     await expect(
       client.getCloudSandboxStableChannel("asb"),
     ).resolves.toMatchObject({ current: null, can_publish: true });
+    await expect(
+      client.listCloudSandboxStableReleases("asb"),
+    ).resolves.toEqual([]);
     await expect(
       client.listCloudSandboxStableRuntimes("asb"),
     ).resolves.toEqual([]);
@@ -132,6 +141,12 @@ describe("ApiClient", () => {
       {
         url:
           "https://api.example.test/api/runtimes/cloud-sandbox/stable-channel?sandbox_backend=asb",
+        method: "GET",
+        body: undefined,
+      },
+      {
+        url:
+          "https://api.example.test/api/runtimes/cloud-sandbox/stable-releases?sandbox_backend=asb&limit=20",
         method: "GET",
         body: undefined,
       },

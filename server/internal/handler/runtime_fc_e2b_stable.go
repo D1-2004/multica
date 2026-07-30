@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -27,6 +28,7 @@ type createStableReleaseRequest struct {
 	SandboxBackend  string `json:"sandbox_backend"`
 	ArtifactRef     string `json:"artifact_ref"`
 	ArtifactBuildID string `json:"artifact_build_id"`
+	ArtifactBuiltAt string `json:"artifact_built_at"`
 	ArtifactDigest  string `json:"artifact_digest"`
 	GitCommit       string `json:"git_commit"`
 	TemplateID      string `json:"template_id"`
@@ -161,6 +163,7 @@ func (h *Handler) createCloudSandboxStableRelease(
 	req.SandboxBackend = strings.ToLower(strings.TrimSpace(req.SandboxBackend))
 	req.ArtifactRef = strings.TrimSpace(req.ArtifactRef)
 	req.ArtifactBuildID = strings.TrimSpace(req.ArtifactBuildID)
+	req.ArtifactBuiltAt = strings.TrimSpace(req.ArtifactBuiltAt)
 	req.ArtifactDigest = strings.ToLower(strings.TrimSpace(req.ArtifactDigest))
 	req.GitCommit = strings.ToLower(strings.TrimSpace(req.GitCommit))
 	req.TemplateID = strings.TrimSpace(req.TemplateID)
@@ -186,11 +189,26 @@ func (h *Handler) createCloudSandboxStableRelease(
 	if expectedBuildID == "" {
 		expectedBuildID = req.ExpectedBuildID
 	}
+	var artifactBuiltAt *time.Time
+	if backend == service.SandboxBackendASB {
+		parsed, parseErr := time.Parse(time.RFC3339, req.ArtifactBuiltAt)
+		if parseErr != nil {
+			writeError(w, http.StatusBadRequest, "artifact_built_at must be an RFC3339 timestamp for ASB releases")
+			return
+		}
+		if parsed.After(time.Now().Add(5 * time.Minute)) {
+			writeError(w, http.StatusBadRequest, "artifact_built_at cannot be in the future")
+			return
+		}
+		parsed = parsed.UTC()
+		artifactBuiltAt = &parsed
+	}
 	release, _, err := h.FCE2BStable.CreateRelease(r.Context(), service.CreateFCE2BStableReleaseInput{
 		IdempotencyKey:  idempotencyKey,
 		SandboxBackend:  backend,
 		ArtifactRef:     req.ArtifactRef,
 		ExpectedBuildID: expectedBuildID,
+		ArtifactBuiltAt: artifactBuiltAt,
 		ArtifactDigest:  req.ArtifactDigest,
 		GitCommit:       req.GitCommit,
 		TemplateID:      req.TemplateID,

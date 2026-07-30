@@ -55,6 +55,7 @@ func TestRunRuntimeStableReleaseCreateSendsIdempotencyKey(t *testing.T) {
 			"sandbox_backend":   "asb",
 			"artifact_ref":      "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			"artifact_build_id": "42",
+			"artifact_built_at": "2026-07-30T20:34:18+08:00",
 			"artifact_digest":   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			"git_commit":        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		} {
@@ -74,6 +75,7 @@ func TestRunRuntimeStableReleaseCreateSendsIdempotencyKey(t *testing.T) {
 	for name, value := range map[string]string{
 		"artifact-ref":      "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"artifact-build-id": "42",
+		"artifact-built-at": "2026-07-30T20:34:18+08:00",
 		"artifact-digest":   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"git-commit":        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"idempotency-key":   "release-build-42",

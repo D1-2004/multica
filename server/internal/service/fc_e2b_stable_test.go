@@ -464,6 +464,24 @@ func TestStableReleaseFingerprintDoesNotDependOnDerivedBootstrapState(t *testing
 	}
 }
 
+func TestStableReleaseFingerprintIncludesArtifactBuildTime(t *testing.T) {
+	firstBuiltAt := time.Date(2026, 7, 30, 20, 34, 18, 0, time.FixedZone("CST", 8*60*60))
+	secondBuiltAt := firstBuiltAt.Add(time.Second)
+	input := CreateFCE2BStableReleaseInput{
+		SandboxBackend:  SandboxBackendASB,
+		ArtifactRef:     "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ExpectedBuildID: "build-1",
+		ArtifactBuiltAt: &firstBuiltAt,
+		ArtifactDigest:  "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		GitCommit:       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	}
+	first := stableReleaseFingerprint(input)
+	input.ArtifactBuiltAt = &secondBuiltAt
+	if got := stableReleaseFingerprint(input); got == first {
+		t.Fatal("artifact build time did not change the request fingerprint")
+	}
+}
+
 func TestRuntimeUsesTemplateRequiresTemplateAndBuild(t *testing.T) {
 	runtime := db.AgentRuntime{Metadata: []byte(`{
 		"template_id":"template-1",

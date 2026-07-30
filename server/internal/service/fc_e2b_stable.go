@@ -83,6 +83,7 @@ type FCE2BStableRelease struct {
 	ArtifactKind                string                        `json:"artifact_kind"`
 	ArtifactRef                 string                        `json:"artifact_ref"`
 	ArtifactBuildID             string                        `json:"artifact_build_id"`
+	ArtifactBuiltAt             *time.Time                    `json:"artifact_built_at,omitempty"`
 	ArtifactAlias               string                        `json:"artifact_alias"`
 	ArtifactDigest              string                        `json:"artifact_digest"`
 	ID                          string                        `json:"id"`
@@ -127,6 +128,7 @@ type CreateFCE2BStableReleaseInput struct {
 	SandboxBackend  SandboxBackendKind
 	ArtifactRef     string
 	ExpectedBuildID string
+	ArtifactBuiltAt *time.Time
 	ArtifactDigest  string
 	GitCommit       string
 	TemplateID      string
@@ -585,10 +587,11 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 		if input.IdempotencyKey == "" ||
 			!cloudSandboxOCIDigestPattern.MatchString(input.ArtifactRef) ||
 			input.ExpectedBuildID == "" ||
+			input.ArtifactBuiltAt == nil ||
 			!isSHA256Digest(input.ArtifactDigest) ||
 			len(input.GitCommit) != 40 ||
 			!isLowerHex(input.GitCommit) {
-			return FCE2BStableRelease{}, false, errors.New("ASB release requires an immutable artifact_ref, expected_build_id, artifact_digest, and 40-character git_commit")
+			return FCE2BStableRelease{}, false, errors.New("ASB release requires an immutable artifact_ref, expected_build_id, artifact_built_at, artifact_digest, and 40-character git_commit")
 		}
 		if !strings.HasSuffix(input.ArtifactRef, "@"+input.ArtifactDigest) {
 			return FCE2BStableRelease{}, false, errors.New("ASB artifact_ref and artifact_digest do not match")
@@ -638,12 +641,13 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 			artifact_kind,
 			artifact_ref,
 			artifact_build_id,
+			artifact_built_at,
 			artifact_digest,
 			git_commit,
 			note,
 			actor_user_id,
 			bootstrap
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id
 	`, input.IdempotencyKey, fingerprint, input.TemplateID,
 		func() string {
@@ -653,7 +657,8 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 			return ""
 		}(),
 		backend, artifactKind, input.ArtifactRef, input.ExpectedBuildID,
-		input.ArtifactDigest, input.GitCommit, input.Note, input.ActorUserID, input.Bootstrap,
+		input.ArtifactBuiltAt, input.ArtifactDigest, input.GitCommit, input.Note,
+		input.ActorUserID, input.Bootstrap,
 	).Scan(&releaseID)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -2839,6 +2844,7 @@ func (s *FCE2BStableService) scanRelease(row rowScanner) (FCE2BStableRelease, er
 	var release FCE2BStableRelease
 	var manifestJSON []byte
 	var actor pgtype.UUID
+	var artifactBuiltAt pgtype.Timestamptz
 	var developerRolloutStartedAt, developerRolloutCompletedAt pgtype.Timestamptz
 	var rolloutStartedAt, batchStartedAt, nextBatchAt, completedAt pgtype.Timestamptz
 	err := row.Scan(
@@ -2847,6 +2853,7 @@ func (s *FCE2BStableService) scanRelease(row rowScanner) (FCE2BStableRelease, er
 		&release.ArtifactKind,
 		&release.ArtifactRef,
 		&release.ArtifactBuildID,
+		&artifactBuiltAt,
 		&release.ArtifactAlias,
 		&release.ArtifactDigest,
 		&release.TemplateID,
@@ -2890,6 +2897,9 @@ func (s *FCE2BStableService) scanRelease(row rowScanner) (FCE2BStableRelease, er
 	if len(manifestJSON) > 0 {
 		_ = json.Unmarshal(manifestJSON, &release.Manifest)
 	}
+	if artifactBuiltAt.Valid {
+		release.ArtifactBuiltAt = &artifactBuiltAt.Time
+	}
 	if developerRolloutStartedAt.Valid {
 		release.DeveloperRolloutStartedAt = &developerRolloutStartedAt.Time
 	}
@@ -2918,6 +2928,12 @@ func stableReleaseFingerprint(input CreateFCE2BStableReleaseInput) string {
 		input.ArtifactRef,
 		input.TemplateID,
 		input.ExpectedBuildID,
+		func() string {
+			if input.ArtifactBuiltAt == nil {
+				return ""
+			}
+			return input.ArtifactBuiltAt.UTC().Format(time.RFC3339Nano)
+		}(),
 		input.ArtifactDigest,
 		input.GitCommit,
 		input.Note,
@@ -3079,6 +3095,7 @@ const stableReleaseColumns = `
 	release.artifact_kind,
 	release.artifact_ref,
 	release.artifact_build_id,
+	release.artifact_built_at,
 	release.template_alias,
 	release.artifact_digest,
 	release.template_id,

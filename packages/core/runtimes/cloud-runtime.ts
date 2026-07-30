@@ -165,6 +165,7 @@ export interface FCE2BStableRelease {
   artifact_kind: "e2b_template" | "oci_image";
   artifact_ref: string;
   artifact_build_id: string;
+  artifact_built_at?: string;
   artifact_alias: string;
   artifact_digest: string;
   id: string;
@@ -241,6 +242,7 @@ export interface CreateCloudSandboxStableReleaseRequest {
   sandbox_backend: SandboxBackend;
   artifact_ref?: string;
   artifact_build_id?: string;
+  artifact_built_at?: string;
   artifact_digest?: string;
   git_commit?: string;
   template_id?: string;
@@ -401,6 +403,8 @@ export const cloudRuntimeKeys = {
     ["cloud-sandbox-stable-channel", backend] as const,
   cloudSandboxStableRelease: (releaseId: string) =>
     ["cloud-sandbox-stable-release", releaseId] as const,
+  cloudSandboxStableReleases: (backend: SandboxBackend) =>
+    ["cloud-sandbox-stable-releases", backend] as const,
   cloudSandboxStableRuntimes: (backend: SandboxBackend) =>
     ["cloud-sandbox-stable-runtimes", backend] as const,
 };
@@ -461,6 +465,19 @@ export function useCloudSandboxStableChannel(backend: SandboxBackend) {
     queryKey: cloudRuntimeKeys.cloudSandboxStableChannel(backend),
     queryFn: () => api.getCloudSandboxStableChannel(backend),
     refetchInterval: (query) => (query.state.data?.active_release ? 5000 : false),
+    staleTime: 15 * 1000,
+  });
+}
+
+export function useCloudSandboxStableReleases(
+  backend: SandboxBackend,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: cloudRuntimeKeys.cloudSandboxStableReleases(backend),
+    queryFn: () => api.listCloudSandboxStableReleases(backend),
+    enabled,
+    refetchInterval: 15 * 1000,
     staleTime: 15 * 1000,
   });
 }
@@ -631,6 +648,9 @@ export function useCreateCloudSandboxStableRelease(backend: SandboxBackend) {
           queryKey: cloudRuntimeKeys.cloudSandboxStableRuntimes(backend),
         }),
         qc.invalidateQueries({
+          queryKey: cloudRuntimeKeys.cloudSandboxStableReleases(backend),
+        }),
+        qc.invalidateQueries({
           queryKey: cloudRuntimeKeys.cloudSandboxStableRelease(release.id),
         }),
       ]);
@@ -672,6 +692,9 @@ export function useMutateCloudSandboxStableRelease(
         }),
         qc.invalidateQueries({
           queryKey: cloudRuntimeKeys.cloudSandboxStableRuntimes(backend),
+        }),
+        qc.invalidateQueries({
+          queryKey: cloudRuntimeKeys.cloudSandboxStableReleases(backend),
         }),
         qc.invalidateQueries({
           queryKey: cloudRuntimeKeys.cloudSandboxStableRelease(release.id),

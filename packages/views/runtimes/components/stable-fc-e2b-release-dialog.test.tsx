@@ -51,6 +51,12 @@ const mockTemplatesQuery = vi.hoisted(() => ({
   isError: false,
   error: null as Error | null,
 }));
+const mockReleaseHistoryQuery = vi.hoisted(() => ({
+  data: [] as Array<Record<string, unknown>>,
+  isLoading: false,
+  isError: false,
+  error: null as Error | null,
+}));
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "workspace-1",
@@ -64,6 +70,7 @@ vi.mock("@multica/core/runtimes", () => ({
         template.status?.toLowerCase() === "ready",
   ),
   useCloudSandboxStableChannel: () => mockChannelQuery,
+  useCloudSandboxStableReleases: () => mockReleaseHistoryQuery,
   useFCE2BTemplates: () => mockTemplatesQuery,
   useCreateCloudSandboxStableRelease: () => ({
     mutateAsync: (...args: unknown[]) => mockCreateRelease(...args),
@@ -128,6 +135,10 @@ describe("StableFCE2BReleaseDialog", () => {
     mockTemplatesQuery.isLoading = false;
     mockTemplatesQuery.isError = false;
     mockTemplatesQuery.error = null;
+    mockReleaseHistoryQuery.data = [];
+    mockReleaseHistoryQuery.isLoading = false;
+    mockReleaseHistoryQuery.isError = false;
+    mockReleaseHistoryQuery.error = null;
   });
 
   it("initializes with template evidence and an optional note", async () => {
@@ -410,6 +421,9 @@ describe("StableFCE2BReleaseDialog", () => {
     fireEvent.change(screen.getByLabelText("Aone build ID"), {
       target: { value: "56309841" },
     });
+    fireEvent.change(screen.getByLabelText("Aone build time"), {
+      target: { value: "2026-07-30T20:34:18" },
+    });
     fireEvent.change(screen.getByLabelText("Image digest"), {
       target: { value: digest },
     });
@@ -430,11 +444,63 @@ describe("StableFCE2BReleaseDialog", () => {
           sandbox_backend: "asb",
           artifact_ref: `hub.docker.alibaba-inc.com/aone-base-global/multica-asb-runtime@${digest}`,
           artifact_build_id: "56309841",
+          artifact_built_at: "2026-07-30T20:34:18+08:00",
           artifact_digest: digest,
           git_commit: commit,
           note: "",
         },
       }),
     );
+  });
+
+  it("keeps long ASB references contained and renders build-time history", () => {
+    const artifactRef =
+      "hub.docker.alibaba-inc.com/aone-base-global/multica-asb-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    mockChannelQuery.data.current = {
+      artifact_ref: artifactRef,
+      artifact_build_id: "56487728",
+      artifact_alias: "multica-asb-runtime:56487728",
+      artifact_digest:
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      template_id: "",
+      template_build_id: "",
+      template_alias: "multica-asb-runtime:56487728",
+      release_id: "release-current",
+    };
+    mockReleaseHistoryQuery.data = [
+      {
+        id: "release-current",
+        artifact_ref: artifactRef,
+        artifact_build_id: "56487728",
+        artifact_built_at: "2026-07-29T12:43:00Z",
+        artifact_alias: "multica-asb-runtime:56487728",
+        source_revision: "abcdef1234567890",
+        status: "completed",
+      },
+      {
+        id: "release-previous",
+        artifact_ref:
+          "hub.docker.alibaba-inc.com/aone-base-global/multica-asb-runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        artifact_build_id: "56309841",
+        artifact_built_at: "2026-07-28T09:30:00Z",
+        artifact_alias: "multica-asb-runtime:56309841",
+        source_revision: "1234567890abcdef",
+        status: "rolled_back",
+      },
+    ];
+
+    renderDialog("asb");
+
+    expect(screen.getByRole("dialog")).toHaveClass(
+      "overflow-hidden",
+      "sm:max-w-4xl",
+    );
+    expect(screen.getByText("Version history")).toBeInTheDocument();
+    expect(screen.getByText("Latest 2 versions")).toBeInTheDocument();
+    expect(screen.getAllByText(artifactRef).length).toBeGreaterThan(0);
+    expect(
+      document.querySelector('time[datetime="2026-07-29T12:43:00Z"]'),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Rolled back")).toBeInTheDocument();
   });
 });

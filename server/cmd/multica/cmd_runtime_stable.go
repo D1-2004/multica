@@ -89,6 +89,7 @@ func init() {
 	runtimeStableReleaseCreateCmd.Flags().String("backend", "asb", "Sandbox backend: asb or aliyun_fc")
 	runtimeStableReleaseCreateCmd.Flags().String("artifact-ref", "", "Immutable ASB OCI image reference")
 	runtimeStableReleaseCreateCmd.Flags().String("artifact-build-id", "", "Artifact build identifier")
+	runtimeStableReleaseCreateCmd.Flags().String("artifact-built-at", "", "ASB artifact build time in RFC3339 format")
 	runtimeStableReleaseCreateCmd.Flags().String("artifact-digest", "", "Artifact sha256 digest")
 	runtimeStableReleaseCreateCmd.Flags().String("git-commit", "", "Source Git commit")
 	runtimeStableReleaseCreateCmd.Flags().String("template-id", "", "FC/E2B template ID")
@@ -291,6 +292,7 @@ func runRuntimeStableReleaseCreate(cmd *cobra.Command, _ []string) error {
 	for flag, field := range map[string]string{
 		"artifact-ref":      "artifact_ref",
 		"artifact-build-id": "artifact_build_id",
+		"artifact-built-at": "artifact_built_at",
 		"artifact-digest":   "artifact_digest",
 		"git-commit":        "git_commit",
 		"template-id":       "template_id",
@@ -303,7 +305,7 @@ func runRuntimeStableReleaseCreate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	if backend == "asb" {
-		for _, field := range []string{"artifact_ref", "artifact_build_id", "artifact_digest", "git_commit"} {
+		for _, field := range []string{"artifact_ref", "artifact_build_id", "artifact_built_at", "artifact_digest", "git_commit"} {
 			if _, ok := body[field]; !ok {
 				return fmt.Errorf("--%s is required for --backend asb", strings.ReplaceAll(field, "_", "-"))
 			}
@@ -362,7 +364,7 @@ func printRuntimeStableRelease(cmd *cobra.Command, release map[string]any) error
 }
 
 func stableReleaseHeaders() []string {
-	return []string{"ID", "BACKEND", "STATUS", "BUILD_ID", "BATCH", "UPDATED", "FAILED", "ERROR"}
+	return []string{"ID", "BACKEND", "STATUS", "BUILD_ID", "BUILT_AT", "BATCH", "UPDATED", "FAILED", "ERROR"}
 }
 
 func stableReleaseRow(release map[string]any) []string {
@@ -371,6 +373,7 @@ func stableReleaseRow(release map[string]any) []string {
 		strVal(release, "sandbox_backend"),
 		strVal(release, "status"),
 		strVal(release, "artifact_build_id"),
+		strVal(release, "artifact_built_at"),
 		strVal(release, "current_batch"),
 		strVal(release, "updated_targets"),
 		strVal(release, "failed_targets"),

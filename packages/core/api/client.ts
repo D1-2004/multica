@@ -204,6 +204,7 @@ import {
   CloudRuntimeNodeSchema,
   FCE2BStableChannelSchema,
   FCE2BStableReleaseSchema,
+  FCE2BStableReleaseListSchema,
   FCE2BStableRuntimeOverviewListSchema,
   EMPTY_FC_E2B_STABLE_CHANNEL,
   EMPTY_FC_E2B_STABLE_RELEASE,
@@ -1143,6 +1144,22 @@ export class ApiClient {
       EMPTY_FC_E2B_STABLE_RELEASE,
       { endpoint: "GET /api/runtimes/fc-e2b/stable-releases/:id" },
     );
+  }
+
+  async listCloudSandboxStableReleases(
+    backend: SandboxBackend,
+    limit = 20,
+  ): Promise<FCE2BStableRelease[]> {
+    const search = new URLSearchParams({
+      sandbox_backend: backend,
+      limit: String(limit),
+    });
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/cloud-sandbox/stable-releases?${search.toString()}`,
+    );
+    return parseWithFallback(raw, FCE2BStableReleaseListSchema, [], {
+      endpoint: "GET /api/runtimes/cloud-sandbox/stable-releases",
+    });
   }
 
   async listFCE2BStableRuntimes(): Promise<FCE2BStableRuntimeOverview[]> {
