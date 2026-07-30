@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -240,6 +241,12 @@ func (h *Handler) mutateFCE2BStableRelease(
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
+		slog.Error(
+			"FC/E2B stable release mutation failed",
+			"error", err,
+			"release_id", chi.URLParam(r, "releaseId"),
+			"path", r.URL.Path,
+		)
 		writeError(w, http.StatusInternalServerError, "failed to update stable release")
 		return
 	}

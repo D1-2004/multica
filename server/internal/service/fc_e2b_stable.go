@@ -568,38 +568,40 @@ func (s *FCE2BStableService) StartRollout(ctx context.Context, releaseID pgtype.
 	return s.GetRelease(ctx, releaseID)
 }
 
-func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtype.UUID) (FCE2BStableRelease, error) {
-	token := uuid.New()
-	var release FCE2BStableRelease
-	var rolloutStartedAt, batchStartedAt pgtype.Timestamptz
-	// Manual advance may supersede a worker that is only evaluating a covered
-	// stage. A target update remains exclusive: while any Runtime is actively
-	// changing templates, the manual request waits for that work to finish.
-	if err := s.Pool.QueryRow(ctx, `
-		UPDATE fc_e2b_stable_release
+func (s *FCE2BStableService) claimStableRolloutForAdvance(
+	ctx context.Context,
+	queryer stableReleaseQueryer,
+	releaseID pgtype.UUID,
+	token uuid.UUID,
+) (FCE2BStableRelease, error) {
+	return s.scanRelease(queryer.QueryRow(ctx, `
+		UPDATE fc_e2b_stable_release release
 		SET lease_token = $2,
 		    lease_expires_at = now() + $3::interval,
 		    updated_at = now()
-		WHERE id = $1
+		WHERE release.id = $1
 		  AND status = 'rolling_out'
 		  AND current_batch BETWEEN 1 AND 3
 		  AND NOT EXISTS (
 		      SELECT 1
 		      FROM fc_e2b_stable_release_target target
-		      WHERE target.release_id = fc_e2b_stable_release.id
+		      WHERE target.release_id = release.id
 		        AND target.status = 'updating'
 		  )
-		RETURNING id::text, template_alias, status, current_batch,
-		          target_percentage, rollout_started_at, batch_started_at
-	`, releaseID, token, stableReleaseLeaseDuration.String()).Scan(
-		&release.ID,
-		&release.TemplateAlias,
-		&release.Status,
-		&release.CurrentBatch,
-		&release.TargetPercentage,
-		&rolloutStartedAt,
-		&batchStartedAt,
-	); err != nil {
+		RETURNING `+stableReleaseColumns,
+		releaseID,
+		token,
+		stableReleaseLeaseDuration.String(),
+	))
+}
+
+func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtype.UUID) (FCE2BStableRelease, error) {
+	token := uuid.New()
+	// Manual advance may supersede a worker that is only evaluating a covered
+	// stage. A target update remains exclusive: while any Runtime is actively
+	// changing templates, the manual request waits for that work to finish.
+	release, err := s.claimStableRolloutForAdvance(ctx, s.Pool, releaseID, token)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			current, loadErr := s.GetRelease(ctx, releaseID)
 			if loadErr != nil {
@@ -638,11 +640,9 @@ func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtyp
 			WHERE id = $1 AND lease_token = $2
 		`, releaseID, token)
 	}()
-	if !rolloutStartedAt.Valid || !batchStartedAt.Valid {
+	if release.RolloutStartedAt == nil || release.BatchStartedAt == nil {
 		return FCE2BStableRelease{}, fmt.Errorf("%w: rollout timing is incomplete", ErrFCE2BStableReleaseState)
 	}
-	release.RolloutStartedAt = &rolloutStartedAt.Time
-	release.BatchStartedAt = &batchStartedAt.Time
 
 	if err := s.reconcileTargets(ctx, release); err != nil {
 		return FCE2BStableRelease{}, fmt.Errorf("reconcile stable rollout targets before advance: %w", err)
@@ -676,7 +676,7 @@ func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtyp
 		)
 	}
 
-	nextBatch, percentage, _ := stableNextBatch(release.CurrentBatch, rolloutStartedAt.Time)
+	nextBatch, percentage, _ := stableNextBatch(release.CurrentBatch, *release.RolloutStartedAt)
 	if nextBatch == 0 {
 		return FCE2BStableRelease{}, ErrFCE2BStableReleaseState
 	}
