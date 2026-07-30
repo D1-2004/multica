@@ -342,12 +342,8 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	if githubErr != nil && !errors.Is(githubErr, githubapp.ErrUnavailable) {
 		slog.Warn("github agent sources disabled", "error", githubErr)
 	}
-	agentIdentityControlBaseURL := cfg.FCE2B.AgentIdentityControlBaseURL
-	if strings.TrimSpace(agentIdentityControlBaseURL) == "" {
-		agentIdentityControlBaseURL = cfg.FCE2B.AgentIdentityBaseURL
-	}
 	agentIdentityGitHub := agentidentitygithub.NewClient(agentidentitygithub.Config{
-		BaseURL: agentIdentityControlBaseURL,
+		BaseURL: agentIdentityGitHubBaseURL(cfg),
 		Timeout: cfg.FCE2B.AgentIdentityTimeout,
 	})
 	fcLauncher.GitHubIdentity = agentIdentityGitHub
@@ -401,6 +397,13 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
 	return h
+}
+
+func agentIdentityGitHubBaseURL(cfg Config) string {
+	if baseURL := strings.TrimRight(strings.TrimSpace(cfg.FCE2B.AgentIdentityControlBaseURL), "/"); baseURL != "" {
+		return baseURL
+	}
+	return strings.TrimRight(strings.TrimSpace(cfg.FCE2B.AgentIdentityBaseURL), "/")
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
