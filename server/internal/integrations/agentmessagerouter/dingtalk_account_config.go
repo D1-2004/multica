@@ -54,6 +54,7 @@ type DingTalkAccountConfig struct {
 	MessageRouteError    *BindingTaskError              `json:"message_route_error,omitempty"`
 	MessageScope         string                         `json:"message_scope"`
 	CalendarStartEnabled bool                           `json:"calendar_start_enabled,omitempty"`
+	ApprovalStatusChangedEnabled bool                   `json:"approval_status_changed_enabled,omitempty"`
 	Conversations        []DingTalkConversationSnapshot `json:"conversations,omitempty"`
 	BoundAt              *time.Time                     `json:"bound_at,omitempty"`
 }
@@ -75,6 +76,7 @@ type PublicDingTalkBindingOutcome struct {
 	SurfaceType          string                         `json:"surface_type,omitempty"`
 	MessageScope         string                         `json:"message_scope,omitempty"`
 	CalendarStartEnabled bool                           `json:"calendar_start_enabled,omitempty"`
+	ApprovalStatusChangedEnabled bool                   `json:"approval_status_changed_enabled,omitempty"`
 	Conversations        []DingTalkConversationSnapshot `json:"conversations,omitempty"`
 	BoundAt              *time.Time                     `json:"bound_at,omitempty"`
 	Error                *BindingTaskError              `json:"error,omitempty"`
@@ -233,6 +235,7 @@ func (c DingTalkAccountConfig) PublicBinding(
 			SurfaceType:          c.SurfaceType,
 			MessageScope:         c.MessageScope,
 			CalendarStartEnabled: c.CalendarStartEnabled,
+			ApprovalStatusChangedEnabled: c.ApprovalStatusChangedEnabled,
 			Conversations:        append([]DingTalkConversationSnapshot(nil), c.Conversations...),
 			BoundAt:              c.BoundAt,
 			Error:                c.MessageRouteError,

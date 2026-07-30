@@ -62,6 +62,7 @@ describe("DingTalk account binding schemas", () => {
             surface_type: "chat",
             message_scope: "custom",
             calendar_start_enabled: true,
+            approval_status_changed_enabled: true,
             conversations: [
               {
                 cid: "cid-group-1",
@@ -102,6 +103,7 @@ describe("DingTalk account binding schemas", () => {
             surfaceType: "chat",
             messageScope: "custom",
             calendarStartEnabled: true,
+            approvalStatusChangedEnabled: true,
             conversations: [
               {
                 cid: "cid-group-1",
@@ -139,6 +141,7 @@ describe("DingTalk account binding schemas", () => {
       status: "active",
       messageScope: "direct_only",
       calendarStartEnabled: false,
+      approvalStatusChangedEnabled: false,
       conversations: [],
     });
   });

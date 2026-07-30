@@ -167,6 +167,7 @@ func (s *Service) CompleteBinding(ctx context.Context, params CompleteBindingPar
 		config.MessageRouteError = params.Message.Error
 		config.MessageScope = messageScope
 		config.CalendarStartEnabled = false
+		config.ApprovalStatusChangedEnabled = false
 		config.Conversations = conversations
 		rawConfig, marshalErr := config.Marshal()
 		if marshalErr != nil {
@@ -309,7 +310,7 @@ func validSourceID(sourceID string) bool {
 
 func validBindingSubscriptions(subscriptions []BindingSubscriptionResult) bool {
 	for _, subscription := range subscriptions {
-		if (subscription.Domain != "channel" && subscription.Domain != "calendar") ||
+		if (subscription.Domain != "channel" && subscription.Domain != "calendar" && subscription.Domain != "approval") ||
 			subscription.Status != "active" || !validSourceID(subscription.SourceID) {
 			return false
 		}
@@ -320,6 +321,15 @@ func validBindingSubscriptions(subscriptions []BindingSubscriptionResult) bool {
 func hasActiveCalendarSubscription(subscriptions []BindingSubscriptionResult) bool {
 	for _, subscription := range subscriptions {
 		if subscription.Domain == "calendar" && subscription.Status == "active" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasActiveApprovalSubscription(subscriptions []BindingSubscriptionResult) bool {
+	for _, subscription := range subscriptions {
+		if subscription.Domain == "approval" && subscription.Status == "active" {
 			return true
 		}
 	}

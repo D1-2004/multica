@@ -106,6 +106,7 @@ const activeBinding = {
     surfaceType: "issue",
     messageScope: "direct_only",
     calendarStartEnabled: false,
+    approvalStatusChangedEnabled: false,
     conversations: [],
   },
 };

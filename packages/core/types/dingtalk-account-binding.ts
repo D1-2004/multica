@@ -29,6 +29,7 @@ export interface DingTalkMessageRouteOutcome
   surfaceType?: DingTalkProcessingSurface | null;
   messageScope: DingTalkMessageScope;
   calendarStartEnabled?: boolean;
+  approvalStatusChangedEnabled?: boolean;
   conversations: DingTalkConversationSummary[];
 }
 
