@@ -97,6 +97,31 @@ func (h *Handler) handleAgentDispatchV2(
 		writeError(w, http.StatusServiceUnavailable, "task completion delivery is not configured")
 		return
 	}
+	if shouldSkipApprovalDispatch(command) {
+		slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+			"outcome", "skipped_auto_approve",
+			"protocol", "dispatch_command_v2",
+			"domain", command.Event.Domain,
+			"eventType", command.Event.Type,
+			"nodeType", "auto_approve",
+			"processInstanceId", strings.TrimSpace(command.Event.Data.Approval.FormCode),
+		)
+		if command.CompletionCallback != nil && h.TaskService != nil {
+			if err := h.TaskService.EnqueueSynchronousTaskCompletion(
+				r.Context(),
+				command.CompletionCallback.URL,
+				command.CompletionCallback.Target,
+				dispatchContext.AgentID,
+				"approval auto_approve node — DingTalk engine handles auto-approval, no agent task needed",
+				"auto_approve_skipped",
+			); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to persist task completion")
+				return
+			}
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	command.DispatchEndpointID = uuidToString(dispatchContext.EndpointNamespaceID)
 	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext)
 	if err != nil {

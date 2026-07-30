@@ -691,13 +691,17 @@ func TestApprovalStatusChangedDispatchUsesIssueWithoutOutboundReply(t *testing.T
 		"do not send any DingTalk chat reply",
 		`"processInstanceId":"FORM-2026-001"`,
 		`"nodeType":"auto_approve"`,
+		`"originatorUid":"originator-uid-secret"`,
+		"dws chat message send",
+		"dws ding message send",
+		"payment, leave, reimbursement",
 		"create-instance",
 	} {
 		if !strings.Contains(prompt.WorkflowPrompt, required) {
 			t.Errorf("approval workflow prompt missing %q: %q", required, prompt.WorkflowPrompt)
 		}
 	}
-	for _, secret := range []string{"approver-uid-secret-1", "approver-uid-secret-2", "originator-uid-secret", "cc-uid-secret", "cid-secret"} {
+	for _, secret := range []string{"approver-uid-secret-1", "approver-uid-secret-2", "cc-uid-secret", "cid-secret"} {
 		if strings.Contains(prompt.WorkflowPrompt, secret) {
 			t.Fatalf("approval workflow prompt leaked %q: %q", secret, prompt.WorkflowPrompt)
 		}
@@ -759,6 +763,63 @@ func TestApprovalStatusChangedDispatchUsesIssueWithoutOutboundReply(t *testing.T
 	}
 }
 
+func TestShouldSkipApprovalDispatch(t *testing.T) {
+	tests := []struct {
+		name    string
+		command DispatchCommand
+		want    bool
+	}{
+		{
+			name: "auto_approve approval is skipped",
+			command: DispatchCommand{
+				Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+					Approval: &ApprovalEventData{NodeType: "auto_approve", FormCode: "FORM-001"},
+				}},
+			},
+			want: true,
+		},
+		{
+			name: "non-auto_approve approval is not skipped",
+			command: DispatchCommand{
+				Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+					Approval: &ApprovalEventData{NodeType: "normal", FormCode: "FORM-001"},
+				}},
+			},
+			want: false,
+		},
+		{
+			name: "channel event is not skipped",
+			command: DispatchCommand{
+				Event: DispatchEvent{Domain: "channel", Type: "message.created"},
+			},
+			want: false,
+		},
+		{
+			name: "calendar event is not skipped",
+			command: DispatchCommand{
+				Event: DispatchEvent{Domain: "calendar", Type: "calendar.started"},
+			},
+			want: false,
+		},
+		{
+			name: "approval with whitespace nodeType is not skipped",
+			command: DispatchCommand{
+				Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+					Approval: &ApprovalEventData{NodeType: "  auto_approve  ", FormCode: "FORM-001"},
+				}},
+			},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldSkipApprovalDispatch(tt.command); got != tt.want {
+				t.Fatalf("shouldSkipApprovalDispatch() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestApplyDingTalkDispatchPromptKeepsApprovalTaskOutboundFree(t *testing.T) {
 	context := dispatchTaskContextForTest(t, DispatchCommand{
 		SchemaVersion: "2.0",
@@ -789,6 +850,8 @@ func TestApplyDingTalkDispatchPromptKeepsApprovalTaskOutboundFree(t *testing.T) 
 		"dws oa approval approve",
 		"dws oa approval create-instance",
 		`"processInstanceId":"FORM-2026-001"`,
+		`"originatorUid":"originator-uid"`,
+		"dws chat message send",
 	} {
 		if !strings.Contains(response.HandoffNote, want) {
 			t.Errorf("approval task handoff missing %q: %s", want, response.HandoffNote)
