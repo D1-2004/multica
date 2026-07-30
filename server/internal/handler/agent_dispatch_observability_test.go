@@ -16,10 +16,203 @@ import (
 
 type agentDispatchObservabilityFixture struct {
 	taskID        string
+	issueID       string
 	endpointID    string
 	deliveryToken string
 	startedAt     time.Time
 	completedAt   time.Time
+}
+
+func TestAgentDispatchObservabilitySummaryReturnsRuntimeAndCurrentSandbox(t *testing.T) {
+	fixture := createAgentDispatchObservabilityFixture(t, "runtime-sandbox")
+
+	var runtimeID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_runtime (
+			workspace_id, daemon_id, name, runtime_mode, provider, status,
+			device_info, metadata, owner_id, last_seen_at
+		)
+		VALUES (
+			$1, NULL, 'FC Runtime', 'cloud', 'opencode', 'online',
+			'FC/E2B runtime',
+			'{
+				"kind":"fc-e2b",
+				"template":"sandbox-template-v2",
+				"template_id":"template-id-v2",
+				"template_name":"Sandbox Template V2",
+				"private_key":"must-be-forwarded",
+				"future_extension":{"revision":3,"enabled":true}
+			}'::jsonb,
+			$2, now()
+		)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create FC/E2B runtime: %v", err)
+	}
+	if _, err := testPool.Exec(
+		context.Background(),
+		`UPDATE agent_task_queue SET runtime_id = $1 WHERE id = $2`,
+		runtimeID,
+		fixture.taskID,
+	); err != nil {
+		t.Fatalf("assign FC/E2B runtime: %v", err)
+	}
+	expiresAt := time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO fc_e2b_sandbox_session (
+			workspace_id, runtime_id, scope_type, scope_id,
+			sandbox_id, template, status, expires_at
+		)
+		VALUES ($1, $2, 'issue', $3, 'sandbox-current-123',
+			'sandbox-template-v2', 'running', $4)
+	`, testWorkspaceID, runtimeID, fixture.issueID, expiresAt); err != nil {
+		t.Fatalf("create current sandbox session: %v", err)
+	}
+
+	request := agentDispatchObservabilityRequest(
+		t,
+		http.MethodGet,
+		fmt.Sprintf(
+			"/api/webhooks/agent-dispatch/%s/tasks/%s/summary",
+			fixture.endpointID,
+			fixture.taskID,
+		),
+		fixture,
+		fixture.taskID,
+	)
+	response := httptest.NewRecorder()
+	testHandler.GetAgentDispatchTaskSummary(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("runtime summary status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Runtime *struct {
+			ID           string         `json:"id"`
+			Name         string         `json:"name"`
+			Mode         string         `json:"mode"`
+			Provider     string         `json:"provider"`
+			Status       string         `json:"status"`
+			Template     any            `json:"template"`
+			TemplateID   any            `json:"template_id"`
+			TemplateName any            `json:"template_name"`
+			Metadata     map[string]any `json:"metadata"`
+			Current      *struct {
+				ID        string  `json:"id"`
+				ScopeType string  `json:"scope_type"`
+				ScopeID   string  `json:"scope_id"`
+				Status    string  `json:"status"`
+				ExpiresAt *string `json:"expires_at"`
+			} `json:"current_sandbox"`
+		} `json:"runtime"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode runtime summary: %v", err)
+	}
+	if body.Runtime == nil {
+		t.Fatal("runtime = nil, want runtime details")
+	}
+	if body.Runtime.ID != runtimeID ||
+		body.Runtime.Name != "FC Runtime" ||
+		body.Runtime.Mode != "cloud" ||
+		body.Runtime.Provider != "opencode" ||
+		body.Runtime.Status != "online" {
+		t.Fatalf("runtime identity = %#v", body.Runtime)
+	}
+	if body.Runtime.Template != nil ||
+		body.Runtime.TemplateID != nil ||
+		body.Runtime.TemplateName != nil {
+		t.Fatalf("runtime contains duplicate template fields: %#v", body.Runtime)
+	}
+	if body.Runtime.Metadata["template"] != "sandbox-template-v2" ||
+		body.Runtime.Metadata["template_id"] != "template-id-v2" ||
+		body.Runtime.Metadata["template_name"] != "Sandbox Template V2" ||
+		body.Runtime.Metadata["private_key"] != "must-be-forwarded" {
+		t.Fatalf("runtime metadata = %#v", body.Runtime.Metadata)
+	}
+	futureExtension, ok := body.Runtime.Metadata["future_extension"].(map[string]any)
+	if !ok || futureExtension["revision"] != float64(3) || futureExtension["enabled"] != true {
+		t.Fatalf("future metadata extension = %#v", body.Runtime.Metadata["future_extension"])
+	}
+	if body.Runtime.Current == nil ||
+		body.Runtime.Current.ID != "sandbox-current-123" ||
+		body.Runtime.Current.ScopeType != "issue" ||
+		body.Runtime.Current.ScopeID != fixture.issueID ||
+		body.Runtime.Current.Status != "running" ||
+		body.Runtime.Current.ExpiresAt == nil {
+		t.Fatalf("current sandbox = %#v", body.Runtime.Current)
+	}
+}
+
+func TestAgentDispatchObservabilitySummaryOmitsUnavailableCurrentSandbox(t *testing.T) {
+	fixture := createAgentDispatchObservabilityFixture(t, "runtime-no-sandbox")
+
+	var runtimeID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_runtime (
+			workspace_id, daemon_id, name, runtime_mode, provider, status,
+			device_info, metadata, owner_id, last_seen_at
+		)
+		VALUES (
+			$1, NULL, 'Expired FC Runtime', 'cloud', 'hermes', 'offline',
+			'FC/E2B runtime',
+			'{"kind":"fc-e2b","template":"expired-template"}'::jsonb,
+			$2, now()
+		)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create expired FC/E2B runtime: %v", err)
+	}
+	if _, err := testPool.Exec(
+		context.Background(),
+		`UPDATE agent_task_queue SET runtime_id = $1 WHERE id = $2`,
+		runtimeID,
+		fixture.taskID,
+	); err != nil {
+		t.Fatalf("assign expired FC/E2B runtime: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO fc_e2b_sandbox_session (
+			workspace_id, runtime_id, scope_type, scope_id,
+			sandbox_id, template, status, expires_at
+		)
+		VALUES ($1, $2, 'issue', $3, 'sandbox-expired',
+			'expired-template', 'running', now() - interval '1 minute')
+	`, testWorkspaceID, runtimeID, fixture.issueID); err != nil {
+		t.Fatalf("create expired sandbox session: %v", err)
+	}
+
+	request := agentDispatchObservabilityRequest(
+		t,
+		http.MethodGet,
+		fmt.Sprintf(
+			"/api/webhooks/agent-dispatch/%s/tasks/%s/summary",
+			fixture.endpointID,
+			fixture.taskID,
+		),
+		fixture,
+		fixture.taskID,
+	)
+	response := httptest.NewRecorder()
+	testHandler.GetAgentDispatchTaskSummary(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expired sandbox summary status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Runtime *struct {
+			Current any `json:"current_sandbox"`
+		} `json:"runtime"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode expired sandbox summary: %v", err)
+	}
+	if body.Runtime == nil {
+		t.Fatal("runtime = nil, want runtime details")
+	}
+	if body.Runtime.Current != nil {
+		t.Fatalf("current_sandbox = %#v, want omitted", body.Runtime.Current)
+	}
 }
 
 func TestAgentDispatchObservabilitySummaryReturnsExistingTaskData(t *testing.T) {
@@ -58,6 +251,16 @@ func TestAgentDispatchObservabilitySummaryReturnsExistingTaskData(t *testing.T) 
 		MessageCount        int32   `json:"message_count"`
 		ToolCallCount       int32   `json:"tool_call_count"`
 		TranscriptAvailable bool    `json:"transcript_available"`
+		Runtime             *struct {
+			ID             string `json:"id"`
+			Name           string `json:"name"`
+			Mode           string `json:"mode"`
+			Provider       string `json:"provider"`
+			Status         string `json:"status"`
+			Metadata       any    `json:"metadata"`
+			Template       any    `json:"template"`
+			CurrentSandbox any    `json:"current_sandbox"`
+		} `json:"runtime"`
 		UsageDetails        []struct {
 			Provider         string `json:"provider"`
 			Model            string `json:"model"`
@@ -109,6 +312,19 @@ func TestAgentDispatchObservabilitySummaryReturnsExistingTaskData(t *testing.T) 
 	if len(body.UsageDetails) != 1 || body.UsageDetails[0].Provider != "anthropic" ||
 		body.UsageDetails[0].Model != "claude-sonnet-4" {
 		t.Fatalf("usage_details = %#v", body.UsageDetails)
+	}
+	if body.Runtime == nil ||
+		body.Runtime.ID != handlerTestRuntimeID(t) ||
+		body.Runtime.Name != "Handler Test Runtime" ||
+		body.Runtime.Mode != "cloud" ||
+		body.Runtime.Provider != "handler_test_runtime" ||
+		body.Runtime.Status != "online" {
+		t.Fatalf("non-FC/E2B runtime = %#v", body.Runtime)
+	}
+	if body.Runtime.Metadata != nil ||
+		body.Runtime.Template != nil ||
+		body.Runtime.CurrentSandbox != nil {
+		t.Fatalf("non-FC/E2B runtime contains FC/E2B fields: %#v", body.Runtime)
 	}
 }
 
@@ -354,6 +570,7 @@ func createAgentDispatchObservabilityFixture(
 
 	return agentDispatchObservabilityFixture{
 		taskID:        taskID,
+		issueID:       issueID,
 		endpointID:    endpointID,
 		deliveryToken: deliveryToken,
 		startedAt:     startedAt,

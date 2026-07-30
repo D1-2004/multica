@@ -7,7 +7,7 @@
 - 复用现有 Agent dispatch endpoint 凭证，不新增 Aone 配置。
 - 凭证主体绑定 Multica 的一个 `workspace_id + agent_id`，不是全局 Router 身份。
 - 每次读取都先校验 endpoint Bearer，再要求目标 task 同时属于该工作区和智能体。
-- 只读取现有 `agent_task_queue`、`task_usage` 和 `task_message`。不新增表、不复制 Transcript、不改变采集或保留期。
+- 只读取现有 `agent_task_queue`、`agent_runtime`、`fc_e2b_sandbox_session`、`task_usage` 和 `task_message`。不新增表、不复制 Transcript、不改变采集或保留期。
 - 不修改、匿名化或放宽现有用户 API 和守护进程 API。
 - `AGENT_MESSAGE_ROUTER_SERVICE_CREDENTIAL` 是 Multica 调 Router 的反向服务凭证，不用于本契约。
 
@@ -77,7 +77,31 @@ GET {dispatchUrl}/tasks/{taskId}/summary
       "cache_write_tokens": 3
     }
   ],
-  "transcript_available": true
+  "transcript_available": true,
+  "runtime": {
+    "id": "f2db602f-1377-48e3-a047-7f203fd297f8",
+    "name": "FC Runtime",
+    "mode": "cloud",
+    "provider": "opencode",
+    "status": "online",
+    "metadata": {
+      "kind": "fc-e2b",
+      "template": "sandbox-template-v2",
+      "template_id": "template-id-v2",
+      "template_name": "Sandbox Template V2",
+      "future_extension": {
+        "revision": 3,
+        "enabled": true
+      }
+    },
+    "current_sandbox": {
+      "id": "sandbox-current-123",
+      "scope_type": "issue",
+      "scope_id": "b79d108e-25be-40e1-91cd-ced89c69be7d",
+      "status": "running",
+      "expires_at": "2026-07-29T07:00:05.123Z"
+    }
+  }
 }
 ```
 
@@ -98,6 +122,15 @@ GET {dispatchUrl}/tasks/{taskId}/summary
 | `tool_call_count` | int | 当前 `task_message.type = "tool_use"` 的行数。 |
 | `usage_details` | array | 按现有 `task_usage` 行返回；无 usage 时为 `[]`。 |
 | `transcript_available` | boolean | task 通过本契约鉴权且 `task_message` 可读时为 `true`，与当前是否已有消息无关。 |
+| `runtime` | object, optional | task 当前关联的 runtime；task 尚未关联 runtime 或关联行已不存在时省略。 |
+| `runtime.id` | string | `agent_task_queue.runtime_id` 对应的 runtime UUID。 |
+| `runtime.name` / `mode` / `provider` / `status` | string | 原样返回 runtime 的名称、运行模式、Provider 和当前状态。 |
+| `runtime.metadata` | JSON, optional | FC/E2B runtime 完整原样返回查询时刻的 `agent_runtime.metadata`，不做字段白名单、裁剪或重命名；其他 runtime 省略。未来新增 FC/E2B metadata 字段无需修改本观测契约即可被 Router 读取。该值是当前 runtime metadata，不是任务执行时的不可变快照。 |
+| `runtime.current_sandbox` | object, optional | 仅当当前仍存在与 task scope、runtime 和 template 精确匹配，且状态为 `running`、尚未过期的 FC/E2B session 时返回。它表示查询时刻的当前会话，不是任务执行时的不可变历史快照。 |
+| `runtime.current_sandbox.id` | string | 当前 FC/E2B sandbox ID。 |
+| `runtime.current_sandbox.scope_type` / `scope_id` | string | 与执行器一致：优先使用 task 的 chat session，缺失时使用 issue。 |
+| `runtime.current_sandbox.status` | string | 当前 session 状态；本契约只会命中 `running`。 |
+| `runtime.current_sandbox.expires_at` | RFC3339Nano string | 当前 session 的失效时间，UTC。 |
 
 ## Transcript 分页
 
@@ -164,6 +197,7 @@ GET {dispatchUrl}/tasks/{taskId}/messages?since=<seq>&limit=<limit>
 | 500 | `failed to resolve task` | task 归属查询失败。 |
 | 500 | `failed to get task usage` | usage 查询失败。 |
 | 500 | `failed to get task message summary` | 消息计数查询失败。 |
+| 500 | `failed to get task runtime` | runtime 或当前沙箱 session 查询发生存储故障。 |
 | 500 | `failed to list task messages` | Transcript 查询失败。 |
 
 ## Router 接入方式
@@ -180,6 +214,9 @@ GET {dispatchUrl}/tasks/{taskId}/messages?since=<seq>&limit=<limit>
    - `usageDetails <- usage_details`
    - RFC3339Nano 时间先解析成 `Instant`，对 Dashboard/LWP 再输出 epoch 毫秒
    - `transcriptAvailable <- transcript_available`
+   - `runtimeId/runtimeName/runtimeMode/runtimeProvider/runtimeStatus <- runtime.*`
+   - `runtimeMetadata <- runtime.metadata`；Router 如需展示模板或后续扩展字段，从该 JSON 按需读取，不要求 Multica 增加重复字段
+   - `currentSandboxId <- runtime.current_sandbox.id`；此字段只代表查询时仍有效的当前 session，不可作为历史执行快照
 8. 如果历史审计行没有可解析的 Agent target，Router 应只让摘要/Transcript 节点降级，不影响普通 Trace；不要回退到用户 JWT、守护进程 token、数据库直连或 `AGENT_MESSAGE_ROUTER_SERVICE_CREDENTIAL`。
 
 ## 配置影响
@@ -191,4 +228,6 @@ GET {dispatchUrl}/tasks/{taskId}/messages?since=<seq>&limit=<limit>
 
 ## 历史记录
 
+- 2026-07-30：将 FC/E2B runtime 模板白名单字段调整为完整 `runtime.metadata` 透传，并移除重复的 `runtime.template/template_id/template_name`。原因：调用方明确要求 FC/E2B metadata 中现有和未来扩展字段无需修改 Multica summary 契约即可进入审计链路；其他 runtime 仍只返回通用身份字段，当前 sandbox 定位仍只依赖 metadata 中的 `template`，不改变 session 查询语义。
+- 2026-07-30：扩展 task summary，增加 task 实际关联的 runtime、FC/E2B 模板白名单字段和当前有效 sandbox session。原因：Router 观测后台需要展示任务运行载体与云沙箱排障信息；复用现有 runtime/session 数据即可满足当前排障，不引入新采集链路或数据库变更，并明确当前 session 不等同于历史快照。
 - 2026-07-29：新增 Agent-scoped task 摘要和 Transcript 分页只读契约。原因：Router 观测后台已有 task 外部 ID，但现有用户/Daemon messages API 的身份边界不能由 Router 满足；复用现有 endpoint-specific dispatch HMAC/Bearer 可以在不新增配置、不扩大到全局服务权限、不改变采集与存储语义的前提下，补齐最小只读观测闭环。

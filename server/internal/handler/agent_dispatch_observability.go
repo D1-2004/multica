@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -10,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -37,6 +40,25 @@ type AgentDispatchTaskSummaryResponse struct {
 	ToolCallCount       int32              `json:"tool_call_count"`
 	UsageDetails        []TaskUsagePayload `json:"usage_details"`
 	TranscriptAvailable bool               `json:"transcript_available"`
+	Runtime             *AgentDispatchTaskRuntimeResponse `json:"runtime,omitempty"`
+}
+
+type AgentDispatchTaskRuntimeResponse struct {
+	ID             string                               `json:"id"`
+	Name           string                               `json:"name"`
+	Mode           string                               `json:"mode"`
+	Provider       string                               `json:"provider"`
+	Status         string                               `json:"status"`
+	Metadata       json.RawMessage                      `json:"metadata,omitempty"`
+	CurrentSandbox *AgentDispatchCurrentSandboxResponse `json:"current_sandbox,omitempty"`
+}
+
+type AgentDispatchCurrentSandboxResponse struct {
+	ID        string  `json:"id"`
+	ScopeType string  `json:"scope_type"`
+	ScopeID   string  `json:"scope_id"`
+	Status    string  `json:"status"`
+	ExpiresAt *string `json:"expires_at"`
 }
 
 type AgentDispatchTaskMessagesResponse struct {
@@ -60,6 +82,11 @@ func (h *Handler) GetAgentDispatchTaskSummary(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to get task message summary")
 		return
 	}
+	runtimeSummary, err := h.agentDispatchTaskRuntimeSummary(r.Context(), task)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get task runtime")
+		return
+	}
 
 	response := AgentDispatchTaskSummaryResponse{
 		TaskID:              uuidToString(task.ID),
@@ -72,6 +99,7 @@ func (h *Handler) GetAgentDispatchTaskSummary(w http.ResponseWriter, r *http.Req
 		ToolCallCount:       messageSummary.ToolCallCount,
 		UsageDetails:        make([]TaskUsagePayload, 0, len(usageRows)),
 		TranscriptAvailable: true,
+		Runtime:             runtimeSummary,
 	}
 	if task.StartedAt.Valid && task.CompletedAt.Valid && !task.CompletedAt.Time.Before(task.StartedAt.Time) {
 		durationMS := task.CompletedAt.Time.Sub(task.StartedAt.Time).Milliseconds()
@@ -106,6 +134,83 @@ func (h *Handler) GetAgentDispatchTaskSummary(w http.ResponseWriter, r *http.Req
 	}
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (h *Handler) agentDispatchTaskRuntimeSummary(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+) (*AgentDispatchTaskRuntimeResponse, error) {
+	if !task.RuntimeID.Valid {
+		return nil, nil
+	}
+	runtime, err := h.Queries.GetAgentRuntime(ctx, task.RuntimeID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	response := &AgentDispatchTaskRuntimeResponse{
+		ID:       uuidToString(runtime.ID),
+		Name:     runtime.Name,
+		Mode:     runtime.RuntimeMode,
+		Provider: runtime.Provider,
+		Status:   runtime.Status,
+	}
+	if !service.IsFCE2BRuntime(runtime) {
+		return response, nil
+	}
+	response.Metadata = json.RawMessage(runtime.Metadata)
+
+	var metadata struct {
+		Template string `json:"template"`
+	}
+	if err := json.Unmarshal(runtime.Metadata, &metadata); err != nil {
+		return response, nil
+	}
+	template := strings.TrimSpace(metadata.Template)
+	if template == "" {
+		return response, nil
+	}
+
+	scopeType, scopeID, ok := agentDispatchTaskSandboxScope(task)
+	if !ok {
+		return response, nil
+	}
+	session, err := h.Queries.GetActiveFCE2BSandboxSession(
+		ctx,
+		db.GetActiveFCE2BSandboxSessionParams{
+			RuntimeID: task.RuntimeID,
+			ScopeType: scopeType,
+			ScopeID:   scopeID,
+			Template:  template,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return response, nil
+		}
+		return nil, err
+	}
+	response.CurrentSandbox = &AgentDispatchCurrentSandboxResponse{
+		ID:        session.SandboxID,
+		ScopeType: session.ScopeType,
+		ScopeID:   uuidToString(session.ScopeID),
+		Status:    session.Status,
+		ExpiresAt: agentDispatchObservabilityTimestampPtr(session.ExpiresAt),
+	}
+	return response, nil
+}
+
+func agentDispatchTaskSandboxScope(task db.AgentTaskQueue) (string, pgtype.UUID, bool) {
+	if task.ChatSessionID.Valid {
+		return "chat", task.ChatSessionID, true
+	}
+	if task.IssueID.Valid {
+		return "issue", task.IssueID, true
+	}
+	return "", pgtype.UUID{}, false
 }
 
 func (h *Handler) ListAgentDispatchTaskMessages(w http.ResponseWriter, r *http.Request) {
