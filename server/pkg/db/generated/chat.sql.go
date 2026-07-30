@@ -1258,6 +1258,31 @@ func (q *Queries) UpdateChatSessionTitleIfCurrent(ctx context.Context, arg Updat
 	return i, err
 }
 
+const updateChatSessionTitleIfStale = `-- name: UpdateChatSessionTitleIfStale :execrows
+UPDATE chat_session SET title = $1, updated_at = now()
+WHERE id = $2 AND title = ANY($3::text[]) AND title <> $1
+`
+
+type UpdateChatSessionTitleIfStaleParams struct {
+	NewTitle    string      `json:"new_title"`
+	ID          pgtype.UUID `json:"id"`
+	StaleTitles []string    `json:"stale_titles"`
+}
+
+// Channel-derived title refresh: overwrite the title only while it still
+// holds a known machine-derived value (a platform's static default such as
+// "DingTalk group chat", or an older derivation the adapter recognizes, such
+// as the bare group name before the sender was appended). A manual rename or
+// an LLM auto-title is never in @stale_titles, so it is never clobbered.
+// Zero rows updated means "leave it alone", not an error.
+func (q *Queries) UpdateChatSessionTitleIfStale(ctx context.Context, arg UpdateChatSessionTitleIfStaleParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateChatSessionTitleIfStale, arg.NewTitle, arg.ID, arg.StaleTitles)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertDeferredChannelChatTask = `-- name: UpsertDeferredChannelChatTask :one
 WITH consumed_pending_fresh AS (
     DELETE FROM chat_session_pending_fresh

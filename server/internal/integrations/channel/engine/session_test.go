@@ -47,6 +47,7 @@ type fakeSessionQueries struct {
 	replyTargets    int
 	lastConfig      []byte // config of the most recent CreateChannelChatSessionBinding
 	lastTitle       string // title of the most recent CreateChatSession
+	titles          map[pgtype.UUID]string
 
 	prevMessage       *string // GetMostRecentUserChatMessage result; nil → ErrNoRows
 	markRows          int64   // MarkChannelInboundDedupProcessed result
@@ -64,7 +65,7 @@ type fakeSessionQueries struct {
 }
 
 func newFake() *fakeSessionQueries {
-	return &fakeSessionQueries{bindings: map[string]pgtype.UUID{}, markRows: 1}
+	return &fakeSessionQueries{bindings: map[string]pgtype.UUID{}, titles: map[pgtype.UUID]string{}, markRows: 1}
 }
 
 func bindKey(inst pgtype.UUID, chat string) string { return fmt.Sprintf("%x|%s", inst.Bytes, chat) }
@@ -82,7 +83,9 @@ func (f *fakeSessionQueries) CreateChatSession(_ context.Context, arg db.CreateC
 	f.nextSession++
 	f.createdSessions++
 	f.lastTitle = arg.Title
-	return db.ChatSession{ID: uid(f.nextSession)}, nil
+	id := uid(f.nextSession)
+	f.titles[id] = arg.Title
+	return db.ChatSession{ID: id}, nil
 }
 
 func (f *fakeSessionQueries) CreateChannelChatSessionBinding(_ context.Context, arg db.CreateChannelChatSessionBindingParams) (db.ChannelChatSessionBinding, error) {
@@ -167,6 +170,22 @@ func (f *fakeSessionQueries) MarkChannelInboundDedupProcessed(context.Context, d
 	return f.markRows, nil
 }
 
+// UpdateChatSessionTitleIfStale mirrors the real query's CAS: the write lands
+// only while the stored title is one of the stale candidates.
+func (f *fakeSessionQueries) UpdateChatSessionTitleIfStale(_ context.Context, arg db.UpdateChatSessionTitleIfStaleParams) (int64, error) {
+	current, ok := f.titles[arg.ID]
+	if !ok || current == arg.NewTitle {
+		return 0, nil
+	}
+	for _, stale := range arg.StaleTitles {
+		if current == stale {
+			f.titles[arg.ID] = arg.NewTitle
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
 func newTestSession(f SessionQueries) *ChatSession {
 	return newChatSessionWith(f, fakeTxStarter{}, channel.TypeFeishu, SessionTitles{Group: "G", Direct: "D", Fallback: "F"})
 }
@@ -224,6 +243,69 @@ func TestEnsureSession_TitleOverride(t *testing.T) {
 	}
 	if f.lastTitle != "G" {
 		t.Errorf("fallback title = %q, want the static group title", f.lastTitle)
+	}
+}
+
+// TestEnsureSession_StaleTitleRefresh: an existing session still holding a
+// machine-derived title (a static default, or an older derivation named in
+// StaleTitles) upgrades in place when a later message carries a better one;
+// a manual rename is never clobbered.
+func TestEnsureSession_StaleTitleRefresh(t *testing.T) {
+	f := newFake()
+	s := newTestSession(f)
+	in := EnsureSessionInput{InstallationID: uid(1), BindingKey: "chatA", ChatType: channel.ChatTypeGroup, Sender: uid(7)}
+
+	// First contact carries no usable platform name: static group title.
+	id, err := s.EnsureSession(context.Background(), in)
+	if err != nil {
+		t.Fatalf("EnsureSession: %v", err)
+	}
+	if f.titles[id] != "G" {
+		t.Fatalf("initial title = %q, want static default", f.titles[id])
+	}
+
+	// A later message derives group + sender: the static default upgrades
+	// without creating a new session.
+	in.Title = "项目群 · 张三"
+	in.StaleTitles = []string{"项目群", "张三"}
+	id2, err := s.EnsureSession(context.Background(), in)
+	if err != nil {
+		t.Fatalf("EnsureSession refresh: %v", err)
+	}
+	if id2 != id || f.createdSessions != 1 {
+		t.Fatalf("refresh must reuse the session: id2=%v created=%d", id2, f.createdSessions)
+	}
+	if f.titles[id] != "项目群 · 张三" {
+		t.Errorf("static default not upgraded: %q", f.titles[id])
+	}
+
+	// The pre-sender bare group name is a stale candidate too.
+	f.titles[id] = "项目群"
+	if _, err := s.EnsureSession(context.Background(), in); err != nil {
+		t.Fatalf("EnsureSession legacy refresh: %v", err)
+	}
+	if f.titles[id] != "项目群 · 张三" {
+		t.Errorf("bare group name not upgraded: %q", f.titles[id])
+	}
+
+	// A manual rename is not in the stale set and must survive.
+	f.titles[id] = "自定义名字"
+	if _, err := s.EnsureSession(context.Background(), in); err != nil {
+		t.Fatalf("EnsureSession after rename: %v", err)
+	}
+	if f.titles[id] != "自定义名字" {
+		t.Errorf("manual rename clobbered: %q", f.titles[id])
+	}
+
+	// A message with no derivable title never downgrades an existing one.
+	blank := in
+	blank.Title, blank.StaleTitles = "", nil
+	f.titles[id] = "项目群 · 张三"
+	if _, err := s.EnsureSession(context.Background(), blank); err != nil {
+		t.Fatalf("EnsureSession blank: %v", err)
+	}
+	if f.titles[id] != "项目群 · 张三" {
+		t.Errorf("blank derivation changed title: %q", f.titles[id])
 	}
 }
 

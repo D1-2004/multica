@@ -561,6 +561,7 @@ type sessionBinder struct {
 
 func (r *sessionBinder) EnsureSession(ctx context.Context, p engine.EnsureSessionParams) (pgtype.UUID, error) {
 	bindingKey, config := dingtalkSessionRouting(p.Message)
+	title, staleTitles := dingtalkSessionTitle(p.Message)
 	return r.session.EnsureSession(ctx, engine.EnsureSessionInput{
 		WorkspaceID:    p.Installation.WorkspaceID,
 		AgentID:        p.Installation.AgentID,
@@ -569,10 +570,8 @@ func (r *sessionBinder) EnsureSession(ctx context.Context, p engine.EnsureSessio
 		BindingKey:     bindingKey,
 		BindingConfig:  config,
 		ChatType:       p.Message.Source.ChatType,
-		// Group sessions take the group's real name so the Multica
-		// session list (and the agent's thread name) says WHICH group,
-		// not a generic "DingTalk group chat". DMs keep the static title.
-		Title: dingtalkSessionTitle(p.Message),
+		Title:          title,
+		StaleTitles:    staleTitles,
 	})
 }
 
@@ -610,18 +609,35 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 	return result, nil
 }
 
-// dingtalkSessionTitle derives the chat_session title override: the group's
-// conversation title when present. Empty (DMs, or a callback without a
-// title) falls back to the engine's static SessionTitles.
-func dingtalkSessionTitle(msg channel.InboundMessage) string {
-	if msg.Source.ChatType != channel.ChatTypeGroup {
-		return ""
-	}
+// dingtalkSessionTitle derives the chat_session title override. Group
+// sessions are isolated per (group, sender), so the sender IS the human
+// counterpart of the session: the title composes both — "项目群 · 张三" — so
+// the Multica session list says WHICH group and WHO is talking, not a generic
+// "DingTalk group chat". DMs take the sender's nick. Empty (callback without
+// either field) falls back to the engine's static SessionTitles.
+//
+// staleTitles lists older derivations this title supersedes — the bare group
+// name (pre-sender format) and the bare nick (title-less first callback) — so
+// an existing session upgrades in place on the next message while a manual
+// rename is left alone.
+func dingtalkSessionTitle(msg channel.InboundMessage) (title string, staleTitles []string) {
 	raw, err := decodeDingTalkRaw(msg)
 	if err != nil {
-		return ""
+		return "", nil
 	}
-	return strings.TrimSpace(raw.ConversationTitle)
+	nick := strings.TrimSpace(raw.SenderNick)
+	if msg.Source.ChatType != channel.ChatTypeGroup {
+		return nick, nil
+	}
+	group := strings.TrimSpace(raw.ConversationTitle)
+	switch {
+	case group != "" && nick != "":
+		return group + " · " + nick, []string{group, nick}
+	case group != "":
+		return group, nil
+	default:
+		return nick, nil
+	}
 }
 
 // dingtalkMessageBody is the stored (and prompted) form of one inbound

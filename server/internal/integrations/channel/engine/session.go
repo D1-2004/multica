@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -51,6 +52,7 @@ type SessionQueries interface {
 	GetMostRecentUserChatMessage(ctx context.Context, chatSessionID pgtype.UUID) (db.ChatMessage, error)
 	UpdateChannelChatSessionBindingReplyTarget(ctx context.Context, arg db.UpdateChannelChatSessionBindingReplyTargetParams) error
 	MarkChannelInboundDedupProcessed(ctx context.Context, arg db.MarkChannelInboundDedupProcessedParams) (int64, error)
+	UpdateChatSessionTitleIfStale(ctx context.Context, arg db.UpdateChatSessionTitleIfStaleParams) (int64, error)
 }
 
 // dbSessionQueries adapts *db.Queries to SessionQueries — the only purpose is
@@ -96,6 +98,9 @@ func (a dbSessionQueries) UpdateChannelChatSessionBindingReplyTarget(ctx context
 }
 func (a dbSessionQueries) MarkChannelInboundDedupProcessed(ctx context.Context, arg db.MarkChannelInboundDedupProcessedParams) (int64, error) {
 	return a.q.MarkChannelInboundDedupProcessed(ctx, arg)
+}
+func (a dbSessionQueries) UpdateChatSessionTitleIfStale(ctx context.Context, arg db.UpdateChatSessionTitleIfStaleParams) (int64, error) {
+	return a.q.UpdateChatSessionTitleIfStale(ctx, arg)
 }
 
 // SessionTitles are the per-platform display titles a freshly created
@@ -173,6 +178,12 @@ type EnsureSessionInput struct {
 	// "group chat". The static titles remain the fallback for chats with
 	// no usable platform name (DMs, missing title).
 	Title string
+	// StaleTitles are older machine derivations of THIS session's title that
+	// Title supersedes (e.g. the bare group name before the sender nick was
+	// appended). On a session that already exists, Title replaces the stored
+	// title only when it still equals one of these or a static SessionTitles
+	// default — a manual rename or LLM auto-title is never overwritten.
+	StaleTitles []string
 }
 
 // EnsureSession returns the chat_session.id bound to (installation, BindingKey),
@@ -185,6 +196,7 @@ func (s *ChatSession) EnsureSession(ctx context.Context, in EnsureSessionInput) 
 
 	existing, err := s.q.GetChannelChatSessionBinding(ctx, lookup)
 	if err == nil {
+		s.refreshStaleTitle(ctx, existing.ChatSessionID, in)
 		return existing.ChatSessionID, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -203,6 +215,42 @@ func (s *ChatSession) EnsureSession(ctx context.Context, in EnsureSessionInput) 
 		return pgtype.UUID{}, fmt.Errorf("race re-read after unique violation: %w", lookupErr)
 	}
 	return pgtype.UUID{}, err
+}
+
+// refreshStaleTitle upgrades an existing session's machine-derived title when
+// a later message carries a better derivation — the first callback may have
+// lacked the group name, and sessions created before sender enrichment hold
+// only the bare group name or a static default. The CAS whitelist (static
+// SessionTitles plus the adapter's StaleTitles) guarantees a manual rename or
+// LLM auto-title is never overwritten. Best-effort: the title is cosmetic, so
+// a failure must not block message ingestion.
+func (s *ChatSession) refreshStaleTitle(ctx context.Context, sessionID pgtype.UUID, in EnsureSessionInput) {
+	newTitle := strings.TrimSpace(in.Title)
+	if newTitle == "" {
+		return
+	}
+	stale := make([]string, 0, 3+len(in.StaleTitles))
+	for _, t := range []string{s.titles.Group, s.titles.Direct, s.titles.Fallback} {
+		if t != "" && t != newTitle {
+			stale = append(stale, t)
+		}
+	}
+	for _, t := range in.StaleTitles {
+		if t = strings.TrimSpace(t); t != "" && t != newTitle {
+			stale = append(stale, t)
+		}
+	}
+	if len(stale) == 0 {
+		return
+	}
+	if _, err := s.q.UpdateChatSessionTitleIfStale(ctx, db.UpdateChatSessionTitleIfStaleParams{
+		ID:          sessionID,
+		NewTitle:    newTitle,
+		StaleTitles: stale,
+	}); err != nil {
+		slog.WarnContext(ctx, "channel chat session title refresh failed",
+			"chat_session_id", sessionID, "error", err)
+	}
 }
 
 func (s *ChatSession) createSessionAndBinding(ctx context.Context, in EnsureSessionInput) (pgtype.UUID, error) {

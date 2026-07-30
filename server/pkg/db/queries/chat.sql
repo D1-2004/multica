@@ -85,6 +85,16 @@ UPDATE chat_session SET title = @new_title, updated_at = now()
 WHERE id = @id AND title = @expected_title
 RETURNING *;
 
+-- name: UpdateChatSessionTitleIfStale :execrows
+-- Channel-derived title refresh: overwrite the title only while it still
+-- holds a known machine-derived value (a platform's static default such as
+-- "DingTalk group chat", or an older derivation the adapter recognizes, such
+-- as the bare group name before the sender was appended). A manual rename or
+-- an LLM auto-title is never in @stale_titles, so it is never clobbered.
+-- Zero rows updated means "leave it alone", not an error.
+UPDATE chat_session SET title = @new_title, updated_at = now()
+WHERE id = @id AND title = ANY(@stale_titles::text[]) AND title <> @new_title;
+
 -- name: SetChatSessionPinned :one
 -- Pin/unpin a chat. Deliberately does NOT touch updated_at: pinning is a
 -- list-ordering preference, not activity, so it must not bump the session's

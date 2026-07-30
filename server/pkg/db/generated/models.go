@@ -592,6 +592,74 @@ type FcE2bSandboxSession struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type FcE2bStableChannel struct {
+	Channel                string             `json:"channel"`
+	CurrentTemplateID      string             `json:"current_template_id"`
+	CurrentTemplateBuildID string             `json:"current_template_build_id"`
+	CurrentTemplateAlias   string             `json:"current_template_alias"`
+	CurrentReleaseID       pgtype.UUID        `json:"current_release_id"`
+	ActiveReleaseID        pgtype.UUID        `json:"active_release_id"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type FcE2bStableRelease struct {
+	ID                          pgtype.UUID        `json:"id"`
+	IdempotencyKey              string             `json:"idempotency_key"`
+	RequestFingerprint          string             `json:"request_fingerprint"`
+	TemplateID                  string             `json:"template_id"`
+	TemplateBuildID             string             `json:"template_build_id"`
+	TemplateAlias               string             `json:"template_alias"`
+	GitCommit                   string             `json:"git_commit"`
+	AcrDigest                   string             `json:"acr_digest"`
+	Note                        string             `json:"note"`
+	ActorUserID                 pgtype.UUID        `json:"actor_user_id"`
+	Bootstrap                   bool               `json:"bootstrap"`
+	Status                      string             `json:"status"`
+	CurrentBatch                int16              `json:"current_batch"`
+	TargetPercentage            int16              `json:"target_percentage"`
+	PreviousTemplateID          string             `json:"previous_template_id"`
+	PreviousTemplateBuildID     string             `json:"previous_template_build_id"`
+	PreviousTemplateAlias       string             `json:"previous_template_alias"`
+	Manifest                    []byte             `json:"manifest"`
+	TotalTargets                int32              `json:"total_targets"`
+	UpdatedTargets              int32              `json:"updated_targets"`
+	FailedTargets               int32              `json:"failed_targets"`
+	RolloutStartedAt            pgtype.Timestamptz `json:"rollout_started_at"`
+	BatchStartedAt              pgtype.Timestamptz `json:"batch_started_at"`
+	NextBatchAt                 pgtype.Timestamptz `json:"next_batch_at"`
+	CompletedAt                 pgtype.Timestamptz `json:"completed_at"`
+	ValidationError             string             `json:"validation_error"`
+	PausedFromStatus            string             `json:"paused_from_status"`
+	LeaseToken                  pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt              pgtype.Timestamptz `json:"lease_expires_at"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	SourceRevision              string             `json:"source_revision"`
+	DeveloperRolloutStartedAt   pgtype.Timestamptz `json:"developer_rollout_started_at"`
+	DeveloperRolloutCompletedAt pgtype.Timestamptz `json:"developer_rollout_completed_at"`
+}
+
+type FcE2bStableReleaseTarget struct {
+	ID                      pgtype.UUID        `json:"id"`
+	ReleaseID               pgtype.UUID        `json:"release_id"`
+	RuntimeID               pgtype.UUID        `json:"runtime_id"`
+	WorkspaceID             pgtype.UUID        `json:"workspace_id"`
+	Provider                string             `json:"provider"`
+	BatchIndex              int16              `json:"batch_index"`
+	Status                  string             `json:"status"`
+	PreviousTemplateID      string             `json:"previous_template_id"`
+	PreviousTemplateBuildID string             `json:"previous_template_build_id"`
+	PreviousTemplateAlias   string             `json:"previous_template_alias"`
+	AttemptCount            int32              `json:"attempt_count"`
+	LastError               string             `json:"last_error"`
+	LeaseToken              pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt          pgtype.Timestamptz `json:"lease_expires_at"`
+	CompletedAt             pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	IsDeveloper             bool               `json:"is_developer"`
+}
+
 type FdeOnboarding struct {
 	UserID      pgtype.UUID        `json:"user_id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
