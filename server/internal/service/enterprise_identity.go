@@ -389,7 +389,11 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	}
 	authXToken, err := s.AuthX.IssueForVerifiedEmployee(ctx, employeeID)
 	if err != nil {
-		logEnterpriseIdentityBindingStageFailure("issue_authx_token")
+		slog.Warn("enterprise identity binding stage failed",
+			"stage", "issue_authx_token",
+			"authx_service_id", s.Config.AuthXServiceID,
+			"error", err,
+		)
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
 	agentSPIFFEID, err := s.agentSPIFFEID(attempt.AgentID)
