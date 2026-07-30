@@ -1558,6 +1558,8 @@ func TestFCE2BConfigFromEnvAgentIdentity(t *testing.T) {
 	t.Setenv("MULTICA_AGENT_IDENTITY_SANDBOX_BASE_URL", "https://agent-identity.dingtalk.com/")
 	t.Setenv("MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS", "7")
 	t.Setenv("MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET", "dws-client-secret")
+	t.Setenv("MULTICA_AGENT_IDENTITY_DEBUG_LOG_CONTEXT_TOKEN", "true")
+	t.Setenv("MULTICA_AGENT_IDENTITY_DEBUG_CONTEXT_TOKEN_AGENT_IDS", "agent-a, agent-b,agent-a")
 	cfg := FCE2BConfigFromEnv()
 	if cfg.AgentIdentityControlBaseURL != "https://pre-agent-identity.dingtalk.com" {
 		t.Fatalf("control base url = %q", cfg.AgentIdentityControlBaseURL)
@@ -1570,6 +1572,12 @@ func TestFCE2BConfigFromEnvAgentIdentity(t *testing.T) {
 	}
 	if cfg.DWSClientSecret != "dws-client-secret" {
 		t.Fatal("DWS client secret was not loaded")
+	}
+	if !cfg.AgentIdentityDebugLogContextToken {
+		t.Fatal("debug ContextToken log switch was not loaded")
+	}
+	if !reflect.DeepEqual(cfg.AgentIdentityDebugContextAgentIDs, []string{"agent-a", "agent-b"}) {
+		t.Fatalf("debug ContextToken agent allowlist = %#v", cfg.AgentIdentityDebugContextAgentIDs)
 	}
 }
 
@@ -1600,6 +1608,31 @@ func TestFCE2BConfigFromEnvKeepsAgentIdentityProductionURLInProduction(t *testin
 	cfg := FCE2BConfigFromEnv()
 	if cfg.AgentIdentityBaseURL != "https://agent-identity.dingtalk.com" {
 		t.Fatalf("base url = %q", cfg.AgentIdentityBaseURL)
+	}
+}
+
+func TestFCE2BAgentIdentityContextDebugGuard(t *testing.T) {
+	cfg := FCE2BConfig{
+		AgentIdentityDebugLogContextToken: true,
+		AgentIdentityDebugContextAgentIDs: []string{"agent-a"},
+	}
+
+	t.Setenv("APP_ENV", "production")
+	if ok, reason := cfg.shouldDebugLogAgentIdentityContext("agent-a"); ok || reason != "environment_not_allowed" {
+		t.Fatalf("production debug guard = (%v, %q), want blocked by environment", ok, reason)
+	}
+
+	t.Setenv("AONE_ENV_TYPE", "prepub")
+	if ok, reason := cfg.shouldDebugLogAgentIdentityContext("agent-a"); !ok || reason != "" {
+		t.Fatalf("prepub debug guard = (%v, %q), want allowed", ok, reason)
+	}
+	if ok, reason := cfg.shouldDebugLogAgentIdentityContext("agent-b"); ok || reason != "agent_not_allowlisted" {
+		t.Fatalf("non-allowlisted agent guard = (%v, %q), want blocked by allowlist", ok, reason)
+	}
+
+	cfg.AgentIdentityDebugContextAgentIDs = nil
+	if ok, reason := cfg.shouldDebugLogAgentIdentityContext("agent-a"); ok || reason != "agent_allowlist_empty" {
+		t.Fatalf("empty allowlist guard = (%v, %q), want blocked by allowlist", ok, reason)
 	}
 }
 
