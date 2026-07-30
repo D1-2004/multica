@@ -634,10 +634,6 @@
       "enterprise_identity_connecting": "연결 중...",
       "enterprise_identity_reconnect": "재인증",
       "enterprise_identity_connect_failed": "직원 인증을 시작하지 못했습니다.",
-      "enterprise_identity_test": "테스트",
-      "enterprise_identity_testing": "테스트 중...",
-      "enterprise_identity_test_ok": "직원 신원 테스트에 성공했습니다.",
-      "enterprise_identity_test_failed": "직원 신원을 테스트하지 못했습니다.",
       "enterprise_identity_revoke": "연결 해제",
       "enterprise_identity_revoked": "직원 신원 연결을 해제했습니다.",
       "enterprise_identity_revoke_failed": "직원 신원 연결을 해제하지 못했습니다."

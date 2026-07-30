@@ -1518,7 +1518,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/agent-identity/github/{connectionId}", h.DisconnectAgentIdentityGitHubConnection)
 					r.Get("/agent-identity/enterprise/status", h.GetAgentEnterpriseIdentityStatus)
 					r.Post("/agent-identity/enterprise/oauth/start", h.BeginAgentEnterpriseIdentityBinding)
-					r.Post("/agent-identity/enterprise/test", h.TestAgentEnterpriseIdentity)
 					r.Delete("/agent-identity/enterprise", h.RevokeAgentEnterpriseIdentity)
 				})
 				r.Group(func(r chi.Router) {

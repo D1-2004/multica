@@ -626,10 +626,6 @@
       "enterprise_identity_connecting": "接続しています...",
       "enterprise_identity_reconnect": "再認証",
       "enterprise_identity_connect_failed": "従業員認証を開始できませんでした。",
-      "enterprise_identity_test": "テスト",
-      "enterprise_identity_testing": "テスト中...",
-      "enterprise_identity_test_ok": "従業員 ID のテストに成功しました。",
-      "enterprise_identity_test_failed": "従業員 ID をテストできませんでした。",
       "enterprise_identity_revoke": "連携解除",
       "enterprise_identity_revoked": "従業員 ID の連携を解除しました。",
       "enterprise_identity_revoke_failed": "従業員 ID の連携を解除できませんでした。"

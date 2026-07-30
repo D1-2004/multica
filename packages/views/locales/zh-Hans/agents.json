@@ -731,10 +731,6 @@
       "enterprise_identity_connecting": "正在连接...",
       "enterprise_identity_reconnect": "重新授权",
       "enterprise_identity_connect_failed": "无法发起员工身份授权。",
-      "enterprise_identity_test": "测试",
-      "enterprise_identity_testing": "测试中...",
-      "enterprise_identity_test_ok": "员工身份测试成功。",
-      "enterprise_identity_test_failed": "无法测试员工身份。",
       "enterprise_identity_revoke": "解除绑定",
       "enterprise_identity_revoked": "员工身份已解除绑定。",
       "enterprise_identity_revoke_failed": "无法解除员工身份绑定。"

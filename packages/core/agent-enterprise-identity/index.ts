@@ -5,5 +5,4 @@ export {
 export {
   useBeginAgentEnterpriseIdentityBinding,
   useRevokeAgentEnterpriseIdentity,
-  useTestAgentEnterpriseIdentity,
 } from "./mutations";

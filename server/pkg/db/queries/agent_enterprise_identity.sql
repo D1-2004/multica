@@ -57,6 +57,7 @@ DO UPDATE SET
     token_version = agent_enterprise_identity.token_version + 1,
     status = 'active',
     bound_by = EXCLUDED.bound_by,
+    anchor_maintained_at = now(),
     updated_at = now()
 RETURNING agent_enterprise_identity.*;
 
@@ -91,14 +92,14 @@ FROM agent_enterprise_identity
 WHERE status = 'active'
   AND (
     authx_refresh_expires_at <= sqlc.arg('rotate_before')
-    OR updated_at <= sqlc.arg('anchor_renew_before')
+    OR anchor_maintained_at <= sqlc.arg('anchor_renew_before')
   )
-ORDER BY LEAST(authx_refresh_expires_at, updated_at), id
+ORDER BY LEAST(authx_refresh_expires_at, anchor_maintained_at), id
 LIMIT sqlc.arg('batch_size');
 
 -- name: TouchAgentEnterpriseIdentityMaintenance :execrows
 UPDATE agent_enterprise_identity
-SET updated_at = now()
+SET anchor_maintained_at = now()
 WHERE id = sqlc.arg('id')
   AND token_version = sqlc.arg('expected_token_version')
   AND status = 'active';
@@ -117,6 +118,7 @@ RETURNING *;
 -- name: CompareAndSwapAgentEnterpriseIdentityAnchor :one
 UPDATE agent_enterprise_identity
 SET buc_anchor_sandbox_id = sqlc.arg('buc_anchor_sandbox_id'),
+    anchor_maintained_at = now(),
     token_version = token_version + 1,
     updated_at = now()
 WHERE id = sqlc.arg('id')

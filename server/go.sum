@@ -115,6 +115,8 @@ github.com/lmittmann/tint v1.1.3 h1:Hv4EaHWXQr+GTFnOU4VKf8UvAtZgn0VuKT+G0wFlO3I=
 github.com/lmittmann/tint v1.1.3/go.mod h1:HIS3gSy7qNwGCj+5oRjAutErFBl4BzdQP6cJZ0NfMwE=
 github.com/mattn/go-shellwords v1.0.13 h1:DC0OMEpGjm6LfNFU4ckYcvbQKyp2vE8atyFGXNtDcf4=
 github.com/mattn/go-shellwords v1.0.13/go.mod h1:EZzvwXDESEeg03EKmM+RmDnNOPKG4lLtQsUlTZDWQ8Y=
+github.com/mozillazg/go-pinyin v0.21.0 h1:Wo8/NT45z7P3er/9YSLHA3/kjZzbLz5hR7i+jGeIGao=
+github.com/mozillazg/go-pinyin v0.21.0/go.mod h1:iR4EnMMRXkfpFVV5FMi4FNB6wGq9NV6uDWbUuPhP4Yc=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/nxadm/tail v1.4.8 h1:nPr65rt6Y5JFSKQO7qToXr7pePgD6Gwiw05lkbyAQTE=
@@ -192,8 +194,6 @@ gitlab.alibaba-inc.com/cmms-package/cmmsdkgo v1.1.1 h1:llIMSBiUeRl+ZdDPUrprFvXh0
 gitlab.alibaba-inc.com/cmms-package/cmmsdkgo v1.1.1/go.mod h1:aYjHGrmcAMqgPlZYT8Mzml2SQl6b3GW02syC9XV5hlA=
 gitlab.alibaba-inc.com/idem/idem-api-client v1.0.0 h1:ooY2X5cHc8fpa2V143v8LC5r/2DnJWmhLxXbZbK8qo8=
 gitlab.alibaba-inc.com/idem/idem-api-client v1.0.0/go.mod h1:/i3lVE76iaAwuU0UUWh24qM8O5YDd1wJKj+4OUXbdgg=
-gitlab.alibaba-inc.com/idem/idem-api-client-golang v1.0.0 h1:SFhpfCU6Q7R4j+WyiDR2dPXUDWva8bK8b7jXsvWXouY=
-gitlab.alibaba-inc.com/idem/idem-api-client-golang v1.0.0/go.mod h1:/i3lVE76iaAwuU0UUWh24qM8O5YDd1wJKj+4OUXbdgg=
 gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang v1.2.21 h1:IHo+k7DCpHZQOVOAp6gQf32h09vjYKPokBpIFKlrhMM=
 gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang v1.2.21/go.mod h1:N/GURdmOTLgsWWNFxPDLyE9SDsbnMisj5sfsuzxx5OQ=
 gitlab.alibaba-inc.com/koastline/normandy-credential-sdk-golang v1.1.4 h1:a/ZjvWPJtmBgQxA86tCTQTfjCuK/nNLy2kDUo4+WEr4=

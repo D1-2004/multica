@@ -147,10 +147,6 @@ import type {
   TestAgentIdentityGitHubConnectionResponse,
   AgentEnterpriseIdentityStatusResponse,
   BeginAgentEnterpriseIdentityBindingResponse,
-  TestAgentEnterpriseIdentityResponse,
-  AgentEnterpriseIdentityStatusResponse,
-  BeginAgentEnterpriseIdentityBindingResponse,
-  TestAgentEnterpriseIdentityResponse,
   RegisterSlackBYORequest,
   RedeemSlackBindingTokenResponse,
   Squad,
@@ -210,10 +206,8 @@ import {
   EMPTY_FC_E2B_STABLE_RELEASE,
   AgentEnterpriseIdentityStatusResponseSchema,
   BeginAgentEnterpriseIdentityBindingResponseSchema,
-  TestAgentEnterpriseIdentityResponseSchema,
   EMPTY_AGENT_ENTERPRISE_IDENTITY_STATUS_RESPONSE,
   EMPTY_BEGIN_AGENT_ENTERPRISE_IDENTITY_BINDING_RESPONSE,
-  EMPTY_TEST_AGENT_ENTERPRISE_IDENTITY_RESPONSE,
   AddDingTalkGroupMembersResponseSchema,
   AddDingTalkWorkspaceMembersResponseSchema,
   DingTalkUserSearchResponseSchema,
@@ -3136,26 +3130,6 @@ export class ApiClient {
       {
         endpoint:
           "POST /api/workspaces/:id/agent-identity/enterprise/oauth/start",
-        includeReceived: false,
-      },
-    );
-  }
-
-  async testAgentEnterpriseIdentity(
-    workspaceId: string,
-    agentId: string,
-  ): Promise<TestAgentEnterpriseIdentityResponse> {
-    const search = new URLSearchParams({ agent_id: agentId });
-    const raw = await this.fetch<unknown>(
-      `/api/workspaces/${workspaceId}/agent-identity/enterprise/test?${search.toString()}`,
-      { method: "POST" },
-    );
-    return parseWithFallback(
-      raw,
-      TestAgentEnterpriseIdentityResponseSchema,
-      EMPTY_TEST_AGENT_ENTERPRISE_IDENTITY_RESPONSE,
-      {
-        endpoint: "POST /api/workspaces/:id/agent-identity/enterprise/test",
         includeReceived: false,
       },
     );

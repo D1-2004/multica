@@ -208,12 +208,6 @@ describe("ApiClient", () => {
           },
         ),
       )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ ok: true }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      )
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -244,9 +238,6 @@ describe("ApiClient", () => {
       expiresAt: 1799200000,
     });
     await expect(
-      client.testAgentEnterpriseIdentity("workspace-1", "agent-1"),
-    ).resolves.toEqual({ ok: true });
-    await expect(
       client.revokeAgentEnterpriseIdentity("workspace-1", "agent-1"),
     ).resolves.toBeUndefined();
 
@@ -269,12 +260,6 @@ describe("ApiClient", () => {
           agent_id: "agent-1",
           redirect_path: "/ws/workspace-1/agents/agent-1?tab=identity",
         }),
-      },
-      {
-        url:
-          "https://api.example.test/api/workspaces/workspace-1/agent-identity/enterprise/test?agent_id=agent-1",
-        method: "POST",
-        body: undefined,
       },
       {
         url:

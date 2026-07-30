@@ -48,7 +48,6 @@ beforeEach(() => {
   setApiInstance({
     getAgentEnterpriseIdentityStatus: getStatus,
     beginAgentEnterpriseIdentityBinding: vi.fn(),
-    testAgentEnterpriseIdentity: vi.fn(),
     revokeAgentEnterpriseIdentity: vi.fn(),
   } as unknown as ApiClient);
 });
@@ -103,7 +102,9 @@ describe("EnterpriseIdentityBindingCard", () => {
     expect(screen.getByText(/Employee ID: \*2345/)).toBeInTheDocument();
     expect(screen.queryByText(/12345/)).not.toBeInTheDocument();
     expect(screen.getByText(/Agent Identity profile.*aip-1/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Test" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Test" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reauthorize" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Unbind" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();

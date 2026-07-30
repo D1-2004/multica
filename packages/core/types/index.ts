@@ -193,7 +193,6 @@ export type {
   AgentEnterpriseIdentityConnection,
   AgentEnterpriseIdentityStatusResponse,
   BeginAgentEnterpriseIdentityBindingResponse,
-  TestAgentEnterpriseIdentityResponse,
 } from "./agent-enterprise-identity";
 export type {
   Autopilot,

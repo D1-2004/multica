@@ -2,12 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Building2, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
+import { Building2, RefreshCw, Unplug } from "lucide-react";
 import {
   agentEnterpriseIdentityStatusOptions,
   useBeginAgentEnterpriseIdentityBinding,
   useRevokeAgentEnterpriseIdentity,
-  useTestAgentEnterpriseIdentity,
 } from "@multica/core/agent-enterprise-identity";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { Button } from "@multica/ui/components/ui/button";
@@ -55,7 +54,6 @@ export function EnterpriseIdentityBindingCard({
     enabled: !!wsId && !!agentId,
   });
   const beginBinding = useBeginAgentEnterpriseIdentityBinding(wsId);
-  const testIdentity = useTestAgentEnterpriseIdentity(wsId);
   const revokeIdentity = useRevokeAgentEnterpriseIdentity(wsId);
   const identity = data?.identity ?? null;
   const canMutate = canManage && data?.canManage === true;
@@ -116,24 +114,6 @@ export function EnterpriseIdentityBindingCard({
         errorMessage(
           error,
           t(($) => $.tab_body.integrations.enterprise_identity_connect_failed),
-        ),
-      );
-    }
-  }
-
-  async function test() {
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      await testIdentity.mutateAsync(agentId);
-      setActionMessage(
-        t(($) => $.tab_body.integrations.enterprise_identity_test_ok),
-      );
-    } catch (error) {
-      setActionError(
-        errorMessage(
-          error,
-          t(($) => $.tab_body.integrations.enterprise_identity_test_failed),
         ),
       );
     }
@@ -263,21 +243,6 @@ export function EnterpriseIdentityBindingCard({
             </div>
             {canMutate ? (
               <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={test}
-                  disabled={testIdentity.isPending || needsReauth}
-                >
-                  <ShieldCheck className="mr-2 h-4 w-4" />
-                  {testIdentity.isPending
-                    ? t(
-                        ($) =>
-                          $.tab_body.integrations.enterprise_identity_testing,
-                      )
-                    : t(($) => $.tab_body.integrations.enterprise_identity_test)}
-                </Button>
                 <Button
                   type="button"
                   size="sm"

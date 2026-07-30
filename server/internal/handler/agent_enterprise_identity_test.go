@@ -187,23 +187,3 @@ func TestAgentEnterpriseIdentityStatusTreatsRevokedBindingAsUnbound(t *testing.T
 		t.Fatalf("revoked identity should be reported as unbound: %#v", payload)
 	}
 }
-
-func TestAgentEnterpriseIdentityMemberCannotTestBinding(t *testing.T) {
-	agentID, memberUserID := createEnterpriseIdentityHandlerFixture(t)
-	handler := *testHandler
-	handler.EnterpriseIdentity = &service.EnterpriseIdentityService{}
-
-	request := newRequestAsUser(
-		memberUserID,
-		http.MethodPost,
-		"/api/workspaces/"+testWorkspaceID+"/agent-identity/enterprise/test?agent_id="+agentID,
-		nil,
-	)
-	request = withURLParams(request, "id", testWorkspaceID)
-	response := httptest.NewRecorder()
-	handler.TestAgentEnterpriseIdentity(response, request)
-
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d: %s", response.Code, response.Body.String())
-	}
-}

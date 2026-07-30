@@ -25,10 +25,6 @@ import type {
   TestAgentIdentityGitHubConnectionResponse,
   AgentEnterpriseIdentityStatusResponse,
   BeginAgentEnterpriseIdentityBindingResponse,
-  TestAgentEnterpriseIdentityResponse,
-  AgentEnterpriseIdentityStatusResponse,
-  BeginAgentEnterpriseIdentityBindingResponse,
-  TestAgentEnterpriseIdentityResponse,
   GroupedIssuesResponse,
   GitHubAgentPreview,
   GitHubInstallation,
@@ -430,16 +426,6 @@ export const BeginAgentEnterpriseIdentityBindingResponseSchema = z
 export const EMPTY_BEGIN_AGENT_ENTERPRISE_IDENTITY_BINDING_RESPONSE: BeginAgentEnterpriseIdentityBindingResponse = {
   authorizationUrl: "",
   expiresAt: 0,
-};
-
-export const TestAgentEnterpriseIdentityResponseSchema = z
-  .object({
-    ok: z.boolean(),
-  })
-  .loose();
-
-export const EMPTY_TEST_AGENT_ENTERPRISE_IDENTITY_RESPONSE: TestAgentEnterpriseIdentityResponse = {
-  ok: false,
 };
 
 // Label responses are consumed by settings tables and resource pickers. Keep

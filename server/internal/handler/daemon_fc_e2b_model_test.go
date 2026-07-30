@@ -26,6 +26,31 @@ func TestClaimTaskByRuntime_PiManagedMCPSupportedTemplateClaims(t *testing.T) {
 	assertPiManagedMCPClaim(t, `{"kind":"fc-e2b","capabilities":["pi","dws","mcp"]}`, http.StatusOK, "dispatched")
 }
 
+func TestClaimTaskByRuntime_ASBPiManagedMCPRequiresImageCapability(t *testing.T) {
+	assertPiManagedMCPClaim(
+		t,
+		asbPiRuntimeMetadata([]string{"pi", "dws"}),
+		http.StatusConflict,
+		"cancelled",
+	)
+}
+
+func TestClaimTaskByRuntime_ASBPiManagedMCPSupportedImageClaims(t *testing.T) {
+	assertPiManagedMCPClaim(
+		t,
+		asbPiRuntimeMetadata([]string{"pi", "dws", "mcp"}),
+		http.StatusOK,
+		"dispatched",
+	)
+}
+
+func asbPiRuntimeMetadata(capabilities []string) string {
+	encodedCapabilities, _ := json.Marshal(capabilities)
+	digest := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	return `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"pi","artifact_kind":"oci_image","artifact_ref":"registry.example/runtime@sha256:` +
+		digest + `","artifact_digest":"sha256:` + digest + `","capabilities":` + string(encodedCapabilities) + `}`
+}
+
 func assertPiManagedMCPClaim(t *testing.T, runtimeMetadata string, wantStatus int, wantTaskStatus string) {
 	t.Helper()
 	if testHandler == nil || testPool == nil {

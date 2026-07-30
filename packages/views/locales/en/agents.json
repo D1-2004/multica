@@ -744,10 +744,6 @@
       "enterprise_identity_connecting": "Connecting...",
       "enterprise_identity_reconnect": "Reauthorize",
       "enterprise_identity_connect_failed": "Unable to start employee authorization.",
-      "enterprise_identity_test": "Test",
-      "enterprise_identity_testing": "Testing...",
-      "enterprise_identity_test_ok": "Employee identity test succeeded.",
-      "enterprise_identity_test_failed": "Unable to test employee identity.",
       "enterprise_identity_revoke": "Unbind",
       "enterprise_identity_revoked": "Employee identity unbound.",
       "enterprise_identity_revoke_failed": "Unable to unbind employee identity."

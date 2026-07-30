@@ -14,13 +14,14 @@ import (
 const compareAndSwapAgentEnterpriseIdentityAnchor = `-- name: CompareAndSwapAgentEnterpriseIdentityAnchor :one
 UPDATE agent_enterprise_identity
 SET buc_anchor_sandbox_id = $1,
+    anchor_maintained_at = now(),
     token_version = token_version + 1,
     updated_at = now()
 WHERE id = $2
   AND token_version = $3
   AND buc_anchor_sandbox_id = $4
   AND status = 'active'
-RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, buc_anchor_sandbox_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at
+RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, buc_anchor_sandbox_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, anchor_maintained_at
 `
 
 type CompareAndSwapAgentEnterpriseIdentityAnchorParams struct {
@@ -55,6 +56,7 @@ func (q *Queries) CompareAndSwapAgentEnterpriseIdentityAnchor(ctx context.Contex
 		&i.BoundBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AnchorMaintainedAt,
 	)
 	return i, err
 }
@@ -68,7 +70,7 @@ SET authx_refresh_token_encrypted = $1,
 WHERE id = $3
   AND token_version = $4
   AND status = 'active'
-RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, buc_anchor_sandbox_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at
+RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, buc_anchor_sandbox_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, anchor_maintained_at
 `
 
 type CompareAndSwapAgentEnterpriseIdentityTokenParams struct {
@@ -103,6 +105,7 @@ func (q *Queries) CompareAndSwapAgentEnterpriseIdentityToken(ctx context.Context
 		&i.BoundBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AnchorMaintainedAt,
 	)
 	return i, err
 }
@@ -234,7 +237,7 @@ func (q *Queries) DeleteExpiredAgentEnterpriseIdentityAttempts(ctx context.Conte
 }
 
 const getActiveAgentEnterpriseIdentity = `-- name: GetActiveAgentEnterpriseIdentity :one
-SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, buc_anchor_sandbox_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at
+SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, buc_anchor_sandbox_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, anchor_maintained_at
 FROM agent_enterprise_identity
 WHERE workspace_id = $1
   AND agent_id = $2
@@ -266,12 +269,13 @@ func (q *Queries) GetActiveAgentEnterpriseIdentity(ctx context.Context, arg GetA
 		&i.BoundBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AnchorMaintainedAt,
 	)
 	return i, err
 }
 
 const getAgentEnterpriseIdentity = `-- name: GetAgentEnterpriseIdentity :one
-SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, buc_anchor_sandbox_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at
+SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, buc_anchor_sandbox_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, anchor_maintained_at
 FROM agent_enterprise_identity
 WHERE workspace_id = $1
   AND agent_id = $2
@@ -302,19 +306,20 @@ func (q *Queries) GetAgentEnterpriseIdentity(ctx context.Context, arg GetAgentEn
 		&i.BoundBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AnchorMaintainedAt,
 	)
 	return i, err
 }
 
 const listAgentEnterpriseIdentitiesForMaintenance = `-- name: ListAgentEnterpriseIdentitiesForMaintenance :many
-SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, buc_anchor_sandbox_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at
+SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, buc_anchor_sandbox_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, anchor_maintained_at
 FROM agent_enterprise_identity
 WHERE status = 'active'
   AND (
     authx_refresh_expires_at <= $1
-    OR updated_at <= $2
+    OR anchor_maintained_at <= $2
   )
-ORDER BY LEAST(authx_refresh_expires_at, updated_at), id
+ORDER BY LEAST(authx_refresh_expires_at, anchor_maintained_at), id
 LIMIT $3
 `
 
@@ -350,6 +355,7 @@ func (q *Queries) ListAgentEnterpriseIdentitiesForMaintenance(ctx context.Contex
 			&i.BoundBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AnchorMaintainedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -398,7 +404,7 @@ SET status = 'revoked',
 WHERE workspace_id = $1
   AND agent_id = $2
   AND status <> 'revoked'
-RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, buc_anchor_sandbox_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at
+RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, buc_anchor_sandbox_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, anchor_maintained_at
 `
 
 type RevokeAgentEnterpriseIdentityParams struct {
@@ -426,13 +432,14 @@ func (q *Queries) RevokeAgentEnterpriseIdentity(ctx context.Context, arg RevokeA
 		&i.BoundBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AnchorMaintainedAt,
 	)
 	return i, err
 }
 
 const touchAgentEnterpriseIdentityMaintenance = `-- name: TouchAgentEnterpriseIdentityMaintenance :execrows
 UPDATE agent_enterprise_identity
-SET updated_at = now()
+SET anchor_maintained_at = now()
 WHERE id = $1
   AND token_version = $2
   AND status = 'active'
@@ -497,8 +504,9 @@ DO UPDATE SET
     token_version = agent_enterprise_identity.token_version + 1,
     status = 'active',
     bound_by = EXCLUDED.bound_by,
+    anchor_maintained_at = now(),
     updated_at = now()
-RETURNING agent_enterprise_identity.id, agent_enterprise_identity.workspace_id, agent_enterprise_identity.agent_id, agent_enterprise_identity.raw_emp_id, agent_enterprise_identity.display_name, agent_enterprise_identity.buc_agent_id, agent_enterprise_identity.agent_spiffe_id, agent_enterprise_identity.aip_id, agent_enterprise_identity.buc_anchor_sandbox_id, agent_enterprise_identity.authx_refresh_token_encrypted, agent_enterprise_identity.authx_refresh_expires_at, agent_enterprise_identity.token_version, agent_enterprise_identity.status, agent_enterprise_identity.bound_by, agent_enterprise_identity.created_at, agent_enterprise_identity.updated_at
+RETURNING agent_enterprise_identity.id, agent_enterprise_identity.workspace_id, agent_enterprise_identity.agent_id, agent_enterprise_identity.raw_emp_id, agent_enterprise_identity.display_name, agent_enterprise_identity.buc_agent_id, agent_enterprise_identity.agent_spiffe_id, agent_enterprise_identity.aip_id, agent_enterprise_identity.buc_anchor_sandbox_id, agent_enterprise_identity.authx_refresh_token_encrypted, agent_enterprise_identity.authx_refresh_expires_at, agent_enterprise_identity.token_version, agent_enterprise_identity.status, agent_enterprise_identity.bound_by, agent_enterprise_identity.created_at, agent_enterprise_identity.updated_at, agent_enterprise_identity.anchor_maintained_at
 `
 
 type UpsertAgentEnterpriseIdentityParams struct {
@@ -547,6 +555,7 @@ func (q *Queries) UpsertAgentEnterpriseIdentity(ctx context.Context, arg UpsertA
 		&i.BoundBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AnchorMaintainedAt,
 	)
 	return i, err
 }

@@ -85,6 +85,28 @@ func TestNormalizePiMCPConfigAcceptsOpenCodeNativeContainer(t *testing.T) {
 	}
 }
 
+func TestNormalizePiMCPConfigCanonicalizesChineseServerNameForPi(t *testing.T) {
+	raw := json.RawMessage(`{
+		"mcpServers": {
+			"通义万相-图生图": {"url":"https://mcp.example.test/image"}
+		}
+	}`)
+	data, err := normalizePiMCPConfig(raw)
+	if err != nil {
+		t.Fatalf("normalizePiMCPConfig: %v", err)
+	}
+	var got piMCPConfig
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Servers) != 1 {
+		t.Fatalf("servers = %d, want 1", len(got.Servers))
+	}
+	if got.Servers[0].Name != "tong-yi-wan-xiang-tu-sheng-tu-1b927467ea" {
+		t.Fatalf("canonical Chinese server name = %q", got.Servers[0].Name)
+	}
+}
+
 func TestNormalizePiMCPConfigRejectsInvalidDocuments(t *testing.T) {
 	tests := map[string]string{
 		"not json":                 `not-json`,

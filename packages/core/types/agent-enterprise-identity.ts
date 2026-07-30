@@ -19,7 +19,3 @@ export interface BeginAgentEnterpriseIdentityBindingResponse {
   authorizationUrl: string;
   expiresAt: number;
 }
-
-export interface TestAgentEnterpriseIdentityResponse {
-  ok: boolean;
-}

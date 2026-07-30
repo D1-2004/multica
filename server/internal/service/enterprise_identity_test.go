@@ -351,13 +351,13 @@ func (f *fakeEnterpriseAnchor) Create(
 func (f *fakeEnterpriseAnchor) EnsureAvailable(
 	_ context.Context,
 	binding EnterpriseIdentityAnchorBinding,
-) (string, error) {
+) (EnterpriseIdentityAnchorAvailability, error) {
 	f.available = binding
 	f.availableID = binding.SandboxID
 	if f.successorID != "" {
-		return f.successorID, nil
+		return EnterpriseIdentityAnchorAvailability{SandboxID: f.successorID}, nil
 	}
-	return binding.SandboxID, nil
+	return EnterpriseIdentityAnchorAvailability{SandboxID: binding.SandboxID}, nil
 }
 
 func (f *fakeEnterpriseAnchor) Delete(_ context.Context, sandboxID string) error {
@@ -995,7 +995,7 @@ func TestEnterpriseIdentityMaintenanceRenewsAnchorAndRotatesRefresh(t *testing.T
 		t.Fatalf("rotated refresh token = %q", rotated)
 	}
 	if !store.maintenanceArgs.RotateBefore.Time.Equal(now.Add(defaultEnterpriseRefreshBefore)) ||
-		!store.maintenanceArgs.AnchorRenewBefore.Time.Equal(now.Add(-defaultEnterpriseAnchorRenewInterval)) ||
+		!store.maintenanceArgs.AnchorRenewBefore.Time.Equal(now.Add(-defaultEnterpriseAnchorMaintenanceInterval)) ||
 		store.maintenanceArgs.BatchSize != defaultEnterpriseMaintenanceBatch {
 		t.Fatalf("maintenance query = %#v", store.maintenanceArgs)
 	}

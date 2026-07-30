@@ -24,18 +24,6 @@ export function useBeginAgentEnterpriseIdentityBinding(wsId: string) {
   });
 }
 
-export function useTestAgentEnterpriseIdentity(wsId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (agentId: string) =>
-      api.testAgentEnterpriseIdentity(wsId, agentId),
-    onSettled: (_data, _error, agentId) =>
-      queryClient.invalidateQueries({
-        queryKey: agentEnterpriseIdentityKeys.status(wsId, agentId),
-      }),
-  });
-}
-
 export function useRevokeAgentEnterpriseIdentity(wsId: string) {
   const queryClient = useQueryClient();
   return useMutation({

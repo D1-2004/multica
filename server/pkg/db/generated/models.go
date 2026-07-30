@@ -125,6 +125,7 @@ type AgentEnterpriseIdentity struct {
 	BoundBy                    pgtype.UUID        `json:"bound_by"`
 	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	AnchorMaintainedAt         pgtype.Timestamptz `json:"anchor_maintained_at"`
 }
 
 type AgentEnterpriseIdentityAttempt struct {

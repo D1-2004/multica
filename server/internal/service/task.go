@@ -3331,7 +3331,7 @@ func (s *TaskService) agentNeedsDWSSkill(ctx context.Context, agentID pgtype.UUI
 		return false
 	}
 	runtime, err := s.Queries.GetAgentRuntime(ctx, agent.RuntimeID)
-	return err == nil && FCE2BRuntimeHasCapability(runtime, "dws")
+	return err == nil && CloudSandboxRuntimeHasCapability(runtime, "dws")
 }
 
 func BuildAgentSkillBundles(skills []AgentSkillData) ([]AgentSkillData, []AgentSkillRefData) {

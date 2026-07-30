@@ -170,9 +170,11 @@ type ASBBUCIdentityGrant struct {
 }
 
 type ASBHTTPError struct {
-	Operation  string
-	StatusCode int
-	RequestID  string
+	Operation    string
+	StatusCode   int
+	RequestID    string
+	ErrorCode    string
+	ErrorMessage string
 }
 
 func (e *ASBHTTPError) Error() string {
@@ -335,7 +337,12 @@ func (c *ASBClient) DeleteSandbox(ctx context.Context, sandboxID string) error {
 	)
 }
 
-func (c *ASBClient) RenewSandbox(ctx context.Context, sandboxID string, expiresAt time.Time) error {
+func (c *ASBClient) RenewSandbox(
+	ctx context.Context,
+	sandboxID string,
+	expiresAt time.Time,
+	force bool,
+) error {
 	if err := validateASBSandboxID(sandboxID); err != nil {
 		return err
 	}
@@ -349,12 +356,16 @@ func (c *ASBClient) RenewSandbox(ctx context.Context, sandboxID string, expiresA
 	request := struct {
 		ExpiresAt time.Time `json:"expiresAt"`
 	}{ExpiresAt: expiresAt.UTC()}
+	var query url.Values
+	if force {
+		query = url.Values{"force": []string{"true"}}
+	}
 	return c.doLifecycleJSON(
 		ctx,
 		"renew_sandbox",
 		http.MethodPost,
 		"/sandboxes/"+sandboxID+"/renew-expiration",
-		nil,
+		query,
 		request,
 		nil,
 		http.StatusOK,
@@ -513,7 +524,8 @@ func (c *ASBClient) Exec(ctx context.Context, endpoint *ASBEndpoint, input ASBEx
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, newASBHTTPError("exec", response)
+		encoded, _ := io.ReadAll(io.LimitReader(response.Body, asbMaxResponseBodyBytes))
+		return nil, newASBHTTPError("exec", response, encoded)
 	}
 	contentType := strings.ToLower(response.Header.Get("Content-Type"))
 	if contentType != "" && !strings.HasPrefix(contentType, "text/event-stream") {
@@ -694,8 +706,8 @@ func (c *ASBClient) doLifecycleJSONVia(
 	}
 	defer response.Body.Close()
 	if !containsStatus(acceptedStatusCodes, response.StatusCode) {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, asbMaxResponseBodyBytes))
-		return newASBHTTPError(operation, response)
+		encoded, _ := io.ReadAll(io.LimitReader(response.Body, asbMaxResponseBodyBytes))
+		return newASBHTTPError(operation, response, encoded)
 	}
 	if output == nil || response.StatusCode == http.StatusNoContent {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, asbMaxResponseBodyBytes))
@@ -716,30 +728,37 @@ func (c *ASBClient) doLifecycleJSONVia(
 	return nil
 }
 
-func newASBHTTPError(operation string, response *http.Response) error {
+func newASBHTTPError(operation string, response *http.Response, encoded []byte) error {
 	requestID := response.Header.Get("X-Request-ID")
 	if requestID == "" {
 		requestID = response.Header.Get("X-Aone-Request-Id")
 	}
+	var payload struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(encoded, &payload)
 	return &ASBHTTPError{
-		Operation:  operation,
-		StatusCode: response.StatusCode,
-		RequestID:  sanitizeASBRequestID(requestID),
+		Operation:    operation,
+		StatusCode:   response.StatusCode,
+		RequestID:    sanitizeASBDiagnosticValue(requestID, 128),
+		ErrorCode:    sanitizeASBDiagnosticValue(payload.Code, 128),
+		ErrorMessage: sanitizeASBDiagnosticValue(payload.Message, 512),
 	}
 }
 
-func sanitizeASBRequestID(value string) string {
+func sanitizeASBDiagnosticValue(value string, limit int) string {
 	value = strings.TrimSpace(value)
-	if len(value) > 128 {
-		value = value[:128]
+	if limit > 0 && len(value) > limit {
+		value = value[:limit]
 	}
 	var cleaned strings.Builder
 	for _, character := range value {
-		if character >= 0x21 && character <= 0x7e {
+		if character >= 0x20 && character != 0x7f {
 			cleaned.WriteRune(character)
 		}
 	}
-	return cleaned.String()
+	return strings.TrimSpace(cleaned.String())
 }
 
 func normalizeASBEndpoint(raw, defaultScheme string) (*url.URL, error) {

@@ -50,10 +50,6 @@ type startAgentEnterpriseIdentityResponse struct {
 	ExpiresAt        int64  `json:"expires_at"`
 }
 
-type testAgentEnterpriseIdentityResponse struct {
-	OK bool `json:"ok"`
-}
-
 const (
 	enterpriseIdentityCallbackTimeout   = 5 * time.Minute
 	enterpriseIdentityCallbackHeartbeat = 2 * time.Second
@@ -340,26 +336,6 @@ window.location.replace(%s);
 </script>
 <noscript><a href="%s">返回 Multica</a></noscript>
 </body></html>`, nonce, targetJSON, html.EscapeString(target))
-}
-
-func (h *Handler) TestAgentEnterpriseIdentity(w http.ResponseWriter, r *http.Request) {
-	if h.EnterpriseIdentity == nil {
-		writeError(w, http.StatusServiceUnavailable, "enterprise sandbox identity is not configured")
-		return
-	}
-	workspaceID, agent, _, ok := h.authorizeAgentEnterpriseIdentity(
-		w,
-		r,
-		strings.TrimSpace(r.URL.Query().Get("agent_id")),
-	)
-	if !ok {
-		return
-	}
-	if _, err := h.EnterpriseIdentity.ResolveASBTaskIdentity(r.Context(), workspaceID, agent.ID); err != nil {
-		writeEnterpriseIdentityError(w, r, "test", workspaceID, agent.ID, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, testAgentEnterpriseIdentityResponse{OK: true})
 }
 
 func (h *Handler) RevokeAgentEnterpriseIdentity(w http.ResponseWriter, r *http.Request) {
