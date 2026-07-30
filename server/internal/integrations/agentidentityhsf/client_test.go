@@ -85,7 +85,7 @@ func TestCreateContextInvokesAgentIdentityHSF(t *testing.T) {
 		"rpc-version":                "1.0.0",
 		"rpc-group":                  "HSF",
 		"rpc-method-name":            "createAgentIdentityContext",
-		"rpc-method-parameter-types": parameterType,
+		"rpc-method-parameter-types": createParameterType,
 		"serialization-type":         "application/json",
 		"rpc-generic":                "true",
 		"rpc-timeout":                "10000",
@@ -105,7 +105,7 @@ func TestCreateContextInvokesAgentIdentityHSF(t *testing.T) {
 		t.Fatalf("payload length = %d, want 1", len(payload))
 	}
 	request := payload[0]
-	if request["class"] != requestClass || request["requestId"] != "request-1" || request["ttlSeconds"] != float64(900) {
+	if request["class"] != createRequestClass || request["requestId"] != "request-1" || request["ttlSeconds"] != float64(900) {
 		t.Fatalf("unexpected request payload: %#v", request)
 	}
 	contextPayload, ok := request["context"].(map[string]any)
@@ -127,6 +127,116 @@ func TestCreateContextInvokesAgentIdentityHSF(t *testing.T) {
 	credentials, ok := identity["credentials"].([]any)
 	if !ok || len(credentials) != 1 || credentials[0] != "DWS_AUTH_CODE" {
 		t.Fatalf("unexpected credentials: %#v", identity["credentials"])
+	}
+}
+
+func TestCreateContextIncludesGithubIdentity(t *testing.T) {
+	invoker := &fakeBindingInvoker{event: &dapr.BindingEvent{Data: []byte(`{
+		"success":true,
+		"contextId":"ctx_123",
+		"contextToken":"secret-context-token",
+		"expiresAt":1783665600000
+	}`)}}
+	client := newTestClient(invoker)
+	req := validCreateContextRequest()
+	req.GithubConnectionID = "github-connection-1"
+
+	if _, err := client.CreateContext(context.Background(), req); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+
+	var payload []map[string]any
+	if err := json.Unmarshal(invoker.request.Data, &payload); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	identities, ok := payload[0]["identities"].([]any)
+	if !ok || len(identities) != 2 {
+		t.Fatalf("unexpected identities: %#v", payload[0]["identities"])
+	}
+	github, ok := identities[1].(map[string]any)
+	if !ok || github["key"] != "github" || github["type"] != "GITHUB_USER" {
+		t.Fatalf("unexpected github identity: %#v", identities[1])
+	}
+	attributes, ok := github["attributes"].(map[string]any)
+	if !ok || attributes["connectionId"] != "github-connection-1" {
+		t.Fatalf("unexpected github attributes: %#v", github["attributes"])
+	}
+	credentials, ok := github["credentials"].([]any)
+	if !ok || len(credentials) != 1 || credentials[0] != "GITHUB_ACCESS_TOKEN" {
+		t.Fatalf("unexpected github credentials: %#v", github["credentials"])
+	}
+}
+
+func TestCreateContextAllowsGithubOnlyIdentity(t *testing.T) {
+	invoker := &fakeBindingInvoker{event: &dapr.BindingEvent{Data: []byte(`{
+		"success":true,
+		"contextId":"ctx_123",
+		"contextToken":"secret-context-token",
+		"expiresAt":1783665600000
+	}`)}}
+	client := newTestClient(invoker)
+	req := validCreateContextRequest()
+	req.UID = ""
+	req.OrgID = ""
+	req.GithubConnectionID = "github-connection-1"
+
+	if _, err := client.CreateContext(context.Background(), req); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+	var payload []map[string]any
+	if err := json.Unmarshal(invoker.request.Data, &payload); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	identities, ok := payload[0]["identities"].([]any)
+	if !ok || len(identities) != 1 {
+		t.Fatalf("unexpected identities: %#v", payload[0]["identities"])
+	}
+	github := identities[0].(map[string]any)
+	if github["key"] != "github" {
+		t.Fatalf("unexpected identity: %#v", github)
+	}
+}
+
+func TestExtendContextInvokesAgentIdentityHSF(t *testing.T) {
+	invoker := &fakeBindingInvoker{event: &dapr.BindingEvent{Data: []byte(`{
+		"success":true,
+		"contextId":"ctx_123",
+		"expiresAt":1783665600000
+	}`)}}
+	client := newTestClient(invoker)
+
+	result, err := client.ExtendContext(context.Background(), ExtendContextRequest{
+		ContextToken:       "external-context-token",
+		TaskID:             "task-1",
+		AgentID:            "agent-1",
+		RuntimeType:        "E2B",
+		RuntimeID:          "sandbox-1",
+		Reason:             "github",
+		Source:             map[string]string{"app": "dt-fde-multica"},
+		GithubConnectionID: "github-connection-1",
+	})
+	if err != nil {
+		t.Fatalf("ExtendContext: %v", err)
+	}
+	if result.ContextID != "ctx_123" || result.ExpiresAt != 1783665600000 {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if invoker.request.Metadata["rpc-method-name"] != "extendAgentIdentityContext" ||
+		invoker.request.Metadata["rpc-method-parameter-types"] != extendParameterType {
+		t.Fatalf("unexpected metadata: %#v", invoker.request.Metadata)
+	}
+	var payload []map[string]any
+	if err := json.Unmarshal(invoker.request.Data, &payload); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	request := payload[0]
+	if request["class"] != extendRequestClass || request["contextToken"] != "external-context-token" {
+		t.Fatalf("unexpected extend request: %#v", request)
+	}
+	identities := request["identities"].([]any)
+	github := identities[0].(map[string]any)
+	if github["key"] != "github" || github["type"] != "GITHUB_USER" {
+		t.Fatalf("unexpected github identity: %#v", github)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/chattrace"
+	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -23,14 +24,43 @@ import (
 )
 
 type fakeAgentIdentityContextCreator struct {
-	requests []agentidentityhsf.CreateContextRequest
-	result   agentidentityhsf.CreateContextResult
-	err      error
+	requests       []agentidentityhsf.CreateContextRequest
+	extendRequests []agentidentityhsf.ExtendContextRequest
+	result         agentidentityhsf.CreateContextResult
+	extendResult   agentidentityhsf.ExtendContextResult
+	err            error
+	extendErr      error
 }
 
 func (f *fakeAgentIdentityContextCreator) CreateContext(_ context.Context, request agentidentityhsf.CreateContextRequest) (agentidentityhsf.CreateContextResult, error) {
 	f.requests = append(f.requests, request)
 	return f.result, f.err
+}
+
+func (f *fakeAgentIdentityContextCreator) ExtendContext(_ context.Context, request agentidentityhsf.ExtendContextRequest) (agentidentityhsf.ExtendContextResult, error) {
+	f.extendRequests = append(f.extendRequests, request)
+	return f.extendResult, f.extendErr
+}
+
+type fakeAgentIdentityGithubBindingReader struct {
+	connection agentidentitygithub.Connection
+	err        error
+	requests   []fakeAgentIdentityGithubStatusRequest
+}
+
+type fakeAgentIdentityGithubStatusRequest struct {
+	workspaceID string
+	agentID     string
+	userID      string
+}
+
+func (f *fakeAgentIdentityGithubBindingReader) GetStatus(_ context.Context, workspaceID, agentID, userID string) (agentidentitygithub.Connection, error) {
+	f.requests = append(f.requests, fakeAgentIdentityGithubStatusRequest{
+		workspaceID: workspaceID,
+		agentID:     agentID,
+		userID:      userID,
+	})
+	return f.connection, f.err
 }
 
 type fakeAgentIdentityBindingReader struct {
@@ -1038,19 +1068,19 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extraEnvForTask with external identity returned error: %v", err)
 	}
-	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 2 {
-		t.Fatalf("Agent binding did not win over external identity: requests=%d env=%#v", len(identityClient.requests), env)
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "caller_external_token" || len(identityClient.requests) != 1 {
+		t.Fatalf("external identity was not preserved: requests=%d env=%#v", len(identityClient.requests), env)
 	}
 	task.Context = []byte(`{"dingtalk_robot_identity":{"uid":"99999999","org_id":"88888888"}}`)
 	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-legacy-context")
 	if err != nil {
 		t.Fatalf("extraEnvForTask legacy task context fallback returned error: %v", err)
 	}
-	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 3 {
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 2 {
 		t.Fatalf("legacy channel identity bypassed Agent binding fallback: requests=%d env=%#v", len(identityClient.requests), env)
 	}
-	if identityClient.requests[2].UID != "24710833" || identityClient.requests[2].OrgID != "439446171" {
-		t.Fatalf("launcher consumed channel identity: %#v", identityClient.requests[2])
+	if identityClient.requests[1].UID != "24710833" || identityClient.requests[1].OrgID != "439446171" {
+		t.Fatalf("launcher consumed channel identity: %#v", identityClient.requests[1])
 	}
 	task.Context = []byte(`{"dispatch_source":{"platform":"dingtalk","type":"digital_employee"}}`)
 	task.ChatSessionID = pgtype.UUID{}
@@ -1058,11 +1088,11 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extraEnvForTask direct task fallback returned error: %v", err)
 	}
-	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 4 {
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 3 {
 		t.Fatalf("direct task did not use Agent binding: requests=%d env=%#v", len(identityClient.requests), env)
 	}
-	if _, present := identityClient.requests[3].Source["chat_session_id"]; present {
-		t.Fatalf("direct task identity source contains chat session: %#v", identityClient.requests[3].Source)
+	if _, present := identityClient.requests[2].Source["chat_session_id"]; present {
+		t.Fatalf("direct task identity source contains chat session: %#v", identityClient.requests[2].Source)
 	}
 	task.ChatSessionID = util.MustParseUUID("22222222-2222-2222-2222-222222222222")
 
@@ -1105,7 +1135,7 @@ func TestParseFCE2BModels(t *testing.T) {
 	}
 }
 
-func TestFCE2BIdentityEnvPrefersAgentBindingOverExternalContextToken(t *testing.T) {
+func TestFCE2BIdentityEnvPreservesExternalContextTokenOverAgentDWSBinding(t *testing.T) {
 	bindings := &fakeAgentIdentityBindingReader{identity: db.AgentDingtalkIdentity{
 		DwsUid: "24710833",
 		OrgID:  "439446171",
@@ -1136,15 +1166,69 @@ func TestFCE2BIdentityEnvPrefersAgentBindingOverExternalContextToken(t *testing.
 		Metadata:    []byte(`{"kind":"fc-e2b","capabilities":["dws"]}`),
 	}
 
-	env, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-binding-priority")
+	env, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-binding-priority", db.Agent{})
 	if err != nil {
 		t.Fatalf("identityEnvForTask: %v", err)
 	}
-	if env[protocol.AgentIdentityContextTokenEnvKey] != "agent-binding-context-token" {
-		t.Fatalf("identity env = %#v, want Agent binding token", env)
+	if env[protocol.AgentIdentityContextTokenEnvKey] != "external-context-token" {
+		t.Fatalf("identity env = %#v, want external ContextToken", env)
 	}
-	if len(bindings.requests) != 1 || len(identityContexts.requests) != 1 {
-		t.Fatalf("binding requests = %d, context requests = %d", len(bindings.requests), len(identityContexts.requests))
+	if len(bindings.requests) != 0 || len(identityContexts.requests) != 0 {
+		t.Fatalf("external token should bypass DWS fallback: binding requests = %d, context requests = %d", len(bindings.requests), len(identityContexts.requests))
+	}
+}
+
+func TestFCE2BIdentityEnvExtendsPreparedContextTokenWithGitHub(t *testing.T) {
+	identityContexts := &fakeAgentIdentityContextCreator{
+		extendResult: agentidentityhsf.ExtendContextResult{
+			ContextID: "ctx-id",
+			ExpiresAt: time.Now().Add(15 * time.Minute).UnixMilli(),
+		},
+	}
+	github := &fakeAgentIdentityGithubBindingReader{connection: agentidentitygithub.Connection{
+		ConnectionID: "github-connection-1",
+		Status:       "ACTIVE",
+	}}
+	launcher := &FCE2BLauncher{
+		Config: FCE2BConfig{
+			AgentIdentityBaseURL: "https://agent-identity.dingtalk.com",
+			AgentIdentityTimeout: 7 * time.Second,
+		},
+		AgentIdentity:  identityContexts,
+		GitHubIdentity: github,
+	}
+	task := db.AgentTaskQueue{
+		ID:      util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID: util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		Context: []byte(`{"agent_identity_context_token":"external-context-token","agent_identity_context_token_expires_at":4102444800000,"agent_identity_context_token_source":"external"}`),
+	}
+	runtime := db.AgentRuntime{
+		WorkspaceID: util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+		RuntimeMode: "cloud",
+		Metadata:    []byte(`{"kind":"fc-e2b","capabilities":["dws"]}`),
+	}
+	agent := db.Agent{
+		OwnerID: util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+	}
+
+	env, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-github-extend", agent)
+	if err != nil {
+		t.Fatalf("identityEnvForTask: %v", err)
+	}
+	if env[protocol.AgentIdentityContextTokenEnvKey] != "external-context-token" {
+		t.Fatalf("identity env = %#v, want original ContextToken", env)
+	}
+	if len(identityContexts.requests) != 0 || len(identityContexts.extendRequests) != 1 {
+		t.Fatalf("create/extend requests = %d/%d", len(identityContexts.requests), len(identityContexts.extendRequests))
+	}
+	extend := identityContexts.extendRequests[0]
+	if extend.ContextToken != "external-context-token" || extend.GithubConnectionID != "github-connection-1" ||
+		extend.TaskID != util.UUIDToString(task.ID) || extend.AgentID != util.UUIDToString(task.AgentID) ||
+		extend.RuntimeID != "sandbox-github-extend" {
+		t.Fatalf("extend request = %#v", extend)
+	}
+	if len(github.requests) != 1 || github.requests[0].userID != util.UUIDToString(agent.OwnerID) {
+		t.Fatalf("GitHub status requests = %#v", github.requests)
 	}
 }
 
@@ -1179,7 +1263,7 @@ func TestFCE2BIdentityEnvUsesOnlyPreparedTokenOrAgentBindingFallback(t *testing.
 		Metadata:    []byte(`{"kind":"fc-e2b","capabilities":["dws"]}`),
 	}
 
-	env, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-1")
+	env, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-1", db.Agent{})
 	if err != nil {
 		t.Fatalf("identityEnvForTask: %v", err)
 	}
@@ -1196,7 +1280,7 @@ func TestFCE2BIdentityEnvUsesOnlyPreparedTokenOrAgentBindingFallback(t *testing.
 
 	task.Context = []byte(`{"agent_identity_context_token":"prepared-context-token","agent_identity_context_token_expires_at":4102444800000,"dingtalk_robot_identity":{"uid":"99999999","org_id":"88888888"}}`)
 	runtime.Metadata = []byte(`{"kind":"fc-e2b","capabilities":["hermes"]}`)
-	env, err = launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-2")
+	env, err = launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-2", db.Agent{})
 	if err != nil {
 		t.Fatalf("prepared identityEnvForTask: %v", err)
 	}
@@ -1208,7 +1292,7 @@ func TestFCE2BIdentityEnvUsesOnlyPreparedTokenOrAgentBindingFallback(t *testing.
 	}
 
 	task.Context = []byte(`{"agent_identity_context_token":"external-context-token","agent_identity_context_token_expires_at":4102444800000,"agent_identity_context_token_source":"external"}`)
-	env, err = launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-external")
+	env, err = launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-external", db.Agent{})
 	if err != nil {
 		t.Fatalf("external identityEnvForTask: %v", err)
 	}
@@ -1233,7 +1317,7 @@ func TestFCE2BIdentityEnvUsesOnlyPreparedTokenOrAgentBindingFallback(t *testing.
 		`{"agent_identity_context_token":null,"agent_identity_context_token_expires_at":1}`,
 	} {
 		task.Context = []byte(invalidContext)
-		if _, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-invalid"); err == nil {
+		if _, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-invalid", db.Agent{}); err == nil {
 			t.Fatalf("invalid prepared ContextToken silently used Agent binding fallback: %s", invalidContext)
 		}
 	}
@@ -1252,7 +1336,7 @@ func TestFCE2BIdentityEnvUsesOnlyPreparedTokenOrAgentBindingFallback(t *testing.
 	} {
 		task.Context = []byte(cachedContext)
 		identityContexts.result.ExpiresAt = time.Now().Add(15 * time.Minute).UnixMilli()
-		env, err = launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-refresh-cache")
+		env, err = launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-refresh-cache", db.Agent{})
 		if err != nil {
 			t.Fatalf("refresh cached ContextToken: %v", err)
 		}
@@ -1267,12 +1351,12 @@ func TestFCE2BIdentityEnvUsesOnlyPreparedTokenOrAgentBindingFallback(t *testing.
 
 	bindings.err = pgx.ErrNoRows
 	task.Context = []byte(`{"agent_identity_context_token":"expired-cache","agent_identity_context_token_expires_at":1}`)
-	if _, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-refresh-without-binding"); err == nil {
+	if _, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-refresh-without-binding", db.Agent{}); err == nil {
 		t.Fatal("expired cache without a Multica Agent binding must not run without identity")
 	}
 
 	task.Context = []byte(`{"agent_identity_context_token":"expired-external","agent_identity_context_token_expires_at":1,"agent_identity_context_token_source":"external"}`)
-	if _, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-expired-external"); err == nil {
+	if _, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-expired-external", db.Agent{}); err == nil {
 		t.Fatal("expired external ContextToken must fail instead of changing execution identity")
 	}
 	if len(identityContexts.requests) != 2 {
@@ -1282,7 +1366,7 @@ func TestFCE2BIdentityEnvUsesOnlyPreparedTokenOrAgentBindingFallback(t *testing.
 	bindings.err = nil
 	task.Context = nil
 	identityContexts.result.ExpiresAt = 1
-	env, err = launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-fresh-token")
+	env, err = launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-fresh-token", db.Agent{})
 	if err != nil {
 		t.Fatalf("freshly acquired ContextToken must trust the HSF response: %v", err)
 	}
@@ -1309,9 +1393,10 @@ func TestFCE2BExtraEnvIncludesAgentIdentityContextToken(t *testing.T) {
 		Context: []byte(`{"agent_identity_context_token":"ctx_sandbox_token","agent_identity_context_token_expires_at":4102444800000}`),
 	}
 	got, err := fcE2BAgentIdentityExtraEnv(task, FCE2BConfig{
-		AgentIdentityBaseURL: "https://pre-agent-identity.dingtalk.com",
-		AgentIdentityTimeout: 7 * time.Second,
-		DWSClientSecret:      "dws-client-secret",
+		AgentIdentityBaseURL:        "https://pre-agent-identity.dingtalk.com",
+		AgentIdentitySandboxBaseURL: "https://agent-identity.dingtalk.com",
+		AgentIdentityTimeout:        7 * time.Second,
+		DWSClientSecret:             "dws-client-secret",
 	})
 	if err != nil {
 		t.Fatalf("fcE2BAgentIdentityExtraEnv: %v", err)
@@ -1319,7 +1404,7 @@ func TestFCE2BExtraEnvIncludesAgentIdentityContextToken(t *testing.T) {
 	if got["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_sandbox_token" {
 		t.Fatalf("AGENT_IDENTITY_CONTEXT_TOKEN = %q, want ctx_sandbox_token", got["AGENT_IDENTITY_CONTEXT_TOKEN"])
 	}
-	if got["MULTICA_AGENT_IDENTITY_BASE_URL"] != "https://pre-agent-identity.dingtalk.com" {
+	if got["MULTICA_AGENT_IDENTITY_BASE_URL"] != "https://agent-identity.dingtalk.com" {
 		t.Fatalf("MULTICA_AGENT_IDENTITY_BASE_URL = %q", got["MULTICA_AGENT_IDENTITY_BASE_URL"])
 	}
 	if got["MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS"] != "7" {
@@ -1469,17 +1554,41 @@ func TestSandboxSourceEnvRejectsPartialDingTalkStreamSource(t *testing.T) {
 
 func TestFCE2BConfigFromEnvAgentIdentity(t *testing.T) {
 	t.Setenv("MULTICA_AGENT_IDENTITY_BASE_URL", "https://pre-agent-identity.dingtalk.com/")
+	t.Setenv("MULTICA_AGENT_IDENTITY_CONTROL_BASE_URL", "https://pre-agent-identity.dingtalk.com/")
+	t.Setenv("MULTICA_AGENT_IDENTITY_SANDBOX_BASE_URL", "https://agent-identity.dingtalk.com/")
 	t.Setenv("MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS", "7")
 	t.Setenv("MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET", "dws-client-secret")
+	t.Setenv("MULTICA_AGENT_IDENTITY_DEBUG_LOG_CONTEXT_TOKEN", "true")
+	t.Setenv("MULTICA_AGENT_IDENTITY_DEBUG_CONTEXT_TOKEN_AGENT_IDS", "agent-a, agent-b,agent-a")
 	cfg := FCE2BConfigFromEnv()
-	if cfg.AgentIdentityBaseURL != "https://pre-agent-identity.dingtalk.com" {
-		t.Fatalf("base url = %q", cfg.AgentIdentityBaseURL)
+	if cfg.AgentIdentityControlBaseURL != "https://pre-agent-identity.dingtalk.com" {
+		t.Fatalf("control base url = %q", cfg.AgentIdentityControlBaseURL)
+	}
+	if cfg.AgentIdentitySandboxBaseURL != "https://agent-identity.dingtalk.com" || cfg.AgentIdentityBaseURL != "https://agent-identity.dingtalk.com" {
+		t.Fatalf("sandbox/base url = %q/%q", cfg.AgentIdentitySandboxBaseURL, cfg.AgentIdentityBaseURL)
 	}
 	if cfg.AgentIdentityTimeout != 7*time.Second {
 		t.Fatalf("timeout = %s", cfg.AgentIdentityTimeout)
 	}
 	if cfg.DWSClientSecret != "dws-client-secret" {
 		t.Fatal("DWS client secret was not loaded")
+	}
+	if !cfg.AgentIdentityDebugLogContextToken {
+		t.Fatal("debug ContextToken log switch was not loaded")
+	}
+	if !reflect.DeepEqual(cfg.AgentIdentityDebugContextAgentIDs, []string{"agent-a", "agent-b"}) {
+		t.Fatalf("debug ContextToken agent allowlist = %#v", cfg.AgentIdentityDebugContextAgentIDs)
+	}
+}
+
+func TestFCE2BConfigFromEnvAgentIdentityLegacyBaseURLFallback(t *testing.T) {
+	t.Setenv("MULTICA_AGENT_IDENTITY_BASE_URL", "https://agent-identity.dingtalk.com/")
+	cfg := FCE2BConfigFromEnv()
+	if cfg.AgentIdentityControlBaseURL != "https://agent-identity.dingtalk.com" ||
+		cfg.AgentIdentitySandboxBaseURL != "https://agent-identity.dingtalk.com" ||
+		cfg.AgentIdentityBaseURL != "https://agent-identity.dingtalk.com" {
+		t.Fatalf("agent identity URLs = control:%q sandbox:%q base:%q",
+			cfg.AgentIdentityControlBaseURL, cfg.AgentIdentitySandboxBaseURL, cfg.AgentIdentityBaseURL)
 	}
 }
 
@@ -1499,6 +1608,31 @@ func TestFCE2BConfigFromEnvKeepsAgentIdentityProductionURLInProduction(t *testin
 	cfg := FCE2BConfigFromEnv()
 	if cfg.AgentIdentityBaseURL != "https://agent-identity.dingtalk.com" {
 		t.Fatalf("base url = %q", cfg.AgentIdentityBaseURL)
+	}
+}
+
+func TestFCE2BAgentIdentityContextDebugGuard(t *testing.T) {
+	cfg := FCE2BConfig{
+		AgentIdentityDebugLogContextToken: true,
+		AgentIdentityDebugContextAgentIDs: []string{"agent-a"},
+	}
+
+	t.Setenv("APP_ENV", "production")
+	if ok, reason := cfg.shouldDebugLogAgentIdentityContext("agent-a"); ok || reason != "environment_not_allowed" {
+		t.Fatalf("production debug guard = (%v, %q), want blocked by environment", ok, reason)
+	}
+
+	t.Setenv("AONE_ENV_TYPE", "prepub")
+	if ok, reason := cfg.shouldDebugLogAgentIdentityContext("agent-a"); !ok || reason != "" {
+		t.Fatalf("prepub debug guard = (%v, %q), want allowed", ok, reason)
+	}
+	if ok, reason := cfg.shouldDebugLogAgentIdentityContext("agent-b"); ok || reason != "agent_not_allowlisted" {
+		t.Fatalf("non-allowlisted agent guard = (%v, %q), want blocked by allowlist", ok, reason)
+	}
+
+	cfg.AgentIdentityDebugContextAgentIDs = nil
+	if ok, reason := cfg.shouldDebugLogAgentIdentityContext("agent-a"); ok || reason != "agent_allowlist_empty" {
+		t.Fatalf("empty allowlist guard = (%v, %q), want blocked by allowlist", ok, reason)
 	}
 }
 

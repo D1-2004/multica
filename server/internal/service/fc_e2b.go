@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/chattrace"
+	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -79,40 +80,57 @@ const (
 )
 
 type FCE2BConfig struct {
-	Enabled              bool
-	Template             string
-	ServerURL            string
-	APIKey               string
-	APIURL               string
-	Domain               string
-	LLMBaseURL           string
-	LLMAPIKey            string
-	LLMModels            []string
-	AgentIdentityBaseURL string
-	AgentIdentityTimeout time.Duration
-	DWSClientSecret      string
-	CLIPath              string
-	TimeoutSeconds       int
-	SandboxReadyTimeout  time.Duration
-	ParseError           error
+	Enabled                           bool
+	Template                          string
+	ServerURL                         string
+	APIKey                            string
+	APIURL                            string
+	Domain                            string
+	LLMBaseURL                        string
+	LLMAPIKey                         string
+	LLMModels                         []string
+	AgentIdentityControlBaseURL       string
+	AgentIdentitySandboxBaseURL       string
+	AgentIdentityBaseURL              string
+	AgentIdentityTimeout              time.Duration
+	AgentIdentityDebugLogContextToken bool
+	AgentIdentityDebugContextAgentIDs []string
+	DWSClientSecret                   string
+	CLIPath                           string
+	TimeoutSeconds                    int
+	SandboxReadyTimeout               time.Duration
+	ParseError                        error
 }
 
 func FCE2BConfigFromEnv() FCE2BConfig {
+	legacyAgentIdentityBaseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_BASE_URL")), "/")
+	controlAgentIdentityBaseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_CONTROL_BASE_URL")), "/")
+	if controlAgentIdentityBaseURL == "" {
+		controlAgentIdentityBaseURL = legacyAgentIdentityBaseURL
+	}
+	sandboxAgentIdentityBaseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_SANDBOX_BASE_URL")), "/")
+	if sandboxAgentIdentityBaseURL == "" {
+		sandboxAgentIdentityBaseURL = legacyAgentIdentityBaseURL
+	}
 	cfg := FCE2BConfig{
-		Enabled:              envBool("MULTICA_FC_E2B_ENABLED"),
-		Template:             strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TEMPLATE")),
-		ServerURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_SERVER_URL")), "/"),
-		APIKey:               strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_KEY")),
-		APIURL:               strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_URL")), "/"),
-		Domain:               strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),
-		LLMBaseURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_BASE_URL")), "/"),
-		LLMAPIKey:            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_API_KEY")),
-		AgentIdentityBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_BASE_URL")), "/"),
-		AgentIdentityTimeout: defaultAgentIdentityTimeout,
-		DWSClientSecret:      strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET")),
-		CLIPath:              strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_CLI_PATH")),
-		TimeoutSeconds:       defaultFCE2BTimeoutSeconds,
-		SandboxReadyTimeout:  defaultFCE2BSandboxReadyTimeout,
+		Enabled:                           envBool("MULTICA_FC_E2B_ENABLED"),
+		Template:                          strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TEMPLATE")),
+		ServerURL:                         strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_SERVER_URL")), "/"),
+		APIKey:                            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_KEY")),
+		APIURL:                            strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_URL")), "/"),
+		Domain:                            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),
+		LLMBaseURL:                        strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_BASE_URL")), "/"),
+		LLMAPIKey:                         strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_OPENAI_API_KEY")),
+		AgentIdentityControlBaseURL:       controlAgentIdentityBaseURL,
+		AgentIdentitySandboxBaseURL:       sandboxAgentIdentityBaseURL,
+		AgentIdentityBaseURL:              sandboxAgentIdentityBaseURL,
+		AgentIdentityTimeout:              defaultAgentIdentityTimeout,
+		AgentIdentityDebugLogContextToken: envBool("MULTICA_AGENT_IDENTITY_DEBUG_LOG_CONTEXT_TOKEN"),
+		AgentIdentityDebugContextAgentIDs: parseCommaSeparatedEnv(os.Getenv("MULTICA_AGENT_IDENTITY_DEBUG_CONTEXT_TOKEN_AGENT_IDS")),
+		DWSClientSecret:                   strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET")),
+		CLIPath:                           strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_CLI_PATH")),
+		TimeoutSeconds:                    defaultFCE2BTimeoutSeconds,
+		SandboxReadyTimeout:               defaultFCE2BSandboxReadyTimeout,
 	}
 	models, err := parseFCE2BModels(os.Getenv("MULTICA_FC_E2B_OPENAI_MODELS"))
 	if err != nil {
@@ -150,9 +168,85 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 	return cfg
 }
 
+func (c FCE2BConfig) agentIdentityControlBaseURL() string {
+	if strings.TrimSpace(c.AgentIdentityControlBaseURL) != "" {
+		return strings.TrimRight(strings.TrimSpace(c.AgentIdentityControlBaseURL), "/")
+	}
+	return strings.TrimRight(strings.TrimSpace(c.AgentIdentityBaseURL), "/")
+}
+
+func (c FCE2BConfig) agentIdentitySandboxBaseURL() string {
+	if strings.TrimSpace(c.AgentIdentitySandboxBaseURL) != "" {
+		return strings.TrimRight(strings.TrimSpace(c.AgentIdentitySandboxBaseURL), "/")
+	}
+	return strings.TrimRight(strings.TrimSpace(c.AgentIdentityBaseURL), "/")
+}
+
 func envBool(name string) bool {
 	v := strings.TrimSpace(os.Getenv(name))
 	return strings.EqualFold(v, "true") || v == "1"
+}
+
+func parseCommaSeparatedEnv(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	return values
+}
+
+func (c FCE2BConfig) shouldDebugLogAgentIdentityContext(agentID string) (bool, string) {
+	if !c.AgentIdentityDebugLogContextToken {
+		return false, "disabled"
+	}
+	if !agentIdentityContextDebugEnvironmentAllowed() {
+		return false, "environment_not_allowed"
+	}
+	if len(c.AgentIdentityDebugContextAgentIDs) == 0 {
+		return false, "agent_allowlist_empty"
+	}
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return false, "agent_id_empty"
+	}
+	if !slices.Contains(c.AgentIdentityDebugContextAgentIDs, agentID) {
+		return false, "agent_not_allowlisted"
+	}
+	return true, ""
+}
+
+func agentIdentityContextDebugEnvironmentAllowed() bool {
+	for _, name := range []string{"AONE_ENV_TYPE", "ENV_TYPE", "APP_ENV", "GO_ENV"} {
+		raw := strings.TrimSpace(os.Getenv(name))
+		if raw == "" {
+			continue
+		}
+		return agentIdentityContextDebugEnvironmentValueAllowed(raw)
+	}
+	return false
+}
+
+func agentIdentityContextDebugEnvironmentValueAllowed(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "prepub", "pre", "prepublish", "daily", "staging", "stage", "test", "testing", "local", "dev", "development":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c FCE2BConfig) Validate() error {
@@ -826,6 +920,7 @@ type FCE2BLauncher struct {
 	Config             FCE2BConfig
 	Runner             CommandRunner
 	AgentIdentity      AgentIdentityContextCreator
+	GitHubIdentity     AgentIdentityGithubBindingReader
 	IdentityBindings   AgentIdentityBindingReader
 	SandboxRelaySigner SandboxRelayTokenSigner
 
@@ -847,6 +942,11 @@ type FCE2BRuntimeTemplateUpdateResult struct {
 
 type AgentIdentityContextCreator interface {
 	CreateContext(context.Context, agentidentityhsf.CreateContextRequest) (agentidentityhsf.CreateContextResult, error)
+	ExtendContext(context.Context, agentidentityhsf.ExtendContextRequest) (agentidentityhsf.ExtendContextResult, error)
+}
+
+type AgentIdentityGithubBindingReader interface {
+	GetStatus(context.Context, string, string, string) (agentidentitygithub.Connection, error)
 }
 
 type AgentIdentityBindingReader interface {
@@ -1665,7 +1765,7 @@ func (l *FCE2BLauncher) extraEnvForTask(
 	for key, value := range traceEnv {
 		env[key] = value
 	}
-	agentIdentityEnv, err := l.identityEnvForTask(ctx, task, runtime, sandboxID)
+	agentIdentityEnv, err := l.identityEnvForTask(ctx, task, runtime, sandboxID, agentRow)
 	if err != nil {
 		return nil, err
 	}
@@ -1695,8 +1795,38 @@ func (l *FCE2BLauncher) identityEnvForTask(
 	task db.AgentTaskQueue,
 	runtime db.AgentRuntime,
 	sandboxID string,
+	agentRow db.Agent,
 ) (map[string]string, error) {
+	taskID := util.UUIDToString(task.ID)
+	agentID := util.UUIDToString(task.AgentID)
 	hasDWSCapability := FCE2BRuntimeHasCapability(runtime, "dws")
+	githubConnection, hasGithubConnection := l.githubConnectionForAgent(ctx, task, runtime, agentRow)
+
+	prepared, err := fcE2BAgentIdentityExtraEnv(task, l.Config)
+	if err != nil && !errors.Is(err, errAgentIdentityContextTokenRefreshRequired) {
+		return nil, err
+	}
+	if len(prepared) > 0 {
+		if hasGithubConnection {
+			l.extendPreparedContextWithGithub(ctx, prepared[protocol.AgentIdentityContextTokenEnvKey], task, runtime, sandboxID, githubConnection)
+		}
+		slog.Info("FC/E2B task identity selected",
+			"task_id", taskID,
+			"identity_source", "prepared_context_token",
+			"github_identity", hasGithubConnection,
+		)
+		return prepared, nil
+	}
+	refreshRequired := errors.Is(err, errAgentIdentityContextTokenRefreshRequired)
+	if refreshRequired {
+		slog.Info("FC/E2B cached task identity requires refresh",
+			"task_id", taskID,
+			"identity_source", "task_context_cache",
+		)
+	}
+
+	var dwsIdentity db.AgentDingtalkIdentity
+	hasDWSBinding := false
 	if hasDWSCapability {
 		if l.IdentityBindings == nil {
 			return nil, errors.New("Agent identity binding reader is not configured")
@@ -1706,67 +1836,166 @@ func (l *FCE2BLauncher) identityEnvForTask(
 			AgentID:     task.AgentID,
 		})
 		if err == nil {
-			if l.AgentIdentity == nil {
-				return nil, errors.New("Agent Identity HSF client is not configured")
-			}
-			taskID := util.UUIDToString(task.ID)
-			result, err := l.AgentIdentity.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
-				RequestID:   "multica-task-" + taskID,
-				TaskID:      taskID,
-				AgentID:     util.UUIDToString(task.AgentID),
-				RuntimeType: "E2B",
-				RuntimeID:   sandboxID,
-				Reason:      "Multica Agent DWS authorization",
-				Source: map[string]string{
-					"app":             "dt-fde-multica",
-					"identity_source": "agent_binding_fallback",
-				},
-				UID:        identity.DwsUid,
-				OrgID:      identity.OrgID,
-				TTLSeconds: 900,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("create Agent Identity context for task: %w", err)
-			}
-			slog.Info("FC/E2B task identity selected",
-				"task_id", taskID,
-				"identity_source", "agent_binding_fallback",
-			)
-			return fcE2BAgentIdentityEnvForToken(result.ContextToken, l.Config)
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
+			dwsIdentity = identity
+			hasDWSBinding = true
+		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("load Agent DingTalk identity: %w", err)
 		}
 	}
 
-	prepared, err := fcE2BAgentIdentityExtraEnv(task, l.Config)
-	if err != nil && !errors.Is(err, errAgentIdentityContextTokenRefreshRequired) {
-		return nil, err
-	}
-	if len(prepared) > 0 {
+	if hasDWSBinding || hasGithubConnection {
+		if l.AgentIdentity == nil {
+			return nil, errors.New("Agent Identity HSF client is not configured")
+		}
+		source := map[string]string{
+			"app":             "dt-fde-multica",
+			"identity_source": "agent_binding_fallback",
+		}
+		if hasGithubConnection {
+			source["github_identity_source"] = "agent_github_binding"
+		}
+		result, err := l.AgentIdentity.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
+			RequestID:          "multica-task-" + taskID,
+			TaskID:             taskID,
+			AgentID:            agentID,
+			RuntimeType:        "E2B",
+			RuntimeID:          sandboxID,
+			Reason:             "Multica Agent runtime authorization",
+			Source:             source,
+			UID:                dwsIdentity.DwsUid,
+			OrgID:              dwsIdentity.OrgID,
+			GithubConnectionID: githubConnection.ConnectionID,
+			TTLSeconds:         900,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create Agent Identity context for task: %w", err)
+		}
+		l.debugLogAgentIdentityContextToken(taskID, agentID, sandboxID, result, hasDWSBinding, hasGithubConnection)
 		slog.Info("FC/E2B task identity selected",
-			"task_id", util.UUIDToString(task.ID),
-			"identity_source", "prepared_context_token",
+			"task_id", taskID,
+			"identity_source", "agent_binding_fallback",
+			"dws_identity", hasDWSBinding,
+			"github_identity", hasGithubConnection,
 		)
-		return prepared, nil
+		return fcE2BAgentIdentityEnvForToken(result.ContextToken, l.Config)
 	}
-	refreshRequired := errors.Is(err, errAgentIdentityContextTokenRefreshRequired)
+
 	if refreshRequired {
-		slog.Info("FC/E2B cached task identity requires refresh",
-			"task_id", util.UUIDToString(task.ID),
-			"identity_source", "task_context_cache",
-		)
-	}
-	if !hasDWSCapability {
-		if refreshRequired {
+		if !hasDWSCapability {
 			return nil, errors.New("DWS capability is required to refresh the cached Agent Identity ContextToken")
 		}
-		return nil, nil
-	}
-	if refreshRequired {
 		return nil, errors.New("Multica Agent DingTalk identity binding is required to refresh the cached ContextToken")
 	}
 	return nil, nil
+}
+
+func (l *FCE2BLauncher) debugLogAgentIdentityContextToken(
+	taskID string,
+	agentID string,
+	sandboxID string,
+	result agentidentityhsf.CreateContextResult,
+	hasDWSBinding bool,
+	hasGithubConnection bool,
+) {
+	if l == nil {
+		return
+	}
+	enabled, reason := l.Config.shouldDebugLogAgentIdentityContext(agentID)
+	if !enabled {
+		if l.Config.AgentIdentityDebugLogContextToken && reason == "environment_not_allowed" {
+			slog.Warn("FC/E2B Agent Identity ContextToken debug log blocked",
+				"event", "fc_e2b_identity_context_debug_blocked",
+				"task_id", taskID,
+				"agent_id", agentID,
+				"reason", reason,
+			)
+		}
+		return
+	}
+	slog.Warn("FC/E2B Agent Identity ContextToken debug",
+		"event", "fc_e2b_identity_context_debug",
+		"task_id", taskID,
+		"agent_id", agentID,
+		"sandbox_id", sandboxID,
+		"identity_source", "agent_binding_fallback",
+		"dws_identity", hasDWSBinding,
+		"github_identity", hasGithubConnection,
+		"expires_at", result.ExpiresAt,
+		"context_value", result.ContextToken,
+	)
+}
+
+func (l *FCE2BLauncher) githubConnectionForAgent(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	runtime db.AgentRuntime,
+	agentRow db.Agent,
+) (agentidentitygithub.Connection, bool) {
+	if l == nil || l.GitHubIdentity == nil || !agentRow.OwnerID.Valid {
+		return agentidentitygithub.Connection{}, false
+	}
+	if enabled, ok := l.GitHubIdentity.(interface{ Enabled() bool }); ok && !enabled.Enabled() {
+		return agentidentitygithub.Connection{}, false
+	}
+	connection, err := l.GitHubIdentity.GetStatus(
+		ctx,
+		util.UUIDToString(runtime.WorkspaceID),
+		util.UUIDToString(task.AgentID),
+		util.UUIDToString(agentRow.OwnerID),
+	)
+	if err != nil {
+		slog.Warn("FC/E2B GitHub identity lookup skipped",
+			"task_id", util.UUIDToString(task.ID),
+			"agent_id", util.UUIDToString(task.AgentID),
+			"error", err,
+		)
+		return agentidentitygithub.Connection{}, false
+	}
+	if strings.TrimSpace(connection.ConnectionID) == "" || !strings.EqualFold(strings.TrimSpace(connection.Status), "ACTIVE") {
+		return agentidentitygithub.Connection{}, false
+	}
+	return connection, true
+}
+
+func (l *FCE2BLauncher) extendPreparedContextWithGithub(
+	ctx context.Context,
+	contextToken string,
+	task db.AgentTaskQueue,
+	runtime db.AgentRuntime,
+	sandboxID string,
+	connection agentidentitygithub.Connection,
+) {
+	if l == nil || l.AgentIdentity == nil || strings.TrimSpace(contextToken) == "" || strings.TrimSpace(connection.ConnectionID) == "" {
+		return
+	}
+	taskID := util.UUIDToString(task.ID)
+	_, err := l.AgentIdentity.ExtendContext(ctx, agentidentityhsf.ExtendContextRequest{
+		ContextToken:       contextToken,
+		TaskID:             taskID,
+		AgentID:            util.UUIDToString(task.AgentID),
+		RuntimeType:        "E2B",
+		RuntimeID:          sandboxID,
+		Reason:             "Multica Agent GitHub authorization",
+		GithubConnectionID: connection.ConnectionID,
+		Source: map[string]string{
+			"app":             "dt-fde-multica",
+			"identity_source": "prepared_context_token",
+		},
+	})
+	if err != nil {
+		slog.Warn("FC/E2B GitHub identity extend skipped",
+			"task_id", taskID,
+			"agent_id", util.UUIDToString(task.AgentID),
+			"connection_id", connection.ConnectionID,
+			"error", err,
+		)
+		return
+	}
+	slog.Info("FC/E2B GitHub identity appended to prepared ContextToken",
+		"task_id", taskID,
+		"agent_id", util.UUIDToString(task.AgentID),
+		"connection_id", connection.ConnectionID,
+	)
 }
 
 func fcE2BTaskTraceEnv(task db.AgentTaskQueue) (map[string]string, error) {
@@ -1903,7 +2132,8 @@ func fcE2BAgentIdentityEnvForToken(token string, cfg FCE2BConfig) (map[string]st
 	if token == "" {
 		return nil, errors.New("Agent Identity returned an empty ContextToken")
 	}
-	if cfg.AgentIdentityBaseURL == "" {
+	baseURL := cfg.agentIdentitySandboxBaseURL()
+	if baseURL == "" {
 		return nil, errors.New("MULTICA_AGENT_IDENTITY_BASE_URL is required for ContextToken tasks")
 	}
 	timeout := cfg.AgentIdentityTimeout
@@ -1916,7 +2146,7 @@ func fcE2BAgentIdentityEnvForToken(token string, cfg FCE2BConfig) (map[string]st
 	}
 	env := map[string]string{
 		protocol.AgentIdentityContextTokenEnvKey: token,
-		"MULTICA_AGENT_IDENTITY_BASE_URL":        cfg.AgentIdentityBaseURL,
+		"MULTICA_AGENT_IDENTITY_BASE_URL":        baseURL,
 		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS": strconv.Itoa(seconds),
 	}
 	if cfg.DWSClientSecret != "" {

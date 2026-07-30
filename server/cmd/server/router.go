@@ -1469,6 +1469,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/agent-identity/github/status", h.GetAgentIdentityGitHubStatus)
 					r.Post("/agent-identity/github/oauth/start", h.BeginAgentIdentityGitHubOAuth)
 					r.Post("/agent-identity/github/{connectionId}/test", h.TestAgentIdentityGitHubConnection)
+					r.Delete("/agent-identity/github/{connectionId}", h.DisconnectAgentIdentityGitHubConnection)
 				})
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
