@@ -192,6 +192,31 @@ func TestASBClientParsesSanitizedLifecycleError(t *testing.T) {
 	}
 }
 
+func TestNewASBHTTPErrorParsesNestedDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	response := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header: http.Header{
+			"X-Aone-Request-Id": []string{"nested-request-123"},
+		},
+	}
+	err := newASBHTTPError(
+		"attach_buc_identity",
+		response,
+		[]byte(`{"error":{"code":"WIREGUARD_INVALID","message":"lazy identity was not declared"}}`),
+	)
+	var httpErr *ASBHTTPError
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("newASBHTTPError error = %v", err)
+	}
+	if httpErr.ErrorCode != "WIREGUARD_INVALID" ||
+		httpErr.ErrorMessage != "lazy identity was not declared" ||
+		httpErr.RequestID != "nested-request-123" {
+		t.Fatalf("ASB nested HTTP error = %#v", httpErr)
+	}
+}
+
 func TestASBClientIdentityInjection(t *testing.T) {
 	t.Parallel()
 

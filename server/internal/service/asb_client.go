@@ -751,10 +751,38 @@ func newASBHTTPError(operation string, response *http.Response, encoded []byte) 
 		requestID = response.Header.Get("X-Aone-Request-Id")
 	}
 	var payload struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code    string          `json:"code"`
+		Message string          `json:"message"`
+		Reason  string          `json:"reason"`
+		Error   json.RawMessage `json:"error"`
 	}
 	_ = json.Unmarshal(encoded, &payload)
+	if len(payload.Error) > 0 {
+		var nested struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Reason  string `json:"reason"`
+		}
+		if json.Unmarshal(payload.Error, &nested) == nil {
+			if payload.Code == "" {
+				payload.Code = nested.Code
+			}
+			if payload.Message == "" {
+				payload.Message = nested.Message
+			}
+			if payload.Reason == "" {
+				payload.Reason = nested.Reason
+			}
+		} else if payload.Message == "" {
+			var errorText string
+			if json.Unmarshal(payload.Error, &errorText) == nil {
+				payload.Message = errorText
+			}
+		}
+	}
+	if payload.Message == "" {
+		payload.Message = payload.Reason
+	}
 	return &ASBHTTPError{
 		Operation:    operation,
 		StatusCode:   response.StatusCode,

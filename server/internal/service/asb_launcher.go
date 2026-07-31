@@ -711,6 +711,7 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID 
 		BUCIDToken:           identity.BUCTokens.IDToken,
 		WireGuardCredentials: l.Config.WireGuardCredentials,
 	}, true); err != nil {
+		logASBIdentityAttachmentFailure(sandboxID, err)
 		return fmt.Errorf("attach ASB BUC identity: %w", err)
 	}
 	if err := l.Client.AttachAgentIdentity(ctx, sandboxID, ASBAgentIdentityGrant{
@@ -718,9 +719,26 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID 
 		AgentToken:    identity.AgentIdentityToken,
 		AgentID:       identity.AgentSPIFFEID,
 	}); err != nil {
+		logASBIdentityAttachmentFailure(sandboxID, err)
 		return fmt.Errorf("attach ASB Agent Identity: %w", err)
 	}
 	return nil
+}
+
+func logASBIdentityAttachmentFailure(sandboxID string, err error) {
+	var httpErr *ASBHTTPError
+	if !errors.As(err, &httpErr) {
+		return
+	}
+	slog.Warn(
+		"ASB identity attachment rejected",
+		"sandbox_id", sandboxID,
+		"operation", httpErr.Operation,
+		"http_status", httpErr.StatusCode,
+		"request_id", httpErr.RequestID,
+		"error_code", httpErr.ErrorCode,
+		"error_message", redact.Text(httpErr.ErrorMessage),
+	)
 }
 
 func (l *ASBLauncher) execRunOnce(
