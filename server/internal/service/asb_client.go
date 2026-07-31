@@ -197,18 +197,6 @@ func (e *ASBHTTPError) Error() string {
 	return fmt.Sprintf("ASB %s failed with HTTP %d (request_id=%s)", e.Operation, e.StatusCode, e.RequestID)
 }
 
-func isASBWireGuardConverging(err error) bool {
-	var httpErr *ASBHTTPError
-	return errors.As(err, &httpErr) &&
-		httpErr.Operation == "attach_buc_identity" &&
-		httpErr.StatusCode == http.StatusBadRequest &&
-		strings.EqualFold(strings.TrimSpace(httpErr.ErrorCode), "BAD_REQUEST") &&
-		strings.Contains(
-			strings.ToLower(httpErr.ErrorMessage),
-			"wireguard tunnel not ready yet",
-		)
-}
-
 func NewASBClient(cfg ASBClientConfig) (*ASBClient, error) {
 	rawBaseURL := strings.TrimSpace(cfg.BaseURL)
 	if rawBaseURL == "" {

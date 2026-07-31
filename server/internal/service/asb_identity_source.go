@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 type EnterpriseIdentitySourceAvailability struct {
@@ -270,7 +271,6 @@ func attachAndProbeASBIdentitySource(
 			BUCIDToken:           tokens.IDToken,
 			WireGuardCredentials: wireGuardCredentials,
 		},
-		timeout,
 	); err != nil {
 		return err
 	}
@@ -284,10 +284,10 @@ func attachAndProbeASBIdentitySource(
 		return fmt.Errorf("wait for attached ASB identity source to return running: %w", err)
 	}
 
-	// The synchronous WireGuard attachment can itself take several minutes.
-	// Start a fresh readiness window only after it has completed so a transient
-	// endpoint state conflict immediately after attachment does not consume the
-	// entire CLI identity-probe budget.
+	// The attachment is deliberately submitted exactly once. ASB documents that
+	// every repeated WireGuard attachment restarts the VPN tunnel, so retrying
+	// the POST while it is converging can prevent it from ever becoming ready.
+	// Readiness is determined only by the identity probes below.
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(asbIdentityProbeInterval(timeout))
@@ -324,35 +324,11 @@ func attachASBBUCIdentitySource(
 	client *ASBClient,
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
-	timeout time.Duration,
 ) error {
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(asbIdentityProbeInterval(timeout))
-	defer ticker.Stop()
-	var lastErr error
-	for {
-		err := client.AttachBUCIdentity(ctx, sandboxID, grant, true)
-		switch {
-		case err == nil:
-			return nil
-		case isASBWireGuardConverging(err):
-			lastErr = err
-		default:
-			return fmt.Errorf("attach BUC identity to temporary ASB source: %w", err)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf(
-				"temporary ASB BUC identity attachment did not complete within %s: %w",
-				timeout,
-				lastErr,
-			)
-		case <-ticker.C:
-		}
+	if err := client.AttachBUCIdentity(ctx, sandboxID, grant, false); err != nil {
+		return fmt.Errorf("attach BUC identity to temporary ASB source: %w", err)
 	}
+	return nil
 }
 
 func asbIdentityProbeInterval(timeout time.Duration) time.Duration {
@@ -567,6 +543,7 @@ func logASBIdentitySourceFailure(stage string, sandboxID string, err error) {
 		"stage", stage,
 		"sandbox_id", strings.TrimSpace(sandboxID),
 		"error_class", enterpriseIdentityErrorClass(err),
+		"error", redact.Text(err.Error()),
 	}
 	var httpErr *ASBHTTPError
 	if errors.As(err, &httpErr) {

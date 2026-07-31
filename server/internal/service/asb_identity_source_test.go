@@ -92,7 +92,7 @@ func TestASBIdentitySourcePausesWithoutDeletingAndResumesForInheritance(t *testi
 			})
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/identity/wireguard":
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBBUCIdentityGrant
@@ -105,7 +105,7 @@ func TestASBIdentitySourcePausesWithoutDeletingAndResumesForInheritance(t *testi
 				t.Fatalf("BUC identity grant = %#v", grant)
 			}
 			attachCalls++
-			response.WriteHeader(http.StatusOK)
+			response.WriteHeader(http.StatusAccepted)
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/endpoints/44772":
 			response.Header().Set("Content-Type", "application/json")
@@ -250,16 +250,24 @@ func TestASBIdentitySourcePausesWithoutDeletingAndResumesForInheritance(t *testi
 	}
 }
 
-func TestAttachAndProbeASBIdentitySourceStartsFreshProbeWindowAfterSyncAttach(t *testing.T) {
+func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T) {
 	const sandboxID = "identity-source-delayed-attach"
+	attachCalls := 0
 	endpointCalls := 0
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
+			attachCalls++
+			if request.URL.Query().Get("sync") != "false" {
+				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
+			}
+			if attachCalls > 1 {
+				t.Fatalf("identity source attach calls = %d, want exactly one", attachCalls)
+			}
 			time.Sleep(30 * time.Millisecond)
-			response.WriteHeader(http.StatusOK)
+			response.WriteHeader(http.StatusAccepted)
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID:
 			response.Header().Set("Content-Type", "application/json")
@@ -321,6 +329,9 @@ func TestAttachAndProbeASBIdentitySourceStartsFreshProbeWindowAfterSyncAttach(t 
 	}
 	if endpointCalls != 2 {
 		t.Fatalf("endpoint calls = %d, want 2", endpointCalls)
+	}
+	if attachCalls != 1 {
+		t.Fatalf("attach calls = %d, want 1", attachCalls)
 	}
 }
 
