@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -95,18 +94,6 @@ func NewASBEnterpriseRuntimeFromConfig(
 	if err := identityConfig.Validate(asbConfig); err != nil {
 		return nil, err
 	}
-	var stableValidationClient *ASBClient
-	if asbConfig.StableValidationAPIKey != "" {
-		var err error
-		stableValidationClient, err = NewASBClient(ASBClientConfig{
-			BaseURL: asbConfig.APIURL,
-			APIKey:  asbConfig.StableValidationAPIKey,
-			Timeout: 30 * time.Second,
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
 	bucClient, err := NewHTTPBUCOAuthClient(
 		identityConfig.BUCTokenURL,
 		identityConfig.BUCIssuer,
@@ -163,7 +150,6 @@ func NewASBEnterpriseRuntimeFromConfig(
 		tasks,
 		common,
 		asbConfig,
-		stableValidationClient,
 		identity,
 		credentials,
 	)

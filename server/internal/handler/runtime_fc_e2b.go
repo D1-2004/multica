@@ -713,7 +713,7 @@ func (h *Handler) UpdateCloudSandboxRuntimeArtifact(w http.ResponseWriter, r *ht
 		Alias:   strings.TrimSpace(req.ArtifactAlias),
 		Digest:  strings.ToLower(strings.TrimSpace(req.ArtifactDigest)),
 	}
-	manifest, err := h.ASBLauncher.VerifyStableArtifact(r.Context(), artifact)
+	manifest, err := h.ASBLauncher.VerifyStableArtifact(r.Context(), runtimeUUID, artifact)
 	if err != nil {
 		slog.Error("ASB candidate artifact update validation failed",
 			"error", err,

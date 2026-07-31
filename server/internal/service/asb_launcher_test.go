@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -186,6 +188,7 @@ func TestASBRunnerCommandUsesExecdUserCore(t *testing.T) {
 func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	t.Parallel()
 
+	const runtimeAPIKey = "runtime-owned-validation-key"
 	digest := "sha256:" + strings.Repeat("a", 64)
 	manifest := map[string]any{
 		"schema_version":   3,
@@ -209,6 +212,9 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
 		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes":
+			if got := request.Header.Get(asbAPIKeyHeader); got != runtimeAPIKey {
+				t.Errorf("ASB validation credential = %q, want the Runtime-owned credential", got)
+			}
 			response.Header().Set("Content-Type", "application/json")
 			response.WriteHeader(http.StatusAccepted)
 			_, _ = io.WriteString(response, `{"id":"sandbox-123","status":{"state":"Pending"},"createdAt":"2026-07-29T05:00:00Z","entrypoint":["sleep infinity"]}`)
@@ -255,16 +261,36 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	}))
 	defer server.Close()
 
+	secrets, err := secretbox.New(bytes.Repeat([]byte{0x42}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedAPIKey, err := secrets.Seal([]byte(runtimeAPIKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
 	launcher := &ASBLauncher{
-		Client: newTestASBClient(t, server),
 		Config: ASBConfig{
+			APIURL:         server.URL,
 			TimeoutSeconds: 60,
 			ReadyTimeout:   time.Second,
 			ResourceCPU:    "2",
 			ResourceMemory: "4Gi",
 		},
+		Credentials: &ASBRuntimeClientProvider{
+			Store: &fakeASBRuntimeCredentialStore{
+				credential: db.AsbRuntimeCredential{
+					RuntimeID:       runtimeID,
+					ApiKeyEncrypted: encryptedAPIKey,
+					ApiKeyHint:      "n-key",
+				},
+			},
+			Secrets: secrets,
+			Config:  ASBConfig{APIURL: server.URL},
+		},
 	}
-	got, err := launcher.VerifyStableArtifact(context.Background(), ASBArtifact{
+	got, err := launcher.VerifyStableArtifact(context.Background(), runtimeID, ASBArtifact{
 		Ref:     "registry.example/runtime@" + digest,
 		BuildID: "aone-run-1",
 		Digest:  digest,

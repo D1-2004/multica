@@ -1317,7 +1317,11 @@ func (s *FCE2BStableService) validateASBRelease(
 	if err := validateASBArtifact(artifact); err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
 	}
-	manifest, err := s.ASBLauncher.VerifyStableArtifact(ctx, artifact)
+	validationRuntimeID, err := s.asbValidationRuntimeForPublisher(ctx, release.ActorUserID)
+	if err != nil {
+		return s.failValidation(ctx, release.ID, token, err)
+	}
+	manifest, err := s.ASBLauncher.VerifyStableArtifact(ctx, validationRuntimeID, artifact)
 	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
 	}
@@ -1438,6 +1442,42 @@ func (s *FCE2BStableService) validateASBRelease(
 	}
 	s.Notify()
 	return nil
+}
+
+func (s *FCE2BStableService) asbValidationRuntimeForPublisher(
+	ctx context.Context,
+	actorUserID string,
+) (pgtype.UUID, error) {
+	if s == nil || s.Pool == nil {
+		return pgtype.UUID{}, errors.New("ASB stable validation database is unavailable")
+	}
+	actorID, err := util.ParseUUID(actorUserID)
+	if err != nil {
+		return pgtype.UUID{}, errors.New("ASB stable release publisher is invalid")
+	}
+	var runtimeID pgtype.UUID
+	err = s.Pool.QueryRow(ctx, `
+		SELECT runtime.id
+		FROM agent_runtime runtime
+		JOIN asb_runtime_credential credential ON credential.runtime_id = runtime.id
+		WHERE runtime.owner_id = $1
+		  AND runtime.runtime_mode = 'cloud'
+		  AND CASE
+		        WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+		        ELSE runtime.metadata->>'sandbox_backend'
+		      END = 'asb'
+		ORDER BY runtime.id
+		LIMIT 1
+	`, actorID).Scan(&runtimeID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pgtype.UUID{}, errors.New(
+			"ASB stable validation requires the publisher to configure an API key on an ASB Runtime",
+		)
+	}
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("select ASB stable validation Runtime: %w", err)
+	}
+	return runtimeID, nil
 }
 
 func (s *FCE2BStableService) updateRuntimeForStableRelease(

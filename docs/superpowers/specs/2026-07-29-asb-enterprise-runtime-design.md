@@ -327,10 +327,11 @@ sequenceDiagram
 - `MULTICA_IDEM_AGENT_TRUST_DOMAIN`
 - `MULTICA_IDEM_AGENT_NAMESPACE`
 
-`MULTICA_ASB_STABLE_VALIDATION_API_KEY` 是可选的平台稳定制品验证 Key。任务使用的 ASB
-API Key 在创建 Runtime 时由用户提交，服务端校验后加密保存；Client Secret、
-WireGuard 凭证和主密钥仍只通过 Aone 环境密文或服务凭据注入。任何 Key 都不写
-Runtime 元数据、日志或前端回读响应。
+ASB API Key 在创建 Runtime 时由用户提交，服务端校验后按 Runtime 加密保存。
+任务启动、候选镜像更新和稳定镜像验证均只使用 Runtime 凭证；稳定发布验证使用
+发布人名下已配置凭证的 ASB Runtime，不提供环境变量 Key 或跨租户兜底。
+Client Secret、WireGuard 凭证和主密钥仍只通过 Aone 环境密文或服务凭据注入。
+任何 Key 都不写 Runtime 元数据、日志或前端回读响应。
 
 ### 5.3 命令执行
 

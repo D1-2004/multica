@@ -41,34 +41,32 @@ const (
 // ASBConfig is the deployment-owned configuration for the Aone Sandbox
 // backend. Tenant API keys are Runtime-owned encrypted credentials.
 type ASBConfig struct {
-	Enabled                bool
-	APIURL                 string
-	StableValidationAPIKey string
-	ServerURL              string
-	LLMBaseURL             string
-	LLMAPIKey              string
-	LLMModels              []string
-	TimeoutSeconds         int
-	ReadyTimeout           time.Duration
-	ResourceCPU            string
-	ResourceMemory         string
-	WireGuardCredentials   string
-	ParseError             error
+	Enabled              bool
+	APIURL               string
+	ServerURL            string
+	LLMBaseURL           string
+	LLMAPIKey            string
+	LLMModels            []string
+	TimeoutSeconds       int
+	ReadyTimeout         time.Duration
+	ResourceCPU          string
+	ResourceMemory       string
+	WireGuardCredentials string
+	ParseError           error
 }
 
 func ASBConfigFromEnv() ASBConfig {
 	cfg := ASBConfig{
-		Enabled:                envBool("MULTICA_ASB_ENABLED"),
-		APIURL:                 strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_API_URL")), "/"),
-		StableValidationAPIKey: strings.TrimSpace(os.Getenv("MULTICA_ASB_STABLE_VALIDATION_API_KEY")),
-		ServerURL:              strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_SERVER_URL")), "/"),
-		LLMBaseURL:             strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_BASE_URL")), "/"),
-		LLMAPIKey:              strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_API_KEY")),
-		TimeoutSeconds:         defaultASBTimeoutSeconds,
-		ReadyTimeout:           defaultASBReadyTimeout,
-		ResourceCPU:            firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_CPU"), defaultASBResourceCPU),
-		ResourceMemory:         firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_MEMORY"), defaultASBResourceMemory),
-		WireGuardCredentials:   strings.TrimSpace(os.Getenv("MULTICA_ASB_WG_CLIENT_CREDENTIALS")),
+		Enabled:              envBool("MULTICA_ASB_ENABLED"),
+		APIURL:               strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_API_URL")), "/"),
+		ServerURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_SERVER_URL")), "/"),
+		LLMBaseURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_BASE_URL")), "/"),
+		LLMAPIKey:            strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_API_KEY")),
+		TimeoutSeconds:       defaultASBTimeoutSeconds,
+		ReadyTimeout:         defaultASBReadyTimeout,
+		ResourceCPU:          firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_CPU"), defaultASBResourceCPU),
+		ResourceMemory:       firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_MEMORY"), defaultASBResourceMemory),
+		WireGuardCredentials: strings.TrimSpace(os.Getenv("MULTICA_ASB_WG_CLIENT_CREDENTIALS")),
 	}
 	models, err := parseStringListEnv("MULTICA_ASB_OPENAI_MODELS", os.Getenv("MULTICA_ASB_OPENAI_MODELS"))
 	if err != nil {
@@ -332,7 +330,6 @@ func NewASBLauncher(
 	tasks *TaskService,
 	common *FCE2BLauncher,
 	cfg ASBConfig,
-	client *ASBClient,
 	identity ASBTaskIdentityResolver,
 	credentials *ASBRuntimeClientProvider,
 ) *ASBLauncher {
@@ -341,7 +338,6 @@ func NewASBLauncher(
 		Tasks:       tasks,
 		Common:      common,
 		Config:      cfg,
-		Client:      client,
 		Identity:    identity,
 		Credentials: credentials,
 	}
@@ -867,11 +863,19 @@ func (l *ASBLauncher) failLaunch(ctx context.Context, task db.AgentTaskQueue, me
 	return fmt.Errorf("ASB launch failed: %s", redact.Text(message))
 }
 
-func (l *ASBLauncher) VerifyStableArtifact(ctx context.Context, artifact ASBArtifact) (map[string]any, error) {
-	if l == nil || l.Client == nil {
-		return nil, errors.New("ASB stable validation API key is not configured")
+func (l *ASBLauncher) VerifyStableArtifact(
+	ctx context.Context,
+	runtimeID pgtype.UUID,
+	artifact ASBArtifact,
+) (map[string]any, error) {
+	if l == nil || l.Credentials == nil {
+		return nil, errors.New("ASB Runtime credential service is unavailable")
 	}
-	return l.verifyStableArtifact(ctx, l.Client, artifact)
+	client, err := l.Credentials.ClientForRuntime(ctx, runtimeID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve ASB stable validation Runtime credential: %w", err)
+	}
+	return l.verifyStableArtifact(ctx, client, artifact)
 }
 
 func (l *ASBLauncher) VerifyArtifactWithAPIKey(
