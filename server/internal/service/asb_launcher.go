@@ -25,8 +25,6 @@ import (
 const (
 	defaultASBTimeoutSeconds      = 3600
 	defaultASBReadyTimeout        = 90 * time.Second
-	defaultASBIdentityProbePeriod = time.Second
-	defaultASBIdentityProbeLimit  = 60 * time.Second
 	defaultASBResourceCPU         = "2"
 	defaultASBResourceMemory      = "4Gi"
 	asbRunnerHome                 = "/home/user"
@@ -52,7 +50,6 @@ type ASBConfig struct {
 	LLMModels              []string
 	TimeoutSeconds         int
 	ReadyTimeout           time.Duration
-	IdentityProbeTimeout   time.Duration
 	ResourceCPU            string
 	ResourceMemory         string
 	WireGuardCredentials   string
@@ -69,7 +66,6 @@ func ASBConfigFromEnv() ASBConfig {
 		LLMAPIKey:              strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_API_KEY")),
 		TimeoutSeconds:         defaultASBTimeoutSeconds,
 		ReadyTimeout:           defaultASBReadyTimeout,
-		IdentityProbeTimeout:   defaultASBIdentityProbeLimit,
 		ResourceCPU:            firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_CPU"), defaultASBResourceCPU),
 		ResourceMemory:         firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_MEMORY"), defaultASBResourceMemory),
 		WireGuardCredentials:   strings.TrimSpace(os.Getenv("MULTICA_ASB_WG_CLIENT_CREDENTIALS")),
@@ -82,7 +78,6 @@ func ASBConfigFromEnv() ASBConfig {
 	}
 	parsePositiveIntEnv("MULTICA_ASB_TIMEOUT_SECONDS", &cfg.TimeoutSeconds, &cfg.ParseError)
 	parsePositiveDurationEnv("MULTICA_ASB_READY_TIMEOUT", &cfg.ReadyTimeout, &cfg.ParseError)
-	parsePositiveDurationEnv("MULTICA_ASB_IDENTITY_PROBE_TIMEOUT", &cfg.IdentityProbeTimeout, &cfg.ParseError)
 	return cfg
 }
 
@@ -156,9 +151,6 @@ func (c ASBConfig) Validate() error {
 	}
 	if c.ReadyTimeout <= 0 {
 		missing = append(missing, "MULTICA_ASB_READY_TIMEOUT")
-	}
-	if c.IdentityProbeTimeout <= 0 {
-		missing = append(missing, "MULTICA_ASB_IDENTITY_PROBE_TIMEOUT")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing ASB config: %s", strings.Join(missing, ", "))
@@ -733,62 +725,7 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID 
 	}); err != nil {
 		return fmt.Errorf("attach ASB Agent Identity: %w", err)
 	}
-	endpoint, err := l.Client.GetEndpoint(ctx, sandboxID, asbExecPort)
-	if err != nil {
-		return fmt.Errorf("resolve ASB command endpoint: %w", err)
-	}
-	deadline := time.NewTimer(l.Config.IdentityProbeTimeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(defaultASBIdentityProbePeriod)
-	defer ticker.Stop()
-	var lastErr error
-	for {
-		if err := l.probeSandboxIdentities(ctx, endpoint); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("ASB identity probes did not become ready within %s: %w", l.Config.IdentityProbeTimeout, lastErr)
-		case <-ticker.C:
-		}
-	}
-}
-
-func (l *ASBLauncher) probeSandboxIdentities(
-	ctx context.Context,
-	endpoint *ASBEndpoint,
-) error {
-	result, err := l.Client.Exec(ctx, endpoint, ASBExecInput{
-		Command: asbIdentityProbeCommand(),
-		CWD:     "/",
-		Timeout: 25 * time.Second,
-		Envs: map[string]string{
-			"HOME":    asbRunnerHome,
-			"USER":    "user",
-			"LOGNAME": "user",
-		},
-	})
-	if err != nil {
-		return err
-	}
-	if result.ExitCode == nil || *result.ExitCode != 0 {
-		return errors.New("ASB identity probe failed")
-	}
 	return nil
-}
-
-func asbIdentityProbeCommand() string {
-	return "set -eu; " +
-		"curl -fsS --max-time 10 -H 'Agent-Proof-Token-Audience: https://authx.alibaba-inc.com' " +
-		"https://authx.alibaba-inc.com/ciap/sandbox/identity-info -d '' >/dev/null; " +
-		"curl -fsS --max-time 10 -X POST " +
-		"https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json >/dev/null; " +
-		"a1 --no-update-check -f json auth whoami >/dev/null; " +
-		"mw --no-update-check auth whoami --format json >/dev/null"
 }
 
 func (l *ASBLauncher) execRunOnce(

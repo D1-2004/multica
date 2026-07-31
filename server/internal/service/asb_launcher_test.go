@@ -96,13 +96,12 @@ func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
 	}
 }
 
-func TestASBLauncherInjectsPlatformCredentialsWithoutAnchorSandbox(t *testing.T) {
+func TestASBLauncherInjectsPlatformCredentialsWithoutAnchorOrProbe(t *testing.T) {
 	t.Parallel()
 
 	var wireguardGrant ASBBUCIdentityGrant
 	var spiffeGrant ASBAgentIdentityGrant
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/wireguard":
@@ -116,15 +115,6 @@ func TestASBLauncherInjectsPlatformCredentialsWithoutAnchorSandbox(t *testing.T)
 				t.Fatalf("decode SPIFFE identity: %v", err)
 			}
 			response.WriteHeader(http.StatusNoContent)
-		case request.Method == http.MethodGet &&
-			request.URL.Path == "/v1/sandboxes/sandbox-123/endpoints/44772":
-			_ = json.NewEncoder(response).Encode(map[string]any{
-				"endpoint": server.URL + "/execd",
-				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
-			})
-		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
-			response.Header().Set("Content-Type", "text/event-stream")
-			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 		default:
 			http.NotFound(response, request)
 		}
@@ -148,7 +138,6 @@ func TestASBLauncherInjectsPlatformCredentialsWithoutAnchorSandbox(t *testing.T)
 	launcher := &ASBLauncher{
 		Client: newTestASBClient(t, server),
 		Config: ASBConfig{
-			IdentityProbeTimeout: time.Second,
 			WireGuardCredentials: "wireguard-credentials",
 		},
 	}
@@ -191,25 +180,6 @@ func TestASBRunnerCommandUsesExecdUserCore(t *testing.T) {
 	}
 	if strings.Contains(command, "container-log-entry") {
 		t.Fatalf("ASB runner command uses the root-only FC wrapper: %q", command)
-	}
-}
-
-func TestASBIdentityProbeUsesReadOnlyCLIs(t *testing.T) {
-	t.Parallel()
-
-	command := asbIdentityProbeCommand()
-	for _, expected := range []string{
-		"a1 --no-update-check -f json auth whoami",
-		"mw --no-update-check auth whoami --format json",
-	} {
-		if !strings.Contains(command, expected) {
-			t.Fatalf("ASB identity probe is missing %q: %s", expected, command)
-		}
-	}
-	for _, unexpected := range []string{"emp_id", "employee_id", "jq -e"} {
-		if strings.Contains(command, unexpected) {
-			t.Fatalf("ASB identity probe still checks %q: %s", unexpected, command)
-		}
 	}
 }
 
