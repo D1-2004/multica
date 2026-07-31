@@ -177,6 +177,17 @@ func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 		if err := digitalEmployeeWithChat.validate(); err != nil {
 			t.Fatalf("digital employee chat+robot_sdk rejected: %v", err)
 		}
+
+		digitalEmployeeWithAuto := c
+		digitalEmployeeWithAuto.Source.Type = "digital_employee"
+		digitalEmployeeWithAuto.CompletionCallback = &DispatchCompletionCallback{
+			URL: "/api/v1/dispatch-tasks/test-validation-auto/execution-result",
+		}
+		digitalEmployeeWithAuto.Surface.Type = "auto"
+		digitalEmployeeWithAuto.Outbound.Mode = "dws"
+		if err := digitalEmployeeWithAuto.validate(); err != nil {
+			t.Fatalf("digital employee auto+dws rejected: %v", err)
+		}
 	})
 
 	t.Run("surface and outbound values remain closed", func(t *testing.T) {
@@ -290,12 +301,30 @@ func TestDispatchPromptBuilderRoutesRuntimePolicyByOutboundMode(t *testing.T) {
 			Sender:       DispatchSender{DisplayName: "张三", OpenDingTalkID: "open-user-1"},
 			Messages:     []DispatchMessage{{OpenMsgID: "msg-1", Text: "处理告警"}},
 		}},
+		Surface:  DispatchSurface{Type: "chat"},
 		Outbound: DispatchOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
 	}
 
 	robotPrompt := mustBuildDispatchPrompt(t, base)
 	if robotPrompt.WorkflowPrompt != "" {
 		t.Fatalf("robot workflow prompt must not own server-side outbound: %q", robotPrompt.WorkflowPrompt)
+	}
+	if strings.Contains(robotPrompt.RuntimePrompt, "multica issue delegate") {
+		t.Fatalf("chat mode received auto delegation policy: %q", robotPrompt.RuntimePrompt)
+	}
+
+	auto := base
+	auto.Surface.Type = "auto"
+	autoPrompt := mustBuildDispatchPrompt(t, auto)
+	for _, want := range []string{
+		"本轮以 auto 模式运行",
+		"multica issue delegate",
+		"release_parent",
+		"dws chat message reply",
+	} {
+		if !strings.Contains(autoPrompt.RuntimePrompt, want) {
+			t.Errorf("auto runtime prompt missing %q: %q", want, autoPrompt.RuntimePrompt)
+		}
 	}
 
 	robotDWS := base
@@ -579,6 +608,35 @@ func TestApplyDingTalkDispatchPromptSupportsDWSChatSurface(t *testing.T) {
 	}
 	if strings.Contains(response.ChatMessage, "two required final delivery destinations") {
 		t.Fatalf("chat task received issue-only dual-delivery instruction: %s", response.ChatMessage)
+	}
+}
+
+func TestApplyDingTalkDispatchPromptSupportsAutoModeOnChatMaterializer(t *testing.T) {
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-auto"},
+			Sender:       DispatchSender{OpenDingTalkID: "open-sender"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-auto", Text: "处理复杂任务"}},
+		}},
+		Surface:  DispatchSurface{Type: "auto"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	})
+	response := AgentTaskResponse{ChatSessionID: "chat-1", ChatMessage: "处理复杂任务"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	for _, want := range []string{
+		"## Trusted DingTalk Dispatch",
+		"本轮以 auto 模式运行",
+		"multica issue delegate",
+		"dws chat message reply",
+		"处理复杂任务",
+	} {
+		if !strings.Contains(response.ChatMessage, want) {
+			t.Errorf("auto task missing %q: %s", want, response.ChatMessage)
+		}
 	}
 }
 

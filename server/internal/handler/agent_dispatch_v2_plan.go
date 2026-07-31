@@ -7,10 +7,12 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// agentDispatchExecutionPlan keeps persistence surface, authorization identity,
-// prompt projection, and outbound ownership independent after wire validation.
+// agentDispatchExecutionPlan keeps execution mode, persistence materializer,
+// authorization identity, prompt projection, and outbound ownership independent
+// after wire validation.
 type agentDispatchExecutionPlan struct {
-	SurfaceType            string
+	ModeType               string
+	MaterializerType       string
 	InstallationOverride   *engine.ResolvedInstallation
 	Identity               engine.ResolvedIdentity
 	Prompt                 DispatchPrompt
@@ -26,9 +28,13 @@ func buildAgentDispatchExecutionPlan(command DispatchCommand, dispatchContext ag
 	if err != nil {
 		return agentDispatchExecutionPlan{}, err
 	}
+	materializerType := command.Surface.Type
+	if materializerType == protocol.DispatchSurfaceTypeAuto {
+		materializerType = protocol.DispatchSurfaceTypeChat
+	}
 	var installationOverride *engine.ResolvedInstallation
 	if command.Source.Type == "digital_employee" &&
-		command.Surface.Type == protocol.DispatchSurfaceTypeChat &&
+		materializerType == protocol.DispatchSurfaceTypeChat &&
 		command.Outbound.Mode == protocol.DispatchOutboundModeDWS {
 		if !dispatchContext.EndpointNamespaceID.Valid ||
 			!dispatchContext.WorkspaceID.Valid ||
@@ -44,7 +50,8 @@ func buildAgentDispatchExecutionPlan(command DispatchCommand, dispatchContext ag
 		}
 	}
 	return agentDispatchExecutionPlan{
-		SurfaceType:          command.Surface.Type,
+		ModeType:             command.Surface.Type,
+		MaterializerType:     materializerType,
 		InstallationOverride: installationOverride,
 		Identity: engine.ResolvedIdentity{
 			PrincipalUserID: dispatchContext.UserID,
