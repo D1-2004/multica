@@ -273,10 +273,9 @@ func attachAndProbeASBIdentitySource(
 		return fmt.Errorf("wait for attached ASB identity source to return running: %w", err)
 	}
 
-	// The attachment is deliberately submitted exactly once. ASB documents that
-	// every repeated WireGuard attachment restarts the VPN tunnel, so retrying
-	// the POST while it is converging can prevent it from ever becoming ready.
-	// Readiness is determined only by the identity probes below.
+	// Submit the attachment exactly once, then determine readiness only through
+	// the identity probes below. The asynchronous ASB contract acknowledges the
+	// request with HTTP 202 while the sandbox-side WireGuard tunnel converges.
 	ticker := time.NewTicker(asbIdentityProbeInterval(timeout))
 	defer ticker.Stop()
 	var lastErr error
@@ -313,12 +312,10 @@ func attachASBBUCIdentitySource(
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
 ) error {
-	// Use one synchronous attachment. ASB only reports HTTP 200 after the
-	// sandbox-side WireGuard setup has completed; returning from an async
-	// attachment while that setup is still replacing sandbox resources can
-	// expose a transient Running state and then a terminal sandbox. Retrying
-	// the attachment is also unsafe because every POST restarts the setup.
-	if err := client.AttachBUCIdentity(ctx, sandboxID, grant, true); err != nil {
+	// Use the documented asynchronous attachment contract. A synchronous call
+	// can return HTTP 400 while the WireGuard sidecar is still converging, before
+	// the readiness window below has a chance to observe the completed tunnel.
+	if err := client.AttachBUCIdentity(ctx, sandboxID, grant, false); err != nil {
 		return fmt.Errorf("attach BUC identity to temporary ASB source: %w", err)
 	}
 	return nil
