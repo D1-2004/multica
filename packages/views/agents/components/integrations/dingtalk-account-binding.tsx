@@ -179,6 +179,9 @@ function DingTalkMessageScopeSummary({
       {outcome.calendarStartEnabled ? (
         <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_calendar_start)}</p>
       ) : null}
+      {outcome.approvalStatusChangedEnabled ? (
+        <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_approval_status_changed)}</p>
+      ) : null}
     </div>
   );
 }

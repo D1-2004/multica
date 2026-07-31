@@ -450,6 +450,7 @@ func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *
 			Subscriptions: []BindingSubscriptionResult{
 				{Domain: "channel", SourceID: "source-channel", Status: "active"},
 				{Domain: "calendar", SourceID: "source-calendar", Status: "active"},
+				{Domain: "approval", SourceID: "source-approval", Status: "active"},
 			},
 		},
 	})
@@ -461,6 +462,7 @@ func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *
 		result.Binding.MessageRoute.AccountAvatarURL != "https://example.com/digital-worker.png" ||
 		result.Binding.MessageRoute.SurfaceType != DingTalkSurfaceIssue ||
 		!result.Binding.MessageRoute.CalendarStartEnabled ||
+		!result.Binding.MessageRoute.ApprovalStatusChangedEnabled ||
 		store.row.Status != "active" || store.identity.AgentID.Valid || router.getCalls != 1 {
 		t.Fatalf("result=%#v row status=%q router GETs=%d", result, store.row.Status, router.getCalls)
 	}
@@ -470,7 +472,7 @@ func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *
 	}
 	if stored.AccountDisplayName != "Digital Worker Zhang" ||
 		stored.AccountAvatarURL != "https://example.com/digital-worker.png" ||
-		stored.SurfaceType != DingTalkSurfaceIssue || !stored.CalendarStartEnabled {
+		stored.SurfaceType != DingTalkSurfaceIssue || !stored.CalendarStartEnabled || !stored.ApprovalStatusChangedEnabled {
 		t.Fatalf("stored config = %#v", stored)
 	}
 }
