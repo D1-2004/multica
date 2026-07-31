@@ -99,9 +99,14 @@ type Config struct {
 	// return 503 instead of attempting to dial a hard-coded private service.
 	CloudRuntimeFleetURL     string
 	CloudRuntimeFleetTimeout time.Duration
-	FCE2B                    service.FCE2BConfig
-	AttachmentDownloadMode   string
-	AttachmentDownloadURLTTL time.Duration
+	// AgentIdentityControlBaseURL is used by Multica server-side control-plane
+	// calls, such as GitHub identity binding, status, test, and disconnect.
+	// FC/E2B sandbox redeem must keep using FCE2B.AgentIdentityBaseURL because
+	// sandboxes have different network reachability from the Multica server.
+	AgentIdentityControlBaseURL string
+	FCE2B                       service.FCE2BConfig
+	AttachmentDownloadMode      string
+	AttachmentDownloadURLTTL    time.Duration
 	// AttachmentFrameAncestors are trusted browser origins allowed to embed
 	// attachment preview responses. In production this should mirror the
 	// frontend/CORS origin allowlist so split app/api self-hosted deployments
@@ -400,6 +405,9 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 }
 
 func agentIdentityGitHubBaseURL(cfg Config) string {
+	if baseURL := strings.TrimRight(strings.TrimSpace(cfg.AgentIdentityControlBaseURL), "/"); baseURL != "" {
+		return baseURL
+	}
 	if baseURL := strings.TrimRight(strings.TrimSpace(cfg.FCE2B.AgentIdentityControlBaseURL), "/"); baseURL != "" {
 		return baseURL
 	}

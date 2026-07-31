@@ -303,6 +303,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		TrustedProxies:                parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
 		CloudRuntimeFleetURL:          cloudRuntimeFleetURLFromEnv(),
 		CloudRuntimeFleetTimeout:      envDuration("MULTICA_CLOUD_FLEET_TIMEOUT", 35*time.Second),
+		AgentIdentityControlBaseURL:   agentIdentityControlBaseURLFromEnv(),
 		FCE2B:                         service.FCE2BConfigFromEnv(),
 		AttachmentDownloadMode:        os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
 		AttachmentDownloadURLTTL:      envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
@@ -2100,6 +2101,18 @@ func cloudRuntimeFleetURLFromEnv() string {
 		return url
 	}
 	return strings.TrimSpace(os.Getenv("MULTICA_FLEET_URL"))
+}
+
+func agentIdentityControlBaseURLFromEnv() string {
+	if baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_AGENT_IDENTITY_CONTROL_BASE_URL")), "/"); baseURL != "" {
+		return baseURL
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AONE_ENV_TYPE"))) {
+	case "pre", "prepub", "staging":
+		return "https://pre-agent-identity.dingtalk.com"
+	default:
+		return ""
+	}
 }
 
 // composioStateSecret resolves the HMAC key for the connect-state. Prefers an
