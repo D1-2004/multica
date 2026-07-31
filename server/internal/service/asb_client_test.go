@@ -65,6 +65,10 @@ func TestASBClientLifecycle(t *testing.T) {
 				t.Error("renew expiration is missing")
 			}
 			response.WriteHeader(http.StatusOK)
+		case request.Method == http.MethodPost && request.URL.Path == "/root/v1/sandboxes/"+testSandboxID+"/pause":
+			response.WriteHeader(http.StatusAccepted)
+		case request.Method == http.MethodPost && request.URL.Path == "/root/v1/sandboxes/"+testSandboxID+"/resume":
+			response.WriteHeader(http.StatusAccepted)
 		case request.Method == http.MethodDelete && request.URL.Path == "/root/v1/sandboxes/"+testSandboxID:
 			response.WriteHeader(http.StatusNoContent)
 		default:
@@ -115,11 +119,17 @@ func TestASBClientLifecycle(t *testing.T) {
 	); err != nil {
 		t.Fatalf("RenewSandbox: %v", err)
 	}
+	if err := client.PauseSandbox(context.Background(), testSandboxID); err != nil {
+		t.Fatalf("PauseSandbox: %v", err)
+	}
+	if err := client.ResumeSandbox(context.Background(), testSandboxID); err != nil {
+		t.Fatalf("ResumeSandbox: %v", err)
+	}
 	if err := client.DeleteSandbox(context.Background(), testSandboxID); err != nil {
 		t.Fatalf("DeleteSandbox: %v", err)
 	}
 
-	if len(calls) != 4 {
+	if len(calls) != 6 {
 		t.Fatalf("calls = %#v", calls)
 	}
 }

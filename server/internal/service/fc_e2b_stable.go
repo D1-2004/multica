@@ -1878,6 +1878,9 @@ func (s *FCE2BStableService) finalizeObservation(
 }
 
 func (s *FCE2BStableService) rollbackRelease(ctx context.Context, release FCE2BStableRelease, token uuid.UUID) error {
+	if err := s.removeStaleStableTargets(ctx, release); err != nil {
+		return s.releaseLease(ctx, release.ID, token, err)
+	}
 	target, err := s.claimRollbackTarget(ctx, release.ID)
 	if err == nil {
 		if release.SandboxBackend == string(SandboxBackendASB) {
@@ -2056,6 +2059,14 @@ func (s *FCE2BStableService) completeRollbackTarget(
 }
 
 func (s *FCE2BStableService) reconcileTargets(ctx context.Context, release FCE2BStableRelease) error {
+	// Releases created before the stable channels became backend-aware can
+	// contain targets from the other sandbox backend. A Runtime can also move
+	// between backends or leave the stable channel while a release is active.
+	// Remove those stale targets before claiming any work so an FC/E2B release
+	// never attempts to patch an ASB Runtime (and vice versa).
+	if err := s.removeStaleStableTargets(ctx, release); err != nil {
+		return err
+	}
 	targets, err := s.listStableRuntimes(ctx, release.ID, SandboxBackendKind(release.SandboxBackend))
 	if err != nil {
 		return err
@@ -2083,6 +2094,11 @@ func (s *FCE2BStableService) reconcileTargets(ctx context.Context, release FCE2B
 			return err
 		}
 	}
+	// A Runtime can switch backend after the list read but before insertion.
+	// Recheck after insertion so totals never retain that raced stale target.
+	if err := s.removeStaleStableTargets(ctx, release); err != nil {
+		return err
+	}
 	_, err = s.Pool.Exec(ctx, `
 		UPDATE fc_e2b_stable_release
 		SET total_targets = (
@@ -2092,10 +2108,45 @@ func (s *FCE2BStableService) reconcileTargets(ctx context.Context, release FCE2B
 		    SELECT count(*) FROM fc_e2b_stable_release_target
 		    WHERE release_id = $1 AND status = 'updated'
 		),
+		failed_targets = (
+		    SELECT count(*) FROM fc_e2b_stable_release_target
+		    WHERE release_id = $1 AND status = 'failed'
+		),
 		updated_at = now()
 		WHERE id = $1
 	`, release.ID)
 	return err
+}
+
+func (s *FCE2BStableService) removeStaleStableTargets(
+	ctx context.Context,
+	release FCE2BStableRelease,
+) error {
+	if _, err := s.Pool.Exec(ctx, `
+		DELETE FROM fc_e2b_stable_release_target target
+		WHERE target.release_id = $1
+		  AND (
+		      target.sandbox_backend <> $2
+		      OR NOT EXISTS (
+		          SELECT 1
+		          FROM agent_runtime runtime
+		          WHERE runtime.id = target.runtime_id
+		            AND runtime.runtime_mode = 'cloud'
+		            AND CASE
+		                  WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+		                  ELSE runtime.metadata->>'sandbox_backend'
+		                END = $2
+		            AND COALESCE(
+		                  NULLIF(runtime.metadata->>'artifact_channel', ''),
+		                  NULLIF(runtime.metadata->>'template_channel', ''),
+		                  'stable'
+		                ) = 'stable'
+		      )
+		  )
+	`, release.ID, release.SandboxBackend); err != nil {
+		return fmt.Errorf("remove stale stable release targets: %w", err)
+	}
+	return nil
 }
 
 func (s *FCE2BStableService) listStableRuntimes(
@@ -2426,15 +2477,33 @@ func (s *FCE2BStableService) claimTarget(
 	var target stableRuntimeTarget
 	err := s.Pool.QueryRow(ctx, `
 		WITH candidate AS (
-			SELECT id
-			FROM fc_e2b_stable_release_target
-			WHERE release_id = $1
-			  AND ($3 = false OR is_developer = true)
+			SELECT target.id
+			FROM fc_e2b_stable_release_target target
+			JOIN fc_e2b_stable_release release
+			  ON release.id = target.release_id
+			JOIN agent_runtime runtime
+			  ON runtime.id = target.runtime_id
+			WHERE release.id = $1
+			  AND target.sandbox_backend = release.sandbox_backend
+			  AND runtime.runtime_mode = 'cloud'
+			  AND CASE
+			        WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+			        ELSE runtime.metadata->>'sandbox_backend'
+			      END = release.sandbox_backend
+			  AND COALESCE(
+			        NULLIF(runtime.metadata->>'artifact_channel', ''),
+			        NULLIF(runtime.metadata->>'template_channel', ''),
+			        'stable'
+			      ) = 'stable'
+			  AND ($3 = false OR target.is_developer = true)
 			  AND (
-			      status = 'pending'
-			      OR (status = 'updating' AND lease_expires_at < now())
+			      target.status = 'pending'
+			      OR (
+			          target.status = 'updating'
+			          AND target.lease_expires_at < now()
+			      )
 			  )
-			ORDER BY batch_index, runtime_id
+			ORDER BY target.batch_index, target.runtime_id
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		)
@@ -2737,12 +2806,30 @@ func (s *FCE2BStableService) claimRollbackTarget(ctx context.Context, releaseID 
 	var target stableRuntimeTarget
 	err := s.Pool.QueryRow(ctx, `
 		WITH candidate AS (
-			SELECT id
-			FROM fc_e2b_stable_release_target
-			WHERE release_id = $1
-			  AND status IN ('updated', 'rolling_back')
-			  AND (lease_expires_at IS NULL OR lease_expires_at < now())
-			ORDER BY batch_index DESC, runtime_id
+			SELECT target.id
+			FROM fc_e2b_stable_release_target target
+			JOIN fc_e2b_stable_release release
+			  ON release.id = target.release_id
+			JOIN agent_runtime runtime
+			  ON runtime.id = target.runtime_id
+			WHERE release.id = $1
+			  AND target.sandbox_backend = release.sandbox_backend
+			  AND runtime.runtime_mode = 'cloud'
+			  AND CASE
+			        WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+			        ELSE runtime.metadata->>'sandbox_backend'
+			      END = release.sandbox_backend
+			  AND COALESCE(
+			        NULLIF(runtime.metadata->>'artifact_channel', ''),
+			        NULLIF(runtime.metadata->>'template_channel', ''),
+			        'stable'
+			      ) = 'stable'
+			  AND target.status IN ('updated', 'rolling_back')
+			  AND (
+			      target.lease_expires_at IS NULL
+			      OR target.lease_expires_at < now()
+			  )
+			ORDER BY target.batch_index DESC, target.runtime_id
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		)

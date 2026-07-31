@@ -51,7 +51,10 @@ type startAgentEnterpriseIdentityResponse struct {
 }
 
 const (
-	enterpriseIdentityCallbackTimeout   = 5 * time.Minute
+	// The streamed callback includes ASB creation, synchronous WireGuard
+	// binding, BUC/a1 probes, snapshot persistence, and pause. Keep its
+	// server-side budget beyond the complete source-establishment budget.
+	enterpriseIdentityCallbackTimeout   = 15 * time.Minute
 	enterpriseIdentityCallbackHeartbeat = 2 * time.Second
 )
 

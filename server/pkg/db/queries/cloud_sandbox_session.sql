@@ -107,6 +107,35 @@ WHERE runtime_id = sqlc.arg('runtime_id')
   AND status = 'running'
 ORDER BY updated_at, sandbox_id;
 
+-- name: ListIdleASBSandboxSessionsByRuntimes :many
+SELECT session.*
+FROM fc_e2b_sandbox_session AS session
+WHERE session.runtime_id = ANY(sqlc.arg('runtime_ids')::uuid[])
+  AND session.sandbox_backend = 'asb'
+  AND session.status IN ('running', 'stale')
+  AND NOT EXISTS (
+      SELECT 1
+      FROM agent_task_queue AS task
+      WHERE task.runtime_id = session.runtime_id
+        AND task.status IN (
+            'queued',
+            'dispatched',
+            'running',
+            'waiting_local_directory',
+            'deferred'
+        )
+        AND (
+            (session.scope_type = 'chat' AND task.chat_session_id = session.scope_id)
+            OR
+            (session.scope_type = 'issue' AND task.issue_id = session.scope_id)
+        )
+  )
+ORDER BY
+    CASE WHEN session.expires_at <= now() THEN 0 ELSE 1 END,
+    session.last_used_at,
+    session.created_at,
+    session.sandbox_id;
+
 -- name: ListActiveCloudSandboxSessionsByAgentIdentity :many
 SELECT session.*
 FROM fc_e2b_sandbox_session session

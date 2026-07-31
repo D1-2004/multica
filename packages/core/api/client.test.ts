@@ -52,6 +52,27 @@ describe("ApiClient", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            valid: true,
+            quotas: [
+              {
+                network_zone: "ALITest",
+                region: "cn-zhangjiakou",
+                quota: 5,
+                usage: 1,
+                remaining: 4,
+                volume_usage_gib: 0,
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
         new Response(JSON.stringify({ id: "runtime-1" }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -117,6 +138,22 @@ describe("ApiClient", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const client = new ApiClient("https://api.example.test");
+    await expect(
+      client.validateASBRuntimeCredential({
+        api_key: "tenant-key-1234",
+      }),
+    ).resolves.toMatchObject({
+      valid: true,
+      quotas: [
+        {
+          network_zone: "ALITest",
+          region: "cn-zhangjiakou",
+          quota: 5,
+          usage: 1,
+          remaining: 4,
+        },
+      ],
+    });
     await client.createCloudSandboxRuntime({
       sandbox_backend: "asb",
       api_key: "tenant-key-1234",
@@ -165,6 +202,14 @@ describe("ApiClient", () => {
       method: init?.method ?? "GET",
       body: init?.body,
     }))).toEqual([
+      {
+        url:
+          "https://api.example.test/api/runtimes/asb-credential/validate",
+        method: "POST",
+        body: JSON.stringify({
+          api_key: "tenant-key-1234",
+        }),
+      },
       {
         url: "https://api.example.test/api/runtimes/cloud-sandbox",
         method: "POST",

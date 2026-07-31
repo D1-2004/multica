@@ -23,12 +23,14 @@ import (
 )
 
 const (
-	defaultASBTimeoutSeconds      = 3600
-	defaultASBReadyTimeout        = 90 * time.Second
-	defaultASBResourceCPU         = "2"
-	defaultASBResourceMemory      = "4Gi"
-	asbRunnerHome                 = "/home/user"
-	asbUnboundIdentityFingerprint = "7a5d3e85306c71a48596592e43c235dc5f8c9e3f96eeb52b9e6637a04356b1da"
+	defaultASBTimeoutSeconds         = asbMaxCreateTimeout
+	defaultASBReadyTimeout           = 90 * time.Second
+	defaultASBWireGuardReadyTimeout  = 4 * time.Minute
+	defaultASBWireGuardProbeInterval = 5 * time.Second
+	defaultASBResourceCPU            = "2"
+	defaultASBResourceMemory         = "4Gi"
+	asbRunnerHome                    = "/home/user"
+	asbUnboundIdentityFingerprint    = "7a5d3e85306c71a48596592e43c235dc5f8c9e3f96eeb52b9e6637a04356b1da"
 )
 
 type asbIdentityMode string
@@ -41,32 +43,34 @@ const (
 // ASBConfig is the deployment-owned configuration for the Aone Sandbox
 // backend. Tenant API keys are Runtime-owned encrypted credentials.
 type ASBConfig struct {
-	Enabled              bool
-	APIURL               string
-	ServerURL            string
-	LLMBaseURL           string
-	LLMAPIKey            string
-	LLMModels            []string
-	TimeoutSeconds       int
-	ReadyTimeout         time.Duration
-	ResourceCPU          string
-	ResourceMemory       string
-	WireGuardCredentials string
-	ParseError           error
+	Enabled               bool
+	APIURL                string
+	ServerURL             string
+	LLMBaseURL            string
+	LLMAPIKey             string
+	LLMModels             []string
+	TimeoutSeconds        int
+	ReadyTimeout          time.Duration
+	WireGuardReadyTimeout time.Duration
+	ResourceCPU           string
+	ResourceMemory        string
+	WireGuardCredentials  string
+	ParseError            error
 }
 
 func ASBConfigFromEnv() ASBConfig {
 	cfg := ASBConfig{
-		Enabled:              envBool("MULTICA_ASB_ENABLED"),
-		APIURL:               strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_API_URL")), "/"),
-		ServerURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_SERVER_URL")), "/"),
-		LLMBaseURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_BASE_URL")), "/"),
-		LLMAPIKey:            strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_API_KEY")),
-		TimeoutSeconds:       defaultASBTimeoutSeconds,
-		ReadyTimeout:         defaultASBReadyTimeout,
-		ResourceCPU:          firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_CPU"), defaultASBResourceCPU),
-		ResourceMemory:       firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_MEMORY"), defaultASBResourceMemory),
-		WireGuardCredentials: strings.TrimSpace(os.Getenv("MULTICA_ASB_WG_CLIENT_CREDENTIALS")),
+		Enabled:               envBool("MULTICA_ASB_ENABLED"),
+		APIURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_API_URL")), "/"),
+		ServerURL:             strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_SERVER_URL")), "/"),
+		LLMBaseURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_BASE_URL")), "/"),
+		LLMAPIKey:             strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_API_KEY")),
+		TimeoutSeconds:        defaultASBTimeoutSeconds,
+		ReadyTimeout:          defaultASBReadyTimeout,
+		WireGuardReadyTimeout: defaultASBWireGuardReadyTimeout,
+		ResourceCPU:           firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_CPU"), defaultASBResourceCPU),
+		ResourceMemory:        firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_MEMORY"), defaultASBResourceMemory),
+		WireGuardCredentials:  strings.TrimSpace(os.Getenv("MULTICA_ASB_WG_CLIENT_CREDENTIALS")),
 	}
 	models, err := parseStringListEnv("MULTICA_ASB_OPENAI_MODELS", os.Getenv("MULTICA_ASB_OPENAI_MODELS"))
 	if err != nil {
@@ -76,6 +80,11 @@ func ASBConfigFromEnv() ASBConfig {
 	}
 	parsePositiveIntEnv("MULTICA_ASB_TIMEOUT_SECONDS", &cfg.TimeoutSeconds, &cfg.ParseError)
 	parsePositiveDurationEnv("MULTICA_ASB_READY_TIMEOUT", &cfg.ReadyTimeout, &cfg.ParseError)
+	parsePositiveDurationEnv(
+		"MULTICA_ASB_WIREGUARD_READY_TIMEOUT",
+		&cfg.WireGuardReadyTimeout,
+		&cfg.ParseError,
+	)
 	return cfg
 }
 
@@ -150,6 +159,9 @@ func (c ASBConfig) Validate() error {
 	if c.ReadyTimeout <= 0 {
 		missing = append(missing, "MULTICA_ASB_READY_TIMEOUT")
 	}
+	if c.WireGuardReadyTimeout <= 0 {
+		missing = append(missing, "MULTICA_ASB_WIREGUARD_READY_TIMEOUT")
+	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing ASB config: %s", strings.Join(missing, ", "))
 	}
@@ -180,7 +192,8 @@ type ASBResolvedIdentity struct {
 	BUCAgentID         string
 	AgentSPIFFEID      string
 	AIPID              string
-	BUCTokens          BUCIdentityTokens
+	SourceSandboxID    string
+	SourceRuntimeID    pgtype.UUID
 	AgentIdentityToken string
 	Fingerprint        string
 }
@@ -193,15 +206,16 @@ func (identity ASBResolvedIdentity) validate() error {
 			identity.BUCAgentID,
 			identity.AgentSPIFFEID,
 			identity.AIPID,
-			identity.BUCTokens.AccessToken,
-			identity.BUCTokens.RefreshToken,
-			identity.BUCTokens.IDToken,
+			identity.SourceSandboxID,
 			identity.AgentIdentityToken,
 			identity.Fingerprint,
 		} {
 			if strings.TrimSpace(value) == "" {
 				return errors.New("Agent enterprise identity is incomplete")
 			}
+		}
+		if !identity.SourceRuntimeID.Valid {
+			return errors.New("Agent enterprise identity source Runtime is incomplete")
 		}
 		return nil
 	case asbIdentityModeUnbound:
@@ -210,9 +224,8 @@ func (identity ASBResolvedIdentity) validate() error {
 			identity.BUCAgentID != "" ||
 			identity.AgentSPIFFEID != "" ||
 			identity.AIPID != "" ||
-			identity.BUCTokens.AccessToken != "" ||
-			identity.BUCTokens.RefreshToken != "" ||
-			identity.BUCTokens.IDToken != "" ||
+			identity.SourceSandboxID != "" ||
+			identity.SourceRuntimeID.Valid ||
 			identity.AgentIdentityToken != "" {
 			return errors.New("unbound ASB identity is invalid")
 		}
@@ -222,13 +235,19 @@ func (identity ASBResolvedIdentity) validate() error {
 	}
 }
 
-func (identity ASBResolvedIdentity) sandboxExtensions() map[string]string {
+func (identity ASBResolvedIdentity) sandboxExtensions(
+	wireGuardCredentials string,
+) map[string]string {
 	if identity.Mode == asbIdentityModeUnbound {
 		return nil
 	}
+	// With originalSandboxID the ASB create-time contract inherits the source
+	// credential directory and intentionally omits the expiring buc.* tokens.
 	return map[string]string{
-		"spiffe.lazyAuth":    "true",
-		"wireguard.lazyAuth": "true",
+		"spiffe.lazyAuth":          "true",
+		"wireguard.worker":         identity.RawEmployeeID,
+		"wireguard.uemCredentials": wireGuardCredentials,
+		"buc.originalSandboxID":    identity.SourceSandboxID,
 	}
 }
 
@@ -301,7 +320,19 @@ type ASBRuntimeCredentialUpdateResult struct {
 }
 
 type ASBTaskIdentityResolver interface {
-	ResolveASBTaskIdentity(context.Context, pgtype.UUID, pgtype.UUID) (ASBResolvedIdentity, error)
+	ResolveASBTaskIdentity(
+		context.Context,
+		pgtype.UUID,
+		pgtype.UUID,
+		pgtype.UUID,
+	) (ASBResolvedIdentity, error)
+	AcquireASBTaskIdentitySource(
+		context.Context,
+		pgtype.UUID,
+		pgtype.UUID,
+		pgtype.UUID,
+		string,
+	) (func(context.Context) error, error)
 }
 
 type ASBLauncher struct {
@@ -379,10 +410,6 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 		return l.failLaunch(ctx, task, "Agent enterprise identity service is unavailable")
 	}
 
-	identity, err := l.resolveTaskIdentity(ctx, runtime.WorkspaceID, task.AgentID)
-	if err != nil {
-		return l.failLaunch(ctx, task, err.Error())
-	}
 	if l.Pool == nil {
 		return l.failLaunch(ctx, task, "ASB sandbox coordination requires a database pool")
 	}
@@ -400,6 +427,20 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 
 	locked := *l
 	locked.Queries = db.New(runtimeLockConn)
+	lockedCredentials := *locked.Credentials
+	lockedCredentials.Store = locked.Queries
+	locked.Credentials = &lockedCredentials
+	identity, err := locked.resolveTaskIdentity(
+		ctx,
+		runtime.WorkspaceID,
+		task.AgentID,
+		task.RuntimeID,
+	)
+	if err != nil {
+		releaseRuntimeLock()
+		lockHeld = false
+		return l.failLaunch(ctx, task, err.Error())
+	}
 	client, err := locked.Credentials.ClientForRuntime(ctx, task.RuntimeID)
 	if err != nil {
 		releaseRuntimeLock()
@@ -460,8 +501,14 @@ func (l *ASBLauncher) resolveTaskIdentity(
 	ctx context.Context,
 	workspaceID pgtype.UUID,
 	agentID pgtype.UUID,
+	runtimeID pgtype.UUID,
 ) (ASBResolvedIdentity, error) {
-	identity, err := l.Identity.ResolveASBTaskIdentity(ctx, workspaceID, agentID)
+	identity, err := l.Identity.ResolveASBTaskIdentity(
+		ctx,
+		workspaceID,
+		agentID,
+		runtimeID,
+	)
 	if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
 		return ASBResolvedIdentity{
 			Mode:        asbIdentityModeUnbound,
@@ -520,6 +567,7 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 		metadata,
 		scope,
 		scoped,
+		task.AgentID,
 		identity,
 		runtimeLockConn,
 		trace,
@@ -577,6 +625,7 @@ func (l *ASBLauncher) resolveSandbox(
 	metadata CloudSandboxRuntimeMetadata,
 	scope fcE2BTaskScope,
 	scoped bool,
+	agentID pgtype.UUID,
 	identity ASBResolvedIdentity,
 	runtimeLockConn *pgxpool.Conn,
 	trace chattrace.Trace,
@@ -622,20 +671,60 @@ func (l *ASBLauncher) resolveSandbox(
 	chattrace.LogStage(slog.Default(), trace, "asb_sandbox_create", "started",
 		"artifact_ref", metadata.ArtifactRef,
 	)
-	sandbox, err := l.Client.CreateSandbox(ctx, ASBCreateSandboxInput{
-		ImageURI:       metadata.ArtifactRef,
-		TimeoutSeconds: l.Config.TimeoutSeconds,
-		ResourceCPU:    l.Config.ResourceCPU,
-		ResourceMemory: l.Config.ResourceMemory,
-		Entrypoint:     []string{"sleep infinity"},
-		Metadata: map[string]string{
-			"multica.runtime_id": util.UUIDToString(runtime.ID),
-			"multica.backend":    string(SandboxBackendASB),
+	var releaseIdentitySource func(context.Context) error
+	var err error
+	sourceReleased := false
+	if identity.Mode == asbIdentityModeBound {
+		releaseIdentitySource, err = l.Identity.AcquireASBTaskIdentitySource(
+			ctx,
+			runtime.WorkspaceID,
+			agentID,
+			runtime.ID,
+			identity.SourceSandboxID,
+		)
+		if err != nil {
+			return "", true, err
+		}
+		defer func() {
+			if sourceReleased {
+				return
+			}
+			cleanupCtx, cancel := context.WithTimeout(
+				context.Background(),
+				l.Config.WireGuardReadyTimeout,
+			)
+			defer cancel()
+			if releaseErr := releaseIdentitySource(cleanupCtx); releaseErr != nil {
+				logASBIdentitySourceFailure(
+					"pause_source_after_failed_task_create",
+					identity.SourceSandboxID,
+					releaseErr,
+				)
+			}
+		}()
+	}
+	sandbox, err := createASBSandboxWithCapacityOnConnection(
+		ctx,
+		l.Queries,
+		l.Credentials,
+		l.Client,
+		runtime.ID,
+		runtimeLockConn,
+		ASBCreateSandboxInput{
+			ImageURI:       metadata.ArtifactRef,
+			TimeoutSeconds: l.Config.TimeoutSeconds,
+			ResourceCPU:    l.Config.ResourceCPU,
+			ResourceMemory: l.Config.ResourceMemory,
+			Entrypoint:     []string{"sleep infinity"},
+			Metadata: map[string]string{
+				"multica.runtime_id": util.UUIDToString(runtime.ID),
+				"multica.backend":    string(SandboxBackendASB),
+			},
+			Extensions: identity.sandboxExtensions(l.Config.WireGuardCredentials),
 		},
-		Extensions: identity.sandboxExtensions(),
-	})
+	)
 	if err != nil {
-		return "", true, fmt.Errorf("create ASB sandbox: %w", err)
+		return "", true, err
 	}
 	keepSandbox := false
 	defer func() {
@@ -652,6 +741,10 @@ func (l *ASBLauncher) resolveSandbox(
 		if err := l.ensureSandboxIdentityReady(ctx, sandbox.ID, identity); err != nil {
 			return "", true, err
 		}
+		if err := releaseIdentitySource(ctx); err != nil {
+			return "", true, err
+		}
+		sourceReleased = true
 	}
 	if scoped {
 		if _, err := l.Queries.UpsertCloudSandboxSession(ctx, db.UpsertCloudSandboxSessionParams{
@@ -704,15 +797,13 @@ func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) 
 }
 
 func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID string, identity ASBResolvedIdentity) error {
-	if err := l.Client.AttachBUCIdentity(ctx, sandboxID, ASBBUCIdentityGrant{
-		EmployeeID:           identity.RawEmployeeID,
-		BUCAccessToken:       identity.BUCTokens.AccessToken,
-		BUCRefreshToken:      identity.BUCTokens.RefreshToken,
-		BUCIDToken:           identity.BUCTokens.IDToken,
-		WireGuardCredentials: l.Config.WireGuardCredentials,
-	}, true); err != nil {
-		logASBIdentityAttachmentFailure(sandboxID, err)
-		return fmt.Errorf("attach ASB BUC identity: %w", err)
+	if err := l.waitSandboxBUCIdentityReady(
+		ctx,
+		sandboxID,
+		identity.RawEmployeeID,
+		identity.BUCAgentID,
+	); err != nil {
+		return err
 	}
 	if err := l.Client.AttachAgentIdentity(ctx, sandboxID, ASBAgentIdentityGrant{
 		RawEmployeeID: identity.RawEmployeeID,
@@ -723,6 +814,47 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID 
 		return fmt.Errorf("attach ASB Agent Identity: %w", err)
 	}
 	return nil
+}
+
+func (l *ASBLauncher) waitSandboxBUCIdentityReady(
+	ctx context.Context,
+	sandboxID string,
+	employeeID string,
+	bucAgentID string,
+) error {
+	timeout := l.Config.WireGuardReadyTimeout
+	if timeout <= 0 {
+		return errors.New("ASB WireGuard ready timeout is not configured")
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(defaultASBWireGuardProbeInterval)
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		if err := probeASBBUCIdentity(
+			ctx,
+			l.Client,
+			sandboxID,
+			employeeID,
+			bucAgentID,
+		); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf(
+				"ASB inherited BUC identity did not become ready within %s: %w",
+				timeout,
+				lastErr,
+			)
+		case <-ticker.C:
+		}
+	}
 }
 
 func logASBIdentityAttachmentFailure(sandboxID string, err error) {
@@ -1096,6 +1228,35 @@ func (l *ASBLauncher) UpdateRuntimeAPIKey(
 	if !IsASBRuntime(runtime) {
 		return ASBRuntimeCredentialUpdateResult{}, ErrCloudSandboxRuntimeRequired
 	}
+	newClient, err := NewASBClientForAPIKey(l.Config, apiKey)
+	if err != nil {
+		return ASBRuntimeCredentialUpdateResult{}, err
+	}
+	capacityKeys := []int32{newClient.capacityLockKey}
+	var cleanupClient *ASBClient
+	currentCredential, currentCredentialErr := qtx.GetASBRuntimeCredential(
+		ctx,
+		runtimeID,
+	)
+	if currentCredentialErr == nil {
+		cleanupClient, err = l.Credentials.clientForCredential(currentCredential)
+		if err != nil {
+			return ASBRuntimeCredentialUpdateResult{}, err
+		}
+		capacityKeys = append(capacityKeys, cleanupClient.capacityLockKey)
+	} else if !errors.Is(currentCredentialErr, pgx.ErrNoRows) {
+		return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf(
+			"load current ASB Runtime API key: %w",
+			currentCredentialErr,
+		)
+	}
+	if err := lockASBTenantCapacityInTransaction(
+		ctx,
+		tx,
+		capacityKeys...,
+	); err != nil {
+		return ASBRuntimeCredentialUpdateResult{}, err
+	}
 	activeSessions, err := qtx.ListActiveCloudSandboxSessionsByRuntimeAndBackend(
 		ctx,
 		db.ListActiveCloudSandboxSessionsByRuntimeAndBackendParams{
@@ -1106,27 +1267,46 @@ func (l *ASBLauncher) UpdateRuntimeAPIKey(
 	if err != nil {
 		return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf("list ASB sandboxes before API key update: %w", err)
 	}
-	if len(activeSessions) > 0 {
+	activeIdentities, err := qtx.ListActiveAgentEnterpriseIdentitiesByRuntime(ctx, runtimeID)
+	if err != nil {
+		return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf(
+			"list ASB enterprise identity sources before API key update: %w",
+			err,
+		)
+	}
+	if len(activeSessions) > 0 || len(activeIdentities) > 0 {
 		// Delete with the credential that owns the existing sandboxes before
-		// replacing it. For a pre-migration Runtime with no stored credential,
-		// the submitted key must prove ownership by deleting those sandboxes.
-		var cleanupClient *ASBClient
-		currentCredential, loadErr := qtx.GetASBRuntimeCredential(ctx, runtimeID)
-		switch {
-		case loadErr == nil:
-			cleanupClient, err = l.Credentials.clientForCredential(currentCredential)
-		case errors.Is(loadErr, pgx.ErrNoRows):
-			cleanupClient, err = NewASBClientForAPIKey(l.Config, apiKey)
-		default:
-			err = fmt.Errorf("load current ASB Runtime API key: %w", loadErr)
-		}
-		if err != nil {
-			return ASBRuntimeCredentialUpdateResult{}, err
+		// replacing it. Live resources without a stored owner key are an
+		// inconsistent state; never guess ownership from the submitted key.
+		if cleanupClient == nil {
+			return ASBRuntimeCredentialUpdateResult{}, errors.New(
+				"ASB Runtime has live resources but no owning API key",
+			)
 		}
 		for _, session := range activeSessions {
-			if err := cleanupClient.DeleteSandbox(ctx, session.SandboxID); err != nil {
+			if err := deleteASBSandboxIfExists(
+				ctx,
+				cleanupClient,
+				session.SandboxID,
+			); err != nil {
 				return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf(
 					"delete ASB sandbox before API key update: %w",
+					err,
+				)
+			}
+		}
+		for _, identity := range activeIdentities {
+			if !identity.BucIdentitySourceSandboxID.Valid ||
+				strings.TrimSpace(identity.BucIdentitySourceSandboxID.String) == "" {
+				continue
+			}
+			if err := deleteASBSandboxIfExists(
+				ctx,
+				cleanupClient,
+				identity.BucIdentitySourceSandboxID.String,
+			); err != nil {
+				return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf(
+					"delete paused ASB enterprise identity source before API key update: %w",
 					err,
 				)
 			}
@@ -1145,6 +1325,15 @@ func (l *ASBLauncher) UpdateRuntimeAPIKey(
 	)
 	if err != nil {
 		return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf("invalidate ASB sandbox sessions: %w", err)
+	}
+	if _, err := qtx.MarkAgentEnterpriseIdentitiesNeedsReauthByRuntime(
+		ctx,
+		runtimeID,
+	); err != nil {
+		return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf(
+			"invalidate ASB enterprise identity source after API key update: %w",
+			err,
+		)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf("commit ASB API key update: %w", err)

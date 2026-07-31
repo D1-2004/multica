@@ -124,8 +124,9 @@ type AgentEnterpriseIdentity struct {
 	BoundBy                    pgtype.UUID        `json:"bound_by"`
 	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
-	BucTokensEncrypted         []byte             `json:"buc_tokens_encrypted"`
-	BucAccessExpiresAt         pgtype.Timestamptz `json:"buc_access_expires_at"`
+	BucIdentitySourceSandboxID pgtype.Text        `json:"buc_identity_source_sandbox_id"`
+	BucIdentitySourceRuntimeID pgtype.UUID        `json:"buc_identity_source_runtime_id"`
+	BucIdentitySourceUpdatedAt pgtype.Timestamptz `json:"buc_identity_source_updated_at"`
 }
 
 type AgentEnterpriseIdentityAttempt struct {

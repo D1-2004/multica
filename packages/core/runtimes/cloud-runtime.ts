@@ -84,6 +84,26 @@ export interface UpdateASBRuntimeCredentialRequest {
   api_key: string;
 }
 
+export interface ValidateASBRuntimeCredentialRequest {
+  api_key: string;
+}
+
+export interface ASBRuntimeQuota {
+  network_zone: string;
+  region: string;
+  quota: number;
+  usage: number;
+  remaining: number;
+  alert_percentage?: number;
+  volume_size_quota_gib?: number;
+  volume_usage_gib: number;
+}
+
+export interface ValidateASBRuntimeCredentialResponse {
+  valid: true;
+  quotas: ASBRuntimeQuota[];
+}
+
 export interface ASBRuntimeCredentialResponse {
   configured: boolean;
   api_key_hint: string;
@@ -584,6 +604,13 @@ export function useCreateCloudSandboxRuntime(wsId: string) {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
     },
+  });
+}
+
+export function useValidateASBRuntimeCredential() {
+  return useMutation({
+    mutationFn: (data: ValidateASBRuntimeCredentialRequest) =>
+      api.validateASBRuntimeCredential(data),
   });
 }
 

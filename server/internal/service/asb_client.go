@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,6 +53,7 @@ type ASBClientConfig struct {
 type ASBClient struct {
 	baseURL         *url.URL
 	apiKey          string
+	capacityLockKey int32
 	lifecycleClient *http.Client
 	identityClient  *http.Client
 	execClient      *http.Client
@@ -93,6 +96,16 @@ type ASBSandbox struct {
 	CreatedAt  time.Time        `json:"createdAt"`
 	ExpiresAt  *time.Time       `json:"expiresAt,omitempty"`
 	Image      *ASBImageSpec    `json:"image,omitempty"`
+}
+
+type ASBSandboxQuota struct {
+	NetworkZone        string `json:"networkZone"`
+	Region             string `json:"region"`
+	Quota              int    `json:"quota"`
+	Usage              int    `json:"usage"`
+	AlertPercentage    *int   `json:"alertPercentage,omitempty"`
+	VolumeSizeQuotaGiB *int64 `json:"volumeSizeQuotaGib,omitempty"`
+	VolumeUsageGiB     int64  `json:"volumeUsageGib"`
 }
 
 type ASBEndpoint struct {
@@ -184,6 +197,18 @@ func (e *ASBHTTPError) Error() string {
 	return fmt.Sprintf("ASB %s failed with HTTP %d (request_id=%s)", e.Operation, e.StatusCode, e.RequestID)
 }
 
+func isASBWireGuardConverging(err error) bool {
+	var httpErr *ASBHTTPError
+	return errors.As(err, &httpErr) &&
+		httpErr.Operation == "attach_buc_identity" &&
+		httpErr.StatusCode == http.StatusBadRequest &&
+		strings.EqualFold(strings.TrimSpace(httpErr.ErrorCode), "BAD_REQUEST") &&
+		strings.Contains(
+			strings.ToLower(httpErr.ErrorMessage),
+			"wireguard tunnel not ready yet",
+		)
+}
+
 func NewASBClient(cfg ASBClientConfig) (*ASBClient, error) {
 	rawBaseURL := strings.TrimSpace(cfg.BaseURL)
 	if rawBaseURL == "" {
@@ -217,10 +242,16 @@ func NewASBClient(cfg ASBClientConfig) (*ASBClient, error) {
 	return &ASBClient{
 		baseURL:         baseURL,
 		apiKey:          cfg.APIKey,
+		capacityLockKey: asbAPIKeyCapacityLockKey(cfg.APIKey),
 		lifecycleClient: lifecycleClient,
 		identityClient:  identityClient,
 		execClient:      execClient,
 	}, nil
+}
+
+func asbAPIKeyCapacityLockKey(apiKey string) int32 {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(apiKey)))
+	return int32(binary.BigEndian.Uint32(sum[:4]))
 }
 
 func cloneASBHTTPClient(source *http.Client) *http.Client {
@@ -304,21 +335,30 @@ func (c *ASBClient) CreateSandbox(ctx context.Context, input ASBCreateSandboxInp
 	return &sandbox, nil
 }
 
-// ValidateCredential checks the tenant API key against the quota endpoint.
-// This endpoint is read-only and does not consume a sandbox slot, so Runtime
-// creation and credential rotation can fail fast without allocating a probe
-// sandbox.
-func (c *ASBClient) ValidateCredential(ctx context.Context) error {
-	return c.doLifecycleJSON(
+// ListQuotas checks the tenant API key against the read-only quota endpoint
+// and returns its current sandbox allocation. It does not consume a slot.
+func (c *ASBClient) ListQuotas(ctx context.Context) ([]ASBSandboxQuota, error) {
+	var quotas []ASBSandboxQuota
+	err := c.doLifecycleJSON(
 		ctx,
-		"validate_api_key",
+		"list_quotas",
 		http.MethodGet,
 		"/sandboxes/quotas",
 		nil,
 		nil,
-		nil,
+		&quotas,
 		http.StatusOK,
 	)
+	if err != nil {
+		return nil, err
+	}
+	return quotas, nil
+}
+
+// ValidateCredential checks the key again at the persistence boundary.
+func (c *ASBClient) ValidateCredential(ctx context.Context) error {
+	_, err := c.ListQuotas(ctx)
+	return err
 }
 
 func (c *ASBClient) GetSandbox(ctx context.Context, sandboxID string) (*ASBSandbox, error) {
@@ -351,6 +391,42 @@ func (c *ASBClient) DeleteSandbox(ctx context.Context, sandboxID string) error {
 		http.StatusAccepted,
 		http.StatusNoContent,
 		http.StatusNotFound,
+	)
+}
+
+func (c *ASBClient) PauseSandbox(ctx context.Context, sandboxID string) error {
+	if err := validateASBSandboxID(sandboxID); err != nil {
+		return err
+	}
+	return c.doLifecycleJSON(
+		ctx,
+		"pause_sandbox",
+		http.MethodPost,
+		"/sandboxes/"+sandboxID+"/pause",
+		nil,
+		nil,
+		nil,
+		http.StatusOK,
+		http.StatusAccepted,
+		http.StatusNoContent,
+	)
+}
+
+func (c *ASBClient) ResumeSandbox(ctx context.Context, sandboxID string) error {
+	if err := validateASBSandboxID(sandboxID); err != nil {
+		return err
+	}
+	return c.doLifecycleJSON(
+		ctx,
+		"resume_sandbox",
+		http.MethodPost,
+		"/sandboxes/"+sandboxID+"/resume",
+		nil,
+		nil,
+		nil,
+		http.StatusOK,
+		http.StatusAccepted,
+		http.StatusNoContent,
 	)
 }
 

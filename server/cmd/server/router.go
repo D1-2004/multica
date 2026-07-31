@@ -1858,6 +1858,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/fc-e2b/templates", h.ListFCE2BTemplates)
 				r.Post("/fc-e2b", h.CreateFCE2BRuntime)
 				r.Post("/cloud-sandbox", h.CreateCloudSandboxRuntime)
+				r.Post("/asb-credential/validate", h.ValidateASBRuntimeCredential)
 				r.Route("/{runtimeId}", func(r chi.Router) {
 					r.Patch("/", h.UpdateAgentRuntime)
 					r.Patch("/fc-e2b-template", h.UpdateFCE2BRuntimeTemplate)

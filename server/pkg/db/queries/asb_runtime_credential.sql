@@ -3,6 +3,11 @@ SELECT *
 FROM asb_runtime_credential
 WHERE runtime_id = sqlc.arg('runtime_id');
 
+-- name: ListASBRuntimeCredentials :many
+SELECT *
+FROM asb_runtime_credential
+ORDER BY runtime_id;
+
 -- name: UpsertASBRuntimeCredential :one
 INSERT INTO asb_runtime_credential (
     runtime_id,

@@ -15,8 +15,9 @@ import (
 )
 
 type fakeASBRuntimeCredentialStore struct {
-	credential db.AsbRuntimeCredential
-	upsert     db.UpsertASBRuntimeCredentialParams
+	credential  db.AsbRuntimeCredential
+	credentials []db.AsbRuntimeCredential
+	upsert      db.UpsertASBRuntimeCredentialParams
 }
 
 func (store *fakeASBRuntimeCredentialStore) GetASBRuntimeCredential(
@@ -24,6 +25,18 @@ func (store *fakeASBRuntimeCredentialStore) GetASBRuntimeCredential(
 	pgtype.UUID,
 ) (db.AsbRuntimeCredential, error) {
 	return store.credential, nil
+}
+
+func (store *fakeASBRuntimeCredentialStore) ListASBRuntimeCredentials(
+	context.Context,
+) ([]db.AsbRuntimeCredential, error) {
+	if store.credentials != nil {
+		return append([]db.AsbRuntimeCredential(nil), store.credentials...), nil
+	}
+	if store.credential.RuntimeID.Valid {
+		return []db.AsbRuntimeCredential{store.credential}, nil
+	}
+	return nil, nil
 }
 
 func (store *fakeASBRuntimeCredentialStore) UpsertASBRuntimeCredential(
@@ -107,6 +120,62 @@ func TestASBRuntimeCredentialIsEncryptedAndResolvedPerRuntime(t *testing.T) {
 	}
 }
 
+func TestASBRuntimeCredentialFindsRuntimesSharingExactAPIKey(t *testing.T) {
+	t.Parallel()
+
+	box, err := secretbox.New(bytes.Repeat([]byte{0x41}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeA := pgtype.UUID{Bytes: [16]byte{0x11}, Valid: true}
+	runtimeB := pgtype.UUID{Bytes: [16]byte{0x22}, Valid: true}
+	runtimeOther := pgtype.UUID{Bytes: [16]byte{0x33}, Valid: true}
+	seal := func(value string) []byte {
+		sealed, sealErr := box.Seal([]byte(value))
+		if sealErr != nil {
+			t.Fatal(sealErr)
+		}
+		return sealed
+	}
+	store := &fakeASBRuntimeCredentialStore{
+		credential: db.AsbRuntimeCredential{
+			RuntimeID:       runtimeA,
+			ApiKeyEncrypted: seal("shared-tenant-key"),
+			ApiKeyHint:      "-key",
+		},
+		credentials: []db.AsbRuntimeCredential{
+			{
+				RuntimeID:       runtimeA,
+				ApiKeyEncrypted: seal("shared-tenant-key"),
+				ApiKeyHint:      "-key",
+			},
+			{
+				RuntimeID:       runtimeB,
+				ApiKeyEncrypted: seal("shared-tenant-key"),
+				ApiKeyHint:      "-key",
+			},
+			{
+				RuntimeID:       runtimeOther,
+				ApiKeyEncrypted: seal("other-tenant-key"),
+				ApiKeyHint:      "-key",
+			},
+		},
+	}
+	provider := &ASBRuntimeClientProvider{Store: store, Secrets: box}
+	runtimeIDs, err := provider.RuntimeIDsSharingAPIKey(
+		context.Background(),
+		runtimeA,
+	)
+	if err != nil {
+		t.Fatalf("RuntimeIDsSharingAPIKey: %v", err)
+	}
+	if len(runtimeIDs) != 2 ||
+		runtimeIDs[0] != runtimeA ||
+		runtimeIDs[1] != runtimeB {
+		t.Fatalf("matching Runtime IDs = %#v", runtimeIDs)
+	}
+}
+
 func TestASBRuntimeCredentialValidationRejectsUnauthorizedKey(t *testing.T) {
 	t.Parallel()
 
@@ -123,6 +192,56 @@ func TestASBRuntimeCredentialValidationRejectsUnauthorizedKey(t *testing.T) {
 	var validationErr *ASBAPIKeyValidationError
 	if !errors.As(err, &validationErr) || !validationErr.Rejected {
 		t.Fatalf("ValidateAPIKey error = %#v, want rejected validation error", err)
+	}
+}
+
+func TestASBRuntimeCredentialValidationReturnsQuota(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet ||
+			request.URL.Path != "/v1/sandboxes/quotas" ||
+			request.Header.Get(asbAPIKeyHeader) != "tenant-key" {
+			http.NotFound(response, request)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`[{
+			"networkZone":"ALITest",
+			"region":"cn-zhangjiakou",
+			"quota":5,
+			"usage":1,
+			"alertPercentage":80,
+			"volumeSizeQuotaGib":100,
+			"volumeUsageGib":4
+		}]`))
+	}))
+	defer server.Close()
+
+	provider := &ASBRuntimeClientProvider{
+		Config: ASBConfig{APIURL: server.URL},
+	}
+	quotas, err := provider.ValidateAPIKeyAndGetQuotas(
+		context.Background(),
+		"tenant-key",
+	)
+	if err != nil {
+		t.Fatalf("ValidateAPIKeyAndGetQuotas: %v", err)
+	}
+	if len(quotas) != 1 {
+		t.Fatalf("quotas = %#v", quotas)
+	}
+	quota := quotas[0]
+	if quota.NetworkZone != "ALITest" ||
+		quota.Region != "cn-zhangjiakou" ||
+		quota.Quota != 5 ||
+		quota.Usage != 1 ||
+		quota.AlertPercentage == nil ||
+		*quota.AlertPercentage != 80 ||
+		quota.VolumeSizeQuotaGiB == nil ||
+		*quota.VolumeSizeQuotaGiB != 100 ||
+		quota.VolumeUsageGiB != 4 {
+		t.Fatalf("quota = %#v", quota)
 	}
 }
 

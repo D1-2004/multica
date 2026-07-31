@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"strings"
@@ -35,6 +36,7 @@ func (e *ASBAPIKeyValidationError) Unwrap() error {
 
 type asbRuntimeCredentialReader interface {
 	GetASBRuntimeCredential(context.Context, pgtype.UUID) (db.AsbRuntimeCredential, error)
+	ListASBRuntimeCredentials(context.Context) ([]db.AsbRuntimeCredential, error)
 }
 
 type asbRuntimeCredentialWriter interface {
@@ -78,20 +80,29 @@ func (p *ASBRuntimeClientProvider) ValidateAPIKey(
 	ctx context.Context,
 	apiKey string,
 ) error {
+	_, err := p.ValidateAPIKeyAndGetQuotas(ctx, apiKey)
+	return err
+}
+
+func (p *ASBRuntimeClientProvider) ValidateAPIKeyAndGetQuotas(
+	ctx context.Context,
+	apiKey string,
+) ([]ASBSandboxQuota, error) {
 	if p == nil {
-		return errors.New("ASB Runtime credential service is unavailable")
+		return nil, errors.New("ASB Runtime credential service is unavailable")
 	}
 	client, err := NewASBClientForAPIKey(p.Config, apiKey)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := client.ValidateCredential(ctx); err != nil {
+	quotas, err := client.ListQuotas(ctx)
+	if err != nil {
 		var httpErr *ASBHTTPError
 		rejected := errors.As(err, &httpErr) &&
 			(httpErr.StatusCode == 401 || httpErr.StatusCode == 403)
-		return &ASBAPIKeyValidationError{Rejected: rejected, Cause: err}
+		return nil, &ASBAPIKeyValidationError{Rejected: rejected, Cause: err}
 	}
-	return nil
+	return quotas, nil
 }
 
 func (p *ASBRuntimeClientProvider) ClientForRuntime(
@@ -106,6 +117,49 @@ func (p *ASBRuntimeClientProvider) ClientForRuntime(
 		return nil, fmt.Errorf("load ASB Runtime API key: %w", err)
 	}
 	return p.clientForCredential(credential)
+}
+
+// RuntimeIDsSharingAPIKey returns the Runtime rows whose encrypted credential
+// resolves to the same ASB tenant key. ASB quota is key-scoped, so only task
+// sandboxes owned by one of these Runtimes may be reclaimed for this request.
+func (p *ASBRuntimeClientProvider) RuntimeIDsSharingAPIKey(
+	ctx context.Context,
+	runtimeID pgtype.UUID,
+) ([]pgtype.UUID, error) {
+	if p == nil || p.Store == nil || p.Secrets == nil {
+		return nil, errors.New("ASB Runtime credential service is unavailable")
+	}
+	current, err := p.Store.GetASBRuntimeCredential(ctx, runtimeID)
+	if err != nil {
+		return nil, fmt.Errorf("load ASB Runtime API key: %w", err)
+	}
+	currentPlain, err := p.Secrets.Open(current.ApiKeyEncrypted)
+	if err != nil {
+		return nil, errors.New("decrypt ASB Runtime API key")
+	}
+	defer clear(currentPlain)
+
+	credentials, err := p.Store.ListASBRuntimeCredentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list ASB Runtime API keys: %w", err)
+	}
+	runtimeIDs := make([]pgtype.UUID, 0, len(credentials))
+	for _, credential := range credentials {
+		plain, err := p.Secrets.Open(credential.ApiKeyEncrypted)
+		if err != nil {
+			return nil, errors.New("decrypt ASB Runtime API key")
+		}
+		matches := len(plain) == len(currentPlain) &&
+			subtle.ConstantTimeCompare(plain, currentPlain) == 1
+		clear(plain)
+		if matches {
+			runtimeIDs = append(runtimeIDs, credential.RuntimeID)
+		}
+	}
+	if len(runtimeIDs) == 0 {
+		return nil, errors.New("ASB Runtime credential ownership is inconsistent")
+	}
+	return runtimeIDs, nil
 }
 
 func (p *ASBRuntimeClientProvider) clientForCredential(

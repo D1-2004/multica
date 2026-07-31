@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Check, Cloud, Loader2, Search } from "lucide-react";
+import { Check, Cloud, Loader2, Search, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import type { RuntimeVisibility } from "@multica/core/types/agent";
 import {
@@ -15,6 +15,7 @@ import {
   useCloudSandboxStableChannel,
   useCreateCloudSandboxRuntime,
   useFCE2BTemplates,
+  useValidateASBRuntimeCredential,
 } from "@multica/core/runtimes";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { Button } from "@multica/ui/components/ui/button";
@@ -96,6 +97,7 @@ export function FCE2BRuntimeDialog({
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();
   const createRuntime = useCreateCloudSandboxRuntime(wsId);
+  const validateASBCredential = useValidateASBRuntimeCredential();
   const templatesQuery = useFCE2BTemplates(wsId);
   const stableChannelQuery = useCloudSandboxStableChannel(sandboxBackend);
   const templates = (templatesQuery.data ?? []).filter(isReadyFCE2BTemplate);
@@ -112,6 +114,11 @@ export function FCE2BRuntimeDialog({
   const [artifactAlias, setArtifactAlias] = useState("");
   const [artifactDigest, setArtifactDigest] = useState("");
   const [apiKey, setAPIKey] = useState("");
+  const [validatedAPIKey, setValidatedAPIKey] = useState("");
+  const apiKeyIsValidated =
+    Boolean(apiKey.trim()) &&
+    validatedAPIKey === apiKey.trim() &&
+    validateASBCredential.data?.valid === true;
   const availableProviders =
     sandboxBackend === "asb" || templateChannel === "stable"
       ? [...FC_E2B_RUNTIME_PROVIDERS]
@@ -159,6 +166,20 @@ export function FCE2BRuntimeDialog({
     setProvider(nextProvider);
   };
 
+  const handleValidateASBCredential = async () => {
+    const nextAPIKey = apiKey.trim();
+    if (!nextAPIKey) return;
+    setValidatedAPIKey("");
+    try {
+      const result = await validateASBCredential.mutateAsync({
+        api_key: nextAPIKey,
+      });
+      if (result.valid) setValidatedAPIKey(nextAPIKey);
+    } catch {
+      setValidatedAPIKey("");
+    }
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (
@@ -168,10 +189,7 @@ export function FCE2BRuntimeDialog({
     ) {
       return;
     }
-    if (
-      sandboxBackend === "asb" &&
-      !apiKey.trim()
-    ) {
+    if (sandboxBackend === "asb" && !apiKeyIsValidated) {
       return;
     }
     if (
@@ -223,7 +241,7 @@ export function FCE2BRuntimeDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Cloud className="h-4 w-4 text-muted-foreground" />
@@ -255,12 +273,81 @@ export function FCE2BRuntimeDialog({
                 type="password"
                 autoComplete="off"
                 value={apiKey}
-                onChange={(event) => setAPIKey(event.target.value)}
+                onChange={(event) => {
+                  setAPIKey(event.target.value);
+                  setValidatedAPIKey("");
+                  validateASBCredential.reset();
+                }}
                 required
               />
               <p className="text-xs text-muted-foreground">
                 {t(($) => $.fc_e2b_runtime.api_key_hint)}
               </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                disabled={!apiKey.trim() || validateASBCredential.isPending}
+                onClick={handleValidateASBCredential}
+              >
+                {validateASBCredential.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                )}
+                {validateASBCredential.isPending
+                  ? t(($) => $.fc_e2b_runtime.api_key_validating)
+                  : t(($) => $.fc_e2b_runtime.api_key_validate)}
+              </Button>
+              {validateASBCredential.isError && (
+                <p className="text-xs text-destructive">
+                  {validateASBCredential.error instanceof Error
+                    ? validateASBCredential.error.message
+                    : t(($) => $.fc_e2b_runtime.api_key_validation_failed)}
+                </p>
+              )}
+              {apiKeyIsValidated && validateASBCredential.data && (
+                <div className="mt-2 space-y-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
+                  <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                    <Check className="h-3.5 w-3.5" />
+                    {t(($) => $.fc_e2b_runtime.api_key_valid)}
+                  </p>
+                  {validateASBCredential.data.quotas.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t(($) => $.fc_e2b_runtime.quota_empty)}
+                    </p>
+                  ) : (
+                    <div className="max-h-36 space-y-2 overflow-y-auto">
+                      {validateASBCredential.data.quotas.map((quota) => (
+                        <div
+                          key={`${quota.network_zone}:${quota.region}`}
+                          className="rounded border bg-background/60 px-2.5 py-2 text-xs"
+                        >
+                          <p className="font-medium">
+                            {quota.network_zone} · {quota.region}
+                          </p>
+                          <p className="mt-0.5 text-muted-foreground">
+                            {t(($) => $.fc_e2b_runtime.quota_usage, {
+                              usage: quota.usage,
+                              quota: quota.quota,
+                              remaining: quota.remaining,
+                            })}
+                          </p>
+                          {quota.volume_size_quota_gib !== undefined && (
+                            <p className="mt-0.5 text-muted-foreground">
+                              {t(($) => $.fc_e2b_runtime.volume_quota_usage, {
+                                usage: quota.volume_usage_gib,
+                                quota: quota.volume_size_quota_gib,
+                              })}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -530,7 +617,7 @@ export function FCE2BRuntimeDialog({
             form="fc-e2b-runtime-form"
             disabled={
               createRuntime.isPending ||
-              (sandboxBackend === "asb" && !apiKey.trim()) ||
+              (sandboxBackend === "asb" && !apiKeyIsValidated) ||
               (templateChannel === "stable"
                 ? !stableChannelQuery.data?.current
                 : sandboxBackend === "aliyun_fc"

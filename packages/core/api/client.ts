@@ -182,6 +182,8 @@ import type {
   ListCloudRuntimeNodesParams,
   SandboxBackend,
   ASBRuntimeCredentialResponse,
+  ValidateASBRuntimeCredentialRequest,
+  ValidateASBRuntimeCredentialResponse,
   UpdateCloudSandboxRuntimeArtifactRequest,
   UpdateASBRuntimeCredentialRequest,
   UpdateFCE2BRuntimeTemplateRequest,
@@ -1240,6 +1242,18 @@ export class ApiClient {
       `/api/runtimes/${encodeURIComponent(runtimeId)}/cloud-sandbox-artifact`,
       {
         method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    );
+  }
+
+  async validateASBRuntimeCredential(
+    data: ValidateASBRuntimeCredentialRequest,
+  ): Promise<ValidateASBRuntimeCredentialResponse> {
+    return this.fetch<ValidateASBRuntimeCredentialResponse>(
+      "/api/runtimes/asb-credential/validate",
+      {
+        method: "POST",
         body: JSON.stringify(data),
       },
     );

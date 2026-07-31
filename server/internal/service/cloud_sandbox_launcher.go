@@ -132,6 +132,16 @@ func NewASBEnterpriseRuntimeFromConfig(
 		Secrets: secrets,
 		Config:  asbConfig,
 	}
+	capacity := &ASBSandboxCapacityManager{
+		Pool:        pool,
+		Credentials: credentials,
+	}
+	source := &ASBIdentitySourceManager{
+		Store:       queries,
+		Credentials: credentials,
+		Capacity:    capacity,
+		Config:      asbConfig,
+	}
 	identity, err := NewEnterpriseIdentityService(
 		queries,
 		identityConfig,
@@ -139,8 +149,10 @@ func NewASBEnterpriseRuntimeFromConfig(
 		authXClient,
 		idemClient,
 		credentials,
+		source,
 		secrets,
 		newPostgresEnterpriseIdentityTokenRotationLocker(pool),
+		newPostgresEnterpriseIdentityRuntimeLocker(pool),
 	)
 	if err != nil {
 		return nil, err

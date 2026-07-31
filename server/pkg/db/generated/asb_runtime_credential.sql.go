@@ -30,6 +30,38 @@ func (q *Queries) GetASBRuntimeCredential(ctx context.Context, runtimeID pgtype.
 	return i, err
 }
 
+const listASBRuntimeCredentials = `-- name: ListASBRuntimeCredentials :many
+SELECT runtime_id, api_key_encrypted, api_key_hint, created_at, updated_at
+FROM asb_runtime_credential
+ORDER BY runtime_id
+`
+
+func (q *Queries) ListASBRuntimeCredentials(ctx context.Context) ([]AsbRuntimeCredential, error) {
+	rows, err := q.db.Query(ctx, listASBRuntimeCredentials)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AsbRuntimeCredential{}
+	for rows.Next() {
+		var i AsbRuntimeCredential
+		if err := rows.Scan(
+			&i.RuntimeID,
+			&i.ApiKeyEncrypted,
+			&i.ApiKeyHint,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertASBRuntimeCredential = `-- name: UpsertASBRuntimeCredential :one
 INSERT INTO asb_runtime_credential (
     runtime_id,

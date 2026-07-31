@@ -27,8 +27,22 @@ func (resolver fakeASBTaskIdentityResolver) ResolveASBTaskIdentity(
 	context.Context,
 	pgtype.UUID,
 	pgtype.UUID,
+	pgtype.UUID,
 ) (ASBResolvedIdentity, error) {
 	return resolver.identity, resolver.err
+}
+
+func (resolver fakeASBTaskIdentityResolver) AcquireASBTaskIdentitySource(
+	context.Context,
+	pgtype.UUID,
+	pgtype.UUID,
+	pgtype.UUID,
+	string,
+) (func(context.Context) error, error) {
+	if resolver.err != nil {
+		return nil, resolver.err
+	}
+	return func(context.Context) error { return nil }, nil
 }
 
 func TestASBLaunchIdentityAllowsExplicitUnboundMode(t *testing.T) {
@@ -37,7 +51,12 @@ func TestASBLaunchIdentityAllowsExplicitUnboundMode(t *testing.T) {
 	launcher := &ASBLauncher{
 		Identity: fakeASBTaskIdentityResolver{err: ErrEnterpriseIdentityNeedsReauth},
 	}
-	identity, err := launcher.resolveTaskIdentity(context.Background(), pgtype.UUID{}, pgtype.UUID{})
+	identity, err := launcher.resolveTaskIdentity(
+		context.Background(),
+		pgtype.UUID{},
+		pgtype.UUID{},
+		pgtype.UUID{},
+	)
 	if err != nil {
 		t.Fatalf("resolveTaskIdentity: %v", err)
 	}
@@ -45,7 +64,7 @@ func TestASBLaunchIdentityAllowsExplicitUnboundMode(t *testing.T) {
 		identity.Fingerprint != asbUnboundIdentityFingerprint {
 		t.Fatalf("unbound identity = %#v", identity)
 	}
-	if extensions := identity.sandboxExtensions(); len(extensions) != 0 {
+	if extensions := identity.sandboxExtensions("unused"); len(extensions) != 0 {
 		t.Fatalf("unbound sandbox extensions = %#v", extensions)
 	}
 }
@@ -61,6 +80,7 @@ func TestASBLaunchIdentityDoesNotHideResolverFailure(t *testing.T) {
 		context.Background(),
 		pgtype.UUID{},
 		pgtype.UUID{},
+		pgtype.UUID{},
 	); !errors.Is(err, resolverErr) {
 		t.Fatalf("resolveTaskIdentity error = %v, want %v", err, resolverErr)
 	}
@@ -70,51 +90,54 @@ func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
 	t.Parallel()
 
 	identity := ASBResolvedIdentity{
-		Mode:          asbIdentityModeBound,
-		RawEmployeeID: "12345",
-		BUCAgentID:    "agent-multica-asb",
-		AgentSPIFFEID: "spiffe://multica.prod.ali/ns/default/agents/agent-1",
-		AIPID:         "aip-1",
-		BUCTokens: BUCIdentityTokens{
-			AccessToken:  "buc-access",
-			RefreshToken: "buc-refresh",
-			IDToken:      "buc-id",
-		},
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:              "aip-1",
+		SourceSandboxID:    "identity-source-1",
+		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		AgentIdentityToken: "ait",
 		Fingerprint:        strings.Repeat("a", 64),
 	}
 	if err := identity.validate(); err != nil {
 		t.Fatalf("validate bound identity: %v", err)
 	}
-	extensions := identity.sandboxExtensions()
+	extensions := identity.sandboxExtensions("wireguard-credentials")
 	for key, expected := range map[string]string{
-		"spiffe.lazyAuth":    "true",
-		"wireguard.lazyAuth": "true",
+		"spiffe.lazyAuth":          "true",
+		"wireguard.worker":         "12345",
+		"wireguard.uemCredentials": "wireguard-credentials",
+		"buc.originalSandboxID":    "identity-source-1",
 	} {
 		if extensions[key] != expected {
 			t.Fatalf("bound sandbox extension %s = %q, want %q", key, extensions[key], expected)
 		}
 	}
-	for _, forbidden := range []string{"wireguard.worker", "wireguard.uemCredentials"} {
+	for _, forbidden := range []string{"wireguard.lazyAuth"} {
 		if _, ok := extensions[forbidden]; ok {
 			t.Fatalf("bound sandbox extensions include create-time identity field %s", forbidden)
 		}
 	}
 }
 
-func TestASBLauncherInjectsPlatformCredentialsWithoutAnchorOrProbe(t *testing.T) {
+func TestASBLauncherProbesInheritedBUCAndOnlyAttachesAgentIdentity(t *testing.T) {
 	t.Parallel()
 
-	var wireguardGrant ASBBUCIdentityGrant
 	var spiffeGrant ASBAgentIdentityGrant
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/sandbox-123/endpoints/44772":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/execd",
+				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
+			})
 		case request.Method == http.MethodPost &&
-			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/wireguard":
-			if err := json.NewDecoder(request.Body).Decode(&wireguardGrant); err != nil {
-				t.Fatalf("decode WireGuard identity: %v", err)
-			}
-			response.WriteHeader(http.StatusOK)
+			request.URL.Path == "/execd/command":
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/spiffe":
 			if err := json.NewDecoder(request.Body).Decode(&spiffeGrant); err != nil {
@@ -128,23 +151,20 @@ func TestASBLauncherInjectsPlatformCredentialsWithoutAnchorOrProbe(t *testing.T)
 	defer server.Close()
 
 	identity := ASBResolvedIdentity{
-		Mode:          asbIdentityModeBound,
-		RawEmployeeID: "12345",
-		BUCAgentID:    "agent-multica-asb",
-		AgentSPIFFEID: "spiffe://multica.prod.ali/ns/default/agents/agent-1",
-		AIPID:         "aip-1",
-		BUCTokens: BUCIdentityTokens{
-			AccessToken:  "buc-access",
-			RefreshToken: "buc-refresh",
-			IDToken:      "buc-id",
-		},
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:              "aip-1",
+		SourceSandboxID:    "identity-source-1",
+		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		AgentIdentityToken: "ait",
 		Fingerprint:        strings.Repeat("a", 64),
 	}
 	launcher := &ASBLauncher{
 		Client: newTestASBClient(t, server),
 		Config: ASBConfig{
-			WireGuardCredentials: "wireguard-credentials",
+			WireGuardReadyTimeout: time.Second,
 		},
 	}
 	if err := launcher.ensureSandboxIdentityReady(
@@ -154,19 +174,71 @@ func TestASBLauncherInjectsPlatformCredentialsWithoutAnchorOrProbe(t *testing.T)
 	); err != nil {
 		t.Fatalf("ensureSandboxIdentityReady: %v", err)
 	}
-	if wireguardGrant.OriginalSandboxID != "" {
-		t.Fatalf("platform credential injection reused anchor sandbox %q", wireguardGrant.OriginalSandboxID)
-	}
-	if wireguardGrant.EmployeeID != identity.RawEmployeeID ||
-		wireguardGrant.BUCAccessToken != identity.BUCTokens.AccessToken ||
-		wireguardGrant.BUCRefreshToken != identity.BUCTokens.RefreshToken ||
-		wireguardGrant.BUCIDToken != identity.BUCTokens.IDToken {
-		t.Fatalf("WireGuard identity grant = %#v", wireguardGrant)
-	}
 	if spiffeGrant.RawEmployeeID != identity.RawEmployeeID ||
 		spiffeGrant.AgentToken != identity.AgentIdentityToken ||
 		spiffeGrant.AgentID != identity.AgentSPIFFEID {
 		t.Fatalf("SPIFFE identity grant = %#v", spiffeGrant)
+	}
+}
+
+func TestASBLauncherReadsTenantQuotaBeforeCreatingSandbox(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		response  string
+		exhausted bool
+		wantErr   bool
+	}{
+		{
+			name:      "slot available",
+			response:  `[{"networkZone":"ALITest","region":"cn-zhangjiakou","quota":5,"usage":4}]`,
+			exhausted: false,
+		},
+		{
+			name:      "quota exhausted",
+			response:  `[{"networkZone":"ALITest","region":"cn-zhangjiakou","quota":5,"usage":5}]`,
+			exhausted: true,
+		},
+		{
+			name:     "missing allocation",
+			response: `[]`,
+			wantErr:  true,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(
+				response http.ResponseWriter,
+				request *http.Request,
+			) {
+				if request.Method != http.MethodGet ||
+					request.URL.Path != "/v1/sandboxes/quotas" {
+					http.NotFound(response, request)
+					return
+				}
+				response.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(response, test.response)
+			}))
+			defer server.Close()
+
+			client := newTestASBClient(t, server)
+			exhausted, err := asbTenantQuotaExhausted(context.Background(), client)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("asbTenantQuotaExhausted unexpectedly succeeded")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("asbTenantQuotaExhausted: %v", err)
+			}
+			if exhausted != test.exhausted {
+				t.Fatalf("quota exhausted = %v, want %v", exhausted, test.exhausted)
+			}
+		})
 	}
 }
 

@@ -169,6 +169,72 @@ func (q *Queries) ListActiveCloudSandboxSessionsByRuntimeAndBackend(ctx context.
 	return items, nil
 }
 
+const listIdleASBSandboxSessionsByRuntimes = `-- name: ListIdleASBSandboxSessionsByRuntimes :many
+SELECT session.id, session.workspace_id, session.runtime_id, session.scope_type, session.scope_id, session.sandbox_id, session.template, session.status, session.last_used_at, session.expires_at, session.created_at, session.updated_at, session.sandbox_backend, session.identity_fingerprint, session.artifact_ref
+FROM fc_e2b_sandbox_session AS session
+WHERE session.runtime_id = ANY($1::uuid[])
+  AND session.sandbox_backend = 'asb'
+  AND session.status IN ('running', 'stale')
+  AND NOT EXISTS (
+      SELECT 1
+      FROM agent_task_queue AS task
+      WHERE task.runtime_id = session.runtime_id
+        AND task.status IN (
+            'queued',
+            'dispatched',
+            'running',
+            'waiting_local_directory',
+            'deferred'
+        )
+        AND (
+            (session.scope_type = 'chat' AND task.chat_session_id = session.scope_id)
+            OR
+            (session.scope_type = 'issue' AND task.issue_id = session.scope_id)
+        )
+  )
+ORDER BY
+    CASE WHEN session.expires_at <= now() THEN 0 ELSE 1 END,
+    session.last_used_at,
+    session.created_at,
+    session.sandbox_id
+`
+
+func (q *Queries) ListIdleASBSandboxSessionsByRuntimes(ctx context.Context, runtimeIds []pgtype.UUID) ([]FcE2bSandboxSession, error) {
+	rows, err := q.db.Query(ctx, listIdleASBSandboxSessionsByRuntimes, runtimeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FcE2bSandboxSession{}
+	for rows.Next() {
+		var i FcE2bSandboxSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.RuntimeID,
+			&i.ScopeType,
+			&i.ScopeID,
+			&i.SandboxID,
+			&i.Template,
+			&i.Status,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SandboxBackend,
+			&i.IdentityFingerprint,
+			&i.ArtifactRef,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markCloudSandboxSessionStale = `-- name: MarkCloudSandboxSessionStale :exec
 UPDATE fc_e2b_sandbox_session
 SET status = 'stale',

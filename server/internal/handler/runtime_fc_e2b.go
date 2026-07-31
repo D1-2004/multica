@@ -48,6 +48,17 @@ type updateASBRuntimeCredentialRequest struct {
 	APIKey string `json:"api_key"`
 }
 
+type asbRuntimeQuotaResponse struct {
+	NetworkZone        string `json:"network_zone"`
+	Region             string `json:"region"`
+	Quota              int    `json:"quota"`
+	Usage              int    `json:"usage"`
+	Remaining          int    `json:"remaining"`
+	AlertPercentage    *int   `json:"alert_percentage,omitempty"`
+	VolumeSizeQuotaGiB *int64 `json:"volume_size_quota_gib,omitempty"`
+	VolumeUsageGiB     int64  `json:"volume_usage_gib"`
+}
+
 func (h *Handler) ListFCE2BTemplates(w http.ResponseWriter, r *http.Request) {
 	if !h.cfg.FCE2B.Enabled {
 		slog.Warn("FC/E2B template list rejected: runtime disabled")
@@ -553,6 +564,68 @@ func (h *Handler) GetASBRuntimeCredential(w http.ResponseWriter, r *http.Request
 		"configured":   true,
 		"api_key_hint": credential.ApiKeyHint,
 		"updated_at":   credential.UpdatedAt.Time.Unix(),
+	})
+}
+
+func (h *Handler) ValidateASBRuntimeCredential(w http.ResponseWriter, r *http.Request) {
+	if !h.cfg.ASB.Enabled || h.ASBLauncher == nil || h.ASBLauncher.Credentials == nil {
+		writeError(w, http.StatusServiceUnavailable, "Aone Sandbox Runtime is disabled")
+		return
+	}
+	if err := h.cfg.ASB.Validate(); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.requireWorkspaceRole(
+		w,
+		r,
+		workspaceID,
+		"workspace not found",
+		"owner",
+		"admin",
+	); !ok {
+		return
+	}
+	var req updateASBRuntimeCredentialRequest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 8<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := service.ValidateASBAPIKey(req.APIKey); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	quotas, err := h.ASBLauncher.Credentials.ValidateAPIKeyAndGetQuotas(
+		r.Context(),
+		req.APIKey,
+	)
+	if err != nil {
+		writeASBAPIKeyValidationError(w, "", err)
+		return
+	}
+	response := make([]asbRuntimeQuotaResponse, 0, len(quotas))
+	for _, quota := range quotas {
+		remaining := quota.Quota - quota.Usage
+		if remaining < 0 {
+			remaining = 0
+		}
+		response = append(response, asbRuntimeQuotaResponse{
+			NetworkZone:        quota.NetworkZone,
+			Region:             quota.Region,
+			Quota:              quota.Quota,
+			Usage:              quota.Usage,
+			Remaining:          remaining,
+			AlertPercentage:    quota.AlertPercentage,
+			VolumeSizeQuotaGiB: quota.VolumeSizeQuotaGiB,
+			VolumeUsageGiB:     quota.VolumeUsageGiB,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"valid":  true,
+		"quotas": response,
 	})
 }
 
