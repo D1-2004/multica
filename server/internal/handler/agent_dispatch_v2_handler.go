@@ -241,6 +241,38 @@ func (h *Handler) executeAgentDispatchV2(
 		return
 	}
 
+	// Approval event auto-linking: when the agent created the approval instance,
+	// it embedded the current issue identifier (e.g. "MUL-123") into a form
+	// field. The Router includes form values in AIReadableContent. If we can
+	// recover the identifier and match it to an existing issue assigned to this
+	// agent, redirect to a continuation (comment) on that issue instead of
+	// creating a new one — preserving the original conversation context.
+	if command.AgentID != "" &&
+		command.Event.Domain == "approval" &&
+		command.Event.Type == "approval.status_changed" &&
+		command.Event.Data.Approval != nil {
+		issuePrefix := h.getIssuePrefix(r.Context(), dispatchContext.WorkspaceID)
+		identifier := extractIssueIdentifierFromApprovalContent(
+			command.Event.Data.Approval.AIReadableContent, issuePrefix)
+		if identifier != "" {
+			if issue, ok := h.lookupIssueByIdentifier(r.Context(), dispatchContext.WorkspaceID, issuePrefix, identifier); ok {
+				if issue.AssigneeType.Valid && issue.AssigneeType.String == "agent" &&
+					uuidToString(issue.AssigneeID) == uuidToString(dispatchContext.AgentID) {
+					command.Continuation = &AgentDispatchContinuation{
+						Kind:    "issue",
+						IssueID: uuidToString(issue.ID),
+					}
+					command.AgentID = "" // fall through to continuation path
+					slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+						"outcome", "linked_approval_to_issue",
+						"issueIdentifier", identifier,
+						"processInstanceId", strings.TrimSpace(command.Event.Data.Approval.FormCode),
+					)
+				}
+			}
+		}
+	}
+
 	if command.AgentID != "" {
 		agent, ok := h.resolveAgentDispatchAgent(
 			w, r, dispatchContext.UserID, dispatchContext.WorkspaceID, dispatchContext.AgentID)

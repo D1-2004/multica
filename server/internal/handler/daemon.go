@@ -1742,10 +1742,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// project explicitly attached its repos, those are the authoritative set
 	// for issues inside that project. When the project has no github_repo
 	// resources (or no project at all), we fall back to the workspace repos.
+	var issueNumber int32 // saved for IssueIdentifier construction after workspace load
 	if task.IssueID.Valid {
 		if issue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil {
 			resp.WorkspaceID = uuidToString(issue.WorkspaceID)
 			resp.ThreadName = issue.Title
+			issueNumber = issue.Number
 
 			// Squad-leader briefing injection: keyed off the task being a
 			// leader-task (is_leader_task) carrying a squad_id — NOT off the
@@ -2422,6 +2424,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	if ws, err := h.Queries.GetWorkspace(r.Context(), parseUUID(resp.WorkspaceID)); err == nil {
 		if ws.Context.Valid {
 			resp.WorkspaceContext = ws.Context.String
+		}
+		// Construct the human-readable issue identifier (e.g. "MUL-123") so
+		// the agent can embed it when creating DingTalk approval instances.
+		// The approval event callback carries this identifier back, allowing
+		// Mutica to link the approval to the original issue (continuation).
+		if issueNumber > 0 && ws.IssuePrefix != "" {
+			resp.IssueIdentifier = ws.IssuePrefix + "-" + strconv.Itoa(int(issueNumber))
 		}
 	} else {
 		slog.Warn("task claim: failed to load workspace for context injection",

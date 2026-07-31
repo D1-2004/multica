@@ -32,11 +32,11 @@ RUN apk add --no-cache ca-certificates tzdata coreutils curl gcompat libc6-compa
     && npm install -g @e2b/cli@2.13.0 \
     && npm cache clean --force
 
-# Pre-release: use locally built dws-wukong binary (includes create-instance)
-# instead of downloading from dingtalk-workspace-cli GitHub releases.
-COPY APP-META/docker-config/dws/checksums.txt /tmp/dws/checksums.txt
-COPY APP-META/docker-config/dws/dws-linux-amd64.tar.gz /tmp/dws/dws-linux-amd64.tar.gz
 RUN set -eux; \
+    mkdir -p /tmp/dws; \
+    base="${DWS_RELEASE_BASE}/${DWS_VERSION}"; \
+    curl -fsSLo /tmp/dws/checksums.txt "${base}/checksums.txt"; \
+    curl -fsSLo /tmp/dws/dws-linux-amd64.tar.gz "${base}/dws-linux-amd64.tar.gz"; \
     cd /tmp/dws; \
     grep '  dws-linux-amd64.tar.gz$' checksums.txt | sha256sum -c -; \
     tar -xzf dws-linux-amd64.tar.gz; \
