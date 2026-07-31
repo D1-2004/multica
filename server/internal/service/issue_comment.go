@@ -176,15 +176,10 @@ func (s *IssueCommentService) createDelegatedExternalFollowUp(ctx context.Contex
 	} else if !errors.Is(childErr, pgx.ErrNoRows) {
 		return IssueCommentCreateResult{}, fmt.Errorf("check delegated child task: %w", childErr)
 	}
-	active, err := qtx.HasActiveTaskForIssueAndAgent(ctx, db.HasActiveTaskForIssueAndAgentParams{
-		IssueID: params.Issue.ID,
-		AgentID: params.Issue.AssigneeID,
-	})
-	if err != nil {
-		return IssueCommentCreateResult{}, fmt.Errorf("check active issue task: %w", err)
-	}
-	if active {
-		return IssueCommentCreateResult{}, ErrIssueDispatchPending
+	if _, commentErr := qtx.GetDelegatedMemberCommentBySourceTask(ctx, sourceTask.ID); commentErr == nil {
+		return IssueCommentCreateResult{}, ErrDelegationAlreadyExists
+	} else if !errors.Is(commentErr, pgx.ErrNoRows) {
+		return IssueCommentCreateResult{}, fmt.Errorf("check delegated member comment: %w", commentErr)
 	}
 	comment, err := qtx.CreateComment(ctx, db.CreateCommentParams{
 		IssueID:     params.Issue.ID,
@@ -193,6 +188,7 @@ func (s *IssueCommentService) createDelegatedExternalFollowUp(ctx context.Contex
 		AuthorID:    params.AuthorID,
 		Content:     params.Content,
 		Type:        "comment",
+		SourceTaskID: sourceTask.ID,
 	})
 	if err != nil {
 		return IssueCommentCreateResult{}, fmt.Errorf("create issue comment: %w", err)
@@ -224,22 +220,58 @@ func (s *IssueCommentService) createDelegatedExternalFollowUp(ctx context.Contex
 		return IssueCommentCreateResult{}, errors.New("delegation target agent has no runtime")
 	}
 	triggerSummary := truncateForSummary(params.Content, triggerSummaryMaxLen)
-	task, err := qtx.CreateAgentTask(ctx, db.CreateAgentTaskParams{
-		AgentID:                   params.Issue.AssigneeID,
-		RuntimeID:                 agent.RuntimeID,
-		IssueID:                   params.Issue.ID,
-		Priority:                  priorityToInt(params.Issue.Priority),
-		TriggerCommentID:          comment.ID,
-		TriggerSummary:            pgtype.Text{String: triggerSummary, Valid: triggerSummary != ""},
-		OriginatorUserID:          params.AuthorID,
-		RuntimeMcpOverlay:         overlay.Overlay,
-		RuntimeConnectedApps:      overlay.ConnectedApps,
-		ParentTaskID:              sourceTask.ID,
-		AgentIdentityContextToken: agentIdentityContextTokenText(params.AgentIdentityContextToken),
-		DispatchContext:           params.DispatchContext,
+	taskCreated := false
+	task := db.AgentTaskQueue{}
+	merged, mergeErr := qtx.MergeDelegatedCommentIntoPendingTask(ctx, db.MergeDelegatedCommentIntoPendingTaskParams{
+		IssueID:             params.Issue.ID,
+		AgentID:             params.Issue.AssigneeID,
+		NewTriggerCommentID: comment.ID,
+		NewTriggerSummary:   pgtype.Text{String: triggerSummary, Valid: triggerSummary != ""},
 	})
-	if err != nil {
-		return IssueCommentCreateResult{}, fmt.Errorf("create delegated follow-up task: %w", err)
+	switch {
+	case mergeErr == nil:
+		task, err = qtx.GetAgentTask(ctx, merged.ID)
+		if err != nil {
+			return IssueCommentCreateResult{}, fmt.Errorf("load merged delegated follow-up task: %w", err)
+		}
+	case !errors.Is(mergeErr, pgx.ErrNoRows):
+		return IssueCommentCreateResult{}, fmt.Errorf("merge delegated follow-up task: %w", mergeErr)
+	default:
+		pending, pendingErr := qtx.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
+			IssueID: params.Issue.ID,
+			AgentID: params.Issue.AssigneeID,
+		})
+		if pendingErr != nil {
+			return IssueCommentCreateResult{}, fmt.Errorf("check pending delegated follow-up task: %w", pendingErr)
+		}
+		if pending {
+			task, err = qtx.GetLatestActiveTaskForIssueAndAgent(ctx, db.GetLatestActiveTaskForIssueAndAgentParams{
+				IssueID: params.Issue.ID,
+				AgentID: params.Issue.AssigneeID,
+			})
+			if err != nil {
+				return IssueCommentCreateResult{}, fmt.Errorf("load delegated follow-up queue anchor: %w", err)
+			}
+			break
+		}
+		task, err = qtx.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+			AgentID:                   params.Issue.AssigneeID,
+			RuntimeID:                 agent.RuntimeID,
+			IssueID:                   params.Issue.ID,
+			Priority:                  priorityToInt(params.Issue.Priority),
+			TriggerCommentID:          comment.ID,
+			TriggerSummary:            pgtype.Text{String: triggerSummary, Valid: triggerSummary != ""},
+			OriginatorUserID:          params.AuthorID,
+			RuntimeMcpOverlay:         overlay.Overlay,
+			RuntimeConnectedApps:      overlay.ConnectedApps,
+			ParentTaskID:              sourceTask.ID,
+			AgentIdentityContextToken: agentIdentityContextTokenText(params.AgentIdentityContextToken),
+			DispatchContext:           params.DispatchContext,
+		})
+		if err != nil {
+			return IssueCommentCreateResult{}, fmt.Errorf("create delegated follow-up task: %w", err)
+		}
+		taskCreated = true
 	}
 	if params.Delegation.CallbackUpdateURL != "" {
 		workspace, workspaceErr := qtx.GetWorkspace(ctx, params.Issue.WorkspaceID)
@@ -265,7 +297,9 @@ func (s *IssueCommentService) createDelegatedExternalFollowUp(ctx context.Contex
 		return IssueCommentCreateResult{}, fmt.Errorf("commit delegated follow-up: %w", err)
 	}
 	s.publishExternalFollowUpComment(params, opts, comment, attachments)
-	s.TaskService.publishIssueTaskEnqueued(ctx, task)
+	if taskCreated {
+		s.TaskService.publishIssueTaskEnqueued(ctx, task)
+	}
 	return IssueCommentCreateResult{Comment: comment, Attachments: attachments, Task: task}, nil
 }
 

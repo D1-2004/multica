@@ -189,13 +189,49 @@ func (h *Handler) existingDelegatedTaskResponse(
 	workspaceID pgtype.UUID,
 ) bool {
 	task, err := h.Queries.GetDelegatedChildTaskByParent(r.Context(), sourceTask.ID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false
-	}
-	if err != nil {
+	triggerCommentID := pgtype.UUID{}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusInternalServerError, "failed to load delegated task")
 		return true
 	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		comment, commentErr := h.Queries.GetDelegatedMemberCommentBySourceTask(r.Context(), sourceTask.ID)
+		if errors.Is(commentErr, pgx.ErrNoRows) {
+			return false
+		}
+		if commentErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load delegated comment")
+			return true
+		}
+		issue, issueErr := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+			ID:          comment.IssueID,
+			WorkspaceID: workspaceID,
+		})
+		if issueErr != nil {
+			writeError(w, http.StatusConflict, "delegated issue no longer exists")
+			return true
+		}
+		task, err = h.Queries.GetTaskForDelegatedComment(r.Context(), db.GetTaskForDelegatedCommentParams{
+			IssueID:   issue.ID,
+			AgentID:   issue.AssigneeID,
+			CommentID: comment.ID,
+		})
+		if err != nil {
+			writeError(w, http.StatusConflict, "delegated issue task no longer exists")
+			return true
+		}
+		triggerCommentID = comment.ID
+		h.writeIssueDelegationResponse(
+			r.Context(),
+			w,
+			http.StatusOK,
+			issue,
+			task,
+			triggerCommentID,
+		)
+		return true
+	}
+	triggerCommentID = task.TriggerCommentID
 	if !task.IssueID.Valid {
 		writeError(w, http.StatusConflict, "delegated task has no issue")
 		return true
@@ -214,7 +250,7 @@ func (h *Handler) existingDelegatedTaskResponse(
 		http.StatusOK,
 		issue,
 		task,
-		task.TriggerCommentID,
+		triggerCommentID,
 	)
 	return true
 }

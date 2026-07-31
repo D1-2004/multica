@@ -1122,6 +1122,30 @@ WHERE id = (
 )
 RETURNING id, coalesced_comment_ids;
 
+-- name: MergeDelegatedCommentIntoPendingTask :one
+-- Delegated continuations use the same queued-task coalescing plan as ordinary
+-- comments, but the physical run must retain the FIRST source Chat task's
+-- private execution identity and capabilities. Only the comment plan and
+-- user-visible summary move forward; originator/runtime overlay/context stay
+-- untouched on the existing queued row.
+UPDATE agent_task_queue
+SET coalesced_comment_ids = (
+        SELECT COALESCE(array_agg(DISTINCT e), '{}')
+        FROM unnest(array_append(coalesced_comment_ids, trigger_comment_id)) AS e
+        WHERE e IS NOT NULL AND e <> @new_trigger_comment_id::uuid
+    ),
+    trigger_comment_id = @new_trigger_comment_id::uuid,
+    trigger_summary = COALESCE(sqlc.narg('new_trigger_summary'), trigger_summary)
+WHERE id = (
+    SELECT t.id FROM agent_task_queue t
+    WHERE t.issue_id = @issue_id
+      AND t.agent_id = @agent_id
+      AND t.status = 'queued'
+    ORDER BY t.created_at DESC
+    LIMIT 1
+)
+RETURNING id, coalesced_comment_ids;
+
 -- name: HasActiveTaskForIssueAndAgent :one
 -- MUL-4195: true when the (issue, agent) pair has any non-terminal task in a
 -- state whose completion will run completion reconciliation — queued,
@@ -1135,6 +1159,51 @@ RETURNING id, coalesced_comment_ids;
 SELECT count(*) > 0 AS has_active FROM agent_task_queue
 WHERE issue_id = $1 AND agent_id = $2
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory');
+
+-- name: GetLatestActiveTaskForIssueAndAgent :one
+-- Returns the current queue anchor when a comment arrives after a task has
+-- already been claimed. The comment is not treated as delivered to this row;
+-- completion reconciliation will enqueue the follow-up that actually consumes
+-- it. Callers use this row only for handoff observability and response metadata.
+SELECT * FROM agent_task_queue
+WHERE issue_id = $1 AND agent_id = $2
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+ORDER BY
+  CASE status
+    WHEN 'queued' THEN 0
+    WHEN 'dispatched' THEN 1
+    WHEN 'waiting_local_directory' THEN 2
+    WHEN 'running' THEN 3
+    ELSE 4
+  END,
+  created_at DESC
+LIMIT 1;
+
+-- name: GetTaskForDelegatedComment :one
+-- Reconstructs an idempotent continuation response. Prefer the task whose
+-- planned/delivered receipt contains the delegated comment. A still-active
+-- queue anchor is the only fallback, covering the narrow dispatched-before-
+-- reconciliation window where the comment has been persisted but cannot yet be
+-- attached to a successor task.
+SELECT * FROM agent_task_queue
+WHERE issue_id = @issue_id
+  AND agent_id = @agent_id
+  AND (
+    trigger_comment_id = @comment_id
+    OR @comment_id::uuid = ANY(coalesced_comment_ids)
+    OR @comment_id::uuid = ANY(delivered_comment_ids)
+    OR status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  )
+ORDER BY
+  CASE
+    WHEN trigger_comment_id = @comment_id
+      OR @comment_id::uuid = ANY(coalesced_comment_ids)
+      OR @comment_id::uuid = ANY(delivered_comment_ids)
+    THEN 0
+    ELSE 1
+  END,
+  created_at DESC
+LIMIT 1;
 
 -- name: GetLatestTaskRoleForIssueAndAgent :one
 -- Returns the role markers from the agent's most recent task on this issue.

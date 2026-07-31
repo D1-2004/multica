@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -287,7 +288,8 @@ func (w *CompletionWorker) processNextCompletion(ctx context.Context) (bool, err
 	}
 
 	var deliveryErr *ExecutionResultDeliveryError
-	if errors.As(err, &deliveryErr) && !deliveryErr.Retryable() {
+	dropAfterFirstFailure := strings.HasPrefix(completion.RequestID, "multica-comment-terminal:")
+	if dropAfterFirstFailure || errors.As(err, &deliveryErr) && !deliveryErr.Retryable() {
 		_, deadLetterErr := w.queries.DeadLetterTaskCompletion(ctx, db.DeadLetterTaskCompletionParams{
 			ID:         completion.ID,
 			LeaseToken: completion.LeaseToken,
