@@ -310,6 +310,28 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	}
 }
 
+func TestASBExecFailureDetailRedactsAndBoundsOutput(t *testing.T) {
+	t.Parallel()
+
+	exitCode := 141
+	detail := asbExecFailureDetail(&ASBExecResult{
+		ExitCode:  &exitCode,
+		ErrorName: "CommandExecError",
+		Stderr:    strings.Repeat("x", 5000) + "\nAPI_KEY=sk-abcdefghijklmnopqrstuvwxyz123456",
+	})
+	if !strings.Contains(detail, "exit_code=141") ||
+		!strings.Contains(detail, "error_name=CommandExecError") {
+		t.Fatalf("failure detail = %q", detail)
+	}
+	if strings.Contains(detail, "sk-abcdefghijklmnopqrstuvwxyz123456") ||
+		!strings.Contains(detail, "[REDACTED CREDENTIAL]") {
+		t.Fatalf("failure detail did not redact the credential: %q", detail)
+	}
+	if len([]rune(detail)) > 1300 {
+		t.Fatalf("failure detail has %d runes, want a bounded diagnostic", len([]rune(detail)))
+	}
+}
+
 func TestASBExecRunOnceUsesDefaultUserAndDirectCore(t *testing.T) {
 	t.Parallel()
 

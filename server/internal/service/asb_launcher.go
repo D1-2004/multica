@@ -1005,7 +1005,10 @@ func (l *ASBLauncher) verifyStableArtifact(
 		return nil, fmt.Errorf("ASB runtime-smoke-test failed: %w", err)
 	}
 	if smoke.ExitCode == nil || *smoke.ExitCode != 0 || smoke.ErrorName != "" {
-		return nil, errors.New("ASB runtime-smoke-test failed")
+		return nil, fmt.Errorf(
+			"ASB runtime-smoke-test failed: %s",
+			asbExecFailureDetail(smoke),
+		)
 	}
 	manifestResult, err := client.Exec(ctx, endpoint, ASBExecInput{
 		Command: "/bin/cat /usr/local/share/multica/runtime-manifest.json",
@@ -1031,6 +1034,41 @@ func (l *ASBLauncher) verifyStableArtifact(
 		return nil, err
 	}
 	return manifest, nil
+}
+
+func asbExecFailureDetail(result *ASBExecResult) string {
+	if result == nil {
+		return "execution result is missing"
+	}
+	const maxOutputRunes = 1024
+	parts := make([]string, 0, 5)
+	if result.ExitCode == nil {
+		parts = append(parts, "exit_code=missing")
+	} else {
+		parts = append(parts, fmt.Sprintf("exit_code=%d", *result.ExitCode))
+	}
+	if value := strings.TrimSpace(result.ErrorName); value != "" {
+		parts = append(parts, "error_name="+value)
+	}
+	for _, output := range []struct {
+		name  string
+		value string
+	}{
+		{name: "stderr_tail", value: result.Stderr},
+		{name: "stdout_tail", value: result.Stdout},
+		{name: "result_tail", value: result.Result},
+	} {
+		value := strings.TrimSpace(redact.Text(output.value))
+		if value == "" {
+			continue
+		}
+		runes := []rune(value)
+		if len(runes) > maxOutputRunes {
+			value = "…" + string(runes[len(runes)-maxOutputRunes:])
+		}
+		parts = append(parts, output.name+"="+strconv.Quote(value))
+	}
+	return strings.Join(parts, " ")
 }
 
 func (l *ASBLauncher) UpdateRuntimeArtifact(
