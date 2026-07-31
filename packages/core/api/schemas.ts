@@ -130,6 +130,7 @@ const DingTalkMessageRouteOutcomeSchema = z
     bound_at: z.string().nullable().optional(),
     message_scope: z.string().optional(),
     calendar_start_enabled: z.boolean().optional(),
+    approval_status_changed_enabled: z.boolean().optional(),
     conversations: z.array(DingTalkConversationSummarySchema).optional().default([]),
     error: DingTalkBindingErrorSchema.nullable().optional().catch(undefined),
   })
@@ -152,6 +153,7 @@ const DingTalkMessageRouteOutcomeSchema = z
     ...(outcome.error !== undefined ? { error: outcome.error } : {}),
     messageScope: normalizeDingTalkMessageScope(outcome.message_scope),
     calendarStartEnabled: outcome.calendar_start_enabled ?? false,
+    approvalStatusChangedEnabled: outcome.approval_status_changed_enabled ?? false,
     conversations: outcome.conversations,
   }));
 
