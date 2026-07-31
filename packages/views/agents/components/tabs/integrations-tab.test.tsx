@@ -109,10 +109,20 @@ vi.mock("../../../settings/components/dingtalk-tab", () => ({
 }));
 
 vi.mock("../integrations/dingtalk-account-binding", () => ({
-  DingTalkAccountBindingCard: ({ agentId }: { agentId: string }) => (
+  DingTalkAccountBindingCard: ({
+    agentId,
+    canOperate,
+    permissionLoading,
+  }: {
+    agentId: string;
+    canOperate: boolean;
+    permissionLoading: boolean;
+  }) => (
     <section
       aria-label="Enterprise digital employee"
       data-agent-id={agentId}
+      data-can-operate={canOperate ? "true" : "false"}
+      data-permission-loading={permissionLoading ? "true" : "false"}
     />
   ),
 }));
@@ -170,7 +180,13 @@ describe("IntegrationsTab", () => {
   beforeEach(resetFixtures);
 
   it("renders the shared bind entry for every platform for an owner when configured and supported", () => {
-    renderTab(<IntegrationsTab agent={agent} />);
+    renderTab(
+      <IntegrationsTab
+        agent={agent}
+        canOperateDingTalkBinding
+        dingTalkBindingPermissionLoading={false}
+      />,
+    );
     expect(screen.getByText("Lark")).toBeTruthy();
     expect(screen.getByText("Slack")).toBeTruthy();
     expect(screen.getByText("Enterprise bot")).toBeTruthy();
@@ -181,6 +197,7 @@ describe("IntegrationsTab", () => {
     const lark = screen.getByText("Lark");
     const slack = screen.getByText("Slack");
     expect(digitalEmployee).toHaveAttribute("data-agent-id", "agent-1");
+    expect(digitalEmployee).toHaveAttribute("data-can-operate", "true");
     expect(
       digitalEmployee.compareDocumentPosition(enterpriseBot) &
         Node.DOCUMENT_POSITION_FOLLOWING,
@@ -203,7 +220,13 @@ describe("IntegrationsTab", () => {
       configured: true,
       install_supported: false,
     };
-    renderTab(<IntegrationsTab agent={agent} />);
+    renderTab(
+      <IntegrationsTab
+        agent={agent}
+        canOperateDingTalkBinding
+        dingTalkBindingPermissionLoading={false}
+      />,
+    );
     // Lark has no manual fallback, so it still surfaces coming-soon.
     expect(screen.getByText(/Lark Bot installation coming soon/i)).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
@@ -221,7 +244,13 @@ describe("IntegrationsTab", () => {
       configured: false,
       install_supported: false,
     };
-    renderTab(<IntegrationsTab agent={agent} />);
+    renderTab(
+      <IntegrationsTab
+        agent={agent}
+        canOperateDingTalkBinding
+        dingTalkBindingPermissionLoading={false}
+      />,
+    );
     expect(screen.getByText(/Lark integration not enabled/i)).toBeTruthy();
     expect(screen.getByText(/Enterprise bot unavailable/i)).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
@@ -230,13 +259,22 @@ describe("IntegrationsTab", () => {
 
   it("points members at Settings when they are neither an admin nor the agent owner", () => {
     // A plain member viewing an agent owned by someone else cannot manage
-    // bot installations, but account association remains available to every
-    // logged-in workspace member.
+    // bot installations. The digital-employee card remains visible, while
+    // its mutation controls receive the read-only permission decision.
     membersRef.current = [{ user_id: "user-1", role: "member" }];
-    renderTab(<IntegrationsTab agent={{ ...agent, owner_id: "user-2" }} />);
+    renderTab(
+      <IntegrationsTab
+        agent={{ ...agent, owner_id: "user-2" }}
+        canOperateDingTalkBinding={false}
+        dingTalkBindingPermissionLoading={false}
+      />,
+    );
     expect(
       screen.getByRole("region", { name: /Enterprise digital employee/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: /Enterprise digital employee/i }),
+    ).toHaveAttribute("data-can-operate", "false");
     expect(
       screen.getByText(/Only workspace owners and admins can create enterprise bots/i),
     ).toBeTruthy();
@@ -251,7 +289,13 @@ describe("IntegrationsTab", () => {
     // renders and receives owner_id; Slack's and DingTalk's routes stay
     // admin-only, so they show the read-only note instead of a CTA (MUL-4213).
     membersRef.current = [{ user_id: "user-1", role: "member" }];
-    renderTab(<IntegrationsTab agent={agent} />);
+    renderTab(
+      <IntegrationsTab
+        agent={agent}
+        canOperateDingTalkBinding
+        dingTalkBindingPermissionLoading={false}
+      />,
+    );
     const larkButton = screen.getByTestId("lark-bind-button");
     expect(larkButton.getAttribute("data-agent-id")).toBe("agent-1");
     expect(larkButton.getAttribute("data-agent-owner-id")).toBe("user-1");
@@ -275,7 +319,13 @@ describe("IntegrationsTab", () => {
       configured: true,
       install_supported: false,
     };
-    renderTab(<IntegrationsTab agent={agent} />);
+    renderTab(
+      <IntegrationsTab
+        agent={agent}
+        canOperateDingTalkBinding
+        dingTalkBindingPermissionLoading={false}
+      />,
+    );
     expect(screen.getByTestId("lark-bind-button")).toBeTruthy();
     expect(screen.getByTestId("dingtalk-bind-button")).toBeTruthy();
     expect(screen.queryByText(/installation coming soon/i)).toBeNull();

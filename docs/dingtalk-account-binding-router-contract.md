@@ -84,6 +84,34 @@ identity, or sender selection. The existing `message` / `identity` modes,
 organization selection, message scope, callback contract, and later binding
 behavior are unchanged.
 
+### Binding operation authorization
+
+The binding-list endpoint remains visible to workspace members so an operator
+without mutation permission can inspect the current digital-employee and
+execution-identity state.
+
+Starting either binding mode, changing the processing surface, and unbinding
+require both of the existing Agent permission decisions:
+
+1. The member can manage the Agent: they are the Agent owner or a workspace
+   owner/admin.
+2. The member can invoke the Agent under `permission_mode` and
+   `agent_invocation_target`. Workspace administration does not bypass a
+   private Agent's invocation policy.
+
+An operator who fails either decision receives HTTP 403:
+
+```json
+{
+  "code": "agent_binding_forbidden",
+  "error": "无权限操作，请联系此智能体管理员处理"
+}
+```
+
+The browser applies the same decision before mutation and keeps the binding
+card readable. The server check remains authoritative for stale clients and
+direct API calls.
+
 ### Inspecting and changing the processing surface
 
 For an active message binding, Multica reads the Router subscription with the
@@ -173,6 +201,27 @@ that path with its own configured Multica callback origin:
 MESSAGE_ROUTER_MULTICA_DISPATCH_ORIGIN + dispatchPath
 ```
 
+### Dispatch rejection details
+
+Multica non-2xx dispatch responses include a JSON error body. For example, the
+runtime invocation gate currently returns HTTP 403 with:
+
+```json
+{
+  "error": "dispatch member cannot invoke agent"
+}
+```
+
+The current Router dispatch client reads this response body and persists it in
+`dispatch_task.response_body`; its terminal task log also includes a bounded
+`responseSummary`. Router separately records the normalized
+`failureCode=http_error` and an HTTP-status-based `failureReason`.
+
+Dispatch is asynchronous: the original Router receive call has already returned
+`accepted` before the worker calls Multica. Therefore the detailed Multica body
+is retained on the Router dispatch task and in its terminal log, but is not
+synchronously returned to the original event producer.
+
 Pre-release and production Router deployments can therefore share binding data
 without persisting a pre-release callback origin into a record later consumed
 by production. The Router HTTP API base URL and the Multica callback origin are
@@ -180,6 +229,10 @@ separate configuration values with opposite communication directions.
 
 ## History
 
+- 2026-07-31: Bound message/identity mutations to the intersection of Agent
+  management and invocation permission, while preserving member-visible
+  binding status. Documented how Router retains Multica non-2xx response bodies
+  for asynchronous dispatch diagnosis.
 - 2026-07-29: Added `auto` as a processing-surface binding value. Multica now
   preserves it in the local binding snapshot, exposes it through the binding
   API, and lets operators display or select it without rewriting it to `chat`.
@@ -250,3 +303,17 @@ That made distinct causes such as an existing source binding or an incompatible
 client environment indistinguishable in Multica. Persisting the already
 validated error preserves the failure boundary without exposing callback
 credentials or raw upstream exceptions.
+
+Binding mutators previously required only workspace membership, while task
+dispatch later enforced the Agent invocation policy against the member captured
+by the dispatch endpoint. That mismatch allowed an operator to create a binding
+that could never execute. Requiring both management and invocation permission
+aligns configuration authority with runtime authority without granting workspace
+admins an invocation bypass. Keeping the list endpoint readable preserves the
+view-only experience.
+
+Dispatch failures occur after Router has asynchronously accepted the inbound
+event, so the original producer cannot receive Multica's later HTTP body in the
+same response. Recording the body on the dispatch task and emitting a bounded
+terminal summary keeps the platform detail available for diagnosis while the
+stable failure code and reason remain safe aggregation fields.
