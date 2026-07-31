@@ -45,7 +45,7 @@ func TestASBLaunchIdentityAllowsExplicitUnboundMode(t *testing.T) {
 		identity.Fingerprint != asbUnboundIdentityFingerprint {
 		t.Fatalf("unbound identity = %#v", identity)
 	}
-	if extensions := identity.sandboxExtensions("unused"); len(extensions) != 0 {
+	if extensions := identity.sandboxExtensions(); len(extensions) != 0 {
 		t.Fatalf("unbound sandbox extensions = %#v", extensions)
 	}
 }
@@ -86,14 +86,18 @@ func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
 	if err := identity.validate(); err != nil {
 		t.Fatalf("validate bound identity: %v", err)
 	}
-	extensions := identity.sandboxExtensions("wireguard-credentials")
+	extensions := identity.sandboxExtensions()
 	for key, expected := range map[string]string{
-		"spiffe.lazyAuth":          "true",
-		"wireguard.worker":         "12345",
-		"wireguard.uemCredentials": "wireguard-credentials",
+		"spiffe.lazyAuth":    "true",
+		"wireguard.lazyAuth": "true",
 	} {
 		if extensions[key] != expected {
 			t.Fatalf("bound sandbox extension %s = %q, want %q", key, extensions[key], expected)
+		}
+	}
+	for _, forbidden := range []string{"wireguard.worker", "wireguard.uemCredentials"} {
+		if _, ok := extensions[forbidden]; ok {
+			t.Fatalf("bound sandbox extensions include create-time identity field %s", forbidden)
 		}
 	}
 }

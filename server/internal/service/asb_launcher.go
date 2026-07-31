@@ -222,14 +222,13 @@ func (identity ASBResolvedIdentity) validate() error {
 	}
 }
 
-func (identity ASBResolvedIdentity) sandboxExtensions(wireGuardCredentials string) map[string]string {
+func (identity ASBResolvedIdentity) sandboxExtensions() map[string]string {
 	if identity.Mode == asbIdentityModeUnbound {
 		return nil
 	}
 	return map[string]string{
-		"spiffe.lazyAuth":          "true",
-		"wireguard.worker":         identity.RawEmployeeID,
-		"wireguard.uemCredentials": wireGuardCredentials,
+		"spiffe.lazyAuth":    "true",
+		"wireguard.lazyAuth": "true",
 	}
 }
 
@@ -633,7 +632,7 @@ func (l *ASBLauncher) resolveSandbox(
 			"multica.runtime_id": util.UUIDToString(runtime.ID),
 			"multica.backend":    string(SandboxBackendASB),
 		},
-		Extensions: identity.sandboxExtensions(l.Config.WireGuardCredentials),
+		Extensions: identity.sandboxExtensions(),
 	})
 	if err != nil {
 		return "", true, fmt.Errorf("create ASB sandbox: %w", err)
