@@ -260,8 +260,10 @@ func attachAndProbeASBIdentitySource(
 	if timeout <= 0 {
 		return errors.New("ASB WireGuard ready timeout is not configured")
 	}
+	identityCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	if err := attachASBBUCIdentitySource(
-		ctx,
+		identityCtx,
 		client,
 		sandboxID,
 		ASBBUCIdentityGrant{
@@ -275,7 +277,7 @@ func attachAndProbeASBIdentitySource(
 		return err
 	}
 	if err := waitForASBSandboxState(
-		ctx,
+		identityCtx,
 		client,
 		sandboxID,
 		timeout,
@@ -288,14 +290,12 @@ func attachAndProbeASBIdentitySource(
 	// every repeated WireGuard attachment restarts the VPN tunnel, so retrying
 	// the POST while it is converging can prevent it from ever becoming ready.
 	// Readiness is determined only by the identity probes below.
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
 	ticker := time.NewTicker(asbIdentityProbeInterval(timeout))
 	defer ticker.Stop()
 	var lastErr error
 	for {
 		if err := probeASBBUCIdentity(
-			ctx,
+			identityCtx,
 			client,
 			sandboxID,
 			employeeID,
@@ -306,9 +306,10 @@ func attachAndProbeASBIdentitySource(
 			lastErr = err
 		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
+		case <-identityCtx.Done():
+			if !errors.Is(identityCtx.Err(), context.DeadlineExceeded) {
+				return identityCtx.Err()
+			}
 			return fmt.Errorf(
 				"temporary ASB enterprise identity source did not become ready within %s: %w",
 				timeout,
@@ -325,7 +326,12 @@ func attachASBBUCIdentitySource(
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
 ) error {
-	if err := client.AttachBUCIdentity(ctx, sandboxID, grant, false); err != nil {
+	// Use one synchronous attachment. ASB only reports HTTP 200 after the
+	// sandbox-side WireGuard setup has completed; returning from an async
+	// attachment while that setup is still replacing sandbox resources can
+	// expose a transient Running state and then a terminal sandbox. Retrying
+	// the attachment is also unsafe because every POST restarts the setup.
+	if err := client.AttachBUCIdentity(ctx, sandboxID, grant, true); err != nil {
 		return fmt.Errorf("attach BUC identity to temporary ASB source: %w", err)
 	}
 	return nil
