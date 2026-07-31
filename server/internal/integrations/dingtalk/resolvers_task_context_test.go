@@ -20,6 +20,15 @@ import (
 const (
 	legacyDingTalkRobotIdentityJSONKey            = "dingtalk_robot_identity"
 	legacyDingTalkRobotIdentityUnavailableJSONKey = "dingtalk_robot_identity_unavailable"
+	testASBDWSRuntimeMetadata                     = `{
+		"kind":"cloud-sandbox",
+		"sandbox_backend":"asb",
+		"provider":"hermes",
+		"artifact_kind":"oci_image",
+		"artifact_ref":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"artifact_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"capabilities":["hermes","dws"]
+	}`
 )
 
 type taskContextQueriesStub struct {
@@ -62,11 +71,8 @@ func (s *robotEmployeeResolverStub) ResolveEmployeeByCorpID(_ context.Context, c
 func newRobotTaskContextResolver(employee *robotEmployeeResolverStub) *robotTaskContextResolver {
 	return &robotTaskContextResolver{
 		q: &taskContextQueriesStub{
-			agent: db.Agent{RuntimeID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}},
-			runtime: db.AgentRuntime{RuntimeMode: "cloud", Metadata: []byte(`{
-				"kind":"fc-e2b",
-				"capabilities":["dws"]
-			}`)},
+			agent:   db.Agent{RuntimeID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}},
+			runtime: db.AgentRuntime{RuntimeMode: "cloud", Metadata: []byte(testASBDWSRuntimeMetadata)},
 		},
 		employees: employee,
 		identityContexts: &robotIdentityContextCreatorStub{
@@ -155,15 +161,15 @@ func TestRobotTaskContextResolverContinuesWithoutMissingOrganizationIdentity(t *
 
 func TestRobotTaskContextResolverPrefersTrustedExternalIdentityToken(t *testing.T) {
 	message, err := InboundFromHTTPCallback(HTTPCallbackMessage{
-		ConversationID:                 "conversation-1",
-		ConversationType:               "single",
-		MessageID:                      "message-1",
-		SenderUID:                      "123456",
-		SenderOrgID:                    "654321",
-		SenderName:                     "黄谣",
-		Text:                           "hello",
-		IdentityContextToken:           "sealed-router-context",
-		IdentityContextTokenExpiresAt:  4102444800000,
+		ConversationID:                "conversation-1",
+		ConversationType:              "single",
+		MessageID:                     "message-1",
+		SenderUID:                     "123456",
+		SenderOrgID:                   "654321",
+		SenderName:                    "黄谣",
+		Text:                          "hello",
+		IdentityContextToken:          "sealed-router-context",
+		IdentityContextTokenExpiresAt: 4102444800000,
 	}, "client-1", "11111111-1111-1111-1111-111111111111")
 	if err != nil {
 		t.Fatalf("InboundFromHTTPCallback: %v", err)
@@ -216,16 +222,16 @@ func TestRobotTaskContextResolverOverridesDispatchInitiatorWithCurrentSender(t *
 		t.Fatal(err)
 	}
 	message, err := InboundFromHTTPCallback(HTTPCallbackMessage{
-		ConversationID:       "conversation-1",
-		ConversationType:     "single",
-		MessageID:            "message-1",
-		SenderUID:            "123456",
-			SenderOrgID:          "654321",
-			SenderName:           "当前对话者",
-			Text:                 "hello",
-			IdentityContextToken: "sealed-router-context",
-			IdentityContextTokenExpiresAt: 4102444800000,
-			DispatchContext:      fakeInitiator,
+		ConversationID:                "conversation-1",
+		ConversationType:              "single",
+		MessageID:                     "message-1",
+		SenderUID:                     "123456",
+		SenderOrgID:                   "654321",
+		SenderName:                    "当前对话者",
+		Text:                          "hello",
+		IdentityContextToken:          "sealed-router-context",
+		IdentityContextTokenExpiresAt: 4102444800000,
+		DispatchContext:               fakeInitiator,
 	}, "client-1", "11111111-1111-1111-1111-111111111111")
 	if err != nil {
 		t.Fatalf("InboundFromHTTPCallback: %v", err)
@@ -362,11 +368,8 @@ func TestRobotTaskContextResolverExchangesStreamSenderForContextToken(t *testing
 	runtimeID := pgtype.UUID{Bytes: [16]byte{2}, Valid: true}
 	resolver := &robotTaskContextResolver{
 		q: &taskContextQueriesStub{
-			agent: db.Agent{RuntimeID: runtimeID},
-			runtime: db.AgentRuntime{RuntimeMode: "cloud", Metadata: []byte(`{
-				"kind":"fc-e2b",
-				"capabilities":["dws"]
-			}`)},
+			agent:   db.Agent{RuntimeID: runtimeID},
+			runtime: db.AgentRuntime{RuntimeMode: "cloud", Metadata: []byte(testASBDWSRuntimeMetadata)},
 		},
 		employees:        employee,
 		identityContexts: identityContexts,

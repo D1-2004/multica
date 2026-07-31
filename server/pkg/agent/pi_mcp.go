@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
+
+	"github.com/mozillazg/go-pinyin"
 )
 
 const (
@@ -110,12 +114,12 @@ func normalizePiMCPConfig(raw json.RawMessage) ([]byte, error) {
 
 	servers := make([]piMCPServer, 0, len(names))
 	for _, name := range names {
-		if !piMCPServerNameRE.MatchString(name) {
-			return nil, fmt.Errorf("pi mcp_config: server %q has an invalid name", name)
+		canonicalName, err := canonicalPiMCPServerName(name)
+		if err != nil {
+			return nil, err
 		}
 		var server piMCPServer
 		var enabled bool
-		var err error
 		if raw, ok := source.MCPServers[name]; ok {
 			server, enabled, err = normalizePiMCPClaudeServer(name, raw)
 		} else {
@@ -125,6 +129,7 @@ func normalizePiMCPConfig(raw json.RawMessage) ([]byte, error) {
 			return nil, err
 		}
 		if enabled {
+			server.Name = canonicalName
 			servers = append(servers, server)
 		}
 	}
@@ -137,6 +142,75 @@ func normalizePiMCPConfig(raw json.RawMessage) ([]byte, error) {
 		return nil, errors.New("pi canonical mcp_config exceeds the 1 MiB limit")
 	}
 	return data, nil
+}
+
+func canonicalPiMCPServerName(name string) (string, error) {
+	if piMCPServerNameRE.MatchString(name) {
+		return name, nil
+	}
+
+	args := pinyin.NewArgs()
+	args.Style = pinyin.Normal
+	var (
+		canonical strings.Builder
+		hasHan    bool
+		separated bool
+	)
+	writeSeparator := func() {
+		if canonical.Len() > 0 {
+			separated = true
+		}
+	}
+	for _, character := range name {
+		switch {
+		case unicode.Is(unicode.Han, character):
+			hasHan = true
+			values := pinyin.SinglePinyin(character, args)
+			if len(values) == 0 || values[0] == "" {
+				return "", fmt.Errorf("pi mcp_config: server %q has an invalid name", name)
+			}
+			writeSeparator()
+			if separated {
+				canonical.WriteByte('-')
+				separated = false
+			}
+			canonical.WriteString(strings.ToLower(values[0]))
+		case character >= 'A' && character <= 'Z':
+			if separated {
+				canonical.WriteByte('-')
+				separated = false
+			}
+			canonical.WriteRune(character + ('a' - 'A'))
+		case character >= 'a' && character <= 'z' || character >= '0' && character <= '9':
+			if separated {
+				canonical.WriteByte('-')
+				separated = false
+			}
+			canonical.WriteRune(character)
+		default:
+			writeSeparator()
+		}
+	}
+	if !hasHan {
+		return "", fmt.Errorf("pi mcp_config: server %q has an invalid name", name)
+	}
+
+	base := strings.Trim(canonical.String(), "-")
+	const hashLength = 10
+	const separatorLength = 1
+	maxBaseLength := 64 - separatorLength - hashLength
+	if len(base) > maxBaseLength {
+		base = strings.TrimRight(base[:maxBaseLength], "-")
+	}
+	if base == "" {
+		return "", fmt.Errorf("pi mcp_config: server %q has an invalid name", name)
+	}
+	digest := sha256.Sum256([]byte(name))
+	result := fmt.Sprintf("%s-%x", base, digest[:hashLength/2])
+	if !piMCPServerNameRE.MatchString(result) {
+		return "", fmt.Errorf("pi mcp_config: server %q has an invalid name", name)
+	}
+	return result, nil
 }
 
 func normalizePiMCPClaudeServer(name string, raw json.RawMessage) (piMCPServer, bool, error) {

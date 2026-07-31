@@ -105,6 +105,8 @@ type Config struct {
 	// sandboxes have different network reachability from the Multica server.
 	AgentIdentityControlBaseURL string
 	FCE2B                       service.FCE2BConfig
+	ASB                         service.ASBConfig
+	EnterpriseIdentity          service.EnterpriseIdentityConfig
 	AttachmentDownloadMode      string
 	AttachmentDownloadURLTTL    time.Duration
 	// AttachmentFrameAncestors are trusted browser origins allowed to embed
@@ -150,6 +152,8 @@ type Handler struct {
 	Bus                     *events.Bus
 	TaskService             *service.TaskService
 	FCE2BLauncher           *service.FCE2BLauncher
+	ASBLauncher             *service.ASBLauncher
+	EnterpriseIdentity      *service.EnterpriseIdentityService
 	FCE2BStable             *service.FCE2BStableService
 	IssueService            *service.IssueService
 	IssueCommentService     *service.IssueCommentService

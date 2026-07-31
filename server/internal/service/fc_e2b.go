@@ -357,16 +357,8 @@ func (c FCE2BConfig) ValidateTemplateAPI() error {
 }
 
 func IsFCE2BRuntime(rt db.AgentRuntime) bool {
-	if rt.RuntimeMode != "cloud" {
-		return false
-	}
-	var metadata struct {
-		Kind string `json:"kind"`
-	}
-	if len(rt.Metadata) == 0 || json.Unmarshal(rt.Metadata, &metadata) != nil {
-		return false
-	}
-	return metadata.Kind == FCE2BMetadataKind
+	metadata, err := ParseCloudSandboxRuntime(rt)
+	return err == nil && metadata.SandboxBackend == SandboxBackendAliyunFC
 }
 
 // FCE2BSupportedProviders lists the agent providers an FC/E2B sandbox runtime
@@ -612,25 +604,7 @@ func (l *FCE2BLauncher) detectFCE2BRunnerLaunch(ctx context.Context, sandboxID s
 }
 
 func FCE2BRuntimeHasCapability(rt db.AgentRuntime, capability string) bool {
-	if !IsFCE2BRuntime(rt) {
-		return false
-	}
-	capability = strings.ToLower(strings.TrimSpace(capability))
-	if capability == "" {
-		return false
-	}
-	var metadata struct {
-		Capabilities []string `json:"capabilities"`
-	}
-	if json.Unmarshal(rt.Metadata, &metadata) != nil {
-		return false
-	}
-	for _, candidate := range metadata.Capabilities {
-		if strings.ToLower(strings.TrimSpace(candidate)) == capability {
-			return true
-		}
-	}
-	return false
+	return IsFCE2BRuntime(rt) && CloudSandboxRuntimeHasCapability(rt, capability)
 }
 
 // FCE2BRuntimeTemplateChannel treats rows created before stable-channel
@@ -639,17 +613,7 @@ func FCE2BRuntimeTemplateChannel(rt db.AgentRuntime) string {
 	if !IsFCE2BRuntime(rt) {
 		return ""
 	}
-	var metadata struct {
-		TemplateChannel string `json:"template_channel"`
-	}
-	if json.Unmarshal(rt.Metadata, &metadata) != nil {
-		return ""
-	}
-	channel := strings.ToLower(strings.TrimSpace(metadata.TemplateChannel))
-	if channel == "" {
-		return "stable"
-	}
-	return channel
+	return CloudSandboxRuntimeChannel(rt)
 }
 
 type CommandRunner interface {
@@ -1742,11 +1706,24 @@ func (l *FCE2BLauncher) extraEnvForTask(
 	runtime db.AgentRuntime,
 	sandboxID string,
 ) (map[string]string, error) {
+	return l.extraEnvForTaskWithModel(ctx, task, runtime, sandboxID, l.Config.ModelForAgent)
+}
+
+func (l *FCE2BLauncher) extraEnvForTaskWithModel(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	runtime db.AgentRuntime,
+	sandboxID string,
+	modelForAgent func(string) (string, error),
+) (map[string]string, error) {
+	if modelForAgent == nil {
+		return nil, errors.New("cloud sandbox model resolver is unavailable")
+	}
 	agentRow, err := l.Queries.GetAgent(ctx, task.AgentID)
 	if err != nil {
-		return nil, fmt.Errorf("load agent for FC/E2B launch: %w", err)
+		return nil, fmt.Errorf("load agent for cloud sandbox launch: %w", err)
 	}
-	model, err := l.Config.ModelForAgent(agentRow.Model.String)
+	model, err := modelForAgent(agentRow.Model.String)
 	if err != nil {
 		return nil, err
 	}
@@ -1799,7 +1776,7 @@ func (l *FCE2BLauncher) identityEnvForTask(
 ) (map[string]string, error) {
 	taskID := util.UUIDToString(task.ID)
 	agentID := util.UUIDToString(task.AgentID)
-	hasDWSCapability := FCE2BRuntimeHasCapability(runtime, "dws")
+	hasDWSCapability := CloudSandboxRuntimeHasCapability(runtime, "dws")
 	githubConnection, hasGithubConnection := l.githubConnectionForAgent(ctx, task, runtime, agentRow)
 
 	prepared, err := fcE2BAgentIdentityExtraEnv(task, l.Config)

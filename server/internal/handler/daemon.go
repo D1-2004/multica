@@ -1634,16 +1634,16 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				mcpConfig = merged
 			}
 		}
-		// Pi itself intentionally has no native MCP client. FC/E2B Pi templates
-		// therefore must explicitly advertise the image-owned `mcp` extension
+		// Pi itself intentionally has no native MCP client. Cloud-sandbox Pi
+		// images therefore must explicitly advertise the image-owned `mcp` extension
 		// before a managed config can be dispatched. The UI applies the same
 		// capability gate, but this server-side check also covers CLI/API-created
 		// agents and user-scoped runtime overlays. Fail closed and cancel the
 		// already-claimed task instead of launching Pi without the requested tools.
-		if service.IsFCE2BRuntime(runtime) &&
-			service.FCE2BRuntimeProvider(runtime) == "pi" &&
+		if service.IsCloudSandboxRuntime(runtime) &&
+			service.CloudSandboxRuntimeProvider(runtime) == "pi" &&
 			agentpkg.HasManagedMCPConfig(mcpConfig) &&
-			!service.FCE2BRuntimeHasCapability(runtime, "mcp") {
+			!service.CloudSandboxRuntimeHasCapability(runtime, "mcp") {
 			slog.Error("daemon claim: Pi runtime template lacks managed MCP capability; cancelling task",
 				"task_id", uuidToString(task.ID),
 				"runtime_id", runtimeID,

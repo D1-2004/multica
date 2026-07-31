@@ -41,6 +41,15 @@ func TestBuildPiArgsBasicFlags(t *testing.T) {
 	}
 }
 
+func TestQualifyPiModelWithConfiguredDefaultProvider(t *testing.T) {
+	if got := qualifyPiModel("qwen3.7-plus", "deap"); got != "deap/qwen3.7-plus" {
+		t.Fatalf("qualifyPiModel() = %q, want %q", got, "deap/qwen3.7-plus")
+	}
+	if got := qualifyPiModel("anthropic/claude-sonnet-4-20250514", "deap"); got != "anthropic/claude-sonnet-4-20250514" {
+		t.Fatalf("qualified model was rewritten: %q", got)
+	}
+}
+
 func TestBuildPiArgsCustomArgsAppended(t *testing.T) {
 	// Users can still restrict tools via custom_args if desired.
 	args := buildPiArgs("prompt", "/tmp/s.jsonl", ExecOptions{

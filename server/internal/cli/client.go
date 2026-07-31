@@ -314,6 +314,19 @@ func (c *APIClient) DeleteJSONWithBody(ctx context.Context, path string, body an
 
 // PostJSON performs a POST request with a JSON body.
 func (c *APIClient) PostJSON(ctx context.Context, path string, body any, out any) error {
+	return c.PostJSONWithHeaders(ctx, path, body, out, nil)
+}
+
+// PostJSONWithHeaders performs a POST request with a JSON body and additional
+// request headers. Authentication and Multica execution-context headers remain
+// owned by the client.
+func (c *APIClient) PostJSONWithHeaders(
+	ctx context.Context,
+	path string,
+	body any,
+	out any,
+	headers map[string]string,
+) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -324,6 +337,9 @@ func (c *APIClient) PostJSON(ctx context.Context, path string, body any, out any
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 	c.setHeaders(req)
 
 	resp, err := c.HTTPClient.Do(req)

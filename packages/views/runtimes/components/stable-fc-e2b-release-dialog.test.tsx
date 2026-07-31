@@ -23,6 +23,10 @@ const mockMutateRelease = vi.hoisted(() => ({
 const mockChannelQuery = vi.hoisted(() => ({
   data: {
     current: null as null | {
+      artifact_ref: string;
+      artifact_build_id: string;
+      artifact_alias: string;
+      artifact_digest: string;
       template_id: string;
       template_build_id: string;
       template_alias: string;
@@ -47,6 +51,12 @@ const mockTemplatesQuery = vi.hoisted(() => ({
   isError: false,
   error: null as Error | null,
 }));
+const mockReleaseHistoryQuery = vi.hoisted(() => ({
+  data: [] as Array<Record<string, unknown>>,
+  isLoading: false,
+  isError: false,
+  error: null as Error | null,
+}));
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "workspace-1",
@@ -59,16 +69,20 @@ vi.mock("@multica/core/runtimes", () => ({
         template.build_id?.trim() &&
         template.status?.toLowerCase() === "ready",
   ),
-  useFCE2BStableChannel: () => mockChannelQuery,
+  useCloudSandboxStableChannel: () => mockChannelQuery,
+  useCloudSandboxStableReleases: () => mockReleaseHistoryQuery,
   useFCE2BTemplates: () => mockTemplatesQuery,
-  useCreateFCE2BStableRelease: () => ({
+  useCreateCloudSandboxStableRelease: () => ({
     mutateAsync: (...args: unknown[]) => mockCreateRelease(...args),
     isPending: false,
   }),
-  useMutateFCE2BStableRelease: (action: keyof typeof mockMutateRelease) => ({
-    mutateAsync: (...args: unknown[]) => mockMutateRelease[action](...args),
-    isPending: false,
-  }),
+  useMutateCloudSandboxStableRelease: (
+    _backend: string,
+    action: keyof typeof mockMutateRelease,
+  ) => ({
+      mutateAsync: (...args: unknown[]) => mockMutateRelease[action](...args),
+      isPending: false,
+    }),
 }));
 
 vi.mock("sonner", () => ({
@@ -77,10 +91,13 @@ vi.mock("sonner", () => ({
 
 import { StableFCE2BReleaseDialog } from "./stable-fc-e2b-release-dialog";
 
-function renderDialog() {
+function renderDialog(sandboxBackend: "aliyun_fc" | "asb" = "aliyun_fc") {
   return render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
-      <StableFCE2BReleaseDialog onClose={vi.fn()} />
+      <StableFCE2BReleaseDialog
+        sandboxBackend={sandboxBackend}
+        onClose={vi.fn()}
+      />
     </I18nProvider>,
   );
 }
@@ -118,6 +135,10 @@ describe("StableFCE2BReleaseDialog", () => {
     mockTemplatesQuery.isLoading = false;
     mockTemplatesQuery.isError = false;
     mockTemplatesQuery.error = null;
+    mockReleaseHistoryQuery.data = [];
+    mockReleaseHistoryQuery.isLoading = false;
+    mockReleaseHistoryQuery.isError = false;
+    mockReleaseHistoryQuery.error = null;
   });
 
   it("initializes with template evidence and an optional note", async () => {
@@ -142,6 +163,7 @@ describe("StableFCE2BReleaseDialog", () => {
       expect(mockCreateRelease).toHaveBeenCalledWith({
         idempotencyKey: expect.any(String),
         data: {
+          sandbox_backend: "aliyun_fc",
           template_id: "template-current",
           expected_build_id: "build-current",
           note: "",
@@ -152,6 +174,10 @@ describe("StableFCE2BReleaseDialog", () => {
 
   it("labels the current stable template even when its build changed", async () => {
     mockChannelQuery.data.current = {
+      artifact_ref: "template-current",
+      artifact_build_id: "build-current",
+      artifact_alias: "Current image",
+      artifact_digest: "",
       template_id: "template-current",
       template_build_id: "build-current-before-log-config",
       template_alias: "Current image",
@@ -184,6 +210,7 @@ describe("StableFCE2BReleaseDialog", () => {
       expect(mockCreateRelease).toHaveBeenCalledWith({
         idempotencyKey: expect.any(String),
         data: {
+          sandbox_backend: "aliyun_fc",
           template_id: "template-current",
           expected_build_id: "build-current",
           note: "",
@@ -194,6 +221,10 @@ describe("StableFCE2BReleaseDialog", () => {
 
   it("waits for developer approval before manually starting the 24-hour rollout", async () => {
     mockChannelQuery.data.current = {
+      artifact_ref: "template-current",
+      artifact_build_id: "build-current",
+      artifact_alias: "Current image",
+      artifact_digest: "",
       template_id: "template-current",
       template_build_id: "build-current",
       template_alias: "Current image",
@@ -201,6 +232,7 @@ describe("StableFCE2BReleaseDialog", () => {
     };
     mockChannelQuery.data.active_release = {
       id: "release-next",
+      artifact_alias: "Next image",
       template_alias: "Next image",
       status: "awaiting_rollout",
       bootstrap: false,
@@ -229,6 +261,10 @@ describe("StableFCE2BReleaseDialog", () => {
 
   it("shows the fixed rollout schedule and advances without changing its timestamps", async () => {
     mockChannelQuery.data.current = {
+      artifact_ref: "template-current",
+      artifact_build_id: "build-current",
+      artifact_alias: "Current image",
+      artifact_digest: "",
       template_id: "template-current",
       template_build_id: "build-current",
       template_alias: "Current image",
@@ -330,6 +366,10 @@ describe("StableFCE2BReleaseDialog", () => {
 
   it("completes final observation and exits the active release", async () => {
     mockChannelQuery.data.current = {
+      artifact_ref: "template-current",
+      artifact_build_id: "build-current",
+      artifact_alias: "Current image",
+      artifact_digest: "",
       template_id: "template-current",
       template_build_id: "build-current",
       template_alias: "Current image",
@@ -363,5 +403,104 @@ describe("StableFCE2BReleaseDialog", () => {
         "release-next",
       ),
     );
+  });
+
+  it("submits an immutable ASB image with Aone and source evidence", async () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    const commit = "b".repeat(40);
+    renderDialog("asb");
+
+    fireEvent.change(
+      screen.getByLabelText("Immutable OCI image reference"),
+      {
+        target: {
+          value: `hub.docker.alibaba-inc.com/aone-base-global/multica-asb-runtime@${digest}`,
+        },
+      },
+    );
+    fireEvent.change(screen.getByLabelText("Aone build ID"), {
+      target: { value: "56309841" },
+    });
+    fireEvent.change(screen.getByLabelText("Aone build time"), {
+      target: { value: "2026-07-30T20:34:18" },
+    });
+    fireEvent.change(screen.getByLabelText("Image digest"), {
+      target: { value: digest },
+    });
+    fireEvent.change(screen.getByLabelText("Source commit"), {
+      target: { value: commit },
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Verify and initialize stable channel",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(mockCreateRelease).toHaveBeenCalledWith({
+        idempotencyKey: expect.any(String),
+        data: {
+          sandbox_backend: "asb",
+          artifact_ref: `hub.docker.alibaba-inc.com/aone-base-global/multica-asb-runtime@${digest}`,
+          artifact_build_id: "56309841",
+          artifact_built_at: "2026-07-30T20:34:18+08:00",
+          artifact_digest: digest,
+          git_commit: commit,
+          note: "",
+        },
+      }),
+    );
+  });
+
+  it("keeps long ASB references contained and renders build-time history", () => {
+    const artifactRef =
+      "hub.docker.alibaba-inc.com/aone-base-global/multica-asb-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    mockChannelQuery.data.current = {
+      artifact_ref: artifactRef,
+      artifact_build_id: "56487728",
+      artifact_alias: "multica-asb-runtime:56487728",
+      artifact_digest:
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      template_id: "",
+      template_build_id: "",
+      template_alias: "multica-asb-runtime:56487728",
+      release_id: "release-current",
+    };
+    mockReleaseHistoryQuery.data = [
+      {
+        id: "release-current",
+        artifact_ref: artifactRef,
+        artifact_build_id: "56487728",
+        artifact_built_at: "2026-07-29T12:43:00Z",
+        artifact_alias: "multica-asb-runtime:56487728",
+        source_revision: "abcdef1234567890",
+        status: "completed",
+      },
+      {
+        id: "release-previous",
+        artifact_ref:
+          "hub.docker.alibaba-inc.com/aone-base-global/multica-asb-runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        artifact_build_id: "56309841",
+        artifact_built_at: "2026-07-28T09:30:00Z",
+        artifact_alias: "multica-asb-runtime:56309841",
+        source_revision: "1234567890abcdef",
+        status: "rolled_back",
+      },
+    ];
+
+    renderDialog("asb");
+
+    expect(screen.getByRole("dialog")).toHaveClass(
+      "overflow-hidden",
+      "sm:max-w-4xl",
+    );
+    expect(screen.getByText("Version history")).toBeInTheDocument();
+    expect(screen.getByText("Latest 2 versions")).toBeInTheDocument();
+    expect(screen.getAllByText(artifactRef).length).toBeGreaterThan(0);
+    expect(
+      document.querySelector('time[datetime="2026-07-29T12:43:00Z"]'),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Rolled back")).toBeInTheDocument();
   });
 });

@@ -42,15 +42,21 @@ func TestLoadAgentExecutionSkillsFollowsRuntimeDWSCapability(t *testing.T) {
 	}
 
 	var dwsRuntimeID string
+	digest := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	asbDWSMetadata := fmt.Sprintf(
+		`{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"hermes","artifact_kind":"oci_image","artifact_ref":"registry.example/runtime@sha256:%s","artifact_digest":"sha256:%s","capabilities":["hermes","dws"]}`,
+		digest,
+		digest,
+	)
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO agent_runtime (
 			workspace_id, name, runtime_mode, provider, status,
 			device_info, metadata, visibility, owner_id
 		)
-		VALUES ($1, 'FC Hermes DWS', 'cloud', 'hermes', 'online',
-			'test runtime', '{"kind":"fc-e2b","capabilities":["hermes","dws"]}'::jsonb, 'private', $2)
+		VALUES ($1, 'ASB Hermes DWS', 'cloud', 'hermes', 'online',
+			'test runtime', $2::jsonb, 'private', $3)
 		RETURNING id
-	`, workspaceID, userID).Scan(&dwsRuntimeID); err != nil {
+	`, workspaceID, asbDWSMetadata, userID).Scan(&dwsRuntimeID); err != nil {
 		t.Fatalf("create DWS runtime: %v", err)
 	}
 	var nonDWSRuntimeID string

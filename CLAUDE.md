@@ -261,10 +261,11 @@ pre-release environment provides shared PostgreSQL, Tair, and OSS:
 - Exercise concurrent state transitions with separate database transactions or
   connections, and review the old/new-binary rolling window before release.
 
-Database migrations are an explicit release phase. Container startup must never
-run migrations: execute the packaged `migrate up` binary in a dedicated one-off
-migration task before rolling out application pods. A failed migration blocks
-the release without coupling schema changes to replica startup.
+The Aone all-in-one deployment runs the packaged `migrate up` binary from
+`src/main.sh` after stopping old application processes and before starting the
+new release. The migration runner holds a PostgreSQL advisory lock, so concurrent
+pod startup is serialized safely. Generic container entrypoints still require an
+explicit migration phase.
 
 Migration rules:
 

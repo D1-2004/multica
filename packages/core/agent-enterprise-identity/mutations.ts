@@ -1,0 +1,38 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "../api";
+import { agentEnterpriseIdentityKeys } from "./queries";
+
+export function useBeginAgentEnterpriseIdentityBinding(wsId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      agentId,
+      redirectPath,
+    }: {
+      agentId: string;
+      redirectPath: string;
+    }) =>
+      api.beginAgentEnterpriseIdentityBinding(
+        wsId,
+        agentId,
+        redirectPath,
+      ),
+    onSettled: (_data, _error, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: agentEnterpriseIdentityKeys.status(wsId, variables.agentId),
+      }),
+  });
+}
+
+export function useRevokeAgentEnterpriseIdentity(wsId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (agentId: string) =>
+      api.revokeAgentEnterpriseIdentity(wsId, agentId),
+    onSuccess: async (_data, agentId) => {
+      await queryClient.invalidateQueries({
+        queryKey: agentEnterpriseIdentityKeys.status(wsId, agentId),
+      });
+    },
+  });
+}

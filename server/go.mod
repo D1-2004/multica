@@ -19,6 +19,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/lmittmann/tint v1.1.3
 	github.com/mattn/go-shellwords v1.0.13
+	github.com/mozillazg/go-pinyin v0.21.0
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/openai/openai-go/v3 v3.41.1
 	github.com/pelletier/go-toml/v2 v2.3.0
@@ -30,6 +31,8 @@ require (
 	github.com/slack-go/slack v0.26.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
+	gitlab.alibaba-inc.com/idem/idem-api-client-golang v1.0.0
+	gitlab.alibaba-inc.com/koastline/normandy-auth-sdk-golang v1.2.21
 	gitlab.alibaba-inc.com/koastline/normandy-credential-sdk-golang v1.1.4
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.35.0
@@ -58,13 +61,14 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dapr/dapr v1.15.0-rc.17 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
@@ -72,7 +76,7 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
-	gitlab.alibaba-inc.com/cmms-package/cmmsdkgo v1.1.0 // indirect
+	gitlab.alibaba-inc.com/cmms-package/cmmsdkgo v1.1.1 // indirect
 	go.opentelemetry.io/otel v1.34.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
@@ -81,3 +85,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250127172529-29210b9bc287 // indirect
 	google.golang.org/grpc v1.70.0 // indirect
 )
+
+// Aone GOPROXY publishes the Idem Go SDK from the Code repository path.
+replace gitlab.alibaba-inc.com/idem/idem-api-client-golang => gitlab.alibaba-inc.com/idem/idem-api-client v1.0.0

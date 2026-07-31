@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { AgentRuntime } from "../types";
 import {
   fcE2BProviderForTemplate,
+  isASBRuntime,
+  isCloudSandboxRuntime,
   isFCE2BRuntime,
   isReadyFCE2BTemplate,
+  parseCloudSandboxRuntimeMetadata,
   parseFCE2BRuntimeMetadata,
 } from "./cloud-runtime";
 import type { FCE2BTemplate } from "./cloud-runtime";
@@ -92,6 +95,92 @@ describe("parseFCE2BRuntimeMetadata", () => {
     expect(
       parseFCE2BRuntimeMetadata(
         makeRuntime({ metadata: { kind: 123, template_id: ["tpl-v2"] } }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("parseCloudSandboxRuntimeMetadata", () => {
+  it("parses an ASB OCI runtime without treating it as FC/E2B", () => {
+    const runtime = makeRuntime({
+      provider: "pi",
+      metadata: {
+        kind: "cloud-sandbox",
+        sandbox_backend: "asb",
+        provider: "opencode",
+        artifact_kind: "oci_image",
+        artifact_channel: "candidate",
+        artifact_ref: "registry.example.test/multica/asb@sha256:abc",
+        artifact_build_id: "build-42",
+        artifact_alias: "asb-candidate",
+        artifact_digest: "sha256:abc",
+        capabilities: ["a1", "mw", "", 42],
+      },
+    });
+
+    expect(parseCloudSandboxRuntimeMetadata(runtime)).toEqual({
+      kind: "cloud-sandbox",
+      sandboxBackend: "asb",
+      provider: "opencode",
+      artifactKind: "oci_image",
+      artifactChannel: "candidate",
+      artifactRef: "registry.example.test/multica/asb@sha256:abc",
+      artifactBuildId: "build-42",
+      artifactAlias: "asb-candidate",
+      artifactDigest: "sha256:abc",
+      capabilities: ["a1", "mw"],
+    });
+    expect(isCloudSandboxRuntime(runtime)).toBe(true);
+    expect(isASBRuntime(runtime)).toBe(true);
+    expect(isFCE2BRuntime(runtime)).toBe(false);
+  });
+
+  it("keeps legacy FC/E2B metadata compatible with the generic parser", () => {
+    const runtime = makeRuntime({
+      metadata: {
+        kind: "fc-e2b",
+        template: "multica-fc-team-v2",
+        template_id: "tpl-v2",
+        template_build_id: "build-v2",
+        template_channel: "candidate",
+        capabilities: ["dws", "mcp"],
+      },
+    });
+
+    expect(parseCloudSandboxRuntimeMetadata(runtime)).toMatchObject({
+      sandboxBackend: "aliyun_fc",
+      artifactKind: "e2b_template",
+      artifactChannel: "candidate",
+      artifactRef: "tpl-v2",
+      artifactBuildId: "build-v2",
+      capabilities: ["dws", "mcp"],
+    });
+    expect(isCloudSandboxRuntime(runtime)).toBe(true);
+    expect(isASBRuntime(runtime)).toBe(false);
+    expect(isFCE2BRuntime(runtime)).toBe(true);
+  });
+
+  it("rejects backend and artifact combinations that cannot execute", () => {
+    expect(
+      parseCloudSandboxRuntimeMetadata(
+        makeRuntime({
+          metadata: {
+            kind: "cloud-sandbox",
+            sandbox_backend: "asb",
+            artifact_kind: "e2b_template",
+          },
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseCloudSandboxRuntimeMetadata(
+        makeRuntime({
+          metadata: {
+            kind: "cloud-sandbox",
+            sandbox_backend: "aliyun_fc",
+            artifact_kind: "oci_image",
+          },
+        }),
       ),
     ).toBeNull();
   });
