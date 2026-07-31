@@ -647,6 +647,7 @@
       "dingtalk_account_connect": "绑定数字员工",
       "dingtalk_account_starting": "正在准备员工账号二维码...",
       "dingtalk_account_begin_failed": "无法发起企业数字员工绑定。",
+      "dingtalk_account_permission_denied": "无权限操作，请联系此智能体管理员处理",
       "dingtalk_account_dialog_title": "绑定企业数字员工",
       "dingtalk_account_dialog_description": "请先为 {{agent}} 创建一个钉钉员工账号，用该员工账号登录钉钉客户端后，再扫描此二维码完成绑定。",
       "dingtalk_account_scan_hint": "请使用员工账号登录的钉钉客户端扫码。绑定成功后页面会自动更新。",

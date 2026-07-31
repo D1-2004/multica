@@ -821,6 +821,106 @@ func TestApprovalStatusChangedDispatchUsesIssueWithoutOutboundReply(t *testing.T
 	}
 }
 
+func TestApprovalWorkflowPromptApprovedBranch(t *testing.T) {
+	c := DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+			Approval: &ApprovalEventData{
+				FormCode:          "FORM-2026-001",
+				OriginatorUid:     "originator-uid-secret",
+				ApproverUids:      []string{"approver-uid-secret-1"},
+				NodeType:          "normal",
+				Status:            "approved",
+				AIReadableContent: "审批单「FORM-2026-001」已通过",
+			},
+		}},
+		Surface:          DispatchSurface{Type: "issue"},
+		Outbound:         DispatchOutbound{Mode: "none"},
+		ExternalIdentity: AgentDispatchExternalIdentity{ContextToken: "ctx", ExpiresAt: 4102444800000},
+	}
+	if err := c.validate(); err != nil {
+		t.Fatalf("valid approval dispatch rejected: %v", err)
+	}
+	prompt := mustBuildDispatchPrompt(t, c)
+	wf := prompt.WorkflowPrompt
+
+	for _, required := range []string{
+		"status is approved",
+		"Do not call approve or reject",
+		"dws oa approval detail",
+		"original intent",
+		"dws chat message send",
+		"dws ding message send",
+		`"status":"approved"`,
+		`"originatorUid":"originator-uid-secret"`,
+	} {
+		if !strings.Contains(wf, required) {
+			t.Errorf("approved branch missing %q: %q", required, wf)
+		}
+	}
+
+	for _, absent := range []string{
+		"dws oa approval tasks",
+		"dws oa approval approve",
+		"dws oa approval reject",
+		"auto_approve",
+	} {
+		if strings.Contains(wf, absent) {
+			t.Errorf("approved branch must not contain %q: %q", absent, wf)
+		}
+	}
+}
+
+func TestApprovalWorkflowPromptRejectedBranch(t *testing.T) {
+	c := DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+			Approval: &ApprovalEventData{
+				FormCode:          "FORM-2026-001",
+				OriginatorUid:     "originator-uid-secret",
+				ApproverUids:      []string{"approver-uid-secret-1"},
+				NodeType:          "normal",
+				Status:            "rejected",
+				AIReadableContent: "审批单「FORM-2026-001」已拒绝",
+			},
+		}},
+		Surface:          DispatchSurface{Type: "issue"},
+		Outbound:         DispatchOutbound{Mode: "none"},
+		ExternalIdentity: AgentDispatchExternalIdentity{ContextToken: "ctx", ExpiresAt: 4102444800000},
+	}
+	if err := c.validate(); err != nil {
+		t.Fatalf("valid approval dispatch rejected: %v", err)
+	}
+	prompt := mustBuildDispatchPrompt(t, c)
+	wf := prompt.WorkflowPrompt
+
+	for _, required := range []string{
+		"status is rejected",
+		"Do not call approve or reject",
+		"dws chat message send",
+		"Notify the approval initiator",
+		"resubmission",
+		`"status":"rejected"`,
+	} {
+		if !strings.Contains(wf, required) {
+			t.Errorf("rejected branch missing %q: %q", required, wf)
+		}
+	}
+
+	for _, absent := range []string{
+		"dws oa approval tasks",
+		"dws oa approval approve",
+		"dws oa approval reject",
+		"follow-up actions",
+	} {
+		if strings.Contains(wf, absent) {
+			t.Errorf("rejected branch must not contain %q: %q", absent, wf)
+		}
+	}
+}
+
 func TestShouldSkipApprovalDispatch(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -873,6 +973,73 @@ func TestShouldSkipApprovalDispatch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := shouldSkipApprovalDispatch(tt.command); got != tt.want {
 				t.Fatalf("shouldSkipApprovalDispatch() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractIssueIdentifierFromApprovalContent(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		prefix  string
+		want    string
+	}{
+		{
+			name:    "identifier in form field",
+			content: "审批单「FORM-001」已通过\n关联Issue：MUL-123\n事由：天气查询",
+			prefix:  "MUL",
+			want:    "MUL-123",
+		},
+		{
+			name:    "identifier embedded in text",
+			content: "审批标题：MUL-456 的天气查询申请已通过",
+			prefix:  "MUL",
+			want:    "MUL-456",
+		},
+		{
+			name:    "case insensitive match",
+			content: "关联issue: mul-789",
+			prefix:  "MUL",
+			want:    "MUL-789",
+		},
+		{
+			name:    "no identifier in content",
+			content: "审批单「FORM-001」已通过",
+			prefix:  "MUL",
+			want:    "",
+		},
+		{
+			name:    "empty content",
+			content: "",
+			prefix:  "MUL",
+			want:    "",
+		},
+		{
+			name:    "empty prefix",
+			content: "MUL-123",
+			prefix:  "",
+			want:    "",
+		},
+		{
+			name:    "different prefix in content does not match",
+			content: "关联Issue: ABC-123",
+			prefix:  "MUL",
+			want:    "",
+		},
+		{
+			name:    "prefix with special chars",
+			content: "关联Issue: FDE-42",
+			prefix:  "FDE",
+			want:    "FDE-42",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractIssueIdentifierFromApprovalContent(tt.content, tt.prefix)
+			if got != tt.want {
+				t.Fatalf("extractIssueIdentifierFromApprovalContent(%q, %q) = %q, want %q",
+					tt.content, tt.prefix, got, tt.want)
 			}
 		})
 	}
