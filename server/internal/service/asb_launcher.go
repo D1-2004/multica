@@ -43,34 +43,36 @@ const (
 // ASBConfig is the deployment-owned configuration for the Aone Sandbox
 // backend. Tenant API keys are Runtime-owned encrypted credentials.
 type ASBConfig struct {
-	Enabled               bool
-	APIURL                string
-	ServerURL             string
-	LLMBaseURL            string
-	LLMAPIKey             string
-	LLMModels             []string
-	TimeoutSeconds        int
-	ReadyTimeout          time.Duration
-	WireGuardReadyTimeout time.Duration
-	ResourceCPU           string
-	ResourceMemory        string
-	WireGuardCredentials  string
-	ParseError            error
+	Enabled                bool
+	APIURL                 string
+	ServerURL              string
+	LLMBaseURL             string
+	LLMAPIKey              string
+	LLMModels              []string
+	TimeoutSeconds         int
+	ReadyTimeout           time.Duration
+	WireGuardReadyTimeout  time.Duration
+	ResourceCPU            string
+	ResourceMemory         string
+	WireGuardCredentials   string
+	IdentityAnchorImageRef string
+	ParseError             error
 }
 
 func ASBConfigFromEnv() ASBConfig {
 	cfg := ASBConfig{
-		Enabled:               envBool("MULTICA_ASB_ENABLED"),
-		APIURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_API_URL")), "/"),
-		ServerURL:             strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_SERVER_URL")), "/"),
-		LLMBaseURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_BASE_URL")), "/"),
-		LLMAPIKey:             strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_API_KEY")),
-		TimeoutSeconds:        defaultASBTimeoutSeconds,
-		ReadyTimeout:          defaultASBReadyTimeout,
-		WireGuardReadyTimeout: defaultASBWireGuardReadyTimeout,
-		ResourceCPU:           firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_CPU"), defaultASBResourceCPU),
-		ResourceMemory:        firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_MEMORY"), defaultASBResourceMemory),
-		WireGuardCredentials:  strings.TrimSpace(os.Getenv("MULTICA_ASB_WG_CLIENT_CREDENTIALS")),
+		Enabled:                envBool("MULTICA_ASB_ENABLED"),
+		APIURL:                 strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_API_URL")), "/"),
+		ServerURL:              strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_SERVER_URL")), "/"),
+		LLMBaseURL:             strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_BASE_URL")), "/"),
+		LLMAPIKey:              strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_API_KEY")),
+		TimeoutSeconds:         defaultASBTimeoutSeconds,
+		ReadyTimeout:           defaultASBReadyTimeout,
+		WireGuardReadyTimeout:  defaultASBWireGuardReadyTimeout,
+		ResourceCPU:            firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_CPU"), defaultASBResourceCPU),
+		ResourceMemory:         firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_MEMORY"), defaultASBResourceMemory),
+		WireGuardCredentials:   strings.TrimSpace(os.Getenv("MULTICA_ASB_WG_CLIENT_CREDENTIALS")),
+		IdentityAnchorImageRef: strings.TrimSpace(os.Getenv("MULTICA_ASB_IDENTITY_ANCHOR_IMAGE")),
 	}
 	models, err := parseStringListEnv("MULTICA_ASB_OPENAI_MODELS", os.Getenv("MULTICA_ASB_OPENAI_MODELS"))
 	if err != nil {
@@ -138,6 +140,7 @@ func (c ASBConfig) Validate() error {
 		{"MULTICA_ASB_RESOURCE_CPU", c.ResourceCPU},
 		{"MULTICA_ASB_RESOURCE_MEMORY", c.ResourceMemory},
 		{"MULTICA_ASB_WG_CLIENT_CREDENTIALS", c.WireGuardCredentials},
+		{"MULTICA_ASB_IDENTITY_ANCHOR_IMAGE", c.IdentityAnchorImageRef},
 	}
 	for _, item := range required {
 		if strings.TrimSpace(item.value) == "" {
@@ -161,6 +164,10 @@ func (c ASBConfig) Validate() error {
 	}
 	if c.WireGuardReadyTimeout <= 0 {
 		missing = append(missing, "MULTICA_ASB_WIREGUARD_READY_TIMEOUT")
+	}
+	if strings.TrimSpace(c.IdentityAnchorImageRef) != "" &&
+		!cloudSandboxOCIDigestPattern.MatchString(c.IdentityAnchorImageRef) {
+		return errors.New("MULTICA_ASB_IDENTITY_ANCHOR_IMAGE must use an immutable sha256 OCI digest")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing ASB config: %s", strings.Join(missing, ", "))

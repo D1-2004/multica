@@ -56,9 +56,10 @@ func (store *fakeASBIdentitySourceStore) ListASBRuntimeCredentials(
 
 func TestASBIdentitySourcePausesAndResumesForInheritance(t *testing.T) {
 	const (
-		sourceSandboxID = "identity-source-123"
-		employeeID      = "12345"
-		bucAgentID      = "agent-multica-asb"
+		sourceSandboxID  = "identity-source-123"
+		identityImageRef = "registry.example/identity-source@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		employeeID       = "12345"
+		bucAgentID       = "agent-multica-asb"
 	)
 
 	state := "Running"
@@ -74,7 +75,8 @@ func TestASBIdentitySourcePausesAndResumesForInheritance(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 				t.Fatalf("decode create request: %v", err)
 			}
-			if payload.Timeout != asbMaxCreateTimeout ||
+			if payload.Image.URI != identityImageRef ||
+				payload.Timeout != asbMaxCreateTimeout ||
 				payload.Extensions["wireguard.lazyAuth"] != "true" ||
 				len(payload.Extensions) != 1 {
 				t.Fatalf("identity source create request = %#v", payload)
@@ -118,11 +120,9 @@ func TestASBIdentitySourcePausesAndResumesForInheritance(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
 				t.Fatalf("decode identity probe: %v", err)
 			}
-			if input.Envs["EXPECTED_EMP_ID"] != employeeID ||
-				input.Envs["EXPECTED_BUC_AGENT_ID"] != bucAgentID ||
-				!strings.Contains(input.Command, "a1 --no-update-check") ||
-				!strings.Contains(input.Command, "nw-aliwork-cli login --no-update-check") ||
-				!strings.Contains(input.Command, "nw-aliwork-cli whoami --no-update-check") {
+			if input.Command != "curl -fsS --max-time 10 -X POST https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json >/dev/null" ||
+				strings.Contains(input.Command, "a1 ") ||
+				strings.Contains(input.Command, "nw-aliwork-cli") {
 				t.Fatalf("identity probe input = %#v", input)
 			}
 			response.Header().Set("Content-Type", "text/event-stream")
@@ -188,11 +188,12 @@ func TestASBIdentitySourcePausesAndResumesForInheritance(t *testing.T) {
 		},
 		Capacity: fakeASBIdentitySourceCapacity{},
 		Config: ASBConfig{
-			ResourceCPU:           "2",
-			ResourceMemory:        "4Gi",
-			ReadyTimeout:          time.Second,
-			WireGuardReadyTimeout: time.Second,
-			WireGuardCredentials:  "wg-client",
+			ResourceCPU:            "2",
+			ResourceMemory:         "4Gi",
+			ReadyTimeout:           time.Second,
+			WireGuardReadyTimeout:  time.Second,
+			WireGuardCredentials:   "wg-client",
+			IdentityAnchorImageRef: identityImageRef,
 		},
 	}
 

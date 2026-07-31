@@ -39,8 +39,9 @@ type asbIdentitySourceRuntimeStore interface {
 }
 
 // ASBIdentitySourceManager establishes a BUC credential directory inside a
-// dedicated ASB sandbox. Once BUC, a1, and nw-aliwork-cli are proven usable,
-// the source is paused. It is resumed only while a task sandbox inherits that
+// dedicated ASB sandbox built from the same image that proved the original
+// prepub anchor flow. Once BUC is proven usable, the source is paused. It is
+// resumed only while a task sandbox inherits that
 // directory through buc.originalSandboxID, then paused again after inheritance.
 // Paused is therefore a healthy lifecycle state, not a reauthorization signal.
 type ASBIdentitySourceManager struct {
@@ -82,7 +83,7 @@ func (m *ASBIdentitySourceManager) Create(
 		return EnterpriseIdentitySourceAvailability{}, err
 	}
 	sandbox, err := m.Capacity.Create(ctx, runtimeID, client, ASBCreateSandboxInput{
-		ImageURI:       metadata.ArtifactRef,
+		ImageURI:       m.Config.IdentityAnchorImageRef,
 		TimeoutSeconds: asbMaxCreateTimeout,
 		ResourceCPU:    m.Config.ResourceCPU,
 		ResourceMemory: m.Config.ResourceMemory,
@@ -297,19 +298,17 @@ func attachAndProbeASBIdentitySource(
 		return fmt.Errorf("wait for attached ASB identity source to return running: %w", err)
 	}
 
-	// Submit the attachment exactly once, then determine readiness only through
-	// the identity probes below. The asynchronous ASB contract acknowledges the
-	// request with HTTP 202 while the sandbox-side WireGuard tunnel converges.
+	// Preserve the last proven prepub contract: synchronous BUC attachment,
+	// followed only by the BUC reachability probe. A1 and other CLI checks belong
+	// to real task verification and must not make an otherwise valid binding fail.
 	ticker := time.NewTicker(asbIdentityProbeInterval(timeout))
 	defer ticker.Stop()
 	var lastErr error
 	for {
-		if err := probeASBBUCIdentity(
+		if err := probeASBIdentitySourceBUC(
 			identityCtx,
 			client,
 			sandboxID,
-			employeeID,
-			bucAgentID,
 		); err == nil {
 			return nil
 		} else {
@@ -398,8 +397,36 @@ func prepareASBIdentitySource(
 	if err := renewASBIdentitySource(sourceCtx, client, sandboxID); err != nil {
 		return err
 	}
-	if err := probeASBBUCIdentity(sourceCtx, client, sandboxID, employeeID, bucAgentID); err != nil {
+	if err := probeASBIdentitySourceBUC(sourceCtx, client, sandboxID); err != nil {
 		return fmt.Errorf("probe resumed ASB enterprise identity source: %w", err)
+	}
+	return nil
+}
+
+func probeASBIdentitySourceBUC(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+) error {
+	endpoint, err := client.GetEndpoint(ctx, sandboxID, asbExecPort)
+	if err != nil {
+		return fmt.Errorf("resolve ASB identity source command endpoint: %w", err)
+	}
+	result, err := client.Exec(ctx, endpoint, ASBExecInput{
+		Command: "curl -fsS --max-time 10 -X POST https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json >/dev/null",
+		CWD:     "/",
+		Timeout: 15 * time.Second,
+		Envs: map[string]string{
+			"HOME":    asbRunnerHome,
+			"USER":    "user",
+			"LOGNAME": "user",
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode == nil || *result.ExitCode != 0 || result.ErrorName != "" {
+		return errors.New("ASB BUC identity probe failed")
 	}
 	return nil
 }
