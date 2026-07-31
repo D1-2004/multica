@@ -372,6 +372,46 @@ func TestCompletionWorkerRetriesTransientResponse(t *testing.T) {
 	}
 }
 
+func TestCompletionWorkerDropsDelegatedCommentCallbackAfterFirstFailure(t *testing.T) {
+	pool := taskCompletionTestPool(t)
+	queries := db.New(pool)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+	client, err := NewClient(ClientConfig{BaseURL: server.URL, ServiceCredential: "service-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion := enqueueWorkerTestCompletion(t, queries, client.TargetIdentity(), "comment-drop")
+	requestID := "multica-comment-terminal:" + util.UUIDToString(completion.RootTaskID)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE task_completion_outbox SET request_id = $2 WHERE id = $1
+	`, completion.ID, requestID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM task_completion_outbox WHERE id = $1`, completion.ID)
+	})
+
+	worker := NewCompletionWorker(queries, client, nil)
+	if worked, err := worker.ProcessNext(context.Background()); err != nil || !worked {
+		t.Fatalf("worked=%v error=%v", worked, err)
+	}
+	var status string
+	var attempts int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT status, attempt_count FROM task_completion_outbox WHERE id = $1
+	`, completion.ID).Scan(&status, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 || status != "dead_letter" || attempts != 1 {
+		t.Fatalf("requests=%d status=%q attempts=%d", requests, status, attempts)
+	}
+}
+
 func TestCompletionWorkerDeadLettersPermanentResponse(t *testing.T) {
 	pool := taskCompletionTestPool(t)
 	queries := db.New(pool)

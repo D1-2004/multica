@@ -397,6 +397,16 @@ INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, ty
 VALUES ($1, $2, $3, $4, $5, $6, sqlc.narg(parent_id), sqlc.narg(source_task_id))
 RETURNING *;
 
+-- name: GetDelegatedMemberCommentBySourceTask :one
+-- Idempotency lookup for Chat-to-Issue continuation. One source Chat task owns
+-- at most one delegated member comment; retries must return that existing
+-- mapping instead of appending the same instruction again.
+SELECT * FROM comment
+WHERE author_type = 'member'
+  AND source_task_id = @source_task_id
+ORDER BY created_at, id
+LIMIT 1;
+
 -- name: UpdateComment :one
 UPDATE comment SET
     content = $2,

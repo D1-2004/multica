@@ -3022,6 +3022,79 @@ func (q *Queries) GetLastTaskStartedAtForIssueAndAgent(ctx context.Context, arg 
 	return started_at, err
 }
 
+const getLatestActiveTaskForIssueAndAgent = `-- name: GetLatestActiveTaskForIssueAndAgent :one
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, runtime_launch_lease_token, runtime_launch_lease_expires_at FROM agent_task_queue
+WHERE issue_id = $1 AND agent_id = $2
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+ORDER BY
+  CASE status
+    WHEN 'queued' THEN 0
+    WHEN 'dispatched' THEN 1
+    WHEN 'waiting_local_directory' THEN 2
+    WHEN 'running' THEN 3
+    ELSE 4
+  END,
+  created_at DESC
+LIMIT 1
+`
+
+type GetLatestActiveTaskForIssueAndAgentParams struct {
+	IssueID pgtype.UUID `json:"issue_id"`
+	AgentID pgtype.UUID `json:"agent_id"`
+}
+
+// Returns the current queue anchor when a comment arrives after a task has
+// already been claimed. The comment is not treated as delivered to this row;
+// completion reconciliation will enqueue the follow-up that actually consumes
+// it. Callers use this row only for handoff observability and response metadata.
+func (q *Queries) GetLatestActiveTaskForIssueAndAgent(ctx context.Context, arg GetLatestActiveTaskForIssueAndAgentParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, getLatestActiveTaskForIssueAndAgent, arg.IssueID, arg.AgentID)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.RuntimeLaunchLeaseToken,
+		&i.RuntimeLaunchLeaseExpiresAt,
+	)
+	return i, err
+}
+
 const getLatestTaskRoleForIssueAndAgent = `-- name: GetLatestTaskRoleForIssueAndAgent :one
 SELECT is_leader_task, squad_id FROM agent_task_queue
 WHERE issue_id = $1 AND agent_id = $2
@@ -3059,6 +3132,87 @@ LIMIT 1
 
 func (q *Queries) GetRetryChildByParent(ctx context.Context, parentTaskID pgtype.UUID) (AgentTaskQueue, error) {
 	row := q.db.QueryRow(ctx, getRetryChildByParent, parentTaskID)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.RuntimeLaunchLeaseToken,
+		&i.RuntimeLaunchLeaseExpiresAt,
+	)
+	return i, err
+}
+
+const getTaskForDelegatedComment = `-- name: GetTaskForDelegatedComment :one
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, runtime_launch_lease_token, runtime_launch_lease_expires_at FROM agent_task_queue
+WHERE issue_id = $1
+  AND agent_id = $2
+  AND (
+    trigger_comment_id = $3
+    OR $3::uuid = ANY(coalesced_comment_ids)
+    OR $3::uuid = ANY(delivered_comment_ids)
+    OR status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  )
+ORDER BY
+  CASE
+    WHEN trigger_comment_id = $3
+      OR $3::uuid = ANY(coalesced_comment_ids)
+      OR $3::uuid = ANY(delivered_comment_ids)
+    THEN 0
+    ELSE 1
+  END,
+  created_at DESC
+LIMIT 1
+`
+
+type GetTaskForDelegatedCommentParams struct {
+	IssueID   pgtype.UUID `json:"issue_id"`
+	AgentID   pgtype.UUID `json:"agent_id"`
+	CommentID pgtype.UUID `json:"comment_id"`
+}
+
+// Reconstructs an idempotent continuation response. Prefer the task whose
+// planned/delivered receipt contains the delegated comment. A still-active
+// queue anchor is the only fallback, covering the narrow dispatched-before-
+// reconciliation window where the comment has been persisted but cannot yet be
+// attached to a successor task.
+func (q *Queries) GetTaskForDelegatedComment(ctx context.Context, arg GetTaskForDelegatedCommentParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, getTaskForDelegatedComment, arg.IssueID, arg.AgentID, arg.CommentID)
 	var i AgentTaskQueue
 	err := row.Scan(
 		&i.ID,
@@ -4346,6 +4500,55 @@ func (q *Queries) MergeCommentIntoPendingTask(ctx context.Context, arg MergeComm
 		arg.AgentID,
 	)
 	var i MergeCommentIntoPendingTaskRow
+	err := row.Scan(&i.ID, &i.CoalescedCommentIds)
+	return i, err
+}
+
+const mergeDelegatedCommentIntoPendingTask = `-- name: MergeDelegatedCommentIntoPendingTask :one
+UPDATE agent_task_queue
+SET coalesced_comment_ids = (
+        SELECT COALESCE(array_agg(DISTINCT e), '{}')
+        FROM unnest(array_append(coalesced_comment_ids, trigger_comment_id)) AS e
+        WHERE e IS NOT NULL AND e <> $1::uuid
+    ),
+    trigger_comment_id = $1::uuid,
+    trigger_summary = COALESCE($2, trigger_summary)
+WHERE id = (
+    SELECT t.id FROM agent_task_queue t
+    WHERE t.issue_id = $3
+      AND t.agent_id = $4
+      AND t.status = 'queued'
+    ORDER BY t.created_at DESC
+    LIMIT 1
+)
+RETURNING id, coalesced_comment_ids
+`
+
+type MergeDelegatedCommentIntoPendingTaskParams struct {
+	NewTriggerCommentID pgtype.UUID `json:"new_trigger_comment_id"`
+	NewTriggerSummary   pgtype.Text `json:"new_trigger_summary"`
+	IssueID             pgtype.UUID `json:"issue_id"`
+	AgentID             pgtype.UUID `json:"agent_id"`
+}
+
+type MergeDelegatedCommentIntoPendingTaskRow struct {
+	ID                  pgtype.UUID   `json:"id"`
+	CoalescedCommentIds []pgtype.UUID `json:"coalesced_comment_ids"`
+}
+
+// Delegated continuations use the same queued-task coalescing plan as ordinary
+// comments, but the physical run must retain the FIRST source Chat task's
+// private execution identity and capabilities. Only the comment plan and
+// user-visible summary move forward; originator/runtime overlay/context stay
+// untouched on the existing queued row.
+func (q *Queries) MergeDelegatedCommentIntoPendingTask(ctx context.Context, arg MergeDelegatedCommentIntoPendingTaskParams) (MergeDelegatedCommentIntoPendingTaskRow, error) {
+	row := q.db.QueryRow(ctx, mergeDelegatedCommentIntoPendingTask,
+		arg.NewTriggerCommentID,
+		arg.NewTriggerSummary,
+		arg.IssueID,
+		arg.AgentID,
+	)
+	var i MergeDelegatedCommentIntoPendingTaskRow
 	err := row.Scan(&i.ID, &i.CoalescedCommentIds)
 	return i, err
 }

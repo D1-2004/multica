@@ -160,6 +160,143 @@ func TestCancelledTaskOutboxIsCreatedAtomically(t *testing.T) {
 	assertCancelledCompletion(t, fixture, taskID, taskID, "")
 }
 
+func TestCancelledDelegatedIssueTaskFansOutDeliveredCommentCallbacks(t *testing.T) {
+	fixture := newCancelledCompletionFixture(t)
+	firstSourceTaskID := fixture.taskIDs[0]
+	secondSourceTaskID := fixture.taskIDs[1]
+	issueID := fixture.issueIDs[0]
+	firstCallbackURL := cancelledCompletionCallback(firstSourceTaskID)
+	secondCallbackURL := cancelledCompletionCallback(secondSourceTaskID)
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE agent_task_queue
+		SET status = 'completed',
+		    completed_at = now(),
+		    context = jsonb_build_object(
+		        'completion_callback',
+		        jsonb_build_object(
+		            'url', CASE id
+		                WHEN $1::uuid THEN $3::text
+		                ELSE $4::text
+		            END,
+		            'target', $5::text
+		        )
+		    )
+		WHERE id = ANY(ARRAY[$1::uuid, $2::uuid])
+	`, firstSourceTaskID, secondSourceTaskID, firstCallbackURL, secondCallbackURL, taskCompletionTestTarget); err != nil {
+		t.Fatal(err)
+	}
+	var firstCommentID, secondCommentID string
+	for _, input := range []struct {
+		sourceTaskID string
+		content      string
+		destination  *string
+	}{
+		{firstSourceTaskID, "first delegated input", &firstCommentID},
+		{secondSourceTaskID, "second delegated input", &secondCommentID},
+	} {
+		if err := fixture.pool.QueryRow(context.Background(), `
+			INSERT INTO comment (
+				issue_id, workspace_id, author_type, author_id, content, type,
+				source_task_id
+			)
+			VALUES ($1, $2, 'member', $3, $4, 'comment', $5)
+			RETURNING id
+		`, issueID, fixture.workspaceID, fixture.userID, input.content, input.sourceTaskID).Scan(input.destination); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var targetTaskID string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority, started_at,
+			initiator_user_id, originator_user_id, parent_task_id,
+			trigger_comment_id, coalesced_comment_ids, delivered_comment_ids
+		)
+		VALUES (
+			$1, $2, $3, 'running', 2, now(), $4, $4, $5,
+			$6, ARRAY[$7::uuid], ARRAY[$6::uuid, $7::uuid]
+		)
+		RETURNING id
+	`, fixture.agentID, fixture.runtimeID, issueID, fixture.userID,
+		firstSourceTaskID, secondCommentID, firstCommentID).Scan(&targetTaskID); err != nil {
+		t.Fatal(err)
+	}
+	for _, reply := range []struct {
+		parentID string
+		content  string
+	}{
+		{firstCommentID, "first cancellation reply"},
+		{secondCommentID, "second cancellation reply"},
+	} {
+		if _, err := fixture.pool.Exec(context.Background(), `
+			INSERT INTO comment (
+				issue_id, workspace_id, author_type, author_id, content, type,
+				parent_id, source_task_id
+			)
+			VALUES ($1, $2, 'agent', $3, $4, 'comment', $5, $6)
+		`, issueID, fixture.workspaceID, fixture.agentID, reply.content, reply.parentID, targetTaskID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := fixture.queries.CancelAgentTask(
+		context.Background(),
+		util.MustParseUUID(targetTaskID),
+	); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := fixture.pool.Query(context.Background(), `
+		SELECT root_task_id::text, callback_url, request_id, result_message,
+		       execution_status, failure_reason
+		FROM task_completion_outbox
+		WHERE terminal_task_id = $1
+		ORDER BY callback_url
+	`, targetTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string][]string{}
+	for rows.Next() {
+		var callbackURL, rootTaskID, requestID, resultMessage, executionStatus, failureReason string
+		if err := rows.Scan(
+			&rootTaskID,
+			&callbackURL,
+			&requestID,
+			&resultMessage,
+			&executionStatus,
+			&failureReason,
+		); err != nil {
+			t.Fatal(err)
+		}
+		got[callbackURL] = []string{rootTaskID, requestID, resultMessage, executionStatus, failureReason}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("cancel callback count = %d, want 2: %+v", len(got), got)
+	}
+	for _, want := range []struct {
+		callbackURL  string
+		sourceTaskID string
+		reply        string
+	}{
+		{firstCallbackURL, firstSourceTaskID, "first cancellation reply"},
+		{secondCallbackURL, secondSourceTaskID, "second cancellation reply"},
+	} {
+		row := got[want.callbackURL]
+		if len(row) != 5 ||
+			row[0] != want.sourceTaskID ||
+			row[1] != "multica-comment-terminal:"+want.sourceTaskID ||
+			row[2] != want.reply ||
+			row[3] != "failed" ||
+			row[4] != "cancelled" {
+			t.Fatalf("cancel callback %s = %v", want.callbackURL, row)
+		}
+	}
+}
+
 func TestDeleteIssuePreservesCancelledTaskOutbox(t *testing.T) {
 	fixture := newCancelledCompletionFixture(t)
 	taskID := fixture.taskIDs[0]
