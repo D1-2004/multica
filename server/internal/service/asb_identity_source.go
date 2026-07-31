@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -285,6 +286,7 @@ func attachAndProbeASBIdentitySource(
 			BUCIDToken:           tokens.IDToken,
 			WireGuardCredentials: wireGuardCredentials,
 		},
+		timeout,
 	); err != nil {
 		return err
 	}
@@ -334,15 +336,47 @@ func attachASBBUCIdentitySource(
 	client *ASBClient,
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
+	timeout time.Duration,
 ) error {
-	// Keep the same synchronous attachment contract as the prepub version that
-	// completed the end-to-end BUC and a1 flow on 2026-07-30. The source is
-	// already Running here, so a successful response is the authoritative point
-	// at which a task sandbox may inherit its credential directory.
-	if err := client.AttachBUCIdentity(ctx, sandboxID, grant, true); err != nil {
-		return fmt.Errorf("attach BUC identity to temporary ASB source: %w", err)
+	interval := asbIdentityProbeInterval(timeout)
+	attempt := 0
+	for {
+		attempt++
+		err := client.AttachBUCIdentity(ctx, sandboxID, grant, true)
+		if err == nil {
+			return nil
+		}
+		if !isASBWireGuardTunnelConverging(err) {
+			return fmt.Errorf("attach BUC identity to temporary ASB source: %w", err)
+		}
+		slog.Warn(
+			"ASB BUC identity attachment waiting for WireGuard tunnel",
+			"sandbox_id", sandboxID,
+			"attempt", attempt,
+			"retry_after", interval,
+		)
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf(
+				"attach BUC identity to temporary ASB source before WireGuard timeout: %w",
+				err,
+			)
+		case <-timer.C:
+		}
 	}
-	return nil
+}
+
+func isASBWireGuardTunnelConverging(err error) bool {
+	var httpErr *ASBHTTPError
+	return errors.As(err, &httpErr) &&
+		httpErr.Operation == "attach_buc_identity" &&
+		httpErr.StatusCode == http.StatusBadRequest &&
+		strings.Contains(
+			strings.ToLower(httpErr.ErrorMessage),
+			"wireguard tunnel not ready yet",
+		)
 }
 
 func asbIdentityProbeInterval(timeout time.Duration) time.Duration {

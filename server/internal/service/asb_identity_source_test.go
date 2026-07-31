@@ -375,6 +375,123 @@ func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T
 	}
 }
 
+func TestAttachAndProbeASBIdentitySourceRetriesWhileWireGuardConverges(t *testing.T) {
+	const sandboxID = "identity-source-wireguard-converging"
+	attachCalls := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
+			attachCalls++
+			response.Header().Set("Content-Type", "application/json")
+			if attachCalls == 1 {
+				response.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(response, `{
+					"code":"BAD_REQUEST",
+					"message":"wireguard tunnel not ready yet, sandboxId=identity-source-wireguard-converging"
+				}`)
+				return
+			}
+			response.WriteHeader(http.StatusOK)
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID:
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(response, `{
+				"id":"identity-source-wireguard-converging",
+				"status":{"state":"Running"},
+				"createdAt":"2026-07-31T05:00:00Z"
+			}`)
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/endpoints/44772":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/exec",
+				"headers":  map[string]string{"X-Sandbox-Token": "endpoint-token"},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/exec/command":
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(
+				response,
+				"data: {\"type\":\"execution_complete\",\"execution_time\":1}\n",
+			)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewASBClient(ASBClientConfig{
+		BaseURL: server.URL,
+		APIKey:  "runtime-api-key",
+	})
+	if err != nil {
+		t.Fatalf("NewASBClient: %v", err)
+	}
+	if err := attachAndProbeASBIdentitySource(
+		context.Background(),
+		client,
+		sandboxID,
+		"12345",
+		"agent-multica-asb",
+		BUCIdentityTokens{
+			AccessToken:  "buc-access",
+			RefreshToken: "buc-refresh",
+			IDToken:      "buc-id",
+		},
+		"wg-client",
+		250*time.Millisecond,
+	); err != nil {
+		t.Fatalf("attachAndProbeASBIdentitySource: %v", err)
+	}
+	if attachCalls != 2 {
+		t.Fatalf("attach calls = %d, want 2", attachCalls)
+	}
+}
+
+func TestAttachAndProbeASBIdentitySourceDoesNotRetryOtherBadRequest(t *testing.T) {
+	const sandboxID = "identity-source-invalid-grant"
+	attachCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		attachCalls++
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(response, `{
+			"code":"BAD_REQUEST",
+			"message":"identity grant is invalid"
+		}`)
+	}))
+	defer server.Close()
+
+	client, err := NewASBClient(ASBClientConfig{
+		BaseURL: server.URL,
+		APIKey:  "runtime-api-key",
+	})
+	if err != nil {
+		t.Fatalf("NewASBClient: %v", err)
+	}
+	err = attachAndProbeASBIdentitySource(
+		context.Background(),
+		client,
+		sandboxID,
+		"12345",
+		"agent-multica-asb",
+		BUCIdentityTokens{
+			AccessToken:  "buc-access",
+			RefreshToken: "buc-refresh",
+			IDToken:      "buc-id",
+		},
+		"wg-client",
+		250*time.Millisecond,
+	)
+	if err == nil {
+		t.Fatal("attachAndProbeASBIdentitySource() error = nil, want bad request")
+	}
+	if attachCalls != 1 {
+		t.Fatalf("attach calls = %d, want 1", attachCalls)
+	}
+}
+
 func TestASBIdentityProbeStageReturnsLastSafeMarker(t *testing.T) {
 	t.Parallel()
 
