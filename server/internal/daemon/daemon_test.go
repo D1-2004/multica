@@ -103,6 +103,9 @@ func TestIsBlockedEnvKey(t *testing.T) {
 		{key: "CURSOR_MCP_AUTH_SOURCE", want: true},
 		{key: "OPENCLAW_CONFIG_PATH", want: true},
 		{key: "OPENCLAW_INCLUDE_ROOTS", want: true},
+		{key: "AGENT_IDENTITY_CONTEXT_TOKEN", want: true},
+		{key: "GH_CONFIG_DIR", want: true},
+		{key: "gh_config_dir", want: true},
 		{key: "ANTHROPIC_API_KEY", want: false},
 		{key: "CURSOR_AGENT", want: false},
 		// HERMES_HOME is intentionally NOT blocked: a skill-less Hermes task
@@ -181,6 +184,25 @@ func TestLayerCustomEnvAndHermesHome(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestInheritManagedChildEnvPassesGitHubConfigDirOnly(t *testing.T) {
+	t.Setenv("GH_CONFIG_DIR", "/tmp/multica-gh/task-123")
+	t.Setenv("GH_TOKEN", "should-not-leak")
+	t.Setenv("GITHUB_TOKEN", "should-not-leak")
+
+	agentEnv := map[string]string{}
+	inheritManagedChildEnv(agentEnv)
+
+	if got := agentEnv["GH_CONFIG_DIR"]; got != "/tmp/multica-gh/task-123" {
+		t.Fatalf("GH_CONFIG_DIR = %q, want task-scoped gh config dir", got)
+	}
+	if _, ok := agentEnv["GH_TOKEN"]; ok {
+		t.Fatal("GH_TOKEN must not be inherited into the agent environment")
+	}
+	if _, ok := agentEnv["GITHUB_TOKEN"]; ok {
+		t.Fatal("GITHUB_TOKEN must not be inherited into the agent environment")
 	}
 }
 

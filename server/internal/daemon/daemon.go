@@ -3862,6 +3862,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"TMP":                  taskTempDir,
 		"TEMP":                 taskTempDir,
 	}
+	inheritManagedChildEnv(agentEnv)
 	if task.TraceID != "" {
 		agentEnv["MULTICA_TRACE_ID"] = task.TraceID
 	}
@@ -4922,10 +4923,16 @@ func isBlockedEnvKey(key string) bool {
 		return true
 	}
 	switch upper {
-	case "HOME", "PATH", "USER", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "CODEX_HOME", "CURSOR_DATA_DIR", execenv.CursorMcpAuthSourceEnv, "OPENCLAW_CONFIG_PATH", "OPENCLAW_INCLUDE_ROOTS":
+	case "HOME", "PATH", "USER", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "CODEX_HOME", "CURSOR_DATA_DIR", execenv.CursorMcpAuthSourceEnv, "OPENCLAW_CONFIG_PATH", "OPENCLAW_INCLUDE_ROOTS", "AGENT_IDENTITY_CONTEXT_TOKEN", "GH_CONFIG_DIR":
 		return true
 	}
 	return false
+}
+
+func inheritManagedChildEnv(agentEnv map[string]string) {
+	if githubConfigDir := strings.TrimSpace(os.Getenv("GH_CONFIG_DIR")); githubConfigDir != "" {
+		agentEnv["GH_CONFIG_DIR"] = githubConfigDir
+	}
 }
 
 // layerCustomEnvAndHermesHome applies the agent's custom_env onto the child env
