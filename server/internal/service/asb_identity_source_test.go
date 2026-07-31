@@ -54,7 +54,7 @@ func (store *fakeASBIdentitySourceStore) ListASBRuntimeCredentials(
 	return []db.AsbRuntimeCredential{store.credential}, nil
 }
 
-func TestASBIdentitySourcePausesAndResumesForInheritance(t *testing.T) {
+func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	const (
 		sourceSandboxID  = "identity-source-123"
 		identityImageRef = "registry.example/identity-source@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -215,8 +215,8 @@ func TestASBIdentitySourcePausesAndResumesForInheritance(t *testing.T) {
 	}
 	if source.SandboxID != sourceSandboxID ||
 		source.RuntimeID != runtimeID ||
-		state != "Paused" ||
-		pauseCalls != 1 ||
+		state != "Running" ||
+		pauseCalls != 0 ||
 		deleteCalls != 0 {
 		t.Fatalf(
 			"created identity source = %#v, state=%s pause_calls=%d delete_calls=%d",
@@ -236,13 +236,13 @@ func TestASBIdentitySourcePausesAndResumesForInheritance(t *testing.T) {
 	); err != nil {
 		t.Fatalf("Prepare identity source: %v", err)
 	}
-	if state != "Running" || resumeCalls != 1 {
+	if state != "Running" || resumeCalls != 0 {
 		t.Fatalf("prepared state=%s resume_calls=%d", state, resumeCalls)
 	}
 	if err := manager.Park(context.Background(), runtimeID, sourceSandboxID); err != nil {
 		t.Fatalf("Park identity source: %v", err)
 	}
-	if state != "Paused" || pauseCalls != 2 {
+	if state != "Running" || pauseCalls != 0 {
 		t.Fatalf("released state=%s pause_calls=%d", state, pauseCalls)
 	}
 	if err := manager.Delete(context.Background(), runtimeID, sourceSandboxID); err != nil {

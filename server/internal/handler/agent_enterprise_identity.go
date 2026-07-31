@@ -52,7 +52,7 @@ type startAgentEnterpriseIdentityResponse struct {
 
 const (
 	// The streamed callback includes ASB creation, synchronous WireGuard
-	// binding, BUC/a1 probes, snapshot persistence, and pause. Keep its
+	// binding, BUC probes, and snapshot persistence. Keep its
 	// server-side budget beyond the complete source-establishment budget.
 	enterpriseIdentityCallbackTimeout   = 15 * time.Minute
 	enterpriseIdentityCallbackHeartbeat = 2 * time.Second
@@ -295,7 +295,7 @@ func enterpriseIdentityCallbackNonce() (string, error) {
 func enterpriseIdentityCallbackOpeningPage(nonce string) string {
 	// The padding makes the first response chunk larger than common ingress
 	// proxy buffers, so the browser receives the progress page immediately.
-	padding := strings.Repeat(" ", 4096)
+	padding := strings.Repeat(" ", 16*1024)
 	return fmt.Sprintf(`<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -314,7 +314,7 @@ h1{font-size:20px;margin:0 0 12px}p{color:#5f6672;margin:0}
 <main>
 <div class="spinner" aria-hidden="true"></div>
 <h1 id="callback-title">正在绑定员工身份</h1>
-<p id="callback-message">授权已接收，正在安全保存并校验员工身份凭证，请不要返回或重复点击。</p>
+<p id="callback-message">授权已接收，正在创建企业沙箱身份，通常需要 2–3 分钟。请不要返回或重复点击。</p>
 </main>
 <script nonce="%s">window.history.replaceState(null,"",window.location.pathname);</script>
 <!-- %s -->
