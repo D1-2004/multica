@@ -5,10 +5,19 @@ its fields as independent policies instead of inferring one policy from another.
 
 ## Surface
 
-`surface.type` is the only field that selects the Multica persistence surface:
+`surface.type` is the only field that selects the Multica execution mode. Each
+mode has an explicit initial persistence materializer:
 
 - `issue` creates an Issue or appends a follow-up to the referenced Issue.
 - `chat` creates or reuses a chat session and appends a user message.
+- `auto` preserves automatic execution policy as a first-class mode while
+  initially materializing the channel message in a chat session. Multica adds
+  private foreground-coordination instructions so the Agent can either finish
+  lightweight work in Chat or delegate durable work to an Issue.
+
+`auto` currently applies to `channel/message.created`. The
+`calendar/calendar.started` contract remains Issue-only because it has no
+foreground Chat session to release.
 
 Channel slash commands do not override this choice. In particular, text such as
 `/issue`, `/new`, `/reset`, or `/unbind` remains prompt content when delivered by
@@ -17,6 +26,10 @@ Agent Dispatch V2.
 The response always returns the latest continuation produced by the selected
 surface. A recreated missing Issue or chat therefore replaces a stale
 continuation for the Router to persist.
+
+Continuation kind identifies the materialized locator, not the execution mode.
+Both `chat` and `auto` therefore return a `chat` continuation containing
+`chatSessionId`; `issue` returns an Issue continuation.
 
 ## Identity
 
@@ -70,9 +83,16 @@ Multica builds prompt material from the structured source event:
 - workflow instructions are added when the selected outbound mode requires the
   Agent to deliver through DWS.
 
-The prompt builder is independent of `surface.type`. The same structured event
-can therefore run as either an Issue or a chat without moving prompt assembly
-back into the Router.
+Event projection in the prompt builder is independent of `surface.type`. The
+same structured event can therefore run as an Issue, Chat, or Auto mode without
+moving prompt assembly back into the Router.
+
+After event projection, Multica appends the private automatic-delegation policy
+only when `surface.type=auto`. The mode remains `auto` in persisted dispatch
+context and audit data even though its initial materializer is Chat. A
+successful Issue delegation creates the target task with `surface.type=issue`,
+so the background task does not recursively receive the automatic front-stage
+policy.
 
 ## Outbound
 
@@ -105,6 +125,9 @@ compositions subject to the command's ordinary validation.
 - 2026-07-27: Raised the Multica Agent DingTalk binding above external and
   cached task-context tokens in the runtime identity decision. Task context is
   now consulted only when the Agent has no local identity binding.
+- 2026-07-30: Added `auto` as a first-class Agent Dispatch mode. Channel
+  messages retain `surface.type=auto`, initially materialize as Chat, and
+  receive private foreground-coordination and Issue-delegation instructions.
 
 ## Reason
 
@@ -136,3 +159,8 @@ Giving the explicit per-Agent binding highest priority makes the execution
 identity configured in Multica authoritative. External and cached tokens remain
 fallback inputs for unbound Agents, so this change only reorders identity
 selection and does not alter the task-context protocol.
+
+Keeping `auto` distinct from `chat` preserves the binding decision in task
+context, logs, and future policy evolution. Separating mode from materializer
+allows the current implementation to reuse durable Chat sessions and Chat
+continuations without erasing the fact that automatic delegation policy applies.
