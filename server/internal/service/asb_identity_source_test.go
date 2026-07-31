@@ -253,6 +253,43 @@ func TestASBIdentitySourcePausesAndResumesForInheritance(t *testing.T) {
 	}
 }
 
+func TestASBIdentitySourceRenewalUsesAbsoluteCreationLimit(t *testing.T) {
+	t.Parallel()
+
+	createdAt := time.Date(2026, time.July, 30, 14, 0, 0, 0, time.UTC)
+	now := createdAt.Add(24 * time.Hour)
+	sandbox := &ASBSandbox{CreatedAt: createdAt}
+
+	expiresAt, renew := asbIdentitySourceRenewal(sandbox, now)
+	if !renew {
+		t.Fatal("asbIdentitySourceRenewal() renew = false, want true")
+	}
+	want := createdAt.Add(asbMaxRenewalDuration - time.Minute)
+	if !expiresAt.Equal(want) {
+		t.Fatalf("expires_at = %s, want %s", expiresAt, want)
+	}
+	if expiresAt.Equal(now.Add(asbMaxRenewalDuration - time.Minute)) {
+		t.Fatal("renewal deadline incorrectly moved with the current time")
+	}
+}
+
+func TestASBIdentitySourceRenewalDoesNotExtendPastExistingAbsoluteLimit(t *testing.T) {
+	t.Parallel()
+
+	createdAt := time.Date(2026, time.July, 30, 14, 0, 0, 0, time.UTC)
+	now := createdAt.Add(24 * time.Hour)
+	existing := createdAt.Add(asbMaxRenewalDuration - time.Minute)
+	sandbox := &ASBSandbox{CreatedAt: createdAt, ExpiresAt: &existing}
+
+	expiresAt, renew := asbIdentitySourceRenewal(sandbox, now)
+	if renew {
+		t.Fatal("asbIdentitySourceRenewal() renew = true, want false")
+	}
+	if !expiresAt.Equal(existing) {
+		t.Fatalf("expires_at = %s, want %s", expiresAt, existing)
+	}
+}
+
 func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T) {
 	const sandboxID = "identity-source-delayed-attach"
 	attachCalls := 0

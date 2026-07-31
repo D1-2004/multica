@@ -474,11 +474,46 @@ func renewASBIdentitySource(
 	client *ASBClient,
 	sandboxID string,
 ) error {
-	expiresAt := time.Now().Add(asbMaxRenewalDuration - time.Minute)
+	sandbox, err := client.GetSandbox(ctx, sandboxID)
+	if err != nil {
+		return fmt.Errorf("load ASB enterprise identity source before renewal: %w", err)
+	}
+	expiresAt, renew := asbIdentitySourceRenewal(sandbox, time.Now())
+	if !renew {
+		return nil
+	}
 	if err := client.RenewSandbox(ctx, sandboxID, expiresAt, false); err != nil {
 		return fmt.Errorf("renew ASB enterprise identity source: %w", err)
 	}
 	return nil
+}
+
+const asbIdentitySourceRenewalSafetyMargin = time.Minute
+
+// ASB bounds a sandbox's lifetime from CreatedAt, not from each renewal call.
+// Keep the exact deadline calculation used by the prepub anchor flow that
+// completed real BUC and a1 tasks on 2026-07-30.
+func asbIdentitySourceRenewal(
+	sandbox *ASBSandbox,
+	now time.Time,
+) (time.Time, bool) {
+	if sandbox == nil || sandbox.CreatedAt.IsZero() {
+		return time.Time{}, false
+	}
+	expiresAt := now.Add(asbMaxRenewalDuration)
+	maxExpiresAt := sandbox.CreatedAt.Add(
+		asbMaxRenewalDuration - asbIdentitySourceRenewalSafetyMargin,
+	)
+	if expiresAt.After(maxExpiresAt) {
+		expiresAt = maxExpiresAt
+	}
+	if !expiresAt.After(now) {
+		return expiresAt, false
+	}
+	if sandbox.ExpiresAt != nil && !expiresAt.After(*sandbox.ExpiresAt) {
+		return expiresAt, false
+	}
+	return expiresAt, true
 }
 
 func waitForASBSandboxState(
