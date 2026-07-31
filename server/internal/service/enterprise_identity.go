@@ -1019,13 +1019,13 @@ func (s *EnterpriseIdentityService) maintainActiveIdentities(ctx context.Context
 			}
 		}
 		if !current.BucIdentitySourceUpdatedAt.Time.After(now.Add(-s.SourceRefreshInterval)) {
-			if err := s.refreshPausedIdentitySource(ctx, current); err != nil {
+			if err := s.refreshIdentitySource(ctx, current); err != nil {
 				if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
 					s.markNeedsReauth(ctx, current)
 					continue
 				}
 				slog.Warn(
-					"paused ASB enterprise identity source maintenance failed",
+					"ASB enterprise identity source maintenance failed",
 					"agent_id", util.UUIDToString(current.AgentID),
 					"error", err,
 				)
@@ -1035,7 +1035,7 @@ func (s *EnterpriseIdentityService) maintainActiveIdentities(ctx context.Context
 	return nil
 }
 
-func (s *EnterpriseIdentityService) refreshPausedIdentitySource(
+func (s *EnterpriseIdentityService) refreshIdentitySource(
 	ctx context.Context,
 	identity db.AgentEnterpriseIdentity,
 ) error {

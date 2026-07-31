@@ -54,7 +54,7 @@ func (store *fakeASBIdentitySourceStore) ListASBRuntimeCredentials(
 	return []db.AsbRuntimeCredential{store.credential}, nil
 }
 
-func TestASBIdentitySourcePausesWithoutDeletingAndResumesForInheritance(t *testing.T) {
+func TestASBIdentitySourceStaysRunningForInheritance(t *testing.T) {
 	const (
 		sourceSandboxID = "identity-source-123"
 		employeeID      = "12345"
@@ -76,7 +76,7 @@ func TestASBIdentitySourcePausesWithoutDeletingAndResumesForInheritance(t *testi
 			}
 			if payload.Timeout != asbMaxCreateTimeout ||
 				payload.Extensions["wireguard.lazyAuth"] != "true" ||
-				payload.Extensions["persistence"] != "snapshot" {
+				len(payload.Extensions) != 1 {
 				t.Fatalf("identity source create request = %#v", payload)
 			}
 			response.Header().Set("Content-Type", "application/json")
@@ -214,7 +214,7 @@ func TestASBIdentitySourcePausesWithoutDeletingAndResumesForInheritance(t *testi
 	}
 	if source.SandboxID != sourceSandboxID ||
 		source.RuntimeID != runtimeID ||
-		state != "Paused" ||
+		state != "Running" ||
 		deleteCalls != 0 {
 		t.Fatalf(
 			"created identity source = %#v, state=%s delete_calls=%d",
@@ -233,14 +233,14 @@ func TestASBIdentitySourcePausesWithoutDeletingAndResumesForInheritance(t *testi
 	); err != nil {
 		t.Fatalf("Prepare identity source: %v", err)
 	}
-	if state != "Running" || resumeCalls != 1 {
+	if state != "Running" || resumeCalls != 0 {
 		t.Fatalf("prepared state=%s resume_calls=%d", state, resumeCalls)
 	}
 	if err := manager.Park(context.Background(), runtimeID, sourceSandboxID); err != nil {
 		t.Fatalf("Park identity source: %v", err)
 	}
-	if state != "Paused" || pauseCalls != 2 {
-		t.Fatalf("parked state=%s pause_calls=%d", state, pauseCalls)
+	if state != "Running" || pauseCalls != 0 {
+		t.Fatalf("released state=%s pause_calls=%d", state, pauseCalls)
 	}
 	if err := manager.Delete(context.Background(), runtimeID, sourceSandboxID); err != nil {
 		t.Fatalf("Delete identity source: %v", err)

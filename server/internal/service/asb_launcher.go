@@ -696,7 +696,7 @@ func (l *ASBLauncher) resolveSandbox(
 			defer cancel()
 			if releaseErr := releaseIdentitySource(cleanupCtx); releaseErr != nil {
 				logASBIdentitySourceFailure(
-					"pause_source_after_failed_task_create",
+					"release_source_after_failed_task_create",
 					identity.SourceSandboxID,
 					releaseErr,
 				)
@@ -1306,7 +1306,7 @@ func (l *ASBLauncher) UpdateRuntimeAPIKey(
 				identity.BucIdentitySourceSandboxID.String,
 			); err != nil {
 				return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf(
-					"delete paused ASB enterprise identity source before API key update: %w",
+					"delete ASB enterprise identity source before API key update: %w",
 					err,
 				)
 			}
