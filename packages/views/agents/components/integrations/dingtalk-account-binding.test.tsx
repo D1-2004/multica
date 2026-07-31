@@ -19,6 +19,7 @@ const beginBinding = vi.fn();
 const deleteBinding = vi.fn();
 const updateBindingSurface = vi.fn();
 const mid2Url = vi.hoisted(() => vi.fn());
+const toastError = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "workspace-1",
@@ -31,6 +32,10 @@ vi.mock("react-qr-code", () => ({
 }));
 
 vi.mock("@ali/ding-mediaid", () => ({ mid2Url }));
+
+vi.mock("sonner", () => ({
+  toast: { error: toastError },
+}));
 
 vi.mock("@multica/ui/components/ui/avatar", () => ({
   Avatar: ({ children }: { children: ReactNode }) => <span>{children}</span>,
@@ -68,7 +73,11 @@ function createWrapper(queryClient: QueryClient) {
   };
 }
 
-function renderCard(bindingMode: "message" | "identity" = "message") {
+function renderCard(
+  bindingMode: "message" | "identity" = "message",
+  canOperate = true,
+  permissionLoading = false,
+) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -80,6 +89,8 @@ function renderCard(bindingMode: "message" | "identity" = "message") {
       agentId="agent-1"
       agentName="Planner"
       bindingMode={bindingMode}
+      canOperate={canOperate}
+      permissionLoading={permissionLoading}
     />,
     { wrapper: createWrapper(queryClient) },
   );
@@ -329,6 +340,21 @@ describe("DingTalkAccountBindingCard", () => {
     expect(await screen.findByRole("heading", { name: "Bind execution identity" })).toBeInTheDocument();
   });
 
+  it.each([
+    ["message", /Bind digital employee/i],
+    ["identity", /Bind execution identity/i],
+  ] as const)("keeps unauthorized %s binding read only", async (bindingMode, buttonName) => {
+    const user = userEvent.setup();
+
+    renderCard(bindingMode, false);
+    await user.click(await screen.findByRole("button", { name: buttonName }));
+
+    expect(toastError).toHaveBeenCalledWith(
+      "You don't have permission to perform this action. Contact this agent's administrator.",
+    );
+    expect(beginBinding).not.toHaveBeenCalled();
+  });
+
   it("shows an expired state for an already-expired begin response", async () => {
     beginBinding.mockResolvedValue({
       bindingId: "agent-1",
@@ -521,6 +547,35 @@ describe("DingTalkAccountBindingCard", () => {
     expect(screen.getByText("Zhang San")).toBeInTheDocument();
   });
 
+  it("blocks unauthorized unbind and run-mode changes without calling the API", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [activeBinding],
+      configured: true,
+    });
+    const user = userEvent.setup();
+
+    renderCard("message", false);
+    expect(await screen.findByText("Zhang San")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^Unbind$/i }));
+    await user.click(screen.getByRole("button", { name: "Run mode: Task mode" }));
+
+    expect(toastError).toHaveBeenCalledTimes(2);
+    expect(deleteBinding).not.toHaveBeenCalled();
+    expect(updateBindingSurface).not.toHaveBeenCalled();
+    expect(screen.queryByRole("radio", { name: /Conversation mode/i })).not.toBeInTheDocument();
+  });
+
+  it("does not report a permission error while permissions are loading", async () => {
+    renderCard("message", false, true);
+
+    expect(
+      await screen.findByRole("button", { name: /Bind digital employee/i }),
+    ).toBeDisabled();
+    expect(toastError).not.toHaveBeenCalled();
+    expect(beginBinding).not.toHaveBeenCalled();
+  });
+
   it("shows and can unbind the execution identity while the digital employee is active", async () => {
     listBindings.mockResolvedValue({ bindings: [activeBinding], configured: true });
 
@@ -614,7 +669,7 @@ describe("DingTalkAccountBindingCard", () => {
     ).toBeInTheDocument();
   });
 
-  it("lets a member restart a pending association after reload", async () => {
+  it("lets an authorized operator restart a pending association after reload", async () => {
     listBindings.mockResolvedValue({
       bindings: [
         {
@@ -634,5 +689,11 @@ describe("DingTalkAccountBindingCard", () => {
     expect(
       screen.getByRole("button", { name: /Generate a new QR code/i }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps the exact Chinese permission message", () => {
+    expect(
+      zhHansAgents.tab_body.integrations.dingtalk_account_permission_denied,
+    ).toBe("无权限操作，请联系此智能体管理员处理");
   });
 });

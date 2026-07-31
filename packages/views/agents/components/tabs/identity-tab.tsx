@@ -8,7 +8,15 @@ import { memberListOptions } from "@multica/core/workspace/queries";
 import { DingTalkAccountBindingCard } from "../integrations/dingtalk-account-binding";
 import { GitHubIdentityBindingCard } from "../integrations/github-identity-binding";
 
-export function IdentityTab({ agent }: { agent: Agent }) {
+export function IdentityTab({
+  agent,
+  canOperateDingTalkBinding,
+  dingTalkBindingPermissionLoading,
+}: {
+  agent: Agent;
+  canOperateDingTalkBinding: boolean;
+  dingTalkBindingPermissionLoading: boolean;
+}) {
   const wsId = useWorkspaceId();
   const user = useAuthStore((s) => s.user);
   const { data: members = [] } = useQuery({
@@ -32,6 +40,8 @@ export function IdentityTab({ agent }: { agent: Agent }) {
         agentId={agent.id}
         agentName={agent.name}
         bindingMode="identity"
+        canOperate={canOperateDingTalkBinding}
+        permissionLoading={dingTalkBindingPermissionLoading}
       />
     </div>
   );

@@ -542,6 +542,7 @@
       "dingtalk_account_connect": "DingTalk アカウントを関連付ける",
       "dingtalk_account_starting": "QR コードを生成しています...",
       "dingtalk_account_begin_failed": "DingTalk アカウントの関連付けを開始できませんでした。",
+      "dingtalk_account_permission_denied": "この操作を行う権限がありません。このエージェントの管理者に連絡してください。",
       "dingtalk_account_dialog_title": "DingTalk アカウントを関連付ける",
       "dingtalk_account_dialog_description": "まず {{agent}} 用の DingTalk 従業員アカウントを作成し、そのアカウントで DingTalk クライアントにサインインしてから、このコードをスキャンしてください。",
       "dingtalk_account_scan_hint": "従業員アカウントでサインインした DingTalk クライアントでスキャンしてください。バインドが完了すると、このページは自動的に更新されます。",

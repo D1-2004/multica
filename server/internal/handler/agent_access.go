@@ -9,6 +9,11 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+type agentInvocationPermissionStore interface {
+	GetMemberByUserAndWorkspace(context.Context, db.GetMemberByUserAndWorkspaceParams) (db.Member, error)
+	ListAgentInvocationTargets(context.Context, pgtype.UUID) ([]db.AgentInvocationTarget, error)
+}
+
 // Agent invocation permission model (MUL-3963).
 //
 // Two distinct questions, previously conflated in canAccessPrivateAgent:
@@ -46,6 +51,26 @@ import (
 // agent/system principals, but member/team targets fail closed without a
 // matching human.
 func (h *Handler) canInvokeAgent(ctx context.Context, agent db.Agent, actorType, actorID, originatorUserID, workspaceID string) bool {
+	return canInvokeAgentWithStore(
+		ctx,
+		h.Queries,
+		agent,
+		actorType,
+		actorID,
+		originatorUserID,
+		workspaceID,
+	)
+}
+
+func canInvokeAgentWithStore(
+	ctx context.Context,
+	store agentInvocationPermissionStore,
+	agent db.Agent,
+	actorType,
+	actorID,
+	originatorUserID,
+	workspaceID string,
+) bool {
 	effectiveUser := actorID
 	if actorType != "member" {
 		// agent / system: never trust the immediate principal, only the
@@ -64,7 +89,7 @@ func (h *Handler) canInvokeAgent(ctx context.Context, agent db.Agent, actorType,
 		return false
 	}
 
-	targets, err := h.Queries.ListAgentInvocationTargets(ctx, agent.ID)
+	targets, err := store.ListAgentInvocationTargets(ctx, agent.ID)
 	if err != nil {
 		return false
 	}
@@ -82,8 +107,18 @@ func (h *Handler) canInvokeAgent(ctx context.Context, agent db.Agent, actorType,
 	workspaceBroad := actorType == "agent" || actorType == "system"
 	isWorkspaceMember := false
 	if effectiveUser != "" {
-		if _, err := h.getWorkspaceMember(ctx, effectiveUser, workspaceID); err == nil {
-			isWorkspaceMember = true
+		userUUID, userErr := util.ParseUUID(effectiveUser)
+		workspaceUUID, workspaceErr := util.ParseUUID(workspaceID)
+		if userErr == nil && workspaceErr == nil {
+			if _, err := store.GetMemberByUserAndWorkspace(
+				ctx,
+				db.GetMemberByUserAndWorkspaceParams{
+					UserID:      userUUID,
+					WorkspaceID: workspaceUUID,
+				},
+			); err == nil {
+				isWorkspaceMember = true
+			}
 		}
 	}
 

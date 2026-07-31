@@ -167,6 +167,8 @@ function renderPane(runtimes: AgentRuntime[]) {
             members={[]}
             onUpdate={vi.fn().mockResolvedValue(undefined)}
             canEdit
+            canOperateDingTalkBinding
+            dingTalkBindingPermissionLoading={false}
           />
         </QueryClientProvider>
       </NavigationProvider>
