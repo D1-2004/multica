@@ -22,6 +22,8 @@ function currentReturnPath(): string {
   const url = new URL(window.location.href);
   url.searchParams.delete("github_connection");
   url.searchParams.delete("connection_id");
+  url.searchParams.delete("github_error_code");
+  url.searchParams.delete("github_error_message");
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
@@ -31,6 +33,8 @@ function clearOAuthReturnParams() {
   if (!url.searchParams.has("github_connection")) return;
   url.searchParams.delete("github_connection");
   url.searchParams.delete("connection_id");
+  url.searchParams.delete("github_error_code");
+  url.searchParams.delete("github_error_message");
   window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
@@ -75,11 +79,20 @@ export function GitHubIdentityBindingCard({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
-    if (params.get("github_connection") !== "success") return;
-    setActionMessage(t(($) => $.tab_body.integrations.github_identity_connected));
-    setActionError(null);
+    const oauthStatus = params.get("github_connection");
+    if (!oauthStatus) return;
+    if (oauthStatus === "success") {
+      setActionMessage(t(($) => $.tab_body.integrations.github_identity_connected));
+      setActionError(null);
+      void refetch();
+    } else {
+      setActionMessage(null);
+      setActionError(
+        params.get("github_error_message") ||
+          t(($) => $.tab_body.integrations.github_identity_connect_failed),
+      );
+    }
     clearOAuthReturnParams();
-    void refetch();
   }, [refetch, t]);
 
   const connection = data?.connection ?? null;
