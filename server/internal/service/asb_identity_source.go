@@ -336,10 +336,11 @@ func attachASBBUCIdentitySource(
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
 ) error {
-	// Use the documented asynchronous attachment contract. A synchronous call
-	// can return HTTP 400 while the WireGuard sidecar is still converging, before
-	// the readiness window below has a chance to observe the completed tunnel.
-	if err := client.AttachBUCIdentity(ctx, sandboxID, grant, false); err != nil {
+	// Keep the same synchronous attachment contract as the prepub version that
+	// completed the end-to-end BUC and a1 flow on 2026-07-30. The source is
+	// already Running here, so a successful response is the authoritative point
+	// at which a task sandbox may inherit its credential directory.
+	if err := client.AttachBUCIdentity(ctx, sandboxID, grant, true); err != nil {
 		return fmt.Errorf("attach BUC identity to temporary ASB source: %w", err)
 	}
 	return nil
