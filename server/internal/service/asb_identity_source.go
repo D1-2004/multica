@@ -39,11 +39,10 @@ type asbIdentitySourceRuntimeStore interface {
 }
 
 // ASBIdentitySourceManager establishes a BUC credential directory inside a
-// dedicated ASB sandbox. The source stays Running so task sandboxes can inherit
-// that directory through buc.originalSandboxID. ASB BUC identity requires an
-// egress-wgclient sidecar, while the documented snapshot/checkpoint persistence
-// modes support only single-container sandboxes, so pausing this source is not
-// a supported persistence boundary.
+// dedicated ASB sandbox. Once BUC, a1, and nw-aliwork-cli are proven usable,
+// the source is paused. It is resumed only while a task sandbox inherits that
+// directory through buc.originalSandboxID, then paused again after inheritance.
+// Paused is therefore a healthy lifecycle state, not a reauthorization signal.
 type ASBIdentitySourceManager struct {
 	Store       asbIdentitySourceRuntimeStore
 	Credentials *ASBRuntimeClientProvider
@@ -145,13 +144,25 @@ func (m *ASBIdentitySourceManager) Create(
 			err,
 		)
 	}
+	if err := parkASBIdentitySource(
+		ctx,
+		client,
+		sandbox.ID,
+		m.sourceLifecycleTimeout(),
+	); err != nil {
+		logASBIdentitySourceFailure("pause_source", sandbox.ID, err)
+		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
+			"pause temporary ASB enterprise identity source: %w",
+			err,
+		)
+	}
 	retained = true
 	slog.Info(
-		"running ASB enterprise identity source established",
+		"paused ASB enterprise identity source established",
 		"runtime_id", util.UUIDToString(runtimeID),
 		"agent_id", util.UUIDToString(agentID),
 		"sandbox_id", sandbox.ID,
-		"running_quota_retained", true,
+		"running_quota_retained", false,
 	)
 	return EnterpriseIdentitySourceAvailability{
 		SandboxID: sandbox.ID,
@@ -181,6 +192,12 @@ func (m *ASBIdentitySourceManager) Prepare(
 		logASBIdentitySourceFailure("prepare_source", sandboxID, err)
 		return err
 	}
+	slog.Info(
+		"ASB enterprise identity source prepared",
+		"runtime_id", util.UUIDToString(runtimeID),
+		"sandbox_id", sandboxID,
+		"state", "running",
+	)
 	return nil
 }
 
@@ -193,14 +210,21 @@ func (m *ASBIdentitySourceManager) Park(
 	if err != nil {
 		return err
 	}
-	if err := keepASBIdentitySourceRunning(
+	if err := parkASBIdentitySource(
 		ctx,
 		client,
 		sandboxID,
+		m.sourceLifecycleTimeout(),
 	); err != nil {
-		logASBIdentitySourceFailure("keep_source_running", sandboxID, err)
+		logASBIdentitySourceFailure("pause_source", sandboxID, err)
 		return err
 	}
+	slog.Info(
+		"ASB enterprise identity source parked",
+		"runtime_id", util.UUIDToString(runtimeID),
+		"sandbox_id", sandboxID,
+		"state", "paused",
+	)
 	return nil
 }
 
@@ -349,31 +373,72 @@ func prepareASBIdentitySource(
 	if err != nil {
 		return fmt.Errorf("load ASB enterprise identity source: %w", err)
 	}
-	if !strings.EqualFold(strings.TrimSpace(sandbox.Status.State), "running") {
+	switch state := strings.ToLower(strings.TrimSpace(sandbox.Status.State)); state {
+	case "paused":
+		if err := client.ResumeSandbox(sourceCtx, sandboxID); err != nil {
+			return fmt.Errorf("resume ASB enterprise identity source: %w", err)
+		}
+	case "pausing":
+		if err := waitForASBSandboxState(sourceCtx, client, sandboxID, timeout, "paused"); err != nil {
+			return err
+		}
+		if err := client.ResumeSandbox(sourceCtx, sandboxID); err != nil {
+			return fmt.Errorf("resume ASB enterprise identity source: %w", err)
+		}
+	case "running", "pending", "resuming":
+	case "failed", "terminated", "error":
 		return ErrEnterpriseIdentityNeedsReauth
+	default:
+		return fmt.Errorf("ASB enterprise identity source has unsupported state %q", state)
+	}
+	if err := waitForASBSandboxState(sourceCtx, client, sandboxID, timeout, "running"); err != nil {
+		return err
 	}
 	if err := renewASBIdentitySource(sourceCtx, client, sandboxID); err != nil {
 		return err
 	}
 	if err := probeASBBUCIdentity(sourceCtx, client, sandboxID, employeeID, bucAgentID); err != nil {
-		return fmt.Errorf("probe running ASB enterprise identity source: %w", err)
+		return fmt.Errorf("probe resumed ASB enterprise identity source: %w", err)
 	}
 	return nil
 }
 
-func keepASBIdentitySourceRunning(
+func parkASBIdentitySource(
 	ctx context.Context,
 	client *ASBClient,
 	sandboxID string,
+	timeout time.Duration,
 ) error {
-	source, err := client.GetSandbox(ctx, sandboxID)
+	if timeout <= 0 {
+		return errors.New("ASB identity source lifecycle timeout is not configured")
+	}
+	sourceCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	source, err := client.GetSandbox(sourceCtx, sandboxID)
 	if err != nil {
-		return fmt.Errorf("load ASB enterprise identity source after inheritance: %w", err)
+		return fmt.Errorf("load ASB enterprise identity source before pause: %w", err)
 	}
-	if !strings.EqualFold(strings.TrimSpace(source.Status.State), "running") {
+	switch state := strings.ToLower(strings.TrimSpace(source.Status.State)); state {
+	case "paused":
+		return nil
+	case "running":
+		if err := client.PauseSandbox(sourceCtx, sandboxID); err != nil {
+			return fmt.Errorf("pause ASB enterprise identity source: %w", err)
+		}
+	case "pausing":
+	case "pending", "resuming":
+		if err := waitForASBSandboxState(sourceCtx, client, sandboxID, timeout, "running"); err != nil {
+			return err
+		}
+		if err := client.PauseSandbox(sourceCtx, sandboxID); err != nil {
+			return fmt.Errorf("pause ASB enterprise identity source: %w", err)
+		}
+	case "failed", "terminated", "error":
 		return ErrEnterpriseIdentityNeedsReauth
+	default:
+		return fmt.Errorf("ASB enterprise identity source has unsupported state %q", state)
 	}
-	return nil
+	return waitForASBSandboxState(sourceCtx, client, sandboxID, timeout, "paused")
 }
 
 func renewASBIdentitySource(
