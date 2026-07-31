@@ -250,6 +250,80 @@ func TestASBIdentitySourcePausesWithoutDeletingAndResumesForInheritance(t *testi
 	}
 }
 
+func TestAttachAndProbeASBIdentitySourceStartsFreshProbeWindowAfterSyncAttach(t *testing.T) {
+	const sandboxID = "identity-source-delayed-attach"
+	endpointCalls := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
+			time.Sleep(30 * time.Millisecond)
+			response.WriteHeader(http.StatusOK)
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID:
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(response, `{
+				"id":"identity-source-delayed-attach",
+				"status":{"state":"Running"},
+				"createdAt":"2026-07-31T05:00:00Z"
+			}`)
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/endpoints/44772":
+			endpointCalls++
+			response.Header().Set("Content-Type", "application/json")
+			if endpointCalls == 1 {
+				response.WriteHeader(http.StatusConflict)
+				_, _ = io.WriteString(response, `{
+					"code":"SANDBOX_STATE_CONFLICT",
+					"message":"sandbox endpoint is converging"
+				}`)
+				return
+			}
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/exec",
+				"headers":  map[string]string{"X-Sandbox-Token": "endpoint-token"},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/exec/command":
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(
+				response,
+				"data: {\"type\":\"execution_complete\",\"execution_time\":1}\n",
+			)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewASBClient(ASBClientConfig{
+		BaseURL: server.URL,
+		APIKey:  "runtime-api-key",
+	})
+	if err != nil {
+		t.Fatalf("NewASBClient: %v", err)
+	}
+	if err := attachAndProbeASBIdentitySource(
+		context.Background(),
+		client,
+		sandboxID,
+		"12345",
+		"agent-multica-asb",
+		BUCIdentityTokens{
+			AccessToken:  "buc-access",
+			RefreshToken: "buc-refresh",
+			IDToken:      "buc-id",
+		},
+		"wg-client",
+		20*time.Millisecond,
+	); err != nil {
+		t.Fatalf("attachAndProbeASBIdentitySource: %v", err)
+	}
+	if endpointCalls != 2 {
+		t.Fatalf("endpoint calls = %d, want 2", endpointCalls)
+	}
+}
+
 func TestASBIdentityProbeStageReturnsLastSafeMarker(t *testing.T) {
 	t.Parallel()
 

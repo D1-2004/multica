@@ -262,6 +262,91 @@ func TestStableRuntimeProviderPreservesLegacyHermesDefault(t *testing.T) {
 	}
 }
 
+func TestStableRuntimeMetadataForBackendUsesCanonicalRuntimeParser(t *testing.T) {
+	validASBDigest := strings.Repeat("a", 64)
+	tests := []struct {
+		name     string
+		runtime  db.AgentRuntime
+		backend  SandboxBackendKind
+		eligible bool
+	}{
+		{
+			name: "legacy FC Runtime",
+			runtime: db.AgentRuntime{
+				RuntimeMode: "cloud",
+				Provider:    "hermes",
+				Metadata: []byte(`{
+					"kind":"fc-e2b",
+					"template_id":"template-id",
+					"template_build_id":"build-id",
+					"template_channel":"stable"
+				}`),
+			},
+			backend:  SandboxBackendAliyunFC,
+			eligible: true,
+		},
+		{
+			name: "ASB Runtime is excluded from FC channel",
+			runtime: db.AgentRuntime{
+				RuntimeMode: "cloud",
+				Provider:    "hermes",
+				Metadata: []byte(`{
+					"kind":"cloud-sandbox",
+					"sandbox_backend":"asb",
+					"provider":"hermes",
+					"artifact_kind":"oci_image",
+					"artifact_channel":"stable",
+					"artifact_ref":"registry.example/runtime@sha256:` + validASBDigest + `"
+				}`),
+			},
+			backend:  SandboxBackendAliyunFC,
+			eligible: false,
+		},
+		{
+			name: "malformed FC metadata is excluded",
+			runtime: db.AgentRuntime{
+				RuntimeMode: "cloud",
+				Provider:    "hermes",
+				Metadata: []byte(`{
+					"kind":"cloud-sandbox",
+					"sandbox_backend":"aliyun_fc",
+					"provider":"hermes",
+					"artifact_kind":"oci_image",
+					"artifact_channel":"stable",
+					"artifact_ref":"template-id"
+				}`),
+			},
+			backend:  SandboxBackendAliyunFC,
+			eligible: false,
+		},
+		{
+			name: "candidate Runtime is excluded",
+			runtime: db.AgentRuntime{
+				RuntimeMode: "cloud",
+				Provider:    "pi",
+				Metadata: []byte(`{
+					"kind":"cloud-sandbox",
+					"sandbox_backend":"aliyun_fc",
+					"provider":"pi",
+					"artifact_kind":"e2b_template",
+					"artifact_channel":"candidate",
+					"artifact_ref":"template-id"
+				}`),
+			},
+			backend:  SandboxBackendAliyunFC,
+			eligible: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, eligible := stableRuntimeMetadataForBackend(test.runtime, test.backend)
+			if eligible != test.eligible {
+				t.Fatalf("eligible = %t, want %t", eligible, test.eligible)
+			}
+		})
+	}
+}
+
 func TestStableRuntimeOwnedByDeveloperUsesOnlyConfiguredOwnerUUID(t *testing.T) {
 	allowed := util.MustParseUUID("410d0a06-a026-449b-b7ab-64c9d92481bd")
 	other := util.MustParseUUID("2c508db5-5410-41f9-ad69-d3d527529c20")

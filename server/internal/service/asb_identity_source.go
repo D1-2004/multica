@@ -259,42 +259,51 @@ func attachAndProbeASBIdentitySource(
 	if timeout <= 0 {
 		return errors.New("ASB WireGuard ready timeout is not configured")
 	}
+	if err := attachASBBUCIdentitySource(
+		ctx,
+		client,
+		sandboxID,
+		ASBBUCIdentityGrant{
+			EmployeeID:           employeeID,
+			BUCAccessToken:       tokens.AccessToken,
+			BUCRefreshToken:      tokens.RefreshToken,
+			BUCIDToken:           tokens.IDToken,
+			WireGuardCredentials: wireGuardCredentials,
+		},
+		timeout,
+	); err != nil {
+		return err
+	}
+	if err := waitForASBSandboxState(
+		ctx,
+		client,
+		sandboxID,
+		timeout,
+		"running",
+	); err != nil {
+		return fmt.Errorf("wait for attached ASB identity source to return running: %w", err)
+	}
+
+	// The synchronous WireGuard attachment can itself take several minutes.
+	// Start a fresh readiness window only after it has completed so a transient
+	// endpoint state conflict immediately after attachment does not consume the
+	// entire CLI identity-probe budget.
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
-	ticker := time.NewTicker(defaultASBWireGuardProbeInterval)
+	ticker := time.NewTicker(asbIdentityProbeInterval(timeout))
 	defer ticker.Stop()
-	attached := false
 	var lastErr error
 	for {
-		if !attached {
-			err := client.AttachBUCIdentity(ctx, sandboxID, ASBBUCIdentityGrant{
-				EmployeeID:           employeeID,
-				BUCAccessToken:       tokens.AccessToken,
-				BUCRefreshToken:      tokens.RefreshToken,
-				BUCIDToken:           tokens.IDToken,
-				WireGuardCredentials: wireGuardCredentials,
-			}, true)
-			switch {
-			case err == nil:
-				attached = true
-			case isASBWireGuardConverging(err):
-				lastErr = err
-			default:
-				return fmt.Errorf("attach BUC identity to temporary ASB source: %w", err)
-			}
-		}
-		if attached {
-			if err := probeASBBUCIdentity(
-				ctx,
-				client,
-				sandboxID,
-				employeeID,
-				bucAgentID,
-			); err == nil {
-				return nil
-			} else {
-				lastErr = err
-			}
+		if err := probeASBBUCIdentity(
+			ctx,
+			client,
+			sandboxID,
+			employeeID,
+			bucAgentID,
+		); err == nil {
+			return nil
+		} else {
+			lastErr = err
 		}
 		select {
 		case <-ctx.Done():
@@ -308,6 +317,53 @@ func attachAndProbeASBIdentitySource(
 		case <-ticker.C:
 		}
 	}
+}
+
+func attachASBBUCIdentitySource(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+	grant ASBBUCIdentityGrant,
+	timeout time.Duration,
+) error {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(asbIdentityProbeInterval(timeout))
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		err := client.AttachBUCIdentity(ctx, sandboxID, grant, true)
+		switch {
+		case err == nil:
+			return nil
+		case isASBWireGuardConverging(err):
+			lastErr = err
+		default:
+			return fmt.Errorf("attach BUC identity to temporary ASB source: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf(
+				"temporary ASB BUC identity attachment did not complete within %s: %w",
+				timeout,
+				lastErr,
+			)
+		case <-ticker.C:
+		}
+	}
+}
+
+func asbIdentityProbeInterval(timeout time.Duration) time.Duration {
+	interval := defaultASBWireGuardProbeInterval
+	if timeout < interval {
+		interval = timeout / 10
+	}
+	if interval < time.Millisecond {
+		return time.Millisecond
+	}
+	return interval
 }
 
 func prepareASBIdentitySource(
@@ -440,6 +496,13 @@ func probeASBBUCIdentity(
 ) error {
 	endpoint, err := client.GetEndpoint(ctx, sandboxID, asbExecPort)
 	if err != nil {
+		if sandbox, stateErr := client.GetSandbox(ctx, sandboxID); stateErr == nil {
+			return fmt.Errorf(
+				"resolve ASB command endpoint for BUC probe (sandbox_state=%s): %w",
+				strings.ToLower(strings.TrimSpace(sandbox.Status.State)),
+				err,
+			)
+		}
 		return fmt.Errorf("resolve ASB command endpoint for BUC probe: %w", err)
 	}
 	result, err := client.Exec(ctx, endpoint, ASBExecInput{
