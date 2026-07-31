@@ -375,7 +375,7 @@ func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T
 	}
 }
 
-func TestAttachAndProbeASBIdentitySourceRetriesWhileWireGuardConverges(t *testing.T) {
+func TestAttachAndProbeASBIdentitySourceProbesAfterWireGuardConvergingResponse(t *testing.T) {
 	const sandboxID = "identity-source-wireguard-converging"
 	attachCalls := 0
 	var server *httptest.Server
@@ -385,15 +385,11 @@ func TestAttachAndProbeASBIdentitySourceRetriesWhileWireGuardConverges(t *testin
 			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
 			attachCalls++
 			response.Header().Set("Content-Type", "application/json")
-			if attachCalls == 1 {
-				response.WriteHeader(http.StatusBadRequest)
-				_, _ = io.WriteString(response, `{
-					"code":"BAD_REQUEST",
-					"message":"wireguard tunnel not ready yet, sandboxId=identity-source-wireguard-converging"
-				}`)
-				return
-			}
-			response.WriteHeader(http.StatusOK)
+			response.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(response, `{
+				"code":"BAD_REQUEST",
+				"message":"wireguard tunnel not ready yet, sandboxId=identity-source-wireguard-converging"
+			}`)
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID:
 			response.Header().Set("Content-Type", "application/json")
@@ -444,8 +440,8 @@ func TestAttachAndProbeASBIdentitySourceRetriesWhileWireGuardConverges(t *testin
 	); err != nil {
 		t.Fatalf("attachAndProbeASBIdentitySource: %v", err)
 	}
-	if attachCalls != 2 {
-		t.Fatalf("attach calls = %d, want 2", attachCalls)
+	if attachCalls != 1 {
+		t.Fatalf("attach calls = %d, want exactly one", attachCalls)
 	}
 }
 

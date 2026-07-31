@@ -286,7 +286,6 @@ func attachAndProbeASBIdentitySource(
 			BUCIDToken:           tokens.IDToken,
 			WireGuardCredentials: wireGuardCredentials,
 		},
-		timeout,
 	); err != nil {
 		return err
 	}
@@ -336,36 +335,25 @@ func attachASBBUCIdentitySource(
 	client *ASBClient,
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
-	timeout time.Duration,
 ) error {
-	interval := asbIdentityProbeInterval(timeout)
-	attempt := 0
-	for {
-		attempt++
-		err := client.AttachBUCIdentity(ctx, sandboxID, grant, true)
-		if err == nil {
-			return nil
-		}
-		if !isASBWireGuardTunnelConverging(err) {
-			return fmt.Errorf("attach BUC identity to temporary ASB source: %w", err)
-		}
-		slog.Warn(
-			"ASB BUC identity attachment waiting for WireGuard tunnel",
-			"sandbox_id", sandboxID,
-			"attempt", attempt,
-			"retry_after", interval,
-		)
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return fmt.Errorf(
-				"attach BUC identity to temporary ASB source before WireGuard timeout: %w",
-				err,
-			)
-		case <-timer.C:
-		}
+	// Submit the synchronous attachment exactly once. ASB can return the
+	// documented tunnel-converging response after it has started sandbox-side
+	// WireGuard setup. Repeating the POST restarts that setup and can keep the
+	// tunnel permanently unready. The caller therefore treats this one response
+	// as an in-progress attachment and proves completion through state and BUC
+	// probes only.
+	err := client.AttachBUCIdentity(ctx, sandboxID, grant, true)
+	if err == nil {
+		return nil
 	}
+	if isASBWireGuardTunnelConverging(err) {
+		slog.Info(
+			"ASB BUC identity attachment is converging after single submission",
+			"sandbox_id", sandboxID,
+		)
+		return nil
+	}
+	return fmt.Errorf("attach BUC identity to temporary ASB source: %w", err)
 }
 
 func isASBWireGuardTunnelConverging(err error) bool {
