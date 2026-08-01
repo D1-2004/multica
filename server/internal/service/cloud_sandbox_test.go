@@ -146,3 +146,59 @@ func TestCloudSandboxLauncherDispatchesOnlyToSelectedBackend(t *testing.T) {
 		t.Fatalf("ASB calls=%d FC calls=%d", asb.calls, fc.calls)
 	}
 }
+
+func TestCloudSandboxLauncherDispatchesFCWhenASBUnavailable(t *testing.T) {
+	t.Parallel()
+
+	runtimeID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	fc := &recordingCloudSandboxLauncher{}
+	launcher := NewCloudSandboxLauncher(fakeCloudSandboxRuntimeStore{
+		runtime: db.AgentRuntime{
+			ID:          runtimeID,
+			RuntimeMode: "cloud",
+			Provider:    "pi",
+			Metadata: json.RawMessage(`{
+				"kind":"cloud-sandbox",
+				"sandbox_backend":"aliyun_fc",
+				"provider":"pi",
+				"artifact_kind":"e2b_template",
+				"artifact_ref":"fc-template-id",
+				"artifact_build_id":"fc-template-build-id"
+			}`),
+		},
+	}, fc, nil)
+	if err := launcher.LaunchTask(context.Background(), db.AgentTaskQueue{RuntimeID: runtimeID}); err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if fc.calls != 1 {
+		t.Fatalf("FC calls=%d, want 1", fc.calls)
+	}
+}
+
+func TestCloudSandboxLauncherDoesNotRouteASBToFCWhenASBUnavailable(t *testing.T) {
+	t.Parallel()
+
+	runtimeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	fc := &recordingCloudSandboxLauncher{}
+	launcher := NewCloudSandboxLauncher(fakeCloudSandboxRuntimeStore{
+		runtime: db.AgentRuntime{
+			ID:          runtimeID,
+			RuntimeMode: "cloud",
+			Provider:    "hermes",
+			Metadata: json.RawMessage(`{
+				"kind":"cloud-sandbox",
+				"sandbox_backend":"asb",
+				"provider":"hermes",
+				"artifact_kind":"oci_image",
+				"artifact_ref":"hub.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}`),
+		},
+	}, fc, nil)
+	err := launcher.LaunchTask(context.Background(), db.AgentTaskQueue{RuntimeID: runtimeID})
+	if err == nil || err.Error() != "ASB sandbox launcher is unavailable" {
+		t.Fatalf("LaunchTask error=%v", err)
+	}
+	if fc.calls != 0 {
+		t.Fatalf("FC calls=%d, want 0", fc.calls)
+	}
+}

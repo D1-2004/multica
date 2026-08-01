@@ -431,8 +431,11 @@ func main() {
 		service.EnterpriseIdentityConfigFromEnv(),
 	)
 	if asbRuntimeErr != nil {
-		slog.Error("background ASB enterprise runtime configuration failed", "error", asbRuntimeErr)
-		os.Exit(1)
+		slog.Error(
+			"background ASB enterprise runtime disabled due to invalid configuration",
+			"error", asbRuntimeErr,
+			"fc_e2b_available", true,
+		)
 	}
 	var backgroundASBLauncher service.TaskRuntimeLauncher
 	if backgroundASBRuntime != nil {

@@ -325,8 +325,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		signupConfig.EnterpriseIdentity,
 	)
 	if err != nil {
-		slog.Error("ASB enterprise runtime configuration failed", "error", err)
-		os.Exit(1)
+		slog.Error(
+			"ASB enterprise runtime disabled due to invalid configuration",
+			"error", err,
+			"fc_e2b_available", true,
+		)
 	}
 	if asbRuntime != nil {
 		h.ASBLauncher = asbRuntime.Launcher
