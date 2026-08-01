@@ -2431,7 +2431,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		)
 	}
 
-	applyDingTalkDispatchPromptToExistingTaskFields(&resp, task.Context)
+	applyDingTalkDispatchPromptToExistingTaskFieldsWithFeatureFlags(&resp, task.Context, h.FeatureFlags)
 
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
 }

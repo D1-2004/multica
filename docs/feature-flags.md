@@ -2,7 +2,7 @@
 
 Multica ships a framework-level feature flag implementation:
 
-- **Backend**: `server/pkg/featureflag` — Go package.
+- **Backend**: `server/pkg/featureflag` — Go package with environment, Diamond surface-prompt, YAML, and chain providers.
 - **Frontend**: `@multica/core/feature-flags` — TypeScript module with React hooks.
 
 Both sides share the same vocabulary (`Decision`, `EvalContext`, `Rule`, `PercentRollout`) and the same FNV-1a percent bucketing, so a flag evaluated on the server and on the client lands in the same bucket for the same user.
@@ -15,12 +15,12 @@ The package is designed so new features can adopt feature flags without writing 
 
 ```
 [Toggle Point] --query--> [Service / Router] --read--> [Provider / Configuration]
-   business code                                          static / env / chain
+   business code                                          env / Diamond / YAML / chain
 ```
 
 - A **Toggle Point** is the single `if` in business code. It always calls the Service, never the provider directly.
 - The **Service** (`Service` in Go, `FeatureFlagService` in TS) is the router. Business code never depends on which provider is behind it.
-- A **Provider** is the configuration backend. Today we ship `StaticProvider` (in-memory rules), `EnvProvider` (Go only — env-var override), and `ChainProvider` (composition). A future DB or LaunchDarkly provider plugs in without changing any caller.
+- A **Provider** is the configuration backend. The Go server ships `StaticProvider` (in-memory/YAML rules), `EnvProvider`, `DiamondProvider` (dynamic immutable surface-prompt snapshots), and `ChainProvider`. The frontend uses its own static provider.
 - A **Decision** is the structured result: `{ enabled, variant, reason, source }`. `IsEnabled` is the boolean projection, `Variant` is the raw string. Use `Decision` for diagnostic endpoints.
 
 Four flag categories (Martin Fowler):
@@ -50,14 +50,19 @@ if err != nil {
 }
 ```
 
-`NewServiceFromEnv` reads two env vars — both follow the same `MULTICA_*_FILE` / `FF_*` conventions documented in `.env.example`:
+`NewServiceFromEnv` composes the following configuration sources:
 
 | Env var | Role |
 |---|---|
 | `MULTICA_FEATURE_FLAGS_FILE` | Path to the YAML rule set (optional; absent = no static rules). |
+| `MULTICA_DIAMOND_ENABLED` | Enables the optional Alibaba Diamond dynamic provider. Defaults to `false`. |
+| `MULTICA_DIAMOND_DATA_ID` | Diamond Data ID. Defaults to `dt-fde-multica.json`. |
+| `MULTICA_DIAMOND_GROUP` | Diamond Group. Defaults to `DEFAULT_GROUP`. |
 | `FF_<FLAG_KEY>` | Per-flag runtime override. `FF_BILLING_NEW_INVOICE_EMAIL=false` / `25%` / `experiment-v2`. Beats the YAML, no redeploy. |
 
-The provider chain is `EnvProvider → YAML StaticProvider`. The server can boot with zero flag config — every `IsEnabled` call falls back to the caller's default until someone authors a rule.
+The provider chain is `EnvProvider → DiamondProvider → YAML StaticProvider → caller default`. Earlier providers win. The server can boot with zero flag config, and disabling Diamond preserves the previous `EnvProvider → YAML` behavior.
+
+When Diamond is enabled, startup performs `GetConfig` and then registers `ListenConfig`. Its JSON contract is the fixed `issue/chat/auto.prompt` surface-prompt document described in [Alibaba Diamond configuration](diamond.md), not the generic YAML rule schema. Each complete document is validated before an atomic snapshot replacement. `{}` is valid. Invalid JSON leaves the last valid Diamond snapshot untouched. Diamond client, fetch, and listener failures are fail-open and do not prevent the server from using environment overrides, YAML, or caller defaults.
 
 ### YAML schema
 
@@ -224,6 +229,13 @@ Adopted from Martin Fowler, ConfigCat and Octopus.
 - **Convention**: `Off` is the legacy / safe state, `On` is the new behavior. Lets CI test "all-off (today)" and "all-on (tomorrow)".
 - **Kill switch fast path**: ops-critical flags should be exposed via `EnvProvider` so SREs can flip them without a deploy.
 - **Backend protection**: anything controlling access goes through the backend Service; the frontend flag is presentation only.
-- **No secrets in flags**: variant values are not Secrets Manager / KMS. Use those for tokens, keys, and passwords.
+- **No secrets in flags**: variant values are not Secrets Manager / KMS. Database URLs, JWT secrets, service credentials, signing keys, tokens, and passwords must not be stored in YAML or Diamond.
 
 See `docs/design.md` and `docs/timezone-architecture-rfc.md` for prior examples of how this pattern is used across the codebase.
+
+## Change history
+
+| Date | Change | Reason |
+|---|---|---|
+| 2026-08-01 | Defined Diamond as the dynamic source for `issue/chat/auto.prompt` and removed binary-embedded surface prompt fallback. | Keep changeable Agent behavior policy in configuration while retaining security and outbound protocol constraints in code. |
+| 2026-08-01 | Added Diamond to the backend provider chain and documented the dynamic snapshot lifecycle, precedence, and security boundary. | Support runtime configuration updates across all replicas while retaining the environment, YAML, and caller-default fallback chain. |

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -316,15 +317,8 @@ func TestDispatchPromptBuilderRoutesRuntimePolicyByOutboundMode(t *testing.T) {
 	auto := base
 	auto.Surface.Type = "auto"
 	autoPrompt := mustBuildDispatchPrompt(t, auto)
-	for _, want := range []string{
-		"本轮以 auto 模式运行",
-		"multica issue delegate",
-		"release_parent",
-		"dws chat message reply",
-	} {
-		if !strings.Contains(autoPrompt.RuntimePrompt, want) {
-			t.Errorf("auto runtime prompt missing %q: %q", want, autoPrompt.RuntimePrompt)
-		}
+	if strings.Contains(autoPrompt.RuntimePrompt, "multica issue delegate") {
+		t.Fatalf("auto mode retained an embedded delegation prompt: %q", autoPrompt.RuntimePrompt)
 	}
 
 	robotDWS := base
@@ -346,6 +340,101 @@ func TestDispatchPromptBuilderRoutesRuntimePolicyByOutboundMode(t *testing.T) {
 	unsupported.Event.Domain = "calendar"
 	if _, err := BuildDispatchPrompt(unsupported); err == nil {
 		t.Fatal("unregistered prompt strategy was accepted")
+	}
+}
+
+func TestDispatchPromptBuilderUsesDynamicAutoRuntimePrompt(t *testing.T) {
+	provider := featureflag.NewDiamondProvider()
+	if _, _, err := provider.ApplyJSON([]byte(`{"auto":{"prompt":"DYNAMIC AUTO POLICY FROM DIAMOND"}}`)); err != nil {
+		t.Fatalf("seed Diamond prompt: %v", err)
+	}
+	flags := featureflag.NewService(provider)
+	command := DispatchCommand{
+		Source: DispatchSource{Platform: "dingtalk", Type: "robot"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-1"},
+			Sender:       DispatchSender{DisplayName: "张三", OpenDingTalkID: "open-user-1"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-1", Text: "处理告警"}},
+		}},
+		Surface:  DispatchSurface{Type: "auto"},
+		Outbound: DispatchOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
+	}
+
+	prompt, err := buildDispatchPrompt(command, flags)
+	if err != nil {
+		t.Fatalf("buildDispatchPrompt: %v", err)
+	}
+	if !strings.Contains(prompt.RuntimePrompt, "DYNAMIC AUTO POLICY FROM DIAMOND") {
+		t.Fatalf("runtime prompt missing dynamic policy: %q", prompt.RuntimePrompt)
+	}
+	if _, _, err := provider.ApplyJSON([]byte(`{"auto":{"prompt":"UPDATED AUTO POLICY"}}`)); err != nil {
+		t.Fatalf("update Diamond prompt: %v", err)
+	}
+	prompt, err = buildDispatchPrompt(command, flags)
+	if err != nil {
+		t.Fatalf("buildDispatchPrompt after update: %v", err)
+	}
+	if !strings.Contains(prompt.RuntimePrompt, "UPDATED AUTO POLICY") || strings.Contains(prompt.RuntimePrompt, "DYNAMIC AUTO POLICY FROM DIAMOND") {
+		t.Fatalf("runtime prompt did not observe the atomic Diamond update: %q", prompt.RuntimePrompt)
+	}
+}
+
+func TestDispatchPromptBuilderUsesDiamondPromptForEverySurface(t *testing.T) {
+	provider := featureflag.NewDiamondProvider()
+	if _, _, err := provider.ApplyJSON([]byte(`{
+  "issue":{"prompt":"ISSUE MODE POLICY"},
+  "chat":{"prompt":"CHAT MODE POLICY"},
+  "auto":{"prompt":"AUTO MODE POLICY"}
+}`)); err != nil {
+		t.Fatalf("seed Diamond prompts: %v", err)
+	}
+	flags := featureflag.NewService(provider)
+	command := DispatchCommand{
+		Source: DispatchSource{Platform: "dingtalk", Type: "robot"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-1"},
+			Sender:       DispatchSender{DisplayName: "张三", OpenDingTalkID: "open-user-1"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-1", Text: "处理告警"}},
+		}},
+		Outbound: DispatchOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
+	}
+
+	for surface, want := range map[string]string{
+		"issue": "ISSUE MODE POLICY",
+		"chat":  "CHAT MODE POLICY",
+		"auto":  "AUTO MODE POLICY",
+	} {
+		command.Surface.Type = surface
+		prompt, err := buildDispatchPrompt(command, flags)
+		if err != nil {
+			t.Fatalf("buildDispatchPrompt(%s): %v", surface, err)
+		}
+		if !strings.Contains(prompt.RuntimePrompt, want) {
+			t.Errorf("surface %s runtime prompt missing %q: %q", surface, want, prompt.RuntimePrompt)
+		}
+	}
+}
+
+func TestDispatchPromptBuilderHasNoEmbeddedSurfacePromptFallback(t *testing.T) {
+	command := DispatchCommand{
+		Source: DispatchSource{Platform: "dingtalk", Type: "robot"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-1"},
+			Sender:       DispatchSender{DisplayName: "张三", OpenDingTalkID: "open-user-1"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-1", Text: "处理告警"}},
+		}},
+		Surface:  DispatchSurface{Type: "auto"},
+		Outbound: DispatchOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
+	}
+
+	prompt, err := buildDispatchPrompt(command, nil)
+	if err != nil {
+		t.Fatalf("buildDispatchPrompt: %v", err)
+	}
+	for _, embedded := range []string{"# Auto 模式前台协调职责", "multica issue delegate", "release_parent"} {
+		if strings.Contains(prompt.RuntimePrompt, embedded) {
+			t.Errorf("runtime prompt retained embedded surface policy %q: %q", embedded, prompt.RuntimePrompt)
+		}
 	}
 }
 

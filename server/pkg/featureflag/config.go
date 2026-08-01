@@ -1,7 +1,10 @@
 package featureflag
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -40,6 +43,10 @@ type ruleConfig struct {
 type percentConfig struct {
 	Percent int    `yaml:"percent"`
 	By      string `yaml:"by,omitempty"`
+}
+
+type diamondPromptConfig struct {
+	Prompt string `json:"prompt"`
 }
 
 // toRule converts the wire shape to a runtime Rule, applying defaults for
@@ -116,26 +123,85 @@ func parseRulesYAML(data []byte) (map[string]Rule, error) {
 	return out, nil
 }
 
+func parseDiamondPromptsJSON(data []byte) (map[string]Rule, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+
+	var raw map[string]json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, fmt.Errorf("featureflag: parse Diamond JSON: %w", err)
+	}
+	if raw == nil {
+		return nil, fmt.Errorf("featureflag: Diamond JSON must be an object")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("featureflag: Diamond JSON contains multiple values")
+		}
+		return nil, fmt.Errorf("featureflag: parse trailing Diamond JSON: %w", err)
+	}
+
+	sectionKeys := map[string]string{
+		"issue": DispatchIssueRuntimePromptFlagKey,
+		"chat":  DispatchChatRuntimePromptFlagKey,
+		"auto":  DispatchAutoRuntimePromptFlagKey,
+	}
+	out := make(map[string]Rule, len(raw))
+	for section, encodedPrompt := range raw {
+		flagKey, ok := sectionKeys[section]
+		if !ok {
+			return nil, fmt.Errorf("featureflag: unknown Diamond prompt section %q", section)
+		}
+		if bytes.Equal(bytes.TrimSpace(encodedPrompt), []byte("null")) {
+			return nil, fmt.Errorf("featureflag: Diamond prompt section %q must be an object", section)
+		}
+
+		ruleDecoder := json.NewDecoder(bytes.NewReader(encodedPrompt))
+		ruleDecoder.DisallowUnknownFields()
+		var promptConfig diamondPromptConfig
+		if err := ruleDecoder.Decode(&promptConfig); err != nil {
+			return nil, fmt.Errorf("featureflag: parse Diamond prompt section %q: %w", section, err)
+		}
+		if err := ruleDecoder.Decode(&trailing); err != io.EOF {
+			return nil, fmt.Errorf("featureflag: Diamond prompt section %q contains trailing data", section)
+		}
+		prompt := strings.TrimSpace(promptConfig.Prompt)
+		out[flagKey] = Rule{Default: prompt != "", Variant: prompt}
+	}
+	return out, nil
+}
+
 // NewServiceFromEnv constructs a Service wired with the standard multica
 // config sources, in order of decreasing precedence:
 //
 //  1. EnvProvider (FF_<KEY> overrides — Ops kill switches, fastest path).
-//  2. StaticProvider loaded from the YAML file at MULTICA_FEATURE_FLAGS_FILE
+//  2. DiamondProvider (when MULTICA_DIAMOND_ENABLED is true).
+//  3. StaticProvider loaded from the YAML file at MULTICA_FEATURE_FLAGS_FILE
 //     (when the env var is set and the file exists).
 //
-// When MULTICA_FEATURE_FLAGS_FILE is unset, the Service still works — the
-// EnvProvider is the sole layer, and IsEnabled falls through to the
-// caller's default for any flag without an FF_<KEY> override. The server
-// can therefore boot before any flag config is authored.
+// When both optional sources are disabled or unset, the Service still works:
+// EnvProvider remains the sole layer, and IsEnabled falls through to the
+// caller's default for any flag without an FF_<KEY> override.
 //
 // When the file path is set but the file is malformed, this returns an
 // error rather than silently dropping the configuration — operators
 // expect feature-flag misconfig to fail loudly the way every other
-// config knob does (DATABASE_URL parse errors, JWT_SECRET missing in
-// production, etc.).
+// config knob does. Diamond failures are deliberately fail-open and retain
+// the rest of the provider chain.
 func NewServiceFromEnv(opts ...Option) (*Service, error) {
+	return newServiceFromEnvWithDiamondFactory(newNacosDiamondClient, opts...)
+}
+
+func newServiceFromEnvWithDiamondFactory(factory diamondClientFactory, opts ...Option) (*Service, error) {
 	var providers []Provider
 	providers = append(providers, NewEnvProvider(EnvOverridePrefix))
+
+	diamondConfig := diamondConfigFromEnv()
+	var diamondProvider *DiamondProvider
+	if diamondConfig.Enabled {
+		diamondProvider = NewDiamondProvider()
+		providers = append(providers, diamondProvider)
+	}
 
 	path := strings.TrimSpace(os.Getenv(EnvFlagFile))
 	var loadedCount int
@@ -157,6 +223,9 @@ func NewServiceFromEnv(opts ...Option) (*Service, error) {
 			slog.Int("rules", loadedCount),
 			slog.String("env_prefix", EnvOverridePrefix),
 		)
+	}
+	if diamondProvider != nil {
+		startDiamondListener(svc, diamondProvider, diamondConfig, factory)
 	}
 	return svc, nil
 }

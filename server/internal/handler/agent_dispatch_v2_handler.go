@@ -176,7 +176,7 @@ func (h *Handler) handleAgentDispatchV2(
 		return
 	}
 	command.DispatchEndpointID = uuidToString(dispatchContext.EndpointNamespaceID)
-	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext)
+	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext, h.FeatureFlags)
 	if err != nil {
 		slog.Error("MULTICA_AGENT_DISPATCH_REQUEST",
 			"outcome", "failed",

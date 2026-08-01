@@ -5,8 +5,8 @@ package handler
 // projection into issue/comment display text and private runtime instructions.
 
 import (
+	"context"
 	"crypto/sha256"
-	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -133,9 +134,6 @@ type dispatchPromptBuilderKey struct {
 
 type dispatchPromptStrategy func(DispatchCommand) DispatchPrompt
 
-//go:embed prompts/auto-chat-delegation.md
-var autoModeRuntimePrompt string
-
 // DispatchPromptBuilder is the single structured-event projection boundary.
 // Adding a domain, event type, or source requires an explicit strategy
 // registration instead of prompt assembly in an HTTP handler.
@@ -156,6 +154,10 @@ func (b *DispatchPromptBuilder) register(domain, eventType, sourceType string, s
 }
 
 func (b *DispatchPromptBuilder) Build(c DispatchCommand) (DispatchPrompt, error) {
+	return b.build(c, nil)
+}
+
+func (b *DispatchPromptBuilder) build(c DispatchCommand, flags *featureflag.Service) (DispatchPrompt, error) {
 	if b == nil {
 		return DispatchPrompt{}, errors.New("dispatch prompt builder is not configured")
 	}
@@ -165,10 +167,27 @@ func (b *DispatchPromptBuilder) Build(c DispatchCommand) (DispatchPrompt, error)
 		return DispatchPrompt{}, fmt.Errorf("unsupported dispatch prompt strategy: %s/%s/%s", key.Domain, key.EventType, key.SourceType)
 	}
 	prompt := strategy(c)
-	if c.Surface.Type == protocol.DispatchSurfaceTypeAuto {
-		prompt.RuntimePrompt = joinDispatchPromptSections(prompt.RuntimePrompt, autoModeRuntimePrompt)
-	}
+	prompt.RuntimePrompt = joinDispatchPromptSections(prompt.RuntimePrompt, resolveSurfaceRuntimePrompt(flags, c.Surface.Type))
 	return prompt, nil
+}
+
+func resolveSurfaceRuntimePrompt(flags *featureflag.Service, surfaceType string) string {
+	var flagKey string
+	switch surfaceType {
+	case protocol.DispatchSurfaceTypeIssue:
+		flagKey = featureflag.DispatchIssueRuntimePromptFlagKey
+	case protocol.DispatchSurfaceTypeChat:
+		flagKey = featureflag.DispatchChatRuntimePromptFlagKey
+	case protocol.DispatchSurfaceTypeAuto:
+		flagKey = featureflag.DispatchAutoRuntimePromptFlagKey
+	default:
+		return ""
+	}
+	configured := strings.TrimSpace(flags.Variant(context.Background(), flagKey, ""))
+	if configured == "" || configured == "off" {
+		return ""
+	}
+	return configured
 }
 
 var defaultDispatchPromptBuilder = NewDispatchPromptBuilder()
@@ -297,6 +316,10 @@ func BuildDispatchPrompt(c DispatchCommand) (DispatchPrompt, error) {
 	return defaultDispatchPromptBuilder.Build(c)
 }
 
+func buildDispatchPrompt(c DispatchCommand, flags *featureflag.Service) (DispatchPrompt, error) {
+	return defaultDispatchPromptBuilder.build(c, flags)
+}
+
 func buildDingTalkRobotPrompt(c DispatchCommand) DispatchPrompt {
 	return buildDingTalkPrompt(c)
 }
@@ -391,6 +414,14 @@ type persistedDispatchContext struct {
 // structured task context, then carries them through fields every supported
 // daemon already consumes.
 func applyDingTalkDispatchPromptToExistingTaskFields(response *AgentTaskResponse, rawContext []byte) {
+	applyDingTalkDispatchPromptToExistingTaskFieldsWithFeatureFlags(response, rawContext, nil)
+}
+
+func applyDingTalkDispatchPromptToExistingTaskFieldsWithFeatureFlags(
+	response *AgentTaskResponse,
+	rawContext []byte,
+	flags *featureflag.Service,
+) {
 	if response == nil || len(rawContext) == 0 {
 		return
 	}
@@ -430,7 +461,7 @@ func applyDingTalkDispatchPromptToExistingTaskFields(response *AgentTaskResponse
 		Surface:  stored.Surface,
 		Outbound: stored.Outbound,
 	}
-	prompt, err := BuildDispatchPrompt(command)
+	prompt, err := buildDispatchPrompt(command, flags)
 	if err != nil {
 		return
 	}

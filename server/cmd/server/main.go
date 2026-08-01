@@ -161,36 +161,31 @@ func main() {
 		port = "8080"
 	}
 
-	// Feature flags: loaded once at startup from MULTICA_FEATURE_FLAGS_FILE
-	// (a YAML rule set) with FF_<KEY> env overrides layered on top.
+	// Feature flags: FF_<KEY> overrides are layered over an optional dynamic
+	// Diamond snapshot and the startup YAML rule set.
 	// See docs/feature-flags.md for the schema and lifecycle rules.
 	//
-	// Booting the server without any flag config is intentional: when the
-	// env var is unset, every IsEnabled call falls through to the caller's
-	// default, so existing code paths are unchanged until someone adds a
-	// rule. A misconfigured (malformed / missing) file surfaces as a hard
-	// error so operators see misconfig the same way they do for any other
-	// MULTICA_*_FILE knob.
+	// Booting without either remote or file configuration is intentional.
+	// Diamond failures are fail-open; a malformed configured YAML file remains
+	// a startup error so operators do not silently lose source-controlled rules.
 	flags, err := featureflag.NewServiceFromEnv(featureflag.WithLogger(slog.Default()))
 	if err != nil {
 		slog.Error("feature flag configuration failed to load", "error", err)
 		os.Exit(1)
 	}
-	_ = flags // adopted by the router (opts.FeatureFlags) and server-side toggle points; see docs/feature-flags.md
-
 	sandboxRelaySigner, err := sandboxrelay.LoadSignerFromEnv()
 	if err != nil {
 		slog.Error("sandbox relay signing configuration failed", "error", err)
-		os.Exit(1)
+		closeFeatureFlagsAndExit(flags, 1)
 	}
 	sandboxHTTPRelay, err := sandboxrelay.LoadRelayFromEnv()
 	if err != nil {
 		slog.Error("sandbox relay forwarding configuration failed", "error", err)
-		os.Exit(1)
+		closeFeatureFlagsAndExit(flags, 1)
 	}
 	if sandboxRelaySigner != nil && sandboxHTTPRelay != nil {
 		slog.Error("sandbox relay signer and forwarding relay must not be enabled on the same deployment")
-		os.Exit(1)
+		closeFeatureFlagsAndExit(flags, 1)
 	}
 	if sandboxRelaySigner != nil {
 		slog.Info("sandbox relay signing enabled")
@@ -211,13 +206,13 @@ func main() {
 	pool, err := newDBPool(ctx, dbURL)
 	if err != nil {
 		slog.Error("unable to connect to database", "error", err)
-		os.Exit(1)
+		closeFeatureFlagsAndExit(flags, 1)
 	}
 	defer pool.Close()
 
 	if err := pool.Ping(ctx); err != nil {
 		slog.Error("unable to ping database", "error", err)
-		os.Exit(1)
+		closeFeatureFlagsAndExit(flags, 1)
 	}
 	slog.Info("connected to database")
 	logPoolConfig(pool)
@@ -259,7 +254,7 @@ func main() {
 	redisOpts, redisSource, err := redisOptionsFromEnv()
 	if err != nil {
 		slog.Error("Redis configuration failed", "error", err)
-		os.Exit(1)
+		closeFeatureFlagsAndExit(flags, 1)
 	}
 	if redisOpts != nil {
 		if envBool("REDIS_DISABLE_CLIENT_NAME", false) {
@@ -268,7 +263,7 @@ func main() {
 		storeRedis = newNamedRedisClient(redisOpts, "store")
 		if err := storeRedis.Ping(ctx).Err(); err != nil {
 			slog.Error("unable to ping Redis", "source", redisSource, "error", err)
-			os.Exit(1)
+			closeFeatureFlagsAndExit(flags, 1)
 		}
 		slog.Info("connected to Redis", "source", redisSource)
 		relayWriteRedis = newNamedRedisClient(redisOpts, "realtime-write")
@@ -518,7 +513,7 @@ func main() {
 		slog.Info("server starting", "port", port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)
-			os.Exit(1)
+			closeFeatureFlagsAndExit(flags, 1)
 		}
 	}()
 
@@ -543,7 +538,7 @@ func main() {
 	if err := srv.Shutdown(apiShutdownCtx); err != nil {
 		apiShutdownCancel()
 		slog.Error("server forced to shutdown", "error", err)
-		os.Exit(1)
+		closeFeatureFlagsAndExit(flags, 1)
 	}
 	apiShutdownCancel()
 	if h.ChannelSupervisor != nil {
@@ -601,5 +596,11 @@ func main() {
 		}
 		metricsShutdownCancel()
 	}
+	_ = flags.Close()
 	slog.Info("server stopped")
+}
+
+func closeFeatureFlagsAndExit(flags *featureflag.Service, code int) {
+	_ = flags.Close()
+	os.Exit(code)
 }

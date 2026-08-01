@@ -38,7 +38,7 @@ func TestBuildAgentDispatchExecutionPlanComposesSurfaceIdentityAndOutbound(t *te
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			command := dispatchCommandForPlanTest(tc.sourceType, tc.modeType, tc.outboundMode)
-			plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext)
+			plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -82,7 +82,7 @@ func TestBuildAgentDispatchExecutionPlanRejectsDigitalEmployeeChatWithoutEndpoin
 		UserID:      pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
 		WorkspaceID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true},
 		AgentID:     pgtype.UUID{Bytes: [16]byte{3}, Valid: true},
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("digital employee chat+DWS accepted without authenticated endpoint namespace")
 	}
@@ -94,7 +94,7 @@ func TestBuildAgentDispatchExecutionPlanRejectsDigitalEmployeeChatWithoutEndpoin
 		EndpointNamespaceID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
 		WorkspaceID:         pgtype.UUID{Bytes: [16]byte{2}, Valid: true},
 		AgentID:             pgtype.UUID{Bytes: [16]byte{3}, Valid: true},
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("digital employee chat+DWS accepted without authenticated endpoint principal")
 	}
