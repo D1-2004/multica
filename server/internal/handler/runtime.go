@@ -743,6 +743,10 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := h.enqueueDingTalkBindingUnbinds(r.Context(), qtx, archivedAgentIDs); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to preserve dingtalk binding cleanup")
+		return
+	}
 
 	// Remove archived squads whose leader is an archived agent on this runtime
 	// so the RESTRICT FK on squad.leader_id won't block the subsequent agent
@@ -796,6 +800,7 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete runtime")
 		return
 	}
+	h.notifyDingTalkBindingUnbinds()
 
 	slog.Info("runtime deleted", "runtime_id", uuidToString(rt.ID), "deleted_by", userID)
 
@@ -1020,6 +1025,10 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 			return
 		}
 	}
+	if err := h.enqueueDingTalkBindingUnbinds(r.Context(), qtx, allArchivedIDs); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to preserve dingtalk binding cleanup")
+		return
+	}
 
 	// 4. Hard-delete the archived agents so the agent.runtime_id FK
 	//    (ON DELETE RESTRICT) no longer keeps the runtime alive.
@@ -1065,6 +1074,7 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
 	}
+	h.notifyDingTalkBindingUnbinds()
 
 	// Post-commit fan-out — same ordering as publishRevocation so subscribers
 	// observe task:cancelled before agent:archived before the runtime list

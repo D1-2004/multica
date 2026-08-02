@@ -450,6 +450,10 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if err := h.enqueueDingTalkBindingUnbinds(r.Context(), qtx, archivedAgentIDs); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to preserve dingtalk binding cleanup")
+			return
+		}
 		if err := qtx.DeleteSquadsByArchivedAgentsOnRuntime(r.Context(), rid); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to clean up squads referencing archived agents")
 			return
@@ -504,6 +508,7 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
 	}
+	h.notifyDingTalkBindingUnbinds()
 
 	// Tell connected clients to refetch the runtime list (instances vanished).
 	profileID := uuidToString(profileUUID)

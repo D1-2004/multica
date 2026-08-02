@@ -8,8 +8,21 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+type runtimeCascadeUnbindRouter struct {
+	requests []agentmessagerouter.DigitalEmployeeBindingKey
+}
+
+func (r *runtimeCascadeUnbindRouter) UnbindDigitalEmployeeBinding(
+	_ context.Context,
+	key agentmessagerouter.DigitalEmployeeBindingKey,
+) (agentmessagerouter.DigitalEmployeeBindingUnbindResult, error) {
+	r.requests = append(r.requests, key)
+	return agentmessagerouter.DigitalEmployeeBindingUnbindResult{Status: "unbound"}, nil
+}
 
 // parseExpectedActiveAgentIDs is the cascade endpoint's input validator.
 // Empty list is a valid plan ("no active agents" — cascade just deletes the
@@ -243,6 +256,29 @@ func TestArchiveAgentsAndDeleteRuntime_HappyPath(t *testing.T) {
 
 	runtimeID := createCascadeFixtureRuntime(t, ctx, "Cascade Happy Runtime")
 	agentID := createCascadeFixtureAgent(t, ctx, runtimeID, "Cascade Happy Agent")
+	var installationID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO channel_installation (
+			workspace_id, agent_id, channel_type, config, installer_user_id, status
+		) VALUES (
+			$1, $2, 'dingtalk_account',
+			jsonb_build_object(
+				'router_source_id', 'source-runtime-delete',
+				'router_platform', 'dingtalk',
+				'router_tenant_id', 'corp-runtime-delete',
+				'router_account_id', 'employee-runtime-delete',
+				'dispatch_endpoint_id', 'v1_EREREREREREREREREREREQ'
+			),
+			$3, 'active'
+		)
+		RETURNING id
+	`, testWorkspaceID, agentID, testUserID).Scan(&installationID); err != nil {
+		t.Fatalf("seed dingtalk account binding: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM dingtalk_binding_unbind_outbox WHERE installation_id = $1`, installationID)
+		testPool.Exec(context.Background(), `DELETE FROM channel_installation WHERE id = $1`, installationID)
+	})
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/runtimes/"+runtimeID+"/archive-agents-and-delete",
@@ -269,6 +305,49 @@ func TestArchiveAgentsAndDeleteRuntime_HappyPath(t *testing.T) {
 	}
 	if agentRows != 0 {
 		t.Fatalf("expected archived agent to be hard-deleted with runtime, found %d", agentRows)
+	}
+	var intentCount, projectionCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM dingtalk_binding_unbind_outbox
+		WHERE installation_id = $1 AND platform = 'dingtalk'
+		  AND tenant_id = 'corp-runtime-delete' AND account_id = 'employee-runtime-delete'
+		  AND status = 'queued'
+	`, installationID).Scan(&intentCount); err != nil {
+		t.Fatalf("count dingtalk unbind intent: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM channel_installation WHERE id = $1`, installationID).Scan(&projectionCount); err != nil {
+		t.Fatalf("count dingtalk binding projection: %v", err)
+	}
+	if intentCount != 1 || projectionCount != 1 {
+		t.Fatalf("hard cleanup intent=%d projection=%d, want durable intent and retained projection before Router delivery", intentCount, projectionCount)
+	}
+
+	router := &runtimeCascadeUnbindRouter{}
+	worker := agentmessagerouter.NewBindingUnbindWorker(db.New(testPool), router, testRouterTargetIdentity)
+	worked, err := worker.ProcessNext(ctx)
+	if err != nil || !worked {
+		t.Fatalf("process hard-delete unbind intent worked=%v error=%v", worked, err)
+	}
+	if len(router.requests) != 1 || router.requests[0].AgentID != agentID ||
+		router.requests[0].Platform != "dingtalk" ||
+		router.requests[0].TenantID != "corp-runtime-delete" ||
+		router.requests[0].AccountID != "employee-runtime-delete" {
+		t.Fatalf("hard-delete conditional unbind request = %#v", router.requests)
+	}
+	var deliveredStatus string
+	if err := testPool.QueryRow(ctx, `
+		SELECT status FROM dingtalk_binding_unbind_outbox WHERE installation_id = $1
+	`, installationID).Scan(&deliveredStatus); err != nil {
+		t.Fatal(err)
+	}
+	if deliveredStatus != "delivered" {
+		t.Fatalf("hard-delete intent status = %q", deliveredStatus)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM channel_installation WHERE id = $1`, installationID).Scan(&projectionCount); err != nil {
+		t.Fatal(err)
+	}
+	if projectionCount != 0 {
+		t.Fatalf("delivered hard-delete projection count = %d", projectionCount)
 	}
 }
 

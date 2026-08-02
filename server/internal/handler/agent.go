@@ -1836,7 +1836,19 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := requestUserID(r)
-	archived, err := h.Queries.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if err := h.enqueueDingTalkBindingUnbinds(r.Context(), qtx, []pgtype.UUID{agent.ID}); err != nil {
+		slog.Warn("enqueue dingtalk binding unbind on archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+	archived, err := qtx.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
 		ID:         agent.ID,
 		ArchivedBy: parseUUID(userID),
 	})
@@ -1845,6 +1857,11 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to archive agent")
 		return
 	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+	h.notifyDingTalkBindingUnbinds()
 
 	// Cancel all pending/active tasks for this agent. Discard the returned
 	// rows here — the agent:archived event below already triggers a full

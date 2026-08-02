@@ -910,6 +910,64 @@ func TestArchiveRestoreAgent_PreservesSkillsInResponse(t *testing.T) {
 	}
 }
 
+func TestArchiveAgentPersistsDingTalkAccountUnbindIntent(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "archive-dingtalk-unbind-agent", nil)
+	var installationID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO channel_installation (
+			workspace_id, agent_id, channel_type, config, installer_user_id, status
+		) VALUES (
+			$1, $2, 'dingtalk_account',
+			jsonb_build_object(
+				'router_source_id', 'source-archive-agent',
+				'router_platform', 'dingtalk',
+				'router_tenant_id', 'corp-archive',
+				'router_account_id', 'employee-archive',
+				'dispatch_endpoint_id', 'v1_EREREREREREREREREREREQ'
+			),
+			$3, 'active'
+		)
+		RETURNING id
+	`, testWorkspaceID, agentID, testUserID).Scan(&installationID); err != nil {
+		t.Fatalf("seed dingtalk account binding: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM dingtalk_binding_unbind_outbox WHERE installation_id = $1`, installationID)
+		testPool.Exec(context.Background(), `DELETE FROM channel_installation WHERE id = $1`, installationID)
+	})
+
+	request := withURLParam(newRequest(http.MethodPost, "/api/agents/"+agentID+"/archive", nil), "id", agentID)
+	response := httptest.NewRecorder()
+	testHandler.ArchiveAgent(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("ArchiveAgent: expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+
+	var platform, tenantID, accountID, targetIdentity string
+	if err := testPool.QueryRow(ctx, `
+		SELECT platform, tenant_id, account_id, target_identity
+		FROM dingtalk_binding_unbind_outbox
+		WHERE installation_id = $1 AND status = 'queued'
+	`, installationID).Scan(&platform, &tenantID, &accountID, &targetIdentity); err != nil {
+		t.Fatalf("load unbind intent: %v", err)
+	}
+	if platform != "dingtalk" || tenantID != "corp-archive" || accountID != "employee-archive" ||
+		targetIdentity != testRouterTargetIdentity {
+		t.Fatalf("intent platform=%q tenant=%q account=%q target=%q", platform, tenantID, accountID, targetIdentity)
+	}
+	var projectionCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM channel_installation WHERE id = $1`, installationID).Scan(&projectionCount); err != nil {
+		t.Fatal(err)
+	}
+	if projectionCount != 1 {
+		t.Fatalf("binding projection removed before Router delivery: count=%d", projectionCount)
+	}
+}
+
 // insertHandlerTestTask creates an in_progress task for the given
 // agent so resolveActor's GetAgentTask lookup succeeds without
 // dragging the full TaskService into the test.

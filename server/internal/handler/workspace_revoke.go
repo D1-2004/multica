@@ -88,6 +88,9 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 		for i, a := range result.ArchivedAgents {
 			archivedAgentIDs[i] = a.ID
 		}
+		if err := h.enqueueDingTalkBindingUnbinds(ctx, qtx, archivedAgentIDs); err != nil {
+			return empty, err
+		}
 		result.CancelledTasks, err = qtx.CancelAgentTasksByRuntimeOrAgent(ctx, db.CancelAgentTasksByRuntimeOrAgentParams{
 			RuntimeIds: runtimeIDs,
 			AgentIds:   archivedAgentIDs,
@@ -150,6 +153,7 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 	if err := tx.Commit(ctx); err != nil {
 		return empty, err
 	}
+	h.notifyDingTalkBindingUnbinds()
 
 	return result, nil
 }
