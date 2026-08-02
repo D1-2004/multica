@@ -1,4 +1,4 @@
-CREATE UNIQUE INDEX issue_dta_load_smoke_operation_unique
+CREATE UNIQUE INDEX IF NOT EXISTS issue_dta_load_smoke_operation_unique
 ON issue (
     workspace_id,
     (metadata->>'token_id'),
