@@ -6,15 +6,14 @@ import (
 	"strings"
 )
 
-const WorkspaceAccessActorSource = "workspace_access_grant"
+const WorkspaceAccessActorSource = "workspace_access_token"
 
 type workspaceAccessPrincipalContextKey struct{}
 
 // WorkspaceAccessPrincipal is the authenticated, database-backed policy for a
 // DTA workspace credential. It is deliberately separate from workspace roles:
-// a Grant is not a member and never becomes an owner or admin.
+// a Token subject is not a member and never becomes an owner or admin.
 type WorkspaceAccessPrincipal struct {
-	GrantID       string
 	TokenID       string
 	UserID        string
 	WorkspaceID   string
@@ -43,7 +42,7 @@ func (p WorkspaceAccessPrincipal) HasCapability(capability string) bool {
 }
 
 // workspaceAccessCapabilityForRequest is the fail-closed operation registry.
-// A newly-added API route is inaccessible to a Grant until it is explicitly
+// A newly-added API route is inaccessible to a DTA Token until it is explicitly
 // mapped here and receives resource-level checks in its handler.
 func workspaceAccessCapabilityForRequest(r *http.Request) (string, bool) {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")

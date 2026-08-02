@@ -22,7 +22,7 @@ import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { useCurrentMember } from "@multica/core/permissions";
 import { useFeatureEnabled } from "@multica/core/config";
-import { WORKSPACE_ACCESS_GRANTS_FLAG } from "@multica/core/feature-flags";
+import { WORKSPACE_ACCESS_TOKENS_FLAG } from "@multica/core/feature-flags";
 import { useNavigation } from "../../navigation";
 import { AccountTab } from "./account-tab";
 import { PreferencesTab } from "./preferences-tab";
@@ -112,7 +112,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
   const workspace = useCurrentWorkspace();
   const workspaceName = workspace?.name;
   const { role } = useCurrentMember(workspace?.id ?? "");
-  const workspaceAccessEnabled = useFeatureEnabled(WORKSPACE_ACCESS_GRANTS_FLAG, false);
+  const workspaceAccessEnabled = useFeatureEnabled(WORKSPACE_ACCESS_TOKENS_FLAG, false);
   const navigation = useNavigation();
   const isMobile = useIsMobile();
 

@@ -1425,13 +1425,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/", h.ListWorkspaces)
 			r.Post("/", h.CreateWorkspace)
 			r.Route("/{id}", func(r chi.Router) {
-				// Workspace Access Grants are external control-plane credentials.
+				// DTA Tokens are workspace-bound external control-plane identities.
 				// Only a human workspace owner may create or change them; admins,
-				// members, and Grant credentials cannot reach this group.
+				// members, and DTA Token credentials cannot reach this group.
 				r.Group(func(r chi.Router) {
 					r.Use(func(next http.Handler) http.Handler {
 						return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-							if !featureflags.WorkspaceAccessGrantsEnabled(req.Context(), opts.FeatureFlags) {
+							if !featureflags.WorkspaceAccessTokensEnabled(req.Context(), opts.FeatureFlags) {
 								http.NotFound(w, req)
 								return
 							}
@@ -1439,20 +1439,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						})
 					})
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner"))
-					r.Route("/access-grants", func(r chi.Router) {
-						r.Get("/", h.ListWorkspaceAccessGrants)
-						r.Post("/", h.CreateWorkspaceAccessGrant)
-						r.Route("/{grantId}", func(r chi.Router) {
-							r.Get("/", h.GetWorkspaceAccessGrant)
-							r.Patch("/", h.UpdateWorkspaceAccessGrant)
-							r.Post("/disable", h.DisableWorkspaceAccessGrant)
-							r.Post("/enable", h.EnableWorkspaceAccessGrant)
-							r.Route("/tokens", func(r chi.Router) {
-								r.Get("/", h.ListWorkspaceAccessTokens)
-								r.Post("/", h.CreateWorkspaceAccessToken)
-								r.Patch("/{tokenId}", h.UpdateWorkspaceAccessToken)
-								r.Delete("/{tokenId}", h.RevokeWorkspaceAccessToken)
-							})
+					r.Route("/access-tokens", func(r chi.Router) {
+						r.Get("/", h.ListWorkspaceAccessTokens)
+						r.Post("/", h.CreateWorkspaceAccessToken)
+						r.Route("/{tokenId}", func(r chi.Router) {
+							r.Get("/", h.GetWorkspaceAccessToken)
+							r.Patch("/", h.UpdateWorkspaceAccessToken)
+							r.Post("/regenerate", h.RegenerateWorkspaceAccessToken)
+							r.Delete("/", h.RevokeWorkspaceAccessToken)
 						})
 					})
 				})

@@ -401,9 +401,9 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 // canManageSkill checks whether the current user can update or delete a skill.
 // The skill creator or workspace owner/admin can manage any skill.
 func (h *Handler) canManageSkill(w http.ResponseWriter, r *http.Request, skill db.Skill) bool {
-	if allowed, isGrant := workspaceAccessCanManageSkill(r.Context(), skill); isGrant {
+	if allowed, isToken := workspaceAccessCanManageSkill(r.Context(), skill); isToken {
 		if !allowed {
-			writeError(w, http.StatusForbidden, "grant_resource_not_allowed")
+			writeError(w, http.StatusForbidden, "workspace_access_resource_not_allowed")
 		}
 		return allowed
 	}

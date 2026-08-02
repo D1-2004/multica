@@ -37,8 +37,8 @@ func GeneratePATToken() (string, error) {
 	return "mul_" + hex.EncodeToString(b), nil
 }
 
-// GenerateWorkspaceAccessToken creates a credential for a workspace Access
-// Grant. The prefix is intentionally distinct from personal and machine PATs
+// GenerateWorkspaceAccessToken creates a workspace-bound DTA credential. The
+// prefix is intentionally distinct from personal and machine PATs
 // so authentication never falls through to a broader identity type.
 func GenerateWorkspaceAccessToken() (string, error) {
 	b := make([]byte, 20)

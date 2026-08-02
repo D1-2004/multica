@@ -34,7 +34,7 @@ func TestWorkspaceAccessCapabilityForRequest(t *testing.T) {
 		{http.MethodDelete, "/api/runtimes/r", "", false},
 		{http.MethodGet, "/api/me", "", false},
 		{http.MethodGet, "/api/workspaces/w/members", "", false},
-		{http.MethodPost, "/api/workspaces/w/access-grants", "", false},
+		{http.MethodPost, "/api/workspaces/w/access-tokens", "", false},
 		{http.MethodPost, "/api/issues", "", false},
 		{http.MethodGet, "/ws", "", false},
 	}

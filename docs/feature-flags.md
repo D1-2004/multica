@@ -212,19 +212,19 @@ longer gates the write endpoint. `/api/config` still reports
 switch; this is a client-compatibility decision, not an operator-controlled
 flag.
 
-`workspace_access_grants` is also a release flag and defaults to `false`.
+`workspace_access_tokens` is also a release flag and defaults to `false`.
 Keep it off while migration 257 is rolling out. After every API replica runs
-the new binary, enable it with `FF_WORKSPACE_ACCESS_GRANTS=true` or:
+the new binary, enable it with `FF_WORKSPACE_ACCESS_TOKENS=true` or:
 
 ```yaml
-workspace_access_grants:
+workspace_access_tokens:
   default: true
 ```
 
 The backend then accepts `dta_` credentials and owner management
 routes, while `/api/config` exposes the same decision so Web/Desktop shows the
 DTA Access settings tab. Turning it off again blocks all `dta_` requests and
-hides the management UI; it does not delete Grants, keys, agents, or traces.
+hides the management UI; it does not delete DTA Tokens, agents, or traces.
 
 ### Security note: never rely on the frontend alone
 

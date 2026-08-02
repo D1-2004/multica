@@ -9,8 +9,8 @@ import (
 )
 
 func workspaceAccessCanUseAgent(ctx context.Context, agent db.Agent) (bool, bool) {
-	principal, isGrant := middleware.WorkspaceAccessPrincipalFromContext(ctx)
-	if !isGrant {
+	principal, isToken := middleware.WorkspaceAccessPrincipalFromContext(ctx)
+	if !isToken {
 		return false, false
 	}
 	if uuidToString(agent.WorkspaceID) != principal.WorkspaceID {
@@ -23,8 +23,8 @@ func workspaceAccessCanUseAgent(ctx context.Context, agent db.Agent) (bool, bool
 }
 
 func workspaceAccessCanManageSkill(ctx context.Context, skill db.Skill) (bool, bool) {
-	principal, isGrant := middleware.WorkspaceAccessPrincipalFromContext(ctx)
-	if !isGrant {
+	principal, isToken := middleware.WorkspaceAccessPrincipalFromContext(ctx)
+	if !isToken {
 		return false, false
 	}
 	if uuidToString(skill.WorkspaceID) != principal.WorkspaceID {
@@ -37,19 +37,19 @@ func workspaceAccessCanManageSkill(ctx context.Context, skill db.Skill) (bool, b
 }
 
 func requireWorkspaceAccessAgent(w http.ResponseWriter, r *http.Request, agent db.Agent) bool {
-	allowed, isGrant := workspaceAccessCanUseAgent(r.Context(), agent)
-	if !isGrant {
+	allowed, isToken := workspaceAccessCanUseAgent(r.Context(), agent)
+	if !isToken {
 		return true
 	}
 	if !allowed {
-		writeError(w, http.StatusForbidden, "grant_resource_not_allowed")
+		writeError(w, http.StatusForbidden, "workspace_access_resource_not_allowed")
 		return false
 	}
 	return true
 }
 
 func canUseRuntimeForRequest(r *http.Request, member db.Member, runtime db.AgentRuntime) bool {
-	if principal, isGrant := middleware.WorkspaceAccessPrincipalFromContext(r.Context()); isGrant {
+	if principal, isToken := middleware.WorkspaceAccessPrincipalFromContext(r.Context()); isToken {
 		if uuidToString(runtime.WorkspaceID) != principal.WorkspaceID {
 			return false
 		}

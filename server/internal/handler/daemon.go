@@ -3807,7 +3807,7 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 // ListTaskMessagesByUser returns task messages for a task.
 // Used by the frontend under regular user auth (not daemon auth).
 // Verifies the task belongs to the caller's workspace and that the caller can
-// view the task's agent. Grant callers additionally apply their resource scope.
+// view the task's agent. DTA Token callers additionally apply their resource scope.
 func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task_id")
@@ -3832,9 +3832,9 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}
-	if allowed, isGrant := workspaceAccessCanUseAgent(r.Context(), agent); isGrant {
+	if allowed, isToken := workspaceAccessCanUseAgent(r.Context(), agent); isToken {
 		if !allowed {
-			writeError(w, http.StatusForbidden, "grant_resource_not_allowed")
+			writeError(w, http.StatusForbidden, "workspace_access_resource_not_allowed")
 			return
 		}
 	} else {

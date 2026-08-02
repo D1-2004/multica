@@ -218,12 +218,12 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 
 			if principal, ok := WorkspaceAccessPrincipalFromContext(r.Context()); ok {
 				if workspaceID != principal.WorkspaceID {
-					writeError(w, http.StatusForbidden, "grant_workspace_mismatch")
+					writeError(w, http.StatusForbidden, "workspace_access_workspace_mismatch")
 					return
 				}
 				// This context-only marker keeps existing workspace handlers from
 				// querying a member row. Its role is not accepted by any human role
-				// check; resource authority comes from the Grant Principal.
+				// check; resource authority comes from the DTA Token Principal.
 				member := db.Member{
 					WorkspaceID: parseUUIDOrZero(principal.WorkspaceID),
 					UserID:      parseUUIDOrZero(principal.UserID),

@@ -155,69 +155,63 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				return
 			}
 
-			// Workspace Access Grant token. Grant policy remains in PostgreSQL
-			// and is read on every request so disable, capability changes, scope
-			// changes, expiry updates, and revocation take effect immediately.
+			// Workspace-bound DTA Token. Identity and policy live on the same
+			// database row and are read on every request, so capability, scope,
+			// expiry, regeneration, and revocation changes take effect immediately.
 			if strings.HasPrefix(tokenString, "dta_") {
 				// Passing the service is the production wiring. The variadic shape
 				// keeps small auth unit fixtures source-compatible; when supplied,
 				// a missing flag is deliberately off for rolling-release safety.
-				if len(releaseFlags) > 0 && !internalflags.WorkspaceAccessGrantsEnabled(r.Context(), releaseFlags[0]) {
-					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "grant_operation_not_allowed")
+				if len(releaseFlags) > 0 && !internalflags.WorkspaceAccessTokensEnabled(r.Context(), releaseFlags[0]) {
+					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "workspace_access_operation_not_allowed")
 					return
 				}
 				if queries == nil {
-					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "grant_token_invalid")
+					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_access_token_invalid")
 					return
 				}
 				row, err := queries.GetWorkspaceAccessTokenByHash(r.Context(), auth.HashToken(tokenString))
 				if err != nil {
-					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "grant_token_invalid")
+					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_access_token_invalid")
 					return
 				}
 				if row.PrincipalType != WorkspaceAccessActorSource {
-					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "grant_token_invalid")
+					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_access_token_invalid")
 					return
 				}
 				if row.RevokedAt.Valid {
 					auditWorkspaceAccessRequest(r, queries, row, "", "denied")
-					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "grant_token_revoked")
+					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_access_token_revoked")
 					return
 				}
 				if row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(time.Now()) {
 					auditWorkspaceAccessRequest(r, queries, row, "", "denied")
-					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "grant_token_expired")
-					return
-				}
-				if row.GrantStatus != "active" {
-					auditWorkspaceAccessRequest(r, queries, row, "", "denied")
-					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "grant_disabled")
+					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_access_token_expired")
 					return
 				}
 
 				principal := WorkspaceAccessPrincipal{
-					GrantID:       uuidToString(row.GrantID),
-					TokenID:       uuidToString(row.TokenID),
+					TokenID:       uuidToString(row.ID),
 					UserID:        uuidToString(row.SubjectUserID),
 					WorkspaceID:   uuidToString(row.WorkspaceID),
-					Name:          row.GrantName,
+					Name:          row.Name,
 					Capabilities:  row.Capabilities,
 					ResourceScope: row.ResourceScope,
-					Version:       row.GrantVersion,
+					Version:       row.Version,
 				}
 				capability, allowed := workspaceAccessCapabilityForRequest(r)
 				if !allowed {
 					auditWorkspaceAccessRequest(r, queries, row, "", "denied")
-					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "grant_operation_not_allowed")
+					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "workspace_access_operation_not_allowed")
 					return
 				}
 				if capability != "" && !principal.HasCapability(capability) {
 					auditWorkspaceAccessRequest(r, queries, row, capability, "denied")
-					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "grant_capability_denied")
+					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "workspace_access_capability_denied")
 					return
 				}
 
-				// These headers are server-owned for Grant requests. The workspace
+				// These headers are server-owned for DTA Token requests. The workspace
 				// resolver also reads the Principal first, so query parameters cannot
 				// negotiate a different workspace.
 				r.Header.Del("X-Workspace-Slug")
@@ -225,7 +219,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				r.Header.Set("X-User-ID", principal.UserID)
 				r.Header.Set("X-Actor-Source", WorkspaceAccessActorSource)
 				r = r.WithContext(WithWorkspaceAccessPrincipal(r.Context(), principal))
-				if err := queries.UpdateWorkspaceAccessTokenLastUsed(r.Context(), row.TokenID); err != nil {
+				if err := queries.UpdateWorkspaceAccessTokenLastUsed(r.Context(), row.ID); err != nil {
 					slog.Warn("auth: failed to update workspace access token last_used_at", "token_id", principal.TokenID, "error", err)
 				}
 				recorder := &workspaceAccessAuditResponseWriter{ResponseWriter: w, status: http.StatusOK}
@@ -359,15 +353,14 @@ func auditWorkspaceAccessRequest(r *http.Request, queries *db.Queries, row db.Ge
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 	if _, err := queries.CreateWorkspaceAccessAudit(r.Context(), db.CreateWorkspaceAccessAuditParams{
 		WorkspaceID:  row.WorkspaceID,
-		GrantID:      row.GrantID,
-		TokenID:      row.TokenID,
+		TokenID:      row.ID,
 		ActorUserID:  row.SubjectUserID,
 		Action:       r.Method + " " + r.URL.Path,
 		ResourceType: pgtype.Text{String: capability, Valid: capability != ""},
 		Result:       result,
 		RequestID:    pgtype.Text{String: requestID, Valid: requestID != ""},
 	}); err != nil {
-		slog.Warn("auth: failed to audit workspace access request", "grant_id", uuidToString(row.GrantID), "token_id", uuidToString(row.TokenID), "error", err)
+		slog.Warn("auth: failed to audit workspace access request", "token_id", uuidToString(row.ID), "error", err)
 	}
 }
 

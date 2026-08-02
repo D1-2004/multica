@@ -24,135 +24,251 @@ func withWorkspaceAccessParams(req *http.Request, params ...string) *http.Reques
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
 
-func TestWorkspaceAccessGrantLifecycle(t *testing.T) {
-	createReq := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/access-grants", map[string]any{
-		"name":           "Vendor A",
+func TestWorkspaceAccessTokenLifecycleAndRegeneration(t *testing.T) {
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	createReq := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/access-tokens", map[string]any{
+		"name":           "Vendor user A",
 		"capabilities":   []string{"deployment.manage", "trace.read"},
 		"resource_scope": "own_agents",
+		"expires_at":     expiresAt,
 	})
 	createReq = withWorkspaceAccessParams(createReq, "id", testWorkspaceID)
 	createRec := httptest.NewRecorder()
-	testHandler.CreateWorkspaceAccessGrant(createRec, createReq)
+	testHandler.CreateWorkspaceAccessToken(createRec, createReq)
 	if createRec.Code != http.StatusCreated {
-		t.Fatalf("CreateWorkspaceAccessGrant status = %d, body = %s", createRec.Code, createRec.Body.String())
+		t.Fatalf("CreateWorkspaceAccessToken status = %d, body = %s", createRec.Code, createRec.Body.String())
 	}
-	var grant WorkspaceAccessGrantResponse
-	if err := json.NewDecoder(createRec.Body).Decode(&grant); err != nil {
-		t.Fatalf("decode grant: %v", err)
+	var created WorkspaceAccessTokenSecretResponse
+	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode token: %v", err)
 	}
-	if grant.ResourceScope != "own_agents" || grant.Version != 1 {
-		t.Fatalf("unexpected grant: %+v", grant)
+	if !strings.HasPrefix(created.Token, "dta_") || created.Version != 1 || created.ResourceScope != "own_agents" {
+		t.Fatalf("unexpected created token: %+v", created)
 	}
 
-	var subjectID, principalType string
+	var subjectID, principalType, storedHash string
 	if err := testPool.QueryRow(context.Background(), `
-		SELECT g.subject_user_id::text, u.principal_type
-		FROM workspace_access_grant g
-		JOIN "user" u ON u.id = g.subject_user_id
-		WHERE g.id = $1
-	`, grant.ID).Scan(&subjectID, &principalType); err != nil {
-		t.Fatalf("load grant subject: %v", err)
+		SELECT t.subject_user_id::text, u.principal_type, t.token_hash
+		FROM workspace_access_token t
+		JOIN "user" u ON u.id = t.subject_user_id
+		WHERE t.id = $1
+	`, created.ID).Scan(&subjectID, &principalType, &storedHash); err != nil {
+		t.Fatalf("load token subject: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace_access_grant WHERE id = $1`, grant.ID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, subjectID)
-	})
-	if principalType != "workspace_access_grant" {
+	if principalType != "workspace_access_token" {
 		t.Fatalf("principal_type = %q", principalType)
+	}
+	if storedHash != auth.HashToken(created.Token) || strings.Contains(storedHash, created.Token) {
+		t.Fatal("database must store only the token hash")
 	}
 	var memberCount int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM member WHERE user_id = $1`, subjectID).Scan(&memberCount); err != nil {
 		t.Fatalf("count subject memberships: %v", err)
 	}
 	if memberCount != 0 {
-		t.Fatalf("grant subject has %d member rows, want 0", memberCount)
+		t.Fatalf("token subject has %d member rows, want 0", memberCount)
 	}
 
-	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
-	tokenReq := newRequest(http.MethodPost, "/tokens", map[string]any{
-		"name":       "DTA production",
-		"expires_at": expiresAt,
+	var ownedAgentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, visibility, permission_mode, max_concurrent_tasks, owner_id
+		)
+		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'workspace', 'private', 1, $4)
+		RETURNING id
+	`, testWorkspaceID, "regenerate-owner-"+created.ID, testRuntimeID, subjectID).Scan(&ownedAgentID); err != nil {
+		t.Fatalf("create owned agent: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, ownedAgentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace_access_token WHERE id = $1`, created.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, subjectID)
 	})
-	tokenReq = withWorkspaceAccessParams(tokenReq, "id", testWorkspaceID, "grantId", grant.ID)
-	tokenRec := httptest.NewRecorder()
-	testHandler.CreateWorkspaceAccessToken(tokenRec, tokenReq)
-	if tokenRec.Code != http.StatusCreated {
-		t.Fatalf("CreateWorkspaceAccessToken status = %d, body = %s", tokenRec.Code, tokenRec.Body.String())
-	}
-	var createdToken CreateWorkspaceAccessTokenResponse
-	if err := json.NewDecoder(tokenRec.Body).Decode(&createdToken); err != nil {
-		t.Fatalf("decode token: %v", err)
-	}
-	if !strings.HasPrefix(createdToken.Token, "dta_") {
-		t.Fatalf("token = %q, want dta_ prefix", createdToken.Token)
-	}
-	var storedHash string
-	if err := testPool.QueryRow(context.Background(), `SELECT token_hash FROM workspace_access_token WHERE id = $1`, createdToken.ID).Scan(&storedHash); err != nil {
-		t.Fatalf("load token hash: %v", err)
-	}
-	if storedHash != auth.HashToken(createdToken.Token) || strings.Contains(storedHash, createdToken.Token) {
-		t.Fatal("database must store only the token hash")
-	}
 
-	listReq := newRequest(http.MethodGet, "/tokens", nil)
-	listReq = withWorkspaceAccessParams(listReq, "id", testWorkspaceID, "grantId", grant.ID)
+	listReq := withWorkspaceAccessParams(newRequest(http.MethodGet, "/access-tokens", nil), "id", testWorkspaceID)
 	listRec := httptest.NewRecorder()
 	testHandler.ListWorkspaceAccessTokens(listRec, listReq)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("ListWorkspaceAccessTokens status = %d, body = %s", listRec.Code, listRec.Body.String())
 	}
-	if strings.Contains(listRec.Body.String(), createdToken.Token) || strings.Contains(listRec.Body.String(), storedHash) {
+	if strings.Contains(listRec.Body.String(), created.Token) || strings.Contains(listRec.Body.String(), storedHash) {
 		t.Fatal("token list leaked plaintext or hash")
 	}
 
-	updateReq := newRequest(http.MethodPatch, "/grant", map[string]any{
-		"name":           "Vendor A",
+	updateReq := newRequest(http.MethodPatch, "/access-tokens/"+created.ID, map[string]any{
+		"name":           "Vendor user A",
 		"capabilities":   []string{"trace.read"},
 		"resource_scope": "workspace",
-		"version":        grant.Version,
+		"expires_at":     nil,
+		"version":        created.Version,
 	})
-	updateReq = withWorkspaceAccessParams(updateReq, "id", testWorkspaceID, "grantId", grant.ID)
+	updateReq = withWorkspaceAccessParams(updateReq, "id", testWorkspaceID, "tokenId", created.ID)
 	updateRec := httptest.NewRecorder()
-	testHandler.UpdateWorkspaceAccessGrant(updateRec, updateReq)
+	testHandler.UpdateWorkspaceAccessToken(updateRec, updateReq)
 	if updateRec.Code != http.StatusOK {
-		t.Fatalf("UpdateWorkspaceAccessGrant status = %d, body = %s", updateRec.Code, updateRec.Body.String())
+		t.Fatalf("UpdateWorkspaceAccessToken status = %d, body = %s", updateRec.Code, updateRec.Body.String())
 	}
-	var updated WorkspaceAccessGrantResponse
+	var updated WorkspaceAccessTokenResponse
 	if err := json.NewDecoder(updateRec.Body).Decode(&updated); err != nil {
-		t.Fatalf("decode updated grant: %v", err)
+		t.Fatalf("decode updated token: %v", err)
 	}
-	if updated.ResourceScope != "workspace" || updated.Version != 2 || len(updated.Capabilities) != 1 || updated.Capabilities[0] != "trace.read" {
-		t.Fatalf("unexpected updated grant: %+v", updated)
-	}
-
-	disableReq := newRequest(http.MethodPost, "/disable", nil)
-	disableReq = withWorkspaceAccessParams(disableReq, "id", testWorkspaceID, "grantId", grant.ID)
-	disableRec := httptest.NewRecorder()
-	testHandler.DisableWorkspaceAccessGrant(disableRec, disableReq)
-	if disableRec.Code != http.StatusOK {
-		t.Fatalf("DisableWorkspaceAccessGrant status = %d, body = %s", disableRec.Code, disableRec.Body.String())
+	if updated.Version != 2 || updated.ResourceScope != "workspace" || len(updated.Capabilities) != 1 || updated.Capabilities[0] != "trace.read" {
+		t.Fatalf("unexpected updated token: %+v", updated)
 	}
 
-	revokeReq := newRequest(http.MethodDelete, "/token", nil)
-	revokeReq = withWorkspaceAccessParams(revokeReq, "id", testWorkspaceID, "grantId", grant.ID, "tokenId", createdToken.ID)
+	newExpiry := time.Now().Add(90 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	regenerateReq := newRequest(http.MethodPost, "/access-tokens/"+created.ID+"/regenerate", map[string]any{
+		"expires_at": newExpiry,
+		"version":    updated.Version,
+	})
+	regenerateReq = withWorkspaceAccessParams(regenerateReq, "id", testWorkspaceID, "tokenId", created.ID)
+	regenerateRec := httptest.NewRecorder()
+	testHandler.RegenerateWorkspaceAccessToken(regenerateRec, regenerateReq)
+	if regenerateRec.Code != http.StatusOK {
+		t.Fatalf("RegenerateWorkspaceAccessToken status = %d, body = %s", regenerateRec.Code, regenerateRec.Body.String())
+	}
+	var regenerated WorkspaceAccessTokenSecretResponse
+	if err := json.NewDecoder(regenerateRec.Body).Decode(&regenerated); err != nil {
+		t.Fatalf("decode regenerated token: %v", err)
+	}
+	if regenerated.Token == created.Token || regenerated.ID != created.ID || regenerated.Version != 3 {
+		t.Fatalf("unexpected regenerated token: %+v", regenerated)
+	}
+	var subjectAfter, agentOwnerAfter string
+	if err := testPool.QueryRow(context.Background(), `SELECT subject_user_id::text FROM workspace_access_token WHERE id = $1`, created.ID).Scan(&subjectAfter); err != nil {
+		t.Fatalf("load subject after regenerate: %v", err)
+	}
+	if err := testPool.QueryRow(context.Background(), `SELECT owner_id::text FROM agent WHERE id = $1`, ownedAgentID).Scan(&agentOwnerAfter); err != nil {
+		t.Fatalf("load agent owner after regenerate: %v", err)
+	}
+	if subjectAfter != subjectID || agentOwnerAfter != subjectID {
+		t.Fatalf("regenerate changed ownership: subject=%s agent_owner=%s want=%s", subjectAfter, agentOwnerAfter, subjectID)
+	}
+
+	authStatus := func(rawToken string) int {
+		req := httptest.NewRequest(http.MethodGet, "/api/workspace-access/self", nil)
+		req.Header.Set("Authorization", "Bearer "+rawToken)
+		rec := httptest.NewRecorder()
+		middleware.Auth(testHandler.Queries, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})).ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if got := authStatus(created.Token); got != http.StatusUnauthorized {
+		t.Fatalf("old token after regenerate status=%d, want 401", got)
+	}
+	if got := authStatus(regenerated.Token); got != http.StatusNoContent {
+		t.Fatalf("new token after regenerate status=%d, want 204", got)
+	}
+
+	staleReq := newRequest(http.MethodPost, "/access-tokens/"+created.ID+"/regenerate", map[string]any{
+		"expires_at": newExpiry,
+		"version":    updated.Version,
+	})
+	staleReq = withWorkspaceAccessParams(staleReq, "id", testWorkspaceID, "tokenId", created.ID)
+	staleRec := httptest.NewRecorder()
+	testHandler.RegenerateWorkspaceAccessToken(staleRec, staleReq)
+	if staleRec.Code != http.StatusConflict {
+		t.Fatalf("stale regenerate status=%d body=%s", staleRec.Code, staleRec.Body.String())
+	}
+
+	revokeReq := withWorkspaceAccessParams(newRequest(http.MethodDelete, "/access-tokens/"+created.ID, nil), "id", testWorkspaceID, "tokenId", created.ID)
 	revokeRec := httptest.NewRecorder()
 	testHandler.RevokeWorkspaceAccessToken(revokeRec, revokeReq)
 	if revokeRec.Code != http.StatusNoContent {
 		t.Fatalf("RevokeWorkspaceAccessToken status = %d, body = %s", revokeRec.Code, revokeRec.Body.String())
 	}
+	if got := authStatus(regenerated.Token); got != http.StatusUnauthorized {
+		t.Fatalf("revoked token status=%d, want 401", got)
+	}
+	revokedRegenerateReq := newRequest(http.MethodPost, "/access-tokens/"+created.ID+"/regenerate", map[string]any{
+		"expires_at": newExpiry,
+		"version":    regenerated.Version,
+	})
+	revokedRegenerateReq = withWorkspaceAccessParams(revokedRegenerateReq, "id", testWorkspaceID, "tokenId", created.ID)
+	revokedRegenerateRec := httptest.NewRecorder()
+	testHandler.RegenerateWorkspaceAccessToken(revokedRegenerateRec, revokedRegenerateReq)
+	if revokedRegenerateRec.Code != http.StatusConflict {
+		t.Fatalf("revoked regenerate status=%d body=%s", revokedRegenerateRec.Code, revokedRegenerateRec.Body.String())
+	}
 }
 
-func TestWorkspaceAccessGrantRejectsInvalidPolicy(t *testing.T) {
-	req := newRequest(http.MethodPost, "/access-grants", map[string]any{
-		"name":           "Vendor",
-		"capabilities":   []string{"members.manage"},
-		"resource_scope": "workspace",
+func TestWorkspaceAccessTokenRejectsInvalidPolicy(t *testing.T) {
+	req := newRequest(http.MethodPost, "/access-tokens", map[string]any{
+		"name": "Vendor", "capabilities": []string{"members.manage"}, "resource_scope": "workspace",
 	})
 	req = withWorkspaceAccessParams(req, "id", testWorkspaceID)
 	rec := httptest.NewRecorder()
-	testHandler.CreateWorkspaceAccessGrant(rec, req)
+	testHandler.CreateWorkspaceAccessToken(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkspaceAccessTokensHaveIndependentDynamicPolicies(t *testing.T) {
+	create := func(name string, capabilities []string) WorkspaceAccessTokenSecretResponse {
+		t.Helper()
+		req := newRequest(http.MethodPost, "/access-tokens", map[string]any{
+			"name": name, "capabilities": capabilities, "resource_scope": "own_agents", "expires_at": nil,
+		})
+		req = withWorkspaceAccessParams(req, "id", testWorkspaceID)
+		rec := httptest.NewRecorder()
+		testHandler.CreateWorkspaceAccessToken(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create %s status=%d body=%s", name, rec.Code, rec.Body.String())
+		}
+		var token WorkspaceAccessTokenSecretResponse
+		if err := json.NewDecoder(rec.Body).Decode(&token); err != nil {
+			t.Fatalf("decode %s: %v", name, err)
+		}
+		return token
+	}
+	traceToken := create("Trace operator", []string{"trace.read"})
+	manageToken := create("Deployment operator", []string{"deployment.manage"})
+	var traceSubject, manageSubject string
+	if err := testPool.QueryRow(context.Background(), `SELECT subject_user_id::text FROM workspace_access_token WHERE id = $1`, traceToken.ID).Scan(&traceSubject); err != nil {
+		t.Fatalf("load trace subject: %v", err)
+	}
+	if err := testPool.QueryRow(context.Background(), `SELECT subject_user_id::text FROM workspace_access_token WHERE id = $1`, manageToken.ID).Scan(&manageSubject); err != nil {
+		t.Fatalf("load manage subject: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace_access_token WHERE id = ANY($1::uuid[])`, []string{traceToken.ID, manageToken.ID})
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = ANY($1::uuid[])`, []string{traceSubject, manageSubject})
+	})
+	if traceSubject == manageSubject {
+		t.Fatal("different external operators must have different internal subjects")
+	}
+
+	requestStatus := func(rawToken string) int {
+		req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+		req.Header.Set("Authorization", "Bearer "+rawToken)
+		rec := httptest.NewRecorder()
+		middleware.Auth(testHandler.Queries, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})).ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if got := requestStatus(traceToken.Token); got != http.StatusForbidden {
+		t.Fatalf("trace-only token GET /api/agents status=%d, want 403", got)
+	}
+	if got := requestStatus(manageToken.Token); got != http.StatusNoContent {
+		t.Fatalf("manage token GET /api/agents status=%d, want 204", got)
+	}
+
+	updateReq := newRequest(http.MethodPatch, "/access-tokens/"+traceToken.ID, map[string]any{
+		"name": "Trace operator", "capabilities": []string{"deployment.manage", "trace.read"},
+		"resource_scope": "own_agents", "expires_at": nil, "version": traceToken.Version,
+	})
+	updateReq = withWorkspaceAccessParams(updateReq, "id", testWorkspaceID, "tokenId", traceToken.ID)
+	updateRec := httptest.NewRecorder()
+	testHandler.UpdateWorkspaceAccessToken(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("update trace token status=%d body=%s", updateRec.Code, updateRec.Body.String())
+	}
+	if got := requestStatus(traceToken.Token); got != http.StatusNoContent {
+		t.Fatalf("updated token GET /api/agents status=%d, want 204", got)
 	}
 }
 
@@ -161,7 +277,6 @@ func TestWorkspaceAccessAgentScopeMatrix(t *testing.T) {
 	workspaceID := "22222222-2222-4222-8222-222222222222"
 	otherWorkspaceID := "33333333-3333-4333-8333-333333333333"
 	otherOwnerID := "44444444-4444-4444-8444-444444444444"
-
 	tests := []struct {
 		name    string
 		scope   string
@@ -173,17 +288,12 @@ func TestWorkspaceAccessAgentScopeMatrix(t *testing.T) {
 		{"workspace scope other owner", "workspace", db.Agent{WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID(otherOwnerID)}, true},
 		{"workspace scope cannot cross workspace", "workspace", db.Agent{WorkspaceID: parseUUID(otherWorkspaceID), OwnerID: parseUUID(subjectID)}, false},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := middleware.WithWorkspaceAccessPrincipal(context.Background(), middleware.WorkspaceAccessPrincipal{
-				UserID:        subjectID,
-				WorkspaceID:   workspaceID,
-				ResourceScope: tt.scope,
-			})
-			allowed, isGrant := workspaceAccessCanUseAgent(ctx, tt.agent)
-			if !isGrant || allowed != tt.allowed {
-				t.Fatalf("got allowed=%v isGrant=%v, want allowed=%v isGrant=true", allowed, isGrant, tt.allowed)
+			ctx := middleware.WithWorkspaceAccessPrincipal(context.Background(), middleware.WorkspaceAccessPrincipal{UserID: subjectID, WorkspaceID: workspaceID, ResourceScope: tt.scope})
+			allowed, isToken := workspaceAccessCanUseAgent(ctx, tt.agent)
+			if !isToken || allowed != tt.allowed {
+				t.Fatalf("got allowed=%v isToken=%v, want allowed=%v isToken=true", allowed, isToken, tt.allowed)
 			}
 		})
 	}
@@ -192,42 +302,28 @@ func TestWorkspaceAccessAgentScopeMatrix(t *testing.T) {
 func TestWorkspaceAccessTraceScopeAndPagination(t *testing.T) {
 	ctx := context.Background()
 	var subjectID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email, principal_type)
-		VALUES ('Trace Grant', 'trace-grant-' || gen_random_uuid()::text || '@internal.multica.invalid', 'workspace_access_grant')
-		RETURNING id
-	`).Scan(&subjectID); err != nil {
+	if err := testPool.QueryRow(ctx, `INSERT INTO "user" (name, email, principal_type) VALUES ('Trace Token', 'trace-token-' || gen_random_uuid()::text || '@internal.multica.invalid', 'workspace_access_token') RETURNING id`).Scan(&subjectID); err != nil {
 		t.Fatalf("create trace subject: %v", err)
 	}
-
 	createAgent := func(name, ownerID string) string {
 		t.Helper()
 		var agentID string
 		if err := testPool.QueryRow(ctx, `
-			INSERT INTO agent (
-				workspace_id, name, description, runtime_mode, runtime_config,
-				runtime_id, visibility, permission_mode, max_concurrent_tasks, owner_id
-			)
-			VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'workspace', 'private', 1, $4)
-			RETURNING id
+			INSERT INTO agent (workspace_id, name, description, runtime_mode, runtime_config, runtime_id, visibility, permission_mode, max_concurrent_tasks, owner_id)
+			VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'workspace', 'private', 1, $4) RETURNING id
 		`, testWorkspaceID, name, testRuntimeID, ownerID).Scan(&agentID); err != nil {
 			t.Fatalf("create trace agent: %v", err)
 		}
 		return agentID
 	}
-	ownedAgentID := createAgent("trace-grant-owned-"+subjectID, subjectID)
-	otherAgentID := createAgent("trace-grant-other-"+subjectID, testUserID)
-
+	ownedAgentID := createAgent("trace-token-owned-"+subjectID, subjectID)
+	otherAgentID := createAgent("trace-token-other-"+subjectID, testUserID)
 	createTask := func(agentID string) string {
 		t.Helper()
 		var taskID string
 		if err := testPool.QueryRow(ctx, `
 			INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, context)
-			VALUES ($1, $2, 'completed', 0, jsonb_build_object(
-				'type', 'quick_create', 'workspace_id', $3::text,
-				'requester_id', $4::text, 'prompt', 'diagnose'
-			))
-			RETURNING id
+			VALUES ($1, $2, 'completed', 0, jsonb_build_object('type', 'quick_create', 'workspace_id', $3::text, 'requester_id', $4::text, 'prompt', 'diagnose')) RETURNING id
 		`, agentID, testRuntimeID, testWorkspaceID, testUserID).Scan(&taskID); err != nil {
 			t.Fatalf("create trace task: %v", err)
 		}
@@ -235,37 +331,27 @@ func TestWorkspaceAccessTraceScopeAndPagination(t *testing.T) {
 	}
 	ownedTaskID := createTask(ownedAgentID)
 	otherTaskID := createTask(otherAgentID)
-
 	if _, err := testPool.Exec(ctx, `
-		INSERT INTO task_message (task_id, seq, type, tool, content, input, output)
-		VALUES
-			($1, 1, 'thinking', NULL, 'considering', NULL, NULL),
-			($1, 2, 'tool_use', 'Search', NULL, '{"query":"full fidelity"}'::jsonb, NULL),
-			($1, 3, 'tool_result', 'Search', NULL, NULL, 'raw tool result')
+		INSERT INTO task_message (task_id, seq, type, tool, content, input, output) VALUES
+		($1, 1, 'thinking', NULL, 'considering', NULL, NULL),
+		($1, 2, 'tool_use', 'Search', NULL, '{"query":"full fidelity"}'::jsonb, NULL),
+		($1, 3, 'tool_result', 'Search', NULL, NULL, 'raw tool result')
 	`, ownedTaskID); err != nil {
 		t.Fatalf("create trace messages: %v", err)
 	}
-
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = ANY($1::uuid[])`, []string{ownedTaskID, otherTaskID})
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = ANY($1::uuid[])`, []string{ownedAgentID, otherAgentID})
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, subjectID)
 	})
-
 	requestFor := func(taskID, scope, query string) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, "/api/tasks/"+taskID+"/messages"+query, nil)
 		req = withWorkspaceAccessParams(req, "taskId", taskID)
-		principal := middleware.WorkspaceAccessPrincipal{
-			UserID: subjectID, WorkspaceID: testWorkspaceID, ResourceScope: scope,
-			Capabilities: []string{"trace.read"},
-		}
+		principal := middleware.WorkspaceAccessPrincipal{UserID: subjectID, WorkspaceID: testWorkspaceID, ResourceScope: scope, Capabilities: []string{"trace.read"}}
 		requestCtx := middleware.WithWorkspaceAccessPrincipal(req.Context(), principal)
-		requestCtx = middleware.SetMemberContext(requestCtx, testWorkspaceID, db.Member{
-			WorkspaceID: parseUUID(testWorkspaceID), UserID: parseUUID(subjectID), Role: middleware.WorkspaceAccessActorSource,
-		})
+		requestCtx = middleware.SetMemberContext(requestCtx, testWorkspaceID, db.Member{WorkspaceID: parseUUID(testWorkspaceID), UserID: parseUUID(subjectID), Role: middleware.WorkspaceAccessActorSource})
 		return req.WithContext(requestCtx)
 	}
-
 	pageRec := httptest.NewRecorder()
 	testHandler.ListTaskMessagesByUser(pageRec, requestFor(ownedTaskID, "own_agents", "?since=1&limit=2"))
 	if pageRec.Code != http.StatusOK {
@@ -278,13 +364,11 @@ func TestWorkspaceAccessTraceScopeAndPagination(t *testing.T) {
 	if len(page) != 2 || page[0].Seq != 2 || page[0].Input["query"] != "full fidelity" || page[1].Output != "raw tool result" {
 		t.Fatalf("unexpected trace page: %#v", page)
 	}
-
 	deniedRec := httptest.NewRecorder()
 	testHandler.ListTaskMessagesByUser(deniedRec, requestFor(otherTaskID, "own_agents", ""))
-	if deniedRec.Code != http.StatusForbidden || !strings.Contains(deniedRec.Body.String(), "grant_resource_not_allowed") {
+	if deniedRec.Code != http.StatusForbidden || !strings.Contains(deniedRec.Body.String(), "workspace_access_resource_not_allowed") {
 		t.Fatalf("own scope foreign trace status = %d, body = %s", deniedRec.Code, deniedRec.Body.String())
 	}
-
 	workspaceRec := httptest.NewRecorder()
 	testHandler.ListTaskMessagesByUser(workspaceRec, requestFor(otherTaskID, "workspace", ""))
 	if workspaceRec.Code != http.StatusOK {

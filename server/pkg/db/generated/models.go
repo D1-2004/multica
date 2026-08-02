@@ -1372,7 +1372,6 @@ type Workspace struct {
 type WorkspaceAccessAudit struct {
 	ID           pgtype.UUID        `json:"id"`
 	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
-	GrantID      pgtype.UUID        `json:"grant_id"`
 	TokenID      pgtype.UUID        `json:"token_id"`
 	ActorUserID  pgtype.UUID        `json:"actor_user_id"`
 	Action       string             `json:"action"`
@@ -1383,34 +1382,24 @@ type WorkspaceAccessAudit struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
-type WorkspaceAccessGrant struct {
+type WorkspaceAccessToken struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
 	SubjectUserID pgtype.UUID        `json:"subject_user_id"`
 	Name          string             `json:"name"`
+	TokenHash     string             `json:"token_hash"`
+	TokenPrefix   string             `json:"token_prefix"`
 	Capabilities  []string           `json:"capabilities"`
 	ResourceScope string             `json:"resource_scope"`
-	Status        string             `json:"status"`
 	Version       int32              `json:"version"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt    pgtype.Timestamptz `json:"last_used_at"`
 	CreatedBy     pgtype.UUID        `json:"created_by"`
 	UpdatedBy     pgtype.UUID        `json:"updated_by"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-	DisabledAt    pgtype.Timestamptz `json:"disabled_at"`
-}
-
-type WorkspaceAccessToken struct {
-	ID          pgtype.UUID        `json:"id"`
-	GrantID     pgtype.UUID        `json:"grant_id"`
-	Name        string             `json:"name"`
-	TokenHash   string             `json:"token_hash"`
-	TokenPrefix string             `json:"token_prefix"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
-	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
-	CreatedBy   pgtype.UUID        `json:"created_by"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	RevokedBy   pgtype.UUID        `json:"revoked_by"`
-	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+	RevokedBy     pgtype.UUID        `json:"revoked_by"`
+	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
 }
 
 type WorkspaceInvitation struct {

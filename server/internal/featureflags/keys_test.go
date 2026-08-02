@@ -13,8 +13,8 @@ func TestReleaseFlagsDefaultToOff(t *testing.T) {
 	if ResourceLabelsEnabled(ctx, nil) {
 		t.Fatal("resource labels release flag must default to off")
 	}
-	if WorkspaceAccessGrantsEnabled(ctx, nil) {
-		t.Fatal("workspace access grants release flag must default to off")
+	if WorkspaceAccessTokensEnabled(ctx, nil) {
+		t.Fatal("workspace access tokens release flag must default to off")
 	}
 }
 

@@ -627,10 +627,10 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list runtimes")
 		return
 	}
-	if _, isGrant := middleware.WorkspaceAccessPrincipalFromContext(r.Context()); isGrant {
+	if _, isToken := middleware.WorkspaceAccessPrincipalFromContext(r.Context()); isToken {
 		member, ok := middleware.MemberFromContext(r.Context())
 		if !ok {
-			writeError(w, http.StatusForbidden, "grant_resource_not_allowed")
+			writeError(w, http.StatusForbidden, "workspace_access_resource_not_allowed")
 			return
 		}
 		visible := make([]db.AgentRuntime, 0, len(runtimes))

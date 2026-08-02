@@ -40,21 +40,22 @@ import {
   TimelineEntriesSchema,
   UserSchema,
   ProvisionFDEOnboardingResponseSchema,
-  WorkspaceAccessGrantListSchema,
-  CreateWorkspaceAccessTokenResponseSchema,
-  EMPTY_CREATE_WORKSPACE_ACCESS_TOKEN_RESPONSE,
+  WorkspaceAccessTokenListSchema,
+  WorkspaceAccessTokenSecretResponseSchema,
+  EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
 
 describe("workspace access schemas", () => {
-  it("fails closed when a grant contains an unknown capability", () => {
+  it("fails closed when a token contains an unknown capability", () => {
     const parsed = parseWithFallback(
       [{
-        id: "g1", workspace_id: "w1", name: "DTA", capabilities: ["members.manage"],
-        resource_scope: "workspace", status: "active", version: 1,
-        created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z", disabled_at: null,
+        id: "t1", workspace_id: "w1", name: "DTA", capabilities: ["members.manage"],
+        resource_scope: "workspace", version: 1, token_prefix: "dta_abc",
+        expires_at: null, last_used_at: null, revoked_at: null,
+        created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z",
       }],
-      WorkspaceAccessGrantListSchema,
+      WorkspaceAccessTokenListSchema,
       [],
       { endpoint: "test" },
     );
@@ -64,14 +65,16 @@ describe("workspace access schemas", () => {
   it("does not accept a token-create response without its one-time secret", () => {
     const parsed = parseWithFallback(
       {
-        id: "t1", grant_id: "g1", name: "prod", token_prefix: "dta_abc",
-        expires_at: null, last_used_at: null, created_at: "2026-08-02T00:00:00Z", revoked_at: null,
+        id: "t1", workspace_id: "w1", name: "prod", capabilities: ["trace.read"],
+        resource_scope: "own_agents", version: 1, token_prefix: "dta_abc",
+        expires_at: null, last_used_at: null, created_at: "2026-08-02T00:00:00Z",
+        updated_at: "2026-08-02T00:00:00Z", revoked_at: null,
       },
-      CreateWorkspaceAccessTokenResponseSchema,
-      EMPTY_CREATE_WORKSPACE_ACCESS_TOKEN_RESPONSE,
+      WorkspaceAccessTokenSecretResponseSchema,
+      EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE,
       { endpoint: "test", includeReceived: false },
     );
-    expect(parsed).toEqual(EMPTY_CREATE_WORKSPACE_ACCESS_TOKEN_RESPONSE);
+    expect(parsed).toEqual(EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE);
   });
 });
 

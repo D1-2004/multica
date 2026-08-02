@@ -47,9 +47,8 @@ import type {
   TimelineEntry,
   User,
   WebhookDelivery,
-  WorkspaceAccessGrant,
   WorkspaceAccessToken,
-  CreateWorkspaceAccessTokenResponse,
+  WorkspaceAccessTokenSecretResponse,
 } from "../types";
 import type {
   CloudRuntimeNode,
@@ -1967,62 +1966,42 @@ export const EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE: CreateBillingPortalSe
   url: "",
 };
 
-export const WorkspaceAccessGrantSchema = z.object({
+export const WorkspaceAccessTokenSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
   name: z.string(),
   capabilities: z.array(z.enum(["deployment.manage", "deployment.retire", "trace.read"])),
   resource_scope: z.enum(["own_agents", "workspace"]),
-  status: z.enum(["active", "disabled"]),
   version: z.number(),
-  created_at: z.string(),
-  updated_at: z.string(),
-  disabled_at: z.string().nullable(),
-}).loose();
-
-export const WorkspaceAccessGrantListSchema = z.array(WorkspaceAccessGrantSchema);
-
-export const WorkspaceAccessTokenSchema = z.object({
-  id: z.string(),
-  grant_id: z.string(),
-  name: z.string(),
   token_prefix: z.string(),
   expires_at: z.string().nullable(),
   last_used_at: z.string().nullable(),
   created_at: z.string(),
+  updated_at: z.string(),
   revoked_at: z.string().nullable(),
 }).loose();
 
 export const WorkspaceAccessTokenListSchema = z.array(WorkspaceAccessTokenSchema);
-export const CreateWorkspaceAccessTokenResponseSchema = WorkspaceAccessTokenSchema.extend({
+export const WorkspaceAccessTokenSecretResponseSchema = WorkspaceAccessTokenSchema.extend({
   token: z.string().min(1),
 });
 
-export const EMPTY_WORKSPACE_ACCESS_GRANT: WorkspaceAccessGrant = {
+export const EMPTY_WORKSPACE_ACCESS_TOKEN: WorkspaceAccessToken = {
   id: "",
   workspace_id: "",
   name: "",
   capabilities: [],
   resource_scope: "own_agents",
-  status: "disabled",
   version: 0,
-  created_at: "",
-  updated_at: "",
-  disabled_at: null,
-};
-
-export const EMPTY_WORKSPACE_ACCESS_TOKEN: WorkspaceAccessToken = {
-  id: "",
-  grant_id: "",
-  name: "",
   token_prefix: "",
   expires_at: null,
   last_used_at: null,
   created_at: "",
+  updated_at: "",
   revoked_at: null,
 };
 
-export const EMPTY_CREATE_WORKSPACE_ACCESS_TOKEN_RESPONSE: CreateWorkspaceAccessTokenResponse = {
+export const EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE: WorkspaceAccessTokenSecretResponse = {
   ...EMPTY_WORKSPACE_ACCESS_TOKEN,
   token: "",
 };

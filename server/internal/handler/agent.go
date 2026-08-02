@@ -830,7 +830,7 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	visible := make([]AgentResponse, 0, len(agents))
 	for _, a := range agents {
 		targets := targetsByAgent[uuidToString(a.ID)]
-		if allowed, isGrant := workspaceAccessCanUseAgent(r.Context(), a); isGrant {
+		if allowed, isToken := workspaceAccessCanUseAgent(r.Context(), a); isToken {
 			if !allowed {
 				continue
 			}
@@ -1473,9 +1473,9 @@ func redactAgentResponseForActor(resp *AgentResponse, actorType string) {
 // Only the agent owner or workspace owner/admin can manage any agent,
 // regardless of whether it is public or private.
 func (h *Handler) canManageAgent(w http.ResponseWriter, r *http.Request, agent db.Agent) bool {
-	if allowed, isGrant := workspaceAccessCanUseAgent(r.Context(), agent); isGrant {
+	if allowed, isToken := workspaceAccessCanUseAgent(r.Context(), agent); isToken {
 		if !allowed {
-			writeError(w, http.StatusForbidden, "grant_resource_not_allowed")
+			writeError(w, http.StatusForbidden, "workspace_access_resource_not_allowed")
 		}
 		return allowed
 	}
@@ -2046,7 +2046,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, isGrant := middleware.WorkspaceAccessPrincipalFromContext(r.Context()); isGrant {
+	if _, isToken := middleware.WorkspaceAccessPrincipalFromContext(r.Context()); isToken {
 		resp := make([]WorkspaceAccessTaskResponse, len(tasks))
 		for i, task := range tasks {
 			resp[i] = workspaceAccessTaskToResponse(task)
