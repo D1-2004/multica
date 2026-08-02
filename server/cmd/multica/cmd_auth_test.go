@@ -360,6 +360,7 @@ func TestValidateLoginTokenPrefix(t *testing.T) {
 	}{
 		{name: "mul_ PAT", token: "mul_abc123", wantErr: false},
 		{name: "mcn_ Cloud Node PAT", token: "mcn_abc123", wantErr: false},
+		{name: "dta_ workspace access token", token: "dta_abc123", wantErr: false},
 		{name: "empty token", token: "", wantErr: true},
 		{name: "no prefix", token: "abc123", wantErr: true},
 		{name: "wrong prefix mdt_", token: "mdt_abc123", wantErr: true},
@@ -388,7 +389,7 @@ func TestValidateLoginTokenPrefix(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown prefix")
 	}
-	for _, p := range []string{"mul_", "mcn_"} {
+	for _, p := range []string{"mul_", "mcn_", "dta_"} {
 		if !strings.Contains(err.Error(), p) {
 			t.Errorf("error %q does not mention prefix %q", err.Error(), p)
 		}

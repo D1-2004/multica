@@ -334,11 +334,22 @@ func (h *Handler) GetWorkspaceAccessSelf(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusForbidden, "workspace_access_operation_not_allowed")
 		return
 	}
+	workspace, err := h.Queries.GetWorkspace(r.Context(), parseUUID(principal.WorkspaceID))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "workspace not found")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"principal_type": "workspace_access_token",
 		"token_id":       principal.TokenID,
 		"name":           principal.Name,
 		"workspace_id":   principal.WorkspaceID,
+		"workspace": map[string]any{
+			"id":           uuidToString(workspace.ID),
+			"name":         workspace.Name,
+			"slug":         workspace.Slug,
+			"issue_prefix": workspace.IssuePrefix,
+		},
 		"capabilities":   principal.Capabilities,
 		"resource_scope": principal.ResourceScope,
 		"version":        principal.Version,

@@ -194,6 +194,39 @@ func TestWorkspaceAccessTokenLifecycleAndRegeneration(t *testing.T) {
 	}
 }
 
+func TestGetWorkspaceAccessSelfIncludesBoundWorkspace(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/workspace-access/self", nil)
+	req = req.WithContext(middleware.WithWorkspaceAccessPrincipal(req.Context(), middleware.WorkspaceAccessPrincipal{
+		TokenID:       "11111111-1111-1111-1111-111111111111",
+		UserID:        testUserID,
+		WorkspaceID:   testWorkspaceID,
+		Name:          "Vendor A",
+		Capabilities:  []string{"deployment.manage"},
+		ResourceScope: "own_agents",
+		Version:       1,
+	}))
+	rec := httptest.NewRecorder()
+	testHandler.GetWorkspaceAccessSelf(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		PrincipalType string `json:"principal_type"`
+		WorkspaceID   string `json:"workspace_id"`
+		Workspace     struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			Slug string `json:"slug"`
+		} `json:"workspace"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode self: %v", err)
+	}
+	if got.PrincipalType != "workspace_access_token" || got.WorkspaceID != testWorkspaceID || got.Workspace.ID != testWorkspaceID || got.Workspace.Name == "" || got.Workspace.Slug == "" {
+		t.Fatalf("self response = %+v", got)
+	}
+}
+
 func TestWorkspaceAccessTokenRejectsInvalidPolicy(t *testing.T) {
 	req := newRequest(http.MethodPost, "/access-tokens", map[string]any{
 		"name": "Vendor", "capabilities": []string{"members.manage"}, "resource_scope": "workspace",

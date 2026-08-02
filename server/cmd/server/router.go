@@ -1717,6 +1717,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Task messages (user-facing, not daemon auth)
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
 
+			// DTA deployment load verification. These endpoints deliberately expose
+			// only server-stamped smoke Issues, never generic Issue or Chat CRUD.
+			r.Route("/api/dta/load-smokes", func(r chi.Router) {
+				r.Post("/", h.CreateDTALoadSmoke)
+				r.Route("/{issueId}", func(r chi.Router) {
+					r.Get("/runs", h.ListDTALoadSmokeRuns)
+					r.Get("/runs/{taskId}/messages", h.ListDTALoadSmokeMessages)
+					r.Get("/comments", h.ListDTALoadSmokeComments)
+					r.Post("/retry", h.RetryDTALoadSmoke)
+				})
+			})
+
 			// Task-scoped Chat -> Issue background handoff. The handler requires
 			// the server-stamped task_token actor and rejects ordinary member
 			// credentials even though this route lives in the workspace group.

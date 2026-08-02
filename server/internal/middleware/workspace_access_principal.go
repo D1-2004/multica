@@ -102,6 +102,41 @@ func workspaceAccessCapabilityForRequest(r *http.Request) (string, bool) {
 		return "deployment.manage", true
 	}
 
+	// GitHub Agent Source delivery reuses only installations that a human
+	// workspace manager has already connected. DTA Tokens may discover those
+	// bindings, preview an immutable source revision, and create an Agent from
+	// that preview; they cannot connect, reuse, or delete installations.
+	if len(parts) == 5 && parts[0] == "api" && parts[1] == "workspaces" && parts[3] == "github" {
+		switch {
+		case parts[4] == "installations" && r.Method == http.MethodGet:
+			return "deployment.manage", true
+		case parts[4] == "repositories" && r.Method == http.MethodGet:
+			return "deployment.manage", true
+		case parts[4] == "agent-preview" && r.Method == http.MethodPost:
+			return "deployment.manage", true
+		case parts[4] == "agents" && r.Method == http.MethodPost:
+			return "deployment.manage", true
+		}
+	}
+
+	// Purpose-built deployment verification surface. It can only create and
+	// inspect server-stamped load-smoke Issues; generic Issue/Chat APIs remain
+	// outside the workspace Token surface.
+	if len(parts) >= 3 && parts[0] == "api" && parts[1] == "dta" && parts[2] == "load-smokes" {
+		switch {
+		case len(parts) == 3 && r.Method == http.MethodPost:
+			return "deployment.manage", true
+		case len(parts) == 5 && parts[4] == "runs" && r.Method == http.MethodGet:
+			return "deployment.manage", true
+		case len(parts) == 5 && parts[4] == "comments" && r.Method == http.MethodGet:
+			return "deployment.manage", true
+		case len(parts) == 5 && parts[4] == "retry" && r.Method == http.MethodPost:
+			return "deployment.manage", true
+		case len(parts) == 7 && parts[4] == "runs" && parts[6] == "messages" && r.Method == http.MethodGet:
+			return "deployment.manage", true
+		}
+	}
+
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "messages" && r.Method == http.MethodGet {
 		return "trace.read", true
 	}
