@@ -212,6 +212,20 @@ longer gates the write endpoint. `/api/config` still reports
 switch; this is a client-compatibility decision, not an operator-controlled
 flag.
 
+`workspace_access_grants` is also a release flag and defaults to `false`.
+Keep it off while migration 257 is rolling out. After every API replica runs
+the new binary, enable it with `FF_WORKSPACE_ACCESS_GRANTS=true` or:
+
+```yaml
+workspace_access_grants:
+  default: true
+```
+
+The backend then accepts `dta_` credentials and owner management
+routes, while `/api/config` exposes the same decision so Web/Desktop shows the
+DTA Access settings tab. Turning it off again blocks all `dta_` requests and
+hides the management UI; it does not delete Grants, keys, agents, or traces.
+
 ### Security note: never rely on the frontend alone
 
 A frontend feature flag controls what the user *sees*. It does NOT enforce access. Any API route exposing the same capability MUST evaluate the matching backend flag independently. The two flags can share a key but they live in two `Service` instances and the backend value is the source of truth.

@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -625,6 +626,20 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list runtimes")
 		return
+	}
+	if _, isGrant := middleware.WorkspaceAccessPrincipalFromContext(r.Context()); isGrant {
+		member, ok := middleware.MemberFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusForbidden, "grant_resource_not_allowed")
+			return
+		}
+		visible := make([]db.AgentRuntime, 0, len(runtimes))
+		for _, runtime := range runtimes {
+			if canUseRuntimeForRequest(r, member, runtime) {
+				visible = append(visible, runtime)
+			}
+		}
+		runtimes = visible
 	}
 
 	resp := make([]AgentRuntimeResponse, len(runtimes))

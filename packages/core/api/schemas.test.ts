@@ -40,8 +40,40 @@ import {
   TimelineEntriesSchema,
   UserSchema,
   ProvisionFDEOnboardingResponseSchema,
+  WorkspaceAccessGrantListSchema,
+  CreateWorkspaceAccessTokenResponseSchema,
+  EMPTY_CREATE_WORKSPACE_ACCESS_TOKEN_RESPONSE,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
+
+describe("workspace access schemas", () => {
+  it("fails closed when a grant contains an unknown capability", () => {
+    const parsed = parseWithFallback(
+      [{
+        id: "g1", workspace_id: "w1", name: "DTA", capabilities: ["members.manage"],
+        resource_scope: "workspace", status: "active", version: 1,
+        created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z", disabled_at: null,
+      }],
+      WorkspaceAccessGrantListSchema,
+      [],
+      { endpoint: "test" },
+    );
+    expect(parsed).toEqual([]);
+  });
+
+  it("does not accept a token-create response without its one-time secret", () => {
+    const parsed = parseWithFallback(
+      {
+        id: "t1", grant_id: "g1", name: "prod", token_prefix: "dta_abc",
+        expires_at: null, last_used_at: null, created_at: "2026-08-02T00:00:00Z", revoked_at: null,
+      },
+      CreateWorkspaceAccessTokenResponseSchema,
+      EMPTY_CREATE_WORKSPACE_ACCESS_TOKEN_RESPONSE,
+      { endpoint: "test", includeReceived: false },
+    );
+    expect(parsed).toEqual(EMPTY_CREATE_WORKSPACE_ACCESS_TOKEN_RESPONSE);
+  });
+});
 
 describe("GitHub installation schemas", () => {
   it("defaults reusable installations for older server responses", () => {

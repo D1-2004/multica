@@ -1353,11 +1353,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Protected API routes
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
+		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, opts.FeatureFlags))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
 
 		// --- User-scoped routes (no workspace context required) ---
 		r.Get("/api/me", h.GetMe)
+		r.Get("/api/workspace-access/self", h.GetWorkspaceAccessSelf)
 		r.Patch("/api/me", h.UpdateMe)
 		r.Patch("/api/me/onboarding", h.PatchOnboarding)
 		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)
@@ -1424,6 +1425,37 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/", h.ListWorkspaces)
 			r.Post("/", h.CreateWorkspace)
 			r.Route("/{id}", func(r chi.Router) {
+				// Workspace Access Grants are external control-plane credentials.
+				// Only a human workspace owner may create or change them; admins,
+				// members, and Grant credentials cannot reach this group.
+				r.Group(func(r chi.Router) {
+					r.Use(func(next http.Handler) http.Handler {
+						return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+							if !featureflags.WorkspaceAccessGrantsEnabled(req.Context(), opts.FeatureFlags) {
+								http.NotFound(w, req)
+								return
+							}
+							next.ServeHTTP(w, req)
+						})
+					})
+					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner"))
+					r.Route("/access-grants", func(r chi.Router) {
+						r.Get("/", h.ListWorkspaceAccessGrants)
+						r.Post("/", h.CreateWorkspaceAccessGrant)
+						r.Route("/{grantId}", func(r chi.Router) {
+							r.Get("/", h.GetWorkspaceAccessGrant)
+							r.Patch("/", h.UpdateWorkspaceAccessGrant)
+							r.Post("/disable", h.DisableWorkspaceAccessGrant)
+							r.Post("/enable", h.EnableWorkspaceAccessGrant)
+							r.Route("/tokens", func(r chi.Router) {
+								r.Get("/", h.ListWorkspaceAccessTokens)
+								r.Post("/", h.CreateWorkspaceAccessToken)
+								r.Patch("/{tokenId}", h.UpdateWorkspaceAccessToken)
+								r.Delete("/{tokenId}", h.RevokeWorkspaceAccessToken)
+							})
+						})
+					})
+				})
 				// Member-level access
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))

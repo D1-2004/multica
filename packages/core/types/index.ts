@@ -108,6 +108,8 @@ export type {
   CancelTaskResponse,
 } from "./chat";
 export type { StorageAdapter } from "./storage";
+export type * from "./workspace-access";
+export { WORKSPACE_ACCESS_CAPABILITIES } from "./workspace-access";
 export type {
   Project,
   ProjectStatus,

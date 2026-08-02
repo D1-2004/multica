@@ -14,11 +14,15 @@ import {
   MessageCircle,
   Tags,
   Keyboard,
+  ShieldCheck,
 } from "lucide-react";
 import { GitHubMark } from "./github-mark";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components/ui/tabs";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { useCurrentWorkspace } from "@multica/core/paths";
+import { useCurrentMember } from "@multica/core/permissions";
+import { useFeatureEnabled } from "@multica/core/config";
+import { WORKSPACE_ACCESS_GRANTS_FLAG } from "@multica/core/feature-flags";
 import { useNavigation } from "../../navigation";
 import { AccountTab } from "./account-tab";
 import { PreferencesTab } from "./preferences-tab";
@@ -33,6 +37,7 @@ import { LabsTab } from "./labs-tab";
 import { NotificationsTab } from "./notifications-tab";
 import { LabelsTab } from "./labels-tab";
 import { KeyboardShortcutsTab } from "./keyboard-shortcuts-tab";
+import { WorkspaceAccessTab } from "./workspace-access-tab";
 import { useT } from "../../i18n";
 
 const ACCOUNT_TAB_KEYS = ["profile", "preferences", "shortcuts", "chat", "notifications", "tokens"] as const;
@@ -53,6 +58,7 @@ const WORKSPACE_TAB_KEYS = [
   "labs",
   "members",
   "labels",
+  "workspace_access",
 ] as const;
 const WORKSPACE_TAB_VALUES = {
   general: "workspace",
@@ -62,6 +68,7 @@ const WORKSPACE_TAB_VALUES = {
   labs: "labs",
   members: "members",
   labels: "labels",
+  workspace_access: "workspace_access",
 } as const;
 const WORKSPACE_TAB_ICONS = {
   general: Settings,
@@ -71,6 +78,7 @@ const WORKSPACE_TAB_ICONS = {
   labs: FlaskConical,
   members: Users,
   labels: Tags,
+  workspace_access: ShieldCheck,
 } as const;
 
 const DEFAULT_TAB = "profile";
@@ -101,7 +109,10 @@ interface SettingsPageProps {
 
 export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
   const { t } = useT("settings");
-  const workspaceName = useCurrentWorkspace()?.name;
+  const workspace = useCurrentWorkspace();
+  const workspaceName = workspace?.name;
+  const { role } = useCurrentMember(workspace?.id ?? "");
+  const workspaceAccessEnabled = useFeatureEnabled(WORKSPACE_ACCESS_GRANTS_FLAG, false);
   const navigation = useNavigation();
   const isMobile = useIsMobile();
 
@@ -112,10 +123,12 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
     () =>
       new Set<string>([
         ...ACCOUNT_TAB_KEYS,
-        ...Object.values(WORKSPACE_TAB_VALUES),
+        ...Object.entries(WORKSPACE_TAB_VALUES)
+          .filter(([key]) => key !== "workspace_access" || (workspaceAccessEnabled && role === "owner"))
+          .map(([, value]) => value),
         ...(extraAccountTabs?.map((tab) => tab.value) ?? []),
       ]),
-    [extraAccountTabs],
+    [extraAccountTabs, role, workspaceAccessEnabled],
   );
 
   const tabFromUrl = navigation.searchParams.get(TAB_QUERY_KEY);
@@ -182,7 +195,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <span className="hidden truncate px-2 pb-1 pt-4 text-xs font-medium text-muted-foreground md:block">
             {workspaceName ?? t(($) => $.page.workspace_fallback)}
           </span>
-          {WORKSPACE_TAB_KEYS.map((key) => {
+          {WORKSPACE_TAB_KEYS.filter((key) => key !== "workspace_access" || (workspaceAccessEnabled && role === "owner")).map((key) => {
             const Icon = WORKSPACE_TAB_ICONS[key];
             return (
               <TabsTrigger
@@ -214,6 +227,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <TabsContent value="labs"><LabsTab /></TabsContent>
           <TabsContent value="members"><MembersTab /></TabsContent>
           <TabsContent value="labels"><LabelsTab /></TabsContent>
+          {workspaceAccessEnabled && role === "owner" ? <TabsContent value="workspace_access"><WorkspaceAccessTab /></TabsContent> : null}
           {extraAccountTabs?.map((tab) => (
             <TabsContent key={tab.value} value={tab.value}>{tab.content}</TabsContent>
           ))}

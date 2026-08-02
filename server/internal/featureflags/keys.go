@@ -19,6 +19,9 @@ const (
 	// ResourceLabels controls the agent- and skill-scoped label namespaces.
 	// Issue labels remain available while this release flag is off.
 	ResourceLabels = "settings_resource_labels"
+	// WorkspaceAccessGrants gates issuance and use of workspace-bound DTA
+	// credentials during the additive-schema / rolling-server rollout.
+	WorkspaceAccessGrants = "workspace_access_grants"
 	// agentSkillTogglesCompat is no longer a release flag. Keep publishing the
 	// key as enabled so installed v0.4.0 desktop clients, which still gate the
 	// switch on this config decision, receive the permanently enabled behavior.
@@ -29,6 +32,7 @@ var frontendPublicFlags = []string{
 	ComposioMCPApps,
 	AgentBuilder,
 	ResourceLabels,
+	WorkspaceAccessGrants,
 }
 
 func ComposioMCPAppsEnabled(ctx context.Context, flags *featureflag.Service) bool {
@@ -41,6 +45,10 @@ func AgentBuilderEnabled(ctx context.Context, flags *featureflag.Service) bool {
 
 func ResourceLabelsEnabled(ctx context.Context, flags *featureflag.Service) bool {
 	return flags.IsEnabled(ctx, ResourceLabels, false)
+}
+
+func WorkspaceAccessGrantsEnabled(ctx context.Context, flags *featureflag.Service) bool {
+	return flags.IsEnabled(ctx, WorkspaceAccessGrants, false)
 }
 
 func EvaluateFrontendPublicFlags(ctx context.Context, flags *featureflag.Service) map[string]bool {

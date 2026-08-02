@@ -1,21 +1,22 @@
 ---
 title: Authentication and tokens
-description: Multica has three kinds of tokens — one each for the browser, the CLI, and the daemon. When to use which.
+description: Browser, personal, daemon, and workspace-bound DTA credentials — when to use each one.
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Multica has three kinds of tokens, one for each context: the browser Web UI, the command line and scripts, and the daemon. All three represent the same you, but their scopes and lifetimes differ.
+Multica uses different credentials for people, daemons, and external DTA integrations. Human credentials represent a user. A DTA access key represents only an owner-configured authorization in one workspace.
 
-## The three tokens
+## Token types
 
 | Token | Format | Where it's used | Lifetime |
 |---|---|---|---|
 | **JWT cookie** | `multica_auth` cookie (HttpOnly) | Web browser | 30 days |
 | **Personal access token (PAT)** | Prefixed with `mul_` | CLI, scripts, direct API calls | No expiry by default; when you create one via the API you can pass `expires_in_days` |
 | **Daemon token** | Prefixed with `mdt_` | Daemon-to-server communication | Managed by the daemon itself |
+| **DTA access key** | Prefixed with `dta_` | DTA integration for an external service provider | Set by the workspace owner; can be changed or revoked independently |
 
-In day-to-day use you'll only touch the first two directly. The **[daemon](/daemon-runtimes) token** is created and refreshed automatically by `multica daemon login` — you don't have to think about it.
+In day-to-day use you'll only touch the first two directly. The **[daemon](/daemon-runtimes) token** is created and refreshed automatically by `multica daemon login`. DTA access keys are created only by workspace owners and are delivered to DTA through an approved secret channel.
 
 ## What each token can hit
 
@@ -29,6 +30,21 @@ In day-to-day use you'll only touch the first two directly. The **[daemon](/daem
 **A PAT can hit almost anything** — it represents "the full you." A daemon token can only do what the daemon needs: fetch tasks and report results.
 
 **Both can hit `/api/daemon/*`, but their scopes differ.** A PAT represents an **entire user** — once authenticated, it can see every workspace you belong to. A daemon token is pinned to a single workspace at creation time and can only touch resources in that workspace. In production, run your daemon with a daemon token — don't take the shortcut of using a PAT, or you'll be granting far more privilege than the daemon needs.
+
+## DTA access keys for external service providers
+
+A workspace owner manages these under **Settings → DTA Access**. Each authorization has two independent controls:
+
+- **Permissions**: create/update deployments, retire deployments, and read task traces. Owners can select any combination.
+- **Resource scope**: only agents created by that authorization (`own_agents`, recommended), or all agents in the workspace (`workspace`).
+
+Changing permissions or scope applies to every key under that authorization on its next request. Disabling the authorization immediately blocks all of its keys. Individual keys can also expire or be revoked without deleting the authorization, its agents, or their trace history.
+
+<Callout type="warning">
+**A DTA access key is not a personal access token and is not supported by the Multica CLI.** Give it only to the DTA integration. The external service provider should operate the workspace through DTA and should not receive a Multica account or an owner's PAT.
+</Callout>
+
+The full key is shown only once. For safe rotation, issue a new key, switch DTA to it, verify access, and then revoke the old key.
 
 ## Logging in
 

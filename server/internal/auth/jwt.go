@@ -37,6 +37,17 @@ func GeneratePATToken() (string, error) {
 	return "mul_" + hex.EncodeToString(b), nil
 }
 
+// GenerateWorkspaceAccessToken creates a credential for a workspace Access
+// Grant. The prefix is intentionally distinct from personal and machine PATs
+// so authentication never falls through to a broader identity type.
+func GenerateWorkspaceAccessToken() (string, error) {
+	b := make([]byte, 20)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate workspace access token: %w", err)
+	}
+	return "dta_" + hex.EncodeToString(b), nil
+}
+
 // GenerateDaemonToken creates a new daemon auth token: "mdt_" + 40 random hex chars.
 func GenerateDaemonToken() (string, error) {
 	b := make([]byte, 20) // 20 bytes = 40 hex chars

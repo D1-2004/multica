@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -39,6 +40,10 @@ func SetMemberContext(ctx context.Context, workspaceID string, member db.Member)
 	return ctx
 }
 
+func setWorkspaceContext(ctx context.Context, workspaceID string) context.Context {
+	return context.WithValue(ctx, ctxKeyWorkspaceID, workspaceID)
+}
+
 // errWorkspaceNotFound is returned when a slug was provided but doesn't match
 // any workspace. This lets the middleware distinguish "no identifier provided"
 // (400) from "identifier provided but invalid" (404).
@@ -66,6 +71,9 @@ var errWorkspaceNotFound = errors.New("workspace not found")
 // internal resolver instead — this helper collapses both cases to "" for
 // simpler handler-level checks.
 func ResolveWorkspaceIDFromRequest(r *http.Request, queries *db.Queries) string {
+	if principal, ok := WorkspaceAccessPrincipalFromContext(r.Context()); ok {
+		return principal.WorkspaceID
+	}
 	// A mat_ task token is bound to exactly one workspace by the token
 	// row. Auth middleware writes that workspace into X-Workspace-ID
 	// after stripping any client-supplied X-Actor-Source. Any other
@@ -112,6 +120,9 @@ type workspaceResolver func(r *http.Request) (string, error)
 // TODO: cache slug→UUID lookup (slug is immutable, safe to cache with short TTL)
 func resolveWorkspaceUUID(queries *db.Queries) workspaceResolver {
 	return func(r *http.Request) (string, error) {
+		if principal, ok := WorkspaceAccessPrincipalFromContext(r.Context()); ok {
+			return principal.WorkspaceID, nil
+		}
 		// Task-token-authenticated requests must operate on the
 		// token's bound workspace. The auth middleware wrote that ID
 		// into X-Workspace-ID; nothing the agent can put on the wire
@@ -205,6 +216,24 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 				return
 			}
 
+			if principal, ok := WorkspaceAccessPrincipalFromContext(r.Context()); ok {
+				if workspaceID != principal.WorkspaceID {
+					writeError(w, http.StatusForbidden, "grant_workspace_mismatch")
+					return
+				}
+				// This context-only marker keeps existing workspace handlers from
+				// querying a member row. Its role is not accepted by any human role
+				// check; resource authority comes from the Grant Principal.
+				member := db.Member{
+					WorkspaceID: parseUUIDOrZero(principal.WorkspaceID),
+					UserID:      parseUUIDOrZero(principal.UserID),
+					Role:        WorkspaceAccessActorSource,
+				}
+				ctx := SetMemberContext(setWorkspaceContext(r.Context(), workspaceID), workspaceID, member)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
 			// Final task-token binding check: even when the workspace
 			// was resolved from a chi URL parameter
 			// (RequireWorkspaceMemberFromURL), the agent must not be
@@ -262,4 +291,12 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func parseUUIDOrZero(value string) pgtype.UUID {
+	uuid, err := util.ParseUUID(value)
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	return uuid
 }

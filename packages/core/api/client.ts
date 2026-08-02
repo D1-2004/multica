@@ -51,6 +51,12 @@ import type {
   PersonalAccessToken,
   CreatePersonalAccessTokenRequest,
   CreatePersonalAccessTokenResponse,
+  WorkspaceAccessGrant,
+  WorkspaceAccessToken,
+  CreateWorkspaceAccessGrantRequest,
+  UpdateWorkspaceAccessGrantRequest,
+  CreateWorkspaceAccessTokenRequest,
+  CreateWorkspaceAccessTokenResponse,
   RuntimeUsage,
   IssueUsageSummary,
   RuntimeHourlyActivity,
@@ -316,6 +322,14 @@ import {
   EMPTY_BEGIN_AGENT_IDENTITY_GITHUB_OAUTH_RESPONSE,
   EMPTY_DISCONNECT_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
   EMPTY_TEST_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
+  WorkspaceAccessGrantSchema,
+  WorkspaceAccessGrantListSchema,
+  WorkspaceAccessTokenSchema,
+  WorkspaceAccessTokenListSchema,
+  CreateWorkspaceAccessTokenResponseSchema,
+  EMPTY_WORKSPACE_ACCESS_GRANT,
+  EMPTY_WORKSPACE_ACCESS_TOKEN,
+  EMPTY_CREATE_WORKSPACE_ACCESS_TOKEN_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -2128,6 +2142,81 @@ export class ApiClient {
 
   async revokePersonalAccessToken(id: string): Promise<void> {
     await this.fetch(`/api/tokens/${id}`, { method: "DELETE" });
+  }
+
+  // Owner-managed DTA workspace access. These credentials are intentionally
+  // separate from personal PATs and are never used by the Multica CLI.
+  async listWorkspaceAccessGrants(workspaceId: string): Promise<WorkspaceAccessGrant[]> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-grants`);
+    return parseWithFallback(raw, WorkspaceAccessGrantListSchema, [], {
+      endpoint: "GET /api/workspaces/:id/access-grants",
+    });
+  }
+
+  async createWorkspaceAccessGrant(workspaceId: string, data: CreateWorkspaceAccessGrantRequest): Promise<WorkspaceAccessGrant> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-grants`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkspaceAccessGrantSchema, EMPTY_WORKSPACE_ACCESS_GRANT, {
+      endpoint: "POST /api/workspaces/:id/access-grants",
+    });
+  }
+
+  async updateWorkspaceAccessGrant(workspaceId: string, grantId: string, data: UpdateWorkspaceAccessGrantRequest): Promise<WorkspaceAccessGrant> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-grants/${grantId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkspaceAccessGrantSchema, EMPTY_WORKSPACE_ACCESS_GRANT, {
+      endpoint: "PATCH /api/workspaces/:id/access-grants/:grantId",
+    });
+  }
+
+  async setWorkspaceAccessGrantEnabled(workspaceId: string, grantId: string, enabled: boolean): Promise<WorkspaceAccessGrant> {
+    const action = enabled ? "enable" : "disable";
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-grants/${grantId}/${action}`, {
+      method: "POST",
+    });
+    return parseWithFallback(raw, WorkspaceAccessGrantSchema, EMPTY_WORKSPACE_ACCESS_GRANT, {
+      endpoint: `POST /api/workspaces/:id/access-grants/:grantId/${action}`,
+    });
+  }
+
+  async listWorkspaceAccessTokens(workspaceId: string, grantId: string): Promise<WorkspaceAccessToken[]> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-grants/${grantId}/tokens`);
+    return parseWithFallback(raw, WorkspaceAccessTokenListSchema, [], {
+      endpoint: "GET /api/workspaces/:id/access-grants/:grantId/tokens",
+      includeReceived: false,
+    });
+  }
+
+  async createWorkspaceAccessToken(workspaceId: string, grantId: string, data: CreateWorkspaceAccessTokenRequest): Promise<CreateWorkspaceAccessTokenResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-grants/${grantId}/tokens`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, CreateWorkspaceAccessTokenResponseSchema, EMPTY_CREATE_WORKSPACE_ACCESS_TOKEN_RESPONSE, {
+      endpoint: "POST /api/workspaces/:id/access-grants/:grantId/tokens",
+      includeReceived: false,
+    });
+  }
+
+  async updateWorkspaceAccessTokenExpiry(workspaceId: string, grantId: string, tokenId: string, expiresAt: string | null): Promise<WorkspaceAccessToken> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-grants/${grantId}/tokens/${tokenId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ expires_at: expiresAt }),
+    });
+    return parseWithFallback(raw, WorkspaceAccessTokenSchema, EMPTY_WORKSPACE_ACCESS_TOKEN, {
+      endpoint: "PATCH /api/workspaces/:id/access-grants/:grantId/tokens/:tokenId",
+      includeReceived: false,
+    });
+  }
+
+  async revokeWorkspaceAccessToken(workspaceId: string, grantId: string, tokenId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/access-grants/${grantId}/tokens/${tokenId}`, {
+      method: "DELETE",
+    });
   }
 
   // File Upload & Attachments

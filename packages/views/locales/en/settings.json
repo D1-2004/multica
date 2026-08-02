@@ -112,8 +112,63 @@
       "integrations": "Integrations",
       "labs": "Labs",
       "members": "Members",
-      "labels": "Labels"
+      "labels": "Labels",
+      "workspace_access": "DTA Access"
     }
+  },
+  "workspace_access": {
+    "title": "DTA Access",
+    "description": "Issue workspace-bound credentials for DTA. External operators use DTA only and do not receive a Multica account or personal API token.",
+    "owner_only": "Only workspace owners can manage DTA access.",
+    "grants_title": "Access authorizations",
+    "grants_description": "Permissions and scope can be changed at any time. Changes apply to every key under the authorization on its next request.",
+    "create": "Create authorization",
+    "loading": "Loading DTA access…",
+    "empty": "No DTA access authorizations yet.",
+    "active": "Active",
+    "disabled": "Disabled",
+    "edit": "Edit",
+    "enable": "Enable",
+    "disable": "Disable",
+    "issue_token": "Issue key",
+    "no_tokens": "No keys have been issued.",
+    "expires": "Expires",
+    "last_used": "Last used",
+    "revoked": "Revoked",
+    "extend_90": "Extend 90 days",
+    "revoke": "Revoke key",
+    "revoke_confirm": "Revoke this DTA access key? DTA requests using it will fail immediately.",
+    "saved": "DTA access saved",
+    "save_failed": "Couldn't save DTA access",
+    "create_title": "Create DTA access",
+    "edit_title": "Edit DTA access",
+    "name_placeholder": "Service provider or integration name",
+    "token_name_placeholder": "Key name, such as Production",
+    "permissions": "Permissions",
+    "scope_title": "Resource scope",
+    "scope": {
+      "own_agents": "Only agents created by this authorization",
+      "workspace": "All agents in this workspace"
+    },
+    "capabilities": {
+      "manage": "Create and update deployments",
+      "retire": "Retire deployments",
+      "trace": "Read task traces"
+    },
+    "workspace_warning": "Workspace scope can operate agents owned by employees or other DTA authorizations, but only through the permissions selected above.",
+    "first_token": "First DTA access key",
+    "expiry": {
+      "days": "{{count}} days",
+      "never": "Never expires"
+    },
+    "permanent_warning": "A key with no expiry remains usable until it is revoked or this DTA access is disabled. Use an expiring key when possible.",
+    "cancel": "Cancel",
+    "save": "Save",
+    "token_response_invalid": "The server did not return a usable one-time key. Revoke the key metadata and issue a new one.",
+    "secret_title": "Save this DTA access key now",
+    "secret_warning": "This key is shown only once. Send it only through your approved secret-delivery channel; it cannot be recovered later.",
+    "secret_confirm": "I have copied and stored this key safely",
+    "close": "Close"
   },
   "labels": {
     "title": "Labels",

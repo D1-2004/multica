@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/agent"
@@ -390,6 +391,54 @@ type AgentTaskResponse struct {
 	AgentIdentityContextTokenExpiresAt int64  `json:"agent_identity_context_token_expires_at,omitempty"`
 }
 
+// WorkspaceAccessTaskResponse is the control-plane-safe task summary exposed
+// to DTA. It intentionally excludes work directories, runtime configuration,
+// prompts, callback payloads, and task credentials while preserving the
+// status, failure, result, and trigger fields needed for debugging.
+type WorkspaceAccessTaskResponse struct {
+	ID             string  `json:"id"`
+	AgentID        string  `json:"agent_id"`
+	IssueID        string  `json:"issue_id,omitempty"`
+	Status         string  `json:"status"`
+	DispatchedAt   *string `json:"dispatched_at"`
+	StartedAt      *string `json:"started_at"`
+	CompletedAt    *string `json:"completed_at"`
+	Result         any     `json:"result"`
+	Error          *string `json:"error"`
+	FailureReason  string  `json:"failure_reason,omitempty"`
+	Attempt        int32   `json:"attempt"`
+	MaxAttempts    int32   `json:"max_attempts"`
+	TriggerSummary *string `json:"trigger_summary,omitempty"`
+	CreatedAt      string  `json:"created_at"`
+}
+
+func workspaceAccessTaskToResponse(task db.AgentTaskQueue) WorkspaceAccessTaskResponse {
+	var result any
+	if task.Result != nil {
+		_ = json.Unmarshal(task.Result, &result)
+	}
+	failureReason := ""
+	if task.FailureReason.Valid {
+		failureReason = task.FailureReason.String
+	}
+	return WorkspaceAccessTaskResponse{
+		ID:             uuidToString(task.ID),
+		AgentID:        uuidToString(task.AgentID),
+		IssueID:        uuidToString(task.IssueID),
+		Status:         task.Status,
+		DispatchedAt:   timestampToPtr(task.DispatchedAt),
+		StartedAt:      timestampToPtr(task.StartedAt),
+		CompletedAt:    timestampToPtr(task.CompletedAt),
+		Result:         result,
+		Error:          textToPtr(task.Error),
+		FailureReason:  failureReason,
+		Attempt:        task.Attempt,
+		MaxAttempts:    task.MaxAttempts,
+		TriggerSummary: textToPtr(task.TriggerSummary),
+		CreatedAt:      timestampToString(task.CreatedAt),
+	}
+}
+
 // ChatAttachmentMeta is the structured attachment metadata embedded in
 // claim responses for chat tasks. The agent uses these to run
 // `multica attachment download <id>` rather than guessing from the
@@ -484,33 +533,33 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		traceStartedAtUnixMS = trace.StartedAtUnixMS
 	}
 	return AgentTaskResponse{
-		ID:                             uuidToString(t.ID),
-		AgentID:                        uuidToString(t.AgentID),
-		RuntimeID:                      uuidToString(t.RuntimeID),
-		IssueID:                        uuidToString(t.IssueID),
-		WorkspaceID:                    workspaceID,
-		TraceID:                        traceID,
-		TraceStartedAtUnixMS:           traceStartedAtUnixMS,
-		Status:                         t.Status,
-		Priority:                       t.Priority,
-		DispatchedAt:                   timestampToPtr(t.DispatchedAt),
-		StartedAt:                      timestampToPtr(t.StartedAt),
-		CompletedAt:                    timestampToPtr(t.CompletedAt),
-		Result:                         result,
-		Error:                          textToPtr(t.Error),
-		FailureReason:                  failureReason,
-		Attempt:                        t.Attempt,
-		MaxAttempts:                    t.MaxAttempts,
-		ParentTaskID:                   uuidToPtr(t.ParentTaskID),
-		IsLeaderTask:                   t.IsLeaderTask,
-		CreatedAt:                      timestampToString(t.CreatedAt),
-		TriggerCommentID:               uuidToPtr(t.TriggerCommentID),
-		CoalescedCommentIDs:            uuidsToStrings(t.CoalescedCommentIds),
-		DeliveredCommentIDs:            uuidStringsOrEmpty(t.DeliveredCommentIds),
-		TriggerSummary:                 textToPtr(t.TriggerSummary),
-		HandoffNote:                    handoffNote,
-		WorkDir:                        workDir,
-		RelativeWorkDir:                relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
+		ID:                   uuidToString(t.ID),
+		AgentID:              uuidToString(t.AgentID),
+		RuntimeID:            uuidToString(t.RuntimeID),
+		IssueID:              uuidToString(t.IssueID),
+		WorkspaceID:          workspaceID,
+		TraceID:              traceID,
+		TraceStartedAtUnixMS: traceStartedAtUnixMS,
+		Status:               t.Status,
+		Priority:             t.Priority,
+		DispatchedAt:         timestampToPtr(t.DispatchedAt),
+		StartedAt:            timestampToPtr(t.StartedAt),
+		CompletedAt:          timestampToPtr(t.CompletedAt),
+		Result:               result,
+		Error:                textToPtr(t.Error),
+		FailureReason:        failureReason,
+		Attempt:              t.Attempt,
+		MaxAttempts:          t.MaxAttempts,
+		ParentTaskID:         uuidToPtr(t.ParentTaskID),
+		IsLeaderTask:         t.IsLeaderTask,
+		CreatedAt:            timestampToString(t.CreatedAt),
+		TriggerCommentID:     uuidToPtr(t.TriggerCommentID),
+		CoalescedCommentIDs:  uuidsToStrings(t.CoalescedCommentIds),
+		DeliveredCommentIDs:  uuidStringsOrEmpty(t.DeliveredCommentIds),
+		TriggerSummary:       textToPtr(t.TriggerSummary),
+		HandoffNote:          handoffNote,
+		WorkDir:              workDir,
+		RelativeWorkDir:      relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
 		// Surface task source so the UI can distinguish issue-linked tasks
 		// from chat-spawned or autopilot-spawned ones; all three may arrive
 		// with issue_id = "" once a task has no linked issue.
@@ -781,7 +830,11 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	visible := make([]AgentResponse, 0, len(agents))
 	for _, a := range agents {
 		targets := targetsByAgent[uuidToString(a.ID)]
-		if actorType == "member" {
+		if allowed, isGrant := workspaceAccessCanUseAgent(r.Context(), a); isGrant {
+			if !allowed {
+				continue
+			}
+		} else if actorType == "member" {
 			if !memberAllowedToViewAgent(a, targets, actorID, member.Role) {
 				continue
 			}
@@ -1005,7 +1058,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !canUseRuntimeForAgent(member, runtime) {
+	if !canUseRuntimeForRequest(r, member, runtime) {
 		writeError(w, http.StatusForbidden, "this runtime is private; only its owner or a workspace admin can create agents on it")
 		return
 	}
@@ -1420,6 +1473,12 @@ func redactAgentResponseForActor(resp *AgentResponse, actorType string) {
 // Only the agent owner or workspace owner/admin can manage any agent,
 // regardless of whether it is public or private.
 func (h *Handler) canManageAgent(w http.ResponseWriter, r *http.Request, agent db.Agent) bool {
+	if allowed, isGrant := workspaceAccessCanUseAgent(r.Context(), agent); isGrant {
+		if !allowed {
+			writeError(w, http.StatusForbidden, "grant_resource_not_allowed")
+		}
+		return allowed
+	}
 	wsID := uuidToString(agent.WorkspaceID)
 	member, ok := h.requireWorkspaceRole(w, r, wsID, "agent not found", "owner", "admin", "member")
 	if !ok {
@@ -1536,7 +1595,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		if !canUseRuntimeForAgent(member, runtime) {
+		if !canUseRuntimeForRequest(r, member, runtime) {
 			writeError(w, http.StatusForbidden, "this runtime is private; only its owner or a workspace admin can move agents onto it")
 			return
 		}
@@ -1987,11 +2046,19 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, isGrant := middleware.WorkspaceAccessPrincipalFromContext(r.Context()); isGrant {
+		resp := make([]WorkspaceAccessTaskResponse, len(tasks))
+		for i, task := range tasks {
+			resp[i] = workspaceAccessTaskToResponse(task)
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
 	resp := make([]AgentTaskResponse, len(tasks))
 	for i, t := range tasks {
 		resp[i] = taskToResponse(t, workspaceID)
 	}
-
 	writeJSON(w, http.StatusOK, resp)
 }
 
