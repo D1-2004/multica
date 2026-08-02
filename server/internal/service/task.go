@@ -3805,7 +3805,7 @@ func appendSafeDispatchMetadata(payload map[string]any, taskContext []byte) {
 }
 
 func safeDispatchEventData(data map[string]any) map[string]any {
-	safe := make(map[string]any, 3)
+	safe := make(map[string]any, 6)
 	if conversation, ok := data["conversation"].(map[string]any); ok {
 		safe["conversation"] = map[string]any{
 			"openConversationId": conversation["openConversationId"],
@@ -3828,6 +3828,18 @@ func safeDispatchEventData(data map[string]any) map[string]any {
 			})
 		}
 		safe["messages"] = refs
+	}
+	// Pass through calendar and approval notification-recipient fields so the
+	// DingTalk outbound can deliver issue-scoped dispatch completion notices
+	// to the right users (attendees, organizers, approvers, etc.).
+	if attendees, ok := data["attendees"].([]any); ok {
+		safe["attendees"] = attendees
+	}
+	if organizers, ok := data["organizers"].([]any); ok {
+		safe["organizers"] = organizers
+	}
+	if approval, ok := data["approval"].(map[string]any); ok {
+		safe["approval"] = approval
 	}
 	return safe
 }

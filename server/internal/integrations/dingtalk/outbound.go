@@ -98,6 +98,16 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 	if handled, err := o.processDispatchEvent(ctx, e); handled {
 		return err
 	}
+	// Issue-scoped dispatch events (calendar.started, approval.status_changed)
+	// use outbound.mode=none and carry no chat_session. Deliver the agent's
+	// completion output to the event's notification recipients via DingTalk
+	// direct message so the user sees the result without opening Multica.
+	if e.Type == protocol.EventTaskCompleted {
+		if err := o.processIssueDispatchNotification(ctx, e); err != nil {
+			o.logger.WarnContext(ctx, "dingtalk outbound: issue dispatch notification failed",
+				"error", err, "task_id", util.UUIDToString(taskIDFromEvent(e)))
+		}
+	}
 	// Legacy Stream chats publish their reply on chat:done and their terminal
 	// failure notice on task:failed. The dispatch-only queued/completed events
 	// must not fall through to the legacy failure-message path.
@@ -608,4 +618,150 @@ func chatTraceFromEvent(e events.Event) (chattrace.Trace, bool, error) {
 		return chattrace.Trace{}, true, err
 	}
 	return trace, true, nil
+}
+
+// processIssueDispatchNotification delivers the agent's completion output to
+// the notification recipients listed in the dispatch event data (calendar
+// attendees/organizers or approval originator/approvers/cc). It only fires for
+// issue-scoped dispatches whose outbound.mode is "none" — robot_sdk dispatches
+// are already handled by processDispatchEvent above.
+func (o *Outbound) processIssueDispatchNotification(ctx context.Context, e events.Event) error {
+	payload, ok := e.Payload.(map[string]any)
+	if !ok {
+		return nil
+	}
+	issueID, _ := payload["issue_id"].(string)
+	if strings.TrimSpace(issueID) == "" {
+		return nil
+	}
+	source, _ := payload["dispatch_source"].(map[string]any)
+	if source["platform"] != "dingtalk" {
+		return nil
+	}
+	outbound, _ := payload["dispatch_outbound"].(map[string]any)
+	if outbound["mode"] != "none" {
+		return nil
+	}
+
+	data, _ := payload["dispatch_event_data"].(map[string]any)
+	recipients := extractDispatchNotificationRecipients(data)
+	if len(recipients) == 0 {
+		return nil
+	}
+
+	route, err := o.resolveDispatchNotificationRoute(ctx, payload)
+	if err != nil {
+		return err
+	}
+
+	taskIDStr, _ := payload["task_id"].(string)
+	taskUUID, err := util.ParseUUID(taskIDStr)
+	if err != nil {
+		return fmt.Errorf("parse dispatch task id for notification: %w", err)
+	}
+	content := o.dispatchCompletionContent(ctx, taskUUID, payload)
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+
+	o.logger.InfoContext(ctx, "dingtalk dispatch notification: delivering completion",
+		"task_id", taskIDStr,
+		"issue_id", issueID,
+		"recipients", len(recipients),
+	)
+	var lifecycleErr error
+	for _, staffID := range recipients {
+		target := RobotTarget{UserStaffID: staffID}
+		if err := o.messenger.SendMarkdown(ctx, route.credentials, target, content); err != nil {
+			lifecycleErr = errors.Join(lifecycleErr, fmt.Errorf("post dispatch notification to %s: %w", staffID, err))
+		}
+	}
+	return lifecycleErr
+}
+
+// extractDispatchNotificationRecipients collects unique user IDs from the
+// dispatch event data. For calendar events it pulls attendees and organizers;
+// for approval events it pulls the originator, approvers, and cc list.
+func extractDispatchNotificationRecipients(data map[string]any) []string {
+	var recipients []string
+	seen := make(map[string]struct{})
+	add := func(uid string) {
+		uid = strings.TrimSpace(uid)
+		if uid == "" {
+			return
+		}
+		if _, ok := seen[uid]; ok {
+			return
+		}
+		seen[uid] = struct{}{}
+		recipients = append(recipients, uid)
+	}
+
+	if attendees, ok := data["attendees"].([]any); ok {
+		for _, a := range attendees {
+			if m, ok := a.(map[string]any); ok {
+				if uid, ok := m["uid"].(string); ok {
+					add(uid)
+				}
+			}
+		}
+	}
+	if organizers, ok := data["organizers"].([]any); ok {
+		for _, o := range organizers {
+			if uid, ok := o.(string); ok {
+				add(uid)
+			}
+		}
+	}
+	if approval, ok := data["approval"].(map[string]any); ok {
+		if uid, ok := approval["originatorUid"].(string); ok {
+			add(uid)
+		}
+		if approvers, ok := approval["approverUids"].([]any); ok {
+			for _, a := range approvers {
+				if uid, ok := a.(string); ok {
+					add(uid)
+				}
+			}
+		}
+		if ccs, ok := approval["ccUids"].([]any); ok {
+			for _, c := range ccs {
+				if uid, ok := c.(string); ok {
+					add(uid)
+				}
+			}
+		}
+	}
+	return recipients
+}
+
+// resolveDispatchNotificationRoute loads the DingTalk installation
+// credentials for the agent that handled the dispatch. Unlike
+// resolveDispatchRobotRoute it does not require a conversation or messages —
+// the notification is a direct message, not a group reply.
+func (o *Outbound) resolveDispatchNotificationRoute(ctx context.Context, payload map[string]any) (dispatchRobotRoute, error) {
+	resolver, ok := o.q.(dispatchInstallationResolver)
+	if !ok {
+		return dispatchRobotRoute{}, errors.New("dingtalk dispatch notification: installation resolver is not configured")
+	}
+	workspaceID, err := util.ParseUUID(fmt.Sprint(payload["workspace_id"]))
+	if err != nil {
+		return dispatchRobotRoute{}, fmt.Errorf("parse dispatch workspace id: %w", err)
+	}
+	agentID, err := util.ParseUUID(fmt.Sprint(payload["agent_id"]))
+	if err != nil {
+		return dispatchRobotRoute{}, fmt.Errorf("parse dispatch agent id: %w", err)
+	}
+	inst, err := resolver.GetDingTalkAccountBindingByAgent(ctx, db.GetDingTalkAccountBindingByAgentParams{WorkspaceID: workspaceID, AgentID: agentID})
+	if err != nil {
+		return dispatchRobotRoute{}, fmt.Errorf("lookup dispatch DingTalk installation: %w", err)
+	}
+	if inst.Status != "active" {
+		return dispatchRobotRoute{}, errors.New("dingtalk dispatch notification: installation is not active")
+	}
+	creds, err := decodeChannelCredentials(inst.Config, o.decrypt)
+	if err != nil {
+		return dispatchRobotRoute{}, fmt.Errorf("decode dispatch DingTalk credentials: %w", err)
+	}
+	return dispatchRobotRoute{credentials: creds}, nil
 }
