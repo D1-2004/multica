@@ -48,6 +48,9 @@ type DingTalkAccountConfig struct {
 	CallbackTokenHash    string                         `json:"callback_token_hash,omitempty"`
 	CallbackExpiresAt    time.Time                      `json:"callback_expires_at,omitempty"`
 	RouterSourceID       string                         `json:"router_source_id,omitempty"`
+	RouterPlatform       string                         `json:"router_platform,omitempty"`
+	RouterTenantID       string                         `json:"router_tenant_id,omitempty"`
+	RouterAccountID      string                         `json:"router_account_id,omitempty"`
 	AccountDisplayName   string                         `json:"account_display_name,omitempty"`
 	AccountAvatarURL     string                         `json:"account_avatar_url,omitempty"`
 	SurfaceType          string                         `json:"surface_type,omitempty"`
@@ -143,6 +146,23 @@ func (c DingTalkAccountConfig) Validate() error {
 		if err != nil || len(decoded) != sha256.Size {
 			return errors.New("dingtalk account callback credential is invalid")
 		}
+	}
+	accountKeyFields := 0
+	if c.RouterPlatform != "" {
+		accountKeyFields++
+	}
+	if c.RouterTenantID != "" {
+		accountKeyFields++
+	}
+	if c.RouterAccountID != "" {
+		accountKeyFields++
+	}
+	if accountKeyFields != 0 && accountKeyFields != 3 {
+		return errors.New("dingtalk account router account key is incomplete")
+	}
+	if accountKeyFields == 3 && (c.RouterPlatform != "dingtalk" ||
+		!validRouterIdentifier(c.RouterTenantID) || !validRouterIdentifier(c.RouterAccountID)) {
+		return errors.New("dingtalk account router account key is invalid")
 	}
 	if c.RouterSourceID != "" && c.BoundAt == nil {
 		return errors.New("dingtalk account bound time is required")

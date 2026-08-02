@@ -72,6 +72,36 @@ WHERE ci.workspace_id = sqlc.arg('workspace_id')
   AND ci.channel_type = 'dingtalk_account'
 ORDER BY ci.created_at ASC, ci.id ASC;
 
+-- name: ListDingTalkAccountBindingAccountKeyBackfillRows :many
+-- The explicit maintenance command must inventory orphaned projections after
+-- Agent deletion, so this query deliberately has no Agent join.
+SELECT ci.*
+FROM channel_installation ci
+WHERE ci.channel_type = 'dingtalk_account'
+ORDER BY ci.created_at ASC, ci.id ASC;
+
+-- name: BackfillDingTalkAccountRouterAccountKey :one
+-- Enrichment writes only an all-or-nothing account identity and compares the
+-- complete original JSON snapshot so a concurrent callback always wins.
+UPDATE channel_installation
+SET config = config || jsonb_build_object(
+        'router_platform', sqlc.arg('router_platform')::text,
+        'router_tenant_id', sqlc.arg('router_tenant_id')::text,
+        'router_account_id', sqlc.arg('router_account_id')::text
+    ),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND agent_id = sqlc.arg('agent_id')
+  AND channel_type = 'dingtalk_account'
+  AND status = sqlc.arg('expected_status')::text
+  AND config ->> 'router_source_id' = sqlc.arg('expected_router_source_id')::text
+  AND NULLIF(config ->> 'router_platform', '') IS NULL
+  AND NULLIF(config ->> 'router_tenant_id', '') IS NULL
+  AND NULLIF(config ->> 'router_account_id', '') IS NULL
+  AND config = sqlc.arg('expected_config')::jsonb
+RETURNING *;
+
 -- name: ClearExpiredDingTalkAccountCallbackCredentials :exec
 -- Callback credentials are only needed for short-lived idempotent retries.
 -- Remove both fields together after expiry while preserving the active binding
@@ -155,6 +185,54 @@ WHERE id = sqlc.arg('id')
   AND agent_id = sqlc.arg('agent_id')
   AND channel_type = 'dingtalk_account'
   AND status IN ('pending', 'active', 'revoked')
+RETURNING *;
+
+-- name: RevokeDingTalkAccountBindingByAccountKey :one
+-- A conditional Router unbind may only revoke the exact local account key that
+-- was sent upstream. A concurrent takeover or callback cannot be overwritten.
+UPDATE channel_installation
+SET config = jsonb_build_object(
+        'schema_version', config -> 'schema_version',
+        'dispatch_endpoint_id', config -> 'dispatch_endpoint_id',
+        'dispatch_key_id', config -> 'dispatch_key_id',
+        'dispatch_url', config -> 'dispatch_url'
+    ),
+    status = 'revoked',
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND agent_id = sqlc.arg('agent_id')
+  AND channel_type = 'dingtalk_account'
+  AND status = 'active'
+  AND config ->> 'router_platform' = sqlc.arg('expected_router_platform')::text
+  AND config ->> 'router_tenant_id' = sqlc.arg('expected_router_tenant_id')::text
+  AND config ->> 'router_account_id' = sqlc.arg('expected_router_account_id')::text
+RETURNING *;
+
+-- name: DeletePreviousDingTalkAccountBindingProjection :many
+-- A takeover callback removes only the previous Agent projection for this
+-- canonical account in the current database. The winning installation is
+-- always excluded and this statement has no Router side effects.
+DELETE FROM channel_installation
+WHERE channel_type = 'dingtalk_account'
+  AND id <> sqlc.arg('current_installation_id')
+  AND agent_id = sqlc.arg('previous_agent_id')
+  AND config ->> 'router_platform' = sqlc.arg('router_platform')::text
+  AND config ->> 'router_tenant_id' = sqlc.arg('router_tenant_id')::text
+  AND config ->> 'router_account_id' = sqlc.arg('router_account_id')::text
+RETURNING *;
+
+-- name: DeleteDingTalkAccountBindingProjectionByAccountKey :one
+-- Outbox delivery may run after Agent deletion, so this exact-key projection
+-- cleanup deliberately does not join the Agent table.
+DELETE FROM channel_installation
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND agent_id = sqlc.arg('agent_id')
+  AND channel_type = 'dingtalk_account'
+  AND config ->> 'router_platform' = sqlc.arg('expected_router_platform')::text
+  AND config ->> 'router_tenant_id' = sqlc.arg('expected_router_tenant_id')::text
+  AND config ->> 'router_account_id' = sqlc.arg('expected_router_account_id')::text
 RETURNING *;
 
 -- name: GetActiveDingTalkAccountBindingByEndpoint :one

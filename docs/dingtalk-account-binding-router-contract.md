@@ -162,6 +162,167 @@ instead of collapsing every terminal result into a generic failed status.
 be safe to display, and callback validation rejects invalid codes, empty or
 oversized messages, and control characters.
 
+### Account key and current binding ownership
+
+A digital-employee binding is a control-plane ownership fact, not a separate
+Router entity. The account key and binding key are:
+
+```text
+accountKey = platform + tenantId + accountId
+bindingKey = accountKey + agentId
+```
+
+The dedicated API fixes `sourceType=digital_employee`. If a future shared API
+also manages robots, `sourceType` must become an explicit part of both keys.
+`domain` is deliberately absent: Router owns one `agent_data_source` row per
+business domain, while users bind and unbind the selected domain set as one
+digital-employee operation.
+
+This control-plane key does not redefine inbound message identity. Inbound
+routing continues to resolve a source by its established platform, domain, and
+account fields; an event-supplied tenant is not a trusted routing discriminator.
+For binding control-plane calls, however, Router requires the trusted
+`tenantId` and compares it exactly with the persisted source tenant before it
+reads or mutates ownership.
+
+`sourceId` remains a Router-owned per-domain locator. Multica may retain the
+channel `router_source_id` for subscription detail and surface updates, but it
+must not use one domain source as the cross-domain binding identity.
+
+Router also enforces the current product constraint that one Agent owns at most
+one digital-employee account. Binding and takeover lock the target Agent before
+checking its active account groups; a different existing account returns
+`agent_already_bound` and is never silently replaced.
+
+### Batch reconciliation
+
+Multica checks active local projections in one authenticated batch:
+
+```http
+POST /api/digital-employee-bindings/check
+Authorization: Bearer <service credential>
+Content-Type: application/json
+
+{
+  "bindings": [
+    {
+      "agentId": "<agent UUID>",
+      "platform": "dingtalk",
+      "tenantId": "<organization ID>",
+      "accountId": "<digital employee UID>",
+      "expectedDomains": ["channel", "calendar"]
+    }
+  ]
+}
+```
+
+Router resolves every active domain source for the account key and returns one
+result per request in the same order. Result status is one of:
+
+- `valid`: every expected domain exists and every active domain belongs to the
+  requested Agent;
+- `unbound`: the account has no active binding;
+- `bound_to_other_agent`: every active domain belongs to one different Agent;
+- `inconsistent`: an expected domain is missing, an unexpected partial state
+  exists, or active domains have different owners.
+
+A `bound_to_other_agent` result includes `currentAgentId`. An `inconsistent`
+result does not nominate an owner. Router unavailability is an HTTP failure;
+Multica derives `router_unavailable` locally and must not rewrite or remove the
+stored projection. The UI keeps the unbind action and displays:
+
+- `bound_to_other_agent`: `该数字员工已经绑定到其他智能体，消息订阅已失效`
+- `inconsistent`: `该数字员工已经绑定到其他智能体，消息订阅已失效`
+- `router_unavailable`: `暂时无法核验消息订阅状态`
+
+Reconciliation never mutates Router or Multica state.
+
+### Conditional account-level unbind
+
+User-initiated unbind sends the exact binding key:
+
+```http
+POST /api/digital-employee-bindings/unbind
+Authorization: Bearer <service credential>
+Content-Type: application/json
+
+{
+  "agentId": "<agent UUID>",
+  "platform": "dingtalk",
+  "tenantId": "<organization ID>",
+  "accountId": "<digital employee UID>"
+}
+```
+
+Router locks the account's active domain bindings before acting. It unsubscribes
+all domains only when all of them still belong to the requested Agent. It
+returns `unbound` when the relationship was removed or was already absent,
+`ownership_changed` when the account now belongs to another Agent, and
+`inconsistent` for mixed or partial ownership. The latter two outcomes never
+remove a Router binding. Multica may revoke only the local projection whose
+complete stored binding key equals the request; a row absent from the current
+environment is an idempotent no-op.
+
+The existing Agent-wide digital-employee delete is not used for a user's local
+unbind. It would be too broad when a stale environment still shows one account
+after that Agent has subsequently bound another account.
+
+### Conflict takeover
+
+The first binding request always uses `replaceExistingBinding=false`. When the
+account is already owned by another Agent, Router returns `source_already_bound`
+with safe details `{ "boundAgentId": "<current Agent>" }`; the authenticated
+request already carries the account key. The binding page shows a dedicated
+error step with `解除原绑定并继续` and `退出`.
+
+Confirmation repeats the authenticated binding request with:
+
+```json
+{
+  "replaceExistingBinding": true,
+  "expectedCurrentAgentId": "<Agent reported by the conflict>"
+}
+```
+
+Router treats all domain rows for the account as one compare-and-swap. It
+switches them only if they still belong to `expectedCurrentAgentId`; an absent
+binding may be created and an already-current `newAgentId` is idempotent. A new
+owner produces a refreshed conflict, and mixed ownership produces
+`inconsistent`. Retargeting does not unsubscribe and recreate unchanged
+DingTalk listeners.
+
+The success callback includes the canonical account key and, only after a
+takeover, `previous_agent_id`. Multica uses that tuple only as a local cleanup
+hint in the database receiving the callback. It never calls Router while
+cleaning the old local projection.
+
+### Historical account-key enrichment
+
+New successful bindings persist `router_platform`, `router_tenant_id`, and
+`router_account_id` beside the existing Agent and channel `router_source_id`.
+Historical active projections missing those fields are enriched from the
+Router source named by their stored `router_source_id`. Router must return the
+persisted trusted account identity for that service-authenticated lookup.
+
+```http
+POST /api/digital-employee-bindings/source-identities
+Authorization: Bearer <service credential>
+Content-Type: application/json
+
+{ "sourceIds": ["source-channel"] }
+```
+
+Each found result contains `sourceId`, `platform`, `tenantId`, `accountId`,
+`sourceType`, and `domain`; missing IDs are returned separately. This read does
+not require a current `agent_binding` row and never mutates source ownership.
+
+The enrichment is dry-run by default and writes through a full-snapshot CAS. It
+does not require the source to remain owned by the local Agent, because that is
+the state reconciliation is intended to discover; it does require the source
+to be a DingTalk digital-employee channel source. Rows with a missing source,
+missing trusted tenant, malformed local config, or a concurrent change remain
+unchanged for audit. No binding ID or Router relation table is introduced.
+
 ## Router to Multica
 
 `dispatchPath` identifies the Multica webhook but deliberately contains no
@@ -177,6 +338,55 @@ Pre-release and production Router deployments can therefore share binding data
 without persisting a pre-release callback origin into a record later consumed
 by production. The Router HTTP API base URL and the Multica callback origin are
 separate configuration values with opposite communication directions.
+
+The successful message callback carries the canonical account identity in
+snake_case. `source_id` remains the channel-domain locator used by existing
+subscription detail and surface APIs:
+
+```json
+{
+  "message_binding": {
+    "status": "success",
+    "source_id": "source-channel",
+    "platform": "dingtalk",
+    "tenant_id": "corp-a",
+    "account_id": "employee-uid",
+    "previous_agent_id": "agent-a"
+  }
+}
+```
+
+`previous_agent_id` is omitted when no takeover occurred. On takeover, Multica
+matches the previous Agent plus `platform`, `tenant_id`, and `account_id`; the
+new installation is excluded and a row absent from this environment is a no-op.
+This cleanup never calls Router, so a callback handled against an isolated
+pre-release Multica database cannot change the authoritative Router owner or a
+production-only Multica projection.
+
+Agent archive and hard runtime/profile cleanup persist an unbind outbox intent
+in the same database transaction before local ownership rows can disappear.
+The intent copies the complete account binding key. The worker runs outside
+that transaction, calls conditional account-level unbind, retries Router
+outages, and treats `unbound` or `ownership_changed` as terminal without
+touching a newer owner. Historical rows must be enriched before this closure is
+enabled; there is no Agent-wide or source-only fallback for an unresolved
+account key.
+
+## Rollout order
+
+1. Deploy Router's additive check, source-identity, conditional-unbind, and
+   compare-and-swap takeover contract while retaining unrelated old callers.
+2. Deploy the binding page so every new successful callback carries the
+   canonical account key and conflict confirmation uses the expected owner.
+3. Deploy Multica's strict account-key callback, reconciliation, conditional
+   unbind, and outbox implementation. Do not keep a binding-ID or legacy
+   callback identity track in parallel.
+4. Run account-key enrichment in dry-run, review unresolved rows, apply it to
+   the intended Multica database, and repeat until every actionable active row
+   is complete or explicitly classified.
+5. Enable batch reconciliation, conditional user unbind, and account-key
+   Agent-removal outbox delivery. Remove the Agent-wide user-unbind path only
+   after this gate passes.
 
 ## History
 
@@ -250,3 +460,27 @@ That made distinct causes such as an existing source binding or an incompatible
 client environment indistinguishable in Multica. Persisting the already
 validated error preserves the failure boundary without exposing callback
 credentials or raw upstream exceptions.
+
+## 2026-08-02 Account-key Binding Change History
+
+- Defined the digital-employee account key as `platform + tenantId + accountId`
+  and the current binding key as that account key plus `agentId`.
+- Added account-level batch reconciliation, conditional unbind, and
+  compare-and-swap takeover semantics across every selected business domain.
+- Kept `sourceId` as a per-domain Router locator and removed the proposed
+  cross-service binding ID, relation lifecycle, and binding-ID backfill.
+- Added canonical account identity to the successful callback, local
+  projection, historical enrichment, and durable Agent-removal intent.
+
+## 2026-08-02 Account-key Binding Change Reason
+
+The product currently permits at most one digital employee per Agent and treats
+the selected channel and calendar listeners as one account-level operation.
+The authoritative fact is therefore which Agent currently owns the trusted
+DingTalk account key; a separate historical relation entity is unnecessary.
+Including the expected Agent in every reconciliation, unbind, and takeover
+mutation makes stale cross-environment requests conditional, while grouping by
+the account key prevents a domain `sourceId` from being mistaken for the whole
+binding. Agent-wide deletion remains too broad for user-initiated unbind because
+the same Agent may bind a different account later, so local and outbox cleanup
+carry the complete account binding key.

@@ -112,6 +112,172 @@ func TestClientIssuesBindingTokenWithServiceCredential(t *testing.T) {
 	}
 }
 
+func TestClientChecksDigitalEmployeeBindingsByAccountKey(t *testing.T) {
+	requests := []DigitalEmployeeBindingKey{
+		{
+			AgentID:         "agent-a",
+			Platform:        "dingtalk",
+			TenantID:        "corp-a",
+			AccountID:       "employee-a",
+			ExpectedDomains: []string{"channel", "calendar"},
+		},
+		{
+			AgentID:         "agent-b",
+			Platform:        "dingtalk",
+			TenantID:        "corp-b",
+			AccountID:       "employee-b",
+			ExpectedDomains: []string{"channel"},
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/digital-employee-bindings/check" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			Bindings []DigitalEmployeeBindingKey `json:"bindings"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Bindings) != 2 || body.Bindings[0].AccountID != "employee-a" ||
+			len(body.Bindings[0].ExpectedDomains) != 2 || body.Bindings[1].AgentID != "agent-b" {
+			t.Fatalf("request body = %#v", body)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"code":    "success",
+			"data": map[string]any{
+				"bindings": []map[string]any{
+					{
+						"agentId": "agent-a", "platform": "dingtalk", "tenantId": "corp-a",
+						"accountId": "employee-a", "status": "valid",
+					},
+					{
+						"agentId": "agent-b", "platform": "dingtalk", "tenantId": "corp-b",
+						"accountId": "employee-b", "status": "bound_to_other_agent", "currentAgentId": "agent-c",
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := mustTestClient(t, server)
+	got, err := client.CheckDigitalEmployeeBindings(context.Background(), requests)
+	if err != nil {
+		t.Fatalf("CheckDigitalEmployeeBindings: %v", err)
+	}
+	if len(got) != 2 || got[0].Status != "valid" || got[1].Status != "bound_to_other_agent" ||
+		got[1].CurrentAgentID != "agent-c" {
+		t.Fatalf("result = %#v", got)
+	}
+}
+
+func TestClientConditionallyUnbindsCompleteAccountKey(t *testing.T) {
+	request := DigitalEmployeeBindingKey{
+		AgentID: "agent-a", Platform: "dingtalk", TenantID: "corp-a", AccountID: "employee-a",
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/digital-employee-bindings/unbind" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body) != 4 || body["agentId"] != "agent-a" || body["platform"] != "dingtalk" ||
+			body["tenantId"] != "corp-a" || body["accountId"] != "employee-a" {
+			t.Fatalf("request body = %#v", body)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"code":    "success",
+			"data":    map[string]any{"status": "ownership_changed"},
+		})
+	}))
+	defer server.Close()
+
+	got, err := mustTestClient(t, server).UnbindDigitalEmployeeBinding(context.Background(), request)
+	if err != nil {
+		t.Fatalf("UnbindDigitalEmployeeBinding: %v", err)
+	}
+	if got.Status != "ownership_changed" {
+		t.Fatalf("result = %#v", got)
+	}
+}
+
+func TestClientLooksUpSourceIdentitiesWithoutBindingRelation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/digital-employee-bindings/source-identities" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string][]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if got := body["sourceIds"]; len(got) != 2 || got[0] != "source-channel" || got[1] != "missing-source" {
+			t.Fatalf("request body = %#v", body)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"code":    "success",
+			"data": map[string]any{
+				"sources": []map[string]any{{
+					"sourceId": "source-channel", "platform": "dingtalk", "tenantId": "corp-a",
+					"accountId": "employee-a", "sourceType": "digital_employee", "domain": "channel",
+				}},
+				"missingSourceIds": []string{"missing-source"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	got, err := mustTestClient(t, server).GetDigitalEmployeeSourceIdentities(
+		context.Background(), []string{"source-channel", "missing-source"},
+	)
+	if err != nil {
+		t.Fatalf("GetDigitalEmployeeSourceIdentities: %v", err)
+	}
+	if len(got.Sources) != 1 || got.Sources[0].AccountID != "employee-a" ||
+		len(got.MissingSourceIDs) != 1 || got.MissingSourceIDs[0] != "missing-source" {
+		t.Fatalf("result = %#v", got)
+	}
+}
+
+func TestClientReturnsIncompleteSourceIdentityForPerRecordClassification(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"code":    "success",
+			"data": map[string]any{
+				"sources": []map[string]any{
+					{
+						"sourceId": "source-valid", "platform": "dingtalk", "tenantId": "corp-a",
+						"accountId": "employee-a", "sourceType": "digital_employee", "domain": "channel",
+					},
+					{
+						"sourceId": "source-missing-tenant", "platform": "dingtalk",
+						"accountId": "employee-b", "sourceType": "digital_employee", "domain": "channel",
+					},
+				},
+				"missingSourceIds": []string{},
+			},
+		})
+	}))
+	defer server.Close()
+
+	got, err := mustTestClient(t, server).GetDigitalEmployeeSourceIdentities(
+		context.Background(), []string{"source-valid", "source-missing-tenant"},
+	)
+	if err != nil {
+		t.Fatalf("GetDigitalEmployeeSourceIdentities: %v", err)
+	}
+	if len(got.Sources) != 2 || got.Sources[0].TenantID != "corp-a" ||
+		got.Sources[1].SourceID != "source-missing-tenant" || got.Sources[1].TenantID != "" {
+		t.Fatalf("result = %#v", got)
+	}
+}
+
 func TestNormalizeAgentDescriptorEnforcesBindingMetadataContract(t *testing.T) {
 	dispatchPath := "/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw"
 	valid := bindingTokenDescriptorForTest(dispatchPath)
@@ -590,6 +756,65 @@ func TestClientMapsHTTP200SubscriptionNotFoundToSentinel(t *testing.T) {
 	var routerError *RouterAPIError
 	if !errors.As(err, &routerError) || routerError.Code != "business_error" {
 		t.Fatalf("error = %#v, want typed RouterAPIError", err)
+	}
+}
+
+func TestClientMapsHTTP404SubscriptionNotFoundToSentinelWithoutLeakingBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": "subscription_not_found",
+			"message": "Bearer service-credential callback-credential-secret",
+		})
+	}))
+	defer server.Close()
+
+	client := mustTestClient(t, server)
+	_, err := client.GetSubscription(context.Background(), "source-1")
+	if !errors.Is(err, ErrSubscriptionNotFound) {
+		t.Fatalf("error = %v, want ErrSubscriptionNotFound", err)
+	}
+	if containsAny(err.Error(), "service-credential", "callback-credential-secret") {
+		t.Fatalf("unsafe error = %q", err)
+	}
+}
+
+func TestClientClassifiesMalformedBackfillLookupResponses(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		data map[string]any
+		lookup func(*Client) error
+	}{
+		{
+			name: "subscription",
+			path: "/api/subscriptions/source-1",
+			data: map[string]any{"sourceId": "source-1", "status": "active"},
+			lookup: func(client *Client) error {
+				_, err := client.GetSubscription(context.Background(), "source-1")
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != test.path {
+					t.Fatalf("path = %q, want %q", r.URL.Path, test.path)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"success": true,
+					"code": "success",
+					"data": test.data,
+				})
+			}))
+			defer server.Close()
+
+			err := test.lookup(mustTestClient(t, server))
+			if !errors.Is(err, ErrRouterInvalidResponse) {
+				t.Fatalf("error = %v, want ErrRouterInvalidResponse", err)
+			}
+		})
 	}
 }
 

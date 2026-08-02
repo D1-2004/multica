@@ -63,6 +63,45 @@ type Subscription struct {
 	Status      string               `json:"status"`
 }
 
+type DigitalEmployeeBindingKey struct {
+	AgentID         string   `json:"agentId"`
+	Platform        string   `json:"platform"`
+	TenantID        string   `json:"tenantId"`
+	AccountID       string   `json:"accountId"`
+	ExpectedDomains []string `json:"expectedDomains,omitempty"`
+}
+
+type DigitalEmployeeBindingCheck struct {
+	AgentID        string `json:"agentId"`
+	Platform       string `json:"platform"`
+	TenantID       string `json:"tenantId"`
+	AccountID      string `json:"accountId"`
+	Status         string `json:"status"`
+	CurrentAgentID string `json:"currentAgentId,omitempty"`
+}
+
+type digitalEmployeeBindingCheckResponse struct {
+	Bindings []DigitalEmployeeBindingCheck `json:"bindings"`
+}
+
+type DigitalEmployeeBindingUnbindResult struct {
+	Status string `json:"status"`
+}
+
+type DigitalEmployeeSourceIdentity struct {
+	SourceID   string `json:"sourceId"`
+	Platform   string `json:"platform"`
+	TenantID   string `json:"tenantId"`
+	AccountID  string `json:"accountId"`
+	SourceType string `json:"sourceType"`
+	Domain     string `json:"domain"`
+}
+
+type DigitalEmployeeSourceIdentityResult struct {
+	Sources          []DigitalEmployeeSourceIdentity `json:"sources"`
+	MissingSourceIDs []string                        `json:"missingSourceIds"`
+}
+
 type SubscriptionSurface struct {
 	Type string `json:"type"`
 }
@@ -158,6 +197,7 @@ type routerErrorResponse struct {
 
 var (
 	ErrRouterAPI              = errors.New("agent message router returned a business error")
+	ErrRouterInvalidResponse  = errors.New("agent message router response is invalid")
 	ErrSubscriptionNotFound   = errors.New("agent message router subscription not found")
 	ErrDeliveryTargetNotFound = errors.New("agent message router delivery target not found")
 )
@@ -271,8 +311,140 @@ func (c *Client) IssueBindingToken(ctx context.Context, descriptor AgentDescript
 	if err != nil {
 		return BindingToken{}, err
 	}
-	if result.BindingToken == "" || result.ExpiresAt.IsZero() {
+	if !isTrimmedNonEmpty(result.BindingToken) || result.ExpiresAt.IsZero() {
 		return BindingToken{}, errors.New("agent message router token issue response is invalid")
+	}
+	return result, nil
+}
+
+func (c *Client) CheckDigitalEmployeeBindings(
+	ctx context.Context,
+	bindings []DigitalEmployeeBindingKey,
+) ([]DigitalEmployeeBindingCheck, error) {
+	if len(bindings) == 0 {
+		return []DigitalEmployeeBindingCheck{}, nil
+	}
+	for _, binding := range bindings {
+		if !validDigitalEmployeeBindingKey(binding, true) {
+			return nil, errors.New("agent message router digital employee binding check request is invalid")
+		}
+	}
+	body, err := json.Marshal(map[string]any{"bindings": bindings})
+	if err != nil {
+		return nil, errors.New("encode agent message router digital employee binding check request")
+	}
+	response, err := c.do(ctx, http.MethodPost, "/api/digital-employee-bindings/check", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, decodeRouterHTTPError(response.Body, response.StatusCode)
+	}
+	result, err := decodeRouterResponse[digitalEmployeeBindingCheckResponse](response.Body)
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Bindings) != len(bindings) {
+		return nil, ErrRouterInvalidResponse
+	}
+	for index, item := range result.Bindings {
+		requested := bindings[index]
+		if item.AgentID != requested.AgentID || item.Platform != requested.Platform ||
+			item.TenantID != requested.TenantID || item.AccountID != requested.AccountID ||
+			!validDigitalEmployeeBindingCheck(item) {
+			return nil, ErrRouterInvalidResponse
+		}
+	}
+	return result.Bindings, nil
+}
+
+func (c *Client) UnbindDigitalEmployeeBinding(
+	ctx context.Context,
+	binding DigitalEmployeeBindingKey,
+) (DigitalEmployeeBindingUnbindResult, error) {
+	binding.ExpectedDomains = nil
+	if !validDigitalEmployeeBindingKey(binding, false) {
+		return DigitalEmployeeBindingUnbindResult{}, errors.New("agent message router digital employee unbind request is invalid")
+	}
+	body, err := json.Marshal(binding)
+	if err != nil {
+		return DigitalEmployeeBindingUnbindResult{}, errors.New("encode agent message router digital employee unbind request")
+	}
+	response, err := c.do(ctx, http.MethodPost, "/api/digital-employee-bindings/unbind", bytes.NewReader(body))
+	if err != nil {
+		return DigitalEmployeeBindingUnbindResult{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return DigitalEmployeeBindingUnbindResult{}, decodeRouterHTTPError(response.Body, response.StatusCode)
+	}
+	result, err := decodeRouterResponse[DigitalEmployeeBindingUnbindResult](response.Body)
+	if err != nil {
+		return DigitalEmployeeBindingUnbindResult{}, err
+	}
+	if result.Status != "unbound" && result.Status != "ownership_changed" && result.Status != "inconsistent" {
+		return DigitalEmployeeBindingUnbindResult{}, ErrRouterInvalidResponse
+	}
+	return result, nil
+}
+
+func (c *Client) GetDigitalEmployeeSourceIdentities(
+	ctx context.Context,
+	sourceIDs []string,
+) (DigitalEmployeeSourceIdentityResult, error) {
+	if len(sourceIDs) == 0 {
+		return DigitalEmployeeSourceIdentityResult{}, nil
+	}
+	requested := make(map[string]struct{}, len(sourceIDs))
+	unique := make([]string, 0, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		if !validRouterIdentifier(sourceID) {
+			return DigitalEmployeeSourceIdentityResult{}, errors.New("agent message router source identity request is invalid")
+		}
+		if _, exists := requested[sourceID]; exists {
+			continue
+		}
+		requested[sourceID] = struct{}{}
+		unique = append(unique, sourceID)
+	}
+	body, err := json.Marshal(map[string]any{"sourceIds": unique})
+	if err != nil {
+		return DigitalEmployeeSourceIdentityResult{}, errors.New("encode agent message router source identity request")
+	}
+	response, err := c.do(ctx, http.MethodPost, "/api/digital-employee-bindings/source-identities", bytes.NewReader(body))
+	if err != nil {
+		return DigitalEmployeeSourceIdentityResult{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return DigitalEmployeeSourceIdentityResult{}, decodeRouterHTTPError(response.Body, response.StatusCode)
+	}
+	result, err := decodeRouterResponse[DigitalEmployeeSourceIdentityResult](response.Body)
+	if err != nil {
+		return DigitalEmployeeSourceIdentityResult{}, err
+	}
+	accounted := make(map[string]struct{}, len(unique))
+	for _, source := range result.Sources {
+		if _, exists := requested[source.SourceID]; !exists || !validRouterIdentifier(source.SourceID) {
+			return DigitalEmployeeSourceIdentityResult{}, ErrRouterInvalidResponse
+		}
+		if _, duplicate := accounted[source.SourceID]; duplicate {
+			return DigitalEmployeeSourceIdentityResult{}, ErrRouterInvalidResponse
+		}
+		accounted[source.SourceID] = struct{}{}
+	}
+	for _, sourceID := range result.MissingSourceIDs {
+		if _, exists := requested[sourceID]; !exists || !validRouterIdentifier(sourceID) {
+			return DigitalEmployeeSourceIdentityResult{}, ErrRouterInvalidResponse
+		}
+		if _, duplicate := accounted[sourceID]; duplicate {
+			return DigitalEmployeeSourceIdentityResult{}, ErrRouterInvalidResponse
+		}
+		accounted[sourceID] = struct{}{}
+	}
+	if len(accounted) != len(unique) {
+		return DigitalEmployeeSourceIdentityResult{}, ErrRouterInvalidResponse
 	}
 	return result, nil
 }
@@ -384,16 +556,22 @@ func (c *Client) GetSubscription(ctx context.Context, sourceID string) (Subscrip
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if response.StatusCode == http.StatusNotFound {
+			return Subscription{}, ErrSubscriptionNotFound
+		}
 		return Subscription{}, fmt.Errorf("agent message router subscription query failed with status %d", response.StatusCode)
 	}
 	result, err := decodeRouterResponse[Subscription](response.Body)
 	if err != nil {
-		return Subscription{}, err
+		if errors.Is(err, ErrRouterAPI) {
+			return Subscription{}, err
+		}
+		return Subscription{}, ErrRouterInvalidResponse
 	}
 	if result.SourceID != sourceID || result.Status != "active" ||
 		!isTrimmedNonEmpty(result.AgentID) || !isTrimmedNonEmpty(result.DispatchURL) ||
 		!validSubscriptionSurface(result.Surface) || !validSubscriptionOutbound(result.Outbound) {
-		return Subscription{}, errors.New("agent message router subscription response is invalid")
+		return Subscription{}, ErrRouterInvalidResponse
 	}
 	return result, nil
 }
@@ -593,6 +771,49 @@ func safeRouterErrorCode(code string) string {
 
 func isTrimmedNonEmpty(value string) bool {
 	return value != "" && strings.TrimSpace(value) == value
+}
+
+func validRouterIdentifier(value string) bool {
+	return isTrimmedNonEmpty(value) && len(value) <= 256 && !strings.ContainsAny(value, "\x00\r\n\t")
+}
+
+func validDigitalEmployeeBindingKey(binding DigitalEmployeeBindingKey, requireDomains bool) bool {
+	if !validRouterIdentifier(binding.AgentID) || binding.Platform != "dingtalk" ||
+		!validRouterIdentifier(binding.TenantID) || !validRouterIdentifier(binding.AccountID) {
+		return false
+	}
+	if !requireDomains {
+		return len(binding.ExpectedDomains) == 0
+	}
+	if len(binding.ExpectedDomains) == 0 || len(binding.ExpectedDomains) > 2 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(binding.ExpectedDomains))
+	for _, domain := range binding.ExpectedDomains {
+		if domain != "channel" && domain != "calendar" {
+			return false
+		}
+		if _, exists := seen[domain]; exists {
+			return false
+		}
+		seen[domain] = struct{}{}
+	}
+	return true
+}
+
+func validDigitalEmployeeBindingCheck(result DigitalEmployeeBindingCheck) bool {
+	if !validRouterIdentifier(result.AgentID) || result.Platform != "dingtalk" ||
+		!validRouterIdentifier(result.TenantID) || !validRouterIdentifier(result.AccountID) {
+		return false
+	}
+	switch result.Status {
+	case "valid", "unbound", "inconsistent":
+		return result.CurrentAgentID == ""
+	case "bound_to_other_agent":
+		return validRouterIdentifier(result.CurrentAgentID) && result.CurrentAgentID != result.AgentID
+	default:
+		return false
+	}
 }
 
 func validSubscriptionSurface(surface SubscriptionSurface) bool {

@@ -49,6 +49,10 @@ type BindingSubscriptionResult struct {
 
 type MessageBindingResult struct {
 	Status             string                         `json:"status"`
+	Platform           string                         `json:"platform"`
+	TenantID           string                         `json:"tenant_id"`
+	AccountID          string                         `json:"account_id"`
+	PreviousAgentID    string                         `json:"previous_agent_id,omitempty"`
 	AccountDisplayName string                         `json:"account_display_name"`
 	AccountAvatarURL   string                         `json:"account_avatar_url"`
 	MessageScope       string                         `json:"message_scope"`
@@ -244,6 +248,10 @@ func validateCompleteBindingParams(params CompleteBindingParams) (string, []Ding
 	switch params.Message.Status {
 	case DingTalkBindingTaskStatusSuccess:
 		if params.Message.Error != nil ||
+			params.Message.Platform != "dingtalk" ||
+			!validRouterIdentifier(params.Message.TenantID) ||
+			!validRouterIdentifier(params.Message.AccountID) ||
+			!validOptionalPreviousAgentID(params.Message.PreviousAgentID) ||
 			!validSourceID(params.Message.SourceID) || !validBindingSubscriptions(params.Message.Subscriptions) ||
 			utf8.RuneCountInString(strings.TrimSpace(params.Message.AccountDisplayName)) > maxAccountNameRunes ||
 			!validAccountAvatarURL(strings.TrimSpace(params.Message.AccountAvatarURL)) {
@@ -252,6 +260,8 @@ func validateCompleteBindingParams(params CompleteBindingParams) (string, []Ding
 		return normalizeDingTalkConversationBinding(params.Message.MessageScope, params.Message.Conversations)
 	case DingTalkBindingTaskStatusSkipped:
 		if params.Message.Error != nil || params.Message.SourceID != "" || params.Message.MessageScope != "" ||
+			params.Message.Platform != "" || params.Message.TenantID != "" || params.Message.AccountID != "" ||
+			params.Message.PreviousAgentID != "" ||
 			params.Message.AccountDisplayName != "" || params.Message.AccountAvatarURL != "" ||
 			len(params.Message.Conversations) != 0 || len(params.Message.Subscriptions) != 0 {
 			return "", nil, ErrInvalidResult
@@ -259,6 +269,8 @@ func validateCompleteBindingParams(params CompleteBindingParams) (string, []Ding
 		return DingTalkMessageScopeDirectOnly, nil, nil
 	case DingTalkBindingTaskStatusFailed:
 		if params.Message.SourceID != "" || len(params.Message.Subscriptions) != 0 ||
+			params.Message.Platform != "" || params.Message.TenantID != "" || params.Message.AccountID != "" ||
+			params.Message.PreviousAgentID != "" ||
 			params.Message.AccountDisplayName != "" || params.Message.AccountAvatarURL != "" ||
 			!validBindingTaskError(params.Message.Error) {
 			return "", nil, ErrInvalidResult
@@ -273,6 +285,14 @@ func validateCompleteBindingParams(params CompleteBindingParams) (string, []Ding
 	default:
 		return "", nil, ErrInvalidResult
 	}
+}
+
+func validOptionalPreviousAgentID(value string) bool {
+	if value == "" {
+		return true
+	}
+	agentID, err := util.ParseUUID(value)
+	return err == nil && util.UUIDToString(agentID) == value
 }
 
 func emptyIdentityResult(result IdentityBindingResult) bool {

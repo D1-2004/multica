@@ -34,6 +34,8 @@ type fakeBindingStore struct {
 	listErr         error
 	beginConfig     []byte
 	revokeArg       db.RevokeDingTalkAccountBindingParams
+	accountRevokeArg db.RevokeDingTalkAccountBindingByAccountKeyParams
+	previousCleanupArgs []db.DeletePreviousDingTalkAccountBindingProjectionParams
 	activated       bool
 	revoked         bool
 	updatedSurface  bool
@@ -204,6 +206,27 @@ func (f *fakeBindingStore) RevokeDingTalkAccountBinding(_ context.Context, arg d
 	return f.row, nil
 }
 
+func (f *fakeBindingStore) RevokeDingTalkAccountBindingByAccountKey(_ context.Context, arg db.RevokeDingTalkAccountBindingByAccountKeyParams) (db.ChannelInstallation, error) {
+	if f.revokeErr != nil {
+		return db.ChannelInstallation{}, f.revokeErr
+	}
+	f.accountRevokeArg = arg
+	config, err := ParseDingTalkAccountConfig(f.row.Config)
+	if err != nil || f.row.ID != arg.ID || f.row.WorkspaceID != arg.WorkspaceID || f.row.AgentID != arg.AgentID ||
+		f.row.Status != "active" || config.RouterPlatform != arg.ExpectedRouterPlatform ||
+		config.RouterTenantID != arg.ExpectedRouterTenantID || config.RouterAccountID != arg.ExpectedRouterAccountID {
+		return db.ChannelInstallation{}, pgx.ErrNoRows
+	}
+	return f.RevokeDingTalkAccountBinding(context.Background(), db.RevokeDingTalkAccountBindingParams{
+		ID: arg.ID, WorkspaceID: arg.WorkspaceID, AgentID: arg.AgentID,
+	})
+}
+
+func (f *fakeBindingStore) DeletePreviousDingTalkAccountBindingProjection(_ context.Context, arg db.DeletePreviousDingTalkAccountBindingProjectionParams) ([]db.ChannelInstallation, error) {
+	f.previousCleanupArgs = append(f.previousCleanupArgs, arg)
+	return nil, nil
+}
+
 func (f *fakeBindingStore) BeginAgentDingTalkIdentityAttempt(_ context.Context, arg db.BeginAgentDingTalkIdentityAttemptParams) (db.AgentDingtalkIdentityAttempt, error) {
 	f.identityAttempt = db.AgentDingtalkIdentityAttempt{
 		ID:                mustUUIDForTest("22222222-2222-2222-2222-222222222222"),
@@ -299,9 +322,25 @@ type fakeBindingRouter struct {
 	getCalls     int
 	deleted      []string
 	updated      []string
+	bindingChecks        []DigitalEmployeeBindingCheck
+	bindingCheckErr      error
+	bindingCheckRequests [][]DigitalEmployeeBindingKey
+	unbindResult         DigitalEmployeeBindingUnbindResult
+	unbindErr            error
+	unbindRequests       []DigitalEmployeeBindingKey
 
 	deleteDigitalEmployeeErr     error
 	deletedDigitalEmployeeAgents []string
+}
+
+func (f *fakeBindingRouter) CheckDigitalEmployeeBindings(_ context.Context, bindings []DigitalEmployeeBindingKey) ([]DigitalEmployeeBindingCheck, error) {
+	f.bindingCheckRequests = append(f.bindingCheckRequests, append([]DigitalEmployeeBindingKey(nil), bindings...))
+	return append([]DigitalEmployeeBindingCheck(nil), f.bindingChecks...), f.bindingCheckErr
+}
+
+func (f *fakeBindingRouter) UnbindDigitalEmployeeBinding(_ context.Context, binding DigitalEmployeeBindingKey) (DigitalEmployeeBindingUnbindResult, error) {
+	f.unbindRequests = append(f.unbindRequests, binding)
+	return f.unbindResult, f.unbindErr
 }
 
 func (f *fakeBindingRouter) IssueBindingToken(_ context.Context, descriptor AgentDescriptor) (BindingToken, error) {
@@ -443,6 +482,9 @@ func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *
 		},
 		Message: MessageBindingResult{
 			Status:             DingTalkBindingTaskStatusSuccess,
+			Platform:           "dingtalk",
+			TenantID:           "corp-a",
+			AccountID:          "employee-a",
 			AccountDisplayName: "Digital Worker Zhang",
 			AccountAvatarURL:   "https://example.com/digital-worker.png",
 			MessageScope:       DingTalkMessageScopeDirectOnly,
@@ -483,6 +525,9 @@ func TestUpdateDingTalkAccountBindingSurfacePreservesAccountSnapshot(t *testing.
 		t.Fatal(err)
 	}
 	config.RouterSourceID = "source-channel"
+	config.RouterPlatform = "dingtalk"
+	config.RouterTenantID = "corp-a"
+	config.RouterAccountID = "employee-a"
 	config.AccountDisplayName = "Digital Worker Zhang"
 	config.AccountAvatarURL = "https://example.com/digital-worker.png"
 	config.SurfaceType = DingTalkSurfaceIssue
@@ -571,6 +616,54 @@ func TestCompleteBindingRejectsMalformedTaskDetails(t *testing.T) {
 					Subscriptions: []BindingSubscriptionResult{
 						{Domain: "channel", SourceID: " source-channel ", Status: "active"},
 					},
+				},
+			},
+		},
+		{
+			name: "takeover previous agent is not a canonical UUID",
+			params: CompleteBindingParams{
+				Status: DingTalkBindingCompletionStatus,
+				Identity: IdentityBindingResult{Status: DingTalkBindingTaskStatusSkipped},
+				Message: MessageBindingResult{
+					Status: DingTalkBindingTaskStatusSuccess, Platform: "dingtalk",
+					TenantID: "corp-a", AccountID: "employee-a", PreviousAgentID: "agent-a",
+					MessageScope: DingTalkMessageScopeDirectOnly, SourceID: "source-channel",
+				},
+			},
+		},
+		{
+			name: "successful message is missing tenant identity",
+			params: CompleteBindingParams{
+				Status: DingTalkBindingCompletionStatus,
+				Identity: IdentityBindingResult{Status: DingTalkBindingTaskStatusSkipped},
+				Message: MessageBindingResult{
+					Status: DingTalkBindingTaskStatusSuccess, Platform: "dingtalk",
+					AccountID: "employee-a", MessageScope: DingTalkMessageScopeDirectOnly,
+					SourceID: "source-channel",
+				},
+			},
+		},
+		{
+			name: "successful message is missing account identity",
+			params: CompleteBindingParams{
+				Status: DingTalkBindingCompletionStatus,
+				Identity: IdentityBindingResult{Status: DingTalkBindingTaskStatusSkipped},
+				Message: MessageBindingResult{
+					Status: DingTalkBindingTaskStatusSuccess, Platform: "dingtalk",
+					TenantID: "corp-a", MessageScope: DingTalkMessageScopeDirectOnly,
+					SourceID: "source-channel",
+				},
+			},
+		},
+		{
+			name: "successful message account identity has whitespace",
+			params: CompleteBindingParams{
+				Status: DingTalkBindingCompletionStatus,
+				Identity: IdentityBindingResult{Status: DingTalkBindingTaskStatusSkipped},
+				Message: MessageBindingResult{
+					Status: DingTalkBindingTaskStatusSuccess, Platform: "dingtalk",
+					TenantID: " corp-a ", AccountID: "employee-a", MessageScope: DingTalkMessageScopeDirectOnly,
+					SourceID: "source-channel",
 				},
 			},
 		},
@@ -976,6 +1069,8 @@ func TestCompleteCallbackVerifiesSubscriptionAndActivates(t *testing.T) {
 		t.Fatal(err)
 	}
 	if activeConfig.RouterSourceID != "source-1" || activeConfig.BoundAt == nil ||
+		activeConfig.RouterPlatform != "dingtalk" || activeConfig.RouterTenantID != "corp-a" ||
+		activeConfig.RouterAccountID != "employee-a" ||
 		activeConfig.MessageScope != DingTalkMessageScopeCustom || len(activeConfig.Conversations) != 2 ||
 		activeConfig.Conversations[0].AvatarMediaID != "@media-alpha" {
 		t.Fatalf("active config = %#v", activeConfig)
@@ -990,6 +1085,36 @@ func TestCompleteCallbackVerifiesSubscriptionAndActivates(t *testing.T) {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("public binding leaked %q: %s", secret, encoded)
 		}
+	}
+}
+
+func TestCompleteCallbackCleansOnlyPreviousAccountProjectionWithoutRouterDelete(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	store := pendingBindingStore(t, now, canonicalCallbackToken)
+	config, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := &fakeBindingRouter{subscription: Subscription{
+		SourceID: "source-1", AgentID: uuidStringForTest(store.row.AgentID), DispatchURL: config.DispatchURL, Status: "active",
+	}}
+	service := newBindingServiceForTest(t, store, router, now)
+	params := messageCallbackParamsForTest(store.row.ID, "source-1")
+	params.MessageBinding.PreviousAgentID = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+
+	if _, err := service.CompleteCallback(context.Background(), params); err != nil {
+		t.Fatalf("CompleteCallback: %v", err)
+	}
+	if len(store.previousCleanupArgs) != 1 {
+		t.Fatalf("cleanup args = %#v", store.previousCleanupArgs)
+	}
+	cleanup := store.previousCleanupArgs[0]
+	if cleanup.CurrentInstallationID != store.row.ID || cleanup.PreviousAgentID.String() != params.MessageBinding.PreviousAgentID ||
+		cleanup.RouterPlatform != "dingtalk" || cleanup.RouterTenantID != "corp-a" || cleanup.RouterAccountID != "employee-a" {
+		t.Fatalf("cleanup = %#v", cleanup)
+	}
+	if len(router.deleted) != 0 || len(router.deletedDigitalEmployeeAgents) != 0 || len(router.unbindRequests) != 0 {
+		t.Fatalf("callback cleanup called Router: %#v", router)
 	}
 }
 
@@ -1106,7 +1231,7 @@ func TestCompleteCallbackRejectsInvalidConversationSnapshots(t *testing.T) {
 	}
 }
 
-func TestCompleteCallbackMismatchDeletesRouterSubscriptionWithoutActivating(t *testing.T) {
+func TestCompleteCallbackMismatchDoesNotDeleteSourceLevelSubscription(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
 	config, err := ParseDingTalkAccountConfig(store.row.Config)
@@ -1128,8 +1253,8 @@ func TestCompleteCallbackMismatchDeletesRouterSubscriptionWithoutActivating(t *t
 	if store.activated {
 		t.Fatal("mismatched Router subscription was activated")
 	}
-	if len(router.deleted) != 1 || router.deleted[0] != "source-1" {
-		t.Fatalf("compensation deletes = %#v", router.deleted)
+	if len(router.deleted) != 0 {
+		t.Fatalf("source-level compensation could destroy the winning account binding: %#v", router.deleted)
 	}
 	assertMetricCounter(t, service.metrics, "dingtalk_account_callback_total", map[string]string{"outcome": "conflict"}, 1)
 	assertMetricCounter(t, service.metrics, "dingtalk_account_subscription_verify_total", map[string]string{"outcome": "inactive"}, 1)
@@ -1189,7 +1314,7 @@ func TestCompleteCallbackRejectsTamperedRoutingWithoutDeleting(t *testing.T) {
 	}
 }
 
-func TestCompleteCallbackCompensatesVerifiedSourceWhenActivationLosesPendingCAS(t *testing.T) {
+func TestCompleteCallbackDoesNotDeleteAccountSourceWhenActivationLosesPendingCAS(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
 	store.activateErr = pgx.ErrNoRows
@@ -1209,12 +1334,12 @@ func TestCompleteCallbackCompensatesVerifiedSourceWhenActivationLosesPendingCAS(
 	if !errors.Is(err, ErrBindingConflict) {
 		t.Fatalf("CompleteCallback() error = %v, want ErrBindingConflict", err)
 	}
-	if len(router.deleted) != 1 || router.deleted[0] != "source-1" {
-		t.Fatalf("verified stale source compensation = %#v", router.deleted)
+	if len(router.deleted) != 0 {
+		t.Fatalf("stale callback deleted an account source after losing CAS: %#v", router.deleted)
 	}
 }
 
-func TestCompleteCallbackCompensatesLosingSourceWhenAnotherCallbackActivates(t *testing.T) {
+func TestCompleteCallbackDoesNotDeleteSourceWhenAnotherCallbackActivates(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
 	config, err := ParseDingTalkAccountConfig(store.row.Config)
@@ -1245,8 +1370,46 @@ func TestCompleteCallbackCompensatesLosingSourceWhenAnotherCallbackActivates(t *
 	if !errors.Is(err, ErrBindingConflict) {
 		t.Fatalf("CompleteCallback() error = %v, want ErrBindingConflict", err)
 	}
-	if len(router.deleted) != 1 || router.deleted[0] != "source-loser" {
-		t.Fatalf("losing source compensation = %#v", router.deleted)
+	if len(router.deleted) != 0 {
+		t.Fatalf("losing callback deleted a source after another callback won: %#v", router.deleted)
+	}
+}
+
+func TestCompleteCallbackDoesNotAcceptSameSourceDifferentAccountAfterLosingCAS(t *testing.T) {
+	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	store := pendingBindingStore(t, now, canonicalCallbackToken)
+	config, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.activateErr = pgx.ErrNoRows
+	store.activateHook = func(store *fakeBindingStore) {
+		winning := config
+		winning.RouterSourceID = "source-shared"
+		winning.RouterPlatform = "dingtalk"
+		winning.RouterTenantID = "corp-winner"
+		winning.RouterAccountID = "employee-winner"
+		winning.BoundAt = &now
+		store.row.Config, err = winning.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		store.row.Status = "active"
+	}
+	router := &fakeBindingRouter{subscription: Subscription{
+		SourceID:    "source-shared",
+		AgentID:     uuidStringForTest(store.row.AgentID),
+		DispatchURL: config.DispatchURL,
+		Status:      "active",
+	}}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	_, err = service.CompleteCallback(context.Background(), messageCallbackParamsForTest(store.row.ID, "source-shared"))
+	if !errors.Is(err, ErrBindingConflict) {
+		t.Fatalf("CompleteCallback() error = %v, want ErrBindingConflict", err)
+	}
+	if len(router.deleted) != 0 || len(router.unbindRequests) != 0 {
+		t.Fatalf("losing callback mutated Router winner: deleted=%#v unbound=%#v", router.deleted, router.unbindRequests)
 	}
 }
 
@@ -1259,6 +1422,9 @@ func TestCompleteCallbackIsIdempotentAndRejectsDifferentSource(t *testing.T) {
 	}
 	boundAt := now.Add(-time.Second)
 	config.RouterSourceID = "source-1"
+	config.RouterPlatform = "dingtalk"
+	config.RouterTenantID = "corp-a"
+	config.RouterAccountID = "employee-a"
 	config.BoundAt = &boundAt
 	store.row.Config, err = config.Marshal()
 	if err != nil {
@@ -1287,12 +1453,18 @@ func TestCompleteCallbackIsIdempotentAndRejectsDifferentSource(t *testing.T) {
 	if len(router.deleted) != 0 {
 		t.Fatalf("different source must not delete an unverified Router subscription: %#v", router.deleted)
 	}
+	differentAccount := messageCallbackParamsForTest(store.row.ID, "source-1")
+	differentAccount.MessageBinding.AccountID = "employee-b"
+	_, err = service.CompleteCallback(context.Background(), differentAccount)
+	if !errors.Is(err, ErrBindingConflict) {
+		t.Fatalf("different-account callback error = %v", err)
+	}
 }
 
 func TestCompleteCallbackRejectsExpiredTokenBeforeRouterLookup(t *testing.T) {
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now.Add(-20*time.Minute), canonicalCallbackToken)
-	router := &fakeBindingRouter{}
+	router := &fakeBindingRouter{unbindResult: DigitalEmployeeBindingUnbindResult{Status: "unbound"}}
 	service := newBindingServiceForTest(t, store, router, now)
 
 	_, err := service.CompleteCallback(context.Background(), messageCallbackParamsForTest(store.row.ID, "source-1"))
@@ -1423,6 +1595,9 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 	}
 	boundAt := now
 	config.RouterSourceID = "source-1"
+	config.RouterPlatform = "dingtalk"
+	config.RouterTenantID = "corp-a"
+	config.RouterAccountID = "employee-a"
 	config.BoundAt = &boundAt
 	config.AccountDisplayName = "Zhang San"
 	config.AccountAvatarURL = "https://example.com/avatar.png"
@@ -1436,7 +1611,7 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 	}
 	store.row.Status = "active"
 	setIdentityForTest(store)
-	router := &fakeBindingRouter{}
+	router := &fakeBindingRouter{unbindResult: DigitalEmployeeBindingUnbindResult{Status: "unbound"}}
 	service := newBindingServiceForTest(t, store, router, now)
 
 	binding, err := service.Unbind(context.Background(), UnbindParams{
@@ -1447,16 +1622,15 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unbind() error = %v", err)
 	}
-	if len(router.deletedDigitalEmployeeAgents) != 1 ||
-		router.deletedDigitalEmployeeAgents[0] != uuidStringForTest(store.row.AgentID) ||
+	if len(router.unbindRequests) != 1 || len(router.deletedDigitalEmployeeAgents) != 0 ||
 		len(router.deleted) != 0 || !store.revoked ||
 		binding.MessageRoute.Status != "revoked" || binding.DWSIdentity.Status != "active" ||
 		binding.DWSIdentity.Source != "identity" || !store.identity.AgentID.Valid {
 		t.Fatalf("digital employee delete=%#v source delete=%#v revoked=%v binding=%#v",
 			router.deletedDigitalEmployeeAgents, router.deleted, store.revoked, binding)
 	}
-	if store.revokeArg.AgentID != store.row.AgentID {
-		t.Fatalf("revoke agent = %v, want %v", store.revokeArg.AgentID, store.row.AgentID)
+	if store.accountRevokeArg.AgentID != store.row.AgentID {
+		t.Fatalf("revoke agent = %v, want %v", store.accountRevokeArg.AgentID, store.row.AgentID)
 	}
 	var revokedConfig map[string]any
 	if err := json.Unmarshal(store.row.Config, &revokedConfig); err != nil {
@@ -1559,6 +1733,9 @@ func activeBindingStoreForUnbind(t *testing.T, now time.Time) *fakeBindingStore 
 	}
 	boundAt := now
 	config.RouterSourceID = "source-1"
+	config.RouterPlatform = "dingtalk"
+	config.RouterTenantID = "corp-a"
+	config.RouterAccountID = "employee-a"
 	config.BoundAt = &boundAt
 	store.row.Config, err = config.Marshal()
 	if err != nil {
@@ -1573,7 +1750,7 @@ func TestUnbindProceedsWhenRouterHasNoRemainingDigitalEmployeeSubscriptions(t *t
 	// disabled every subscription. The local revoke must still converge.
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := activeBindingStoreForUnbind(t, now)
-	router := &fakeBindingRouter{}
+	router := &fakeBindingRouter{unbindResult: DigitalEmployeeBindingUnbindResult{Status: "unbound"}}
 	service := newBindingServiceForTest(t, store, router, now)
 
 	binding, err := service.Unbind(context.Background(), UnbindParams{
@@ -1590,10 +1767,44 @@ func TestUnbindProceedsWhenRouterHasNoRemainingDigitalEmployeeSubscriptions(t *t
 	assertMetricCounter(t, service.metrics, "dingtalk_account_unbind_total", map[string]string{"outcome": "success"}, 1)
 }
 
-func TestUnbindRevokedMessageClearsOrphanedDigitalEmployeeSubscriptions(t *testing.T) {
-	// The legacy single-source delete could revoke the local row while leaving
-	// a calendar source active. A repeated message unbind must repair that
-	// state through the agent-scoped Router cleanup.
+func TestUnbindUsesCompleteAccountKeyAndPreservesInconsistentProjection(t *testing.T) {
+	now := time.Date(2026, 8, 2, 11, 30, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name        string
+		status      string
+		wantErr     error
+		wantRevoked bool
+	}{
+		{name: "unbound", status: "unbound", wantRevoked: true},
+		{name: "ownership changed", status: "ownership_changed", wantRevoked: true},
+		{name: "inconsistent", status: "inconsistent", wantErr: ErrBindingConflict},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := activeBindingStoreForUnbind(t, now)
+			router := &fakeBindingRouter{unbindResult: DigitalEmployeeBindingUnbindResult{Status: tt.status}}
+			service := newBindingServiceForTest(t, store, router, now)
+			_, err := service.Unbind(context.Background(), UnbindParams{
+				WorkspaceID: store.row.WorkspaceID, AgentID: store.row.AgentID, BindingMode: BindingModeMessage,
+			})
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Unbind error = %v, want %v", err, tt.wantErr)
+			}
+			if store.revoked != tt.wantRevoked {
+				t.Fatalf("revoked = %v", store.revoked)
+			}
+			if len(router.unbindRequests) != 1 {
+				t.Fatalf("unbind requests = %#v", router.unbindRequests)
+			}
+			request := router.unbindRequests[0]
+			if request.AgentID != uuidStringForTest(store.row.AgentID) || request.Platform != "dingtalk" ||
+				request.TenantID != "corp-a" || request.AccountID != "employee-a" || len(request.ExpectedDomains) != 0 {
+				t.Fatalf("unbind request = %#v", request)
+			}
+		})
+	}
+}
+
+func TestUnbindRevokedMessageDoesNotIssueBroadRouterDelete(t *testing.T) {
 	now := time.Date(2026, 7, 25, 0, 11, 0, 0, time.UTC)
 	store := activeBindingStoreForUnbind(t, now)
 	if _, err := store.RevokeDingTalkAccountBinding(context.Background(),
@@ -1616,10 +1827,9 @@ func TestUnbindRevokedMessageClearsOrphanedDigitalEmployeeSubscriptions(t *testi
 	if err != nil {
 		t.Fatalf("Unbind(revoked message) error = %v", err)
 	}
-	if len(router.deletedDigitalEmployeeAgents) != 1 ||
-		router.deletedDigitalEmployeeAgents[0] != uuidStringForTest(store.row.AgentID) ||
+	if len(router.unbindRequests) != 0 || len(router.deletedDigitalEmployeeAgents) != 0 ||
 		binding.MessageRoute.Status != "revoked" {
-		t.Fatalf("delete=%#v binding=%#v", router.deletedDigitalEmployeeAgents, binding)
+		t.Fatalf("unbind=%#v broad delete=%#v binding=%#v", router.unbindRequests, router.deletedDigitalEmployeeAgents, binding)
 	}
 }
 
@@ -1629,7 +1839,7 @@ func TestUnbindStaysFailClosedOnOtherRouterErrors(t *testing.T) {
 	// router subscription would keep dispatching into a revoked binding.
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := activeBindingStoreForUnbind(t, now)
-	router := &fakeBindingRouter{deleteDigitalEmployeeErr: errors.New("router transport failure")}
+	router := &fakeBindingRouter{unbindErr: errors.New("router transport failure")}
 	service := newBindingServiceForTest(t, store, router, now)
 
 	_, err := service.Unbind(context.Background(), UnbindParams{
@@ -1670,33 +1880,84 @@ func TestListClearsExpiredCallbackCredentialBeforeReturningBindings(t *testing.T
 	}
 }
 
-func TestListLoadsCurrentSurfaceForExistingActiveBinding(t *testing.T) {
+func TestListReconcilesActiveAccountBindingsInOneBatch(t *testing.T) {
+	now := time.Date(2026, 8, 2, 11, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		result     DigitalEmployeeBindingCheck
+		routerErr  error
+		wantStatus string
+	}{
+		{name: "valid", result: DigitalEmployeeBindingCheck{Status: "valid"}, wantStatus: "active"},
+		{name: "unbound", result: DigitalEmployeeBindingCheck{Status: "unbound"}, wantStatus: "unbound"},
+		{name: "other agent", result: DigitalEmployeeBindingCheck{Status: "bound_to_other_agent", CurrentAgentID: "agent-other"}, wantStatus: "bound_to_other_agent"},
+		{name: "inconsistent", result: DigitalEmployeeBindingCheck{Status: "inconsistent"}, wantStatus: "inconsistent"},
+		{name: "unavailable", routerErr: errors.New("router unavailable"), wantStatus: "router_unavailable"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := activeBindingStoreForUnbind(t, now)
+			agentID := uuidStringForTest(store.row.AgentID)
+			result := tt.result
+			result.AgentID = agentID
+			result.Platform = "dingtalk"
+			result.TenantID = "corp-a"
+			result.AccountID = "employee-a"
+			router := &fakeBindingRouter{bindingChecks: []DigitalEmployeeBindingCheck{result}, bindingCheckErr: tt.routerErr}
+			service := newBindingServiceForTest(t, store, router, now)
+
+			listed, err := service.List(context.Background(), store.row.WorkspaceID)
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if len(listed) != 1 || listed[0].MessageRoute.Status != tt.wantStatus {
+				t.Fatalf("listed = %#v", listed)
+			}
+			if len(router.bindingCheckRequests) != 1 || len(router.bindingCheckRequests[0]) != 1 {
+				t.Fatalf("check requests = %#v", router.bindingCheckRequests)
+			}
+			request := router.bindingCheckRequests[0][0]
+			if request.AgentID != agentID || request.Platform != "dingtalk" || request.TenantID != "corp-a" ||
+				request.AccountID != "employee-a" || len(request.ExpectedDomains) != 1 || request.ExpectedDomains[0] != "channel" {
+				t.Fatalf("check request = %#v", request)
+			}
+		})
+	}
+}
+
+func TestListUsesPersistedSurfaceWhileReconcilingAccount(t *testing.T) {
 	now := time.Date(2026, 7, 23, 9, 0, 0, 0, time.UTC)
 	store := activeBindingStoreForUnbind(t, now)
 	config, err := ParseDingTalkAccountConfig(store.row.Config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	router := &fakeBindingRouter{subscription: Subscription{
-		SourceID:    config.RouterSourceID,
-		AgentID:     uuidStringForTest(store.row.AgentID),
-		DispatchURL: config.DispatchURL,
-		Surface:     SubscriptionSurface{Type: DingTalkSurfaceChat},
-		Outbound:    SubscriptionOutbound{Mode: "dws", ReplyTo: "latest_message"},
-		Status:      "active",
-	}}
+	config.SurfaceType = DingTalkSurfaceChat
+	config.CalendarStartEnabled = true
+	store.row.Config, err = config.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentID := uuidStringForTest(store.row.AgentID)
+	router := &fakeBindingRouter{bindingChecks: []DigitalEmployeeBindingCheck{{
+		AgentID: agentID, Platform: "dingtalk", TenantID: "corp-a", AccountID: "employee-a", Status: "valid",
+	}}}
 	service := newBindingServiceForTest(t, store, router, now)
 
 	listed, err := service.List(context.Background(), store.row.WorkspaceID)
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if len(listed) != 1 || listed[0].MessageRoute.SurfaceType != DingTalkSurfaceChat || router.getCalls != 1 {
-		t.Fatalf("listed = %#v router GETs = %d", listed, router.getCalls)
+	if len(listed) != 1 || listed[0].MessageRoute.SurfaceType != DingTalkSurfaceChat || router.getCalls != 0 ||
+		len(router.bindingCheckRequests) != 1 || len(router.bindingCheckRequests[0]) != 1 ||
+		len(router.bindingCheckRequests[0][0].ExpectedDomains) != 2 ||
+		router.bindingCheckRequests[0][0].ExpectedDomains[0] != "channel" ||
+		router.bindingCheckRequests[0][0].ExpectedDomains[1] != "calendar" {
+		t.Fatalf("listed = %#v router GETs = %d checks=%#v", listed, router.getCalls, router.bindingCheckRequests)
 	}
 }
 
-func TestListAcceptsHistoricalDispatchURLWhenRouterReturnsEndpointPath(t *testing.T) {
+func TestListMarksLegacyAccountWithoutKeyInconsistentWithoutRouterLookup(t *testing.T) {
 	now := time.Date(2026, 7, 23, 9, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
 	config, err := ParseDingTalkAccountConfig(store.row.Config)
@@ -1714,21 +1975,16 @@ func TestListAcceptsHistoricalDispatchURLWhenRouterReturnsEndpointPath(t *testin
 	}
 	store.row.Status = "active"
 
-	router := &fakeBindingRouter{subscription: Subscription{
-		SourceID:    "source-legacy",
-		AgentID:     uuidStringForTest(store.row.AgentID),
-		DispatchURL: "/api/webhooks/agent-dispatch/" + config.DispatchEndpointID,
-		Surface:     SubscriptionSurface{Type: DingTalkSurfaceIssue},
-		Status:      "active",
-	}}
+	router := &fakeBindingRouter{}
 	service := newBindingServiceForTest(t, store, router, now)
 
 	listed, err := service.List(context.Background(), store.row.WorkspaceID)
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if len(listed) != 1 || listed[0].MessageRoute.SurfaceType != DingTalkSurfaceIssue || router.getCalls != 1 {
-		t.Fatalf("listed = %#v router GETs = %d", listed, router.getCalls)
+	if len(listed) != 1 || listed[0].MessageRoute.Status != "inconsistent" || router.getCalls != 0 ||
+		len(router.bindingCheckRequests) != 0 {
+		t.Fatalf("listed = %#v router GETs = %d checks=%#v", listed, router.getCalls, router.bindingCheckRequests)
 	}
 }
 
@@ -1856,7 +2112,10 @@ func messageCallbackParamsForTest(bindingID pgtype.UUID, sourceID string) Callba
 		IdentityBinding: IdentityBindingResult{
 			Status: "skipped",
 		},
-		MessageBinding: MessageBindingResult{Status: "success", SourceID: sourceID},
+		MessageBinding: MessageBindingResult{
+			Status: "success", SourceID: sourceID, Platform: "dingtalk",
+			TenantID: "corp-a", AccountID: "employee-a",
+		},
 	}
 }
 

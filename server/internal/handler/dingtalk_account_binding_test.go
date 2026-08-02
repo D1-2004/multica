@@ -303,6 +303,10 @@ func TestDingTalkAccountCallbackForwardsMessageScopeAndConversations(t *testing.
 			},
 			"message_binding":{
 				"status":"success",
+				"platform":"dingtalk",
+				"tenant_id":"corp-a",
+				"account_id":"employee-a",
+				"previous_agent_id":"44444444-4444-4444-4444-444444444444",
 				"account_display_name":"Digital Worker Zhang",
 				"account_avatar_url":"https://example.com/digital-worker.png",
 				"source_id":"source-1",
@@ -343,6 +347,9 @@ func TestDingTalkAccountCallbackForwardsMessageScopeAndConversations(t *testing.
 	}
 	message, ok := forwarded["Message"].(map[string]any)
 	if !ok || message["message_scope"] != "custom" ||
+		message["platform"] != "dingtalk" || message["tenant_id"] != "corp-a" ||
+		message["account_id"] != "employee-a" ||
+		message["previous_agent_id"] != "44444444-4444-4444-4444-444444444444" ||
 		message["account_display_name"] != "Digital Worker Zhang" ||
 		message["account_avatar_url"] != "https://example.com/digital-worker.png" {
 		t.Fatalf("forwarded message = %#v params=%s", forwarded["Message"], encoded)
@@ -633,7 +640,7 @@ func validDingTalkBindingCallbackBody(bindingMode, messageStatus, sourceID strin
 	}
 	message := `{"status":"skipped","message_scope":"","conversations":[],"source_id":"","subscriptions":[],"error":null}`
 	if messageStatus == "success" {
-		message = `{"status":"success","message_scope":"direct_only","conversations":[],"source_id":"` + sourceID + `","subscriptions":[{"domain":"channel","source_id":"` + sourceID + `","status":"active"}],"error":null}`
+		message = `{"status":"success","platform":"dingtalk","tenant_id":"corp-a","account_id":"employee-a","message_scope":"direct_only","conversations":[],"source_id":"` + sourceID + `","subscriptions":[{"domain":"channel","source_id":"` + sourceID + `","status":"active"}],"error":null}`
 	}
 	return `{"binding_mode":"` + bindingMode + `","status":"completed","identity_binding":` + identity + `,"message_binding":` + message + `}`
 }
