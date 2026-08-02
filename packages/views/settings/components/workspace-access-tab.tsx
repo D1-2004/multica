@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@multica/ui/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
 import { copyText } from "@multica/ui/lib/clipboard";
-import type { WorkspaceAccessCapability, WorkspaceAccessResourceScope, WorkspaceAccessToken } from "@multica/core/types";
+import type { WorkspaceAccessCapability, WorkspaceAccessToken } from "@multica/core/types";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { useCurrentMember } from "@multica/core/permissions";
 import { workspaceAccessTokenListOptions } from "@multica/core/workspace-access/queries";
@@ -99,8 +99,7 @@ function TokenCard({ wsId, token, onSecret }: { wsId: string; token: WorkspaceAc
               {token.revoked_at ? <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t(($) => $.workspace_access.revoked)}</span> : null}
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              {token.resource_scope === "own_agents" ? t(($) => $.workspace_access.scope.own_agents) : t(($) => $.workspace_access.scope.workspace)}
-              {" · "}{token.capabilities.map(capabilityLabel).join(" · ")}
+              {token.capabilities.map(capabilityLabel).join(" · ")}
             </p>
             <p className="mt-2 text-xs text-muted-foreground">
               <span className="font-mono">{token.token_prefix}…</span>
@@ -137,7 +136,6 @@ function TokenEditorDialog({ wsId, token, open, onOpenChange, onSecret }: {
   const updateToken = useUpdateWorkspaceAccessToken(wsId);
   const [name, setName] = useState(token?.name ?? "");
   const [capabilities, setCapabilities] = useState<WorkspaceAccessCapability[]>(token?.capabilities ?? ["deployment.manage", "trace.read"]);
-  const [scope, setScope] = useState<WorkspaceAccessResourceScope>(token?.resource_scope ?? "own_agents");
   const [expiry, setExpiry] = useState(token ? "keep" : "90");
   const capabilityCopy = useMemo(() => ({
     "deployment.manage": {
@@ -160,9 +158,9 @@ function TokenEditorDialog({ wsId, token, open, onOpenChange, onSecret }: {
     try {
       const expiresAt = expiryFromOption(expiry, token?.expires_at ?? null);
       if (token) {
-        await updateToken.mutateAsync({ tokenId: token.id, data: { name: name.trim(), capabilities, resource_scope: scope, expires_at: expiresAt, version: token.version } });
+        await updateToken.mutateAsync({ tokenId: token.id, data: { name: name.trim(), capabilities, expires_at: expiresAt, version: token.version } });
       } else {
-        await createToken.mutateAsync({ data: { name: name.trim(), capabilities, resource_scope: scope, expires_at: expiresAt }, onToken: onSecret });
+        await createToken.mutateAsync({ data: { name: name.trim(), capabilities, expires_at: expiresAt }, onToken: onSecret });
       }
       onOpenChange(false);
       toast.success(t(($) => $.workspace_access.saved));
@@ -186,17 +184,6 @@ function TokenEditorDialog({ wsId, token, open, onOpenChange, onSecret }: {
                 <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{capabilityCopy[capability].description}</span>
               </span>
             </label>)}
-          </div>
-          <div className="space-y-2">
-            <div className="text-sm font-medium">{t(($) => $.workspace_access.scope_title)}</div>
-            <Select value={scope} onValueChange={(value) => setScope(value as WorkspaceAccessResourceScope)}>
-              <SelectTrigger className="w-full min-w-0"><SelectValue>{scope === "own_agents" ? t(($) => $.workspace_access.scope.own_agents) : t(($) => $.workspace_access.scope.workspace)}</SelectValue></SelectTrigger>
-              <SelectContent><SelectItem value="own_agents">{t(($) => $.workspace_access.scope.own_agents)}</SelectItem><SelectItem value="workspace">{t(($) => $.workspace_access.scope.workspace)}</SelectItem></SelectContent>
-            </Select>
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              {scope === "own_agents" ? t(($) => $.workspace_access.scope_descriptions.own_agents) : t(($) => $.workspace_access.scope_descriptions.workspace)}
-            </p>
-            {scope === "workspace" ? <Alert><AlertDescription>{t(($) => $.workspace_access.workspace_warning)}</AlertDescription></Alert> : null}
           </div>
           <ExpirySelect value={expiry} onChange={setExpiry} includeKeep={!!token} />
           {expiry === "never" ? <Alert><AlertDescription>{t(($) => $.workspace_access.permanent_warning)}</AlertDescription></Alert> : null}

@@ -27,10 +27,9 @@ func withWorkspaceAccessParams(req *http.Request, params ...string) *http.Reques
 func TestWorkspaceAccessTokenLifecycleAndRegeneration(t *testing.T) {
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
 	createReq := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/access-tokens", map[string]any{
-		"name":           "Vendor user A",
-		"capabilities":   []string{"deployment.manage", "trace.read"},
-		"resource_scope": "own_agents",
-		"expires_at":     expiresAt,
+		"name":         "Vendor user A",
+		"capabilities": []string{"deployment.manage", "trace.read"},
+		"expires_at":   expiresAt,
 	})
 	createReq = withWorkspaceAccessParams(createReq, "id", testWorkspaceID)
 	createRec := httptest.NewRecorder()
@@ -42,8 +41,11 @@ func TestWorkspaceAccessTokenLifecycleAndRegeneration(t *testing.T) {
 	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
 		t.Fatalf("decode token: %v", err)
 	}
-	if !strings.HasPrefix(created.Token, "dta_") || created.Version != 1 || created.ResourceScope != "own_agents" {
+	if !strings.HasPrefix(created.Token, "dta_") || created.Version != 1 {
 		t.Fatalf("unexpected created token: %+v", created)
+	}
+	if strings.Contains(createRec.Body.String(), "resource_scope") {
+		t.Fatalf("create response exposed removed resource scope: %s", createRec.Body.String())
 	}
 
 	var subjectID, principalType, storedHash string
@@ -97,8 +99,10 @@ func TestWorkspaceAccessTokenLifecycleAndRegeneration(t *testing.T) {
 	}
 
 	updateReq := newRequest(http.MethodPatch, "/access-tokens/"+created.ID, map[string]any{
-		"name":           "Vendor user A",
-		"capabilities":   []string{"trace.read"},
+		"name":         "Vendor user A",
+		"capabilities": []string{"trace.read"},
+		// Old clients may still submit this removed field. It must be ignored
+		// and must never widen the token beyond its native owner identity.
 		"resource_scope": "workspace",
 		"expires_at":     nil,
 		"version":        created.Version,
@@ -113,8 +117,18 @@ func TestWorkspaceAccessTokenLifecycleAndRegeneration(t *testing.T) {
 	if err := json.NewDecoder(updateRec.Body).Decode(&updated); err != nil {
 		t.Fatalf("decode updated token: %v", err)
 	}
-	if updated.Version != 2 || updated.ResourceScope != "workspace" || len(updated.Capabilities) != 1 || updated.Capabilities[0] != "trace.read" {
+	if updated.Version != 2 || len(updated.Capabilities) != 1 || updated.Capabilities[0] != "trace.read" {
 		t.Fatalf("unexpected updated token: %+v", updated)
+	}
+	if strings.Contains(updateRec.Body.String(), "resource_scope") {
+		t.Fatalf("update response exposed removed resource scope: %s", updateRec.Body.String())
+	}
+	var storedScope string
+	if err := testPool.QueryRow(context.Background(), `SELECT resource_scope FROM workspace_access_token WHERE id = $1`, created.ID).Scan(&storedScope); err != nil {
+		t.Fatalf("load legacy resource scope: %v", err)
+	}
+	if storedScope != "own_agents" {
+		t.Fatalf("legacy resource_scope request widened stored policy to %q", storedScope)
 	}
 
 	newExpiry := time.Now().Add(90 * 24 * time.Hour).UTC().Format(time.RFC3339)
@@ -197,13 +211,12 @@ func TestWorkspaceAccessTokenLifecycleAndRegeneration(t *testing.T) {
 func TestGetWorkspaceAccessSelfIncludesBoundWorkspace(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/workspace-access/self", nil)
 	req = req.WithContext(middleware.WithWorkspaceAccessPrincipal(req.Context(), middleware.WorkspaceAccessPrincipal{
-		TokenID:       "11111111-1111-1111-1111-111111111111",
-		UserID:        testUserID,
-		WorkspaceID:   testWorkspaceID,
-		Name:          "Vendor A",
-		Capabilities:  []string{"deployment.manage"},
-		ResourceScope: "own_agents",
-		Version:       1,
+		TokenID:      "11111111-1111-1111-1111-111111111111",
+		UserID:       testUserID,
+		WorkspaceID:  testWorkspaceID,
+		Name:         "Vendor A",
+		Capabilities: []string{"deployment.manage"},
+		Version:      1,
 	}))
 	rec := httptest.NewRecorder()
 	testHandler.GetWorkspaceAccessSelf(rec, req)
@@ -229,7 +242,7 @@ func TestGetWorkspaceAccessSelfIncludesBoundWorkspace(t *testing.T) {
 
 func TestWorkspaceAccessTokenRejectsInvalidPolicy(t *testing.T) {
 	req := newRequest(http.MethodPost, "/access-tokens", map[string]any{
-		"name": "Vendor", "capabilities": []string{"members.manage"}, "resource_scope": "workspace",
+		"name": "Vendor", "capabilities": []string{"members.manage"},
 	})
 	req = withWorkspaceAccessParams(req, "id", testWorkspaceID)
 	rec := httptest.NewRecorder()
@@ -243,7 +256,7 @@ func TestWorkspaceAccessTokensHaveIndependentDynamicPolicies(t *testing.T) {
 	create := func(name string, capabilities []string) WorkspaceAccessTokenSecretResponse {
 		t.Helper()
 		req := newRequest(http.MethodPost, "/access-tokens", map[string]any{
-			"name": name, "capabilities": capabilities, "resource_scope": "own_agents", "expires_at": nil,
+			"name": name, "capabilities": capabilities, "expires_at": nil,
 		})
 		req = withWorkspaceAccessParams(req, "id", testWorkspaceID)
 		rec := httptest.NewRecorder()
@@ -292,7 +305,7 @@ func TestWorkspaceAccessTokensHaveIndependentDynamicPolicies(t *testing.T) {
 
 	updateReq := newRequest(http.MethodPatch, "/access-tokens/"+traceToken.ID, map[string]any{
 		"name": "Trace operator", "capabilities": []string{"deployment.manage", "trace.read"},
-		"resource_scope": "own_agents", "expires_at": nil, "version": traceToken.Version,
+		"expires_at": nil, "version": traceToken.Version,
 	})
 	updateReq = withWorkspaceAccessParams(updateReq, "id", testWorkspaceID, "tokenId", traceToken.ID)
 	updateRec := httptest.NewRecorder()
@@ -305,34 +318,56 @@ func TestWorkspaceAccessTokensHaveIndependentDynamicPolicies(t *testing.T) {
 	}
 }
 
-func TestWorkspaceAccessAgentScopeMatrix(t *testing.T) {
+func TestWorkspaceAccessNativeOwnership(t *testing.T) {
 	subjectID := "11111111-1111-4111-8111-111111111111"
 	workspaceID := "22222222-2222-4222-8222-222222222222"
 	otherWorkspaceID := "33333333-3333-4333-8333-333333333333"
 	otherOwnerID := "44444444-4444-4444-8444-444444444444"
 	tests := []struct {
 		name    string
-		scope   string
 		agent   db.Agent
 		allowed bool
 	}{
-		{"own agent", "own_agents", db.Agent{WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID(subjectID)}, true},
-		{"same workspace other owner", "own_agents", db.Agent{WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID(otherOwnerID)}, false},
-		{"workspace scope other owner", "workspace", db.Agent{WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID(otherOwnerID)}, true},
-		{"workspace scope cannot cross workspace", "workspace", db.Agent{WorkspaceID: parseUUID(otherWorkspaceID), OwnerID: parseUUID(subjectID)}, false},
+		{"own agent", db.Agent{WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID(subjectID)}, true},
+		{"same workspace other owner", db.Agent{WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID(otherOwnerID)}, false},
+		{"own agent in another workspace", db.Agent{WorkspaceID: parseUUID(otherWorkspaceID), OwnerID: parseUUID(subjectID)}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := middleware.WithWorkspaceAccessPrincipal(context.Background(), middleware.WorkspaceAccessPrincipal{UserID: subjectID, WorkspaceID: workspaceID, ResourceScope: tt.scope})
+			ctx := middleware.WithWorkspaceAccessPrincipal(context.Background(), middleware.WorkspaceAccessPrincipal{UserID: subjectID, WorkspaceID: workspaceID})
 			allowed, isToken := workspaceAccessCanUseAgent(ctx, tt.agent)
 			if !isToken || allowed != tt.allowed {
 				t.Fatalf("got allowed=%v isToken=%v, want allowed=%v isToken=true", allowed, isToken, tt.allowed)
 			}
 		})
 	}
+
+	ctx := middleware.WithWorkspaceAccessPrincipal(context.Background(), middleware.WorkspaceAccessPrincipal{UserID: subjectID, WorkspaceID: workspaceID})
+	if allowed, isToken := workspaceAccessCanManageSkill(ctx, db.Skill{
+		WorkspaceID: parseUUID(workspaceID), CreatedBy: parseUUID(subjectID),
+	}); !isToken || !allowed {
+		t.Fatalf("token must manage its own skill: allowed=%v isToken=%v", allowed, isToken)
+	}
+	if allowed, isToken := workspaceAccessCanManageSkill(ctx, db.Skill{
+		WorkspaceID: parseUUID(workspaceID), CreatedBy: parseUUID(otherOwnerID),
+	}); !isToken || allowed {
+		t.Fatalf("token must not manage another creator's skill: allowed=%v isToken=%v", allowed, isToken)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtimes", nil).WithContext(ctx)
+	member := db.Member{WorkspaceID: parseUUID(workspaceID), UserID: parseUUID(subjectID), Role: middleware.WorkspaceAccessActorSource}
+	if !canUseRuntimeForRequest(req, member, db.AgentRuntime{WorkspaceID: parseUUID(workspaceID), Visibility: "public", OwnerID: parseUUID(otherOwnerID)}) {
+		t.Fatal("token must retain native access to a public workspace runtime")
+	}
+	if !canUseRuntimeForRequest(req, member, db.AgentRuntime{WorkspaceID: parseUUID(workspaceID), Visibility: "private", OwnerID: parseUUID(subjectID)}) {
+		t.Fatal("token must use its own private runtime")
+	}
+	if canUseRuntimeForRequest(req, member, db.AgentRuntime{WorkspaceID: parseUUID(workspaceID), Visibility: "private", OwnerID: parseUUID(otherOwnerID)}) {
+		t.Fatal("token must not use another owner's private runtime")
+	}
 }
 
-func TestWorkspaceAccessTraceScopeAndPagination(t *testing.T) {
+func TestWorkspaceAccessTraceOwnershipAndPagination(t *testing.T) {
 	ctx := context.Background()
 	var subjectID string
 	if err := testPool.QueryRow(ctx, `INSERT INTO "user" (name, email, principal_type) VALUES ('Trace Token', 'trace-token-' || gen_random_uuid()::text || '@internal.multica.invalid', 'workspace_access_token') RETURNING id`).Scan(&subjectID); err != nil {
@@ -377,16 +412,16 @@ func TestWorkspaceAccessTraceScopeAndPagination(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = ANY($1::uuid[])`, []string{ownedAgentID, otherAgentID})
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, subjectID)
 	})
-	requestFor := func(taskID, scope, query string) *http.Request {
+	requestFor := func(taskID, query string) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, "/api/tasks/"+taskID+"/messages"+query, nil)
 		req = withWorkspaceAccessParams(req, "taskId", taskID)
-		principal := middleware.WorkspaceAccessPrincipal{UserID: subjectID, WorkspaceID: testWorkspaceID, ResourceScope: scope, Capabilities: []string{"trace.read"}}
+		principal := middleware.WorkspaceAccessPrincipal{UserID: subjectID, WorkspaceID: testWorkspaceID, Capabilities: []string{"trace.read"}}
 		requestCtx := middleware.WithWorkspaceAccessPrincipal(req.Context(), principal)
 		requestCtx = middleware.SetMemberContext(requestCtx, testWorkspaceID, db.Member{WorkspaceID: parseUUID(testWorkspaceID), UserID: parseUUID(subjectID), Role: middleware.WorkspaceAccessActorSource})
 		return req.WithContext(requestCtx)
 	}
 	pageRec := httptest.NewRecorder()
-	testHandler.ListTaskMessagesByUser(pageRec, requestFor(ownedTaskID, "own_agents", "?since=1&limit=2"))
+	testHandler.ListTaskMessagesByUser(pageRec, requestFor(ownedTaskID, "?since=1&limit=2"))
 	if pageRec.Code != http.StatusOK {
 		t.Fatalf("owned trace status = %d, body = %s", pageRec.Code, pageRec.Body.String())
 	}
@@ -398,13 +433,8 @@ func TestWorkspaceAccessTraceScopeAndPagination(t *testing.T) {
 		t.Fatalf("unexpected trace page: %#v", page)
 	}
 	deniedRec := httptest.NewRecorder()
-	testHandler.ListTaskMessagesByUser(deniedRec, requestFor(otherTaskID, "own_agents", ""))
+	testHandler.ListTaskMessagesByUser(deniedRec, requestFor(otherTaskID, ""))
 	if deniedRec.Code != http.StatusForbidden || !strings.Contains(deniedRec.Body.String(), "workspace_access_resource_not_allowed") {
-		t.Fatalf("own scope foreign trace status = %d, body = %s", deniedRec.Code, deniedRec.Body.String())
-	}
-	workspaceRec := httptest.NewRecorder()
-	testHandler.ListTaskMessagesByUser(workspaceRec, requestFor(otherTaskID, "workspace", ""))
-	if workspaceRec.Code != http.StatusOK {
-		t.Fatalf("workspace scope trace status = %d, body = %s", workspaceRec.Code, workspaceRec.Body.String())
+		t.Fatalf("foreign owner trace status = %d, body = %s", deniedRec.Code, deniedRec.Body.String())
 	}
 }

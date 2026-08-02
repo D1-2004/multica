@@ -14,13 +14,12 @@ type workspaceAccessPrincipalContextKey struct{}
 // DTA workspace credential. It is deliberately separate from workspace roles:
 // a Token subject is not a member and never becomes an owner or admin.
 type WorkspaceAccessPrincipal struct {
-	TokenID       string
-	UserID        string
-	WorkspaceID   string
-	Name          string
-	Capabilities  []string
-	ResourceScope string
-	Version       int32
+	TokenID      string
+	UserID       string
+	WorkspaceID  string
+	Name         string
+	Capabilities []string
+	Version      int32
 }
 
 func WithWorkspaceAccessPrincipal(ctx context.Context, principal WorkspaceAccessPrincipal) context.Context {

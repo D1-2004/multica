@@ -47,11 +47,20 @@ import {
 import { parseWithFallback } from "./schema";
 
 describe("workspace access schemas", () => {
+  it("parses tokens without a configurable resource scope", () => {
+    const parsed = WorkspaceAccessTokenListSchema.parse([{
+      id: "t1", workspace_id: "w1", name: "DTA", capabilities: ["deployment.manage"],
+      version: 1, token_prefix: "dta_abc", expires_at: null, last_used_at: null,
+      revoked_at: null, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z",
+    }]);
+    expect(parsed[0]).not.toHaveProperty("resource_scope");
+  });
+
   it("fails closed when a token contains an unknown capability", () => {
     const parsed = parseWithFallback(
       [{
         id: "t1", workspace_id: "w1", name: "DTA", capabilities: ["members.manage"],
-        resource_scope: "workspace", version: 1, token_prefix: "dta_abc",
+        version: 1, token_prefix: "dta_abc",
         expires_at: null, last_used_at: null, revoked_at: null,
         created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z",
       }],
@@ -66,7 +75,7 @@ describe("workspace access schemas", () => {
     const parsed = parseWithFallback(
       {
         id: "t1", workspace_id: "w1", name: "prod", capabilities: ["trace.read"],
-        resource_scope: "own_agents", version: 1, token_prefix: "dta_abc",
+        version: 1, token_prefix: "dta_abc",
         expires_at: null, last_used_at: null, created_at: "2026-08-02T00:00:00Z",
         updated_at: "2026-08-02T00:00:00Z", revoked_at: null,
       },

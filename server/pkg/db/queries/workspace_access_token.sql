@@ -27,7 +27,7 @@ VALUES (
     sqlc.arg('token_hash'),
     sqlc.arg('token_prefix'),
     sqlc.arg('capabilities'),
-    sqlc.arg('resource_scope'),
+    'own_agents',
     sqlc.narg('expires_at'),
     sqlc.arg('actor_user_id'),
     sqlc.arg('actor_user_id')
@@ -47,7 +47,6 @@ ORDER BY created_at DESC;
 UPDATE workspace_access_token
 SET name = sqlc.arg('name'),
     capabilities = sqlc.arg('capabilities'),
-    resource_scope = sqlc.arg('resource_scope'),
     expires_at = sqlc.narg('expires_at'),
     version = version + 1,
     updated_by = sqlc.arg('actor_user_id'),

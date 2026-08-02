@@ -23,9 +23,8 @@ type workspaceAccessSelf struct {
 		Context     *string `json:"context"`
 		IssuePrefix string  `json:"issue_prefix"`
 	} `json:"workspace"`
-	Capabilities  []string `json:"capabilities"`
-	ResourceScope string   `json:"resource_scope"`
-	Version       int32    `json:"version"`
+	Capabilities []string `json:"capabilities"`
+	Version      int32    `json:"version"`
 }
 
 func isWorkspaceAccessToken(token string) bool {

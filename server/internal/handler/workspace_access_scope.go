@@ -16,9 +16,6 @@ func workspaceAccessCanUseAgent(ctx context.Context, agent db.Agent) (bool, bool
 	if uuidToString(agent.WorkspaceID) != principal.WorkspaceID {
 		return false, true
 	}
-	if principal.ResourceScope == "workspace" {
-		return true, true
-	}
 	return uuidToString(agent.OwnerID) == principal.UserID, true
 }
 
@@ -29,9 +26,6 @@ func workspaceAccessCanManageSkill(ctx context.Context, skill db.Skill) (bool, b
 	}
 	if uuidToString(skill.WorkspaceID) != principal.WorkspaceID {
 		return false, true
-	}
-	if principal.ResourceScope == "workspace" {
-		return true, true
 	}
 	return skill.CreatedBy.Valid && uuidToString(skill.CreatedBy) == principal.UserID, true
 }
@@ -52,9 +46,6 @@ func canUseRuntimeForRequest(r *http.Request, member db.Member, runtime db.Agent
 	if principal, isToken := middleware.WorkspaceAccessPrincipalFromContext(r.Context()); isToken {
 		if uuidToString(runtime.WorkspaceID) != principal.WorkspaceID {
 			return false
-		}
-		if principal.ResourceScope == "workspace" {
-			return true
 		}
 	}
 	return canUseRuntimeForAgent(member, runtime)

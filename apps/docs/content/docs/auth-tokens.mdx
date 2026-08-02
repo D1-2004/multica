@@ -33,12 +33,11 @@ In day-to-day use you'll only touch the first two directly. The **[daemon](/daem
 
 ## DTA access keys for external service providers
 
-A workspace owner manages these under **Settings → DTA Access**. Each token has two independent controls:
+A workspace owner manages these under **Settings → DTA Access**. Each token has one configurable permission set:
 
 - **Permissions**: create/update deployments, retire deployments, and read task traces. Owners can select any combination.
-- **Resource scope**: only agents created by that token (`own_agents`, recommended), or all agents in the workspace (`workspace`).
 
-Create a separate token for each external operator that needs different permissions. Changing a token's permissions or scope applies on its next request. Revoking it immediately blocks that operator without deleting its agents or trace history.
+Create a separate token for each external operator that needs different permissions. Every token is permanently bound to one workspace and follows Multica's native ownership rules: it can manage only agents and skills owned by its stable internal subject, while human workspace owners/admins retain their normal governance visibility. Changing a token's permissions applies on its next request. Revoking it immediately blocks that operator without deleting its agents or trace history.
 
 <Callout type="warning">
 **A DTA access key is not a personal access token and is not supported by the Multica CLI.** Give it only to the DTA integration. The external service provider should operate the workspace through DTA and should not receive a Multica account or an owner's PAT.

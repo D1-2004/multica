@@ -23,18 +23,17 @@ var workspaceAccessCapabilities = map[string]struct{}{
 }
 
 type WorkspaceAccessTokenResponse struct {
-	ID            string   `json:"id"`
-	WorkspaceID   string   `json:"workspace_id"`
-	Name          string   `json:"name"`
-	Capabilities  []string `json:"capabilities"`
-	ResourceScope string   `json:"resource_scope"`
-	Version       int32    `json:"version"`
-	Prefix        string   `json:"token_prefix"`
-	ExpiresAt     *string  `json:"expires_at"`
-	LastUsedAt    *string  `json:"last_used_at"`
-	CreatedAt     string   `json:"created_at"`
-	UpdatedAt     string   `json:"updated_at"`
-	RevokedAt     *string  `json:"revoked_at"`
+	ID           string   `json:"id"`
+	WorkspaceID  string   `json:"workspace_id"`
+	Name         string   `json:"name"`
+	Capabilities []string `json:"capabilities"`
+	Version      int32    `json:"version"`
+	Prefix       string   `json:"token_prefix"`
+	ExpiresAt    *string  `json:"expires_at"`
+	LastUsedAt   *string  `json:"last_used_at"`
+	CreatedAt    string   `json:"created_at"`
+	UpdatedAt    string   `json:"updated_at"`
+	RevokedAt    *string  `json:"revoked_at"`
 }
 
 type WorkspaceAccessTokenSecretResponse struct {
@@ -44,27 +43,23 @@ type WorkspaceAccessTokenSecretResponse struct {
 
 func workspaceAccessTokenToResponse(token db.WorkspaceAccessToken) WorkspaceAccessTokenResponse {
 	return WorkspaceAccessTokenResponse{
-		ID:            uuidToString(token.ID),
-		WorkspaceID:   uuidToString(token.WorkspaceID),
-		Name:          token.Name,
-		Capabilities:  token.Capabilities,
-		ResourceScope: token.ResourceScope,
-		Version:       token.Version,
-		Prefix:        token.TokenPrefix,
-		ExpiresAt:     timestampToPtr(token.ExpiresAt),
-		LastUsedAt:    timestampToPtr(token.LastUsedAt),
-		CreatedAt:     timestampToString(token.CreatedAt),
-		UpdatedAt:     timestampToString(token.UpdatedAt),
-		RevokedAt:     timestampToPtr(token.RevokedAt),
+		ID:           uuidToString(token.ID),
+		WorkspaceID:  uuidToString(token.WorkspaceID),
+		Name:         token.Name,
+		Capabilities: token.Capabilities,
+		Version:      token.Version,
+		Prefix:       token.TokenPrefix,
+		ExpiresAt:    timestampToPtr(token.ExpiresAt),
+		LastUsedAt:   timestampToPtr(token.LastUsedAt),
+		CreatedAt:    timestampToString(token.CreatedAt),
+		UpdatedAt:    timestampToString(token.UpdatedAt),
+		RevokedAt:    timestampToPtr(token.RevokedAt),
 	}
 }
 
-func validateWorkspaceAccessPolicy(name string, capabilities []string, resourceScope string) error {
+func validateWorkspaceAccessPolicy(name string, capabilities []string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("name is required")
-	}
-	if resourceScope != "own_agents" && resourceScope != "workspace" {
-		return errors.New("resource_scope must be own_agents or workspace")
 	}
 	if len(capabilities) == 0 {
 		return errors.New("at least one capability is required")
@@ -83,10 +78,9 @@ func validateWorkspaceAccessPolicy(name string, capabilities []string, resourceS
 }
 
 type createWorkspaceAccessTokenRequest struct {
-	Name          string   `json:"name"`
-	Capabilities  []string `json:"capabilities"`
-	ResourceScope string   `json:"resource_scope"`
-	ExpiresAt     *string  `json:"expires_at"`
+	Name         string   `json:"name"`
+	Capabilities []string `json:"capabilities"`
+	ExpiresAt    *string  `json:"expires_at"`
 }
 
 func (h *Handler) CreateWorkspaceAccessToken(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +94,7 @@ func (h *Handler) CreateWorkspaceAccessToken(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := validateWorkspaceAccessPolicy(req.Name, req.Capabilities, req.ResourceScope); err != nil {
+	if err := validateWorkspaceAccessPolicy(req.Name, req.Capabilities); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -127,7 +121,6 @@ func (h *Handler) CreateWorkspaceAccessToken(w http.ResponseWriter, r *http.Requ
 			TokenHash:     auth.HashToken(rawToken),
 			TokenPrefix:   workspaceAccessTokenPrefix(rawToken),
 			Capabilities:  req.Capabilities,
-			ResourceScope: req.ResourceScope,
 			ExpiresAt:     expiresAt,
 			ActorUserID:   parseUUID(actorID),
 		})
@@ -169,11 +162,10 @@ func (h *Handler) GetWorkspaceAccessToken(w http.ResponseWriter, r *http.Request
 }
 
 type updateWorkspaceAccessTokenRequest struct {
-	Name          string          `json:"name"`
-	Capabilities  []string        `json:"capabilities"`
-	ResourceScope string          `json:"resource_scope"`
-	ExpiresAt     json.RawMessage `json:"expires_at"`
-	Version       int32           `json:"version"`
+	Name         string          `json:"name"`
+	Capabilities []string        `json:"capabilities"`
+	ExpiresAt    json.RawMessage `json:"expires_at"`
+	Version      int32           `json:"version"`
 }
 
 func (h *Handler) UpdateWorkspaceAccessToken(w http.ResponseWriter, r *http.Request) {
@@ -194,7 +186,7 @@ func (h *Handler) UpdateWorkspaceAccessToken(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := validateWorkspaceAccessPolicy(req.Name, req.Capabilities, req.ResourceScope); err != nil {
+	if err := validateWorkspaceAccessPolicy(req.Name, req.Capabilities); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -206,14 +198,13 @@ func (h *Handler) UpdateWorkspaceAccessToken(w http.ResponseWriter, r *http.Requ
 	err := h.runWorkspaceAccessTransaction(r.Context(), func(qtx *db.Queries) error {
 		var updateErr error
 		updated, updateErr = qtx.UpdateWorkspaceAccessToken(r.Context(), db.UpdateWorkspaceAccessTokenParams{
-			Name:          strings.TrimSpace(req.Name),
-			Capabilities:  req.Capabilities,
-			ResourceScope: req.ResourceScope,
-			ExpiresAt:     expiresAt,
-			ActorUserID:   parseUUID(actorID),
-			ID:            current.ID,
-			WorkspaceID:   current.WorkspaceID,
-			Version:       req.Version,
+			Name:         strings.TrimSpace(req.Name),
+			Capabilities: req.Capabilities,
+			ExpiresAt:    expiresAt,
+			ActorUserID:  parseUUID(actorID),
+			ID:           current.ID,
+			WorkspaceID:  current.WorkspaceID,
+			Version:      req.Version,
 		})
 		if updateErr != nil {
 			return updateErr
@@ -350,9 +341,8 @@ func (h *Handler) GetWorkspaceAccessSelf(w http.ResponseWriter, r *http.Request)
 			"slug":         workspace.Slug,
 			"issue_prefix": workspace.IssuePrefix,
 		},
-		"capabilities":   principal.Capabilities,
-		"resource_scope": principal.ResourceScope,
-		"version":        principal.Version,
+		"capabilities": principal.Capabilities,
+		"version":      principal.Version,
 	})
 }
 

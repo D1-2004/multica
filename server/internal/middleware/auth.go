@@ -156,7 +156,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 			}
 
 			// Workspace-bound DTA Token. Identity and policy live on the same
-			// database row and are read on every request, so capability, scope,
+			// database row and are read on every request, so capability,
 			// expiry, regeneration, and revocation changes take effect immediately.
 			if strings.HasPrefix(tokenString, "dta_") {
 				// Passing the service is the production wiring. The variadic shape
@@ -191,13 +191,12 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				}
 
 				principal := WorkspaceAccessPrincipal{
-					TokenID:       uuidToString(row.ID),
-					UserID:        uuidToString(row.SubjectUserID),
-					WorkspaceID:   uuidToString(row.WorkspaceID),
-					Name:          row.Name,
-					Capabilities:  row.Capabilities,
-					ResourceScope: row.ResourceScope,
-					Version:       row.Version,
+					TokenID:      uuidToString(row.ID),
+					UserID:       uuidToString(row.SubjectUserID),
+					WorkspaceID:  uuidToString(row.WorkspaceID),
+					Name:         row.Name,
+					Capabilities: row.Capabilities,
+					Version:      row.Version,
 				}
 				capability, allowed := workspaceAccessCapabilityForRequest(r)
 				if !allowed {

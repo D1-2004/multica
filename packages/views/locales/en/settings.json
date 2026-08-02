@@ -141,27 +141,17 @@
     "regenerate_title": "Regenerate DTA token",
     "regenerate_warning": "The current key will stop working immediately. Configure the newly generated key in DTA after you save it.",
     "permissions": "Permissions",
-    "permissions_description": "Permissions can be combined. Unselected capabilities and APIs not described below are denied by default. Resource scope further limits which agents these permissions apply to.",
-    "scope_title": "Resource scope",
-    "scope": {
-      "own_agents": "This token's agents",
-      "workspace": "All workspace agents"
-    },
-    "scope_descriptions": {
-      "own_agents": "Can access only agents created by this token and their related resources, not agents created by employees or other tokens. Regenerating the key does not change ownership.",
-      "workspace": "Can access every agent in this workspace, including agents created by employees or other DTA tokens, but cannot cross workspace boundaries."
-    },
+    "permissions_description": "Permissions can be combined. Unselected capabilities and APIs not described below are denied by default. Each token follows Multica's native ownership rules and cannot manage agents owned by employees or other tokens.",
     "capabilities": {
       "manage": "Create and maintain agents",
       "retire": "Retire agents",
       "trace": "Read task traces"
     },
     "capability_descriptions": {
-      "manage": "Create, view, and update in-scope agents; restore retired agents; manage Agent Sources, Skill assignments, and Skill files; and list available runtimes. Does not include retiring agents or reading task traces.",
-      "retire": "Archive in-scope agents. Does not include creating, editing, or restoring agents, or reading task traces.",
-      "trace": "Read task lists and complete message histories for in-scope agents, including user input, agent output, tool arguments, and tool results. Does not include editing or retiring agents."
+      "manage": "Create, view, and update agents owned by this token; restore retired agents; manage their Agent Sources, Skill assignments, and Skill files; and list available runtimes. Does not include retiring agents or reading task traces.",
+      "retire": "Archive agents owned by this token. Does not include creating, editing, or restoring agents, or reading task traces.",
+      "trace": "Read task lists and complete message histories for agents owned by this token, including user input, agent output, tool arguments, and tool results. Does not include editing or retiring agents."
     },
-    "workspace_warning": "Workspace scope can operate agents owned by employees or other DTA tokens, but only through the permissions selected above.",
     "expiry_title": "Expiry",
     "expiry_description": "All DTA requests using this token fail immediately after it expires. You can edit the expiry or regenerate the key with a new expiry.",
     "expiry": {

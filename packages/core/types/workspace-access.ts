@@ -5,14 +5,12 @@ export const WORKSPACE_ACCESS_CAPABILITIES = [
 ] as const;
 
 export type WorkspaceAccessCapability = (typeof WORKSPACE_ACCESS_CAPABILITIES)[number];
-export type WorkspaceAccessResourceScope = "own_agents" | "workspace";
 
 export interface WorkspaceAccessToken {
   id: string;
   workspace_id: string;
   name: string;
   capabilities: WorkspaceAccessCapability[];
-  resource_scope: WorkspaceAccessResourceScope;
   version: number;
   token_prefix: string;
   expires_at: string | null;
@@ -29,7 +27,6 @@ export interface WorkspaceAccessTokenSecretResponse extends WorkspaceAccessToken
 export interface CreateWorkspaceAccessTokenRequest {
   name: string;
   capabilities: WorkspaceAccessCapability[];
-  resource_scope: WorkspaceAccessResourceScope;
   expires_at: string | null;
 }
 

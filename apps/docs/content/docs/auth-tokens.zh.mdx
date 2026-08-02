@@ -33,12 +33,11 @@ Multica 为人员、守护进程和外部 DTA 集成使用不同凭证。人员�
 
 ## 给外部服务商使用的 DTA 访问密钥
 
-工作区所有者在 **Settings → DTA Token** 中管理。每个 Token 包含两组相互独立的控制：
+工作区所有者在 **Settings → DTA Token** 中管理。每个 Token 可配置一组权限：
 
 - **权限**：创建和更新部署、下线部署、查看任务链路，可按需任意组合。
-- **资源范围**：仅此 Token 创建的智能体（`own_agents`，推荐），或当前工作区全部智能体（`workspace`）。
 
-需要不同权限的外部使用方应分别创建 Token。修改权限或资源范围后，该 Token 的下一次请求立即按新策略执行；吊销会立即阻止该使用方，但不会删除其创建的智能体和历史 Trace。
+需要不同权限的外部使用方应分别创建 Token。每个 Token 永久绑定一个工作区，并遵循 Multica 原生 ownership：只能管理归属于其稳定内部身份的智能体和 skill；工作区的 human owner/admin 仍保留原生治理可见性。修改权限后，该 Token 的下一次请求立即按新策略执行；吊销会立即阻止该使用方，但不会删除其创建的智能体和历史 Trace。
 
 <Callout type="warning">
 **DTA 访问密钥不是个人 PAT，也不能用于 Multica CLI。** 只把它配置给 DTA。外部服务商应完全通过 DTA 操作，不需要 Multica 账号，也不应拿到工作区所有者的 PAT。

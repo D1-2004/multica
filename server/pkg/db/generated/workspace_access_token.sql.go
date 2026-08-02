@@ -93,10 +93,10 @@ VALUES (
     $4,
     $5,
     $6,
+    'own_agents',
     $7,
     $8,
-    $9,
-    $9
+    $8
 )
 RETURNING id, workspace_id, subject_user_id, name, token_hash, token_prefix, capabilities, resource_scope, version, expires_at, last_used_at, created_by, updated_by, created_at, updated_at, revoked_by, revoked_at
 `
@@ -108,7 +108,6 @@ type CreateWorkspaceAccessTokenParams struct {
 	TokenHash     string             `json:"token_hash"`
 	TokenPrefix   string             `json:"token_prefix"`
 	Capabilities  []string           `json:"capabilities"`
-	ResourceScope string             `json:"resource_scope"`
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 	ActorUserID   pgtype.UUID        `json:"actor_user_id"`
 }
@@ -121,7 +120,6 @@ func (q *Queries) CreateWorkspaceAccessToken(ctx context.Context, arg CreateWork
 		arg.TokenHash,
 		arg.TokenPrefix,
 		arg.Capabilities,
-		arg.ResourceScope,
 		arg.ExpiresAt,
 		arg.ActorUserID,
 	)
@@ -421,34 +419,31 @@ const updateWorkspaceAccessToken = `-- name: UpdateWorkspaceAccessToken :one
 UPDATE workspace_access_token
 SET name = $1,
     capabilities = $2,
-    resource_scope = $3,
-    expires_at = $4,
+    expires_at = $3,
     version = version + 1,
-    updated_by = $5,
+    updated_by = $4,
     updated_at = now()
-WHERE id = $6
-  AND workspace_id = $7
-  AND version = $8
+WHERE id = $5
+  AND workspace_id = $6
+  AND version = $7
   AND revoked_at IS NULL
 RETURNING id, workspace_id, subject_user_id, name, token_hash, token_prefix, capabilities, resource_scope, version, expires_at, last_used_at, created_by, updated_by, created_at, updated_at, revoked_by, revoked_at
 `
 
 type UpdateWorkspaceAccessTokenParams struct {
-	Name          string             `json:"name"`
-	Capabilities  []string           `json:"capabilities"`
-	ResourceScope string             `json:"resource_scope"`
-	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
-	ActorUserID   pgtype.UUID        `json:"actor_user_id"`
-	ID            pgtype.UUID        `json:"id"`
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	Version       int32              `json:"version"`
+	Name         string             `json:"name"`
+	Capabilities []string           `json:"capabilities"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	ActorUserID  pgtype.UUID        `json:"actor_user_id"`
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	Version      int32              `json:"version"`
 }
 
 func (q *Queries) UpdateWorkspaceAccessToken(ctx context.Context, arg UpdateWorkspaceAccessTokenParams) (WorkspaceAccessToken, error) {
 	row := q.db.QueryRow(ctx, updateWorkspaceAccessToken,
 		arg.Name,
 		arg.Capabilities,
-		arg.ResourceScope,
 		arg.ExpiresAt,
 		arg.ActorUserID,
 		arg.ID,
