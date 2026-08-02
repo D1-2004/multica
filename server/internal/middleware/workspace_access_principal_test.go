@@ -34,6 +34,7 @@ func TestWorkspaceAccessCapabilityForRequest(t *testing.T) {
 		{http.MethodPost, "/api/workspaces/w/github/installations/reuse", "", false},
 		{http.MethodDelete, "/api/workspaces/w/github/installations/i", "", false},
 		{http.MethodPost, "/api/dta/load-smokes", "deployment.manage", true},
+		{http.MethodGet, "/api/dta/load-smokes?agent_id=a&marker=m", "deployment.manage", true},
 		{http.MethodGet, "/api/dta/load-smokes/i/runs", "deployment.manage", true},
 		{http.MethodGet, "/api/dta/load-smokes/i/comments", "deployment.manage", true},
 		{http.MethodPost, "/api/dta/load-smokes/i/retry", "deployment.manage", true},

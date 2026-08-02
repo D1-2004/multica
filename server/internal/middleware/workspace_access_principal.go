@@ -123,7 +123,7 @@ func workspaceAccessCapabilityForRequest(r *http.Request) (string, bool) {
 	// outside the workspace Token surface.
 	if len(parts) >= 3 && parts[0] == "api" && parts[1] == "dta" && parts[2] == "load-smokes" {
 		switch {
-		case len(parts) == 3 && r.Method == http.MethodPost:
+		case len(parts) == 3 && (r.Method == http.MethodGet || r.Method == http.MethodPost):
 			return "deployment.manage", true
 		case len(parts) == 5 && parts[4] == "runs" && r.Method == http.MethodGet:
 			return "deployment.manage", true

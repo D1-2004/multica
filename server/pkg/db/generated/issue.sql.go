@@ -532,6 +532,62 @@ func (q *Queries) FindRecentAutopilotDuplicateIssue(ctx context.Context, arg Fin
 	return i, err
 }
 
+const getDTALoadSmokeByOperation = `-- name: GetDTALoadSmokeByOperation :one
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage FROM issue
+WHERE workspace_id = $1
+  AND metadata->>'kind' = 'dta_load_smoke'
+  AND metadata->>'token_id' = $2::text
+  AND metadata->>'agent_id' = $3::text
+  AND metadata->>'marker' = $4::text
+ORDER BY created_at ASC
+LIMIT 1
+`
+
+type GetDTALoadSmokeByOperationParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	TokenID     string      `json:"token_id"`
+	AgentID     string      `json:"agent_id"`
+	Marker      string      `json:"marker"`
+}
+
+func (q *Queries) GetDTALoadSmokeByOperation(ctx context.Context, arg GetDTALoadSmokeByOperationParams) (Issue, error) {
+	row := q.db.QueryRow(ctx, getDTALoadSmokeByOperation,
+		arg.WorkspaceID,
+		arg.TokenID,
+		arg.AgentID,
+		arg.Marker,
+	)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+	)
+	return i, err
+}
+
 const getIssue = `-- name: GetIssue :one
 SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage FROM issue
 WHERE id = $1

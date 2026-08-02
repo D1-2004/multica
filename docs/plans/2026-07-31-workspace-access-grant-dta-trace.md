@@ -4,18 +4,18 @@
 > 状态：已完成（仅 Multica 范围）
 > 创建日期：2026-07-31
 > 计划 ID：20260731-workspace-access-grant-dta-trace
-> 最后更新时间：2026-08-02 23:25 CST
+> 最后更新时间：2026-08-02 23:49 CST
 > 当前分支：`codex/workspace-access-grants`
 > 目标执行分支：`codex/workspace-access-grants`
 > 基线 Commit：`origin/develop@596ed393fd1db31f4a83765a7ca686df200fc215`
-> 已有实现 Commit：`df47612fa`、`0c8c4ab97`、`3ef44ea57`、`a1df2accf`、`f42726e66`、`fab9a8fc5`
+> 已有实现 Commit：`df47612fa`、`0c8c4ab97`、`3ef44ea57`、`a1df2accf`、`f42726e66`、`fab9a8fc5`、`c682a7b8d`、`dd44505cc`
 > 原始工作区：`/Users/fanqi/test/code/ding-fde-agent/dt-fde-multica`
 > Worktree 路径：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-workspace-access-grants`
 > Worktree 来源：本任务于 2026-08-02 创建
 > DTA 工作区：本轮不修改；曾创建的 `codex/workspace-access-profile` 工作树已恢复为干净状态
 > 交付状态：第一阶段已推送并部署预发；第二阶段与 ownership 收敛本地实现完成、未推送、未部署；生产未发布
 > 收尾状态：保留中
-> 当前里程碑：Multica Token 权限与原生 ownership 收敛已完成
+> 当前里程碑：load-smoke operation 幂等与恢复合同已完成
 
 ## 一句话结论
 
@@ -157,7 +157,7 @@ Workspace 设置页显示平铺的“DTA Token”：
 
 - `deployment.manage` 允许读取 workspace 已授权的 GitHub installations/repositories、执行 agent preview/create、source readback/sync；handler 必须按 Token workspace 和 agent ownership 复核。
 - installation 的创建、复用、授权变更保持 human-only。
-- 新增 DTA load-smoke create/runs/messages/comments/retry 合同，服务端内部完成 Issue/task 编排并只返回部署验收所需状态和证据。
+- 新增 DTA load-smoke create/resolve/runs/messages/comments/retry 合同，服务端内部完成 Issue/task 编排并只返回部署验收所需状态和证据；`marker` 是可重放、可恢复的 operation ID。
 - Multica 提供隐藏的内部 CLI 传输命令；DTA 何时切换该接缝不属于本轮。
 
 ## 被排除的方案
@@ -183,6 +183,7 @@ Workspace 设置页显示平铺的“DTA Token”：
 ## 文件与职责
 
 - `server/migrations/257_workspace_access_token.*.sql`：未发布 migration 原地收敛为 Token + audit。
+- `server/migrations/259_dta_load_smoke_operation_idempotency.*.sql`：以 Workspace＋Token＋Agent＋marker 建立 load-smoke 永久唯一约束。
 - `server/pkg/db/queries/workspace_access_token.sql`：单层 Token CRUD、认证、regenerate、revoke 和 audit。
 - `server/internal/middleware/auth.go`、`workspace_access_principal.go`：去除 GrantID，策略直接来自 Token。
 - `server/internal/handler/workspace_access.go`：平铺 Token 管理 API。
@@ -208,6 +209,15 @@ Workspace 设置页显示平铺的“DTA Token”：
 - [x] 里程碑八：实现 DTA 专用 load-smoke API/隐藏 CLI，保持通用 Issue/Comment 默认拒绝。
 - [x] 里程碑九：运行 Multica CLI、handler、middleware、router 和 Go 全量回归；DTA 联调明确后置。
 - [x] 里程碑十：删除产品/API 中的 `own_agents/workspace` 资源范围，迁移已有宽权限值，统一按原生 ownership 验证。
+- [x] 里程碑十一：把 load-smoke marker 收敛为幂等 operation key，补齐并发唯一约束与按 marker 恢复接口。
+
+## 调试假设记录
+
+| 假设 | 验证方式 | 结果 |
+|---|---|---|
+| H1：`marker` 只写 metadata，未参与查重或唯一约束，因此响应丢失后重放会创建第二个 Issue | 检查 `CreateDTALoadSmoke`、`IssueService.Create` 与 router | 已确认：`AllowDuplicate:true` 显式跳过 active duplicate guard，且只有 `issueId` 子资源读取接口 |
+| H2：只改为 `AllowDuplicate:false` 就足够 | 对照通用 Issue duplicate key | 已否定：通用 key 只按 Workspace/project/parent/title 且只约束 active Issue，无法表达 Token＋Agent＋marker 的永久 operation identity |
+| H3：需要 metadata 查询、数据库唯一约束和恢复 API 三者同时存在 | 增加重放、并发、payload 冲突、跨 Token 与恢复回归测试 | 已确认：同 operation 同 payload 返回原 Issue；不同 payload 409；并发只创建一条；跨 Token 404；GET 可按 Agent＋marker 恢复 |
 
 ## 执行记录
 
@@ -218,7 +228,8 @@ Workspace 设置页显示平铺的“DTA Token”：
 | 预发开关注入 | 已完成 | `3ef44ea57` | `bash -n src/main.sh`；trait guarded replacement；pipeline/health/config 回读 | 运行时白名单包含 `FF_WORKSPACE_ACCESS_TOKENS`；预发 trait 98→99 个唯一 key，其他项不变；`/api/config` 返回 true |
 | 预发 UI 反馈修复 | 已完成 | `fab9a8fc5` | Views typecheck；目标 ESLint；locale JSON；diff check | Select 使用全宽约束；权限、资源范围和有效期补齐详细说明；真实浏览器像素效果待下一次预发部署复验 |
 | 第二阶段 Multica 机器身份交付面 | 已完成 | `c682a7b8d` | `go test ./cmd/multica ./internal/handler ./internal/middleware ./cmd/server`；`go test ./...`；专项 profile/load-smoke 测试 | profile、GitHub allowlist、专用 smoke 均通过；全量测试仅命中既有 `pkg/agent` 72ms 时序测试失败，专项复跑可稳定复现且与本改动无关；DTA 工作树干净 |
-| 原生 ownership 收敛 | 已完成，待提交 | 本次实现提交 | Workspace Access 精确 Go 测试；middleware/CLI 精确测试；`go vet`；Core 80 tests；全量 TS typecheck；Docs build；migration lint/up/readback | UI/API/self 删除资源范围；旧 `resource_scope=workspace` 请求无法放宽；Agent/Skill 按 owner/creator，Runtime 按原生 public/owner；258 将预发已有宽权限值归一为 `own_agents`；绑定权限明确不在本版 |
+| 原生 ownership 收敛 | 已提交 | `dd44505cc` | Workspace Access 精确 Go 测试；middleware/CLI 精确测试；`go vet`；Core 80 tests；全量 TS typecheck；Docs build；migration lint/up/readback | UI/API/self 删除资源范围；旧 `resource_scope=workspace` 请求无法放宽；Agent/Skill 按 owner/creator，Runtime 按原生 public/owner；258 将预发已有宽权限值归一为 `own_agents`；绑定权限明确不在本版 |
+| load-smoke operation 修复 | 已完成 | 本次实现提交 | handler 专项连续 3 次；middleware/CLI/router/migrate 测试；`go vet`；migration 259 up/index readback/唯一冲突探针 | 同 payload 重放与终态重放返回原 Issue；不同 payload 409；并发只创建一条；Token 隔离；按 marker 恢复；数据库永久唯一约束均通过 |
 
 ## 验证策略
 
@@ -236,7 +247,7 @@ Workspace 设置页显示平铺的“DTA Token”：
 | 回归 | handler 全包、Go vet、TS workspace typecheck、Core 测试、Docs build |
 | profile 兼容 | `dta_` 登录/状态/workspace list/get 专项；证明 `/api/me` 和 human PAT 仍拒绝 |
 | GitHub Source | installation/repository/preview/create/source sync/readback allowlist 与跨 Workspace、非 owner 拒绝测试 |
-| load-smoke | DTA 专用 create/runs/messages/comments/retry；server-stamped metadata、Token/Agent ownership；普通 Issue/Comment 仍拒绝 |
+| load-smoke | DTA 专用 create/resolve/runs/messages/comments/retry；server-stamped metadata、Token/Agent ownership；operation 幂等、payload 冲突、并发唯一、终态重放、跨 Token 拒绝；普通 Issue/Comment 仍拒绝 |
 | Multica 回归 | Go/CLI/handler/middleware/router 专项 + `go test ./...`，记录无关基线失败 |
 
 ## 数据迁移与回滚
@@ -246,7 +257,7 @@ Workspace 设置页显示平铺的“DTA Token”：
 - 生产不存在旧 Grant 数据，不建设 Grant→Token 数据迁移。
 - 发布仍由默认关闭的 `workspace_access_tokens` feature flag 保护。
 - 回滚优先关闭 flag；不删除 subject、Token、Agent 或 Trace。down migration 只允许空表环境。
-- 第二阶段不新增持久表迁移；关闭 `workspace_access_tokens` flag 会同时关闭 profile、GitHub 和 load-smoke 机器身份入口。
+- 第二阶段不新增持久表；migration 259 只增加 load-smoke operation 部分唯一索引。关闭 `workspace_access_tokens` flag 会同时关闭 profile、GitHub 和 load-smoke 机器身份入口。
 
 ## 系统边界与职责
 
@@ -279,13 +290,13 @@ profile 只保存连接信息与当前明文密钥；授权状态、Token ID、s
 
 - Token 吊销/过期/重新生成未更新 profile：下一请求明确失败；更新同一 profile 后按稳定 subject 恢复。
 - GitHub installation 不可见：返回可识别的授权缺口，不 fallback 到 direct snapshot。
-- load-smoke 超时：返回 operation/任务标识，由 DTA status/readback reconcile；不盲目创建第二个 smoke。
+- load-smoke 超时或创建响应丢失：调用 `GET /api/dta/load-smokes?agent_id=<id>&marker=<operation>` 恢复原 Issue；重复 POST 同 payload 也返回原 Issue，不创建第二个 smoke。
 - 新后端与旧 CLI：旧 CLI 明确拒绝 `dta_`，不会误当 human；升级兼容 CLI 后才启用 DTA profile。
 
 ## 并发与一致性
 
 - Token policy 每请求读取，regenerate/version CAS 和现有 Agent ownership 不变。
-- load-smoke 的 marker 由调用方生成并写入 server-stamped metadata；本轮不承诺创建请求的幂等重放，DTA 接入时需用 Receipt/operation 约束重试。
+- load-smoke 的 marker 由调用方生成；`(workspace, token, agent, marker)` 是永久 operation identity。相同 payload 重放返回同一 Issue（首次 201、重放 200），不同 `required_skills` 返回 409；稳定 operation title 负责事务内串行化，migration 259 唯一索引兜底终态与并发竞态。
 - source create/sync 沿用现有服务端事务与 DTA frozen SHA/readback，不增加双写。
 
 ## 可观测性
@@ -322,6 +333,7 @@ profile 只保存连接信息与当前明文密钥；授权状态、Token ID、s
 | 2026-08-02 | 增加 DTA 托管 profile、GitHub Source 完整合同和专用 load-smoke；允许最小 DTA 接缝 | 用户确认不改用 `mul_` PAT，要求按推荐方案更新计划并完成 | 是，已确认 |
 | 2026-08-02 | 收窄为只完成 Multica；撤销 DTA 工作树内全部未提交适配 | 用户明确“dta你不用管” | 是，已确认 |
 | 2026-08-02 | 删除 `own_agents/workspace` 可配置范围，统一按 Multica 原生 ownership；本版不加机器人/数字员工绑定权限 | 用户确认 Workspace 管理员原生治理能力已足够，要求继续修改并明确“这版先不加”绑定权限 | 是，已确认 |
+| 2026-08-02 | 将 load-smoke marker 升级为幂等 operation key，增加永久唯一索引与按 marker 恢复 | Review 指出 `AllowDuplicate:true`、缺少 operation 回读以及计划承诺互相矛盾 | 是，按 review 修复 |
 
 ## 最终验证结果
 
@@ -345,6 +357,7 @@ profile 只保存连接信息与当前明文密钥；授权状态、Token ID、s
 | `dta_` profile | `TestWorkspaceAccessProfileUsesSelfWithoutHumanEndpoints` | login/status/workspace list/get 只调用 `/api/workspace-access/self`；不触达 `/api/me` 或 workspace 枚举 |
 | GitHub Source allowlist | `TestWorkspaceAccessCapabilityForRequest` | installation/repository/preview/create 归入 `deployment.manage`；connect/reuse/delete installation 继续拒绝 |
 | 专用 load-smoke | `TestDTALoadSmokeIsServerStampedAndTokenScoped`、`TestDTALoadSmokeCLIUsesDedicatedAPI` | 服务端固定 prompt/metadata；Token ID/Agent ownership 与 marker 注入拒绝通过；通用 Issue/Comment 未开放 |
+| load-smoke operation 幂等 | handler 专项 `-count=3`；middleware/CLI/router/migrate 测试；migration 259 index readback 与重复插入探针；`go vet` | 首次 201、同 payload/终态重放 200 且同 Issue、不同 payload 409、并发唯一、跨 Token 404、Agent＋marker 恢复及数据库唯一冲突均通过 |
 | 删除资源范围 | API/Core/UI 残留扫描；旧字段请求回归；migration 258 up/readback | 产品合同不再出现 `resource_scope`；旧客户端字段被忽略且不能放宽；数据库宽权限值为 0 |
 | 第二阶段 Go 静态与回归 | `go vet ./cmd/multica ./cmd/server ./internal/handler ./internal/middleware`；`go test` 同四包 `-count=1` | 全部通过 |
 | 第二阶段全量 Go | `go test ./...` | 除 `pkg/agent.TestCodexExecuteSemanticInactivityAllowsContinuousMessages` 外全部通过；该测试单独复跑仍在未修改包内以 72ms no-progress timeout 失败 |

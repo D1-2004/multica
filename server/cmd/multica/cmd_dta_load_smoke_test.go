@@ -57,3 +57,36 @@ func TestDTALoadSmokeCLIUsesDedicatedAPI(t *testing.T) {
 		t.Fatalf("stdout = %q", out)
 	}
 }
+
+func TestDTALoadSmokeCLIResolvesOperationByMarker(t *testing.T) {
+	const (
+		token       = "dta_contract"
+		workspaceID = "11111111-1111-1111-1111-111111111111"
+		agentID     = "22222222-2222-2222-2222-222222222222"
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/dta/load-smokes" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("agent_id") != agentID || r.URL.Query().Get("marker") != "marker:1" {
+			t.Fatalf("query = %q", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "issue-1"})
+	}))
+	defer server.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", server.URL)
+	t.Setenv("MULTICA_TOKEN", token)
+	t.Setenv("MULTICA_WORKSPACE_ID", workspaceID)
+	cmd := &cobra.Command{}
+	cmd.PersistentFlags().String("profile", "", "")
+	cmd.Flags().String("agent", agentID, "")
+	cmd.Flags().String("marker", "marker:1", "")
+	out, err := captureStdout(t, func() error { return runDTALoadSmokeResolve(cmd, nil) })
+	if err != nil {
+		t.Fatalf("run resolve: %v", err)
+	}
+	if out != "{\n  \"id\": \"issue-1\"\n}\n" {
+		t.Fatalf("stdout = %q", out)
+	}
+}

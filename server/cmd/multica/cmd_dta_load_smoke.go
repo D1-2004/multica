@@ -26,6 +26,12 @@ var dtaLoadSmokeCreateCmd = &cobra.Command{
 	RunE:  runDTALoadSmokeCreate,
 }
 
+var dtaLoadSmokeResolveCmd = &cobra.Command{
+	Use:   "resolve",
+	Short: "Resolve a DTA load verification operation",
+	RunE:  runDTALoadSmokeResolve,
+}
+
 var dtaLoadSmokeRunsCmd = &cobra.Command{
 	Use:  "runs <issue-id>",
 	Args: cobra.ExactArgs(1),
@@ -53,6 +59,7 @@ var dtaLoadSmokeRetryCmd = &cobra.Command{
 func init() {
 	dtaLoadSmokeCmd.AddCommand(
 		dtaLoadSmokeCreateCmd,
+		dtaLoadSmokeResolveCmd,
 		dtaLoadSmokeRunsCmd,
 		dtaLoadSmokeMessagesCmd,
 		dtaLoadSmokeCommentsCmd,
@@ -63,8 +70,21 @@ func init() {
 	dtaLoadSmokeCreateCmd.Flags().StringArray("required-skill", nil, "Required Skill name (repeatable)")
 	_ = dtaLoadSmokeCreateCmd.MarkFlagRequired("agent")
 	_ = dtaLoadSmokeCreateCmd.MarkFlagRequired("marker")
+	dtaLoadSmokeResolveCmd.Flags().String("agent", "", "Agent UUID")
+	dtaLoadSmokeResolveCmd.Flags().String("marker", "", "Unique verification marker")
+	_ = dtaLoadSmokeResolveCmd.MarkFlagRequired("agent")
+	_ = dtaLoadSmokeResolveCmd.MarkFlagRequired("marker")
 	dtaLoadSmokeRetryCmd.Flags().String("reason", "", "Retry reason: initial or skills_not_visible")
 	_ = dtaLoadSmokeRetryCmd.MarkFlagRequired("reason")
+}
+
+func runDTALoadSmokeResolve(cmd *cobra.Command, _ []string) error {
+	agentID, _ := cmd.Flags().GetString("agent")
+	marker, _ := cmd.Flags().GetString("marker")
+	query := url.Values{}
+	query.Set("agent_id", agentID)
+	query.Set("marker", marker)
+	return runDTALoadSmokeJSON(cmd, "GET", "/api/dta/load-smokes?"+query.Encode(), nil)
 }
 
 func runDTALoadSmokeCreate(cmd *cobra.Command, _ []string) error {

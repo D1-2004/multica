@@ -1720,6 +1720,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// DTA deployment load verification. These endpoints deliberately expose
 			// only server-stamped smoke Issues, never generic Issue or Chat CRUD.
 			r.Route("/api/dta/load-smokes", func(r chi.Router) {
+				r.Get("/", h.GetDTALoadSmokeByOperation)
 				r.Post("/", h.CreateDTALoadSmoke)
 				r.Route("/{issueId}", func(r chi.Router) {
 					r.Get("/runs", h.ListDTALoadSmokeRuns)

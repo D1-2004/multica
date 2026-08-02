@@ -69,6 +69,16 @@ WHERE id = $1;
 SELECT * FROM issue
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: GetDTALoadSmokeByOperation :one
+SELECT * FROM issue
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND metadata->>'kind' = 'dta_load_smoke'
+  AND metadata->>'token_id' = sqlc.arg('token_id')::text
+  AND metadata->>'agent_id' = sqlc.arg('agent_id')::text
+  AND metadata->>'marker' = sqlc.arg('marker')::text
+ORDER BY created_at ASC
+LIMIT 1;
+
 -- name: CreateIssue :one
 INSERT INTO issue (
     workspace_id, title, description, status, priority,

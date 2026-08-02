@@ -2,7 +2,9 @@ package handler
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,12 +36,13 @@ type dtaLoadSmokeRetryRequest struct {
 }
 
 type dtaLoadSmokeMetadata struct {
-	Kind      string `json:"kind"`
-	SubjectID string `json:"subject_id"`
-	TokenID   string `json:"token_id,omitempty"`
-	AgentID   string `json:"agent_id"`
-	Marker    string `json:"marker"`
-	Schema    string `json:"schema"`
+	Kind        string `json:"kind"`
+	SubjectID   string `json:"subject_id"`
+	TokenID     string `json:"token_id,omitempty"`
+	AgentID     string `json:"agent_id"`
+	Marker      string `json:"marker"`
+	RequestHash string `json:"request_hash"`
+	Schema      string `json:"schema"`
 }
 
 // CreateDTALoadSmoke creates the one narrow Issue shape used to verify that a
@@ -56,6 +59,7 @@ func (h *Handler) CreateDTALoadSmoke(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	request.AgentID = strings.TrimSpace(request.AgentID)
 	request.Marker = strings.TrimSpace(request.Marker)
 	if !dtaLoadSmokeMarkerPattern.MatchString(request.Marker) {
 		writeError(w, http.StatusBadRequest, "marker contains unsupported characters")
@@ -76,6 +80,9 @@ func (h *Handler) CreateDTALoadSmoke(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		seenSkills[name] = struct{}{}
+	}
+	if request.RequiredSkills == nil {
+		request.RequiredSkills = []string{}
 	}
 
 	workspaceID := h.resolveWorkspaceID(r)
@@ -101,18 +108,32 @@ func (h *Handler) CreateDTALoadSmoke(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	requestHash := dtaLoadSmokeRequestHash(request.RequiredSkills)
+	lookup := db.GetDTALoadSmokeByOperationParams{
+		WorkspaceID: workspaceUUID,
+		TokenID:     principal.TokenID,
+		AgentID:     request.AgentID,
+		Marker:      request.Marker,
+	}
+	if existing, lookupErr := h.Queries.GetDTALoadSmokeByOperation(r.Context(), lookup); lookupErr == nil {
+		h.writeDTALoadSmokeReplay(w, r, existing, lookup, requestHash)
+		return
+	} else if !isNotFound(lookupErr) {
+		writeError(w, http.StatusInternalServerError, "failed to resolve load smoke operation")
+		return
+	}
 	metadata := dtaLoadSmokeMetadata{
 		Kind: dtaLoadSmokeMetadataKind, SubjectID: subjectID, AgentID: request.AgentID,
-		Marker: request.Marker, Schema: "dta-multica-load-smoke@1",
+		Marker: request.Marker, RequestHash: requestHash, Schema: "dta-multica-load-smoke@2",
 	}
 	metadata.TokenID = principal.TokenID
 	metadataJSON, _ := json.Marshal(metadata)
 	expectedResponse, _ := json.Marshal(map[string]any{
-		"schema": "dta-multica-load-smoke@1", "marker": request.Marker,
+		"schema": "dta-multica-load-smoke@2", "marker": request.Marker,
 		"loaded": request.RequiredSkills,
 	})
 	description := strings.Join([]string{
-		"DTA_MULTICA_LOAD_SMOKE@1",
+		"DTA_MULTICA_LOAD_SMOKE@2",
 		"marker=" + request.Marker,
 		"required_skills=" + string(mustJSON(request.RequiredSkills)),
 		"This is a deployment control-plane verification task.",
@@ -123,7 +144,7 @@ func (h *Handler) CreateDTALoadSmoke(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
 		WorkspaceID:    workspaceUUID,
-		Title:          "[DTA load smoke] " + request.Marker,
+		Title:          "[DTA load smoke " + dtaLoadSmokeOperationFingerprint(principal.TokenID, request.AgentID, request.Marker) + "] " + request.Marker,
 		Description:    pgtype.Text{String: description, Valid: true},
 		Status:         "todo",
 		Priority:       "none",
@@ -132,15 +153,104 @@ func (h *Handler) CreateDTALoadSmoke(w http.ResponseWriter, r *http.Request) {
 		CreatorType:    "member",
 		CreatorID:      parseUUID(subjectID),
 		Metadata:       metadataJSON,
-		AllowDuplicate: true,
+		AllowDuplicate: false,
 	}, service.IssueCreateOpts{
 		ActorID: subjectID, AnalyticsAgentID: request.AgentID, Platform: "dta",
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrActiveDuplicate) && result.DuplicateIssue != nil {
+			h.writeDTALoadSmokeReplay(w, r, *result.DuplicateIssue, lookup, requestHash)
+			return
+		}
+		if isUniqueViolation(err) {
+			if existing, lookupErr := h.Queries.GetDTALoadSmokeByOperation(r.Context(), lookup); lookupErr == nil {
+				h.writeDTALoadSmokeReplay(w, r, existing, lookup, requestHash)
+				return
+			}
+		}
 		writeError(w, http.StatusInternalServerError, "failed to create load smoke")
 		return
 	}
 	writeJSON(w, http.StatusCreated, issueToResponse(result.Issue, h.getIssuePrefix(r.Context(), workspaceUUID)))
+}
+
+// GetDTALoadSmokeByOperation recovers a create response after the caller lost
+// it or timed out. The operation is scoped to the authenticated Token, so a
+// marker is never a cross-Token discovery mechanism.
+func (h *Handler) GetDTALoadSmokeByOperation(w http.ResponseWriter, r *http.Request) {
+	principal, isToken := middleware.WorkspaceAccessPrincipalFromContext(r.Context())
+	if !isToken {
+		writeError(w, http.StatusForbidden, "workspace_access_operation_not_allowed")
+		return
+	}
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	marker := strings.TrimSpace(r.URL.Query().Get("marker"))
+	if !dtaLoadSmokeMarkerPattern.MatchString(marker) {
+		writeError(w, http.StatusBadRequest, "marker contains unsupported characters")
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	agentUUID, ok := parseUUIDOrBadRequest(w, agentID, "agent_id")
+	if !ok {
+		return
+	}
+	agent, err := h.Queries.GetAgent(r.Context(), agentUUID)
+	if err != nil || uuidToString(agent.WorkspaceID) != workspaceID || agent.ArchivedAt.Valid {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+	if allowed, _ := workspaceAccessCanUseAgent(r.Context(), agent); !allowed {
+		writeError(w, http.StatusForbidden, "workspace_access_resource_not_allowed")
+		return
+	}
+	issue, err := h.Queries.GetDTALoadSmokeByOperation(r.Context(), db.GetDTALoadSmokeByOperationParams{
+		WorkspaceID: workspaceUUID,
+		TokenID:     principal.TokenID,
+		AgentID:     agentID,
+		Marker:      marker,
+	})
+	if err != nil {
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, "load smoke not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to resolve load smoke operation")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, issueToResponse(issue, h.getIssuePrefix(r.Context(), workspaceUUID)))
+}
+
+func (h *Handler) writeDTALoadSmokeReplay(
+	w http.ResponseWriter,
+	r *http.Request,
+	issue db.Issue,
+	operation db.GetDTALoadSmokeByOperationParams,
+	requestHash string,
+) {
+	var metadata dtaLoadSmokeMetadata
+	if json.Unmarshal(issue.Metadata, &metadata) != nil || metadata.Kind != dtaLoadSmokeMetadataKind ||
+		metadata.Schema != "dta-multica-load-smoke@2" || metadata.TokenID != operation.TokenID ||
+		metadata.AgentID != operation.AgentID || metadata.Marker != operation.Marker ||
+		uuidToString(issue.WorkspaceID) != uuidToString(operation.WorkspaceID) ||
+		metadata.RequestHash == "" || metadata.RequestHash != requestHash {
+		writeError(w, http.StatusConflict, "load_smoke_operation_conflict")
+		return
+	}
+	writeJSON(w, http.StatusOK, issueToResponse(issue, h.getIssuePrefix(r.Context(), issue.WorkspaceID)))
+}
+
+func dtaLoadSmokeRequestHash(requiredSkills []string) string {
+	digest := sha256.Sum256(mustJSON(requiredSkills))
+	return fmt.Sprintf("%x", digest[:])
+}
+
+func dtaLoadSmokeOperationFingerprint(tokenID, agentID, marker string) string {
+	digest := sha256.Sum256([]byte(tokenID + "\x00" + agentID + "\x00" + marker))
+	return fmt.Sprintf("%x", digest[:8])
 }
 
 func mustJSON(value any) []byte {
