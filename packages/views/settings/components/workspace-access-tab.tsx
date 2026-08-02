@@ -172,7 +172,7 @@ function TokenEditorDialog({ wsId, token, open, onOpenChange, onSecret }: {
   };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
         <DialogHeader><DialogTitle>{token ? t(($) => $.workspace_access.edit_title) : t(($) => $.workspace_access.create_title)}</DialogTitle></DialogHeader>
         <div className="space-y-5">
           <Input value={name} onChange={(event) => setName(event.target.value)} placeholder={t(($) => $.workspace_access.name_placeholder)} />
@@ -190,7 +190,7 @@ function TokenEditorDialog({ wsId, token, open, onOpenChange, onSecret }: {
           <div className="space-y-2">
             <div className="text-sm font-medium">{t(($) => $.workspace_access.scope_title)}</div>
             <Select value={scope} onValueChange={(value) => setScope(value as WorkspaceAccessResourceScope)}>
-              <SelectTrigger className="w-full min-w-0"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-full min-w-0"><SelectValue>{scope === "own_agents" ? t(($) => $.workspace_access.scope.own_agents) : t(($) => $.workspace_access.scope.workspace)}</SelectValue></SelectTrigger>
               <SelectContent><SelectItem value="own_agents">{t(($) => $.workspace_access.scope.own_agents)}</SelectItem><SelectItem value="workspace">{t(($) => $.workspace_access.scope.workspace)}</SelectItem></SelectContent>
             </Select>
             <p className="text-xs leading-relaxed text-muted-foreground">
@@ -237,9 +237,14 @@ function RegenerateTokenDialog({ wsId, token, open, onOpenChange, onSecret }: {
 
 function ExpirySelect({ value, onChange, includeKeep = false }: { value: string; onChange: (value: string) => void; includeKeep?: boolean }) {
   const { t } = useT("settings");
+  const label = value === "keep"
+    ? t(($) => $.workspace_access.expiry.keep)
+    : value === "never"
+      ? t(($) => $.workspace_access.expiry.never)
+      : t(($) => $.workspace_access.expiry.days, { count: Number(value) });
   return <div className="space-y-2">
     <div className="text-sm font-medium">{t(($) => $.workspace_access.expiry_title)}</div>
-    <Select value={value} onValueChange={(next) => next && onChange(next)}><SelectTrigger className="w-full min-w-0"><SelectValue /></SelectTrigger><SelectContent>{includeKeep ? <SelectItem value="keep">{t(($) => $.workspace_access.expiry.keep)}</SelectItem> : null}{EXPIRY_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option === "never" ? t(($) => $.workspace_access.expiry.never) : t(($) => $.workspace_access.expiry.days, { count: Number(option) })}</SelectItem>)}</SelectContent></Select>
+    <Select value={value} onValueChange={(next) => next && onChange(next)}><SelectTrigger className="w-full min-w-0"><SelectValue>{label}</SelectValue></SelectTrigger><SelectContent>{includeKeep ? <SelectItem value="keep">{t(($) => $.workspace_access.expiry.keep)}</SelectItem> : null}{EXPIRY_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option === "never" ? t(($) => $.workspace_access.expiry.never) : t(($) => $.workspace_access.expiry.days, { count: Number(option) })}</SelectItem>)}</SelectContent></Select>
     <p className="text-xs leading-relaxed text-muted-foreground">{t(($) => $.workspace_access.expiry_description)}</p>
   </div>;
 }
