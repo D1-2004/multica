@@ -4,15 +4,15 @@
 > 状态：已完成
 > 创建日期：2026-07-31
 > 计划 ID：20260731-workspace-access-grant-dta-trace
-> 最后更新时间：2026-08-02 17:56 CST
+> 最后更新时间：2026-08-02 18:29 CST
 > 当前分支：`codex/workspace-access-grants`
 > 目标执行分支：`codex/workspace-access-grants`
 > 基线 Commit：`origin/develop@596ed393fd1db31f4a83765a7ca686df200fc215`
-> 已有实现 Commit：`df47612fa325a29c7f19fce69d09644c2c81b78d`
+> 已有实现 Commit：`df47612fa`、`0c8c4ab97`、`3ef44ea57`
 > 原始工作区：`/Users/fanqi/test/code/ding-fde-agent/dt-fde-multica`
 > Worktree 路径：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-workspace-access-grants`
 > Worktree 来源：本任务于 2026-08-02 创建
-> 交付状态：实现与验证完成，本文件将随单层 Token 改造创建后续本地提交
+> 交付状态：实现、推送和预发部署完成；生产未发布
 > 收尾状态：保留中
 > 当前里程碑：单层 Token 改造已完成
 
@@ -171,7 +171,8 @@ Workspace 设置页显示平铺的“DTA Token”：
 | 里程碑 | 状态 | 关联 Commit | 实际验证命令 | 结果与证据 |
 |---|---|---|---|---|
 | 已废弃 Grant+多 Token 初版 | 已提交 | `df47612fa` | 见 Git commit | 作为重构基线保留，不 amend、不 rebase |
-| 单层 Token 改造 | 已完成 | 本次后续本地提交 | `make sqlc`；专项 Go + 隔离 PostgreSQL；`go vet`；`pnpm typecheck`；Core 精确测试；Docs build；257 down/up | Token 独立权限、动态改权、regenerate、吊销、ownership/scope/Trace 均通过；TS 类型通过；Core 79/79；Docs 157 页构建通过 |
+| 单层 Token 改造 | 已完成 | `0c8c4ab97` | `make sqlc`；专项 Go + 隔离 PostgreSQL；`go vet`；`pnpm typecheck`；Core 精确测试；Docs build；257 down/up | Token 独立权限、动态改权、regenerate、吊销、ownership/scope/Trace 均通过；TS 类型通过；Core 79/79；Docs 157 页构建通过 |
+| 预发开关注入 | 已完成 | `3ef44ea57` | `bash -n src/main.sh`；trait guarded replacement；pipeline/health/config 回读 | 运行时白名单包含 `FF_WORKSPACE_ACCESS_TOKENS`；预发 trait 98→99 个唯一 key，其他项不变；`/api/config` 返回 true |
 
 ## 验证策略
 
@@ -197,8 +198,8 @@ Workspace 设置页显示平铺的“DTA Token”：
 
 ## 发布边界
 
-- 本轮只允许当前 worktree 内实现、测试和本地 commit 判断。
-- Push、PR、合并、部署、功能开关开启和 DTA 改造均未授权。
+- 初始实现阶段只允许当前 worktree 内修改、测试和本地 commit；用户随后明确授权提交、push 和部署预发。
+- 已创建 Aone CR `35392614` 并部署 pipeline 66；未授权生产发布、正式流水线、代码合并或 DTA 仓库修改。
 
 ## 计划变更记录
 
@@ -207,6 +208,7 @@ Workspace 设置页显示平铺的“DTA Token”：
 | 2026-07-31 | 初始 Grant 计划 | 用户要求 Multica 支持 DTA 权限与 Trace | 是 |
 | 2026-08-02 | 完成 Grant→多 Token 初版 `df47612fa` | 当时采用稳定授权与多凭证模型 | 是 |
 | 2026-08-02 | 改为一个 Token 一份身份和权限；原地 regenerate；删除 Grant 层 | 用户明确不同实际使用方应有不同权限，并接受重新生成导致中断；随后指示“改” | 是 |
+| 2026-08-02 | 推送并部署预发；补齐 release flag 运行时白名单；预发 trait 开启功能 | 用户明确要求提交、推送、部署预发，并纠正环境变量应通过 trait 后重新部署 | 是 |
 
 ## 最终验证结果
 
@@ -224,6 +226,8 @@ Workspace 设置页显示平铺的“DTA Token”：
 | Docs | `pnpm --filter @multica/docs build` | 生产构建通过，157 个静态页面生成 |
 | Migration | 隔离库全量 migrate up；257 direct down/up；schema 查询 | 通过；Grant 表不存在，Token/audit/principal_type 存在，Token 测试数据为 0 |
 | 安全残留 | 搜索旧 Grant symbol/API/flag、疑似 `dta_` 明文 | 范围内无残留，无提交明文 Token |
+| 预发交付 | CR `35392614`；Run `3101721096`；Deploy Order `158336422` | snapshot revision `3ef44ea57`；代码合并、构建、扫描、2/2 主机部署、集成测试成功；停在人工预发验证门禁 |
+| 预发可用性 | `GET /healthz`；`GET /api/config` | HTTP 200；`feature_flags.workspace_access_tokens=true` |
 
 未通过但不归因于本改造的仓库基线验证：
 
@@ -235,11 +239,13 @@ Workspace 设置页显示平铺的“DTA Token”：
 
 - 原始工作区用户修改：`docs/plans/2026-07-29-fde-start-dta-managed-source.md`，不得触碰。
 - 当前 worktree：本任务创建并保留。
-- 当前已有提交：`df47612fa`；单层 Token 改造将随本计划收尾创建后续本地提交，具体 hash 见交接。
-- 未授权：push、PR、合并、部署、发布、DTA 修改。
+- 当前实现提交：`df47612fa`、`0c8c4ab97`、`3ef44ea57`；均已推送，运行中预发 snapshot 为 `3ef44ea57`。
+- 当前 worktree 干净并保留；未创建代码 MR，未合并，未发布生产，未修改 DTA。
 
 ## 遗留风险
 
 - DTA 仍需后续接入新 Token 管理合同并隐藏 Multica 概念。
 - 重新生成会立即中断仍使用旧密钥的 DTA，这是用户接受的产品语义。
 - Trace fidelity、REST 轮询和永久 Token 风险维持原边界。
+- 本次只部署到预发；pipeline 停在人工预发验证门禁。
+- 一次预发数据库验证命令的解析错误把 `DATABASE_URL` 完整连接串回显到了工具输出；需轮换预发数据库凭据，生产凭据未读取。
