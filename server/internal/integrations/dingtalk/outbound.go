@@ -735,14 +735,23 @@ func extractDispatchNotificationRecipients(data map[string]any) []string {
 	return recipients
 }
 
-// resolveDispatchNotificationRoute loads the DingTalk installation
+// dispatchBotInstallationResolver resolves the traditional DingTalk robot
+// installation (channel_type='dingtalk') which carries app_id, app_secret,
+// and robot_code — the credentials RobotMessenger.SendMarkdown needs.
+// The dingtalk_account row used by the Router dispatch path does not carry
+// these fields, so we must query the robot installation explicitly.
+type dispatchBotInstallationResolver interface {
+	GetActiveDingTalkBotInstallationByAgent(context.Context, db.GetActiveDingTalkBotInstallationByAgentParams) (db.ChannelInstallation, error)
+}
+
+// resolveDispatchNotificationRoute loads the DingTalk robot installation
 // credentials for the agent that handled the dispatch. Unlike
 // resolveDispatchRobotRoute it does not require a conversation or messages —
 // the notification is a direct message, not a group reply.
 func (o *Outbound) resolveDispatchNotificationRoute(ctx context.Context, payload map[string]any) (dispatchRobotRoute, error) {
-	resolver, ok := o.q.(dispatchInstallationResolver)
+	resolver, ok := o.q.(dispatchBotInstallationResolver)
 	if !ok {
-		return dispatchRobotRoute{}, errors.New("dingtalk dispatch notification: installation resolver is not configured")
+		return dispatchRobotRoute{}, errors.New("dingtalk dispatch notification: bot installation resolver is not configured")
 	}
 	workspaceID, err := util.ParseUUID(fmt.Sprint(payload["workspace_id"]))
 	if err != nil {
@@ -752,12 +761,12 @@ func (o *Outbound) resolveDispatchNotificationRoute(ctx context.Context, payload
 	if err != nil {
 		return dispatchRobotRoute{}, fmt.Errorf("parse dispatch agent id: %w", err)
 	}
-	inst, err := resolver.GetDingTalkAccountBindingByAgent(ctx, db.GetDingTalkAccountBindingByAgentParams{WorkspaceID: workspaceID, AgentID: agentID})
+	inst, err := resolver.GetActiveDingTalkBotInstallationByAgent(ctx, db.GetActiveDingTalkBotInstallationByAgentParams{WorkspaceID: workspaceID, AgentID: agentID})
 	if err != nil {
-		return dispatchRobotRoute{}, fmt.Errorf("lookup dispatch DingTalk installation: %w", err)
+		return dispatchRobotRoute{}, fmt.Errorf("lookup dispatch DingTalk bot installation: %w", err)
 	}
 	if inst.Status != "active" {
-		return dispatchRobotRoute{}, errors.New("dingtalk dispatch notification: installation is not active")
+		return dispatchRobotRoute{}, errors.New("dingtalk dispatch notification: bot installation is not active")
 	}
 	creds, err := decodeChannelCredentials(inst.Config, o.decrypt)
 	if err != nil {
