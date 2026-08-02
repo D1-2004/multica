@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Persist the trusted DingTalk account key in Multica, reconcile every active local projection with Router ownership, conditionally unbind the exact account, clean takeover remnants locally, and close Agent deletion through a durable account-key outbox.
+**Goal:** Persist the trusted DingTalk account key in Multica, reconcile every active local projection with Router ownership, conditionally unbind the exact account, clean takeover remnants locally, and make Agent deletion synchronously fail closed around Router unbind.
 
 **Architecture:** `channel_installation.id` remains Multica's local attempt/projection ID. Message binding config stores the Router channel source only for domain-specific APIs and separately stores `router_platform + router_tenant_id + router_account_id` as the cross-domain account identity. All Router ownership calls combine that account key with the immutable Multica Agent ID; no Router binding ID or relation lifecycle is stored.
 
@@ -12,7 +12,7 @@
 
 ---
 
-### Task 1: Remove binding-ID-specific work without losing deletion closure
+### Task 1: Remove binding-ID-specific work and the proposed async deletion table
 
 **Files:**
 - Delete: `server/cmd/backfill_dingtalk_binding_ids/`
@@ -22,7 +22,6 @@
 - Modify: `server/internal/integrations/agentmessagerouter/dingtalk_account_config.go`
 - Modify: `server/internal/integrations/agentmessagerouter/service.go`
 - Modify: `server/pkg/db/queries/dingtalk_account_binding.sql`
-- Modify: `server/migrations/257_dingtalk_binding_unbind_outbox.up.sql`
 - Modify: all generated/test/UI/docs files containing `router_binding_id`, `binding_id`, or `replaced_binding_ids`
 
 - [ ] **Step 1: Inventory superseded fields and files**
@@ -39,11 +38,11 @@ Expected: the current uncommitted binding-ID project and any unrelated historica
 
 - [ ] **Step 2: Remove only relation-ID behavior**
 
-Remove `RouterBindingID`, relation GET/check/delete client methods, relation-based local CAS queries, and binding-ID backfill. Keep the Agent deletion outbox/worker structure, but change its identity in Task 5.
+Remove `RouterBindingID`, relation GET/check/delete client methods, relation-based local CAS queries, binding-ID backfill, and every part of the proposed asynchronous Agent-deletion table/worker. Task 5 replaces deletion closure with a synchronous fail-closed transaction and introduces no schema.
 
 - [ ] **Step 3: Confirm there is no cross-service relation ID**
 
-Repeat the search. Expected: no DingTalk account-binding config, DTO, callback, outbox, command, or UI state depends on a Router binding ID.
+Repeat the search. Expected: no DingTalk account-binding config, DTO, callback, command, or UI state depends on a Router binding ID.
 
 ### Task 2: Persist and validate the canonical account key
 
@@ -195,47 +194,49 @@ go test ./internal/integrations/agentmessagerouter ./internal/handler -count=1
 
 Expected: PASS.
 
-### Task 5: Retarget the durable Agent-removal outbox to account keys
+### Task 5: Make Agent removal synchronously fail closed
 
 **Files:**
-- Modify: `server/migrations/257_dingtalk_binding_unbind_outbox.up.sql`
-- Modify: `server/migrations/257_dingtalk_binding_unbind_outbox.down.sql`
-- Modify: `server/pkg/db/queries/dingtalk_binding_unbind_outbox.sql`
-- Regenerate: `server/pkg/db/generated/dingtalk_binding_unbind_outbox.sql.go`
-- Modify: `server/internal/integrations/agentmessagerouter/binding_unbind_worker.go`
-- Modify: `server/internal/integrations/agentmessagerouter/binding_unbind_worker_test.go`
-- Modify: Agent archive/delete/runtime cleanup handlers and tests already touched by the current work
+- Modify: `server/pkg/db/queries/agent.sql`
+- Modify: `server/pkg/db/queries/dingtalk_account_binding.sql`
+- Regenerate: affected sqlc files
+- Modify: Agent archive/delete/runtime/profile/member-revocation handlers and focused tests
+- Delete: the proposed async deletion migration, query, generated model, repository helper, worker, runner wiring, tests, and verifier
 
-- [ ] **Step 1: Store the complete intent snapshot**
+- [ ] **Step 1: Fence binding creation with the Agent row**
 
-The outbox row contains:
+Deletion locks the exact Agent rows in stable ID order. Binding begin takes a
+conflicting key-share lock and requires `archived_at IS NULL`, so a new pending
+binding cannot cross the deletion transaction.
 
-```text
-installation_id, workspace_id, agent_id,
-platform, tenant_id, account_id,
-status, attempt_count, available_at, lease fields, last_error_code
-```
+- [ ] **Step 2: Resolve and conditionally unbind before local deletion**
 
-Remove `router_binding_id` and source-only target selection.
+Lock the Agent's single DingTalk projection after the Agent row. Enrich a legacy
+row only after exact source, Agent, dispatch target, and active-state checks.
+Call Router with the complete account key plus the expected Agent. Continue
+only for `unbound` or `ownership_changed`; keep the Agent and projection for
+`inconsistent`, invalid responses, authentication/transport errors, or 5xx.
 
-- [ ] **Step 2: Enqueue before ownership rows disappear**
+- [ ] **Step 3: Remove only the exact local projection**
 
-In the same PostgreSQL transaction as Agent archive/hard deletion, copy the complete active account key into the outbox before the installation or Agent join becomes unavailable.
+After Router accepts the conditional unbind, delete only the still-active local
+row whose installation, workspace, Agent, and complete account key match the
+locked snapshot. Then archive or hard-delete the Agent in the same local
+transaction.
 
-- [ ] **Step 3: Call conditional account unbind outside the transaction**
+- [ ] **Step 4: Exercise concurrency and the accepted reverse window**
 
-Treat `unbound` and `ownership_changed` as terminal success. Retry transport, authentication, and upstream-unsubscribe failures. Keep `inconsistent` for operational review.
-
-- [ ] **Step 4: Exercise concurrency**
-
-Test lease expiry, duplicate enqueue, worker races, Router ownership change, Agent deletion, and restart retry.
+Test bind/delete serialization, callback/local CAS safety, Router ownership
+change, Router unavailable, legacy enrichment, runtime hard deletion, and the
+case where Router succeeds but the local transaction rolls back. The latter
+returns failure and deliberately leaves the Agent/local projection for an
+idempotent user retry; no asynchronous compensation table is introduced.
 
 Run:
 
 ```bash
 cd server
-go test ./internal/integrations/agentmessagerouter -run 'Test.*UnbindWorker' -count=1
-go test ./internal/handler -run 'Test.*(Archive|Delete|Cleanup).*DingTalk' -count=1
+go test ./internal/handler -run 'Test.*(Teardown|Archive|Delete|Cleanup).*DingTalk' -count=1
 ```
 
 Expected: PASS.
@@ -356,5 +357,16 @@ Expected: PASS.
 - [ ] **Step 2: Run `make test` and `pnpm test` if focused checks pass and time permits**
 - [ ] **Step 3: Run `git diff --check` and inspect the complete diff/status**
 - [ ] **Step 4: Confirm no formatter was run and no unrelated dirty file was altered**
-- [ ] **Step 5: Report PASS/FAIL for persistence, reconciliation, stale unbind safety, takeover cleanup, deletion outbox, enrichment, UI states, and protocol history**
-- [ ] **Step 6: Stop without commit, push, migration execution, backfill execution, or deployment**
+- [ ] **Step 5: Report PASS/FAIL for persistence, reconciliation, stale unbind safety, takeover cleanup, synchronous fail-closed deletion, enrichment, UI states, and protocol history**
+- [ ] **Step 6: After independent acceptance, follow the separately authorized commit, push, pre-release database audit, and deployment procedure**
+
+## Change History
+
+- 2026-08-02: Temporarily renumbered the proposed asynchronous cleanup migration
+  from 257 to 263 after the release merge introduced upstream migrations
+  257-262. Reason: migration tracking uses the complete filename stem. The
+  migration was subsequently removed with the asynchronous design.
+- 2026-08-02: Removed the proposed asynchronous Agent-removal table and changed
+  deletion to a synchronous fail-closed Router unbind under Agent/projection
+  row locks. Reason: the product explicitly accepts the small reverse window
+  after Router success and does not want a new schema object for compensation.

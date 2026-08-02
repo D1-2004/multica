@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -433,26 +434,54 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	lockedRuntimeIDs := append([]pgtype.UUID(nil), runtimeIDs...)
+	sort.Slice(lockedRuntimeIDs, func(i, j int) bool {
+		return lockedRuntimeIDs[i].String() < lockedRuntimeIDs[j].String()
+	})
+	for _, runtimeID := range lockedRuntimeIDs {
+		if _, err := qtx.LockAgentRuntime(r.Context(), runtimeID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to lock runtime")
+			return
+		}
+	}
+	activeAfterLock, err := qtx.ListActiveAgentsByRuntimesForUpdate(r.Context(), lockedRuntimeIDs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to recheck profile usage")
+		return
+	}
+	if len(activeAfterLock) > 0 {
+		writeError(w, http.StatusConflict, "cannot delete runtime profile: active agents are still bound to its runtimes")
+		return
+	}
+	archivedAgents, err := qtx.ListArchivedAgentsByRuntimesForUpdate(r.Context(), lockedRuntimeIDs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to enumerate archived agents")
+		return
+	}
+	archivedAgentIDsByRuntime := make(map[pgtype.UUID][]pgtype.UUID, len(lockedRuntimeIDs))
+	allArchivedAgentIDs := make([]pgtype.UUID, len(archivedAgents))
+	for i, archivedAgent := range archivedAgents {
+		allArchivedAgentIDs[i] = archivedAgent.ID
+		archivedAgentIDsByRuntime[archivedAgent.RuntimeID] = append(
+			archivedAgentIDsByRuntime[archivedAgent.RuntimeID], archivedAgent.ID,
+		)
+	}
+	if _, err := h.teardownDingTalkBindings(r.Context(), qtx, allArchivedAgentIDs); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to unbind dingtalk account bindings")
+		return
+	}
 
 	// App-layer cascade, per runtime, mirroring DeleteAgentRuntime: pause
 	// autopilots pointing at the archived agents, drop archived squads led by
 	// them, then hard-delete the archived agents so the RESTRICT FK on
 	// agent.runtime_id no longer blocks removing the runtime row.
-	for _, rid := range runtimeIDs {
-		archivedAgentIDs, err := qtx.ListArchivedAgentIDsByRuntime(r.Context(), rid)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to enumerate archived agents")
-			return
-		}
+	for _, rid := range lockedRuntimeIDs {
+		archivedAgentIDs := archivedAgentIDsByRuntime[rid]
 		if len(archivedAgentIDs) > 0 {
 			if err := qtx.PauseAutopilotsByAgentAssignees(r.Context(), archivedAgentIDs); err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to pause autopilots")
 				return
 			}
-		}
-		if err := h.enqueueDingTalkBindingUnbinds(r.Context(), qtx, archivedAgentIDs); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to preserve dingtalk binding cleanup")
-			return
 		}
 		if err := qtx.DeleteSquadsByArchivedAgentsOnRuntime(r.Context(), rid); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to clean up squads referencing archived agents")
@@ -508,8 +537,6 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
 	}
-	h.notifyDingTalkBindingUnbinds()
-
 	// Tell connected clients to refetch the runtime list (instances vanished).
 	profileID := uuidToString(profileUUID)
 	h.requestDaemonRuntimeProfileRefresh(wsID, profileID)

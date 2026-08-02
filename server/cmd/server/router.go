@@ -335,11 +335,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		)
 		h.TaskCompletionTargetIdentity = routerClient.TargetIdentity()
 		h.TaskService.CompletionNotifier = h.TaskCompletionWorker
-		h.DingTalkBindingUnbindWorker = agentmessagerouter.NewBindingUnbindWorker(
-			queries,
-			routerClient,
-			routerClient.TargetIdentity(),
-		)
+		h.DingTalkBindingTeardownRouter = routerClient
 	}
 	dispatchKeysRaw := strings.TrimSpace(os.Getenv("MULTICA_AGENT_DISPATCH_KEYS"))
 	dispatchCurrentKeyID := strings.TrimSpace(os.Getenv("MULTICA_AGENT_DISPATCH_CURRENT_KEY_ID"))

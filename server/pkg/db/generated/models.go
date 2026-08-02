@@ -514,26 +514,6 @@ type DaemonToken struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
-type DingtalkBindingUnbindOutbox struct {
-	ID             pgtype.UUID        `json:"id"`
-	InstallationID pgtype.UUID        `json:"installation_id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	AgentID        pgtype.UUID        `json:"agent_id"`
-	Platform       string             `json:"platform"`
-	TenantID       string             `json:"tenant_id"`
-	AccountID      string             `json:"account_id"`
-	TargetIdentity string             `json:"target_identity"`
-	Status         string             `json:"status"`
-	AvailableAt    pgtype.Timestamptz `json:"available_at"`
-	AttemptCount   int32              `json:"attempt_count"`
-	LeaseToken     pgtype.UUID        `json:"lease_token"`
-	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
-	LastErrorCode  pgtype.Text        `json:"last_error_code"`
-	DeliveredAt    pgtype.Timestamptz `json:"delivered_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-}
-
 type DingtalkInstallSession struct {
 	ID             string             `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`

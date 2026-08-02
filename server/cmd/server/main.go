@@ -456,9 +456,6 @@ func main() {
 	if h.TaskCompletionWorker != nil {
 		go h.TaskCompletionWorker.Run(sweepCtx)
 	}
-	if h.DingTalkBindingUnbindWorker != nil {
-		go h.DingTalkBindingUnbindWorker.Run(sweepCtx)
-	}
 	if h.DingTalkStreamInbox != nil {
 		go h.DingTalkStreamInbox.Run(sweepCtx)
 	}
@@ -567,9 +564,6 @@ func main() {
 	}
 	if h.TaskCompletionWorker != nil && !h.TaskCompletionWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("task completion worker did not exit within shutdown timeout")
-	}
-	if h.DingTalkBindingUnbindWorker != nil && !h.DingTalkBindingUnbindWorker.WaitWithTimeout(5*time.Second) {
-		slog.Warn("dingtalk binding unbind worker did not exit within shutdown timeout")
 	}
 	if h.DingTalkStreamInbox != nil && !h.DingTalkStreamInbox.WaitWithTimeout(5*time.Second) {
 		slog.Warn("dingtalk stream inbox worker did not exit within shutdown timeout",

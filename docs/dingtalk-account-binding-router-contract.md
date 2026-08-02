@@ -363,14 +363,19 @@ This cleanup never calls Router, so a callback handled against an isolated
 pre-release Multica database cannot change the authoritative Router owner or a
 production-only Multica projection.
 
-Agent archive and hard runtime/profile cleanup persist an unbind outbox intent
-in the same database transaction before local ownership rows can disappear.
-The intent copies the complete account binding key. The worker runs outside
-that transaction, calls conditional account-level unbind, retries Router
-outages, and treats `unbound` or `ownership_changed` as terminal without
-touching a newer owner. Historical rows must be enriched before this closure is
-enabled; there is no Agent-wide or source-only fallback for an unresolved
-account key.
+Agent archive and hard runtime/profile cleanup are synchronous and fail closed.
+The local transaction locks the Agent and its single account projection, safely
+enriches a legacy row when necessary, and calls conditional account-level
+unbind before removing the exact local projection and Agent state. Only
+`unbound` and `ownership_changed` may continue. `inconsistent`, malformed
+responses, authentication/transport failures, and Router 5xx preserve the
+local transaction for retry. Binding begin takes a conflicting lock on the same
+Agent row, so a new binding cannot cross deletion. If Router succeeds but the
+local transaction later fails, the Agent and projection remain locally while
+Router is already unbound; this deliberately accepted reverse window is
+resolved by an idempotent user retry and does not introduce an asynchronous
+compensation table. There is no Agent-wide or source-only fallback for an
+unresolved account key.
 
 ## Rollout order
 
@@ -379,13 +384,13 @@ account key.
 2. Deploy the binding page so every new successful callback carries the
    canonical account key and conflict confirmation uses the expected owner.
 3. Deploy Multica's strict account-key callback, reconciliation, conditional
-   unbind, and outbox implementation. Do not keep a binding-ID or legacy
+   unbind, and synchronous fail-closed Agent deletion. Do not keep a binding-ID or legacy
    callback identity track in parallel.
 4. Run account-key enrichment in dry-run, review unresolved rows, apply it to
    the intended Multica database, and repeat until every actionable active row
    is complete or explicitly classified.
-5. Enable batch reconciliation, conditional user unbind, and account-key
-   Agent-removal outbox delivery. Remove the Agent-wide user-unbind path only
+5. Enable batch reconciliation, conditional user unbind, and synchronous
+   account-key Agent removal. Remove the Agent-wide user-unbind path only
    after this gate passes.
 
 ## History
@@ -470,7 +475,7 @@ credentials or raw upstream exceptions.
 - Kept `sourceId` as a per-domain Router locator and removed the proposed
   cross-service binding ID, relation lifecycle, and binding-ID backfill.
 - Added canonical account identity to the successful callback, local
-  projection, historical enrichment, and durable Agent-removal intent.
+  projection, historical enrichment, and synchronous Agent-removal check.
 
 ## 2026-08-02 Account-key Binding Change Reason
 
@@ -482,5 +487,24 @@ Including the expected Agent in every reconciliation, unbind, and takeover
 mutation makes stale cross-environment requests conditional, while grouping by
 the account key prevents a domain `sourceId` from being mistaken for the whole
 binding. Agent-wide deletion remains too broad for user-initiated unbind because
-the same Agent may bind a different account later, so local and outbox cleanup
-carry the complete account binding key.
+the same Agent may bind a different account later, so every local cleanup uses
+the complete account binding key.
+
+## 2026-08-02 Synchronous Agent-removal Change History
+
+- Removed the proposed asynchronous unbind table, migration, worker, retry
+  configuration, and runtime registration from Multica.
+- Agent archive and hard cleanup now lock the Agent and local projection, run
+  exact account-key enrichment when needed, conditionally unbind the expected
+  Agent in Router, and commit local cleanup only for safe Router outcomes.
+- Binding begin now participates in the same Agent-row lock fence, preventing a
+  new pending binding from crossing a concurrent delete.
+
+## 2026-08-02 Synchronous Agent-removal Change Reason
+
+The product explicitly chose not to add a new database table for deletion
+compensation. A synchronous fail-closed state machine keeps unsafe or
+unverifiable ownership intact and makes the small Router-success/local-rollback
+window visible as a retryable failure. Exact BindingKey conditions and shared
+row locks preserve a newer winner without introducing a second lifecycle or
+schema track.

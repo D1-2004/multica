@@ -1032,6 +1032,14 @@ func (s *Service) subscriptionVerificationOutcome(subscription Subscription, sou
 }
 
 func (s *Service) subscriptionDispatchTargetMatches(dispatchTarget, endpointID string) bool {
+	publicBaseURL := ""
+	if s != nil && s.publicOrigin != nil {
+		publicBaseURL = s.publicOrigin.String()
+	}
+	return SubscriptionDispatchTargetMatches(dispatchTarget, endpointID, publicBaseURL)
+}
+
+func SubscriptionDispatchTargetMatches(dispatchTarget, endpointID, publicBaseURL string) bool {
 	expectedPath, err := dispatchPathForEndpointID(endpointID)
 	if err != nil {
 		return false
@@ -1039,10 +1047,10 @@ func (s *Service) subscriptionDispatchTargetMatches(dispatchTarget, endpointID s
 	if dispatchTarget == expectedPath {
 		return true
 	}
-	if s == nil || s.publicOrigin == nil {
+	if strings.TrimSpace(publicBaseURL) == "" {
 		return false
 	}
-	expectedURL, err := BuildDispatchURL(s.publicOrigin.String(), endpointID)
+	expectedURL, err := BuildDispatchURL(publicBaseURL, endpointID)
 	return err == nil && dispatchTarget == expectedURL
 }
 

@@ -461,7 +461,6 @@ WITH doomed AS (
     WHERE agent_id IN (
         SELECT id FROM agent WHERE runtime_id = $1 AND archived_at IS NOT NULL
     )
-      AND channel_type <> 'dingtalk_account'
 ),
 cleared_chat_sessions AS (
     DELETE FROM channel_chat_session_binding WHERE installation_id IN (SELECT id FROM doomed)

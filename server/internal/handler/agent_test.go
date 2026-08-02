@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 )
 
 // TestListWorkspaceAgentTaskSnapshot covers the agent presence snapshot endpoint:
@@ -910,35 +912,19 @@ func TestArchiveRestoreAgent_PreservesSkillsInResponse(t *testing.T) {
 	}
 }
 
-func TestArchiveAgentPersistsDingTalkAccountUnbindIntent(t *testing.T) {
+func TestArchiveAgentSynchronouslyUnbindsDingTalkAccount(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
 	agentID := createHandlerTestAgent(t, "archive-dingtalk-unbind-agent", nil)
-	var installationID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO channel_installation (
-			workspace_id, agent_id, channel_type, config, installer_user_id, status
-		) VALUES (
-			$1, $2, 'dingtalk_account',
-			jsonb_build_object(
-				'router_source_id', 'source-archive-agent',
-				'router_platform', 'dingtalk',
-				'router_tenant_id', 'corp-archive',
-				'router_account_id', 'employee-archive',
-				'dispatch_endpoint_id', 'v1_EREREREREREREREREREREQ'
-			),
-			$3, 'active'
-		)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&installationID); err != nil {
-		t.Fatalf("seed dingtalk account binding: %v", err)
+	installationID := seedAccountKeyProjection(t, ctx, agentID, "source-archive-agent", "corp-archive", "employee-archive")
+	router := &fakeDingTalkBindingTeardownRouter{
+		unbindResult: agentmessagerouter.DigitalEmployeeBindingUnbindResult{Status: "unbound"},
 	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM dingtalk_binding_unbind_outbox WHERE installation_id = $1`, installationID)
-		testPool.Exec(context.Background(), `DELETE FROM channel_installation WHERE id = $1`, installationID)
-	})
+	previousRouter := testHandler.DingTalkBindingTeardownRouter
+	testHandler.DingTalkBindingTeardownRouter = router
+	t.Cleanup(func() { testHandler.DingTalkBindingTeardownRouter = previousRouter })
 
 	request := withURLParam(newRequest(http.MethodPost, "/api/agents/"+agentID+"/archive", nil), "id", agentID)
 	response := httptest.NewRecorder()
@@ -947,24 +933,48 @@ func TestArchiveAgentPersistsDingTalkAccountUnbindIntent(t *testing.T) {
 		t.Fatalf("ArchiveAgent: expected 200, got %d: %s", response.Code, response.Body.String())
 	}
 
-	var platform, tenantID, accountID, targetIdentity string
-	if err := testPool.QueryRow(ctx, `
-		SELECT platform, tenant_id, account_id, target_identity
-		FROM dingtalk_binding_unbind_outbox
-		WHERE installation_id = $1 AND status = 'queued'
-	`, installationID).Scan(&platform, &tenantID, &accountID, &targetIdentity); err != nil {
-		t.Fatalf("load unbind intent: %v", err)
-	}
-	if platform != "dingtalk" || tenantID != "corp-archive" || accountID != "employee-archive" ||
-		targetIdentity != testRouterTargetIdentity {
-		t.Fatalf("intent platform=%q tenant=%q account=%q target=%q", platform, tenantID, accountID, targetIdentity)
+	if len(router.unbinds) != 1 || router.unbinds[0].AgentID != agentID ||
+		router.unbinds[0].Platform != "dingtalk" || router.unbinds[0].TenantID != "corp-archive" ||
+		router.unbinds[0].AccountID != "employee-archive" {
+		t.Fatalf("conditional unbind request = %#v", router.unbinds)
 	}
 	var projectionCount int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM channel_installation WHERE id = $1`, installationID).Scan(&projectionCount); err != nil {
 		t.Fatal(err)
 	}
-	if projectionCount != 1 {
-		t.Fatalf("binding projection removed before Router delivery: count=%d", projectionCount)
+	if projectionCount != 0 {
+		t.Fatalf("binding projection count=%d, want synchronous removal", projectionCount)
+	}
+}
+
+func TestArchiveAgentFailsClosedWhenDingTalkRouterIsUnavailable(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "archive-dingtalk-router-unavailable", nil)
+	installationID := seedAccountKeyProjection(t, ctx, agentID, "source-archive-unavailable", "corp-unavailable", "employee-unavailable")
+	router := &fakeDingTalkBindingTeardownRouter{unbindErr: fmt.Errorf("Router unavailable")}
+	previousRouter := testHandler.DingTalkBindingTeardownRouter
+	testHandler.DingTalkBindingTeardownRouter = router
+	t.Cleanup(func() { testHandler.DingTalkBindingTeardownRouter = previousRouter })
+
+	request := withURLParam(newRequest(http.MethodPost, "/api/agents/"+agentID+"/archive", nil), "id", agentID)
+	response := httptest.NewRecorder()
+	testHandler.ArchiveAgent(response, request)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("ArchiveAgent: expected 500, got %d: %s", response.Code, response.Body.String())
+	}
+	var archived bool
+	var projectionCount int
+	if err := testPool.QueryRow(ctx, `SELECT archived_at IS NOT NULL FROM agent WHERE id = $1`, agentID).Scan(&archived); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM channel_installation WHERE id = $1`, installationID).Scan(&projectionCount); err != nil {
+		t.Fatal(err)
+	}
+	if archived || projectionCount != 1 {
+		t.Fatalf("failed archive archived=%v projection count=%d, want both retained", archived, projectionCount)
 	}
 }
 

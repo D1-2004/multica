@@ -1843,9 +1843,15 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
-	if err := h.enqueueDingTalkBindingUnbinds(r.Context(), qtx, []pgtype.UUID{agent.ID}); err != nil {
-		slog.Warn("enqueue dingtalk binding unbind on archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+	lockedAgents, err := h.teardownDingTalkBindings(r.Context(), qtx, []pgtype.UUID{agent.ID})
+	if err != nil {
+		slog.Warn("synchronous dingtalk binding teardown on archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+	if len(lockedAgents) != 1 || lockedAgents[0].ID != agent.ID ||
+		lockedAgents[0].WorkspaceID != agent.WorkspaceID || lockedAgents[0].ArchivedAt.Valid {
+		writeError(w, http.StatusConflict, "agent state changed; please retry")
 		return
 	}
 	archived, err := qtx.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
@@ -1861,8 +1867,6 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to archive agent")
 		return
 	}
-	h.notifyDingTalkBindingUnbinds()
-
 	// Cancel all pending/active tasks for this agent. Discard the returned
 	// rows here — the agent:archived event below already triggers a full
 	// active-tasks invalidation on every connected client, so per-task

@@ -722,6 +722,19 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.LockAgentRuntime(r.Context(), rt.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock runtime")
+		return
+	}
+	activeAfterLock, err := qtx.ListActiveAgentsByRuntimesForUpdate(r.Context(), []pgtype.UUID{rt.ID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to recheck runtime dependencies")
+		return
+	}
+	if len(activeAfterLock) > 0 {
+		writeJSON(w, http.StatusConflict, runtimeHasActiveAgentsResponse(activeAfterLock))
+		return
+	}
 
 	// Pause autopilots pointing at the archived agents BEFORE we delete
 	// them. Migration 096 dropped the autopilot.assignee_id agent FK, so a
@@ -732,10 +745,14 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	// can re-point or delete the row instead. This runs inside the teardown
 	// transaction so a pause that lands but is followed by a failed delete
 	// rolls back with everything else, matching ArchiveAgentsAndDeleteRuntime.
-	archivedAgentIDs, err := qtx.ListArchivedAgentIDsByRuntime(r.Context(), rt.ID)
+	archivedAgents, err := qtx.ListArchivedAgentsByRuntimesForUpdate(r.Context(), []pgtype.UUID{rt.ID})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enumerate archived agents")
 		return
+	}
+	archivedAgentIDs := make([]pgtype.UUID, len(archivedAgents))
+	for i, agent := range archivedAgents {
+		archivedAgentIDs[i] = agent.ID
 	}
 	if len(archivedAgentIDs) > 0 {
 		if err := qtx.PauseAutopilotsByAgentAssignees(r.Context(), archivedAgentIDs); err != nil {
@@ -743,8 +760,8 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := h.enqueueDingTalkBindingUnbinds(r.Context(), qtx, archivedAgentIDs); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to preserve dingtalk binding cleanup")
+	if _, err := h.teardownDingTalkBindings(r.Context(), qtx, archivedAgentIDs); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to unbind dingtalk account bindings")
 		return
 	}
 
@@ -800,8 +817,6 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete runtime")
 		return
 	}
-	h.notifyDingTalkBindingUnbinds()
-
 	slog.Info("runtime deleted", "runtime_id", uuidToString(rt.ID), "deleted_by", userID)
 
 	// Notify frontend to refresh runtime list.
@@ -976,6 +991,20 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 	for i, a := range currentActive {
 		currentActiveIDs[i] = a.ID
 	}
+	preexistingArchived, err := qtx.ListArchivedAgentsByRuntimesForUpdate(r.Context(), []pgtype.UUID{rt.ID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to enumerate archived agents")
+		return
+	}
+	preexistingArchivedIDs := make([]pgtype.UUID, len(preexistingArchived))
+	for i, agent := range preexistingArchived {
+		preexistingArchivedIDs[i] = agent.ID
+	}
+	teardownAgentIDs := append(append([]pgtype.UUID(nil), currentActiveIDs...), preexistingArchivedIDs...)
+	if _, err := h.teardownDingTalkBindings(r.Context(), qtx, teardownAgentIDs); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to unbind dingtalk account bindings")
+		return
+	}
 
 	// 1. Archive every active agent on this runtime, narrowed to the
 	//    user-confirmed expected_active_agent_ids set (which equals
@@ -1025,11 +1054,6 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 			return
 		}
 	}
-	if err := h.enqueueDingTalkBindingUnbinds(r.Context(), qtx, allArchivedIDs); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to preserve dingtalk binding cleanup")
-		return
-	}
-
 	// 4. Hard-delete the archived agents so the agent.runtime_id FK
 	//    (ON DELETE RESTRICT) no longer keeps the runtime alive.
 	if err := qtx.DeleteAgentInvocationTargetsByArchivedRuntimeAgents(r.Context(), rt.ID); err != nil {
@@ -1074,8 +1098,6 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
 	}
-	h.notifyDingTalkBindingUnbinds()
-
 	// Post-commit fan-out — same ordering as publishRevocation so subscribers
 	// observe task:cancelled before agent:archived before the runtime list
 	// refresh, matching the order other revocation paths use.

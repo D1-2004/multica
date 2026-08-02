@@ -129,6 +129,14 @@ func (q *Queries) BackfillDingTalkAccountRouterAccountKey(ctx context.Context, a
 
 const beginDingTalkAccountBinding = `-- name: BeginDingTalkAccountBinding :one
 
+WITH target_agent AS (
+    SELECT id, workspace_id
+    FROM agent
+    WHERE id = $2
+      AND workspace_id = $1
+      AND archived_at IS NULL
+    FOR KEY SHARE
+)
 INSERT INTO channel_installation (
     workspace_id, agent_id, channel_type, config, status, installer_user_id
 )
@@ -139,9 +147,7 @@ SELECT
     $3,
     'pending',
     $4
-FROM agent a
-WHERE a.id = $2
-  AND a.workspace_id = $1
+FROM target_agent a
 ON CONFLICT (workspace_id, agent_id, channel_type) DO UPDATE SET
     config = EXCLUDED.config || jsonb_build_object(
         'dispatch_endpoint_id', channel_installation.config ->> 'dispatch_endpoint_id',
@@ -167,7 +173,10 @@ type BeginDingTalkAccountBindingParams struct {
 // integration cannot read or mutate another channel's installation.
 // Insert the first pending attempt only when the agent belongs to the supplied
 // workspace. Concurrent/repeated attempts rotate the callback credential but
-// keep the stable endpoint fields. active rows deliberately return no row.
+// keep the stable endpoint fields. The KEY SHARE lock conflicts with Agent
+// teardown's FOR UPDATE lock; after teardown commits, archived agents no longer
+// satisfy the CTE and cannot acquire a new pending binding. active rows
+// deliberately return no row.
 func (q *Queries) BeginDingTalkAccountBinding(ctx context.Context, arg BeginDingTalkAccountBindingParams) (ChannelInstallation, error) {
 	row := q.db.QueryRow(ctx, beginDingTalkAccountBinding,
 		arg.WorkspaceID,
@@ -269,19 +278,20 @@ func (q *Queries) CompleteDingTalkAccountBindingResult(ctx context.Context, arg 
 	return i, err
 }
 
-const deleteDingTalkAccountBindingProjectionByAccountKey = `-- name: DeleteDingTalkAccountBindingProjectionByAccountKey :one
+const deleteDingTalkAccountBindingProjectionForTeardown = `-- name: DeleteDingTalkAccountBindingProjectionForTeardown :one
 DELETE FROM channel_installation
 WHERE id = $1
   AND workspace_id = $2
   AND agent_id = $3
   AND channel_type = 'dingtalk_account'
+  AND status = 'active'
   AND config ->> 'router_platform' = $4::text
   AND config ->> 'router_tenant_id' = $5::text
   AND config ->> 'router_account_id' = $6::text
 RETURNING id, workspace_id, agent_id, channel_type, config, status, ws_lease_token, ws_lease_expires_at, installer_user_id, installed_at, created_at, updated_at
 `
 
-type DeleteDingTalkAccountBindingProjectionByAccountKeyParams struct {
+type DeleteDingTalkAccountBindingProjectionForTeardownParams struct {
 	ID                      pgtype.UUID `json:"id"`
 	WorkspaceID             pgtype.UUID `json:"workspace_id"`
 	AgentID                 pgtype.UUID `json:"agent_id"`
@@ -290,10 +300,11 @@ type DeleteDingTalkAccountBindingProjectionByAccountKeyParams struct {
 	ExpectedRouterAccountID string      `json:"expected_router_account_id"`
 }
 
-// Outbox delivery may run after Agent deletion, so this exact-key projection
-// cleanup deliberately does not join the Agent table.
-func (q *Queries) DeleteDingTalkAccountBindingProjectionByAccountKey(ctx context.Context, arg DeleteDingTalkAccountBindingProjectionByAccountKeyParams) (ChannelInstallation, error) {
-	row := q.db.QueryRow(ctx, deleteDingTalkAccountBindingProjectionByAccountKey,
+// Router has already conditionally unbound this exact BindingKey. Remove only
+// the still-active local projection whose complete AccountKey matches the
+// request; a concurrent takeover/callback therefore cannot be destroyed.
+func (q *Queries) DeleteDingTalkAccountBindingProjectionForTeardown(ctx context.Context, arg DeleteDingTalkAccountBindingProjectionForTeardownParams) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, deleteDingTalkAccountBindingProjectionForTeardown,
 		arg.ID,
 		arg.WorkspaceID,
 		arg.AgentID,
@@ -469,6 +480,37 @@ type GetDingTalkAccountBindingByAgentParams struct {
 
 func (q *Queries) GetDingTalkAccountBindingByAgent(ctx context.Context, arg GetDingTalkAccountBindingByAgentParams) (ChannelInstallation, error) {
 	row := q.db.QueryRow(ctx, getDingTalkAccountBindingByAgent, arg.WorkspaceID, arg.AgentID)
+	var i ChannelInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDingTalkAccountBindingByAgentForUpdate = `-- name: GetDingTalkAccountBindingByAgentForUpdate :one
+SELECT ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.status, ci.ws_lease_token, ci.ws_lease_expires_at, ci.installer_user_id, ci.installed_at, ci.created_at, ci.updated_at
+FROM channel_installation ci
+WHERE ci.agent_id = $1
+  AND ci.channel_type = 'dingtalk_account'
+FOR UPDATE
+`
+
+// Agent teardown already holds the Agent row lock. Lock the single local
+// projection as the second step so callback activation and local cleanup are
+// serialized behind the same transaction.
+func (q *Queries) GetDingTalkAccountBindingByAgentForUpdate(ctx context.Context, agentID pgtype.UUID) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, getDingTalkAccountBindingByAgentForUpdate, agentID)
 	var i ChannelInstallation
 	err := row.Scan(
 		&i.ID,

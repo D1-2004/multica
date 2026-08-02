@@ -2,7 +2,9 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"sort"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -69,6 +71,27 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 				daemonIDs = append(daemonIDs, rt.DaemonID.String)
 			}
 		}
+		lockedRuntimeIDs := append([]pgtype.UUID(nil), runtimeIDs...)
+		sort.Slice(lockedRuntimeIDs, func(i, j int) bool {
+			return lockedRuntimeIDs[i].String() < lockedRuntimeIDs[j].String()
+		})
+		for _, runtimeID := range lockedRuntimeIDs {
+			if _, err := qtx.LockAgentRuntime(ctx, runtimeID); err != nil {
+				return empty, err
+			}
+		}
+
+		activeAgents, lockErr := qtx.ListActiveAgentsByRuntimesForUpdate(ctx, runtimeIDs)
+		if lockErr != nil {
+			return empty, lockErr
+		}
+		activeAgentIDs := make([]pgtype.UUID, len(activeAgents))
+		for i, agent := range activeAgents {
+			activeAgentIDs[i] = agent.ID
+		}
+		if _, err := h.teardownDingTalkBindings(ctx, qtx, activeAgentIDs); err != nil {
+			return empty, err
+		}
 
 		result.ArchivedAgents, err = qtx.ArchiveAgentsByRuntime(ctx, db.ArchiveAgentsByRuntimeParams{
 			ArchivedBy: archivedBy,
@@ -76,6 +99,9 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 		})
 		if err != nil {
 			return empty, err
+		}
+		if !sameDingTalkBindingAgentSet(activeAgentIDs, result.ArchivedAgents) {
+			return empty, errors.New("agent set changed during member revocation")
 		}
 
 		// Cancel by runtime AND by archived agent. agent.runtime_id can be
@@ -87,9 +113,6 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 		archivedAgentIDs := make([]pgtype.UUID, len(result.ArchivedAgents))
 		for i, a := range result.ArchivedAgents {
 			archivedAgentIDs[i] = a.ID
-		}
-		if err := h.enqueueDingTalkBindingUnbinds(ctx, qtx, archivedAgentIDs); err != nil {
-			return empty, err
 		}
 		result.CancelledTasks, err = qtx.CancelAgentTasksByRuntimeOrAgent(ctx, db.CancelAgentTasksByRuntimeOrAgentParams{
 			RuntimeIds: runtimeIDs,
@@ -153,8 +176,6 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 	if err := tx.Commit(ctx); err != nil {
 		return empty, err
 	}
-	h.notifyDingTalkBindingUnbinds()
-
 	return result, nil
 }
 
