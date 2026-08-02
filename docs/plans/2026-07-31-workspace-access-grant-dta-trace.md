@@ -4,7 +4,7 @@
 > 状态：已完成
 > 创建日期：2026-07-31
 > 计划 ID：20260731-workspace-access-grant-dta-trace
-> 最后更新时间：2026-08-02 18:29 CST
+> 最后更新时间：2026-08-02 18:36 CST
 > 当前分支：`codex/workspace-access-grants`
 > 目标执行分支：`codex/workspace-access-grants`
 > 基线 Commit：`origin/develop@596ed393fd1db31f4a83765a7ca686df200fc215`
@@ -173,6 +173,7 @@ Workspace 设置页显示平铺的“DTA Token”：
 | 已废弃 Grant+多 Token 初版 | 已提交 | `df47612fa` | 见 Git commit | 作为重构基线保留，不 amend、不 rebase |
 | 单层 Token 改造 | 已完成 | `0c8c4ab97` | `make sqlc`；专项 Go + 隔离 PostgreSQL；`go vet`；`pnpm typecheck`；Core 精确测试；Docs build；257 down/up | Token 独立权限、动态改权、regenerate、吊销、ownership/scope/Trace 均通过；TS 类型通过；Core 79/79；Docs 157 页构建通过 |
 | 预发开关注入 | 已完成 | `3ef44ea57` | `bash -n src/main.sh`；trait guarded replacement；pipeline/health/config 回读 | 运行时白名单包含 `FF_WORKSPACE_ACCESS_TOKENS`；预发 trait 98→99 个唯一 key，其他项不变；`/api/config` 返回 true |
+| 预发 UI 反馈修复 | 已完成，待推送复验 | 待提交 | Views typecheck；目标 ESLint；locale JSON；diff check | Select 使用全宽约束；权限、资源范围和有效期补齐详细说明；真实浏览器像素效果待下一次预发部署复验 |
 
 ## 验证策略
 
@@ -209,6 +210,7 @@ Workspace 设置页显示平铺的“DTA Token”：
 | 2026-08-02 | 完成 Grant→多 Token 初版 `df47612fa` | 当时采用稳定授权与多凭证模型 | 是 |
 | 2026-08-02 | 改为一个 Token 一份身份和权限；原地 regenerate；删除 Grant 层 | 用户明确不同实际使用方应有不同权限，并接受重新生成导致中断；随后指示“改” | 是 |
 | 2026-08-02 | 推送并部署预发；补齐 release flag 运行时白名单；预发 trait 开启功能 | 用户明确要求提交、推送、部署预发，并纠正环境变量应通过 trait 后重新部署 | 是 |
+| 2026-08-02 | 修复资源范围 Select 溢出，并增强权限、范围和有效期说明 | 用户在预发截图中确认布局异常、权限说明过弱且有效期缺少字段名 | 是 |
 
 ## 最终验证结果
 
@@ -228,6 +230,7 @@ Workspace 设置页显示平铺的“DTA Token”：
 | 安全残留 | 搜索旧 Grant symbol/API/flag、疑似 `dta_` 明文 | 范围内无残留，无提交明文 Token |
 | 预发交付 | CR `35392614`；Run `3101721096`；Deploy Order `158336422` | snapshot revision `3ef44ea57`；代码合并、构建、扫描、2/2 主机部署、集成测试成功；停在人工预发验证门禁 |
 | 预发可用性 | `GET /healthz`；`GET /api/config` | HTTP 200；`feature_flags.workspace_access_tokens=true` |
+| UI 反馈修复 | `pnpm --filter @multica/views typecheck`；目标 ESLint；locale JSON parse；`git diff --check` | 全部通过；预发浏览器复验需随下一次部署执行 |
 
 未通过但不归因于本改造的仓库基线验证：
 

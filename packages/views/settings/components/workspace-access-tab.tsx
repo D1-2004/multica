@@ -139,10 +139,19 @@ function TokenEditorDialog({ wsId, token, open, onOpenChange, onSecret }: {
   const [capabilities, setCapabilities] = useState<WorkspaceAccessCapability[]>(token?.capabilities ?? ["deployment.manage", "trace.read"]);
   const [scope, setScope] = useState<WorkspaceAccessResourceScope>(token?.resource_scope ?? "own_agents");
   const [expiry, setExpiry] = useState(token ? "keep" : "90");
-  const capabilityLabels = useMemo(() => ({
-    "deployment.manage": t(($) => $.workspace_access.capabilities.manage),
-    "deployment.retire": t(($) => $.workspace_access.capabilities.retire),
-    "trace.read": t(($) => $.workspace_access.capabilities.trace),
+  const capabilityCopy = useMemo(() => ({
+    "deployment.manage": {
+      title: t(($) => $.workspace_access.capabilities.manage),
+      description: t(($) => $.workspace_access.capability_descriptions.manage),
+    },
+    "deployment.retire": {
+      title: t(($) => $.workspace_access.capabilities.retire),
+      description: t(($) => $.workspace_access.capability_descriptions.retire),
+    },
+    "trace.read": {
+      title: t(($) => $.workspace_access.capabilities.trace),
+      description: t(($) => $.workspace_access.capability_descriptions.trace),
+    },
   }), [t]);
   const toggleCapability = (capability: WorkspaceAccessCapability, checked: boolean) => setCapabilities((current) => checked
     ? Array.from(new Set([...current, capability]))
@@ -167,19 +176,26 @@ function TokenEditorDialog({ wsId, token, open, onOpenChange, onSecret }: {
         <DialogHeader><DialogTitle>{token ? t(($) => $.workspace_access.edit_title) : t(($) => $.workspace_access.create_title)}</DialogTitle></DialogHeader>
         <div className="space-y-5">
           <Input value={name} onChange={(event) => setName(event.target.value)} placeholder={t(($) => $.workspace_access.name_placeholder)} />
-          <div className="space-y-2">
+          <div className="space-y-3">
             <div className="text-sm font-medium">{t(($) => $.workspace_access.permissions)}</div>
-            {ALL_CAPABILITIES.map((capability) => <label key={capability} className="flex items-center gap-2 text-sm">
-              <Checkbox checked={capabilities.includes(capability)} onCheckedChange={(value) => toggleCapability(capability, value === true)} />
-              {capabilityLabels[capability]}
+            <p className="text-xs leading-relaxed text-muted-foreground">{t(($) => $.workspace_access.permissions_description)}</p>
+            {ALL_CAPABILITIES.map((capability) => <label key={capability} className="flex cursor-pointer items-start gap-3 rounded-lg border p-3">
+              <Checkbox className="mt-0.5" checked={capabilities.includes(capability)} onCheckedChange={(value) => toggleCapability(capability, value === true)} />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">{capabilityCopy[capability].title}</span>
+                <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{capabilityCopy[capability].description}</span>
+              </span>
             </label>)}
           </div>
           <div className="space-y-2">
             <div className="text-sm font-medium">{t(($) => $.workspace_access.scope_title)}</div>
             <Select value={scope} onValueChange={(value) => setScope(value as WorkspaceAccessResourceScope)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-full min-w-0"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="own_agents">{t(($) => $.workspace_access.scope.own_agents)}</SelectItem><SelectItem value="workspace">{t(($) => $.workspace_access.scope.workspace)}</SelectItem></SelectContent>
             </Select>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {scope === "own_agents" ? t(($) => $.workspace_access.scope_descriptions.own_agents) : t(($) => $.workspace_access.scope_descriptions.workspace)}
+            </p>
             {scope === "workspace" ? <Alert><AlertDescription>{t(($) => $.workspace_access.workspace_warning)}</AlertDescription></Alert> : null}
           </div>
           <ExpirySelect value={expiry} onChange={setExpiry} includeKeep={!!token} />
@@ -221,7 +237,11 @@ function RegenerateTokenDialog({ wsId, token, open, onOpenChange, onSecret }: {
 
 function ExpirySelect({ value, onChange, includeKeep = false }: { value: string; onChange: (value: string) => void; includeKeep?: boolean }) {
   const { t } = useT("settings");
-  return <Select value={value} onValueChange={(next) => next && onChange(next)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{includeKeep ? <SelectItem value="keep">{t(($) => $.workspace_access.expiry.keep)}</SelectItem> : null}{EXPIRY_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option === "never" ? t(($) => $.workspace_access.expiry.never) : t(($) => $.workspace_access.expiry.days, { count: Number(option) })}</SelectItem>)}</SelectContent></Select>;
+  return <div className="space-y-2">
+    <div className="text-sm font-medium">{t(($) => $.workspace_access.expiry_title)}</div>
+    <Select value={value} onValueChange={(next) => next && onChange(next)}><SelectTrigger className="w-full min-w-0"><SelectValue /></SelectTrigger><SelectContent>{includeKeep ? <SelectItem value="keep">{t(($) => $.workspace_access.expiry.keep)}</SelectItem> : null}{EXPIRY_OPTIONS.map((option) => <SelectItem key={option} value={option}>{option === "never" ? t(($) => $.workspace_access.expiry.never) : t(($) => $.workspace_access.expiry.days, { count: Number(option) })}</SelectItem>)}</SelectContent></Select>
+    <p className="text-xs leading-relaxed text-muted-foreground">{t(($) => $.workspace_access.expiry_description)}</p>
+  </div>;
 }
 
 function SecretDialog({ secret, onClose }: { secret: string | null; onClose: () => void }) {
