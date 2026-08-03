@@ -85,7 +85,7 @@ func TestASBLaunchIdentityAllowsExplicitUnboundMode(t *testing.T) {
 		identity.Fingerprint != asbUnboundIdentityFingerprint {
 		t.Fatalf("unbound identity = %#v", identity)
 	}
-	if extensions := identity.sandboxExtensions(); len(extensions) != 0 {
+	if extensions := identity.sandboxExtensions("wg-client"); len(extensions) != 0 {
 		t.Fatalf("unbound sandbox extensions = %#v", extensions)
 	}
 }
@@ -146,33 +146,27 @@ func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
 	if err := identity.validate(); err != nil {
 		t.Fatalf("validate bound identity: %v", err)
 	}
-	extensions := identity.sandboxExtensions()
+	extensions := identity.sandboxExtensions("wireguard-credentials")
 	for key, expected := range map[string]string{
-		"spiffe.lazyAuth":    "true",
-		"wireguard.lazyAuth": "true",
+		"spiffe.lazyAuth":          "true",
+		"wireguard.worker":         identity.RawEmployeeID,
+		"wireguard.uemCredentials": "wireguard-credentials",
+		"buc.originalSandboxID":    identity.SourceSandboxID,
 	} {
 		if extensions[key] != expected {
 			t.Fatalf("bound sandbox extension %s = %q, want %q", key, extensions[key], expected)
 		}
 	}
-	for _, forbidden := range []string{
-		"wireguard.worker",
-		"wireguard.uemCredentials",
-		"buc.originalSandboxID",
-	} {
-		if _, ok := extensions[forbidden]; ok {
-			t.Fatalf("bound sandbox extensions include create-time identity field %s", forbidden)
-		}
+	if _, ok := extensions["wireguard.lazyAuth"]; ok {
+		t.Fatal("bound sandbox extensions mix lazy WireGuard auth with create-time identity")
 	}
 }
 
-func TestASBLauncherAttachesAgentIdentityBeforeEnterpriseCLIProbe(t *testing.T) {
+func TestASBLauncherUsesCreateTimeBUCAndAttachesAgentIdentityBeforeProbe(t *testing.T) {
 	t.Parallel()
 
 	var spiffeGrant ASBAgentIdentityGrant
-	var bucGrant ASBBUCIdentityGrant
 	var spiffeAttached atomic.Bool
-	var bucAttached atomic.Bool
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
@@ -183,19 +177,9 @@ func TestASBLauncherAttachesAgentIdentityBeforeEnterpriseCLIProbe(t *testing.T) 
 				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
 			})
 		case request.Method == http.MethodPost &&
-			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/wireguard":
-			if request.URL.Query().Get("sync") != "true" {
-				t.Errorf("wireguard sync = %q", request.URL.Query().Get("sync"))
-			}
-			if err := json.NewDecoder(request.Body).Decode(&bucGrant); err != nil {
-				t.Fatalf("decode BUC identity: %v", err)
-			}
-			bucAttached.Store(true)
-			response.WriteHeader(http.StatusOK)
-		case request.Method == http.MethodPost &&
 			request.URL.Path == "/execd/command":
-			if !bucAttached.Load() || !spiffeAttached.Load() {
-				http.Error(response, "BUC and SPIFFE identities must be attached before the CLI probe", http.StatusConflict)
+			if !spiffeAttached.Load() {
+				http.Error(response, "SPIFFE identity must be attached before the CLI probe", http.StatusConflict)
 				return
 			}
 			response.Header().Set("Content-Type", "text/event-stream")
@@ -243,14 +227,6 @@ func TestASBLauncherAttachesAgentIdentityBeforeEnterpriseCLIProbe(t *testing.T) 
 		spiffeGrant.AgentID != identity.AgentSPIFFEID {
 		t.Fatalf("SPIFFE identity grant = %#v", spiffeGrant)
 	}
-	if bucGrant.EmployeeID != identity.RawEmployeeID ||
-		bucGrant.WireGuardCredentials != "wireguard-credentials" ||
-		bucGrant.OriginalSandboxID != identity.SourceSandboxID ||
-		bucGrant.BUCAccessToken != "" ||
-		bucGrant.BUCRefreshToken != "" ||
-		bucGrant.BUCIDToken != "" {
-		t.Fatalf("BUC identity grant = %#v", bucGrant)
-	}
 }
 
 func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
@@ -275,9 +251,6 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 				_, _ = io.WriteString(response, `data: {"type":"error","error":{"ename":"CommandExecError","evalue":"1"}}`+"\n")
 			}
 			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
-		case request.Method == http.MethodPost &&
-			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/wireguard":
-			response.WriteHeader(http.StatusOK)
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/spiffe":
 			if attachCalls.Add(1) >= 2 {

@@ -44,36 +44,34 @@ const (
 // ASBConfig is the deployment-owned configuration for the Aone Sandbox
 // backend. Tenant API keys are Runtime-owned encrypted credentials.
 type ASBConfig struct {
-	Enabled                bool
-	APIURL                 string
-	ServerURL              string
-	LLMBaseURL             string
-	LLMAPIKey              string
-	LLMModels              []string
-	TimeoutSeconds         int
-	ReadyTimeout           time.Duration
-	WireGuardReadyTimeout  time.Duration
-	ResourceCPU            string
-	ResourceMemory         string
-	WireGuardCredentials   string
-	IdentityAnchorImageRef string
-	ParseError             error
+	Enabled               bool
+	APIURL                string
+	ServerURL             string
+	LLMBaseURL            string
+	LLMAPIKey             string
+	LLMModels             []string
+	TimeoutSeconds        int
+	ReadyTimeout          time.Duration
+	WireGuardReadyTimeout time.Duration
+	ResourceCPU           string
+	ResourceMemory        string
+	WireGuardCredentials  string
+	ParseError            error
 }
 
 func ASBConfigFromEnv() ASBConfig {
 	cfg := ASBConfig{
-		Enabled:                envBool("MULTICA_ASB_ENABLED"),
-		APIURL:                 strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_API_URL")), "/"),
-		ServerURL:              strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_SERVER_URL")), "/"),
-		LLMBaseURL:             strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_BASE_URL")), "/"),
-		LLMAPIKey:              strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_API_KEY")),
-		TimeoutSeconds:         defaultASBTimeoutSeconds,
-		ReadyTimeout:           defaultASBReadyTimeout,
-		WireGuardReadyTimeout:  defaultASBWireGuardReadyTimeout,
-		ResourceCPU:            firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_CPU"), defaultASBResourceCPU),
-		ResourceMemory:         firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_MEMORY"), defaultASBResourceMemory),
-		WireGuardCredentials:   strings.TrimSpace(os.Getenv("MULTICA_ASB_WG_CLIENT_CREDENTIALS")),
-		IdentityAnchorImageRef: strings.TrimSpace(os.Getenv("MULTICA_ASB_IDENTITY_ANCHOR_IMAGE")),
+		Enabled:               envBool("MULTICA_ASB_ENABLED"),
+		APIURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_API_URL")), "/"),
+		ServerURL:             strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_SERVER_URL")), "/"),
+		LLMBaseURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_BASE_URL")), "/"),
+		LLMAPIKey:             strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_API_KEY")),
+		TimeoutSeconds:        defaultASBTimeoutSeconds,
+		ReadyTimeout:          defaultASBReadyTimeout,
+		WireGuardReadyTimeout: defaultASBWireGuardReadyTimeout,
+		ResourceCPU:           firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_CPU"), defaultASBResourceCPU),
+		ResourceMemory:        firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_MEMORY"), defaultASBResourceMemory),
+		WireGuardCredentials:  strings.TrimSpace(os.Getenv("MULTICA_ASB_WG_CLIENT_CREDENTIALS")),
 	}
 	models, err := parseStringListEnv("MULTICA_ASB_OPENAI_MODELS", os.Getenv("MULTICA_ASB_OPENAI_MODELS"))
 	if err != nil {
@@ -141,7 +139,6 @@ func (c ASBConfig) Validate() error {
 		{"MULTICA_ASB_RESOURCE_CPU", c.ResourceCPU},
 		{"MULTICA_ASB_RESOURCE_MEMORY", c.ResourceMemory},
 		{"MULTICA_ASB_WG_CLIENT_CREDENTIALS", c.WireGuardCredentials},
-		{"MULTICA_ASB_IDENTITY_ANCHOR_IMAGE", c.IdentityAnchorImageRef},
 	}
 	for _, item := range required {
 		if strings.TrimSpace(item.value) == "" {
@@ -165,10 +162,6 @@ func (c ASBConfig) Validate() error {
 	}
 	if c.WireGuardReadyTimeout <= 0 {
 		missing = append(missing, "MULTICA_ASB_WIREGUARD_READY_TIMEOUT")
-	}
-	if strings.TrimSpace(c.IdentityAnchorImageRef) != "" &&
-		!cloudSandboxOCIDigestPattern.MatchString(c.IdentityAnchorImageRef) {
-		return errors.New("MULTICA_ASB_IDENTITY_ANCHOR_IMAGE must use an immutable sha256 OCI digest")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing ASB config: %s", strings.Join(missing, ", "))
@@ -243,16 +236,20 @@ func (identity ASBResolvedIdentity) validate() error {
 	}
 }
 
-func (identity ASBResolvedIdentity) sandboxExtensions() map[string]string {
+func (identity ASBResolvedIdentity) sandboxExtensions(
+	wireGuardCredentials string,
+) map[string]string {
 	if identity.Mode == asbIdentityModeUnbound {
 		return nil
 	}
-	// Both identities are attached after the sandbox reaches Running. In
-	// particular, ASB documents originalSandboxId reuse on the runtime
-	// WireGuard attachment API rather than as a create-time credential copy.
+	// The proven ASB inheritance contract copies the source credential directory
+	// during sandbox creation. The source and target use the same immutable
+	// Runtime image, so the copied directory layout is compatible.
 	return map[string]string{
-		"spiffe.lazyAuth":    "true",
-		"wireguard.lazyAuth": "true",
+		"spiffe.lazyAuth":          "true",
+		"wireguard.worker":         identity.RawEmployeeID,
+		"wireguard.uemCredentials": wireGuardCredentials,
+		"buc.originalSandboxID":    identity.SourceSandboxID,
 	}
 }
 
@@ -773,7 +770,7 @@ func (l *ASBLauncher) resolveSandbox(
 					"multica.runtime_id": util.UUIDToString(runtime.ID),
 					"multica.backend":    string(SandboxBackendASB),
 				},
-				Extensions: identity.sandboxExtensions(),
+				Extensions: identity.sandboxExtensions(l.Config.WireGuardCredentials),
 			},
 		)
 		if err != nil {
@@ -865,21 +862,6 @@ func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) 
 }
 
 func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID string, identity ASBResolvedIdentity) error {
-	// originalSandboxId reuses the ASB-managed BUC credential directory without
-	// exposing or persisting the user's OAuth token trio in Multica. The target
-	// has declared wireguard.lazyAuth at creation and is already Running here.
-	if err := attachASBBUCIdentityOnce(
-		ctx,
-		l.Client,
-		sandboxID,
-		ASBBUCIdentityGrant{
-			EmployeeID:           identity.RawEmployeeID,
-			WireGuardCredentials: l.Config.WireGuardCredentials,
-			OriginalSandboxID:    identity.SourceSandboxID,
-		},
-	); err != nil {
-		return fmt.Errorf("attach inherited ASB BUC identity: %w", err)
-	}
 	// The enterprise CLI probe calls a1, which needs the SPIFFE auth headers
 	// installed by AttachAgentIdentity. Attach them before probing the inherited
 	// BUC credential directory to avoid a circular readiness dependency.

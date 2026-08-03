@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -56,13 +57,14 @@ func (store *fakeASBIdentitySourceStore) ListASBRuntimeCredentials(
 
 func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	const (
-		sourceSandboxID  = "identity-source-123"
-		identityImageRef = "registry.example/identity-source@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-		employeeID       = "12345"
-		bucAgentID       = "agent-multica-asb"
+		sourceSandboxID = "identity-source-123"
+		runtimeImageRef = "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		employeeID      = "12345"
+		bucAgentID      = "agent-multica-asb"
 	)
 
 	state := "Running"
+	sourceImageRef := runtimeImageRef
 	attachCalls := 0
 	renewCalls := 0
 	pauseCalls := 0
@@ -76,7 +78,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 				t.Fatalf("decode create request: %v", err)
 			}
-			if payload.Image.URI != identityImageRef ||
+			if payload.Image.URI != runtimeImageRef ||
 				payload.Timeout != asbMaxCreateTimeout ||
 				payload.Extensions["wireguard.lazyAuth"] != "true" ||
 				len(payload.Extensions) != 1 {
@@ -92,6 +94,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 				"id":        sourceSandboxID,
 				"status":    map[string]string{"state": state},
 				"createdAt": "2026-07-31T05:00:00Z",
+				"image":     map[string]string{"uri": sourceImageRef},
 			})
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/identity/wireguard":
@@ -192,12 +195,11 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 		},
 		Capacity: fakeASBIdentitySourceCapacity{},
 		Config: ASBConfig{
-			ResourceCPU:            "2",
-			ResourceMemory:         "4Gi",
-			ReadyTimeout:           time.Second,
-			WireGuardReadyTimeout:  time.Second,
-			WireGuardCredentials:   "wg-client",
-			IdentityAnchorImageRef: identityImageRef,
+			ResourceCPU:           "2",
+			ResourceMemory:        "4Gi",
+			ReadyTimeout:          time.Second,
+			WireGuardReadyTimeout: time.Second,
+			WireGuardCredentials:  "wg-client",
 		},
 	}
 
@@ -255,6 +257,16 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	}
 	if state != "Running" || pauseCalls != 0 {
 		t.Fatalf("released state=%s pause_calls=%d", state, pauseCalls)
+	}
+	sourceImageRef = "registry.example/runtime@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	if err := manager.Prepare(
+		context.Background(),
+		runtimeID,
+		sourceSandboxID,
+		employeeID,
+		bucAgentID,
+	); !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+		t.Fatalf("Prepare mismatched identity source error = %v", err)
 	}
 	if err := manager.Delete(context.Background(), runtimeID, sourceSandboxID); err != nil {
 		t.Fatalf("Delete identity source: %v", err)

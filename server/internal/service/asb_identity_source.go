@@ -26,6 +26,7 @@ type EnterpriseIdentitySource interface {
 		enterpriseIdentitySourceKey,
 		BUCIdentityTokens,
 	) (EnterpriseIdentitySourceAvailability, error)
+	Compatible(context.Context, pgtype.UUID, pgtype.UUID) (bool, error)
 	Prepare(context.Context, pgtype.UUID, string, string, string) error
 	Park(context.Context, pgtype.UUID, string) error
 	Delete(context.Context, pgtype.UUID, string) error
@@ -36,16 +37,50 @@ type asbIdentitySourceRuntimeStore interface {
 }
 
 // ASBIdentitySourceManager establishes a BUC credential directory inside a
-// dedicated ASB sandbox built from the same image that proved the original
-// prepub anchor flow. OpenSandbox provision sandboxes do not support ASB's
-// pause operation, so the proven source remains running while task sandboxes
-// inherit its directory through buc.originalSandboxID. Park releases only the
-// Multica-side source lease; it does not mutate the sandbox lifecycle.
+// dedicated ASB sandbox built from the owning Runtime's immutable image.
+// OpenSandbox provision sandboxes do not support ASB's pause operation, so the
+// source remains running while compatible task sandboxes inherit its directory
+// through buc.originalSandboxID. Park releases only the Multica-side source
+// lease; it does not mutate the sandbox lifecycle.
 type ASBIdentitySourceManager struct {
 	Store       asbIdentitySourceRuntimeStore
 	Credentials *ASBRuntimeClientProvider
 	Capacity    ASBSandboxCapacity
 	Config      ASBConfig
+}
+
+func (m *ASBIdentitySourceManager) Compatible(
+	ctx context.Context,
+	sourceRuntimeID pgtype.UUID,
+	targetRuntimeID pgtype.UUID,
+) (bool, error) {
+	sourceRef, err := m.runtimeArtifactRef(ctx, sourceRuntimeID)
+	if err != nil {
+		return false, err
+	}
+	targetRef, err := m.runtimeArtifactRef(ctx, targetRuntimeID)
+	if err != nil {
+		return false, err
+	}
+	return sourceRef == targetRef, nil
+}
+
+func (m *ASBIdentitySourceManager) runtimeArtifactRef(
+	ctx context.Context,
+	runtimeID pgtype.UUID,
+) (string, error) {
+	if m == nil || m.Store == nil {
+		return "", errors.New("ASB enterprise identity source manager is unavailable")
+	}
+	runtime, err := m.Store.GetAgentRuntime(ctx, runtimeID)
+	if err != nil {
+		return "", fmt.Errorf("load ASB Runtime for enterprise identity source: %w", err)
+	}
+	metadata, err := ParseCloudSandboxRuntime(runtime)
+	if err != nil || metadata.SandboxBackend != SandboxBackendASB {
+		return "", errors.New("enterprise identity source requires an ASB Runtime")
+	}
+	return metadata.ArtifactRef, nil
 }
 
 func (m *ASBIdentitySourceManager) Create(
@@ -80,7 +115,7 @@ func (m *ASBIdentitySourceManager) Create(
 		return EnterpriseIdentitySourceAvailability{}, err
 	}
 	sandbox, err := m.Capacity.Create(ctx, runtimeID, client, ASBCreateSandboxInput{
-		ImageURI:       m.Config.IdentityAnchorImageRef,
+		ImageURI:       metadata.ArtifactRef,
 		TimeoutSeconds: asbMaxCreateTimeout,
 		ResourceCPU:    m.Config.ResourceCPU,
 		ResourceMemory: m.Config.ResourceMemory,
@@ -163,6 +198,10 @@ func (m *ASBIdentitySourceManager) Prepare(
 	employeeID string,
 	bucAgentID string,
 ) error {
+	expectedImageRef, err := m.runtimeArtifactRef(ctx, runtimeID)
+	if err != nil {
+		return err
+	}
 	client, err := m.clientForRuntime(ctx, runtimeID)
 	if err != nil {
 		return err
@@ -173,6 +212,7 @@ func (m *ASBIdentitySourceManager) Prepare(
 		sandboxID,
 		employeeID,
 		bucAgentID,
+		expectedImageRef,
 		m.sourceLifecycleTimeout(),
 	); err != nil {
 		logASBIdentitySourceFailure("prepare_source", sandboxID, err)
@@ -383,6 +423,7 @@ func prepareASBIdentitySource(
 	sandboxID string,
 	employeeID string,
 	bucAgentID string,
+	expectedImageRef string,
 	timeout time.Duration,
 ) error {
 	if timeout <= 0 {
@@ -393,6 +434,13 @@ func prepareASBIdentitySource(
 	sandbox, err := client.GetSandbox(sourceCtx, sandboxID)
 	if err != nil {
 		return fmt.Errorf("load ASB enterprise identity source: %w", err)
+	}
+	if sandbox.Image == nil ||
+		strings.TrimSpace(sandbox.Image.URI) != strings.TrimSpace(expectedImageRef) {
+		return fmt.Errorf(
+			"%w: ASB enterprise identity source image does not match Runtime artifact",
+			ErrEnterpriseIdentityNeedsReauth,
+		)
 	}
 	switch state := strings.ToLower(strings.TrimSpace(sandbox.Status.State)); state {
 	case "paused":

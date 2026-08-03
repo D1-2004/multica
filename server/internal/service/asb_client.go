@@ -595,8 +595,8 @@ func (c *ASBClient) AttachBUCIdentity(ctx context.Context, sandboxID string, gra
 	if hasAnyToken && !hasAllTokens {
 		return errors.New("ASB BUC identity token trio is incomplete")
 	}
-	if strings.TrimSpace(grant.OriginalSandboxID) == "" && !hasAllTokens {
-		return errors.New("ASB BUC identity grant requires tokens or an original sandbox")
+	if !hasAllTokens {
+		return errors.New("ASB BUC identity token trio is required")
 	}
 	if strings.TrimSpace(grant.OriginalSandboxID) != "" {
 		if err := validateASBSandboxID(grant.OriginalSandboxID); err != nil {

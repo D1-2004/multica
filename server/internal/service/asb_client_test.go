@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -406,23 +407,13 @@ func TestASBClientSynchronousBUCIdentityUsesCallerDeadline(t *testing.T) {
 	}
 }
 
-func TestASBClientAllowsBUCIdentitySourceReuseWithoutTokenTrio(t *testing.T) {
+func TestASBClientRejectsBUCIdentitySourceReuseWithoutTokenTrio(t *testing.T) {
 	t.Parallel()
 
-	var received ASBBUCIdentityGrant
+	var called atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost ||
-			request.URL.Path != "/v1/sandboxes/"+testSandboxID+"/identity/wireguard" {
-			http.NotFound(response, request)
-			return
-		}
-		if request.URL.Query().Get("sync") != "true" {
-			t.Errorf("wireguard sync = %q", request.URL.Query().Get("sync"))
-		}
-		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
-			t.Fatalf("decode BUC identity grant: %v", err)
-		}
-		response.WriteHeader(http.StatusOK)
+		called.Store(true)
+		http.Error(response, "unexpected request", http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
@@ -432,16 +423,17 @@ func TestASBClientAllowsBUCIdentitySourceReuseWithoutTokenTrio(t *testing.T) {
 		WireGuardCredentials: "wireguard-credentials",
 		OriginalSandboxID:    "identity-source-1",
 	}
-	if err := client.AttachBUCIdentity(
+	err := client.AttachBUCIdentity(
 		context.Background(),
 		testSandboxID,
 		grant,
 		true,
-	); err != nil {
-		t.Fatalf("AttachBUCIdentity: %v", err)
+	)
+	if err == nil || !strings.Contains(err.Error(), "token trio is required") {
+		t.Fatalf("AttachBUCIdentity error = %v", err)
 	}
-	if received != grant {
-		t.Fatalf("BUC identity grant = %#v, want %#v", received, grant)
+	if called.Load() {
+		t.Fatal("invalid source-only BUC grant reached the ASB API")
 	}
 }
 

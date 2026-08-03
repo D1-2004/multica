@@ -602,6 +602,21 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		}
 	}()
 	logEnterpriseIdentityBindingStageSuccess("lock_asb_runtime", stageStarted, bindingAttrs...)
+	compatibleRuntimeIDs, err := s.compatibleASBIdentitySourceRuntimeIDs(
+		ctx,
+		agent.RuntimeID,
+		tenantScope.RuntimeIDs,
+	)
+	if err != nil {
+		logEnterpriseIdentityBindingStageFailure(
+			"resolve_asb_identity_source_artifacts",
+			stageStarted,
+			err,
+			bindingAttrs...,
+		)
+		cleanupAIP()
+		return CompleteEnterpriseIdentityBindingResult{}, err
+	}
 
 	stageStarted = time.Now()
 	sourceKey := enterpriseIdentitySourceKey{
@@ -631,7 +646,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	source, sourceCreated, err := s.reuseOrCreateIdentitySource(
 		ctx,
 		sourceKey,
-		tenantScope.RuntimeIDs,
+		compatibleRuntimeIDs,
 		bucTokens,
 	)
 	if err != nil {
@@ -968,6 +983,27 @@ func (s *EnterpriseIdentityService) reuseOrCreateIdentitySource(
 	return source, true, nil
 }
 
+func (s *EnterpriseIdentityService) compatibleASBIdentitySourceRuntimeIDs(
+	ctx context.Context,
+	targetRuntimeID pgtype.UUID,
+	candidates []pgtype.UUID,
+) ([]pgtype.UUID, error) {
+	compatible := make([]pgtype.UUID, 0, len(candidates))
+	for _, candidate := range candidates {
+		matches, err := s.Source.Compatible(ctx, candidate, targetRuntimeID)
+		if err != nil {
+			return nil, fmt.Errorf("compare ASB Runtime identity source artifacts: %w", err)
+		}
+		if matches {
+			compatible = append(compatible, candidate)
+		}
+	}
+	if len(compatible) == 0 {
+		return nil, errors.New("ASB Runtime has no compatible enterprise identity source artifact")
+	}
+	return compatible, nil
+}
+
 func (s *EnterpriseIdentityService) deleteIdentitySourceIfUnreferenced(
 	ctx context.Context,
 	identity db.AgentEnterpriseIdentity,
@@ -1168,6 +1204,21 @@ func (s *EnterpriseIdentityService) ResolveASBTaskIdentity(
 			s.markNeedsReauth(ctx, identity)
 			return ASBResolvedIdentity{}, ErrEnterpriseIdentityNeedsReauth
 		}
+		compatible, err := s.Source.Compatible(
+			ctx,
+			identity.BucIdentitySourceRuntimeID,
+			runtimeID,
+		)
+		if err != nil {
+			return ASBResolvedIdentity{}, fmt.Errorf(
+				"compare ASB Runtime identity source artifact: %w",
+				err,
+			)
+		}
+		if !compatible {
+			s.markNeedsReauth(ctx, identity)
+			return ASBResolvedIdentity{}, ErrEnterpriseIdentityNeedsReauth
+		}
 		updated, refreshed, err := s.rotateAuthXToken(ctx, identity)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
@@ -1224,6 +1275,19 @@ func (s *EnterpriseIdentityService) AcquireASBTaskIdentitySource(
 		return nil, fmt.Errorf("lock ASB Runtime credential scope before source lease: %w", err)
 	}
 	if !tenantScope.Contains(identity.BucIdentitySourceRuntimeID) {
+		unlockRuntime()
+		return nil, ErrEnterpriseIdentityNeedsReauth
+	}
+	compatible, err := s.Source.Compatible(
+		ctx,
+		identity.BucIdentitySourceRuntimeID,
+		runtimeID,
+	)
+	if err != nil {
+		unlockRuntime()
+		return nil, fmt.Errorf("compare ASB Runtime identity source artifact: %w", err)
+	}
+	if !compatible {
 		unlockRuntime()
 		return nil, ErrEnterpriseIdentityNeedsReauth
 	}
