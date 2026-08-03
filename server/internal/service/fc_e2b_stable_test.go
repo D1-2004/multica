@@ -589,9 +589,18 @@ func TestVerifyStableTemplateRunsNativeSmokeAndChecksManifest(t *testing.T) {
 		"",
 		"",
 		`{
-			"schema_version":1,
+			"schema_version":3,
+			"sandbox_backends":["aliyun_fc","asb"],
 			"providers":["hermes","opencode","pi"],
 			"capabilities":["dws","dws.im_event","mcp"],
+			"capabilities_by_backend":{
+				"aliyun_fc":["dws","dws.im_event","mcp"],
+				"asb":["dws","dws.im_event","mcp","a1","mw","buc"]
+			},
+			"identity_modes_by_backend":{
+				"aliyun_fc":["agent_identity"],
+				"asb":["agent_identity","spiffe","buc_wireguard"]
+			},
 			"component_versions":{
 				"hermes":"0.19.0",
 				"opencode":"v1.18.4",

@@ -1269,18 +1269,30 @@ func (l *FCE2BLauncher) VerifyStableTemplate(ctx context.Context, selected FCE2B
 		return nil, fmt.Errorf("read runtime manifest: %w", err)
 	}
 	var manifest struct {
-		SchemaVersion     int               `json:"schema_version"`
-		Providers         []string          `json:"providers"`
-		Capabilities      []string          `json:"capabilities"`
-		ComponentVersions map[string]string `json:"component_versions"`
-		RunnerProtocol    string            `json:"runner_protocol"`
+		SchemaVersion          int                 `json:"schema_version"`
+		SandboxBackends        []string            `json:"sandbox_backends"`
+		Providers              []string            `json:"providers"`
+		Capabilities           []string            `json:"capabilities"`
+		CapabilitiesByBackend  map[string][]string `json:"capabilities_by_backend"`
+		IdentityModesByBackend map[string][]string `json:"identity_modes_by_backend"`
+		ComponentVersions      map[string]string   `json:"component_versions"`
+		RunnerProtocol         string              `json:"runner_protocol"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &manifest); err != nil {
 		return nil, fmt.Errorf("decode runtime manifest: %w", err)
 	}
-	if manifest.SchemaVersion != 1 ||
+	if manifest.SchemaVersion != 3 ||
+		!containsAllStrings(manifest.SandboxBackends, string(SandboxBackendAliyunFC)) ||
 		!slices.Equal(manifest.Providers, []string{"hermes", "opencode", "pi"}) ||
 		!slices.Equal(manifest.Capabilities, []string{"dws", "dws.im_event", "mcp"}) ||
+		!slices.Equal(
+			manifest.CapabilitiesByBackend[string(SandboxBackendAliyunFC)],
+			[]string{"dws", "dws.im_event", "mcp"},
+		) ||
+		!slices.Equal(
+			manifest.IdentityModesByBackend[string(SandboxBackendAliyunFC)],
+			[]string{"agent_identity"},
+		) ||
 		manifest.RunnerProtocol != string(fcE2BRunnerLaunchRootLog) {
 		return nil, errors.New("runtime manifest does not satisfy the stable channel contract")
 	}
