@@ -175,12 +175,12 @@ func parseDiamondPromptsJSON(data []byte) (map[string]Rule, error) {
 // config sources, in order of decreasing precedence:
 //
 //  1. EnvProvider (FF_<KEY> overrides — Ops kill switches, fastest path).
-//  2. DiamondProvider (when MULTICA_DIAMOND_ENABLED is true).
+//  2. DiamondProvider (always active; connection failures are fail-open).
 //  3. StaticProvider loaded from the YAML file at MULTICA_FEATURE_FLAGS_FILE
 //     (when the env var is set and the file exists).
 //
-// When both optional sources are disabled or unset, the Service still works:
-// EnvProvider remains the sole layer, and IsEnabled falls through to the
+// When Diamond is unavailable and the YAML source is unset, the Service still
+// works: EnvProvider remains available, and IsEnabled falls through to the
 // caller's default for any flag without an FF_<KEY> override.
 //
 // When the file path is set but the file is malformed, this returns an
@@ -197,11 +197,8 @@ func newServiceFromEnvWithDiamondFactory(factory diamondClientFactory, opts ...O
 	providers = append(providers, NewEnvProvider(EnvOverridePrefix))
 
 	diamondConfig := diamondConfigFromEnv()
-	var diamondProvider *DiamondProvider
-	if diamondConfig.Enabled {
-		diamondProvider = NewDiamondProvider()
-		providers = append(providers, diamondProvider)
-	}
+	diamondProvider := NewDiamondProvider()
+	providers = append(providers, diamondProvider)
 
 	path := strings.TrimSpace(os.Getenv(EnvFlagFile))
 	var loadedCount int
@@ -224,8 +221,6 @@ func newServiceFromEnvWithDiamondFactory(factory diamondClientFactory, opts ...O
 			slog.String("env_prefix", EnvOverridePrefix),
 		)
 	}
-	if diamondProvider != nil {
-		startDiamondListener(svc, diamondProvider, diamondConfig, factory)
-	}
+	startDiamondListener(svc, diamondProvider, diamondConfig, factory)
 	return svc, nil
 }

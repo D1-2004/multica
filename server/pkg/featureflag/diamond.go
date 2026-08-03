@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
@@ -16,9 +15,8 @@ import (
 )
 
 const (
-	EnvDiamondEnabled = "MULTICA_DIAMOND_ENABLED"
-	EnvDiamondDataID  = "MULTICA_DIAMOND_DATA_ID"
-	EnvDiamondGroup   = "MULTICA_DIAMOND_GROUP"
+	EnvDiamondDataID = "MULTICA_DIAMOND_DATA_ID"
+	EnvDiamondGroup  = "MULTICA_DIAMOND_GROUP"
 
 	DefaultDiamondDataID = "dt-fde-multica.json"
 	DefaultDiamondGroup  = "DEFAULT_GROUP"
@@ -30,9 +28,8 @@ const (
 )
 
 type diamondConfig struct {
-	Enabled bool
-	DataID  string
-	Group   string
+	DataID string
+	Group  string
 }
 
 type diamondClientSettings struct {
@@ -112,10 +109,6 @@ func newNacosDiamondClient(settings diamondClientSettings) (diamondConfigClient,
 }
 
 func diamondConfigFromEnv() diamondConfig {
-	enabled, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(EnvDiamondEnabled)))
-	if err != nil {
-		enabled = false
-	}
 	dataID := strings.TrimSpace(os.Getenv(EnvDiamondDataID))
 	if dataID == "" {
 		dataID = DefaultDiamondDataID
@@ -124,7 +117,7 @@ func diamondConfigFromEnv() diamondConfig {
 	if group == "" {
 		group = DefaultDiamondGroup
 	}
-	return diamondConfig{Enabled: enabled, DataID: dataID, Group: group}
+	return diamondConfig{DataID: dataID, Group: group}
 }
 
 func startDiamondListener(

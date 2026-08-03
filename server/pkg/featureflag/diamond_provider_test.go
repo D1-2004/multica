@@ -101,22 +101,21 @@ func TestDiamondProviderRejectsInvalidRulesWithoutReplacingSnapshot(t *testing.T
 	}
 }
 
-func TestDiamondDisabledPreservesExistingProviderChain(t *testing.T) {
+func TestDiamondAlwaysStartsWithoutEnableSwitch(t *testing.T) {
 	path := writeTempFile(t, "flags.yaml", "yaml_flag:\n  default: true\nenv_flag:\n  default: false\n")
 	t.Setenv(EnvFlagFile, path)
-	t.Setenv(EnvDiamondEnabled, "false")
 	t.Setenv("FF_ENV_FLAG", "true")
 
 	factoryCalled := false
 	service, err := newServiceFromEnvWithDiamondFactory(func(diamondClientSettings) (diamondConfigClient, error) {
 		factoryCalled = true
-		return nil, errors.New("Diamond client must stay disabled")
+		return &fakeDiamondClient{content: `{"chat":{"prompt":"diamond-chat"}}`}, nil
 	})
 	if err != nil {
-		t.Fatalf("disabled Diamond changed startup behavior: %v", err)
+		t.Fatalf("always-on Diamond changed startup behavior: %v", err)
 	}
-	if factoryCalled {
-		t.Fatal("disabled Diamond created a client")
+	if !factoryCalled {
+		t.Fatal("Diamond client was not created without an enable switch")
 	}
 	if !service.IsEnabled(context.Background(), "env_flag", false) {
 		t.Fatal("existing FF_ override did not retain precedence")
@@ -126,6 +125,12 @@ func TestDiamondDisabledPreservesExistingProviderChain(t *testing.T) {
 	}
 	if service.IsEnabled(context.Background(), "missing", false) {
 		t.Fatal("caller default behavior changed")
+	}
+	if got := service.Variant(context.Background(), DispatchChatRuntimePromptFlagKey, "fallback"); got != "diamond-chat" {
+		t.Fatalf("Diamond prompt = %q, want diamond-chat", got)
+	}
+	if err := service.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 }
 
@@ -205,7 +210,6 @@ func (c *fakeDiamondClient) CloseClient() {
 func TestNewServiceFromEnvUsesDiamondBetweenEnvAndYAML(t *testing.T) {
 	path := writeTempFile(t, "flags.yaml", "dispatch_issue_runtime_prompt:\n  default: true\n  variant: yaml-issue\ndispatch_chat_runtime_prompt:\n  default: true\n  variant: yaml-chat\n")
 	t.Setenv(EnvFlagFile, path)
-	t.Setenv(EnvDiamondEnabled, "true")
 	t.Setenv(EnvDiamondDataID, "")
 	t.Setenv(EnvDiamondGroup, "")
 	t.Setenv("FF_DISPATCH_ISSUE_RUNTIME_PROMPT", "env-issue")
@@ -245,7 +249,6 @@ func TestNewServiceFromEnvUsesDiamondBetweenEnvAndYAML(t *testing.T) {
 
 func TestDiamondListenerUpdatesWithoutRestartAndRejectsInvalidJSON(t *testing.T) {
 	t.Setenv(EnvFlagFile, "")
-	t.Setenv(EnvDiamondEnabled, "true")
 	t.Setenv(EnvDiamondDataID, "custom.json")
 	t.Setenv(EnvDiamondGroup, "CUSTOM_GROUP")
 
@@ -288,7 +291,6 @@ func TestDiamondListenerUpdatesWithoutRestartAndRejectsInvalidJSON(t *testing.T)
 func TestDiamondUnavailableFailsOpenWithoutLoggingContent(t *testing.T) {
 	path := writeTempFile(t, "flags.yaml", "yaml_flag:\n  default: true\n")
 	t.Setenv(EnvFlagFile, path)
-	t.Setenv(EnvDiamondEnabled, "true")
 
 	var logs strings.Builder
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
@@ -313,7 +315,6 @@ func TestDiamondUnavailableFailsOpenWithoutLoggingContent(t *testing.T) {
 
 func TestDiamondGetFailureStillRegistersListener(t *testing.T) {
 	t.Setenv(EnvFlagFile, "")
-	t.Setenv(EnvDiamondEnabled, "true")
 	client := &fakeDiamondClient{getErr: errors.New("unavailable")}
 	service, err := newServiceFromEnvWithDiamondFactory(func(diamondClientSettings) (diamondConfigClient, error) {
 		return client, nil

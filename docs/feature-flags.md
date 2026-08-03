@@ -55,14 +55,13 @@ if err != nil {
 | Env var | Role |
 |---|---|
 | `MULTICA_FEATURE_FLAGS_FILE` | Path to the YAML rule set (optional; absent = no static rules). |
-| `MULTICA_DIAMOND_ENABLED` | Enables the optional Alibaba Diamond dynamic provider. Defaults to `false`. |
 | `MULTICA_DIAMOND_DATA_ID` | Diamond Data ID. Defaults to `dt-fde-multica.json`. |
 | `MULTICA_DIAMOND_GROUP` | Diamond Group. Defaults to `DEFAULT_GROUP`. |
 | `FF_<FLAG_KEY>` | Per-flag runtime override. `FF_BILLING_NEW_INVOICE_EMAIL=false` / `25%` / `experiment-v2`. Beats the YAML, no redeploy. |
 
-The provider chain is `EnvProvider → DiamondProvider → YAML StaticProvider → caller default`. Earlier providers win. The server can boot with zero flag config, and disabling Diamond preserves the previous `EnvProvider → YAML` behavior.
+The provider chain is `EnvProvider → DiamondProvider → YAML StaticProvider → caller default`. Earlier providers win. Diamond has no enable switch and is started for every server process; if it is unavailable, fail-open behavior preserves the remaining provider chain.
 
-When Diamond is enabled, startup performs `GetConfig` and then registers `ListenConfig`. Its JSON contract is the fixed `issue/chat/auto.prompt` surface-prompt document described in [Alibaba Diamond configuration](diamond.md), not the generic YAML rule schema. Each complete document is validated before an atomic snapshot replacement. `{}` is valid. Invalid JSON leaves the last valid Diamond snapshot untouched. Diamond client, fetch, and listener failures are fail-open and do not prevent the server from using environment overrides, YAML, or caller defaults.
+At startup Diamond performs `GetConfig` and then registers `ListenConfig`. Its JSON contract is the fixed `issue/chat/auto.prompt` surface-prompt document described in [Alibaba Diamond configuration](diamond.md), not the generic YAML rule schema. Each complete document is validated before an atomic snapshot replacement. `{}` is valid. Invalid JSON leaves the last valid Diamond snapshot untouched. Diamond client, fetch, and listener failures are fail-open and do not prevent the server from using environment overrides, YAML, or caller defaults.
 
 ### YAML schema
 
@@ -237,5 +236,6 @@ See `docs/design.md` and `docs/timezone-architecture-rfc.md` for prior examples 
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-08-04 | Made the Diamond provider always active and removed its deployment enable switch. | Ensure dynamic surface prompts are not accidentally bypassed when only the fixed Diamond coordinates are configured. |
 | 2026-08-01 | Defined Diamond as the dynamic source for `issue/chat/auto.prompt` and removed binary-embedded surface prompt fallback. | Keep changeable Agent behavior policy in configuration while retaining security and outbound protocol constraints in code. |
 | 2026-08-01 | Added Diamond to the backend provider chain and documented the dynamic snapshot lifecycle, precedence, and security boundary. | Support runtime configuration updates across all replicas while retaining the environment, YAML, and caller-default fallback chain. |

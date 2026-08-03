@@ -1,12 +1,12 @@
 # Alibaba Diamond configuration
 
-Multica uses Alibaba Diamond as an optional dynamic source for backend feature-flag rules. Diamond does not replace process environment variables, the YAML rule file, or caller defaults. The effective precedence is:
+Multica uses Alibaba Diamond as an always-active dynamic source for backend feature-flag rules. Diamond does not replace process environment variables, the YAML rule file, or caller defaults. The effective precedence is:
 
 ```text
 FF_* environment override > Diamond JSON > YAML file > caller default
 ```
 
-Diamond is disabled by default. With `MULTICA_DIAMOND_ENABLED=false` or when the variable is absent, server behavior is identical to a deployment without this integration.
+There is no Diamond enable switch. Every server process attempts the initial read and registers the listener during startup. Connection, read, and listener failures are fail-open and do not prevent the service from starting.
 
 ## Fixed connection contract
 
@@ -25,7 +25,6 @@ The configuration coordinates default to:
 
 | Setting | Environment variable | Default |
 |---|---|---|
-| Enabled | `MULTICA_DIAMOND_ENABLED` | `false` |
 | Data ID | `MULTICA_DIAMOND_DATA_ID` | `dt-fde-multica.json` |
 | Group | `MULTICA_DIAMOND_GROUP` | `DEFAULT_GROUP` |
 
@@ -59,7 +58,7 @@ The server maps these sections to the internal feature-flag keys `dispatch_issue
 | `chat` | `FF_DISPATCH_CHAT_RUNTIME_PROMPT` | `dispatch_chat_runtime_prompt` |
 | `auto` | `FF_DISPATCH_AUTO_RUNTIME_PROMPT` | `dispatch_auto_runtime_prompt` |
 
-There is no mode-specific prompt embedded in the binary. When Diamond is disabled, unavailable, or omits a section, and neither the corresponding `FF_*` override nor YAML rule supplies a value, Multica injects no mode-specific prompt. The common external-input safety policy and trusted DWS outbound workflow remain server-owned because they are security and protocol constraints rather than surface behavior configuration.
+There is no mode-specific prompt embedded in the binary. When Diamond is unavailable or omits a section, and neither the corresponding `FF_*` override nor YAML rule supplies a value, Multica injects no mode-specific prompt. The common external-input safety policy and trusted DWS outbound workflow remain server-owned because they are security and protocol constraints rather than surface behavior configuration.
 
 ## Startup, updates, and shutdown
 
@@ -93,5 +92,6 @@ Diamond is not a secret store. Do not place database URLs, JWT secrets, service 
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-08-04 | Removed the Diamond enable switch and made the provider start unconditionally with fail-open behavior. | Avoid silently skipping dynamic prompts when deployment configuration omits a redundant enable variable. |
 | 2026-08-01 | Replaced the embedded auto-mode prompt with the strict `issue/chat/auto.prompt` Diamond document and enabled dynamic prompt injection for all three surfaces. | Keep surface behavior policy outside the binary and allow one atomic configuration update to control every dispatch mode. |
 | 2026-08-01 | Added the optional Diamond-backed dynamic feature-flag provider. | Allow runtime configuration updates without restarting Multica while preserving fail-open behavior and configuration precedence. |
