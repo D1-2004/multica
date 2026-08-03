@@ -92,6 +92,7 @@ func (m *ASBSandboxCapacityManager) Create(
 		m.Credentials,
 		client,
 		runtimeID,
+		pgtype.UUID{},
 		conn,
 		input,
 	)
@@ -130,6 +131,7 @@ func createASBSandboxWithCapacityOnConnection(
 	credentials *ASBRuntimeClientProvider,
 	client *ASBClient,
 	runtimeID pgtype.UUID,
+	excludedTaskID pgtype.UUID,
 	conn *pgxpool.Conn,
 	input ASBCreateSandboxInput,
 ) (*ASBSandbox, error) {
@@ -153,6 +155,7 @@ func createASBSandboxWithCapacityOnConnection(
 			credentials,
 			client,
 			runtimeID,
+			excludedTaskID,
 			conn,
 		)
 		if err != nil {
@@ -184,6 +187,7 @@ func createASBSandboxWithCapacityOnConnection(
 		credentials,
 		client,
 		runtimeID,
+		excludedTaskID,
 		conn,
 	)
 	if reclaimErr != nil {
@@ -215,6 +219,7 @@ func reclaimIdleASBSandboxForCredential(
 	credentials *ASBRuntimeClientProvider,
 	client *ASBClient,
 	requestingRuntimeID pgtype.UUID,
+	excludedTaskID pgtype.UUID,
 	conn *pgxpool.Conn,
 ) (bool, error) {
 	scopedCredentials := *credentials
@@ -242,7 +247,13 @@ func reclaimIdleASBSandboxForCredential(
 		"sandbox_count", len(liveSandboxes),
 		"running_count", runningCount,
 	)
-	candidates, err := queries.ListIdleASBSandboxSessionsByRuntimes(ctx, runtimeIDs)
+	candidates, err := queries.ListIdleASBSandboxSessionsByRuntimes(
+		ctx,
+		db.ListIdleASBSandboxSessionsByRuntimesParams{
+			RuntimeIds:     runtimeIDs,
+			ExcludedTaskID: excludedTaskID,
+		},
+	)
 	if err != nil {
 		return false, fmt.Errorf("list idle ASB task sandboxes: %w", err)
 	}
@@ -274,6 +285,7 @@ func reclaimIdleASBSandboxForCredential(
 			ctx,
 			queries,
 			runtimeIDs,
+			excludedTaskID,
 			candidate,
 		)
 		if err != nil {
@@ -351,9 +363,16 @@ func isIdleASBSandboxCandidate(
 	ctx context.Context,
 	queries *db.Queries,
 	runtimeIDs []pgtype.UUID,
+	excludedTaskID pgtype.UUID,
 	candidate db.FcE2bSandboxSession,
 ) (bool, error) {
-	candidates, err := queries.ListIdleASBSandboxSessionsByRuntimes(ctx, runtimeIDs)
+	candidates, err := queries.ListIdleASBSandboxSessionsByRuntimes(
+		ctx,
+		db.ListIdleASBSandboxSessionsByRuntimesParams{
+			RuntimeIds:     runtimeIDs,
+			ExcludedTaskID: excludedTaskID,
+		},
+	)
 	if err != nil {
 		return false, fmt.Errorf("recheck idle ASB task sandbox: %w", err)
 	}

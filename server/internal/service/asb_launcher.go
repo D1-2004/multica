@@ -600,6 +600,7 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 		scope,
 		scoped,
 		task.AgentID,
+		task.ID,
 		identity,
 		runtimeLockConn,
 		trace,
@@ -659,6 +660,7 @@ func (l *ASBLauncher) resolveSandbox(
 	scope fcE2BTaskScope,
 	scoped bool,
 	agentID pgtype.UUID,
+	excludedTaskID pgtype.UUID,
 	identity ASBResolvedIdentity,
 	runtimeLockConn *pgxpool.Conn,
 	trace chattrace.Trace,
@@ -762,6 +764,7 @@ func (l *ASBLauncher) resolveSandbox(
 			l.Credentials,
 			l.Client,
 			runtime.ID,
+			excludedTaskID,
 			runtimeLockConn,
 			ASBCreateSandboxInput{
 				ImageURI:       metadata.ArtifactRef,

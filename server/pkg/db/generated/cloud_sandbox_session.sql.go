@@ -179,6 +179,7 @@ WHERE session.runtime_id = ANY($1::uuid[])
       SELECT 1
       FROM agent_task_queue AS task
       WHERE task.runtime_id = session.runtime_id
+        AND task.id IS DISTINCT FROM $2::uuid
         AND task.status IN (
             'queued',
             'dispatched',
@@ -199,8 +200,13 @@ ORDER BY
     session.sandbox_id
 `
 
-func (q *Queries) ListIdleASBSandboxSessionsByRuntimes(ctx context.Context, runtimeIds []pgtype.UUID) ([]FcE2bSandboxSession, error) {
-	rows, err := q.db.Query(ctx, listIdleASBSandboxSessionsByRuntimes, runtimeIds)
+type ListIdleASBSandboxSessionsByRuntimesParams struct {
+	RuntimeIds     []pgtype.UUID `json:"runtime_ids"`
+	ExcludedTaskID pgtype.UUID   `json:"excluded_task_id"`
+}
+
+func (q *Queries) ListIdleASBSandboxSessionsByRuntimes(ctx context.Context, arg ListIdleASBSandboxSessionsByRuntimesParams) ([]FcE2bSandboxSession, error) {
+	rows, err := q.db.Query(ctx, listIdleASBSandboxSessionsByRuntimes, arg.RuntimeIds, arg.ExcludedTaskID)
 	if err != nil {
 		return nil, err
 	}

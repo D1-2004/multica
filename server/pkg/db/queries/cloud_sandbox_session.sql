@@ -117,6 +117,7 @@ WHERE session.runtime_id = ANY(sqlc.arg('runtime_ids')::uuid[])
       SELECT 1
       FROM agent_task_queue AS task
       WHERE task.runtime_id = session.runtime_id
+        AND task.id IS DISTINCT FROM sqlc.narg('excluded_task_id')::uuid
         AND task.status IN (
             'queued',
             'dispatched',
