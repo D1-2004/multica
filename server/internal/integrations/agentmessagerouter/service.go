@@ -948,19 +948,43 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding Publ
 		if config.RouterPlatform == "" || config.RouterTenantID == "" || config.RouterAccountID == "" {
 			return PublicDingTalkAccountBinding{}, ErrBindingConflict
 		}
-		result, unbindErr := s.router.UnbindDigitalEmployeeBinding(ctx, DigitalEmployeeBindingKey{
+		bindingKey := DigitalEmployeeBindingKey{
 			AgentID:   util.UUIDToString(row.AgentID),
 			Platform:  config.RouterPlatform,
 			TenantID:  config.RouterTenantID,
 			AccountID: config.RouterAccountID,
-		})
-		if unbindErr != nil {
+		}
+		checkKey := bindingKey
+		checkKey.ExpectedDomains = []string{"channel"}
+		if config.CalendarStartEnabled {
+			checkKey.ExpectedDomains = append(checkKey.ExpectedDomains, "calendar")
+		}
+		checks, checkErr := s.router.CheckDigitalEmployeeBindings(ctx, []DigitalEmployeeBindingKey{checkKey})
+		if checkErr != nil || len(checks) != 1 {
 			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
 		}
-		if result.Status == "inconsistent" {
-			return PublicDingTalkAccountBinding{}, ErrBindingConflict
+		check := checks[0]
+		if check.AgentID != checkKey.AgentID || check.Platform != checkKey.Platform ||
+			check.TenantID != checkKey.TenantID || check.AccountID != checkKey.AccountID ||
+			!validDigitalEmployeeBindingCheck(check) {
+			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
 		}
-		if result.Status != "unbound" && result.Status != "ownership_changed" {
+		switch check.Status {
+		case "valid":
+			result, unbindErr := s.router.UnbindDigitalEmployeeBinding(ctx, bindingKey)
+			if unbindErr != nil {
+				return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+			}
+			if result.Status == "inconsistent" {
+				return PublicDingTalkAccountBinding{}, ErrBindingConflict
+			}
+			if result.Status != "unbound" && result.Status != "ownership_changed" {
+				return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+			}
+		case "unbound", "bound_to_other_agent":
+		case "inconsistent":
+			return PublicDingTalkAccountBinding{}, ErrBindingConflict
+		default:
 			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
 		}
 	}

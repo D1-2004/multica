@@ -29,7 +29,10 @@ type fakeDingTalkAccountBindingService struct {
 	completeResult agentmessagerouter.CompleteBindingResult
 	updateParams   agentmessagerouter.UpdateSurfaceParams
 	updateResult   agentmessagerouter.PublicDingTalkAccountBinding
+	unbindCalls    int
+	unbindParams   agentmessagerouter.UnbindParams
 	unbindResult   agentmessagerouter.PublicDingTalkAccountBinding
+	unbindErr      error
 }
 
 func (f *fakeDingTalkAccountBindingService) UpdateSurface(_ context.Context, params agentmessagerouter.UpdateSurfaceParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
@@ -53,8 +56,10 @@ func (f *fakeDingTalkAccountBindingService) CompleteBinding(_ context.Context, p
 	return f.completeResult, nil
 }
 
-func (f *fakeDingTalkAccountBindingService) Unbind(context.Context, agentmessagerouter.UnbindParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
-	return f.unbindResult, nil
+func (f *fakeDingTalkAccountBindingService) Unbind(_ context.Context, params agentmessagerouter.UnbindParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
+	f.unbindCalls++
+	f.unbindParams = params
+	return f.unbindResult, f.unbindErr
 }
 
 func TestListDingTalkAccountBindingsReportsUnconfiguredWithoutSecrets(t *testing.T) {
@@ -585,6 +590,35 @@ func TestUnbindDingTalkAccountPublishesRevokedEvent(t *testing.T) {
 		published.ActorID != "44444444-4444-4444-4444-444444444444" {
 		t.Fatalf("published event = %#v", published)
 	}
+}
+
+func TestUnbindDingTalkAccountKeepsProjectionRetryableWhenRouterCheckFails(t *testing.T) {
+	service := &fakeDingTalkAccountBindingService{unbindErr: agentmessagerouter.ErrRouterUnavailable}
+	bus := events.New()
+	published := 0
+	bus.Subscribe(protocol.EventDingTalkAccountBindingRevoked, func(events.Event) {
+		published++
+	})
+	h := &Handler{DingTalkAccountBindings: service, Bus: bus}
+	req := httptest.NewRequest(
+		http.MethodDelete,
+		"/api/workspaces/22222222-2222-2222-2222-222222222222/dingtalk/account-bindings/33333333-3333-3333-3333-333333333333?binding_mode=message",
+		nil,
+	)
+	req.Header.Set("X-User-ID", "44444444-4444-4444-4444-444444444444")
+	req = withURLParams(
+		req,
+		"id", "22222222-2222-2222-2222-222222222222",
+		"agentId", "33333333-3333-3333-3333-333333333333",
+	)
+	w := httptest.NewRecorder()
+
+	h.UnbindDingTalkAccountBinding(w, req)
+
+	if w.Code != http.StatusBadGateway || service.unbindCalls != 1 || published != 0 {
+		t.Fatalf("status = %d calls = %d published = %d body = %s", w.Code, service.unbindCalls, published, w.Body.String())
+	}
+	assertDingTalkAccountBindingErrorCode(t, w, "subscription_verify_failed")
 }
 
 func TestDingTalkAccountBindingServiceErrorsHaveStableCodes(t *testing.T) {

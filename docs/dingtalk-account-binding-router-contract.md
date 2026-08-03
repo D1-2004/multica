@@ -239,7 +239,21 @@ Reconciliation never mutates Router or Multica state.
 
 ### Conditional account-level unbind
 
-User-initiated unbind sends the exact binding key:
+User-initiated Multica DELETE never trusts a reconciliation status previously
+rendered by the UI. It reloads the active local projection, builds the complete
+binding key and expected domain set from the persisted config, and performs a
+fresh batch-check request for that one key.
+
+- `valid`: send the exact binding key to Router's conditional unbind, then
+  revoke the exact local projection by account-key compare-and-swap;
+- `unbound` or `bound_to_other_agent`: do not call Router unbind; revoke only
+  the exact stale local projection by account-key compare-and-swap;
+- `inconsistent`: preserve the local projection and return a conflict;
+- transport, timeout, authentication, Router 5xx, result-count mismatch, or
+  malformed/mismatched response: preserve the local projection and return a
+  retryable verification failure.
+
+The conditional unbind request for the `valid` branch is:
 
 ```http
 POST /api/digital-employee-bindings/unbind
@@ -266,6 +280,12 @@ environment is an idempotent no-op.
 The existing Agent-wide digital-employee delete is not used for a user's local
 unbind. It would be too broad when a stale environment still shows one account
 after that Agent has subsequently bound another account.
+
+The check and mutation are deliberately separate network calls. If ownership
+changes after a `valid` check, Router's conditional unbind returns
+`ownership_changed` without deleting the new winner; Multica may then revoke
+only its exact old local projection. The local compare-and-swap also prevents a
+concurrent replacement projection from being cleared.
 
 ### Conflict takeover
 
@@ -508,3 +528,24 @@ unverifiable ownership intact and makes the small Router-success/local-rollback
 window visible as a retryable failure. Exact BindingKey conditions and shared
 row locks preserve a newer winner without introducing a second lifecycle or
 schema track.
+
+## 2026-08-03 User-unbind Reconciliation Change History
+
+- Added a fresh Router ownership check inside the Multica DELETE service path;
+  previously only the list path reconciled ownership.
+- A local active projection reported as `bound_to_other_agent` or `unbound` is
+  now revoked locally by exact AccountKey compare-and-swap without calling
+  Router unbind.
+- Router-unavailable, malformed, mismatched, or `inconsistent` check results
+  now preserve the local projection for retry. A `valid` check still uses the
+  existing conditional Router unbind before local cleanup.
+
+## 2026-08-03 User-unbind Reconciliation Change Reason
+
+The UI can display a fresh reconciliation result while the local projection
+still names an older Agent. Calling Router unbind directly from that stale
+projection creates an avoidable ownership conflict and must never risk the
+current winner. Rechecking from persisted AccountKey data makes the server the
+decision authority; skipping Router mutation for a confirmed stale projection
+removes only Multica's obsolete state, while the existing conditional unbind
+continues to protect ownership changes that occur after a `valid` check.
