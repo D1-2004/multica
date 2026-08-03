@@ -60,6 +60,27 @@ func (h *Handler) canManageDingTalkAgentForRequest(
 	return agent, true
 }
 
+func (h *Handler) canReadDingTalkAccountBindingStatus(
+	w http.ResponseWriter,
+	r *http.Request,
+	workspaceID pgtype.UUID,
+	agentID pgtype.UUID,
+) (db.Agent, bool) {
+	agent, ok := h.loadDingTalkAgentForRequest(w, r, workspaceID, agentID)
+	if !ok {
+		return db.Agent{}, false
+	}
+	member, ok := h.workspaceMember(w, r, uuidToString(workspaceID))
+	if !ok {
+		return db.Agent{}, false
+	}
+	if roleAllowed(member.Role, "owner", "admin") || uuidToString(agent.OwnerID) == requestUserID(r) {
+		return agent, true
+	}
+	writeError(w, http.StatusNotFound, "agent not found in this workspace")
+	return db.Agent{}, false
+}
+
 func (h *Handler) canManageDingTalkInstallationForRequest(
 	w http.ResponseWriter,
 	r *http.Request,

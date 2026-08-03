@@ -24,26 +24,26 @@ import (
 const canonicalCallbackToken = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 type fakeBindingStore struct {
-	row             db.ChannelInstallation
-	beginErr        error
-	getErr          error
-	activateErr     error
-	activateHook    func(*fakeBindingStore)
-	revokeErr       error
-	updateSurfaceErr error
-	listErr         error
-	beginConfig     []byte
-	revokeArg       db.RevokeDingTalkAccountBindingParams
-	accountRevokeArg db.RevokeDingTalkAccountBindingByAccountKeyParams
+	row                 db.ChannelInstallation
+	beginErr            error
+	getErr              error
+	activateErr         error
+	activateHook        func(*fakeBindingStore)
+	revokeErr           error
+	updateSurfaceErr    error
+	listErr             error
+	beginConfig         []byte
+	revokeArg           db.RevokeDingTalkAccountBindingParams
+	accountRevokeArg    db.RevokeDingTalkAccountBindingByAccountKeyParams
 	previousCleanupArgs []db.DeletePreviousDingTalkAccountBindingProjectionParams
-	activated       bool
-	revoked         bool
-	updatedSurface  bool
-	identityAttempt db.AgentDingtalkIdentityAttempt
-	identity        db.AgentDingtalkIdentity
-	cleanupErr      error
-	cleanupCalls    int
-	operations      *[]string
+	activated           bool
+	revoked             bool
+	updatedSurface      bool
+	identityAttempt     db.AgentDingtalkIdentityAttempt
+	identity            db.AgentDingtalkIdentity
+	cleanupErr          error
+	cleanupCalls        int
+	operations          *[]string
 }
 
 func (f *fakeBindingStore) UpdateDingTalkAccountBindingSurface(_ context.Context, arg db.UpdateDingTalkAccountBindingSurfaceParams) (db.ChannelInstallation, error) {
@@ -316,16 +316,16 @@ func (f *fakeBindingStore) DeleteAgentDingTalkIdentityAttempts(_ context.Context
 }
 
 type fakeBindingRouter struct {
-	issued       BindingToken
-	issueErr     error
-	subscription Subscription
-	getErr       error
-	deleteErr    error
-	updateErr    error
-	issueAgent   AgentDescriptor
-	getCalls     int
-	deleted      []string
-	updated      []string
+	issued               BindingToken
+	issueErr             error
+	subscription         Subscription
+	getErr               error
+	deleteErr            error
+	updateErr            error
+	issueAgent           AgentDescriptor
+	getCalls             int
+	deleted              []string
+	updated              []string
 	bindingChecks        []DigitalEmployeeBindingCheck
 	bindingCheckErr      error
 	bindingCheckRequests [][]DigitalEmployeeBindingKey
@@ -707,7 +707,7 @@ func TestCompleteBindingRejectsMalformedTaskDetails(t *testing.T) {
 		{
 			name: "takeover previous agent is not a canonical UUID",
 			params: CompleteBindingParams{
-				Status: DingTalkBindingCompletionStatus,
+				Status:   DingTalkBindingCompletionStatus,
 				Identity: IdentityBindingResult{Status: DingTalkBindingTaskStatusSkipped},
 				Message: MessageBindingResult{
 					Status: DingTalkBindingTaskStatusSuccess, Platform: "dingtalk",
@@ -719,7 +719,7 @@ func TestCompleteBindingRejectsMalformedTaskDetails(t *testing.T) {
 		{
 			name: "successful message is missing tenant identity",
 			params: CompleteBindingParams{
-				Status: DingTalkBindingCompletionStatus,
+				Status:   DingTalkBindingCompletionStatus,
 				Identity: IdentityBindingResult{Status: DingTalkBindingTaskStatusSkipped},
 				Message: MessageBindingResult{
 					Status: DingTalkBindingTaskStatusSuccess, Platform: "dingtalk",
@@ -731,7 +731,7 @@ func TestCompleteBindingRejectsMalformedTaskDetails(t *testing.T) {
 		{
 			name: "successful message is missing account identity",
 			params: CompleteBindingParams{
-				Status: DingTalkBindingCompletionStatus,
+				Status:   DingTalkBindingCompletionStatus,
 				Identity: IdentityBindingResult{Status: DingTalkBindingTaskStatusSkipped},
 				Message: MessageBindingResult{
 					Status: DingTalkBindingTaskStatusSuccess, Platform: "dingtalk",
@@ -743,7 +743,7 @@ func TestCompleteBindingRejectsMalformedTaskDetails(t *testing.T) {
 		{
 			name: "successful message account identity has whitespace",
 			params: CompleteBindingParams{
-				Status: DingTalkBindingCompletionStatus,
+				Status:   DingTalkBindingCompletionStatus,
 				Identity: IdentityBindingResult{Status: DingTalkBindingTaskStatusSkipped},
 				Message: MessageBindingResult{
 					Status: DingTalkBindingTaskStatusSuccess, Platform: "dingtalk",
@@ -2072,6 +2072,126 @@ func TestUnbindStaysFailClosedOnOtherRouterErrors(t *testing.T) {
 	}
 	if store.revoked {
 		t.Fatal("local row must not be revoked when the router delete failed")
+	}
+}
+
+func TestDingTalkAccountMessageBindingStatus(t *testing.T) {
+	now := time.Date(2026, 8, 3, 10, 30, 0, 0, time.UTC)
+	newActive := func(t *testing.T) *fakeBindingStore {
+		store := activeBindingStoreForUnbind(t, now)
+		config, err := ParseDingTalkAccountConfig(store.row.Config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		config.SurfaceType = DingTalkSurfaceAuto
+		store.row.Config, err = config.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return store
+	}
+	matching := func(t *testing.T, store *fakeBindingStore) Subscription {
+		config, err := ParseDingTalkAccountConfig(store.row.Config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Subscription{
+			SourceID:    config.RouterSourceID,
+			AgentID:     uuidStringForTest(store.row.AgentID),
+			DispatchURL: "/api/webhooks/agent-dispatch/" + config.DispatchEndpointID,
+			Surface:     SubscriptionSurface{Type: DingTalkSurfaceAuto},
+			Outbound:    SubscriptionOutbound{Mode: "dws", ReplyTo: "latest_message"},
+			Status:      "active",
+		}
+	}
+	tests := []struct {
+		name       string
+		prepare    func(*testing.T) (*fakeBindingStore, *fakeBindingRouter)
+		local      string
+		verify     string
+		routerGets int
+	}{
+		{"not bound", func(*testing.T) (*fakeBindingStore, *fakeBindingRouter) {
+			return &fakeBindingStore{}, &fakeBindingRouter{}
+		}, "not_bound", "not_bound", 0},
+		{"revoked", func(t *testing.T) (*fakeBindingStore, *fakeBindingRouter) {
+			store := newActive(t)
+			store.row.Status = "revoked"
+			return store, &fakeBindingRouter{}
+		}, "not_bound", "not_bound", 0},
+		{"pending", func(t *testing.T) (*fakeBindingStore, *fakeBindingRouter) {
+			return pendingBindingStore(t, now, canonicalCallbackToken), &fakeBindingRouter{}
+		}, "pending", "pending", 0},
+		{"failed", func(t *testing.T) (*fakeBindingStore, *fakeBindingRouter) {
+			store := pendingBindingStore(t, now, canonicalCallbackToken)
+			config, err := ParseDingTalkAccountConfig(store.row.Config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			config.MessageRouteStatus = DingTalkBindingStatusFailed
+			config.MessageRouteError = &BindingTaskError{Code: "binding_failed", Message: "callback-token-secret", Retryable: true}
+			store.row.Config, err = config.Marshal()
+			if err != nil {
+				t.Fatal(err)
+			}
+			return store, &fakeBindingRouter{}
+		}, "failed", "failed", 0},
+		{"verified", func(t *testing.T) (*fakeBindingStore, *fakeBindingRouter) {
+			store := newActive(t)
+			return store, &fakeBindingRouter{subscription: matching(t, store)}
+		}, "active", "verified", 1},
+		{"missing", func(t *testing.T) (*fakeBindingStore, *fakeBindingRouter) {
+			return newActive(t), &fakeBindingRouter{getErr: ErrSubscriptionNotFound}
+		}, "active", "drifted", 1},
+		{"mismatched", func(t *testing.T) (*fakeBindingStore, *fakeBindingRouter) {
+			store := newActive(t)
+			subscription := matching(t, store)
+			subscription.AgentID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+			return store, &fakeBindingRouter{subscription: subscription}
+		}, "active", "drifted", 1},
+		{"source mismatch", func(t *testing.T) (*fakeBindingStore, *fakeBindingRouter) {
+			store := newActive(t)
+			subscription := matching(t, store)
+			subscription.SourceID = "different-source"
+			return store, &fakeBindingRouter{subscription: subscription, getErr: ErrSubscriptionDrift}
+		}, "active", "drifted", 1},
+		{"dispatch target mismatch", func(t *testing.T) (*fakeBindingStore, *fakeBindingRouter) {
+			store := newActive(t)
+			subscription := matching(t, store)
+			subscription.DispatchURL = "/api/webhooks/agent-dispatch/v1_other-endpoint"
+			return store, &fakeBindingRouter{subscription: subscription}
+		}, "active", "drifted", 1},
+		{"unavailable", func(t *testing.T) (*fakeBindingStore, *fakeBindingRouter) {
+			return newActive(t), &fakeBindingRouter{getErr: errors.New("router timeout")}
+		}, "active", "unavailable", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, router := tt.prepare(t)
+			status, err := newBindingServiceForTest(t, store, router, now).GetMessageBindingStatus(
+				context.Background(),
+				mustUUIDForTest("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+				mustUUIDForTest("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+			)
+			if err != nil {
+				t.Fatalf("GetMessageBindingStatus() error = %v", err)
+			}
+			if !status.Configured || status.AgentID != "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" ||
+				status.BindingMode != BindingModeMessage || status.Binding.MessageRoute.Status != tt.local ||
+				status.Verification.Status != tt.verify || !status.Verification.CheckedAt.Equal(now) {
+				t.Fatalf("status = %#v", status)
+			}
+			if router.getCalls != tt.routerGets {
+				t.Fatalf("router GET calls = %d, want %d", router.getCalls, tt.routerGets)
+			}
+			raw, err := json.Marshal(status)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if containsAny(string(raw), "qr_code_url", "binding_token", "callback_token", "callback_token_hash", "callback-token-secret") {
+				t.Fatalf("status leaked credentials: %s", raw)
+			}
+		})
 	}
 }
 

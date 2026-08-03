@@ -155,8 +155,8 @@ func (c *Client) CreateHTTPCallbackSubscription(ctx context.Context, p CreateSub
 			"agentId":     strings.TrimSpace(p.AgentID),
 			"dispatchUrl": strings.TrimSpace(p.DispatchURL),
 		},
-		"surface":               p.Surface,
-		"outbound":              p.Outbound,
+		"surface":                p.Surface,
+		"outbound":               p.Outbound,
 		"bindingToken":           strings.TrimSpace(p.BindingToken),
 		"enabledDomains":         []string{"channel"},
 		"replaceExistingBinding": p.ReplaceExisting,
@@ -199,6 +199,7 @@ var (
 	ErrRouterAPI              = errors.New("agent message router returned a business error")
 	ErrRouterInvalidResponse  = errors.New("agent message router response is invalid")
 	ErrSubscriptionNotFound   = errors.New("agent message router subscription not found")
+	ErrSubscriptionDrift      = errors.New("agent message router subscription does not match the requested source")
 	ErrDeliveryTargetNotFound = errors.New("agent message router delivery target not found")
 )
 
@@ -568,10 +569,12 @@ func (c *Client) GetSubscription(ctx context.Context, sourceID string) (Subscrip
 		}
 		return Subscription{}, ErrRouterInvalidResponse
 	}
-	if result.SourceID != sourceID || result.Status != "active" ||
-		!isTrimmedNonEmpty(result.AgentID) || !isTrimmedNonEmpty(result.DispatchURL) ||
+	if !isTrimmedNonEmpty(result.SourceID) || !isTrimmedNonEmpty(result.AgentID) || !isTrimmedNonEmpty(result.DispatchURL) ||
 		!validSubscriptionSurface(result.Surface) || !validSubscriptionOutbound(result.Outbound) {
 		return Subscription{}, ErrRouterInvalidResponse
+	}
+	if result.SourceID != sourceID || result.Status != "active" {
+		return result, ErrSubscriptionDrift
 	}
 	return result, nil
 }

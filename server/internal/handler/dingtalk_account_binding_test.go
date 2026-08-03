@@ -15,6 +15,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -26,6 +27,9 @@ type fakeDingTalkAccountBindingService struct {
 	beginResult    agentmessagerouter.BeginResult
 	beginErr       error
 	listResult     []agentmessagerouter.PublicDingTalkAccountBinding
+	statusCalls    int
+	statusResult   agentmessagerouter.MessageBindingStatus
+	statusErr      error
 	completeCalls  int
 	completeParams agentmessagerouter.CompleteBindingParams
 	completeResult agentmessagerouter.CompleteBindingResult
@@ -36,6 +40,14 @@ type fakeDingTalkAccountBindingService struct {
 	unbindParams   agentmessagerouter.UnbindParams
 	unbindResult   agentmessagerouter.PublicDingTalkAccountBinding
 	unbindErr      error
+}
+
+func (f *fakeDingTalkAccountBindingService) GetMessageBindingStatus(
+	_ context.Context,
+	_, _ pgtype.UUID,
+) (agentmessagerouter.MessageBindingStatus, error) {
+	f.statusCalls++
+	return f.statusResult, f.statusErr
 }
 
 func (f *fakeDingTalkAccountBindingService) UpdateSurface(_ context.Context, params agentmessagerouter.UpdateSurfaceParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
@@ -125,6 +137,67 @@ func TestListDingTalkAccountBindingsUsesNativeMemberVisibility(t *testing.T) {
 	}
 	if len(response.Bindings) != 2 {
 		t.Fatalf("bindings = %#v, want native member workspace list", response.Bindings)
+	}
+}
+
+func TestDingTalkAccountBindingStatusUsesNativeAgentOwnership(t *testing.T) {
+	workspaceID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	serviceMemberID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	ownedAgentID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	foreignAgentID := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	foreignOwnerID := "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+	metadata := &dingTalkOwnershipMetadataDB{agents: map[string]db.Agent{
+		ownedAgentID: {
+			ID: parseUUID(ownedAgentID), WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID(serviceMemberID),
+		},
+		foreignAgentID: {
+			ID: parseUUID(foreignAgentID), WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID(foreignOwnerID),
+		},
+	}}
+	tests := []struct {
+		name       string
+		role       string
+		agentID    string
+		wantStatus int
+		wantCalls  int
+	}{
+		{name: "service member reads owned agent", role: "member", agentID: ownedAgentID, wantStatus: http.StatusOK, wantCalls: 1},
+		{name: "service member cannot discover foreign agent", role: "member", agentID: foreignAgentID, wantStatus: http.StatusNotFound},
+		{name: "workspace admin reads foreign agent", role: "admin", agentID: foreignAgentID, wantStatus: http.StatusOK, wantCalls: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			statusResult := agentmessagerouter.MessageBindingStatus{
+				Configured: true, AgentID: tt.agentID, BindingMode: agentmessagerouter.BindingModeMessage,
+			}
+			statusResult.Binding.MessageRoute.Status = "not_bound"
+			statusResult.Verification.Status = "not_bound"
+			service := &fakeDingTalkAccountBindingService{statusResult: statusResult}
+			h := &Handler{DingTalkAccountBindings: service, dingTalkAccountBindingMetadata: metadata}
+			req := httptest.NewRequest(
+				http.MethodGet,
+				"/api/workspaces/"+workspaceID+"/dingtalk/account-bindings/"+tt.agentID+"/status",
+				nil,
+			)
+			req.Header.Set("X-User-ID", serviceMemberID)
+			req.Header.Set("X-Actor-Source", middleware.WorkspaceAccessActorSource)
+			req = withURLParams(req, "id", workspaceID, "agentId", tt.agentID)
+			req = req.WithContext(middleware.SetMemberContext(req.Context(), workspaceID, db.Member{
+				WorkspaceID: parseUUID(workspaceID), UserID: parseUUID(serviceMemberID), Role: tt.role,
+			}))
+			w := httptest.NewRecorder()
+
+			h.GetDingTalkAccountBindingStatus(w, req)
+
+			if w.Code != tt.wantStatus || service.statusCalls != tt.wantCalls {
+				t.Fatalf("status = %d calls = %d body=%s", w.Code, service.statusCalls, w.Body.String())
+			}
+			for _, secretField := range []string{"qr_code_url", "binding_token", "callback_token", "callback_token_hash"} {
+				if strings.Contains(w.Body.String(), secretField) {
+					t.Fatalf("response leaked %q: %s", secretField, w.Body.String())
+				}
+			}
+		})
 	}
 }
 

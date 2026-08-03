@@ -28,9 +28,34 @@ const (
 type dingTalkAccountBindingService interface {
 	Begin(context.Context, agentmessagerouter.BeginParams) (agentmessagerouter.BeginResult, error)
 	List(context.Context, pgtype.UUID) ([]agentmessagerouter.PublicDingTalkAccountBinding, error)
+	GetMessageBindingStatus(context.Context, pgtype.UUID, pgtype.UUID) (agentmessagerouter.MessageBindingStatus, error)
 	CompleteBinding(context.Context, agentmessagerouter.CompleteBindingParams) (agentmessagerouter.CompleteBindingResult, error)
 	UpdateSurface(context.Context, agentmessagerouter.UpdateSurfaceParams) (agentmessagerouter.PublicDingTalkAccountBinding, error)
 	Unbind(context.Context, agentmessagerouter.UnbindParams) (agentmessagerouter.PublicDingTalkAccountBinding, error)
+}
+
+func (h *Handler) GetDingTalkAccountBindingStatus(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
+	if !ok {
+		return
+	}
+	agentID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "agentId"), "agent id")
+	if !ok {
+		return
+	}
+	if _, ok := h.canReadDingTalkAccountBindingStatus(w, r, workspaceID, agentID); !ok {
+		return
+	}
+	if h.DingTalkAccountBindings == nil {
+		writeDingTalkAccountBindingError(w, agentmessagerouter.ErrNotConfigured)
+		return
+	}
+	status, err := h.DingTalkAccountBindings.GetMessageBindingStatus(r.Context(), workspaceID, agentID)
+	if err != nil {
+		writeDingTalkAccountBindingError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 type dingTalkAccountBindingMetadataStore interface {

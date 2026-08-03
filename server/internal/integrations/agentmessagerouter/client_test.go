@@ -429,9 +429,9 @@ func TestClientRegistersRobotWithExplicitDispatchPolicy(t *testing.T) {
 				"sourceId":    "source-1",
 				"agentId":     "agent-1",
 				"dispatchUrl": dispatchURL,
-				"surface": map[string]any{"type": "chat"},
-				"outbound": map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"},
-				"status": "active",
+				"surface":     map[string]any{"type": "chat"},
+				"outbound":    map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"},
+				"status":      "active",
 			},
 		})
 	}))
@@ -841,11 +841,12 @@ func TestClientPreservesTypedBindingTokenBusinessErrorWithoutLeakingMessage(t *t
 
 func TestClientRejectsInvalidSuccessfulSubscriptionPayloads(t *testing.T) {
 	tests := []struct {
-		name string
-		data map[string]any
+		name      string
+		data      map[string]any
+		wantDrift bool
 	}{
-		{name: "different source", data: map[string]any{"sourceId": "source-2", "agentId": "agent-1", "dispatchUrl": "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint", "status": "active"}},
-		{name: "inactive", data: map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint", "status": "inactive"}},
+		{name: "different source", data: map[string]any{"sourceId": "source-2", "agentId": "agent-1", "dispatchUrl": "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint", "surface": map[string]any{"type": "auto"}, "outbound": map[string]any{"mode": "dws", "replyTo": "latest_message"}, "status": "active"}, wantDrift: true},
+		{name: "inactive", data: map[string]any{"sourceId": "source-1", "agentId": "agent-1", "dispatchUrl": "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint", "surface": map[string]any{"type": "auto"}, "outbound": map[string]any{"mode": "dws", "replyTo": "latest_message"}, "status": "inactive"}, wantDrift: true},
 		{name: "missing agent", data: map[string]any{"sourceId": "source-1", "dispatchUrl": "https://multica.example.com/api/webhooks/agent-dispatch/v1_endpoint", "status": "active"}},
 		{name: "missing dispatch url", data: map[string]any{"sourceId": "source-1", "agentId": "agent-1", "status": "active"}},
 	}
@@ -857,8 +858,15 @@ func TestClientRejectsInvalidSuccessfulSubscriptionPayloads(t *testing.T) {
 			defer server.Close()
 
 			client := mustTestClient(t, server)
-			if _, err := client.GetSubscription(context.Background(), "source-1"); err == nil {
+			result, err := client.GetSubscription(context.Background(), "source-1")
+			if err == nil {
 				t.Fatal("expected invalid subscription response")
+			}
+			if errors.Is(err, ErrSubscriptionDrift) != tt.wantDrift {
+				t.Fatalf("error = %v, want drift=%v", err, tt.wantDrift)
+			}
+			if tt.wantDrift && result.SourceID != tt.data["sourceId"] {
+				t.Fatalf("result = %#v, want mismatched snapshot preserved", result)
 			}
 		})
 	}
