@@ -295,6 +295,8 @@ func attachAndProbeASBIdentitySource(
 			identityCtx,
 			client,
 			sandboxID,
+			employeeID,
+			bucAgentID,
 		); err == nil {
 			return nil
 		} else {
@@ -401,7 +403,13 @@ func prepareASBIdentitySource(
 	if err := waitForASBSandboxState(sourceCtx, client, sandboxID, timeout, "running"); err != nil {
 		return err
 	}
-	if err := probeASBIdentitySourceBUC(sourceCtx, client, sandboxID); err != nil {
+	if err := probeASBIdentitySourceBUC(
+		sourceCtx,
+		client,
+		sandboxID,
+		employeeID,
+		bucAgentID,
+	); err != nil {
 		return fmt.Errorf("probe resumed ASB enterprise identity source: %w", err)
 	}
 	return nil
@@ -411,19 +419,23 @@ func probeASBIdentitySourceBUC(
 	ctx context.Context,
 	client *ASBClient,
 	sandboxID string,
+	employeeID string,
+	bucAgentID string,
 ) error {
 	endpoint, err := client.GetEndpoint(ctx, sandboxID, asbExecPort)
 	if err != nil {
 		return fmt.Errorf("resolve ASB identity source command endpoint: %w", err)
 	}
 	result, err := client.Exec(ctx, endpoint, ASBExecInput{
-		Command: "curl -fsS --max-time 10 -X POST https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json >/dev/null",
+		Command: asbBUCOnlyIdentityProbeCommand(),
 		CWD:     "/",
 		Timeout: 15 * time.Second,
 		Envs: map[string]string{
-			"HOME":    asbRunnerHome,
-			"USER":    "user",
-			"LOGNAME": "user",
+			"HOME":                  asbRunnerHome,
+			"USER":                  "user",
+			"LOGNAME":               "user",
+			"EXPECTED_EMP_ID":       employeeID,
+			"EXPECTED_BUC_AGENT_ID": bucAgentID,
 		},
 	})
 	if err != nil {
@@ -564,12 +576,28 @@ func probeASBBUCIdentity(
 		if stage == "" {
 			stage = "unknown"
 		}
-		return fmt.Errorf("ASB enterprise CLI identity probe failed at %s", stage)
+		return &asbEnterpriseCLIIdentityProbeError{stage: stage}
 	}
 	return nil
 }
 
-func asbBUCIdentityProbeCommand() string {
+type asbEnterpriseCLIIdentityProbeError struct {
+	stage string
+}
+
+func (e *asbEnterpriseCLIIdentityProbeError) Error() string {
+	return fmt.Sprintf("ASB enterprise CLI identity probe failed at %s", e.stage)
+}
+
+func asbEnterpriseCLIIdentityProbeFailureStage(err error) string {
+	var probeErr *asbEnterpriseCLIIdentityProbeError
+	if errors.As(err, &probeErr) {
+		return probeErr.stage
+	}
+	return ""
+}
+
+func asbBUCOnlyIdentityProbeCommand() string {
 	return "set -euo pipefail; " +
 		"printf 'probe_stage=buc\\n' >&2; " +
 		"curl -fsS --max-time 10 -X POST " +
@@ -580,7 +608,11 @@ func asbBUCIdentityProbeCommand() string {
 		"str(d.get(\"empId\", \"\")) == os.environ[\"EXPECTED_EMP_ID\"] and " +
 		"str(d.get(\"agentId\", \"\")) == os.environ[\"EXPECTED_BUC_AGENT_ID\"]; " +
 		"raise SystemExit(0 if ok else 1)" +
-		"'; " +
+		"'"
+}
+
+func asbBUCIdentityProbeCommand() string {
+	return asbBUCOnlyIdentityProbeCommand() + "; " +
 		"printf 'probe_stage=a1\\n' >&2; " +
 		"a1 --no-update-check -f json auth whoami >/dev/null; " +
 		"printf 'probe_stage=complete\\n' >&2"

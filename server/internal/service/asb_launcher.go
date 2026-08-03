@@ -872,17 +872,20 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID 
 	// The enterprise CLI probe calls a1, which needs the SPIFFE auth headers
 	// installed by AttachAgentIdentity. Attach them before probing the inherited
 	// BUC credential directory to avoid a circular readiness dependency.
-	if err := l.Client.AttachAgentIdentity(ctx, sandboxID, ASBAgentIdentityGrant{
+	grant := ASBAgentIdentityGrant{
 		RawEmployeeID: identity.RawEmployeeID,
 		AgentToken:    identity.AgentIdentityToken,
 		AgentID:       identity.AgentSPIFFEID,
-	}); err != nil {
+	}
+	attachmentNeedsRetry := false
+	if err := l.Client.AttachAgentIdentity(ctx, sandboxID, grant); err != nil {
 		logASBIdentityAttachmentFailure(sandboxID, err)
 		if !isASBAgentIdentityAttachmentConverging(err) {
 			return fmt.Errorf("attach ASB Agent Identity: %w", err)
 		}
+		attachmentNeedsRetry = true
 		slog.Info(
-			"ASB Agent Identity attachment is converging after asynchronous submission",
+			"ASB Agent Identity attachment needs retry after transient CSI response",
 			"sandbox_id", sandboxID,
 		)
 	}
@@ -891,6 +894,8 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID 
 		sandboxID,
 		identity.RawEmployeeID,
 		identity.BUCAgentID,
+		grant,
+		attachmentNeedsRetry,
 	); err != nil {
 		return err
 	}
@@ -914,6 +919,8 @@ func (l *ASBLauncher) waitSandboxBUCIdentityReady(
 	sandboxID string,
 	employeeID string,
 	bucAgentID string,
+	agentIdentityGrant ASBAgentIdentityGrant,
+	attachmentNeedsRetry bool,
 ) error {
 	timeout := l.Config.WireGuardReadyTimeout
 	if timeout <= 0 {
@@ -921,7 +928,7 @@ func (l *ASBLauncher) waitSandboxBUCIdentityReady(
 	}
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
-	ticker := time.NewTicker(defaultASBWireGuardProbeInterval)
+	ticker := time.NewTicker(asbIdentityProbeInterval(timeout))
 	defer ticker.Stop()
 	var lastErr error
 	for {
@@ -946,6 +953,20 @@ func (l *ASBLauncher) waitSandboxBUCIdentityReady(
 				lastErr,
 			)
 		case <-ticker.C:
+			if !attachmentNeedsRetry &&
+				asbEnterpriseCLIIdentityProbeFailureStage(lastErr) != "a1" {
+				continue
+			}
+			err := l.Client.AttachAgentIdentity(ctx, sandboxID, agentIdentityGrant)
+			if err == nil {
+				attachmentNeedsRetry = false
+				continue
+			}
+			logASBIdentityAttachmentFailure(sandboxID, err)
+			if !isASBAgentIdentityAttachmentConverging(err) {
+				return fmt.Errorf("retry ASB Agent Identity attachment: %w", err)
+			}
+			attachmentNeedsRetry = true
 		}
 	}
 }

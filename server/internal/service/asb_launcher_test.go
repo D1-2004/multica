@@ -234,6 +234,7 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 	t.Parallel()
 
 	var probeObserved atomic.Bool
+	var attachCalls atomic.Int32
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
@@ -246,9 +247,17 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
 			probeObserved.Store(true)
 			response.Header().Set("Content-Type", "text/event-stream")
+			if attachCalls.Load() < 2 {
+				_, _ = io.WriteString(response, `data: {"type":"stderr","text":"probe_stage=a1\n"}`+"\n")
+				_, _ = io.WriteString(response, `data: {"type":"error","error":{"ename":"CommandExecError","evalue":"1"}}`+"\n")
+			}
 			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/spiffe":
+			if attachCalls.Add(1) >= 2 {
+				response.WriteHeader(http.StatusAccepted)
+				return
+			}
 			response.Header().Set("Content-Type", "application/json")
 			response.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(response, `{
@@ -263,7 +272,7 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 
 	launcher := &ASBLauncher{
 		Client: newTestASBClient(t, server),
-		Config: ASBConfig{WireGuardReadyTimeout: time.Second},
+		Config: ASBConfig{WireGuardReadyTimeout: 500 * time.Millisecond},
 	}
 	identity := ASBResolvedIdentity{
 		RawEmployeeID:      "12345",
@@ -276,6 +285,9 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 	}
 	if !probeObserved.Load() {
 		t.Fatal("enterprise CLI probe was not executed after the converging attachment response")
+	}
+	if attachCalls.Load() != 2 {
+		t.Fatalf("SPIFFE attachment calls = %d, want 2", attachCalls.Load())
 	}
 }
 

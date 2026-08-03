@@ -121,7 +121,9 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
 				t.Fatalf("decode identity probe: %v", err)
 			}
-			if input.Command != "curl -fsS --max-time 10 -X POST https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json >/dev/null" ||
+			if input.Command != asbBUCOnlyIdentityProbeCommand() ||
+				input.Envs["EXPECTED_EMP_ID"] != employeeID ||
+				input.Envs["EXPECTED_BUC_AGENT_ID"] != bucAgentID ||
 				strings.Contains(input.Command, "a1 ") ||
 				strings.Contains(input.Command, "nw-aliwork-cli") {
 				t.Fatalf("identity probe input = %#v", input)
@@ -485,17 +487,34 @@ func TestASBIdentityProbeStageReturnsLastSafeMarker(t *testing.T) {
 
 func TestASBIdentityProbeCommandHasValidShellSyntax(t *testing.T) {
 	t.Parallel()
-	command := asbBUCIdentityProbeCommand()
-	if strings.Contains(command, "nw-aliwork") {
-		t.Fatalf("identity probe still depends on removed nw-aliwork CLI: %q", command)
-	}
-
-	if output, err := exec.Command(
-		"bash",
-		"-n",
-		"-c",
-		command,
-	).CombinedOutput(); err != nil {
-		t.Fatalf("identity probe shell syntax: %v\n%s", err, output)
+	for name, command := range map[string]string{
+		"buc_only": asbBUCOnlyIdentityProbeCommand(),
+		"buc_a1":   asbBUCIdentityProbeCommand(),
+	} {
+		command := command
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if strings.Contains(command, "nw-aliwork") {
+				t.Fatalf("identity probe still depends on removed nw-aliwork CLI: %q", command)
+			}
+			for _, required := range []string{
+				"sandbox=true",
+				"EXPECTED_EMP_ID",
+				"EXPECTED_BUC_AGENT_ID",
+				"p.get(\"success\") is True",
+			} {
+				if !strings.Contains(command, required) {
+					t.Fatalf("identity probe is missing %q: %q", required, command)
+				}
+			}
+			if output, err := exec.Command(
+				"bash",
+				"-n",
+				"-c",
+				command,
+			).CombinedOutput(); err != nil {
+				t.Fatalf("identity probe shell syntax: %v\n%s", err, output)
+			}
+		})
 	}
 }
