@@ -99,6 +99,7 @@ type FCE2BStableRelease struct {
 	Status                      string                        `json:"status"`
 	CurrentBatch                int                           `json:"current_batch"`
 	TargetPercentage            int                           `json:"target_percentage"`
+	StageTargetCount            int                           `json:"stage_target_count"`
 	PreviousTemplateID          string                        `json:"previous_template_id"`
 	PreviousTemplateBuildID     string                        `json:"previous_template_build_id"`
 	PreviousTemplateAlias       string                        `json:"previous_template_alias"`
@@ -284,7 +285,14 @@ func (s *FCE2BStableService) GetChannel(
 }
 
 func (s *FCE2BStableService) GetRelease(ctx context.Context, releaseID pgtype.UUID) (FCE2BStableRelease, error) {
-	return s.scanRelease(s.Pool.QueryRow(ctx, stableReleaseSelect+` WHERE id = $1`, releaseID))
+	release, err := s.scanRelease(s.Pool.QueryRow(ctx, stableReleaseSelect+` WHERE id = $1`, releaseID))
+	if err != nil {
+		return FCE2BStableRelease{}, err
+	}
+	if err := s.populateStageTargetCount(ctx, &release); err != nil {
+		return FCE2BStableRelease{}, err
+	}
+	return release, nil
 }
 
 func (s *FCE2BStableService) ListReleases(
@@ -810,21 +818,20 @@ func (s *FCE2BStableService) Resume(ctx context.Context, releaseID pgtype.UUID) 
 }
 
 func (s *FCE2BStableService) StartRollout(ctx context.Context, releaseID pgtype.UUID) (FCE2BStableRelease, error) {
-	startedAt := time.Now()
 	tag, err := s.Pool.Exec(ctx, `
 		UPDATE fc_e2b_stable_release
 		SET status = 'rolling_out',
 		    current_batch = 1,
 		    target_percentage = 5,
-		    rollout_started_at = $2,
-		    batch_started_at = $2,
-		    next_batch_at = $2,
+		    rollout_started_at = now(),
+		    batch_started_at = now(),
+		    next_batch_at = now(),
 		    validation_error = '',
 		    lease_token = NULL,
 		    lease_expires_at = NULL,
 		    updated_at = now()
 		WHERE id = $1 AND status = 'awaiting_rollout'
-	`, releaseID, startedAt)
+	`, releaseID)
 	if err != nil {
 		return FCE2BStableRelease{}, fmt.Errorf("start 24-hour stable rollout: %w", err)
 	}
@@ -932,14 +939,14 @@ func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtyp
 			progress.Failed,
 		)
 	}
-	stageTarget := stableBatchTarget(progress.Total, release.CurrentBatch)
-	if !stableBatchCovered(progress.Total, progress.Updated, release.CurrentBatch) {
+	stageTarget := stableBatchTarget(progress.StageTotal, release.CurrentBatch)
+	if !stableBatchCovered(progress.StageTotal, progress.StageUpdated, release.CurrentBatch) {
 		return FCE2BStableRelease{}, fmt.Errorf(
 			"%w: the %d%% stage requires %d updated runtime targets, but only %d are updated",
 			ErrFCE2BStableAdvanceBlocked,
 			release.TargetPercentage,
 			stageTarget,
-			progress.Updated,
+			progress.StageUpdated,
 		)
 	}
 
@@ -959,7 +966,6 @@ func (s *FCE2BStableService) AdvanceRollout(ctx context.Context, releaseID pgtyp
 		release.CurrentBatch,
 		nextBatch,
 		percentage,
-		time.Now(),
 	); err != nil {
 		return FCE2BStableRelease{}, err
 	}
@@ -1009,15 +1015,46 @@ func (s *FCE2BStableService) CompleteObservation(
 	var missing, failed int
 	if err := s.Pool.QueryRow(ctx, `
 		SELECT
-			count(*) FILTER (WHERE status <> 'updated'),
-			count(*) FILTER (WHERE status = 'failed')
-		FROM fc_e2b_stable_release_target
-		WHERE release_id = $1
+			count(*) FILTER (WHERE target.id IS NULL OR target.status <> 'updated'),
+			count(*) FILTER (WHERE target.status = 'failed')
+		FROM agent_runtime runtime
+		JOIN fc_e2b_stable_release live_release ON live_release.id = $1
+		LEFT JOIN fc_e2b_stable_release_target target
+		  ON target.release_id = live_release.id
+		 AND target.runtime_id = runtime.id
+		 AND target.sandbox_backend = live_release.sandbox_backend
+		WHERE runtime.runtime_mode = 'cloud'
+		  AND CASE
+		        WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+		        ELSE runtime.metadata->>'sandbox_backend'
+		      END = live_release.sandbox_backend
+		  AND COALESCE(
+		        NULLIF(runtime.metadata->>'artifact_channel', ''),
+		        NULLIF(runtime.metadata->>'template_channel', ''),
+		        'stable'
+		      ) = 'stable'
 	`, release.ID).Scan(&missing, &failed); err != nil {
 		return FCE2BStableRelease{}, fmt.Errorf("check stable observation targets: %w", err)
 	}
-	if err := stableObservationTargetsError(missing, failed); err != nil {
+	if err := stableObservationFailedTargetsError(failed); err != nil {
 		return FCE2BStableRelease{}, fmt.Errorf("%w: %v", ErrFCE2BStableObservationBlocked, err)
+	}
+	if stableObservationNeedsCatchUp(missing, failed) {
+		tag, err := s.Pool.Exec(ctx, `
+			UPDATE fc_e2b_stable_release
+			SET status = 'rolling_out', current_batch = 4, target_percentage = 100,
+			    batch_started_at = now(), next_batch_at = now(),
+			    lease_token = NULL, lease_expires_at = NULL, updated_at = now()
+			WHERE id = $1 AND status = 'observing' AND lease_token = $2
+		`, release.ID, token)
+		if err != nil {
+			return FCE2BStableRelease{}, fmt.Errorf("restart final stable rollout catch-up: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			return FCE2BStableRelease{}, ErrFCE2BStableReleaseState
+		}
+		s.Notify()
+		return s.GetRelease(ctx, releaseID)
 	}
 	if err := s.stableLaunchHealthGate(ctx, release); err != nil {
 		return FCE2BStableRelease{}, fmt.Errorf("%w: %v", ErrFCE2BStableObservationBlocked, err)
@@ -1569,10 +1606,24 @@ func (s *FCE2BStableService) developerRolloutRelease(
 	var pending, failed int
 	if err := s.Pool.QueryRow(ctx, `
 		SELECT
-			count(*) FILTER (WHERE status IN ('pending', 'updating')),
-			count(*) FILTER (WHERE status = 'failed')
-		FROM fc_e2b_stable_release_target
-		WHERE release_id = $1 AND is_developer = true
+			count(*) FILTER (WHERE target.status IN ('pending', 'updating')),
+			count(*) FILTER (WHERE target.status = 'failed')
+		FROM fc_e2b_stable_release_target target
+		JOIN fc_e2b_stable_release live_release ON live_release.id = target.release_id
+		JOIN agent_runtime runtime ON runtime.id = target.runtime_id
+		WHERE live_release.id = $1
+		  AND target.sandbox_backend = live_release.sandbox_backend
+		  AND target.is_developer = true
+		  AND runtime.runtime_mode = 'cloud'
+		  AND CASE
+		        WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+		        ELSE runtime.metadata->>'sandbox_backend'
+		      END = live_release.sandbox_backend
+		  AND COALESCE(
+		        NULLIF(runtime.metadata->>'artifact_channel', ''),
+		        NULLIF(runtime.metadata->>'template_channel', ''),
+		        'stable'
+		      ) = 'stable'
 	`, release.ID).Scan(&pending, &failed); err != nil {
 		return s.releaseLease(ctx, release.ID, token, err)
 	}
@@ -1642,8 +1693,8 @@ func (s *FCE2BStableService) rolloutRelease(ctx context.Context, release FCE2BSt
 		return s.releaseLease(ctx, release.ID, token, nil)
 	}
 
-	stageTarget := stableBatchTarget(progress.Total, release.CurrentBatch)
-	if !stableBatchCovered(progress.Total, progress.Updated, release.CurrentBatch) {
+	stageTarget := stableBatchTarget(progress.StageTotal, release.CurrentBatch)
+	if !stableBatchCovered(progress.StageTotal, progress.StageUpdated, release.CurrentBatch) {
 		target, claimErr := s.claimTarget(ctx, release.ID, release.CurrentBatch, false)
 		if errors.Is(claimErr, pgx.ErrNoRows) {
 			return s.pauseForGate(
@@ -1655,7 +1706,7 @@ func (s *FCE2BStableService) rolloutRelease(ctx context.Context, release FCE2BSt
 					"the %d%% stage requires %d updated runtime targets, but only %d are updated and no eligible target remains",
 					release.TargetPercentage,
 					stageTarget,
-					progress.Updated,
+					progress.StageUpdated,
 				),
 			)
 		}
@@ -1729,7 +1780,6 @@ func (s *FCE2BStableService) rolloutRelease(ctx context.Context, release FCE2BSt
 		release.CurrentBatch,
 		nextBatch,
 		percentage,
-		time.Now(),
 	); err != nil {
 		return err
 	}
@@ -1744,8 +1794,23 @@ func (s *FCE2BStableService) observeRelease(ctx context.Context, release FCE2BSt
 	var missing int
 	if err := s.Pool.QueryRow(ctx, `
 		SELECT count(*)
-		FROM fc_e2b_stable_release_target
-		WHERE release_id = $1 AND status <> 'updated'
+		FROM agent_runtime runtime
+		JOIN fc_e2b_stable_release live_release ON live_release.id = $1
+		LEFT JOIN fc_e2b_stable_release_target target
+		  ON target.release_id = live_release.id
+		 AND target.runtime_id = runtime.id
+		 AND target.sandbox_backend = live_release.sandbox_backend
+		WHERE runtime.runtime_mode = 'cloud'
+		  AND CASE
+		        WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+		        ELSE runtime.metadata->>'sandbox_backend'
+		      END = live_release.sandbox_backend
+		  AND COALESCE(
+		        NULLIF(runtime.metadata->>'artifact_channel', ''),
+		        NULLIF(runtime.metadata->>'template_channel', ''),
+		        'stable'
+		      ) = 'stable'
+		  AND (target.id IS NULL OR target.status <> 'updated')
 	`, release.ID).Scan(&missing); err != nil {
 		return s.releaseLease(ctx, release.ID, token, err)
 	}
@@ -1753,7 +1818,8 @@ func (s *FCE2BStableService) observeRelease(ctx context.Context, release FCE2BSt
 		_, err := s.Pool.Exec(ctx, `
 			UPDATE fc_e2b_stable_release
 			SET status = 'rolling_out', current_batch = 4, target_percentage = 100,
-			    next_batch_at = now(), lease_token = NULL, lease_expires_at = NULL,
+			    batch_started_at = now(), next_batch_at = now(),
+			    lease_token = NULL, lease_expires_at = NULL,
 			    updated_at = now()
 			WHERE id = $1 AND lease_token = $2
 		`, release.ID, token)
@@ -1811,6 +1877,7 @@ func (s *FCE2BStableService) finalizeObservation(
 			SET status = 'rolling_out',
 			    current_batch = 4,
 			    target_percentage = 100,
+			    batch_started_at = now(),
 			    next_batch_at = now(),
 			    lease_token = NULL,
 			    lease_expires_at = NULL,
@@ -2096,20 +2163,50 @@ func (s *FCE2BStableService) reconcileTargets(ctx context.Context, release FCE2B
 		return err
 	}
 	_, err = s.Pool.Exec(ctx, `
-		UPDATE fc_e2b_stable_release
+		UPDATE fc_e2b_stable_release release
 		SET total_targets = (
-		    SELECT count(*) FROM fc_e2b_stable_release_target WHERE release_id = $1
+		    SELECT count(*)
+		    FROM fc_e2b_stable_release_target target
+		    JOIN agent_runtime runtime ON runtime.id = target.runtime_id
+		    WHERE target.release_id = release.id
+		      AND target.sandbox_backend = release.sandbox_backend
+		      AND runtime.runtime_mode = 'cloud'
+		      AND CASE
+		            WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+		            ELSE runtime.metadata->>'sandbox_backend'
+		          END = release.sandbox_backend
+		      AND COALESCE(
+		            NULLIF(runtime.metadata->>'artifact_channel', ''),
+		            NULLIF(runtime.metadata->>'template_channel', ''),
+		            'stable'
+		          ) = 'stable'
 		),
 		updated_targets = (
-		    SELECT count(*) FROM fc_e2b_stable_release_target
-		    WHERE release_id = $1 AND status = 'updated'
+		    SELECT count(*)
+		    FROM fc_e2b_stable_release_target target
+		    JOIN agent_runtime runtime ON runtime.id = target.runtime_id
+		    WHERE target.release_id = release.id
+		      AND target.sandbox_backend = release.sandbox_backend
+		      AND target.status = 'updated'
+		      AND runtime.runtime_mode = 'cloud'
+		      AND CASE
+		            WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+		            ELSE runtime.metadata->>'sandbox_backend'
+		          END = release.sandbox_backend
+		      AND COALESCE(
+		            NULLIF(runtime.metadata->>'artifact_channel', ''),
+		            NULLIF(runtime.metadata->>'template_channel', ''),
+		            'stable'
+		          ) = 'stable'
 		),
 		failed_targets = (
-		    SELECT count(*) FROM fc_e2b_stable_release_target
-		    WHERE release_id = $1 AND status = 'failed'
+		    SELECT count(*) FROM fc_e2b_stable_release_target target
+		    WHERE target.release_id = release.id
+		      AND target.sandbox_backend = release.sandbox_backend
+		      AND target.status = 'failed'
 		),
 		updated_at = now()
-		WHERE id = $1
+		WHERE release.id = $1
 	`, release.ID)
 	return err
 }
@@ -2433,7 +2530,9 @@ func stableRolloutSchedule(startedAt time.Time) []FCE2BStableRolloutMilestone {
 
 type stableRolloutProgress struct {
 	Total          int
+	StageTotal     int
 	Updated        int
+	StageUpdated   int
 	Updating       int
 	ActiveUpdating int
 	Failed         int
@@ -2444,11 +2543,49 @@ func (s *FCE2BStableService) loadStableRolloutProgress(
 	releaseID string,
 	currentBatch int,
 ) (stableRolloutProgress, error) {
+	return loadStableRolloutProgress(ctx, s.Pool, releaseID, currentBatch)
+}
+
+func loadStableRolloutProgress(
+	ctx context.Context,
+	queryer stableReleaseQueryer,
+	releaseID string,
+	currentBatch int,
+) (stableRolloutProgress, error) {
 	var progress stableRolloutProgress
-	err := s.Pool.QueryRow(ctx, `
+	err := queryer.QueryRow(ctx, `
+		WITH release_state AS (
+			SELECT sandbox_backend, batch_started_at
+			FROM fc_e2b_stable_release
+			WHERE id = $1
+		), live_target AS (
+			SELECT target.*, runtime.created_at AS runtime_created_at
+			FROM fc_e2b_stable_release_target target
+			JOIN agent_runtime runtime ON runtime.id = target.runtime_id
+			JOIN release_state ON true
+			WHERE target.release_id = $1
+			  AND target.sandbox_backend = release_state.sandbox_backend
+			  AND runtime.runtime_mode = 'cloud'
+			  AND CASE
+			        WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+			        ELSE runtime.metadata->>'sandbox_backend'
+			      END = release_state.sandbox_backend
+			  AND COALESCE(
+			        NULLIF(runtime.metadata->>'artifact_channel', ''),
+			        NULLIF(runtime.metadata->>'template_channel', ''),
+			        'stable'
+			      ) = 'stable'
+		)
 		SELECT
 			count(*),
+			count(*) FILTER (
+			    WHERE runtime_created_at <= (SELECT batch_started_at FROM release_state)
+			),
 			count(*) FILTER (WHERE status = 'updated'),
+			count(*) FILTER (
+			    WHERE status = 'updated'
+			      AND runtime_created_at <= (SELECT batch_started_at FROM release_state)
+			),
 			count(*) FILTER (
 			    WHERE status = 'updating' AND batch_index <= $2
 			),
@@ -2460,11 +2597,12 @@ func (s *FCE2BStableService) loadStableRolloutProgress(
 			count(*) FILTER (
 			    WHERE status = 'failed' AND batch_index <= $2
 			)
-		FROM fc_e2b_stable_release_target
-		WHERE release_id = $1
+		FROM live_target
 	`, releaseID, currentBatch).Scan(
 		&progress.Total,
+		&progress.StageTotal,
 		&progress.Updated,
+		&progress.StageUpdated,
 		&progress.Updating,
 		&progress.ActiveUpdating,
 		&progress.Failed,
@@ -2482,27 +2620,41 @@ func (s *FCE2BStableService) advanceStableRolloutStage(
 	currentBatch,
 	nextBatch,
 	percentage int,
-	startedAt time.Time,
 ) error {
 	tag, err := s.Pool.Exec(ctx, `
 		UPDATE fc_e2b_stable_release
 		SET current_batch = $1,
 		    target_percentage = $2,
-		    batch_started_at = $3,
-		    next_batch_at = $3,
+		    batch_started_at = now(),
+		    next_batch_at = now(),
 		    updated_targets = (
-		        SELECT count(*) FROM fc_e2b_stable_release_target
-		        WHERE release_id = $4 AND status = 'updated'
-		    ),
+			    SELECT count(*)
+			    FROM fc_e2b_stable_release_target target
+			    JOIN fc_e2b_stable_release live_release ON live_release.id = target.release_id
+			    JOIN agent_runtime runtime ON runtime.id = target.runtime_id
+			    WHERE live_release.id = $3
+			      AND target.sandbox_backend = live_release.sandbox_backend
+			      AND target.status = 'updated'
+			      AND runtime.runtime_mode = 'cloud'
+			      AND CASE
+			            WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+			            ELSE runtime.metadata->>'sandbox_backend'
+			          END = live_release.sandbox_backend
+			      AND COALESCE(
+			            NULLIF(runtime.metadata->>'artifact_channel', ''),
+			            NULLIF(runtime.metadata->>'template_channel', ''),
+			            'stable'
+			          ) = 'stable'
+			),
 		    validation_error = '',
 		    lease_token = NULL,
 		    lease_expires_at = NULL,
 		    updated_at = now()
-		WHERE id = $4
+		WHERE id = $3
 		  AND status = 'rolling_out'
-		  AND current_batch = $5
-		  AND lease_token = $6
-	`, nextBatch, percentage, startedAt, releaseID, currentBatch, token)
+		  AND current_batch = $4
+		  AND lease_token = $5
+	`, nextBatch, percentage, releaseID, currentBatch, token)
 	if err != nil {
 		return fmt.Errorf("advance stable rollout stage: %w", err)
 	}
@@ -2523,12 +2675,18 @@ func (s *FCE2BStableService) claimTarget(
 		WITH candidate AS (
 			SELECT target.id
 			FROM fc_e2b_stable_release_target target
-			JOIN fc_e2b_stable_release release
-			  ON release.id = target.release_id
-			JOIN agent_runtime runtime
-			  ON runtime.id = target.runtime_id
+			JOIN fc_e2b_stable_release release ON release.id = target.release_id
+			JOIN agent_runtime runtime ON runtime.id = target.runtime_id
 			WHERE release.id = $1
 			  AND target.sandbox_backend = release.sandbox_backend
+			  AND ($3 = false OR target.is_developer = true)
+			  AND (
+			      $3 = true
+			      OR (
+			          release.batch_started_at IS NOT NULL
+			          AND runtime.created_at <= release.batch_started_at
+			      )
+			  )
 			  AND runtime.runtime_mode = 'cloud'
 			  AND CASE
 			        WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
@@ -2539,16 +2697,12 @@ func (s *FCE2BStableService) claimTarget(
 			        NULLIF(runtime.metadata->>'template_channel', ''),
 			        'stable'
 			      ) = 'stable'
-			  AND ($3 = false OR target.is_developer = true)
 			  AND (
 			      target.status = 'pending'
-			      OR (
-			          target.status = 'updating'
-			          AND target.lease_expires_at < now()
-			      )
+			      OR (target.status = 'updating' AND target.lease_expires_at < now())
 			  )
 			ORDER BY target.batch_index, target.runtime_id
-			FOR UPDATE SKIP LOCKED
+			FOR UPDATE OF target SKIP LOCKED
 			LIMIT 1
 		)
 		UPDATE fc_e2b_stable_release_target target
@@ -2809,14 +2963,15 @@ func stableTargetNeedsBatchHealthGate(completedAt, batchStartedAt time.Time) boo
 	return !completedAt.Before(batchStartedAt)
 }
 
-func stableObservationTargetsError(missing, failed int) error {
+func stableObservationFailedTargetsError(failed int) error {
 	if failed > 0 {
 		return fmt.Errorf("%d runtime targets failed", failed)
 	}
-	if missing > 0 {
-		return fmt.Errorf("%d runtime targets are not updated", missing)
-	}
 	return nil
+}
+
+func stableObservationNeedsCatchUp(missing, failed int) bool {
+	return missing > 0 && failed == 0
 }
 
 func failureRate(failed, total int) float64 {
@@ -3004,7 +3159,27 @@ func (s *FCE2BStableService) getActiveRelease(
 	if err != nil {
 		return nil, err
 	}
+	if err := s.populateStageTargetCount(ctx, &release); err != nil {
+		return nil, err
+	}
 	return &release, nil
+}
+
+func (s *FCE2BStableService) populateStageTargetCount(
+	ctx context.Context,
+	release *FCE2BStableRelease,
+) error {
+	if release == nil || release.CurrentBatch < 1 || release.CurrentBatch > 4 || release.BatchStartedAt == nil {
+		return nil
+	}
+	progress, err := s.loadStableRolloutProgress(ctx, release.ID, release.CurrentBatch)
+	if err != nil {
+		return err
+	}
+	release.TotalTargets = progress.Total
+	release.UpdatedTargets = progress.Updated
+	release.StageTargetCount = stableBatchTarget(progress.StageTotal, release.CurrentBatch)
+	return nil
 }
 
 type rowScanner interface {
@@ -3294,15 +3469,39 @@ const stableReleaseColumns = `
 	(
 	    SELECT count(*)
 	    FROM fc_e2b_stable_release_target developer_target
+	    JOIN agent_runtime runtime ON runtime.id = developer_target.runtime_id
 	    WHERE developer_target.release_id = release.id
+	      AND developer_target.sandbox_backend = release.sandbox_backend
 	      AND developer_target.is_developer = true
+	      AND runtime.runtime_mode = 'cloud'
+	      AND CASE
+	            WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+	            ELSE runtime.metadata->>'sandbox_backend'
+	          END = release.sandbox_backend
+	      AND COALESCE(
+	            NULLIF(runtime.metadata->>'artifact_channel', ''),
+	            NULLIF(runtime.metadata->>'template_channel', ''),
+	            'stable'
+	          ) = 'stable'
 	),
 	(
 	    SELECT count(*)
 	    FROM fc_e2b_stable_release_target developer_target
+	    JOIN agent_runtime runtime ON runtime.id = developer_target.runtime_id
 	    WHERE developer_target.release_id = release.id
+	      AND developer_target.sandbox_backend = release.sandbox_backend
 	      AND developer_target.is_developer = true
 	      AND developer_target.status = 'updated'
+	      AND runtime.runtime_mode = 'cloud'
+	      AND CASE
+	            WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+	            ELSE runtime.metadata->>'sandbox_backend'
+	          END = release.sandbox_backend
+	      AND COALESCE(
+	            NULLIF(runtime.metadata->>'artifact_channel', ''),
+	            NULLIF(runtime.metadata->>'template_channel', ''),
+	            'stable'
+	          ) = 'stable'
 	),
 	release.developer_rollout_started_at,
 	release.developer_rollout_completed_at,

@@ -53,7 +53,7 @@ func buildAgentDispatchIssueCreateParams(
 ) service.IssueCreateParams {
 	title := strings.TrimSpace(overrides.Title)
 	if title == "" {
-		title = dispatchIssueTitle(command)
+		title = dispatchIssueTitle(command, idempotencyKey)
 	}
 	displayContent := overrides.DisplayContent
 	if strings.TrimSpace(displayContent) == "" {
@@ -73,7 +73,7 @@ func buildAgentDispatchIssueCreateParams(
 		AssigneeID:                agent.ID,
 		CreatorType:               "member",
 		CreatorID:                 dispatchContext.UserID,
-		AllowDuplicate:            false,
+		AllowDuplicate:            command.CompletionCallback != nil,
 		AgentIdentityContextToken: command.ExternalIdentity.ContextToken,
 		DispatchContext:           privateContext,
 		Metadata:                  overrides.Metadata,
@@ -693,7 +693,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		Platform:         "webhook",
 	})
 	if errors.Is(err, service.ErrActiveDuplicate) {
-		writeError(w, http.StatusConflict, "dispatch already accepted")
+		writeError(w, http.StatusConflict, service.ErrActiveDuplicate.Error())
 		return
 	}
 	if err != nil {

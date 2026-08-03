@@ -7,16 +7,18 @@ package handler
 import (
 	"crypto/sha256"
 	_ "embed"
+	"encoding/base32"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"golang.org/x/text/unicode/norm"
 )
 
 type DispatchSource struct {
@@ -708,38 +710,140 @@ func dispatchWindowIdempotencyKey(c DispatchCommand) string {
 	return "dispatch-window:" + hex.EncodeToString(h[:])
 }
 
-func dispatchIssueTitle(c DispatchCommand) string {
+func dispatchIssueTitle(c DispatchCommand, idempotencyKey string) string {
+	shortCode := dispatchEventShortCode(idempotencyKey)
 	if c.Event.Domain == "calendar" && c.Event.Type == "calendar.started" {
-		return truncateDispatchTitle("日程开始：" + strings.TrimSpace(c.Event.Data.Subject))
+		subject := normalizeDispatchTitleFragment(c.Event.Data.Subject)
+		if subject == "" {
+			subject = "钉钉日程"
+		}
+		return truncateDispatchTitle(
+			"【钉钉·日程】"+subject+"｜"+dispatchCalendarTitleTime(c.Event.Data),
+			shortCode,
+		)
 	}
 	if c.Event.Domain == "approval" && c.Event.Type == "approval.status_changed" && c.Event.Data.Approval != nil {
-		return truncateDispatchTitle("审批单：" + strings.TrimSpace(c.Event.Data.Approval.FormCode))
+		formCode := normalizeDispatchTitleFragment(c.Event.Data.Approval.FormCode)
+		if formCode == "" {
+			formCode = "钉钉审批"
+		}
+		return truncateDispatchTitle("审批单："+formCode, shortCode)
 	}
+
+	summary := ""
 	for _, message := range c.Event.Data.Messages {
-		if text := strings.TrimSpace(message.Text); text != "" {
-			return truncateDispatchTitle(strings.Join(strings.Fields(text), " "))
+		if text := normalizeDispatchTitleFragment(message.Text); text != "" {
+			summary = text
+			break
 		}
 	}
-	for _, message := range c.Event.Data.Messages {
-		for _, attachment := range message.Attachments {
-			if name := strings.TrimSpace(attachment.Name); name != "" {
-				return truncateDispatchTitle("附件：" + strings.Join(strings.Fields(name), " "))
-			}
-			if contentType := strings.TrimSpace(attachment.ContentType); contentType != "" {
-				return truncateDispatchTitle("附件：" + strings.Join(strings.Fields(contentType), " "))
-			}
-			if attachmentType := strings.TrimSpace(attachment.Type); attachmentType != "" {
-				return truncateDispatchTitle("附件：" + strings.Join(strings.Fields(attachmentType), " "))
-			}
-			return "钉钉消息附件"
-		}
+	if summary == "" {
+		summary = firstDispatchAttachmentTitleFragment(c.Event.Data.Messages, func(a DispatchAttachment) string {
+			return a.Name
+		})
 	}
-	return "钉钉消息"
+	if summary == "" {
+		summary = firstDispatchAttachmentTitleFragment(c.Event.Data.Messages, func(a DispatchAttachment) string {
+			return a.ContentType
+		})
+	}
+	if summary == "" {
+		summary = firstDispatchAttachmentTitleFragment(c.Event.Data.Messages, func(a DispatchAttachment) string {
+			return a.Type
+		})
+	}
+	if summary == "" {
+		summary = "钉钉消息"
+	}
+
+	sender := normalizeDispatchTitleFragment(c.Event.Data.Sender.DisplayName)
+	if sender == "" {
+		sender = "钉钉用户"
+	}
+
+	var title string
+	switch strings.ToLower(normalizeDispatchTitleFragment(c.Event.Data.Conversation.Type)) {
+	case "single", "p2p", "private", "direct":
+		title = "【钉钉·私聊】" + sender + "：" + summary
+	case "group":
+		conversation := normalizeDispatchTitleFragment(c.Event.Data.Conversation.Title)
+		if conversation == "" {
+			conversation = "钉钉群聊"
+		}
+		title = "【钉钉·群聊】" + conversation + "｜" + sender + "：" + summary
+	default:
+		conversation := normalizeDispatchTitleFragment(c.Event.Data.Conversation.Title)
+		if conversation != "" {
+			conversation += "｜"
+		}
+		title = "【钉钉消息】" + conversation + sender + "：" + summary
+	}
+	return truncateDispatchTitle(title, shortCode)
 }
 
-func truncateDispatchTitle(title string) string {
-	if utf8.RuneCountInString(title) > 160 {
-		return string([]rune(title)[:160])
+func dispatchEventShortCode(idempotencyKey string) string {
+	digest := sha256.Sum256([]byte(idempotencyKey))
+	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:])[:8]
+}
+
+func firstDispatchAttachmentTitleFragment(
+	messages []DispatchMessage,
+	value func(DispatchAttachment) string,
+) string {
+	for _, message := range messages {
+		for _, attachment := range message.Attachments {
+			if fragment := normalizeDispatchTitleFragment(value(attachment)); fragment != "" {
+				return fragment
+			}
+		}
 	}
-	return title
+	return ""
+}
+
+func normalizeDispatchTitleFragment(value string) string {
+	value = norm.NFKC.String(value)
+	value = strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return ' '
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, value)
+	value = strings.Join(strings.Fields(value), " ")
+	return strings.TrimFunc(value, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune("|｜:：·•・/\\,，;；", r)
+	})
+}
+
+func dispatchCalendarTitleTime(data DispatchEventData) string {
+	if data.StartTime == nil {
+		return "时间待定"
+	}
+	location := time.UTC
+	if name := strings.TrimSpace(data.Timezone); name != "" {
+		if loaded, err := time.LoadLocation(name); err == nil {
+			location = loaded
+		}
+	}
+	start := time.UnixMilli(*data.StartTime).In(location)
+	if data.AllDayEvent {
+		return start.Format("2006-01-02")
+	}
+	return start.Format("2006-01-02 15:04")
+}
+
+func truncateDispatchTitle(title, shortCode string) string {
+	const maxRunes = 160
+	suffix := " · " + shortCode
+	available := maxRunes - len([]rune(suffix))
+	titleRunes := []rune(title)
+	if len(titleRunes) > available {
+		title = string(titleRunes[:available])
+		title = strings.TrimRightFunc(title, func(r rune) bool {
+			return unicode.IsSpace(r) || strings.ContainsRune("|｜:：·•・/\\,，;；", r)
+		})
+	}
+	return title + suffix
 }

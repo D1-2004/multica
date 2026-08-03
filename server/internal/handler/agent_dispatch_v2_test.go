@@ -86,7 +86,7 @@ func TestCalendarStartedDispatchUsesIssueWithoutOutboundReply(t *testing.T) {
 		}},
 		Surface:          DispatchSurface{Type: "issue"},
 		Outbound:         DispatchOutbound{Mode: "none"},
-		ExternalIdentity: AgentDispatchExternalIdentity{ContextToken: "context-token"},
+		ExternalIdentity: AgentDispatchExternalIdentity{ContextToken: "context-token", ExpiresAt: 4102444800000},
 	}
 	if err := c.validate(); err != nil {
 		t.Fatalf("valid calendar dispatch rejected: %v", err)
@@ -101,7 +101,7 @@ func TestCalendarStartedDispatchUsesIssueWithoutOutboundReply(t *testing.T) {
 	if got := dispatchWindowIdempotencyKey(c); got != "calendar:calendar-1:1784217600000" {
 		t.Fatalf("calendar idempotency key = %q", got)
 	}
-	if got := dispatchIssueTitle(c); got != "日程开始：项目评审会" {
+	if got := dispatchIssueTitle(c, dispatchWindowIdempotencyKey(c)); got != "【钉钉·日程】项目评审会｜2026-07-16 16:00 · UZMQZZ4C" {
 		t.Fatalf("calendar issue title = %q", got)
 	}
 
@@ -767,7 +767,8 @@ func TestApprovalStatusChangedDispatchUsesIssueWithoutOutboundReply(t *testing.T
 	if got := dispatchWindowIdempotencyKey(c); got != "approval:FORM-2026-001:approving" {
 		t.Fatalf("approval idempotency key = %q", got)
 	}
-	if got := dispatchIssueTitle(c); got != "审批单：FORM-2026-001" {
+	approvalKey := dispatchWindowIdempotencyKey(c)
+	if got, want := dispatchIssueTitle(c, approvalKey), "审批单：FORM-2026-001 · "+dispatchEventShortCode(approvalKey); got != want {
 		t.Fatalf("approval issue title = %q", got)
 	}
 
@@ -1178,32 +1179,174 @@ func TestDigitalEmployeePromptResolvesMissingReplySenderWithoutGuessing(t *testi
 	}
 }
 
-func TestDispatchIssueTitleUsesFirstUserMessage(t *testing.T) {
-	longMessage := strings.Repeat("界", 170)
-	c := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{Messages: []DispatchMessage{
-		{Text: "  \n\t"},
-		{Text: longMessage},
-	}}}}
-
-	title := dispatchIssueTitle(c)
-	if utf8.RuneCountInString(title) != 160 {
-		t.Fatalf("title rune count = %d, want 160", utf8.RuneCountInString(title))
+func TestBuildAgentDispatchIssueCreateParamsBuildsNormalizedBusinessTitle(t *testing.T) {
+	tests := []struct {
+		name    string
+		command DispatchCommand
+		key     string
+		want    string
+	}{
+		{
+			name: "group message keeps display characters",
+			command: DispatchCommand{Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+				Conversation: DispatchConversation{Type: "group", Title: " 项目群｜ "},
+				Sender:       DispatchSender{DisplayName: " 张三： "},
+				Messages: []DispatchMessage{
+					{Text: " \n\t"},
+					{Text: " 你好  👋 "},
+				},
+			}}},
+			key:  "dispatch-window-A",
+			want: "【钉钉·群聊】项目群｜张三：你好 👋 · LMYHEJFQ",
+		},
+		{
+			name: "private message omits conversation title and normalizes nfkc",
+			command: DispatchCommand{Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+				Conversation: DispatchConversation{Type: "single", Title: "不应出现的私聊标题"},
+				Sender:       DispatchSender{DisplayName: " 李四\u200b "},
+				Messages:     []DispatchMessage{{Text: " Ａ\u200bＢ\x00\nＣ "}},
+			}}},
+			key:  "dispatch-window-B",
+			want: "【钉钉·私聊】李四：AB C · 5TEIWDJF",
+		},
+		{
+			name: "attachment name and empty display fallbacks",
+			command: DispatchCommand{Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+				Conversation: DispatchConversation{Type: "group"},
+				Messages: []DispatchMessage{{Attachments: []DispatchAttachment{
+					{Name: " ｜告警截图.png： "},
+				}}},
+			}}},
+			key:  "dispatch-window-A",
+			want: "【钉钉·群聊】钉钉群聊｜钉钉用户：告警截图.png · LMYHEJFQ",
+		},
+		{
+			name: "unknown conversation and attachment content type",
+			command: DispatchCommand{Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+				Messages: []DispatchMessage{{Attachments: []DispatchAttachment{
+					{ContentType: " application/pdf "},
+				}}},
+			}}},
+			key:  "dispatch-window-A",
+			want: "【钉钉消息】钉钉用户：application/pdf · LMYHEJFQ",
+		},
+		{
+			name: "attachment type fallback",
+			command: DispatchCommand{Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+				Conversation: DispatchConversation{Type: "direct"},
+				Sender:       DispatchSender{DisplayName: "王五"},
+				Messages: []DispatchMessage{{Attachments: []DispatchAttachment{
+					{Type: "image"},
+				}}},
+			}}},
+			key:  "dispatch-window-A",
+			want: "【钉钉·私聊】王五：image · LMYHEJFQ",
+		},
 	}
-	if title != strings.Repeat("界", 160) {
-		t.Fatalf("title = %q", title)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := buildAgentDispatchIssueCreateParams(
+				tt.command,
+				DispatchPrompt{},
+				agentDispatchContext{},
+				db.Agent{},
+				tt.key,
+				agentDispatchIssueCreateOverrides{},
+			)
+			if params.Title != tt.want {
+				t.Fatalf("title = %q, want %q", params.Title, tt.want)
+			}
+		})
 	}
 }
 
-func TestDispatchIssueTitleFallsBackToAttachmentThenGeneric(t *testing.T) {
-	withAttachment := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{Messages: []DispatchMessage{{
-		Attachments: []DispatchAttachment{{Name: "告警截图.png"}},
-	}}}}}
-	if got := dispatchIssueTitle(withAttachment); got != "附件：告警截图.png" {
-		t.Fatalf("attachment title = %q", got)
+func TestBuildAgentDispatchIssueCreateParamsUsesAcceptanceInsteadOfTitleDeduplication(t *testing.T) {
+	command := DispatchCommand{CompletionCallback: &DispatchCompletionCallback{
+		URL: "/api/v1/dispatch-tasks/title-dedup-test/execution-result",
+	}}
+	withAcceptance := buildAgentDispatchIssueCreateParams(
+		command,
+		DispatchPrompt{},
+		agentDispatchContext{},
+		db.Agent{},
+		"dispatch-window-A",
+		agentDispatchIssueCreateOverrides{},
+	)
+	if !withAcceptance.AllowDuplicate {
+		t.Fatal("dispatch with durable acceptance still uses business title as its idempotency guard")
 	}
 
-	if got := dispatchIssueTitle(DispatchCommand{}); got != "钉钉消息" {
-		t.Fatalf("generic title = %q", got)
+	command.CompletionCallback = nil
+	withoutAcceptance := buildAgentDispatchIssueCreateParams(
+		command,
+		DispatchPrompt{},
+		agentDispatchContext{},
+		db.Agent{},
+		"dispatch-window-A",
+		agentDispatchIssueCreateOverrides{},
+	)
+	if withoutAcceptance.AllowDuplicate {
+		t.Fatal("dispatch without durable acceptance unexpectedly bypasses the title duplicate guard")
+	}
+}
+
+func TestDispatchEventShortCodeIsStableBase32(t *testing.T) {
+	for _, key := range []string{"dispatch-window-A", "含中文的 key", "key/with:safe-input"} {
+		first := dispatchEventShortCode(key)
+		second := dispatchEventShortCode(key)
+		if first != second || len(first) != 8 {
+			t.Fatalf("short code for %q is not stable eight-character output: %q / %q", key, first, second)
+		}
+		for _, r := range first {
+			if (r < 'A' || r > 'Z') && (r < '2' || r > '7') {
+				t.Fatalf("short code for %q contains unsafe rune %q: %q", key, r, first)
+			}
+		}
+	}
+	if dispatchEventShortCode("dispatch-window-A") == dispatchEventShortCode("dispatch-window-B") {
+		t.Fatal("different dispatch windows produced the same short code")
+	}
+}
+
+func TestBuildAgentDispatchIssueCreateParamsKeepsShortCodeWithinRuneLimit(t *testing.T) {
+	command := DispatchCommand{Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+		Conversation: DispatchConversation{Type: "group", Title: strings.Repeat("会", 100)},
+		Sender:       DispatchSender{DisplayName: strings.Repeat("发", 100)},
+		Messages:     []DispatchMessage{{Text: strings.Repeat("界", 200)}},
+	}}}
+	params := buildAgentDispatchIssueCreateParams(
+		command,
+		DispatchPrompt{},
+		agentDispatchContext{},
+		db.Agent{},
+		"dispatch-window-A",
+		agentDispatchIssueCreateOverrides{},
+	)
+
+	if got := utf8.RuneCountInString(params.Title); got > 160 {
+		t.Fatalf("title rune count = %d, want <= 160", got)
+	}
+	if !strings.HasSuffix(params.Title, " · LMYHEJFQ") {
+		t.Fatalf("title lost stable short code: %q", params.Title)
+	}
+}
+
+func TestBuildAgentDispatchIssueCreateParamsFormatsCalendarTitle(t *testing.T) {
+	start := int64(1784217600000)
+	command := DispatchCommand{Event: DispatchEvent{Domain: "calendar", Type: "calendar.started", Data: DispatchEventData{
+		Subject: " ｜项目评审会： ", StartTime: &start, Timezone: "Asia/Shanghai",
+	}}}
+	params := buildAgentDispatchIssueCreateParams(
+		command,
+		DispatchPrompt{},
+		agentDispatchContext{},
+		db.Agent{},
+		"calendar-key",
+		agentDispatchIssueCreateOverrides{},
+	)
+	if params.Title != "【钉钉·日程】项目评审会｜2026-07-17 00:00 · 5CYY7PQC" {
+		t.Fatalf("calendar title = %q", params.Title)
 	}
 }
 

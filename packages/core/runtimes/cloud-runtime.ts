@@ -212,6 +212,7 @@ export interface FCE2BStableRelease {
   status: FCE2BStableReleaseStatus;
   current_batch: number;
   target_percentage: number;
+  stage_target_count?: number;
   previous_template_id: string;
   previous_template_build_id: string;
   previous_template_alias: string;
