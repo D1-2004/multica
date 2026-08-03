@@ -241,6 +241,7 @@ describe("StableFCE2BReleaseDialog", () => {
       bootstrap: false,
       current_batch: 1,
       target_percentage: 5,
+      stage_target_count: 3,
       previous_template_alias: "Current image",
       updated_targets: 35,
       total_targets: 61,
@@ -286,7 +287,7 @@ describe("StableFCE2BReleaseDialog", () => {
     expect(screen.getByText("57%")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Current cumulative stage target: 5% (4 Runtimes). Updates above this count carry into later stages.",
+        "Current cumulative stage target: 5% (3 Runtimes). Updates above this count carry into later stages.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("Roll out to 5%")).toBeInTheDocument();

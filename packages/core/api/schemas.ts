@@ -844,6 +844,7 @@ export const FCE2BStableReleaseSchema = z.object({
   ]),
   current_batch: z.number(),
   target_percentage: z.number(),
+  stage_target_count: z.number().optional(),
   previous_template_id: z.string(),
   previous_template_build_id: z.string(),
   previous_template_alias: z.string(),

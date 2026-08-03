@@ -60,17 +60,6 @@ const rolloutOffsetByBatch: Record<number, string> = {
   5: "T+24h",
 };
 
-function rolloutStageTarget(total: number, batch: number): number {
-  if (total <= 0 || batch < 1 || batch > 4) return 0;
-  const first = Math.min(
-    total,
-    Math.max(Math.ceil(total * 0.05), total >= 3 ? 3 : 1),
-  );
-  const second = Math.min(total, Math.max(first, Math.ceil(total * 0.25)));
-  const third = Math.min(total, Math.max(second, Math.ceil(total * 0.5)));
-  return [first, second, third, total][batch - 1] ?? 0;
-}
-
 export function StableFCE2BReleaseDialog({
   onClose,
 }: {
@@ -263,17 +252,15 @@ export function StableFCE2BReleaseDialog({
                 </span>
                 <span>{progressPercentage}%</span>
               </div>
-              {showRolloutStage && (
-                <p className="text-muted-foreground">
-                  {t(($) => $.fc_e2b_stable.rollout_stage_target, {
-                    percentage: active.target_percentage,
-                    target: rolloutStageTarget(
-                      active.total_targets,
-                      active.current_batch,
-                    ),
-                  })}
-                </p>
-              )}
+              {showRolloutStage &&
+                active.stage_target_count !== undefined && (
+                  <p className="text-muted-foreground">
+                    {t(($) => $.fc_e2b_stable.rollout_stage_target, {
+                      percentage: active.target_percentage,
+                      target: active.stage_target_count,
+                    })}
+                  </p>
+                )}
               {active.status === "awaiting_rollout" && (
                 <p className="text-muted-foreground">
                   {t(($) => $.fc_e2b_stable.awaiting_rollout_notice)}
