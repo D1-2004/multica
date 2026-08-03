@@ -583,10 +583,6 @@ func asbBUCIdentityProbeCommand() string {
 		"'; " +
 		"printf 'probe_stage=a1\\n' >&2; " +
 		"a1 --no-update-check -f json auth whoami >/dev/null; " +
-		"printf 'probe_stage=nw_aliwork_login\\n' >&2; " +
-		"nw-aliwork-cli login --no-update-check >/dev/null; " +
-		"printf 'probe_stage=nw_aliwork_whoami\\n' >&2; " +
-		"nw-aliwork-cli whoami --no-update-check >/dev/null; " +
 		"printf 'probe_stage=complete\\n' >&2"
 }
 

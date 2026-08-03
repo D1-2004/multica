@@ -477,20 +477,24 @@ func TestAttachAndProbeASBIdentitySourceDoesNotRetryOtherBadRequest(t *testing.T
 func TestASBIdentityProbeStageReturnsLastSafeMarker(t *testing.T) {
 	t.Parallel()
 
-	stderr := "probe_stage=buc\nprobe_stage=a1\nprobe_stage=nw_aliwork_login\n"
-	if got := asbIdentityProbeStage(stderr); got != "nw_aliwork_login" {
+	stderr := "probe_stage=buc\nprobe_stage=a1\n"
+	if got := asbIdentityProbeStage(stderr); got != "a1" {
 		t.Fatalf("asbIdentityProbeStage() = %q", got)
 	}
 }
 
 func TestASBIdentityProbeCommandHasValidShellSyntax(t *testing.T) {
 	t.Parallel()
+	command := asbBUCIdentityProbeCommand()
+	if strings.Contains(command, "nw-aliwork") {
+		t.Fatalf("identity probe still depends on removed nw-aliwork CLI: %q", command)
+	}
 
 	if output, err := exec.Command(
 		"bash",
 		"-n",
 		"-c",
-		asbBUCIdentityProbeCommand(),
+		command,
 	).CombinedOutput(); err != nil {
 		t.Fatalf("identity probe shell syntax: %v\n%s", err, output)
 	}
