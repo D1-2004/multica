@@ -433,9 +433,7 @@ func (s *Service) GetMessageBindingStatus(
 		return result, nil
 	}
 	result.Verification.Status = "verified"
-	if result.Binding.MessageRoute.SurfaceType == "" {
-		result.Binding.MessageRoute.SurfaceType = subscription.Surface.Type
-	}
+	result.Binding.MessageRoute.SurfaceType = subscription.Surface.Type
 	return result, nil
 }
 
@@ -1143,6 +1141,12 @@ func (s *Service) subscriptionVerificationOutcome(subscription Subscription, sou
 	}
 	if subscription.Status != "active" {
 		return "inactive"
+	}
+	if subscription.Outbound.Mode != "dws" {
+		return "outbound_mode_mismatch"
+	}
+	if subscription.Outbound.ReplyTo != "latest_message" {
+		return "outbound_reply_to_mismatch"
 	}
 	return "success"
 }

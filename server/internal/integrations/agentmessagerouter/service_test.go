@@ -2161,6 +2161,18 @@ func TestDingTalkAccountMessageBindingStatus(t *testing.T) {
 			subscription.DispatchURL = "/api/webhooks/agent-dispatch/v1_other-endpoint"
 			return store, &fakeBindingRouter{subscription: subscription}
 		}, "active", "drifted", 1},
+		{"outbound mode mismatch", func(t *testing.T) (*fakeBindingStore, *fakeBindingRouter) {
+			store := newActive(t)
+			subscription := matching(t, store)
+			subscription.Outbound.Mode = "robot_sdk"
+			return store, &fakeBindingRouter{subscription: subscription}
+		}, "active", "drifted", 1},
+		{"outbound reply target mismatch", func(t *testing.T) (*fakeBindingStore, *fakeBindingRouter) {
+			store := newActive(t)
+			subscription := matching(t, store)
+			subscription.Outbound.ReplyTo = "new_message"
+			return store, &fakeBindingRouter{subscription: subscription}
+		}, "active", "drifted", 1},
 		{"unavailable", func(t *testing.T) (*fakeBindingStore, *fakeBindingRouter) {
 			return newActive(t), &fakeBindingRouter{getErr: errors.New("router timeout")}
 		}, "active", "unavailable", 1},
@@ -2192,6 +2204,40 @@ func TestDingTalkAccountMessageBindingStatus(t *testing.T) {
 				t.Fatalf("status leaked credentials: %s", raw)
 			}
 		})
+	}
+}
+
+func TestDingTalkAccountMessageBindingStatusUsesVerifiedRouterSurface(t *testing.T) {
+	now := time.Date(2026, 8, 3, 10, 30, 0, 0, time.UTC)
+	store := activeBindingStoreForUnbind(t, now)
+	config, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SurfaceType = DingTalkSurfaceAuto
+	store.row.Config, err = config.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := &fakeBindingRouter{subscription: Subscription{
+		SourceID:    config.RouterSourceID,
+		AgentID:     uuidStringForTest(store.row.AgentID),
+		DispatchURL: "/api/webhooks/agent-dispatch/" + config.DispatchEndpointID,
+		Surface:     SubscriptionSurface{Type: DingTalkSurfaceChat},
+		Outbound:    SubscriptionOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		Status:      "active",
+	}}
+
+	status, err := newBindingServiceForTest(t, store, router, now).GetMessageBindingStatus(
+		context.Background(),
+		store.row.WorkspaceID,
+		store.row.AgentID,
+	)
+	if err != nil {
+		t.Fatalf("GetMessageBindingStatus() error = %v", err)
+	}
+	if status.Verification.Status != "verified" || status.Binding.MessageRoute.SurfaceType != DingTalkSurfaceChat {
+		t.Fatalf("status = %#v", status)
 	}
 }
 
