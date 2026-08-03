@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Copy, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -12,12 +12,13 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@multica/ui/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
 import { copyText } from "@multica/ui/lib/clipboard";
-import type { WorkspaceAccessCapability, WorkspaceAccessToken } from "@multica/core/types";
+import type { WorkspaceAccessToken } from "@multica/core/types";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { useCurrentMember } from "@multica/core/permissions";
 import { workspaceAccessTokenListOptions } from "@multica/core/workspace-access/queries";
 import {
   useCreateWorkspaceAccessToken,
+  useDeleteWorkspaceAccessToken,
   useRegenerateWorkspaceAccessToken,
   useRevokeWorkspaceAccessToken,
   useUpdateWorkspaceAccessToken,
@@ -25,7 +26,6 @@ import {
 import { useT } from "../../i18n";
 import { SettingsSection, SettingsTab } from "./settings-layout";
 
-const ALL_CAPABILITIES: WorkspaceAccessCapability[] = ["deployment.manage", "deployment.retire", "trace.read"];
 const EXPIRY_OPTIONS = ["30", "90", "365", "never"] as const;
 
 function expiryFromOption(option: string, current: string | null = null): string | null {
@@ -81,14 +81,9 @@ export function WorkspaceAccessTab() {
 function TokenCard({ wsId, token, onSecret }: { wsId: string; token: WorkspaceAccessToken; onSecret: (secret: string) => void }) {
   const { t } = useT("settings");
   const revoke = useRevokeWorkspaceAccessToken(wsId);
+  const remove = useDeleteWorkspaceAccessToken(wsId);
   const [editOpen, setEditOpen] = useState(false);
   const [regenerateOpen, setRegenerateOpen] = useState(false);
-  const capabilityLabel = (capability: WorkspaceAccessCapability) => capability === "deployment.manage"
-    ? t(($) => $.workspace_access.capabilities.manage)
-    : capability === "deployment.retire"
-      ? t(($) => $.workspace_access.capabilities.retire)
-      : t(($) => $.workspace_access.capabilities.trace);
-
   return (
     <Card>
       <CardContent className="space-y-4">
@@ -99,7 +94,7 @@ function TokenCard({ wsId, token, onSecret }: { wsId: string; token: WorkspaceAc
               {token.revoked_at ? <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t(($) => $.workspace_access.revoked)}</span> : null}
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              {token.capabilities.map(capabilityLabel).join(" · ")}
+              {t(($) => $.workspace_access.member_role)}
             </p>
             <p className="mt-2 text-xs text-muted-foreground">
               <span className="font-mono">{token.token_prefix}…</span>
@@ -119,7 +114,15 @@ function TokenCard({ wsId, token, onSecret }: { wsId: string; token: WorkspaceAc
                 aria-label={t(($) => $.workspace_access.revoke)}
               ><Trash2 className="size-4 text-destructive" /></Button>
             </div>
-          ) : null}
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={remove.isPending}
+              onClick={() => { if (window.confirm(t(($) => $.workspace_access.delete_confirm))) remove.mutate(token.id); }}
+              aria-label={t(($) => $.workspace_access.delete)}
+            ><Trash2 className="size-4 text-destructive" />{t(($) => $.workspace_access.delete)}</Button>
+          )}
         </div>
       </CardContent>
       <TokenEditorDialog wsId={wsId} token={token} open={editOpen} onOpenChange={setEditOpen} onSecret={onSecret} />
@@ -135,32 +138,14 @@ function TokenEditorDialog({ wsId, token, open, onOpenChange, onSecret }: {
   const createToken = useCreateWorkspaceAccessToken(wsId);
   const updateToken = useUpdateWorkspaceAccessToken(wsId);
   const [name, setName] = useState(token?.name ?? "");
-  const [capabilities, setCapabilities] = useState<WorkspaceAccessCapability[]>(token?.capabilities ?? ["deployment.manage", "trace.read"]);
   const [expiry, setExpiry] = useState(token ? "keep" : "90");
-  const capabilityCopy = useMemo(() => ({
-    "deployment.manage": {
-      title: t(($) => $.workspace_access.capabilities.manage),
-      description: t(($) => $.workspace_access.capability_descriptions.manage),
-    },
-    "deployment.retire": {
-      title: t(($) => $.workspace_access.capabilities.retire),
-      description: t(($) => $.workspace_access.capability_descriptions.retire),
-    },
-    "trace.read": {
-      title: t(($) => $.workspace_access.capabilities.trace),
-      description: t(($) => $.workspace_access.capability_descriptions.trace),
-    },
-  }), [t]);
-  const toggleCapability = (capability: WorkspaceAccessCapability, checked: boolean) => setCapabilities((current) => checked
-    ? Array.from(new Set([...current, capability]))
-    : current.filter((item) => item !== capability));
   const save = async () => {
     try {
       const expiresAt = expiryFromOption(expiry, token?.expires_at ?? null);
       if (token) {
-        await updateToken.mutateAsync({ tokenId: token.id, data: { name: name.trim(), capabilities, expires_at: expiresAt, version: token.version } });
+        await updateToken.mutateAsync({ tokenId: token.id, data: { name: name.trim(), expires_at: expiresAt, version: token.version } });
       } else {
-        await createToken.mutateAsync({ data: { name: name.trim(), capabilities, expires_at: expiresAt }, onToken: onSecret });
+        await createToken.mutateAsync({ data: { name: name.trim(), expires_at: expiresAt }, onToken: onSecret });
       }
       onOpenChange(false);
       toast.success(t(($) => $.workspace_access.saved));
@@ -174,21 +159,11 @@ function TokenEditorDialog({ wsId, token, open, onOpenChange, onSecret }: {
         <DialogHeader><DialogTitle>{token ? t(($) => $.workspace_access.edit_title) : t(($) => $.workspace_access.create_title)}</DialogTitle></DialogHeader>
         <div className="space-y-5">
           <Input value={name} onChange={(event) => setName(event.target.value)} placeholder={t(($) => $.workspace_access.name_placeholder)} />
-          <div className="space-y-3">
-            <div className="text-sm font-medium">{t(($) => $.workspace_access.permissions)}</div>
-            <p className="text-xs leading-relaxed text-muted-foreground">{t(($) => $.workspace_access.permissions_description)}</p>
-            {ALL_CAPABILITIES.map((capability) => <label key={capability} className="flex cursor-pointer items-start gap-3 rounded-lg border p-3">
-              <Checkbox className="mt-0.5" checked={capabilities.includes(capability)} onCheckedChange={(value) => toggleCapability(capability, value === true)} />
-              <span className="min-w-0">
-                <span className="block text-sm font-medium">{capabilityCopy[capability].title}</span>
-                <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{capabilityCopy[capability].description}</span>
-              </span>
-            </label>)}
-          </div>
+          <Alert><AlertDescription>{t(($) => $.workspace_access.member_permissions_description)}</AlertDescription></Alert>
           <ExpirySelect value={expiry} onChange={setExpiry} includeKeep={!!token} />
           {expiry === "never" ? <Alert><AlertDescription>{t(($) => $.workspace_access.permanent_warning)}</AlertDescription></Alert> : null}
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>{t(($) => $.workspace_access.cancel)}</Button><Button onClick={save} disabled={!name.trim() || capabilities.length === 0 || createToken.isPending || updateToken.isPending}>{t(($) => $.workspace_access.save)}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>{t(($) => $.workspace_access.cancel)}</Button><Button onClick={save} disabled={!name.trim() || createToken.isPending || updateToken.isPending}>{t(($) => $.workspace_access.save)}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );

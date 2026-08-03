@@ -1,7 +1,7 @@
 # 工作区 DTA Token 权限与 Trace 实施计划
 
 > 工作流：grill-and-plan
-> 状态：已完成（仅 Multica 范围）
+> 状态：已废弃（由 `2026-08-03-dta-service-member.md` 替代）
 > 创建日期：2026-07-31
 > 计划 ID：20260731-workspace-access-grant-dta-trace
 > 最后更新时间：2026-08-03 CST
@@ -18,6 +18,8 @@
 > 当前里程碑：机器人与数字员工绑定基础能力已补齐并完成本地验证
 
 ## 一句话结论
+
+> 2026-08-03：用户决定停止维护 DTA 专属 capability/allowlist，把 Token subject 建模为不可交互登录的普通 Workspace member，并由管理员预建公共 Runtime。后续实施、迁移和验证统一记录在 `docs/plans/2026-08-03-dta-service-member.md`；本文件仅保留此前预发实现与决策历史。
 
 Multica 由工作区 `owner` 直接创建 DTA Token；第二阶段让该 `dta_` 机器身份复用 Multica 的具名 profile/CLI 输出合同，但不冒充 human PAT，并补齐 GitHub Source 与专用 load-smoke，使 DTA 保留现有 plan → apply → 独立回读 → Receipt 主链。
 

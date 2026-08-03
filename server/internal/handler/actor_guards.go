@@ -5,8 +5,8 @@ import (
 )
 
 // RequireHumanActor is a chi-style middleware that rejects requests
-// authenticated via a machine credential — currently mat_ task tokens
-// and mcn_ cloud-node PATs. It exists for endpoints whose
+// authenticated via a machine credential — currently mat_ task tokens,
+// mcn_ cloud-node PATs, and dta_ workspace service-member tokens. It exists for endpoints whose
 // authorization model is "the human owner authorized this", not
 // "anyone holding the owner's credentials authorized this".
 //
@@ -99,7 +99,7 @@ func RequireHumanActor(next http.Handler) http.Handler {
 		// strips any client-supplied value before stamping its own,
 		// so a non-empty value here is authoritative.
 		switch r.Header.Get("X-Actor-Source") {
-		case "task_token", "cloud_pat":
+		case "task_token", "cloud_pat", "workspace_access_token":
 			writeError(w, http.StatusForbidden, "this endpoint is only available to human actors")
 			return
 		}

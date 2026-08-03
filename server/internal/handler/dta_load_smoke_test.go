@@ -46,7 +46,6 @@ func TestDTALoadSmokeIsServerStampedAndTokenScoped(t *testing.T) {
 		req = withWorkspaceAccessParams(req, params...)
 		principal := middleware.WorkspaceAccessPrincipal{
 			TokenID: tokenID, UserID: subjectID, WorkspaceID: testWorkspaceID,
-			Capabilities: []string{"deployment.manage"},
 		}
 		requestCtx := middleware.WithWorkspaceAccessPrincipal(req.Context(), principal)
 		requestCtx = middleware.SetMemberContext(requestCtx, testWorkspaceID, db.Member{

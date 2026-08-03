@@ -2184,6 +2184,12 @@ export class ApiClient {
   }
 
   async revokeWorkspaceAccessToken(workspaceId: string, tokenId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/access-tokens/${tokenId}/revoke`, {
+      method: "POST",
+    });
+  }
+
+  async deleteWorkspaceAccessToken(workspaceId: string, tokenId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/access-tokens/${tokenId}`, {
       method: "DELETE",
     });

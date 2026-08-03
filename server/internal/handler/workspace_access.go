@@ -16,24 +16,17 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-var workspaceAccessCapabilities = map[string]struct{}{
-	"deployment.manage": {},
-	"deployment.retire": {},
-	"trace.read":        {},
-}
-
 type WorkspaceAccessTokenResponse struct {
-	ID           string   `json:"id"`
-	WorkspaceID  string   `json:"workspace_id"`
-	Name         string   `json:"name"`
-	Capabilities []string `json:"capabilities"`
-	Version      int32    `json:"version"`
-	Prefix       string   `json:"token_prefix"`
-	ExpiresAt    *string  `json:"expires_at"`
-	LastUsedAt   *string  `json:"last_used_at"`
-	CreatedAt    string   `json:"created_at"`
-	UpdatedAt    string   `json:"updated_at"`
-	RevokedAt    *string  `json:"revoked_at"`
+	ID          string  `json:"id"`
+	WorkspaceID string  `json:"workspace_id"`
+	Name        string  `json:"name"`
+	Version     int32   `json:"version"`
+	Prefix      string  `json:"token_prefix"`
+	ExpiresAt   *string `json:"expires_at"`
+	LastUsedAt  *string `json:"last_used_at"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
+	RevokedAt   *string `json:"revoked_at"`
 }
 
 type WorkspaceAccessTokenSecretResponse struct {
@@ -43,44 +36,29 @@ type WorkspaceAccessTokenSecretResponse struct {
 
 func workspaceAccessTokenToResponse(token db.WorkspaceAccessToken) WorkspaceAccessTokenResponse {
 	return WorkspaceAccessTokenResponse{
-		ID:           uuidToString(token.ID),
-		WorkspaceID:  uuidToString(token.WorkspaceID),
-		Name:         token.Name,
-		Capabilities: token.Capabilities,
-		Version:      token.Version,
-		Prefix:       token.TokenPrefix,
-		ExpiresAt:    timestampToPtr(token.ExpiresAt),
-		LastUsedAt:   timestampToPtr(token.LastUsedAt),
-		CreatedAt:    timestampToString(token.CreatedAt),
-		UpdatedAt:    timestampToString(token.UpdatedAt),
-		RevokedAt:    timestampToPtr(token.RevokedAt),
+		ID:          uuidToString(token.ID),
+		WorkspaceID: uuidToString(token.WorkspaceID),
+		Name:        token.Name,
+		Version:     token.Version,
+		Prefix:      token.TokenPrefix,
+		ExpiresAt:   timestampToPtr(token.ExpiresAt),
+		LastUsedAt:  timestampToPtr(token.LastUsedAt),
+		CreatedAt:   timestampToString(token.CreatedAt),
+		UpdatedAt:   timestampToString(token.UpdatedAt),
+		RevokedAt:   timestampToPtr(token.RevokedAt),
 	}
 }
 
-func validateWorkspaceAccessPolicy(name string, capabilities []string) error {
+func validateWorkspaceAccessPolicy(name string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("name is required")
-	}
-	if len(capabilities) == 0 {
-		return errors.New("at least one capability is required")
-	}
-	seen := make(map[string]struct{}, len(capabilities))
-	for _, capability := range capabilities {
-		if _, ok := workspaceAccessCapabilities[capability]; !ok {
-			return errors.New("unsupported capability")
-		}
-		if _, duplicate := seen[capability]; duplicate {
-			return errors.New("capabilities must not contain duplicates")
-		}
-		seen[capability] = struct{}{}
 	}
 	return nil
 }
 
 type createWorkspaceAccessTokenRequest struct {
-	Name         string   `json:"name"`
-	Capabilities []string `json:"capabilities"`
-	ExpiresAt    *string  `json:"expires_at"`
+	Name      string  `json:"name"`
+	ExpiresAt *string `json:"expires_at"`
 }
 
 func (h *Handler) CreateWorkspaceAccessToken(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +72,7 @@ func (h *Handler) CreateWorkspaceAccessToken(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := validateWorkspaceAccessPolicy(req.Name, req.Capabilities); err != nil {
+	if err := validateWorkspaceAccessPolicy(req.Name); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -114,13 +92,19 @@ func (h *Handler) CreateWorkspaceAccessToken(w http.ResponseWriter, r *http.Requ
 		if createErr != nil {
 			return createErr
 		}
+		if _, createErr = qtx.CreateMember(r.Context(), db.CreateMemberParams{
+			WorkspaceID: parseUUID(workspaceID),
+			UserID:      subject.ID,
+			Role:        "member",
+		}); createErr != nil {
+			return createErr
+		}
 		token, createErr = qtx.CreateWorkspaceAccessToken(r.Context(), db.CreateWorkspaceAccessTokenParams{
 			WorkspaceID:   parseUUID(workspaceID),
 			SubjectUserID: subject.ID,
 			Name:          strings.TrimSpace(req.Name),
 			TokenHash:     auth.HashToken(rawToken),
 			TokenPrefix:   workspaceAccessTokenPrefix(rawToken),
-			Capabilities:  req.Capabilities,
 			ExpiresAt:     expiresAt,
 			ActorUserID:   parseUUID(actorID),
 		})
@@ -162,10 +146,9 @@ func (h *Handler) GetWorkspaceAccessToken(w http.ResponseWriter, r *http.Request
 }
 
 type updateWorkspaceAccessTokenRequest struct {
-	Name         string          `json:"name"`
-	Capabilities []string        `json:"capabilities"`
-	ExpiresAt    json.RawMessage `json:"expires_at"`
-	Version      int32           `json:"version"`
+	Name      string          `json:"name"`
+	ExpiresAt json.RawMessage `json:"expires_at"`
+	Version   int32           `json:"version"`
 }
 
 func (h *Handler) UpdateWorkspaceAccessToken(w http.ResponseWriter, r *http.Request) {
@@ -186,7 +169,7 @@ func (h *Handler) UpdateWorkspaceAccessToken(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := validateWorkspaceAccessPolicy(req.Name, req.Capabilities); err != nil {
+	if err := validateWorkspaceAccessPolicy(req.Name); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -198,13 +181,12 @@ func (h *Handler) UpdateWorkspaceAccessToken(w http.ResponseWriter, r *http.Requ
 	err := h.runWorkspaceAccessTransaction(r.Context(), func(qtx *db.Queries) error {
 		var updateErr error
 		updated, updateErr = qtx.UpdateWorkspaceAccessToken(r.Context(), db.UpdateWorkspaceAccessTokenParams{
-			Name:         strings.TrimSpace(req.Name),
-			Capabilities: req.Capabilities,
-			ExpiresAt:    expiresAt,
-			ActorUserID:  parseUUID(actorID),
-			ID:           current.ID,
-			WorkspaceID:  current.WorkspaceID,
-			Version:      req.Version,
+			Name:        strings.TrimSpace(req.Name),
+			ExpiresAt:   expiresAt,
+			ActorUserID: parseUUID(actorID),
+			ID:          current.ID,
+			WorkspaceID: current.WorkspaceID,
+			Version:     req.Version,
 		})
 		if updateErr != nil {
 			return updateErr
@@ -319,6 +301,46 @@ func (h *Handler) RevokeWorkspaceAccessToken(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *Handler) DeleteWorkspaceAccessToken(w http.ResponseWriter, r *http.Request) {
+	current, ok := h.loadWorkspaceAccessToken(w, r)
+	if !ok {
+		return
+	}
+	if !current.RevokedAt.Valid {
+		writeError(w, http.StatusConflict, "access token must be revoked before deletion")
+		return
+	}
+	actorID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	err := h.runWorkspaceAccessTransaction(r.Context(), func(qtx *db.Queries) error {
+		if auditErr := createWorkspaceAccessAudit(r, qtx, current.WorkspaceID, current.ID, parseUUID(actorID), "token.deleted", "token", current.ID); auditErr != nil {
+			return auditErr
+		}
+		deleted, deleteErr := qtx.DeleteRevokedWorkspaceAccessToken(r.Context(), db.DeleteRevokedWorkspaceAccessTokenParams{
+			ID:          current.ID,
+			WorkspaceID: current.WorkspaceID,
+		})
+		if deleteErr != nil {
+			return deleteErr
+		}
+		if deleted != 1 {
+			return pgx.ErrNoRows
+		}
+		return nil
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, "access token changed before deletion")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete access token")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) GetWorkspaceAccessSelf(w http.ResponseWriter, r *http.Request) {
 	principal, ok := middleware.WorkspaceAccessPrincipalFromContext(r.Context())
 	if !ok {
@@ -341,8 +363,7 @@ func (h *Handler) GetWorkspaceAccessSelf(w http.ResponseWriter, r *http.Request)
 			"slug":         workspace.Slug,
 			"issue_prefix": workspace.IssuePrefix,
 		},
-		"capabilities": principal.Capabilities,
-		"version":      principal.Version,
+		"version": principal.Version,
 	})
 }
 

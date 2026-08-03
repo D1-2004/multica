@@ -14,8 +14,6 @@ INSERT INTO workspace_access_token (
     name,
     token_hash,
     token_prefix,
-    capabilities,
-    resource_scope,
     expires_at,
     created_by,
     updated_by
@@ -26,8 +24,6 @@ VALUES (
     sqlc.arg('name'),
     sqlc.arg('token_hash'),
     sqlc.arg('token_prefix'),
-    sqlc.arg('capabilities'),
-    'own_agents',
     sqlc.narg('expires_at'),
     sqlc.arg('actor_user_id'),
     sqlc.arg('actor_user_id')
@@ -46,7 +42,6 @@ ORDER BY created_at DESC;
 -- name: UpdateWorkspaceAccessToken :one
 UPDATE workspace_access_token
 SET name = sqlc.arg('name'),
-    capabilities = sqlc.arg('capabilities'),
     expires_at = sqlc.narg('expires_at'),
     version = version + 1,
     updated_by = sqlc.arg('actor_user_id'),
@@ -83,6 +78,12 @@ WHERE id = sqlc.arg('id')
   AND workspace_id = sqlc.arg('workspace_id')
   AND revoked_at IS NULL
 RETURNING *;
+
+-- name: DeleteRevokedWorkspaceAccessToken :execrows
+DELETE FROM workspace_access_token
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND revoked_at IS NOT NULL;
 
 -- name: GetWorkspaceAccessTokenByHash :one
 SELECT t.*, u.principal_type

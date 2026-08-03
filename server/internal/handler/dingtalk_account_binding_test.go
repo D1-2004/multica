@@ -15,7 +15,6 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
-	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -100,30 +99,17 @@ func TestListDingTalkAccountBindingsReportsUnconfiguredWithoutSecrets(t *testing
 	}
 }
 
-func TestListDingTalkAccountBindingsFiltersWorkspaceTokenOwnedAgents(t *testing.T) {
+func TestListDingTalkAccountBindingsUsesNativeMemberVisibility(t *testing.T) {
 	workspaceID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-	subjectID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 	ownAgentID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 	foreignAgentID := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
 	service := &fakeDingTalkAccountBindingService{listResult: []agentmessagerouter.PublicDingTalkAccountBinding{
 		{ID: "own-binding", WorkspaceID: workspaceID, AgentID: ownAgentID},
 		{ID: "foreign-binding", WorkspaceID: workspaceID, AgentID: foreignAgentID},
 	}}
-	metadata := &dingTalkOwnershipMetadataDB{agents: map[string]db.Agent{
-		ownAgentID: {
-			ID: parseUUID(ownAgentID), WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID(subjectID),
-		},
-		foreignAgentID: {
-			ID: parseUUID(foreignAgentID), WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
-		},
-	}}
-	h := &Handler{DingTalkAccountBindings: service, dingTalkAccountBindingMetadata: metadata}
+	h := &Handler{DingTalkAccountBindings: service}
 	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/"+workspaceID+"/dingtalk/account-bindings", nil)
 	req = withURLParams(req, "id", workspaceID)
-	req = req.WithContext(middleware.WithWorkspaceAccessPrincipal(req.Context(), middleware.WorkspaceAccessPrincipal{
-		WorkspaceID: workspaceID,
-		UserID:      subjectID,
-	}))
 	w := httptest.NewRecorder()
 
 	h.ListDingTalkAccountBindings(w, req)
@@ -137,12 +123,12 @@ func TestListDingTalkAccountBindingsFiltersWorkspaceTokenOwnedAgents(t *testing.
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(response.Bindings) != 1 || response.Bindings[0].AgentID != ownAgentID {
-		t.Fatalf("bindings = %#v, want only own Agent binding", response.Bindings)
+	if len(response.Bindings) != 2 {
+		t.Fatalf("bindings = %#v, want native member workspace list", response.Bindings)
 	}
 }
 
-func TestDingTalkAccountBindingMutationsRejectForeignAgentForWorkspaceToken(t *testing.T) {
+func TestDingTalkAccountBindingMutationsUseNativeMemberBehavior(t *testing.T) {
 	workspaceID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	subjectID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 	foreignAgentID := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
@@ -179,29 +165,25 @@ func TestDingTalkAccountBindingMutationsRejectForeignAgentForWorkspaceToken(t *t
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			service := &fakeDingTalkAccountBindingService{}
-			h := &Handler{DingTalkAccountBindings: service, dingTalkAccountBindingMetadata: metadata}
+			h := &Handler{DingTalkAccountBindings: service, dingTalkAccountBindingMetadata: metadata, Bus: events.New()}
 			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
 			req.Header.Set("X-User-ID", subjectID)
 			req = withURLParams(req, "id", workspaceID, "agentId", foreignAgentID)
-			req = req.WithContext(middleware.WithWorkspaceAccessPrincipal(req.Context(), middleware.WorkspaceAccessPrincipal{
-				WorkspaceID: workspaceID,
-				UserID:      subjectID,
-			}))
 			w := httptest.NewRecorder()
 
 			tt.invoke(h, w, req)
 
-			if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "workspace_access_resource_not_allowed") {
+			if w.Code >= http.StatusBadRequest {
 				t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 			}
-			if service.beginCalls != 0 || service.updateCalls != 0 || service.unbindCalls != 0 {
-				t.Fatalf("service calls begin=%d update=%d unbind=%d", service.beginCalls, service.updateCalls, service.unbindCalls)
+			if service.beginCalls+service.updateCalls+service.unbindCalls != 1 {
+				t.Fatalf("service calls begin=%d update=%d unbind=%d, want exactly one", service.beginCalls, service.updateCalls, service.unbindCalls)
 			}
 		})
 	}
 }
 
-func TestBeginDingTalkAccountBindingAllowsOwnedAgentForWorkspaceToken(t *testing.T) {
+func TestBeginDingTalkAccountBindingUsesNativeMemberActor(t *testing.T) {
 	workspaceID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	subjectID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 	agentID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
@@ -222,11 +204,6 @@ func TestBeginDingTalkAccountBindingAllowsOwnedAgentForWorkspaceToken(t *testing
 	)
 	req.Header.Set("X-User-ID", subjectID)
 	req = withURLParams(req, "id", workspaceID)
-	req = req.WithContext(middleware.WithWorkspaceAccessPrincipal(req.Context(), middleware.WorkspaceAccessPrincipal{
-		WorkspaceID:  workspaceID,
-		UserID:       subjectID,
-		Capabilities: []string{"trace.read"},
-	}))
 	w := httptest.NewRecorder()
 
 	h.BeginDingTalkAccountBinding(w, req)

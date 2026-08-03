@@ -221,17 +221,6 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 					writeError(w, http.StatusForbidden, "workspace_access_workspace_mismatch")
 					return
 				}
-				// This context-only marker keeps existing workspace handlers from
-				// querying a member row. Its role is not accepted by any human role
-				// check; resource authority comes from the DTA Token Principal.
-				member := db.Member{
-					WorkspaceID: parseUUIDOrZero(principal.WorkspaceID),
-					UserID:      parseUUIDOrZero(principal.UserID),
-					Role:        WorkspaceAccessActorSource,
-				}
-				ctx := SetMemberContext(setWorkspaceContext(r.Context(), workspaceID), workspaceID, member)
-				next.ServeHTTP(w, r.WithContext(ctx))
-				return
 			}
 
 			// Final task-token binding check: even when the workspace

@@ -8,8 +8,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
-	"github.com/multica-ai/multica/server/internal/middleware"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // DingTalk-install handler unit tests focus on the no-config
@@ -106,38 +104,5 @@ func TestListDingTalkInstallations_NotConfiguredReturnsEmpty(t *testing.T) {
 	}
 	if len(resp.Installations) != 0 {
 		t.Fatalf("expected empty installations list, got %d", len(resp.Installations))
-	}
-}
-
-func TestFilterDingTalkInstallationsForWorkspaceTokenOwnedAgents(t *testing.T) {
-	workspaceID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-	subjectID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-	ownAgentID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
-	foreignAgentID := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
-	metadata := &dingTalkOwnershipMetadataDB{agents: map[string]db.Agent{
-		ownAgentID: {
-			ID: parseUUID(ownAgentID), WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID(subjectID),
-		},
-		foreignAgentID: {
-			ID: parseUUID(foreignAgentID), WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
-		},
-	}}
-	h := &Handler{dingTalkAccountBindingMetadata: metadata}
-	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/"+workspaceID+"/dingtalk/installations", nil)
-	req = req.WithContext(middleware.WithWorkspaceAccessPrincipal(req.Context(), middleware.WorkspaceAccessPrincipal{
-		WorkspaceID: workspaceID,
-		UserID:      subjectID,
-	}))
-	installations := []dingtalk.Installation{
-		{ID: parseUUID("11111111-1111-4111-8111-111111111111"), WorkspaceID: parseUUID(workspaceID), AgentID: parseUUID(ownAgentID)},
-		{ID: parseUUID("22222222-2222-4222-8222-222222222222"), WorkspaceID: parseUUID(workspaceID), AgentID: parseUUID(foreignAgentID)},
-	}
-
-	filtered, err := h.filterDingTalkInstallationsForRequest(req, parseUUID(workspaceID), installations)
-	if err != nil {
-		t.Fatalf("filter installations: %v", err)
-	}
-	if len(filtered) != 1 || filtered[0].AgentID != parseUUID(ownAgentID) {
-		t.Fatalf("installations = %#v, want only own Agent installation", filtered)
 	}
 }

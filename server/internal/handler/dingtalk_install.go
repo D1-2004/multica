@@ -10,14 +10,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
-	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // DingTalk bot installation endpoints — the scan-to-create device flow
 // ("一键创建钉钉应用扫码接入"). Mirrors the Lark install surface in
-// lark.go: human members can list and human admins can mutate. Workspace DTA
-// tokens can use the same surface only for Agents owned by their token subject.
+// lark.go: members can list and admins can mutate. DTA service members follow
+// the same role checks and visibility as any other workspace member.
 
 // DingTalkInstallationResponse is the wire shape for an installation
 // row. The encrypted client_secret is INTENTIONALLY absent — the only
@@ -108,11 +107,6 @@ func (h *Handler) ListDingTalkInstallations(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to list dingtalk installations")
 		return
 	}
-	rows, err = h.filterDingTalkInstallationsForRequest(r, wsUUID, rows)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to filter dingtalk installations")
-		return
-	}
 	out := make([]DingTalkInstallationResponse, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, dingTalkInstallationToResponse(row))
@@ -147,16 +141,12 @@ func (h *Handler) RevokeDingTalkInstallation(w http.ResponseWriter, r *http.Requ
 	}
 	// Workspace-scoped lookup ensures one workspace cannot revoke
 	// another's installation by guessing the UUID.
-	installation, err := h.DingTalkInstallations.GetInWorkspace(r.Context(), instUUID, wsUUID)
-	if err != nil {
+	if _, err := h.DingTalkInstallations.GetInWorkspace(r.Context(), instUUID, wsUUID); err != nil {
 		if errors.Is(err, dingtalk.ErrInstallationNotFound) {
 			writeError(w, http.StatusNotFound, "dingtalk installation not found")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to load installation")
-		return
-	}
-	if !h.requireDingTalkAgentForWorkspaceToken(w, r, wsUUID, installation.AgentID) {
 		return
 	}
 	if err := h.DingTalkInstallations.Revoke(r.Context(), instUUID); err != nil {
@@ -189,24 +179,6 @@ func (h *Handler) RetryDingTalkRouterRegistration(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	if _, isToken := middleware.WorkspaceAccessPrincipalFromContext(r.Context()); isToken {
-		if h.DingTalkInstallations == nil {
-			writeError(w, http.StatusServiceUnavailable, "dingtalk install not configured")
-			return
-		}
-		installation, err := h.DingTalkInstallations.GetInWorkspace(r.Context(), instUUID, wsUUID)
-		if err != nil {
-			if errors.Is(err, dingtalk.ErrInstallationNotFound) {
-				writeError(w, http.StatusNotFound, "dingtalk installation not found")
-			} else {
-				writeError(w, http.StatusInternalServerError, "failed to load installation")
-			}
-			return
-		}
-		if !h.requireDingTalkAgentForWorkspaceToken(w, r, wsUUID, installation.AgentID) {
-			return
-		}
-	}
 	inst, err := h.DingTalkRegistration.RetryHTTPCallbackRouter(r.Context(), wsUUID, instUUID)
 	if err != nil {
 		if errors.Is(err, dingtalk.ErrInstallationNotFound) {
@@ -232,8 +204,7 @@ type BeginDingTalkInstallResponse struct {
 
 // BeginDingTalkInstall (POST /api/workspaces/{id}/dingtalk/install/begin)
 // opens a new device-flow registration session against DingTalk.
-// Human admin-only at the router; workspace DTA tokens are admitted separately
-// and restricted to their own Agents in this handler. The agent_id query param picks which
+// Human admin-only at the router. The agent_id query param picks which
 // Multica Agent the new app will be bound to; the agent must belong to
 // this workspace (RegistrationService re-checks that defense-in-depth).
 //
@@ -347,8 +318,7 @@ func dingTalkInstallStatusToResponse(state dingtalk.RegistrationSessionState) Di
 
 // GetDingTalkInstallStatus (GET /api/workspaces/{id}/dingtalk/install/{sessionId}/status)
 // returns the current state of an in-flight install session.
-// Human admin-only at the router; workspace DTA tokens may poll only sessions
-// for their own Agents. Unknown / cross-workspace / GC'd sessions
+// Human admin-only at the router. Unknown / cross-workspace / GC'd sessions
 // return 404 — the frontend treats it as "session lost, please restart".
 func (h *Handler) GetDingTalkInstallStatus(w http.ResponseWriter, r *http.Request) {
 	if h.DingTalkRegistration == nil {
@@ -371,9 +341,6 @@ func (h *Handler) GetDingTalkInstallStatus(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to load install session")
-		return
-	}
-	if !h.requireDingTalkAgentForWorkspaceToken(w, r, wsUUID, state.AgentID) {
 		return
 	}
 	// The dingtalk_installation:created event is published by the

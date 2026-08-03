@@ -34,8 +34,7 @@ func TestWorkspaceAccessProfileUsesSelfWithoutHumanEndpoints(t *testing.T) {
 			"workspace": map[string]any{
 				"id": workspaceID, "name": "Acme", "slug": "acme", "issue_prefix": "ACM",
 			},
-			"capabilities": []string{"deployment.manage"},
-			"version":      1,
+			"version": 1,
 		})
 	}))
 	defer srv.Close()

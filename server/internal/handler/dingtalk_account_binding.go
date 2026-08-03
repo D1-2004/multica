@@ -71,11 +71,6 @@ func (h *Handler) ListDingTalkAccountBindings(w http.ResponseWriter, r *http.Req
 		writeDingTalkAccountBindingError(w, err)
 		return
 	}
-	bindings, err = h.filterDingTalkAccountBindingsForRequest(r, workspaceID, bindings)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to filter dingtalk account bindings")
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"bindings":   bindings,
 		"configured": true,

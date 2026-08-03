@@ -1389,8 +1389,6 @@ type WorkspaceAccessToken struct {
 	Name          string             `json:"name"`
 	TokenHash     string             `json:"token_hash"`
 	TokenPrefix   string             `json:"token_prefix"`
-	Capabilities  []string           `json:"capabilities"`
-	ResourceScope string             `json:"resource_scope"`
 	Version       int32              `json:"version"`
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 	LastUsedAt    pgtype.Timestamptz `json:"last_used_at"`

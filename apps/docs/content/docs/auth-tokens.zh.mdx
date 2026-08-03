@@ -5,7 +5,7 @@ description: 浏览器、个人、守护进程和工作区 DTA 凭证分别适�
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Multica 为人员、守护进程和外部 DTA 集成使用不同凭证。人员凭证代表一个用户；每个 DTA Token 代表一名外部使用方，以及工作区所有者为其配置的权限。
+Multica 为人员、守护进程和外部 DTA 集成使用不同凭证。人员凭证代表一个可登录用户；每个 DTA Token 代表目标工作区中的一个稳定、不可交互登录的普通成员身份。
 
 ## 凭证类型
 
@@ -14,7 +14,7 @@ Multica 为人员、守护进程和外部 DTA 集成使用不同凭证。人员�
 | **JWT Cookie** | `multica_auth` cookie（HttpOnly） | Web 浏览器 | 30 天 |
 | **个人访问令牌（PAT）** | 以 `mul_` 开头 | CLI / 脚本 / 直接调 API | 默认不过期；用 API 创建时可选传 `expires_in_days` |
 | **守护进程令牌（Daemon Token）** | 以 `mdt_` 开头 | Daemon 内部和 server 通信 | 由 daemon 自己管理 |
-| **DTA 访问密钥** | 以 `dta_` 开头 | 外部服务商通过 DTA 操作工作区 | 由工作区所有者配置，可独立改权和吊销 |
+| **DTA 访问密钥** | 以 `dta_` 开头 | 外部服务商通过 DTA 操作工作区 | 由工作区所有者管理，可设置有效期、重新生成或吊销 |
 
 日常使用你只会直接接触前两种。**[守护进程](/daemon-runtimes)令牌**由 `multica daemon login` 自动生成和刷新。DTA 访问密钥只由工作区所有者创建，并通过已批准的密钥交付渠道配置到 DTA。
 
@@ -33,19 +33,20 @@ Multica 为人员、守护进程和外部 DTA 集成使用不同凭证。人员�
 
 ## 给外部服务商使用的 DTA 访问密钥
 
-工作区所有者在 **Settings → DTA Token** 中管理。每个 Token 可配置一组权限：
+工作区所有者在 **Settings → DTA Token** 中管理。创建 Token 时，Multica 同时创建一个永久绑定到该工作区的 service user，并把它加入工作区作为普通 `member`。因此它不再维护一套 DTA 专属权限开关，而是直接遵循 Multica 原有的成员角色、资源可见性和 ownership 规则。
 
-- **权限**：创建和更新部署、下线部署、查看任务链路，可按需任意组合。
+- 与普通非管理员成员相同，可以创建和管理自己有权操作的智能体、Skill、任务、Trace、节律以及钉钉绑定等资源。
+- 不能执行仅限工作区 owner/admin 的操作，例如管理成员或创建、修改 Runtime。
+- 工作区管理员应提前创建可供成员使用的公共 Runtime；DTA 创建的智能体使用这些 Runtime 运行任务。
+- 工作区 owner/admin 继续保留 Multica 原生的治理权限和可见性。
 
-钉钉机器人和已有数字员工的绑定、查询与解绑是所有有效 DTA Token 的基础能力，不增加独立权限开关，也不受上述三个权限控制。Token 仍然只能查看和操作归属于其稳定内部身份的智能体绑定。
-
-需要不同权限的外部使用方应分别创建 Token。每个 Token 永久绑定一个工作区，并遵循 Multica 原生 ownership：只能管理归属于其稳定内部身份的智能体和 skill；工作区的 human owner/admin 仍保留原生治理可见性。修改权限后，该 Token 的下一次请求立即按新策略执行；吊销会立即阻止该使用方，但不会删除其创建的智能体和历史 Trace。
+每个外部使用方应使用独立 Token，便于单独设置有效期、审计、重新生成和吊销。重新生成不会改变其 service user 身份和既有资源归属；吊销会立即阻止后续请求，但不会删除该身份创建的智能体、任务或历史 Trace。已吊销的 Token 记录可以从设置页彻底删除；其 service user 和业务资源仍会保留。
 
 <Callout type="warning">
-**DTA 访问密钥不是个人 PAT，也不能用于 Multica CLI。** 只把它配置给 DTA。外部服务商应完全通过 DTA 操作，不需要 Multica 账号，也不应拿到工作区所有者的 PAT。
+**DTA 访问密钥不是个人 PAT，不提供给外部服务商直接使用 Multica CLI。** 只把它配置给 DTA。外部服务商应完全通过 DTA 操作，不需要 Multica 账号，也不应拿到工作区所有者的 PAT。DTA 内部可以通过 Multica 的隐藏 transport 复用该凭证，但这不是对外产品入口。
 </Callout>
 
-完整密钥只展示一次。重新生成 Token 会让旧密钥立即失效，但保留该 Token 的身份和已有智能体 ownership。请保存新密钥并重新配置到 DTA。
+完整密钥只展示一次。重新生成 Token 会让旧密钥立即失效，但保留该 Token 的身份和已有资源 ownership。请保存新密钥并重新配置到 DTA。
 
 ## 登录
 

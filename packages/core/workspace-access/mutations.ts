@@ -52,3 +52,11 @@ export function useRevokeWorkspaceAccessToken(wsId: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: workspaceAccessKeys.tokens(wsId) }),
   });
 }
+
+export function useDeleteWorkspaceAccessToken(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tokenId: string) => api.deleteWorkspaceAccessToken(wsId, tokenId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: workspaceAccessKeys.tokens(wsId) }),
+  });
+}

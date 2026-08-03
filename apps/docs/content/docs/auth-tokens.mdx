@@ -5,7 +5,7 @@ description: Browser, personal, daemon, and workspace-bound DTA credentials — 
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Multica uses different credentials for people, daemons, and external DTA integrations. Human credentials represent a user. Each DTA token represents one external operator with owner-configured permissions in one workspace.
+Multica uses different credentials for people, daemons, and external DTA integrations. Human credentials represent an interactive user. Each DTA token represents a stable, non-interactive standard member in one workspace.
 
 ## Token types
 
@@ -14,7 +14,7 @@ Multica uses different credentials for people, daemons, and external DTA integra
 | **JWT cookie** | `multica_auth` cookie (HttpOnly) | Web browser | 30 days |
 | **Personal access token (PAT)** | Prefixed with `mul_` | CLI, scripts, direct API calls | No expiry by default; when you create one via the API you can pass `expires_in_days` |
 | **Daemon token** | Prefixed with `mdt_` | Daemon-to-server communication | Managed by the daemon itself |
-| **DTA access key** | Prefixed with `dta_` | DTA integration for an external service provider | Set by the workspace owner; can be changed or revoked independently |
+| **DTA access key** | Prefixed with `dta_` | DTA integration for an external service provider | Managed by the workspace owner; can expire, be regenerated, or be revoked |
 
 In day-to-day use you'll only touch the first two directly. The **[daemon](/daemon-runtimes) token** is created and refreshed automatically by `multica daemon login`. DTA access keys are created only by workspace owners and are delivered to DTA through an approved secret channel.
 
@@ -33,19 +33,20 @@ In day-to-day use you'll only touch the first two directly. The **[daemon](/daem
 
 ## DTA access keys for external service providers
 
-A workspace owner manages these under **Settings → DTA Access**. Each token has one configurable permission set:
+A workspace owner manages these under **Settings → DTA Access**. When a token is created, Multica also creates a service user, permanently binds it to the workspace, and adds it as a standard `member`. There is no separate DTA permission matrix: the identity follows Multica's native member roles, resource visibility, and ownership rules.
 
-- **Permissions**: create/update deployments, retire deployments, and read task traces. Owners can select any combination.
+- It has the same business access as a standard non-admin member, including the agents, skills, tasks, traces, schedules, and DingTalk bindings that member may operate.
+- It cannot perform owner/admin-only operations such as member management or Runtime creation and administration.
+- A workspace administrator must create a public Runtime for members in advance; agents created through DTA use that Runtime for tasks.
+- Human workspace owners/admins retain their native governance access and visibility.
 
-DingTalk robot and existing digital-employee binding, listing, and removal are baseline capabilities for every valid DTA token. They do not add another permission switch and are not controlled by the three permissions above. A token can still see and operate only bindings for agents owned by its stable internal subject.
-
-Create a separate token for each external operator that needs different permissions. Every token is permanently bound to one workspace and follows Multica's native ownership rules: it can manage only agents and skills owned by its stable internal subject, while human workspace owners/admins retain their normal governance visibility. Changing a token's permissions applies on its next request. Revoking it immediately blocks that operator without deleting its agents or trace history.
+Create a separate token for each external operator so its expiry, audit trail, regeneration, and revocation remain independent. Regeneration preserves the service-user identity and ownership of existing resources. Revocation blocks subsequent requests immediately without deleting its agents, tasks, or trace history. A revoked token record can then be permanently removed in Settings; its service user and business resources remain intact.
 
 <Callout type="warning">
-**A DTA access key is not a personal access token and is not supported by the Multica CLI.** Give it only to the DTA integration. The external service provider should operate the workspace through DTA and should not receive a Multica account or an owner's PAT.
+**A DTA access key is not a personal access token and must not be given to an external operator for direct Multica CLI use.** Give it only to the DTA integration. The external service provider should operate the workspace through DTA and should not receive a Multica account or an owner's PAT. DTA may reuse it through Multica's hidden internal transport, which is not a public product surface.
 </Callout>
 
-The full key is shown only once. Regenerating a token immediately invalidates its old key, but preserves the token's identity and ownership of existing agents. Save the new key and update DTA before making another request.
+The full key is shown only once. Regenerating a token immediately invalidates its old key, but preserves the token's identity and ownership of existing resources. Save the new key and update DTA before making another request.
 
 ## Logging in
 

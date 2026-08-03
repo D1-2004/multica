@@ -155,9 +155,9 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				return
 			}
 
-			// Workspace-bound DTA Token. Identity and policy live on the same
-			// database row and are read on every request, so capability,
-			// expiry, regeneration, and revocation changes take effect immediately.
+			// Workspace-bound DTA Token. The database row owns credential lifecycle
+			// and a stable service-user identity. Business authorization is resolved
+			// later through that subject's native workspace member row.
 			if strings.HasPrefix(tokenString, "dta_") {
 				// Passing the service is the production wiring. The variadic shape
 				// keeps small auth unit fixtures source-compatible; when supplied,
@@ -180,34 +180,22 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					return
 				}
 				if row.RevokedAt.Valid {
-					auditWorkspaceAccessRequest(r, queries, row, "", "denied")
+					auditWorkspaceAccessRequest(r, queries, row, "denied")
 					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_access_token_revoked")
 					return
 				}
 				if row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(time.Now()) {
-					auditWorkspaceAccessRequest(r, queries, row, "", "denied")
+					auditWorkspaceAccessRequest(r, queries, row, "denied")
 					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_access_token_expired")
 					return
 				}
 
 				principal := WorkspaceAccessPrincipal{
-					TokenID:      uuidToString(row.ID),
-					UserID:       uuidToString(row.SubjectUserID),
-					WorkspaceID:  uuidToString(row.WorkspaceID),
-					Name:         row.Name,
-					Capabilities: row.Capabilities,
-					Version:      row.Version,
-				}
-				capability, allowed := workspaceAccessCapabilityForRequest(r)
-				if !allowed {
-					auditWorkspaceAccessRequest(r, queries, row, "", "denied")
-					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "workspace_access_operation_not_allowed")
-					return
-				}
-				if capability != "" && !principal.HasCapability(capability) {
-					auditWorkspaceAccessRequest(r, queries, row, capability, "denied")
-					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "workspace_access_capability_denied")
-					return
+					TokenID:     uuidToString(row.ID),
+					UserID:      uuidToString(row.SubjectUserID),
+					WorkspaceID: uuidToString(row.WorkspaceID),
+					Name:        row.Name,
+					Version:     row.Version,
 				}
 
 				// These headers are server-owned for DTA Token requests. The workspace
@@ -227,7 +215,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				if recorder.status >= http.StatusBadRequest {
 					result = "denied"
 				}
-				auditWorkspaceAccessRequest(r, queries, row, capability, result)
+				auditWorkspaceAccessRequest(r, queries, row, result)
 				return
 			}
 
@@ -348,16 +336,15 @@ func writeWorkspaceAccessAuthError(w http.ResponseWriter, status int, code strin
 	_, _ = w.Write([]byte(`{"error":"` + code + `","code":"` + code + `"}`))
 }
 
-func auditWorkspaceAccessRequest(r *http.Request, queries *db.Queries, row db.GetWorkspaceAccessTokenByHashRow, capability, result string) {
+func auditWorkspaceAccessRequest(r *http.Request, queries *db.Queries, row db.GetWorkspaceAccessTokenByHashRow, result string) {
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 	if _, err := queries.CreateWorkspaceAccessAudit(r.Context(), db.CreateWorkspaceAccessAuditParams{
-		WorkspaceID:  row.WorkspaceID,
-		TokenID:      row.ID,
-		ActorUserID:  row.SubjectUserID,
-		Action:       r.Method + " " + r.URL.Path,
-		ResourceType: pgtype.Text{String: capability, Valid: capability != ""},
-		Result:       result,
-		RequestID:    pgtype.Text{String: requestID, Valid: requestID != ""},
+		WorkspaceID: row.WorkspaceID,
+		TokenID:     row.ID,
+		ActorUserID: row.SubjectUserID,
+		Action:      r.Method + " " + r.URL.Path,
+		Result:      result,
+		RequestID:   pgtype.Text{String: requestID, Valid: requestID != ""},
 	}); err != nil {
 		slog.Warn("auth: failed to audit workspace access request", "token_id", uuidToString(row.ID), "error", err)
 	}

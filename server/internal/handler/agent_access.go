@@ -153,9 +153,6 @@ func canInvokeAgentWithStore(
 //   - a regular member passes for a public_to agent only when they hit a
 //     workspace or member target; private agents stay owner+admin only.
 func (h *Handler) canAccessPrivateAgent(ctx context.Context, agent db.Agent, actorType, actorID, workspaceID string) bool {
-	if allowed, isToken := workspaceAccessCanUseAgent(ctx, agent); isToken {
-		return allowed
-	}
 	if actorType == "agent" {
 		return true
 	}

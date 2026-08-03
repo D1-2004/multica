@@ -22,7 +22,7 @@ type workspaceAccessAuthFixture struct {
 	userID      string
 }
 
-func setupWorkspaceAccessAuthFixture(t *testing.T, capabilities []string) (*db.Queries, workspaceAccessAuthFixture) {
+func setupWorkspaceAccessAuthFixture(t *testing.T) (*db.Queries, workspaceAccessAuthFixture) {
 	t.Helper()
 	pool := openPool(t)
 	stamp := time.Now().UnixNano()
@@ -36,6 +36,9 @@ func setupWorkspaceAccessAuthFixture(t *testing.T, capabilities []string) (*db.Q
 	if err := pool.QueryRow(context.Background(), `INSERT INTO workspace (name, slug, issue_prefix) VALUES ('Token auth', $1, 'WAT') RETURNING id`, fmt.Sprintf("token-auth-%d", stamp)).Scan(&workspaceID); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')`, workspaceID, subjectID); err != nil {
+		t.Fatalf("create token subject membership: %v", err)
+	}
 	rawToken, err := auth.GenerateWorkspaceAccessToken()
 	if err != nil {
 		t.Fatalf("generate token: %v", err)
@@ -43,11 +46,11 @@ func setupWorkspaceAccessAuthFixture(t *testing.T, capabilities []string) (*db.Q
 	if err := pool.QueryRow(context.Background(), `
 		INSERT INTO workspace_access_token (
 			workspace_id, subject_user_id, name, token_hash, token_prefix,
-			capabilities, resource_scope, created_by, updated_by
+			created_by, updated_by
 		)
-		VALUES ($1, $2, 'Vendor user', $3, $4, $5, 'own_agents', $6, $6)
+		VALUES ($1, $2, 'Vendor user', $3, $4, $5, $5)
 		RETURNING id
-	`, workspaceID, subjectID, auth.HashToken(rawToken), rawToken[:12], capabilities, creatorID).Scan(&tokenID); err != nil {
+	`, workspaceID, subjectID, auth.HashToken(rawToken), rawToken[:12], creatorID).Scan(&tokenID); err != nil {
 		t.Fatalf("create token: %v", err)
 	}
 	t.Cleanup(func() {
@@ -59,7 +62,7 @@ func setupWorkspaceAccessAuthFixture(t *testing.T, capabilities []string) (*db.Q
 }
 
 func TestWorkspaceAccessAuthReleaseFlagDefaultsOff(t *testing.T) {
-	queries, fixture := setupWorkspaceAccessAuthFixture(t, []string{"trace.read"})
+	queries, fixture := setupWorkspaceAccessAuthFixture(t)
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("next must not be called") })
 	req := httptest.NewRequest(http.MethodGet, "/api/workspace-access/self", nil)
 	req.Header.Set("Authorization", "Bearer "+fixture.rawToken)
@@ -81,7 +84,7 @@ func TestWorkspaceAccessAuthReleaseFlagDefaultsOff(t *testing.T) {
 }
 
 func TestWorkspaceAccessAuthBuildsPrincipalAndBindsWorkspace(t *testing.T) {
-	queries, fixture := setupWorkspaceAccessAuthFixture(t, []string{"trace.read"})
+	queries, fixture := setupWorkspaceAccessAuthFixture(t)
 	handler := Auth(queries, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := WorkspaceAccessPrincipalFromContext(r.Context())
 		if !ok {
@@ -109,57 +112,81 @@ func TestWorkspaceAccessAuthBuildsPrincipalAndBindsWorkspace(t *testing.T) {
 	}
 }
 
-func TestWorkspaceAccessAuthFailsClosedByOperationAndCapability(t *testing.T) {
-	queries, fixture := setupWorkspaceAccessAuthFixture(t, []string{"trace.read"})
-	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("next must not be called") })
-	tests := []struct{ path, code string }{
-		{"/api/me", "workspace_access_operation_not_allowed"},
-		{"/api/agents", "workspace_access_capability_denied"},
-	}
-	for _, tt := range tests {
-		req := httptest.NewRequest(http.MethodGet, tt.path, nil)
-		req.Header.Set("Authorization", "Bearer "+fixture.rawToken)
-		rec := httptest.NewRecorder()
-		Auth(queries, nil, nil)(next).ServeHTTP(rec, req)
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), tt.code) {
-			t.Fatalf("%s status=%d body=%s", tt.path, rec.Code, rec.Body.String())
-		}
-	}
-	pool := openPool(t)
-	defer pool.Close()
-	var deniedCount int
-	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM workspace_access_audit WHERE token_id = $1 AND result = 'denied'`, fixture.tokenID).Scan(&deniedCount); err != nil {
-		t.Fatalf("count denied audit rows: %v", err)
-	}
-	if deniedCount != len(tests) {
-		t.Fatalf("denied audit rows = %d, want %d", deniedCount, len(tests))
-	}
-}
-
-func TestWorkspaceAccessAuthAllowsDingTalkBindingWithoutDeploymentCapability(t *testing.T) {
-	queries, fixture := setupWorkspaceAccessAuthFixture(t, []string{"trace.read"})
+func TestWorkspaceAccessAuthDelegatesBusinessAuthorizationToNativeRoutes(t *testing.T) {
+	queries, fixture := setupWorkspaceAccessAuthFixture(t)
 	nextCalled := false
 	handler := Auth(queries, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nextCalled = true
 		principal, ok := WorkspaceAccessPrincipalFromContext(r.Context())
-		if !ok || len(principal.Capabilities) != 1 || principal.Capabilities[0] != "trace.read" {
-			t.Fatalf("principal = %+v, want trace-only token", principal)
+		if !ok || principal.UserID != fixture.userID {
+			t.Fatalf("principal = %+v, want service member subject", principal)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/"+fixture.workspaceID+"/dingtalk/account-bindings", nil)
-	req.Header.Set("Authorization", "Bearer "+fixture.rawToken)
-	rec := httptest.NewRecorder()
-
-	handler.ServeHTTP(rec, req)
-
-	if !nextCalled || rec.Code != http.StatusNoContent {
-		t.Fatalf("next called=%v status=%d body=%s", nextCalled, rec.Code, rec.Body.String())
+	for _, path := range []string{"/api/agents", "/api/issues", "/api/autopilots", "/api/agent-task-snapshot"} {
+		nextCalled = false
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+fixture.rawToken)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if !nextCalled || rec.Code != http.StatusNoContent {
+			t.Fatalf("%s next called=%v status=%d body=%s", path, nextCalled, rec.Code, rec.Body.String())
+		}
 	}
 }
 
+func TestWorkspaceAccessAuthUsesNativeMemberRole(t *testing.T) {
+	queries, fixture := setupWorkspaceAccessAuthFixture(t)
+	request := func() *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+		req.Header.Set("Authorization", "Bearer "+fixture.rawToken)
+		return req
+	}
+
+	t.Run("member route receives persisted member context", func(t *testing.T) {
+		nextCalled := false
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			nextCalled = true
+			member, ok := MemberFromContext(r.Context())
+			if !ok || member.Role != "member" || member.UserID.String() != fixture.userID {
+				t.Fatalf("member = %+v, ok=%v", member, ok)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+		handler := Auth(queries, nil, nil)(RequireWorkspaceMember(queries)(next))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, request())
+		if !nextCalled || rec.Code != http.StatusNoContent {
+			t.Fatalf("next called=%v status=%d body=%s", nextCalled, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("owner route is denied", func(t *testing.T) {
+		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("next must not be called") })
+		handler := Auth(queries, nil, nil)(RequireWorkspaceRole(queries, "owner")(next))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, request())
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "insufficient permissions") {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("bound workspace cannot be replaced", func(t *testing.T) {
+		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("next must not be called") })
+		foreignWorkspace := func(*http.Request) (string, error) {
+			return "00000000-0000-4000-8000-000000000001", nil
+		}
+		handler := Auth(queries, nil, nil)(buildMiddleware(queries, foreignWorkspace, nil)(next))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, request())
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "workspace_access_workspace_mismatch") {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
 func TestWorkspaceAccessAuthExpiryAndRevokeApplyOnNextRequest(t *testing.T) {
-	queries, fixture := setupWorkspaceAccessAuthFixture(t, []string{"trace.read"})
+	queries, fixture := setupWorkspaceAccessAuthFixture(t)
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	pool := openPool(t)
 	defer pool.Close()
@@ -184,7 +211,7 @@ func TestWorkspaceAccessAuthExpiryAndRevokeApplyOnNextRequest(t *testing.T) {
 }
 
 func TestWorkspaceAccessSubjectCannotAuthenticateAsHuman(t *testing.T) {
-	queries, fixture := setupWorkspaceAccessAuthFixture(t, []string{"trace.read"})
+	queries, fixture := setupWorkspaceAccessAuthFixture(t)
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("next must not be called") })
 
 	t.Run("JWT", func(t *testing.T) {

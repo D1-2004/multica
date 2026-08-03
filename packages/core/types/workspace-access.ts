@@ -1,16 +1,7 @@
-export const WORKSPACE_ACCESS_CAPABILITIES = [
-  "deployment.manage",
-  "deployment.retire",
-  "trace.read",
-] as const;
-
-export type WorkspaceAccessCapability = (typeof WORKSPACE_ACCESS_CAPABILITIES)[number];
-
 export interface WorkspaceAccessToken {
   id: string;
   workspace_id: string;
   name: string;
-  capabilities: WorkspaceAccessCapability[];
   version: number;
   token_prefix: string;
   expires_at: string | null;
@@ -26,7 +17,6 @@ export interface WorkspaceAccessTokenSecretResponse extends WorkspaceAccessToken
 
 export interface CreateWorkspaceAccessTokenRequest {
   name: string;
-  capabilities: WorkspaceAccessCapability[];
   expires_at: string | null;
 }
 

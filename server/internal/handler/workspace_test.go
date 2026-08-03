@@ -596,6 +596,84 @@ func TestDeleteMember_RevokesTargetRuntimes(t *testing.T) {
 	assertRevoked(t, fx)
 }
 
+func TestWorkspaceAccessServiceMemberRoleAndMembershipAreImmutable(t *testing.T) {
+	ctx := context.Background()
+	const slug = "handler-tests-service-member-immutable"
+	_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
+
+	var workspaceID, subjectID, memberID string
+	if err := testPool.QueryRow(ctx, `
+INSERT INTO workspace (name, slug, description, issue_prefix)
+VALUES ('Service member invariant', $1, '', 'SMI')
+RETURNING id
+`, slug).Scan(&workspaceID); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'owner')
+`, workspaceID, testUserID); err != nil {
+		t.Fatalf("create owner member: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+INSERT INTO "user" (name, email, principal_type)
+VALUES ('Service Member Invariant', 'service-member-invariant-' || gen_random_uuid()::text || '@internal.multica.invalid', 'workspace_access_token')
+RETURNING id
+`).Scan(&subjectID); err != nil {
+		t.Fatalf("create service user: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member') RETURNING id
+`, workspaceID, subjectID).Scan(&memberID); err != nil {
+		t.Fatalf("create service member: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, subjectID)
+	})
+
+	t.Run("cannot promote", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := newRequest("PATCH", "/api/workspaces/"+workspaceID+"/members/"+memberID, map[string]any{"role": "admin"})
+		req.Header.Set("X-Workspace-ID", workspaceID)
+		req = withURLParams(req, "id", workspaceID, "memberId", memberID)
+		testHandler.UpdateMember(w, req)
+		if w.Code != http.StatusConflict {
+			t.Fatalf("UpdateMember: expected 409, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("cannot remove", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := newRequest("DELETE", "/api/workspaces/"+workspaceID+"/members/"+memberID, nil)
+		req.Header.Set("X-Workspace-ID", workspaceID)
+		req = withURLParams(req, "id", workspaceID, "memberId", memberID)
+		testHandler.DeleteMember(w, req)
+		if w.Code != http.StatusConflict {
+			t.Fatalf("DeleteMember: expected 409, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("cannot leave", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/workspaces/"+workspaceID+"/leave", nil)
+		req.Header.Set("X-User-ID", subjectID)
+		req.Header.Set("X-Workspace-ID", workspaceID)
+		req = withURLParam(req, "id", workspaceID)
+		testHandler.LeaveWorkspace(w, req)
+		if w.Code != http.StatusConflict {
+			t.Fatalf("LeaveWorkspace: expected 409, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	var role string
+	if err := testPool.QueryRow(ctx, `SELECT role FROM member WHERE id = $1`, memberID).Scan(&role); err != nil {
+		t.Fatalf("read service member: %v", err)
+	}
+	if role != "member" {
+		t.Fatalf("service member role = %q, want member", role)
+	}
+}
+
 // TestDeleteMember_PrunesChannelUserBindings verifies the application-layer
 // replacement for the channel_user_binding member-FK cascade (MUL-3515 §4):
 // removing a member prunes that member's channel bindings, in the same tx as

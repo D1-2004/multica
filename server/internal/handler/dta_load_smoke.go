@@ -99,7 +99,7 @@ func (h *Handler) CreateDTALoadSmoke(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
 	}
-	if allowed, _ := workspaceAccessCanUseAgent(r.Context(), agent); !allowed {
+	if uuidToString(agent.OwnerID) != principal.UserID {
 		writeError(w, http.StatusForbidden, "workspace_access_resource_not_allowed")
 		return
 	}
@@ -203,7 +203,7 @@ func (h *Handler) GetDTALoadSmokeByOperation(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
 	}
-	if allowed, _ := workspaceAccessCanUseAgent(r.Context(), agent); !allowed {
+	if uuidToString(agent.OwnerID) != principal.UserID {
 		writeError(w, http.StatusForbidden, "workspace_access_resource_not_allowed")
 		return
 	}
@@ -355,8 +355,7 @@ func (h *Handler) loadDTALoadSmoke(w http.ResponseWriter, r *http.Request) (db.I
 		return db.Issue{}, false
 	}
 	agent, err := h.Queries.GetAgent(r.Context(), issue.AssigneeID)
-	allowed, _ := workspaceAccessCanUseAgent(r.Context(), agent)
-	if err != nil || !allowed {
+	if err != nil || uuidToString(agent.OwnerID) != principal.UserID {
 		writeError(w, http.StatusForbidden, "workspace_access_resource_not_allowed")
 		return db.Issue{}, false
 	}
