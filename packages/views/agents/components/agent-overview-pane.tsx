@@ -132,6 +132,8 @@ interface AgentOverviewPaneProps {
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
   currentUserId?: string | null;
   canEdit: boolean;
+  canOperateDingTalkBinding: boolean;
+  dingTalkBindingPermissionLoading: boolean;
   source?: AgentSource | null;
   sourceSyncing?: boolean;
   onSourceSync?: () => void;
@@ -155,6 +157,8 @@ export function AgentOverviewPane({
   onUpdate,
   currentUserId,
   canEdit,
+  canOperateDingTalkBinding,
+  dingTalkBindingPermissionLoading,
   source = null,
   sourceSyncing = false,
   onSourceSync,
@@ -459,10 +463,18 @@ export function AgentOverviewPane({
                     <AgentMcpTab agent={agent} />
                   )}
                   {effectiveView === "integrations" && (
-                    <IntegrationsTab agent={agent} />
+                    <IntegrationsTab
+                      agent={agent}
+                      canOperateDingTalkBinding={canOperateDingTalkBinding}
+                      dingTalkBindingPermissionLoading={dingTalkBindingPermissionLoading}
+                    />
                   )}
                   {effectiveView === "identity" && (
-                    <IdentityTab agent={agent} />
+                    <IdentityTab
+                      agent={agent}
+                      canOperateDingTalkBinding={canOperateDingTalkBinding}
+                      dingTalkBindingPermissionLoading={dingTalkBindingPermissionLoading}
+                    />
                   )}
                   {effectiveView === "general" && (
                     <AgentDetailInspector

@@ -73,8 +73,13 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(logOutput, response.Continuation.IssueID) || strings.Contains(logOutput, response.TaskID) {
-		t.Fatalf("dispatch request log leaked issue or task id: %s", logOutput)
+	for _, line := range strings.Split(logOutput, "\n") {
+		if !strings.Contains(line, "MULTICA_AGENT_DISPATCH_REQUEST") {
+			continue
+		}
+		if strings.Contains(line, response.Continuation.IssueID) || strings.Contains(line, response.TaskID) {
+			t.Fatalf("dispatch request log leaked issue or task id: %s", line)
+		}
 	}
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, response.Continuation.IssueID)
@@ -89,7 +94,7 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 	`, response.Continuation.IssueID).Scan(&title, &description); err != nil {
 		t.Fatal(err)
 	}
-	if title != "帮我看一下线上告警" {
+	if !strings.HasPrefix(title, "【钉钉·私聊】张三：帮我看一下线上告警 · ") {
 		t.Fatalf("title = %q", title)
 	}
 	for _, visible := range []string{"张三", "帮我看一下线上告警", "关注最近十分钟的错误日志"} {
@@ -178,12 +183,206 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 	}
 }
 
-func TestHandleAgentDispatchV2RecreatesMissingContinuationIssue(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "test-v2-missing-continuation", nil)
-	const missingIssueID = "00000000-0000-4000-8000-000000000002"
+func TestHandleAgentDispatchV2SeparatesTitleDuplicatesFromAcceptanceIdempotency(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-v2-title-and-acceptance-idempotency", nil)
+	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
 	body := fmt.Sprintf(`{
 		"schemaVersion":"2.0",
 		"agentId":%q,
+		"continuation":null,
+		"completionCallback":{"url":"/api/v1/dispatch-tasks/test-title-idempotency/execution-result"},
+		"source":{"platform":"dingtalk","type":"digital_employee"},
+		"event":{
+			"domain":"channel",
+			"type":"message.created",
+			"data":{
+				"conversation":{"openConversationId":"cid-title-idempotency","type":"single"},
+				"sender":{"displayName":"张三"},
+				"messages":[{"openMsgId":"msg-title-idempotency","occurredAt":1784512800000,"text":"你好"}]
+			}
+		},
+		"surface":{"type":"issue"},
+		"outbound":{"mode":"dws","replyTo":"latest_message"}
+	}`, agentID)
+	dispatch := func(key string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+deliverySecret)
+		req.Header.Set("Idempotency-Key", key)
+		req = withURLParams(req, "endpointId", endpointID)
+		w := httptest.NewRecorder()
+		testHandler.HandleAgentDispatch(w, req)
+		return w
+	}
+
+	const firstKey = "dispatch-window-A"
+	const secondKey = "dispatch-window-B"
+	first := dispatch(firstKey)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first dispatch: expected 201, got %d: %s", first.Code, first.Body.String())
+	}
+	second := dispatch(secondKey)
+	if second.Code != http.StatusCreated {
+		t.Fatalf("different-key dispatch: expected 201, got %d: %s", second.Code, second.Body.String())
+	}
+
+	var firstResponse, secondResponse AgentDispatchResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &firstResponse); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &secondResponse); err != nil {
+		t.Fatal(err)
+	}
+	if firstResponse.Continuation.IssueID == secondResponse.Continuation.IssueID ||
+		firstResponse.TaskID == secondResponse.TaskID {
+		t.Fatalf("different idempotency keys reused acceptance: first=%+v second=%+v", firstResponse, secondResponse)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = ANY($1::uuid[])`, []string{
+			firstResponse.Continuation.IssueID,
+			secondResponse.Continuation.IssueID,
+		})
+	})
+
+	var firstTitle, secondTitle string
+	if err := testPool.QueryRow(context.Background(), `SELECT title FROM issue WHERE id = $1`, firstResponse.Continuation.IssueID).Scan(&firstTitle); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(context.Background(), `SELECT title FROM issue WHERE id = $1`, secondResponse.Continuation.IssueID).Scan(&secondTitle); err != nil {
+		t.Fatal(err)
+	}
+	if firstTitle != "【钉钉·私聊】张三：你好 · LMYHEJFQ" ||
+		secondTitle != "【钉钉·私聊】张三：你好 · 5TEIWDJF" {
+		t.Fatalf("titles do not separate event windows: first=%q second=%q", firstTitle, secondTitle)
+	}
+
+	replay := dispatch(firstKey)
+	if replay.Code != http.StatusCreated {
+		t.Fatalf("same-key replay: expected 201, got %d: %s", replay.Code, replay.Body.String())
+	}
+	if !bytes.Equal(replay.Body.Bytes(), first.Body.Bytes()) {
+		t.Fatalf("same-key replay changed acceptance:\n got: %s\nwant: %s", replay.Body.Bytes(), first.Body.Bytes())
+	}
+
+	var taskCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM agent_task_queue
+		WHERE agent_id = $1
+		  AND parent_task_id IS NULL
+		  AND context #>> '{dispatch_idempotency_key}' = $2
+	`, agentID, firstKey).Scan(&taskCount); err != nil {
+		t.Fatal(err)
+	}
+	if taskCount != 1 {
+		t.Fatalf("same key created %d root tasks, want 1", taskCount)
+	}
+	var issueCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM issue WHERE workspace_id = $1 AND title = $2
+	`, testWorkspaceID, firstTitle).Scan(&issueCount); err != nil {
+		t.Fatal(err)
+	}
+	if issueCount != 1 {
+		t.Fatalf("same key created %d issues with title %q, want 1", issueCount, firstTitle)
+	}
+
+	endpoint, err := testHandler.Queries.GetAgentDispatchEndpointByEndpointID(context.Background(), endpointID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var acceptanceStatus, acceptedRootTaskID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT status, root_task_id
+		FROM agent_dispatch_acceptance
+		WHERE endpoint_id = $1 AND idempotency_key = $2
+	`, endpoint.ID, firstKey).Scan(&acceptanceStatus, &acceptedRootTaskID); err != nil {
+		t.Fatal(err)
+	}
+	if acceptanceStatus != "accepted" || acceptedRootTaskID != firstResponse.TaskID {
+		t.Fatalf("same-key acceptance = status:%q root:%q, want accepted/%q",
+			acceptanceStatus, acceptedRootTaskID, firstResponse.TaskID)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `
+			DELETE FROM agent_dispatch_acceptance
+			WHERE endpoint_id = $1 AND idempotency_key = ANY($2::text[])
+		`, endpoint.ID, []string{firstKey, secondKey})
+	})
+}
+
+func TestHandleAgentDispatchV2ContinuationDoesNotChangeIssueTitle(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-v2-continuation-keeps-title", nil)
+	var issueID string
+	const originalTitle = "保持原标题"
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, assignee_type, assignee_id,
+			creator_type, creator_id, number, position
+		)
+		VALUES (
+			$1, $2, 'todo', 'none', 'agent', $3, 'member', $4,
+			(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1), 0
+		)
+		RETURNING id
+	`, testWorkspaceID, originalTitle, agentID, testUserID).Scan(&issueID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	body := fmt.Sprintf(`{
+		"schemaVersion":"2.0",
+		"continuation":{"kind":"issue","issueId":%q},
+		"source":{"platform":"dingtalk","type":"digital_employee"},
+		"event":{
+			"domain":"channel",
+			"type":"message.created",
+			"data":{
+				"conversation":{"openConversationId":"cid-continuation-title","type":"single"},
+				"sender":{"displayName":"张三"},
+				"messages":[{"openMsgId":"msg-continuation-title","occurredAt":1784512800000,"text":"你好"}]
+			}
+		},
+		"surface":{"type":"issue"},
+		"outbound":{"mode":"dws","replyTo":"latest_message"}
+	}`, issueID)
+	w := postAgentDispatchForTest(t, body, agentID)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("continuation dispatch: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var title string
+	if err := testPool.QueryRow(context.Background(), `SELECT title FROM issue WHERE id = $1`, issueID).Scan(&title); err != nil {
+		t.Fatal(err)
+	}
+	if title != originalTitle {
+		t.Fatalf("continuation changed issue title to %q, want %q", title, originalTitle)
+	}
+}
+
+func TestHandleAgentDispatchV2RecreatesMissingContinuationIssue(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-v2-missing-continuation", nil)
+	const missingIssueID = "00000000-0000-4000-8000-000000000002"
+	var legacyIssueID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_type, creator_id, number, position
+		)
+		VALUES (
+			$1, '你好', 'todo', 'none', 'member', $2,
+			(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1), 0
+		)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&legacyIssueID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, legacyIssueID)
+	})
+	body := fmt.Sprintf(`{
+		"schemaVersion":"2.0",
 		"continuation":{"kind":"issue","issueId":%q},
 		"source":{"platform":"dingtalk","type":"digital_employee"},
 		"event":{
@@ -192,12 +391,12 @@ func TestHandleAgentDispatchV2RecreatesMissingContinuationIssue(t *testing.T) {
 			"data":{
 				"conversation":{"openConversationId":"cid-recreated","type":"single"},
 				"sender":{"displayName":"张三"},
-				"messages":[{"openMsgId":"msg-recreated","occurredAt":1784512800000,"text":"原续接 Issue 已删除，请继续处理"}]
+				"messages":[{"openMsgId":"msg-recreated","occurredAt":1784512800000,"text":"你好"}]
 			}
 		},
 		"surface":{"type":"issue"},
 		"outbound":{"mode":"dws","replyTo":"latest_message"}
-	}`, agentID, missingIssueID)
+	}`, missingIssueID)
 
 	w := postAgentDispatchForTest(t, body, agentID)
 	if w.Code != http.StatusCreated {

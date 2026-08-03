@@ -28,7 +28,15 @@ import { DingTalkAccountBindingCard } from "../integrations/dingtalk-account-bin
  * adds the explanatory chrome around it, so the two entry points can never
  * drift.
  */
-export function IntegrationsTab({ agent }: { agent: Agent }) {
+export function IntegrationsTab({
+  agent,
+  canOperateDingTalkBinding,
+  dingTalkBindingPermissionLoading,
+}: {
+  agent: Agent;
+  canOperateDingTalkBinding: boolean;
+  dingTalkBindingPermissionLoading: boolean;
+}) {
   const { t } = useT("agents");
   const { t: ts } = useT("settings");
   const wsId = useWorkspaceId();
@@ -105,6 +113,8 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
           agentId={agent.id}
           agentName={agent.name}
           bindingMode="message"
+          canOperate={canOperateDingTalkBinding}
+          permissionLoading={dingTalkBindingPermissionLoading}
         />
         <p className="text-xs text-muted-foreground">
           {t(($) => $.tab_body.integrations.members_note)}
@@ -123,6 +133,8 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
         agentId={agent.id}
         agentName={agent.name}
         bindingMode="message"
+        canOperate={canOperateDingTalkBinding}
+        permissionLoading={dingTalkBindingPermissionLoading}
       />
 
       <section className="rounded-lg border">

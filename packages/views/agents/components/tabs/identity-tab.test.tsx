@@ -35,11 +35,20 @@ vi.mock("@multica/core/auth", () => {
 });
 
 vi.mock("../integrations/dingtalk-account-binding", () => ({
-  DingTalkAccountBindingCard: ({ agentId, bindingMode }: { agentId: string; bindingMode: string }) => (
+  DingTalkAccountBindingCard: ({
+    agentId,
+    bindingMode,
+    canOperate,
+  }: {
+    agentId: string;
+    bindingMode: string;
+    canOperate: boolean;
+  }) => (
     <section
       aria-label="Enterprise digital employee"
       data-agent-id={agentId}
       data-binding-mode={bindingMode}
+      data-can-operate={canOperate ? "true" : "false"}
     />
   ),
 }));
@@ -98,7 +107,13 @@ describe("IdentityTab", () => {
   });
 
   it("renders GitHub sandbox identity before DingTalk digital employee identity", () => {
-    renderTab(<IdentityTab agent={agent} />);
+    renderTab(
+      <IdentityTab
+        agent={agent}
+        canOperateDingTalkBinding
+        dingTalkBindingPermissionLoading={false}
+      />,
+    );
     const githubIdentity = screen.getByRole("region", {
       name: /GitHub sandbox identity/i,
     });
@@ -108,6 +123,7 @@ describe("IdentityTab", () => {
     expect(githubIdentity).toHaveAttribute("data-agent-id", "agent-1");
     expect(githubIdentity).toHaveAttribute("data-can-manage", "true");
     expect(digitalEmployee).toHaveAttribute("data-binding-mode", "identity");
+    expect(digitalEmployee).toHaveAttribute("data-can-operate", "true");
     expect(
       githubIdentity.compareDocumentPosition(digitalEmployee) &
         Node.DOCUMENT_POSITION_FOLLOWING,
@@ -116,7 +132,13 @@ describe("IdentityTab", () => {
 
   it("lets a non-admin agent owner manage GitHub sandbox identity", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
-    renderTab(<IdentityTab agent={agent} />);
+    renderTab(
+      <IdentityTab
+        agent={agent}
+        canOperateDingTalkBinding
+        dingTalkBindingPermissionLoading={false}
+      />,
+    );
     expect(
       screen.getByRole("region", { name: /GitHub sandbox identity/i }),
     ).toHaveAttribute("data-can-manage", "true");
@@ -124,9 +146,18 @@ describe("IdentityTab", () => {
 
   it("shows GitHub sandbox identity read-only for non-owner members", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
-    renderTab(<IdentityTab agent={{ ...agent, owner_id: "user-2" }} />);
+    renderTab(
+      <IdentityTab
+        agent={{ ...agent, owner_id: "user-2" }}
+        canOperateDingTalkBinding={false}
+        dingTalkBindingPermissionLoading={false}
+      />,
+    );
     expect(
       screen.getByRole("region", { name: /GitHub sandbox identity/i }),
     ).toHaveAttribute("data-can-manage", "false");
+    expect(
+      screen.getByRole("region", { name: /Enterprise digital employee/i }),
+    ).toHaveAttribute("data-can-operate", "false");
   });
 });
