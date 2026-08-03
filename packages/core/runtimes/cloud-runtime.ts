@@ -593,9 +593,16 @@ export function filterRuntimesForSandboxBackend(
   backend: SandboxBackend,
 ): AgentRuntime[] {
   return runtimes.filter((runtime) => {
+    if (runtime.runtime_mode !== "cloud") return false;
     const metadata = parseCloudSandboxRuntimeMetadata(runtime);
     return metadata === null || metadata.sandboxBackend === backend;
   });
+}
+
+export function filterPhysicalRuntimes(
+  runtimes: AgentRuntime[],
+): AgentRuntime[] {
+  return runtimes.filter((runtime) => runtime.runtime_mode === "local");
 }
 
 export function useCreateFCE2BRuntime(wsId: string) {

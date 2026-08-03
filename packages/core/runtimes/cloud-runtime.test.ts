@@ -3,6 +3,7 @@ import type { AgentRuntime } from "../types";
 import {
   fcE2BProviderForTemplate,
   filterRuntimesForSandboxBackend,
+  filterPhysicalRuntimes,
   isASBRuntime,
   isCloudSandboxRuntime,
   isFCE2BRuntime,
@@ -188,7 +189,7 @@ describe("parseCloudSandboxRuntimeMetadata", () => {
 });
 
 describe("filterRuntimesForSandboxBackend", () => {
-  it("separates FC and ASB runtimes while retaining non-sandbox runtimes", () => {
+  it("separates physical, FC, and ASB runtimes", () => {
     const fc = makeRuntime({ id: "fc" });
     const asb = makeRuntime({
       id: "asb",
@@ -204,17 +205,29 @@ describe("filterRuntimesForSandboxBackend", () => {
       },
     });
     const local = makeRuntime({ id: "local", runtime_mode: "local" });
+    const genericCloud = makeRuntime({
+      id: "generic-cloud",
+      runtime_mode: "cloud",
+      metadata: undefined,
+    });
 
     expect(
-      filterRuntimesForSandboxBackend([fc, asb, local], "aliyun_fc").map(
-        (runtime) => runtime.id,
-      ),
-    ).toEqual(["fc", "local"]);
+      filterRuntimesForSandboxBackend(
+        [fc, asb, local, genericCloud],
+        "aliyun_fc",
+      ).map((runtime) => runtime.id),
+    ).toEqual(["fc", "generic-cloud"]);
     expect(
-      filterRuntimesForSandboxBackend([fc, asb, local], "asb").map(
+      filterRuntimesForSandboxBackend(
+        [fc, asb, local, genericCloud],
+        "asb",
+      ).map((runtime) => runtime.id),
+    ).toEqual(["asb", "generic-cloud"]);
+    expect(
+      filterPhysicalRuntimes([fc, asb, local, genericCloud]).map(
         (runtime) => runtime.id,
       ),
-    ).toEqual(["asb", "local"]);
+    ).toEqual(["local"]);
   });
 });
 

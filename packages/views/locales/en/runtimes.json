@@ -4,6 +4,7 @@
     "tagline": "Machines and cloud workers running CLI sessions for your agents.",
     "learn_more": "Learn more →",
     "connect_remote": "Add a computer",
+    "view_physical": "Computers",
     "search_placeholder": "Search runtimes…",
     "scope_mine": "Mine",
     "scope_all": "All",
@@ -14,6 +15,10 @@
     "empty": {
       "title": "No runtimes yet",
       "hint": "Desktop auto-scans this computer. To use another machine — a server, dev box, or any computer with a terminal — add it here."
+    },
+    "cloud_empty": {
+      "title": "No cloud sandbox runtimes yet",
+      "hint": "There are no runtimes for this cloud sandbox type."
     },
     "no_matches": {
       "title": "No matches",

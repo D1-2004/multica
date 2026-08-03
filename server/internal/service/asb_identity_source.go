@@ -135,10 +135,10 @@ func (m *ASBIdentitySourceManager) Create(
 		logASBIdentitySourceFailure("establish_buc_identity", sandbox.ID, err)
 		return EnterpriseIdentitySourceAvailability{}, err
 	}
-	if err := renewASBIdentitySource(ctx, client, sandbox.ID); err != nil {
-		logASBIdentitySourceFailure("renew_source", sandbox.ID, err)
+	if err := initializeASBIdentitySourceExpiration(ctx, client, sandbox.ID); err != nil {
+		logASBIdentitySourceFailure("initialize_source_expiration", sandbox.ID, err)
 		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
-			"renew temporary ASB enterprise identity source: %w",
+			"initialize temporary ASB enterprise identity source expiration: %w",
 			err,
 		)
 	}
@@ -401,9 +401,6 @@ func prepareASBIdentitySource(
 	if err := waitForASBSandboxState(sourceCtx, client, sandboxID, timeout, "running"); err != nil {
 		return err
 	}
-	if err := renewASBIdentitySource(sourceCtx, client, sandboxID); err != nil {
-		return err
-	}
 	if err := probeASBIdentitySourceBUC(sourceCtx, client, sandboxID); err != nil {
 		return fmt.Errorf("probe resumed ASB enterprise identity source: %w", err)
 	}
@@ -467,44 +464,27 @@ func retainASBIdentitySource(
 	}
 }
 
-func renewASBIdentitySource(
+func initializeASBIdentitySourceExpiration(
 	ctx context.Context,
 	client *ASBClient,
 	sandboxID string,
 ) error {
-	sandbox, err := client.GetSandbox(ctx, sandboxID)
-	if err != nil {
-		return fmt.Errorf("load ASB enterprise identity source before renewal: %w", err)
-	}
-	expiresAt, renew := asbIdentitySourceRenewal(sandbox, time.Now())
-	if !renew {
-		return nil
-	}
+	expiresAt := asbIdentitySourceInitialExpiration(time.Now())
 	if err := client.RenewSandbox(ctx, sandboxID, expiresAt, false); err != nil {
-		return fmt.Errorf("renew ASB enterprise identity source: %w", err)
+		return fmt.Errorf("set ASB enterprise identity source expiration: %w", err)
 	}
 	return nil
 }
 
-const asbIdentitySourceRenewalSafetyMargin = time.Minute
+const asbIdentitySourceExpirationSafetyMargin = time.Minute
 
-// ASB calculates each renewal deadline from the renewal request time. Renew to
-// just below the documented seven-day request limit so periodic maintenance
-// keeps a healthy identity source alive without hitting a boundary condition.
-func asbIdentitySourceRenewal(
-	sandbox *ASBSandbox,
-	now time.Time,
-) (time.Time, bool) {
-	if sandbox == nil || now.IsZero() {
-		return time.Time{}, false
-	}
-	expiresAt := now.Add(
-		asbMaxRenewalDuration - asbIdentitySourceRenewalSafetyMargin,
+// Set the source lifetime once, immediately after creation. ASB enforces a
+// creation-relative maximum, so later renewal attempts cannot extend an
+// existing source and must not be part of task startup or maintenance.
+func asbIdentitySourceInitialExpiration(now time.Time) time.Time {
+	return now.Add(
+		asbMaxRenewalDuration - asbIdentitySourceExpirationSafetyMargin,
 	)
-	if sandbox.ExpiresAt != nil && !expiresAt.After(*sandbox.ExpiresAt) {
-		return expiresAt, false
-	}
-	return expiresAt, true
 }
 
 func waitForASBSandboxState(

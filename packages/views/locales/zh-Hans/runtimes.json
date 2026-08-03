@@ -4,6 +4,7 @@
     "tagline": "为智能体跑 CLI 会话的机器和云端 worker。",
     "learn_more": "了解更多 →",
     "connect_remote": "添加电脑",
+    "view_physical": "电脑（物理机器）",
     "search_placeholder": "搜索运行时...",
     "scope_mine": "我的",
     "scope_all": "全部",
@@ -14,6 +15,10 @@
     "empty": {
       "title": "还没有运行时",
       "hint": "桌面端会自动扫描这台电脑。想把另一台电脑加进来 —— 服务器、远程开发机，或任何能开终端的电脑 —— 在这里添加。"
+    },
+    "cloud_empty": {
+      "title": "还没有云沙箱运行时",
+      "hint": "当前云沙箱类型下还没有可用的运行时。"
     },
     "no_matches": {
       "title": "无匹配",

@@ -64,6 +64,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 
 	state := "Running"
 	attachCalls := 0
+	renewCalls := 0
 	pauseCalls := 0
 	resumeCalls := 0
 	deleteCalls := 0
@@ -129,6 +130,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 			_, _ = io.WriteString(response, "data: {\"type\":\"execution_complete\",\"execution_time\":1}\n")
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/renew-expiration":
+			renewCalls++
 			response.WriteHeader(http.StatusOK)
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/pause":
@@ -238,8 +240,13 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	); err != nil {
 		t.Fatalf("Prepare identity source: %v", err)
 	}
-	if state != "Running" || resumeCalls != 0 {
-		t.Fatalf("prepared state=%s resume_calls=%d", state, resumeCalls)
+	if state != "Running" || resumeCalls != 0 || renewCalls != 1 {
+		t.Fatalf(
+			"prepared state=%s resume_calls=%d renew_calls=%d",
+			state,
+			resumeCalls,
+			renewCalls,
+		)
 	}
 	if err := manager.Park(context.Background(), runtimeID, sourceSandboxID); err != nil {
 		t.Fatalf("Park identity source: %v", err)
@@ -255,40 +262,17 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	}
 }
 
-func TestASBIdentitySourceRenewalUsesRollingDeadline(t *testing.T) {
+func TestASBIdentitySourceInitialExpirationLeavesOneMinuteSafetyMargin(t *testing.T) {
 	t.Parallel()
 
-	createdAt := time.Date(2026, time.July, 30, 14, 0, 0, 0, time.UTC)
-	now := createdAt.Add(24 * time.Hour)
-	sandbox := &ASBSandbox{CreatedAt: createdAt}
-
-	expiresAt, renew := asbIdentitySourceRenewal(sandbox, now)
-	if !renew {
-		t.Fatal("asbIdentitySourceRenewal() renew = false, want true")
-	}
+	now := time.Date(2026, time.July, 30, 14, 0, 0, 0, time.UTC)
+	expiresAt := asbIdentitySourceInitialExpiration(now)
 	want := now.Add(asbMaxRenewalDuration - time.Minute)
 	if !expiresAt.Equal(want) {
 		t.Fatalf("expires_at = %s, want %s", expiresAt, want)
 	}
-	if !expiresAt.After(createdAt.Add(asbMaxRenewalDuration)) {
-		t.Fatal("renewal deadline did not move beyond the creation-relative limit")
-	}
-}
-
-func TestASBIdentitySourceRenewalSkipsAnEqualRollingDeadline(t *testing.T) {
-	t.Parallel()
-
-	createdAt := time.Date(2026, time.July, 30, 14, 0, 0, 0, time.UTC)
-	now := createdAt.Add(24 * time.Hour)
-	existing := now.Add(asbMaxRenewalDuration - time.Minute)
-	sandbox := &ASBSandbox{CreatedAt: createdAt, ExpiresAt: &existing}
-
-	expiresAt, renew := asbIdentitySourceRenewal(sandbox, now)
-	if renew {
-		t.Fatal("asbIdentitySourceRenewal() renew = true, want false")
-	}
-	if !expiresAt.Equal(existing) {
-		t.Fatalf("expires_at = %s, want %s", expiresAt, existing)
+	if got := expiresAt.Sub(now); got != 167*time.Hour+59*time.Minute {
+		t.Fatalf("initial source lifetime = %s, want 167h59m", got)
 	}
 }
 

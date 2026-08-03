@@ -17,6 +17,7 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { runtimeProfileListOptions } from "@multica/core/runtimes";
 import {
+  filterPhysicalRuntimes,
   filterRuntimesForSandboxBackend,
   type SandboxBackend,
   useCloudSandboxStableChannel,
@@ -68,6 +69,13 @@ export interface RuntimesPageProps {
   cloudRuntimeEnabled?: boolean;
 }
 
+type RuntimeView = "physical" | SandboxBackend;
+
+function runtimeViewFromSearch(value: string | null): RuntimeView {
+  if (value === "physical" || value === "asb") return value;
+  return "aliyun_fc";
+}
+
 function useNowTick(intervalMs = 30_000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -93,13 +101,17 @@ export function RuntimesPage({
   const [showFCE2BRuntimeDialog, setShowFCE2BRuntimeDialog] = useState(false);
   const [showStableReleaseDialog, setShowStableReleaseDialog] = useState(false);
   const navigation = useNavigation();
+  const runtimeView = runtimeViewFromSearch(
+    navigation.searchParams.get("backend"),
+  );
+  const isPhysicalView = runtimeView === "physical";
   const sandboxBackend: SandboxBackend =
-    navigation.searchParams.get("backend") === "asb" ? "asb" : "aliyun_fc";
+    runtimeView === "asb" ? "asb" : "aliyun_fc";
   const stableChannelQuery = useCloudSandboxStableChannel(sandboxBackend);
   const paths = useWorkspacePaths();
-  const changeSandboxBackend = (backend: SandboxBackend) => {
+  const changeRuntimeView = (view: RuntimeView) => {
     const search = new URLSearchParams(navigation.searchParams);
-    search.set("backend", backend);
+    search.set("backend", view);
     navigation.replace(`${navigation.pathname}?${search.toString()}`);
     setShowFCE2BRuntimeDialog(false);
     setShowStableReleaseDialog(false);
@@ -125,10 +137,10 @@ export function RuntimesPage({
 
   const visibleRuntimes = useMemo(
     () =>
-      canManageFCE2B
-        ? filterRuntimesForSandboxBackend(runtimes, sandboxBackend)
-        : runtimes,
-    [canManageFCE2B, runtimes, sandboxBackend],
+      isPhysicalView
+        ? filterPhysicalRuntimes(runtimes)
+        : filterRuntimesForSandboxBackend(runtimes, sandboxBackend),
+    [isPhysicalView, runtimes, sandboxBackend],
   );
 
   const handleDaemonEvent = useCallback(() => {
@@ -149,7 +161,7 @@ export function RuntimesPage({
         localMachineName,
         currentUserId,
         workloadByRuntimeId: workloadIndex,
-        ensureLocalMachine: hasLocalMachine,
+        ensureLocalMachine: isPhysicalView && hasLocalMachine,
       }),
     [
       visibleRuntimes,
@@ -159,9 +171,11 @@ export function RuntimesPage({
       currentUserId,
       workloadIndex,
       hasLocalMachine,
+      isPhysicalView,
     ],
   );
   const orphanProfileRuntimes = useMemo(() => {
+    if (!isPhysicalView) return [];
     if (machines.some((machine) => machine.mode === "local")) return [];
     return runtimeProfiles.map((profile) => {
       const createdAt = Date.parse(profile.created_at);
@@ -171,7 +185,7 @@ export function RuntimesPage({
         fallbackMachineName: "Unassigned",
       });
     });
-  }, [machines, runtimeProfiles]);
+  }, [isPhysicalView, machines, runtimeProfiles]);
 
   if (isAuthLoading || runtimesLoading || profilesLoading) {
     return <RuntimesPageSkeleton />;
@@ -180,8 +194,8 @@ export function RuntimesPage({
   const showEmpty =
     machines.length === 0 &&
     orphanProfileRuntimes.length === 0 &&
-    !bootstrapping &&
-    hasLocalMachine !== true;
+    (!isPhysicalView || !bootstrapping) &&
+    (!isPhysicalView || hasLocalMachine !== true);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -192,8 +206,9 @@ export function RuntimesPage({
         onOpenCloudRuntime={() => setShowCloudRuntimeDialog(true)}
         canManageFCE2B={canManageFCE2B}
         onOpenFCE2BRuntime={() => setShowFCE2BRuntimeDialog(true)}
-        sandboxBackend={sandboxBackend}
-        onSandboxBackendChange={changeSandboxBackend}
+        runtimeView={runtimeView}
+        onRuntimeViewChange={changeRuntimeView}
+        isPhysicalView={isPhysicalView}
         canPublishStable={stableChannelQuery.data?.can_publish === true}
         stableOverviewHref={`${paths.stableRuntimes()}?backend=${sandboxBackend}`}
         onOpenStableRelease={() => setShowStableReleaseDialog(true)}
@@ -201,7 +216,10 @@ export function RuntimesPage({
 
       {showEmpty ? (
         <div className="flex flex-1 items-center justify-center p-6">
-          <EmptyState onConnectRemote={() => setShowConnectDialog(true)} />
+          <EmptyState
+            isPhysicalView={isPhysicalView}
+            onConnectRemote={() => setShowConnectDialog(true)}
+          />
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -209,7 +227,7 @@ export function RuntimesPage({
             {(machines.length > 0 || bootstrapping) && (
               <MachineList
                 machines={machines}
-                bootstrapping={bootstrapping}
+                bootstrapping={isPhysicalView && bootstrapping}
               />
             )}
             {orphanProfileRuntimes.length > 0 && (
@@ -223,25 +241,27 @@ export function RuntimesPage({
         </div>
       )}
 
-      {showConnectDialog && (
+      {isPhysicalView && showConnectDialog && (
         <ConnectRemoteDialog onClose={() => setShowConnectDialog(false)} />
       )}
-      {cloudRuntimeEnabled && showCloudRuntimeDialog && (
+      {!isPhysicalView && cloudRuntimeEnabled && showCloudRuntimeDialog && (
         <CloudRuntimeDialog onClose={() => setShowCloudRuntimeDialog(false)} />
       )}
-      {canManageFCE2B && showFCE2BRuntimeDialog && (
+      {!isPhysicalView && canManageFCE2B && showFCE2BRuntimeDialog && (
         <FCE2BRuntimeDialog
           canPublish={stableChannelQuery.data?.can_publish === true}
           sandboxBackend={sandboxBackend}
           onClose={() => setShowFCE2BRuntimeDialog(false)}
         />
       )}
-      {stableChannelQuery.data?.can_publish && showStableReleaseDialog && (
-        <StableFCE2BReleaseDialog
-          sandboxBackend={sandboxBackend}
-          onClose={() => setShowStableReleaseDialog(false)}
-        />
-      )}
+      {!isPhysicalView &&
+        stableChannelQuery.data?.can_publish &&
+        showStableReleaseDialog && (
+          <StableFCE2BReleaseDialog
+            sandboxBackend={sandboxBackend}
+            onClose={() => setShowStableReleaseDialog(false)}
+          />
+        )}
     </div>
   );
 }
@@ -280,8 +300,9 @@ function PageHeaderBar({
   onOpenCloudRuntime,
   canManageFCE2B,
   onOpenFCE2BRuntime,
-  sandboxBackend,
-  onSandboxBackendChange,
+  runtimeView,
+  onRuntimeViewChange,
+  isPhysicalView,
   canPublishStable,
   stableOverviewHref,
   onOpenStableRelease,
@@ -292,8 +313,9 @@ function PageHeaderBar({
   onOpenCloudRuntime: () => void;
   canManageFCE2B: boolean;
   onOpenFCE2BRuntime: () => void;
-  sandboxBackend: SandboxBackend;
-  onSandboxBackendChange: (backend: SandboxBackend) => void;
+  runtimeView: RuntimeView;
+  onRuntimeViewChange: (view: RuntimeView) => void;
+  isPhysicalView: boolean;
   canPublishStable: boolean;
   stableOverviewHref: string;
   onOpenStableRelease: () => void;
@@ -311,27 +333,26 @@ function PageHeaderBar({
       }}
       actions={
         <>
-          {canManageFCE2B && (
-            <Select
-              value={sandboxBackend}
-              onValueChange={(value) =>
-                onSandboxBackendChange(value as SandboxBackend)
-              }
-            >
-              <SelectTrigger size="sm" className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent align="end">
-                <SelectItem value="aliyun_fc">
-                  {t(($) => $.fc_e2b_runtime.backend_aliyun_fc)}
-                </SelectItem>
-                <SelectItem value="asb">
-                  {t(($) => $.fc_e2b_runtime.backend_asb)}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          )}
-          {canPublishStable && (
+          <Select
+            value={runtimeView}
+            onValueChange={(value) => onRuntimeViewChange(value as RuntimeView)}
+          >
+            <SelectTrigger size="sm" className="w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value="physical">
+                {t(($) => $.page.view_physical)}
+              </SelectItem>
+              <SelectItem value="aliyun_fc">
+                {t(($) => $.fc_e2b_runtime.backend_aliyun_fc)}
+              </SelectItem>
+              <SelectItem value="asb">
+                {t(($) => $.fc_e2b_runtime.backend_asb)}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          {!isPhysicalView && canPublishStable && (
             <>
               <CollectionPageHeaderAction
                 icon={LayoutDashboard}
@@ -345,25 +366,27 @@ function PageHeaderBar({
               />
             </>
           )}
-          {canManageFCE2B && (
+          {!isPhysicalView && canManageFCE2B && (
             <CollectionPageHeaderAction
               icon={Cloud}
               label={t(($) => $.fc_e2b_runtime.action)}
               onClick={onOpenFCE2BRuntime}
             />
           )}
-          {cloudRuntimeEnabled && (
+          {!isPhysicalView && cloudRuntimeEnabled && (
             <CollectionPageHeaderAction
               icon={Cloud}
               label={t(($) => $.cloud_runtime.action)}
               onClick={onOpenCloudRuntime}
             />
           )}
-          <CollectionPageHeaderAction
-            icon={Plus}
-            label={t(($) => $.page.connect_remote)}
-            onClick={onConnectRemote}
-          />
+          {isPhysicalView && (
+            <CollectionPageHeaderAction
+              icon={Plus}
+              label={t(($) => $.page.connect_remote)}
+              onClick={onConnectRemote}
+            />
+          )}
         </>
       }
     />
@@ -508,18 +531,30 @@ function ProviderIconStack({ providers }: { providers: string[] }) {
   );
 }
 
-function EmptyState({ onConnectRemote }: { onConnectRemote: () => void }) {
+function EmptyState({
+  isPhysicalView,
+  onConnectRemote,
+}: {
+  isPhysicalView: boolean;
+  onConnectRemote: () => void;
+}) {
   const { t } = useT("runtimes");
   return (
     <CollectionPageState
       icon={Server}
-      title={t(($) => $.page.empty.title)}
-      description={t(($) => $.page.empty.hint)}
+      title={t(($) =>
+        isPhysicalView ? $.page.empty.title : $.page.cloud_empty.title,
+      )}
+      description={t(($) =>
+        isPhysicalView ? $.page.empty.hint : $.page.cloud_empty.hint,
+      )}
       actions={
-        <Button type="button" size="sm" onClick={onConnectRemote}>
-          <Plus aria-hidden="true" className="size-3" />
-          {t(($) => $.page.connect_remote)}
-        </Button>
+        isPhysicalView ? (
+          <Button type="button" size="sm" onClick={onConnectRemote}>
+            <Plus aria-hidden="true" className="size-3" />
+            {t(($) => $.page.connect_remote)}
+          </Button>
+        ) : undefined
       }
     />
   );

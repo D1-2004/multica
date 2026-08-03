@@ -70,20 +70,42 @@ func TestASBLaunchIdentityAllowsExplicitUnboundMode(t *testing.T) {
 	}
 }
 
-func TestASBLaunchIdentityDoesNotHideResolverFailure(t *testing.T) {
+func TestASBLaunchIdentityResolverFailureUsesUnboundMode(t *testing.T) {
 	t.Parallel()
 
 	resolverErr := errors.New("identity store unavailable")
 	launcher := &ASBLauncher{
 		Identity: fakeASBTaskIdentityResolver{err: resolverErr},
 	}
-	if _, err := launcher.resolveTaskIdentity(
+	identity, err := launcher.resolveTaskIdentity(
 		context.Background(),
 		pgtype.UUID{},
 		pgtype.UUID{},
 		pgtype.UUID{},
-	); !errors.Is(err, resolverErr) {
-		t.Fatalf("resolveTaskIdentity error = %v, want %v", err, resolverErr)
+	)
+	if err != nil {
+		t.Fatalf("resolveTaskIdentity: %v", err)
+	}
+	if identity != unboundASBResolvedIdentity() {
+		t.Fatalf("identity = %#v, want unbound", identity)
+	}
+}
+
+func TestASBLaunchWithoutIdentityServiceUsesUnboundMode(t *testing.T) {
+	t.Parallel()
+
+	launcher := &ASBLauncher{}
+	identity, err := launcher.resolveTaskIdentity(
+		context.Background(),
+		pgtype.UUID{},
+		pgtype.UUID{},
+		pgtype.UUID{},
+	)
+	if err != nil {
+		t.Fatalf("resolveTaskIdentity: %v", err)
+	}
+	if identity != unboundASBResolvedIdentity() {
+		t.Fatalf("identity = %#v, want unbound", identity)
 	}
 }
 
