@@ -34,6 +34,24 @@ type completeStableReleaseRow struct {
 	at time.Time
 }
 
+type stableRolloutProgressRow struct {
+	values []int
+}
+
+func (row stableRolloutProgressRow) Scan(dest ...any) error {
+	if len(dest) != len(row.values) {
+		return fmt.Errorf("stable rollout progress scan has %d destinations, want %d", len(dest), len(row.values))
+	}
+	for index, target := range dest {
+		value, ok := target.(*int)
+		if !ok {
+			return fmt.Errorf("unsupported stable rollout progress scan target %T", target)
+		}
+		*value = row.values[index]
+	}
+	return nil
+}
+
 func (row completeStableReleaseRow) Scan(dest ...any) error {
 	for _, target := range dest {
 		switch value := target.(type) {
@@ -121,7 +139,7 @@ func TestStableRolloutCoverageUsesCumulativeUpdatedTargets(t *testing.T) {
 		{name: "developer coverage skips 25 percent work", total: 61, updated: 35, batch: 2, target: 16, covered: true},
 		{name: "developer coverage skips 50 percent work", total: 61, updated: 35, batch: 3, target: 31, covered: true},
 		{name: "100 percent still requires every runtime", total: 61, updated: 35, batch: 4, target: 61, covered: false},
-		{name: "new runtimes can raise an active stage target", total: 80, updated: 35, batch: 3, target: 40, covered: false},
+		{name: "live cohort computes the next fifty percent target", total: 80, updated: 35, batch: 3, target: 40, covered: false},
 		{name: "new runtime during final stage must be updated", total: 62, updated: 61, batch: 4, target: 62, covered: false},
 		{name: "new runtime completes final stage after update", total: 62, updated: 62, batch: 4, target: 62, covered: true},
 	}
@@ -141,6 +159,45 @@ func TestStableRolloutCoverageUsesCumulativeUpdatedTargets(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestLoadStableRolloutProgressFreezesCurrentStageCohort(t *testing.T) {
+	queryer := &recordingStableReleaseQueryer{row: stableRolloutProgressRow{
+		values: []int{
+			61, // live Runtime targets after one Runtime was added
+			60, // Runtime targets that existed when the 50% stage started
+			31, // all updated targets, including one Runtime added after stage start
+			30, // updated targets from the frozen current-stage cohort
+			0,
+			0,
+			0,
+		},
+	}}
+	progress, err := loadStableRolloutProgress(
+		context.Background(),
+		queryer,
+		"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		3,
+	)
+	if err != nil {
+		t.Fatalf("loadStableRolloutProgress() error = %v", err)
+	}
+	if progress.Total != 61 || progress.StageTotal != 60 || progress.Updated != 31 || progress.StageUpdated != 30 {
+		t.Fatalf("stable rollout progress = %#v, want live=61 stage=60 updated=31 stageUpdated=30", progress)
+	}
+	if target := stableBatchTarget(progress.StageTotal, 3); target != 30 {
+		t.Fatalf("frozen 50%% stage target = %d, want 30", target)
+	}
+	if !stableBatchCovered(progress.StageTotal, progress.StageUpdated, 3) {
+		t.Fatal("a 50% stage that completed at 30/60 was invalidated by a later Runtime")
+	}
+	if nextTarget := stableBatchTarget(progress.Total, 4); nextTarget != 61 {
+		t.Fatalf("next 100%% stage target = %d, want all 61 live Runtimes", nextTarget)
+	}
+	if !strings.Contains(queryer.query, "runtime.created_at AS runtime_created_at") ||
+		!strings.Contains(queryer.query, "runtime_created_at <= (SELECT batch_started_at FROM release_state)") {
+		t.Fatal("stage cohort is not anchored to the persisted batch start time")
 	}
 }
 
@@ -424,15 +481,17 @@ func TestStableBatchHealthWindowExcludesDeveloperPreRolloutCutovers(t *testing.T
 	}
 }
 
-func TestStableObservationTargetsError(t *testing.T) {
-	if err := stableObservationTargetsError(0, 0); err != nil {
+func TestStableObservationRestartsFinalCatchUpForNewRuntimes(t *testing.T) {
+	if err := stableObservationFailedTargetsError(0); err != nil {
 		t.Fatalf("fully updated observation was blocked: %v", err)
 	}
-	if err := stableObservationTargetsError(2, 0); err == nil ||
-		!strings.Contains(err.Error(), "2 runtime targets are not updated") {
-		t.Fatalf("missing targets error = %v", err)
+	if !stableObservationNeedsCatchUp(2, 0) {
+		t.Fatal("new Runtime targets did not restart the final 100% catch-up")
 	}
-	if err := stableObservationTargetsError(2, 1); err == nil ||
+	if stableObservationNeedsCatchUp(2, 1) {
+		t.Fatal("failed Runtime targets were treated as ordinary catch-up work")
+	}
+	if err := stableObservationFailedTargetsError(1); err == nil ||
 		!strings.Contains(err.Error(), "1 runtime targets failed") {
 		t.Fatalf("failed targets error = %v", err)
 	}
