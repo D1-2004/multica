@@ -550,6 +550,7 @@
       "dingtalk_account_connect": "DingTalk 계정 연결",
       "dingtalk_account_starting": "QR 코드 생성 중...",
       "dingtalk_account_begin_failed": "DingTalk 계정 연결을 시작하지 못했습니다.",
+      "dingtalk_account_permission_denied": "이 작업을 수행할 권한이 없습니다. 이 에이전트의 관리자에게 문의하세요.",
       "dingtalk_account_dialog_title": "DingTalk 계정 연결",
       "dingtalk_account_dialog_description": "먼저 {{agent}}용 DingTalk 직원 계정을 만들고, 해당 계정으로 DingTalk 클라이언트에 로그인한 뒤 이 코드를 스캔하세요.",
       "dingtalk_account_scan_hint": "직원 계정으로 로그인한 DingTalk 클라이언트에서 스캔하세요. 바인딩이 완료되면 이 페이지가 자동으로 업데이트됩니다.",

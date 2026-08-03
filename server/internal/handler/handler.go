@@ -281,7 +281,8 @@ type Handler struct {
 	DingTalkAccountBindingOrigin string
 	// Defaults to Queries; the narrow seam keeps authoritative metadata loading
 	// directly testable without changing production wiring.
-	dingTalkAccountBindingMetadata dingTalkAccountBindingMetadataStore
+	dingTalkAccountBindingMetadata    dingTalkAccountBindingMetadataStore
+	dingTalkAccountBindingPermissions agentInvocationPermissionStore
 	// LarkOAuth resolves Feishu login codes for POST /auth/lark. Production
 	// prefers the private channel agent (LARK_AGENT_BASE_URL) so the app
 	// secret stays outside this backend; the direct client remains available

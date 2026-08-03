@@ -364,6 +364,8 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
           onUpdate={handleUpdate}
           currentUserId={currentUser?.id ?? null}
           canEdit={canEdit.allowed}
+          canOperateDingTalkBinding={canEdit.allowed && canAssign.allowed}
+          dingTalkBindingPermissionLoading={permissionsLoading}
           source={agentSource ?? null}
           sourceSyncing={sourceSyncing}
           onSourceSync={handleSourceSync}

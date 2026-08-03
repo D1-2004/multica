@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Link2, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { QRCode } from "react-qr-code";
 import { mid2Url } from "@ali/ding-mediaid";
+import { toast } from "sonner";
 import type {
   BeginDingTalkAccountBindingResponse,
   DingTalkAccountBindingOutcome,
@@ -186,10 +187,14 @@ function DingTalkMessageScopeSummary({
 export function DingTalkRunModePicker({
   value,
   disabled,
+  readOnly,
+  onReadOnlyClick,
   onConfirm,
 }: {
   value: DingTalkProcessingSurface;
   disabled?: boolean;
+  readOnly?: boolean;
+  onReadOnlyClick?: () => void;
   onConfirm: (surfaceType: DingTalkProcessingSurface) => Promise<boolean>;
 }) {
   const { t } = useT("agents");
@@ -219,6 +224,10 @@ export function DingTalkRunModePicker({
   }
 
   function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen && readOnly) {
+      onReadOnlyClick?.();
+      return;
+    }
     if (nextOpen) setDraftValue(value);
     setOpen(nextOpen);
   }
@@ -312,10 +321,14 @@ export function DingTalkAccountBindingCard({
   agentId,
   agentName,
   bindingMode = "message",
+  canOperate,
+  permissionLoading,
 }: {
   agentId: string;
   agentName: string;
   bindingMode?: DingTalkBindingMode;
+  canOperate: boolean;
+  permissionLoading: boolean;
 }) {
   const wsId = useWorkspaceId();
   const { data, isPending } = useQuery({
@@ -330,6 +343,8 @@ export function DingTalkAccountBindingCard({
       bindingMode={bindingMode}
       data={data}
       listingPending={isPending}
+      canOperate={canOperate}
+      permissionLoading={permissionLoading}
     />
   );
 }
@@ -340,12 +355,16 @@ function DingTalkBindingModeCard({
   bindingMode,
   data,
   listingPending,
+  canOperate,
+  permissionLoading,
 }: {
   agentId: string;
   agentName: string;
   bindingMode: DingTalkBindingMode;
   data?: DingTalkAccountBindingsResponse;
   listingPending: boolean;
+  canOperate: boolean;
+  permissionLoading: boolean;
 }) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
@@ -393,6 +412,15 @@ function DingTalkBindingModeCard({
   const fallbackName = bindingMode === "message"
     ? t(($) => $.tab_body.integrations.dingtalk_account_fallback_name)
     : t(($) => $.tab_body.integrations.dingtalk_identity_fallback_name);
+  const permissionDenied = t(
+    ($) => $.tab_body.integrations.dingtalk_account_permission_denied,
+  );
+
+  function rejectUnauthorizedOperation(): boolean {
+    if (permissionLoading || canOperate) return false;
+    toast.error(permissionDenied);
+    return true;
+  }
 
   function statusLabel(status: string): string {
     switch (status) {
@@ -432,6 +460,7 @@ function DingTalkBindingModeCard({
   }, [connected]);
 
   async function startBinding() {
+    if (rejectUnauthorizedOperation()) return;
     setActionError(null);
     try {
       const nextAttempt = await beginBinding.mutateAsync({ agentId, bindingMode });
@@ -447,6 +476,7 @@ function DingTalkBindingModeCard({
 
   async function unbind() {
     if (!connected) return;
+    if (rejectUnauthorizedOperation()) return;
     setActionError(null);
     try {
       await deleteBinding.mutateAsync({ agentId, bindingMode });
@@ -460,6 +490,7 @@ function DingTalkBindingModeCard({
   }
 
   async function updateSurface(surfaceType: DingTalkProcessingSurface): Promise<boolean> {
+    if (rejectUnauthorizedOperation()) return false;
     if (bindingMode !== "message" || currentBinding?.messageRoute.surfaceType === surfaceType) {
       return true;
     }
@@ -535,7 +566,9 @@ function DingTalkBindingModeCard({
                     </span>
                     <DingTalkRunModePicker
                       value={currentBinding.messageRoute.surfaceType}
-                      disabled={updateBindingSurface.isPending}
+                      disabled={permissionLoading || updateBindingSurface.isPending}
+                      readOnly={!canOperate}
+                      onReadOnlyClick={rejectUnauthorizedOperation}
                       onConfirm={updateSurface}
                     />
                   </div>
@@ -545,9 +578,11 @@ function DingTalkBindingModeCard({
             <Button
               variant="destructive"
               size="sm"
-              onClick={() => setConfirmOpen(true)}
+              onClick={() => {
+                if (!rejectUnauthorizedOperation()) setConfirmOpen(true);
+              }}
               className="shrink-0"
-              disabled={deleteBinding.isPending || updateBindingSurface.isPending}
+              disabled={permissionLoading || deleteBinding.isPending || updateBindingSurface.isPending}
             >
               <Trash2 className="h-3 w-3" />
               {t(($) => $.tab_body.integrations.dingtalk_account_unbind)}
@@ -577,7 +612,7 @@ function DingTalkBindingModeCard({
               variant="outline"
               size="sm"
               onClick={() => void startBinding()}
-              disabled={beginBinding.isPending}
+              disabled={permissionLoading || beginBinding.isPending}
             >
               {retryMessageBinding ? <RefreshCw className="h-3 w-3" /> : null}
               {beginBinding.isPending ? startingLabel :
@@ -640,7 +675,7 @@ function DingTalkBindingModeCard({
                 {t(($) => $.tab_body.integrations.dingtalk_account_close)}
               </Button>
               {expired ? (
-                <Button size="sm" onClick={() => void startBinding()} disabled={beginBinding.isPending}>
+                <Button size="sm" onClick={() => void startBinding()} disabled={permissionLoading || beginBinding.isPending}>
                   <RefreshCw className="h-3 w-3" />
                   {t(($) => $.tab_body.integrations.dingtalk_account_new_qr)}
                 </Button>

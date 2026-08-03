@@ -655,6 +655,13 @@ func TestHandleAgentDispatchRejectsMemberWithoutAgentInvocationPermission(t *tes
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("HandleAgentDispatch private agent: expected 403, got %d: %s", w.Code, w.Body.String())
 	}
+	var response map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode dispatch rejection: %v body=%s", err, w.Body.String())
+	}
+	if response["error"] != "dispatch member cannot invoke agent" {
+		t.Fatalf("dispatch rejection body = %#v", response)
+	}
 }
 
 func TestHandleAgentDispatchRejectsContinuationOutsideEndpointAgent(t *testing.T) {

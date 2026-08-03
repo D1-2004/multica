@@ -22,6 +22,7 @@ import (
 
 const (
 	maxDingTalkAccountCallbackBodyBytes = 1 << 20
+	dingTalkAccountBindingForbidden     = "无权限操作，请联系此智能体管理员处理"
 )
 
 type dingTalkAccountBindingService interface {
@@ -101,25 +102,23 @@ func (h *Handler) BeginDingTalkAccountBinding(w http.ResponseWriter, r *http.Req
 		writeDingTalkAccountBindingAPIError(w, http.StatusBadRequest, "invalid_binding_mode", "binding_mode must be message or identity")
 		return
 	}
+	initiatorID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
+		return
+	}
+	agent, ok := h.authorizeDingTalkAccountBindingOperation(
+		w,
+		r,
+		initiatorID,
+		workspaceID,
+		agentID,
+	)
+	if !ok {
+		return
+	}
 	metadataStore := h.dingTalkAccountBindingMetadata
 	if metadataStore == nil {
 		metadataStore = h.Queries
-	}
-	agent, err := metadataStore.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-		ID:          agentID,
-		WorkspaceID: workspaceID,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "agent not found in this workspace")
-		} else {
-			writeError(w, http.StatusInternalServerError, "failed to load agent")
-		}
-		return
-	}
-	if agent.ArchivedAt.Valid {
-		writeError(w, http.StatusConflict, "agent is archived")
-		return
 	}
 	workspace, err := metadataStore.GetWorkspace(r.Context(), workspaceID)
 	if err != nil {
@@ -128,10 +127,6 @@ func (h *Handler) BeginDingTalkAccountBinding(w http.ResponseWriter, r *http.Req
 		} else {
 			writeError(w, http.StatusInternalServerError, "failed to load workspace")
 		}
-		return
-	}
-	initiatorID, ok := parseUUIDOrBadRequest(w, userID, "user id")
-	if !ok {
 		return
 	}
 	result, err := h.DingTalkAccountBindings.Begin(r.Context(), agentmessagerouter.BeginParams{
@@ -216,9 +211,22 @@ func (h *Handler) UnbindDingTalkAccountBinding(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	initiatorID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
+		return
+	}
 	bindingMode := agentmessagerouter.BindingMode(strings.TrimSpace(r.URL.Query().Get("binding_mode")))
 	if !bindingMode.Valid() {
 		writeDingTalkAccountBindingAPIError(w, http.StatusBadRequest, "invalid_binding_mode", "binding_mode must be message or identity")
+		return
+	}
+	if _, ok := h.authorizeDingTalkAccountBindingOperation(
+		w,
+		r,
+		initiatorID,
+		workspaceID,
+		agentID,
+	); !ok {
 		return
 	}
 	result, err := h.DingTalkAccountBindings.Unbind(r.Context(), agentmessagerouter.UnbindParams{
@@ -245,7 +253,8 @@ func (h *Handler) UpdateDingTalkAccountBindingSurface(w http.ResponseWriter, r *
 		writeError(w, http.StatusServiceUnavailable, "dingtalk account binding is not configured")
 		return
 	}
-	if _, ok := requireUserID(w, r); !ok {
+	userID, ok := requireUserID(w, r)
+	if !ok {
 		return
 	}
 	workspaceID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
@@ -254,6 +263,19 @@ func (h *Handler) UpdateDingTalkAccountBindingSurface(w http.ResponseWriter, r *
 	}
 	agentID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "agentId"), "agent id")
 	if !ok {
+		return
+	}
+	initiatorID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
+		return
+	}
+	if _, ok := h.authorizeDingTalkAccountBindingOperation(
+		w,
+		r,
+		initiatorID,
+		workspaceID,
+		agentID,
+	); !ok {
 		return
 	}
 	var request updateDingTalkAccountBindingSurfaceRequest
@@ -277,6 +299,87 @@ func (h *Handler) UpdateDingTalkAccountBindingSurface(w http.ResponseWriter, r *
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) authorizeDingTalkAccountBindingOperation(
+	w http.ResponseWriter,
+	r *http.Request,
+	userID,
+	workspaceID,
+	agentID pgtype.UUID,
+) (db.Agent, bool) {
+	metadataStore := h.dingTalkAccountBindingMetadata
+	if metadataStore == nil {
+		metadataStore = h.Queries
+	}
+	agent, err := metadataStore.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+		ID:          agentID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "agent not found in this workspace")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to load agent")
+		}
+		return db.Agent{}, false
+	}
+	if agent.ArchivedAt.Valid {
+		writeError(w, http.StatusConflict, "agent is archived")
+		return db.Agent{}, false
+	}
+	permissionStore := h.dingTalkAccountBindingPermissions
+	if permissionStore == nil {
+		permissionStore = h.Queries
+	}
+	if !canOperateDingTalkAccountBinding(
+		r.Context(),
+		permissionStore,
+		agent,
+		userID,
+		workspaceID,
+	) {
+		writeDingTalkAccountBindingAPIError(
+			w,
+			http.StatusForbidden,
+			"agent_binding_forbidden",
+			dingTalkAccountBindingForbidden,
+		)
+		return db.Agent{}, false
+	}
+	return agent, true
+}
+
+func canOperateDingTalkAccountBinding(
+	ctx context.Context,
+	store agentInvocationPermissionStore,
+	agent db.Agent,
+	userID,
+	workspaceID pgtype.UUID,
+) bool {
+	member, err := store.GetMemberByUserAndWorkspace(
+		ctx,
+		db.GetMemberByUserAndWorkspaceParams{
+			UserID:      userID,
+			WorkspaceID: workspaceID,
+		},
+	)
+	if err != nil {
+		return false
+	}
+	canManage := roleAllowed(member.Role, "owner", "admin") || agent.OwnerID == userID
+	if !canManage {
+		return false
+	}
+	return canInvokeAgentWithStore(
+		ctx,
+		store,
+		agent,
+		"member",
+		uuidToString(userID),
+		"",
+		uuidToString(workspaceID),
+	)
 }
 
 func decodeLimitedJSON(w http.ResponseWriter, r *http.Request, limit int64, target any, code string) error {
