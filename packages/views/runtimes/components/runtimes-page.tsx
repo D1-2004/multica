@@ -17,6 +17,7 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { runtimeProfileListOptions } from "@multica/core/runtimes";
 import {
+  filterRuntimesForSandboxBackend,
   type SandboxBackend,
   useCloudSandboxStableChannel,
 } from "@multica/core/runtimes";
@@ -122,6 +123,14 @@ export function RuntimesPage({
   const canManageFCE2B =
     currentMember?.role === "owner" || currentMember?.role === "admin";
 
+  const visibleRuntimes = useMemo(
+    () =>
+      canManageFCE2B
+        ? filterRuntimesForSandboxBackend(runtimes, sandboxBackend)
+        : runtimes,
+    [canManageFCE2B, runtimes, sandboxBackend],
+  );
+
   const handleDaemonEvent = useCallback(() => {
     qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
   }, [qc, wsId]);
@@ -134,7 +143,7 @@ export function RuntimesPage({
   const now = useNowTick();
   const machines = useMemo(
     () =>
-      buildRuntimeMachines(runtimes, {
+      buildRuntimeMachines(visibleRuntimes, {
         now,
         localDaemonId,
         localMachineName,
@@ -143,7 +152,7 @@ export function RuntimesPage({
         ensureLocalMachine: hasLocalMachine,
       }),
     [
-      runtimes,
+      visibleRuntimes,
       now,
       localDaemonId,
       localMachineName,

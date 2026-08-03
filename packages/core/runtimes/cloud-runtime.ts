@@ -107,6 +107,7 @@ export interface ValidateASBRuntimeCredentialResponse {
 export interface ASBRuntimeCredentialResponse {
   configured: boolean;
   api_key_hint: string;
+  quotas: ASBRuntimeQuota[];
   invalidated_sandbox_count?: number;
   updated_at?: number | null;
 }
@@ -439,6 +440,8 @@ export const cloudRuntimeKeys = {
     ["cloud-sandbox-stable-releases", backend] as const,
   cloudSandboxStableRuntimes: (backend: SandboxBackend) =>
     ["cloud-sandbox-stable-runtimes", backend] as const,
+  asbCredential: (wsId: string, runtimeId: string) =>
+    [...cloudRuntimeKeys.all(wsId), "asb-credential", runtimeId] as const,
 };
 
 const PENDING_NODE_STATUSES = new Set([
@@ -585,6 +588,16 @@ export function isASBRuntime(
   return parseCloudSandboxRuntimeMetadata(runtime)?.sandboxBackend === "asb";
 }
 
+export function filterRuntimesForSandboxBackend(
+  runtimes: AgentRuntime[],
+  backend: SandboxBackend,
+): AgentRuntime[] {
+  return runtimes.filter((runtime) => {
+    const metadata = parseCloudSandboxRuntimeMetadata(runtime);
+    return metadata === null || metadata.sandboxBackend === backend;
+  });
+}
+
 export function useCreateFCE2BRuntime(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -611,6 +624,19 @@ export function useValidateASBRuntimeCredential() {
   return useMutation({
     mutationFn: (data: ValidateASBRuntimeCredentialRequest) =>
       api.validateASBRuntimeCredential(data),
+  });
+}
+
+export function useASBRuntimeCredential(
+  wsId: string,
+  runtimeId: string,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: cloudRuntimeKeys.asbCredential(wsId, runtimeId),
+    queryFn: () => api.getASBRuntimeCredential(runtimeId),
+    enabled,
+    staleTime: 15 * 1000,
   });
 }
 
@@ -656,8 +682,13 @@ export function useUpdateASBRuntimeCredential(wsId: string) {
       runtimeId: string;
       data: UpdateASBRuntimeCredentialRequest;
     }) => api.updateASBRuntimeCredential(runtimeId, data),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
+    onSuccess: async (_result, variables) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) }),
+        qc.invalidateQueries({
+          queryKey: cloudRuntimeKeys.asbCredential(wsId, variables.runtimeId),
+        }),
+      ]);
     },
   });
 }

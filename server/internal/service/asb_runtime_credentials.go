@@ -52,6 +52,23 @@ type ASBRuntimeClientProvider struct {
 	Config  ASBConfig
 }
 
+type ASBTenantCredentialScope struct {
+	LockKey    int32
+	RuntimeIDs []pgtype.UUID
+}
+
+func (scope ASBTenantCredentialScope) Contains(runtimeID pgtype.UUID) bool {
+	if !runtimeID.Valid {
+		return false
+	}
+	for _, candidate := range scope.RuntimeIDs {
+		if candidate == runtimeID {
+			return true
+		}
+	}
+	return false
+}
+
 func ValidateASBAPIKey(apiKey string) error {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
@@ -126,28 +143,43 @@ func (p *ASBRuntimeClientProvider) RuntimeIDsSharingAPIKey(
 	ctx context.Context,
 	runtimeID pgtype.UUID,
 ) ([]pgtype.UUID, error) {
+	scope, err := p.RuntimeCredentialScope(ctx, runtimeID)
+	if err != nil {
+		return nil, err
+	}
+	return scope.RuntimeIDs, nil
+}
+
+// RuntimeCredentialScope resolves the stable tenant lock key and every
+// Runtime currently using the exact same ASB API key. Sandboxes created by
+// those Runtimes belong to one ASB tenant and may inherit one identity source.
+func (p *ASBRuntimeClientProvider) RuntimeCredentialScope(
+	ctx context.Context,
+	runtimeID pgtype.UUID,
+) (ASBTenantCredentialScope, error) {
 	if p == nil || p.Store == nil || p.Secrets == nil {
-		return nil, errors.New("ASB Runtime credential service is unavailable")
+		return ASBTenantCredentialScope{}, errors.New("ASB Runtime credential service is unavailable")
 	}
 	current, err := p.Store.GetASBRuntimeCredential(ctx, runtimeID)
 	if err != nil {
-		return nil, fmt.Errorf("load ASB Runtime API key: %w", err)
+		return ASBTenantCredentialScope{}, fmt.Errorf("load ASB Runtime API key: %w", err)
 	}
 	currentPlain, err := p.Secrets.Open(current.ApiKeyEncrypted)
 	if err != nil {
-		return nil, errors.New("decrypt ASB Runtime API key")
+		return ASBTenantCredentialScope{}, errors.New("decrypt ASB Runtime API key")
 	}
 	defer clear(currentPlain)
+	lockKey := asbAPIKeyCapacityLockKey(string(currentPlain))
 
 	credentials, err := p.Store.ListASBRuntimeCredentials(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list ASB Runtime API keys: %w", err)
+		return ASBTenantCredentialScope{}, fmt.Errorf("list ASB Runtime API keys: %w", err)
 	}
 	runtimeIDs := make([]pgtype.UUID, 0, len(credentials))
 	for _, credential := range credentials {
 		plain, err := p.Secrets.Open(credential.ApiKeyEncrypted)
 		if err != nil {
-			return nil, errors.New("decrypt ASB Runtime API key")
+			return ASBTenantCredentialScope{}, errors.New("decrypt ASB Runtime API key")
 		}
 		matches := len(plain) == len(currentPlain) &&
 			subtle.ConstantTimeCompare(plain, currentPlain) == 1
@@ -157,9 +189,12 @@ func (p *ASBRuntimeClientProvider) RuntimeIDsSharingAPIKey(
 		}
 	}
 	if len(runtimeIDs) == 0 {
-		return nil, errors.New("ASB Runtime credential ownership is inconsistent")
+		return ASBTenantCredentialScope{}, errors.New("ASB Runtime credential ownership is inconsistent")
 	}
-	return runtimeIDs, nil
+	return ASBTenantCredentialScope{
+		LockKey:    lockKey,
+		RuntimeIDs: runtimeIDs,
+	}, nil
 }
 
 func (p *ASBRuntimeClientProvider) clientForCredential(

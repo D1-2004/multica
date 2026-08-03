@@ -138,6 +138,7 @@ vi.mock("@multica/core/runtimes", () => ({
   useFCE2BStableChannel: () => ({
     data: { current: null, active_release: null, can_publish: true },
   }),
+  isASBRuntime: () => false,
   useUpdateFCE2BRuntimeTemplate: () => ({
     mutateAsync: (...args: unknown[]) => mockUpdateFCE2BTemplate(...args),
     isPending: false,
@@ -185,6 +186,9 @@ vi.mock("@multica/core/runtimes/mutations", () => ({
 vi.mock("./provider-logo", () => ({ ProviderLogo: () => null }));
 vi.mock("./update-section", () => ({ UpdateSection: () => null }));
 vi.mock("./usage-section", () => ({ UsageSection: () => null }));
+vi.mock("./asb-runtime-credential-section", () => ({
+  ASBRuntimeCredentialSection: () => null,
+}));
 vi.mock("./shared", () => ({ HealthBadge: () => null }));
 vi.mock("../../agents/presence", () => ({
   availabilityConfig: { offline: { dotClass: "", textClass: "" } },

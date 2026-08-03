@@ -196,11 +196,16 @@ type enterpriseIdentityStore interface {
 	GetAgent(context.Context, pgtype.UUID) (db.Agent, error)
 	GetAgentEnterpriseIdentity(context.Context, db.GetAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
 	GetActiveAgentEnterpriseIdentity(context.Context, db.GetActiveAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
+	GetReusableAgentEnterpriseIdentitySource(context.Context, db.GetReusableAgentEnterpriseIdentitySourceParams) (db.AgentEnterpriseIdentity, error)
+	ListActiveAgentEnterpriseIdentitySourceReferences(context.Context, db.ListActiveAgentEnterpriseIdentitySourceReferencesParams) ([]db.AgentEnterpriseIdentity, error)
+	CountActiveAgentEnterpriseIdentitySourceReferences(context.Context, db.CountActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error)
 	UpsertAgentEnterpriseIdentity(context.Context, db.UpsertAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
 	CompareAndSwapAgentEnterpriseIdentitySource(context.Context, db.CompareAndSwapAgentEnterpriseIdentitySourceParams) (db.AgentEnterpriseIdentity, error)
+	TouchActiveAgentEnterpriseIdentitySourceReferences(context.Context, db.TouchActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error)
 	CompareAndSwapAgentEnterpriseIdentityToken(context.Context, db.CompareAndSwapAgentEnterpriseIdentityTokenParams) (db.AgentEnterpriseIdentity, error)
 	ListAgentEnterpriseIdentitiesForMaintenance(context.Context, db.ListAgentEnterpriseIdentitiesForMaintenanceParams) ([]db.AgentEnterpriseIdentity, error)
 	MarkAgentEnterpriseIdentityNeedsReauth(context.Context, db.MarkAgentEnterpriseIdentityNeedsReauthParams) (int64, error)
+	MarkAgentEnterpriseIdentitiesNeedsReauthBySource(context.Context, db.MarkAgentEnterpriseIdentitiesNeedsReauthBySourceParams) ([]db.AgentEnterpriseIdentity, error)
 	RevokeAgentEnterpriseIdentity(context.Context, db.RevokeAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
 	ListActiveCloudSandboxSessionsByAgentIdentity(context.Context, db.ListActiveCloudSandboxSessionsByAgentIdentityParams) ([]db.FcE2bSandboxSession, error)
 	MarkCloudSandboxSessionStale(context.Context, db.MarkCloudSandboxSessionStaleParams) error
@@ -208,6 +213,10 @@ type enterpriseIdentityStore interface {
 
 type EnterpriseIdentitySandboxController interface {
 	DeleteRuntimeSandbox(context.Context, pgtype.UUID, string) error
+}
+
+type EnterpriseIdentityASBTenantResolver interface {
+	RuntimeCredentialScope(context.Context, pgtype.UUID) (ASBTenantCredentialScope, error)
 }
 
 type EnterpriseIdentityTokenRotationLocker interface {
@@ -280,9 +289,11 @@ type EnterpriseIdentityService struct {
 	AuthX       EnterpriseAuthX
 	Idem        EnterpriseIdem
 	Sandboxes   EnterpriseIdentitySandboxController
+	Tenants     EnterpriseIdentityASBTenantResolver
 	Source      EnterpriseIdentitySource
 	Secrets     *secretbox.Box
 	TokenLock   EnterpriseIdentityTokenRotationLocker
+	SourceLock  EnterpriseIdentitySourceLocker
 	RuntimeLock EnterpriseIdentityRuntimeLocker
 	Now         func() time.Time
 	Authorize   *url.URL
@@ -300,9 +311,11 @@ func NewEnterpriseIdentityService(
 	authX EnterpriseAuthX,
 	idem EnterpriseIdem,
 	sandboxes EnterpriseIdentitySandboxController,
+	tenants EnterpriseIdentityASBTenantResolver,
 	source EnterpriseIdentitySource,
 	secrets *secretbox.Box,
 	tokenLock EnterpriseIdentityTokenRotationLocker,
+	sourceLock EnterpriseIdentitySourceLocker,
 	runtimeLock EnterpriseIdentityRuntimeLocker,
 ) (*EnterpriseIdentityService, error) {
 	if store == nil ||
@@ -310,9 +323,11 @@ func NewEnterpriseIdentityService(
 		authX == nil ||
 		idem == nil ||
 		sandboxes == nil ||
+		tenants == nil ||
 		source == nil ||
 		secrets == nil ||
 		tokenLock == nil ||
+		sourceLock == nil ||
 		runtimeLock == nil {
 		return nil, errors.New("enterprise identity service dependencies are incomplete")
 	}
@@ -327,9 +342,11 @@ func NewEnterpriseIdentityService(
 		AuthX:       authX,
 		Idem:        idem,
 		Sandboxes:   sandboxes,
+		Tenants:     tenants,
 		Source:      source,
 		Secrets:     secrets,
 		TokenLock:   tokenLock,
+		SourceLock:  sourceLock,
 		RuntimeLock: runtimeLock,
 		Now:         time.Now,
 		Authorize:   authorizeURL,
@@ -570,23 +587,51 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
-	unlockRuntime, err := s.RuntimeLock.LockShared(ctx, agent.RuntimeID)
+	tenantScope, unlockRuntime, err := s.lockASBTenantCredentialScope(
+		ctx,
+		agent.RuntimeID,
+	)
 	if err != nil {
 		logEnterpriseIdentityBindingStageFailure("lock_asb_runtime", stageStarted, err, bindingAttrs...)
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
-	defer unlockRuntime()
+	defer func() {
+		if unlockRuntime != nil {
+			unlockRuntime()
+		}
+	}()
 	logEnterpriseIdentityBindingStageSuccess("lock_asb_runtime", stageStarted, bindingAttrs...)
 
 	stageStarted = time.Now()
-	source, err := s.Source.Create(
+	sourceKey := enterpriseIdentitySourceKey{
+		WorkspaceID:   attempt.WorkspaceID,
+		BoundBy:       attempt.ActorUserID,
+		RuntimeID:     agent.RuntimeID,
+		TenantLockKey: tenantScope.LockKey,
+		RawEmployeeID: employeeID,
+		BUCAgentID:    s.Config.BUCAgentID,
+	}
+	unlockSource, err := s.SourceLock.Lock(ctx, sourceKey)
+	if err != nil {
+		logEnterpriseIdentityBindingStageFailure(
+			"lock_asb_identity_source",
+			stageStarted,
+			err,
+			bindingAttrs...,
+		)
+		cleanupAIP()
+		return CompleteEnterpriseIdentityBindingResult{}, err
+	}
+	defer func() {
+		if unlockSource != nil {
+			unlockSource()
+		}
+	}()
+	source, sourceCreated, err := s.reuseOrCreateIdentitySource(
 		ctx,
-		agent.RuntimeID,
-		attempt.WorkspaceID,
-		attempt.AgentID,
-		employeeID,
-		s.Config.BUCAgentID,
+		sourceKey,
+		tenantScope.RuntimeIDs,
 		bucTokens,
 	)
 	if err != nil {
@@ -602,9 +647,16 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 	logEnterpriseIdentityBindingStageSuccess(
 		"establish_asb_identity_source",
 		stageStarted,
-		append(bindingAttrs, "source_sandbox_id", source.SandboxID)...,
+		append(
+			bindingAttrs,
+			"source_sandbox_id", source.SandboxID,
+			"source_reused", !sourceCreated,
+		)...,
 	)
 	cleanupSource := func() {
+		if !sourceCreated {
+			return
+		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if cleanupErr := s.Source.Delete(
@@ -633,6 +685,11 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 
 	stageStarted = time.Now()
 	var unlockExistingIdentity func()
+	defer func() {
+		if unlockExistingIdentity != nil {
+			unlockExistingIdentity()
+		}
+	}()
 	if oldIdentityFound && oldIdentity.ID.Valid {
 		unlockExistingIdentity, err = s.TokenLock.Lock(ctx, oldIdentity.ID)
 		if err != nil {
@@ -649,7 +706,6 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 				err,
 			)
 		}
-		defer unlockExistingIdentity()
 		current, reloadErr := s.Store.GetAgentEnterpriseIdentity(
 			ctx,
 			db.GetAgentEnterpriseIdentityParams{
@@ -691,6 +747,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		AgentSpiffeID:              agentSPIFFEID,
 		AipID:                      aipID,
 		BucIdentitySourceSandboxID: pgtype.Text{String: source.SandboxID, Valid: true},
+		BucIdentitySourceRuntimeID: source.RuntimeID,
 		AuthxRefreshTokenEncrypted: sealedRefresh,
 		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: authXToken.RefreshExpiresAt, Valid: true},
 		BoundBy:                    attempt.ActorUserID,
@@ -702,6 +759,15 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		return CompleteEnterpriseIdentityBindingResult{}, fmt.Errorf("persist enterprise identity binding: %w", err)
 	}
 	logEnterpriseIdentityBindingStageSuccess("persist_binding", stageStarted, bindingAttrs...)
+	sourceCreated = false
+	if unlockExistingIdentity != nil {
+		unlockExistingIdentity()
+		unlockExistingIdentity = nil
+	}
+	unlockSource()
+	unlockSource = nil
+	unlockRuntime()
+	unlockRuntime = nil
 	if oldIdentityFound {
 		if err := s.retireActiveSandboxes(ctx, attempt.WorkspaceID, attempt.AgentID, oldIdentity); err != nil {
 			slog.Warn("failed to retire sandboxes from replaced enterprise identity",
@@ -712,13 +778,9 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		if oldIdentity.BucIdentitySourceSandboxID.Valid &&
 			oldIdentity.BucIdentitySourceRuntimeID.Valid &&
 			oldIdentity.BucIdentitySourceSandboxID.String != source.SandboxID {
-			if err := s.Source.Delete(
-				ctx,
-				oldIdentity.BucIdentitySourceRuntimeID,
-				oldIdentity.BucIdentitySourceSandboxID.String,
-			); err != nil {
+			if err := s.deleteIdentitySourceIfUnreferenced(ctx, oldIdentity); err != nil {
 				slog.Warn(
-					"failed to delete replaced ASB enterprise identity source",
+					"failed to release replaced ASB enterprise identity source",
 					"agent_id", util.UUIDToString(attempt.AgentID),
 					"sandbox_id", oldIdentity.BucIdentitySourceSandboxID.String,
 					"error", err,
@@ -731,7 +793,7 @@ func (s *EnterpriseIdentityService) CompleteBinding(
 		append(
 			bindingAttrs,
 			"duration_ms", enterpriseIdentityDurationMilliseconds(bindingStarted),
-			"credential_mode", "asb_paused_source",
+			"credential_mode", "asb_shared_source",
 		)...,
 	)
 	return CompleteEnterpriseIdentityBindingResult{
@@ -837,6 +899,242 @@ func (s *EnterpriseIdentityService) loadReplaceableIdentity(
 	return identity, identity.ID.Valid, nil
 }
 
+func (s *EnterpriseIdentityService) reuseOrCreateIdentitySource(
+	ctx context.Context,
+	key enterpriseIdentitySourceKey,
+	runtimeIDs []pgtype.UUID,
+	tokens BUCIdentityTokens,
+) (EnterpriseIdentitySourceAvailability, bool, error) {
+	reusable, err := s.Store.GetReusableAgentEnterpriseIdentitySource(
+		ctx,
+		db.GetReusableAgentEnterpriseIdentitySourceParams{
+			WorkspaceID: key.WorkspaceID,
+			BoundBy:     key.BoundBy,
+			RawEmpID:    key.RawEmployeeID,
+			BucAgentID:  key.BUCAgentID,
+			RuntimeIds:  runtimeIDs,
+		},
+	)
+	if err == nil {
+		sandboxID := strings.TrimSpace(reusable.BucIdentitySourceSandboxID.String)
+		sourceRuntimeID := reusable.BucIdentitySourceRuntimeID
+		prepareErr := s.Source.Prepare(
+			ctx,
+			sourceRuntimeID,
+			sandboxID,
+			key.RawEmployeeID,
+			key.BUCAgentID,
+		)
+		if prepareErr == nil {
+			prepareErr = s.Source.Park(ctx, sourceRuntimeID, sandboxID)
+		}
+		if prepareErr == nil {
+			_, touchErr := s.Store.TouchActiveAgentEnterpriseIdentitySourceReferences(
+				ctx,
+				db.TouchActiveAgentEnterpriseIdentitySourceReferencesParams{
+					WorkspaceID: key.WorkspaceID,
+					RuntimeID:   sourceRuntimeID,
+					SandboxID:   pgtype.Text{String: sandboxID, Valid: true},
+				},
+			)
+			if touchErr != nil {
+				return EnterpriseIdentitySourceAvailability{}, false, fmt.Errorf(
+					"touch reusable ASB enterprise identity source: %w",
+					touchErr,
+				)
+			}
+			return EnterpriseIdentitySourceAvailability{
+				SandboxID: sandboxID,
+				RuntimeID: sourceRuntimeID,
+			}, false, nil
+		}
+		if !errors.Is(prepareErr, ErrEnterpriseIdentityNeedsReauth) {
+			return EnterpriseIdentitySourceAvailability{}, false, prepareErr
+		}
+		if err := s.markIdentitySourceNeedsReauthUnderLock(ctx, reusable); err != nil {
+			return EnterpriseIdentitySourceAvailability{}, false, err
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return EnterpriseIdentitySourceAvailability{}, false, fmt.Errorf(
+			"find reusable ASB enterprise identity source: %w",
+			err,
+		)
+	}
+
+	source, err := s.Source.Create(ctx, key, tokens)
+	if err != nil {
+		return EnterpriseIdentitySourceAvailability{}, false, err
+	}
+	return source, true, nil
+}
+
+func (s *EnterpriseIdentityService) deleteIdentitySourceIfUnreferenced(
+	ctx context.Context,
+	identity db.AgentEnterpriseIdentity,
+) error {
+	if !identity.BucIdentitySourceSandboxID.Valid ||
+		strings.TrimSpace(identity.BucIdentitySourceSandboxID.String) == "" ||
+		!identity.BucIdentitySourceRuntimeID.Valid {
+		return nil
+	}
+	tenantScope, unlockRuntime, err := s.lockASBTenantCredentialScope(
+		ctx,
+		identity.BucIdentitySourceRuntimeID,
+	)
+	if err != nil {
+		return err
+	}
+	defer unlockRuntime()
+	key, err := enterpriseIdentitySourceKeyFromIdentity(identity, tenantScope.LockKey)
+	if err != nil {
+		return err
+	}
+	unlock, err := s.SourceLock.Lock(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.deleteIdentitySourceIfUnreferencedUnderLock(ctx, identity)
+}
+
+func (s *EnterpriseIdentityService) deleteIdentitySourceIfUnreferencedUnderLock(
+	ctx context.Context,
+	identity db.AgentEnterpriseIdentity,
+) error {
+	references, err := s.Store.CountActiveAgentEnterpriseIdentitySourceReferences(
+		ctx,
+		db.CountActiveAgentEnterpriseIdentitySourceReferencesParams{
+			WorkspaceID: identity.WorkspaceID,
+			RuntimeID:   identity.BucIdentitySourceRuntimeID,
+			SandboxID:   identity.BucIdentitySourceSandboxID,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("count ASB enterprise identity source references: %w", err)
+	}
+	if references > 0 {
+		return nil
+	}
+	return s.Source.Delete(
+		ctx,
+		identity.BucIdentitySourceRuntimeID,
+		identity.BucIdentitySourceSandboxID.String,
+	)
+}
+
+func (s *EnterpriseIdentityService) markIdentitySourceNeedsReauth(
+	ctx context.Context,
+	identity db.AgentEnterpriseIdentity,
+) error {
+	tenantScope, unlockRuntime, err := s.lockASBTenantCredentialScope(
+		ctx,
+		identity.BucIdentitySourceRuntimeID,
+	)
+	if err != nil {
+		return err
+	}
+	defer unlockRuntime()
+	key, err := enterpriseIdentitySourceKeyFromIdentity(identity, tenantScope.LockKey)
+	if err != nil {
+		return err
+	}
+	unlock, err := s.SourceLock.Lock(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.markIdentitySourceNeedsReauthUnderLock(ctx, identity)
+}
+
+func (s *EnterpriseIdentityService) lockASBTenantCredentialScope(
+	ctx context.Context,
+	runtimeID pgtype.UUID,
+) (ASBTenantCredentialScope, func(), error) {
+	if !runtimeID.Valid {
+		return ASBTenantCredentialScope{}, nil,
+			errors.New("ASB Runtime credential scope target is incomplete")
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		tenantScope, err := s.Tenants.RuntimeCredentialScope(ctx, runtimeID)
+		if err != nil {
+			return ASBTenantCredentialScope{}, nil, err
+		}
+		unlockRuntime, err := s.RuntimeLock.LockSharedMany(ctx, tenantScope.RuntimeIDs)
+		if err != nil {
+			return ASBTenantCredentialScope{}, nil, err
+		}
+		currentScope, err := s.Tenants.RuntimeCredentialScope(ctx, runtimeID)
+		if err != nil {
+			unlockRuntime()
+			return ASBTenantCredentialScope{}, nil, err
+		}
+		if sameASBTenantCredentialScope(tenantScope, currentScope) {
+			return currentScope, unlockRuntime, nil
+		}
+		unlockRuntime()
+	}
+	return ASBTenantCredentialScope{}, nil, errors.New(
+		"ASB Runtime credential scope changed while acquiring its read lock",
+	)
+}
+
+func sameASBTenantCredentialScope(left, right ASBTenantCredentialScope) bool {
+	if left.LockKey != right.LockKey || len(left.RuntimeIDs) != len(right.RuntimeIDs) {
+		return false
+	}
+	for _, runtimeID := range left.RuntimeIDs {
+		if !right.Contains(runtimeID) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *EnterpriseIdentityService) markIdentitySourceNeedsReauthUnderLock(
+	ctx context.Context,
+	identity db.AgentEnterpriseIdentity,
+) error {
+	params := db.ListActiveAgentEnterpriseIdentitySourceReferencesParams{
+		WorkspaceID: identity.WorkspaceID,
+		RuntimeID:   identity.BucIdentitySourceRuntimeID,
+		SandboxID:   identity.BucIdentitySourceSandboxID,
+	}
+	references, err := s.Store.ListActiveAgentEnterpriseIdentitySourceReferences(ctx, params)
+	if err != nil {
+		return fmt.Errorf("list invalid ASB enterprise identity source references: %w", err)
+	}
+	if _, err := s.Store.MarkAgentEnterpriseIdentitiesNeedsReauthBySource(
+		ctx,
+		db.MarkAgentEnterpriseIdentitiesNeedsReauthBySourceParams(params),
+	); err != nil {
+		return fmt.Errorf("mark shared ASB enterprise identity source for reauthorization: %w", err)
+	}
+	var cleanupErr error
+	for _, reference := range references {
+		cleanupErr = errors.Join(
+			cleanupErr,
+			s.retireActiveSandboxes(
+				ctx,
+				reference.WorkspaceID,
+				reference.AgentID,
+				reference,
+			),
+		)
+	}
+	cleanupErr = errors.Join(
+		cleanupErr,
+		s.Source.Delete(
+			ctx,
+			identity.BucIdentitySourceRuntimeID,
+			identity.BucIdentitySourceSandboxID.String,
+		),
+	)
+	if cleanupErr != nil {
+		return fmt.Errorf("retire invalid shared ASB enterprise identity source: %w", cleanupErr)
+	}
+	return nil
+}
+
 func (s *EnterpriseIdentityService) ResolveASBTaskIdentity(
 	ctx context.Context,
 	workspaceID pgtype.UUID,
@@ -857,9 +1155,16 @@ func (s *EnterpriseIdentityService) ResolveASBTaskIdentity(
 		if !identity.BucIdentitySourceSandboxID.Valid ||
 			strings.TrimSpace(identity.BucIdentitySourceSandboxID.String) == "" ||
 			!identity.BucIdentitySourceRuntimeID.Valid ||
-			identity.BucIdentitySourceRuntimeID != runtimeID ||
 			!identity.AuthxRefreshExpiresAt.Valid ||
 			!identity.AuthxRefreshExpiresAt.Time.After(s.Now()) {
+			s.markNeedsReauth(ctx, identity)
+			return ASBResolvedIdentity{}, ErrEnterpriseIdentityNeedsReauth
+		}
+		tenantScope, err := s.Tenants.RuntimeCredentialScope(ctx, runtimeID)
+		if err != nil {
+			return ASBResolvedIdentity{}, fmt.Errorf("resolve ASB Runtime credential scope: %w", err)
+		}
+		if !tenantScope.Contains(identity.BucIdentitySourceRuntimeID) {
 			s.markNeedsReauth(ctx, identity)
 			return ASBResolvedIdentity{}, ErrEnterpriseIdentityNeedsReauth
 		}
@@ -914,9 +1219,34 @@ func (s *EnterpriseIdentityService) AcquireASBTaskIdentitySource(
 	if err != nil {
 		return nil, fmt.Errorf("load enterprise identity before source lease: %w", err)
 	}
-	unlock, err := s.TokenLock.Lock(ctx, identity.ID)
+	tenantScope, unlockRuntime, err := s.lockASBTenantCredentialScope(ctx, runtimeID)
 	if err != nil {
-		return nil, fmt.Errorf("lock ASB enterprise identity source: %w", err)
+		return nil, fmt.Errorf("lock ASB Runtime credential scope before source lease: %w", err)
+	}
+	if !tenantScope.Contains(identity.BucIdentitySourceRuntimeID) {
+		unlockRuntime()
+		return nil, ErrEnterpriseIdentityNeedsReauth
+	}
+	sourceKey, err := enterpriseIdentitySourceKeyFromIdentity(identity, tenantScope.LockKey)
+	if err != nil {
+		unlockRuntime()
+		return nil, err
+	}
+	unlockSource, err := s.SourceLock.LockShared(ctx, sourceKey)
+	if err != nil {
+		unlockRuntime()
+		return nil, fmt.Errorf("lock shared ASB enterprise identity source: %w", err)
+	}
+	unlockIdentity, err := s.TokenLock.Lock(ctx, identity.ID)
+	if err != nil {
+		unlockSource()
+		unlockRuntime()
+		return nil, fmt.Errorf("lock Agent enterprise identity: %w", err)
+	}
+	releaseLocks := func() {
+		unlockIdentity()
+		unlockSource()
+		unlockRuntime()
 	}
 	current, err := s.Store.GetActiveAgentEnterpriseIdentity(
 		ctx,
@@ -926,31 +1256,34 @@ func (s *EnterpriseIdentityService) AcquireASBTaskIdentitySource(
 		},
 	)
 	if err != nil {
-		unlock()
+		releaseLocks()
 		return nil, fmt.Errorf("reload enterprise identity under source lock: %w", err)
 	}
 	if current.ID != identity.ID ||
+		!sameEnterpriseIdentitySourceSnapshot(identity, current) ||
 		!current.BucIdentitySourceSandboxID.Valid ||
-		current.BucIdentitySourceSandboxID.String != expectedSourceSandboxID ||
-		current.BucIdentitySourceRuntimeID != runtimeID {
-		unlock()
+		current.BucIdentitySourceSandboxID.String != expectedSourceSandboxID {
+		releaseLocks()
 		return nil, ErrEnterpriseIdentityNeedsReauth
 	}
 	if err := s.Source.Prepare(
 		ctx,
-		runtimeID,
+		current.BucIdentitySourceRuntimeID,
 		expectedSourceSandboxID,
 		current.RawEmpID,
 		current.BucAgentID,
 	); err != nil {
-		unlock()
+		releaseLocks()
+		if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+			_ = s.markIdentitySourceNeedsReauth(ctx, current)
+		}
 		return nil, fmt.Errorf("prepare ASB enterprise identity source: %w", err)
 	}
 	return func(closeCtx context.Context) error {
-		defer unlock()
+		defer releaseLocks()
 		if err := s.Source.Park(
 			closeCtx,
-			runtimeID,
+			current.BucIdentitySourceRuntimeID,
 			expectedSourceSandboxID,
 		); err != nil {
 			return fmt.Errorf("park ASB enterprise identity source: %w", err)
@@ -991,6 +1324,7 @@ func (s *EnterpriseIdentityService) maintainActiveIdentities(ctx context.Context
 	if err != nil {
 		return fmt.Errorf("list enterprise identities for maintenance: %w", err)
 	}
+	maintainedSources := make(map[string]struct{})
 	for _, identity := range identities {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -1019,9 +1353,21 @@ func (s *EnterpriseIdentityService) maintainActiveIdentities(ctx context.Context
 			}
 		}
 		if !current.BucIdentitySourceUpdatedAt.Time.After(now.Add(-s.SourceRefreshInterval)) {
+			sourceCoordinate := util.UUIDToString(current.BucIdentitySourceRuntimeID) + ":" +
+				current.BucIdentitySourceSandboxID.String
+			if _, maintained := maintainedSources[sourceCoordinate]; maintained {
+				continue
+			}
+			maintainedSources[sourceCoordinate] = struct{}{}
 			if err := s.refreshIdentitySource(ctx, current); err != nil {
 				if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
-					s.markNeedsReauth(ctx, current)
+					if markErr := s.markIdentitySourceNeedsReauth(ctx, current); markErr != nil {
+						slog.Warn(
+							"failed to invalidate shared ASB enterprise identity source",
+							"sandbox_id", current.BucIdentitySourceSandboxID.String,
+							"error", markErr,
+						)
+					}
 					continue
 				}
 				slog.Warn(
@@ -1039,31 +1385,18 @@ func (s *EnterpriseIdentityService) refreshIdentitySource(
 	ctx context.Context,
 	identity db.AgentEnterpriseIdentity,
 ) error {
-	unlockIdentity, err := s.TokenLock.Lock(ctx, identity.ID)
-	if err != nil {
-		return err
-	}
-	defer unlockIdentity()
-	current, err := s.Store.GetActiveAgentEnterpriseIdentity(
+	current, releaseLocks, err := s.lockEnterpriseIdentityForSourceMutation(
 		ctx,
-		db.GetActiveAgentEnterpriseIdentityParams{
-			WorkspaceID: identity.WorkspaceID,
-			AgentID:     identity.AgentID,
-		},
+		identity.WorkspaceID,
+		identity.AgentID,
 	)
 	if err != nil {
 		return err
 	}
-	if current.ID != identity.ID ||
-		!current.BucIdentitySourceSandboxID.Valid ||
-		!current.BucIdentitySourceRuntimeID.Valid {
-		return ErrEnterpriseIdentityNeedsReauth
+	defer releaseLocks()
+	if !sameEnterpriseIdentitySourceSnapshot(identity, current) {
+		return nil
 	}
-	unlockRuntime, err := s.RuntimeLock.LockShared(ctx, current.BucIdentitySourceRuntimeID)
-	if err != nil {
-		return err
-	}
-	defer unlockRuntime()
 	if err := s.Source.Prepare(
 		ctx,
 		current.BucIdentitySourceRuntimeID,
@@ -1094,13 +1427,12 @@ func (s *EnterpriseIdentityService) refreshIdentitySource(
 		return err
 	}
 	parked = true
-	_, err = s.Store.CompareAndSwapAgentEnterpriseIdentitySource(
+	_, err = s.Store.TouchActiveAgentEnterpriseIdentitySourceReferences(
 		ctx,
-		db.CompareAndSwapAgentEnterpriseIdentitySourceParams{
-			BucIdentitySourceSandboxID: current.BucIdentitySourceSandboxID,
-			ID:                         current.ID,
-			ExpectedSourceSandboxID:    current.BucIdentitySourceSandboxID,
-			ExpectedSourceRuntimeID:    current.BucIdentitySourceRuntimeID,
+		db.TouchActiveAgentEnterpriseIdentitySourceReferencesParams{
+			WorkspaceID: current.WorkspaceID,
+			RuntimeID:   current.BucIdentitySourceRuntimeID,
+			SandboxID:   current.BucIdentitySourceSandboxID,
 		},
 	)
 	return err
@@ -1168,25 +1500,15 @@ func (s *EnterpriseIdentityService) Revoke(
 	workspaceID pgtype.UUID,
 	agentID pgtype.UUID,
 ) error {
-	current, err := s.Store.GetAgentEnterpriseIdentity(ctx, db.GetAgentEnterpriseIdentityParams{
-		WorkspaceID: workspaceID,
-		AgentID:     agentID,
-	})
+	current, releaseLocks, err := s.lockEnterpriseIdentityForSourceMutation(
+		ctx,
+		workspaceID,
+		agentID,
+	)
 	if err != nil {
 		return err
 	}
-	unlock, err := s.TokenLock.Lock(ctx, current.ID)
-	if err != nil {
-		return fmt.Errorf("lock enterprise identity before revocation: %w", err)
-	}
-	defer unlock()
-	current, err = s.Store.GetAgentEnterpriseIdentity(ctx, db.GetAgentEnterpriseIdentityParams{
-		WorkspaceID: workspaceID,
-		AgentID:     agentID,
-	})
-	if err != nil {
-		return err
-	}
+	defer releaseLocks()
 	operatorSPIFFEID, err := s.operatorSPIFFEID(current.RawEmpID)
 	if err != nil {
 		return err
@@ -1204,11 +1526,7 @@ func (s *EnterpriseIdentityService) Revoke(
 		current.BucIdentitySourceRuntimeID.Valid {
 		cleanupErr = errors.Join(
 			cleanupErr,
-			s.Source.Delete(
-				ctx,
-				current.BucIdentitySourceRuntimeID,
-				current.BucIdentitySourceSandboxID.String,
-			),
+			s.deleteIdentitySourceIfUnreferencedUnderLock(ctx, current),
 		)
 	}
 	cleanupErr = errors.Join(cleanupErr, s.Idem.DeleteAgent(ctx, revoked.AipID, operatorSPIFFEID))
@@ -1262,25 +1580,21 @@ func (s *EnterpriseIdentityService) retireActiveSandboxes(
 }
 
 func (s *EnterpriseIdentityService) markNeedsReauth(ctx context.Context, identity db.AgentEnterpriseIdentity) {
-	unlock, err := s.TokenLock.Lock(ctx, identity.ID)
+	current, releaseLocks, err := s.lockEnterpriseIdentityForSourceMutation(
+		ctx,
+		identity.WorkspaceID,
+		identity.AgentID,
+	)
 	if err != nil {
 		slog.Warn(
-			"failed to lock enterprise identity requiring reauthorization",
+			"failed to lock current enterprise identity requiring reauthorization",
 			"agent_id", util.UUIDToString(identity.AgentID),
 			"error", err,
 		)
 		return
 	}
-	defer unlock()
-	current, err := s.Store.GetAgentEnterpriseIdentity(
-		ctx,
-		db.GetAgentEnterpriseIdentityParams{
-			WorkspaceID: identity.WorkspaceID,
-			AgentID:     identity.AgentID,
-		},
-	)
-	if err != nil ||
-		current.ID != identity.ID ||
+	defer releaseLocks()
+	if !sameEnterpriseIdentitySourceSnapshot(identity, current) ||
 		current.Status != "active" {
 		return
 	}
@@ -1299,19 +1613,106 @@ func (s *EnterpriseIdentityService) markNeedsReauth(ctx context.Context, identit
 	}
 	if current.BucIdentitySourceSandboxID.Valid &&
 		current.BucIdentitySourceRuntimeID.Valid {
-		if err := s.Source.Delete(
-			ctx,
-			current.BucIdentitySourceRuntimeID,
-			current.BucIdentitySourceSandboxID.String,
-		); err != nil {
+		if err := s.deleteIdentitySourceIfUnreferencedUnderLock(ctx, current); err != nil {
 			slog.Warn(
-				"failed to delete ASB source requiring enterprise reauthorization",
+				"failed to release ASB source requiring enterprise reauthorization",
 				"agent_id", util.UUIDToString(current.AgentID),
 				"sandbox_id", current.BucIdentitySourceSandboxID.String,
 				"error", err,
 			)
 		}
 	}
+}
+
+func (s *EnterpriseIdentityService) lockEnterpriseIdentityForSourceMutation(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	agentID pgtype.UUID,
+) (db.AgentEnterpriseIdentity, func(), error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		identity, err := s.Store.GetAgentEnterpriseIdentity(
+			ctx,
+			db.GetAgentEnterpriseIdentityParams{
+				WorkspaceID: workspaceID,
+				AgentID:     agentID,
+			},
+		)
+		if err != nil {
+			return db.AgentEnterpriseIdentity{}, nil, err
+		}
+		var unlockRuntime func()
+		var unlockSource func()
+		if identity.BucIdentitySourceSandboxID.Valid &&
+			identity.BucIdentitySourceRuntimeID.Valid {
+			tenantScope, runtimeUnlock, keyErr := s.lockASBTenantCredentialScope(
+				ctx,
+				identity.BucIdentitySourceRuntimeID,
+			)
+			if keyErr != nil {
+				return db.AgentEnterpriseIdentity{}, nil, keyErr
+			}
+			unlockRuntime = runtimeUnlock
+			sourceKey, err := enterpriseIdentitySourceKeyFromIdentity(
+				identity,
+				tenantScope.LockKey,
+			)
+			if err != nil {
+				unlockRuntime()
+				return db.AgentEnterpriseIdentity{}, nil, fmt.Errorf(
+					"build enterprise identity source key: %w",
+					err,
+				)
+			}
+			unlockSource, err = s.SourceLock.Lock(ctx, sourceKey)
+			if err != nil {
+				unlockRuntime()
+				return db.AgentEnterpriseIdentity{}, nil, fmt.Errorf(
+					"lock shared enterprise identity source: %w",
+					err,
+				)
+			}
+		}
+		unlockIdentity, err := s.TokenLock.Lock(ctx, identity.ID)
+		if err != nil {
+			if unlockSource != nil {
+				unlockSource()
+			}
+			if unlockRuntime != nil {
+				unlockRuntime()
+			}
+			return db.AgentEnterpriseIdentity{}, nil, fmt.Errorf(
+				"lock Agent enterprise identity: %w",
+				err,
+			)
+		}
+		release := func() {
+			unlockIdentity()
+			if unlockSource != nil {
+				unlockSource()
+			}
+			if unlockRuntime != nil {
+				unlockRuntime()
+			}
+		}
+		current, err := s.Store.GetAgentEnterpriseIdentity(
+			ctx,
+			db.GetAgentEnterpriseIdentityParams{
+				WorkspaceID: workspaceID,
+				AgentID:     agentID,
+			},
+		)
+		if err != nil {
+			release()
+			return db.AgentEnterpriseIdentity{}, nil, err
+		}
+		if sameEnterpriseIdentitySourceSnapshot(identity, current) {
+			return current, release, nil
+		}
+		release()
+	}
+	return db.AgentEnterpriseIdentity{}, nil, errors.New(
+		"enterprise identity source changed while acquiring its mutation lock",
+	)
 }
 
 func (s *EnterpriseIdentityService) agentSPIFFEID(agentID pgtype.UUID) (string, error) {

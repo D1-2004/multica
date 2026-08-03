@@ -32,6 +32,9 @@ type fakeEnterpriseIdentityStore struct {
 	attempt         db.AgentEnterpriseIdentityAttempt
 	agent           db.Agent
 	current         db.AgentEnterpriseIdentity
+	reusable        db.AgentEnterpriseIdentity
+	reusableArgs    db.GetReusableAgentEnterpriseIdentitySourceParams
+	references      []db.AgentEnterpriseIdentity
 	getCurrentErr   error
 	createAttempt   db.CreateAgentEnterpriseIdentityAttemptParams
 	upsert          db.UpsertAgentEnterpriseIdentityParams
@@ -42,6 +45,8 @@ type fakeEnterpriseIdentityStore struct {
 	maintenanceArgs db.ListAgentEnterpriseIdentitiesForMaintenanceParams
 	activeSessions  []db.FcE2bSandboxSession
 	markedStale     []db.MarkCloudSandboxSessionStaleParams
+	touchedSources  int
+	invalidSources  int
 }
 
 func (f *fakeEnterpriseIdentityStore) CreateAgentEnterpriseIdentityAttempt(
@@ -86,6 +91,59 @@ func (f *fakeEnterpriseIdentityStore) GetActiveAgentEnterpriseIdentity(
 	return f.current, nil
 }
 
+func (f *fakeEnterpriseIdentityStore) GetReusableAgentEnterpriseIdentitySource(
+	_ context.Context,
+	params db.GetReusableAgentEnterpriseIdentitySourceParams,
+) (db.AgentEnterpriseIdentity, error) {
+	f.reusableArgs = params
+	if f.reusable.ID.Valid {
+		return f.reusable, nil
+	}
+	if f.current.ID.Valid &&
+		f.current.Status == "active" &&
+		f.current.WorkspaceID == params.WorkspaceID &&
+		f.current.BoundBy == params.BoundBy &&
+		f.current.RawEmpID == params.RawEmpID &&
+		f.current.BucAgentID == params.BucAgentID &&
+		containsUUID(params.RuntimeIds, f.current.BucIdentitySourceRuntimeID) &&
+		f.current.BucIdentitySourceSandboxID.Valid {
+		return f.current, nil
+	}
+	return db.AgentEnterpriseIdentity{}, pgx.ErrNoRows
+}
+
+func (f *fakeEnterpriseIdentityStore) ListActiveAgentEnterpriseIdentitySourceReferences(
+	context.Context,
+	db.ListActiveAgentEnterpriseIdentitySourceReferencesParams,
+) ([]db.AgentEnterpriseIdentity, error) {
+	if f.references != nil {
+		return f.references, nil
+	}
+	if f.current.ID.Valid && f.current.Status == "active" {
+		return []db.AgentEnterpriseIdentity{f.current}, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeEnterpriseIdentityStore) CountActiveAgentEnterpriseIdentitySourceReferences(
+	context.Context,
+	db.CountActiveAgentEnterpriseIdentitySourceReferencesParams,
+) (int64, error) {
+	if f.references != nil {
+		var count int64
+		for _, identity := range f.references {
+			if identity.Status == "active" {
+				count++
+			}
+		}
+		return count, nil
+	}
+	if f.current.ID.Valid && f.current.Status == "active" {
+		return 1, nil
+	}
+	return 0, nil
+}
+
 func (f *fakeEnterpriseIdentityStore) UpsertAgentEnterpriseIdentity(
 	_ context.Context,
 	params db.UpsertAgentEnterpriseIdentityParams,
@@ -101,7 +159,7 @@ func (f *fakeEnterpriseIdentityStore) UpsertAgentEnterpriseIdentity(
 		AgentSpiffeID:              params.AgentSpiffeID,
 		AipID:                      params.AipID,
 		BucIdentitySourceSandboxID: params.BucIdentitySourceSandboxID,
-		BucIdentitySourceRuntimeID: f.agent.RuntimeID,
+		BucIdentitySourceRuntimeID: params.BucIdentitySourceRuntimeID,
 		BucIdentitySourceUpdatedAt: pgtype.Timestamptz{
 			Time:  time.Now(),
 			Valid: true,
@@ -133,6 +191,15 @@ func (f *fakeEnterpriseIdentityStore) CompareAndSwapAgentEnterpriseIdentitySourc
 	return f.current, nil
 }
 
+func (f *fakeEnterpriseIdentityStore) TouchActiveAgentEnterpriseIdentitySourceReferences(
+	context.Context,
+	db.TouchActiveAgentEnterpriseIdentitySourceReferencesParams,
+) (int64, error) {
+	f.touchedSources++
+	f.current.BucIdentitySourceUpdatedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	return 1, nil
+}
+
 func (f *fakeEnterpriseIdentityStore) CompareAndSwapAgentEnterpriseIdentityToken(
 	_ context.Context,
 	params db.CompareAndSwapAgentEnterpriseIdentityTokenParams,
@@ -152,7 +219,24 @@ func (f *fakeEnterpriseIdentityStore) MarkAgentEnterpriseIdentityNeedsReauth(
 	db.MarkAgentEnterpriseIdentityNeedsReauthParams,
 ) (int64, error) {
 	f.markNeedsReauth++
+	f.current.Status = "needs_reauth"
 	return 1, nil
+}
+
+func (f *fakeEnterpriseIdentityStore) MarkAgentEnterpriseIdentitiesNeedsReauthBySource(
+	context.Context,
+	db.MarkAgentEnterpriseIdentitiesNeedsReauthBySourceParams,
+) ([]db.AgentEnterpriseIdentity, error) {
+	f.invalidSources++
+	identities := f.references
+	if identities == nil && f.current.ID.Valid {
+		identities = []db.AgentEnterpriseIdentity{f.current}
+	}
+	for index := range identities {
+		identities[index].Status = "needs_reauth"
+	}
+	f.current.Status = "needs_reauth"
+	return identities, nil
 }
 
 func (f *fakeEnterpriseIdentityStore) ListAgentEnterpriseIdentitiesForMaintenance(
@@ -168,6 +252,11 @@ func (f *fakeEnterpriseIdentityStore) RevokeAgentEnterpriseIdentity(
 	db.RevokeAgentEnterpriseIdentityParams,
 ) (db.AgentEnterpriseIdentity, error) {
 	f.current.Status = "revoked"
+	for index := range f.references {
+		if f.references[index].ID == f.current.ID {
+			f.references[index].Status = "revoked"
+		}
+	}
 	return f.current, nil
 }
 
@@ -272,6 +361,26 @@ type fakeEnterpriseIdentityTokenRotationLocker struct {
 	mu sync.Mutex
 }
 
+type fakeEnterpriseIdentitySourceLocker struct {
+	mu sync.RWMutex
+}
+
+func (f *fakeEnterpriseIdentitySourceLocker) Lock(
+	_ context.Context,
+	_ enterpriseIdentitySourceKey,
+) (func(), error) {
+	f.mu.Lock()
+	return f.mu.Unlock, nil
+}
+
+func (f *fakeEnterpriseIdentitySourceLocker) LockShared(
+	_ context.Context,
+	_ enterpriseIdentitySourceKey,
+) (func(), error) {
+	f.mu.RLock()
+	return f.mu.RUnlock, nil
+}
+
 func (f *fakeEnterpriseIdentityTokenRotationLocker) Lock(
 	_ context.Context,
 	_ pgtype.UUID,
@@ -285,41 +394,73 @@ type fakeEnterpriseIdentityRuntimeLocker struct {
 }
 
 func (f *fakeEnterpriseIdentityRuntimeLocker) LockShared(
+	ctx context.Context,
+	runtimeID pgtype.UUID,
+) (func(), error) {
+	return f.LockSharedMany(ctx, []pgtype.UUID{runtimeID})
+}
+
+func (f *fakeEnterpriseIdentityRuntimeLocker) LockSharedMany(
 	_ context.Context,
-	_ pgtype.UUID,
+	_ []pgtype.UUID,
 ) (func(), error) {
 	f.mu.Lock()
 	return f.mu.Unlock, nil
 }
 
+type fakeEnterpriseIdentityTenantResolver struct {
+	lockKey    int32
+	runtimeIDs []pgtype.UUID
+}
+
+func (f *fakeEnterpriseIdentityTenantResolver) RuntimeCredentialScope(
+	_ context.Context,
+	runtimeID pgtype.UUID,
+) (ASBTenantCredentialScope, error) {
+	lockKey := f.lockKey
+	if lockKey == 0 {
+		lockKey = 42
+	}
+	runtimeIDs := f.runtimeIDs
+	if len(runtimeIDs) == 0 {
+		runtimeIDs = []pgtype.UUID{runtimeID}
+	}
+	return ASBTenantCredentialScope{LockKey: lockKey, RuntimeIDs: runtimeIDs}, nil
+}
+
+func containsUUID(values []pgtype.UUID, target pgtype.UUID) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 type fakeEnterpriseIdentitySource struct {
 	availability EnterpriseIdentitySourceAvailability
-	runtimeID    pgtype.UUID
-	workspaceID  pgtype.UUID
-	agentID      pgtype.UUID
+	key          enterpriseIdentitySourceKey
+	createCalls  int
 	employeeID   string
 	bucAgentID   string
 	tokens       BUCIdentityTokens
 	err          error
 	prepared     []string
+	preparedOn   []pgtype.UUID
 	parked       []string
+	parkedOn     []pgtype.UUID
 	deleted      []string
 }
 
 func (f *fakeEnterpriseIdentitySource) Create(
 	_ context.Context,
-	runtimeID pgtype.UUID,
-	workspaceID pgtype.UUID,
-	agentID pgtype.UUID,
-	employeeID string,
-	bucAgentID string,
+	key enterpriseIdentitySourceKey,
 	tokens BUCIdentityTokens,
 ) (EnterpriseIdentitySourceAvailability, error) {
-	f.runtimeID = runtimeID
-	f.workspaceID = workspaceID
-	f.agentID = agentID
-	f.employeeID = employeeID
-	f.bucAgentID = bucAgentID
+	f.createCalls++
+	f.key = key
+	f.employeeID = key.RawEmployeeID
+	f.bucAgentID = key.BUCAgentID
 	f.tokens = tokens
 	if f.err != nil {
 		return EnterpriseIdentitySourceAvailability{}, f.err
@@ -328,28 +469,30 @@ func (f *fakeEnterpriseIdentitySource) Create(
 		f.availability.SandboxID = "identity-source-1"
 	}
 	if !f.availability.RuntimeID.Valid {
-		f.availability.RuntimeID = runtimeID
+		f.availability.RuntimeID = key.RuntimeID
 	}
 	return f.availability, nil
 }
 
 func (f *fakeEnterpriseIdentitySource) Prepare(
 	_ context.Context,
-	_ pgtype.UUID,
+	runtimeID pgtype.UUID,
 	sandboxID string,
 	_ string,
 	_ string,
 ) error {
 	f.prepared = append(f.prepared, sandboxID)
+	f.preparedOn = append(f.preparedOn, runtimeID)
 	return f.err
 }
 
 func (f *fakeEnterpriseIdentitySource) Park(
 	_ context.Context,
-	_ pgtype.UUID,
+	runtimeID pgtype.UUID,
 	sandboxID string,
 ) error {
 	f.parked = append(f.parked, sandboxID)
+	f.parkedOn = append(f.parkedOn, runtimeID)
 	return f.err
 }
 
@@ -777,9 +920,10 @@ func TestEnterpriseIdentityCompleteBindingPersistsRollingSourceWithoutBUCTokens(
 	if source.tokens.AccessToken != "buc-access" ||
 		source.tokens.RefreshToken != "buc-refresh" ||
 		source.tokens.IDToken != bucIDToken ||
-		source.runtimeID != runtimeID ||
+		source.key.RuntimeID != runtimeID ||
+		source.key.BoundBy != store.attempt.ActorUserID ||
 		source.employeeID != "12345" {
-		t.Fatalf("temporary ASB identity source input = %#v runtime=%v", source.tokens, source.runtimeID)
+		t.Fatalf("temporary ASB identity source input = %#v key=%#v", source.tokens, source.key)
 	}
 	if !store.upsert.BucIdentitySourceSandboxID.Valid ||
 		store.upsert.BucIdentitySourceSandboxID.String != "identity-source-1" ||
@@ -795,11 +939,113 @@ func TestEnterpriseIdentityCompleteBindingPersistsRollingSourceWithoutBUCTokens(
 	}
 }
 
+func TestEnterpriseIdentityReusesSharedSourceAcrossAgentsAndRuntimes(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 3, 4, 0, 0, 0, time.UTC)
+	workspaceID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
+	boundBy := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	sourceRuntimeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	targetRuntimeID := util.MustParseUUID("88888888-8888-8888-8888-888888888888")
+	reusable := db.AgentEnterpriseIdentity{
+		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+		WorkspaceID:                workspaceID,
+		AgentID:                    util.MustParseUUID("55555555-5555-5555-5555-555555555555"),
+		RawEmpID:                   "12345",
+		BucAgentID:                 "buc-agent-1",
+		BucIdentitySourceSandboxID: pgtype.Text{String: "shared-source-1", Valid: true},
+		BucIdentitySourceRuntimeID: sourceRuntimeID,
+		BucIdentitySourceUpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		Status:                     "active",
+		BoundBy:                    boundBy,
+	}
+	store := &fakeEnterpriseIdentityStore{reusable: reusable}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{},
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+	source := serviceUnderTest.Source.(*fakeEnterpriseIdentitySource)
+	availability, created, err := serviceUnderTest.reuseOrCreateIdentitySource(
+		context.Background(),
+		enterpriseIdentitySourceKey{
+			WorkspaceID:   workspaceID,
+			BoundBy:       boundBy,
+			RuntimeID:     targetRuntimeID,
+			TenantLockKey: 42,
+			RawEmployeeID: "12345",
+			BUCAgentID:    "buc-agent-1",
+		},
+		[]pgtype.UUID{sourceRuntimeID, targetRuntimeID},
+		BUCIdentityTokens{},
+	)
+	if err != nil {
+		t.Fatalf("reuseOrCreateIdentitySource: %v", err)
+	}
+	if created || availability.SandboxID != "shared-source-1" || availability.RuntimeID != sourceRuntimeID {
+		t.Fatalf("shared source availability = %#v, created=%t", availability, created)
+	}
+	if source.createCalls != 0 || strings.Join(source.prepared, ",") != "shared-source-1" ||
+		strings.Join(source.parked, ",") != "shared-source-1" || store.touchedSources != 1 {
+		t.Fatalf(
+			"shared source actions: create=%d prepare=%v park=%v touch=%d",
+			source.createCalls,
+			source.prepared,
+			source.parked,
+			store.touchedSources,
+		)
+	}
+	if len(source.preparedOn) != 1 || source.preparedOn[0] != sourceRuntimeID ||
+		len(source.parkedOn) != 1 || source.parkedOn[0] != sourceRuntimeID ||
+		!containsUUID(store.reusableArgs.RuntimeIds, sourceRuntimeID) ||
+		!containsUUID(store.reusableArgs.RuntimeIds, targetRuntimeID) {
+		t.Fatalf(
+			"cross-Runtime source actions: prepare=%v park=%v query=%v",
+			source.preparedOn,
+			source.parkedOn,
+			store.reusableArgs.RuntimeIds,
+		)
+	}
+}
+
+func TestEnterpriseIdentitySourceLockUsesSharedTenantAcrossRuntimes(t *testing.T) {
+	t.Parallel()
+
+	workspaceID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
+	boundBy := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	runtimeA := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	runtimeB := util.MustParseUUID("44444444-4444-4444-4444-444444444444")
+	keyA := enterpriseIdentitySourceKey{
+		WorkspaceID:   workspaceID,
+		BoundBy:       boundBy,
+		RuntimeID:     runtimeA,
+		TenantLockKey: 42,
+		RawEmployeeID: "12345",
+		BUCAgentID:    "buc-agent-1",
+	}
+	keyB := keyA
+	keyB.RuntimeID = runtimeB
+	if enterpriseIdentitySourceLockKey(keyA) != enterpriseIdentitySourceLockKey(keyB) ||
+		enterpriseIdentitySourceFingerprint(keyA) != enterpriseIdentitySourceFingerprint(keyB) {
+		t.Fatal("same ASB tenant and identity did not resolve to one shared source key")
+	}
+	keyB.TenantLockKey = 43
+	if enterpriseIdentitySourceLockKey(keyA) == enterpriseIdentitySourceLockKey(keyB) ||
+		enterpriseIdentitySourceFingerprint(keyA) == enterpriseIdentitySourceFingerprint(keyB) {
+		t.Fatal("different ASB tenants resolved to one shared source key")
+	}
+}
+
 func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 29, 7, 0, 0, 0, time.UTC)
-	runtimeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
+	sourceRuntimeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
+	taskRuntimeID := util.MustParseUUID("66666666-6666-6666-6666-666666666666")
 	box, err := secretbox.New(bytes.Repeat([]byte{0x42}, secretbox.KeySize))
 	if err != nil {
 		t.Fatal(err)
@@ -818,7 +1064,7 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 			AgentSpiffeID:              "spiffe://agents.example/ns/multica/agents/222",
 			AipID:                      "aip-1",
 			BucIdentitySourceSandboxID: pgtype.Text{String: "identity-source-1", Valid: true},
-			BucIdentitySourceRuntimeID: runtimeID,
+			BucIdentitySourceRuntimeID: sourceRuntimeID,
 			AuthxRefreshTokenEncrypted: sealedRefresh,
 			AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
 			TokenVersion:               2,
@@ -842,12 +1088,15 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 		now,
 	)
 	serviceUnderTest.Secrets = box
+	serviceUnderTest.Tenants = &fakeEnterpriseIdentityTenantResolver{
+		runtimeIDs: []pgtype.UUID{sourceRuntimeID, taskRuntimeID},
+	}
 
 	resolved, err := serviceUnderTest.ResolveASBTaskIdentity(
 		context.Background(),
 		store.current.WorkspaceID,
 		store.current.AgentID,
-		runtimeID,
+		taskRuntimeID,
 	)
 	if err != nil {
 		t.Fatalf("ResolveASBTaskIdentity: %v", err)
@@ -856,7 +1105,7 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 		idem.issuedOIDC != "authx-id-new" ||
 		resolved.AgentIdentityToken != "ait-task" ||
 		resolved.SourceSandboxID != "identity-source-1" ||
-		resolved.SourceRuntimeID != runtimeID ||
+		resolved.SourceRuntimeID != sourceRuntimeID ||
 		len(resolved.Fingerprint) != 64 {
 		t.Fatalf("resolved = %#v", resolved)
 	}
@@ -945,11 +1194,12 @@ func TestEnterpriseIdentityTokenRotationReloadsAfterSharedLock(t *testing.T) {
 	}
 }
 
-func TestEnterpriseIdentityLeasesPausedSourceWithoutChangingIdentity(t *testing.T) {
+func TestEnterpriseIdentityLeasesSharedSourceAcrossRuntimesWithoutChangingIdentity(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 30, 4, 0, 0, 0, time.UTC)
-	runtimeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
+	sourceRuntimeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
+	taskRuntimeID := util.MustParseUUID("66666666-6666-6666-6666-666666666666")
 	identity := db.AgentEnterpriseIdentity{
 		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
 		WorkspaceID:                util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
@@ -959,9 +1209,10 @@ func TestEnterpriseIdentityLeasesPausedSourceWithoutChangingIdentity(t *testing.
 		AgentSpiffeID:              "spiffe://agents.example/ns/multica/agents/222",
 		AipID:                      "aip-1",
 		BucIdentitySourceSandboxID: pgtype.Text{String: "source-1", Valid: true},
-		BucIdentitySourceRuntimeID: runtimeID,
+		BucIdentitySourceRuntimeID: sourceRuntimeID,
 		TokenVersion:               2,
 		Status:                     "active",
+		BoundBy:                    util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
 	}
 	store := &fakeEnterpriseIdentityStore{current: identity}
 	serviceUnderTest := newTestEnterpriseIdentityService(
@@ -973,13 +1224,16 @@ func TestEnterpriseIdentityLeasesPausedSourceWithoutChangingIdentity(t *testing.
 		&fakeEnterpriseSandboxes{},
 		now,
 	)
+	serviceUnderTest.Tenants = &fakeEnterpriseIdentityTenantResolver{
+		runtimeIDs: []pgtype.UUID{sourceRuntimeID, taskRuntimeID},
+	}
 	source := serviceUnderTest.Source.(*fakeEnterpriseIdentitySource)
 
 	release, err := serviceUnderTest.AcquireASBTaskIdentitySource(
 		context.Background(),
 		identity.WorkspaceID,
 		identity.AgentID,
-		runtimeID,
+		taskRuntimeID,
 		"source-1",
 	)
 	if err != nil {
@@ -988,11 +1242,17 @@ func TestEnterpriseIdentityLeasesPausedSourceWithoutChangingIdentity(t *testing.
 	if got := strings.Join(source.prepared, ","); got != "source-1" {
 		t.Fatalf("prepared identity source = %q", got)
 	}
+	if len(source.preparedOn) != 1 || source.preparedOn[0] != sourceRuntimeID {
+		t.Fatalf("prepared source Runtime = %v", source.preparedOn)
+	}
 	if err := release(context.Background()); err != nil {
 		t.Fatalf("release ASB identity source: %v", err)
 	}
 	if got := strings.Join(source.parked, ","); got != "source-1" {
 		t.Fatalf("parked identity source = %q", got)
+	}
+	if len(source.parkedOn) != 1 || source.parkedOn[0] != sourceRuntimeID {
+		t.Fatalf("parked source Runtime = %v", source.parkedOn)
 	}
 	if store.current.BucIdentitySourceSandboxID.String != "source-1" ||
 		store.current.TokenVersion != identity.TokenVersion {
@@ -1029,6 +1289,7 @@ func TestEnterpriseIdentityMaintenanceRefreshesPlatformCredentials(t *testing.T)
 		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(10 * time.Minute), Valid: true},
 		TokenVersion:               2,
 		Status:                     "active",
+		BoundBy:                    util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
 	}
 	store := &fakeEnterpriseIdentityStore{
 		current:     identity,
@@ -1143,6 +1404,56 @@ func TestEnterpriseIdentityRevokeRetiresActiveASBSandboxes(t *testing.T) {
 	}
 	if store.current.Status != "revoked" {
 		t.Fatalf("identity status = %q", store.current.Status)
+	}
+}
+
+func TestEnterpriseIdentityRevokeRetainsSharedSourceReferencedByAnotherAgent(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 3, 4, 0, 0, 0, time.UTC)
+	workspaceID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
+	boundBy := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	runtimeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	first := db.AgentEnterpriseIdentity{
+		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+		WorkspaceID:                workspaceID,
+		AgentID:                    util.MustParseUUID("55555555-5555-5555-5555-555555555555"),
+		RawEmpID:                   "12345",
+		BucAgentID:                 "buc-agent-1",
+		AgentSpiffeID:              "spiffe://agents.example/ns/multica/agents/555",
+		AipID:                      "aip-1",
+		BucIdentitySourceSandboxID: pgtype.Text{String: "shared-source-1", Valid: true},
+		BucIdentitySourceRuntimeID: runtimeID,
+		Status:                     "active",
+		BoundBy:                    boundBy,
+	}
+	second := first
+	second.ID = util.MustParseUUID("66666666-6666-6666-6666-666666666666")
+	second.AgentID = util.MustParseUUID("77777777-7777-7777-7777-777777777777")
+	second.AgentSpiffeID = "spiffe://agents.example/ns/multica/agents/777"
+	second.AipID = "aip-2"
+	store := &fakeEnterpriseIdentityStore{
+		current:    first,
+		references: []db.AgentEnterpriseIdentity{first, second},
+	}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{},
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+	source := serviceUnderTest.Source.(*fakeEnterpriseIdentitySource)
+	if err := serviceUnderTest.Revoke(context.Background(), workspaceID, first.AgentID); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	if len(source.deleted) != 0 {
+		t.Fatalf("shared source deleted while referenced: %v", source.deleted)
+	}
+	if store.references[0].Status != "revoked" || store.references[1].Status != "active" {
+		t.Fatalf("shared source references = %#v", store.references)
 	}
 }
 
@@ -1482,9 +1793,11 @@ func newTestEnterpriseIdentityService(
 		authX,
 		idem,
 		sandboxes,
+		&fakeEnterpriseIdentityTenantResolver{},
 		&fakeEnterpriseIdentitySource{},
 		box,
 		&fakeEnterpriseIdentityTokenRotationLocker{},
+		&fakeEnterpriseIdentitySourceLocker{},
 		&fakeEnterpriseIdentityRuntimeLocker{},
 	)
 	if err != nil {

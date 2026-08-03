@@ -11,6 +11,38 @@ WHERE workspace_id = sqlc.arg('workspace_id')
   AND agent_id = sqlc.arg('agent_id')
   AND status = 'active';
 
+-- name: GetReusableAgentEnterpriseIdentitySource :one
+SELECT *
+FROM agent_enterprise_identity
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND bound_by = sqlc.arg('bound_by')
+  AND raw_emp_id = sqlc.arg('raw_emp_id')
+  AND buc_agent_id = sqlc.arg('buc_agent_id')
+  AND buc_identity_source_runtime_id = ANY(sqlc.arg('runtime_ids')::uuid[])
+  AND buc_identity_source_sandbox_id IS NOT NULL
+  AND btrim(buc_identity_source_sandbox_id) <> ''
+  AND buc_identity_source_updated_at IS NOT NULL
+  AND status = 'active'
+ORDER BY buc_identity_source_updated_at DESC, id
+LIMIT 1;
+
+-- name: ListActiveAgentEnterpriseIdentitySourceReferences :many
+SELECT *
+FROM agent_enterprise_identity
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND buc_identity_source_runtime_id = sqlc.arg('runtime_id')
+  AND buc_identity_source_sandbox_id = sqlc.arg('sandbox_id')
+  AND status = 'active'
+ORDER BY id;
+
+-- name: CountActiveAgentEnterpriseIdentitySourceReferences :one
+SELECT count(*)
+FROM agent_enterprise_identity
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND buc_identity_source_runtime_id = sqlc.arg('runtime_id')
+  AND buc_identity_source_sandbox_id = sqlc.arg('sandbox_id')
+  AND status = 'active';
+
 -- name: ListActiveAgentEnterpriseIdentitiesByRuntime :many
 SELECT identity.*
 FROM agent_enterprise_identity AS identity
@@ -18,8 +50,10 @@ JOIN agent
   ON agent.id = identity.agent_id
  AND agent.workspace_id = identity.workspace_id
 WHERE identity.status = 'active'
-  AND identity.buc_identity_source_runtime_id = sqlc.arg('runtime_id')
-  AND agent.runtime_id = sqlc.arg('runtime_id')
+  AND (
+    identity.buc_identity_source_runtime_id = sqlc.arg('runtime_id')
+    OR agent.runtime_id = sqlc.arg('runtime_id')
+  )
 ORDER BY identity.id;
 
 -- name: UpsertAgentEnterpriseIdentity :one
@@ -49,7 +83,7 @@ SELECT
     sqlc.arg('agent_spiffe_id'),
     sqlc.arg('aip_id'),
     sqlc.arg('buc_identity_source_sandbox_id'),
-    agent.runtime_id,
+    sqlc.arg('buc_identity_source_runtime_id'),
     now(),
     sqlc.arg('authx_refresh_token_encrypted'),
     sqlc.arg('authx_refresh_expires_at'),
@@ -120,8 +154,10 @@ FROM agent
 WHERE identity.agent_id = agent.id
   AND identity.workspace_id = agent.workspace_id
   AND identity.status = 'active'
-  AND identity.buc_identity_source_runtime_id = sqlc.arg('runtime_id')
-  AND agent.runtime_id = sqlc.arg('runtime_id');
+  AND (
+    identity.buc_identity_source_runtime_id = sqlc.arg('runtime_id')
+    OR agent.runtime_id = sqlc.arg('runtime_id')
+  );
 
 -- name: ListAgentEnterpriseIdentitiesForMaintenance :many
 SELECT *
@@ -153,6 +189,31 @@ SET buc_identity_source_sandbox_id = sqlc.arg('buc_identity_source_sandbox_id'),
 WHERE id = sqlc.arg('id')
   AND buc_identity_source_sandbox_id = sqlc.arg('expected_source_sandbox_id')
   AND buc_identity_source_runtime_id = sqlc.arg('expected_source_runtime_id')
+  AND status = 'active'
+RETURNING *;
+
+-- name: TouchActiveAgentEnterpriseIdentitySourceReferences :execrows
+UPDATE agent_enterprise_identity
+SET buc_identity_source_updated_at = now(),
+    updated_at = now()
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND buc_identity_source_runtime_id = sqlc.arg('runtime_id')
+  AND buc_identity_source_sandbox_id = sqlc.arg('sandbox_id')
+  AND status = 'active';
+
+-- name: MarkAgentEnterpriseIdentitiesNeedsReauthBySource :many
+UPDATE agent_enterprise_identity
+SET status = 'needs_reauth',
+    buc_identity_source_sandbox_id = NULL,
+    buc_identity_source_runtime_id = NULL,
+    buc_identity_source_updated_at = NULL,
+    authx_refresh_token_encrypted = NULL,
+    authx_refresh_expires_at = NULL,
+    token_version = token_version + 1,
+    updated_at = now()
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND buc_identity_source_runtime_id = sqlc.arg('runtime_id')
+  AND buc_identity_source_sandbox_id = sqlc.arg('sandbox_id')
   AND status = 'active'
 RETURNING *;
 

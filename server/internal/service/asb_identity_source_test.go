@@ -199,11 +199,13 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 
 	source, err := manager.Create(
 		context.Background(),
-		runtimeID,
-		util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
-		util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
-		employeeID,
-		bucAgentID,
+		enterpriseIdentitySourceKey{
+			WorkspaceID:   util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+			BoundBy:       util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+			RuntimeID:     runtimeID,
+			RawEmployeeID: employeeID,
+			BUCAgentID:    bucAgentID,
+		},
 		BUCIdentityTokens{
 			AccessToken:  "buc-access",
 			RefreshToken: "buc-refresh",
@@ -253,7 +255,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	}
 }
 
-func TestASBIdentitySourceRenewalUsesAbsoluteCreationLimit(t *testing.T) {
+func TestASBIdentitySourceRenewalUsesRollingDeadline(t *testing.T) {
 	t.Parallel()
 
 	createdAt := time.Date(2026, time.July, 30, 14, 0, 0, 0, time.UTC)
@@ -264,21 +266,21 @@ func TestASBIdentitySourceRenewalUsesAbsoluteCreationLimit(t *testing.T) {
 	if !renew {
 		t.Fatal("asbIdentitySourceRenewal() renew = false, want true")
 	}
-	want := createdAt.Add(asbMaxRenewalDuration - time.Minute)
+	want := now.Add(asbMaxRenewalDuration - time.Minute)
 	if !expiresAt.Equal(want) {
 		t.Fatalf("expires_at = %s, want %s", expiresAt, want)
 	}
-	if expiresAt.Equal(now.Add(asbMaxRenewalDuration - time.Minute)) {
-		t.Fatal("renewal deadline incorrectly moved with the current time")
+	if !expiresAt.After(createdAt.Add(asbMaxRenewalDuration)) {
+		t.Fatal("renewal deadline did not move beyond the creation-relative limit")
 	}
 }
 
-func TestASBIdentitySourceRenewalDoesNotExtendPastExistingAbsoluteLimit(t *testing.T) {
+func TestASBIdentitySourceRenewalSkipsAnEqualRollingDeadline(t *testing.T) {
 	t.Parallel()
 
 	createdAt := time.Date(2026, time.July, 30, 14, 0, 0, 0, time.UTC)
 	now := createdAt.Add(24 * time.Hour)
-	existing := createdAt.Add(asbMaxRenewalDuration - time.Minute)
+	existing := now.Add(asbMaxRenewalDuration - time.Minute)
 	sandbox := &ASBSandbox{CreatedAt: createdAt, ExpiresAt: &existing}
 
 	expiresAt, renew := asbIdentitySourceRenewal(sandbox, now)

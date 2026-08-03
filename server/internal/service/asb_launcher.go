@@ -324,6 +324,7 @@ type ASBRuntimeArtifactUpdateResult struct {
 type ASBRuntimeCredentialUpdateResult struct {
 	APIKeyHint              string
 	InvalidatedSandboxCount int64
+	Quotas                  []ASBSandboxQuota
 }
 
 type ASBTaskIdentityResolver interface {
@@ -1209,7 +1210,8 @@ func (l *ASBLauncher) UpdateRuntimeAPIKey(
 	// Validate before taking the Runtime write lock. The quota endpoint is
 	// read-only and proves both key ownership and control-plane reachability
 	// without consuming a sandbox slot.
-	if err := l.Credentials.ValidateAPIKey(ctx, apiKey); err != nil {
+	quotas, err := l.Credentials.ValidateAPIKeyAndGetQuotas(ctx, apiKey)
+	if err != nil {
 		return ASBRuntimeCredentialUpdateResult{}, err
 	}
 	conn, err := l.Pool.Acquire(ctx)
@@ -1305,15 +1307,53 @@ func (l *ASBLauncher) UpdateRuntimeAPIKey(
 				)
 			}
 		}
+		type identitySourceCoordinate struct {
+			workspaceID pgtype.UUID
+			runtimeID   pgtype.UUID
+			sandboxID   string
+		}
+		affectedSourceReferences := make(
+			map[identitySourceCoordinate]int64,
+			len(activeIdentities),
+		)
 		for _, identity := range activeIdentities {
 			if !identity.BucIdentitySourceSandboxID.Valid ||
-				strings.TrimSpace(identity.BucIdentitySourceSandboxID.String) == "" {
+				strings.TrimSpace(identity.BucIdentitySourceSandboxID.String) == "" ||
+				!identity.BucIdentitySourceRuntimeID.Valid {
+				continue
+			}
+			coordinate := identitySourceCoordinate{
+				workspaceID: identity.WorkspaceID,
+				runtimeID:   identity.BucIdentitySourceRuntimeID,
+				sandboxID:   strings.TrimSpace(identity.BucIdentitySourceSandboxID.String),
+			}
+			affectedSourceReferences[coordinate]++
+		}
+		for coordinate, affectedReferences := range affectedSourceReferences {
+			activeReferences, err := qtx.CountActiveAgentEnterpriseIdentitySourceReferences(
+				ctx,
+				db.CountActiveAgentEnterpriseIdentitySourceReferencesParams{
+					WorkspaceID: coordinate.workspaceID,
+					RuntimeID:   coordinate.runtimeID,
+					SandboxID: pgtype.Text{
+						String: coordinate.sandboxID,
+						Valid:  true,
+					},
+				},
+			)
+			if err != nil {
+				return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf(
+					"count ASB enterprise identity source references before API key update: %w",
+					err,
+				)
+			}
+			if activeReferences > affectedReferences {
 				continue
 			}
 			if err := deleteASBSandboxIfExists(
 				ctx,
 				cleanupClient,
-				identity.BucIdentitySourceSandboxID.String,
+				coordinate.sandboxID,
 			); err != nil {
 				return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf(
 					"delete ASB enterprise identity source before API key update: %w",
@@ -1351,6 +1391,7 @@ func (l *ASBLauncher) UpdateRuntimeAPIKey(
 	return ASBRuntimeCredentialUpdateResult{
 		APIKeyHint:              credential.ApiKeyHint,
 		InvalidatedSandboxCount: invalidated,
+		Quotas:                  quotas,
 	}, nil
 }
 

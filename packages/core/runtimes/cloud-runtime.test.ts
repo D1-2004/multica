@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentRuntime } from "../types";
 import {
   fcE2BProviderForTemplate,
+  filterRuntimesForSandboxBackend,
   isASBRuntime,
   isCloudSandboxRuntime,
   isFCE2BRuntime,
@@ -183,6 +184,37 @@ describe("parseCloudSandboxRuntimeMetadata", () => {
         }),
       ),
     ).toBeNull();
+  });
+});
+
+describe("filterRuntimesForSandboxBackend", () => {
+  it("separates FC and ASB runtimes while retaining non-sandbox runtimes", () => {
+    const fc = makeRuntime({ id: "fc" });
+    const asb = makeRuntime({
+      id: "asb",
+      metadata: {
+        kind: "cloud-sandbox",
+        sandbox_backend: "asb",
+        provider: "hermes",
+        artifact_kind: "oci_image",
+        artifact_channel: "stable",
+        artifact_ref: "registry.example.test/asb@sha256:abc",
+        artifact_build_id: "build-1",
+        artifact_digest: "sha256:abc",
+      },
+    });
+    const local = makeRuntime({ id: "local", runtime_mode: "local" });
+
+    expect(
+      filterRuntimesForSandboxBackend([fc, asb, local], "aliyun_fc").map(
+        (runtime) => runtime.id,
+      ),
+    ).toEqual(["fc", "local"]);
+    expect(
+      filterRuntimesForSandboxBackend([fc, asb, local], "asb").map(
+        (runtime) => runtime.id,
+      ),
+    ).toEqual(["asb", "local"]);
   });
 });
 

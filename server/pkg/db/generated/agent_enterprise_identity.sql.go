@@ -151,6 +151,28 @@ func (q *Queries) ConsumeAgentEnterpriseIdentityAttempt(ctx context.Context, sta
 	return i, err
 }
 
+const countActiveAgentEnterpriseIdentitySourceReferences = `-- name: CountActiveAgentEnterpriseIdentitySourceReferences :one
+SELECT count(*)
+FROM agent_enterprise_identity
+WHERE workspace_id = $1
+  AND buc_identity_source_runtime_id = $2
+  AND buc_identity_source_sandbox_id = $3
+  AND status = 'active'
+`
+
+type CountActiveAgentEnterpriseIdentitySourceReferencesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+	SandboxID   pgtype.Text `json:"sandbox_id"`
+}
+
+func (q *Queries) CountActiveAgentEnterpriseIdentitySourceReferences(ctx context.Context, arg CountActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveAgentEnterpriseIdentitySourceReferences, arg.WorkspaceID, arg.RuntimeID, arg.SandboxID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAgentEnterpriseIdentityAttempt = `-- name: CreateAgentEnterpriseIdentityAttempt :one
 INSERT INTO agent_enterprise_identity_attempt (
     workspace_id,
@@ -314,6 +336,62 @@ func (q *Queries) GetAgentEnterpriseIdentity(ctx context.Context, arg GetAgentEn
 	return i, err
 }
 
+const getReusableAgentEnterpriseIdentitySource = `-- name: GetReusableAgentEnterpriseIdentitySource :one
+SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at
+FROM agent_enterprise_identity
+WHERE workspace_id = $1
+  AND bound_by = $2
+  AND raw_emp_id = $3
+  AND buc_agent_id = $4
+  AND buc_identity_source_runtime_id = ANY($5::uuid[])
+  AND buc_identity_source_sandbox_id IS NOT NULL
+  AND btrim(buc_identity_source_sandbox_id) <> ''
+  AND buc_identity_source_updated_at IS NOT NULL
+  AND status = 'active'
+ORDER BY buc_identity_source_updated_at DESC, id
+LIMIT 1
+`
+
+type GetReusableAgentEnterpriseIdentitySourceParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	BoundBy     pgtype.UUID   `json:"bound_by"`
+	RawEmpID    string        `json:"raw_emp_id"`
+	BucAgentID  string        `json:"buc_agent_id"`
+	RuntimeIds  []pgtype.UUID `json:"runtime_ids"`
+}
+
+func (q *Queries) GetReusableAgentEnterpriseIdentitySource(ctx context.Context, arg GetReusableAgentEnterpriseIdentitySourceParams) (AgentEnterpriseIdentity, error) {
+	row := q.db.QueryRow(ctx, getReusableAgentEnterpriseIdentitySource,
+		arg.WorkspaceID,
+		arg.BoundBy,
+		arg.RawEmpID,
+		arg.BucAgentID,
+		arg.RuntimeIds,
+	)
+	var i AgentEnterpriseIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.RawEmpID,
+		&i.DisplayName,
+		&i.BucAgentID,
+		&i.AgentSpiffeID,
+		&i.AipID,
+		&i.AuthxRefreshTokenEncrypted,
+		&i.AuthxRefreshExpiresAt,
+		&i.TokenVersion,
+		&i.Status,
+		&i.BoundBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BucIdentitySourceSandboxID,
+		&i.BucIdentitySourceRuntimeID,
+		&i.BucIdentitySourceUpdatedAt,
+	)
+	return i, err
+}
+
 const listActiveAgentEnterpriseIdentitiesByRuntime = `-- name: ListActiveAgentEnterpriseIdentitiesByRuntime :many
 SELECT identity.id, identity.workspace_id, identity.agent_id, identity.raw_emp_id, identity.display_name, identity.buc_agent_id, identity.agent_spiffe_id, identity.aip_id, identity.authx_refresh_token_encrypted, identity.authx_refresh_expires_at, identity.token_version, identity.status, identity.bound_by, identity.created_at, identity.updated_at, identity.buc_identity_source_sandbox_id, identity.buc_identity_source_runtime_id, identity.buc_identity_source_updated_at
 FROM agent_enterprise_identity AS identity
@@ -321,13 +399,70 @@ JOIN agent
   ON agent.id = identity.agent_id
  AND agent.workspace_id = identity.workspace_id
 WHERE identity.status = 'active'
-  AND identity.buc_identity_source_runtime_id = $1
-  AND agent.runtime_id = $1
+  AND (
+    identity.buc_identity_source_runtime_id = $1
+    OR agent.runtime_id = $1
+  )
 ORDER BY identity.id
 `
 
 func (q *Queries) ListActiveAgentEnterpriseIdentitiesByRuntime(ctx context.Context, runtimeID pgtype.UUID) ([]AgentEnterpriseIdentity, error) {
 	rows, err := q.db.Query(ctx, listActiveAgentEnterpriseIdentitiesByRuntime, runtimeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentEnterpriseIdentity{}
+	for rows.Next() {
+		var i AgentEnterpriseIdentity
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AgentID,
+			&i.RawEmpID,
+			&i.DisplayName,
+			&i.BucAgentID,
+			&i.AgentSpiffeID,
+			&i.AipID,
+			&i.AuthxRefreshTokenEncrypted,
+			&i.AuthxRefreshExpiresAt,
+			&i.TokenVersion,
+			&i.Status,
+			&i.BoundBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.BucIdentitySourceSandboxID,
+			&i.BucIdentitySourceRuntimeID,
+			&i.BucIdentitySourceUpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActiveAgentEnterpriseIdentitySourceReferences = `-- name: ListActiveAgentEnterpriseIdentitySourceReferences :many
+SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at
+FROM agent_enterprise_identity
+WHERE workspace_id = $1
+  AND buc_identity_source_runtime_id = $2
+  AND buc_identity_source_sandbox_id = $3
+  AND status = 'active'
+ORDER BY id
+`
+
+type ListActiveAgentEnterpriseIdentitySourceReferencesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+	SandboxID   pgtype.Text `json:"sandbox_id"`
+}
+
+func (q *Queries) ListActiveAgentEnterpriseIdentitySourceReferences(ctx context.Context, arg ListActiveAgentEnterpriseIdentitySourceReferencesParams) ([]AgentEnterpriseIdentity, error) {
+	rows, err := q.db.Query(ctx, listActiveAgentEnterpriseIdentitySourceReferences, arg.WorkspaceID, arg.RuntimeID, arg.SandboxID)
 	if err != nil {
 		return nil, err
 	}
@@ -436,8 +571,10 @@ FROM agent
 WHERE identity.agent_id = agent.id
   AND identity.workspace_id = agent.workspace_id
   AND identity.status = 'active'
-  AND identity.buc_identity_source_runtime_id = $1
-  AND agent.runtime_id = $1
+  AND (
+    identity.buc_identity_source_runtime_id = $1
+    OR agent.runtime_id = $1
+  )
 `
 
 func (q *Queries) MarkAgentEnterpriseIdentitiesNeedsReauthByRuntime(ctx context.Context, runtimeID pgtype.UUID) (int64, error) {
@@ -446,6 +583,68 @@ func (q *Queries) MarkAgentEnterpriseIdentitiesNeedsReauthByRuntime(ctx context.
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const markAgentEnterpriseIdentitiesNeedsReauthBySource = `-- name: MarkAgentEnterpriseIdentitiesNeedsReauthBySource :many
+UPDATE agent_enterprise_identity
+SET status = 'needs_reauth',
+    buc_identity_source_sandbox_id = NULL,
+    buc_identity_source_runtime_id = NULL,
+    buc_identity_source_updated_at = NULL,
+    authx_refresh_token_encrypted = NULL,
+    authx_refresh_expires_at = NULL,
+    token_version = token_version + 1,
+    updated_at = now()
+WHERE workspace_id = $1
+  AND buc_identity_source_runtime_id = $2
+  AND buc_identity_source_sandbox_id = $3
+  AND status = 'active'
+RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at
+`
+
+type MarkAgentEnterpriseIdentitiesNeedsReauthBySourceParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+	SandboxID   pgtype.Text `json:"sandbox_id"`
+}
+
+func (q *Queries) MarkAgentEnterpriseIdentitiesNeedsReauthBySource(ctx context.Context, arg MarkAgentEnterpriseIdentitiesNeedsReauthBySourceParams) ([]AgentEnterpriseIdentity, error) {
+	rows, err := q.db.Query(ctx, markAgentEnterpriseIdentitiesNeedsReauthBySource, arg.WorkspaceID, arg.RuntimeID, arg.SandboxID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentEnterpriseIdentity{}
+	for rows.Next() {
+		var i AgentEnterpriseIdentity
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AgentID,
+			&i.RawEmpID,
+			&i.DisplayName,
+			&i.BucAgentID,
+			&i.AgentSpiffeID,
+			&i.AipID,
+			&i.AuthxRefreshTokenEncrypted,
+			&i.AuthxRefreshExpiresAt,
+			&i.TokenVersion,
+			&i.Status,
+			&i.BoundBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.BucIdentitySourceSandboxID,
+			&i.BucIdentitySourceRuntimeID,
+			&i.BucIdentitySourceUpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markAgentEnterpriseIdentityNeedsReauth = `-- name: MarkAgentEnterpriseIdentityNeedsReauth :execrows
@@ -523,6 +722,30 @@ func (q *Queries) RevokeAgentEnterpriseIdentity(ctx context.Context, arg RevokeA
 	return i, err
 }
 
+const touchActiveAgentEnterpriseIdentitySourceReferences = `-- name: TouchActiveAgentEnterpriseIdentitySourceReferences :execrows
+UPDATE agent_enterprise_identity
+SET buc_identity_source_updated_at = now(),
+    updated_at = now()
+WHERE workspace_id = $1
+  AND buc_identity_source_runtime_id = $2
+  AND buc_identity_source_sandbox_id = $3
+  AND status = 'active'
+`
+
+type TouchActiveAgentEnterpriseIdentitySourceReferencesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+	SandboxID   pgtype.Text `json:"sandbox_id"`
+}
+
+func (q *Queries) TouchActiveAgentEnterpriseIdentitySourceReferences(ctx context.Context, arg TouchActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, touchActiveAgentEnterpriseIdentitySourceReferences, arg.WorkspaceID, arg.RuntimeID, arg.SandboxID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertAgentEnterpriseIdentity = `-- name: UpsertAgentEnterpriseIdentity :one
 INSERT INTO agent_enterprise_identity (
     workspace_id,
@@ -550,13 +773,13 @@ SELECT
     $6,
     $7,
     $8,
-    agent.runtime_id,
-    now(),
     $9,
+    now(),
     $10,
+    $11,
     1,
     'active',
-    $11
+    $12
 FROM agent
 WHERE agent.id = $2
   AND agent.workspace_id = $1
@@ -588,6 +811,7 @@ type UpsertAgentEnterpriseIdentityParams struct {
 	AgentSpiffeID              string             `json:"agent_spiffe_id"`
 	AipID                      string             `json:"aip_id"`
 	BucIdentitySourceSandboxID pgtype.Text        `json:"buc_identity_source_sandbox_id"`
+	BucIdentitySourceRuntimeID pgtype.UUID        `json:"buc_identity_source_runtime_id"`
 	AuthxRefreshTokenEncrypted []byte             `json:"authx_refresh_token_encrypted"`
 	AuthxRefreshExpiresAt      pgtype.Timestamptz `json:"authx_refresh_expires_at"`
 	BoundBy                    pgtype.UUID        `json:"bound_by"`
@@ -603,6 +827,7 @@ func (q *Queries) UpsertAgentEnterpriseIdentity(ctx context.Context, arg UpsertA
 		arg.AgentSpiffeID,
 		arg.AipID,
 		arg.BucIdentitySourceSandboxID,
+		arg.BucIdentitySourceRuntimeID,
 		arg.AuthxRefreshTokenEncrypted,
 		arg.AuthxRefreshExpiresAt,
 		arg.BoundBy,

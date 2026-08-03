@@ -121,6 +121,23 @@
       "unknown_template": "未知模板",
       "change_template": "修改模板"
     },
+    "asb_credential": {
+      "title": "ASB 凭证与额度",
+      "loading": "正在读取凭证与额度...",
+      "configured_key": "当前 API Key",
+      "not_configured": "尚未配置 API Key",
+      "current_quota": "当前额度",
+      "load_failed": "无法读取 ASB 凭证或额度",
+      "retry": "重试",
+      "replace_label": "更新 ASB API Key",
+      "replace_placeholder": "输入新的 API Key",
+      "warning": "更新 Key 会终止此 Runtime 现有的 ASB 沙箱，并使关联员工身份需要重新授权。",
+      "save": "保存新 Key",
+      "saving": "保存中...",
+      "updated": "ASB API Key 已更新",
+      "updated_with_invalidated": "ASB API Key 已更新，已失效 {{count}} 个沙箱",
+      "update_failed": "更新 ASB API Key 失败"
+    },
     "visibility_label": {
       "private": "私有",
       "public": "公开"

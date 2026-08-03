@@ -121,6 +121,23 @@
       "unknown_template": "不明なテンプレート",
       "change_template": "テンプレートを変更"
     },
+    "asb_credential": {
+      "title": "ASB 認証情報とクォータ",
+      "loading": "認証情報とクォータを読み込み中...",
+      "configured_key": "現在の API Key",
+      "not_configured": "API Key が設定されていません",
+      "current_quota": "現在のクォータ",
+      "load_failed": "ASB 認証情報またはクォータを取得できません",
+      "retry": "再試行",
+      "replace_label": "ASB API Key を更新",
+      "replace_placeholder": "新しい API Key を入力",
+      "warning": "Key を更新すると、この Runtime の既存 ASB サンドボックスが終了し、関連する従業員 ID の再認証が必要になります。",
+      "save": "新しい Key を保存",
+      "saving": "保存中...",
+      "updated": "ASB API Key を更新しました",
+      "updated_with_invalidated": "ASB API Key を更新し、{{count}} 個のサンドボックスを無効化しました",
+      "update_failed": "ASB API Key の更新に失敗しました"
+    },
     "visibility_label": {
       "private": "非公開",
       "public": "公開"

@@ -108,6 +108,16 @@ describe("ApiClient", () => {
           JSON.stringify({
             configured: true,
             api_key_hint: "1234",
+            quotas: [
+              {
+                network_zone: "ALITest",
+                region: "cn-zhangjiakou",
+                quota: 5,
+                usage: 1,
+                remaining: 4,
+                volume_usage_gib: 0,
+              },
+            ],
             updated_at: 1799200000,
           }),
           {
@@ -121,6 +131,16 @@ describe("ApiClient", () => {
           JSON.stringify({
             configured: true,
             api_key_hint: "5678",
+            quotas: [
+              {
+                network_zone: "ALITest",
+                region: "cn-zhangjiakou",
+                quota: 5,
+                usage: 2,
+                remaining: 3,
+                volume_usage_gib: 0,
+              },
+            ],
             invalidated_sandbox_count: 2,
           }),
           {
@@ -180,6 +200,7 @@ describe("ApiClient", () => {
     ).resolves.toMatchObject({
       configured: true,
       api_key_hint: "1234",
+      quotas: [{ quota: 5, usage: 1, remaining: 4 }],
     });
     await expect(
       client.updateASBRuntimeCredential("runtime/1", {
@@ -188,6 +209,7 @@ describe("ApiClient", () => {
     ).resolves.toMatchObject({
       configured: true,
       api_key_hint: "5678",
+      quotas: [{ quota: 5, usage: 2, remaining: 3 }],
       invalidated_sandbox_count: 2,
     });
     await client.updateCloudSandboxRuntimeArtifact("runtime/1", {

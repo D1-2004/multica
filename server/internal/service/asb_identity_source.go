@@ -23,11 +23,7 @@ type EnterpriseIdentitySourceAvailability struct {
 type EnterpriseIdentitySource interface {
 	Create(
 		context.Context,
-		pgtype.UUID,
-		pgtype.UUID,
-		pgtype.UUID,
-		string,
-		string,
+		enterpriseIdentitySourceKey,
 		BUCIdentityTokens,
 	) (EnterpriseIdentitySourceAvailability, error)
 	Prepare(context.Context, pgtype.UUID, string, string, string) error
@@ -54,11 +50,7 @@ type ASBIdentitySourceManager struct {
 
 func (m *ASBIdentitySourceManager) Create(
 	ctx context.Context,
-	runtimeID pgtype.UUID,
-	workspaceID pgtype.UUID,
-	agentID pgtype.UUID,
-	employeeID string,
-	bucAgentID string,
+	key enterpriseIdentitySourceKey,
 	tokens BUCIdentityTokens,
 ) (EnterpriseIdentitySourceAvailability, error) {
 	if m == nil || m.Store == nil || m.Credentials == nil || m.Capacity == nil {
@@ -66,6 +58,10 @@ func (m *ASBIdentitySourceManager) Create(
 			"ASB enterprise identity source manager is unavailable",
 		)
 	}
+	if err := key.validate(); err != nil {
+		return EnterpriseIdentitySourceAvailability{}, err
+	}
+	runtimeID := key.RuntimeID
 	runtime, err := m.Store.GetAgentRuntime(ctx, runtimeID)
 	if err != nil {
 		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
@@ -91,8 +87,8 @@ func (m *ASBIdentitySourceManager) Create(
 		Entrypoint:     []string{"sleep infinity"},
 		Metadata: map[string]string{
 			"multica.identity_source": "true",
-			"multica.workspace_id":    util.UUIDToString(workspaceID),
-			"multica.agent_id":        util.UUIDToString(agentID),
+			"multica.workspace_id":    util.UUIDToString(key.WorkspaceID),
+			"multica.subject_key":     enterpriseIdentitySourceFingerprint(key),
 			"multica.runtime_id":      util.UUIDToString(runtimeID),
 		},
 		Extensions: map[string]string{
@@ -130,8 +126,8 @@ func (m *ASBIdentitySourceManager) Create(
 		ctx,
 		client,
 		sandbox.ID,
-		employeeID,
-		bucAgentID,
+		key.RawEmployeeID,
+		key.BUCAgentID,
 		tokens,
 		m.Config.WireGuardCredentials,
 		m.Config.WireGuardReadyTimeout,
@@ -150,7 +146,7 @@ func (m *ASBIdentitySourceManager) Create(
 	slog.Info(
 		"running ASB enterprise identity source established",
 		"runtime_id", util.UUIDToString(runtimeID),
-		"agent_id", util.UUIDToString(agentID),
+		"subject_key", enterpriseIdentitySourceFingerprint(key),
 		"sandbox_id", sandbox.ID,
 		"running_quota_retained", true,
 	)
@@ -492,26 +488,19 @@ func renewASBIdentitySource(
 
 const asbIdentitySourceRenewalSafetyMargin = time.Minute
 
-// ASB bounds a sandbox's lifetime from CreatedAt, not from each renewal call.
-// Keep the exact deadline calculation used by the prepub anchor flow that
-// completed real BUC and a1 tasks on 2026-07-30.
+// ASB calculates each renewal deadline from the renewal request time. Renew to
+// just below the documented seven-day request limit so periodic maintenance
+// keeps a healthy identity source alive without hitting a boundary condition.
 func asbIdentitySourceRenewal(
 	sandbox *ASBSandbox,
 	now time.Time,
 ) (time.Time, bool) {
-	if sandbox == nil || sandbox.CreatedAt.IsZero() {
+	if sandbox == nil || now.IsZero() {
 		return time.Time{}, false
 	}
-	expiresAt := now.Add(asbMaxRenewalDuration)
-	maxExpiresAt := sandbox.CreatedAt.Add(
+	expiresAt := now.Add(
 		asbMaxRenewalDuration - asbIdentitySourceRenewalSafetyMargin,
 	)
-	if expiresAt.After(maxExpiresAt) {
-		expiresAt = maxExpiresAt
-	}
-	if !expiresAt.After(now) {
-		return expiresAt, false
-	}
 	if sandbox.ExpiresAt != nil && !expiresAt.After(*sandbox.ExpiresAt) {
 		return expiresAt, false
 	}

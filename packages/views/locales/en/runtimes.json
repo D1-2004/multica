@@ -126,6 +126,23 @@
       "unknown_template": "Unknown template",
       "change_template": "Change template"
     },
+    "asb_credential": {
+      "title": "ASB credential and quota",
+      "loading": "Loading credential and quota...",
+      "configured_key": "Current API Key",
+      "not_configured": "No API Key configured",
+      "current_quota": "Current quota",
+      "load_failed": "Unable to load the ASB credential or quota",
+      "retry": "Retry",
+      "replace_label": "Update ASB API Key",
+      "replace_placeholder": "Enter a new API Key",
+      "warning": "Updating the key terminates this Runtime's existing ASB sandboxes and requires associated employee identities to be authorized again.",
+      "save": "Save new key",
+      "saving": "Saving...",
+      "updated": "ASB API Key updated",
+      "updated_with_invalidated": "ASB API Key updated; {{count}} sandboxes invalidated",
+      "update_failed": "Failed to update the ASB API Key"
+    },
     "visibility_label": {
       "private": "Private",
       "public": "Public"

@@ -551,6 +551,7 @@ func (h *Handler) GetASBRuntimeCredential(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, map[string]any{
 			"configured":   false,
 			"api_key_hint": "",
+			"quotas":       []asbRuntimeQuotaResponse{},
 			"updated_at":   nil,
 		})
 		return
@@ -560,11 +561,45 @@ func (h *Handler) GetASBRuntimeCredential(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to load ASB Runtime credential status")
 		return
 	}
+	client, err := h.ASBLauncher.Credentials.ClientForRuntime(r.Context(), runtimeUUID)
+	if err != nil {
+		slog.Error("ASB Runtime credential client creation failed", "runtime_id", runtimeID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to load ASB Runtime quota")
+		return
+	}
+	quotas, err := client.ListQuotas(r.Context())
+	if err != nil {
+		slog.Warn("ASB Runtime quota lookup failed", "runtime_id", runtimeID, "error", err)
+		writeError(w, http.StatusServiceUnavailable, "failed to load ASB Runtime quota")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"configured":   true,
 		"api_key_hint": credential.ApiKeyHint,
+		"quotas":       asbRuntimeQuotaResponses(quotas),
 		"updated_at":   credential.UpdatedAt.Time.Unix(),
 	})
+}
+
+func asbRuntimeQuotaResponses(quotas []service.ASBSandboxQuota) []asbRuntimeQuotaResponse {
+	response := make([]asbRuntimeQuotaResponse, 0, len(quotas))
+	for _, quota := range quotas {
+		remaining := quota.Quota - quota.Usage
+		if remaining < 0 {
+			remaining = 0
+		}
+		response = append(response, asbRuntimeQuotaResponse{
+			NetworkZone:        quota.NetworkZone,
+			Region:             quota.Region,
+			Quota:              quota.Quota,
+			Usage:              quota.Usage,
+			Remaining:          remaining,
+			AlertPercentage:    quota.AlertPercentage,
+			VolumeSizeQuotaGiB: quota.VolumeSizeQuotaGiB,
+			VolumeUsageGiB:     quota.VolumeUsageGiB,
+		})
+	}
+	return response
 }
 
 func (h *Handler) ValidateASBRuntimeCredential(w http.ResponseWriter, r *http.Request) {
@@ -606,26 +641,9 @@ func (h *Handler) ValidateASBRuntimeCredential(w http.ResponseWriter, r *http.Re
 		writeASBAPIKeyValidationError(w, "", err)
 		return
 	}
-	response := make([]asbRuntimeQuotaResponse, 0, len(quotas))
-	for _, quota := range quotas {
-		remaining := quota.Quota - quota.Usage
-		if remaining < 0 {
-			remaining = 0
-		}
-		response = append(response, asbRuntimeQuotaResponse{
-			NetworkZone:        quota.NetworkZone,
-			Region:             quota.Region,
-			Quota:              quota.Quota,
-			Usage:              quota.Usage,
-			Remaining:          remaining,
-			AlertPercentage:    quota.AlertPercentage,
-			VolumeSizeQuotaGiB: quota.VolumeSizeQuotaGiB,
-			VolumeUsageGiB:     quota.VolumeUsageGiB,
-		})
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"valid":  true,
-		"quotas": response,
+		"quotas": asbRuntimeQuotaResponses(quotas),
 	})
 }
 
@@ -700,6 +718,7 @@ func (h *Handler) UpdateASBRuntimeCredential(w http.ResponseWriter, r *http.Requ
 		"configured":                true,
 		"api_key_hint":              result.APIKeyHint,
 		"invalidated_sandbox_count": result.InvalidatedSandboxCount,
+		"quotas":                    asbRuntimeQuotaResponses(result.Quotas),
 	})
 }
 

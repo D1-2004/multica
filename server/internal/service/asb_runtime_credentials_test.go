@@ -120,7 +120,7 @@ func TestASBRuntimeCredentialIsEncryptedAndResolvedPerRuntime(t *testing.T) {
 	}
 }
 
-func TestASBRuntimeCredentialFindsRuntimesSharingExactAPIKey(t *testing.T) {
+func TestASBRuntimeCredentialResolvesSharedTenantScope(t *testing.T) {
 	t.Parallel()
 
 	box, err := secretbox.New(bytes.Repeat([]byte{0x41}, secretbox.KeySize))
@@ -162,17 +162,18 @@ func TestASBRuntimeCredentialFindsRuntimesSharingExactAPIKey(t *testing.T) {
 		},
 	}
 	provider := &ASBRuntimeClientProvider{Store: store, Secrets: box}
-	runtimeIDs, err := provider.RuntimeIDsSharingAPIKey(
+	scope, err := provider.RuntimeCredentialScope(
 		context.Background(),
 		runtimeA,
 	)
 	if err != nil {
-		t.Fatalf("RuntimeIDsSharingAPIKey: %v", err)
+		t.Fatalf("RuntimeCredentialScope: %v", err)
 	}
-	if len(runtimeIDs) != 2 ||
-		runtimeIDs[0] != runtimeA ||
-		runtimeIDs[1] != runtimeB {
-		t.Fatalf("matching Runtime IDs = %#v", runtimeIDs)
+	if scope.LockKey != asbAPIKeyCapacityLockKey("shared-tenant-key") ||
+		len(scope.RuntimeIDs) != 2 ||
+		scope.RuntimeIDs[0] != runtimeA ||
+		scope.RuntimeIDs[1] != runtimeB {
+		t.Fatalf("tenant credential scope = %#v", scope)
 	}
 }
 
