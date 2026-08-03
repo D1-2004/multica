@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -321,6 +322,10 @@ type ASBRuntimeCredentialUpdateResult struct {
 	InvalidatedSandboxCount int64
 	Quotas                  []ASBSandboxQuota
 }
+
+var ErrASBRuntimeHasActiveTaskSandboxes = errors.New(
+	"ASB Runtime has active task sandboxes; wait for tasks to finish before updating the API key",
+)
 
 type ASBTaskIdentityResolver interface {
 	ResolveASBTaskIdentity(
@@ -707,6 +712,15 @@ func (l *ASBLauncher) resolveSandbox(
 				l.deleteASBSandboxAfterIdentityFailure(session.SandboxID)
 			}
 		}
+		if err := l.deleteSupersededASBSandboxForScope(
+			ctx,
+			runtime,
+			scope,
+			excludedTaskID,
+			identity.Fingerprint,
+		); err != nil {
+			return "", false, ASBResolvedIdentity{}, err
+		}
 	}
 
 	for {
@@ -819,6 +833,101 @@ func (l *ASBLauncher) resolveSandbox(
 		)
 		return sandbox.ID, true, identity, nil
 	}
+}
+
+// deleteSupersededASBSandboxForScope removes the control-plane sandbox that
+// belongs to the same logical scope but no longer matches the current
+// artifact, identity, or expiry requirements. UpsertCloudSandboxSession uses
+// one row per scope and identity; deleting first prevents that upsert from
+// losing the only handle to a still-running ASB instance.
+func (l *ASBLauncher) deleteSupersededASBSandboxForScope(
+	ctx context.Context,
+	runtime db.AgentRuntime,
+	scope fcE2BTaskScope,
+	excludedTaskID pgtype.UUID,
+	identityFingerprint string,
+) error {
+	sessions, err := l.Queries.ListActiveCloudSandboxSessionsByRuntimeAndBackend(
+		ctx,
+		db.ListActiveCloudSandboxSessionsByRuntimeAndBackendParams{
+			RuntimeID:      runtime.ID,
+			SandboxBackend: string(SandboxBackendASB),
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("list superseded ASB sandbox sessions: %w", err)
+	}
+	var superseded *db.FcE2bSandboxSession
+	for index := range sessions {
+		session := &sessions[index]
+		if session.ScopeType == scope.typ &&
+			session.ScopeID == scope.id &&
+			session.IdentityFingerprint == identityFingerprint {
+			superseded = session
+			break
+		}
+	}
+	if superseded == nil {
+		return nil
+	}
+	runtimeIDs, err := l.Credentials.RuntimeIDsSharingAPIKey(ctx, runtime.ID)
+	if err != nil {
+		return fmt.Errorf("resolve ASB tenant scope for superseded sandbox: %w", err)
+	}
+	idleSessions, err := l.Queries.ListIdleASBSandboxSessionsByRuntimes(
+		ctx,
+		db.ListIdleASBSandboxSessionsByRuntimesParams{
+			RuntimeIds:     runtimeIDs,
+			ExcludedTaskID: excludedTaskID,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("check superseded ASB sandbox usage: %w", err)
+	}
+	idle := false
+	for _, candidate := range idleSessions {
+		if candidate.ID == superseded.ID &&
+			candidate.SandboxID == superseded.SandboxID {
+			idle = true
+			break
+		}
+	}
+	if !idle {
+		return errors.New("superseded ASB sandbox is still processing a task")
+	}
+	live, exists, err := getLiveASBSandbox(ctx, l.Client, superseded.SandboxID)
+	if err != nil {
+		return fmt.Errorf("query superseded ASB sandbox: %w", err)
+	}
+	if exists && !isTerminalASBSandboxState(live.Status.State) {
+		if err := l.Client.DeleteSandbox(ctx, superseded.SandboxID); err != nil {
+			return fmt.Errorf("delete superseded ASB sandbox: %w", err)
+		}
+		if err := waitForASBCapacityRelease(ctx, l.Client, superseded.SandboxID); err != nil {
+			return err
+		}
+	}
+	if err := l.Queries.MarkCloudSandboxSessionStale(
+		ctx,
+		db.MarkCloudSandboxSessionStaleParams{
+			RuntimeID:           superseded.RuntimeID,
+			ScopeType:           superseded.ScopeType,
+			ScopeID:             superseded.ScopeID,
+			SandboxID:           superseded.SandboxID,
+			SandboxBackend:      string(SandboxBackendASB),
+			IdentityFingerprint: superseded.IdentityFingerprint,
+		},
+	); err != nil {
+		return fmt.Errorf("mark superseded ASB sandbox stale: %w", err)
+	}
+	slog.Info(
+		"deleted superseded ASB task sandbox before replacement",
+		"runtime_id", util.UUIDToString(runtime.ID),
+		"sandbox_id", superseded.SandboxID,
+		"scope_type", superseded.ScopeType,
+		"scope_id", util.UUIDToString(superseded.ScopeID),
+	)
+	return nil
 }
 
 func (l *ASBLauncher) deleteASBSandboxAfterIdentityFailure(sandboxID string) {
@@ -1356,11 +1465,20 @@ func (l *ASBLauncher) UpdateRuntimeAPIKey(
 	}
 	capacityKeys := []int32{newClient.capacityLockKey}
 	var cleanupClient *ASBClient
+	sameCredential := false
 	currentCredential, currentCredentialErr := qtx.GetASBRuntimeCredential(
 		ctx,
 		runtimeID,
 	)
 	if currentCredentialErr == nil {
+		currentPlain, openErr := l.Credentials.Secrets.Open(currentCredential.ApiKeyEncrypted)
+		if openErr != nil {
+			return ASBRuntimeCredentialUpdateResult{}, errors.New("decrypt current ASB Runtime API key")
+		}
+		newPlain := []byte(strings.TrimSpace(apiKey))
+		sameCredential = len(currentPlain) == len(newPlain) &&
+			subtle.ConstantTimeCompare(currentPlain, newPlain) == 1
+		clear(currentPlain)
 		cleanupClient, err = l.Credentials.clientForCredential(currentCredential)
 		if err != nil {
 			return ASBRuntimeCredentialUpdateResult{}, err
@@ -1379,6 +1497,18 @@ func (l *ASBLauncher) UpdateRuntimeAPIKey(
 	); err != nil {
 		return ASBRuntimeCredentialUpdateResult{}, err
 	}
+	if sameCredential {
+		if err := tx.Commit(ctx); err != nil {
+			return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf(
+				"commit idempotent ASB API key update: %w",
+				err,
+			)
+		}
+		return ASBRuntimeCredentialUpdateResult{
+			APIKeyHint: currentCredential.ApiKeyHint,
+			Quotas:     quotas,
+		}, nil
+	}
 	activeSessions, err := qtx.ListActiveCloudSandboxSessionsByRuntimeAndBackend(
 		ctx,
 		db.ListActiveCloudSandboxSessionsByRuntimeAndBackendParams{
@@ -1388,6 +1518,30 @@ func (l *ASBLauncher) UpdateRuntimeAPIKey(
 	)
 	if err != nil {
 		return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf("list ASB sandboxes before API key update: %w", err)
+	}
+	if len(activeSessions) > 0 {
+		idleSessions, err := qtx.ListIdleASBSandboxSessionsByRuntimes(
+			ctx,
+			db.ListIdleASBSandboxSessionsByRuntimesParams{
+				RuntimeIds:     []pgtype.UUID{runtimeID},
+				ExcludedTaskID: pgtype.UUID{},
+			},
+		)
+		if err != nil {
+			return ASBRuntimeCredentialUpdateResult{}, fmt.Errorf(
+				"check ASB sandbox usage before API key update: %w",
+				err,
+			)
+		}
+		idleIDs := make(map[pgtype.UUID]struct{}, len(idleSessions))
+		for _, session := range idleSessions {
+			idleIDs[session.ID] = struct{}{}
+		}
+		for _, session := range activeSessions {
+			if _, idle := idleIDs[session.ID]; !idle {
+				return ASBRuntimeCredentialUpdateResult{}, ErrASBRuntimeHasActiveTaskSandboxes
+			}
+		}
 	}
 	activeIdentities, err := qtx.ListActiveAgentEnterpriseIdentitiesByRuntime(ctx, runtimeID)
 	if err != nil {

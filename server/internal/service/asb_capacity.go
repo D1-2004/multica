@@ -379,7 +379,7 @@ func isIdleASBSandboxCandidate(
 	for _, current := range candidates {
 		if current.ID == candidate.ID &&
 			current.SandboxID == candidate.SandboxID &&
-			current.Status == "running" {
+			(current.Status == "running" || current.Status == "stale") {
 			return true, nil
 		}
 	}

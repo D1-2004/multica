@@ -695,6 +695,8 @@ func (h *Handler) UpdateASBRuntimeCredential(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusNotFound, "runtime not found")
 		case errors.Is(err, service.ErrCloudSandboxRuntimeRequired):
 			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, service.ErrASBRuntimeHasActiveTaskSandboxes):
+			writeError(w, http.StatusConflict, err.Error())
 		default:
 			var validationErr *service.ASBAPIKeyValidationError
 			if errors.As(err, &validationErr) {

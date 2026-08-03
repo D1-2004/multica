@@ -104,7 +104,7 @@ SELECT *
 FROM fc_e2b_sandbox_session
 WHERE runtime_id = sqlc.arg('runtime_id')
   AND sandbox_backend = sqlc.arg('sandbox_backend')
-  AND status = 'running'
+  AND status IN ('running', 'stale')
 ORDER BY updated_at, sandbox_id;
 
 -- name: ListIdleASBSandboxSessionsByRuntimes :many
@@ -112,7 +112,10 @@ SELECT session.*
 FROM fc_e2b_sandbox_session AS session
 WHERE session.runtime_id = ANY(sqlc.arg('runtime_ids')::uuid[])
   AND session.sandbox_backend = 'asb'
-  AND session.status = 'running'
+  -- A Runtime artifact or API-key rotation marks the database row stale
+  -- before the old ASB instance actually exits. Keep that resource visible
+  -- to the quota reclaimer until the control-plane sandbox is deleted.
+  AND session.status IN ('running', 'stale')
   AND NOT EXISTS (
       SELECT 1
       FROM agent_task_queue AS task

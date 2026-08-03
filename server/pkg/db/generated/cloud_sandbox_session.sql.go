@@ -124,7 +124,7 @@ SELECT id, workspace_id, runtime_id, scope_type, scope_id, sandbox_id, template,
 FROM fc_e2b_sandbox_session
 WHERE runtime_id = $1
   AND sandbox_backend = $2
-  AND status = 'running'
+  AND status IN ('running', 'stale')
 ORDER BY updated_at, sandbox_id
 `
 
@@ -174,7 +174,10 @@ SELECT session.id, session.workspace_id, session.runtime_id, session.scope_type,
 FROM fc_e2b_sandbox_session AS session
 WHERE session.runtime_id = ANY($1::uuid[])
   AND session.sandbox_backend = 'asb'
-  AND session.status = 'running'
+  -- A Runtime artifact or API-key rotation marks the database row stale
+  -- before the old ASB instance actually exits. Keep that resource visible
+  -- to the quota reclaimer until the control-plane sandbox is deleted.
+  AND session.status IN ('running', 'stale')
   AND NOT EXISTS (
       SELECT 1
       FROM agent_task_queue AS task
