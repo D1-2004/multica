@@ -136,6 +136,28 @@ func TestWorkspaceAccessAuthFailsClosedByOperationAndCapability(t *testing.T) {
 	}
 }
 
+func TestWorkspaceAccessAuthAllowsDingTalkBindingWithoutDeploymentCapability(t *testing.T) {
+	queries, fixture := setupWorkspaceAccessAuthFixture(t, []string{"trace.read"})
+	nextCalled := false
+	handler := Auth(queries, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nextCalled = true
+		principal, ok := WorkspaceAccessPrincipalFromContext(r.Context())
+		if !ok || len(principal.Capabilities) != 1 || principal.Capabilities[0] != "trace.read" {
+			t.Fatalf("principal = %+v, want trace-only token", principal)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/"+fixture.workspaceID+"/dingtalk/account-bindings", nil)
+	req.Header.Set("Authorization", "Bearer "+fixture.rawToken)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if !nextCalled || rec.Code != http.StatusNoContent {
+		t.Fatalf("next called=%v status=%d body=%s", nextCalled, rec.Code, rec.Body.String())
+	}
+}
+
 func TestWorkspaceAccessAuthExpiryAndRevokeApplyOnNextRequest(t *testing.T) {
 	queries, fixture := setupWorkspaceAccessAuthFixture(t, []string{"trace.read"})
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })

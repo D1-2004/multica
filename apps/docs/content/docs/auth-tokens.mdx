@@ -37,6 +37,8 @@ A workspace owner manages these under **Settings → DTA Access**. Each token ha
 
 - **Permissions**: create/update deployments, retire deployments, and read task traces. Owners can select any combination.
 
+DingTalk robot and existing digital-employee binding, listing, and removal are baseline capabilities for every valid DTA token. They do not add another permission switch and are not controlled by the three permissions above. A token can still see and operate only bindings for agents owned by its stable internal subject.
+
 Create a separate token for each external operator that needs different permissions. Every token is permanently bound to one workspace and follows Multica's native ownership rules: it can manage only agents and skills owned by its stable internal subject, while human workspace owners/admins retain their normal governance visibility. Changing a token's permissions applies on its next request. Revoking it immediately blocks that operator without deleting its agents or trace history.
 
 <Callout type="warning">

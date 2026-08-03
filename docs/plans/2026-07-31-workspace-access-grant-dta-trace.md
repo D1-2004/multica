@@ -4,18 +4,18 @@
 > 状态：已完成（仅 Multica 范围）
 > 创建日期：2026-07-31
 > 计划 ID：20260731-workspace-access-grant-dta-trace
-> 最后更新时间：2026-08-02 23:49 CST
+> 最后更新时间：2026-08-03 CST
 > 当前分支：`codex/workspace-access-grants`
 > 目标执行分支：`codex/workspace-access-grants`
 > 基线 Commit：`origin/develop@596ed393fd1db31f4a83765a7ca686df200fc215`
-> 已有实现 Commit：`df47612fa`、`0c8c4ab97`、`3ef44ea57`、`a1df2accf`、`f42726e66`、`fab9a8fc5`、`c682a7b8d`、`dd44505cc`
+> 已有实现 Commit：`df47612fa`、`0c8c4ab97`、`3ef44ea57`、`a1df2accf`、`f42726e66`、`fab9a8fc5`、`c682a7b8d`、`dd44505cc`、`f8e47238b`、`7a95c20d6`
 > 原始工作区：`/Users/fanqi/test/code/ding-fde-agent/dt-fde-multica`
 > Worktree 路径：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-workspace-access-grants`
 > Worktree 来源：本任务于 2026-08-02 创建
 > DTA 工作区：本轮不修改；曾创建的 `codex/workspace-access-profile` 工作树已恢复为干净状态
-> 交付状态：第一阶段已推送并部署预发；第二阶段与 ownership 收敛本地实现完成、未推送、未部署；生产未发布
+> 交付状态：截至 `7a95c20d6` 已推送并部署预发；本次绑定能力纠正已获授权提交、推送并部署预发，执行中；生产未发布
 > 收尾状态：保留中
-> 当前里程碑：load-smoke operation 幂等与恢复合同已完成
+> 当前里程碑：机器人与数字员工绑定基础能力已补齐并完成本地验证
 
 ## 一句话结论
 
@@ -26,7 +26,7 @@ Multica 由工作区 `owner` 直接创建 DTA Token；第二阶段让该 `dta_` 
 - `df47612fa` 已实现 Grant→多 Token、三个 capability、`own_agents/workspace`、Agent/Skill ownership、Trace、默认拒绝 operation gate、owner UI、审计和 feature flag。
 - 用户进一步明确：真实使用方彼此不同，应该各自拥有不同权限；短暂中断可接受，不需要一个授权下多把密钥做无损轮换。
 - 因此 Grant 与 Token 分离没有业务价值，反而会让权限主体和实际使用方错位。
-- 当前分支尚未 push、发布或部署，migration 257 只在本任务隔离数据库使用，可以直接改写而无需生产兼容迁移。
+- 初始实现时分支尚未发布，migration 257 可在隔离数据库直接收敛；当前截至 `7a95c20d6` 已推送并部署预发，后续变更按追加提交和重新部署处理。
 
 ## 目标
 
@@ -43,6 +43,7 @@ Multica 由工作区 `owner` 直接创建 DTA Token；第二阶段让该 `dta_` 
 11. 以 DTA 专用 load-smoke API 替代对外开放通用 Issue/Comment 权限；部署验证可用 `deployment.manage`，普通 Trace 仍要求 `trace.read`。
 12. 本轮只完成 Multica 的身份、权限和专用传输合同；DTA 如何接入留到后续独立任务。
 13. Token 固定绑定一个 Workspace；可管理资源由其稳定 `subject_user_id` 按 Multica 原生 ownership 决定，不允许额外放宽到 Workspace 内其他 owner 的资源。
+14. 机器人安装和已有数字员工绑定不新增独立 capability；所有有效 `dta_` Token 默认可用，但只能查看和操作其 subject 自己拥有的 Agent 绑定。
 
 ## 非目标
 
@@ -52,8 +53,8 @@ Multica 由工作区 `owner` 直接创建 DTA Token；第二阶段让该 `dta_` 
 - 不让一个 Token 代表多个不同权限的外部使用方；不同人或不同权限创建不同 Token。
 - 不新增业务数据脱敏、External Trace 投影、Grant 级 WebSocket 或通用 IAM。
 - 不修改、提交或推送 DTA；不在本轮验证 DTA Receipt 或部署编排。
-- 不新增机器人、数字员工或其他消息渠道绑定权限；如后续需要，作为独立高风险 capability 设计，不并入 `deployment.manage`。
-- 不 push、开 PR、合并、部署或开启生产 feature flag。
+- 不新增机器人、数字员工或其他消息渠道的独立 capability 开关；本轮只复用 Multica 已有钉钉机器人安装与数字员工绑定能力，不扩展新的渠道类型。
+- 不开 PR、不合并、不部署生产或开启生产 feature flag；本次仅按用户授权提交、推送当前分支并重新部署预发。
 
 ## 已确认需求
 
@@ -63,8 +64,9 @@ Multica 由工作区 `owner` 直接创建 DTA Token；第二阶段让该 `dta_` 
 - 允许重新生成造成 DTA 短暂中断。
 - 用户对“改”的确认包括上一轮推荐：重新生成保留稳定内部 owner，因此仍能管理此前创建的 Agent。
 - 只有 human workspace `owner` 可以管理 DTA Token；admin/member/Token 本身均不能。
-- 用户确认复用 Multica profile 合同而非 human 登录态；profile 中保存的仍是 `dta_`，权限继续由现有 Token Grant 执行。
+- 用户确认复用 Multica profile 合同而非 human 登录态；profile 中保存的仍是 `dta_`，权限继续由服务端 Token policy 执行。
 - 用户最终收窄本轮范围为只改 Multica；DTA 适配、Receipt 和跨仓库联调后置。
+- 用户澄清“这版先不加机器人/数字员工权限”是指暂不提供独立权限控制，而不是禁止 Token 使用；因此所有有效 Token 默认拥有绑定能力，且继续受绑定 Workspace 与原生 Agent ownership 约束。
 
 ## 执行假设
 
@@ -113,12 +115,12 @@ workspace_access_token
 
 | capability | 允许 operation | 资源边界 |
 |---|---|---|
-| 无 | `GET /api/workspace-access/self` | 只返回当前 Token 自省 |
+| 基础能力（不要求特定 capability） | `GET /api/workspace-access/self`；钉钉机器人 installation 查询/创建/状态/撤销/重试；已有数字员工 binding 查询/创建/surface/解绑 | 自省只返回当前 Token；绑定能力只返回和操作 subject owner 的 Agent 资源 |
 | `deployment.manage` | Agent list/create/get/update/restore/source/sync/skill assignment；Skill list/create/search/get/update/delete/files；`GET /api/runtimes` | 仅 subject owner/creator 的 Agent、Skill；Runtime 复用原生 public/owner 规则 |
 | `deployment.retire` | `POST /api/agents/{id}/archive` | 只归档 subject owner 的 Agent |
 | `trace.read` | `GET /api/agents/{id}/tasks`、`GET /api/tasks/{taskId}/messages` | task→agent 后校验 Workspace 与 Agent owner |
 
-其他现有或未来路由默认拒绝。Token 不获得 member/admin/owner 角色。
+其他现有或未来路由默认拒绝。Token 不获得 member/admin/owner 角色。机器人与数字员工绑定是所有有效 Token 的基础能力，不由 `deployment.manage`、`deployment.retire` 或 `trace.read` 控制。
 
 ### 4. Owner-only 管理 API
 
@@ -196,6 +198,7 @@ Workspace 设置页显示平铺的“DTA Token”：
 - `server/internal/handler/workspace_access.go`：自省返回绑定 workspace 展示数据和稳定 principal。
 - `server/internal/middleware/workspace_access_principal.go`、GitHub/source handler：补齐受控 GitHub Source operation 与 ownership 校验。
 - Multica load-smoke handler/router/CLI：提供 DTA 专用创建、状态和必要重试合同，不开放通用 Issue 面。
+- `server/internal/middleware/workspace_access_principal.go`、DingTalk install/account-binding handler：把已有机器人和数字员工绑定路由作为有效 Token 的基础能力开放，并按 subject owner 过滤和校验 Agent 资源。
 
 ## 实施步骤
 
@@ -210,6 +213,7 @@ Workspace 设置页显示平铺的“DTA Token”：
 - [x] 里程碑九：运行 Multica CLI、handler、middleware、router 和 Go 全量回归；DTA 联调明确后置。
 - [x] 里程碑十：删除产品/API 中的 `own_agents/workspace` 资源范围，迁移已有宽权限值，统一按原生 ownership 验证。
 - [x] 里程碑十一：把 load-smoke marker 收敛为幂等 operation key，补齐并发唯一约束与按 marker 恢复接口。
+- [x] 里程碑十二：纠正绑定权限语义，开放机器人/数字员工绑定基础能力并补齐 Token Agent ownership 过滤。
 
 ## 调试假设记录
 
@@ -228,8 +232,9 @@ Workspace 设置页显示平铺的“DTA Token”：
 | 预发开关注入 | 已完成 | `3ef44ea57` | `bash -n src/main.sh`；trait guarded replacement；pipeline/health/config 回读 | 运行时白名单包含 `FF_WORKSPACE_ACCESS_TOKENS`；预发 trait 98→99 个唯一 key，其他项不变；`/api/config` 返回 true |
 | 预发 UI 反馈修复 | 已完成 | `fab9a8fc5` | Views typecheck；目标 ESLint；locale JSON；diff check | Select 使用全宽约束；权限、资源范围和有效期补齐详细说明；真实浏览器像素效果待下一次预发部署复验 |
 | 第二阶段 Multica 机器身份交付面 | 已完成 | `c682a7b8d` | `go test ./cmd/multica ./internal/handler ./internal/middleware ./cmd/server`；`go test ./...`；专项 profile/load-smoke 测试 | profile、GitHub allowlist、专用 smoke 均通过；全量测试仅命中既有 `pkg/agent` 72ms 时序测试失败，专项复跑可稳定复现且与本改动无关；DTA 工作树干净 |
-| 原生 ownership 收敛 | 已提交 | `dd44505cc` | Workspace Access 精确 Go 测试；middleware/CLI 精确测试；`go vet`；Core 80 tests；全量 TS typecheck；Docs build；migration lint/up/readback | UI/API/self 删除资源范围；旧 `resource_scope=workspace` 请求无法放宽；Agent/Skill 按 owner/creator，Runtime 按原生 public/owner；258 将预发已有宽权限值归一为 `own_agents`；绑定权限明确不在本版 |
+| 原生 ownership 收敛 | 已提交 | `dd44505cc` | Workspace Access 精确 Go 测试；middleware/CLI 精确测试；`go vet`；Core 80 tests；全量 TS typecheck；Docs build；migration lint/up/readback | UI/API/self 删除资源范围；旧 `resource_scope=workspace` 请求无法放宽；Agent/Skill 按 owner/creator，Runtime 按原生 public/owner；258 将预发已有宽权限值归一为 `own_agents`；当时把“暂不单独控制绑定权限”错误理解为不开放，已由里程碑十二纠正 |
 | load-smoke operation 修复 | 已完成 | 本次实现提交 | handler 专项连续 3 次；middleware/CLI/router/migrate 测试；`go vet`；migration 259 up/index readback/唯一冲突探针 | 同 payload 重放与终态重放返回原 Issue；不同 payload 409；并发只创建一条；Token 隔离；按 marker 恢复；数据库永久唯一约束均通过 |
+| 机器人与数字员工绑定基础能力 | 已完成，待交付 | 本次实现提交 | middleware auth/allowlist；handler ownership/list；DingTalk session；router 专项；`go vet`；Views typecheck；Docs build | trace-only Token 可进入绑定路由；机器人和数字员工列表只返回 subject owner Agent；own Agent 可绑定，其他 owner 拒绝；human 更新/解绑回归通过；不新增 capability |
 
 ## 验证策略
 
@@ -248,6 +253,7 @@ Workspace 设置页显示平铺的“DTA Token”：
 | profile 兼容 | `dta_` 登录/状态/workspace list/get 专项；证明 `/api/me` 和 human PAT 仍拒绝 |
 | GitHub Source | installation/repository/preview/create/source sync/readback allowlist 与跨 Workspace、非 owner 拒绝测试 |
 | load-smoke | DTA 专用 create/resolve/runs/messages/comments/retry；server-stamped metadata、Token/Agent ownership；operation 幂等、payload 冲突、并发唯一、终态重放、跨 Token 拒绝；普通 Issue/Comment 仍拒绝 |
+| 机器人与数字员工绑定 | 不要求特定 capability 的有效 Token 可调用既有钉钉 installation/account-binding 合同；列表只含 subject owner Agent，创建/状态/surface/解绑/撤销/重试拒绝其他 owner 与跨 Workspace Agent；human 行为不变 |
 | Multica 回归 | Go/CLI/handler/middleware/router 专项 + `go test ./...`，记录无关基线失败 |
 
 ## 数据迁移与回滚
@@ -332,8 +338,9 @@ profile 只保存连接信息与当前明文密钥；授权状态、Token ID、s
 | 2026-08-02 | 修复资源范围 Select 溢出，并增强权限、范围和有效期说明 | 用户在预发截图中确认布局异常、权限说明过弱且有效期缺少字段名 | 是 |
 | 2026-08-02 | 增加 DTA 托管 profile、GitHub Source 完整合同和专用 load-smoke；允许最小 DTA 接缝 | 用户确认不改用 `mul_` PAT，要求按推荐方案更新计划并完成 | 是，已确认 |
 | 2026-08-02 | 收窄为只完成 Multica；撤销 DTA 工作树内全部未提交适配 | 用户明确“dta你不用管” | 是，已确认 |
-| 2026-08-02 | 删除 `own_agents/workspace` 可配置范围，统一按 Multica 原生 ownership；本版不加机器人/数字员工绑定权限 | 用户确认 Workspace 管理员原生治理能力已足够，要求继续修改并明确“这版先不加”绑定权限 | 是，已确认 |
+| 2026-08-02 | 删除 `own_agents/workspace` 可配置范围，统一按 Multica 原生 ownership；当时把“本版不加机器人/数字员工绑定权限”理解为完全不开放 | 用户后续澄清其原意是暂不做独立权限开关，而不是禁止使用 | 已由 2026-08-03 决策替代 |
 | 2026-08-02 | 将 load-smoke marker 升级为幂等 operation key，增加永久唯一索引与按 marker 恢复 | Review 指出 `AllowDuplicate:true`、缺少 operation 回读以及计划承诺互相矛盾 | 是，按 review 修复 |
+| 2026-08-03 | 机器人和已有数字员工绑定改为所有有效 Token 默认可用，不新增独立 capability，并保持 subject Agent ownership | 用户澄清“先不加权限”表示暂不控制而不是全部禁止，并明确要求更新计划和代码 | 是，已确认并执行 |
 
 ## 最终验证结果
 
@@ -359,6 +366,10 @@ profile 只保存连接信息与当前明文密钥；授权状态、Token ID、s
 | 专用 load-smoke | `TestDTALoadSmokeIsServerStampedAndTokenScoped`、`TestDTALoadSmokeCLIUsesDedicatedAPI` | 服务端固定 prompt/metadata；Token ID/Agent ownership 与 marker 注入拒绝通过；通用 Issue/Comment 未开放 |
 | load-smoke operation 幂等 | handler 专项 `-count=3`；middleware/CLI/router/migrate 测试；migration 259 index readback 与重复插入探针；`go vet` | 首次 201、同 payload/终态重放 200 且同 Issue、不同 payload 409、并发唯一、跨 Token 404、Agent＋marker 恢复及数据库唯一冲突均通过 |
 | 删除资源范围 | API/Core/UI 残留扫描；旧字段请求回归；migration 258 up/readback | 产品合同不再出现 `resource_scope`；旧客户端字段被忽略且不能放宽；数据库宽权限值为 0 |
+| 绑定路由基础权限 | `TestWorkspaceAccessCapabilityForRequest`、`TestWorkspaceAccessAuthAllowsDingTalkBindingWithoutDeploymentCapability` | installation/account-binding 精确路由允许；未知 method/path 继续默认拒绝；只有 `trace.read` 的 Token 也能通过认证进入 Handler |
+| 绑定资源边界 | account-binding owned/foreign/list 测试、installation list filter、registration session AgentID 回读 | own Agent 创建成功；foreign Agent 的 begin/surface/unbind 返回 403；机器人与数字员工列表只含 own Agent；跨副本 status 可按持久化 AgentID 复核 ownership |
+| 绑定 human 回归 | 既有 surface chat/auto、unbind 事件测试 | human 请求不增加 Token 专用 ownership 查询，原有成功行为保持 |
+| 绑定说明 | locale JSON parse、Views typecheck、Docs build | 中英文设置说明和认证文档明确绑定是所有有效 Token 的基础能力；Views typecheck 通过；Docs 157 页构建通过 |
 | 第二阶段 Go 静态与回归 | `go vet ./cmd/multica ./cmd/server ./internal/handler ./internal/middleware`；`go test` 同四包 `-count=1` | 全部通过 |
 | 第二阶段全量 Go | `go test ./...` | 除 `pkg/agent.TestCodexExecuteSemanticInactivityAllowsContinuousMessages` 外全部通过；该测试单独复跑仍在未修改包内以 72ms no-progress timeout 失败 |
 | DTA 范围 | DTA worktree `git status --short` | 空；本轮未修改 DTA |
@@ -367,14 +378,15 @@ profile 只保存连接信息与当前明文密钥；授权状态、Token ID、s
 
 - 未把全量 `go test ./...` 宣称为通过；唯一失败是未修改的 `server/pkg/agent` 72ms Codex 时序测试，单独复跑同样失败。
 - 本轮扩大到整个 handler 包时还命中共享测试库中的无关基线/残留数据失败（dispatch 断言、重复唯一键等）；本次 Workspace Access 精确测试在迁移恢复后的隔离数据库中全部通过。
+- 本轮运行 `cmd/server` 全包时，未配置 readiness 健康依赖导致 `/readyz`、`/healthz` 期望 200 实际 503；本次修改覆盖的 DingTalk callback/router 专项单独通过。
 - 仓库 `migrate down` 会连续回退全部迁移而非只回退最新一条，在隔离测试库回退到 133 时命中既有唯一索引冲突；随后已重新 `migrate up` 到 258 并确认宽权限值为 0。
 
 ### 最终工作区
 
 - 原始工作区用户修改：`docs/plans/2026-07-29-fde-start-dta-managed-source.md`，不得触碰。
 - 当前 worktree：本任务创建并保留。
-- 当前第一阶段提交：`df47612fa`、`0c8c4ab97`、`3ef44ea57`、`a1df2accf`、`f42726e66`、`fab9a8fc5`；均已推送；第二阶段已有本地提交 `c682a7b8d`，ownership 收敛随本计划最终状态提交。
-- 当前 worktree 由本任务创建并保留；本轮不 push、不部署、不创建代码 MR、不合并、不发布生产，未修改 DTA。
+- 当前分支已推送至 `7a95c20d6`；本次机器人/数字员工绑定改动与计划收尾待提交、推送和预发部署。
+- 当前 worktree 由本任务创建并保留；本轮不创建代码 MR、不合并、不发布生产，未修改 DTA。
 
 ## 遗留风险
 
@@ -382,4 +394,5 @@ profile 只保存连接信息与当前明文密钥；授权状态、Token ID、s
 - 重新生成会立即中断仍使用旧密钥的 DTA，这是用户接受的产品语义。
 - Trace fidelity、REST 轮询和永久 Token 风险维持原边界。
 - 本次只部署到预发；pipeline 停在人工预发验证门禁。
+- 本次机器人/数字员工绑定基础能力已完成本地实现与验证，待本轮提交并部署预发；生产仍是旧的“全部拒绝”行为。
 - 一次预发数据库验证命令的解析错误把 `DATABASE_URL` 完整连接串回显到了工具输出；需轮换预发数据库凭据，生产凭据未读取。

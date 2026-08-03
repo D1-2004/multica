@@ -121,7 +121,7 @@
     "description": "为 DTA 签发仅绑定当前工作区的访问凭证。外部服务商只使用 DTA，不获得 Multica 账号或个人 API Token。",
     "owner_only": "只有工作区所有者可以管理 DTA Token。",
     "tokens_title": "DTA Token",
-    "tokens_description": "每个 Token 代表一个独立的外部使用方，分别配置权限和资源范围。",
+    "tokens_description": "每个 Token 代表一个独立的外部使用方，分别配置权限和有效期。",
     "create": "新建 Token",
     "loading": "正在加载 DTA Token…",
     "empty": "暂无 DTA Token。",
@@ -141,7 +141,7 @@
     "regenerate_title": "重新生成 DTA Token",
     "regenerate_warning": "当前密钥会立即失效。请保存新密钥后，将其重新配置到 DTA。",
     "permissions": "权限",
-    "permissions_description": "权限可以组合使用；未勾选的能力以及下列说明之外的接口默认不可访问。每个 Token 遵循 Multica 原生 ownership，只能管理归属于自己的智能体。",
+    "permissions_description": "以下三个权限可以组合使用；未勾选的能力以及说明之外的接口默认不可访问。机器人和数字员工绑定是所有有效 Token 的基础能力，不受这些开关控制，但只能查看和操作归属于自己的智能体。",
     "capabilities": {
       "manage": "创建与维护智能体",
       "retire": "下线智能体",

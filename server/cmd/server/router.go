@@ -1535,7 +1535,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// DingTalk bot installations. Same member/admin split as
 				// Lark: listing is member-visible so the Integrations tab
 				// renders connection state for everyone; install / revoke
-				// require admin.
+				// require admin. Workspace DTA tokens are admitted by their
+				// fail-closed operation registry and each handler rechecks token
+				// ownership before returning or mutating an Agent binding.
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/dingtalk/installations", h.ListDingTalkInstallations)

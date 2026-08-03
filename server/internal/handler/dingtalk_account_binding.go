@@ -39,12 +39,12 @@ type dingTalkAccountBindingMetadataStore interface {
 }
 
 type beginDingTalkAccountBindingRequest struct {
-	AgentID     string                          `json:"agent_id"`
+	AgentID     string                         `json:"agent_id"`
 	BindingMode agentmessagerouter.BindingMode `json:"binding_mode"`
 }
 
 type dingTalkAccountBindingCallbackRequest struct {
-	BindingMode     agentmessagerouter.BindingMode          `json:"binding_mode"`
+	BindingMode     agentmessagerouter.BindingMode           `json:"binding_mode"`
 	Status          string                                   `json:"status"`
 	IdentityBinding agentmessagerouter.IdentityBindingResult `json:"identity_binding"`
 	MessageBinding  agentmessagerouter.MessageBindingResult  `json:"message_binding"`
@@ -69,6 +69,11 @@ func (h *Handler) ListDingTalkAccountBindings(w http.ResponseWriter, r *http.Req
 	bindings, err := h.DingTalkAccountBindings.List(r.Context(), workspaceID)
 	if err != nil {
 		writeDingTalkAccountBindingError(w, err)
+		return
+	}
+	bindings, err = h.filterDingTalkAccountBindingsForRequest(r, workspaceID, bindings)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to filter dingtalk account bindings")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

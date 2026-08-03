@@ -121,7 +121,7 @@
     "description": "Issue workspace-bound credentials for DTA. External operators use DTA only and do not receive a Multica account or personal API token.",
     "owner_only": "Only workspace owners can manage DTA access.",
     "tokens_title": "DTA tokens",
-    "tokens_description": "Each token represents one external operator with independent permissions and resource scope.",
+    "tokens_description": "Each token represents one external operator with independent permissions and expiry.",
     "create": "Create token",
     "loading": "Loading DTA access…",
     "empty": "No DTA tokens yet.",
@@ -141,7 +141,7 @@
     "regenerate_title": "Regenerate DTA token",
     "regenerate_warning": "The current key will stop working immediately. Configure the newly generated key in DTA after you save it.",
     "permissions": "Permissions",
-    "permissions_description": "Permissions can be combined. Unselected capabilities and APIs not described below are denied by default. Each token follows Multica's native ownership rules and cannot manage agents owned by employees or other tokens.",
+    "permissions_description": "The three permissions below can be combined. Unselected capabilities and APIs not described here are denied by default. Robot and digital-employee binding are baseline capabilities for every valid token and are not controlled by these switches, but remain limited to agents owned by that token.",
     "capabilities": {
       "manage": "Create and maintain agents",
       "retire": "Retire agents",

@@ -118,6 +118,35 @@ func workspaceAccessCapabilityForRequest(r *http.Request) (string, bool) {
 		}
 	}
 
+	// DingTalk robot installations and existing-account bindings are baseline
+	// workspace-token capabilities. They deliberately have no separate policy
+	// switch; handlers still restrict every resource to the token subject's own
+	// Agents and the token's bound workspace.
+	if len(parts) >= 5 && parts[0] == "api" && parts[1] == "workspaces" && parts[3] == "dingtalk" {
+		switch {
+		case len(parts) == 5 && parts[4] == "installations" && r.Method == http.MethodGet:
+			return "", true
+		case len(parts) == 6 && parts[4] == "installations" && r.Method == http.MethodDelete:
+			return "", true
+		case len(parts) == 8 && parts[4] == "installations" && parts[6] == "router" && parts[7] == "retry" && r.Method == http.MethodPost:
+			return "", true
+		case len(parts) == 6 && parts[4] == "install" && parts[5] == "begin" && r.Method == http.MethodPost:
+			return "", true
+		case len(parts) == 7 && parts[4] == "install" && parts[6] == "status" && r.Method == http.MethodGet:
+			return "", true
+		case len(parts) == 6 && parts[4] == "install" && parts[5] == "manual" && r.Method == http.MethodPost:
+			return "", true
+		case len(parts) == 5 && parts[4] == "account-bindings" && r.Method == http.MethodGet:
+			return "", true
+		case len(parts) == 6 && parts[4] == "account-bindings" && parts[5] == "begin" && r.Method == http.MethodPost:
+			return "", true
+		case len(parts) == 7 && parts[4] == "account-bindings" && parts[6] == "surface" && r.Method == http.MethodPatch:
+			return "", true
+		case len(parts) == 6 && parts[4] == "account-bindings" && r.Method == http.MethodDelete:
+			return "", true
+		}
+	}
+
 	// Purpose-built deployment verification surface. It can only create and
 	// inspect server-stamped load-smoke Issues; generic Issue/Chat APIs remain
 	// outside the workspace Token surface.
