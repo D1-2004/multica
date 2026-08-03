@@ -191,8 +191,8 @@ func TestASBLauncherAttachesAgentIdentityBeforeEnterpriseCLIProbe(t *testing.T) 
 			if err := json.NewDecoder(request.Body).Decode(&spiffeGrant); err != nil {
 				t.Fatalf("decode SPIFFE identity: %v", err)
 			}
-				spiffeAttached.Store(true)
-				response.WriteHeader(http.StatusAccepted)
+			spiffeAttached.Store(true)
+			response.WriteHeader(http.StatusAccepted)
 		default:
 			http.NotFound(response, request)
 		}
@@ -227,6 +227,68 @@ func TestASBLauncherAttachesAgentIdentityBeforeEnterpriseCLIProbe(t *testing.T) 
 		spiffeGrant.AgentToken != identity.AgentIdentityToken ||
 		spiffeGrant.AgentID != identity.AgentSPIFFEID {
 		t.Fatalf("SPIFFE identity grant = %#v", spiffeGrant)
+	}
+}
+
+func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
+	t.Parallel()
+
+	var probeObserved atomic.Bool
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/sandbox-123/endpoints/44772":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/execd",
+				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
+			probeObserved.Store(true)
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
+		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/spiffe":
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(response, `{
+				"code":"BAD_REQUEST",
+				"message":"failed to attach sandbox spiffe identity to sandbox-123, got status code 502"
+			}`)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	launcher := &ASBLauncher{
+		Client: newTestASBClient(t, server),
+		Config: ASBConfig{WireGuardReadyTimeout: time.Second},
+	}
+	identity := ASBResolvedIdentity{
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AgentIdentityToken: "ait",
+	}
+	if err := launcher.ensureSandboxIdentityReady(context.Background(), "sandbox-123", identity); err != nil {
+		t.Fatalf("ensureSandboxIdentityReady: %v", err)
+	}
+	if !probeObserved.Load() {
+		t.Fatal("enterprise CLI probe was not executed after the converging attachment response")
+	}
+}
+
+func TestASBAgentIdentityAttachmentConvergingRejectsOtherBadRequest(t *testing.T) {
+	t.Parallel()
+
+	err := &ASBHTTPError{
+		Operation:    "attach_agent_identity",
+		StatusCode:   http.StatusBadRequest,
+		ErrorMessage: "identity grant is invalid",
+	}
+	if isASBAgentIdentityAttachmentConverging(err) {
+		t.Fatal("unrelated HTTP 400 must not be classified as a converging SPIFFE attachment")
 	}
 }
 

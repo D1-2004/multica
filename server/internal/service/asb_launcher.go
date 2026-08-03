@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -877,7 +878,13 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID 
 		AgentID:       identity.AgentSPIFFEID,
 	}); err != nil {
 		logASBIdentityAttachmentFailure(sandboxID, err)
-		return fmt.Errorf("attach ASB Agent Identity: %w", err)
+		if !isASBAgentIdentityAttachmentConverging(err) {
+			return fmt.Errorf("attach ASB Agent Identity: %w", err)
+		}
+		slog.Info(
+			"ASB Agent Identity attachment is converging after asynchronous submission",
+			"sandbox_id", sandboxID,
+		)
 	}
 	if err := l.waitSandboxBUCIdentityReady(
 		ctx,
@@ -888,6 +895,18 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID 
 		return err
 	}
 	return nil
+}
+
+func isASBAgentIdentityAttachmentConverging(err error) bool {
+	var httpErr *ASBHTTPError
+	if !errors.As(err, &httpErr) ||
+		httpErr.Operation != "attach_agent_identity" ||
+		httpErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(httpErr.ErrorMessage))
+	return strings.Contains(message, "failed to attach sandbox spiffe identity") &&
+		strings.Contains(message, "got status code 502")
 }
 
 func (l *ASBLauncher) waitSandboxBUCIdentityReady(
