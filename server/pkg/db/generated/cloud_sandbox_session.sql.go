@@ -174,7 +174,7 @@ SELECT session.id, session.workspace_id, session.runtime_id, session.scope_type,
 FROM fc_e2b_sandbox_session AS session
 WHERE session.runtime_id = ANY($1::uuid[])
   AND session.sandbox_backend = 'asb'
-  AND session.status IN ('running', 'stale')
+  AND session.status = 'running'
   AND NOT EXISTS (
       SELECT 1
       FROM agent_task_queue AS task

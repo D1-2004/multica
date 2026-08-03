@@ -90,12 +90,27 @@ type ASBSandboxStatus struct {
 }
 
 type ASBSandbox struct {
-	ID         string           `json:"id"`
-	Status     ASBSandboxStatus `json:"status"`
-	Entrypoint []string         `json:"entrypoint,omitempty"`
-	CreatedAt  time.Time        `json:"createdAt"`
-	ExpiresAt  *time.Time       `json:"expiresAt,omitempty"`
-	Image      *ASBImageSpec    `json:"image,omitempty"`
+	ID         string            `json:"id"`
+	Status     ASBSandboxStatus  `json:"status"`
+	Entrypoint []string          `json:"entrypoint,omitempty"`
+	CreatedAt  time.Time         `json:"createdAt"`
+	ExpiresAt  *time.Time        `json:"expiresAt,omitempty"`
+	Image      *ASBImageSpec     `json:"image,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
+	Extensions map[string]string `json:"extensions,omitempty"`
+}
+
+type asbSandboxPagination struct {
+	Page            int  `json:"page"`
+	PageSize        int  `json:"pageSize"`
+	Total           int  `json:"total"`
+	HasNextPage     bool `json:"hasNextPage"`
+	HasPreviousPage bool `json:"hasPreviousPage"`
+}
+
+type asbSandboxPage struct {
+	SandboxInfos []ASBSandbox          `json:"sandboxInfos"`
+	Pagination   *asbSandboxPagination `json:"pagination"`
 }
 
 type ASBSandboxQuota struct {
@@ -341,6 +356,54 @@ func (c *ASBClient) ListQuotas(ctx context.Context) ([]ASBSandboxQuota, error) {
 		return nil, err
 	}
 	return quotas, nil
+}
+
+// ListSandboxes returns the current control-plane state for every sandbox
+// visible to the tenant API key.
+func (c *ASBClient) ListSandboxes(ctx context.Context, states ...string) ([]ASBSandbox, error) {
+	const pageSize = 100
+	var sandboxes []ASBSandbox
+	for page := 1; ; page++ {
+		query := url.Values{
+			"page":     {strconv.Itoa(page)},
+			"pageSize": {strconv.Itoa(pageSize)},
+		}
+		for _, state := range states {
+			if normalized := strings.TrimSpace(state); normalized != "" {
+				query.Add("state", normalized)
+			}
+		}
+		var response asbSandboxPage
+		if err := c.doLifecycleJSON(
+			ctx,
+			"list_sandboxes",
+			http.MethodGet,
+			"/sandboxes",
+			query,
+			nil,
+			&response,
+			http.StatusOK,
+		); err != nil {
+			return nil, err
+		}
+		if response.Pagination == nil ||
+			response.Pagination.Page != page ||
+			response.Pagination.PageSize <= 0 {
+			return nil, errors.New("ASB list_sandboxes returned invalid pagination")
+		}
+		for index := range response.SandboxInfos {
+			if err := validateASBSandboxResponse(&response.SandboxInfos[index]); err != nil {
+				return nil, fmt.Errorf(
+					"ASB list_sandboxes returned an invalid sandbox: %w",
+					err,
+				)
+			}
+		}
+		sandboxes = append(sandboxes, response.SandboxInfos...)
+		if !response.Pagination.HasNextPage {
+			return sandboxes, nil
+		}
+	}
 }
 
 // ValidateCredential checks the key again at the persistence boundary.

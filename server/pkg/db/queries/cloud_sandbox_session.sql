@@ -112,7 +112,7 @@ SELECT session.*
 FROM fc_e2b_sandbox_session AS session
 WHERE session.runtime_id = ANY(sqlc.arg('runtime_ids')::uuid[])
   AND session.sandbox_backend = 'asb'
-  AND session.status IN ('running', 'stale')
+  AND session.status = 'running'
   AND NOT EXISTS (
       SELECT 1
       FROM agent_task_queue AS task

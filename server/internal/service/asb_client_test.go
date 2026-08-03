@@ -51,6 +51,16 @@ func TestASBClientLifecycle(t *testing.T) {
 			response.Header().Set("Content-Type", "application/json")
 			response.WriteHeader(http.StatusCreated)
 			_, _ = io.WriteString(response, `{"id":"sandbox-123","status":{"state":"Pending"},"createdAt":"2026-07-29T05:00:00Z","entrypoint":["tail","-f","/dev/null"]}`)
+		case request.Method == http.MethodGet && request.URL.Path == "/root/v1/sandboxes":
+			if request.URL.Query().Get("page") != "1" ||
+				request.URL.Query().Get("pageSize") != "100" {
+				t.Errorf("list query = %q", request.URL.RawQuery)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(response, `{
+				"sandboxInfos":[{"id":"sandbox-123","status":{"state":"Running"},"createdAt":"2026-07-29T05:00:00Z"}],
+				"pagination":{"page":1,"pageSize":100,"total":1,"hasNextPage":false,"hasPreviousPage":false}
+			}`)
 		case request.Method == http.MethodGet && request.URL.Path == "/root/v1/sandboxes/"+testSandboxID:
 			response.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(response, `{"id":"sandbox-123","status":{"state":"Running"},"createdAt":"2026-07-29T05:00:00Z","entrypoint":["tail","-f","/dev/null"]}`)
@@ -103,6 +113,14 @@ func TestASBClientLifecycle(t *testing.T) {
 	if sandbox.ID != testSandboxID || sandbox.Status.State != "Pending" {
 		t.Fatalf("created sandbox = %#v", sandbox)
 	}
+	sandboxes, err := client.ListSandboxes(context.Background())
+	if err != nil {
+		t.Fatalf("ListSandboxes: %v", err)
+	}
+	if len(sandboxes) != 1 || sandboxes[0].ID != testSandboxID ||
+		sandboxes[0].Status.State != "Running" {
+		t.Fatalf("listed sandboxes = %#v", sandboxes)
+	}
 
 	sandbox, err = client.GetSandbox(context.Background(), testSandboxID)
 	if err != nil {
@@ -129,7 +147,7 @@ func TestASBClientLifecycle(t *testing.T) {
 		t.Fatalf("DeleteSandbox: %v", err)
 	}
 
-	if len(calls) != 6 {
+	if len(calls) != 7 {
 		t.Fatalf("calls = %#v", calls)
 	}
 }
@@ -170,6 +188,42 @@ func TestASBClientEnforcesLifecycleLimits(t *testing.T) {
 		false,
 	); err == nil {
 		t.Fatal("RenewSandbox accepted an expiration beyond seven days")
+	}
+}
+
+func TestASBClientListSandboxesPaginates(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1/sandboxes" {
+			http.NotFound(response, request)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Query().Get("page") {
+		case "1":
+			_, _ = io.WriteString(response, `{
+				"sandboxInfos":[{"id":"sandbox-1","status":{"state":"Running"},"createdAt":"2026-07-29T05:00:00Z"}],
+				"pagination":{"page":1,"pageSize":100,"total":2,"hasNextPage":true,"hasPreviousPage":false}
+			}`)
+		case "2":
+			_, _ = io.WriteString(response, `{
+				"sandboxInfos":[{"id":"sandbox-2","status":{"state":"Pending"},"createdAt":"2026-07-29T05:01:00Z"}],
+				"pagination":{"page":2,"pageSize":100,"total":2,"hasNextPage":false,"hasPreviousPage":true}
+			}`)
+		default:
+			http.Error(response, "unexpected page", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	client := newTestASBClient(t, server)
+
+	sandboxes, err := client.ListSandboxes(context.Background())
+	if err != nil {
+		t.Fatalf("ListSandboxes: %v", err)
+	}
+	if len(sandboxes) != 2 || sandboxes[0].ID != "sandbox-1" || sandboxes[1].ID != "sandbox-2" {
+		t.Fatalf("sandboxes = %#v", sandboxes)
 	}
 }
 
