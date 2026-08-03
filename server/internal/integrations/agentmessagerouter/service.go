@@ -428,7 +428,9 @@ func (s *Service) GetMessageBindingStatus(
 		}
 		return result, nil
 	}
-	if s.subscriptionVerificationOutcome(subscription, config.RouterSourceID, row, config) != "success" {
+	if s.subscriptionVerificationOutcome(subscription, config.RouterSourceID, row, config) != "success" ||
+		subscription.Outbound.Mode != "dws" ||
+		subscription.Outbound.ReplyTo != "latest_message" {
 		result.Verification.Status = "drifted"
 		return result, nil
 	}
@@ -1141,12 +1143,6 @@ func (s *Service) subscriptionVerificationOutcome(subscription Subscription, sou
 	}
 	if subscription.Status != "active" {
 		return "inactive"
-	}
-	if subscription.Outbound.Mode != "dws" {
-		return "outbound_mode_mismatch"
-	}
-	if subscription.Outbound.ReplyTo != "latest_message" {
-		return "outbound_reply_to_mismatch"
 	}
 	return "success"
 }
