@@ -18,8 +18,8 @@ func TestWaitForASBCapacityReleaseObservesSandboxAndQuota(t *testing.T) {
 		response.Header().Set("Content-Type", "application/json")
 		switch {
 		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes":
-			if request.URL.Query().Get("state") != "Running" {
-				t.Errorf("sandbox state filter = %q", request.URL.Query().Get("state"))
+			if state := request.URL.Query().Get("state"); state != "" {
+				t.Errorf("sandbox state filter = %q, want empty", state)
 			}
 			call := listCalls.Add(1)
 			if call == 1 {

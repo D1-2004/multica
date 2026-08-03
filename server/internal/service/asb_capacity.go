@@ -223,7 +223,10 @@ func reclaimIdleASBSandboxForCredential(
 	if err != nil {
 		return false, err
 	}
-	liveSandboxes, err := client.ListSandboxes(ctx, "Running")
+	// The ASB list endpoint currently returns an empty page when the state
+	// filter is present even though the same tenant has Running sandboxes.
+	// Fetch the authoritative tenant inventory and classify states locally.
+	liveSandboxes, err := client.ListSandboxes(ctx)
 	if err != nil {
 		return false, fmt.Errorf("query live ASB sandboxes before idle-instance reclaim: %w", err)
 	}
@@ -243,6 +246,12 @@ func reclaimIdleASBSandboxForCredential(
 	if err != nil {
 		return false, fmt.Errorf("list idle ASB task sandboxes: %w", err)
 	}
+	slog.Info(
+		"evaluated idle ASB task sandbox candidates for tenant capacity reclaim",
+		"requesting_runtime_id", util.UUIDToString(requestingRuntimeID),
+		"shared_runtime_count", len(runtimeIDs),
+		"idle_candidate_count", len(candidates),
+	)
 	for _, candidate := range candidates {
 		if !candidate.ScopeID.Valid ||
 			(candidate.ScopeType != fcE2BScopeTypeChat &&
@@ -409,7 +418,9 @@ func waitForASBCapacityRelease(
 	lastQuota := 0
 	lastUsage := 0
 	for {
-		sandboxes, err := client.ListSandboxes(waitCtx, "Running")
+		// Keep using the complete tenant inventory here. A filtered list may
+		// hide the sandbox before its deletion has actually released quota.
+		sandboxes, err := client.ListSandboxes(waitCtx)
 		if err != nil {
 			if waitCtx.Err() != nil {
 				break
