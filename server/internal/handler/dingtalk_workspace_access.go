@@ -46,3 +46,42 @@ func (h *Handler) loadDingTalkAgentForRequest(
 	}
 	return agent, true
 }
+
+func (h *Handler) canManageDingTalkAgentForRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	workspaceID pgtype.UUID,
+	agentID pgtype.UUID,
+) (db.Agent, bool) {
+	agent, ok := h.loadDingTalkAgentForRequest(w, r, workspaceID, agentID)
+	if !ok || !h.canManageAgent(w, r, agent) {
+		return db.Agent{}, false
+	}
+	return agent, true
+}
+
+func (h *Handler) canManageDingTalkInstallationForRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	workspaceID pgtype.UUID,
+	agentID pgtype.UUID,
+) bool {
+	store := h.dingTalkAgentMetadataStore()
+	if store == nil {
+		writeError(w, http.StatusInternalServerError, "failed to load agent")
+		return false
+	}
+	agent, err := store.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+		ID:          agentID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			_, ok := h.requireWorkspaceRole(w, r, uuidToString(workspaceID), "dingtalk installation not found", "owner", "admin")
+			return ok
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load agent")
+		return false
+	}
+	return h.canManageAgent(w, r, agent)
+}

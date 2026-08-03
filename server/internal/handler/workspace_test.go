@@ -626,6 +626,13 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member') RETUR
 `, workspaceID, subjectID).Scan(&memberID); err != nil {
 		t.Fatalf("create service member: %v", err)
 	}
+	if _, err := testPool.Exec(ctx, `
+INSERT INTO workspace_access_token (
+    workspace_id, subject_user_id, name, token_hash, token_prefix, created_by, updated_by
+) VALUES ($1, $2, 'Invariant Token', 'invariant-token-' || gen_random_uuid()::text, 'dta_invariant', $3, $3)
+`, workspaceID, subjectID, testUserID); err != nil {
+		t.Fatalf("create workspace access token: %v", err)
+	}
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, subjectID)

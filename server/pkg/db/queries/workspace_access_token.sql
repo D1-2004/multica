@@ -85,6 +85,14 @@ WHERE id = sqlc.arg('id')
   AND workspace_id = sqlc.arg('workspace_id')
   AND revoked_at IS NOT NULL;
 
+-- name: HasWorkspaceAccessTokenForSubject :one
+SELECT EXISTS (
+    SELECT 1
+    FROM workspace_access_token
+    WHERE workspace_id = sqlc.arg('workspace_id')
+      AND subject_user_id = sqlc.arg('subject_user_id')
+);
+
 -- name: GetWorkspaceAccessTokenByHash :one
 SELECT t.*, u.principal_type
 FROM workspace_access_token t

@@ -12,9 +12,9 @@
 > 原始分支：`codex/workspace-access-grants`
 > Worktree 路径：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-dta-service-member`
 > Worktree 来源：本次任务创建
-> 交付状态：已本地提交
-> 收尾状态：完成
-> 当前里程碑：完成
+> 交付状态：本地实现与评审修复已完成，提交以 Git 元数据为准
+> 收尾状态：已完成并保留 Worktree
+> 当前里程碑：已完成
 
 ## 一句话结论
 
@@ -31,7 +31,7 @@
 ## 目标
 
 1. Owner 创建 Token 时，事务内创建不可交互登录的 subject user、role=`member` 的 Workspace membership、Token 和审计记录。
-2. 已存在的预发 Token subject 通过追加 migration 幂等补齐并强制归一为 member；成员管理接口不能提升或移除 service member，不修改 Agent、Skill、Task 或 Trace ownership。
+2. 已存在的预发 Token subject 通过追加 migration 幂等补齐并强制归一为 member；成员管理接口不能提升 service member，且有关联 Token 时不能移除，不修改 Agent、Skill、Task 或 Trace ownership。
 3. `dta_` 认证继续校验 Token 的 workspace、有效期、吊销和 feature flag，但授权进入普通 Workspace member 链路。
 4. 删除运行时 capability gate、DTA 专属路由 allowlist和 Handler 特判；Agent/Skill/Runtime/Trace/Autopilot/钉钉绑定复用普通 member 行为。
 5. Token 创建、编辑页面只管理名称、有效期、重新生成、吊销和删除；不展示或编辑 capability。
@@ -66,7 +66,7 @@
 - membership 使用现有普通 `member` role；不新增 `service_member` 角色，避免再造一套权限体系。
 - migration 直接删除 `workspace_access_token.capabilities` 与 `resource_scope`；新版本不再返回或读取这两项旧策略。
 - migration 对现有有效、过期和已吊销 Token subject 都补 member，并将既有更高角色强制归一为 member；吊销只使凭据无效，不删除 membership 或已拥有资源。
-- Token hard delete 若现有实现只删除 Token 行，继续保留 subject/member 和资源；不在本轮引入资源转移或级联删除。
+- Token hard delete 只删除 Token 行并暂时保留 subject/member 和资源；随后 owner/admin 可通过成员删除流程显式清理该身份及其资源。
 - 普通 member 当前能看到的公共 Workspace 数据，service user 也能看到；这是用户选择该模型后接受的权限语义。
 
 ## 关键设计决定
@@ -108,7 +108,9 @@ Token 类型继续用于禁止交互登录、吊销、过期、审计和唯一 W
 - create/update schema 删除可配置 capability；旧客户端携带字段时忽略，不能改变权限。
 - 设置页删除权限卡片和权限说明，明确“拥有工作区普通成员权限，不具备管理员权限；Runtime 由管理员预建”。
 - Token 明文仍只在创建/重新生成响应展示一次。
-- 成员管理接口拒绝把 service member 提升为 admin/owner，也拒绝管理员移除或 service member 主动离开；凭据停用继续走 Token 吊销/删除。
+- 成员管理接口拒绝把 service member 提升为 admin/owner，也拒绝 service member 主动离开；凭据停用继续走 Token 吊销/删除。
+- service member 仍有关联 Token 行时禁止从成员管理移除；Token 已硬删除后允许 owner/admin 使用原生成员删除流程清理身份及其资源，避免永久幽灵成员。
+- 钉钉机器人 install/revoke/retry/status 路由允许普通 member 进入，Handler 对齐 Lark 按 Agent 二次授权：Agent owner 或 Workspace owner/admin 可操作，其他成员拒绝。
 
 ## 被排除的方案
 
@@ -160,8 +162,8 @@ Token 类型继续用于禁止交互登录、吊销、过期、审计和唯一 W
 | 数据与身份 | 已完成 |  | migration 260 down/up/replay；SQL schema/member readback；Token 生命周期测试 | 旧列为 0；所有 Token subject 都存在且 role=`member`；创建、重新生成、吊销、硬删除均通过 |
 | 认证与原生权限 | 已完成 |  | `go test -p 1` 精准回归；`go vet` | 原生 member context、跨 workspace、owner deny、登录隔离、成员角色/移除不变量均通过 |
 | 原生业务能力 | 已完成 |  | Runtime、snapshot、Trace、Autopilot、DingTalk、load-smoke、claim/mat 定点测试 | 公共 Runtime 可使用、他人私有 Runtime 拒绝；任务领取可铸造短期 Token；节律与调试链路通过 |
-| Core/UI/docs | 已完成 |  | Core Vitest 79 项；Core/Views/Docs typecheck | schema 不再暴露权限字段；设置页与文档合同通过类型检查 |
-| 最终验证 | 已完成 |  | `git diff --check`；修改 Go 文件 gofmt；精准残留扫描 | 无 whitespace/格式问题；运行时无旧 capability/resource-scope 读取 |
+| Core/UI/docs | 已完成 |  | Core Vitest 79 项；DingTalk Views Vitest 27 项；Core/Views/Docs typecheck | schema 不再暴露权限字段；普通 Agent owner 可见机器人管理入口；设置页与文档合同通过 |
+| 最终验证 | 已完成 |  | 连接 migration 260 测试库的 Go 定向回归；目标包 `go vet`；`git diff --check`；修改 Go 文件 gofmt | 普通成员路由、Agent ownership、Token/成员生命周期均通过；无 whitespace/格式问题 |
 
 ## 验证策略
 
@@ -223,7 +225,7 @@ DTA HTTPS → dta_ 生命周期校验 → 原生 member middleware → 业务 Ha
 
 - Token 创建沿用单事务；membership 唯一约束负责并发去重。
 - regenerate/version CAS、过期和吊销语义保持不变。
-- member 写入口额外锁定 service member：只能保持 role=`member`，不能由管理员移除，也不能主动离开；Token 不提供角色修改入口。
+- member 写入口额外锁定 service member：只能保持 role=`member`，有关联 Token 时不能由管理员移除，也不能主动离开；Token 硬删除后管理员可显式清理。
 
 ## 可观测性
 
@@ -254,23 +256,32 @@ DTA HTTPS → dta_ 生命周期校验 → 原生 member middleware → 业务 Ha
 | 2026-08-03 | 不保留旧 capability 数据/API/滚动兼容，migration 直接删除列 | 用户明确当前没有旧 DTA Token 使用方，兼容没有价值 | 是，用户已明确要求继续 |
 | 2026-08-03 | service member 角色与 membership 设为不可变；migration 归一错误管理员角色 | 用户确认 service member 必须始终是非管理员，不能被成员接口提升或移除 | 是，用户已明确允许增加 |
 | 2026-08-03 | 暂不限制外部服务商直接使用 Token/CLI | 当前优先目标是降低耦合并先跑通完整交付链路 | 是，用户明确要求先不管 |
+| 2026-08-03 | Token 删除后允许管理员清理无 Token 的 service member；机器人安装改为 member 路由 + Agent ownership | 评审发现无清理出口和普通 service member 机器人交付能力退化；用户明确要求普通用户可绑定机器人 | 是，用户已明确要求修改 |
+
+## 调试假设记录
+
+| 假设 | 验证方式 | 结果 |
+|---|---|---|
+| 幽灵成员由 hard delete 保留 membership 且 `DeleteMember` 无条件 409 共同造成 | 对照 `DeleteWorkspaceAccessToken`、`DeleteMember` 与生命周期测试 | 已证实；Token 行删除后没有任何可达清理路径 |
+| 普通成员历史上可直接进入钉钉机器人安装路由 | 检查引入提交 `2b23679e6d`、基线 `e716729b0` 和当前 router | 否；历史路由一直是 owner/admin，旧 DTA Token 依靠中间件提前放行 |
+| 将机器人路由直接降为 member 即可安全恢复 | 对照 DingTalk 与 Lark Handler 的 Agent ownership 校验 | 否；DingTalk 当前只校验 Agent 属于 Workspace，必须补 `canManageAgent`、session Agent ownership 和孤儿安装 admin fallback |
 
 ## 最终验证结果
 
 - 隔离 PostgreSQL migration 260 down/up/replay 成功；`capabilities`、`resource_scope` 列数量为 0，`token_subject_non_member=0`。
-- Token 生命周期、原生 member middleware、workspace 绑定、过期/吊销、human JWT/PAT 隔离、成员不可提升/移除通过。
+- Token 生命周期、原生 member middleware、workspace 绑定、过期/吊销、human JWT/PAT 隔离通过；service member 在 Token 存在时不可提升或移除，Token 硬删除后可由管理员通过原生成员清理流程删除。
 - 普通成员可使用管理员预建的 public Runtime，不能使用他人 private Runtime；任务 claim、workspace context 和短期任务 Token 链路通过。
-- Trace 映射、Agent task snapshot、Autopilot 权限、DingTalk 原生绑定、DTA load-smoke 通过。
-- Core Vitest 79 项通过；Core、Views、Docs typecheck 通过；目标 Go 包 `go vet` 通过。
+- Trace 映射、Agent task snapshot、Autopilot 权限、DingTalk 原生绑定、DTA load-smoke 通过；普通 Agent owner 可安装、重试、轮询和解绑自己的钉钉机器人，其他普通成员被拒绝。
+- DingTalk Views Vitest 27 项、Core Vitest 79 项通过；Core、Views、Docs typecheck 通过；目标 Go 包 `go vet` 通过。
 - 后端 `internal/handler` 整包测试仍存在本分支外的 dispatch/onboarding/GitHub 等既有失败；本次修改涉及的定点回归全部通过，未借此改动无关代码。
 
 ### 最终工作区
 
 - 原始工作区与分支：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-workspace-access-grants`，`codex/workspace-access-grants`
 - 最终工作区与分支：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-dta-service-member`，`codex/dta-service-member`
-- 交付状态：已本地提交；提交号以 Git 元数据为准
+- 交付状态：本地实现和评审修复已完成；提交号以 Git 元数据为准
 - Worktree 收尾：保留
-- 当前未提交改动：无
+- 当前未提交改动：无（本计划与评审修复一并创建追加提交）
 - 未执行的验证：DTA 仓库端到端联调与预发部署，均不在本轮授权范围内
 
 ## 遗留风险

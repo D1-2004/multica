@@ -33,14 +33,14 @@ Multica 为人员、守护进程和外部 DTA 集成使用不同凭证。人员�
 
 ## 给外部服务商使用的 DTA 访问密钥
 
-工作区所有者在 **Settings → DTA Token** 中管理。创建 Token 时，Multica 同时创建一个永久绑定到该工作区的 service user，并把它加入工作区作为普通 `member`。因此它不再维护一套 DTA 专属权限开关，而是直接遵循 Multica 原有的成员角色、资源可见性和 ownership 规则。
+工作区所有者在 **Settings → DTA Token** 中管理。创建 Token 时，Multica 同时创建一个稳定绑定到该工作区的 service user，并把它加入工作区作为普通 `member`。因此它不再维护一套 DTA 专属权限开关，而是直接遵循 Multica 原有的成员角色、资源可见性和 ownership 规则。
 
 - 与普通非管理员成员相同，可以创建和管理自己有权操作的智能体、Skill、任务、Trace、节律以及钉钉绑定等资源。
 - 不能执行仅限工作区 owner/admin 的操作，例如管理成员或创建、修改 Runtime。
 - 工作区管理员应提前创建可供成员使用的公共 Runtime；DTA 创建的智能体使用这些 Runtime 运行任务。
 - 工作区 owner/admin 继续保留 Multica 原生的治理权限和可见性。
 
-每个外部使用方应使用独立 Token，便于单独设置有效期、审计、重新生成和吊销。重新生成不会改变其 service user 身份和既有资源归属；吊销会立即阻止后续请求，但不会删除该身份创建的智能体、任务或历史 Trace。已吊销的 Token 记录可以从设置页彻底删除；其 service user 和业务资源仍会保留。
+每个外部使用方应使用独立 Token，便于单独设置有效期、审计、重新生成和吊销。重新生成不会改变其 service user 身份和既有资源归属；吊销会立即阻止后续请求，但不会删除该身份创建的智能体、任务或历史 Trace。已吊销的 Token 记录可以从设置页彻底删除；service user 会暂时保留，之后 owner/admin 可以从成员管理中显式移除，并触发现有的 Agent、Runtime 和任务清理流程。
 
 <Callout type="warning">
 **DTA 访问密钥不是个人 PAT，不提供给外部服务商直接使用 Multica CLI。** 只把它配置给 DTA。外部服务商应完全通过 DTA 操作，不需要 Multica 账号，也不应拿到工作区所有者的 PAT。DTA 内部可以通过 Multica 的隐藏 transport 复用该凭证，但这不是对外产品入口。

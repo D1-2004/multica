@@ -274,6 +274,27 @@ func (q *Queries) GetWorkspaceAccessTokenByHash(ctx context.Context, tokenHash s
 	return i, err
 }
 
+const hasWorkspaceAccessTokenForSubject = `-- name: HasWorkspaceAccessTokenForSubject :one
+SELECT EXISTS (
+    SELECT 1
+    FROM workspace_access_token
+    WHERE workspace_id = $1
+      AND subject_user_id = $2
+)
+`
+
+type HasWorkspaceAccessTokenForSubjectParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	SubjectUserID pgtype.UUID `json:"subject_user_id"`
+}
+
+func (q *Queries) HasWorkspaceAccessTokenForSubject(ctx context.Context, arg HasWorkspaceAccessTokenForSubjectParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasWorkspaceAccessTokenForSubject, arg.WorkspaceID, arg.SubjectUserID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listWorkspaceAccessTokens = `-- name: ListWorkspaceAccessTokens :many
 SELECT id, workspace_id, subject_user_id, name, token_hash, token_prefix, version, expires_at, last_used_at, created_by, updated_by, created_at, updated_at, revoked_by, revoked_at FROM workspace_access_token
 WHERE workspace_id = $1

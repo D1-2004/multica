@@ -198,10 +198,27 @@ describe("DingTalkAgentBindButton (CTA gate)", () => {
     expect(screen.getByRole("button", { name: /Create enterprise bot/i })).toBeTruthy();
   });
 
-  it("hides the bind CTA for a non-admin member (matches backend admin gate)", () => {
+  it("shows the bind CTA for a non-admin member who owns the agent", () => {
+    membersRef.current = [{ user_id: "user-1", role: "member" }];
+    render(
+      <DingTalkAgentBindButton
+        agentId="agent-1"
+        agentOwnerId="user-1"
+        agentName="Bot"
+      />,
+      { wrapper: I18nWrapper },
+    );
+    expect(screen.getByRole("button", { name: /Create enterprise bot/i })).toBeTruthy();
+  });
+
+  it("hides the bind CTA for a non-admin member who does not own the agent", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     const { container } = render(
-      <DingTalkAgentBindButton agentId="agent-1" agentName="Bot" />,
+      <DingTalkAgentBindButton
+        agentId="agent-1"
+        agentOwnerId="user-2"
+        agentName="Bot"
+      />,
       { wrapper: I18nWrapper },
     );
     expect(container.innerHTML).toBe("");

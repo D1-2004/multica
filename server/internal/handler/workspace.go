@@ -658,8 +658,18 @@ func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isServiceUser {
-		writeError(w, http.StatusConflict, "workspace access service members cannot be removed; revoke or delete the token instead")
-		return
+		hasToken, tokenErr := h.Queries.HasWorkspaceAccessTokenForSubject(r.Context(), db.HasWorkspaceAccessTokenForSubjectParams{
+			WorkspaceID:   target.WorkspaceID,
+			SubjectUserID: target.UserID,
+		})
+		if tokenErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete member")
+			return
+		}
+		if hasToken {
+			writeError(w, http.StatusConflict, "workspace access service members with a token cannot be removed; revoke and delete the token first")
+			return
+		}
 	}
 
 	if target.Role == "owner" && requester.Role != "owner" {

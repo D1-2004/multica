@@ -1533,13 +1533,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/lark/install/{sessionId}/status", h.GetLarkInstallStatus)
 				})
 
-				// DingTalk bot installations use the native member/admin split:
-				// listing and account binding are member-visible, while bot install
-				// and revoke remain owner/admin-only. DTA service members pass
-				// through the same role middleware as interactive members.
+				// DingTalk bot installation and account binding are member-visible.
+				// Mutation handlers authorize against the target Agent: its owner or
+				// a workspace owner/admin may install, poll, retry, or revoke.
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/dingtalk/installations", h.ListDingTalkInstallations)
+					r.Delete("/dingtalk/installations/{installationId}", h.RevokeDingTalkInstallation)
+					r.Post("/dingtalk/installations/{installationId}/router/retry", h.RetryDingTalkRouterRegistration)
+					r.Post("/dingtalk/install/begin", h.BeginDingTalkInstall)
+					r.Get("/dingtalk/install/{sessionId}/status", h.GetDingTalkInstallStatus)
+					r.Post("/dingtalk/install/manual", h.ManualInstallDingTalk)
 					r.Get("/dingtalk/account-bindings", h.ListDingTalkAccountBindings)
 					r.Post("/dingtalk/account-bindings/begin", h.BeginDingTalkAccountBinding)
 					r.Patch("/dingtalk/account-bindings/{agentId}/surface", h.UpdateDingTalkAccountBindingSurface)
@@ -1552,23 +1556,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/agent-identity/enterprise/oauth/start", h.BeginAgentEnterpriseIdentityBinding)
 					r.Delete("/agent-identity/enterprise", h.RevokeAgentEnterpriseIdentity)
 				})
-				r.Group(func(r chi.Router) {
-					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
-					r.Delete("/dingtalk/installations/{installationId}", h.RevokeDingTalkInstallation)
-					r.Post("/dingtalk/installations/{installationId}/router/retry", h.RetryDingTalkRouterRegistration)
-					// Scan-to-create device flow. Begin opens a new
-					// registration session against DingTalk and returns
-					// the QR-code URL; the frontend dialog then polls
-					// /install/{sessionId}/status until success or
-					// terminal failure.
-					r.Post("/dingtalk/install/begin", h.BeginDingTalkInstall)
-					r.Get("/dingtalk/install/{sessionId}/status", h.GetDingTalkInstallStatus)
-					// Manual install fallback: create the installation from
-					// operator-supplied AppKey/AppSecret when the scan-to-create
-					// device flow is unavailable.
-					r.Post("/dingtalk/install/manual", h.ManualInstallDingTalk)
-				})
-
 				// Slack integration (MUL-3666). Same admin/member split as
 				// Lark: listing is member-visible; OAuth begin + revoke are
 				// admin-only. The OAuth callback itself is a public route (it is

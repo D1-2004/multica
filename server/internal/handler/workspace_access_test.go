@@ -44,14 +44,14 @@ func TestWorkspaceAccessTokenLifecycleCreatesStableServiceMember(t *testing.T) {
 		t.Fatalf("created token = %+v", created)
 	}
 
-	var subjectID, principalType, storedHash, memberRole string
+	var subjectID, memberID, principalType, storedHash, memberRole string
 	if err := testPool.QueryRow(context.Background(), `
-		SELECT t.subject_user_id::text, u.principal_type, t.token_hash, m.role
+		SELECT t.subject_user_id::text, m.id::text, u.principal_type, t.token_hash, m.role
 		FROM workspace_access_token t
 		JOIN "user" u ON u.id = t.subject_user_id
 		JOIN member m ON m.workspace_id = t.workspace_id AND m.user_id = t.subject_user_id
 		WHERE t.id = $1
-	`, created.ID).Scan(&subjectID, &principalType, &storedHash, &memberRole); err != nil {
+	`, created.ID).Scan(&subjectID, &memberID, &principalType, &storedHash, &memberRole); err != nil {
 		t.Fatalf("load service member: %v", err)
 	}
 	if principalType != middleware.WorkspaceAccessActorSource || memberRole != "member" {
@@ -170,6 +170,17 @@ func TestWorkspaceAccessTokenLifecycleCreatesStableServiceMember(t *testing.T) {
 		ORDER BY created_at DESC LIMIT 1
 	`, created.ID).Scan(&auditTokenID); err != nil || auditTokenID != nil {
 		t.Fatalf("delete audit token_id=%v err=%v, want retained audit with null FK", auditTokenID, err)
+	}
+
+	removeMemberReq := withWorkspaceAccessParams(newRequest(http.MethodDelete, "/api/workspaces/"+testWorkspaceID+"/members/"+memberID, nil), "id", testWorkspaceID, "memberId", memberID)
+	removeMemberRec := httptest.NewRecorder()
+	testHandler.DeleteMember(removeMemberRec, removeMemberReq)
+	if removeMemberRec.Code != http.StatusNoContent {
+		t.Fatalf("remove orphan service member status=%d body=%s", removeMemberRec.Code, removeMemberRec.Body.String())
+	}
+	var memberCount int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM member WHERE id = $1`, memberID).Scan(&memberCount); err != nil || memberCount != 0 {
+		t.Fatalf("orphan service member count=%d err=%v", memberCount, err)
 	}
 }
 

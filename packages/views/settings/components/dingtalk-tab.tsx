@@ -298,19 +298,21 @@ function InstallationRow({
 
 // DingTalkAgentBindButton is the per-agent CTA we expose from the agent
 // detail page. Visibility rules mirror LarkAgentBindButton:
-//   1. Non-owner/admin viewers see nothing — the backend gates install /
-//      status / disconnect on those roles.
-//   2. If this agent ALREADY has an active installation, owner/admins see
-//      the connected badge regardless of install_supported (which only
-//      governs NEW scan-installs).
-//   3. Otherwise the Bind CTA shows only when install_supported is true.
+//   1. Viewers who neither own the agent nor administer the workspace see
+//      nothing — the backend applies the same per-agent authorization.
+//   2. If this agent ALREADY has an active installation, authorized viewers
+//      see the connected badge regardless of install_supported.
+//   3. Otherwise the Bind CTA shows whenever the integration is configured;
+//      manual credentials remain available when scan install is unsupported.
 export function DingTalkAgentBindButton({
   agentId,
+  agentOwnerId,
   agentName,
   className,
   onShowConnectedDetails,
 }: {
   agentId: string;
+  agentOwnerId?: string | null;
   agentName?: string;
   className?: string;
   /** When set, the connected state renders as a compact read-only status
@@ -341,7 +343,9 @@ export function DingTalkAgentBindButton({
   });
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
   const canManage =
-    currentMember?.role === "owner" || currentMember?.role === "admin";
+    currentMember?.role === "owner" ||
+    currentMember?.role === "admin" ||
+    (!!user?.id && agentOwnerId != null && agentOwnerId === user.id);
 
   if (!canManage) return null;
 
