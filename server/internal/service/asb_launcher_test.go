@@ -191,8 +191,8 @@ func TestASBLauncherAttachesAgentIdentityBeforeEnterpriseCLIProbe(t *testing.T) 
 			if err := json.NewDecoder(request.Body).Decode(&spiffeGrant); err != nil {
 				t.Fatalf("decode SPIFFE identity: %v", err)
 			}
-			spiffeAttached.Store(true)
-			response.WriteHeader(http.StatusOK)
+				spiffeAttached.Store(true)
+				response.WriteHeader(http.StatusAccepted)
 		default:
 			http.NotFound(response, request)
 		}

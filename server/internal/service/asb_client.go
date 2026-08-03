@@ -560,17 +560,22 @@ func (c *ASBClient) AttachAgentIdentity(ctx context.Context, sandboxID string, g
 		strings.TrimSpace(grant.AgentID) == "" {
 		return errors.New("ASB Agent Identity grant is incomplete")
 	}
-	query := url.Values{"sync": []string{"true"}}
+	// ASB explicitly recommends asynchronous SPIFFE attachment. A synchronous
+	// request waits inside the control plane and can surface its transient CSI
+	// 502 as a terminal HTTP 400 even though subsequent sandbox requests are the
+	// recovery trigger. The launcher proves completion by repeatedly executing
+	// the BUC + a1 identity probe before it exposes the sandbox to a task.
+	query := url.Values{"sync": []string{"false"}}
 	return c.doLifecycleJSONVia(
 		ctx,
-		c.identityClient,
+		c.lifecycleClient,
 		"attach_agent_identity",
 		http.MethodPost,
 		"/sandboxes/"+sandboxID+"/identity/spiffe",
 		query,
 		grant,
 		nil,
-		http.StatusOK,
+		http.StatusAccepted,
 	)
 }
 

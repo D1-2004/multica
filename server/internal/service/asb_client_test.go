@@ -290,7 +290,7 @@ func TestASBClientIdentityInjection(t *testing.T) {
 		}
 		switch request.URL.Path {
 		case "/v1/sandboxes/" + testSandboxID + "/identity/spiffe":
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Errorf("spiffe sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBAgentIdentityGrant
@@ -317,7 +317,7 @@ func TestASBClientIdentityInjection(t *testing.T) {
 			http.NotFound(response, request)
 			return
 		}
-		response.WriteHeader(http.StatusOK)
+		response.WriteHeader(http.StatusAccepted)
 	}))
 	defer server.Close()
 
@@ -341,15 +341,14 @@ func TestASBClientIdentityInjection(t *testing.T) {
 	}
 }
 
-func TestASBClientSynchronousAgentIdentityUsesCallerDeadline(t *testing.T) {
+func TestASBClientAsynchronousAgentIdentityUsesLifecycleTimeout(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Query().Get("sync") != "true" {
+		if request.URL.Query().Get("sync") != "false" {
 			t.Errorf("spiffe sync = %q", request.URL.Query().Get("sync"))
 		}
-		time.Sleep(80 * time.Millisecond)
-		response.WriteHeader(http.StatusOK)
+		response.WriteHeader(http.StatusAccepted)
 	}))
 	defer server.Close()
 
