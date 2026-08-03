@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -121,10 +122,11 @@ func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
 	}
 }
 
-func TestASBLauncherProbesInheritedBUCAndOnlyAttachesAgentIdentity(t *testing.T) {
+func TestASBLauncherAttachesAgentIdentityBeforeEnterpriseCLIProbe(t *testing.T) {
 	t.Parallel()
 
 	var spiffeGrant ASBAgentIdentityGrant
+	var spiffeAttached atomic.Bool
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
@@ -136,6 +138,10 @@ func TestASBLauncherProbesInheritedBUCAndOnlyAttachesAgentIdentity(t *testing.T)
 			})
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/execd/command":
+			if !spiffeAttached.Load() {
+				http.Error(response, "SPIFFE identity must be attached before the CLI probe", http.StatusConflict)
+				return
+			}
 			response.Header().Set("Content-Type", "text/event-stream")
 			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 		case request.Method == http.MethodPost &&
@@ -143,6 +149,7 @@ func TestASBLauncherProbesInheritedBUCAndOnlyAttachesAgentIdentity(t *testing.T)
 			if err := json.NewDecoder(request.Body).Decode(&spiffeGrant); err != nil {
 				t.Fatalf("decode SPIFFE identity: %v", err)
 			}
+			spiffeAttached.Store(true)
 			response.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(response, request)

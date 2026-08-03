@@ -804,14 +804,9 @@ func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) 
 }
 
 func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID string, identity ASBResolvedIdentity) error {
-	if err := l.waitSandboxBUCIdentityReady(
-		ctx,
-		sandboxID,
-		identity.RawEmployeeID,
-		identity.BUCAgentID,
-	); err != nil {
-		return err
-	}
+	// The enterprise CLI probe calls a1, which needs the SPIFFE auth headers
+	// installed by AttachAgentIdentity. Attach them before probing the inherited
+	// BUC credential directory to avoid a circular readiness dependency.
 	if err := l.Client.AttachAgentIdentity(ctx, sandboxID, ASBAgentIdentityGrant{
 		RawEmployeeID: identity.RawEmployeeID,
 		AgentToken:    identity.AgentIdentityToken,
@@ -819,6 +814,14 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID 
 	}); err != nil {
 		logASBIdentityAttachmentFailure(sandboxID, err)
 		return fmt.Errorf("attach ASB Agent Identity: %w", err)
+	}
+	if err := l.waitSandboxBUCIdentityReady(
+		ctx,
+		sandboxID,
+		identity.RawEmployeeID,
+		identity.BUCAgentID,
+	); err != nil {
+		return err
 	}
 	return nil
 }
