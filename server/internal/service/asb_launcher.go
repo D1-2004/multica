@@ -243,19 +243,16 @@ func (identity ASBResolvedIdentity) validate() error {
 	}
 }
 
-func (identity ASBResolvedIdentity) sandboxExtensions(
-	wireGuardCredentials string,
-) map[string]string {
+func (identity ASBResolvedIdentity) sandboxExtensions() map[string]string {
 	if identity.Mode == asbIdentityModeUnbound {
 		return nil
 	}
-	// With originalSandboxID the ASB create-time contract inherits the source
-	// credential directory and intentionally omits the expiring buc.* tokens.
+	// Both identities are attached after the sandbox reaches Running. In
+	// particular, ASB documents originalSandboxId reuse on the runtime
+	// WireGuard attachment API rather than as a create-time credential copy.
 	return map[string]string{
-		"spiffe.lazyAuth":          "true",
-		"wireguard.worker":         identity.RawEmployeeID,
-		"wireguard.uemCredentials": wireGuardCredentials,
-		"buc.originalSandboxID":    identity.SourceSandboxID,
+		"spiffe.lazyAuth":    "true",
+		"wireguard.lazyAuth": "true",
 	}
 }
 
@@ -705,13 +702,12 @@ func (l *ASBLauncher) resolveSandbox(
 					IdentityFingerprint: identity.Fingerprint,
 				})
 				slog.Warn(
-					"ASB warm sandbox employee identity is unavailable; starting task without employee identity",
+					"ASB warm sandbox employee identity is unavailable; recreating the bound sandbox",
 					"runtime_id", util.UUIDToString(runtime.ID),
 					"sandbox_id", session.SandboxID,
 					"error", redact.Text(readyErr.Error()),
 				)
 				l.deleteASBSandboxAfterIdentityFailure(session.SandboxID)
-				identity = unboundASBResolvedIdentity()
 			}
 		}
 	}
@@ -777,7 +773,7 @@ func (l *ASBLauncher) resolveSandbox(
 					"multica.runtime_id": util.UUIDToString(runtime.ID),
 					"multica.backend":    string(SandboxBackendASB),
 				},
-				Extensions: identity.sandboxExtensions(l.Config.WireGuardCredentials),
+				Extensions: identity.sandboxExtensions(),
 			},
 		)
 		if err != nil {
@@ -869,6 +865,21 @@ func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) 
 }
 
 func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID string, identity ASBResolvedIdentity) error {
+	// originalSandboxId reuses the ASB-managed BUC credential directory without
+	// exposing or persisting the user's OAuth token trio in Multica. The target
+	// has declared wireguard.lazyAuth at creation and is already Running here.
+	if err := attachASBBUCIdentityOnce(
+		ctx,
+		l.Client,
+		sandboxID,
+		ASBBUCIdentityGrant{
+			EmployeeID:           identity.RawEmployeeID,
+			WireGuardCredentials: l.Config.WireGuardCredentials,
+			OriginalSandboxID:    identity.SourceSandboxID,
+		},
+	); err != nil {
+		return fmt.Errorf("attach inherited ASB BUC identity: %w", err)
+	}
 	// The enterprise CLI probe calls a1, which needs the SPIFFE auth headers
 	// installed by AttachAgentIdentity. Attach them before probing the inherited
 	// BUC credential directory to avoid a circular readiness dependency.

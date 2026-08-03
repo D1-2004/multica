@@ -85,7 +85,7 @@ func TestASBLaunchIdentityAllowsExplicitUnboundMode(t *testing.T) {
 		identity.Fingerprint != asbUnboundIdentityFingerprint {
 		t.Fatalf("unbound identity = %#v", identity)
 	}
-	if extensions := identity.sandboxExtensions("unused"); len(extensions) != 0 {
+	if extensions := identity.sandboxExtensions(); len(extensions) != 0 {
 		t.Fatalf("unbound sandbox extensions = %#v", extensions)
 	}
 }
@@ -146,18 +146,20 @@ func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
 	if err := identity.validate(); err != nil {
 		t.Fatalf("validate bound identity: %v", err)
 	}
-	extensions := identity.sandboxExtensions("wireguard-credentials")
+	extensions := identity.sandboxExtensions()
 	for key, expected := range map[string]string{
-		"spiffe.lazyAuth":          "true",
-		"wireguard.worker":         "12345",
-		"wireguard.uemCredentials": "wireguard-credentials",
-		"buc.originalSandboxID":    "identity-source-1",
+		"spiffe.lazyAuth":    "true",
+		"wireguard.lazyAuth": "true",
 	} {
 		if extensions[key] != expected {
 			t.Fatalf("bound sandbox extension %s = %q, want %q", key, extensions[key], expected)
 		}
 	}
-	for _, forbidden := range []string{"wireguard.lazyAuth"} {
+	for _, forbidden := range []string{
+		"wireguard.worker",
+		"wireguard.uemCredentials",
+		"buc.originalSandboxID",
+	} {
 		if _, ok := extensions[forbidden]; ok {
 			t.Fatalf("bound sandbox extensions include create-time identity field %s", forbidden)
 		}
@@ -168,7 +170,9 @@ func TestASBLauncherAttachesAgentIdentityBeforeEnterpriseCLIProbe(t *testing.T) 
 	t.Parallel()
 
 	var spiffeGrant ASBAgentIdentityGrant
+	var bucGrant ASBBUCIdentityGrant
 	var spiffeAttached atomic.Bool
+	var bucAttached atomic.Bool
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
@@ -179,9 +183,19 @@ func TestASBLauncherAttachesAgentIdentityBeforeEnterpriseCLIProbe(t *testing.T) 
 				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
 			})
 		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/wireguard":
+			if request.URL.Query().Get("sync") != "true" {
+				t.Errorf("wireguard sync = %q", request.URL.Query().Get("sync"))
+			}
+			if err := json.NewDecoder(request.Body).Decode(&bucGrant); err != nil {
+				t.Fatalf("decode BUC identity: %v", err)
+			}
+			bucAttached.Store(true)
+			response.WriteHeader(http.StatusOK)
+		case request.Method == http.MethodPost &&
 			request.URL.Path == "/execd/command":
-			if !spiffeAttached.Load() {
-				http.Error(response, "SPIFFE identity must be attached before the CLI probe", http.StatusConflict)
+			if !bucAttached.Load() || !spiffeAttached.Load() {
+				http.Error(response, "BUC and SPIFFE identities must be attached before the CLI probe", http.StatusConflict)
 				return
 			}
 			response.Header().Set("Content-Type", "text/event-stream")
@@ -213,6 +227,7 @@ func TestASBLauncherAttachesAgentIdentityBeforeEnterpriseCLIProbe(t *testing.T) 
 	launcher := &ASBLauncher{
 		Client: newTestASBClient(t, server),
 		Config: ASBConfig{
+			WireGuardCredentials:  "wireguard-credentials",
 			WireGuardReadyTimeout: time.Second,
 		},
 	}
@@ -227,6 +242,14 @@ func TestASBLauncherAttachesAgentIdentityBeforeEnterpriseCLIProbe(t *testing.T) 
 		spiffeGrant.AgentToken != identity.AgentIdentityToken ||
 		spiffeGrant.AgentID != identity.AgentSPIFFEID {
 		t.Fatalf("SPIFFE identity grant = %#v", spiffeGrant)
+	}
+	if bucGrant.EmployeeID != identity.RawEmployeeID ||
+		bucGrant.WireGuardCredentials != "wireguard-credentials" ||
+		bucGrant.OriginalSandboxID != identity.SourceSandboxID ||
+		bucGrant.BUCAccessToken != "" ||
+		bucGrant.BUCRefreshToken != "" ||
+		bucGrant.BUCIDToken != "" {
+		t.Fatalf("BUC identity grant = %#v", bucGrant)
 	}
 }
 
@@ -253,6 +276,9 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 			}
 			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/wireguard":
+			response.WriteHeader(http.StatusOK)
+		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/spiffe":
 			if attachCalls.Add(1) >= 2 {
 				response.WriteHeader(http.StatusAccepted)
@@ -272,13 +298,18 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 
 	launcher := &ASBLauncher{
 		Client: newTestASBClient(t, server),
-		Config: ASBConfig{WireGuardReadyTimeout: 500 * time.Millisecond},
+		Config: ASBConfig{
+			WireGuardCredentials:  "wireguard-credentials",
+			WireGuardReadyTimeout: 500 * time.Millisecond,
+		},
 	}
 	identity := ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
 		RawEmployeeID:      "12345",
 		BUCAgentID:         "agent-multica-asb",
 		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
 		AgentIdentityToken: "ait",
+		SourceSandboxID:    "identity-source-1",
 	}
 	if err := launcher.ensureSandboxIdentityReady(context.Background(), "sandbox-123", identity); err != nil {
 		t.Fatalf("ensureSandboxIdentityReady: %v", err)

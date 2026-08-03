@@ -406,6 +406,45 @@ func TestASBClientSynchronousBUCIdentityUsesCallerDeadline(t *testing.T) {
 	}
 }
 
+func TestASBClientAllowsBUCIdentitySourceReuseWithoutTokenTrio(t *testing.T) {
+	t.Parallel()
+
+	var received ASBBUCIdentityGrant
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost ||
+			request.URL.Path != "/v1/sandboxes/"+testSandboxID+"/identity/wireguard" {
+			http.NotFound(response, request)
+			return
+		}
+		if request.URL.Query().Get("sync") != "true" {
+			t.Errorf("wireguard sync = %q", request.URL.Query().Get("sync"))
+		}
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Fatalf("decode BUC identity grant: %v", err)
+		}
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := newTestASBClient(t, server)
+	grant := ASBBUCIdentityGrant{
+		EmployeeID:           "12345",
+		WireGuardCredentials: "wireguard-credentials",
+		OriginalSandboxID:    "identity-source-1",
+	}
+	if err := client.AttachBUCIdentity(
+		context.Background(),
+		testSandboxID,
+		grant,
+		true,
+	); err != nil {
+		t.Fatalf("AttachBUCIdentity: %v", err)
+	}
+	if received != grant {
+		t.Fatalf("BUC identity grant = %#v, want %#v", received, grant)
+	}
+}
+
 func TestASBClientExecUsesOnlyEndpointHeaders(t *testing.T) {
 	t.Parallel()
 

@@ -190,9 +190,9 @@ type ASBAgentIdentityGrant struct {
 
 type ASBBUCIdentityGrant struct {
 	EmployeeID           string `json:"empId"`
-	BUCAccessToken       string `json:"bucAccessToken"`
-	BUCRefreshToken      string `json:"bucRefreshToken"`
-	BUCIDToken           string `json:"bucIdToken"`
+	BUCAccessToken       string `json:"bucAccessToken,omitempty"`
+	BUCRefreshToken      string `json:"bucRefreshToken,omitempty"`
+	BUCIDToken           string `json:"bucIdToken,omitempty"`
 	WireGuardCredentials string `json:"wgclientCredentials"`
 	OriginalSandboxID    string `json:"originalSandboxId,omitempty"`
 }
@@ -584,13 +584,21 @@ func (c *ASBClient) AttachBUCIdentity(ctx context.Context, sandboxID string, gra
 		return err
 	}
 	if strings.TrimSpace(grant.EmployeeID) == "" ||
-		strings.TrimSpace(grant.BUCAccessToken) == "" ||
-		strings.TrimSpace(grant.BUCRefreshToken) == "" ||
-		strings.TrimSpace(grant.BUCIDToken) == "" ||
 		strings.TrimSpace(grant.WireGuardCredentials) == "" {
 		return errors.New("ASB BUC identity grant is incomplete")
 	}
-	if grant.OriginalSandboxID != "" {
+	accessToken := strings.TrimSpace(grant.BUCAccessToken)
+	refreshToken := strings.TrimSpace(grant.BUCRefreshToken)
+	idToken := strings.TrimSpace(grant.BUCIDToken)
+	hasAnyToken := accessToken != "" || refreshToken != "" || idToken != ""
+	hasAllTokens := accessToken != "" && refreshToken != "" && idToken != ""
+	if hasAnyToken && !hasAllTokens {
+		return errors.New("ASB BUC identity token trio is incomplete")
+	}
+	if strings.TrimSpace(grant.OriginalSandboxID) == "" && !hasAllTokens {
+		return errors.New("ASB BUC identity grant requires tokens or an original sandbox")
+	}
+	if strings.TrimSpace(grant.OriginalSandboxID) != "" {
 		if err := validateASBSandboxID(grant.OriginalSandboxID); err != nil {
 			return err
 		}

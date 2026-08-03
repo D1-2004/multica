@@ -323,6 +323,18 @@ func attachASBBUCIdentitySource(
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
 ) error {
+	if err := attachASBBUCIdentityOnce(ctx, client, sandboxID, grant); err != nil {
+		return fmt.Errorf("attach BUC identity to temporary ASB source: %w", err)
+	}
+	return nil
+}
+
+func attachASBBUCIdentityOnce(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+	grant ASBBUCIdentityGrant,
+) error {
 	// Submit the synchronous attachment exactly once. ASB can return the
 	// documented tunnel-converging response after it has started sandbox-side
 	// WireGuard setup. Repeating the POST restarts that setup and can keep the
@@ -340,7 +352,7 @@ func attachASBBUCIdentitySource(
 		)
 		return nil
 	}
-	return fmt.Errorf("attach BUC identity to temporary ASB source: %w", err)
+	return err
 }
 
 func isASBWireGuardTunnelConverging(err error) bool {
