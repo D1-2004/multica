@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 // piBackend implements Backend by spawning the Pi CLI in non-interactive
@@ -261,7 +263,8 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		cancel()
 		return nil, fmt.Errorf("pi stdin pipe: %w", err)
 	}
-	cmd.Stderr = newLogWriter(b.cfg.Logger, "[pi:stderr] ")
+	stderrBuf := newStderrTail(newLogWriter(b.cfg.Logger, "[pi:stderr] "), agentStderrTailBytes)
+	cmd.Stderr = stderrBuf
 
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
@@ -409,6 +412,9 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		} else if waitErr != nil && finalStatus == "completed" {
 			finalStatus = "failed"
 			finalError = fmt.Sprintf("pi exited with error: %v", waitErr)
+		}
+		if finalError != "" {
+			finalError = withAgentStderr(finalError, "pi", redact.Text(stderrBuf.Tail()))
 		}
 
 		b.cfg.Logger.Info("pi finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())

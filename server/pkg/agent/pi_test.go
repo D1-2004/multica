@@ -143,6 +143,48 @@ func TestPiExecuteAttachesStdinPipe(t *testing.T) {
 	}
 }
 
+func TestPiExecuteIncludesRedactedStderrOnProcessFailure(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixture is POSIX-only")
+	}
+
+	fakePath := filepath.Join(t.TempDir(), "pi")
+	script := "#!/bin/sh\nprintf 'provider rejected TOKEN=super-secret-value\\n' >&2\nexit 1\n"
+	writeTestExecutable(t, fakePath, []byte(script))
+
+	backend, err := New("pi", Config{ExecutablePath: fakePath, Logger: slog.Default()})
+	if err != nil {
+		t.Fatalf("new pi backend: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	go func() {
+		for range session.Messages {
+		}
+	}()
+
+	select {
+	case result := <-session.Result:
+		if result.Status != "failed" {
+			t.Fatalf("expected status=failed, got %q", result.Status)
+		}
+		if !strings.Contains(result.Error, "pi stderr: provider rejected [REDACTED CREDENTIAL]") {
+			t.Fatalf("expected redacted stderr detail, got %q", result.Error)
+		}
+		if strings.Contains(result.Error, "super-secret-value") {
+			t.Fatalf("stderr secret was not redacted: %q", result.Error)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for result")
+	}
+}
+
 // piEventStreamScript builds a sh script that prints each JSON event on
 // its own stdout line. Fixtures must not contain single quotes.
 func piEventStreamScript(events []string) string {
