@@ -560,9 +560,10 @@ func (c *ASBClient) AttachAgentIdentity(ctx context.Context, sandboxID string, g
 		strings.TrimSpace(grant.AgentID) == "" {
 		return errors.New("ASB Agent Identity grant is incomplete")
 	}
-	query := url.Values{"sync": []string{"false"}}
-	return c.doLifecycleJSON(
+	query := url.Values{"sync": []string{"true"}}
+	return c.doLifecycleJSONVia(
 		ctx,
+		c.identityClient,
 		"attach_agent_identity",
 		http.MethodPost,
 		"/sandboxes/"+sandboxID+"/identity/spiffe",
@@ -570,9 +571,6 @@ func (c *ASBClient) AttachAgentIdentity(ctx context.Context, sandboxID string, g
 		grant,
 		nil,
 		http.StatusOK,
-		http.StatusCreated,
-		http.StatusAccepted,
-		http.StatusNoContent,
 	)
 }
 

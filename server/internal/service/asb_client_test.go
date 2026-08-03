@@ -290,7 +290,7 @@ func TestASBClientIdentityInjection(t *testing.T) {
 		}
 		switch request.URL.Path {
 		case "/v1/sandboxes/" + testSandboxID + "/identity/spiffe":
-			if request.URL.Query().Get("sync") != "false" {
+			if request.URL.Query().Get("sync") != "true" {
 				t.Errorf("spiffe sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBAgentIdentityGrant
@@ -317,7 +317,7 @@ func TestASBClientIdentityInjection(t *testing.T) {
 			http.NotFound(response, request)
 			return
 		}
-		response.WriteHeader(http.StatusNoContent)
+		response.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
@@ -338,6 +338,38 @@ func TestASBClientIdentityInjection(t *testing.T) {
 		OriginalSandboxID:    "anchor-1",
 	}, true); err != nil {
 		t.Fatalf("AttachBUCIdentity: %v", err)
+	}
+}
+
+func TestASBClientSynchronousAgentIdentityUsesCallerDeadline(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Query().Get("sync") != "true" {
+			t.Errorf("spiffe sync = %q", request.URL.Query().Get("sync"))
+		}
+		time.Sleep(80 * time.Millisecond)
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client, err := NewASBClient(ASBClientConfig{
+		BaseURL:    server.URL,
+		APIKey:     testASBAPIKey,
+		Timeout:    20 * time.Millisecond,
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("NewASBClient: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if err := client.AttachAgentIdentity(ctx, testSandboxID, ASBAgentIdentityGrant{
+		RawEmployeeID: "12345",
+		AgentToken:    testAgentToken,
+		AgentID:       "spiffe://agent/test",
+	}); err != nil {
+		t.Fatalf("AttachAgentIdentity: %v", err)
 	}
 }
 
