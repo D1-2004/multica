@@ -13,29 +13,21 @@ import (
 func TestWaitForASBCapacityReleaseObservesSandboxAndQuota(t *testing.T) {
 	t.Parallel()
 
-	var listCalls atomic.Int32
+	var getCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch {
-		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes":
-			if state := request.URL.Query().Get("state"); state != "" {
-				t.Errorf("sandbox state filter = %q, want empty", state)
-			}
-			call := listCalls.Add(1)
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/sandbox-reclaimed":
+			call := getCalls.Add(1)
 			if call == 1 {
-				_, _ = io.WriteString(response, `{
-					"sandboxInfos":[{"id":"sandbox-reclaimed","status":{"state":"Running"},"createdAt":"2026-08-03T05:00:00Z"}],
-					"pagination":{"page":1,"pageSize":100,"total":1,"hasNextPage":false,"hasPreviousPage":false}
-				}`)
+				_, _ = io.WriteString(response, `{"id":"sandbox-reclaimed","status":{"state":"Running"},"createdAt":"2026-08-03T05:00:00Z"}`)
 				return
 			}
-			_, _ = io.WriteString(response, `{
-				"sandboxInfos":[],
-				"pagination":{"page":1,"pageSize":100,"total":0,"hasNextPage":false,"hasPreviousPage":false}
-			}`)
+			response.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(response, `{"code":"NOT_FOUND","message":"sandbox not found"}`)
 		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/quotas":
 			usage := 5
-			if listCalls.Load() > 1 {
+			if getCalls.Load() > 1 {
 				usage = 4
 			}
 			_, _ = io.WriteString(response, `[{"networkZone":"ALITest","region":"cn-zhangjiakou","quota":5,"usage":`+strconv.Itoa(usage)+`}]`)
@@ -53,8 +45,8 @@ func TestWaitForASBCapacityReleaseObservesSandboxAndQuota(t *testing.T) {
 	); err != nil {
 		t.Fatalf("waitForASBCapacityRelease: %v", err)
 	}
-	if listCalls.Load() < 2 {
-		t.Fatalf("list calls = %d, want at least 2", listCalls.Load())
+	if getCalls.Load() < 2 {
+		t.Fatalf("get calls = %d, want at least 2", getCalls.Load())
 	}
 }
 
@@ -82,5 +74,20 @@ func TestGetLiveASBSandboxTreatsNotFoundAsMissing(t *testing.T) {
 	}
 	if exists || sandbox != nil {
 		t.Fatalf("sandbox = %#v, exists = %t", sandbox, exists)
+	}
+}
+
+func TestIsActiveASBTaskStatus(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []string{"queued", "dispatched", "running", "waiting_local_directory", "deferred"} {
+		if !isActiveASBTaskStatus(status) {
+			t.Fatalf("status %q should fence its sandbox from reclaim", status)
+		}
+	}
+	for _, status := range []string{"completed", "failed", "cancelled"} {
+		if isActiveASBTaskStatus(status) {
+			t.Fatalf("status %q should allow an untracked sandbox reclaim", status)
+		}
 	}
 }

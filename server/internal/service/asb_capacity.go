@@ -228,10 +228,15 @@ func reclaimIdleASBSandboxForCredential(
 	if err != nil {
 		return false, err
 	}
-	// The ASB list endpoint currently returns an empty page when the state
-	// filter is present even though the same tenant has Running sandboxes.
-	// Fetch the authoritative tenant inventory and classify states locally.
-	liveSandboxes, err := client.ListSandboxes(ctx)
+	// Query only Multica task sandboxes. The unfiltered tenant endpoint has
+	// returned an empty page in prepub while quota and the ASB console both show
+	// live instances; the documented metadata filter also excludes the identity
+	// source and unrelated tenant workloads from any reclaim decision.
+	liveSandboxes, err := client.ListSandboxesByMetadata(
+		ctx,
+		"multica.backend",
+		string(SandboxBackendASB),
+	)
 	if err != nil {
 		return false, fmt.Errorf("query live ASB sandboxes before idle-instance reclaim: %w", err)
 	}
@@ -356,7 +361,114 @@ func reclaimIdleASBSandboxForCredential(
 		)
 		return true, nil
 	}
+	return reclaimUntrackedIdleASBSandbox(
+		ctx,
+		queries,
+		client,
+		requestingRuntimeID,
+		runtimeIDs,
+		excludedTaskID,
+		liveSandboxes,
+	)
+}
+
+func reclaimUntrackedIdleASBSandbox(
+	ctx context.Context,
+	queries *db.Queries,
+	client *ASBClient,
+	requestingRuntimeID pgtype.UUID,
+	runtimeIDs []pgtype.UUID,
+	excludedTaskID pgtype.UUID,
+	liveSandboxes []ASBSandbox,
+) (bool, error) {
+	runtimeSet := make(map[pgtype.UUID]struct{}, len(runtimeIDs))
+	trackedSandboxIDs := make(map[string]struct{})
+	for _, runtimeID := range runtimeIDs {
+		runtimeSet[runtimeID] = struct{}{}
+		sessions, err := queries.ListActiveCloudSandboxSessionsByRuntimeAndBackend(
+			ctx,
+			db.ListActiveCloudSandboxSessionsByRuntimeAndBackendParams{
+				RuntimeID:      runtimeID,
+				SandboxBackend: string(SandboxBackendASB),
+			},
+		)
+		if err != nil {
+			return false, fmt.Errorf("list tracked ASB task sandboxes: %w", err)
+		}
+		for _, session := range sessions {
+			trackedSandboxIDs[session.SandboxID] = struct{}{}
+		}
+	}
+
+	sort.SliceStable(liveSandboxes, func(i, j int) bool {
+		return liveSandboxes[i].CreatedAt.Before(liveSandboxes[j].CreatedAt)
+	})
+	for _, sandbox := range liveSandboxes {
+		if !strings.EqualFold(strings.TrimSpace(sandbox.Status.State), "running") {
+			continue
+		}
+		if _, tracked := trackedSandboxIDs[sandbox.ID]; tracked {
+			continue
+		}
+		runtimeID, err := util.ParseUUID(strings.TrimSpace(sandbox.Metadata["multica.runtime_id"]))
+		if err != nil {
+			continue
+		}
+		if _, sharedCredential := runtimeSet[runtimeID]; !sharedCredential {
+			continue
+		}
+		taskID, err := util.ParseUUID(strings.TrimSpace(sandbox.Metadata["multica.task_id"]))
+		if err != nil {
+			// Pre-fix sandboxes do not carry a task fence. Do not infer idleness
+			// from absence of a session while a launch may still be in progress.
+			continue
+		}
+		if excludedTaskID.Valid && taskID == excludedTaskID {
+			continue
+		}
+		task, err := queries.GetAgentTask(ctx, taskID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("query ASB task fence before orphan reclaim: %w", err)
+		}
+		if task.RuntimeID != runtimeID || isActiveASBTaskStatus(task.Status) {
+			continue
+		}
+		live, exists, err := getLiveASBSandbox(ctx, client, sandbox.ID)
+		if err != nil {
+			return false, fmt.Errorf("recheck untracked ASB task sandbox state: %w", err)
+		}
+		if !exists || !strings.EqualFold(strings.TrimSpace(live.Status.State), "running") {
+			continue
+		}
+		if err := client.DeleteSandbox(ctx, sandbox.ID); err != nil {
+			return false, fmt.Errorf("delete untracked idle ASB task sandbox: %w", err)
+		}
+		if err := waitForASBCapacityRelease(ctx, client, sandbox.ID); err != nil {
+			return false, err
+		}
+		slog.Info(
+			"reclaimed untracked idle ASB task sandbox for tenant capacity",
+			"requesting_runtime_id", util.UUIDToString(requestingRuntimeID),
+			"runtime_id", util.UUIDToString(runtimeID),
+			"task_id", util.UUIDToString(taskID),
+			"sandbox_id", sandbox.ID,
+			"task_status", task.Status,
+		)
+		return true, nil
+	}
 	return false, nil
+}
+
+func isActiveASBTaskStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "queued", "dispatched", "running", "waiting_local_directory", "deferred":
+		return true
+	default:
+		return false
+	}
 }
 
 func isIdleASBSandboxCandidate(
@@ -437,24 +549,16 @@ func waitForASBCapacityRelease(
 	lastQuota := 0
 	lastUsage := 0
 	for {
-		// Keep using the complete tenant inventory here. A filtered list may
-		// hide the sandbox before its deletion has actually released quota.
-		sandboxes, err := client.ListSandboxes(waitCtx)
+		live, exists, err := getLiveASBSandbox(waitCtx, client, sandboxID)
 		if err != nil {
 			if waitCtx.Err() != nil {
 				break
 			}
-			return fmt.Errorf("query ASB sandboxes after idle-instance delete: %w", err)
+			return fmt.Errorf("query ASB sandbox after idle-instance delete: %w", err)
 		}
-		found := false
 		lastState = "not_found"
-		for _, sandbox := range sandboxes {
-			if sandbox.ID != sandboxID {
-				continue
-			}
-			found = true
-			lastState = strings.ToLower(strings.TrimSpace(sandbox.Status.State))
-			break
+		if exists {
+			lastState = strings.ToLower(strings.TrimSpace(live.Status.State))
 		}
 		quotas, err := client.ListQuotas(waitCtx)
 		if err != nil {
@@ -469,12 +573,11 @@ func waitForASBCapacityRelease(
 		}
 		lastQuota = quota
 		lastUsage = usage
-		if (!found || isTerminalASBSandboxState(lastState)) && !quotaExhausted {
+		if (!exists || isTerminalASBSandboxState(lastState)) && !quotaExhausted {
 			slog.Info(
 				"ASB tenant capacity released after idle-instance delete",
 				"sandbox_id", sandboxID,
 				"sandbox_state", lastState,
-				"sandbox_count", len(sandboxes),
 				"quota", quota,
 				"usage", usage,
 			)

@@ -219,6 +219,7 @@ func TestASBLauncherUsesCreateTimeBUCAndAttachesAgentIdentityBeforeProbe(t *test
 		context.Background(),
 		"sandbox-123",
 		identity,
+		launcher.Config.WireGuardReadyTimeout,
 	); err != nil {
 		t.Fatalf("ensureSandboxIdentityReady: %v", err)
 	}
@@ -284,7 +285,12 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 		AgentIdentityToken: "ait",
 		SourceSandboxID:    "identity-source-1",
 	}
-	if err := launcher.ensureSandboxIdentityReady(context.Background(), "sandbox-123", identity); err != nil {
+	if err := launcher.ensureSandboxIdentityReady(
+		context.Background(),
+		"sandbox-123",
+		identity,
+		launcher.Config.WireGuardReadyTimeout,
+	); err != nil {
 		t.Fatalf("ensureSandboxIdentityReady: %v", err)
 	}
 	if !probeObserved.Load() {
@@ -292,6 +298,14 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 	}
 	if attachCalls.Load() != 2 {
 		t.Fatalf("SPIFFE attachment calls = %d, want 2", attachCalls.Load())
+	}
+}
+
+func TestASBTaskIdentityProbeTimeoutSplitsBoundAttempts(t *testing.T) {
+	t.Parallel()
+
+	if got := asbTaskIdentityProbeTimeout(4 * time.Minute); got != 2*time.Minute {
+		t.Fatalf("identity probe timeout = %s, want 2m", got)
 	}
 }
 

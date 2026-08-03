@@ -113,6 +113,11 @@ type asbSandboxPage struct {
 	Pagination   *asbSandboxPagination `json:"pagination"`
 }
 
+type asbSandboxListFilter struct {
+	States   []string
+	Metadata string
+}
+
 type ASBSandboxQuota struct {
 	NetworkZone        string `json:"networkZone"`
 	Region             string `json:"region"`
@@ -361,6 +366,29 @@ func (c *ASBClient) ListQuotas(ctx context.Context) ([]ASBSandboxQuota, error) {
 // ListSandboxes returns the current control-plane state for every sandbox
 // visible to the tenant API key.
 func (c *ASBClient) ListSandboxes(ctx context.Context, states ...string) ([]ASBSandbox, error) {
+	return c.listSandboxes(ctx, asbSandboxListFilter{States: states})
+}
+
+// ListSandboxesByMetadata scopes inventory reads to one exact metadata pair.
+// Multica uses this to distinguish task sandboxes from the identity source and
+// unrelated tenant workloads before making a capacity decision.
+func (c *ASBClient) ListSandboxesByMetadata(
+	ctx context.Context,
+	key string,
+	value string,
+) ([]ASBSandbox, error) {
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	if key == "" || value == "" || strings.ContainsAny(key, "=&") {
+		return nil, errors.New("ASB sandbox metadata filter is invalid")
+	}
+	return c.listSandboxes(ctx, asbSandboxListFilter{Metadata: key + "=" + value})
+}
+
+func (c *ASBClient) listSandboxes(
+	ctx context.Context,
+	filter asbSandboxListFilter,
+) ([]ASBSandbox, error) {
 	const pageSize = 100
 	var sandboxes []ASBSandbox
 	for page := 1; ; page++ {
@@ -368,10 +396,13 @@ func (c *ASBClient) ListSandboxes(ctx context.Context, states ...string) ([]ASBS
 			"page":     {strconv.Itoa(page)},
 			"pageSize": {strconv.Itoa(pageSize)},
 		}
-		for _, state := range states {
+		for _, state := range filter.States {
 			if normalized := strings.TrimSpace(state); normalized != "" {
 				query.Add("state", normalized)
 			}
+		}
+		if filter.Metadata != "" {
+			query.Set("metadata", filter.Metadata)
 		}
 		var response asbSandboxPage
 		if err := c.doLifecycleJSON(

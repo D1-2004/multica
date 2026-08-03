@@ -190,3 +190,22 @@ func TestAgentEnterpriseIdentityStatusTreatsRevokedBindingAsUnbound(t *testing.T
 		t.Fatalf("revoked identity should be reported as unbound: %#v", payload)
 	}
 }
+
+func TestEnterpriseIdentityCallbackOpeningChunkResistsProxyBuffering(t *testing.T) {
+	t.Parallel()
+
+	padding, err := enterpriseIdentityCallbackPadding()
+	if err != nil {
+		t.Fatalf("generate callback padding: %v", err)
+	}
+	page := enterpriseIdentityCallbackOpeningPage("nonce", padding)
+	if len(page) < 32*1024 {
+		t.Fatalf("opening callback chunk length = %d, want at least 32 KiB", len(page))
+	}
+	if !strings.Contains(page, "通常需要 2–3 分钟") {
+		t.Fatal("opening callback chunk does not contain the progress guidance")
+	}
+	if strings.Contains(padding, " ") {
+		t.Fatal("callback padding unexpectedly contains repeated-space padding")
+	}
+}

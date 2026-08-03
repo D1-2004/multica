@@ -56,6 +56,10 @@ const (
 	// server-side budget beyond the complete source-establishment budget.
 	enterpriseIdentityCallbackTimeout   = 15 * time.Minute
 	enterpriseIdentityCallbackHeartbeat = 2 * time.Second
+	// Keep the first streamed HTML chunk above common ingress compression and
+	// buffering thresholds. Random bytes remain large after transport
+	// compression, unlike the previous repeated-space padding.
+	enterpriseIdentityCallbackPaddingBytes = 24 * 1024
 )
 
 type enterpriseIdentityCallbackResult struct {
@@ -184,8 +188,14 @@ func (h *Handler) CompleteAgentEnterpriseIdentityBinding(w http.ResponseWriter, 
 		writeError(w, http.StatusInternalServerError, "enterprise identity callback could not be initialized")
 		return
 	}
+	padding, err := enterpriseIdentityCallbackPadding()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "enterprise identity callback could not be initialized")
+		return
+	}
 
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Cache-Control", "no-store, no-transform")
+	w.Header().Set("Content-Encoding", "identity")
 	w.Header().Set("Content-Security-Policy", fmt.Sprintf(
 		"default-src 'none'; script-src 'nonce-%s'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
 		nonce,
@@ -197,7 +207,7 @@ func (h *Handler) CompleteAgentEnterpriseIdentityBinding(w http.ResponseWriter, 
 	w.WriteHeader(http.StatusOK)
 
 	clientConnected := true
-	if _, err := io.WriteString(w, enterpriseIdentityCallbackOpeningPage(nonce)); err != nil {
+	if _, err := io.WriteString(w, enterpriseIdentityCallbackOpeningPage(nonce, padding)); err != nil {
 		clientConnected = false
 	} else {
 		flusher.Flush()
@@ -292,10 +302,15 @@ func enterpriseIdentityCallbackNonce() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
-func enterpriseIdentityCallbackOpeningPage(nonce string) string {
-	// The padding makes the first response chunk larger than common ingress
-	// proxy buffers, so the browser receives the progress page immediately.
-	padding := strings.Repeat(" ", 16*1024)
+func enterpriseIdentityCallbackPadding() (string, error) {
+	raw := make([]byte, enterpriseIdentityCallbackPaddingBytes)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawStdEncoding.EncodeToString(raw), nil
+}
+
+func enterpriseIdentityCallbackOpeningPage(nonce string, padding string) string {
 	return fmt.Sprintf(`<!doctype html>
 <html lang="zh-CN">
 <head>

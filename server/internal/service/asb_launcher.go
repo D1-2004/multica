@@ -31,6 +31,7 @@ const (
 	defaultASBWireGuardProbeInterval = 5 * time.Second
 	defaultASBResourceCPU            = "2"
 	defaultASBResourceMemory         = "4Gi"
+	asbBoundIdentityMaxAttempts      = 2
 	asbRunnerHome                    = "/home/user"
 	asbUnboundIdentityFingerprint    = "7a5d3e85306c71a48596592e43c235dc5f8c9e3f96eeb52b9e6637a04356b1da"
 )
@@ -668,6 +669,8 @@ func (l *ASBLauncher) resolveSandbox(
 	if err := identity.validate(); err != nil {
 		return "", false, ASBResolvedIdentity{}, err
 	}
+	boundIdentityFailures := 0
+	identityProbeTimeout := asbTaskIdentityProbeTimeout(l.Config.WireGuardReadyTimeout)
 	if scoped {
 		release, err := l.lockSandboxScopeOnConnection(ctx, runtime, scope, runtimeLockConn)
 		if err != nil {
@@ -692,9 +695,15 @@ func (l *ASBLauncher) resolveSandbox(
 			if identity.Mode != asbIdentityModeBound {
 				return session.SandboxID, false, identity, nil
 			}
-			if readyErr := l.ensureSandboxIdentityReady(ctx, session.SandboxID, identity); readyErr == nil {
+			if readyErr := l.ensureSandboxIdentityReady(
+				ctx,
+				session.SandboxID,
+				identity,
+				identityProbeTimeout,
+			); readyErr == nil {
 				return session.SandboxID, false, identity, nil
 			} else {
+				boundIdentityFailures++
 				_ = l.Queries.MarkCloudSandboxSessionStale(ctx, db.MarkCloudSandboxSessionStaleParams{
 					RuntimeID:           runtime.ID,
 					ScopeType:           scope.typ,
@@ -766,6 +775,13 @@ func (l *ASBLauncher) resolveSandbox(
 			releaseIdentitySource = nil
 		}
 
+		sandboxMetadata := map[string]string{
+			"multica.runtime_id": util.UUIDToString(runtime.ID),
+			"multica.backend":    string(SandboxBackendASB),
+		}
+		if excludedTaskID.Valid {
+			sandboxMetadata["multica.task_id"] = util.UUIDToString(excludedTaskID)
+		}
 		sandbox, err := createASBSandboxWithCapacityOnConnection(
 			ctx,
 			l.Queries,
@@ -780,11 +796,8 @@ func (l *ASBLauncher) resolveSandbox(
 				ResourceCPU:    l.Config.ResourceCPU,
 				ResourceMemory: l.Config.ResourceMemory,
 				Entrypoint:     []string{"sleep infinity"},
-				Metadata: map[string]string{
-					"multica.runtime_id": util.UUIDToString(runtime.ID),
-					"multica.backend":    string(SandboxBackendASB),
-				},
-				Extensions: identity.sandboxExtensions(l.Config.WireGuardCredentials),
+				Metadata:       sandboxMetadata,
+				Extensions:     identity.sandboxExtensions(l.Config.WireGuardCredentials),
 			},
 		)
 		if err != nil {
@@ -797,15 +810,31 @@ func (l *ASBLauncher) resolveSandbox(
 			return "", true, ASBResolvedIdentity{}, err
 		}
 		if identity.Mode == asbIdentityModeBound {
-			if err := l.ensureSandboxIdentityReady(ctx, sandbox.ID, identity); err != nil {
+			if err := l.ensureSandboxIdentityReady(
+				ctx,
+				sandbox.ID,
+				identity,
+				identityProbeTimeout,
+			); err != nil {
+				boundIdentityFailures++
+				retryBoundIdentity := boundIdentityFailures < asbBoundIdentityMaxAttempts
+				message := "ASB inherited employee identity is unavailable after bounded retries; starting task without employee identity"
+				if retryBoundIdentity {
+					message = "ASB inherited employee identity is unavailable; recreating one bound task sandbox"
+				}
 				slog.Warn(
-					"ASB inherited employee identity is unavailable; retrying task without employee identity",
+					message,
 					"runtime_id", util.UUIDToString(runtime.ID),
 					"sandbox_id", sandbox.ID,
+					"identity_attempt", boundIdentityFailures,
+					"identity_attempt_limit", asbBoundIdentityMaxAttempts,
 					"error", redact.Text(err.Error()),
 				)
 				releaseSource("release_source_after_identity_unavailable")
 				l.deleteASBSandboxAfterIdentityFailure(sandbox.ID)
+				if retryBoundIdentity {
+					continue
+				}
 				identity = unboundASBResolvedIdentity()
 				continue
 			}
@@ -931,11 +960,22 @@ func (l *ASBLauncher) deleteSupersededASBSandboxForScope(
 }
 
 func (l *ASBLauncher) deleteASBSandboxAfterIdentityFailure(sandboxID string) {
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	cleanupCtx, cancel := context.WithTimeout(
+		context.Background(),
+		asbCapacityReleaseTimeout+15*time.Second,
+	)
 	defer cancel()
 	if err := l.Client.DeleteSandbox(cleanupCtx, sandboxID); err != nil {
 		slog.Warn(
 			"failed to delete ASB sandbox after employee identity failure",
+			"sandbox_id", sandboxID,
+			"error", redact.Text(err.Error()),
+		)
+		return
+	}
+	if err := waitForASBCapacityRelease(cleanupCtx, l.Client, sandboxID); err != nil {
+		slog.Warn(
+			"ASB sandbox deletion after employee identity failure did not release capacity in time",
 			"sandbox_id", sandboxID,
 			"error", redact.Text(err.Error()),
 		)
@@ -970,7 +1010,19 @@ func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) 
 	}
 }
 
-func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID string, identity ASBResolvedIdentity) error {
+func asbTaskIdentityProbeTimeout(configured time.Duration) time.Duration {
+	if configured <= 0 {
+		return configured
+	}
+	return configured / asbBoundIdentityMaxAttempts
+}
+
+func (l *ASBLauncher) ensureSandboxIdentityReady(
+	ctx context.Context,
+	sandboxID string,
+	identity ASBResolvedIdentity,
+	timeout time.Duration,
+) error {
 	// The enterprise CLI probe calls a1, which needs the SPIFFE auth headers
 	// installed by AttachAgentIdentity. Attach them before probing the inherited
 	// BUC credential directory to avoid a circular readiness dependency.
@@ -998,6 +1050,7 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(ctx context.Context, sandboxID 
 		identity.BUCAgentID,
 		grant,
 		attachmentNeedsRetry,
+		timeout,
 	); err != nil {
 		return err
 	}
@@ -1023,8 +1076,8 @@ func (l *ASBLauncher) waitSandboxBUCIdentityReady(
 	bucAgentID string,
 	agentIdentityGrant ASBAgentIdentityGrant,
 	attachmentNeedsRetry bool,
+	timeout time.Duration,
 ) error {
-	timeout := l.Config.WireGuardReadyTimeout
 	if timeout <= 0 {
 		return errors.New("ASB WireGuard ready timeout is not configured")
 	}

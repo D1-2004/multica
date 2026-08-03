@@ -228,6 +228,35 @@ func TestASBClientListSandboxesPaginates(t *testing.T) {
 	}
 }
 
+func TestASBClientListSandboxesByMetadata(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1/sandboxes" {
+			http.NotFound(response, request)
+			return
+		}
+		if got := request.URL.Query().Get("metadata"); got != "multica.backend=asb" {
+			t.Fatalf("metadata filter = %q", got)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(response, `{
+			"sandboxInfos":[{"id":"sandbox-task","status":{"state":"Running"},"createdAt":"2026-08-04T05:00:00Z","metadata":{"multica.backend":"asb"}}],
+			"pagination":{"page":1,"pageSize":100,"total":1,"hasNextPage":false,"hasPreviousPage":false}
+		}`)
+	}))
+	defer server.Close()
+	client := newTestASBClient(t, server)
+
+	sandboxes, err := client.ListSandboxesByMetadata(context.Background(), "multica.backend", "asb")
+	if err != nil {
+		t.Fatalf("ListSandboxesByMetadata: %v", err)
+	}
+	if len(sandboxes) != 1 || sandboxes[0].ID != "sandbox-task" {
+		t.Fatalf("sandboxes = %#v", sandboxes)
+	}
+}
+
 func TestASBClientParsesSanitizedLifecycleError(t *testing.T) {
 	t.Parallel()
 
