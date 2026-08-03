@@ -351,6 +351,7 @@ type ASBLauncher struct {
 	Client      *ASBClient
 	Identity    ASBTaskIdentityResolver
 	Credentials *ASBRuntimeClientProvider
+	Capacity    ASBSandboxCapacity
 	Pool        *pgxpool.Pool
 }
 
@@ -384,6 +385,14 @@ func NewASBLauncher(
 func (l *ASBLauncher) SetPool(pool *pgxpool.Pool) {
 	if l != nil {
 		l.Pool = pool
+		if pool == nil || l.Credentials == nil {
+			l.Capacity = nil
+			return
+		}
+		l.Capacity = &ASBSandboxCapacityManager{
+			Pool:        pool,
+			Credentials: l.Credentials,
+		}
 	}
 }
 
@@ -1082,11 +1091,21 @@ func (l *ASBLauncher) VerifyStableArtifact(
 	if l == nil || l.Credentials == nil {
 		return nil, errors.New("ASB Runtime credential service is unavailable")
 	}
+	if l.Capacity == nil {
+		return nil, errors.New("ASB stable validation capacity coordination is unavailable")
+	}
 	client, err := l.Credentials.ClientForRuntime(ctx, runtimeID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve ASB stable validation Runtime credential: %w", err)
 	}
-	return l.verifyStableArtifact(ctx, client, artifact)
+	return l.verifyStableArtifact(
+		ctx,
+		client,
+		artifact,
+		func(ctx context.Context, input ASBCreateSandboxInput) (*ASBSandbox, error) {
+			return l.Capacity.Create(ctx, runtimeID, client, input)
+		},
+	)
 }
 
 func (l *ASBLauncher) VerifyArtifactWithAPIKey(
@@ -1101,18 +1120,22 @@ func (l *ASBLauncher) VerifyArtifactWithAPIKey(
 	if err != nil {
 		return nil, err
 	}
-	return l.verifyStableArtifact(ctx, client, artifact)
+	return l.verifyStableArtifact(ctx, client, artifact, client.CreateSandbox)
 }
 
 func (l *ASBLauncher) verifyStableArtifact(
 	ctx context.Context,
 	client *ASBClient,
 	artifact ASBArtifact,
+	createSandbox func(context.Context, ASBCreateSandboxInput) (*ASBSandbox, error),
 ) (map[string]any, error) {
 	if err := validateASBArtifact(artifact); err != nil {
 		return nil, err
 	}
-	sandbox, err := client.CreateSandbox(ctx, ASBCreateSandboxInput{
+	if createSandbox == nil {
+		return nil, errors.New("ASB stable validation sandbox creator is unavailable")
+	}
+	sandbox, err := createSandbox(ctx, ASBCreateSandboxInput{
 		ImageURI:       artifact.Ref,
 		TimeoutSeconds: l.Config.TimeoutSeconds,
 		ResourceCPU:    l.Config.ResourceCPU,

@@ -24,6 +24,26 @@ type fakeASBTaskIdentityResolver struct {
 	err      error
 }
 
+type fakeASBSandboxCapacity struct {
+	t              *testing.T
+	wantRuntimeID  pgtype.UUID
+	createRequests int
+}
+
+func (capacity *fakeASBSandboxCapacity) Create(
+	ctx context.Context,
+	runtimeID pgtype.UUID,
+	client *ASBClient,
+	input ASBCreateSandboxInput,
+) (*ASBSandbox, error) {
+	capacity.t.Helper()
+	if runtimeID != capacity.wantRuntimeID {
+		capacity.t.Fatalf("capacity Runtime ID = %v, want %v", runtimeID, capacity.wantRuntimeID)
+	}
+	capacity.createRequests++
+	return client.CreateSandbox(ctx, input)
+}
+
 func (resolver fakeASBTaskIdentityResolver) ResolveASBTaskIdentity(
 	context.Context,
 	pgtype.UUID,
@@ -375,6 +395,10 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtimeID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
+	capacity := &fakeASBSandboxCapacity{
+		t:             t,
+		wantRuntimeID: runtimeID,
+	}
 	launcher := &ASBLauncher{
 		Config: ASBConfig{
 			APIURL:         server.URL,
@@ -394,6 +418,7 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 			Secrets: secrets,
 			Config:  ASBConfig{APIURL: server.URL},
 		},
+		Capacity: capacity,
 	}
 	got, err := launcher.VerifyStableArtifact(context.Background(), runtimeID, ASBArtifact{
 		Ref:     "registry.example/runtime@" + digest,
@@ -405,6 +430,9 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	}
 	if execCalls != 2 {
 		t.Fatalf("exec calls = %d, want 2", execCalls)
+	}
+	if capacity.createRequests != 1 {
+		t.Fatalf("capacity create requests = %d, want 1", capacity.createRequests)
 	}
 	if intMetadataValue(got, "schema_version") != 3 {
 		t.Fatalf("manifest = %#v", got)
