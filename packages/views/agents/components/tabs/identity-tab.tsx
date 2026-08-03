@@ -3,7 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
-import type { Agent } from "@multica/core/types";
+import { isASBRuntime } from "@multica/core/runtimes";
+import type { Agent, AgentRuntime } from "@multica/core/types";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { DingTalkAccountBindingCard } from "../integrations/dingtalk-account-binding";
 import { EnterpriseIdentityBindingCard } from "../integrations/enterprise-identity-binding";
@@ -11,10 +12,12 @@ import { GitHubIdentityBindingCard } from "../integrations/github-identity-bindi
 
 export function IdentityTab({
   agent,
+  runtime,
   canOperateDingTalkBinding,
   dingTalkBindingPermissionLoading,
 }: {
   agent: Agent;
+  runtime?: AgentRuntime | null;
   canOperateDingTalkBinding: boolean;
   dingTalkBindingPermissionLoading: boolean;
 }) {
@@ -37,10 +40,12 @@ export function IdentityTab({
         agentId={agent.id}
         canManage={canManageIdentity}
       />
-      <EnterpriseIdentityBindingCard
-        agentId={agent.id}
-        canManage={canManageIdentity}
-      />
+      {isASBRuntime(runtime) && (
+        <EnterpriseIdentityBindingCard
+          agentId={agent.id}
+          canManage={canManageIdentity}
+        />
+      )}
       <DingTalkAccountBindingCard
         agentId={agent.id}
         agentName={agent.name}
