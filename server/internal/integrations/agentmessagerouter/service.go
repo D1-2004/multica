@@ -589,16 +589,12 @@ func (s *Service) List(ctx context.Context, workspaceID pgtype.UUID) ([]PublicDi
 			reconciliation[rowKey] = "inconsistent"
 			continue
 		}
-		domains := []string{"channel"}
-		if config.CalendarStartEnabled {
-			domains = append(domains, "calendar")
-		}
 		checkRequests = append(checkRequests, DigitalEmployeeBindingKey{
 			AgentID:         util.UUIDToString(row.AgentID),
 			Platform:        config.RouterPlatform,
 			TenantID:        config.RouterTenantID,
 			AccountID:       config.RouterAccountID,
-			ExpectedDomains: domains,
+			ExpectedDomains: config.bindingDomains(),
 		})
 		checkRows = append(checkRows, index)
 	}
@@ -750,7 +746,8 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 	config.MessageRouteStatus = ""
 	config.MessageRouteError = nil
 	config.MessageScope = messageScope
-	config.CalendarStartEnabled = hasActiveCalendarSubscription(params.MessageBinding.Subscriptions)
+	config.EnabledDomains, _ = bindingSubscriptionDomains(params.MessageBinding.Subscriptions)
+	config.CalendarStartEnabled = containsBindingDomain(config.EnabledDomains, "calendar")
 	config.Conversations = conversations
 	config.BoundAt = &boundAt
 	activeConfig, err := config.Marshal()
@@ -955,10 +952,7 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding Publ
 			AccountID: config.RouterAccountID,
 		}
 		checkKey := bindingKey
-		checkKey.ExpectedDomains = []string{"channel"}
-		if config.CalendarStartEnabled {
-			checkKey.ExpectedDomains = append(checkKey.ExpectedDomains, "calendar")
-		}
+		checkKey.ExpectedDomains = config.bindingDomains()
 		checks, checkErr := s.router.CheckDigitalEmployeeBindings(ctx, []DigitalEmployeeBindingKey{checkKey})
 		if checkErr != nil || len(checks) != 1 {
 			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable

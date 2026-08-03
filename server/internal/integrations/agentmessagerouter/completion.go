@@ -252,7 +252,7 @@ func validateCompleteBindingParams(params CompleteBindingParams) (string, []Ding
 			!validRouterIdentifier(params.Message.TenantID) ||
 			!validRouterIdentifier(params.Message.AccountID) ||
 			!validOptionalPreviousAgentID(params.Message.PreviousAgentID) ||
-			!validSourceID(params.Message.SourceID) || !validBindingSubscriptions(params.Message.Subscriptions) ||
+			!validSourceID(params.Message.SourceID) || !validBindingSubscriptions(params.Message.SourceID, params.Message.Subscriptions) ||
 			utf8.RuneCountInString(strings.TrimSpace(params.Message.AccountDisplayName)) > maxAccountNameRunes ||
 			!validAccountAvatarURL(strings.TrimSpace(params.Message.AccountAvatarURL)) {
 			return "", nil, ErrInvalidResult
@@ -327,21 +327,30 @@ func validSourceID(sourceID string) bool {
 	return trimmed != "" && sourceID == trimmed && len(sourceID) <= maxSourceIDBytes
 }
 
-func validBindingSubscriptions(subscriptions []BindingSubscriptionResult) bool {
-	for _, subscription := range subscriptions {
-		if (subscription.Domain != "channel" && subscription.Domain != "calendar") ||
-			subscription.Status != "active" || !validSourceID(subscription.SourceID) {
-			return false
-		}
+func validBindingSubscriptions(primarySourceID string, subscriptions []BindingSubscriptionResult) bool {
+	domains, valid := bindingSubscriptionDomains(subscriptions)
+	if !valid || !containsBindingDomain(domains, "channel") {
+		return false
 	}
-	return true
-}
-
-func hasActiveCalendarSubscription(subscriptions []BindingSubscriptionResult) bool {
 	for _, subscription := range subscriptions {
-		if subscription.Domain == "calendar" && subscription.Status == "active" {
-			return true
+		if subscription.Domain == "channel" {
+			return subscription.SourceID == primarySourceID
 		}
 	}
 	return false
+}
+
+func bindingSubscriptionDomains(subscriptions []BindingSubscriptionResult) ([]string, bool) {
+	if len(subscriptions) == 0 || len(subscriptions) > maxBindingDomains {
+		return nil, false
+	}
+	domains := make([]string, len(subscriptions))
+	for index, subscription := range subscriptions {
+		if subscription.Status != "active" || !validSourceID(subscription.SourceID) {
+			return nil, false
+		}
+		domains[index] = subscription.Domain
+	}
+	normalized, err := normalizeBindingDomains(domains)
+	return normalized, err == nil
 }

@@ -119,7 +119,7 @@ func TestClientChecksDigitalEmployeeBindingsByAccountKey(t *testing.T) {
 			Platform:        "dingtalk",
 			TenantID:        "corp-a",
 			AccountID:       "employee-a",
-			ExpectedDomains: []string{"channel", "calendar"},
+			ExpectedDomains: []string{"channel", "calendar", "approval", "future_domain"},
 		},
 		{
 			AgentID:         "agent-b",
@@ -140,7 +140,7 @@ func TestClientChecksDigitalEmployeeBindingsByAccountKey(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(body.Bindings) != 2 || body.Bindings[0].AccountID != "employee-a" ||
-			len(body.Bindings[0].ExpectedDomains) != 2 || body.Bindings[1].AgentID != "agent-b" {
+			len(body.Bindings[0].ExpectedDomains) != 4 || body.Bindings[1].AgentID != "agent-b" {
 			t.Fatalf("request body = %#v", body)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{

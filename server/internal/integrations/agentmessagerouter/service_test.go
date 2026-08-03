@@ -538,6 +538,70 @@ func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *
 	}
 }
 
+func TestCompleteBindingPersistsEverySubscriptionDomainForReconciliation(t *testing.T) {
+	now := time.Date(2026, 8, 3, 18, 0, 0, 0, time.UTC)
+	store := pendingBindingStore(t, now, canonicalCallbackToken)
+	config, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := &fakeBindingRouter{subscription: Subscription{
+		SourceID:    "source-channel",
+		AgentID:     uuidStringForTest(store.row.AgentID),
+		DispatchURL: config.DispatchURL,
+		Surface:     SubscriptionSurface{Type: DingTalkSurfaceIssue},
+		Outbound:    SubscriptionOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		Status:      "active",
+	}}
+	service := newBindingServiceForTest(t, store, router, now)
+	wantDomains := []string{"channel", "calendar", "approval", "future_domain"}
+
+	_, err = service.CompleteBinding(context.Background(), CompleteBindingParams{
+		BindingID:     store.row.ID,
+		BindingMode:   BindingModeMessage,
+		CallbackToken: canonicalCallbackToken,
+		Status:        DingTalkBindingCompletionStatus,
+		Identity:      IdentityBindingResult{Status: DingTalkBindingTaskStatusSkipped},
+		Message: MessageBindingResult{
+			Status:       DingTalkBindingTaskStatusSuccess,
+			Platform:     "dingtalk",
+			TenantID:     "corp-a",
+			AccountID:    "employee-a",
+			MessageScope: DingTalkMessageScopeDirectOnly,
+			SourceID:     "source-channel",
+			Subscriptions: []BindingSubscriptionResult{
+				{Domain: "channel", SourceID: "source-channel", Status: "active"},
+				{Domain: "calendar", SourceID: "source-calendar", Status: "active"},
+				{Domain: "approval", SourceID: "source-approval", Status: "active"},
+				{Domain: "future_domain", SourceID: "source-future", Status: "active"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompleteBinding() error = %v", err)
+	}
+
+	var stored struct {
+		EnabledDomains []string `json:"enabled_domains"`
+	}
+	if err := json.Unmarshal(store.row.Config, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(stored.EnabledDomains, ","); got != strings.Join(wantDomains, ",") {
+		t.Fatalf("stored enabled domains = %#v", stored.EnabledDomains)
+	}
+
+	if _, err := service.List(context.Background(), store.row.WorkspaceID); err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(router.bindingCheckRequests) != 1 || len(router.bindingCheckRequests[0]) != 1 {
+		t.Fatalf("binding check requests = %#v", router.bindingCheckRequests)
+	}
+	if got := strings.Join(router.bindingCheckRequests[0][0].ExpectedDomains, ","); got != strings.Join(wantDomains, ",") {
+		t.Fatalf("binding check domains = %#v", router.bindingCheckRequests[0][0].ExpectedDomains)
+	}
+}
+
 func TestUpdateDingTalkAccountBindingSurfacePreservesAccountSnapshot(t *testing.T) {
 	now := time.Date(2026, 7, 23, 9, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
@@ -2089,7 +2153,7 @@ func TestListUsesPersistedSurfaceWhileReconcilingAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	config.SurfaceType = DingTalkSurfaceChat
-	config.CalendarStartEnabled = true
+	config.EnabledDomains = []string{"channel", "calendar"}
 	store.row.Config, err = config.Marshal()
 	if err != nil {
 		t.Fatal(err)
@@ -2271,6 +2335,9 @@ func messageCallbackParamsForTest(bindingID pgtype.UUID, sourceID string) Callba
 		MessageBinding: MessageBindingResult{
 			Status: "success", SourceID: sourceID, Platform: "dingtalk",
 			TenantID: "corp-a", AccountID: "employee-a",
+			Subscriptions: []BindingSubscriptionResult{
+				{Domain: "channel", SourceID: sourceID, Status: "active"},
+			},
 		},
 	}
 }

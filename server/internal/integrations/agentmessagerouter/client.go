@@ -785,20 +785,8 @@ func validDigitalEmployeeBindingKey(binding DigitalEmployeeBindingKey, requireDo
 	if !requireDomains {
 		return len(binding.ExpectedDomains) == 0
 	}
-	if len(binding.ExpectedDomains) == 0 || len(binding.ExpectedDomains) > 2 {
-		return false
-	}
-	seen := make(map[string]struct{}, len(binding.ExpectedDomains))
-	for _, domain := range binding.ExpectedDomains {
-		if domain != "channel" && domain != "calendar" {
-			return false
-		}
-		if _, exists := seen[domain]; exists {
-			return false
-		}
-		seen[domain] = struct{}{}
-	}
-	return true
+	_, err := normalizeBindingDomains(binding.ExpectedDomains)
+	return len(binding.ExpectedDomains) > 0 && err == nil
 }
 
 func validDigitalEmployeeBindingCheck(result DigitalEmployeeBindingCheck) bool {

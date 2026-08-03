@@ -210,7 +210,7 @@ Content-Type: application/json
       "platform": "dingtalk",
       "tenantId": "<organization ID>",
       "accountId": "<digital employee UID>",
-      "expectedDomains": ["channel", "calendar"]
+      "expectedDomains": ["channel", "calendar", "approval"]
     }
   ]
 }
@@ -371,10 +371,30 @@ subscription detail and surface APIs:
     "platform": "dingtalk",
     "tenant_id": "corp-a",
     "account_id": "employee-uid",
-    "previous_agent_id": "agent-a"
+    "previous_agent_id": "agent-a",
+    "subscriptions": [
+      {"domain": "channel", "source_id": "source-channel", "status": "active"},
+      {"domain": "calendar", "source_id": "source-calendar", "status": "active"},
+      {"domain": "approval", "source_id": "source-approval", "status": "active"}
+    ]
   }
 }
 ```
+
+For every successful message callback, `subscriptions` is required and is the
+authoritative set of active business domains. Multica validates the collection
+without maintaining a local domain allowlist, persists its ordered domain set
+as `channel_installation.config.enabled_domains`, and sends that exact set as
+`expectedDomains` during reconciliation and user-unbind prechecks. Adding a new
+Router domain therefore does not require another Multica code change. The
+top-level `source_id` must still match the `channel` subscription because the
+existing detail and surface APIs use that locator.
+
+Rows written before `enabled_domains` existed remain readable. For such an
+active row only, Multica derives `channel` plus optional `calendar` from the
+legacy `calendar_start_enabled` field. New callbacks never use this fallback;
+an empty, duplicate, inactive, malformed, or channel-mismatched subscription
+collection is rejected as an invalid callback result.
 
 `previous_agent_id` is omitted when no takeover occurred. On takeover, Multica
 matches the previous Agent plus `platform`, `tenant_id`, and `account_id`; the
@@ -500,7 +520,7 @@ credentials or raw upstream exceptions.
 ## 2026-08-02 Account-key Binding Change Reason
 
 The product currently permits at most one digital employee per Agent and treats
-the selected channel and calendar listeners as one account-level operation.
+all selected business-domain listeners as one account-level operation.
 The authoritative fact is therefore which Agent currently owns the trusted
 DingTalk account key; a separate historical relation entity is unnecessary.
 Including the expected Agent in every reconciliation, unbind, and takeover
@@ -549,3 +569,22 @@ current winner. Rechecking from persisted AccountKey data makes the server the
 decision authority; skipping Router mutation for a confirmed stale projection
 removes only Multica's obsolete state, while the existing conditional unbind
 continues to protect ownership changes that occur after a `valid` check.
+
+## 2026-08-03 Generic Subscription-domain Persistence Change History
+
+- Added `channel_installation.config.enabled_domains` as the durable ordered
+  snapshot of every active domain returned by the successful binding callback.
+- Removed Multica's `channel`/`calendar` allowlist from callback and Router-check
+  validation; domain collections now use generic bounded identifier validation.
+- Reconciliation and user-unbind prechecks now send the persisted domain set
+  instead of reconstructing it from `calendar_start_enabled`.
+- Retained read compatibility for active rows created before `enabled_domains`
+  by deriving the previous `channel` plus optional `calendar` representation.
+
+## 2026-08-03 Generic Subscription-domain Persistence Change Reason
+
+Reducing a multi-domain callback to one calendar boolean loses approval and any
+future Router domain, causing a valid binding to be reported as `inconsistent`
+and blocking user unbind. Persisting the Router callback's complete domain set
+makes that set authoritative throughout Multica and removes the need to update
+Multica whenever Router adds another supported business domain.
