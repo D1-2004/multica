@@ -141,6 +141,8 @@ export function RuntimeDetail({
     : false;
   const isRuntimeOwner = user && runtime.owner_id === user.id;
   const canEditRuntime = isAdmin || isRuntimeOwner;
+  const canEditVisibility =
+    !!canEditRuntime && (!parseFCE2BRuntimeMetadata(runtime) || isAdmin);
   const runtimeProfile: RuntimeProfile | null = runtime.profile_id
     ? profiles.find((p) => p.id === runtime.profile_id) ?? null
     : null;
@@ -228,7 +230,7 @@ export function RuntimeDetail({
               runtime={runtime}
               cliVersion={cliVersion}
               launchedBy={launchedBy}
-              canEdit={!!canEditRuntime}
+              canEditVisibility={canEditVisibility}
               canManageTemplate={
                 isAdmin &&
                 stableChannelQuery.data?.can_publish === true &&
@@ -510,7 +512,7 @@ function DiagnosticsCard({
   runtime,
   cliVersion,
   launchedBy,
-  canEdit,
+  canEditVisibility,
   canManageTemplate,
   canDelete,
   onChangeTemplate,
@@ -519,7 +521,7 @@ function DiagnosticsCard({
   runtime: AgentRuntime;
   cliVersion: string | null;
   launchedBy: string | null;
-  canEdit: boolean;
+  canEditVisibility: boolean;
   canManageTemplate: boolean;
   canDelete: boolean;
   onChangeTemplate: () => void;
@@ -549,7 +551,7 @@ function DiagnosticsCard({
           <div className="mb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
             {t(($) => $.detail.diagnostics_visibility)}
           </div>
-          {canEdit ? (
+          {canEditVisibility ? (
             <VisibilityEditor runtime={runtime} />
           ) : (
             <VisibilityReadout runtime={runtime} />

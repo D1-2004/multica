@@ -72,7 +72,12 @@ func (h *Handler) ListFCE2BTemplates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	workspaceID := h.resolveWorkspaceID(r)
-	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+	member, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin", "member")
+	if !ok {
+		return
+	}
+	if !roleAllowed(member.Role, "owner", "admin") && !h.canPublishFCE2BStable(r) {
+		writeError(w, http.StatusForbidden, "FC/E2B template catalog is restricted to workspace admins and stable publishers")
 		return
 	}
 
@@ -137,7 +142,7 @@ func (h *Handler) createCloudSandboxRuntime(
 		return
 	}
 	workspaceID := h.resolveWorkspaceID(r)
-	member, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin")
+	member, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin", "member")
 	if !ok {
 		return
 	}
@@ -258,6 +263,11 @@ func (h *Handler) createAliyunFCRuntime(
 	if visibility != "private" && visibility != "public" {
 		writeError(w, http.StatusBadRequest, "visibility must be 'private' or 'public'")
 		return
+	}
+	// Managed sandboxes created by plain members remain private. Workspace
+	// owners/admins may deliberately provision public shared infrastructure.
+	if !roleAllowed(member.Role, "owner", "admin") {
+		visibility = "private"
 	}
 
 	metadata, err := json.Marshal(map[string]any{
@@ -465,6 +475,11 @@ func (h *Handler) createASBRuntime(
 	if visibility != "private" && visibility != "public" {
 		writeError(w, http.StatusBadRequest, "visibility must be 'private' or 'public'")
 		return
+	}
+	// Managed sandboxes created by plain members remain private. Workspace
+	// owners/admins may deliberately provision public shared infrastructure.
+	if !roleAllowed(member.Role, "owner", "admin") {
+		visibility = "private"
 	}
 	metadataValues["timeout_seconds"] = h.cfg.ASB.TimeoutSeconds
 	metadataValues["created_by"] = uuidToString(member.UserID)

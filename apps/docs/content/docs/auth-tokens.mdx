@@ -36,8 +36,8 @@ In day-to-day use you'll only touch the first two directly. The **[daemon](/daem
 A workspace owner manages these under **Settings → DTA Access**. When a token is created, Multica also creates a stable service user bound to the workspace and adds it as a standard `member`. There is no separate DTA permission matrix: the identity follows Multica's native member roles, resource visibility, and ownership rules.
 
 - It has the same business access as a standard non-admin member, including the agents, skills, tasks, traces, schedules, and DingTalk bindings that member may operate.
-- It cannot perform owner/admin-only operations such as member management or Runtime creation and administration.
-- A workspace administrator must create a public Runtime for members in advance; agents created through DTA use that Runtime for tasks.
+- It cannot perform owner/admin-only operations such as member management, workspace settings, public managed Runtime creation, or stable release administration.
+- It may create a stable-channel private FC/E2B Runtime owned by its service user, then create and run its agents on that Runtime.
 - Human workspace owners/admins retain their native governance access and visibility.
 
 Create a separate token for each external operator so its expiry, audit trail, regeneration, and revocation remain independent. Regeneration preserves the service-user identity and ownership of existing resources. Revocation blocks subsequent requests immediately without deleting its agents, tasks, or trace history. A revoked token record can then be permanently removed in Settings. The service user remains until an owner/admin explicitly removes it through member management, which invokes the existing Agent, Runtime, and task cleanup flow.

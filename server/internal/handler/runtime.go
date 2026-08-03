@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -471,6 +472,10 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		v := *req.Visibility
 		if v != "private" && v != "public" {
 			writeError(w, http.StatusBadRequest, "visibility must be 'private' or 'public'")
+			return
+		}
+		if v == "public" && service.IsFCE2BRuntime(rt) && !roleAllowed(member.Role, "owner", "admin") {
+			writeError(w, http.StatusForbidden, "only workspace owners and admins can make an FC/E2B runtime public")
 			return
 		}
 		if v != rt.Visibility {

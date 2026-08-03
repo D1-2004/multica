@@ -111,7 +111,7 @@ func TestDefaultFCE2BRuntimeName(t *testing.T) {
 	}
 }
 
-func TestCreateStableFCE2BRuntimeUsesCurrentCatalogBuild(t *testing.T) {
+func TestCreateStableFCE2BRuntimeAllowsMemberAndForcesPrivate(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler database fixture unavailable")
 	}
@@ -179,11 +179,27 @@ func TestCreateStableFCE2BRuntimeUsesCurrentCatalogBuild(t *testing.T) {
 		t.Fatalf("set stable channel fixture: %v", err)
 	}
 
-	createdRuntimeID := ""
+	var memberID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO "user" (name, email, principal_type)
+		VALUES ('FC Runtime Member', $1, 'workspace_access_token')
+		RETURNING id
+	`, "fc-runtime-member-"+suffix+"@multica.test").Scan(&memberID); err != nil {
+		t.Fatalf("create runtime member: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')
+	`, testWorkspaceID, memberID); err != nil {
+		t.Fatalf("create runtime member membership: %v", err)
+	}
+
+	createdRuntimeIDs := []string{}
 	t.Cleanup(func() {
-		if createdRuntimeID != "" {
-			_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, createdRuntimeID)
+		for _, runtimeID := range createdRuntimeIDs {
+			_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 		}
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM member WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, memberID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, memberID)
 		if hadStableChannel {
 			_, _ = testPool.Exec(context.Background(), `
 				UPDATE fc_e2b_stable_channel
@@ -217,26 +233,62 @@ func TestCreateStableFCE2BRuntimeUsesCurrentCatalogBuild(t *testing.T) {
 	h.FCE2BStable = service.NewFCE2BStableService(testPool, h.FCE2BLauncher, nil)
 
 	w := httptest.NewRecorder()
-	h.CreateFCE2BRuntime(w, newRequest(http.MethodPost, "/api/runtimes/fc-e2b", map[string]any{
+	h.CreateFCE2BRuntime(w, newRequestAs(memberID, http.MethodPost, "/api/runtimes/fc-e2b", map[string]any{
 		"name":             "Stable Current Catalog Build",
 		"template_channel": "stable",
 		"provider":         "hermes",
+		"visibility":       "public",
 	}))
 	if w.Code != http.StatusCreated {
-		t.Fatalf("stable runtime status = %d, want 201: %s", w.Code, w.Body.String())
+		t.Fatalf("member stable runtime status = %d, want 201: %s", w.Code, w.Body.String())
 	}
 
 	var response AgentRuntimeResponse
 	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
 		t.Fatalf("decode runtime response: %v", err)
 	}
-	createdRuntimeID = response.ID
+	createdRuntimeIDs = append(createdRuntimeIDs, response.ID)
+	if response.OwnerID == nil || *response.OwnerID != memberID {
+		t.Fatalf("member runtime owner = %v, want %s", response.OwnerID, memberID)
+	}
+	if response.Visibility != "private" {
+		t.Fatalf("member runtime visibility = %q, want private", response.Visibility)
+	}
 	metadata, ok := response.Metadata.(map[string]any)
 	if !ok {
 		t.Fatalf("runtime metadata = %#v", response.Metadata)
 	}
 	if metadata["template_id"] != templateID || metadata["template_build_id"] != currentBuildID {
 		t.Fatalf("runtime template metadata = %#v", metadata)
+	}
+
+	candidate := httptest.NewRecorder()
+	h.CreateFCE2BRuntime(candidate, newRequestAs(memberID, http.MethodPost, "/api/runtimes/fc-e2b", map[string]any{
+		"template_channel": "candidate",
+		"template_id":      templateID,
+		"provider":         "hermes",
+	}))
+	if candidate.Code != http.StatusForbidden {
+		t.Fatalf("member candidate runtime status = %d, want 403: %s", candidate.Code, candidate.Body.String())
+	}
+
+	admin := httptest.NewRecorder()
+	h.CreateFCE2BRuntime(admin, newRequest(http.MethodPost, "/api/runtimes/fc-e2b", map[string]any{
+		"name":             "Public Stable Runtime",
+		"template_channel": "stable",
+		"provider":         "hermes",
+		"visibility":       "public",
+	}))
+	if admin.Code != http.StatusCreated {
+		t.Fatalf("admin public runtime status = %d, want 201: %s", admin.Code, admin.Body.String())
+	}
+	var adminResponse AgentRuntimeResponse
+	if err := json.NewDecoder(admin.Body).Decode(&adminResponse); err != nil {
+		t.Fatalf("decode admin runtime response: %v", err)
+	}
+	createdRuntimeIDs = append(createdRuntimeIDs, adminResponse.ID)
+	if adminResponse.Visibility != "public" {
+		t.Fatalf("admin runtime visibility = %q, want public", adminResponse.Visibility)
 	}
 }
 

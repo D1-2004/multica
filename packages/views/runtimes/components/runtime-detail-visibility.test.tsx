@@ -280,6 +280,23 @@ describe("RuntimeDetail visibility section", () => {
     );
   });
 
+  it("keeps FC/E2B visibility read-only for a non-admin runtime owner", () => {
+    renderDetail(
+      makeRuntime({
+        owner_id: "user-me",
+        runtime_mode: "cloud",
+        visibility: "private",
+        metadata: {
+          kind: "fc-e2b",
+          template_channel: "stable",
+          template: "stable-template",
+        },
+      }),
+    );
+    expect(screen.getByText("Private")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Public" })).not.toBeInTheDocument();
+  });
+
   it("renders a read-only visibility chip when the caller cannot edit", () => {
     renderDetail(makeRuntime({ owner_id: "someone-else", visibility: "public" }));
     expect(screen.getByText("Public")).toBeInTheDocument();

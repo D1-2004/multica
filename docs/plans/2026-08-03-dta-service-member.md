@@ -12,20 +12,20 @@
 > 原始分支：`codex/workspace-access-grants`
 > Worktree 路径：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-dta-service-member`
 > Worktree 来源：本次任务创建
-> 交付状态：本地实现与评审修复已完成，提交以 Git 元数据为准
+> 交付状态：Runtime 普通成员创建能力已完成，提交以 Git 元数据为准
 > 收尾状态：已完成并保留 Worktree
 > 当前里程碑：已完成
 
 ## 一句话结论
 
-把每个 DTA Token 的稳定 subject 建成目标 Workspace 中 role=`member` 的不可登录 service user；Token 请求走 Multica 原生成员、ownership、Runtime、Trace、Autopilot 和钉钉绑定权限，不再维护 DTA 专属 capability 与逐路由 allowlist。Workspace 管理员预建公共 Runtime，DTA Token 本轮不创建 Runtime。
+把每个 DTA Token 的稳定 subject 建成目标 Workspace 中 role=`member` 的不可登录 service user；Token 请求走 Multica 原生成员、ownership、Runtime、Trace、Autopilot 和钉钉绑定权限，不再维护 DTA 专属 capability 与逐路由 allowlist。普通成员可创建并管理自己拥有的 stable/private FC/E2B Runtime，candidate、public 和发布管理仍受限。
 
 ## 背景与现状证据
 
 - 基线分支已经实现单层 `workspace_access_token`、稳定 `subject_user_id`、明文单次返回、过期、重新生成、吊销、审计、设置页和 feature flag。
 - 基线把 subject 明确排除在 `workspace_member` 之外，依赖 `WorkspaceAccessPrincipal`、三个 capability、逐路由 allowlist 和每个 Handler 的 Token ownership 分支。
 - 该模型每增加一个 DTA 交付功能都要同步扩展 allowlist、capability、UI、迁移和特殊 ownership；Runtime、`mat_`、snapshot、Autopilot 和钉钉绑定已暴露出持续扩张成本。
-- 用户已决定初版不做细粒度 Token 权限：DTA subject 权限与普通非管理员用户一致；Workspace 管理员预先创建公共 Runtime，Token 只能使用原生可见 Runtime。
+- 用户已决定初版不做细粒度 Token 权限：DTA subject 权限与普通非管理员用户一致，并追加确认普通成员需要创建自有 Runtime。
 - 旧 worktree 仍保留孤儿钉钉绑定过滤和组织目录 deny 测试的未提交修改；新分支不复制这些代码，因为普通 member 模型会删除 Token 专属过滤和 allowlist，随后按原生 member 行为重新验收。
 
 ## 目标
@@ -35,15 +35,15 @@
 3. `dta_` 认证继续校验 Token 的 workspace、有效期、吊销和 feature flag，但授权进入普通 Workspace member 链路。
 4. 删除运行时 capability gate、DTA 专属路由 allowlist和 Handler 特判；Agent/Skill/Runtime/Trace/Autopilot/钉钉绑定复用普通 member 行为。
 5. Token 创建、编辑页面只管理名称、有效期、重新生成、吊销和删除；不展示或编辑 capability。
-6. 管理员预建公共 Runtime；DTA Token 可以查看和使用原生可见 Runtime，但不能创建、编辑或删除 Runtime。
-7. Agent 领取任务时 `mat_.user_id = runtime.owner_id` 的现有机制保持；管理员预建的 Runtime owner 是正式成员，因此沙箱 Multica CLI 继续走现有 task-token 链路。
+6. 普通成员可创建 stable-channel、private FC/E2B Runtime，owner 为调用者；可编辑名称和删除自己的 Runtime。非发布者 member 不能创建 candidate，非管理员 member 不能创建或切换为 public，也不能管理稳定发布。
+7. Agent 领取任务时 `mat_.user_id = runtime.owner_id` 的现有机制保持；DTA service member 同时拥有其 Runtime 与 Agent，因此沙箱 Multica CLI 继续走现有 task-token 链路。
 8. 不修改 DTA 仓库；Multica 侧保持当前 DTA 所需自省/profile兼容接口，并确保完整普通 member API 合同可用。
 9. 不兼容旧 DTA Token capability/resource-scope 合同；数据库、API、sqlc、认证和 UI 直接删除两项旧策略字段。
 
 ## 非目标
 
 - 不新增或保留 `deployment.manage`、`deployment.retire`、`trace.read`、`schedule.manage` 等可配置权限。
-- 不为 DTA Token 创建 FC/E2B Runtime；不放宽当前 Runtime owner/admin 创建门禁。
+- 不向非发布者普通成员开放 candidate Runtime，不向非管理员普通成员开放 public managed Runtime、稳定版本发布或 fleet 管理。
 - 不让 service user 登录 Multica Web/Desktop、签发 human PAT、成为 admin/owner 或管理成员。
 - 不限制 Token 必须由 DTA 客户端调用；当前目标是先跑通服务商交付链路，不建设 CLI/调用方识别门禁。
 - 不承诺 DTA Token 只能被某个客户端调用；服务端只能识别凭据身份，不能区分 HTTPS 请求来自 DTA、curl 或 CLI。
@@ -55,7 +55,7 @@
 - 每个 Token 对应一个稳定 service user；不同外部使用方创建不同 Token。
 - service user 是 Workspace 普通 member，拥有与其他普通成员相同的权限，不是管理员。
 - Owner 只控制 Token 生命周期，暂不配置细粒度业务权限。
-- Runtime 由 Workspace 管理员提前创建为公共 Runtime，DTA Token 直接使用。
+- 普通成员和 DTA service member 可以创建并管理自己的 stable/private FC/E2B Runtime。
 - Agent、Skill 等资源继续使用原生 owner/creator 字段；Token 重新生成不改变 subject 或既有资源归属。
 - 节律、snapshot、Trace、机器人和数字员工绑定不再建设 DTA 专属放行层，按普通 member 的现有能力验收。
 - 本轮只改 Multica；旧分支保留，不在其上继续开发。
@@ -97,8 +97,9 @@ Token 类型继续用于禁止交互登录、吊销、过期、审计和唯一 W
 
 ### 3. Runtime 与任务 Token
 
-- `POST /api/runtimes/fc-e2b` 继续要求 human Workspace owner/admin。
-- 普通 DTA member 使用管理员创建的 public Runtime；Runtime owner 仍是管理员。
+- `POST /api/runtimes/fc-e2b` 对 Workspace member 开放；普通成员只允许 stable channel 且服务端强制 private，owner 为调用者。
+- Workspace owner/admin 继续可以创建 public Runtime；candidate 仍要求 stable publisher。
+- 普通成员不能通过 PATCH 把 FC/E2B Runtime 切为 public，但可以重命名、删除自己的 Runtime。
 - 领取任务继续生成绑定 Agent/Task/Workspace/Runtime owner 的 `mat_`；Runtime owner 是正式 member，因此无需修改 Workspace task-token middleware。
 - 沙箱永不注入长期 `dta_`，只注入现有短期 `mat_`。
 
@@ -106,7 +107,7 @@ Token 类型继续用于禁止交互登录、吊销、过期、审计和唯一 W
 
 - 保留 create/list/get/update/regenerate/revoke/delete、自省和审计 API；活动 Token 先吊销，已吊销记录才可硬删除，删除不级联 service member 或业务资源。
 - create/update schema 删除可配置 capability；旧客户端携带字段时忽略，不能改变权限。
-- 设置页删除权限卡片和权限说明，明确“拥有工作区普通成员权限，不具备管理员权限；Runtime 由管理员预建”。
+- 设置页删除权限卡片和权限说明，明确“拥有工作区普通成员权限，可创建自有 stable/private Runtime，不具备管理员与发布权限”。
 - Token 明文仍只在创建/重新生成响应展示一次。
 - 成员管理接口拒绝把 service member 提升为 admin/owner，也拒绝 service member 主动离开；凭据停用继续走 Token 吊销/删除。
 - service member 仍有关联 Token 行时禁止从成员管理移除；Token 已硬删除后允许 owner/admin 使用原生成员删除流程清理身份及其资源，避免永久幽灵成员。
@@ -116,7 +117,7 @@ Token 类型继续用于禁止交互登录、吊销、过期、审计和唯一 W
 
 - **继续 capability + allowlist 或保留废弃列兼容旧 Token**：功能面扩张时维护成本和遗漏风险持续增长，且当前没有旧 DTA Token 使用方，已被用户否决。
 - **新增 service_member 角色**：仍会形成第二套权限矩阵，不能实现“与其他普通用户一样”。
-- **让 DTA 创建 Runtime**：会继续保留 owner/admin 例外和非成员 task-token 身份问题；用户已选择管理员预建公共 Runtime。
+- **无附加治理地让普通成员创建 candidate/public managed Runtime**：会扩大模板发布和全 Workspace 基础设施影响面；candidate 继续要求 publisher，public 继续要求 owner/admin。
 - **把 DTA Token 换成 human PAT**：无法独立吊销、审计和保持不可登录身份，并可能继承管理员权限。
 - **把长期 dta_ 注入沙箱**：扩大凭据泄漏半径；继续使用任务绑定的 `mat_`。
 
@@ -142,8 +143,8 @@ Token 类型继续用于禁止交互登录、吊销、过期、审计和唯一 W
 - `server/internal/handler/agent*.go`、`skill.go`、DingTalk handlers：删除仅为 DTA principal 存在的过滤/ownership 分支，复用普通 member 行为。
 - `server/cmd/server/router.go`：移除 DTA operation gate 接线但保留 owner-only Token 管理和 feature flag。
 - `packages/core/**/workspace-access*`：删除 capability schema/type/mutation 字段，保持兼容解析。
-- `packages/views/settings/components/workspace-access-tab.tsx` 与 locales/docs：删除权限配置，说明普通成员权限与管理员预建 Runtime。
-- 测试：认证/member、Token 生命周期、原生 Agent ownership、Runtime 拒绝创建且可使用 public Runtime、Autopilot/snapshot/Trace/绑定、`mat_` CLI 与登录隔离。
+- `packages/views/settings/components/workspace-access-tab.tsx` 与 locales/docs：删除权限配置，说明普通成员权限与自有 stable/private Runtime 边界。
+- 测试：认证/member、Token 生命周期、原生 Agent ownership、stable/private Runtime 创建与 candidate/public deny、Autopilot/snapshot/Trace/绑定、`mat_` CLI 与登录隔离。
 
 ## 实施步骤
 
@@ -153,6 +154,7 @@ Token 类型继续用于禁止交互登录、吊销、过期、审计和唯一 W
 - [x] 里程碑四：删除 Handler 的 DTA 专属资源过滤，验收 Agent、Skill、公共 Runtime、Trace、snapshot、Autopilot 和钉钉绑定的原生成员行为。
 - [x] 里程碑五：收敛 Core/UI/docs 合同，删除权限编辑并补普通成员/公共 Runtime 说明。
 - [x] 里程碑六：运行数据库、Go、TypeScript、Docs 和安全回归，更新最终证据并决定本地 commit。
+- [x] 里程碑七：开放普通成员创建自有 stable/private FC/E2B Runtime，锁定 candidate/public 边界并完成追加验证。
 
 ## 执行记录
 
@@ -164,6 +166,7 @@ Token 类型继续用于禁止交互登录、吊销、过期、审计和唯一 W
 | 原生业务能力 | 已完成 |  | Runtime、snapshot、Trace、Autopilot、DingTalk、load-smoke、claim/mat 定点测试 | 公共 Runtime 可使用、他人私有 Runtime 拒绝；任务领取可铸造短期 Token；节律与调试链路通过 |
 | Core/UI/docs | 已完成 |  | Core Vitest 79 项；DingTalk Views Vitest 27 项；Core/Views/Docs typecheck | schema 不再暴露权限字段；普通 Agent owner 可见机器人管理入口；设置页与文档合同通过 |
 | 最终验证 | 已完成 |  | 连接 migration 260 测试库的 Go 定向回归；目标包 `go vet`；`git diff --check`；修改 Go 文件 gofmt | 普通成员路由、Agent ownership、Token/成员生命周期均通过；无 whitespace/格式问题 |
+| 普通成员 Runtime 创建 | 已完成 |  | 创建/visibility 红绿回归；Views Vitest 48 项；Core Vitest 84 项；Views/Core/Docs typecheck；目标 Go 包测试与 `go vet` | member stable 创建 201、owner 为调用者且强制 private；非 publisher candidate 403；member public PATCH 403；admin public 保持成功 |
 
 ## 验证策略
 
@@ -174,7 +177,7 @@ Token 类型继续用于禁止交互登录、吊销、过期、审计和唯一 W
 | 普通 member 授权 | capability 残留拒绝或意外 admin | middleware/router 集成测试；member/admin deny 对照 | 是 |
 | 登录隔离 | service user 获得 Web/PAT 登录 | `/api/me`、PAT/owner API、成员管理拒绝测试 | 是 |
 | 原生资源面 | Agent/Autopilot/Trace/绑定行为漂移 | 使用相同 member 与 dta_ subject 的对照测试 | 是 |
-| Runtime | DTA 创建 Runtime 或无法使用 public Runtime | POST 创建拒绝、public Runtime list/use 成功、private foreign 不可用 | 是 |
+| Runtime | 普通成员被错误拒绝，或借创建/更新越权为 candidate/public | member stable/private 创建成功；candidate/public 创建与 public PATCH 拒绝；owner/admin 既有路径通过 | 是 |
 | 沙箱 CLI | 长期 Token 泄漏或 `mat_` 失效 | claim/mint/inject/auth/Workspace 现有测试 + service member fixture | 是 |
 | UI/API | 旧 capability 仍可编辑或响应解析失败 | Core schema tests、Views tests/typecheck、docs build | 否 |
 | 旧策略列删除 | 残留 SQL/API/UI 读取导致运行失败 | migration schema readback、sqlc、全仓精准残留扫描 | 是 |
@@ -189,7 +192,7 @@ Token 类型继续用于禁止交互登录、吊销、过期、审计和唯一 W
 
 ## 系统边界与职责
 
-- Workspace Owner 管理 Token 生命周期并预建公共 Runtime。
+- Workspace Owner 管理 Token 生命周期；普通成员管理自己创建的 stable/private Runtime，管理员治理 public Runtime 和发布面。
 - Multica 原生 member/ownership 是业务授权权威；Token 表只负责机器凭据生命周期、Workspace 绑定和审计。
 - DTA 保持上层交付编排，本轮不修改；沙箱继续使用 `mat_`。
 
@@ -198,7 +201,7 @@ Token 类型继续用于禁止交互登录、吊销、过期、审计和唯一 W
 ```text
 Owner → service user/member/token → PostgreSQL
 DTA HTTPS → dta_ 生命周期校验 → 原生 member middleware → 业务 Handler
-任务 claim → public Runtime owner → mat_ → 沙箱 Multica CLI → task-bound API
+任务 claim → Runtime owner(service member) → mat_ → 沙箱 Multica CLI → task-bound API
 ```
 
 ## 接口与兼容性
@@ -219,7 +222,7 @@ DTA HTTPS → dta_ 生命周期校验 → 原生 member middleware → 业务 Ha
 - Token 已创建但 member 写入失败：事务整体回滚，不返回明文。
 - 旧 Token migration 前请求：发布流程先执行 migration，再滚动应用；不存在临时非成员窗口。
 - Token 吊销：下一请求 401；subject/member 与资源保留，重新创建新 Token 不自动接管旧资源。
-- 公共 Runtime 不存在：DTA 部署返回明确缺少可用 Runtime，不尝试自行创建。
+- stable channel 未初始化或 Runtime 创建失败：DTA 部署返回明确错误，不回退到 candidate/public 创建。
 
 ## 并发与一致性
 
@@ -235,7 +238,7 @@ DTA HTTPS → dta_ 生命周期校验 → 原生 member middleware → 业务 Ha
 ## 发布策略与功能开关
 
 - migration 前先关闭 `workspace_access_tokens`；migration 先行，应用再滚动，验证新版本后重新开启。
-- 预发需验证现有 Token 被补 member、设置页无权限配置、公共 Runtime 可用、Runtime 创建拒绝、节律/snapshot/Trace 正常。
+- 预发需验证现有 Token 被补 member、设置页无权限配置、自有 stable/private Runtime 创建成功、candidate/public 拒绝、节律/snapshot/Trace 正常。
 - 本轮完成后仅创建本地 commit；push和预发部署等待用户另行授权。
 
 ## 回滚步骤与触发条件
@@ -257,6 +260,7 @@ DTA HTTPS → dta_ 生命周期校验 → 原生 member middleware → 业务 Ha
 | 2026-08-03 | service member 角色与 membership 设为不可变；migration 归一错误管理员角色 | 用户确认 service member 必须始终是非管理员，不能被成员接口提升或移除 | 是，用户已明确允许增加 |
 | 2026-08-03 | 暂不限制外部服务商直接使用 Token/CLI | 当前优先目标是降低耦合并先跑通完整交付链路 | 是，用户明确要求先不管 |
 | 2026-08-03 | Token 删除后允许管理员清理无 Token 的 service member；机器人安装改为 member 路由 + Agent ownership | 评审发现无清理出口和普通 service member 机器人交付能力退化；用户明确要求普通用户可绑定机器人 | 是，用户已明确要求修改 |
+| 2026-08-03 | 普通成员可创建自有 stable/private FC/E2B Runtime；candidate/public 和发布面保持受限 | 用户确认普通成员也需要创建 Runtime，并接受前一轮推荐边界 | 是，用户明确回复“加” |
 
 ## 调试假设记录
 
@@ -270,18 +274,19 @@ DTA HTTPS → dta_ 生命周期校验 → 原生 member middleware → 业务 Ha
 
 - 隔离 PostgreSQL migration 260 down/up/replay 成功；`capabilities`、`resource_scope` 列数量为 0，`token_subject_non_member=0`。
 - Token 生命周期、原生 member middleware、workspace 绑定、过期/吊销、human JWT/PAT 隔离通过；service member 在 Token 存在时不可提升或移除，Token 硬删除后可由管理员通过原生成员清理流程删除。
-- 普通成员可使用管理员预建的 public Runtime，不能使用他人 private Runtime；任务 claim、workspace context 和短期任务 Token 链路通过。
+- 普通成员可使用 public Runtime，不能使用他人 private Runtime；本次追加允许创建自有 stable/private Runtime，任务 claim、workspace context 和短期任务 Token 链路保持通过。
 - Trace 映射、Agent task snapshot、Autopilot 权限、DingTalk 原生绑定、DTA load-smoke 通过；普通 Agent owner 可安装、重试、轮询和解绑自己的钉钉机器人，其他普通成员被拒绝。
 - DingTalk Views Vitest 27 项、Core Vitest 79 项通过；Core、Views、Docs typecheck 通过；目标 Go 包 `go vet` 通过。
+- Runtime 追加验证通过：普通 member stable 创建成功并归属调用者，显式 public 输入被强制 private；非 publisher candidate 和 member public PATCH 被拒绝，owner/admin public 创建与修改保持成功。追加后 Views 48 项、Core 84 项、目标 Go 包测试、`go vet` 与 Docs typecheck 通过。
 - 后端 `internal/handler` 整包测试仍存在本分支外的 dispatch/onboarding/GitHub 等既有失败；本次修改涉及的定点回归全部通过，未借此改动无关代码。
 
 ### 最终工作区
 
 - 原始工作区与分支：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-workspace-access-grants`，`codex/workspace-access-grants`
 - 最终工作区与分支：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-dta-service-member`，`codex/dta-service-member`
-- 交付状态：本地实现和评审修复已完成；提交号以 Git 元数据为准
+- 交付状态：Runtime 普通成员创建能力追加完成；提交号以 Git 元数据为准
 - Worktree 收尾：保留
-- 当前未提交改动：无（本计划与评审修复一并创建追加提交）
+- 当前未提交改动：无（本次 Runtime 能力追加与计划收尾一并创建追加提交）
 - 未执行的验证：DTA 仓库端到端联调与预发部署，均不在本轮授权范围内
 
 ## 遗留风险

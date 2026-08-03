@@ -139,7 +139,7 @@
     "edit_title": "编辑 DTA Token",
     "name_placeholder": "外部使用方名称",
     "member_role": "工作区普通成员权限",
-    "member_permissions_description": "此 Token 与工作区普通成员拥有相同权限，可以使用普通成员可见的智能体、任务、Trace、节律和绑定能力，但不能管理成员、工作区设置或 Runtime。请先由工作区管理员创建公共 Runtime，再将 Token 配置到 DTA。",
+    "member_permissions_description": "此 Token 与工作区普通成员拥有相同权限，可以管理自己的智能体、任务、Trace、节律、绑定和 stable 私有 Runtime；不能管理成员或工作区设置，也不能创建公共托管 Runtime 或管理稳定版本发布。",
     "regenerate": "重新生成",
     "regenerated": "DTA Token 已重新生成",
     "regenerate_title": "重新生成 DTA Token",

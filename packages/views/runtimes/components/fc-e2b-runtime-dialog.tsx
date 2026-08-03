@@ -88,17 +88,19 @@ function formatTemplateUpdatedAt(value?: string): string {
 export function FCE2BRuntimeDialog({
   onClose,
   canPublish,
+  canCreatePublic,
   sandboxBackend,
 }: {
   onClose: () => void;
   canPublish: boolean;
+  canCreatePublic: boolean;
   sandboxBackend: SandboxBackend;
 }) {
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();
   const createRuntime = useCreateCloudSandboxRuntime(wsId);
   const validateASBCredential = useValidateASBRuntimeCredential();
-  const templatesQuery = useFCE2BTemplates(wsId);
+  const templatesQuery = useFCE2BTemplates(wsId, canPublish);
   const stableChannelQuery = useCloudSandboxStableChannel(sandboxBackend);
   const templates = (templatesQuery.data ?? []).filter(isReadyFCE2BTemplate);
   const [templateChannel, setTemplateChannel] = useState<"stable" | "candidate">(
@@ -592,9 +594,11 @@ export function FCE2BRuntimeDialog({
                 <SelectItem value="private">
                   {t(($) => $.detail.visibility_label.private)}
                 </SelectItem>
-                <SelectItem value="public">
-                  {t(($) => $.detail.visibility_label.public)}
-                </SelectItem>
+                {canCreatePublic && (
+                  <SelectItem value="public">
+                    {t(($) => $.detail.visibility_label.public)}
+                  </SelectItem>
+                )}
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">

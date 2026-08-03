@@ -139,7 +139,7 @@
     "edit_title": "Edit DTA token",
     "name_placeholder": "External operator name",
     "member_role": "Standard workspace member access",
-    "member_permissions_description": "This token has the same access as a standard workspace member. It can use member-visible agents, tasks, traces, schedules, and bindings, but cannot manage members, workspace settings, or runtimes. A workspace administrator must create a public runtime before the token is configured in DTA.",
+    "member_permissions_description": "This token has the same access as a standard workspace member. It can manage its own agents, tasks, traces, schedules, bindings, and stable private runtimes. It cannot manage members or workspace settings, create public managed runtimes, or administer stable releases.",
     "regenerate": "Regenerate",
     "regenerated": "DTA token regenerated",
     "regenerate_title": "Regenerate DTA token",
