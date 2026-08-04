@@ -301,11 +301,44 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 	}
 }
 
-func TestASBTaskIdentityProbeTimeoutSplitsBoundAttempts(t *testing.T) {
+func TestASBIdentityPreparationDoesNotBlockTaskLaunch(t *testing.T) {
 	t.Parallel()
 
-	if got := asbTaskIdentityProbeTimeout(4 * time.Minute); got != 80*time.Second {
-		t.Fatalf("identity probe timeout = %s, want 1m20s", got)
+	result := make(chan error, 1)
+	startedAt := time.Now()
+	err, completed := waitASBIdentityPreparation(
+		context.Background(),
+		result,
+		20*time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("foreground identity wait: %v", err)
+	}
+	if completed {
+		t.Fatal("background identity preparation unexpectedly completed")
+	}
+	if elapsed := time.Since(startedAt); elapsed > 500*time.Millisecond {
+		t.Fatalf("foreground identity wait took %s, want less than 500ms", elapsed)
+	}
+}
+
+func TestASBIdentityPreparationReportsImmediateResult(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("identity unavailable")
+	result := make(chan error, 1)
+	result <- wantErr
+	close(result)
+	err, completed := waitASBIdentityPreparation(
+		context.Background(),
+		result,
+		time.Second,
+	)
+	if !completed {
+		t.Fatal("identity preparation result was not reported")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("identity preparation error = %v, want %v", err, wantErr)
 	}
 }
 

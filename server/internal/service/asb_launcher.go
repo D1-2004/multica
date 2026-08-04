@@ -31,7 +31,7 @@ const (
 	defaultASBWireGuardProbeInterval = 5 * time.Second
 	defaultASBResourceCPU            = "2"
 	defaultASBResourceMemory         = "4Gi"
-	asbBoundIdentityMaxAttempts      = 3
+	asbTaskIdentityForegroundWait    = 10 * time.Second
 	asbRunnerHome                    = "/home/user"
 	asbUnboundIdentityFingerprint    = "7a5d3e85306c71a48596592e43c235dc5f8c9e3f96eeb52b9e6637a04356b1da"
 )
@@ -669,8 +669,7 @@ func (l *ASBLauncher) resolveSandbox(
 	if err := identity.validate(); err != nil {
 		return "", false, ASBResolvedIdentity{}, err
 	}
-	boundIdentityFailures := 0
-	identityProbeTimeout := asbTaskIdentityProbeTimeout(l.Config.WireGuardReadyTimeout)
+	identityProbeTimeout := l.Config.WireGuardReadyTimeout
 	if scoped {
 		release, err := l.lockSandboxScopeOnConnection(ctx, runtime, scope, runtimeLockConn)
 		if err != nil {
@@ -695,31 +694,35 @@ func (l *ASBLauncher) resolveSandbox(
 			if identity.Mode != asbIdentityModeBound {
 				return session.SandboxID, false, identity, nil
 			}
-			if readyErr := l.ensureSandboxIdentityReady(
-				ctx,
+			identityResult := l.prepareSandboxIdentity(
 				session.SandboxID,
 				identity,
 				identityProbeTimeout,
-			); readyErr == nil {
-				return session.SandboxID, false, identity, nil
-			} else {
-				boundIdentityFailures++
+				nil,
+			)
+			readyErr, completed := waitASBIdentityPreparation(
+				ctx,
+				identityResult,
+				asbTaskIdentityForegroundWait,
+			)
+			if ctx.Err() != nil {
+				return "", false, ASBResolvedIdentity{}, ctx.Err()
+			}
+			if readyErr != nil {
 				slog.Warn(
-					"ASB warm sandbox employee identity is unavailable; recreating the bound sandbox",
+					"ASB warm sandbox employee identity is unavailable; starting task without blocking on employee identity",
 					"runtime_id", util.UUIDToString(runtime.ID),
 					"sandbox_id", session.SandboxID,
 					"error", redact.Text(readyErr.Error()),
 				)
-				if cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
-					runtime,
-					scope,
-					true,
-					identity.Fingerprint,
-					session.SandboxID,
-				); cleanupErr != nil {
-					return "", false, ASBResolvedIdentity{}, cleanupErr
-				}
+			} else if !completed {
+				slog.Info(
+					"ASB warm sandbox employee identity preparation continues in background",
+					"runtime_id", util.UUIDToString(runtime.ID),
+					"sandbox_id", session.SandboxID,
+				)
 			}
+			return session.SandboxID, false, identity, nil
 		}
 		if err := l.deleteSupersededASBSandboxForScope(
 			ctx,
@@ -851,43 +854,34 @@ func (l *ASBLauncher) resolveSandbox(
 			return "", true, ASBResolvedIdentity{}, err
 		}
 		if identity.Mode == asbIdentityModeBound {
-			if err := l.ensureSandboxIdentityReady(
-				ctx,
+			identityResult := l.prepareSandboxIdentity(
 				sandbox.ID,
 				identity,
 				identityProbeTimeout,
-			); err != nil {
-				boundIdentityFailures++
-				retryBoundIdentity := boundIdentityFailures < asbBoundIdentityMaxAttempts
-				message := "ASB inherited employee identity is unavailable after bounded retries; starting task without employee identity"
-				if retryBoundIdentity {
-					message = "ASB inherited employee identity is unavailable; recreating one bound task sandbox"
-				}
+				releaseSource,
+			)
+			readyErr, completed := waitASBIdentityPreparation(
+				ctx,
+				identityResult,
+				asbTaskIdentityForegroundWait,
+			)
+			if ctx.Err() != nil {
+				return "", true, ASBResolvedIdentity{}, ctx.Err()
+			}
+			if readyErr != nil {
 				slog.Warn(
-					message,
+					"ASB inherited employee identity is unavailable; starting task without blocking on employee identity",
 					"runtime_id", util.UUIDToString(runtime.ID),
 					"sandbox_id", sandbox.ID,
-					"identity_attempt", boundIdentityFailures,
-					"identity_attempt_limit", asbBoundIdentityMaxAttempts,
-					"error", redact.Text(err.Error()),
+					"error", redact.Text(readyErr.Error()),
 				)
-				releaseSource("release_source_after_identity_unavailable")
-				if cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
-					runtime,
-					scope,
-					scoped,
-					identity.Fingerprint,
-					sandbox.ID,
-				); cleanupErr != nil {
-					return "", true, ASBResolvedIdentity{}, cleanupErr
-				}
-				if retryBoundIdentity {
-					continue
-				}
-				identity = unboundASBResolvedIdentity()
-				continue
+			} else if !completed {
+				slog.Info(
+					"ASB inherited employee identity preparation continues in background",
+					"runtime_id", util.UUIDToString(runtime.ID),
+					"sandbox_id", sandbox.ID,
+				)
 			}
-			releaseSource("release_source_after_identity_ready")
 		}
 		chattrace.LogStage(slog.Default(), trace, "asb_sandbox_create", "ready",
 			"sandbox_id", sandbox.ID,
@@ -1057,11 +1051,63 @@ func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) 
 	}
 }
 
-func asbTaskIdentityProbeTimeout(configured time.Duration) time.Duration {
-	if configured <= 0 {
-		return configured
+func (l *ASBLauncher) prepareSandboxIdentity(
+	sandboxID string,
+	identity ASBResolvedIdentity,
+	timeout time.Duration,
+	onComplete func(string),
+) <-chan error {
+	result := make(chan error, 1)
+	go func() {
+		identityCtx, cancel := context.WithTimeout(
+			context.Background(),
+			timeout+15*time.Second,
+		)
+		defer cancel()
+		err := l.ensureSandboxIdentityReady(
+			identityCtx,
+			sandboxID,
+			identity,
+			timeout,
+		)
+		stage := "release_source_after_identity_ready"
+		if err != nil {
+			stage = "release_source_after_identity_unavailable"
+			slog.Warn(
+				"ASB employee identity preparation finished without a ready identity",
+				"sandbox_id", sandboxID,
+				"error", redact.Text(err.Error()),
+			)
+		} else {
+			slog.Info(
+				"ASB employee identity preparation completed",
+				"sandbox_id", sandboxID,
+			)
+		}
+		if onComplete != nil {
+			onComplete(stage)
+		}
+		result <- err
+		close(result)
+	}()
+	return result
+}
+
+func waitASBIdentityPreparation(
+	ctx context.Context,
+	result <-chan error,
+	foregroundWait time.Duration,
+) (error, bool) {
+	timer := time.NewTimer(foregroundWait)
+	defer timer.Stop()
+	select {
+	case err := <-result:
+		return err, true
+	case <-ctx.Done():
+		return ctx.Err(), true
+	case <-timer.C:
+		return nil, false
 	}
-	return configured / asbBoundIdentityMaxAttempts
 }
 
 func (l *ASBLauncher) ensureSandboxIdentityReady(
