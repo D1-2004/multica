@@ -3,7 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Cpu, Loader2, Plus, Check, Info } from "lucide-react";
-import { isFCE2BRuntime, runtimeModelsOptions } from "@multica/core/runtimes";
+import {
+  isCloudSandboxRuntime,
+  runtimeModelsOptions,
+} from "@multica/core/runtimes";
 import type { AgentRuntime, RuntimeModel } from "@multica/core/types";
 import {
   Popover,
@@ -40,7 +43,7 @@ export function ModelDropdown({
   const { t } = useT("agents");
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const fixedCatalog = isFCE2BRuntime(runtime);
+  const fixedCatalog = isCloudSandboxRuntime(runtime);
 
   const modelsQuery = useQuery(
     runtimeModelsOptions(runtimeOnline ? runtimeId : null),

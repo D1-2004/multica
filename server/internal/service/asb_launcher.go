@@ -257,9 +257,9 @@ func (identity ASBResolvedIdentity) sandboxExtensions(
 	if identity.Mode == asbIdentityModeUnbound {
 		return nil
 	}
-	// The proven ASB inheritance contract copies the source credential directory
-	// during sandbox creation. The source and target use the same immutable
-	// Runtime image, so the copied directory layout is compatible.
+	// ASB copies only the source credential directory during sandbox creation.
+	// The task sandbox still boots from the current Runtime image, so an image
+	// rotation must not invalidate the long-lived identity source.
 	return map[string]string{
 		"spiffe.lazyAuth":          "true",
 		"wireguard.worker":         identity.RawEmployeeID,
