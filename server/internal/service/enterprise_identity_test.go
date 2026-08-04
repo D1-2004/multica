@@ -452,17 +452,6 @@ type fakeEnterpriseIdentitySource struct {
 	deleted      []string
 }
 
-func (f *fakeEnterpriseIdentitySource) Compatible(
-	_ context.Context,
-	_ pgtype.UUID,
-	_ pgtype.UUID,
-) (bool, error) {
-	if f.err != nil {
-		return false, f.err
-	}
-	return true, nil
-}
-
 func (f *fakeEnterpriseIdentitySource) Create(
 	_ context.Context,
 	key enterpriseIdentitySourceKey,
