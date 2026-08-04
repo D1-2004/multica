@@ -242,18 +242,18 @@ func (h *Handler) executeAgentDispatchV2(
 	}
 
 	// Approval event auto-linking: when the agent created the approval instance,
-	// it embedded the current issue identifier (e.g. "MUL-123") into a form
-	// field. The Router includes form values in AIReadableContent. If we can
-	// recover the identifier and match it to an existing issue assigned to this
-	// agent, redirect to a continuation (comment) on that issue instead of
+	// it wrote the current issue identifier (e.g. "WS-50") into the form field
+	// named 关联Issue. The Router includes form values in AIReadableContent. If
+	// we can recover the identifier and match it to an existing issue assigned to
+	// this agent, redirect to a continuation (comment) on that issue instead of
 	// creating a new one — preserving the original conversation context.
 	if command.AgentID != "" &&
 		command.Event.Domain == "approval" &&
 		command.Event.Type == "approval.status_changed" &&
 		command.Event.Data.Approval != nil {
 		issuePrefix := h.getIssuePrefix(r.Context(), dispatchContext.WorkspaceID)
-		identifier := extractIssueIdentifierFromApprovalContent(
-			command.Event.Data.Approval.AIReadableContent, issuePrefix)
+		rawContent := command.Event.Data.Approval.AIReadableContent
+		identifier := extractIssueIdentifierFromApprovalContent(rawContent, issuePrefix)
 		if identifier != "" {
 			if issue, ok := h.lookupIssueByIdentifier(r.Context(), dispatchContext.WorkspaceID, issuePrefix, identifier); ok {
 				if issue.AssigneeType.Valid && issue.AssigneeType.String == "agent" &&
@@ -268,8 +268,33 @@ func (h *Handler) executeAgentDispatchV2(
 						"issueIdentifier", identifier,
 						"processInstanceId", strings.TrimSpace(command.Event.Data.Approval.FormCode),
 					)
+				} else {
+					slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+						"outcome", "approval_link_skipped_assignee_mismatch",
+						"issueIdentifier", identifier,
+						"issueAssigneeType", issue.AssigneeType.String,
+						"issueAssigneeID", uuidToString(issue.AssigneeID),
+						"dispatchAgentID", uuidToString(dispatchContext.AgentID),
+					)
 				}
+			} else {
+				slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+					"outcome", "approval_link_skipped_issue_not_found",
+					"issueIdentifier", identifier,
+					"issuePrefix", issuePrefix,
+				)
 			}
+		} else {
+			preview := rawContent
+			if len(preview) > 300 {
+				preview = preview[:300] + "…"
+			}
+			slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+				"outcome", "approval_link_skipped_no_identifier",
+				"issuePrefix", issuePrefix,
+				"aiReadableContentPreview", preview,
+				"processInstanceId", strings.TrimSpace(command.Event.Data.Approval.FormCode),
+			)
 		}
 	}
 
