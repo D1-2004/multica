@@ -690,12 +690,28 @@ func asbBUCIdentityProbeCommand() string {
 }
 
 func asbIdentityProbeStage(stderr string) string {
+	const marker = "probe_stage="
 	var stage string
-	for _, line := range strings.Split(stderr, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "probe_stage=") {
-			stage = strings.TrimSpace(strings.TrimPrefix(line, "probe_stage="))
+	for remaining := stderr; ; {
+		markerIndex := strings.Index(remaining, marker)
+		if markerIndex < 0 {
+			break
 		}
+		value := remaining[markerIndex+len(marker):]
+		// Execd may deliver adjacent stderr writes as separate SSE events and
+		// decodeASBExecStream intentionally concatenates their text verbatim.
+		// Match only the markers emitted by our probe command so a following
+		// curl/a1 error cannot turn "a1" into an unknown failure stage and
+		// suppress the documented Agent Identity re-attachment.
+		switch {
+		case strings.HasPrefix(value, "complete"):
+			stage = "complete"
+		case strings.HasPrefix(value, "a1"):
+			stage = "a1"
+		case strings.HasPrefix(value, "buc"):
+			stage = "buc"
+		}
+		remaining = value
 	}
 	return stage
 }

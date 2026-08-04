@@ -495,9 +495,40 @@ func TestAttachAndProbeASBIdentitySourceDoesNotRetryOtherBadRequest(t *testing.T
 func TestASBIdentityProbeStageReturnsLastSafeMarker(t *testing.T) {
 	t.Parallel()
 
-	stderr := "probe_stage=buc\nprobe_stage=a1\n"
-	if got := asbIdentityProbeStage(stderr); got != "a1" {
-		t.Fatalf("asbIdentityProbeStage() = %q", got)
+	tests := []struct {
+		name   string
+		stderr string
+		want   string
+	}{
+		{
+			name:   "newline separated",
+			stderr: "probe_stage=buc\nprobe_stage=a1\n",
+			want:   "a1",
+		},
+		{
+			name:   "curl error concatenated by SSE decoder",
+			stderr: "probe_stage=buccurl: (22) The requested URL returned error: 502",
+			want:   "buc",
+		},
+		{
+			name:   "a1 error concatenated after adjacent markers",
+			stderr: "probe_stage=bucprobe_stage=a1a1-server rejected authentication",
+			want:   "a1",
+		},
+		{
+			name:   "completed probe",
+			stderr: "probe_stage=bucprobe_stage=a1probe_stage=complete",
+			want:   "complete",
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := asbIdentityProbeStage(test.stderr); got != test.want {
+				t.Fatalf("asbIdentityProbeStage() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
