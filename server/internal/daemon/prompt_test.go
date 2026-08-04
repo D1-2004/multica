@@ -9,6 +9,59 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
+func TestBuildPromptPrependsOptionalTaskInstruction(t *testing.T) {
+	const instruction = "# Runtime delivery\n\nReply to the trusted outbound target."
+	tasks := []struct {
+		name string
+		json string
+	}{
+		{name: "issue", json: `{"issue_id":"issue-1"}`},
+		{name: "comment", json: `{"issue_id":"issue-1","trigger_comment_id":"comment-1","trigger_comment_content":"continue"}`},
+		{name: "chat", json: `{"chat_session_id":"chat-1","chat_message":"hello"}`},
+		{name: "autopilot", json: `{"autopilot_run_id":"run-1","autopilot_title":"daily report","autopilot_description":"prepare it"}`},
+		{name: "quick create", json: `{"quick_create_prompt":"create an issue"}`},
+	}
+
+	for _, tc := range tasks {
+		t.Run(tc.name, func(t *testing.T) {
+			var base Task
+			if err := json.Unmarshal([]byte(tc.json), &base); err != nil {
+				t.Fatalf("decode base task: %v", err)
+			}
+			basePrompt := BuildPrompt(base, "hermes")
+
+			var instructed Task
+			withInstruction := strings.TrimSuffix(tc.json, "}") + `,"instruction":` + string(mustJSON(t, instruction)) + `}`
+			if err := json.Unmarshal([]byte(withInstruction), &instructed); err != nil {
+				t.Fatalf("decode instructed task: %v", err)
+			}
+			if got, want := BuildPrompt(instructed, "hermes"), instruction+"\n\n"+basePrompt; got != want {
+				t.Fatalf("prompt with instruction mismatch\n--- got ---\n%s\n--- want ---\n%s", got, want)
+			}
+		})
+	}
+
+	t.Run("blank remains byte-for-byte compatible", func(t *testing.T) {
+		base := Task{IssueID: "issue-1"}
+		var blank Task
+		if err := json.Unmarshal([]byte(`{"issue_id":"issue-1","instruction":"  \n\t"}`), &blank); err != nil {
+			t.Fatalf("decode blank instruction task: %v", err)
+		}
+		if got, want := BuildPrompt(blank, "hermes"), BuildPrompt(base, "hermes"); got != want {
+			t.Fatalf("blank instruction changed prompt\n--- got ---\n%s\n--- want ---\n%s", got, want)
+		}
+	})
+}
+
+func mustJSON(t *testing.T, value string) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal JSON string: %v", err)
+	}
+	return encoded
+}
+
 // TestBuildQuickCreatePromptRules locks in the rules that govern how the
 // quick-create agent is allowed to translate raw user input into the issue
 // description body. Each substring corresponds to a concrete failure mode

@@ -15,6 +15,14 @@ import (
 // post with `--content-file`) because the shell-layer corruption it guards
 // against is not specific to any one provider or host (MUL-2904, #4182).
 func BuildPrompt(task Task, provider string) string {
+	prompt := buildTaskPrompt(task, provider)
+	if instruction := strings.TrimSpace(task.Instruction); instruction != "" {
+		return instruction + "\n\n" + prompt
+	}
+	return prompt
+}
+
+func buildTaskPrompt(task Task, provider string) string {
 	if task.ChatSessionID != "" {
 		return buildChatPromptForProvider(task, provider)
 	}

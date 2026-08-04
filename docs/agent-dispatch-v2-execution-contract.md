@@ -83,6 +83,12 @@ Multica builds prompt material from the structured source event:
 - workflow instructions are added when the selected outbound mode requires the
   Agent to deliver through DWS.
 
+The daemon claim task accepts an optional `instruction` string. When it is
+non-blank, the daemon prepends it to the generated per-task prompt for every
+task kind. It does not write the value into the built-in runtime brief. A
+missing, empty, or whitespace-only value is a byte-for-byte no-op, allowing the
+daemon consumer to roll out before any server starts producing the field.
+
 Event projection in the prompt builder is independent of `surface.type`. The
 same structured event can therefore run as an Issue, Chat, or Auto mode without
 moving prompt assembly back into the Router.
@@ -128,6 +134,9 @@ compositions subject to the command's ordinary validation.
 - 2026-07-30: Added `auto` as a first-class Agent Dispatch mode. Channel
   messages retain `surface.type=auto`, initially materialize as Chat, and
   receive private foreground-coordination and Issue-delegation instructions.
+- 2026-08-04: Added backward-compatible daemon consumption of the optional
+  task-level `instruction` field. Non-blank values are prepended to the task
+  prompt; absent or blank values preserve the existing prompt exactly.
 
 ## Reason
 
@@ -164,3 +173,8 @@ Keeping `auto` distinct from `chat` preserves the binding decision in task
 context, logs, and future policy evolution. Separating mode from materializer
 allows the current implementation to reuse durable Chat sessions and Chat
 continuations without erasing the fact that automatic delegation policy applies.
+
+The task-level `instruction` field separates runtime-delivery policy from
+user-visible issue, comment, and chat content. Rolling out its daemon reader
+first is safe because existing claim responses omit the field and therefore
+retain the previous prompt without modification.
