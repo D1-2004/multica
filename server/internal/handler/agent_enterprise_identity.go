@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -24,9 +23,10 @@ import (
 )
 
 type agentEnterpriseIdentityStatusResponse struct {
-	Configured bool                               `json:"configured"`
-	CanManage  bool                               `json:"can_manage"`
-	Identity   *agentEnterpriseIdentityConnection `json:"identity"`
+	Configured     bool                               `json:"configured"`
+	CanManage      bool                               `json:"can_manage"`
+	BindingVersion int64                              `json:"binding_version"`
+	Identity       *agentEnterpriseIdentityConnection `json:"identity"`
 }
 
 type agentEnterpriseIdentityConnection struct {
@@ -51,21 +51,9 @@ type startAgentEnterpriseIdentityResponse struct {
 }
 
 const (
-	// The streamed callback includes ASB creation, synchronous WireGuard
-	// binding, BUC probes, and snapshot persistence. Keep its
-	// server-side budget beyond the complete source-establishment budget.
-	enterpriseIdentityCallbackTimeout   = 15 * time.Minute
-	enterpriseIdentityCallbackHeartbeat = 2 * time.Second
-	// Keep the first streamed HTML chunk above common ingress compression and
-	// buffering thresholds. Random bytes remain large after transport
-	// compression, unlike the previous repeated-space padding.
-	enterpriseIdentityCallbackPaddingBytes = 24 * 1024
+	enterpriseIdentityCallbackTimeout      = 15 * time.Minute
+	enterpriseIdentityCallbackPollInterval = 2 * time.Second
 )
-
-type enterpriseIdentityCallbackResult struct {
-	result service.CompleteEnterpriseIdentityBindingResult
-	err    error
-}
 
 func (h *Handler) GetAgentEnterpriseIdentityStatus(w http.ResponseWriter, r *http.Request) {
 	workspaceID, agent, _, member, ok := h.loadAgentEnterpriseIdentityTarget(
@@ -103,9 +91,10 @@ func (h *Handler) GetAgentEnterpriseIdentityStatus(w http.ResponseWriter, r *htt
 	}
 	if identity.Status == "revoked" {
 		writeJSON(w, http.StatusOK, agentEnterpriseIdentityStatusResponse{
-			Configured: true,
-			CanManage:  canManage,
-			Identity:   nil,
+			Configured:     true,
+			CanManage:      canManage,
+			BindingVersion: identity.TokenVersion,
+			Identity:       nil,
 		})
 		return
 	}
@@ -124,9 +113,10 @@ func (h *Handler) GetAgentEnterpriseIdentityStatus(w http.ResponseWriter, r *htt
 		}
 	}
 	writeJSON(w, http.StatusOK, agentEnterpriseIdentityStatusResponse{
-		Configured: true,
-		CanManage:  canManage,
-		Identity:   connection,
+		Configured:     true,
+		CanManage:      canManage,
+		BindingVersion: identity.TokenVersion,
+		Identity:       connection,
 	})
 }
 
@@ -178,120 +168,94 @@ func (h *Handler) CompleteAgentEnterpriseIdentityBinding(w http.ResponseWriter, 
 		return
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "enterprise identity callback streaming is unavailable")
-		return
-	}
 	nonce, err := enterpriseIdentityCallbackNonce()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "enterprise identity callback could not be initialized")
 		return
 	}
-	padding, err := enterpriseIdentityCallbackPadding()
+	prepared, err := h.EnterpriseIdentity.PrepareBindingCompletion(r.Context(), state)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "enterprise identity callback could not be initialized")
+		slog.Warn(
+			"enterprise identity OAuth callback preparation failed",
+			append(logger.RequestAttrs(r), "error_type", fmt.Sprintf("%T", err))...,
+		)
+		writeError(w, http.StatusBadRequest, "enterprise identity authorization could not be completed")
 		return
 	}
+	target, targetErr := url.Parse(prepared.RedirectPath)
+	if targetErr != nil || target.IsAbs() || !strings.HasPrefix(target.Path, "/") {
+		slog.Warn(
+			"enterprise identity OAuth callback produced invalid redirect",
+			logger.RequestAttrs(r)...,
+		)
+		writeError(w, http.StatusBadRequest, "enterprise identity authorization could not be completed")
+		return
+	}
+	query := target.Query()
+	query.Set("enterprise_identity", "connected")
+	target.RawQuery = query.Encode()
+
+	previousBindingVersion := int64(0)
+	identity, identityErr := h.Queries.GetAgentEnterpriseIdentity(
+		r.Context(),
+		db.GetAgentEnterpriseIdentityParams{
+			WorkspaceID: prepared.WorkspaceID,
+			AgentID:     prepared.AgentID,
+		},
+	)
+	if identityErr == nil {
+		previousBindingVersion = identity.TokenVersion
+	} else if !errors.Is(identityErr, pgx.ErrNoRows) {
+		writeEnterpriseIdentityError(
+			w,
+			r,
+			"load_callback_binding_version",
+			prepared.WorkspaceID,
+			prepared.AgentID,
+			identityErr,
+		)
+		return
+	}
+	expectedBindingVersion := previousBindingVersion + 1
+	statusURL := fmt.Sprintf(
+		"/api/workspaces/%s/agent-identity/enterprise/status?agent_id=%s",
+		url.PathEscape(util.UUIDToString(prepared.WorkspaceID)),
+		url.QueryEscape(util.UUIDToString(prepared.AgentID)),
+	)
+
+	requestAttrs := logger.RequestAttrs(r)
+	bindingCtx, cancelBinding := context.WithTimeout(
+		context.Background(),
+		enterpriseIdentityCallbackTimeout,
+	)
+	go func() {
+		defer cancelBinding()
+		if _, completeErr := h.EnterpriseIdentity.CompletePreparedBinding(
+			bindingCtx,
+			prepared,
+			code,
+		); completeErr != nil {
+			slog.Warn(
+				"enterprise identity OAuth callback failed",
+				append(requestAttrs, "error_type", fmt.Sprintf("%T", completeErr))...,
+			)
+		}
+	}()
 
 	w.Header().Set("Cache-Control", "no-store, no-transform")
-	w.Header().Set("Content-Encoding", "identity")
 	w.Header().Set("Content-Security-Policy", fmt.Sprintf(
-		"default-src 'none'; script-src 'nonce-%s'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+		"default-src 'none'; connect-src 'self'; script-src 'nonce-%s'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
 		nonce,
 	))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusOK)
-
-	clientConnected := true
-	if _, err := io.WriteString(w, enterpriseIdentityCallbackOpeningPage(nonce, padding)); err != nil {
-		clientConnected = false
-	} else {
-		flusher.Flush()
-	}
-
-	// BUC redirects are browser-facing, while token exchange, AuthX rotation,
-	// and Idem registration are server-side operations. Do not let a mobile
-	// browser navigation cancel an already consumed one-time OAuth callback.
-	bindingCtx, cancel := context.WithTimeout(
-		context.WithoutCancel(r.Context()),
-		enterpriseIdentityCallbackTimeout,
-	)
-	defer cancel()
-	resultCh := make(chan enterpriseIdentityCallbackResult, 1)
-	go func() {
-		result, completeErr := h.EnterpriseIdentity.CompleteBinding(bindingCtx, state, code)
-		resultCh <- enterpriseIdentityCallbackResult{result: result, err: completeErr}
-	}()
-
-	heartbeat := time.NewTicker(enterpriseIdentityCallbackHeartbeat)
-	defer heartbeat.Stop()
-	for {
-		select {
-		case outcome := <-resultCh:
-			if outcome.err != nil {
-				slog.Warn(
-					"enterprise identity OAuth callback failed",
-					append(
-						logger.RequestAttrs(r),
-						"error_type",
-						fmt.Sprintf("%T", outcome.err),
-					)...,
-				)
-				if clientConnected {
-					_, _ = io.WriteString(w, enterpriseIdentityCallbackFailurePage(nonce))
-					flusher.Flush()
-				}
-				return
-			}
-			target, targetErr := url.Parse(outcome.result.RedirectPath)
-			if targetErr != nil || target.IsAbs() || !strings.HasPrefix(target.Path, "/") {
-				slog.Warn(
-					"enterprise identity OAuth callback produced invalid redirect",
-					logger.RequestAttrs(r)...,
-				)
-				if clientConnected {
-					_, _ = io.WriteString(w, enterpriseIdentityCallbackFailurePage(nonce))
-					flusher.Flush()
-				}
-				return
-			}
-			query := target.Query()
-			query.Set("enterprise_identity", "connected")
-			target.RawQuery = query.Encode()
-			if clientConnected {
-				_, _ = io.WriteString(w, enterpriseIdentityCallbackSuccessPage(nonce, target.String()))
-				flusher.Flush()
-			}
-			return
-		case <-heartbeat.C:
-			if !clientConnected {
-				continue
-			}
-			if _, err := io.WriteString(w, "<!-- enterprise-identity-callback-heartbeat -->\n"); err != nil {
-				clientConnected = false
-				continue
-			}
-			flusher.Flush()
-		case <-bindingCtx.Done():
-			slog.Warn(
-				"enterprise identity OAuth callback timed out",
-				append(
-					logger.RequestAttrs(r),
-					"timeout_seconds",
-					int64(enterpriseIdentityCallbackTimeout/time.Second),
-				)...,
-			)
-			if clientConnected {
-				_, _ = io.WriteString(w, enterpriseIdentityCallbackFailurePage(nonce))
-				flusher.Flush()
-			}
-			return
-		}
-	}
+	_, _ = w.Write([]byte(enterpriseIdentityCallbackProgressPage(
+		nonce,
+		statusURL,
+		target.String(),
+		expectedBindingVersion,
+	)))
 }
 
 func enterpriseIdentityCallbackNonce() (string, error) {
@@ -302,15 +266,14 @@ func enterpriseIdentityCallbackNonce() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
-func enterpriseIdentityCallbackPadding() (string, error) {
-	raw := make([]byte, enterpriseIdentityCallbackPaddingBytes)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	return base64.RawStdEncoding.EncodeToString(raw), nil
-}
-
-func enterpriseIdentityCallbackOpeningPage(nonce string, padding string) string {
+func enterpriseIdentityCallbackProgressPage(
+	nonce string,
+	statusURL string,
+	redirectURL string,
+	expectedBindingVersion int64,
+) string {
+	statusURLJSON, _ := json.Marshal(statusURL)
+	redirectURLJSON, _ := json.Marshal(redirectURL)
 	return fmt.Sprintf(`<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -329,30 +292,46 @@ h1{font-size:20px;margin:0 0 12px}p{color:#5f6672;margin:0}
 <main>
 <div class="spinner" aria-hidden="true"></div>
 <h1 id="callback-title">正在绑定员工身份</h1>
-<p id="callback-message">授权已接收，正在创建企业沙箱身份，通常需要 2–3 分钟。请不要返回或重复点击。</p>
+<p id="callback-message">授权已接收，正在创建企业沙箱身份，通常需要 1–2 分钟，繁忙时可能稍久。请不要返回或重复点击。</p>
 </main>
-<script nonce="%s">window.history.replaceState(null,"",window.location.pathname);</script>
-<!-- %s -->
-`, nonce, padding)
+<script nonce="%s">
+window.history.replaceState(null,"",window.location.pathname);
+const statusURL=%s;
+const redirectURL=%s;
+const expectedBindingVersion=%d;
+const startedAt=Date.now();
+async function pollBinding(){
+  try {
+    const response=await fetch(statusURL,{credentials:"same-origin",cache:"no-store"});
+    if(response.ok){
+      const payload=await response.json();
+      if(payload.identity?.status==="active" && Number(payload.binding_version)>=expectedBindingVersion){
+        document.getElementById("callback-title").textContent="员工身份绑定成功";
+        document.getElementById("callback-message").textContent="正在返回 Multica…";
+        window.location.replace(redirectURL);
+        return;
+      }
+    }
+  } catch (_) {}
+  if(Date.now()-startedAt>=%d){
+    document.getElementById("callback-title").textContent="员工身份绑定未完成";
+    document.getElementById("callback-message").textContent="请返回 Multica 后重新发起绑定。";
+    return;
+  }
+  window.setTimeout(pollBinding,%d);
 }
-
-func enterpriseIdentityCallbackFailurePage(nonce string) string {
-	return fmt.Sprintf(`<script nonce="%s">
-document.getElementById("callback-title").textContent="员工身份绑定未完成";
-document.getElementById("callback-message").textContent="请返回 Multica 后重新发起绑定。";
-</script>
-</body></html>`, nonce)
-}
-
-func enterpriseIdentityCallbackSuccessPage(nonce string, target string) string {
-	targetJSON, _ := json.Marshal(target)
-	return fmt.Sprintf(`<script nonce="%s">
-document.getElementById("callback-title").textContent="员工身份绑定成功";
-document.getElementById("callback-message").textContent="正在返回 Multica…";
-window.location.replace(%s);
+pollBinding();
 </script>
 <noscript><a href="%s">返回 Multica</a></noscript>
-</body></html>`, nonce, targetJSON, html.EscapeString(target))
+</body></html>`,
+		nonce,
+		statusURLJSON,
+		redirectURLJSON,
+		expectedBindingVersion,
+		enterpriseIdentityCallbackTimeout.Milliseconds(),
+		enterpriseIdentityCallbackPollInterval.Milliseconds(),
+		html.EscapeString(redirectURL),
+	)
 }
 
 func (h *Handler) RevokeAgentEnterpriseIdentity(w http.ResponseWriter, r *http.Request) {

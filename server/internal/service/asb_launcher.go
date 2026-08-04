@@ -31,7 +31,7 @@ const (
 	defaultASBWireGuardProbeInterval = 5 * time.Second
 	defaultASBResourceCPU            = "2"
 	defaultASBResourceMemory         = "4Gi"
-	asbBoundIdentityMaxAttempts      = 2
+	asbBoundIdentityMaxAttempts      = 3
 	asbRunnerHome                    = "/home/user"
 	asbUnboundIdentityFingerprint    = "7a5d3e85306c71a48596592e43c235dc5f8c9e3f96eeb52b9e6637a04356b1da"
 )
@@ -704,21 +704,21 @@ func (l *ASBLauncher) resolveSandbox(
 				return session.SandboxID, false, identity, nil
 			} else {
 				boundIdentityFailures++
-				_ = l.Queries.MarkCloudSandboxSessionStale(ctx, db.MarkCloudSandboxSessionStaleParams{
-					RuntimeID:           runtime.ID,
-					ScopeType:           scope.typ,
-					ScopeID:             scope.id,
-					SandboxID:           session.SandboxID,
-					SandboxBackend:      string(SandboxBackendASB),
-					IdentityFingerprint: identity.Fingerprint,
-				})
 				slog.Warn(
 					"ASB warm sandbox employee identity is unavailable; recreating the bound sandbox",
 					"runtime_id", util.UUIDToString(runtime.ID),
 					"sandbox_id", session.SandboxID,
 					"error", redact.Text(readyErr.Error()),
 				)
-				l.deleteASBSandboxAfterIdentityFailure(session.SandboxID)
+				if cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
+					runtime,
+					scope,
+					true,
+					identity.Fingerprint,
+					session.SandboxID,
+				); cleanupErr != nil {
+					return "", false, ASBResolvedIdentity{}, cleanupErr
+				}
 			}
 		}
 		if err := l.deleteSupersededASBSandboxForScope(
@@ -804,9 +804,50 @@ func (l *ASBLauncher) resolveSandbox(
 			releaseSource("release_source_after_failed_task_create")
 			return "", true, ASBResolvedIdentity{}, err
 		}
+		// Persist the control-plane handle before waiting for readiness or
+		// inherited identity. Capacity reconciliation must be able to find and
+		// safely reclaim every accepted create, including one that later fails
+		// during Pending, WireGuard convergence, or a CLI identity probe.
+		if scoped {
+			if _, err := l.Queries.UpsertCloudSandboxSession(ctx, db.UpsertCloudSandboxSessionParams{
+				WorkspaceID:         runtime.WorkspaceID,
+				RuntimeID:           runtime.ID,
+				ScopeType:           scope.typ,
+				ScopeID:             scope.id,
+				SandboxID:           sandbox.ID,
+				ArtifactRef:         metadata.ArtifactRef,
+				ExpiresAt:           pgtype.Timestamptz{Time: time.Now().Add(time.Duration(l.Config.TimeoutSeconds) * time.Second), Valid: true},
+				SandboxBackend:      string(SandboxBackendASB),
+				IdentityFingerprint: identity.Fingerprint,
+			}); err != nil {
+				releaseSource("release_source_after_failed_session_record")
+				cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
+					runtime,
+					scope,
+					false,
+					identity.Fingerprint,
+					sandbox.ID,
+				)
+				if cleanupErr != nil {
+					return "", true, ASBResolvedIdentity{}, errors.Join(
+						fmt.Errorf("record ASB sandbox session: %w", err),
+						cleanupErr,
+					)
+				}
+				return "", true, ASBResolvedIdentity{}, fmt.Errorf("record ASB sandbox session: %w", err)
+			}
+		}
 		if err := l.waitSandboxRunning(ctx, sandbox.ID); err != nil {
 			releaseSource("release_source_after_failed_wait_running")
-			l.deleteASBSandboxAfterIdentityFailure(sandbox.ID)
+			if cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
+				runtime,
+				scope,
+				scoped,
+				identity.Fingerprint,
+				sandbox.ID,
+			); cleanupErr != nil {
+				return "", true, ASBResolvedIdentity{}, errors.Join(err, cleanupErr)
+			}
 			return "", true, ASBResolvedIdentity{}, err
 		}
 		if identity.Mode == asbIdentityModeBound {
@@ -831,7 +872,15 @@ func (l *ASBLauncher) resolveSandbox(
 					"error", redact.Text(err.Error()),
 				)
 				releaseSource("release_source_after_identity_unavailable")
-				l.deleteASBSandboxAfterIdentityFailure(sandbox.ID)
+				if cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
+					runtime,
+					scope,
+					scoped,
+					identity.Fingerprint,
+					sandbox.ID,
+				); cleanupErr != nil {
+					return "", true, ASBResolvedIdentity{}, cleanupErr
+				}
 				if retryBoundIdentity {
 					continue
 				}
@@ -839,22 +888,6 @@ func (l *ASBLauncher) resolveSandbox(
 				continue
 			}
 			releaseSource("release_source_after_identity_ready")
-		}
-		if scoped {
-			if _, err := l.Queries.UpsertCloudSandboxSession(ctx, db.UpsertCloudSandboxSessionParams{
-				WorkspaceID:         runtime.WorkspaceID,
-				RuntimeID:           runtime.ID,
-				ScopeType:           scope.typ,
-				ScopeID:             scope.id,
-				SandboxID:           sandbox.ID,
-				ArtifactRef:         metadata.ArtifactRef,
-				ExpiresAt:           pgtype.Timestamptz{Time: time.Now().Add(time.Duration(l.Config.TimeoutSeconds) * time.Second), Valid: true},
-				SandboxBackend:      string(SandboxBackendASB),
-				IdentityFingerprint: identity.Fingerprint,
-			}); err != nil {
-				l.deleteASBSandboxAfterIdentityFailure(sandbox.ID)
-				return "", true, ASBResolvedIdentity{}, fmt.Errorf("record ASB sandbox session: %w", err)
-			}
 		}
 		chattrace.LogStage(slog.Default(), trace, "asb_sandbox_create", "ready",
 			"sandbox_id", sandbox.ID,
@@ -959,27 +992,41 @@ func (l *ASBLauncher) deleteSupersededASBSandboxForScope(
 	return nil
 }
 
-func (l *ASBLauncher) deleteASBSandboxAfterIdentityFailure(sandboxID string) {
+func (l *ASBLauncher) deleteASBSandboxAfterIdentityFailure(
+	runtime db.AgentRuntime,
+	scope fcE2BTaskScope,
+	scoped bool,
+	identityFingerprint string,
+	sandboxID string,
+) error {
 	cleanupCtx, cancel := context.WithTimeout(
 		context.Background(),
 		asbCapacityReleaseTimeout+15*time.Second,
 	)
 	defer cancel()
-	if err := l.Client.DeleteSandbox(cleanupCtx, sandboxID); err != nil {
-		slog.Warn(
-			"failed to delete ASB sandbox after employee identity failure",
-			"sandbox_id", sandboxID,
-			"error", redact.Text(err.Error()),
-		)
-		return
+	if err := deleteASBSandboxIfExists(cleanupCtx, l.Client, sandboxID); err != nil {
+		return fmt.Errorf("delete ASB sandbox after employee identity failure: %w", err)
 	}
 	if err := waitForASBCapacityRelease(cleanupCtx, l.Client, sandboxID); err != nil {
-		slog.Warn(
-			"ASB sandbox deletion after employee identity failure did not release capacity in time",
-			"sandbox_id", sandboxID,
-			"error", redact.Text(err.Error()),
-		)
+		return err
 	}
+	if !scoped {
+		return nil
+	}
+	if err := l.Queries.MarkCloudSandboxSessionStale(
+		cleanupCtx,
+		db.MarkCloudSandboxSessionStaleParams{
+			RuntimeID:           runtime.ID,
+			ScopeType:           scope.typ,
+			ScopeID:             scope.id,
+			SandboxID:           sandboxID,
+			SandboxBackend:      string(SandboxBackendASB),
+			IdentityFingerprint: identityFingerprint,
+		},
+	); err != nil {
+		return fmt.Errorf("mark deleted ASB sandbox session stale: %w", err)
+	}
+	return nil
 }
 
 func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) error {

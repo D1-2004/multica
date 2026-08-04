@@ -264,7 +264,18 @@ func (m *ASBIdentitySourceManager) Delete(
 	if err != nil {
 		return err
 	}
-	return deleteASBSandboxIfExists(ctx, client, sandboxID)
+	if err := deleteASBSandboxIfExists(ctx, client, sandboxID); err != nil {
+		return err
+	}
+	if err := waitForASBCapacityRelease(ctx, client, sandboxID); err != nil {
+		return fmt.Errorf("wait for ASB enterprise identity source capacity release: %w", err)
+	}
+	slog.Info(
+		"deleted ASB enterprise identity source",
+		"runtime_id", util.UUIDToString(runtimeID),
+		"sandbox_id", sandboxID,
+	)
+	return nil
 }
 
 func (m *ASBIdentitySourceManager) clientForRuntime(

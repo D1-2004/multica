@@ -427,35 +427,88 @@ type CompleteEnterpriseIdentityBindingResult struct {
 	RedirectPath string
 }
 
-func (s *EnterpriseIdentityService) CompleteBinding(
+// PreparedEnterpriseIdentityBinding is the consumed, one-time OAuth attempt
+// used by the browser callback. Preparing is intentionally fast so the
+// handler can finish the navigation response before ASB source creation starts.
+// The database row stays private to this package; callers only receive the
+// coordinates required to render and poll the progress page.
+type PreparedEnterpriseIdentityBinding struct {
+	WorkspaceID  pgtype.UUID
+	AgentID      pgtype.UUID
+	RedirectPath string
+
+	attempt db.AgentEnterpriseIdentityAttempt
+	started time.Time
+}
+
+func (s *EnterpriseIdentityService) PrepareBindingCompletion(
 	ctx context.Context,
 	state string,
-	code string,
-) (CompleteEnterpriseIdentityBindingResult, error) {
+) (PreparedEnterpriseIdentityBinding, error) {
 	bindingStarted := time.Now()
 	state = strings.TrimSpace(state)
-	code = strings.TrimSpace(code)
-	if state == "" || code == "" {
+	if state == "" {
 		err := errors.New("enterprise identity OAuth callback is incomplete")
 		logEnterpriseIdentityBindingStageFailure("validate_oauth_callback", bindingStarted, err)
-		return CompleteEnterpriseIdentityBindingResult{}, err
+		return PreparedEnterpriseIdentityBinding{}, err
 	}
 	stageStarted := time.Now()
 	attempt, err := s.Store.ConsumeAgentEnterpriseIdentityAttempt(ctx, sha256Bytes(state))
 	if err != nil {
 		logEnterpriseIdentityBindingStageFailure("consume_oauth_attempt", stageStarted, err)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return CompleteEnterpriseIdentityBindingResult{}, errors.New("enterprise identity OAuth attempt is invalid, expired, or already used")
+			return PreparedEnterpriseIdentityBinding{}, errors.New("enterprise identity OAuth attempt is invalid, expired, or already used")
 		}
-		return CompleteEnterpriseIdentityBindingResult{}, fmt.Errorf("consume enterprise identity OAuth attempt: %w", err)
+		return PreparedEnterpriseIdentityBinding{}, fmt.Errorf("consume enterprise identity OAuth attempt: %w", err)
 	}
 	bindingAttrs := []any{
 		"workspace_id", util.UUIDToString(attempt.WorkspaceID),
 		"agent_id", util.UUIDToString(attempt.AgentID),
 	}
 	logEnterpriseIdentityBindingStageSuccess("consume_oauth_attempt", stageStarted, bindingAttrs...)
+	return PreparedEnterpriseIdentityBinding{
+		WorkspaceID:  attempt.WorkspaceID,
+		AgentID:      attempt.AgentID,
+		RedirectPath: attempt.RedirectPath,
+		attempt:      attempt,
+		started:      bindingStarted,
+	}, nil
+}
 
-	stageStarted = time.Now()
+func (s *EnterpriseIdentityService) CompleteBinding(
+	ctx context.Context,
+	state string,
+	code string,
+) (CompleteEnterpriseIdentityBindingResult, error) {
+	prepared, err := s.PrepareBindingCompletion(ctx, state)
+	if err != nil {
+		return CompleteEnterpriseIdentityBindingResult{}, err
+	}
+	return s.CompletePreparedBinding(ctx, prepared, code)
+}
+
+func (s *EnterpriseIdentityService) CompletePreparedBinding(
+	ctx context.Context,
+	prepared PreparedEnterpriseIdentityBinding,
+	code string,
+) (CompleteEnterpriseIdentityBindingResult, error) {
+	bindingStarted := prepared.started
+	if bindingStarted.IsZero() {
+		bindingStarted = time.Now()
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		err := errors.New("enterprise identity OAuth callback is incomplete")
+		logEnterpriseIdentityBindingStageFailure("validate_oauth_callback", bindingStarted, err)
+		return CompleteEnterpriseIdentityBindingResult{}, err
+	}
+	attempt := prepared.attempt
+	bindingAttrs := []any{
+		"workspace_id", util.UUIDToString(attempt.WorkspaceID),
+		"agent_id", util.UUIDToString(attempt.AgentID),
+	}
+
+	stageStarted := time.Now()
 	bucTokens, err := s.BUC.ExchangeCode(ctx, code)
 	if err != nil {
 		logEnterpriseIdentityBindingStageFailure("exchange_buc_code", stageStarted, err, bindingAttrs...)

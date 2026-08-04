@@ -304,8 +304,8 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 func TestASBTaskIdentityProbeTimeoutSplitsBoundAttempts(t *testing.T) {
 	t.Parallel()
 
-	if got := asbTaskIdentityProbeTimeout(4 * time.Minute); got != 2*time.Minute {
-		t.Fatalf("identity probe timeout = %s, want 2m", got)
+	if got := asbTaskIdentityProbeTimeout(4 * time.Minute); got != 80*time.Second {
+		t.Fatalf("identity probe timeout = %s, want 1m20s", got)
 	}
 }
 

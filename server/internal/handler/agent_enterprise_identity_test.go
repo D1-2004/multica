@@ -15,9 +15,10 @@ import (
 )
 
 type enterpriseIdentityStatusTestResponse struct {
-	Configured bool `json:"configured"`
-	CanManage  bool `json:"can_manage"`
-	Identity   *struct {
+	Configured     bool  `json:"configured"`
+	CanManage      bool  `json:"can_manage"`
+	BindingVersion int64 `json:"binding_version"`
+	Identity       *struct {
 		EmployeeID          string `json:"employee_id"`
 		DisplayName         string `json:"display_name"`
 		Status              string `json:"status"`
@@ -191,21 +192,25 @@ func TestAgentEnterpriseIdentityStatusTreatsRevokedBindingAsUnbound(t *testing.T
 	}
 }
 
-func TestEnterpriseIdentityCallbackOpeningChunkResistsProxyBuffering(t *testing.T) {
+func TestEnterpriseIdentityCallbackProgressPagePollsNewBindingVersion(t *testing.T) {
 	t.Parallel()
 
-	padding, err := enterpriseIdentityCallbackPadding()
-	if err != nil {
-		t.Fatalf("generate callback padding: %v", err)
-	}
-	page := enterpriseIdentityCallbackOpeningPage("nonce", padding)
-	if len(page) < 32*1024 {
-		t.Fatalf("opening callback chunk length = %d, want at least 32 KiB", len(page))
-	}
-	if !strings.Contains(page, "通常需要 2–3 分钟") {
-		t.Fatal("opening callback chunk does not contain the progress guidance")
-	}
-	if strings.Contains(padding, " ") {
-		t.Fatal("callback padding unexpectedly contains repeated-space padding")
+	page := enterpriseIdentityCallbackProgressPage(
+		"nonce",
+		"/api/workspaces/workspace-id/agent-identity/enterprise/status?agent_id=agent-id",
+		"/settings?enterprise_identity=connected",
+		7,
+	)
+	for _, expected := range []string{
+		"通常需要 1–2 分钟",
+		"fetch(statusURL",
+		"payload.binding_version",
+		"expectedBindingVersion=7",
+		"window.location.replace(redirectURL)",
+		"</body></html>",
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("callback progress page does not contain %q", expected)
+		}
 	}
 }

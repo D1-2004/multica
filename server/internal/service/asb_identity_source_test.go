@@ -152,6 +152,10 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 			deleteCalls++
 			state = "Terminated"
 			response.WriteHeader(http.StatusNoContent)
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/quotas":
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(response, `[{"networkZone":"ALITest","region":"cn-zhangjiakou","quota":5,"usage":0}]`)
 		default:
 			http.NotFound(response, request)
 		}
