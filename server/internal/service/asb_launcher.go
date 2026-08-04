@@ -31,7 +31,7 @@ const (
 	defaultASBWireGuardProbeInterval = 5 * time.Second
 	defaultASBResourceCPU            = "2"
 	defaultASBResourceMemory         = "4Gi"
-	asbBoundIdentityMaxAttempts      = 3
+	asbOptionalIdentityAttachTimeout = 30 * time.Second
 	asbRunnerHome                    = "/home/user"
 	asbUnboundIdentityFingerprint    = "7a5d3e85306c71a48596592e43c235dc5f8c9e3f96eeb52b9e6637a04356b1da"
 )
@@ -644,6 +644,11 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	if err := l.execRunOnce(ctx, sandboxID, runtime, task.ID, token, coldStart, extraEnv); err != nil {
 		return asbLaunchSubmission{}, false, err
 	}
+	// Employee identity is an optional Runtime enhancement. Submit the runner
+	// first, then ask ASB to attach SPIFFE identity once through its lifecycle
+	// API. Do not run CLI probes here: the sandbox command endpoint is also used
+	// by the runner and must never be held up by identity readiness.
+	l.attachSandboxIdentityAfterTaskStart(runtime.ID, task.ID, sandboxID, identity)
 	return asbLaunchSubmission{
 		runtime:             runtime,
 		sandboxID:           sandboxID,
@@ -669,8 +674,6 @@ func (l *ASBLauncher) resolveSandbox(
 	if err := identity.validate(); err != nil {
 		return "", false, ASBResolvedIdentity{}, err
 	}
-	boundIdentityFailures := 0
-	identityProbeTimeout := asbTaskIdentityProbeTimeout(l.Config.WireGuardReadyTimeout)
 	if scoped {
 		release, err := l.lockSandboxScopeOnConnection(ctx, runtime, scope, runtimeLockConn)
 		if err != nil {
@@ -692,34 +695,10 @@ func (l *ASBLauncher) resolveSandbox(
 			if err != nil {
 				return "", false, ASBResolvedIdentity{}, fmt.Errorf("load ASB sandbox session: %w", err)
 			}
-			if identity.Mode != asbIdentityModeBound {
-				return session.SandboxID, false, identity, nil
-			}
-			if readyErr := l.ensureSandboxIdentityReady(
-				ctx,
-				session.SandboxID,
-				identity,
-				identityProbeTimeout,
-			); readyErr == nil {
-				return session.SandboxID, false, identity, nil
-			} else {
-				boundIdentityFailures++
-				slog.Warn(
-					"ASB warm sandbox employee identity is unavailable; recreating the bound sandbox",
-					"runtime_id", util.UUIDToString(runtime.ID),
-					"sandbox_id", session.SandboxID,
-					"error", redact.Text(readyErr.Error()),
-				)
-				if cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
-					runtime,
-					scope,
-					true,
-					identity.Fingerprint,
-					session.SandboxID,
-				); cleanupErr != nil {
-					return "", false, ASBResolvedIdentity{}, cleanupErr
-				}
-			}
+			// A warm task sandbox is reusable independently of optional employee
+			// identity state. Any SPIFFE reattachment is scheduled only after the
+			// runner command has been submitted.
+			return session.SandboxID, false, identity, nil
 		}
 		if err := l.deleteSupersededASBSandboxForScope(
 			ctx,
@@ -851,43 +830,7 @@ func (l *ASBLauncher) resolveSandbox(
 			return "", true, ASBResolvedIdentity{}, err
 		}
 		if identity.Mode == asbIdentityModeBound {
-			if err := l.ensureSandboxIdentityReady(
-				ctx,
-				sandbox.ID,
-				identity,
-				identityProbeTimeout,
-			); err != nil {
-				boundIdentityFailures++
-				retryBoundIdentity := boundIdentityFailures < asbBoundIdentityMaxAttempts
-				message := "ASB inherited employee identity is unavailable after bounded retries; starting task without employee identity"
-				if retryBoundIdentity {
-					message = "ASB inherited employee identity is unavailable; recreating one bound task sandbox"
-				}
-				slog.Warn(
-					message,
-					"runtime_id", util.UUIDToString(runtime.ID),
-					"sandbox_id", sandbox.ID,
-					"identity_attempt", boundIdentityFailures,
-					"identity_attempt_limit", asbBoundIdentityMaxAttempts,
-					"error", redact.Text(err.Error()),
-				)
-				releaseSource("release_source_after_identity_unavailable")
-				if cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
-					runtime,
-					scope,
-					scoped,
-					identity.Fingerprint,
-					sandbox.ID,
-				); cleanupErr != nil {
-					return "", true, ASBResolvedIdentity{}, cleanupErr
-				}
-				if retryBoundIdentity {
-					continue
-				}
-				identity = unboundASBResolvedIdentity()
-				continue
-			}
-			releaseSource("release_source_after_identity_ready")
+			releaseSource("release_source_after_sandbox_running")
 		}
 		chattrace.LogStage(slog.Default(), trace, "asb_sandbox_create", "ready",
 			"sandbox_id", sandbox.ID,
@@ -1057,11 +1000,44 @@ func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) 
 	}
 }
 
-func asbTaskIdentityProbeTimeout(configured time.Duration) time.Duration {
-	if configured <= 0 {
-		return configured
+func (l *ASBLauncher) attachSandboxIdentityAfterTaskStart(
+	runtimeID pgtype.UUID,
+	taskID pgtype.UUID,
+	sandboxID string,
+	identity ASBResolvedIdentity,
+) {
+	if l == nil || l.Client == nil || identity.Mode != asbIdentityModeBound {
+		return
 	}
-	return configured / asbBoundIdentityMaxAttempts
+	grant := ASBAgentIdentityGrant{
+		RawEmployeeID: identity.RawEmployeeID,
+		AgentToken:    identity.AgentIdentityToken,
+		AgentID:       identity.AgentSPIFFEID,
+	}
+	go func() {
+		attachCtx, cancel := context.WithTimeout(
+			context.Background(),
+			asbOptionalIdentityAttachTimeout,
+		)
+		defer cancel()
+		if err := l.Client.AttachAgentIdentity(attachCtx, sandboxID, grant); err != nil {
+			logASBIdentityAttachmentFailure(sandboxID, err)
+			slog.Warn(
+				"ASB optional employee identity attachment failed after task start",
+				"runtime_id", util.UUIDToString(runtimeID),
+				"task_id", util.UUIDToString(taskID),
+				"sandbox_id", sandboxID,
+				"error", redact.Text(err.Error()),
+			)
+			return
+		}
+		slog.Info(
+			"ASB optional employee identity attachment accepted after task start",
+			"runtime_id", util.UUIDToString(runtimeID),
+			"task_id", util.UUIDToString(taskID),
+			"sandbox_id", sandboxID,
+		)
+	}()
 }
 
 func (l *ASBLauncher) ensureSandboxIdentityReady(

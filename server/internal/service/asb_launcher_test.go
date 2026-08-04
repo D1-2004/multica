@@ -301,12 +301,45 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 	}
 }
 
-func TestASBTaskIdentityProbeTimeoutSplitsBoundAttempts(t *testing.T) {
+func TestASBOptionalIdentityAttachmentDoesNotBlockTaskStart(t *testing.T) {
 	t.Parallel()
 
-	if got := asbTaskIdentityProbeTimeout(4 * time.Minute); got != 80*time.Second {
-		t.Fatalf("identity probe timeout = %s, want 1m20s", got)
+	requestStarted := make(chan struct{})
+	releaseRequest := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost ||
+			request.URL.Path != "/v1/sandboxes/sandbox-123/identity/spiffe" {
+			http.NotFound(response, request)
+			return
+		}
+		close(requestStarted)
+		<-releaseRequest
+		response.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	launcher := &ASBLauncher{Client: newTestASBClient(t, server)}
+	startedAt := time.Now()
+	launcher.attachSandboxIdentityAfterTaskStart(
+		util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		"sandbox-123",
+		ASBResolvedIdentity{
+			Mode:               asbIdentityModeBound,
+			RawEmployeeID:      "12345",
+			AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+			AgentIdentityToken: "ait",
+		},
+	)
+	if elapsed := time.Since(startedAt); elapsed > 100*time.Millisecond {
+		t.Fatalf("optional identity attachment blocked for %s", elapsed)
 	}
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("optional identity attachment request was not started")
+	}
+	close(releaseRequest)
 }
 
 func TestASBAgentIdentityAttachmentConvergingRejectsOtherBadRequest(t *testing.T) {

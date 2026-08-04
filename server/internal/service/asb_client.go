@@ -593,9 +593,9 @@ func (c *ASBClient) AttachAgentIdentity(ctx context.Context, sandboxID string, g
 	}
 	// ASB explicitly recommends asynchronous SPIFFE attachment. A synchronous
 	// request waits inside the control plane and can surface its transient CSI
-	// 502 as a terminal HTTP 400 even though subsequent sandbox requests are the
-	// recovery trigger. The launcher proves completion by repeatedly executing
-	// the BUC + a1 identity probe before it exposes the sandbox to a task.
+	// 502 as a terminal HTTP 400 even though the attachment may still converge.
+	// Employee identity is optional, so the launcher submits this request only
+	// after the runner command and never gates task startup on its completion.
 	query := url.Values{"sync": []string{"false"}}
 	return c.doLifecycleJSONVia(
 		ctx,
