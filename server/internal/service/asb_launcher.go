@@ -27,12 +27,12 @@ import (
 const (
 	defaultASBTimeoutSeconds         = asbMaxCreateTimeout
 	defaultASBReadyTimeout           = 90 * time.Second
+	defaultASBCommandReadyTimeout    = 7 * time.Minute
 	defaultASBWireGuardReadyTimeout  = 4 * time.Minute
 	defaultASBWireGuardProbeInterval = 5 * time.Second
 	defaultASBResourceCPU            = "2"
 	defaultASBResourceMemory         = "4Gi"
 	asbOptionalIdentityAttachTimeout = 30 * time.Second
-	asbCommandReadyTimeout           = defaultASBReadyTimeout
 	asbCommandReadyRetryInterval     = time.Second
 	asbCommandProbeTimeout           = 5 * time.Second
 	asbRunnerHome                    = "/home/user"
@@ -57,6 +57,7 @@ type ASBConfig struct {
 	LLMModels             []string
 	TimeoutSeconds        int
 	ReadyTimeout          time.Duration
+	CommandReadyTimeout   time.Duration
 	WireGuardReadyTimeout time.Duration
 	ResourceCPU           string
 	ResourceMemory        string
@@ -73,6 +74,7 @@ func ASBConfigFromEnv() ASBConfig {
 		LLMAPIKey:             strings.TrimSpace(os.Getenv("MULTICA_ASB_OPENAI_API_KEY")),
 		TimeoutSeconds:        defaultASBTimeoutSeconds,
 		ReadyTimeout:          defaultASBReadyTimeout,
+		CommandReadyTimeout:   defaultASBCommandReadyTimeout,
 		WireGuardReadyTimeout: defaultASBWireGuardReadyTimeout,
 		ResourceCPU:           firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_CPU"), defaultASBResourceCPU),
 		ResourceMemory:        firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_MEMORY"), defaultASBResourceMemory),
@@ -86,6 +88,11 @@ func ASBConfigFromEnv() ASBConfig {
 	}
 	parsePositiveIntEnv("MULTICA_ASB_TIMEOUT_SECONDS", &cfg.TimeoutSeconds, &cfg.ParseError)
 	parsePositiveDurationEnv("MULTICA_ASB_READY_TIMEOUT", &cfg.ReadyTimeout, &cfg.ParseError)
+	parsePositiveDurationEnv(
+		"MULTICA_ASB_COMMAND_READY_TIMEOUT",
+		&cfg.CommandReadyTimeout,
+		&cfg.ParseError,
+	)
 	parsePositiveDurationEnv(
 		"MULTICA_ASB_WIREGUARD_READY_TIMEOUT",
 		&cfg.WireGuardReadyTimeout,
@@ -164,6 +171,9 @@ func (c ASBConfig) Validate() error {
 	}
 	if c.ReadyTimeout <= 0 {
 		missing = append(missing, "MULTICA_ASB_READY_TIMEOUT")
+	}
+	if c.CommandReadyTimeout <= 0 {
+		missing = append(missing, "MULTICA_ASB_COMMAND_READY_TIMEOUT")
 	}
 	if c.WireGuardReadyTimeout <= 0 {
 		missing = append(missing, "MULTICA_ASB_WIREGUARD_READY_TIMEOUT")
@@ -740,6 +750,24 @@ func (l *ASBLauncher) resolveSandbox(
 			if err != nil {
 				return "", false, ASBResolvedIdentity{}, fmt.Errorf("load ASB sandbox session: %w", err)
 			}
+			reusable, state, err := inspectReusableASBSandbox(ctx, l.Client, session.SandboxID)
+			if err != nil {
+				return "", false, ASBResolvedIdentity{}, fmt.Errorf(
+					"query reusable ASB sandbox: %w",
+					err,
+				)
+			}
+			if !reusable {
+				slog.Info(
+					"ASB sandbox session points to an unavailable sandbox; creating a replacement",
+					"runtime_id", util.UUIDToString(runtime.ID),
+					"sandbox_id", session.SandboxID,
+					"scope_type", scope.typ,
+					"scope_id", util.UUIDToString(scope.id),
+					"sandbox_state", state,
+				)
+				break
+			}
 			// A warm task sandbox is reusable independently of optional employee
 			// identity state. Any SPIFFE reattachment is scheduled only after the
 			// runner command has been submitted.
@@ -883,6 +911,23 @@ func (l *ASBLauncher) resolveSandbox(
 		)
 		return sandbox.ID, true, identity, nil
 	}
+}
+
+func inspectReusableASBSandbox(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+) (bool, string, error) {
+	live, exists, err := getLiveASBSandbox(ctx, client, sandboxID)
+	if err != nil {
+		return false, "", err
+	}
+	if !exists {
+		return false, "not_found", nil
+	}
+	state := strings.TrimSpace(live.Status.State)
+	reusable := !isTerminalASBSandboxState(state) && !strings.EqualFold(state, "failed")
+	return reusable, state, nil
 }
 
 // deleteSupersededASBSandboxForScope removes the control-plane sandbox that
@@ -1089,9 +1134,9 @@ func (l *ASBLauncher) waitSandboxCommandReady(
 	ctx context.Context,
 	sandboxID string,
 ) (*ASBEndpoint, error) {
-	timeout := asbCommandReadyTimeout
-	if l.Config.ReadyTimeout > 0 && l.Config.ReadyTimeout < timeout {
-		timeout = l.Config.ReadyTimeout
+	timeout := l.Config.CommandReadyTimeout
+	if timeout <= 0 {
+		return nil, errors.New("ASB command ready timeout is not configured")
 	}
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
