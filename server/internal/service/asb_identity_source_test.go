@@ -294,7 +294,7 @@ func TestASBIdentitySourceInitialExpirationLeavesOneMinuteSafetyMargin(t *testin
 	}
 }
 
-func TestInitializeASBIdentitySourceExpirationUsesCreationTime(t *testing.T) {
+func TestInitializeASBIdentitySourceExpirationUsesCreateResponseTimeWithoutReloading(t *testing.T) {
 	t.Parallel()
 
 	const sandboxID = "identity-source-absolute-expiration"
@@ -303,13 +303,6 @@ func TestInitializeASBIdentitySourceExpirationUsesCreationTime(t *testing.T) {
 	renewCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
-		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/"+sandboxID:
-			response.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(response).Encode(map[string]any{
-				"id":        sandboxID,
-				"status":    map[string]string{"state": "Running"},
-				"createdAt": createdAt,
-			})
 		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes/"+sandboxID+"/renew-expiration":
 			var payload struct {
 				ExpiresAt time.Time `json:"expiresAt"`
@@ -329,7 +322,12 @@ func TestInitializeASBIdentitySourceExpirationUsesCreationTime(t *testing.T) {
 	defer server.Close()
 
 	client := newTestASBClient(t, server)
-	if err := initializeASBIdentitySourceExpiration(context.Background(), client, sandboxID); err != nil {
+	if err := initializeASBIdentitySourceExpiration(
+		context.Background(),
+		client,
+		sandboxID,
+		createdAt,
+	); err != nil {
 		t.Fatalf("initialize source expiration: %v", err)
 	}
 	if renewCalls != 1 {
