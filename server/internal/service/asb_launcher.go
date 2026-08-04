@@ -312,6 +312,48 @@ func BuildASBRuntimeMetadata(
 	}, nil
 }
 
+// BuildASBCandidateBootstrapMetadata records an immutable candidate image and
+// its Runtime-scoped credential without running the full native ASB smoke test
+// on the request path. Candidate Runtimes stay offline and exist only to give
+// the asynchronous stable-release validator a credential. The stable release
+// still reads and validates the image's real manifest before it can publish.
+func BuildASBCandidateBootstrapMetadata(
+	artifact ASBArtifact,
+	provider string,
+) (map[string]any, error) {
+	if err := validateASBArtifact(artifact); err != nil {
+		return nil, err
+	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		provider = FCE2BProvider
+	}
+	if !IsFCE2BSupportedProvider(provider) {
+		return nil, ErrFCE2BTemplateProviderUnsupported
+	}
+	alias := strings.TrimSpace(artifact.Alias)
+	if alias == "" {
+		alias = asbArtifactAlias(artifact.Ref, artifact.BuildID)
+	}
+	return map[string]any{
+		"kind":               CloudSandboxMetadataKind,
+		"sandbox_backend":    string(SandboxBackendASB),
+		"provider":           provider,
+		"artifact_kind":      CloudSandboxArtifactOCIImage,
+		"artifact_channel":   CloudSandboxChannelCandidate,
+		"artifact_ref":       artifact.Ref,
+		"artifact_build_id":  artifact.BuildID,
+		"artifact_alias":     alias,
+		"artifact_digest":    artifact.Digest,
+		"artifact_status":    "PENDING_STABLE_VALIDATION",
+		"manifest_version":   0,
+		"capabilities":       []string{},
+		"component_versions": map[string]string{},
+		"runner_protocol":    string(fcE2BRunnerLaunchRootLog),
+		"runner":             FCE2BRunnerCommandForProvider(provider),
+	}, nil
+}
+
 type ASBRuntimeArtifactUpdateResult struct {
 	Runtime                 db.AgentRuntime
 	PreviousArtifactRef     string

@@ -359,6 +359,8 @@ func (h *Handler) createASBRuntime(
 		Alias:   strings.TrimSpace(req.ArtifactAlias),
 		Digest:  strings.ToLower(strings.TrimSpace(req.ArtifactDigest)),
 	}
+	runtimeStatus := "online"
+	var metadataValues map[string]any
 	runtimeQueries := h.Queries
 	var runtimeTx pgx.Tx
 	defer func() {
@@ -420,27 +422,36 @@ func (h *Handler) createASBRuntime(
 			writeError(w, http.StatusBadRequest, "artifact_ref, artifact_build_id and artifact_digest are required for a candidate runtime")
 			return
 		}
-		manifest, err := h.ASBLauncher.VerifyArtifactWithAPIKey(r.Context(), artifact, apiKey)
+		var err error
+		metadataValues, err = service.BuildASBCandidateBootstrapMetadata(artifact, req.Provider)
 		if err != nil {
-			slog.Error("ASB candidate artifact validation failed", "error", err)
-			writeError(w, http.StatusBadRequest, "ASB candidate artifact validation failed")
+			if errors.Is(err, service.ErrFCE2BTemplateProviderUnsupported) {
+				writeError(w, http.StatusBadRequest, "unsupported ASB Runtime provider")
+				return
+			}
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		artifact.Manifest = manifest
+		// A candidate is a credential-bearing bootstrap record. It cannot run
+		// tasks until the asynchronous stable release validates the real image.
+		runtimeStatus = "offline"
 	}
 
-	metadataValues, err := service.BuildASBRuntimeMetadata(
-		artifact,
-		req.Provider,
-		artifactChannel,
-	)
-	if errors.Is(err, service.ErrFCE2BTemplateProviderUnsupported) {
-		writeError(w, http.StatusBadRequest, "provider is not declared by the ASB runtime manifest")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	if metadataValues == nil {
+		var err error
+		metadataValues, err = service.BuildASBRuntimeMetadata(
+			artifact,
+			req.Provider,
+			artifactChannel,
+		)
+		if errors.Is(err, service.ErrFCE2BTemplateProviderUnsupported) {
+			writeError(w, http.StatusBadRequest, "provider is not declared by the ASB runtime manifest")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	provider, _ := metadataValues["provider"].(string)
 	name := strings.TrimSpace(req.Name)
@@ -482,7 +493,7 @@ func (h *Handler) createASBRuntime(
 		Name:        name,
 		RuntimeMode: "cloud",
 		Provider:    provider,
-		Status:      "online",
+		Status:      runtimeStatus,
 		DeviceInfo:  name,
 		Metadata:    metadata,
 		OwnerID:     member.UserID,
