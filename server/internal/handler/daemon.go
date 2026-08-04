@@ -1746,6 +1746,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		if issue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil {
 			resp.WorkspaceID = uuidToString(issue.WorkspaceID)
 			resp.ThreadName = issue.Title
+			resp.IssueIdentifier = h.getIssuePrefix(r.Context(), issue.WorkspaceID) + "-" + strconv.Itoa(int(issue.Number))
 
 			// Squad-leader briefing injection: keyed off the task being a
 			// leader-task (is_leader_task) carrying a squad_id — NOT off the

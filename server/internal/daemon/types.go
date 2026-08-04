@@ -61,6 +61,7 @@ type Task struct {
 	AgentID              string `json:"agent_id"`
 	RuntimeID            string `json:"runtime_id"`
 	IssueID              string `json:"issue_id"`
+	IssueIdentifier     string `json:"issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123), resolved on claim so the agent can embed it when creating external approvals
 	WorkspaceID          string `json:"workspace_id"`
 	TraceID              string `json:"trace_id,omitempty"`
 	TraceStartedAtUnixMS int64  `json:"trace_started_at_unix_ms,omitempty"`
