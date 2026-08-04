@@ -14,7 +14,11 @@ func TestClaimTaskByRuntime_FCE2BDoesNotForwardAgentModel(t *testing.T) {
 	assertClaimedAgentModel(t, `{"kind":"fc-e2b"}`, "")
 }
 
-func TestClaimTaskByRuntime_NonFCE2BForwardsAgentModel(t *testing.T) {
+func TestClaimTaskByRuntime_ASBDoesNotForwardAgentModel(t *testing.T) {
+	assertClaimedAgentModel(t, asbRuntimeMetadata("hermes", []string{"hermes", "mcp"}), "")
+}
+
+func TestClaimTaskByRuntime_NonCloudSandboxForwardsAgentModel(t *testing.T) {
 	assertClaimedAgentModel(t, `{}`, "qwen3.7-plus")
 }
 
@@ -45,9 +49,13 @@ func TestClaimTaskByRuntime_ASBPiManagedMCPSupportedImageClaims(t *testing.T) {
 }
 
 func asbPiRuntimeMetadata(capabilities []string) string {
+	return asbRuntimeMetadata("pi", capabilities)
+}
+
+func asbRuntimeMetadata(provider string, capabilities []string) string {
 	encodedCapabilities, _ := json.Marshal(capabilities)
 	digest := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	return `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"pi","artifact_kind":"oci_image","artifact_ref":"registry.example/runtime@sha256:` +
+	return `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"` + provider + `","artifact_kind":"oci_image","artifact_ref":"registry.example/runtime@sha256:` +
 		digest + `","artifact_digest":"sha256:` + digest + `","capabilities":` + string(encodedCapabilities) + `}`
 }
 
