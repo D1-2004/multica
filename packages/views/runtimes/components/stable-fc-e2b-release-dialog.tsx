@@ -6,12 +6,16 @@ import { Check, ChevronsRight, Clock3, Loader2, ShieldCheck } from "lucide-react
 import { toast } from "sonner";
 import {
   isReadyFCE2BTemplate,
+  type CreateCloudSandboxStableReleaseRequest,
   type FCE2BTemplate,
-  useCreateFCE2BStableRelease,
-  useFCE2BStableChannel,
-  useFCE2BTemplates,
-  useMutateFCE2BStableRelease,
   type FCE2BStableReleaseAction,
+  type FCE2BStableReleaseStatus,
+  type SandboxBackend,
+  useCloudSandboxStableChannel,
+  useCloudSandboxStableReleases,
+  useCreateCloudSandboxStableRelease,
+  useFCE2BTemplates,
+  useMutateCloudSandboxStableRelease,
 } from "@multica/core/runtimes";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { Button } from "@multica/ui/components/ui/button";
@@ -23,6 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
+import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { useT } from "../../i18n";
@@ -52,6 +57,34 @@ function formatRolloutTime(value: string): string {
   }).format(new Date(value));
 }
 
+function formatArtifactBuiltAt(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(value));
+}
+
+function artifactBuiltAtFromAoneTag(value: string): string {
+  const match = value.match(
+    /:(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\d*@sha256:/,
+  );
+  if (!match) return "";
+  const [, year, month, day, hour, minute, second] = match;
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}`;
+}
+
+function toAoneBuildTimestamp(value: string): string {
+  const match = value.match(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::(\d{2})(?:\.\d{1,3})?)?$/,
+  );
+  if (!match) return "";
+  return `${match[1]}:${match[2] ?? "00"}+08:00`;
+}
+
 const rolloutOffsetByBatch: Record<number, string> = {
   1: "T+0",
   2: "T+2h",
@@ -62,29 +95,73 @@ const rolloutOffsetByBatch: Record<number, string> = {
 
 export function StableFCE2BReleaseDialog({
   onClose,
+  sandboxBackend = "aliyun_fc",
 }: {
   onClose: () => void;
+  sandboxBackend?: SandboxBackend;
 }) {
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();
-  const channelQuery = useFCE2BStableChannel();
+  const channelQuery = useCloudSandboxStableChannel(sandboxBackend);
+  const releaseHistoryQuery = useCloudSandboxStableReleases(
+    sandboxBackend,
+    sandboxBackend === "asb",
+  );
   const templatesQuery = useFCE2BTemplates(wsId);
-  const createRelease = useCreateFCE2BStableRelease();
-  const pauseRelease = useMutateFCE2BStableRelease("pause");
-  const resumeRelease = useMutateFCE2BStableRelease("resume");
-  const startRollout = useMutateFCE2BStableRelease("start-rollout");
-  const advanceRollout = useMutateFCE2BStableRelease("advance-rollout");
-  const completeObservation = useMutateFCE2BStableRelease(
+  const createRelease = useCreateCloudSandboxStableRelease(sandboxBackend);
+  const pauseRelease = useMutateCloudSandboxStableRelease(
+    sandboxBackend,
+    "pause",
+  );
+  const resumeRelease = useMutateCloudSandboxStableRelease(
+    sandboxBackend,
+    "resume",
+  );
+  const startRollout = useMutateCloudSandboxStableRelease(
+    sandboxBackend,
+    "start-rollout",
+  );
+  const advanceRollout = useMutateCloudSandboxStableRelease(
+    sandboxBackend,
+    "advance-rollout",
+  );
+  const completeObservation = useMutateCloudSandboxStableRelease(
+    sandboxBackend,
     "complete-observation",
   );
-  const terminateRelease = useMutateFCE2BStableRelease("terminate");
-  const rollbackRelease = useMutateFCE2BStableRelease("rollback");
+  const terminateRelease = useMutateCloudSandboxStableRelease(
+    sandboxBackend,
+    "terminate",
+  );
+  const rollbackRelease = useMutateCloudSandboxStableRelease(
+    sandboxBackend,
+    "rollback",
+  );
   const [selected, setSelected] = useState<FCE2BTemplate | null>(null);
+  const [artifactRef, setArtifactRef] = useState("");
+  const [artifactBuildId, setArtifactBuildId] = useState("");
+  const [artifactBuiltAt, setArtifactBuiltAt] = useState("");
+  const [artifactDigest, setArtifactDigest] = useState("");
+  const [gitCommit, setGitCommit] = useState("");
   const [note, setNote] = useState("");
   const active = channelQuery.data?.active_release ?? null;
   const current = channelQuery.data?.current ?? null;
   const bootstrap = current == null;
   const templates = (templatesQuery.data ?? []).filter(isReadyFCE2BTemplate);
+  const normalizedArtifactRef = artifactRef.trim();
+  const normalizedArtifactBuildId = artifactBuildId.trim();
+  const normalizedArtifactBuiltAt = toAoneBuildTimestamp(artifactBuiltAt);
+  const normalizedArtifactDigest = artifactDigest.trim().toLowerCase();
+  const normalizedGitCommit = gitCommit.trim().toLowerCase();
+  const asbCandidateReady =
+    /^sha256:[0-9a-f]{64}$/.test(normalizedArtifactDigest) &&
+    /^[0-9a-f]{40}$/.test(normalizedGitCommit) &&
+    normalizedArtifactBuildId.length > 0 &&
+    normalizedArtifactBuiltAt.length > 0 &&
+    normalizedArtifactRef.endsWith(`@${normalizedArtifactDigest}`);
+  const fcCandidateReady = Boolean(selected?.id && selected.build_id);
+  const candidateReady =
+    sandboxBackend === "asb" ? asbCandidateReady : fcCandidateReady;
   const developerProgress =
     active?.status === "developer_rollout" ||
     active?.status === "awaiting_rollout";
@@ -127,8 +204,8 @@ export function StableFCE2BReleaseDialog({
       "failed",
     ].includes(active.status);
 
-  const activeStatusLabel = (() => {
-    switch (active?.status) {
+  const releaseStatusLabel = (status: FCE2BStableReleaseStatus): string => {
+    switch (status) {
       case "validating":
         return t(($) => $.fc_e2b_stable.status.validating);
       case "developer_rollout":
@@ -143,22 +220,51 @@ export function StableFCE2BReleaseDialog({
         return t(($) => $.fc_e2b_stable.status.paused);
       case "rolling_back":
         return t(($) => $.fc_e2b_stable.status.rolling_back);
+      case "completed":
+        return t(($) => $.fc_e2b_stable.status.completed);
+      case "rolled_back":
+        return t(($) => $.fc_e2b_stable.status.rolled_back);
+      case "terminated":
+        return t(($) => $.fc_e2b_stable.status.terminated);
+      case "failed":
+        return t(($) => $.fc_e2b_stable.status.failed);
       default:
-        return active?.status ?? "";
+        return status;
     }
-  })();
+  };
+  const activeStatusLabel = active ? releaseStatusLabel(active.status) : "";
+  const releaseHistory = releaseHistoryQuery.data ?? [];
+  const currentRelease = current
+    ? releaseHistory.find((release) => release.id === current.release_id)
+    : undefined;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selected?.id || !selected.build_id) return;
+    if (!candidateReady) return;
     try {
-      await createRelease.mutateAsync({
-        idempotencyKey: crypto.randomUUID(),
-        data: {
+      let data: CreateCloudSandboxStableReleaseRequest;
+      if (sandboxBackend === "asb") {
+        data = {
+          sandbox_backend: sandboxBackend,
+          artifact_ref: normalizedArtifactRef,
+          artifact_build_id: normalizedArtifactBuildId,
+          artifact_built_at: normalizedArtifactBuiltAt,
+          artifact_digest: normalizedArtifactDigest,
+          git_commit: normalizedGitCommit,
+          note: note.trim(),
+        };
+      } else {
+        if (!selected?.id || !selected.build_id) return;
+        data = {
+          sandbox_backend: sandboxBackend,
           template_id: selected.id,
           expected_build_id: selected.build_id,
           note: note.trim(),
-        },
+        };
+      }
+      await createRelease.mutateAsync({
+        idempotencyKey: crypto.randomUUID(),
+        data,
       });
       toast.success(t(($) => $.fc_e2b_stable.toast_submitted));
     } catch (error) {
@@ -197,42 +303,157 @@ export function StableFCE2BReleaseDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[min(92dvh,56rem)] min-w-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+        <DialogHeader className="shrink-0 border-b border-surface-border px-5 py-4 pr-12">
           <DialogTitle className="flex items-center gap-2 text-base">
             <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-            {t(($) => $.fc_e2b_stable.title)}
+            {sandboxBackend === "asb"
+              ? t(($) => $.fc_e2b_stable.title_asb)
+              : t(($) => $.fc_e2b_stable.title)}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            {t(($) => $.fc_e2b_stable.description)}
+            {sandboxBackend === "asb"
+              ? t(($) => $.fc_e2b_stable.description_asb)
+              : t(($) => $.fc_e2b_stable.description)}
           </DialogDescription>
         </DialogHeader>
 
+        <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden px-5 py-4">
         {current && (
-          <div className="space-y-1.5 rounded-md border border-primary/25 bg-primary/5 p-3 text-xs">
+          <div className="min-w-0 space-y-1.5 rounded-md border border-primary/25 bg-primary/5 p-3 text-xs">
             <div className="flex items-center gap-2">
               <ShieldCheck className="h-3.5 w-3.5 text-primary" />
               <span className="font-medium">
                 {t(($) => $.fc_e2b_stable.current_stable)}
               </span>
             </div>
-            <p className="truncate font-medium" title={current.template_alias}>
-              {current.template_alias}
+            <p className="break-all font-medium" title={current.artifact_alias}>
+              {current.artifact_alias}
             </p>
             <p
-              className="truncate text-muted-foreground"
-              title={`${current.template_id} · ${current.template_build_id}`}
+              className="break-all text-muted-foreground"
+              title={`${current.artifact_ref} · ${current.artifact_build_id}`}
             >
-              {current.template_id} · {current.template_build_id}
+              {current.artifact_ref} · {current.artifact_build_id}
             </p>
+            {current.artifact_digest && (
+              <p
+                className="break-all font-mono text-[10px] text-muted-foreground"
+                title={current.artifact_digest}
+              >
+                {current.artifact_digest}
+              </p>
+            )}
+            {currentRelease?.artifact_built_at && (
+              <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground">
+                <span>{t(($) => $.fc_e2b_stable.artifact_built_at)}:</span>
+                <time dateTime={currentRelease.artifact_built_at}>
+                  {formatArtifactBuiltAt(currentRelease.artifact_built_at)}
+                </time>
+              </p>
+            )}
           </div>
+        )}
+
+        {sandboxBackend === "asb" && (
+          <section className="min-w-0 space-y-2 rounded-md border bg-muted/15 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="flex items-center gap-2 text-xs font-medium">
+                <Clock3 className="h-3.5 w-3.5 text-muted-foreground" />
+                {t(($) => $.fc_e2b_stable.history_title)}
+              </h3>
+              {!releaseHistoryQuery.isLoading && (
+                <span className="text-[10px] text-muted-foreground">
+                  {t(($) => $.fc_e2b_stable.history_count, {
+                    count: releaseHistory.length,
+                  })}
+                </span>
+              )}
+            </div>
+            {releaseHistoryQuery.isLoading && (
+              <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {t(($) => $.fc_e2b_stable.history_loading)}
+              </div>
+            )}
+            {releaseHistoryQuery.isError && (
+              <p className="py-2 text-xs text-destructive">
+                {releaseHistoryQuery.error instanceof Error
+                  ? releaseHistoryQuery.error.message
+                  : t(($) => $.fc_e2b_stable.history_failed)}
+              </p>
+            )}
+            {!releaseHistoryQuery.isLoading &&
+              !releaseHistoryQuery.isError &&
+              releaseHistory.length === 0 && (
+                <p className="py-2 text-xs text-muted-foreground">
+                  {t(($) => $.fc_e2b_stable.history_empty)}
+                </p>
+              )}
+            {releaseHistory.length > 0 && (
+              <ol className="max-h-64 divide-y overflow-y-auto rounded-md border bg-background">
+                {releaseHistory.map((release) => {
+                  const isCurrent = release.id === current?.release_id;
+                  return (
+                    <li
+                      key={release.id}
+                      className="min-w-0 space-y-1.5 px-3 py-2.5 text-xs"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="break-all font-medium">
+                          {release.artifact_alias || release.artifact_build_id}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          {isCurrent && (
+                            <span className="rounded bg-primary/10 px-2 py-0.5 text-primary">
+                              {t(($) => $.fc_e2b_stable.template_current)}
+                            </span>
+                          )}
+                          <span className="rounded bg-muted px-2 py-0.5 text-muted-foreground">
+                            {releaseStatusLabel(release.status)}
+                          </span>
+                        </span>
+                      </div>
+                      <p className="break-all font-mono text-[10px] leading-4 text-muted-foreground">
+                        {release.artifact_ref}
+                      </p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                        <span>
+                          {t(($) => $.fc_e2b_stable.artifact_build_id)}:{" "}
+                          {release.artifact_build_id}
+                        </span>
+                        {release.artifact_built_at && (
+                          <span>
+                            {t(($) => $.fc_e2b_stable.artifact_built_at)}:{" "}
+                            <time dateTime={release.artifact_built_at}>
+                              {formatArtifactBuiltAt(
+                                release.artifact_built_at,
+                              )}
+                            </time>
+                          </span>
+                        )}
+                        {release.source_revision && (
+                          <span>
+                            {t(($) => $.fc_e2b_stable.git_commit)}:{" "}
+                            <span className="font-mono">
+                              {release.source_revision.slice(0, 12)}
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </section>
         )}
 
         {active ? (
           <div className="space-y-4">
             <div className="space-y-2 rounded-md border p-3 text-xs">
               <div className="flex items-center justify-between gap-3">
-                <span className="font-medium">{active.template_alias}</span>
+                <span className="font-medium">{active.artifact_alias}</span>
                 <span className="rounded bg-muted px-2 py-0.5">
                   {activeStatusLabel}
                 </span>
@@ -442,81 +663,186 @@ export function StableFCE2BReleaseDialog({
             </div>
           </div>
         ) : (
-          <form id="fc-e2b-stable-release-form" onSubmit={submit} className="space-y-4">
+          <form
+            id="cloud-sandbox-stable-release-form"
+            onSubmit={submit}
+            className="space-y-4"
+          >
             {bootstrap && (
               <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
-                {t(($) => $.fc_e2b_stable.bootstrap_notice)}
+                {sandboxBackend === "asb"
+                  ? t(($) => $.fc_e2b_stable.bootstrap_notice_asb)
+                  : t(($) => $.fc_e2b_stable.bootstrap_notice)}
               </p>
             )}
             <p className="text-xs text-muted-foreground">
-              {t(($) => $.fc_e2b_stable.validation_notice)}
+              {sandboxBackend === "asb"
+                ? t(($) => $.fc_e2b_stable.validation_notice_asb)
+                : t(($) => $.fc_e2b_stable.validation_notice)}
             </p>
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t(($) => $.fc_e2b_stable.template)}</Label>
-              <div className="max-h-44 overflow-y-auto rounded-md border">
-                {templatesQuery.isLoading && (
-                  <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    {t(($) => $.fc_e2b_runtime.templates_loading)}
-                  </div>
-                )}
-                {templatesQuery.isError && (
-                  <div className="p-3 text-xs text-destructive">
-                    {templatesQuery.error instanceof Error
-                      ? templatesQuery.error.message
-                      : t(($) => $.fc_e2b_runtime.templates_failed)}
-                  </div>
-                )}
-                {!templatesQuery.isLoading &&
-                  !templatesQuery.isError &&
-                  templates.length === 0 && (
-                    <div className="p-3 text-xs text-muted-foreground">
-                      {t(($) => $.fc_e2b_runtime.templates_empty)}
+            {sandboxBackend === "aliyun_fc" ? (
+              <div className="space-y-1.5">
+                <Label className="text-xs">
+                  {t(($) => $.fc_e2b_stable.template)}
+                </Label>
+                <div className="max-h-44 overflow-y-auto rounded-md border">
+                  {templatesQuery.isLoading && (
+                    <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      {t(($) => $.fc_e2b_runtime.templates_loading)}
                     </div>
                   )}
-                {templates.map((template) => {
-                  const isCurrent =
-                    current != null &&
-                    template.id === current.template_id;
-                  const isSelected =
-                    selected?.id === template.id &&
-                    selected?.build_id === template.build_id;
-                  const updatedAt = formatTemplateUpdatedAt(template.updated_at);
-                  return (
-                    <button
-                      key={`${template.id}:${template.build_id}`}
-                      type="button"
-                      onClick={() => setSelected(template)}
-                      className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-xs last:border-b-0 hover:bg-muted/50"
-                    >
-                      <span className="min-w-0 space-y-1">
-                        <span className="block truncate font-medium">
-                          {displayTemplate(template)}
-                        </span>
-                        <span className="block truncate text-muted-foreground">
-                          {template.id} · {template.build_id}
-                        </span>
-                        {updatedAt && (
+                  {templatesQuery.isError && (
+                    <div className="p-3 text-xs text-destructive">
+                      {templatesQuery.error instanceof Error
+                        ? templatesQuery.error.message
+                        : t(($) => $.fc_e2b_runtime.templates_failed)}
+                    </div>
+                  )}
+                  {!templatesQuery.isLoading &&
+                    !templatesQuery.isError &&
+                    templates.length === 0 && (
+                      <div className="p-3 text-xs text-muted-foreground">
+                        {t(($) => $.fc_e2b_runtime.templates_empty)}
+                      </div>
+                    )}
+                  {templates.map((template) => {
+                    const isCurrent =
+                      current != null &&
+                      template.id === current.artifact_ref &&
+                      template.build_id === current.artifact_build_id;
+                    const isSelected =
+                      selected?.id === template.id &&
+                      selected?.build_id === template.build_id;
+                    const updatedAt = formatTemplateUpdatedAt(
+                      template.updated_at,
+                    );
+                    return (
+                      <button
+                        key={`${template.id}:${template.build_id}`}
+                        type="button"
+                        onClick={() => setSelected(template)}
+                        className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-xs last:border-b-0 hover:bg-muted/50"
+                      >
+                        <span className="min-w-0 space-y-1">
+                          <span className="block truncate font-medium">
+                            {displayTemplate(template)}
+                          </span>
                           <span className="block truncate text-muted-foreground">
-                            {t(($) => $.fc_e2b_runtime.template_updated, {
-                              time: updatedAt,
-                            })}
+                            {template.id} · {template.build_id}
                           </span>
-                        )}
-                      </span>
-                      <span className="flex shrink-0 items-center gap-1.5">
-                        {isCurrent && (
-                          <span className="rounded bg-muted px-2 py-0.5 text-muted-foreground">
-                            {t(($) => $.fc_e2b_stable.template_current)}
-                          </span>
-                        )}
-                        {isSelected && <Check className="h-3.5 w-3.5" />}
-                      </span>
-                    </button>
-                  );
-                })}
+                          {updatedAt && (
+                            <span className="block truncate text-muted-foreground">
+                              {t(($) => $.fc_e2b_runtime.template_updated, {
+                                time: updatedAt,
+                              })}
+                            </span>
+                          )}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          {isCurrent && (
+                            <span className="rounded bg-muted px-2 py-0.5 text-muted-foreground">
+                              {t(($) => $.fc_e2b_stable.template_current)}
+                            </span>
+                          )}
+                          {isSelected && <Check className="h-3.5 w-3.5" />}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="stable-release-artifact-ref" className="text-xs">
+                    {t(($) => $.fc_e2b_stable.artifact_ref)}
+                  </Label>
+                  <Input
+                    id="stable-release-artifact-ref"
+                    value={artifactRef}
+                    onChange={(event) => {
+                      const nextRef = event.target.value;
+                      setArtifactRef(nextRef);
+                      const detectedBuildTime =
+                        artifactBuiltAtFromAoneTag(nextRef);
+                      if (detectedBuildTime) {
+                        setArtifactBuiltAt(detectedBuildTime);
+                      }
+                    }}
+                    placeholder="registry.example/image@sha256:..."
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="stable-release-artifact-built-at"
+                    className="text-xs"
+                  >
+                    {t(($) => $.fc_e2b_stable.artifact_built_at)}
+                  </Label>
+                  <Input
+                    id="stable-release-artifact-built-at"
+                    type="datetime-local"
+                    step="1"
+                    value={artifactBuiltAt}
+                    onChange={(event) =>
+                      setArtifactBuiltAt(event.target.value)
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="stable-release-artifact-build-id"
+                    className="text-xs"
+                  >
+                    {t(($) => $.fc_e2b_stable.artifact_build_id)}
+                  </Label>
+                  <Input
+                    id="stable-release-artifact-build-id"
+                    value={artifactBuildId}
+                    onChange={(event) =>
+                      setArtifactBuildId(event.target.value)
+                    }
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="stable-release-artifact-digest"
+                    className="text-xs"
+                  >
+                    {t(($) => $.fc_e2b_stable.artifact_digest)}
+                  </Label>
+                  <Input
+                    id="stable-release-artifact-digest"
+                    value={artifactDigest}
+                    onChange={(event) => setArtifactDigest(event.target.value)}
+                    placeholder="sha256:..."
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="stable-release-git-commit" className="text-xs">
+                    {t(($) => $.fc_e2b_stable.git_commit)}
+                  </Label>
+                  <Input
+                    id="stable-release-git-commit"
+                    value={gitCommit}
+                    onChange={(event) => setGitCommit(event.target.value)}
+                    placeholder="40-character commit SHA"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {t(($) => $.fc_e2b_stable.artifact_hint_asb)}
+                </p>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label htmlFor="stable-release-note" className="text-xs">
                 {t(($) => $.fc_e2b_stable.note)}
@@ -530,20 +856,17 @@ export function StableFCE2BReleaseDialog({
             </div>
           </form>
         )}
+        </div>
 
-        <DialogFooter>
+        <DialogFooter className="mx-0 mb-0 shrink-0 rounded-none rounded-b-xl border-t px-5 py-4">
           <Button type="button" variant="outline" onClick={onClose}>
             {t(($) => $.fc_e2b_stable.close)}
           </Button>
           {!active && (
             <Button
               type="submit"
-              form="fc-e2b-stable-release-form"
-              disabled={
-                createRelease.isPending ||
-                !selected?.id ||
-                !selected.build_id
-              }
+              form="cloud-sandbox-stable-release-form"
+              disabled={createRelease.isPending || !candidateReady}
             >
               {createRelease.isPending && (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />

@@ -108,6 +108,42 @@ type AgentDispatchEndpoint struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AgentEnterpriseIdentity struct {
+	ID                         pgtype.UUID        `json:"id"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	AgentID                    pgtype.UUID        `json:"agent_id"`
+	RawEmpID                   string             `json:"raw_emp_id"`
+	DisplayName                string             `json:"display_name"`
+	BucAgentID                 string             `json:"buc_agent_id"`
+	AgentSpiffeID              string             `json:"agent_spiffe_id"`
+	AipID                      string             `json:"aip_id"`
+	AuthxRefreshTokenEncrypted []byte             `json:"authx_refresh_token_encrypted"`
+	AuthxRefreshExpiresAt      pgtype.Timestamptz `json:"authx_refresh_expires_at"`
+	TokenVersion               int64              `json:"token_version"`
+	Status                     string             `json:"status"`
+	BoundBy                    pgtype.UUID        `json:"bound_by"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	BucIdentitySourceSandboxID pgtype.Text        `json:"buc_identity_source_sandbox_id"`
+	BucIdentitySourceRuntimeID pgtype.UUID        `json:"buc_identity_source_runtime_id"`
+	BucIdentitySourceUpdatedAt pgtype.Timestamptz `json:"buc_identity_source_updated_at"`
+}
+
+type AgentEnterpriseIdentityAttempt struct {
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	AgentID               pgtype.UUID        `json:"agent_id"`
+	ActorUserID           pgtype.UUID        `json:"actor_user_id"`
+	RequestedRawEmpID     pgtype.Text        `json:"requested_raw_emp_id"`
+	StateHash             []byte             `json:"state_hash"`
+	NonceHash             []byte             `json:"nonce_hash"`
+	PkceVerifierEncrypted []byte             `json:"pkce_verifier_encrypted"`
+	RedirectPath          string             `json:"redirect_path"`
+	ExpiresAt             pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt            pgtype.Timestamptz `json:"consumed_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
 // Allow-list of who may invoke a public_to agent (MUL-3963). One row per (agent, target_type, target); targets stack and canInvokeAgent OR-matches. workspace rows store the agent workspace_id in target_id; member rows store the user id; team rows are reserved and inert in V1. Rows only matter when agent.permission_mode = public_to. No DB foreign keys: agent_id / created_by / member target_id relationships are maintained in the application layer (see migration comment).
 type AgentInvocationTarget struct {
 	ID         pgtype.UUID        `json:"id"`
@@ -224,6 +260,14 @@ type AgentToLabel struct {
 	AgentID   pgtype.UUID        `json:"agent_id"`
 	LabelID   pgtype.UUID        `json:"label_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type AsbRuntimeCredential struct {
+	RuntimeID       pgtype.UUID        `json:"runtime_id"`
+	ApiKeyEncrypted []byte             `json:"api_key_encrypted"`
+	ApiKeyHint      string             `json:"api_key_hint"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Attachment struct {
@@ -578,18 +622,21 @@ type DingtalkStreamInbox struct {
 }
 
 type FcE2bSandboxSession struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	RuntimeID   pgtype.UUID        `json:"runtime_id"`
-	ScopeType   string             `json:"scope_type"`
-	ScopeID     pgtype.UUID        `json:"scope_id"`
-	SandboxID   string             `json:"sandbox_id"`
-	Template    string             `json:"template"`
-	Status      string             `json:"status"`
-	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	RuntimeID           pgtype.UUID        `json:"runtime_id"`
+	ScopeType           string             `json:"scope_type"`
+	ScopeID             pgtype.UUID        `json:"scope_id"`
+	SandboxID           string             `json:"sandbox_id"`
+	Template            string             `json:"template"`
+	Status              string             `json:"status"`
+	LastUsedAt          pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	SandboxBackend      string             `json:"sandbox_backend"`
+	IdentityFingerprint string             `json:"identity_fingerprint"`
+	ArtifactRef         string             `json:"artifact_ref"`
 }
 
 type FcE2bStableChannel struct {
@@ -600,6 +647,11 @@ type FcE2bStableChannel struct {
 	CurrentReleaseID       pgtype.UUID        `json:"current_release_id"`
 	ActiveReleaseID        pgtype.UUID        `json:"active_release_id"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	SandboxBackend         string             `json:"sandbox_backend"`
+	ArtifactKind           string             `json:"artifact_kind"`
+	CurrentArtifactRef     string             `json:"current_artifact_ref"`
+	CurrentArtifactBuildID string             `json:"current_artifact_build_id"`
+	CurrentArtifactDigest  string             `json:"current_artifact_digest"`
 }
 
 type FcE2bStableRelease struct {
@@ -637,6 +689,15 @@ type FcE2bStableRelease struct {
 	SourceRevision              string             `json:"source_revision"`
 	DeveloperRolloutStartedAt   pgtype.Timestamptz `json:"developer_rollout_started_at"`
 	DeveloperRolloutCompletedAt pgtype.Timestamptz `json:"developer_rollout_completed_at"`
+	SandboxBackend              string             `json:"sandbox_backend"`
+	ArtifactKind                string             `json:"artifact_kind"`
+	ArtifactRef                 string             `json:"artifact_ref"`
+	ArtifactBuildID             string             `json:"artifact_build_id"`
+	ArtifactDigest              string             `json:"artifact_digest"`
+	PreviousArtifactRef         string             `json:"previous_artifact_ref"`
+	PreviousArtifactBuildID     string             `json:"previous_artifact_build_id"`
+	PreviousArtifactDigest      string             `json:"previous_artifact_digest"`
+	ArtifactBuiltAt             pgtype.Timestamptz `json:"artifact_built_at"`
 }
 
 type FcE2bStableReleaseTarget struct {
@@ -658,6 +719,10 @@ type FcE2bStableReleaseTarget struct {
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	IsDeveloper             bool               `json:"is_developer"`
+	SandboxBackend          string             `json:"sandbox_backend"`
+	PreviousArtifactRef     string             `json:"previous_artifact_ref"`
+	PreviousArtifactBuildID string             `json:"previous_artifact_build_id"`
+	PreviousArtifactDigest  string             `json:"previous_artifact_digest"`
 }
 
 type FdeOnboarding struct {

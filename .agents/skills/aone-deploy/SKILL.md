@@ -61,9 +61,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```
 
 - `file` = `backend` | `frontend` | `health` | `bootstrap` (whitelisted; not a path)
-- `bootstrap` carries application startup orchestration — read this first when
-  the app fails to start. Migration output belongs to the separate migration
-  task and is not emitted by application containers.
+- `bootstrap` carries application startup orchestration and Aone all-in-one
+  migration output — read this first when the app fails to start.
 - `contains` filters server-side; `lines` caps at 2000
 
 Handler: `server/cmd/server/log_tail.go`, route in `server/cmd/server/router.go`.
@@ -199,10 +198,11 @@ a1 app pipeline run --pipeline-id 66
 
 Pre-release runs PolarDB PostgreSQL 17 (`multica_pre`), reachable from a dev
 machine with the proxy unset. Get the URL from the env trait
-(`DATABASE_URL`). Migrations are a separate release operation: run the packaged
-`migrate up` binary in a dedicated one-off migration task before application
-pods are rolled. Application entrypoints must only start the application and
-must never mutate the database schema.
+(`DATABASE_URL`). The Aone all-in-one startup script runs the packaged
+`migrate up` binary after stopping the old application processes and before
+starting the new release. The migration runner uses a PostgreSQL advisory lock
+to serialize concurrent pod startup. Other deployment modes still run migration
+as an explicit release operation.
 
 Before shipping risky migrations, rehearse them against the real pre-release
 database inside a transaction that is always rolled back — a local Postgres runs

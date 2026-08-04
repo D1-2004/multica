@@ -14,7 +14,7 @@ RUN curl -fsSLo /tmp/go.tgz "https://dl.google.com/go/go${GO_VERSION}.linux-amd6
     tar -C /usr/local -xzf /tmp/go.tgz && \
     rm -f /tmp/go.tgz
 ENV PATH="/usr/local/go/bin:${PATH}"
-ENV GOPROXY=http://goproxy.alibaba-inc.com
+ENV GOPROXY=http://goproxy.alibaba-inc.com,https://goproxy.cn,direct
 ENV GONOSUMDB=*.alibaba-inc.com
 ENV GOSUMDB=sum.golang.google.cn
 COPY ${APP_NAME}.tgz /tmp/source.tgz

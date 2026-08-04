@@ -5223,6 +5223,13 @@ func isBlockedEnvKey(key string) bool {
 }
 
 func inheritManagedChildEnv(agentEnv map[string]string) {
+	// The outer Runtime runner exchanges the ContextToken before daemon startup
+	// and stores the resulting DWS tokens in a per-task directory. Pass only
+	// that directory selector to the Agent child; client credentials and the
+	// original ContextToken remain outside the model/tool process.
+	if dwsConfigDir := strings.TrimSpace(os.Getenv("DWS_CONFIG_DIR")); dwsConfigDir != "" {
+		agentEnv["DWS_CONFIG_DIR"] = dwsConfigDir
+	}
 	if githubConfigDir := strings.TrimSpace(os.Getenv("GH_CONFIG_DIR")); githubConfigDir != "" {
 		agentEnv["GH_CONFIG_DIR"] = githubConfigDir
 	}

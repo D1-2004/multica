@@ -60,6 +60,8 @@ import (
 //   - skills/       task-local, only the bound skills
 //   - config.yaml   derived config with absolutized external_dirs
 //   - memories/     fresh per-task dir, isolated from the host's memory
+//   - state.db*     task-local ACP session database and SQLite sidecars,
+//     preserved across warm-sandbox reuse
 //
 // Everything else in the shared home is mirrored generically.
 //
@@ -87,6 +89,9 @@ var hermesOverriddenEntries = map[string]struct{}{
 	"active_profile": {},
 	"profiles":       {},
 	".env":           {},
+	"state.db":       {},
+	"state.db-shm":   {},
+	"state.db-wal":   {},
 }
 
 // platformDefaultHermesHome returns Hermes' platform-native default home:

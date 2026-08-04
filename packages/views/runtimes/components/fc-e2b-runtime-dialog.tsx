@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Check, Cloud, Loader2, Search } from "lucide-react";
+import { Check, Cloud, Loader2, Search, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import type { RuntimeVisibility } from "@multica/core/types/agent";
 import {
@@ -11,9 +11,11 @@ import {
   isReadyFCE2BTemplate,
   type FCE2BRuntimeProvider,
   type FCE2BTemplate,
-  useCreateFCE2BRuntime,
-  useFCE2BStableChannel,
+  type SandboxBackend,
+  useCloudSandboxStableChannel,
+  useCreateCloudSandboxRuntime,
   useFCE2BTemplates,
+  useValidateASBRuntimeCredential,
 } from "@multica/core/runtimes";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { Button } from "@multica/ui/components/ui/button";
@@ -86,15 +88,18 @@ function formatTemplateUpdatedAt(value?: string): string {
 export function FCE2BRuntimeDialog({
   onClose,
   canPublish,
+  sandboxBackend,
 }: {
   onClose: () => void;
   canPublish: boolean;
+  sandboxBackend: SandboxBackend;
 }) {
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();
-  const createRuntime = useCreateFCE2BRuntime(wsId);
+  const createRuntime = useCreateCloudSandboxRuntime(wsId);
+  const validateASBCredential = useValidateASBRuntimeCredential();
   const templatesQuery = useFCE2BTemplates(wsId);
-  const stableChannelQuery = useFCE2BStableChannel();
+  const stableChannelQuery = useCloudSandboxStableChannel(sandboxBackend);
   const templates = (templatesQuery.data ?? []).filter(isReadyFCE2BTemplate);
   const [templateChannel, setTemplateChannel] = useState<"stable" | "candidate">(
     "stable",
@@ -104,8 +109,18 @@ export function FCE2BRuntimeDialog({
   const [provider, setProvider] = useState<FCE2BRuntimeProvider>("hermes");
   const [name, setName] = useState("");
   const [visibility, setVisibility] = useState<RuntimeVisibility>("private");
+  const [artifactRef, setArtifactRef] = useState("");
+  const [artifactBuildId, setArtifactBuildId] = useState("");
+  const [artifactAlias, setArtifactAlias] = useState("");
+  const [artifactDigest, setArtifactDigest] = useState("");
+  const [apiKey, setAPIKey] = useState("");
+  const [validatedAPIKey, setValidatedAPIKey] = useState("");
+  const apiKeyIsValidated =
+    Boolean(apiKey.trim()) &&
+    validatedAPIKey === apiKey.trim() &&
+    validateASBCredential.data?.valid === true;
   const availableProviders =
-    templateChannel === "stable"
+    sandboxBackend === "asb" || templateChannel === "stable"
       ? [...FC_E2B_RUNTIME_PROVIDERS]
       : selectedTemplate
         ? FC_E2B_RUNTIME_PROVIDERS.filter((candidate) =>
@@ -151,18 +166,63 @@ export function FCE2BRuntimeDialog({
     setProvider(nextProvider);
   };
 
+  const handleValidateASBCredential = async () => {
+    const nextAPIKey = apiKey.trim();
+    if (!nextAPIKey) return;
+    setValidatedAPIKey("");
+    try {
+      const result = await validateASBCredential.mutateAsync({
+        api_key: nextAPIKey,
+      });
+      if (result.valid) setValidatedAPIKey(nextAPIKey);
+    } catch {
+      setValidatedAPIKey("");
+    }
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (templateChannel === "candidate" && !selectedTemplate) return;
+    if (
+      sandboxBackend === "aliyun_fc" &&
+      templateChannel === "candidate" &&
+      !selectedTemplate
+    ) {
+      return;
+    }
+    if (sandboxBackend === "asb" && !apiKeyIsValidated) {
+      return;
+    }
+    if (
+      sandboxBackend === "asb" &&
+      templateChannel === "candidate" &&
+      (!artifactRef.trim() ||
+        !artifactBuildId.trim() ||
+        !artifactDigest.trim())
+    ) {
+      return;
+    }
     try {
       await createRuntime.mutateAsync({
-        ...(templateChannel === "candidate"
+        sandbox_backend: sandboxBackend,
+        ...(sandboxBackend === "asb" ? { api_key: apiKey.trim() } : {}),
+        ...(sandboxBackend === "aliyun_fc" &&
+        templateChannel === "candidate"
           ? { template_id: selectedTemplate!.id }
           : {}),
-        template_channel: templateChannel,
+        ...(sandboxBackend === "asb" && templateChannel === "candidate"
+          ? {
+              artifact_ref: artifactRef.trim(),
+              artifact_build_id: artifactBuildId.trim(),
+              artifact_alias: artifactAlias.trim() || undefined,
+              artifact_digest: artifactDigest.trim(),
+            }
+          : {}),
+        artifact_channel: templateChannel,
         name:
           name.trim() ||
-          (selectedTemplate
+          (sandboxBackend === "asb"
+            ? `ASB-${PROVIDER_LABELS[provider]}`
+            : selectedTemplate
             ? templateRuntimeName(selectedTemplate, provider)
             : `FC-${PROVIDER_LABELS[provider]}-Stable`),
         provider,
@@ -181,7 +241,7 @@ export function FCE2BRuntimeDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Cloud className="h-4 w-4 text-muted-foreground" />
@@ -197,6 +257,100 @@ export function FCE2BRuntimeDialog({
           onSubmit={handleSubmit}
           className="space-y-4"
         >
+          <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            {sandboxBackend === "asb"
+              ? t(($) => $.fc_e2b_runtime.backend_asb_hint)
+              : t(($) => $.fc_e2b_runtime.backend_aliyun_fc_hint)}
+          </p>
+
+          {sandboxBackend === "asb" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="asb-api-key" className="text-xs">
+                {t(($) => $.fc_e2b_runtime.fields.api_key)}
+              </Label>
+              <Input
+                id="asb-api-key"
+                type="password"
+                autoComplete="off"
+                value={apiKey}
+                onChange={(event) => {
+                  setAPIKey(event.target.value);
+                  setValidatedAPIKey("");
+                  validateASBCredential.reset();
+                }}
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                {t(($) => $.fc_e2b_runtime.api_key_hint)}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                disabled={!apiKey.trim() || validateASBCredential.isPending}
+                onClick={handleValidateASBCredential}
+              >
+                {validateASBCredential.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                )}
+                {validateASBCredential.isPending
+                  ? t(($) => $.fc_e2b_runtime.api_key_validating)
+                  : t(($) => $.fc_e2b_runtime.api_key_validate)}
+              </Button>
+              {validateASBCredential.isError && (
+                <p className="text-xs text-destructive">
+                  {validateASBCredential.error instanceof Error
+                    ? validateASBCredential.error.message
+                    : t(($) => $.fc_e2b_runtime.api_key_validation_failed)}
+                </p>
+              )}
+              {apiKeyIsValidated && validateASBCredential.data && (
+                <div className="mt-2 space-y-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
+                  <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                    <Check className="h-3.5 w-3.5" />
+                    {t(($) => $.fc_e2b_runtime.api_key_valid)}
+                  </p>
+                  {validateASBCredential.data.quotas.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t(($) => $.fc_e2b_runtime.quota_empty)}
+                    </p>
+                  ) : (
+                    <div className="max-h-36 space-y-2 overflow-y-auto">
+                      {validateASBCredential.data.quotas.map((quota) => (
+                        <div
+                          key={`${quota.network_zone}:${quota.region}`}
+                          className="rounded border bg-background/60 px-2.5 py-2 text-xs"
+                        >
+                          <p className="font-medium">
+                            {quota.network_zone} · {quota.region}
+                          </p>
+                          <p className="mt-0.5 text-muted-foreground">
+                            {t(($) => $.fc_e2b_runtime.quota_usage, {
+                              usage: quota.usage,
+                              quota: quota.quota,
+                              remaining: quota.remaining,
+                            })}
+                          </p>
+                          {quota.volume_size_quota_gib !== undefined && (
+                            <p className="mt-0.5 text-muted-foreground">
+                              {t(($) => $.fc_e2b_runtime.volume_quota_usage, {
+                                usage: quota.volume_usage_gib,
+                                quota: quota.volume_size_quota_gib,
+                              })}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <Label className="text-xs">
               {t(($) => $.fc_e2b_runtime.fields.channel)}
@@ -224,13 +378,17 @@ export function FCE2BRuntimeDialog({
             <p className="text-xs text-muted-foreground">
               {templateChannel === "stable"
                 ? stableChannelQuery.data?.current
-                  ? stableChannelQuery.data.current.template_alias
+                  ? stableChannelQuery.data.current.artifact_alias ||
+                    stableChannelQuery.data.current.template_alias
                   : t(($) => $.fc_e2b_runtime.stable_uninitialized)
-                : t(($) => $.fc_e2b_runtime.candidate_hint)}
+                : sandboxBackend === "asb"
+                  ? t(($) => $.fc_e2b_runtime.candidate_asb_hint)
+                  : t(($) => $.fc_e2b_runtime.candidate_hint)}
             </p>
           </div>
 
-          {templateChannel === "candidate" && (
+          {sandboxBackend === "aliyun_fc" &&
+            templateChannel === "candidate" && (
           <div className="space-y-2">
             <Label htmlFor="fc-e2b-template-search" className="text-xs">
               {t(($) => $.fc_e2b_runtime.fields.template)}
@@ -326,6 +484,55 @@ export function FCE2BRuntimeDialog({
           </div>
           )}
 
+          {sandboxBackend === "asb" && templateChannel === "candidate" ? (
+            <div className="space-y-3 rounded-md border p-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="asb-artifact-ref" className="text-xs">
+                  {t(($) => $.fc_e2b_runtime.fields.artifact_ref)}
+                </Label>
+                <Input
+                  id="asb-artifact-ref"
+                  value={artifactRef}
+                  onChange={(event) => setArtifactRef(event.target.value)}
+                  placeholder="registry/repository@sha256:..."
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="asb-artifact-build-id" className="text-xs">
+                  {t(($) => $.fc_e2b_runtime.fields.artifact_build_id)}
+                </Label>
+                <Input
+                  id="asb-artifact-build-id"
+                  value={artifactBuildId}
+                  onChange={(event) => setArtifactBuildId(event.target.value)}
+                  placeholder="asb-abcdef0"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="asb-artifact-digest" className="text-xs">
+                  {t(($) => $.fc_e2b_runtime.fields.artifact_digest)}
+                </Label>
+                <Input
+                  id="asb-artifact-digest"
+                  value={artifactDigest}
+                  onChange={(event) => setArtifactDigest(event.target.value)}
+                  placeholder="sha256:..."
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="asb-artifact-alias" className="text-xs">
+                  {t(($) => $.fc_e2b_runtime.fields.artifact_alias)}
+                </Label>
+                <Input
+                  id="asb-artifact-alias"
+                  value={artifactAlias}
+                  onChange={(event) => setArtifactAlias(event.target.value)}
+                  placeholder="multica-asb-runtime:build"
+                />
+              </div>
+            </div>
+          ) : null}
+
           <div className="space-y-1.5">
             <Label className="text-xs">
               {t(($) => $.fc_e2b_runtime.fields.provider)}
@@ -359,7 +566,9 @@ export function FCE2BRuntimeDialog({
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder={
-                selectedTemplate
+                sandboxBackend === "asb"
+                  ? `ASB-${PROVIDER_LABELS[provider]}`
+                  : selectedTemplate
                   ? templateRuntimeName(selectedTemplate, provider)
                   : templateChannel === "stable"
                     ? `FC-${PROVIDER_LABELS[provider]}-Stable`
@@ -408,9 +617,14 @@ export function FCE2BRuntimeDialog({
             form="fc-e2b-runtime-form"
             disabled={
               createRuntime.isPending ||
+              (sandboxBackend === "asb" && !apiKeyIsValidated) ||
               (templateChannel === "stable"
                 ? !stableChannelQuery.data?.current
-                : !selectedTemplate) ||
+                : sandboxBackend === "aliyun_fc"
+                  ? !selectedTemplate
+                  : !artifactRef.trim() ||
+                    !artifactBuildId.trim() ||
+                    !artifactDigest.trim()) ||
               !availableProviders.includes(provider)
             }
           >

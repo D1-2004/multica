@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS agent_enterprise_identity_source_reference_idx;
+DROP INDEX IF EXISTS agent_enterprise_identity_source_reuse_idx;

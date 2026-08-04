@@ -24,6 +24,7 @@ import { useUpdateRuntime } from "@multica/core/runtimes/mutations";
 import {
   deriveRuntimeHealth,
   parseFCE2BRuntimeMetadata,
+  isASBRuntime,
   runtimeDisplayName,
   runtimeProfileListOptions,
   useFCE2BStableChannel,
@@ -50,6 +51,7 @@ import { UsageSection } from "./usage-section";
 import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import { DeleteRuntimeProfileDialog } from "./delete-runtime-profile-dialog";
 import { UpdateFCE2BRuntimeTemplateDialog } from "./update-fc-e2b-runtime-template-dialog";
+import { ASBRuntimeCredentialSection } from "./asb-runtime-credential-section";
 import { useT, useTimeAgo } from "../../i18n";
 
 function getCliVersion(metadata: Record<string, unknown>): string | null {
@@ -219,6 +221,9 @@ export function RuntimeDetail({
               presenceMap={presenceMap}
               agentHref={(id) => paths.agentDetail(id)}
             />
+            {isAdmin && isASBRuntime(runtime) && (
+              <ASBRuntimeCredentialSection runtimeId={runtime.id} />
+            )}
             <DiagnosticsCard
               runtime={runtime}
               cliVersion={cliVersion}
