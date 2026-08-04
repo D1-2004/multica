@@ -1667,13 +1667,15 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			runtimeConfig = json.RawMessage(agent.RuntimeConfig)
 		}
 		model := agent.Model.String
-		if service.IsFCE2BRuntime(runtime) {
-			// FC/E2B uses the saved agent model only when the server launches the
-			// sandbox and injects OPENAI_MODEL; the in-sandbox runner writes it
+		if service.IsCloudSandboxRuntime(runtime) {
+			// Cloud sandboxes use the saved agent model only when the server launches
+			// the sandbox and injects OPENAI_MODEL; the in-sandbox runner writes it
 			// into the agent's own config for every provider. Forwarding the same
 			// value to the daemon would make the agent re-select the model itself
 			// (e.g. Hermes calls session/set_model), bypassing the custom provider
-			// credentials the runner wrote.
+			// credentials the runner wrote. Hermes also rebuilds its session agent
+			// during session/set_model, which discards MCP tools registered during
+			// session/new.
 			model = ""
 		}
 		resp.Agent = &TaskAgentData{
