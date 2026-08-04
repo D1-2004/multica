@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -57,15 +56,16 @@ func (store *fakeASBIdentitySourceStore) ListASBRuntimeCredentials(
 
 func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	const (
-		sourceSandboxID = "identity-source-123"
-		runtimeImageRef = "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-		employeeID      = "12345"
-		bucAgentID      = "agent-multica-asb"
+		sourceSandboxID        = "identity-source-123"
+		runtimeImageRef        = "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		rotatedRuntimeImageRef = "registry.example/runtime@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+		employeeID             = "12345"
+		bucAgentID             = "agent-multica-asb"
 	)
 
 	state := "Running"
-	sourceImageRef := runtimeImageRef
 	attachCalls := 0
+	probeCalls := 0
 	renewCalls := 0
 	pauseCalls := 0
 	resumeCalls := 0
@@ -94,7 +94,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 				"id":        sourceSandboxID,
 				"status":    map[string]string{"state": state},
 				"createdAt": "2026-07-31T05:00:00Z",
-				"image":     map[string]string{"uri": sourceImageRef},
+				"image":     map[string]string{"uri": runtimeImageRef},
 			})
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/identity/wireguard":
@@ -120,6 +120,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 				"headers":  map[string]string{"X-Sandbox-Token": "endpoint-token"},
 			})
 		case request.Method == http.MethodPost && request.URL.Path == "/exec/command":
+			probeCalls++
 			var input asbExecRequest
 			if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
 				t.Fatalf("decode identity probe: %v", err)
@@ -262,21 +263,31 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	if state != "Running" || pauseCalls != 0 {
 		t.Fatalf("released state=%s pause_calls=%d", state, pauseCalls)
 	}
-	sourceImageRef = "registry.example/runtime@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	store.runtime.Metadata = []byte(strings.Replace(
+		string(store.runtime.Metadata),
+		runtimeImageRef,
+		rotatedRuntimeImageRef,
+		1,
+	))
 	if err := manager.Prepare(
 		context.Background(),
 		runtimeID,
 		sourceSandboxID,
 		employeeID,
 		bucAgentID,
-	); !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
-		t.Fatalf("Prepare mismatched identity source error = %v", err)
+	); err != nil {
+		t.Fatalf("Prepare identity source after Runtime artifact rotation: %v", err)
 	}
 	if err := manager.Delete(context.Background(), runtimeID, sourceSandboxID); err != nil {
 		t.Fatalf("Delete identity source: %v", err)
 	}
-	if attachCalls != 1 || deleteCalls != 1 {
-		t.Fatalf("attach_calls=%d delete_calls=%d", attachCalls, deleteCalls)
+	if attachCalls != 1 || probeCalls != 3 || deleteCalls != 1 {
+		t.Fatalf(
+			"attach_calls=%d probe_calls=%d delete_calls=%d",
+			attachCalls,
+			probeCalls,
+			deleteCalls,
+		)
 	}
 }
 
