@@ -686,9 +686,10 @@ func (s *TaskService) EnqueueTaskForIssueWithAgentIdentityContext(ctx context.Co
 }
 
 // EnqueueTaskForIssueWithDispatchContext is the structured-dispatch variant.
-// dispatchContext is server-private JSON (for example the RuntimePrompt and
-// outbound routing metadata); it is merged into the task context alongside
-// the short-lived identity token and never copied into the issue/comment.
+// dispatchContext is server-private JSON containing structured routing facts
+// and the Router-provided dynamic context prompt. It is merged into the task
+// context alongside the short-lived identity token and never copied into the
+// issue or comment.
 func (s *TaskService) EnqueueTaskForIssueWithDispatchContext(ctx context.Context, issue db.Issue, agentIdentityContextToken string, dispatchContext []byte, triggerCommentID ...pgtype.UUID) (db.AgentTaskQueue, error) {
 	var commentID pgtype.UUID
 	if len(triggerCommentID) > 0 {

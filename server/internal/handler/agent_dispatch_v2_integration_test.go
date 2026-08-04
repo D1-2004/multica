@@ -42,7 +42,8 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 			}
 		},
 		"surface":{"type":"issue"},
-		"outbound":{"mode":"dws","replyTo":"latest_message"}
+		"outbound":{"mode":"dws","replyTo":"latest_message"},
+		"contextPrompt":"ROUTER CONTEXT"
 	}`, agentID)
 
 	w := postAgentDispatchForTest(t, body, agentID)
@@ -120,7 +121,7 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 	if hasIdentityToken {
 		t.Fatalf("identity-less dispatch fabricated a context token: %s", taskContext)
 	}
-	for _, structuredValue := range []string{"dispatch_schema_version", "dispatch_event_data", "cid-private", "msg-private-2", "dispatch_outbound", "latest_message"} {
+	for _, structuredValue := range []string{"dispatch_schema_version", "dispatch_event_data", "cid-private", "msg-private-2", "dispatch_outbound", "latest_message", "dispatch_context_prompt", "ROUTER CONTEXT"} {
 		if !strings.Contains(string(taskContext), structuredValue) {
 			t.Errorf("task structured context missing %q: %s", structuredValue, taskContext)
 		}
@@ -156,6 +157,7 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 		Task *struct {
 			ID          string `json:"id"`
 			HandoffNote string `json:"handoff_note"`
+			Instruction string `json:"instruction"`
 		} `json:"task"`
 	}
 	if err := json.Unmarshal(claimW.Body.Bytes(), &claim); err != nil {
@@ -164,17 +166,11 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 	if claim.Task == nil || claim.Task.ID != response.TaskID {
 		t.Fatalf("claim returned wrong task: %s", claimW.Body.String())
 	}
-	for _, required := range []string{
-		"## Trusted DingTalk Dispatch",
-		`"openConversationId":"cid-private"`,
-		`"openMsgId":"msg-private-2"`,
-		"dws chat message add-emoji",
-		"at most 4 visible characters",
-		"dws chat message reply",
-	} {
-		if !strings.Contains(claim.Task.HandoffNote, required) {
-			t.Errorf("claim handoff_note missing %q: %s", required, claim.Task.HandoffNote)
-		}
+	if claim.Task.HandoffNote != "" {
+		t.Fatalf("claim handoff_note contains private instruction: %q", claim.Task.HandoffNote)
+	}
+	if claim.Task.Instruction != "ROUTER CONTEXT" {
+		t.Fatalf("claim instruction = %q", claim.Task.Instruction)
 	}
 	for _, forbidden := range []string{"dispatch_runtime_prompt", "dispatch_workflow_prompt", "dispatch_surface_type", "dispatch_outbound_mode"} {
 		if strings.Contains(claimW.Body.String(), forbidden) {

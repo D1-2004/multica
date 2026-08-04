@@ -270,6 +270,7 @@ type AgentTaskResponse struct {
 	RuntimeID            string `json:"runtime_id"`
 	IssueID              string `json:"issue_id"`
 	WorkspaceID          string `json:"workspace_id"`
+	Instruction          string `json:"instruction,omitempty"` // daemon-claim only: trusted per-task instruction prepended to the generated task prompt
 	TraceID              string `json:"trace_id,omitempty"`
 	TraceStartedAtUnixMS int64  `json:"trace_started_at_unix_ms,omitempty"`
 	// WorkspaceContext is the workspace-level system prompt set in workspace

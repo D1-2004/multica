@@ -32,10 +32,13 @@ For the pre-release environment, create the JSON configuration under application
 
 ## JSON schema
 
-The Diamond document contains the runtime prompt for each dispatch surface. These prompts are configuration, not source-code constants:
+The Diamond document contains one common runtime prompt plus the prompt for each dispatch surface. These prompts are configuration, not source-code constants:
 
 ```json
 {
+  "common": {
+    "prompt": "Shared safety, delivery, and response policy"
+  },
   "issue": {
     "prompt": "Issue mode runtime policy"
   },
@@ -48,17 +51,30 @@ The Diamond document contains the runtime prompt for each dispatch surface. Thes
 }
 ```
 
-The only allowed top-level keys are `issue`, `chat`, and `auto`; the only allowed field inside each section is the string field `prompt`. Sections may be omitted. `{}` is a valid empty configuration and atomically removes all Diamond prompts. Unknown sections, unknown fields, `null`, non-string prompts, malformed JSON, and trailing JSON values are rejected.
+The only allowed top-level keys are `common`, `issue`, `chat`, and `auto`; the only allowed field inside each section is the string field `prompt`. Sections may be omitted. `{}` is a valid empty configuration and atomically removes all Diamond prompts. Unknown sections, unknown fields, `null`, non-string prompts, malformed JSON, and trailing JSON values are rejected.
 
-The server maps these sections to the internal feature-flag keys `dispatch_issue_runtime_prompt`, `dispatch_chat_runtime_prompt`, and `dispatch_auto_runtime_prompt`. This keeps the existing precedence contract available for emergency overrides and YAML fallback:
+The server maps these sections to internal feature-flag keys. This keeps the existing precedence contract available for emergency overrides and YAML fallback:
 
-| Surface | Highest-priority environment override | YAML fallback key |
+| Section | Highest-priority environment override | YAML fallback key |
 |---|---|---|
+| `common` | `FF_DISPATCH_COMMON_RUNTIME_PROMPT` | `dispatch_common_runtime_prompt` |
 | `issue` | `FF_DISPATCH_ISSUE_RUNTIME_PROMPT` | `dispatch_issue_runtime_prompt` |
 | `chat` | `FF_DISPATCH_CHAT_RUNTIME_PROMPT` | `dispatch_chat_runtime_prompt` |
 | `auto` | `FF_DISPATCH_AUTO_RUNTIME_PROMPT` | `dispatch_auto_runtime_prompt` |
 
-There is no mode-specific prompt embedded in the binary. When Diamond is unavailable or omits a section, and neither the corresponding `FF_*` override nor YAML rule supplies a value, Multica injects no mode-specific prompt. The common external-input safety policy and trusted DWS outbound workflow remain server-owned because they are security and protocol constraints rather than surface behavior configuration.
+There is no fixed dispatch prompt embedded in the binary. For each daemon claim, Multica assembles the independent task-level `instruction` in this exact order:
+
+```text
+common.prompt
+
+<current surface>.prompt
+
+Dispatch Command contextPrompt
+```
+
+Blank sections are skipped. If all three inputs are blank, `instruction` is omitted and older tasks preserve their previous behavior. `contextPrompt` is not Diamond configuration: it is dynamic, credential-free execution context supplied by the authenticated Router command and persisted only in private task context. Issue descriptions, comment content, chat messages, and assignment handoff notes are never rewritten with these instructions.
+
+Every continuation task recomposes the instruction at claim time from the latest valid Diamond snapshot. When Auto delegates to an Issue, Multica transfers the dynamic Router context, changes the private dispatch surface to `issue`, and recomposes `common + issue + context`; it does not copy the Auto prompt into the child task.
 
 ## Startup, updates, and shutdown
 
@@ -92,6 +108,7 @@ Diamond is not a secret store. Do not place database URLs, JWT secrets, service 
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-08-04 | Added `common.prompt` and claim-time `common + mode + contextPrompt` composition through the independent task `instruction` field. | Keep fixed policy in Diamond, dynamic delivery facts in Router context, and all private instructions out of user-visible Issue, comment, chat, and handoff content. |
 | 2026-08-04 | Removed the Diamond enable switch and made the provider start unconditionally with fail-open behavior. | Avoid silently skipping dynamic prompts when deployment configuration omits a redundant enable variable. |
 | 2026-08-01 | Replaced the embedded auto-mode prompt with the strict `issue/chat/auto.prompt` Diamond document and enabled dynamic prompt injection for all three surfaces. | Keep surface behavior policy outside the binary and allow one atomic configuration update to control every dispatch mode. |
 | 2026-08-01 | Added the optional Diamond-backed dynamic feature-flag provider. | Allow runtime configuration updates without restarting Multica while preserving fail-open behavior and configuration precedence. |

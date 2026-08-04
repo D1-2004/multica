@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
-	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -24,12 +23,11 @@ type agentDispatchExecutionPlan struct {
 func buildAgentDispatchExecutionPlan(
 	command DispatchCommand,
 	dispatchContext agentDispatchContext,
-	flags *featureflag.Service,
 ) (agentDispatchExecutionPlan, error) {
 	if !dispatchContext.UserID.Valid {
 		return agentDispatchExecutionPlan{}, errors.New("agent dispatch endpoint has no actor")
 	}
-	prompt, err := buildDispatchPrompt(command, flags)
+	prompt, err := BuildDispatchPrompt(command)
 	if err != nil {
 		return agentDispatchExecutionPlan{}, err
 	}

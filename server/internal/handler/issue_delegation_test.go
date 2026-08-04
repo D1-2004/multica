@@ -70,6 +70,7 @@ func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t
 		},
 		"dispatch_surface":{"type":"chat"},
 		"dispatch_outbound":{"mode":"dws","replyTo":"latest_message"},
+		"dispatch_context_prompt":"ROUTER CONTEXT",
 		"dispatch_idempotency_key":"dispatch-window:delegation",
 		"parent_ref":{"type":"router_task","id":"router-task-123"},
 		"unknown_large_number":9007199254740993,
@@ -141,7 +142,7 @@ func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, inherited := range []string{"private-context-token", "dispatch_schema_version", "parent_ref", "router-task-123", "completion_callback", "9007199254740993"} {
+	for _, inherited := range []string{"private-context-token", "dispatch_schema_version", "dispatch_context_prompt", "ROUTER CONTEXT", "parent_ref", "router-task-123", "completion_callback", "9007199254740993"} {
 		if !strings.Contains(string(targetTask.Context), inherited) {
 			t.Errorf("target context missing %q: %s", inherited, targetTask.Context)
 		}
