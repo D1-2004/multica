@@ -32,7 +32,7 @@ const (
 	defaultASBResourceCPU            = "2"
 	defaultASBResourceMemory         = "4Gi"
 	asbOptionalIdentityAttachTimeout = 30 * time.Second
-	asbCommandReadyTimeout           = 30 * time.Second
+	asbCommandReadyTimeout           = defaultASBReadyTimeout
 	asbCommandReadyRetryInterval     = time.Second
 	asbCommandProbeTimeout           = 5 * time.Second
 	asbRunnerHome                    = "/home/user"
@@ -1094,7 +1094,8 @@ func (l *ASBLauncher) waitSandboxCommandReady(
 			return nil, ctx.Err()
 		case <-deadline.C:
 			return nil, fmt.Errorf(
-				"ASB command service was not ready within %s: %w",
+				"ASB command service for sandbox %s was not ready within %s: %w",
+				sandboxID,
 				timeout,
 				lastErr,
 			)

@@ -1875,6 +1875,13 @@ func (l *FCE2BLauncher) identityEnvForTask(
 		}
 		return nil, errors.New("Multica Agent DingTalk identity binding is required to refresh the cached ContextToken")
 	}
+	slog.Info("FC/E2B task identity selected",
+		"task_id", taskID,
+		"identity_source", "none",
+		"dws_capability", hasDWSCapability,
+		"dws_identity", false,
+		"github_identity", false,
+	)
 	return nil, nil
 }
 
