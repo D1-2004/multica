@@ -567,6 +567,29 @@ func TestStableBatchHealthWindowExcludesDeveloperPreRolloutCutovers(t *testing.T
 }
 
 func TestStableObservationRestartsFinalCatchUpForNewRuntimes(t *testing.T) {
+	missing, failed := stableObservationTargetCounts(stableRolloutProgress{
+		Total:   5,
+		Updated: 5,
+	})
+	if missing != 0 || failed != 0 {
+		t.Fatalf("fully updated reconciled targets = missing %d, failed %d", missing, failed)
+	}
+	missing, failed = stableObservationTargetCounts(stableRolloutProgress{
+		Total:   6,
+		Updated: 5,
+	})
+	if missing != 1 || failed != 0 {
+		t.Fatalf("new reconciled target = missing %d, failed %d", missing, failed)
+	}
+	missing, failed = stableObservationTargetCounts(stableRolloutProgress{
+		Total:   6,
+		Updated: 5,
+		Failed:  1,
+	})
+	if missing != 1 || failed != 1 {
+		t.Fatalf("failed reconciled target = missing %d, failed %d", missing, failed)
+	}
+
 	if err := stableObservationFailedTargetsError(0); err != nil {
 		t.Fatalf("fully updated observation was blocked: %v", err)
 	}
