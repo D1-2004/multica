@@ -3,7 +3,10 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Cpu, Loader2, Plus } from "lucide-react";
-import { isFCE2BRuntime, runtimeModelsOptions } from "@multica/core/runtimes";
+import {
+  isCloudSandboxRuntime,
+  runtimeModelsOptions,
+} from "@multica/core/runtimes";
 import type { AgentRuntime } from "@multica/core/types";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
@@ -50,7 +53,7 @@ export function ModelPicker({
   const { t } = useT("agents");
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const fixedCatalog = isFCE2BRuntime(runtime);
+  const fixedCatalog = isCloudSandboxRuntime(runtime);
 
   const modelsQuery = useQuery(
     runtimeModelsOptions(runtimeOnline ? runtimeId : null),

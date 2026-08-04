@@ -124,6 +124,59 @@ func TestInitiateListModelsReturnsConfiguredFCE2BModels(t *testing.T) {
 	}
 }
 
+func TestInitiateListModelsReturnsConfiguredASBModels(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	var runtimeID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (
+			workspace_id, daemon_id, name, runtime_mode, provider,
+			status, device_info, metadata, last_seen_at, visibility, owner_id
+		)
+		VALUES ($1, NULL, 'ASB model catalog runtime', 'cloud', 'opencode',
+			'online', 'asb fixture', '{
+				"kind":"cloud-sandbox",
+				"sandbox_backend":"asb",
+				"provider":"opencode",
+				"artifact_kind":"oci_image",
+				"artifact_ref":"registry.example.com/multica@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+			}'::jsonb, now(), 'private', $2)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create ASB runtime: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
+
+	original := testHandler.cfg.ASB
+	testHandler.cfg.ASB = service.ASBConfig{
+		LLMModels: []string{"qwen3.7-plus", "glm-5"},
+	}
+	t.Cleanup(func() { testHandler.cfg.ASB = original })
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/runtimes/"+runtimeID+"/models", nil)
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.InitiateListModels(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp ModelListRequest
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != ModelListCompleted || !resp.Supported || len(resp.Models) != 2 {
+		t.Fatalf("unexpected ASB model response: %#v", resp)
+	}
+	if resp.Models[0].ID != "qwen3.7-plus" || resp.Models[0].Provider != "opencode" || !resp.Models[0].Default {
+		t.Fatalf("first ASB model must be the configured default: %#v", resp.Models[0])
+	}
+	if resp.Models[1].ID != "glm-5" || resp.Models[1].Provider != "opencode" || resp.Models[1].Default {
+		t.Fatalf("second ASB model must be selectable and non-default: %#v", resp.Models[1])
+	}
+}
+
 // TestGetRuntimeUsage_BucketsByUsageTime ensures a task that was enqueued on
 // one calendar day but whose tokens were reported the next day (e.g. execution
 // crossed midnight, or the task sat in the queue) is attributed to the day
