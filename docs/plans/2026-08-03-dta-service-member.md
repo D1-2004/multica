@@ -4,17 +4,17 @@
 > 状态：已完成
 > 创建日期：2026-08-03
 > 计划 ID：20260803-dta-service-member
-> 最后更新时间：2026-08-03 CST
+> 最后更新时间：2026-08-04 CST
 > 当前分支：`codex/dta-service-member`
 > 目标执行分支：`codex/dta-service-member`
-> 基线 Commit：`e716729b0885cfc202da307cf7e2218383d676b9`
+> 基线 Commit：`d839e6c382aa60724f4e43ccb9ab8034dd62fd8f`
 > 原始工作区：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-workspace-access-grants`
 > 原始分支：`codex/workspace-access-grants`
 > Worktree 路径：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-dta-service-member`
 > Worktree 来源：本次任务创建
-> 交付状态：Runtime 普通成员创建能力已完成，提交以 Git 元数据为准
-> 收尾状态：已完成并保留 Worktree
-> 当前里程碑：已完成
+> 交付状态：已基于最新正式基线完成 rebase、migration 重编号和发布前回归，可进入推送与正式合并流程
+> 收尾状态：Worktree 保留；本地已完成，尚未 push 重写后的分支
+> 当前里程碑：正式发布准备
 
 ## 一句话结论
 
@@ -136,7 +136,7 @@ Token 类型继续用于禁止交互登录、吊销、过期、审计和唯一 W
 
 ## 文件与职责
 
-- `server/migrations/260_*`：幂等补齐 service user membership，并删除 capability/resource-scope 列；down 仅为本地恢复重建列及约束。
+- `server/migrations/269_*`：幂等补齐 service user membership，并删除 capability/resource-scope 列；down 仅为本地恢复重建列及约束。
 - `server/pkg/db/queries/workspace_access_token.sql` 与 sqlc 生成物：Token 创建事务增加 membership，生命周期查询保持。
 - `server/internal/middleware/auth.go`、`workspace.go`、`workspace_access_principal.go`：把 `dta_` 接入普通 member 上下文，移除 operation allowlist/capability gate，保留 Token 生命周期与审计来源。
 - `server/internal/handler/workspace_access.go`：API schema 删除 capability 编辑，创建 subject/member/token 原子化。
@@ -161,11 +161,11 @@ Token 类型继续用于禁止交互登录、吊销、过期、审计和唯一 W
 | 里程碑 | 状态 | 关联 Commit（可选） | 实际验证命令 | 结果与证据 |
 |---|---|---|---|---|
 | 计划确认与环境准备 | 已完成 |  | `git worktree add -b codex/dta-service-member ... e716729b0`；分支/状态核对 | 新 worktree 位于记录路径；旧 worktree 未提交代码未被复制或修改 |
-| 数据与身份 | 已完成 |  | migration 260 down/up/replay；SQL schema/member readback；Token 生命周期测试 | 旧列为 0；所有 Token subject 都存在且 role=`member`；创建、重新生成、吊销、硬删除均通过 |
+| 数据与身份 | 已完成 |  | migration 269 down/up/replay；SQL schema/member readback；Token 生命周期测试 | 旧列为 0；所有 Token subject 都存在且 role=`member`；创建、重新生成、吊销、硬删除均通过 |
 | 认证与原生权限 | 已完成 |  | `go test -p 1` 精准回归；`go vet` | 原生 member context、跨 workspace、owner deny、登录隔离、成员角色/移除不变量均通过 |
 | 原生业务能力 | 已完成 |  | Runtime、snapshot、Trace、Autopilot、DingTalk、load-smoke、claim/mat 定点测试 | 公共 Runtime 可使用、他人私有 Runtime 拒绝；任务领取可铸造短期 Token；节律与调试链路通过 |
 | Core/UI/docs | 已完成 |  | Core Vitest 79 项；DingTalk Views Vitest 27 项；Core/Views/Docs typecheck | schema 不再暴露权限字段；普通 Agent owner 可见机器人管理入口；设置页与文档合同通过 |
-| 最终验证 | 已完成 |  | 连接 migration 260 测试库的 Go 定向回归；目标包 `go vet`；`git diff --check`；修改 Go 文件 gofmt | 普通成员路由、Agent ownership、Token/成员生命周期均通过；无 whitespace/格式问题 |
+| 最终验证 | 已完成 |  | 连接 migration 269 测试库的 Go 定向回归；目标包 `go vet`；`git diff --check`；修改 Go 文件 gofmt | 普通成员路由、Agent ownership、Token/成员生命周期均通过；无 whitespace/格式问题 |
 | 普通成员 Runtime 创建 | 已完成 |  | 创建/visibility 红绿回归；Views Vitest 48 项；Core Vitest 84 项；Views/Core/Docs typecheck；目标 Go 包测试与 `go vet` | member stable 创建 201、owner 为调用者且强制 private；非 publisher candidate 403；member public PATCH 403；admin public 保持成功 |
 
 ## 验证策略
@@ -213,7 +213,7 @@ DTA HTTPS → dta_ 生命周期校验 → 原生 member middleware → 业务 Ha
 
 ## 数据迁移与幂等
 
-- 使用新编号 migration，不改写已在预发应用的 257–259。
+- 正式发布 rebase 后使用唯一编号 266–269；预发曾应用旧 stem 257–260，因此 266/267/268/269 的 up migration 必须允许在旧 schema 上幂等重放并记录新 stem，不能再次创建表、列或放宽资源范围。
 - `INSERT ... SELECT ... ON CONFLICT DO UPDATE SET role='member'` 补 membership 并修复 Token subject 的错误管理员角色；只影响 `workspace_access_token.subject_user_id`。
 - migration 删除 capability/resource-scope 列时使用 `DROP COLUMN IF EXISTS`，可重放且完整 filename stem 稳定；down 不删除 member，避免误删随后产生资源的身份，但会为本地/预发回滚重建两列和原约束。
 
@@ -261,6 +261,16 @@ DTA HTTPS → dta_ 生命周期校验 → 原生 member middleware → 业务 Ha
 | 2026-08-03 | 暂不限制外部服务商直接使用 Token/CLI | 当前优先目标是降低耦合并先跑通完整交付链路 | 是，用户明确要求先不管 |
 | 2026-08-03 | Token 删除后允许管理员清理无 Token 的 service member；机器人安装改为 member 路由 + Agent ownership | 评审发现无清理出口和普通 service member 机器人交付能力退化；用户明确要求普通用户可绑定机器人 | 是，用户已明确要求修改 |
 | 2026-08-03 | 普通成员可创建自有 stable/private FC/E2B Runtime；candidate/public 和发布面保持受限 | 用户确认普通成员也需要创建 Runtime，并接受前一轮推荐边界 | 是，用户明确回复“加” |
+| 2026-08-04 | rebase 到最新正式基线，并把 Workspace Access migration 从预发历史编号 257–260 调整为 266–269 | 最新正式基线已占用 257–265；直接发布存在重复 migration 前缀和 Runtime/数字员工绑定代码冲突 | 是，用户明确要求 rebase 并更新迁移编号 |
+
+## 正式发布准备（2026-08-04）
+
+- [x] 从 `origin/develop@d839e6c38` rebase 19 个功能提交，并保留 rebase 前本地备份分支 `codex/dta-service-member-pre-rebase-20260804`。
+- [x] 解决数字员工绑定、Runtime 和 Router subscription 测试冲突；以最新正式账号键、ASB Runtime 与绑定权限模型为基线，只重放普通成员/DTA service member 增量。
+- [x] 将 migration 调整为 `266_workspace_access_token`、`267_workspace_access_native_ownership`、`268_dta_load_smoke_operation_idempotency`、`269_workspace_access_service_member`。
+- [x] 验证新 migration 在全新正式 schema 与已执行旧 257–260 的预发 schema 上均可安全执行。
+- [x] 运行 migration lint、认证/成员、Runtime、数字员工绑定/Router、Core/Views 类型检查与目标测试。
+- [x] 完成最终 diff 审核和正式发布风险记录；本地提交后等待 force-with-lease push 的单独授权。
 
 ## 调试假设记录
 
@@ -272,24 +282,28 @@ DTA HTTPS → dta_ 生命周期校验 → 原生 member middleware → 业务 Ha
 
 ## 最终验证结果
 
-- 隔离 PostgreSQL migration 260 down/up/replay 成功；`capabilities`、`resource_scope` 列数量为 0，`token_subject_non_member=0`。
+- 基于 `origin/develop@d839e6c38` 完成 19 个功能提交的 rebase；数字员工绑定、Runtime 与 Router 冲突按最新正式实现合并，未保留冲突标记。
+- 隔离 PostgreSQL 双路径验证通过：全新正式 schema 可直接执行 266–269；已执行旧 257–260 的预发 schema 可幂等继续执行 266–269。两条路径最终均无 `capabilities`、`resource_scope` 列，并保留唯一 load-smoke operation 索引。
+- 隔离 PostgreSQL migration 269 down/up/replay 成功；`capabilities`、`resource_scope` 列数量为 0，`token_subject_non_member=0`。
 - Token 生命周期、原生 member middleware、workspace 绑定、过期/吊销、human JWT/PAT 隔离通过；service member 在 Token 存在时不可提升或移除，Token 硬删除后可由管理员通过原生成员清理流程删除。
 - 普通成员可使用 public Runtime，不能使用他人 private Runtime；本次追加允许创建自有 stable/private Runtime，任务 claim、workspace context 和短期任务 Token 链路保持通过。
 - Trace 映射、Agent task snapshot、Autopilot 权限、DingTalk 原生绑定、DTA load-smoke 通过；普通 Agent owner 可安装、重试、轮询和解绑自己的钉钉机器人，其他普通成员被拒绝。
 - DingTalk Views Vitest 27 项、Core Vitest 79 项通过；Core、Views、Docs typecheck 通过；目标 Go 包 `go vet` 通过。
-- Runtime 追加验证通过：普通 member stable 创建成功并归属调用者，显式 public 输入被强制 private；非 publisher candidate 和 member public PATCH 被拒绝，owner/admin public 创建与修改保持成功。追加后 Views 48 项、Core 84 项、目标 Go 包测试、`go vet` 与 Docs typecheck 通过。
+- Runtime 追加验证通过：普通 member stable 创建成功并归属调用者，显式 public 输入被强制 private；非 publisher candidate 和 member public PATCH 被拒绝，owner/admin public 创建与修改保持成功。
+- 发布前新鲜回归通过：认证、成员、Handler、Server、CLI 目标 Go 测试通过，Router package 全量测试通过，目标 Go 包 `go vet` 通过；Core typecheck + 89 项 Vitest、Views typecheck + 51 项 Vitest、Docs typecheck 通过。
 - 后端 `internal/handler` 整包测试仍存在本分支外的 dispatch/onboarding/GitHub 等既有失败；本次修改涉及的定点回归全部通过，未借此改动无关代码。
 
 ### 最终工作区
 
 - 原始工作区与分支：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-workspace-access-grants`，`codex/workspace-access-grants`
 - 最终工作区与分支：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-dta-service-member`，`codex/dta-service-member`
-- 交付状态：Runtime 普通成员创建能力追加完成；提交号以 Git 元数据为准
+- 交付状态：最新正式基线 rebase、migration 266–269 重编号与发布前回归完成；提交号以 Git 元数据为准
 - Worktree 收尾：保留
-- 当前未提交改动：无（本次 Runtime 能力追加与计划收尾一并创建追加提交）
+- 当前未提交改动：本计划更新时尚待创建 migration 重编号与发布准备提交
 - 未执行的验证：DTA 仓库端到端联调与预发部署，均不在本轮授权范围内
 
 ## 遗留风险
 
 - DTA 仓库尚未对新 Token 做真实联调；本轮只保证 Multica 合同。
 - 普通 member 可见面可能随 Multica 原生权限演进而扩大；未来若重新要求细粒度授权，应设计标准 RBAC role，而不是恢复逐路由 allowlist。
+- 正式环境当前未配置 `FF_WORKSPACE_ACCESS_TOKENS`；合并与部署代码不会自动启用 DTA Token 页面和认证入口，需在 migration 与应用验证完成后单独开启。

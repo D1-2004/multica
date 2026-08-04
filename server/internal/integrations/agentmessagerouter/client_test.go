@@ -763,7 +763,7 @@ func TestClientMapsHTTP404SubscriptionNotFoundToSentinelWithoutLeakingBody(t *te
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"code": "subscription_not_found",
+			"code":    "subscription_not_found",
 			"message": "Bearer service-credential callback-credential-secret",
 		})
 	}))
@@ -781,9 +781,9 @@ func TestClientMapsHTTP404SubscriptionNotFoundToSentinelWithoutLeakingBody(t *te
 
 func TestClientClassifiesMalformedBackfillLookupResponses(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		data map[string]any
+		name   string
+		path   string
+		data   map[string]any
 		lookup func(*Client) error
 	}{
 		{
@@ -804,8 +804,8 @@ func TestClientClassifiesMalformedBackfillLookupResponses(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"success": true,
-					"code": "success",
-					"data": test.data,
+					"code":    "success",
+					"data":    test.data,
 				})
 			}))
 			defer server.Close()

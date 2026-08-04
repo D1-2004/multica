@@ -1,8 +1,8 @@
 ALTER TABLE "user"
-    ADD COLUMN principal_type TEXT NOT NULL DEFAULT 'human'
+    ADD COLUMN IF NOT EXISTS principal_type TEXT NOT NULL DEFAULT 'human'
         CHECK (principal_type IN ('human', 'workspace_access_token'));
 
-CREATE TABLE workspace_access_token (
+CREATE TABLE IF NOT EXISTS workspace_access_token (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
     subject_user_id UUID NOT NULL UNIQUE REFERENCES "user"(id) ON DELETE RESTRICT,
@@ -25,10 +25,10 @@ CREATE TABLE workspace_access_token (
     CHECK (capabilities <@ ARRAY['deployment.manage', 'deployment.retire', 'trace.read']::TEXT[])
 );
 
-CREATE INDEX idx_workspace_access_token_workspace
+CREATE INDEX IF NOT EXISTS idx_workspace_access_token_workspace
     ON workspace_access_token(workspace_id, created_at DESC);
 
-CREATE TABLE workspace_access_audit (
+CREATE TABLE IF NOT EXISTS workspace_access_audit (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
     token_id UUID REFERENCES workspace_access_token(id) ON DELETE SET NULL,
@@ -41,5 +41,5 @@ CREATE TABLE workspace_access_audit (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_workspace_access_audit_workspace_created
+CREATE INDEX IF NOT EXISTS idx_workspace_access_audit_workspace_created
     ON workspace_access_audit(workspace_id, created_at DESC);

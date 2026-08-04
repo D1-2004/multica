@@ -213,7 +213,7 @@ switch; this is a client-compatibility decision, not an operator-controlled
 flag.
 
 `workspace_access_tokens` is also a release flag and defaults to `false`.
-Keep it off while migration 257 is rolling out. After every API replica runs
+Keep it off while migration 266 is rolling out. After every API replica runs
 the new binary, enable it with `FF_WORKSPACE_ACCESS_TOKENS=true` or:
 
 ```yaml

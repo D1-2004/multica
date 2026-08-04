@@ -1,3 +1,5 @@
+-- This rollback is intentionally guarded because the schema may already have
+-- been populated by the pre-release-only 257 migration stem.
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM workspace_access_token) THEN
