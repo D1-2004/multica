@@ -198,7 +198,7 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		)
 		return nil, fmt.Errorf("load DingTalk robot runtime: %w", err)
 	}
-	if !service.FCE2BRuntimeHasCapability(runtime, "dws") {
+	if !service.CloudSandboxRuntimeHasCapability(runtime, "dws") {
 		log.Info("dingtalk robot DWS identity skipped",
 			"event", "dingtalk_dws_identity_skipped",
 			"reason", "runtime_without_dws_capability",

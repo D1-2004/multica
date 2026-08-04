@@ -145,6 +145,8 @@ import type {
   BeginAgentIdentityGitHubOAuthResponse,
   DisconnectAgentIdentityGitHubConnectionResponse,
   TestAgentIdentityGitHubConnectionResponse,
+  AgentEnterpriseIdentityStatusResponse,
+  BeginAgentEnterpriseIdentityBindingResponse,
   RegisterSlackBYORequest,
   RedeemSlackBindingTokenResponse,
   Squad,
@@ -167,6 +169,8 @@ import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
 import type {
   CloudRuntimeNode,
+  CreateCloudSandboxRuntimeRequest,
+  CreateCloudSandboxStableReleaseRequest,
   CreateFCE2BRuntimeRequest,
   CreateCloudRuntimeNodeRequest,
   FCE2BTemplate,
@@ -176,6 +180,12 @@ import type {
   FCE2BStableRuntimeOverview,
   CreateFCE2BStableReleaseRequest,
   ListCloudRuntimeNodesParams,
+  SandboxBackend,
+  ASBRuntimeCredentialResponse,
+  ValidateASBRuntimeCredentialRequest,
+  ValidateASBRuntimeCredentialResponse,
+  UpdateCloudSandboxRuntimeArtifactRequest,
+  UpdateASBRuntimeCredentialRequest,
   UpdateFCE2BRuntimeTemplateRequest,
 } from "../runtimes/cloud-runtime";
 import { type Logger, noopLogger } from "../logger";
@@ -194,9 +204,14 @@ import {
   CloudRuntimeNodeSchema,
   FCE2BStableChannelSchema,
   FCE2BStableReleaseSchema,
+  FCE2BStableReleaseListSchema,
   FCE2BStableRuntimeOverviewListSchema,
   EMPTY_FC_E2B_STABLE_CHANNEL,
   EMPTY_FC_E2B_STABLE_RELEASE,
+  AgentEnterpriseIdentityStatusResponseSchema,
+  BeginAgentEnterpriseIdentityBindingResponseSchema,
+  EMPTY_AGENT_ENTERPRISE_IDENTITY_STATUS_RESPONSE,
+  EMPTY_BEGIN_AGENT_ENTERPRISE_IDENTITY_BINDING_RESPONSE,
   AddDingTalkGroupMembersResponseSchema,
   AddDingTalkWorkspaceMembersResponseSchema,
   DingTalkUserSearchResponseSchema,
@@ -1042,6 +1057,15 @@ export class ApiClient {
     });
   }
 
+  async createCloudSandboxRuntime(
+    data: CreateCloudSandboxRuntimeRequest,
+  ): Promise<AgentRuntime> {
+    return this.fetch("/api/runtimes/cloud-sandbox", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
   async listFCE2BTemplates(): Promise<FCE2BTemplate[]> {
     return this.fetch("/api/runtimes/fc-e2b/templates");
   }
@@ -1053,6 +1077,21 @@ export class ApiClient {
       FCE2BStableChannelSchema,
       EMPTY_FC_E2B_STABLE_CHANNEL,
       { endpoint: "GET /api/runtimes/fc-e2b/stable-channel" },
+    );
+  }
+
+  async getCloudSandboxStableChannel(
+    backend: SandboxBackend,
+  ): Promise<FCE2BStableChannel> {
+    const search = new URLSearchParams({ sandbox_backend: backend });
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/cloud-sandbox/stable-channel?${search.toString()}`,
+    );
+    return parseWithFallback(
+      raw,
+      FCE2BStableChannelSchema,
+      EMPTY_FC_E2B_STABLE_CHANNEL,
+      { endpoint: "GET /api/runtimes/cloud-sandbox/stable-channel" },
     );
   }
 
@@ -1073,6 +1112,26 @@ export class ApiClient {
     );
   }
 
+  async createCloudSandboxStableRelease(
+    data: CreateCloudSandboxStableReleaseRequest,
+    idempotencyKey: string,
+  ): Promise<FCE2BStableRelease> {
+    const raw = await this.fetch<unknown>(
+      "/api/runtimes/cloud-sandbox/stable-releases",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+        headers: { "Idempotency-Key": idempotencyKey },
+      },
+    );
+    return parseWithFallback(
+      raw,
+      FCE2BStableReleaseSchema,
+      EMPTY_FC_E2B_STABLE_RELEASE,
+      { endpoint: "POST /api/runtimes/cloud-sandbox/stable-releases" },
+    );
+  }
+
   async getFCE2BStableRelease(releaseId: string): Promise<FCE2BStableRelease> {
     const raw = await this.fetch<unknown>(
       `/api/runtimes/fc-e2b/stable-releases/${releaseId}`,
@@ -1085,6 +1144,22 @@ export class ApiClient {
     );
   }
 
+  async listCloudSandboxStableReleases(
+    backend: SandboxBackend,
+    limit = 20,
+  ): Promise<FCE2BStableRelease[]> {
+    const search = new URLSearchParams({
+      sandbox_backend: backend,
+      limit: String(limit),
+    });
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/cloud-sandbox/stable-releases?${search.toString()}`,
+    );
+    return parseWithFallback(raw, FCE2BStableReleaseListSchema, [], {
+      endpoint: "GET /api/runtimes/cloud-sandbox/stable-releases",
+    });
+  }
+
   async listFCE2BStableRuntimes(): Promise<FCE2BStableRuntimeOverview[]> {
     const raw = await this.fetch<unknown>(
       "/api/runtimes/fc-e2b/stable-runtimes",
@@ -1094,6 +1169,21 @@ export class ApiClient {
       FCE2BStableRuntimeOverviewListSchema,
       [],
       { endpoint: "GET /api/runtimes/fc-e2b/stable-runtimes" },
+    );
+  }
+
+  async listCloudSandboxStableRuntimes(
+    backend: SandboxBackend,
+  ): Promise<FCE2BStableRuntimeOverview[]> {
+    const search = new URLSearchParams({ sandbox_backend: backend });
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/cloud-sandbox/stable-runtimes?${search.toString()}`,
+    );
+    return parseWithFallback(
+      raw,
+      FCE2BStableRuntimeOverviewListSchema,
+      [],
+      { endpoint: "GET /api/runtimes/cloud-sandbox/stable-runtimes" },
     );
   }
 
@@ -1113,6 +1203,24 @@ export class ApiClient {
     );
   }
 
+  async mutateCloudSandboxStableRelease(
+    releaseId: string,
+    action: FCE2BStableReleaseAction,
+  ): Promise<FCE2BStableRelease> {
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/cloud-sandbox/stable-releases/${encodeURIComponent(releaseId)}/${action}`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      FCE2BStableReleaseSchema,
+      EMPTY_FC_E2B_STABLE_RELEASE,
+      {
+        endpoint: `POST /api/runtimes/cloud-sandbox/stable-releases/:id/${action}`,
+      },
+    );
+  }
+
   async updateFCE2BRuntimeTemplate(
     runtimeId: string,
     data: UpdateFCE2BRuntimeTemplateRequest,
@@ -1123,6 +1231,52 @@ export class ApiClient {
         method: "PATCH",
         body: JSON.stringify(data),
       },
+    );
+  }
+
+  async updateCloudSandboxRuntimeArtifact(
+    runtimeId: string,
+    data: UpdateCloudSandboxRuntimeArtifactRequest,
+  ): Promise<AgentRuntime> {
+    return this.fetch<AgentRuntime>(
+      `/api/runtimes/${encodeURIComponent(runtimeId)}/cloud-sandbox-artifact`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    );
+  }
+
+  async validateASBRuntimeCredential(
+    data: ValidateASBRuntimeCredentialRequest,
+  ): Promise<ValidateASBRuntimeCredentialResponse> {
+    return this.fetch<ValidateASBRuntimeCredentialResponse>(
+      "/api/runtimes/asb-credential/validate",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
+  }
+
+  async updateASBRuntimeCredential(
+    runtimeId: string,
+    data: UpdateASBRuntimeCredentialRequest,
+  ): Promise<ASBRuntimeCredentialResponse> {
+    return this.fetch<ASBRuntimeCredentialResponse>(
+      `/api/runtimes/${encodeURIComponent(runtimeId)}/asb-credential`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    );
+  }
+
+  async getASBRuntimeCredential(
+    runtimeId: string,
+  ): Promise<ASBRuntimeCredentialResponse> {
+    return this.fetch<ASBRuntimeCredentialResponse>(
+      `/api/runtimes/${encodeURIComponent(runtimeId)}/asb-credential`,
     );
   }
 
@@ -2968,6 +3122,64 @@ export class ApiClient {
       DisconnectAgentIdentityGitHubConnectionResponseSchema,
       EMPTY_DISCONNECT_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
       { endpoint: "DELETE /api/workspaces/:id/agent-identity/github/:connectionId" },
+    );
+  }
+
+  async getAgentEnterpriseIdentityStatus(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<AgentEnterpriseIdentityStatusResponse> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/agent-identity/enterprise/status?${search.toString()}`,
+    );
+    return parseWithFallback(
+      raw,
+      AgentEnterpriseIdentityStatusResponseSchema,
+      EMPTY_AGENT_ENTERPRISE_IDENTITY_STATUS_RESPONSE,
+      {
+        endpoint:
+          "GET /api/workspaces/:id/agent-identity/enterprise/status",
+        includeReceived: false,
+      },
+    );
+  }
+
+  async beginAgentEnterpriseIdentityBinding(
+    workspaceId: string,
+    agentId: string,
+    redirectPath: string,
+  ): Promise<BeginAgentEnterpriseIdentityBindingResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/agent-identity/enterprise/oauth/start`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          agent_id: agentId,
+          redirect_path: redirectPath,
+        }),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      BeginAgentEnterpriseIdentityBindingResponseSchema,
+      EMPTY_BEGIN_AGENT_ENTERPRISE_IDENTITY_BINDING_RESPONSE,
+      {
+        endpoint:
+          "POST /api/workspaces/:id/agent-identity/enterprise/oauth/start",
+        includeReceived: false,
+      },
+    );
+  }
+
+  async revokeAgentEnterpriseIdentity(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<void> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/agent-identity/enterprise?${search.toString()}`,
+      { method: "DELETE" },
     );
   }
 

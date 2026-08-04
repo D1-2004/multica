@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { NavigationProvider } from "../../navigation";
 import enCommon from "../../locales/en/common.json";
@@ -14,6 +15,12 @@ const TEST_RESOURCES = {
 const mockChannelQuery = vi.hoisted(() => ({
   data: {
     current: {
+      sandbox_backend: "aliyun_fc",
+      artifact_kind: "e2b_template",
+      artifact_ref: "template-stable",
+      artifact_build_id: "build-stable",
+      artifact_alias: "stable-image",
+      artifact_digest: "",
       template_id: "template-stable",
       template_build_id: "build-stable",
       template_alias: "stable-image",
@@ -21,6 +28,12 @@ const mockChannelQuery = vi.hoisted(() => ({
     },
     active_release: {
       id: "release-next",
+      sandbox_backend: "aliyun_fc",
+      artifact_kind: "e2b_template",
+      artifact_ref: "template-next",
+      artifact_build_id: "build-next",
+      artifact_alias: "next-image",
+      artifact_digest: "",
       template_id: "template-next",
       template_build_id: "build-next",
       template_alias: "next-image",
@@ -59,8 +72,14 @@ const mockRuntimesQuery = vi.hoisted(() => ({
       workspace_id: "workspace-a",
       workspace_name: "Workspace Alpha",
       runtime_name: "Runtime Alpha",
+      sandbox_backend: "aliyun_fc",
       provider: "hermes",
       status: "online",
+      artifact_channel: "stable",
+      artifact_alias: "stable-image",
+      artifact_ref: "template-stable",
+      artifact_build_id: "build-stable",
+      artifact_digest: "",
       template_channel: "stable",
       template_alias: "stable-image",
       template_id: "template-stable",
@@ -75,8 +94,14 @@ const mockRuntimesQuery = vi.hoisted(() => ({
       workspace_id: "workspace-b",
       workspace_name: "Workspace Beta",
       runtime_name: "Runtime Beta",
+      sandbox_backend: "aliyun_fc",
       provider: "opencode",
       status: "online",
+      artifact_channel: "stable",
+      artifact_alias: "next-image",
+      artifact_ref: "template-next",
+      artifact_build_id: "build-next",
+      artifact_digest: "",
       template_channel: "stable",
       template_alias: "next-image",
       template_id: "template-next",
@@ -91,8 +116,14 @@ const mockRuntimesQuery = vi.hoisted(() => ({
       workspace_id: "workspace-b",
       workspace_name: "Workspace Beta",
       runtime_name: "Runtime Gamma",
+      sandbox_backend: "aliyun_fc",
       provider: "pi",
       status: "offline",
+      artifact_channel: "stable",
+      artifact_alias: "old-image",
+      artifact_ref: "template-old",
+      artifact_build_id: "build-old",
+      artifact_digest: "",
       template_channel: "stable",
       template_alias: "old-image",
       template_id: "template-old",
@@ -118,8 +149,8 @@ vi.mock("@multica/core/paths", () => ({
 }));
 
 vi.mock("@multica/core/runtimes", () => ({
-  useFCE2BStableChannel: () => mockChannelQuery,
-  useFCE2BStableRuntimes: () => mockRuntimesQuery,
+  useCloudSandboxStableChannel: () => mockChannelQuery,
+  useCloudSandboxStableRuntimes: () => mockRuntimesQuery,
 }));
 
 vi.mock("./stable-fc-e2b-release-dialog", () => ({
@@ -128,16 +159,22 @@ vi.mock("./stable-fc-e2b-release-dialog", () => ({
 
 import { StableFCE2BRuntimeOverviewPage } from "./stable-fc-e2b-runtime-overview-page";
 
-function renderPage() {
+function renderPage({
+  search = "",
+  replace = vi.fn(),
+}: {
+  search?: string;
+  replace?: (path: string) => void;
+} = {}) {
   return render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <NavigationProvider
         value={{
           push: vi.fn(),
-          replace: vi.fn(),
+          replace,
           back: vi.fn(),
           pathname: "/workspace/runtimes/stable",
-          searchParams: new URLSearchParams(),
+          searchParams: new URLSearchParams(search),
           getShareableUrl: (path) => path,
         }}
       >
@@ -176,7 +213,7 @@ describe("StableFCE2BRuntimeOverviewPage", () => {
 
     fireEvent.change(
       screen.getByPlaceholderText(
-        "Search workspace, Runtime, template, or build ID...",
+        "Search workspace, Runtime, artifact, or build ID...",
       ),
       { target: { value: "Runtime Beta" } },
     );
@@ -185,5 +222,24 @@ describe("StableFCE2BRuntimeOverviewPage", () => {
     expect(screen.getByText("Runtime Beta")).toBeInTheDocument();
     expect(screen.queryByText("Runtime Gamma")).not.toBeInTheDocument();
     expect(screen.getByText("Showing 1 of 3 runtimes")).toBeInTheDocument();
+  });
+
+  it("uses and preserves the Runtime page backend query", async () => {
+    const replace = vi.fn<(path: string) => void>();
+    const user = userEvent.setup();
+    renderPage({ search: "backend=asb", replace });
+
+    expect(
+      screen.getByRole("link", { name: "Runtimes" }),
+    ).toHaveAttribute("href", "/workspace/runtimes?backend=asb");
+
+    await user.click(screen.getAllByRole("combobox")[0]!);
+    await user.click(
+      screen.getByRole("option", { name: "Alibaba Cloud FC" }),
+    );
+
+    expect(replace).toHaveBeenCalledWith(
+      "/workspace/runtimes/stable?backend=aliyun_fc",
+    );
   });
 });

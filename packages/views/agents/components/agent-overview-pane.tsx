@@ -472,6 +472,7 @@ export function AgentOverviewPane({
                   {effectiveView === "identity" && (
                     <IdentityTab
                       agent={agent}
+                      runtime={runtime}
                       canOperateDingTalkBinding={canOperateDingTalkBinding}
                       dingTalkBindingPermissionLoading={dingTalkBindingPermissionLoading}
                     />

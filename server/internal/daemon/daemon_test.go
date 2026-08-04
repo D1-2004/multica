@@ -187,16 +187,24 @@ func TestIsBlockedEnvKey(t *testing.T) {
 	}
 }
 
-func TestInheritManagedChildEnvPassesGitHubConfigDirOnly(t *testing.T) {
+func TestInheritManagedChildEnvPassesTaskScopedConfigDirsOnly(t *testing.T) {
+	t.Setenv("DWS_CONFIG_DIR", "/tmp/multica-dws/task-123")
 	t.Setenv("GH_CONFIG_DIR", "/tmp/multica-gh/task-123")
+	t.Setenv("DWS_CLIENT_SECRET", "should-not-leak")
 	t.Setenv("GH_TOKEN", "should-not-leak")
 	t.Setenv("GITHUB_TOKEN", "should-not-leak")
 
 	agentEnv := map[string]string{}
 	inheritManagedChildEnv(agentEnv)
 
+	if got := agentEnv["DWS_CONFIG_DIR"]; got != "/tmp/multica-dws/task-123" {
+		t.Fatalf("DWS_CONFIG_DIR = %q, want task-scoped DWS config dir", got)
+	}
 	if got := agentEnv["GH_CONFIG_DIR"]; got != "/tmp/multica-gh/task-123" {
 		t.Fatalf("GH_CONFIG_DIR = %q, want task-scoped gh config dir", got)
+	}
+	if _, ok := agentEnv["DWS_CLIENT_SECRET"]; ok {
+		t.Fatal("DWS_CLIENT_SECRET must not be inherited into the agent environment")
 	}
 	if _, ok := agentEnv["GH_TOKEN"]; ok {
 		t.Fatal("GH_TOKEN must not be inherited into the agent environment")
