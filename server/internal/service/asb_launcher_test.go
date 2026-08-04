@@ -26,6 +26,18 @@ type fakeASBTaskIdentityResolver struct {
 	err      error
 }
 
+func TestASBConfigCommandReadyTimeout(t *testing.T) {
+	t.Setenv("MULTICA_ASB_COMMAND_READY_TIMEOUT", "")
+	if got := ASBConfigFromEnv().CommandReadyTimeout; got != 7*time.Minute {
+		t.Fatalf("default command ready timeout = %s, want 7m", got)
+	}
+
+	t.Setenv("MULTICA_ASB_COMMAND_READY_TIMEOUT", "9m")
+	if got := ASBConfigFromEnv().CommandReadyTimeout; got != 9*time.Minute {
+		t.Fatalf("configured command ready timeout = %s, want 9m", got)
+	}
+}
+
 type fakeASBSandboxCapacity struct {
 	t              *testing.T
 	wantRuntimeID  pgtype.UUID
@@ -841,9 +853,10 @@ func TestASBExecRunOnceUsesDefaultUserAndDirectCore(t *testing.T) {
 	launcher := &ASBLauncher{
 		Client: newTestASBClient(t, server),
 		Config: ASBConfig{
-			ReadyTimeout: 3 * time.Second,
-			LLMBaseURL:   "https://models.example/v1",
-			LLMAPIKey:    "test-model-key",
+			ReadyTimeout:        3 * time.Second,
+			CommandReadyTimeout: 3 * time.Second,
+			LLMBaseURL:          "https://models.example/v1",
+			LLMAPIKey:           "test-model-key",
 		},
 	}
 	err = launcher.execRunOnce(
@@ -881,5 +894,41 @@ func TestASBExecRunOnceUsesDefaultUserAndDirectCore(t *testing.T) {
 		captured.Envs["USER"] != "user" ||
 		captured.Envs["LOGNAME"] != "user" {
 		t.Fatalf("ASB runner environment = %#v", captured.Envs)
+	}
+}
+
+func TestWaitSandboxCommandReadyUsesDedicatedTimeout(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1/sandboxes/sandbox-123/endpoints/44772":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": strings.TrimPrefix(serverURLFromRequest(request), "http://") + "/execd",
+				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
+			})
+		case "/execd/command":
+			http.Error(response, "execd is still starting", http.StatusBadGateway)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	launcher := &ASBLauncher{
+		Client: newTestASBClient(t, server),
+		Config: ASBConfig{
+			ReadyTimeout:        time.Millisecond,
+			CommandReadyTimeout: 50 * time.Millisecond,
+		},
+	}
+	started := time.Now()
+	_, err := launcher.waitSandboxCommandReady(context.Background(), testSandboxID)
+	if err == nil || !strings.Contains(err.Error(), "was not ready within 50ms") {
+		t.Fatalf("wait command ready error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Fatalf("dedicated command timeout elapsed = %s, want less than 1s", elapsed)
 	}
 }
