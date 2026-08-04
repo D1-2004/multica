@@ -170,7 +170,12 @@ func (m *ASBIdentitySourceManager) Create(
 		logASBIdentitySourceFailure("establish_buc_identity", sandbox.ID, err)
 		return EnterpriseIdentitySourceAvailability{}, err
 	}
-	if err := initializeASBIdentitySourceExpiration(ctx, client, sandbox.ID); err != nil {
+	if err := initializeASBIdentitySourceExpiration(
+		ctx,
+		client,
+		sandbox.ID,
+		sandbox.CreatedAt,
+	); err != nil {
 		logASBIdentitySourceFailure("initialize_source_expiration", sandbox.ID, err)
 		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
 			"initialize temporary ASB enterprise identity source expiration: %w",
@@ -551,18 +556,12 @@ func initializeASBIdentitySourceExpiration(
 	ctx context.Context,
 	client *ASBClient,
 	sandboxID string,
+	createdAt time.Time,
 ) error {
-	sandbox, err := client.GetSandbox(ctx, sandboxID)
-	if err != nil {
-		return fmt.Errorf(
-			"load ASB enterprise identity source before setting expiration: %w",
-			err,
-		)
-	}
-	if sandbox.CreatedAt.IsZero() {
+	if createdAt.IsZero() {
 		return errors.New("ASB enterprise identity source creation time is missing")
 	}
-	expiresAt := asbIdentitySourceInitialExpiration(sandbox.CreatedAt)
+	expiresAt := asbIdentitySourceInitialExpiration(createdAt)
 	if err := client.RenewSandbox(ctx, sandboxID, expiresAt, false); err != nil {
 		return fmt.Errorf("set ASB enterprise identity source expiration: %w", err)
 	}
