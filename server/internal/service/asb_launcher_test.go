@@ -8,12 +8,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -413,6 +415,211 @@ func TestASBLauncherReadsTenantQuotaBeforeCreatingSandbox(t *testing.T) {
 				t.Fatalf("quota exhausted = %v, want %v", exhausted, test.exhausted)
 			}
 		})
+	}
+}
+
+func TestInspectReusableASBSandboxRejectsUnavailableStates(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v1/sandboxes/running":
+			_, _ = io.WriteString(response, `{"id":"running","status":{"state":"Running"},"createdAt":"2026-08-04T08:00:00Z"}`)
+		case "/v1/sandboxes/terminated":
+			_, _ = io.WriteString(response, `{"id":"terminated","status":{"state":"Terminated"},"createdAt":"2026-08-04T08:00:00Z"}`)
+		case "/v1/sandboxes/failed":
+			_, _ = io.WriteString(response, `{"id":"failed","status":{"state":"Failed"},"createdAt":"2026-08-04T08:00:00Z"}`)
+		case "/v1/sandboxes/missing":
+			response.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(response, `{"code":"NOT_FOUND","message":"sandbox not found"}`)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	client := newTestASBClient(t, server)
+
+	tests := []struct {
+		name         string
+		sandboxID    string
+		wantReusable bool
+		wantState    string
+	}{
+		{name: "running", sandboxID: "running", wantReusable: true, wantState: "Running"},
+		{name: "terminated", sandboxID: "terminated", wantState: "Terminated"},
+		{name: "failed", sandboxID: "failed", wantState: "Failed"},
+		{name: "missing", sandboxID: "missing", wantState: "not_found"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reusable, state, err := inspectReusableASBSandbox(
+				context.Background(),
+				client,
+				test.sandboxID,
+			)
+			if err != nil {
+				t.Fatalf("inspect reusable sandbox: %v", err)
+			}
+			if reusable != test.wantReusable || state != test.wantState {
+				t.Fatalf(
+					"inspection = (reusable=%v, state=%q), want (reusable=%v, state=%q)",
+					reusable,
+					state,
+					test.wantReusable,
+					test.wantState,
+				)
+			}
+		})
+	}
+}
+
+func TestResolveASBSandboxReplacesUnavailableWarmSession(t *testing.T) {
+	pool := newSandboxLockPool(t)
+	workspaceID, userID, runtimeID := seedFCE2BSandboxRuntime(
+		t,
+		pool,
+		"Unavailable ASB Warm Session",
+	)
+	baseQueries := db.New(pool)
+	runtime, err := baseQueries.GetAgentRuntime(context.Background(), runtimeID)
+	if err != nil {
+		t.Fatalf("load runtime: %v", err)
+	}
+
+	var createCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/quotas":
+			_, _ = io.WriteString(response, `[{"networkZone":"ALITest","region":"cn-zhangjiakou","quota":5,"usage":1}]`)
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes":
+			id := "replacement-" + strconv.Itoa(int(createCalls.Add(1)))
+			response.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(response, `{"id":"`+id+`","status":{"state":"Pending"},"createdAt":"2026-08-04T08:00:00Z"}`)
+		case request.Method == http.MethodGet && strings.HasPrefix(request.URL.Path, "/v1/sandboxes/replacement-"):
+			id := strings.TrimPrefix(request.URL.Path, "/v1/sandboxes/")
+			_, _ = io.WriteString(response, `{"id":"`+id+`","status":{"state":"Running"},"createdAt":"2026-08-04T08:00:00Z"}`)
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/terminated-warm":
+			_, _ = io.WriteString(response, `{"id":"terminated-warm","status":{"state":"Terminated"},"createdAt":"2026-08-04T07:00:00Z"}`)
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/missing-warm":
+			response.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(response, `{"code":"NOT_FOUND","message":"sandbox not found"}`)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	box, err := secretbox.New(bytes.Repeat([]byte{0x52}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedAPIKey, err := box.Seal([]byte(testASBAPIKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := db.AsbRuntimeCredential{
+		RuntimeID:       runtimeID,
+		ApiKeyEncrypted: encryptedAPIKey,
+		ApiKeyHint:      "-key",
+	}
+	credentials := &ASBRuntimeClientProvider{
+		Store: &fakeASBRuntimeCredentialStore{
+			credential:  credential,
+			credentials: []db.AsbRuntimeCredential{credential},
+		},
+		Secrets: box,
+		Config:  ASBConfig{APIURL: server.URL},
+	}
+	common := NewFCE2BLauncher(baseQueries, nil, FCE2BConfig{}, nil)
+	common.SetPool(pool)
+	launcher := &ASBLauncher{
+		Common:      common,
+		Config:      ASBConfig{TimeoutSeconds: 300, ReadyTimeout: time.Second, ResourceCPU: "2", ResourceMemory: "4Gi"},
+		Client:      newTestASBClient(t, server),
+		Credentials: credentials,
+		Pool:        pool,
+	}
+	metadata := CloudSandboxRuntimeMetadata{
+		ArtifactRef: "registry.example/runtime@sha256:" + strings.Repeat("a", 64),
+	}
+
+	tests := []struct {
+		name         string
+		scopeID      pgtype.UUID
+		oldSandboxID string
+	}{
+		{name: "terminated", scopeID: workspaceID, oldSandboxID: "terminated-warm"},
+		{name: "not found", scopeID: userID, oldSandboxID: "missing-warm"},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scope := fcE2BTaskScope{typ: fcE2BScopeTypeChat, id: test.scopeID}
+			if _, err := baseQueries.UpsertCloudSandboxSession(
+				context.Background(),
+				db.UpsertCloudSandboxSessionParams{
+					WorkspaceID:         workspaceID,
+					RuntimeID:           runtimeID,
+					ScopeType:           scope.typ,
+					ScopeID:             scope.id,
+					SandboxID:           test.oldSandboxID,
+					ArtifactRef:         metadata.ArtifactRef,
+					ExpiresAt:           pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+					SandboxBackend:      string(SandboxBackendASB),
+					IdentityFingerprint: asbUnboundIdentityFingerprint,
+				},
+			); err != nil {
+				t.Fatalf("seed warm sandbox session: %v", err)
+			}
+
+			conn, err := pool.Acquire(context.Background())
+			if err != nil {
+				t.Fatalf("acquire runtime lock connection: %v", err)
+			}
+			launcher.Queries = db.New(conn)
+			sandboxID, coldStart, _, err := launcher.resolveSandbox(
+				context.Background(),
+				runtime,
+				metadata,
+				scope,
+				true,
+				userID,
+				pgtype.UUID{},
+				unboundASBResolvedIdentity(),
+				conn,
+				chattrace.New("task"),
+			)
+			conn.Release()
+			if err != nil {
+				t.Fatalf("resolve sandbox: %v", err)
+			}
+			wantSandboxID := "replacement-" + strconv.Itoa(index+1)
+			if sandboxID != wantSandboxID || !coldStart {
+				t.Fatalf("resolved sandbox = (%q, cold=%v), want (%q, true)", sandboxID, coldStart, wantSandboxID)
+			}
+
+			session, err := baseQueries.GetActiveCloudSandboxSession(
+				context.Background(),
+				db.GetActiveCloudSandboxSessionParams{
+					RuntimeID:           runtimeID,
+					ScopeType:           scope.typ,
+					ScopeID:             scope.id,
+					SandboxBackend:      string(SandboxBackendASB),
+					IdentityFingerprint: asbUnboundIdentityFingerprint,
+					ArtifactRef:         metadata.ArtifactRef,
+				},
+			)
+			if err != nil {
+				t.Fatalf("load replacement session: %v", err)
+			}
+			if session.SandboxID != wantSandboxID {
+				t.Fatalf("persisted sandbox = %q, want %q", session.SandboxID, wantSandboxID)
+			}
+		})
+	}
+	if createCalls.Load() != int32(len(tests)) {
+		t.Fatalf("ASB create calls = %d, want %d", createCalls.Load(), len(tests))
 	}
 }
 
