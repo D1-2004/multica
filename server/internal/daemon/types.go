@@ -145,11 +145,6 @@ type Task struct {
 	AuthToken                          string `json:"auth_token,omitempty"`
 	AgentIdentityContextToken          string `json:"agent_identity_context_token,omitempty"`
 	AgentIdentityContextTokenExpiresAt int64  `json:"agent_identity_context_token_expires_at,omitempty"`
-	// IssueIdentifier is the human-readable issue identifier (e.g. "MUL-123")
-	// resolved at claim time. The agent uses this value when creating DingTalk
-	// approval instances so the approval event callback can be linked back to
-	// the original issue.
-	IssueIdentifier string `json:"issue_identifier,omitempty"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata the daemon

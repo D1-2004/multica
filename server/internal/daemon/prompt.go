@@ -29,11 +29,7 @@ func BuildPrompt(task Task, provider string) string {
 	}
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
-	fmt.Fprintf(&b, "Your assigned issue ID is: %s", task.IssueID)
-	if task.IssueIdentifier != "" {
-		fmt.Fprintf(&b, " (identifier: %s)", task.IssueIdentifier)
-	}
-	b.WriteString("\n\n")
+	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
 	// Assignment handoff (MUL-3375): a free-text instruction the person who
 	// assigned/promoted this issue left for you. Frame it as a handoff, not a
 	// comment to reply to — there is no comment thread to answer here.
@@ -151,11 +147,7 @@ func buildQuickCreatePrompt(task Task) string {
 func buildCommentPrompt(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
-	fmt.Fprintf(&b, "Your assigned issue ID is: %s", task.IssueID)
-	if task.IssueIdentifier != "" {
-		fmt.Fprintf(&b, " (identifier: %s)", task.IssueIdentifier)
-	}
-	b.WriteString("\n\n")
+	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
 	if task.TriggerCommentContent != "" {
 		authorLabel := "A user"
 		if task.TriggerAuthorType == "agent" {

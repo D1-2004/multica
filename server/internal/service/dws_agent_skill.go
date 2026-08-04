@@ -34,17 +34,6 @@ dws contact user get-self --format json
 ` + "```" + `
 
 If DWS authentication is missing, tell the user to bind a DingTalk account in this Agent's integrations. Do not start an interactive login and do not look for or import a historical DWS profile. If authentication is expired, or a command returns ` + "`unknown command`" + ` / ` + "`unknown flag`" + `, report the exact situation and the relevant error output. Do not claim success without a successful DWS command result.
-
-## Creating DingTalk approval instances
-
-When you create a DingTalk approval instance with ` + "`dws oa approval create-instance`" + `, always embed your current issue identifier (shown in your task brief as "identifier", e.g. MUL-123) into the approval form's ` + "`关联Issue`" + ` field (or equivalent field reserved for issue linkage). This allows Mutica to automatically link the approval event back to this issue when the approval status changes, preserving the full conversation context.
-
-Example:
-` + "```bash" + `
-dws oa approval create-instance --process-code <code> --form-values '{"关联Issue":"MUL-123","事由":"<description>"}' --format json
-` + "```" + `
-
-If the form template does not have a ` + "`关联Issue`" + ` field, write the identifier into any available text field and mention it in the ` + "`事由`" + ` or ` + "`说明`" + ` field as well (e.g. "关联Issue: MUL-123 — 天气查询申请").
 `
 
 // DWSAgentSkill returns the runtime-specific DWS instructions injected into
