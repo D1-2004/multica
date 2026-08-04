@@ -1012,30 +1012,11 @@ func (s *FCE2BStableService) CompleteObservation(
 	if err := s.reconcileTargets(ctx, release); err != nil {
 		return FCE2BStableRelease{}, fmt.Errorf("reconcile stable observation targets: %w", err)
 	}
-	var missing, failed int
-	if err := s.Pool.QueryRow(ctx, `
-		SELECT
-			count(*) FILTER (WHERE target.id IS NULL OR target.status <> 'updated'),
-			count(*) FILTER (WHERE target.status = 'failed')
-		FROM agent_runtime runtime
-		JOIN fc_e2b_stable_release live_release ON live_release.id = $1
-		LEFT JOIN fc_e2b_stable_release_target target
-		  ON target.release_id = live_release.id
-		 AND target.runtime_id = runtime.id
-		 AND target.sandbox_backend = live_release.sandbox_backend
-		WHERE runtime.runtime_mode = 'cloud'
-		  AND CASE
-		        WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
-		        ELSE runtime.metadata->>'sandbox_backend'
-		      END = live_release.sandbox_backend
-		  AND COALESCE(
-		        NULLIF(runtime.metadata->>'artifact_channel', ''),
-		        NULLIF(runtime.metadata->>'template_channel', ''),
-		        'stable'
-		      ) = 'stable'
-	`, release.ID).Scan(&missing, &failed); err != nil {
+	progress, err := s.loadStableRolloutProgress(ctx, release.ID, release.CurrentBatch)
+	if err != nil {
 		return FCE2BStableRelease{}, fmt.Errorf("check stable observation targets: %w", err)
 	}
+	missing, failed := stableObservationTargetCounts(progress)
 	if err := stableObservationFailedTargetsError(failed); err != nil {
 		return FCE2BStableRelease{}, fmt.Errorf("%w: %v", ErrFCE2BStableObservationBlocked, err)
 	}
@@ -2968,6 +2949,10 @@ func stableObservationFailedTargetsError(failed int) error {
 		return fmt.Errorf("%d runtime targets failed", failed)
 	}
 	return nil
+}
+
+func stableObservationTargetCounts(progress stableRolloutProgress) (missing, failed int) {
+	return progress.Total - progress.Updated, progress.Failed
 }
 
 func stableObservationNeedsCatchUp(missing, failed int) bool {
