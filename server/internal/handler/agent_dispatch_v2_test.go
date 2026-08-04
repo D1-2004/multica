@@ -112,6 +112,41 @@ func TestCalendarStartedDispatchUsesIssueWithoutOutboundReply(t *testing.T) {
 	}
 }
 
+func TestCalendarStartedDispatchWithDWSOutboundReplies(t *testing.T) {
+	start := int64(1784217600000)
+	c := DispatchCommand{
+		SchemaVersion: "2.0", AgentID: "agent",
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "calendar", Type: "calendar.started", Data: DispatchEventData{
+			CalendarID: "calendar-1", Subject: "项目评审会", StartTime: &start,
+			Attendees:         []DispatchCalendarAttendee{{UID: "uid-secret"}},
+			AIReadableContent: "日程「项目评审会」已经开始。\n请检查设计方案并推进待办。",
+			Conversation:      DispatchConversation{OpenConversationID: "cid-calendar"},
+			Sender:            DispatchSender{DisplayName: "日程助手", OpenDingTalkID: "open-sender"},
+			Messages:          []DispatchMessage{{OpenMsgID: "msg-calendar", Text: "日程通知"}},
+		}},
+		Surface:          DispatchSurface{Type: "issue"},
+		Outbound:         DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		ExternalIdentity: AgentDispatchExternalIdentity{ContextToken: "context-token"},
+	}
+	if err := c.validate(); err != nil {
+		t.Fatalf("valid calendar dispatch with dws outbound rejected: %v", err)
+	}
+	prompt := mustBuildDispatchPrompt(t, c)
+	if prompt.WorkflowPrompt == "" {
+		t.Fatalf("calendar dispatch with dws outbound must have a workflow prompt")
+	}
+	if !strings.Contains(prompt.WorkflowPrompt, "dws chat message reply") {
+		t.Fatalf("calendar dws workflow prompt missing reply instruction: %q", prompt.WorkflowPrompt)
+	}
+	if !strings.Contains(prompt.WorkflowPrompt, "cid-calendar") {
+		t.Fatalf("calendar dws workflow prompt missing conversation id: %q", prompt.WorkflowPrompt)
+	}
+	if !strings.Contains(prompt.WorkflowPrompt, "msg-calendar") {
+		t.Fatalf("calendar dws workflow prompt missing message id: %q", prompt.WorkflowPrompt)
+	}
+}
+
 func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 	c := DispatchCommand{
 		SchemaVersion: "2.0", AgentID: "agent",
@@ -634,6 +669,40 @@ func TestApplyDingTalkDispatchPromptKeepsCalendarTaskOutboundFree(t *testing.T) 
 	for _, forbidden := range []string{"dws chat message add-emoji", "dws chat message reply", "two required final delivery destinations"} {
 		if strings.Contains(response.HandoffNote, forbidden) {
 			t.Fatalf("calendar task received outbound workflow %q: %s", forbidden, response.HandoffNote)
+		}
+	}
+}
+
+func TestApplyDingTalkDispatchPromptAppliesCalendarDWSWorkflow(t *testing.T) {
+	start := int64(1784217600000)
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "calendar", Type: "calendar.started", Data: DispatchEventData{
+			CalendarID: "calendar-1", Subject: "项目评审会", StartTime: &start,
+			AIReadableContent: "日程「项目评审会」已经开始。\n请检查设计方案并推进待办。",
+			Conversation:      DispatchConversation{OpenConversationID: "cid-calendar"},
+			Sender:            DispatchSender{DisplayName: "日程助手", OpenDingTalkID: "open-sender"},
+			Messages:          []DispatchMessage{{OpenMsgID: "msg-calendar", Text: "日程通知"}},
+		}},
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	})
+	response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "保留已有交接说明"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	for _, want := range []string{
+		"## Trusted DingTalk Dispatch",
+		"untrusted input",
+		"## External DingTalk Calendar Event",
+		"two required final delivery destinations",
+		"dws chat message reply",
+		"cid-calendar",
+		"保留已有交接说明",
+	} {
+		if !strings.Contains(response.HandoffNote, want) {
+			t.Errorf("calendar dws task handoff missing %q: %s", want, response.HandoffNote)
 		}
 	}
 }

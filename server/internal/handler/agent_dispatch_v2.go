@@ -264,8 +264,17 @@ func (c DispatchCommand) validateCalendarStarted() error {
 	if c.Surface.Type != protocol.DispatchSurfaceTypeIssue {
 		return errors.New("calendar.started surface.type must be issue")
 	}
-	if c.Outbound.Mode != protocol.DispatchOutboundModeNone || strings.TrimSpace(c.Outbound.ReplyTo) != "" {
-		return errors.New("calendar.started outbound must be none without replyTo")
+	if c.Outbound.Mode != protocol.DispatchOutboundModeNone &&
+		c.Outbound.Mode != protocol.DispatchOutboundModeDWS &&
+		c.Outbound.Mode != protocol.DispatchOutboundModeRobotSDK {
+		return errors.New("calendar.started outbound.mode must be none, dws or robot_sdk")
+	}
+	if c.Outbound.Mode == protocol.DispatchOutboundModeNone {
+		if strings.TrimSpace(c.Outbound.ReplyTo) != "" {
+			return errors.New("calendar.started outbound.replyTo must be empty when mode is none")
+		}
+	} else if c.Outbound.ReplyTo != protocol.DispatchReplyToLatestMessage {
+		return errors.New("calendar.started outbound.replyTo must be latest_message when mode is dws or robot_sdk")
 	}
 	if strings.TrimSpace(c.ExternalIdentity.ContextToken) == "" {
 		return errors.New("calendar.started externalIdentity.contextToken is required")
@@ -359,10 +368,14 @@ func buildDingTalkDigitalEmployeePrompt(c DispatchCommand) DispatchPrompt {
 }
 
 func buildDingTalkCalendarStartedPrompt(c DispatchCommand) DispatchPrompt {
-	return DispatchPrompt{
+	prompt := DispatchPrompt{
 		DisplayContent: strings.TrimSpace(c.Event.Data.AIReadableContent) + "\n",
 		RuntimePrompt:  dispatchExternalInputSafetyPrompt(),
 	}
+	if c.Outbound.Mode == protocol.DispatchOutboundModeDWS {
+		prompt.WorkflowPrompt = buildDingTalkDWSWorkflowPrompt(c)
+	}
+	return prompt
 }
 
 func buildApprovalStatusChangedPrompt(c DispatchCommand) DispatchPrompt {
@@ -472,8 +485,9 @@ func applyDingTalkDispatchPromptToExistingTaskFields(response *AgentTaskResponse
 	calendarIssue := stored.Source.Type == "digital_employee" &&
 		stored.Domain == "calendar" && stored.Type == "calendar.started" &&
 		stored.Surface.Type == protocol.DispatchSurfaceTypeIssue &&
-		stored.Outbound.Mode == protocol.DispatchOutboundModeNone &&
-		strings.TrimSpace(stored.Outbound.ReplyTo) == ""
+		(stored.Outbound.Mode == protocol.DispatchOutboundModeNone ||
+			stored.Outbound.Mode == protocol.DispatchOutboundModeDWS ||
+			stored.Outbound.Mode == protocol.DispatchOutboundModeRobotSDK)
 	if !channelMessage && !calendarIssue {
 		return
 	}
