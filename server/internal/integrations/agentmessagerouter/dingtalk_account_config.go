@@ -29,6 +29,7 @@ const (
 	maxConversationCIDBytes        = 256
 	maxConversationNameRunes       = 256
 	maxConversationMediaIDBytes    = 1024
+	maxBindingDomains              = 64
 )
 
 type DingTalkConversationSnapshot struct {
@@ -48,12 +49,16 @@ type DingTalkAccountConfig struct {
 	CallbackTokenHash    string                         `json:"callback_token_hash,omitempty"`
 	CallbackExpiresAt    time.Time                      `json:"callback_expires_at,omitempty"`
 	RouterSourceID       string                         `json:"router_source_id,omitempty"`
+	RouterPlatform       string                         `json:"router_platform,omitempty"`
+	RouterTenantID       string                         `json:"router_tenant_id,omitempty"`
+	RouterAccountID      string                         `json:"router_account_id,omitempty"`
 	AccountDisplayName   string                         `json:"account_display_name,omitempty"`
 	AccountAvatarURL     string                         `json:"account_avatar_url,omitempty"`
 	SurfaceType          string                         `json:"surface_type,omitempty"`
 	MessageRouteStatus   string                         `json:"message_route_status,omitempty"`
 	MessageRouteError    *BindingTaskError              `json:"message_route_error,omitempty"`
 	MessageScope         string                         `json:"message_scope"`
+	EnabledDomains       []string                       `json:"enabled_domains,omitempty"`
 	CalendarStartEnabled bool                           `json:"calendar_start_enabled,omitempty"`
 	Conversations        []DingTalkConversationSnapshot `json:"conversations,omitempty"`
 	BoundAt              *time.Time                     `json:"bound_at,omitempty"`
@@ -95,6 +100,14 @@ func NewPendingDingTalkAccountConfig(endpointID, dispatchURL, callbackHash strin
 }
 
 func (c DingTalkAccountConfig) Marshal() ([]byte, error) {
+	domains, err := normalizeBindingDomains(c.bindingDomains())
+	if err != nil {
+		return nil, err
+	}
+	c.EnabledDomains = domains
+	if len(domains) > 0 {
+		c.CalendarStartEnabled = containsBindingDomain(domains, "calendar")
+	}
 	messageScope, conversations, err := normalizeDingTalkConversationBinding(c.MessageScope, c.Conversations)
 	if err != nil {
 		return nil, err
@@ -114,6 +127,14 @@ func ParseDingTalkAccountConfig(raw []byte) (DingTalkAccountConfig, error) {
 	}
 	if config.MessageScope == "" {
 		config.MessageScope = DingTalkMessageScopeDirectOnly
+	}
+	domains, err := normalizeBindingDomains(config.bindingDomains())
+	if err != nil {
+		return DingTalkAccountConfig{}, err
+	}
+	config.EnabledDomains = domains
+	if len(domains) > 0 {
+		config.CalendarStartEnabled = containsBindingDomain(domains, "calendar")
 	}
 	messageScope, conversations, err := normalizeDingTalkConversationBinding(config.MessageScope, config.Conversations)
 	if err != nil {
@@ -144,8 +165,32 @@ func (c DingTalkAccountConfig) Validate() error {
 			return errors.New("dingtalk account callback credential is invalid")
 		}
 	}
+	accountKeyFields := 0
+	if c.RouterPlatform != "" {
+		accountKeyFields++
+	}
+	if c.RouterTenantID != "" {
+		accountKeyFields++
+	}
+	if c.RouterAccountID != "" {
+		accountKeyFields++
+	}
+	if accountKeyFields != 0 && accountKeyFields != 3 {
+		return errors.New("dingtalk account router account key is incomplete")
+	}
+	if accountKeyFields == 3 && (c.RouterPlatform != "dingtalk" ||
+		!validRouterIdentifier(c.RouterTenantID) || !validRouterIdentifier(c.RouterAccountID)) {
+		return errors.New("dingtalk account router account key is invalid")
+	}
 	if c.RouterSourceID != "" && c.BoundAt == nil {
 		return errors.New("dingtalk account bound time is required")
+	}
+	domains, err := normalizeBindingDomains(c.EnabledDomains)
+	if err != nil {
+		return err
+	}
+	if c.RouterSourceID != "" && (len(domains) == 0 || !containsBindingDomain(domains, "channel")) {
+		return errors.New("dingtalk account enabled domains are invalid")
 	}
 	if c.SurfaceType != "" && !validDingTalkSurfaceType(c.SurfaceType) {
 		return errors.New("dingtalk account surface type is invalid")
@@ -167,6 +212,51 @@ func (c DingTalkAccountConfig) Validate() error {
 		return err
 	}
 	return nil
+}
+
+func (c DingTalkAccountConfig) bindingDomains() []string {
+	if len(c.EnabledDomains) > 0 {
+		return append([]string(nil), c.EnabledDomains...)
+	}
+	if c.RouterSourceID == "" {
+		return nil
+	}
+	domains := []string{"channel"}
+	if c.CalendarStartEnabled {
+		domains = append(domains, "calendar")
+	}
+	return domains
+}
+
+func normalizeBindingDomains(domains []string) ([]string, error) {
+	if len(domains) == 0 {
+		return nil, nil
+	}
+	if len(domains) > maxBindingDomains {
+		return nil, errors.New("dingtalk account enabled domains are invalid")
+	}
+	normalized := make([]string, len(domains))
+	seen := make(map[string]struct{}, len(domains))
+	for index, domain := range domains {
+		if !validRouterIdentifier(domain) {
+			return nil, errors.New("dingtalk account enabled domains are invalid")
+		}
+		if _, exists := seen[domain]; exists {
+			return nil, errors.New("dingtalk account enabled domains are duplicated")
+		}
+		seen[domain] = struct{}{}
+		normalized[index] = domain
+	}
+	return normalized, nil
+}
+
+func containsBindingDomain(domains []string, expected string) bool {
+	for _, domain := range domains {
+		if domain == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeDingTalkConversationBinding(messageScope string, conversations []DingTalkConversationSnapshot) (string, []DingTalkConversationSnapshot, error) {

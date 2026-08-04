@@ -122,7 +122,7 @@ func TestNewServiceFromEnvNoFile(t *testing.T) {
 	// "framework adopted but no flags yet" path. Use t.Setenv so the
 	// state is restored after the test.
 	t.Setenv(EnvFlagFile, "")
-	svc, err := NewServiceFromEnv()
+	svc, err := newServiceFromEnvWithDiamondFactory(nil)
 	if err != nil {
 		t.Fatalf("NewServiceFromEnv: %v", err)
 	}
@@ -141,7 +141,7 @@ demo_flag:
   default: true
 `)
 	t.Setenv(EnvFlagFile, path)
-	svc, err := NewServiceFromEnv()
+	svc, err := newServiceFromEnvWithDiamondFactory(nil)
 	if err != nil {
 		t.Fatalf("NewServiceFromEnv: %v", err)
 	}
@@ -159,7 +159,7 @@ demo_flag:
 `)
 	t.Setenv(EnvFlagFile, path)
 	t.Setenv("FF_DEMO_FLAG", "false")
-	svc, err := NewServiceFromEnv()
+	svc, err := newServiceFromEnvWithDiamondFactory(nil)
 	if err != nil {
 		t.Fatalf("NewServiceFromEnv: %v", err)
 	}
@@ -170,7 +170,7 @@ demo_flag:
 
 func TestNewServiceFromEnvBadFileSurfacesError(t *testing.T) {
 	t.Setenv(EnvFlagFile, "/no/such/file.yaml")
-	_, err := NewServiceFromEnv()
+	_, err := newServiceFromEnvWithDiamondFactory(nil)
 	if err == nil {
 		t.Fatalf("missing file must surface as an error so operators see misconfig")
 	}

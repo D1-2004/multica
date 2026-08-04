@@ -21,27 +21,32 @@ func TestBuildAgentDispatchExecutionPlanComposesSurfaceIdentityAndOutbound(t *te
 	for _, tc := range []struct {
 		name                   string
 		sourceType             string
-		surfaceType            string
+		modeType               string
+		materializerType       string
 		outboundMode           string
 		wantWorkflow           bool
 		wantServerOutboundMute bool
 		wantEndpointNamespace  bool
 	}{
-		{name: "digital employee issue through DWS", sourceType: "digital_employee", surfaceType: "issue", outboundMode: "dws", wantWorkflow: true, wantServerOutboundMute: true},
-		{name: "digital employee chat through robot SDK", sourceType: "digital_employee", surfaceType: "chat", outboundMode: "robot_sdk"},
-		{name: "digital employee chat through DWS", sourceType: "digital_employee", surfaceType: "chat", outboundMode: "dws", wantWorkflow: true, wantServerOutboundMute: true, wantEndpointNamespace: true},
-		{name: "robot issue through DWS", sourceType: "robot", surfaceType: "issue", outboundMode: "dws", wantWorkflow: true, wantServerOutboundMute: true},
-		{name: "robot chat through DWS", sourceType: "robot", surfaceType: "chat", outboundMode: "dws", wantWorkflow: true, wantServerOutboundMute: true},
-		{name: "robot chat through robot SDK", sourceType: "robot", surfaceType: "chat", outboundMode: "robot_sdk"},
+		{name: "digital employee issue through DWS", sourceType: "digital_employee", modeType: "issue", materializerType: "issue", outboundMode: "dws", wantWorkflow: true, wantServerOutboundMute: true},
+		{name: "digital employee chat through robot SDK", sourceType: "digital_employee", modeType: "chat", materializerType: "chat", outboundMode: "robot_sdk"},
+		{name: "digital employee chat through DWS", sourceType: "digital_employee", modeType: "chat", materializerType: "chat", outboundMode: "dws", wantWorkflow: true, wantServerOutboundMute: true, wantEndpointNamespace: true},
+		{name: "digital employee auto through DWS", sourceType: "digital_employee", modeType: "auto", materializerType: "chat", outboundMode: "dws", wantWorkflow: true, wantServerOutboundMute: true, wantEndpointNamespace: true},
+		{name: "robot issue through DWS", sourceType: "robot", modeType: "issue", materializerType: "issue", outboundMode: "dws", wantWorkflow: true, wantServerOutboundMute: true},
+		{name: "robot chat through DWS", sourceType: "robot", modeType: "chat", materializerType: "chat", outboundMode: "dws", wantWorkflow: true, wantServerOutboundMute: true},
+		{name: "robot auto through robot SDK", sourceType: "robot", modeType: "auto", materializerType: "chat", outboundMode: "robot_sdk"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			command := dispatchCommandForPlanTest(tc.sourceType, tc.surfaceType, tc.outboundMode)
-			plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext)
+			command := dispatchCommandForPlanTest(tc.sourceType, tc.modeType, tc.outboundMode)
+			plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.SurfaceType != tc.surfaceType {
-				t.Fatalf("surface = %q, want %q", plan.SurfaceType, tc.surfaceType)
+			if plan.ModeType != tc.modeType {
+				t.Fatalf("mode = %q, want %q", plan.ModeType, tc.modeType)
+			}
+			if plan.MaterializerType != tc.materializerType {
+				t.Fatalf("materializer = %q, want %q", plan.MaterializerType, tc.materializerType)
 			}
 			if plan.Identity.PrincipalUserID != principal || plan.Identity.InitiatorUserID.Valid {
 				t.Fatalf("identity = %+v, want authenticated endpoint principal", plan.Identity)
@@ -77,7 +82,7 @@ func TestBuildAgentDispatchExecutionPlanRejectsDigitalEmployeeChatWithoutEndpoin
 		UserID:      pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
 		WorkspaceID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true},
 		AgentID:     pgtype.UUID{Bytes: [16]byte{3}, Valid: true},
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("digital employee chat+DWS accepted without authenticated endpoint namespace")
 	}
@@ -89,7 +94,7 @@ func TestBuildAgentDispatchExecutionPlanRejectsDigitalEmployeeChatWithoutEndpoin
 		EndpointNamespaceID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
 		WorkspaceID:         pgtype.UUID{Bytes: [16]byte{2}, Valid: true},
 		AgentID:             pgtype.UUID{Bytes: [16]byte{3}, Valid: true},
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("digital employee chat+DWS accepted without authenticated endpoint principal")
 	}

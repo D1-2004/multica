@@ -31,7 +31,9 @@ type fakeDingTalkAccountBindingService struct {
 	updateParams   agentmessagerouter.UpdateSurfaceParams
 	updateResult   agentmessagerouter.PublicDingTalkAccountBinding
 	unbindCalls    int
+	unbindParams   agentmessagerouter.UnbindParams
 	unbindResult   agentmessagerouter.PublicDingTalkAccountBinding
+	unbindErr      error
 }
 
 func (f *fakeDingTalkAccountBindingService) UpdateSurface(_ context.Context, params agentmessagerouter.UpdateSurfaceParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
@@ -56,9 +58,10 @@ func (f *fakeDingTalkAccountBindingService) CompleteBinding(_ context.Context, p
 	return f.completeResult, nil
 }
 
-func (f *fakeDingTalkAccountBindingService) Unbind(context.Context, agentmessagerouter.UnbindParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
+func (f *fakeDingTalkAccountBindingService) Unbind(_ context.Context, params agentmessagerouter.UnbindParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
 	f.unbindCalls++
-	return f.unbindResult, nil
+	f.unbindParams = params
+	return f.unbindResult, f.unbindErr
 }
 
 func TestListDingTalkAccountBindingsReportsUnconfiguredWithoutSecrets(t *testing.T) {
@@ -542,6 +545,10 @@ func TestDingTalkAccountCallbackForwardsMessageScopeAndConversations(t *testing.
 			},
 			"message_binding":{
 				"status":"success",
+				"platform":"dingtalk",
+				"tenant_id":"corp-a",
+				"account_id":"employee-a",
+				"previous_agent_id":"44444444-4444-4444-4444-444444444444",
 				"account_display_name":"Digital Worker Zhang",
 				"account_avatar_url":"https://example.com/digital-worker.png",
 				"source_id":"source-1",
@@ -582,6 +589,9 @@ func TestDingTalkAccountCallbackForwardsMessageScopeAndConversations(t *testing.
 	}
 	message, ok := forwarded["Message"].(map[string]any)
 	if !ok || message["message_scope"] != "custom" ||
+		message["platform"] != "dingtalk" || message["tenant_id"] != "corp-a" ||
+		message["account_id"] != "employee-a" ||
+		message["previous_agent_id"] != "44444444-4444-4444-4444-444444444444" ||
 		message["account_display_name"] != "Digital Worker Zhang" ||
 		message["account_avatar_url"] != "https://example.com/digital-worker.png" {
 		t.Fatalf("forwarded message = %#v params=%s", forwarded["Message"], encoded)
@@ -868,6 +878,52 @@ func TestUnbindDingTalkAccountPublishesRevokedEvent(t *testing.T) {
 	}
 }
 
+func TestUnbindDingTalkAccountKeepsProjectionRetryableWhenRouterCheckFails(t *testing.T) {
+	workspaceID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	agentID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	userID := util.MustParseUUID("44444444-4444-4444-4444-444444444444")
+	service := &fakeDingTalkAccountBindingService{unbindErr: agentmessagerouter.ErrRouterUnavailable}
+	bus := events.New()
+	published := 0
+	bus.Subscribe(protocol.EventDingTalkAccountBindingRevoked, func(events.Event) {
+		published++
+	})
+	h := &Handler{
+		DingTalkAccountBindings: service,
+		Bus:                     bus,
+		dingTalkAccountBindingMetadata: &beginBindingMetadataDB{
+			agent: db.Agent{
+				ID:             agentID,
+				WorkspaceID:    workspaceID,
+				OwnerID:        userID,
+				PermissionMode: "private",
+			},
+		},
+		dingTalkAccountBindingPermissions: &fakeDingTalkAccountBindingPermissionStore{
+			member: db.Member{WorkspaceID: workspaceID, UserID: userID, Role: "member"},
+		},
+	}
+	req := httptest.NewRequest(
+		http.MethodDelete,
+		"/api/workspaces/22222222-2222-2222-2222-222222222222/dingtalk/account-bindings/33333333-3333-3333-3333-333333333333?binding_mode=message",
+		nil,
+	)
+	req.Header.Set("X-User-ID", "44444444-4444-4444-4444-444444444444")
+	req = withURLParams(
+		req,
+		"id", "22222222-2222-2222-2222-222222222222",
+		"agentId", "33333333-3333-3333-3333-333333333333",
+	)
+	w := httptest.NewRecorder()
+
+	h.UnbindDingTalkAccountBinding(w, req)
+
+	if w.Code != http.StatusBadGateway || service.unbindCalls != 1 || published != 0 {
+		t.Fatalf("status = %d calls = %d published = %d body = %s", w.Code, service.unbindCalls, published, w.Body.String())
+	}
+	assertDingTalkAccountBindingErrorCode(t, w, "subscription_verify_failed")
+}
+
 func TestDingTalkAccountBindingServiceErrorsHaveStableCodes(t *testing.T) {
 	tests := []struct {
 		err        error
@@ -921,7 +977,7 @@ func validDingTalkBindingCallbackBody(bindingMode, messageStatus, sourceID strin
 	}
 	message := `{"status":"skipped","message_scope":"","conversations":[],"source_id":"","subscriptions":[],"error":null}`
 	if messageStatus == "success" {
-		message = `{"status":"success","message_scope":"direct_only","conversations":[],"source_id":"` + sourceID + `","subscriptions":[{"domain":"channel","source_id":"` + sourceID + `","status":"active"}],"error":null}`
+		message = `{"status":"success","platform":"dingtalk","tenant_id":"corp-a","account_id":"employee-a","message_scope":"direct_only","conversations":[],"source_id":"` + sourceID + `","subscriptions":[{"domain":"channel","source_id":"` + sourceID + `","status":"active"}],"error":null}`
 	}
 	return `{"binding_mode":"` + bindingMode + `","status":"completed","identity_binding":` + identity + `,"message_binding":` + message + `}`
 }

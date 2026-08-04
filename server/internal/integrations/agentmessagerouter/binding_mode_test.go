@@ -78,8 +78,11 @@ func TestMessageBindingCallbackStoresRouteWithoutChangingExecutionIdentity(t *te
 			Status: "skipped",
 		},
 		MessageBinding: MessageBindingResult{
-			Status:   "success",
-			SourceID: "source-1",
+			Status: "success", SourceID: "source-1", Platform: "dingtalk",
+			TenantID: "corp-a", AccountID: "employee-a",
+			Subscriptions: []BindingSubscriptionResult{
+				{Domain: "channel", SourceID: "source-1", Status: "active"},
+			},
 		},
 	})
 	if err != nil {

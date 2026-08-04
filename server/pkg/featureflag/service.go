@@ -3,6 +3,7 @@ package featureflag
 import (
 	"context"
 	"log/slog"
+	"sync"
 )
 
 // Service is the framework-level Toggle Router. Business code asks the
@@ -15,8 +16,30 @@ import (
 // callers compose Service without first guarding against nil, which in
 // practice is the most common cause of feature-flag-related nil panics.
 type Service struct {
-	provider Provider
-	logger   *slog.Logger
+	provider  Provider
+	logger    *slog.Logger
+	closeOnce sync.Once
+	closeFunc func() error
+	closeErr  error
+}
+
+func (s *Service) setCloseFunc(closeFunc func() error) {
+	if s != nil {
+		s.closeFunc = closeFunc
+	}
+}
+
+// Close releases dynamic provider resources. It is safe to call more than once.
+func (s *Service) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.closeOnce.Do(func() {
+		if s.closeFunc != nil {
+			s.closeErr = s.closeFunc()
+		}
+	})
+	return s.closeErr
 }
 
 // Option configures optional Service behavior.

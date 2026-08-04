@@ -62,8 +62,81 @@ func (q *Queries) ActivateDingTalkAccountBinding(ctx context.Context, arg Activa
 	return i, err
 }
 
+const backfillDingTalkAccountRouterAccountKey = `-- name: BackfillDingTalkAccountRouterAccountKey :one
+UPDATE channel_installation
+SET config = config || jsonb_build_object(
+        'router_platform', $1::text,
+        'router_tenant_id', $2::text,
+        'router_account_id', $3::text
+    ),
+    updated_at = now()
+WHERE id = $4
+  AND workspace_id = $5
+  AND agent_id = $6
+  AND channel_type = 'dingtalk_account'
+  AND status = $7::text
+  AND config ->> 'router_source_id' = $8::text
+  AND NULLIF(config ->> 'router_platform', '') IS NULL
+  AND NULLIF(config ->> 'router_tenant_id', '') IS NULL
+  AND NULLIF(config ->> 'router_account_id', '') IS NULL
+  AND config = $9::jsonb
+RETURNING id, workspace_id, agent_id, channel_type, config, status, ws_lease_token, ws_lease_expires_at, installer_user_id, installed_at, created_at, updated_at
+`
+
+type BackfillDingTalkAccountRouterAccountKeyParams struct {
+	RouterPlatform         string      `json:"router_platform"`
+	RouterTenantID         string      `json:"router_tenant_id"`
+	RouterAccountID        string      `json:"router_account_id"`
+	ID                     pgtype.UUID `json:"id"`
+	WorkspaceID            pgtype.UUID `json:"workspace_id"`
+	AgentID                pgtype.UUID `json:"agent_id"`
+	ExpectedStatus         string      `json:"expected_status"`
+	ExpectedRouterSourceID string      `json:"expected_router_source_id"`
+	ExpectedConfig         []byte      `json:"expected_config"`
+}
+
+// Enrichment writes only an all-or-nothing account identity and compares the
+// complete original JSON snapshot so a concurrent callback always wins.
+func (q *Queries) BackfillDingTalkAccountRouterAccountKey(ctx context.Context, arg BackfillDingTalkAccountRouterAccountKeyParams) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, backfillDingTalkAccountRouterAccountKey,
+		arg.RouterPlatform,
+		arg.RouterTenantID,
+		arg.RouterAccountID,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.AgentID,
+		arg.ExpectedStatus,
+		arg.ExpectedRouterSourceID,
+		arg.ExpectedConfig,
+	)
+	var i ChannelInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const beginDingTalkAccountBinding = `-- name: BeginDingTalkAccountBinding :one
 
+WITH target_agent AS (
+    SELECT id, workspace_id
+    FROM agent
+    WHERE id = $2
+      AND workspace_id = $1
+      AND archived_at IS NULL
+    FOR KEY SHARE
+)
 INSERT INTO channel_installation (
     workspace_id, agent_id, channel_type, config, status, installer_user_id
 )
@@ -74,9 +147,7 @@ SELECT
     $3,
     'pending',
     $4
-FROM agent a
-WHERE a.id = $2
-  AND a.workspace_id = $1
+FROM target_agent a
 ON CONFLICT (workspace_id, agent_id, channel_type) DO UPDATE SET
     config = EXCLUDED.config || jsonb_build_object(
         'dispatch_endpoint_id', channel_installation.config ->> 'dispatch_endpoint_id',
@@ -102,7 +173,10 @@ type BeginDingTalkAccountBindingParams struct {
 // integration cannot read or mutate another channel's installation.
 // Insert the first pending attempt only when the agent belongs to the supplied
 // workspace. Concurrent/repeated attempts rotate the callback credential but
-// keep the stable endpoint fields. active rows deliberately return no row.
+// keep the stable endpoint fields. The KEY SHARE lock conflicts with Agent
+// teardown's FOR UPDATE lock; after teardown commits, archived agents no longer
+// satisfy the CTE and cannot acquire a new pending binding. active rows
+// deliberately return no row.
 func (q *Queries) BeginDingTalkAccountBinding(ctx context.Context, arg BeginDingTalkAccountBindingParams) (ChannelInstallation, error) {
 	row := q.db.QueryRow(ctx, beginDingTalkAccountBinding,
 		arg.WorkspaceID,
@@ -202,6 +276,119 @@ func (q *Queries) CompleteDingTalkAccountBindingResult(ctx context.Context, arg 
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const deleteDingTalkAccountBindingProjectionForTeardown = `-- name: DeleteDingTalkAccountBindingProjectionForTeardown :one
+DELETE FROM channel_installation
+WHERE id = $1
+  AND workspace_id = $2
+  AND agent_id = $3
+  AND channel_type = 'dingtalk_account'
+  AND status = 'active'
+  AND config ->> 'router_platform' = $4::text
+  AND config ->> 'router_tenant_id' = $5::text
+  AND config ->> 'router_account_id' = $6::text
+RETURNING id, workspace_id, agent_id, channel_type, config, status, ws_lease_token, ws_lease_expires_at, installer_user_id, installed_at, created_at, updated_at
+`
+
+type DeleteDingTalkAccountBindingProjectionForTeardownParams struct {
+	ID                      pgtype.UUID `json:"id"`
+	WorkspaceID             pgtype.UUID `json:"workspace_id"`
+	AgentID                 pgtype.UUID `json:"agent_id"`
+	ExpectedRouterPlatform  string      `json:"expected_router_platform"`
+	ExpectedRouterTenantID  string      `json:"expected_router_tenant_id"`
+	ExpectedRouterAccountID string      `json:"expected_router_account_id"`
+}
+
+// Router has already conditionally unbound this exact BindingKey. Remove only
+// the still-active local projection whose complete AccountKey matches the
+// request; a concurrent takeover/callback therefore cannot be destroyed.
+func (q *Queries) DeleteDingTalkAccountBindingProjectionForTeardown(ctx context.Context, arg DeleteDingTalkAccountBindingProjectionForTeardownParams) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, deleteDingTalkAccountBindingProjectionForTeardown,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.AgentID,
+		arg.ExpectedRouterPlatform,
+		arg.ExpectedRouterTenantID,
+		arg.ExpectedRouterAccountID,
+	)
+	var i ChannelInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const deletePreviousDingTalkAccountBindingProjection = `-- name: DeletePreviousDingTalkAccountBindingProjection :many
+DELETE FROM channel_installation
+WHERE channel_type = 'dingtalk_account'
+  AND id <> $1
+  AND agent_id = $2
+  AND config ->> 'router_platform' = $3::text
+  AND config ->> 'router_tenant_id' = $4::text
+  AND config ->> 'router_account_id' = $5::text
+RETURNING id, workspace_id, agent_id, channel_type, config, status, ws_lease_token, ws_lease_expires_at, installer_user_id, installed_at, created_at, updated_at
+`
+
+type DeletePreviousDingTalkAccountBindingProjectionParams struct {
+	CurrentInstallationID pgtype.UUID `json:"current_installation_id"`
+	PreviousAgentID       pgtype.UUID `json:"previous_agent_id"`
+	RouterPlatform        string      `json:"router_platform"`
+	RouterTenantID        string      `json:"router_tenant_id"`
+	RouterAccountID       string      `json:"router_account_id"`
+}
+
+// A takeover callback removes only the previous Agent projection for this
+// canonical account in the current database. The winning installation is
+// always excluded and this statement has no Router side effects.
+func (q *Queries) DeletePreviousDingTalkAccountBindingProjection(ctx context.Context, arg DeletePreviousDingTalkAccountBindingProjectionParams) ([]ChannelInstallation, error) {
+	rows, err := q.db.Query(ctx, deletePreviousDingTalkAccountBindingProjection,
+		arg.CurrentInstallationID,
+		arg.PreviousAgentID,
+		arg.RouterPlatform,
+		arg.RouterTenantID,
+		arg.RouterAccountID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChannelInstallation{}
+	for rows.Next() {
+		var i ChannelInstallation
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AgentID,
+			&i.ChannelType,
+			&i.Config,
+			&i.Status,
+			&i.WsLeaseToken,
+			&i.WsLeaseExpiresAt,
+			&i.InstallerUserID,
+			&i.InstalledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getActiveDingTalkAccountBindingByEndpoint = `-- name: GetActiveDingTalkAccountBindingByEndpoint :one
@@ -311,6 +498,37 @@ func (q *Queries) GetDingTalkAccountBindingByAgent(ctx context.Context, arg GetD
 	return i, err
 }
 
+const getDingTalkAccountBindingByAgentForUpdate = `-- name: GetDingTalkAccountBindingByAgentForUpdate :one
+SELECT ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.status, ci.ws_lease_token, ci.ws_lease_expires_at, ci.installer_user_id, ci.installed_at, ci.created_at, ci.updated_at
+FROM channel_installation ci
+WHERE ci.agent_id = $1
+  AND ci.channel_type = 'dingtalk_account'
+FOR UPDATE
+`
+
+// Agent teardown already holds the Agent row lock. Lock the single local
+// projection as the second step so callback activation and local cleanup are
+// serialized behind the same transaction.
+func (q *Queries) GetDingTalkAccountBindingByAgentForUpdate(ctx context.Context, agentID pgtype.UUID) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, getDingTalkAccountBindingByAgentForUpdate, agentID)
+	var i ChannelInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getDingTalkAccountBindingInWorkspace = `-- name: GetDingTalkAccountBindingInWorkspace :one
 SELECT ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.status, ci.ws_lease_token, ci.ws_lease_expires_at, ci.installer_user_id, ci.installed_at, ci.created_at, ci.updated_at
 FROM channel_installation ci
@@ -345,6 +563,48 @@ func (q *Queries) GetDingTalkAccountBindingInWorkspace(ctx context.Context, arg 
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listDingTalkAccountBindingAccountKeyBackfillRows = `-- name: ListDingTalkAccountBindingAccountKeyBackfillRows :many
+SELECT ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.status, ci.ws_lease_token, ci.ws_lease_expires_at, ci.installer_user_id, ci.installed_at, ci.created_at, ci.updated_at
+FROM channel_installation ci
+WHERE ci.channel_type = 'dingtalk_account'
+ORDER BY ci.created_at ASC, ci.id ASC
+`
+
+// The explicit maintenance command must inventory orphaned projections after
+// Agent deletion, so this query deliberately has no Agent join.
+func (q *Queries) ListDingTalkAccountBindingAccountKeyBackfillRows(ctx context.Context) ([]ChannelInstallation, error) {
+	rows, err := q.db.Query(ctx, listDingTalkAccountBindingAccountKeyBackfillRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChannelInstallation{}
+	for rows.Next() {
+		var i ChannelInstallation
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AgentID,
+			&i.ChannelType,
+			&i.Config,
+			&i.Status,
+			&i.WsLeaseToken,
+			&i.WsLeaseExpiresAt,
+			&i.InstallerUserID,
+			&i.InstalledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listDingTalkAccountBindings = `-- name: ListDingTalkAccountBindings :many
@@ -422,6 +682,65 @@ type RevokeDingTalkAccountBindingParams struct {
 // statement never mutates agent_dingtalk_identity or its in-flight attempts.
 func (q *Queries) RevokeDingTalkAccountBinding(ctx context.Context, arg RevokeDingTalkAccountBindingParams) (ChannelInstallation, error) {
 	row := q.db.QueryRow(ctx, revokeDingTalkAccountBinding, arg.ID, arg.WorkspaceID, arg.AgentID)
+	var i ChannelInstallation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Config,
+		&i.Status,
+		&i.WsLeaseToken,
+		&i.WsLeaseExpiresAt,
+		&i.InstallerUserID,
+		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const revokeDingTalkAccountBindingByAccountKey = `-- name: RevokeDingTalkAccountBindingByAccountKey :one
+UPDATE channel_installation
+SET config = jsonb_build_object(
+        'schema_version', config -> 'schema_version',
+        'dispatch_endpoint_id', config -> 'dispatch_endpoint_id',
+        'dispatch_key_id', config -> 'dispatch_key_id',
+        'dispatch_url', config -> 'dispatch_url'
+    ),
+    status = 'revoked',
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND agent_id = $3
+  AND channel_type = 'dingtalk_account'
+  AND status = 'active'
+  AND config ->> 'router_platform' = $4::text
+  AND config ->> 'router_tenant_id' = $5::text
+  AND config ->> 'router_account_id' = $6::text
+RETURNING id, workspace_id, agent_id, channel_type, config, status, ws_lease_token, ws_lease_expires_at, installer_user_id, installed_at, created_at, updated_at
+`
+
+type RevokeDingTalkAccountBindingByAccountKeyParams struct {
+	ID                      pgtype.UUID `json:"id"`
+	WorkspaceID             pgtype.UUID `json:"workspace_id"`
+	AgentID                 pgtype.UUID `json:"agent_id"`
+	ExpectedRouterPlatform  string      `json:"expected_router_platform"`
+	ExpectedRouterTenantID  string      `json:"expected_router_tenant_id"`
+	ExpectedRouterAccountID string      `json:"expected_router_account_id"`
+}
+
+// A conditional Router unbind may only revoke the exact local account key that
+// was sent upstream. A concurrent takeover or callback cannot be overwritten.
+func (q *Queries) RevokeDingTalkAccountBindingByAccountKey(ctx context.Context, arg RevokeDingTalkAccountBindingByAccountKeyParams) (ChannelInstallation, error) {
+	row := q.db.QueryRow(ctx, revokeDingTalkAccountBindingByAccountKey,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.AgentID,
+		arg.ExpectedRouterPlatform,
+		arg.ExpectedRouterTenantID,
+		arg.ExpectedRouterAccountID,
+	)
 	var i ChannelInstallation
 	err := row.Scan(
 		&i.ID,

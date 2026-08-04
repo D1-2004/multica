@@ -480,7 +480,7 @@ func TestDelegateIssueWithExternalCompletionRequiresUpdateCallback(t *testing.T)
 	}
 }
 
-func TestDelegateIssueContinueReusesExternalIssueDispatchBusySemantics(t *testing.T) {
+func TestDelegateIssueContinueCoalescesCallbacksOntoOneIssueTask(t *testing.T) {
 	targetAgentID := createHandlerTestAgent(t, "delegation-queue-target", nil)
 	targetAgentUUID, _ := util.ParseUUID(targetAgentID)
 	workspaceUUID, _ := util.ParseUUID(testWorkspaceID)
@@ -514,17 +514,254 @@ func TestDelegateIssueContinueReusesExternalIssueDispatchBusySemantics(t *testin
 	}
 
 	sourceAgentID := createHandlerTestAgent(t, "delegation-queue-source", nil)
-	sourceTaskID, _ := createDelegationSourceTask(t, sourceAgentID, `{}`)
-	req := delegationRequest(t, sourceTaskID, sourceAgentID, map[string]any{
-		"source_task_id": sourceTaskID,
+	firstCallbackURL := "/api/v1/dispatch-tasks/router-queue-first/execution-result"
+	firstUpdateURL := "/api/v1/dispatch-tasks/router-queue-first/execution-update"
+	firstContext := fmt.Sprintf(`{
+		"agent_identity_context_token":"first-queue-token",
+		"completion_callback":{"url":%q,"update_url":%q,"target":%q}
+	}`, firstCallbackURL, firstUpdateURL, testRouterTargetIdentity)
+	firstSourceTaskID, _ := createDelegationSourceTask(t, sourceAgentID, firstContext)
+	first := httptest.NewRecorder()
+	testHandler.DelegateIssue(first, delegationRequest(t, firstSourceTaskID, sourceAgentID, map[string]any{
+		"source_task_id": firstSourceTaskID,
 		"mode":           "continue",
 		"issue_id":       uuidToString(issue.ID),
 		"content":        "把这些新闻撰写成日报卡片并发送给我",
-	})
-	w := httptest.NewRecorder()
-	testHandler.DelegateIssue(w, req)
-	if w.Code != http.StatusConflict {
-		t.Fatalf("continue with active issue task = %d: %s", w.Code, w.Body.String())
+	}))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first continuation = %d: %s", first.Code, first.Body.String())
+	}
+	var firstResponse IssueDelegationResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &firstResponse); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_task_queue
+		SET runtime_mcp_overlay = '{"sentinel":"first-delegation-context"}'::jsonb
+		WHERE id = $1
+	`, firstResponse.TargetTaskID); err != nil {
+		t.Fatal(err)
+	}
+
+	secondCallbackURL := "/api/v1/dispatch-tasks/router-queue-second/execution-result"
+	secondUpdateURL := "/api/v1/dispatch-tasks/router-queue-second/execution-update"
+	secondContext := fmt.Sprintf(`{
+		"agent_identity_context_token":"second-queue-token",
+		"completion_callback":{"url":%q,"update_url":%q,"target":%q}
+	}`, secondCallbackURL, secondUpdateURL, testRouterTargetIdentity)
+	secondSourceTaskID, _ := createDelegationSourceTask(t, sourceAgentID, secondContext)
+	second := httptest.NewRecorder()
+	testHandler.DelegateIssue(second, delegationRequest(t, secondSourceTaskID, sourceAgentID, map[string]any{
+		"source_task_id": secondSourceTaskID,
+		"mode":           "continue",
+		"issue_id":       uuidToString(issue.ID),
+		"content":        "这个任务别做了，取消掉",
+	}))
+	if second.Code != http.StatusCreated {
+		t.Fatalf("second continuation = %d: %s", second.Code, second.Body.String())
+	}
+	var secondResponse IssueDelegationResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &secondResponse); err != nil {
+		t.Fatal(err)
+	}
+	if firstResponse.TargetTaskID != secondResponse.TargetTaskID {
+		t.Fatalf("continuations used different tasks: first=%s second=%s",
+			firstResponse.TargetTaskID, secondResponse.TargetTaskID)
+	}
+	secondReplay := httptest.NewRecorder()
+	testHandler.DelegateIssue(secondReplay, delegationRequest(t, secondSourceTaskID, sourceAgentID, map[string]any{
+		"source_task_id": secondSourceTaskID,
+		"mode":           "continue",
+		"issue_id":       uuidToString(issue.ID),
+		"content":        "这个任务别做了，取消掉",
+	}))
+	if secondReplay.Code != http.StatusOK {
+		t.Fatalf("second continuation replay = %d: %s", secondReplay.Code, secondReplay.Body.String())
+	}
+	var secondReplayResponse IssueDelegationResponse
+	if err := json.Unmarshal(secondReplay.Body.Bytes(), &secondReplayResponse); err != nil {
+		t.Fatal(err)
+	}
+	if secondReplayResponse.TargetTaskID != secondResponse.TargetTaskID ||
+		secondReplayResponse.TriggerCommentID != secondResponse.TriggerCommentID {
+		t.Fatalf("second replay response=%+v, want target=%s comment=%s",
+			secondReplayResponse, secondResponse.TargetTaskID, secondResponse.TriggerCommentID)
+	}
+	var replayCommentCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM comment
+		WHERE author_type = 'member' AND source_task_id = $1
+	`, secondSourceTaskID).Scan(&replayCommentCount); err != nil {
+		t.Fatal(err)
+	}
+	if replayCommentCount != 1 {
+		t.Fatalf("second continuation replay created %d comments, want 1", replayCommentCount)
+	}
+
+	var (
+		parentTaskID        string
+		targetContext       string
+		targetRuntimeOverlay string
+		triggerCommentID    string
+		coalescedCommentIDs []string
+	)
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT parent_task_id::text, context::text, runtime_mcp_overlay::text,
+		       trigger_comment_id::text,
+		       ARRAY(SELECT id::text FROM unnest(coalesced_comment_ids) AS id ORDER BY id::text)
+		FROM agent_task_queue
+		WHERE id = $1
+	`, firstResponse.TargetTaskID).Scan(
+		&parentTaskID,
+		&targetContext,
+		&targetRuntimeOverlay,
+		&triggerCommentID,
+		&coalescedCommentIDs,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if parentTaskID != firstSourceTaskID {
+		t.Fatalf("target parent task = %s, want first source %s", parentTaskID, firstSourceTaskID)
+	}
+	if !strings.Contains(targetContext, "first-queue-token") ||
+		strings.Contains(targetContext, "second-queue-token") {
+		t.Fatalf("coalesced task did not retain first context: %s", targetContext)
+	}
+	if !strings.Contains(targetRuntimeOverlay, "first-delegation-context") {
+		t.Fatalf("coalesced task overwrote first runtime overlay: %s", targetRuntimeOverlay)
+	}
+	if triggerCommentID != secondResponse.TriggerCommentID ||
+		len(coalescedCommentIDs) != 1 ||
+		coalescedCommentIDs[0] != firstResponse.TriggerCommentID {
+		t.Fatalf("comment plan trigger=%s coalesced=%v first=%s second=%s",
+			triggerCommentID,
+			coalescedCommentIDs,
+			firstResponse.TriggerCommentID,
+			secondResponse.TriggerCommentID,
+		)
+	}
+
+	for _, mapping := range []struct {
+		commentID    string
+		sourceTaskID string
+	}{
+		{firstResponse.TriggerCommentID, firstSourceTaskID},
+		{secondResponse.TriggerCommentID, secondSourceTaskID},
+	} {
+		var storedSourceTaskID string
+		if err := testPool.QueryRow(context.Background(), `
+			SELECT source_task_id::text FROM comment WHERE id = $1
+		`, mapping.commentID).Scan(&storedSourceTaskID); err != nil {
+			t.Fatal(err)
+		}
+		if storedSourceTaskID != mapping.sourceTaskID {
+			t.Fatalf("comment %s source task = %s, want %s",
+				mapping.commentID, storedSourceTaskID, mapping.sourceTaskID)
+		}
+	}
+
+	for _, sourceTaskID := range []string{firstSourceTaskID, secondSourceTaskID} {
+		sourceTaskUUID, _ := util.ParseUUID(sourceTaskID)
+		if _, err := testHandler.TaskService.CompleteTask(
+			context.Background(),
+			sourceTaskUUID,
+			[]byte(`{"output":"已转入后台处理"}`),
+			"",
+			"",
+		); err != nil {
+			t.Fatal(err)
+		}
+		var premature int
+		if err := testPool.QueryRow(context.Background(), `
+			SELECT count(*) FROM task_completion_outbox WHERE root_task_id = $1
+		`, sourceTaskID).Scan(&premature); err != nil {
+			t.Fatal(err)
+		}
+		if premature != 0 {
+			t.Fatalf("source task %s queued terminal callback before issue task completion", sourceTaskID)
+		}
+	}
+
+	targetTaskUUID, _ := util.ParseUUID(firstResponse.TargetTaskID)
+	firstCommentUUID, _ := util.ParseUUID(firstResponse.TriggerCommentID)
+	secondCommentUUID, _ := util.ParseUUID(secondResponse.TriggerCommentID)
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_task_queue
+		SET status = 'running',
+		    started_at = now(),
+		    delivered_comment_ids = ARRAY[$2::uuid, $3::uuid]
+		WHERE id = $1
+	`, targetTaskUUID, firstCommentUUID, secondCommentUUID); err != nil {
+		t.Fatal(err)
+	}
+	for _, reply := range []struct {
+		parentID string
+		content  string
+	}{
+		{firstResponse.TriggerCommentID, "日报卡片已生成并发送"},
+		{secondResponse.TriggerCommentID, "已按追加指令停止后续发送"},
+	} {
+		if _, err := testPool.Exec(context.Background(), `
+			INSERT INTO comment (
+				issue_id, workspace_id, author_type, author_id, content, type,
+				parent_id, source_task_id
+			)
+			VALUES ($1, $2, 'agent', $3, $4, 'comment', $5, $6)
+		`, issue.ID, issue.WorkspaceID, targetAgentUUID, reply.content, reply.parentID, targetTaskUUID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := testHandler.TaskService.CompleteTask(
+		context.Background(),
+		targetTaskUUID,
+		[]byte(`{"output":"本轮合并任务执行完成"}`),
+		"",
+		"",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := testPool.Query(context.Background(), `
+		SELECT root_task_id::text, callback_url, request_id, result_message
+		FROM task_completion_outbox
+		WHERE terminal_task_id = $1
+		ORDER BY callback_url
+	`, targetTaskUUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string]struct {
+		rootTaskID   string
+		requestID    string
+		resultMessage string
+	}{}
+	for rows.Next() {
+		var callbackURL, rootTaskID, requestID, resultMessage string
+		if err := rows.Scan(&rootTaskID, &callbackURL, &requestID, &resultMessage); err != nil {
+			t.Fatal(err)
+		}
+		got[callbackURL] = struct {
+			rootTaskID   string
+			requestID    string
+			resultMessage string
+		}{rootTaskID, requestID, resultMessage}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("terminal callback count = %d, want 2: %+v", len(got), got)
+	}
+	if firstResult := got[firstCallbackURL]; firstResult.rootTaskID != firstSourceTaskID ||
+		firstResult.requestID != "multica-comment-terminal:"+firstSourceTaskID ||
+		firstResult.resultMessage != "日报卡片已生成并发送" {
+		t.Fatalf("first callback = %+v", firstResult)
+	}
+	if secondResult := got[secondCallbackURL]; secondResult.rootTaskID != secondSourceTaskID ||
+		secondResult.requestID != "multica-comment-terminal:"+secondSourceTaskID ||
+		secondResult.resultMessage != "已按追加指令停止后续发送" {
+		t.Fatalf("second callback = %+v", secondResult)
 	}
 }
 
@@ -599,6 +836,84 @@ func TestDelegateIssueContinuePersistsCommentTaskAndHandoffTogether(t *testing.T
 		callbackPath != updateURL {
 		t.Fatalf("comment=%q target=%q callback=%q response=%+v",
 			commentContent, targetTaskID, callbackPath, delegated)
+	}
+}
+
+func TestDelegateIssueContinuationWaitsUntilCommentIsDelivered(t *testing.T) {
+	sourceAgentID := createHandlerTestAgent(t, "delegation-undelivered-source", nil)
+	targetAgentID := createHandlerTestAgent(t, "delegation-undelivered-target", nil)
+	issue := createDelegationContinuationIssue(t, targetAgentID, "委派评论等待实际交付")
+	callbackURL := "/api/v1/dispatch-tasks/router-undelivered/execution-result"
+	updateURL := "/api/v1/dispatch-tasks/router-undelivered/execution-update"
+	sourceContext := fmt.Sprintf(`{
+		"agent_identity_context_token":"undelivered-private-token",
+		"completion_callback":{"url":%q,"update_url":%q,"target":%q}
+	}`, callbackURL, updateURL, testRouterTargetIdentity)
+	sourceTaskID, _ := createDelegationSourceTask(t, sourceAgentID, sourceContext)
+
+	w := httptest.NewRecorder()
+	testHandler.DelegateIssue(w, delegationRequest(t, sourceTaskID, sourceAgentID, map[string]any{
+		"source_task_id": sourceTaskID,
+		"mode":           "continue",
+		"issue_id":       uuidToString(issue.ID),
+		"content":        "这条评论必须等实际交付后才能回调",
+	}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("DelegateIssue continue = %d: %s", w.Code, w.Body.String())
+	}
+	var delegated IssueDelegationResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &delegated); err != nil {
+		t.Fatal(err)
+	}
+	sourceTaskUUID, _ := util.ParseUUID(sourceTaskID)
+	if _, err := testHandler.TaskService.CompleteTask(
+		context.Background(),
+		sourceTaskUUID,
+		[]byte(`{"output":"已转入后台处理"}`),
+		"",
+		"",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_task_queue
+		SET status = 'running', started_at = now(), delivered_comment_ids = '{}'
+		WHERE id = $1
+	`, delegated.TargetTaskID); err != nil {
+		t.Fatal(err)
+	}
+	if completed := completeTaskViaHandler(t, delegated.TargetTaskID, "claim 未包含委派评论"); completed.Code != http.StatusOK {
+		t.Fatalf("CompleteTask = %d: %s", completed.Code, completed.Body.String())
+	}
+	var premature int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM task_completion_outbox WHERE root_task_id = $1
+	`, sourceTaskID).Scan(&premature); err != nil {
+		t.Fatal(err)
+	}
+	if premature != 0 {
+		t.Fatalf("undelivered delegated comment created %d terminal callbacks", premature)
+	}
+	var successorParentTaskID, successorTriggerCommentID, successorContext string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT parent_task_id::text, trigger_comment_id::text, context::text
+		FROM agent_task_queue
+		WHERE issue_id = $1 AND status = 'queued'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, issue.ID).Scan(
+		&successorParentTaskID,
+		&successorTriggerCommentID,
+		&successorContext,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if successorParentTaskID != sourceTaskID ||
+		successorTriggerCommentID != delegated.TriggerCommentID ||
+		!strings.Contains(successorContext, "undelivered-private-token") {
+		t.Fatalf("successor parent=%s trigger=%s context=%s",
+			successorParentTaskID, successorTriggerCommentID, successorContext)
 	}
 }
 

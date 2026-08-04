@@ -436,6 +436,15 @@ FROM lineage
 WHERE lineage.parent_task_id IS NULL
   AND COALESCE(lineage.context #>> '{completion_callback,url}', '') <> ''
   AND COALESCE(lineage.context #>> '{completion_callback,target}', '') <> ''
+  -- Continuation callbacks are owned by their member comments. Even when this
+  -- root is also the physical parent, it must wait until the comment appears
+  -- in a claim-time delivered_comment_ids receipt.
+  AND NOT EXISTS (
+      SELECT 1
+      FROM comment delegated_input
+      WHERE delegated_input.author_type = 'member'
+        AND delegated_input.source_task_id = lineage.id
+  )
   -- Completing a root that already handed work to a child only releases the
   -- foreground run. Completing the child walks back to this same root and is
   -- allowed to produce the one terminal callback.
@@ -473,6 +482,105 @@ func (q *Queries) GetTaskCompletionTarget(ctx context.Context, id pgtype.UUID) (
 	return i, err
 }
 
+const getTaskReplyForComment = `-- name: GetTaskReplyForComment :one
+WITH RECURSIVE lineage AS (
+    SELECT task.id, task.parent_task_id
+    FROM agent_task_queue task
+    WHERE task.id = $2
+
+    UNION ALL
+
+    SELECT parent.id, parent.parent_task_id
+    FROM agent_task_queue parent
+    JOIN lineage child ON parent.id = child.parent_task_id
+)
+SELECT reply.content
+FROM comment reply
+JOIN lineage ON lineage.id = reply.source_task_id
+WHERE reply.author_type = 'agent'
+  AND reply.parent_id = $1
+  AND COALESCE(BTRIM(reply.content), '') <> ''
+ORDER BY reply.created_at DESC, reply.id DESC
+LIMIT 1
+`
+
+type GetTaskReplyForCommentParams struct {
+	CommentID      pgtype.UUID `json:"comment_id"`
+	TerminalTaskID pgtype.UUID `json:"terminal_task_id"`
+}
+
+// Resolve the latest Agent reply produced by this task lineage for one
+// delegated input comment. Direct parent matching mirrors the UI thread
+// contract and keeps each source callback paired with its own visible reply.
+func (q *Queries) GetTaskReplyForComment(ctx context.Context, arg GetTaskReplyForCommentParams) (string, error) {
+	row := q.db.QueryRow(ctx, getTaskReplyForComment, arg.CommentID, arg.TerminalTaskID)
+	var content string
+	err := row.Scan(&content)
+	return content, err
+}
+
+const listTaskCommentCompletionTargets = `-- name: ListTaskCommentCompletionTargets :many
+WITH delivered AS (
+    SELECT unnest(task.delivered_comment_ids) AS comment_id
+    FROM agent_task_queue task
+    WHERE task.id = $1
+)
+SELECT DISTINCT ON (source_task.id)
+    source_task.id AS root_task_id,
+    source_task.agent_id AS root_agent_id,
+    COALESCE(source_task.context #>> '{completion_callback,url}', '')::text AS callback_url,
+    COALESCE(source_task.context #>> '{completion_callback,target}', '')::text AS target_identity,
+    delegated_input.id AS comment_id
+FROM delivered
+JOIN comment delegated_input
+  ON delegated_input.id = delivered.comment_id
+ AND delegated_input.author_type = 'member'
+ AND delegated_input.source_task_id IS NOT NULL
+JOIN agent_task_queue source_task
+  ON source_task.id = delegated_input.source_task_id
+WHERE COALESCE(source_task.context #>> '{completion_callback,url}', '') <> ''
+  AND COALESCE(source_task.context #>> '{completion_callback,target}', '') <> ''
+ORDER BY source_task.id, delegated_input.created_at DESC, delegated_input.id DESC
+`
+
+type ListTaskCommentCompletionTargetsRow struct {
+	RootTaskID     pgtype.UUID `json:"root_task_id"`
+	RootAgentID    pgtype.UUID `json:"root_agent_id"`
+	CallbackUrl    string      `json:"callback_url"`
+	TargetIdentity string      `json:"target_identity"`
+	CommentID      pgtype.UUID `json:"comment_id"`
+}
+
+// A single Issue run can consume multiple delegated member comments. Each
+// comment points back to the source Chat task whose private callback metadata
+// must be closed independently. delivered_comment_ids is the claim-time
+// receipt, so planned-but-undelivered comments are intentionally excluded.
+func (q *Queries) ListTaskCommentCompletionTargets(ctx context.Context, terminalTaskID pgtype.UUID) ([]ListTaskCommentCompletionTargetsRow, error) {
+	rows, err := q.db.Query(ctx, listTaskCommentCompletionTargets, terminalTaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTaskCommentCompletionTargetsRow{}
+	for rows.Next() {
+		var i ListTaskCommentCompletionTargetsRow
+		if err := rows.Scan(
+			&i.RootTaskID,
+			&i.RootAgentID,
+			&i.CallbackUrl,
+			&i.TargetIdentity,
+			&i.CommentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTerminalTaskIDsMissingCompletion = `-- name: ListTerminalTaskIDsMissingCompletion :many
 WITH RECURSIVE lineage AS (
     SELECT
@@ -495,6 +603,12 @@ WITH RECURSIVE lineage AS (
           SELECT 1
           FROM agent_task_queue child
           WHERE child.parent_task_id = terminal.id
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM comment delegated_input
+          WHERE delegated_input.author_type = 'member'
+            AND delegated_input.source_task_id = terminal.id
       )
 
     UNION ALL

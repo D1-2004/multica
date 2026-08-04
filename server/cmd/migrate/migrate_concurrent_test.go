@@ -318,6 +318,29 @@ func TestRunMigrationsConcurrentAlreadyApplied(t *testing.T) {
 	}
 }
 
+func TestRunMigrationsUpIgnoresAppliedVersionWhoseSourceFileWasRemoved(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), raceTestTimeout)
+	defer cancel()
+
+	if err := runMigrations(ctx, f.pool, f.opts()); err != nil {
+		t.Fatalf("baseline runMigrations: %v", err)
+	}
+	baseline := f.appliedVersions(t)
+	if len(f.files) < 2 || !equalStrings(baseline, f.versions) {
+		t.Fatalf("baseline schema_migrations = %v, want %v", baseline, f.versions)
+	}
+
+	opts := f.opts()
+	opts.Files = append([]string(nil), f.files[1:]...)
+	if err := runMigrations(ctx, f.pool, opts); err != nil {
+		t.Fatalf("runMigrations after removing an applied source file: %v", err)
+	}
+	if got := f.appliedVersions(t); !equalStrings(got, baseline) {
+		t.Fatalf("removed source changed migration tracking: got %v, want %v", got, baseline)
+	}
+}
+
 // TestRunMigrationsAdvisoryLockSerializes proves the lock genuinely
 // blocks contenders. We acquire the same advisory key on a side
 // connection BEFORE spawning any runMigrations goroutine, then start N

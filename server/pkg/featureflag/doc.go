@@ -26,11 +26,9 @@
 // Wiring:
 //
 // The standard way to construct the Service inside the multica server is
-// featureflag.NewServiceFromEnv, which reads MULTICA_FEATURE_FLAGS_FILE for
-// the YAML rule set and layers an EnvProvider on top so individual flags
-// can be overridden at runtime via FF_<KEY> env vars. The core types only
-// depend on the standard library; the YAML loader pulls in gopkg.in/yaml.v3
-// which is already a server-level dependency.
+// featureflag.NewServiceFromEnv, which layers FF_<KEY> environment overrides,
+// an optional Alibaba Diamond dynamic snapshot, and the YAML rule set from
+// MULTICA_FEATURE_FLAGS_FILE in that order.
 //
 // See server/pkg/featureflag/service.go for the public Service API and
 // docs/feature-flags.md for end-to-end usage examples.
