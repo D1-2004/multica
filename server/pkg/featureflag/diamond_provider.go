@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	DispatchIssueRuntimePromptFlagKey = "dispatch_issue_runtime_prompt"
-	DispatchChatRuntimePromptFlagKey  = "dispatch_chat_runtime_prompt"
-	DispatchAutoRuntimePromptFlagKey  = "dispatch_auto_runtime_prompt"
+	DispatchCommonRuntimePromptFlagKey = "dispatch_common_runtime_prompt"
+	DispatchIssueRuntimePromptFlagKey  = "dispatch_issue_runtime_prompt"
+	DispatchChatRuntimePromptFlagKey   = "dispatch_chat_runtime_prompt"
+	DispatchAutoRuntimePromptFlagKey   = "dispatch_auto_runtime_prompt"
 )
 
 type diamondSnapshot struct {
