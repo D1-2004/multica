@@ -176,7 +176,7 @@ func (h *Handler) handleAgentDispatchV2(
 		return
 	}
 	command.DispatchEndpointID = uuidToString(dispatchContext.EndpointNamespaceID)
-	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext)
+	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext, h.FeatureFlags)
 	if err != nil {
 		slog.Error("MULTICA_AGENT_DISPATCH_REQUEST",
 			"outcome", "failed",
@@ -284,7 +284,7 @@ func (h *Handler) executeAgentDispatchV2(
 	plan agentDispatchExecutionPlan,
 	dispatchContext agentDispatchContext,
 ) {
-	if plan.SurfaceType == "chat" {
+	if plan.MaterializerType == protocol.DispatchSurfaceTypeChat {
 		if command.Continuation != nil &&
 			(command.Continuation.Kind != "chat" || strings.TrimSpace(command.Continuation.ChatSessionID) == "") {
 			writeError(w, http.StatusBadRequest, "continuation must identify a chat")

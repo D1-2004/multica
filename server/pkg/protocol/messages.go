@@ -33,6 +33,7 @@ const (
 const (
 	DispatchSurfaceTypeIssue     = "issue"
 	DispatchSurfaceTypeChat      = "chat"
+	DispatchSurfaceTypeAuto      = "auto"
 	DispatchOutboundModeDWS      = "dws"
 	DispatchOutboundModeRobotSDK = "robot_sdk"
 	DispatchOutboundModeNone     = "none"
