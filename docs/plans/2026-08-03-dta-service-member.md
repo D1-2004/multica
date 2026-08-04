@@ -299,7 +299,7 @@ DTA HTTPS → dta_ 生命周期校验 → 原生 member middleware → 业务 Ha
 - 最终工作区与分支：`/Users/fanqi/test/code/ding-fde-agent/.worktrees/dt-fde-multica-dta-service-member`，`codex/dta-service-member`
 - 交付状态：最新正式基线 rebase、migration 266–269 重编号与发布前回归完成；提交号以 Git 元数据为准
 - Worktree 收尾：保留
-- 当前未提交改动：本计划更新时尚待创建 migration 重编号与发布准备提交
+- 当前未提交改动：无
 - 未执行的验证：DTA 仓库端到端联调与预发部署，均不在本轮授权范围内
 
 ## 遗留风险
