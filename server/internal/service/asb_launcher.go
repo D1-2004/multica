@@ -32,6 +32,9 @@ const (
 	defaultASBResourceCPU            = "2"
 	defaultASBResourceMemory         = "4Gi"
 	asbOptionalIdentityAttachTimeout = 30 * time.Second
+	asbCommandReadyTimeout           = 30 * time.Second
+	asbCommandReadyRetryInterval     = time.Second
+	asbCommandProbeTimeout           = 5 * time.Second
 	asbRunnerHome                    = "/home/user"
 	asbUnboundIdentityFingerprint    = "7a5d3e85306c71a48596592e43c235dc5f8c9e3f96eeb52b9e6637a04356b1da"
 )
@@ -1040,6 +1043,82 @@ func (l *ASBLauncher) attachSandboxIdentityAfterTaskStart(
 	}()
 }
 
+func (l *ASBLauncher) waitSandboxCommandReady(
+	ctx context.Context,
+	sandboxID string,
+) (*ASBEndpoint, error) {
+	timeout := asbCommandReadyTimeout
+	if l.Config.ReadyTimeout > 0 && l.Config.ReadyTimeout < timeout {
+		timeout = l.Config.ReadyTimeout
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	retryTicker := time.NewTicker(asbCommandReadyRetryInterval)
+	defer retryTicker.Stop()
+	started := time.Now()
+	attempts := 0
+	var lastErr error
+	for {
+		attempts++
+		endpoint, err := l.Client.GetEndpoint(ctx, sandboxID, asbExecPort)
+		if err == nil {
+			probeCtx, cancel := context.WithTimeout(ctx, asbCommandProbeTimeout)
+			result, probeErr := l.Client.Exec(probeCtx, endpoint, ASBExecInput{
+				Command:    "/usr/bin/true",
+				CWD:        "/workspace",
+				Background: true,
+				Timeout:    asbCommandProbeTimeout,
+			})
+			cancel()
+			if probeErr == nil && result.ErrorName == "" {
+				slog.Info(
+					"ASB command service is ready",
+					"sandbox_id", sandboxID,
+					"attempts", attempts,
+					"duration_ms", time.Since(started).Milliseconds(),
+				)
+				return endpoint, nil
+			}
+			if probeErr != nil {
+				err = probeErr
+			} else {
+				err = errors.New("ASB command readiness probe returned an error")
+			}
+		}
+		lastErr = err
+		if !isASBCommandServiceConverging(err) {
+			return nil, fmt.Errorf("ASB command service readiness probe failed: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-deadline.C:
+			return nil, fmt.Errorf(
+				"ASB command service was not ready within %s: %w",
+				timeout,
+				lastErr,
+			)
+		case <-retryTicker.C:
+		}
+	}
+}
+
+func isASBCommandServiceConverging(err error) bool {
+	var httpErr *ASBHTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	switch httpErr.StatusCode {
+	case http.StatusConflict,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
 func (l *ASBLauncher) ensureSandboxIdentityReady(
 	ctx context.Context,
 	sandboxID string,
@@ -1215,9 +1294,9 @@ func (l *ASBLauncher) execRunOnce(
 	for key, value := range extraEnv {
 		envs[key] = value
 	}
-	endpoint, err := l.Client.GetEndpoint(ctx, sandboxID, asbExecPort)
+	endpoint, err := l.waitSandboxCommandReady(ctx, sandboxID)
 	if err != nil {
-		return fmt.Errorf("resolve ASB command endpoint: %w", err)
+		return err
 	}
 	result, err := l.Client.Exec(ctx, endpoint, ASBExecInput{
 		Command:    command,

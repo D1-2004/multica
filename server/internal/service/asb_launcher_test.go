@@ -590,6 +590,7 @@ func TestASBExecRunOnceUsesDefaultUserAndDirectCore(t *testing.T) {
 	t.Parallel()
 
 	var captured asbExecRequest
+	commandRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/v1/sandboxes/sandbox-123/endpoints/44772":
@@ -601,6 +602,11 @@ func TestASBExecRunOnceUsesDefaultUserAndDirectCore(t *testing.T) {
 		case "/execd/command":
 			if err := json.NewDecoder(request.Body).Decode(&captured); err != nil {
 				t.Fatalf("decode exec request: %v", err)
+			}
+			commandRequests++
+			if commandRequests == 1 {
+				http.Error(response, "execd is still starting", http.StatusBadGateway)
+				return
 			}
 			response.Header().Set("Content-Type", "text/event-stream")
 			_, _ = io.WriteString(response, `data: {"type":"init","text":"exec-1"}`+"\n")
@@ -628,7 +634,7 @@ func TestASBExecRunOnceUsesDefaultUserAndDirectCore(t *testing.T) {
 	launcher := &ASBLauncher{
 		Client: newTestASBClient(t, server),
 		Config: ASBConfig{
-			ReadyTimeout: time.Second,
+			ReadyTimeout: 3 * time.Second,
 			LLMBaseURL:   "https://models.example/v1",
 			LLMAPIKey:    "test-model-key",
 		},
@@ -651,6 +657,9 @@ func TestASBExecRunOnceUsesDefaultUserAndDirectCore(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("execRunOnce: %v", err)
+	}
+	if commandRequests != 3 {
+		t.Fatalf("ASB command requests = %d, want readiness retry plus one runner submission", commandRequests)
 	}
 	if captured.UID != nil || captured.GID != nil {
 		t.Fatalf("ASB runner requested an explicit user: uid=%v gid=%v", captured.UID, captured.GID)
