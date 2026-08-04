@@ -552,7 +552,17 @@ func initializeASBIdentitySourceExpiration(
 	client *ASBClient,
 	sandboxID string,
 ) error {
-	expiresAt := asbIdentitySourceInitialExpiration(time.Now())
+	sandbox, err := client.GetSandbox(ctx, sandboxID)
+	if err != nil {
+		return fmt.Errorf(
+			"load ASB enterprise identity source before setting expiration: %w",
+			err,
+		)
+	}
+	if sandbox.CreatedAt.IsZero() {
+		return errors.New("ASB enterprise identity source creation time is missing")
+	}
+	expiresAt := asbIdentitySourceInitialExpiration(sandbox.CreatedAt)
 	if err := client.RenewSandbox(ctx, sandboxID, expiresAt, false); err != nil {
 		return fmt.Errorf("set ASB enterprise identity source expiration: %w", err)
 	}
@@ -564,8 +574,8 @@ const asbIdentitySourceExpirationSafetyMargin = time.Minute
 // Set the source lifetime once, immediately after creation. ASB enforces a
 // creation-relative maximum, so later renewal attempts cannot extend an
 // existing source and must not be part of task startup or maintenance.
-func asbIdentitySourceInitialExpiration(now time.Time) time.Time {
-	return now.Add(
+func asbIdentitySourceInitialExpiration(createdAt time.Time) time.Time {
+	return createdAt.Add(
 		asbMaxRenewalDuration - asbIdentitySourceExpirationSafetyMargin,
 	)
 }

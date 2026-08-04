@@ -283,14 +283,57 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 func TestASBIdentitySourceInitialExpirationLeavesOneMinuteSafetyMargin(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, time.July, 30, 14, 0, 0, 0, time.UTC)
-	expiresAt := asbIdentitySourceInitialExpiration(now)
-	want := now.Add(asbMaxRenewalDuration - time.Minute)
+	createdAt := time.Date(2026, time.July, 30, 14, 0, 0, 0, time.UTC)
+	expiresAt := asbIdentitySourceInitialExpiration(createdAt)
+	want := createdAt.Add(asbMaxRenewalDuration - time.Minute)
 	if !expiresAt.Equal(want) {
 		t.Fatalf("expires_at = %s, want %s", expiresAt, want)
 	}
-	if got := expiresAt.Sub(now); got != 167*time.Hour+59*time.Minute {
+	if got := expiresAt.Sub(createdAt); got != 167*time.Hour+59*time.Minute {
 		t.Fatalf("initial source lifetime = %s, want 167h59m", got)
+	}
+}
+
+func TestInitializeASBIdentitySourceExpirationUsesCreationTime(t *testing.T) {
+	t.Parallel()
+
+	const sandboxID = "identity-source-absolute-expiration"
+	createdAt := time.Now().UTC().Add(-52 * time.Second).Truncate(time.Second)
+	want := asbIdentitySourceInitialExpiration(createdAt)
+	renewCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/"+sandboxID:
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":        sandboxID,
+				"status":    map[string]string{"state": "Running"},
+				"createdAt": createdAt,
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes/"+sandboxID+"/renew-expiration":
+			var payload struct {
+				ExpiresAt time.Time `json:"expiresAt"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode renew request: %v", err)
+			}
+			if !payload.ExpiresAt.Equal(want) {
+				t.Fatalf("renew expires_at = %s, want creation-relative %s", payload.ExpiresAt, want)
+			}
+			renewCalls++
+			response.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	client := newTestASBClient(t, server)
+	if err := initializeASBIdentitySourceExpiration(context.Background(), client, sandboxID); err != nil {
+		t.Fatalf("initialize source expiration: %v", err)
+	}
+	if renewCalls != 1 {
+		t.Fatalf("renew calls = %d, want 1", renewCalls)
 	}
 }
 
