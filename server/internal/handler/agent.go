@@ -387,12 +387,6 @@ type AgentTaskResponse struct {
 	AuthToken                          string `json:"auth_token,omitempty"`
 	AgentIdentityContextToken          string `json:"agent_identity_context_token,omitempty"`
 	AgentIdentityContextTokenExpiresAt int64  `json:"agent_identity_context_token_expires_at,omitempty"`
-	// IssueIdentifier is the human-readable issue identifier (e.g. "MUL-123")
-	// resolved at claim time from the workspace's IssuePrefix + issue Number.
-	// Populated for issue-bound tasks; empty for chat / autopilot / quick-create.
-	// The agent uses this value when creating DingTalk approval instances so the
-	// approval event callback can be linked back to the original issue.
-	IssueIdentifier string `json:"issue_identifier,omitempty"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata embedded in
@@ -1842,7 +1836,25 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := requestUserID(r)
-	archived, err := h.Queries.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	lockedAgents, err := h.teardownDingTalkBindings(r.Context(), qtx, []pgtype.UUID{agent.ID})
+	if err != nil {
+		slog.Warn("synchronous dingtalk binding teardown on archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+	if len(lockedAgents) != 1 || lockedAgents[0].ID != agent.ID ||
+		lockedAgents[0].WorkspaceID != agent.WorkspaceID || lockedAgents[0].ArchivedAt.Valid {
+		writeError(w, http.StatusConflict, "agent state changed; please retry")
+		return
+	}
+	archived, err := qtx.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
 		ID:         agent.ID,
 		ArchivedBy: parseUUID(userID),
 	})
@@ -1851,7 +1863,10 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to archive agent")
 		return
 	}
-
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
 	// Cancel all pending/active tasks for this agent. Discard the returned
 	// rows here — the agent:archived event below already triggers a full
 	// active-tasks invalidation on every connected client, so per-task

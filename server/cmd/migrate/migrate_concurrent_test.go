@@ -341,8 +341,9 @@ func TestRunMigrationsReconcilesRenumberedASBMigrations(t *testing.T) {
 	}
 
 	legacyVersions := make([]string, 0, len(migrationVersionAliases))
-	currentVersions := make([]string, 0, len(migrationVersionAliases))
+	currentVersionSet := make(map[string]struct{}, len(migrationVersionAliases))
 	files := make([]string, 0, len(migrationVersionAliases))
+	fileSet := make(map[string]struct{}, len(migrationVersionAliases))
 	dir := t.TempDir()
 	for _, alias := range migrationVersionAliases {
 		if _, err := f.pool.Exec(ctx,
@@ -352,13 +353,20 @@ func TestRunMigrationsReconcilesRenumberedASBMigrations(t *testing.T) {
 			t.Fatalf("seed legacy migration %s: %v", alias.Legacy, err)
 		}
 
-		path := filepath.Join(dir, alias.Current+".up.sql")
-		if err := os.WriteFile(path, []byte("SELECT 1 / 0;\n"), 0o600); err != nil {
-			t.Fatalf("write replacement migration %s: %v", alias.Current, err)
+		if _, exists := fileSet[alias.Current]; !exists {
+			path := filepath.Join(dir, alias.Current+".up.sql")
+			if err := os.WriteFile(path, []byte("SELECT 1 / 0;\n"), 0o600); err != nil {
+				t.Fatalf("write replacement migration %s: %v", alias.Current, err)
+			}
+			files = append(files, path)
+			fileSet[alias.Current] = struct{}{}
 		}
 		legacyVersions = append(legacyVersions, alias.Legacy)
-		currentVersions = append(currentVersions, alias.Current)
-		files = append(files, path)
+		currentVersionSet[alias.Current] = struct{}{}
+	}
+	currentVersions := make([]string, 0, len(currentVersionSet))
+	for version := range currentVersionSet {
+		currentVersions = append(currentVersions, version)
 	}
 	sort.Strings(files)
 	sort.Strings(currentVersions)
@@ -386,6 +394,29 @@ func TestRunMigrationsReconcilesRenumberedASBMigrations(t *testing.T) {
 		if exists {
 			t.Fatalf("legacy migration %s still exists after renumbering", legacy)
 		}
+	}
+}
+
+func TestRunMigrationsUpIgnoresAppliedVersionWhoseSourceFileWasRemoved(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), raceTestTimeout)
+	defer cancel()
+
+	if err := runMigrations(ctx, f.pool, f.opts()); err != nil {
+		t.Fatalf("baseline runMigrations: %v", err)
+	}
+	baseline := f.appliedVersions(t)
+	if len(f.files) < 2 || !equalStrings(baseline, f.versions) {
+		t.Fatalf("baseline schema_migrations = %v, want %v", baseline, f.versions)
+	}
+
+	opts := f.opts()
+	opts.Files = append([]string(nil), f.files[1:]...)
+	if err := runMigrations(ctx, f.pool, opts); err != nil {
+		t.Fatalf("runMigrations after removing an applied source file: %v", err)
+	}
+	if got := f.appliedVersions(t); !equalStrings(got, baseline) {
+		t.Fatalf("removed source changed migration tracking: got %v, want %v", got, baseline)
 	}
 }
 

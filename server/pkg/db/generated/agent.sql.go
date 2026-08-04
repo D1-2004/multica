@@ -42,7 +42,7 @@ func (q *Queries) AcquireAgentTaskRuntimeLaunchLease(ctx context.Context, arg Ac
 
 const archiveAgent = `-- name: ArchiveAgent :one
 UPDATE agent SET archived_at = now(), archived_by = $2, updated_at = now()
-WHERE id = $1
+WHERE id = $1 AND archived_at IS NULL
 RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key
 `
 
@@ -3626,6 +3626,62 @@ func (q *Queries) ListActiveAgentsByRuntimeForUpdate(ctx context.Context, runtim
 	return items, nil
 }
 
+const listActiveAgentsByRuntimesForUpdate = `-- name: ListActiveAgentsByRuntimesForUpdate :many
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key FROM agent
+WHERE runtime_id = ANY($1::uuid[]) AND archived_at IS NULL
+ORDER BY id
+FOR UPDATE
+`
+
+// Member revocation uses this stable set to synchronously tear down external
+// bindings before archiving the Agents in the same transaction.
+func (q *Queries) ListActiveAgentsByRuntimesForUpdate(ctx context.Context, runtimeIds []pgtype.UUID) ([]Agent, error) {
+	rows, err := q.db.Query(ctx, listActiveAgentsByRuntimesForUpdate, runtimeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Agent{}
+	for rows.Next() {
+		var i Agent
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Name,
+			&i.AvatarUrl,
+			&i.RuntimeMode,
+			&i.RuntimeConfig,
+			&i.Visibility,
+			&i.Status,
+			&i.MaxConcurrentTasks,
+			&i.OwnerID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Description,
+			&i.RuntimeID,
+			&i.Instructions,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
+			&i.CustomEnv,
+			&i.CustomArgs,
+			&i.McpConfig,
+			&i.Model,
+			&i.ThinkingLevel,
+			&i.ComposioToolkitAllowlist,
+			&i.PermissionMode,
+			&i.Kind,
+			&i.SystemKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listActiveDelegatedDescendantTasksByParent = `-- name: ListActiveDelegatedDescendantTasksByParent :many
 WITH RECURSIVE delegated_task_ids AS (
     SELECT child.id
@@ -3908,6 +3964,64 @@ ORDER BY created_at ASC
 
 func (q *Queries) ListAllAgents(ctx context.Context, workspaceID pgtype.UUID) ([]Agent, error) {
 	rows, err := q.db.Query(ctx, listAllAgents, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Agent{}
+	for rows.Next() {
+		var i Agent
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Name,
+			&i.AvatarUrl,
+			&i.RuntimeMode,
+			&i.RuntimeConfig,
+			&i.Visibility,
+			&i.Status,
+			&i.MaxConcurrentTasks,
+			&i.OwnerID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Description,
+			&i.RuntimeID,
+			&i.Instructions,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
+			&i.CustomEnv,
+			&i.CustomArgs,
+			&i.McpConfig,
+			&i.Model,
+			&i.ThinkingLevel,
+			&i.ComposioToolkitAllowlist,
+			&i.PermissionMode,
+			&i.Kind,
+			&i.SystemKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listArchivedAgentsByRuntimesForUpdate = `-- name: ListArchivedAgentsByRuntimesForUpdate :many
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key FROM agent
+WHERE runtime_id = ANY($1::uuid[]) AND archived_at IS NOT NULL
+ORDER BY id
+FOR UPDATE
+`
+
+// Hard runtime/profile cleanup locks its complete victim set before any Router
+// call. Together with the parent runtime locks this prevents an archived Agent
+// from moving into or out of the cleanup set while external teardown is in
+// progress.
+func (q *Queries) ListArchivedAgentsByRuntimesForUpdate(ctx context.Context, runtimeIds []pgtype.UUID) ([]Agent, error) {
+	rows, err := q.db.Query(ctx, listArchivedAgentsByRuntimesForUpdate, runtimeIds)
 	if err != nil {
 		return nil, err
 	}
@@ -4325,6 +4439,63 @@ func (q *Queries) ListWorkspaceAgentTaskSnapshot(ctx context.Context, workspaceI
 			&i.ChatInputTaskID,
 			&i.RuntimeLaunchLeaseToken,
 			&i.RuntimeLaunchLeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockAgentsForDingTalkBindingTeardown = `-- name: LockAgentsForDingTalkBindingTeardown :many
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key FROM agent
+WHERE id = ANY($1::uuid[])
+ORDER BY id
+FOR UPDATE
+`
+
+// Synchronous Router teardown holds these row locks until the surrounding
+// archive/delete transaction commits. Message-binding begin takes a matching
+// KEY SHARE lock, so no new binding attempt can cross this deletion fence.
+func (q *Queries) LockAgentsForDingTalkBindingTeardown(ctx context.Context, agentIds []pgtype.UUID) ([]Agent, error) {
+	rows, err := q.db.Query(ctx, lockAgentsForDingTalkBindingTeardown, agentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Agent{}
+	for rows.Next() {
+		var i Agent
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Name,
+			&i.AvatarUrl,
+			&i.RuntimeMode,
+			&i.RuntimeConfig,
+			&i.Visibility,
+			&i.Status,
+			&i.MaxConcurrentTasks,
+			&i.OwnerID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Description,
+			&i.RuntimeID,
+			&i.Instructions,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
+			&i.CustomEnv,
+			&i.CustomArgs,
+			&i.McpConfig,
+			&i.Model,
+			&i.ThinkingLevel,
+			&i.ComposioToolkitAllowlist,
+			&i.PermissionMode,
+			&i.Kind,
+			&i.SystemKey,
 		); err != nil {
 			return nil, err
 		}

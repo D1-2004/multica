@@ -103,7 +103,6 @@ describe("DingTalk account binding schemas", () => {
             surface_type: "chat",
             message_scope: "custom",
             calendar_start_enabled: true,
-            approval_status_changed_enabled: true,
             conversations: [
               {
                 cid: "cid-group-1",
@@ -144,7 +143,6 @@ describe("DingTalk account binding schemas", () => {
             surfaceType: "chat",
             messageScope: "custom",
             calendarStartEnabled: true,
-            approvalStatusChangedEnabled: true,
             conversations: [
               {
                 cid: "cid-group-1",
@@ -202,7 +200,6 @@ describe("DingTalk account binding schemas", () => {
       status: "active",
       messageScope: "direct_only",
       calendarStartEnabled: false,
-      approvalStatusChangedEnabled: false,
       conversations: [],
     });
   });
@@ -233,6 +230,73 @@ describe("DingTalk account binding schemas", () => {
       message: "消息源已绑定给其他 Agent，请解绑后重试",
       retryable: false,
     });
+  });
+
+  it.each(["revoked", "unbound", "bound_to_other_agent", "inconsistent", "router_unavailable"] as const)(
+    "preserves the %s reconciliation state",
+    (status) => {
+      const parsed = DingTalkAccountBindingsResponseSchema.parse({
+        bindings: [
+          {
+            id: "installation-1",
+            workspace_id: "workspace-1",
+            agent_id: "agent-1",
+            dws_identity: { status: "unbound" },
+            message_route: { status },
+          },
+        ],
+        configured: true,
+      });
+
+      expect(parsed.bindings[0]?.messageRoute.status).toBe(status);
+    },
+  );
+
+  it("retains the binding as unavailable when Router returns an unknown reconciliation status", () => {
+    expect(
+      parseWithFallback(
+        {
+          bindings: [
+            {
+              id: "installation-1",
+              workspace_id: "workspace-1",
+              agent_id: "agent-1",
+              dws_identity: { status: "unbound" },
+              message_route: { status: "router_timeout" },
+            },
+          ],
+          configured: true,
+        },
+        DingTalkAccountBindingsResponseSchema,
+        EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
+        { endpoint: "GET /api/workspaces/:id/dingtalk/account-bindings" },
+      ),
+    ).toMatchObject({
+      bindings: [{ id: "installation-1", messageRoute: { status: "router_unavailable" } }],
+      configured: true,
+    });
+  });
+
+  it("falls back safely when the reconciliation status is structurally malformed", () => {
+    expect(
+      parseWithFallback(
+        {
+          bindings: [
+            {
+              id: "installation-1",
+              workspace_id: "workspace-1",
+              agent_id: "agent-1",
+              dws_identity: { status: "unbound" },
+              message_route: { status: 42 },
+            },
+          ],
+          configured: true,
+        },
+        DingTalkAccountBindingsResponseSchema,
+        EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
+        { endpoint: "GET /api/workspaces/:id/dingtalk/account-bindings" },
+      ),
+    ).toEqual({ bindings: [], configured: false });
   });
 
   it("falls back safely when the binding list is malformed", () => {

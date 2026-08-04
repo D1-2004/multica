@@ -50,6 +50,8 @@ type Store interface {
 	CompleteDingTalkAccountBindingResult(context.Context, db.CompleteDingTalkAccountBindingResultParams) (db.ChannelInstallation, error)
 	UpdateDingTalkAccountBindingSurface(context.Context, db.UpdateDingTalkAccountBindingSurfaceParams) (db.ChannelInstallation, error)
 	RevokeDingTalkAccountBinding(context.Context, db.RevokeDingTalkAccountBindingParams) (db.ChannelInstallation, error)
+	RevokeDingTalkAccountBindingByAccountKey(context.Context, db.RevokeDingTalkAccountBindingByAccountKeyParams) (db.ChannelInstallation, error)
+	DeletePreviousDingTalkAccountBindingProjection(context.Context, db.DeletePreviousDingTalkAccountBindingProjectionParams) ([]db.ChannelInstallation, error)
 }
 
 type robotEndpointStore interface {
@@ -71,10 +73,10 @@ type IdentityStore interface {
 // verify the DBase callback, and proxy unbind. *Client satisfies it.
 type Router interface {
 	IssueBindingToken(ctx context.Context, descriptor AgentDescriptor) (BindingToken, error)
+	CheckDigitalEmployeeBindings(ctx context.Context, bindings []DigitalEmployeeBindingKey) ([]DigitalEmployeeBindingCheck, error)
+	UnbindDigitalEmployeeBinding(ctx context.Context, binding DigitalEmployeeBindingKey) (DigitalEmployeeBindingUnbindResult, error)
 	GetSubscription(ctx context.Context, sourceID string) (Subscription, error)
 	UpdateSubscriptionSurface(ctx context.Context, sourceID, agentID, surfaceType string) (Subscription, error)
-	DeleteSubscription(ctx context.Context, sourceID string) error
-	DeleteDigitalEmployeeSubscriptions(ctx context.Context, agentID string) error
 }
 
 type DispatchEndpoint struct {
@@ -571,6 +573,53 @@ func (s *Service) List(ctx context.Context, workspaceID pgtype.UUID) ([]PublicDi
 	if err != nil {
 		return nil, fmt.Errorf("list dingtalk account bindings: %w", err)
 	}
+	reconciliation := make(map[string]string, len(rows))
+	checkRequests := make([]DigitalEmployeeBindingKey, 0, len(rows))
+	checkRows := make([]int, 0, len(rows))
+	for index, row := range rows {
+		if row.Status != "active" {
+			continue
+		}
+		config, parseErr := ParseDingTalkAccountConfig(row.Config)
+		if parseErr != nil {
+			return nil, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
+		}
+		rowKey := util.UUIDToString(row.ID)
+		if config.RouterPlatform == "" || config.RouterTenantID == "" || config.RouterAccountID == "" {
+			reconciliation[rowKey] = "inconsistent"
+			continue
+		}
+		checkRequests = append(checkRequests, DigitalEmployeeBindingKey{
+			AgentID:         util.UUIDToString(row.AgentID),
+			Platform:        config.RouterPlatform,
+			TenantID:        config.RouterTenantID,
+			AccountID:       config.RouterAccountID,
+			ExpectedDomains: config.bindingDomains(),
+		})
+		checkRows = append(checkRows, index)
+	}
+	if len(checkRequests) > 0 {
+		results, checkErr := s.router.CheckDigitalEmployeeBindings(ctx, checkRequests)
+		if checkErr != nil || len(results) != len(checkRequests) {
+			for _, rowIndex := range checkRows {
+				reconciliation[util.UUIDToString(rows[rowIndex].ID)] = "router_unavailable"
+			}
+		} else {
+			for index, result := range results {
+				request := checkRequests[index]
+				status := "router_unavailable"
+				if result.AgentID == request.AgentID && result.Platform == request.Platform &&
+					result.TenantID == request.TenantID && result.AccountID == request.AccountID &&
+					validDigitalEmployeeBindingCheck(result) {
+					status = result.Status
+					if status == "valid" {
+						status = "active"
+					}
+				}
+				reconciliation[util.UUIDToString(rows[checkRows[index]].ID)] = status
+			}
+		}
+	}
 	identities, err := s.identityStore.ListAgentDingTalkIdentities(ctx, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list dingtalk identities: %w", err)
@@ -578,24 +627,12 @@ func (s *Service) List(ctx context.Context, workspaceID pgtype.UUID) ([]PublicDi
 	bindings := make([]PublicDingTalkAccountBinding, 0, len(rows)+len(identities))
 	seenAgents := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
-		config, parseErr := ParseDingTalkAccountConfig(row.Config)
-		if parseErr != nil {
-			return nil, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
-		}
-		if row.Status == "active" && config.SurfaceType == "" && config.RouterSourceID != "" {
-			subscription, verifyErr := s.verifySubscription(ctx, config.RouterSourceID, row, config)
-			if verifyErr != nil {
-				return nil, verifyErr
-			}
-			config.SurfaceType = subscription.Surface.Type
-			row.Config, parseErr = config.Marshal()
-			if parseErr != nil {
-				return nil, fmt.Errorf("%w: current binding surface", ErrInvalidResult)
-			}
-		}
 		binding, err := s.publicBinding(ctx, row)
 		if err != nil {
 			return nil, err
+		}
+		if status := reconciliation[util.UUIDToString(row.ID)]; status != "" {
+			binding.MessageRoute.Status = status
 		}
 		bindings = append(bindings, binding)
 		seenAgents[binding.AgentID] = struct{}{}
@@ -674,11 +711,19 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 		!s.now().Before(config.CallbackExpiresAt) {
 		return PublicDingTalkAccountBinding{}, ErrCallbackExpired
 	}
+	if params.MessageBinding.PreviousAgentID == util.UUIDToString(row.AgentID) {
+		return PublicDingTalkAccountBinding{}, ErrInvalidResult
+	}
 	if row.Status == "active" {
-		if config.RouterSourceID != sourceID {
+		if config.RouterSourceID != sourceID || config.RouterPlatform != params.MessageBinding.Platform ||
+			config.RouterTenantID != params.MessageBinding.TenantID ||
+			config.RouterAccountID != params.MessageBinding.AccountID {
 			return PublicDingTalkAccountBinding{}, ErrBindingConflict
 		}
 		if err := s.verifyActiveSubscription(ctx, sourceID, row, config); err != nil {
+			return PublicDingTalkAccountBinding{}, err
+		}
+		if err := s.cleanupPreviousAccountProjection(ctx, row, params.MessageBinding); err != nil {
 			return PublicDingTalkAccountBinding{}, err
 		}
 		return s.publicBinding(ctx, row)
@@ -688,27 +733,21 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 	}
 	subscription, err := s.verifySubscription(ctx, sourceID, row, config)
 	if err != nil {
-		// Only compensate a source whose GET response proves it belongs to this
-		// exact agent and dispatch endpoint. Never DELETE an unverified body sourceId.
-		if errors.Is(err, ErrBindingConflict) && subscription.SourceID == sourceID &&
-			subscription.AgentID == util.UUIDToString(row.AgentID) &&
-			s.subscriptionDispatchTargetMatches(subscription.DispatchURL, config.DispatchEndpointID) {
-			if err := s.router.DeleteSubscription(ctx, subscription.SourceID); err != nil {
-				return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
-			}
-		}
 		return PublicDingTalkAccountBinding{}, err
 	}
 	boundAt := s.now().UTC()
 	config.RouterSourceID = sourceID
+	config.RouterPlatform = params.MessageBinding.Platform
+	config.RouterTenantID = params.MessageBinding.TenantID
+	config.RouterAccountID = params.MessageBinding.AccountID
 	config.AccountDisplayName = strings.TrimSpace(params.MessageBinding.AccountDisplayName)
 	config.AccountAvatarURL = strings.TrimSpace(params.MessageBinding.AccountAvatarURL)
 	config.SurfaceType = subscription.Surface.Type
 	config.MessageRouteStatus = ""
 	config.MessageRouteError = nil
 	config.MessageScope = messageScope
-	config.CalendarStartEnabled = hasActiveCalendarSubscription(params.MessageBinding.Subscriptions)
-	config.ApprovalStatusChangedEnabled = hasActiveApprovalSubscription(params.MessageBinding.Subscriptions)
+	config.EnabledDomains, _ = bindingSubscriptionDomains(params.MessageBinding.Subscriptions)
+	config.CalendarStartEnabled = containsBindingDomain(config.EnabledDomains, "calendar")
 	config.Conversations = conversations
 	config.BoundAt = &boundAt
 	activeConfig, err := config.Marshal()
@@ -728,25 +767,50 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 			if lookupErr == nil && current.Status == "active" {
 				currentConfig, parseErr := ParseDingTalkAccountConfig(current.Config)
 				if parseErr == nil && currentConfig.RouterSourceID == sourceID &&
+					currentConfig.RouterPlatform == params.MessageBinding.Platform &&
+					currentConfig.RouterTenantID == params.MessageBinding.TenantID &&
+					currentConfig.RouterAccountID == params.MessageBinding.AccountID &&
 					VerifyCallbackToken(params.CallbackToken, currentConfig.CallbackTokenHash) &&
 					s.now().Before(currentConfig.CallbackExpiresAt) {
 					return s.publicBinding(ctx, current)
-				}
-			}
-			// The callback source was already verified against this exact agent and
-			// dispatch endpoint. If the local CAS lost to a newer pending attempt, an
-			// unbind, or another source becoming active, remove only this losing
-			// source. Never delete the source stored by the winning active row.
-			if lookupErr == nil {
-				if deleteErr := s.router.DeleteSubscription(ctx, sourceID); deleteErr != nil {
-					return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
 				}
 			}
 			return PublicDingTalkAccountBinding{}, ErrBindingConflict
 		}
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("activate dingtalk account binding: %w", err)
 	}
+	if err := s.cleanupPreviousAccountProjection(ctx, activated, params.MessageBinding); err != nil {
+		return PublicDingTalkAccountBinding{}, err
+	}
 	return s.publicBinding(ctx, activated)
+}
+
+func (s *Service) cleanupPreviousAccountProjection(
+	ctx context.Context,
+	current db.ChannelInstallation,
+	message MessageBindingResult,
+) error {
+	if message.PreviousAgentID == "" {
+		return nil
+	}
+	previousAgentID, err := util.ParseUUID(message.PreviousAgentID)
+	if err != nil || previousAgentID == current.AgentID {
+		return ErrInvalidResult
+	}
+	_, err = s.store.DeletePreviousDingTalkAccountBindingProjection(
+		ctx,
+		db.DeletePreviousDingTalkAccountBindingProjectionParams{
+			CurrentInstallationID: current.ID,
+			PreviousAgentID:       previousAgentID,
+			RouterPlatform:        message.Platform,
+			RouterTenantID:        message.TenantID,
+			RouterAccountID:       message.AccountID,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("delete previous dingtalk account projection: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) UpdateSurface(ctx context.Context, params UpdateSurfaceParams) (PublicDingTalkAccountBinding, error) {
@@ -873,24 +937,63 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding Publ
 		}
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("get dingtalk account binding: %w", err)
 	}
-	if _, err := ParseDingTalkAccountConfig(row.Config); err != nil {
+	config, err := ParseDingTalkAccountConfig(row.Config)
+	if err != nil {
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
 	}
-	// A calendar-enabled account owns multiple Router sources. Resolve them
-	// from the stable agent ID, rather than the mutable local source ID, so a
-	// retry also heals calendar sources orphaned by the legacy single-source
-	// unbind path. Router returns an empty success when nothing remains.
-	if err := s.router.DeleteDigitalEmployeeSubscriptions(
-		ctx,
-		util.UUIDToString(row.AgentID),
-	); err != nil {
-		return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+	if row.Status == "active" {
+		if config.RouterPlatform == "" || config.RouterTenantID == "" || config.RouterAccountID == "" {
+			return PublicDingTalkAccountBinding{}, ErrBindingConflict
+		}
+		bindingKey := DigitalEmployeeBindingKey{
+			AgentID:   util.UUIDToString(row.AgentID),
+			Platform:  config.RouterPlatform,
+			TenantID:  config.RouterTenantID,
+			AccountID: config.RouterAccountID,
+		}
+		checkKey := bindingKey
+		checkKey.ExpectedDomains = config.bindingDomains()
+		checks, checkErr := s.router.CheckDigitalEmployeeBindings(ctx, []DigitalEmployeeBindingKey{checkKey})
+		if checkErr != nil || len(checks) != 1 {
+			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+		}
+		check := checks[0]
+		if check.AgentID != checkKey.AgentID || check.Platform != checkKey.Platform ||
+			check.TenantID != checkKey.TenantID || check.AccountID != checkKey.AccountID ||
+			!validDigitalEmployeeBindingCheck(check) {
+			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+		}
+		switch check.Status {
+		case "valid":
+			result, unbindErr := s.router.UnbindDigitalEmployeeBinding(ctx, bindingKey)
+			if unbindErr != nil {
+				return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+			}
+			if result.Status == "inconsistent" {
+				return PublicDingTalkAccountBinding{}, ErrBindingConflict
+			}
+			if result.Status != "unbound" && result.Status != "ownership_changed" {
+				return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+			}
+		case "unbound", "bound_to_other_agent":
+		case "inconsistent":
+			return PublicDingTalkAccountBinding{}, ErrBindingConflict
+		default:
+			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
+		}
 	}
-	revoked, err := s.store.RevokeDingTalkAccountBinding(ctx, db.RevokeDingTalkAccountBindingParams{
-		ID:          row.ID,
-		WorkspaceID: row.WorkspaceID,
-		AgentID:     row.AgentID,
-	})
+	var revoked db.ChannelInstallation
+	if row.Status == "active" {
+		revoked, err = s.store.RevokeDingTalkAccountBindingByAccountKey(ctx, db.RevokeDingTalkAccountBindingByAccountKeyParams{
+			ID: row.ID, WorkspaceID: row.WorkspaceID, AgentID: row.AgentID,
+			ExpectedRouterPlatform: config.RouterPlatform, ExpectedRouterTenantID: config.RouterTenantID,
+			ExpectedRouterAccountID: config.RouterAccountID,
+		})
+	} else {
+		revoked, err = s.store.RevokeDingTalkAccountBinding(ctx, db.RevokeDingTalkAccountBindingParams{
+			ID: row.ID, WorkspaceID: row.WorkspaceID, AgentID: row.AgentID,
+		})
+	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PublicDingTalkAccountBinding{}, ErrNotFound
@@ -947,6 +1050,14 @@ func (s *Service) subscriptionVerificationOutcome(subscription Subscription, sou
 }
 
 func (s *Service) subscriptionDispatchTargetMatches(dispatchTarget, endpointID string) bool {
+	publicBaseURL := ""
+	if s != nil && s.publicOrigin != nil {
+		publicBaseURL = s.publicOrigin.String()
+	}
+	return SubscriptionDispatchTargetMatches(dispatchTarget, endpointID, publicBaseURL)
+}
+
+func SubscriptionDispatchTargetMatches(dispatchTarget, endpointID, publicBaseURL string) bool {
 	expectedPath, err := dispatchPathForEndpointID(endpointID)
 	if err != nil {
 		return false
@@ -954,10 +1065,10 @@ func (s *Service) subscriptionDispatchTargetMatches(dispatchTarget, endpointID s
 	if dispatchTarget == expectedPath {
 		return true
 	}
-	if s == nil || s.publicOrigin == nil {
+	if strings.TrimSpace(publicBaseURL) == "" {
 		return false
 	}
-	expectedURL, err := BuildDispatchURL(s.publicOrigin.String(), endpointID)
+	expectedURL, err := BuildDispatchURL(publicBaseURL, endpointID)
 	return err == nil && dispatchTarget == expectedURL
 }
 

@@ -52,12 +52,6 @@ var legacyDuplicateMigrationStems = map[string][]string{
 	// silently re-run it on every database that has it. Recorded instead, so
 	// the lint stays a real guard for the prefixes we do control.
 	"175": {"175_runtime_profile_add_deveco", "175_webhook_delivery_worker"},
-	// The ASB enterprise schema and delegated comment fanout were both released
-	// to the Aone fork under prefix 257 before their branches converged. The
-	// migration runner records full stems, so renaming either applied migration
-	// would execute it again. Keep the shipped pair explicit and reserve unique
-	// prefixes for every migration added after the merge.
-	"257": {"257_asb_enterprise_runtime", "257_delegated_comment_completion_fanout"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)

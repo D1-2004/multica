@@ -7,6 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 )
 
 // insertRuntimeProfileFixture creates a runtime_profile in testWorkspaceID and
@@ -138,6 +141,86 @@ VALUES ($1, $2, 'feishu', 'oc_rp', 'p2p')`, rpChat, rpInstallID); err != nil {
 	}
 	if bindingRows != 0 {
 		t.Fatalf("channel chat-session binding not swept: %d dangling rows", bindingRows)
+	}
+}
+
+func TestDeleteRuntimeProfileLocksAllRuntimesAgainstArchivedBindingMove(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	profileID := insertRuntimeProfileFixture(t, ctx, "Locked Profile Delete", "codex", "company-codex-profile-lock")
+	targetRuntimeID := insertProfileRuntimeFixture(t, ctx, profileID, "Locked Profile Runtime", "codex")
+	targetAgentID := createCascadeFixtureAgent(t, ctx, targetRuntimeID, "Locked Profile Agent")
+	seedAccountKeyProjection(t, ctx, targetAgentID, "source-profile-lock-target", "tenant-profile-lock", "account-profile-lock-target")
+	sourceRuntimeID := createCascadeFixtureRuntime(t, ctx, "Profile Move Source")
+	movingAgentID := createCascadeFixtureAgent(t, ctx, sourceRuntimeID, "Profile Moving Agent")
+	movingInstallationID := seedAccountKeyProjection(t, ctx, movingAgentID, "source-profile-lock-moving", "tenant-profile-lock", "account-profile-lock-moving")
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent SET archived_at = now(), archived_by = $1
+		WHERE id = ANY($2::uuid[])
+	`, testUserID, []string{targetAgentID, movingAgentID}); err != nil {
+		t.Fatal(err)
+	}
+
+	router := &fakeDingTalkBindingTeardownRouter{
+		unbindResult:  agentmessagerouter.DigitalEmployeeBindingUnbindResult{Status: "unbound"},
+		unbindStarted:  make(chan struct{}, 1),
+		unbindContinue: make(chan struct{}),
+	}
+	previousRouter := testHandler.DingTalkBindingTeardownRouter
+	testHandler.DingTalkBindingTeardownRouter = router
+	t.Cleanup(func() { testHandler.DingTalkBindingTeardownRouter = previousRouter })
+
+	response := httptest.NewRecorder()
+	request := newRequest(http.MethodDelete, "/api/workspaces/"+testWorkspaceID+"/runtime-profiles/"+profileID, nil)
+	request = withURLParams(request, "id", testWorkspaceID, "profileId", profileID)
+	deleteDone := make(chan struct{})
+	go func() {
+		testHandler.DeleteRuntimeProfile(response, request)
+		close(deleteDone)
+	}()
+	select {
+	case <-router.unbindStarted:
+	case <-time.After(3 * time.Second):
+		close(router.unbindContinue)
+		<-deleteDone
+		t.Fatal("profile deletion did not reach Router teardown")
+	}
+
+	moveDone := make(chan error, 1)
+	go func() {
+		_, moveErr := testPool.Exec(context.Background(), `UPDATE agent SET runtime_id = $1 WHERE id = $2`, targetRuntimeID, movingAgentID)
+		moveDone <- moveErr
+	}()
+	earlyMove := false
+	select {
+	case <-moveDone:
+		earlyMove = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(router.unbindContinue)
+	<-deleteDone
+	if earlyMove {
+		t.Fatal("archived Agent moved into profile runtime while cleanup was awaiting Router")
+	}
+	select {
+	case <-moveDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("blocked profile Agent move did not resolve")
+	}
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("DeleteRuntimeProfile: expected 204, got %d: %s", response.Code, response.Body.String())
+	}
+	var movingAgentCount, movingProjectionCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent WHERE id = $1 AND runtime_id = $2`, movingAgentID, sourceRuntimeID).Scan(&movingAgentCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM channel_installation WHERE id = $1`, movingInstallationID).Scan(&movingProjectionCount); err != nil {
+		t.Fatal(err)
+	}
+	if movingAgentCount != 1 || movingProjectionCount != 1 || len(router.unbinds) != 1 {
+		t.Fatalf("moving Agent count=%d projection=%d Router calls=%d", movingAgentCount, movingProjectionCount, len(router.unbinds))
 	}
 }
 

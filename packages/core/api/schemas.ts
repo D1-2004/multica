@@ -63,9 +63,30 @@ const DingTalkBindingErrorSchema = z
   })
   .loose();
 
+const dingTalkAccountBindingStatuses = [
+  "active",
+  "pending",
+  "failed",
+  "skipped",
+  "revoked",
+  "unbound",
+  "bound_to_other_agent",
+  "inconsistent",
+  "router_unavailable",
+] as const;
+
+const DingTalkAccountBindingStatusSchema = z.enum(dingTalkAccountBindingStatuses);
+const DingTalkAccountBindingStatusInputSchema = z.preprocess(
+  (status) =>
+    typeof status === "string" && !dingTalkAccountBindingStatuses.some((known) => known === status)
+      ? "router_unavailable"
+      : status,
+  DingTalkAccountBindingStatusSchema,
+);
+
 const DingTalkAccountBindingOutcomeSchema = z
   .object({
-    status: z.string(),
+    status: DingTalkAccountBindingStatusInputSchema,
     source: z.literal("identity").nullable().optional(),
     organization_name: z.string().nullable().optional(),
     account_display_name: z.string().nullable().optional(),
@@ -124,7 +145,7 @@ function normalizeDingTalkProcessingSurface(
 
 const DingTalkMessageRouteOutcomeSchema = z
   .object({
-    status: z.string(),
+    status: DingTalkAccountBindingStatusInputSchema,
     organization_name: z.string().nullable().optional(),
     account_display_name: z.string().nullable().optional(),
     account_avatar_url: z.string().nullable().optional(),
@@ -132,7 +153,6 @@ const DingTalkMessageRouteOutcomeSchema = z
     bound_at: z.string().nullable().optional(),
     message_scope: z.string().optional(),
     calendar_start_enabled: z.boolean().optional(),
-    approval_status_changed_enabled: z.boolean().optional(),
     conversations: z.array(DingTalkConversationSummarySchema).optional().default([]),
     error: DingTalkBindingErrorSchema.nullable().optional().catch(undefined),
   })
@@ -155,7 +175,6 @@ const DingTalkMessageRouteOutcomeSchema = z
     ...(outcome.error !== undefined ? { error: outcome.error } : {}),
     messageScope: normalizeDingTalkMessageScope(outcome.message_scope),
     calendarStartEnabled: outcome.calendar_start_enabled ?? false,
-    approvalStatusChangedEnabled: outcome.approval_status_changed_enabled ?? false,
     conversations: outcome.conversations,
   }));
 

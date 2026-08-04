@@ -4,8 +4,19 @@ export interface DingTalkBindingError {
   retryable: boolean;
 }
 
+export type DingTalkAccountBindingStatus =
+  | "active"
+  | "pending"
+  | "failed"
+  | "skipped"
+  | "revoked"
+  | "unbound"
+  | "bound_to_other_agent"
+  | "inconsistent"
+  | "router_unavailable";
+
 export interface DingTalkAccountBindingOutcome {
-  status: string;
+  status: DingTalkAccountBindingStatus;
   source?: "identity" | null;
   organizationName?: string | null;
   accountDisplayName?: string | null;
@@ -29,7 +40,6 @@ export interface DingTalkMessageRouteOutcome
   surfaceType?: DingTalkProcessingSurface | null;
   messageScope: DingTalkMessageScope;
   calendarStartEnabled?: boolean;
-  approvalStatusChangedEnabled?: boolean;
   conversations: DingTalkConversationSummary[];
 }
 

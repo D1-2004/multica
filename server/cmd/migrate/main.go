@@ -47,17 +47,45 @@ type migrationVersionAlias struct {
 }
 
 // migrationVersionAliases preserves databases that received the ASB
-// migrations from the prepub-only branch before that branch was rebased onto
+// migrations from prepub-only revisions before the feature was rebased onto
 // the shared migration sequence. The SQL contents are unchanged: moving the
 // bookkeeping row prevents the same schema change from running twice.
 var migrationVersionAliases = []migrationVersionAlias{
 	{
 		Legacy:  "253_asb_enterprise_runtime",
-		Current: "257_asb_enterprise_runtime",
+		Current: "258_asb_enterprise_runtime",
+	},
+	{
+		Legacy:  "257_asb_enterprise_runtime",
+		Current: "258_asb_enterprise_runtime",
 	},
 	{
 		Legacy:  "254_buc_identity_from_callback",
-		Current: "258_buc_identity_from_callback",
+		Current: "259_buc_identity_from_callback",
+	},
+	{
+		Legacy:  "258_buc_identity_from_callback",
+		Current: "259_buc_identity_from_callback",
+	},
+	{
+		Legacy:  "259_asb_artifact_build_time",
+		Current: "260_asb_artifact_build_time",
+	},
+	{
+		Legacy:  "260_asb_identity_anchor_renewal",
+		Current: "261_asb_identity_anchor_renewal",
+	},
+	{
+		Legacy:  "261_platform_asb_credentials",
+		Current: "262_platform_asb_credentials",
+	},
+	{
+		Legacy:  "262_asb_paused_identity_source",
+		Current: "263_asb_paused_identity_source",
+	},
+	{
+		Legacy:  "263_asb_shared_identity_source",
+		Current: "264_asb_shared_identity_source",
 	},
 }
 

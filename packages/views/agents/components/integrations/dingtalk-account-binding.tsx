@@ -180,9 +180,6 @@ function DingTalkMessageScopeSummary({
       {outcome.calendarStartEnabled ? (
         <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_calendar_start)}</p>
       ) : null}
-      {outcome.approvalStatusChangedEnabled ? (
-        <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_approval_status_changed)}</p>
-      ) : null}
     </div>
   );
 }
@@ -385,6 +382,11 @@ function DingTalkBindingModeCard({
   );
   const messageRouteActive = currentBinding?.messageRoute.status === "active";
   const messageRoutePending = currentBinding?.messageRoute.status === "pending";
+  const messageRouteReconciliationState = bindingMode === "message" &&
+    (currentBinding?.messageRoute.status === "unbound" ||
+      currentBinding?.messageRoute.status === "bound_to_other_agent" ||
+      currentBinding?.messageRoute.status === "inconsistent" ||
+      currentBinding?.messageRoute.status === "router_unavailable");
   const messageBindingFailed = bindingMode === "message" &&
     currentBinding?.messageRoute.status === "failed";
   const retryMessageBinding = bindingMode === "message" &&
@@ -393,6 +395,10 @@ function DingTalkBindingModeCard({
   const connected = bindingMode === "message"
     ? messageRouteActive
     : identityActive;
+  const canUnbind = bindingMode === "message"
+    ? messageRouteActive || messageRouteReconciliationState
+    : identityActive;
+  const showBoundAccount = connected || messageRouteReconciliationState;
   const accountOutcome = bindingMode === "message"
     ? currentBinding?.messageRoute
     : currentBinding?.dwsIdentity;
@@ -435,6 +441,12 @@ function DingTalkBindingModeCard({
         return t(($) => $.tab_body.integrations.dingtalk_account_status_failed);
       case "skipped":
         return t(($) => $.tab_body.integrations.dingtalk_account_status_skipped);
+      case "bound_to_other_agent":
+        return t(($) => $.tab_body.integrations.dingtalk_account_status_bound_to_other_agent);
+      case "inconsistent":
+        return t(($) => $.tab_body.integrations.dingtalk_account_status_inconsistent);
+      case "router_unavailable":
+        return t(($) => $.tab_body.integrations.dingtalk_account_status_router_unavailable);
       default:
         return t(($) => $.tab_body.integrations.dingtalk_account_status_unbound);
     }
@@ -478,7 +490,7 @@ function DingTalkBindingModeCard({
   }
 
   async function unbind() {
-    if (!connected) return;
+    if (!canUnbind) return;
     if (rejectUnauthorizedOperation()) return;
     setActionError(null);
     try {
@@ -534,7 +546,7 @@ function DingTalkBindingModeCard({
           <p className="text-xs text-muted-foreground">
             {t(($) => $.tab_body.integrations.dingtalk_account_not_configured)}
           </p>
-        ) : connected && accountOutcome ? (
+        ) : showBoundAccount && accountOutcome ? (
           <div
             className="flex items-start justify-between gap-3"
             data-testid={bindingMode === "message"
@@ -551,8 +563,22 @@ function DingTalkBindingModeCard({
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{displayName(accountOutcome, fallbackName)}</p>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  {bindingMode === "message" && currentBinding ? (
+                  {bindingMode === "message" && currentBinding?.messageRoute.status === "active" ? (
                     <DingTalkMessageScopeSummary outcome={currentBinding.messageRoute} />
+                  ) : bindingMode === "message" &&
+                    (currentBinding?.messageRoute.status === "bound_to_other_agent" ||
+                      currentBinding?.messageRoute.status === "inconsistent") ? (
+                    <p className="text-destructive" role="alert">
+                      {t(($) => $.tab_body.integrations.dingtalk_account_binding_invalid_warning)}
+                    </p>
+                  ) : bindingMode === "message" && currentBinding?.messageRoute.status === "router_unavailable" ? (
+                    <p className="text-amber-700 dark:text-amber-400" role="status">
+                      {t(($) => $.tab_body.integrations.dingtalk_account_router_unavailable_warning)}
+                    </p>
+                  ) : bindingMode === "message" && currentBinding ? (
+                    <p className="text-destructive" role="alert">
+                      {t(($) => $.tab_body.integrations.dingtalk_account_unbound_warning)}
+                    </p>
                   ) : (
                     <p>{t(($) => $.tab_body.integrations.dingtalk_identity_connected)}</p>
                   )}
@@ -562,7 +588,7 @@ function DingTalkBindingModeCard({
                     {t(($) => $.tab_body.integrations.dingtalk_account_organization)}: {accountOutcome.organizationName}
                   </p>
                 ) : null}
-                {bindingMode === "message" && currentBinding?.messageRoute.surfaceType ? (
+                {bindingMode === "message" && messageRouteActive && currentBinding?.messageRoute.surfaceType ? (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <span className="text-xs text-muted-foreground">
                       {t(($) => $.tab_body.integrations.dingtalk_account_run_mode)}

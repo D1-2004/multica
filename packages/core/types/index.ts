@@ -174,6 +174,7 @@ export type {
 export type {
   DingTalkAccountBinding,
   DingTalkAccountBindingOutcome,
+  DingTalkAccountBindingStatus,
   DingTalkConversationSummary,
   DingTalkMessageRouteOutcome,
   DingTalkMessageScope,

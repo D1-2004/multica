@@ -117,7 +117,6 @@ const activeBinding = {
     surfaceType: "issue",
     messageScope: "direct_only",
     calendarStartEnabled: false,
-    approvalStatusChangedEnabled: false,
     conversations: [],
   },
 };
@@ -208,6 +207,106 @@ describe("DingTalkAccountBindingCard", () => {
     expect(integrations.dingtalk_account_scope_custom_other).toBe(
       "已监听 {{count}} 个对话的消息",
     );
+    expect(integrations.dingtalk_account_binding_invalid_warning).toBe(
+      "该数字员工已经绑定到其他智能体，消息订阅已失效",
+    );
+    expect(integrations.dingtalk_account_router_unavailable_warning).toBe(
+      "暂时无法核验消息订阅状态",
+    );
+  });
+
+  it.each([
+    [
+      "bound_to_other_agent",
+      "This digital employee is now bound to another agent. Its message subscription is no longer active here.",
+    ],
+    [
+      "inconsistent",
+      "This digital employee is now bound to another agent. Its message subscription is no longer active here.",
+    ],
+    ["unbound", "This digital employee's message subscription is no longer active."],
+    ["router_unavailable", "The message subscription status cannot be verified right now."],
+  ] as const)("keeps the unbind action for a %s message relation", async (status, warning) => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          dwsIdentity: { status: "unbound" },
+          messageRoute: { ...activeBinding.messageRoute, status },
+        },
+      ],
+      configured: true,
+    });
+    renderCard();
+
+    expect(await screen.findByText(warning)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Bind digital employee/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
+    expect(deleteBinding).not.toHaveBeenCalled();
+  });
+
+  it("removes a stale bound-to-other-agent projection after unbind succeeds and refreshes", async () => {
+    listBindings
+      .mockResolvedValueOnce({
+        bindings: [
+          {
+            ...activeBinding,
+            dwsIdentity: { status: "unbound" },
+            messageRoute: {
+              ...activeBinding.messageRoute,
+              status: "bound_to_other_agent",
+            },
+          },
+        ],
+        configured: true,
+      })
+      .mockResolvedValue({ bindings: [], configured: true });
+    const user = userEvent.setup();
+
+    renderCard();
+
+    expect(await screen.findByText(
+      "This digital employee is now bound to another agent. Its message subscription is no longer active here.",
+    )).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Unbind$/i }));
+    await user.click(screen.getAllByRole("button", { name: /^Unbind$/i }).at(-1)!);
+
+    expect(deleteBinding).toHaveBeenCalledWith("workspace-1", "agent-1", "message");
+    expect(await screen.findByRole("button", { name: /Bind digital employee/i })).toBeInTheDocument();
+    expect(listBindings).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a router-unavailable projection and shows a retryable unbind error", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          dwsIdentity: { status: "unbound" },
+          messageRoute: {
+            ...activeBinding.messageRoute,
+            status: "router_unavailable",
+          },
+        },
+      ],
+      configured: true,
+    });
+    deleteBinding.mockRejectedValue(new Error("Subscription verification failed. Try again."));
+    const user = userEvent.setup();
+
+    renderCard();
+
+    expect(await screen.findByText(
+      "The message subscription status cannot be verified right now.",
+    )).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Unbind$/i }));
+    await user.click(screen.getAllByRole("button", { name: /^Unbind$/i }).at(-1)!);
+
+    expect(await screen.findByText("Subscription verification failed. Try again.")).toBeInTheDocument();
+    expect(screen.getByText(
+      "The message subscription status cannot be verified right now.",
+    )).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Bind digital employee/i })).not.toBeInTheDocument();
+    expect(listBindings).toHaveBeenCalledTimes(1);
   });
 
   it("expands every custom conversation with media-id, URL, and initial fallbacks", async () => {
@@ -611,7 +710,7 @@ describe("DingTalkAccountBindingCard", () => {
     expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
   });
 
-  it("keeps message listening unbound after identity-only binding", async () => {
+  it("keeps an unbound message projection visible and removable after identity-only binding", async () => {
     listBindings.mockResolvedValue({
       bindings: [
         {
@@ -632,8 +731,9 @@ describe("DingTalkAccountBindingCard", () => {
     unmount();
     renderCard("message");
     expect(
-      await screen.findByRole("button", { name: /Bind digital employee/i }),
+      await screen.findByText(enAgents.tab_body.integrations.dingtalk_account_unbound_warning),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
   });
 
   it("shows terminal task failures and allows a fresh binding attempt", async () => {
