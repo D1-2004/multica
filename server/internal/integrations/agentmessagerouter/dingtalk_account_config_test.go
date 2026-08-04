@@ -7,6 +7,49 @@ import (
 	"time"
 )
 
+func TestDingTalkAccountConfigPersistsCompleteRouterAccountKey(t *testing.T) {
+	config := NewPendingDingTalkAccountConfig(
+		"v1_AAECAwQFBgcICQoLDA0ODw",
+		"/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
+		HashCallbackToken(canonicalCallbackToken),
+		time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC),
+	)
+	config.RouterSourceID = "source-channel"
+	config.RouterPlatform = "dingtalk"
+	config.RouterTenantID = "corp-a"
+	config.RouterAccountID = "employee-a"
+	boundAt := time.Date(2026, 8, 2, 9, 59, 0, 0, time.UTC)
+	config.BoundAt = &boundAt
+
+	raw, err := config.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	parsed, err := ParseDingTalkAccountConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseDingTalkAccountConfig: %v", err)
+	}
+	if parsed.RouterPlatform != "dingtalk" || parsed.RouterTenantID != "corp-a" ||
+		parsed.RouterAccountID != "employee-a" || parsed.RouterSourceID != "source-channel" {
+		t.Fatalf("parsed = %#v", parsed)
+	}
+}
+
+func TestDingTalkAccountConfigRejectsPartialRouterAccountKey(t *testing.T) {
+	config := NewPendingDingTalkAccountConfig(
+		"v1_AAECAwQFBgcICQoLDA0ODw",
+		"/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
+		HashCallbackToken(canonicalCallbackToken),
+		time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC),
+	)
+	config.RouterPlatform = "dingtalk"
+	config.RouterTenantID = "corp-a"
+
+	if _, err := config.Marshal(); err == nil {
+		t.Fatal("partial Router account key was accepted")
+	}
+}
+
 func TestDingTalkAccountConfigRoundTripAndPublicProjection(t *testing.T) {
 	expiresAt := time.Date(2026, 7, 14, 10, 10, 0, 0, time.UTC)
 	boundAt := time.Date(2026, 7, 14, 10, 0, 12, 0, time.UTC)

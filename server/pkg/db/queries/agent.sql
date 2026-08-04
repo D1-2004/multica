@@ -128,8 +128,17 @@ RETURNING *;
 
 -- name: ArchiveAgent :one
 UPDATE agent SET archived_at = now(), archived_by = $2, updated_at = now()
-WHERE id = $1
+WHERE id = $1 AND archived_at IS NULL
 RETURNING *;
+
+-- name: LockAgentsForDingTalkBindingTeardown :many
+-- Synchronous Router teardown holds these row locks until the surrounding
+-- archive/delete transaction commits. Message-binding begin takes a matching
+-- KEY SHARE lock, so no new binding attempt can cross this deletion fence.
+SELECT * FROM agent
+WHERE id = ANY(@agent_ids::uuid[])
+ORDER BY id
+FOR UPDATE;
 
 -- name: ArchiveAgentsByRuntime :many
 -- Bulk-archives every active agent bound to any runtime in the given set.
@@ -140,6 +149,24 @@ UPDATE agent
 SET archived_at = now(), archived_by = @archived_by, updated_at = now()
 WHERE runtime_id = ANY(@runtime_ids::uuid[]) AND archived_at IS NULL
 RETURNING *;
+
+-- name: ListActiveAgentsByRuntimesForUpdate :many
+-- Member revocation uses this stable set to synchronously tear down external
+-- bindings before archiving the Agents in the same transaction.
+SELECT * FROM agent
+WHERE runtime_id = ANY(@runtime_ids::uuid[]) AND archived_at IS NULL
+ORDER BY id
+FOR UPDATE;
+
+-- name: ListArchivedAgentsByRuntimesForUpdate :many
+-- Hard runtime/profile cleanup locks its complete victim set before any Router
+-- call. Together with the parent runtime locks this prevents an archived Agent
+-- from moving into or out of the cleanup set while external teardown is in
+-- progress.
+SELECT * FROM agent
+WHERE runtime_id = ANY(@runtime_ids::uuid[]) AND archived_at IS NOT NULL
+ORDER BY id
+FOR UPDATE;
 
 -- name: ArchiveAgentsByIDs :many
 -- Narrow archive that only touches the explicit ID list. Used by the

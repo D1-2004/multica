@@ -61,9 +61,30 @@ const DingTalkBindingErrorSchema = z
   })
   .loose();
 
+const dingTalkAccountBindingStatuses = [
+  "active",
+  "pending",
+  "failed",
+  "skipped",
+  "revoked",
+  "unbound",
+  "bound_to_other_agent",
+  "inconsistent",
+  "router_unavailable",
+] as const;
+
+const DingTalkAccountBindingStatusSchema = z.enum(dingTalkAccountBindingStatuses);
+const DingTalkAccountBindingStatusInputSchema = z.preprocess(
+  (status) =>
+    typeof status === "string" && !dingTalkAccountBindingStatuses.some((known) => known === status)
+      ? "router_unavailable"
+      : status,
+  DingTalkAccountBindingStatusSchema,
+);
+
 const DingTalkAccountBindingOutcomeSchema = z
   .object({
-    status: z.string(),
+    status: DingTalkAccountBindingStatusInputSchema,
     source: z.literal("identity").nullable().optional(),
     organization_name: z.string().nullable().optional(),
     account_display_name: z.string().nullable().optional(),
@@ -122,7 +143,7 @@ function normalizeDingTalkProcessingSurface(
 
 const DingTalkMessageRouteOutcomeSchema = z
   .object({
-    status: z.string(),
+    status: DingTalkAccountBindingStatusInputSchema,
     organization_name: z.string().nullable().optional(),
     account_display_name: z.string().nullable().optional(),
     account_avatar_url: z.string().nullable().optional(),
