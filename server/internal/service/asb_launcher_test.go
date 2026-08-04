@@ -301,21 +301,30 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 	}
 }
 
-func TestASBIdentityPreparationDoesNotBlockTaskLaunch(t *testing.T) {
+func TestASBIdentityPreparationCancelsBeforeTaskLaunch(t *testing.T) {
 	t.Parallel()
 
-	result := make(chan error, 1)
+	probeCtx, cancel := context.WithCancel(context.Background())
+	preparation := &asbIdentityPreparation{
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+	go func() {
+		<-probeCtx.Done()
+		preparation.err = probeCtx.Err()
+		close(preparation.done)
+	}()
 	startedAt := time.Now()
 	err, completed := waitASBIdentityPreparation(
 		context.Background(),
-		result,
+		preparation,
 		20*time.Millisecond,
 	)
 	if err != nil {
 		t.Fatalf("foreground identity wait: %v", err)
 	}
 	if completed {
-		t.Fatal("background identity preparation unexpectedly completed")
+		t.Fatal("timed-out identity preparation unexpectedly completed")
 	}
 	if elapsed := time.Since(startedAt); elapsed > 500*time.Millisecond {
 		t.Fatalf("foreground identity wait took %s, want less than 500ms", elapsed)
@@ -326,12 +335,15 @@ func TestASBIdentityPreparationReportsImmediateResult(t *testing.T) {
 	t.Parallel()
 
 	wantErr := errors.New("identity unavailable")
-	result := make(chan error, 1)
-	result <- wantErr
-	close(result)
+	preparation := &asbIdentityPreparation{
+		cancel: func() {},
+		done:   make(chan struct{}),
+		err:    wantErr,
+	}
+	close(preparation.done)
 	err, completed := waitASBIdentityPreparation(
 		context.Background(),
-		result,
+		preparation,
 		time.Second,
 	)
 	if !completed {
@@ -339,6 +351,32 @@ func TestASBIdentityPreparationReportsImmediateResult(t *testing.T) {
 	}
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("identity preparation error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestASBIdentityPreparationTrackerCancelsPreviousProbe(t *testing.T) {
+	t.Parallel()
+
+	tracker := newASBIdentityPreparationTracker()
+	probeCtx, cancel := context.WithCancel(context.Background())
+	preparation := &asbIdentityPreparation{
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+	go func() {
+		<-probeCtx.Done()
+		preparation.err = probeCtx.Err()
+		close(preparation.done)
+	}()
+	tracker.track("sandbox-tracked", preparation)
+	tracker.cancelAndWait("sandbox-tracked")
+	if !errors.Is(preparation.err, context.Canceled) {
+		t.Fatalf("identity preparation error = %v, want context canceled", preparation.err)
+	}
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if len(tracker.active) != 0 {
+		t.Fatalf("active identity preparations = %d, want 0", len(tracker.active))
 	}
 }
 
