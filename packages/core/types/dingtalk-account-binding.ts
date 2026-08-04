@@ -39,6 +39,7 @@ export interface DingTalkMessageRouteOutcome
   extends DingTalkAccountBindingOutcome {
   surfaceType?: DingTalkProcessingSurface | null;
   messageScope: DingTalkMessageScope;
+  enabledDomains: string[];
   calendarStartEnabled?: boolean;
   conversations: DingTalkConversationSummary[];
 }

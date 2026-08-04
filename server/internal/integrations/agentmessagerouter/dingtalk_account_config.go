@@ -80,6 +80,7 @@ type PublicDingTalkBindingOutcome struct {
 	AccountAvatarURL     string                         `json:"account_avatar_url,omitempty"`
 	SurfaceType          string                         `json:"surface_type,omitempty"`
 	MessageScope         string                         `json:"message_scope,omitempty"`
+	EnabledDomains       []string                       `json:"enabled_domains,omitempty"`
 	CalendarStartEnabled bool                           `json:"calendar_start_enabled,omitempty"`
 	Conversations        []DingTalkConversationSnapshot `json:"conversations,omitempty"`
 	BoundAt              *time.Time                     `json:"bound_at,omitempty"`
@@ -215,17 +216,7 @@ func (c DingTalkAccountConfig) Validate() error {
 }
 
 func (c DingTalkAccountConfig) bindingDomains() []string {
-	if len(c.EnabledDomains) > 0 {
-		return append([]string(nil), c.EnabledDomains...)
-	}
-	if c.RouterSourceID == "" {
-		return nil
-	}
-	domains := []string{"channel"}
-	if c.CalendarStartEnabled {
-		domains = append(domains, "calendar")
-	}
-	return domains
+	return append([]string(nil), c.EnabledDomains...)
 }
 
 func normalizeBindingDomains(domains []string) ([]string, error) {
@@ -323,6 +314,7 @@ func (c DingTalkAccountConfig) PublicBinding(
 			AccountAvatarURL:     c.AccountAvatarURL,
 			SurfaceType:          c.SurfaceType,
 			MessageScope:         c.MessageScope,
+			EnabledDomains:       append([]string(nil), c.EnabledDomains...),
 			CalendarStartEnabled: c.CalendarStartEnabled,
 			Conversations:        append([]DingTalkConversationSnapshot(nil), c.Conversations...),
 			BoundAt:              c.BoundAt,
