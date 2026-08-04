@@ -1797,26 +1797,87 @@ func (l *FCE2BLauncher) identityEnvForTask(
 	sandboxID string,
 	agentRow db.Agent,
 ) (map[string]string, error) {
+	resolved, err := l.resolveIdentityForTask(ctx, task, runtime, sandboxID, agentRow)
+	if err != nil {
+		return nil, err
+	}
+	if resolved.ContextToken == "" {
+		return nil, nil
+	}
+	return fcE2BAgentIdentityEnvForToken(resolved.ContextToken, l.Config)
+}
+
+type fcE2BResolvedIdentity struct {
+	ContextToken string
+	Source       string
+}
+
+type fcE2BDWSIdentity struct {
+	UID    string
+	OrgID  string
+	Source string
+}
+
+func (l *FCE2BLauncher) resolveIdentityForTask(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	runtime db.AgentRuntime,
+	sandboxID string,
+	agentRow db.Agent,
+) (fcE2BResolvedIdentity, error) {
 	taskID := util.UUIDToString(task.ID)
-	agentID := util.UUIDToString(task.AgentID)
 	hasDWSCapability := FCE2BRuntimeHasCapability(runtime, "dws")
 	githubConnection, hasGithubConnection := l.githubConnectionForAgent(ctx, task, runtime, agentRow)
 
+	stableDWS := fcE2BDWSIdentity{}
+	if hasDWSCapability {
+		if l.IdentityBindings == nil {
+			return fcE2BResolvedIdentity{}, errors.New("Agent identity binding reader is not configured")
+		}
+		identity, err := l.IdentityBindings.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+			WorkspaceID: runtime.WorkspaceID,
+			AgentID:     task.AgentID,
+		})
+		if err == nil {
+			stableDWS = fcE2BDWSIdentity{
+				UID:    identity.DwsUid,
+				OrgID:  identity.OrgID,
+				Source: "agent_binding_fallback",
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return fcE2BResolvedIdentity{}, fmt.Errorf("load Agent DingTalk identity: %w", err)
+		}
+		if stableDWS.Source == "" {
+			externalDWS, present, err := fcE2BExternalDWSIdentity(task)
+			if err != nil {
+				return fcE2BResolvedIdentity{}, err
+			}
+			if present {
+				stableDWS = externalDWS
+			}
+		}
+	}
+	if stableDWS.Source != "" {
+		return l.createResolvedIdentityContext(ctx, task, sandboxID, stableDWS, githubConnection, hasGithubConnection)
+	}
+
 	prepared, err := fcE2BAgentIdentityExtraEnv(task, l.Config)
 	if err != nil && !errors.Is(err, errAgentIdentityContextTokenRefreshRequired) {
-		return nil, err
+		return fcE2BResolvedIdentity{}, err
 	}
 	if len(prepared) > 0 {
+		contextToken := prepared[protocol.AgentIdentityContextTokenEnvKey]
 		if hasGithubConnection {
-			l.extendPreparedContextWithGithub(ctx, prepared[protocol.AgentIdentityContextTokenEnvKey], task, runtime, sandboxID, githubConnection)
+			l.extendPreparedContextWithGithub(ctx, contextToken, task, runtime, sandboxID, githubConnection)
 		}
 		slog.Info("FC/E2B task identity selected",
 			"task_id", taskID,
 			"identity_source", "prepared_context_token",
 			"github_identity", hasGithubConnection,
 		)
-		return prepared, nil
+		return fcE2BResolvedIdentity{ContextToken: contextToken, Source: "prepared_context_token"}, nil
 	}
+
 	refreshRequired := errors.Is(err, errAgentIdentityContextTokenRefreshRequired)
 	if refreshRequired {
 		slog.Info("FC/E2B cached task identity requires refresh",
@@ -1824,69 +1885,63 @@ func (l *FCE2BLauncher) identityEnvForTask(
 			"identity_source", "task_context_cache",
 		)
 	}
-
-	var dwsIdentity db.AgentDingtalkIdentity
-	hasDWSBinding := false
-	if hasDWSCapability {
-		if l.IdentityBindings == nil {
-			return nil, errors.New("Agent identity binding reader is not configured")
-		}
-		identity, err := l.IdentityBindings.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
-			WorkspaceID: runtime.WorkspaceID,
-			AgentID:     task.AgentID,
-		})
-		if err == nil {
-			dwsIdentity = identity
-			hasDWSBinding = true
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("load Agent DingTalk identity: %w", err)
-		}
+	if hasGithubConnection {
+		return l.createResolvedIdentityContext(ctx, task, sandboxID, fcE2BDWSIdentity{Source: "agent_github_binding"}, githubConnection, true)
 	}
-
-	if hasDWSBinding || hasGithubConnection {
-		if l.AgentIdentity == nil {
-			return nil, errors.New("Agent Identity HSF client is not configured")
-		}
-		source := map[string]string{
-			"app":             "dt-fde-multica",
-			"identity_source": "agent_binding_fallback",
-		}
-		if hasGithubConnection {
-			source["github_identity_source"] = "agent_github_binding"
-		}
-		result, err := l.AgentIdentity.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
-			RequestID:          "multica-task-" + taskID,
-			TaskID:             taskID,
-			AgentID:            agentID,
-			RuntimeType:        "E2B",
-			RuntimeID:          sandboxID,
-			Reason:             "Multica Agent runtime authorization",
-			Source:             source,
-			UID:                dwsIdentity.DwsUid,
-			OrgID:              dwsIdentity.OrgID,
-			GithubConnectionID: githubConnection.ConnectionID,
-			TTLSeconds:         900,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("create Agent Identity context for task: %w", err)
-		}
-		l.debugLogAgentIdentityContextToken(taskID, agentID, sandboxID, result, hasDWSBinding, hasGithubConnection)
-		slog.Info("FC/E2B task identity selected",
-			"task_id", taskID,
-			"identity_source", "agent_binding_fallback",
-			"dws_identity", hasDWSBinding,
-			"github_identity", hasGithubConnection,
-		)
-		return fcE2BAgentIdentityEnvForToken(result.ContextToken, l.Config)
-	}
-
 	if refreshRequired {
 		if !hasDWSCapability {
-			return nil, errors.New("DWS capability is required to refresh the cached Agent Identity ContextToken")
+			return fcE2BResolvedIdentity{}, errors.New("DWS capability is required to refresh the cached Agent Identity ContextToken")
 		}
-		return nil, errors.New("Multica Agent DingTalk identity binding is required to refresh the cached ContextToken")
+		return fcE2BResolvedIdentity{}, errors.New("Multica Agent DingTalk identity binding is required to refresh the cached ContextToken")
 	}
-	return nil, nil
+	return fcE2BResolvedIdentity{}, nil
+}
+
+func (l *FCE2BLauncher) createResolvedIdentityContext(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	sandboxID string,
+	dwsIdentity fcE2BDWSIdentity,
+	githubConnection agentidentitygithub.Connection,
+	hasGithubConnection bool,
+) (fcE2BResolvedIdentity, error) {
+	if l.AgentIdentity == nil {
+		return fcE2BResolvedIdentity{}, errors.New("Agent Identity HSF client is not configured")
+	}
+	taskID := util.UUIDToString(task.ID)
+	agentID := util.UUIDToString(task.AgentID)
+	source := map[string]string{
+		"app":             "dt-fde-multica",
+		"identity_source": dwsIdentity.Source,
+	}
+	if hasGithubConnection {
+		source["github_identity_source"] = "agent_github_binding"
+	}
+	result, err := l.AgentIdentity.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
+		RequestID:          "multica-task-" + taskID,
+		TaskID:             taskID,
+		AgentID:            agentID,
+		RuntimeType:        "E2B",
+		RuntimeID:          sandboxID,
+		Reason:             "Multica Agent runtime authorization",
+		Source:             source,
+		UID:                dwsIdentity.UID,
+		OrgID:              dwsIdentity.OrgID,
+		GithubConnectionID: githubConnection.ConnectionID,
+		TTLSeconds:         900,
+	})
+	if err != nil {
+		return fcE2BResolvedIdentity{}, fmt.Errorf("create Agent Identity context for task: %w", err)
+	}
+	hasDWSIdentity := dwsIdentity.UID != ""
+	l.debugLogAgentIdentityContextToken(taskID, agentID, sandboxID, result, dwsIdentity.Source, hasDWSIdentity, hasGithubConnection)
+	slog.Info("FC/E2B task identity selected",
+		"task_id", taskID,
+		"identity_source", dwsIdentity.Source,
+		"dws_identity", hasDWSIdentity,
+		"github_identity", hasGithubConnection,
+	)
+	return fcE2BResolvedIdentity{ContextToken: result.ContextToken, Source: dwsIdentity.Source}, nil
 }
 
 func (l *FCE2BLauncher) debugLogAgentIdentityContextToken(
@@ -1894,6 +1949,7 @@ func (l *FCE2BLauncher) debugLogAgentIdentityContextToken(
 	agentID string,
 	sandboxID string,
 	result agentidentityhsf.CreateContextResult,
+	identitySource string,
 	hasDWSBinding bool,
 	hasGithubConnection bool,
 ) {
@@ -1917,12 +1973,57 @@ func (l *FCE2BLauncher) debugLogAgentIdentityContextToken(
 		"task_id", taskID,
 		"agent_id", agentID,
 		"sandbox_id", sandboxID,
-		"identity_source", "agent_binding_fallback",
+		"identity_source", identitySource,
 		"dws_identity", hasDWSBinding,
 		"github_identity", hasGithubConnection,
 		"expires_at", result.ExpiresAt,
 		"context_value", result.ContextToken,
 	)
+}
+
+func fcE2BExternalDWSIdentity(task db.AgentTaskQueue) (fcE2BDWSIdentity, bool, error) {
+	if len(bytes.TrimSpace(task.Context)) == 0 {
+		return fcE2BDWSIdentity{}, false, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(task.Context, &payload); err != nil {
+		return fcE2BDWSIdentity{}, false, fmt.Errorf("parse task context for external DWS identity: %w", err)
+	}
+	raw, present := payload["external_identity"]
+	if !present {
+		return fcE2BDWSIdentity{}, false, nil
+	}
+	var external struct {
+		DWS *struct {
+			UID   string `json:"uid"`
+			OrgID string `json:"orgId"`
+		} `json:"dws"`
+	}
+	if err := json.Unmarshal(raw, &external); err != nil {
+		return fcE2BDWSIdentity{}, false, errors.New("parse external DWS identity from task context")
+	}
+	if external.DWS == nil {
+		return fcE2BDWSIdentity{}, false, nil
+	}
+	uid := strings.TrimSpace(external.DWS.UID)
+	orgID := strings.TrimSpace(external.DWS.OrgID)
+	if uid != external.DWS.UID || orgID != external.DWS.OrgID ||
+		!validFCE2BDWSIdentifier(uid) || !validFCE2BDWSIdentifier(orgID) {
+		return fcE2BDWSIdentity{}, false, errors.New("external DWS identity in task context is invalid")
+	}
+	return fcE2BDWSIdentity{UID: uid, OrgID: orgID, Source: "external_dws"}, true, nil
+}
+
+func validFCE2BDWSIdentifier(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (l *FCE2BLauncher) githubConnectionForAgent(

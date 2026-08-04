@@ -156,6 +156,7 @@ status              = queued | delivered | dead_letter
 服务端从源 task context 读取并保留：
 
 - `agent_identity_context_token` 及过期时间、来源；
+- `external_identity.dws` 稳定 DWS 身份描述；
 - dispatch source、domain、event data 和 outbound；
 - dispatch endpoint、幂等键和未知的兼容字段；
 - terminal completion callback URL、execution update callback URL 与
@@ -171,7 +172,7 @@ status              = queued | delivered | dead_letter
 因此目标 task 获得 Issue 的双落点规则，而不会继续使用 Chat prompt。
 
 如果评论合并进已有 queued task，不覆盖该 task 的私有 context。该物理
-task 继续使用创建它时的第一份 ContextToken、身份和 runtime context；后续
+task 继续使用创建它时的第一份 ContextToken、稳定 DWS 描述和 runtime context；后续
 评论的 callback 留在各自 source Chat task context 中，不拼接进目标 task。
 
 转换发生在服务端内存和 task 私有 context 中。CLI 请求、CLI 输出、Issue

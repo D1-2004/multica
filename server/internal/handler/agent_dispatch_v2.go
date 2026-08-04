@@ -221,6 +221,11 @@ func (c DispatchCommand) validate() error {
 	} else if c.ExternalIdentity.ExpiresAt <= 0 {
 		return errors.New("externalIdentity.expiresAt is invalid")
 	}
+	if c.ExternalIdentity.DWS != nil &&
+		(!validDispatchDWSIdentifier(c.ExternalIdentity.DWS.UID) ||
+			!validDispatchDWSIdentifier(c.ExternalIdentity.DWS.OrgID)) {
+		return errors.New("externalIdentity.dws uid and orgId must be decimal identifiers")
+	}
 	// Callback presence alone selects durable terminal delivery. An absent
 	// callback keeps the direct Streaming and rolling legacy behavior; source
 	// type and outbound mode do not select completion semantics.
@@ -291,8 +296,8 @@ func (c DispatchCommand) validateCalendarStarted() error {
 	if c.Outbound.Mode != protocol.DispatchOutboundModeNone || strings.TrimSpace(c.Outbound.ReplyTo) != "" {
 		return errors.New("calendar.started outbound must be none without replyTo")
 	}
-	if strings.TrimSpace(c.ExternalIdentity.ContextToken) == "" {
-		return errors.New("calendar.started externalIdentity.contextToken is required")
+	if strings.TrimSpace(c.ExternalIdentity.ContextToken) == "" && c.ExternalIdentity.DWS == nil {
+		return errors.New("calendar.started externalIdentity.contextToken or externalIdentity.dws is required")
 	}
 	return nil
 }
@@ -306,6 +311,18 @@ func validDispatchContextToken(token string) bool {
 	}
 	for _, r := range token {
 		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func validDispatchDWSIdentifier(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
 			return false
 		}
 	}

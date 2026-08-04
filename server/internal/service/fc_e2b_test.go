@@ -1068,19 +1068,19 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extraEnvForTask with external identity returned error: %v", err)
 	}
-	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "caller_external_token" || len(identityClient.requests) != 1 {
-		t.Fatalf("external identity was not preserved: requests=%d env=%#v", len(identityClient.requests), env)
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 2 {
+		t.Fatalf("Agent binding did not override the task ContextToken: requests=%d env=%#v", len(identityClient.requests), env)
 	}
 	task.Context = []byte(`{"dingtalk_robot_identity":{"uid":"99999999","org_id":"88888888"}}`)
 	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-legacy-context")
 	if err != nil {
 		t.Fatalf("extraEnvForTask legacy task context fallback returned error: %v", err)
 	}
-	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 2 {
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 3 {
 		t.Fatalf("legacy channel identity bypassed Agent binding fallback: requests=%d env=%#v", len(identityClient.requests), env)
 	}
-	if identityClient.requests[1].UID != "24710833" || identityClient.requests[1].OrgID != "439446171" {
-		t.Fatalf("launcher consumed channel identity: %#v", identityClient.requests[1])
+	if identityClient.requests[2].UID != "24710833" || identityClient.requests[2].OrgID != "439446171" {
+		t.Fatalf("launcher consumed channel identity: %#v", identityClient.requests[2])
 	}
 	task.Context = []byte(`{"dispatch_source":{"platform":"dingtalk","type":"digital_employee"}}`)
 	task.ChatSessionID = pgtype.UUID{}
@@ -1088,11 +1088,11 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extraEnvForTask direct task fallback returned error: %v", err)
 	}
-	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 3 {
+	if env["AGENT_IDENTITY_CONTEXT_TOKEN"] != "ctx_from_agent_binding" || len(identityClient.requests) != 4 {
 		t.Fatalf("direct task did not use Agent binding: requests=%d env=%#v", len(identityClient.requests), env)
 	}
-	if _, present := identityClient.requests[2].Source["chat_session_id"]; present {
-		t.Fatalf("direct task identity source contains chat session: %#v", identityClient.requests[2].Source)
+	if _, present := identityClient.requests[3].Source["chat_session_id"]; present {
+		t.Fatalf("direct task identity source contains chat session: %#v", identityClient.requests[3].Source)
 	}
 	task.ChatSessionID = util.MustParseUUID("22222222-2222-2222-2222-222222222222")
 
@@ -1135,7 +1135,7 @@ func TestParseFCE2BModels(t *testing.T) {
 	}
 }
 
-func TestFCE2BIdentityEnvPreservesExternalContextTokenOverAgentDWSBinding(t *testing.T) {
+func TestFCE2BIdentityEnvPrefersAgentDWSBindingOverExternalContextToken(t *testing.T) {
 	bindings := &fakeAgentIdentityBindingReader{identity: db.AgentDingtalkIdentity{
 		DwsUid: "24710833",
 		OrgID:  "439446171",
@@ -1158,7 +1158,12 @@ func TestFCE2BIdentityEnvPreservesExternalContextTokenOverAgentDWSBinding(t *tes
 	task := db.AgentTaskQueue{
 		ID:      util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		AgentID: util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
-		Context: []byte(`{"agent_identity_context_token":"external-context-token","agent_identity_context_token_expires_at":4102444800000,"agent_identity_context_token_source":"external"}`),
+		Context: []byte(`{
+			"external_identity":{"dws":{"uid":"55555555","orgId":"66666666"}},
+			"agent_identity_context_token":"external-context-token",
+			"agent_identity_context_token_expires_at":4102444800000,
+			"agent_identity_context_token_source":"external"
+		}`),
 	}
 	runtime := db.AgentRuntime{
 		WorkspaceID: util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
@@ -1170,11 +1175,94 @@ func TestFCE2BIdentityEnvPreservesExternalContextTokenOverAgentDWSBinding(t *tes
 	if err != nil {
 		t.Fatalf("identityEnvForTask: %v", err)
 	}
-	if env[protocol.AgentIdentityContextTokenEnvKey] != "external-context-token" {
-		t.Fatalf("identity env = %#v, want external ContextToken", env)
+	if env[protocol.AgentIdentityContextTokenEnvKey] != "agent-binding-context-token" {
+		t.Fatalf("identity env = %#v, want freshly resolved Agent binding ContextToken", env)
 	}
-	if len(bindings.requests) != 0 || len(identityContexts.requests) != 0 {
-		t.Fatalf("external token should bypass DWS fallback: binding requests = %d, context requests = %d", len(bindings.requests), len(identityContexts.requests))
+	if len(bindings.requests) != 1 || len(identityContexts.requests) != 1 {
+		t.Fatalf("binding/context requests = %d/%d, want one unified resolution", len(bindings.requests), len(identityContexts.requests))
+	}
+	request := identityContexts.requests[0]
+	if request.UID != "24710833" || request.OrgID != "439446171" || request.TTLSeconds != 900 {
+		t.Fatalf("Agent Identity request = %#v", request)
+	}
+}
+
+func TestFCE2BIdentityEnvFailsClosedWithoutDWSBindingReader(t *testing.T) {
+	launcher := &FCE2BLauncher{
+		Config: FCE2BConfig{
+			AgentIdentityBaseURL: "https://agent-identity.dingtalk.com",
+			AgentIdentityTimeout: 7 * time.Second,
+		},
+	}
+	task := db.AgentTaskQueue{
+		ID:      util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID: util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		Context: []byte(`{"external_identity":{"dws":{"uid":"24710833","orgId":"439446171"}}}`),
+	}
+	runtime := db.AgentRuntime{
+		WorkspaceID: util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+		RuntimeMode: "cloud",
+		Metadata:    []byte(`{"kind":"fc-e2b","capabilities":["dws"]}`),
+	}
+
+	_, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-missing-reader", db.Agent{})
+	if err == nil || !strings.Contains(err.Error(), "binding reader is not configured") {
+		t.Fatalf("missing binding reader error = %v", err)
+	}
+}
+
+func TestFCE2BIdentityEnvResolvesExternalDWSWithGithubBeforeLegacyToken(t *testing.T) {
+	bindings := &fakeAgentIdentityBindingReader{err: pgx.ErrNoRows}
+	identityContexts := &fakeAgentIdentityContextCreator{
+		result: agentidentityhsf.CreateContextResult{
+			ContextToken: "fresh-external-dws-context-token",
+			ExpiresAt:    time.Now().Add(15 * time.Minute).UnixMilli(),
+		},
+	}
+	github := &fakeAgentIdentityGithubBindingReader{connection: agentidentitygithub.Connection{
+		ConnectionID: "github-connection-1",
+		Status:       "ACTIVE",
+	}}
+	launcher := &FCE2BLauncher{
+		Config: FCE2BConfig{
+			AgentIdentityBaseURL: "https://agent-identity.dingtalk.com",
+			AgentIdentityTimeout: 7 * time.Second,
+		},
+		IdentityBindings: bindings,
+		AgentIdentity:    identityContexts,
+		GitHubIdentity:   github,
+	}
+	task := db.AgentTaskQueue{
+		ID:      util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID: util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		Context: []byte(`{
+			"external_identity":{"dws":{"uid":"24710833","orgId":"439446171"}},
+			"agent_identity_context_token":"external-context-token",
+			"agent_identity_context_token_expires_at":4102444800000,
+			"agent_identity_context_token_source":"external"
+		}`),
+	}
+	runtime := db.AgentRuntime{
+		WorkspaceID: util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+		RuntimeMode: "cloud",
+		Metadata:    []byte(`{"kind":"fc-e2b","capabilities":["dws"]}`),
+	}
+	agent := db.Agent{OwnerID: util.MustParseUUID("44444444-4444-4444-4444-444444444444")}
+
+	env, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-external-dws", agent)
+	if err != nil {
+		t.Fatalf("identityEnvForTask: %v", err)
+	}
+	if env[protocol.AgentIdentityContextTokenEnvKey] != "fresh-external-dws-context-token" {
+		t.Fatalf("identity env = %#v", env)
+	}
+	if len(bindings.requests) != 1 || len(identityContexts.requests) != 1 || len(identityContexts.extendRequests) != 0 {
+		t.Fatalf("binding/create/extend requests = %d/%d/%d", len(bindings.requests), len(identityContexts.requests), len(identityContexts.extendRequests))
+	}
+	request := identityContexts.requests[0]
+	if request.UID != "24710833" || request.OrgID != "439446171" || request.GithubConnectionID != "github-connection-1" ||
+		request.Source["identity_source"] != "external_dws" {
+		t.Fatalf("Agent Identity request = %#v", request)
 	}
 }
 
@@ -1194,8 +1282,9 @@ func TestFCE2BIdentityEnvExtendsPreparedContextTokenWithGitHub(t *testing.T) {
 			AgentIdentityBaseURL: "https://agent-identity.dingtalk.com",
 			AgentIdentityTimeout: 7 * time.Second,
 		},
-		AgentIdentity:  identityContexts,
-		GitHubIdentity: github,
+		IdentityBindings: &fakeAgentIdentityBindingReader{err: pgx.ErrNoRows},
+		AgentIdentity:    identityContexts,
+		GitHubIdentity:   github,
 	}
 	task := db.AgentTaskQueue{
 		ID:      util.MustParseUUID("11111111-1111-1111-1111-111111111111"),

@@ -107,8 +107,9 @@ func buildAgentDispatchIssueFollowUpParams(
 }
 
 func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
-	// Do not include ExternalIdentity: the token has its own dedicated private
-	// task-context field and must never be duplicated in a JSON snapshot.
+	// The token has its own dedicated private task-context field and must never
+	// be duplicated in a JSON snapshot. The stable DWS descriptor is retained so
+	// identity can be resolved immediately before a cloud sandbox starts.
 	payload := map[string]any{
 		"dispatch_schema_version":         c.SchemaVersion,
 		"dispatch_source":                 c.Source,
@@ -122,6 +123,11 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 	if c.ExternalIdentity.ContextToken != "" {
 		payload[protocol.AgentIdentityContextTokenExpiresAtJSONKey] = c.ExternalIdentity.ExpiresAt
 		payload[protocol.AgentIdentityContextTokenSourceJSONKey] = protocol.AgentIdentityContextTokenSourceExternal
+	}
+	if c.ExternalIdentity.DWS != nil {
+		payload["external_identity"] = struct {
+			DWS *AgentDispatchDWSIdentity `json:"dws"`
+		}{DWS: c.ExternalIdentity.DWS}
 	}
 	if c.DispatchEndpointID != "" {
 		payload["dispatch_endpoint_id"] = c.DispatchEndpointID

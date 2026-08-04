@@ -73,8 +73,14 @@ type AgentDispatchChannelContext struct {
 }
 
 type AgentDispatchExternalIdentity struct {
-	ContextToken string `json:"contextToken"`
-	ExpiresAt    int64  `json:"expiresAt"`
+	ContextToken string                    `json:"contextToken"`
+	ExpiresAt    int64                     `json:"expiresAt"`
+	DWS          *AgentDispatchDWSIdentity `json:"dws,omitempty"`
+}
+
+type AgentDispatchDWSIdentity struct {
+	UID   string `json:"uid"`
+	OrgID string `json:"orgId"`
 }
 
 type AgentDispatchRequest struct {

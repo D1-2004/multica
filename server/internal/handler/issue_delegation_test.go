@@ -75,6 +75,7 @@ func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t
 		"unknown_large_number":9007199254740993,
 		"agent_identity_context_token":"private-context-token",
 		"agent_identity_context_token_expires_at":4102444800,
+		"external_identity":{"dws":{"uid":"24710833","orgId":"439446171"}},
 		"completion_callback":{"url":%q,"update_url":%q,"target":%q}
 	}`, callbackURL, updateURL, testRouterTargetIdentity)
 	sourceTaskID, chatSessionID := createDelegationSourceTask(t, sourceAgentID, sourceContext)
@@ -141,7 +142,7 @@ func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, inherited := range []string{"private-context-token", "dispatch_schema_version", "parent_ref", "router-task-123", "completion_callback", "9007199254740993"} {
+	for _, inherited := range []string{"private-context-token", "dispatch_schema_version", "parent_ref", "router-task-123", "completion_callback", "9007199254740993", "external_identity", "24710833", "439446171"} {
 		if !strings.Contains(string(targetTask.Context), inherited) {
 			t.Errorf("target context missing %q: %s", inherited, targetTask.Context)
 		}
