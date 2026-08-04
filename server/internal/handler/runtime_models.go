@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/service"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // ---------------------------------------------------------------------------
@@ -280,6 +281,40 @@ func modelListRequestTerminal(status ModelListStatus) bool {
 	return status == ModelListCompleted || status == ModelListFailed || status == ModelListTimeout
 }
 
+type cloudSandboxModelCatalog struct {
+	Models          []string
+	Provider        string
+	ConfigKey       string
+	RequestIDPrefix string
+}
+
+// Cloud sandbox daemons exist only while a task sandbox is running, so an idle
+// Runtime cannot service heartbeat-driven discovery. Their selectable models
+// are deployment-owned and must be returned synchronously from server config.
+func (h *Handler) configuredCloudSandboxModelCatalog(rt db.AgentRuntime) (cloudSandboxModelCatalog, bool) {
+	metadata, err := service.ParseCloudSandboxRuntime(rt)
+	if err != nil {
+		return cloudSandboxModelCatalog{}, false
+	}
+
+	catalog := cloudSandboxModelCatalog{}
+	switch metadata.SandboxBackend {
+	case service.SandboxBackendAliyunFC:
+		catalog.Models = h.cfg.FCE2B.LLMModels
+		catalog.Provider = service.FCE2BRuntimeProvider(rt)
+		catalog.ConfigKey = "MULTICA_FC_E2B_OPENAI_MODELS"
+		catalog.RequestIDPrefix = "fc-e2b"
+	case service.SandboxBackendASB:
+		catalog.Models = h.cfg.ASB.LLMModels
+		catalog.Provider = metadata.Provider
+		catalog.ConfigKey = "MULTICA_ASB_OPENAI_MODELS"
+		catalog.RequestIDPrefix = "asb"
+	default:
+		return cloudSandboxModelCatalog{}, false
+	}
+	return catalog, true
+}
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -305,22 +340,22 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "runtime is offline")
 		return
 	}
-	if service.IsFCE2BRuntime(rt) {
-		if len(h.cfg.FCE2B.LLMModels) == 0 {
-			writeError(w, http.StatusServiceUnavailable, "MULTICA_FC_E2B_OPENAI_MODELS is empty")
+	if catalog, ok := h.configuredCloudSandboxModelCatalog(rt); ok {
+		if len(catalog.Models) == 0 {
+			writeError(w, http.StatusServiceUnavailable, catalog.ConfigKey+" is empty")
 			return
 		}
-		models := make([]ModelEntry, 0, len(h.cfg.FCE2B.LLMModels))
-		for i, model := range h.cfg.FCE2B.LLMModels {
+		models := make([]ModelEntry, 0, len(catalog.Models))
+		for i, model := range catalog.Models {
 			models = append(models, ModelEntry{
 				ID:       model,
 				Label:    model,
-				Provider: service.FCE2BRuntimeProvider(rt),
+				Provider: catalog.Provider,
 				Default:  i == 0,
 			})
 		}
 		writeJSON(w, http.StatusOK, ModelListRequest{
-			ID:        "fc-e2b:" + uuidToString(rt.ID),
+			ID:        catalog.RequestIDPrefix + ":" + uuidToString(rt.ID),
 			RuntimeID: uuidToString(rt.ID),
 			Status:    ModelListCompleted,
 			Models:    models,
