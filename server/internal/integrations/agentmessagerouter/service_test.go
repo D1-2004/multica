@@ -30,14 +30,17 @@ type fakeBindingStore struct {
 	activateErr     error
 	activateHook    func(*fakeBindingStore)
 	revokeErr       error
+	backfillErr     error
 	updateSurfaceErr error
 	listErr         error
 	beginConfig     []byte
 	revokeArg       db.RevokeDingTalkAccountBindingParams
 	accountRevokeArg db.RevokeDingTalkAccountBindingByAccountKeyParams
+	backfillArg     db.BackfillDingTalkAccountRouterAccountKeyParams
 	previousCleanupArgs []db.DeletePreviousDingTalkAccountBindingProjectionParams
 	activated       bool
 	revoked         bool
+	backfilled      bool
 	updatedSurface  bool
 	identityAttempt db.AgentDingtalkIdentityAttempt
 	identity        db.AgentDingtalkIdentity
@@ -226,6 +229,29 @@ func (f *fakeBindingStore) RevokeDingTalkAccountBindingByAccountKey(_ context.Co
 	})
 }
 
+func (f *fakeBindingStore) BackfillDingTalkAccountRouterAccountKey(_ context.Context, arg db.BackfillDingTalkAccountRouterAccountKeyParams) (db.ChannelInstallation, error) {
+	if f.backfillErr != nil {
+		return db.ChannelInstallation{}, f.backfillErr
+	}
+	f.backfillArg = arg
+	config, err := ParseDingTalkAccountConfig(f.row.Config)
+	if err != nil || f.row.ID != arg.ID || f.row.WorkspaceID != arg.WorkspaceID ||
+		f.row.AgentID != arg.AgentID || f.row.Status != arg.ExpectedStatus ||
+		config.RouterSourceID != arg.ExpectedRouterSourceID ||
+		!bytes.Equal(f.row.Config, arg.ExpectedConfig) {
+		return db.ChannelInstallation{}, pgx.ErrNoRows
+	}
+	config.RouterPlatform = arg.RouterPlatform
+	config.RouterTenantID = arg.RouterTenantID
+	config.RouterAccountID = arg.RouterAccountID
+	f.row.Config, err = config.Marshal()
+	if err != nil {
+		return db.ChannelInstallation{}, err
+	}
+	f.backfilled = true
+	return f.row, nil
+}
+
 func (f *fakeBindingStore) DeletePreviousDingTalkAccountBindingProjection(_ context.Context, arg db.DeletePreviousDingTalkAccountBindingProjectionParams) ([]db.ChannelInstallation, error) {
 	f.previousCleanupArgs = append(f.previousCleanupArgs, arg)
 	return nil, nil
@@ -332,6 +358,9 @@ type fakeBindingRouter struct {
 	unbindResult         DigitalEmployeeBindingUnbindResult
 	unbindErr            error
 	unbindRequests       []DigitalEmployeeBindingKey
+	sourceResult         DigitalEmployeeSourceIdentityResult
+	sourceErr            error
+	sourceIDs            [][]string
 	operations           *[]string
 
 	deleteDigitalEmployeeErr     error
@@ -362,6 +391,11 @@ func (f *fakeBindingRouter) UnbindDigitalEmployeeBinding(_ context.Context, bind
 		*f.operations = append(*f.operations, "router_unbind")
 	}
 	return f.unbindResult, f.unbindErr
+}
+
+func (f *fakeBindingRouter) GetDigitalEmployeeSourceIdentities(_ context.Context, sourceIDs []string) (DigitalEmployeeSourceIdentityResult, error) {
+	f.sourceIDs = append(f.sourceIDs, append([]string(nil), sourceIDs...))
+	return f.sourceResult, f.sourceErr
 }
 
 func (f *fakeBindingRouter) IssueBindingToken(_ context.Context, descriptor AgentDescriptor) (BindingToken, error) {
@@ -1720,17 +1754,10 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 		t.Fatalf("digital employee delete=%#v source delete=%#v revoked=%v binding=%#v",
 			router.deletedDigitalEmployeeAgents, router.deleted, store.revoked, binding)
 	}
-	if len(router.bindingCheckRequests) != 1 || len(router.bindingCheckRequests[0]) != 1 {
-		t.Fatalf("binding check requests = %#v", router.bindingCheckRequests)
+	if len(router.bindingCheckRequests) != 0 {
+		t.Fatalf("binding check requests = %#v, want none", router.bindingCheckRequests)
 	}
-	checkRequest := router.bindingCheckRequests[0][0]
-	if checkRequest.AgentID != uuidStringForTest(store.row.AgentID) || checkRequest.Platform != "dingtalk" ||
-		checkRequest.TenantID != "corp-a" || checkRequest.AccountID != "employee-a" ||
-		len(checkRequest.ExpectedDomains) != 2 || checkRequest.ExpectedDomains[0] != "channel" ||
-		checkRequest.ExpectedDomains[1] != "calendar" {
-		t.Fatalf("binding check request = %#v", checkRequest)
-	}
-	if got, want := strings.Join(operations, ","), "router_check,router_unbind,local_revoke"; got != want {
+	if got, want := strings.Join(operations, ","), "router_unbind,local_revoke"; got != want {
 		t.Fatalf("operation order = %q, want %q", got, want)
 	}
 	if store.accountRevokeArg.AgentID != store.row.AgentID {
@@ -1786,18 +1813,14 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 	}
 }
 
-func TestUnbindBoundToOtherAgentRevokesOnlyStaleLocalProjection(t *testing.T) {
+func TestUnbindOwnershipChangedRevokesOnlyStaleLocalProjection(t *testing.T) {
 	now := time.Date(2026, 8, 3, 12, 25, 0, 0, time.UTC)
 	store := activeBindingStoreForUnbind(t, now)
-	agentID := uuidStringForTest(store.row.AgentID)
 	operations := []string{}
 	store.operations = &operations
 	router := &fakeBindingRouter{
-		bindingChecks: []DigitalEmployeeBindingCheck{{
-			AgentID: agentID, Platform: "dingtalk", TenantID: "corp-a", AccountID: "employee-a",
-			Status: "bound_to_other_agent", CurrentAgentID: "agent-current-owner",
-		}},
-		operations: &operations,
+		unbindResult: DigitalEmployeeBindingUnbindResult{Status: "ownership_changed"},
+		operations:   &operations,
 	}
 	service := newBindingServiceForTest(t, store, router, now)
 
@@ -1810,30 +1833,30 @@ func TestUnbindBoundToOtherAgentRevokesOnlyStaleLocalProjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unbind() error = %v", err)
 	}
-	if len(router.unbindRequests) != 0 || !store.revoked || binding.MessageRoute.Status != "revoked" {
+	if len(router.bindingCheckRequests) != 0 || len(router.unbindRequests) != 1 || !store.revoked || binding.MessageRoute.Status != "revoked" {
 		t.Fatalf("unbind requests = %#v revoked = %v binding = %#v", router.unbindRequests, store.revoked, binding)
 	}
-	if got, want := strings.Join(operations, ","), "router_check,local_revoke"; got != want {
+	if got, want := strings.Join(operations, ","), "router_unbind,local_revoke"; got != want {
 		t.Fatalf("operation order = %q, want %q", got, want)
 	}
 }
 
-func TestUnbindFailsClosedWhenRouterCheckIsUnavailableOrInvalid(t *testing.T) {
+func TestUnbindFailsClosedWhenRouterUnbindIsUnavailableOrInvalid(t *testing.T) {
 	now := time.Date(2026, 8, 3, 12, 26, 0, 0, time.UTC)
 	for _, tt := range []struct {
-		name          string
-		bindingChecks []DigitalEmployeeBindingCheck
-		checkErr      error
+		name      string
+		status    string
+		unbindErr error
 	}{
-		{name: "router unavailable", checkErr: errors.New("router unavailable")},
-		{name: "empty response", bindingChecks: []DigitalEmployeeBindingCheck{}},
-		{name: "mismatched response", bindingChecks: []DigitalEmployeeBindingCheck{{
-			AgentID: "different-agent", Platform: "dingtalk", TenantID: "corp-a", AccountID: "employee-a", Status: "valid",
-		}}},
+		{name: "router unavailable", unbindErr: errors.New("router unavailable")},
+		{name: "unexpected response", status: "unexpected"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			store := activeBindingStoreForUnbind(t, now)
-			router := &fakeBindingRouter{bindingChecks: tt.bindingChecks, bindingCheckErr: tt.checkErr}
+			router := &fakeBindingRouter{
+				unbindResult: DigitalEmployeeBindingUnbindResult{Status: tt.status},
+				unbindErr:    tt.unbindErr,
+			}
 			service := newBindingServiceForTest(t, store, router, now)
 
 			_, err := service.Unbind(context.Background(), UnbindParams{
@@ -1845,20 +1868,17 @@ func TestUnbindFailsClosedWhenRouterCheckIsUnavailableOrInvalid(t *testing.T) {
 			if !errors.Is(err, ErrRouterUnavailable) {
 				t.Fatalf("Unbind() error = %v, want ErrRouterUnavailable", err)
 			}
-			if len(router.unbindRequests) != 0 || store.revoked {
+			if len(router.bindingCheckRequests) != 0 || len(router.unbindRequests) != 1 || store.revoked {
 				t.Fatalf("unbind requests = %#v revoked = %v", router.unbindRequests, store.revoked)
 			}
 		})
 	}
 }
 
-func TestUnbindFailsClosedWhenLatestRouterCheckIsInconsistent(t *testing.T) {
+func TestUnbindFailsClosedWhenRouterUnbindIsInconsistent(t *testing.T) {
 	now := time.Date(2026, 8, 3, 12, 27, 0, 0, time.UTC)
 	store := activeBindingStoreForUnbind(t, now)
-	router := &fakeBindingRouter{bindingChecks: []DigitalEmployeeBindingCheck{{
-		AgentID: uuidStringForTest(store.row.AgentID), Platform: "dingtalk", TenantID: "corp-a",
-		AccountID: "employee-a", Status: "inconsistent",
-	}}}
+	router := &fakeBindingRouter{unbindResult: DigitalEmployeeBindingUnbindResult{Status: "inconsistent"}}
 	service := newBindingServiceForTest(t, store, router, now)
 
 	_, err := service.Unbind(context.Background(), UnbindParams{
@@ -1870,12 +1890,12 @@ func TestUnbindFailsClosedWhenLatestRouterCheckIsInconsistent(t *testing.T) {
 	if !errors.Is(err, ErrBindingConflict) {
 		t.Fatalf("Unbind() error = %v, want ErrBindingConflict", err)
 	}
-	if len(router.unbindRequests) != 0 || store.revoked {
+	if len(router.bindingCheckRequests) != 0 || len(router.unbindRequests) != 1 || store.revoked {
 		t.Fatalf("unbind requests = %#v revoked = %v", router.unbindRequests, store.revoked)
 	}
 }
 
-func TestUnbindOwnershipChangeAfterValidCheckOnlyConvergesOldProjection(t *testing.T) {
+func TestUnbindOwnershipChangeOnlyConvergesOldProjection(t *testing.T) {
 	now := time.Date(2026, 8, 3, 12, 28, 0, 0, time.UTC)
 	store := activeBindingStoreForUnbind(t, now)
 	router := &fakeBindingRouter{unbindResult: DigitalEmployeeBindingUnbindResult{Status: "ownership_changed"}}
@@ -1890,7 +1910,7 @@ func TestUnbindOwnershipChangeAfterValidCheckOnlyConvergesOldProjection(t *testi
 	if err != nil {
 		t.Fatalf("Unbind() error = %v", err)
 	}
-	if len(router.bindingCheckRequests) != 1 || len(router.unbindRequests) != 1 ||
+	if len(router.bindingCheckRequests) != 0 || len(router.unbindRequests) != 1 ||
 		!store.revoked || binding.MessageRoute.Status != "revoked" {
 		t.Fatalf("checks = %#v unbinds = %#v revoked = %v binding = %#v",
 			router.bindingCheckRequests, router.unbindRequests, store.revoked, binding)
@@ -1965,9 +1985,56 @@ func activeBindingStoreForUnbind(t *testing.T, now time.Time) *fakeBindingStore 
 	return store
 }
 
+func TestUnbindEnrichesLegacyAccountKeyBeforeRouterUnbind(t *testing.T) {
+	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
+	store := activeBindingStoreForUnbind(t, now)
+	config, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.RouterPlatform = ""
+	config.RouterTenantID = ""
+	config.RouterAccountID = ""
+	store.row.Config, err = config.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := &fakeBindingRouter{
+		sourceResult: DigitalEmployeeSourceIdentityResult{Sources: []DigitalEmployeeSourceIdentity{{
+			SourceID: config.RouterSourceID, Platform: "dingtalk", TenantID: "corp-a", AccountID: "employee-a",
+			SourceType: "digital_employee", Domain: "channel",
+		}}},
+		unbindResult: DigitalEmployeeBindingUnbindResult{Status: "unbound"},
+	}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	binding, err := service.Unbind(context.Background(), UnbindParams{
+		WorkspaceID: store.row.WorkspaceID,
+		AgentID:     store.row.AgentID,
+		BindingMode: BindingModeMessage,
+	})
+
+	if err != nil {
+		t.Fatalf("Unbind() error = %v", err)
+	}
+	if !store.backfilled || !store.revoked || binding.MessageRoute.Status != "revoked" {
+		t.Fatalf("backfilled=%v revoked=%v binding=%#v", store.backfilled, store.revoked, binding)
+	}
+	if len(router.sourceIDs) != 1 || len(router.sourceIDs[0]) != 1 ||
+		router.sourceIDs[0][0] != config.RouterSourceID ||
+		len(router.bindingCheckRequests) != 0 || len(router.unbindRequests) != 1 {
+		t.Fatalf("sourceIDs=%#v checks=%#v unbinds=%#v", router.sourceIDs, router.bindingCheckRequests, router.unbindRequests)
+	}
+	request := router.unbindRequests[0]
+	if request.AgentID != uuidStringForTest(store.row.AgentID) || request.Platform != "dingtalk" ||
+		request.TenantID != "corp-a" || request.AccountID != "employee-a" || len(request.ExpectedDomains) != 0 {
+		t.Fatalf("unbind request = %#v", request)
+	}
+}
+
 func TestUnbindProceedsWhenRouterHasNoRemainingDigitalEmployeeSubscriptions(t *testing.T) {
-	// Router returns an empty successful batch when a previous attempt already
-	// disabled every subscription. The local revoke must still converge.
+	// Router returns unbound when a previous attempt already disabled every
+	// subscription. The local revoke must still converge.
 	now := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	store := activeBindingStoreForUnbind(t, now)
 	router := &fakeBindingRouter{unbindResult: DigitalEmployeeBindingUnbindResult{Status: "unbound"}}

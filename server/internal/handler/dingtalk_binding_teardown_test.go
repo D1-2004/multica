@@ -238,7 +238,7 @@ func TestTeardownDingTalkBindingsEnrichesLegacyRowBeforeUnbind(t *testing.T) {
 	if err := teardownDingTalkBindings(context.Background(), store, router, []pgtype.UUID{agentID}); err != nil {
 		t.Fatalf("teardownDingTalkBindings: %v", err)
 	}
-	if store.backfills != 1 || len(router.sourceIDs) != 1 || len(router.sourcesRead) != 1 || len(router.unbinds) != 1 {
+	if store.backfills != 1 || len(router.sourceIDs) != 1 || len(router.sourcesRead) != 0 || len(router.unbinds) != 1 {
 		t.Fatalf("backfills=%d identity lookups=%d subscription lookups=%d unbinds=%d", store.backfills, len(router.sourceIDs), len(router.sourcesRead), len(router.unbinds))
 	}
 }
@@ -268,7 +268,7 @@ func TestTeardownDingTalkBindingsAcceptsConfiguredPublicDispatchURLForLegacyRow(
 	}
 }
 
-func TestTeardownDingTalkBindingsRejectsLegacySourceOwnedByAnotherAgent(t *testing.T) {
+func TestTeardownDingTalkBindingsDoesNotRequireLegacyActiveSubscriptionOwner(t *testing.T) {
 	agentID := parseUUID("66666666-6666-4666-8666-666666666666")
 	store := &fakeDingTalkBindingTeardownStore{
 		agents:   []db.Agent{{ID: agentID}},
@@ -280,29 +280,35 @@ func TestTeardownDingTalkBindingsRejectsLegacySourceOwnedByAnotherAgent(t *testi
 			SourceID: "source-1", Platform: "dingtalk", TenantID: "tenant-1", AccountID: "account-1",
 			SourceType: "digital_employee", Domain: "channel",
 		}}},
+		subscribeErr: errors.New("subscription disabled"),
 		subscription: agentmessagerouter.Subscription{
 			SourceID: "source-1", AgentID: "77777777-7777-4777-8777-777777777777",
-			DispatchURL: "/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw", Status: "active",
+			DispatchURL: "/api/webhooks/agent-dispatch/v1_AQIDBAUGBwgJCgsMDQ4PEA", Status: "inactive",
 		},
 	}
 
-	if err := teardownDingTalkBindings(context.Background(), store, router, []pgtype.UUID{agentID}); err == nil {
-		t.Fatal("teardownDingTalkBindings succeeded for a source owned by another Agent")
+	if err := teardownDingTalkBindings(context.Background(), store, router, []pgtype.UUID{agentID}); err != nil {
+		t.Fatalf("teardownDingTalkBindings: %v", err)
 	}
-	if store.backfills != 0 || len(router.unbinds) != 0 {
-		t.Fatalf("backfills=%d unbinds=%d, want no mutation", store.backfills, len(router.unbinds))
+	if store.backfills != 1 || store.deletions != 1 || len(router.sourcesRead) != 0 || len(router.unbinds) != 1 {
+		t.Fatalf("backfills=%d deletions=%d subscription reads=%d unbinds=%d", store.backfills, store.deletions, len(router.sourcesRead), len(router.unbinds))
 	}
 }
 
-func TestTeardownDingTalkBindingsRejectsLegacySubscriptionMismatch(t *testing.T) {
+func TestTeardownDingTalkBindingsRejectsInvalidLegacySourceIdentity(t *testing.T) {
 	agentID := parseUUID("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")
 	tests := []struct {
-		name         string
-		dispatchURL  string
-		status       string
+		name     string
+		identity agentmessagerouter.DigitalEmployeeSourceIdentity
 	}{
-		{name: "dispatch", dispatchURL: "/api/webhooks/agent-dispatch/v1_AQIDBAUGBwgJCgsMDQ4PEA", status: "active"},
-		{name: "status", dispatchURL: "/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw", status: "inactive"},
+		{name: "wrong platform", identity: agentmessagerouter.DigitalEmployeeSourceIdentity{
+			SourceID: "source-1", Platform: "lark", TenantID: "tenant-1", AccountID: "account-1",
+			SourceType: "digital_employee", Domain: "channel",
+		}},
+		{name: "wrong domain", identity: agentmessagerouter.DigitalEmployeeSourceIdentity{
+			SourceID: "source-1", Platform: "dingtalk", TenantID: "tenant-1", AccountID: "account-1",
+			SourceType: "digital_employee", Domain: "calendar",
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -311,16 +317,10 @@ func TestTeardownDingTalkBindingsRejectsLegacySubscriptionMismatch(t *testing.T)
 				bindings: map[pgtype.UUID]db.ChannelInstallation{agentID: dingTalkBindingTeardownRow(t, agentID, "active", false)},
 			}
 			router := &fakeDingTalkBindingTeardownRouter{
-				sourceResult: agentmessagerouter.DigitalEmployeeSourceIdentityResult{Sources: []agentmessagerouter.DigitalEmployeeSourceIdentity{{
-					SourceID: "source-1", Platform: "dingtalk", TenantID: "tenant-1", AccountID: "account-1",
-					SourceType: "digital_employee", Domain: "channel",
-				}}},
-				subscription: agentmessagerouter.Subscription{
-					SourceID: "source-1", AgentID: agentID.String(), DispatchURL: tt.dispatchURL, Status: tt.status,
-				},
+				sourceResult: agentmessagerouter.DigitalEmployeeSourceIdentityResult{Sources: []agentmessagerouter.DigitalEmployeeSourceIdentity{tt.identity}},
 			}
 			if err := teardownDingTalkBindings(context.Background(), store, router, []pgtype.UUID{agentID}); err == nil {
-				t.Fatal("teardownDingTalkBindings succeeded for mismatched legacy subscription")
+				t.Fatal("teardownDingTalkBindings succeeded for invalid source identity")
 			}
 			if store.backfills != 0 || len(router.unbinds) != 0 {
 				t.Fatalf("backfills=%d unbinds=%d, want no mutation", store.backfills, len(router.unbinds))
