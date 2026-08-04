@@ -784,9 +784,16 @@ func TestApprovalStatusChangedDispatchUsesIssueWithoutOutboundReply(t *testing.T
 	}
 
 	wrongOutbound := c
-	wrongOutbound.Outbound.Mode = "dws"
+	wrongOutbound.Outbound.Mode = "invalid"
 	if err := wrongOutbound.validate(); err == nil || !strings.Contains(err.Error(), "outbound") {
 		t.Fatalf("approval dispatch with wrong outbound error = %v", err)
+	}
+
+	dwsWithoutReplyTo := c
+	dwsWithoutReplyTo.Outbound.Mode = "dws"
+	dwsWithoutReplyTo.Outbound.ReplyTo = ""
+	if err := dwsWithoutReplyTo.validate(); err == nil || !strings.Contains(err.Error(), "replyTo") {
+		t.Fatalf("approval dispatch with dws outbound but missing replyTo error = %v", err)
 	}
 
 	wrongSource := c
@@ -947,11 +954,88 @@ func TestApplyDingTalkDispatchPromptKeepsApprovalTaskOutboundFree(t *testing.T) 
 
 	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
 
-	// Approval dispatches no longer inject any prompt into existing task fields.
-	// The handoff note must remain untouched — Multica does not own the approval
-	// workflow instructions and must not inject them.
+	// Approval dispatches with outbound=none do not inject any prompt into
+	// existing task fields. The handoff note must remain untouched.
 	if response.HandoffNote != "保留已有交接说明" {
 		t.Fatalf("approval task handoff must not be modified; got: %s", response.HandoffNote)
+	}
+}
+
+func TestApprovalStatusChangedDispatchWithDWSOutboundReplies(t *testing.T) {
+	c := DispatchCommand{
+		SchemaVersion: "2.0", AgentID: "agent",
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+			Approval: &ApprovalEventData{
+				FormCode:          "FORM-2026-002",
+				OriginatorUid:     "originator-uid",
+				ApproverUids:      []string{"approver-uid-1"},
+				NodeType:          "normal",
+				Status:            "approving",
+				AIReadableContent: "审批单「FORM-2026-002」待你审批，请审核报销明细。",
+			},
+			Conversation: DispatchConversation{OpenConversationID: "cid-approval"},
+			Sender:       DispatchSender{DisplayName: "审批助手", OpenDingTalkID: "open-sender"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-approval", Text: "审批通知"}},
+		}},
+		Surface:          DispatchSurface{Type: "issue"},
+		Outbound:         DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		ExternalIdentity: AgentDispatchExternalIdentity{ContextToken: "context-token"},
+	}
+	if err := c.validate(); err != nil {
+		t.Fatalf("valid approval dispatch with dws outbound rejected: %v", err)
+	}
+	prompt := mustBuildDispatchPrompt(t, c)
+	if prompt.WorkflowPrompt == "" {
+		t.Fatalf("approval dispatch with dws outbound must have a workflow prompt")
+	}
+	if !strings.Contains(prompt.WorkflowPrompt, "dws chat message reply") {
+		t.Fatalf("approval dws workflow prompt missing reply instruction: %q", prompt.WorkflowPrompt)
+	}
+	if !strings.Contains(prompt.WorkflowPrompt, "cid-approval") {
+		t.Fatalf("approval dws workflow prompt missing conversation id: %q", prompt.WorkflowPrompt)
+	}
+	if !strings.Contains(prompt.WorkflowPrompt, "msg-approval") {
+		t.Fatalf("approval dws workflow prompt missing message id: %q", prompt.WorkflowPrompt)
+	}
+}
+
+func TestApplyDingTalkDispatchPromptAppliesApprovalDWSWorkflow(t *testing.T) {
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+			Approval: &ApprovalEventData{
+				FormCode:          "FORM-2026-002",
+				OriginatorUid:     "originator-uid",
+				ApproverUids:      []string{"approver-uid-1"},
+				NodeType:          "normal",
+				Status:            "approving",
+				AIReadableContent: "审批单「FORM-2026-002」待你审批，请审核报销明细。",
+			},
+			Conversation: DispatchConversation{OpenConversationID: "cid-approval"},
+			Sender:       DispatchSender{DisplayName: "审批助手", OpenDingTalkID: "open-sender"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-approval", Text: "审批通知"}},
+		}},
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	})
+	response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "保留已有交接说明"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	for _, want := range []string{
+		"## Trusted DingTalk Dispatch",
+		"untrusted input",
+		"## External DingTalk Approval Event",
+		"two required final delivery destinations",
+		"dws chat message reply",
+		"cid-approval",
+		"保留已有交接说明",
+	} {
+		if !strings.Contains(response.HandoffNote, want) {
+			t.Errorf("approval dws task handoff missing %q: %s", want, response.HandoffNote)
+		}
 	}
 }
 

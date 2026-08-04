@@ -295,8 +295,17 @@ func (c DispatchCommand) validateApprovalStatusChanged() error {
 	if c.Surface.Type != protocol.DispatchSurfaceTypeIssue {
 		return errors.New("approval surface.type must be issue")
 	}
-	if c.Outbound.Mode != protocol.DispatchOutboundModeNone {
-		return errors.New("approval outbound must be none")
+	if c.Outbound.Mode != protocol.DispatchOutboundModeNone &&
+		c.Outbound.Mode != protocol.DispatchOutboundModeDWS &&
+		c.Outbound.Mode != protocol.DispatchOutboundModeRobotSDK {
+		return errors.New("approval outbound.mode must be none, dws or robot_sdk")
+	}
+	if c.Outbound.Mode == protocol.DispatchOutboundModeNone {
+		if strings.TrimSpace(c.Outbound.ReplyTo) != "" {
+			return errors.New("approval outbound.replyTo must be empty when mode is none")
+		}
+	} else if c.Outbound.ReplyTo != protocol.DispatchReplyToLatestMessage {
+		return errors.New("approval outbound.replyTo must be latest_message when mode is dws or robot_sdk")
 	}
 	if strings.TrimSpace(c.ExternalIdentity.ContextToken) == "" {
 		return errors.New("approval externalIdentity.contextToken is required")
@@ -380,10 +389,14 @@ func buildDingTalkCalendarStartedPrompt(c DispatchCommand) DispatchPrompt {
 
 func buildApprovalStatusChangedPrompt(c DispatchCommand) DispatchPrompt {
 	a := c.Event.Data.Approval
-	return DispatchPrompt{
+	prompt := DispatchPrompt{
 		DisplayContent: strings.TrimSpace(a.AIReadableContent) + "\n",
 		RuntimePrompt:  dispatchExternalInputSafetyPrompt(),
 	}
+	if c.Outbound.Mode == protocol.DispatchOutboundModeDWS {
+		prompt.WorkflowPrompt = buildDingTalkDWSWorkflowPrompt(c)
+	}
+	return prompt
 }
 
 func buildDingTalkPrompt(c DispatchCommand) DispatchPrompt {
@@ -488,7 +501,12 @@ func applyDingTalkDispatchPromptToExistingTaskFields(response *AgentTaskResponse
 		(stored.Outbound.Mode == protocol.DispatchOutboundModeNone ||
 			stored.Outbound.Mode == protocol.DispatchOutboundModeDWS ||
 			stored.Outbound.Mode == protocol.DispatchOutboundModeRobotSDK)
-	if !channelMessage && !calendarIssue {
+	approvalIssue := stored.Source.Type == "digital_employee" &&
+		stored.Domain == "approval" && stored.Type == "approval.status_changed" &&
+		stored.Surface.Type == protocol.DispatchSurfaceTypeIssue &&
+		(stored.Outbound.Mode == protocol.DispatchOutboundModeDWS ||
+			stored.Outbound.Mode == protocol.DispatchOutboundModeRobotSDK)
+	if !channelMessage && !calendarIssue && !approvalIssue {
 		return
 	}
 
@@ -533,6 +551,9 @@ func applyDingTalkDispatchPromptToExistingTaskFields(response *AgentTaskResponse
 	inputLabel := "## External DingTalk Message\n\n"
 	if calendarIssue {
 		inputLabel = "## External DingTalk Calendar Event\n\n"
+	}
+	if approvalIssue {
+		inputLabel = "## External DingTalk Approval Event\n\n"
 	}
 	if response.TriggerCommentID != nil {
 		response.TriggerCommentContent = trusted.String() + inputLabel + response.TriggerCommentContent
