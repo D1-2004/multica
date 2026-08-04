@@ -11,7 +11,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -32,7 +31,7 @@ const (
 	defaultASBWireGuardProbeInterval = 5 * time.Second
 	defaultASBResourceCPU            = "2"
 	defaultASBResourceMemory         = "4Gi"
-	asbTaskIdentityForegroundWait    = 10 * time.Second
+	asbBoundIdentityMaxAttempts      = 3
 	asbRunnerHome                    = "/home/user"
 	asbUnboundIdentityFingerprint    = "7a5d3e85306c71a48596592e43c235dc5f8c9e3f96eeb52b9e6637a04356b1da"
 )
@@ -355,8 +354,6 @@ type ASBLauncher struct {
 	Credentials *ASBRuntimeClientProvider
 	Capacity    ASBSandboxCapacity
 	Pool        *pgxpool.Pool
-
-	identityPreparations *asbIdentityPreparationTracker
 }
 
 type asbLaunchSubmission struct {
@@ -368,75 +365,6 @@ type asbLaunchSubmission struct {
 	identityFingerprint string
 }
 
-// asbIdentityPreparation is a cancellable identity probe. Closing done is the
-// synchronization boundary: callers must wait for it before issuing another
-// command through the same sandbox exec endpoint.
-type asbIdentityPreparation struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-	err    error
-}
-
-// asbIdentityPreparationTracker owns only the optional post-launch identity
-// probes. A later task cancels and joins the previous probe before it submits
-// another runner command to the same sandbox.
-type asbIdentityPreparationTracker struct {
-	mu     sync.Mutex
-	active map[string]*asbIdentityPreparation
-}
-
-func newASBIdentityPreparationTracker() *asbIdentityPreparationTracker {
-	return &asbIdentityPreparationTracker{
-		active: make(map[string]*asbIdentityPreparation),
-	}
-}
-
-var defaultASBIdentityPreparationTracker = newASBIdentityPreparationTracker()
-
-func (l *ASBLauncher) backgroundIdentityPreparations() *asbIdentityPreparationTracker {
-	if l != nil && l.identityPreparations != nil {
-		return l.identityPreparations
-	}
-	return defaultASBIdentityPreparationTracker
-}
-
-func (tracker *asbIdentityPreparationTracker) track(
-	sandboxID string,
-	preparation *asbIdentityPreparation,
-) {
-	if tracker == nil || preparation == nil {
-		return
-	}
-	tracker.cancelAndWait(sandboxID)
-	tracker.mu.Lock()
-	tracker.active[sandboxID] = preparation
-	tracker.mu.Unlock()
-	go func() {
-		<-preparation.done
-		tracker.mu.Lock()
-		if tracker.active[sandboxID] == preparation {
-			delete(tracker.active, sandboxID)
-		}
-		tracker.mu.Unlock()
-	}()
-}
-
-func (tracker *asbIdentityPreparationTracker) cancelAndWait(sandboxID string) {
-	if tracker == nil {
-		return
-	}
-	tracker.mu.Lock()
-	preparation := tracker.active[sandboxID]
-	if preparation != nil {
-		delete(tracker.active, sandboxID)
-		preparation.cancel()
-	}
-	tracker.mu.Unlock()
-	if preparation != nil {
-		<-preparation.done
-	}
-}
-
 func NewASBLauncher(
 	queries *db.Queries,
 	tasks *TaskService,
@@ -446,13 +374,12 @@ func NewASBLauncher(
 	credentials *ASBRuntimeClientProvider,
 ) *ASBLauncher {
 	return &ASBLauncher{
-		Queries:              queries,
-		Tasks:                tasks,
-		Common:               common,
-		Config:               cfg,
-		Identity:             identity,
-		Credentials:          credentials,
-		identityPreparations: newASBIdentityPreparationTracker(),
+		Queries:     queries,
+		Tasks:       tasks,
+		Common:      common,
+		Config:      cfg,
+		Identity:    identity,
+		Credentials: credentials,
 	}
 }
 
@@ -667,7 +594,7 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	}
 
 	scope, scoped := fcE2BScopeForTask(task)
-	sandboxID, coldStart, effectiveIdentity, retryIdentityAfterRunner, err := l.resolveSandbox(
+	sandboxID, coldStart, effectiveIdentity, err := l.resolveSandbox(
 		ctx,
 		runtime,
 		metadata,
@@ -714,26 +641,8 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	}); err != nil {
 		return asbLaunchSubmission{}, false, errors.New("failed to persist ASB daemon token")
 	}
-	// A previous task may still be running an optional identity probe through
-	// the sandbox command endpoint. Cancel and join it before submitting the
-	// runner so ASB never receives concurrent /command requests for one sandbox.
-	l.backgroundIdentityPreparations().cancelAndWait(sandboxID)
 	if err := l.execRunOnce(ctx, sandboxID, runtime, task.ID, token, coldStart, extraEnv); err != nil {
 		return asbLaunchSubmission{}, false, err
-	}
-	if retryIdentityAfterRunner {
-		preparation := l.prepareSandboxIdentity(
-			sandboxID,
-			identity,
-			l.Config.WireGuardReadyTimeout,
-			nil,
-		)
-		l.backgroundIdentityPreparations().track(sandboxID, preparation)
-		slog.Info(
-			"ASB employee identity preparation resumed after runner exec",
-			"runtime_id", util.UUIDToString(runtime.ID),
-			"sandbox_id", sandboxID,
-		)
 	}
 	return asbLaunchSubmission{
 		runtime:             runtime,
@@ -756,15 +665,16 @@ func (l *ASBLauncher) resolveSandbox(
 	identity ASBResolvedIdentity,
 	runtimeLockConn *pgxpool.Conn,
 	trace chattrace.Trace,
-) (string, bool, ASBResolvedIdentity, bool, error) {
+) (string, bool, ASBResolvedIdentity, error) {
 	if err := identity.validate(); err != nil {
-		return "", false, ASBResolvedIdentity{}, false, err
+		return "", false, ASBResolvedIdentity{}, err
 	}
-	identityProbeTimeout := l.Config.WireGuardReadyTimeout
+	boundIdentityFailures := 0
+	identityProbeTimeout := asbTaskIdentityProbeTimeout(l.Config.WireGuardReadyTimeout)
 	if scoped {
 		release, err := l.lockSandboxScopeOnConnection(ctx, runtime, scope, runtimeLockConn)
 		if err != nil {
-			return "", false, ASBResolvedIdentity{}, false, err
+			return "", false, ASBResolvedIdentity{}, err
 		}
 		defer release()
 		for {
@@ -780,41 +690,36 @@ func (l *ASBLauncher) resolveSandbox(
 				break
 			}
 			if err != nil {
-				return "", false, ASBResolvedIdentity{}, false, fmt.Errorf("load ASB sandbox session: %w", err)
+				return "", false, ASBResolvedIdentity{}, fmt.Errorf("load ASB sandbox session: %w", err)
 			}
 			if identity.Mode != asbIdentityModeBound {
-				return session.SandboxID, false, identity, false, nil
+				return session.SandboxID, false, identity, nil
 			}
-			l.backgroundIdentityPreparations().cancelAndWait(session.SandboxID)
-			identityResult := l.prepareSandboxIdentity(
+			if readyErr := l.ensureSandboxIdentityReady(
+				ctx,
 				session.SandboxID,
 				identity,
 				identityProbeTimeout,
-				nil,
-			)
-			readyErr, completed := waitASBIdentityPreparation(
-				ctx,
-				identityResult,
-				asbTaskIdentityForegroundWait,
-			)
-			if ctx.Err() != nil {
-				return "", false, ASBResolvedIdentity{}, false, ctx.Err()
-			}
-			if readyErr != nil {
+			); readyErr == nil {
+				return session.SandboxID, false, identity, nil
+			} else {
+				boundIdentityFailures++
 				slog.Warn(
-					"ASB warm sandbox employee identity is unavailable; starting task without blocking on employee identity",
+					"ASB warm sandbox employee identity is unavailable; recreating the bound sandbox",
 					"runtime_id", util.UUIDToString(runtime.ID),
 					"sandbox_id", session.SandboxID,
 					"error", redact.Text(readyErr.Error()),
 				)
-			} else if !completed {
-				slog.Info(
-					"ASB warm sandbox employee identity preparation deferred until after runner exec",
-					"runtime_id", util.UUIDToString(runtime.ID),
-					"sandbox_id", session.SandboxID,
-				)
+				if cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
+					runtime,
+					scope,
+					true,
+					identity.Fingerprint,
+					session.SandboxID,
+				); cleanupErr != nil {
+					return "", false, ASBResolvedIdentity{}, cleanupErr
+				}
 			}
-			return session.SandboxID, false, identity, !completed, nil
 		}
 		if err := l.deleteSupersededASBSandboxForScope(
 			ctx,
@@ -823,7 +728,7 @@ func (l *ASBLauncher) resolveSandbox(
 			excludedTaskID,
 			identity.Fingerprint,
 		); err != nil {
-			return "", false, ASBResolvedIdentity{}, false, err
+			return "", false, ASBResolvedIdentity{}, err
 		}
 	}
 
@@ -897,7 +802,7 @@ func (l *ASBLauncher) resolveSandbox(
 		)
 		if err != nil {
 			releaseSource("release_source_after_failed_task_create")
-			return "", true, ASBResolvedIdentity{}, false, err
+			return "", true, ASBResolvedIdentity{}, err
 		}
 		// Persist the control-plane handle before waiting for readiness or
 		// inherited identity. Capacity reconciliation must be able to find and
@@ -924,12 +829,12 @@ func (l *ASBLauncher) resolveSandbox(
 					sandbox.ID,
 				)
 				if cleanupErr != nil {
-					return "", true, ASBResolvedIdentity{}, false, errors.Join(
+					return "", true, ASBResolvedIdentity{}, errors.Join(
 						fmt.Errorf("record ASB sandbox session: %w", err),
 						cleanupErr,
 					)
 				}
-				return "", true, ASBResolvedIdentity{}, false, fmt.Errorf("record ASB sandbox session: %w", err)
+				return "", true, ASBResolvedIdentity{}, fmt.Errorf("record ASB sandbox session: %w", err)
 			}
 		}
 		if err := l.waitSandboxRunning(ctx, sandbox.ID); err != nil {
@@ -941,47 +846,54 @@ func (l *ASBLauncher) resolveSandbox(
 				identity.Fingerprint,
 				sandbox.ID,
 			); cleanupErr != nil {
-				return "", true, ASBResolvedIdentity{}, false, errors.Join(err, cleanupErr)
+				return "", true, ASBResolvedIdentity{}, errors.Join(err, cleanupErr)
 			}
-			return "", true, ASBResolvedIdentity{}, false, err
+			return "", true, ASBResolvedIdentity{}, err
 		}
-		retryIdentityAfterRunner := false
 		if identity.Mode == asbIdentityModeBound {
-			identityResult := l.prepareSandboxIdentity(
+			if err := l.ensureSandboxIdentityReady(
+				ctx,
 				sandbox.ID,
 				identity,
 				identityProbeTimeout,
-				releaseSource,
-			)
-			readyErr, completed := waitASBIdentityPreparation(
-				ctx,
-				identityResult,
-				asbTaskIdentityForegroundWait,
-			)
-			if ctx.Err() != nil {
-				return "", true, ASBResolvedIdentity{}, false, ctx.Err()
-			}
-			if readyErr != nil {
+			); err != nil {
+				boundIdentityFailures++
+				retryBoundIdentity := boundIdentityFailures < asbBoundIdentityMaxAttempts
+				message := "ASB inherited employee identity is unavailable after bounded retries; starting task without employee identity"
+				if retryBoundIdentity {
+					message = "ASB inherited employee identity is unavailable; recreating one bound task sandbox"
+				}
 				slog.Warn(
-					"ASB inherited employee identity is unavailable; starting task without blocking on employee identity",
+					message,
 					"runtime_id", util.UUIDToString(runtime.ID),
 					"sandbox_id", sandbox.ID,
-					"error", redact.Text(readyErr.Error()),
+					"identity_attempt", boundIdentityFailures,
+					"identity_attempt_limit", asbBoundIdentityMaxAttempts,
+					"error", redact.Text(err.Error()),
 				)
-			} else if !completed {
-				retryIdentityAfterRunner = true
-				slog.Info(
-					"ASB inherited employee identity preparation deferred until after runner exec",
-					"runtime_id", util.UUIDToString(runtime.ID),
-					"sandbox_id", sandbox.ID,
-				)
+				releaseSource("release_source_after_identity_unavailable")
+				if cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
+					runtime,
+					scope,
+					scoped,
+					identity.Fingerprint,
+					sandbox.ID,
+				); cleanupErr != nil {
+					return "", true, ASBResolvedIdentity{}, cleanupErr
+				}
+				if retryBoundIdentity {
+					continue
+				}
+				identity = unboundASBResolvedIdentity()
+				continue
 			}
+			releaseSource("release_source_after_identity_ready")
 		}
 		chattrace.LogStage(slog.Default(), trace, "asb_sandbox_create", "ready",
 			"sandbox_id", sandbox.ID,
 			"identity_mode", string(identity.Mode),
 		)
-		return sandbox.ID, true, identity, retryIdentityAfterRunner, nil
+		return sandbox.ID, true, identity, nil
 	}
 }
 
@@ -1145,82 +1057,11 @@ func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) 
 	}
 }
 
-func (l *ASBLauncher) prepareSandboxIdentity(
-	sandboxID string,
-	identity ASBResolvedIdentity,
-	timeout time.Duration,
-	onComplete func(string),
-) *asbIdentityPreparation {
-	identityCtx, cancel := context.WithTimeout(
-		context.Background(),
-		timeout+15*time.Second,
-	)
-	preparation := &asbIdentityPreparation{
-		cancel: cancel,
-		done:   make(chan struct{}),
+func asbTaskIdentityProbeTimeout(configured time.Duration) time.Duration {
+	if configured <= 0 {
+		return configured
 	}
-	go func() {
-		defer cancel()
-		preparation.err = l.ensureSandboxIdentityReady(
-			identityCtx,
-			sandboxID,
-			identity,
-			timeout,
-		)
-		stage := "release_source_after_identity_ready"
-		if preparation.err != nil {
-			stage = "release_source_after_identity_unavailable"
-			slog.Warn(
-				"ASB employee identity preparation finished without a ready identity",
-				"sandbox_id", sandboxID,
-				"error", redact.Text(preparation.err.Error()),
-			)
-		} else {
-			slog.Info(
-				"ASB employee identity preparation completed",
-				"sandbox_id", sandboxID,
-			)
-		}
-		if onComplete != nil {
-			onComplete(stage)
-		}
-		close(preparation.done)
-	}()
-	return preparation
-}
-
-func waitASBIdentityPreparation(
-	ctx context.Context,
-	preparation *asbIdentityPreparation,
-	foregroundWait time.Duration,
-) (error, bool) {
-	if preparation == nil {
-		return errors.New("ASB identity preparation is unavailable"), true
-	}
-	timer := time.NewTimer(foregroundWait)
-	defer timer.Stop()
-	select {
-	case <-preparation.done:
-		return preparation.err, true
-	case <-ctx.Done():
-		preparation.cancel()
-		<-preparation.done
-		return ctx.Err(), true
-	case <-timer.C:
-		// The ASB command endpoint does not reliably accept concurrent requests.
-		// Cancel and join the optional probe before returning control to the
-		// runner launch. A post-runner retry may start only after execRunOnce.
-		preparation.cancel()
-		<-preparation.done
-		if preparation.err == nil {
-			return nil, true
-		}
-		if errors.Is(preparation.err, context.Canceled) ||
-			errors.Is(preparation.err, context.DeadlineExceeded) {
-			return nil, false
-		}
-		return preparation.err, true
-	}
+	return configured / asbBoundIdentityMaxAttempts
 }
 
 func (l *ASBLauncher) ensureSandboxIdentityReady(
