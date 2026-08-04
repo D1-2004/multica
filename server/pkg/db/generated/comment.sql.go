@@ -276,6 +276,39 @@ func (q *Queries) GetCommentInWorkspace(ctx context.Context, arg GetCommentInWor
 	return i, err
 }
 
+const getDelegatedMemberCommentBySourceTask = `-- name: GetDelegatedMemberCommentBySourceTask :one
+SELECT id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id, resolved_at, resolved_by_type, resolved_by_id, source_task_id FROM comment
+WHERE author_type = 'member'
+  AND source_task_id = $1
+ORDER BY created_at, id
+LIMIT 1
+`
+
+// Idempotency lookup for Chat-to-Issue continuation. One source Chat task owns
+// at most one delegated member comment; retries must return that existing
+// mapping instead of appending the same instruction again.
+func (q *Queries) GetDelegatedMemberCommentBySourceTask(ctx context.Context, sourceTaskID pgtype.UUID) (Comment, error) {
+	row := q.db.QueryRow(ctx, getDelegatedMemberCommentBySourceTask, sourceTaskID)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.IssueID,
+		&i.AuthorType,
+		&i.AuthorID,
+		&i.Content,
+		&i.Type,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ParentID,
+		&i.WorkspaceID,
+		&i.ResolvedAt,
+		&i.ResolvedByType,
+		&i.ResolvedByID,
+		&i.SourceTaskID,
+	)
+	return i, err
+}
+
 const getLatestMemberCommentForIssueSince = `-- name: GetLatestMemberCommentForIssueSince :one
 SELECT id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id, resolved_at, resolved_by_type, resolved_by_id, source_task_id FROM comment
 WHERE issue_id = $1
