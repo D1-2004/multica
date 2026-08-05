@@ -463,7 +463,12 @@ func IsFCE2BTemplatePublished(template FCE2BTemplate) bool {
 		len(template.Providers) > 0
 }
 
-func isFCE2BTemplateStableRollbackCompatible(template FCE2BTemplate) bool {
+// IsFCE2BTemplateRuntimeCompatible reports whether the catalog entry carries
+// a strict manifest alias understood by this server. The immediately previous
+// m2 manifest remains valid for explicitly creating a compatibility Runtime
+// and for stable rollback; m1 stays retired. Publishing and ordinary rotation
+// still require the current manifest version through IsFCE2BTemplatePublished.
+func IsFCE2BTemplateRuntimeCompatible(template FCE2BTemplate) bool {
 	alias := strings.TrimSpace(template.Name)
 	if alias == "" {
 		alias = strings.TrimSpace(template.Template)
@@ -472,7 +477,7 @@ func isFCE2BTemplateStableRollbackCompatible(template FCE2BTemplate) bool {
 	applied, err := applyFCE2BTemplateManifestAlias(&verified, alias)
 	return err == nil && applied &&
 		verified.ManifestVersion == template.ManifestVersion &&
-		verified.ManifestVersion >= 1 &&
+		verified.ManifestVersion >= 2 &&
 		verified.ManifestVersion <= fcE2BTemplateManifestVersion
 }
 
@@ -1133,7 +1138,7 @@ func (l *FCE2BLauncher) updateRuntimeTemplate(
 		return FCE2BRuntimeTemplateUpdateResult{}, errors.New("FC/E2B template is not ready")
 	}
 	if !IsFCE2BTemplatePublished(selected) &&
-		(managedMetadata == nil || !isFCE2BTemplateStableRollbackCompatible(selected)) {
+		(managedMetadata == nil || !IsFCE2BTemplateRuntimeCompatible(selected)) {
 		return FCE2BRuntimeTemplateUpdateResult{}, errors.New("FC/E2B template has no verified manifest")
 	}
 

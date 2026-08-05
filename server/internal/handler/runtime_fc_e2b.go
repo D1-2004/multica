@@ -238,7 +238,7 @@ func (h *Handler) createAliyunFCRuntime(
 		writeError(w, http.StatusBadRequest, "template_id does not match an available FC/E2B template")
 		return
 	}
-	if !service.IsFCE2BTemplateReady(selected) || !service.IsFCE2BTemplatePublished(selected) {
+	if !service.IsFCE2BTemplateReady(selected) || !service.IsFCE2BTemplateRuntimeCompatible(selected) {
 		writeError(w, http.StatusBadRequest, "FC/E2B template is not ready with a verified manifest")
 		return
 	}
