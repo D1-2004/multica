@@ -511,7 +511,7 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 		wantPublished bool
 	}{
 		{name: "valid current", buildID: "build-current", alias: validAlias, wantApplied: true, wantPublished: true},
-		{name: "valid previous", buildID: "build-previous", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-bbbbbb", wantApplied: true},
+		{name: "valid previous", buildID: "build-previous", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-bbbbbb", wantApplied: true, wantPublished: true},
 		{name: "valid legacy", buildID: "build-legacy", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa", wantApplied: true},
 		{name: "missing build ID", alias: validAlias},
 		{name: "old template name", buildID: "build-current", alias: "multica-fc-hermes-opencode-dws-v1"},

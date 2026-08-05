@@ -455,25 +455,14 @@ func IsFCE2BTemplateReady(template FCE2BTemplate) bool {
 }
 
 // IsFCE2BTemplatePublished reports whether the current build carries a valid
-// current manifest alias required for safe runtime creation and rotation.
+// supported manifest alias required for safe publication, runtime creation,
+// and rotation. m2 and m3 are supported; m1 is retired.
 func IsFCE2BTemplatePublished(template FCE2BTemplate) bool {
-	return template.ManifestVersion == fcE2BTemplateManifestVersion &&
+	return template.ManifestVersion >= 2 &&
+		template.ManifestVersion <= fcE2BTemplateManifestVersion &&
 		strings.TrimSpace(template.BuildID) != "" &&
 		strings.TrimSpace(template.RunnerProtocol) == string(fcE2BRunnerLaunchRootLog) &&
 		len(template.Providers) > 0
-}
-
-func isFCE2BTemplateStableRollbackCompatible(template FCE2BTemplate) bool {
-	alias := strings.TrimSpace(template.Name)
-	if alias == "" {
-		alias = strings.TrimSpace(template.Template)
-	}
-	verified := FCE2BTemplate{BuildID: strings.TrimSpace(template.BuildID)}
-	applied, err := applyFCE2BTemplateManifestAlias(&verified, alias)
-	return err == nil && applied &&
-		verified.ManifestVersion == template.ManifestVersion &&
-		verified.ManifestVersion >= 1 &&
-		verified.ManifestVersion <= fcE2BTemplateManifestVersion
 }
 
 func fcE2BRunnerLaunchForMode(provider string, mode fcE2BRunnerLaunchMode) (fcE2BRunnerLaunch, error) {
@@ -1132,8 +1121,7 @@ func (l *FCE2BLauncher) updateRuntimeTemplate(
 	if !IsFCE2BTemplateReady(selected) {
 		return FCE2BRuntimeTemplateUpdateResult{}, errors.New("FC/E2B template is not ready")
 	}
-	if !IsFCE2BTemplatePublished(selected) &&
-		(managedMetadata == nil || !isFCE2BTemplateStableRollbackCompatible(selected)) {
+	if !IsFCE2BTemplatePublished(selected) {
 		return FCE2BRuntimeTemplateUpdateResult{}, errors.New("FC/E2B template has no verified manifest")
 	}
 
