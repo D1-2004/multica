@@ -20,7 +20,7 @@ const (
 	AgentIdentityContextTokenEnvKey           = "AGENT_IDENTITY_CONTEXT_TOKEN"
 	DispatchSurfaceJSONKey                    = "dispatch_surface"
 	DispatchOutboundJSONKey                   = "dispatch_outbound"
-	DispatchContextPromptJSONKey              = "dispatch_context_prompt"
+	DispatchWorkflowPromptJSONKey             = "dispatch_workflow_prompt"
 	DingTalkStreamSourceJSONKey               = "dingtalk_stream_source"
 	DingTalkConversationInitiatorJSONKey      = "dingtalk_conversation_initiator"
 	SandboxSourceHostnameEnvKey               = "MULTICA_SANDBOX_SOURCE_HOSTNAME"
