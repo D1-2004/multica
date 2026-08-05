@@ -369,6 +369,69 @@ func TestFCE2BLauncherCommandsUseSandboxReadyTimeout(t *testing.T) {
 	}
 }
 
+func TestFCE2BCreateSandboxRetriesOnlyCapacity429(t *testing.T) {
+	capacity429 := errors.New("StatusCode: 429 Code: ResourceExhausted Message: Function concurrent request count exceeded")
+	runner := &fakeCommandRunner{
+		out: []string{"", "", "", "Sandbox created with ID sbx_after_retry using template multica-test"},
+		errs: []error{
+			capacity429,
+			capacity429,
+			capacity429,
+			nil,
+		},
+	}
+	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{
+		CLIPath:             "e2b-test",
+		TimeoutSeconds:      1800,
+		SandboxReadyTimeout: time.Second,
+	}, runner)
+	var delays []time.Duration
+	launcher.jitter = func(delay time.Duration) time.Duration { return delay }
+	launcher.sleep = func(_ context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		return nil
+	}
+
+	sandboxID, err := launcher.createSandbox(context.Background(), "multica-test")
+	if err != nil {
+		t.Fatalf("createSandbox() error = %v", err)
+	}
+	if sandboxID != "sbx_after_retry" {
+		t.Fatalf("sandbox id = %q", sandboxID)
+	}
+	if len(runner.calls) != 4 {
+		t.Fatalf("sandbox create calls = %d, want 4", len(runner.calls))
+	}
+	if want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}; !reflect.DeepEqual(delays, want) {
+		t.Fatalf("retry delays = %v, want %v", delays, want)
+	}
+	if failure := ClassifyRuntimeStartFailure(SandboxBackendAliyunFC, capacity429.Error()); failure.Code != "FCE2B-SANDBOX-CAPACITY-429" || !failure.Retryable {
+		t.Fatalf("capacity 429 classification = %+v", failure)
+	}
+}
+
+func TestFCE2BCreateSandboxDoesNotRetryOther429(t *testing.T) {
+	runner := &fakeCommandRunner{errs: []error{
+		errors.New("StatusCode: 429 Code: ResourceExhausted Message: account quota exhausted"),
+	}}
+	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{
+		CLIPath:             "e2b-test",
+		TimeoutSeconds:      1800,
+		SandboxReadyTimeout: time.Second,
+	}, runner)
+	launcher.sleep = func(_ context.Context, _ time.Duration) error {
+		t.Fatal("non-capacity 429 must not sleep or retry")
+		return nil
+	}
+
+	if _, err := launcher.createSandbox(context.Background(), "multica-test"); err == nil {
+		t.Fatal("createSandbox() accepted a non-capacity 429")
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("sandbox create calls = %d, want 1", len(runner.calls))
+	}
+}
+
 func TestParseE2BSandboxIDStrictCreateOutput(t *testing.T) {
 	got, err := parseE2BSandboxID("Sandbox created with ID sbx_123abc using template multica-fc-hermes-v1\n")
 	if err != nil {
@@ -383,13 +446,13 @@ func TestParseE2BSandboxIDStrictCreateOutput(t *testing.T) {
 }
 
 func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
-	const alias = "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"
+	const alias = "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"
 	got, err := parseFCE2BTemplates(`[
 		{
 			"templateID": "idt7f6on323gsyuqjt59",
 			"buildID": "a4aa129e-ef89-4fce-9fc9-605a1015e0e1",
-			"aliases": ["default", "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"],
-			"names": ["multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"],
+			"aliases": ["default", "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"],
+			"names": ["multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"],
 			"buildStatus": "ready",
 			"createdAt": "2026-07-08T13:16:30.740524Z",
 			"updatedAt": "2026-07-08T13:19:01.365773Z"
@@ -425,7 +488,7 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 	if want := []string{"hermes", "opencode", "pi"}; !reflect.DeepEqual(got[0].Providers, want) {
 		t.Fatalf("providers = %#v, want %#v", got[0].Providers, want)
 	}
-	if want := []string{"dws", "dws.im_event", "mcp"}; !reflect.DeepEqual(got[0].Capabilities, want) {
+	if want := []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1}; !reflect.DeepEqual(got[0].Capabilities, want) {
 		t.Fatalf("capabilities = %#v, want %#v", got[0].Capabilities, want)
 	}
 	if want := map[string]string{
@@ -439,7 +502,7 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 }
 
 func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
-	const validAlias = "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"
+	const validAlias = "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"
 	tests := []struct {
 		name          string
 		buildID       string
@@ -448,15 +511,17 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 		wantPublished bool
 	}{
 		{name: "valid current", buildID: "build-current", alias: validAlias, wantApplied: true, wantPublished: true},
+		{name: "valid previous", buildID: "build-previous", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-bbbbbb", wantApplied: true, wantPublished: true},
 		{name: "valid legacy", buildID: "build-legacy", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa", wantApplied: true},
 		{name: "missing build ID", alias: validAlias},
 		{name: "old template name", buildID: "build-current", alias: "multica-fc-hermes-opencode-dws-v1"},
-		{name: "missing patch version", buildID: "build-current", alias: "multica-m2-h0_19-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
-		{name: "leading zero", buildID: "build-current", alias: "multica-m2-h00_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
-		{name: "current missing MCP marker", buildID: "build-current", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-9a6bfa"},
+		{name: "missing patch version", buildID: "build-current", alias: "multica-m3-h0_19-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
+		{name: "leading zero", buildID: "build-current", alias: "multica-m3-h00_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
+		{name: "current missing startup-event marker", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
+		{name: "previous falsely claims startup events", buildID: "build-current", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
 		{name: "legacy falsely claims MCP", buildID: "build-current", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
-		{name: "wrong runner", buildID: "build-current", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r2-9a6bfa"},
-		{name: "uppercase SHA", buildID: "build-current", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9A6BFA"},
+		{name: "wrong runner", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r2-9a6bfa"},
+		{name: "uppercase SHA", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9A6BFA"},
 		{name: "suffix", buildID: "build-current", alias: validAlias + "-extra"},
 	}
 	for _, test := range tests {
@@ -482,10 +547,10 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 func TestListFCE2BTemplatesReadsOnlyManifestAliases(t *testing.T) {
 	runner := &fakeCommandRunner{out: []string{`[
 		{"id":"tpl-older","buildID":"build-older","aliases":["multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa"],"status":"ready","updatedAt":"2026-07-20T01:00:00Z"},
-		{"id":"tpl-current","buildID":"build-current","aliases":["default","multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"],"names":["multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"],"status":"ready","updatedAt":"2026-07-21T01:00:00Z"},
+		{"id":"tpl-current","buildID":"build-current","aliases":["default","multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"],"names":["multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"],"status":"ready","updatedAt":"2026-07-21T01:00:00Z"},
 		{"id":"tpl-old","buildID":"build-old","aliases":["multica-fc-hermes-opencode-dws-v1"],"status":"ready"},
-		{"id":"tpl-malformed","buildID":"build-malformed","aliases":["multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-9a6bfa"],"status":"ready"},
-		{"id":"tpl-no-build","aliases":["multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-bbbbbb"],"status":"ready"}
+		{"id":"tpl-malformed","buildID":"build-malformed","aliases":["multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"],"status":"ready"},
+		{"id":"tpl-no-build","aliases":["multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-bbbbbb"],"status":"ready"}
 	]`}}
 	templates, err := ListFCE2BTemplates(context.Background(), FCE2BConfig{
 		APIKey:  "test-key",
@@ -500,7 +565,7 @@ func TestListFCE2BTemplatesReadsOnlyManifestAliases(t *testing.T) {
 		t.Fatalf("templates = %#v", templates)
 	}
 	got := templates[0]
-	if got.ID != "tpl-current" || got.BuildID != "build-current" || got.ManifestVersion != 2 {
+	if got.ID != "tpl-current" || got.BuildID != "build-current" || got.ManifestVersion != 3 {
 		t.Fatalf("verified template = %#v", got)
 	}
 	if want := []string{"hermes", "opencode", "pi"}; !reflect.DeepEqual(got.Providers, want) {
@@ -865,7 +930,7 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	launch := mustFCE2BRunnerLaunch(t, rt)
 	if err := launcher.execRunOnce(context.Background(), "sbx_dws", rt, launch.Mode, taskID, "mdt_test_token", false, map[string]string{
 		"AGENT_IDENTITY_CONTEXT_TOKEN": "context_secret",
-		"MULTICA_CHAT_SESSION_ID":       "chat-session-1",
+		"MULTICA_CHAT_SESSION_ID":      "chat-session-1",
 	}); err != nil {
 		t.Fatalf("execRunOnce returned error: %v", err)
 	}

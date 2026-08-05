@@ -9,6 +9,7 @@ import (
 	"hash/fnv"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"regexp"
@@ -48,11 +49,12 @@ const (
 	fcE2BDaemonTokenTTL             = time.Hour
 	fcE2BRunnerClaimTimeout         = 2 * time.Minute
 	fcE2BRunnerClaimPollInterval    = 500 * time.Millisecond
+	fcE2BSandboxCreateMaxAttempts   = 4
 	fcE2BRunOnceHealthPortBase      = 20000
 	fcE2BRunOnceHealthPortSpan      = 30000
 	fcE2BRootRunnerInstallDir       = "/usr/local/libexec"
 	fcE2BLegacyRunnerInstallDir     = "/usr/local/bin"
-	fcE2BTemplateManifestVersion    = 2
+	fcE2BTemplateManifestVersion    = 3
 	fcE2BChatSessionIDEnvKey        = "MULTICA_CHAT_SESSION_ID"
 )
 
@@ -76,6 +78,7 @@ type fcE2BRunnerClaimState string
 const (
 	fcE2BRunnerClaimObserved fcE2BRunnerClaimState = "observed"
 	fcE2BRunnerClaimBlocked  fcE2BRunnerClaimState = "blocked"
+	fcE2BRunnerClaimFailed   fcE2BRunnerClaimState = "failed"
 	fcE2BRunnerClaimStalled  fcE2BRunnerClaimState = "stalled"
 )
 
@@ -452,9 +455,11 @@ func IsFCE2BTemplateReady(template FCE2BTemplate) bool {
 }
 
 // IsFCE2BTemplatePublished reports whether the current build carries a valid
-// current manifest alias required for safe runtime creation and rotation.
+// supported manifest alias required for safe publication, runtime creation,
+// and rotation. m2 and m3 are supported; m1 is retired.
 func IsFCE2BTemplatePublished(template FCE2BTemplate) bool {
-	return template.ManifestVersion == fcE2BTemplateManifestVersion &&
+	return template.ManifestVersion >= 2 &&
+		template.ManifestVersion <= fcE2BTemplateManifestVersion &&
 		strings.TrimSpace(template.BuildID) != "" &&
 		strings.TrimSpace(template.RunnerProtocol) == string(fcE2BRunnerLaunchRootLog) &&
 		len(template.Providers) > 0
@@ -739,7 +744,7 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 	return templates, nil
 }
 
-var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([12])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(di|dim)-r1-([0-9a-f]{6})$`)
+var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([123])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dims|dim|di)-r1-([0-9a-f]{6})$`)
 
 func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (bool, error) {
 	if template == nil {
@@ -758,7 +763,8 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 		return false, nil
 	}
 	capabilityCode := matches[7]
-	if (manifestVersion == 1 && capabilityCode != "di") || (manifestVersion == 2 && capabilityCode != "dim") {
+	expectedCapabilityCode := map[int]string{1: "di", 2: "dim", 3: "dims"}[manifestVersion]
+	if capabilityCode != expectedCapabilityCode {
 		return false, nil
 	}
 	hermesVersion, hermesOK := parseFCE2BUnderscoreSemver(matches[2])
@@ -775,6 +781,9 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 	template.Capabilities = []string{"dws", "dws.im_event"}
 	if manifestVersion >= 2 {
 		template.Capabilities = append(template.Capabilities, "mcp")
+	}
+	if manifestVersion >= 3 {
+		template.Capabilities = append(template.Capabilities, RuntimeStartCapabilityEventsV1)
 	}
 	template.ComponentVersions = map[string]string{
 		"hermes":   hermesVersion,
@@ -887,6 +896,8 @@ type FCE2BLauncher struct {
 	GitHubIdentity     AgentIdentityGithubBindingReader
 	IdentityBindings   AgentIdentityBindingReader
 	SandboxRelaySigner SandboxRelayTokenSigner
+	sleep              func(context.Context, time.Duration) error
+	jitter             func(time.Duration) time.Duration
 
 	// Pool backs the cross-replica runtime and sandbox advisory locks.
 	Pool *pgxpool.Pool
@@ -1039,6 +1050,8 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 		Runner:           runner,
 		AgentIdentity:    agentidentityhsf.NewClient(),
 		IdentityBindings: q,
+		sleep:            sleepWithContext,
+		jitter:           runtimeStartRetryJitter,
 	}
 }
 
@@ -1284,10 +1297,10 @@ func (l *FCE2BLauncher) VerifyStableTemplate(ctx context.Context, selected FCE2B
 	if manifest.SchemaVersion != 3 ||
 		!containsAllStrings(manifest.SandboxBackends, string(SandboxBackendAliyunFC)) ||
 		!slices.Equal(manifest.Providers, []string{"hermes", "opencode", "pi"}) ||
-		!slices.Equal(manifest.Capabilities, []string{"dws", "dws.im_event", "mcp"}) ||
+		!slices.Equal(manifest.Capabilities, []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1}) ||
 		!slices.Equal(
 			manifest.CapabilitiesByBackend[string(SandboxBackendAliyunFC)],
-			[]string{"dws", "dws.im_event", "mcp"},
+			[]string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
 		) ||
 		!slices.Equal(
 			manifest.IdentityModesByBackend[string(SandboxBackendAliyunFC)],
@@ -1341,22 +1354,47 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	}
 	trace, traceErr := chattrace.ForTask(task.Context, taskID, task.CreatedAt.Time)
 	if traceErr != nil {
-		return l.failLaunch(ctx, task, "invalid task trace: "+traceErr.Error())
+		failure := ClassifyRuntimeStartFailure(SandboxBackendAliyunFC, "invalid task trace: "+traceErr.Error())
+		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
 	}
 	chattrace.LogStage(slog.Default(), trace, "fc_e2b_launch", "started",
 		"task_id", taskID,
 		"runtime_id", runtimeID,
 	)
 	if !l.Config.Enabled {
-		return l.failLaunch(ctx, task, "FC/E2B runtime is disabled")
+		failure := ClassifyRuntimeStartFailure(SandboxBackendAliyunFC, "FC/E2B runtime is disabled")
+		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
 	}
 	if err := l.Config.Validate(); err != nil {
-		return l.failLaunch(ctx, task, err.Error())
+		failure := ClassifyRuntimeStartError(SandboxBackendAliyunFC, err)
+		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
+	}
+	attempt, err := l.Tasks.BeginRuntimeStartAttempt(
+		ctx,
+		task,
+		SandboxBackendAliyunFC,
+		runtimeStartProtocolForRuntime(runtime),
+	)
+	if err != nil {
+		if errors.Is(err, errRuntimeLaunchLeaseLost) {
+			return err
+		}
+		failure := NewRuntimeStartFailure(
+			SandboxBackendAliyunFC,
+			"FCE2B-ATTEMPT-CREATE-FAILED",
+			"launch_started",
+			false,
+			"无法创建 Runtime 启动记录。",
+			err.Error(),
+		)
+		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
 	}
 
 	runtimeLockConn, releaseRuntimeLock, err := l.lockRuntimeShared(ctx, task.RuntimeID)
 	if err != nil {
-		return l.failLaunch(ctx, task, err.Error())
+		failure := ClassifyRuntimeStartError(SandboxBackendAliyunFC, err)
+		failure.Phase = "runtime_lock"
+		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
 	runtimeLockHeld := true
 	defer func() {
@@ -1370,13 +1408,27 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	// several launches each reserve one connection for their shared lock.
 	lockedLauncher := *l
 	lockedLauncher.Queries = db.New(runtimeLockConn)
-	submission, deferred, submitErr := lockedLauncher.submitTaskUnderRuntimeLock(ctx, task, runtimeLockConn, trace)
+	lockedLauncher.Tasks = &TaskService{Queries: lockedLauncher.Queries}
+	submission, deferred, submitErr := lockedLauncher.submitTaskUnderRuntimeLock(ctx, task, runtimeLockConn, trace, attempt)
 	releaseRuntimeLock()
 	runtimeLockHeld = false
 	if submitErr != nil {
-		return l.failLaunch(ctx, task, submitErr.Error())
+		failure := ClassifyRuntimeStartError(SandboxBackendAliyunFC, submitErr)
+		failure = runtimeStartFailureAtLastStage(ctx, l.Queries, attempt, failure)
+		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
 	if deferred {
+		if err := l.Tasks.MarkRuntimeStartBlocked(ctx, attempt); err != nil {
+			failure := NewRuntimeStartFailure(
+				SandboxBackendAliyunFC,
+				"FCE2B-BLOCKED-ATTEMPT-RECORD-FAILED",
+				"task_serialization",
+				true,
+				"Runtime 启动排队状态记录失败。",
+				err.Error(),
+			)
+			return l.failLaunch(ctx, task, attempt.ID, failure)
+		}
 		return nil
 	}
 
@@ -1391,19 +1443,45 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		"task_id", taskID,
 		"sandbox_id", submission.sandboxID,
 	)
-	claimState, err := l.waitForRunOnceClaim(ctx, task)
+	claimState, err := l.waitForRunOnceClaim(ctx, task, attempt)
 	if err != nil {
-		return l.failLaunch(ctx, task, err.Error())
+		if errors.Is(err, errRuntimeLaunchLeaseLost) {
+			return err
+		}
+		failure := ClassifyRuntimeStartError(SandboxBackendAliyunFC, err)
+		failure = runtimeStartFailureAtLastStage(ctx, l.Queries, attempt, failure)
+		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
 	switch claimState {
 	case fcE2BRunnerClaimObserved:
 		slog.Info("FC/E2B run-once claim observed", "task_id", taskID, "runtime_id", runtimeID, "sandbox_id", submission.sandboxID)
 		chattrace.LogStage(slog.Default(), trace, "fc_e2b_claim", "observed", "task_id", taskID, "sandbox_id", submission.sandboxID)
 	case fcE2BRunnerClaimBlocked:
+		if err := l.Tasks.MarkRuntimeStartBlocked(ctx, attempt); err != nil {
+			failure := NewRuntimeStartFailure(
+				SandboxBackendAliyunFC,
+				"FCE2B-BLOCKED-ATTEMPT-RECORD-FAILED",
+				"task_serialization",
+				true,
+				"Runtime 启动排队状态记录失败。",
+				err.Error(),
+			)
+			return l.failLaunch(ctx, task, attempt.ID, failure)
+		}
 		slog.Info("FC/E2B run-once claim blocked by active task", "task_id", taskID, "runtime_id", runtimeID, "sandbox_id", submission.sandboxID)
 		chattrace.LogStage(slog.Default(), trace, "fc_e2b_claim", "blocked", "task_id", taskID, "sandbox_id", submission.sandboxID)
+	case fcE2BRunnerClaimFailed:
+		return fmt.Errorf("FC/E2B launch failed: Runtime reported a startup failure")
 	case fcE2BRunnerClaimStalled:
-		return l.failLaunch(ctx, task, fmt.Sprintf("FC/E2B runner did not claim task within %s after sandbox exec", fcE2BRunnerClaimTimeout))
+		detail := fmt.Sprintf("FC/E2B runner did not claim task within %s after sandbox exec", fcE2BRunnerClaimTimeout)
+		failure := ClassifyRuntimeStartFailure(SandboxBackendAliyunFC, detail)
+		if current, lookupErr := l.Queries.GetAgentTaskRuntimeStartAttempt(ctx, db.GetAgentTaskRuntimeStartAttemptParams{
+			ID: attempt.ID, TaskID: task.ID, RuntimeID: task.RuntimeID,
+		}); lookupErr == nil && current.LastStage != "" {
+			failure.Phase = current.LastStage
+			failure.InternalDetail = detail + "; last_stage=" + current.LastStage
+		}
+		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
 	if submission.scoped {
 		_ = l.Queries.TouchFCE2BSandboxSession(ctx, db.TouchFCE2BSandboxSessionParams{
@@ -1416,7 +1494,7 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	return nil
 }
 
-func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.AgentTaskQueue, runtimeLockConn *pgxpool.Conn, trace chattrace.Trace) (fcE2BLaunchSubmission, bool, error) {
+func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.AgentTaskQueue, runtimeLockConn *pgxpool.Conn, trace chattrace.Trace, attempt db.AgentTaskRuntimeStartAttempt) (fcE2BLaunchSubmission, bool, error) {
 	taskID := util.UUIDToString(task.ID)
 	runtimeID := util.UUIDToString(task.RuntimeID)
 	agentID := util.UUIDToString(task.AgentID)
@@ -1443,6 +1521,9 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		"runtime_id", runtimeID,
 		"template", template,
 	)
+	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "template_resolved"); err != nil {
+		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B template stage: %w", err)
+	}
 
 	tasks, err := l.Queries.ListAgentTasks(ctx, task.AgentID)
 	if err != nil {
@@ -1463,6 +1544,9 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 
 	scope, scoped := fcE2BScopeForTask(task)
 	sandboxResolveStarted := time.Now()
+	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "sandbox_resolving"); err != nil {
+		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B sandbox stage: %w", err)
+	}
 	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_resolve", "started", "task_id", taskID)
 	sandboxID, coldStart, err := l.resolveSandboxOnConnection(ctx, runtime, scope, scoped, template, runtimeLockConn, trace)
 	if err != nil {
@@ -1494,8 +1578,15 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		"cold_start", coldStart,
 		"stage_elapsed_ms", time.Since(sandboxResolveStarted).Milliseconds(),
 	)
+	attempt, err = l.Tasks.UpdateRuntimeStartSandbox(ctx, attempt, sandboxID, coldStart, "sandbox_ready")
+	if err != nil {
+		return fcE2BLaunchSubmission{}, false, err
+	}
 
 	runnerProbeStarted := time.Now()
+	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "runner_probing"); err != nil {
+		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B runner probe stage: %w", err)
+	}
 	chattrace.LogStage(slog.Default(), trace, "fc_e2b_runner_probe", "started", "task_id", taskID, "sandbox_id", sandboxID)
 	launch, err := l.detectFCE2BRunnerLaunch(ctx, sandboxID, runtime)
 	if err != nil {
@@ -1513,10 +1604,19 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		"runner_protocol", string(launch.Mode),
 		"stage_elapsed_ms", time.Since(runnerProbeStarted).Milliseconds(),
 	)
+	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "runner_probe_succeeded"); err != nil {
+		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B runner probe stage: %w", err)
+	}
 
+	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "task_environment_preparing"); err != nil {
+		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B task environment stage: %w", err)
+	}
 	extraEnv, err := l.extraEnvForTask(ctx, task, runtime, sandboxID)
 	if err != nil {
 		return fcE2BLaunchSubmission{}, false, err
+	}
+	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "daemon_token_preparing"); err != nil {
+		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B daemon token stage: %w", err)
 	}
 	token, err := auth.GenerateDaemonToken()
 	if err != nil {
@@ -1543,6 +1643,16 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	}); err != nil {
 		return fcE2BLaunchSubmission{}, false, errors.New("failed to persist FC/E2B daemon token")
 	}
+	if attempt.Protocol == RuntimeStartProtocolHTTPJSONV1 {
+		if extraEnv == nil {
+			extraEnv = make(map[string]string)
+		}
+		extraEnv["MULTICA_RUNTIME_START_ATTEMPT_ID"] = util.UUIDToString(attempt.ID)
+		extraEnv["MULTICA_RUNTIME_START_PROTOCOL"] = attempt.Protocol
+	}
+	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "runner_exec_submitting"); err != nil {
+		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B runner exec submission stage: %w", err)
+	}
 	runOnceStarted := time.Now()
 	chattrace.LogStage(slog.Default(), trace, "fc_e2b_run_once", "started", "task_id", taskID, "sandbox_id", sandboxID)
 	if err := l.execRunOnce(ctx, sandboxID, runtime, launch.Mode, task.ID, token, coldStart, extraEnv); err != nil {
@@ -1553,6 +1663,9 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 			"error", err,
 		)
 		return fcE2BLaunchSubmission{}, false, err
+	}
+	if err := l.Tasks.RecordRuntimeStartRunnerExecSubmitted(ctx, attempt.ID, task.ID, task.RuntimeID); err != nil {
+		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B runner exec stage: %w", err)
 	}
 	return fcE2BLaunchSubmission{runtime: runtime, sandboxID: sandboxID, coldStart: coldStart, scope: scope, scoped: scoped}, false, nil
 }
@@ -1598,7 +1711,11 @@ func fcE2BScopeForTask(task db.AgentTaskQueue) (fcE2BTaskScope, bool) {
 	return fcE2BTaskScope{}, false
 }
 
-func (l *FCE2BLauncher) waitForRunOnceClaim(ctx context.Context, task db.AgentTaskQueue) (fcE2BRunnerClaimState, error) {
+func (l *FCE2BLauncher) waitForRunOnceClaim(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	attempt db.AgentTaskRuntimeStartAttempt,
+) (fcE2BRunnerClaimState, error) {
 	deadline := time.NewTimer(fcE2BRunnerClaimTimeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(fcE2BRunnerClaimPollInterval)
@@ -1606,15 +1723,43 @@ func (l *FCE2BLauncher) waitForRunOnceClaim(ctx context.Context, task db.AgentTa
 	checkedInitialBlocker := false
 
 	for {
-		current, err := l.Queries.GetAgentTask(ctx, task.ID)
-		if err != nil {
-			return "", fmt.Errorf("verify FC/E2B runner claim: %w", err)
+		// A task token is written only at the final claim boundary. Besides the
+		// current handler's in-transaction finalization, this CAS lets a new
+		// launcher observe a claim completed by an older server replica during a
+		// rolling deployment.
+		if _, err := l.Queries.FinalizeAgentTaskRuntimeStartAttemptForTask(ctx, db.FinalizeAgentTaskRuntimeStartAttemptForTaskParams{
+			TaskID:    task.ID,
+			RuntimeID: task.RuntimeID,
+		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("finalize Runtime runner claim from task token: %w", err)
 		}
-		if current.Status != "queued" {
+		currentAttempt, err := l.Queries.GetAgentTaskRuntimeStartAttempt(ctx, db.GetAgentTaskRuntimeStartAttemptParams{
+			ID:        attempt.ID,
+			TaskID:    task.ID,
+			RuntimeID: task.RuntimeID,
+		})
+		if err != nil {
+			return "", fmt.Errorf("verify Runtime runner claim: %w", err)
+		}
+		switch currentAttempt.Status {
+		case "claimed":
 			return fcE2BRunnerClaimObserved, nil
+		case "blocked":
+			return fcE2BRunnerClaimBlocked, nil
+		case "failed", "timed_out":
+			return fcE2BRunnerClaimFailed, nil
+		case "superseded":
+			return "", errRuntimeLaunchLeaseLost
+		case "starting":
+		default:
+			return "", fmt.Errorf("verify Runtime runner claim: unexpected attempt status %q", currentAttempt.Status)
 		}
 		if !checkedInitialBlocker {
 			checkedInitialBlocker = true
+			current, err := l.Queries.GetAgentTask(ctx, task.ID)
+			if err != nil {
+				return "", fmt.Errorf("load task while checking Runtime runner blockers: %w", err)
+			}
 			tasks, err := l.Queries.ListAgentTasks(ctx, current.AgentID)
 			if err != nil {
 				return "", fmt.Errorf("check FC/E2B runner claim blockers: %w", err)
@@ -1628,12 +1773,27 @@ func (l *FCE2BLauncher) waitForRunOnceClaim(ctx context.Context, task db.AgentTa
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-deadline.C:
+			freshAttempt, err := l.Queries.GetAgentTaskRuntimeStartAttempt(ctx, db.GetAgentTaskRuntimeStartAttemptParams{
+				ID:        attempt.ID,
+				TaskID:    task.ID,
+				RuntimeID: task.RuntimeID,
+			})
+			if err != nil {
+				return "", fmt.Errorf("verify Runtime runner claim at deadline: %w", err)
+			}
+			switch freshAttempt.Status {
+			case "claimed":
+				return fcE2BRunnerClaimObserved, nil
+			case "blocked":
+				return fcE2BRunnerClaimBlocked, nil
+			case "failed", "timed_out":
+				return fcE2BRunnerClaimFailed, nil
+			case "superseded":
+				return "", errRuntimeLaunchLeaseLost
+			}
 			fresh, err := l.Queries.GetAgentTask(ctx, task.ID)
 			if err != nil {
-				return "", fmt.Errorf("verify FC/E2B runner claim: %w", err)
-			}
-			if fresh.Status != "queued" {
-				return fcE2BRunnerClaimObserved, nil
+				return "", fmt.Errorf("load task while checking Runtime runner blockers at deadline: %w", err)
 			}
 			tasks, err := l.Queries.ListAgentTasks(ctx, fresh.AgentID)
 			if err != nil {
@@ -2236,15 +2396,76 @@ func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (str
 		"--lifecycle.ontimeout", "kill",
 		template,
 	}
-	out, err := l.runE2BCommand(ctx, args)
-	if err != nil {
-		return "", fmt.Errorf("FC/E2B sandbox create failed: %w", err)
+	for attempt := 1; attempt <= fcE2BSandboxCreateMaxAttempts; attempt++ {
+		out, err := l.runE2BCommand(ctx, args)
+		if err == nil {
+			id, parseErr := parseE2BSandboxID(out)
+			if parseErr != nil {
+				responseErr := errors.New("FC/E2B sandbox create returned no sandbox id")
+				return "", withRuntimeStartUserDetail(responseErr, responseErr.Error())
+			}
+			return id, nil
+		}
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if !isFCE2BSandboxCapacityRateLimitText(err.Error()) || attempt == fcE2BSandboxCreateMaxAttempts {
+			createErr := fmt.Errorf("FC/E2B sandbox create failed: %w", err)
+			return "", withRuntimeStartUserDetail(createErr, createErr.Error())
+		}
+		baseDelay := time.Second << (attempt - 1)
+		delay := l.sandboxCreateRetryDelay(baseDelay)
+		slog.Warn("FC/E2B sandbox create capacity limited; retry scheduled",
+			"backend", SandboxBackendAliyunFC,
+			"stage", "sandbox_create",
+			"error_code", "FCE2B-SANDBOX-CAPACITY-429",
+			"error", redact.Text(err.Error()),
+			"attempt", attempt,
+			"max_attempts", fcE2BSandboxCreateMaxAttempts,
+			"retry_delay_ms", delay.Milliseconds(),
+		)
+		if err := l.sleepBeforeSandboxCreateRetry(ctx, delay); err != nil {
+			return "", err
+		}
 	}
-	id, err := parseE2BSandboxID(out)
-	if err != nil {
-		return "", fmt.Errorf("FC/E2B sandbox create returned no sandbox id")
+	exhaustedErr := errors.New("FC/E2B sandbox create exhausted retries")
+	return "", withRuntimeStartUserDetail(exhaustedErr, exhaustedErr.Error())
+}
+
+func isFCE2BSandboxCapacityRateLimitText(value string) bool {
+	lower := strings.ToLower(value)
+	return strings.Contains(lower, "429") &&
+		strings.Contains(lower, "resourceexhausted") &&
+		strings.Contains(lower, "function concurrent request count exceeded")
+}
+
+func (l *FCE2BLauncher) sandboxCreateRetryDelay(base time.Duration) time.Duration {
+	if l != nil && l.jitter != nil {
+		return l.jitter(base)
 	}
-	return id, nil
+	return runtimeStartRetryJitter(base)
+}
+
+func (l *FCE2BLauncher) sleepBeforeSandboxCreateRetry(ctx context.Context, delay time.Duration) error {
+	if l != nil && l.sleep != nil {
+		return l.sleep(ctx, delay)
+	}
+	return sleepWithContext(ctx, delay)
+}
+
+func runtimeStartRetryJitter(base time.Duration) time.Duration {
+	return time.Duration(float64(base) * (0.8 + rand.Float64()*0.4))
+}
+
+func sleepWithContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (l *FCE2BLauncher) checkSandboxReady(ctx context.Context, sandboxID string) error {
@@ -2262,7 +2483,8 @@ func (l *FCE2BLauncher) waitSandboxReady(ctx context.Context, sandboxID string) 
 		}
 		lastErr = err
 		if time.Now().After(deadline) {
-			return fmt.Errorf("FC/E2B sandbox was not ready within %s: %w", l.Config.SandboxReadyTimeout, lastErr)
+			readyErr := fmt.Errorf("FC/E2B sandbox was not ready within %s: %w", l.Config.SandboxReadyTimeout, lastErr)
+			return withRuntimeStartUserDetail(readyErr, readyErr.Error())
 		}
 		select {
 		case <-ctx.Done():
@@ -2333,7 +2555,8 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"runner_protocol", string(launch.Mode),
 	)
 	if _, err := l.runE2BCommand(ctx, args); err != nil {
-		return fmt.Errorf("FC/E2B runner exec failed: %w", err)
+		execErr := fmt.Errorf("FC/E2B runner exec failed: %w", err)
+		return withRuntimeStartUserDetail(execErr, execErr.Error())
 	}
 	return nil
 }
@@ -2391,6 +2614,8 @@ func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 		protocol.SandboxRelayTokenEnvKey,
 		"MULTICA_AGENT_IDENTITY_BASE_URL",
 		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS",
+		"MULTICA_RUNTIME_START_ATTEMPT_ID",
+		"MULTICA_RUNTIME_START_PROTOCOL",
 		"DWS_CLIENT_SECRET":
 		return true
 	default:
@@ -2415,15 +2640,20 @@ func fcE2BTemplateForRuntime(rt db.AgentRuntime, configuredTemplate string) (str
 	return template, nil
 }
 
-func (l *FCE2BLauncher) failLaunch(ctx context.Context, task db.AgentTaskQueue, msg string) error {
+func (l *FCE2BLauncher) failLaunch(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	attemptID pgtype.UUID,
+	failure RuntimeStartFailure,
+) error {
 	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) {
 		return cause
 	}
-	_, err := l.Tasks.FailTaskRuntimeStart(ctx, task.ID, task.RuntimeID, msg)
+	_, err := l.Tasks.FailTaskRuntimeStart(ctx, task.ID, task.RuntimeID, attemptID, failure)
 	if err != nil {
 		return err
 	}
-	return fmt.Errorf("FC/E2B launch failed: %s", redact.Text(msg))
+	return fmt.Errorf("FC/E2B launch failed: %s (%s)", failure.Code, failure.InternalDetail)
 }
 
 var e2bSandboxIDPattern = regexp.MustCompile(`Sandbox created with ID ([A-Za-z0-9_-]+) using template`)
@@ -2439,20 +2669,54 @@ func parseE2BSandboxID(output string) (string, error) {
 	return "", errors.New("unrecognized sandbox output")
 }
 
-func (s *TaskService) FailTaskRuntimeStart(ctx context.Context, taskID, runtimeID pgtype.UUID, errMsg string) (*db.AgentTaskQueue, error) {
-	errMsg = redact.Text(errMsg)
+func (s *TaskService) FailTaskRuntimeStart(
+	ctx context.Context,
+	taskID pgtype.UUID,
+	runtimeID pgtype.UUID,
+	attemptID pgtype.UUID,
+	failure RuntimeStartFailure,
+) (*db.AgentTaskQueue, error) {
+	userMessage := FormatRuntimeStartUserMessage(taskID, failure)
 	var task db.AgentTaskQueue
 	var assistantMsg *db.ChatMessage
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
-		t, err := qtx.FailAgentTaskRuntimeStart(ctx, db.FailAgentTaskRuntimeStartParams{
-			ID:        taskID,
-			RuntimeID: runtimeID,
-			Error:     pgtype.Text{String: errMsg, Valid: errMsg != ""},
-		})
-		if err != nil {
-			return err
+		if attemptID.Valid {
+			t, err := qtx.FailAgentTaskForRuntimeStartAttempt(ctx, db.FailAgentTaskForRuntimeStartAttemptParams{
+				Error:     pgtype.Text{String: userMessage, Valid: true},
+				TaskID:    taskID,
+				RuntimeID: runtimeID,
+				AttemptID: attemptID,
+			})
+			if err != nil {
+				return err
+			}
+			task = t
+			status := "failed"
+			if strings.HasSuffix(failure.Code, "-TIMEOUT") {
+				status = "timed_out"
+			}
+			if _, err := qtx.FailAgentTaskRuntimeStartAttempt(ctx, db.FailAgentTaskRuntimeStartAttemptParams{
+				Status:      status,
+				Stage:       failure.Phase,
+				ErrorCode:   failure.Code,
+				ErrorDetail: failure.InternalDetail,
+				ID:          attemptID,
+				TaskID:      taskID,
+				RuntimeID:   runtimeID,
+			}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("fail runtime start attempt: %w", err)
+			}
+		} else {
+			t, err := qtx.FailAgentTaskRuntimeStart(ctx, db.FailAgentTaskRuntimeStartParams{
+				ID:        taskID,
+				RuntimeID: runtimeID,
+				Error:     pgtype.Text{String: userMessage, Valid: true},
+			})
+			if err != nil {
+				return err
+			}
+			task = t
 		}
-		task = t
 
 		seq := int32(1)
 		messages, err := qtx.ListTaskMessages(ctx, taskID)
@@ -2468,7 +2732,7 @@ func (s *TaskService) FailTaskRuntimeStart(ctx context.Context, taskID, runtimeI
 			TaskID:  taskID,
 			Seq:     seq,
 			Type:    "error",
-			Content: pgtype.Text{String: "Runtime start failed: " + errMsg, Valid: true},
+			Content: pgtype.Text{String: userMessage, Valid: true},
 		})
 		if err != nil {
 			return err
@@ -2477,7 +2741,7 @@ func (s *TaskService) FailTaskRuntimeStart(ctx context.Context, taskID, runtimeI
 			row, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
 				ChatSessionID: task.ChatSessionID,
 				Role:          "assistant",
-				Content:       "Runtime start failed: " + errMsg,
+				Content:       userMessage,
 				TaskID:        task.ID,
 				FailureReason: pgtype.Text{String: "runtime_start_failed", Valid: true},
 				ElapsedMs:     computeChatElapsedMs(task),
@@ -2502,7 +2766,12 @@ func (s *TaskService) FailTaskRuntimeStart(ctx context.Context, taskID, runtimeI
 		"task_id", util.UUIDToString(task.ID),
 		"runtime_id", util.UUIDToString(task.RuntimeID),
 		"agent_id", util.UUIDToString(task.AgentID),
-		"error", errMsg,
+		"runtime_start_attempt_id", util.UUIDToString(attemptID),
+		"backend", failure.Backend,
+		"stage", failure.Phase,
+		"error_code", failure.Code,
+		"retryable", failure.Retryable,
+		"error", failure.InternalDetail,
 		"failure_reason", "runtime_start_failed",
 	)
 	s.captureTaskFailed(ctx, task)

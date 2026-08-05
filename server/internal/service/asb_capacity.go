@@ -23,8 +23,11 @@ const (
 	asbCapacityReleasePollInterval = time.Second
 )
 
-var ErrASBCapacityUnavailable = errors.New(
-	"Aone Sandbox 实例额度已满，当前 Runtime 没有可安全回收的空闲任务沙箱；请等待正在处理的任务结束后重试",
+const asbCapacityUnavailableMessage = "Aone Sandbox 实例额度已满，当前 Runtime 没有可安全回收的空闲任务沙箱；请等待正在处理的任务结束后重试"
+
+var ErrASBCapacityUnavailable = withRuntimeStartUserDetail(
+	errors.New(asbCapacityUnavailableMessage),
+	asbCapacityUnavailableMessage,
 )
 
 type ASBSandboxCapacity interface {

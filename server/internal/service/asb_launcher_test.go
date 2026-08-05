@@ -664,7 +664,7 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 		"sandbox_backends": []string{"aliyun_fc", "asb"},
 		"providers":        []string{"hermes", "opencode", "pi"},
 		"capabilities_by_backend": map[string][]string{
-			"asb": {"dws", "mcp", "a1", "mw", "buc"},
+			"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1},
 		},
 		"identity_modes_by_backend": map[string][]string{
 			"asb": {"agent_identity", "spiffe", "buc_wireguard"},

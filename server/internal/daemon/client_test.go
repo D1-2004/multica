@@ -270,13 +270,19 @@ func TestClient_ClaimTaskWithRunOnceOptions(t *testing.T) {
 		if got, _ := body["target_task_id"].(string); got != "task-1" {
 			t.Fatalf("target_task_id = %q, want task-1; body=%v", got, body)
 		}
+		if got, _ := body["runtime_start_attempt_id"].(string); got != "attempt-1" {
+			t.Fatalf("runtime_start_attempt_id = %q, want attempt-1; body=%v", got, body)
+		}
+		if got, _ := body["startup_status_protocol"].(string); got != "http-json-v1" {
+			t.Fatalf("startup_status_protocol = %q, want http-json-v1; body=%v", got, body)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"task":null}`))
 	}))
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
-	if _, err := c.ClaimTaskWithOptions(context.Background(), "runtime-1", ClaimTaskOptions{FCE2BColdStart: true, TargetTaskID: "task-1"}); err != nil {
+	if _, err := c.ClaimTaskWithOptions(context.Background(), "runtime-1", ClaimTaskOptions{FCE2BColdStart: true, TargetTaskID: "task-1", RuntimeStartAttempt: "attempt-1", StartupProtocol: "http-json-v1"}); err != nil {
 		t.Fatalf("ClaimTaskWithOptions: %v", err)
 	}
 }

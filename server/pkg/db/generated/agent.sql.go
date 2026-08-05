@@ -4450,6 +4450,33 @@ func (q *Queries) ListWorkspaceAgentTaskSnapshot(ctx context.Context, workspaceI
 	return items, nil
 }
 
+const lockAgentTaskClaimFinalization = `-- name: LockAgentTaskClaimFinalization :one
+SELECT id
+FROM agent_task_queue
+WHERE id = $1
+  AND runtime_id = $2
+  AND status = 'dispatched'
+  AND started_at IS NULL
+  AND dispatched_at = $3
+FOR UPDATE
+`
+
+type LockAgentTaskClaimFinalizationParams struct {
+	TaskID       pgtype.UUID        `json:"task_id"`
+	RuntimeID    pgtype.UUID        `json:"runtime_id"`
+	DispatchedAt pgtype.Timestamptz `json:"dispatched_at"`
+}
+
+// Serialize claim finalization with Runtime startup failure. Both paths lock
+// the task row before touching the startup-attempt row, so exactly one can
+// commit and the lock order stays consistent.
+func (q *Queries) LockAgentTaskClaimFinalization(ctx context.Context, arg LockAgentTaskClaimFinalizationParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockAgentTaskClaimFinalization, arg.TaskID, arg.RuntimeID, arg.DispatchedAt)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockAgentsForDingTalkBindingTeardown = `-- name: LockAgentsForDingTalkBindingTeardown :many
 SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key FROM agent
 WHERE id = ANY($1::uuid[])

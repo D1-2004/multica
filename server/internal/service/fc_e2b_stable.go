@@ -1978,9 +1978,9 @@ func (s *FCE2BStableService) rollbackRelease(ctx context.Context, release FCE2BS
 			Name:              release.PreviousTemplateAlias,
 			Template:          release.PreviousTemplateAlias,
 			Status:            "READY",
-			ManifestVersion:   2,
+			ManifestVersion:   3,
 			Providers:         []string{"hermes", "opencode", "pi"},
-			Capabilities:      []string{"dws", "dws.im_event", "mcp"},
+			Capabilities:      []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
 			ComponentVersions: releaseComponentVersions(release.Manifest),
 			RunnerProtocol:    string(fcE2BRunnerLaunchRootLog),
 		}
@@ -3320,9 +3320,9 @@ func releaseTemplate(release FCE2BStableRelease) FCE2BTemplate {
 		Name:              release.TemplateAlias,
 		Template:          release.TemplateAlias,
 		Status:            "READY",
-		ManifestVersion:   2,
+		ManifestVersion:   3,
 		Providers:         []string{"hermes", "opencode", "pi"},
-		Capabilities:      []string{"dws", "dws.im_event", "mcp"},
+		Capabilities:      []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
 		ComponentVersions: releaseComponentVersions(release.Manifest),
 		RunnerProtocol:    string(fcE2BRunnerLaunchRootLog),
 	}

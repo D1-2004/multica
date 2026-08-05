@@ -200,8 +200,10 @@ func (c *Client) Token() string {
 }
 
 type ClaimTaskOptions struct {
-	FCE2BColdStart bool
-	TargetTaskID   string
+	FCE2BColdStart      bool
+	TargetTaskID        string
+	RuntimeStartAttempt string
+	StartupProtocol     string
 }
 
 func (c *Client) ClaimTask(ctx context.Context, runtimeID string) (*Task, error) {
@@ -218,6 +220,12 @@ func (c *Client) ClaimTaskWithOptions(ctx context.Context, runtimeID string, opt
 	}
 	if targetTaskID := strings.TrimSpace(opts.TargetTaskID); targetTaskID != "" {
 		body["target_task_id"] = targetTaskID
+	}
+	if attemptID := strings.TrimSpace(opts.RuntimeStartAttempt); attemptID != "" {
+		body["runtime_start_attempt_id"] = attemptID
+	}
+	if protocol := strings.TrimSpace(opts.StartupProtocol); protocol != "" {
+		body["startup_status_protocol"] = protocol
 	}
 	if err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/claim", runtimeID), body, &resp); err != nil {
 		return nil, err
