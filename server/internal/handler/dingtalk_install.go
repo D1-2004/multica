@@ -10,13 +10,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // DingTalk bot installation endpoints — the scan-to-create device flow
 // ("一键创建钉钉应用扫码接入"). Mirrors the Lark install surface in
-// lark.go: member-visible listing, admin-gated begin/status/revoke.
+// lark.go: members can manage bots attached to their own Agents, while
+// workspace owners/admins can manage any Agent in the workspace.
 
 // DingTalkInstallationResponse is the wire shape for an installation
 // row. The encrypted client_secret is INTENTIONALLY absent — the only
@@ -141,12 +141,16 @@ func (h *Handler) RevokeDingTalkInstallation(w http.ResponseWriter, r *http.Requ
 	}
 	// Workspace-scoped lookup ensures one workspace cannot revoke
 	// another's installation by guessing the UUID.
-	if _, err := h.DingTalkInstallations.GetInWorkspace(r.Context(), instUUID, wsUUID); err != nil {
+	installation, err := h.DingTalkInstallations.GetInWorkspace(r.Context(), instUUID, wsUUID)
+	if err != nil {
 		if errors.Is(err, dingtalk.ErrInstallationNotFound) {
 			writeError(w, http.StatusNotFound, "dingtalk installation not found")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to load installation")
+		return
+	}
+	if !h.canManageDingTalkInstallationForRequest(w, r, wsUUID, installation.AgentID) {
 		return
 	}
 	if err := h.DingTalkInstallations.Revoke(r.Context(), instUUID); err != nil {
@@ -179,6 +183,22 @@ func (h *Handler) RetryDingTalkRouterRegistration(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
+	if h.DingTalkInstallations == nil {
+		writeError(w, http.StatusServiceUnavailable, "dingtalk install not configured")
+		return
+	}
+	installation, err := h.DingTalkInstallations.GetInWorkspace(r.Context(), instUUID, wsUUID)
+	if err != nil {
+		if errors.Is(err, dingtalk.ErrInstallationNotFound) {
+			writeError(w, http.StatusNotFound, "dingtalk installation not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to load installation")
+		}
+		return
+	}
+	if !h.canManageDingTalkInstallationForRequest(w, r, wsUUID, installation.AgentID) {
+		return
+	}
 	inst, err := h.DingTalkRegistration.RetryHTTPCallbackRouter(r.Context(), wsUUID, instUUID)
 	if err != nil {
 		if errors.Is(err, dingtalk.ErrInstallationNotFound) {
@@ -204,9 +224,9 @@ type BeginDingTalkInstallResponse struct {
 
 // BeginDingTalkInstall (POST /api/workspaces/{id}/dingtalk/install/begin)
 // opens a new device-flow registration session against DingTalk.
-// Admin-only at the router. The agent_id query param picks which
-// Multica Agent the new app will be bound to; the agent must belong to
-// this workspace (RegistrationService re-checks that defense-in-depth).
+// The router requires membership and this handler requires ownership of the
+// target Agent (or workspace owner/admin). RegistrationService re-checks that
+// the Agent belongs to this workspace defense-in-depth.
 //
 // Returns 503 when the integration is not wired; the UI hides the bind
 // button in that case so this should not be reached through the normal
@@ -236,11 +256,7 @@ func (h *Handler) BeginDingTalkInstall(w http.ResponseWriter, r *http.Request) {
 	// Ownership pre-check at the HTTP boundary so a malformed agent_id
 	// surfaces 404 here (not an opaque service error from inside the
 	// service's own re-check).
-	if _, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-		ID:          agentUUID,
-		WorkspaceID: wsUUID,
-	}); err != nil {
-		writeError(w, http.StatusNotFound, "agent not found in this workspace")
+	if _, ok := h.canManageDingTalkAgentForRequest(w, r, wsUUID, agentUUID); !ok {
 		return
 	}
 	initiatorUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
@@ -322,8 +338,9 @@ func dingTalkInstallStatusToResponse(state dingtalk.RegistrationSessionState) Di
 
 // GetDingTalkInstallStatus (GET /api/workspaces/{id}/dingtalk/install/{sessionId}/status)
 // returns the current state of an in-flight install session.
-// Admin-only at the router. Unknown / cross-workspace / GC'd sessions
-// return 404 — the frontend treats it as "session lost, please restart".
+// The router requires membership and this handler authorizes against the
+// session's target Agent. Unknown / cross-workspace / GC'd sessions return
+// 404 — the frontend treats it as "session lost, please restart".
 func (h *Handler) GetDingTalkInstallStatus(w http.ResponseWriter, r *http.Request) {
 	if h.DingTalkRegistration == nil {
 		writeError(w, http.StatusServiceUnavailable, "dingtalk install not configured")
@@ -345,6 +362,9 @@ func (h *Handler) GetDingTalkInstallStatus(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to load install session")
+		return
+	}
+	if _, ok := h.canManageDingTalkAgentForRequest(w, r, wsUUID, state.AgentID); !ok {
 		return
 	}
 	// The dingtalk_installation:created event is published by the
@@ -378,7 +398,8 @@ type ManualInstallDingTalkRequest struct {
 
 // ManualInstallDingTalk (POST /api/workspaces/{id}/dingtalk/install/manual)
 // creates an installation directly from operator-supplied credentials,
-// bypassing the device flow. Admin-only at the router. It is available
+// bypassing the device flow. The router requires membership and this handler
+// restricts plain members to their own Agents. It is available
 // whenever DingTalk is configured (the at-rest key is set) regardless of
 // whether the device-flow RegistrationService is wired — that is the
 // point: it keeps a workspace unblocked when the scan flow is broken.
@@ -430,11 +451,7 @@ func (h *Handler) ManualInstallDingTalk(w http.ResponseWriter, r *http.Request) 
 	}
 	// Ownership check at the boundary: a workspace admin must not bind an
 	// app to another workspace's agent by guessing its UUID.
-	if _, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-		ID:          agentUUID,
-		WorkspaceID: wsUUID,
-	}); err != nil {
-		writeError(w, http.StatusNotFound, "agent not found in this workspace")
+	if _, ok := h.canManageDingTalkAgentForRequest(w, r, wsUUID, agentUUID); !ok {
 		return
 	}
 	initiatorUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")

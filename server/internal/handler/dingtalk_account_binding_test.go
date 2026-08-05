@@ -10,20 +10,26 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type fakeDingTalkAccountBindingService struct {
-	beginCalls      int
-	beginParams     agentmessagerouter.BeginParams
-	beginResult     agentmessagerouter.BeginResult
-	beginErr        error
+	beginCalls     int
+	beginParams    agentmessagerouter.BeginParams
+	beginResult    agentmessagerouter.BeginResult
+	beginErr       error
+	listResult     []agentmessagerouter.PublicDingTalkAccountBinding
+	statusCalls    int
+	statusResult   agentmessagerouter.MessageBindingStatus
+	statusErr      error
 	completeCalls  int
 	completeParams agentmessagerouter.CompleteBindingParams
 	completeResult agentmessagerouter.CompleteBindingResult
@@ -34,6 +40,14 @@ type fakeDingTalkAccountBindingService struct {
 	unbindParams   agentmessagerouter.UnbindParams
 	unbindResult   agentmessagerouter.PublicDingTalkAccountBinding
 	unbindErr      error
+}
+
+func (f *fakeDingTalkAccountBindingService) GetMessageBindingStatus(
+	_ context.Context,
+	_, _ pgtype.UUID,
+) (agentmessagerouter.MessageBindingStatus, error) {
+	f.statusCalls++
+	return f.statusResult, f.statusErr
 }
 
 func (f *fakeDingTalkAccountBindingService) UpdateSurface(_ context.Context, params agentmessagerouter.UpdateSurfaceParams) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
@@ -49,7 +63,7 @@ func (f *fakeDingTalkAccountBindingService) Begin(_ context.Context, params agen
 }
 
 func (f *fakeDingTalkAccountBindingService) List(context.Context, pgtype.UUID) ([]agentmessagerouter.PublicDingTalkAccountBinding, error) {
-	return nil, nil
+	return f.listResult, nil
 }
 
 func (f *fakeDingTalkAccountBindingService) CompleteBinding(_ context.Context, params agentmessagerouter.CompleteBindingParams) (agentmessagerouter.CompleteBindingResult, error) {
@@ -64,6 +78,26 @@ func (f *fakeDingTalkAccountBindingService) Unbind(_ context.Context, params age
 	return f.unbindResult, f.unbindErr
 }
 
+type dingTalkOwnershipMetadataDB struct {
+	agents    map[string]db.Agent
+	workspace db.Workspace
+}
+
+func (f *dingTalkOwnershipMetadataDB) GetAgentInWorkspace(_ context.Context, params db.GetAgentInWorkspaceParams) (db.Agent, error) {
+	agent, ok := f.agents[util.UUIDToString(params.ID)]
+	if !ok || agent.WorkspaceID != params.WorkspaceID {
+		return db.Agent{}, pgx.ErrNoRows
+	}
+	return agent, nil
+}
+
+func (f *dingTalkOwnershipMetadataDB) GetWorkspace(_ context.Context, id pgtype.UUID) (db.Workspace, error) {
+	if f.workspace.ID != id {
+		return db.Workspace{}, pgx.ErrNoRows
+	}
+	return f.workspace, nil
+}
+
 func TestListDingTalkAccountBindingsReportsUnconfiguredWithoutSecrets(t *testing.T) {
 	h := &Handler{}
 	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/workspace-1/dingtalk/account-bindings", nil)
@@ -74,6 +108,184 @@ func TestListDingTalkAccountBindingsReportsUnconfiguredWithoutSecrets(t *testing
 	}
 	if got := w.Body.String(); got != "{\"bindings\":[],\"configured\":false}\n" {
 		t.Fatalf("body = %s", got)
+	}
+}
+
+func TestListDingTalkAccountBindingsUsesNativeMemberVisibility(t *testing.T) {
+	workspaceID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	ownAgentID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	foreignAgentID := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	service := &fakeDingTalkAccountBindingService{listResult: []agentmessagerouter.PublicDingTalkAccountBinding{
+		{ID: "own-binding", WorkspaceID: workspaceID, AgentID: ownAgentID},
+		{ID: "foreign-binding", WorkspaceID: workspaceID, AgentID: foreignAgentID},
+	}}
+	h := &Handler{DingTalkAccountBindings: service}
+	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/"+workspaceID+"/dingtalk/account-bindings", nil)
+	req = withURLParams(req, "id", workspaceID)
+	w := httptest.NewRecorder()
+
+	h.ListDingTalkAccountBindings(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Bindings []agentmessagerouter.PublicDingTalkAccountBinding `json:"bindings"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Bindings) != 2 {
+		t.Fatalf("bindings = %#v, want native member workspace list", response.Bindings)
+	}
+}
+
+func TestDingTalkAccountBindingStatusUsesNativeAgentOwnership(t *testing.T) {
+	workspaceID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	serviceMemberID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	ownedAgentID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	foreignAgentID := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	foreignOwnerID := "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+	metadata := &dingTalkOwnershipMetadataDB{agents: map[string]db.Agent{
+		ownedAgentID: {
+			ID: parseUUID(ownedAgentID), WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID(serviceMemberID),
+		},
+		foreignAgentID: {
+			ID: parseUUID(foreignAgentID), WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID(foreignOwnerID),
+		},
+	}}
+	tests := []struct {
+		name       string
+		role       string
+		agentID    string
+		wantStatus int
+		wantCalls  int
+	}{
+		{name: "service member reads owned agent", role: "member", agentID: ownedAgentID, wantStatus: http.StatusOK, wantCalls: 1},
+		{name: "service member cannot discover foreign agent", role: "member", agentID: foreignAgentID, wantStatus: http.StatusNotFound},
+		{name: "workspace admin reads foreign agent", role: "admin", agentID: foreignAgentID, wantStatus: http.StatusOK, wantCalls: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			statusResult := agentmessagerouter.MessageBindingStatus{
+				Configured: true, AgentID: tt.agentID, BindingMode: agentmessagerouter.BindingModeMessage,
+			}
+			statusResult.Binding.MessageRoute.Status = "not_bound"
+			statusResult.Verification.Status = "not_bound"
+			service := &fakeDingTalkAccountBindingService{statusResult: statusResult}
+			h := &Handler{DingTalkAccountBindings: service, dingTalkAccountBindingMetadata: metadata}
+			req := httptest.NewRequest(
+				http.MethodGet,
+				"/api/workspaces/"+workspaceID+"/dingtalk/account-bindings/"+tt.agentID+"/status",
+				nil,
+			)
+			req.Header.Set("X-User-ID", serviceMemberID)
+			req.Header.Set("X-Actor-Source", middleware.WorkspaceAccessActorSource)
+			req = withURLParams(req, "id", workspaceID, "agentId", tt.agentID)
+			req = req.WithContext(middleware.SetMemberContext(req.Context(), workspaceID, db.Member{
+				WorkspaceID: parseUUID(workspaceID), UserID: parseUUID(serviceMemberID), Role: tt.role,
+			}))
+			w := httptest.NewRecorder()
+
+			h.GetDingTalkAccountBindingStatus(w, req)
+
+			if w.Code != tt.wantStatus || service.statusCalls != tt.wantCalls {
+				t.Fatalf("status = %d calls = %d body=%s", w.Code, service.statusCalls, w.Body.String())
+			}
+			for _, secretField := range []string{"qr_code_url", "binding_token", "callback_token", "callback_token_hash"} {
+				if strings.Contains(w.Body.String(), secretField) {
+					t.Fatalf("response leaked %q: %s", secretField, w.Body.String())
+				}
+			}
+		})
+	}
+}
+
+func TestDingTalkAccountBindingMutationsUseNativeMemberBehavior(t *testing.T) {
+	workspaceID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	subjectID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	foreignAgentID := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	metadata := &dingTalkOwnershipMetadataDB{
+		agents: map[string]db.Agent{
+			foreignAgentID: {
+				ID: parseUUID(foreignAgentID), WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+			},
+		},
+		workspace: db.Workspace{ID: parseUUID(workspaceID)},
+	}
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		invoke func(*Handler, http.ResponseWriter, *http.Request)
+	}{
+		{
+			name: "begin", method: http.MethodPost, path: "/api/workspaces/" + workspaceID + "/dingtalk/account-bindings/begin",
+			body:   `{"agent_id":"` + foreignAgentID + `","binding_mode":"message"}`,
+			invoke: (*Handler).BeginDingTalkAccountBinding,
+		},
+		{
+			name: "surface", method: http.MethodPatch, path: "/api/workspaces/" + workspaceID + "/dingtalk/account-bindings/" + foreignAgentID + "/surface",
+			body:   `{"surface_type":"issue"}`,
+			invoke: (*Handler).UpdateDingTalkAccountBindingSurface,
+		},
+		{
+			name: "unbind", method: http.MethodDelete, path: "/api/workspaces/" + workspaceID + "/dingtalk/account-bindings/" + foreignAgentID + "?binding_mode=message",
+			invoke: (*Handler).UnbindDingTalkAccountBinding,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &fakeDingTalkAccountBindingService{}
+			h := &Handler{DingTalkAccountBindings: service, dingTalkAccountBindingMetadata: metadata, Bus: events.New()}
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("X-User-ID", subjectID)
+			req = withURLParams(req, "id", workspaceID, "agentId", foreignAgentID)
+			w := httptest.NewRecorder()
+
+			tt.invoke(h, w, req)
+
+			if w.Code >= http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+			}
+			if service.beginCalls+service.updateCalls+service.unbindCalls != 1 {
+				t.Fatalf("service calls begin=%d update=%d unbind=%d, want exactly one", service.beginCalls, service.updateCalls, service.unbindCalls)
+			}
+		})
+	}
+}
+
+func TestBeginDingTalkAccountBindingUsesNativeMemberActor(t *testing.T) {
+	workspaceID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	subjectID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	agentID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	metadata := &dingTalkOwnershipMetadataDB{
+		agents: map[string]db.Agent{
+			agentID: {
+				ID: parseUUID(agentID), WorkspaceID: parseUUID(workspaceID), OwnerID: parseUUID(subjectID), Name: "Owned Agent",
+			},
+		},
+		workspace: db.Workspace{ID: parseUUID(workspaceID), Name: "Token Workspace"},
+	}
+	service := &fakeDingTalkAccountBindingService{beginResult: agentmessagerouter.BeginResult{BindingID: "owned-binding"}}
+	h := &Handler{DingTalkAccountBindings: service, dingTalkAccountBindingMetadata: metadata}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/workspaces/"+workspaceID+"/dingtalk/account-bindings/begin",
+		strings.NewReader(`{"agent_id":"`+agentID+`","binding_mode":"identity"}`),
+	)
+	req.Header.Set("X-User-ID", subjectID)
+	req = withURLParams(req, "id", workspaceID)
+	w := httptest.NewRecorder()
+
+	h.BeginDingTalkAccountBinding(w, req)
+
+	if w.Code != http.StatusOK || service.beginCalls != 1 {
+		t.Fatalf("status = %d begin calls=%d body=%s", w.Code, service.beginCalls, w.Body.String())
+	}
+	if service.beginParams.BindingMode != agentmessagerouter.BindingModeIdentity || service.beginParams.InitiatorID != parseUUID(subjectID) {
+		t.Fatalf("begin params = %#v", service.beginParams)
 	}
 }
 
@@ -99,7 +311,7 @@ func TestBeginDingTalkAccountBindingUsesDatabaseAgentAndWorkspaceNames(t *testin
 		},
 	}
 	h := &Handler{
-		DingTalkAccountBindings:           service,
+		DingTalkAccountBindings:        service,
 		dingTalkAccountBindingMetadata: metadataDB,
 		dingTalkAccountBindingPermissions: &fakeDingTalkAccountBindingPermissionStore{
 			member: db.Member{UserID: initiatorID, Role: "member"},
@@ -349,8 +561,8 @@ func TestDingTalkAccountBindingMutationsRejectUnauthorizedOperators(t *testing.T
 		t.Run(tt.name, func(t *testing.T) {
 			service := &fakeDingTalkAccountBindingService{}
 			h := &Handler{
-				DingTalkAccountBindings:             service,
-				dingTalkAccountBindingMetadata:      metadataDB,
+				DingTalkAccountBindings:           service,
+				dingTalkAccountBindingMetadata:    metadataDB,
 				dingTalkAccountBindingPermissions: permissions,
 			}
 			req := tt.request()

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -539,6 +540,14 @@ type UpdateMemberRequest struct {
 	Role string `json:"role"`
 }
 
+func (h *Handler) isWorkspaceAccessServiceUser(ctx context.Context, userID pgtype.UUID) (bool, error) {
+	user, err := h.Queries.GetUser(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return user.PrincipalType == "workspace_access_token", nil
+}
+
 func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
 	requester, ok := h.workspaceMember(w, r, workspaceID)
@@ -570,6 +579,16 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	role, valid := normalizeMemberRole(req.Role)
 	if !valid {
 		writeError(w, http.StatusBadRequest, "invalid member role")
+		return
+	}
+
+	isServiceUser, err := h.isWorkspaceAccessServiceUser(r.Context(), target.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update member")
+		return
+	}
+	if isServiceUser && role != "member" {
+		writeError(w, http.StatusConflict, "workspace access service members must keep the member role")
 		return
 	}
 
@@ -633,6 +652,26 @@ func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isServiceUser, err := h.isWorkspaceAccessServiceUser(r.Context(), target.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete member")
+		return
+	}
+	if isServiceUser {
+		hasToken, tokenErr := h.Queries.HasWorkspaceAccessTokenForSubject(r.Context(), db.HasWorkspaceAccessTokenForSubjectParams{
+			WorkspaceID:   target.WorkspaceID,
+			SubjectUserID: target.UserID,
+		})
+		if tokenErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete member")
+			return
+		}
+		if hasToken {
+			writeError(w, http.StatusConflict, "workspace access service members with a token cannot be removed; revoke and delete the token first")
+			return
+		}
+	}
+
 	if target.Role == "owner" && requester.Role != "owner" {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
@@ -679,6 +718,16 @@ func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
+		return
+	}
+
+	isServiceUser, err := h.isWorkspaceAccessServiceUser(r.Context(), member.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to leave workspace")
+		return
+	}
+	if isServiceUser {
+		writeError(w, http.StatusConflict, "workspace access service members cannot leave the workspace; revoke or delete the token instead")
 		return
 	}
 

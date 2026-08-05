@@ -27,7 +27,7 @@ import (
 // with a Multica Cloud Node PAT (`mcn_`) even though the server happily
 // authenticates both kinds. Keep this list in sync with the prefix branches
 // in server/internal/middleware/auth.go.
-var loginTokenPrefixes = []string{"mul_", auth.CloudPATPrefix}
+var loginTokenPrefixes = []string{"mul_", auth.CloudPATPrefix, workspaceAccessTokenPrefix}
 
 // validateLoginTokenPrefix returns nil if token starts with one of the
 // CLI-recognised PAT prefixes, or an error describing the accepted set.
@@ -436,17 +436,30 @@ func runAuthLoginToken(cmd *cobra.Command, providedToken string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	var me struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
-	}
-	if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
-		return cli.WithUserMessage("Could not sign in with that token — make sure it is valid and not expired, then run `multica login --token <token>` again.", err)
+	var principalName, principalDetail, workspaceID string
+	if isWorkspaceAccessToken(token) {
+		self, err := fetchWorkspaceAccessSelf(ctx, client)
+		if err != nil {
+			return cli.WithUserMessage("Could not configure that DTA access key — make sure it is valid and not expired, then try again.", err)
+		}
+		principalName = self.Name
+		principalDetail = "workspace access token"
+		workspaceID = self.WorkspaceID
+	} else {
+		var me struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		}
+		if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
+			return cli.WithUserMessage("Could not sign in with that token — make sure it is valid and not expired, then run `multica login --token <token>` again.", err)
+		}
+		principalName = me.Name
+		principalDetail = me.Email
 	}
 
 	profile := resolveProfile(cmd)
 	cfg, _ := cli.LoadCLIConfigForProfile(profile)
-	cfg.WorkspaceID = ""
+	cfg.WorkspaceID = workspaceID
 	cfg.Token = token
 	cfg.ServerURL = serverURL
 	if cfg.AppURL == "" && serverURL == defaultCloudServerURL {
@@ -456,7 +469,7 @@ func runAuthLoginToken(cmd *cobra.Command, providedToken string) error {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", me.Name, me.Email)
+	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", principalName, principalDetail)
 	return nil
 }
 
@@ -474,13 +487,26 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	var me struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
-	}
-	if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
-		fmt.Fprintf(os.Stderr, "Token is invalid or expired: %v\nRun 'multica login' to re-authenticate.\n", err)
-		return nil
+	var principalName, principalDetail string
+	if isWorkspaceAccessToken(token) {
+		self, err := fetchWorkspaceAccessSelf(ctx, client)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Token is invalid or expired: %v\nReconfigure the DTA access key.\n", err)
+			return nil
+		}
+		principalName = self.Name
+		principalDetail = "workspace access token " + self.TokenID
+	} else {
+		var me struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		}
+		if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
+			fmt.Fprintf(os.Stderr, "Token is invalid or expired: %v\nRun 'multica login' to re-authenticate.\n", err)
+			return nil
+		}
+		principalName = me.Name
+		principalDetail = me.Email
 	}
 
 	prefix := token
@@ -488,7 +514,7 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 		prefix = prefix[:12] + "..."
 	}
 
-	fmt.Fprintf(os.Stderr, "Server:  %s\nUser:    %s (%s)\nToken:   %s\n", serverURL, me.Name, me.Email, prefix)
+	fmt.Fprintf(os.Stderr, "Server:  %s\nUser:    %s (%s)\nToken:   %s\n", serverURL, principalName, principalDetail, prefix)
 	return nil
 }
 

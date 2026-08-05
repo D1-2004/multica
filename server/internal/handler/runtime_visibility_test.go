@@ -301,6 +301,41 @@ func TestUpdateAgentRuntime_VisibilityPatchApplies(t *testing.T) {
 	}
 }
 
+func TestUpdateAgentRuntime_FCE2BMemberCannotMakeRuntimePublic(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	runtimeID, runtimeOwnerID, _ := runtimeVisibilityFixture(t)
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_runtime
+		SET metadata = '{"kind":"fc-e2b","template_channel":"stable"}'::jsonb
+		WHERE id = $1
+	`, runtimeID); err != nil {
+		t.Fatalf("mark runtime as FC/E2B: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequestAs(runtimeOwnerID, http.MethodPatch, "/api/runtimes/"+runtimeID, map[string]any{
+		"visibility": "public",
+	})
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.UpdateAgentRuntime(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("member FC/E2B public visibility status = %d, want 403: %s", w.Code, w.Body.String())
+	}
+
+	admin := httptest.NewRecorder()
+	adminReq := newRequestAs(testUserID, http.MethodPatch, "/api/runtimes/"+runtimeID, map[string]any{
+		"visibility": "public",
+	})
+	adminReq = withURLParam(adminReq, "runtimeId", runtimeID)
+	testHandler.UpdateAgentRuntime(admin, adminReq)
+	if admin.Code != http.StatusOK {
+		t.Fatalf("admin FC/E2B public visibility status = %d, want 200: %s", admin.Code, admin.Body.String())
+	}
+}
+
 // TestUpdateAgentRuntime_IgnoresTimezoneField guards the RFC migration that
 // dropped `timezone` from UpdateAgentRuntimeRequest: a PATCH body still
 // carrying `timezone` must not error, must not echo a `timezone` key back,

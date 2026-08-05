@@ -484,33 +484,33 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		traceStartedAtUnixMS = trace.StartedAtUnixMS
 	}
 	return AgentTaskResponse{
-		ID:                             uuidToString(t.ID),
-		AgentID:                        uuidToString(t.AgentID),
-		RuntimeID:                      uuidToString(t.RuntimeID),
-		IssueID:                        uuidToString(t.IssueID),
-		WorkspaceID:                    workspaceID,
-		TraceID:                        traceID,
-		TraceStartedAtUnixMS:           traceStartedAtUnixMS,
-		Status:                         t.Status,
-		Priority:                       t.Priority,
-		DispatchedAt:                   timestampToPtr(t.DispatchedAt),
-		StartedAt:                      timestampToPtr(t.StartedAt),
-		CompletedAt:                    timestampToPtr(t.CompletedAt),
-		Result:                         result,
-		Error:                          textToPtr(t.Error),
-		FailureReason:                  failureReason,
-		Attempt:                        t.Attempt,
-		MaxAttempts:                    t.MaxAttempts,
-		ParentTaskID:                   uuidToPtr(t.ParentTaskID),
-		IsLeaderTask:                   t.IsLeaderTask,
-		CreatedAt:                      timestampToString(t.CreatedAt),
-		TriggerCommentID:               uuidToPtr(t.TriggerCommentID),
-		CoalescedCommentIDs:            uuidsToStrings(t.CoalescedCommentIds),
-		DeliveredCommentIDs:            uuidStringsOrEmpty(t.DeliveredCommentIds),
-		TriggerSummary:                 textToPtr(t.TriggerSummary),
-		HandoffNote:                    handoffNote,
-		WorkDir:                        workDir,
-		RelativeWorkDir:                relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
+		ID:                   uuidToString(t.ID),
+		AgentID:              uuidToString(t.AgentID),
+		RuntimeID:            uuidToString(t.RuntimeID),
+		IssueID:              uuidToString(t.IssueID),
+		WorkspaceID:          workspaceID,
+		TraceID:              traceID,
+		TraceStartedAtUnixMS: traceStartedAtUnixMS,
+		Status:               t.Status,
+		Priority:             t.Priority,
+		DispatchedAt:         timestampToPtr(t.DispatchedAt),
+		StartedAt:            timestampToPtr(t.StartedAt),
+		CompletedAt:          timestampToPtr(t.CompletedAt),
+		Result:               result,
+		Error:                textToPtr(t.Error),
+		FailureReason:        failureReason,
+		Attempt:              t.Attempt,
+		MaxAttempts:          t.MaxAttempts,
+		ParentTaskID:         uuidToPtr(t.ParentTaskID),
+		IsLeaderTask:         t.IsLeaderTask,
+		CreatedAt:            timestampToString(t.CreatedAt),
+		TriggerCommentID:     uuidToPtr(t.TriggerCommentID),
+		CoalescedCommentIDs:  uuidsToStrings(t.CoalescedCommentIds),
+		DeliveredCommentIDs:  uuidStringsOrEmpty(t.DeliveredCommentIds),
+		TriggerSummary:       textToPtr(t.TriggerSummary),
+		HandoffNote:          handoffNote,
+		WorkDir:              workDir,
+		RelativeWorkDir:      relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
 		// Surface task source so the UI can distinguish issue-linked tasks
 		// from chat-spawned or autopilot-spawned ones; all three may arrive
 		// with issue_id = "" once a task has no linked issue.
@@ -1991,7 +1991,6 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	for i, t := range tasks {
 		resp[i] = taskToResponse(t, workspaceID)
 	}
-
 	writeJSON(w, http.StatusOK, resp)
 }
 

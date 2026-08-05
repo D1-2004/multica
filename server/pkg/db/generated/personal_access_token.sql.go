@@ -84,10 +84,11 @@ func (q *Queries) ExtendPersonalAccessTokenExpiry(ctx context.Context, arg Exten
 }
 
 const getPersonalAccessTokenByHash = `-- name: GetPersonalAccessTokenByHash :one
-SELECT id, user_id, name, token_hash, token_prefix, expires_at, last_used_at, revoked, created_at FROM personal_access_token
-WHERE token_hash = $1
-  AND revoked = FALSE
-  AND (expires_at IS NULL OR expires_at > now())
+SELECT pat.id, pat.user_id, pat.name, pat.token_hash, pat.token_prefix, pat.expires_at, pat.last_used_at, pat.revoked, pat.created_at FROM personal_access_token pat
+JOIN "user" u ON u.id = pat.user_id AND u.principal_type = 'human'
+WHERE pat.token_hash = $1
+  AND pat.revoked = FALSE
+  AND (pat.expires_at IS NULL OR pat.expires_at > now())
 `
 
 func (q *Queries) GetPersonalAccessTokenByHash(ctx context.Context, tokenHash string) (PersonalAccessToken, error) {

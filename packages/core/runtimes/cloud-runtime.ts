@@ -483,8 +483,11 @@ export function fcE2BTemplateListOptions(wsId: string) {
   });
 }
 
-export function useFCE2BTemplates(wsId: string) {
-  return useQuery(fcE2BTemplateListOptions(wsId));
+export function useFCE2BTemplates(wsId: string, enabled = true) {
+  return useQuery({
+    ...fcE2BTemplateListOptions(wsId),
+    enabled,
+  });
 }
 
 export function useFCE2BStableChannel() {

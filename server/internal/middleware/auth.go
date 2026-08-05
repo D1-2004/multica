@@ -10,8 +10,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
+	internalflags "github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
 
 func uuidToString(u pgtype.UUID) string { return util.UUIDToString(u) }
@@ -33,7 +35,7 @@ func uuidToString(u pgtype.UUID) string { return util.UUIDToString(u) }
 // local DB. When nil (Fleet URL unset) mcn_ tokens are rejected at the
 // prefix branch — we don't fall through to the mul_ / JWT paths, since
 // an mcn_ string is by construction not a valid mul_ PAT or JWT.
-func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATVerifier) func(http.Handler) http.Handler {
+func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATVerifier, releaseFlags ...*featureflag.Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// X-Actor-Source is server-set only — any value supplied by
@@ -153,6 +155,70 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				return
 			}
 
+			// Workspace-bound DTA Token. The database row owns credential lifecycle
+			// and a stable service-user identity. Business authorization is resolved
+			// later through that subject's native workspace member row.
+			if strings.HasPrefix(tokenString, "dta_") {
+				// Passing the service is the production wiring. The variadic shape
+				// keeps small auth unit fixtures source-compatible; when supplied,
+				// a missing flag is deliberately off for rolling-release safety.
+				if len(releaseFlags) > 0 && !internalflags.WorkspaceAccessTokensEnabled(r.Context(), releaseFlags[0]) {
+					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "workspace_access_operation_not_allowed")
+					return
+				}
+				if queries == nil {
+					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_access_token_invalid")
+					return
+				}
+				row, err := queries.GetWorkspaceAccessTokenByHash(r.Context(), auth.HashToken(tokenString))
+				if err != nil {
+					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_access_token_invalid")
+					return
+				}
+				if row.PrincipalType != WorkspaceAccessActorSource {
+					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_access_token_invalid")
+					return
+				}
+				if row.RevokedAt.Valid {
+					auditWorkspaceAccessRequest(r, queries, row, "denied")
+					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_access_token_revoked")
+					return
+				}
+				if row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(time.Now()) {
+					auditWorkspaceAccessRequest(r, queries, row, "denied")
+					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_access_token_expired")
+					return
+				}
+
+				principal := WorkspaceAccessPrincipal{
+					TokenID:     uuidToString(row.ID),
+					UserID:      uuidToString(row.SubjectUserID),
+					WorkspaceID: uuidToString(row.WorkspaceID),
+					Name:        row.Name,
+					Version:     row.Version,
+				}
+
+				// These headers are server-owned for DTA Token requests. The workspace
+				// resolver also reads the Principal first, so query parameters cannot
+				// negotiate a different workspace.
+				r.Header.Del("X-Workspace-Slug")
+				r.Header.Set("X-Workspace-ID", principal.WorkspaceID)
+				r.Header.Set("X-User-ID", principal.UserID)
+				r.Header.Set("X-Actor-Source", WorkspaceAccessActorSource)
+				r = r.WithContext(WithWorkspaceAccessPrincipal(r.Context(), principal))
+				if err := queries.UpdateWorkspaceAccessTokenLastUsed(r.Context(), row.ID); err != nil {
+					slog.Warn("auth: failed to update workspace access token last_used_at", "token_id", principal.TokenID, "error", err)
+				}
+				recorder := &workspaceAccessAuditResponseWriter{ResponseWriter: w, status: http.StatusOK}
+				next.ServeHTTP(recorder, r)
+				result := "success"
+				if recorder.status >= http.StatusBadRequest {
+					result = "denied"
+				}
+				auditWorkspaceAccessRequest(r, queries, row, result)
+				return
+			}
+
 			// PAT: tokens starting with "mul_"
 			if strings.HasPrefix(tokenString, "mul_") {
 				hash := auth.HashToken(tokenString)
@@ -225,6 +291,18 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				http.Error(w, `{"error":"invalid claims"}`, http.StatusUnauthorized)
 				return
 			}
+			if queries != nil {
+				subjectID, parseErr := util.ParseUUID(sub)
+				if parseErr != nil {
+					http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+					return
+				}
+				if _, lookupErr := queries.GetHumanUser(r.Context(), subjectID); lookupErr != nil {
+					slog.Warn("auth: JWT subject is not a human principal", "subject", sub, "error", lookupErr)
+					http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+					return
+				}
+			}
 			r.Header.Set("X-User-ID", sub)
 			if email, ok := claims["email"].(string); ok {
 				r.Header.Set("X-User-Email", email)
@@ -235,6 +313,40 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+type workspaceAccessAuditResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *workspaceAccessAuditResponseWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *workspaceAccessAuditResponseWriter) Write(body []byte) (int, error) {
+	return w.ResponseWriter.Write(body)
+}
+
+func writeWorkspaceAccessAuthError(w http.ResponseWriter, status int, code string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(`{"error":"` + code + `","code":"` + code + `"}`))
+}
+
+func auditWorkspaceAccessRequest(r *http.Request, queries *db.Queries, row db.GetWorkspaceAccessTokenByHashRow, result string) {
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	if _, err := queries.CreateWorkspaceAccessAudit(r.Context(), db.CreateWorkspaceAccessAuditParams{
+		WorkspaceID: row.WorkspaceID,
+		TokenID:     row.ID,
+		ActorUserID: row.SubjectUserID,
+		Action:      r.Method + " " + r.URL.Path,
+		Result:      result,
+		RequestID:   pgtype.Text{String: requestID, Valid: requestID != ""},
+	}); err != nil {
+		slog.Warn("auth: failed to audit workspace access request", "token_id", uuidToString(row.ID), "error", err)
 	}
 }
 

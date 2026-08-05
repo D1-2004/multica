@@ -4,10 +4,11 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: GetPersonalAccessTokenByHash :one
-SELECT * FROM personal_access_token
-WHERE token_hash = $1
-  AND revoked = FALSE
-  AND (expires_at IS NULL OR expires_at > now());
+SELECT pat.* FROM personal_access_token pat
+JOIN "user" u ON u.id = pat.user_id AND u.principal_type = 'human'
+WHERE pat.token_hash = $1
+  AND pat.revoked = FALSE
+  AND (pat.expires_at IS NULL OR pat.expires_at > now());
 
 -- name: ListPersonalAccessTokensByUser :many
 SELECT * FROM personal_access_token

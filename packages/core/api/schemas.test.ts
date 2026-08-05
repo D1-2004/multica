@@ -40,8 +40,38 @@ import {
   TimelineEntriesSchema,
   UserSchema,
   ProvisionFDEOnboardingResponseSchema,
+  WorkspaceAccessTokenListSchema,
+  WorkspaceAccessTokenSecretResponseSchema,
+  EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
+
+describe("workspace access schemas", () => {
+  it("parses service-member tokens without a configurable policy", () => {
+    const parsed = WorkspaceAccessTokenListSchema.parse([{
+      id: "t1", workspace_id: "w1", name: "DTA",
+      version: 1, token_prefix: "dta_abc", expires_at: null, last_used_at: null,
+      revoked_at: null, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z",
+    }]);
+    expect(parsed[0]).not.toHaveProperty("resource_scope");
+    expect(parsed[0]).not.toHaveProperty("capabilities");
+  });
+
+  it("does not accept a token-create response without its one-time secret", () => {
+    const parsed = parseWithFallback(
+      {
+        id: "t1", workspace_id: "w1", name: "prod",
+        version: 1, token_prefix: "dta_abc",
+        expires_at: null, last_used_at: null, created_at: "2026-08-02T00:00:00Z",
+        updated_at: "2026-08-02T00:00:00Z", revoked_at: null,
+      },
+      WorkspaceAccessTokenSecretResponseSchema,
+      EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE,
+      { endpoint: "test", includeReceived: false },
+    );
+    expect(parsed).toEqual(EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE);
+  });
+});
 
 describe("GitHub installation schemas", () => {
   it("defaults reusable installations for older server responses", () => {

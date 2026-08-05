@@ -51,6 +51,11 @@ import type {
   PersonalAccessToken,
   CreatePersonalAccessTokenRequest,
   CreatePersonalAccessTokenResponse,
+  WorkspaceAccessToken,
+  CreateWorkspaceAccessTokenRequest,
+  UpdateWorkspaceAccessTokenRequest,
+  RegenerateWorkspaceAccessTokenRequest,
+  WorkspaceAccessTokenSecretResponse,
   RuntimeUsage,
   IssueUsageSummary,
   RuntimeHourlyActivity,
@@ -316,6 +321,11 @@ import {
   EMPTY_BEGIN_AGENT_IDENTITY_GITHUB_OAUTH_RESPONSE,
   EMPTY_DISCONNECT_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
   EMPTY_TEST_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
+  WorkspaceAccessTokenSchema,
+  WorkspaceAccessTokenListSchema,
+  WorkspaceAccessTokenSecretResponseSchema,
+  EMPTY_WORKSPACE_ACCESS_TOKEN,
+  EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -2128,6 +2138,61 @@ export class ApiClient {
 
   async revokePersonalAccessToken(id: string): Promise<void> {
     await this.fetch(`/api/tokens/${id}`, { method: "DELETE" });
+  }
+
+  // Owner-managed DTA workspace access. These credentials are intentionally
+  // separate from personal PATs and are never used by the Multica CLI.
+  async listWorkspaceAccessTokens(workspaceId: string): Promise<WorkspaceAccessToken[]> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-tokens`);
+    return parseWithFallback(raw, WorkspaceAccessTokenListSchema, [], {
+      endpoint: "GET /api/workspaces/:id/access-tokens",
+      includeReceived: false,
+    });
+  }
+
+  async createWorkspaceAccessToken(workspaceId: string, data: CreateWorkspaceAccessTokenRequest): Promise<WorkspaceAccessTokenSecretResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-tokens`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkspaceAccessTokenSecretResponseSchema, EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE, {
+      endpoint: "POST /api/workspaces/:id/access-tokens",
+      includeReceived: false,
+    });
+  }
+
+  async updateWorkspaceAccessToken(workspaceId: string, tokenId: string, data: UpdateWorkspaceAccessTokenRequest): Promise<WorkspaceAccessToken> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-tokens/${tokenId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkspaceAccessTokenSchema, EMPTY_WORKSPACE_ACCESS_TOKEN, {
+      endpoint: "PATCH /api/workspaces/:id/access-tokens/:tokenId",
+      includeReceived: false,
+    });
+  }
+
+  async regenerateWorkspaceAccessToken(workspaceId: string, tokenId: string, data: RegenerateWorkspaceAccessTokenRequest): Promise<WorkspaceAccessTokenSecretResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-tokens/${tokenId}/regenerate`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkspaceAccessTokenSecretResponseSchema, EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE, {
+      endpoint: "POST /api/workspaces/:id/access-tokens/:tokenId/regenerate",
+      includeReceived: false,
+    });
+  }
+
+  async revokeWorkspaceAccessToken(workspaceId: string, tokenId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/access-tokens/${tokenId}/revoke`, {
+      method: "POST",
+    });
+  }
+
+  async deleteWorkspaceAccessToken(workspaceId: string, tokenId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/access-tokens/${tokenId}`, {
+      method: "DELETE",
+    });
   }
 
   // File Upload & Attachments

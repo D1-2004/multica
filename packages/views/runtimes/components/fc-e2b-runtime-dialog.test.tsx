@@ -83,6 +83,7 @@ function renderDialog() {
       <FCE2BRuntimeDialog
         sandboxBackend="asb"
         canPublish={false}
+        canCreatePublic={false}
         onClose={vi.fn()}
       />
     </I18nProvider>,

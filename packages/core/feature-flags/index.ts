@@ -21,6 +21,7 @@ export {
   AGENT_BUILDER_FLAG,
   COMPOSIO_MCP_APPS_FLAG,
   RESOURCE_LABELS_FLAG,
+  WORKSPACE_ACCESS_TOKENS_FLAG,
 } from "./keys";
 export {
   FeatureFlagsProvider,

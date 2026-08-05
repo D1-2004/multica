@@ -2,9 +2,13 @@
 SELECT * FROM "user"
 WHERE id = $1;
 
+-- name: GetHumanUser :one
+SELECT * FROM "user"
+WHERE id = $1 AND principal_type = 'human';
+
 -- name: GetUserByEmail :one
 SELECT * FROM "user"
-WHERE email = $1;
+WHERE email = $1 AND principal_type = 'human';
 
 -- name: CreateUser :one
 INSERT INTO "user" (name, email, avatar_url)

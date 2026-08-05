@@ -1353,24 +1353,25 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Protected API routes
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
+		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, opts.FeatureFlags))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
 
 		// --- User-scoped routes (no workspace context required) ---
-		r.Get("/api/me", h.GetMe)
-		r.Patch("/api/me", h.UpdateMe)
-		r.Patch("/api/me/onboarding", h.PatchOnboarding)
-		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)
-		r.Post("/api/me/onboarding/cloud-waitlist", h.JoinCloudWaitlist)
+		r.With(handler.RequireHumanActor).Get("/api/me", h.GetMe)
+		r.Get("/api/workspace-access/self", h.GetWorkspaceAccessSelf)
+		r.With(handler.RequireHumanActor).Patch("/api/me", h.UpdateMe)
+		r.With(handler.RequireHumanActor).Patch("/api/me/onboarding", h.PatchOnboarding)
+		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/complete", h.CompleteOnboarding)
+		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/cloud-waitlist", h.JoinCloudWaitlist)
 		// DEPRECATED — shim routes for desktop < v3 during the rollout
 		// window. v3 frontend creates the Helper agent + starter issue
 		// via generic CreateAgent / CreateIssue and only calls /complete
 		// here. Remove once X-Client-Version telemetry confirms zero
 		// pre-v3 desktops are still calling these. Handlers live in
 		// server/internal/handler/onboarding_shim.go.
-		r.Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
-		r.Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
-		r.Post("/api/cli-token", h.IssueCliToken)
+		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
+		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
+		r.With(handler.RequireHumanActor).Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
 		r.Get("/api/runtimes/fc-e2b/stable-channel", h.GetFCE2BStableChannel)
@@ -1422,14 +1423,40 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
-			r.Post("/", h.CreateWorkspace)
+			r.With(handler.RequireHumanActor).Post("/", h.CreateWorkspace)
 			r.Route("/{id}", func(r chi.Router) {
+				// DTA Tokens are workspace-bound service-member identities. Only a
+				// human workspace owner may create or change their credentials;
+				// admins, members, and DTA credentials cannot reach this group.
+				r.Group(func(r chi.Router) {
+					r.Use(func(next http.Handler) http.Handler {
+						return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+							if !featureflags.WorkspaceAccessTokensEnabled(req.Context(), opts.FeatureFlags) {
+								http.NotFound(w, req)
+								return
+							}
+							next.ServeHTTP(w, req)
+						})
+					})
+					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner"))
+					r.Route("/access-tokens", func(r chi.Router) {
+						r.Get("/", h.ListWorkspaceAccessTokens)
+						r.Post("/", h.CreateWorkspaceAccessToken)
+						r.Route("/{tokenId}", func(r chi.Router) {
+							r.Get("/", h.GetWorkspaceAccessToken)
+							r.Patch("/", h.UpdateWorkspaceAccessToken)
+							r.Post("/regenerate", h.RegenerateWorkspaceAccessToken)
+							r.Post("/revoke", h.RevokeWorkspaceAccessToken)
+							r.Delete("/", h.DeleteWorkspaceAccessToken)
+						})
+					})
+				})
 				// Member-level access
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/", h.GetWorkspace)
 					r.Get("/members", h.ListMembersWithUser)
-					r.Post("/leave", h.LeaveWorkspace)
+					r.With(handler.RequireHumanActor).Post("/leave", h.LeaveWorkspace)
 					r.Get("/invitations", h.ListWorkspaceInvitations)
 					// Listing GitHub installations is member-visible so the
 					// integrations tab no longer renders blank for non-admins;
@@ -1506,14 +1533,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/lark/install/{sessionId}/status", h.GetLarkInstallStatus)
 				})
 
-				// DingTalk bot installations. Same member/admin split as
-				// Lark: listing is member-visible so the Integrations tab
-				// renders connection state for everyone; install / revoke
-				// require admin.
+				// DingTalk bot installation and account binding are member-visible.
+				// Mutation handlers authorize against the target Agent: its owner or
+				// a workspace owner/admin may install, poll, retry, or revoke.
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/dingtalk/installations", h.ListDingTalkInstallations)
+					r.Delete("/dingtalk/installations/{installationId}", h.RevokeDingTalkInstallation)
+					r.Post("/dingtalk/installations/{installationId}/router/retry", h.RetryDingTalkRouterRegistration)
+					r.Post("/dingtalk/install/begin", h.BeginDingTalkInstall)
+					r.Get("/dingtalk/install/{sessionId}/status", h.GetDingTalkInstallStatus)
+					r.Post("/dingtalk/install/manual", h.ManualInstallDingTalk)
 					r.Get("/dingtalk/account-bindings", h.ListDingTalkAccountBindings)
+					r.Get("/dingtalk/account-bindings/{agentId}/status", h.GetDingTalkAccountBindingStatus)
 					r.Post("/dingtalk/account-bindings/begin", h.BeginDingTalkAccountBinding)
 					r.Patch("/dingtalk/account-bindings/{agentId}/surface", h.UpdateDingTalkAccountBindingSurface)
 					r.Delete("/dingtalk/account-bindings/{agentId}", h.UnbindDingTalkAccountBinding)
@@ -1525,23 +1557,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/agent-identity/enterprise/oauth/start", h.BeginAgentEnterpriseIdentityBinding)
 					r.Delete("/agent-identity/enterprise", h.RevokeAgentEnterpriseIdentity)
 				})
-				r.Group(func(r chi.Router) {
-					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
-					r.Delete("/dingtalk/installations/{installationId}", h.RevokeDingTalkInstallation)
-					r.Post("/dingtalk/installations/{installationId}/router/retry", h.RetryDingTalkRouterRegistration)
-					// Scan-to-create device flow. Begin opens a new
-					// registration session against DingTalk and returns
-					// the QR-code URL; the frontend dialog then polls
-					// /install/{sessionId}/status until success or
-					// terminal failure.
-					r.Post("/dingtalk/install/begin", h.BeginDingTalkInstall)
-					r.Get("/dingtalk/install/{sessionId}/status", h.GetDingTalkInstallStatus)
-					// Manual install fallback: create the installation from
-					// operator-supplied AppKey/AppSecret when the scan-to-create
-					// device flow is unavailable.
-					r.Post("/dingtalk/install/manual", h.ManualInstallDingTalk)
-				})
-
 				// Slack integration (MUL-3666). Same admin/member split as
 				// Lark: listing is member-visible; OAuth begin + revoke are
 				// admin-only. The OAuth callback itself is a public route (it is
@@ -1596,6 +1611,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/invitations/{id}/decline", h.DeclineInvitation)
 
 		r.Route("/api/tokens", func(r chi.Router) {
+			r.Use(handler.RequireHumanActor)
 			r.Get("/", h.ListPersonalAccessTokens)
 			r.Post("/", h.CreatePersonalAccessToken)
 			r.Post("/current/renew", h.RenewCurrentPersonalAccessToken)
@@ -1690,6 +1706,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Task messages (user-facing, not daemon auth)
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+
+			// DTA deployment load verification. These endpoints deliberately expose
+			// only server-stamped smoke Issues, never generic Issue or Chat CRUD.
+			r.Route("/api/dta/load-smokes", func(r chi.Router) {
+				r.Get("/", h.GetDTALoadSmokeByOperation)
+				r.Post("/", h.CreateDTALoadSmoke)
+				r.Route("/{issueId}", func(r chi.Router) {
+					r.Get("/runs", h.ListDTALoadSmokeRuns)
+					r.Get("/runs/{taskId}/messages", h.ListDTALoadSmokeMessages)
+					r.Get("/comments", h.ListDTALoadSmokeComments)
+					r.Post("/retry", h.RetryDTALoadSmoke)
+				})
+			})
 
 			// Task-scoped Chat -> Issue background handoff. The handler requires
 			// the server-stamped task_token actor and rejects ordinary member
