@@ -256,6 +256,26 @@ type AgentTaskQueue struct {
 	RuntimeLaunchLeaseExpiresAt pgtype.Timestamptz `json:"runtime_launch_lease_expires_at"`
 }
 
+type AgentTaskRuntimeStartAttempt struct {
+	ID               pgtype.UUID        `json:"id"`
+	TaskID           pgtype.UUID        `json:"task_id"`
+	RuntimeID        pgtype.UUID        `json:"runtime_id"`
+	Backend          string             `json:"backend"`
+	Protocol         string             `json:"protocol"`
+	SandboxID        string             `json:"sandbox_id"`
+	ColdStart        pgtype.Bool        `json:"cold_start"`
+	Status           string             `json:"status"`
+	LastStage        string             `json:"last_stage"`
+	ErrorCode        string             `json:"error_code"`
+	ErrorDetail      string             `json:"error_detail"`
+	RunnerStartedAt  pgtype.Timestamptz `json:"runner_started_at"`
+	DaemonStartedAt  pgtype.Timestamptz `json:"daemon_started_at"`
+	ClaimFinalizedAt pgtype.Timestamptz `json:"claim_finalized_at"`
+	FinishedAt       pgtype.Timestamptz `json:"finished_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentToLabel struct {
 	AgentID   pgtype.UUID        `json:"agent_id"`
 	LabelID   pgtype.UUID        `json:"label_id"`

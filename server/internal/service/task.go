@@ -1947,23 +1947,35 @@ func (s *TaskService) FinalizeTaskClaim(
 ) ([]pgtype.UUID, error) {
 	receipt := task.DeliveredCommentIds
 	err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		if _, err := qtx.LockAgentTaskClaimFinalization(ctx, db.LockAgentTaskClaimFinalizationParams{
+			TaskID:       task.ID,
+			RuntimeID:    task.RuntimeID,
+			DispatchedAt: task.DispatchedAt,
+		}); err != nil {
+			return fmt.Errorf("lock task claim finalization: %w", err)
+		}
 		if _, err := qtx.CreateTaskToken(ctx, token); err != nil {
 			return fmt.Errorf("create task token: %w", err)
 		}
-		if !recordCommentReceipt {
-			return nil
+		if recordCommentReceipt {
+			persisted, err := qtx.SetTaskDeliveredCommentIDs(ctx, db.SetTaskDeliveredCommentIDsParams{
+				DeliveredCommentIds:      deliveredCommentIDs,
+				TaskID:                   task.ID,
+				RuntimeID:                task.RuntimeID,
+				DispatchedAt:             task.DispatchedAt,
+				ExpectedTriggerCommentID: task.TriggerCommentID,
+			})
+			if err != nil {
+				return fmt.Errorf("set delivered comment ids: %w", err)
+			}
+			receipt = persisted
 		}
-		persisted, err := qtx.SetTaskDeliveredCommentIDs(ctx, db.SetTaskDeliveredCommentIDsParams{
-			DeliveredCommentIds:      deliveredCommentIDs,
-			TaskID:                   task.ID,
-			RuntimeID:                task.RuntimeID,
-			DispatchedAt:             task.DispatchedAt,
-			ExpectedTriggerCommentID: task.TriggerCommentID,
-		})
-		if err != nil {
-			return fmt.Errorf("set delivered comment ids: %w", err)
+		if _, err := qtx.FinalizeAgentTaskRuntimeStartAttemptForTask(ctx, db.FinalizeAgentTaskRuntimeStartAttemptForTaskParams{
+			TaskID:    task.ID,
+			RuntimeID: task.RuntimeID,
+		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("finalize runtime start attempt: %w", err)
 		}
-		receipt = persisted
 		return nil
 	})
 	if err != nil {
@@ -3597,6 +3609,7 @@ func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 		}
 
 		launchCtx, cancelLaunch := context.WithCancelCause(context.Background())
+		launchCtx = withTaskRuntimeLaunchLease(launchCtx, lease)
 		renewDone := make(chan struct{})
 		go s.renewRuntimeLaunchLease(launchCtx, cancelLaunch, lease, renewDone)
 

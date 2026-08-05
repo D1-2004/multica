@@ -662,12 +662,14 @@ func runDaemonRunOnce(cmd *cobra.Command, _ []string) error {
 
 	d := daemon.New(cfg, logger)
 	return d.RunOnce(ctx, daemon.RunOnceOptions{
-		RuntimeID:      runtimeID,
-		DaemonToken:    daemonToken,
-		Provider:       provider,
-		RuntimeName:    runtimeName,
-		FCE2BColdStart: strings.EqualFold(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_COLD_START")), "true") || strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_COLD_START")) == "1",
-		TargetTaskID:   targetTaskID,
+		RuntimeID:           runtimeID,
+		DaemonToken:         daemonToken,
+		Provider:            provider,
+		RuntimeName:         runtimeName,
+		FCE2BColdStart:      strings.EqualFold(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_COLD_START")), "true") || strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_COLD_START")) == "1",
+		TargetTaskID:        targetTaskID,
+		RuntimeStartAttempt: strings.TrimSpace(os.Getenv("MULTICA_RUNTIME_START_ATTEMPT_ID")),
+		StartupProtocol:     strings.TrimSpace(os.Getenv("MULTICA_RUNTIME_START_PROTOCOL")),
 	})
 }
 

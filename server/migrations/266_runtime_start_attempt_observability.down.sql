@@ -1,0 +1,4 @@
+DROP INDEX IF EXISTS uq_agent_task_runtime_start_attempt_active_task;
+DROP INDEX IF EXISTS idx_agent_task_runtime_start_attempt_active;
+DROP INDEX IF EXISTS idx_agent_task_runtime_start_attempt_task;
+DROP TABLE IF EXISTS agent_task_runtime_start_attempt;

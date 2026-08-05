@@ -467,25 +467,52 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 	runtimeID := util.UUIDToString(task.RuntimeID)
 	trace, traceErr := chattrace.ForTask(task.Context, taskID, task.CreatedAt.Time)
 	if traceErr != nil {
-		return l.failLaunch(ctx, task, "invalid task trace: "+traceErr.Error())
+		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, "invalid task trace: "+traceErr.Error())
+		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
 	}
 	chattrace.LogStage(slog.Default(), trace, "asb_launch", "started", "task_id", taskID, "runtime_id", runtimeID)
 	if !l.Config.Enabled {
-		return l.failLaunch(ctx, task, "ASB runtime is disabled")
+		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, "ASB runtime is disabled")
+		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
 	}
 	if err := l.Config.Validate(); err != nil {
-		return l.failLaunch(ctx, task, err.Error())
+		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, err.Error())
+		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
 	}
 	if l.Credentials == nil {
-		return l.failLaunch(ctx, task, "ASB Runtime API key is not configured")
+		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, "ASB Runtime API key is not configured")
+		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
 	}
 	if l.Pool == nil {
-		return l.failLaunch(ctx, task, "ASB sandbox coordination requires a database pool")
+		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, "ASB sandbox coordination requires a database pool")
+		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
+	}
+	attempt, err := l.Tasks.BeginRuntimeStartAttempt(
+		ctx,
+		task,
+		SandboxBackendASB,
+		runtimeStartProtocolForRuntime(runtime),
+	)
+	if err != nil {
+		if errors.Is(err, errRuntimeLaunchLeaseLost) {
+			return err
+		}
+		failure := NewRuntimeStartFailure(
+			SandboxBackendASB,
+			"ASB-ATTEMPT-CREATE-FAILED",
+			"launch_started",
+			false,
+			"无法创建 Runtime 启动记录。",
+			err.Error(),
+		)
+		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
 	}
 
 	runtimeLockConn, releaseRuntimeLock, err := l.lockRuntimeShared(ctx, task.RuntimeID)
 	if err != nil {
-		return l.failLaunch(ctx, task, err.Error())
+		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, err.Error())
+		failure.Phase = "runtime_lock"
+		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
 	lockHeld := true
 	defer func() {
@@ -496,6 +523,7 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 
 	locked := *l
 	locked.Queries = db.New(runtimeLockConn)
+	locked.Tasks = &TaskService{Queries: locked.Queries}
 	lockedCredentials := *locked.Credentials
 	lockedCredentials.Store = locked.Queries
 	locked.Credentials = &lockedCredentials
@@ -508,27 +536,45 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 	if err != nil {
 		releaseRuntimeLock()
 		lockHeld = false
-		return l.failLaunch(ctx, task, err.Error())
+		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, err.Error())
+		failure.Phase = "identity_resolve"
+		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
 	client, err := locked.Credentials.ClientForRuntime(ctx, task.RuntimeID)
 	if err != nil {
 		releaseRuntimeLock()
 		lockHeld = false
-		return l.failLaunch(ctx, task, err.Error())
+		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, err.Error())
+		failure.Phase = "credential_resolve"
+		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
 	locked.Client = client
 	if locked.Common != nil {
 		common := *locked.Common
 		common.Queries = locked.Queries
+		common.Tasks = locked.Tasks
 		locked.Common = &common
 	}
-	submission, deferred, err := locked.submitTaskUnderRuntimeLock(ctx, task, runtimeLockConn, identity, trace)
+	submission, deferred, err := locked.submitTaskUnderRuntimeLock(ctx, task, runtimeLockConn, identity, trace, attempt)
 	releaseRuntimeLock()
 	lockHeld = false
 	if err != nil {
-		return l.failLaunch(ctx, task, err.Error())
+		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, err.Error())
+		failure = runtimeStartFailureAtLastStage(ctx, l.Queries, attempt, failure)
+		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
 	if deferred {
+		if err := l.Tasks.MarkRuntimeStartBlocked(ctx, attempt); err != nil {
+			failure := NewRuntimeStartFailure(
+				SandboxBackendASB,
+				"ASB-BLOCKED-ATTEMPT-RECORD-FAILED",
+				"task_serialization",
+				true,
+				"Runtime 启动排队状态记录失败。",
+				err.Error(),
+			)
+			return l.failLaunch(ctx, task, attempt.ID, failure)
+		}
 		return nil
 	}
 
@@ -542,12 +588,41 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 		"task_id", taskID,
 		"sandbox_id", submission.sandboxID,
 	)
-	claimState, err := l.waitForRunOnceClaim(ctx, task)
+	claimState, err := l.waitForRunOnceClaim(ctx, task, attempt)
 	if err != nil {
-		return l.failLaunch(ctx, task, err.Error())
+		if errors.Is(err, errRuntimeLaunchLeaseLost) {
+			return err
+		}
+		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, err.Error())
+		failure = runtimeStartFailureAtLastStage(ctx, l.Queries, attempt, failure)
+		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
-	if claimState == fcE2BRunnerClaimStalled {
-		return l.failLaunch(ctx, task, fmt.Sprintf("ASB runner did not claim task within %s after sandbox exec", fcE2BRunnerClaimTimeout))
+	switch claimState {
+	case fcE2BRunnerClaimObserved:
+	case fcE2BRunnerClaimBlocked:
+		if err := l.Tasks.MarkRuntimeStartBlocked(ctx, attempt); err != nil {
+			failure := NewRuntimeStartFailure(
+				SandboxBackendASB,
+				"ASB-BLOCKED-ATTEMPT-RECORD-FAILED",
+				"task_serialization",
+				true,
+				"Runtime 启动排队状态记录失败。",
+				err.Error(),
+			)
+			return l.failLaunch(ctx, task, attempt.ID, failure)
+		}
+	case fcE2BRunnerClaimFailed:
+		return errors.New("ASB launch failed: Runtime reported a startup failure")
+	case fcE2BRunnerClaimStalled:
+		detail := fmt.Sprintf("ASB runner did not claim task within %s after sandbox exec", fcE2BRunnerClaimTimeout)
+		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, detail)
+		if current, lookupErr := l.Queries.GetAgentTaskRuntimeStartAttempt(ctx, db.GetAgentTaskRuntimeStartAttemptParams{
+			ID: attempt.ID, TaskID: task.ID, RuntimeID: task.RuntimeID,
+		}); lookupErr == nil && current.LastStage != "" {
+			failure.Phase = current.LastStage
+			failure.InternalDetail = detail + "; last_stage=" + current.LastStage
+		}
+		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
 	chattrace.LogStage(slog.Default(), trace, "asb_claim", string(claimState),
 		"task_id", taskID,
@@ -618,6 +693,7 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	runtimeLockConn *pgxpool.Conn,
 	identity ASBResolvedIdentity,
 	trace chattrace.Trace,
+	attempt db.AgentTaskRuntimeStartAttempt,
 ) (asbLaunchSubmission, bool, error) {
 	runtime, err := l.Queries.GetAgentRuntime(ctx, task.RuntimeID)
 	if err != nil {
@@ -632,6 +708,9 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	}
 	if !runtime.OwnerID.Valid {
 		return asbLaunchSubmission{}, false, errors.New("ASB runtime has no owner_id")
+	}
+	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "runtime_validated"); err != nil {
+		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB Runtime validation stage: %w", err)
 	}
 	tasks, err := l.Queries.ListAgentTasks(ctx, task.AgentID)
 	if err != nil {
@@ -649,6 +728,9 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	}
 
 	scope, scoped := fcE2BScopeForTask(task)
+	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "sandbox_resolving"); err != nil {
+		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB sandbox stage: %w", err)
+	}
 	sandboxID, coldStart, effectiveIdentity, err := l.resolveSandbox(
 		ctx,
 		runtime,
@@ -664,10 +746,20 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	if err != nil {
 		return asbLaunchSubmission{}, false, err
 	}
+	attempt, err = l.Tasks.UpdateRuntimeStartSandbox(ctx, attempt, sandboxID, coldStart, "sandbox_ready")
+	if err != nil {
+		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB sandbox ready stage: %w", err)
+	}
 	identity = effectiveIdentity
+	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "task_environment_preparing"); err != nil {
+		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB task environment stage: %w", err)
+	}
 	extraEnv, err := l.extraEnvForTask(ctx, task, runtime, sandboxID)
 	if err != nil {
 		return asbLaunchSubmission{}, false, err
+	}
+	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "daemon_token_preparing"); err != nil {
+		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB daemon token stage: %w", err)
 	}
 	token, err := auth.GenerateDaemonToken()
 	if err != nil {
@@ -696,8 +788,21 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	}); err != nil {
 		return asbLaunchSubmission{}, false, errors.New("failed to persist ASB daemon token")
 	}
+	if attempt.Protocol == RuntimeStartProtocolHTTPJSONV1 {
+		if extraEnv == nil {
+			extraEnv = make(map[string]string)
+		}
+		extraEnv["MULTICA_RUNTIME_START_ATTEMPT_ID"] = util.UUIDToString(attempt.ID)
+		extraEnv["MULTICA_RUNTIME_START_PROTOCOL"] = attempt.Protocol
+	}
+	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "runner_exec_submitting"); err != nil {
+		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB runner exec submission stage: %w", err)
+	}
 	if err := l.execRunOnce(ctx, sandboxID, runtime, task.ID, token, coldStart, extraEnv); err != nil {
 		return asbLaunchSubmission{}, false, err
+	}
+	if err := l.Tasks.RecordRuntimeStartRunnerExecSubmitted(ctx, attempt.ID, task.ID, task.RuntimeID); err != nil {
+		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB runner exec stage: %w", err)
 	}
 	// Employee identity is an optional Runtime enhancement. Submit the runner
 	// first, then ask ASB to attach SPIFFE identity once through its lifecycle
@@ -1451,24 +1556,33 @@ func (l *ASBLauncher) lockSandboxScopeOnConnection(
 	return common.lockSandboxScopeOnConnection(ctx, runtime, scope, existing)
 }
 
-func (l *ASBLauncher) waitForRunOnceClaim(ctx context.Context, task db.AgentTaskQueue) (fcE2BRunnerClaimState, error) {
+func (l *ASBLauncher) waitForRunOnceClaim(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	attempt db.AgentTaskRuntimeStartAttempt,
+) (fcE2BRunnerClaimState, error) {
 	if l.Common == nil {
 		return "", errors.New("ASB task claim verification is unavailable")
 	}
 	common := *l.Common
 	common.Queries = l.Queries
-	return common.waitForRunOnceClaim(ctx, task)
+	return common.waitForRunOnceClaim(ctx, task, attempt)
 }
 
-func (l *ASBLauncher) failLaunch(ctx context.Context, task db.AgentTaskQueue, message string) error {
+func (l *ASBLauncher) failLaunch(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	attemptID pgtype.UUID,
+	failure RuntimeStartFailure,
+) error {
 	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) {
 		return cause
 	}
-	_, err := l.Tasks.FailTaskRuntimeStart(ctx, task.ID, task.RuntimeID, message)
+	_, err := l.Tasks.FailTaskRuntimeStart(ctx, task.ID, task.RuntimeID, attemptID, failure)
 	if err != nil {
 		return err
 	}
-	return fmt.Errorf("ASB launch failed: %s", redact.Text(message))
+	return fmt.Errorf("ASB launch failed: %s (%s)", failure.Code, failure.InternalDetail)
 }
 
 func (l *ASBLauncher) VerifyStableArtifact(
@@ -1593,7 +1707,7 @@ func (l *ASBLauncher) verifyStableArtifact(
 	if err := json.Unmarshal([]byte(strings.TrimSpace(manifestResult.Stdout)), &manifest); err != nil {
 		return nil, errors.New("decode ASB runtime manifest")
 	}
-	if err := validateASBRuntimeManifest(manifest); err != nil {
+	if err := validateASBReleaseManifest(manifest); err != nil {
 		return nil, err
 	}
 	return manifest, nil
@@ -2037,6 +2151,22 @@ func validateASBRuntimeManifest(manifest map[string]any) error {
 		) ||
 		stringMetadataValue(manifest, "runner_protocol") != string(fcE2BRunnerLaunchRootLog) {
 		return errors.New("ASB runtime manifest does not satisfy the enterprise sandbox contract")
+	}
+	return nil
+}
+
+// Existing ASB images remain valid runtime bindings during a rolling backend
+// deployment. Only a newly promoted release must advertise the additive
+// startup-events capability.
+func validateASBReleaseManifest(manifest map[string]any) error {
+	if err := validateASBRuntimeManifest(manifest); err != nil {
+		return err
+	}
+	if !containsAllStrings(
+		manifestStringSliceForBackend(manifest, "capabilities_by_backend", string(SandboxBackendASB)),
+		RuntimeStartCapabilityEventsV1,
+	) {
+		return errors.New("ASB release manifest does not advertise runtime start events")
 	}
 	return nil
 }

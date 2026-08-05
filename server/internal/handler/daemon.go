@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
@@ -2443,8 +2444,10 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 // the microVM for, and FCE2BColdStart says the microVM has no resumable session
 // (so the claim payload must carry replayed chat history).
 type claimTaskByRuntimeRequest struct {
-	FCE2BColdStart bool   `json:"fc_e2b_cold_start"`
-	TargetTaskID   string `json:"target_task_id"`
+	FCE2BColdStart        bool   `json:"fc_e2b_cold_start"`
+	TargetTaskID          string `json:"target_task_id"`
+	RuntimeStartAttemptID string `json:"runtime_start_attempt_id"`
+	StartupStatusProtocol string `json:"startup_status_protocol"`
 }
 
 // ClaimTaskByRuntime atomically claims the next queued task for a runtime.
@@ -2494,6 +2497,22 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var requestedAttemptID pgtype.UUID
+	attemptProvided := strings.TrimSpace(req.RuntimeStartAttemptID) != ""
+	protocolProvided := strings.TrimSpace(req.StartupStatusProtocol) != ""
+	if attemptProvided != protocolProvided {
+		outcome = "error_request"
+		writeError(w, http.StatusBadRequest, "runtime start attempt and protocol must be provided together")
+		return
+	}
+	if attemptProvided {
+		parsed, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(req.RuntimeStartAttemptID), "runtime_start_attempt_id")
+		if !ok {
+			outcome = "error_request"
+			return
+		}
+		requestedAttemptID = parsed
+	}
 
 	claimStart := time.Now()
 	targetTaskID := strings.TrimSpace(req.TargetTaskID)
@@ -2523,6 +2542,51 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		slog.Debug("no task to claim", "runtime_id", runtimeID)
 		payloadBytes, _ = writeMeasuredJSON(w, http.StatusOK, map[string]any{"task": nil})
 		outcome = "no_task"
+		return
+	}
+	attempt, attemptErr := h.Queries.GetStartingAgentTaskRuntimeStartAttemptByTask(r.Context(), db.GetStartingAgentTaskRuntimeStartAttemptByTaskParams{
+		TaskID:    task.ID,
+		RuntimeID: task.RuntimeID,
+	})
+	if attemptErr == nil {
+		if attempt.Protocol == service.RuntimeStartProtocolHTTPJSONV1 {
+			if !attemptProvided || requestedAttemptID != attempt.ID || strings.TrimSpace(req.StartupStatusProtocol) != attempt.Protocol {
+				outcome = "error_runtime_start_protocol"
+				if _, err := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); err != nil {
+					outcome = "error_runtime_start_requeue"
+					writeError(w, http.StatusInternalServerError, "failed to requeue task after runtime start protocol mismatch")
+					return
+				}
+				writeError(w, http.StatusConflict, "runtime start protocol mismatch")
+				return
+			}
+		} else if attemptProvided {
+			outcome = "error_runtime_start_attempt"
+			if _, err := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); err != nil {
+				outcome = "error_runtime_start_requeue"
+				writeError(w, http.StatusInternalServerError, "failed to requeue task after unexpected runtime start protocol")
+				return
+			}
+			writeError(w, http.StatusConflict, "legacy runtime start does not accept protocol fields")
+			return
+		}
+	} else if errors.Is(attemptErr, pgx.ErrNoRows) && attemptProvided {
+		outcome = "error_runtime_start_attempt"
+		if _, err := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); err != nil {
+			outcome = "error_runtime_start_requeue"
+			writeError(w, http.StatusInternalServerError, "failed to requeue task after inactive runtime start attempt")
+			return
+		}
+		writeError(w, http.StatusConflict, "runtime start attempt is not active")
+		return
+	} else if attemptErr != nil && !errors.Is(attemptErr, pgx.ErrNoRows) {
+		outcome = "error_runtime_start_attempt"
+		if _, err := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); err != nil {
+			outcome = "error_runtime_start_requeue"
+			writeError(w, http.StatusInternalServerError, "failed to requeue task after runtime start lookup failure")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load runtime start attempt")
 		return
 	}
 	if !task.TriggerCommentID.Valid && len(task.CoalescedCommentIds) > 0 {

@@ -16,7 +16,7 @@ func TestFCE2BFailLaunchDoesNotFailTaskAfterLeaseLoss(t *testing.T) {
 	cancel(errRuntimeLaunchLeaseLost)
 
 	launcher := &FCE2BLauncher{}
-	err := launcher.failLaunch(ctx, db.AgentTaskQueue{}, "runner stopped")
+	err := launcher.failLaunch(ctx, db.AgentTaskQueue{}, pgtype.UUID{}, RuntimeStartFailure{})
 	if !errors.Is(err, errRuntimeLaunchLeaseLost) {
 		t.Fatalf("failLaunch error = %v, want runtime launch lease loss", err)
 	}
