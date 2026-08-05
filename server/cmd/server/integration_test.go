@@ -272,6 +272,44 @@ func TestConfigRouteIsPublic(t *testing.T) {
 	readJSON(t, resp, &result)
 }
 
+func TestDingTalkBotInstallRouteAllowsPlainWorkspaceMember(t *testing.T) {
+	ctx := context.Background()
+	var userID string
+	if err := testPool.QueryRow(ctx, `
+INSERT INTO "user" (name, email) VALUES ('DingTalk Plain Member', 'dingtalk-plain-member-' || gen_random_uuid()::text || '@multica.ai') RETURNING id
+`).Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')`, testWorkspaceID, userID); err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM member WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, userID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
+	})
+
+	token, err := generateTestJWT(userID, "dingtalk-plain-member@multica.ai", "DingTalk Plain Member")
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, testServer.URL+"/api/workspaces/"+testWorkspaceID+"/dingtalk/install/manual", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("plain member was rejected by workspace role gate: %s", body)
+	}
+}
+
 // ---- Auth ----
 
 func TestSendCodeAndVerify(t *testing.T) {

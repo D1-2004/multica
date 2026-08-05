@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS issue_dta_load_smoke_operation_unique;

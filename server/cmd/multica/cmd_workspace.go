@@ -129,6 +129,13 @@ func fetchWorkspaces(ctx context.Context, cmd *cobra.Command) ([]workspaceSummar
 	}
 
 	client := cli.NewAPIClient(serverURL, "", token)
+	if isWorkspaceAccessToken(token) {
+		self, err := fetchWorkspaceAccessSelf(ctx, client)
+		if err != nil {
+			return nil, fmt.Errorf("read DTA workspace binding: %w", err)
+		}
+		return []workspaceSummary{workspaceSummaryFromAccessSelf(self)}, nil
+	}
 	var workspaces []workspaceSummary
 	if err := client.GetJSON(ctx, "/api/workspaces", &workspaces); err != nil {
 		return nil, fmt.Errorf("list workspaces: %w", err)
@@ -323,7 +330,20 @@ func runWorkspaceGet(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	var ws map[string]any
-	if err := client.GetJSON(ctx, "/api/workspaces/"+wsID, &ws); err != nil {
+	if isWorkspaceAccessToken(resolveToken(cmd)) {
+		self, selfErr := fetchWorkspaceAccessSelf(ctx, client)
+		if selfErr != nil {
+			return fmt.Errorf("get workspace: %w", selfErr)
+		}
+		if self.WorkspaceID != wsID {
+			return fmt.Errorf("get workspace: DTA access key is bound to a different workspace")
+		}
+		ws = map[string]any{
+			"id": self.Workspace.ID, "name": self.Workspace.Name, "slug": self.Workspace.Slug,
+			"description": self.Workspace.Description, "context": self.Workspace.Context,
+			"issue_prefix": self.Workspace.IssuePrefix,
+		}
+	} else if err := client.GetJSON(ctx, "/api/workspaces/"+wsID, &ws); err != nil {
 		return fmt.Errorf("get workspace: %w", err)
 	}
 

@@ -177,6 +177,9 @@ func TestRegistrationGetSessionNotFound(t *testing.T) {
 	if state.Status != RegistrationStatusPending {
 		t.Errorf("Status: got %q want pending", state.Status)
 	}
+	if state.AgentID != ws {
+		t.Errorf("AgentID: got %s want %s", uuidString(state.AgentID), uuidString(ws))
+	}
 }
 
 func TestRegistrationGetSessionGCsExpiredEntries(t *testing.T) {

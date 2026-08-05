@@ -59,6 +59,9 @@ func TestRequireHumanActor_BlocksMachineCredentials(t *testing.T) {
 		// of machine credential as mat_ for billing-authorization
 		// purposes.
 		{name: "cloud_pat", actorSource: "cloud_pat"},
+		// dta_ workspace token — a non-interactive service member may use
+		// workspace APIs but must not mint human credentials or mutate an account.
+		{name: "workspace_access_token", actorSource: "workspace_access_token"},
 	}
 
 	for _, tc := range cases {

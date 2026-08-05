@@ -1297,7 +1297,8 @@ type User struct {
 	Language                pgtype.Text        `json:"language"`
 	ProfileDescription      string             `json:"profile_description"`
 	// User-preferred IANA timezone for report rendering (Viewing tz). NULL means "use the browser-detected tz at render time". Affects dashboards, charts, and any "today" label shown to this user. Does not affect data materialisation — all rollups remain in UTC.
-	Timezone pgtype.Text `json:"timezone"`
+	Timezone      pgtype.Text `json:"timezone"`
+	PrincipalType string      `json:"principal_type"`
 }
 
 type UserComposioConnection struct {
@@ -1366,6 +1367,37 @@ type Workspace struct {
 	IssuePrefix  string             `json:"issue_prefix"`
 	IssueCounter int32              `json:"issue_counter"`
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
+}
+
+type WorkspaceAccessAudit struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	TokenID      pgtype.UUID        `json:"token_id"`
+	ActorUserID  pgtype.UUID        `json:"actor_user_id"`
+	Action       string             `json:"action"`
+	ResourceType pgtype.Text        `json:"resource_type"`
+	ResourceID   pgtype.UUID        `json:"resource_id"`
+	Result       string             `json:"result"`
+	RequestID    pgtype.Text        `json:"request_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkspaceAccessToken struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	SubjectUserID pgtype.UUID        `json:"subject_user_id"`
+	Name          string             `json:"name"`
+	TokenHash     string             `json:"token_hash"`
+	TokenPrefix   string             `json:"token_prefix"`
+	Version       int32              `json:"version"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt    pgtype.Timestamptz `json:"last_used_at"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	UpdatedBy     pgtype.UUID        `json:"updated_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	RevokedBy     pgtype.UUID        `json:"revoked_by"`
+	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
 }
 
 type WorkspaceInvitation struct {

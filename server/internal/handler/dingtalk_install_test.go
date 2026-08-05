@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -104,5 +105,103 @@ func TestListDingTalkInstallations_NotConfiguredReturnsEmpty(t *testing.T) {
 	}
 	if len(resp.Installations) != 0 {
 		t.Fatalf("expected empty installations list, got %d", len(resp.Installations))
+	}
+}
+
+func TestManualInstallDingTalkAllowsAgentOwnerAndRejectsOtherMember(t *testing.T) {
+	ctx := context.Background()
+	installations := configureDingTalkChatDispatchForTest(t)
+	if installations == nil {
+		t.Fatal("dingtalk installations not configured")
+	}
+
+	var memberUserID, ownAgentID, foreignAgentID string
+	if err := testPool.QueryRow(ctx, `
+INSERT INTO "user" (name, email, principal_type)
+VALUES ('DingTalk Member Installer', 'dingtalk-member-installer-' || gen_random_uuid()::text || '@multica.ai', 'workspace_access_token')
+RETURNING id
+`).Scan(&memberUserID); err != nil {
+		t.Fatalf("create member user: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')`, testWorkspaceID, memberUserID); err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	createAgent := func(ownerID, name string) string {
+		t.Helper()
+		var agentID string
+		if err := testPool.QueryRow(ctx, `
+INSERT INTO agent (
+    workspace_id, name, description, runtime_mode, runtime_config,
+    runtime_id, visibility, permission_mode, max_concurrent_tasks, owner_id
+) VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'workspace', 'private', 1, $4)
+RETURNING id
+`, testWorkspaceID, name, testRuntimeID, ownerID).Scan(&agentID); err != nil {
+			t.Fatalf("create agent: %v", err)
+		}
+		return agentID
+	}
+	ownAgentID = createAgent(memberUserID, "dingtalk-member-own-agent-"+memberUserID)
+	foreignAgentID = createAgent(testUserID, "dingtalk-member-foreign-agent-"+memberUserID)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM channel_installation WHERE client_id = ANY($1)`, []string{"member-own-app-" + memberUserID, "member-foreign-app-" + memberUserID, "member-existing-foreign-app-" + memberUserID})
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = ANY($1)`, []string{ownAgentID, foreignAgentID})
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM member WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, memberUserID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, memberUserID)
+	})
+
+	call := func(agentID, suffix string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/dingtalk/install/manual", map[string]any{
+			"agent_id":      agentID,
+			"client_id":     "member-" + suffix + "-app-" + memberUserID,
+			"client_secret": "secret-" + suffix,
+			"robot_code":    "robot-" + suffix + "-" + memberUserID,
+		})
+		req.Header.Set("X-User-ID", memberUserID)
+		req.Header.Set("X-Workspace-ID", testWorkspaceID)
+		req = withURLParam(req, "id", testWorkspaceID)
+		rec := httptest.NewRecorder()
+		testHandler.ManualInstallDingTalk(rec, req)
+		return rec
+	}
+
+	ownRec := call(ownAgentID, "own")
+	if ownRec.Code != http.StatusOK {
+		t.Fatalf("own agent install: expected 200, got %d: %s", ownRec.Code, ownRec.Body.String())
+	}
+	var ownInstallation DingTalkInstallationResponse
+	if err := json.NewDecoder(ownRec.Body).Decode(&ownInstallation); err != nil {
+		t.Fatalf("decode own installation: %v", err)
+	}
+	revoke := func(installationID string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := newRequest(http.MethodDelete, "/api/workspaces/"+testWorkspaceID+"/dingtalk/installations/"+installationID, nil)
+		req.Header.Set("X-User-ID", memberUserID)
+		req.Header.Set("X-Workspace-ID", testWorkspaceID)
+		req = withURLParams(req, "id", testWorkspaceID, "installationId", installationID)
+		rec := httptest.NewRecorder()
+		testHandler.RevokeDingTalkInstallation(rec, req)
+		return rec
+	}
+	if rec := revoke(ownInstallation.ID); rec.Code != http.StatusNoContent {
+		t.Fatalf("own installation revoke: expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+	foreignInstallation, err := installations.Upsert(ctx, dingtalk.InstallationParams{
+		WorkspaceID:     parseUUID(testWorkspaceID),
+		AgentID:         parseUUID(foreignAgentID),
+		ClientID:        "member-existing-foreign-app-" + memberUserID,
+		ClientSecret:    "secret-existing-foreign",
+		RobotCode:       "robot-existing-foreign-" + memberUserID,
+		InstallerUserID: parseUUID(testUserID),
+	})
+	if err != nil {
+		t.Fatalf("create foreign installation: %v", err)
+	}
+	if rec := revoke(uuidToString(foreignInstallation.ID)); rec.Code != http.StatusForbidden {
+		t.Fatalf("foreign installation revoke: expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if rec := call(foreignAgentID, "foreign"); rec.Code != http.StatusForbidden {
+		t.Fatalf("foreign agent install: expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

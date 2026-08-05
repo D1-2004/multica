@@ -51,6 +51,10 @@ import { StableFCE2BReleaseDialog } from "./stable-fc-e2b-release-dialog";
 import { ProviderLogo } from "./provider-logo";
 import { buildWorkloadIndex, RuntimeList } from "./runtime-list";
 import { pendingRuntimeFromProfile } from "./pending-runtime";
+import {
+  canCreateFCE2BRuntime,
+  canCreatePublicFCE2BRuntime,
+} from "./runtime-access";
 import { buildRuntimeMachines, type RuntimeMachine } from "./runtime-machines";
 import { HealthDot, HealthIcon, useHealthLabel } from "./shared";
 import { useT, useTimeAgo } from "../../i18n";
@@ -127,13 +131,13 @@ export function RuntimesPage({
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
 
-  // The Cloud SB (FC E2B) runtime is an admin-only affordance, gated the
-  // same way the runtime list gates delete: workspace owner/admin role.
+  // Any regular workspace member may create an owned stable/private managed
+  // runtime. Public managed runtimes remain an owner/admin affordance.
   const currentMember = currentUserId
     ? members.find((m) => m.user_id === currentUserId)
     : null;
-  const canManageFCE2B =
-    currentMember?.role === "owner" || currentMember?.role === "admin";
+  const canCreateFCE2B = canCreateFCE2BRuntime(currentMember?.role);
+  const canCreatePublicFCE2B = canCreatePublicFCE2BRuntime(currentMember?.role);
 
   const visibleRuntimes = useMemo(
     () =>
@@ -204,7 +208,7 @@ export function RuntimesPage({
         onConnectRemote={() => setShowConnectDialog(true)}
         cloudRuntimeEnabled={cloudRuntimeEnabled}
         onOpenCloudRuntime={() => setShowCloudRuntimeDialog(true)}
-        canManageFCE2B={canManageFCE2B}
+        canManageFCE2B={canCreateFCE2B}
         onOpenFCE2BRuntime={() => setShowFCE2BRuntimeDialog(true)}
         runtimeView={runtimeView}
         onRuntimeViewChange={changeRuntimeView}
@@ -247,9 +251,10 @@ export function RuntimesPage({
       {!isPhysicalView && cloudRuntimeEnabled && showCloudRuntimeDialog && (
         <CloudRuntimeDialog onClose={() => setShowCloudRuntimeDialog(false)} />
       )}
-      {!isPhysicalView && canManageFCE2B && showFCE2BRuntimeDialog && (
+      {!isPhysicalView && canCreateFCE2B && showFCE2BRuntimeDialog && (
         <FCE2BRuntimeDialog
           canPublish={stableChannelQuery.data?.can_publish === true}
+          canCreatePublic={canCreatePublicFCE2B}
           sandboxBackend={sandboxBackend}
           onClose={() => setShowFCE2BRuntimeDialog(false)}
         />

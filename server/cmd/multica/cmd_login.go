@@ -90,6 +90,23 @@ func autoWatchWorkspaces(cmd *cobra.Command) error {
 	client := cli.NewAPIClient(serverURL, "", token)
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
+	if isWorkspaceAccessToken(token) {
+		self, err := fetchWorkspaceAccessSelf(ctx, client)
+		if err != nil {
+			return fmt.Errorf("read DTA workspace binding: %w", err)
+		}
+		profile := resolveProfile(cmd)
+		cfg, err := cli.LoadCLIConfigForProfile(profile)
+		if err != nil {
+			return err
+		}
+		cfg.WorkspaceID = self.WorkspaceID
+		if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "\nFound 1 workspace(s):\n* %s (%s)\n", self.Workspace.Name, self.WorkspaceID)
+		return nil
+	}
 
 	var workspaces []struct {
 		ID   string `json:"id"`

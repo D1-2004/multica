@@ -77,10 +77,9 @@ export function IntegrationsTab({
   // backend would 403.
   const canManageLark = isWorkspaceAdmin || isAgentOwner;
   const canManageSlack = isWorkspaceAdmin;
-  // DingTalk install/revoke routes are workspace owner/admin-only too
-  // (server/internal/handler/dingtalk.go), so its gate matches Slack — the
-  // agent owner must not see a CTA the backend would 403.
-  const canManageDingTalk = isWorkspaceAdmin;
+  // DingTalk install/manage follows the same per-agent authorization as
+  // Lark: the agent owner or a workspace owner/admin may operate it.
+  const canManageDingTalk = isWorkspaceAdmin || isAgentOwner;
   const hasActiveInstall =
     listing?.installations.some(
       (inst) => inst.agent_id === agent.id && inst.status === "active",
@@ -151,9 +150,8 @@ export function IntegrationsTab({
         </div>
         <div className="border-t px-4 py-3">
           {!canManageDingTalk ? (
-            // DingTalk install/revoke stay workspace owner/admin-only, so an
-            // agent owner who is not an admin only gets the read-only note
-            // here (like Slack above). Reuses the shared members note.
+            // Members who neither own this agent nor administer the workspace
+            // only get the read-only note. Reuses the shared members note.
             <p className="text-xs text-muted-foreground">
               {t(($) => $.tab_body.integrations.members_note)}
             </p>
@@ -165,7 +163,11 @@ export function IntegrationsTab({
             // Configured: the shared button renders the scan-or-manual bind
             // CTA (or the connected badge). The manual path keeps binding
             // possible even when the scan flow is down.
-            <DingTalkAgentBindButton agentId={agent.id} agentName={agent.name} />
+            <DingTalkAgentBindButton
+              agentId={agent.id}
+              agentName={agent.name}
+              agentOwnerId={agent.owner_id}
+            />
           )}
         </div>
       </section>

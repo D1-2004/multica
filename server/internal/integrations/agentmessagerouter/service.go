@@ -319,6 +319,22 @@ type UpdateSurfaceParams struct {
 	SurfaceType string
 }
 
+type MessageBindingStatus struct {
+	Configured  bool        `json:"configured"`
+	AgentID     string      `json:"agent_id"`
+	BindingMode BindingMode `json:"binding_mode"`
+	Binding     struct {
+		MessageRoute struct {
+			Status      string `json:"status"`
+			SurfaceType string `json:"surface_type,omitempty"`
+		} `json:"message_route"`
+	} `json:"binding"`
+	Verification struct {
+		Status    string    `json:"status"`
+		CheckedAt time.Time `json:"checked_at"`
+	} `json:"verification"`
+}
+
 func NewService(store Store, router Router, config ServiceConfig) (*Service, error) {
 	if store == nil || router == nil || config.Keyring == nil || config.Random == nil ||
 		config.IdentityStore == nil || config.Endpoints == nil {
@@ -353,6 +369,88 @@ func NewService(store Store, router Router, config ServiceConfig) (*Service, err
 		endpoints:       config.Endpoints,
 		metrics:         config.Metrics,
 	}, nil
+}
+
+func (s *Service) GetMessageBindingStatus(
+	ctx context.Context,
+	workspaceID, agentID pgtype.UUID,
+) (MessageBindingStatus, error) {
+	result := newMessageBindingStatus(agentID, s != nil && s.store != nil && s.router != nil)
+	if s == nil || s.store == nil || s.router == nil {
+		return result, ErrNotConfigured
+	}
+	if !workspaceID.Valid || !agentID.Valid {
+		return result, ErrNotFound
+	}
+	result.Verification.CheckedAt = s.now().UTC()
+	row, err := s.store.GetDingTalkAccountBindingByAgent(ctx, db.GetDingTalkAccountBindingByAgentParams{
+		WorkspaceID: workspaceID,
+		AgentID:     agentID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			setMessageBindingStatus(&result, "not_bound")
+			return result, nil
+		}
+		return MessageBindingStatus{}, fmt.Errorf("get dingtalk account binding status: %w", err)
+	}
+	if row.ChannelType != ChannelTypeDingTalkAccount || row.WorkspaceID != workspaceID || row.AgentID != agentID {
+		return MessageBindingStatus{}, ErrInvalidResult
+	}
+	if row.Status == "revoked" {
+		setMessageBindingStatus(&result, "not_bound")
+		return result, nil
+	}
+	config, err := ParseDingTalkAccountConfig(row.Config)
+	if err != nil {
+		return MessageBindingStatus{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
+	}
+	result.Binding.MessageRoute.SurfaceType = config.SurfaceType
+	if config.MessageRouteStatus == DingTalkBindingStatusFailed {
+		setMessageBindingStatus(&result, DingTalkBindingStatusFailed)
+		return result, nil
+	}
+	if row.Status != "active" {
+		setMessageBindingStatus(&result, row.Status)
+		return result, nil
+	}
+	result.Binding.MessageRoute.Status = "active"
+	if strings.TrimSpace(config.RouterSourceID) == "" {
+		result.Verification.Status = "drifted"
+		return result, nil
+	}
+	subscription, err := s.router.GetSubscription(ctx, config.RouterSourceID)
+	if err != nil {
+		if errors.Is(err, ErrSubscriptionNotFound) || errors.Is(err, ErrSubscriptionDrift) {
+			result.Verification.Status = "drifted"
+		} else {
+			result.Verification.Status = "unavailable"
+		}
+		return result, nil
+	}
+	if s.subscriptionVerificationOutcome(subscription, config.RouterSourceID, row, config) != "success" ||
+		subscription.Outbound.Mode != "dws" ||
+		subscription.Outbound.ReplyTo != "latest_message" {
+		result.Verification.Status = "drifted"
+		return result, nil
+	}
+	result.Verification.Status = "verified"
+	result.Binding.MessageRoute.SurfaceType = subscription.Surface.Type
+	return result, nil
+}
+
+func newMessageBindingStatus(agentID pgtype.UUID, configured bool) MessageBindingStatus {
+	result := MessageBindingStatus{
+		Configured:  configured,
+		AgentID:     util.UUIDToString(agentID),
+		BindingMode: BindingModeMessage,
+	}
+	return result
+}
+
+func setMessageBindingStatus(result *MessageBindingStatus, status string) {
+	result.Binding.MessageRoute.Status = status
+	result.Verification.Status = status
 }
 
 func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginResult, err error) {

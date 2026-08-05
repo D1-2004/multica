@@ -47,6 +47,8 @@ import type {
   TimelineEntry,
   User,
   WebhookDelivery,
+  WorkspaceAccessToken,
+  WorkspaceAccessTokenSecretResponse,
 } from "../types";
 import type {
   CloudRuntimeNode,
@@ -1962,4 +1964,40 @@ export const CreateBillingPortalSessionResponseSchema = z.object({
 
 export const EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE: CreateBillingPortalSessionResponse = {
   url: "",
+};
+
+export const WorkspaceAccessTokenSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  name: z.string(),
+  version: z.number(),
+  token_prefix: z.string(),
+  expires_at: z.string().nullable(),
+  last_used_at: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  revoked_at: z.string().nullable(),
+}).loose();
+
+export const WorkspaceAccessTokenListSchema = z.array(WorkspaceAccessTokenSchema);
+export const WorkspaceAccessTokenSecretResponseSchema = WorkspaceAccessTokenSchema.extend({
+  token: z.string().min(1),
+});
+
+export const EMPTY_WORKSPACE_ACCESS_TOKEN: WorkspaceAccessToken = {
+  id: "",
+  workspace_id: "",
+  name: "",
+  version: 0,
+  token_prefix: "",
+  expires_at: null,
+  last_used_at: null,
+  created_at: "",
+  updated_at: "",
+  revoked_at: null,
+};
+
+export const EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE: WorkspaceAccessTokenSecretResponse = {
+  ...EMPTY_WORKSPACE_ACCESS_TOKEN,
+  token: "",
 };

@@ -11,7 +11,7 @@ import (
 )
 
 // ownerLookupFor returns an auth.OwnerLookupFunc that asks the
-// generated GetUser query whether `ownerID` is a real row in our
+// generated GetHumanUser query whether `ownerID` is a real human row in our
 // `user` table. It is used by the mcn_ branches of Auth and
 // DaemonAuth to confirm that Cloud's owner_id maps to a known local
 // user before the verifier returns success / caches the result.
@@ -21,7 +21,7 @@ import (
 //     This path only kicks in when a middleware is constructed
 //     without a DB handle, which only happens in tests that exercise
 //     the verifier wiring without a real database.
-//   - GetUser hits   → (true, nil): owner_id is a known user.
+//   - GetHumanUser hits → (true, nil): owner_id is a known human user.
 //   - pgx.ErrNoRows  → (false, nil): owner_id is unknown.
 //     The verifier maps this to ErrCloudPATInvalid (reason
 //     "owner_unknown") without caching.
@@ -31,7 +31,7 @@ import (
 //
 // Parsing the UUID is done via util.ParseUUID, which returns a zero
 // UUID on a malformed input. A zero UUID will not match any real row,
-// so the eventual GetUser call cleanly resolves to (false, nil) and
+// so the eventual GetHumanUser call cleanly resolves to (false, nil) and
 // the request is rejected — there is no need for a separate "looks
 // like a UUID" precheck here. Cloud has already vetted the format
 // before signing the verify response.
@@ -47,7 +47,7 @@ func ownerLookupFor(queries *db.Queries) auth.OwnerLookupFunc {
 			// reject the token like any owner_unknown.
 			return false, nil
 		}
-		_, err = queries.GetUser(ctx, uuid)
+		_, err = queries.GetHumanUser(ctx, uuid)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return false, nil

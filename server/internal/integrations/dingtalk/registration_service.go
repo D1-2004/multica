@@ -284,6 +284,7 @@ func (s *registrationSession) snapshot() RegistrationSessionState {
 	return RegistrationSessionState{
 		ID:             s.id,
 		Status:         s.status,
+		AgentID:        s.agentID,
 		InstallationID: s.installationID,
 		ErrorReason:    s.errorReason,
 		ErrorMessage:   s.errorMessage,
@@ -317,6 +318,7 @@ func (s *registrationSession) markError(reason, msg string, gcAfter time.Time) {
 type RegistrationSessionState struct {
 	ID                 string
 	Status             RegistrationSessionStatus
+	AgentID            pgtype.UUID
 	InstallationID     pgtype.UUID
 	RegistrationStatus string
 	ErrorReason        string
@@ -485,6 +487,7 @@ func (s *RegistrationService) GetSession(ctx context.Context, workspaceID pgtype
 		return RegistrationSessionState{
 			ID:           rec.ID,
 			Status:       RegistrationStatusError,
+			AgentID:      rec.AgentID,
 			ErrorReason:  RegistrationReasonExpired,
 			ErrorMessage: "QR expired before authorization",
 		}, nil
@@ -492,6 +495,7 @@ func (s *RegistrationService) GetSession(ctx context.Context, workspaceID pgtype
 	state := RegistrationSessionState{
 		ID:             rec.ID,
 		Status:         rec.Status,
+		AgentID:        rec.AgentID,
 		InstallationID: rec.InstallationID,
 		ErrorReason:    rec.ErrorReason,
 		ErrorMessage:   rec.ErrorMessage,

@@ -3806,7 +3806,8 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 
 // ListTaskMessagesByUser returns task messages for a task.
 // Used by the frontend under regular user auth (not daemon auth).
-// Verifies the task belongs to the caller's workspace.
+// Verifies the task belongs to the caller's workspace and that the caller can
+// view the task's agent. DTA service members use the same native visibility rules.
 func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task_id")
@@ -3826,24 +3827,45 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}
+	agent, err := h.Queries.GetAgent(r.Context(), task.AgentID)
+	if err != nil || uuidToString(agent.WorkspaceID) != wsID {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	member, ok := h.workspaceMember(w, r, wsID)
+	if !ok {
+		return
+	}
+	actorType, actorID := h.resolveActor(r, requestUserID(r), wsID)
+	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, wsID) {
+		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+		return
+	}
+	_ = member
 
-	var (
-		messages []db.TaskMessage
-		queryErr error
-	)
+	sinceSeq := 0
 	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
-		sinceSeq, parseErr := strconv.Atoi(sinceStr)
-		if parseErr != nil {
+		parsed, parseErr := strconv.Atoi(sinceStr)
+		if parseErr != nil || parsed < 0 {
 			writeError(w, http.StatusBadRequest, "invalid since parameter")
 			return
 		}
-		messages, queryErr = h.Queries.ListTaskMessagesSince(r.Context(), db.ListTaskMessagesSinceParams{
-			TaskID: taskUUID,
-			Seq:    int32(sinceSeq),
-		})
-	} else {
-		messages, queryErr = h.Queries.ListTaskMessages(r.Context(), taskUUID)
+		sinceSeq = parsed
 	}
+	limit := 500
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		parsed, parseErr := strconv.Atoi(limitStr)
+		if parseErr != nil || parsed < 1 || parsed > 1000 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 1000")
+			return
+		}
+		limit = parsed
+	}
+	messages, queryErr := h.Queries.ListTaskMessagesPage(r.Context(), db.ListTaskMessagesPageParams{
+		TaskID: taskUUID,
+		Seq:    int32(sinceSeq),
+		Limit:  int32(limit),
+	})
 	if queryErr != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list task messages")
 		return

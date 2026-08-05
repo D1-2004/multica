@@ -103,8 +103,18 @@ vi.mock("../../../settings/components/slack-tab", () => ({
 
 // DingTalkAgentBindButton is covered in dingtalk-tab.test.tsx.
 vi.mock("../../../settings/components/dingtalk-tab", () => ({
-  DingTalkAgentBindButton: ({ agentId }: { agentId: string }) => (
-    <div data-testid="dingtalk-bind-button" data-agent-id={agentId} />
+  DingTalkAgentBindButton: ({
+    agentId,
+    agentOwnerId,
+  }: {
+    agentId: string;
+    agentOwnerId?: string | null;
+  }) => (
+    <div
+      data-testid="dingtalk-bind-button"
+      data-agent-id={agentId}
+      data-agent-owner-id={agentOwnerId ?? ""}
+    />
   ),
 }));
 
@@ -283,11 +293,10 @@ describe("IntegrationsTab", () => {
     expect(screen.queryByTestId("dingtalk-bind-button")).toBeNull();
   });
 
-  it("lets a non-admin agent owner bind Lark but keeps Slack and DingTalk admin-only", () => {
+  it("lets a non-admin agent owner bind Lark and DingTalk while Slack stays admin-only", () => {
     // The agent's owner (user-1) is only a plain workspace member. Lark
-    // authorizes the agent owner (canManageAgent), so the Lark bind entry
-    // renders and receives owner_id; Slack's and DingTalk's routes stay
-    // admin-only, so they show the read-only note instead of a CTA (MUL-4213).
+    // and DingTalk authorize the agent owner (canManageAgent), so both bind
+    // entries render and receive owner_id. Slack stays admin-only.
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     renderTab(
       <IntegrationsTab
@@ -300,14 +309,15 @@ describe("IntegrationsTab", () => {
     expect(larkButton.getAttribute("data-agent-id")).toBe("agent-1");
     expect(larkButton.getAttribute("data-agent-owner-id")).toBe("user-1");
     expect(screen.queryByTestId("slack-bind-button")).toBeNull();
-    expect(screen.queryByTestId("dingtalk-bind-button")).toBeNull();
-    // Both the Slack and the DingTalk section fall back to the shared
-    // members note.
+    const dingtalkButton = screen.getByTestId("dingtalk-bind-button");
+    expect(dingtalkButton.getAttribute("data-agent-id")).toBe("agent-1");
+    expect(dingtalkButton.getAttribute("data-agent-owner-id")).toBe("user-1");
+    // Only the Slack section falls back to the shared members note.
     expect(
       screen.getAllByText(
         /Only workspace owners and admins can create enterprise bots/i,
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it("renders the bind entry (not coming-soon) when installs are unavailable but the agent is already bound", () => {
