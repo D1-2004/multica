@@ -142,7 +142,6 @@ func parseDiamondPromptsJSON(data []byte) (map[string]Rule, error) {
 	}
 
 	sectionKeys := map[string]string{
-		"common": DispatchCommonRuntimePromptFlagKey,
 		"issue": DispatchIssueRuntimePromptFlagKey,
 		"chat":  DispatchChatRuntimePromptFlagKey,
 		"auto":  DispatchAutoRuntimePromptFlagKey,
