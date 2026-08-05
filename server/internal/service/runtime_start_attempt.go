@@ -38,6 +38,73 @@ type RuntimeStartFailure struct {
 	Retryable      bool
 	PublicMessage  string
 	InternalDetail string
+	hasUserDetail  bool
+}
+
+// runtimeStartUserDetailer marks an error detail that is safe to return to the
+// task owner after redaction. Third-party clients attach this at the boundary
+// where the response origin is still known; launcher-internal errors remain
+// private and continue to use the generic stage message.
+type runtimeStartUserDetailer interface {
+	runtimeStartUserDetail() string
+}
+
+type runtimeStartExternalError struct {
+	cause      error
+	userDetail string
+}
+
+func (e *runtimeStartExternalError) Error() string {
+	if e == nil || e.cause == nil {
+		return "Runtime startup external service failed"
+	}
+	return e.cause.Error()
+}
+
+func (e *runtimeStartExternalError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func (e *runtimeStartExternalError) runtimeStartUserDetail() string {
+	if e == nil {
+		return ""
+	}
+	return e.userDetail
+}
+
+func withRuntimeStartUserDetail(cause error, detail string) error {
+	detail = sanitizeRuntimeStartUserDetail(detail)
+	if cause == nil {
+		cause = errors.New(detail)
+	}
+	if detail == "" {
+		return cause
+	}
+	return &runtimeStartExternalError{cause: cause, userDetail: detail}
+}
+
+func runtimeStartUserDetailFromError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var detailer runtimeStartUserDetailer
+	if !errors.As(err, &detailer) {
+		return ""
+	}
+	return sanitizeRuntimeStartUserDetail(detailer.runtimeStartUserDetail())
+}
+
+func sanitizeRuntimeStartUserDetail(detail string) string {
+	detail = strings.Join(strings.Fields(redact.Text(detail)), " ")
+	const maxRunes = 1024
+	runes := []rune(detail)
+	if len(runes) > maxRunes {
+		detail = string(runes[:maxRunes]) + "…"
+	}
+	return detail
 }
 
 func NewRuntimeStartFailure(
@@ -123,6 +190,26 @@ func ClassifyRuntimeStartFailure(backend SandboxBackendKind, detail string) Runt
 	}
 }
 
+// ClassifyRuntimeStartError preserves details explicitly marked at an
+// external-service boundary. It never promotes an arbitrary internal error to
+// user-visible text merely because it happened during Runtime startup.
+func ClassifyRuntimeStartError(backend SandboxBackendKind, err error) RuntimeStartFailure {
+	if err == nil {
+		return ClassifyRuntimeStartFailure(backend, "")
+	}
+	detail := redact.Text(err.Error())
+	userDetail := runtimeStartUserDetailFromError(err)
+	if userDetail != "" && !strings.Contains(detail, userDetail) {
+		detail += "; upstream_error=" + userDetail
+	}
+	failure := ClassifyRuntimeStartFailure(backend, detail)
+	if userDetail != "" {
+		failure.PublicMessage = userDetail
+		failure.hasUserDetail = true
+	}
+	return failure
+}
+
 func RuntimeStartFailureForStage(
 	backend SandboxBackendKind,
 	stage string,
@@ -203,7 +290,9 @@ func refineRuntimeStartFailureAtStage(failure RuntimeStartFailure, stage string)
 			prefix = "ASB"
 		}
 		failure.Code = prefix + "-" + strings.ToUpper(strings.ReplaceAll(stage, "_", "-")) + "-FAILED"
-		failure.PublicMessage = "Runtime 在 " + stage + " 阶段启动失败。"
+		if !failure.hasUserDetail {
+			failure.PublicMessage = "Runtime 在 " + stage + " 阶段启动失败。"
+		}
 	}
 	if failure.InternalDetail == "" {
 		failure.InternalDetail = "last_stage=" + stage

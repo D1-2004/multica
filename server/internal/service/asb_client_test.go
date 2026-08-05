@@ -284,6 +284,17 @@ func TestASBClientParsesSanitizedLifecycleError(t *testing.T) {
 		httpErr.RequestID != "request-123" {
 		t.Fatalf("ASB HTTP error = %#v", httpErr)
 	}
+	failure := ClassifyRuntimeStartError(SandboxBackendASB, err)
+	for _, expected := range []string{
+		"HTTP 400",
+		"request_id=request-123",
+		"code=EXPIRATION_INVALID",
+		"message=expiresAt must increase",
+	} {
+		if !strings.Contains(failure.PublicMessage, expected) {
+			t.Fatalf("ASB public failure %q does not contain %q", failure.PublicMessage, expected)
+		}
+	}
 }
 
 func TestNewASBHTTPErrorParsesNestedDiagnostics(t *testing.T) {

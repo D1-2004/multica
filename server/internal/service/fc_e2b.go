@@ -1378,7 +1378,7 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
 	}
 	if err := l.Config.Validate(); err != nil {
-		failure := ClassifyRuntimeStartFailure(SandboxBackendAliyunFC, err.Error())
+		failure := ClassifyRuntimeStartError(SandboxBackendAliyunFC, err)
 		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
 	}
 	attempt, err := l.Tasks.BeginRuntimeStartAttempt(
@@ -1404,7 +1404,7 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 
 	runtimeLockConn, releaseRuntimeLock, err := l.lockRuntimeShared(ctx, task.RuntimeID)
 	if err != nil {
-		failure := ClassifyRuntimeStartFailure(SandboxBackendAliyunFC, err.Error())
+		failure := ClassifyRuntimeStartError(SandboxBackendAliyunFC, err)
 		failure.Phase = "runtime_lock"
 		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
@@ -1425,7 +1425,7 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	releaseRuntimeLock()
 	runtimeLockHeld = false
 	if submitErr != nil {
-		failure := ClassifyRuntimeStartFailure(SandboxBackendAliyunFC, submitErr.Error())
+		failure := ClassifyRuntimeStartError(SandboxBackendAliyunFC, submitErr)
 		failure = runtimeStartFailureAtLastStage(ctx, l.Queries, attempt, failure)
 		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
@@ -1460,7 +1460,7 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 		if errors.Is(err, errRuntimeLaunchLeaseLost) {
 			return err
 		}
-		failure := ClassifyRuntimeStartFailure(SandboxBackendAliyunFC, err.Error())
+		failure := ClassifyRuntimeStartError(SandboxBackendAliyunFC, err)
 		failure = runtimeStartFailureAtLastStage(ctx, l.Queries, attempt, failure)
 		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
@@ -2413,7 +2413,8 @@ func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (str
 		if err == nil {
 			id, parseErr := parseE2BSandboxID(out)
 			if parseErr != nil {
-				return "", errors.New("FC/E2B sandbox create returned no sandbox id")
+				responseErr := errors.New("FC/E2B sandbox create returned no sandbox id")
+				return "", withRuntimeStartUserDetail(responseErr, responseErr.Error())
 			}
 			return id, nil
 		}
@@ -2421,7 +2422,8 @@ func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (str
 			return "", ctx.Err()
 		}
 		if !isFCE2BSandboxCapacityRateLimitText(err.Error()) || attempt == fcE2BSandboxCreateMaxAttempts {
-			return "", fmt.Errorf("FC/E2B sandbox create failed: %w", err)
+			createErr := fmt.Errorf("FC/E2B sandbox create failed: %w", err)
+			return "", withRuntimeStartUserDetail(createErr, createErr.Error())
 		}
 		baseDelay := time.Second << (attempt - 1)
 		delay := l.sandboxCreateRetryDelay(baseDelay)
@@ -2438,7 +2440,8 @@ func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (str
 			return "", err
 		}
 	}
-	return "", errors.New("FC/E2B sandbox create exhausted retries")
+	exhaustedErr := errors.New("FC/E2B sandbox create exhausted retries")
+	return "", withRuntimeStartUserDetail(exhaustedErr, exhaustedErr.Error())
 }
 
 func isFCE2BSandboxCapacityRateLimitText(value string) bool {
@@ -2492,7 +2495,8 @@ func (l *FCE2BLauncher) waitSandboxReady(ctx context.Context, sandboxID string) 
 		}
 		lastErr = err
 		if time.Now().After(deadline) {
-			return fmt.Errorf("FC/E2B sandbox was not ready within %s: %w", l.Config.SandboxReadyTimeout, lastErr)
+			readyErr := fmt.Errorf("FC/E2B sandbox was not ready within %s: %w", l.Config.SandboxReadyTimeout, lastErr)
+			return withRuntimeStartUserDetail(readyErr, readyErr.Error())
 		}
 		select {
 		case <-ctx.Done():
@@ -2563,7 +2567,8 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"runner_protocol", string(launch.Mode),
 	)
 	if _, err := l.runE2BCommand(ctx, args); err != nil {
-		return fmt.Errorf("FC/E2B runner exec failed: %w", err)
+		execErr := fmt.Errorf("FC/E2B runner exec failed: %w", err)
+		return withRuntimeStartUserDetail(execErr, execErr.Error())
 	}
 	return nil
 }

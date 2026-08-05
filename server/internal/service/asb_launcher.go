@@ -476,7 +476,7 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
 	}
 	if err := l.Config.Validate(); err != nil {
-		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, err.Error())
+		failure := ClassifyRuntimeStartError(SandboxBackendASB, err)
 		return l.failLaunch(ctx, task, pgtype.UUID{}, failure)
 	}
 	if l.Credentials == nil {
@@ -510,7 +510,7 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 
 	runtimeLockConn, releaseRuntimeLock, err := l.lockRuntimeShared(ctx, task.RuntimeID)
 	if err != nil {
-		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, err.Error())
+		failure := ClassifyRuntimeStartError(SandboxBackendASB, err)
 		failure.Phase = "runtime_lock"
 		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
@@ -536,7 +536,7 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 	if err != nil {
 		releaseRuntimeLock()
 		lockHeld = false
-		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, err.Error())
+		failure := ClassifyRuntimeStartError(SandboxBackendASB, err)
 		failure.Phase = "identity_resolve"
 		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
@@ -544,7 +544,7 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 	if err != nil {
 		releaseRuntimeLock()
 		lockHeld = false
-		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, err.Error())
+		failure := ClassifyRuntimeStartError(SandboxBackendASB, err)
 		failure.Phase = "credential_resolve"
 		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
@@ -559,7 +559,7 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 	releaseRuntimeLock()
 	lockHeld = false
 	if err != nil {
-		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, err.Error())
+		failure := ClassifyRuntimeStartError(SandboxBackendASB, err)
 		failure = runtimeStartFailureAtLastStage(ctx, l.Queries, attempt, failure)
 		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
@@ -593,7 +593,7 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 		if errors.Is(err, errRuntimeLaunchLeaseLost) {
 			return err
 		}
-		failure := ClassifyRuntimeStartFailure(SandboxBackendASB, err.Error())
+		failure := ClassifyRuntimeStartError(SandboxBackendASB, err)
 		failure = runtimeStartFailureAtLastStage(ctx, l.Queries, attempt, failure)
 		return l.failLaunch(ctx, task, attempt.ID, failure)
 	}
@@ -1179,7 +1179,11 @@ func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) 
 			case "running":
 				return nil
 			case "failed", "terminated", "error":
-				return fmt.Errorf("ASB sandbox entered terminal state %q", sandbox.Status.State)
+				detail := fmt.Sprintf("ASB sandbox entered terminal state %q", sandbox.Status.State)
+				if reason := strings.TrimSpace(sandbox.Status.Reason); reason != "" {
+					detail += ": " + reason
+				}
+				return withRuntimeStartUserDetail(errors.New(detail), detail)
 			}
 		}
 		select {
@@ -1502,7 +1506,8 @@ func (l *ASBLauncher) execRunOnce(
 		return fmt.Errorf("ASB runner exec failed: %w", err)
 	}
 	if result.ErrorName != "" {
-		return errors.New("ASB runner exec returned an error")
+		detail := "ASB runner exec returned an error: " + result.ErrorName
+		return withRuntimeStartUserDetail(errors.New(detail), detail)
 	}
 	return nil
 }

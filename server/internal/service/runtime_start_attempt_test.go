@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -95,6 +96,54 @@ func TestGenericRuntimeStartFailureIsRefinedToLastObservedStage(t *testing.T) {
 	}
 	if !strings.Contains(refined.PublicMessage, "runner_probing") || !strings.Contains(refined.InternalDetail, "last_stage=runner_probing") {
 		t.Fatalf("refined failure lacks stage detail: %+v", refined)
+	}
+}
+
+func TestExternalRuntimeStartDetailSurvivesStageRefinement(t *testing.T) {
+	t.Parallel()
+
+	secret := "sk-" + strings.Repeat("x", 24)
+	externalErr := withRuntimeStartUserDetail(
+		errors.New("ASB upstream failed"),
+		"Aone Sandbox 实例额度已满 token="+secret,
+	)
+	failure := ClassifyRuntimeStartError(SandboxBackendASB, externalErr)
+	refined := refineRuntimeStartFailureAtStage(failure, "sandbox_resolving")
+
+	if refined.Code != "ASB-SANDBOX-RESOLVING-FAILED" || refined.Phase != "sandbox_resolving" {
+		t.Fatalf("refined external failure = %+v", refined)
+	}
+	if !strings.Contains(refined.PublicMessage, "Aone Sandbox 实例额度已满") {
+		t.Fatalf("public message lost external detail: %q", refined.PublicMessage)
+	}
+	if strings.Contains(refined.PublicMessage, secret) || !strings.Contains(refined.PublicMessage, "[REDACTED") {
+		t.Fatalf("public message was not redacted: %q", refined.PublicMessage)
+	}
+}
+
+func TestInternalRuntimeStartErrorKeepsGenericStageMessage(t *testing.T) {
+	t.Parallel()
+
+	failure := ClassifyRuntimeStartError(
+		SandboxBackendASB,
+		errors.New("database password=do-not-expose"),
+	)
+	refined := refineRuntimeStartFailureAtStage(failure, "sandbox_resolving")
+	if refined.PublicMessage != "Runtime 在 sandbox_resolving 阶段启动失败。" {
+		t.Fatalf("internal error became user-visible: %q", refined.PublicMessage)
+	}
+}
+
+func TestASBCapacityErrorUsesGenericExternalDetailChannel(t *testing.T) {
+	t.Parallel()
+
+	failure := ClassifyRuntimeStartError(SandboxBackendASB, ErrASBCapacityUnavailable)
+	refined := refineRuntimeStartFailureAtStage(failure, "sandbox_resolving")
+	if refined.Code != "ASB-SANDBOX-RESOLVING-FAILED" {
+		t.Fatalf("ASB capacity code was specially classified: %q", refined.Code)
+	}
+	if refined.PublicMessage != asbCapacityUnavailableMessage {
+		t.Fatalf("ASB capacity detail = %q", refined.PublicMessage)
 	}
 }
 
