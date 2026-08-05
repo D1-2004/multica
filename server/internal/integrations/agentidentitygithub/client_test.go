@@ -123,3 +123,47 @@ func TestServiceErrorCarriesAgentIdentityErrorBody(t *testing.T) {
 		t.Fatalf("unexpected service error: %#v", svcErr)
 	}
 }
+
+func TestClientUsesCurrentRuntimeConfigProviders(t *testing.T) {
+	firstCalls := 0
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		firstCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"connectionId":"first"}`))
+	}))
+	defer first.Close()
+	secondCalls := 0
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		secondCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"connectionId":"second"}`))
+	}))
+	defer second.Close()
+
+	baseURL := first.URL
+	timeout := time.Second
+	client := NewClient(Config{
+		BaseURLProvider: func() string { return baseURL },
+		TimeoutProvider: func() time.Duration { return timeout },
+	})
+	firstResult, err := client.GetStatus(context.Background(), "workspace-1", "agent-1", "user-1")
+	if err != nil {
+		t.Fatalf("first GetStatus: %v", err)
+	}
+	if firstResult.ConnectionID != "first" || firstCalls != 1 || secondCalls != 0 {
+		t.Fatalf("first provider result = %#v, calls = %d/%d", firstResult, firstCalls, secondCalls)
+	}
+
+	baseURL = second.URL
+	timeout = 2 * time.Second
+	secondResult, err := client.GetStatus(context.Background(), "workspace-1", "agent-1", "user-1")
+	if err != nil {
+		t.Fatalf("second GetStatus: %v", err)
+	}
+	if secondResult.ConnectionID != "second" || firstCalls != 1 || secondCalls != 1 {
+		t.Fatalf("second provider result = %#v, calls = %d/%d", secondResult, firstCalls, secondCalls)
+	}
+	if got := client.currentTimeout(); got != 2*time.Second {
+		t.Fatalf("current timeout = %s, want 2s", got)
+	}
+}

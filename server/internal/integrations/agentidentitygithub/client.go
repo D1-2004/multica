@@ -14,15 +14,19 @@ import (
 const defaultTimeout = 10 * time.Second
 
 type Config struct {
-	BaseURL    string
-	Timeout    time.Duration
-	HTTPClient *http.Client
+	BaseURL         string
+	BaseURLProvider func() string
+	Timeout         time.Duration
+	TimeoutProvider func() time.Duration
+	HTTPClient      *http.Client
 }
 
 type Client struct {
-	baseURL    string
-	timeout    time.Duration
-	httpClient *http.Client
+	baseURL         string
+	baseURLProvider func() string
+	timeout         time.Duration
+	timeoutProvider func() time.Duration
+	httpClient      *http.Client
 }
 
 func NewClient(cfg Config) *Client {
@@ -36,14 +40,36 @@ func NewClient(cfg Config) *Client {
 		httpClient = http.DefaultClient
 	}
 	return &Client{
-		baseURL:    baseURL,
-		timeout:    timeout,
-		httpClient: httpClient,
+		baseURL:         baseURL,
+		baseURLProvider: cfg.BaseURLProvider,
+		timeout:         timeout,
+		timeoutProvider: cfg.TimeoutProvider,
+		httpClient:      httpClient,
 	}
 }
 
 func (c *Client) Enabled() bool {
-	return c != nil && c.baseURL != ""
+	return c != nil && c.currentBaseURL() != ""
+}
+
+func (c *Client) currentBaseURL() string {
+	if c == nil {
+		return ""
+	}
+	if c.baseURLProvider != nil {
+		return strings.TrimRight(strings.TrimSpace(c.baseURLProvider()), "/")
+	}
+	return c.baseURL
+}
+
+func (c *Client) currentTimeout() time.Duration {
+	if c == nil {
+		return defaultTimeout
+	}
+	if c.timeoutProvider != nil {
+		return c.timeoutProvider()
+	}
+	return c.timeout
 }
 
 type OAuthStartRequest struct {
@@ -145,10 +171,11 @@ func (c *Client) Disconnect(ctx context.Context, connectionID, workspaceID, agen
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, body any, out any) error {
-	if !c.Enabled() {
+	baseURL := c.currentBaseURL()
+	if baseURL == "" {
 		return &ServiceError{StatusCode: http.StatusServiceUnavailable, Code: "NOT_CONFIGURED", Message: "agent identity github is not configured"}
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	ctx, cancel := context.WithTimeout(ctx, c.currentTimeout())
 	defer cancel()
 
 	var reader *bytes.Reader
@@ -162,7 +189,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 		reader = bytes.NewReader(payload)
 	}
 
-	target := c.baseURL + path
+	target := baseURL + path
 	if len(query) > 0 {
 		target += "?" + query.Encode()
 	}

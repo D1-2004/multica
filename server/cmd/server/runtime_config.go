@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -194,6 +195,8 @@ func (c *appRuntimeConfig) handlerConfig() handler.Config {
 	cfg.LoginProviders = append([]string(nil), raw.Web.LoginProviders...)
 	cfg.GitHubAPIBaseURLProvider = c.githubAPIBaseURL
 	cfg.AgentIdentityControlBaseURL = raw.AgentIdentity.ControlBaseURL
+	cfg.AgentIdentityControlBaseURLProvider = c.agentIdentityControlBaseURL
+	cfg.AgentIdentityTimeoutProvider = c.agentIdentityTimeout
 	cfg.FCE2B = c.fce2b()
 	cfg.ASB = c.asb()
 	cfg.EnterpriseIdentity = c.enterpriseIdentity()
@@ -253,6 +256,20 @@ func (c *appRuntimeConfig) agentMessageRouterInternalURL() string {
 		return ""
 	}
 	return c.current().Integrations.AgentMessageRouterInternalURL
+}
+
+func (c *appRuntimeConfig) agentIdentityControlBaseURL() string {
+	if c == nil {
+		return ""
+	}
+	return c.current().AgentIdentity.ControlBaseURL
+}
+
+func (c *appRuntimeConfig) agentIdentityTimeout() time.Duration {
+	if c == nil {
+		return 0
+	}
+	return c.current().AgentIdentity.Timeout.Duration
 }
 
 func (c *appRuntimeConfig) githubAPIBaseURL() string {

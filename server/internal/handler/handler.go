@@ -111,12 +111,14 @@ type Config struct {
 	// calls, such as GitHub identity binding, status, test, and disconnect.
 	// FC/E2B sandbox redeem must keep using FCE2B.AgentIdentityBaseURL because
 	// sandboxes have different network reachability from the Multica server.
-	AgentIdentityControlBaseURL string
-	FCE2B                       service.FCE2BConfig
-	ASB                         service.ASBConfig
-	EnterpriseIdentity          service.EnterpriseIdentityConfig
-	AttachmentDownloadMode      string
-	AttachmentDownloadURLTTL    time.Duration
+	AgentIdentityControlBaseURL         string
+	AgentIdentityControlBaseURLProvider func() string
+	AgentIdentityTimeoutProvider        func() time.Duration
+	FCE2B                               service.FCE2BConfig
+	ASB                                 service.ASBConfig
+	EnterpriseIdentity                  service.EnterpriseIdentityConfig
+	AttachmentDownloadMode              string
+	AttachmentDownloadURLTTL            time.Duration
 	// AttachmentFrameAncestors are trusted browser origins allowed to embed
 	// attachment preview responses. In production this should mirror the
 	// frontend/CORS origin allowlist so split app/api self-hosted deployments
@@ -400,8 +402,10 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		slog.Warn("github agent sources disabled", "error", githubErr)
 	}
 	agentIdentityGitHub := agentidentitygithub.NewClient(agentidentitygithub.Config{
-		BaseURL: agentIdentityGitHubBaseURL(cfg),
-		Timeout: cfg.FCE2B.AgentIdentityTimeout,
+		BaseURL:         agentIdentityGitHubBaseURL(cfg),
+		BaseURLProvider: cfg.AgentIdentityControlBaseURLProvider,
+		Timeout:         cfg.FCE2B.AgentIdentityTimeout,
+		TimeoutProvider: cfg.AgentIdentityTimeoutProvider,
 	})
 	fcLauncher.GitHubIdentity = agentIdentityGitHub
 
