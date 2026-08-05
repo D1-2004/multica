@@ -421,6 +421,29 @@ func TestStableRuntimeOwnedByDeveloperUsesOnlyConfiguredOwnerUUID(t *testing.T) 
 	}
 }
 
+func TestFCE2BStableServiceReadsCurrentDeveloperUserIDs(t *testing.T) {
+	initial := "410d0a06-a026-449b-b7ab-64c9d92481bd"
+	updated := "2c508db5-5410-41f9-ad69-d3d527529c20"
+	service := NewFCE2BStableService(nil, nil, map[string]struct{}{initial: {}})
+
+	current := map[string]struct{}{updated: {}}
+	service.DeveloperUserIDsProvider = func() map[string]struct{} {
+		return current
+	}
+	if _, ok := service.currentDeveloperUserIDs()[updated]; !ok {
+		t.Fatal("current Diamond developer list was not used")
+	}
+	if _, ok := service.currentDeveloperUserIDs()[initial]; ok {
+		t.Fatal("startup developer list remained active after installing the provider")
+	}
+
+	replacement := "bc780d5f-3cf2-4bc5-99be-86fe204f193d"
+	current = map[string]struct{}{replacement: {}}
+	if _, ok := service.currentDeveloperUserIDs()[replacement]; !ok {
+		t.Fatal("updated Diamond developer list was not observed")
+	}
+}
+
 func TestStableNextBatchSchedule(t *testing.T) {
 	started := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
 	tests := []struct {

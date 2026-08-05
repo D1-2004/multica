@@ -399,6 +399,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		stableRuntimePublishers,
 		h.ASBLauncher,
 	)
+	if opts.RuntimeConfig != nil {
+		h.FCE2BStable.DeveloperUserIDsProvider = opts.RuntimeConfig.stablePublisherUserIDs
+	}
 	h.TaskService.RuntimeLauncher = service.NewCloudSandboxLauncher(
 		queries,
 		h.FCE2BLauncher,

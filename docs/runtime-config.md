@@ -58,6 +58,8 @@ The following legacy environment settings are represented by the runtime documen
 
 `runtime.llm.default_model` must name an entry in `runtime.llm.models`. The server always exposes and injects the default model first, so FC/E2B and ASB use the same default and catalog.
 
+`runtime.fc_e2b.stable_publisher_user_ids` is also live: both stable-release authorization and developer-first rollout classification read the current Diamond snapshot, so list changes do not require an application release.
+
 See [the complete example](runtime-config.example.json) for schema version 1.
 
 ## Release procedure

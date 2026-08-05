@@ -178,11 +178,12 @@ type FCE2BStableRuntimeOverview struct {
 }
 
 type FCE2BStableService struct {
-	Pool             *pgxpool.Pool
-	Launcher         *FCE2BLauncher
-	ASBLauncher      *ASBLauncher
-	DeveloperUserIDs map[string]struct{}
-	wake             chan struct{}
+	Pool                     *pgxpool.Pool
+	Launcher                 *FCE2BLauncher
+	ASBLauncher              *ASBLauncher
+	DeveloperUserIDs         map[string]struct{}
+	DeveloperUserIDsProvider func() map[string]struct{}
+	wake                     chan struct{}
 }
 
 func NewFCE2BStableService(
@@ -215,6 +216,16 @@ func (s *FCE2BStableService) Notify() {
 	case s.wake <- struct{}{}:
 	default:
 	}
+}
+
+func (s *FCE2BStableService) currentDeveloperUserIDs() map[string]struct{} {
+	if s == nil {
+		return nil
+	}
+	if s.DeveloperUserIDsProvider != nil {
+		return s.DeveloperUserIDsProvider()
+	}
+	return s.DeveloperUserIDs
 }
 
 func (s *FCE2BStableService) Run(ctx context.Context) {
@@ -2292,6 +2303,7 @@ func (s *FCE2BStableService) listStableRuntimes(
 		return nil, fmt.Errorf("list stable FC/E2B runtimes: %w", err)
 	}
 	defer rows.Close()
+	developerUserIDs := s.currentDeveloperUserIDs()
 	var targets []stableRuntimeTarget
 	for rows.Next() {
 		var target stableRuntimeTarget
@@ -2320,7 +2332,7 @@ func (s *FCE2BStableService) listStableRuntimes(
 			)
 			continue
 		}
-		target.IsDeveloper = stableRuntimeOwnedByDeveloper(target.OwnerID, s.DeveloperUserIDs)
+		target.IsDeveloper = stableRuntimeOwnedByDeveloper(target.OwnerID, developerUserIDs)
 		target.Provider = metadata.Provider
 		target.PreviousArtifactRef = metadata.ArtifactRef
 		target.PreviousArtifactBuildID = metadata.ArtifactBuildID
