@@ -232,6 +232,21 @@ describe("filterRuntimesForSandboxBackend", () => {
 });
 
 describe("isReadyFCE2BTemplate", () => {
+  it("accepts published m2 and m3 manifests only", () => {
+    expect(
+      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 2 })),
+    ).toBe(true);
+    expect(
+      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 3 })),
+    ).toBe(true);
+    expect(
+      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 1 })),
+    ).toBe(false);
+    expect(
+      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 4 })),
+    ).toBe(false);
+  });
+
   it("requires both a real template ID and ready status", () => {
     expect(
       isReadyFCE2BTemplate(makeTemplate({ status: "READY" })),
@@ -244,9 +259,6 @@ describe("isReadyFCE2BTemplate", () => {
     ).toBe(false);
     expect(
       isReadyFCE2BTemplate(makeTemplate({ manifest_version: 0 })),
-    ).toBe(false);
-    expect(
-      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 1 })),
     ).toBe(false);
   });
 });

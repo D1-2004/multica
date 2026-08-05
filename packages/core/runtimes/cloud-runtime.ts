@@ -43,6 +43,8 @@ export interface CreateCloudRuntimeNodeRequest {
  * Mirrors the server-side `FCE2BSupportedProviders`.
  */
 export const FC_E2B_RUNTIME_PROVIDERS = ["hermes", "opencode", "pi"] as const;
+const MIN_PUBLISHED_FC_E2B_MANIFEST_VERSION = 2;
+const MAX_PUBLISHED_FC_E2B_MANIFEST_VERSION = 3;
 export type FCE2BRuntimeProvider = (typeof FC_E2B_RUNTIME_PROVIDERS)[number];
 export type SandboxBackend = "aliyun_fc" | "asb";
 export type CloudSandboxArtifactChannel = "stable" | "candidate";
@@ -402,7 +404,8 @@ export function isReadyFCE2BTemplate(template: FCE2BTemplate): boolean {
     typeof template.build_id === "string" &&
     template.build_id.trim().length > 0 &&
     template.status?.trim().toLowerCase() === "ready" &&
-    template.manifest_version === 2 &&
+    template.manifest_version >= MIN_PUBLISHED_FC_E2B_MANIFEST_VERSION &&
+    template.manifest_version <= MAX_PUBLISHED_FC_E2B_MANIFEST_VERSION &&
     template.runner_protocol === "root-log-v1" &&
     template.providers.some((provider) =>
       (FC_E2B_RUNTIME_PROVIDERS as readonly string[]).includes(provider),
