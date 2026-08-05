@@ -116,7 +116,11 @@ func cookieDomain() string {
 // cookies received on a plain-HTTP page, so the flag has to track the actual
 // user-facing scheme rather than a coarser environment name.
 func isSecureCookie() bool {
-	raw := strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN"))
+	return isSecureCookieForOrigin(os.Getenv("FRONTEND_ORIGIN"))
+}
+
+func isSecureCookieForOrigin(raw string) bool {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return false
 	}
@@ -147,7 +151,11 @@ func generateCSRFToken(authToken string) (string, error) {
 
 // SetAuthCookies sets the HttpOnly auth cookie and the readable CSRF cookie on the response.
 func SetAuthCookies(w http.ResponseWriter, token string) error {
-	secure := isSecureCookie()
+	return SetAuthCookiesForOrigin(w, token, os.Getenv("FRONTEND_ORIGIN"))
+}
+
+func SetAuthCookiesForOrigin(w http.ResponseWriter, token, frontendOrigin string) error {
+	secure := isSecureCookieForOrigin(frontendOrigin)
 	domain := cookieDomain()
 	ttl := AuthTokenTTL()
 	now := time.Now()
@@ -186,8 +194,12 @@ func SetAuthCookies(w http.ResponseWriter, token string) error {
 
 // ClearAuthCookies removes the auth and CSRF cookies.
 func ClearAuthCookies(w http.ResponseWriter) {
+	ClearAuthCookiesForOrigin(w, os.Getenv("FRONTEND_ORIGIN"))
+}
+
+func ClearAuthCookiesForOrigin(w http.ResponseWriter, frontendOrigin string) {
 	domain := cookieDomain()
-	secure := isSecureCookie()
+	secure := isSecureCookieForOrigin(frontendOrigin)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     AuthCookieName,

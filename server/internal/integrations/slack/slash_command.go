@@ -71,12 +71,13 @@ type quickCreateEnqueuer interface {
 
 // SlashCommandProcessor handles the Slack `/issue` slash command end to end.
 type SlashCommandProcessor struct {
-	q           slashQueries
-	tasks       quickCreateEnqueuer
-	binding     bindingMinter
-	appURL      string
-	bindingPath string
-	logger      *slog.Logger
+	q              slashQueries
+	tasks          quickCreateEnqueuer
+	binding        bindingMinter
+	appURL         string
+	appURLProvider func() string
+	bindingPath    string
+	logger         *slog.Logger
 	// respond posts an ephemeral reply to the command's response_url. Injected
 	// so tests can capture the reply without hitting Slack.
 	respond func(ctx context.Context, responseURL, text string) error
@@ -87,12 +88,13 @@ type SlashCommandProcessor struct {
 // to a plain instruction. Tasks + Queries are required for the command to do
 // anything.
 type SlashCommandConfig struct {
-	Queries     *db.Queries
-	Tasks       quickCreateEnqueuer
-	Binding     bindingMinter
-	AppURL      string
-	BindingPath string // default "/slack/bind"
-	Logger      *slog.Logger
+	Queries        *db.Queries
+	Tasks          quickCreateEnqueuer
+	Binding        bindingMinter
+	AppURL         string
+	AppURLProvider func() string
+	BindingPath    string // default "/slack/bind"
+	Logger         *slog.Logger
 }
 
 // NewSlashCommandProcessor builds the processor. The default responder POSTs an
@@ -111,12 +113,13 @@ func NewSlashCommandProcessor(cfg SlashCommandConfig) *SlashCommandProcessor {
 		bindingPath = "/" + bindingPath
 	}
 	p := &SlashCommandProcessor{
-		q:           cfg.Queries,
-		tasks:       cfg.Tasks,
-		binding:     cfg.Binding,
-		appURL:      strings.TrimRight(cfg.AppURL, "/"),
-		bindingPath: bindingPath,
-		logger:      logger,
+		q:              cfg.Queries,
+		tasks:          cfg.Tasks,
+		binding:        cfg.Binding,
+		appURL:         strings.TrimRight(cfg.AppURL, "/"),
+		appURLProvider: cfg.AppURLProvider,
+		bindingPath:    bindingPath,
+		logger:         logger,
 	}
 	p.respond = func(ctx context.Context, responseURL, text string) error {
 		return slack.PostWebhookContext(ctx, responseURL, &slack.WebhookMessage{
@@ -125,6 +128,16 @@ func NewSlashCommandProcessor(cfg SlashCommandConfig) *SlashCommandProcessor {
 		})
 	}
 	return p
+}
+
+func (p *SlashCommandProcessor) currentAppURL() string {
+	if p != nil && p.appURLProvider != nil {
+		return strings.TrimRight(strings.TrimSpace(p.appURLProvider()), "/")
+	}
+	if p == nil {
+		return ""
+	}
+	return p.appURL
 }
 
 // Handle processes one slash command and delivers the ephemeral reply. It is
@@ -259,7 +272,8 @@ func (p *SlashCommandProcessor) resolveUser(ctx context.Context, inst engine.Res
 // prompt, mirroring the outbound replier's NeedsBinding message. Falls back to a
 // plain instruction when the binding service / app URL are not configured.
 func (p *SlashCommandProcessor) bindingText(ctx context.Context, inst engine.ResolvedInstallation, slackUserID string) string {
-	if p.binding == nil || p.appURL == "" {
+	appURL := p.currentAppURL()
+	if p.binding == nil || appURL == "" {
 		return slashLinkAccountFallback
 	}
 	token, err := p.binding.Mint(ctx, inst.WorkspaceID, inst.ID, slackUserID)
@@ -268,7 +282,7 @@ func (p *SlashCommandProcessor) bindingText(ctx context.Context, inst engine.Res
 			"installation_id", inst.ID, "error", err)
 		return slashLinkAccountFallback
 	}
-	bindURL := p.appURL + p.bindingPath + "?token=" + url.QueryEscape(token.Raw)
+	bindURL := appURL + p.bindingPath + "?token=" + url.QueryEscape(token.Raw)
 	// Wrap the URL as an explicit Slack link so the base64url token's `_`/`-`
 	// are not mangled by mrkdwn (same reasoning as the replier).
 	return "👋 To file issues, link your Slack account to Multica: <" +

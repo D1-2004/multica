@@ -71,6 +71,42 @@ type ASBEnterpriseRuntime struct {
 	Identity *EnterpriseIdentityService
 }
 
+// SetConfigProviders switches an already-constructed ASB/enterprise runtime
+// to immutable dynamic snapshots. All providers are validated before any
+// pointer is installed.
+func (r *ASBEnterpriseRuntime) SetConfigProviders(
+	asbProvider func() ASBConfig,
+	identityProvider func() EnterpriseIdentityConfig,
+) error {
+	if r == nil || r.Launcher == nil || r.Identity == nil || asbProvider == nil || identityProvider == nil {
+		return errors.New("ASB enterprise runtime dynamic configuration is incomplete")
+	}
+	asbConfig := asbProvider()
+	identityConfig := identityProvider()
+	if err := asbConfig.Validate(); err != nil {
+		return err
+	}
+	if err := identityConfig.Validate(asbConfig); err != nil {
+		return err
+	}
+	dynamicClients, err := newDynamicEnterpriseIdentityClients(identityProvider)
+	if err != nil {
+		return err
+	}
+	r.Launcher.ConfigProvider = asbProvider
+	if r.Launcher.Credentials != nil {
+		r.Launcher.Credentials.ConfigProvider = asbProvider
+	}
+	if source, ok := r.Identity.Source.(*ASBIdentitySourceManager); ok {
+		source.ConfigProvider = asbProvider
+	}
+	r.Identity.ConfigProvider = identityProvider
+	r.Identity.BUC = dynamicClients
+	r.Identity.AuthX = dynamicClients
+	r.Identity.Idem = dynamicClients
+	return nil
+}
+
 func NewASBEnterpriseRuntimeFromConfig(
 	queries *db.Queries,
 	tasks *TaskService,

@@ -174,11 +174,12 @@ func (h *Handler) BeginDingTalkAccountBinding(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) CompleteDingTalkAccountBindingCallback(w http.ResponseWriter, r *http.Request) {
-	if h.DingTalkAccountBindings == nil || strings.TrimSpace(h.DingTalkAccountBindingOrigin) == "" {
+	expectedOrigin := h.currentDingTalkAccountBindingOrigin()
+	if h.DingTalkAccountBindings == nil || expectedOrigin == "" {
 		writeDingTalkAccountBindingAPIError(w, http.StatusServiceUnavailable, "binding_not_configured", "dingtalk account binding is not configured")
 		return
 	}
-	if r.Header.Get("Origin") != h.DingTalkAccountBindingOrigin {
+	if r.Header.Get("Origin") != expectedOrigin {
 		writeDingTalkAccountBindingAPIError(w, http.StatusForbidden, "callback_origin_forbidden", "callback origin is not allowed")
 		return
 	}

@@ -56,6 +56,22 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
+// WithProvider prepends a deployment-owned provider to the standard chain.
+// It is applied during construction, before the Service is shared with request
+// goroutines, so no provider mutation occurs at runtime.
+func WithProvider(provider Provider) Option {
+	return func(s *Service) {
+		if s == nil || provider == nil {
+			return
+		}
+		if s.provider == nil {
+			s.provider = provider
+			return
+		}
+		s.provider = NewChainProvider(provider, s.provider)
+	}
+}
+
 // NewService returns a Service backed by the supplied provider. Passing a
 // nil provider is allowed and is equivalent to the always-default behavior;
 // see the package doc for the rationale.

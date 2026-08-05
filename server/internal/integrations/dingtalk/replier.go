@@ -56,14 +56,15 @@ type agentNamer interface {
 
 // OutboundReplier implements engine.OutboundReplier for DingTalk.
 type OutboundReplier struct {
-	binding     bindingMinter
-	agentNamer  agentNamer
-	messenger   *RobotMessenger
-	decrypt     Decrypter
-	httpClient  *http.Client
-	appURL      string
-	bindingPath string
-	logger      *slog.Logger
+	binding        bindingMinter
+	agentNamer     agentNamer
+	messenger      *RobotMessenger
+	decrypt        Decrypter
+	httpClient     *http.Client
+	appURL         string
+	appURLProvider func() string
+	bindingPath    string
+	logger         *slog.Logger
 }
 
 // OutboundReplierConfig configures the replier. Binding + AppURL are
@@ -81,10 +82,11 @@ type OutboundReplierConfig struct {
 	// AppURL is the Multica web app host the user clicks into to redeem the
 	// binding token (MULTICA_APP_URL ?? FRONTEND_ORIGIN — the bind page
 	// /dingtalk/bind is served by the web app, not the API host).
-	AppURL      string
-	BindingPath string // default "/dingtalk/bind"
-	HTTPClient  *http.Client
-	Logger      *slog.Logger
+	AppURL         string
+	AppURLProvider func() string
+	BindingPath    string // default "/dingtalk/bind"
+	HTTPClient     *http.Client
+	Logger         *slog.Logger
 }
 
 var _ engine.OutboundReplier = (*OutboundReplier)(nil)
@@ -107,15 +109,26 @@ func NewOutboundReplier(cfg OutboundReplierConfig) *OutboundReplier {
 		httpClient = &http.Client{Timeout: 15 * time.Second}
 	}
 	return &OutboundReplier{
-		binding:     cfg.Binding,
-		agentNamer:  cfg.AgentNamer,
-		messenger:   cfg.Messenger,
-		decrypt:     cfg.Decrypt,
-		httpClient:  httpClient,
-		appURL:      strings.TrimRight(cfg.AppURL, "/"),
-		bindingPath: bindingPath,
-		logger:      logger,
+		binding:        cfg.Binding,
+		agentNamer:     cfg.AgentNamer,
+		messenger:      cfg.Messenger,
+		decrypt:        cfg.Decrypt,
+		httpClient:     httpClient,
+		appURL:         strings.TrimRight(cfg.AppURL, "/"),
+		appURLProvider: cfg.AppURLProvider,
+		bindingPath:    bindingPath,
+		logger:         logger,
 	}
+}
+
+func (r *OutboundReplier) currentAppURL() string {
+	if r != nil && r.appURLProvider != nil {
+		return strings.TrimRight(strings.TrimSpace(r.appURLProvider()), "/")
+	}
+	if r == nil {
+		return ""
+	}
+	return r.appURL
 }
 
 // Reply routes each outcome to its user-visible message. Errors are logged,
@@ -179,14 +192,15 @@ func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.Res
 	if r.binding == nil {
 		return errors.New("binding service not configured")
 	}
-	if r.appURL == "" {
+	appURL := r.currentAppURL()
+	if appURL == "" {
 		return errors.New("app url not configured")
 	}
 	token, err := r.binding.Mint(ctx, inst.WorkspaceID, inst.ID, sender)
 	if err != nil {
 		return fmt.Errorf("mint binding token: %w", err)
 	}
-	bindURL := r.appURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
+	bindURL := appURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
 	botName := r.botName(ctx, inst)
 	intro := "👋 要开始与我对话，请先将你的钉钉账号绑定到 Multica"
 	if botName != "" {

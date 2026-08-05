@@ -882,6 +882,7 @@ type FCE2BLauncher struct {
 	Queries            *db.Queries
 	Tasks              *TaskService
 	Config             FCE2BConfig
+	ConfigProvider     func() FCE2BConfig
 	Runner             CommandRunner
 	AgentIdentity      AgentIdentityContextCreator
 	GitHubIdentity     AgentIdentityGithubBindingReader
@@ -890,6 +891,19 @@ type FCE2BLauncher struct {
 
 	// Pool backs the cross-replica runtime and sandbox advisory locks.
 	Pool *pgxpool.Pool
+}
+
+// withCurrentConfig freezes one dynamic configuration snapshot for the whole
+// operation. Long-running launches therefore cannot mix two Diamond versions
+// halfway through sandbox creation.
+func (l *FCE2BLauncher) withCurrentConfig() *FCE2BLauncher {
+	if l == nil || l.ConfigProvider == nil {
+		return l
+	}
+	configured := *l
+	configured.Config = l.ConfigProvider()
+	configured.ConfigProvider = nil
+	return &configured
 }
 
 var ErrFCE2BRuntimeRequired = errors.New("runtime is not an FC/E2B cloud runtime")
@@ -1066,6 +1080,9 @@ func (l *FCE2BLauncher) SetSandboxRelaySigner(signer *sandboxrelay.Signer) {
 // The exclusive runtime advisory lock conflicts with LaunchTask's shared lock,
 // so the returned runtime is the cutover boundary for later launches.
 func (l *FCE2BLauncher) UpdateRuntimeTemplate(ctx context.Context, runtimeID pgtype.UUID, selected FCE2BTemplate) (FCE2BRuntimeTemplateUpdateResult, error) {
+	if configured := l.withCurrentConfig(); configured != l {
+		return configured.UpdateRuntimeTemplate(ctx, runtimeID, selected)
+	}
 	return l.updateRuntimeTemplate(ctx, runtimeID, selected, nil)
 }
 
@@ -1079,6 +1096,9 @@ func (l *FCE2BLauncher) UpdateRuntimeTemplateForStableRelease(
 	releaseID string,
 	batchIndex int,
 ) (FCE2BRuntimeTemplateUpdateResult, error) {
+	if configured := l.withCurrentConfig(); configured != l {
+		return configured.UpdateRuntimeTemplateForStableRelease(ctx, runtimeID, selected, releaseID, batchIndex)
+	}
 	return l.updateRuntimeTemplate(ctx, runtimeID, selected, map[string]any{
 		"template_channel":  "stable",
 		"stable_release_id": strings.TrimSpace(releaseID),
@@ -1230,6 +1250,9 @@ func (l *FCE2BLauncher) updateRuntimeTemplate(
 // sandbox. A READY catalog status is insufficient because the smoke test runs
 // after the E2B build becomes ready.
 func (l *FCE2BLauncher) VerifyStableTemplate(ctx context.Context, selected FCE2BTemplate) (map[string]any, error) {
+	if configured := l.withCurrentConfig(); configured != l {
+		return configured.VerifyStableTemplate(ctx, selected)
+	}
 	if l == nil {
 		return nil, errors.New("FC/E2B launcher is unavailable")
 	}
@@ -1321,6 +1344,9 @@ type fcE2BLaunchSubmission struct {
 }
 
 func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) error {
+	if configured := l.withCurrentConfig(); configured != l {
+		return configured.LaunchTask(ctx, task)
+	}
 	if l == nil || l.Queries == nil || l.Tasks == nil || !task.RuntimeID.Valid {
 		return nil
 	}

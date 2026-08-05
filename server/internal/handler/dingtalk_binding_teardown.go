@@ -87,8 +87,8 @@ func (s dbDingTalkBindingTeardownStore) DeleteBindingProjection(
 		ctx,
 		db.DeleteDingTalkAccountBindingProjectionForTeardownParams{
 			ID: row.ID, WorkspaceID: row.WorkspaceID, AgentID: row.AgentID,
-			ExpectedRouterPlatform: config.RouterPlatform,
-			ExpectedRouterTenantID: config.RouterTenantID,
+			ExpectedRouterPlatform:  config.RouterPlatform,
+			ExpectedRouterTenantID:  config.RouterTenantID,
 			ExpectedRouterAccountID: config.RouterAccountID,
 		},
 	)
@@ -315,6 +315,6 @@ func (h *Handler) teardownDingTalkBindings(
 		dbDingTalkBindingTeardownStore{queries: queries},
 		h.DingTalkBindingTeardownRouter,
 		agentIDs,
-		h.cfg.PublicURL,
+		h.currentConfig().PublicURL,
 	)
 }

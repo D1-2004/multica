@@ -1,6 +1,11 @@
 # Alibaba Diamond configuration
 
-Multica uses Alibaba Diamond as an always-active dynamic source for backend feature-flag rules. Diamond does not replace process environment variables, the YAML rule file, or caller defaults. The effective precedence is:
+Multica uses two independent Alibaba Diamond documents:
+
+- `dt-fde-multica.json` is the always-active, fail-open prompt/feature-rule source documented on this page. It does not replace process environment variables, the YAML rule file, or caller defaults.
+- `dt-fde-multica-runtime.json` is the opt-in, fail-closed managed runtime configuration. When `MULTICA_RUNTIME_CONFIG_SOURCE=diamond`, it is authoritative for the migrated non-secret settings and has no environment-variable fallback. See [Managed runtime configuration](runtime-config.md).
+
+For the prompt/feature-rule document, the effective precedence is:
 
 ```text
 FF_* environment override > Diamond JSON > YAML file > caller default

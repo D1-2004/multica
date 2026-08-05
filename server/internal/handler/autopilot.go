@@ -212,8 +212,8 @@ func (h *Handler) triggerToResponse(t db.AutopilotTrigger) AutopilotTriggerRespo
 	if t.Kind == "webhook" && t.WebhookToken.Valid && t.WebhookToken.String != "" {
 		path := webhookPathForToken(t.WebhookToken.String)
 		resp.WebhookPath = &path
-		if h.cfg.PublicURL != "" {
-			full := h.cfg.PublicURL + path
+		if publicURL := h.currentConfig().PublicURL; publicURL != "" {
+			full := publicURL + path
 			resp.WebhookURL = &full
 		}
 		provider := t.Provider

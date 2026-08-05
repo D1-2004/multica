@@ -410,7 +410,7 @@ func (h *Handler) VerifyCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Set HttpOnly auth cookie (browser clients) + CSRF cookie.
-	if err := auth.SetAuthCookies(w, tokenString); err != nil {
+	if err := auth.SetAuthCookiesForOrigin(w, tokenString, h.currentConfig().FrontendOrigin); err != nil {
 		slog.Warn("failed to set auth cookies", "error", err)
 	}
 
@@ -621,7 +621,7 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := auth.SetAuthCookies(w, tokenString); err != nil {
+	if err := auth.SetAuthCookiesForOrigin(w, tokenString, h.currentConfig().FrontendOrigin); err != nil {
 		slog.Warn("failed to set auth cookies", "error", err)
 	}
 
@@ -736,7 +736,7 @@ func (h *Handler) DingTalkLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := auth.SetAuthCookies(w, tokenString); err != nil {
+	if err := auth.SetAuthCookiesForOrigin(w, tokenString, h.currentConfig().FrontendOrigin); err != nil {
 		slog.Warn("failed to set auth cookies", "error", err)
 	}
 
@@ -850,7 +850,7 @@ func (h *Handler) LarkLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := auth.SetAuthCookies(w, tokenString); err != nil {
+	if err := auth.SetAuthCookiesForOrigin(w, tokenString, h.currentConfig().FrontendOrigin); err != nil {
 		slog.Warn("failed to set auth cookies", "error", err)
 	}
 
@@ -893,7 +893,7 @@ func (h *Handler) IssueCliToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
-	auth.ClearAuthCookies(w)
+	auth.ClearAuthCookiesForOrigin(w, h.currentConfig().FrontendOrigin)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
 }
 

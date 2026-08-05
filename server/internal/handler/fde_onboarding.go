@@ -65,11 +65,11 @@ func (h *Handler) ProvisionFDEOnboarding(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, "FDE Agent source is not configured")
 		return
 	}
-	if !h.cfg.FCE2B.Enabled || strings.TrimSpace(h.cfg.FCE2B.Template) == "" {
+	if !h.currentConfig().FCE2B.Enabled || strings.TrimSpace(h.currentConfig().FCE2B.Template) == "" {
 		writeError(w, http.StatusServiceUnavailable, "FDE FC runtime is not configured")
 		return
 	}
-	if err := h.cfg.FCE2B.Validate(); err != nil {
+	if err := h.currentConfig().FCE2B.Validate(); err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
@@ -102,8 +102,8 @@ func (h *Handler) ProvisionFDEOnboarding(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	model := ""
-	if len(h.cfg.FCE2B.LLMModels) > 0 {
-		model = h.cfg.FCE2B.LLMModels[0]
+	if len(h.currentConfig().FCE2B.LLMModels) > 0 {
+		model = h.currentConfig().FCE2B.LLMModels[0]
 	}
 	agent, created, err := h.ManagedAgent.Provision(r.Context(), workspace.ID, ownerID, runtime.ID, runtime.RuntimeMode, runtime.Provider, model)
 	if err != nil {
@@ -218,15 +218,16 @@ func (h *Handler) createFDEWorkspace(r *http.Request, userID pgtype.UUID, req FD
 }
 
 func (h *Handler) upsertFDERuntime(r *http.Request, workspaceID, ownerID pgtype.UUID) (db.AgentRuntime, error) {
+	cfg := h.currentConfig()
 	name := "FDE Runtime"
 	daemonID := pgtype.Text{String: "fc-e2b:fde:" + uuidToString(workspaceID), Valid: true}
 	// The managed FDE runtime contract is explicitly Hermes + DWS. Catalogued
 	// user runtimes use the verified template manifest instead.
 	provider := service.FCE2BProvider
 	metadata, err := json.Marshal(map[string]any{
-		"kind": service.FCE2BMetadataKind, "template": h.cfg.FCE2B.Template,
-		"template_id": h.cfg.FCE2B.Template, "template_name": name,
-		"capabilities": []string{provider, "dws"}, "timeout_seconds": h.cfg.FCE2B.TimeoutSeconds,
+		"kind": service.FCE2BMetadataKind, "template": cfg.FCE2B.Template,
+		"template_id": cfg.FCE2B.Template, "template_name": name,
+		"capabilities": []string{provider, "dws"}, "timeout_seconds": cfg.FCE2B.TimeoutSeconds,
 		"created_by": uuidToString(ownerID), "runner": service.FCE2BRunnerCommandForProvider(provider),
 		"managed_source_key": "fde-agent",
 	})
@@ -242,8 +243,9 @@ func (h *Handler) upsertFDERuntime(r *http.Request, workspaceID, ownerID pgtype.
 }
 
 func (h *Handler) fdeOnboardingConfigured() bool {
-	if h.ManagedAgent == nil || !h.ManagedAgent.Enabled() || !h.cfg.FCE2B.Enabled || strings.TrimSpace(h.cfg.FCE2B.Template) == "" || h.DingTalkRegistration == nil || h.DingTalkInstallations == nil {
+	cfg := h.currentConfig()
+	if h.ManagedAgent == nil || !h.ManagedAgent.Enabled() || !cfg.FCE2B.Enabled || strings.TrimSpace(cfg.FCE2B.Template) == "" || h.DingTalkRegistration == nil || h.DingTalkInstallations == nil {
 		return false
 	}
-	return h.cfg.FCE2B.Validate() == nil
+	return cfg.FCE2B.Validate() == nil
 }

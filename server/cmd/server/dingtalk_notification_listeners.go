@@ -20,23 +20,39 @@ import (
 const dingTalkNotificationTimeout = 8 * time.Second
 
 type dingTalkNotificationListener struct {
-	queries  *db.Queries
-	notifier dingtalk.PersonalNotificationClient
-	appURL   string
+	queries        *db.Queries
+	notifier       dingtalk.PersonalNotificationClient
+	appURL         string
+	appURLProvider func() string
 }
 
-func registerDingTalkNotificationListeners(bus *events.Bus, queries *db.Queries, notifier dingtalk.PersonalNotificationClient, appURL string) {
+func registerDingTalkNotificationListeners(bus *events.Bus, queries *db.Queries, notifier dingtalk.PersonalNotificationClient, appURL string, providers ...func() string) {
 	if bus == nil || queries == nil || notifier == nil || !notifier.IsConfigured() {
 		return
 	}
+	var appURLProvider func() string
+	if len(providers) > 0 {
+		appURLProvider = providers[0]
+	}
 	l := &dingTalkNotificationListener{
-		queries:  queries,
-		notifier: notifier,
-		appURL:   strings.TrimRight(strings.TrimSpace(appURL), "/"),
+		queries:        queries,
+		notifier:       notifier,
+		appURL:         strings.TrimRight(strings.TrimSpace(appURL), "/"),
+		appURLProvider: appURLProvider,
 	}
 	bus.Subscribe(protocol.EventInboxNew, l.handleInboxNew)
 	bus.Subscribe(protocol.EventInvitationCreated, l.handleInvitationCreated)
 	bus.Subscribe(protocol.EventMemberAdded, l.handleMemberAdded)
+}
+
+func (l *dingTalkNotificationListener) currentAppURL() string {
+	if l != nil && l.appURLProvider != nil {
+		return strings.TrimRight(strings.TrimSpace(l.appURLProvider()), "/")
+	}
+	if l == nil {
+		return ""
+	}
+	return l.appURL
 }
 
 func (l *dingTalkNotificationListener) handleInboxNew(e events.Event) {
@@ -318,27 +334,30 @@ func notificationRecipientFromUser(user db.User) dingtalk.PersonalNotificationRe
 }
 
 func (l *dingTalkNotificationListener) issueURL(workspaceSlug, issueID string) string {
-	if l.appURL == "" || workspaceSlug == "" {
+	appURL := l.currentAppURL()
+	if appURL == "" || workspaceSlug == "" {
 		return ""
 	}
 	if issueID == "" {
 		return l.workspaceURL(workspaceSlug)
 	}
-	return l.appURL + "/" + url.PathEscape(workspaceSlug) + "/issues/" + url.PathEscape(issueID)
+	return appURL + "/" + url.PathEscape(workspaceSlug) + "/issues/" + url.PathEscape(issueID)
 }
 
 func (l *dingTalkNotificationListener) workspaceURL(workspaceSlug string) string {
-	if l.appURL == "" || workspaceSlug == "" {
+	appURL := l.currentAppURL()
+	if appURL == "" || workspaceSlug == "" {
 		return ""
 	}
-	return l.appURL + "/" + url.PathEscape(workspaceSlug) + "/issues"
+	return appURL + "/" + url.PathEscape(workspaceSlug) + "/issues"
 }
 
 func (l *dingTalkNotificationListener) invitationURL(invitationID string) string {
-	if l.appURL == "" || invitationID == "" {
+	appURL := l.currentAppURL()
+	if appURL == "" || invitationID == "" {
 		return ""
 	}
-	return l.appURL + "/invite/" + url.PathEscape(invitationID)
+	return appURL + "/invite/" + url.PathEscape(invitationID)
 }
 
 func roleLabel(role string) string {

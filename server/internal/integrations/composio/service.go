@@ -99,11 +99,13 @@ type Config struct {
 	// CallbackBaseURL is the absolute, public base URL of THIS API, with no
 	// trailing slash (e.g. "https://multica.ai"). The Composio callback
 	// URL is built as CallbackBaseURL + CallbackPath. Required.
-	CallbackBaseURL string
+	CallbackBaseURL         string
+	CallbackBaseURLProvider func() string
 	// FrontendBaseURL is the web app base used to build the post-callback
 	// browser redirect (e.g. "https://multica.ai"). May be empty, in which
 	// case CallbackRedirect returns a site-relative path.
-	FrontendBaseURL string
+	FrontendBaseURL         string
+	FrontendBaseURLProvider func() string
 	// StateTTL overrides the default connect-state lifetime. Zero uses
 	// defaultStateTTL.
 	StateTTL time.Duration
@@ -121,13 +123,15 @@ const callbackPath = "/api/integrations/composio/callback"
 
 // Service is the Composio business-integration service.
 type Service struct {
-	sdk         SDK
-	store       Store
-	secret      []byte
-	callbackURL string
-	frontendURL string
-	stateTTL    time.Duration
-	now         func() time.Time
+	sdk                     SDK
+	store                   Store
+	secret                  []byte
+	callbackURL             string
+	callbackBaseURLProvider func() string
+	frontendURL             string
+	frontendBaseURLProvider func() string
+	stateTTL                time.Duration
+	now                     func() time.Time
 
 	// authCache holds the resolved toolkit_slug → auth_config_id map for the
 	// project. It is rebuilt from Composio's /auth_configs endpoint on first
@@ -151,7 +155,11 @@ func NewService(client SDK, store Store, cfg Config) (*Service, error) {
 	if len(cfg.StateSecret) == 0 {
 		return nil, errors.New("composio: StateSecret is required")
 	}
-	base := strings.TrimRight(strings.TrimSpace(cfg.CallbackBaseURL), "/")
+	callbackBaseURL := cfg.CallbackBaseURL
+	if cfg.CallbackBaseURLProvider != nil {
+		callbackBaseURL = cfg.CallbackBaseURLProvider()
+	}
+	base := strings.TrimRight(strings.TrimSpace(callbackBaseURL), "/")
 	if base == "" {
 		return nil, errors.New("composio: CallbackBaseURL is required")
 	}
@@ -169,16 +177,42 @@ func NewService(client SDK, store Store, cfg Config) (*Service, error) {
 		now = time.Now
 	}
 
+	frontendBaseURL := cfg.FrontendBaseURL
+	if cfg.FrontendBaseURLProvider != nil {
+		frontendBaseURL = cfg.FrontendBaseURLProvider()
+	}
 	return &Service{
-		sdk:          client,
-		store:        store,
-		secret:       cfg.StateSecret,
-		callbackURL:  base + callbackPath,
-		frontendURL:  strings.TrimRight(strings.TrimSpace(cfg.FrontendBaseURL), "/"),
-		stateTTL:     ttl,
-		now:          now,
-		authCacheTTL: authTTL,
+		sdk:                     client,
+		store:                   store,
+		secret:                  cfg.StateSecret,
+		callbackURL:             base + callbackPath,
+		callbackBaseURLProvider: cfg.CallbackBaseURLProvider,
+		frontendURL:             strings.TrimRight(strings.TrimSpace(frontendBaseURL), "/"),
+		frontendBaseURLProvider: cfg.FrontendBaseURLProvider,
+		stateTTL:                ttl,
+		now:                     now,
+		authCacheTTL:            authTTL,
 	}, nil
+}
+
+func (s *Service) currentCallbackURL() string {
+	if s != nil && s.callbackBaseURLProvider != nil {
+		return strings.TrimRight(strings.TrimSpace(s.callbackBaseURLProvider()), "/") + callbackPath
+	}
+	if s == nil {
+		return ""
+	}
+	return s.callbackURL
+}
+
+func (s *Service) currentFrontendURL() string {
+	if s != nil && s.frontendBaseURLProvider != nil {
+		return strings.TrimRight(strings.TrimSpace(s.frontendBaseURLProvider()), "/")
+	}
+	if s == nil {
+		return ""
+	}
+	return s.frontendURL
 }
 
 // Connection is the API-facing view of a local connection row. The Composio
@@ -265,7 +299,7 @@ func (s *Service) BeginConnect(ctx context.Context, userID pgtype.UUID, toolkitS
 	// Composio appends its own status / connected_account_id query params to
 	// the callback URL and preserves ours, so the signed state rides back to us
 	// on the redirect.
-	callbackURL := s.callbackURL + "?state=" + url.QueryEscape(state)
+	callbackURL := s.currentCallbackURL() + "?state=" + url.QueryEscape(state)
 
 	resp, err := s.sdk.CreateLink(ctx, sdk.CreateLinkRequest{
 		AuthConfigID: authConfigID,
@@ -466,7 +500,7 @@ func (s *Service) CallbackRedirect(slug string, success bool) string {
 	} else {
 		path = "/settings?tab=integrations&error=composio_connect_failed"
 	}
-	return s.frontendURL + path
+	return s.currentFrontendURL() + path
 }
 
 // rowToConnection maps a DB row to the API-facing Connection view.

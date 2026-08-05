@@ -26,12 +26,14 @@ const (
 
 type ClientConfig struct {
 	BaseURL           string
+	BaseURLProvider   func() string
 	ServiceCredential string
 	HTTPClient        *http.Client
 }
 
 type Client struct {
 	baseURL           *url.URL
+	baseURLProvider   func() string
 	targetIdentity    string
 	serviceCredential string
 	httpClient        *http.Client
@@ -226,18 +228,51 @@ func (e *RouterAPIError) Is(target error) bool {
 }
 
 func NewClient(config ClientConfig) (*Client, error) {
-	baseURL, err := url.Parse(strings.TrimSpace(config.BaseURL))
+	rawBaseURL := config.BaseURL
+	if config.BaseURLProvider != nil {
+		rawBaseURL = config.BaseURLProvider()
+	}
+	baseURL, canonicalTarget, err := normalizeRouterBaseURL(rawBaseURL)
+	if err != nil {
+		return nil, err
+	}
+	credential := strings.TrimSpace(config.ServiceCredential)
+	if credential == "" || strings.ContainsAny(credential, " \t\r\n") {
+		return nil, errors.New("agent message router service credential is required")
+	}
+	httpClient := config.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 10 * time.Second}
+	} else {
+		cloned := *httpClient
+		httpClient = &cloned
+	}
+	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	targetDigest := sha256.Sum256([]byte(canonicalTarget))
+	return &Client{
+		baseURL:           baseURL,
+		baseURLProvider:   config.BaseURLProvider,
+		targetIdentity:    fmt.Sprintf("router-target:v1:sha256:%x", targetDigest),
+		serviceCredential: credential,
+		httpClient:        httpClient,
+	}, nil
+}
+
+func normalizeRouterBaseURL(raw string) (*url.URL, string, error) {
+	baseURL, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" ||
 		(baseURL.Scheme != "http" && baseURL.Scheme != "https") ||
 		baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" ||
 		baseURL.RawPath != "" {
-		return nil, errors.New("agent message router base url is invalid")
+		return nil, "", errors.New("agent message router base url is invalid")
 	}
 	scheme := strings.ToLower(baseURL.Scheme)
 	hostname := strings.ToLower(baseURL.Hostname())
 	port := baseURL.Port()
 	if hostname == "" {
-		return nil, errors.New("agent message router base url is invalid")
+		return nil, "", errors.New("agent message router base url is invalid")
 	}
 	if (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
 		port = ""
@@ -254,34 +289,14 @@ func NewClient(config ClientConfig) (*Client, error) {
 	}
 	if basePath != "" &&
 		(!strings.HasPrefix(basePath, "/") || pathpkg.Clean(basePath) != basePath) {
-		return nil, errors.New("agent message router base url is invalid")
+		return nil, "", errors.New("agent message router base url is invalid")
 	}
 	baseURL.Scheme = scheme
 	baseURL.Host = host
 	baseURL.Path = basePath
-	credential := strings.TrimSpace(config.ServiceCredential)
-	if credential == "" || strings.ContainsAny(credential, " \t\r\n") {
-		return nil, errors.New("agent message router service credential is required")
-	}
 	baseURL.Path = strings.TrimRight(baseURL.Path, "/")
-	httpClient := config.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
-	} else {
-		cloned := *httpClient
-		httpClient = &cloned
-	}
-	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
 	canonicalTarget := scheme + "://" + host + basePath
-	targetDigest := sha256.Sum256([]byte(canonicalTarget))
-	return &Client{
-		baseURL:           baseURL,
-		targetIdentity:    fmt.Sprintf("router-target:v1:sha256:%x", targetDigest),
-		serviceCredential: credential,
-		httpClient:        httpClient,
-	}, nil
+	return baseURL, canonicalTarget, nil
 }
 
 func (c *Client) TargetIdentity() string {
@@ -685,7 +700,15 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader) (*
 	if c == nil || c.baseURL == nil || c.httpClient == nil {
 		return nil, errors.New("agent message router client is not configured")
 	}
-	target := *c.baseURL
+	baseURL := c.baseURL
+	if c.baseURLProvider != nil {
+		resolved, _, err := normalizeRouterBaseURL(c.baseURLProvider())
+		if err != nil {
+			return nil, err
+		}
+		baseURL = resolved
+	}
+	target := *baseURL
 	target.Path = strings.TrimRight(target.Path, "/") + path
 	request, err := http.NewRequestWithContext(ctx, method, target.String(), body)
 	if err != nil {

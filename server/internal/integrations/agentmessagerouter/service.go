@@ -93,16 +93,18 @@ type DispatchEndpointStore interface {
 }
 
 type DispatchEndpointServiceConfig struct {
-	PublicBaseURL string
-	Keyring       *DispatchKeyring
-	Random        io.Reader
+	PublicBaseURL         string
+	PublicBaseURLProvider func() string
+	Keyring               *DispatchKeyring
+	Random                io.Reader
 }
 
 type DispatchEndpointService struct {
-	store        DispatchEndpointStore
-	publicOrigin *url.URL
-	keyring      *DispatchKeyring
-	random       io.Reader
+	store                 DispatchEndpointStore
+	publicOrigin          *url.URL
+	publicBaseURLProvider func() string
+	keyring               *DispatchKeyring
+	random                io.Reader
 }
 
 type DBDispatchEndpointStore struct {
@@ -161,16 +163,38 @@ func NewDispatchEndpointService(store DispatchEndpointStore, config DispatchEndp
 	if store == nil || config.Keyring == nil || config.Random == nil {
 		return nil, errors.New("agent dispatch endpoint service is not configured")
 	}
-	publicOrigin, err := canonicalHTTPSOrigin(config.PublicBaseURL)
+	publicBaseURL := config.PublicBaseURL
+	if config.PublicBaseURLProvider != nil {
+		publicBaseURL = config.PublicBaseURLProvider()
+	}
+	publicOrigin, err := canonicalHTTPSOrigin(publicBaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("agent dispatch endpoint service is not configured: %w", err)
 	}
 	return &DispatchEndpointService{
-		store:        store,
-		publicOrigin: publicOrigin,
-		keyring:      config.Keyring,
-		random:       config.Random,
+		store:                 store,
+		publicOrigin:          publicOrigin,
+		publicBaseURLProvider: config.PublicBaseURLProvider,
+		keyring:               config.Keyring,
+		random:                config.Random,
 	}, nil
+}
+
+func (s *DispatchEndpointService) currentPublicOrigin() (*url.URL, error) {
+	if s == nil {
+		return nil, errors.New("agent dispatch endpoint service is not configured")
+	}
+	if s.publicBaseURLProvider == nil {
+		if s.publicOrigin == nil {
+			return nil, errors.New("agent dispatch endpoint service is not configured")
+		}
+		return s.publicOrigin, nil
+	}
+	publicOrigin, err := canonicalHTTPSOrigin(s.publicBaseURLProvider())
+	if err != nil {
+		return nil, fmt.Errorf("agent dispatch endpoint service is not configured: %w", err)
+	}
+	return publicOrigin, nil
 }
 
 func (s *DispatchEndpointService) Ensure(
@@ -179,8 +203,12 @@ func (s *DispatchEndpointService) Ensure(
 	agentID pgtype.UUID,
 	actorUserID pgtype.UUID,
 ) (DispatchEndpoint, error) {
-	if s == nil || s.store == nil || s.publicOrigin == nil || s.keyring == nil || s.random == nil {
+	if s == nil || s.store == nil || s.keyring == nil || s.random == nil {
 		return DispatchEndpoint{}, errors.New("agent dispatch endpoint service is not configured")
+	}
+	publicOrigin, err := s.currentPublicOrigin()
+	if err != nil {
+		return DispatchEndpoint{}, err
 	}
 	if !workspaceID.Valid || !agentID.Valid || !actorUserID.Valid {
 		return DispatchEndpoint{}, errors.New("agent dispatch endpoint ownership is invalid")
@@ -205,18 +233,22 @@ func (s *DispatchEndpointService) Ensure(
 	if err != nil {
 		return DispatchEndpoint{}, fmt.Errorf("ensure agent dispatch endpoint: %w", err)
 	}
-	return normalizeDispatchEndpoint(result, workspaceID, agentID, s.publicOrigin)
+	return normalizeDispatchEndpoint(result, workspaceID, agentID, publicOrigin)
 }
 
 func (s *DispatchEndpointService) Get(ctx context.Context, agentID pgtype.UUID) (DispatchEndpoint, error) {
 	if s == nil || s.store == nil || !agentID.Valid {
 		return DispatchEndpoint{}, errors.New("agent dispatch endpoint service is not configured")
 	}
+	publicOrigin, err := s.currentPublicOrigin()
+	if err != nil {
+		return DispatchEndpoint{}, err
+	}
 	result, err := s.store.GetAgentDispatchEndpoint(ctx, agentID)
 	if err != nil {
 		return DispatchEndpoint{}, err
 	}
-	return normalizeDispatchEndpoint(result, result.WorkspaceID, agentID, s.publicOrigin)
+	return normalizeDispatchEndpoint(result, result.WorkspaceID, agentID, publicOrigin)
 }
 
 func normalizeDispatchEndpoint(
@@ -240,29 +272,33 @@ func normalizeDispatchEndpoint(
 }
 
 type ServiceConfig struct {
-	PublicBaseURL   string
-	DBaseBindingURL string
-	CallbackTTL     time.Duration
-	Keyring         *DispatchKeyring
-	Random          io.Reader
-	Now             func() time.Time
-	IdentityStore   IdentityStore
-	Endpoints       *DispatchEndpointService
-	Metrics         *obsmetrics.BusinessMetrics
+	PublicBaseURL           string
+	PublicBaseURLProvider   func() string
+	DBaseBindingURL         string
+	DBaseBindingURLProvider func() string
+	CallbackTTL             time.Duration
+	Keyring                 *DispatchKeyring
+	Random                  io.Reader
+	Now                     func() time.Time
+	IdentityStore           IdentityStore
+	Endpoints               *DispatchEndpointService
+	Metrics                 *obsmetrics.BusinessMetrics
 }
 
 type Service struct {
-	store           Store
-	router          Router
-	publicOrigin    *url.URL
-	dbaseBindingURL *url.URL
-	callbackTTL     time.Duration
-	keyring         *DispatchKeyring
-	random          io.Reader
-	now             func() time.Time
-	identityStore   IdentityStore
-	endpoints       *DispatchEndpointService
-	metrics         *obsmetrics.BusinessMetrics
+	store                   Store
+	router                  Router
+	publicOrigin            *url.URL
+	publicBaseURLProvider   func() string
+	dbaseBindingURL         *url.URL
+	dbaseBindingURLProvider func() string
+	callbackTTL             time.Duration
+	keyring                 *DispatchKeyring
+	random                  io.Reader
+	now                     func() time.Time
+	identityStore           IdentityStore
+	endpoints               *DispatchEndpointService
+	metrics                 *obsmetrics.BusinessMetrics
 }
 
 type BeginWorkspace struct {
@@ -340,11 +376,19 @@ func NewService(store Store, router Router, config ServiceConfig) (*Service, err
 		config.IdentityStore == nil || config.Endpoints == nil {
 		return nil, ErrNotConfigured
 	}
-	publicOrigin, err := canonicalHTTPSOrigin(config.PublicBaseURL)
+	publicBaseURL := config.PublicBaseURL
+	if config.PublicBaseURLProvider != nil {
+		publicBaseURL = config.PublicBaseURLProvider()
+	}
+	publicOrigin, err := canonicalHTTPSOrigin(publicBaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid public origin", ErrNotConfigured)
 	}
-	dbaseBindingURL, err := parseDBaseBindingURL(config.DBaseBindingURL)
+	dbaseBindingURLValue := config.DBaseBindingURL
+	if config.DBaseBindingURLProvider != nil {
+		dbaseBindingURLValue = config.DBaseBindingURLProvider()
+	}
+	dbaseBindingURL, err := parseDBaseBindingURL(dbaseBindingURLValue)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid DBase binding URL", ErrNotConfigured)
 	}
@@ -357,18 +401,54 @@ func NewService(store Store, router Router, config ServiceConfig) (*Service, err
 		now = time.Now
 	}
 	return &Service{
-		store:           store,
-		router:          router,
-		publicOrigin:    publicOrigin,
-		dbaseBindingURL: dbaseBindingURL,
-		callbackTTL:     callbackTTL,
-		keyring:         config.Keyring,
-		random:          config.Random,
-		now:             now,
-		identityStore:   config.IdentityStore,
-		endpoints:       config.Endpoints,
-		metrics:         config.Metrics,
+		store:                   store,
+		router:                  router,
+		publicOrigin:            publicOrigin,
+		publicBaseURLProvider:   config.PublicBaseURLProvider,
+		dbaseBindingURL:         dbaseBindingURL,
+		dbaseBindingURLProvider: config.DBaseBindingURLProvider,
+		callbackTTL:             callbackTTL,
+		keyring:                 config.Keyring,
+		random:                  config.Random,
+		now:                     now,
+		identityStore:           config.IdentityStore,
+		endpoints:               config.Endpoints,
+		metrics:                 config.Metrics,
 	}, nil
+}
+
+func (s *Service) currentPublicOrigin() (*url.URL, error) {
+	if s == nil {
+		return nil, ErrNotConfigured
+	}
+	if s.publicBaseURLProvider == nil {
+		if s.publicOrigin == nil {
+			return nil, ErrNotConfigured
+		}
+		return s.publicOrigin, nil
+	}
+	publicOrigin, err := canonicalHTTPSOrigin(s.publicBaseURLProvider())
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid public origin", ErrNotConfigured)
+	}
+	return publicOrigin, nil
+}
+
+func (s *Service) currentDBaseBindingURL() (*url.URL, error) {
+	if s == nil {
+		return nil, ErrNotConfigured
+	}
+	if s.dbaseBindingURLProvider == nil {
+		if s.dbaseBindingURL == nil {
+			return nil, ErrNotConfigured
+		}
+		return s.dbaseBindingURL, nil
+	}
+	dbaseBindingURL, err := parseDBaseBindingURL(s.dbaseBindingURLProvider())
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid DBase binding URL", ErrNotConfigured)
+	}
+	return dbaseBindingURL, nil
 }
 
 func (s *Service) GetMessageBindingStatus(
@@ -468,6 +548,14 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 	if s == nil || s.store == nil || s.router == nil || s.identityStore == nil || s.keyring == nil ||
 		s.random == nil || s.endpoints == nil {
 		return BeginResult{}, ErrNotConfigured
+	}
+	publicOrigin, err := s.currentPublicOrigin()
+	if err != nil {
+		return BeginResult{}, err
+	}
+	dbaseBindingURL, err := s.currentDBaseBindingURL()
+	if err != nil {
+		return BeginResult{}, err
 	}
 	agentName, err := normalizeBindingDisplayName("agent name", params.Agent.Name)
 	if err != nil {
@@ -597,7 +685,7 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		}
 		bindingID = identityAttempt.ID
 	}
-	callbackURL := *s.publicOrigin
+	callbackURL := *publicOrigin
 	callbackURL.Path = "/api/integrations/dingtalk/account-bindings/" + util.UUIDToString(bindingID) + "/callback"
 	fragment := url.Values{
 		"bindingMode":   {string(params.BindingMode)},
@@ -611,7 +699,7 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 		"workspaceName": {descriptor.Workspace.Name},
 		"dispatchPath":  {descriptor.DispatchPath},
 	}
-	qrCodeURL := s.dbaseBindingURL.String() + "#" + fragment.Encode()
+	qrCodeURL := dbaseBindingURL.String() + "#" + fragment.Encode()
 	return BeginResult{
 		BindingID: util.UUIDToString(bindingID),
 		QRCodeURL: qrCodeURL,
@@ -623,6 +711,10 @@ func (s *Service) dispatchEndpointForAgent(
 	ctx context.Context,
 	workspaceID, agentID pgtype.UUID,
 ) (string, string, error) {
+	publicOrigin, err := s.currentPublicOrigin()
+	if err != nil {
+		return "", "", err
+	}
 	if store, ok := s.store.(robotEndpointStore); ok {
 		row, err := store.GetActiveDingTalkBotInstallationByAgent(ctx, db.GetActiveDingTalkBotInstallationByAgentParams{
 			WorkspaceID: workspaceID,
@@ -636,7 +728,7 @@ func (s *Service) dispatchEndpointForAgent(
 				return "", "", errors.New("invalid robot dispatch endpoint")
 			}
 			if strings.TrimSpace(cfg.EndpointID) != "" {
-				dispatchURL, err := BuildDispatchURL(s.publicOrigin.String(), cfg.EndpointID)
+				dispatchURL, err := BuildDispatchURL(publicOrigin.String(), cfg.EndpointID)
 				return cfg.EndpointID, dispatchURL, err
 			}
 		} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -647,7 +739,7 @@ func (s *Service) dispatchEndpointForAgent(
 	if err != nil {
 		return "", "", err
 	}
-	dispatchURL, err := BuildDispatchURL(s.publicOrigin.String(), endpointID)
+	dispatchURL, err := BuildDispatchURL(publicOrigin.String(), endpointID)
 	return endpointID, dispatchURL, err
 }
 
@@ -1148,10 +1240,11 @@ func (s *Service) subscriptionVerificationOutcome(subscription Subscription, sou
 }
 
 func (s *Service) subscriptionDispatchTargetMatches(dispatchTarget, endpointID string) bool {
-	publicBaseURL := ""
-	if s != nil && s.publicOrigin != nil {
-		publicBaseURL = s.publicOrigin.String()
+	publicOrigin, err := s.currentPublicOrigin()
+	if err != nil {
+		return false
 	}
+	publicBaseURL := publicOrigin.String()
 	return SubscriptionDispatchTargetMatches(dispatchTarget, endpointID, publicBaseURL)
 }
 

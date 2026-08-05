@@ -317,7 +317,7 @@ func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	installationIDStr := q.Get("installation_id")
 	state := q.Get("state")
-	frontend := strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN"))
+	frontend := strings.TrimSpace(h.currentConfig().FrontendOrigin)
 	if frontend == "" {
 		frontend = "http://localhost:3000"
 	}

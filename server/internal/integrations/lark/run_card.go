@@ -435,6 +435,9 @@ type RunCardPublisherConfig struct {
 	// AppURL is the Multica web app origin (MULTICA_APP_URL) used for
 	// the card's "open in Multica" button. Empty omits the button.
 	AppURL string
+	// AppURLProvider is authoritative when configured and is resolved when a
+	// card is rendered so deployment configuration changes do not require a restart.
+	AppURLProvider func() string
 	// PatchMinInterval throttles task:message-driven patches per task.
 	PatchMinInterval time.Duration
 	// DetailEventLimit caps the collapsible panel's event lines.
@@ -504,6 +507,16 @@ type RunCardPublisher struct {
 	// tasks, non-Lark origins, missing bindings) so the task:message
 	// firehose costs one map lookup after the first resolution.
 	negative map[string]struct{}
+}
+
+func (p *RunCardPublisher) currentAppURL() string {
+	if p != nil && p.cfg.AppURLProvider != nil {
+		return strings.TrimRight(strings.TrimSpace(p.cfg.AppURLProvider()), "/")
+	}
+	if p == nil {
+		return ""
+	}
+	return strings.TrimRight(strings.TrimSpace(p.cfg.AppURL), "/")
 }
 
 // runCardNegativeCap bounds the negative cache. On overflow the whole
@@ -912,8 +925,8 @@ func (p *RunCardPublisher) resolveTarget(ctx context.Context, w *runCardWorker, 
 			// The issue-detail route is workspace-scoped
 			// (/{workspaceSlug}/issues/{id}); a root-level /issues/{id}
 			// would 404 ("issues" is a reserved slug).
-			if p.cfg.AppURL != "" && ws.Slug != "" {
-				issueURL = strings.TrimRight(p.cfg.AppURL, "/") + "/" + url.PathEscape(ws.Slug) + "/issues/" + url.PathEscape(identifier)
+			if appURL := p.currentAppURL(); appURL != "" && ws.Slug != "" {
+				issueURL = appURL + "/" + url.PathEscape(ws.Slug) + "/issues/" + url.PathEscape(identifier)
 			}
 		}
 	}
