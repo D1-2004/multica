@@ -26,6 +26,17 @@ type taskRuntimeLaunchLease struct {
 	expiresAt time.Time
 }
 
+type taskRuntimeLaunchLeaseContextKey struct{}
+
+func withTaskRuntimeLaunchLease(ctx context.Context, lease taskRuntimeLaunchLease) context.Context {
+	return context.WithValue(ctx, taskRuntimeLaunchLeaseContextKey{}, lease)
+}
+
+func taskRuntimeLaunchLeaseFromContext(ctx context.Context) (taskRuntimeLaunchLease, bool) {
+	lease, ok := ctx.Value(taskRuntimeLaunchLeaseContextKey{}).(taskRuntimeLaunchLease)
+	return lease, ok && lease.taskID.Valid && lease.token.Valid
+}
+
 type taskRuntimeLaunchLeaseStore interface {
 	Acquire(ctx context.Context, taskID pgtype.UUID, ttl time.Duration) (taskRuntimeLaunchLease, bool, error)
 	Renew(ctx context.Context, lease taskRuntimeLaunchLease, ttl time.Duration) (time.Time, bool, error)

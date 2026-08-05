@@ -217,6 +217,23 @@ func (e *ASBHTTPError) Error() string {
 	return fmt.Sprintf("ASB %s failed with HTTP %d (request_id=%s)", e.Operation, e.StatusCode, e.RequestID)
 }
 
+func (e *ASBHTTPError) runtimeStartUserDetail() string {
+	if e == nil {
+		return ""
+	}
+	diagnostics := make([]string, 0, 2)
+	if e.ErrorCode != "" {
+		diagnostics = append(diagnostics, "code="+e.ErrorCode)
+	}
+	if e.ErrorMessage != "" {
+		diagnostics = append(diagnostics, "message="+e.ErrorMessage)
+	}
+	if len(diagnostics) == 0 {
+		return e.Error()
+	}
+	return e.Error() + ": " + strings.Join(diagnostics, "; ")
+}
+
 func NewASBClient(cfg ASBClientConfig) (*ASBClient, error) {
 	rawBaseURL := strings.TrimSpace(cfg.BaseURL)
 	if rawBaseURL == "" {
@@ -706,7 +723,8 @@ func (c *ASBClient) Exec(ctx context.Context, endpoint *ASBEndpoint, input ASBEx
 
 	response, err := c.execClient.Do(httpRequest)
 	if err != nil {
-		return nil, fmt.Errorf("ASB exec request failed: %w", err)
+		requestErr := fmt.Errorf("ASB exec request failed: %w", err)
+		return nil, withRuntimeStartUserDetail(requestErr, requestErr.Error())
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -888,7 +906,8 @@ func (c *ASBClient) doLifecycleJSONVia(
 
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("ASB %s request failed: %w", operation, err)
+		requestErr := fmt.Errorf("ASB %s request failed: %w", operation, err)
+		return withRuntimeStartUserDetail(requestErr, requestErr.Error())
 	}
 	defer response.Body.Close()
 	if !containsStatus(acceptedStatusCodes, response.StatusCode) {

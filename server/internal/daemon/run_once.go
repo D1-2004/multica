@@ -8,12 +8,14 @@ import (
 )
 
 type RunOnceOptions struct {
-	RuntimeID      string
-	DaemonToken    string
-	Provider       string
-	RuntimeName    string
-	FCE2BColdStart bool
-	TargetTaskID   string
+	RuntimeID           string
+	DaemonToken         string
+	Provider            string
+	RuntimeName         string
+	FCE2BColdStart      bool
+	TargetTaskID        string
+	RuntimeStartAttempt string
+	StartupProtocol     string
 }
 
 func (d *Daemon) RunOnce(ctx context.Context, opts RunOnceOptions) error {
@@ -22,6 +24,8 @@ func (d *Daemon) RunOnce(ctx context.Context, opts RunOnceOptions) error {
 	opts.Provider = strings.TrimSpace(opts.Provider)
 	opts.RuntimeName = strings.TrimSpace(opts.RuntimeName)
 	opts.TargetTaskID = strings.TrimSpace(opts.TargetTaskID)
+	opts.RuntimeStartAttempt = strings.TrimSpace(opts.RuntimeStartAttempt)
+	opts.StartupProtocol = strings.TrimSpace(opts.StartupProtocol)
 	if opts.RuntimeID == "" {
 		return fmt.Errorf("runtime id is required")
 	}
@@ -50,8 +54,10 @@ func (d *Daemon) RunOnce(ctx context.Context, opts RunOnceOptions) error {
 
 	d.seedRunOnceRuntime(opts.RuntimeID, opts.RuntimeName, opts.Provider)
 	task, err := d.client.ClaimTaskWithOptions(runCtx, opts.RuntimeID, ClaimTaskOptions{
-		FCE2BColdStart: opts.FCE2BColdStart,
-		TargetTaskID:   opts.TargetTaskID,
+		FCE2BColdStart:      opts.FCE2BColdStart,
+		TargetTaskID:        opts.TargetTaskID,
+		RuntimeStartAttempt: opts.RuntimeStartAttempt,
+		StartupProtocol:     opts.StartupProtocol,
 	})
 	if err != nil {
 		return fmt.Errorf("claim task: %w", err)

@@ -674,10 +674,10 @@ func TestVerifyStableTemplateRunsNativeSmokeAndChecksManifest(t *testing.T) {
 			"schema_version":3,
 			"sandbox_backends":["aliyun_fc","asb"],
 			"providers":["hermes","opencode","pi"],
-			"capabilities":["dws","dws.im_event","mcp"],
+			"capabilities":["dws","dws.im_event","mcp","runtime_start_events_v1"],
 			"capabilities_by_backend":{
-				"aliyun_fc":["dws","dws.im_event","mcp"],
-				"asb":["dws","dws.im_event","mcp","a1","mw","buc"]
+				"aliyun_fc":["dws","dws.im_event","mcp","runtime_start_events_v1"],
+				"asb":["dws","dws.im_event","mcp","runtime_start_events_v1","a1","mw","buc"]
 			},
 			"identity_modes_by_backend":{
 				"aliyun_fc":["agent_identity"],
@@ -707,9 +707,9 @@ func TestVerifyStableTemplateRunsNativeSmokeAndChecksManifest(t *testing.T) {
 		BuildID:         "build-1",
 		Template:        "multica-stable",
 		Status:          "READY",
-		ManifestVersion: 2,
+		ManifestVersion: 3,
 		Providers:       []string{"hermes", "opencode", "pi"},
-		Capabilities:    []string{"dws", "dws.im_event", "mcp"},
+		Capabilities:    []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
 		ComponentVersions: map[string]string{
 			"hermes":   "0.19.0",
 			"opencode": "v1.18.4",
@@ -759,9 +759,9 @@ func TestVerifyStableTemplateSmokeFailureRejectsCandidate(t *testing.T) {
 		BuildID:         "build-1",
 		Template:        "multica-stable",
 		Status:          "READY",
-		ManifestVersion: 2,
+		ManifestVersion: 3,
 		Providers:       []string{"hermes", "opencode", "pi"},
-		Capabilities:    []string{"dws", "dws.im_event", "mcp"},
+		Capabilities:    []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
 		RunnerProtocol:  "root-log-v1",
 	})
 	if err == nil || !strings.Contains(err.Error(), "runtime-smoke-test failed") {

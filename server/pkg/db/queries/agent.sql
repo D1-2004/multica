@@ -650,6 +650,19 @@ WHERE id = @task_id
   )
 RETURNING delivered_comment_ids;
 
+-- name: LockAgentTaskClaimFinalization :one
+-- Serialize claim finalization with Runtime startup failure. Both paths lock
+-- the task row before touching the startup-attempt row, so exactly one can
+-- commit and the lock order stays consistent.
+SELECT id
+FROM agent_task_queue
+WHERE id = @task_id
+  AND runtime_id = @runtime_id
+  AND status = 'dispatched'
+  AND started_at IS NULL
+  AND dispatched_at = @dispatched_at
+FOR UPDATE;
+
 -- name: RequeueAgentTaskAfterClaimFailure :one
 -- Claim finalization (task token + optional comment receipt) failed before any
 -- response bytes were written. Return only that exact claim generation to the
