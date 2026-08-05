@@ -110,17 +110,14 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 	// Do not include ExternalIdentity: the token has its own dedicated private
 	// task-context field and must never be duplicated in a JSON snapshot.
 	payload := map[string]any{
-		"dispatch_schema_version":             c.SchemaVersion,
-		"dispatch_source":                     c.Source,
-		"dispatch_domain":                     c.Event.Domain,
-		"dispatch_type":                       c.Event.Type,
-		"dispatch_event_data":                 c.Event.Data,
-		protocol.DispatchSurfaceJSONKey:        c.Surface,
-		protocol.DispatchOutboundJSONKey:       c.Outbound,
-		"dispatch_idempotency_key":            idempotencyKey,
-	}
-	if strings.TrimSpace(c.ContextPrompt) != "" {
-		payload[protocol.DispatchContextPromptJSONKey] = c.ContextPrompt
+		"dispatch_schema_version":         c.SchemaVersion,
+		"dispatch_source":                 c.Source,
+		"dispatch_domain":                 c.Event.Domain,
+		"dispatch_type":                   c.Event.Type,
+		"dispatch_event_data":             c.Event.Data,
+		protocol.DispatchSurfaceJSONKey: c.Surface,
+		protocol.DispatchOutboundJSONKey: c.Outbound,
+		"dispatch_idempotency_key":        idempotencyKey,
 	}
 	if c.ExternalIdentity.ContextToken != "" {
 		payload[protocol.AgentIdentityContextTokenExpiresAtJSONKey] = c.ExternalIdentity.ExpiresAt
@@ -179,7 +176,7 @@ func (h *Handler) handleAgentDispatchV2(
 		return
 	}
 	command.DispatchEndpointID = uuidToString(dispatchContext.EndpointNamespaceID)
-	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext)
+	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext, h.FeatureFlags)
 	if err != nil {
 		slog.Error("MULTICA_AGENT_DISPATCH_REQUEST",
 			"outcome", "failed",
@@ -207,6 +204,8 @@ func (h *Handler) handleAgentDispatchV2(
 		"identityMode", "dispatch_endpoint_actor",
 		"serverOutboundSuppressed", plan.SuppressServerOutbound,
 		"displayBytes", len(plan.Prompt.DisplayContent),
+		"runtimeBytes", len(plan.Prompt.RuntimePrompt),
+		"workflowBytes", len(plan.Prompt.WorkflowPrompt),
 	)
 	if command.AgentID != "" {
 		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(command.AgentID), "agentId")
@@ -339,23 +338,15 @@ type AgentDispatchV2Request struct {
 	Event              DispatchEvent                 `json:"event"`
 	Surface            DispatchSurface               `json:"surface"`
 	Outbound           DispatchOutbound              `json:"outbound"`
-	ContextPrompt      string                        `json:"contextPrompt,omitempty"`
 	ExternalIdentity   AgentDispatchExternalIdentity `json:"externalIdentity"`
 	CompletionCallback *DispatchCompletionCallback   `json:"completionCallback,omitempty"`
 }
 
 func (r AgentDispatchV2Request) DispatchCommand() DispatchCommand {
 	return DispatchCommand{
-		SchemaVersion:      r.SchemaVersion,
-		AgentID:            r.AgentID,
-		Continuation:       r.Continuation,
-		Source:             r.Source,
-		Event:              r.Event,
-		Surface:            r.Surface,
-		Outbound:           r.Outbound,
-		ContextPrompt:      r.ContextPrompt,
-		ExternalIdentity:   r.ExternalIdentity,
-		CompletionCallback: r.CompletionCallback,
+		SchemaVersion: r.SchemaVersion, AgentID: r.AgentID, Continuation: r.Continuation,
+		Source: r.Source, Event: r.Event, Surface: r.Surface, Outbound: r.Outbound,
+		ExternalIdentity: r.ExternalIdentity, CompletionCallback: r.CompletionCallback,
 	}
 }
 

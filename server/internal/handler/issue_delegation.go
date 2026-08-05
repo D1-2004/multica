@@ -49,7 +49,6 @@ type issueDelegationPrivateContext struct {
 	Type          string            `json:"dispatch_type"`
 	EventData     DispatchEventData `json:"dispatch_event_data"`
 	Outbound      DispatchOutbound  `json:"dispatch_outbound"`
-	ContextPrompt string            `json:"dispatch_context_prompt"`
 
 	IdentityContextToken          string `json:"agent_identity_context_token"`
 	IdentityContextTokenExpiresAt int64  `json:"agent_identity_context_token_expires_at"`
@@ -151,9 +150,8 @@ func delegatedIssueDispatch(
 			Type:   private.Type,
 			Data:   private.EventData,
 		},
-		Surface:       DispatchSurface{Type: protocol.DispatchSurfaceTypeIssue},
-		Outbound:      private.Outbound,
-		ContextPrompt: private.ContextPrompt,
+		Surface: DispatchSurface{Type: protocol.DispatchSurfaceTypeIssue},
+		Outbound: private.Outbound,
 		ExternalIdentity: AgentDispatchExternalIdentity{
 			ContextToken: private.IdentityContextToken,
 			ExpiresAt:    private.IdentityContextTokenExpiresAt,

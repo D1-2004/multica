@@ -16,7 +16,8 @@ func TestHTTPCallbackTaskContextCarriesDispatchPolicyAndExternalIdentity(t *test
 		"dispatch_schema_version":"2.0",
 		"dispatch_source":{"platform":"dingtalk","type":"robot"},
 		"dispatch_surface":{"type":"chat"},
-		"dispatch_outbound":{"mode":"dws","replyTo":"latest_message"}
+		"dispatch_outbound":{"mode":"dws","replyTo":"latest_message"},
+		"dispatch_workflow_prompt":"trusted DWS workflow"
 	}`)
 	input := HTTPCallbackMessage{
 		ConversationID:       "conversation-1",
@@ -61,6 +62,7 @@ func TestHTTPCallbackTaskContextCarriesDispatchPolicyAndExternalIdentity(t *test
 	for _, key := range []string{
 		protocol.DispatchSurfaceJSONKey,
 		protocol.DispatchOutboundJSONKey,
+		protocol.DispatchWorkflowPromptJSONKey,
 	} {
 		if _, ok := payload[key]; !ok {
 			t.Fatalf("task context missing %q: %s", key, contextJSON)
