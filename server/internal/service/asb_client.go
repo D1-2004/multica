@@ -114,8 +114,7 @@ type asbSandboxPage struct {
 }
 
 type asbSandboxListFilter struct {
-	States   []string
-	Metadata string
+	States []string
 }
 
 type ASBSandboxQuota struct {
@@ -386,20 +385,28 @@ func (c *ASBClient) ListSandboxes(ctx context.Context, states ...string) ([]ASBS
 	return c.listSandboxes(ctx, asbSandboxListFilter{States: states})
 }
 
-// ListSandboxesByMetadata scopes inventory reads to one exact metadata pair.
-// Multica uses this to distinguish task sandboxes from the identity source and
-// unrelated tenant workloads before making a capacity decision.
-func (c *ASBClient) ListSandboxesByMetadata(
-	ctx context.Context,
-	key string,
-	value string,
-) ([]ASBSandbox, error) {
-	key = strings.TrimSpace(key)
-	value = strings.TrimSpace(value)
-	if key == "" || value == "" || strings.ContainsAny(key, "=&") {
-		return nil, errors.New("ASB sandbox metadata filter is invalid")
+// ListLiveSandboxes explicitly queries every lifecycle state that can still
+// consume tenant capacity. The hosted OpenSandbox API uses the same title-case
+// state enums returned by lifecycle responses. It accepts only one effective
+// state per request, so merge the paginated results locally.
+func (c *ASBClient) ListLiveSandboxes(ctx context.Context) ([]ASBSandbox, error) {
+	states := []string{"Pending", "Running", "Paused"}
+	sandboxes := make([]ASBSandbox, 0)
+	seen := make(map[string]struct{})
+	for _, state := range states {
+		stateSandboxes, err := c.ListSandboxes(ctx, state)
+		if err != nil {
+			return nil, fmt.Errorf("list %s ASB sandboxes: %w", strings.ToLower(state), err)
+		}
+		for _, sandbox := range stateSandboxes {
+			if _, exists := seen[sandbox.ID]; exists {
+				continue
+			}
+			seen[sandbox.ID] = struct{}{}
+			sandboxes = append(sandboxes, sandbox)
+		}
 	}
-	return c.listSandboxes(ctx, asbSandboxListFilter{Metadata: key + "=" + value})
+	return sandboxes, nil
 }
 
 func (c *ASBClient) listSandboxes(
@@ -417,9 +424,6 @@ func (c *ASBClient) listSandboxes(
 			if normalized := strings.TrimSpace(state); normalized != "" {
 				query.Add("state", normalized)
 			}
-		}
-		if filter.Metadata != "" {
-			query.Set("metadata", filter.Metadata)
 		}
 		var response asbSandboxPage
 		if err := c.doLifecycleJSON(
