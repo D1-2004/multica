@@ -242,13 +242,19 @@ func TestASBClientListLiveSandboxesQueriesActiveStatesSeparatelyWithoutMetadata(
 		if len(states) != 1 {
 			t.Fatalf("state filters = %#v, want exactly one", states)
 		}
-		state := states[0]
-		switch state {
-		case "Pending", "Running", "Paused":
+		queryState := states[0]
+		var responseState string
+		switch queryState {
+		case "pending":
+			responseState = "Pending"
+		case "running":
+			responseState = "Running"
+		case "paused":
+			responseState = "Paused"
 		default:
-			t.Fatalf("state filter = %q", state)
+			t.Fatalf("state filter = %q", queryState)
 		}
-		requestCounts[state]++
+		requestCounts[queryState]++
 		if got := request.URL.Query().Get("metadata"); got != "" {
 			t.Fatalf("metadata filter = %q, want empty", got)
 		}
@@ -256,7 +262,7 @@ func TestASBClientListLiveSandboxesQueriesActiveStatesSeparatelyWithoutMetadata(
 		_, _ = fmt.Fprintf(response, `{
 			"sandboxInfos":[{"id":"sandbox-%s","status":{"state":"%s"},"createdAt":"2026-08-04T05:00:00Z"}],
 			"pagination":{"page":1,"pageSize":100,"total":1,"hasNextPage":false,"hasPreviousPage":false}
-		}`, strings.ToLower(state), state)
+		}`, queryState, responseState)
 	}))
 	defer server.Close()
 	client := newTestASBClient(t, server)
@@ -269,7 +275,7 @@ func TestASBClientListLiveSandboxesQueriesActiveStatesSeparatelyWithoutMetadata(
 		sandboxes[1].ID != "sandbox-running" || sandboxes[2].ID != "sandbox-paused" {
 		t.Fatalf("sandboxes = %#v", sandboxes)
 	}
-	for _, state := range []string{"Pending", "Running", "Paused"} {
+	for _, state := range []string{"pending", "running", "paused"} {
 		if got := requestCounts[state]; got != 1 {
 			t.Fatalf("%s request count = %d, want 1", state, got)
 		}

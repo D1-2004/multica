@@ -386,11 +386,12 @@ func (c *ASBClient) ListSandboxes(ctx context.Context, states ...string) ([]ASBS
 }
 
 // ListLiveSandboxes explicitly queries the lifecycle states eligible for
-// capacity reclaim instead of relying on an unscoped inventory view. The ASB
-// list endpoint accepts only one effective state per request, so query each
-// state independently and merge the paginated results locally.
+// capacity reclaim instead of relying on an unscoped inventory view. Aone's
+// hosted list API matches lower-case query enums even though sandbox responses
+// use title-case lifecycle states. It also accepts only one effective state per
+// request, so query each state independently and merge the paginated results.
 func (c *ASBClient) ListLiveSandboxes(ctx context.Context) ([]ASBSandbox, error) {
-	states := []string{"Pending", "Running", "Paused"}
+	states := []string{"pending", "running", "paused"}
 	sandboxes := make([]ASBSandbox, 0)
 	seen := make(map[string]struct{})
 	for _, state := range states {
