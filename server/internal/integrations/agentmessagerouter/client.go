@@ -137,6 +137,7 @@ type CreateSubscriptionParams struct {
 	DispatchURL        string
 	BindingToken       string
 	SubscriptionConfig map[string]any
+	EnabledDomains     []string
 	Surface            SubscriptionSurface
 	Outbound           SubscriptionOutbound
 	ReplaceExisting    bool
@@ -145,6 +146,14 @@ type CreateSubscriptionParams struct {
 func (c *Client) CreateHTTPCallbackSubscription(ctx context.Context, p CreateSubscriptionParams) (Subscription, error) {
 	if !validSubscriptionSurface(p.Surface) || !validSubscriptionOutbound(p.Outbound) {
 		return Subscription{}, errors.New("agent message router subscription dispatch policy is invalid")
+	}
+	domains := p.EnabledDomains
+	if len(domains) == 0 {
+		domains = []string{"channel"}
+	}
+	domains, err := normalizeBindingDomains(domains)
+	if err != nil || !containsBindingDomain(domains, "channel") {
+		return Subscription{}, errors.New("agent message router subscription domains are invalid")
 	}
 	body, err := json.Marshal(map[string]any{
 		"source": map[string]any{
@@ -160,7 +169,7 @@ func (c *Client) CreateHTTPCallbackSubscription(ctx context.Context, p CreateSub
 		"surface":                p.Surface,
 		"outbound":               p.Outbound,
 		"bindingToken":           strings.TrimSpace(p.BindingToken),
-		"enabledDomains":         []string{"channel"},
+		"enabledDomains":         domains,
 		"replaceExistingBinding": p.ReplaceExisting,
 	})
 	if err != nil {

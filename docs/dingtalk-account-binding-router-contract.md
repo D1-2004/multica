@@ -702,3 +702,95 @@ The integrations page previously received only the derived
 subscription even though Multica had persisted and reconciled it. Exposing the
 authoritative domain set preserves the distinction between business event
 domains and the channel-domain conversation filter.
+
+## Native MCP Direct Binding Contract
+
+The server-hosted Streamable HTTP endpoint at `POST /api/mcp` exposes three
+task-scoped digital-employee actions:
+
+- `get_digital_employee_binding`
+- `bind_digital_employee_to_multica_agent`
+- `unbind_digital_employee`
+
+The MCP client never supplies `workspace_id`, `agent_id`, a Router binding
+token, or a dispatch target. Multica resolves the authenticated task from the
+server-trusted task-token headers, verifies that its persisted Agent matches
+the token, and authorizes the operation as the task's persisted human
+originator. Binding and unbinding therefore retain the same Agent
+manage-plus-invoke permission rule as the browser flow.
+
+The bind tool accepts the `tenant_id` and `digital_employee_id` returned by the
+DWS digital-employee creation flow, plus optional processing surface, message
+scope, conversation filters, and enabled business domains. Defaults are
+`surface_type=auto`, `message_scope=direct_only`, and
+`enabled_domains=[channel]`; every submitted domain set must contain `channel`.
+Multica creates the local pending projection before any Router mutation, then
+issues and consumes the one-time Router credential entirely in server memory.
+The credential is never returned, persisted, or logged.
+
+Multica binds the account through the current Router subscription endpoint:
+
+```http
+POST /api/subscriptions
+Authorization: Bearer <service credential>
+Content-Type: application/json
+
+{
+  "source": {
+    "platform": "dingtalk",
+    "domain": "channel",
+    "tenantId": "<organization ID>",
+    "accountId": "<digital employee UID>",
+    "subscriptionConfig": {"upstreamMode": "HTTP_CALLBACK"}
+  },
+  "agent": {
+    "agentId": "<task Agent UUID>",
+    "dispatchUrl": "<current Multica origin>/api/webhooks/agent-dispatch/<endpointId>"
+  },
+  "surface": {"type": "auto"},
+  "outbound": {"mode": "dws", "replyTo": "latest_message"},
+  "bindingToken": "<one-time token>",
+  "enabledDomains": ["channel"],
+  "replaceExistingBinding": false
+}
+```
+
+The token descriptor continues to carry the environment-neutral
+`dispatchPath`; the subscription request carries the current environment's
+absolute `dispatchUrl`. Multica validates the returned Agent, source, dispatch
+target, status, surface, and outbound policy before activating its projection.
+If a previously unbound account becomes owned by the Agent but Router returns
+an error, an invalid response, or local activation fails, Multica performs an
+exact conditional account-level unbind as compensation. A compensation failure
+keeps the pending projection for retry. Before compensating, Multica rechecks
+the pending attempt credential hash and exact account key; a superseded attempt
+must not unbind ownership established by a newer concurrent attempt.
+
+A pending direct projection already contains the complete account key. The
+unbind tool therefore calls Router's conditional account-level unbind before
+clearing either an active projection or such a pending projection. This covers
+the recoverable window where Router accepted the direct bind but Multica could
+not activate its local row. Pending browser attempts without a complete
+account key remain local-only and can still be revoked without a Router call.
+
+## 2026-08-07 Native MCP Direct Binding Change History
+
+- Added task-scoped query, bind, and unbind tools to the existing `/api/mcp`
+  endpoint without adding caller-controlled workspace or Agent identifiers.
+- Added direct Router subscription creation with server-only one-time binding
+  credentials and persisted the requested generic enabled-domain set.
+- Separated core digital-employee binding availability from optional DBase
+  page configuration; the browser flow still requires a valid DBase origin.
+- Added exact Router compensation for partial direct binds and Router-first
+  cleanup for pending direct projections with a complete account key.
+
+## 2026-08-07 Native MCP Direct Binding Change Reason
+
+Agents can create a DingTalk digital employee through DWS while running a
+Multica task, so requiring a browser QR handoff would reintroduce client-image
+release coupling and prevent the Agent from completing the workflow itself.
+Keeping identity derivation, one-time credentials, dispatch targeting, and
+compensation inside the Multica service makes the MCP call safe across old and
+new runtime images. Extending Router-first cleanup to complete pending direct
+projections prevents a failed local activation from leaving an upstream
+subscription that the user cannot subsequently remove.

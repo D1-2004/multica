@@ -293,12 +293,14 @@ type Handler struct {
 	// bot integration is configured (MULTICA_DINGTALK_SECRET_KEY set).
 	DingTalkBindingTokens                *dingtalk.BindingTokenService
 	DingTalkAccountBindings              dingTalkAccountBindingService
+	DigitalEmployeeBindingMCPBindings    DigitalEmployeeBindingMCPService
 	DingTalkAccountBindingOrigin         string
 	dingTalkAccountBindingOriginProvider func() string
 	// Defaults to Queries; the narrow seam keeps authoritative metadata loading
 	// directly testable without changing production wiring.
 	dingTalkAccountBindingMetadata    dingTalkAccountBindingMetadataStore
 	dingTalkAccountBindingPermissions agentInvocationPermissionStore
+	multicaMCPBindingTasks            multicaMCPBindingTaskStore
 	// LarkOAuth resolves Feishu login codes for POST /auth/lark. Production
 	// prefers the private channel agent (LARK_AGENT_BASE_URL) so the app
 	// secret stays outside this backend; the direct client remains available

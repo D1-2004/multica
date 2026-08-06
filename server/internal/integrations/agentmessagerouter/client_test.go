@@ -703,6 +703,10 @@ func TestClientCreatesHTTPCallbackSubscriptionWithoutInventingTenant(t *testing.
 		if body["replaceExistingBinding"] != true {
 			t.Fatalf("replaceExistingBinding = %#v", body["replaceExistingBinding"])
 		}
+		domains, _ := body["enabledDomains"].([]any)
+		if len(domains) != 2 || domains[0] != "channel" || domains[1] != "approval" {
+			t.Fatalf("enabledDomains = %#v", body["enabledDomains"])
+		}
 		surface, _ := body["surface"].(map[string]any)
 		outbound, _ := body["outbound"].(map[string]any)
 		if surface["type"] != "chat" || outbound["mode"] != "robot_sdk" || outbound["replyTo"] != "latest_message" {
@@ -725,6 +729,7 @@ func TestClientCreatesHTTPCallbackSubscriptionWithoutInventingTenant(t *testing.
 		AccountID: "robot-code-1", AgentID: "agent-1", DispatchURL: dispatchURL,
 		BindingToken:       "bat_v1.token",
 		SubscriptionConfig: map[string]any{"upstreamMode": "HTTP_CALLBACK"},
+		EnabledDomains:     []string{"channel", "approval"},
 		Surface:            SubscriptionSurface{Type: "chat"},
 		Outbound:           SubscriptionOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
 		ReplaceExisting:    true,
