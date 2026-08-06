@@ -9,7 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
@@ -189,7 +193,7 @@ func TestMulticaMCPInitialize(t *testing.T) {
 	}
 }
 
-func TestMulticaMCPToolsListPublishesOnlyChatSend(t *testing.T) {
+func TestMulticaMCPToolsListPublishesChatAndSelfDigitalEmployeeActions(t *testing.T) {
 	h := testMulticaMCPHandler(t, true)
 	w := httptest.NewRecorder()
 	h.MulticaMCP(w, mcpRequest(t, "tools/list", "list-1", map[string]any{}))
@@ -199,8 +203,30 @@ func TestMulticaMCPToolsListPublishesOnlyChatSend(t *testing.T) {
 	}
 	got := decodeMCPResponse(t, w)
 	tools := got["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 1 || tools[0].(map[string]any)["name"] != multicaMCPChatSendTool {
+	wantNames := []string{
+		multicaMCPChatSendTool,
+		"get_digital_employee_binding",
+		"bind_digital_employee_to_multica_agent",
+		"unbind_digital_employee",
+	}
+	if len(tools) != len(wantNames) {
 		t.Fatalf("tools=%#v", tools)
+	}
+	for index, wantName := range wantNames {
+		tool := tools[index].(map[string]any)
+		if tool["name"] != wantName {
+			t.Fatalf("tool[%d].name=%#v want %q", index, tool["name"], wantName)
+		}
+		if wantName == multicaMCPChatSendTool {
+			continue
+		}
+		properties := tool["inputSchema"].(map[string]any)["properties"].(map[string]any)
+		if _, exists := properties["workspace_id"]; exists {
+			t.Fatalf("%s exposes caller-controlled workspace_id", wantName)
+		}
+		if _, exists := properties["agent_id"]; exists {
+			t.Fatalf("%s exposes caller-controlled agent_id", wantName)
+		}
 	}
 	description, _ := tools[0].(map[string]any)["description"].(string)
 	if !strings.Contains(description, "Authorized server-provided Multica action") {
@@ -269,6 +295,215 @@ func TestMulticaMCPRequiresTaskTokenActorAndReleaseFlag(t *testing.T) {
 			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 		}
 	})
+}
+
+func TestMulticaMCPDigitalEmployeeGetReportsUnconfiguredAsToolError(t *testing.T) {
+	h := testMulticaMCPHandler(t, true)
+	w := httptest.NewRecorder()
+	h.MulticaMCP(w, mcpRequest(t, "tools/call", "binding-get-1", map[string]any{
+		"name":      multicaMCPBindingGetTool,
+		"arguments": map[string]any{},
+	}))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("tools/call status=%d body=%s", w.Code, w.Body.String())
+	}
+	got := decodeMCPResponse(t, w)
+	if got["error"] != nil {
+		t.Fatalf("binding tool failure must use MCP tool result: %#v", got)
+	}
+	result := got["result"].(map[string]any)
+	if isError, _ := result["isError"].(bool); !isError {
+		t.Fatalf("expected tool error, got %#v", result)
+	}
+	content := result["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(content, "not configured") {
+		t.Fatalf("content=%q", content)
+	}
+}
+
+type fakeMulticaMCPBindingService struct {
+	getCalls     int
+	getWorkspace pgtype.UUID
+	getAgent     pgtype.UUID
+	getResult    agentmessagerouter.DirectDigitalEmployeeBinding
+	getErr       error
+	bindCalls    int
+	bindParams   agentmessagerouter.DirectBindingParams
+	bindResult   agentmessagerouter.DirectDigitalEmployeeBinding
+	bindErr      error
+	unbindCalls  int
+	unbindParams agentmessagerouter.UnbindParams
+	unbindResult agentmessagerouter.PublicDingTalkAccountBinding
+	unbindErr    error
+}
+
+func (f *fakeMulticaMCPBindingService) GetDigitalEmployeeBinding(
+	_ context.Context,
+	workspaceID, agentID pgtype.UUID,
+) (agentmessagerouter.DirectDigitalEmployeeBinding, error) {
+	f.getCalls++
+	f.getWorkspace = workspaceID
+	f.getAgent = agentID
+	return f.getResult, f.getErr
+}
+
+func (f *fakeMulticaMCPBindingService) BindDigitalEmployee(
+	_ context.Context,
+	params agentmessagerouter.DirectBindingParams,
+) (agentmessagerouter.DirectDigitalEmployeeBinding, error) {
+	f.bindCalls++
+	f.bindParams = params
+	return f.bindResult, f.bindErr
+}
+
+func (f *fakeMulticaMCPBindingService) Unbind(
+	_ context.Context,
+	params agentmessagerouter.UnbindParams,
+) (agentmessagerouter.PublicDingTalkAccountBinding, error) {
+	f.unbindCalls++
+	f.unbindParams = params
+	return f.unbindResult, f.unbindErr
+}
+
+type fakeMulticaMCPTaskStore struct {
+	task db.AgentTaskQueue
+	err  error
+}
+
+func (f *fakeMulticaMCPTaskStore) GetAgentTaskInWorkspace(
+	context.Context,
+	db.GetAgentTaskInWorkspaceParams,
+) (db.AgentTaskQueue, error) {
+	return f.task, f.err
+}
+
+func TestMulticaMCPDigitalEmployeeGetPinsTaskAgentAndUsesHumanOriginator(t *testing.T) {
+	workspaceID := util.MustParseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	agentID := util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	originatorID := util.MustParseUUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+	taskID := util.MustParseUUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+	service := &fakeMulticaMCPBindingService{getResult: agentmessagerouter.DirectDigitalEmployeeBinding{
+		WorkspaceID: util.UUIDToString(workspaceID), AgentID: util.UUIDToString(agentID),
+		Status: "active", RouterBindingStatus: "valid", RetryStatus: "not_required",
+	}}
+	h := testMulticaMCPHandler(t, true)
+	h.DigitalEmployeeBindingMCPBindings = service
+	h.multicaMCPBindingTasks = &fakeMulticaMCPTaskStore{task: db.AgentTaskQueue{
+		ID: taskID, AgentID: agentID, Status: "running", OriginatorUserID: originatorID,
+	}}
+	h.dingTalkAccountBindingMetadata = &beginBindingMetadataDB{
+		agent: db.Agent{
+			ID: agentID, WorkspaceID: workspaceID, OwnerID: originatorID,
+			Name: "Agent A", PermissionMode: "private",
+		},
+		workspace: db.Workspace{ID: workspaceID, Name: "Workspace A"},
+	}
+	h.dingTalkAccountBindingPermissions = &fakeDingTalkAccountBindingPermissionStore{
+		member: db.Member{UserID: originatorID, WorkspaceID: workspaceID, Role: "member"},
+	}
+	r := mcpRequest(t, "tools/call", "binding-get-2", map[string]any{
+		"name":      multicaMCPBindingGetTool,
+		"arguments": map[string]any{},
+	})
+	r.Header.Set("X-Workspace-ID", util.UUIDToString(workspaceID))
+	r.Header.Set("X-Agent-ID", util.UUIDToString(agentID))
+	r.Header.Set("X-Task-ID", util.UUIDToString(taskID))
+	// The task-token owner is deliberately different. Mutation authority comes
+	// from the task's persisted human originator, not this compatibility header.
+	r.Header.Set("X-User-ID", "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+	w := httptest.NewRecorder()
+
+	h.MulticaMCP(w, r)
+
+	if w.Code != http.StatusOK || service.getCalls != 1 ||
+		service.getWorkspace != workspaceID || service.getAgent != agentID {
+		t.Fatalf("status=%d get calls=%d workspace=%v agent=%v body=%s", w.Code, service.getCalls, service.getWorkspace, service.getAgent, w.Body.String())
+	}
+	result := decodeMCPResponse(t, w)["result"].(map[string]any)
+	if isError, _ := result["isError"].(bool); isError {
+		t.Fatalf("tools/call returned error: %#v", result)
+	}
+}
+
+func TestMulticaMCPDigitalEmployeeMutationsApplySafeDefaultsAndOriginator(t *testing.T) {
+	workspaceID := util.MustParseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	agentID := util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	originatorID := util.MustParseUUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+	taskID := util.MustParseUUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+	service := &fakeMulticaMCPBindingService{bindResult: agentmessagerouter.DirectDigitalEmployeeBinding{
+		WorkspaceID: util.UUIDToString(workspaceID), AgentID: util.UUIDToString(agentID),
+		TenantID: "tenant-a", DigitalEmployeeID: "employee-a",
+		Status: "active", RouterBindingStatus: "valid", RetryStatus: "not_required",
+	}}
+	h := testMulticaMCPHandler(t, true)
+	h.DigitalEmployeeBindingMCPBindings = service
+	h.multicaMCPBindingTasks = &fakeMulticaMCPTaskStore{task: db.AgentTaskQueue{
+		ID: taskID, AgentID: agentID, Status: "running", OriginatorUserID: originatorID,
+	}}
+	h.dingTalkAccountBindingMetadata = &beginBindingMetadataDB{
+		agent: db.Agent{
+			ID: agentID, WorkspaceID: workspaceID, OwnerID: originatorID,
+			Name: "Agent A", PermissionMode: "private",
+		},
+		workspace: db.Workspace{ID: workspaceID, Name: "Workspace A"},
+	}
+	h.dingTalkAccountBindingPermissions = &fakeDingTalkAccountBindingPermissionStore{
+		member: db.Member{UserID: originatorID, WorkspaceID: workspaceID, Role: "member"},
+	}
+	r := mcpRequest(t, "tools/call", "binding-bind-1", map[string]any{
+		"name": multicaMCPBindingBindTool,
+		"arguments": map[string]any{
+			"tenant_id": " tenant-a ", "digital_employee_id": " employee-a ",
+		},
+	})
+	r.Header.Set("X-Workspace-ID", util.UUIDToString(workspaceID))
+	r.Header.Set("X-Agent-ID", util.UUIDToString(agentID))
+	r.Header.Set("X-Task-ID", util.UUIDToString(taskID))
+	w := httptest.NewRecorder()
+
+	h.MulticaMCP(w, r)
+
+	if w.Code != http.StatusOK || service.bindCalls != 1 {
+		t.Fatalf("status=%d bind calls=%d body=%s", w.Code, service.bindCalls, w.Body.String())
+	}
+	params := service.bindParams
+	if params.Agent.ID != agentID || params.Agent.Workspace.ID != workspaceID || params.InitiatorID != originatorID ||
+		params.TenantID != "tenant-a" || params.DigitalEmployeeID != "employee-a" ||
+		params.SurfaceType != agentmessagerouter.DingTalkSurfaceAuto ||
+		params.MessageScope != agentmessagerouter.DingTalkMessageScopeDirectOnly ||
+		len(params.EnabledDomains) != 1 || params.EnabledDomains[0] != "channel" {
+		t.Fatalf("bind params=%#v", params)
+	}
+	secret := "bat_v1.caller-supplied-secret"
+	malicious := mcpRequest(t, "tools/call", "binding-bind-2", map[string]any{
+		"name": multicaMCPBindingBindTool,
+		"arguments": map[string]any{
+			"tenant_id": "tenant-a", "digital_employee_id": "employee-a", "bindingToken": secret,
+		},
+	})
+	malicious.Header.Set("X-Workspace-ID", util.UUIDToString(workspaceID))
+	malicious.Header.Set("X-Agent-ID", util.UUIDToString(agentID))
+	malicious.Header.Set("X-Task-ID", util.UUIDToString(taskID))
+	maliciousResponse := httptest.NewRecorder()
+	h.MulticaMCP(maliciousResponse, malicious)
+	if service.bindCalls != 1 || !strings.Contains(maliciousResponse.Body.String(), `"isError":true`) ||
+		strings.Contains(maliciousResponse.Body.String(), secret) {
+		t.Fatalf("caller token reached service or response: calls=%d body=%s", service.bindCalls, maliciousResponse.Body.String())
+	}
+	unbind := mcpRequest(t, "tools/call", "binding-unbind-1", map[string]any{
+		"name": multicaMCPBindingUnbindTool, "arguments": map[string]any{},
+	})
+	unbind.Header.Set("X-Workspace-ID", util.UUIDToString(workspaceID))
+	unbind.Header.Set("X-Agent-ID", util.UUIDToString(agentID))
+	unbind.Header.Set("X-Task-ID", util.UUIDToString(taskID))
+	unbindResponse := httptest.NewRecorder()
+	h.MulticaMCP(unbindResponse, unbind)
+	if service.unbindCalls != 1 || service.unbindParams.WorkspaceID != workspaceID ||
+		service.unbindParams.AgentID != agentID ||
+		service.unbindParams.BindingMode != agentmessagerouter.BindingModeMessage {
+		t.Fatalf("unbind calls=%d params=%#v body=%s", service.unbindCalls, service.unbindParams, unbindResponse.Body.String())
+	}
 }
 
 func TestMulticaMCPChatSendContinuesAnotherOwnedSession(t *testing.T) {

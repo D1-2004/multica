@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,8 +13,10 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -24,6 +27,9 @@ const (
 	multicaMCPProtocolVersion       = "2025-06-18"
 	multicaMCPCompatProtocolVersion = "2025-03-26"
 	multicaMCPChatSendTool          = "chat_send_message"
+	multicaMCPBindingGetTool        = "get_digital_employee_binding"
+	multicaMCPBindingBindTool       = "bind_digital_employee_to_multica_agent"
+	multicaMCPBindingUnbindTool     = "unbind_digital_employee"
 	multicaMCPServerName            = "multica"
 	multicaMCPMaxRequestBytes       = 1 << 20
 	multicaMCPForwardedFromTaskContextKey    = "mcp_forwarded_from_task_id"
@@ -72,6 +78,33 @@ type multicaMCPChatSendResult struct {
 	TaskID    string `json:"task_id"`
 	TraceID   string `json:"trace_id"`
 	CreatedAt string `json:"created_at"`
+}
+
+type multicaMCPDigitalEmployeeBindArguments struct {
+	TenantID          string                                             `json:"tenant_id"`
+	DigitalEmployeeID string                                             `json:"digital_employee_id"`
+	SurfaceType       string                                             `json:"surface_type"`
+	MessageScope      string                                             `json:"message_scope"`
+	EnabledDomains    []string                                           `json:"enabled_domains"`
+	Conversations     []agentmessagerouter.DingTalkConversationSnapshot `json:"conversations"`
+}
+
+type multicaMCPBindingTaskStore interface {
+	GetAgentTaskInWorkspace(context.Context, db.GetAgentTaskInWorkspaceParams) (db.AgentTaskQueue, error)
+}
+
+type DigitalEmployeeBindingMCPService interface {
+	BindDigitalEmployee(context.Context, agentmessagerouter.DirectBindingParams) (agentmessagerouter.DirectDigitalEmployeeBinding, error)
+	GetDigitalEmployeeBinding(context.Context, pgtype.UUID, pgtype.UUID) (agentmessagerouter.DirectDigitalEmployeeBinding, error)
+	Unbind(context.Context, agentmessagerouter.UnbindParams) (agentmessagerouter.PublicDingTalkAccountBinding, error)
+}
+
+type multicaMCPBindingIdentity struct {
+	WorkspaceID pgtype.UUID
+	AgentID     pgtype.UUID
+	Originator  pgtype.UUID
+	Agent       db.Agent
+	Workspace   db.Workspace
 }
 
 type multicaMCPToolCallError struct {
@@ -221,11 +254,89 @@ func (h *Handler) MulticaMCP(w http.ResponseWriter, r *http.Request) {
 	case "ping":
 		h.writeMulticaMCPResult(w, req.ID, map[string]any{})
 	case "tools/list":
-		h.writeMulticaMCPResult(w, req.ID, map[string]any{"tools": []any{multicaMCPChatSendDefinition()}})
+		h.writeMulticaMCPResult(w, req.ID, map[string]any{"tools": multicaMCPToolDefinitions()})
 	case "tools/call":
 		h.handleMulticaMCPToolsCall(w, r, req)
 	default:
 		h.writeMulticaMCPError(w, req.ID, -32601, "method not found")
+	}
+}
+
+func multicaMCPToolDefinitions() []any {
+	return []any{
+		multicaMCPChatSendDefinition(),
+		multicaMCPBindingGetDefinition(),
+		multicaMCPBindingBindDefinition(),
+		multicaMCPBindingUnbindDefinition(),
+	}
+}
+
+func multicaMCPBindingGetDefinition() map[string]any {
+	return map[string]any{
+		"name":        multicaMCPBindingGetTool,
+		"title":       "Get this Agent's digital employee binding",
+		"description": "Get Multica's local digital employee binding for the authenticated task Agent and reconcile it with Router. The target Agent and workspace always come from the task token.",
+		"inputSchema": multicaMCPEmptyObjectSchema(),
+		"annotations": map[string]any{
+			"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false,
+		},
+	}
+}
+
+func multicaMCPBindingBindDefinition() map[string]any {
+	return map[string]any{
+		"name":        multicaMCPBindingBindTool,
+		"title":       "Bind a DingTalk digital employee to this Agent",
+		"description": "Bind a DingTalk digital employee created through DWS to the authenticated task Agent. Multica issues and consumes the one-time Router credential server-side and never exposes it to the caller. Existing ownership is never taken over.",
+		"inputSchema": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"tenant_id":            map[string]any{"type": "string", "minLength": 1, "description": "DingTalk organization identifier returned by DWS."},
+				"digital_employee_id":  map[string]any{"type": "string", "minLength": 1, "description": "Digital employee account identifier returned by DWS."},
+				"surface_type":         map[string]any{"type": "string", "enum": []string{"issue", "chat", "auto"}, "default": "auto"},
+				"message_scope":        map[string]any{"type": "string", "enum": []string{"direct_only", "custom", "all"}, "default": "direct_only"},
+				"enabled_domains":      map[string]any{"type": "array", "items": map[string]any{"type": "string", "minLength": 1}, "default": []string{"channel"}},
+				"conversations": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"required":             []string{"cid", "name"},
+						"properties": map[string]any{
+							"cid":             map[string]any{"type": "string", "minLength": 1},
+							"name":            map[string]any{"type": "string", "minLength": 1},
+							"avatar_media_id": map[string]any{"type": "string"},
+							"avatar_url":      map[string]any{"type": "string"},
+						},
+					},
+				},
+			},
+			"required": []string{"tenant_id", "digital_employee_id"},
+		},
+		"annotations": map[string]any{
+			"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false,
+		},
+	}
+}
+
+func multicaMCPBindingUnbindDefinition() map[string]any {
+	return map[string]any{
+		"name":        multicaMCPBindingUnbindTool,
+		"title":       "Unbind this Agent's digital employee",
+		"description": "Conditionally unbind the authenticated task Agent's current digital employee. Router ownership is checked authoritatively before Multica clears its local projection.",
+		"inputSchema": multicaMCPEmptyObjectSchema(),
+		"annotations": map[string]any{
+			"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false,
+		},
+	}
+}
+
+func multicaMCPEmptyObjectSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           map[string]any{},
 	}
 }
 
@@ -324,6 +435,10 @@ func (h *Handler) handleMulticaMCPToolsCall(w http.ResponseWriter, r *http.Reque
 		h.writeMulticaMCPError(w, req.ID, -32602, "invalid tool call parameters")
 		return
 	}
+	if params.Name == multicaMCPBindingGetTool || params.Name == multicaMCPBindingBindTool || params.Name == multicaMCPBindingUnbindTool {
+		h.handleMulticaMCPDigitalEmployeeCall(w, r, req.ID, params.Name, params.Arguments)
+		return
+	}
 	if params.Name != multicaMCPChatSendTool {
 		h.writeMulticaMCPError(w, req.ID, -32602, "unknown tool")
 		return
@@ -362,6 +477,233 @@ func (h *Handler) handleMulticaMCPToolsCall(w http.ResponseWriter, r *http.Reque
 	h.writeMulticaMCPResult(w, req.ID, multicaMCPToolResult{
 		Content:           []multicaMCPContent{{Type: "text", Text: string(textResult)}},
 		StructuredContent: result,
+	})
+}
+
+func (h *Handler) handleMulticaMCPDigitalEmployeeCall(
+	w http.ResponseWriter,
+	r *http.Request,
+	id json.RawMessage,
+	toolName string,
+	rawArguments json.RawMessage,
+) {
+	service := h.DigitalEmployeeBindingMCPBindings
+	if service == nil {
+		h.writeMulticaMCPToolError(w, id, "Digital employee binding is not configured")
+		return
+	}
+	identity, err := h.resolveMulticaMCPBindingIdentity(r)
+	if err != nil {
+		h.writeMulticaMCPToolError(w, id, multicaMCPDigitalEmployeeErrorMessage(err))
+		return
+	}
+
+	var result any
+	switch toolName {
+	case multicaMCPBindingGetTool:
+		if err := decodeMulticaMCPArguments(rawArguments, &struct{}{}); err != nil {
+			h.writeMulticaMCPToolError(w, id, "invalid get_digital_employee_binding arguments")
+			return
+		}
+		result, err = service.GetDigitalEmployeeBinding(r.Context(), identity.WorkspaceID, identity.AgentID)
+	case multicaMCPBindingBindTool:
+		var args multicaMCPDigitalEmployeeBindArguments
+		if err := decodeMulticaMCPArguments(rawArguments, &args); err != nil {
+			h.writeMulticaMCPToolError(w, id, "invalid bind_digital_employee_to_multica_agent arguments")
+			return
+		}
+		args.TenantID = strings.TrimSpace(args.TenantID)
+		args.DigitalEmployeeID = strings.TrimSpace(args.DigitalEmployeeID)
+		if args.TenantID == "" || args.DigitalEmployeeID == "" {
+			h.writeMulticaMCPToolError(w, id, "tenant_id and digital_employee_id are required")
+			return
+		}
+		if strings.TrimSpace(args.SurfaceType) == "" {
+			args.SurfaceType = agentmessagerouter.DingTalkSurfaceAuto
+		}
+		if strings.TrimSpace(args.MessageScope) == "" {
+			args.MessageScope = agentmessagerouter.DingTalkMessageScopeDirectOnly
+		}
+		if len(args.EnabledDomains) == 0 {
+			args.EnabledDomains = []string{"channel"}
+		}
+		result, err = service.BindDigitalEmployee(r.Context(), agentmessagerouter.DirectBindingParams{
+			Agent: agentmessagerouter.BeginAgent{
+				ID:   identity.AgentID,
+				Name: identity.Agent.Name,
+				Workspace: agentmessagerouter.BeginWorkspace{
+					ID:   identity.WorkspaceID,
+					Name: identity.Workspace.Name,
+				},
+			},
+			InitiatorID:       identity.Originator,
+			TenantID:          args.TenantID,
+			DigitalEmployeeID: args.DigitalEmployeeID,
+			SurfaceType:       args.SurfaceType,
+			MessageScope:      args.MessageScope,
+			EnabledDomains:    args.EnabledDomains,
+			Conversations:     args.Conversations,
+		})
+	case multicaMCPBindingUnbindTool:
+		if err := decodeMulticaMCPArguments(rawArguments, &struct{}{}); err != nil {
+			h.writeMulticaMCPToolError(w, id, "invalid unbind_digital_employee arguments")
+			return
+		}
+		result, err = service.Unbind(r.Context(), agentmessagerouter.UnbindParams{
+			WorkspaceID: identity.WorkspaceID,
+			AgentID:     identity.AgentID,
+			BindingMode: agentmessagerouter.BindingModeMessage,
+		})
+	}
+	if err != nil {
+		message := multicaMCPDigitalEmployeeErrorMessage(err)
+		slog.Warn("Multica MCP digital employee action failed",
+			"tool", toolName,
+			"source_task_id", r.Header.Get("X-Task-ID"),
+			"workspace_id", util.UUIDToString(identity.WorkspaceID),
+			"agent_id", util.UUIDToString(identity.AgentID),
+			"error_class", message,
+		)
+		h.writeMulticaMCPToolError(w, id, message)
+		return
+	}
+	slog.Info("Multica MCP digital employee action completed",
+		"tool", toolName,
+		"source_task_id", r.Header.Get("X-Task-ID"),
+		"workspace_id", util.UUIDToString(identity.WorkspaceID),
+		"agent_id", util.UUIDToString(identity.AgentID),
+	)
+	payload, _ := json.Marshal(result)
+	h.writeMulticaMCPResult(w, id, multicaMCPToolResult{
+		Content:           []multicaMCPContent{{Type: "text", Text: string(payload)}},
+		StructuredContent: result,
+	})
+}
+
+func (h *Handler) resolveMulticaMCPBindingIdentity(r *http.Request) (multicaMCPBindingIdentity, error) {
+	workspaceID := ctxWorkspaceID(r.Context())
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(r.Header.Get("X-Workspace-ID"))
+	}
+	workspaceUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "authenticated workspace is invalid"}
+	}
+	taskUUID, err := util.ParseUUID(strings.TrimSpace(r.Header.Get("X-Task-ID")))
+	if err != nil {
+		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "authenticated source task is invalid"}
+	}
+	taskStore := h.multicaMCPBindingTasks
+	if taskStore == nil {
+		taskStore = h.Queries
+	}
+	if taskStore == nil {
+		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "Digital employee binding is not configured"}
+	}
+	task, err := taskStore.GetAgentTaskInWorkspace(r.Context(), db.GetAgentTaskInWorkspaceParams{
+		ID: taskUUID, WorkspaceID: workspaceUUID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "authenticated source task was not found"}
+	}
+	if err != nil {
+		return multicaMCPBindingIdentity{}, err
+	}
+	agentID := strings.TrimSpace(r.Header.Get("X-Agent-ID"))
+	if agentID == "" || agentID != util.UUIDToString(task.AgentID) {
+		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "authenticated Agent does not own the source task"}
+	}
+	if task.Status != "running" && task.Status != "dispatched" {
+		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "source task is not active"}
+	}
+	originator := sourceTaskOriginator(task)
+	if !originator.Valid {
+		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "source task has no human originator"}
+	}
+	metadataStore := h.dingTalkAccountBindingMetadata
+	if metadataStore == nil {
+		metadataStore = h.Queries
+	}
+	if metadataStore == nil {
+		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "Digital employee binding is not configured"}
+	}
+	agent, err := metadataStore.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+		ID: task.AgentID, WorkspaceID: workspaceUUID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "authenticated Agent was not found"}
+	}
+	if err != nil {
+		return multicaMCPBindingIdentity{}, err
+	}
+	if agent.ArchivedAt.Valid {
+		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "authenticated Agent is archived"}
+	}
+	permissionStore := h.dingTalkAccountBindingPermissions
+	if permissionStore == nil {
+		permissionStore = h.Queries
+	}
+	if permissionStore == nil || !canOperateDingTalkAccountBinding(
+		r.Context(), permissionStore, agent, originator, workspaceUUID,
+	) {
+		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: dingTalkAccountBindingForbidden}
+	}
+	workspace, err := metadataStore.GetWorkspace(r.Context(), workspaceUUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "authenticated workspace was not found"}
+	}
+	if err != nil {
+		return multicaMCPBindingIdentity{}, err
+	}
+	return multicaMCPBindingIdentity{
+		WorkspaceID: workspaceUUID,
+		AgentID:     task.AgentID,
+		Originator:  originator,
+		Agent:       agent,
+		Workspace:   workspace,
+	}, nil
+}
+
+func decodeMulticaMCPArguments(raw json.RawMessage, target any) error {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		raw = json.RawMessage(`{}`)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("invalid tool arguments")
+	}
+	return nil
+}
+
+func multicaMCPDigitalEmployeeErrorMessage(err error) string {
+	var toolErr *multicaMCPToolCallError
+	if errors.As(err, &toolErr) {
+		return toolErr.message
+	}
+	switch {
+	case errors.Is(err, agentmessagerouter.ErrNotConfigured):
+		return "Digital employee binding is not configured"
+	case errors.Is(err, agentmessagerouter.ErrNotFound):
+		return "Digital employee binding was not found"
+	case errors.Is(err, agentmessagerouter.ErrAlreadyActive), errors.Is(err, agentmessagerouter.ErrBindingConflict):
+		return "Digital employee binding conflicts with the current ownership state"
+	case errors.Is(err, agentmessagerouter.ErrInvalidResult):
+		return "Digital employee binding arguments or state are invalid"
+	case errors.Is(err, agentmessagerouter.ErrRouterUnavailable):
+		return "Router is temporarily unavailable; retry later"
+	default:
+		return "Digital employee binding failed"
+	}
+}
+
+func (h *Handler) writeMulticaMCPToolError(w http.ResponseWriter, id json.RawMessage, message string) {
+	h.writeMulticaMCPResult(w, id, multicaMCPToolResult{
+		Content: []multicaMCPContent{{Type: "text", Text: message}},
+		IsError: true,
 	})
 }
 
