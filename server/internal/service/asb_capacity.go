@@ -152,7 +152,7 @@ func createASBSandboxWithCapacityOnConnection(
 		return nil, err
 	}
 	if quotaExhausted {
-		reclaimed, err := reclaimIdleASBSandboxForCredential(
+		reclaimed, err := reclaimASBSandboxForCredential(
 			ctx,
 			queries,
 			credentials,
@@ -160,6 +160,7 @@ func createASBSandboxWithCapacityOnConnection(
 			runtimeID,
 			excludedTaskID,
 			conn,
+			isOrdinaryASBTaskSandboxMetadata(input.Metadata),
 		)
 		if err != nil {
 			return nil, err
@@ -175,7 +176,7 @@ func createASBSandboxWithCapacityOnConnection(
 	}
 	logASBCreateFailure("initial", runtimeID, err)
 	// The quota can change between its read and the create call. Re-read it
-	// while still holding the tenant lock, reclaim one now-idle task sandbox,
+	// while still holding the tenant lock, reclaim one eligible task sandbox,
 	// and repeat the create operation once.
 	quotaExhausted, quotaErr := asbTenantQuotaExhausted(ctx, client)
 	if quotaErr != nil {
@@ -184,7 +185,7 @@ func createASBSandboxWithCapacityOnConnection(
 	if !quotaExhausted {
 		return nil, fmt.Errorf("create ASB sandbox: %w", err)
 	}
-	reclaimed, reclaimErr := reclaimIdleASBSandboxForCredential(
+	reclaimed, reclaimErr := reclaimASBSandboxForCredential(
 		ctx,
 		queries,
 		credentials,
@@ -192,6 +193,7 @@ func createASBSandboxWithCapacityOnConnection(
 		runtimeID,
 		excludedTaskID,
 		conn,
+		isOrdinaryASBTaskSandboxMetadata(input.Metadata),
 	)
 	if reclaimErr != nil {
 		return nil, errors.Join(fmt.Errorf("create ASB sandbox: %w", err), reclaimErr)
@@ -201,8 +203,8 @@ func createASBSandboxWithCapacityOnConnection(
 	}
 	sandbox, err = client.CreateSandbox(ctx, input)
 	if err != nil {
-		logASBCreateFailure("after_idle_reclaim", runtimeID, err)
-		return nil, fmt.Errorf("create ASB sandbox after idle-instance reclaim: %w", err)
+		logASBCreateFailure("after_capacity_reclaim", runtimeID, err)
+		return nil, fmt.Errorf("create ASB sandbox after capacity reclaim: %w", err)
 	}
 	return sandbox, nil
 }
@@ -216,7 +218,138 @@ func asbTenantQuotaExhausted(ctx context.Context, client *ASBClient) (bool, erro
 	return exhausted, err
 }
 
-func reclaimIdleASBSandboxForCredential(
+type asbPeerTaskSandboxCandidate struct {
+	sandbox   ASBSandbox
+	runtimeID pgtype.UUID
+	taskID    pgtype.UUID
+}
+
+func ordinaryASBTaskSandboxMetadata(
+	metadata map[string]string,
+) (pgtype.UUID, pgtype.UUID, bool) {
+	runtimeID, valid := preemptibleASBSandboxRuntimeID(metadata)
+	if !valid {
+		return pgtype.UUID{}, pgtype.UUID{}, false
+	}
+	taskID, err := util.ParseUUID(strings.TrimSpace(metadata["multica.task_id"]))
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, false
+	}
+	return runtimeID, taskID, true
+}
+
+func preemptibleASBSandboxRuntimeID(metadata map[string]string) (pgtype.UUID, bool) {
+	if !strings.EqualFold(
+		strings.TrimSpace(metadata["multica.backend"]),
+		string(SandboxBackendASB),
+	) ||
+		strings.EqualFold(strings.TrimSpace(metadata["multica.identity_source"]), "true") ||
+		strings.EqualFold(strings.TrimSpace(metadata["multica.release_validation"]), "true") {
+		return pgtype.UUID{}, false
+	}
+	runtimeID, err := util.ParseUUID(strings.TrimSpace(metadata["multica.runtime_id"]))
+	if err != nil {
+		return pgtype.UUID{}, false
+	}
+	return runtimeID, true
+}
+
+func isOrdinaryASBTaskSandboxMetadata(metadata map[string]string) bool {
+	_, _, valid := ordinaryASBTaskSandboxMetadata(metadata)
+	return valid
+}
+
+func isReclaimablePeerASBSandboxState(state string) bool {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "pending", "running", "paused":
+		return true
+	default:
+		return false
+	}
+}
+
+func peerASBTaskSandboxCandidates(
+	localRuntimeIDs []pgtype.UUID,
+	liveSandboxes []ASBSandbox,
+) []asbPeerTaskSandboxCandidate {
+	localRuntimeSet := make(map[pgtype.UUID]struct{}, len(localRuntimeIDs))
+	for _, runtimeID := range localRuntimeIDs {
+		localRuntimeSet[runtimeID] = struct{}{}
+	}
+	candidates := make([]asbPeerTaskSandboxCandidate, 0)
+	for _, sandbox := range liveSandboxes {
+		if !isReclaimablePeerASBSandboxState(sandbox.Status.State) {
+			continue
+		}
+		runtimeID, preemptible := preemptibleASBSandboxRuntimeID(sandbox.Metadata)
+		if !preemptible {
+			continue
+		}
+		if _, local := localRuntimeSet[runtimeID]; local {
+			continue
+		}
+		taskID, _ := util.ParseUUID(strings.TrimSpace(sandbox.Metadata["multica.task_id"]))
+		candidates = append(candidates, asbPeerTaskSandboxCandidate{
+			sandbox:   sandbox,
+			runtimeID: runtimeID,
+			taskID:    taskID,
+		})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].sandbox.CreatedAt.Equal(candidates[j].sandbox.CreatedAt) {
+			return candidates[i].sandbox.ID < candidates[j].sandbox.ID
+		}
+		return candidates[i].sandbox.CreatedAt.Before(candidates[j].sandbox.CreatedAt)
+	})
+	return candidates
+}
+
+func reclaimPeerASBTaskSandbox(
+	ctx context.Context,
+	client *ASBClient,
+	requestingRuntimeID pgtype.UUID,
+	localRuntimeIDs []pgtype.UUID,
+	liveSandboxes []ASBSandbox,
+) (bool, error) {
+	candidates := peerASBTaskSandboxCandidates(localRuntimeIDs, liveSandboxes)
+	slog.Info(
+		"evaluated peer ASB task sandboxes for tenant capacity preemption",
+		"requesting_runtime_id", util.UUIDToString(requestingRuntimeID),
+		"local_runtime_count", len(localRuntimeIDs),
+		"peer_candidate_count", len(candidates),
+	)
+	for _, candidate := range candidates {
+		live, exists, err := getLiveASBSandbox(ctx, client, candidate.sandbox.ID)
+		if err != nil {
+			return false, fmt.Errorf("recheck peer ASB task sandbox before preemption: %w", err)
+		}
+		if !exists {
+			continue
+		}
+		current := peerASBTaskSandboxCandidates(localRuntimeIDs, []ASBSandbox{*live})
+		if len(current) != 1 || current[0].sandbox.ID != candidate.sandbox.ID {
+			continue
+		}
+		if err := client.DeleteSandbox(ctx, candidate.sandbox.ID); err != nil {
+			return false, fmt.Errorf("delete peer ASB task sandbox: %w", err)
+		}
+		if err := waitForASBCapacityRelease(ctx, client, candidate.sandbox.ID); err != nil {
+			return false, err
+		}
+		slog.Info(
+			"preempted peer ASB task sandbox for tenant capacity",
+			"requesting_runtime_id", util.UUIDToString(requestingRuntimeID),
+			"peer_runtime_id", util.UUIDToString(current[0].runtimeID),
+			"peer_task_id", util.UUIDToString(current[0].taskID),
+			"sandbox_id", candidate.sandbox.ID,
+			"sandbox_created_at", candidate.sandbox.CreatedAt,
+		)
+		return true, nil
+	}
+	return false, nil
+}
+
+func reclaimASBSandboxForCredential(
 	ctx context.Context,
 	queries *db.Queries,
 	credentials *ASBRuntimeClientProvider,
@@ -224,6 +357,7 @@ func reclaimIdleASBSandboxForCredential(
 	requestingRuntimeID pgtype.UUID,
 	excludedTaskID pgtype.UUID,
 	conn *pgxpool.Conn,
+	allowPeerTaskPreemption bool,
 ) (bool, error) {
 	scopedCredentials := *credentials
 	scopedCredentials.Store = queries
@@ -231,17 +365,14 @@ func reclaimIdleASBSandboxForCredential(
 	if err != nil {
 		return false, err
 	}
-	// Query only Multica task sandboxes. The unfiltered tenant endpoint has
-	// returned an empty page in prepub while quota and the ASB console both show
-	// live instances; the documented metadata filter also excludes the identity
-	// source and unrelated tenant workloads from any reclaim decision.
-	liveSandboxes, err := client.ListSandboxesByMetadata(
-		ctx,
-		"multica.backend",
-		string(SandboxBackendASB),
-	)
+	// Query the live lifecycle states explicitly. ASB has returned an empty page
+	// for unscoped and metadata-only inventory reads in prepub while quota and
+	// the console both show active instances. Candidate classification remains
+	// local so identity sources, release validation, and unrelated workloads are
+	// excluded before any delete.
+	liveSandboxes, err := client.ListLiveSandboxes(ctx)
 	if err != nil {
-		return false, fmt.Errorf("query live ASB sandboxes before idle-instance reclaim: %w", err)
+		return false, fmt.Errorf("query real-time ASB sandboxes before capacity reclaim: %w", err)
 	}
 	runningCount := 0
 	for _, sandbox := range liveSandboxes {
@@ -255,6 +386,21 @@ func reclaimIdleASBSandboxForCredential(
 		"sandbox_count", len(liveSandboxes),
 		"running_count", runningCount,
 	)
+	if allowPeerTaskPreemption {
+		reclaimed, err := reclaimPeerASBTaskSandbox(
+			ctx,
+			client,
+			requestingRuntimeID,
+			runtimeIDs,
+			liveSandboxes,
+		)
+		if err != nil {
+			return false, err
+		}
+		if reclaimed {
+			return true, nil
+		}
+	}
 	candidates, err := queries.ListIdleASBSandboxSessionsByRuntimes(
 		ctx,
 		db.ListIdleASBSandboxSessionsByRuntimesParams{
@@ -557,7 +703,7 @@ func waitForASBCapacityRelease(
 			if waitCtx.Err() != nil {
 				break
 			}
-			return fmt.Errorf("query ASB sandbox after idle-instance delete: %w", err)
+			return fmt.Errorf("query ASB sandbox after capacity reclaim: %w", err)
 		}
 		lastState = "not_found"
 		if exists {
@@ -568,7 +714,7 @@ func waitForASBCapacityRelease(
 			if waitCtx.Err() != nil {
 				break
 			}
-			return fmt.Errorf("query ASB quota after idle-instance delete: %w", err)
+			return fmt.Errorf("query ASB quota after capacity reclaim: %w", err)
 		}
 		quotaExhausted, quota, usage, err := summarizeASBQuotas(quotas)
 		if err != nil {
@@ -578,7 +724,7 @@ func waitForASBCapacityRelease(
 		lastUsage = usage
 		if (!exists || isTerminalASBSandboxState(lastState)) && !quotaExhausted {
 			slog.Info(
-				"ASB tenant capacity released after idle-instance delete",
+				"ASB tenant capacity released after sandbox reclaim",
 				"sandbox_id", sandboxID,
 				"sandbox_state", lastState,
 				"quota", quota,
