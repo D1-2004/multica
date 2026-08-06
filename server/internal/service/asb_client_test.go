@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -59,8 +60,8 @@ func TestASBClientLifecycle(t *testing.T) {
 			}
 			response.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(response, `{
-				"sandboxInfos":[{"id":"sandbox-123","status":{"state":"Running"},"createdAt":"2026-07-29T05:00:00Z"}],
-				"pagination":{"page":1,"pageSize":100,"total":1,"hasNextPage":false,"hasPreviousPage":false}
+				"items":[{"id":"sandbox-123","status":{"state":"Running"},"createdAt":"2026-07-29T05:00:00Z"}],
+				"pagination":{"page":1,"pageSize":100,"totalItems":1,"totalPages":1,"hasNextPage":false}
 			}`)
 		case request.Method == http.MethodGet && request.URL.Path == "/root/v1/sandboxes/"+testSandboxID:
 			response.Header().Set("Content-Type", "application/json")
@@ -204,13 +205,13 @@ func TestASBClientListSandboxesPaginates(t *testing.T) {
 		switch request.URL.Query().Get("page") {
 		case "1":
 			_, _ = io.WriteString(response, `{
-				"sandboxInfos":[{"id":"sandbox-1","status":{"state":"Running"},"createdAt":"2026-07-29T05:00:00Z"}],
-				"pagination":{"page":1,"pageSize":100,"total":2,"hasNextPage":true,"hasPreviousPage":false}
+				"items":[{"id":"sandbox-1","status":{"state":"Running"},"createdAt":"2026-07-29T05:00:00Z"}],
+				"pagination":{"page":1,"pageSize":100,"totalItems":2,"totalPages":2,"hasNextPage":true}
 			}`)
 		case "2":
 			_, _ = io.WriteString(response, `{
-				"sandboxInfos":[{"id":"sandbox-2","status":{"state":"Pending"},"createdAt":"2026-07-29T05:01:00Z"}],
-				"pagination":{"page":2,"pageSize":100,"total":2,"hasNextPage":false,"hasPreviousPage":true}
+				"items":[{"id":"sandbox-2","status":{"state":"Pending"},"createdAt":"2026-07-29T05:01:00Z"}],
+				"pagination":{"page":2,"pageSize":100,"totalItems":2,"totalPages":2,"hasNextPage":false}
 			}`)
 		default:
 			http.Error(response, "unexpected page", http.StatusBadRequest)
@@ -256,8 +257,8 @@ func TestASBClientListLiveSandboxesQueriesTitleCaseActiveStatesSeparately(t *tes
 		requestCounts[queryState]++
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(response, `{
-			"sandboxInfos":[{"id":"sandbox-%s","status":{"state":"%s"},"createdAt":"2026-08-04T05:00:00Z","metadata":{"multica.backend":"asb"}}],
-			"pagination":{"page":1,"pageSize":100,"total":1,"hasNextPage":false,"hasPreviousPage":false}
+			"items":[{"id":"sandbox-%s","status":{"state":"%s"},"createdAt":"2026-08-04T05:00:00Z","metadata":{"multica.backend":"asb"}}],
+			"pagination":{"page":1,"pageSize":100,"totalItems":1,"totalPages":1,"hasNextPage":false}
 		}`, strings.ToLower(queryState), responseState)
 	}))
 	defer server.Close()
