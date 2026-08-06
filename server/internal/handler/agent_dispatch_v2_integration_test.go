@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.T) {
@@ -148,6 +149,7 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 		testWorkspaceID,
 		"dispatch-v2-claim",
 	)
+	claimReq.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityTaskInstructionV1)
 	claimReq = withURLParam(claimReq, "runtimeId", runtimeID)
 	testHandler.ClaimTaskByRuntime(claimW, claimReq)
 	if claimW.Code != http.StatusOK {

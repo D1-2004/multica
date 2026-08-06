@@ -5,6 +5,9 @@ import "encoding/json"
 const (
 	DaemonCapabilitySkillBundlesV1      = "skill-bundles-v1"
 	DaemonCapabilityCoalescedCommentsV1 = "coalesced-comments-v1"
+	// DaemonCapabilityTaskInstructionV1 advertises that the daemon consumes
+	// AgentTaskResponse.instruction by prepending it to the generated task prompt.
+	DaemonCapabilityTaskInstructionV1 = "task-instruction-v1"
 	// DaemonCapabilityRPCV1 advertises that the daemon can carry
 	// request/response RPCs over the WebSocket control connection (MUL-4257).
 	// Gated so only daemons+servers that both support it route claim over WS;

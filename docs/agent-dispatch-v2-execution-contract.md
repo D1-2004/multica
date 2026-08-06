@@ -99,14 +99,30 @@ Multica builds prompt material from the structured source event:
 The daemon claim task accepts an optional `instruction` string. When it is
 non-blank, the daemon prepends it to the generated per-task prompt for every
 task kind. It does not write the value into the built-in runtime brief. A
-missing, empty, or whitespace-only value is a byte-for-byte no-op, allowing the
-daemon consumer to roll out before any server starts producing the field.
+missing, empty, or whitespace-only value is a byte-for-byte no-op.
+
+An instruction-capable daemon advertises `task-instruction-v1` through
+`X-Client-Capabilities` on both HTTP claims and the WebSocket control
+connection. Multica selects the delivery projection from the capability on the
+actual claim request, not from persisted runtime metadata or the runtime
+version string. An instruction-capable daemon receives the new Diamond plus
+Router composition through `instruction`. A daemon without that capability
+uses the previous prompt builder and receives its output through the existing
+`handoff_note`, `trigger_comment_content`, or `chat_message` claim field it
+already consumes. The two builders and transports are mutually exclusive.
 
 At claim time Multica composes that field as `common.prompt + current mode.prompt
 + contextPrompt`, skipping blank sections and separating non-blank sections with
 two newlines. The composition is claim-scoped, so Diamond updates apply to tasks
-that have not yet been claimed. Issue descriptions, trigger-comment content,
-chat messages, and assignment handoff notes remain unchanged user-visible data.
+that have not yet been claimed. Persisted Issue descriptions, trigger-comment
+content, chat messages, and assignment handoff notes remain unchanged. Only the
+claim response for a legacy daemon temporarily prefixes the matching task field
+as a compatibility transport.
+
+If all three new composition inputs are blank, an instruction-capable daemon
+receives no task instruction. This does not switch it onto the legacy builder.
+Conversely, a daemon without `task-instruction-v1` always uses the legacy
+builder, even when Diamond common or Router context sections are available.
 
 Event projection in the prompt builder is independent of `surface.type`. The
 same structured event can therefore run as an Issue, Chat, or Auto mode without
@@ -160,6 +176,12 @@ compositions subject to the command's ordinary validation.
   claim-time `common + mode + context` composition into task `instruction`.
   Removed Multica's hard-coded DingTalk safety/delivery prompt generation and
   stopped rewriting user-visible task fields with private instructions.
+- 2026-08-06: Added the `task-instruction-v1` daemon capability and a
+  capability-gated claim projection so prompt construction can follow the
+  actual daemon consumer instead of a runtime version guess.
+- 2026-08-06: Split prompt construction by daemon capability. New daemons use
+  only `common + mode + contextPrompt`; older images always use the previous
+  structured DingTalk prompt builder and legacy task-content transport.
 
 ## Reason
 
@@ -239,3 +261,13 @@ parsing or rewriting Router's context string.
 - Reason: Delivery policy must remain current at task start without exposing
   trusted DWS routing data in user-visible content or dropping the stable DWS
   identity during a surface handoff.
+
+## Change record: 2026-08-06 runtime compatibility
+
+- History: Capability-gated the claim response. Daemons advertising
+  `task-instruction-v1` receive the composed private `instruction`; older
+  daemons receive the legacy prompt through the claim-only Issue, comment, or
+  Chat input field. Persisted user-visible content remains unchanged.
+- Reason: Rolling deployments must preserve complete prompt behavior while old
+  runtime images still ignore `instruction`, without mixing legacy policy into
+  new images or duplicating instructions.
