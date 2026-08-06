@@ -107,6 +107,33 @@ func TestRegistrationCapabilitiesRequireURLAndRouter(t *testing.T) {
 	}
 }
 
+func TestRegistrationCapabilitiesUseOutgoingURLProvider(t *testing.T) {
+	outgoingURL := "https://gateway.example.test/callback"
+	client := NewRegistrationClient(RegistrationConfig{
+		OutgoingURLProvider: func() string { return outgoingURL },
+	})
+	svc, err := NewRegistrationService(
+		RegistrationServiceConfig{sessionStore: newMemSessionStore()},
+		client, newInstallationServiceForTest(t), &db.Queries{}, nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRegistrationService: %v", err)
+	}
+	svc.SetHTTPCallbackRouter(stubHTTPCallbackRouter{})
+	if !svc.Capabilities().HTTPCallbackAvailable {
+		t.Fatal("HTTP callback should be available with a dynamic URL and Router wiring")
+	}
+
+	outgoingURL = ""
+	capabilities := svc.Capabilities()
+	if capabilities.HTTPCallbackAvailable {
+		t.Fatal("HTTP callback must become unavailable when the dynamic URL is cleared")
+	}
+	if capabilities.HTTPCallbackReason != "callback_url_not_configured" {
+		t.Fatalf("HTTP callback reason = %q, want callback_url_not_configured", capabilities.HTTPCallbackReason)
+	}
+}
+
 func TestRegistrationServiceConstructorValidatesDeps(t *testing.T) {
 	client := NewRegistrationClient(RegistrationConfig{})
 	installs := newInstallationServiceForTest(t)
