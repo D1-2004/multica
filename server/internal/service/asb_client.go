@@ -101,16 +101,16 @@ type ASBSandbox struct {
 }
 
 type asbSandboxPagination struct {
-	Page            int  `json:"page"`
-	PageSize        int  `json:"pageSize"`
-	Total           int  `json:"total"`
-	HasNextPage     bool `json:"hasNextPage"`
-	HasPreviousPage bool `json:"hasPreviousPage"`
+	Page        int  `json:"page"`
+	PageSize    int  `json:"pageSize"`
+	TotalItems  int  `json:"totalItems"`
+	TotalPages  int  `json:"totalPages"`
+	HasNextPage bool `json:"hasNextPage"`
 }
 
 type asbSandboxPage struct {
-	SandboxInfos []ASBSandbox          `json:"sandboxInfos"`
-	Pagination   *asbSandboxPagination `json:"pagination"`
+	Items      []ASBSandbox          `json:"items"`
+	Pagination *asbSandboxPagination `json:"pagination"`
 }
 
 type asbSandboxListFilter struct {
@@ -443,15 +443,15 @@ func (c *ASBClient) listSandboxes(
 			response.Pagination.PageSize <= 0 {
 			return nil, errors.New("ASB list_sandboxes returned invalid pagination")
 		}
-		for index := range response.SandboxInfos {
-			if err := validateASBSandboxResponse(&response.SandboxInfos[index]); err != nil {
+		for index := range response.Items {
+			if err := validateASBSandboxResponse(&response.Items[index]); err != nil {
 				return nil, fmt.Errorf(
 					"ASB list_sandboxes returned an invalid sandbox: %w",
 					err,
 				)
 			}
 		}
-		sandboxes = append(sandboxes, response.SandboxInfos...)
+		sandboxes = append(sandboxes, response.Items...)
 		if !response.Pagination.HasNextPage {
 			return sandboxes, nil
 		}
