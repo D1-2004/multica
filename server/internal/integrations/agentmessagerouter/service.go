@@ -51,6 +51,7 @@ type Store interface {
 	UpdateDingTalkAccountBindingSurface(context.Context, db.UpdateDingTalkAccountBindingSurfaceParams) (db.ChannelInstallation, error)
 	RevokeDingTalkAccountBinding(context.Context, db.RevokeDingTalkAccountBindingParams) (db.ChannelInstallation, error)
 	RevokeDingTalkAccountBindingByAccountKey(context.Context, db.RevokeDingTalkAccountBindingByAccountKeyParams) (db.ChannelInstallation, error)
+	BackfillDingTalkAccountRouterAccountKey(context.Context, db.BackfillDingTalkAccountRouterAccountKeyParams) (db.ChannelInstallation, error)
 	DeletePreviousDingTalkAccountBindingProjection(context.Context, db.DeletePreviousDingTalkAccountBindingProjectionParams) ([]db.ChannelInstallation, error)
 }
 
@@ -75,6 +76,7 @@ type Router interface {
 	IssueBindingToken(ctx context.Context, descriptor AgentDescriptor) (BindingToken, error)
 	CheckDigitalEmployeeBindings(ctx context.Context, bindings []DigitalEmployeeBindingKey) ([]DigitalEmployeeBindingCheck, error)
 	UnbindDigitalEmployeeBinding(ctx context.Context, binding DigitalEmployeeBindingKey) (DigitalEmployeeBindingUnbindResult, error)
+	GetDigitalEmployeeSourceIdentities(ctx context.Context, sourceIDs []string) (DigitalEmployeeSourceIdentityResult, error)
 	GetSubscription(ctx context.Context, sourceID string) (Subscription, error)
 	UpdateSubscriptionSurface(ctx context.Context, sourceID, agentID, surfaceType string) (Subscription, error)
 }
@@ -1132,8 +1134,35 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding Publ
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
 	}
 	if row.Status == "active" {
-		if config.RouterPlatform == "" || config.RouterTenantID == "" || config.RouterAccountID == "" {
-			return PublicDingTalkAccountBinding{}, ErrBindingConflict
+		if !completeDigitalEmployeeAccountKey(config) {
+			identity, resolveErr := s.resolveLegacyDingTalkAccountKey(ctx, row, config)
+			if resolveErr != nil {
+				return PublicDingTalkAccountBinding{}, resolveErr
+			}
+			updated, updateErr := s.store.BackfillDingTalkAccountRouterAccountKey(ctx, db.BackfillDingTalkAccountRouterAccountKeyParams{
+				RouterPlatform: identity.Platform,
+				RouterTenantID: identity.TenantID,
+				RouterAccountID: identity.AccountID,
+				ID: row.ID, WorkspaceID: row.WorkspaceID, AgentID: row.AgentID,
+				ExpectedStatus: row.Status, ExpectedRouterSourceID: config.RouterSourceID,
+				ExpectedConfig: append([]byte(nil), row.Config...),
+			})
+			if updateErr != nil {
+				if errors.Is(updateErr, pgx.ErrNoRows) {
+					return PublicDingTalkAccountBinding{}, ErrBindingConflict
+				}
+				return PublicDingTalkAccountBinding{}, fmt.Errorf("backfill dingtalk account binding key: %w", updateErr)
+			}
+			updatedConfig, parseUpdatedErr := ParseDingTalkAccountConfig(updated.Config)
+			if parseUpdatedErr != nil || updated.ID != row.ID || updated.WorkspaceID != row.WorkspaceID ||
+				updated.AgentID != row.AgentID || updated.Status != row.Status ||
+				updatedConfig.RouterSourceID != config.RouterSourceID || !completeDigitalEmployeeAccountKey(updatedConfig) ||
+				updatedConfig.RouterPlatform != identity.Platform || updatedConfig.RouterTenantID != identity.TenantID ||
+				updatedConfig.RouterAccountID != identity.AccountID {
+				return PublicDingTalkAccountBinding{}, ErrBindingConflict
+			}
+			row = updated
+			config = updatedConfig
 		}
 		bindingKey := DigitalEmployeeBindingKey{
 			AgentID:   util.UUIDToString(row.AgentID),
@@ -1141,31 +1170,12 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding Publ
 			TenantID:  config.RouterTenantID,
 			AccountID: config.RouterAccountID,
 		}
-		checkKey := bindingKey
-		checkKey.ExpectedDomains = config.bindingDomains()
-		checks, checkErr := s.router.CheckDigitalEmployeeBindings(ctx, []DigitalEmployeeBindingKey{checkKey})
-		if checkErr != nil || len(checks) != 1 {
+		result, unbindErr := s.router.UnbindDigitalEmployeeBinding(ctx, bindingKey)
+		if unbindErr != nil {
 			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
 		}
-		check := checks[0]
-		if check.AgentID != checkKey.AgentID || check.Platform != checkKey.Platform ||
-			check.TenantID != checkKey.TenantID || check.AccountID != checkKey.AccountID ||
-			!validDigitalEmployeeBindingCheck(check) {
-			return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
-		}
-		switch check.Status {
-		case "valid":
-			result, unbindErr := s.router.UnbindDigitalEmployeeBinding(ctx, bindingKey)
-			if unbindErr != nil {
-				return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
-			}
-			if result.Status == "inconsistent" {
-				return PublicDingTalkAccountBinding{}, ErrBindingConflict
-			}
-			if result.Status != "unbound" && result.Status != "ownership_changed" {
-				return PublicDingTalkAccountBinding{}, ErrRouterUnavailable
-			}
-		case "unbound", "bound_to_other_agent":
+		switch result.Status {
+		case "unbound", "ownership_changed":
 		case "inconsistent":
 			return PublicDingTalkAccountBinding{}, ErrBindingConflict
 		default:
@@ -1191,6 +1201,43 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding Publ
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("revoke dingtalk account binding: %w", err)
 	}
 	return s.publicBinding(ctx, revoked)
+}
+
+func (s *Service) resolveLegacyDingTalkAccountKey(
+	ctx context.Context,
+	row db.ChannelInstallation,
+	config DingTalkAccountConfig,
+) (DigitalEmployeeSourceIdentity, error) {
+	sourceID := strings.TrimSpace(config.RouterSourceID)
+	if !validRouterIdentifier(sourceID) {
+		return DigitalEmployeeSourceIdentity{}, ErrBindingConflict
+	}
+	result, err := s.router.GetDigitalEmployeeSourceIdentities(ctx, []string{sourceID})
+	if err != nil {
+		return DigitalEmployeeSourceIdentity{}, ErrRouterUnavailable
+	}
+	for _, missing := range result.MissingSourceIDs {
+		if missing == sourceID {
+			return DigitalEmployeeSourceIdentity{}, ErrBindingConflict
+		}
+	}
+	if len(result.Sources) != 1 {
+		return DigitalEmployeeSourceIdentity{}, ErrBindingConflict
+	}
+	identity := result.Sources[0]
+	if identity.SourceID != sourceID || identity.Platform != "dingtalk" ||
+		identity.SourceType != "digital_employee" || identity.Domain != "channel" ||
+		!validRouterIdentifier(identity.TenantID) || !validRouterIdentifier(identity.AccountID) ||
+		row.ChannelType != ChannelTypeDingTalkAccount {
+		return DigitalEmployeeSourceIdentity{}, ErrBindingConflict
+	}
+	return identity, nil
+}
+
+func completeDigitalEmployeeAccountKey(config DingTalkAccountConfig) bool {
+	return config.RouterPlatform == "dingtalk" &&
+		validRouterIdentifier(config.RouterTenantID) &&
+		validRouterIdentifier(config.RouterAccountID)
 }
 
 func (s *Service) verifyActiveSubscription(ctx context.Context, sourceID string, row db.ChannelInstallation, config DingTalkAccountConfig) error {
