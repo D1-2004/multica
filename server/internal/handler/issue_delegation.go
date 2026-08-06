@@ -49,11 +49,13 @@ type issueDelegationPrivateContext struct {
 	Type          string            `json:"dispatch_type"`
 	EventData     DispatchEventData `json:"dispatch_event_data"`
 	Outbound      DispatchOutbound  `json:"dispatch_outbound"`
+	ContextPrompt string            `json:"dispatch_context_prompt"`
 
-	IdentityContextToken          string `json:"agent_identity_context_token"`
-	IdentityContextTokenExpiresAt int64  `json:"agent_identity_context_token_expires_at"`
-	DispatchEndpointID            string `json:"dispatch_endpoint_id"`
-	IdempotencyKey                string `json:"dispatch_idempotency_key"`
+	IdentityContextToken          string                        `json:"agent_identity_context_token"`
+	IdentityContextTokenExpiresAt int64                         `json:"agent_identity_context_token_expires_at"`
+	ExternalIdentity             AgentDispatchExternalIdentity `json:"external_identity"`
+	DispatchEndpointID            string                        `json:"dispatch_endpoint_id"`
+	IdempotencyKey                string                        `json:"dispatch_idempotency_key"`
 
 	CompletionCallback *struct {
 		URL       string `json:"url"`
@@ -150,14 +152,14 @@ func delegatedIssueDispatch(
 			Type:   private.Type,
 			Data:   private.EventData,
 		},
-		Surface: DispatchSurface{Type: protocol.DispatchSurfaceTypeIssue},
-		Outbound: private.Outbound,
-		ExternalIdentity: AgentDispatchExternalIdentity{
-			ContextToken: private.IdentityContextToken,
-			ExpiresAt:    private.IdentityContextTokenExpiresAt,
-		},
+		Surface:       DispatchSurface{Type: protocol.DispatchSurfaceTypeIssue},
+		Outbound:      private.Outbound,
+		ContextPrompt: private.ContextPrompt,
+		ExternalIdentity: private.ExternalIdentity,
 		DispatchEndpointID: private.DispatchEndpointID,
 	}
+	command.ExternalIdentity.ContextToken = private.IdentityContextToken
+	command.ExternalIdentity.ExpiresAt = private.IdentityContextTokenExpiresAt
 	if private.CompletionCallback != nil {
 		command.CompletionCallback = &DispatchCompletionCallback{
 			URL:       private.CompletionCallback.URL,

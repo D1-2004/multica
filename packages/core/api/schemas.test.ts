@@ -132,6 +132,7 @@ describe("DingTalk account binding schemas", () => {
             account_avatar_url: "https://example.test/digital-worker.png",
             surface_type: "chat",
             message_scope: "custom",
+            enabled_domains: ["channel", "calendar", "approval"],
             calendar_start_enabled: true,
             conversations: [
               {
@@ -172,6 +173,7 @@ describe("DingTalk account binding schemas", () => {
             accountAvatarUrl: "https://example.test/digital-worker.png",
             surfaceType: "chat",
             messageScope: "custom",
+            enabledDomains: ["channel", "calendar", "approval"],
             calendarStartEnabled: true,
             conversations: [
               {
@@ -229,6 +231,7 @@ describe("DingTalk account binding schemas", () => {
     expect(parsed.bindings[0]?.messageRoute).toEqual({
       status: "active",
       messageScope: "direct_only",
+      enabledDomains: [],
       calendarStartEnabled: false,
       conversations: [],
     });

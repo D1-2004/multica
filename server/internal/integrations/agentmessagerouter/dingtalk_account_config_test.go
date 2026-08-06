@@ -18,6 +18,7 @@ func TestDingTalkAccountConfigPersistsCompleteRouterAccountKey(t *testing.T) {
 	config.RouterPlatform = "dingtalk"
 	config.RouterTenantID = "corp-a"
 	config.RouterAccountID = "employee-a"
+	config.EnabledDomains = []string{"channel"}
 	boundAt := time.Date(2026, 8, 2, 9, 59, 0, 0, time.UTC)
 	config.BoundAt = &boundAt
 
@@ -50,6 +51,24 @@ func TestDingTalkAccountConfigRejectsPartialRouterAccountKey(t *testing.T) {
 	}
 }
 
+func TestDingTalkAccountConfigRejectsActiveBindingWithoutEnabledDomains(t *testing.T) {
+	raw := []byte(`{
+		"schema_version":1,
+		"dispatch_endpoint_id":"v1_AAECAwQFBgcICQoLDA0ODw",
+		"dispatch_key_id":"v1",
+		"router_source_id":"source-channel",
+		"router_platform":"dingtalk",
+		"router_tenant_id":"corp-a",
+		"router_account_id":"employee-a",
+		"bound_at":"2026-08-04T08:00:00Z",
+		"calendar_start_enabled":true
+	}`)
+
+	if _, err := ParseDingTalkAccountConfig(raw); err == nil {
+		t.Fatal("active binding without enabled_domains was accepted")
+	}
+}
+
 func TestDingTalkAccountConfigRoundTripAndPublicProjection(t *testing.T) {
 	expiresAt := time.Date(2026, 7, 14, 10, 10, 0, 0, time.UTC)
 	boundAt := time.Date(2026, 7, 14, 10, 0, 12, 0, time.UTC)
@@ -61,6 +80,7 @@ func TestDingTalkAccountConfigRoundTripAndPublicProjection(t *testing.T) {
 		CallbackTokenHash:  strings.Repeat("a", 64),
 		CallbackExpiresAt:  expiresAt,
 		RouterSourceID:     "source-1",
+		EnabledDomains:     []string{"channel"},
 		AccountDisplayName: "Zhang San",
 		AccountAvatarURL:   "https://example.com/avatar.png",
 		BoundAt:            &boundAt,
@@ -131,6 +151,7 @@ func TestDingTalkAccountConfigPreservesConversationSnapshots(t *testing.T) {
 		"dispatch_url":"https://multica.example.com/api/webhooks/agent-dispatch/v1_AAECAwQFBgcICQoLDA0ODw",
 		"router_source_id":"source-1",
 		"bound_at":"2026-07-14T10:00:12Z",
+		"enabled_domains":["channel"],
 		"message_scope":"custom",
 		"conversations":[
 			{"cid":"cid-alpha","name":"Project Alpha","avatar_media_id":"@media-alpha","avatar_url":"https://example.com/alpha.png"},

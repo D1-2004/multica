@@ -25,7 +25,6 @@ type DingTalkBindingTeardownRouter interface {
 		context.Context,
 		[]string,
 	) (agentmessagerouter.DigitalEmployeeSourceIdentityResult, error)
-	GetSubscription(context.Context, string) (agentmessagerouter.Subscription, error)
 }
 
 type dingTalkBindingTeardownStore interface {
@@ -282,17 +281,6 @@ func resolveLegacyDingTalkBindingAccountKey(
 		!validDingTalkBindingRouterIdentifier(identity.TenantID) ||
 		!validDingTalkBindingRouterIdentifier(identity.AccountID) {
 		return agentmessagerouter.DigitalEmployeeSourceIdentity{}, errors.New("legacy dingtalk binding source identity is inconsistent")
-	}
-	subscription, subscriptionErr := router.GetSubscription(ctx, sourceID)
-	if subscriptionErr != nil {
-		return agentmessagerouter.DigitalEmployeeSourceIdentity{}, fmt.Errorf("verify legacy dingtalk binding subscription: %w", subscriptionErr)
-	}
-	if subscription.SourceID != sourceID || subscription.AgentID != row.AgentID.String() ||
-		subscription.Status != "active" ||
-		!agentmessagerouter.SubscriptionDispatchTargetMatches(
-			subscription.DispatchURL, config.DispatchEndpointID, publicBaseURL,
-		) {
-		return agentmessagerouter.DigitalEmployeeSourceIdentity{}, errors.New("legacy dingtalk binding subscription is inconsistent")
 	}
 	return identity, nil
 }

@@ -107,21 +107,30 @@ func buildAgentDispatchIssueFollowUpParams(
 }
 
 func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
-	// Do not include ExternalIdentity: the token has its own dedicated private
-	// task-context field and must never be duplicated in a JSON snapshot.
+	// The token has its own dedicated private task-context field and must never
+	// be duplicated in a JSON snapshot. The stable DWS descriptor is retained so
+	// identity can be resolved immediately before a cloud sandbox starts.
 	payload := map[string]any{
-		"dispatch_schema_version":         c.SchemaVersion,
-		"dispatch_source":                 c.Source,
-		"dispatch_domain":                 c.Event.Domain,
-		"dispatch_type":                   c.Event.Type,
-		"dispatch_event_data":             c.Event.Data,
-		protocol.DispatchSurfaceJSONKey: c.Surface,
-		protocol.DispatchOutboundJSONKey: c.Outbound,
-		"dispatch_idempotency_key":        idempotencyKey,
+		"dispatch_schema_version":             c.SchemaVersion,
+		"dispatch_source":                     c.Source,
+		"dispatch_domain":                     c.Event.Domain,
+		"dispatch_type":                       c.Event.Type,
+		"dispatch_event_data":                 c.Event.Data,
+		protocol.DispatchSurfaceJSONKey:        c.Surface,
+		protocol.DispatchOutboundJSONKey:       c.Outbound,
+		"dispatch_idempotency_key":            idempotencyKey,
+	}
+	if strings.TrimSpace(c.ContextPrompt) != "" {
+		payload[protocol.DispatchContextPromptJSONKey] = c.ContextPrompt
 	}
 	if c.ExternalIdentity.ContextToken != "" {
 		payload[protocol.AgentIdentityContextTokenExpiresAtJSONKey] = c.ExternalIdentity.ExpiresAt
 		payload[protocol.AgentIdentityContextTokenSourceJSONKey] = protocol.AgentIdentityContextTokenSourceExternal
+	}
+	if c.ExternalIdentity.DWS != nil {
+		payload["external_identity"] = struct {
+			DWS *AgentDispatchDWSIdentity `json:"dws"`
+		}{DWS: c.ExternalIdentity.DWS}
 	}
 	if c.DispatchEndpointID != "" {
 		payload["dispatch_endpoint_id"] = c.DispatchEndpointID
@@ -175,8 +184,33 @@ func (h *Handler) handleAgentDispatchV2(
 		writeError(w, http.StatusServiceUnavailable, "task completion delivery is not configured")
 		return
 	}
+	if shouldSkipApprovalDispatch(command) {
+		slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+			"outcome", "skipped_auto_approve",
+			"protocol", "dispatch_command_v2",
+			"domain", command.Event.Domain,
+			"eventType", command.Event.Type,
+			"nodeType", "auto_approve",
+			"processInstanceId", strings.TrimSpace(command.Event.Data.Approval.FormCode),
+		)
+		if command.CompletionCallback != nil && h.TaskService != nil {
+			if err := h.TaskService.EnqueueSynchronousTaskCompletion(
+				r.Context(),
+				command.CompletionCallback.URL,
+				command.CompletionCallback.Target,
+				dispatchContext.AgentID,
+				"approval auto_approve node — DingTalk engine handles auto-approval, no agent task needed",
+				"auto_approve_skipped",
+			); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to persist task completion")
+				return
+			}
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	command.DispatchEndpointID = uuidToString(dispatchContext.EndpointNamespaceID)
-	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext, h.FeatureFlags)
+	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext)
 	if err != nil {
 		slog.Error("MULTICA_AGENT_DISPATCH_REQUEST",
 			"outcome", "failed",
@@ -204,8 +238,6 @@ func (h *Handler) handleAgentDispatchV2(
 		"identityMode", "dispatch_endpoint_actor",
 		"serverOutboundSuppressed", plan.SuppressServerOutbound,
 		"displayBytes", len(plan.Prompt.DisplayContent),
-		"runtimeBytes", len(plan.Prompt.RuntimePrompt),
-		"workflowBytes", len(plan.Prompt.WorkflowPrompt),
 	)
 	if command.AgentID != "" {
 		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(command.AgentID), "agentId")
@@ -294,6 +326,58 @@ func (h *Handler) executeAgentDispatchV2(
 		return
 	}
 
+	// Approval event auto-linking: when the agent created the approval instance,
+	// it wrote the current issue identifier (e.g. "WS-50") into the form field
+	// named 关联Issue. The Router includes form values in AIReadableContent. If
+	// we can recover the identifier and match it to an existing issue assigned to
+	// this agent, redirect to a continuation (comment) on that issue instead of
+	// creating a new one — preserving the original conversation context.
+	if command.AgentID != "" &&
+		command.Event.Domain == "approval" &&
+		command.Event.Type == "approval.status_changed" &&
+		command.Event.Data.Approval != nil {
+		issuePrefix := h.getIssuePrefix(r.Context(), dispatchContext.WorkspaceID)
+		rawContent := command.Event.Data.Approval.AIReadableContent
+		identifier := extractIssueIdentifierFromApprovalContent(rawContent, issuePrefix)
+		if identifier != "" {
+			if issue, ok := h.lookupIssueByIdentifier(r.Context(), dispatchContext.WorkspaceID, issuePrefix, identifier); ok {
+				if issue.AssigneeType.Valid && issue.AssigneeType.String == "agent" &&
+					uuidToString(issue.AssigneeID) == uuidToString(dispatchContext.AgentID) {
+					command.Continuation = &AgentDispatchContinuation{
+						Kind:    "issue",
+						IssueID: uuidToString(issue.ID),
+					}
+					command.AgentID = "" // fall through to continuation path
+					slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+						"outcome", "linked_approval_to_issue",
+						"issueIdentifier", identifier,
+						"processInstanceId", strings.TrimSpace(command.Event.Data.Approval.FormCode),
+					)
+				} else {
+					slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+						"outcome", "approval_link_skipped_assignee_mismatch",
+						"issueIdentifier", identifier,
+						"issueAssigneeType", issue.AssigneeType.String,
+						"issueAssigneeID", uuidToString(issue.AssigneeID),
+						"dispatchAgentID", uuidToString(dispatchContext.AgentID),
+					)
+				}
+			} else {
+				slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+					"outcome", "approval_link_skipped_issue_not_found",
+					"issueIdentifier", identifier,
+					"issuePrefix", issuePrefix,
+				)
+			}
+		} else {
+			slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+				"outcome", "approval_link_skipped_no_identifier",
+				"issuePrefix", issuePrefix,
+				"aiReadableContentBytes", len(rawContent),
+				"processInstanceId", strings.TrimSpace(command.Event.Data.Approval.FormCode),
+			)
+		}
+	}
 	if command.AgentID != "" {
 		agent, ok := h.resolveAgentDispatchAgent(
 			w, r, dispatchContext.UserID, dispatchContext.WorkspaceID, dispatchContext.AgentID)
@@ -338,15 +422,23 @@ type AgentDispatchV2Request struct {
 	Event              DispatchEvent                 `json:"event"`
 	Surface            DispatchSurface               `json:"surface"`
 	Outbound           DispatchOutbound              `json:"outbound"`
+	ContextPrompt      string                        `json:"contextPrompt,omitempty"`
 	ExternalIdentity   AgentDispatchExternalIdentity `json:"externalIdentity"`
 	CompletionCallback *DispatchCompletionCallback   `json:"completionCallback,omitempty"`
 }
 
 func (r AgentDispatchV2Request) DispatchCommand() DispatchCommand {
 	return DispatchCommand{
-		SchemaVersion: r.SchemaVersion, AgentID: r.AgentID, Continuation: r.Continuation,
-		Source: r.Source, Event: r.Event, Surface: r.Surface, Outbound: r.Outbound,
-		ExternalIdentity: r.ExternalIdentity, CompletionCallback: r.CompletionCallback,
+		SchemaVersion:      r.SchemaVersion,
+		AgentID:            r.AgentID,
+		Continuation:       r.Continuation,
+		Source:             r.Source,
+		Event:              r.Event,
+		Surface:            r.Surface,
+		Outbound:           r.Outbound,
+		ContextPrompt:      r.ContextPrompt,
+		ExternalIdentity:   r.ExternalIdentity,
+		CompletionCallback: r.CompletionCallback,
 	}
 }
 

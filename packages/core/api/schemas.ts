@@ -154,6 +154,7 @@ const DingTalkMessageRouteOutcomeSchema = z
     surface_type: z.string().nullable().optional(),
     bound_at: z.string().nullable().optional(),
     message_scope: z.string().optional(),
+    enabled_domains: z.array(z.string()).optional().default([]),
     calendar_start_enabled: z.boolean().optional(),
     conversations: z.array(DingTalkConversationSummarySchema).optional().default([]),
     error: DingTalkBindingErrorSchema.nullable().optional().catch(undefined),
@@ -176,6 +177,7 @@ const DingTalkMessageRouteOutcomeSchema = z
     ...(outcome.bound_at !== undefined ? { boundAt: outcome.bound_at } : {}),
     ...(outcome.error !== undefined ? { error: outcome.error } : {}),
     messageScope: normalizeDingTalkMessageScope(outcome.message_scope),
+    enabledDomains: outcome.enabled_domains,
     calendarStartEnabled: outcome.calendar_start_enabled ?? false,
     conversations: outcome.conversations,
   }));

@@ -228,32 +228,54 @@ func TestASBClientListSandboxesPaginates(t *testing.T) {
 	}
 }
 
-func TestASBClientListSandboxesByMetadata(t *testing.T) {
+func TestASBClientListLiveSandboxesQueriesTitleCaseActiveStatesSeparately(t *testing.T) {
 	t.Parallel()
 
+	requestCounts := make(map[string]int)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet || request.URL.Path != "/v1/sandboxes" {
 			http.NotFound(response, request)
 			return
 		}
-		if got := request.URL.Query().Get("metadata"); got != "multica.backend=asb" {
-			t.Fatalf("metadata filter = %q", got)
+		states := request.URL.Query()["state"]
+		if len(states) != 1 {
+			t.Fatalf("state filters = %#v, want exactly one", states)
 		}
+		queryState := states[0]
+		var responseState string
+		switch queryState {
+		case "Pending":
+			responseState = "Pending"
+		case "Running":
+			responseState = "Running"
+		case "Paused":
+			responseState = "Paused"
+		default:
+			t.Fatalf("state filter = %q", queryState)
+		}
+		requestCounts[queryState]++
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(response, `{
-			"sandboxInfos":[{"id":"sandbox-task","status":{"state":"Running"},"createdAt":"2026-08-04T05:00:00Z","metadata":{"multica.backend":"asb"}}],
+		_, _ = fmt.Fprintf(response, `{
+			"sandboxInfos":[{"id":"sandbox-%s","status":{"state":"%s"},"createdAt":"2026-08-04T05:00:00Z","metadata":{"multica.backend":"asb"}}],
 			"pagination":{"page":1,"pageSize":100,"total":1,"hasNextPage":false,"hasPreviousPage":false}
-		}`)
+		}`, strings.ToLower(queryState), responseState)
 	}))
 	defer server.Close()
 	client := newTestASBClient(t, server)
 
-	sandboxes, err := client.ListSandboxesByMetadata(context.Background(), "multica.backend", "asb")
+	sandboxes, err := client.ListLiveSandboxes(context.Background())
 	if err != nil {
-		t.Fatalf("ListSandboxesByMetadata: %v", err)
+		t.Fatalf("ListLiveSandboxes: %v", err)
 	}
-	if len(sandboxes) != 1 || sandboxes[0].ID != "sandbox-task" {
+	if len(sandboxes) != 3 || sandboxes[0].ID != "sandbox-pending" ||
+		sandboxes[1].ID != "sandbox-running" || sandboxes[2].ID != "sandbox-paused" ||
+		sandboxes[0].Metadata["multica.backend"] != "asb" {
 		t.Fatalf("sandboxes = %#v", sandboxes)
+	}
+	for _, state := range []string{"Pending", "Running", "Paused"} {
+		if got := requestCounts[state]; got != 1 {
+			t.Fatalf("%s request count = %d, want 1", state, got)
+		}
 	}
 }
 

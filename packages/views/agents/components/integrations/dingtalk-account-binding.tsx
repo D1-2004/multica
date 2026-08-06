@@ -180,6 +180,9 @@ function DingTalkMessageScopeSummary({
       {outcome.calendarStartEnabled ? (
         <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_calendar_start)}</p>
       ) : null}
+      {outcome.enabledDomains.includes("approval") ? (
+        <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_approval)}</p>
+      ) : null}
     </div>
   );
 }

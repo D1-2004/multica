@@ -116,6 +116,7 @@ const activeBinding = {
     boundAt: "2026-07-14T09:30:00Z",
     surfaceType: "issue",
     messageScope: "direct_only",
+    enabledDomains: [],
     calendarStartEnabled: false,
     conversations: [],
   },
@@ -199,6 +200,25 @@ describe("DingTalkAccountBindingCard", () => {
     expect(await screen.findByText("Listening for calendar starts")).toBeInTheDocument();
   });
 
+  it("shows approval listening when the binding enables approval events", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          messageRoute: {
+            ...activeBinding.messageRoute,
+            enabledDomains: ["channel", "approval"],
+          },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard();
+
+    expect(await screen.findByText("Listening for approval events")).toBeInTheDocument();
+  });
+
   it("uses the exact Chinese listening summaries", () => {
     const integrations = zhHansAgents.tab_body.integrations;
 
@@ -207,6 +227,7 @@ describe("DingTalkAccountBindingCard", () => {
     expect(integrations.dingtalk_account_scope_custom_other).toBe(
       "已监听 {{count}} 个对话的消息",
     );
+    expect(integrations.dingtalk_account_scope_approval).toBe("已监听审批事件");
     expect(integrations.dingtalk_account_binding_invalid_warning).toBe(
       "该数字员工已经绑定到其他智能体，消息订阅已失效",
     );

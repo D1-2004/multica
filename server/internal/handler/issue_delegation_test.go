@@ -53,6 +53,43 @@ func delegationRequest(t *testing.T, sourceTaskID, sourceAgentID string, body ma
 	return req
 }
 
+func TestDelegatedIssueDispatchPreservesExternalDWSAndContextPrompt(t *testing.T) {
+	source := db.AgentTaskQueue{Context: []byte(`{
+		"dispatch_schema_version":"2.0",
+		"dispatch_source":{"platform":"dingtalk","type":"digital_employee"},
+		"dispatch_domain":"channel",
+		"dispatch_type":"message.created",
+		"dispatch_event_data":{"conversation":{"openConversationId":"cid-delegation"},"messages":[{"openMsgId":"msg-delegation","text":"继续处理"}]},
+		"dispatch_outbound":{"mode":"dws","replyTo":"latest_message"},
+		"dispatch_context_prompt":"ROUTER CONTEXT",
+		"agent_identity_context_token":"private-context-token",
+		"agent_identity_context_token_expires_at":4102444800,
+		"external_identity":{"dws":{"uid":"24710833","orgId":"439446171"}}
+	}`)}
+
+	command, _, transferred, err := delegatedIssueDispatch(source)
+	if err != nil {
+		t.Fatalf("delegatedIssueDispatch: %v", err)
+	}
+	if command.ContextPrompt != "ROUTER CONTEXT" {
+		t.Fatalf("delegated context prompt = %q", command.ContextPrompt)
+	}
+	if command.ExternalIdentity.DWS == nil ||
+		command.ExternalIdentity.DWS.UID != "24710833" ||
+		command.ExternalIdentity.DWS.OrgID != "439446171" {
+		t.Fatalf("delegated external DWS identity = %#v", command.ExternalIdentity.DWS)
+	}
+	if command.ExternalIdentity.ContextToken != "private-context-token" ||
+		command.ExternalIdentity.ExpiresAt != 4102444800 {
+		t.Fatalf("delegated context token identity = %#v", command.ExternalIdentity)
+	}
+	for _, inherited := range []string{"dispatch_context_prompt", "ROUTER CONTEXT", "external_identity", "24710833", "439446171"} {
+		if !strings.Contains(string(transferred), inherited) {
+			t.Errorf("transferred context missing %q: %s", inherited, transferred)
+		}
+	}
+}
+
 func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t *testing.T) {
 	sourceAgentID := createHandlerTestAgent(t, "delegation-source-agent", nil)
 	targetAgentID := createHandlerTestAgent(t, "delegation-target-agent", nil)
@@ -70,11 +107,13 @@ func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t
 		},
 		"dispatch_surface":{"type":"chat"},
 		"dispatch_outbound":{"mode":"dws","replyTo":"latest_message"},
+		"dispatch_context_prompt":"ROUTER CONTEXT",
 		"dispatch_idempotency_key":"dispatch-window:delegation",
 		"parent_ref":{"type":"router_task","id":"router-task-123"},
 		"unknown_large_number":9007199254740993,
 		"agent_identity_context_token":"private-context-token",
 		"agent_identity_context_token_expires_at":4102444800,
+		"external_identity":{"dws":{"uid":"24710833","orgId":"439446171"}},
 		"completion_callback":{"url":%q,"update_url":%q,"target":%q}
 	}`, callbackURL, updateURL, testRouterTargetIdentity)
 	sourceTaskID, chatSessionID := createDelegationSourceTask(t, sourceAgentID, sourceContext)
@@ -141,7 +180,7 @@ func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, inherited := range []string{"private-context-token", "dispatch_schema_version", "parent_ref", "router-task-123", "completion_callback", "9007199254740993"} {
+	for _, inherited := range []string{"private-context-token", "dispatch_schema_version", "dispatch_context_prompt", "ROUTER CONTEXT", "parent_ref", "router-task-123", "completion_callback", "9007199254740993", "external_identity", "24710833", "439446171"} {
 		if !strings.Contains(string(targetTask.Context), inherited) {
 			t.Errorf("target context missing %q: %s", inherited, targetTask.Context)
 		}

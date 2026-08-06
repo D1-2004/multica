@@ -16,8 +16,8 @@ mode has an explicit initial persistence materializer:
   lightweight work in Chat or delegate durable work to an Issue.
 
 `auto` currently applies to `channel/message.created`. The
-`calendar/calendar.started` contract remains Issue-only because it has no
-foreground Chat session to release.
+`calendar/calendar.started` and `approval/approval.status_changed` contracts
+remain Issue-only because neither has a foreground Chat session to release.
 
 Channel slash commands do not override this choice. In particular, text such as
 `/issue`, `/new`, `/reset`, or `/unbind` remains prompt content when delivered by
@@ -38,27 +38,38 @@ resolves its endpoint actor, workspace, and Agent. That endpoint actor is the
 Multica principal used to create sessions, persist messages, and authorize task
 execution.
 
-`externalIdentity.contextToken` remains the separate Agent execution identity
-passed through private task context. When `contextToken` is present,
-`externalIdentity.expiresAt` is also required and carries the token expiry as
-Unix epoch milliseconds. Multica stores the pair as
-`agent_identity_context_token` and
-`agent_identity_context_token_expires_at`, and marks request-supplied tokens
-with `agent_identity_context_token_source=external`; none of these fields is
-exposed through ordinary task responses.
+`externalIdentity` carries optional execution-identity inputs. The existing
+`contextToken` and `expiresAt` pair remains supported: when `contextToken` is
+present, `expiresAt` is required and is Unix epoch milliseconds. The same object
+may also contain `dws={uid,orgId}`. DWS `uid` and `orgId` must be supplied
+together as decimal identifiers, and `dws` may be supplied without a legacy
+ContextToken.
 
-Immediately before starting the task runner, a DWS runtime first resolves the
-Agent's local DingTalk identity binding. When a binding exists, it has highest
-priority regardless of whether task context contains an external or cached
-token, and Multica creates a new Agent Identity context from that binding. Only
-when no Agent binding exists does Multica inspect task context: an external
-token is never replaced by a cached identity, while an expired external token,
-a token inside the one-minute execution safety window, or an incomplete
-external token/expiry pair fails runtime startup. A cached token with more than
-one minute remaining is reused; an absent cache runs without Agent Identity,
-while an expired or near-expiry cache fails because no Agent binding is
-available to refresh it. A malformed cached token/expiry pair still fails
-closed.
+Multica stores the legacy token in the dedicated private
+`agent_identity_context_token` field with
+`agent_identity_context_token_expires_at` and
+`agent_identity_context_token_source=external`. The stable DWS descriptor is
+stored separately as private `external_identity.dws`. Chat, Issue, Chat-to-Issue
+delegation, and Issue follow-up preserve that private descriptor; ordinary task
+responses, Issue/comment content, metadata, broadcasts, and logs do not expose
+it.
+
+Cloud-sandbox launch uses one identity resolver after queue-serialization
+blocking, sandbox resolution, and runner probing, but before `execRunOnce`. For
+a DWS-capable runtime its priority is:
+
+1. the Multica Agent's local DWS binding;
+2. private `external_identity.dws` from the dispatch;
+3. the legacy task ContextToken.
+
+GitHub identity is orthogonal to that ordering. A stable DWS identity creates
+one Agent Identity context with DWS and optional GitHub identities at TTL 900.
+Without stable DWS, a legacy ContextToken is validated and reused; optional
+GitHub identity is appended with `ExtendContext`. With neither stable DWS nor a
+legacy token, an available GitHub binding creates a GitHub-only context. An
+expired external token, a token inside the one-minute execution safety window,
+or an incomplete token/expiry pair fails runtime startup. This resolver is not
+used by the standalone daemon.
 
 The local-clock check applies only when reusing a token read from existing task
 context. Once Multica calls the server-side Agent Identity HSF interface, its
@@ -79,9 +90,11 @@ the existing sender-binding policy.
 Multica builds prompt material from the structured source event:
 
 - display content contains user-visible message and attachment descriptions;
-- runtime instructions contain private input-safety policy;
-- workflow instructions are added when the selected outbound mode requires the
-  Agent to deliver through DWS.
+- `contextPrompt` contains credential-free dynamic execution facts rendered by
+  Router for this delivery, including the outbound mode and any trusted DWS
+  reply target;
+- fixed safety, delivery, response, and routing policy comes from Diamond
+  `common.prompt` plus the prompt for the current `surface.type`.
 
 The daemon claim task accepts an optional `instruction` string. When it is
 non-blank, the daemon prepends it to the generated per-task prompt for every
@@ -89,24 +102,30 @@ task kind. It does not write the value into the built-in runtime brief. A
 missing, empty, or whitespace-only value is a byte-for-byte no-op, allowing the
 daemon consumer to roll out before any server starts producing the field.
 
+At claim time Multica composes that field as `common.prompt + current mode.prompt
++ contextPrompt`, skipping blank sections and separating non-blank sections with
+two newlines. The composition is claim-scoped, so Diamond updates apply to tasks
+that have not yet been claimed. Issue descriptions, trigger-comment content,
+chat messages, and assignment handoff notes remain unchanged user-visible data.
+
 Event projection in the prompt builder is independent of `surface.type`. The
 same structured event can therefore run as an Issue, Chat, or Auto mode without
 moving prompt assembly back into the Router.
 
-After event projection, Multica appends the private automatic-delegation policy
-only when `surface.type=auto`. The mode remains `auto` in persisted dispatch
-context and audit data even though its initial materializer is Chat. A
-successful Issue delegation creates the target task with `surface.type=issue`,
-so the background task does not recursively receive the automatic front-stage
-policy.
+The mode remains `auto` in persisted dispatch context and audit data even though
+its initial materializer is Chat. A successful Issue delegation transfers the
+dynamic Router context, changes the target task's private dispatch surface to
+`issue`, and recomposes `common + issue + context` when the child is claimed.
+The child therefore does not receive the automatic front-stage policy.
 
 ## Outbound
 
 `outbound.mode` is the only field that selects outbound ownership:
 
 - `dws` delegates acknowledgement and final DingTalk delivery to the Agent's
-  injected DWS capability. Multica suppresses server-side typing and robot
-  replies for that dispatch.
+  DWS capability according to the configured fixed prompt and Router's dynamic
+  context. Multica suppresses server-side typing and robot replies for that
+  dispatch.
 - `robot_sdk` keeps Multica's channel typing and robot reply lifecycle enabled.
 
 Outbound selection is independent of source type and surface. Issue plus DWS,
@@ -137,6 +156,10 @@ compositions subject to the command's ordinary validation.
 - 2026-08-04: Added backward-compatible daemon consumption of the optional
   task-level `instruction` field. Non-blank values are prepended to the task
   prompt; absent or blank values preserve the existing prompt exactly.
+- 2026-08-04: Added top-level `contextPrompt`, Diamond `common.prompt`, and
+  claim-time `common + mode + context` composition into task `instruction`.
+  Removed Multica's hard-coded DingTalk safety/delivery prompt generation and
+  stopped rewriting user-visible task fields with private instructions.
 
 ## Reason
 
@@ -178,3 +201,41 @@ The task-level `instruction` field separates runtime-delivery policy from
 user-visible issue, comment, and chat content. Rolling out its daemon reader
 first is safe because existing claim responses omit the field and therefore
 retain the previous prompt without modification.
+
+Separating the three composition inputs keeps fixed policy dynamically
+configurable in Diamond and leaves event-specific delivery facts with Router.
+Claim-time assembly ensures Issue comments and continued Chat tasks see the
+current policy, while an Auto-to-Issue handoff selects the Issue policy without
+parsing or rewriting Router's context string.
+
+## Change record: 2026-08-04
+
+- History: Added optional paired `externalIdentity.dws.uid/orgId`, private stable
+  DWS propagation, and a single cloud-sandbox pre-start identity resolver with
+  local DWS binding > external DWS > legacy ContextToken priority. GitHub remains
+  an orthogonal identity and is combined through one create or extend operation.
+- Reason: A stable upstream DWS identity must survive delayed, delegated, and
+  coalesced execution without exposing credentials, while the final short-lived
+  ContextToken must still be minted against the sandbox that will actually run.
+
+## Change record: 2026-08-06
+
+- History: Added the digital-employee `approval/approval.status_changed` Issue
+  dispatch. Approval callbacks validate their form and approver data, use a
+  stable approval status idempotency key, skip `auto_approve` nodes without an
+  Agent task, and recover the `关联Issue` identifier to continue the original
+  Issue when its Agent matches. `dws` and `robot_sdk` outbound modes reuse the
+  existing trusted reply workflow; `none` keeps approval data outbound-free.
+- Reason: Approval lifecycle callbacks must preserve the originating Issue and
+  sender policy without exposing raw approval content in observability logs or
+  allowing a delayed task to lose its external DWS identity.
+
+## Change record: 2026-08-06 task instruction composition
+
+- History: Router `contextPrompt`, Diamond `common.prompt`, and the persisted
+  task surface are composed at claim time into the private task `instruction`.
+  Issue, comment, and Chat display fields remain unchanged; delegated Issue
+  tasks carry both the Router context and `externalIdentity.dws` privately.
+- Reason: Delivery policy must remain current at task start without exposing
+  trusted DWS routing data in user-visible content or dropping the stable DWS
+  identity during a surface handoff.

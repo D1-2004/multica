@@ -47,22 +47,24 @@ func TestDiamondProviderAppliesCompleteSnapshotsAtomically(t *testing.T) {
 	}
 }
 
-func TestDiamondProviderLoadsSurfacePrompts(t *testing.T) {
+func TestDiamondProviderLoadsCommonAndSurfacePrompts(t *testing.T) {
 	t.Parallel()
 	provider := NewDiamondProvider()
 
 	count, _, err := provider.ApplyJSON([]byte(`{
-  "issue": {"prompt": "ISSUE POLICY"},
-  "chat": {"prompt": "CHAT POLICY"},
-  "auto": {"prompt": "AUTO POLICY"}
-}`))
+	  "common": {"prompt": "COMMON POLICY"},
+	  "issue": {"prompt": "ISSUE POLICY"},
+	  "chat": {"prompt": "CHAT POLICY"},
+	  "auto": {"prompt": "AUTO POLICY"}
+	}`))
 	if err != nil {
 		t.Fatalf("ApplyJSON surface prompts: %v", err)
 	}
-	if count != 3 {
-		t.Fatalf("surface prompt count = %d, want 3", count)
+	if count != 4 {
+		t.Fatalf("prompt count = %d, want 4", count)
 	}
 	for key, want := range map[string]string{
+		DispatchCommonRuntimePromptFlagKey: "COMMON POLICY",
 		DispatchIssueRuntimePromptFlagKey: "ISSUE POLICY",
 		DispatchChatRuntimePromptFlagKey:  "CHAT POLICY",
 		DispatchAutoRuntimePromptFlagKey:  "AUTO POLICY",
