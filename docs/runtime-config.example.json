@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "web": {
+    "attachment_download_mode": "auto",
+    "cors_allowed_origins": [
+      "https://app.example.com"
+    ],
+    "frontend_origin": "https://app.example.com",
+    "login_providers": [
+      "dingtalk"
+    ],
+    "app_url": "https://app.example.com",
+    "public_url": "https://api.example.com",
+    "local_upload_base_url": ""
+  },
+  "integrations": {
+    "agent_message_router_internal_url": "https://router.example.com",
+    "dingtalk_dbase_binding_origin": "https://dbase.example.com",
+    "dingtalk_dbase_binding_page_url": "https://dbase.example.com/bind",
+    "github_api_base_url": "https://api.github.com",
+    "dingtalk_registration_base_url": "https://oapi.dingtalk.com",
+    "dingtalk_registration_outgoing_url": "https://api.example.com/api/integrations/dingtalk/callback"
+  },
+  "features": {
+    "workspace_access_tokens": true
+  },
+  "runtime": {
+    "llm": {
+      "base_url": "https://llm.example.com/v1",
+      "models": [
+        "default-model",
+        "secondary-model"
+      ],
+      "default_model": "default-model"
+    },
+    "fc_e2b": {
+      "enabled": false,
+      "stable_publisher_user_ids": [],
+      "template": "",
+      "server_url": "",
+      "api_url": "",
+      "domain": "",
+      "timeout_seconds": 900,
+      "sandbox_ready_timeout": "5m"
+    },
+    "asb": {
+      "enabled": false,
+      "api_url": "",
+      "server_url": "",
+      "timeout_seconds": 900,
+      "ready_timeout": "5m",
+      "command_ready_timeout": "7m",
+      "wireguard_ready_timeout": "2m",
+      "resource_cpu": "4",
+      "resource_memory": "8Gi"
+    }
+  },
+  "agent_identity": {
+    "control_base_url": "https://identity-control.example.com",
+    "sandbox_base_url": "https://identity-sandbox.example.com",
+    "timeout": "30s",
+    "debug_log_context_token": false,
+    "debug_context_token_agent_ids": []
+  },
+  "enterprise_identity": {
+    "enabled": false,
+    "oauth_attempt_ttl": "10m",
+    "buc_authorize_url": "",
+    "buc_token_url": "",
+    "buc_issuer": "",
+    "buc_jwks_url": "",
+    "buc_redirect_url": "",
+    "buc_authorize_apps": [],
+    "authx_service_id": "",
+    "authx_audience": "",
+    "authx_environment": "",
+    "authx_ttl_seconds": 3600,
+    "idem_base_url": "",
+    "idem_timeout": "30s",
+    "operator_trust_domain": "",
+    "agent_trust_domain": "",
+    "agent_namespace": "",
+    "ait_ttl_seconds": 900
+  }
+}

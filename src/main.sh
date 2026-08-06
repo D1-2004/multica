@@ -17,6 +17,8 @@ RUNTIME_CONFIG_KEYS=(
   APP_ENV
   DATABASE_URL
   JWT_SECRET
+  MULTICA_RUNTIME_CONFIG_SOURCE
+  MULTICA_RUNTIME_LLM_API_KEY
   FRONTEND_ORIGIN
   MULTICA_APP_URL
   MULTICA_PUBLIC_URL
@@ -216,7 +218,14 @@ load_antx_runtime_config() {
 
 load_antx_runtime_config
 
-for required_key in DATABASE_URL JWT_SECRET FRONTEND_ORIGIN MULTICA_APP_URL; do
+required_runtime_keys=(DATABASE_URL JWT_SECRET)
+if [[ "${MULTICA_RUNTIME_CONFIG_SOURCE:-}" == "diamond" ]]; then
+  required_runtime_keys+=(MULTICA_RUNTIME_LLM_API_KEY)
+else
+  required_runtime_keys+=(FRONTEND_ORIGIN MULTICA_APP_URL)
+fi
+
+for required_key in "${required_runtime_keys[@]}"; do
   if [[ -n "${!required_key:-}" ]]; then
     echo "[multica][runtime] required config present: $required_key"
   else
@@ -226,8 +235,12 @@ done
 
 : "${DATABASE_URL:?DATABASE_URL is required}"
 : "${JWT_SECRET:?JWT_SECRET is required}"
-: "${FRONTEND_ORIGIN:?FRONTEND_ORIGIN is required}"
-: "${MULTICA_APP_URL:?MULTICA_APP_URL is required}"
+if [[ "${MULTICA_RUNTIME_CONFIG_SOURCE:-}" == "diamond" ]]; then
+  : "${MULTICA_RUNTIME_LLM_API_KEY:?MULTICA_RUNTIME_LLM_API_KEY is required when MULTICA_RUNTIME_CONFIG_SOURCE=diamond}"
+else
+  : "${FRONTEND_ORIGIN:?FRONTEND_ORIGIN is required}"
+  : "${MULTICA_APP_URL:?MULTICA_APP_URL is required}"
+fi
 
 export APP_ENV="${APP_ENV:-production}"
 export BACKEND_PORT="${BACKEND_PORT:-8080}"

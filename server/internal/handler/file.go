@@ -173,7 +173,7 @@ func attachmentDownloadPath(id string) string {
 //     don't make them worse.
 func (h *Handler) buildMarkdownURL(a db.Attachment, id string) string {
 	relPath := attachmentDownloadPath(id)
-	publicURL := strings.TrimRight(h.cfg.PublicURL, "/")
+	publicURL := strings.TrimRight(h.currentConfig().PublicURL, "/")
 
 	if h.storageURLIsPubliclyReadable(a.Url) {
 		return a.Url
@@ -252,7 +252,7 @@ func normalizeAttachmentDownloadMode(raw string) (attachmentDownloadMode, bool) 
 }
 
 func (h *Handler) attachmentDownloadMode() attachmentDownloadMode {
-	mode, _ := normalizeAttachmentDownloadMode(h.cfg.AttachmentDownloadMode)
+	mode, _ := normalizeAttachmentDownloadMode(h.currentConfig().AttachmentDownloadMode)
 	return mode
 }
 
@@ -1046,7 +1046,7 @@ func (h *Handler) setAttachmentPreviewSecurityHeaders(w http.ResponseWriter) {
 	// Attachment preview responses may be loaded by the web app in same-origin
 	// deployments or split app/api self-hosted deployments. Allow only the API
 	// origin itself plus configured frontend/CORS origins.
-	w.Header().Set("Content-Security-Policy", attachmentPreviewCSPHeader(h.cfg.AttachmentFrameAncestors))
+	w.Header().Set("Content-Security-Policy", attachmentPreviewCSPHeader(h.currentConfig().AttachmentFrameAncestors))
 }
 
 func attachmentPreviewCSPHeader(frameAncestors []string) string {

@@ -83,21 +83,26 @@ type AppConfig struct {
 // sign-in button and signup UI. Only add fields here that are safe to expose
 // to anonymous callers — never user- or tenant-scoped data.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
+	current := h.currentConfig()
 	config := AppConfig{
-		AllowSignup:               os.Getenv("ALLOW_SIGNUP") != "false",
+		AllowSignup:               current.AllowSignup,
 		GoogleClientID:            os.Getenv("GOOGLE_CLIENT_ID"),
 		DingtalkClientID:          os.Getenv("DINGTALK_CLIENT_ID"),
 		LarkClientID:              os.Getenv("LARK_CLIENT_ID"),
-		WorkspaceCreationDisabled: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+		WorkspaceCreationDisabled: current.DisableWorkspaceCreation,
 	}
-	providers := LoginProviders()
+	providers := append([]string(nil), current.LoginProviders...)
 	config.LoginProviders = providers
 	config.DingtalkOnly = len(providers) == 1 && providers[0] == "dingtalk"
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()
 	}
 	config.CdnSigned = h.CFSigner != nil
-	config.DaemonServerURL, config.DaemonAppURL = daemonSetupURLsFromEnv()
+	config.DaemonServerURL, config.DaemonAppURL = daemonSetupURLs(
+		current.PublicURL,
+		current.AppURL,
+		current.FrontendOrigin,
+	)
 	config.FeatureFlags = featureflags.EvaluateFrontendPublicFlags(r.Context(), h.FeatureFlags)
 
 	// Re-read from env on every request so operators can rotate keys via
@@ -166,10 +171,18 @@ func LoginProviderAllowed(name string) bool {
 }
 
 func daemonSetupURLsFromEnv() (string, string) {
-	serverURL := normalizePublicURL(os.Getenv("MULTICA_PUBLIC_URL"))
-	appURL := normalizePublicURL(os.Getenv("MULTICA_APP_URL"))
+	return daemonSetupURLs(
+		os.Getenv("MULTICA_PUBLIC_URL"),
+		os.Getenv("MULTICA_APP_URL"),
+		os.Getenv("FRONTEND_ORIGIN"),
+	)
+}
+
+func daemonSetupURLs(serverRaw, appRaw, frontendRaw string) (string, string) {
+	serverURL := normalizePublicURL(serverRaw)
+	appURL := normalizePublicURL(appRaw)
 	if appURL == "" {
-		appURL = normalizePublicURL(os.Getenv("FRONTEND_ORIGIN"))
+		appURL = normalizePublicURL(frontendRaw)
 	}
 	if appURL == "" {
 		return "", ""

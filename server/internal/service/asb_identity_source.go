@@ -43,10 +43,21 @@ type asbIdentitySourceRuntimeStore interface {
 // image rotation does not replace the source image. Park releases only the
 // Multica-side source lease; it does not mutate the sandbox lifecycle.
 type ASBIdentitySourceManager struct {
-	Store       asbIdentitySourceRuntimeStore
-	Credentials *ASBRuntimeClientProvider
-	Capacity    ASBSandboxCapacity
-	Config      ASBConfig
+	Store          asbIdentitySourceRuntimeStore
+	Credentials    *ASBRuntimeClientProvider
+	Capacity       ASBSandboxCapacity
+	Config         ASBConfig
+	ConfigProvider func() ASBConfig
+}
+
+func (m *ASBIdentitySourceManager) currentConfig() ASBConfig {
+	if m != nil && m.ConfigProvider != nil {
+		return m.ConfigProvider()
+	}
+	if m == nil {
+		return ASBConfig{}
+	}
+	return m.Config
 }
 
 func (m *ASBIdentitySourceManager) validateRuntime(
@@ -72,6 +83,7 @@ func (m *ASBIdentitySourceManager) Create(
 	key enterpriseIdentitySourceKey,
 	tokens BUCIdentityTokens,
 ) (EnterpriseIdentitySourceAvailability, error) {
+	config := m.currentConfig()
 	if m == nil || m.Store == nil || m.Credentials == nil || m.Capacity == nil {
 		return EnterpriseIdentitySourceAvailability{}, errors.New(
 			"ASB enterprise identity source manager is unavailable",
@@ -101,8 +113,8 @@ func (m *ASBIdentitySourceManager) Create(
 	sandbox, err := m.Capacity.Create(ctx, runtimeID, client, ASBCreateSandboxInput{
 		ImageURI:       metadata.ArtifactRef,
 		TimeoutSeconds: asbMaxCreateTimeout,
-		ResourceCPU:    m.Config.ResourceCPU,
-		ResourceMemory: m.Config.ResourceMemory,
+		ResourceCPU:    config.ResourceCPU,
+		ResourceMemory: config.ResourceMemory,
 		Entrypoint:     []string{"sleep infinity"},
 		Metadata: map[string]string{
 			"multica.identity_source": "true",
@@ -136,7 +148,7 @@ func (m *ASBIdentitySourceManager) Create(
 		ctx,
 		client,
 		sandbox.ID,
-		m.Config.ReadyTimeout,
+		config.ReadyTimeout,
 	); err != nil {
 		logASBIdentitySourceFailure("wait_running", sandbox.ID, err)
 		return EnterpriseIdentitySourceAvailability{}, err
@@ -148,8 +160,8 @@ func (m *ASBIdentitySourceManager) Create(
 		key.RawEmployeeID,
 		key.BUCAgentID,
 		tokens,
-		m.Config.WireGuardCredentials,
-		m.Config.WireGuardReadyTimeout,
+		config.WireGuardCredentials,
+		config.WireGuardReadyTimeout,
 	); err != nil {
 		logASBIdentitySourceFailure("establish_buc_identity", sandbox.ID, err)
 		return EnterpriseIdentitySourceAvailability{}, err
@@ -276,9 +288,10 @@ func (m *ASBIdentitySourceManager) clientForRuntime(
 }
 
 func (m *ASBIdentitySourceManager) sourceLifecycleTimeout() time.Duration {
-	timeout := m.Config.ReadyTimeout
-	if m.Config.WireGuardReadyTimeout > timeout {
-		timeout = m.Config.WireGuardReadyTimeout
+	config := m.currentConfig()
+	timeout := config.ReadyTimeout
+	if config.WireGuardReadyTimeout > timeout {
+		timeout = config.WireGuardReadyTimeout
 	}
 	return timeout
 }

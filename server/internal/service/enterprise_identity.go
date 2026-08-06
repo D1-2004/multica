@@ -283,25 +283,36 @@ func enterpriseIdentityTokenRotationLockKey(identityID pgtype.UUID) int32 {
 }
 
 type EnterpriseIdentityService struct {
-	Store       enterpriseIdentityStore
-	Config      EnterpriseIdentityConfig
-	BUC         BUCOAuthClient
-	AuthX       EnterpriseAuthX
-	Idem        EnterpriseIdem
-	Sandboxes   EnterpriseIdentitySandboxController
-	Tenants     EnterpriseIdentityASBTenantResolver
-	Source      EnterpriseIdentitySource
-	Secrets     *secretbox.Box
-	TokenLock   EnterpriseIdentityTokenRotationLocker
-	SourceLock  EnterpriseIdentitySourceLocker
-	RuntimeLock EnterpriseIdentityRuntimeLocker
-	Now         func() time.Time
-	Authorize   *url.URL
+	Store          enterpriseIdentityStore
+	Config         EnterpriseIdentityConfig
+	ConfigProvider func() EnterpriseIdentityConfig
+	BUC            BUCOAuthClient
+	AuthX          EnterpriseAuthX
+	Idem           EnterpriseIdem
+	Sandboxes      EnterpriseIdentitySandboxController
+	Tenants        EnterpriseIdentityASBTenantResolver
+	Source         EnterpriseIdentitySource
+	Secrets        *secretbox.Box
+	TokenLock      EnterpriseIdentityTokenRotationLocker
+	SourceLock     EnterpriseIdentitySourceLocker
+	RuntimeLock    EnterpriseIdentityRuntimeLocker
+	Now            func() time.Time
+	Authorize      *url.URL
 
 	MaintenanceInterval   time.Duration
 	RefreshBefore         time.Duration
 	SourceRefreshInterval time.Duration
 	MaintenanceBatch      int32
+}
+
+func (s *EnterpriseIdentityService) currentConfig() EnterpriseIdentityConfig {
+	if s != nil && s.ConfigProvider != nil {
+		return s.ConfigProvider()
+	}
+	if s == nil {
+		return EnterpriseIdentityConfig{}
+	}
+	return s.Config
 }
 
 func NewEnterpriseIdentityService(
@@ -374,6 +385,7 @@ func (s *EnterpriseIdentityService) StartBinding(
 	ctx context.Context,
 	input StartEnterpriseIdentityBindingInput,
 ) (StartEnterpriseIdentityBindingResult, error) {
+	config := s.currentConfig()
 	if err := validateEnterpriseRedirectPath(input.RedirectPath); err != nil {
 		return StartEnterpriseIdentityBindingResult{}, err
 	}
@@ -386,7 +398,7 @@ func (s *EnterpriseIdentityService) StartBinding(
 		return StartEnterpriseIdentityBindingResult{}, errors.New("generate enterprise identity OAuth nonce")
 	}
 	now := s.Now()
-	expiresAt := now.Add(s.Config.OAuthAttemptTTL)
+	expiresAt := now.Add(config.OAuthAttemptTTL)
 	if _, err := s.Store.CreateAgentEnterpriseIdentityAttempt(ctx, db.CreateAgentEnterpriseIdentityAttemptParams{
 		WorkspaceID:       input.WorkspaceID,
 		AgentID:           input.AgentID,
@@ -399,19 +411,23 @@ func (s *EnterpriseIdentityService) StartBinding(
 	}); err != nil {
 		return StartEnterpriseIdentityBindingResult{}, fmt.Errorf("create enterprise identity binding attempt: %w", err)
 	}
-	authorize := *s.Authorize
+	authorizeURL, err := url.Parse(config.BUCAuthorizeURL)
+	if err != nil {
+		return StartEnterpriseIdentityBindingResult{}, errors.New("parse BUC authorize URL")
+	}
+	authorize := *authorizeURL
 	query := authorize.Query()
 	scope := "profile openid employee"
-	if len(s.Config.BUCAuthorizeApps) > 0 {
+	if len(config.BUCAuthorizeApps) > 0 {
 		scope += " user_authorize"
-		query.Set("authorize_app", strings.Join(s.Config.BUCAuthorizeApps, ","))
+		query.Set("authorize_app", strings.Join(config.BUCAuthorizeApps, ","))
 	}
 	query.Set("scope", scope)
 	query.Set("prompt", "consent")
 	query.Set("response_type", "code")
-	query.Set("client_id", s.Config.BUCClientID)
-	query.Set("redirect_uri", s.Config.BUCRedirectURL)
-	query.Set("agent_id", s.Config.BUCAgentID)
+	query.Set("client_id", config.BUCClientID)
+	query.Set("redirect_uri", config.BUCRedirectURL)
+	query.Set("agent_id", config.BUCAgentID)
 	query.Set("version", "1.0")
 	query.Set("state", state)
 	query.Set("nonce", nonce)
@@ -492,6 +508,7 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 	prepared PreparedEnterpriseIdentityBinding,
 	code string,
 ) (CompleteEnterpriseIdentityBindingResult, error) {
+	config := s.currentConfig()
 	bindingStarted := prepared.started
 	if bindingStarted.IsZero() {
 		bindingStarted = time.Now()
@@ -626,7 +643,7 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 		}
 	}
 	stageStarted = time.Now()
-	if _, err := s.Idem.IssueAIT(ctx, authXToken.IDToken, agentSPIFFEID, operatorSPIFFEID, s.Config.AITTTL); err != nil {
+	if _, err := s.Idem.IssueAIT(ctx, authXToken.IDToken, agentSPIFFEID, operatorSPIFFEID, config.AITTTL); err != nil {
 		logEnterpriseIdentityBindingStageFailure("issue_idem_ait", stageStarted, err, bindingAttrs...)
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, err
@@ -662,7 +679,7 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 		RuntimeID:     agent.RuntimeID,
 		TenantLockKey: tenantScope.LockKey,
 		RawEmployeeID: employeeID,
-		BUCAgentID:    s.Config.BUCAgentID,
+		BUCAgentID:    config.BUCAgentID,
 	}
 	unlockSource, err := s.SourceLock.Lock(ctx, sourceKey)
 	if err != nil {
@@ -795,7 +812,7 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 		AgentID:                    attempt.AgentID,
 		RawEmpID:                   employeeID,
 		DisplayName:                strings.TrimSpace(claims.Name),
-		BucAgentID:                 s.Config.BUCAgentID,
+		BucAgentID:                 config.BUCAgentID,
 		AgentSpiffeID:              agentSPIFFEID,
 		AipID:                      aipID,
 		BucIdentitySourceSandboxID: pgtype.Text{String: source.SandboxID, Valid: true},
@@ -1231,7 +1248,7 @@ func (s *EnterpriseIdentityService) ResolveASBTaskIdentity(
 		if err != nil {
 			return ASBResolvedIdentity{}, err
 		}
-		ait, err := s.Idem.IssueAIT(ctx, refreshed.IDToken, updated.AgentSpiffeID, operatorSPIFFEID, s.Config.AITTTL)
+		ait, err := s.Idem.IssueAIT(ctx, refreshed.IDToken, updated.AgentSpiffeID, operatorSPIFFEID, s.currentConfig().AITTTL)
 		if err != nil {
 			return ASBResolvedIdentity{}, err
 		}
@@ -1769,10 +1786,10 @@ func (s *EnterpriseIdentityService) lockEnterpriseIdentityForSourceMutation(
 
 func (s *EnterpriseIdentityService) agentSPIFFEID(agentID pgtype.UUID) (string, error) {
 	return idemapi.GenerateSpiffeIdUri(&idemapi.IdentitySpec{
-		TrustDomainName: s.Config.AgentTrustDomain,
+		TrustDomainName: s.currentConfig().AgentTrustDomain,
 		WorkloadPathHeader: idemapi.WorkloadPathField{
 			Name:  "ns",
-			Value: s.Config.AgentNamespace,
+			Value: s.currentConfig().AgentNamespace,
 		},
 		WorkloadPathPayloads: []idemapi.WorkloadPathField{{
 			Name:  "agents",
@@ -1786,7 +1803,7 @@ func (s *EnterpriseIdentityService) operatorSPIFFEID(employeeID string) (string,
 		return "", errors.New("enterprise identity employee ID is invalid")
 	}
 	return idemapi.GenerateSpiffeIdUri(&idemapi.IdentitySpec{
-		TrustDomainName: s.Config.OperatorTrustDomain,
+		TrustDomainName: s.currentConfig().OperatorTrustDomain,
 		WorkloadPathHeader: idemapi.WorkloadPathField{
 			Name:  "ns",
 			Value: "buc",

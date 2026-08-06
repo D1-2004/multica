@@ -87,14 +87,15 @@ func NewNoopOutcomeReplier(log *slog.Logger) OutcomeReplier {
 // supervisor goroutines; all dependencies must be goroutine-safe
 // (the standard implementations are).
 type LarkOutcomeReplier struct {
-	client       APIClient
-	bindingSvc   BindingTokenMinter
-	credentials  CredentialsResolver
-	queries      OutcomeReplierQueries
-	appURL       string // e.g. https://multica.example, trailing slash trimmed
-	bindingPath  string // path component of the binding URL, default "/lark/bind"
-	noticeHeader string // header text used by the offline/archived cards
-	log          *slog.Logger
+	client         APIClient
+	bindingSvc     BindingTokenMinter
+	credentials    CredentialsResolver
+	queries        OutcomeReplierQueries
+	appURL         string // e.g. https://multica.example, trailing slash trimmed
+	appURLProvider func() string
+	bindingPath    string // path component of the binding URL, default "/lark/bind"
+	noticeHeader   string // header text used by the offline/archived cards
+	log            *slog.Logger
 }
 
 // OutcomeReplierConfig wires the production replier. AppURL is the Multica web
@@ -105,13 +106,14 @@ type LarkOutcomeReplier struct {
 // binding flow can only log the open_id, not produce a clickable card. The
 // other fields default at construction.
 type OutcomeReplierConfig struct {
-	APIClient   APIClient
-	BindingSvc  BindingTokenMinter
-	Credentials CredentialsResolver
-	Queries     OutcomeReplierQueries
-	AppURL      string
-	BindingPath string
-	Logger      *slog.Logger
+	APIClient      APIClient
+	BindingSvc     BindingTokenMinter
+	Credentials    CredentialsResolver
+	Queries        OutcomeReplierQueries
+	AppURL         string
+	AppURLProvider func() string
+	BindingPath    string
+	Logger         *slog.Logger
 }
 
 // NewLarkOutcomeReplier validates the configuration and returns the
@@ -140,15 +142,26 @@ func NewLarkOutcomeReplier(cfg OutcomeReplierConfig) OutcomeReplier {
 		bindingPath = "/" + bindingPath
 	}
 	return &LarkOutcomeReplier{
-		client:       cfg.APIClient,
-		bindingSvc:   cfg.BindingSvc,
-		credentials:  cfg.Credentials,
-		queries:      cfg.Queries,
-		appURL:       strings.TrimRight(cfg.AppURL, "/"),
-		bindingPath:  bindingPath,
-		noticeHeader: "Multica",
-		log:          log,
+		client:         cfg.APIClient,
+		bindingSvc:     cfg.BindingSvc,
+		credentials:    cfg.Credentials,
+		queries:        cfg.Queries,
+		appURL:         strings.TrimRight(cfg.AppURL, "/"),
+		appURLProvider: cfg.AppURLProvider,
+		bindingPath:    bindingPath,
+		noticeHeader:   "Multica",
+		log:            log,
 	}
+}
+
+func (r *LarkOutcomeReplier) currentAppURL() string {
+	if r != nil && r.appURLProvider != nil {
+		return strings.TrimRight(strings.TrimSpace(r.appURLProvider()), "/")
+	}
+	if r == nil {
+		return ""
+	}
+	return r.appURL
 }
 
 // Reply implements OutcomeReplier. Reads carefully — the switch is
@@ -209,14 +222,15 @@ func (r *LarkOutcomeReplier) sendBindingPrompt(ctx context.Context, inst Install
 	if res.SenderOpenID == "" {
 		return errors.New("missing sender open_id")
 	}
-	if r.appURL == "" {
+	appURL := r.currentAppURL()
+	if appURL == "" {
 		return errors.New("app_url not configured")
 	}
 	token, err := r.bindingSvc.Mint(ctx, inst.WorkspaceID, inst.ID, res.SenderOpenID)
 	if err != nil {
 		return fmt.Errorf("mint binding token: %w", err)
 	}
-	bindURL := r.appURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
+	bindURL := appURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
 	creds, err := r.installationCredentials(inst)
 	if err != nil {
 		return err
@@ -243,7 +257,7 @@ func (r *LarkOutcomeReplier) sendIssueCreated(ctx context.Context, inst Installa
 	if err != nil {
 		return err
 	}
-	text := issueCreatedText(res, r.appURL)
+	text := issueCreatedText(res, r.currentAppURL())
 	// Share the Patcher's classified fallback: a thread reply that
 	// fails because the topic cannot receive it (recalled trigger,
 	// topics disabled, aggregated message) falls back to a chat-level

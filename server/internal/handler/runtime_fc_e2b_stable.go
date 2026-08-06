@@ -41,7 +41,7 @@ func (h *Handler) canPublishFCE2BStable(r *http.Request) bool {
 	if userID == "" {
 		return false
 	}
-	_, ok := h.cfg.StableRuntimePublisherUserIDs[userID]
+	_, ok := h.currentConfig().StableRuntimePublisherUserIDs[userID]
 	return ok
 }
 
@@ -51,7 +51,7 @@ func (h *Handler) requireFCE2BStablePublisher(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return pgtype.UUID{}, false
 	}
-	if _, ok := h.cfg.StableRuntimePublisherUserIDs[util.UUIDToString(userID)]; !ok {
+	if _, ok := h.currentConfig().StableRuntimePublisherUserIDs[util.UUIDToString(userID)]; !ok {
 		writeError(w, http.StatusForbidden, "FC/E2B stable publishing is not permitted")
 		return pgtype.UUID{}, false
 	}

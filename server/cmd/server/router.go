@@ -51,6 +51,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
 
 var defaultOrigins = []string{
@@ -105,6 +106,30 @@ func dingTalkAccountCallbackCORSMiddleware(appOrigins []string, dbaseOrigin stri
 				return
 			}
 			globalHandler.ServeHTTP(w, r)
+		})
+	}
+}
+
+func dynamicDingTalkAccountCallbackCORSMiddleware(config *appRuntimeConfig) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			middleware := dingTalkAccountCallbackCORSMiddleware(
+				config.corsAllowedOrigins(),
+				config.dbaseBindingOrigin(),
+			)
+			middleware(next).ServeHTTP(w, r)
+		})
+	}
+}
+
+func dynamicLoginProviderMiddleware(config *appRuntimeConfig, provider string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !config.loginProviderAllowed(provider) {
+				http.NotFound(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }
@@ -239,7 +264,8 @@ type RouterOptions struct {
 	// SandboxRelay is nil on ordinary deployments. Production injects the
 	// signed pre-release sandbox relay here so requests carrying the routing
 	// assertion are intercepted before local authentication and routing.
-	SandboxRelay func(http.Handler) http.Handler
+	SandboxRelay  func(http.Handler) http.Handler
+	RuntimeConfig *appRuntimeConfig
 }
 
 // NewRouterWithOptions builds the fully-configured Chi router and
@@ -252,6 +278,9 @@ type RouterOptions struct {
 func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client, opts RouterOptions) (chi.Router, *handler.Handler) {
 	queries := db.New(pool)
 	emailSvc := service.NewEmailService()
+	if opts.RuntimeConfig != nil {
+		emailSvc.SetAppURLProvider(opts.RuntimeConfig.frontendOrigin)
+	}
 	daemonHub := opts.DaemonHub
 	if daemonHub == nil {
 		daemonHub = daemonws.NewHub()
@@ -279,6 +308,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	} else {
 		local := storage.NewLocalStorageFromEnv()
 		if local != nil {
+			if opts.RuntimeConfig != nil {
+				local.SetBaseURLProvider(opts.RuntimeConfig.localUploadBaseURL)
+			}
 			store = local
 		}
 	}
@@ -300,6 +332,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		StableRuntimePublisherUserIDs: stableRuntimePublishers,
 		DisableWorkspaceCreation:      os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 		PublicURL:                     strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+		FrontendOrigin:                strings.TrimRight(strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")), "/"),
+		AppURL:                        appURLFromEnv(),
+		LoginProviders:                handler.LoginProviders(),
 		TrustedProxies:                parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
 		CloudRuntimeFleetURL:          cloudRuntimeFleetURLFromEnv(),
 		CloudRuntimeFleetTimeout:      envDuration("MULTICA_CLOUD_FLEET_TIMEOUT", 35*time.Second),
@@ -314,7 +349,24 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		LLMBaseURL:                    strings.TrimSpace(os.Getenv("MULTICA_LLM_BASE_URL")),
 		LLMDefaultModel:               strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
 	}
+	if opts.RuntimeConfig != nil {
+		opts.RuntimeConfig.setBase(signupConfig)
+		signupConfig = opts.RuntimeConfig.handlerConfig()
+		origins = append([]string(nil), signupConfig.AttachmentFrameAncestors...)
+		stableRuntimePublishers = signupConfig.StableRuntimePublisherUserIDs
+	}
+	var appURLProvider func() string
+	var publicURLProvider func() string
+	if opts.RuntimeConfig != nil {
+		appURLProvider = opts.RuntimeConfig.appURL
+		publicURLProvider = opts.RuntimeConfig.publicURL
+	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	if opts.RuntimeConfig != nil {
+		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
+		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
+		h.FCE2BLauncher.ConfigProvider = opts.RuntimeConfig.fce2b
+	}
 	h.FCE2BLauncher.SetSandboxRelaySigner(opts.SandboxRelaySigner)
 	asbRuntime, err := service.NewASBEnterpriseRuntimeFromConfig(
 		queries,
@@ -334,6 +386,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	if asbRuntime != nil {
 		h.ASBLauncher = asbRuntime.Launcher
 		h.EnterpriseIdentity = asbRuntime.Identity
+		if opts.RuntimeConfig != nil {
+			if err := asbRuntime.SetConfigProviders(opts.RuntimeConfig.asb, opts.RuntimeConfig.enterpriseIdentity); err != nil {
+				slog.Error("ASB enterprise runtime dynamic configuration failed", "error", err)
+				os.Exit(1)
+			}
+		}
 	}
 	h.FCE2BStable = service.NewFCE2BStableService(
 		pool,
@@ -341,6 +399,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		stableRuntimePublishers,
 		h.ASBLauncher,
 	)
+	if opts.RuntimeConfig != nil {
+		h.FCE2BStable.DeveloperUserIDsProvider = opts.RuntimeConfig.stablePublisherUserIDs
+	}
 	h.TaskService.RuntimeLauncher = service.NewCloudSandboxLauncher(
 		queries,
 		h.FCE2BLauncher,
@@ -354,10 +415,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.Metrics = opts.BusinessMetrics
 	var agentMessageRouterClient *agentmessagerouter.Client
 	var agentDispatchEndpoints *agentmessagerouter.DispatchEndpointService
-	routerClient, routerClientErr := agentmessagerouter.NewClient(agentmessagerouter.ClientConfig{
+	routerClientConfig := agentmessagerouter.ClientConfig{
 		BaseURL:           strings.TrimSpace(os.Getenv("AGENT_MESSAGE_ROUTER_INTERNAL_URL")),
 		ServiceCredential: strings.TrimSpace(os.Getenv("AGENT_MESSAGE_ROUTER_SERVICE_CREDENTIAL")),
-	})
+	}
+	if opts.RuntimeConfig != nil {
+		routerClientConfig.BaseURLProvider = opts.RuntimeConfig.agentMessageRouterInternalURL
+	}
+	routerClient, routerClientErr := agentmessagerouter.NewClient(routerClientConfig)
 	if routerClientErr == nil {
 		agentMessageRouterClient = routerClient
 		h.TaskCompletionWorker = agentmessagerouter.NewCompletionWorker(
@@ -382,21 +447,30 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			"currentKeyID", keyring.CurrentKeyID(),
 			"keyFingerprints", keyring.KeyFingerprints())
 		dbaseBindingURL := strings.TrimSpace(os.Getenv("DINGTALK_DBASE_BINDING_PAGE_URL"))
+		dbaseBindingOrigin := strings.TrimSpace(os.Getenv("DINGTALK_DBASE_BINDING_ORIGIN"))
+		if opts.RuntimeConfig != nil {
+			dbaseBindingURL = opts.RuntimeConfig.dbaseBindingPageURL()
+			dbaseBindingOrigin = opts.RuntimeConfig.dbaseBindingOrigin()
+		}
 		dbaseOrigin, originErr := handler.NormalizeDingTalkAccountBindingOrigin(
-			os.Getenv("DINGTALK_DBASE_BINDING_ORIGIN"),
+			dbaseBindingOrigin,
 		)
+		endpointServiceConfig := agentmessagerouter.DispatchEndpointServiceConfig{
+			PublicBaseURL: signupConfig.PublicURL,
+			Keyring:       keyring,
+			Random:        rand.Reader,
+		}
+		if opts.RuntimeConfig != nil {
+			endpointServiceConfig.PublicBaseURLProvider = opts.RuntimeConfig.publicURL
+		}
 		endpointService, endpointErr := agentmessagerouter.NewDispatchEndpointService(
 			agentmessagerouter.NewDBDispatchEndpointStore(queries),
-			agentmessagerouter.DispatchEndpointServiceConfig{
-				PublicBaseURL: signupConfig.PublicURL,
-				Keyring:       keyring,
-				Random:        rand.Reader,
-			},
+			endpointServiceConfig,
 		)
 		if routerClientErr == nil && endpointErr == nil {
 			agentDispatchEndpoints = endpointService
 		}
-		bindingService, serviceErr := agentmessagerouter.NewService(queries, routerClient, agentmessagerouter.ServiceConfig{
+		bindingServiceConfig := agentmessagerouter.ServiceConfig{
 			PublicBaseURL:   signupConfig.PublicURL,
 			DBaseBindingURL: dbaseBindingURL,
 			Keyring:         keyring,
@@ -404,7 +478,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			IdentityStore:   queries,
 			Endpoints:       endpointService,
 			Metrics:         opts.BusinessMetrics,
-		})
+		}
+		if opts.RuntimeConfig != nil {
+			bindingServiceConfig.PublicBaseURLProvider = opts.RuntimeConfig.publicURL
+			bindingServiceConfig.DBaseBindingURLProvider = opts.RuntimeConfig.dbaseBindingPageURL
+		}
+		bindingService, serviceErr := agentmessagerouter.NewService(queries, routerClient, bindingServiceConfig)
 		if originErr != nil || routerClientErr != nil || endpointErr != nil || serviceErr != nil ||
 			!dBaseBindingURLMatchesOrigin(dbaseBindingURL, dbaseOrigin) {
 			slog.Error("dingtalk account binding disabled due to invalid configuration",
@@ -463,7 +542,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 	}
 	if h.DingTalkNotifications != nil && h.DingTalkNotifications.IsConfigured() {
-		registerDingTalkNotificationListeners(bus, queries, h.DingTalkNotifications, appURLFromEnv())
+		registerDingTalkNotificationListeners(bus, queries, h.DingTalkNotifications, signupConfig.AppURL, appURLProvider)
 		slog.Info("dingtalk personal notification listener enabled")
 	}
 	// Lark (Feishu) login identity resolution — same tiering as DingTalk:
@@ -684,12 +763,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// it on the ResolverSet when it can actually deliver, so a
 				// pre-outbound deployment pays no reply-goroutine cost.
 				replier := lark.NewLarkOutcomeReplier(lark.OutcomeReplierConfig{
-					APIClient:   larkClient,
-					BindingSvc:  h.LarkBindingTokens,
-					Credentials: installSvc,
-					Queries:     queries,
-					AppURL:      appURLFromEnv(),
-					Logger:      slog.Default(),
+					APIClient:      larkClient,
+					BindingSvc:     h.LarkBindingTokens,
+					Credentials:    installSvc,
+					Queries:        queries,
+					AppURL:         signupConfig.AppURL,
+					AppURLProvider: appURLProvider,
+					Logger:         slog.Default(),
 				})
 				var resolverReplier lark.OutcomeReplier
 				if larkClient.IsConfigured() {
@@ -705,8 +785,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// developer console must enable that callback under
 				// 事件与回调 → 回调配置 → 使用长连接接收回调).
 				runCards := lark.NewRunCardPublisher(cs, installSvc, larkClient, lark.RunCardPublisherConfig{
-					AppURL: appURLFromEnv(),
-					Logger: slog.Default(),
+					AppURL:         signupConfig.AppURL,
+					AppURLProvider: appURLProvider,
+					Logger:         slog.Default(),
 				})
 				runCards.Register(bus)
 				var cardSink lark.CardActionSink
@@ -844,8 +925,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					AgentNamer: queries,
 					// The bind link (/dingtalk/bind) is a web-app page, so it must
 					// use the app URL, NOT MULTICA_PUBLIC_URL. Mirrors Slack/Lark.
-					AppURL: appURLFromEnv(),
-					Logger: slog.Default(),
+					AppURL:         signupConfig.AppURL,
+					AppURLProvider: appURLProvider,
+					Logger:         slog.Default(),
 				})
 				// "Processing" emotion on ingested messages, cleared when the
 				// reply lands (chat-done / task-failed via Outbound below).
@@ -899,10 +981,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Device-flow registration. The base URL override exists for
 				// staging/mock endpoints. The DingTalk product source is fixed
 				// by the registration client so deployments cannot drift.
-				regClient := dingtalk.NewRegistrationClient(dingtalk.RegistrationConfig{
+				regConfig := dingtalk.RegistrationConfig{
 					BaseURL:     strings.TrimSpace(os.Getenv("MULTICA_DINGTALK_REGISTRATION_BASE_URL")),
 					OutgoingURL: strings.TrimSpace(os.Getenv("MULTICA_DINGTALK_REGISTRATION_OUTGOING_URL")),
-				})
+				}
+				if opts.RuntimeConfig != nil {
+					regConfig.BaseURLProvider = opts.RuntimeConfig.dingTalkRegistrationBaseURL
+					regConfig.OutgoingURLProvider = opts.RuntimeConfig.dingTalkRegistrationOutgoingURL
+				}
+				regClient := dingtalk.NewRegistrationClient(regConfig)
 				// Verifier: exchange the freshly minted credentials for an app
 				// access token before committing them, so a half-created app
 				// surfaces as a clean install error instead of a dead row.
@@ -989,8 +1076,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// The bind link (/slack/bind) is a web-app page, so it must use the
 				// app URL (MULTICA_APP_URL ?? FRONTEND_ORIGIN), NOT MULTICA_PUBLIC_URL
 				// (the backend/API URL). Mirrors the Lark replier (appURLFromEnv).
-				AppURL: appURLFromEnv(),
-				Logger: slog.Default(),
+				AppURL:         signupConfig.AppURL,
+				AppURLProvider: appURLProvider,
+				Logger:         slog.Default(),
 			})
 			// Typing indicator (MUL-3874): a 👀 reaction on the user's message
 			// while the agent works, cleared when the run finishes or fails.
@@ -1017,11 +1105,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// + binding service. The invoker gets a private ephemeral acknowledgement
 			// and a Multica notification when the issue lands.
 			slackSlash := slack.NewSlashCommandProcessor(slack.SlashCommandConfig{
-				Queries: queries,
-				Tasks:   h.TaskService,
-				Binding: slackBindingSvc,
-				AppURL:  appURLFromEnv(),
-				Logger:  slog.Default(),
+				Queries:        queries,
+				Tasks:          h.TaskService,
+				Binding:        slackBindingSvc,
+				AppURL:         signupConfig.AppURL,
+				AppURLProvider: appURLProvider,
+				Logger:         slog.Default(),
 			})
 
 			// Per-installation inbound: the Supervisor builds + supervises one
@@ -1067,6 +1156,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			} else {
 				stateSecret := composioStateSecret()
 				callbackBase := composioCallbackBaseURL(signupConfig.PublicURL)
+				if publicURLProvider != nil {
+					callbackBase = publicURLProvider()
+				}
 				switch {
 				case len(stateSecret) == 0:
 					slog.Error("composio: no state secret (set COMPOSIO_STATE_SECRET or JWT_SECRET); composio integration disabled")
@@ -1074,9 +1166,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					slog.Error("composio: no callback base url (set COMPOSIO_CALLBACK_BASE_URL or MULTICA_PUBLIC_URL); composio integration disabled")
 				default:
 					svc, serr := composiointeg.NewService(sdkClient, queries, composiointeg.Config{
-						StateSecret:     stateSecret,
-						CallbackBaseURL: callbackBase,
-						FrontendBaseURL: appURLFromEnv(),
+						StateSecret:             stateSecret,
+						CallbackBaseURL:         callbackBase,
+						CallbackBaseURLProvider: publicURLProvider,
+						FrontendBaseURL:         signupConfig.AppURL,
+						FrontendBaseURLProvider: appURLProvider,
 					})
 					if serr != nil {
 						slog.Error("composio: service init failed; composio integration disabled", "error", serr)
@@ -1158,16 +1252,25 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Share allowed origins with WebSocket origin checker.
 	realtime.SetAllowedOrigins(origins)
+	if opts.RuntimeConfig != nil {
+		opts.RuntimeConfig.subscribe(func(snapshot runtimeconfig.Snapshot) {
+			realtime.SetAllowedOrigins(append([]string(nil), snapshot.Config.Web.CORSAllowedOrigins...))
+		})
+	}
 
 	// Share the same trusted-proxy CIDRs (MULTICA_TRUSTED_PROXIES) so the
 	// WebSocket origin check honors X-Forwarded-Host only from trusted proxies,
 	// using one config source instead of a parallel one.
 	realtime.SetTrustedProxies(signupConfig.TrustedProxies)
 
-	r.Use(dingTalkAccountCallbackCORSMiddleware(
-		origins,
-		h.DingTalkAccountBindingOrigin,
-	))
+	if opts.RuntimeConfig != nil {
+		r.Use(dynamicDingTalkAccountCallbackCORSMiddleware(opts.RuntimeConfig))
+	} else {
+		r.Use(dingTalkAccountCallbackCORSMiddleware(
+			origins,
+			h.DingTalkAccountBindingOrigin,
+		))
+	}
 
 	// Health / readiness checks
 	r.Get("/health", health.liveHandler)
@@ -1238,18 +1341,26 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Because the DingTalk/Feishu apps are 企业内部应用, their OAuth logins only
 	// admit members of that organization, which is the access restriction we
 	// want from an OAuth-only allowlist like "dingtalk,lark".
-	if handler.LoginProviderAllowed("email") {
-		r.With(authRL).Post("/auth/send-code", h.SendCode)
-		r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
-	}
-	if handler.LoginProviderAllowed("google") {
-		r.With(authRL).Post("/auth/google", h.GoogleLogin)
-	}
-	if handler.LoginProviderAllowed("lark") {
-		r.With(authRL).Post("/auth/lark", h.LarkLogin)
-	}
-	if handler.LoginProviderAllowed("dingtalk") {
-		r.With(authRL).Post("/auth/dingtalk", h.DingTalkLogin)
+	if opts.RuntimeConfig != nil {
+		r.With(dynamicLoginProviderMiddleware(opts.RuntimeConfig, "email"), authRL).Post("/auth/send-code", h.SendCode)
+		r.With(dynamicLoginProviderMiddleware(opts.RuntimeConfig, "email"), authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
+		r.With(dynamicLoginProviderMiddleware(opts.RuntimeConfig, "google"), authRL).Post("/auth/google", h.GoogleLogin)
+		r.With(dynamicLoginProviderMiddleware(opts.RuntimeConfig, "lark"), authRL).Post("/auth/lark", h.LarkLogin)
+		r.With(dynamicLoginProviderMiddleware(opts.RuntimeConfig, "dingtalk"), authRL).Post("/auth/dingtalk", h.DingTalkLogin)
+	} else {
+		if handler.LoginProviderAllowed("email") {
+			r.With(authRL).Post("/auth/send-code", h.SendCode)
+			r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
+		}
+		if handler.LoginProviderAllowed("google") {
+			r.With(authRL).Post("/auth/google", h.GoogleLogin)
+		}
+		if handler.LoginProviderAllowed("lark") {
+			r.With(authRL).Post("/auth/lark", h.LarkLogin)
+		}
+		if handler.LoginProviderAllowed("dingtalk") {
+			r.With(authRL).Post("/auth/dingtalk", h.DingTalkLogin)
+		}
 	}
 	// The FDE mobile entry is intentionally separate from the ordinary login
 	// provider allowlist. It always authenticates the current DingTalk user;

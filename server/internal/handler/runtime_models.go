@@ -298,14 +298,15 @@ func (h *Handler) configuredCloudSandboxModelCatalog(rt db.AgentRuntime) (cloudS
 	}
 
 	catalog := cloudSandboxModelCatalog{}
+	cfg := h.currentConfig()
 	switch metadata.SandboxBackend {
 	case service.SandboxBackendAliyunFC:
-		catalog.Models = h.cfg.FCE2B.LLMModels
+		catalog.Models = cfg.FCE2B.LLMModels
 		catalog.Provider = service.FCE2BRuntimeProvider(rt)
 		catalog.ConfigKey = "MULTICA_FC_E2B_OPENAI_MODELS"
 		catalog.RequestIDPrefix = "fc-e2b"
 	case service.SandboxBackendASB:
-		catalog.Models = h.cfg.ASB.LLMModels
+		catalog.Models = cfg.ASB.LLMModels
 		catalog.Provider = metadata.Provider
 		catalog.ConfigKey = "MULTICA_ASB_OPENAI_MODELS"
 		catalog.RequestIDPrefix = "asb"

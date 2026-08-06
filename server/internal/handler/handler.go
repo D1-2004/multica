@@ -86,6 +86,14 @@ type Config struct {
 	// the server into minting webhook URLs pointing at an attacker-controlled
 	// host.
 	PublicURL string
+	// FrontendOrigin and AppURL are browser-facing origins. They stay separate
+	// from PublicURL, which is the backend/API origin.
+	FrontendOrigin string
+	AppURL         string
+	LoginProviders []string
+	// GitHubAPIBaseURLProvider resolves the deployment-specific GitHub API
+	// endpoint for each request. It is nil for environment-only deployments.
+	GitHubAPIBaseURLProvider func() string
 	// TrustedProxies are CIDRs whose source IP we trust to set
 	// X-Forwarded-For / X-Real-IP. Empty means "trust nothing": the rate
 	// limiter uses r.RemoteAddr exclusively. Populated via the
@@ -103,12 +111,14 @@ type Config struct {
 	// calls, such as GitHub identity binding, status, test, and disconnect.
 	// FC/E2B sandbox redeem must keep using FCE2B.AgentIdentityBaseURL because
 	// sandboxes have different network reachability from the Multica server.
-	AgentIdentityControlBaseURL string
-	FCE2B                       service.FCE2BConfig
-	ASB                         service.ASBConfig
-	EnterpriseIdentity          service.EnterpriseIdentityConfig
-	AttachmentDownloadMode      string
-	AttachmentDownloadURLTTL    time.Duration
+	AgentIdentityControlBaseURL         string
+	AgentIdentityControlBaseURLProvider func() string
+	AgentIdentityTimeoutProvider        func() time.Duration
+	FCE2B                               service.FCE2BConfig
+	ASB                                 service.ASBConfig
+	EnterpriseIdentity                  service.EnterpriseIdentityConfig
+	AttachmentDownloadMode              string
+	AttachmentDownloadURLTTL            time.Duration
 	// AttachmentFrameAncestors are trusted browser origins allowed to embed
 	// attachment preview responses. In production this should mirror the
 	// frontend/CORS origin allowlist so split app/api self-hosted deployments
@@ -175,21 +185,21 @@ type Handler struct {
 	// May be nil in tests / self-hosted with the metrics listener disabled;
 	// every Record* method is nil-safe and obsmetrics.RecordEvent treats a
 	// nil Metrics as "PostHog only".
-	Metrics                      *obsmetrics.BusinessMetrics
-	PATCache                     *auth.PATCache
-	DaemonTokenCache             *auth.DaemonTokenCache
-	MembershipCache              *auth.MembershipCache
-	WebhookRateLimiter           WebhookRateLimiter
-	WebhookIPRateLimiter         WebhookRateLimiter
-	WebhookAbsoluteIPRateLimiter WebhookRateLimiter
-	WebhookDeliveryWorker        *WebhookDeliveryWorker
-	TaskCompletionWorker         *agentmessagerouter.CompletionWorker
-	TaskCompletionTargetIdentity string
+	Metrics                       *obsmetrics.BusinessMetrics
+	PATCache                      *auth.PATCache
+	DaemonTokenCache              *auth.DaemonTokenCache
+	MembershipCache               *auth.MembershipCache
+	WebhookRateLimiter            WebhookRateLimiter
+	WebhookIPRateLimiter          WebhookRateLimiter
+	WebhookAbsoluteIPRateLimiter  WebhookRateLimiter
+	WebhookDeliveryWorker         *WebhookDeliveryWorker
+	TaskCompletionWorker          *agentmessagerouter.CompletionWorker
+	TaskCompletionTargetIdentity  string
 	DingTalkBindingTeardownRouter DingTalkBindingTeardownRouter
-	CloudRuntime                 cloudRuntimeProxy
-	GitHubApp                    *githubapp.Client
-	AgentIdentityGitHub          *agentidentitygithub.Client
-	ManagedAgent                 *managedagent.Service
+	CloudRuntime                  cloudRuntimeProxy
+	GitHubApp                     *githubapp.Client
+	AgentIdentityGitHub           *agentidentitygithub.Client
+	ManagedAgent                  *managedagent.Service
 	// Lark integration. All three are nil when the Lark master key
 	// (MULTICA_LARK_SECRET_KEY) is unset; the corresponding HTTP
 	// handlers return 503 in that case so a misconfigured self-host
@@ -281,9 +291,10 @@ type Handler struct {
 	// DingTalkBindingTokens mints/redeems the user-binding tokens behind
 	// the "link your DingTalk account" prompt. Nil unless the DingTalk
 	// bot integration is configured (MULTICA_DINGTALK_SECRET_KEY set).
-	DingTalkBindingTokens        *dingtalk.BindingTokenService
-	DingTalkAccountBindings      dingTalkAccountBindingService
-	DingTalkAccountBindingOrigin string
+	DingTalkBindingTokens                *dingtalk.BindingTokenService
+	DingTalkAccountBindings              dingTalkAccountBindingService
+	DingTalkAccountBindingOrigin         string
+	dingTalkAccountBindingOriginProvider func() string
 	// Defaults to Queries; the narrow seam keeps authoritative metadata loading
 	// directly testable without changing production wiring.
 	dingTalkAccountBindingMetadata    dingTalkAccountBindingMetadataStore
@@ -299,8 +310,44 @@ type Handler struct {
 	// MUL-4309, so it is internal-only now. Always non-nil (New builds it from
 	// Config); when unconfigured its Enabled() reports false and callers fall
 	// back silently.
-	LLM *llm.Client
-	cfg Config
+	LLM            *llm.Client
+	cfg            Config
+	configProvider func() Config
+}
+
+// SetConfigProvider installs a concurrency-safe dynamic configuration source.
+// The provider must return an immutable snapshot. Tests and self-hosted
+// deployments that do not install one continue to use the constructor config.
+func (h *Handler) SetConfigProvider(provider func() Config) {
+	if h != nil {
+		h.configProvider = provider
+	}
+}
+
+func (h *Handler) SetDingTalkAccountBindingOriginProvider(provider func() string) {
+	if h != nil {
+		h.dingTalkAccountBindingOriginProvider = provider
+	}
+}
+
+func (h *Handler) currentDingTalkAccountBindingOrigin() string {
+	if h != nil && h.dingTalkAccountBindingOriginProvider != nil {
+		return strings.TrimSpace(h.dingTalkAccountBindingOriginProvider())
+	}
+	if h == nil {
+		return ""
+	}
+	return strings.TrimSpace(h.DingTalkAccountBindingOrigin)
+}
+
+func (h *Handler) currentConfig() Config {
+	if h != nil && h.configProvider != nil {
+		return h.configProvider()
+	}
+	if h == nil {
+		return Config{}
+	}
+	return h.cfg
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
@@ -346,16 +393,19 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	taskSvc.RuntimeLauncher = fcLauncher
 
 	githubClient, githubErr := githubapp.New(githubapp.Config{
-		AppID:      os.Getenv("GITHUB_APP_ID"),
-		PrivateKey: os.Getenv("GITHUB_APP_PRIVATE_KEY"),
-		APIBase:    os.Getenv("GITHUB_API_BASE_URL"),
+		AppID:           os.Getenv("GITHUB_APP_ID"),
+		PrivateKey:      os.Getenv("GITHUB_APP_PRIVATE_KEY"),
+		APIBase:         os.Getenv("GITHUB_API_BASE_URL"),
+		APIBaseProvider: cfg.GitHubAPIBaseURLProvider,
 	})
 	if githubErr != nil && !errors.Is(githubErr, githubapp.ErrUnavailable) {
 		slog.Warn("github agent sources disabled", "error", githubErr)
 	}
 	agentIdentityGitHub := agentidentitygithub.NewClient(agentidentitygithub.Config{
-		BaseURL: agentIdentityGitHubBaseURL(cfg),
-		Timeout: cfg.FCE2B.AgentIdentityTimeout,
+		BaseURL:         agentIdentityGitHubBaseURL(cfg),
+		BaseURLProvider: cfg.AgentIdentityControlBaseURLProvider,
+		Timeout:         cfg.FCE2B.AgentIdentityTimeout,
+		TimeoutProvider: cfg.AgentIdentityTimeoutProvider,
 	})
 	fcLauncher.GitHubIdentity = agentIdentityGitHub
 

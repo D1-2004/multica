@@ -60,12 +60,12 @@ type asbRuntimeQuotaResponse struct {
 }
 
 func (h *Handler) ListFCE2BTemplates(w http.ResponseWriter, r *http.Request) {
-	if !h.cfg.FCE2B.Enabled {
+	if !h.currentConfig().FCE2B.Enabled {
 		slog.Warn("FC/E2B template list rejected: runtime disabled")
 		writeError(w, http.StatusServiceUnavailable, "FC/E2B runtime is disabled")
 		return
 	}
-	if err := h.cfg.FCE2B.ValidateTemplateAPI(); err != nil {
+	if err := h.currentConfig().FCE2B.ValidateTemplateAPI(); err != nil {
 		slog.Warn("FC/E2B template list rejected: invalid config", "error", err)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
@@ -81,7 +81,7 @@ func (h *Handler) ListFCE2BTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	templates, err := service.ListFCE2BTemplates(r.Context(), h.cfg.FCE2B, nil)
+	templates, err := service.ListFCE2BTemplates(r.Context(), h.currentConfig().FCE2B, nil)
 	if err != nil {
 		slog.Error("FC/E2B template list failed", "error", err)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -120,20 +120,20 @@ func (h *Handler) createCloudSandboxRuntime(
 	}
 	switch backend {
 	case service.SandboxBackendAliyunFC:
-		if !h.cfg.FCE2B.Enabled {
+		if !h.currentConfig().FCE2B.Enabled {
 			writeError(w, http.StatusServiceUnavailable, "FC/E2B runtime is disabled")
 			return
 		}
-		if err := h.cfg.FCE2B.Validate(); err != nil {
+		if err := h.currentConfig().FCE2B.Validate(); err != nil {
 			writeError(w, http.StatusServiceUnavailable, err.Error())
 			return
 		}
 	case service.SandboxBackendASB:
-		if !h.cfg.ASB.Enabled || h.ASBLauncher == nil {
+		if !h.currentConfig().ASB.Enabled || h.ASBLauncher == nil {
 			writeError(w, http.StatusServiceUnavailable, "Aone Sandbox runtime is disabled")
 			return
 		}
-		if err := h.cfg.ASB.Validate(); err != nil {
+		if err := h.currentConfig().ASB.Validate(); err != nil {
 			writeError(w, http.StatusServiceUnavailable, err.Error())
 			return
 		}
@@ -202,7 +202,7 @@ func (h *Handler) createAliyunFCRuntime(
 			return
 		}
 	}
-	templates, err := service.ListFCE2BTemplates(r.Context(), h.cfg.FCE2B, nil)
+	templates, err := service.ListFCE2BTemplates(r.Context(), h.currentConfig().FCE2B, nil)
 	if err != nil {
 		slog.Error("FC/E2B template validation failed during runtime creation", "error", err)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -292,7 +292,7 @@ func (h *Handler) createAliyunFCRuntime(
 		"component_versions": selected.ComponentVersions,
 		"runner_protocol":    selected.RunnerProtocol,
 		"template_channel":   templateChannel,
-		"timeout_seconds":    h.cfg.FCE2B.TimeoutSeconds,
+		"timeout_seconds":    h.currentConfig().FCE2B.TimeoutSeconds,
 		"created_by":         uuidToString(member.UserID),
 		"runner":             service.FCE2BRunnerCommandForProvider(provider),
 	})
@@ -481,7 +481,7 @@ func (h *Handler) createASBRuntime(
 	if !roleAllowed(member.Role, "owner", "admin") {
 		visibility = "private"
 	}
-	metadataValues["timeout_seconds"] = h.cfg.ASB.TimeoutSeconds
+	metadataValues["timeout_seconds"] = h.currentConfig().ASB.TimeoutSeconds
 	metadataValues["created_by"] = uuidToString(member.UserID)
 	metadata, err := json.Marshal(metadataValues)
 	if err != nil {
@@ -539,7 +539,7 @@ func (h *Handler) createASBRuntime(
 }
 
 func (h *Handler) GetASBRuntimeCredential(w http.ResponseWriter, r *http.Request) {
-	if !h.cfg.ASB.Enabled || h.ASBLauncher == nil || h.ASBLauncher.Credentials == nil {
+	if !h.currentConfig().ASB.Enabled || h.ASBLauncher == nil || h.ASBLauncher.Credentials == nil {
 		writeError(w, http.StatusServiceUnavailable, "Aone Sandbox Runtime is disabled")
 		return
 	}
@@ -629,11 +629,11 @@ func asbRuntimeQuotaResponses(quotas []service.ASBSandboxQuota) []asbRuntimeQuot
 }
 
 func (h *Handler) ValidateASBRuntimeCredential(w http.ResponseWriter, r *http.Request) {
-	if !h.cfg.ASB.Enabled || h.ASBLauncher == nil || h.ASBLauncher.Credentials == nil {
+	if !h.currentConfig().ASB.Enabled || h.ASBLauncher == nil || h.ASBLauncher.Credentials == nil {
 		writeError(w, http.StatusServiceUnavailable, "Aone Sandbox Runtime is disabled")
 		return
 	}
-	if err := h.cfg.ASB.Validate(); err != nil {
+	if err := h.currentConfig().ASB.Validate(); err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
@@ -674,7 +674,7 @@ func (h *Handler) ValidateASBRuntimeCredential(w http.ResponseWriter, r *http.Re
 }
 
 func (h *Handler) UpdateASBRuntimeCredential(w http.ResponseWriter, r *http.Request) {
-	if !h.cfg.ASB.Enabled || h.ASBLauncher == nil || h.ASBLauncher.Credentials == nil {
+	if !h.currentConfig().ASB.Enabled || h.ASBLauncher == nil || h.ASBLauncher.Credentials == nil {
 		writeError(w, http.StatusServiceUnavailable, "Aone Sandbox Runtime is disabled")
 		return
 	}
@@ -775,11 +775,11 @@ func cloudSandboxProviderDisplayName(provider string) string {
 }
 
 func (h *Handler) UpdateCloudSandboxRuntimeArtifact(w http.ResponseWriter, r *http.Request) {
-	if !h.cfg.ASB.Enabled || h.ASBLauncher == nil {
+	if !h.currentConfig().ASB.Enabled || h.ASBLauncher == nil {
 		writeError(w, http.StatusServiceUnavailable, "Aone Sandbox runtime is disabled")
 		return
 	}
-	if err := h.cfg.ASB.Validate(); err != nil {
+	if err := h.currentConfig().ASB.Validate(); err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
@@ -887,11 +887,11 @@ func (h *Handler) UpdateCloudSandboxRuntimeArtifact(w http.ResponseWriter, r *ht
 }
 
 func (h *Handler) UpdateFCE2BRuntimeTemplate(w http.ResponseWriter, r *http.Request) {
-	if !h.cfg.FCE2B.Enabled {
+	if !h.currentConfig().FCE2B.Enabled {
 		writeError(w, http.StatusServiceUnavailable, "FC/E2B runtime is disabled")
 		return
 	}
-	if err := h.cfg.FCE2B.ValidateTemplateAPI(); err != nil {
+	if err := h.currentConfig().FCE2B.ValidateTemplateAPI(); err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
@@ -938,7 +938,7 @@ func (h *Handler) UpdateFCE2BRuntimeTemplate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	templates, err := service.ListFCE2BTemplates(r.Context(), h.cfg.FCE2B, h.FCE2BLauncher.Runner)
+	templates, err := service.ListFCE2BTemplates(r.Context(), h.currentConfig().FCE2B, h.FCE2BLauncher.Runner)
 	if err != nil {
 		slog.Error("FC/E2B template validation failed during runtime update", "error", err, "runtime_id", runtimeID)
 		writeError(w, http.StatusServiceUnavailable, err.Error())

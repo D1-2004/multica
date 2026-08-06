@@ -33,6 +33,20 @@ type EmailService struct {
 	smtpTLSInsecure bool
 	smtpTLSImplicit bool
 	smtpEHLOName    string
+	appURLProvider  func() string
+}
+
+func (s *EmailService) SetAppURLProvider(provider func() string) {
+	if s != nil {
+		s.appURLProvider = provider
+	}
+}
+
+func (s *EmailService) currentAppURL() string {
+	if s != nil && s.appURLProvider != nil {
+		return strings.TrimRight(strings.TrimSpace(s.appURLProvider()), "/")
+	}
+	return strings.TrimRight(strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")), "/")
 }
 
 type smtpAuthClient interface {
@@ -366,7 +380,7 @@ func (s *EmailService) SendVerificationCode(to, code string) error {
 // SendInvitationEmail notifies the invitee that they have been invited to a workspace.
 // invitationID is included in the URL so the email deep-links to /invite/{id}.
 func (s *EmailService) SendInvitationEmail(to, inviterName, workspaceName, invitationID string) error {
-	appURL := strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN"))
+	appURL := s.currentAppURL()
 	if appURL == "" {
 		appURL = "https://multica.ai"
 	}
