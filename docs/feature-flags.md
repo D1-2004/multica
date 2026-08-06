@@ -226,6 +226,22 @@ routes, while `/api/config` exposes the same decision so Web/Desktop shows the
 DTA Access settings tab. Turning it off again blocks all `dta_` requests and
 hides the management UI; it does not delete DTA Tokens, agents, or traces.
 
+`multica_mcp_chat_send` controls the server-hosted MCP Chat continuation
+surface and also defaults to `false`. Enable it only after the target runtimes
+already support Multica's managed remote MCP configuration and
+`MULTICA_PUBLIC_URL` is reachable from those runtimes:
+
+```yaml
+multica_mcp_chat_send:
+  default: true
+```
+
+The environment override is `FF_MULTICA_MCP_CHAT_SEND=true`. The same backend
+decision gates both claim-time MCP discovery and `/api/mcp` execution, so
+turning it off prevents new tool discovery and rejects direct calls without
+requiring an Agent image rollback. See [Multica self-hosted MCP Chat send](multica-mcp-chat-send.md)
+for the protocol and rollout contract.
+
 ### Security note: never rely on the frontend alone
 
 A frontend feature flag controls what the user *sees*. It does NOT enforce access. Any API route exposing the same capability MUST evaluate the matching backend flag independently. The two flags can share a key but they live in two `Service` instances and the backend value is the source of truth.
@@ -250,6 +266,7 @@ See `docs/design.md` and `docs/timezone-architecture-rfc.md` for prior examples 
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-08-06 | Added the default-off `multica_mcp_chat_send` release flag and its rollout contract. | Keep discovery and execution of the server-hosted MCP action under one server-side kill switch during mixed Runtime rollout. |
 | 2026-08-04 | Added Diamond `common.prompt` and documented claim-time `common + mode + Router contextPrompt` instruction composition. | Separate fixed policy configuration from dynamic delivery context and keep private instructions out of user-visible content. |
 | 2026-08-04 | Made the Diamond provider always active and removed its deployment enable switch. | Ensure dynamic surface prompts are not accidentally bypassed when only the fixed Diamond coordinates are configured. |
 | 2026-08-01 | Defined Diamond as the dynamic source for `issue/chat/auto.prompt` and removed binary-embedded surface prompt fallback. | Keep changeable Agent behavior policy in configuration while retaining security and outbound protocol constraints in code. |

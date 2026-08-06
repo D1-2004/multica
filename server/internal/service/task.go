@@ -1296,7 +1296,14 @@ type DirectChatSendResult struct {
 	BoundAttachmentIDs []pgtype.UUID
 }
 
-// SendDirectChatMessage atomically persists one web/mobile direct-chat turn:
+// SendDirectChatMessage atomically persists one direct-chat turn from the
+// normal web/mobile path. Server-owned continuations that need durable task
+// provenance use SendDirectChatMessageWithContext.
+func (s *TaskService) SendDirectChatMessage(ctx context.Context, session db.ChatSession, agent db.Agent, initiatorUserID pgtype.UUID, content string, attachmentIDs []pgtype.UUID, uploaderType string, uploaderID pgtype.UUID, trace chattrace.Trace) (*DirectChatSendResult, error) {
+	return s.SendDirectChatMessageWithContext(ctx, session, agent, initiatorUserID, content, attachmentIDs, uploaderType, uploaderID, nil, trace)
+}
+
+// SendDirectChatMessageWithContext atomically persists one direct-chat turn:
 // the owning task (which claims its own input batch via chat_input_task_id), the
 // user message bound to that task, any attachment bindings, and the session
 // touch all commit together (MUL-4351). The daemon is only notified after the
@@ -1307,8 +1314,8 @@ type DirectChatSendResult struct {
 // The caller must have already gated the session and preflighted the agent
 // (archived / no-runtime), passing the loaded agent in; this method trusts those
 // checks and does no further agent validation.
-func (s *TaskService) SendDirectChatMessage(ctx context.Context, session db.ChatSession, agent db.Agent, initiatorUserID pgtype.UUID, content string, attachmentIDs []pgtype.UUID, uploaderType string, uploaderID pgtype.UUID, trace chattrace.Trace) (*DirectChatSendResult, error) {
-	taskContext, err := chattrace.Merge(nil, trace)
+func (s *TaskService) SendDirectChatMessageWithContext(ctx context.Context, session db.ChatSession, agent db.Agent, initiatorUserID pgtype.UUID, content string, attachmentIDs []pgtype.UUID, uploaderType string, uploaderID pgtype.UUID, baseTaskContext []byte, trace chattrace.Trace) (*DirectChatSendResult, error) {
+	taskContext, err := chattrace.Merge(baseTaskContext, trace)
 	if err != nil {
 		return nil, fmt.Errorf("build direct chat trace context: %w", err)
 	}
