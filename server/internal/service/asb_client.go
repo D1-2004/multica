@@ -386,9 +386,27 @@ func (c *ASBClient) ListSandboxes(ctx context.Context, states ...string) ([]ASBS
 }
 
 // ListLiveSandboxes explicitly queries the lifecycle states eligible for
-// capacity reclaim instead of relying on an unscoped inventory view.
+// capacity reclaim instead of relying on an unscoped inventory view. The ASB
+// list endpoint accepts only one effective state per request, so query each
+// state independently and merge the paginated results locally.
 func (c *ASBClient) ListLiveSandboxes(ctx context.Context) ([]ASBSandbox, error) {
-	return c.ListSandboxes(ctx, "Pending", "Running", "Paused")
+	states := []string{"Pending", "Running", "Paused"}
+	sandboxes := make([]ASBSandbox, 0)
+	seen := make(map[string]struct{})
+	for _, state := range states {
+		stateSandboxes, err := c.ListSandboxes(ctx, state)
+		if err != nil {
+			return nil, fmt.Errorf("list %s ASB sandboxes: %w", strings.ToLower(state), err)
+		}
+		for _, sandbox := range stateSandboxes {
+			if _, exists := seen[sandbox.ID]; exists {
+				continue
+			}
+			seen[sandbox.ID] = struct{}{}
+			sandboxes = append(sandboxes, sandbox)
+		}
+	}
+	return sandboxes, nil
 }
 
 func (c *ASBClient) listSandboxes(
