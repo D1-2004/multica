@@ -16,8 +16,8 @@ mode has an explicit initial persistence materializer:
   lightweight work in Chat or delegate durable work to an Issue.
 
 `auto` currently applies to `channel/message.created`. The
-`calendar/calendar.started` contract remains Issue-only because it has no
-foreground Chat session to release.
+`calendar/calendar.started` and `approval/approval.status_changed` contracts
+remain Issue-only because neither has a foreground Chat session to release.
 
 Channel slash commands do not override this choice. In particular, text such as
 `/issue`, `/new`, `/reset`, or `/unbind` remains prompt content when delivered by
@@ -199,3 +199,15 @@ retain the previous prompt without modification.
 - Reason: A stable upstream DWS identity must survive delayed, delegated, and
   coalesced execution without exposing credentials, while the final short-lived
   ContextToken must still be minted against the sandbox that will actually run.
+
+## Change record: 2026-08-06
+
+- History: Added the digital-employee `approval/approval.status_changed` Issue
+  dispatch. Approval callbacks validate their form and approver data, use a
+  stable approval status idempotency key, skip `auto_approve` nodes without an
+  Agent task, and recover the `关联Issue` identifier to continue the original
+  Issue when its Agent matches. `dws` and `robot_sdk` outbound modes reuse the
+  existing trusted reply workflow; `none` keeps approval data outbound-free.
+- Reason: Approval lifecycle callbacks must preserve the originating Issue and
+  sender policy without exposing raw approval content in observability logs or
+  allowing a delayed task to lose its external DWS identity.

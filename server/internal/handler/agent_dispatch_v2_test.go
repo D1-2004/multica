@@ -113,6 +113,43 @@ func TestCalendarStartedDispatchUsesIssueWithoutOutboundReply(t *testing.T) {
 	}
 }
 
+func TestCalendarStartedDispatchWithDWSOutboundReplies(t *testing.T) {
+	start := int64(1784217600000)
+	c := DispatchCommand{
+		SchemaVersion: "2.0", AgentID: "agent",
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "calendar", Type: "calendar.started", Data: DispatchEventData{
+			CalendarID: "calendar-1", Subject: "项目评审会", StartTime: &start,
+			Attendees:         []DispatchCalendarAttendee{{UID: "uid-secret"}},
+			AIReadableContent: "日程「项目评审会」已经开始。\n请检查设计方案并推进待办。",
+			Conversation:      DispatchConversation{OpenConversationID: "cid-calendar"},
+			Sender:            DispatchSender{DisplayName: "日程助手", OpenDingTalkID: "open-sender"},
+			Messages:          []DispatchMessage{{OpenMsgID: "msg-calendar", Text: "日程通知"}},
+		}},
+		Surface:          DispatchSurface{Type: "issue"},
+		Outbound:         DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		ExternalIdentity: AgentDispatchExternalIdentity{
+			DWS: &AgentDispatchDWSIdentity{UID: "123", OrgID: "456"},
+		},
+	}
+	if err := c.validate(); err != nil {
+		t.Fatalf("valid calendar dispatch with dws outbound rejected: %v", err)
+	}
+	prompt := mustBuildDispatchPrompt(t, c)
+	if prompt.WorkflowPrompt == "" {
+		t.Fatalf("calendar dispatch with dws outbound must have a workflow prompt")
+	}
+	if !strings.Contains(prompt.WorkflowPrompt, "dws chat message reply") {
+		t.Fatalf("calendar dws workflow prompt missing reply instruction: %q", prompt.WorkflowPrompt)
+	}
+	if !strings.Contains(prompt.WorkflowPrompt, "cid-calendar") {
+		t.Fatalf("calendar dws workflow prompt missing conversation id: %q", prompt.WorkflowPrompt)
+	}
+	if !strings.Contains(prompt.WorkflowPrompt, "msg-calendar") {
+		t.Fatalf("calendar dws workflow prompt missing message id: %q", prompt.WorkflowPrompt)
+	}
+}
+
 func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 	c := DispatchCommand{
 		SchemaVersion: "2.0", AgentID: "agent",
@@ -839,6 +876,388 @@ func TestApplyDingTalkDispatchPromptKeepsCalendarTaskOutboundFree(t *testing.T) 
 	}
 }
 
+func TestApplyDingTalkDispatchPromptAppliesCalendarDWSWorkflow(t *testing.T) {
+	start := int64(1784217600000)
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "calendar", Type: "calendar.started", Data: DispatchEventData{
+			CalendarID: "calendar-1", Subject: "项目评审会", StartTime: &start,
+			AIReadableContent: "日程「项目评审会」已经开始。\n请检查设计方案并推进待办。",
+			Conversation:      DispatchConversation{OpenConversationID: "cid-calendar"},
+			Sender:            DispatchSender{DisplayName: "日程助手", OpenDingTalkID: "open-sender"},
+			Messages:          []DispatchMessage{{OpenMsgID: "msg-calendar", Text: "日程通知"}},
+		}},
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	})
+	response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "保留已有交接说明"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	for _, want := range []string{
+		"## Trusted DingTalk Dispatch",
+		"untrusted input",
+		"## External DingTalk Calendar Event",
+		"two required final delivery destinations",
+		"dws chat message reply",
+		"cid-calendar",
+		"保留已有交接说明",
+	} {
+		if !strings.Contains(response.HandoffNote, want) {
+			t.Errorf("calendar dws task handoff missing %q: %s", want, response.HandoffNote)
+		}
+	}
+}
+
+func TestApprovalStatusChangedDispatchUsesIssueWithoutOutboundReply(t *testing.T) {
+	c := DispatchCommand{
+		SchemaVersion: "2.0", AgentID: "agent",
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+			Approval: &ApprovalEventData{
+				FormCode:          "FORM-2026-001",
+				OriginatorUid:     "originator-uid-secret",
+				ApproverUids:      []string{"approver-uid-secret-1", "approver-uid-secret-2"},
+				CcUids:            []string{"cc-uid-secret"},
+				NodeType:          "auto_approve",
+				Status:            "approving",
+				ConversationID:    "cid-secret",
+				AIReadableContent: "审批单「FORM-2026-001」待你审批，节点类型：自动通过",
+			},
+		}},
+		Surface:          DispatchSurface{Type: "issue"},
+		Outbound:         DispatchOutbound{Mode: "none"},
+		ExternalIdentity: AgentDispatchExternalIdentity{ContextToken: "context-token", ExpiresAt: 4102444800000},
+	}
+	if err := c.validate(); err != nil {
+		t.Fatalf("valid approval dispatch rejected: %v", err)
+	}
+	prompt := mustBuildDispatchPrompt(t, c)
+	if !strings.Contains(prompt.DisplayContent, "审批单「FORM-2026-001」") {
+		t.Fatalf("approval display content missing aiReadableContent: %q", prompt.DisplayContent)
+	}
+	for _, secret := range []string{"approver-uid-secret-1", "approver-uid-secret-2", "originator-uid-secret", "cc-uid-secret", "cid-secret"} {
+		if strings.Contains(prompt.DisplayContent, secret) {
+			t.Fatalf("approval display content leaked %q: %q", secret, prompt.DisplayContent)
+		}
+	}
+	if !strings.Contains(prompt.RuntimePrompt, "untrusted") {
+		t.Fatalf("approval prompt must have safety runtime prompt: %#v", prompt)
+	}
+	if prompt.WorkflowPrompt != "" {
+		t.Fatalf("approval prompt must not inject workflow prompt; got: %q", prompt.WorkflowPrompt)
+	}
+	if got := dispatchWindowIdempotencyKey(c); got != "approval:FORM-2026-001:approving" {
+		t.Fatalf("approval idempotency key = %q", got)
+	}
+	if got := dispatchIssueTitle(c, dispatchWindowIdempotencyKey(c)); !strings.HasPrefix(got, "审批单：FORM-2026-001 · ") {
+		t.Fatalf("approval issue title = %q", got)
+	}
+
+	clone := func() DispatchCommand {
+		cloned := c
+		approval := *c.Event.Data.Approval
+		cloned.Event.Data.Approval = &approval
+		return cloned
+	}
+
+	missingToken := clone()
+	missingToken.ExternalIdentity.ContextToken = ""
+	missingToken.ExternalIdentity.ExpiresAt = 0
+	if err := missingToken.validate(); err == nil || !strings.Contains(err.Error(), "contextToken") {
+		t.Fatalf("approval dispatch without context token error = %v", err)
+	}
+
+	dwsIdentityOnly := clone()
+	dwsIdentityOnly.ExternalIdentity = AgentDispatchExternalIdentity{
+		DWS: &AgentDispatchDWSIdentity{UID: "123", OrgID: "456"},
+	}
+	if err := dwsIdentityOnly.validate(); err != nil {
+		t.Fatalf("approval dispatch with DWS-only external identity rejected: %v", err)
+	}
+
+	missingFormCode := clone()
+	missingFormCode.Event.Data.Approval.FormCode = ""
+	if err := missingFormCode.validate(); err == nil || !strings.Contains(err.Error(), "formCode") {
+		t.Fatalf("approval dispatch without formCode error = %v", err)
+	}
+
+	missingApproverUids := clone()
+	missingApproverUids.Event.Data.Approval.ApproverUids = nil
+	if err := missingApproverUids.validate(); err == nil || !strings.Contains(err.Error(), "approverUids") {
+		t.Fatalf("approval dispatch without approverUids error = %v", err)
+	}
+
+	missingAIReadableContent := clone()
+	missingAIReadableContent.Event.Data.Approval.AIReadableContent = ""
+	if err := missingAIReadableContent.validate(); err == nil || !strings.Contains(err.Error(), "aiReadableContent") {
+		t.Fatalf("approval dispatch without aiReadableContent error = %v", err)
+	}
+
+	wrongSurface := clone()
+	wrongSurface.Surface.Type = "chat"
+	if err := wrongSurface.validate(); err == nil || !strings.Contains(err.Error(), "surface") {
+		t.Fatalf("approval dispatch with wrong surface error = %v", err)
+	}
+
+	wrongOutbound := clone()
+	wrongOutbound.Outbound.Mode = "invalid"
+	if err := wrongOutbound.validate(); err == nil || !strings.Contains(err.Error(), "outbound") {
+		t.Fatalf("approval dispatch with wrong outbound error = %v", err)
+	}
+
+	dwsWithoutReplyTo := clone()
+	dwsWithoutReplyTo.Outbound.Mode = "dws"
+	dwsWithoutReplyTo.Outbound.ReplyTo = ""
+	if err := dwsWithoutReplyTo.validate(); err == nil || !strings.Contains(err.Error(), "replyTo") {
+		t.Fatalf("approval dispatch with dws outbound but missing replyTo error = %v", err)
+	}
+
+	wrongSource := clone()
+	wrongSource.Source.Type = "robot"
+	if err := wrongSource.validate(); err == nil || !strings.Contains(err.Error(), "digital_employee") {
+		t.Fatalf("approval dispatch with robot source error = %v", err)
+	}
+
+	nilApproval := clone()
+	nilApproval.Event.Data.Approval = nil
+	if err := nilApproval.validate(); err == nil || !strings.Contains(err.Error(), "approval requires") {
+		t.Fatalf("approval dispatch with nil approval data error = %v", err)
+	}
+}
+
+func TestShouldSkipApprovalDispatch(t *testing.T) {
+	tests := []struct {
+		name    string
+		command DispatchCommand
+		want    bool
+	}{
+		{
+			name: "auto_approve approval is skipped",
+			command: DispatchCommand{
+				Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+					Approval: &ApprovalEventData{NodeType: "auto_approve", FormCode: "FORM-001"},
+				}},
+			},
+			want: true,
+		},
+		{
+			name: "non-auto_approve approval is not skipped",
+			command: DispatchCommand{
+				Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+					Approval: &ApprovalEventData{NodeType: "normal", FormCode: "FORM-001"},
+				}},
+			},
+			want: false,
+		},
+		{
+			name: "channel event is not skipped",
+			command: DispatchCommand{
+				Event: DispatchEvent{Domain: "channel", Type: "message.created"},
+			},
+			want: false,
+		},
+		{
+			name: "calendar event is not skipped",
+			command: DispatchCommand{
+				Event: DispatchEvent{Domain: "calendar", Type: "calendar.started"},
+			},
+			want: false,
+		},
+		{
+			name: "approval with whitespace nodeType is not skipped",
+			command: DispatchCommand{
+				Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+					Approval: &ApprovalEventData{NodeType: "  auto_approve  ", FormCode: "FORM-001"},
+				}},
+			},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldSkipApprovalDispatch(tt.command); got != tt.want {
+				t.Fatalf("shouldSkipApprovalDispatch() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractIssueIdentifierFromApprovalContent(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		prefix  string
+		want    string
+	}{
+		{
+			name:    "identifier in form field",
+			content: "审批单「FORM-001」已通过\n关联Issue：MUL-123\n事由：天气查询",
+			prefix:  "MUL",
+			want:    "MUL-123",
+		},
+		{
+			name:    "identifier embedded in text",
+			content: "审批标题：MUL-456 的天气查询申请已通过",
+			prefix:  "MUL",
+			want:    "MUL-456",
+		},
+		{
+			name:    "case insensitive match",
+			content: "关联issue: mul-789",
+			prefix:  "MUL",
+			want:    "MUL-789",
+		},
+		{
+			name:    "no identifier in content",
+			content: "审批单「FORM-001」已通过",
+			prefix:  "MUL",
+			want:    "",
+		},
+		{
+			name:    "empty content",
+			content: "",
+			prefix:  "MUL",
+			want:    "",
+		},
+		{
+			name:    "empty prefix",
+			content: "MUL-123",
+			prefix:  "",
+			want:    "",
+		},
+		{
+			name:    "different prefix in content does not match",
+			content: "关联Issue: ABC-123",
+			prefix:  "MUL",
+			want:    "",
+		},
+		{
+			name:    "prefix with special chars",
+			content: "关联Issue: FDE-42",
+			prefix:  "FDE",
+			want:    "FDE-42",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractIssueIdentifierFromApprovalContent(tt.content, tt.prefix)
+			if got != tt.want {
+				t.Fatalf("extractIssueIdentifierFromApprovalContent(%q, %q) = %q, want %q",
+					tt.content, tt.prefix, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyDingTalkDispatchPromptKeepsApprovalTaskOutboundFree(t *testing.T) {
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+			Approval: &ApprovalEventData{
+				FormCode:          "FORM-2026-001",
+				OriginatorUid:     "originator-uid",
+				ApproverUids:      []string{"approver-uid-1"},
+				NodeType:          "auto_approve",
+				Status:            "approving",
+				AIReadableContent: "审批单「FORM-2026-001」待你审批，节点类型：自动通过",
+			},
+		}},
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "none"},
+	})
+	response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "保留已有交接说明"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	// Approval dispatches with outbound=none do not inject any prompt into
+	// existing task fields. The handoff note must remain untouched.
+	if response.HandoffNote != "保留已有交接说明" {
+		t.Fatalf("approval task handoff must not be modified; got: %s", response.HandoffNote)
+	}
+}
+
+func TestApprovalStatusChangedDispatchWithDWSOutboundReplies(t *testing.T) {
+	c := DispatchCommand{
+		SchemaVersion: "2.0", AgentID: "agent",
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+			Approval: &ApprovalEventData{
+				FormCode:          "FORM-2026-002",
+				OriginatorUid:     "originator-uid",
+				ApproverUids:      []string{"approver-uid-1"},
+				NodeType:          "normal",
+				Status:            "approving",
+				AIReadableContent: "审批单「FORM-2026-002」待你审批，请审核报销明细。",
+			},
+			Conversation: DispatchConversation{OpenConversationID: "cid-approval"},
+			Sender:       DispatchSender{DisplayName: "审批助手", OpenDingTalkID: "open-sender"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-approval", Text: "审批通知"}},
+		}},
+		Surface:          DispatchSurface{Type: "issue"},
+		Outbound:         DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		ExternalIdentity: AgentDispatchExternalIdentity{
+			DWS: &AgentDispatchDWSIdentity{UID: "123", OrgID: "456"},
+		},
+	}
+	if err := c.validate(); err != nil {
+		t.Fatalf("valid approval dispatch with dws outbound rejected: %v", err)
+	}
+	prompt := mustBuildDispatchPrompt(t, c)
+	if prompt.WorkflowPrompt == "" {
+		t.Fatalf("approval dispatch with dws outbound must have a workflow prompt")
+	}
+	if !strings.Contains(prompt.WorkflowPrompt, "dws chat message reply") {
+		t.Fatalf("approval dws workflow prompt missing reply instruction: %q", prompt.WorkflowPrompt)
+	}
+	if !strings.Contains(prompt.WorkflowPrompt, "cid-approval") {
+		t.Fatalf("approval dws workflow prompt missing conversation id: %q", prompt.WorkflowPrompt)
+	}
+	if !strings.Contains(prompt.WorkflowPrompt, "msg-approval") {
+		t.Fatalf("approval dws workflow prompt missing message id: %q", prompt.WorkflowPrompt)
+	}
+}
+
+func TestApplyDingTalkDispatchPromptAppliesApprovalDWSWorkflow(t *testing.T) {
+	context := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "approval", Type: "approval.status_changed", Data: DispatchEventData{
+			Approval: &ApprovalEventData{
+				FormCode:          "FORM-2026-002",
+				OriginatorUid:     "originator-uid",
+				ApproverUids:      []string{"approver-uid-1"},
+				NodeType:          "normal",
+				Status:            "approving",
+				AIReadableContent: "审批单「FORM-2026-002」待你审批，请审核报销明细。",
+			},
+			Conversation: DispatchConversation{OpenConversationID: "cid-approval"},
+			Sender:       DispatchSender{DisplayName: "审批助手", OpenDingTalkID: "open-sender"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-approval", Text: "审批通知"}},
+		}},
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	})
+	response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "保留已有交接说明"}
+
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+
+	for _, want := range []string{
+		"## Trusted DingTalk Dispatch",
+		"untrusted input",
+		"## External DingTalk Approval Event",
+		"two required final delivery destinations",
+		"dws chat message reply",
+		"cid-approval",
+		"保留已有交接说明",
+	} {
+		if !strings.Contains(response.HandoffNote, want) {
+			t.Errorf("approval dws task handoff missing %q: %s", want, response.HandoffNote)
+		}
+	}
+}
 func TestDispatchRuntimeContextStoresStructuredDataWithoutGeneratedPromptFields(t *testing.T) {
 	command := DispatchCommand{
 		SchemaVersion: "2.0",

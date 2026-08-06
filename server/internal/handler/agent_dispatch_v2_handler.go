@@ -181,6 +181,31 @@ func (h *Handler) handleAgentDispatchV2(
 		writeError(w, http.StatusServiceUnavailable, "task completion delivery is not configured")
 		return
 	}
+	if shouldSkipApprovalDispatch(command) {
+		slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+			"outcome", "skipped_auto_approve",
+			"protocol", "dispatch_command_v2",
+			"domain", command.Event.Domain,
+			"eventType", command.Event.Type,
+			"nodeType", "auto_approve",
+			"processInstanceId", strings.TrimSpace(command.Event.Data.Approval.FormCode),
+		)
+		if command.CompletionCallback != nil && h.TaskService != nil {
+			if err := h.TaskService.EnqueueSynchronousTaskCompletion(
+				r.Context(),
+				command.CompletionCallback.URL,
+				command.CompletionCallback.Target,
+				dispatchContext.AgentID,
+				"approval auto_approve node — DingTalk engine handles auto-approval, no agent task needed",
+				"auto_approve_skipped",
+			); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to persist task completion")
+				return
+			}
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	command.DispatchEndpointID = uuidToString(dispatchContext.EndpointNamespaceID)
 	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext, h.FeatureFlags)
 	if err != nil {
@@ -300,6 +325,58 @@ func (h *Handler) executeAgentDispatchV2(
 		return
 	}
 
+	// Approval event auto-linking: when the agent created the approval instance,
+	// it wrote the current issue identifier (e.g. "WS-50") into the form field
+	// named 关联Issue. The Router includes form values in AIReadableContent. If
+	// we can recover the identifier and match it to an existing issue assigned to
+	// this agent, redirect to a continuation (comment) on that issue instead of
+	// creating a new one — preserving the original conversation context.
+	if command.AgentID != "" &&
+		command.Event.Domain == "approval" &&
+		command.Event.Type == "approval.status_changed" &&
+		command.Event.Data.Approval != nil {
+		issuePrefix := h.getIssuePrefix(r.Context(), dispatchContext.WorkspaceID)
+		rawContent := command.Event.Data.Approval.AIReadableContent
+		identifier := extractIssueIdentifierFromApprovalContent(rawContent, issuePrefix)
+		if identifier != "" {
+			if issue, ok := h.lookupIssueByIdentifier(r.Context(), dispatchContext.WorkspaceID, issuePrefix, identifier); ok {
+				if issue.AssigneeType.Valid && issue.AssigneeType.String == "agent" &&
+					uuidToString(issue.AssigneeID) == uuidToString(dispatchContext.AgentID) {
+					command.Continuation = &AgentDispatchContinuation{
+						Kind:    "issue",
+						IssueID: uuidToString(issue.ID),
+					}
+					command.AgentID = "" // fall through to continuation path
+					slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+						"outcome", "linked_approval_to_issue",
+						"issueIdentifier", identifier,
+						"processInstanceId", strings.TrimSpace(command.Event.Data.Approval.FormCode),
+					)
+				} else {
+					slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+						"outcome", "approval_link_skipped_assignee_mismatch",
+						"issueIdentifier", identifier,
+						"issueAssigneeType", issue.AssigneeType.String,
+						"issueAssigneeID", uuidToString(issue.AssigneeID),
+						"dispatchAgentID", uuidToString(dispatchContext.AgentID),
+					)
+				}
+			} else {
+				slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+					"outcome", "approval_link_skipped_issue_not_found",
+					"issueIdentifier", identifier,
+					"issuePrefix", issuePrefix,
+				)
+			}
+		} else {
+			slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+				"outcome", "approval_link_skipped_no_identifier",
+				"issuePrefix", issuePrefix,
+				"aiReadableContentBytes", len(rawContent),
+				"processInstanceId", strings.TrimSpace(command.Event.Data.Approval.FormCode),
+			)
+		}
+	}
 	if command.AgentID != "" {
 		agent, ok := h.resolveAgentDispatchAgent(
 			w, r, dispatchContext.UserID, dispatchContext.WorkspaceID, dispatchContext.AgentID)
