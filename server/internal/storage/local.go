@@ -14,8 +14,25 @@ import (
 )
 
 type LocalStorage struct {
-	uploadDir string
-	baseURL   string
+	uploadDir       string
+	baseURL         string
+	baseURLProvider func() string
+}
+
+func (s *LocalStorage) SetBaseURLProvider(provider func() string) {
+	if s != nil {
+		s.baseURLProvider = provider
+	}
+}
+
+func (s *LocalStorage) currentBaseURL() string {
+	if s != nil && s.baseURLProvider != nil {
+		return strings.TrimRight(strings.TrimSpace(s.baseURLProvider()), "/")
+	}
+	if s == nil {
+		return ""
+	}
+	return s.baseURL
 }
 
 // metaSuffix is the on-disk extension for the sidecar JSON file that
@@ -57,10 +74,11 @@ func NewLocalStorageFromEnv() *LocalStorage {
 }
 
 func (s *LocalStorage) CdnDomain() string {
-	if s.baseURL == "" {
+	baseURL := s.currentBaseURL()
+	if baseURL == "" {
 		return ""
 	}
-	u, err := url.Parse(s.baseURL)
+	u, err := url.Parse(baseURL)
 	if err != nil {
 		return ""
 	}
@@ -68,8 +86,9 @@ func (s *LocalStorage) CdnDomain() string {
 }
 
 func (s *LocalStorage) KeyFromURL(rawURL string) string {
-	if s.baseURL != "" && strings.HasPrefix(rawURL, s.baseURL) {
-		rawURL = strings.TrimPrefix(rawURL, s.baseURL)
+	baseURL := s.currentBaseURL()
+	if baseURL != "" && strings.HasPrefix(rawURL, baseURL) {
+		rawURL = strings.TrimPrefix(rawURL, baseURL)
 	}
 
 	prefix := "/uploads/"
@@ -146,8 +165,8 @@ func (s *LocalStorage) Upload(ctx context.Context, key string, data []byte, cont
 		}
 	}
 
-	if s.baseURL != "" {
-		return fmt.Sprintf("%s/uploads/%s", s.baseURL, key), nil
+	if baseURL := s.currentBaseURL(); baseURL != "" {
+		return fmt.Sprintf("%s/uploads/%s", baseURL, key), nil
 	}
 	return fmt.Sprintf("/uploads/%s", key), nil
 }

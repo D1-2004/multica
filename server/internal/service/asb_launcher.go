@@ -400,15 +400,38 @@ type ASBTaskIdentityResolver interface {
 }
 
 type ASBLauncher struct {
-	Queries     *db.Queries
-	Tasks       *TaskService
-	Common      *FCE2BLauncher
-	Config      ASBConfig
-	Client      *ASBClient
-	Identity    ASBTaskIdentityResolver
-	Credentials *ASBRuntimeClientProvider
-	Capacity    ASBSandboxCapacity
-	Pool        *pgxpool.Pool
+	Queries        *db.Queries
+	Tasks          *TaskService
+	Common         *FCE2BLauncher
+	Config         ASBConfig
+	ConfigProvider func() ASBConfig
+	Client         *ASBClient
+	Identity       ASBTaskIdentityResolver
+	Credentials    *ASBRuntimeClientProvider
+	Capacity       ASBSandboxCapacity
+	Pool           *pgxpool.Pool
+}
+
+func (l *ASBLauncher) withCurrentConfig() *ASBLauncher {
+	if l == nil || l.ConfigProvider == nil {
+		return l
+	}
+	configured := *l
+	configured.Config = l.ConfigProvider()
+	configured.ConfigProvider = nil
+	configured.Common = l.Common.withCurrentConfig()
+	if configured.Credentials != nil {
+		credentials := *configured.Credentials
+		credentials.Config = configured.Config
+		credentials.ConfigProvider = nil
+		configured.Credentials = &credentials
+		if capacity, ok := configured.Capacity.(*ASBSandboxCapacityManager); ok {
+			capacityCopy := *capacity
+			capacityCopy.Credentials = configured.Credentials
+			configured.Capacity = &capacityCopy
+		}
+	}
+	return &configured
 }
 
 type asbLaunchSubmission struct {
@@ -453,6 +476,9 @@ func (l *ASBLauncher) SetPool(pool *pgxpool.Pool) {
 }
 
 func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) error {
+	if configured := l.withCurrentConfig(); configured != l {
+		return configured.LaunchTask(ctx, task)
+	}
 	if l == nil || l.Queries == nil || l.Tasks == nil || !task.RuntimeID.Valid {
 		return nil
 	}
@@ -1595,6 +1621,9 @@ func (l *ASBLauncher) VerifyStableArtifact(
 	runtimeID pgtype.UUID,
 	artifact ASBArtifact,
 ) (map[string]any, error) {
+	if configured := l.withCurrentConfig(); configured != l {
+		return configured.VerifyStableArtifact(ctx, runtimeID, artifact)
+	}
 	if l == nil || l.Credentials == nil {
 		return nil, errors.New("ASB Runtime credential service is unavailable")
 	}
@@ -1620,6 +1649,9 @@ func (l *ASBLauncher) VerifyArtifactWithAPIKey(
 	artifact ASBArtifact,
 	apiKey string,
 ) (map[string]any, error) {
+	if configured := l.withCurrentConfig(); configured != l {
+		return configured.VerifyArtifactWithAPIKey(ctx, artifact, apiKey)
+	}
 	if l == nil {
 		return nil, errors.New("ASB launcher is unavailable")
 	}
@@ -1758,6 +1790,9 @@ func (l *ASBLauncher) UpdateRuntimeArtifact(
 	runtimeID pgtype.UUID,
 	artifact ASBArtifact,
 ) (ASBRuntimeArtifactUpdateResult, error) {
+	if configured := l.withCurrentConfig(); configured != l {
+		return configured.UpdateRuntimeArtifact(ctx, runtimeID, artifact)
+	}
 	return l.updateRuntimeArtifact(ctx, runtimeID, artifact, map[string]any{
 		"artifact_channel": CloudSandboxChannelCandidate,
 	})
@@ -1770,6 +1805,9 @@ func (l *ASBLauncher) UpdateRuntimeArtifactForStableRelease(
 	releaseID string,
 	batchIndex int,
 ) (ASBRuntimeArtifactUpdateResult, error) {
+	if configured := l.withCurrentConfig(); configured != l {
+		return configured.UpdateRuntimeArtifactForStableRelease(ctx, runtimeID, artifact, releaseID, batchIndex)
+	}
 	return l.updateRuntimeArtifact(ctx, runtimeID, artifact, map[string]any{
 		"artifact_channel":  CloudSandboxChannelStable,
 		"stable_release_id": strings.TrimSpace(releaseID),
@@ -1782,6 +1820,9 @@ func (l *ASBLauncher) UpdateRuntimeAPIKey(
 	runtimeID pgtype.UUID,
 	apiKey string,
 ) (ASBRuntimeCredentialUpdateResult, error) {
+	if configured := l.withCurrentConfig(); configured != l {
+		return configured.UpdateRuntimeAPIKey(ctx, runtimeID, apiKey)
+	}
 	if l == nil || l.Queries == nil || l.Pool == nil || l.Credentials == nil {
 		return ASBRuntimeCredentialUpdateResult{}, errors.New("ASB Runtime credential service is unavailable")
 	}

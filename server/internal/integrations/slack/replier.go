@@ -43,12 +43,13 @@ type bindingMinter interface {
 
 // OutboundReplier implements engine.OutboundReplier for Slack.
 type OutboundReplier struct {
-	binding     bindingMinter
-	decrypt     Decrypter
-	newSender   func(creds credentials) replySender
-	appURL      string
-	bindingPath string
-	logger      *slog.Logger
+	binding        bindingMinter
+	decrypt        Decrypter
+	newSender      func(creds credentials) replySender
+	appURL         string
+	appURLProvider func() string
+	bindingPath    string
+	logger         *slog.Logger
 }
 
 // OutboundReplierConfig configures the replier. Binding + AppURL are required
@@ -64,9 +65,10 @@ type OutboundReplierConfig struct {
 	// daemon-facing endpoints — the bind page (/slack/bind) is served by the web
 	// app, so the link must point at the app host, not the API host. Mirrors the
 	// Lark replier's AppURL.
-	AppURL      string
-	BindingPath string // default "/slack/bind"
-	Logger      *slog.Logger
+	AppURL         string
+	AppURLProvider func() string
+	BindingPath    string // default "/slack/bind"
+	Logger         *slog.Logger
 }
 
 var _ engine.OutboundReplier = (*OutboundReplier)(nil)
@@ -86,16 +88,27 @@ func NewOutboundReplier(cfg OutboundReplierConfig) *OutboundReplier {
 		bindingPath = "/" + bindingPath
 	}
 	r := &OutboundReplier{
-		binding:     cfg.Binding,
-		decrypt:     cfg.Decrypt,
-		appURL:      strings.TrimRight(cfg.AppURL, "/"),
-		bindingPath: bindingPath,
-		logger:      logger,
+		binding:        cfg.Binding,
+		decrypt:        cfg.Decrypt,
+		appURL:         strings.TrimRight(cfg.AppURL, "/"),
+		appURLProvider: cfg.AppURLProvider,
+		bindingPath:    bindingPath,
+		logger:         logger,
 	}
 	r.newSender = func(c credentials) replySender {
 		return newSlackSender(c, slack.New(c.BotToken), logger)
 	}
 	return r
+}
+
+func (r *OutboundReplier) currentAppURL() string {
+	if r != nil && r.appURLProvider != nil {
+		return strings.TrimRight(strings.TrimSpace(r.appURLProvider()), "/")
+	}
+	if r == nil {
+		return ""
+	}
+	return r.appURL
 }
 
 // Reply routes each outcome to its user-visible message. Errors are logged, not
@@ -140,14 +153,15 @@ func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.Res
 	if r.binding == nil {
 		return errors.New("binding service not configured")
 	}
-	if r.appURL == "" {
+	appURL := r.currentAppURL()
+	if appURL == "" {
 		return errors.New("app url not configured")
 	}
 	token, err := r.binding.Mint(ctx, inst.WorkspaceID, inst.ID, sender)
 	if err != nil {
 		return fmt.Errorf("mint binding token: %w", err)
 	}
-	bindURL := r.appURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
+	bindURL := appURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
 	// Wrap the URL as an explicit Slack link <url|label>: formatMrkdwn protects
 	// these from its markdown passes, so the base64url token's `_`/`-` chars are
 	// not mangled into italics.

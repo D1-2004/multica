@@ -30,12 +30,13 @@ const (
 var ErrUnavailable = errors.New("github app credentials are unavailable")
 
 type Config struct {
-	AppID         string
-	PrivateKey    string
-	APIBase       string
-	HTTPClient    *http.Client
-	Now           func() time.Time
-	ResponseLimit int64
+	AppID           string
+	PrivateKey      string
+	APIBase         string
+	APIBaseProvider func() string
+	HTTPClient      *http.Client
+	Now             func() time.Time
+	ResponseLimit   int64
 }
 
 // NormalizePrivateKeyPEM accepts PEM values stored either with real newlines or
@@ -45,12 +46,13 @@ func NormalizePrivateKeyPEM(value string) string {
 }
 
 type Client struct {
-	appID         string
-	privateKey    *rsa.PrivateKey
-	baseURL       *url.URL
-	httpClient    *http.Client
-	now           func() time.Time
-	responseLimit int64
+	appID           string
+	privateKey      *rsa.PrivateKey
+	baseURL         *url.URL
+	apiBaseProvider func() string
+	httpClient      *http.Client
+	now             func() time.Time
+	responseLimit   int64
 
 	mu     sync.Mutex
 	tokens map[int64]cachedToken
@@ -106,20 +108,19 @@ func New(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse GitHub App private key: %w", err)
 	}
-	base := strings.TrimSpace(cfg.APIBase)
-	if base == "" {
-		base = DefaultAPIBase
+	base := cfg.APIBase
+	if cfg.APIBaseProvider != nil {
+		base = cfg.APIBaseProvider()
 	}
-	baseURL, err := url.Parse(base)
-	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
+	baseURL, err := parseAPIBase(base)
+	if err != nil {
 		return nil, fmt.Errorf("invalid GitHub API base URL")
 	}
-	baseURL.Path = strings.TrimRight(baseURL.Path, "/")
 
 	httpClient := cloneHTTPClient(cfg.HTTPClient)
 	originalRedirect := httpClient.CheckRedirect
 	httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if !sameOrigin(req.URL, baseURL) {
+		if len(via) == 0 || !sameOrigin(req.URL, via[0].URL) {
 			return errors.New("refusing GitHub API redirect to another origin")
 		}
 		if originalRedirect != nil {
@@ -140,14 +141,42 @@ func New(cfg Config) (*Client, error) {
 		responseLimit = defaultResponseLimit
 	}
 	return &Client{
-		appID:         appID,
-		privateKey:    privateKey,
-		baseURL:       baseURL,
-		httpClient:    httpClient,
-		now:           now,
-		responseLimit: responseLimit,
-		tokens:        make(map[int64]cachedToken),
+		appID:           appID,
+		privateKey:      privateKey,
+		baseURL:         baseURL,
+		apiBaseProvider: cfg.APIBaseProvider,
+		httpClient:      httpClient,
+		now:             now,
+		responseLimit:   responseLimit,
+		tokens:          make(map[int64]cachedToken),
 	}, nil
+}
+
+func parseAPIBase(raw string) (*url.URL, error) {
+	base := strings.TrimSpace(raw)
+	if base == "" {
+		base = DefaultAPIBase
+	}
+	baseURL, err := url.Parse(base)
+	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" || baseURL.User != nil ||
+		baseURL.RawQuery != "" || baseURL.Fragment != "" || baseURL.Opaque != "" {
+		return nil, errors.New("invalid GitHub API base URL")
+	}
+	baseURL.Path = strings.TrimRight(baseURL.Path, "/")
+	return baseURL, nil
+}
+
+func (c *Client) currentBaseURL() (*url.URL, error) {
+	if c == nil {
+		return nil, ErrUnavailable
+	}
+	if c.apiBaseProvider == nil {
+		if c.baseURL == nil {
+			return nil, errors.New("invalid GitHub API base URL")
+		}
+		return c.baseURL, nil
+	}
+	return parseAPIBase(c.apiBaseProvider())
 }
 
 func cloneHTTPClient(in *http.Client) *http.Client {
@@ -371,8 +400,12 @@ func (c *Client) endpoint(path string) (*url.URL, error) {
 	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
 		return nil, errors.New("invalid GitHub API path")
 	}
-	endpoint, err := url.Parse(strings.TrimRight(c.baseURL.String(), "/") + path)
-	if err != nil || !sameOrigin(endpoint, c.baseURL) {
+	baseURL, err := c.currentBaseURL()
+	if err != nil {
+		return nil, err
+	}
+	endpoint, err := url.Parse(strings.TrimRight(baseURL.String(), "/") + path)
+	if err != nil || !sameOrigin(endpoint, baseURL) {
 		return nil, errors.New("invalid GitHub API endpoint")
 	}
 	return endpoint, nil

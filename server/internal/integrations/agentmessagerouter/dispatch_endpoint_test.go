@@ -140,3 +140,38 @@ func TestDispatchEndpointServiceReusesStoredEndpointAcrossConfiguredOrigins(t *t
 		t.Fatalf("runtime dispatch URL = %q, want %q", endpoint.DispatchURL, wantURL)
 	}
 }
+
+func TestDispatchEndpointServiceUsesCurrentPublicBaseURL(t *testing.T) {
+	keyring, err := ParseDispatchKeyring(
+		"v1:ERERERERERERERERERERERERERERERERERERERERERE", "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceID := util.MustParseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	agentID := util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	store := &fakeDispatchEndpointStore{record: DispatchEndpoint{
+		WorkspaceID: workspaceID,
+		AgentID:     agentID,
+		ActorUserID: util.MustParseUUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+		EndpointID:  "v1_EREREREREREREREREREREQ",
+		DispatchURL: "/api/webhooks/agent-dispatch/v1_EREREREREREREREREREREQ",
+	}}
+	current := "https://pre-one.example"
+	service, err := NewDispatchEndpointService(store, DispatchEndpointServiceConfig{
+		PublicBaseURLProvider: func() string { return current },
+		Keyring:               keyring,
+		Random:                bytes.NewReader(bytes.Repeat([]byte{0x44}, 16)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current = "https://pre-two.example"
+	endpoint, err := service.Get(context.Background(), agentID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	want := "https://pre-two.example/api/webhooks/agent-dispatch/v1_EREREREREREREREREREREQ"
+	if endpoint.DispatchURL != want {
+		t.Fatalf("runtime dispatch URL = %q, want %q", endpoint.DispatchURL, want)
+	}
+}

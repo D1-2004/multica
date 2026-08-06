@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
+	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -161,6 +162,18 @@ func main() {
 		port = "8080"
 	}
 
+	remoteRuntimeConfig, err := runtimeconfig.NewFromEnv(slog.Default())
+	if err != nil {
+		slog.Error("required runtime configuration failed to load", "error", err)
+		os.Exit(1)
+	}
+	appRuntimeConfig, err := newAppRuntimeConfig(remoteRuntimeConfig)
+	if err != nil {
+		slog.Error("required runtime configuration is incomplete", "error", err)
+		_ = remoteRuntimeConfig.Close()
+		os.Exit(1)
+	}
+
 	// Feature flags: FF_<KEY> overrides are layered over an optional dynamic
 	// Diamond snapshot and the startup YAML rule set.
 	// See docs/feature-flags.md for the schema and lifecycle rules.
@@ -168,24 +181,29 @@ func main() {
 	// Booting without either remote or file configuration is intentional.
 	// Diamond failures are fail-open; a malformed configured YAML file remains
 	// a startup error so operators do not silently lose source-controlled rules.
-	flags, err := featureflag.NewServiceFromEnv(featureflag.WithLogger(slog.Default()))
+	flagOptions := []featureflag.Option{featureflag.WithLogger(slog.Default())}
+	if appRuntimeConfig != nil {
+		flagOptions = append(flagOptions, featureflag.WithProvider(runtimeFeatureFlagProvider{config: appRuntimeConfig}))
+	}
+	flags, err := featureflag.NewServiceFromEnv(flagOptions...)
 	if err != nil {
 		slog.Error("feature flag configuration failed to load", "error", err)
+		_ = remoteRuntimeConfig.Close()
 		os.Exit(1)
 	}
 	sandboxRelaySigner, err := sandboxrelay.LoadSignerFromEnv()
 	if err != nil {
 		slog.Error("sandbox relay signing configuration failed", "error", err)
-		closeFeatureFlagsAndExit(flags, 1)
+		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
 	sandboxHTTPRelay, err := sandboxrelay.LoadRelayFromEnv()
 	if err != nil {
 		slog.Error("sandbox relay forwarding configuration failed", "error", err)
-		closeFeatureFlagsAndExit(flags, 1)
+		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
 	if sandboxRelaySigner != nil && sandboxHTTPRelay != nil {
 		slog.Error("sandbox relay signer and forwarding relay must not be enabled on the same deployment")
-		closeFeatureFlagsAndExit(flags, 1)
+		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
 	if sandboxRelaySigner != nil {
 		slog.Info("sandbox relay signing enabled")
@@ -206,13 +224,13 @@ func main() {
 	pool, err := newDBPool(ctx, dbURL)
 	if err != nil {
 		slog.Error("unable to connect to database", "error", err)
-		closeFeatureFlagsAndExit(flags, 1)
+		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
 	defer pool.Close()
 
 	if err := pool.Ping(ctx); err != nil {
 		slog.Error("unable to ping database", "error", err)
-		closeFeatureFlagsAndExit(flags, 1)
+		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
 	slog.Info("connected to database")
 	logPoolConfig(pool)
@@ -254,7 +272,7 @@ func main() {
 	redisOpts, redisSource, err := redisOptionsFromEnv()
 	if err != nil {
 		slog.Error("Redis configuration failed", "error", err)
-		closeFeatureFlagsAndExit(flags, 1)
+		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
 	if redisOpts != nil {
 		if envBool("REDIS_DISABLE_CLIENT_NAME", false) {
@@ -263,7 +281,7 @@ func main() {
 		storeRedis = newNamedRedisClient(redisOpts, "store")
 		if err := storeRedis.Ping(ctx).Err(); err != nil {
 			slog.Error("unable to ping Redis", "source", redisSource, "error", err)
-			closeFeatureFlagsAndExit(flags, 1)
+			closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 		}
 		slog.Info("connected to Redis", "source", redisSource)
 		relayWriteRedis = newNamedRedisClient(redisOpts, "realtime-write")
@@ -398,6 +416,7 @@ func main() {
 		HeartbeatScheduler: heartbeatScheduler,
 		SandboxRelaySigner: sandboxRelaySigner,
 		SandboxRelay:       sandboxRelayMiddleware,
+		RuntimeConfig:      appRuntimeConfig,
 	})
 
 	srv := &http.Server{
@@ -411,7 +430,18 @@ func main() {
 	taskSvc := service.NewTaskService(queries, pool, hub, bus, daemonWakeup)
 	taskSvc.Analytics = analyticsClient
 	taskSvc.Metrics = businessMetrics
-	fcLauncher := service.NewFCE2BLauncher(queries, taskSvc, service.FCE2BConfigFromEnv(), nil)
+	fcConfig := service.FCE2BConfigFromEnv()
+	asbConfig := service.ASBConfigFromEnv()
+	enterpriseConfig := service.EnterpriseIdentityConfigFromEnv()
+	if appRuntimeConfig != nil {
+		fcConfig = appRuntimeConfig.fce2b()
+		asbConfig = appRuntimeConfig.asb()
+		enterpriseConfig = appRuntimeConfig.enterpriseIdentity()
+	}
+	fcLauncher := service.NewFCE2BLauncher(queries, taskSvc, fcConfig, nil)
+	if appRuntimeConfig != nil {
+		fcLauncher.ConfigProvider = appRuntimeConfig.fce2b
+	}
 	fcLauncher.SetSandboxRelaySigner(sandboxRelaySigner)
 	// The pool backs the cross-replica sandbox lock: without it two replicas
 	// can each boot a sandbox for the same chat, and the loser's microVM is
@@ -422,8 +452,8 @@ func main() {
 		taskSvc,
 		fcLauncher,
 		pool,
-		service.ASBConfigFromEnv(),
-		service.EnterpriseIdentityConfigFromEnv(),
+		asbConfig,
+		enterpriseConfig,
 	)
 	if asbRuntimeErr != nil {
 		slog.Error(
@@ -435,6 +465,12 @@ func main() {
 	var backgroundASBLauncher service.TaskRuntimeLauncher
 	if backgroundASBRuntime != nil {
 		backgroundASBLauncher = backgroundASBRuntime.Launcher
+		if appRuntimeConfig != nil {
+			if err := backgroundASBRuntime.SetConfigProviders(appRuntimeConfig.asb, appRuntimeConfig.enterpriseIdentity); err != nil {
+				slog.Error("background ASB enterprise runtime dynamic configuration failed", "error", err)
+				closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
+			}
+		}
 	}
 	taskSvc.RuntimeLauncher = service.NewCloudSandboxLauncher(
 		queries,
@@ -539,7 +575,7 @@ func main() {
 		slog.Info("server starting", "port", port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)
-			closeFeatureFlagsAndExit(flags, 1)
+			closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 		}
 	}()
 
@@ -564,7 +600,7 @@ func main() {
 	if err := srv.Shutdown(apiShutdownCtx); err != nil {
 		apiShutdownCancel()
 		slog.Error("server forced to shutdown", "error", err)
-		closeFeatureFlagsAndExit(flags, 1)
+		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
 	apiShutdownCancel()
 	if h.ChannelSupervisor != nil {
@@ -623,10 +659,12 @@ func main() {
 		metricsShutdownCancel()
 	}
 	_ = flags.Close()
+	_ = remoteRuntimeConfig.Close()
 	slog.Info("server stopped")
 }
 
-func closeFeatureFlagsAndExit(flags *featureflag.Service, code int) {
+func closeConfigResourcesAndExit(flags *featureflag.Service, runtime *runtimeconfig.Service, code int) {
 	_ = flags.Close()
+	_ = runtime.Close()
 	os.Exit(code)
 }

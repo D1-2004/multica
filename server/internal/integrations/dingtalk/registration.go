@@ -89,6 +89,9 @@ type RegistrationConfig struct {
 	// BaseURL is the oapi host. Default "https://oapi.dingtalk.com";
 	// staging deployments can point this at a mock.
 	BaseURL string
+	// BaseURLProvider supplies a deployment-managed endpoint for each
+	// registration operation. When set, it is authoritative over BaseURL.
+	BaseURLProvider func() string
 
 	// HTTPClient is the transport for every request the client makes.
 	// Empty defaults to a fresh *http.Client with a 30s timeout.
@@ -98,6 +101,9 @@ type RegistrationConfig struct {
 	// registration is opened in HTTP_CALLBACK mode. It is never accepted
 	// from an API caller.
 	OutgoingURL string
+	// OutgoingURLProvider supplies the fixed callback URL for each begin
+	// operation. When set, it is authoritative over OutgoingURL.
+	OutgoingURLProvider func() string
 }
 
 func (c RegistrationConfig) withDefaults() RegistrationConfig {
@@ -122,6 +128,17 @@ type RegistrationClient struct {
 // NewRegistrationClient constructs the device-flow client.
 func NewRegistrationClient(cfg RegistrationConfig) *RegistrationClient {
 	return &RegistrationClient{cfg: cfg.withDefaults()}
+}
+
+func (c *RegistrationClient) currentConfig() RegistrationConfig {
+	cfg := c.cfg
+	if cfg.BaseURLProvider != nil {
+		cfg.BaseURL = strings.TrimSpace(cfg.BaseURLProvider())
+	}
+	if cfg.OutgoingURLProvider != nil {
+		cfg.OutgoingURL = strings.TrimSpace(cfg.OutgoingURLProvider())
+	}
+	return cfg.withDefaults()
 }
 
 // TransportMode controls only how DingTalk delivers inbound robot messages.
@@ -247,12 +264,13 @@ func (c *RegistrationClient) Begin(ctx context.Context) (*RegistrationBeginResul
 // legacy begin payload byte-for-byte compatible; HTTP_CALLBACK adds the
 // DingTalk protocol's HTTPS mode and the fixed callback URL.
 func (c *RegistrationClient) BeginWithTransport(ctx context.Context, requested TransportMode) (*RegistrationBeginResult, error) {
+	cfg := c.currentConfig()
 	mode, err := normalizeTransportMode(requested)
 	if err != nil {
 		return nil, err
 	}
 	if mode == TransportModeHTTPCallback {
-		if err := validateOutgoingURL(c.cfg.OutgoingURL); err != nil {
+		if err := validateOutgoingURL(cfg.OutgoingURL); err != nil {
 			return nil, err
 		}
 	}
@@ -265,7 +283,7 @@ func (c *RegistrationClient) BeginWithTransport(ctx context.Context, requested T
 	// scan-to-create flow. Keep this stable across deployments so the
 	// authorization page always renders the FDE robot identity and copy.
 	initReq := map[string]string{"source": registrationSource}
-	if err := c.doJSON(ctx, registrationInitPath, initReq, &initResp); err != nil {
+	if err := c.doJSONWithConfig(ctx, cfg, registrationInitPath, initReq, &initResp); err != nil {
 		return nil, err
 	}
 	if err := initResp.err(); err != nil {
@@ -287,9 +305,9 @@ func (c *RegistrationClient) BeginWithTransport(ctx context.Context, requested T
 	beginReq := map[string]string{"nonce": initResp.Nonce}
 	if mode == TransportModeHTTPCallback {
 		beginReq["mode"] = "HTTPS"
-		beginReq["outgoing_url"] = strings.TrimSpace(c.cfg.OutgoingURL)
+		beginReq["outgoing_url"] = strings.TrimSpace(cfg.OutgoingURL)
 	}
-	if err := c.doJSON(ctx, registrationBeginPath, beginReq, &beginResp); err != nil {
+	if err := c.doJSONWithConfig(ctx, cfg, registrationBeginPath, beginReq, &beginResp); err != nil {
 		return nil, err
 	}
 	if err := beginResp.err(); err != nil {
@@ -393,17 +411,21 @@ func (c *RegistrationClient) Poll(ctx context.Context, deviceCode string) (*Regi
 }
 
 func (c *RegistrationClient) doJSON(ctx context.Context, path string, in any, out any) error {
+	return c.doJSONWithConfig(ctx, c.currentConfig(), path, in, out)
+}
+
+func (c *RegistrationClient) doJSONWithConfig(ctx context.Context, cfg RegistrationConfig, path string, in any, out any) error {
 	body, err := json.Marshal(in)
 	if err != nil {
 		return fmt.Errorf("registration: marshal request: %w", err)
 	}
-	endpoint := strings.TrimRight(c.cfg.BaseURL, "/") + path
+	endpoint := strings.TrimRight(cfg.BaseURL, "/") + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("registration: new request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.cfg.HTTPClient.Do(req)
+	resp, err := cfg.HTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("registration: http do: %w", err)
 	}

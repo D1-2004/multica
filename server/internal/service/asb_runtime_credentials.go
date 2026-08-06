@@ -47,9 +47,20 @@ type asbRuntimeCredentialWriter interface {
 // client for one Runtime. The plaintext key only exists while creating the
 // client and is never copied into Runtime metadata or sandbox environments.
 type ASBRuntimeClientProvider struct {
-	Store   asbRuntimeCredentialReader
-	Secrets *secretbox.Box
-	Config  ASBConfig
+	Store          asbRuntimeCredentialReader
+	Secrets        *secretbox.Box
+	Config         ASBConfig
+	ConfigProvider func() ASBConfig
+}
+
+func (p *ASBRuntimeClientProvider) currentConfig() ASBConfig {
+	if p != nil && p.ConfigProvider != nil {
+		return p.ConfigProvider()
+	}
+	if p == nil {
+		return ASBConfig{}
+	}
+	return p.Config
 }
 
 type ASBTenantCredentialScope struct {
@@ -108,7 +119,7 @@ func (p *ASBRuntimeClientProvider) ValidateAPIKeyAndGetQuotas(
 	if p == nil {
 		return nil, errors.New("ASB Runtime credential service is unavailable")
 	}
-	client, err := NewASBClientForAPIKey(p.Config, apiKey)
+	client, err := NewASBClientForAPIKey(p.currentConfig(), apiKey)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +219,7 @@ func (p *ASBRuntimeClientProvider) clientForCredential(
 		return nil, errors.New("decrypt ASB Runtime API key")
 	}
 	defer clear(plain)
-	client, err := NewASBClientForAPIKey(p.Config, string(plain))
+	client, err := NewASBClientForAPIKey(p.currentConfig(), string(plain))
 	if err != nil {
 		return nil, fmt.Errorf("build ASB Runtime client: %w", err)
 	}
@@ -228,7 +239,7 @@ func (p *ASBRuntimeClientProvider) StoreRuntimeAPIKey(
 	if err := ValidateASBAPIKey(apiKey); err != nil {
 		return db.AsbRuntimeCredential{}, err
 	}
-	if _, err := NewASBClientForAPIKey(p.Config, apiKey); err != nil {
+	if _, err := NewASBClientForAPIKey(p.currentConfig(), apiKey); err != nil {
 		return db.AsbRuntimeCredential{}, err
 	}
 	sealed, err := p.Secrets.Seal([]byte(apiKey))

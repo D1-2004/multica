@@ -264,6 +264,29 @@ func newTestClient(t *testing.T, baseURL string) *Client {
 	return client
 }
 
+func TestEndpointUsesCurrentAPIBaseProvider(t *testing.T) {
+	client := newTestClient(t, "https://github-one.example.test/api")
+	current := "https://github-two.example.test/api"
+	client.apiBaseProvider = func() string { return current }
+
+	endpoint, err := client.endpoint("/repos/acme/agent")
+	if err != nil {
+		t.Fatalf("endpoint: %v", err)
+	}
+	if got, want := endpoint.String(), "https://github-two.example.test/api/repos/acme/agent"; got != want {
+		t.Fatalf("endpoint = %q, want %q", got, want)
+	}
+
+	current = "https://github-three.example.test"
+	endpoint, err = client.endpoint("/installation/repositories")
+	if err != nil {
+		t.Fatalf("updated endpoint: %v", err)
+	}
+	if got, want := endpoint.String(), "https://github-three.example.test/installation/repositories"; got != want {
+		t.Fatalf("updated endpoint = %q, want %q", got, want)
+	}
+}
+
 func TestNewAcceptsEscapedPrivateKeyNewlines(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
