@@ -873,7 +873,10 @@ func TestASBExecRunOnceUsesDefaultUserAndDirectCore(t *testing.T) {
 		taskID,
 		"test-daemon-token",
 		true,
-		nil,
+		map[string]string{
+			llmTraceEnabledEnvKey: "true",
+			llmTraceSinkURLEnvKey: "https://trace.example.test/ingest",
+		},
 	)
 	if err != nil {
 		t.Fatalf("execRunOnce: %v", err)
@@ -892,7 +895,9 @@ func TestASBExecRunOnceUsesDefaultUserAndDirectCore(t *testing.T) {
 	if captured.Envs["MULTICA_RUNNER_PROVIDER"] != "hermes" ||
 		captured.Envs["HOME"] != asbRunnerHome ||
 		captured.Envs["USER"] != "user" ||
-		captured.Envs["LOGNAME"] != "user" {
+		captured.Envs["LOGNAME"] != "user" ||
+		captured.Envs[llmTraceEnabledEnvKey] != "true" ||
+		captured.Envs[llmTraceSinkURLEnvKey] != "https://trace.example.test/ingest" {
 		t.Fatalf("ASB runner environment = %#v", captured.Envs)
 	}
 }

@@ -1933,6 +1933,9 @@ func (l *FCE2BLauncher) extraEnvForTaskWithModel(
 		env[fcE2BChatSessionIDEnvKey] = chatSessionID
 	}
 	env["OPENAI_MODEL"] = model
+	for key, value := range llmTraceEnv(agentRow.RuntimeConfig) {
+		env[key] = value
+	}
 	traceEnv, err := fcE2BTaskTraceEnv(task)
 	if err != nil {
 		return nil, err
@@ -2730,6 +2733,8 @@ func sortedEnvKeys(env map[string]string) []string {
 func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 	switch key {
 	case "OPENAI_MODEL",
+		llmTraceEnabledEnvKey,
+		llmTraceSinkURLEnvKey,
 		fcE2BChatSessionIDEnvKey,
 		chattrace.TraceIDEnvKey,
 		chattrace.TraceStartedAtUnixMSEnvKey,
