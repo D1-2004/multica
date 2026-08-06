@@ -114,8 +114,7 @@ type asbSandboxPage struct {
 }
 
 type asbSandboxListFilter struct {
-	States   []string
-	Metadata string
+	States []string
 }
 
 type ASBSandboxQuota struct {
@@ -386,20 +385,10 @@ func (c *ASBClient) ListSandboxes(ctx context.Context, states ...string) ([]ASBS
 	return c.listSandboxes(ctx, asbSandboxListFilter{States: states})
 }
 
-// ListSandboxesByMetadata scopes inventory reads to one exact metadata pair.
-// Multica uses this to distinguish task sandboxes from the identity source and
-// unrelated tenant workloads before making a capacity decision.
-func (c *ASBClient) ListSandboxesByMetadata(
-	ctx context.Context,
-	key string,
-	value string,
-) ([]ASBSandbox, error) {
-	key = strings.TrimSpace(key)
-	value = strings.TrimSpace(value)
-	if key == "" || value == "" || strings.ContainsAny(key, "=&") {
-		return nil, errors.New("ASB sandbox metadata filter is invalid")
-	}
-	return c.listSandboxes(ctx, asbSandboxListFilter{Metadata: key + "=" + value})
+// ListLiveSandboxes explicitly queries the lifecycle states eligible for
+// capacity reclaim instead of relying on an unscoped inventory view.
+func (c *ASBClient) ListLiveSandboxes(ctx context.Context) ([]ASBSandbox, error) {
+	return c.ListSandboxes(ctx, "Pending", "Running", "Paused")
 }
 
 func (c *ASBClient) listSandboxes(
@@ -417,9 +406,6 @@ func (c *ASBClient) listSandboxes(
 			if normalized := strings.TrimSpace(state); normalized != "" {
 				query.Add("state", normalized)
 			}
-		}
-		if filter.Metadata != "" {
-			query.Set("metadata", filter.Metadata)
 		}
 		var response asbSandboxPage
 		if err := c.doLifecycleJSON(

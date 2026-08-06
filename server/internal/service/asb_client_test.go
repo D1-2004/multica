@@ -228,7 +228,7 @@ func TestASBClientListSandboxesPaginates(t *testing.T) {
 	}
 }
 
-func TestASBClientListSandboxesByMetadata(t *testing.T) {
+func TestASBClientListLiveSandboxesQueriesActiveStatesWithoutMetadata(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -236,23 +236,32 @@ func TestASBClientListSandboxesByMetadata(t *testing.T) {
 			http.NotFound(response, request)
 			return
 		}
-		if got := request.URL.Query().Get("metadata"); got != "multica.backend=asb" {
-			t.Fatalf("metadata filter = %q", got)
+		if got := request.URL.Query()["state"]; len(got) != 3 ||
+			got[0] != "Pending" || got[1] != "Running" || got[2] != "Paused" {
+			t.Fatalf("state filters = %#v", got)
+		}
+		if got := request.URL.Query().Get("metadata"); got != "" {
+			t.Fatalf("metadata filter = %q, want empty", got)
 		}
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(response, `{
-			"sandboxInfos":[{"id":"sandbox-task","status":{"state":"Running"},"createdAt":"2026-08-04T05:00:00Z","metadata":{"multica.backend":"asb"}}],
-			"pagination":{"page":1,"pageSize":100,"total":1,"hasNextPage":false,"hasPreviousPage":false}
+			"sandboxInfos":[
+				{"id":"sandbox-pending","status":{"state":"Pending"},"createdAt":"2026-08-04T04:59:00Z"},
+				{"id":"sandbox-running","status":{"state":"Running"},"createdAt":"2026-08-04T05:00:00Z"},
+				{"id":"sandbox-paused","status":{"state":"Paused"},"createdAt":"2026-08-04T05:01:00Z"}
+			],
+			"pagination":{"page":1,"pageSize":100,"total":3,"hasNextPage":false,"hasPreviousPage":false}
 		}`)
 	}))
 	defer server.Close()
 	client := newTestASBClient(t, server)
 
-	sandboxes, err := client.ListSandboxesByMetadata(context.Background(), "multica.backend", "asb")
+	sandboxes, err := client.ListLiveSandboxes(context.Background())
 	if err != nil {
-		t.Fatalf("ListSandboxesByMetadata: %v", err)
+		t.Fatalf("ListLiveSandboxes: %v", err)
 	}
-	if len(sandboxes) != 1 || sandboxes[0].ID != "sandbox-task" {
+	if len(sandboxes) != 3 || sandboxes[0].ID != "sandbox-pending" ||
+		sandboxes[1].ID != "sandbox-running" || sandboxes[2].ID != "sandbox-paused" {
 		t.Fatalf("sandboxes = %#v", sandboxes)
 	}
 }

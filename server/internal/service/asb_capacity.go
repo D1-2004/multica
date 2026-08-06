@@ -365,18 +365,14 @@ func reclaimASBSandboxForCredential(
 	if err != nil {
 		return false, err
 	}
-	// Query only Multica-owned ASB sandboxes. The unfiltered tenant endpoint has
-	// returned an empty page in prepub while quota and the ASB console both show
-	// live instances. The backend filter excludes identity sources and unrelated
-	// tenant workloads; the task metadata predicate below excludes release
-	// validation sandboxes from cross-environment preemption.
-	liveSandboxes, err := client.ListSandboxesByMetadata(
-		ctx,
-		"multica.backend",
-		string(SandboxBackendASB),
-	)
+	// Query the live lifecycle states explicitly. ASB has returned an empty page
+	// for unscoped and metadata-only inventory reads in prepub while quota and
+	// the console both show active instances. Candidate classification remains
+	// local so identity sources, release validation, and unrelated workloads are
+	// excluded before any delete.
+	liveSandboxes, err := client.ListLiveSandboxes(ctx)
 	if err != nil {
-		return false, fmt.Errorf("query live ASB sandboxes before capacity reclaim: %w", err)
+		return false, fmt.Errorf("query real-time ASB sandboxes before capacity reclaim: %w", err)
 	}
 	runningCount := 0
 	for _, sandbox := range liveSandboxes {
