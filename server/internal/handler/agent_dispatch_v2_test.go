@@ -238,6 +238,60 @@ func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 	})
 }
 
+func TestDispatchCommandValidatesAndPersistsExternalDWSIdentity(t *testing.T) {
+	valid := []byte(`{
+		"schemaVersion":"2.0",
+		"agentId":"agent",
+		"source":{"platform":"dingtalk","type":"digital_employee"},
+		"event":{"domain":"channel","type":"message.created","data":{
+			"conversation":{"openConversationId":"cid"},
+			"sender":{"displayName":"sender"},
+			"messages":[{"openMsgId":"msg","text":"hello"}]
+		}},
+		"surface":{"type":"chat"},
+		"outbound":{"mode":"dws","replyTo":"latest_message"},
+		"externalIdentity":{"dws":{"uid":"24710833","orgId":"439446171"}}
+	}`)
+	var request AgentDispatchV2Request
+	if err := json.Unmarshal(valid, &request); err != nil {
+		t.Fatal(err)
+	}
+	command := request.DispatchCommand()
+	if err := command.validate(); err != nil {
+		t.Fatalf("DWS-only external identity rejected: %v", err)
+	}
+	contextJSON := string(dispatchRuntimeContext(command, "dispatch-dws-only"))
+	for _, want := range []string{`"external_identity"`, `"dws"`, `"uid":"24710833"`, `"orgId":"439446171"`} {
+		if !strings.Contains(contextJSON, want) {
+			t.Fatalf("private dispatch context missing %s: %s", want, contextJSON)
+		}
+	}
+	if strings.Contains(contextJSON, "contextToken") {
+		t.Fatalf("private dispatch context used the wire token shape: %s", contextJSON)
+	}
+
+	for _, tc := range []struct {
+		name string
+		dws  string
+	}{
+		{name: "uid without org", dws: `{"uid":"24710833"}`},
+		{name: "org without uid", dws: `{"orgId":"439446171"}`},
+		{name: "non decimal uid", dws: `{"uid":"uid-1","orgId":"439446171"}`},
+		{name: "non decimal org", dws: `{"uid":"24710833","orgId":"org-1"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(strings.ReplaceAll(string(valid), `{"uid":"24710833","orgId":"439446171"}`, tc.dws))
+			var invalid AgentDispatchV2Request
+			if err := json.Unmarshal(raw, &invalid); err != nil {
+				t.Fatal(err)
+			}
+			if err := invalid.DispatchCommand().validate(); err == nil || !strings.Contains(err.Error(), "externalIdentity.dws") {
+				t.Fatalf("invalid externalIdentity.dws error = %v", err)
+			}
+		})
+	}
+}
+
 func TestDispatchRuntimeContextCarriesIdentityExpiryWithoutDuplicatingToken(t *testing.T) {
 	contextJSON := dispatchRuntimeContext(DispatchCommand{
 		SchemaVersion: "2.0",

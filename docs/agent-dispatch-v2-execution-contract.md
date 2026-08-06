@@ -38,27 +38,38 @@ resolves its endpoint actor, workspace, and Agent. That endpoint actor is the
 Multica principal used to create sessions, persist messages, and authorize task
 execution.
 
-`externalIdentity.contextToken` remains the separate Agent execution identity
-passed through private task context. When `contextToken` is present,
-`externalIdentity.expiresAt` is also required and carries the token expiry as
-Unix epoch milliseconds. Multica stores the pair as
-`agent_identity_context_token` and
-`agent_identity_context_token_expires_at`, and marks request-supplied tokens
-with `agent_identity_context_token_source=external`; none of these fields is
-exposed through ordinary task responses.
+`externalIdentity` carries optional execution-identity inputs. The existing
+`contextToken` and `expiresAt` pair remains supported: when `contextToken` is
+present, `expiresAt` is required and is Unix epoch milliseconds. The same object
+may also contain `dws={uid,orgId}`. DWS `uid` and `orgId` must be supplied
+together as decimal identifiers, and `dws` may be supplied without a legacy
+ContextToken.
 
-Immediately before starting the task runner, a DWS runtime first resolves the
-Agent's local DingTalk identity binding. When a binding exists, it has highest
-priority regardless of whether task context contains an external or cached
-token, and Multica creates a new Agent Identity context from that binding. Only
-when no Agent binding exists does Multica inspect task context: an external
-token is never replaced by a cached identity, while an expired external token,
-a token inside the one-minute execution safety window, or an incomplete
-external token/expiry pair fails runtime startup. A cached token with more than
-one minute remaining is reused; an absent cache runs without Agent Identity,
-while an expired or near-expiry cache fails because no Agent binding is
-available to refresh it. A malformed cached token/expiry pair still fails
-closed.
+Multica stores the legacy token in the dedicated private
+`agent_identity_context_token` field with
+`agent_identity_context_token_expires_at` and
+`agent_identity_context_token_source=external`. The stable DWS descriptor is
+stored separately as private `external_identity.dws`. Chat, Issue, Chat-to-Issue
+delegation, and Issue follow-up preserve that private descriptor; ordinary task
+responses, Issue/comment content, metadata, broadcasts, and logs do not expose
+it.
+
+Cloud-sandbox launch uses one identity resolver after queue-serialization
+blocking, sandbox resolution, and runner probing, but before `execRunOnce`. For
+a DWS-capable runtime its priority is:
+
+1. the Multica Agent's local DWS binding;
+2. private `external_identity.dws` from the dispatch;
+3. the legacy task ContextToken.
+
+GitHub identity is orthogonal to that ordering. A stable DWS identity creates
+one Agent Identity context with DWS and optional GitHub identities at TTL 900.
+Without stable DWS, a legacy ContextToken is validated and reused; optional
+GitHub identity is appended with `ExtendContext`. With neither stable DWS nor a
+legacy token, an available GitHub binding creates a GitHub-only context. An
+expired external token, a token inside the one-minute execution safety window,
+or an incomplete token/expiry pair fails runtime startup. This resolver is not
+used by the standalone daemon.
 
 The local-clock check applies only when reusing a token read from existing task
 context. Once Multica calls the server-side Agent Identity HSF interface, its
@@ -178,3 +189,13 @@ The task-level `instruction` field separates runtime-delivery policy from
 user-visible issue, comment, and chat content. Rolling out its daemon reader
 first is safe because existing claim responses omit the field and therefore
 retain the previous prompt without modification.
+
+## Change record: 2026-08-04
+
+- History: Added optional paired `externalIdentity.dws.uid/orgId`, private stable
+  DWS propagation, and a single cloud-sandbox pre-start identity resolver with
+  local DWS binding > external DWS > legacy ContextToken priority. GitHub remains
+  an orthogonal identity and is combined through one create or extend operation.
+- Reason: A stable upstream DWS identity must survive delayed, delegated, and
+  coalesced execution without exposing credentials, while the final short-lived
+  ContextToken must still be minted against the sandbox that will actually run.
