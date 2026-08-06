@@ -442,11 +442,11 @@ new Router domain therefore does not require another Multica code change. The
 top-level `source_id` must still match the `channel` subscription because the
 existing detail and surface APIs use that locator.
 
-Rows written before `enabled_domains` existed remain readable. For such an
-active row only, Multica derives `channel` plus optional `calendar` from the
-legacy `calendar_start_enabled` field. New callbacks never use this fallback;
-an empty, duplicate, inactive, malformed, or channel-mismatched subscription
-collection is rejected as an invalid callback result.
+Every active binding config must include `enabled_domains` with `channel`.
+Multica does not reconstruct domains from `calendar_start_enabled`; an empty,
+duplicate, inactive, malformed, or channel-mismatched subscription collection
+is rejected as an invalid callback result. `message_scope` and `conversations`
+remain the channel-domain filter and are not members of `enabled_domains`.
 
 `previous_agent_id` is omitted when no takeover occurred. On takeover, Multica
 matches the previous Agent plus `platform`, `tenant_id`, and `account_id`; the
@@ -685,3 +685,20 @@ Calling Router first lets the upstream chain decide whether the submitted
 Router/Gateway success does Multica remove its current-environment projection.
 This keeps retries lossless when Router is unavailable and prevents
 `ownership_changed` from disturbing another Agent's new binding.
+
+## 2026-08-04 Public Subscription-domain Projection Change History
+
+- Added `message_route.enabled_domains` to the Multica account-binding list
+  response and its frontend schema.
+- The Agent integrations page now displays the approval listener when the
+  returned domain set includes `approval`.
+- Active stored bindings no longer fall back from `calendar_start_enabled` to
+  synthesize `enabled_domains`; the corrected persisted domain set is required.
+
+## 2026-08-04 Public Subscription-domain Projection Change Reason
+
+The integrations page previously received only the derived
+`calendar_start_enabled` value, so it could not display an active approval
+subscription even though Multica had persisted and reconciled it. Exposing the
+authoritative domain set preserves the distinction between business event
+domains and the channel-domain conversation filter.

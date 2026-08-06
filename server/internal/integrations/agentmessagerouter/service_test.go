@@ -590,7 +590,7 @@ func TestCompleteBindingPersistsEverySubscriptionDomainForReconciliation(t *test
 	service := newBindingServiceForTest(t, store, router, now)
 	wantDomains := []string{"channel", "calendar", "approval", "future_domain"}
 
-	_, err = service.CompleteBinding(context.Background(), CompleteBindingParams{
+	result, err := service.CompleteBinding(context.Background(), CompleteBindingParams{
 		BindingID:     store.row.ID,
 		BindingMode:   BindingModeMessage,
 		CallbackToken: canonicalCallbackToken,
@@ -623,6 +623,19 @@ func TestCompleteBindingPersistsEverySubscriptionDomainForReconciliation(t *test
 	}
 	if got := strings.Join(stored.EnabledDomains, ","); got != strings.Join(wantDomains, ",") {
 		t.Fatalf("stored enabled domains = %#v", stored.EnabledDomains)
+	}
+	publicMessageRoute, err := json.Marshal(result.Binding.MessageRoute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var public struct {
+		EnabledDomains []string `json:"enabled_domains"`
+	}
+	if err := json.Unmarshal(publicMessageRoute, &public); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(public.EnabledDomains, ","); got != strings.Join(wantDomains, ",") {
+		t.Fatalf("public enabled domains = %#v", public.EnabledDomains)
 	}
 
 	if _, err := service.List(context.Background(), store.row.WorkspaceID); err != nil {
@@ -1721,7 +1734,7 @@ func TestUnbindDeletesRouterBeforeRevokingAndListIsPublic(t *testing.T) {
 	config.AccountDisplayName = "Zhang San"
 	config.AccountAvatarURL = "https://example.com/avatar.png"
 	config.MessageScope = DingTalkMessageScopeCustom
-	config.CalendarStartEnabled = true
+	config.EnabledDomains = []string{"channel", "calendar"}
 	config.Conversations = []DingTalkConversationSnapshot{
 		{CID: "cid-alpha", Name: "Project Alpha", AvatarMediaID: "@media-alpha", AvatarURL: "https://example.com/alpha.png"},
 	}
@@ -2532,6 +2545,7 @@ func pendingBindingStore(t *testing.T, now time.Time, callbackToken string) *fak
 		HashCallbackToken(callbackToken),
 		now.Add(10*time.Minute),
 	)
+	config.EnabledDomains = []string{"channel"}
 	raw, err := config.Marshal()
 	if err != nil {
 		t.Fatal(err)
