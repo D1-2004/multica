@@ -228,7 +228,7 @@ func TestASBClientListSandboxesPaginates(t *testing.T) {
 	}
 }
 
-func TestASBClientListLiveSandboxesQueriesUppercaseActiveStatesSeparately(t *testing.T) {
+func TestASBClientListLiveSandboxesQueriesTitleCaseActiveStatesSeparately(t *testing.T) {
 	t.Parallel()
 
 	requestCounts := make(map[string]int)
@@ -244,11 +244,11 @@ func TestASBClientListLiveSandboxesQueriesUppercaseActiveStatesSeparately(t *tes
 		queryState := states[0]
 		var responseState string
 		switch queryState {
-		case "PENDING":
+		case "Pending":
 			responseState = "Pending"
-		case "RUNNING":
+		case "Running":
 			responseState = "Running"
-		case "PAUSED":
+		case "Paused":
 			responseState = "Paused"
 		default:
 			t.Fatalf("state filter = %q", queryState)
@@ -272,7 +272,7 @@ func TestASBClientListLiveSandboxesQueriesUppercaseActiveStatesSeparately(t *tes
 		sandboxes[0].Metadata["multica.backend"] != "asb" {
 		t.Fatalf("sandboxes = %#v", sandboxes)
 	}
-	for _, state := range []string{"PENDING", "RUNNING", "PAUSED"} {
+	for _, state := range []string{"Pending", "Running", "Paused"} {
 		if got := requestCounts[state]; got != 1 {
 			t.Fatalf("%s request count = %d, want 1", state, got)
 		}

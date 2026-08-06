@@ -386,11 +386,11 @@ func (c *ASBClient) ListSandboxes(ctx context.Context, states ...string) ([]ASBS
 }
 
 // ListLiveSandboxes explicitly queries every lifecycle state that can still
-// consume tenant capacity. The hosted OpenSandbox API expects upper-case state
-// enums even though lifecycle responses use title-case values. It also accepts
-// only one effective state per request, so merge the paginated results locally.
+// consume tenant capacity. The hosted OpenSandbox API uses the same title-case
+// state enums returned by lifecycle responses. It accepts only one effective
+// state per request, so merge the paginated results locally.
 func (c *ASBClient) ListLiveSandboxes(ctx context.Context) ([]ASBSandbox, error) {
-	states := []string{"PENDING", "RUNNING", "PAUSED"}
+	states := []string{"Pending", "Running", "Paused"}
 	sandboxes := make([]ASBSandbox, 0)
 	seen := make(map[string]struct{})
 	for _, state := range states {
