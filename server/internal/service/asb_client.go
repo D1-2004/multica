@@ -20,7 +20,6 @@ import (
 
 const (
 	asbAPIKeyHeader         = "OPEN-SANDBOX-API-KEY"
-	asbAoneAPIKeyHeader     = "X-API-Key"
 	asbExecPort             = 44772
 	asbMinCreateTimeout     = 60
 	asbMaxCreateTimeout     = 24 * 60 * 60
@@ -112,11 +111,6 @@ type asbSandboxPagination struct {
 type asbSandboxPage struct {
 	SandboxInfos []ASBSandbox          `json:"sandboxInfos"`
 	Pagination   *asbSandboxPagination `json:"pagination"`
-}
-
-type asbLiveSandboxInventoryItem struct {
-	ID    string `json:"sandbox_id"`
-	State string `json:"state"`
 }
 
 type asbSandboxListFilter struct {
@@ -391,116 +385,28 @@ func (c *ASBClient) ListSandboxes(ctx context.Context, states ...string) ([]ASBS
 	return c.listSandboxes(ctx, asbSandboxListFilter{States: states})
 }
 
-// ListLiveSandboxes reads Aone's real-time management inventory, then resolves
-// every returned ID through the v1 lifecycle detail endpoint. The hosted v1 list can
-// return an empty inventory while quota and the management API both report live
-// instances; the management API is authoritative but does not include Multica
-// metadata needed for safe reclaim decisions.
+// ListLiveSandboxes explicitly queries every lifecycle state that can still
+// consume tenant capacity. The hosted OpenSandbox API expects upper-case state
+// enums even though lifecycle responses use title-case values. It also accepts
+// only one effective state per request, so merge the paginated results locally.
 func (c *ASBClient) ListLiveSandboxes(ctx context.Context) ([]ASBSandbox, error) {
-	items, err := c.listLiveSandboxInventory(ctx)
-	if err != nil {
-		return nil, err
-	}
-	sandboxes := make([]ASBSandbox, 0, len(items))
-	for _, item := range items {
-		sandbox, err := c.GetSandbox(ctx, item.ID)
-		var httpErr *ASBHTTPError
-		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
-			continue
-		}
+	states := []string{"PENDING", "RUNNING", "PAUSED"}
+	sandboxes := make([]ASBSandbox, 0)
+	seen := make(map[string]struct{})
+	for _, state := range states {
+		stateSandboxes, err := c.ListSandboxes(ctx, state)
 		if err != nil {
-			return nil, fmt.Errorf("resolve real-time ASB sandbox %s: %w", item.ID, err)
+			return nil, fmt.Errorf("list %s ASB sandboxes: %w", strings.ToLower(state), err)
 		}
-		sandboxes = append(sandboxes, *sandbox)
-	}
-	return sandboxes, nil
-}
-
-func (c *ASBClient) listLiveSandboxInventory(
-	ctx context.Context,
-) ([]asbLiveSandboxInventoryItem, error) {
-	if c == nil || c.baseURL == nil {
-		return nil, ErrASBDisabled
-	}
-	if c.lifecycleClient == nil {
-		return nil, errors.New("ASB HTTP client is unavailable")
-	}
-	const pageSize = 100
-	items := make([]asbLiveSandboxInventoryItem, 0)
-	seenIDs := make(map[string]struct{})
-	seenCursors := make(map[string]struct{})
-	cursor := ""
-	for {
-		query := url.Values{
-			"limit": {strconv.Itoa(pageSize)},
-			"state": {"running,paused"},
-		}
-		if cursor != "" {
-			query.Set("cursor", cursor)
-		}
-		requestURL := *c.baseURL
-		basePath := strings.TrimSuffix(strings.TrimRight(c.baseURL.Path, "/"), "/v1")
-		requestURL.Path = basePath + "/api/v1/sbx/sandboxes"
-		requestURL.RawPath = ""
-		requestURL.RawQuery = query.Encode()
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
-		if err != nil {
-			return nil, fmt.Errorf("create ASB list_live_sandboxes request: %w", err)
-		}
-		request.Header.Set("Accept", "application/json")
-		request.Header.Set(asbAoneAPIKeyHeader, c.apiKey)
-		request.Header.Set("Authorization", "Bearer "+c.apiKey)
-		response, err := c.lifecycleClient.Do(request)
-		if err != nil {
-			requestErr := fmt.Errorf("ASB list_live_sandboxes request failed: %w", err)
-			return nil, withRuntimeStartUserDetail(requestErr, requestErr.Error())
-		}
-		encoded, readErr := io.ReadAll(io.LimitReader(response.Body, asbMaxResponseBodyBytes+1))
-		_ = response.Body.Close()
-		if readErr != nil {
-			return nil, fmt.Errorf("read ASB list_live_sandboxes response: %w", readErr)
-		}
-		if response.StatusCode != http.StatusOK {
-			return nil, newASBHTTPError("list_live_sandboxes", response, encoded)
-		}
-		if len(encoded) > asbMaxResponseBodyBytes {
-			return nil, fmt.Errorf(
-				"ASB list_live_sandboxes response exceeds %d bytes",
-				asbMaxResponseBodyBytes,
-			)
-		}
-		var page []asbLiveSandboxInventoryItem
-		if err := json.Unmarshal(encoded, &page); err != nil {
-			return nil, errors.New("decode ASB list_live_sandboxes response: invalid JSON")
-		}
-		for _, item := range page {
-			item.ID = strings.TrimSpace(item.ID)
-			item.State = strings.ToLower(strings.TrimSpace(item.State))
-			if err := validateASBSandboxID(item.ID); err != nil {
-				return nil, errors.New("ASB list_live_sandboxes returned an invalid sandbox ID")
-			}
-			if item.State != "running" && item.State != "paused" {
-				return nil, fmt.Errorf(
-					"ASB list_live_sandboxes returned unsupported state %q",
-					item.State,
-				)
-			}
-			if _, exists := seenIDs[item.ID]; exists {
+		for _, sandbox := range stateSandboxes {
+			if _, exists := seen[sandbox.ID]; exists {
 				continue
 			}
-			seenIDs[item.ID] = struct{}{}
-			items = append(items, item)
+			seen[sandbox.ID] = struct{}{}
+			sandboxes = append(sandboxes, sandbox)
 		}
-		nextCursor := strings.TrimSpace(response.Header.Get("X-Next-Token"))
-		if nextCursor == "" {
-			return items, nil
-		}
-		if _, exists := seenCursors[nextCursor]; exists {
-			return nil, errors.New("ASB list_live_sandboxes returned a repeated cursor")
-		}
-		seenCursors[nextCursor] = struct{}{}
-		cursor = nextCursor
 	}
+	return sandboxes, nil
 }
 
 func (c *ASBClient) listSandboxes(

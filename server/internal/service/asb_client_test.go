@@ -228,47 +228,37 @@ func TestASBClientListSandboxesPaginates(t *testing.T) {
 	}
 }
 
-func TestASBClientListLiveSandboxesUsesManagementInventoryAndLifecycleDetails(t *testing.T) {
+func TestASBClientListLiveSandboxesQueriesUppercaseActiveStatesSeparately(t *testing.T) {
 	t.Parallel()
 
-	var inventoryRequests int
+	requestCounts := make(map[string]int)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		if request.Method != http.MethodGet {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1/sandboxes" {
 			http.NotFound(response, request)
 			return
 		}
-		switch request.URL.Path {
-		case "/api/v1/sbx/sandboxes":
-			inventoryRequests++
-			if got := request.Header.Get(asbAoneAPIKeyHeader); got != testASBAPIKey {
-				t.Fatalf("X-API-Key = %q", got)
-			}
-			if got := request.Header.Get("Authorization"); got != "Bearer "+testASBAPIKey {
-				t.Fatalf("Authorization = %q", got)
-			}
-			if got := request.URL.Query().Get("state"); got != "running,paused" {
-				t.Fatalf("state filter = %q", got)
-			}
-			if got := request.URL.Query().Get("limit"); got != "100" {
-				t.Fatalf("limit = %q", got)
-			}
-			switch request.URL.Query().Get("cursor") {
-			case "":
-				response.Header().Set("X-Next-Token", "next-page")
-				_, _ = io.WriteString(response, `[{"sandbox_id":"sandbox-running","state":"running"}]`)
-			case "next-page":
-				_, _ = io.WriteString(response, `[{"sandbox_id":"sandbox-paused","state":"paused"}]`)
-			default:
-				http.Error(response, "unexpected cursor", http.StatusBadRequest)
-			}
-		case "/v1/sandboxes/sandbox-running":
-			_, _ = io.WriteString(response, `{"id":"sandbox-running","status":{"state":"Running"},"createdAt":"2026-08-04T05:00:00Z","metadata":{"multica.backend":"asb"}}`)
-		case "/v1/sandboxes/sandbox-paused":
-			_, _ = io.WriteString(response, `{"id":"sandbox-paused","status":{"state":"Paused"},"createdAt":"2026-08-04T06:00:00Z","metadata":{"multica.backend":"asb"}}`)
-		default:
-			http.NotFound(response, request)
+		states := request.URL.Query()["state"]
+		if len(states) != 1 {
+			t.Fatalf("state filters = %#v, want exactly one", states)
 		}
+		queryState := states[0]
+		var responseState string
+		switch queryState {
+		case "PENDING":
+			responseState = "Pending"
+		case "RUNNING":
+			responseState = "Running"
+		case "PAUSED":
+			responseState = "Paused"
+		default:
+			t.Fatalf("state filter = %q", queryState)
+		}
+		requestCounts[queryState]++
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(response, `{
+			"sandboxInfos":[{"id":"sandbox-%s","status":{"state":"%s"},"createdAt":"2026-08-04T05:00:00Z","metadata":{"multica.backend":"asb"}}],
+			"pagination":{"page":1,"pageSize":100,"total":1,"hasNextPage":false,"hasPreviousPage":false}
+		}`, strings.ToLower(queryState), responseState)
 	}))
 	defer server.Close()
 	client := newTestASBClient(t, server)
@@ -277,13 +267,15 @@ func TestASBClientListLiveSandboxesUsesManagementInventoryAndLifecycleDetails(t 
 	if err != nil {
 		t.Fatalf("ListLiveSandboxes: %v", err)
 	}
-	if len(sandboxes) != 2 || sandboxes[0].ID != "sandbox-running" ||
-		sandboxes[1].ID != "sandbox-paused" ||
+	if len(sandboxes) != 3 || sandboxes[0].ID != "sandbox-pending" ||
+		sandboxes[1].ID != "sandbox-running" || sandboxes[2].ID != "sandbox-paused" ||
 		sandboxes[0].Metadata["multica.backend"] != "asb" {
 		t.Fatalf("sandboxes = %#v", sandboxes)
 	}
-	if inventoryRequests != 2 {
-		t.Fatalf("inventory request count = %d, want 2", inventoryRequests)
+	for _, state := range []string{"PENDING", "RUNNING", "PAUSED"} {
+		if got := requestCounts[state]; got != 1 {
+			t.Fatalf("%s request count = %d, want 1", state, got)
+		}
 	}
 }
 
