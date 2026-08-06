@@ -88,14 +88,25 @@ Multica builds prompt material from the structured source event:
 The daemon claim task accepts an optional `instruction` string. When it is
 non-blank, the daemon prepends it to the generated per-task prompt for every
 task kind. It does not write the value into the built-in runtime brief. A
-missing, empty, or whitespace-only value is a byte-for-byte no-op, allowing the
-daemon consumer to roll out before any server starts producing the field.
+missing, empty, or whitespace-only value is a byte-for-byte no-op.
+
+An instruction-capable daemon advertises `task-instruction-v1` through
+`X-Client-Capabilities` on both HTTP claims and the WebSocket control
+connection. Multica selects the delivery projection from the capability on the
+actual claim request, not from persisted runtime metadata or the runtime
+version string. A daemon without that capability receives the same composed
+instruction through the existing `handoff_note`, `trigger_comment_content`, or
+`chat_message` claim field it already consumes. The two projections are
+mutually exclusive, so an instruction-capable daemon never receives a duplicate
+legacy prefix.
 
 At claim time Multica composes that field as `common.prompt + current mode.prompt
 + contextPrompt`, skipping blank sections and separating non-blank sections with
 two newlines. The composition is claim-scoped, so Diamond updates apply to tasks
-that have not yet been claimed. Issue descriptions, trigger-comment content,
-chat messages, and assignment handoff notes remain unchanged user-visible data.
+that have not yet been claimed. Persisted Issue descriptions, trigger-comment
+content, chat messages, and assignment handoff notes remain unchanged. Only the
+claim response for a legacy daemon temporarily prefixes the matching task field
+as a compatibility transport.
 
 Event projection in the prompt builder is independent of `surface.type`. The
 same structured event can therefore run as an Issue, Chat, or Auto mode without
@@ -149,6 +160,10 @@ compositions subject to the command's ordinary validation.
   claim-time `common + mode + context` composition into task `instruction`.
   Removed Multica's hard-coded DingTalk safety/delivery prompt generation and
   stopped rewriting user-visible task fields with private instructions.
+- 2026-08-06: Added the `task-instruction-v1` daemon capability and a
+  capability-gated legacy claim projection. New daemons receive only
+  `instruction`; older images receive the same composed instruction through the
+  task field they already consume.
 
 ## Reason
 
@@ -196,3 +211,9 @@ configurable in Diamond and leaves event-specific delivery facts with Router.
 Claim-time assembly ensures Issue comments and continued Chat tasks see the
 current policy, while an Auto-to-Issue handoff selects the Issue policy without
 parsing or rewriting Router's context string.
+
+Capability-gating the claim response keeps rolling deployments safe when an
+older runtime image does not deserialize `instruction`. Reusing the exact same
+composed body for both projections avoids restoring a second hard-coded policy
+source, while mutual exclusion prevents new daemons from seeing duplicate
+instructions.

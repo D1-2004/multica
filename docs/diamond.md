@@ -77,7 +77,7 @@ common.prompt
 Dispatch Command contextPrompt
 ```
 
-Blank sections are skipped. If all three inputs are blank, `instruction` is omitted and older tasks preserve their previous behavior. `contextPrompt` is not Diamond configuration: it is dynamic, credential-free execution context supplied by the authenticated Router command and persisted only in private task context. Issue descriptions, comment content, chat messages, and assignment handoff notes are never rewritten with these instructions.
+Blank sections are skipped. If all three inputs are blank, `instruction` is omitted and older tasks preserve their previous behavior. `contextPrompt` is not Diamond configuration: it is dynamic, credential-free execution context supplied by the authenticated Router command and persisted only in private task context. Persisted Issue descriptions, comment content, chat messages, and assignment handoff notes are never rewritten with these instructions. At claim time, daemons advertising `task-instruction-v1` receive the composed value through `instruction`; older daemon images receive the same value as a temporary prefix in the existing task-content field they already consume.
 
 Every continuation task recomposes the instruction at claim time from the latest valid Diamond snapshot. When Auto delegates to an Issue, Multica transfers the dynamic Router context, changes the private dispatch surface to `issue`, and recomposes `common + issue + context`; it does not copy the Auto prompt into the child task.
 
@@ -113,6 +113,7 @@ Diamond is not a secret store. Do not place database URLs, JWT secrets, service 
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-08-06 | Added capability-gated delivery of the composed prompt through `instruction` or the legacy claim field. | Keep old runtime images functional during rolling upgrades without restoring hard-coded prompt policy or duplicating instructions for new daemons. |
 | 2026-08-04 | Added `common.prompt` and claim-time `common + mode + contextPrompt` composition through the independent task `instruction` field. | Keep fixed policy in Diamond, dynamic delivery facts in Router context, and all private instructions out of user-visible Issue, comment, chat, and handoff content. |
 | 2026-08-04 | Removed the Diamond enable switch and made the provider start unconditionally with fail-open behavior. | Avoid silently skipping dynamic prompts when deployment configuration omits a redundant enable variable. |
 | 2026-08-01 | Replaced the embedded auto-mode prompt with the strict `issue/chat/auto.prompt` Diamond document and enabled dynamic prompt injection for all three surfaces. | Keep surface behavior policy outside the binary and allow one atomic configuration update to control every dispatch mode. |

@@ -358,7 +358,7 @@ type persistedDispatchContext struct {
 
 // applyDingTalkDispatchPromptToExistingTaskFields rebuilds the claim-scoped
 // instruction from current Diamond configuration and the persisted Router
-// context. User-authored issue, comment, and chat fields remain untouched.
+// context. Direct callers use the instruction-capable response projection.
 func applyDingTalkDispatchPromptToExistingTaskFields(response *AgentTaskResponse, rawContext []byte) {
 	applyDingTalkDispatchPromptToExistingTaskFieldsWithFeatureFlags(response, rawContext, nil)
 }
@@ -367,6 +367,15 @@ func applyDingTalkDispatchPromptToExistingTaskFieldsWithFeatureFlags(
 	response *AgentTaskResponse,
 	rawContext []byte,
 	flags *featureflag.Service,
+) {
+	applyDingTalkDispatchPromptForClaimWithFeatureFlags(response, rawContext, flags, true)
+}
+
+func applyDingTalkDispatchPromptForClaimWithFeatureFlags(
+	response *AgentTaskResponse,
+	rawContext []byte,
+	flags *featureflag.Service,
+	supportsTaskInstruction bool,
 ) {
 	if response == nil || len(rawContext) == 0 {
 		return
@@ -395,7 +404,32 @@ func applyDingTalkDispatchPromptToExistingTaskFieldsWithFeatureFlags(
 		return
 	}
 
-	response.Instruction = buildDispatchInstruction(flags, stored.Surface.Type, stored.ContextPrompt)
+	instruction := buildDispatchInstruction(flags, stored.Surface.Type, stored.ContextPrompt)
+	if instruction == "" {
+		return
+	}
+	if supportsTaskInstruction {
+		response.Instruction = instruction
+		return
+	}
+
+	response.Instruction = ""
+	inputLabel := "## External DingTalk Message\n\n"
+	if calendarIssue {
+		inputLabel = "## External DingTalk Calendar Event\n\n"
+	}
+	legacyContent := instruction + "\n\n---\n\n" + inputLabel
+	if response.TriggerCommentID != nil {
+		response.TriggerCommentContent = legacyContent + response.TriggerCommentContent
+		return
+	}
+	if response.ChatSessionID != "" {
+		response.ChatMessage = legacyContent + response.ChatMessage
+		return
+	}
+	if response.IssueID != "" {
+		response.HandoffNote = legacyContent + response.HandoffNote
+	}
 }
 
 func joinDispatchPromptSections(sections ...string) string {

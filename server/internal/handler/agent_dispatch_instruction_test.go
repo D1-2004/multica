@@ -84,7 +84,7 @@ func TestDispatchClaimComposesInstructionWithoutChangingUserContent(t *testing.T
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			applyDingTalkDispatchPromptToExistingTaskFieldsWithFeatureFlags(&tc.response, tc.context, flags)
+			applyDingTalkDispatchPromptForClaimWithFeatureFlags(&tc.response, tc.context, flags, true)
 			tc.assertStable(t, tc.response)
 			encoded, err := json.Marshal(tc.response)
 			if err != nil {
@@ -102,6 +102,91 @@ func TestDispatchClaimComposesInstructionWithoutChangingUserContent(t *testing.T
 			}
 			if instruction != tc.want {
 				t.Fatalf("instruction = %q, want %q", instruction, tc.want)
+			}
+		})
+	}
+}
+
+func TestDispatchClaimFallsBackToLegacyTaskFieldsWithoutInstructionCapability(t *testing.T) {
+	provider := featureflag.NewStaticProvider()
+	provider.LoadRules(map[string]featureflag.Rule{
+		featureflag.DispatchCommonRuntimePromptFlagKey: {Default: true, Variant: "COMMON POLICY"},
+		featureflag.DispatchIssueRuntimePromptFlagKey:  {Default: true, Variant: "ISSUE POLICY"},
+		featureflag.DispatchChatRuntimePromptFlagKey:   {Default: true, Variant: "CHAT POLICY"},
+	})
+	flags := featureflag.NewService(provider)
+	issueContext := dispatchTaskContextWithPromptForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event:         DispatchEvent{Domain: "channel", Type: "message.created"},
+		Surface:       DispatchSurface{Type: "issue"},
+		Outbound:      DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	}, "ROUTER CONTEXT")
+	chatContext := dispatchTaskContextWithPromptForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event:         DispatchEvent{Domain: "channel", Type: "message.created"},
+		Surface:       DispatchSurface{Type: "chat"},
+		Outbound:      DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	}, "ROUTER CONTEXT")
+	commentID := "comment-1"
+	tests := []struct {
+		name     string
+		context  []byte
+		response AgentTaskResponse
+		want     AgentTaskResponse
+	}{
+		{
+			name:     "initial issue uses handoff note",
+			context:  issueContext,
+			response: AgentTaskResponse{IssueID: "issue-1", HandoffNote: "原始交接内容"},
+			want: AgentTaskResponse{
+				IssueID: "issue-1",
+				HandoffNote: "COMMON POLICY\n\nISSUE POLICY\n\nROUTER CONTEXT" +
+					"\n\n---\n\n## External DingTalk Message\n\n原始交接内容",
+			},
+		},
+		{
+			name:    "issue comment uses trigger content",
+			context: issueContext,
+			response: AgentTaskResponse{
+				IssueID:               "issue-1",
+				TriggerCommentID:      &commentID,
+				TriggerCommentContent: "原始评论内容",
+			},
+			want: AgentTaskResponse{
+				IssueID:          "issue-1",
+				TriggerCommentID: &commentID,
+				TriggerCommentContent: "COMMON POLICY\n\nISSUE POLICY\n\nROUTER CONTEXT" +
+					"\n\n---\n\n## External DingTalk Message\n\n原始评论内容",
+			},
+		},
+		{
+			name:     "chat uses chat message",
+			context:  chatContext,
+			response: AgentTaskResponse{ChatSessionID: "chat-1", ChatMessage: "原始聊天内容"},
+			want: AgentTaskResponse{
+				ChatSessionID: "chat-1",
+				ChatMessage: "COMMON POLICY\n\nCHAT POLICY\n\nROUTER CONTEXT" +
+					"\n\n---\n\n## External DingTalk Message\n\n原始聊天内容",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			applyDingTalkDispatchPromptForClaimWithFeatureFlags(&tc.response, tc.context, flags, false)
+			if tc.response.Instruction != "" {
+				t.Fatalf("legacy claim instruction = %q, want empty", tc.response.Instruction)
+			}
+			if tc.response.HandoffNote != tc.want.HandoffNote {
+				t.Fatalf("handoff note = %q, want %q", tc.response.HandoffNote, tc.want.HandoffNote)
+			}
+			if tc.response.TriggerCommentContent != tc.want.TriggerCommentContent {
+				t.Fatalf("trigger content = %q, want %q", tc.response.TriggerCommentContent, tc.want.TriggerCommentContent)
+			}
+			if tc.response.ChatMessage != tc.want.ChatMessage {
+				t.Fatalf("chat message = %q, want %q", tc.response.ChatMessage, tc.want.ChatMessage)
 			}
 		})
 	}
