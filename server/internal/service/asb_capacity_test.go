@@ -99,11 +99,18 @@ func TestPeerASBTaskSandboxCandidatesSelectOldestForeignOrdinaryTasks(t *testing
 	}
 
 	candidates := peerASBTaskSandboxCandidates([]pgtype.UUID{localRuntimeID}, sandboxes)
-	if len(candidates) != 2 {
-		t.Fatalf("candidate count = %d, want 2", len(candidates))
+	if len(candidates) != 3 {
+		t.Fatalf("candidate count = %d, want 3", len(candidates))
 	}
-	if candidates[0].sandbox.ID != "peer-old-pending" || candidates[1].sandbox.ID != "peer-new" {
-		t.Fatalf("candidate order = [%s, %s]", candidates[0].sandbox.ID, candidates[1].sandbox.ID)
+	if candidates[0].sandbox.ID != "peer-without-task-fence" ||
+		candidates[1].sandbox.ID != "peer-old-pending" ||
+		candidates[2].sandbox.ID != "peer-new" {
+		t.Fatalf(
+			"candidate order = [%s, %s, %s]",
+			candidates[0].sandbox.ID,
+			candidates[1].sandbox.ID,
+			candidates[2].sandbox.ID,
+		)
 	}
 }
 

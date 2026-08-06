@@ -227,16 +227,8 @@ type asbPeerTaskSandboxCandidate struct {
 func ordinaryASBTaskSandboxMetadata(
 	metadata map[string]string,
 ) (pgtype.UUID, pgtype.UUID, bool) {
-	if !strings.EqualFold(
-		strings.TrimSpace(metadata["multica.backend"]),
-		string(SandboxBackendASB),
-	) ||
-		strings.EqualFold(strings.TrimSpace(metadata["multica.identity_source"]), "true") ||
-		strings.EqualFold(strings.TrimSpace(metadata["multica.release_validation"]), "true") {
-		return pgtype.UUID{}, pgtype.UUID{}, false
-	}
-	runtimeID, err := util.ParseUUID(strings.TrimSpace(metadata["multica.runtime_id"]))
-	if err != nil {
+	runtimeID, valid := preemptibleASBSandboxRuntimeID(metadata)
+	if !valid {
 		return pgtype.UUID{}, pgtype.UUID{}, false
 	}
 	taskID, err := util.ParseUUID(strings.TrimSpace(metadata["multica.task_id"]))
@@ -244,6 +236,22 @@ func ordinaryASBTaskSandboxMetadata(
 		return pgtype.UUID{}, pgtype.UUID{}, false
 	}
 	return runtimeID, taskID, true
+}
+
+func preemptibleASBSandboxRuntimeID(metadata map[string]string) (pgtype.UUID, bool) {
+	if !strings.EqualFold(
+		strings.TrimSpace(metadata["multica.backend"]),
+		string(SandboxBackendASB),
+	) ||
+		strings.EqualFold(strings.TrimSpace(metadata["multica.identity_source"]), "true") ||
+		strings.EqualFold(strings.TrimSpace(metadata["multica.release_validation"]), "true") {
+		return pgtype.UUID{}, false
+	}
+	runtimeID, err := util.ParseUUID(strings.TrimSpace(metadata["multica.runtime_id"]))
+	if err != nil {
+		return pgtype.UUID{}, false
+	}
+	return runtimeID, true
 }
 
 func isOrdinaryASBTaskSandboxMetadata(metadata map[string]string) bool {
@@ -273,13 +281,14 @@ func peerASBTaskSandboxCandidates(
 		if !isReclaimablePeerASBSandboxState(sandbox.Status.State) {
 			continue
 		}
-		runtimeID, taskID, ordinaryTask := ordinaryASBTaskSandboxMetadata(sandbox.Metadata)
-		if !ordinaryTask {
+		runtimeID, preemptible := preemptibleASBSandboxRuntimeID(sandbox.Metadata)
+		if !preemptible {
 			continue
 		}
 		if _, local := localRuntimeSet[runtimeID]; local {
 			continue
 		}
+		taskID, _ := util.ParseUUID(strings.TrimSpace(sandbox.Metadata["multica.task_id"]))
 		candidates = append(candidates, asbPeerTaskSandboxCandidate{
 			sandbox:   sandbox,
 			runtimeID: runtimeID,
