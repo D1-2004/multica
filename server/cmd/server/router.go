@@ -1837,6 +1837,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// credentials even though this route lives in the workspace group.
 			r.Post("/api/issue-delegations", h.DelegateIssue)
 
+			// Server-hosted MCP surface for task-scoped Agent actions. The handler
+			// implements the Streamable HTTP method contract itself (including GET
+			// -> 405) and accepts only the authoritative task_token actor.
+			r.Handle("/api/mcp", http.HandlerFunc(h.MulticaMCP))
+
 			// Labels
 			r.Route("/api/labels", func(r chi.Router) {
 				r.Get("/", h.ListLabels)

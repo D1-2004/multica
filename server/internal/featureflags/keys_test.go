@@ -16,6 +16,9 @@ func TestReleaseFlagsDefaultToOff(t *testing.T) {
 	if WorkspaceAccessTokensEnabled(ctx, nil) {
 		t.Fatal("workspace access tokens release flag must default to off")
 	}
+	if MulticaMCPChatSendEnabled(ctx, nil) {
+		t.Fatal("Multica MCP Chat send release flag must default to off")
+	}
 }
 
 func TestAgentSkillTogglesCompatDecisionStaysEnabled(t *testing.T) {
