@@ -931,12 +931,16 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	if err := launcher.execRunOnce(context.Background(), "sbx_dws", rt, launch.Mode, taskID, "mdt_test_token", false, map[string]string{
 		"AGENT_IDENTITY_CONTEXT_TOKEN": "context_secret",
 		"MULTICA_CHAT_SESSION_ID":      "chat-session-1",
+		llmTraceEnabledEnvKey:            "true",
+		llmTraceSinkURLEnvKey:            "https://trace.example.test/ingest",
 	}); err != nil {
 		t.Fatalf("execRunOnce returned error: %v", err)
 	}
 	args := runner.calls[len(runner.calls)-1].args
 	foundIdentityToken := false
 	foundChatSessionID := false
+	foundTraceEnabled := false
+	foundTraceSinkURL := false
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == "-e" && args[i+1] == "AGENT_IDENTITY_CONTEXT_TOKEN=context_secret" {
 			foundIdentityToken = true
@@ -944,12 +948,21 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 		if args[i] == "-e" && args[i+1] == "MULTICA_CHAT_SESSION_ID=chat-session-1" {
 			foundChatSessionID = true
 		}
+		if args[i] == "-e" && args[i+1] == llmTraceEnabledEnvKey+"=true" {
+			foundTraceEnabled = true
+		}
+		if args[i] == "-e" && args[i+1] == llmTraceSinkURLEnvKey+"=https://trace.example.test/ingest" {
+			foundTraceSinkURL = true
+		}
 	}
 	if !foundIdentityToken {
 		t.Fatal("exec args did not include DWS auth env")
 	}
 	if !foundChatSessionID {
 		t.Fatal("exec args did not include Chat Session ID env")
+	}
+	if !foundTraceEnabled || !foundTraceSinkURL {
+		t.Fatalf("exec args did not include LLM trace env: %#v", args)
 	}
 }
 
@@ -1084,6 +1097,20 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	}
 	if len(identityClient.requests) != 0 {
 		t.Fatalf("unbound chat made Agent Identity requests: %#v", identityClient.requests)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE agent
+		SET runtime_config = '{"llm_trace":{"enabled":true,"sink_url":"https://trace.example.test/ingest"}}'::jsonb
+		WHERE id = $1
+	`, agentID); err != nil {
+		t.Fatalf("save LLM trace runtime config: %v", err)
+	}
+	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-llm-trace")
+	if err != nil {
+		t.Fatalf("extraEnvForTask with LLM trace returned error: %v", err)
+	}
+	if env[llmTraceEnabledEnvKey] != "true" || env[llmTraceSinkURLEnvKey] != "https://trace.example.test/ingest" {
+		t.Fatalf("LLM trace env = %#v", env)
 	}
 
 	if _, err := pool.Exec(ctx, `UPDATE agent SET model = 'qwen3.7-plus' WHERE id = $1`, agentID); err != nil {

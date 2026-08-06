@@ -266,6 +266,7 @@
     "integrations": "Integrations",
     "identity": "Identity",
     "runtime_config": "Routing",
+    "llm_trace": "LLM Trace",
     "discard_dialog_title": "Discard unsaved changes?",
     "discard_dialog_description": "You have unsaved changes in this tab. Leaving now will discard them.",
     "discard_keep": "Keep editing",
@@ -590,6 +591,15 @@
       "tls_hint": "Dial https:// instead of http://",
       "saved_toast": "Routing config saved",
       "save_failed_toast": "Failed to save routing config"
+    },
+    "llm_trace": {
+      "intro": "Mirror this agent's LLM requests to a trace receiver when its tasks run in a cloud sandbox.",
+      "enabled_label": "Enable LLM request trace",
+      "enabled_hint": "When enabled and a receiver URL is set, each task forwards its LLM request body to the receiver.",
+      "sink_url_label": "Trace receiver URL",
+      "sink_url_placeholder": "https://trace.example.com/ingest",
+      "saved_toast": "LLM trace settings saved",
+      "save_failed_toast": "Failed to save LLM trace settings"
     },
     "skills": {
       "intro": "This is the agent's effective skill set. Workspace skills are managed here; local runtime skills are discovered automatically and inherited read-only.",

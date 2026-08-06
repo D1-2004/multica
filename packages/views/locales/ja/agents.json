@@ -249,6 +249,7 @@
     "integrations": "連携",
     "identity": "ID",
     "runtime_config": "ルーティング",
+    "llm_trace": "LLM トレース",
     "discard_dialog_title": "保存していない変更を破棄しますか？",
     "discard_dialog_description": "このタブに保存していない変更があります。今移動すると変更は破棄されます。",
     "discard_keep": "編集を続ける",
@@ -474,6 +475,15 @@
       "tls_hint": "http:// の代わりに https:// でダイヤル",
       "saved_toast": "ルーティング設定を保存しました",
       "save_failed_toast": "ルーティング設定の保存に失敗しました"
+    },
+    "llm_trace": {
+      "intro": "このエージェントのタスクがクラウドサンドボックスで実行されるときに、LLM リクエストをトレース受信先へミラーします。",
+      "enabled_label": "LLM リクエストのトレースを有効化",
+      "enabled_hint": "有効化し、受信先 URL を設定すると、各タスクの LLM リクエスト body が受信先に転送されます。",
+      "sink_url_label": "トレース受信 URL",
+      "sink_url_placeholder": "https://trace.example.com/ingest",
+      "saved_toast": "LLM トレース設定を保存しました",
+      "save_failed_toast": "LLM トレース設定の保存に失敗しました"
     },
     "skills": {
       "assigned_title": "エージェントに割り当て済み",
