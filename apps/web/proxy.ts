@@ -95,5 +95,5 @@ export const config = {
   // negative-lookahead pattern from Next's i18n guide: skip API routes
   // (Go backend), Next internals, and any path with a file extension
   // (favicons, sw.js, public/* assets).
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|.*\\.).*)"],
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|health(?:/|$)|.*\\.).*)"],
 };
