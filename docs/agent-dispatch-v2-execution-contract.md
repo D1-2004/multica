@@ -90,9 +90,11 @@ the existing sender-binding policy.
 Multica builds prompt material from the structured source event:
 
 - display content contains user-visible message and attachment descriptions;
-- runtime instructions contain private input-safety policy;
-- workflow instructions are added when the selected outbound mode requires the
-  Agent to deliver through DWS.
+- `contextPrompt` contains credential-free dynamic execution facts rendered by
+  Router for this delivery, including the outbound mode and any trusted DWS
+  reply target;
+- fixed safety, delivery, response, and routing policy comes from Diamond
+  `common.prompt` plus the prompt for the current `surface.type`.
 
 The daemon claim task accepts an optional `instruction` string. When it is
 non-blank, the daemon prepends it to the generated per-task prompt for every
@@ -100,24 +102,30 @@ task kind. It does not write the value into the built-in runtime brief. A
 missing, empty, or whitespace-only value is a byte-for-byte no-op, allowing the
 daemon consumer to roll out before any server starts producing the field.
 
+At claim time Multica composes that field as `common.prompt + current mode.prompt
++ contextPrompt`, skipping blank sections and separating non-blank sections with
+two newlines. The composition is claim-scoped, so Diamond updates apply to tasks
+that have not yet been claimed. Issue descriptions, trigger-comment content,
+chat messages, and assignment handoff notes remain unchanged user-visible data.
+
 Event projection in the prompt builder is independent of `surface.type`. The
 same structured event can therefore run as an Issue, Chat, or Auto mode without
 moving prompt assembly back into the Router.
 
-After event projection, Multica appends the private automatic-delegation policy
-only when `surface.type=auto`. The mode remains `auto` in persisted dispatch
-context and audit data even though its initial materializer is Chat. A
-successful Issue delegation creates the target task with `surface.type=issue`,
-so the background task does not recursively receive the automatic front-stage
-policy.
+The mode remains `auto` in persisted dispatch context and audit data even though
+its initial materializer is Chat. A successful Issue delegation transfers the
+dynamic Router context, changes the target task's private dispatch surface to
+`issue`, and recomposes `common + issue + context` when the child is claimed.
+The child therefore does not receive the automatic front-stage policy.
 
 ## Outbound
 
 `outbound.mode` is the only field that selects outbound ownership:
 
 - `dws` delegates acknowledgement and final DingTalk delivery to the Agent's
-  injected DWS capability. Multica suppresses server-side typing and robot
-  replies for that dispatch.
+  DWS capability according to the configured fixed prompt and Router's dynamic
+  context. Multica suppresses server-side typing and robot replies for that
+  dispatch.
 - `robot_sdk` keeps Multica's channel typing and robot reply lifecycle enabled.
 
 Outbound selection is independent of source type and surface. Issue plus DWS,
@@ -148,6 +156,10 @@ compositions subject to the command's ordinary validation.
 - 2026-08-04: Added backward-compatible daemon consumption of the optional
   task-level `instruction` field. Non-blank values are prepended to the task
   prompt; absent or blank values preserve the existing prompt exactly.
+- 2026-08-04: Added top-level `contextPrompt`, Diamond `common.prompt`, and
+  claim-time `common + mode + context` composition into task `instruction`.
+  Removed Multica's hard-coded DingTalk safety/delivery prompt generation and
+  stopped rewriting user-visible task fields with private instructions.
 
 ## Reason
 
@@ -190,6 +202,12 @@ user-visible issue, comment, and chat content. Rolling out its daemon reader
 first is safe because existing claim responses omit the field and therefore
 retain the previous prompt without modification.
 
+Separating the three composition inputs keeps fixed policy dynamically
+configurable in Diamond and leaves event-specific delivery facts with Router.
+Claim-time assembly ensures Issue comments and continued Chat tasks see the
+current policy, while an Auto-to-Issue handoff selects the Issue policy without
+parsing or rewriting Router's context string.
+
 ## Change record: 2026-08-04
 
 - History: Added optional paired `externalIdentity.dws.uid/orgId`, private stable
@@ -211,3 +229,13 @@ retain the previous prompt without modification.
 - Reason: Approval lifecycle callbacks must preserve the originating Issue and
   sender policy without exposing raw approval content in observability logs or
   allowing a delayed task to lose its external DWS identity.
+
+## Change record: 2026-08-06 task instruction composition
+
+- History: Router `contextPrompt`, Diamond `common.prompt`, and the persisted
+  task surface are composed at claim time into the private task `instruction`.
+  Issue, comment, and Chat display fields remain unchanged; delegated Issue
+  tasks carry both the Router context and `externalIdentity.dws` privately.
+- Reason: Delivery policy must remain current at task start without exposing
+  trusted DWS routing data in user-visible content or dropping the stable DWS
+  identity during a surface handoff.
