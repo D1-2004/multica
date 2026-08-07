@@ -31,6 +31,11 @@ Multica passes these values only in the task's sandbox execution environment:
 - `MULTICA_LLM_TRACE_TOKEN`
 - `MULTICA_LLM_TRACE_EXPIRES_AT`
 
+The selected Runtime must advertise `llm_trace_v1`. Multica injects none of
+these variables into an older image, even when the Agent setting is enabled.
+This capability check is the execution-time safety boundary; UI rollout flags
+alone do not make an image compatible.
+
 The runtime consumes the token from its protected generation configuration.
 It must not place the token in a URL, provider header, trace body, error payload,
 or log message.
@@ -96,3 +101,4 @@ status, task identity, sequence, sizes, and bounded error classification.
 | --- | --- | --- |
 | 2026-08-06 | Added optional Agent-controlled request mirroring through the existing provider proxy | Allow request-level troubleshooting without a second MITM proxy |
 | 2026-08-07 | Upgraded delivery to paired request/response events, added Router task capabilities, and pushed the immutable execution summary with completion | Reconstruct the full reasoning timeline while avoiding broad sandbox credentials and post-terminal Router pulls |
+| 2026-08-08 | Added `llm_trace_v1` Runtime capability negotiation and the complete runner environment allowlist | Keep old images running without Trace while preventing unsupported images from receiving task-scoped telemetry credentials |

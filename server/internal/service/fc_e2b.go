@@ -54,7 +54,7 @@ const (
 	fcE2BRunOnceHealthPortSpan      = 30000
 	fcE2BRootRunnerInstallDir       = "/usr/local/libexec"
 	fcE2BLegacyRunnerInstallDir     = "/usr/local/bin"
-	fcE2BTemplateManifestVersion    = 3
+	fcE2BTemplateManifestVersion    = 4
 	fcE2BChatSessionIDEnvKey        = "MULTICA_CHAT_SESSION_ID"
 )
 
@@ -456,7 +456,7 @@ func IsFCE2BTemplateReady(template FCE2BTemplate) bool {
 
 // IsFCE2BTemplatePublished reports whether the current build carries a valid
 // supported manifest alias required for safe publication, runtime creation,
-// and rotation. m2 and m3 are supported; m1 is retired.
+// and rotation. m2 through m4 are supported; m1 is retired.
 func IsFCE2BTemplatePublished(template FCE2BTemplate) bool {
 	return template.ManifestVersion >= 2 &&
 		template.ManifestVersion <= fcE2BTemplateManifestVersion &&
@@ -744,7 +744,7 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 	return templates, nil
 }
 
-var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([123])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dims|dim|di)-r1-([0-9a-f]{6})$`)
+var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([1234])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dimst|dims|dim|di)-r1-([0-9a-f]{6})$`)
 
 func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (bool, error) {
 	if template == nil {
@@ -763,7 +763,7 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 		return false, nil
 	}
 	capabilityCode := matches[7]
-	expectedCapabilityCode := map[int]string{1: "di", 2: "dim", 3: "dims"}[manifestVersion]
+	expectedCapabilityCode := map[int]string{1: "di", 2: "dim", 3: "dims", 4: "dimst"}[manifestVersion]
 	if capabilityCode != expectedCapabilityCode {
 		return false, nil
 	}
@@ -784,6 +784,9 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 	}
 	if manifestVersion >= 3 {
 		template.Capabilities = append(template.Capabilities, RuntimeStartCapabilityEventsV1)
+	}
+	if manifestVersion >= 4 {
+		template.Capabilities = append(template.Capabilities, LLMTraceCapability)
 	}
 	template.ComponentVersions = map[string]string{
 		"hermes":   hermesVersion,
@@ -1933,7 +1936,7 @@ func (l *FCE2BLauncher) extraEnvForTaskWithModel(
 		env[fcE2BChatSessionIDEnvKey] = chatSessionID
 	}
 	env["OPENAI_MODEL"] = model
-	for key, value := range llmTraceEnv(agentRow.RuntimeConfig, task.Context) {
+	for key, value := range llmTraceEnv(runtime, agentRow.RuntimeConfig, task.Context) {
 		env[key] = value
 	}
 	traceEnv, err := fcE2BTaskTraceEnv(task)
@@ -2735,6 +2738,8 @@ func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 	case "OPENAI_MODEL",
 		llmTraceEnabledEnvKey,
 		llmTraceSinkURLEnvKey,
+		llmTraceTokenEnvKey,
+		llmTraceExpiresAtEnvKey,
 		fcE2BChatSessionIDEnvKey,
 		chattrace.TraceIDEnvKey,
 		chattrace.TraceStartedAtUnixMSEnvKey,

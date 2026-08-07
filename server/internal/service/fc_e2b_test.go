@@ -446,13 +446,13 @@ func TestParseE2BSandboxIDStrictCreateOutput(t *testing.T) {
 }
 
 func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
-	const alias = "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"
+	const alias = "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"
 	got, err := parseFCE2BTemplates(`[
 		{
 			"templateID": "idt7f6on323gsyuqjt59",
 			"buildID": "a4aa129e-ef89-4fce-9fc9-605a1015e0e1",
-			"aliases": ["default", "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"],
-			"names": ["multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"],
+			"aliases": ["default", "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"],
+			"names": ["multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"],
 			"buildStatus": "ready",
 			"createdAt": "2026-07-08T13:16:30.740524Z",
 			"updatedAt": "2026-07-08T13:19:01.365773Z"
@@ -488,7 +488,7 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 	if want := []string{"hermes", "opencode", "pi"}; !reflect.DeepEqual(got[0].Providers, want) {
 		t.Fatalf("providers = %#v, want %#v", got[0].Providers, want)
 	}
-	if want := []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1}; !reflect.DeepEqual(got[0].Capabilities, want) {
+	if want := []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability}; !reflect.DeepEqual(got[0].Capabilities, want) {
 		t.Fatalf("capabilities = %#v, want %#v", got[0].Capabilities, want)
 	}
 	if want := map[string]string{
@@ -502,7 +502,7 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 }
 
 func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
-	const validAlias = "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"
+	const validAlias = "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"
 	tests := []struct {
 		name          string
 		buildID       string
@@ -511,13 +511,14 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 		wantPublished bool
 	}{
 		{name: "valid current", buildID: "build-current", alias: validAlias, wantApplied: true, wantPublished: true},
-		{name: "valid previous", buildID: "build-previous", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-bbbbbb", wantApplied: true, wantPublished: true},
+		{name: "valid previous", buildID: "build-previous", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-bbbbbb", wantApplied: true, wantPublished: true},
 		{name: "valid legacy", buildID: "build-legacy", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa", wantApplied: true},
 		{name: "missing build ID", alias: validAlias},
 		{name: "old template name", buildID: "build-current", alias: "multica-fc-hermes-opencode-dws-v1"},
 		{name: "missing patch version", buildID: "build-current", alias: "multica-m3-h0_19-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
 		{name: "leading zero", buildID: "build-current", alias: "multica-m3-h00_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
-		{name: "current missing startup-event marker", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
+		{name: "current missing trace marker", buildID: "build-current", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
+		{name: "previous falsely claims trace", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"},
 		{name: "previous falsely claims startup events", buildID: "build-current", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
 		{name: "legacy falsely claims MCP", buildID: "build-current", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
 		{name: "wrong runner", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r2-9a6bfa"},
@@ -1040,7 +1041,7 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 			device_info, metadata, visibility, owner_id
 		)
 		VALUES ($1, 'FC DWS Runtime', 'cloud', 'hermes', 'online',
-			'test runtime', '{"kind":"fc-e2b","capabilities":["hermes","dws"]}'::jsonb, 'private', $2)
+			'test runtime', '{"kind":"fc-e2b","capabilities":["hermes","dws","llm_trace_v1"]}'::jsonb, 'private', $2)
 		RETURNING id
 	`, workspaceID, userID).Scan(&runtimeID); err != nil {
 		t.Fatalf("create runtime: %v", err)
