@@ -1539,6 +1539,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// workspace context.
 		r.Get("/api/attachments/{id}/download", h.DownloadAttachment)
 
+		// Server-hosted MCP is auth-scoped rather than request-workspace-scoped.
+		// Task Tokens carry an authoritative workspace. PAT calls derive it from
+		// session_id or agent_id, then enforce membership and Agent permissions in
+		// the handler, so generic MCP clients need no custom workspace header.
+		r.Handle("/api/mcp", http.HandlerFunc(h.MulticaMCP))
+
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
 			r.With(handler.RequireHumanActor).Post("/", h.CreateWorkspace)
@@ -1842,12 +1848,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// the server-stamped task_token actor and rejects ordinary member
 			// credentials even though this route lives in the workspace group.
 			r.Post("/api/issue-delegations", h.DelegateIssue)
-
-			// Server-hosted MCP surface for explicit personal-token clients and
-			// task-scoped Agent actions. The handler implements the Streamable HTTP
-			// method contract itself (including GET -> 405); outer middleware has
-			// already authenticated the bearer and resolved workspace membership.
-			r.Handle("/api/mcp", http.HandlerFunc(h.MulticaMCP))
 
 			// Labels
 			r.Route("/api/labels", func(r chi.Router) {
