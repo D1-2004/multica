@@ -358,7 +358,7 @@ type RegistrationCapabilities struct {
 
 func (s *RegistrationService) Capabilities() RegistrationCapabilities {
 	result := RegistrationCapabilities{}
-	if err := validateOutgoingURL(s.client.cfg.OutgoingURL); err != nil {
+	if err := validateOutgoingURL(s.client.currentConfig().OutgoingURL); err != nil {
 		result.HTTPCallbackReason = "callback_url_not_configured"
 		return result
 	}
