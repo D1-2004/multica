@@ -37,6 +37,26 @@ const (
 	multicaMCPForwardedFromAgentContextKey   = "mcp_forwarded_from_agent_id"
 )
 
+const multicaMCPChatSendToolDescription = `Authorized server-provided Multica action: send a message to another existing Chat session owned by the authenticated task owner and queue that Chat's Agent to continue.
+
+This managed MCP tool is not a curl/raw-API workaround. Use it when the current Chat receives information that answers a question or unblocks work in another Chat.
+
+The target must be a different session_id.`
+
+const multicaMCPBindingGetToolDescription = `Get Multica's local digital employee binding for the authenticated task Agent and reconcile it with Router.
+
+The target Agent and workspace always come from the task token.`
+
+const multicaMCPBindingBindToolDescription = `Bind a DingTalk digital employee created through DWS to the authenticated task Agent.
+
+Multica issues and consumes the one-time Router credential server-side and never exposes it to the caller.
+
+Existing ownership is never taken over.`
+
+const multicaMCPBindingUnbindToolDescription = `Conditionally unbind the authenticated task Agent's current digital employee.
+
+Router ownership is checked authoritatively before Multica clears its local projection.`
+
 type multicaMCPRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -275,7 +295,7 @@ func multicaMCPBindingGetDefinition() map[string]any {
 	return map[string]any{
 		"name":        multicaMCPBindingGetTool,
 		"title":       "Get this Agent's digital employee binding",
-		"description": "Get Multica's local digital employee binding for the authenticated task Agent and reconcile it with Router. The target Agent and workspace always come from the task token.",
+		"description": multicaMCPBindingGetToolDescription,
 		"inputSchema": multicaMCPEmptyObjectSchema(),
 		"annotations": map[string]any{
 			"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false,
@@ -287,7 +307,7 @@ func multicaMCPBindingBindDefinition() map[string]any {
 	return map[string]any{
 		"name":        multicaMCPBindingBindTool,
 		"title":       "Bind a DingTalk digital employee to this Agent",
-		"description": "Bind a DingTalk digital employee created through DWS to the authenticated task Agent. Multica issues and consumes the one-time Router credential server-side and never exposes it to the caller. Existing ownership is never taken over.",
+		"description": multicaMCPBindingBindToolDescription,
 		"inputSchema": map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
@@ -324,7 +344,7 @@ func multicaMCPBindingUnbindDefinition() map[string]any {
 	return map[string]any{
 		"name":        multicaMCPBindingUnbindTool,
 		"title":       "Unbind this Agent's digital employee",
-		"description": "Conditionally unbind the authenticated task Agent's current digital employee. Router ownership is checked authoritatively before Multica clears its local projection.",
+		"description": multicaMCPBindingUnbindToolDescription,
 		"inputSchema": multicaMCPEmptyObjectSchema(),
 		"annotations": map[string]any{
 			"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false,
@@ -394,9 +414,9 @@ func (h *Handler) handleMulticaMCPInitialize(w http.ResponseWriter, req multicaM
 
 func multicaMCPChatSendDefinition() map[string]any {
 	return map[string]any{
-		"name":  multicaMCPChatSendTool,
-		"title": "Continue an existing Multica Chat",
-		"description": "Authorized server-provided Multica action: send a message to another existing Chat session owned by the authenticated task owner and queue that Chat's Agent to continue. This managed MCP tool is not a curl/raw-API workaround. Use it when the current Chat receives information that answers a question or unblocks work in another Chat. The target must be a different session_id.",
+		"name":        multicaMCPChatSendTool,
+		"title":       "Continue an existing Multica Chat",
+		"description": multicaMCPChatSendToolDescription,
 		"inputSchema": map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
