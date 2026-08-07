@@ -5,11 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -17,7 +15,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
-	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -30,12 +27,31 @@ const (
 	multicaMCPBindingGetTool        = "get_digital_employee_binding"
 	multicaMCPBindingBindTool       = "bind_digital_employee_to_multica_agent"
 	multicaMCPBindingUnbindTool     = "unbind_digital_employee"
-	multicaMCPServerName            = "multica"
 	multicaMCPMaxRequestBytes       = 1 << 20
 	multicaMCPForwardedFromTaskContextKey    = "mcp_forwarded_from_task_id"
 	multicaMCPForwardedFromSessionContextKey = "mcp_forwarded_from_chat_session_id"
 	multicaMCPForwardedFromAgentContextKey   = "mcp_forwarded_from_agent_id"
 )
+
+const multicaMCPChatSendToolDescription = `Authorized server-provided Multica action: send a message to another existing Chat session owned by the authenticated task owner and queue that Chat's Agent to continue.
+
+This managed MCP tool is not a curl/raw-API workaround. Use it when the current Chat receives information that answers a question or unblocks work in another Chat.
+
+The target must be a different session_id.`
+
+const multicaMCPBindingGetToolDescription = `Get Multica's local digital employee binding for the authenticated task Agent and reconcile it with Router.
+
+The target Agent and workspace always come from the task token.`
+
+const multicaMCPBindingBindToolDescription = `Bind a DingTalk digital employee created through DWS to the authenticated task Agent.
+
+Multica issues and consumes the one-time Router credential server-side and never exposes it to the caller.
+
+Existing ownership is never taken over.`
+
+const multicaMCPBindingUnbindToolDescription = `Conditionally unbind the authenticated task Agent's current digital employee.
+
+Router ownership is checked authoritatively before Multica clears its local projection.`
 
 type multicaMCPRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -113,90 +129,8 @@ type multicaMCPToolCallError struct {
 
 func (e *multicaMCPToolCallError) Error() string { return e.message }
 
-// buildMulticaMCPConfig adds the server-owned Multica MCP entry to the
-// canonical Claude-style MCP document consumed by every runtime adapter. The
-// reserved `multica` name always wins, while unrelated servers and top-level
-// provider settings survive unchanged.
-//
-// The task token is deliberately sent as an Authorization header. It must
-// never be put in the endpoint URL because URLs routinely escape into access
-// logs, browser history, and diagnostics.
-func buildMulticaMCPConfig(existing json.RawMessage, publicURL, taskToken string) (json.RawMessage, bool, error) {
-	publicURL = strings.TrimRight(strings.TrimSpace(publicURL), "/")
-	taskToken = strings.TrimSpace(taskToken)
-	if publicURL == "" || !strings.HasPrefix(taskToken, "mat_") {
-		return existing, false, nil
-	}
-	parsedURL, err := url.Parse(publicURL)
-	if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-		return existing, false, fmt.Errorf("invalid Multica public URL")
-	}
-
-	document := map[string]json.RawMessage{}
-	trimmed := bytes.TrimSpace(existing)
-	if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
-		if err := json.Unmarshal(trimmed, &document); err != nil {
-			return existing, false, fmt.Errorf("parse existing MCP config: %w", err)
-		}
-	}
-	servers := map[string]json.RawMessage{}
-	if rawServers, ok := document["mcpServers"]; ok && len(bytes.TrimSpace(rawServers)) > 0 {
-		if err := json.Unmarshal(rawServers, &servers); err != nil {
-			return existing, false, fmt.Errorf("parse existing mcpServers: %w", err)
-		}
-	}
-	if servers == nil {
-		servers = map[string]json.RawMessage{}
-	}
-	entry, err := json.Marshal(map[string]any{
-		"type": "http",
-		"url":  publicURL + "/api/mcp",
-		"headers": map[string]string{
-			"Authorization": "Bearer " + taskToken,
-		},
-	})
-	if err != nil {
-		return existing, false, err
-	}
-	servers[multicaMCPServerName] = entry
-	serversJSON, err := json.Marshal(servers)
-	if err != nil {
-		return existing, false, err
-	}
-	document["mcpServers"] = serversJSON
-	out, err := json.Marshal(document)
-	if err != nil {
-		return existing, false, err
-	}
-	return out, true, nil
-}
-
 func (h *Handler) multicaMCPChatSendEnabled(r *http.Request) bool {
 	return h != nil && featureflags.MulticaMCPChatSendEnabled(r.Context(), h.FeatureFlags)
-}
-
-// injectMulticaMCPIntoClaim runs only after claim finalization, when the
-// task-scoped token actually exists. Older/unsupported cloud images are left
-// untouched; their immutable manifest is the server's compatibility signal.
-func (h *Handler) injectMulticaMCPIntoClaim(r *http.Request, resp *AgentTaskResponse, runtime db.AgentRuntime, taskToken string) {
-	if resp == nil || resp.Agent == nil || !h.multicaMCPChatSendEnabled(r) {
-		return
-	}
-	if service.IsCloudSandboxRuntime(runtime) && !service.CloudSandboxRuntimeHasCapability(runtime, "mcp") {
-		return
-	}
-	merged, injected, err := buildMulticaMCPConfig(resp.Agent.McpConfig, h.currentConfig().PublicURL, taskToken)
-	if err != nil {
-		slog.Warn("daemon claim: failed to inject Multica MCP config",
-			"task_id", resp.ID,
-			"runtime_id", uuidToString(runtime.ID),
-			"error", err,
-		)
-		return
-	}
-	if injected {
-		resp.Agent.McpConfig = merged
-	}
 }
 
 // MulticaMCP is a stateless MCP Streamable HTTP endpoint. V1 does not expose
@@ -275,7 +209,7 @@ func multicaMCPBindingGetDefinition() map[string]any {
 	return map[string]any{
 		"name":        multicaMCPBindingGetTool,
 		"title":       "Get this Agent's digital employee binding",
-		"description": "Get Multica's local digital employee binding for the authenticated task Agent and reconcile it with Router. The target Agent and workspace always come from the task token.",
+		"description": multicaMCPBindingGetToolDescription,
 		"inputSchema": multicaMCPEmptyObjectSchema(),
 		"annotations": map[string]any{
 			"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false,
@@ -287,7 +221,7 @@ func multicaMCPBindingBindDefinition() map[string]any {
 	return map[string]any{
 		"name":        multicaMCPBindingBindTool,
 		"title":       "Bind a DingTalk digital employee to this Agent",
-		"description": "Bind a DingTalk digital employee created through DWS to the authenticated task Agent. Multica issues and consumes the one-time Router credential server-side and never exposes it to the caller. Existing ownership is never taken over.",
+		"description": multicaMCPBindingBindToolDescription,
 		"inputSchema": map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
@@ -324,7 +258,7 @@ func multicaMCPBindingUnbindDefinition() map[string]any {
 	return map[string]any{
 		"name":        multicaMCPBindingUnbindTool,
 		"title":       "Unbind this Agent's digital employee",
-		"description": "Conditionally unbind the authenticated task Agent's current digital employee. Router ownership is checked authoritatively before Multica clears its local projection.",
+		"description": multicaMCPBindingUnbindToolDescription,
 		"inputSchema": multicaMCPEmptyObjectSchema(),
 		"annotations": map[string]any{
 			"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false,
@@ -394,9 +328,9 @@ func (h *Handler) handleMulticaMCPInitialize(w http.ResponseWriter, req multicaM
 
 func multicaMCPChatSendDefinition() map[string]any {
 	return map[string]any{
-		"name":  multicaMCPChatSendTool,
-		"title": "Continue an existing Multica Chat",
-		"description": "Authorized server-provided Multica action: send a message to another existing Chat session owned by the authenticated task owner and queue that Chat's Agent to continue. This managed MCP tool is not a curl/raw-API workaround. Use it when the current Chat receives information that answers a question or unblocks work in another Chat. The target must be a different session_id.",
+		"name":        multicaMCPChatSendTool,
+		"title":       "Continue an existing Multica Chat",
+		"description": multicaMCPChatSendToolDescription,
 		"inputSchema": map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,

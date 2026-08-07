@@ -227,20 +227,20 @@ DTA Access settings tab. Turning it off again blocks all `dta_` requests and
 hides the management UI; it does not delete DTA Tokens, agents, or traces.
 
 `multica_mcp_chat_send` controls the server-hosted MCP Chat continuation
-surface and also defaults to `false`. Enable it only after the target runtimes
-already support Multica's managed remote MCP configuration and
-`MULTICA_PUBLIC_URL` is reachable from those runtimes:
+surface and also defaults to `false`. Enable it when explicitly configured MCP
+clients are ready to call the Multica API endpoint:
 
 ```yaml
 multica_mcp_chat_send:
   default: true
 ```
 
-The environment override is `FF_MULTICA_MCP_CHAT_SEND=true`. The same backend
-decision gates both claim-time MCP discovery and `/api/mcp` execution, so
-turning it off prevents new tool discovery and rejects direct calls without
-requiring an Agent image rollback. See [Multica self-hosted MCP Chat send](multica-mcp-chat-send.md)
-for the protocol and rollout contract.
+The environment override is `FF_MULTICA_MCP_CHAT_SEND=true`. The backend
+decision gates protocol discovery and tool execution on `/api/mcp`. Task claim
+does not inject Multica into Agent or sandbox MCP configuration, regardless of
+the flag value, so enabling the service cannot change sandbox startup. See
+[Multica self-hosted MCP Chat send](multica-mcp-chat-send.md) for the protocol
+and rollout contract.
 
 ### Security note: never rely on the frontend alone
 
@@ -266,6 +266,7 @@ See `docs/design.md` and `docs/timezone-architecture-rfc.md` for prior examples 
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-08-07 | Removed claim-time Multica MCP injection; the flag now gates only the server-hosted endpoint. | Keep MCP adoption explicit and prevent a server rollout from changing sandbox startup configuration. |
 | 2026-08-06 | Added the default-off `multica_mcp_chat_send` release flag and its rollout contract. | Keep discovery and execution of the server-hosted MCP action under one server-side kill switch during mixed Runtime rollout. |
 | 2026-08-04 | Added Diamond `common.prompt` and documented claim-time `common + mode + Router contextPrompt` instruction composition. | Separate fixed policy configuration from dynamic delivery context and keep private instructions out of user-visible content. |
 | 2026-08-04 | Made the Diamond provider always active and removed its deployment enable switch. | Ensure dynamic surface prompts are not accidentally bypassed when only the fixed Diamond coordinates are configured. |
