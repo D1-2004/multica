@@ -706,18 +706,21 @@ domains and the channel-domain conversation filter.
 ## Native MCP Direct Binding Contract
 
 The server-hosted Streamable HTTP endpoint at `POST /api/mcp` exposes three
-task-scoped digital-employee actions:
+digital-employee actions:
 
 - `get_digital_employee_binding`
 - `bind_digital_employee_to_multica_agent`
 - `unbind_digital_employee`
 
-The MCP client never supplies `workspace_id`, `agent_id`, a Router binding
-token, or a dispatch target. Multica resolves the authenticated task from the
-server-trusted task-token headers, verifies that its persisted Agent matches
-the token, and authorizes the operation as the task's persisted human
-originator. Binding and unbinding therefore retain the same Agent
-manage-plus-invoke permission rule as the browser flow.
+The MCP client never supplies `workspace_id`, a Router binding token, or a
+dispatch target. With a `mul_` Personal Access Token, the caller must supply
+`agent_id`; Multica uses the authenticated PAT user as initiator and verifies
+that the Agent belongs to the authenticated Workspace. With a `mat_` Task
+Token, `agent_id` is omitted and Multica fixes the target to the persisted
+Agent of the server-authenticated active task; an explicitly different Agent
+is rejected. Both modes retain the same Agent manage-plus-invoke permission
+rule as the browser flow. The PAT user or Task's persisted human originator is
+the authorization principal, never a caller-supplied user identifier.
 
 The bind tool accepts the `tenant_id` and `digital_employee_id` returned by the
 DWS digital-employee creation flow, plus optional processing surface, message
@@ -744,7 +747,7 @@ Content-Type: application/json
     "subscriptionConfig": {"upstreamMode": "HTTP_CALLBACK"}
   },
   "agent": {
-    "agentId": "<task Agent UUID>",
+    "agentId": "<authorized Agent UUID>",
     "dispatchUrl": "<current Multica origin>/api/webhooks/agent-dispatch/<endpointId>"
   },
   "surface": {"type": "auto"},
@@ -775,8 +778,10 @@ account key remain local-only and can still be revoked without a Router call.
 
 ## 2026-08-07 Native MCP Direct Binding Change History
 
+- Added `mul_` PAT support. PAT callers select `agent_id` within the
+  authenticated Workspace; Task Token callers remain pinned to the task Agent.
 - Added task-scoped query, bind, and unbind tools to the existing `/api/mcp`
-  endpoint without adding caller-controlled workspace or Agent identifiers.
+  endpoint without adding caller-controlled workspace identifiers.
 - Added direct Router subscription creation with server-only one-time binding
   credentials and persisted the requested generic enabled-domain set.
 - Separated core digital-employee binding availability from optional DBase
@@ -785,6 +790,13 @@ account key remain local-only and can still be revoked without a Router call.
   cleanup for pending direct projections with a complete account key.
 
 ## 2026-08-07 Native MCP Direct Binding Change Reason
+
+Local Qoder and Claude Code clients already use Multica Personal Access Tokens
+as durable user credentials. Allowing that existing credential on MCP avoids
+manufacturing a long-lived Task Token, while explicit Agent selection plus the
+existing manage-plus-invoke check preserves the browser flow's authorization
+boundary. Running Agents keep the narrower Task Token behavior, so they cannot
+switch the binding target by supplying another `agent_id`.
 
 Agents can create a DingTalk digital employee through DWS while running a
 Multica task, so requiring a browser QR handoff would reintroduce client-image
