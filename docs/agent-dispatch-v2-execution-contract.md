@@ -31,6 +31,16 @@ Continuation kind identifies the materialized locator, not the execution mode.
 Both `chat` and `auto` therefore return a `chat` continuation containing
 `chatSessionId`; `issue` returns an Issue continuation.
 
+For DingTalk channel messages, a newly created Chat title includes enough topic
+context to distinguish repeated conversations with the same sender. Private
+messages use `sender：opening summary`; group messages use
+`conversation · sender：opening summary`, with missing group or sender fields
+omitted. The summary is NFKC-normalized, strips control and format characters,
+collapses whitespace, and the complete title is capped at 160 Unicode runes.
+On an existing session, only older machine-derived titles such as `sender` or
+`conversation · sender` may be upgraded on the next message; manual and LLM
+titles are never overwritten by channel ingestion.
+
 ## Identity
 
 The webhook bearer credential authenticates an Agent Dispatch endpoint and
@@ -182,6 +192,8 @@ compositions subject to the command's ordinary validation.
 - 2026-08-06: Split prompt construction by daemon capability. New daemons use
   only `common + mode + contextPrompt`; older images always use the previous
   structured DingTalk prompt builder and legacy task-content transport.
+- 2026-08-07: Added the opening-message summary to DingTalk Chat titles while
+  retaining CAS protection for manual and LLM titles.
 
 ## Reason
 
@@ -271,3 +283,13 @@ parsing or rewriting Router's context string.
 - Reason: Rolling deployments must preserve complete prompt behavior while old
   runtime images still ignore `instruction`, without mixing legacy policy into
   new images or duplicating instructions.
+
+## Change record: 2026-08-07 DingTalk Chat title projection
+
+- History: DingTalk private Chat titles now use `sender：opening summary`; group
+  Chat titles use `conversation · sender：opening summary`. Older sender-only or
+  group/sender machine titles are eligible for one safe in-place upgrade.
+- Reason: Sender identity alone produces multiple indistinguishable Chat rows
+  for repeated digital-employee conversations. Adding a normalized opening
+  summary preserves the channel counterpart while making the conversation topic
+  visible, without overwriting user-managed titles.
