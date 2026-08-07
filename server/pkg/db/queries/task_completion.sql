@@ -120,12 +120,14 @@ INSERT INTO task_completion_outbox AS existing (
     external_session_id,
     execution_status,
     result_message,
+    execution_summary,
     error,
     failure_reason
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     sqlc.narg('external_session_id'),
     $7, $8,
+    COALESCE(sqlc.narg('execution_summary')::jsonb, '{}'::jsonb),
     sqlc.narg('error'),
     sqlc.narg('failure_reason')
 )
@@ -139,6 +141,7 @@ WHERE existing.terminal_task_id = EXCLUDED.terminal_task_id
   AND existing.external_session_id IS NOT DISTINCT FROM EXCLUDED.external_session_id
   AND existing.execution_status = EXCLUDED.execution_status
   AND existing.result_message = EXCLUDED.result_message
+  AND existing.execution_summary = EXCLUDED.execution_summary
   AND existing.error IS NOT DISTINCT FROM EXCLUDED.error
   AND existing.failure_reason IS NOT DISTINCT FROM EXCLUDED.failure_reason
 RETURNING *;

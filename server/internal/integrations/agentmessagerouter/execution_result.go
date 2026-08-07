@@ -22,6 +22,7 @@ type ExecutionResultRequest struct {
 	ExecutionStatus   string         `json:"executionStatus"`
 	ResultMessage     string         `json:"resultMessage"`
 	ExecutionResult   map[string]any `json:"executionResult,omitempty"`
+	ExecutionSummary  map[string]any `json:"executionSummary,omitempty"`
 	RawPayload        map[string]any `json:"rawPayload,omitempty"`
 }
 

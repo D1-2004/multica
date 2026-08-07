@@ -1933,7 +1933,7 @@ func (l *FCE2BLauncher) extraEnvForTaskWithModel(
 		env[fcE2BChatSessionIDEnvKey] = chatSessionID
 	}
 	env["OPENAI_MODEL"] = model
-	for key, value := range llmTraceEnv(agentRow.RuntimeConfig) {
+	for key, value := range llmTraceEnv(agentRow.RuntimeConfig, task.Context) {
 		env[key] = value
 	}
 	traceEnv, err := fcE2BTaskTraceEnv(task)

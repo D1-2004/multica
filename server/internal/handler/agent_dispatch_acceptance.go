@@ -73,6 +73,7 @@ func dispatchRequestFingerprint(command DispatchCommand, idempotencyKey string) 
 		Outbound       DispatchOutbound           `json:"outbound"`
 		CallbackURL    string                     `json:"callbackUrl"`
 		UpdateURL      string                     `json:"updateUrl"`
+		TelemetryURL   string                     `json:"telemetryUrl"`
 		CallbackTarget string                     `json:"callbackTarget"`
 		IdempotencyKey string                     `json:"idempotencyKey"`
 		EndpointID     string                     `json:"endpointId"`
@@ -90,6 +91,7 @@ func dispatchRequestFingerprint(command DispatchCommand, idempotencyKey string) 
 	if command.CompletionCallback != nil {
 		payload.CallbackURL = command.CompletionCallback.URL
 		payload.UpdateURL = command.CompletionCallback.UpdateURL
+		payload.TelemetryURL = command.CompletionCallback.TelemetryURL
 		payload.CallbackTarget = command.CompletionCallback.Target
 	}
 	raw, _ := json.Marshal(payload)

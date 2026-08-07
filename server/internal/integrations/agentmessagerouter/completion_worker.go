@@ -2,6 +2,7 @@ package agentmessagerouter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -260,6 +261,12 @@ func (w *CompletionWorker) processNextCompletion(ctx context.Context) (bool, err
 	if err != nil {
 		return false, err
 	}
+	var executionSummary map[string]any
+	if len(completion.ExecutionSummary) > 0 {
+		if err := json.Unmarshal(completion.ExecutionSummary, &executionSummary); err != nil {
+			return true, err
+		}
+	}
 
 	result := ExecutionResultRequest{
 		RequestID:         completion.RequestID,
@@ -269,6 +276,7 @@ func (w *CompletionWorker) processNextCompletion(ctx context.Context) (bool, err
 		ExternalSessionID: completion.ExternalSessionID.String,
 		ExecutionStatus:   completion.ExecutionStatus,
 		ResultMessage:     redact.Text(util.UnescapeBackslashEscapes(completion.ResultMessage)),
+		ExecutionSummary:  executionSummary,
 		ExecutionResult: map[string]any{
 			"terminalTaskId": util.UUIDToString(completion.TerminalTaskID),
 			"error":          completion.Error.String,

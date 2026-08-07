@@ -1203,6 +1203,8 @@ type TaskCompletionOutbox struct {
 	DeliveredAt       pgtype.Timestamptz `json:"delivered_at"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	// Immutable Agent task observability summary sent with the terminal Router callback
+	ExecutionSummary []byte `json:"execution_summary"`
 }
 
 type TaskExecutionUpdateOutbox struct {

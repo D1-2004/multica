@@ -33,8 +33,11 @@ func TestDispatchCommandValidateCompletionCallbackByPresence(t *testing.T) {
 		Surface:            DispatchSurface{Type: "chat"},
 		Outbound:           DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
 		CompletionCallback: &DispatchCompletionCallback{
-			URL:       "/api/v1/dispatch-tasks/router-task-1/execution-result",
-			UpdateURL: "/api/v1/dispatch-tasks/router-task-1/execution-update",
+			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			UpdateURL:          "/api/v1/dispatch-tasks/router-task-1/execution-update",
+			TelemetryURL:       "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
+			TelemetryToken:     "task-write-capability",
+			TelemetryExpiresAt: 1786377600000,
 		},
 	}
 	if err := valid.validate(); err != nil {
@@ -80,15 +83,62 @@ func TestDispatchCommandValidateCompletionCallbackByPresence(t *testing.T) {
 	if err := mismatchedUpdate.validate(); err == nil {
 		t.Fatal("completion and update callbacks accepted different dispatch task IDs")
 	}
+	mismatchedTelemetry := valid
+	mismatchedTelemetry.CompletionCallback = &DispatchCompletionCallback{
+		URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
+		TelemetryURL:       "https://router.example.test/api/v1/dispatch-tasks/router-task-2/llm-traces",
+		TelemetryToken:     "task-write-capability",
+		TelemetryExpiresAt: 1786377600000,
+	}
+	if err := mismatchedTelemetry.validate(); err == nil {
+		t.Fatal("completion and telemetry callbacks accepted different dispatch task IDs")
+	}
+	incompleteTelemetry := valid
+	incompleteTelemetry.CompletionCallback = &DispatchCompletionCallback{
+		URL:          "/api/v1/dispatch-tasks/router-task-1/execution-result",
+		TelemetryURL: "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
+	}
+	if err := incompleteTelemetry.validate(); err == nil {
+		t.Fatal("incomplete telemetry capability accepted")
+	}
+	for _, telemetry := range []DispatchCompletionCallback{
+		{
+			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			TelemetryURL:       "http://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
+			TelemetryToken:     "task-write-capability",
+			TelemetryExpiresAt: 1786377600000,
+		},
+		{
+			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			TelemetryURL:       "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces?token=secret",
+			TelemetryToken:     "task-write-capability",
+			TelemetryExpiresAt: 1786377600000,
+		},
+		{
+			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			TelemetryURL:       "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
+			TelemetryToken:     "token with spaces",
+			TelemetryExpiresAt: 1786377600000,
+		},
+	} {
+		invalid := valid
+		invalid.CompletionCallback = &telemetry
+		if err := invalid.validate(); err == nil {
+			t.Fatalf("invalid telemetry capability accepted: %#v", telemetry)
+		}
+	}
 }
 
 func TestDispatchRuntimeContextPersistsCompletionCallback(t *testing.T) {
 	command := DispatchCommand{
 		SchemaVersion:      "2.0",
 		CompletionCallback: &DispatchCompletionCallback{
-			URL:       "/api/v1/dispatch-tasks/router-task-1/execution-result",
-			UpdateURL: "/api/v1/dispatch-tasks/router-task-1/execution-update",
-			Target:    testRouterTargetIdentity,
+			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			UpdateURL:          "/api/v1/dispatch-tasks/router-task-1/execution-update",
+			TelemetryURL:       "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
+			TelemetryToken:     "task-write-capability",
+			TelemetryExpiresAt: 1786377600000,
+			Target:             testRouterTargetIdentity,
 		},
 	}
 	raw := dispatchRuntimeContext(command, "dispatch-window:1")
@@ -101,6 +151,9 @@ func TestDispatchRuntimeContextPersistsCompletionCallback(t *testing.T) {
 	if !ok ||
 		callback["url"] != "/api/v1/dispatch-tasks/router-task-1/execution-result" ||
 		callback["update_url"] != "/api/v1/dispatch-tasks/router-task-1/execution-update" ||
+		callback["telemetry_url"] != "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces" ||
+		callback["telemetry_token"] != "task-write-capability" ||
+		callback["telemetry_expires_at"] != float64(1786377600000) ||
 		callback["target"] != testRouterTargetIdentity {
 		t.Fatalf("stored callback = %#v", stored["completion_callback"])
 	}
@@ -126,9 +179,12 @@ func TestDispatchRequestFingerprintExcludesOnlyTransientIdentityContext(t *testi
 			ExpiresAt:    4102444800000,
 		},
 		CompletionCallback: &DispatchCompletionCallback{
-			URL:       "/api/v1/dispatch-tasks/router-task-1/execution-result",
-			UpdateURL: "/api/v1/dispatch-tasks/router-task-1/execution-update",
-			Target:    testRouterTargetIdentity,
+			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			UpdateURL:          "/api/v1/dispatch-tasks/router-task-1/execution-update",
+			TelemetryURL:       "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
+			TelemetryToken:     "token-one",
+			TelemetryExpiresAt: 1786377600000,
+			Target:             testRouterTargetIdentity,
 		},
 		DispatchEndpointID: "endpoint-one",
 	}
@@ -138,6 +194,30 @@ func TestDispatchRequestFingerprintExcludesOnlyTransientIdentityContext(t *testi
 	refreshedIdentity.ExternalIdentity.ContextToken = "token-two"
 	if got := dispatchRequestFingerprint(refreshedIdentity, "idempotency-one"); got != first {
 		t.Fatalf("context token changed stable fingerprint: got %q want %q", got, first)
+	}
+	refreshedTelemetry := command
+	refreshedTelemetry.CompletionCallback = &DispatchCompletionCallback{
+		URL:                command.CompletionCallback.URL,
+		UpdateURL:          command.CompletionCallback.UpdateURL,
+		TelemetryURL:       command.CompletionCallback.TelemetryURL,
+		TelemetryToken:     "token-two",
+		TelemetryExpiresAt: 1786464000000,
+		Target:             command.CompletionCallback.Target,
+	}
+	if got := dispatchRequestFingerprint(refreshedTelemetry, "idempotency-one"); got != first {
+		t.Fatalf("refreshed telemetry capability changed stable fingerprint: got %q want %q", got, first)
+	}
+	changedTelemetryURL := refreshedTelemetry
+	changedTelemetryURL.CompletionCallback = &DispatchCompletionCallback{
+		URL:                command.CompletionCallback.URL,
+		UpdateURL:          command.CompletionCallback.UpdateURL,
+		TelemetryURL:       "https://other-router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
+		TelemetryToken:     "token-two",
+		TelemetryExpiresAt: 1786464000000,
+		Target:             command.CompletionCallback.Target,
+	}
+	if got := dispatchRequestFingerprint(changedTelemetryURL, "idempotency-one"); got == first {
+		t.Fatal("changed telemetry URL reused the original fingerprint")
 	}
 
 	changedEvent := command
