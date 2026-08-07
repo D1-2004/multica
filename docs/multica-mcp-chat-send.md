@@ -1,15 +1,17 @@
 # Multica 自托管 MCP：Chat 续写协议
 
-本文定义 Multica 服务端自托管 MCP 的第一期协议。目标是让正在执行的 Chat A 把一条消息发送到已有 Chat B，并触发 B 的 Agent 继续执行；Agent 侧不需要新增 `multica` CLI 命令，也不依赖第三方 MCP 托管。
+本文定义 Multica 服务端自托管 MCP 的 Chat 续写协议。它既支持用户从本机 MCP Client 以个人身份继续一个已有 Chat，也支持正在执行的 Chat A 把消息发送到已有 Chat B 并触发 B 的 Agent 继续执行；Agent 侧不需要新增 `multica` CLI 命令，也不依赖第三方 MCP 托管。
+
+Qoder、Claude Code 的安装配置、task token 限制和使用示例见 [Multica MCP 客户端接入指南](multica-mcp-client-setup.md)。数字员工绑定工具的服务端契约见 [Native MCP Direct Binding Contract](dingtalk-account-binding-router-contract.md#native-mcp-direct-binding-contract)。
 
 ## 1. 总体结构
 
 Multica API 同时承担 MCP Server 和业务服务角色：
 
-1. Chat A 的任务被 Runtime claim 时，Multica 服务端生成已有的任务令牌 `mat_...`。
-2. MCP Client 由使用方显式配置为连接 `https://<multica-api>/api/mcp`；Multica 不改写 claim 返回的 `mcp_config`，也不让沙箱默认使用该 MCP。
-3. 显式接入的 Client 使用 claim 返回的任务令牌连接 Multica MCP；令牌只放在 `Authorization` 请求头中。
-4. Agent 调用 `chat_send_message`，Multica 核验源任务和目标 Chat 后，复用现有原子 Chat 发送事务创建消息和目标任务。
+1. 本机 Qoder、Claude Code 等显式接入的 Client 使用已有的 `mul_` PAT，并通过 `X-Workspace-ID` 选择当前工作区。
+2. Chat A 的任务被 Runtime claim 时，Multica 服务端生成已有的任务令牌 `mat_...`；该 token 固定绑定用户、Agent、Task 和 Workspace。
+3. MCP Client 由使用方显式配置为连接 `https://<multica-api>/api/mcp`；Multica 不改写 claim 返回的 `mcp_config`，也不让沙箱默认使用该 MCP。
+4. 调用 `chat_send_message` 时，PAT 分支以用户成员身份继续其已有 Chat；Task Token 分支核验源任务并保留 A→B 来源。两者都复用现有原子 Chat 发送事务创建消息和目标任务。
 
 这是一条服务端受控、客户端显式选择的能力。工具定义、校验规则和业务行为都随 Multica API 发布；部署服务端 MCP 不会改变现有 Agent 或沙箱的启动配置。
 
@@ -33,7 +35,7 @@ multica_mcp_chat_send:
 显式接入还必须满足以下条件：
 
 - 调用方能够访问 Multica API 的 `/api/mcp` 地址。
-- 调用方本身支持 Streamable HTTP MCP，并显式传入当前任务的 `mat_` 令牌。
+- 调用方本身支持 Streamable HTTP MCP，并显式传入 `mul_` PAT 或当前任务的 `mat_` 令牌；PAT 还必须传当前环境的 `X-Workspace-ID`。
 - 沙箱和 Agent 的既有 `mcp_config` 保持不变；是否安装和使用 Multica MCP 由调用方负责，不能依赖 claim 自动注入。
 
 建议滚动顺序：先发布服务端且保持 flag 关闭，确认 API 与数据库基线正常，再开启 flag。开启或关闭 flag 都不会改变沙箱启动配置；已经排队的目标 Chat 任务是正常业务数据，不会因关 flag 被删除。
@@ -54,7 +56,7 @@ multica_mcp_chat_send:
 
 ## 4. 鉴权与安全边界
 
-显式接入的 MCP Client 配置形如：
+本机 MCP Client 的 PAT 配置形如：
 
 ```json
 {
@@ -63,7 +65,8 @@ multica_mcp_chat_send:
       "type": "http",
       "url": "https://api.example.com/api/mcp",
       "headers": {
-        "Authorization": "Bearer mat_<redacted>"
+        "Authorization": "Bearer mul_<redacted>",
+        "X-Workspace-ID": "<workspace-uuid>"
       }
     }
   }
@@ -72,12 +75,13 @@ multica_mcp_chat_send:
 
 安全规则：
 
-- 只接受 Auth middleware 标记为 `X-Actor-Source: task_token` 的 `mat_` 任务令牌。
-- `X-User-ID`、`X-Agent-ID`、`X-Task-ID`、`X-Workspace-ID` 均由服务端根据 token row 覆盖，客户端自报值不是授权依据。
+- 接受 Auth middleware 已验证的 `mul_` Personal Access Token 和标记为 `X-Actor-Source: task_token` 的 `mat_` Task Token；普通登录 Cookie、JWT 或其他 bearer 不能进入 MCP handler。
+- PAT 分支的 `X-User-ID` 由 Auth middleware 按 token row 写入；客户端必须选择 `X-Workspace-ID`，外层 workspace middleware 会验证用户确实是成员。
+- Task Token 分支的 `X-User-ID`、`X-Agent-ID`、`X-Task-ID`、`X-Workspace-ID` 均由服务端根据 token row 覆盖，客户端自报值不是授权依据。
 - token 不放入 URL、工具参数、日志或工具返回值。
-- MCP handler 会重新查询源任务，核验源 Agent、源任务和 workspace 一致。
+- Task Token 分支会重新查询源任务，核验源 Agent、源任务和 workspace 一致；PAT 分支按用户身份核验 Chat 所有权和目标 Agent invoke 权限。
 - 浏览器请求若携带 `Origin`，只接受配置的 API、App 或 Frontend origin，避免 DNS rebinding 类跨源调用。
-- V1 是 Multica Runtime 与 Multica API 同一信任域内的预置 bearer 模式，不是面向任意外部 MCP Client 的通用 OAuth 接入点。
+- 这是基于 Multica 已有 PAT/Task Token 的 bearer 模式，不是面向任意外部 MCP Client 的通用 OAuth 接入点。
 
 ## 5. Tool：`chat_send_message`
 
@@ -92,19 +96,19 @@ multica_mcp_chat_send:
 
 | 字段 | 必填 | 规则 |
 |---|---:|---|
-| `session_id` | 是 | 有效 UUID；必须是另一个 Chat，不能等于源任务所在 Chat |
+| `session_id` | 是 | 有效 UUID；PAT 可指定本人已有 Chat；Task Token 必须指定源任务之外的另一个 Chat |
 | `content` | 是 | trim 后非空；服务端原样保存，不擅自改写正文 |
 
 ### 目标校验
 
-调用成功前必须同时满足：
+两种鉴权都必须满足：
 
-- 源任务是 `running` 或 `dispatched` 状态的 Chat 任务。
-- 目标 Chat 与源任务属于同一 workspace。
-- 目标 Chat 的 creator 是任务令牌绑定的 Runtime owner。
+- 目标 Chat 属于鉴权 Workspace，creator 是鉴权用户。
 - 目标 Chat 处于 `active` 状态。
 - 目标 Agent 未归档且绑定了 Runtime。
-- 源任务的顶层 human originator 有权触发目标 Agent；private/public-to 规则继续使用现有 `canInvokeAgent` 判定。
+- 鉴权用户有权触发目标 Agent；private/public-to 规则继续使用现有 `canInvokeAgent` 判定。
+
+Task Token 还必须满足：源任务是 `running` 或 `dispatched` 状态的 Chat Task；目标 Chat 不是源 Chat；源任务的持久化顶层 human originator 是权限判断和目标任务的用户来源。
 
 ### 成功结果
 
@@ -122,17 +126,19 @@ multica_mcp_chat_send:
 
 ### 写入语义
 
-- 复用 `TaskService.SendDirectChatMessageWithContext`（现有 direct-send 原子事务的带上下文入口），目标 task、`role=user` 的 Chat message、message-task 绑定和 session touch 在同一事务内提交。
+- PAT 分支复用 `TaskService.SendDirectChatMessage`，以鉴权用户作为 initiator 和 `member` uploader，不伪造源 Agent 或源 Task。
+- Task Token 分支复用 `TaskService.SendDirectChatMessageWithContext`（现有 direct-send 原子事务的带上下文入口），以源 Agent 作为 uploader，并继承源任务的 human originator。
+- 两个分支都在同一事务内提交目标 Task、`role=user` 的 Chat message、message-task 绑定和 session touch。
 - 事务提交后才广播 `task:queued` 并唤醒 Runtime。
-- Chat WebSocket 消息的 actor 是源 Agent，目标 task 的 human originator 继承自源任务。
-- 目标 task context 持久化 `mcp_forwarded_from_task_id`、`mcp_forwarded_from_chat_session_id` 和 `mcp_forwarded_from_agent_id`，用于跨 Chat 追溯来源；这些字段不包含 token。
+- PAT 分支的 Chat WebSocket actor 是鉴权 member，目标 Task 不写入 Task-to-Task 来源字段。
+- Task Token 分支的 Chat WebSocket actor 是源 Agent；目标 Task context 持久化 `mcp_forwarded_from_task_id`、`mcp_forwarded_from_chat_session_id` 和 `mcp_forwarded_from_agent_id`，用于跨 Chat 追溯来源；这些字段不包含 token。
 - V1 工具明确标记 `idempotentHint=false`。客户端在超时后无条件重试可能产生重复消息；加入持久化 idempotency key 属于后续协议版本，不能在未升级协议前假设幂等。
 
 ### 失败语义
 
 - HTTP 鉴权、release flag、Origin 和协议版本错误使用对应的 `4xx/503`。
 - JSON-RPC 结构、方法名和参数错误使用 JSON-RPC error。
-- 已通过协议校验、但源任务或目标 Chat 不满足业务约束时，返回 MCP tool result `isError=true`，不创建目标消息或任务。
+- 已通过协议校验、但 PAT 用户、源任务（仅 Task Token）或目标 Chat 不满足业务约束时，返回 MCP tool result `isError=true`，不创建目标消息或任务。
 - 内部数据库错误只返回通用失败信息，详细错误仅写服务端日志且不包含 token。
 
 ## 6. 客户端配置边界与兼容
@@ -148,5 +154,6 @@ Multica 只提供服务端 endpoint，不拥有 Client 的 MCP 配置：
 
 | 日期 | 变更 | 原因 |
 |---|---|---|
+| 2026-08-07 | 增加 `mul_` PAT 鉴权；PAT 以用户成员身份继续已有 Chat，`mat_` Task Token 继续保留 A→B 固定任务身份和来源追溯。 | 支持 Qoder、Claude Code 使用已有个人令牌显式接入，同时不扩大运行中 Agent 的最小权限边界。 |
 | 2026-08-07 | 移除 task claim 对 Multica MCP 的自动注入，保留服务端 endpoint、鉴权和工具能力。 | 自动改写沙箱 MCP 配置会影响现有 Runtime 启动；服务端能力发布不应让沙箱默认安装或使用。 |
 | 2026-08-06 | 新增 Multica 自托管 Streamable HTTP MCP 与 `chat_send_message`，并在 claim 后以任务令牌动态注入。 | 让 Chat A 能把回答转交给已有 Chat B 并触发后续执行，同时把迭代和发布控制留在服务端，避免为新增 CLI 命令强制滚动 Agent 镜像。 |
