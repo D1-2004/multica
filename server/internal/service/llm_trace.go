@@ -4,16 +4,22 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const (
+	LLMTraceCapability       = "llm_trace_v1"
 	llmTraceEnabledEnvKey   = "MULTICA_LLM_TRACE_ENABLED"
 	llmTraceSinkURLEnvKey   = "MULTICA_LLM_TRACE_SINK_URL"
 	llmTraceTokenEnvKey     = "MULTICA_LLM_TRACE_TOKEN"
 	llmTraceExpiresAtEnvKey = "MULTICA_LLM_TRACE_EXPIRES_AT"
 )
 
-func llmTraceEnv(runtimeConfig []byte, taskContext []byte) map[string]string {
+func llmTraceEnv(runtime db.AgentRuntime, runtimeConfig []byte, taskContext []byte) map[string]string {
+	if !CloudSandboxRuntimeHasCapability(runtime, LLMTraceCapability) {
+		return nil
+	}
 	var config struct {
 		LLMTrace struct {
 			Enabled bool   `json:"enabled"`
