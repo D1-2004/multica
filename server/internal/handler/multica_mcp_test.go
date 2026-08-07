@@ -48,6 +48,16 @@ func mcpRequest(t *testing.T, method string, id any, params any) *http.Request {
 	return r
 }
 
+func personalMCPRequest(t *testing.T, method string, id any, params any) *http.Request {
+	t.Helper()
+	r := mcpRequest(t, method, id, params)
+	r.Header.Del("X-Actor-Source")
+	r.Header.Del("X-Agent-ID")
+	r.Header.Del("X-Task-ID")
+	r.Header.Set("Authorization", "Bearer mul_test_personal_access_token")
+	return r
+}
+
 func decodeMCPResponse(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 	var got map[string]any
@@ -113,8 +123,8 @@ func TestMulticaMCPToolsListPublishesChatAndSelfDigitalEmployeeActions(t *testin
 		if _, exists := properties["workspace_id"]; exists {
 			t.Fatalf("%s exposes caller-controlled workspace_id", wantName)
 		}
-		if _, exists := properties["agent_id"]; exists {
-			t.Fatalf("%s exposes caller-controlled agent_id", wantName)
+		if _, exists := properties["agent_id"]; !exists {
+			t.Fatalf("%s does not expose the PAT Agent selector", wantName)
 		}
 	}
 	description, _ := tools[0].(map[string]any)["description"].(string)
@@ -164,14 +174,23 @@ func TestMulticaMCPTransportAndJSONRPCFailures(t *testing.T) {
 	})
 }
 
-func TestMulticaMCPRequiresTaskTokenActorAndReleaseFlag(t *testing.T) {
-	t.Run("human actor", func(t *testing.T) {
+func TestMulticaMCPRequiresSupportedBearerAndReleaseFlag(t *testing.T) {
+	t.Run("JWT or cookie-shaped human actor", func(t *testing.T) {
 		h := testMulticaMCPHandler(t, true)
 		r := mcpRequest(t, "tools/list", 1, nil)
 		r.Header.Del("X-Actor-Source")
 		w := httptest.NewRecorder()
 		h.MulticaMCP(w, r)
 		if w.Code != http.StatusForbidden {
+			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("personal access token", func(t *testing.T) {
+		h := testMulticaMCPHandler(t, true)
+		w := httptest.NewRecorder()
+		h.MulticaMCP(w, personalMCPRequest(t, "tools/list", 1, nil))
+		if w.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 		}
 	})
@@ -315,6 +334,115 @@ func TestMulticaMCPDigitalEmployeeGetPinsTaskAgentAndUsesHumanOriginator(t *test
 	}
 }
 
+func TestMulticaMCPPersonalTokenBindingUsesSelectedAgent(t *testing.T) {
+	workspaceID := util.MustParseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	agentID := util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	userID := util.MustParseUUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+	service := &fakeMulticaMCPBindingService{getResult: agentmessagerouter.DirectDigitalEmployeeBinding{
+		WorkspaceID: util.UUIDToString(workspaceID), AgentID: util.UUIDToString(agentID),
+		Status: "active", RouterBindingStatus: "valid", RetryStatus: "not_required",
+	}}
+	h := testMulticaMCPHandler(t, true)
+	h.DigitalEmployeeBindingMCPBindings = service
+	h.dingTalkAccountBindingMetadata = &beginBindingMetadataDB{
+		agent: db.Agent{
+			ID: agentID, WorkspaceID: workspaceID, OwnerID: userID,
+			Name: "Agent A", PermissionMode: "private",
+		},
+		workspace: db.Workspace{ID: workspaceID, Name: "Workspace A"},
+	}
+	h.dingTalkAccountBindingPermissions = &fakeDingTalkAccountBindingPermissionStore{
+		member: db.Member{UserID: userID, WorkspaceID: workspaceID, Role: "member"},
+	}
+	r := personalMCPRequest(t, "tools/call", "binding-get-pat", map[string]any{
+		"name": multicaMCPBindingGetTool,
+		"arguments": map[string]any{
+			"agent_id": util.UUIDToString(agentID),
+		},
+	})
+	r.Header.Set("X-User-ID", util.UUIDToString(userID))
+	r.Header.Set("X-Workspace-ID", util.UUIDToString(workspaceID))
+	w := httptest.NewRecorder()
+
+	h.MulticaMCP(w, r)
+
+	if w.Code != http.StatusOK || service.getCalls != 1 ||
+		service.getWorkspace != workspaceID || service.getAgent != agentID {
+		t.Fatalf("status=%d calls=%d workspace=%v agent=%v body=%s", w.Code, service.getCalls, service.getWorkspace, service.getAgent, w.Body.String())
+	}
+	result := decodeMCPResponse(t, w)["result"].(map[string]any)
+	if isError, _ := result["isError"].(bool); isError {
+		t.Fatalf("tools/call returned error: %#v", result)
+	}
+}
+
+func TestMulticaMCPPersonalTokenBindingRequiresAgent(t *testing.T) {
+	h := testMulticaMCPHandler(t, true)
+	h.DigitalEmployeeBindingMCPBindings = &fakeMulticaMCPBindingService{}
+	w := httptest.NewRecorder()
+	h.MulticaMCP(w, personalMCPRequest(t, "tools/call", "binding-get-pat-missing-agent", map[string]any{
+		"name":      multicaMCPBindingGetTool,
+		"arguments": map[string]any{},
+	}))
+
+	result := decodeMCPResponse(t, w)["result"].(map[string]any)
+	if isError, _ := result["isError"].(bool); !isError {
+		t.Fatalf("expected tool error, got %#v", result)
+	}
+	content := result["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(content, "agent_id is required") {
+		t.Fatalf("content=%q", content)
+	}
+}
+
+func TestMulticaMCPTaskTokenBindingRejectsDifferentAgent(t *testing.T) {
+	workspaceID := util.MustParseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	taskAgentID := util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	requestedAgentID := util.MustParseUUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+	originatorID := util.MustParseUUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+	taskID := util.MustParseUUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+	service := &fakeMulticaMCPBindingService{}
+	h := testMulticaMCPHandler(t, true)
+	h.DigitalEmployeeBindingMCPBindings = service
+	h.multicaMCPBindingTasks = &fakeMulticaMCPTaskStore{task: db.AgentTaskQueue{
+		ID: taskID, AgentID: taskAgentID, Status: "running", OriginatorUserID: originatorID,
+	}}
+	h.dingTalkAccountBindingMetadata = &beginBindingMetadataDB{
+		agent: db.Agent{
+			ID: taskAgentID, WorkspaceID: workspaceID, OwnerID: originatorID,
+			Name: "Task Agent", PermissionMode: "private",
+		},
+		workspace: db.Workspace{ID: workspaceID, Name: "Workspace A"},
+	}
+	h.dingTalkAccountBindingPermissions = &fakeDingTalkAccountBindingPermissionStore{
+		member: db.Member{UserID: originatorID, WorkspaceID: workspaceID, Role: "member"},
+	}
+	r := mcpRequest(t, "tools/call", "binding-get-task-agent-switch", map[string]any{
+		"name": multicaMCPBindingGetTool,
+		"arguments": map[string]any{
+			"agent_id": util.UUIDToString(requestedAgentID),
+		},
+	})
+	r.Header.Set("X-Workspace-ID", util.UUIDToString(workspaceID))
+	r.Header.Set("X-Agent-ID", util.UUIDToString(taskAgentID))
+	r.Header.Set("X-Task-ID", util.UUIDToString(taskID))
+	w := httptest.NewRecorder()
+
+	h.MulticaMCP(w, r)
+
+	if service.getCalls != 0 {
+		t.Fatalf("binding service called %d times", service.getCalls)
+	}
+	result := decodeMCPResponse(t, w)["result"].(map[string]any)
+	if isError, _ := result["isError"].(bool); !isError {
+		t.Fatalf("expected tool error, got %#v", result)
+	}
+	content := result["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(content, "cannot select a different Agent") {
+		t.Fatalf("content=%q", content)
+	}
+}
+
 func TestMulticaMCPDigitalEmployeeMutationsApplySafeDefaultsAndOriginator(t *testing.T) {
 	workspaceID := util.MustParseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	agentID := util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
@@ -392,6 +520,94 @@ func TestMulticaMCPDigitalEmployeeMutationsApplySafeDefaultsAndOriginator(t *tes
 		service.unbindParams.AgentID != agentID ||
 		service.unbindParams.BindingMode != agentmessagerouter.BindingModeMessage {
 		t.Fatalf("unbind calls=%d params=%#v body=%s", service.unbindCalls, service.unbindParams, unbindResponse.Body.String())
+	}
+}
+
+func TestMulticaMCPPersonalTokenChatSendDoesNotRequireSourceTask(t *testing.T) {
+	h := testMulticaMCPHandler(t, true)
+	r := personalMCPRequest(t, "tools/call", "chat-pat-no-source-task", map[string]any{
+		"name": multicaMCPChatSendTool,
+		"arguments": map[string]any{
+			"session_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			"content":    "continue the existing Chat",
+		},
+	})
+	r.Header.Set("X-User-ID", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	r.Header.Set("X-Workspace-ID", "cccccccc-cccc-cccc-cccc-cccccccccccc")
+	w := httptest.NewRecorder()
+
+	h.MulticaMCP(w, r)
+
+	result := decodeMCPResponse(t, w)["result"].(map[string]any)
+	if isError, _ := result["isError"].(bool); !isError {
+		t.Fatalf("expected missing test backend to return a tool error, got %#v", result)
+	}
+	content := result["content"].([]any)[0].(map[string]any)["text"].(string)
+	if strings.Contains(content, "source task") {
+		t.Fatalf("personal access token unexpectedly required a source task: %q", content)
+	}
+}
+
+func TestMulticaMCPPersonalTokenChatSendUsesMemberIdentity(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	withFeatureFlag(t, testHandler, featureflags.MulticaMCPChatSend, true)
+	ctx := context.Background()
+	targetAgentID := createHandlerTestAgent(t, "MCP PAT target agent", nil)
+	targetSessionID := createHandlerTestChatSession(t, targetAgentID)
+
+	r := personalMCPRequest(t, "tools/call", "chat-pat-member", map[string]any{
+		"name": multicaMCPChatSendTool,
+		"arguments": map[string]any{
+			"session_id": targetSessionID,
+			"content":    "PAT user continues this Chat",
+		},
+	})
+	r.Header.Set("X-User-ID", testUserID)
+	r.Header.Set("X-Workspace-ID", testWorkspaceID)
+	r = withChatTestWorkspaceCtx(t, r)
+	w := httptest.NewRecorder()
+
+	testHandler.MulticaMCP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("tools/call status=%d body=%s", w.Code, w.Body.String())
+	}
+	result := decodeMCPResponse(t, w)["result"].(map[string]any)
+	if isError, _ := result["isError"].(bool); isError {
+		t.Fatalf("tools/call returned tool error: %#v", result)
+	}
+	structured := result["structuredContent"].(map[string]any)
+	if structured["session_id"] != targetSessionID || structured["task_id"] == "" || structured["message_id"] == "" {
+		t.Fatalf("structuredContent=%#v", structured)
+	}
+
+	var content, role, taskID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT content, role, task_id::text
+		FROM chat_message
+		WHERE id = $1 AND chat_session_id = $2
+	`, structured["message_id"], targetSessionID).Scan(&content, &role, &taskID); err != nil {
+		t.Fatalf("load PAT message: %v", err)
+	}
+	if content != "PAT user continues this Chat" || role != "user" || taskID != structured["task_id"] {
+		t.Fatalf("PAT message content=%q role=%q task=%q", content, role, taskID)
+	}
+	var taskContext []byte
+	if err := testPool.QueryRow(ctx, `SELECT context FROM agent_task_queue WHERE id = $1`, structured["task_id"]).Scan(&taskContext); err != nil {
+		t.Fatalf("load PAT target task context: %v", err)
+	}
+	if len(taskContext) > 0 {
+		var got map[string]any
+		if err := json.Unmarshal(taskContext, &got); err != nil {
+			t.Fatalf("decode PAT target task context: %v", err)
+		}
+		if got[multicaMCPForwardedFromTaskContextKey] != nil ||
+			got[multicaMCPForwardedFromSessionContextKey] != nil ||
+			got[multicaMCPForwardedFromAgentContextKey] != nil {
+			t.Fatalf("PAT task must not carry task-to-task provenance: %#v", got)
+		}
 	}
 }
 
