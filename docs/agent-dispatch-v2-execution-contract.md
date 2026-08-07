@@ -148,6 +148,42 @@ Outbound selection is independent of source type and surface. Issue plus DWS,
 chat plus DWS, Issue plus robot SDK, and chat plus robot SDK remain valid
 compositions subject to the command's ordinary validation.
 
+## LLM telemetry and terminal summary
+
+`completionCallback` may carry a task-scoped telemetry capability in addition
+to its existing terminal and update callback paths:
+
+```json
+{
+  "url": "/api/v1/dispatch-tasks/dispatch-1/execution-result",
+  "updateUrl": "/api/v1/dispatch-tasks/dispatch-1/execution-update",
+  "telemetryUrl": "https://router.example.test/api/v1/dispatch-tasks/dispatch-1/llm-traces",
+  "telemetryToken": "opaque-task-write-capability",
+  "telemetryExpiresAt": 1786377600000
+}
+```
+
+The telemetry fields are optional as a group. When present, the URL must be an
+absolute HTTPS URL without user info, query, or fragment; all three callback
+paths must identify the same Router dispatch task. The token is an opaque
+Bearer value and `telemetryExpiresAt` is Unix epoch milliseconds. Multica
+stores the capability only in private task context and passes it to the cloud
+sandbox through task execution environment values. It is not written to task
+content, response payloads, command arguments, or logs.
+
+Agent `runtime_config.llm_trace.enabled` remains the delivery switch. A complete
+Router telemetry capability overrides the Agent's configured static sink for
+that task. A static sink remains backward compatible without a Router token;
+the Router token is never sent to that sink. Missing or disabled configuration
+produces no trace delivery.
+
+The terminal `execution-result` request now also accepts an optional
+`executionSummary`. Multica freezes the same task timing, usage, message/tool
+counts, and runtime/sandbox shape exposed by its task summary endpoint into the
+completion outbox in the terminal transaction. Every retry sends that immutable
+snapshot, allowing Router to persist Agent environment data without making a
+post-terminal summary/messages request back to Multica.
+
 ## History
 
 - 2026-07-22: Separated surface, authenticated principal, prompt projection,
@@ -271,3 +307,11 @@ parsing or rewriting Router's context string.
 - Reason: Rolling deployments must preserve complete prompt behavior while old
   runtime images still ignore `instruction`, without mixing legacy policy into
   new images or duplicating instructions.
+
+## Change record: 2026-08-07 LLM trace observability
+
+- History: Added the optional task-scoped LLM telemetry URL/token/expiry
+  callback and the optional immutable `executionSummary` terminal payload.
+- Reason: The sandbox needs a narrow, expiring write target for paired model
+  traffic, while Router needs Agent environment data without a post-terminal
+  pull whose runtime snapshot may already have changed or expired.

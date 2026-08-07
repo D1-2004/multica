@@ -58,9 +58,12 @@ type issueDelegationPrivateContext struct {
 	IdempotencyKey                string                        `json:"dispatch_idempotency_key"`
 
 	CompletionCallback *struct {
-		URL       string `json:"url"`
-		UpdateURL string `json:"update_url"`
-		Target    string `json:"target"`
+		URL                string `json:"url"`
+		UpdateURL          string `json:"update_url"`
+		TelemetryURL       string `json:"telemetry_url"`
+		TelemetryToken     string `json:"telemetry_token"`
+		TelemetryExpiresAt int64  `json:"telemetry_expires_at"`
+		Target             string `json:"target"`
 	} `json:"completion_callback,omitempty"`
 }
 
@@ -162,9 +165,12 @@ func delegatedIssueDispatch(
 	command.ExternalIdentity.ExpiresAt = private.IdentityContextTokenExpiresAt
 	if private.CompletionCallback != nil {
 		command.CompletionCallback = &DispatchCompletionCallback{
-			URL:       private.CompletionCallback.URL,
-			UpdateURL: private.CompletionCallback.UpdateURL,
-			Target:    private.CompletionCallback.Target,
+			URL:                private.CompletionCallback.URL,
+			UpdateURL:          private.CompletionCallback.UpdateURL,
+			TelemetryURL:       private.CompletionCallback.TelemetryURL,
+			TelemetryToken:     private.CompletionCallback.TelemetryToken,
+			TelemetryExpiresAt: private.CompletionCallback.TelemetryExpiresAt,
+			Target:             private.CompletionCallback.Target,
 		}
 	}
 	if strings.TrimSpace(private.SchemaVersion) == "" {

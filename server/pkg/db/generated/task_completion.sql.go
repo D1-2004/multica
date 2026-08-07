@@ -35,7 +35,7 @@ SET lease_token = gen_random_uuid(),
     updated_at = now()
 FROM candidate
 WHERE completion.id = candidate.id
-RETURNING completion.id, completion.root_task_id, completion.terminal_task_id, completion.callback_url, completion.target_identity, completion.request_id, completion.agent_id, completion.external_session_id, completion.execution_status, completion.result_message, completion.error, completion.failure_reason, completion.status, completion.available_at, completion.attempt_count, completion.lease_token, completion.lease_expires_at, completion.last_error, completion.delivered_at, completion.created_at, completion.updated_at
+RETURNING completion.id, completion.root_task_id, completion.terminal_task_id, completion.callback_url, completion.target_identity, completion.request_id, completion.agent_id, completion.external_session_id, completion.execution_status, completion.result_message, completion.error, completion.failure_reason, completion.status, completion.available_at, completion.attempt_count, completion.lease_token, completion.lease_expires_at, completion.last_error, completion.delivered_at, completion.created_at, completion.updated_at, completion.execution_summary
 `
 
 func (q *Queries) ClaimTaskCompletion(ctx context.Context, workerTargetIdentity string) (TaskCompletionOutbox, error) {
@@ -63,6 +63,7 @@ func (q *Queries) ClaimTaskCompletion(ctx context.Context, workerTargetIdentity 
 		&i.DeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExecutionSummary,
 	)
 	return i, err
 }
@@ -78,7 +79,7 @@ SET status = 'delivered',
 WHERE id = $1
   AND lease_token = $2
   AND status = 'queued'
-RETURNING id, root_task_id, terminal_task_id, callback_url, target_identity, request_id, agent_id, external_session_id, execution_status, result_message, error, failure_reason, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at
+RETURNING id, root_task_id, terminal_task_id, callback_url, target_identity, request_id, agent_id, external_session_id, execution_status, result_message, error, failure_reason, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at, execution_summary
 `
 
 type CompleteTaskCompletionParams struct {
@@ -111,6 +112,7 @@ func (q *Queries) CompleteTaskCompletion(ctx context.Context, arg CompleteTaskCo
 		&i.DeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExecutionSummary,
 	)
 	return i, err
 }
@@ -126,7 +128,7 @@ SET status = 'dead_letter',
 WHERE id = $1
   AND lease_token = $2
   AND status = 'queued'
-RETURNING id, root_task_id, terminal_task_id, callback_url, target_identity, request_id, agent_id, external_session_id, execution_status, result_message, error, failure_reason, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at
+RETURNING id, root_task_id, terminal_task_id, callback_url, target_identity, request_id, agent_id, external_session_id, execution_status, result_message, error, failure_reason, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at, execution_summary
 `
 
 type DeadLetterTaskCompletionParams struct {
@@ -160,6 +162,7 @@ func (q *Queries) DeadLetterTaskCompletion(ctx context.Context, arg DeadLetterTa
 		&i.DeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExecutionSummary,
 	)
 	return i, err
 }
@@ -190,7 +193,7 @@ WHERE existing.root_task_id IS NULL
   AND existing.result_message = EXCLUDED.result_message
   AND existing.error IS NOT DISTINCT FROM EXCLUDED.error
   AND existing.failure_reason IS NOT DISTINCT FROM EXCLUDED.failure_reason
-RETURNING id, root_task_id, terminal_task_id, callback_url, target_identity, request_id, agent_id, external_session_id, execution_status, result_message, error, failure_reason, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at
+RETURNING id, root_task_id, terminal_task_id, callback_url, target_identity, request_id, agent_id, external_session_id, execution_status, result_message, error, failure_reason, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at, execution_summary
 `
 
 type EnqueueSynchronousTaskCompletionParams struct {
@@ -234,6 +237,7 @@ func (q *Queries) EnqueueSynchronousTaskCompletion(ctx context.Context, arg Enqu
 		&i.DeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExecutionSummary,
 	)
 	return i, err
 }
@@ -249,14 +253,16 @@ INSERT INTO task_completion_outbox AS existing (
     external_session_id,
     execution_status,
     result_message,
+    execution_summary,
     error,
     failure_reason
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $9,
     $7, $8,
-    $10,
-    $11
+    COALESCE($10::jsonb, '{}'::jsonb),
+    $11,
+    $12
 )
 ON CONFLICT (root_task_id) DO UPDATE
 SET updated_at = existing.updated_at
@@ -268,9 +274,10 @@ WHERE existing.terminal_task_id = EXCLUDED.terminal_task_id
   AND existing.external_session_id IS NOT DISTINCT FROM EXCLUDED.external_session_id
   AND existing.execution_status = EXCLUDED.execution_status
   AND existing.result_message = EXCLUDED.result_message
+  AND existing.execution_summary = EXCLUDED.execution_summary
   AND existing.error IS NOT DISTINCT FROM EXCLUDED.error
   AND existing.failure_reason IS NOT DISTINCT FROM EXCLUDED.failure_reason
-RETURNING id, root_task_id, terminal_task_id, callback_url, target_identity, request_id, agent_id, external_session_id, execution_status, result_message, error, failure_reason, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at
+RETURNING id, root_task_id, terminal_task_id, callback_url, target_identity, request_id, agent_id, external_session_id, execution_status, result_message, error, failure_reason, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at, execution_summary
 `
 
 type EnqueueTaskCompletionParams struct {
@@ -283,6 +290,7 @@ type EnqueueTaskCompletionParams struct {
 	ExecutionStatus   string      `json:"execution_status"`
 	ResultMessage     string      `json:"result_message"`
 	ExternalSessionID pgtype.Text `json:"external_session_id"`
+	ExecutionSummary  []byte      `json:"execution_summary"`
 	Error             pgtype.Text `json:"error"`
 	FailureReason     pgtype.Text `json:"failure_reason"`
 }
@@ -298,6 +306,7 @@ func (q *Queries) EnqueueTaskCompletion(ctx context.Context, arg EnqueueTaskComp
 		arg.ExecutionStatus,
 		arg.ResultMessage,
 		arg.ExternalSessionID,
+		arg.ExecutionSummary,
 		arg.Error,
 		arg.FailureReason,
 	)
@@ -324,6 +333,7 @@ func (q *Queries) EnqueueTaskCompletion(ctx context.Context, arg EnqueueTaskComp
 		&i.DeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExecutionSummary,
 	)
 	return i, err
 }
@@ -368,7 +378,7 @@ func (q *Queries) GetLastTaskReplyText(ctx context.Context, id pgtype.UUID) (pgt
 }
 
 const getTaskCompletionByRequestID = `-- name: GetTaskCompletionByRequestID :one
-SELECT id, root_task_id, terminal_task_id, callback_url, target_identity, request_id, agent_id, external_session_id, execution_status, result_message, error, failure_reason, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at
+SELECT id, root_task_id, terminal_task_id, callback_url, target_identity, request_id, agent_id, external_session_id, execution_status, result_message, error, failure_reason, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at, execution_summary
 FROM task_completion_outbox
 WHERE request_id = $1
 `
@@ -398,6 +408,7 @@ func (q *Queries) GetTaskCompletionByRequestID(ctx context.Context, requestID st
 		&i.DeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExecutionSummary,
 	)
 	return i, err
 }
@@ -673,7 +684,7 @@ SET available_at = $3,
 WHERE id = $1
   AND lease_token = $2
   AND status = 'queued'
-RETURNING id, root_task_id, terminal_task_id, callback_url, target_identity, request_id, agent_id, external_session_id, execution_status, result_message, error, failure_reason, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at
+RETURNING id, root_task_id, terminal_task_id, callback_url, target_identity, request_id, agent_id, external_session_id, execution_status, result_message, error, failure_reason, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at, execution_summary
 `
 
 type RetryTaskCompletionParams struct {
@@ -713,6 +724,7 @@ func (q *Queries) RetryTaskCompletion(ctx context.Context, arg RetryTaskCompleti
 		&i.DeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExecutionSummary,
 	)
 	return i, err
 }

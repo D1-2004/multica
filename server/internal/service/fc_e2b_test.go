@@ -1112,6 +1112,16 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	if env[llmTraceEnabledEnvKey] != "true" || env[llmTraceSinkURLEnvKey] != "https://trace.example.test/ingest" {
 		t.Fatalf("LLM trace env = %#v", env)
 	}
+	task.Context = []byte(`{"completion_callback":{"telemetry_url":"https://router.example.test/api/v1/dispatch-tasks/task-1/llm-traces","telemetry_token":"task-capability","telemetry_expires_at":1786377600000}}`)
+	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-router-llm-trace")
+	if err != nil {
+		t.Fatalf("extraEnvForTask with Router LLM trace returned error: %v", err)
+	}
+	if env[llmTraceSinkURLEnvKey] != "https://router.example.test/api/v1/dispatch-tasks/task-1/llm-traces" ||
+		env[llmTraceTokenEnvKey] != "task-capability" || env[llmTraceExpiresAtEnvKey] != "1786377600000" {
+		t.Fatalf("Router LLM trace env = %#v", env)
+	}
+	task.Context = nil
 
 	if _, err := pool.Exec(ctx, `UPDATE agent SET model = 'qwen3.7-plus' WHERE id = $1`, agentID); err != nil {
 		t.Fatalf("save selected FC model: %v", err)
