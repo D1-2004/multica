@@ -27,6 +27,8 @@ const (
 	multicaMCPBindingGetTool        = "get_digital_employee_binding"
 	multicaMCPBindingBindTool       = "bind_digital_employee_to_multica_agent"
 	multicaMCPBindingUnbindTool     = "unbind_digital_employee"
+	multicaMCPAgentSearchTool       = "search_agents"
+	multicaMCPAgentListTool         = "list_agents"
 	multicaMCPMaxRequestBytes       = 1 << 20
 	multicaMCPPersonalTokenPrefix   = "mul_"
 	multicaMCPForwardedFromTaskContextKey    = "mcp_forwarded_from_task_id"
@@ -57,6 +59,18 @@ const multicaMCPBindingUnbindToolDescription = `Conditionally unbind a Multica A
 With a personal access token, supply agent_id for an Agent the authenticated member may manage and invoke. With a task token, the target is fixed to the authenticated task Agent.
 
 Router ownership is checked authoritatively before Multica clears its local projection.`
+
+const multicaMCPAgentSearchToolDescription = `Search active Multica Agents by a case-insensitive name substring and return their detailed, non-secret metadata.
+
+With a personal access token, the search spans every Workspace of the authenticated user but only returns Agents that user may view. With a task token, the search is limited to the authenticated task Workspace.
+
+Workspace context is derived server-side. MCP configuration, environment values, runtime credentials, and other secret-bearing fields are never returned.`
+
+const multicaMCPAgentListToolDescription = `List all active Multica Agents available to the authenticated caller and return their detailed, non-secret metadata.
+
+With a personal access token, the result spans every Workspace of the authenticated user but only includes Agents that user may view. With a task token, the result is limited to the authenticated task Workspace.
+
+Workspace context is derived server-side. MCP configuration, environment values, runtime credentials, and other secret-bearing fields are never returned.`
 
 type multicaMCPRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -115,8 +129,56 @@ type multicaMCPAgentArguments struct {
 	AgentID string `json:"agent_id"`
 }
 
+type multicaMCPAgentSearchArguments struct {
+	Keyword string `json:"keyword"`
+}
+
+type multicaMCPAgentInfo struct {
+	ID                 string                     `json:"id"`
+	WorkspaceID        string                     `json:"workspace_id"`
+	WorkspaceName      string                     `json:"workspace_name"`
+	WorkspaceSlug      string                     `json:"workspace_slug"`
+	Name               string                     `json:"name"`
+	Description        string                     `json:"description"`
+	Instructions       string                     `json:"instructions"`
+	AvatarURL          *string                    `json:"avatar_url"`
+	RuntimeID          string                     `json:"runtime_id"`
+	RuntimeMode        string                     `json:"runtime_mode"`
+	Status             string                     `json:"status"`
+	PermissionMode     string                     `json:"permission_mode"`
+	Visibility         string                     `json:"visibility"`
+	InvocationTargets  []AgentInvocationTargetDTO `json:"invocation_targets"`
+	OwnerID            *string                    `json:"owner_id"`
+	MaxConcurrentTasks int32                      `json:"max_concurrent_tasks"`
+	Model              string                     `json:"model"`
+	ThinkingLevel      string                     `json:"thinking_level"`
+	CreatedAt          string                     `json:"created_at"`
+	UpdatedAt          string                     `json:"updated_at"`
+}
+
+type multicaMCPAgentQueryResult struct {
+	Agents []multicaMCPAgentInfo `json:"agents"`
+	Count  int                   `json:"count"`
+}
+
 type multicaMCPBindingTaskStore interface {
 	GetAgentTaskInWorkspace(context.Context, db.GetAgentTaskInWorkspaceParams) (db.AgentTaskQueue, error)
+}
+
+type multicaMCPAgentStore interface {
+	GetAgent(context.Context, pgtype.UUID) (db.Agent, error)
+}
+
+type multicaMCPWorkspaceMemberStore interface {
+	GetMemberByUserAndWorkspace(context.Context, db.GetMemberByUserAndWorkspaceParams) (db.Member, error)
+}
+
+type multicaMCPAgentQueryStore interface {
+	ListWorkspaces(context.Context, pgtype.UUID) ([]db.Workspace, error)
+	GetWorkspace(context.Context, pgtype.UUID) (db.Workspace, error)
+	ListAgents(context.Context, pgtype.UUID) ([]db.Agent, error)
+	GetMemberByUserAndWorkspace(context.Context, db.GetMemberByUserAndWorkspaceParams) (db.Member, error)
+	ListAgentInvocationTargetsByAgentIDs(context.Context, []pgtype.UUID) ([]db.AgentInvocationTarget, error)
 }
 
 type DigitalEmployeeBindingMCPService interface {
@@ -211,9 +273,10 @@ func multicaMCPTaskTokenAuthenticated(r *http.Request) bool {
 }
 
 func multicaMCPPersonalTokenAuthenticated(r *http.Request) bool {
-	// The route is behind Auth and workspace membership middleware. Auth has
-	// already validated the mul_ credential, stripped any caller-supplied
-	// X-Actor-Source, and stamped X-User-ID before this discriminator runs.
+	// The route is behind Auth. Auth has already validated the mul_ credential,
+	// stripped any caller-supplied X-Actor-Source, and stamped X-User-ID before
+	// this discriminator runs. Each write derives its workspace from the target
+	// resource and enforces membership inside the business authorization gate.
 	if r.Header.Get("X-Actor-Source") != "" || strings.TrimSpace(r.Header.Get("X-User-ID")) == "" {
 		return false
 	}
@@ -227,6 +290,56 @@ func multicaMCPToolDefinitions() []any {
 		multicaMCPBindingGetDefinition(),
 		multicaMCPBindingBindDefinition(),
 		multicaMCPBindingUnbindDefinition(),
+		multicaMCPAgentSearchDefinition(),
+		multicaMCPAgentListDefinition(),
+	}
+}
+
+func multicaMCPAgentSearchDefinition() map[string]any {
+	return map[string]any{
+		"name":        multicaMCPAgentSearchTool,
+		"title":       "Search Multica Agents by name",
+		"description": multicaMCPAgentSearchToolDescription,
+		"inputSchema": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"keyword": map[string]any{"type": "string", "minLength": 1, "description": "Case-insensitive substring to match against Agent names."},
+			},
+			"required": []string{"keyword"},
+		},
+		"outputSchema": multicaMCPAgentQueryOutputSchema(),
+		"annotations": map[string]any{
+			"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false,
+		},
+	}
+}
+
+func multicaMCPAgentListDefinition() map[string]any {
+	return map[string]any{
+		"name":        multicaMCPAgentListTool,
+		"title":       "List Multica Agents",
+		"description": multicaMCPAgentListToolDescription,
+		"inputSchema": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties":           map[string]any{},
+		},
+		"outputSchema": multicaMCPAgentQueryOutputSchema(),
+		"annotations": map[string]any{
+			"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false,
+		},
+	}
+}
+
+func multicaMCPAgentQueryOutputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"agents": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+			"count":  map[string]any{"type": "integer", "minimum": 0},
+		},
+		"required": []string{"agents", "count"},
 	}
 }
 
@@ -408,6 +521,10 @@ func (h *Handler) handleMulticaMCPToolsCall(w http.ResponseWriter, r *http.Reque
 		h.handleMulticaMCPDigitalEmployeeCall(w, r, req.ID, params.Name, params.Arguments)
 		return
 	}
+	if params.Name == multicaMCPAgentSearchTool || params.Name == multicaMCPAgentListTool {
+		h.handleMulticaMCPAgentCall(w, r, req.ID, params.Name, params.Arguments)
+		return
+	}
 	if params.Name != multicaMCPChatSendTool {
 		h.writeMulticaMCPError(w, req.ID, -32602, "unknown tool")
 		return
@@ -447,6 +564,184 @@ func (h *Handler) handleMulticaMCPToolsCall(w http.ResponseWriter, r *http.Reque
 		Content:           []multicaMCPContent{{Type: "text", Text: string(textResult)}},
 		StructuredContent: result,
 	})
+}
+
+func (h *Handler) handleMulticaMCPAgentCall(
+	w http.ResponseWriter,
+	r *http.Request,
+	id json.RawMessage,
+	toolName string,
+	rawArguments json.RawMessage,
+) {
+	keyword := ""
+	if toolName == multicaMCPAgentSearchTool {
+		var args multicaMCPAgentSearchArguments
+		if err := decodeMulticaMCPArguments(rawArguments, &args); err != nil {
+			h.writeMulticaMCPError(w, id, -32602, "invalid search_agents arguments")
+			return
+		}
+		keyword = strings.TrimSpace(args.Keyword)
+		if keyword == "" {
+			h.writeMulticaMCPError(w, id, -32602, "keyword is required")
+			return
+		}
+	} else {
+		var args struct{}
+		if err := decodeMulticaMCPArguments(rawArguments, &args); err != nil {
+			h.writeMulticaMCPError(w, id, -32602, "invalid list_agents arguments")
+			return
+		}
+	}
+
+	result, err := h.callMulticaMCPAgentQuery(r, keyword)
+	if err != nil {
+		var toolErr *multicaMCPToolCallError
+		if !errors.As(err, &toolErr) {
+			slog.Error("Multica MCP Agent query failed", "tool", toolName, "source_task_id", r.Header.Get("X-Task-ID"), "error", err)
+			toolErr = &multicaMCPToolCallError{message: "failed to query Agents"}
+		}
+		h.writeMulticaMCPToolError(w, id, toolErr.message)
+		return
+	}
+	payload, _ := json.Marshal(result)
+	h.writeMulticaMCPResult(w, id, multicaMCPToolResult{
+		Content:           []multicaMCPContent{{Type: "text", Text: string(payload)}},
+		StructuredContent: result,
+	})
+}
+
+func (h *Handler) callMulticaMCPAgentQuery(r *http.Request, keyword string) (multicaMCPAgentQueryResult, error) {
+	store := h.multicaMCPAgents
+	if store == nil {
+		store = h.Queries
+	}
+	if store == nil {
+		return multicaMCPAgentQueryResult{}, &multicaMCPToolCallError{message: "Agent query service is unavailable"}
+	}
+
+	type scopedWorkspace struct {
+		workspace db.Workspace
+		member    *db.Member
+	}
+	var scopes []scopedWorkspace
+	if multicaMCPTaskTokenAuthenticated(r) {
+		workspaceID, err := util.ParseUUID(strings.TrimSpace(r.Header.Get("X-Workspace-ID")))
+		if err != nil {
+			return multicaMCPAgentQueryResult{}, &multicaMCPToolCallError{message: "authenticated workspace is invalid"}
+		}
+		workspace, err := store.GetWorkspace(r.Context(), workspaceID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return multicaMCPAgentQueryResult{}, &multicaMCPToolCallError{message: "authenticated workspace was not found"}
+		}
+		if err != nil {
+			return multicaMCPAgentQueryResult{}, err
+		}
+		scopes = append(scopes, scopedWorkspace{workspace: workspace})
+	} else {
+		userID, err := util.ParseUUID(strings.TrimSpace(r.Header.Get("X-User-ID")))
+		if err != nil {
+			return multicaMCPAgentQueryResult{}, &multicaMCPToolCallError{message: "authenticated user is invalid"}
+		}
+		workspaces, err := store.ListWorkspaces(r.Context(), userID)
+		if err != nil {
+			return multicaMCPAgentQueryResult{}, err
+		}
+		for _, workspace := range workspaces {
+			member, err := store.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
+				UserID: userID, WorkspaceID: workspace.ID,
+			})
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return multicaMCPAgentQueryResult{}, err
+			}
+			scopes = append(scopes, scopedWorkspace{workspace: workspace, member: &member})
+		}
+	}
+
+	needle := strings.ToLower(keyword)
+	result := multicaMCPAgentQueryResult{Agents: []multicaMCPAgentInfo{}}
+	for _, scope := range scopes {
+		agents, err := store.ListAgents(r.Context(), scope.workspace.ID)
+		if err != nil {
+			return multicaMCPAgentQueryResult{}, err
+		}
+		targetsByAgent, err := multicaMCPAgentTargetsByAgent(r.Context(), store, agents)
+		if err != nil {
+			return multicaMCPAgentQueryResult{}, err
+		}
+		for _, agent := range agents {
+			targets := targetsByAgent[uuidToString(agent.ID)]
+			if scope.member != nil && !memberAllowedToViewAgent(agent, targets, strings.TrimSpace(r.Header.Get("X-User-ID")), scope.member.Role) {
+				continue
+			}
+			if needle != "" && !strings.Contains(strings.ToLower(agent.Name), needle) {
+				continue
+			}
+			result.Agents = append(result.Agents, multicaMCPAgentInfoFrom(agent, scope.workspace, targets))
+		}
+	}
+	result.Count = len(result.Agents)
+	return result, nil
+}
+
+func multicaMCPAgentTargetsByAgent(
+	ctx context.Context,
+	store multicaMCPAgentQueryStore,
+	agents []db.Agent,
+) (map[string][]db.AgentInvocationTarget, error) {
+	ids := make([]pgtype.UUID, 0, len(agents))
+	for _, agent := range agents {
+		ids = append(ids, agent.ID)
+	}
+	result := make(map[string][]db.AgentInvocationTarget, len(agents))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	targets, err := store.ListAgentInvocationTargetsByAgentIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, target := range targets {
+		agentID := uuidToString(target.AgentID)
+		result[agentID] = append(result[agentID], target)
+	}
+	return result, nil
+}
+
+func multicaMCPAgentInfoFrom(agent db.Agent, workspace db.Workspace, targets []db.AgentInvocationTarget) multicaMCPAgentInfo {
+	invocationTargets := make([]AgentInvocationTargetDTO, 0, len(targets))
+	for _, target := range targets {
+		var targetID *string
+		if target.TargetID.Valid {
+			id := uuidToString(target.TargetID)
+			targetID = &id
+		}
+		invocationTargets = append(invocationTargets, AgentInvocationTargetDTO{TargetType: target.TargetType, TargetID: targetID})
+	}
+	return multicaMCPAgentInfo{
+		ID:                 uuidToString(agent.ID),
+		WorkspaceID:        uuidToString(agent.WorkspaceID),
+		WorkspaceName:      workspace.Name,
+		WorkspaceSlug:      workspace.Slug,
+		Name:               agent.Name,
+		Description:        agent.Description,
+		Instructions:       agent.Instructions,
+		AvatarURL:          textToPtr(agent.AvatarUrl),
+		RuntimeID:          uuidToString(agent.RuntimeID),
+		RuntimeMode:        agent.RuntimeMode,
+		Status:             agent.Status,
+		PermissionMode:     agent.PermissionMode,
+		Visibility:         deriveLegacyVisibility(agent.PermissionMode, targets),
+		InvocationTargets:  invocationTargets,
+		OwnerID:            uuidToPtr(agent.OwnerID),
+		MaxConcurrentTasks: agent.MaxConcurrentTasks,
+		Model:              agent.Model.String,
+		ThinkingLevel:      agent.ThinkingLevel.String,
+		CreatedAt:          timestampToString(agent.CreatedAt),
+		UpdatedAt:          timestampToString(agent.UpdatedAt),
+	}
 }
 
 func (h *Handler) handleMulticaMCPDigitalEmployeeCall(
@@ -557,18 +852,25 @@ func (h *Handler) handleMulticaMCPDigitalEmployeeCall(
 }
 
 func (h *Handler) resolveMulticaMCPBindingIdentity(r *http.Request, requestedAgentID string) (multicaMCPBindingIdentity, error) {
-	workspaceID := ctxWorkspaceID(r.Context())
-	if workspaceID == "" {
-		workspaceID = strings.TrimSpace(r.Header.Get("X-Workspace-ID"))
-	}
-	workspaceUUID, err := util.ParseUUID(workspaceID)
-	if err != nil {
-		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "authenticated workspace is invalid"}
-	}
 	requestedAgentID = strings.TrimSpace(requestedAgentID)
+	metadataStore := h.dingTalkAccountBindingMetadata
+	if metadataStore == nil {
+		metadataStore = h.Queries
+	}
+	if metadataStore == nil {
+		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "Digital employee binding is not configured"}
+	}
+	var workspaceUUID pgtype.UUID
 	var agentUUID pgtype.UUID
 	var originator pgtype.UUID
+	var agent db.Agent
+	var err error
 	if multicaMCPTaskTokenAuthenticated(r) {
+		workspaceID := strings.TrimSpace(r.Header.Get("X-Workspace-ID"))
+		workspaceUUID, err = util.ParseUUID(workspaceID)
+		if err != nil {
+			return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "authenticated workspace is invalid"}
+		}
 		taskUUID, err := util.ParseUUID(strings.TrimSpace(r.Header.Get("X-Task-ID")))
 		if err != nil {
 			return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "authenticated source task is invalid"}
@@ -622,17 +924,24 @@ func (h *Handler) resolveMulticaMCPBindingIdentity(r *http.Request, requestedAge
 		if err != nil {
 			return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "authenticated user is invalid"}
 		}
+		agentStore, ok := metadataStore.(multicaMCPAgentStore)
+		if !ok {
+			return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "Digital employee binding is not configured"}
+		}
+		agent, err = agentStore.GetAgent(r.Context(), agentUUID)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && agent.Kind != "user") {
+			return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "authenticated Agent was not found"}
+		}
+		if err != nil {
+			return multicaMCPBindingIdentity{}, err
+		}
+		workspaceUUID = agent.WorkspaceID
 	}
-	metadataStore := h.dingTalkAccountBindingMetadata
-	if metadataStore == nil {
-		metadataStore = h.Queries
+	if !agent.ID.Valid {
+		agent, err = metadataStore.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+			ID: agentUUID, WorkspaceID: workspaceUUID,
+		})
 	}
-	if metadataStore == nil {
-		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "Digital employee binding is not configured"}
-	}
-	agent, err := metadataStore.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-		ID: agentUUID, WorkspaceID: workspaceUUID,
-	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return multicaMCPBindingIdentity{}, &multicaMCPToolCallError{message: "authenticated Agent was not found"}
 	}
@@ -710,6 +1019,22 @@ func (h *Handler) writeMulticaMCPToolError(w http.ResponseWriter, id json.RawMes
 	})
 }
 
+func validateMulticaMCPWorkspaceMember(
+	ctx context.Context,
+	store multicaMCPWorkspaceMemberStore,
+	userID, workspaceID pgtype.UUID,
+) error {
+	if store == nil {
+		return &multicaMCPToolCallError{message: "workspace membership service is unavailable"}
+	}
+	if _, err := store.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+		UserID: userID, WorkspaceID: workspaceID,
+	}); err != nil {
+		return &multicaMCPToolCallError{message: "authenticated user is not a member of the target workspace"}
+	}
+	return nil
+}
+
 func (h *Handler) callMulticaMCPChatSend(r *http.Request, args multicaMCPChatSendArguments) (multicaMCPChatSendResult, error) {
 	if multicaMCPPersonalTokenAuthenticated(r) {
 		return h.callMulticaMCPPersonalChatSend(r, args)
@@ -718,14 +1043,6 @@ func (h *Handler) callMulticaMCPChatSend(r *http.Request, args multicaMCPChatSen
 }
 
 func (h *Handler) callMulticaMCPPersonalChatSend(r *http.Request, args multicaMCPChatSendArguments) (multicaMCPChatSendResult, error) {
-	workspaceID := ctxWorkspaceID(r.Context())
-	if workspaceID == "" {
-		workspaceID = strings.TrimSpace(r.Header.Get("X-Workspace-ID"))
-	}
-	workspaceUUID, err := util.ParseUUID(workspaceID)
-	if err != nil {
-		return multicaMCPChatSendResult{}, &multicaMCPToolCallError{message: "authenticated workspace is invalid"}
-	}
 	userID := strings.TrimSpace(r.Header.Get("X-User-ID"))
 	userUUID, err := util.ParseUUID(userID)
 	if err != nil {
@@ -738,10 +1055,7 @@ func (h *Handler) callMulticaMCPPersonalChatSend(r *http.Request, args multicaMC
 	if h.Queries == nil || h.TaskService == nil {
 		return multicaMCPChatSendResult{}, &multicaMCPToolCallError{message: "target Chat service is unavailable"}
 	}
-	targetSession, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
-		ID:          targetSessionUUID,
-		WorkspaceID: workspaceUUID,
-	})
+	targetSession, err := h.Queries.GetChatSession(r.Context(), targetSessionUUID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return multicaMCPChatSendResult{}, &multicaMCPToolCallError{message: "target Chat was not found"}
 	}
@@ -750,6 +1064,10 @@ func (h *Handler) callMulticaMCPPersonalChatSend(r *http.Request, args multicaMC
 	}
 	if targetSession.CreatorID != userUUID {
 		return multicaMCPChatSendResult{}, &multicaMCPToolCallError{message: "target Chat is not owned by the authenticated user"}
+	}
+	workspaceUUID := targetSession.WorkspaceID
+	if err := validateMulticaMCPWorkspaceMember(r.Context(), h.Queries, userUUID, workspaceUUID); err != nil {
+		return multicaMCPChatSendResult{}, err
 	}
 	if targetSession.Status != "active" {
 		return multicaMCPChatSendResult{}, &multicaMCPToolCallError{message: "target Chat is archived"}
@@ -869,6 +1187,13 @@ func (h *Handler) callMulticaMCPTaskChatSend(r *http.Request, args multicaMCPCha
 	taskOwnerID := strings.TrimSpace(r.Header.Get("X-User-ID"))
 	if taskOwnerID == "" || uuidToString(targetSession.CreatorID) != taskOwnerID {
 		return multicaMCPChatSendResult{}, &multicaMCPToolCallError{message: "target Chat is not owned by the authenticated task owner"}
+	}
+	taskOwnerUUID, err := util.ParseUUID(taskOwnerID)
+	if err != nil {
+		return multicaMCPChatSendResult{}, &multicaMCPToolCallError{message: "authenticated task owner is invalid"}
+	}
+	if err := validateMulticaMCPWorkspaceMember(r.Context(), h.Queries, taskOwnerUUID, workspaceUUID); err != nil {
+		return multicaMCPChatSendResult{}, err
 	}
 	if targetSession.Status != "active" {
 		return multicaMCPChatSendResult{}, &multicaMCPToolCallError{message: "target Chat is archived"}

@@ -1,6 +1,6 @@
 # Multica 自托管 MCP：Chat 续写协议
 
-本文定义 Multica 服务端自托管 MCP 的 Chat 续写协议。它既支持用户从本机 MCP Client 以个人身份继续一个已有 Chat，也支持正在执行的 Chat A 把消息发送到已有 Chat B 并触发 B 的 Agent 继续执行；Agent 侧不需要新增 `multica` CLI 命令，也不依赖第三方 MCP 托管。
+本文定义 Multica 服务端自托管 MCP 的 Chat 续写和 Agent 查询协议。它既支持用户从本机 MCP Client 以个人身份继续一个已有 Chat，也支持正在执行的 Chat A 把消息发送到已有 Chat B 并触发 B 的 Agent 继续执行，还提供受权限约束的 Agent 发现能力；Agent 侧不需要新增 `multica` CLI 命令，也不依赖第三方 MCP 托管。
 
 Qoder、Claude Code 的安装配置、task token 限制和使用示例见 [Multica MCP 客户端接入指南](multica-mcp-client-setup.md)。数字员工绑定工具的服务端契约见 [Native MCP Direct Binding Contract](dingtalk-account-binding-router-contract.md#native-mcp-direct-binding-contract)。
 
@@ -8,7 +8,7 @@ Qoder、Claude Code 的安装配置、task token 限制和使用示例见 [Multi
 
 Multica API 同时承担 MCP Server 和业务服务角色：
 
-1. 本机 Qoder、Claude Code 等显式接入的 Client 使用已有的 `mul_` PAT，并通过 `X-Workspace-ID` 选择当前工作区。
+1. 本机 Codex、Qoder、Claude Code 等显式接入的 Client 使用已有的 `mul_` PAT；客户端不传 Workspace header。
 2. Chat A 的任务被 Runtime claim 时，Multica 服务端生成已有的任务令牌 `mat_...`；该 token 固定绑定用户、Agent、Task 和 Workspace。
 3. MCP Client 由使用方显式配置为连接 `https://<multica-api>/api/mcp`；Multica 不改写 claim 返回的 `mcp_config`，也不让沙箱默认使用该 MCP。
 4. 调用 `chat_send_message` 时，PAT 分支以用户成员身份继续其已有 Chat；Task Token 分支核验源任务并保留 A→B 来源。两者都复用现有原子 Chat 发送事务创建消息和目标任务。
@@ -35,7 +35,7 @@ multica_mcp_chat_send:
 显式接入还必须满足以下条件：
 
 - 调用方能够访问 Multica API 的 `/api/mcp` 地址。
-- 调用方本身支持 Streamable HTTP MCP，并显式传入 `mul_` PAT 或当前任务的 `mat_` 令牌；PAT 还必须传当前环境的 `X-Workspace-ID`。
+- 调用方本身支持 Streamable HTTP MCP，并显式传入 `mul_` PAT 或当前任务的 `mat_` 令牌。
 - 沙箱和 Agent 的既有 `mcp_config` 保持不变；是否安装和使用 Multica MCP 由调用方负责，不能依赖 claim 自动注入。
 
 建议滚动顺序：先发布服务端且保持 flag 关闭，确认 API 与数据库基线正常，再开启 flag。开启或关闭 flag 都不会改变沙箱启动配置；已经排队的目标 Chat 任务是正常业务数据，不会因关 flag 被删除。
@@ -65,8 +65,7 @@ multica_mcp_chat_send:
       "type": "http",
       "url": "https://api.example.com/api/mcp",
       "headers": {
-        "Authorization": "Bearer mul_<redacted>",
-        "X-Workspace-ID": "<workspace-uuid>"
+        "Authorization": "Bearer mul_<redacted>"
       }
     }
   }
@@ -76,7 +75,8 @@ multica_mcp_chat_send:
 安全规则：
 
 - 接受 Auth middleware 已验证的 `mul_` Personal Access Token 和标记为 `X-Actor-Source: task_token` 的 `mat_` Task Token；普通登录 Cookie、JWT 或其他 bearer 不能进入 MCP handler。
-- PAT 分支的 `X-User-ID` 由 Auth middleware 按 token row 写入；客户端必须选择 `X-Workspace-ID`，外层 workspace middleware 会验证用户确实是成员。
+- PAT 分支的 `X-User-ID` 由 Auth middleware 按 token row 写入。Chat 根据 `session_id`、数字员工工具根据 `agent_id` 反查 Workspace，再由业务权限门校验 PAT 用户仍是成员。
+- Agent 查询不接收 Workspace 参数。PAT 查询遍历该用户仍有成员关系的 Workspace，并复用现有 Agent 可见性规则；Task Token 查询固定在 token 的 Workspace。
 - Task Token 分支的 `X-User-ID`、`X-Agent-ID`、`X-Task-ID`、`X-Workspace-ID` 均由服务端根据 token row 覆盖，客户端自报值不是授权依据。
 - token 不放入 URL、工具参数、日志或工具返回值。
 - Task Token 分支会重新查询源任务，核验源 Agent、源任务和 workspace 一致；PAT 分支按用户身份核验 Chat 所有权和目标 Agent invoke 权限。
@@ -141,7 +141,56 @@ Task Token 还必须满足：源任务是 `running` 或 `dispatched` 状态的 C
 - 已通过协议校验、但 PAT 用户、源任务（仅 Task Token）或目标 Chat 不满足业务约束时，返回 MCP tool result `isError=true`，不创建目标消息或任务。
 - 内部数据库错误只返回通用失败信息，详细错误仅写服务端日志且不包含 token。
 
-## 6. 客户端配置边界与兼容
+## 6. Tools：`search_agents` 与 `list_agents`
+
+`search_agents` 按 Agent 名称做忽略大小写的包含匹配：
+
+```json
+{
+  "keyword": "探针"
+}
+```
+
+`keyword` trim 后必须非空。`list_agents` 不接收业务参数，输入为 `{}`。
+
+两个工具都只返回未归档的用户 Agent，结果结构一致：
+
+```json
+{
+  "agents": [
+    {
+      "id": "<agent-uuid>",
+      "workspace_id": "<workspace-uuid>",
+      "workspace_name": "Workspace A",
+      "workspace_slug": "workspace-a",
+      "name": "Agent name",
+      "description": "...",
+      "instructions": "...",
+      "avatar_url": null,
+      "runtime_id": "<runtime-uuid>",
+      "runtime_mode": "local",
+      "status": "idle",
+      "permission_mode": "private",
+      "visibility": "private",
+      "invocation_targets": [],
+      "owner_id": "<user-uuid>",
+      "max_concurrent_tasks": 1,
+      "model": "",
+      "thinking_level": "",
+      "created_at": "<RFC3339 timestamp>",
+      "updated_at": "<RFC3339 timestamp>"
+    }
+  ],
+  "count": 1
+}
+```
+
+- PAT：跨该用户的全部 Workspace 查询，但普通成员只能看到自己拥有或 invocation allow-list 允许查看的 Agent；Workspace owner/admin 沿用现有治理视图，可看到该 Workspace 的全部活跃 Agent。
+- Task Token：只查询 token 固定的 Workspace，并沿用现有 Agent actor 的 Workspace 内协作可见性。
+- 两个工具都是只读、幂等工具，不返回 `mcp_config`、`custom_env`、`custom_args`、`runtime_config`、Composio allow-list 或任何凭据。
+- `structuredContent` 和 `content[0].text` 返回同一份结果，兼容不同 MCP Client。
+
+## 7. 客户端配置边界与兼容
 
 Multica 只提供服务端 endpoint，不拥有 Client 的 MCP 配置：
 
@@ -154,6 +203,8 @@ Multica 只提供服务端 endpoint，不拥有 Client 的 MCP 配置：
 
 | 日期 | 变更 | 原因 |
 |---|---|---|
+| 2026-08-07 | 新增 `search_agents` 和 `list_agents`，由服务端推导 Workspace，并按 PAT 用户可见性或 Task Token Workspace 返回非敏感 Agent 详情。 | 让通用 MCP Client 能先通过名称找到 Agent UUID、查看 Agent 元数据，再调用绑定或 Chat 等后续工具，同时避免重新引入客户端 Workspace header 或泄露 Agent 配置凭据。 |
+| 2026-08-07 | PAT 客户端不再传 Workspace header；服务端从目标 Chat 或 Agent 反查 Workspace 并校验成员关系。 | Streamable HTTP Client 的连接初始化不携带业务资源，要求全局 Workspace header 会阻断 Codex 等通用客户端；资源级解析同时避免多 Workspace 用户产生默认选择歧义。 |
 | 2026-08-07 | 增加 `mul_` PAT 鉴权；PAT 以用户成员身份继续已有 Chat，`mat_` Task Token 继续保留 A→B 固定任务身份和来源追溯。 | 支持 Qoder、Claude Code 使用已有个人令牌显式接入，同时不扩大运行中 Agent 的最小权限边界。 |
 | 2026-08-07 | 移除 task claim 对 Multica MCP 的自动注入，保留服务端 endpoint、鉴权和工具能力。 | 自动改写沙箱 MCP 配置会影响现有 Runtime 启动；服务端能力发布不应让沙箱默认安装或使用。 |
 | 2026-08-06 | 新增 Multica 自托管 Streamable HTTP MCP 与 `chat_send_message`，并在 claim 后以任务令牌动态注入。 | 让 Chat A 能把回答转交给已有 Chat B 并触发后续执行，同时把迭代和发布控制留在服务端，避免为新增 CLI 命令强制滚动 Agent 镜像。 |

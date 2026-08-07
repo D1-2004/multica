@@ -715,12 +715,13 @@ digital-employee actions:
 The MCP client never supplies `workspace_id`, a Router binding token, or a
 dispatch target. With a `mul_` Personal Access Token, the caller must supply
 `agent_id`; Multica uses the authenticated PAT user as initiator and verifies
-that the Agent belongs to the authenticated Workspace. With a `mat_` Task
-Token, `agent_id` is omitted and Multica fixes the target to the persisted
-Agent of the server-authenticated active task; an explicitly different Agent
-is rejected. Both modes retain the same Agent manage-plus-invoke permission
-rule as the browser flow. The PAT user or Task's persisted human originator is
-the authorization principal, never a caller-supplied user identifier.
+the Agent's persisted Workspace membership without accepting a Workspace
+header. With a `mat_` Task Token, `agent_id` is omitted and Multica fixes the
+target to the persisted Agent of the server-authenticated active task; an
+explicitly different Agent is rejected. Both modes retain the same Agent
+manage-plus-invoke permission rule as the browser flow. The PAT user or Task's
+persisted human originator is the authorization principal, never a
+caller-supplied user identifier.
 
 The bind tool accepts the `tenant_id` and `digital_employee_id` returned by the
 DWS digital-employee creation flow, plus optional processing surface, message
@@ -778,6 +779,8 @@ account key remain local-only and can still be revoked without a Router call.
 
 ## 2026-08-07 Native MCP Direct Binding Change History
 
+- Removed the PAT client's Workspace header; the selected Agent row now owns
+  Workspace resolution before member and manage-plus-invoke authorization.
 - Added `mul_` PAT support. PAT callers select `agent_id` within the
   authenticated Workspace; Task Token callers remain pinned to the task Agent.
 - Added task-scoped query, bind, and unbind tools to the existing `/api/mcp`

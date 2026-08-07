@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/featureflags"
@@ -54,6 +55,7 @@ func personalMCPRequest(t *testing.T, method string, id any, params any) *http.R
 	r.Header.Del("X-Actor-Source")
 	r.Header.Del("X-Agent-ID")
 	r.Header.Del("X-Task-ID")
+	r.Header.Del("X-Workspace-ID")
 	r.Header.Set("Authorization", "Bearer mul_test_personal_access_token")
 	return r
 }
@@ -107,6 +109,8 @@ func TestMulticaMCPToolsListPublishesChatAndSelfDigitalEmployeeActions(t *testin
 		"get_digital_employee_binding",
 		"bind_digital_employee_to_multica_agent",
 		"unbind_digital_employee",
+		"search_agents",
+		"list_agents",
 	}
 	if len(tools) != len(wantNames) {
 		t.Fatalf("tools=%#v", tools)
@@ -116,7 +120,7 @@ func TestMulticaMCPToolsListPublishesChatAndSelfDigitalEmployeeActions(t *testin
 		if tool["name"] != wantName {
 			t.Fatalf("tool[%d].name=%#v want %q", index, tool["name"], wantName)
 		}
-		if wantName == multicaMCPChatSendTool {
+		if wantName == multicaMCPChatSendTool || wantName == multicaMCPAgentSearchTool || wantName == multicaMCPAgentListTool {
 			continue
 		}
 		properties := tool["inputSchema"].(map[string]any)["properties"].(map[string]any)
@@ -130,6 +134,168 @@ func TestMulticaMCPToolsListPublishesChatAndSelfDigitalEmployeeActions(t *testin
 	description, _ := tools[0].(map[string]any)["description"].(string)
 	if !strings.Contains(description, "Authorized server-provided Multica action") {
 		t.Fatalf("tool description does not identify the managed authorization boundary: %q", description)
+	}
+}
+
+type fakeMulticaMCPAgentQueryStore struct {
+	workspaces []db.Workspace
+	agents     map[string][]db.Agent
+	members    map[string]db.Member
+	targets    []db.AgentInvocationTarget
+}
+
+func (f *fakeMulticaMCPAgentQueryStore) ListWorkspaces(context.Context, pgtype.UUID) ([]db.Workspace, error) {
+	return f.workspaces, nil
+}
+
+func (f *fakeMulticaMCPAgentQueryStore) GetWorkspace(_ context.Context, id pgtype.UUID) (db.Workspace, error) {
+	for _, workspace := range f.workspaces {
+		if workspace.ID == id {
+			return workspace, nil
+		}
+	}
+	return db.Workspace{}, pgx.ErrNoRows
+}
+
+func (f *fakeMulticaMCPAgentQueryStore) ListAgents(_ context.Context, workspaceID pgtype.UUID) ([]db.Agent, error) {
+	return f.agents[util.UUIDToString(workspaceID)], nil
+}
+
+func (f *fakeMulticaMCPAgentQueryStore) GetMemberByUserAndWorkspace(
+	_ context.Context,
+	params db.GetMemberByUserAndWorkspaceParams,
+) (db.Member, error) {
+	member, ok := f.members[util.UUIDToString(params.WorkspaceID)]
+	if !ok || member.UserID != params.UserID {
+		return db.Member{}, pgx.ErrNoRows
+	}
+	return member, nil
+}
+
+func (f *fakeMulticaMCPAgentQueryStore) ListAgentInvocationTargetsByAgentIDs(
+	_ context.Context,
+	agentIDs []pgtype.UUID,
+) ([]db.AgentInvocationTarget, error) {
+	wanted := make(map[pgtype.UUID]struct{}, len(agentIDs))
+	for _, agentID := range agentIDs {
+		wanted[agentID] = struct{}{}
+	}
+	var result []db.AgentInvocationTarget
+	for _, target := range f.targets {
+		if _, ok := wanted[target.AgentID]; ok {
+			result = append(result, target)
+		}
+	}
+	return result, nil
+}
+
+func TestMulticaMCPAgentQueriesUsePATVisibilityAcrossWorkspaces(t *testing.T) {
+	userID := util.MustParseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	workspaceA := util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	workspaceB := util.MustParseUUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+	ownedAgent := util.MustParseUUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+	privateAgent := util.MustParseUUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+	sharedAgent := util.MustParseUUID("ffffffff-ffff-ffff-ffff-ffffffffffff")
+	adminVisibleAgent := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
+	otherOwner := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	store := &fakeMulticaMCPAgentQueryStore{
+		workspaces: []db.Workspace{
+			{ID: workspaceA, Name: "Workspace A", Slug: "workspace-a"},
+			{ID: workspaceB, Name: "Workspace B", Slug: "workspace-b"},
+		},
+		agents: map[string][]db.Agent{
+			util.UUIDToString(workspaceA): {
+				{ID: ownedAgent, WorkspaceID: workspaceA, OwnerID: userID, Name: "Alpha Probe", Kind: "user", Status: "idle", PermissionMode: "private", Description: "owned"},
+				{ID: privateAgent, WorkspaceID: workspaceA, OwnerID: otherOwner, Name: "Hidden Probe", Kind: "user", Status: "idle", PermissionMode: "private"},
+				{ID: sharedAgent, WorkspaceID: workspaceA, OwnerID: otherOwner, Name: "Shared PROBE", Kind: "user", Status: "idle", PermissionMode: "public_to"},
+			},
+			util.UUIDToString(workspaceB): {
+				{ID: adminVisibleAgent, WorkspaceID: workspaceB, OwnerID: otherOwner, Name: "Admin Agent", Kind: "user", Status: "idle", PermissionMode: "private"},
+			},
+		},
+		members: map[string]db.Member{
+			util.UUIDToString(workspaceA): {UserID: userID, WorkspaceID: workspaceA, Role: "member"},
+			util.UUIDToString(workspaceB): {UserID: userID, WorkspaceID: workspaceB, Role: "admin"},
+		},
+		targets: []db.AgentInvocationTarget{{AgentID: sharedAgent, TargetType: "member", TargetID: userID}},
+	}
+	h := testMulticaMCPHandler(t, true)
+	h.multicaMCPAgents = store
+
+	listRequest := personalMCPRequest(t, "tools/call", "agent-list", map[string]any{
+		"name": multicaMCPAgentListTool, "arguments": map[string]any{},
+	})
+	listRequest.Header.Set("X-User-ID", util.UUIDToString(userID))
+	listResponse := httptest.NewRecorder()
+	h.MulticaMCP(listResponse, listRequest)
+
+	result := decodeMCPResponse(t, listResponse)["result"].(map[string]any)
+	if isError, _ := result["isError"].(bool); isError {
+		t.Fatalf("list_agents returned error: %#v", result)
+	}
+	agents := result["structuredContent"].(map[string]any)["agents"].([]any)
+	if len(agents) != 3 {
+		t.Fatalf("agents=%#v", agents)
+	}
+	encoded, _ := json.Marshal(agents)
+	text := string(encoded)
+	if strings.Contains(text, util.UUIDToString(privateAgent)) || strings.Contains(text, "mcp_config") || strings.Contains(text, "custom_env") {
+		t.Fatalf("list_agents leaked a hidden Agent or secret-bearing fields: %s", text)
+	}
+	if !strings.Contains(text, `"workspace_name":"Workspace B"`) {
+		t.Fatalf("list_agents omitted workspace detail: %s", text)
+	}
+
+	searchRequest := personalMCPRequest(t, "tools/call", "agent-search", map[string]any{
+		"name": multicaMCPAgentSearchTool, "arguments": map[string]any{"keyword": "probe"},
+	})
+	searchRequest.Header.Set("X-User-ID", util.UUIDToString(userID))
+	searchResponse := httptest.NewRecorder()
+	h.MulticaMCP(searchResponse, searchRequest)
+	searchResult := decodeMCPResponse(t, searchResponse)["result"].(map[string]any)
+	searchAgents := searchResult["structuredContent"].(map[string]any)["agents"].([]any)
+	if len(searchAgents) != 2 {
+		t.Fatalf("search_agents=%#v", searchAgents)
+	}
+}
+
+func TestMulticaMCPAgentQueriesKeepTaskTokenInItsWorkspace(t *testing.T) {
+	workspaceA := util.MustParseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	workspaceB := util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	privateAgent := util.MustParseUUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+	otherAgent := util.MustParseUUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+	h := testMulticaMCPHandler(t, true)
+	h.multicaMCPAgents = &fakeMulticaMCPAgentQueryStore{
+		workspaces: []db.Workspace{{ID: workspaceA, Name: "Workspace A"}, {ID: workspaceB, Name: "Workspace B"}},
+		agents: map[string][]db.Agent{
+			util.UUIDToString(workspaceA): {{ID: privateAgent, WorkspaceID: workspaceA, Name: "Private Peer", Kind: "user", PermissionMode: "private"}},
+			util.UUIDToString(workspaceB): {{ID: otherAgent, WorkspaceID: workspaceB, Name: "Other Workspace", Kind: "user", PermissionMode: "private"}},
+		},
+	}
+	r := mcpRequest(t, "tools/call", "task-agent-list", map[string]any{
+		"name": multicaMCPAgentListTool, "arguments": map[string]any{},
+	})
+	r.Header.Set("X-Workspace-ID", util.UUIDToString(workspaceA))
+	w := httptest.NewRecorder()
+	h.MulticaMCP(w, r)
+
+	result := decodeMCPResponse(t, w)["result"].(map[string]any)
+	agents := result["structuredContent"].(map[string]any)["agents"].([]any)
+	if len(agents) != 1 || agents[0].(map[string]any)["id"] != util.UUIDToString(privateAgent) {
+		t.Fatalf("task-token agents=%#v", agents)
+	}
+}
+
+func TestMulticaMCPSearchAgentsRequiresKeyword(t *testing.T) {
+	h := testMulticaMCPHandler(t, true)
+	w := httptest.NewRecorder()
+	h.MulticaMCP(w, personalMCPRequest(t, "tools/call", "agent-search-empty", map[string]any{
+		"name": multicaMCPAgentSearchTool, "arguments": map[string]any{"keyword": "  "},
+	}))
+
+	got := decodeMCPResponse(t, w)
+	if got["error"].(map[string]any)["code"] != float64(-32602) {
+		t.Fatalf("response=%#v", got)
 	}
 }
 
@@ -347,7 +513,7 @@ func TestMulticaMCPPersonalTokenBindingUsesSelectedAgent(t *testing.T) {
 	h.dingTalkAccountBindingMetadata = &beginBindingMetadataDB{
 		agent: db.Agent{
 			ID: agentID, WorkspaceID: workspaceID, OwnerID: userID,
-			Name: "Agent A", PermissionMode: "private",
+			Name: "Agent A", PermissionMode: "private", Kind: "user",
 		},
 		workspace: db.Workspace{ID: workspaceID, Name: "Workspace A"},
 	}
@@ -361,7 +527,6 @@ func TestMulticaMCPPersonalTokenBindingUsesSelectedAgent(t *testing.T) {
 		},
 	})
 	r.Header.Set("X-User-ID", util.UUIDToString(userID))
-	r.Header.Set("X-Workspace-ID", util.UUIDToString(workspaceID))
 	w := httptest.NewRecorder()
 
 	h.MulticaMCP(w, r)
@@ -392,6 +557,21 @@ func TestMulticaMCPPersonalTokenBindingRequiresAgent(t *testing.T) {
 	content := result["content"].([]any)[0].(map[string]any)["text"].(string)
 	if !strings.Contains(content, "agent_id is required") {
 		t.Fatalf("content=%q", content)
+	}
+}
+
+func TestMulticaMCPWorkspaceMembershipFailsClosed(t *testing.T) {
+	userID := util.MustParseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	workspaceID := util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	allowed := &fakeDingTalkAccountBindingPermissionStore{
+		member: db.Member{UserID: userID, WorkspaceID: workspaceID, Role: "member"},
+	}
+	if err := validateMulticaMCPWorkspaceMember(context.Background(), allowed, userID, workspaceID); err != nil {
+		t.Fatalf("valid member rejected: %v", err)
+	}
+	removed := &fakeDingTalkAccountBindingPermissionStore{memberErr: pgx.ErrNoRows}
+	if err := validateMulticaMCPWorkspaceMember(context.Background(), removed, userID, workspaceID); err == nil {
+		t.Fatal("removed workspace member was accepted")
 	}
 }
 
@@ -533,7 +713,6 @@ func TestMulticaMCPPersonalTokenChatSendDoesNotRequireSourceTask(t *testing.T) {
 		},
 	})
 	r.Header.Set("X-User-ID", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
-	r.Header.Set("X-Workspace-ID", "cccccccc-cccc-cccc-cccc-cccccccccccc")
 	w := httptest.NewRecorder()
 
 	h.MulticaMCP(w, r)
@@ -543,8 +722,8 @@ func TestMulticaMCPPersonalTokenChatSendDoesNotRequireSourceTask(t *testing.T) {
 		t.Fatalf("expected missing test backend to return a tool error, got %#v", result)
 	}
 	content := result["content"].([]any)[0].(map[string]any)["text"].(string)
-	if strings.Contains(content, "source task") {
-		t.Fatalf("personal access token unexpectedly required a source task: %q", content)
+	if strings.Contains(content, "source task") || strings.Contains(content, "workspace") {
+		t.Fatalf("personal access token unexpectedly required task or workspace context: %q", content)
 	}
 }
 
@@ -565,8 +744,6 @@ func TestMulticaMCPPersonalTokenChatSendUsesMemberIdentity(t *testing.T) {
 		},
 	})
 	r.Header.Set("X-User-ID", testUserID)
-	r.Header.Set("X-Workspace-ID", testWorkspaceID)
-	r = withChatTestWorkspaceCtx(t, r)
 	w := httptest.NewRecorder()
 
 	testHandler.MulticaMCP(w, r)

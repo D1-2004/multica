@@ -301,6 +301,7 @@ type Handler struct {
 	dingTalkAccountBindingMetadata    dingTalkAccountBindingMetadataStore
 	dingTalkAccountBindingPermissions agentInvocationPermissionStore
 	multicaMCPBindingTasks            multicaMCPBindingTaskStore
+	multicaMCPAgents                  multicaMCPAgentQueryStore
 	// LarkOAuth resolves Feishu login codes for POST /auth/lark. Production
 	// prefers the private channel agent (LARK_AGENT_BASE_URL) so the app
 	// secret stays outside this backend; the direct client remains available
