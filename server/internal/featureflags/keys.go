@@ -22,10 +22,9 @@ const (
 	// WorkspaceAccessTokens gates issuance and use of workspace-bound DTA
 	// credentials during the additive-schema / rolling-server rollout.
 	WorkspaceAccessTokens = "workspace_access_tokens"
-	// MulticaMCPChatSend gates both claim-time discovery and execution of the
-	// server-hosted MCP tool that lets one running Chat task continue another
-	// existing Chat. It defaults off so operators can roll the server before
-	// enabling the capability for MCP-ready runtimes.
+	// MulticaMCPChatSend gates discovery and execution on the server-hosted MCP
+	// endpoint that lets one running Chat task continue another existing Chat.
+	// Task claim never installs this MCP into a Runtime or Agent configuration.
 	MulticaMCPChatSend = "multica_mcp_chat_send"
 	// agentSkillTogglesCompat is no longer a release flag. Keep publishing the
 	// key as enabled so installed v0.4.0 desktop clients, which still gate the

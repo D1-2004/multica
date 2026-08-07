@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -56,116 +55,6 @@ func decodeMCPResponse(t *testing.T, w *httptest.ResponseRecorder) map[string]an
 		t.Fatalf("decode MCP response: %v; body=%s", err, w.Body.String())
 	}
 	return got
-}
-
-func TestBuildMulticaMCPConfigPreservesExistingServersAndOwnsReservedName(t *testing.T) {
-	existing := json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx"},"multica":{"url":"https://stale.invalid/mcp"}},"experimental":{"keep":true}}`)
-	got, injected, err := buildMulticaMCPConfig(existing, "https://api.multica.test/", "mat_secret")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !injected {
-		t.Fatal("expected Multica MCP config to be injected")
-	}
-	var document map[string]any
-	if err := json.Unmarshal(got, &document); err != nil {
-		t.Fatal(err)
-	}
-	servers := document["mcpServers"].(map[string]any)
-	if servers["fetch"].(map[string]any)["command"] != "uvx" {
-		t.Fatalf("existing server was not preserved: %s", got)
-	}
-	multica := servers["multica"].(map[string]any)
-	if multica["type"] != "http" || multica["url"] != "https://api.multica.test/api/mcp" {
-		t.Fatalf("unexpected Multica server config: %#v", multica)
-	}
-	headers := multica["headers"].(map[string]any)
-	if headers["Authorization"] != "Bearer mat_secret" {
-		t.Fatalf("Authorization header = %#v", headers["Authorization"])
-	}
-	if document["experimental"].(map[string]any)["keep"] != true {
-		t.Fatalf("non-MCP config was not preserved: %s", got)
-	}
-}
-
-func TestBuildMulticaMCPConfigSkipsWithoutPublicURLOrTaskToken(t *testing.T) {
-	existing := json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx"}}}`)
-	for _, tc := range []struct {
-		name      string
-		publicURL string
-		token     string
-	}{
-		{name: "missing public URL", token: "mat_secret"},
-		{name: "missing task token", publicURL: "https://api.multica.test"},
-		{name: "wrong token type", publicURL: "https://api.multica.test", token: "mul_member"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, injected, err := buildMulticaMCPConfig(existing, tc.publicURL, tc.token)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if injected || string(got) != string(existing) {
-				t.Fatalf("got injected=%v config=%s", injected, got)
-			}
-		})
-	}
-}
-
-func TestBuildMulticaMCPConfigAcceptsNullServerMap(t *testing.T) {
-	got, injected, err := buildMulticaMCPConfig(json.RawMessage(`{"mcpServers":null}`), "https://api.multica.test", "mat_secret")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !injected || !bytes.Contains(got, []byte(`"multica"`)) {
-		t.Fatalf("got injected=%v config=%s", injected, got)
-	}
-}
-
-func TestInjectMulticaMCPIntoClaimHonorsFlagURLAndRuntimeCapability(t *testing.T) {
-	request := mcpRequest(t, "tools/list", 1, nil)
-	localRuntime := db.AgentRuntime{RuntimeMode: "local", Provider: "codex"}
-
-	t.Run("enabled local runtime", func(t *testing.T) {
-		h := testMulticaMCPHandler(t, true)
-		resp := AgentTaskResponse{Agent: &TaskAgentData{McpConfig: json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx"}}}`)}}
-		h.injectMulticaMCPIntoClaim(request, &resp, localRuntime, "mat_secret")
-		if !bytes.Contains(resp.Agent.McpConfig, []byte(`"multica"`)) || !bytes.Contains(resp.Agent.McpConfig, []byte(`Bearer mat_secret`)) {
-			t.Fatalf("Multica MCP was not injected: %s", resp.Agent.McpConfig)
-		}
-	})
-
-	t.Run("flag disabled", func(t *testing.T) {
-		h := testMulticaMCPHandler(t, false)
-		resp := AgentTaskResponse{Agent: &TaskAgentData{}}
-		h.injectMulticaMCPIntoClaim(request, &resp, localRuntime, "mat_secret")
-		if len(resp.Agent.McpConfig) != 0 {
-			t.Fatalf("disabled flag injected config: %s", resp.Agent.McpConfig)
-		}
-	})
-
-	t.Run("public URL missing", func(t *testing.T) {
-		h := testMulticaMCPHandler(t, true)
-		h.cfg.PublicURL = ""
-		resp := AgentTaskResponse{Agent: &TaskAgentData{}}
-		h.injectMulticaMCPIntoClaim(request, &resp, localRuntime, "mat_secret")
-		if len(resp.Agent.McpConfig) != 0 {
-			t.Fatalf("missing public URL injected config: %s", resp.Agent.McpConfig)
-		}
-	})
-
-	t.Run("cloud runtime without MCP capability", func(t *testing.T) {
-		h := testMulticaMCPHandler(t, true)
-		runtime := db.AgentRuntime{
-			RuntimeMode: "cloud",
-			Provider:    "codex",
-			Metadata:    []byte(`{"kind":"fc-e2b","provider":"codex","template":"legacy","capabilities":["dws"]}`),
-		}
-		resp := AgentTaskResponse{Agent: &TaskAgentData{}}
-		h.injectMulticaMCPIntoClaim(request, &resp, runtime, "mat_secret")
-		if len(resp.Agent.McpConfig) != 0 {
-			t.Fatalf("non-MCP cloud runtime received config: %s", resp.Agent.McpConfig)
-		}
-	})
 }
 
 func TestMulticaMCPInitialize(t *testing.T) {

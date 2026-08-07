@@ -7,15 +7,15 @@
 Multica API 同时承担 MCP Server 和业务服务角色：
 
 1. Chat A 的任务被 Runtime claim 时，Multica 服务端生成已有的任务令牌 `mat_...`。
-2. 服务端把 `https://<MULTICA_PUBLIC_URL>/api/mcp` 动态合并到该任务的 `mcp_config.mcpServers`。
-3. Runtime 使用现有 managed MCP 配置能力连接 Multica MCP；令牌只放在 `Authorization` 请求头中。
+2. MCP Client 由使用方显式配置为连接 `https://<multica-api>/api/mcp`；Multica 不改写 claim 返回的 `mcp_config`，也不让沙箱默认使用该 MCP。
+3. 显式接入的 Client 使用 claim 返回的任务令牌连接 Multica MCP；令牌只放在 `Authorization` 请求头中。
 4. Agent 调用 `chat_send_message`，Multica 核验源任务和目标 Chat 后，复用现有原子 Chat 发送事务创建消息和目标任务。
 
-这是一条服务端受控能力。工具定义、校验规则和业务行为都随 Multica API 发布；Agent 镜像只需已经具备仓库现有的远程 MCP 客户端能力。
+这是一条服务端受控、客户端显式选择的能力。工具定义、校验规则和业务行为都随 Multica API 发布；部署服务端 MCP 不会改变现有 Agent 或沙箱的启动配置。
 
 ## 2. 发布开关与运行条件
 
-能力默认关闭，由后端 release flag `multica_mcp_chat_send` 同时控制“claim 时发现工具”和“执行工具”两处边界。
+能力默认关闭，由后端 release flag `multica_mcp_chat_send` 控制 `/api/mcp` 的协议发现和工具执行。该开关不修改 task claim 响应。
 
 全局开启：
 
@@ -30,13 +30,13 @@ multica_mcp_chat_send:
   default: true
 ```
 
-还必须满足以下条件：
+显式接入还必须满足以下条件：
 
-- `MULTICA_PUBLIC_URL` 是 Runtime 可访问的 Multica API 绝对地址；未配置时不注入 MCP。
-- FC/E2B、ASB 等不可变 Cloud Sandbox manifest 必须声明 `mcp` capability；旧镜像未声明时不注入。
-- 本地 Runtime 必须已经支持现有 managed `mcp_config` 通道。协议不要求新增 CLI 子命令，但无法让一个本身没有 MCP 客户端的旧 Runtime 获得 MCP 能力。
+- 调用方能够访问 Multica API 的 `/api/mcp` 地址。
+- 调用方本身支持 Streamable HTTP MCP，并显式传入当前任务的 `mat_` 令牌。
+- 沙箱和 Agent 的既有 `mcp_config` 保持不变；是否安装和使用 Multica MCP 由调用方负责，不能依赖 claim 自动注入。
 
-建议滚动顺序：先发布服务端且保持 flag 关闭，确认 API 与数据库基线正常，再开启 flag。回滚时先关闭 flag；已经排队的目标 Chat 任务是正常业务数据，不会因关 flag 被删除。
+建议滚动顺序：先发布服务端且保持 flag 关闭，确认 API 与数据库基线正常，再开启 flag。开启或关闭 flag 都不会改变沙箱启动配置；已经排队的目标 Chat 任务是正常业务数据，不会因关 flag 被删除。
 
 ## 3. MCP 传输协议
 
@@ -54,7 +54,7 @@ multica_mcp_chat_send:
 
 ## 4. 鉴权与安全边界
 
-claim 响应内的 canonical MCP 配置形如：
+显式接入的 MCP Client 配置形如：
 
 ```json
 {
@@ -135,18 +135,18 @@ claim 响应内的 canonical MCP 配置形如：
 - 已通过协议校验、但源任务或目标 Chat 不满足业务约束时，返回 MCP tool result `isError=true`，不创建目标消息或任务。
 - 内部数据库错误只返回通用失败信息，详细错误仅写服务端日志且不包含 token。
 
-## 6. 配置合并与兼容
+## 6. 客户端配置边界与兼容
 
-Multica 使用保留 server name `multica`。claim 时合并遵循：
+Multica 只提供服务端 endpoint，不拥有 Client 的 MCP 配置：
 
-- 保留 Agent 已配置的其他 `mcpServers`。
-- 保留 MCP 文档中非 `mcpServers` 的 provider 扩展字段。
-- 若 Agent 自己配置了同名 `multica`，服务端条目覆盖它，防止把任务令牌发往非 Multica URL。
-- 单任务 claim 与批量 claim 使用完全相同的注入逻辑。
-- flag 关闭、Public URL 缺失、token 不是 `mat_`，或 Cloud Sandbox 未声明 `mcp` capability 时，claim 保持原配置不变。
+- 单任务 claim 和批量 claim 都只返回既有任务令牌，不向 `mcp_config.mcpServers` 增加 `multica`。
+- Agent 已配置的 `mcpServers` 和 provider 扩展字段不会被本功能覆盖。
+- 调用方可以自行使用 `multica` 作为 Client 侧 server name，但必须显式配置可信 URL 和 `Authorization` 请求头。
+- flag 只决定 `/api/mcp` 是否接受调用；关闭 flag 不清理或改写任何 Client、Agent 或沙箱配置。
 
 ## 变更历史
 
 | 日期 | 变更 | 原因 |
 |---|---|---|
+| 2026-08-07 | 移除 task claim 对 Multica MCP 的自动注入，保留服务端 endpoint、鉴权和工具能力。 | 自动改写沙箱 MCP 配置会影响现有 Runtime 启动；服务端能力发布不应让沙箱默认安装或使用。 |
 | 2026-08-06 | 新增 Multica 自托管 Streamable HTTP MCP 与 `chat_send_message`，并在 claim 后以任务令牌动态注入。 | 让 Chat A 能把回答转交给已有 Chat B 并触发后续执行，同时把迭代和发布控制留在服务端，避免为新增 CLI 命令强制滚动 Agent 镜像。 |
