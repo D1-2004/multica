@@ -3,7 +3,6 @@ package service
 import (
 	"encoding/json"
 	"net/url"
-	"strconv"
 	"strings"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -49,15 +48,11 @@ func llmTraceEnv(
 	expiresAt := ""
 	if config.LLMTrace.Enabled {
 		callback := contextPayload.CompletionCallback
-		if strings.TrimSpace(callback.TelemetryURL) != "" &&
-			strings.TrimSpace(callback.TelemetryToken) != "" && callback.TelemetryExpiresAt > 0 {
-			if relayURL := llmTraceRelayURL(relayBaseURL, taskID); relayURL != "" {
-				sinkURL = relayURL
-				token = callback.TelemetryToken
-				expiresAt = strconv.FormatInt(callback.TelemetryExpiresAt, 10)
-			}
-		} else {
-			sinkURL = config.LLMTrace.SinkURL
+		hasRouterTelemetry := strings.TrimSpace(callback.TelemetryURL) != "" &&
+			strings.TrimSpace(callback.TelemetryToken) != "" && callback.TelemetryExpiresAt > 0
+		hasStaticSink := strings.TrimSpace(config.LLMTrace.SinkURL) != ""
+		if hasRouterTelemetry || hasStaticSink {
+			sinkURL = llmTraceRelayURL(relayBaseURL, taskID)
 		}
 		if strings.TrimSpace(sinkURL) != "" {
 			enabled = "true"

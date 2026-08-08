@@ -1944,6 +1944,8 @@ func TestFCE2BWithSandboxRelayToken(t *testing.T) {
 	launcher := &FCE2BLauncher{SandboxRelaySigner: signer}
 	extraEnv := map[string]string{
 		protocol.AgentIdentityContextTokenEnvKey: "identity-context-token",
+		llmTraceEnabledEnvKey:                    "true",
+		llmTraceSinkURLEnvKey:                    "https://multica.example.test/api/daemon/tasks/11111111-1111-1111-1111-111111111111/llm-traces",
 	}
 
 	got, err := launcher.withSandboxRelayToken(
@@ -1960,6 +1962,9 @@ func TestFCE2BWithSandboxRelayToken(t *testing.T) {
 	}
 	if got[protocol.SandboxRelayTokenEnvKey] != "signed-relay-token" {
 		t.Fatalf("unexpected relay token: %q", got[protocol.SandboxRelayTokenEnvKey])
+	}
+	if got[llmTraceTokenEnvKey] != "mdt_daemon-secret" || got[llmTraceExpiresAtEnvKey] != "1785240000000" {
+		t.Fatalf("unexpected LLM trace relay auth: token=%q expires_at=%q", got[llmTraceTokenEnvKey], got[llmTraceExpiresAtEnvKey])
 	}
 	if len(signer.requests) != 1 {
 		t.Fatalf("expected one mint request, got %d", len(signer.requests))

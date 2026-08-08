@@ -30,12 +30,12 @@ func TestLLMTraceEnvUsesAgentRuntimeConfig(t *testing.T) {
 		want          map[string]string
 	}{
 		{
-			name:          "enabled with receiver",
+			name:          "enabled with receiver is relayed through Multica",
 			runtimeConfig: `{"llm_trace":{"enabled":true,"sink_url":"https://trace.example.test/ingest"}}`,
 			taskContext:   `{}`,
 			want: map[string]string{
 				"MULTICA_LLM_TRACE_ENABLED":    "true",
-				"MULTICA_LLM_TRACE_SINK_URL":   "https://trace.example.test/ingest",
+				"MULTICA_LLM_TRACE_SINK_URL":   "https://pre-fde-workbench.example.test/api/daemon/tasks/11111111-1111-1111-1111-111111111111/llm-traces",
 				"MULTICA_LLM_TRACE_TOKEN":      "",
 				"MULTICA_LLM_TRACE_EXPIRES_AT": "",
 			},
@@ -47,8 +47,8 @@ func TestLLMTraceEnvUsesAgentRuntimeConfig(t *testing.T) {
 			want: map[string]string{
 				"MULTICA_LLM_TRACE_ENABLED":    "true",
 				"MULTICA_LLM_TRACE_SINK_URL":   "https://pre-fde-workbench.example.test/api/daemon/tasks/11111111-1111-1111-1111-111111111111/llm-traces",
-				"MULTICA_LLM_TRACE_TOKEN":      "task-capability",
-				"MULTICA_LLM_TRACE_EXPIRES_AT": "1786377600000",
+				"MULTICA_LLM_TRACE_TOKEN":      "",
+				"MULTICA_LLM_TRACE_EXPIRES_AT": "",
 			},
 		},
 		{

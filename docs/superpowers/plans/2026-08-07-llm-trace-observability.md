@@ -91,7 +91,7 @@ Runtime posts one paired event to Multica. Multica selects the stored relative R
 **Files:** Expected areas include `server/internal/handler/agent_dispatch_v2.go`, `server/internal/service/task_completion*`, `server/internal/integrations/agentmessagerouter/*`, migrations, sqlc queries/generated files, FC/ASB task launchers, and protocol docs.
 
 - [ ] Add failing dispatch parsing/validation tests for optional telemetry callback fields and confirm callback URL/target idempotency remains unchanged.
-- [ ] Persist telemetry callback values in task context. When `llm_trace.enabled` is true, a complete Router URL/token/expiry capability overrides the static Agent sink; otherwise a non-empty static sink remains backward compatible without a token. Never send the Router token to the static sink.
+- [ ] Persist telemetry callback values in task context. When `llm_trace.enabled` is true and either a complete Router URL/token/expiry capability or a non-empty static Agent sink exists, send the sandbox pair once to Multica. Multica independently fans out to both configured destinations and never sends the Router token to the static sink.
 - [ ] Add failing terminal tests showing the same task-summary shape currently returned by the Multica summary endpoint is frozen into `task_completion_outbox` in the terminal transaction.
 - [ ] Add the outbox JSONB column and regenerate sqlc. The worker must send the persisted summary on every retry rather than rebuilding a potentially changed sandbox snapshot.
 - [ ] Extend `ExecutionResultRequest` with `executionSummary` and add worker retry/idempotency tests.
@@ -107,7 +107,7 @@ Runtime posts one paired event to Multica. Multica selects the stored relative R
 - [ ] Add failing proxy tests for ordinary JSON responses, SSE responses, 4xx/5xx responses, interrupted streams, capture truncation/hash, retry replay, and disabled/missing telemetry configuration.
 - [ ] Allocate sequence at request start and persist the next value in the task generation state so proxy restart does not reuse a sequence.
 - [ ] Tee response chunks to the caller and a bounded collector. Hash and count the full stream while retaining at most 1 MiB of request and 1 MiB of response body.
-- [ ] Enqueue the completed pair for delivery to the absolute HTTPS Multica task relay with `Authorization: Bearer <telemetryToken>`; Multica forwards it to the stored relative Router path. Do not place the token in URL, logs, proxy error payloads, or provider requests.
+- [ ] Enqueue the completed pair for delivery to the absolute HTTPS Multica task relay with `Authorization: Bearer <daemonToken>`; Multica validates daemon/task ownership and fans out to the stored Router callback and Agent static sink. Do not place either token in URL, logs, proxy error payloads, or provider requests.
 - [ ] Retry transient delivery with the same sequence and treat 401/403/409/410 as terminal telemetry outcomes. Telemetry failure must not fail the LLM request.
 - [ ] Add bounded shutdown flush before the runner exits. Unsent telemetry after the budget is dropped and must not block task completion.
 - [ ] Preserve the current generation-header isolation and streaming behavior for Hermes, OpenCode, and Pi.
@@ -144,5 +144,15 @@ Runtime posts one paired event to Multica. Multica selects the stored relative R
   traffic, while private Router staging and production ingress may not be
   publicly reachable. Multica already has the internal Router Base URL needed
   to complete the second hop. The first hop continues to require the existing
-  task-bound Sandbox Relay assertion before Multica checks the independent
-  Router capability.
+  Sandbox Relay assertion and its bound daemon-token digest before Multica
+  applies `DaemonAuth` and task/Runtime ownership checks.
+
+## Change record: 2026-08-08 Multica fan-out correction
+
+- History: The sandbox now authenticates its single Multica trace submission
+  with the existing short-lived daemon token. Multica retains the Router
+  capability server-side and forwards the unchanged pair to both Router and
+  the configured Agent static sink.
+- Reason: Dynamic observability must not suppress the original Agent trace
+  destination, and sandbox delivery should use the same authenticated channel
+  as task lifecycle calls instead of exposing a second downstream capability.

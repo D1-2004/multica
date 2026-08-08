@@ -1708,6 +1708,13 @@ func (l *FCE2BLauncher) withSandboxRelayToken(
 	daemonToken string,
 	expiresAt time.Time,
 ) (map[string]string, error) {
+	if extraEnv == nil {
+		extraEnv = make(map[string]string)
+	}
+	if extraEnv[llmTraceEnabledEnvKey] == "true" && strings.TrimSpace(extraEnv[llmTraceSinkURLEnvKey]) != "" {
+		extraEnv[llmTraceTokenEnvKey] = daemonToken
+		extraEnv[llmTraceExpiresAtEnvKey] = strconv.FormatInt(expiresAt.UnixMilli(), 10)
+	}
 	if l == nil || l.SandboxRelaySigner == nil {
 		return extraEnv, nil
 	}
@@ -1722,9 +1729,6 @@ func (l *FCE2BLauncher) withSandboxRelayToken(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("mint FC/E2B sandbox relay token: %w", err)
-	}
-	if extraEnv == nil {
-		extraEnv = make(map[string]string)
 	}
 	extraEnv[protocol.SandboxRelayTokenEnvKey] = relayToken
 	return extraEnv, nil
