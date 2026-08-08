@@ -21,3 +21,19 @@ func TestMainRouterDoesNotExposePrometheusMetrics(t *testing.T) {
 		t.Fatalf("main API /metrics status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
+
+func TestLLMTraceIngressRequiresDaemonAuthentication(t *testing.T) {
+	router := NewRouter(nil, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/daemon/tasks/11111111-1111-1111-1111-111111111111/llm-traces",
+		nil,
+	)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("LLM trace ingress status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}

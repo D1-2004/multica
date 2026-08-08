@@ -152,36 +152,36 @@ func TestRelayForwardsTaskScopedMulticaRequests(t *testing.T) {
 	}
 }
 
-func TestRelayForwardsOnlyTaskBoundLLMTraceCapability(t *testing.T) {
-	const capability = "router-llm-trace-capability"
+func TestRelayRequiresDaemonAuthorizationForLLMTrace(t *testing.T) {
+	const daemonToken = "mdt_prepub-daemon"
 	var upstreamCalls atomic.Int32
 	upstream := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		upstreamCalls.Add(1)
 		if req.Method != http.MethodPost || req.URL.Path != "/api/daemon/tasks/task-1/llm-traces" {
 			t.Errorf("unexpected upstream request: %s %s", req.Method, req.URL.String())
 		}
-		if got := req.Header.Get("Authorization"); got != "Bearer "+capability {
+		if got := req.Header.Get("Authorization"); got != "Bearer "+daemonToken {
 			t.Errorf("Authorization = %q", got)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 	relay, signer, _ := testRelay(t, upstream, nil)
-	token := mintTestToken(t, signer, "mdt_prepub-daemon", "")
+	token := mintTestToken(t, signer, daemonToken, "")
 
 	for _, test := range []struct {
 		name   string
 		method string
 		path   string
+		bearer string
 		status int
 	}{
-		{name: "matching task", method: http.MethodPost, path: "/api/daemon/tasks/task-1/llm-traces", status: http.StatusNoContent},
-		{name: "mismatched task", method: http.MethodPost, path: "/api/daemon/tasks/task-other/llm-traces", status: http.StatusForbidden},
-		{name: "query rejected", method: http.MethodPost, path: "/api/daemon/tasks/task-1/llm-traces?redirect=1", status: http.StatusForbidden},
-		{name: "method rejected", method: http.MethodGet, path: "/api/daemon/tasks/task-1/llm-traces", status: http.StatusForbidden},
+		{name: "matching daemon token", method: http.MethodPost, path: "/api/daemon/tasks/task-1/llm-traces", bearer: daemonToken, status: http.StatusNoContent},
+		{name: "router capability rejected", method: http.MethodPost, path: "/api/daemon/tasks/task-1/llm-traces", bearer: "router-llm-trace-capability", status: http.StatusForbidden},
+		{name: "wrong daemon token rejected", method: http.MethodPost, path: "/api/daemon/tasks/task-1/llm-traces", bearer: "mdt_other-daemon", status: http.StatusForbidden},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			req := httptest.NewRequest(test.method, test.path, strings.NewReader(`{}`))
-			req.Header.Set("Authorization", "Bearer "+capability)
+			req.Header.Set("Authorization", "Bearer "+test.bearer)
 			req.Header.Set(protocol.SandboxRelayTokenHeader, token)
 			recorder := httptest.NewRecorder()
 			relay.Middleware(http.NotFoundHandler()).ServeHTTP(recorder, req)

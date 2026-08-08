@@ -168,24 +168,26 @@ a trusted relative Router path without query or fragment; all three callback
 paths must identify the same Router dispatch task. The token is an opaque
 Bearer value and `telemetryExpiresAt` is Unix epoch milliseconds. Multica
 stores the Router path and capability only in private task context. The cloud
-sandbox receives an absolute HTTPS Multica task-relay URL plus that scoped
-capability, so it reuses the same reachable control-plane origin as task
-messages, usage, and completion. Multica resolves the stored relative path
-against its existing Router Internal Base URL and forwards the payload over the
-internal network. None of these values is written to task content, response
-payloads, command arguments, or logs.
+sandbox receives an absolute HTTPS Multica task-relay URL plus its existing
+short-lived daemon token, so it reuses the same reachable control-plane origin
+as task messages, usage, and completion. Multica authenticates the daemon,
+checks task/Runtime ownership, resolves the stored relative Router path against
+its existing Router Internal Base URL, and forwards the payload over the
+internal network. None of the Router telemetry values is written to task
+content, sandbox environment, response payloads, command arguments, or logs.
 
 In deployments using the existing Sandbox Relay, the runtime maps that
 same-origin Multica endpoint through its per-task loopback egress relay. The
-edge verifies the sandbox assertion and task ID before Multica validates the
-independent Router capability. The sandbox assertion remains outside provider
-proxy configuration.
+edge verifies the sandbox assertion and daemon-token digest before Multica
+applies ordinary `DaemonAuth` and task ownership checks. The sandbox assertion
+remains outside provider proxy configuration.
 
 Agent `runtime_config.llm_trace.enabled` remains the delivery switch. A complete
-Router telemetry capability overrides the Agent's configured static sink for
-that task. A static sink remains backward compatible without a Router token;
-the Router token is never sent to that sink. Missing or disabled configuration
-produces no trace delivery.
+Router telemetry capability and the Agent's configured static sink are
+independent destinations. Multica fans out one sandbox submission to both when
+both are present. A static sink receives the unchanged trace JSON without a
+Router or daemon token. Missing or disabled configuration produces no trace
+delivery.
 
 The terminal `execution-result` request now also accepts an optional
 `executionSummary`. Multica freezes the same task timing, usage, message/tool
@@ -339,3 +341,14 @@ parsing or rewriting Router's context string.
   and keeps raw model traffic off an additional public network path. The
   per-task Sandbox Relay assertion is also preserved as the first-hop network
   boundary rather than exposing it to the provider proxy.
+
+## Change record: 2026-08-08 Multica trace fan-out
+
+- History: Replaced Router-capability authentication at the sandbox boundary
+  with the existing short-lived daemon token. The Multica task endpoint now
+  authenticates through `DaemonAuth`, verifies task/Runtime ownership, and
+  independently forwards the same pair to Router telemetry and the Agent's
+  configured static sink.
+- Reason: A Router callback must not override the Agent's original trace
+  destination, and private Router capabilities should remain server-side while
+  sandbox traffic reuses the proven task lifecycle control-plane channel.

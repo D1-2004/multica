@@ -18,13 +18,13 @@ The Agent setting remains:
 }
 ```
 
-Delivery is enabled only when `enabled` is true and the effective URL is
-non-empty. For an Agent Dispatch task, a complete private callback containing
-relative `telemetry_url`, `telemetry_token`, and `telemetry_expires_at`
-overrides the static `sink_url`. Multica replaces the Router path with its own
-absolute HTTPS task-relay URL before launching the sandbox. An incomplete
-callback is ignored. A static receiver remains compatible without a token, and
-the Router token is never attached to it.
+Delivery is enabled only when `enabled` is true and at least one destination is
+available: a non-empty static `sink_url`, or a complete private Router callback
+containing relative `telemetry_url`, `telemetry_token`, and
+`telemetry_expires_at`. Multica always gives the sandbox its own absolute task
+relay URL. The two destinations do not override each other: after receiving one
+paired event, Multica forwards the unchanged JSON to every configured
+destination.
 
 Multica passes these values only in the task's sandbox execution environment:
 
@@ -38,20 +38,22 @@ these variables into an older image, even when the Agent setting is enabled.
 This capability check is the execution-time safety boundary; UI rollout flags
 alone do not make an image compatible.
 
-The runtime consumes the token and Multica relay URL from its protected
-generation configuration. It posts the paired body to Multica; Multica checks
-the task's stored capability and forwards the unchanged JSON to Router using
-the existing internal Router base URL. This is the same sandbox-to-Multica
-network origin already used for task messages, usage, and completion. The
-runtime must not place the token in a URL, provider header, trace body, error
-payload, or log message.
+The runtime consumes a short-lived daemon token and the Multica relay URL from
+its protected generation configuration. It posts the paired body to Multica;
+Multica authenticates the daemon, checks that the task belongs to that daemon's
+Runtime, and then fans out server-side. Router delivery uses the task's stored
+Router capability and the existing internal Router base URL. Static sink
+delivery uses the Agent's current `sink_url` without attaching the Router or
+daemon token. This is the same sandbox-to-Multica network origin already used
+for task messages, usage, and completion. The runtime must not place any token
+in a URL, provider header, trace body, error payload, or log message.
 
 When the deployment injects `MULTICA_SANDBOX_RELAY_TOKEN`, the runner rewrites
 the same-origin Multica trace target to its per-task loopback egress relay. The
-public Sandbox Relay first verifies that signed assertion and binds the path to
-the Multica task ID; Multica then independently verifies the Router-issued
-Bearer capability stored on that task. The Sandbox Relay assertion is never
-written into provider proxy configuration.
+public Sandbox Relay verifies that signed assertion and that the Bearer daemon
+token matches the daemon-token digest in the assertion. Multica then applies
+ordinary `DaemonAuth` plus task/Runtime ownership checks. The Sandbox Relay
+assertion is never written into provider proxy configuration.
 
 ## Router paired-event contract
 
@@ -85,9 +87,9 @@ Retries reuse the same sequence and exact payload; telemetry failure never
 changes the model response returned to the Agent.
 
 Router derives the task identity from the authenticated URL and capability. A
-sender cannot select another task in the body. The capability expires after at
-most three days and Router rejects it as soon as the dispatch task reaches a
-terminal state.
+sender cannot select another task in the body. The capability remains only in
+Multica task context, expires after at most three days, and Router rejects it as
+soon as the dispatch task reaches a terminal state.
 
 ## Completion summary
 
@@ -117,3 +119,4 @@ status, task identity, sequence, sizes, and bounded error classification.
 | 2026-08-08 | Added `llm_trace_v1` Runtime capability negotiation and the complete runner environment allowlist | Keep old images running without Trace while preventing unsupported images from receiving task-scoped telemetry credentials |
 | 2026-08-08 | Routed task-scoped paired traces through an absolute HTTPS Multica task endpoint, while keeping Router's telemetry path relative and forwarding it over the existing internal Router connection | Cloud sandboxes can reach Multica but may not reach a private Router ingress; the relay removes a separate telemetry-Origin configuration and public-network dependency |
 | 2026-08-08 | Bound the Multica trace endpoint to the existing per-task Sandbox Relay assertion before validating the Router capability | Preserve the proven sandbox control-plane tunnel without exposing its relay token to the model proxy configuration |
+| 2026-08-08 | Unified all sandbox trace delivery through daemon-authenticated Multica ingress and added server-side fan-out to both Router telemetry and the Agent static sink | Prevent a dynamic Router callback from suppressing the original trace destination, keep Router capabilities out of the sandbox, and reuse the same proven control-plane path as task lifecycle reporting |
