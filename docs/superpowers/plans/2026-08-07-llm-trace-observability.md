@@ -4,7 +4,7 @@
 
 **Goal:** Capture each sandbox LLM request and response as one ordered trace record, send it to Router with a task-scoped three-day write capability that stops working after terminal completion, and expose the data through a dedicated Dashboard panel.
 
-**Architecture:** Router owns the trace capability, ingestion table, terminal revocation decision, and separate read API. Multica persists the Router callback material and the terminal execution summary in its reliable completion outbox. Runtime tees the upstream response while preserving streaming behavior and posts request/response pairs directly to Router. Dashboard keeps ordinary trace detail small and loads LLM pairs only when the new panel is opened.
+**Architecture:** Router owns the trace capability, ingestion table, terminal revocation decision, and separate read API. Multica persists the Router callback material and the terminal execution summary in its reliable completion outbox. Runtime tees the upstream response while preserving streaming behavior and posts request/response pairs to an absolute HTTPS Multica task relay; deployments with Sandbox Relay route that target through the existing task-bound loopback egress relay. Multica resolves the trusted relative Router telemetry path against its existing internal Router Base URL and forwards the unchanged pair. Dashboard keeps ordinary trace detail small and loads LLM pairs only when the new panel is opened.
 
 **Tech Stack:** Java 17/Spring/PostgreSQL Router, Go/PostgreSQL Multica, Python runtime proxy, React/TypeScript Dashboard, Aone CI/CD.
 
@@ -19,7 +19,7 @@ Router dispatches the following optional callback fields. Old Multica versions m
   "completionCallback": {
     "url": "/api/v1/dispatch-tasks/dispatch-1/execution-result",
     "updateUrl": "/api/v1/dispatch-tasks/dispatch-1/execution-update",
-    "telemetryUrl": "https://router.example.test/api/v1/dispatch-tasks/dispatch-1/llm-traces",
+    "telemetryUrl": "/api/v1/dispatch-tasks/dispatch-1/llm-traces",
     "telemetryToken": "opaque-task-write-capability",
     "telemetryExpiresAt": 1786377600000
   }
@@ -49,7 +49,7 @@ Multica extends the existing terminal callback with an immutable summary capture
 }
 ```
 
-Runtime posts one paired event. Router derives `task_id` from the trusted URL/token instead of accepting it from the body.
+Runtime posts one paired event to Multica. Multica selects the stored relative Router path and forwards the exact JSON with the stored task capability. Router derives `task_id` from that trusted path/token instead of accepting it from the body.
 
 ```json
 {
@@ -107,7 +107,7 @@ Runtime posts one paired event. Router derives `task_id` from the trusted URL/to
 - [ ] Add failing proxy tests for ordinary JSON responses, SSE responses, 4xx/5xx responses, interrupted streams, capture truncation/hash, retry replay, and disabled/missing telemetry configuration.
 - [ ] Allocate sequence at request start and persist the next value in the task generation state so proxy restart does not reuse a sequence.
 - [ ] Tee response chunks to the caller and a bounded collector. Hash and count the full stream while retaining at most 1 MiB of request and 1 MiB of response body.
-- [ ] Enqueue the completed pair for direct Router delivery with `Authorization: Bearer <telemetryToken>`; do not place the token in URL, logs, proxy error payloads, or provider requests.
+- [ ] Enqueue the completed pair for delivery to the absolute HTTPS Multica task relay with `Authorization: Bearer <telemetryToken>`; Multica forwards it to the stored relative Router path. Do not place the token in URL, logs, proxy error payloads, or provider requests.
 - [ ] Retry transient delivery with the same sequence and treat 401/403/409/410 as terminal telemetry outcomes. Telemetry failure must not fail the LLM request.
 - [ ] Add bounded shutdown flush before the runner exits. Unsent telemetry after the budget is dropped and must not block task completion.
 - [ ] Preserve the current generation-header isolation and streaming behavior for Hermes, OpenCode, and Pi.
@@ -134,3 +134,15 @@ Runtime posts one paired event. Router derives `task_id` from the trusted URL/to
 - [ ] Verify Runtime publishes an immutable image digest, READY E2B template, successful real-sandbox smoke, and successful ASB candidate image validation.
 - [ ] Record protocol versions, migrations, rollback order, remote SHAs, pipeline evidence, and the deferred end-to-end test owned by the user.
 - [ ] Do not claim overall integration success; the agreed completion gate is successful component deployment, with cross-service functional integration deferred.
+
+## Change record: 2026-08-08 Multica relay correction
+
+- History: Replaced direct sandbox-to-Router delivery and the separately
+  configured absolute telemetry Origin with a relative Router callback path and
+  an absolute HTTPS Multica task relay URL injected at execution time.
+- Reason: The sandbox already has a proven route to Multica for task control
+  traffic, while private Router staging and production ingress may not be
+  publicly reachable. Multica already has the internal Router Base URL needed
+  to complete the second hop. The first hop continues to require the existing
+  task-bound Sandbox Relay assertion before Multica checks the independent
+  Router capability.

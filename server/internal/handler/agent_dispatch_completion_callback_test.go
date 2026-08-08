@@ -35,7 +35,7 @@ func TestDispatchCommandValidateCompletionCallbackByPresence(t *testing.T) {
 		CompletionCallback: &DispatchCompletionCallback{
 			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
 			UpdateURL:          "/api/v1/dispatch-tasks/router-task-1/execution-update",
-			TelemetryURL:       "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
+			TelemetryURL:       "/api/v1/dispatch-tasks/router-task-1/llm-traces",
 			TelemetryToken:     "task-write-capability",
 			TelemetryExpiresAt: 1786377600000,
 		},
@@ -86,7 +86,7 @@ func TestDispatchCommandValidateCompletionCallbackByPresence(t *testing.T) {
 	mismatchedTelemetry := valid
 	mismatchedTelemetry.CompletionCallback = &DispatchCompletionCallback{
 		URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
-		TelemetryURL:       "https://router.example.test/api/v1/dispatch-tasks/router-task-2/llm-traces",
+		TelemetryURL:       "/api/v1/dispatch-tasks/router-task-2/llm-traces",
 		TelemetryToken:     "task-write-capability",
 		TelemetryExpiresAt: 1786377600000,
 	}
@@ -96,7 +96,7 @@ func TestDispatchCommandValidateCompletionCallbackByPresence(t *testing.T) {
 	incompleteTelemetry := valid
 	incompleteTelemetry.CompletionCallback = &DispatchCompletionCallback{
 		URL:          "/api/v1/dispatch-tasks/router-task-1/execution-result",
-		TelemetryURL: "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
+		TelemetryURL: "/api/v1/dispatch-tasks/router-task-1/llm-traces",
 	}
 	if err := incompleteTelemetry.validate(); err == nil {
 		t.Fatal("incomplete telemetry capability accepted")
@@ -104,19 +104,19 @@ func TestDispatchCommandValidateCompletionCallbackByPresence(t *testing.T) {
 	for _, telemetry := range []DispatchCompletionCallback{
 		{
 			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
-			TelemetryURL:       "http://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
-			TelemetryToken:     "task-write-capability",
-			TelemetryExpiresAt: 1786377600000,
-		},
-		{
-			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
-			TelemetryURL:       "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces?token=secret",
-			TelemetryToken:     "task-write-capability",
-			TelemetryExpiresAt: 1786377600000,
-		},
-		{
-			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
 			TelemetryURL:       "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
+			TelemetryToken:     "task-write-capability",
+			TelemetryExpiresAt: 1786377600000,
+		},
+		{
+			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			TelemetryURL:       "/api/v1/dispatch-tasks/router-task-1/llm-traces?token=secret",
+			TelemetryToken:     "task-write-capability",
+			TelemetryExpiresAt: 1786377600000,
+		},
+		{
+			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			TelemetryURL:       "/api/v1/dispatch-tasks/router-task-1/llm-traces",
 			TelemetryToken:     "token with spaces",
 			TelemetryExpiresAt: 1786377600000,
 		},
@@ -135,7 +135,7 @@ func TestDispatchRuntimeContextPersistsCompletionCallback(t *testing.T) {
 		CompletionCallback: &DispatchCompletionCallback{
 			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
 			UpdateURL:          "/api/v1/dispatch-tasks/router-task-1/execution-update",
-			TelemetryURL:       "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
+			TelemetryURL:       "/api/v1/dispatch-tasks/router-task-1/llm-traces",
 			TelemetryToken:     "task-write-capability",
 			TelemetryExpiresAt: 1786377600000,
 			Target:             testRouterTargetIdentity,
@@ -151,7 +151,7 @@ func TestDispatchRuntimeContextPersistsCompletionCallback(t *testing.T) {
 	if !ok ||
 		callback["url"] != "/api/v1/dispatch-tasks/router-task-1/execution-result" ||
 		callback["update_url"] != "/api/v1/dispatch-tasks/router-task-1/execution-update" ||
-		callback["telemetry_url"] != "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces" ||
+		callback["telemetry_url"] != "/api/v1/dispatch-tasks/router-task-1/llm-traces" ||
 		callback["telemetry_token"] != "task-write-capability" ||
 		callback["telemetry_expires_at"] != float64(1786377600000) ||
 		callback["target"] != testRouterTargetIdentity {
@@ -181,7 +181,7 @@ func TestDispatchRequestFingerprintExcludesOnlyTransientIdentityContext(t *testi
 		CompletionCallback: &DispatchCompletionCallback{
 			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
 			UpdateURL:          "/api/v1/dispatch-tasks/router-task-1/execution-update",
-			TelemetryURL:       "https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
+			TelemetryURL:       "/api/v1/dispatch-tasks/router-task-1/llm-traces",
 			TelemetryToken:     "token-one",
 			TelemetryExpiresAt: 1786377600000,
 			Target:             testRouterTargetIdentity,
@@ -211,7 +211,7 @@ func TestDispatchRequestFingerprintExcludesOnlyTransientIdentityContext(t *testi
 	changedTelemetryURL.CompletionCallback = &DispatchCompletionCallback{
 		URL:                command.CompletionCallback.URL,
 		UpdateURL:          command.CompletionCallback.UpdateURL,
-		TelemetryURL:       "https://other-router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces",
+		TelemetryURL:       "/api/v1/dispatch-tasks/router-task-2/llm-traces",
 		TelemetryToken:     "token-two",
 		TelemetryExpiresAt: 1786464000000,
 		Target:             command.CompletionCallback.Target,

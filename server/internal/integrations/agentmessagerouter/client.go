@@ -697,6 +697,16 @@ func (c *Client) DeleteDigitalEmployeeSubscriptions(ctx context.Context, agentID
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	return c.doWithBearer(ctx, method, path, c.serviceCredential, body)
+}
+
+func (c *Client) doWithBearer(
+	ctx context.Context,
+	method string,
+	path string,
+	bearer string,
+	body io.Reader,
+) (*http.Response, error) {
 	if c == nil || c.baseURL == nil || c.httpClient == nil {
 		return nil, errors.New("agent message router client is not configured")
 	}
@@ -715,7 +725,7 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader) (*
 		return nil, errors.New("create agent message router request")
 	}
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Authorization", "Bearer "+c.serviceCredential)
+	request.Header.Set("Authorization", "Bearer "+bearer)
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}

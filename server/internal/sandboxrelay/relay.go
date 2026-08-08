@@ -176,6 +176,13 @@ func (relay *Relay) selectProxy(req *http.Request, claims *Claims) (*httputil.Re
 	if !claims.Allows(TargetMultica) {
 		return nil, "", errors.New("Multica relay target is not allowed")
 	}
+	if req.Method == http.MethodPost && req.URL.RawQuery == "" &&
+		isTaskLLMTraceRelayPath(req.URL.Path, claims.TaskID) {
+		// The sandbox relay token binds this request to the Multica task. The
+		// Router-issued bearer capability is deliberately left intact for the
+		// Multica LLM trace handler to validate before forwarding.
+		return relay.multica, TargetMultica, nil
+	}
 	if isDaemonAPIPath(req.URL.Path) {
 		if !strings.HasPrefix(bearer, "mdt_") ||
 			!stringsEqualConstantTime(auth.HashToken(bearer), claims.DaemonTokenSHA256) {
@@ -292,6 +299,14 @@ func singleBearerToken(header http.Header) (string, error) {
 
 func isDaemonAPIPath(path string) bool {
 	return path == "/api/daemon" || strings.HasPrefix(path, "/api/daemon/")
+}
+
+func isTaskLLMTraceRelayPath(path, taskID string) bool {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return false
+	}
+	return path == "/api/daemon/tasks/"+url.PathEscape(taskID)+"/llm-traces"
 }
 
 func stringsEqualConstantTime(left, right string) bool {

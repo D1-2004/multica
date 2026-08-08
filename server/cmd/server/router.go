@@ -425,6 +425,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	routerClient, routerClientErr := agentmessagerouter.NewClient(routerClientConfig)
 	if routerClientErr == nil {
 		agentMessageRouterClient = routerClient
+		h.AgentMessageRouterLLMTrace = routerClient
 		h.TaskCompletionWorker = agentmessagerouter.NewCompletionWorker(
 			queries,
 			routerClient,
@@ -1418,6 +1419,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Get("/api/agent-enterprise-identity/buc/callback", h.CompleteAgentEnterpriseIdentityBinding)
 
 	// Daemon API routes (require daemon token or valid user token)
+	// LLM trace relay authenticates with the Router-issued task capability,
+	// then forwards over Multica's existing internal Router connection.
+	r.Post("/api/daemon/tasks/{taskId}/llm-traces", h.RelayTaskLLMTrace)
 	r.Route("/api/daemon", func(r chi.Router) {
 		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier))
 
