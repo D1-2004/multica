@@ -195,6 +195,7 @@ type Handler struct {
 	WebhookDeliveryWorker         *WebhookDeliveryWorker
 	TaskCompletionWorker          *agentmessagerouter.CompletionWorker
 	TaskCompletionTargetIdentity  string
+	AgentMessageRouterLLMTrace    LLMTraceRouter
 	DingTalkBindingTeardownRouter DingTalkBindingTeardownRouter
 	CloudRuntime                  cloudRuntimeProxy
 	GitHubApp                     *githubapp.Client

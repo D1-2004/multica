@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -16,7 +17,13 @@ const (
 	llmTraceExpiresAtEnvKey = "MULTICA_LLM_TRACE_EXPIRES_AT"
 )
 
-func llmTraceEnv(runtime db.AgentRuntime, runtimeConfig []byte, taskContext []byte) map[string]string {
+func llmTraceEnv(
+	runtime db.AgentRuntime,
+	runtimeConfig []byte,
+	taskContext []byte,
+	relayBaseURL string,
+	taskID string,
+) map[string]string {
 	if !CloudSandboxRuntimeHasCapability(runtime, LLMTraceCapability) {
 		return nil
 	}
@@ -44,9 +51,11 @@ func llmTraceEnv(runtime db.AgentRuntime, runtimeConfig []byte, taskContext []by
 		callback := contextPayload.CompletionCallback
 		if strings.TrimSpace(callback.TelemetryURL) != "" &&
 			strings.TrimSpace(callback.TelemetryToken) != "" && callback.TelemetryExpiresAt > 0 {
-			sinkURL = callback.TelemetryURL
-			token = callback.TelemetryToken
-			expiresAt = strconv.FormatInt(callback.TelemetryExpiresAt, 10)
+			if relayURL := llmTraceRelayURL(relayBaseURL, taskID); relayURL != "" {
+				sinkURL = relayURL
+				token = callback.TelemetryToken
+				expiresAt = strconv.FormatInt(callback.TelemetryExpiresAt, 10)
+			}
 		} else {
 			sinkURL = config.LLMTrace.SinkURL
 		}
@@ -60,4 +69,18 @@ func llmTraceEnv(runtime db.AgentRuntime, runtimeConfig []byte, taskContext []by
 		llmTraceTokenEnvKey:     token,
 		llmTraceExpiresAtEnvKey: expiresAt,
 	}
+}
+
+func llmTraceRelayURL(baseURL, taskID string) string {
+	baseURL = strings.TrimSpace(baseURL)
+	taskID = strings.TrimSpace(taskID)
+	parsed, err := url.Parse(baseURL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") ||
+		parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" ||
+		parsed.Fragment != "" || taskID == "" {
+		return ""
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") +
+		"/api/daemon/tasks/" + url.PathEscape(taskID) + "/llm-traces"
+	return parsed.String()
 }

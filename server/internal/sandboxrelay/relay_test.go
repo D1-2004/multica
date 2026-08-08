@@ -152,6 +152,49 @@ func TestRelayForwardsTaskScopedMulticaRequests(t *testing.T) {
 	}
 }
 
+func TestRelayForwardsOnlyTaskBoundLLMTraceCapability(t *testing.T) {
+	const capability = "router-llm-trace-capability"
+	var upstreamCalls atomic.Int32
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls.Add(1)
+		if req.Method != http.MethodPost || req.URL.Path != "/api/daemon/tasks/task-1/llm-traces" {
+			t.Errorf("unexpected upstream request: %s %s", req.Method, req.URL.String())
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer "+capability {
+			t.Errorf("Authorization = %q", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	relay, signer, _ := testRelay(t, upstream, nil)
+	token := mintTestToken(t, signer, "mdt_prepub-daemon", "")
+
+	for _, test := range []struct {
+		name   string
+		method string
+		path   string
+		status int
+	}{
+		{name: "matching task", method: http.MethodPost, path: "/api/daemon/tasks/task-1/llm-traces", status: http.StatusNoContent},
+		{name: "mismatched task", method: http.MethodPost, path: "/api/daemon/tasks/task-other/llm-traces", status: http.StatusForbidden},
+		{name: "query rejected", method: http.MethodPost, path: "/api/daemon/tasks/task-1/llm-traces?redirect=1", status: http.StatusForbidden},
+		{name: "method rejected", method: http.MethodGet, path: "/api/daemon/tasks/task-1/llm-traces", status: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(test.method, test.path, strings.NewReader(`{}`))
+			req.Header.Set("Authorization", "Bearer "+capability)
+			req.Header.Set(protocol.SandboxRelayTokenHeader, token)
+			recorder := httptest.NewRecorder()
+			relay.Middleware(http.NotFoundHandler()).ServeHTTP(recorder, req)
+			if recorder.Code != test.status {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+	if upstreamCalls.Load() != 1 {
+		t.Fatalf("upstream calls = %d", upstreamCalls.Load())
+	}
+}
+
 func TestRelayForwardsOnlyExactBoundAgentIdentityRedeem(t *testing.T) {
 	const contextToken = "context-prepub-secret"
 	var identityCalls atomic.Int32

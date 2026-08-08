@@ -228,7 +228,7 @@ var routerCompletionTargetPattern = regexp.MustCompile(`^router-target:v1:sha256
 
 func routerTelemetryCallbackTaskID(rawURL string) (string, bool) {
 	parsed, err := url.ParseRequestURI(rawURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" ||
+	if err != nil || !strings.HasPrefix(rawURL, "/") || parsed.IsAbs() || parsed.Host != "" ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", false
 	}
