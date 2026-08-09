@@ -60,6 +60,12 @@ var (
 
 func taskScopedAuthToken(task Task) (string, error) {
 	token := strings.TrimSpace(task.AuthToken)
+	if task.A2AInvocation {
+		if token != "" {
+			return "", errors.New("A2A invocation unexpectedly received a task-scoped auth token")
+		}
+		return "", nil
+	}
 	if token == "" {
 		return "", errors.New("server did not provide task-scoped auth token")
 	}
@@ -242,6 +248,15 @@ type Daemon struct {
 	updating      atomic.Bool        // prevents concurrent update attempts
 	activeTasks   atomic.Int64       // number of tasks currently in handleTask; exposed via /health
 	ready         atomic.Bool        // false until preflight completes; gates /health status (starting -> running)
+
+	// Local mutating endpoints are capabilities, not ambient localhost trust.
+	// controlNonce is public and changes per daemon process; task capabilities
+	// are one-way token digests scoped to the currently executing child.
+	localControlNonceOnce   sync.Once
+	localControlNonce       string
+	localControlNonceErr    error
+	localTaskCapabilitiesMu sync.RWMutex
+	localTaskCapabilities   map[[32]byte]*localTaskCapability
 
 	// claimMu guards pauseClaims and claimsInFlight. It is held only for the
 	// microseconds it takes to make a decision; ClaimTask itself runs without
@@ -3757,6 +3772,13 @@ func skillRefFromBundle(bundle SkillData) SkillRefData {
 }
 
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (TaskResult, error) {
+	// An inbound A2A grant is bound to the claimed Agent configuration. If the
+	// server could not load that Agent, continuing with defaults would discard
+	// the managed empty MCP boundary and let the provider inherit host state.
+	if task.A2AInvocation && task.Agent == nil {
+		return TaskResult{}, errors.New("refusing to spawn A2A invocation: claim has no Agent configuration")
+	}
+
 	// Refuse to spawn an agent without a workspace. An empty workspace_id
 	// here would make MULTICA_WORKSPACE_ID empty in the agent env, and the
 	// CLI would otherwise silently fall back to the user-global config — a
@@ -3836,7 +3858,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		NewCommentCount:                  task.NewCommentCount,
 		NewCommentsSince:                 task.NewCommentsSince,
 		PriorSessionResumed:              task.PriorSessionID != "",
-		AgentID:                          agentID,
+		AgentID:                          taskContextAgentID(task, agentID),
 		AgentName:                        agentName,
 		AgentInstructions:                instructions,
 		AgentSkills:                      convertSkillsForEnv(skills),
@@ -3911,18 +3933,21 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var cursorMcpAuthSource string
 	if task.Agent != nil {
 		agentMcpConfig = task.Agent.McpConfig
-		effectiveMcpConfig = agentMcpConfig
-		if merged, mergeErr := mergeRuntimeAndAgentMcpConfig(provider, agentMcpConfig); mergeErr != nil {
-			taskLog.Warn("mcp_config: runtime merge failed; using agent configuration only",
-				"provider", provider,
-				"error", mergeErr,
-			)
-		} else {
-			effectiveMcpConfig = merged
-		}
 		if provider == "cursor" {
 			cursorMcpAuthSource = strings.TrimSpace(task.Agent.CustomEnv[execenv.CursorMcpAuthSourceEnv])
 		}
+	}
+	effectiveMcpConfig = agentMcpConfig
+	if resolved, resolveErr := resolveTaskMcpConfig(provider, agentMcpConfig, task.A2AInvocation); resolveErr != nil {
+		if task.A2AInvocation {
+			return TaskResult{}, fmt.Errorf("resolve A2A MCP configuration: %w", resolveErr)
+		}
+		taskLog.Warn("mcp_config: runtime merge failed; using agent configuration only",
+			"provider", provider,
+			"error", resolveErr,
+		)
+	} else {
+		effectiveMcpConfig = resolved
 	}
 	// Decode openclaw-specific runtime_config knobs once so reuse / prepare /
 	// ExecOptions all see the same mode + gateway pin (issue #3260). Parse
@@ -4083,8 +4108,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 
 	prompt := BuildPrompt(task, provider)
 
-	// Pass task-scoped auth credentials and context so the spawned agent CLI
-	// can call the Multica API and the local daemon (e.g. `multica repo checkout`).
+	// Pass task-scoped auth credentials and context so ordinary spawned agents
+	// can call the Multica API and local daemon (e.g. `multica repo checkout`).
+	// Inbound A2A tasks are deliberately credentialless: the server marks them
+	// explicitly and an empty token is injected to mask any daemon-process token.
 	// MULTICA_TASK_SLOT is allocated from the daemon-wide concurrency pool, not
 	// per-agent. When one daemon hosts multiple agents, slots index shared
 	// daemon-level resources such as GPUs.
@@ -4098,6 +4125,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	var inputImages []agent.InputImage
 	if providerSupportsNativeImageInput(provider) {
+		if task.A2AInvocation && len(task.ChatMessageAttachments) > 0 {
+			return TaskResult{}, errors.New("A2A invocation cannot materialize authenticated chat attachments")
+		}
 		inputImages, err = materializeChatImages(
 			ctx,
 			cli.NewAPIClient(d.cfg.ServerBaseURL, task.WorkspaceID, agentToken),
@@ -4121,13 +4151,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"TMP":                  taskTempDir,
 		"TEMP":                 taskTempDir,
 	}
-	inheritManagedChildEnv(agentEnv)
-	if task.TraceID != "" {
-		agentEnv["MULTICA_TRACE_ID"] = task.TraceID
+	if !task.A2AInvocation {
+		inheritManagedChildEnv(agentEnv)
 	}
-	if task.TraceStartedAtUnixMS > 0 {
-		agentEnv["MULTICA_TRACE_STARTED_AT_UNIX_MS"] = strconv.FormatInt(task.TraceStartedAtUnixMS, 10)
-	}
+	injectTaskTraceEnv(agentEnv, task)
 	if task.AutopilotRunID != "" {
 		agentEnv["MULTICA_AUTOPILOT_RUN_ID"] = task.AutopilotRunID
 	}
@@ -4142,6 +4169,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	)
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("resolve Agent Identity ContextToken: %w", err)
+	}
+	if task.A2AInvocation && token != "" {
+		return TaskResult{}, errors.New("A2A invocation unexpectedly received an Agent Identity ContextToken")
 	}
 	if token != "" {
 		agentEnv[protocol.AgentIdentityContextTokenEnvKey] = token
@@ -4159,6 +4189,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				taskLog.Warn("quick-create attachment ids: marshal failed; skipping env injection", "error", err)
 			}
 		}
+	}
+	if task.A2AInvocation {
+		// A2A is an Agent grant, never an implicit grant to the runtime owner's
+		// internal Multica topology, identifiers, or ambient credentials. Apply
+		// this after all task metadata is assembled so future MULTICA_* additions
+		// also fail closed for externally triggered children.
+		isolateA2AChildEnv(agentEnv)
 	}
 	// Ensure the multica CLI is on PATH inside the agent's environment.
 	// Some runtimes (e.g. Codex) run in an isolated sandbox that may not
@@ -4235,10 +4272,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if len(profileFixedArgs) > 0 {
 		extraArgs = append(append([]string{}, profileFixedArgs...), extraArgs...)
 	}
-	var mcpConfig json.RawMessage
+	mcpConfig := effectiveMcpConfig
 	if task.Agent != nil {
 		customArgs = task.Agent.CustomArgs
-		mcpConfig = effectiveMcpConfig
 	}
 	if provider == "hermes" {
 		customArgs = hermesLaunchArgs(customArgs, env != nil && env.HermesHome != "")
@@ -4343,6 +4379,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"resume_session", execOpts.ResumeSessionID != "",
 		"timeout", execOpts.Timeout,
 	)
+	releaseLocalCapability, err := d.registerLocalTaskCapability(task, agentToken, env.WorkDir)
+	if err != nil {
+		return TaskResult{}, fmt.Errorf("register local task capability: %w", err)
+	}
+	defer releaseLocalCapability()
 
 	// Shared across the resume-retry below so the retry's transcript rows
 	// keep ascending seq values for the same task.
@@ -5232,6 +5273,108 @@ func inheritManagedChildEnv(agentEnv map[string]string) {
 	}
 	if githubConfigDir := strings.TrimSpace(os.Getenv("GH_CONFIG_DIR")); githubConfigDir != "" {
 		agentEnv["GH_CONFIG_DIR"] = githubConfigDir
+	}
+}
+
+func injectTaskTraceEnv(agentEnv map[string]string, task Task) {
+	if task.A2AInvocation {
+		return
+	}
+	if task.TraceID != "" {
+		agentEnv["MULTICA_TRACE_ID"] = task.TraceID
+	}
+	if task.TraceStartedAtUnixMS > 0 {
+		agentEnv["MULTICA_TRACE_STARTED_AT_UNIX_MS"] = strconv.FormatInt(task.TraceStartedAtUnixMS, 10)
+	}
+}
+
+// taskContextAgentID keeps the internal Agent UUID out of workdir sidecars and
+// provider runtime briefs for externally triggered tasks. The Agent's public
+// name, instructions, skills, and explicitly configured capabilities remain
+// available; only the Multica database identifier is removed.
+func taskContextAgentID(task Task, internalAgentID string) string {
+	if task.A2AInvocation {
+		return ""
+	}
+	return internalAgentID
+}
+
+// isolateA2AChildEnv removes daemon-internal topology and identity as well as
+// ambient credentials from an externally triggered child. The explicit keys
+// ensure buildEnv overrides inherited values even when the daemon did not add
+// that field to agentEnv itself.
+func isolateA2AChildEnv(agentEnv map[string]string) {
+	for key := range agentEnv {
+		maskA2ASensitiveEnvKey(agentEnv, key)
+	}
+	for _, key := range []string{
+		"MULTICA_SERVER_URL",
+		"MULTICA_WORKSPACE_ID",
+		"MULTICA_RUNTIME_ID",
+		"MULTICA_AGENT_ID",
+		"MULTICA_TASK_ID",
+		"MULTICA_DAEMON_PORT",
+		"MULTICA_TRACE_ID",
+		"MULTICA_TRACE_STARTED_AT_UNIX_MS",
+	} {
+		agentEnv[key] = ""
+	}
+	maskA2AInheritedCredentialEnv(agentEnv)
+	// Keep a non-identifying execution-context marker so CLI fail-closed guards
+	// do not need an internal agent or task UUID to recognize an A2A child.
+	agentEnv["MULTICA_A2A_INVOCATION"] = "1"
+}
+
+// maskA2AInheritedCredentialEnv prevents a daemon/process credential from
+// becoming an ambient capability of an externally triggered child. Explicit
+// runtime fields already present in agentEnv are preserved, and the Agent's
+// own custom_env is layered afterwards; only accidental process inheritance is
+// removed here.
+func maskA2AInheritedCredentialEnv(agentEnv map[string]string) {
+	for _, entry := range os.Environ() {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok || !isA2AInheritedCredentialEnvKey(key) {
+			continue
+		}
+		if _, explicitlySet := agentEnv[key]; explicitlySet {
+			continue
+		}
+		maskA2ASensitiveEnvKey(agentEnv, key)
+	}
+}
+
+func maskA2ASensitiveEnvKey(agentEnv map[string]string, key string) {
+	if isA2AInheritedCredentialEnvKey(key) {
+		agentEnv[key] = ""
+	}
+}
+
+func isA2AInheritedCredentialEnvKey(key string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(key))
+	if upper == "" {
+		return false
+	}
+	for _, prefix := range []string{
+		"MULTICA_", "DWS_", "GH_", "GITHUB_", "AWS_", "AZURE_",
+		"GOOGLE_", "ALIYUN_", "ALIBABA_CLOUD_", "OPENAI_", "ANTHROPIC_",
+	} {
+		if strings.HasPrefix(upper, prefix) {
+			return true
+		}
+	}
+	for _, suffix := range []string{
+		"_TOKEN", "_SECRET", "_PASSWORD", "_PASS", "_API_KEY",
+		"_PRIVATE_KEY", "_CREDENTIAL", "_CREDENTIALS",
+	} {
+		if strings.HasSuffix(upper, suffix) {
+			return true
+		}
+	}
+	switch upper {
+	case "SSH_AUTH_SOCK", "KUBECONFIG", "DOCKER_CONFIG", "NETRC":
+		return true
+	default:
+		return false
 	}
 }
 

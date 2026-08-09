@@ -2,14 +2,20 @@ package daemon
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
@@ -34,6 +40,10 @@ type HealthResponse struct {
 	ActiveTaskCount int64             `json:"active_task_count"`
 	Agents          []string          `json:"agents"`
 	Workspaces      []healthWorkspace `json:"workspaces"`
+	// ControlNonce is a public, per-process challenge. The management CLI
+	// combines it with the profile credential to derive a shutdown-only token;
+	// publishing the nonce does not disclose either credential.
+	ControlNonce string `json:"control_nonce,omitempty"`
 }
 
 type healthWorkspace struct {
@@ -60,6 +70,176 @@ type repoCheckoutRequest struct {
 	Ref         string `json:"ref,omitempty"`
 	AgentName   string `json:"agent_name"`
 	TaskID      string `json:"task_id"`
+}
+
+const localControlTokenDomain = "multica-local-control-v1"
+
+type localTaskCapability struct {
+	mu          sync.RWMutex
+	active      bool
+	taskID      string
+	workspaceID string
+	workDir     string
+	allowedRepo map[string]struct{}
+}
+
+// DeriveLocalControlToken derives a daemon-local, shutdown-only bearer token
+// without sending the profile credential itself over the loopback endpoint.
+// The per-process nonce makes a value obtained from a stale or spoofed health
+// server unusable against a later daemon instance.
+func DeriveLocalControlToken(authToken, daemonID, nonce string) (string, error) {
+	authToken = strings.TrimSpace(authToken)
+	daemonID = strings.TrimSpace(daemonID)
+	nonce = strings.TrimSpace(nonce)
+	if authToken == "" {
+		return "", errors.New("daemon auth token is required")
+	}
+	if daemonID == "" {
+		return "", errors.New("daemon id is required")
+	}
+	if nonce == "" {
+		return "", errors.New("daemon control nonce is required")
+	}
+
+	mac := hmac.New(sha256.New, []byte(authToken))
+	_, _ = mac.Write([]byte(localControlTokenDomain))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write([]byte(daemonID))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write([]byte(nonce))
+	return "mdc_" + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+}
+
+func (d *Daemon) controlNonce() (string, error) {
+	d.localControlNonceOnce.Do(func() {
+		if strings.TrimSpace(d.localControlNonce) != "" {
+			return
+		}
+		var raw [32]byte
+		if _, err := rand.Read(raw[:]); err != nil {
+			d.localControlNonceErr = fmt.Errorf("generate local control nonce: %w", err)
+			return
+		}
+		d.localControlNonce = base64.RawURLEncoding.EncodeToString(raw[:])
+	})
+	return d.localControlNonce, d.localControlNonceErr
+}
+
+func localBearerToken(r *http.Request) (string, bool) {
+	parts := strings.Fields(r.Header.Get("Authorization"))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
+		return "", false
+	}
+	return parts[1], true
+}
+
+func writeLocalUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", `Bearer realm="multica-daemon"`)
+	http.Error(w, "unauthorized", http.StatusUnauthorized)
+}
+
+func canonicalLocalWorkDir(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("workdir is required")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve workdir: %w", err)
+	}
+	abs = filepath.Clean(abs)
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(resolved), nil
+	}
+	return abs, nil
+}
+
+// registerLocalTaskCapability makes repo checkout available only while the
+// corresponding child is executing. The map stores a one-way digest instead
+// of the bearer token and every authorization is bound to the claimed task,
+// workspace, prepared workdir, and task-visible repo set.
+func (d *Daemon) registerLocalTaskCapability(task Task, token, workDir string) (func(), error) {
+	token = strings.TrimSpace(token)
+	if task.A2AInvocation {
+		if token != "" {
+			return nil, errors.New("A2A task must not receive a local task capability")
+		}
+		return func() {}, nil
+	}
+	if !strings.HasPrefix(token, "mat_") {
+		return nil, errors.New("local task capability must use a task-scoped token")
+	}
+	taskID := strings.TrimSpace(task.ID)
+	workspaceID := strings.TrimSpace(task.WorkspaceID)
+	if taskID == "" || workspaceID == "" {
+		return nil, errors.New("local task capability requires task and workspace ids")
+	}
+	canonicalWorkDir, err := canonicalLocalWorkDir(workDir)
+	if err != nil {
+		return nil, err
+	}
+	allowedRepo := make(map[string]struct{}, len(task.Repos))
+	for _, repo := range task.Repos {
+		if url := strings.TrimSpace(repo.URL); url != "" {
+			allowedRepo[url] = struct{}{}
+		}
+	}
+	capability := &localTaskCapability{
+		active:      true,
+		taskID:      taskID,
+		workspaceID: workspaceID,
+		workDir:     canonicalWorkDir,
+		allowedRepo: allowedRepo,
+	}
+	digest := sha256.Sum256([]byte(token))
+
+	d.localTaskCapabilitiesMu.Lock()
+	if d.localTaskCapabilities == nil {
+		d.localTaskCapabilities = make(map[[sha256.Size]byte]*localTaskCapability)
+	}
+	if _, exists := d.localTaskCapabilities[digest]; exists {
+		d.localTaskCapabilitiesMu.Unlock()
+		return nil, errors.New("local task capability is already active")
+	}
+	d.localTaskCapabilities[digest] = capability
+	d.localTaskCapabilitiesMu.Unlock()
+
+	return func() {
+		// Wait only for requests already authenticated with this exact
+		// capability. Once active is false, no later request can enter the
+		// mutation path even if it raced with removal from the digest map.
+		capability.mu.Lock()
+		capability.active = false
+		capability.mu.Unlock()
+
+		d.localTaskCapabilitiesMu.Lock()
+		if current := d.localTaskCapabilities[digest]; current == capability {
+			delete(d.localTaskCapabilities, digest)
+		}
+		d.localTaskCapabilitiesMu.Unlock()
+	}, nil
+}
+
+func (d *Daemon) acquireLocalTaskCapability(r *http.Request) (*localTaskCapability, func(), bool) {
+	token, ok := localBearerToken(r)
+	if !ok {
+		return nil, nil, false
+	}
+	digest := sha256.Sum256([]byte(token))
+	d.localTaskCapabilitiesMu.RLock()
+	capability := d.localTaskCapabilities[digest]
+	if capability != nil {
+		capability.mu.RLock()
+	}
+	d.localTaskCapabilitiesMu.RUnlock()
+	if capability == nil {
+		return nil, nil, false
+	}
+	if !capability.active {
+		capability.mu.RUnlock()
+		return nil, nil, false
+	}
+	return capability, capability.mu.RUnlock, true
 }
 
 // healthHandler returns the /health HTTP handler. Extracted from serveHealth
@@ -105,6 +285,9 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			Agents:          agents,
 			Workspaces:      wsList,
 		}
+		if nonce, err := d.controlNonce(); err == nil {
+			resp.ControlNonce = nonce
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -115,12 +298,27 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 // top-level context. Used by `multica daemon stop` so we don't depend on
 // OS-signal delivery, which is unreliable on Windows once the daemon is
 // spawned with DETACHED_PROCESS (no shared console with the stop caller).
-// The listener is bound to 127.0.0.1 only, so only local processes can hit
-// this endpoint.
+// The listener is bound to 127.0.0.1 and the endpoint additionally requires a
+// daemon-control capability; localhost alone is not an authorization boundary.
 func (d *Daemon) shutdownHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		provided, ok := localBearerToken(r)
+		if !ok || d.client == nil {
+			writeLocalUnauthorized(w)
+			return
+		}
+		nonce, err := d.controlNonce()
+		if err != nil {
+			http.Error(w, "local control unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		expected, err := DeriveLocalControlToken(d.client.Token(), d.cfg.DaemonID, nonce)
+		if err != nil || !hmac.Equal([]byte(provided), []byte(expected)) {
+			writeLocalUnauthorized(w)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -160,6 +358,12 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		capability, releaseCapability, ok := d.acquireLocalTaskCapability(r)
+		if !ok {
+			writeLocalUnauthorized(w)
+			return
+		}
+		defer releaseCapability()
 
 		var req repoCheckoutRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -177,6 +381,26 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 		}
 		if req.WorkDir == "" {
 			http.Error(w, "workdir is required", http.StatusBadRequest)
+			return
+		}
+		if req.TaskID == "" {
+			http.Error(w, "task_id is required", http.StatusBadRequest)
+			return
+		}
+
+		workDir, err := canonicalLocalWorkDir(req.WorkDir)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(req.TaskID) != capability.taskID ||
+			strings.TrimSpace(req.WorkspaceID) != capability.workspaceID ||
+			workDir != capability.workDir {
+			http.Error(w, "capability does not match task context", http.StatusForbidden)
+			return
+		}
+		if _, allowed := capability.allowedRepo[req.URL]; !allowed {
+			http.Error(w, "repository is not available to this task", http.StatusForbidden)
 			return
 		}
 

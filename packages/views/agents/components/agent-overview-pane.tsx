@@ -10,7 +10,10 @@ import type {
 } from "@multica/core/types";
 import { runtimeSupportsMcpConfig } from "@multica/core/agents";
 import { useFeatureEnabled } from "@multica/core/config";
-import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
+import {
+  AGENT_A2A_INBOUND_FLAG,
+  COMPOSIO_MCP_APPS_FLAG,
+} from "@multica/core/feature-flags";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { dingtalkInstallationsOptions } from "@multica/core/dingtalk";
 import { dingtalkAccountBindingsOptions } from "@multica/core/dingtalk-account-bindings";
@@ -38,6 +41,7 @@ import { IntegrationsTab } from "./tabs/integrations-tab";
 import { IdentityTab } from "./tabs/identity-tab";
 import { RuntimeConfigTab } from "./tabs/runtime-config-tab";
 import { LLMTraceTab } from "./tabs/llm-trace-tab";
+import { A2ATab } from "./tabs/a2a-tab";
 import { AgentDetailInspector } from "./agent-detail-inspector";
 import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
@@ -61,7 +65,8 @@ export type DetailTab =
   | "env"
   | "custom_args"
   | "runtime_config"
-  | "llm_trace";
+  | "llm_trace"
+  | "a2a";
 
 type SecondaryTab = {
   id: DetailTab;
@@ -77,7 +82,8 @@ type SecondaryTab = {
     | "environment"
     | "custom_args"
     | "runtime_config"
-    | "llm_trace";
+    | "llm_trace"
+    | "a2a";
 };
 
 const CAPABILITY_TABS: SecondaryTab[] = [
@@ -96,6 +102,7 @@ const SETTINGS_TABS: SecondaryTab[] = [
   { id: "custom_args", labelKey: "custom_args" },
   { id: "runtime_config", labelKey: "runtime_config" },
   { id: "llm_trace", labelKey: "llm_trace" },
+  { id: "a2a", labelKey: "a2a" },
 ];
 
 const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
@@ -177,6 +184,10 @@ export function AgentOverviewPane({
     COMPOSIO_MCP_APPS_FLAG,
     false,
   );
+  const agentA2AInboundEnabled = useFeatureEnabled(
+    AGENT_A2A_INBOUND_FLAG,
+    false,
+  );
   const [activeView, setActiveView] = useState<DetailTab>(() =>
     isDetailTab(urlView) ? urlView : "overview",
   );
@@ -242,9 +253,22 @@ export function AgentOverviewPane({
           return runtime?.provider === "openclaw";
         }
         if (tab.id === "llm_trace") return agent.runtime_mode === "cloud";
+        if (tab.id === "a2a") {
+          return (
+            agentA2AInboundEnabled &&
+            !!currentUserId &&
+            agent.owner_id === currentUserId
+          );
+        }
         return true;
       }),
-    [agent.runtime_mode, runtime?.provider],
+    [
+      agent.owner_id,
+      agent.runtime_mode,
+      agentA2AInboundEnabled,
+      currentUserId,
+      runtime?.provider,
+    ],
   );
 
   const visibleViews = useMemo(
@@ -531,6 +555,7 @@ export function AgentOverviewPane({
                       onDirtyChange={setActiveDirty}
                     />
                   )}
+                  {effectiveView === "a2a" && <A2ATab agent={agent} />}
                 </div>
               </div>
             </section>

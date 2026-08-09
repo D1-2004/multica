@@ -29,6 +29,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -362,6 +363,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		publicURLProvider = opts.RuntimeConfig.publicURL
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	h.A2AProtocol = a2aintegration.NewJSONRPCHandler(h.A2AService)
 	if opts.RuntimeConfig != nil {
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
@@ -1378,6 +1380,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Public API
 	r.Get("/api/config", h.GetConfig)
 	r.With(contactSalesRL).Post("/api/contact-sales", h.CreateContactSales)
+	// Per-Agent A2A discovery is public metadata; JSON-RPC uses an endpoint-
+	// specific Bearer credential and derives all tenant context server-side.
+	r.Get("/api/a2a/agents/{publicAgentId}/.well-known/agent-card.json", h.GetAgentA2ACard)
+	r.Post("/api/a2a/agents/{publicAgentId}/v1", h.HandleAgentA2ARPC)
 
 	// Webhook ingress for autopilots. Outside the authenticated group on
 	// purpose: the bearer token in the URL path IS the credential. Workspace
@@ -1972,6 +1978,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/labels/{labelId}", h.DetachLabelFromAgent)
 					r.Put("/skills/{skillId}/enabled", h.SetAgentSkillEnabled)
 					r.Delete("/skills/{skillId}", h.RemoveAgentSkill)
+					r.Route("/a2a", func(r chi.Router) {
+						r.Use(handler.RequireHumanActor)
+						r.Get("/", h.GetAgentA2AConfig)
+						r.Put("/", h.UpdateAgentA2AConfig)
+						r.Post("/clients", h.CreateAgentA2AClient)
+						r.Patch("/clients/{clientId}", h.UpdateAgentA2AClient)
+						r.Post("/clients/{clientId}/credentials", h.CreateAgentA2ACredential)
+						r.Delete("/clients/{clientId}/credentials/{credentialId}", h.DeleteAgentA2ACredential)
+					})
 					// Dedicated env-management endpoint. Owner/admin only;
 					// agent actors are denied. Every reveal / write is
 					// audited to activity_log. See MUL-2600 and

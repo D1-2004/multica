@@ -56,6 +56,25 @@ func TestNormalizeServerBaseURL(t *testing.T) {
 	}
 }
 
+func TestRunTaskA2AMissingAgentFailsClosed(t *testing.T) {
+	d := &Daemon{}
+	_, err := d.runTask(context.Background(), Task{
+		WorkspaceID:   "workspace-a2a",
+		A2AInvocation: true,
+	}, "claude", 0, slog.Default())
+	if err == nil || !strings.Contains(err.Error(), "claim has no Agent configuration") {
+		t.Fatalf("runTask() error = %v, want missing A2A Agent configuration refusal", err)
+	}
+}
+
+func TestRunTaskOrdinaryMissingAgentKeepsExistingValidation(t *testing.T) {
+	d := &Daemon{}
+	_, err := d.runTask(context.Background(), Task{}, "claude", 0, slog.Default())
+	if err == nil || !strings.Contains(err.Error(), "task has no workspace_id") {
+		t.Fatalf("runTask() error = %v, want existing workspace validation", err)
+	}
+}
+
 func TestTriggerRestart_BrewLinuxCellarDeleted(t *testing.T) {
 	originalIsBrewInstall := isBrewInstall
 	originalGetBrewPrefix := getBrewPrefix
@@ -307,6 +326,7 @@ func TestTaskScopedAuthToken(t *testing.T) {
 	tests := []struct {
 		name    string
 		token   string
+		a2a     bool
 		want    string
 		wantErr string
 	}{
@@ -324,13 +344,23 @@ func TestTaskScopedAuthToken(t *testing.T) {
 			token: " mat_task_token ",
 			want:  "mat_task_token",
 		},
+		{
+			name: "A2A invocation is explicitly credentialless",
+			a2a:  true,
+		},
+		{
+			name:    "A2A invocation rejects an accidentally minted token",
+			token:   "mat_task_token",
+			a2a:     true,
+			wantErr: "A2A invocation unexpectedly received a task-scoped auth token",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := taskScopedAuthToken(Task{AuthToken: tt.token})
+			got, err := taskScopedAuthToken(Task{AuthToken: tt.token, A2AInvocation: tt.a2a})
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Fatalf("taskScopedAuthToken() error = nil, want %q", tt.wantErr)
@@ -347,6 +377,134 @@ func TestTaskScopedAuthToken(t *testing.T) {
 				t.Fatalf("taskScopedAuthToken() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestMaskA2AInheritedCredentialEnv(t *testing.T) {
+	t.Setenv("MULTICA_DAEMON_TOKEN", "mdt_owner_secret")
+	t.Setenv("DWS_CLIENT_SECRET", "dws_owner_secret")
+	t.Setenv("GH_TOKEN", "github_owner_secret")
+	t.Setenv("OPENAI_API_KEY", "ambient_provider_secret")
+	t.Setenv("HARMLESS_RUNTIME_SETTING", "keep")
+
+	agentEnv := map[string]string{
+		"MULTICA_TOKEN":      "",
+		"MULTICA_SERVER_URL": "https://multica.example.test",
+	}
+	maskA2AInheritedCredentialEnv(agentEnv)
+
+	for _, key := range []string{"MULTICA_DAEMON_TOKEN", "DWS_CLIENT_SECRET", "GH_TOKEN", "OPENAI_API_KEY"} {
+		if value, ok := agentEnv[key]; !ok || value != "" {
+			t.Fatalf("credential %s was not masked: %#v", key, agentEnv)
+		}
+	}
+	if _, ok := agentEnv["HARMLESS_RUNTIME_SETTING"]; ok {
+		t.Fatalf("non-credential setting was unnecessarily rewritten: %#v", agentEnv)
+	}
+	if agentEnv["MULTICA_SERVER_URL"] != "https://multica.example.test" {
+		t.Fatalf("explicit runtime value was overwritten: %#v", agentEnv)
+	}
+}
+
+func TestInjectTaskTraceEnv(t *testing.T) {
+	t.Run("ordinary task keeps trace context", func(t *testing.T) {
+		agentEnv := map[string]string{}
+		injectTaskTraceEnv(agentEnv, Task{
+			TraceID:              "trace-ordinary",
+			TraceStartedAtUnixMS: 1_786_000_000_123,
+		})
+
+		if got := agentEnv["MULTICA_TRACE_ID"]; got != "trace-ordinary" {
+			t.Fatalf("MULTICA_TRACE_ID = %q, want ordinary task trace", got)
+		}
+		if got := agentEnv["MULTICA_TRACE_STARTED_AT_UNIX_MS"]; got != "1786000000123" {
+			t.Fatalf("MULTICA_TRACE_STARTED_AT_UNIX_MS = %q, want ordinary task start time", got)
+		}
+		if _, ok := agentEnv["MULTICA_A2A_INVOCATION"]; ok {
+			t.Fatalf("ordinary task received A2A execution marker: %#v", agentEnv)
+		}
+	})
+
+	t.Run("A2A task does not inject trace context", func(t *testing.T) {
+		agentEnv := map[string]string{}
+		injectTaskTraceEnv(agentEnv, Task{
+			A2AInvocation:        true,
+			TraceID:              "trace-a2a",
+			TraceStartedAtUnixMS: 1_786_000_000_123,
+		})
+
+		for _, key := range []string{"MULTICA_TRACE_ID", "MULTICA_TRACE_STARTED_AT_UNIX_MS"} {
+			if _, ok := agentEnv[key]; ok {
+				t.Fatalf("A2A trace key %s was injected: %#v", key, agentEnv)
+			}
+		}
+	})
+}
+
+func TestTaskContextAgentID(t *testing.T) {
+	const internalAgentID = "22222222-2222-2222-2222-222222222222"
+	if got := taskContextAgentID(Task{}, internalAgentID); got != internalAgentID {
+		t.Fatalf("ordinary task Agent ID = %q, want %q", got, internalAgentID)
+	}
+	if got := taskContextAgentID(Task{A2AInvocation: true}, internalAgentID); got != "" {
+		t.Fatalf("A2A task leaked internal Agent ID into task context: %q", got)
+	}
+}
+
+func TestIsolateA2AChildEnv(t *testing.T) {
+	t.Setenv("MULTICA_RUNTIME_ID", "runtime-from-daemon")
+	t.Setenv("MULTICA_TRACE_ID", "trace-from-daemon")
+	t.Setenv("MULTICA_TRACE_STARTED_AT_UNIX_MS", "1786000000000")
+	t.Setenv("MULTICA_DAEMON_TOKEN", "mdt_owner_secret")
+	t.Setenv("DWS_CLIENT_SECRET", "dws_owner_secret")
+	t.Setenv("GH_TOKEN", "github_owner_secret")
+	t.Setenv("HARMLESS_RUNTIME_SETTING", "keep")
+
+	agentEnv := map[string]string{
+		"MULTICA_TOKEN":                    "mat_internal",
+		"MULTICA_SERVER_URL":               "https://internal.example.test",
+		"MULTICA_DAEMON_PORT":              "49152",
+		"MULTICA_WORKSPACE_ID":             "11111111-1111-1111-1111-111111111111",
+		"MULTICA_AGENT_NAME":               "internal-agent",
+		"MULTICA_AGENT_ID":                 "22222222-2222-2222-2222-222222222222",
+		"MULTICA_TASK_ID":                  "33333333-3333-3333-3333-333333333333",
+		"MULTICA_TASK_SLOT":                "7",
+		"MULTICA_TRACE_ID":                 "trace-from-task",
+		"MULTICA_TRACE_STARTED_AT_UNIX_MS": "1786000000123",
+		"MULTICA_AUTOPILOT_ID":             "44444444-4444-4444-4444-444444444444",
+		"SAFE_PROVIDER_SETTING":            "preserve",
+	}
+	isolateA2AChildEnv(agentEnv)
+
+	if got := agentEnv["MULTICA_A2A_INVOCATION"]; got != "1" {
+		t.Fatalf("MULTICA_A2A_INVOCATION = %q, want non-identifying execution marker", got)
+	}
+	for _, key := range []string{
+		"MULTICA_TOKEN",
+		"MULTICA_SERVER_URL",
+		"MULTICA_DAEMON_PORT",
+		"MULTICA_WORKSPACE_ID",
+		"MULTICA_RUNTIME_ID",
+		"MULTICA_AGENT_NAME",
+		"MULTICA_AGENT_ID",
+		"MULTICA_TASK_ID",
+		"MULTICA_TASK_SLOT",
+		"MULTICA_TRACE_ID",
+		"MULTICA_TRACE_STARTED_AT_UNIX_MS",
+		"MULTICA_AUTOPILOT_ID",
+		"MULTICA_DAEMON_TOKEN",
+		"DWS_CLIENT_SECRET",
+		"GH_TOKEN",
+	} {
+		if value, ok := agentEnv[key]; !ok || value != "" {
+			t.Fatalf("A2A-sensitive env %s was not explicitly cleared: %#v", key, agentEnv)
+		}
+	}
+	if got := agentEnv["SAFE_PROVIDER_SETTING"]; got != "preserve" {
+		t.Fatalf("safe explicit setting = %q, want preserve", got)
+	}
+	if _, ok := agentEnv["HARMLESS_RUNTIME_SETTING"]; ok {
+		t.Fatalf("harmless inherited setting was unnecessarily rewritten: %#v", agentEnv)
 	}
 }
 

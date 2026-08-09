@@ -43,6 +43,11 @@ import {
   WorkspaceAccessTokenListSchema,
   WorkspaceAccessTokenSecretResponseSchema,
   EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE,
+  AgentA2AConfigSchema,
+  AgentA2AClientSchema,
+  AgentA2ACredentialSecretResponseSchema,
+  EMPTY_AGENT_A2A_CONFIG,
+  EMPTY_AGENT_A2A_CREDENTIAL_SECRET_RESPONSE,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
 
@@ -70,6 +75,161 @@ describe("workspace access schemas", () => {
       { endpoint: "test", includeReceived: false },
     );
     expect(parsed).toEqual(EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE);
+  });
+});
+
+describe("Agent A2A management schemas", () => {
+  const skill = {
+    id: "coding",
+    name: "Coding",
+    description: "Build a local project",
+    tags: ["code"],
+    examples: ["Create a Node.js project"],
+  };
+
+  const credential = {
+    id: "credential-1",
+    key_id: "key-1",
+    token_prefix: "mca2a_key-1",
+    status: "active",
+    expires_at: null,
+    last_used_at: null,
+    created_at: "2026-08-09T00:00:00Z",
+    revoked_at: null,
+  };
+
+  it("parses snake_case management data into camelCase domain values", () => {
+    const parsed = AgentA2AConfigSchema.parse({
+      endpoint: {
+        public_agent_id: "public-agent-1",
+        enabled: true,
+        card_name: "Coding Agent",
+        card_description: "Builds projects",
+        card_version: "1.0.0",
+        card_skills: [skill],
+        card_url: "https://example.test/api/a2a/agents/public-agent-1/.well-known/agent-card.json",
+        rpc_url: "https://example.test/api/a2a/agents/public-agent-1/v1",
+        protocol_version: "1.0",
+      },
+      agent_card: {
+        name: "Coding Agent",
+        description: "Builds projects",
+        supportedInterfaces: [{
+          url: "https://example.test/api/a2a/agents/public-agent-1/v1",
+          protocolBinding: "JSONRPC",
+          protocolVersion: "1.0",
+        }],
+        version: "1.0.0",
+        capabilities: { streaming: false },
+        securitySchemes: {
+          bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "opaque" },
+        },
+        securityRequirements: [{ schemes: { bearerAuth: [] } }],
+        defaultInputModes: ["text/plain"],
+        defaultOutputModes: ["text/plain"],
+        skills: [skill],
+      },
+      clients: [{
+        id: "client-1",
+        name: "Local Coding Agent",
+        status: "active",
+        scopes: ["send", "read"],
+        rate_limit_per_minute: 30,
+        max_concurrent_tasks: 2,
+        credentials: [credential],
+        created_at: "2026-08-09T00:00:00Z",
+        updated_at: "2026-08-09T00:00:00Z",
+        revoked_at: null,
+      }],
+    });
+
+    expect(parsed.endpoint).toMatchObject({
+      publicAgentId: "public-agent-1",
+      cardName: "Coding Agent",
+      cardUrl: "https://example.test/api/a2a/agents/public-agent-1/.well-known/agent-card.json",
+      rpcUrl: "https://example.test/api/a2a/agents/public-agent-1/v1",
+      protocolVersion: "1.0",
+    });
+    expect(parsed.agentCard?.supportedInterfaces[0]?.protocolBinding)
+      .toBe("JSONRPC");
+    expect(parsed.agentCard?.securityRequirements).toEqual([
+      { schemes: { bearerAuth: [] } },
+    ]);
+    expect(parsed.clients[0]).toMatchObject({
+      rateLimitPerMinute: 30,
+      maxConcurrentTasks: 2,
+    });
+    expect(parsed.clients[0]?.credentials[0]).toMatchObject({
+      keyId: "key-1",
+      tokenPrefix: "mca2a_key-1",
+      updatedAt: "2026-08-09T00:00:00Z",
+    });
+  });
+
+  it("rejects A2A scopes that are not implemented by the first slice", () => {
+    const baseClient = {
+      id: "client-1",
+      name: "Unsupported caller",
+      status: "active",
+      rate_limit_per_minute: null,
+      max_concurrent_tasks: null,
+      credentials: [],
+      created_at: "2026-08-09T00:00:00Z",
+      updated_at: "2026-08-09T00:00:00Z",
+      revoked_at: null,
+    };
+
+    for (const scope of ["list", "cancel"]) {
+      expect(AgentA2AClientSchema.safeParse({
+        ...baseClient,
+        scopes: ["send", scope],
+      }).success).toBe(false);
+    }
+  });
+
+  it("falls back safely when the management response is malformed", () => {
+    const parsed = parseWithFallback(
+      { endpoint: null, agent_card: null, clients: "not-an-array" },
+      AgentA2AConfigSchema,
+      EMPTY_AGENT_A2A_CONFIG,
+      { endpoint: "test", includeReceived: false },
+    );
+    expect(parsed).toEqual(EMPTY_AGENT_A2A_CONFIG);
+  });
+
+  it("keeps a disabled endpoint when PublicURL is not configured", () => {
+    const parsed = AgentA2AConfigSchema.parse({
+      endpoint: {
+        public_agent_id: "public-agent-1",
+        enabled: false,
+        card_name: "Coding Agent",
+        card_description: "Builds projects",
+        card_version: "1.0.0",
+        card_skills: [],
+        card_url: "",
+        rpc_url: "",
+        protocol_version: "1.0",
+      },
+      agent_card: null,
+      clients: [],
+    });
+
+    expect(parsed.endpoint).toMatchObject({
+      enabled: false,
+      cardUrl: "",
+      rpcUrl: "",
+      protocolVersion: "1.0",
+    });
+  });
+
+  it("requires the one-time token in a credential-create response", () => {
+    const parsed = parseWithFallback(
+      { credential },
+      AgentA2ACredentialSecretResponseSchema,
+      EMPTY_AGENT_A2A_CREDENTIAL_SECRET_RESPONSE,
+      { endpoint: "test", includeReceived: false },
+    );
+    expect(parsed).toEqual(EMPTY_AGENT_A2A_CREDENTIAL_SECRET_RESPONSE);
   });
 });
 

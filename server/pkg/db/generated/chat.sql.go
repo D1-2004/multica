@@ -31,6 +31,83 @@ func (q *Queries) ChatSessionHasUserMessage(ctx context.Context, chatSessionID p
 	return has_user_message, err
 }
 
+const createA2AChatTask = `-- name: CreateA2AChatTask :one
+INSERT INTO agent_task_queue (
+    agent_id, runtime_id, issue_id, status, priority, chat_session_id,
+    initiator_user_id, originator_user_id, force_fresh_session,
+    runtime_mcp_overlay, runtime_connected_apps, context, max_attempts
+)
+VALUES (
+    $1, $2, NULL, 'queued', 2, $3,
+    NULL, NULL, FALSE, NULL, NULL, $4, 1
+)
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, runtime_launch_lease_token, runtime_launch_lease_expires_at
+`
+
+type CreateA2AChatTaskParams struct {
+	AgentID       pgtype.UUID `json:"agent_id"`
+	RuntimeID     pgtype.UUID `json:"runtime_id"`
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	TaskContext   []byte      `json:"task_context"`
+}
+
+// A2A tasks deliberately have no human initiator/originator and no personal
+// runtime overlay. The endpoint owner is only chat_session ownership plumbing;
+// it must never become the caller identity or grant access to personal apps.
+// Retry stays disabled until A2A logical retry lineage is implemented.
+func (q *Queries) CreateA2AChatTask(ctx context.Context, arg CreateA2AChatTaskParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, createA2AChatTask,
+		arg.AgentID,
+		arg.RuntimeID,
+		arg.ChatSessionID,
+		arg.TaskContext,
+	)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.RuntimeLaunchLeaseToken,
+		&i.RuntimeLaunchLeaseExpiresAt,
+	)
+	return i, err
+}
+
 const createChatMessage = `-- name: CreateChatMessage :one
 INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms, message_kind, source_payload)
 VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::text, 'message'), $8)
@@ -312,7 +389,11 @@ func (q *Queries) GetChatSession(ctx context.Context, id pgtype.UUID) (ChatSessi
 
 const getChatSessionInWorkspace = `-- name: GetChatSessionInWorkspace :one
 SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at FROM chat_session
-WHERE id = $1 AND workspace_id = $2
+WHERE chat_session.id = $1
+  AND chat_session.workspace_id = $2
+  AND NOT EXISTS (
+    SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = chat_session.id
+  )
 `
 
 type GetChatSessionInWorkspaceParams struct {
@@ -445,6 +526,9 @@ SELECT EXISTS (
     AND cs.workspace_id = $1
     AND cs.creator_id = $2
     AND cs.agent_id = ANY($3::uuid[])
+    AND NOT EXISTS (
+      SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+    )
 ) AS has_pending
 `
 
@@ -508,6 +592,9 @@ LEFT JOIN LATERAL (
    LIMIT 1
 ) lm ON true
 WHERE cs.workspace_id = $1 AND cs.creator_id = $2
+  AND NOT EXISTS (
+    SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+  )
 ORDER BY (cs.pinned_at IS NOT NULL) DESC, cs.pinned_at DESC, COALESCE(lm.created_at, cs.updated_at) DESC
 `
 
@@ -747,6 +834,9 @@ LEFT JOIN LATERAL (
    LIMIT 1
 ) lm ON true
 WHERE cs.workspace_id = $1 AND cs.creator_id = $2 AND cs.status = 'active'
+  AND NOT EXISTS (
+    SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+  )
 ORDER BY (cs.pinned_at IS NOT NULL) DESC, cs.pinned_at DESC, COALESCE(lm.created_at, cs.updated_at) DESC
 `
 
@@ -874,6 +964,9 @@ WHERE atq.chat_session_id IS NOT NULL
   AND atq.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
   AND cs.workspace_id = $1
   AND cs.creator_id = $2
+  AND NOT EXISTS (
+    SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+  )
 ORDER BY atq.created_at DESC
 `
 

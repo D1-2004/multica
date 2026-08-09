@@ -9,7 +9,11 @@ WHERE id = $1;
 
 -- name: GetChatSessionInWorkspace :one
 SELECT * FROM chat_session
-WHERE id = $1 AND workspace_id = $2;
+WHERE chat_session.id = $1
+  AND chat_session.workspace_id = $2
+  AND NOT EXISTS (
+    SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = chat_session.id
+  );
 
 -- name: ListChatSessionsByCreator :many
 -- IM-style list: each active session with its unread *count* (assistant
@@ -34,6 +38,9 @@ LEFT JOIN LATERAL (
    LIMIT 1
 ) lm ON true
 WHERE cs.workspace_id = $1 AND cs.creator_id = $2 AND cs.status = 'active'
+  AND NOT EXISTS (
+    SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+  )
 ORDER BY (cs.pinned_at IS NOT NULL) DESC, cs.pinned_at DESC, COALESCE(lm.created_at, cs.updated_at) DESC;
 
 -- name: ListAllChatSessionsByCreator :many
@@ -65,6 +72,9 @@ LEFT JOIN LATERAL (
    LIMIT 1
 ) lm ON true
 WHERE cs.workspace_id = $1 AND cs.creator_id = $2
+  AND NOT EXISTS (
+    SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+  )
 ORDER BY (cs.pinned_at IS NOT NULL) DESC, cs.pinned_at DESC, COALESCE(lm.created_at, cs.updated_at) DESC;
 
 -- name: UpdateChatSessionTitle :one
@@ -253,6 +263,22 @@ VALUES (
 )
 RETURNING *;
 
+-- name: CreateA2AChatTask :one
+-- A2A tasks deliberately have no human initiator/originator and no personal
+-- runtime overlay. The endpoint owner is only chat_session ownership plumbing;
+-- it must never become the caller identity or grant access to personal apps.
+-- Retry stays disabled until A2A logical retry lineage is implemented.
+INSERT INTO agent_task_queue (
+    agent_id, runtime_id, issue_id, status, priority, chat_session_id,
+    initiator_user_id, originator_user_id, force_fresh_session,
+    runtime_mcp_overlay, runtime_connected_apps, context, max_attempts
+)
+VALUES (
+    @agent_id, @runtime_id, NULL, 'queued', 2, @chat_session_id,
+    NULL, NULL, FALSE, NULL, NULL, sqlc.narg(task_context), 1
+)
+RETURNING *;
+
 -- name: PutChatSessionPendingFresh :exec
 INSERT INTO chat_session_pending_fresh (chat_session_id)
 VALUES ($1)
@@ -365,6 +391,9 @@ WHERE atq.chat_session_id IS NOT NULL
   AND atq.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
   AND cs.workspace_id = $1
   AND cs.creator_id = $2
+  AND NOT EXISTS (
+    SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+  )
 ORDER BY atq.created_at DESC;
 
 -- name: HasPendingChatTasksByCreator :one
@@ -386,6 +415,9 @@ SELECT EXISTS (
     AND cs.workspace_id = sqlc.arg(workspace_id)
     AND cs.creator_id = sqlc.arg(creator_id)
     AND cs.agent_id = ANY(sqlc.arg(agent_ids)::uuid[])
+    AND NOT EXISTS (
+      SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+    )
 ) AS has_pending;
 
 -- name: MarkChatSessionRead :exec

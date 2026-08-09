@@ -646,6 +646,34 @@ func TestBuildEnvAppendsExtras(t *testing.T) {
 	}
 }
 
+func TestMergeEnvExplicitEmptyValueMasksInheritedCredential(t *testing.T) {
+	t.Parallel()
+
+	env := mergeEnv(
+		[]string{"PATH=/usr/bin", "MULTICA_TOKEN=mat_owner_token", "MULTICA_DAEMON_TOKEN=mdt_owner_token", "GH_TOKEN=owner-token"},
+		map[string]string{"MULTICA_TOKEN": "", "MULTICA_DAEMON_TOKEN": "", "GH_TOKEN": ""},
+	)
+	want := map[string]int{
+		"PATH=/usr/bin":         1,
+		"MULTICA_TOKEN=":        1,
+		"MULTICA_DAEMON_TOKEN=": 1,
+		"GH_TOKEN=":             1,
+	}
+	for _, entry := range env {
+		if entry == "MULTICA_TOKEN=mat_owner_token" || entry == "MULTICA_DAEMON_TOKEN=mdt_owner_token" || entry == "GH_TOKEN=owner-token" {
+			t.Fatalf("inherited credential was not masked: %v", env)
+		}
+		if _, ok := want[entry]; ok {
+			want[entry]--
+		}
+	}
+	for entry, remaining := range want {
+		if remaining != 0 {
+			t.Fatalf("entry %q count mismatch in %v", entry, env)
+		}
+	}
+}
+
 func TestBuildEnvNilExtras(t *testing.T) {
 	t.Parallel()
 

@@ -715,6 +715,13 @@ func mergeEnv(base []string, extra map[string]string) []string {
 		if isFilteredChildEnvKey(key) {
 			continue
 		}
+		// Explicit task/agent environment always wins over the daemon process.
+		// Besides matching normal environment override semantics, this lets a
+		// restricted execution mask inherited credentials with an empty value
+		// without emitting duplicate keys whose lookup order varies by runtime.
+		if _, overridden := extra[key]; overridden {
+			continue
+		}
 		env = append(env, entry)
 	}
 	for k, v := range extra {

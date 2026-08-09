@@ -143,6 +143,33 @@ func TestASBLaunchWithoutIdentityServiceUsesUnboundMode(t *testing.T) {
 	}
 }
 
+func TestASBA2ATaskNeverResolvesEmployeeIdentity(t *testing.T) {
+	t.Parallel()
+
+	launcher := &ASBLauncher{Identity: fakeASBTaskIdentityResolver{identity: ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:              "aip-1",
+		SourceSandboxID:    "identity-source-1",
+		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentIdentityToken: "ait",
+		Fingerprint:        strings.Repeat("a", 64),
+	}}}
+	identity, err := launcher.resolveTaskIdentityForTask(
+		context.Background(),
+		db.AgentTaskQueue{Context: newA2ATaskContext()},
+		pgtype.UUID{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity != unboundASBResolvedIdentity() {
+		t.Fatalf("A2A identity = %#v, want unbound", identity)
+	}
+}
+
 func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
 	t.Parallel()
 

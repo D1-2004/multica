@@ -323,10 +323,17 @@ func normalizeAPIBaseURL(raw string) string {
 	return raw
 }
 
-// inAgentExecutionContext reports whether the CLI has explicit task identity
-// markers from a daemon-managed agent task.
+const a2aInvocationEnvKey = "MULTICA_A2A_INVOCATION"
+
+// inAgentExecutionContext reports whether the CLI has an explicit execution
+// marker from a daemon-managed agent task. A2A children deliberately do not
+// receive internal Agent or task UUIDs, so the daemon supplies a non-identifying
+// marker instead. Treat any non-empty value as fail-closed execution context;
+// only the daemon writes the canonical value ("1").
 func inAgentExecutionContext() bool {
-	return os.Getenv("MULTICA_AGENT_ID") != "" || os.Getenv("MULTICA_TASK_ID") != ""
+	return os.Getenv("MULTICA_AGENT_ID") != "" ||
+		os.Getenv("MULTICA_TASK_ID") != "" ||
+		strings.TrimSpace(os.Getenv(a2aInvocationEnvKey)) != ""
 }
 
 // inDaemonManagedExecutionContext reports whether the CLI is being invoked

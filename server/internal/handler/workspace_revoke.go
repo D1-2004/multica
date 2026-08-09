@@ -51,6 +51,13 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 	defer tx.Rollback(ctx)
 
 	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.LockWorkspaceMemberForRevocation(ctx, db.LockWorkspaceMemberForRevocationParams{
+		MemberID:    memberID,
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+	}); err != nil {
+		return empty, err
+	}
 
 	runtimes, err := qtx.ListAgentRuntimesByOwner(ctx, db.ListAgentRuntimesByOwnerParams{
 		WorkspaceID: workspaceID,
@@ -138,6 +145,58 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 		}
 	}
 
+	// A2A delegation follows Agent ownership, not runtime ownership. An Agent
+	// owned by the departing member may run on a shared runtime owned by
+	// somebody else, so the runtime cascade above is not a sufficient fence.
+	// These queries lock the complete owner-Agent set and then walk the A2A
+	// hierarchy in the fixed agent -> endpoint -> client -> credential order.
+	// Disabling only the endpoint would stop new sends but leave old GetTask
+	// grants readable; permanently revoking both clients and active credentials
+	// also prevents those grants from reviving if the same user is re-invited.
+	a2aAgentIDs, err := qtx.LockAgentsForMemberA2ARevocation(ctx, db.LockAgentsForMemberA2ARevocationParams{
+		WorkspaceID:  workspaceID,
+		MemberUserID: userID,
+	})
+	if err != nil {
+		return empty, err
+	}
+	a2aEndpointIDs, err := qtx.LockAgentA2AEndpointsForMemberRevocation(ctx, db.LockAgentA2AEndpointsForMemberRevocationParams{
+		WorkspaceID: workspaceID,
+		AgentIds:    a2aAgentIDs,
+	})
+	if err != nil {
+		return empty, err
+	}
+	a2aClientIDs, err := qtx.LockA2AClientsForMemberRevocation(ctx, a2aEndpointIDs)
+	if err != nil {
+		return empty, err
+	}
+	a2aCredentialIDs, err := qtx.LockA2ACredentialsForMemberRevocation(ctx, a2aClientIDs)
+	if err != nil {
+		return empty, err
+	}
+	disabledA2AEndpointIDs, err := qtx.DisableAgentA2AEndpointsForMemberRevocation(ctx, a2aEndpointIDs)
+	if err != nil {
+		return empty, err
+	}
+	revokedA2AClientIDs, err := qtx.RevokeA2AClientsForMemberRevocation(ctx, db.RevokeA2AClientsForMemberRevocationParams{
+		ClientIds: a2aClientIDs,
+		RevokedBy: archivedBy,
+	})
+	if err != nil {
+		return empty, err
+	}
+	revokedA2ACredentialIDs, err := qtx.RevokeA2ACredentialsForMemberRevocation(ctx, db.RevokeA2ACredentialsForMemberRevocationParams{
+		CredentialIds: a2aCredentialIDs,
+		RevokedBy:     archivedBy,
+	})
+	if err != nil {
+		return empty, err
+	}
+	result.A2AEndpointsDisabled = int64(len(disabledA2AEndpointIDs))
+	result.A2AClientsRevoked = int64(len(revokedA2AClientIDs))
+	result.A2ACredentialsRevoked = int64(len(revokedA2ACredentialIDs))
+
 	// channel_user_binding used to carry a member FK with ON DELETE CASCADE, so
 	// a removed member's IM bindings vanished automatically. MUL-3515 §4 dropped
 	// every channel_* foreign key, moving that integrity rule to the application
@@ -184,15 +243,21 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 // Publishing inside the transaction would let subscribers observe a state the
 // tx might still roll back (see TaskService.BroadcastCancelledTasks docstring).
 type revocationResult struct {
-	Runtimes           []db.AgentRuntime
-	ArchivedAgents     []db.Agent
-	CancelledTasks     []db.AgentTaskQueue
-	OfflineRuntimeIDs  []db.ForceOfflineRuntimesByIDsRow
-	RevokedTokenHashes []string
+	Runtimes              []db.AgentRuntime
+	ArchivedAgents        []db.Agent
+	CancelledTasks        []db.AgentTaskQueue
+	OfflineRuntimeIDs     []db.ForceOfflineRuntimesByIDsRow
+	RevokedTokenHashes    []string
+	A2AEndpointsDisabled  int64
+	A2AClientsRevoked     int64
+	A2ACredentialsRevoked int64
 }
 
 func (r revocationResult) isEmpty() bool {
-	return len(r.Runtimes) == 0
+	return len(r.Runtimes) == 0 &&
+		r.A2AEndpointsDisabled == 0 &&
+		r.A2AClientsRevoked == 0 &&
+		r.A2ACredentialsRevoked == 0
 }
 
 // publishRevocation runs all post-commit side effects: invalidate daemon token
@@ -248,6 +313,9 @@ func logRevocation(result revocationResult, workspaceID, userID string, attrs ..
 		"tasks_cancelled", len(result.CancelledTasks),
 		"runtimes_taken_offline", len(result.OfflineRuntimeIDs),
 		"daemon_tokens_revoked", len(result.RevokedTokenHashes),
+		"a2a_endpoints_disabled", result.A2AEndpointsDisabled,
+		"a2a_clients_revoked", result.A2AClientsRevoked,
+		"a2a_credentials_revoked", result.A2ACredentialsRevoked,
 	}
 	slog.Info("member runtimes revoked", append(base, attrs...)...)
 }

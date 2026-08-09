@@ -553,12 +553,7 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 	lockedCredentials := *locked.Credentials
 	lockedCredentials.Store = locked.Queries
 	locked.Credentials = &lockedCredentials
-	identity, err := locked.resolveTaskIdentity(
-		ctx,
-		runtime.WorkspaceID,
-		task.AgentID,
-		task.RuntimeID,
-	)
+	identity, err := locked.resolveTaskIdentityForTask(ctx, task, runtime.WorkspaceID)
 	if err != nil {
 		releaseRuntimeLock()
 		lockHeld = false
@@ -704,6 +699,19 @@ func (l *ASBLauncher) resolveTaskIdentity(
 		return unboundASBResolvedIdentity(), nil
 	}
 	return identity, nil
+}
+
+func (l *ASBLauncher) resolveTaskIdentityForTask(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	workspaceID pgtype.UUID,
+) (ASBResolvedIdentity, error) {
+	if IsA2ATaskOrigin(task.Context) {
+		// A remote A2A caller never receives the Agent/owner employee identity,
+		// BUC session, a1/mw access, or identity-derived sandbox extensions.
+		return unboundASBResolvedIdentity(), nil
+	}
+	return l.resolveTaskIdentity(ctx, workspaceID, task.AgentID, task.RuntimeID)
 }
 
 func unboundASBResolvedIdentity() ASBResolvedIdentity {

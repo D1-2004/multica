@@ -217,6 +217,21 @@ SELECT * FROM agent_task_queue
 WHERE agent_id = $1
 ORDER BY created_at DESC;
 
+-- name: ListHumanVisibleAgentTasks :many
+-- External A2A principals share the execution engine but not the ordinary
+-- member Activity surface. Keep ListAgentTasks unfiltered for schedulers and
+-- concurrency/blocker checks; only this presentation query hides A2A rows.
+SELECT task.*
+FROM agent_task_queue task
+WHERE task.agent_id = $1
+  AND COALESCE(task.context ->> 'multica_origin', '') <> 'a2a'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM a2a_context context
+      WHERE context.chat_session_id = task.chat_session_id
+  )
+ORDER BY created_at DESC;
+
 -- name: CreateAgentTask :one
 -- head_sha, agent_identity_context_token and dispatch_context are
 -- server-private task context.
@@ -1452,6 +1467,12 @@ SELECT atq.* FROM agent_task_queue atq
 JOIN agent a ON a.id = atq.agent_id
 WHERE a.workspace_id = $1
   AND atq.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND COALESCE(atq.context ->> 'multica_origin', '') <> 'a2a'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM a2a_context context
+      WHERE context.chat_session_id = atq.chat_session_id
+  )
 
 UNION ALL
 
@@ -1461,6 +1482,12 @@ SELECT t.* FROM (
   JOIN agent a ON a.id = atq.agent_id
   WHERE a.workspace_id = $1
     AND atq.status IN ('completed', 'failed')
+    AND COALESCE(atq.context ->> 'multica_origin', '') <> 'a2a'
+    AND NOT EXISTS (
+        SELECT 1
+        FROM a2a_context context
+        WHERE context.chat_session_id = atq.chat_session_id
+    )
   ORDER BY atq.agent_id, atq.completed_at DESC NULLS LAST
 ) t;
 

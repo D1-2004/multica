@@ -10,6 +10,69 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type A2aClient struct {
+	ID                 pgtype.UUID        `json:"id"`
+	EndpointID         pgtype.UUID        `json:"endpoint_id"`
+	Name               string             `json:"name"`
+	Status             string             `json:"status"`
+	Scopes             []string           `json:"scopes"`
+	RateLimitPerMinute pgtype.Int4        `json:"rate_limit_per_minute"`
+	MaxConcurrentTasks pgtype.Int4        `json:"max_concurrent_tasks"`
+	CreatedBy          pgtype.UUID        `json:"created_by"`
+	UpdatedBy          pgtype.UUID        `json:"updated_by"`
+	RevokedAt          pgtype.Timestamptz `json:"revoked_at"`
+	RevokedBy          pgtype.UUID        `json:"revoked_by"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type A2aClientCredential struct {
+	ID          pgtype.UUID        `json:"id"`
+	ClientID    pgtype.UUID        `json:"client_id"`
+	KeyID       string             `json:"key_id"`
+	TokenHash   string             `json:"token_hash"`
+	TokenPrefix string             `json:"token_prefix"`
+	Status      string             `json:"status"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+	RevokedBy   pgtype.UUID        `json:"revoked_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type A2aContext struct {
+	ID              pgtype.UUID        `json:"id"`
+	EndpointID      pgtype.UUID        `json:"endpoint_id"`
+	ClientID        pgtype.UUID        `json:"client_id"`
+	PublicContextID string             `json:"public_context_id"`
+	ChatSessionID   pgtype.UUID        `json:"chat_session_id"`
+	LastActivityAt  pgtype.Timestamptz `json:"last_activity_at"`
+	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type A2aTaskBinding struct {
+	ID                          pgtype.UUID        `json:"id"`
+	EndpointID                  pgtype.UUID        `json:"endpoint_id"`
+	ClientID                    pgtype.UUID        `json:"client_id"`
+	ContextID                   pgtype.UUID        `json:"context_id"`
+	AcceptedCredentialID        pgtype.UUID        `json:"accepted_credential_id"`
+	PublicTaskID                string             `json:"public_task_id"`
+	MessageID                   string             `json:"message_id"`
+	RequestFingerprint          string             `json:"request_fingerprint"`
+	ArtifactID                  string             `json:"artifact_id"`
+	RootLocalTaskID             pgtype.UUID        `json:"root_local_task_id"`
+	InputChatMessageID          pgtype.UUID        `json:"input_chat_message_id"`
+	RequestID                   pgtype.Text        `json:"request_id"`
+	CancelRequestedAt           pgtype.Timestamptz `json:"cancel_requested_at"`
+	FailureFinalizedLocalTaskID pgtype.UUID        `json:"failure_finalized_local_task_id"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ActivityLog struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
@@ -50,6 +113,21 @@ type Agent struct {
 	PermissionMode string      `json:"permission_mode"`
 	Kind           string      `json:"kind"`
 	SystemKey      pgtype.Text `json:"system_key"`
+}
+
+type AgentA2aEndpoint struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	PublicAgentID     string             `json:"public_agent_id"`
+	Enabled           bool               `json:"enabled"`
+	DelegatedByUserID pgtype.UUID        `json:"delegated_by_user_id"`
+	CardName          string             `json:"card_name"`
+	CardDescription   string             `json:"card_description"`
+	CardVersion       string             `json:"card_version"`
+	CardSkills        []byte             `json:"card_skills"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type AgentDingtalkIdentity struct {

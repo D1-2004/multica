@@ -48,6 +48,17 @@ func GenerateWorkspaceAccessToken() (string, error) {
 	return "dta_" + hex.EncodeToString(b), nil
 }
 
+// GenerateA2AToken creates a credential scoped to one published A2A client.
+// The distinct prefix prevents this machine credential from ever falling
+// through to the broader PAT/JWT authentication paths.
+func GenerateA2AToken() (string, error) {
+	b := make([]byte, 20)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate A2A token: %w", err)
+	}
+	return "mca2a_" + hex.EncodeToString(b), nil
+}
+
 // GenerateDaemonToken creates a new daemon auth token: "mdt_" + 40 random hex chars.
 func GenerateDaemonToken() (string, error) {
 	b := make([]byte, 20) // 20 bytes = 40 hex chars

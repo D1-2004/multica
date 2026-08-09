@@ -22,6 +22,41 @@ type runtimeLocalMcpServerSummary struct {
 	Enabled   bool   `json:"enabled"`
 }
 
+// resolveTaskMcpConfig applies the task-origin boundary before provider
+// adapters see MCP configuration. Ordinary tasks retain the existing additive
+// runtime merge. An inbound A2A invocation may use only the MCP configuration
+// explicitly carried by the claimed Agent; an absent config becomes a managed
+// empty set so provider adapters do not fall back to native host configuration.
+func resolveTaskMcpConfig(provider string, agentConfig json.RawMessage, a2aInvocation bool) (json.RawMessage, error) {
+	if !a2aInvocation {
+		return mergeRuntimeAndAgentMcpConfig(provider, agentConfig)
+	}
+
+	if !supportsA2AStrictMcpIsolation(provider) {
+		return nil, fmt.Errorf("runtime provider %q cannot safely isolate native MCP configuration for A2A invocations", provider)
+	}
+
+	trimmed := bytes.TrimSpace(agentConfig)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return json.RawMessage(`{"mcpServers":{}}`), nil
+	}
+	return agentConfig, nil
+}
+
+// supportsA2AStrictMcpIsolation is deliberately an allowlist. These providers
+// have a verified strict-replace path for a managed empty MCP document:
+// Claude uses --strict-mcp-config with the task-local document. Providers that
+// ignore/deep-merge McpConfig or retain another unisolated native capability
+// path must fail closed for externally triggered tasks.
+func supportsA2AStrictMcpIsolation(provider string) bool {
+	switch provider {
+	case "claude":
+		return true
+	default:
+		return false
+	}
+}
+
 // mergeRuntimeAndAgentMcpConfig builds the task-local MCP configuration used
 // when an agent has MCP servers managed by Multica. Runtime servers are the
 // base layer and the agent's entries win on a same-name collision. The merge
