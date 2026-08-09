@@ -16,6 +16,20 @@ func TestReleaseFlagsDefaultToOff(t *testing.T) {
 	if WorkspaceAccessTokensEnabled(ctx, nil) {
 		t.Fatal("workspace access tokens release flag must default to off")
 	}
+	if AgentA2AInboundEnabled(ctx, nil) {
+		t.Fatal("agent A2A inbound release flag must default to off")
+	}
+}
+
+func TestAgentA2AInboundIsPublishedToFrontend(t *testing.T) {
+	flags := EvaluateFrontendPublicFlags(context.Background(), nil)
+	value, ok := flags[AgentA2AInbound]
+	if !ok {
+		t.Fatal("agent A2A inbound release flag must be published to the frontend")
+	}
+	if value {
+		t.Fatal("agent A2A inbound release flag must default to off")
+	}
 }
 
 func TestAgentSkillTogglesCompatDecisionStaysEnabled(t *testing.T) {

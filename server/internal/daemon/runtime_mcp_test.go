@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -178,6 +179,96 @@ func TestMergeRuntimeAndAgentMcpConfigNullKeepsNativeInheritance(t *testing.T) {
 		}
 		if string(merged) != string(raw) {
 			t.Fatalf("merged %q = %q", string(raw), string(merged))
+		}
+	}
+}
+
+func TestResolveTaskMcpConfigA2AEmptyDisablesNativeFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{"mcpServers":{"host-only":{"command":"host-secret"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, raw := range []json.RawMessage{nil, json.RawMessage{}, json.RawMessage("null"), json.RawMessage(" null ")} {
+		got, err := resolveTaskMcpConfig("claude", raw, true)
+		if err != nil {
+			t.Fatalf("resolveTaskMcpConfig(%q): %v", string(raw), err)
+		}
+		var document struct {
+			McpServers map[string]json.RawMessage `json:"mcpServers"`
+		}
+		if err := json.Unmarshal(got, &document); err != nil {
+			t.Fatalf("unmarshal resolved config %q: %v", string(got), err)
+		}
+		if document.McpServers == nil || len(document.McpServers) != 0 {
+			t.Fatalf("resolved config %q must be an explicit managed empty set", string(got))
+		}
+	}
+}
+
+func TestResolveTaskMcpConfigA2APreservesExplicitAgentConfigForClaude(t *testing.T) {
+	agentConfig := json.RawMessage(`{"mcpServers":{"agent-only":{"command":"agent-command"}}}`)
+	got, err := resolveTaskMcpConfig("claude", agentConfig, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(agentConfig) {
+		t.Fatalf("resolveTaskMcpConfig() = %q, want explicit Agent config %q", string(got), string(agentConfig))
+	}
+}
+
+func TestResolveTaskMcpConfigA2AUsesOnlyExplicitAgentConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{"mcpServers":{"host-only":{"command":"host-secret"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	agentConfig := json.RawMessage(`{"mcpServers":{"agent-only":{"command":"agent-command"}}}`)
+
+	got, err := resolveTaskMcpConfig("claude", agentConfig, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		McpServers map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(got, &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.McpServers) != 1 || document.McpServers["agent-only"]["command"] != "agent-command" {
+		t.Fatalf("A2A MCP config = %#v, want only explicit Agent server", document.McpServers)
+	}
+	if _, ok := document.McpServers["host-only"]; ok {
+		t.Fatalf("A2A MCP config inherited host-only server: %#v", document.McpServers)
+	}
+
+	ordinary, err := resolveTaskMcpConfig("claude", agentConfig, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(ordinary, &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.McpServers) != 2 {
+		t.Fatalf("ordinary MCP config = %#v, want existing runtime merge behavior", document.McpServers)
+	}
+}
+
+func TestResolveTaskMcpConfigA2AUnverifiedProvidersFailClosed(t *testing.T) {
+	for _, provider := range []string{"codebuddy", "codex", "cursor", "openclaw", "opencode", "deveco", "copilot", "antigravity", "pi", "future-runtime"} {
+		for _, raw := range []json.RawMessage{
+			nil,
+			json.RawMessage(`{"mcpServers":{"agent-only":{"url":"https://agent.example/mcp"}}}`),
+		} {
+			got, err := resolveTaskMcpConfig(provider, raw, true)
+			if err == nil {
+				t.Fatalf("resolveTaskMcpConfig(%q, %q) = %q, nil; want fail-closed error", provider, string(raw), string(got))
+			}
+			want := fmt.Sprintf("runtime provider %q cannot safely isolate native MCP configuration for A2A invocations", provider)
+			if err.Error() != want {
+				t.Fatalf("resolveTaskMcpConfig(%q, %q) error = %q, want %q", provider, string(raw), err, want)
+			}
 		}
 	}
 }

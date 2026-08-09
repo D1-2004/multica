@@ -1325,6 +1325,132 @@ func parseRuntimeConnectedAppsForClaim(raw []byte, taskID pgtype.UUID) []runtime
 	return apps
 }
 
+// clearA2AClaimWorkspaceData prevents an external A2A principal from
+// inheriting workspace-owned execution context. Callers must invoke it only
+// after validating the resolved task workspace against the runtime workspace;
+// sanitizing the payload is not a substitute for that authorization check.
+func clearA2AClaimWorkspaceData(resp *AgentTaskResponse, taskContext []byte) {
+	if !service.IsA2ATaskOrigin(taskContext) {
+		return
+	}
+	resp.Repos = nil
+	resp.WorkspaceContext = ""
+	resp.ConnectedApps = nil
+}
+
+const a2aClaimRuntimeSafetyPolicyError = "A2A task execution blocked by runtime safety policy"
+
+const a2aClaimAgentLoadError = "A2A task execution failed because agent configuration could not be loaded"
+
+func isA2AClaimTokenlessRuntime(runtime db.AgentRuntime) bool {
+	if runtime.RuntimeMode != "local" {
+		return false
+	}
+	switch runtime.Provider {
+	case "claude":
+		return true
+	default:
+		return false
+	}
+}
+
+// failA2AClaimOnAgentLoadError turns a post-claim Agent read failure into a
+// terminal A2A failure. Ordinary tasks retain the historical best-effort
+// behavior. The callback seam keeps the branch independently testable without
+// replacing the generated query layer, while production supplies the same
+// binding-preserving terminal path used by the runtime-safety gate.
+func failA2AClaimOnAgentLoadError(
+	ctx context.Context,
+	task *db.AgentTaskQueue,
+	agentLoadErr error,
+	terminalFail func(context.Context, pgtype.UUID, string) error,
+) *claimBuildFailure {
+	if agentLoadErr == nil || task == nil || !service.IsA2ATaskOrigin(task.Context) {
+		return nil
+	}
+
+	slog.Error("task claim: failed to load agent for A2A task",
+		"task_id", uuidToString(task.ID),
+		"agent_id", uuidToString(task.AgentID),
+		"error", agentLoadErr,
+	)
+	if err := terminalFail(ctx, task.ID, a2aClaimAgentLoadError); err != nil {
+		slog.Error("task claim: failed to record A2A agent-load failure",
+			"task_id", uuidToString(task.ID),
+			"agent_id", uuidToString(task.AgentID),
+			"error", err,
+		)
+		return &claimBuildFailure{
+			outcome: "error_a2a_agent_load_failure",
+			status:  http.StatusInternalServerError,
+			message: "failed to record A2A agent-load failure",
+		}
+	}
+
+	return &claimBuildFailure{
+		outcome: "error_a2a_agent_load",
+		status:  http.StatusInternalServerError,
+		message: a2aClaimAgentLoadError,
+	}
+}
+
+// enforceA2AClaimExecutionSafety rechecks the hard tokenless-runtime policy at
+// both server-controlled pre-execution boundaries: after durable claim and
+// immediately before StartTask moves the task to running. Admission and
+// execution can be separated by an arbitrarily long queue delay, so a non-local
+// or unsupported runtime, or a revoked runtime-safety exemption, must fail the
+// dispatched task rather than execute it under stale authorization. The
+// provider allowlist is intentionally limited to the unsafe-loopback Claude E2E
+// slice; inclusion is not proof that ambient customization is isolated. Every
+// other provider stays fail-closed. The release feature flag is intentionally
+// admission-only: turning it off must not strand accepted work.
+func (h *Handler) enforceA2AClaimExecutionSafety(ctx context.Context, task *db.AgentTaskQueue, runtime db.AgentRuntime) *claimBuildFailure {
+	if !service.IsA2ATaskOrigin(task.Context) {
+		return nil
+	}
+
+	outcome := ""
+	switch {
+	case runtime.RuntimeMode != "local":
+		outcome = "error_a2a_runtime_nonlocal"
+	case !isA2AClaimTokenlessRuntime(runtime):
+		outcome = "error_a2a_runtime_provider"
+	case !evaluateAgentA2ARuntimeSafety(h.currentConfig().PublicURL).Allowed:
+		outcome = "error_a2a_runtime_unsafe"
+	default:
+		return nil
+	}
+
+	if _, err := h.TaskService.FailA2ATaskForExecutionSafety(ctx, task.ID, a2aClaimRuntimeSafetyPolicyError); err != nil {
+		slog.Error("task claim: failed to record runtime-policy failure for A2A task",
+			"task_id", uuidToString(task.ID),
+			"runtime_id", uuidToString(task.RuntimeID),
+			"runtime_mode", runtime.RuntimeMode,
+			"runtime_provider", runtime.Provider,
+			"reason", outcome,
+			"error", err,
+		)
+		return &claimBuildFailure{
+			outcome: "error_a2a_policy_failure",
+			status:  http.StatusInternalServerError,
+			message: "failed to record A2A runtime safety failure",
+		}
+	}
+
+	slog.Warn("task claim: failed A2A task rejected by runtime policy",
+		"task_id", uuidToString(task.ID),
+		"runtime_id", uuidToString(task.RuntimeID),
+		"runtime_mode", runtime.RuntimeMode,
+		"runtime_provider", runtime.Provider,
+		"reason", outcome,
+	)
+	return &claimBuildFailure{
+		outcome: outcome,
+		status:  http.StatusConflict,
+		message: a2aClaimRuntimeSafetyPolicyError,
+	}
+}
+
 // repairStaleCommentPlanIfNeeded handles the edit/delete race where a claimed
 // task's trigger_comment_id was cleared but coalesced_comment_ids survive: such
 // a task must never be dispatched as a generic assignment — its user-scoped MCP
@@ -1498,6 +1624,9 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		rtWorkspaceID := uuidToString(rt.WorkspaceID)
+		if h.enforceA2AClaimExecutionSafety(r.Context(), &task, rt) != nil {
+			continue
+		}
 		// Stale comment-plan repair must run for the batch path too: otherwise a
 		// task whose trigger was deleted (only coalesced survive) would be
 		// finalized+dispatched with no comment input, silently dropping the
@@ -1514,7 +1643,9 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 			// the reclaim path.
 			continue
 		}
-		if !rt.OwnerID.Valid {
+		a2aInvocation := service.IsA2ATaskOrigin(task.Context)
+		resp.A2AInvocation = a2aInvocation
+		if !a2aInvocation && !rt.OwnerID.Valid {
 			slog.Error("batch claim: runtime owner missing; cancelling task to avoid unscoped agent credentials",
 				"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
 			if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
@@ -1523,29 +1654,31 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		tokenStr, terr := auth.GenerateAgentTaskToken()
-		if terr != nil {
-			slog.Error("batch claim: generate task token failed; requeueing claim",
-				"task_id", uuidToString(task.ID), "error", terr)
-			if _, rerr := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), task); rerr != nil {
-				slog.Error("batch claim: requeue after token-gen failure failed",
-					"task_id", uuidToString(task.ID), "error", rerr)
-			}
-			continue
-		}
 		// Route through the SAME finalization as the per-runtime endpoint so the
-		// token and the comment-delivery receipt (delivered_comment_ids for
-		// comment/coalesced-comment tasks) are persisted atomically; on failure
-		// the exact claim is requeued and omitted from this batch.
+		// optional token and the comment-delivery receipt (delivered_comment_ids
+		// for comment/coalesced-comment tasks) are persisted atomically; on
+		// failure the exact claim is requeued and omitted from this batch.
 		commentBackedTask := task.TriggerCommentID.Valid || len(task.CoalescedCommentIds) > 0
-		receipt, ferr := h.TaskService.FinalizeTaskClaim(r.Context(), task, db.CreateTaskTokenParams{
-			TokenHash:   auth.HashToken(tokenStr),
-			TaskID:      task.ID,
-			AgentID:     task.AgentID,
-			WorkspaceID: parseUUID(resp.WorkspaceID),
-			UserID:      rt.OwnerID,
-			ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
-		}, deliveredCommentIDs, commentBackedTask)
+		var (
+			receipt  []pgtype.UUID
+			tokenStr string
+			ferr     error
+		)
+		if a2aInvocation {
+			receipt, ferr = h.TaskService.FinalizeTaskClaimWithoutToken(r.Context(), task, deliveredCommentIDs, commentBackedTask)
+		} else {
+			tokenStr, ferr = auth.GenerateAgentTaskToken()
+			if ferr == nil {
+				receipt, ferr = h.TaskService.FinalizeTaskClaim(r.Context(), task, db.CreateTaskTokenParams{
+					TokenHash:   auth.HashToken(tokenStr),
+					TaskID:      task.ID,
+					AgentID:     task.AgentID,
+					WorkspaceID: parseUUID(resp.WorkspaceID),
+					UserID:      rt.OwnerID,
+					ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
+				}, deliveredCommentIDs, commentBackedTask)
+			}
+		}
 		if ferr != nil {
 			slog.Error("batch claim: finalize task claim failed; requeueing claim",
 				"task_id", uuidToString(task.ID), "error", ferr)
@@ -1571,8 +1704,8 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 // claimBuildFailure captures a pre-response failure from
 // buildClaimedTaskResponse (workspace isolation, chat-input load/empty, ...) so
 // the per-runtime handler can render the exact status/message/outcome and the
-// batch handler can skip the task. Any task cancellation is already performed
-// inside the builder before it returns one.
+// batch handler can skip the task. Any required task cancellation or terminal
+// failure is already performed inside the builder before it returns one.
 type claimBuildFailure struct {
 	outcome string
 	status  int
@@ -1604,7 +1737,19 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	if composioMCPEnabled {
 		resp.ConnectedApps = parseRuntimeConnectedAppsForClaim(task.RuntimeConnectedApps, task.ID)
 	}
-	if agent, err := h.Queries.GetAgent(r.Context(), task.AgentID); err == nil {
+	agent, agentLoadErr := h.Queries.GetAgent(r.Context(), task.AgentID)
+	if failure := failA2AClaimOnAgentLoadError(
+		r.Context(),
+		task,
+		agentLoadErr,
+		func(ctx context.Context, taskID pgtype.UUID, message string) error {
+			_, err := h.TaskService.FailA2ATaskForExecutionSafety(ctx, taskID, message)
+			return err
+		},
+	); failure != nil {
+		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure
+	}
+	if agentLoadErr == nil {
 		useSkillRefs := requestHasDaemonCapability(r, protocol.DaemonCapabilitySkillBundlesV1)
 		var customEnv map[string]string
 		if agent.CustomEnv != nil {
@@ -1708,7 +1853,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// the heading entirely on the daemon side; cloud / system runtimes with
 	// no owner stay anonymous. Failure here must not block claim — the agent
 	// can still run without the user-context section.
-	if runtime.OwnerID.Valid {
+	if runtime.OwnerID.Valid && service.ShouldInjectRuntimeOwnerProfile(task.Context) {
 		if owner, err := h.Queries.GetUser(r.Context(), runtime.OwnerID); err == nil {
 			resp.RequestingUserName = owner.Name
 			resp.RequestingUserProfileDescription = owner.ProfileDescription
@@ -2435,6 +2580,8 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		)
 	}
 
+	clearA2AClaimWorkspaceData(&resp, task.Context)
+
 	applyDingTalkDispatchPromptForClaimWithFeatureFlags(
 		&resp,
 		task.Context,
@@ -2550,6 +2697,11 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		outcome = "no_task"
 		return
 	}
+	if failure := h.enforceA2AClaimExecutionSafety(r.Context(), task, runtime); failure != nil {
+		outcome = failure.outcome
+		writeError(w, failure.status, failure.message)
+		return
+	}
 	attempt, attemptErr := h.Queries.GetStartingAgentTaskRuntimeStartAttemptByTask(r.Context(), db.GetStartingAgentTaskRuntimeStartAttemptByTaskParams{
 		TaskID:    task.ID,
 		RuntimeID: task.RuntimeID,
@@ -2619,6 +2771,8 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	commentBackedTask := task.TriggerCommentID.Valid || len(task.CoalescedCommentIds) > 0
+	a2aInvocation := service.IsA2ATaskOrigin(task.Context)
+	resp.A2AInvocation = a2aInvocation
 	requeueFailedClaim := func(reason string) {
 		if _, err := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); err != nil {
 			slog.Error("task claim: failed to requeue after finalization error",
@@ -2628,18 +2782,11 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			)
 		}
 	}
-	// Mint a task-scoped `mat_` token bound to (agent, task, workspace,
-	// owner). The daemon will inject this as MULTICA_TOKEN into the agent
-	// process instead of its own credential, so any API call the agent
-	// makes — even one that strips X-Agent-ID / X-Task-ID headers — is
-	// recognized server-side as actor=agent, closing the lateral-movement
-	// path on owner-only endpoints (e.g. `/api/agents/{id}/env`). Runtime
-	// owner is required because task tokens are still bound to an owning user;
-	// without one, fail the claim explicitly instead of letting the daemon
-	// fall back to a member/owner credential. MUL-3292.
-	// Token expires after the queue/runtime upper bound (24h) so it survives
-	// long-running tasks but cannot outlive a forgotten one.
-	if !runtime.OwnerID.Valid {
+	// Ordinary tasks receive a `mat_` token bound to (agent, task, workspace,
+	// owner). A2A-origin tasks take the explicit tokenless finalization path;
+	// the response marker lets the daemon distinguish that grant from a broken
+	// ordinary claim while never falling back to its member/owner credential.
+	if !a2aInvocation && !runtime.OwnerID.Valid {
 		outcome = "error_token"
 		slog.Error("task claim: runtime owner missing; cancelling task to avoid unscoped agent credentials",
 			"task_id", uuidToString(task.ID),
@@ -2653,23 +2800,26 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "runtime owner required to mint task token")
 		return
 	}
-	tokenStr, terr := auth.GenerateAgentTaskToken()
-	if terr != nil {
-		outcome = "error_token"
-		slog.Error("task claim: failed to generate agent task token",
-			"task_id", uuidToString(task.ID), "error", terr)
-		requeueFailedClaim("token_generation")
-		writeError(w, http.StatusInternalServerError, "failed to mint task token")
-		return
+	var (
+		receipt  []pgtype.UUID
+		tokenStr string
+		ferr     error
+	)
+	if a2aInvocation {
+		receipt, ferr = h.TaskService.FinalizeTaskClaimWithoutToken(r.Context(), *task, deliveredCommentIDs, commentBackedTask)
+	} else {
+		tokenStr, ferr = auth.GenerateAgentTaskToken()
+		if ferr == nil {
+			receipt, ferr = h.TaskService.FinalizeTaskClaim(r.Context(), *task, db.CreateTaskTokenParams{
+				TokenHash:   auth.HashToken(tokenStr),
+				TaskID:      task.ID,
+				AgentID:     task.AgentID,
+				WorkspaceID: parseUUID(resp.WorkspaceID),
+				UserID:      runtime.OwnerID,
+				ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
+			}, deliveredCommentIDs, commentBackedTask)
+		}
 	}
-	receipt, ferr := h.TaskService.FinalizeTaskClaim(r.Context(), *task, db.CreateTaskTokenParams{
-		TokenHash:   auth.HashToken(tokenStr),
-		TaskID:      task.ID,
-		AgentID:     task.AgentID,
-		WorkspaceID: parseUUID(resp.WorkspaceID),
-		UserID:      runtime.OwnerID,
-		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
-	}, deliveredCommentIDs, commentBackedTask)
 	if ferr != nil {
 		outcome = "error_claim_finalize"
 		slog.Error("task claim: failed to finalize token and comment delivery receipt",
@@ -2897,20 +3047,41 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
 	// Verify the caller owns this task's workspace.
-	_, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
+	task, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
 	if !ok {
 		return
 	}
+	if service.IsA2ATaskOrigin(task.Context) {
+		runtime, runtimeErr := h.Queries.GetAgentRuntime(r.Context(), task.RuntimeID)
+		if runtimeErr != nil && !errors.Is(runtimeErr, pgx.ErrNoRows) {
+			slog.Error("start task: failed to reload A2A runtime safety state",
+				"task_id", taskID,
+				"runtime_id", uuidToString(task.RuntimeID),
+				"error", runtimeErr,
+			)
+			writeError(w, http.StatusInternalServerError, "failed to verify A2A runtime safety")
+			return
+		}
+		if runtimeErr != nil || uuidToString(runtime.WorkspaceID) != workspaceID {
+			// A missing or cross-workspace runtime is an unsafe current state, not
+			// permission to reuse the stale claim-time runtime decision.
+			runtime = db.AgentRuntime{}
+		}
+		if failure := h.enforceA2AClaimExecutionSafety(r.Context(), &task, runtime); failure != nil {
+			writeError(w, failure.status, failure.message)
+			return
+		}
+	}
 
-	task, err := h.TaskService.StartTask(r.Context(), parseUUID(taskID))
+	started, err := h.TaskService.StartTask(r.Context(), parseUUID(taskID))
 	if err != nil {
 		slog.Warn("start task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	slog.Info("task started", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
-	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+	slog.Info("task started", "task_id", taskID, "agent_id", uuidToString(started.AgentID))
+	writeJSON(w, http.StatusOK, taskToResponse(*started, workspaceID))
 }
 
 // TaskWaitLocalDirectoryRequest is the body the daemon POSTs when it parks
@@ -2982,7 +3153,7 @@ func (h *Handler) ReportTaskProgress(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.TaskService.ReportProgress(r.Context(), taskID, workspaceID, req.Summary, req.Step, req.Total)
+	h.TaskService.ReportProgress(r.Context(), task, workspaceID, req.Summary, req.Step, req.Total)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -3700,6 +3871,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 			workspaceID = uuidToString(cs.WorkspaceID)
 		}
 	}
+	suppressHumanRealtime := h.TaskService.ShouldSuppressA2AHumanRealtime(r.Context(), task)
 
 	for _, msg := range req.Messages {
 		// Redact sensitive information before persisting or broadcasting.
@@ -3726,7 +3898,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if workspaceID != "" {
+		if workspaceID != "" && !suppressHumanRealtime {
 			h.publishTask(protocol.EventTaskMessage, workspaceID, "system", "", taskID,
 				taskMessageToPayload(created, taskID, uuidToString(task.IssueID)))
 		}
@@ -3887,6 +4059,13 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 
 	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
 	if err != nil {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if h.TaskService.ShouldSuppressA2AHumanRealtime(r.Context(), task) {
+		// A2A execution transcripts are external-principal data. They are
+		// intentionally absent from ordinary member APIs; owner audit belongs
+		// on the A2A management surface, not the human task-message endpoint.
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}

@@ -254,6 +254,9 @@ func healthPortForProfile(profile string) int {
 // --- daemon start ---
 
 func runDaemonStart(cmd *cobra.Command, _ []string) error {
+	if err := rejectDaemonLifecycleInTask(); err != nil {
+		return err
+	}
 	foreground, _ := cmd.Flags().GetBool("foreground")
 	if foreground {
 		return runDaemonForeground(cmd)
@@ -676,6 +679,9 @@ func runDaemonRunOnce(cmd *cobra.Command, _ []string) error {
 // --- daemon restart ---
 
 func runDaemonRestart(cmd *cobra.Command, args []string) error {
+	if err := rejectDaemonLifecycleInTask(); err != nil {
+		return err
+	}
 	profile := resolveProfile(cmd)
 	healthPort := healthPortForProfile(profile)
 
@@ -687,7 +693,7 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 		pid, _ := health["pid"].(float64)
 		if pid > 0 {
 			fmt.Fprintf(os.Stderr, "Stopping daemon (pid %d)...\n", int(pid))
-			if err := requestDaemonShutdown(healthPort); err != nil {
+			if err := requestDaemonShutdown(profile, healthPort, health); err != nil {
 				if p, perr := os.FindProcess(int(pid)); perr == nil {
 					_ = p.Kill()
 				}
@@ -713,6 +719,9 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 // --- daemon stop ---
 
 func runDaemonStop(cmd *cobra.Command, _ []string) error {
+	if err := rejectDaemonLifecycleInTask(); err != nil {
+		return err
+	}
 	profile := resolveProfile(cmd)
 	healthPort := healthPortForProfile(profile)
 
@@ -745,7 +754,7 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 	// GenerateConsoleCtrlEvent can't reach it; HTTP works on both
 	// platforms and triggers the same context-cancel path the daemon
 	// already uses for self-restart.
-	if err := requestDaemonShutdown(healthPort); err != nil {
+	if err := requestDaemonShutdown(profile, healthPort, health); err != nil {
 		fmt.Fprintf(os.Stderr, "Graceful shutdown request failed: %v — falling back to forced kill.\n", err)
 		if kerr := process.Kill(); kerr != nil {
 			return fmt.Errorf("kill daemon (pid %d): %w", int(pid), kerr)
@@ -771,14 +780,41 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// requestDaemonShutdown POSTs to the daemon's /shutdown endpoint to ask it
-// to exit gracefully. Returns an error if the request could not be delivered
-// (network error, non-2xx status, or the endpoint predates this change).
-func requestDaemonShutdown(healthPort int) error {
+func rejectDaemonLifecycleInTask() error {
+	// Use live daemon-provided environment markers here, not the durable
+	// workdir marker: an operator may legitimately revisit a preserved task
+	// directory later and must still be able to manage the daemon.
+	if inAgentExecutionContext() || os.Getenv("MULTICA_DAEMON_PORT") != "" {
+		return errors.New("daemon lifecycle commands are unavailable inside a daemon-managed agent task")
+	}
+	return nil
+}
+
+// requestDaemonShutdown POSTs to the daemon's /shutdown endpoint with a
+// shutdown-only bearer derived from the profile credential and the current
+// daemon instance's public challenge. An older daemon has no control_nonce;
+// for that compatibility case only, the request remains unauthenticated.
+func requestDaemonShutdown(profile string, healthPort int, health map[string]any) error {
+	controlToken := ""
+	if nonce, _ := health["control_nonce"].(string); strings.TrimSpace(nonce) != "" {
+		daemonID, _ := health["daemon_id"].(string)
+		cfg, err := cli.LoadCLIConfigForProfile(profile)
+		if err != nil {
+			return fmt.Errorf("load daemon profile credential: %w", err)
+		}
+		controlToken, err = daemon.DeriveLocalControlToken(cfg.Token, daemonID, nonce)
+		if err != nil {
+			return fmt.Errorf("derive daemon control token: %w", err)
+		}
+	}
+
 	url := fmt.Sprintf("http://127.0.0.1:%d/shutdown", healthPort)
 	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
 		return err
+	}
+	if controlToken != "" {
+		req.Header.Set("Authorization", "Bearer "+controlToken)
 	}
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)

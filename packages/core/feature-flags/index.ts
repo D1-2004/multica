@@ -18,6 +18,7 @@ export { FeatureFlagService } from "./service";
 export { StaticProvider } from "./static-provider";
 export { ChainProvider } from "./chain-provider";
 export {
+  AGENT_A2A_INBOUND_FLAG,
   AGENT_BUILDER_FLAG,
   COMPOSIO_MCP_APPS_FLAG,
   RESOURCE_LABELS_FLAG,

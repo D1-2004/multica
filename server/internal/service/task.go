@@ -1945,6 +1945,33 @@ func (s *TaskService) FinalizeTaskClaim(
 	deliveredCommentIDs []pgtype.UUID,
 	recordCommentReceipt bool,
 ) ([]pgtype.UUID, error) {
+	return s.finalizeTaskClaim(ctx, task, &token, deliveredCommentIDs, recordCommentReceipt)
+}
+
+// FinalizeTaskClaimWithoutToken is the credentialless counterpart used only
+// for durable A2A-origin tasks. It still performs the exact claim lock,
+// delivery-receipt CAS, and runtime-start finalization, but deliberately does
+// not create a task_token row. The daemon receives an explicit A2A marker and
+// must run the child without falling back to daemon/member credentials.
+func (s *TaskService) FinalizeTaskClaimWithoutToken(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	deliveredCommentIDs []pgtype.UUID,
+	recordCommentReceipt bool,
+) ([]pgtype.UUID, error) {
+	if !IsA2ATaskOrigin(task.Context) {
+		return nil, errors.New("tokenless task claim requires durable A2A origin")
+	}
+	return s.finalizeTaskClaim(ctx, task, nil, deliveredCommentIDs, recordCommentReceipt)
+}
+
+func (s *TaskService) finalizeTaskClaim(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	token *db.CreateTaskTokenParams,
+	deliveredCommentIDs []pgtype.UUID,
+	recordCommentReceipt bool,
+) ([]pgtype.UUID, error) {
 	receipt := task.DeliveredCommentIds
 	err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		if _, err := qtx.LockAgentTaskClaimFinalization(ctx, db.LockAgentTaskClaimFinalizationParams{
@@ -1954,8 +1981,10 @@ func (s *TaskService) FinalizeTaskClaim(
 		}); err != nil {
 			return fmt.Errorf("lock task claim finalization: %w", err)
 		}
-		if _, err := qtx.CreateTaskToken(ctx, token); err != nil {
-			return fmt.Errorf("create task token: %w", err)
+		if token != nil {
+			if _, err := qtx.CreateTaskToken(ctx, *token); err != nil {
+				return fmt.Errorf("create task token: %w", err)
+			}
 		}
 		if recordCommentReceipt {
 			persisted, err := qtx.SetTaskDeliveredCommentIDs(ctx, db.SetTaskDeliveredCommentIDsParams{
@@ -2666,7 +2695,7 @@ func (s *TaskService) FailTask(
 	taskID pgtype.UUID,
 	errMsg, sessionID, workDir, failureReason string,
 ) (*db.AgentTaskQueue, error) {
-	return s.FailTaskWithResultMessage(
+	return s.failTaskWithResultMessage(
 		ctx,
 		taskID,
 		errMsg,
@@ -2674,6 +2703,7 @@ func (s *TaskService) FailTask(
 		sessionID,
 		workDir,
 		failureReason,
+		failTaskOptions{},
 	)
 }
 
@@ -2681,6 +2711,56 @@ func (s *TaskService) FailTaskWithResultMessage(
 	ctx context.Context,
 	taskID pgtype.UUID,
 	errMsg, resultMessage, sessionID, workDir, failureReason string,
+) (*db.AgentTaskQueue, error) {
+	return s.failTaskWithResultMessage(
+		ctx,
+		taskID,
+		errMsg,
+		resultMessage,
+		sessionID,
+		workDir,
+		failureReason,
+		failTaskOptions{},
+	)
+}
+
+const (
+	a2aExecutionSafetyAttemptStage     = "claim_safety_rejected"
+	a2aExecutionSafetyAttemptErrorCode = "A2A-CLAIM-SAFETY-REJECTED"
+)
+
+type failTaskOptions struct {
+	terminateA2ARuntimeStartAttempt bool
+}
+
+// FailA2ATaskForExecutionSafety is the terminal path for an A2A task rejected
+// by the runtime safety policy after dispatch. Cloud run-once launchers create
+// a runtime-start attempt before the daemon claims the task, so that attempt
+// must become terminal in the same transaction as the task. Keeping the task
+// update first preserves the task -> attempt lock order shared with claim and
+// runtime-start finalization.
+func (s *TaskService) FailA2ATaskForExecutionSafety(
+	ctx context.Context,
+	taskID pgtype.UUID,
+	errMsg string,
+) (*db.AgentTaskQueue, error) {
+	return s.failTaskWithResultMessage(
+		ctx,
+		taskID,
+		errMsg,
+		"",
+		"",
+		"",
+		"agent_error",
+		failTaskOptions{terminateA2ARuntimeStartAttempt: true},
+	)
+}
+
+func (s *TaskService) failTaskWithResultMessage(
+	ctx context.Context,
+	taskID pgtype.UUID,
+	errMsg, resultMessage, sessionID, workDir, failureReason string,
+	options failTaskOptions,
 ) (*db.AgentTaskQueue, error) {
 	// MUL-2946: synthesise a refined reason from the error text whenever the
 	// caller didn't supply one. This is the last write-path guard against
@@ -2742,6 +2822,34 @@ func (s *TaskService) FailTaskWithResultMessage(
 			return err
 		}
 		task = t
+
+		if options.terminateA2ARuntimeStartAttempt {
+			if !IsA2ATaskOrigin(t.Context) {
+				return errors.New("execution-safety failure requires durable A2A origin")
+			}
+			attempt, attemptErr := qtx.GetStartingAgentTaskRuntimeStartAttemptByTask(ctx, db.GetStartingAgentTaskRuntimeStartAttemptByTaskParams{
+				TaskID:    t.ID,
+				RuntimeID: t.RuntimeID,
+			})
+			switch {
+			case attemptErr == nil:
+				if _, attemptErr = qtx.FailAgentTaskRuntimeStartAttempt(ctx, db.FailAgentTaskRuntimeStartAttemptParams{
+					Status:      "failed",
+					Stage:       a2aExecutionSafetyAttemptStage,
+					ErrorCode:   a2aExecutionSafetyAttemptErrorCode,
+					ErrorDetail: errMsg,
+					ID:          attempt.ID,
+					TaskID:      t.ID,
+					RuntimeID:   t.RuntimeID,
+				}); attemptErr != nil && !errors.Is(attemptErr, pgx.ErrNoRows) {
+					return fmt.Errorf("fail A2A runtime start attempt: %w", attemptErr)
+				}
+			case errors.Is(attemptErr, pgx.ErrNoRows):
+				// Local runtimes do not have a server-managed start attempt.
+			default:
+				return fmt.Errorf("load A2A runtime start attempt: %w", attemptErr)
+			}
+		}
 
 		// Keep resume-unsafe sessions on the task row for observability, but
 		// do not promote them to the chat-level resume pointer.
@@ -3183,16 +3291,10 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 			}
 		}
 
-		failureReason := "agent_error"
-		if t.FailureReason.Valid && t.FailureReason.String != "" {
-			failureReason = t.FailureReason.String
-		}
 		s.captureTaskFailed(ctx, t)
 
-		workspaceID := ""
 		if t.IssueID.Valid {
 			if issue, err := s.Queries.GetIssue(ctx, t.IssueID); err == nil {
-				workspaceID = util.UUIDToString(issue.WorkspaceID)
 				// Reset stuck in_progress issues only when no other active
 				// task exists for the issue and no retry was just enqueued.
 				issueKey := util.UUIDToString(t.IssueID)
@@ -3227,24 +3329,7 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 				}
 			}
 		}
-		if workspaceID == "" {
-			workspaceID = s.ResolveTaskWorkspaceID(ctx, t)
-		}
-
-		if workspaceID != "" {
-			s.Bus.Publish(events.Event{
-				Type:        protocol.EventTaskFailed,
-				WorkspaceID: workspaceID,
-				ActorType:   "system",
-				Payload: map[string]any{
-					"task_id":        util.UUIDToString(t.ID),
-					"agent_id":       util.UUIDToString(t.AgentID),
-					"issue_id":       util.UUIDToString(t.IssueID),
-					"status":         "failed",
-					"failure_reason": failureReason,
-				},
-			})
-		}
+		s.broadcastTaskEvent(ctx, protocol.EventTaskFailed, t)
 
 		affectedAgents[util.UUIDToString(t.AgentID)] = t.AgentID
 	}
@@ -3314,7 +3399,11 @@ func (s *TaskService) runInTx(ctx context.Context, fn func(*db.Queries) error) e
 }
 
 // ReportProgress broadcasts a progress update via the event bus.
-func (s *TaskService) ReportProgress(ctx context.Context, taskID string, workspaceID string, summary string, step, total int) {
+func (s *TaskService) ReportProgress(ctx context.Context, task db.AgentTaskQueue, workspaceID string, summary string, step, total int) {
+	if s.ShouldSuppressA2AHumanRealtime(ctx, task) {
+		return
+	}
+	taskID := util.UUIDToString(task.ID)
 	s.Bus.Publish(events.Event{
 		Type:        protocol.EventTaskProgress,
 		WorkspaceID: workspaceID,
@@ -3885,7 +3974,42 @@ func (s *TaskService) notifyRuntimeMayHaveWork(runtimeID pgtype.UUID, taskID str
 	s.Wakeup.NotifyTaskAvailable(runtimeKey, taskID)
 }
 
+// ShouldSuppressA2AHumanRealtime is the privacy gate shared by task/chat event
+// producers and regular member read handlers. A2A callers are external
+// principals: their local task/session IDs and execution transcript must not be
+// projected into the human workspace UI.
+//
+// The immutable task-context marker is the hot path and follows retry rows.
+// The database lookup is the authoritative compatibility fallback for a task
+// created before the marker existed. Lookup failures fail closed only for the
+// narrow shape used by external chat tasks, so an infrastructure problem cannot
+// turn into cross-principal disclosure while ordinary human task events remain
+// unaffected.
+func (s *TaskService) ShouldSuppressA2AHumanRealtime(ctx context.Context, task db.AgentTaskQueue) bool {
+	if hasA2ATaskOrigin(task.Context) {
+		return true
+	}
+	if !task.ChatSessionID.Valid || task.InitiatorUserID.Valid || task.OriginatorUserID.Valid {
+		return false
+	}
+	if s == nil || s.Queries == nil {
+		return true
+	}
+	isA2A, err := s.Queries.IsA2ALocalTask(ctx, task.ID)
+	if err != nil {
+		slog.Error("A2A task privacy lookup failed; suppressing human projection",
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
+		return true
+	}
+	return isA2A
+}
+
 func (s *TaskService) broadcastTaskDispatch(ctx context.Context, task db.AgentTaskQueue) {
+	if s.ShouldSuppressA2AHumanRealtime(ctx, task) {
+		return
+	}
 	payload := taskDispatchBroadcastPayload(task)
 
 	workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
@@ -3980,6 +4104,9 @@ func safeDispatchEventData(data map[string]any) map[string]any {
 }
 
 func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, task db.AgentTaskQueue) {
+	if s.ShouldSuppressA2AHumanRealtime(ctx, task) {
+		return
+	}
 	workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
 	if workspaceID == "" {
 		return
@@ -3994,6 +4121,13 @@ func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, 
 	appendSafeDispatchMetadata(payload, task.Context)
 	if task.ChatSessionID.Valid {
 		payload["chat_session_id"] = util.UUIDToString(task.ChatSessionID)
+	}
+	if eventType == protocol.EventTaskFailed {
+		failureReason := "agent_error"
+		if task.FailureReason.Valid && task.FailureReason.String != "" {
+			failureReason = task.FailureReason.String
+		}
+		payload["failure_reason"] = failureReason
 	}
 	s.Bus.Publish(events.Event{
 		Type:        eventType,
@@ -4038,6 +4172,9 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 }
 
 func (s *TaskService) broadcastChatDone(ctx context.Context, task db.AgentTaskQueue, msg *db.ChatMessage) {
+	if s.ShouldSuppressA2AHumanRealtime(ctx, task) {
+		return
+	}
 	workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
 	if workspaceID == "" {
 		return
@@ -4455,6 +4592,7 @@ func agentToMap(a db.Agent) map[string]any {
 	if a.RuntimeConfig != nil {
 		json.Unmarshal(a.RuntimeConfig, &rc)
 	}
+	maskRuntimeConfigGatewayTokenForBroadcast(rc)
 	return map[string]any{
 		"id":                   util.UUIDToString(a.ID),
 		"workspace_id":         util.UUIDToString(a.WorkspaceID),
@@ -4473,5 +4611,24 @@ func agentToMap(a db.Agent) map[string]any {
 		"updated_at":           util.TimestampToString(a.UpdatedAt),
 		"archived_at":          util.TimestampToPtr(a.ArchivedAt),
 		"archived_by":          util.UUIDToPtr(a.ArchivedBy),
+	}
+}
+
+// maskRuntimeConfigGatewayTokenForBroadcast mirrors the Agent HTTP DTO's
+// secret boundary. Status changes are workspace-broadcast, so the OpenClaw
+// gateway bearer must never be copied from the persisted runtime config into
+// an event payload.
+func maskRuntimeConfigGatewayTokenForBroadcast(runtimeConfig any) {
+	root, ok := runtimeConfig.(map[string]any)
+	if !ok {
+		return
+	}
+	gateway, ok := root["gateway"].(map[string]any)
+	if !ok {
+		return
+	}
+	token, _ := gateway["token"].(string)
+	if token != "" {
+		gateway["token"] = "***"
 	}
 }

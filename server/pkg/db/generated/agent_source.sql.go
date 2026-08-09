@@ -49,6 +49,112 @@ func (q *Queries) AgentNameExistsInWorkspace(ctx context.Context, arg AgentNameE
 	return exists, err
 }
 
+const applyManagedAgentOwnerChange = `-- name: ApplyManagedAgentOwnerChange :one
+WITH eligible_agent AS MATERIALIZED (
+    SELECT target.id, target.owner_id
+    FROM agent AS target
+    WHERE target.id = $2
+      AND target.workspace_id = $3
+      AND EXISTS (
+          SELECT 1
+          FROM agent_source
+          WHERE agent_source.agent_id = target.id
+            AND agent_source.managed_source_key = $4
+      )
+), disabled_endpoint AS (
+    UPDATE agent_a2a_endpoint AS endpoint
+    SET enabled = FALSE,
+        updated_at = now()
+    FROM eligible_agent AS target
+    WHERE endpoint.agent_id = target.id
+      AND target.owner_id IS DISTINCT FROM $1
+    RETURNING endpoint.id
+), revoked_clients AS (
+    UPDATE a2a_client AS client
+    SET status = 'revoked',
+        revoked_at = COALESCE(client.revoked_at, now()),
+        revoked_by = COALESCE(client.revoked_by, $1),
+        updated_by = $1,
+        updated_at = now()
+    FROM disabled_endpoint AS endpoint
+    WHERE client.endpoint_id = endpoint.id
+    RETURNING client.id
+), revoked_credentials AS (
+    UPDATE a2a_client_credential AS credential
+    SET status = 'revoked',
+        revoked_at = now(),
+        revoked_by = $1,
+        updated_at = now()
+    -- Referencing revoked_clients fixes the lock order at
+    -- agent -> endpoint -> client -> credential.
+    WHERE credential.client_id IN (SELECT id FROM revoked_clients)
+      AND credential.status = 'active'
+    RETURNING credential.id
+), ownership_cleanup AS MATERIALIZED (
+    SELECT
+        (SELECT count(*) FROM revoked_clients) AS revoked_client_count,
+        (SELECT count(*) FROM revoked_credentials) AS revoked_credential_count
+)
+UPDATE agent AS target
+SET owner_id = $1,
+    updated_at = now()
+FROM eligible_agent AS eligible
+CROSS JOIN ownership_cleanup
+WHERE target.id = eligible.id
+RETURNING target.id, target.workspace_id, target.name, target.avatar_url, target.runtime_mode, target.runtime_config, target.visibility, target.status, target.max_concurrent_tasks, target.owner_id, target.created_at, target.updated_at, target.description, target.runtime_id, target.instructions, target.archived_at, target.archived_by, target.custom_env, target.custom_args, target.mcp_config, target.model, target.thinking_level, target.composio_toolkit_allowlist, target.permission_mode, target.kind, target.system_key
+`
+
+type ApplyManagedAgentOwnerChangeParams struct {
+	OwnerID          pgtype.UUID `json:"owner_id"`
+	AgentID          pgtype.UUID `json:"agent_id"`
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	ManagedSourceKey pgtype.Text `json:"managed_source_key"`
+}
+
+// This must run as a second READ COMMITTED statement after
+// LockManagedAgentOwnerChange. The fresh statement snapshot includes grants
+// committed by transactions that held Agent SHARE while the first statement
+// waited. The transaction still holds the Agent lock, so no new grant can pass
+// admission until this cleanup and owner update commit.
+func (q *Queries) ApplyManagedAgentOwnerChange(ctx context.Context, arg ApplyManagedAgentOwnerChangeParams) (Agent, error) {
+	row := q.db.QueryRow(ctx, applyManagedAgentOwnerChange,
+		arg.OwnerID,
+		arg.AgentID,
+		arg.WorkspaceID,
+		arg.ManagedSourceKey,
+	)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.RuntimeMode,
+		&i.RuntimeConfig,
+		&i.Visibility,
+		&i.Status,
+		&i.MaxConcurrentTasks,
+		&i.OwnerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Description,
+		&i.RuntimeID,
+		&i.Instructions,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+		&i.CustomEnv,
+		&i.CustomArgs,
+		&i.McpConfig,
+		&i.Model,
+		&i.ThinkingLevel,
+		&i.ComposioToolkitAllowlist,
+		&i.PermissionMode,
+		&i.Kind,
+		&i.SystemKey,
+	)
+	return i, err
+}
+
 const createAgentSource = `-- name: CreateAgentSource :one
 INSERT INTO agent_source (
     agent_id, workspace_id, source_type, github_installation_id, repo_owner, repo_name, ref,
@@ -473,6 +579,78 @@ func (q *Queries) LockAgentSourceByAgentID(ctx context.Context, agentID pgtype.U
 	return i, err
 }
 
+const lockManagedAgentOwnerChange = `-- name: LockManagedAgentOwnerChange :one
+WITH locked_new_owner AS MATERIALIZED (
+    SELECT candidate.workspace_id, candidate.user_id
+    FROM member AS candidate
+    WHERE candidate.workspace_id = $3
+      AND candidate.user_id = $4
+    FOR KEY SHARE OF candidate
+)
+SELECT target.id, target.workspace_id, target.name, target.avatar_url, target.runtime_mode, target.runtime_config, target.visibility, target.status, target.max_concurrent_tasks, target.owner_id, target.created_at, target.updated_at, target.description, target.runtime_id, target.instructions, target.archived_at, target.archived_by, target.custom_env, target.custom_args, target.mcp_config, target.model, target.thinking_level, target.composio_toolkit_allowlist, target.permission_mode, target.kind, target.system_key
+FROM locked_new_owner AS new_owner
+JOIN agent AS target
+  ON target.workspace_id = new_owner.workspace_id
+WHERE target.id = $1
+  AND EXISTS (
+      SELECT 1
+      FROM agent_source
+      WHERE agent_source.agent_id = target.id
+        AND agent_source.managed_source_key = $2
+  )
+FOR UPDATE OF target
+`
+
+type LockManagedAgentOwnerChangeParams struct {
+	AgentID          pgtype.UUID `json:"agent_id"`
+	ManagedSourceKey pgtype.Text `json:"managed_source_key"`
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	OwnerID          pgtype.UUID `json:"owner_id"`
+}
+
+// Lock the new owner's membership before the Agent. Holding the membership
+// KEY SHARE lock through commit prevents a concurrent removal from leaving a
+// managed Agent owned by a non-member. MATERIALIZED makes the lock order
+// deterministic: new-owner member -> Agent.
+func (q *Queries) LockManagedAgentOwnerChange(ctx context.Context, arg LockManagedAgentOwnerChangeParams) (Agent, error) {
+	row := q.db.QueryRow(ctx, lockManagedAgentOwnerChange,
+		arg.AgentID,
+		arg.ManagedSourceKey,
+		arg.WorkspaceID,
+		arg.OwnerID,
+	)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.RuntimeMode,
+		&i.RuntimeConfig,
+		&i.Visibility,
+		&i.Status,
+		&i.MaxConcurrentTasks,
+		&i.OwnerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Description,
+		&i.RuntimeID,
+		&i.Instructions,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+		&i.CustomEnv,
+		&i.CustomArgs,
+		&i.McpConfig,
+		&i.Model,
+		&i.ThinkingLevel,
+		&i.ComposioToolkitAllowlist,
+		&i.PermissionMode,
+		&i.Kind,
+		&i.SystemKey,
+	)
+	return i, err
+}
+
 const markAgentSourceSyncFailed = `-- name: MarkAgentSourceSyncFailed :one
 UPDATE agent_source
 SET sync_status = CASE
@@ -645,67 +823,6 @@ func (q *Queries) UpdateAgentSourceSkillPath(ctx context.Context, arg UpdateAgen
 		&i.SourcePath,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const updateManagedAgentOwner = `-- name: UpdateManagedAgentOwner :one
-UPDATE agent AS target
-SET owner_id = $1,
-    updated_at = now()
-WHERE target.id = $2
-  AND target.workspace_id = $3
-  AND EXISTS (
-      SELECT 1
-      FROM agent_source
-      WHERE agent_source.agent_id = target.id
-        AND agent_source.managed_source_key = $4
-  )
-RETURNING target.id, target.workspace_id, target.name, target.avatar_url, target.runtime_mode, target.runtime_config, target.visibility, target.status, target.max_concurrent_tasks, target.owner_id, target.created_at, target.updated_at, target.description, target.runtime_id, target.instructions, target.archived_at, target.archived_by, target.custom_env, target.custom_args, target.mcp_config, target.model, target.thinking_level, target.composio_toolkit_allowlist, target.permission_mode, target.kind, target.system_key
-`
-
-type UpdateManagedAgentOwnerParams struct {
-	OwnerID          pgtype.UUID `json:"owner_id"`
-	AgentID          pgtype.UUID `json:"agent_id"`
-	WorkspaceID      pgtype.UUID `json:"workspace_id"`
-	ManagedSourceKey pgtype.Text `json:"managed_source_key"`
-}
-
-func (q *Queries) UpdateManagedAgentOwner(ctx context.Context, arg UpdateManagedAgentOwnerParams) (Agent, error) {
-	row := q.db.QueryRow(ctx, updateManagedAgentOwner,
-		arg.OwnerID,
-		arg.AgentID,
-		arg.WorkspaceID,
-		arg.ManagedSourceKey,
-	)
-	var i Agent
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.AvatarUrl,
-		&i.RuntimeMode,
-		&i.RuntimeConfig,
-		&i.Visibility,
-		&i.Status,
-		&i.MaxConcurrentTasks,
-		&i.OwnerID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Description,
-		&i.RuntimeID,
-		&i.Instructions,
-		&i.ArchivedAt,
-		&i.ArchivedBy,
-		&i.CustomEnv,
-		&i.CustomArgs,
-		&i.McpConfig,
-		&i.Model,
-		&i.ThinkingLevel,
-		&i.ComposioToolkitAllowlist,
-		&i.PermissionMode,
-		&i.Kind,
-		&i.SystemKey,
 	)
 	return i, err
 }

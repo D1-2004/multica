@@ -161,6 +161,8 @@ type Handler struct {
 	DaemonWorkspaceRefresh  WorkspaceSetRefreshNotifier
 	Bus                     *events.Bus
 	TaskService             *service.TaskService
+	A2AService              *service.A2AService
+	A2AProtocol             http.Handler
 	FCE2BLauncher           *service.FCE2BLauncher
 	ASBLauncher             *service.ASBLauncher
 	EnterpriseIdentity      *service.EnterpriseIdentityService
@@ -419,6 +421,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		DaemonWorkspaceRefresh:       daemonWorkspaceRefresh,
 		Bus:                          bus,
 		TaskService:                  taskSvc,
+		A2AService:                   service.NewA2AService(queries, txStarter, taskSvc),
 		FCE2BLauncher:                fcLauncher,
 		IssueService:                 service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
 		IssueCommentService:          service.NewIssueCommentService(queries, bus, taskSvc),

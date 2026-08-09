@@ -61,8 +61,8 @@ type Task struct {
 	AgentID              string `json:"agent_id"`
 	RuntimeID            string `json:"runtime_id"`
 	IssueID              string `json:"issue_id"`
-	Instruction          string `json:"instruction,omitempty"` // trusted per-task instruction prepended to the generated task prompt; empty is backward-compatible
-	IssueIdentifier     string `json:"issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123), resolved on claim so the agent can embed it when creating external approvals
+	Instruction          string `json:"instruction,omitempty"`      // trusted per-task instruction prepended to the generated task prompt; empty is backward-compatible
+	IssueIdentifier      string `json:"issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123), resolved on claim so the agent can embed it when creating external approvals
 	WorkspaceID          string `json:"workspace_id"`
 	TraceID              string `json:"trace_id,omitempty"`
 	TraceStartedAtUnixMS int64  `json:"trace_started_at_unix_ms,omitempty"`
@@ -139,6 +139,10 @@ type Task struct {
 	InitiatorID    string `json:"initiator_id,omitempty"`
 	InitiatorName  string `json:"initiator_name,omitempty"`
 	InitiatorEmail string `json:"initiator_email,omitempty"`
+	// A2AInvocation is emitted only for a durable inbound-A2A task. It permits
+	// a credentialless child process while keeping missing tokens fail-closed
+	// for every ordinary task.
+	A2AInvocation bool `json:"a2a_invocation,omitempty"`
 	// AuthToken is the task-scoped credential the server mints at claim time.
 	// The daemon injects it into the spawned agent as MULTICA_TOKEN so the
 	// agent never sees the daemon's own (often workspace-owner) credential.

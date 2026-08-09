@@ -49,6 +49,10 @@ import type {
   WebhookDelivery,
   WorkspaceAccessToken,
   WorkspaceAccessTokenSecretResponse,
+  AgentA2AClient,
+  AgentA2AConfig,
+  AgentA2ACredential,
+  AgentA2ACredentialSecretResponse,
 } from "../types";
 import type {
   CloudRuntimeNode,
@@ -2001,5 +2005,208 @@ export const EMPTY_WORKSPACE_ACCESS_TOKEN: WorkspaceAccessToken = {
 
 export const EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE: WorkspaceAccessTokenSecretResponse = {
   ...EMPTY_WORKSPACE_ACCESS_TOKEN,
+  token: "",
+};
+
+export const AgentA2ACardSkillSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  tags: z.array(z.string()),
+  examples: z.array(z.string()).optional(),
+  inputModes: z.array(z.string()).optional(),
+  outputModes: z.array(z.string()).optional(),
+  securityRequirements: z.array(
+    z.object({
+      schemes: z.record(z.string(), z.array(z.string())),
+    }).loose(),
+  ).optional(),
+}).loose();
+
+const AgentA2ASupportedInterfaceSchema = z.object({
+  url: z.string(),
+  protocolBinding: z.string(),
+  protocolVersion: z.string(),
+  tenant: z.string().optional(),
+}).loose();
+
+const AgentA2ACapabilitiesSchema = z.object({
+  streaming: z.boolean().optional(),
+  pushNotifications: z.boolean().optional(),
+  extendedAgentCard: z.boolean().optional(),
+  extensions: z.array(z.unknown()).optional(),
+}).loose();
+
+export const AgentA2AAgentCardSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  supportedInterfaces: z.array(AgentA2ASupportedInterfaceSchema),
+  version: z.string(),
+  capabilities: AgentA2ACapabilitiesSchema,
+  securitySchemes: z.record(z.string(), z.unknown()).optional(),
+  securityRequirements: z.array(
+    z.object({
+      schemes: z.record(z.string(), z.array(z.string())),
+    }).loose(),
+  ).optional(),
+  defaultInputModes: z.array(z.string()),
+  defaultOutputModes: z.array(z.string()),
+  skills: z.array(AgentA2ACardSkillSchema),
+}).loose();
+
+export const AgentA2AEndpointSchema = z.object({
+  id: z.string().optional(),
+  agent_id: z.string().optional(),
+  public_agent_id: z.string(),
+  enabled: z.boolean(),
+  delegated_by_user_id: z.string().optional(),
+  card_name: z.string(),
+  card_description: z.string(),
+  card_version: z.string(),
+  card_skills: z.array(AgentA2ACardSkillSchema),
+  card_url: z.string(),
+  rpc_url: z.string(),
+  protocol_version: z.string().optional().default("1.0"),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+}).loose()
+  .transform((endpoint) => ({
+    enabled: endpoint.enabled,
+    publicAgentId: endpoint.public_agent_id,
+    cardName: endpoint.card_name,
+    cardDescription: endpoint.card_description,
+    cardVersion: endpoint.card_version,
+    cardSkills: endpoint.card_skills,
+    cardUrl: endpoint.card_url,
+    rpcUrl: endpoint.rpc_url,
+    protocolVersion: endpoint.protocol_version,
+    ...(endpoint.id !== undefined ? { id: endpoint.id } : {}),
+    ...(endpoint.agent_id !== undefined ? { agentId: endpoint.agent_id } : {}),
+    ...(endpoint.delegated_by_user_id !== undefined
+      ? { delegatedByUserId: endpoint.delegated_by_user_id }
+      : {}),
+    ...(endpoint.created_at !== undefined ? { createdAt: endpoint.created_at } : {}),
+    ...(endpoint.updated_at !== undefined ? { updatedAt: endpoint.updated_at } : {}),
+  }));
+
+const AgentA2ACredentialWireSchema = z.object({
+  id: z.string(),
+  key_id: z.string(),
+  token_prefix: z.string(),
+  status: z.enum(["active", "revoked"]),
+  expires_at: z.string().nullable().optional().default(null),
+  last_used_at: z.string().nullable().optional().default(null),
+  revoked_at: z.string().nullable().optional().default(null),
+  created_at: z.string(),
+  updated_at: z.string().optional(),
+});
+
+function toAgentA2ACredential(
+  credential: z.infer<typeof AgentA2ACredentialWireSchema>,
+): AgentA2ACredential {
+  return {
+    id: credential.id,
+    keyId: credential.key_id,
+    tokenPrefix: credential.token_prefix,
+    status: credential.status,
+    expiresAt: credential.expires_at,
+    lastUsedAt: credential.last_used_at,
+    revokedAt: credential.revoked_at,
+    createdAt: credential.created_at,
+    updatedAt: credential.updated_at ?? credential.created_at,
+  };
+}
+
+export const AgentA2ACredentialSchema = AgentA2ACredentialWireSchema
+  .transform(toAgentA2ACredential);
+
+export const AgentA2AClientSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: z.enum(["active", "disabled", "revoked"]),
+  scopes: z.array(z.enum(["send", "read"])),
+  rate_limit_per_minute: z.number().int().positive().nullable().optional().default(null),
+  max_concurrent_tasks: z.number().int().positive().nullable().optional().default(null),
+  credentials: z.array(AgentA2ACredentialSchema).optional().default([]),
+  created_at: z.string(),
+  updated_at: z.string(),
+  revoked_at: z.string().nullable().optional().default(null),
+}).loose().transform((client) => ({
+  id: client.id,
+  name: client.name,
+  status: client.status,
+  scopes: client.scopes,
+  rateLimitPerMinute: client.rate_limit_per_minute,
+  maxConcurrentTasks: client.max_concurrent_tasks,
+  credentials: client.credentials,
+  createdAt: client.created_at,
+  updatedAt: client.updated_at,
+  revokedAt: client.revoked_at,
+}));
+
+export const AgentA2AConfigSchema = z.object({
+  endpoint: AgentA2AEndpointSchema.nullable(),
+  agent_card: AgentA2AAgentCardSchema.nullable(),
+  clients: z.array(AgentA2AClientSchema),
+}).loose().transform((config) => ({
+  endpoint: config.endpoint,
+  agentCard: config.agent_card,
+  clients: config.clients,
+}));
+
+export const AgentA2ACredentialSecretResponseSchema = z.union([
+  z.object({
+    credential: AgentA2ACredentialWireSchema,
+    token: z.string().min(1),
+  }),
+  AgentA2ACredentialWireSchema.extend({
+    token: z.string().min(1),
+  }),
+]).transform((response): AgentA2ACredentialSecretResponse => {
+  if ("credential" in response) {
+    return {
+      credential: toAgentA2ACredential(response.credential),
+      token: response.token,
+    };
+  }
+  return {
+    credential: toAgentA2ACredential(response),
+    token: response.token,
+  };
+});
+
+export const EMPTY_AGENT_A2A_CREDENTIAL: AgentA2ACredential = {
+  id: "",
+  keyId: "",
+  tokenPrefix: "",
+  status: "revoked",
+  expiresAt: null,
+  lastUsedAt: null,
+  revokedAt: null,
+  createdAt: "",
+  updatedAt: "",
+};
+
+export const EMPTY_AGENT_A2A_CLIENT: AgentA2AClient = {
+  id: "",
+  name: "",
+  status: "revoked",
+  scopes: [],
+  rateLimitPerMinute: null,
+  maxConcurrentTasks: null,
+  credentials: [],
+  createdAt: "",
+  updatedAt: "",
+  revokedAt: null,
+};
+
+export const EMPTY_AGENT_A2A_CONFIG: AgentA2AConfig = {
+  endpoint: null,
+  agentCard: null,
+  clients: [],
+};
+
+export const EMPTY_AGENT_A2A_CREDENTIAL_SECRET_RESPONSE: AgentA2ACredentialSecretResponse = {
+  credential: EMPTY_AGENT_A2A_CREDENTIAL,
   token: "",
 };

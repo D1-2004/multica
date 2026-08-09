@@ -22,6 +22,10 @@ const (
 	// WorkspaceAccessTokens gates issuance and use of workspace-bound DTA
 	// credentials during the additive-schema / rolling-server rollout.
 	WorkspaceAccessTokens = "workspace_access_tokens"
+	// AgentA2AInbound gates publishing a user-owned Agent through the inbound
+	// A2A control plane and protocol endpoint. It is fail-closed during the
+	// additive-schema and rolling-server rollout.
+	AgentA2AInbound = "agent_a2a_inbound"
 	// agentSkillTogglesCompat is no longer a release flag. Keep publishing the
 	// key as enabled so installed v0.4.0 desktop clients, which still gate the
 	// switch on this config decision, receive the permanently enabled behavior.
@@ -33,6 +37,7 @@ var frontendPublicFlags = []string{
 	AgentBuilder,
 	ResourceLabels,
 	WorkspaceAccessTokens,
+	AgentA2AInbound,
 }
 
 func ComposioMCPAppsEnabled(ctx context.Context, flags *featureflag.Service) bool {
@@ -49,6 +54,10 @@ func ResourceLabelsEnabled(ctx context.Context, flags *featureflag.Service) bool
 
 func WorkspaceAccessTokensEnabled(ctx context.Context, flags *featureflag.Service) bool {
 	return flags.IsEnabled(ctx, WorkspaceAccessTokens, false)
+}
+
+func AgentA2AInboundEnabled(ctx context.Context, flags *featureflag.Service) bool {
+	return flags.IsEnabled(ctx, AgentA2AInbound, false)
 }
 
 func EvaluateFrontendPublicFlags(ctx context.Context, flags *featureflag.Service) map[string]bool {

@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Agent, AgentRuntime } from "@multica/core/types";
+import { configStore } from "@multica/core/config";
+import { AGENT_A2A_INBOUND_FLAG } from "@multica/core/feature-flags";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enAgents from "../../locales/en/agents.json";
@@ -47,6 +49,9 @@ vi.mock("./tabs/integrations-tab", () => ({
 }));
 vi.mock("./tabs/identity-tab", () => ({
   IdentityTab: () => <div>identity-tab</div>,
+}));
+vi.mock("./tabs/a2a-tab", () => ({
+  A2ATab: () => <div>a2a-tab</div>,
 }));
 vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
@@ -143,7 +148,10 @@ function makeRuntime(provider: string, capabilities?: string[]): AgentRuntime {
   };
 }
 
-function renderPane(runtimes: AgentRuntime[]) {
+function renderPane(
+  runtimes: AgentRuntime[],
+  options: { currentUserId?: string; agent?: Agent } = {},
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -160,7 +168,7 @@ function renderPane(runtimes: AgentRuntime[]) {
       <NavigationProvider value={navigation}>
         <QueryClientProvider client={queryClient}>
           <AgentOverviewPane
-            agent={baseAgent}
+            agent={options.agent ?? baseAgent}
             runtime={runtimes[0] ?? null}
             owner={null}
             runtimes={runtimes}
@@ -169,6 +177,7 @@ function renderPane(runtimes: AgentRuntime[]) {
             canEdit
             canOperateDingTalkBinding
             dingTalkBindingPermissionLoading={false}
+            currentUserId={options.currentUserId}
           />
         </QueryClientProvider>
       </NavigationProvider>
@@ -189,6 +198,7 @@ beforeEach(() => {
   slackListingRef.current = { installations: [], configured: false };
   dingtalkListingRef.current = { installations: [], configured: false };
   dingtalkAccountListingRef.current = { bindings: [], configured: false };
+  configStore.getState().setFeatureFlags({ [AGENT_A2A_INBOUND_FLAG]: false });
 });
 
 describe("AgentOverviewPane MCP tab visibility", () => {
@@ -319,5 +329,26 @@ describe("AgentOverviewPane Settings navigation", () => {
     renderPane([makeRuntime("claude")]);
     openSettings();
     expect(screen.getByRole("tab", { name: /^Access$/i })).toBeInTheDocument();
+  });
+
+  it("shows A2A only to the agent owner when the inbound flag is enabled", () => {
+    configStore.getState().setFeatureFlags({ [AGENT_A2A_INBOUND_FLAG]: true });
+
+    const { unmount } = renderPane([makeRuntime("claude")], {
+      currentUserId: "user-1",
+    });
+    openSettings();
+    expect(screen.getByRole("tab", { name: /^A2A$/i })).toBeInTheDocument();
+    unmount();
+
+    renderPane([makeRuntime("claude")], { currentUserId: "user-2" });
+    openSettings();
+    expect(screen.queryByRole("tab", { name: /^A2A$/i })).not.toBeInTheDocument();
+  });
+
+  it("hides A2A from the owner while the inbound flag is disabled", () => {
+    renderPane([makeRuntime("claude")], { currentUserId: "user-1" });
+    openSettings();
+    expect(screen.queryByRole("tab", { name: /^A2A$/i })).not.toBeInTheDocument();
   });
 });

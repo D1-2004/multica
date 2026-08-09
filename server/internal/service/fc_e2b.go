@@ -1972,6 +1972,12 @@ func (l *FCE2BLauncher) identityEnvForTask(
 	sandboxID string,
 	agentRow db.Agent,
 ) (map[string]string, error) {
+	if IsA2ATaskOrigin(task.Context) {
+		// External A2A principals are intentionally unbound. Do not attach a
+		// cached ContextToken, the Agent's DingTalk execution identity, or the
+		// owner's GitHub connection to a remotely supplied prompt.
+		return nil, nil
+	}
 	resolved, err := l.resolveIdentityForTask(ctx, task, runtime, sandboxID, agentRow)
 	if err != nil {
 		return nil, err

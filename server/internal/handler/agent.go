@@ -269,7 +269,7 @@ type AgentTaskResponse struct {
 	AgentID              string `json:"agent_id"`
 	RuntimeID            string `json:"runtime_id"`
 	IssueID              string `json:"issue_id"`
-	IssueIdentifier     string `json:"issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123), resolved on claim so the agent can embed it when creating external approvals
+	IssueIdentifier      string `json:"issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123), resolved on claim so the agent can embed it when creating external approvals
 	WorkspaceID          string `json:"workspace_id"`
 	Instruction          string `json:"instruction,omitempty"` // daemon-claim only: trusted per-task instruction prepended to the generated task prompt
 	TraceID              string `json:"trace_id,omitempty"`
@@ -378,6 +378,11 @@ type AgentTaskResponse struct {
 	InitiatorName  string `json:"initiator_name,omitempty"`  // display name of the initiator
 	InitiatorEmail string `json:"initiator_email,omitempty"` // member email; empty for agent initiators
 	Kind           string `json:"kind"`                      // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
+	// A2AInvocation is set only on the authenticated daemon claim payload when
+	// the durable task context marks an inbound A2A execution. It is the
+	// daemon's explicit authorization to run without a task token; an empty
+	// AuthToken remains fatal for every ordinary task.
+	A2AInvocation bool `json:"a2a_invocation,omitempty"`
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -1982,7 +1987,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := h.Queries.ListAgentTasks(r.Context(), agent.ID)
+	tasks, err := h.Queries.ListHumanVisibleAgentTasks(r.Context(), agent.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agent tasks")
 		return

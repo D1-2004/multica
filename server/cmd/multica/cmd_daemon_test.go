@@ -2,12 +2,17 @@ package main
 
 import (
 	"bytes"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon"
 	"github.com/spf13/cobra"
 )
@@ -38,6 +43,96 @@ func TestDaemonAlive(t *testing.T) {
 	// A response with no status key at all (e.g. malformed) is not alive.
 	if daemonAlive(map[string]any{}) {
 		t.Errorf("daemonAlive(no status) = true, want false")
+	}
+}
+
+func TestRequestDaemonShutdownSendsDerivedControlToken(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := cli.SaveCLIConfig(cli.CLIConfig{Token: "mul_profile_secret"}); err != nil {
+		t.Fatal(err)
+	}
+
+	const (
+		daemonID = "daemon-test"
+		nonce    = "instance-nonce"
+	)
+	wantToken, err := daemon.DeriveLocalControlToken("mul_profile_secret", daemonID, nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotAuthorization string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuthorization = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	_, portText, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = requestDaemonShutdown("", port, map[string]any{
+		"daemon_id":     daemonID,
+		"control_nonce": nonce,
+	})
+	if err != nil {
+		t.Fatalf("requestDaemonShutdown: %v", err)
+	}
+	if gotAuthorization != "Bearer "+wantToken {
+		t.Fatalf("Authorization = %q, want derived control bearer", gotAuthorization)
+	}
+}
+
+func TestDaemonLifecycleCommandsRejectAgentExecutionContext(t *testing.T) {
+	t.Setenv("MULTICA_TASK_ID", "task-a2a")
+
+	tests := []struct {
+		name string
+		run  func(*cobra.Command) error
+	}{
+		{
+			name: "start",
+			run: func(cmd *cobra.Command) error {
+				return runDaemonStart(cmd, nil)
+			},
+		},
+		{
+			name: "restart",
+			run: func(cmd *cobra.Command) error {
+				return runDaemonRestart(cmd, nil)
+			},
+		},
+		{
+			name: "stop",
+			run: func(cmd *cobra.Command) error {
+				return runDaemonStop(cmd, nil)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.run(&cobra.Command{})
+			if err == nil || !strings.Contains(err.Error(), "unavailable inside a daemon-managed agent task") {
+				t.Fatalf("error = %v, want agent-task lifecycle refusal", err)
+			}
+		})
+	}
+}
+
+func TestDaemonLifecycleCommandsRejectA2AInvocationMarker(t *testing.T) {
+	t.Setenv("MULTICA_AGENT_ID", "")
+	t.Setenv("MULTICA_TASK_ID", "")
+	t.Setenv("MULTICA_DAEMON_PORT", "")
+	t.Setenv(a2aInvocationEnvKey, "1")
+
+	if err := rejectDaemonLifecycleInTask(); err == nil ||
+		!strings.Contains(err.Error(), "unavailable inside a daemon-managed agent task") {
+		t.Fatalf("error = %v, want A2A lifecycle refusal", err)
 	}
 }
 
