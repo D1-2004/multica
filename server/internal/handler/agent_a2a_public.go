@@ -29,7 +29,7 @@ func (h *Handler) GetAgentA2ACard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtimeSafety := evaluateAgentA2ALocalRequestSafety(h.currentConfig().PublicURL, r.RemoteAddr)
+	runtimeSafety := evaluateAgentA2ARequestSafety(h.currentConfig().PublicURL, r.RemoteAddr)
 	if !runtimeSafety.Allowed {
 		http.NotFound(w, r)
 		return
@@ -94,7 +94,8 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if !evaluateAgentA2ALocalRequestSafety(h.currentConfig().PublicURL, r.RemoteAddr).Allowed {
+	runtimeSafety := evaluateAgentA2ARequestSafety(h.currentConfig().PublicURL, r.RemoteAddr)
+	if !runtimeSafety.Allowed {
 		http.NotFound(w, r)
 		return
 	}
@@ -166,7 +167,8 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 		EndpointEnabled: credential.EndpointEnabled,
 	})
 	_ = h.Queries.TouchAgentA2ACredentialLastUsed(ctx, credential.CredentialID)
-	warnAgentA2AUnsafeLocalRuntimeAccepted(
+	warnAgentA2AUnsafeRuntimeAccepted(
+		runtimeSafety.Mode,
 		"rpc",
 		uuidToString(credential.WorkspaceID),
 		uuidToString(credential.AgentID),

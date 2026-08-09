@@ -181,7 +181,7 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "enabled is required")
 		return
 	}
-	runtimeSafety := agentA2ARuntimeSafetyDecision{}
+	runtimeSafety := agentA2ARuntimeSafetyDecision{Mode: agentA2ARuntimeSafetyModeDenied}
 	if len(request.CardSkills) == 0 || string(request.CardSkills) == "null" {
 		writeError(w, http.StatusBadRequest, "card_skills must be an array")
 		return
@@ -272,7 +272,8 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if *request.Enabled {
-		warnAgentA2AUnsafeLocalRuntimeAccepted(
+		warnAgentA2AUnsafeRuntimeAccepted(
+			runtimeSafety.Mode,
 			"enable",
 			uuidToString(scope.WorkspaceID),
 			uuidToString(scope.Agent.ID),

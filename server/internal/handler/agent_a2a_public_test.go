@@ -41,7 +41,12 @@ func TestAgentA2APublicRoutesCamouflageUnsafeRuntime(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("APP_ENV", test.appEnv)
+			t.Setenv("AONE_ENV_TYPE", "")
+			t.Setenv("ENV_TYPE", "")
+			t.Setenv("GO_ENV", "")
 			t.Setenv(agentA2AAllowUnsafeLocalRuntimeEnv, test.allowUnsafe)
+			t.Setenv(agentA2AAllowUnsafePrereleaseRuntimeEnv, "")
+			t.Setenv(agentA2AUnsafePrereleasePublicURLEnv, "")
 			h := &Handler{cfg: Config{PublicURL: test.publicURL}}
 			withFeatureFlag(t, h, featureflags.AgentA2AInbound, true)
 
@@ -103,6 +108,33 @@ func TestAgentA2APublicRoutesRequireLoopbackSocketPeer(t *testing.T) {
 	h.HandleAgentA2ARPC(loopbackRPCResponse, loopbackRPCRequest)
 	if loopbackRPCResponse.Code != http.StatusServiceUnavailable {
 		t.Fatalf("loopback RPC status = %d, want 503 proving request passed safety gate", loopbackRPCResponse.Code)
+	}
+}
+
+func TestAgentA2APublicRoutesAllowPrereleaseRemoteSocketPeer(t *testing.T) {
+	const publicURL = "https://agents.example.test/a2a"
+	allowUnsafePrereleaseAgentA2ARuntimeForTest(t, publicURL)
+	database := &agentA2ARecordingDB{}
+	h := &Handler{
+		cfg:     Config{PublicURL: publicURL},
+		Queries: db.New(database),
+	}
+	withFeatureFlag(t, h, featureflags.AgentA2AInbound, true)
+
+	cardRequest := httptest.NewRequest(http.MethodGet, "/api/a2a/agents/opaque/.well-known/agent-card.json", nil)
+	cardRequest.RemoteAddr = "10.20.30.40:49152"
+	cardResponse := httptest.NewRecorder()
+	h.GetAgentA2ACard(cardResponse, cardRequest)
+	if cardResponse.Code != http.StatusNotFound || database.queryRowCalls != 1 {
+		t.Fatalf("prerelease Card request = status:%d queries:%d, want request to pass safety gate and query once", cardResponse.Code, database.queryRowCalls)
+	}
+
+	rpcRequest := httptest.NewRequest(http.MethodPost, "/api/a2a/agents/opaque/v1", nil)
+	rpcRequest.RemoteAddr = "10.20.30.40:49152"
+	rpcResponse := httptest.NewRecorder()
+	h.HandleAgentA2ARPC(rpcResponse, rpcRequest)
+	if rpcResponse.Code != http.StatusServiceUnavailable {
+		t.Fatalf("prerelease RPC status = %d, want 503 proving remote peer passed safety gate", rpcResponse.Code)
 	}
 }
 

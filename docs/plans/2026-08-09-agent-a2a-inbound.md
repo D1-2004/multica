@@ -9,7 +9,7 @@
 > 目标执行分支：`codex/agent-a2a-inbound`
 > 基线 Commit：`3c2e8a976b77e07d9f6f555e294046ac86c93cda`
 > Worktree：`/Users/yuanzhan/.codex/worktrees/9df9/dt-fde-multica`
-> 当前里程碑：首个 flag-off 纵向切片已实现，并通过真实本地 Claude Coding Agent 黑盒 E2E；里程碑 3/4/6/8 留待后续
+> 当前里程碑：首个 flag-off 纵向切片已实现，并通过真实本地 Claude Coding Agent 黑盒 E2E；正在以短期显式 unsafe prerelease 闸门完成托管入口联调，里程碑 3/4/6 留待后续
 
 ## 一句话结论
 
@@ -339,7 +339,9 @@ A2A cancel 不能直接调用当前浏览器语义的 `CancelTaskWithResult(root
 
 当前首切的生产阻断条件：本地 Coding Agent 与 daemon 仍共享宿主 OS 身份。即使 A2A task 不获得 Multica task token、个人 MCP overlay，且 ambient/inherited 敏感环境变量已清理，Claude 工具 shell 仍可能通过共享 `HOME`、provider state directory 或绝对路径读取宿主登录材料；Claude 还会读取宿主 `settings.json`、hooks、plugins、skills 和 commands。provider CLI 自身需要的认证材料和它开放给工具 shell 的文件权限目前没有 broker/isolation 边界。可信固定任务的本地 E2E 只能证明功能链路，不能证明恶意 prompt 的安全性。
 
-因此 `agent_a2a_inbound` 保持默认关闭；production 无条件拒绝，非 production 也只有同时设置 `MULTICA_A2A_ALLOW_UNSAFE_LOCAL_RUNTIME=true`、PublicURL 为精确 loopback、HTTP socket peer 直连 loopback，且 Agent runtime 为 `local + claude` 才能启用、Send、claim 和 StartTask。该豁免只用于可信固定 E2E，不得经代理转发或对不可信调用方开放。生产启用至少要求以下任一方案及 adversarial 验证：
+因此 `agent_a2a_inbound` 保持默认关闭；production 无条件拒绝。常规本地验证只有同时设置 `MULTICA_A2A_ALLOW_UNSAFE_LOCAL_RUNTIME=true`、PublicURL 为精确 loopback、HTTP socket peer 直连 loopback，且 Agent runtime 为 `local + claude` 才能启用、Send、claim 和 StartTask。该豁免只用于可信固定 E2E，不得经代理转发或对不可信调用方开放。
+
+为验证 Aone 托管入口到本地 Coding Agent 的完整 inbound 路径，允许一次短期、显式的非生产预发模式：同时设置 `MULTICA_A2A_ALLOW_UNSAFE_PRERELEASE_RUNTIME=true` 与 `MULTICA_A2A_UNSAFE_PRERELEASE_PUBLIC_URL=<expected>`，且规范化后的 `MULTICA_PUBLIC_URL` 必须与 expected 完全相同、使用 HTTPS、host 非 loopback。该模式允许负载均衡器远端 socket peer，但不降低 feature flag、Agent enabled、Bearer credential、`local + claude` runtime 或 claim/StartTask 二次门禁。预发 E2E 后必须删除这两个 override、关闭 `FF_AGENT_A2A_INBOUND`、吊销本轮 A2A/PAT 凭证并再次部署；最终环境恢复 fail closed。生产启用至少要求以下任一方案及 adversarial 验证：
 
 1. A2A 专用隔离执行环境（容器/沙箱/独立 OS 用户），provider credential 只进入 supervisor 或 broker，不进入工具 shell；或
 2. 运行时可证明的文件系统与进程权限策略，阻止读取宿主 `HOME`、provider auth、DWS/GitHub/cloud CLI 配置和 daemon/profile 配置；
@@ -415,7 +417,7 @@ Transport 前置错误如无/错 Bearer和 body 超限使用 HTTP 401/403/413；
 - [x] 里程碑 5：实现 Agent Settings A2A tab、一次性凭证 UX、Card 安全说明、feature flag 与 locales。
 - [ ] 里程碑 6：增加协议 golden、官方 SDK client、PostgreSQL integration、TCK 与安全/限流/回归验证。
 - [x] 里程碑 7：运行本地 Claude Code Coding Agent 的可信固定任务黑盒 E2E，记录 workdir、响应和测试证据；不把该结果表述为不可信 prompt 的隔离验收。
-- [ ] 里程碑 8：按 schema-first、flag-off、全副本升级、内部 Agent canary、逐 Agent 开启的顺序发布；验证关闭与凭证吊销回滚路径。
+- [ ] 里程碑 8：按 schema-first、flag-off、全副本升级、内部 Agent canary、逐 Agent 开启的顺序发布；当前只执行短期 unsafe prerelease E2E，并在同一轮内验证关闭与凭证吊销回滚路径。
 
 ## 验证策略
 
@@ -579,6 +581,7 @@ credential 写入权限 `0600` 文件或 stdin/env，不出现在命令参数、
 | UI | 已完成 |  | Core/Views typecheck；Core 930 tests；Views 2053 tests | owner-only A2A tab；Card URL/Card JSON/Multica preset/curl 导出均不含 secret；raw token 仅一次性 dialog |
 | 自动化验证 | 首切已完成 |  | Go A2A/daemon/auth/service/CLI 定向测试、Core/Views tests、`make build`、`git diff --check` | 相关测试与构建通过；Card/transport/auth/claim/env/local-daemon 能力已覆盖；List/Cancel/TCK/rate-limit 属于后续里程碑。更宽的既有 Handler/Service integration suite 仍受本地旧 fixture/schema/date 基线问题影响，不计作本切片通过 |
 | 本地 Coding Agent E2E | 已完成 |  | direct Card + JSON-RPC Send/Get、真实本地 Claude、DB readback、`npm test`、独立 Node oracle、proof JSON | 匿名 Card 成功，无 Bearer RPC 返回 401；Task 依次为 submitted/working/completed；Claude 实际执行 Write/Bash 并产出 1 个稳定 Text Artifact，包含 `A2A_E2E_COMPLETED`；独立 5-case oracle 和 Agent 生成的 5 tests 均通过 |
+| Aone 预发托管入口 E2E | 执行中 |  | 预发 Card + JSON-RPC Send/Get、本地隔离 profile/daemon/Claude、独立项目 oracle；结束后删除 override 并再次部署 | 待回填变更单、流水线、Task/Artifact、项目测试与回滚证据 |
 
 ## 首切结果与遗留项
 
