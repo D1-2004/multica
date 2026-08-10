@@ -184,12 +184,10 @@ export function A2ATab({ agent }: { agent: Agent }) {
     () => (agentCard ? serializeJson(agentCard) : ""),
     [agentCard],
   );
-  const hasPublicCardUrl =
-    endpoint?.enabled === true && endpoint.cardUrl.trim() !== "";
-  const hasPublicRpcUrl =
-    endpoint?.enabled === true && endpoint.rpcUrl.trim() !== "";
+  const hasPublicCardUrl = (endpoint?.cardUrl.trim() ?? "") !== "";
+  const hasPublicRpcUrl = (endpoint?.rpcUrl.trim() ?? "") !== "";
   const canExportConnection =
-    hasPublicCardUrl && hasPublicRpcUrl;
+    endpoint?.enabled === true && hasPublicCardUrl && hasPublicRpcUrl;
   const connectionPreset = useMemo(
     () => {
       if (!endpoint || !canExportConnection) return null;
@@ -404,9 +402,11 @@ export function A2ATab({ agent }: { agent: Agent }) {
               <div className="space-y-2 bg-primary/[0.03] px-4 py-4">
                 <div>
                   <Label>{t(($) => $.tab_body.a2a.rpc_url)}</Label>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {t(($) => $.tab_body.a2a.call_description)}
-                  </p>
+                  {endpoint?.enabled === true && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t(($) => $.tab_body.a2a.call_description)}
+                    </p>
+                  )}
                 </div>
                 <div className="flex min-w-0 gap-2">
                   <Input
@@ -513,11 +513,13 @@ export function A2ATab({ agent }: { agent: Agent }) {
           )}
           {hasPublicCardUrl && (
             <>
-              <Alert>
-                <AlertDescription>
-                  {t(($) => $.tab_body.a2a.public_card_notice)}
-                </AlertDescription>
-              </Alert>
+              {endpoint.enabled === true && (
+                <Alert>
+                  <AlertDescription>
+                    {t(($) => $.tab_body.a2a.public_card_notice)}
+                  </AlertDescription>
+                </Alert>
+              )}
               <Card className="py-0 shadow-none">
                 <CardContent className="space-y-5 px-4 py-4">
                   <div className="space-y-1.5">

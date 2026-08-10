@@ -214,6 +214,45 @@ describe("A2ATab", () => {
     expect(container.textContent).not.toContain("MULTICA_A2A_TOKEN");
   });
 
+  it("keeps persisted URLs visible while a disabled endpoint remains unusable", async () => {
+    const user = userEvent.setup();
+    const config = configRef.current!;
+    configRef.current = {
+      ...config,
+      endpoint: { ...config.endpoint!, enabled: false },
+    };
+
+    renderTab();
+
+    expect(screen.getByDisplayValue(/public-agent-1\/v1$/)).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue(/public-agent-1\/\.well-known\/agent-card\.json$/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Use this RPC URL as the A2A endpoint/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("multica-a2a.json")).not.toBeInTheDocument();
+    expect(screen.queryByText(/cURL example/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Create credential$/i }),
+    ).toBeDisabled();
+
+    await user.click(
+      screen.getByRole("button", { name: /Copy A2A RPC URL/i }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /Copy Agent Card URL/i }),
+    );
+    expect(copyTextSpy).toHaveBeenNthCalledWith(
+      1,
+      "https://multica.example/api/a2a/agents/public-agent-1/v1",
+    );
+    expect(copyTextSpy).toHaveBeenNthCalledWith(
+      2,
+      "https://multica.example/api/a2a/agents/public-agent-1/.well-known/agent-card.json",
+    );
+  });
+
   it("keeps a created credential only in the one-time dialog and clears it on close", async () => {
     const user = userEvent.setup();
     renderTab();

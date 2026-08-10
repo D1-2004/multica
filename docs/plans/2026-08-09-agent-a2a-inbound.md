@@ -347,6 +347,8 @@ A2A cancel 不能直接调用当前浏览器语义的 `CancelTaskWithResult(root
 
 2026-08-10 真实预发启用验证发现，Aone 镜像以 build arg 注入且不通过应用 runtime-env trait 暴露 `AONE_ENV_TYPE=pre`，同时应用按正常公网运行方式配置 `APP_ENV=production`。后者表达应用运行模式（禁用测试验证码、启用生产构建），不是 Aone 发布层级；把四个变量无优先级合并会把真实预发误判成生产并返回 403。环境判定因此收窄为 Aone 特例：`AONE_ENV_TYPE` 存在时由该平台层级标记判定，故允许 `pre + APP_ENV=production`；Aone 标记缺失时遍历所有 `ENV_TYPE / GO_ENV / APP_ENV` 通用标记，任何 production 或未知值都 fail closed，不允许 staging 遮蔽 production。必须新增 `AONE_ENV_TYPE=pre + APP_ENV=production` 允许预发、`AONE_ENV_TYPE=production + APP_ENV=staging` 拒绝生产、通用 marker 冲突拒绝、未知 marker 拒绝和 fallback 行为测试，再重新部署后继续 E2E。
 
+2026-08-10 UI 复核补齐两个管理面边界：A2A config 的 GET/PUT 仍通过统一 `parseWithFallback` 记录脱敏 schema warning，但校验失败不再降级为空配置并显示“保存成功”；owner 管理响应只要包含持久 Card/RPC URL 就保持可查看、复制，即使 runtime/gate 暂时使 endpoint 投影为 disabled。导出可调用连接、调用提示与 credential 创建仍严格要求 `endpoint.enabled=true` 且两个 URL 非空，避免把暂不可用地址描述为可调用端点。
+
 1. A2A 专用隔离执行环境（容器/沙箱/独立 OS 用户），provider credential 只进入 supervisor 或 broker，不进入工具 shell；或
 2. 运行时可证明的文件系统与进程权限策略，阻止读取宿主 `HOME`、provider auth、DWS/GitHub/cloud CLI 配置和 daemon/profile 配置；
 3. adversarial canary 证明 `gh auth token`、默认 DWS profile、provider auth file 与已知绝对路径均不可读/不可外传。
@@ -583,7 +585,7 @@ credential 写入权限 `0600` 文件或 stdin/env，不出现在命令参数、
 | Schema / 管理面 | 首切已完成 |  | migration 270、sqlc、Handler PostgreSQL integration tests | endpoint/client/credential 分层；secret 只返回一次；member revoke 与 owner transfer 使用固定锁序永久吊销旧 grant |
 | Inbound happy path | 首切已完成 |  | A2A service/handler/daemon 定向测试 + 真实 Claude E2E | Card、Bearer、官方 SDK JSON-RPC、Send/Get 与持久 binding 已打通；仅支持 `returnImmediately=true` |
 | Logical task / cancel | 待执行 |  |  |  |
-| UI | 已完成 |  | Core/Views typecheck；Core 930 tests；Views 2053 tests | owner-only A2A tab；Card URL/Card JSON/Multica preset/curl 导出均不含 secret；raw token 仅一次性 dialog |
+| UI | 已完成 |  | Core/Views typecheck；Core 930 tests；Views 2053 tests；A2A Core 39 tests + Views 7 tests | owner-only A2A tab；Card URL/Card JSON/Multica preset/curl 导出均不含 secret；raw token 仅一次性 dialog；schema drift 不假成功，disabled 投影仍保留 owner URL 可见性但不开放导出/credential |
 | 自动化验证 | 首切已完成 |  | Go A2A/daemon/auth/service/CLI 定向测试、Core/Views tests、`make build`、`git diff --check` | 相关测试与构建通过；Card/transport/auth/claim/env/local-daemon 能力已覆盖；List/Cancel/TCK/rate-limit 属于后续里程碑。更宽的既有 Handler/Service integration suite 仍受本地旧 fixture/schema/date 基线问题影响，不计作本切片通过 |
 | 本地 Coding Agent E2E | 已完成 |  | direct Card + JSON-RPC Send/Get、真实本地 Claude、DB readback、`npm test`、独立 Node oracle、proof JSON | 匿名 Card 成功，无 Bearer RPC 返回 401；Task 依次为 submitted/working/completed；Claude 实际执行 Write/Bash 并产出 1 个稳定 Text Artifact，包含 `A2A_E2E_COMPLETED`；独立 5-case oracle 和 Agent 生成的 5 tests 均通过 |
 | Aone 预发托管入口 E2E | 已完成 | `41cd46323` / release `4d4394f09` | 预发 Card + JSON-RPC Send/Get、本地隔离 profile/daemon/Claude、`npm test`、独立 Node oracle；删除 override 后再次部署 | run `3102808691` 构建/部署/集成测试成功并停在人工预发验证；Card 匿名 200、无 Bearer RPC 401，Task `tsk_sY3XgiP7MBE9thrbysi8SqH1OuBAmt49` 观察到 submitted/working/completed，Artifact 含 `A2A_E2E_COMPLETED`；一次性 credential/client/Agent/daemon/PAT/profile 已清理，3 个 env key 已删除且非目标项完整保留；最终 run `3102813830` 代码/配置合并、构建、扫描、预发部署与集成测试均成功并停在人工预发验证，flag-off Card/RPC 各 12 次请求均返回 404 |

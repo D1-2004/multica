@@ -2215,10 +2215,19 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(
       `/api/agents/${encodeURIComponent(agentId)}/a2a`,
     );
-    return parseWithFallback(raw, AgentA2AConfigSchema, EMPTY_AGENT_A2A_CONFIG, {
-      endpoint: "GET /api/agents/:id/a2a",
-      includeReceived: false,
-    });
+    const parsed = parseWithFallback(
+      raw,
+      AgentA2AConfigSchema,
+      EMPTY_AGENT_A2A_CONFIG,
+      {
+        endpoint: "GET /api/agents/:id/a2a",
+        includeReceived: false,
+      },
+    );
+    if (parsed === EMPTY_AGENT_A2A_CONFIG) {
+      throw new Error("Invalid A2A configuration response");
+    }
+    return parsed;
   }
 
   async updateAgentA2AConfig(
@@ -2238,10 +2247,19 @@ export class ApiClient {
         }),
       },
     );
-    return parseWithFallback(raw, AgentA2AConfigSchema, EMPTY_AGENT_A2A_CONFIG, {
-      endpoint: "PUT /api/agents/:id/a2a",
-      includeReceived: false,
-    });
+    const parsed = parseWithFallback(
+      raw,
+      AgentA2AConfigSchema,
+      EMPTY_AGENT_A2A_CONFIG,
+      {
+        endpoint: "PUT /api/agents/:id/a2a",
+        includeReceived: false,
+      },
+    );
+    if (parsed === EMPTY_AGENT_A2A_CONFIG) {
+      throw new Error("Invalid A2A configuration response");
+    }
+    return parsed;
   }
 
   async createAgentA2AClient(

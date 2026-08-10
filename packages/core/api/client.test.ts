@@ -8,6 +8,44 @@ afterEach(() => {
   setSchemaLogger(noopLogger);
 });
 
+describe("ApiClient A2A config response schemas", () => {
+  it.each([
+    ["GET", (client: ApiClient) => client.getAgentA2AConfig("agent/1")],
+    [
+      "PUT",
+      (client: ApiClient) =>
+        client.updateAgentA2AConfig("agent/1", {
+          enabled: true,
+          cardName: "Coding Agent",
+          cardDescription: "Builds projects",
+          cardVersion: "1.0.0",
+          cardSkills: [],
+        }),
+    ],
+  ])(
+    "rejects a malformed %s response instead of returning an empty config",
+    async (_method, request) => {
+      const warn = vi.fn();
+      setSchemaLogger({ ...noopLogger, warn });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ endpoint: "malformed" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+
+      await expect(
+        request(new ApiClient("https://api.example.test")),
+      ).rejects.toThrow("Invalid A2A configuration response");
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[1]).not.toHaveProperty("received");
+    },
+  );
+});
+
 describe("ApiClient label response schemas", () => {
   it("falls back safely for malformed label catalog, label, and resource responses", async () => {
     const fetchMock = vi.fn().mockImplementation(() =>
