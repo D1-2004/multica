@@ -48,6 +48,9 @@ vi.mock("./tabs/integrations-tab", () => ({
 vi.mock("./tabs/identity-tab", () => ({
   IdentityTab: () => <div>identity-tab</div>,
 }));
+vi.mock("./tabs/llm-trace-tab", () => ({
+  LLMTraceTab: () => <div>llm-trace-tab</div>,
+}));
 vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
 }));
@@ -143,7 +146,10 @@ function makeRuntime(provider: string, capabilities?: string[]): AgentRuntime {
   };
 }
 
-function renderPane(runtimes: AgentRuntime[]) {
+function renderPane(
+  runtimes: AgentRuntime[],
+  agentOverrides: Partial<Agent> = {},
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -160,7 +166,7 @@ function renderPane(runtimes: AgentRuntime[]) {
       <NavigationProvider value={navigation}>
         <QueryClientProvider client={queryClient}>
           <AgentOverviewPane
-            agent={baseAgent}
+            agent={{ ...baseAgent, ...agentOverrides }}
             runtime={runtimes[0] ?? null}
             owner={null}
             runtimes={runtimes}
@@ -319,5 +325,18 @@ describe("AgentOverviewPane Settings navigation", () => {
     renderPane([makeRuntime("claude")]);
     openSettings();
     expect(screen.getByRole("tab", { name: /^Access$/i })).toBeInTheDocument();
+  });
+
+  it("shows LLM Trace only for cloud agents", () => {
+    const { unmount } = renderPane([makeRuntime("hermes")]);
+    openSettings();
+    expect(
+      screen.queryByRole("tab", { name: /^LLM Trace$/i }),
+    ).not.toBeInTheDocument();
+    unmount();
+
+    renderPane([makeRuntime("hermes")], { runtime_mode: "cloud" });
+    openSettings();
+    expect(screen.getByRole("tab", { name: /^LLM Trace$/i })).toBeInTheDocument();
   });
 });

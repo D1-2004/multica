@@ -267,11 +267,12 @@ func TestCompleteTaskEnqueuesRouterCompletionInTerminalTransaction(t *testing.T)
 	}
 
 	var rootTaskID, terminalTaskID, requestID, status, message, targetIdentity string
+	var executionSummary []byte
 	if err := pool.QueryRow(ctx, `
-		SELECT root_task_id, terminal_task_id, request_id, execution_status, result_message, target_identity
+		SELECT root_task_id, terminal_task_id, request_id, execution_status, result_message, target_identity, execution_summary
 		FROM task_completion_outbox
 		WHERE root_task_id = $1
-	`, taskID).Scan(&rootTaskID, &terminalTaskID, &requestID, &status, &message, &targetIdentity); err != nil {
+	`, taskID).Scan(&rootTaskID, &terminalTaskID, &requestID, &status, &message, &targetIdentity, &executionSummary); err != nil {
 		t.Fatal(err)
 	}
 	if rootTaskID != taskID || terminalTaskID != taskID ||
@@ -279,6 +280,13 @@ func TestCompleteTaskEnqueuesRouterCompletionInTerminalTransaction(t *testing.T)
 		message != "第一行\n第二行" || targetIdentity != taskCompletionTestTarget {
 		t.Fatalf("completion = root:%s terminal:%s request:%s status:%s message:%q",
 			rootTaskID, terminalTaskID, requestID, status, message)
+	}
+	var summary TaskExecutionSummary
+	if err := json.Unmarshal(executionSummary, &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.TaskID != taskID || summary.Status != "completed" || summary.MessageCount != 0 {
+		t.Fatalf("execution summary = %#v", summary)
 	}
 }
 
@@ -677,13 +685,23 @@ func TestTaskCompletionOutboxRejectsConflictingTerminalResult(t *testing.T) {
 		AgentID:         pgtype.UUID{Bytes: [16]byte{12}, Valid: true},
 		ExecutionStatus: "completed",
 		ResultMessage:   "done",
+		ExecutionSummary: []byte(`{"task_id":"task-1","status":"completed"}`),
 	}
 	if _, err := queries.EnqueueTaskCompletion(ctx, first); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := queries.EnqueueTaskCompletion(ctx, first); err != nil {
+		t.Fatalf("exact completion replay failed: %v", err)
+	}
 	t.Cleanup(func() {
 		pool.Exec(context.Background(), `DELETE FROM task_completion_outbox WHERE root_task_id = $1`, rootID)
 	})
+
+	summaryConflict := first
+	summaryConflict.ExecutionSummary = []byte(`{"task_id":"task-1","status":"failed"}`)
+	if _, err := queries.EnqueueTaskCompletion(ctx, summaryConflict); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("conflicting execution summary error = %v, want pgx.ErrNoRows", err)
+	}
 
 	conflict := first
 	conflict.TerminalTaskID = pgtype.UUID{Bytes: [16]byte{13}, Valid: true}

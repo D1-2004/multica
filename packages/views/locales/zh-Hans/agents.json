@@ -257,6 +257,7 @@
     "integrations": "集成",
     "identity": "身份",
     "runtime_config": "路由",
+    "llm_trace": "LLM Trace",
     "discard_dialog_title": "放弃未保存的修改？",
     "discard_dialog_description": "当前 tab 有未保存的修改，离开会丢弃这些修改。",
     "discard_keep": "继续编辑",
@@ -579,6 +580,15 @@
       "tls_hint": "用 https:// 代替 http:// 连接",
       "saved_toast": "路由配置已保存",
       "save_failed_toast": "保存路由配置失败"
+    },
+    "llm_trace": {
+      "intro": "该智能体的任务在云沙箱中执行时，将 LLM 请求镜像到 Trace 接收地址。",
+      "enabled_label": "开启 LLM 请求 Trace",
+      "enabled_hint": "开关开启且已填写接收地址时，每个任务都会将 LLM 请求 body 转发到该地址。",
+      "sink_url_label": "Trace 接收地址",
+      "sink_url_placeholder": "https://trace.example.com/ingest",
+      "saved_toast": "LLM Trace 设置已保存",
+      "save_failed_toast": "保存 LLM Trace 设置失败"
     },
     "skills": {
       "intro": "这里展示该智能体实际拥有的全部 skill。工作区 skill 可在此管理；本地运行时 skill 会自动发现并以只读方式继承。",

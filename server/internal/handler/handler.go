@@ -195,6 +195,8 @@ type Handler struct {
 	WebhookDeliveryWorker         *WebhookDeliveryWorker
 	TaskCompletionWorker          *agentmessagerouter.CompletionWorker
 	TaskCompletionTargetIdentity  string
+	AgentMessageRouterLLMTrace    LLMTraceRouter
+	LLMTraceExternalSink          LLMTraceExternalSink
 	DingTalkBindingTeardownRouter DingTalkBindingTeardownRouter
 	CloudRuntime                  cloudRuntimeProxy
 	GitHubApp                     *githubapp.Client
@@ -431,6 +433,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		ModelListStore:               NewInMemoryModelListStore(),
 		LocalSkillListStore:          NewInMemoryLocalSkillListStore(),
 		LocalSkillImportStore:        NewInMemoryLocalSkillImportStore(),
+		LLMTraceExternalSink:         newHTTPTraceExternalSink(),
 		LivenessStore:                NewNoopLivenessStore(),
 		HeartbeatScheduler:           NewPassthroughHeartbeatScheduler(queries),
 		Storage:                      store,

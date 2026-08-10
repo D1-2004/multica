@@ -258,9 +258,21 @@ func TestCompletionWorkerDeliversAndAcknowledgesOutbox(t *testing.T) {
 	pool := taskCompletionTestPool(t)
 	queries := db.New(pool)
 	requests := 0
+	var received ExecutionResultRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		writeCompletionWorkerSuccess(w, r)
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"code":    "success",
+			"data": map[string]string{
+				"dispatchTaskId":    "router-success",
+				"executionStatus":   received.ExecutionStatus,
+				"executionReportId": "worker-report",
+			},
+		})
 	}))
 	defer server.Close()
 	client, err := NewClient(ClientConfig{BaseURL: server.URL, ServiceCredential: "service-secret"})
@@ -268,6 +280,13 @@ func TestCompletionWorkerDeliversAndAcknowledgesOutbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	completion := enqueueWorkerTestCompletion(t, queries, client.TargetIdentity(), "success")
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE task_completion_outbox
+		SET execution_summary = '{"task_id":"task-1","status":"completed"}'::jsonb
+		WHERE id = $1
+	`, completion.ID); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		pool.Exec(context.Background(), `DELETE FROM task_completion_outbox WHERE id = $1`, completion.ID)
 	})
@@ -278,6 +297,9 @@ func TestCompletionWorkerDeliversAndAcknowledgesOutbox(t *testing.T) {
 	}
 	if !worked || requests != 1 {
 		t.Fatalf("worked=%v requests=%d", worked, requests)
+	}
+	if received.ExecutionSummary["task_id"] != "task-1" || received.ExecutionSummary["status"] != "completed" {
+		t.Fatalf("executionSummary = %#v", received.ExecutionSummary)
 	}
 	var status string
 	if err := pool.QueryRow(context.Background(), `

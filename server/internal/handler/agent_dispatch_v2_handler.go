@@ -136,12 +136,17 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 		payload["dispatch_endpoint_id"] = c.DispatchEndpointID
 	}
 	if c.CompletionCallback != nil {
-		callback := map[string]string{
+		callback := map[string]any{
 			"url":    c.CompletionCallback.URL,
 			"target": c.CompletionCallback.Target,
 		}
 		if c.CompletionCallback.UpdateURL != "" {
 			callback["update_url"] = c.CompletionCallback.UpdateURL
+		}
+		if c.CompletionCallback.TelemetryURL != "" {
+			callback["telemetry_url"] = c.CompletionCallback.TelemetryURL
+			callback["telemetry_token"] = c.CompletionCallback.TelemetryToken
+			callback["telemetry_expires_at"] = c.CompletionCallback.TelemetryExpiresAt
 		}
 		payload["completion_callback"] = callback
 	}

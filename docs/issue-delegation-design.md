@@ -247,12 +247,17 @@ Router 下发两个明确的 callback：
 ```json
 {
   "url": "/api/v1/dispatch-tasks/<id>/execution-result",
-  "updateUrl": "/api/v1/dispatch-tasks/<id>/execution-update"
+  "updateUrl": "/api/v1/dispatch-tasks/<id>/execution-update",
+  "telemetryUrl": "/api/v1/dispatch-tasks/<id>/llm-traces",
+  "telemetryToken": "<task-scoped-capability>",
+  "telemetryExpiresAt": 1786377600000
 }
 ```
 
 `url` 只接收最终 `completed` / `failed`；`updateUrl` 只接收非终态
-`delegated_to_issue`。Multica 不根据字符串替换推导 update URL。
+`delegated_to_issue`。Multica 不根据字符串替换推导 update URL。三个
+telemetry 字段是可选的一组；Chat → Issue 交接时作为私有 task context 原样
+继承，使最终执行 task 使用同一个 Router task-scoped LLM trace 能力。
 
 原子事务提交后，completion worker 先投递 handoff update：
 
@@ -439,7 +444,8 @@ Content-Type: application/json
    缺少 `updateUrl`，只有实际调用 delegation 时才保守拒绝释放 Chat；
 5. Multica 全量后再发布 Router，使其支持 `/execution-update` 并下发
    `completionCallback.updateUrl`；
-6. 不新增 Daemon 协议字段，也不新增 runtime 环境变量。
+6. 不新增 Daemon claim 协议字段；LLM trace capability 只通过 cloud sandbox
+   task exec 环境传入 runtime runner。
 
 ## 12. 变更历史
 
@@ -450,3 +456,5 @@ Content-Type: application/json
 | 2026-07-30 | 增加原子控制权边界、`completionCallback.updateUrl`、可靠 execution update outbox 及 update-before-terminal 顺序保证 | Issue 创建成功不能等价于外部任务完成；必须让 Chat 在失败时继续负责闭环，并在成功后把后台 Issue 快照可靠通知 Router，同时避免极快的 Issue 终态越过 handoff |
 | 2026-07-30 | 续写改为复用普通评论队列；以 `comment.source_task_id` 关联每条外部评论和各自 source Chat callback，按 `delivered_comment_ids` 在一个物理 Issue task 结束时扇出多个 terminal callback；评论 callback 失败后直接丢弃 | UI 已证明多个评论会合并为一次 Agent turn、再按 thread 分别回复；单值 `parent_task_id` 无法表达多个 callback 所有者，评论映射可以在不新增业务表、不修改队列调度算法的前提下保留每个外部任务的闭环 |
 | 2026-07-30 | 增加续写幂等返回、claim 竞争后的私有上下文继承、failed completion reconciliation，以及 migration 257 的取消回调扇出 | 工具重放、评论晚于 claim 和物理 task 失败/取消都是可能产生重复指令或孤儿 callback 的边界，需要在不改队列调度算法的前提下补齐闭环 |
+| 2026-08-07 | 私有继承 `completionCallback` 的 telemetry URL/token/expiry，并由 task exec 环境交给 runtime | Chat → Issue handoff 不能打断同一 Router task 的推理链路；能力凭证必须避免进入用户内容、Daemon claim 和日志 |
+| 2026-08-08 | telemetry URL 改为与 execution callback 共用 Router Base URL 的相对路径；runtime 收到的是 Multica 绝对 HTTPS relay URL，Multica 再向 Router 内网转发 | 云沙箱可访问 Multica 控制面但不保证能访问 Router 内网入口，交接后的 trace 也必须复用同一条可达通路 |

@@ -425,6 +425,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	routerClient, routerClientErr := agentmessagerouter.NewClient(routerClientConfig)
 	if routerClientErr == nil {
 		agentMessageRouterClient = routerClient
+		h.AgentMessageRouterLLMTrace = routerClient
 		h.TaskCompletionWorker = agentmessagerouter.NewCompletionWorker(
 			queries,
 			routerClient,
@@ -1459,6 +1460,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/usage", h.ReportTaskUsage)
 		r.Post("/tasks/{taskId}/messages", h.ReportTaskMessages)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
+		r.Post("/tasks/{taskId}/llm-traces", h.RelayTaskLLMTrace)
 
 		r.Get("/issues/{issueId}/gc-check", h.GetIssueGCCheck)
 		r.Get("/chat-sessions/{sessionId}/gc-check", h.GetChatSessionGCCheck)

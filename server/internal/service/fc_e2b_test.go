@@ -446,13 +446,13 @@ func TestParseE2BSandboxIDStrictCreateOutput(t *testing.T) {
 }
 
 func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
-	const alias = "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"
+	const alias = "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"
 	got, err := parseFCE2BTemplates(`[
 		{
 			"templateID": "idt7f6on323gsyuqjt59",
 			"buildID": "a4aa129e-ef89-4fce-9fc9-605a1015e0e1",
-			"aliases": ["default", "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"],
-			"names": ["multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"],
+			"aliases": ["default", "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"],
+			"names": ["multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"],
 			"buildStatus": "ready",
 			"createdAt": "2026-07-08T13:16:30.740524Z",
 			"updatedAt": "2026-07-08T13:19:01.365773Z"
@@ -488,7 +488,7 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 	if want := []string{"hermes", "opencode", "pi"}; !reflect.DeepEqual(got[0].Providers, want) {
 		t.Fatalf("providers = %#v, want %#v", got[0].Providers, want)
 	}
-	if want := []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1}; !reflect.DeepEqual(got[0].Capabilities, want) {
+	if want := []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability}; !reflect.DeepEqual(got[0].Capabilities, want) {
 		t.Fatalf("capabilities = %#v, want %#v", got[0].Capabilities, want)
 	}
 	if want := map[string]string{
@@ -502,7 +502,7 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 }
 
 func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
-	const validAlias = "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"
+	const validAlias = "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"
 	tests := []struct {
 		name          string
 		buildID       string
@@ -511,13 +511,14 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 		wantPublished bool
 	}{
 		{name: "valid current", buildID: "build-current", alias: validAlias, wantApplied: true, wantPublished: true},
-		{name: "valid previous", buildID: "build-previous", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-bbbbbb", wantApplied: true, wantPublished: true},
+		{name: "valid previous", buildID: "build-previous", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-bbbbbb", wantApplied: true, wantPublished: true},
 		{name: "valid legacy", buildID: "build-legacy", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa", wantApplied: true},
 		{name: "missing build ID", alias: validAlias},
 		{name: "old template name", buildID: "build-current", alias: "multica-fc-hermes-opencode-dws-v1"},
 		{name: "missing patch version", buildID: "build-current", alias: "multica-m3-h0_19-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
 		{name: "leading zero", buildID: "build-current", alias: "multica-m3-h00_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
-		{name: "current missing startup-event marker", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
+		{name: "current missing trace marker", buildID: "build-current", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
+		{name: "previous falsely claims trace", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"},
 		{name: "previous falsely claims startup events", buildID: "build-current", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
 		{name: "legacy falsely claims MCP", buildID: "build-current", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
 		{name: "wrong runner", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r2-9a6bfa"},
@@ -931,12 +932,16 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	if err := launcher.execRunOnce(context.Background(), "sbx_dws", rt, launch.Mode, taskID, "mdt_test_token", false, map[string]string{
 		"AGENT_IDENTITY_CONTEXT_TOKEN": "context_secret",
 		"MULTICA_CHAT_SESSION_ID":      "chat-session-1",
+		llmTraceEnabledEnvKey:            "true",
+		llmTraceSinkURLEnvKey:            "https://trace.example.test/ingest",
 	}); err != nil {
 		t.Fatalf("execRunOnce returned error: %v", err)
 	}
 	args := runner.calls[len(runner.calls)-1].args
 	foundIdentityToken := false
 	foundChatSessionID := false
+	foundTraceEnabled := false
+	foundTraceSinkURL := false
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == "-e" && args[i+1] == "AGENT_IDENTITY_CONTEXT_TOKEN=context_secret" {
 			foundIdentityToken = true
@@ -944,12 +949,21 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 		if args[i] == "-e" && args[i+1] == "MULTICA_CHAT_SESSION_ID=chat-session-1" {
 			foundChatSessionID = true
 		}
+		if args[i] == "-e" && args[i+1] == llmTraceEnabledEnvKey+"=true" {
+			foundTraceEnabled = true
+		}
+		if args[i] == "-e" && args[i+1] == llmTraceSinkURLEnvKey+"=https://trace.example.test/ingest" {
+			foundTraceSinkURL = true
+		}
 	}
 	if !foundIdentityToken {
 		t.Fatal("exec args did not include DWS auth env")
 	}
 	if !foundChatSessionID {
 		t.Fatal("exec args did not include Chat Session ID env")
+	}
+	if !foundTraceEnabled || !foundTraceSinkURL {
+		t.Fatalf("exec args did not include LLM trace env: %#v", args)
 	}
 }
 
@@ -1027,7 +1041,7 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 			device_info, metadata, visibility, owner_id
 		)
 		VALUES ($1, 'FC DWS Runtime', 'cloud', 'hermes', 'online',
-			'test runtime', '{"kind":"fc-e2b","capabilities":["hermes","dws"]}'::jsonb, 'private', $2)
+			'test runtime', '{"kind":"fc-e2b","capabilities":["hermes","dws","llm_trace_v1"]}'::jsonb, 'private', $2)
 		RETURNING id
 	`, workspaceID, userID).Scan(&runtimeID); err != nil {
 		t.Fatalf("create runtime: %v", err)
@@ -1060,6 +1074,7 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	}
 	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{
 		LLMModels:            []string{"qwen3.5-plus"},
+		ServerURL:            "https://multica.example.test",
 		AgentIdentityBaseURL: "https://pre-agent-identity.dingtalk.com",
 		AgentIdentityTimeout: 2 * time.Second,
 		DWSClientSecret:      "dws-client-secret",
@@ -1085,6 +1100,30 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	if len(identityClient.requests) != 0 {
 		t.Fatalf("unbound chat made Agent Identity requests: %#v", identityClient.requests)
 	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE agent
+		SET runtime_config = '{"llm_trace":{"enabled":true,"sink_url":"https://trace.example.test/ingest"}}'::jsonb
+		WHERE id = $1
+	`, agentID); err != nil {
+		t.Fatalf("save LLM trace runtime config: %v", err)
+	}
+	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-llm-trace")
+	if err != nil {
+		t.Fatalf("extraEnvForTask with LLM trace returned error: %v", err)
+	}
+	if env[llmTraceEnabledEnvKey] != "true" || env[llmTraceSinkURLEnvKey] != "https://trace.example.test/ingest" {
+		t.Fatalf("LLM trace env = %#v", env)
+	}
+	task.Context = []byte(`{"completion_callback":{"telemetry_url":"/api/v1/dispatch-tasks/task-1/llm-traces","telemetry_token":"task-capability","telemetry_expires_at":1786377600000}}`)
+	env, err = launcher.extraEnvForTask(ctx, task, runtime, "sbx-router-llm-trace")
+	if err != nil {
+		t.Fatalf("extraEnvForTask with Router LLM trace returned error: %v", err)
+	}
+	if env[llmTraceSinkURLEnvKey] != "https://multica.example.test/api/daemon/tasks/11111111-1111-1111-1111-111111111111/llm-traces" ||
+		env[llmTraceTokenEnvKey] != "task-capability" || env[llmTraceExpiresAtEnvKey] != "1786377600000" {
+		t.Fatalf("Router LLM trace env = %#v", env)
+	}
+	task.Context = nil
 
 	if _, err := pool.Exec(ctx, `UPDATE agent SET model = 'qwen3.7-plus' WHERE id = $1`, agentID); err != nil {
 		t.Fatalf("save selected FC model: %v", err)
@@ -1905,6 +1944,8 @@ func TestFCE2BWithSandboxRelayToken(t *testing.T) {
 	launcher := &FCE2BLauncher{SandboxRelaySigner: signer}
 	extraEnv := map[string]string{
 		protocol.AgentIdentityContextTokenEnvKey: "identity-context-token",
+		llmTraceEnabledEnvKey:                    "true",
+		llmTraceSinkURLEnvKey:                    "https://multica.example.test/api/daemon/tasks/11111111-1111-1111-1111-111111111111/llm-traces",
 	}
 
 	got, err := launcher.withSandboxRelayToken(
@@ -1921,6 +1962,9 @@ func TestFCE2BWithSandboxRelayToken(t *testing.T) {
 	}
 	if got[protocol.SandboxRelayTokenEnvKey] != "signed-relay-token" {
 		t.Fatalf("unexpected relay token: %q", got[protocol.SandboxRelayTokenEnvKey])
+	}
+	if got[llmTraceTokenEnvKey] != "mdt_daemon-secret" || got[llmTraceExpiresAtEnvKey] != "1785240000000" {
+		t.Fatalf("unexpected LLM trace relay auth: token=%q expires_at=%q", got[llmTraceTokenEnvKey], got[llmTraceExpiresAtEnvKey])
 	}
 	if len(signer.requests) != 1 {
 		t.Fatalf("expected one mint request, got %d", len(signer.requests))
