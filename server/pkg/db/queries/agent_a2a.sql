@@ -220,10 +220,14 @@ WHERE endpoint.public_agent_id = sqlc.arg('public_agent_id')
     OR (
       runtime.runtime_mode = 'cloud'
       AND runtime.provider = 'opencode'
-      AND runtime.metadata->>'kind' = 'cloud-sandbox'
-      AND runtime.metadata->>'sandbox_backend' = 'aliyun_fc'
-      AND runtime.metadata->>'artifact_kind' = 'e2b_template'
-      AND COALESCE(runtime.metadata->>'artifact_ref', '') <> ''
+      AND btrim(runtime.metadata->>'kind') = 'cloud-sandbox'
+      AND lower(btrim(runtime.metadata->>'sandbox_backend')) = 'aliyun_fc'
+      AND COALESCE(
+        NULLIF(lower(btrim(runtime.metadata->>'provider')), ''),
+        runtime.provider
+      ) = 'opencode'
+      AND lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
+      AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
       AND runtime.metadata->'capabilities' ? 'a2a_inbound_opencode_v1'
     )
   )
@@ -607,10 +611,14 @@ WITH locked_agent AS MATERIALIZED (
         OR (
           runtime.runtime_mode = 'cloud'
           AND runtime.provider = 'opencode'
-          AND runtime.metadata->>'kind' = 'cloud-sandbox'
-          AND runtime.metadata->>'sandbox_backend' = 'aliyun_fc'
-          AND runtime.metadata->>'artifact_kind' = 'e2b_template'
-          AND COALESCE(runtime.metadata->>'artifact_ref', '') <> ''
+          AND btrim(runtime.metadata->>'kind') = 'cloud-sandbox'
+          AND lower(btrim(runtime.metadata->>'sandbox_backend')) = 'aliyun_fc'
+          AND COALESCE(
+            NULLIF(lower(btrim(runtime.metadata->>'provider')), ''),
+            runtime.provider
+          ) = 'opencode'
+          AND lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
+          AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
           AND runtime.metadata->'capabilities' ? 'a2a_inbound_opencode_v1'
         )
       )

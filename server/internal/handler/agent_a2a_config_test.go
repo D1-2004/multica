@@ -129,6 +129,36 @@ func TestValidateAgentA2ARuntimeEligibility(t *testing.T) {
 			},
 		},
 		{
+			name: "managed runtime metadata provider drift",
+			runtime: db.AgentRuntime{
+				RuntimeMode: "cloud",
+				Provider:    "opencode",
+				Metadata: []byte(`{
+					"kind":"cloud-sandbox",
+					"sandbox_backend":"aliyun_fc",
+					"provider":"hermes",
+					"artifact_kind":"e2b_template",
+					"artifact_ref":"template-a2a-m5",
+					"capabilities":["a2a_inbound_opencode_v1"]
+				}`),
+			},
+		},
+		{
+			name: "managed runtime blank artifact ref",
+			runtime: db.AgentRuntime{
+				RuntimeMode: "cloud",
+				Provider:    "opencode",
+				Metadata: []byte(`{
+					"kind":"cloud-sandbox",
+					"sandbox_backend":"aliyun_fc",
+					"provider":"opencode",
+					"artifact_kind":"e2b_template",
+					"artifact_ref":"   ",
+					"capabilities":["a2a_inbound_opencode_v1"]
+				}`),
+			},
+		},
+		{
 			name:    "managed runtime wrong kind",
 			runtime: db.AgentRuntime{RuntimeMode: "cloud", Provider: "opencode", Metadata: []byte(`{"kind":"fc-e2b","sandbox_backend":"aliyun_fc"}`)},
 		},
@@ -462,6 +492,18 @@ func TestAgentA2AEnableRejectsIneligibleRuntime(t *testing.T) {
 			metadata:    agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A,
 		},
 		{
+			name:        "cloud OpenCode metadata provider drift",
+			runtimeMode: "cloud",
+			provider:    "opencode",
+			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"hermes","artifact_kind":"e2b_template","artifact_ref":"template-a2a-m5","capabilities":["a2a_inbound_opencode_v1"]}`,
+		},
+		{
+			name:        "cloud OpenCode blank artifact ref",
+			runtimeMode: "cloud",
+			provider:    "opencode",
+			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"opencode","artifact_kind":"e2b_template","artifact_ref":"   ","capabilities":["a2a_inbound_opencode_v1"]}`,
+		},
+		{
 			name:        "cloud OpenCode wrong sandbox backend",
 			runtimeMode: "cloud",
 			provider:    "opencode",
@@ -680,6 +722,18 @@ func TestAgentA2ASendRejectsRuntimeSwitchedOutOfAllowlistWithoutCreatingTask(t *
 			runtimeMode: "cloud",
 			provider:    "opencode",
 			metadata:    agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A,
+		},
+		{
+			name:        "runtime metadata provider drifted away from OpenCode",
+			runtimeMode: "cloud",
+			provider:    "opencode",
+			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"hermes","artifact_kind":"e2b_template","artifact_ref":"template-a2a-m5","capabilities":["a2a_inbound_opencode_v1"]}`,
+		},
+		{
+			name:        "runtime metadata artifact ref became blank",
+			runtimeMode: "cloud",
+			provider:    "opencode",
+			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"opencode","artifact_kind":"e2b_template","artifact_ref":"   ","capabilities":["a2a_inbound_opencode_v1"]}`,
 		},
 	}
 	for _, test := range tests {
