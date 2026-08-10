@@ -232,7 +232,7 @@ describe("filterRuntimesForSandboxBackend", () => {
 });
 
 describe("isReadyFCE2BTemplate", () => {
-  it("accepts published m2 through m4 manifests only", () => {
+  it("accepts published m2 through m5 manifests only", () => {
     expect(
       isReadyFCE2BTemplate(makeTemplate({ manifest_version: 2 })),
     ).toBe(true);
@@ -247,6 +247,9 @@ describe("isReadyFCE2BTemplate", () => {
     ).toBe(true);
     expect(
       isReadyFCE2BTemplate(makeTemplate({ manifest_version: 5 })),
+    ).toBe(true);
+    expect(
+      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 6 })),
     ).toBe(false);
   });
 
