@@ -230,7 +230,7 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to load agent runtime")
 			return
 		}
-		if runtimeErr = validateAgentA2ALocalRuntime(runtime); runtimeErr != nil {
+		if runtimeErr = validateAgentA2ARuntimeEligibility(runtime); runtimeErr != nil {
 			writeError(w, http.StatusBadRequest, runtimeErr.Error())
 			return
 		}
@@ -612,7 +612,7 @@ func (h *Handler) loadAgentA2AConfigResponse(r *http.Request, scope agentA2AMana
 		if runtimeErr != nil && !errors.Is(runtimeErr, pgx.ErrNoRows) {
 			return AgentA2AConfigResponse{}, runtimeErr
 		}
-		runtimeEligible = runtimeErr == nil && validateAgentA2ALocalRuntime(runtime) == nil
+		runtimeEligible = runtimeErr == nil && isAgentA2AEligibleRuntime(runtime)
 	}
 
 	endpointResponse, card, err := h.agentA2AEndpointPresentation(scope.Agent, runtimeEligible, endpoint)
@@ -930,26 +930,33 @@ func normalizeAgentA2AScopes(scopes []string) ([]string, error) {
 	return normalized, nil
 }
 
-func validateAgentA2ALocalRuntime(runtime db.AgentRuntime) error {
-	if runtime.RuntimeMode != "local" {
-		return errors.New("A2A inbound can only be enabled for a local agent runtime")
+func validateAgentA2ARuntimeEligibility(runtime db.AgentRuntime) error {
+	if isAgentA2AEligibleRuntime(runtime) {
+		return nil
 	}
-	if !agentA2ASupportsLocalRuntimeProvider(runtime.Provider) {
-		return errors.New("A2A inbound local E2E currently only supports Claude runtime")
-	}
-	return nil
+	return errors.New("A2A inbound prerelease currently only supports a local Claude runtime or a managed Aliyun FC OpenCode runtime")
 }
 
-func agentA2ASupportsLocalRuntimeProvider(provider string) bool {
-	// Keep this set aligned with LockAgentA2ASendAdmission and the daemon's
-	// fail-closed execution guard. Claude is the only provider exercised by the
-	// explicitly unsafe trusted-loopback E2E; this is not an isolation boundary.
-	switch provider {
-	case "claude":
+func isAgentA2AEligibleRuntime(runtime db.AgentRuntime) bool {
+	// Keep this predicate aligned with both runtime filters in agent_a2a.sql and
+	// the daemon's fail-closed execution guard. The managed hosted exception is
+	// deliberately tied to the isolated Aliyun FC sandbox shape used by the
+	// platform; provider/mode alone must never make an arbitrary cloud runtime
+	// eligible.
+	if runtime.RuntimeMode == "local" && runtime.Provider == "claude" {
 		return true
-	default:
+	}
+	if runtime.RuntimeMode != "cloud" || runtime.Provider != "opencode" {
 		return false
 	}
+	var metadata struct {
+		Kind           string `json:"kind"`
+		SandboxBackend string `json:"sandbox_backend"`
+	}
+	if err := json.Unmarshal(runtime.Metadata, &metadata); err != nil {
+		return false
+	}
+	return metadata.Kind == "cloud-sandbox" && metadata.SandboxBackend == "aliyun_fc"
 }
 
 func parseAgentA2ACredentialExpiry(value *string) (pgtype.Timestamptz, error) {

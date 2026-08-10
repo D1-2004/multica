@@ -3938,7 +3938,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 	}
 	effectiveMcpConfig = agentMcpConfig
-	if resolved, resolveErr := resolveTaskMcpConfig(provider, agentMcpConfig, task.A2AInvocation); resolveErr != nil {
+	if resolved, resolveErr := resolveTaskMcpConfigForRuntime(provider, agentMcpConfig, task.A2AInvocation, task.A2AUnsafePrereleaseRuntime); resolveErr != nil {
 		if task.A2AInvocation {
 			return TaskResult{}, fmt.Errorf("resolve A2A MCP configuration: %w", resolveErr)
 		}
@@ -4246,6 +4246,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentCustomEnv = task.Agent.CustomEnv
 	}
 	layerCustomEnvAndHermesHome(agentEnv, agentCustomEnv, env.HermesHome, d.logger)
+	if task.A2AUnsafePrereleaseRuntime {
+		if err := configureUnsafePrereleaseOpenCodeEnv(agentEnv, provider, env.RootDir, runtimeBrief, taskCtx.AgentSkills); err != nil {
+			return TaskResult{}, err
+		}
+	}
 	backend, err := agent.New(provider, agent.Config{
 		ExecutablePath: entry.Path,
 		Env:            agentEnv,
@@ -5323,6 +5328,155 @@ func isolateA2AChildEnv(agentEnv map[string]string) {
 	// Keep a non-identifying execution-context marker so CLI fail-closed guards
 	// do not need an internal agent or task UUID to recognize an A2A child.
 	agentEnv["MULTICA_A2A_INVOCATION"] = "1"
+}
+
+// configureUnsafePrereleaseOpenCodeEnv restores only the managed model
+// bootstrap needed by the allowlisted prerelease cloud runtime. The generic
+// A2A environment scrub deliberately removes these credentials, and production
+// must never reach this exception. OpenCode receives a fresh config/XDG root,
+// project config discovery is disabled, and every ambient OPENCODE_* override
+// is masked before the small managed set below is installed. The model
+// credential is still visible to the coding-agent process, which is why this
+// path remains explicitly unsafe and prerelease-only.
+func configureUnsafePrereleaseOpenCodeEnv(agentEnv map[string]string, provider, envRoot, runtimeBrief string, skills []execenv.SkillContextForEnv) error {
+	if provider != "opencode" {
+		return fmt.Errorf("unsafe prerelease A2A runtime requires opencode, got %q", provider)
+	}
+	envRoot = strings.TrimSpace(envRoot)
+	if envRoot == "" {
+		return errors.New("unsafe prerelease A2A runtime requires an execution root")
+	}
+	managedModelEnv := make(map[string]string, 3)
+	for _, key := range []string{"OPENAI_BASE_URL", "OPENAI_API_KEY"} {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value == "" {
+			return fmt.Errorf("unsafe prerelease A2A runtime is missing %s", key)
+		}
+		managedModelEnv[key] = value
+	}
+	if model := strings.TrimSpace(os.Getenv("OPENAI_MODEL")); model != "" {
+		managedModelEnv["OPENAI_MODEL"] = model
+	}
+	providerGeneration := strings.TrimSpace(os.Getenv("MULTICA_TRACE_ID"))
+	if providerGeneration == "" {
+		return errors.New("unsafe prerelease A2A runtime is missing provider generation")
+	}
+
+	// Agent custom_env is layered immediately before this helper. Mask both
+	// inherited and custom OpenCode controls so an externally-triggered task
+	// cannot re-enable a host config directory, plugin, MCP server, or project
+	// config source.
+	for _, entry := range os.Environ() {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && strings.HasPrefix(strings.ToUpper(key), "OPENCODE_") {
+			agentEnv[key] = ""
+		}
+	}
+	for key := range agentEnv {
+		if strings.HasPrefix(strings.ToUpper(key), "OPENCODE_") {
+			agentEnv[key] = ""
+		}
+	}
+	for key, value := range managedModelEnv {
+		agentEnv[key] = value
+	}
+
+	xdgRoot, err := os.MkdirTemp(envRoot, ".a2a-opencode-")
+	if err != nil {
+		return fmt.Errorf("prepare unsafe prerelease OpenCode root: %w", err)
+	}
+	if err := os.Chmod(xdgRoot, 0o700); err != nil {
+		return fmt.Errorf("secure unsafe prerelease OpenCode root: %w", err)
+	}
+	homeDir := filepath.Join(xdgRoot, "home")
+	managedConfigDir := filepath.Join(xdgRoot, "managed-config")
+	for _, path := range []string{homeDir, managedConfigDir} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return fmt.Errorf("prepare unsafe prerelease OpenCode directory: %w", err)
+		}
+	}
+	for key, leaf := range map[string]string{
+		"XDG_CONFIG_HOME": "config",
+		"XDG_DATA_HOME":   "data",
+		"XDG_STATE_HOME":  "state",
+		"XDG_CACHE_HOME":  "cache",
+	} {
+		path := filepath.Join(xdgRoot, leaf)
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return fmt.Errorf("prepare unsafe prerelease OpenCode %s: %w", key, err)
+		}
+		agentEnv[key] = path
+	}
+
+	briefPath := filepath.Join(xdgRoot, "runtime-brief.md")
+	if err := os.WriteFile(briefPath, []byte(runtimeBrief), 0o600); err != nil {
+		return fmt.Errorf("write unsafe prerelease OpenCode runtime brief: %w", err)
+	}
+	// OPENCODE_DISABLE_PROJECT_CONFIG also disables workdir-native skills.
+	// Materialize the authoritative Agent-bound skill contexts directly into
+	// the otherwise fresh managed config directory. Never copy from WorkDir:
+	// a checked-out repository may contain its own untrusted .opencode tree.
+	if len(skills) > 0 {
+		if err := execenv.WriteManagedSkills(filepath.Join(managedConfigDir, "skills"), skills); err != nil {
+			return fmt.Errorf("write unsafe prerelease OpenCode managed skills: %w", err)
+		}
+	}
+
+	// The managed wrapper normalizes a bare model ID to deap/<id>. The provider
+	// definition must live outside the shared sandbox HOME because XDG is now
+	// isolated. Only placeholders and the loopback proxy route are written; the
+	// model key itself remains in the child environment and never lands on disk.
+	providerConfig := map[string]any{
+		"$schema":      "https://opencode.ai/config.json",
+		"instructions": []string{briefPath},
+		"provider": map[string]any{
+			"deap": map[string]any{
+				"npm":  "@ai-sdk/openai-compatible",
+				"name": "DEAP",
+				"options": map[string]any{
+					"baseURL": managedModelEnv["OPENAI_BASE_URL"],
+					"apiKey":  "{env:OPENAI_API_KEY}",
+					"headers": map[string]string{
+						"X-Multica-Provider-Generation": "{env:MULTICA_A2A_PROVIDER_GENERATION}",
+					},
+				},
+			},
+		},
+	}
+	if model := managedModelEnv["OPENAI_MODEL"]; model != "" {
+		deap := providerConfig["provider"].(map[string]any)["deap"].(map[string]any)
+		deap["models"] = map[string]any{
+			model: map[string]any{
+				"modalities": map[string][]string{
+					"input":  {"text", "image"},
+					"output": {"text"},
+				},
+			},
+		}
+		providerConfig["model"] = "deap/" + model
+	}
+	configPath := filepath.Join(xdgRoot, "managed-opencode.json")
+	configFile, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create unsafe prerelease OpenCode config: %w", err)
+	}
+	encodeErr := json.NewEncoder(configFile).Encode(providerConfig)
+	closeErr := configFile.Close()
+	if encodeErr != nil {
+		return fmt.Errorf("write unsafe prerelease OpenCode config: %w", encodeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close unsafe prerelease OpenCode config: %w", closeErr)
+	}
+
+	agentEnv["OPENCODE_CONFIG"] = configPath
+	agentEnv["OPENCODE_CONFIG_DIR"] = managedConfigDir
+	agentEnv["OPENCODE_CONFIG_CONTENT"] = ""
+	agentEnv["OPENCODE_DISABLE_PROJECT_CONFIG"] = "true"
+	agentEnv["OPENCODE_DISABLE_CLAUDE_CODE_PROMPT"] = "true"
+	agentEnv["HOME"] = homeDir
+	agentEnv["MULTICA_A2A_PROVIDER_GENERATION"] = providerGeneration
+	return nil
 }
 
 // maskA2AInheritedCredentialEnv prevents a daemon/process credential from

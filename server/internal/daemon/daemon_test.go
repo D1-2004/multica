@@ -3530,3 +3530,85 @@ func TestHermesLaunchArgsAndEnvByScenario(t *testing.T) {
 		t.Errorf("overlay task must redirect HERMES_HOME to the overlay, got %q", overlayEnv["HERMES_HOME"])
 	}
 }
+
+func TestConfigureUnsafePrereleaseOpenCodeEnv(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", "https://model.example/v1")
+	t.Setenv("OPENAI_API_KEY", "test-managed-key")
+	t.Setenv("OPENAI_MODEL", "test-model")
+	t.Setenv("MULTICA_TRACE_ID", "provider-generation-a2a")
+	t.Setenv("OPENCODE_PLUGIN", "ambient-plugin")
+	root := t.TempDir()
+	skills := []execenv.SkillContextForEnv{{Name: "Managed Skill", Content: "managed skill"}}
+	agentEnv := map[string]string{
+		"OPENAI_API_KEY":          "agent-override",
+		"XDG_CONFIG_HOME":         "/host/config",
+		"OPENCODE_CONFIG_CONTENT": `{"mcp":{"ambient":{}}}`,
+	}
+
+	const runtimeBrief = "managed A2A runtime brief"
+	if err := configureUnsafePrereleaseOpenCodeEnv(agentEnv, "opencode", root, runtimeBrief, skills); err != nil {
+		t.Fatal(err)
+	}
+	if agentEnv["OPENAI_BASE_URL"] != "https://model.example/v1" ||
+		agentEnv["OPENAI_API_KEY"] != "test-managed-key" ||
+		agentEnv["OPENAI_MODEL"] != "test-model" {
+		t.Fatalf("managed model bootstrap was not restored: %#v", agentEnv)
+	}
+	xdgRoot := filepath.Dir(agentEnv["OPENCODE_CONFIG"])
+	if !strings.HasPrefix(filepath.Base(xdgRoot), ".a2a-opencode-") || filepath.Dir(xdgRoot) != root {
+		t.Fatalf("unexpected isolated OpenCode root %q", xdgRoot)
+	}
+	for key, leaf := range map[string]string{
+		"XDG_CONFIG_HOME": "config",
+		"XDG_DATA_HOME":   "data",
+		"XDG_STATE_HOME":  "state",
+		"XDG_CACHE_HOME":  "cache",
+	} {
+		want := filepath.Join(xdgRoot, leaf)
+		if agentEnv[key] != want {
+			t.Errorf("%s = %q, want %q", key, agentEnv[key], want)
+		}
+		if info, err := os.Stat(want); err != nil || !info.IsDir() {
+			t.Errorf("%s directory not prepared: info=%v err=%v", key, info, err)
+		}
+	}
+	if agentEnv["OPENCODE_DISABLE_PROJECT_CONFIG"] != "true" ||
+		agentEnv["OPENCODE_DISABLE_CLAUDE_CODE_PROMPT"] != "true" ||
+		agentEnv["OPENCODE_CONFIG_DIR"] != filepath.Join(xdgRoot, "managed-config") ||
+		agentEnv["OPENCODE_CONFIG_CONTENT"] != "" ||
+		agentEnv["OPENCODE_PLUGIN"] != "" {
+		t.Fatalf("OpenCode ambient configuration was not replaced: %#v", agentEnv)
+	}
+	if agentEnv["HOME"] != filepath.Join(xdgRoot, "home") {
+		t.Fatalf("OpenCode HOME was not isolated: %#v", agentEnv)
+	}
+	if agentEnv["MULTICA_A2A_PROVIDER_GENERATION"] != "provider-generation-a2a" {
+		t.Fatalf("provider generation was not restored: %#v", agentEnv)
+	}
+	configBytes, err := os.ReadFile(agentEnv["OPENCODE_CONFIG"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(configBytes), "test-managed-key") ||
+		!strings.Contains(string(configBytes), `"deap"`) ||
+		!strings.Contains(string(configBytes), `runtime-brief.md"`) ||
+		!strings.Contains(string(configBytes), `"{env:OPENAI_API_KEY}"`) ||
+		!strings.Contains(string(configBytes), `"{env:MULTICA_A2A_PROVIDER_GENERATION}"`) {
+		t.Fatalf("unexpected managed OpenCode config: %s", configBytes)
+	}
+	if info, err := os.Stat(agentEnv["OPENCODE_CONFIG"]); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("managed OpenCode config mode = %v err=%v", info, err)
+	}
+	briefBytes, err := os.ReadFile(filepath.Join(xdgRoot, "runtime-brief.md"))
+	if err != nil || string(briefBytes) != runtimeBrief {
+		t.Fatalf("managed runtime brief = %q err=%v", briefBytes, err)
+	}
+	copiedSkill, err := os.ReadFile(filepath.Join(agentEnv["OPENCODE_CONFIG_DIR"], "skills", "managed-skill", "SKILL.md"))
+	if err != nil || !strings.Contains(string(copiedSkill), "managed skill") || !strings.Contains(string(copiedSkill), "name: managed-skill") {
+		t.Fatalf("managed skill copy = %q err=%v", copiedSkill, err)
+	}
+
+	if err := configureUnsafePrereleaseOpenCodeEnv(map[string]string{}, "codex", root, runtimeBrief, skills); err == nil {
+		t.Fatal("non-OpenCode provider must fail closed")
+	}
+}

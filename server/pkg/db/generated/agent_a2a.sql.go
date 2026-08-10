@@ -913,8 +913,15 @@ WHERE endpoint.public_agent_id = $1
   AND endpoint.enabled = TRUE
   AND a.archived_at IS NULL
   AND a.runtime_id IS NOT NULL
-  AND runtime.runtime_mode = 'local'
-  AND runtime.provider = 'claude'
+  AND (
+    (runtime.runtime_mode = 'local' AND runtime.provider = 'claude')
+    OR (
+      runtime.runtime_mode = 'cloud'
+      AND runtime.provider = 'opencode'
+      AND runtime.metadata->>'kind' = 'cloud-sandbox'
+      AND runtime.metadata->>'sandbox_backend' = 'aliyun_fc'
+    )
+  )
   AND a.owner_id = endpoint.delegated_by_user_id
 `
 
@@ -1539,11 +1546,19 @@ WITH locked_agent AS MATERIALIZED (
       AND a.workspace_id = $2
       AND a.archived_at IS NULL
       AND a.runtime_id IS NOT NULL
-      AND runtime.runtime_mode = 'local'
-      -- Keep this set aligned with validateAgentA2ALocalRuntime and the
-      -- daemon's fail-closed execution guard. This trusted-loopback Claude E2E
-      -- is explicitly unsafe and is not an isolation boundary.
-      AND runtime.provider = 'claude'
+      -- Keep this predicate aligned with isAgentA2AEligibleRuntime, the
+      -- published Card query, and the daemon's fail-closed execution guard.
+      -- The cloud exception is deliberately tied to the platform-managed
+      -- Aliyun FC sandbox shape, not to cloud/OpenCode runtimes in general.
+      AND (
+        (runtime.runtime_mode = 'local' AND runtime.provider = 'claude')
+        OR (
+          runtime.runtime_mode = 'cloud'
+          AND runtime.provider = 'opencode'
+          AND runtime.metadata->>'kind' = 'cloud-sandbox'
+          AND runtime.metadata->>'sandbox_backend' = 'aliyun_fc'
+        )
+      )
     FOR SHARE OF a, runtime
 ), locked_endpoint AS MATERIALIZED (
     SELECT endpoint.id, endpoint.workspace_id, endpoint.agent_id, endpoint.public_agent_id, endpoint.enabled, endpoint.delegated_by_user_id, endpoint.card_name, endpoint.card_description, endpoint.card_version, endpoint.card_skills, endpoint.created_at, endpoint.updated_at

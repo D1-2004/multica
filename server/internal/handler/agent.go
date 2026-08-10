@@ -383,6 +383,11 @@ type AgentTaskResponse struct {
 	// daemon's explicit authorization to run without a task token; an empty
 	// AuthToken remains fatal for every ordinary task.
 	A2AInvocation bool `json:"a2a_invocation,omitempty"`
+	// A2AUnsafePrereleaseRuntime is emitted only after the server has accepted
+	// an inbound A2A task for the explicitly allowlisted managed prerelease
+	// cloud runtime. It lets that sandbox retain the provider bootstrap needed
+	// to execute the task without weakening the default local-runtime boundary.
+	A2AUnsafePrereleaseRuntime bool `json:"a2a_unsafe_prerelease_runtime,omitempty"`
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request

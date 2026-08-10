@@ -1343,15 +1343,11 @@ const a2aClaimRuntimeSafetyPolicyError = "A2A task execution blocked by runtime 
 const a2aClaimAgentLoadError = "A2A task execution failed because agent configuration could not be loaded"
 
 func isA2AClaimTokenlessRuntime(runtime db.AgentRuntime) bool {
-	if runtime.RuntimeMode != "local" {
-		return false
-	}
-	switch runtime.Provider {
-	case "claude":
-		return true
-	default:
-		return false
-	}
+	return isAgentA2AEligibleRuntime(runtime)
+}
+
+func isA2AUnsafePrereleaseManagedRuntime(runtime db.AgentRuntime) bool {
+	return runtime.RuntimeMode == "cloud" && isAgentA2AEligibleRuntime(runtime)
 }
 
 // failA2AClaimOnAgentLoadError turns a post-claim Agent read failure into a
@@ -1397,13 +1393,14 @@ func failA2AClaimOnAgentLoadError(
 // enforceA2AClaimExecutionSafety rechecks the hard tokenless-runtime policy at
 // both server-controlled pre-execution boundaries: after durable claim and
 // immediately before StartTask moves the task to running. Admission and
-// execution can be separated by an arbitrarily long queue delay, so a non-local
-// or unsupported runtime, or a revoked runtime-safety exemption, must fail the
+// execution can be separated by an arbitrarily long queue delay, so an
+// ineligible runtime, or a revoked runtime-safety exemption, must fail the
 // dispatched task rather than execute it under stale authorization. The
 // provider allowlist is intentionally limited to the unsafe-loopback Claude E2E
-// slice; inclusion is not proof that ambient customization is isolated. Every
-// other provider stays fail-closed. The release feature flag is intentionally
-// admission-only: turning it off must not strand accepted work.
+// slice and the exact managed prerelease cloud runtime shape. Inclusion is not
+// proof that ambient customization is isolated. Every other provider stays
+// fail-closed. The release feature flag is intentionally admission-only:
+// turning it off must not strand accepted work.
 func (h *Handler) enforceA2AClaimExecutionSafety(ctx context.Context, task *db.AgentTaskQueue, runtime db.AgentRuntime) *claimBuildFailure {
 	if !service.IsA2ATaskOrigin(task.Context) {
 		return nil
@@ -1411,10 +1408,8 @@ func (h *Handler) enforceA2AClaimExecutionSafety(ctx context.Context, task *db.A
 
 	outcome := ""
 	switch {
-	case runtime.RuntimeMode != "local":
-		outcome = "error_a2a_runtime_nonlocal"
 	case !isA2AClaimTokenlessRuntime(runtime):
-		outcome = "error_a2a_runtime_provider"
+		outcome = "error_a2a_runtime_ineligible"
 	case !evaluateAgentA2ARuntimeSafety(h.currentConfig().PublicURL).Allowed:
 		outcome = "error_a2a_runtime_unsafe"
 	default:
@@ -1645,6 +1640,7 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 		a2aInvocation := service.IsA2ATaskOrigin(task.Context)
 		resp.A2AInvocation = a2aInvocation
+		resp.A2AUnsafePrereleaseRuntime = a2aInvocation && isA2AUnsafePrereleaseManagedRuntime(rt)
 		if !a2aInvocation && !rt.OwnerID.Valid {
 			slog.Error("batch claim: runtime owner missing; cancelling task to avoid unscoped agent credentials",
 				"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
@@ -2773,6 +2769,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	commentBackedTask := task.TriggerCommentID.Valid || len(task.CoalescedCommentIds) > 0
 	a2aInvocation := service.IsA2ATaskOrigin(task.Context)
 	resp.A2AInvocation = a2aInvocation
+	resp.A2AUnsafePrereleaseRuntime = a2aInvocation && isA2AUnsafePrereleaseManagedRuntime(runtime)
 	requeueFailedClaim := func(reason string) {
 		if _, err := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); err != nil {
 			slog.Error("task claim: failed to requeue after finalization error",

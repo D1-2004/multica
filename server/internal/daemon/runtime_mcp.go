@@ -28,11 +28,21 @@ type runtimeLocalMcpServerSummary struct {
 // explicitly carried by the claimed Agent; an absent config becomes a managed
 // empty set so provider adapters do not fall back to native host configuration.
 func resolveTaskMcpConfig(provider string, agentConfig json.RawMessage, a2aInvocation bool) (json.RawMessage, error) {
+	return resolveTaskMcpConfigForRuntime(provider, agentConfig, a2aInvocation, false)
+}
+
+// resolveTaskMcpConfigForRuntime keeps the default A2A provider allowlist
+// strict while admitting the exact server-attested managed prerelease runtime.
+// OpenCode merges inline configuration rather than replacing every native
+// source, so this exception is safe only together with the task-local XDG
+// directories installed by the daemon and the production-hard-deny server
+// gate. It is intentionally unsuitable as a general OpenCode A2A capability.
+func resolveTaskMcpConfigForRuntime(provider string, agentConfig json.RawMessage, a2aInvocation, unsafePrereleaseRuntime bool) (json.RawMessage, error) {
 	if !a2aInvocation {
 		return mergeRuntimeAndAgentMcpConfig(provider, agentConfig)
 	}
 
-	if !supportsA2AStrictMcpIsolation(provider) {
+	if !supportsA2AStrictMcpIsolation(provider) && !(unsafePrereleaseRuntime && provider == "opencode") {
 		return nil, fmt.Errorf("runtime provider %q cannot safely isolate native MCP configuration for A2A invocations", provider)
 	}
 

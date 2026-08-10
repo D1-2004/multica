@@ -272,3 +272,22 @@ func TestResolveTaskMcpConfigA2AUnverifiedProvidersFailClosed(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveTaskMcpConfigA2AUnsafePrereleaseOpenCodeRequiresAttestation(t *testing.T) {
+	agentConfig := json.RawMessage(`{"mcpServers":{"agent-only":{"url":"https://agent.example/mcp"}}}`)
+
+	got, err := resolveTaskMcpConfigForRuntime("opencode", agentConfig, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(agentConfig) {
+		t.Fatalf("managed prerelease config = %q, want %q", string(got), string(agentConfig))
+	}
+
+	if _, err := resolveTaskMcpConfigForRuntime("opencode", agentConfig, true, false); err == nil {
+		t.Fatal("OpenCode A2A without the server attestation must fail closed")
+	}
+	if _, err := resolveTaskMcpConfigForRuntime("codex", agentConfig, true, true); err == nil {
+		t.Fatal("the prerelease attestation must not admit another provider")
+	}
+}

@@ -121,6 +121,52 @@ func TestClaimTaskByRuntime_A2AWorkspaceDataIsolation(t *testing.T) {
 	}
 }
 
+func TestClaimTaskByRuntime_A2AManagedPrereleaseRuntimeAttestation(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	withA2AClaimTestFlags(t, true, false)
+	allowA2AClaimExecutionForTest(t)
+
+	ctx := context.Background()
+	fixture := createQueuedA2AClaimTestTask(
+		t,
+		ctx,
+		"managed prerelease OpenCode A2A claim",
+		"cloud",
+		"opencode",
+		`{"multica_origin":"a2a"}`,
+		true,
+	)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_runtime
+		SET metadata = '{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc"}'::jsonb
+		WHERE id = $1
+	`, fixture.runtimeID); err != nil {
+		t.Fatalf("mark managed prerelease runtime: %v", err)
+	}
+
+	w := postA2AClaimTestTask(fixture.runtimeID)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var envelope struct {
+		Task *AgentTaskResponse `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode claim response: %v", err)
+	}
+	if envelope.Task == nil || envelope.Task.ID != fixture.taskID {
+		t.Fatalf("claimed task = %+v, want id %s", envelope.Task, fixture.taskID)
+	}
+	if !envelope.Task.A2AInvocation || !envelope.Task.A2AUnsafePrereleaseRuntime {
+		t.Fatalf("managed A2A attestation missing: %+v", envelope.Task)
+	}
+	if envelope.Task.AuthToken != "" || len(envelope.Task.Repos) != 0 || len(envelope.Task.ConnectedApps) != 0 {
+		t.Fatalf("managed A2A claim leaked task credentials or workspace capabilities: %+v", envelope.Task)
+	}
+}
+
 func TestClaimTaskByRuntime_A2AExecutionSafetyRecheck(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -525,8 +571,18 @@ func TestIsA2AClaimTokenlessRuntime(t *testing.T) {
 			}
 		})
 	}
+	managedPrerelease := db.AgentRuntime{
+		RuntimeMode: "cloud",
+		Provider:    "opencode",
+		Metadata:    []byte(`{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc"}`),
+	}
+	if !isA2AClaimTokenlessRuntime(managedPrerelease) || !isA2AUnsafePrereleaseManagedRuntime(managedPrerelease) {
+		t.Fatalf("managed prerelease runtime must be admitted with its explicit daemon attestation: %+v", managedPrerelease)
+	}
 	for _, runtime := range []db.AgentRuntime{
 		{RuntimeMode: "cloud", Provider: "claude"},
+		{RuntimeMode: "cloud", Provider: "opencode"},
+		{RuntimeMode: "cloud", Provider: "opencode", Metadata: []byte(`{"kind":"cloud-sandbox","sandbox_backend":"asb"}`)},
 		{RuntimeMode: "local", Provider: "codebuddy"},
 		{RuntimeMode: "local", Provider: "opencode"},
 		{RuntimeMode: "local", Provider: "codex"},

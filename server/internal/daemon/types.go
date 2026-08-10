@@ -143,6 +143,9 @@ type Task struct {
 	// a credentialless child process while keeping missing tokens fail-closed
 	// for every ordinary task.
 	A2AInvocation bool `json:"a2a_invocation,omitempty"`
+	// A2AUnsafePrereleaseRuntime is a server-attested escape hatch for the
+	// allowlisted managed prerelease cloud runtime. Production never emits it.
+	A2AUnsafePrereleaseRuntime bool `json:"a2a_unsafe_prerelease_runtime,omitempty"`
 	// AuthToken is the task-scoped credential the server mints at claim time.
 	// The daemon injects it into the spawned agent as MULTICA_TOKEN so the
 	// agent never sees the daemon's own (often workspace-owner) credential.

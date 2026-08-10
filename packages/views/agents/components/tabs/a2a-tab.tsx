@@ -61,6 +61,7 @@ import { copyText } from "@multica/ui/lib/clipboard";
 import { useT } from "../../../i18n";
 import {
   buildA2ACurlExample,
+  buildA2ALocalDebugBundle,
   buildMulticaA2AExport,
   serializeJson,
 } from "./a2a-export";
@@ -80,6 +81,27 @@ interface CardFormState {
 interface SecretState {
   clientName: string;
   token: string;
+  rpcUrl: string;
+  agentCardUrl: string;
+  protocolVersion: string;
+}
+
+function buildSecretDebugBundle(secret: SecretState | null) {
+  if (
+    !secret ||
+    !secret.rpcUrl.trim() ||
+    !secret.agentCardUrl.trim() ||
+    !secret.protocolVersion.trim()
+  ) {
+    return null;
+  }
+  return buildA2ALocalDebugBundle({
+    rpcUrl: secret.rpcUrl,
+    agentCardUrl: secret.agentCardUrl,
+    token: secret.token,
+    protocolVersion: secret.protocolVersion,
+    preferredBinding: "JSONRPC",
+  });
 }
 
 function formatDate(value: string | null): string {
@@ -164,12 +186,15 @@ export function A2ATab({ agent }: { agent: Agent }) {
   );
   const hasPublicCardUrl =
     endpoint?.enabled === true && endpoint.cardUrl.trim() !== "";
+  const hasPublicRpcUrl =
+    endpoint?.enabled === true && endpoint.rpcUrl.trim() !== "";
   const canExportConnection =
-    hasPublicCardUrl && endpoint?.rpcUrl.trim() !== "";
+    hasPublicCardUrl && hasPublicRpcUrl;
   const connectionPreset = useMemo(
     () => {
       if (!endpoint || !canExportConnection) return null;
       return buildMulticaA2AExport({
+        rpcUrl: endpoint.rpcUrl,
         agentCardUrl: endpoint.cardUrl,
         protocolVersion: endpoint.protocolVersion,
         preferredBinding: "JSONRPC",
@@ -211,6 +236,7 @@ export function A2ATab({ agent }: { agent: Agent }) {
       });
       toast.success(t(($) => $.tab_body.a2a.config_saved));
     } catch (error) {
+      setForm(initialForm);
       toast.error(
         error instanceof Error
           ? error.message
@@ -238,15 +264,22 @@ export function A2ATab({ agent }: { agent: Agent }) {
   };
 
   const handleCreateCredential = async () => {
-    if (!credentialClient) return;
+    if (!credentialClient || !endpoint || !canExportConnection) return;
     const selectedClient = credentialClient;
+    const persistedEndpoint = endpoint;
     setSecret(null);
     try {
       await createCredential.mutateAsync({
         clientId: selectedClient.id,
         data: { expiresAt: credentialExpiry(credentialExpiryOption) },
         onToken: (token) =>
-          setSecret({ clientName: selectedClient.name, token }),
+          setSecret({
+            clientName: selectedClient.name,
+            token,
+            rpcUrl: persistedEndpoint.rpcUrl,
+            agentCardUrl: persistedEndpoint.cardUrl,
+            protocolVersion: persistedEndpoint.protocolVersion,
+          }),
       });
       setCredentialClient(null);
       setCredentialExpiryOption("90");
@@ -341,8 +374,8 @@ export function A2ATab({ agent }: { agent: Agent }) {
               {t(($) => $.tab_body.a2a.endpoint_description)}
             </p>
           </div>
-          <Badge variant={form.enabled ? "default" : "secondary"}>
-            {form.enabled
+          <Badge variant={endpoint?.enabled === true ? "default" : "secondary"}>
+            {endpoint?.enabled === true
               ? t(($) => $.tab_body.a2a.enabled)
               : t(($) => $.tab_body.a2a.disabled)}
           </Badge>
@@ -367,6 +400,31 @@ export function A2ATab({ agent }: { agent: Agent }) {
                 aria-label={t(($) => $.tab_body.a2a.enable_label)}
               />
             </div>
+            {hasPublicRpcUrl && (
+              <div className="space-y-2 bg-primary/[0.03] px-4 py-4">
+                <div>
+                  <Label>{t(($) => $.tab_body.a2a.rpc_url)}</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t(($) => $.tab_body.a2a.call_description)}
+                  </p>
+                </div>
+                <div className="flex min-w-0 gap-2">
+                  <Input
+                    readOnly
+                    value={endpoint?.rpcUrl ?? ""}
+                    className="min-w-0 bg-background font-mono text-xs"
+                  />
+                  <Button
+                    variant="default"
+                    size="icon"
+                    onClick={() => handleCopy(endpoint?.rpcUrl ?? "")}
+                    aria-label={t(($) => $.tab_body.a2a.copy_rpc_url)}
+                  >
+                    <Copy className="size-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
             <div className="grid gap-4 px-4 py-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="agent-a2a-name">
@@ -574,7 +632,14 @@ export function A2ATab({ agent }: { agent: Agent }) {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => handleCopy(curlExample)}
+                    onClick={() =>
+                      handleCopy(
+                        buildA2ACurlExample({
+                          rpcUrl: endpoint.rpcUrl,
+                          protocolVersion: endpoint.protocolVersion,
+                        }),
+                      )
+                    }
                   >
                     <Copy className="size-4" />
                     {t(($) => $.tab_body.a2a.copy)}
@@ -617,6 +682,7 @@ export function A2ATab({ agent }: { agent: Agent }) {
                 <ClientCard
                   key={client.id}
                   client={client}
+                  canCreateCredential={canExportConnection}
                   onCreateCredential={() => setCredentialClient(client)}
                   onRevokeClient={() => setRevokeClient(client)}
                   onRevokeCredential={(credentialId) =>
@@ -719,7 +785,7 @@ export function A2ATab({ agent }: { agent: Agent }) {
             </Button>
             <Button
               onClick={handleCreateCredential}
-              disabled={createCredential.isPending}
+              disabled={!canExportConnection || createCredential.isPending}
             >
               {createCredential.isPending && (
                 <Loader2 className="size-4 animate-spin" />
@@ -793,11 +859,13 @@ export function A2ATab({ agent }: { agent: Agent }) {
 
 function ClientCard({
   client,
+  canCreateCredential,
   onCreateCredential,
   onRevokeClient,
   onRevokeCredential,
 }: {
   client: AgentA2AClient;
+  canCreateCredential: boolean;
   onCreateCredential: () => void;
   onRevokeClient: () => void;
   onRevokeCredential: (credentialId: string) => void;
@@ -822,7 +890,12 @@ function ClientCard({
           </div>
           <div className="flex flex-wrap gap-2">
             {active && (
-              <Button variant="outline" size="sm" onClick={onCreateCredential}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onCreateCredential}
+                disabled={!canCreateCredential}
+              >
                 <KeyRound className="size-4" />
                 {t(($) => $.tab_body.a2a.create_credential)}
               </Button>
@@ -896,19 +969,31 @@ function SecretDialog({
   onClose: () => void;
 }) {
   const { t } = useT("agents");
-  const [copied, setCopied] = useState(false);
+  const [copiedTarget, setCopiedTarget] = useState<
+    "token" | "config" | "curl" | null
+  >(null);
   const [confirmed, setConfirmed] = useState(false);
+  const localBundle = useMemo(() => buildSecretDebugBundle(secret), [secret]);
+  const localConfig = localBundle?.config ?? null;
+  const localConfigJson = useMemo(
+    () => (localConfig ? serializeJson(localConfig) : ""),
+    [localConfig],
+  );
+  const localCurl = localBundle?.curl ?? "";
 
   const close = () => {
-    setCopied(false);
+    setCopiedTarget(null);
     setConfirmed(false);
     onClose();
   };
 
-  const copy = async () => {
-    if (secret && (await copyText(secret.token))) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+  const copy = async (
+    target: "token" | "config" | "curl",
+    value: string,
+  ) => {
+    if (await copyText(value)) {
+      setCopiedTarget(target);
+      setTimeout(() => setCopiedTarget(null), 2000);
     }
   };
 
@@ -919,7 +1004,10 @@ function SecretDialog({
         if (!open && confirmed) close();
       }}
     >
-      <DialogContent showCloseButton={false}>
+      <DialogContent
+        showCloseButton={false}
+        className="max-h-[90vh] overflow-y-auto sm:max-w-2xl"
+      >
         <DialogHeader>
           <DialogTitle>{t(($) => $.tab_body.a2a.secret_title)}</DialogTitle>
           <DialogDescription>
@@ -942,12 +1030,101 @@ function SecretDialog({
           <Button
             variant="outline"
             size="icon"
-            onClick={copy}
+            onClick={() => copy("token", secret?.token ?? "")}
             aria-label={t(($) => $.tab_body.a2a.copy_secret)}
           >
-            {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+            {copiedTarget === "token" ? (
+              <Check className="size-4" />
+            ) : (
+              <Copy className="size-4" />
+            )}
           </Button>
         </div>
+        {localConfig && (
+          <div className="space-y-5 border-t pt-4">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <Label>{t(($) => $.tab_body.a2a.local_config_title)}</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t(($) => $.tab_body.a2a.local_config_description)}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const freshBundle = buildSecretDebugBundle(secret);
+                      if (freshBundle) {
+                        void copy(
+                          "config",
+                          serializeJson(freshBundle.config),
+                        );
+                      }
+                    }}
+                  >
+                    {copiedTarget === "config" ? (
+                      <Check className="size-4" />
+                    ) : (
+                      <Copy className="size-4" />
+                    )}
+                    {t(($) => $.tab_body.a2a.copy)}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const freshBundle = buildSecretDebugBundle(secret);
+                      if (freshBundle) {
+                        downloadJson(
+                          "multica-a2a.local.json",
+                          freshBundle.config,
+                        );
+                      }
+                    }}
+                  >
+                    <Download className="size-4" />
+                    {t(($) => $.tab_body.a2a.download)}
+                  </Button>
+                </div>
+              </div>
+              <pre className="max-h-64 overflow-auto rounded-md border bg-muted/40 p-3 text-xs leading-5">
+                {localConfigJson}
+              </pre>
+            </div>
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <Label>{t(($) => $.tab_body.a2a.local_curl_title)}</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t(($) => $.tab_body.a2a.local_curl_description)}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const freshBundle = buildSecretDebugBundle(secret);
+                    if (freshBundle) {
+                      void copy("curl", freshBundle.curl);
+                    }
+                  }}
+                >
+                  {copiedTarget === "curl" ? (
+                    <Check className="size-4" />
+                  ) : (
+                    <Copy className="size-4" />
+                  )}
+                  {t(($) => $.tab_body.a2a.copy)}
+                </Button>
+              </div>
+              <pre className="max-h-64 overflow-auto rounded-md border bg-muted/40 p-3 text-xs leading-5">
+                {localCurl}
+              </pre>
+            </div>
+          </div>
+        )}
         <label className="flex items-center gap-2 text-sm">
           <Checkbox
             checked={confirmed}

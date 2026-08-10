@@ -740,6 +740,14 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 	return nil
 }
 
+// WriteManagedSkills writes authoritative, server-provided skill contexts into
+// a clean provider-owned directory. It is intentionally narrower than normal
+// task environment preparation: callers must supply the approved contexts and
+// must not derive them from a checked-out repository or ambient user config.
+func WriteManagedSkills(skillsDir string, skills []SkillContextForEnv) error {
+	return writeSkillFiles(skillsDir, skills, nil)
+}
+
 // renderIssueContext builds the markdown content for issue_context.md.
 func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 	if ctx.AutopilotRunID != "" {
