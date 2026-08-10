@@ -1,7 +1,7 @@
 # Agent 级 Inbound A2A 实施计划
 
 > 工作流：Plan
-> 状态：执行中
+> 状态：首切完成（后续里程碑待执行）
 > 创建日期：2026-08-09
 > 计划 ID：20260809-agent-a2a-inbound
 > 最后更新时间：2026-08-10 CST
@@ -9,7 +9,7 @@
 > 目标执行分支：`codex/agent-a2a-inbound`
 > 基线 Commit：`3c2e8a976b77e07d9f6f555e294046ac86c93cda`
 > Worktree：`/Users/yuanzhan/.codex/worktrees/9df9/dt-fde-multica`
-> 当前里程碑：首个 flag-off 纵向切片已实现，并通过真实本地 Claude Coding Agent 黑盒 E2E；正在以短期显式 unsafe prerelease 闸门完成托管入口联调，里程碑 3/4/6 留待后续
+> 当前里程碑：首个 flag-off 纵向切片已实现，并通过真实本地 Claude Coding Agent 与 Aone 预发托管入口黑盒 E2E；一次性资源与 unsafe override 已清理，最终 flag-off 重部署已完成，里程碑 3/4/6 留待后续
 
 ## 一句话结论
 
@@ -583,12 +583,18 @@ credential 写入权限 `0600` 文件或 stdin/env，不出现在命令参数、
 | UI | 已完成 |  | Core/Views typecheck；Core 930 tests；Views 2053 tests | owner-only A2A tab；Card URL/Card JSON/Multica preset/curl 导出均不含 secret；raw token 仅一次性 dialog |
 | 自动化验证 | 首切已完成 |  | Go A2A/daemon/auth/service/CLI 定向测试、Core/Views tests、`make build`、`git diff --check` | 相关测试与构建通过；Card/transport/auth/claim/env/local-daemon 能力已覆盖；List/Cancel/TCK/rate-limit 属于后续里程碑。更宽的既有 Handler/Service integration suite 仍受本地旧 fixture/schema/date 基线问题影响，不计作本切片通过 |
 | 本地 Coding Agent E2E | 已完成 |  | direct Card + JSON-RPC Send/Get、真实本地 Claude、DB readback、`npm test`、独立 Node oracle、proof JSON | 匿名 Card 成功，无 Bearer RPC 返回 401；Task 依次为 submitted/working/completed；Claude 实际执行 Write/Bash 并产出 1 个稳定 Text Artifact，包含 `A2A_E2E_COMPLETED`；独立 5-case oracle 和 Agent 生成的 5 tests 均通过 |
-| Aone 预发托管入口 E2E | 执行中 |  | 预发 Card + JSON-RPC Send/Get、本地隔离 profile/daemon/Claude、独立项目 oracle；结束后删除 override 并再次部署 | 预发独立认证、1 天 PAT、owner 测试 Workspace、local+claude runtime 与私有 Agent 已就绪；enable 真实命中环境标记误判 403，正按可信 marker 优先级修复并重新部署，之后回填 Task/Artifact、项目测试与回滚证据 |
+| Aone 预发托管入口 E2E | 已完成 | `41cd46323` / release `4d4394f09` | 预发 Card + JSON-RPC Send/Get、本地隔离 profile/daemon/Claude、`npm test`、独立 Node oracle；删除 override 后再次部署 | run `3102808691` 构建/部署/集成测试成功并停在人工预发验证；Card 匿名 200、无 Bearer RPC 401，Task `tsk_sY3XgiP7MBE9thrbysi8SqH1OuBAmt49` 观察到 submitted/working/completed，Artifact 含 `A2A_E2E_COMPLETED`；一次性 credential/client/Agent/daemon/PAT/profile 已清理，3 个 env key 已删除且非目标项完整保留；最终 run `3102813830` 代码/配置合并、构建、扫描、预发部署与集成测试均成功并停在人工预发验证，flag-off Card/RPC 各 12 次请求均返回 404 |
 
 ## 首切结果与遗留项
 
 首个纵向切片已完成：外部 caller 可发现单个 Agent 的标准 Card，使用独立 Bearer credential 调用 `SendMessage(returnImmediately=true)`，再以 `GetTask` 读取持久化状态与 stable Artifact；owner 可在 Agent Settings 中管理 endpoint/client/credential，并导出 Card URL、标准 Card JSON、不含 secret 的 Multica 私有 preset 和 curl 模板。
 
 2026-08-09 本地黑盒 E2E 使用隔离 profile、数据库、Workspace 和 loopback backend。A2A Task 经真实 daemon 驱动本机 Claude Code，在 `/Users/yuanzhan/multica_workspaces_a2a-e2e-9df9/e1c3e65c-b6a3-4b08-b9e2-c8df5ec02705/49da33d2/workdir` 创建 Node.js 项目并完成测试。数据库确认 local task 为 completed，`started_at`、`completed_at`、`work_dir` 均非空；独立 oracle 验证 NFKC/大小写/分隔符/空字符串/类型错误和 proof JSON。管理响应未出现完整 `mca2a_` secret，数据库只保存 64 字符 SHA-256 hash；验收结束后 A2A credential 与专用 PAT 均已吊销，本地 profile token 已移除，daemon/backend 已停止，Workspace 与项目证据保留。
+
+2026-08-10 Aone 预发黑盒 E2E 使用独立 CLI profile、1 天 PAT、owner 测试 Workspace、私有 Agent 和 local+claude runtime。第一次 `SendMessage` 已调度本地 Claude，但验收脚本按 plain Task 误解析 A2A v1 tagged union；脚本立即吊销 caller 并关闭 endpoint，该 Task 仍正常完成，项目位于 `/Users/yuanzhan/.multica/a2a-e2e/20260810-9df9/98e6ad8c-2501-43b9-bf76-3f259b962aa8/24cb3f35/workdir`，Agent 生成 6 个测试全通过，独立 6-case oracle 也通过。第二次按正确 `.result.task` 结构完成全链路：公共 Task `tsk_sY3XgiP7MBE9thrbysi8SqH1OuBAmt49` 经 `TASK_STATE_SUBMITTED → TASK_STATE_WORKING → TASK_STATE_COMPLETED`，只返回稳定 Text Artifact 且含 `A2A_E2E_COMPLETED`；daemon 证据显示本地 task `f9320997-0e19-4753-9354-7d06e2511d78` 由 Claude 在 `/Users/yuanzhan/.multica/a2a-e2e/20260810-9df9/98e6ad8c-2501-43b9-bf76-3f259b962aa8/f9320997/workdir` 执行，Agent 生成 5 个测试与独立 6-case oracle 全通过。
+
+预发 E2E 结束后，两组 A2A credential 均返回吊销 204，client 均为 revoked，endpoint 已关闭，Card 为 404；临时 Agent 已归档，daemon 已停止，1 天 PAT 已吊销且复用返回 401，CLI profile 已登出。Aone `env-vars` trait 从 48 项减为 45 项，仅删除 `FF_AGENT_A2A_INBOUND`、`MULTICA_A2A_ALLOW_UNSAFE_PRERELEASE_RUNTIME`、`MULTICA_A2A_UNSAFE_PRERELEASE_PUBLIC_URL`，无重复键且非目标项完全一致。一次预发数据库连接凭证曾在本地工具输出中暴露，必须由平台侧完成密码轮换，这不属于 A2A 代码验收。
+
+最终 flag-off run `3102813830` 的代码合并、配置合并、构建、制品扫描、预发部署和预发集成测试均为 SUCCESS，流水线仅停在人工“预发验证”，未触发生产发布。部署后再读 trait 仍为 45 项、三个目标键均不存在；对同一公共 Agent Card/RPC URL 分别连续请求 12 次，全部返回 404，证明两个预发实例都已恢复 feature flag off 与 runtime fail closed。
 
 仍未完成的是 blocking Send、List、context follow-up、Cancel/retry 完整状态机、多副本/重启、rate limit、官方 TCK 和生产发布。尤其生产仍被宿主 OS/HOME、Claude settings/hooks/plugins/skills、provider credential 与工具 shell 文件权限未隔离所阻断；当前 hard deny 与 unsafe loopback gate 必须保留，不能把本次可信固定 prompt E2E 解读为恶意 prompt 安全验收。由于总 Plan 仍有后续里程碑，本文件暂不改名为 `*-done.md`。
