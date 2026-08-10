@@ -175,14 +175,54 @@ func TestEvaluateAgentA2ARuntimeSafety(t *testing.T) {
 			wantPublicURL:               "https://agents.example.test/a2a",
 		},
 		{
-			name:                        "prerelease and production marker conflict is denied",
+			name:                        "Aone prerelease tier overrides production application runtime mode",
 			appEnv:                      "production",
 			aoneEnvType:                 "prepub",
 			allowUnsafePrerelease:       "true",
 			prereleaseExpectedPublicURL: "https://agents.example.test/a2a",
 			publicURL:                   "https://agents.example.test/a2a",
+			wantAllowed:                 true,
+			wantMode:                    agentA2ARuntimeSafetyModeUnsafePrerelease,
+			wantPublicURL:               "https://agents.example.test/a2a",
+		},
+		{
+			name:                        "Aone production tier overrides staging application runtime mode",
+			appEnv:                      "staging",
+			aoneEnvType:                 "production",
+			allowUnsafePrerelease:       "true",
+			prereleaseExpectedPublicURL: "https://agents.example.test/a2a",
+			publicURL:                   "https://agents.example.test/a2a",
 			wantMode:                    agentA2ARuntimeSafetyModeDenied,
 			wantPublicURL:               "https://agents.example.test/a2a",
+		},
+		{
+			name:                        "generic staging marker cannot hide production runtime mode",
+			appEnv:                      "production",
+			envType:                     "staging",
+			allowUnsafePrerelease:       "true",
+			prereleaseExpectedPublicURL: "https://agents.example.test/a2a",
+			publicURL:                   "https://agents.example.test/a2a",
+			wantMode:                    agentA2ARuntimeSafetyModeDenied,
+			wantPublicURL:               "https://agents.example.test/a2a",
+		},
+		{
+			name:                        "generic staging marker cannot hide unknown runtime tier",
+			envType:                     "staging",
+			goEnv:                       "canary",
+			allowUnsafePrerelease:       "true",
+			prereleaseExpectedPublicURL: "https://agents.example.test/a2a",
+			publicURL:                   "https://agents.example.test/a2a",
+			wantMode:                    agentA2ARuntimeSafetyModeDenied,
+			wantPublicURL:               "https://agents.example.test/a2a",
+		},
+		{
+			name:             "unknown authoritative tier blocks unsafe local mode",
+			appEnv:           "development",
+			aoneEnvType:      "mystery-tier",
+			allowUnsafeLocal: "true",
+			publicURL:        "http://127.0.0.1:8080",
+			wantMode:         agentA2ARuntimeSafetyModeDenied,
+			wantPublicURL:    "http://127.0.0.1:8080",
 		},
 		{
 			name:                        "prerelease exact normalized HTTPS URL is allowed",
@@ -273,13 +313,66 @@ func TestCurrentAgentA2AEnvironmentMarkers(t *testing.T) {
 		}
 	}
 
-	t.Run("production and prerelease conflict", func(t *testing.T) {
+	t.Run("Aone prerelease tier takes precedence over APP_ENV runtime mode", func(t *testing.T) {
 		clearEnvironment(t)
 		t.Setenv("AONE_ENV_TYPE", "prepub")
 		t.Setenv("APP_ENV", "online")
 		markers := currentAgentA2AEnvironmentMarkers()
-		if !markers.Production || !markers.Prerelease {
-			t.Fatalf("conflicting markers = %+v, want both signals for fail-closed evaluation", markers)
+		if markers.Production || !markers.Prerelease {
+			t.Fatalf("precedence markers = %+v, want prerelease only", markers)
+		}
+	})
+
+	t.Run("Aone production tier cannot be weakened by lower priority markers", func(t *testing.T) {
+		clearEnvironment(t)
+		t.Setenv("AONE_ENV_TYPE", "production")
+		t.Setenv("ENV_TYPE", "prepub")
+		t.Setenv("GO_ENV", "staging")
+		t.Setenv("APP_ENV", "development")
+		markers := currentAgentA2AEnvironmentMarkers()
+		if !markers.Production || markers.Prerelease {
+			t.Fatalf("precedence markers = %+v, want production only", markers)
+		}
+	})
+
+	t.Run("generic staging marker cannot hide APP_ENV production", func(t *testing.T) {
+		clearEnvironment(t)
+		t.Setenv("ENV_TYPE", "stage")
+		t.Setenv("APP_ENV", "production")
+		markers := currentAgentA2AEnvironmentMarkers()
+		if !markers.Production {
+			t.Fatalf("conflicting generic markers = %+v, want production fail-closed signal", markers)
+		}
+	})
+
+	t.Run("generic prerelease and local markers remain prerelease", func(t *testing.T) {
+		clearEnvironment(t)
+		t.Setenv("ENV_TYPE", "stage")
+		t.Setenv("GO_ENV", "development")
+		t.Setenv("APP_ENV", "testing")
+		markers := currentAgentA2AEnvironmentMarkers()
+		if markers.Production || !markers.Prerelease {
+			t.Fatalf("generic markers = %+v, want prerelease only", markers)
+		}
+	})
+
+	t.Run("generic staging marker cannot hide unknown runtime tier", func(t *testing.T) {
+		clearEnvironment(t)
+		t.Setenv("ENV_TYPE", "stage")
+		t.Setenv("GO_ENV", "canary")
+		markers := currentAgentA2AEnvironmentMarkers()
+		if !markers.Production {
+			t.Fatalf("generic unknown markers = %+v, want fail-closed production signal", markers)
+		}
+	})
+
+	t.Run("unknown authoritative tier fails closed", func(t *testing.T) {
+		clearEnvironment(t)
+		t.Setenv("AONE_ENV_TYPE", "canary")
+		t.Setenv("APP_ENV", "staging")
+		markers := currentAgentA2AEnvironmentMarkers()
+		if !markers.Production || markers.Prerelease {
+			t.Fatalf("unknown-tier markers = %+v, want fail-closed production signal", markers)
 		}
 	})
 }

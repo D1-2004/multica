@@ -4,7 +4,7 @@
 > 状态：执行中
 > 创建日期：2026-08-09
 > 计划 ID：20260809-agent-a2a-inbound
-> 最后更新时间：2026-08-09 CST
+> 最后更新时间：2026-08-10 CST
 > 当前分支：`codex/agent-a2a-inbound`
 > 目标执行分支：`codex/agent-a2a-inbound`
 > 基线 Commit：`3c2e8a976b77e07d9f6f555e294046ac86c93cda`
@@ -343,6 +343,8 @@ A2A cancel 不能直接调用当前浏览器语义的 `CancelTaskWithResult(root
 
 为验证 Aone 托管入口到本地 Coding Agent 的完整 inbound 路径，允许一次短期、显式的非生产预发模式：同时设置 `MULTICA_A2A_ALLOW_UNSAFE_PRERELEASE_RUNTIME=true` 与 `MULTICA_A2A_UNSAFE_PRERELEASE_PUBLIC_URL=<expected>`，且规范化后的 `MULTICA_PUBLIC_URL` 必须与 expected 完全相同、使用 HTTPS、host 非 loopback。该模式允许负载均衡器远端 socket peer，但不降低 feature flag、Agent enabled、Bearer credential、`local + claude` runtime 或 claim/StartTask 二次门禁。预发 E2E 后必须删除这两个 override、关闭 `FF_AGENT_A2A_INBOUND`、吊销本轮 A2A/PAT 凭证并再次部署；最终环境恢复 fail closed。生产启用至少要求以下任一方案及 adversarial 验证：
 
+2026-08-10 真实预发启用验证发现，Aone 镜像以 build arg 注入且不通过应用 runtime-env trait 暴露 `AONE_ENV_TYPE=pre`，同时应用按正常公网运行方式配置 `APP_ENV=production`。后者表达应用运行模式（禁用测试验证码、启用生产构建），不是 Aone 发布层级；把四个变量无优先级合并会把真实预发误判成生产并返回 403。环境判定因此收窄为 Aone 特例：`AONE_ENV_TYPE` 存在时由该平台层级标记判定，故允许 `pre + APP_ENV=production`；Aone 标记缺失时遍历所有 `ENV_TYPE / GO_ENV / APP_ENV` 通用标记，任何 production 或未知值都 fail closed，不允许 staging 遮蔽 production。必须新增 `AONE_ENV_TYPE=pre + APP_ENV=production` 允许预发、`AONE_ENV_TYPE=production + APP_ENV=staging` 拒绝生产、通用 marker 冲突拒绝、未知 marker 拒绝和 fallback 行为测试，再重新部署后继续 E2E。
+
 1. A2A 专用隔离执行环境（容器/沙箱/独立 OS 用户），provider credential 只进入 supervisor 或 broker，不进入工具 shell；或
 2. 运行时可证明的文件系统与进程权限策略，阻止读取宿主 `HOME`、provider auth、DWS/GitHub/cloud CLI 配置和 daemon/profile 配置；
 3. adversarial canary 证明 `gh auth token`、默认 DWS profile、provider auth file 与已知绝对路径均不可读/不可外传。
@@ -581,7 +583,7 @@ credential 写入权限 `0600` 文件或 stdin/env，不出现在命令参数、
 | UI | 已完成 |  | Core/Views typecheck；Core 930 tests；Views 2053 tests | owner-only A2A tab；Card URL/Card JSON/Multica preset/curl 导出均不含 secret；raw token 仅一次性 dialog |
 | 自动化验证 | 首切已完成 |  | Go A2A/daemon/auth/service/CLI 定向测试、Core/Views tests、`make build`、`git diff --check` | 相关测试与构建通过；Card/transport/auth/claim/env/local-daemon 能力已覆盖；List/Cancel/TCK/rate-limit 属于后续里程碑。更宽的既有 Handler/Service integration suite 仍受本地旧 fixture/schema/date 基线问题影响，不计作本切片通过 |
 | 本地 Coding Agent E2E | 已完成 |  | direct Card + JSON-RPC Send/Get、真实本地 Claude、DB readback、`npm test`、独立 Node oracle、proof JSON | 匿名 Card 成功，无 Bearer RPC 返回 401；Task 依次为 submitted/working/completed；Claude 实际执行 Write/Bash 并产出 1 个稳定 Text Artifact，包含 `A2A_E2E_COMPLETED`；独立 5-case oracle 和 Agent 生成的 5 tests 均通过 |
-| Aone 预发托管入口 E2E | 执行中 |  | 预发 Card + JSON-RPC Send/Get、本地隔离 profile/daemon/Claude、独立项目 oracle；结束后删除 override 并再次部署 | 待回填变更单、流水线、Task/Artifact、项目测试与回滚证据 |
+| Aone 预发托管入口 E2E | 执行中 |  | 预发 Card + JSON-RPC Send/Get、本地隔离 profile/daemon/Claude、独立项目 oracle；结束后删除 override 并再次部署 | 预发独立认证、1 天 PAT、owner 测试 Workspace、local+claude runtime 与私有 Agent 已就绪；enable 真实命中环境标记误判 403，正按可信 marker 优先级修复并重新部署，之后回填 Task/Artifact、项目测试与回滚证据 |
 
 ## 首切结果与遗留项
 

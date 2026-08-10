@@ -53,9 +53,9 @@ func evaluateAgentA2ARuntimeSafety(publicURL string) agentA2ARuntimeSafetyDecisi
 	}
 
 	decision.PublicBaseURL = baseURL
-	// Production is an unconditional deny across every deployment marker. A
-	// simultaneous prerelease marker is a conflict and therefore also lands in
-	// this branch; no precedence rule may weaken a production signal.
+	// Production is an unconditional deny when selected by the environment
+	// rules below. In Aone, the build-derived AONE_ENV_TYPE image-tier label is
+	// intentionally authoritative over APP_ENV runtime mode.
 	environment := currentAgentA2AEnvironmentMarkers()
 	if environment.Production {
 		return decision
@@ -77,15 +77,46 @@ func evaluateAgentA2ARuntimeSafety(publicURL string) agentA2ARuntimeSafetyDecisi
 
 func currentAgentA2AEnvironmentMarkers() agentA2AEnvironmentMarkers {
 	markers := agentA2AEnvironmentMarkers{}
-	// Inspect every trusted marker rather than applying precedence. Aone injects
-	// AONE_ENV_TYPE from its Docker ENV_TYPE build argument, while the remaining
-	// names cover runtime conventions used by other deployment shapes.
-	for _, name := range []string{"AONE_ENV_TYPE", "ENV_TYPE", "GO_ENV", "APP_ENV"} {
-		switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	// Aone bakes AONE_ENV_TYPE from its Docker ENV_TYPE build argument and does
+	// not expose it through the application's runtime-env trait. APP_ENV instead
+	// describes application runtime mode and is routinely "production" in both
+	// pre-release and production units. Let the Aone tier label decide when it is
+	// present, matching runtimeconfig.productionEnvironmentFromEnv and avoiding a
+	// false production classification for AONE_ENV_TYPE=pre + APP_ENV=production.
+	if value := strings.ToLower(strings.TrimSpace(os.Getenv("AONE_ENV_TYPE"))); value != "" {
+		switch value {
 		case "prod", "production", "online":
 			markers.Production = true
 		case "pre", "prepub", "prepublish", "staging", "stage":
 			markers.Prerelease = true
+		case "local", "dev", "development", "test", "testing":
+			// Explicit local/test tiers are neither production nor prerelease.
+		default:
+			// An unknown Aone tier must not make either unsafe override available.
+			markers.Production = true
+		}
+		return markers
+	}
+
+	// Outside Aone there is no equally trusted platform tier. Inspect all generic
+	// markers so a lower-priority production or unknown signal cannot be hidden by
+	// a preceding staging value. Production wins over every prerelease signal.
+	for _, name := range []string{"ENV_TYPE", "GO_ENV", "APP_ENV"} {
+		value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+		if value == "" {
+			continue
+		}
+		switch value {
+		case "prod", "production", "online":
+			markers.Production = true
+			return markers
+		case "pre", "prepub", "prepublish", "staging", "stage":
+			markers.Prerelease = true
+		case "local", "dev", "development", "test", "testing":
+			// Explicit local/test tiers do not change a prerelease signal.
+		default:
+			markers.Production = true
+			return markers
 		}
 	}
 	return markers
