@@ -22,6 +22,30 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+const agentA2ATestManagedOpenCodeRuntimeMetadata = `{
+	"kind":"cloud-sandbox",
+	"sandbox_backend":"aliyun_fc",
+	"provider":"opencode",
+	"artifact_kind":"e2b_template",
+	"artifact_channel":"candidate",
+	"artifact_ref":"template-a2a-m5",
+	"manifest_version":5,
+	"runner_protocol":"root-log-v1",
+	"capabilities":["opencode","dws","mcp","a2a_inbound_opencode_v1"]
+}`
+
+const agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A = `{
+	"kind":"cloud-sandbox",
+	"sandbox_backend":"aliyun_fc",
+	"provider":"opencode",
+	"artifact_kind":"e2b_template",
+	"artifact_channel":"candidate",
+	"artifact_ref":"template-pre-a2a",
+	"manifest_version":4,
+	"runner_protocol":"root-log-v1",
+	"capabilities":["opencode","dws","mcp"]
+}`
+
 func TestNormalizeAgentA2APublicBaseURL(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -72,12 +96,7 @@ func TestNormalizeAgentA2AScopes(t *testing.T) {
 }
 
 func TestValidateAgentA2ARuntimeEligibility(t *testing.T) {
-	managedMetadata := []byte(`{
-		"kind":"cloud-sandbox",
-		"sandbox_backend":"aliyun_fc",
-		"runner_protocol":"root-log-v1",
-		"template_status":"READY"
-	}`)
+	managedMetadata := []byte(agentA2ATestManagedOpenCodeRuntimeMetadata)
 	tests := []struct {
 		name    string
 		runtime db.AgentRuntime
@@ -100,6 +119,14 @@ func TestValidateAgentA2ARuntimeEligibility(t *testing.T) {
 		{
 			name:    "managed runtime missing metadata",
 			runtime: db.AgentRuntime{RuntimeMode: "cloud", Provider: "opencode", Metadata: []byte(`{}`)},
+		},
+		{
+			name: "managed runtime missing explicit A2A capability",
+			runtime: db.AgentRuntime{
+				RuntimeMode: "cloud",
+				Provider:    "opencode",
+				Metadata:    []byte(agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A),
+			},
 		},
 		{
 			name:    "managed runtime wrong kind",
@@ -132,7 +159,7 @@ func TestValidateAgentA2ARuntimeEligibility(t *testing.T) {
 			if test.want && err != nil {
 				t.Fatalf("eligible runtime rejected: %v", err)
 			}
-			if !test.want && (err == nil || !strings.Contains(err.Error(), "local Claude runtime or a managed Aliyun FC OpenCode runtime")) {
+			if !test.want && (err == nil || !strings.Contains(err.Error(), "local Claude runtime or an A2A-capable managed Aliyun FC OpenCode runtime")) {
 				t.Fatalf("ineligible runtime error = %v, want eligibility guidance", err)
 			}
 		})
@@ -429,6 +456,12 @@ func TestAgentA2AEnableRejectsIneligibleRuntime(t *testing.T) {
 			metadata:    `{}`,
 		},
 		{
+			name:        "cloud OpenCode template missing A2A capability",
+			runtimeMode: "cloud",
+			provider:    "opencode",
+			metadata:    agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A,
+		},
+		{
 			name:        "cloud OpenCode wrong sandbox backend",
 			runtimeMode: "cloud",
 			provider:    "opencode",
@@ -443,7 +476,7 @@ func TestAgentA2AEnableRejectsIneligibleRuntime(t *testing.T) {
 			assignAgentA2ATestRuntime(t, agentID, test.runtimeMode, test.provider, test.metadata)
 
 			response := putAgentA2ATestConfig(t, agentID, ownerID, true)
-			const wantError = "local Claude runtime or a managed Aliyun FC OpenCode runtime"
+			const wantError = "local Claude runtime or an A2A-capable managed Aliyun FC OpenCode runtime"
 			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), wantError) {
 				t.Fatalf("enable response = %d %s, want clear 400 containing %q", response.Code, response.Body.String(), wantError)
 			}
@@ -476,12 +509,7 @@ func TestAgentA2AManagedHostedRuntimeIsPublishedAndAdmitted(t *testing.T) {
 		agentID,
 		"cloud",
 		"opencode",
-		`{
-			"kind":"cloud-sandbox",
-			"sandbox_backend":"aliyun_fc",
-			"runner_protocol":"root-log-v1",
-			"template_status":"READY"
-		}`,
+		agentA2ATestManagedOpenCodeRuntimeMetadata,
 	)
 	endpoint, client, secret := createAgentA2ATestCaller(t, agentID, ownerID)
 
@@ -646,6 +674,12 @@ func TestAgentA2ASendRejectsRuntimeSwitchedOutOfAllowlistWithoutCreatingTask(t *
 			runtimeMode: "cloud",
 			provider:    "opencode",
 			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"asb"}`,
+		},
+		{
+			name:        "runtime switched to pre-A2A managed OpenCode template",
+			runtimeMode: "cloud",
+			provider:    "opencode",
+			metadata:    agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A,
 		},
 	}
 	for _, test := range tests {

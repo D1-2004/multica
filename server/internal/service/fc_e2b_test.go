@@ -446,13 +446,13 @@ func TestParseE2BSandboxIDStrictCreateOutput(t *testing.T) {
 }
 
 func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
-	const alias = "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"
+	const alias = "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"
 	got, err := parseFCE2BTemplates(`[
 		{
 			"templateID": "idt7f6on323gsyuqjt59",
 			"buildID": "a4aa129e-ef89-4fce-9fc9-605a1015e0e1",
-			"aliases": ["default", "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"],
-			"names": ["multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"],
+			"aliases": ["default", "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"],
+			"names": ["multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"],
 			"buildStatus": "ready",
 			"createdAt": "2026-07-08T13:16:30.740524Z",
 			"updatedAt": "2026-07-08T13:19:01.365773Z"
@@ -488,7 +488,7 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 	if want := []string{"hermes", "opencode", "pi"}; !reflect.DeepEqual(got[0].Providers, want) {
 		t.Fatalf("providers = %#v, want %#v", got[0].Providers, want)
 	}
-	if want := []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability}; !reflect.DeepEqual(got[0].Capabilities, want) {
+	if want := []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInboundOpenCodeCapability}; !reflect.DeepEqual(got[0].Capabilities, want) {
 		t.Fatalf("capabilities = %#v, want %#v", got[0].Capabilities, want)
 	}
 	if want := map[string]string{
@@ -502,22 +502,39 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 }
 
 func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
-	const validAlias = "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"
+	const validAlias = "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"
 	tests := []struct {
-		name          string
-		buildID       string
-		alias         string
-		wantApplied   bool
-		wantPublished bool
+		name             string
+		buildID          string
+		alias            string
+		wantApplied      bool
+		wantPublished    bool
+		wantCapabilities []string
 	}{
-		{name: "valid current", buildID: "build-current", alias: validAlias, wantApplied: true, wantPublished: true},
-		{name: "valid previous", buildID: "build-previous", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-bbbbbb", wantApplied: true, wantPublished: true},
+		{
+			name:             "valid current",
+			buildID:          "build-current",
+			alias:            validAlias,
+			wantApplied:      true,
+			wantPublished:    true,
+			wantCapabilities: []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInboundOpenCodeCapability},
+		},
+		{
+			name:             "valid m4 compatibility",
+			buildID:          "build-previous",
+			alias:            "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-bbbbbb",
+			wantApplied:      true,
+			wantPublished:    true,
+			wantCapabilities: []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability},
+		},
 		{name: "valid legacy", buildID: "build-legacy", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa", wantApplied: true},
 		{name: "missing build ID", alias: validAlias},
 		{name: "old template name", buildID: "build-current", alias: "multica-fc-hermes-opencode-dws-v1"},
 		{name: "missing patch version", buildID: "build-current", alias: "multica-m3-h0_19-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
 		{name: "leading zero", buildID: "build-current", alias: "multica-m3-h00_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
-		{name: "current missing trace marker", buildID: "build-current", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
+		{name: "current missing A2A marker", buildID: "build-current", alias: "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"},
+		{name: "m4 falsely claims A2A", buildID: "build-current", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"},
+		{name: "m4 missing trace marker", buildID: "build-current", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
 		{name: "previous falsely claims trace", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"},
 		{name: "previous falsely claims startup events", buildID: "build-current", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
 		{name: "legacy falsely claims MCP", buildID: "build-current", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
@@ -537,6 +554,9 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 			}
 			if got := IsFCE2BTemplatePublished(template); got != test.wantPublished {
 				t.Fatalf("IsFCE2BTemplatePublished = %v, want %v: %+v", got, test.wantPublished, template)
+			}
+			if test.wantCapabilities != nil && !reflect.DeepEqual(template.Capabilities, test.wantCapabilities) {
+				t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, test.wantCapabilities)
 			}
 		})
 	}
@@ -932,8 +952,8 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	if err := launcher.execRunOnce(context.Background(), "sbx_dws", rt, launch.Mode, taskID, "mdt_test_token", false, map[string]string{
 		"AGENT_IDENTITY_CONTEXT_TOKEN": "context_secret",
 		"MULTICA_CHAT_SESSION_ID":      "chat-session-1",
-		llmTraceEnabledEnvKey:            "true",
-		llmTraceSinkURLEnvKey:            "https://trace.example.test/ingest",
+		llmTraceEnabledEnvKey:          "true",
+		llmTraceSinkURLEnvKey:          "https://trace.example.test/ingest",
 	}); err != nil {
 		t.Fatalf("execRunOnce returned error: %v", err)
 	}

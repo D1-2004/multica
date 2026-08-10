@@ -1,15 +1,15 @@
 # Agent 级 Inbound A2A 实施计划
 
 > 工作流：Plan
-> 状态：首切完成（后续里程碑待执行）
+> 状态：托管 Agent 预发入口实现与验收中（后续协议里程碑待执行）
 > 创建日期：2026-08-09
 > 计划 ID：20260809-agent-a2a-inbound
 > 最后更新时间：2026-08-10 CST
 > 当前分支：`codex/agent-a2a-inbound`
 > 目标执行分支：`codex/agent-a2a-inbound`
-> 基线 Commit：`3c2e8a976b77e07d9f6f555e294046ac86c93cda`
+> 基线 Commit：`4d4394f09fdfdc1fa4ba6ac45dfae70138ed9d63`
 > Worktree：`/Users/yuanzhan/.codex/worktrees/9df9/dt-fde-multica`
-> 当前里程碑：首个 flag-off 纵向切片已实现，并通过真实本地 Claude Coding Agent 与 Aone 预发托管入口黑盒 E2E；一次性资源与 unsafe override 已清理，最终 flag-off 重部署已完成，里程碑 3/4/6 留待后续
+> 当前里程碑：把现有预发托管 OpenCode Agent 通过显式 m5 runtime capability 暴露为 inbound A2A endpoint；启用成功后直接交付 Card/RPC URL 与一次性本地调试包，并以外部本地 Agent 完成预发黑盒 E2E
 
 ## 一句话结论
 
@@ -72,13 +72,14 @@ PR 还缺少 A2A v1.0 所需的 `A2A-Version`、完整 `supportedInterfaces`、�
 | Dify / Coze Studio | endpoint 与 app/bot key 分开；Coze key 只在创建时显示一次 | client principal 与 credential 分层，secret 一次显示、之后只保留 prefix/status |
 | Flowise API Code | 可复制 snippet 会插入用户选择的真实 API key | 明确作为反例：Multica snippet/download 永不嵌入 raw secret |
 
-因此 UI 导出合同固定为三层：
+因此 UI 导出合同固定为四层：
 
 1. `Agent Card URL`：默认复制项，供标准 client discovery。
 2. `agent-card.json`：下载服务端当前 Card builder 生成的原样标准 JSON；不含任何 credential。
 3. `multica-a2a.json`：明确标为 Multica 私有 connection preset，而非 A2A 标准文件；只含 `agentCardUrl`、`protocolVersion=1.0`、`preferredBinding=JSONRPC` 与 `tokenEnv=MULTICA_A2A_TOKEN`。
+4. `multica-a2a.local.json`：只在一次性 credential 创建结果 dialog 内生成，包含本次 raw token、Card/RPC URL、headers 和 Send/Get 示例，专供本地调试；关闭 dialog 后前端不再保留 secret，下载文件需由用户按敏感凭证管理。
 
-调用示例同样只引用 `$MULTICA_A2A_TOKEN`。raw token 仅在创建 credential 的一次性 dialog 中出现，不进入 query cache、常规导出、下载目录、日志或代码片段。Card 中声明 Bearer security scheme 只代表协议声明；验收还必须证明无凭证请求实际收到 401/403。
+常规调用示例只引用 `$MULTICA_A2A_TOKEN`。raw token 仅在创建 credential 的一次性 dialog、该 dialog 内的可复制 cURL 和显式下载的本地调试包中出现，不进入 query cache、常规导出或日志。Card 中声明 Bearer security scheme 只代表协议声明；验收还必须证明无凭证请求实际收到 401/403。
 
 ## 已确认需求
 
@@ -98,6 +99,7 @@ PR 还缺少 A2A v1.0 所需的 `A2A-Version`、完整 `supportedInterfaces`、�
 5. 所有业务状态以 PostgreSQL 为真相源，server 重启或请求落到另一副本后仍可查询、去重和取消。
 6. A2A 请求不能获得 Agent owner 的个人 Composio/MCP 连接，也不能伪造为某个 human user 发起。
 7. 本地 Claude Code Coding Agent 能在任务 workdir 中创建项目、运行测试，最终通过 A2A Task Artifact 返回可验证结果；该测试只证明可信固定输入的功能链路。
+8. 预发托管 OpenCode Agent 只有在 Aliyun FC runtime manifest 明确声明 `a2a_inbound_opencode_v1` 时才可启用；启用成功后 UI 必须显示可复制的 Card/RPC URL。
 
 ## 非目标
 
@@ -341,7 +343,7 @@ A2A cancel 不能直接调用当前浏览器语义的 `CancelTaskWithResult(root
 
 因此 `agent_a2a_inbound` 保持默认关闭；production 无条件拒绝。常规本地验证只有同时设置 `MULTICA_A2A_ALLOW_UNSAFE_LOCAL_RUNTIME=true`、PublicURL 为精确 loopback、HTTP socket peer 直连 loopback，且 Agent runtime 为 `local + claude` 才能启用、Send、claim 和 StartTask。该豁免只用于可信固定 E2E，不得经代理转发或对不可信调用方开放。
 
-为验证 Aone 托管入口到本地 Coding Agent 的完整 inbound 路径，允许一次短期、显式的非生产预发模式：同时设置 `MULTICA_A2A_ALLOW_UNSAFE_PRERELEASE_RUNTIME=true` 与 `MULTICA_A2A_UNSAFE_PRERELEASE_PUBLIC_URL=<expected>`，且规范化后的 `MULTICA_PUBLIC_URL` 必须与 expected 完全相同、使用 HTTPS、host 非 loopback。该模式允许负载均衡器远端 socket peer，但不降低 feature flag、Agent enabled、Bearer credential、`local + claude` runtime 或 claim/StartTask 二次门禁。预发 E2E 后必须删除这两个 override、关闭 `FF_AGENT_A2A_INBOUND`、吊销本轮 A2A/PAT 凭证并再次部署；最终环境恢复 fail closed。生产启用至少要求以下任一方案及 adversarial 验证：
+为验证 Aone 托管入口的完整 inbound 路径，允许一次显式的非生产预发模式：同时设置 `MULTICA_A2A_ALLOW_UNSAFE_PRERELEASE_RUNTIME=true` 与 `MULTICA_A2A_UNSAFE_PRERELEASE_PUBLIC_URL=<expected>`，且规范化后的 `MULTICA_PUBLIC_URL` 必须与 expected 完全相同、使用 HTTPS、host 非 loopback。该模式允许负载均衡器远端 socket peer，并允许两种受控 runtime：`local + claude`，或 `cloud + opencode + aliyun_fc` 且 runtime metadata 由 m5 manifest 明确声明 `a2a_inbound_opencode_v1`。后者使用 task-local HOME/XDG、关闭 project/Claude prompt discovery，只注入服务端权威 Definition/Skills 与显式 Agent MCP；共享模型 credential 仍会进入 Coding Agent 子进程，所以该路径继续标记为 prerelease unsafe，production 无条件拒绝。两种路径都不降低 feature flag、Agent enabled、Bearer credential 或 claim/StartTask 二次门禁。验收后吊销测试 credential/client；若目标 Agent 需要继续被调用，则保留 endpoint 与三个预发 gate，否则关闭 endpoint 并清除 gate。生产启用至少要求以下任一方案及 adversarial 验证：
 
 2026-08-10 真实预发启用验证发现，Aone 镜像以 build arg 注入且不通过应用 runtime-env trait 暴露 `AONE_ENV_TYPE=pre`，同时应用按正常公网运行方式配置 `APP_ENV=production`。后者表达应用运行模式（禁用测试验证码、启用生产构建），不是 Aone 发布层级；把四个变量无优先级合并会把真实预发误判成生产并返回 403。环境判定因此收窄为 Aone 特例：`AONE_ENV_TYPE` 存在时由该平台层级标记判定，故允许 `pre + APP_ENV=production`；Aone 标记缺失时遍历所有 `ENV_TYPE / GO_ENV / APP_ENV` 通用标记，任何 production 或未知值都 fail closed，不允许 staging 遮蔽 production。必须新增 `AONE_ENV_TYPE=pre + APP_ENV=production` 允许预发、`AONE_ENV_TYPE=production + APP_ENV=staging` 拒绝生产、通用 marker 冲突拒绝、未知 marker 拒绝和 fallback 行为测试，再重新部署后继续 E2E。
 
@@ -420,6 +422,7 @@ Transport 前置错误如无/错 Bearer和 body 超限使用 HTTP 401/403/413；
 - [ ] 里程碑 6：增加协议 golden、官方 SDK client、PostgreSQL integration、TCK 与安全/限流/回归验证。
 - [x] 里程碑 7：运行本地 Claude Code Coding Agent 的可信固定任务黑盒 E2E，记录 workdir、响应和测试证据；不把该结果表述为不可信 prompt 的隔离验收。
 - [ ] 里程碑 8：按 schema-first、flag-off、全副本升级、内部 Agent canary、逐 Agent 开启的顺序发布；当前只执行短期 unsafe prerelease E2E，并在同一轮内验证关闭与凭证吊销回滚路径。
+- [ ] 里程碑 9：构建并发布带 m5 A2A capability 的 Aliyun FC OpenCode candidate runtime，部署 server/UI 到预发，将授权目标 Agent 切换到 candidate，启用 endpoint 并以本地外部 Agent 完成 Card/401/Send/Get/Artifact 黑盒验收；最终吊销测试 credential，但按用户要求保留可继续调用的 endpoint。
 
 ## 验证策略
 
@@ -584,6 +587,7 @@ credential 写入权限 `0600` 文件或 stdin/env，不出现在命令参数、
 | 自动化验证 | 首切已完成 |  | Go A2A/daemon/auth/service/CLI 定向测试、Core/Views tests、`make build`、`git diff --check` | 相关测试与构建通过；Card/transport/auth/claim/env/local-daemon 能力已覆盖；List/Cancel/TCK/rate-limit 属于后续里程碑。更宽的既有 Handler/Service integration suite 仍受本地旧 fixture/schema/date 基线问题影响，不计作本切片通过 |
 | 本地 Coding Agent E2E | 已完成 |  | direct Card + JSON-RPC Send/Get、真实本地 Claude、DB readback、`npm test`、独立 Node oracle、proof JSON | 匿名 Card 成功，无 Bearer RPC 返回 401；Task 依次为 submitted/working/completed；Claude 实际执行 Write/Bash 并产出 1 个稳定 Text Artifact，包含 `A2A_E2E_COMPLETED`；独立 5-case oracle 和 Agent 生成的 5 tests 均通过 |
 | Aone 预发托管入口 E2E | 已完成 | `41cd46323` / release `4d4394f09` | 预发 Card + JSON-RPC Send/Get、本地隔离 profile/daemon/Claude、`npm test`、独立 Node oracle；删除 override 后再次部署 | run `3102808691` 构建/部署/集成测试成功并停在人工预发验证；Card 匿名 200、无 Bearer RPC 401，Task `tsk_sY3XgiP7MBE9thrbysi8SqH1OuBAmt49` 观察到 submitted/working/completed，Artifact 含 `A2A_E2E_COMPLETED`；一次性 credential/client/Agent/daemon/PAT/profile 已清理，3 个 env key 已删除且非目标项完整保留；最终 run `3102813830` 代码/配置合并、构建、扫描、预发部署与集成测试均成功并停在人工预发验证，flag-off Card/RPC 各 12 次请求均返回 404 |
+| 托管 OpenCode Agent A2A | 进行中 | 当前分支 | m5 manifest/capability、handler/SQL/claim/daemon/UI 定向测试；独立 runtime candidate 与预发真实 Send/Get | 代码侧以显式 capability 取代 runtime 形态猜测；等待 runtime/server 分支推送、候选模板构建、目标 Agent 切换和真实外部调用证据 |
 
 ## 首切结果与遗留项
 

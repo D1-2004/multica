@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -934,7 +935,7 @@ func validateAgentA2ARuntimeEligibility(runtime db.AgentRuntime) error {
 	if isAgentA2AEligibleRuntime(runtime) {
 		return nil
 	}
-	return errors.New("A2A inbound prerelease currently only supports a local Claude runtime or a managed Aliyun FC OpenCode runtime")
+	return errors.New("A2A inbound prerelease currently only supports a local Claude runtime or an A2A-capable managed Aliyun FC OpenCode runtime")
 }
 
 func isAgentA2AEligibleRuntime(runtime db.AgentRuntime) bool {
@@ -949,14 +950,12 @@ func isAgentA2AEligibleRuntime(runtime db.AgentRuntime) bool {
 	if runtime.RuntimeMode != "cloud" || runtime.Provider != "opencode" {
 		return false
 	}
-	var metadata struct {
-		Kind           string `json:"kind"`
-		SandboxBackend string `json:"sandbox_backend"`
-	}
-	if err := json.Unmarshal(runtime.Metadata, &metadata); err != nil {
-		return false
-	}
-	return metadata.Kind == "cloud-sandbox" && metadata.SandboxBackend == "aliyun_fc"
+	metadata, err := service.ParseCloudSandboxRuntime(runtime)
+	return err == nil &&
+		metadata.Kind == service.CloudSandboxMetadataKind &&
+		metadata.SandboxBackend == service.SandboxBackendAliyunFC &&
+		metadata.Provider == "opencode" &&
+		service.FCE2BRuntimeHasCapability(runtime, service.A2AInboundOpenCodeCapability)
 }
 
 func parseAgentA2ACredentialExpiry(value *string) (pgtype.Timestamptz, error) {

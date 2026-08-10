@@ -35,6 +35,9 @@ import (
 
 const (
 	FCE2BMetadataKind = "fc-e2b"
+	// A2AInboundOpenCodeCapability declares support for inbound A2A delivery
+	// through the OpenCode runtime provider.
+	A2AInboundOpenCodeCapability = "a2a_inbound_opencode_v1"
 	// FCE2BProvider is the first provider selected when a verified template
 	// manifest declares Hermes support and the request omits a provider.
 	FCE2BProvider = "hermes"
@@ -54,7 +57,7 @@ const (
 	fcE2BRunOnceHealthPortSpan      = 30000
 	fcE2BRootRunnerInstallDir       = "/usr/local/libexec"
 	fcE2BLegacyRunnerInstallDir     = "/usr/local/bin"
-	fcE2BTemplateManifestVersion    = 4
+	fcE2BTemplateManifestVersion    = 5
 	fcE2BChatSessionIDEnvKey        = "MULTICA_CHAT_SESSION_ID"
 )
 
@@ -456,7 +459,7 @@ func IsFCE2BTemplateReady(template FCE2BTemplate) bool {
 
 // IsFCE2BTemplatePublished reports whether the current build carries a valid
 // supported manifest alias required for safe publication, runtime creation,
-// and rotation. m2 through m4 are supported; m1 is retired.
+// and rotation. m2 through m5 are supported; m1 is retired.
 func IsFCE2BTemplatePublished(template FCE2BTemplate) bool {
 	return template.ManifestVersion >= 2 &&
 		template.ManifestVersion <= fcE2BTemplateManifestVersion &&
@@ -744,7 +747,7 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 	return templates, nil
 }
 
-var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([1234])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dimst|dims|dim|di)-r1-([0-9a-f]{6})$`)
+var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([12345])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dimsta|dimst|dims|dim|di)-r1-([0-9a-f]{6})$`)
 
 func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (bool, error) {
 	if template == nil {
@@ -763,7 +766,7 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 		return false, nil
 	}
 	capabilityCode := matches[7]
-	expectedCapabilityCode := map[int]string{1: "di", 2: "dim", 3: "dims", 4: "dimst"}[manifestVersion]
+	expectedCapabilityCode := map[int]string{1: "di", 2: "dim", 3: "dims", 4: "dimst", 5: "dimsta"}[manifestVersion]
 	if capabilityCode != expectedCapabilityCode {
 		return false, nil
 	}
@@ -787,6 +790,9 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 	}
 	if manifestVersion >= 4 {
 		template.Capabilities = append(template.Capabilities, LLMTraceCapability)
+	}
+	if manifestVersion >= 5 {
+		template.Capabilities = append(template.Capabilities, A2AInboundOpenCodeCapability)
 	}
 	template.ComponentVersions = map[string]string{
 		"hermes":   hermesVersion,

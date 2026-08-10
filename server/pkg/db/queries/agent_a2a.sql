@@ -222,6 +222,9 @@ WHERE endpoint.public_agent_id = sqlc.arg('public_agent_id')
       AND runtime.provider = 'opencode'
       AND runtime.metadata->>'kind' = 'cloud-sandbox'
       AND runtime.metadata->>'sandbox_backend' = 'aliyun_fc'
+      AND runtime.metadata->>'artifact_kind' = 'e2b_template'
+      AND COALESCE(runtime.metadata->>'artifact_ref', '') <> ''
+      AND runtime.metadata->'capabilities' ? 'a2a_inbound_opencode_v1'
     )
   )
   AND a.owner_id = endpoint.delegated_by_user_id;
@@ -606,6 +609,9 @@ WITH locked_agent AS MATERIALIZED (
           AND runtime.provider = 'opencode'
           AND runtime.metadata->>'kind' = 'cloud-sandbox'
           AND runtime.metadata->>'sandbox_backend' = 'aliyun_fc'
+          AND runtime.metadata->>'artifact_kind' = 'e2b_template'
+          AND COALESCE(runtime.metadata->>'artifact_ref', '') <> ''
+          AND runtime.metadata->'capabilities' ? 'a2a_inbound_opencode_v1'
         )
       )
     FOR SHARE OF a, runtime

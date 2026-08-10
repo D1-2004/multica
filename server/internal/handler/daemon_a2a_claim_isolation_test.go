@@ -140,9 +140,9 @@ func TestClaimTaskByRuntime_A2AManagedPrereleaseRuntimeAttestation(t *testing.T)
 	)
 	if _, err := testPool.Exec(ctx, `
 		UPDATE agent_runtime
-		SET metadata = '{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc"}'::jsonb
+		SET metadata = $2::jsonb
 		WHERE id = $1
-	`, fixture.runtimeID); err != nil {
+	`, fixture.runtimeID, agentA2ATestManagedOpenCodeRuntimeMetadata); err != nil {
 		t.Fatalf("mark managed prerelease runtime: %v", err)
 	}
 
@@ -574,7 +574,7 @@ func TestIsA2AClaimTokenlessRuntime(t *testing.T) {
 	managedPrerelease := db.AgentRuntime{
 		RuntimeMode: "cloud",
 		Provider:    "opencode",
-		Metadata:    []byte(`{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc"}`),
+		Metadata:    []byte(agentA2ATestManagedOpenCodeRuntimeMetadata),
 	}
 	if !isA2AClaimTokenlessRuntime(managedPrerelease) || !isA2AUnsafePrereleaseManagedRuntime(managedPrerelease) {
 		t.Fatalf("managed prerelease runtime must be admitted with its explicit daemon attestation: %+v", managedPrerelease)
@@ -582,6 +582,7 @@ func TestIsA2AClaimTokenlessRuntime(t *testing.T) {
 	for _, runtime := range []db.AgentRuntime{
 		{RuntimeMode: "cloud", Provider: "claude"},
 		{RuntimeMode: "cloud", Provider: "opencode"},
+		{RuntimeMode: "cloud", Provider: "opencode", Metadata: []byte(agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A)},
 		{RuntimeMode: "cloud", Provider: "opencode", Metadata: []byte(`{"kind":"cloud-sandbox","sandbox_backend":"asb"}`)},
 		{RuntimeMode: "local", Provider: "codebuddy"},
 		{RuntimeMode: "local", Provider: "opencode"},
