@@ -395,9 +395,9 @@ func TestDingTalkSessionRouting(t *testing.T) {
 // TestDingtalkMessageBodyAndTitle covers the group-context enrichment: the
 // stored body carries WHO is talking and in WHICH group (the agent's chat
 // prompt is nothing but concatenated bodies), and the session title composes
-// the group name with the sender — sessions are per-(group, sender), so the
-// sender is the session's human counterpart. DM bodies stay bare; DM titles
-// take the sender's nick.
+// the group name, sender, and opening-message summary. Sessions are
+// per-(group, sender), so the sender is the session's human counterpart. DM
+// bodies stay bare; DM titles combine the sender with the opening summary.
 func TestDingtalkMessageBodyAndTitle(t *testing.T) {
 	group, _ := inboundFromBotCallback(botCallbackData{
 		ConversationID: "cidG==", MsgID: "m1", SenderStaffID: "s1",
@@ -411,16 +411,16 @@ func TestDingtalkMessageBodyAndTitle(t *testing.T) {
 		t.Errorf("group body = %q", got)
 	}
 	title, stale := dingtalkSessionTitle(group)
-	if title != "项目群 · 张三" {
-		t.Errorf("group title = %q, want group + sender", title)
+	if title != "项目群 · 张三：帮我看下部署状态" {
+		t.Errorf("group title = %q, want group + sender + summary", title)
 	}
-	// Older derivations (bare group name, bare nick) must be upgrade
-	// candidates so pre-existing sessions get renamed in place.
-	if !slices.Equal(stale, []string{"项目群", "张三"}) {
+	// Older derivations (group + sender, bare group name, bare nick) must be
+	// upgrade candidates so pre-existing sessions get renamed in place.
+	if !slices.Equal(stale, []string{"项目群 · 张三", "项目群", "张三"}) {
 		t.Errorf("group stale titles = %q", stale)
 	}
 
-	// Group without a conversation title: speaker label body, sender title.
+	// Group without a conversation title: speaker label body, sender + summary.
 	noTitle, _ := inboundFromBotCallback(botCallbackData{
 		ConversationID: "cidG==", MsgID: "m2", SenderStaffID: "s1",
 		ConversationType: "2", Msgtype: "text", SenderNick: "张三",
@@ -431,11 +431,11 @@ func TestDingtalkMessageBodyAndTitle(t *testing.T) {
 	if got := dingtalkMessageBody(noTitle); got != "[张三]: hi" {
 		t.Errorf("no-title body = %q", got)
 	}
-	if title, stale = dingtalkSessionTitle(noTitle); title != "张三" || stale != nil {
-		t.Errorf("no-title title = %q stale = %q, want bare sender", title, stale)
+	if title, stale = dingtalkSessionTitle(noTitle); title != "张三：hi" || !slices.Equal(stale, []string{"张三"}) {
+		t.Errorf("no-title title = %q stale = %q, want sender + summary", title, stale)
 	}
 
-	// Group without a sender nick: bare group name (current pre-sender shape).
+	// Group without a sender nick: group + summary.
 	noNick, _ := inboundFromBotCallback(botCallbackData{
 		ConversationID: "cidG==", MsgID: "m2b", SenderStaffID: "s1",
 		ConversationType: "2", Msgtype: "text", ConversationTitle: "项目群",
@@ -443,12 +443,11 @@ func TestDingtalkMessageBodyAndTitle(t *testing.T) {
 			Content string `json:"content"`
 		}{Content: "hi"},
 	}, "c")
-	if title, stale = dingtalkSessionTitle(noNick); title != "项目群" || stale != nil {
-		t.Errorf("no-nick title = %q stale = %q, want bare group", title, stale)
+	if title, stale = dingtalkSessionTitle(noNick); title != "项目群：hi" || !slices.Equal(stale, []string{"项目群"}) {
+		t.Errorf("no-nick title = %q stale = %q, want group + summary", title, stale)
 	}
 
-	// DM: bare body, sender-nick title (the counterpart's name, not a
-	// generic "DingTalk direct message").
+	// DM: bare body, sender + opening summary.
 	dm, _ := inboundFromBotCallback(botCallbackData{
 		ConversationID: "cidD==", MsgID: "m3", SenderStaffID: "s1",
 		ConversationType: "1", Msgtype: "text", SenderNick: "张三",
@@ -459,8 +458,18 @@ func TestDingtalkMessageBodyAndTitle(t *testing.T) {
 	if got := dingtalkMessageBody(dm); got != "hi" {
 		t.Errorf("dm body = %q, want bare text", got)
 	}
-	if title, stale = dingtalkSessionTitle(dm); title != "张三" || stale != nil {
-		t.Errorf("dm title = %q stale = %q, want sender nick", title, stale)
+	if title, stale = dingtalkSessionTitle(dm); title != "张三：hi" || !slices.Equal(stale, []string{"张三"}) {
+		t.Errorf("dm title = %q stale = %q, want sender + summary", title, stale)
+	}
+	normalizedDM, _ := inboundFromBotCallback(botCallbackData{
+		ConversationID: "cidD==", MsgID: "m3b", SenderStaffID: "s1",
+		ConversationType: "1", Msgtype: "text", SenderNick: "张三",
+		Text: struct {
+			Content string `json:"content"`
+		}{Content: "  部署\t状态\u200b：\n成功  "},
+	}, "c")
+	if title, _ = dingtalkSessionTitle(normalizedDM); title != "张三：部署 状态: 成功" {
+		t.Errorf("normalized dm title = %q", title)
 	}
 
 	// Pure picture messages carry a visible marker so the daemon keeps the
@@ -471,6 +480,9 @@ func TestDingtalkMessageBodyAndTitle(t *testing.T) {
 	}, "c")
 	if got := dingtalkMessageBody(picture); got != "[张三 @ 项目群]: [图片]" {
 		t.Errorf("picture body = %q", got)
+	}
+	if title, stale = dingtalkSessionTitle(picture); title != "项目群 · 张三：[图片]" || !slices.Equal(stale, []string{"项目群 · 张三", "项目群", "张三"}) {
+		t.Errorf("picture title = %q stale = %q", title, stale)
 	}
 }
 

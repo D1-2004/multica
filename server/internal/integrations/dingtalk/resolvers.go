@@ -9,9 +9,11 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -609,35 +611,70 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 	return result, nil
 }
 
-// dingtalkSessionTitle derives the chat_session title override. Group
-// sessions are isolated per (group, sender), so the sender IS the human
-// counterpart of the session: the title composes both — "项目群 · 张三" — so
-// the Multica session list says WHICH group and WHO is talking, not a generic
-// "DingTalk group chat". DMs take the sender's nick. Empty (callback without
-// either field) falls back to the engine's static SessionTitles.
+// dingtalkSessionTitle derives the chat_session title override. Group sessions
+// are isolated per (group, sender), so the title composes the group, human
+// counterpart, and opening-message summary — "项目群 · 张三：帮我看下部署状态".
+// DMs use "张三：帮我看下部署状态". Empty callback fields fall back to the
+// best available participant/group label and then the engine's static titles.
 //
 // staleTitles lists older derivations this title supersedes — the bare group
-// name (pre-sender format) and the bare nick (title-less first callback) — so
-// an existing session upgrades in place on the next message while a manual
-// rename is left alone.
+// name, bare nick, and pre-summary group/sender format — so an existing session
+// upgrades in place on the next message while a manual rename is left alone.
 func dingtalkSessionTitle(msg channel.InboundMessage) (title string, staleTitles []string) {
 	raw, err := decodeDingTalkRaw(msg)
 	if err != nil {
 		return "", nil
 	}
 	nick := strings.TrimSpace(raw.SenderNick)
+	summary := normalizeDingTalkSessionTitleFragment(msg.Text)
 	if msg.Source.ChatType != channel.ChatTypeGroup {
-		return nick, nil
+		if summary == "" {
+			return nick, nil
+		}
+		if nick == "" {
+			return truncateRunes(summary, 160), nil
+		}
+		return truncateRunes(nick+"："+summary, 160), []string{nick}
 	}
 	group := strings.TrimSpace(raw.ConversationTitle)
+	var base string
+	var legacyStale []string
 	switch {
 	case group != "" && nick != "":
-		return group + " · " + nick, []string{group, nick}
+		base = group + " · " + nick
+		legacyStale = []string{group, nick}
 	case group != "":
-		return group, nil
+		base = group
 	default:
-		return nick, nil
+		base = nick
 	}
+	if summary == "" {
+		return base, legacyStale
+	}
+	if base == "" {
+		return truncateRunes(summary, 160), nil
+	}
+	staleTitles = make([]string, 0, 1+len(legacyStale))
+	staleTitles = append(staleTitles, base)
+	staleTitles = append(staleTitles, legacyStale...)
+	return truncateRunes(base+"："+summary, 160), staleTitles
+}
+
+func normalizeDingTalkSessionTitleFragment(value string) string {
+	value = norm.NFKC.String(value)
+	value = strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return ' '
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, value)
+	value = strings.Join(strings.Fields(value), " ")
+	return strings.TrimFunc(value, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune("|｜:：·•・/\\,，;；", r)
+	})
 }
 
 // dingtalkMessageBody is the stored (and prompted) form of one inbound

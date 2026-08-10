@@ -484,18 +484,24 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			bindingServiceConfig.DBaseBindingURLProvider = opts.RuntimeConfig.dbaseBindingPageURL
 		}
 		bindingService, serviceErr := agentmessagerouter.NewService(queries, routerClient, bindingServiceConfig)
-		if originErr != nil || routerClientErr != nil || endpointErr != nil || serviceErr != nil ||
-			!dBaseBindingURLMatchesOrigin(dbaseBindingURL, dbaseOrigin) {
-			slog.Error("dingtalk account binding disabled due to invalid configuration",
-				"origin_error", originErr,
+		if routerClientErr != nil || endpointErr != nil || serviceErr != nil {
+			slog.Error("digital employee binding disabled due to invalid core configuration",
 				"router_error", routerClientErr,
 				"endpoint_error", endpointErr,
 				"service_error", serviceErr,
 			)
 		} else {
-			h.DingTalkAccountBindings = bindingService
-			h.DingTalkAccountBindingOrigin = dbaseOrigin
-			slog.Info("dingtalk account binding enabled")
+			h.DigitalEmployeeBindingMCPBindings = bindingService
+			slog.Info("digital employee MCP binding enabled")
+			if originErr != nil || !dBaseBindingURLMatchesOrigin(dbaseBindingURL, dbaseOrigin) {
+				slog.Error("dingtalk browser account binding disabled due to invalid DBase configuration",
+					"origin_error", originErr,
+				)
+			} else {
+				h.DingTalkAccountBindings = bindingService
+				h.DingTalkAccountBindingOrigin = dbaseOrigin
+				slog.Info("dingtalk browser account binding enabled")
+			}
 		}
 	}
 	if agentBaseURL := strings.TrimSpace(os.Getenv("DINGTALK_AGENT_BASE_URL")); agentBaseURL != "" {
@@ -1532,6 +1538,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// because they are JSON-API consumers that always have
 		// workspace context.
 		r.Get("/api/attachments/{id}/download", h.DownloadAttachment)
+
+		// Server-hosted MCP is auth-scoped rather than request-workspace-scoped.
+		// Task Tokens carry an authoritative workspace. PAT calls derive it from
+		// session_id or agent_id, then enforce membership and Agent permissions in
+		// the handler, so generic MCP clients need no custom workspace header.
+		r.Handle("/api/mcp", http.HandlerFunc(h.MulticaMCP))
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)

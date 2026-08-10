@@ -22,6 +22,10 @@ const (
 	// WorkspaceAccessTokens gates issuance and use of workspace-bound DTA
 	// credentials during the additive-schema / rolling-server rollout.
 	WorkspaceAccessTokens = "workspace_access_tokens"
+	// MulticaMCPChatSend gates discovery and execution on the server-hosted MCP
+	// endpoint that lets one running Chat task continue another existing Chat.
+	// Task claim never installs this MCP into a Runtime or Agent configuration.
+	MulticaMCPChatSend = "multica_mcp_chat_send"
 	// agentSkillTogglesCompat is no longer a release flag. Keep publishing the
 	// key as enabled so installed v0.4.0 desktop clients, which still gate the
 	// switch on this config decision, receive the permanently enabled behavior.
@@ -49,6 +53,10 @@ func ResourceLabelsEnabled(ctx context.Context, flags *featureflag.Service) bool
 
 func WorkspaceAccessTokensEnabled(ctx context.Context, flags *featureflag.Service) bool {
 	return flags.IsEnabled(ctx, WorkspaceAccessTokens, false)
+}
+
+func MulticaMCPChatSendEnabled(ctx context.Context, flags *featureflag.Service) bool {
+	return flags.IsEnabled(ctx, MulticaMCPChatSend, false)
 }
 
 func EvaluateFrontendPublicFlags(ctx context.Context, flags *featureflag.Service) map[string]bool {

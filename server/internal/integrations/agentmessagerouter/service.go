@@ -390,9 +390,12 @@ func NewService(store Store, router Router, config ServiceConfig) (*Service, err
 	if config.DBaseBindingURLProvider != nil {
 		dbaseBindingURLValue = config.DBaseBindingURLProvider()
 	}
-	dbaseBindingURL, err := parseDBaseBindingURL(dbaseBindingURLValue)
-	if err != nil {
-		return nil, fmt.Errorf("%w: invalid DBase binding URL", ErrNotConfigured)
+	var dbaseBindingURL *url.URL
+	if strings.TrimSpace(dbaseBindingURLValue) != "" {
+		dbaseBindingURL, err = parseDBaseBindingURL(dbaseBindingURLValue)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid DBase binding URL", ErrNotConfigured)
+		}
 	}
 	callbackTTL := config.CallbackTTL
 	if callbackTTL <= 0 {
@@ -446,7 +449,11 @@ func (s *Service) currentDBaseBindingURL() (*url.URL, error) {
 		}
 		return s.dbaseBindingURL, nil
 	}
-	dbaseBindingURL, err := parseDBaseBindingURL(s.dbaseBindingURLProvider())
+	raw := s.dbaseBindingURLProvider()
+	if strings.TrimSpace(raw) == "" {
+		return nil, ErrNotConfigured
+	}
+	dbaseBindingURL, err := parseDBaseBindingURL(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid DBase binding URL", ErrNotConfigured)
 	}
@@ -1133,37 +1140,42 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding Publ
 	if err != nil {
 		return PublicDingTalkAccountBinding{}, fmt.Errorf("%w: stored binding config", ErrInvalidResult)
 	}
-	if row.Status == "active" {
-		if !completeDigitalEmployeeAccountKey(config) {
-			identity, resolveErr := s.resolveLegacyDingTalkAccountKey(ctx, row, config)
-			if resolveErr != nil {
-				return PublicDingTalkAccountBinding{}, resolveErr
-			}
-			updated, updateErr := s.store.BackfillDingTalkAccountRouterAccountKey(ctx, db.BackfillDingTalkAccountRouterAccountKeyParams{
-				RouterPlatform: identity.Platform,
-				RouterTenantID: identity.TenantID,
-				RouterAccountID: identity.AccountID,
-				ID: row.ID, WorkspaceID: row.WorkspaceID, AgentID: row.AgentID,
-				ExpectedStatus: row.Status, ExpectedRouterSourceID: config.RouterSourceID,
-				ExpectedConfig: append([]byte(nil), row.Config...),
-			})
-			if updateErr != nil {
-				if errors.Is(updateErr, pgx.ErrNoRows) {
-					return PublicDingTalkAccountBinding{}, ErrBindingConflict
-				}
-				return PublicDingTalkAccountBinding{}, fmt.Errorf("backfill dingtalk account binding key: %w", updateErr)
-			}
-			updatedConfig, parseUpdatedErr := ParseDingTalkAccountConfig(updated.Config)
-			if parseUpdatedErr != nil || updated.ID != row.ID || updated.WorkspaceID != row.WorkspaceID ||
-				updated.AgentID != row.AgentID || updated.Status != row.Status ||
-				updatedConfig.RouterSourceID != config.RouterSourceID || !completeDigitalEmployeeAccountKey(updatedConfig) ||
-				updatedConfig.RouterPlatform != identity.Platform || updatedConfig.RouterTenantID != identity.TenantID ||
-				updatedConfig.RouterAccountID != identity.AccountID {
+	if row.Status == "active" && !completeDigitalEmployeeAccountKey(config) {
+		identity, resolveErr := s.resolveLegacyDingTalkAccountKey(ctx, row, config)
+		if resolveErr != nil {
+			return PublicDingTalkAccountBinding{}, resolveErr
+		}
+		updated, updateErr := s.store.BackfillDingTalkAccountRouterAccountKey(ctx, db.BackfillDingTalkAccountRouterAccountKeyParams{
+			RouterPlatform: identity.Platform,
+			RouterTenantID: identity.TenantID,
+			RouterAccountID: identity.AccountID,
+			ID: row.ID, WorkspaceID: row.WorkspaceID, AgentID: row.AgentID,
+			ExpectedStatus: row.Status, ExpectedRouterSourceID: config.RouterSourceID,
+			ExpectedConfig: append([]byte(nil), row.Config...),
+		})
+		if updateErr != nil {
+			if errors.Is(updateErr, pgx.ErrNoRows) {
 				return PublicDingTalkAccountBinding{}, ErrBindingConflict
 			}
-			row = updated
-			config = updatedConfig
+			return PublicDingTalkAccountBinding{}, fmt.Errorf("backfill dingtalk account binding key: %w", updateErr)
 		}
+		updatedConfig, parseUpdatedErr := ParseDingTalkAccountConfig(updated.Config)
+		if parseUpdatedErr != nil || updated.ID != row.ID || updated.WorkspaceID != row.WorkspaceID ||
+			updated.AgentID != row.AgentID || updated.Status != row.Status ||
+			updatedConfig.RouterSourceID != config.RouterSourceID || !completeDigitalEmployeeAccountKey(updatedConfig) ||
+			updatedConfig.RouterPlatform != identity.Platform || updatedConfig.RouterTenantID != identity.TenantID ||
+			updatedConfig.RouterAccountID != identity.AccountID {
+			return PublicDingTalkAccountBinding{}, ErrBindingConflict
+		}
+		row = updated
+		config = updatedConfig
+	}
+	// A direct MCP bind persists the exact account key before calling Router.
+	// If Router succeeds but the response or local activation is interrupted,
+	// the projection can remain pending while the upstream ownership is live.
+	// Conditional account-level unbind is safe for that state and must run
+	// before local cleanup just as it does for an active projection.
+	if completeDigitalEmployeeAccountKey(config) {
 		bindingKey := DigitalEmployeeBindingKey{
 			AgentID:   util.UUIDToString(row.AgentID),
 			Platform:  config.RouterPlatform,

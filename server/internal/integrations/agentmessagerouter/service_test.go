@@ -49,6 +49,41 @@ type fakeBindingStore struct {
 	operations          *[]string
 }
 
+func TestNewServiceAllowsDirectBindingWithoutDBasePage(t *testing.T) {
+	now := time.Date(2026, 8, 7, 8, 0, 0, 0, time.UTC)
+	store := &fakeBindingStore{}
+	keyring, err := ParseDispatchKeyring("v1:ERERERERERERERERERERERERERERERERERERERERERE", "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(store, &fakeBindingRouter{}, ServiceConfig{
+		PublicBaseURL: "https://multica.example",
+		Keyring:       keyring,
+		Random:        rand.Reader,
+		Now:           func() time.Time { return now },
+		IdentityStore: store,
+		Endpoints:     newBindingEndpointServiceForTest(t, store, keyring),
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	_, beginErr := service.Begin(context.Background(), BeginParams{
+		Agent: BeginAgent{
+			ID:   uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+			Name: "Agent B",
+			Workspace: BeginWorkspace{
+				ID:   uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+				Name: "Workspace A",
+			},
+		},
+		InitiatorID: uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+		BindingMode: BindingModeMessage,
+	})
+	if !errors.Is(beginErr, ErrNotConfigured) {
+		t.Fatalf("Begin() error = %v, want ErrNotConfigured", beginErr)
+	}
+}
+
 func (f *fakeBindingStore) UpdateDingTalkAccountBindingSurface(_ context.Context, arg db.UpdateDingTalkAccountBindingSurfaceParams) (db.ChannelInstallation, error) {
 	if f.updateSurfaceErr != nil {
 		return db.ChannelInstallation{}, f.updateSurfaceErr

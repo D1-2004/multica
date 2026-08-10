@@ -91,6 +91,15 @@ Token 类型的详细区分见 [认证与令牌](/auth-tokens)。
 | `multica skill files ...` | 嵌套：管理 Skill 的文件 |
 | `multica dingtalk install begin/status` | 发起或查看钉钉机器人安装会话 |
 
+## 服务端 MCP 工具
+
+| 命令 | 用途 |
+|---|---|
+| `multica mcp tools --output json` | 动态获取服务端当前发布的 MCP 工具、说明和参数 schema |
+| `multica mcp call --method <name> --arguments '<json>' --output json` | 按服务端工具名通用调用，不在 CLI 中内置具体方法 |
+
+沙箱无法访问公网 MCP endpoint 时，可以复用 daemon 注入的 `MULTICA_SERVER_URL` 和 task token 调用这两个命令。服务端新增工具后，先重新执行 `mcp tools` 发现即可，不需要重新构建沙箱镜像；`mcp tools` 会自动拉取并合并全部分页。每条命令采用 one-shot 模式，只发送对应的 `tools/list` 或 `tools/call`，协议适配不会暴露给调用方。无参数工具可以省略 `--arguments`；复杂参数使用 `--arguments-stdin` 或 `--arguments-file`。
+
 ### Skill 导入冲突
 
 `multica skill import --url <url>` 默认等同于 `--on-conflict fail`。如果工作区里已经有同名 Skill，命令会返回结构化 `conflict` 结果并退出，不会修改工作区。
