@@ -489,6 +489,7 @@ func writeAttachments(b *strings.Builder) {
 	b.WriteString("## Attachments\n\n")
 	b.WriteString("Issues and comments may include file attachments (images, documents, etc.).\n")
 	b.WriteString("When a task includes attachment IDs and you need the files, inspect `multica attachment --help` and use the authenticated CLI path. Do not open Multica resource URLs directly.\n\n")
+	b.WriteString("When you produce a deliverable file, run `multica attachment upload <local-path>` before finishing. In a chat task it is bound to your reply; in an Issue task it is bound to the current Issue and remains available after the runtime workspace is gone.\n\n")
 }
 
 // writeAlwaysUseCLI emits the "must go through the multica CLI" guardrail

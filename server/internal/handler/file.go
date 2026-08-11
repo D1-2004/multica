@@ -436,12 +436,14 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			}
 			params.ChatSessionID = session.ID
 		}
-		// task_id upload: an agent producing an image/file for its chat reply.
-		// The row is tagged with the producing task and its chat session so
-		// CompleteTask can bind it to the assistant message it synthesizes.
+		// task_id upload: an agent producing a durable task artifact. Chat task
+		// files are transiently tagged with the task/session and bound to the
+		// assistant message on completion. Issue task files are bound directly
+		// to that task's Issue so external integrations can retrieve them after
+		// the sandbox or local worktree disappears.
 		// Gate: the request must come from a task-scoped token, the form task_id
 		// must equal that token's task, the caller must be that task's agent,
-		// and it must be a chat task (has a chat_session_id).
+		// and it must belong to either a chat session or an Issue.
 		if taskID := r.FormValue("task_id"); taskID != "" {
 			// Authoritative task-token boundary (load-bearing, mirrors
 			// chat_history.go:chatHistorySession). X-Task-ID is only trustworthy
@@ -483,14 +485,26 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "task_id upload requires the task's own agent")
 				return
 			}
-			if !task.ChatSessionID.Valid {
-				writeError(w, http.StatusBadRequest, "task_id upload requires a chat task")
+			params.TaskID = task.ID
+			switch {
+			case task.ChatSessionID.Valid:
+				// Bind the session too so reads (groupChatMessageAttachments) and
+				// GC classify the row consistently before it gains a message id.
+				params.ChatSessionID = task.ChatSessionID
+			case task.IssueID.Valid:
+				if params.CommentID.Valid {
+					writeError(w, http.StatusBadRequest, "issue task artifacts cannot target a comment")
+					return
+				}
+				if params.IssueID.Valid && uuidToString(params.IssueID) != uuidToString(task.IssueID) {
+					writeError(w, http.StatusForbidden, "issue_id must match the task's Issue")
+					return
+				}
+				params.IssueID = task.IssueID
+			default:
+				writeError(w, http.StatusBadRequest, "task_id upload requires a chat or Issue task")
 				return
 			}
-			params.TaskID = task.ID
-			// Bind the session too so reads (groupChatMessageAttachments) and
-			// GC classify the row consistently before it gains a message id.
-			params.ChatSessionID = task.ChatSessionID
 		}
 
 		link, err := h.Storage.Upload(r.Context(), key, data, contentType, header.Filename)

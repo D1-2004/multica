@@ -5,12 +5,15 @@ import "context"
 // Principal identifies the authenticated external caller and its target endpoint.
 // IDs are opaque to the protocol layer and are intentionally carried as strings.
 type Principal struct {
-	WorkspaceID     string
-	AgentID         string
-	EndpointID      string
-	PublicAgentID   string
-	ClientID        string
-	CredentialID    string
+	WorkspaceID   string
+	AgentID       string
+	EndpointID    string
+	PublicAgentID string
+	ClientID      string
+	CredentialID  string
+	// OwnerID is the current Agent owner/delegator. Protocol adapters only set
+	// it from the credential admission row; callers can never supply it.
+	OwnerID         string
 	Scopes          []string
 	EndpointEnabled bool
 	// AllowDisabledEndpoint is set only by the authenticated MCP adapter. It

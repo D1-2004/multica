@@ -243,8 +243,8 @@ func TestRunAttachmentUploadRequiresTask(t *testing.T) {
 	}
 
 	cmd := newAttachmentUploadTestCmd() // no --task, no MULTICA_TASK_ID
-	if err := runAttachmentUpload(cmd, []string{imgPath}); err == nil || !strings.Contains(err.Error(), "no chat task in context") {
-		t.Fatalf("runAttachmentUpload error = %v, want no-chat-task error", err)
+	if err := runAttachmentUpload(cmd, []string{imgPath}); err == nil || !strings.Contains(err.Error(), "no task in context") {
+		t.Fatalf("runAttachmentUpload error = %v, want no-task error", err)
 	}
 }
 

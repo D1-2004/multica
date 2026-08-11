@@ -167,6 +167,7 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 		PublicAgentID:   credential.PublicAgentID,
 		ClientID:        uuidToString(credential.ClientID),
 		CredentialID:    uuidToString(credential.CredentialID),
+		OwnerID:         uuidToString(credential.DelegatedByUserID),
 		Scopes:          credential.ClientScopes,
 		EndpointEnabled: credential.EndpointEnabled,
 	})

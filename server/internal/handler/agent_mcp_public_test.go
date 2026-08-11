@@ -30,11 +30,63 @@ func TestAgentMCPRejectsMissingCredentialBeforeDatabaseAccess(t *testing.T) {
 
 func TestAgentMCPPublishesOnlyDelegationTools(t *testing.T) {
 	tools := agentMCPToolDefinitions()
-	if len(tools) != 2 {
-		t.Fatalf("tool count = %d, want 2", len(tools))
+	if len(tools) != 7 {
+		t.Fatalf("tool count = %d, want 7", len(tools))
 	}
-	if tools[0]["name"] != agentMCPDelegateTool || tools[1]["name"] != agentMCPGetTaskTool {
-		t.Fatalf("unexpected tools: %#v", tools)
+	want := []string{
+		agentMCPDelegateTool,
+		agentMCPGetTaskTool,
+		agentMCPGetIssueTool,
+		agentMCPContinueIssueTool,
+		agentMCPListArtifactsTool,
+		agentMCPReadArtifactTool,
+		agentMCPDescribeAgentTool,
+	}
+	for index, name := range want {
+		if tools[index]["name"] != name {
+			t.Fatalf("tool[%d] = %#v, want %q", index, tools[index], name)
+		}
+	}
+}
+
+func TestAgentMCPDelegateDefaultsToIssueAndMirrorsNativeIssueFields(t *testing.T) {
+	args := agentMCPIssueDelegateArguments{Instruction: " Build the report ", Priority: "high"}
+	if err := validateAgentMCPIssueArguments(&args); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if args.Mode != "issue" {
+		t.Fatalf("mode = %q, want issue", args.Mode)
+	}
+	if args.Instruction != "Build the report" {
+		t.Fatalf("instruction = %q", args.Instruction)
+	}
+	delegateSchema := agentMCPToolDefinitions()[0]["inputSchema"].(map[string]any)
+	properties := delegateSchema["properties"].(map[string]any)
+	for _, field := range []string{"title", "priority", "project_id", "parent_issue_id", "stage", "start_date", "due_date", "attachment_ids", "allow_duplicate"} {
+		if _, ok := properties[field]; !ok {
+			t.Errorf("delegate_task schema missing native Issue field %q", field)
+		}
+	}
+}
+
+func TestAgentMCPIssueTitleFallsBackToFirstInstructionLine(t *testing.T) {
+	if got := deriveAgentMCPIssueTitle("", "  First line\nsecond line  "); got != "First line" {
+		t.Fatalf("title = %q", got)
+	}
+}
+
+func TestAgentMCPResourceContentSerializesAsEmbeddedResource(t *testing.T) {
+	payload, err := json.Marshal(multicaMCPContent{
+		Type: "resource",
+		Resource: &agentMCPEmbeddedResource{
+			URI: "multica://artifacts/a1", MIMEType: "text/plain", Text: "hello",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(payload), `"text":""`) || !strings.Contains(string(payload), `"resource"`) {
+		t.Fatalf("unexpected resource payload: %s", payload)
 	}
 }
 

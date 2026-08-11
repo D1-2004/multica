@@ -33,15 +33,14 @@ var attachmentDownloadCmd = &cobra.Command{
 
 var attachmentUploadCmd = &cobra.Command{
 	Use:   "upload <path>",
-	Short: "Upload a file to attach to your chat reply",
-	Long: `Upload a local file so it is attached to the reply of the current chat task.
+	Short: "Upload a file as an artifact of the current task",
+	Long: `Upload a local file as a durable artifact of the current task.
 
-Intended for agents running inside a chat task: the file is tagged with the
-task and, when the task completes, the server binds it to the assistant reply
-it produces — it appears as an attachment card below your reply even if you
-paste nothing. The command also returns a markdown snippet you may paste on its
-own line to place the item: files use !file[name](url) (a card), images use
-![name](url) (inline).
+For a chat task, the server binds the file to the assistant reply when the task
+completes. For an Issue task, the file is attached directly to that Issue so it
+remains available after the runtime workspace disappears. The command also
+returns a markdown snippet you may paste into a chat or Issue comment: files
+use !file[name](url) (a card), images use ![name](url) (inline).
 
 The task id is read from MULTICA_TASK_ID (set by the daemon inside a task);
 override it with --task when needed.`,
@@ -56,7 +55,7 @@ func init() {
 	attachmentCmd.AddCommand(attachmentUploadCmd)
 
 	attachmentDownloadCmd.Flags().StringP("output-dir", "o", ".", "Directory to save the downloaded file")
-	attachmentUploadCmd.Flags().String("task", "", "Chat task id to attach to (defaults to MULTICA_TASK_ID)")
+	attachmentUploadCmd.Flags().String("task", "", "Task id to attach to (defaults to MULTICA_TASK_ID)")
 }
 
 func runAttachmentUpload(cmd *cobra.Command, args []string) error {
@@ -70,7 +69,7 @@ func runAttachmentUpload(cmd *cobra.Command, args []string) error {
 		taskID = client.TaskID
 	}
 	if taskID == "" {
-		return fmt.Errorf("no chat task in context: run inside a chat task (MULTICA_TASK_ID set) or pass --task <id>")
+		return fmt.Errorf("no task in context: run inside an Agent task (MULTICA_TASK_ID set) or pass --task <id>")
 	}
 
 	path := args[0]
@@ -85,7 +84,7 @@ func runAttachmentUpload(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cli.AtLeastAPITimeout(60*time.Second))
 	defer cancel()
 
-	att, err := client.UploadChatAttachment(ctx, data, path, taskID)
+	att, err := client.UploadTaskAttachment(ctx, data, path, taskID)
 	if err != nil {
 		return fmt.Errorf("upload attachment: %w", err)
 	}

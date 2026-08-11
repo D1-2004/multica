@@ -486,11 +486,10 @@ func (c *APIClient) UploadFile(ctx context.Context, fileData []byte, filename st
 	return id, nil
 }
 
-// UploadChatAttachment uploads a file via multipart form to /api/upload-file
-// tagged with a chat task (task_id). The server binds the row to the assistant
-// reply that task produces on completion. Returns the full AttachmentResponse
-// (id + markdown_url) so the agent can embed the image inline in its reply.
-func (c *APIClient) UploadChatAttachment(ctx context.Context, fileData []byte, filename, taskID string) (AttachmentResponse, error) {
+// UploadTaskAttachment uploads a file via multipart form to /api/upload-file
+// tagged with a task_id. The server binds chat artifacts to the assistant
+// reply and Issue-task artifacts directly to the current Issue.
+func (c *APIClient) UploadTaskAttachment(ctx context.Context, fileData []byte, filename, taskID string) (AttachmentResponse, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
