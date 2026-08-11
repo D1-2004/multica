@@ -654,17 +654,80 @@ func TestASBRunnerCommandUsesExecdUserCore(t *testing.T) {
 	}
 }
 
+func TestValidateASBManifestVersionContract(t *testing.T) {
+	t.Parallel()
+
+	manifest := func(version int, capabilities ...string) map[string]any {
+		return map[string]any{
+			"schema_version":   version,
+			"sandbox_backends": []string{"aliyun_fc", "asb"},
+			"providers":        []string{"hermes", "opencode", "pi"},
+			"capabilities_by_backend": map[string][]string{
+				"asb": append([]string{"dws", "mcp", "a1", "mw", "buc"}, capabilities...),
+			},
+			"identity_modes_by_backend": map[string][]string{
+				"asb": {"agent_identity", "spiffe", "buc_wireguard"},
+			},
+			"runner_protocol": string(fcE2BRunnerLaunchRootLog),
+		}
+	}
+
+	tests := []struct {
+		name           string
+		manifest       map[string]any
+		wantRuntimeErr bool
+		wantReleaseErr bool
+	}{
+		{
+			name:           "existing schema v3 runtime",
+			manifest:       manifest(3, RuntimeStartCapabilityEventsV1),
+			wantReleaseErr: true,
+		},
+		{
+			name:     "current schema v4 release",
+			manifest: manifest(4, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+		},
+		{
+			name:           "schema v4 release missing trace capability",
+			manifest:       manifest(4, RuntimeStartCapabilityEventsV1),
+			wantReleaseErr: true,
+		},
+		{
+			name:           "unsupported schema v2",
+			manifest:       manifest(2, RuntimeStartCapabilityEventsV1),
+			wantRuntimeErr: true,
+			wantReleaseErr: true,
+		},
+		{
+			name:           "unsupported schema v5",
+			manifest:       manifest(5, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+			wantRuntimeErr: true,
+			wantReleaseErr: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if gotErr := validateASBRuntimeManifest(test.manifest) != nil; gotErr != test.wantRuntimeErr {
+				t.Fatalf("validateASBRuntimeManifest() error = %v, want error %v", gotErr, test.wantRuntimeErr)
+			}
+			if gotErr := validateASBReleaseManifest(test.manifest) != nil; gotErr != test.wantReleaseErr {
+				t.Fatalf("validateASBReleaseManifest() error = %v, want error %v", gotErr, test.wantReleaseErr)
+			}
+		})
+	}
+}
+
 func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	t.Parallel()
 
 	const runtimeAPIKey = "runtime-owned-validation-key"
 	digest := "sha256:" + strings.Repeat("a", 64)
 	manifest := map[string]any{
-		"schema_version":   3,
+		"schema_version":   4,
 		"sandbox_backends": []string{"aliyun_fc", "asb"},
 		"providers":        []string{"hermes", "opencode", "pi"},
 		"capabilities_by_backend": map[string][]string{
-			"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1},
+			"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, LLMTraceCapability},
 		},
 		"identity_modes_by_backend": map[string][]string{
 			"asb": {"agent_identity", "spiffe", "buc_wireguard"},
@@ -778,7 +841,7 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	if capacity.createRequests != 1 {
 		t.Fatalf("capacity create requests = %d, want 1", capacity.createRequests)
 	}
-	if intMetadataValue(got, "schema_version") != 3 {
+	if intMetadataValue(got, "schema_version") != 4 {
 		t.Fatalf("manifest = %#v", got)
 	}
 }

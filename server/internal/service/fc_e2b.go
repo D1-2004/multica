@@ -2017,7 +2017,9 @@ func (l *FCE2BLauncher) resolveIdentityForTask(
 	agentRow db.Agent,
 ) (fcE2BResolvedIdentity, error) {
 	taskID := util.UUIDToString(task.ID)
-	hasDWSCapability := FCE2BRuntimeHasCapability(runtime, "dws")
+	// This resolver is shared by both Aliyun FC and ASB launchers. Capability
+	// detection must therefore use the common cloud-sandbox metadata model.
+	hasDWSCapability := CloudSandboxRuntimeHasCapability(runtime, "dws")
 	githubConnection, hasGithubConnection := l.githubConnectionForAgent(ctx, task, runtime, agentRow)
 
 	stableDWS := fcE2BDWSIdentity{}

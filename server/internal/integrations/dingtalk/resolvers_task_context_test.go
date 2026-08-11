@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
@@ -51,17 +50,6 @@ type robotEmployeeResolverStub struct {
 	staffID  string
 }
 
-type robotIdentityContextCreatorStub struct {
-	result   agentidentityhsf.CreateContextResult
-	err      error
-	requests []agentidentityhsf.CreateContextRequest
-}
-
-func (s *robotIdentityContextCreatorStub) CreateContext(_ context.Context, request agentidentityhsf.CreateContextRequest) (agentidentityhsf.CreateContextResult, error) {
-	s.requests = append(s.requests, request)
-	return s.result, s.err
-}
-
 func (s *robotEmployeeResolverStub) ResolveEmployeeByCorpID(_ context.Context, corpID, staffID string) (orgemphsf.Employee, error) {
 	s.corpID = corpID
 	s.staffID = staffID
@@ -75,12 +63,6 @@ func newRobotTaskContextResolver(employee *robotEmployeeResolverStub) *robotTask
 			runtime: db.AgentRuntime{RuntimeMode: "cloud", Metadata: []byte(testASBDWSRuntimeMetadata)},
 		},
 		employees: employee,
-		identityContexts: &robotIdentityContextCreatorStub{
-			result: agentidentityhsf.CreateContextResult{
-				ContextToken: "stream-context-token",
-				ExpiresAt:    4102444800000,
-			},
-		},
 	}
 }
 
@@ -134,15 +116,15 @@ func TestRobotTaskContextResolverCarriesStreamSessionReplyLocator(t *testing.T) 
 	}
 }
 
-func TestNewDingTalkResolverSetWiresIdentityContextCreator(t *testing.T) {
-	identityContexts := &robotIdentityContextCreatorStub{}
-	set := NewDingTalkResolverSet(nil, nil, nil, nil, nil, nil, identityContexts, nil, nil, nil)
+func TestNewDingTalkResolverSetWiresEmployeeResolver(t *testing.T) {
+	employees := &robotEmployeeResolverStub{}
+	set := NewDingTalkResolverSet(nil, nil, nil, nil, nil, employees, nil, nil, nil)
 	resolver, ok := set.TaskContext.(*robotTaskContextResolver)
 	if !ok {
 		t.Fatalf("TaskContext resolver = %T", set.TaskContext)
 	}
-	if resolver.identityContexts != identityContexts {
-		t.Fatal("DingTalk resolver set did not wire the identity context creator")
+	if resolver.employees != employees {
+		t.Fatal("DingTalk resolver set did not wire the employee resolver")
 	}
 }
 
@@ -318,7 +300,7 @@ func TestRobotTaskContextResolverRetriesIdentityInfrastructureError(t *testing.T
 	}
 }
 
-func TestRobotTaskContextResolverBuildsIdentityForOpaqueStaffID(t *testing.T) {
+func TestRobotTaskContextResolverBuildsDeferredIdentityForOpaqueStaffID(t *testing.T) {
 	employee := &robotEmployeeResolverStub{employee: orgemphsf.Employee{
 		UID:     "24710833",
 		OrgID:   "439446171",
@@ -341,38 +323,34 @@ func TestRobotTaskContextResolverBuildsIdentityForOpaqueStaffID(t *testing.T) {
 	if err := json.Unmarshal(contextJSON, &payload); err != nil {
 		t.Fatalf("decode task context: %v", err)
 	}
-	var token string
-	if err := json.Unmarshal(payload[protocol.AgentIdentityContextTokenJSONKey], &token); err != nil {
-		t.Fatalf("decode ContextToken: %v", err)
+	if _, present := payload[protocol.AgentIdentityContextTokenJSONKey]; present {
+		t.Fatalf("task context contains an eagerly issued ContextToken: %s", contextJSON)
 	}
-	if token != "stream-context-token" {
-		t.Fatalf("ContextToken = %q", token)
+	var externalIdentity dingtalkTaskExternalIdentity
+	if err := json.Unmarshal(payload["external_identity"], &externalIdentity); err != nil {
+		t.Fatalf("decode deferred external identity: %v", err)
+	}
+	if externalIdentity.DWS.UID != "24710833" || externalIdentity.DWS.OrgID != "439446171" {
+		t.Fatalf("deferred external identity = %#v", externalIdentity)
 	}
 	if _, present := payload[legacyDingTalkRobotIdentityJSONKey]; present {
 		t.Fatal("raw sender identity leaked into task context")
 	}
 }
 
-func TestRobotTaskContextResolverExchangesStreamSenderForContextToken(t *testing.T) {
+func TestRobotTaskContextResolverDefersStreamContextTokenUntilRuntimeLaunch(t *testing.T) {
 	employee := &robotEmployeeResolverStub{employee: orgemphsf.Employee{
 		UID:     "24710833",
 		OrgID:   "439446171",
 		StaffID: "Staff-A_106201",
 	}}
-	identityContexts := &robotIdentityContextCreatorStub{
-		result: agentidentityhsf.CreateContextResult{
-			ContextToken: "stream-context-token",
-			ExpiresAt:    1,
-		},
-	}
 	runtimeID := pgtype.UUID{Bytes: [16]byte{2}, Valid: true}
 	resolver := &robotTaskContextResolver{
 		q: &taskContextQueriesStub{
 			agent:   db.Agent{RuntimeID: runtimeID},
 			runtime: db.AgentRuntime{RuntimeMode: "cloud", Metadata: []byte(testASBDWSRuntimeMetadata)},
 		},
-		employees:        employee,
-		identityContexts: identityContexts,
+		employees: employee,
 	}
 	raw, err := json.Marshal(dingtalkRawEvent{
 		SenderCorpID:  "ding-corp",
@@ -401,33 +379,21 @@ func TestRobotTaskContextResolverExchangesStreamSenderForContextToken(t *testing
 	if err := json.Unmarshal(contextJSON, &payload); err != nil {
 		t.Fatal(err)
 	}
-	var token string
-	if err := json.Unmarshal(payload[protocol.AgentIdentityContextTokenJSONKey], &token); err != nil {
-		t.Fatalf("decode ContextToken: %v", err)
+	if _, present := payload[protocol.AgentIdentityContextTokenJSONKey]; present {
+		t.Fatalf("task context contains an eagerly issued ContextToken: %s", contextJSON)
 	}
-	if token != "stream-context-token" {
-		t.Fatalf("ContextToken = %q", token)
-	}
-	var expiresAt int64
-	if err := json.Unmarshal(payload[protocol.AgentIdentityContextTokenExpiresAtJSONKey], &expiresAt); err != nil {
-		t.Fatalf("decode ContextToken expiry: %v", err)
-	}
-	if expiresAt != 1 {
-		t.Fatalf("ContextToken expiry = %d", expiresAt)
+	if _, present := payload[protocol.AgentIdentityContextTokenExpiresAtJSONKey]; present {
+		t.Fatalf("task context contains an eager ContextToken expiry: %s", contextJSON)
 	}
 	if _, present := payload[protocol.AgentIdentityContextTokenSourceJSONKey]; present {
-		t.Fatal("task-context cache token was incorrectly marked as external")
+		t.Fatalf("task context contains an eager ContextToken source: %s", contextJSON)
 	}
-	if _, present := payload[legacyDingTalkRobotIdentityJSONKey]; present {
-		t.Fatal("resolved sender identity leaked past task preparation")
+	var externalIdentity dingtalkTaskExternalIdentity
+	if err := json.Unmarshal(payload["external_identity"], &externalIdentity); err != nil {
+		t.Fatalf("decode deferred external identity: %v", err)
 	}
-	if len(identityContexts.requests) != 1 {
-		t.Fatalf("Agent Identity requests = %d, want 1", len(identityContexts.requests))
-	}
-	request := identityContexts.requests[0]
-	if request.UID != "24710833" || request.OrgID != "439446171" || request.AgentID != "04000000-0000-0000-0000-000000000000" ||
-		request.RuntimeID != "02000000-0000-0000-0000-000000000000" || request.TTLSeconds != 900 {
-		t.Fatalf("Agent Identity request = %#v", request)
+	if externalIdentity.DWS.UID != "24710833" || externalIdentity.DWS.OrgID != "439446171" {
+		t.Fatalf("deferred external identity = %#v", externalIdentity)
 	}
 }
 
@@ -468,8 +434,11 @@ func TestRobotTaskContextResolverCarriesStreamSourceWithIdentity(t *testing.T) {
 	if source.Hostname != "dt-fde-multica033008056137.pre.na620" || source.NodeID != "node-a" || source.ConnectionID != "node-a-g3" {
 		t.Fatalf("Stream source = %+v", source)
 	}
-	if _, ok := payload[protocol.AgentIdentityContextTokenJSONKey]; !ok {
-		t.Fatal("ContextToken missing from combined task context")
+	if _, ok := payload["external_identity"]; !ok {
+		t.Fatal("deferred DWS identity missing from combined task context")
+	}
+	if _, ok := payload[protocol.AgentIdentityContextTokenJSONKey]; ok {
+		t.Fatal("combined task context contains an eagerly issued ContextToken")
 	}
 }
 
@@ -483,6 +452,7 @@ func assertNoTaskIdentityToken(t *testing.T, contextJSON []byte) {
 		protocol.AgentIdentityContextTokenJSONKey,
 		protocol.AgentIdentityContextTokenExpiresAtJSONKey,
 		protocol.AgentIdentityContextTokenSourceJSONKey,
+		"external_identity",
 		legacyDingTalkRobotIdentityJSONKey,
 		legacyDingTalkRobotIdentityUnavailableJSONKey,
 	} {

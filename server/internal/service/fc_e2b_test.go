@@ -1315,6 +1315,98 @@ func TestFCE2BIdentityEnvFailsClosedWithoutDWSBindingReader(t *testing.T) {
 	}
 }
 
+func asbDWSRuntimeForIdentityTest() db.AgentRuntime {
+	return db.AgentRuntime{
+		WorkspaceID: util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+		RuntimeMode: "cloud",
+		Metadata: []byte(`{
+			"kind":"cloud-sandbox",
+			"sandbox_backend":"asb",
+			"provider":"hermes",
+			"artifact_kind":"oci_image",
+			"artifact_ref":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"artifact_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"capabilities":["hermes","dws"]
+		}`),
+	}
+}
+
+func TestFCE2BIdentityEnvCreatesContextAtLaunchAfterLongQueue(t *testing.T) {
+	bindings := &fakeAgentIdentityBindingReader{err: pgx.ErrNoRows}
+	identityContexts := &fakeAgentIdentityContextCreator{
+		result: agentidentityhsf.CreateContextResult{
+			ContextToken: "just-in-time-context-token",
+			ExpiresAt:    time.Now().Add(15 * time.Minute).UnixMilli(),
+		},
+	}
+	launcher := &FCE2BLauncher{
+		Config: FCE2BConfig{
+			AgentIdentityBaseURL: "https://agent-identity.dingtalk.com",
+			AgentIdentityTimeout: 7 * time.Second,
+		},
+		IdentityBindings: bindings,
+		AgentIdentity:    identityContexts,
+	}
+	task := db.AgentTaskQueue{
+		ID:        util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID:   util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		CreatedAt: pgtype.Timestamptz{Time: time.Now().Add(-20 * time.Minute), Valid: true},
+		Context:   []byte(`{"external_identity":{"dws":{"uid":"24710833","orgId":"439446171"}}}`),
+	}
+	runtime := asbDWSRuntimeForIdentityTest()
+
+	env, err := launcher.identityEnvForTask(context.Background(), task, runtime, "sandbox-after-queue", db.Agent{})
+	if err != nil {
+		t.Fatalf("identityEnvForTask: %v", err)
+	}
+	if env[protocol.AgentIdentityContextTokenEnvKey] != "just-in-time-context-token" {
+		t.Fatalf("identity env = %#v", env)
+	}
+	if len(identityContexts.requests) != 1 {
+		t.Fatalf("Agent Identity requests = %d, want 1 at runtime launch", len(identityContexts.requests))
+	}
+	request := identityContexts.requests[0]
+	if request.RequestID != "multica-task-11111111-1111-1111-1111-111111111111" ||
+		request.TaskID != "11111111-1111-1111-1111-111111111111" ||
+		request.RuntimeID != "sandbox-after-queue" || request.UID != "24710833" ||
+		request.OrgID != "439446171" || request.Source["identity_source"] != "external_dws" ||
+		request.TTLSeconds != 900 {
+		t.Fatalf("Agent Identity request = %#v", request)
+	}
+}
+
+func TestFCE2BIdentityEnvKeepsPreparedTokenForASBDuringResolverRollout(t *testing.T) {
+	bindings := &fakeAgentIdentityBindingReader{err: pgx.ErrNoRows}
+	identityContexts := &fakeAgentIdentityContextCreator{}
+	launcher := &FCE2BLauncher{
+		Config: FCE2BConfig{
+			AgentIdentityBaseURL: "https://agent-identity.dingtalk.com",
+			AgentIdentityTimeout: 7 * time.Second,
+		},
+		IdentityBindings: bindings,
+		AgentIdentity:    identityContexts,
+	}
+	task := db.AgentTaskQueue{
+		ID:      util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID: util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		Context: []byte(`{
+			"agent_identity_context_token":"prepared-before-resolver-rollout",
+			"agent_identity_context_token_expires_at":4102444800000
+		}`),
+	}
+
+	env, err := launcher.identityEnvForTask(context.Background(), task, asbDWSRuntimeForIdentityTest(), "sandbox-rollout", db.Agent{})
+	if err != nil {
+		t.Fatalf("identityEnvForTask: %v", err)
+	}
+	if env[protocol.AgentIdentityContextTokenEnvKey] != "prepared-before-resolver-rollout" {
+		t.Fatalf("identity env = %#v", env)
+	}
+	if len(bindings.requests) != 1 || len(identityContexts.requests) != 0 {
+		t.Fatalf("binding/create requests = %d/%d", len(bindings.requests), len(identityContexts.requests))
+	}
+}
+
 func TestFCE2BIdentityEnvResolvesExternalDWSWithGithubBeforeLegacyToken(t *testing.T) {
 	bindings := &fakeAgentIdentityBindingReader{err: pgx.ErrNoRows}
 	identityContexts := &fakeAgentIdentityContextCreator{
