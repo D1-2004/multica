@@ -1,7 +1,7 @@
 # Agent 级 Inbound A2A 实施计划
 
 > 工作流：Plan
-> 状态：托管 FC OpenCode 全 runtime 版本兼容实现与预发验收中（后续协议里程碑待执行）
+> 状态：托管 FC OpenCode 全 runtime 版本兼容与目标 m2 预发验收已完成（后续协议里程碑待执行）
 > 创建日期：2026-08-09
 > 计划 ID：20260809-agent-a2a-inbound
 > 最后更新时间：2026-08-11 CST
@@ -9,7 +9,7 @@
 > 目标执行分支：`codex/agent-a2a-inbound`
 > 基线 Commit：`4d4394f09fdfdc1fa4ba6ac45dfae70138ed9d63`
 > Worktree：`/Users/yuanzhan/.codex/worktrees/9df9/dt-fde-multica`
-> 当前里程碑：让托管 Aliyun FC OpenCode Agent 的 A2A admission 与 runtime 模板/manifest/capability 版本解耦，使现有 m2 等旧云沙箱和后续版本使用同一 Card/RPC；通过 daemon 能力协商在原生 tokenless 隔离与旧执行器预发兼容模式之间选择，并对目标预发 Agent 完成真实黑盒 E2E
+> 当前里程碑：已让托管 Aliyun FC OpenCode Agent 的 A2A admission 与 runtime 模板/manifest/capability 版本解耦，使现有 m2 等旧云沙箱和后续版本使用同一 Card/RPC；已通过 daemon 能力协商在原生 tokenless 隔离与旧执行器预发兼容模式之间选择，并对目标预发 Agent 完成真实黑盒 E2E
 
 ## 一句话结论
 
@@ -432,7 +432,7 @@ Transport 前置错误如无/错 Bearer和 body 超限使用 HTTP 401/403/413；
 - [ ] 里程碑 6：增加协议 golden、官方 SDK client、PostgreSQL integration、TCK 与安全/限流/回归验证。
 - [x] 里程碑 7：运行本地 Claude Code Coding Agent 的可信固定任务黑盒 E2E，记录 workdir、响应和测试证据；不把该结果表述为不可信 prompt 的隔离验收。
 - [ ] 里程碑 8：按 schema-first、flag-off、全副本升级、内部 Agent canary、逐 Agent 开启的顺序发布；当前只执行短期 unsafe prerelease E2E，并在同一轮内验证关闭与凭证吊销回滚路径。
-- [ ] 里程碑 9：将 Aliyun FC OpenCode A2A admission 与模板/manifest/capability 版本解耦，部署 server/UI 到预发，直接使用授权目标 Agent 当前的 m2 云沙箱启用 endpoint，并以本地外部 Agent 完成 Card/401/Send/Get/Artifact 黑盒验收；最终吊销一次性测试 credential，但按用户要求保留 endpoint 与单独的本地调试 credential。
+- [x] 里程碑 9：将 Aliyun FC OpenCode A2A admission 与模板/manifest/capability 版本解耦，部署 server/UI 到预发，直接使用授权目标 Agent 当前的 m2 云沙箱启用 endpoint，并以本地外部 Agent 完成 Card/401/Send/Get/Artifact 黑盒验收；最终吊销一次性测试 credential，但按用户要求保留 endpoint 与单独的本地调试 credential。
 
 ## 验证策略
 
@@ -597,7 +597,7 @@ credential 写入权限 `0600` 文件或 stdin/env，不出现在命令参数、
 | 自动化验证 | 首切已完成 |  | Go A2A/daemon/auth/service/CLI 定向测试、Core/Views tests、`make build`、`git diff --check` | 相关测试与构建通过；Card/transport/auth/claim/env/local-daemon 能力已覆盖；List/Cancel/TCK/rate-limit 属于后续里程碑。更宽的既有 Handler/Service integration suite 仍受本地旧 fixture/schema/date 基线问题影响，不计作本切片通过 |
 | 本地 Coding Agent E2E | 已完成 |  | direct Card + JSON-RPC Send/Get、真实本地 Claude、DB readback、`npm test`、独立 Node oracle、proof JSON | 匿名 Card 成功，无 Bearer RPC 返回 401；Task 依次为 submitted/working/completed；Claude 实际执行 Write/Bash 并产出 1 个稳定 Text Artifact，包含 `A2A_E2E_COMPLETED`；独立 5-case oracle 和 Agent 生成的 5 tests 均通过 |
 | Aone 预发托管入口 E2E | 已完成 | `41cd46323` / release `4d4394f09` | 预发 Card + JSON-RPC Send/Get、本地隔离 profile/daemon/Claude、`npm test`、独立 Node oracle；删除 override 后再次部署 | run `3102808691` 构建/部署/集成测试成功并停在人工预发验证；Card 匿名 200、无 Bearer RPC 401，Task `tsk_sY3XgiP7MBE9thrbysi8SqH1OuBAmt49` 观察到 submitted/working/completed，Artifact 含 `A2A_E2E_COMPLETED`；一次性 credential/client/Agent/daemon/PAT/profile 已清理，3 个 env key 已删除且非目标项完整保留；最终 run `3102813830` 代码/配置合并、构建、扫描、预发部署与集成测试均成功并停在人工预发验证，flag-off Card/RPC 各 12 次请求均返回 404 |
-| 托管 OpenCode Agent A2A | 进行中 | 当前分支 | runtime-version-independent handler/SQL、m2 template metadata 兼容、native/legacy daemon claim 协商、tokenless runtime-start finalize 数据库集成测试；目标 m2 Agent 预发真实 Send/Get | 已删除 Aliyun FC OpenCode family 内 Card/Send/config 对 m5 capability 与模板版本的依赖，并兼容真实 stable m2 的 `template_id` 旧字段；m2 旧 daemon 使用不落库的哨兵并剥离可选私有输入，m5/新 daemon 保留 tokenless 隔离；handler 事务可基于 durable A2A origin 完成 attempt，launcher 不得提前确认；legacy 进程 credential 风险明确维持 prerelease unsafe；等待修复提交二次部署和目标 Agent 黑盒证据 |
+| 托管 OpenCode Agent A2A | 已完成预发里程碑 | `737135f14` / `15628608e` / `1080f941c` | fresh DB service/handler/daemon A2A 回归、build；run `3103012371`；目标 m2 Card/401/Send/Get/Artifact | 目标 Agent endpoint 已启用；Card/RPC URL 非空；公共 Task `tsk_VveEZX3_SfR0rREaCvC3AkR1uMIi87qI` completed，Artifact `art_4VOInTo_VXJSEn9yhC_Fv8hy3pbGqDIA` 含 `A2A_M2_E2E_COMPLETED`，Agent 报告 Node 项目测试 5/5；一次性 credential/client 已吊销且旧 token 返回 401；保留 `local-debug` credential 至 2026-08-18 12:05 CST |
 
 ## 首切结果与遗留项
 
@@ -610,5 +610,7 @@ credential 写入权限 `0600` 文件或 stdin/env，不出现在命令参数、
 预发 E2E 结束后，两组 A2A credential 均返回吊销 204，client 均为 revoked，endpoint 已关闭，Card 为 404；临时 Agent 已归档，daemon 已停止，1 天 PAT 已吊销且复用返回 401，CLI profile 已登出。Aone `env-vars` trait 从 48 项减为 45 项，仅删除 `FF_AGENT_A2A_INBOUND`、`MULTICA_A2A_ALLOW_UNSAFE_PRERELEASE_RUNTIME`、`MULTICA_A2A_UNSAFE_PRERELEASE_PUBLIC_URL`，无重复键且非目标项完全一致。一次预发数据库连接凭证曾在本地工具输出中暴露，必须由平台侧完成密码轮换，这不属于 A2A 代码验收。
 
 最终 flag-off run `3102813830` 的代码合并、配置合并、构建、制品扫描、预发部署和预发集成测试均为 SUCCESS，流水线仅停在人工“预发验证”，未触发生产发布。部署后再读 trait 仍为 45 项、三个目标键均不存在；对同一公共 Agent Card/RPC URL 分别连续请求 12 次，全部返回 404，证明两个预发实例都已恢复 feature flag off 与 runtime fail closed。
+
+2026-08-11 对用户授权目标 Agent `b7bb85af-99a2-4ce3-acdd-416b2dd6144d` 的 stable m2 云沙箱完成托管入口验收。第一次 run `3103005792` 暴露真实 m2 使用 `template_id/template` 而非 `artifact_kind/artifact_ref`；补齐严格旧形状归一化后，run `3103012371` 的代码/配置合并、构建、制品扫描、预发部署和集成测试全部 SUCCESS，并停在人工“预发验证”，未触发生产。endpoint 启用后公开 Card 为 `https://pre-fde-workbench.dingtalk.com/api/a2a/agents/71adca96-62a5-4149-815c-82e704b8ef77/.well-known/agent-card.json`，RPC 为 `https://pre-fde-workbench.dingtalk.com/api/a2a/agents/71adca96-62a5-4149-815c-82e704b8ef77/v1`；匿名 Card 200、无凭据 RPC 401。公共 Task `tsk_VveEZX3_SfR0rREaCvC3AkR1uMIi87qI` 通过本地 Node A2A client 发起并 completed，Artifact `art_4VOInTo_VXJSEn9yhC_Fv8hy3pbGqDIA` 返回 `A2A_M2_E2E_COMPLETED A2A_M2_E2E_20260811_1128`，并报告生成项目测试 5/5。一次性 client/credential 随后吊销，旧 token 再请求为 401，本地临时 secret 已删除。按用户要求 endpoint 保持开启，另保留 `local-debug` 的 `send/read` credential 至 2026-08-18 12:05 CST；配置位于 `/Users/yuanzhan/.multica/a2a-clients/pre-testing-b7bb85af/config.local.json`，token 位于同目录 `.secrets/a2a.token`，两者权限均为 `0600`。
 
 仍未完成的是 blocking Send、List、context follow-up、Cancel/retry 完整状态机、多副本/重启、rate limit、官方 TCK 和生产发布。尤其生产仍被宿主 OS/HOME、Claude settings/hooks/plugins/skills、provider credential 与工具 shell 文件权限未隔离所阻断；当前 hard deny 与 unsafe loopback gate 必须保留，不能把本次可信固定 prompt E2E 解读为恶意 prompt 安全验收。由于总 Plan 仍有后续里程碑，本文件暂不改名为 `*-done.md`。
