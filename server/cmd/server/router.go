@@ -950,7 +950,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					dingtalk.NewTypingNotifier(dtTyping),
 					dtAutoBinder,
 					orgemphsf.NewClient(),
-					agentidentityhsf.NewClient(),
 					service.NewExternalAttachmentService(queries, store, nil),
 					box.Open,
 					dtMessenger,

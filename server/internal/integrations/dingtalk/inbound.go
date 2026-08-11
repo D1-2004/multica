@@ -212,7 +212,8 @@ type dingtalkRawEvent struct {
 	SenderOrgID string `json:"sender_org_id,omitempty"`
 	// AgentIdentityContextToken is a short-lived opaque credential supplied by
 	// the authenticated Agent Message Router callback. Stream callbacks leave
-	// it empty and use the local sender resolution path instead.
+	// it empty: the resolver persists stable DWS coordinates and the cloud
+	// sandbox launcher issues a ContextToken immediately before task execution.
 	AgentIdentityContextToken          string          `json:"agent_identity_context_token,omitempty"`
 	AgentIdentityContextTokenExpiresAt int64           `json:"agent_identity_context_token_expires_at,omitempty"`
 	DispatchContext                    json.RawMessage `json:"dispatch_context,omitempty"`

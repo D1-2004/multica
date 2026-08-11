@@ -15,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
@@ -41,7 +40,7 @@ const originDingTalkChat = "dingtalk_chat"
 // notices; typing drives the "processing" emotion on ingested messages;
 // auto resolves unbound org members through the corp directory. Each is
 // optional — pass nil to disable.
-func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing engine.TypingNotifier, auto *AutoBinder, employees RobotEmployeeResolver, identityContexts RobotIdentityContextCreator, attachments *service.ExternalAttachmentService, decrypt Decrypter, messenger *RobotMessenger) engine.ResolverSet {
+func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing engine.TypingNotifier, auto *AutoBinder, employees RobotEmployeeResolver, attachments *service.ExternalAttachmentService, decrypt Decrypter, messenger *RobotMessenger) engine.ResolverSet {
 	chatSession := engine.NewChatSession(q, tx, TypeDingtalk, engine.SessionTitles{
 		Group:    "DingTalk group chat",
 		Direct:   "DingTalk direct message",
@@ -50,7 +49,7 @@ func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.O
 	return engine.ResolverSet{
 		Installation:           &installationResolver{q: q},
 		Identity:               &identityResolver{q: q, auto: auto},
-		TaskContext:            &robotTaskContextResolver{q: q, employees: employees, identityContexts: identityContexts},
+		TaskContext:            &robotTaskContextResolver{q: q, employees: employees},
 		Dedup:                  &deduper{q: q},
 		Session:                &sessionBinder{session: chatSession, attachments: &inboundAttachmentImporter{service: attachments, decrypt: decrypt, messenger: messenger}},
 		PendingFresh:           chatSession,
@@ -71,19 +70,14 @@ type RobotEmployeeResolver interface {
 	ResolveEmployeeByCorpID(ctx context.Context, corpID, staffID string) (orgemphsf.Employee, error)
 }
 
-type RobotIdentityContextCreator interface {
-	CreateContext(context.Context, agentidentityhsf.CreateContextRequest) (agentidentityhsf.CreateContextResult, error)
-}
-
 type robotTaskContextQueries interface {
 	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
 	GetAgentRuntime(ctx context.Context, id pgtype.UUID) (db.AgentRuntime, error)
 }
 
 type robotTaskContextResolver struct {
-	q                robotTaskContextQueries
-	employees        RobotEmployeeResolver
-	identityContexts RobotIdentityContextCreator
+	q         robotTaskContextQueries
+	employees RobotEmployeeResolver
 }
 
 const dingtalkSessionReplyContextKey = "dingtalk_session_reply"
@@ -97,6 +91,18 @@ const maxDingTalkInitiatorDisplayNameRunes = 128
 type dingtalkSessionReplyContext struct {
 	Webhook   string `json:"webhook"`
 	ExpiresAt int64  `json:"expires_at,omitempty"`
+}
+
+// dingtalkTaskExternalIdentity is stable task metadata, not an authorization
+// credential. The cloud sandbox launcher exchanges it for a short-lived
+// ContextToken only after task serialization and Runner probing have passed.
+type dingtalkTaskExternalIdentity struct {
+	DWS dingtalkTaskDWSIdentity `json:"dws"`
+}
+
+type dingtalkTaskDWSIdentity struct {
+	UID   string `json:"uid"`
+	OrgID string `json:"orgId"`
 }
 
 func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) ([]byte, error) {
@@ -251,40 +257,16 @@ func (r *robotTaskContextResolver) ResolveTaskContext(ctx context.Context, inst 
 		"org_id_hash", dingtalkTraceHash(employee.OrgID),
 		"latency_ms", time.Since(startedAt).Milliseconds(),
 	)
-	if r.identityContexts == nil {
-		return nil, errors.New("DingTalk Stream Agent Identity context creator is not configured")
-	}
-	messageKey := dingtalkTraceHash(msg.MessageID)
-	result, err := r.identityContexts.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
-		RequestID:   "multica-dingtalk-stream-" + util.UUIDToString(inst.ID) + "-" + messageKey,
-		TaskID:      "dingtalk-stream:" + util.UUIDToString(inst.ID) + ":" + messageKey,
-		AgentID:     util.UUIDToString(inst.AgentID),
-		RuntimeType: "E2B",
-		RuntimeID:   util.UUIDToString(agent.RuntimeID),
-		Reason:      "Multica DingTalk Stream DWS authorization",
-		Source: map[string]string{
-			"app":             "dt-fde-multica",
-			"identity_source": "dingtalk_stream_sender",
+	taskContext["external_identity"] = dingtalkTaskExternalIdentity{
+		DWS: dingtalkTaskDWSIdentity{
+			UID:   employee.UID,
+			OrgID: employee.OrgID,
 		},
-		UID:        employee.UID,
-		OrgID:      employee.OrgID,
-		TTLSeconds: 900,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create DingTalk Stream Agent Identity context: %w", err)
 	}
-	contextToken := strings.TrimSpace(result.ContextToken)
-	if contextToken == "" {
-		return nil, errors.New("DingTalk Stream Agent Identity returned an empty ContextToken")
-	}
-	log.Info("dingtalk robot DWS identity context prepared",
-		"event", "dingtalk_dws_identity_context_prepared",
-		"context_id_hash", dingtalkTraceHash(result.ContextID),
-		"expires_at", result.ExpiresAt,
+	log.Info("dingtalk robot DWS identity deferred until runtime launch",
+		"event", "dingtalk_dws_identity_deferred",
 		"latency_ms", time.Since(startedAt).Milliseconds(),
 	)
-	taskContext[protocol.AgentIdentityContextTokenJSONKey] = contextToken
-	taskContext[protocol.AgentIdentityContextTokenExpiresAtJSONKey] = result.ExpiresAt
 	return marshalDingTalkTaskContext(taskContext)
 }
 
