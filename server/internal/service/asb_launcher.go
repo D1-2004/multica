@@ -2184,7 +2184,8 @@ func validateASBArtifact(artifact ASBArtifact) error {
 }
 
 func validateASBRuntimeManifest(manifest map[string]any) error {
-	if intMetadataValue(manifest, "schema_version") != 3 ||
+	manifestVersion := intMetadataValue(manifest, "schema_version")
+	if (manifestVersion != 3 && manifestVersion != 4) ||
 		!containsAllStrings(stringSliceMetadataValue(manifest, "sandbox_backends"), "asb") ||
 		!containsAllStrings(stringSliceMetadataValue(manifest, "providers"), "hermes", "opencode", "pi") ||
 		!containsAllStrings(
@@ -2201,18 +2202,22 @@ func validateASBRuntimeManifest(manifest map[string]any) error {
 	return nil
 }
 
-// Existing ASB images remain valid runtime bindings during a rolling backend
-// deployment. Only a newly promoted release must advertise the additive
-// startup-events capability.
+// Existing schema-v3 ASB images remain valid runtime bindings during a rolling
+// backend deployment. A newly promoted release must use the current schema and
+// advertise both additive capabilities introduced by schemas v3 and v4.
 func validateASBReleaseManifest(manifest map[string]any) error {
 	if err := validateASBRuntimeManifest(manifest); err != nil {
 		return err
 	}
+	if intMetadataValue(manifest, "schema_version") != 4 {
+		return errors.New("ASB release manifest must use schema version 4")
+	}
 	if !containsAllStrings(
 		manifestStringSliceForBackend(manifest, "capabilities_by_backend", string(SandboxBackendASB)),
 		RuntimeStartCapabilityEventsV1,
+		LLMTraceCapability,
 	) {
-		return errors.New("ASB release manifest does not advertise runtime start events")
+		return errors.New("ASB release manifest does not advertise current runtime capabilities")
 	}
 	return nil
 }
