@@ -109,6 +109,7 @@ describe("Agent A2A management schemas", () => {
         card_skills: [skill],
         card_url: "https://example.test/api/a2a/agents/public-agent-1/.well-known/agent-card.json",
         rpc_url: "https://example.test/api/a2a/agents/public-agent-1/v1",
+        mcp_url: "https://example.test/api/mcp/agents/public-agent-1",
         protocol_version: "1.0",
       },
       agent_card: {
@@ -148,6 +149,7 @@ describe("Agent A2A management schemas", () => {
       cardName: "Coding Agent",
       cardUrl: "https://example.test/api/a2a/agents/public-agent-1/.well-known/agent-card.json",
       rpcUrl: "https://example.test/api/a2a/agents/public-agent-1/v1",
+      mcpUrl: "https://example.test/api/mcp/agents/public-agent-1",
       protocolVersion: "1.0",
     });
     expect(parsed.agentCard?.supportedInterfaces[0]?.protocolBinding)

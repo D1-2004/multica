@@ -191,6 +191,31 @@ func TestParseAgentA2ABearer(t *testing.T) {
 	}
 }
 
+func TestParseAgentAccessTokenSupportsSimpleHeadersAndCapabilityPath(t *testing.T) {
+	valid := "mca2a_0123456789abcdef0123456789abcdef01234567"
+
+	for _, configure := range []func(*http.Request){
+		func(request *http.Request) { request.Header.Set("Authorization", "Bearer "+valid) },
+		func(request *http.Request) { request.Header.Set("X-API-Key", valid) },
+	} {
+		request := httptest.NewRequest(http.MethodPost, "/api/mcp/agents/agent", nil)
+		configure(request)
+		if got, ok := parseAgentAccessToken(request, ""); !ok || got != valid {
+			t.Fatalf("header token = %q, %v; want %q, true", got, ok, valid)
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/mcp/connect/secret", nil)
+	if got, ok := parseAgentAccessToken(request, valid); !ok || got != valid {
+		t.Fatalf("path token = %q, %v; want %q, true", got, ok, valid)
+	}
+
+	request.Header.Set("X-API-Key", "mca2a_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if _, ok := parseAgentAccessToken(request, valid); ok {
+		t.Fatal("conflicting credentials were accepted")
+	}
+}
+
 func TestAgentA2ADetectsTrailingJSONValues(t *testing.T) {
 	valid := `{"jsonrpc":"2.0","id":"1","method":"SendMessage"}`
 	for _, body := range []string{valid + ` {}`, valid + ` null`, valid + ` trailing`} {

@@ -62,6 +62,7 @@ import { useT } from "../../../i18n";
 import {
   buildA2ACurlExample,
   buildA2ALocalDebugBundle,
+  buildCodingAgentMCPBundle,
   buildMulticaA2AExport,
   serializeJson,
 } from "./a2a-export";
@@ -84,6 +85,8 @@ interface SecretState {
   rpcUrl: string;
   agentCardUrl: string;
   protocolVersion: string;
+  mcpUrl: string;
+  publicAgentId: string;
 }
 
 function buildSecretDebugBundle(secret: SecretState | null) {
@@ -102,6 +105,19 @@ function buildSecretDebugBundle(secret: SecretState | null) {
     protocolVersion: secret.protocolVersion,
     preferredBinding: "JSONRPC",
   });
+}
+
+function buildSecretMCPBundle(secret: SecretState | null) {
+  if (!secret?.mcpUrl.trim() || !secret.publicAgentId.trim()) return null;
+  try {
+    return buildCodingAgentMCPBundle({
+      mcpUrl: secret.mcpUrl,
+      token: secret.token,
+      publicAgentId: secret.publicAgentId,
+    });
+  } catch {
+    return null;
+  }
 }
 
 function formatDate(value: string | null): string {
@@ -163,6 +179,7 @@ export function A2ATab({ agent }: { agent: Agent }) {
   const [credentialClient, setCredentialClient] =
     useState<AgentA2AClient | null>(null);
   const [credentialExpiryOption, setCredentialExpiryOption] = useState("90");
+  const [quickConnecting, setQuickConnecting] = useState(false);
   const [secret, setSecret] = useState<SecretState | null>(null);
   const [revokeClient, setRevokeClient] = useState<AgentA2AClient | null>(null);
   const [revokeCredential, setRevokeCredential] = useState<{
@@ -277,6 +294,8 @@ export function A2ATab({ agent }: { agent: Agent }) {
             rpcUrl: persistedEndpoint.rpcUrl,
             agentCardUrl: persistedEndpoint.cardUrl,
             protocolVersion: persistedEndpoint.protocolVersion,
+            mcpUrl: persistedEndpoint.mcpUrl ?? "",
+            publicAgentId: persistedEndpoint.publicAgentId,
           }),
       });
       setCredentialClient(null);
@@ -289,6 +308,47 @@ export function A2ATab({ agent }: { agent: Agent }) {
           ? error.message
           : t(($) => $.tab_body.a2a.credential_create_failed),
       );
+    }
+  };
+
+  const handleQuickConnect = async () => {
+    if (!endpoint || !canExportConnection || !endpoint.mcpUrl?.trim()) return;
+    setQuickConnecting(true);
+    setSecret(null);
+    try {
+      let client = clients.find(
+        (candidate) =>
+          candidate.status === "active" &&
+          candidate.name.toLowerCase() === "local coding agent",
+      );
+      client ??= await createClient.mutateAsync({
+        name: "Local Coding Agent",
+        scopes: [...DEFAULT_SCOPES],
+      });
+      const selectedClient = client;
+      await createCredential.mutateAsync({
+        clientId: selectedClient.id,
+        data: { expiresAt: credentialExpiry("90") },
+        onToken: (token) =>
+          setSecret({
+            clientName: selectedClient.name,
+            token,
+            rpcUrl: endpoint.rpcUrl,
+            agentCardUrl: endpoint.cardUrl,
+            protocolVersion: endpoint.protocolVersion,
+            mcpUrl: endpoint.mcpUrl ?? "",
+            publicAgentId: endpoint.publicAgentId,
+          }),
+      });
+    } catch (error) {
+      setSecret(null);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t(($) => $.tab_body.a2a.credential_create_failed),
+      );
+    } finally {
+      setQuickConnecting(false);
     }
   };
 
@@ -658,6 +718,38 @@ export function A2ATab({ agent }: { agent: Agent }) {
 
       {endpoint && (
         <section className="space-y-3">
+          <Card className="py-0 shadow-none">
+            <CardContent className="flex flex-wrap items-center justify-between gap-4 px-4 py-4">
+              <div>
+                <h3 className="text-sm font-semibold">
+                  {t(($) => $.tab_body.a2a.quick_connect_title)}
+                </h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t(($) => $.tab_body.a2a.quick_connect_description)}
+                </p>
+              </div>
+              <Button
+                onClick={handleQuickConnect}
+                disabled={
+                  !canExportConnection ||
+                  !endpoint.mcpUrl?.trim() ||
+                  quickConnecting
+                }
+              >
+                {quickConnecting ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <KeyRound className="size-4" />
+                )}
+                {t(($) => $.tab_body.a2a.quick_connect_action)}
+              </Button>
+            </CardContent>
+          </Card>
+        </section>
+      )}
+
+      {endpoint && (
+        <section className="space-y-3">
           <div className="flex items-end justify-between gap-4">
             <div>
               <h3 className="text-sm font-semibold">
@@ -972,7 +1064,7 @@ function SecretDialog({
 }) {
   const { t } = useT("agents");
   const [copiedTarget, setCopiedTarget] = useState<
-    "token" | "config" | "curl" | null
+    "token" | "config" | "curl" | "codex" | "claude" | null
   >(null);
   const [confirmed, setConfirmed] = useState(false);
   const localBundle = useMemo(() => buildSecretDebugBundle(secret), [secret]);
@@ -982,6 +1074,7 @@ function SecretDialog({
     [localConfig],
   );
   const localCurl = localBundle?.curl ?? "";
+  const mcpBundle = useMemo(() => buildSecretMCPBundle(secret), [secret]);
 
   const close = () => {
     setCopiedTarget(null);
@@ -990,7 +1083,7 @@ function SecretDialog({
   };
 
   const copy = async (
-    target: "token" | "config" | "curl",
+    target: "token" | "config" | "curl" | "codex" | "claude",
     value: string,
   ) => {
     if (await copyText(value)) {
@@ -1042,6 +1135,44 @@ function SecretDialog({
             )}
           </Button>
         </div>
+        {mcpBundle && (
+          <div className="space-y-4 border-t pt-4">
+            <div>
+              <Label>{t(($) => $.tab_body.a2a.mcp_connect_title)}</Label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t(($) => $.tab_body.a2a.mcp_connect_description)}
+              </p>
+            </div>
+            {([
+              ["codex", "Codex", mcpBundle.codexCommand],
+              ["claude", "Claude Code", mcpBundle.claudeCommand],
+            ] as const).map(([target, label, command]) => (
+              <div key={target} className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Label>{label}</Label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void copy(target, command)}
+                  >
+                    {copiedTarget === target ? (
+                      <Check className="size-4" />
+                    ) : (
+                      <Copy className="size-4" />
+                    )}
+                    {t(($) => $.tab_body.a2a.copy_command)}
+                  </Button>
+                </div>
+                <pre className="overflow-auto rounded-md border bg-muted/40 p-3 text-xs leading-5">
+                  {command}
+                </pre>
+              </div>
+            ))}
+            <p className="text-xs text-muted-foreground">
+              {t(($) => $.tab_body.a2a.mcp_connect_warning)}
+            </p>
+          </div>
+        )}
         {localConfig && (
           <div className="space-y-5 border-t pt-4">
             <div className="space-y-2">

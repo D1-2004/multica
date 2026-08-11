@@ -64,6 +64,8 @@ export interface AgentA2AEndpoint {
   cardSkills: AgentA2ACardSkill[];
   cardUrl: string;
   rpcUrl: string;
+  /** Canonical header-authenticated MCP endpoint; absent on older servers. */
+  mcpUrl?: string;
   protocolVersion: string;
   id?: string;
   agentId?: string;

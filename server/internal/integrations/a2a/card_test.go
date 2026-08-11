@@ -82,4 +82,12 @@ func TestAgentURLsRejectUnsafePublicAgentID(t *testing.T) {
 	if _, err := AgentCardURL("https://multica.example.com", "../other-agent"); err == nil {
 		t.Fatal("AgentCardURL() error = nil, want unsafe path error")
 	}
+
+	mcpURL, err := AgentMCPURL("https://multica.example.com/base", "agent_1")
+	if err != nil {
+		t.Fatalf("AgentMCPURL() error = %v", err)
+	}
+	if want := "https://multica.example.com/base/api/mcp/agents/agent_1"; mcpURL != want {
+		t.Fatalf("AgentMCPURL() = %q, want %q", mcpURL, want)
+	}
 }

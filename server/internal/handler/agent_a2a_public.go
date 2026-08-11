@@ -109,7 +109,7 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
 		return
 	}
-	rawToken, ok := parseAgentA2ABearer(r.Header.Get("Authorization"))
+	rawToken, ok := parseAgentAccessToken(r, "")
 	if !ok {
 		writeAgentA2AUnauthorized(w)
 		return
@@ -148,6 +148,7 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	r.Header.Del("Authorization")
+	r.Header.Del("X-API-Key")
 	if agentA2AHasTrailingJSONValue(body) {
 		// The SDK decoder owns JSON-RPC errors, but it intentionally consumes one
 		// value. Replace multi-value input with malformed JSON so the same SDK
@@ -192,6 +193,50 @@ func parseAgentA2ABearer(authorization string) (string, bool) {
 		return "", false
 	}
 	return token, true
+}
+
+// parseAgentAccessToken accepts the same opaque Agent credential for both A2A
+// and MCP. Authorization is canonical; X-API-Key keeps simple clients simple.
+// A path token is accepted only by the explicit MCP convenience route.
+func parseAgentAccessToken(r *http.Request, pathToken string) (string, bool) {
+	candidates := make([]string, 0, 3)
+	if authorization := strings.TrimSpace(r.Header.Get("Authorization")); authorization != "" {
+		token, ok := parseAgentA2ABearer(authorization)
+		if !ok {
+			return "", false
+		}
+		candidates = append(candidates, token)
+	}
+	if apiKey := strings.TrimSpace(r.Header.Get("X-API-Key")); apiKey != "" {
+		if !validAgentAccessToken(apiKey) {
+			return "", false
+		}
+		candidates = append(candidates, apiKey)
+	}
+	if pathToken = strings.TrimSpace(pathToken); pathToken != "" {
+		if !validAgentAccessToken(pathToken) {
+			return "", false
+		}
+		candidates = append(candidates, pathToken)
+	}
+	if len(candidates) == 0 {
+		return "", false
+	}
+	for _, candidate := range candidates[1:] {
+		if candidate != candidates[0] {
+			return "", false
+		}
+	}
+	return candidates[0], true
+}
+
+func validAgentAccessToken(token string) bool {
+	const prefix = "mca2a_"
+	if len(token) != len(prefix)+40 || !strings.HasPrefix(token, prefix) {
+		return false
+	}
+	_, err := hex.DecodeString(token[len(prefix):])
+	return err == nil
 }
 
 func writeAgentA2AUnauthorized(w http.ResponseWriter) {

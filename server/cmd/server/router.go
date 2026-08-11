@@ -1384,6 +1384,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// specific Bearer credential and derives all tenant context server-side.
 	r.Get("/api/a2a/agents/{publicAgentId}/.well-known/agent-card.json", h.GetAgentA2ACard)
 	r.Post("/api/a2a/agents/{publicAgentId}/v1", h.HandleAgentA2ARPC)
+	// The header-authenticated URL is canonical. The secret-bearing connect URL
+	// exists so a local Coding Agent can be configured with one copied command.
+	r.Post("/api/mcp/agents/{publicAgentId}", h.HandleAgentMCP)
+	r.Post("/api/mcp/connect/{accessToken}", h.HandleAgentMCP)
 
 	// Webhook ingress for autopilots. Outside the authenticated group on
 	// purpose: the bearer token in the URL path IS the credential. Workspace

@@ -44,6 +44,7 @@ type AgentA2AEndpointResponse struct {
 	CardSkills        json.RawMessage `json:"card_skills"`
 	CardURL           string          `json:"card_url"`
 	RPCURL            string          `json:"rpc_url"`
+	MCPURL            string          `json:"mcp_url"`
 	ProtocolVersion   string          `json:"protocol_version"`
 	CreatedAt         string          `json:"created_at"`
 	UpdatedAt         string          `json:"updated_at"`
@@ -677,6 +678,10 @@ func (h *Handler) agentA2AEndpointPresentation(agent db.Agent, runtimeSupported 
 	if err != nil {
 		return AgentA2AEndpointResponse{}, nil, err
 	}
+	mcpURL, err := a2aintegration.AgentMCPURL(baseURL, endpoint.PublicAgentID)
+	if err != nil {
+		return AgentA2AEndpointResponse{}, nil, err
+	}
 	card, err := a2aintegration.BuildAgentCard(a2aintegration.CardConfig{
 		BaseURL:       baseURL,
 		PublicAgentID: endpoint.PublicAgentID,
@@ -690,6 +695,7 @@ func (h *Handler) agentA2AEndpointPresentation(agent db.Agent, runtimeSupported 
 	}
 	response.CardURL = cardURL
 	response.RPCURL = rpcURL
+	response.MCPURL = mcpURL
 	response.Enabled = endpoint.Enabled &&
 		uuidToString(endpoint.DelegatedByUserID) == uuidToString(agent.OwnerID) &&
 		!agent.ArchivedAt.Valid && agent.RuntimeID.Valid && runtimeSupported &&

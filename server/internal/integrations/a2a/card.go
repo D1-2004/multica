@@ -34,6 +34,31 @@ func AgentRPCURL(baseURL, publicAgentID string) (string, error) {
 	return agentURL(baseURL, publicAgentID, "v1")
 }
 
+// AgentMCPURL returns the canonical header-authenticated Streamable HTTP MCP
+// endpoint backed by the same hosted Agent and credential as A2A.
+func AgentMCPURL(baseURL, publicAgentID string) (string, error) {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return "", fmt.Errorf("MCP public base URL is required")
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse MCP public base URL: %w", err)
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return "", fmt.Errorf("MCP public base URL must be an absolute HTTP(S) URL")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("MCP public base URL must not contain a query or fragment")
+	}
+	publicAgentID = strings.TrimSpace(publicAgentID)
+	if publicAgentID == "" || strings.ContainsAny(publicAgentID, "/\\?#") || publicAgentID == "." || publicAgentID == ".." {
+		return "", fmt.Errorf("MCP public agent ID is not path safe")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/api/mcp/agents/" + publicAgentID
+	return parsed.String(), nil
+}
+
 func agentURL(baseURL, publicAgentID, suffix string) (string, error) {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {

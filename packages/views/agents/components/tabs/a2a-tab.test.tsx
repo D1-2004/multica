@@ -108,6 +108,7 @@ describe("A2ATab", () => {
         cardSkills: [],
         cardUrl: "https://multica.example/api/a2a/agents/public-agent-1/.well-known/agent-card.json",
         rpcUrl: "https://multica.example/api/a2a/agents/public-agent-1/v1",
+        mcpUrl: "https://multica.example/api/mcp/agents/public-agent-1",
         protocolVersion: "1.0",
       },
       agentCard: {
@@ -274,6 +275,13 @@ describe("A2ATab", () => {
       "Authorization: Bearer mca2a_one-time-secret",
     );
     expect(screen.getByText(/Ready-to-run cURL/i)).toBeInTheDocument();
+    expect(screen.getByText(/Connect a local Coding Agent/i)).toBeInTheDocument();
+    expect(document.body.textContent).toContain(
+      "codex mcp add multica-public-agent-1 --url",
+    );
+    expect(document.body.textContent).toContain(
+      "/api/mcp/connect/mca2a_one-time-secret",
+    );
     expect(document.body.textContent).toContain('"method": "GetTask"');
     expect(document.body.textContent).toContain("<TASK_ID_FROM_SEND_MESSAGE>");
     expect(document.body.textContent).toContain("A2A tasks/get");
