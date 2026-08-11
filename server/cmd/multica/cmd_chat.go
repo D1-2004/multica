@@ -12,9 +12,32 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-var chatCmd = &cobra.Command{
-	Use:   "chat",
-	Short: "Work with the current chat conversation",
+var chatCmd = newChatCommand()
+
+func newChatCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "chat",
+		Short: "Work with the current chat conversation",
+		Args:  validateChatArgs,
+		RunE:  runChatHelp,
+	}
+}
+
+func validateChatArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"unknown command %q for %q; use %q or %q",
+		args[0],
+		cmd.CommandPath(),
+		"multica chat history",
+		"multica chat thread [id]",
+	)
+}
+
+func runChatHelp(cmd *cobra.Command, _ []string) error {
+	return cmd.Help()
 }
 
 var chatHistoryCmd = &cobra.Command{
