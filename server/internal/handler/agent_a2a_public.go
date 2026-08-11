@@ -16,6 +16,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const maxAgentA2AProtocolBody = 1 << 20
@@ -37,7 +38,9 @@ func (h *Handler) GetAgentA2ACard(w http.ResponseWriter, r *http.Request) {
 	baseURL := runtimeSafety.PublicBaseURL
 	endpoint, err := h.Queries.GetPublishedAgentA2AEndpointByPublicID(
 		r.Context(),
-		strings.TrimSpace(chi.URLParam(r, "publicAgentId")),
+		db.GetPublishedAgentA2AEndpointByPublicIDParams{
+			PublicAgentID: strings.TrimSpace(chi.URLParam(r, "publicAgentId")),
+		},
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.NotFound(w, r)

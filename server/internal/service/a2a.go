@@ -86,7 +86,10 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 		return nil, err
 	}
 
-	endpoint, err := s.Queries.GetPublishedAgentA2AEndpointByPublicID(ctx, principal.PublicAgentID)
+	endpoint, err := s.Queries.GetPublishedAgentA2AEndpointByPublicID(ctx, db.GetPublishedAgentA2AEndpointByPublicIDParams{
+		PublicAgentID:         principal.PublicAgentID,
+		AllowDisabledEndpoint: principal.AllowDisabledEndpoint,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, a2a.NewError(a2a.ErrUnauthorized, "A2A endpoint is not available")
@@ -130,15 +133,17 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 
 	// This lock is the SendMessage admission linearization point. It rechecks
 	// every mutable authorization edge inside the same transaction that creates
-	// the local task, so endpoint/client disable, credential revoke, owner
-	// transfer, archive, and runtime removal cannot race a stale preflight read.
+	// the local task, so client disable, credential revoke, owner transfer,
+	// archive, and runtime removal cannot race a stale preflight read. A2A also
+	// requires endpoint publication; authenticated MCP links intentionally do not.
 	admission, err := qtx.LockAgentA2ASendAdmission(ctx, db.LockAgentA2ASendAdmissionParams{
-		AgentID:       principalIDs.AgentID,
-		WorkspaceID:   principalIDs.WorkspaceID,
-		EndpointID:    principalIDs.EndpointID,
-		PublicAgentID: principal.PublicAgentID,
-		ClientID:      principalIDs.ClientID,
-		CredentialID:  principalIDs.CredentialID,
+		AgentID:               principalIDs.AgentID,
+		WorkspaceID:           principalIDs.WorkspaceID,
+		EndpointID:            principalIDs.EndpointID,
+		PublicAgentID:         principal.PublicAgentID,
+		ClientID:              principalIDs.ClientID,
+		CredentialID:          principalIDs.CredentialID,
+		AllowDisabledEndpoint: principal.AllowDisabledEndpoint,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(ctx)

@@ -525,7 +525,7 @@ func TestAgentA2AManagedHostedRuntimeIsPublishedAndAdmitted(t *testing.T) {
 
 	published, err := testHandler.Queries.GetPublishedAgentA2AEndpointByPublicID(
 		context.Background(),
-		endpoint.PublicAgentID,
+		db.GetPublishedAgentA2AEndpointByPublicIDParams{PublicAgentID: endpoint.PublicAgentID},
 	)
 	if err != nil {
 		t.Fatalf("publish managed runtime endpoint: %v", err)
@@ -550,6 +550,51 @@ func TestAgentA2AManagedHostedRuntimeIsPublishedAndAdmitted(t *testing.T) {
 	}
 	if uuidToString(admission.AgentRuntimeID) != runtimeID {
 		t.Fatalf("admitted runtime = %s, want %s", uuidToString(admission.AgentRuntimeID), runtimeID)
+	}
+}
+
+func TestAgentMCPAdmissionIsIndependentFromA2APublication(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	requireAgentA2ATestSchema(t)
+	configureAgentA2ATestHandler(t)
+	agentID, ownerID, _ := privateAgentTestFixture(t)
+	assignAgentA2ATestRuntime(t, agentID, "local", "claude")
+	endpoint, client, secret := createAgentA2ATestCaller(t, agentID, ownerID)
+
+	if response := putAgentA2ATestConfig(t, agentID, ownerID, false); response.Code != http.StatusOK {
+		t.Fatalf("disable A2A status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+
+	ctx := context.Background()
+	if _, err := testHandler.Queries.GetPublishedAgentA2AEndpointByPublicID(
+		ctx,
+		db.GetPublishedAgentA2AEndpointByPublicIDParams{PublicAgentID: endpoint.PublicAgentID},
+	); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("disabled A2A endpoint publication error = %v, want no rows", err)
+	}
+
+	if _, err := testHandler.Queries.GetPublishedAgentA2AEndpointByPublicID(
+		ctx,
+		db.GetPublishedAgentA2AEndpointByPublicIDParams{
+			PublicAgentID:         endpoint.PublicAgentID,
+			AllowDisabledEndpoint: true,
+		},
+	); err != nil {
+		t.Fatalf("load disabled endpoint for MCP: %v", err)
+	}
+
+	if _, err := testHandler.Queries.LockAgentA2ASendAdmission(ctx, db.LockAgentA2ASendAdmissionParams{
+		AgentID:               util.MustParseUUID(agentID),
+		WorkspaceID:           util.MustParseUUID(testWorkspaceID),
+		EndpointID:            util.MustParseUUID(endpoint.ID),
+		PublicAgentID:         endpoint.PublicAgentID,
+		AllowDisabledEndpoint: true,
+		ClientID:              util.MustParseUUID(client.ID),
+		CredentialID:          util.MustParseUUID(secret.Credential.ID),
+	}); err != nil {
+		t.Fatalf("admit MCP caller while A2A is disabled: %v", err)
 	}
 }
 

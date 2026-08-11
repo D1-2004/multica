@@ -31,7 +31,8 @@ type agentMCPGetTaskArguments struct {
 }
 
 // HandleAgentMCP exposes one hosted Agent as a two-tool Streamable HTTP MCP
-// server. The same independently revocable credential works for A2A and MCP.
+// server. MCP credentials use the same revocable credential substrate as A2A,
+// but the MCP link remains usable independently of A2A publication state.
 // The /connect/{accessToken} route is an intentionally simple capability URL
 // for clients such as Codex that cannot persist a literal HTTP auth header.
 func (h *Handler) HandleAgentMCP(w http.ResponseWriter, r *http.Request) {
@@ -67,14 +68,15 @@ func (h *Handler) HandleAgentMCP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	principal := a2aintegration.Principal{
-		WorkspaceID:     uuidToString(credential.WorkspaceID),
-		AgentID:         uuidToString(credential.AgentID),
-		EndpointID:      uuidToString(credential.EndpointID),
-		PublicAgentID:   credential.PublicAgentID,
-		ClientID:        uuidToString(credential.ClientID),
-		CredentialID:    uuidToString(credential.CredentialID),
-		Scopes:          credential.ClientScopes,
-		EndpointEnabled: credential.EndpointEnabled,
+		WorkspaceID:           uuidToString(credential.WorkspaceID),
+		AgentID:               uuidToString(credential.AgentID),
+		EndpointID:            uuidToString(credential.EndpointID),
+		PublicAgentID:         credential.PublicAgentID,
+		ClientID:              uuidToString(credential.ClientID),
+		CredentialID:          uuidToString(credential.CredentialID),
+		Scopes:                credential.ClientScopes,
+		EndpointEnabled:       credential.EndpointEnabled,
+		AllowDisabledEndpoint: true,
 	}
 	ctx := a2aintegration.WithPrincipal(r.Context(), principal)
 	_ = h.Queries.TouchAgentA2ACredentialLastUsed(ctx, credential.CredentialID)
@@ -187,7 +189,7 @@ func (h *Handler) handleAgentMCPToolsCall(w http.ResponseWriter, r *http.Request
 	var err error
 	switch params.Name {
 	case agentMCPDelegateTool:
-		if !principal.EndpointEnabled || !agentMCPHasScope(principal.Scopes, "send") {
+		if !agentMCPHasScope(principal.Scopes, "send") {
 			h.writeMulticaMCPToolError(w, req.ID, "this connection cannot delegate tasks")
 			return
 		}

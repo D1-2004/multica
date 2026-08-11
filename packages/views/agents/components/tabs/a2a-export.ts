@@ -204,29 +204,21 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-export interface CodingAgentMCPBundle {
-  mcpUrl: string;
+export interface AgentMCPLink {
   connectUrl: string;
-  authorizationHeader: string;
-  codexCommand: string;
-  claudeCommand: string;
-  openCodeCommand: string;
 }
 
 /**
- * Build copy-paste connection material from the canonical Agent MCP URL. The
- * connect URL is deliberately secret-bearing for clients that cannot persist
- * a literal header; revoking the underlying credential invalidates both forms.
+ * Build the single secret-bearing URL exposed by the Agent MCP integration.
+ * Revoking the underlying credential invalidates this URL immediately.
  */
-export function buildCodingAgentMCPBundle({
+export function buildAgentMCPLink({
   mcpUrl,
   token,
-  publicAgentId,
 }: {
   mcpUrl: string;
   token: string;
-  publicAgentId: string;
-}): CodingAgentMCPBundle {
+}): AgentMCPLink {
   const parsed = new URL(mcpUrl);
   const marker = "/api/mcp/agents/";
   const markerIndex = parsed.pathname.lastIndexOf(marker);
@@ -237,21 +229,7 @@ export function buildCodingAgentMCPBundle({
   parsed.search = "";
   parsed.hash = "";
 
-  const suffix = publicAgentId
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9_-]/g, "-")
-    .replaceAll(/^-+|-+$/g, "")
-    .slice(0, 24);
-  const serverName = `multica-${suffix || "agent"}`;
-  const connectUrl = parsed.toString();
-  return {
-    mcpUrl,
-    connectUrl,
-    authorizationHeader: `Authorization: Bearer ${token}`,
-    codexCommand: `codex mcp add ${serverName} --url ${shellQuote(connectUrl)}`,
-    claudeCommand: `claude mcp add --transport http --scope user ${serverName} ${shellQuote(connectUrl)}`,
-    openCodeCommand: `opencode mcp add ${serverName} --url ${shellQuote(mcpUrl)} --header ${shellQuote(`X-API-Key=${token}`)}`,
-  };
+  return { connectUrl: parsed.toString() };
 }
 
 export function buildA2ALocalCurlExample({

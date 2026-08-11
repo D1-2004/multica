@@ -14,6 +14,7 @@ import { LarkAgentBindButton } from "../../../settings/components/lark-tab";
 import { SlackAgentBindButton } from "../../../settings/components/slack-tab";
 import { useT } from "../../../i18n";
 import { DingTalkAccountBindingCard } from "../integrations/dingtalk-account-binding";
+import { AgentMCPLinkCard } from "../integrations/mcp-link-card";
 
 /**
  * Integrations tab on the agent detail page. Surfaces the same external-
@@ -30,10 +31,14 @@ import { DingTalkAccountBindingCard } from "../integrations/dingtalk-account-bin
  */
 export function IntegrationsTab({
   agent,
+  showMcpLink = false,
+  platformIntegrationsConfigured = true,
   canOperateDingTalkBinding,
   dingTalkBindingPermissionLoading,
 }: {
   agent: Agent;
+  showMcpLink?: boolean;
+  platformIntegrationsConfigured?: boolean;
   canOperateDingTalkBinding: boolean;
   dingTalkBindingPermissionLoading: boolean;
 }) {
@@ -98,6 +103,17 @@ export function IntegrationsTab({
   // `dingtalkConfigured`. DingTalkAgentBindButton picks scan vs. manual.
   const dingtalkConfigured = dingtalkListing?.configured === true;
 
+  if (showMcpLink && !platformIntegrationsConfigured) {
+    return (
+      <div className="space-y-6">
+        <p className="text-xs text-muted-foreground">
+          {t(($) => $.tab_body.integrations.intro)}
+        </p>
+        <AgentMCPLinkCard agent={agent} />
+      </div>
+    );
+  }
+
   // A member who can manage none of the platforms (not a workspace admin and
   // not this agent's owner) gets the read-only note instead of the sections.
   // Members can still view connected bots in the (member-visible)
@@ -127,6 +143,8 @@ export function IntegrationsTab({
       <p className="text-xs text-muted-foreground">
         {t(($) => $.tab_body.integrations.intro)}
       </p>
+
+      {showMcpLink && <AgentMCPLinkCard agent={agent} />}
 
       <DingTalkAccountBindingCard
         agentId={agent.id}

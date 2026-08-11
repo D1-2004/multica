@@ -217,6 +217,11 @@ export function AgentOverviewPane({
     slackListing?.configured === true ||
     dingtalkListing?.configured === true ||
     dingtalkAccountListing?.configured === true;
+  const showMcpIntegration =
+    agentA2AInboundEnabled &&
+    !!currentUserId &&
+    !!agent.owner_id &&
+    agent.owner_id === currentUserId;
 
   const visibleCapabilityTabs = useMemo(() => {
     const showMcp = runtime
@@ -231,7 +236,9 @@ export function AgentOverviewPane({
     return CAPABILITY_TABS.filter((tab) => {
       if (tab.id === "mcp_config") return showMcp;
       if (tab.id === "composio_mcp") return showComposioMcp;
-      if (tab.id === "integrations") return integrationsConfigured;
+      if (tab.id === "integrations") {
+        return integrationsConfigured || showMcpIntegration;
+      }
       if (tab.id === "identity") {
         return dingtalkAccountListing?.configured === true;
       }
@@ -244,6 +251,7 @@ export function AgentOverviewPane({
     dingtalkAccountListing?.configured,
     integrationsConfigured,
     runtime,
+    showMcpIntegration,
   ]);
 
   const visibleSettingsTabs = useMemo(
@@ -497,6 +505,8 @@ export function AgentOverviewPane({
                   {effectiveView === "integrations" && (
                     <IntegrationsTab
                       agent={agent}
+                      showMcpLink={showMcpIntegration}
+                      platformIntegrationsConfigured={integrationsConfigured}
                       canOperateDingTalkBinding={canOperateDingTalkBinding}
                       dingTalkBindingPermissionLoading={dingTalkBindingPermissionLoading}
                     />

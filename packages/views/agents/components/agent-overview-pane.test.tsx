@@ -223,7 +223,7 @@ describe("AgentOverviewPane MCP tab visibility", () => {
   ])("renders the MCP tab when the agent runs on the %s runtime", (_label, provider) => {
     renderPane([makeRuntime(provider)]);
     openCapabilities();
-    expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^MCP tools$/i })).toBeInTheDocument();
   });
 
 	it("hides the MCP tab for providers whose backend does not read mcp_config", () => {
@@ -232,19 +232,19 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     renderPane([makeRuntime("gemini")]);
     openCapabilities();
     expect(
-      screen.queryByRole("tab", { name: /^MCP$/i }),
+      screen.queryByRole("tab", { name: /^MCP tools$/i }),
     ).not.toBeInTheDocument();
 	});
 
 	it("shows MCP only for Pi runtimes whose template declares the capability", () => {
 		const { unmount } = renderPane([makeRuntime("pi", ["pi", "mcp"])]);
 		openCapabilities();
-		expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: /^MCP tools$/i })).toBeInTheDocument();
 		unmount();
 
 		renderPane([makeRuntime("pi", ["pi", "dws"])]);
 		openCapabilities();
-		expect(screen.queryByRole("tab", { name: /^MCP$/i })).not.toBeInTheDocument();
+		expect(screen.queryByRole("tab", { name: /^MCP tools$/i })).not.toBeInTheDocument();
 	});
 
   it("keeps the MCP tab visible when the runtime row hasn't loaded yet", () => {
@@ -253,11 +253,22 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     // then back on, which reads as a bug.
     renderPane([]);
     openCapabilities();
-    expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^MCP tools$/i })).toBeInTheDocument();
   });
 });
 
 describe("AgentOverviewPane Integrations tab visibility", () => {
+  it("shows Integrations to the agent owner for MCP export even without channel integrations", () => {
+    configStore.getState().setFeatureFlags({ [AGENT_A2A_INBOUND_FLAG]: true });
+    renderPane([makeRuntime("claude")], { currentUserId: "user-1" });
+
+    openCapabilities();
+
+    expect(
+      screen.getByRole("tab", { name: /^Integrations$/i }),
+    ).toBeInTheDocument();
+  });
+
   it("shows the Integrations tab once the deployment has Lark configured", async () => {
     larkListingRef.current = { installations: [], configured: true };
     renderPane([makeRuntime("claude")]);
@@ -314,7 +325,7 @@ describe("AgentOverviewPane Identity tab", () => {
       "Settings",
       "Instructions",
       "Skills",
-      "MCP",
+      "MCP tools",
       "Integrations",
       "Identity",
     ]);
@@ -367,12 +378,16 @@ describe("AgentOverviewPane Settings navigation", () => {
 
     renderPane([makeRuntime("claude")], { currentUserId: "user-2" });
     openSettings();
-    expect(screen.queryByRole("tab", { name: /^A2A$/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /^A2A$/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides A2A from the owner while the inbound flag is disabled", () => {
     renderPane([makeRuntime("claude")], { currentUserId: "user-1" });
     openSettings();
-    expect(screen.queryByRole("tab", { name: /^A2A$/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /^A2A$/i }),
+    ).not.toBeInTheDocument();
   });
 });

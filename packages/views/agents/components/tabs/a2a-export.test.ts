@@ -4,7 +4,7 @@ import {
   buildA2ACurlExample,
   buildA2ALocalCurlExample,
   buildA2ALocalDebugConfig,
-  buildCodingAgentMCPBundle,
+  buildAgentMCPLink,
   buildMulticaA2AExport,
   serializeJson,
 } from "./a2a-export";
@@ -186,27 +186,15 @@ describe("A2A export helpers", () => {
     );
   });
 
-  it("builds one-command MCP installation URLs that preserve a deployment base path", () => {
-    const bundle = buildCodingAgentMCPBundle({
+  it("builds a secret MCP link that preserves a deployment base path", () => {
+    const link = buildAgentMCPLink({
       mcpUrl: "https://multica.example/base/api/mcp/agents/public-agent-1",
       token: "mca2a_0123456789abcdef0123456789abcdef01234567",
-      publicAgentId: "Public-Agent-1",
     });
 
-    expect(bundle.connectUrl).toBe(
-      "https://multica.example/base/api/mcp/connect/mca2a_0123456789abcdef0123456789abcdef01234567",
-    );
-    expect(bundle.codexCommand).toBe(
-      "codex mcp add multica-public-agent-1 --url 'https://multica.example/base/api/mcp/connect/mca2a_0123456789abcdef0123456789abcdef01234567'",
-    );
-    expect(bundle.claudeCommand).toContain(
-      "claude mcp add --transport http --scope user multica-public-agent-1",
-    );
-    expect(bundle.openCodeCommand).toBe(
-      "opencode mcp add multica-public-agent-1 --url 'https://multica.example/base/api/mcp/agents/public-agent-1' --header 'X-API-Key=mca2a_0123456789abcdef0123456789abcdef01234567'",
-    );
-    expect(bundle.authorizationHeader).toBe(
-      "Authorization: Bearer mca2a_0123456789abcdef0123456789abcdef01234567",
-    );
+    expect(link).toEqual({
+      connectUrl:
+        "https://multica.example/base/api/mcp/connect/mca2a_0123456789abcdef0123456789abcdef01234567",
+    });
   });
 });

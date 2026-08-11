@@ -212,7 +212,7 @@ JOIN member owner_member
   ON owner_member.workspace_id = endpoint.workspace_id
  AND owner_member.user_id = a.owner_id
 WHERE endpoint.public_agent_id = sqlc.arg('public_agent_id')
-  AND endpoint.enabled = TRUE
+  AND (endpoint.enabled = TRUE OR sqlc.arg('allow_disabled_endpoint')::boolean)
   AND a.archived_at IS NULL
   AND a.runtime_id IS NOT NULL
   -- Runtime template aliases, manifest versions and capabilities intentionally
@@ -604,7 +604,8 @@ WHERE endpoint_id = sqlc.arg('endpoint_id')
 -- row is locked in this transaction so a mode/provider switch cannot race task
 -- creation. A management write that commits first makes this query return no
 -- rows; one that waits for this transaction observes the already-accepted task
--- after it resumes.
+-- after it resumes. MCP may bypass only the A2A publication bit; every other
+-- mutable authorization and runtime edge remains mandatory.
 WITH locked_agent AS MATERIALIZED (
     SELECT a.id, a.workspace_id, a.owner_id, a.runtime_id
     FROM agent a
@@ -659,7 +660,10 @@ WITH locked_agent AS MATERIALIZED (
      AND a.owner_id = endpoint.delegated_by_user_id
     WHERE endpoint.id = sqlc.arg('endpoint_id')
       AND endpoint.public_agent_id = sqlc.arg('public_agent_id')
-      AND endpoint.enabled = TRUE
+      AND (
+        endpoint.enabled = TRUE
+        OR sqlc.arg('allow_disabled_endpoint')::boolean
+      )
     FOR UPDATE OF endpoint
 ), locked_client AS MATERIALIZED (
     SELECT client.*

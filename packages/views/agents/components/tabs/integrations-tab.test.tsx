@@ -137,6 +137,12 @@ vi.mock("../integrations/dingtalk-account-binding", () => ({
   ),
 }));
 
+vi.mock("../integrations/mcp-link-card", () => ({
+  AgentMCPLinkCard: ({ agent }: { agent: Agent }) => (
+    <section aria-label="MCP link" data-agent-id={agent.id} />
+  ),
+}));
+
 import { IntegrationsTab } from "./integrations-tab";
 
 const TEST_RESOURCES = {
@@ -188,6 +194,25 @@ function resetFixtures() {
 
 describe("IntegrationsTab", () => {
   beforeEach(resetFixtures);
+
+  it("shows only the MCP integration when no platform integration is configured", () => {
+    renderTab(
+      <IntegrationsTab
+        agent={agent}
+        showMcpLink
+        platformIntegrationsConfigured={false}
+        canOperateDingTalkBinding
+        dingTalkBindingPermissionLoading={false}
+      />,
+    );
+
+    expect(screen.getByRole("region", { name: /MCP link/i })).toHaveAttribute(
+      "data-agent-id",
+      "agent-1",
+    );
+    expect(screen.queryByText("Lark")).not.toBeInTheDocument();
+    expect(screen.queryByText("Slack")).not.toBeInTheDocument();
+  });
 
   it("renders the shared bind entry for every platform for an owner when configured and supported", () => {
     renderTab(

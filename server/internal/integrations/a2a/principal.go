@@ -13,6 +13,10 @@ type Principal struct {
 	CredentialID    string
 	Scopes          []string
 	EndpointEnabled bool
+	// AllowDisabledEndpoint is set only by the authenticated MCP adapter. It
+	// keeps the A2A publication switch independent from an active MCP link while
+	// preserving the same owner, runtime, client and credential admission checks.
+	AllowDisabledEndpoint bool
 }
 
 type principalContextKey struct{}

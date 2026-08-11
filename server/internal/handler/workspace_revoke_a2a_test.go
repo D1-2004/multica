@@ -168,7 +168,7 @@ func TestRevokeMemberPermanentlyRevokesOwnedAgentA2AAccess(t *testing.T) {
 	`, testWorkspaceID, ownerID); err != nil {
 		t.Fatalf("re-invite removed Agent owner: %v", err)
 	}
-	if _, err := testHandler.Queries.GetPublishedAgentA2AEndpointByPublicID(ctx, publicAgentID); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := testHandler.Queries.GetPublishedAgentA2AEndpointByPublicID(ctx, db.GetPublishedAgentA2AEndpointByPublicIDParams{PublicAgentID: publicAgentID}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("endpoint lookup after re-invite error = %v, want pgx.ErrNoRows", err)
 	}
 	if _, err := testHandler.Queries.GetAgentA2ACredentialByTokenHash(ctx, auth.HashToken(rawToken)); !errors.Is(err, pgx.ErrNoRows) {

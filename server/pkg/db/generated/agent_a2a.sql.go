@@ -910,7 +910,7 @@ JOIN member owner_member
   ON owner_member.workspace_id = endpoint.workspace_id
  AND owner_member.user_id = a.owner_id
 WHERE endpoint.public_agent_id = $1
-  AND endpoint.enabled = TRUE
+  AND (endpoint.enabled = TRUE OR $2::boolean)
   AND a.archived_at IS NULL
   AND a.runtime_id IS NOT NULL
   -- Runtime template aliases, manifest versions and capabilities intentionally
@@ -948,6 +948,11 @@ WHERE endpoint.public_agent_id = $1
   AND a.owner_id = endpoint.delegated_by_user_id
 `
 
+type GetPublishedAgentA2AEndpointByPublicIDParams struct {
+	PublicAgentID         string `json:"public_agent_id"`
+	AllowDisabledEndpoint bool   `json:"allow_disabled_endpoint"`
+}
+
 type GetPublishedAgentA2AEndpointByPublicIDRow struct {
 	ID                pgtype.UUID        `json:"id"`
 	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
@@ -965,8 +970,8 @@ type GetPublishedAgentA2AEndpointByPublicIDRow struct {
 	AgentRuntimeID    pgtype.UUID        `json:"agent_runtime_id"`
 }
 
-func (q *Queries) GetPublishedAgentA2AEndpointByPublicID(ctx context.Context, publicAgentID string) (GetPublishedAgentA2AEndpointByPublicIDRow, error) {
-	row := q.db.QueryRow(ctx, getPublishedAgentA2AEndpointByPublicID, publicAgentID)
+func (q *Queries) GetPublishedAgentA2AEndpointByPublicID(ctx context.Context, arg GetPublishedAgentA2AEndpointByPublicIDParams) (GetPublishedAgentA2AEndpointByPublicIDRow, error) {
+	row := q.db.QueryRow(ctx, getPublishedAgentA2AEndpointByPublicID, arg.PublicAgentID, arg.AllowDisabledEndpoint)
 	var i GetPublishedAgentA2AEndpointByPublicIDRow
 	err := row.Scan(
 		&i.ID,
@@ -1610,13 +1615,16 @@ WITH locked_agent AS MATERIALIZED (
      AND a.owner_id = endpoint.delegated_by_user_id
     WHERE endpoint.id = $3
       AND endpoint.public_agent_id = $4
-      AND endpoint.enabled = TRUE
+      AND (
+        endpoint.enabled = TRUE
+        OR $5::boolean
+      )
     FOR UPDATE OF endpoint
 ), locked_client AS MATERIALIZED (
     SELECT client.id, client.endpoint_id, client.name, client.status, client.scopes, client.rate_limit_per_minute, client.max_concurrent_tasks, client.created_by, client.updated_by, client.revoked_at, client.revoked_by, client.created_at, client.updated_at
     FROM a2a_client client
     JOIN locked_endpoint endpoint ON endpoint.id = client.endpoint_id
-    WHERE client.id = $5
+    WHERE client.id = $6
       AND client.status = 'active'
       AND 'send' = ANY(client.scopes)
     FOR UPDATE OF client
@@ -1624,7 +1632,7 @@ WITH locked_agent AS MATERIALIZED (
     SELECT credential.id, credential.client_id, credential.key_id, credential.token_hash, credential.token_prefix, credential.status, credential.expires_at, credential.last_used_at, credential.created_by, credential.revoked_at, credential.revoked_by, credential.created_at, credential.updated_at
     FROM a2a_client_credential credential
     JOIN locked_client client ON client.id = credential.client_id
-    WHERE credential.id = $6
+    WHERE credential.id = $7
       AND credential.status = 'active'
       AND (credential.expires_at IS NULL OR credential.expires_at > now())
     FOR UPDATE OF credential
@@ -1646,12 +1654,13 @@ JOIN locked_credential credential ON credential.client_id = client.id
 `
 
 type LockAgentA2ASendAdmissionParams struct {
-	AgentID       pgtype.UUID `json:"agent_id"`
-	WorkspaceID   pgtype.UUID `json:"workspace_id"`
-	EndpointID    pgtype.UUID `json:"endpoint_id"`
-	PublicAgentID string      `json:"public_agent_id"`
-	ClientID      pgtype.UUID `json:"client_id"`
-	CredentialID  pgtype.UUID `json:"credential_id"`
+	AgentID               pgtype.UUID `json:"agent_id"`
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	EndpointID            pgtype.UUID `json:"endpoint_id"`
+	PublicAgentID         string      `json:"public_agent_id"`
+	AllowDisabledEndpoint bool        `json:"allow_disabled_endpoint"`
+	ClientID              pgtype.UUID `json:"client_id"`
+	CredentialID          pgtype.UUID `json:"credential_id"`
 }
 
 type LockAgentA2ASendAdmissionRow struct {
@@ -1672,13 +1681,15 @@ type LockAgentA2ASendAdmissionRow struct {
 // row is locked in this transaction so a mode/provider switch cannot race task
 // creation. A management write that commits first makes this query return no
 // rows; one that waits for this transaction observes the already-accepted task
-// after it resumes.
+// after it resumes. MCP may bypass only the A2A publication bit; every other
+// mutable authorization and runtime edge remains mandatory.
 func (q *Queries) LockAgentA2ASendAdmission(ctx context.Context, arg LockAgentA2ASendAdmissionParams) (LockAgentA2ASendAdmissionRow, error) {
 	row := q.db.QueryRow(ctx, lockAgentA2ASendAdmission,
 		arg.AgentID,
 		arg.WorkspaceID,
 		arg.EndpointID,
 		arg.PublicAgentID,
+		arg.AllowDisabledEndpoint,
 		arg.ClientID,
 		arg.CredentialID,
 	)
