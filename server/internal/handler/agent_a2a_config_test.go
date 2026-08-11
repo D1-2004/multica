@@ -260,22 +260,107 @@ func TestAgentA2AEndpointPresentationWithoutPublicURLStaysManageable(t *testing.
 	}
 }
 
-func TestAgentA2AManagementRequiresExactHumanOwner(t *testing.T) {
+func TestAgentA2AManagementAllowsHumanOwnerAndWorkspaceAdmin(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 	requireAgentA2ATestSchema(t)
-	agentID, ownerID, _ := privateAgentTestFixture(t)
+	agentID, ownerID, memberID := privateAgentTestFixture(t)
 	withFeatureFlag(t, testHandler, featureflags.AgentA2AInbound, true)
 
-	// A workspace owner/admin is not allowed to manage another user's Agent.
+	// The default test user is the workspace owner and may manage another
+	// member's Agent. The endpoint remains delegated to the Agent's actual owner.
 	response := httptest.NewRecorder()
 	testHandler.GetAgentA2AConfig(response, withAgentA2AURLParams(
 		newRequest(http.MethodGet, "/api/agents/"+agentID+"/a2a", nil),
 		"id", agentID,
 	))
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("workspace owner management status = %d, want 404: %s", response.Code, response.Body.String())
+	if response.Code != http.StatusOK {
+		t.Fatalf("workspace owner management status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	var delegatedBy string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT delegated_by_user_id
+		FROM agent_a2a_endpoint
+		WHERE agent_id = $1
+	`, agentID).Scan(&delegatedBy); err != nil {
+		t.Fatalf("load endpoint delegation: %v", err)
+	}
+	if delegatedBy != ownerID {
+		t.Fatalf("delegated_by_user_id = %s, want Agent owner %s", delegatedBy, ownerID)
+	}
+
+	response = httptest.NewRecorder()
+	testHandler.CreateAgentA2AClient(response, withAgentA2AURLParams(
+		newRequest(http.MethodPost, "/api/agents/"+agentID+"/a2a/clients", map[string]any{
+			"name": "workspace-admin-client",
+		}),
+		"id", agentID,
+	))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("workspace owner create client status = %d, want 201: %s", response.Code, response.Body.String())
+	}
+	var client AgentA2AClientResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &client); err != nil {
+		t.Fatalf("decode workspace owner client: %v", err)
+	}
+	var clientCreatedBy, clientUpdatedBy string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT created_by, updated_by
+		FROM a2a_client
+		WHERE id = $1
+	`, client.ID).Scan(&clientCreatedBy, &clientUpdatedBy); err != nil {
+		t.Fatalf("load workspace owner client audit fields: %v", err)
+	}
+	if clientCreatedBy != testUserID || clientUpdatedBy != testUserID {
+		t.Fatalf("client actor audit = (%s, %s), want (%s, %s)", clientCreatedBy, clientUpdatedBy, testUserID, testUserID)
+	}
+
+	response = httptest.NewRecorder()
+	testHandler.CreateAgentA2ACredential(response, withAgentA2AURLParams(
+		newRequest(http.MethodPost, "/api/agents/"+agentID+"/a2a/clients/"+client.ID+"/credentials", map[string]any{}),
+		"id", agentID,
+		"clientId", client.ID,
+	))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("workspace owner create credential status = %d, want 201: %s", response.Code, response.Body.String())
+	}
+	var secret AgentA2ACredentialSecretResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &secret); err != nil {
+		t.Fatalf("decode workspace owner credential: %v", err)
+	}
+	var credentialCreatedBy string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT created_by
+		FROM a2a_client_credential
+		WHERE id = $1
+	`, secret.Credential.ID).Scan(&credentialCreatedBy); err != nil {
+		t.Fatalf("load workspace owner credential audit fields: %v", err)
+	}
+	if credentialCreatedBy != testUserID {
+		t.Fatalf("credential created_by = %s, want actor %s", credentialCreatedBy, testUserID)
+	}
+
+	response = httptest.NewRecorder()
+	testHandler.DeleteAgentA2ACredential(response, withAgentA2AURLParams(
+		newRequest(http.MethodDelete, "/api/agents/"+agentID+"/a2a/clients/"+client.ID+"/credentials/"+secret.Credential.ID, nil),
+		"id", agentID,
+		"clientId", client.ID,
+		"credentialId", secret.Credential.ID,
+	))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("workspace owner revoke credential status = %d, want 204: %s", response.Code, response.Body.String())
+	}
+	var credentialRevokedBy string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT revoked_by
+		FROM a2a_client_credential
+		WHERE id = $1
+	`, secret.Credential.ID).Scan(&credentialRevokedBy); err != nil {
+		t.Fatalf("load workspace owner credential revoke audit: %v", err)
+	}
+	if credentialRevokedBy != testUserID {
+		t.Fatalf("credential revoked_by = %s, want actor %s", credentialRevokedBy, testUserID)
 	}
 
 	response = httptest.NewRecorder()
@@ -287,15 +372,24 @@ func TestAgentA2AManagementRequiresExactHumanOwner(t *testing.T) {
 		t.Fatalf("exact owner management status = %d, want 200: %s", response.Code, response.Body.String())
 	}
 
+	response = httptest.NewRecorder()
+	testHandler.GetAgentA2AConfig(response, withAgentA2AURLParams(
+		newRequestAs(memberID, http.MethodGet, "/api/agents/"+agentID+"/a2a", nil),
+		"id", agentID,
+	))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("plain member management status = %d, want 403: %s", response.Code, response.Body.String())
+	}
+
 	machineRequest := withAgentA2AURLParams(
-		newRequestAs(ownerID, http.MethodGet, "/api/agents/"+agentID+"/a2a", nil),
+		newRequest(http.MethodGet, "/api/agents/"+agentID+"/a2a", nil),
 		"id", agentID,
 	)
 	machineRequest.Header.Set("X-Actor-Source", "task_token")
 	response = httptest.NewRecorder()
 	testHandler.GetAgentA2AConfig(response, machineRequest)
 	if response.Code != http.StatusForbidden {
-		t.Fatalf("machine owner management status = %d, want 403: %s", response.Code, response.Body.String())
+		t.Fatalf("machine workspace owner management status = %d, want 403: %s", response.Code, response.Body.String())
 	}
 
 	withFeatureFlag(t, testHandler, featureflags.AgentA2AInbound, false)

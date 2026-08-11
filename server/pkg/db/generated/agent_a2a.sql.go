@@ -181,7 +181,7 @@ WITH locked_owner_member AS MATERIALIZED (
     SELECT owner_member.workspace_id, owner_member.user_id
     FROM member owner_member
     WHERE owner_member.workspace_id = $6
-      AND owner_member.user_id = $5
+      AND owner_member.user_id = $7
     FOR KEY SHARE OF owner_member
 ), locked_agent AS MATERIALIZED (
     SELECT a.id, a.workspace_id
@@ -189,9 +189,9 @@ WITH locked_owner_member AS MATERIALIZED (
     JOIN locked_owner_member owner_member
       ON owner_member.workspace_id = a.workspace_id
      AND owner_member.user_id = a.owner_id
-    WHERE a.id = $7
+    WHERE a.id = $8
       AND a.workspace_id = $6
-      AND a.owner_id = $5
+      AND a.owner_id = $7
     FOR SHARE OF a
 ), locked_endpoint AS MATERIALIZED (
     SELECT endpoint.id
@@ -200,8 +200,8 @@ WITH locked_owner_member AS MATERIALIZED (
       ON a.id = endpoint.agent_id
      AND a.workspace_id = endpoint.workspace_id
     WHERE endpoint.workspace_id = $6
-      AND endpoint.agent_id = $7
-      AND endpoint.delegated_by_user_id = $5
+      AND endpoint.agent_id = $8
+      AND endpoint.delegated_by_user_id = $7
     FOR SHARE OF endpoint
 )
 INSERT INTO a2a_client (
@@ -232,8 +232,9 @@ type CreateAgentA2AClientForOwnerParams struct {
 	Scopes             []string    `json:"scopes"`
 	RateLimitPerMinute pgtype.Int4 `json:"rate_limit_per_minute"`
 	MaxConcurrentTasks pgtype.Int4 `json:"max_concurrent_tasks"`
-	OwnerUserID        pgtype.UUID `json:"owner_user_id"`
+	ActorUserID        pgtype.UUID `json:"actor_user_id"`
 	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	OwnerUserID        pgtype.UUID `json:"owner_user_id"`
 	AgentID            pgtype.UUID `json:"agent_id"`
 }
 
@@ -243,8 +244,9 @@ func (q *Queries) CreateAgentA2AClientForOwner(ctx context.Context, arg CreateAg
 		arg.Scopes,
 		arg.RateLimitPerMinute,
 		arg.MaxConcurrentTasks,
-		arg.OwnerUserID,
+		arg.ActorUserID,
 		arg.WorkspaceID,
+		arg.OwnerUserID,
 		arg.AgentID,
 	)
 	var i A2aClient
@@ -271,7 +273,7 @@ WITH locked_owner_member AS MATERIALIZED (
     SELECT owner_member.workspace_id, owner_member.user_id
     FROM member owner_member
     WHERE owner_member.workspace_id = $6
-      AND owner_member.user_id = $5
+      AND owner_member.user_id = $7
     FOR KEY SHARE OF owner_member
 ), locked_agent AS MATERIALIZED (
     SELECT a.id, a.workspace_id
@@ -279,9 +281,9 @@ WITH locked_owner_member AS MATERIALIZED (
     JOIN locked_owner_member owner_member
       ON owner_member.workspace_id = a.workspace_id
      AND owner_member.user_id = a.owner_id
-    WHERE a.id = $7
+    WHERE a.id = $8
       AND a.workspace_id = $6
-      AND a.owner_id = $5
+      AND a.owner_id = $7
     FOR SHARE OF a
 ), locked_endpoint AS MATERIALIZED (
     SELECT endpoint.id
@@ -290,14 +292,14 @@ WITH locked_owner_member AS MATERIALIZED (
       ON a.id = endpoint.agent_id
      AND a.workspace_id = endpoint.workspace_id
     WHERE endpoint.workspace_id = $6
-      AND endpoint.agent_id = $7
-      AND endpoint.delegated_by_user_id = $5
+      AND endpoint.agent_id = $8
+      AND endpoint.delegated_by_user_id = $7
     FOR SHARE OF endpoint
 ), locked_client AS MATERIALIZED (
     SELECT client.id
     FROM a2a_client client
     JOIN locked_endpoint endpoint ON endpoint.id = client.endpoint_id
-    WHERE client.id = $8
+    WHERE client.id = $9
       AND client.status <> 'revoked'
     FOR SHARE OF client
 )
@@ -339,8 +341,9 @@ type CreateAgentA2ACredentialForOwnerParams struct {
 	TokenHash   string             `json:"token_hash"`
 	TokenPrefix string             `json:"token_prefix"`
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
-	OwnerUserID pgtype.UUID        `json:"owner_user_id"`
+	ActorUserID pgtype.UUID        `json:"actor_user_id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	OwnerUserID pgtype.UUID        `json:"owner_user_id"`
 	AgentID     pgtype.UUID        `json:"agent_id"`
 	ClientID    pgtype.UUID        `json:"client_id"`
 }
@@ -366,8 +369,9 @@ func (q *Queries) CreateAgentA2ACredentialForOwner(ctx context.Context, arg Crea
 		arg.TokenHash,
 		arg.TokenPrefix,
 		arg.ExpiresAt,
-		arg.OwnerUserID,
+		arg.ActorUserID,
 		arg.WorkspaceID,
+		arg.OwnerUserID,
 		arg.AgentID,
 		arg.ClientID,
 	)
@@ -956,8 +960,10 @@ type GetAgentA2AEndpointForOwnerParams struct {
 }
 
 // Agent-level inbound A2A persistence. Every management query below is
-// scoped by workspace, agent, and the agent's exact current owner. Public
-// protocol queries are scoped by the stable external client principal.
+// scoped by workspace, agent, and the agent's exact current owner. Management
+// handlers separately authorize the human actor as the Agent owner or a
+// workspace owner/admin. Public protocol queries are scoped by the stable
+// external client principal.
 func (q *Queries) GetAgentA2AEndpointForOwner(ctx context.Context, arg GetAgentA2AEndpointForOwnerParams) (AgentA2aEndpoint, error) {
 	row := q.db.QueryRow(ctx, getAgentA2AEndpointForOwner, arg.OwnerUserID, arg.WorkspaceID, arg.AgentID)
 	var i AgentA2aEndpoint
@@ -1963,14 +1969,14 @@ WITH revoked_client AS (
      AND a.workspace_id = endpoint.workspace_id
     JOIN member owner_member
       ON owner_member.workspace_id = endpoint.workspace_id
-     AND owner_member.user_id = $1
+     AND owner_member.user_id = $5
     WHERE client.id = $2
       AND client.endpoint_id = endpoint.id
       AND client.status <> 'revoked'
       AND endpoint.workspace_id = $3
       AND endpoint.agent_id = $4
-      AND endpoint.delegated_by_user_id = $1
-      AND a.owner_id = $1
+      AND endpoint.delegated_by_user_id = $5
+      AND a.owner_id = $5
     RETURNING client.id, client.endpoint_id, client.name, client.status, client.scopes, client.rate_limit_per_minute, client.max_concurrent_tasks, client.created_by, client.updated_by, client.revoked_at, client.revoked_by, client.created_at, client.updated_at
 ), revoked_credentials AS (
     UPDATE a2a_client_credential credential
@@ -1986,10 +1992,11 @@ SELECT id, endpoint_id, name, status, scopes, rate_limit_per_minute, max_concurr
 `
 
 type RevokeAgentA2AClientForOwnerParams struct {
-	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+	ActorUserID pgtype.UUID `json:"actor_user_id"`
 	ClientID    pgtype.UUID `json:"client_id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	AgentID     pgtype.UUID `json:"agent_id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
 }
 
 type RevokeAgentA2AClientForOwnerRow struct {
@@ -2010,10 +2017,11 @@ type RevokeAgentA2AClientForOwnerRow struct {
 
 func (q *Queries) RevokeAgentA2AClientForOwner(ctx context.Context, arg RevokeAgentA2AClientForOwnerParams) (RevokeAgentA2AClientForOwnerRow, error) {
 	row := q.db.QueryRow(ctx, revokeAgentA2AClientForOwner,
-		arg.OwnerUserID,
+		arg.ActorUserID,
 		arg.ClientID,
 		arg.WorkspaceID,
 		arg.AgentID,
+		arg.OwnerUserID,
 	)
 	var i RevokeAgentA2AClientForOwnerRow
 	err := row.Scan(
@@ -2047,15 +2055,15 @@ JOIN agent a
  AND a.workspace_id = endpoint.workspace_id
 JOIN member owner_member
   ON owner_member.workspace_id = endpoint.workspace_id
- AND owner_member.user_id = $1
+ AND owner_member.user_id = $6
 WHERE credential.id = $2
   AND credential.client_id = client.id
   AND client.id = $3
   AND credential.status = 'active'
   AND endpoint.workspace_id = $4
   AND endpoint.agent_id = $5
-  AND endpoint.delegated_by_user_id = $1
-  AND a.owner_id = $1
+  AND endpoint.delegated_by_user_id = $6
+  AND a.owner_id = $6
 RETURNING
     credential.id,
     credential.client_id,
@@ -2072,11 +2080,12 @@ RETURNING
 `
 
 type RevokeAgentA2ACredentialForOwnerParams struct {
-	OwnerUserID  pgtype.UUID `json:"owner_user_id"`
+	ActorUserID  pgtype.UUID `json:"actor_user_id"`
 	CredentialID pgtype.UUID `json:"credential_id"`
 	ClientID     pgtype.UUID `json:"client_id"`
 	WorkspaceID  pgtype.UUID `json:"workspace_id"`
 	AgentID      pgtype.UUID `json:"agent_id"`
+	OwnerUserID  pgtype.UUID `json:"owner_user_id"`
 }
 
 type RevokeAgentA2ACredentialForOwnerRow struct {
@@ -2096,11 +2105,12 @@ type RevokeAgentA2ACredentialForOwnerRow struct {
 
 func (q *Queries) RevokeAgentA2ACredentialForOwner(ctx context.Context, arg RevokeAgentA2ACredentialForOwnerParams) (RevokeAgentA2ACredentialForOwnerRow, error) {
 	row := q.db.QueryRow(ctx, revokeAgentA2ACredentialForOwner,
-		arg.OwnerUserID,
+		arg.ActorUserID,
 		arg.CredentialID,
 		arg.ClientID,
 		arg.WorkspaceID,
 		arg.AgentID,
+		arg.OwnerUserID,
 	)
 	var i RevokeAgentA2ACredentialForOwnerRow
 	err := row.Scan(
@@ -2200,14 +2210,14 @@ JOIN agent a
  AND a.workspace_id = endpoint.workspace_id
 JOIN member owner_member
   ON owner_member.workspace_id = endpoint.workspace_id
- AND owner_member.user_id = $6
+ AND owner_member.user_id = $10
 WHERE client.id = $7
   AND client.endpoint_id = endpoint.id
   AND client.status <> 'revoked'
   AND endpoint.workspace_id = $8
   AND endpoint.agent_id = $9
-  AND endpoint.delegated_by_user_id = $6
-  AND a.owner_id = $6
+  AND endpoint.delegated_by_user_id = $10
+  AND a.owner_id = $10
 RETURNING client.id, client.endpoint_id, client.name, client.status, client.scopes, client.rate_limit_per_minute, client.max_concurrent_tasks, client.created_by, client.updated_by, client.revoked_at, client.revoked_by, client.created_at, client.updated_at
 `
 
@@ -2217,10 +2227,11 @@ type UpdateAgentA2AClientForOwnerParams struct {
 	Scopes             []string    `json:"scopes"`
 	RateLimitPerMinute pgtype.Int4 `json:"rate_limit_per_minute"`
 	MaxConcurrentTasks pgtype.Int4 `json:"max_concurrent_tasks"`
-	OwnerUserID        pgtype.UUID `json:"owner_user_id"`
+	ActorUserID        pgtype.UUID `json:"actor_user_id"`
 	ClientID           pgtype.UUID `json:"client_id"`
 	WorkspaceID        pgtype.UUID `json:"workspace_id"`
 	AgentID            pgtype.UUID `json:"agent_id"`
+	OwnerUserID        pgtype.UUID `json:"owner_user_id"`
 }
 
 func (q *Queries) UpdateAgentA2AClientForOwner(ctx context.Context, arg UpdateAgentA2AClientForOwnerParams) (A2aClient, error) {
@@ -2230,10 +2241,11 @@ func (q *Queries) UpdateAgentA2AClientForOwner(ctx context.Context, arg UpdateAg
 		arg.Scopes,
 		arg.RateLimitPerMinute,
 		arg.MaxConcurrentTasks,
-		arg.OwnerUserID,
+		arg.ActorUserID,
 		arg.ClientID,
 		arg.WorkspaceID,
 		arg.AgentID,
+		arg.OwnerUserID,
 	)
 	var i A2aClient
 	err := row.Scan(
@@ -2284,8 +2296,8 @@ WITH locked_owner_member AS MATERIALIZED (
     UPDATE a2a_client client
     SET status = 'revoked',
         revoked_at = now(),
-        revoked_by = $3,
-        updated_by = $3,
+        revoked_by = $10,
+        updated_by = $10,
         updated_at = now()
     FROM current_endpoint endpoint
     WHERE client.endpoint_id = endpoint.id
@@ -2296,7 +2308,7 @@ WITH locked_owner_member AS MATERIALIZED (
     UPDATE a2a_client_credential credential
     SET status = 'revoked',
         revoked_at = now(),
-        revoked_by = $3,
+        revoked_by = $10,
         updated_at = now()
     WHERE credential.client_id IN (SELECT id FROM revoked_clients)
       AND credential.status = 'active'
@@ -2353,6 +2365,7 @@ type UpsertAgentA2AEndpointParams struct {
 	CardSkills      []byte      `json:"card_skills"`
 	WorkspaceID     pgtype.UUID `json:"workspace_id"`
 	AgentID         pgtype.UUID `json:"agent_id"`
+	ActorUserID     pgtype.UUID `json:"actor_user_id"`
 }
 
 // Rebinding an endpoint after an agent-owner transfer is a security boundary,
@@ -2370,6 +2383,7 @@ func (q *Queries) UpsertAgentA2AEndpoint(ctx context.Context, arg UpsertAgentA2A
 		arg.CardSkills,
 		arg.WorkspaceID,
 		arg.AgentID,
+		arg.ActorUserID,
 	)
 	var i AgentA2aEndpoint
 	err := row.Scan(

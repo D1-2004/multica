@@ -1,6 +1,8 @@
 -- Agent-level inbound A2A persistence. Every management query below is
--- scoped by workspace, agent, and the agent's exact current owner. Public
--- protocol queries are scoped by the stable external client principal.
+-- scoped by workspace, agent, and the agent's exact current owner. Management
+-- handlers separately authorize the human actor as the Agent owner or a
+-- workspace owner/admin. Public protocol queries are scoped by the stable
+-- external client principal.
 
 -- name: GetAgentA2AEndpointForOwner :one
 SELECT endpoint.*
@@ -172,8 +174,8 @@ WITH locked_owner_member AS MATERIALIZED (
     UPDATE a2a_client client
     SET status = 'revoked',
         revoked_at = now(),
-        revoked_by = sqlc.arg('owner_user_id'),
-        updated_by = sqlc.arg('owner_user_id'),
+        revoked_by = sqlc.arg('actor_user_id'),
+        updated_by = sqlc.arg('actor_user_id'),
         updated_at = now()
     FROM current_endpoint endpoint
     WHERE client.endpoint_id = endpoint.id
@@ -184,7 +186,7 @@ WITH locked_owner_member AS MATERIALIZED (
     UPDATE a2a_client_credential credential
     SET status = 'revoked',
         revoked_at = now(),
-        revoked_by = sqlc.arg('owner_user_id'),
+        revoked_by = sqlc.arg('actor_user_id'),
         updated_at = now()
     WHERE credential.client_id IN (SELECT id FROM revoked_clients)
       AND credential.status = 'active'
@@ -357,8 +359,8 @@ SELECT
     sqlc.arg('scopes')::text[],
     sqlc.narg('rate_limit_per_minute')::integer,
     sqlc.narg('max_concurrent_tasks')::integer,
-    sqlc.arg('owner_user_id'),
-    sqlc.arg('owner_user_id')
+    sqlc.arg('actor_user_id'),
+    sqlc.arg('actor_user_id')
 FROM locked_endpoint endpoint
 RETURNING *;
 
@@ -369,7 +371,7 @@ SET name = sqlc.arg('name'),
     scopes = sqlc.arg('scopes')::text[],
     rate_limit_per_minute = sqlc.narg('rate_limit_per_minute')::integer,
     max_concurrent_tasks = sqlc.narg('max_concurrent_tasks')::integer,
-    updated_by = sqlc.arg('owner_user_id'),
+    updated_by = sqlc.arg('actor_user_id'),
     updated_at = now()
 FROM agent_a2a_endpoint endpoint
 JOIN agent a
@@ -392,8 +394,8 @@ WITH revoked_client AS (
     UPDATE a2a_client client
     SET status = 'revoked',
         revoked_at = now(),
-        revoked_by = sqlc.arg('owner_user_id'),
-        updated_by = sqlc.arg('owner_user_id'),
+        revoked_by = sqlc.arg('actor_user_id'),
+        updated_by = sqlc.arg('actor_user_id'),
         updated_at = now()
     FROM agent_a2a_endpoint endpoint
     JOIN agent a
@@ -414,7 +416,7 @@ WITH revoked_client AS (
     UPDATE a2a_client_credential credential
     SET status = 'revoked',
         revoked_at = now(),
-        revoked_by = sqlc.arg('owner_user_id'),
+        revoked_by = sqlc.arg('actor_user_id'),
         updated_at = now()
     WHERE credential.client_id IN (SELECT id FROM revoked_client)
       AND credential.status = 'active'
@@ -503,7 +505,7 @@ SELECT
     sqlc.arg('token_prefix'),
     'active',
     sqlc.narg('expires_at')::timestamptz,
-    sqlc.arg('owner_user_id')
+    sqlc.arg('actor_user_id')
 FROM locked_client client
 RETURNING
     id,
@@ -523,7 +525,7 @@ RETURNING
 UPDATE a2a_client_credential credential
 SET status = 'revoked',
     revoked_at = now(),
-    revoked_by = sqlc.arg('owner_user_id'),
+    revoked_by = sqlc.arg('actor_user_id'),
     updated_at = now()
 FROM a2a_client client
 JOIN agent_a2a_endpoint endpoint ON endpoint.id = client.endpoint_id

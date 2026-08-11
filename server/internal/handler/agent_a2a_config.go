@@ -116,13 +116,15 @@ type createAgentA2ACredentialRequest struct {
 type agentA2AManagementScope struct {
 	Agent       db.Agent
 	OwnerUserID pgtype.UUID
+	ActorUserID pgtype.UUID
 	WorkspaceID pgtype.UUID
 }
 
-// requireAgentA2AOwner is deliberately stricter than the general agent edit
-// permission: workspace administrators cannot publish or mint credentials for
-// an Agent they do not own, and machine credentials cannot act as the owner.
-func (h *Handler) requireAgentA2AOwner(w http.ResponseWriter, r *http.Request) (agentA2AManagementScope, bool) {
+// requireAgentA2AManager follows the general Agent management boundary: the
+// Agent owner and workspace owners/admins may publish it or manage integration
+// credentials. Machine credentials remain forbidden because this surface can
+// mint bearer tokens and expose an Agent outside the workspace.
+func (h *Handler) requireAgentA2AManager(w http.ResponseWriter, r *http.Request) (agentA2AManagementScope, bool) {
 	if !featureflags.AgentA2AInboundEnabled(r.Context(), h.FeatureFlags) {
 		writeError(w, http.StatusNotFound, "agent A2A inbound is not enabled")
 		return agentA2AManagementScope{}, false
@@ -132,7 +134,7 @@ func (h *Handler) requireAgentA2AOwner(w http.ResponseWriter, r *http.Request) (
 		return agentA2AManagementScope{}, false
 	}
 
-	ownerID, ok := requireUserID(w, r)
+	actorID, ok := requireUserID(w, r)
 	if !ok {
 		return agentA2AManagementScope{}, false
 	}
@@ -140,21 +142,32 @@ func (h *Handler) requireAgentA2AOwner(w http.ResponseWriter, r *http.Request) (
 	if !ok {
 		return agentA2AManagementScope{}, false
 	}
-	if uuidToString(agent.OwnerID) != ownerID {
-		// Use the same response for a missing Agent and an Agent owned by someone
-		// else so the owner-only surface cannot be used for resource probing.
-		writeError(w, http.StatusNotFound, "agent not found")
+	member, ok := h.requireWorkspaceRole(
+		w,
+		r,
+		uuidToString(agent.WorkspaceID),
+		"agent not found",
+		"owner",
+		"admin",
+		"member",
+	)
+	if !ok {
+		return agentA2AManagementScope{}, false
+	}
+	if !roleAllowed(member.Role, "owner", "admin") && uuidToString(agent.OwnerID) != actorID {
+		writeError(w, http.StatusForbidden, "only the agent owner or a workspace admin can manage A2A")
 		return agentA2AManagementScope{}, false
 	}
 	return agentA2AManagementScope{
 		Agent:       agent,
 		OwnerUserID: agent.OwnerID,
+		ActorUserID: member.UserID,
 		WorkspaceID: agent.WorkspaceID,
 	}, true
 }
 
 func (h *Handler) GetAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
-	scope, ok := h.requireAgentA2AOwner(w, r)
+	scope, ok := h.requireAgentA2AManager(w, r)
 	if !ok {
 		return
 	}
@@ -167,7 +180,7 @@ func (h *Handler) GetAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
-	scope, ok := h.requireAgentA2AOwner(w, r)
+	scope, ok := h.requireAgentA2AManager(w, r)
 	if !ok {
 		return
 	}
@@ -258,6 +271,7 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 		PublicAgentID:   publicAgentID,
 		Enabled:         *request.Enabled,
 		OwnerUserID:     scope.OwnerUserID,
+		ActorUserID:     scope.ActorUserID,
 		CardName:        request.CardName,
 		CardDescription: request.CardDescription,
 		CardVersion:     request.CardVersion,
@@ -293,7 +307,7 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateAgentA2AClient(w http.ResponseWriter, r *http.Request) {
-	scope, ok := h.requireAgentA2AOwner(w, r)
+	scope, ok := h.requireAgentA2AManager(w, r)
 	if !ok {
 		return
 	}
@@ -330,6 +344,7 @@ func (h *Handler) CreateAgentA2AClient(w http.ResponseWriter, r *http.Request) {
 		RateLimitPerMinute: pgtype.Int4{},
 		MaxConcurrentTasks: pgtype.Int4{},
 		OwnerUserID:        scope.OwnerUserID,
+		ActorUserID:        scope.ActorUserID,
 		WorkspaceID:        scope.WorkspaceID,
 		AgentID:            scope.Agent.ID,
 	})
@@ -345,7 +360,7 @@ func (h *Handler) CreateAgentA2AClient(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) UpdateAgentA2AClient(w http.ResponseWriter, r *http.Request) {
-	scope, ok := h.requireAgentA2AOwner(w, r)
+	scope, ok := h.requireAgentA2AManager(w, r)
 	if !ok {
 		return
 	}
@@ -416,6 +431,7 @@ func (h *Handler) UpdateAgentA2AClient(w http.ResponseWriter, r *http.Request) {
 	if status == "revoked" {
 		revoked, revokeErr := h.Queries.RevokeAgentA2AClientForOwner(r.Context(), db.RevokeAgentA2AClientForOwnerParams{
 			OwnerUserID: scope.OwnerUserID,
+			ActorUserID: scope.ActorUserID,
 			ClientID:    clientID,
 			WorkspaceID: scope.WorkspaceID,
 			AgentID:     scope.Agent.ID,
@@ -444,6 +460,7 @@ func (h *Handler) UpdateAgentA2AClient(w http.ResponseWriter, r *http.Request) {
 		RateLimitPerMinute: rateLimit,
 		MaxConcurrentTasks: maxConcurrent,
 		OwnerUserID:        scope.OwnerUserID,
+		ActorUserID:        scope.ActorUserID,
 		ClientID:           clientID,
 		WorkspaceID:        scope.WorkspaceID,
 		AgentID:            scope.Agent.ID,
@@ -465,7 +482,7 @@ func (h *Handler) UpdateAgentA2AClient(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateAgentA2ACredential(w http.ResponseWriter, r *http.Request) {
-	scope, ok := h.requireAgentA2AOwner(w, r)
+	scope, ok := h.requireAgentA2AManager(w, r)
 	if !ok {
 		return
 	}
@@ -508,6 +525,7 @@ func (h *Handler) CreateAgentA2ACredential(w http.ResponseWriter, r *http.Reques
 		TokenPrefix: agentA2ATokenPrefix(rawToken),
 		ExpiresAt:   expiresAt,
 		OwnerUserID: scope.OwnerUserID,
+		ActorUserID: scope.ActorUserID,
 		ClientID:    clientID,
 		WorkspaceID: scope.WorkspaceID,
 		AgentID:     scope.Agent.ID,
@@ -532,7 +550,7 @@ func (h *Handler) CreateAgentA2ACredential(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) DeleteAgentA2ACredential(w http.ResponseWriter, r *http.Request) {
-	scope, ok := h.requireAgentA2AOwner(w, r)
+	scope, ok := h.requireAgentA2AManager(w, r)
 	if !ok {
 		return
 	}
@@ -573,6 +591,7 @@ func (h *Handler) DeleteAgentA2ACredential(w http.ResponseWriter, r *http.Reques
 	}
 	_, err = h.Queries.RevokeAgentA2ACredentialForOwner(r.Context(), db.RevokeAgentA2ACredentialForOwnerParams{
 		OwnerUserID:  scope.OwnerUserID,
+		ActorUserID:  scope.ActorUserID,
 		CredentialID: credentialID,
 		ClientID:     clientID,
 		WorkspaceID:  scope.WorkspaceID,
