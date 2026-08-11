@@ -1765,13 +1765,16 @@ func (l *FCE2BLauncher) waitForRunOnceClaim(
 	checkedInitialBlocker := false
 
 	for {
-		// A task token is written only at the final claim boundary. Besides the
-		// current handler's in-transaction finalization, this CAS lets a new
-		// launcher observe a claim completed by an older server replica during a
-		// rolling deployment.
+		// A task token is written only at the ordinary-task final claim boundary.
+		// Besides the current handler's in-transaction finalization, this CAS lets
+		// a new launcher observe an ordinary claim completed by an older server
+		// replica during a rolling deployment. It must never opt into tokenless A2A
+		// finalization here: dispatched precedes response construction, so only the
+		// handler transaction may mark a tokenless claim as complete.
 		if _, err := l.Queries.FinalizeAgentTaskRuntimeStartAttemptForTask(ctx, db.FinalizeAgentTaskRuntimeStartAttemptForTaskParams{
-			TaskID:    task.ID,
-			RuntimeID: task.RuntimeID,
+			TaskID:            task.ID,
+			RuntimeID:         task.RuntimeID,
+			AllowTokenlessA2a: false,
 		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return "", fmt.Errorf("finalize Runtime runner claim from task token: %w", err)
 		}

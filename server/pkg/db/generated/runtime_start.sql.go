@@ -226,7 +226,7 @@ func (q *Queries) FailAgentTaskRuntimeStartAttempt(ctx context.Context, arg Fail
 
 const finalizeAgentTaskRuntimeStartAttemptForTask = `-- name: FinalizeAgentTaskRuntimeStartAttemptForTask :one
 WITH claimable_task AS MATERIALIZED (
-    SELECT id
+    SELECT id, context
     FROM agent_task_queue
     WHERE id = $1
       AND runtime_id = $2
@@ -248,19 +248,28 @@ WHERE attempt.task_id = $1
   )
   AND EXISTS (
       SELECT 1
-      FROM task_token AS token
-      WHERE token.task_id = attempt.task_id
+      FROM claimable_task AS task
+      WHERE EXISTS (
+          SELECT 1
+          FROM task_token AS token
+          WHERE token.task_id = attempt.task_id
+      )
+      OR (
+          $3::boolean
+          AND task.context->>'multica_origin' = 'a2a'
+      )
   )
 RETURNING attempt.id, attempt.task_id, attempt.runtime_id, attempt.backend, attempt.protocol, attempt.sandbox_id, attempt.cold_start, attempt.status, attempt.last_stage, attempt.error_code, attempt.error_detail, attempt.runner_started_at, attempt.daemon_started_at, attempt.claim_finalized_at, attempt.finished_at, attempt.created_at, attempt.updated_at
 `
 
 type FinalizeAgentTaskRuntimeStartAttemptForTaskParams struct {
-	TaskID    pgtype.UUID `json:"task_id"`
-	RuntimeID pgtype.UUID `json:"runtime_id"`
+	TaskID            pgtype.UUID `json:"task_id"`
+	RuntimeID         pgtype.UUID `json:"runtime_id"`
+	AllowTokenlessA2a bool        `json:"allow_tokenless_a2a"`
 }
 
 func (q *Queries) FinalizeAgentTaskRuntimeStartAttemptForTask(ctx context.Context, arg FinalizeAgentTaskRuntimeStartAttemptForTaskParams) (AgentTaskRuntimeStartAttempt, error) {
-	row := q.db.QueryRow(ctx, finalizeAgentTaskRuntimeStartAttemptForTask, arg.TaskID, arg.RuntimeID)
+	row := q.db.QueryRow(ctx, finalizeAgentTaskRuntimeStartAttemptForTask, arg.TaskID, arg.RuntimeID, arg.AllowTokenlessA2a)
 	var i AgentTaskRuntimeStartAttempt
 	err := row.Scan(
 		&i.ID,

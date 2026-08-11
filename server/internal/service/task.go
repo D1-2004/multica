@@ -2007,8 +2007,9 @@ func (s *TaskService) finalizeTaskClaim(
 			receipt = persisted
 		}
 		if _, err := qtx.FinalizeAgentTaskRuntimeStartAttemptForTask(ctx, db.FinalizeAgentTaskRuntimeStartAttemptForTaskParams{
-			TaskID:    task.ID,
-			RuntimeID: task.RuntimeID,
+			TaskID:            task.ID,
+			RuntimeID:         task.RuntimeID,
+			AllowTokenlessA2a: token == nil,
 		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("finalize runtime start attempt: %w", err)
 		}
