@@ -389,6 +389,90 @@ func (q *Queries) CreateAgentA2ACredentialForOwner(ctx context.Context, arg Crea
 	return i, err
 }
 
+const createAgentA2AEndpointIfMissing = `-- name: CreateAgentA2AEndpointIfMissing :one
+WITH locked_owner_member AS MATERIALIZED (
+    SELECT owner_member.workspace_id, owner_member.user_id
+    FROM member owner_member
+    WHERE owner_member.workspace_id = $5
+      AND owner_member.user_id = $2
+    FOR KEY SHARE OF owner_member
+), eligible_agent AS MATERIALIZED (
+    SELECT a.id, a.workspace_id
+    FROM agent a
+    JOIN locked_owner_member owner_member
+      ON owner_member.workspace_id = a.workspace_id
+     AND owner_member.user_id = a.owner_id
+    WHERE a.id = $6
+      AND a.workspace_id = $5
+      AND a.owner_id = $2
+    FOR SHARE OF a
+)
+INSERT INTO agent_a2a_endpoint (
+    workspace_id,
+    agent_id,
+    public_agent_id,
+    enabled,
+    delegated_by_user_id,
+    card_name,
+    card_description,
+    card_version,
+    card_skills
+)
+SELECT
+    a.workspace_id,
+    a.id,
+    $1,
+    FALSE,
+    $2,
+    $3,
+    $4,
+    '1.0.0',
+    '[]'::jsonb
+FROM eligible_agent a
+ON CONFLICT (agent_id) DO NOTHING
+RETURNING id, workspace_id, agent_id, public_agent_id, enabled, delegated_by_user_id, card_name, card_description, card_version, card_skills, created_at, updated_at
+`
+
+type CreateAgentA2AEndpointIfMissingParams struct {
+	PublicAgentID   string      `json:"public_agent_id"`
+	OwnerUserID     pgtype.UUID `json:"owner_user_id"`
+	CardName        string      `json:"card_name"`
+	CardDescription string      `json:"card_description"`
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	AgentID         pgtype.UUID `json:"agent_id"`
+}
+
+// A copied or newly-created Agent deliberately does not inherit the source
+// endpoint, clients, or credentials. Lazily provision its own disabled
+// endpoint when the exact human owner first opens the integration surface.
+// ON CONFLICT prevents concurrent GETs from creating multiple public IDs.
+func (q *Queries) CreateAgentA2AEndpointIfMissing(ctx context.Context, arg CreateAgentA2AEndpointIfMissingParams) (AgentA2aEndpoint, error) {
+	row := q.db.QueryRow(ctx, createAgentA2AEndpointIfMissing,
+		arg.PublicAgentID,
+		arg.OwnerUserID,
+		arg.CardName,
+		arg.CardDescription,
+		arg.WorkspaceID,
+		arg.AgentID,
+	)
+	var i AgentA2aEndpoint
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.PublicAgentID,
+		&i.Enabled,
+		&i.DelegatedByUserID,
+		&i.CardName,
+		&i.CardDescription,
+		&i.CardVersion,
+		&i.CardSkills,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const disableAgentA2AEndpointsForMemberRevocation = `-- name: DisableAgentA2AEndpointsForMemberRevocation :many
 UPDATE agent_a2a_endpoint endpoint
 SET enabled = FALSE,

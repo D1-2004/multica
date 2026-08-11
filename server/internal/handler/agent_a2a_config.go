@@ -599,7 +599,22 @@ func (h *Handler) loadAgentA2AConfigResponse(r *http.Request, scope agentA2AMana
 		AgentID:     scope.Agent.ID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return response, nil
+		endpoint, err = h.Queries.CreateAgentA2AEndpointIfMissing(r.Context(), db.CreateAgentA2AEndpointIfMissingParams{
+			WorkspaceID:     scope.WorkspaceID,
+			OwnerUserID:     scope.OwnerUserID,
+			AgentID:         scope.Agent.ID,
+			PublicAgentID:   uuid.NewString(),
+			CardName:        scope.Agent.Name,
+			CardDescription: scope.Agent.Description,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Another request may have won the unique agent_id insert race.
+			endpoint, err = h.Queries.GetAgentA2AEndpointForOwner(r.Context(), db.GetAgentA2AEndpointForOwnerParams{
+				OwnerUserID: scope.OwnerUserID,
+				WorkspaceID: scope.WorkspaceID,
+				AgentID:     scope.Agent.ID,
+			})
+		}
 	}
 	if err != nil {
 		return AgentA2AConfigResponse{}, err

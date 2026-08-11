@@ -15,6 +15,53 @@ WHERE endpoint.workspace_id = sqlc.arg('workspace_id')
   AND endpoint.agent_id = sqlc.arg('agent_id')
   AND a.owner_id = sqlc.arg('owner_user_id');
 
+-- name: CreateAgentA2AEndpointIfMissing :one
+-- A copied or newly-created Agent deliberately does not inherit the source
+-- endpoint, clients, or credentials. Lazily provision its own disabled
+-- endpoint when the exact human owner first opens the integration surface.
+-- ON CONFLICT prevents concurrent GETs from creating multiple public IDs.
+WITH locked_owner_member AS MATERIALIZED (
+    SELECT owner_member.workspace_id, owner_member.user_id
+    FROM member owner_member
+    WHERE owner_member.workspace_id = sqlc.arg('workspace_id')
+      AND owner_member.user_id = sqlc.arg('owner_user_id')
+    FOR KEY SHARE OF owner_member
+), eligible_agent AS MATERIALIZED (
+    SELECT a.id, a.workspace_id
+    FROM agent a
+    JOIN locked_owner_member owner_member
+      ON owner_member.workspace_id = a.workspace_id
+     AND owner_member.user_id = a.owner_id
+    WHERE a.id = sqlc.arg('agent_id')
+      AND a.workspace_id = sqlc.arg('workspace_id')
+      AND a.owner_id = sqlc.arg('owner_user_id')
+    FOR SHARE OF a
+)
+INSERT INTO agent_a2a_endpoint (
+    workspace_id,
+    agent_id,
+    public_agent_id,
+    enabled,
+    delegated_by_user_id,
+    card_name,
+    card_description,
+    card_version,
+    card_skills
+)
+SELECT
+    a.workspace_id,
+    a.id,
+    sqlc.arg('public_agent_id'),
+    FALSE,
+    sqlc.arg('owner_user_id'),
+    sqlc.arg('card_name'),
+    sqlc.arg('card_description'),
+    '1.0.0',
+    '[]'::jsonb
+FROM eligible_agent a
+ON CONFLICT (agent_id) DO NOTHING
+RETURNING *;
+
 -- name: GetAgentA2AEndpointByAgent :one
 SELECT *
 FROM agent_a2a_endpoint

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -305,6 +306,72 @@ func TestAgentA2AManagementRequiresExactHumanOwner(t *testing.T) {
 	))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("flag-off management status = %d, want 404: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAgentA2AConfigLazilyCreatesOneEndpointForCopiedAgent(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	requireAgentA2ATestSchema(t)
+	agentID, ownerID, _ := privateAgentTestFixture(t)
+	withFeatureFlag(t, testHandler, featureflags.AgentA2AInbound, true)
+
+	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_a2a_endpoint WHERE agent_id = $1`, agentID); err != nil {
+		t.Fatalf("clear copied Agent endpoint: %v", err)
+	}
+
+	const callers = 8
+	responses := make([]*httptest.ResponseRecorder, callers)
+	configs := make([]AgentA2AConfigResponse, callers)
+	var wait sync.WaitGroup
+	wait.Add(callers)
+	for index := range callers {
+		go func() {
+			defer wait.Done()
+			response := httptest.NewRecorder()
+			testHandler.GetAgentA2AConfig(response, withAgentA2AURLParams(
+				newRequestAs(ownerID, http.MethodGet, "/api/agents/"+agentID+"/a2a", nil),
+				"id", agentID,
+			))
+			responses[index] = response
+			if response.Code == http.StatusOK {
+				_ = json.Unmarshal(response.Body.Bytes(), &configs[index])
+			}
+		}()
+	}
+	wait.Wait()
+
+	publicAgentID := ""
+	for index, response := range responses {
+		if response.Code != http.StatusOK {
+			t.Fatalf("caller %d status = %d: %s", index, response.Code, response.Body.String())
+		}
+		endpoint := configs[index].Endpoint
+		if endpoint == nil || endpoint.Enabled || endpoint.CardName != "private-access-test-agent" {
+			t.Fatalf("caller %d endpoint = %#v", index, endpoint)
+		}
+		if publicAgentID == "" {
+			publicAgentID = endpoint.PublicAgentID
+		} else if endpoint.PublicAgentID != publicAgentID {
+			t.Fatalf("caller %d public Agent ID = %q, want %q", index, endpoint.PublicAgentID, publicAgentID)
+		}
+	}
+
+	var endpointCount, clientCount int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM agent_a2a_endpoint WHERE agent_id = $1`, agentID).Scan(&endpointCount); err != nil {
+		t.Fatalf("count copied Agent endpoints: %v", err)
+	}
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM a2a_client client
+		JOIN agent_a2a_endpoint endpoint ON endpoint.id = client.endpoint_id
+		WHERE endpoint.agent_id = $1
+	`, agentID).Scan(&clientCount); err != nil {
+		t.Fatalf("count copied Agent clients: %v", err)
+	}
+	if endpointCount != 1 || clientCount != 0 {
+		t.Fatalf("copied Agent bootstrap counts endpoint=%d client=%d, want 1/0", endpointCount, clientCount)
 	}
 }
 
