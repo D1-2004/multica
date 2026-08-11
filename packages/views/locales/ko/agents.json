@@ -534,7 +534,7 @@
       "copy_failed": "복사하지 못했습니다",
       "clients_title": "A2A 클라이언트",
       "quick_connect_title": "로컬 Coding Agent에서 사용",
-      "quick_connect_description": "90일 액세스 자격 증명을 생성한 뒤 Codex 또는 Claude Code 명령 하나를 복사하세요.",
+      "quick_connect_description": "90일 액세스 자격 증명을 생성한 뒤 Codex, Claude Code 또는 OpenCode 명령 하나를 복사하세요.",
       "quick_connect_action": "연결 명령 생성",
       "clients_description": "외부 호출자마다 안정적인 클라이언트 ID와 개별적으로 폐기할 수 있는 자격 증명을 가집니다.",
       "create_client": "클라이언트 생성",

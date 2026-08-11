@@ -282,6 +282,10 @@ describe("A2ATab", () => {
     expect(document.body.textContent).toContain(
       "/api/mcp/connect/mca2a_one-time-secret",
     );
+    expect(document.body.textContent).toContain(
+      "opencode mcp add multica-public-agent-1 --url",
+    );
+    expect(document.body.textContent).toContain("X-API-Key=mca2a_one-time-secret");
     expect(document.body.textContent).toContain('"method": "GetTask"');
     expect(document.body.textContent).toContain("<TASK_ID_FROM_SEND_MESSAGE>");
     expect(document.body.textContent).toContain("A2A tasks/get");

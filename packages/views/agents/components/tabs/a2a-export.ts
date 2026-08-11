@@ -210,6 +210,7 @@ export interface CodingAgentMCPBundle {
   authorizationHeader: string;
   codexCommand: string;
   claudeCommand: string;
+  openCodeCommand: string;
 }
 
 /**
@@ -249,6 +250,7 @@ export function buildCodingAgentMCPBundle({
     authorizationHeader: `Authorization: Bearer ${token}`,
     codexCommand: `codex mcp add ${serverName} --url ${shellQuote(connectUrl)}`,
     claudeCommand: `claude mcp add --transport http --scope user ${serverName} ${shellQuote(connectUrl)}`,
+    openCodeCommand: `opencode mcp add ${serverName} --url ${shellQuote(mcpUrl)} --header ${shellQuote(`X-API-Key=${token}`)}`,
   };
 }
 

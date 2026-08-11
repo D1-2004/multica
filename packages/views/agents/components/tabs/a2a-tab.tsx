@@ -1064,7 +1064,7 @@ function SecretDialog({
 }) {
   const { t } = useT("agents");
   const [copiedTarget, setCopiedTarget] = useState<
-    "token" | "config" | "curl" | "codex" | "claude" | null
+    "token" | "config" | "curl" | "codex" | "claude" | "opencode" | null
   >(null);
   const [confirmed, setConfirmed] = useState(false);
   const localBundle = useMemo(() => buildSecretDebugBundle(secret), [secret]);
@@ -1083,7 +1083,13 @@ function SecretDialog({
   };
 
   const copy = async (
-    target: "token" | "config" | "curl" | "codex" | "claude",
+    target:
+      | "token"
+      | "config"
+      | "curl"
+      | "codex"
+      | "claude"
+      | "opencode",
     value: string,
   ) => {
     if (await copyText(value)) {
@@ -1146,6 +1152,7 @@ function SecretDialog({
             {([
               ["codex", "Codex", mcpBundle.codexCommand],
               ["claude", "Claude Code", mcpBundle.claudeCommand],
+              ["opencode", "OpenCode", mcpBundle.openCodeCommand],
             ] as const).map(([target, label, command]) => (
               <div key={target} className="space-y-2">
                 <div className="flex items-center justify-between gap-2">

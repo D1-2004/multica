@@ -631,7 +631,7 @@
       "copy_failed": "无法复制",
       "clients_title": "A2A 客户端",
       "quick_connect_title": "在本地 Coding Agent 中使用",
-      "quick_connect_description": "一键生成 90 天有效的接入凭证，然后复制一条 Codex 或 Claude Code 命令。",
+      "quick_connect_description": "一键生成 90 天有效的接入凭证，然后复制一条 Codex、Claude Code 或 OpenCode 命令。",
       "quick_connect_action": "生成连接命令",
       "clients_description": "每个外部调用方都有稳定的客户端身份和可独立吊销的凭证。",
       "create_client": "创建客户端",

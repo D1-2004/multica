@@ -642,7 +642,7 @@
       "copy_failed": "Couldn't copy",
       "clients_title": "A2A clients",
       "quick_connect_title": "Use from a local Coding Agent",
-      "quick_connect_description": "Generate a 90-day access credential, then copy one Codex or Claude Code command.",
+      "quick_connect_description": "Generate a 90-day access credential, then copy one Codex, Claude Code, or OpenCode command.",
       "quick_connect_action": "Generate connection command",
       "clients_description": "Each external caller has its own stable client identity and independently revocable credentials.",
       "create_client": "Create client",

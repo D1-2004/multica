@@ -202,6 +202,9 @@ describe("A2A export helpers", () => {
     expect(bundle.claudeCommand).toContain(
       "claude mcp add --transport http --scope user multica-public-agent-1",
     );
+    expect(bundle.openCodeCommand).toBe(
+      "opencode mcp add multica-public-agent-1 --url 'https://multica.example/base/api/mcp/agents/public-agent-1' --header 'X-API-Key=mca2a_0123456789abcdef0123456789abcdef01234567'",
+    );
     expect(bundle.authorizationHeader).toBe(
       "Authorization: Bearer mca2a_0123456789abcdef0123456789abcdef01234567",
     );
