@@ -349,6 +349,8 @@ daemon claim 采用显式的版本协商，而不是用版本号做 admission：
 
 FC launcher 的 `runtime_start_attempt` 不能继续只把 `task_token` 当作 claim 完成证明。finalize SQL 增加显式 `allow_tokenless_a2a` 参数，但仍锁定 exact task/runtime/status，并从数据库中的 durable task context 独立校验 `multica_origin=a2a`；只有 handler 在完整 payload 构建完成后的事务中可传 `true`。launcher 轮询始终传 `false`，避免仅凭较早写入的 `dispatched` 状态抢先把尚未完成响应构建的 A2A claim 误判为成功。普通任务即使错误传入该参数，也会因缺少 durable A2A origin 而保持 fail closed。
 
+2026-08-11 首次部署后对目标 Agent 实际启用发现，真实 stable m2 已使用 `kind=cloud-sandbox + sandbox_backend=aliyun_fc`，但仍以 `template_id/template` 表达模板身份，没有后来引入的 `artifact_kind/artifact_ref`。兼容解析因此只接受两种完整形状：新版 `artifact_kind=e2b_template + artifact_ref`，或仅限 OpenCode/Aliyun FC、`artifact_kind/ref` 同时缺失且不可变 `template_id` 非空的 m2 旧形状。`template` 别名本身不能作为身份，ASB、其他 provider、新旧字段混搭和空白模板仍拒绝；Go parser、Card SQL 和 Send admission SQL 保持同一条件。
+
 生产启用至少要求以下任一方案及 adversarial 验证：
 
 2026-08-10 真实预发启用验证发现，Aone 镜像以 build arg 注入且不通过应用 runtime-env trait 暴露 `AONE_ENV_TYPE=pre`，同时应用按正常公网运行方式配置 `APP_ENV=production`。后者表达应用运行模式（禁用测试验证码、启用生产构建），不是 Aone 发布层级；把四个变量无优先级合并会把真实预发误判成生产并返回 403。环境判定因此收窄为 Aone 特例：`AONE_ENV_TYPE` 存在时由该平台层级标记判定，故允许 `pre + APP_ENV=production`；Aone 标记缺失时遍历所有 `ENV_TYPE / GO_ENV / APP_ENV` 通用标记，任何 production 或未知值都 fail closed，不允许 staging 遮蔽 production。必须新增 `AONE_ENV_TYPE=pre + APP_ENV=production` 允许预发、`AONE_ENV_TYPE=production + APP_ENV=staging` 拒绝生产、通用 marker 冲突拒绝、未知 marker 拒绝和 fallback 行为测试，再重新部署后继续 E2E。
@@ -595,7 +597,7 @@ credential 写入权限 `0600` 文件或 stdin/env，不出现在命令参数、
 | 自动化验证 | 首切已完成 |  | Go A2A/daemon/auth/service/CLI 定向测试、Core/Views tests、`make build`、`git diff --check` | 相关测试与构建通过；Card/transport/auth/claim/env/local-daemon 能力已覆盖；List/Cancel/TCK/rate-limit 属于后续里程碑。更宽的既有 Handler/Service integration suite 仍受本地旧 fixture/schema/date 基线问题影响，不计作本切片通过 |
 | 本地 Coding Agent E2E | 已完成 |  | direct Card + JSON-RPC Send/Get、真实本地 Claude、DB readback、`npm test`、独立 Node oracle、proof JSON | 匿名 Card 成功，无 Bearer RPC 返回 401；Task 依次为 submitted/working/completed；Claude 实际执行 Write/Bash 并产出 1 个稳定 Text Artifact，包含 `A2A_E2E_COMPLETED`；独立 5-case oracle 和 Agent 生成的 5 tests 均通过 |
 | Aone 预发托管入口 E2E | 已完成 | `41cd46323` / release `4d4394f09` | 预发 Card + JSON-RPC Send/Get、本地隔离 profile/daemon/Claude、`npm test`、独立 Node oracle；删除 override 后再次部署 | run `3102808691` 构建/部署/集成测试成功并停在人工预发验证；Card 匿名 200、无 Bearer RPC 401，Task `tsk_sY3XgiP7MBE9thrbysi8SqH1OuBAmt49` 观察到 submitted/working/completed，Artifact 含 `A2A_E2E_COMPLETED`；一次性 credential/client/Agent/daemon/PAT/profile 已清理，3 个 env key 已删除且非目标项完整保留；最终 run `3102813830` 代码/配置合并、构建、扫描、预发部署与集成测试均成功并停在人工预发验证，flag-off Card/RPC 各 12 次请求均返回 404 |
-| 托管 OpenCode Agent A2A | 进行中 | 当前分支 | runtime-version-independent handler/SQL、native/legacy daemon claim 协商、tokenless runtime-start finalize 数据库集成测试；目标 m2 Agent 预发真实 Send/Get | 已删除 Aliyun FC OpenCode family 内 Card/Send/config 对 m5 capability 与模板版本的依赖；m2 旧 daemon 使用不落库的哨兵并剥离可选私有输入，m5/新 daemon 保留 tokenless 隔离；handler 事务可基于 durable A2A origin 完成 attempt，launcher 不得提前确认；legacy 进程 credential 风险明确维持 prerelease unsafe；等待再次推送、预发部署和目标 Agent 黑盒证据 |
+| 托管 OpenCode Agent A2A | 进行中 | 当前分支 | runtime-version-independent handler/SQL、m2 template metadata 兼容、native/legacy daemon claim 协商、tokenless runtime-start finalize 数据库集成测试；目标 m2 Agent 预发真实 Send/Get | 已删除 Aliyun FC OpenCode family 内 Card/Send/config 对 m5 capability 与模板版本的依赖，并兼容真实 stable m2 的 `template_id` 旧字段；m2 旧 daemon 使用不落库的哨兵并剥离可选私有输入，m5/新 daemon 保留 tokenless 隔离；handler 事务可基于 durable A2A origin 完成 attempt，launcher 不得提前确认；legacy 进程 credential 风险明确维持 prerelease unsafe；等待修复提交二次部署和目标 Agent 黑盒证据 |
 
 ## 首切结果与遗留项
 

@@ -1000,9 +1000,11 @@ func TestFCE2BA2ARunnerEnvIsTaskLocalAcrossRuntimeVersions(t *testing.T) {
 			"kind":"cloud-sandbox",
 			"sandbox_backend":"aliyun_fc",
 			"provider":"opencode",
-			"artifact_kind":"e2b_template",
-			"artifact_ref":"template-m2",
+			"template":"multica-m2-opencode",
+			"template_id":"template-m2-id",
+			"template_channel":"stable",
 			"manifest_version":2,
+			"runner":"multica-fc-opencode-container-log-entry",
 			"capabilities":["opencode"]
 		}`),
 	}

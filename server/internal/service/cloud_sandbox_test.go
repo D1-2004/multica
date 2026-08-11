@@ -57,6 +57,60 @@ func TestParseCloudSandboxRuntimeProjectsLegacyFCMetadata(t *testing.T) {
 	}
 }
 
+func TestParseCloudSandboxRuntimeProjectsStableM2TemplateMetadata(t *testing.T) {
+	t.Parallel()
+
+	runtime := db.AgentRuntime{
+		RuntimeMode: "cloud",
+		Provider:    "opencode",
+		Metadata: json.RawMessage(`{
+			"kind": "cloud-sandbox",
+			"sandbox_backend": "aliyun_fc",
+			"provider": "opencode",
+			"template": "multica-m2-opencode",
+			"template_id": "template-m2-id",
+			"template_build_id": "build-m2-id",
+			"template_alias": "multica-m2-stable",
+			"template_channel": "stable",
+			"manifest_version": 2,
+			"runner_protocol": "root-log-v1",
+			"runner": "multica-fc-opencode-container-log-entry",
+			"capabilities": ["opencode", "dws", "mcp"]
+		}`),
+	}
+	metadata, err := ParseCloudSandboxRuntime(runtime)
+	if err != nil {
+		t.Fatalf("ParseCloudSandboxRuntime stable m2: %v", err)
+	}
+	if metadata.Kind != CloudSandboxMetadataKind ||
+		metadata.SandboxBackend != SandboxBackendAliyunFC ||
+		metadata.Provider != "opencode" ||
+		metadata.ArtifactKind != CloudSandboxArtifactE2BTemplate ||
+		metadata.ArtifactRef != "template-m2-id" ||
+		metadata.ArtifactBuildID != "build-m2-id" ||
+		metadata.ArtifactAlias != "multica-m2-stable" ||
+		metadata.ArtifactChannel != CloudSandboxChannelStable ||
+		metadata.ManifestVersion != 2 {
+		t.Fatalf("stable m2 metadata = %#v", metadata)
+	}
+
+	for name, raw := range map[string]string{
+		"missing template identity": `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"opencode"}`,
+		"template alias only":       `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"opencode","template":"mutable-alias"}`,
+		"partial new artifact":      `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"opencode","artifact_kind":"e2b_template","template_id":"template-m2-id"}`,
+		"ASB legacy template":       `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode","template_id":"template-m2-id"}`,
+		"other provider template":   `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"hermes","template_id":"template-m2-id"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := runtime
+			candidate.Metadata = json.RawMessage(raw)
+			if _, err := ParseCloudSandboxRuntime(candidate); !errors.Is(err, ErrCloudSandboxMetadata) {
+				t.Fatalf("invalid stable metadata error = %v", err)
+			}
+		})
+	}
+}
+
 func TestParseCloudSandboxRuntimeRequiresImmutableASBImage(t *testing.T) {
 	t.Parallel()
 

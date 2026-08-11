@@ -232,8 +232,17 @@ WHERE endpoint.public_agent_id = sqlc.arg('public_agent_id')
             NULLIF(lower(btrim(runtime.metadata->>'provider')), ''),
             runtime.provider
           ) = 'opencode'
-          AND lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
-          AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
+          AND (
+            (
+              lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
+              AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
+            )
+            OR (
+              btrim(COALESCE(runtime.metadata->>'artifact_kind', '')) = ''
+              AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) = ''
+              AND btrim(COALESCE(runtime.metadata->>'template_id', '')) <> ''
+            )
+          )
         )
       )
     )
@@ -625,8 +634,17 @@ WITH locked_agent AS MATERIALIZED (
                 NULLIF(lower(btrim(runtime.metadata->>'provider')), ''),
                 runtime.provider
               ) = 'opencode'
-              AND lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
-              AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
+              AND (
+                (
+                  lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
+                  AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
+                )
+                OR (
+                  btrim(COALESCE(runtime.metadata->>'artifact_kind', '')) = ''
+                  AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) = ''
+                  AND btrim(COALESCE(runtime.metadata->>'template_id', '')) <> ''
+                )
+              )
             )
           )
         )

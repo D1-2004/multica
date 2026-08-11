@@ -189,7 +189,7 @@ func TestClaimTaskByRuntime_A2ALegacyDaemonGetsDenyAllCompatibilityToken(t *test
 		UPDATE agent_runtime
 		SET metadata = $2::jsonb
 		WHERE id = $1
-	`, fixture.runtimeID, agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A); err != nil {
+	`, fixture.runtimeID, agentA2ATestManagedOpenCodeStableM2Metadata); err != nil {
 		t.Fatalf("mark legacy managed runtime: %v", err)
 	}
 
@@ -445,7 +445,7 @@ func TestClaimTaskByRuntime_A2ASafetyRejectTerminatesRuntimeStartAttempt(t *test
 		UPDATE agent_runtime
 		SET metadata = $2::jsonb
 		WHERE id = $1
-	`, fixture.runtimeID, agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A); err != nil {
+	`, fixture.runtimeID, agentA2ATestManagedOpenCodeStableM2Metadata); err != nil {
 		t.Fatalf("mark managed runtime for safety rejection: %v", err)
 	}
 	task, err := testHandler.Queries.GetAgentTask(ctx, parseUUID(fixture.taskID))
@@ -555,7 +555,7 @@ func TestClaimTasksByRuntime_A2ALegacyCompatibilityUsesDenyAllToken(t *testing.T
 		UPDATE agent_runtime
 		SET metadata = $2::jsonb
 		WHERE id = $1
-	`, fixture.runtimeID, agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A); err != nil {
+	`, fixture.runtimeID, agentA2ATestManagedOpenCodeStableM2Metadata); err != nil {
 		t.Fatalf("mark batch legacy managed runtime: %v", err)
 	}
 
@@ -696,6 +696,7 @@ func TestA2AClaimModeNegotiationIsVersionIndependent(t *testing.T) {
 	}
 	for _, runtime := range []db.AgentRuntime{
 		validRuntime("local", "claude", `{}`),
+		validRuntime("cloud", "opencode", agentA2ATestManagedOpenCodeStableM2Metadata),
 		validRuntime("cloud", "opencode", agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A),
 		validRuntime("cloud", "opencode", agentA2ATestManagedOpenCodeRuntimeMetadata),
 		validRuntime("cloud", "opencode", `{"kind":"fc-e2b","template":"legacy-opencode"}`),
@@ -725,6 +726,7 @@ func TestA2AClaimModeNegotiationIsVersionIndependent(t *testing.T) {
 	}
 
 	for name, metadata := range map[string]string{
+		"stable m2 template":      agentA2ATestManagedOpenCodeStableM2Metadata,
 		"pre-capability template": agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A,
 		"current template":        agentA2ATestManagedOpenCodeRuntimeMetadata,
 	} {
@@ -740,7 +742,7 @@ func TestA2AClaimModeNegotiationIsVersionIndependent(t *testing.T) {
 	if requestUsesNativeA2AInvocation(legacyRequest, a2aContext, localClaude) {
 		t.Fatal("daemon without A2A capability must use legacy compatibility")
 	}
-	legacyManaged := validRuntime("cloud", "opencode", agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A)
+	legacyManaged := validRuntime("cloud", "opencode", agentA2ATestManagedOpenCodeStableM2Metadata)
 	if requestUsesNativeA2AInvocation(legacyRequest, a2aContext, legacyManaged) {
 		t.Fatal("pre-capability managed image must use legacy compatibility")
 	}

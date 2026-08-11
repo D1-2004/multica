@@ -46,6 +46,21 @@ const agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A = `{
 	"capabilities":["opencode","dws","mcp"]
 }`
 
+const agentA2ATestManagedOpenCodeStableM2Metadata = `{
+	"kind":"cloud-sandbox",
+	"sandbox_backend":"aliyun_fc",
+	"provider":"opencode",
+	"template":"multica-m2-opencode",
+	"template_id":"template-m2-id",
+	"template_build_id":"build-m2-id",
+	"template_alias":"multica-m2-stable",
+	"template_channel":"stable",
+	"manifest_version":2,
+	"runner_protocol":"root-log-v1",
+	"runner":"multica-fc-opencode-container-log-entry",
+	"capabilities":["opencode","dws","mcp"]
+}`
+
 func TestNormalizeAgentA2APublicBaseURL(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -389,6 +404,13 @@ func TestAgentA2AEnableIsRuntimeVersionAgnostic(t *testing.T) {
 			wantAllowed: true,
 		},
 		{
+			name:        "managed OpenCode stable m2 template metadata",
+			runtimeMode: "cloud",
+			provider:    "opencode",
+			metadata:    agentA2ATestManagedOpenCodeStableM2Metadata,
+			wantAllowed: true,
+		},
+		{
 			name:        "legacy managed OpenCode metadata",
 			runtimeMode: "cloud",
 			provider:    "opencode",
@@ -424,6 +446,12 @@ func TestAgentA2AEnableIsRuntimeVersionAgnostic(t *testing.T) {
 			runtimeMode: "cloud",
 			provider:    "opencode",
 			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"opencode","artifact_kind":"e2b_template","artifact_ref":"   ","capabilities":["a2a_inbound_opencode_v1"]}`,
+		},
+		{
+			name:        "cloud OpenCode missing artifact and legacy template identity",
+			runtimeMode: "cloud",
+			provider:    "opencode",
+			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"opencode"}`,
 		},
 		{
 			name:        "cloud OpenCode wrong sandbox backend",
@@ -654,6 +682,13 @@ func TestAgentA2ASendRemainsAvailableAcrossRuntimeVersionChanges(t *testing.T) {
 			runtimeMode:   "cloud",
 			provider:      "opencode",
 			metadata:      agentA2ATestManagedOpenCodeRuntimeMetadata,
+			wantAvailable: true,
+		},
+		{
+			name:          "runtime switched to stable m2 template metadata",
+			runtimeMode:   "cloud",
+			provider:      "opencode",
+			metadata:      agentA2ATestManagedOpenCodeStableM2Metadata,
 			wantAvailable: true,
 		},
 		{
