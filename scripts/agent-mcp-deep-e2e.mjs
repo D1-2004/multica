@@ -256,7 +256,8 @@ const followUpTexts = (followUpTerminal.task?.artifacts ?? [])
 const followedIssueResponse = await callTool("get_issue", { issue_id: issueID });
 const followedIssue = structuredTask(followedIssueResponse);
 const followUpCommentTexts = (followedIssue?.comments ?? []).map((comment) => comment.content).filter(Boolean);
-const foundPreviousFile = [...followUpTexts, ...followUpCommentTexts].some((text) => text.includes("FOUND_PREVIOUS_FILE"));
+const allFollowUpTexts = [...followUpTexts, ...followUpCommentTexts].map((text) => text.trim());
+const foundPreviousFile = allFollowUpTexts.some((text) => text === "FOUND_PREVIOUS_FILE");
 report.followUp = {
   taskID: followUpTask.id,
   issueID: followUpTask.issue?.id,
@@ -265,7 +266,7 @@ report.followUp = {
   finalTexts: followUpTexts,
   commentTexts: followUpCommentTexts,
   foundPreviousFile,
-  missingPreviousFile: [...followUpTexts, ...followUpCommentTexts].some((text) => text.includes("MISSING_PREVIOUS_FILE")),
+  missingPreviousFile: allFollowUpTexts.some((text) => text === "MISSING_PREVIOUS_FILE"),
 };
 assert(followUpTask.issue?.id === issueID, "follow-up created or returned a different Issue");
 assert(foundPreviousFile, "follow-up did not recover the previous Issue task's file/context");

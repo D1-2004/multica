@@ -1,7 +1,7 @@
 # Agent MCP Issue-backed Delegation 计划
 
 > 工作流：Plan
-> 状态：执行中
+> 状态：已完成
 > 创建日期：2026-08-11 CST
 > 当前分支：`codex/agent-a2a-inbound`
 > 目标环境：Aone 预发 `pre-testing`
@@ -104,4 +104,5 @@ flowchart LR
 | MCP tools 与 artifact projection | 已完成 | 7 个工具；Issue task 上传自动绑定 Issue；`get_task/list_artifacts/read_artifact` 返回持久资源 |
 | 本地回归 | 已完成 | fresh PostgreSQL 定向 handler 集成测试覆盖 6 路并发、字段映射、隔离、文件与 follow-up；CLI/daemon 定向测试与受影响包 `go vet` 通过 |
 | 全仓基线 | 已记录 | 全仓测试仍有与本改动无关的既有环境/fixture 失败；migration lint 报告既有 266/270 重号，本迁移 271 唯一 |
-| Aone 部署与 Coding Agent E2E | 待执行 |  |
+| Aone 部署与协议 E2E | 已完成 | pipeline 66 run `3103140882`：代码合并、构建、预发部署、预发集成测试均成功；停在预期的人工预发验证门禁。6 路并发仅创建 `PRE-1`，附件正文精确匹配，同 issue follow-up 恢复上一轮文件 |
+| 本地 Coding Agent E2E | 已完成 | Codex CLI 通过 header token 环境变量连接 MCP，自主创建 `PRE-2`，轮询至 `TASK_STATE_COMPLETED`，通过 `get_issue/list_artifacts/read_artifact` 精确读回正文 |
