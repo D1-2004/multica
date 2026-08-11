@@ -1060,7 +1060,6 @@ func configureDingTalkChatDispatchForTest(t *testing.T) *dingtalk.InstallationSe
 		nil,
 		nil,
 		nil,
-		nil,
 	))
 	previousRouter := testHandler.ChannelRouter
 	previousInstallations := testHandler.DingTalkInstallations
