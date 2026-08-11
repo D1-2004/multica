@@ -147,7 +147,7 @@ func TestASBCapacityErrorUsesGenericExternalDetailChannel(t *testing.T) {
 	}
 }
 
-func TestASBReleaseManifestRequiresAdditiveStartupEventsCapability(t *testing.T) {
+func TestASBReleaseManifestRequiresCurrentSchemaCapabilities(t *testing.T) {
 	t.Parallel()
 
 	manifest := map[string]any{
@@ -166,10 +166,17 @@ func TestASBReleaseManifestRequiresAdditiveStartupEventsCapability(t *testing.T)
 		t.Fatalf("existing ASB runtime manifest rejected: %v", err)
 	}
 	if err := validateASBReleaseManifest(manifest); err == nil {
-		t.Fatal("new ASB release accepted without runtime start events")
+		t.Fatal("new ASB release accepted with the legacy schema")
 	}
+	manifest["schema_version"] = 4
 	manifest["capabilities_by_backend"] = map[string][]string{
 		"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1},
+	}
+	if err := validateASBReleaseManifest(manifest); err == nil {
+		t.Fatal("new ASB release accepted without LLM trace capability")
+	}
+	manifest["capabilities_by_backend"] = map[string][]string{
+		"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, LLMTraceCapability},
 	}
 	if err := validateASBReleaseManifest(manifest); err != nil {
 		t.Fatalf("new ASB release manifest rejected: %v", err)

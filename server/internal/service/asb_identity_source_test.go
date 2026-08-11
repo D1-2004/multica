@@ -70,6 +70,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	pauseCalls := 0
 	resumeCalls := 0
 	deleteCalls := 0
+	createdAt := time.Now().UTC().Format(time.RFC3339)
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
@@ -86,14 +87,18 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 			}
 			response.Header().Set("Content-Type", "application/json")
 			response.WriteHeader(http.StatusAccepted)
-			_, _ = io.WriteString(response, `{"id":"identity-source-123","status":{"state":"Pending"},"createdAt":"2026-07-31T05:00:00Z"}`)
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":        sourceSandboxID,
+				"status":    map[string]string{"state": "Pending"},
+				"createdAt": createdAt,
+			})
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID:
 			response.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"id":        sourceSandboxID,
 				"status":    map[string]string{"state": state},
-				"createdAt": "2026-07-31T05:00:00Z",
+				"createdAt": createdAt,
 				"image":     map[string]string{"uri": runtimeImageRef},
 			})
 		case request.Method == http.MethodPost &&
