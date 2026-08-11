@@ -618,4 +618,6 @@ credential 写入权限 `0600` 文件或 stdin/env，不出现在命令参数、
 
 同日补齐本地 OpenCode 1.17.14 验收。OpenCode 使用 canonical MCP URL 与 `X-API-Key` header 注册，避免把 credential 放进 URL；本地模型实际调用 `delegate_task` 和 `get_task`，公共 Task `tsk_vh5J6Dfqd9YbTmURBw2kt_iCSYC4qppN` 从 `TASK_STATE_WORKING` 进入 `TASK_STATE_COMPLETED`，Artifact 精确为 `OPENCODE_MCP_PRERELEASE_20260811_150607`。验收发现 OpenCode `mcp list` 会显示 secret URL，因此 UI 为 OpenCode 固定生成 header-auth 命令；测试中暴露的旧 `local-debug` credential `59defa23-49e4-42b1-9de4-84567a602d35` 已立即吊销并确认返回 401，新 credential `cfeacea5-eda3-4801-9349-9b267b685382` 已写回原 `0600` token 文件并确认返回 200。临时 OpenCode MCP 条目已清理，原有全局配置未改变。
 
+OpenCode UI 补齐 Commit `e753a7e26` 经 run `3103052566` 完成代码/配置合并、构建、制品扫描、预发部署和预发集成测试；预发静态 chunk `/_next/static/chunks/6347-68e02260e3429a12.js` 已确认包含 `opencode mcp add`。最终部署后本地 OpenCode 再次通过页面同形命令连接，Task `tsk_8mXEQdUVPuhXMxQ6N11DkLo9y3lC_A9H` 进入 `TASK_STATE_COMPLETED`，Artifact 精确为 `OPENCODE_POSTDEPLOY_20260811_152336`；临时 MCP 条目清理后全局配置仍只包含原有 `pencil` 与 `railway`。
+
 仍未完成的是 blocking Send、List、context follow-up、Cancel/retry 完整状态机、多副本/重启、rate limit、官方 TCK 和生产发布。尤其生产仍被宿主 OS/HOME、Claude settings/hooks/plugins/skills、provider credential 与工具 shell 文件权限未隔离所阻断；当前 hard deny 与 unsafe loopback gate 必须保留，不能把本次可信固定 prompt E2E 解读为恶意 prompt 安全验收。由于总 Plan 仍有后续里程碑，本文件暂不改名为 `*-done.md`。
