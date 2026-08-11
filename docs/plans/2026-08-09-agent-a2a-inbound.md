@@ -1,7 +1,7 @@
 # Agent 级 Inbound A2A 实施计划
 
 > 工作流：Plan
-> 状态：托管 FC OpenCode 全 runtime 版本兼容、目标 m2 A2A 验收与 Agent 级 MCP 一键接入已完成（后续协议里程碑待执行）
+> 状态：托管 FC OpenCode 全 runtime 版本兼容、目标 m2 A2A 验收、A2A/MCP 信息架构分离与 Agent 级 MCP 单链接接入已完成（后续协议里程碑待执行）
 > 创建日期：2026-08-09
 > 计划 ID：20260809-agent-a2a-inbound
 > 最后更新时间：2026-08-11 CST
@@ -9,7 +9,7 @@
 > 目标执行分支：`codex/agent-a2a-inbound`
 > 基线 Commit：`4d4394f09fdfdc1fa4ba6ac45dfae70138ed9d63`
 > Worktree：`/Users/yuanzhan/.codex/worktrees/9df9/dt-fde-multica`
-> 当前里程碑：已让托管 Aliyun FC OpenCode Agent 的 A2A admission 与 runtime 模板/manifest/capability 版本解耦，使现有 m2 等旧云沙箱和后续版本使用同一 Card/RPC；已通过 daemon 能力协商在原生 tokenless 隔离与旧执行器预发兼容模式之间选择；同一可吊销 Agent 凭证现可用于 A2A 与 MCP，并支持本地 Codex、Claude Code 与 OpenCode 复制一条命令接入，目标预发 Agent 已完成真实黑盒 E2E
+> 当前里程碑：已让托管 Aliyun FC OpenCode Agent 的 A2A admission 与 runtime 模板/manifest/capability 版本解耦，使现有 m2 等旧云沙箱和后续版本使用同一 Card/RPC；已通过 daemon 能力协商在原生 tokenless 隔离与旧执行器预发兼容模式之间选择；A2A 保持为 Agent 设置中的标准协议入口，MCP 独立为“能力 → 集成”中的单链接对外出口，两者可使用同一套可吊销 Agent credential 基础设施但生命周期互不依赖
 
 ## 一句话结论
 
@@ -599,6 +599,7 @@ credential 写入权限 `0600` 文件或 stdin/env，不出现在命令参数、
 | Aone 预发托管入口 E2E | 已完成 | `41cd46323` / release `4d4394f09` | 预发 Card + JSON-RPC Send/Get、本地隔离 profile/daemon/Claude、`npm test`、独立 Node oracle；删除 override 后再次部署 | run `3102808691` 构建/部署/集成测试成功并停在人工预发验证；Card 匿名 200、无 Bearer RPC 401，Task `tsk_sY3XgiP7MBE9thrbysi8SqH1OuBAmt49` 观察到 submitted/working/completed，Artifact 含 `A2A_E2E_COMPLETED`；一次性 credential/client/Agent/daemon/PAT/profile 已清理，3 个 env key 已删除且非目标项完整保留；最终 run `3102813830` 代码/配置合并、构建、扫描、预发部署与集成测试均成功并停在人工预发验证，flag-off Card/RPC 各 12 次请求均返回 404 |
 | 托管 OpenCode Agent A2A | 已完成预发里程碑 | `737135f14` / `15628608e` / `1080f941c` | fresh DB service/handler/daemon A2A 回归、build；run `3103012371`；目标 m2 Card/401/Send/Get/Artifact | 目标 Agent endpoint 已启用；Card/RPC URL 非空；公共 Task `tsk_VveEZX3_SfR0rREaCvC3AkR1uMIi87qI` completed，Artifact `art_4VOInTo_VXJSEn9yhC_Fv8hy3pbGqDIA` 含 `A2A_M2_E2E_COMPLETED`，Agent 报告 Node 项目测试 5/5；一次性 credential/client 已吊销且旧 token 返回 401；保留 `local-debug` credential 至 2026-08-18 12:05 CST |
 | Agent MCP 一键接入 | 已完成预发里程碑 | `b14ba20fe` | Core/Views typecheck；106 项前端测试；Go handler/协议/日志测试；本地 MCP initialize/list/delegate/get/revoke；run `3103038543`；预发 Claude Code 与 OpenCode MCP 调用 | A2A credential 不新增存储即可同时用于 Bearer、`X-API-Key` 与 secret MCP URL；Codex/Claude Code/OpenCode 一行命令可复制；本地吊销后立即 401 且应用日志路径脱敏；Claude Code Task `tsk_xCJoDATdRnSgyKoGlY_K7Mne1I16Pg8Z` 与 OpenCode Task `tsk_vh5J6Dfqd9YbTmURBw2kt_iCSYC4qppN` 均 completed 并返回精确 Artifact |
+| A2A / MCP 信息架构分离 | 已完成预发里程碑 | `860eb467d` / release `603957e6b` | Views typecheck；41 项定向前端测试；Go handler/service compile 与 A2A adapter tests；本地 MCP initialize；隔离 Codex MCP `delegate_task/get_task`；run `3103086275` | A2A 只留在 Agent 设置，MCP 单链接移入“能力 → 集成”；MCP admission 不再依赖 A2A endpoint enabled；预发代码/配置合并、构建、扫描、部署、集成测试均成功；本地 Codex 得到精确 Artifact `MCP_SPLIT_UI_860EB467D` |
 
 ## 首切结果与遗留项
 
@@ -619,5 +620,9 @@ credential 写入权限 `0600` 文件或 stdin/env，不出现在命令参数、
 同日补齐本地 OpenCode 1.17.14 验收。OpenCode 使用 canonical MCP URL 与 `X-API-Key` header 注册，避免把 credential 放进 URL；本地模型实际调用 `delegate_task` 和 `get_task`，公共 Task `tsk_vh5J6Dfqd9YbTmURBw2kt_iCSYC4qppN` 从 `TASK_STATE_WORKING` 进入 `TASK_STATE_COMPLETED`，Artifact 精确为 `OPENCODE_MCP_PRERELEASE_20260811_150607`。验收发现 OpenCode `mcp list` 会显示 secret URL，因此 UI 为 OpenCode 固定生成 header-auth 命令；测试中暴露的旧 `local-debug` credential `59defa23-49e4-42b1-9de4-84567a602d35` 已立即吊销并确认返回 401，新 credential `cfeacea5-eda3-4801-9349-9b267b685382` 已写回原 `0600` token 文件并确认返回 200。临时 OpenCode MCP 条目已清理，原有全局配置未改变。
 
 OpenCode UI 补齐 Commit `e753a7e26` 经 run `3103052566` 完成代码/配置合并、构建、制品扫描、预发部署和预发集成测试；预发静态 chunk `/_next/static/chunks/6347-68e02260e3429a12.js` 已确认包含 `opencode mcp add`。最终部署后本地 OpenCode 再次通过页面同形命令连接，Task `tsk_8mXEQdUVPuhXMxQ6N11DkLo9y3lC_A9H` 进入 `TASK_STATE_COMPLETED`，Artifact 精确为 `OPENCODE_POSTDEPLOY_20260811_152336`；临时 MCP 条目清理后全局配置仍只包含原有 `pencil` 与 `railway`。
+
+随后按产品语义完成 A2A 与 MCP 分离。Commit `860eb467d` 中，Agent“设置 → A2A”只保留启停、A2A RPC URL、Agent Card URL 与 A2A API Key 管理；Agent“能力 → 集成”增加独立 MCP 卡片，用户只看到一个 `/api/mcp/connect/<credential>` 链接以及复制、重新生成、吊销三个动作。运行时配置中的 MCP tab 改名为“MCP 工具”，明确它表示该 Agent 消费外部 MCP，而“集成”表示把当前 Agent 披露成 MCP。MCP 继续复用 endpoint/client/credential 表和一次性 secret，不增加数据库表，但查询与 admission 显式允许 endpoint disabled：关闭 A2A 会立即关闭 Card/RPC，不会误伤仍有效的 MCP 链接；credential revoke/expiry、owner、runtime、scope 和事务门禁保持不变。
+
+Run `3103086275` 已完成代码合并、配置合并、构建、制品扫描、预发部署和预发集成测试，当前仅停在人工“预发验证”，没有进入生产。目标 Agent 的长期 `0600` 调试 credential 通过 secret connect URL 完成 MCP initialize，返回 `multica-hosted-agent/1.0.0` 和 tools capability；随后在隔离 `CODEX_HOME` 中让本地 Codex 实际调用 `delegate_task` 并轮询 `get_task` 到 terminal，得到精确 Artifact `MCP_SPLIT_UI_860EB467D`，临时 Codex 配置已清理，用户原全局配置未改变。浏览器自动登录身份仅拥有 `yufa` 工作区，无法访问目标 `pre-testing` 页面，因此没有把该浏览器会话作为 UI 验收证据；CLI 授权身份、黑盒接口和本地 Coding Agent 链路均已通过。
 
 仍未完成的是 blocking Send、List、context follow-up、Cancel/retry 完整状态机、多副本/重启、rate limit、官方 TCK 和生产发布。尤其生产仍被宿主 OS/HOME、Claude settings/hooks/plugins/skills、provider credential 与工具 shell 文件权限未隔离所阻断；当前 hard deny 与 unsafe loopback gate 必须保留，不能把本次可信固定 prompt E2E 解读为恶意 prompt 安全验收。由于总 Plan 仍有后续里程碑，本文件暂不改名为 `*-done.md`。
