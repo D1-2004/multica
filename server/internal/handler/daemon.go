@@ -1338,16 +1338,96 @@ func clearA2AClaimWorkspaceData(resp *AgentTaskResponse, taskContext []byte) {
 	resp.ConnectedApps = nil
 }
 
+// hardenLegacyA2AClaimResponse removes every optional claim input that an old
+// daemon could otherwise project into its ordinary-task brief or provider
+// environment. The externally supplied ChatMessage plus the Agent's public
+// instructions and skills remain; custom env/args/MCP/runtime tuning do not.
+// This is defense in depth for the managed prerelease cloud-sandbox fallback,
+// not a substitute for the process-level sandbox hardening in the launcher.
+func hardenLegacyA2AClaimResponse(resp *AgentTaskResponse) {
+	if resp == nil {
+		return
+	}
+	resp.TraceID = ""
+	resp.TraceStartedAtUnixMS = 0
+	resp.ProjectID = ""
+	resp.ProjectTitle = ""
+	resp.ProjectDescription = ""
+	resp.ProjectResources = nil
+	resp.PriorSessionID = ""
+	resp.PriorWorkDir = ""
+	resp.TriggerCommentID = nil
+	resp.CoalescedCommentIDs = nil
+	resp.CoalescedComments = nil
+	resp.TriggerThreadID = ""
+	resp.TriggerCommentContent = ""
+	resp.TriggerSummary = nil
+	resp.TriggerAuthorType = ""
+	resp.TriggerAuthorName = ""
+	resp.NewCommentCount = 0
+	resp.NewCommentsSince = ""
+	resp.ChatHistory = ""
+	resp.ChatMessageAttachments = nil
+	resp.ChatMessageSourcePayloads = nil
+	resp.AutopilotRunID = ""
+	resp.AutopilotID = ""
+	resp.AutopilotTitle = ""
+	resp.AutopilotDescription = ""
+	resp.AutopilotSource = ""
+	resp.AutopilotTriggerPayload = nil
+	resp.QuickCreatePrompt = ""
+	resp.QuickCreateAttachmentIDs = nil
+	resp.HandoffNote = ""
+	resp.SquadID = ""
+	resp.SquadName = ""
+	resp.ParentIssueID = ""
+	resp.ParentIssueIdentifier = ""
+	resp.RequestingUserName = ""
+	resp.RequestingUserProfileDescription = ""
+	resp.InitiatorType = ""
+	resp.InitiatorID = ""
+	resp.InitiatorName = ""
+	resp.InitiatorEmail = ""
+	resp.AgentIdentityContextToken = ""
+	resp.AgentIdentityContextTokenExpiresAt = 0
+	if resp.Agent != nil {
+		resp.Agent.CustomEnv = nil
+		resp.Agent.CustomArgs = nil
+		resp.Agent.McpConfig = json.RawMessage(`{"mcpServers":{}}`)
+		resp.Agent.RuntimeConfig = nil
+	}
+}
+
 const a2aClaimRuntimeSafetyPolicyError = "A2A task execution blocked by runtime safety policy"
 
 const a2aClaimAgentLoadError = "A2A task execution failed because agent configuration could not be loaded"
 
-func isA2AClaimTokenlessRuntime(runtime db.AgentRuntime) bool {
-	return isAgentA2AEligibleRuntime(runtime)
+func isA2AClaimRuntimeSupported(runtime db.AgentRuntime) bool {
+	return runtime.ID.Valid && runtime.WorkspaceID.Valid && isAgentA2ASupportedRuntimeFamily(runtime)
 }
 
 func isA2AUnsafePrereleaseManagedRuntime(runtime db.AgentRuntime) bool {
-	return runtime.RuntimeMode == "cloud" && isAgentA2AEligibleRuntime(runtime)
+	if !isA2AClaimRuntimeSupported(runtime) || runtime.RuntimeMode != "cloud" {
+		return false
+	}
+	return true
+}
+
+func runtimeSupportsNativeA2AInvocation(runtime db.AgentRuntime) bool {
+	return (runtime.RuntimeMode == "local" && runtime.Provider == "claude") ||
+		isA2AUnsafePrereleaseManagedRuntime(runtime)
+}
+
+func requestUsesNativeA2AInvocation(r *http.Request, taskContext []byte, runtime db.AgentRuntime) bool {
+	if !service.IsA2ATaskOrigin(taskContext) || !runtimeSupportsNativeA2AInvocation(runtime) {
+		return false
+	}
+	// The request capability is the version-independent contract for new
+	// daemons. Existing m5 OpenCode images predate that wire capability but
+	// already implement the native marker; retain their manifest attestation as
+	// a claim-mode fallback only. It is no longer an endpoint/Card/Send gate.
+	return requestHasDaemonCapability(r, protocol.DaemonCapabilityA2AInvocationV1) ||
+		service.FCE2BRuntimeHasCapability(runtime, service.A2AInboundOpenCodeCapability)
 }
 
 // failA2AClaimOnAgentLoadError turns a post-claim Agent read failure into a
@@ -1390,28 +1470,34 @@ func failA2AClaimOnAgentLoadError(
 	}
 }
 
-// enforceA2AClaimExecutionSafety rechecks the hard tokenless-runtime policy at
+// enforceA2AClaimExecutionSafety rechecks the hard runtime-safety policy at
 // both server-controlled pre-execution boundaries: after durable claim and
 // immediately before StartTask moves the task to running. Admission and
-// execution can be separated by an arbitrarily long queue delay, so an
-// ineligible runtime, or a revoked runtime-safety exemption, must fail the
-// dispatched task rather than execute it under stale authorization. The
-// provider allowlist is intentionally limited to the unsafe-loopback Claude E2E
-// slice and the exact managed prerelease cloud runtime shape. Inclusion is not
-// proof that ambient customization is isolated. Every other provider stays
-// fail-closed. The release feature flag is intentionally admission-only:
-// turning it off must not strand accepted work.
-func (h *Handler) enforceA2AClaimExecutionSafety(ctx context.Context, task *db.AgentTaskQueue, runtime db.AgentRuntime) *claimBuildFailure {
+// execution can be separated by an arbitrarily long queue delay, so a missing
+// or unsupported runtime, a legacy local daemon, or a revoked runtime-safety
+// exemption must fail the dispatched task rather than execute it under stale
+// authorization. Runtime template, manifest and capability versions do not
+// participate for the managed cloud-sandbox family; capability negotiation
+// selects native versus hardened legacy execution instead.
+// The release feature flag is intentionally admission-only: turning it off
+// must not strand accepted work.
+func (h *Handler) enforceA2AClaimExecutionSafety(ctx context.Context, r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime) *claimBuildFailure {
 	if !service.IsA2ATaskOrigin(task.Context) {
 		return nil
 	}
 
 	outcome := ""
 	switch {
-	case !isA2AClaimTokenlessRuntime(runtime):
-		outcome = "error_a2a_runtime_ineligible"
+	case !isA2AClaimRuntimeSupported(runtime):
+		outcome = "error_a2a_runtime_unsupported"
 	case !evaluateAgentA2ARuntimeSafety(h.currentConfig().PublicURL).Allowed:
 		outcome = "error_a2a_runtime_unsafe"
+	case !requestUsesNativeA2AInvocation(r, task.Context, runtime) && !isA2AUnsafePrereleaseManagedRuntime(runtime):
+		// A legacy local daemon would inherit the user's host HOME, provider
+		// credentials and native MCP configuration. Only the server-launched,
+		// managed cloud sandbox has a process-level hardening layer suitable for
+		// the legacy compatibility sentinel.
+		outcome = "error_a2a_daemon_upgrade_required"
 	default:
 		return nil
 	}
@@ -1619,7 +1705,7 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		rtWorkspaceID := uuidToString(rt.WorkspaceID)
-		if h.enforceA2AClaimExecutionSafety(r.Context(), &task, rt) != nil {
+		if h.enforceA2AClaimExecutionSafety(r.Context(), r, &task, rt) != nil {
 			continue
 		}
 		// Stale comment-plan repair must run for the batch path too: otherwise a
@@ -1638,10 +1724,14 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 			// the reclaim path.
 			continue
 		}
-		a2aInvocation := service.IsA2ATaskOrigin(task.Context)
-		resp.A2AInvocation = a2aInvocation
-		resp.A2AUnsafePrereleaseRuntime = a2aInvocation && isA2AUnsafePrereleaseManagedRuntime(rt)
-		if !a2aInvocation && !rt.OwnerID.Valid {
+		a2aTask := service.IsA2ATaskOrigin(task.Context)
+		nativeA2AInvocation := requestUsesNativeA2AInvocation(r, task.Context, rt)
+		resp.A2AInvocation = nativeA2AInvocation
+		resp.A2AUnsafePrereleaseRuntime = nativeA2AInvocation && isA2AUnsafePrereleaseManagedRuntime(rt)
+		if a2aTask && !nativeA2AInvocation {
+			hardenLegacyA2AClaimResponse(&resp)
+		}
+		if !a2aTask && !rt.OwnerID.Valid {
 			slog.Error("batch claim: runtime owner missing; cancelling task to avoid unscoped agent credentials",
 				"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
 			if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
@@ -1660,9 +1750,24 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 			tokenStr string
 			ferr     error
 		)
-		if a2aInvocation {
+		switch {
+		case nativeA2AInvocation:
 			receipt, ferr = h.TaskService.FinalizeTaskClaimWithoutToken(r.Context(), task, deliveredCommentIDs, commentBackedTask)
-		} else {
+		case a2aTask:
+			// Old daemons require a mat_-shaped value before launching the Agent.
+			// The compatibility token is deliberately never persisted, so the
+			// sentinel itself has no Multica API authority. The managed runner
+			// remains explicitly prerelease-unsafe because an old daemon may still
+			// inherit its own process credential into the child.
+			tokenStr, ferr = auth.GenerateAgentTaskToken()
+			if ferr == nil {
+				receipt, ferr = h.TaskService.FinalizeTaskClaimWithoutToken(r.Context(), task, deliveredCommentIDs, commentBackedTask)
+			}
+			if ferr == nil {
+				slog.Warn("batch claim: dispatching A2A task through unsafe legacy daemon compatibility",
+					"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
+			}
+		default:
 			tokenStr, ferr = auth.GenerateAgentTaskToken()
 			if ferr == nil {
 				receipt, ferr = h.TaskService.FinalizeTaskClaim(r.Context(), task, db.CreateTaskTokenParams{
@@ -2693,7 +2798,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		outcome = "no_task"
 		return
 	}
-	if failure := h.enforceA2AClaimExecutionSafety(r.Context(), task, runtime); failure != nil {
+	if failure := h.enforceA2AClaimExecutionSafety(r.Context(), r, task, runtime); failure != nil {
 		outcome = failure.outcome
 		writeError(w, failure.status, failure.message)
 		return
@@ -2767,9 +2872,13 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	commentBackedTask := task.TriggerCommentID.Valid || len(task.CoalescedCommentIds) > 0
-	a2aInvocation := service.IsA2ATaskOrigin(task.Context)
-	resp.A2AInvocation = a2aInvocation
-	resp.A2AUnsafePrereleaseRuntime = a2aInvocation && isA2AUnsafePrereleaseManagedRuntime(runtime)
+	a2aTask := service.IsA2ATaskOrigin(task.Context)
+	nativeA2AInvocation := requestUsesNativeA2AInvocation(r, task.Context, runtime)
+	resp.A2AInvocation = nativeA2AInvocation
+	resp.A2AUnsafePrereleaseRuntime = nativeA2AInvocation && isA2AUnsafePrereleaseManagedRuntime(runtime)
+	if a2aTask && !nativeA2AInvocation {
+		hardenLegacyA2AClaimResponse(&resp)
+	}
 	requeueFailedClaim := func(reason string) {
 		if _, err := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); err != nil {
 			slog.Error("task claim: failed to requeue after finalization error",
@@ -2779,11 +2888,15 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			)
 		}
 	}
-	// Ordinary tasks receive a `mat_` token bound to (agent, task, workspace,
-	// owner). A2A-origin tasks take the explicit tokenless finalization path;
-	// the response marker lets the daemon distinguish that grant from a broken
-	// ordinary claim while never falling back to its member/owner credential.
-	if !a2aInvocation && !runtime.OwnerID.Valid {
+	// Ordinary tasks receive a persisted `mat_` token bound to (agent, task,
+	// workspace, owner). A2A-aware daemons advertise a capability and take the
+	// stronger tokenless path. Legacy daemons receive an unregistered mat_-shaped
+	// sentinel: it satisfies their launch-time shape check but the sentinel itself
+	// authorizes no Multica API. This explicit prerelease compatibility keeps old
+	// cloud-sandbox versions executable without making runtime version metadata
+	// part of A2A admission. The deployment safety gate above keeps the old
+	// daemon's remaining process-credential risk out of production.
+	if !a2aTask && !runtime.OwnerID.Valid {
 		outcome = "error_token"
 		slog.Error("task claim: runtime owner missing; cancelling task to avoid unscoped agent credentials",
 			"task_id", uuidToString(task.ID),
@@ -2802,9 +2915,19 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		tokenStr string
 		ferr     error
 	)
-	if a2aInvocation {
+	switch {
+	case nativeA2AInvocation:
 		receipt, ferr = h.TaskService.FinalizeTaskClaimWithoutToken(r.Context(), *task, deliveredCommentIDs, commentBackedTask)
-	} else {
+	case a2aTask:
+		tokenStr, ferr = auth.GenerateAgentTaskToken()
+		if ferr == nil {
+			receipt, ferr = h.TaskService.FinalizeTaskClaimWithoutToken(r.Context(), *task, deliveredCommentIDs, commentBackedTask)
+		}
+		if ferr == nil {
+			slog.Warn("task claim: dispatching A2A task through unsafe legacy daemon compatibility",
+				"task_id", uuidToString(task.ID), "runtime_id", runtimeID)
+		}
+	default:
 		tokenStr, ferr = auth.GenerateAgentTaskToken()
 		if ferr == nil {
 			receipt, ferr = h.TaskService.FinalizeTaskClaim(r.Context(), *task, db.CreateTaskTokenParams{
@@ -3064,7 +3187,7 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 			// permission to reuse the stale claim-time runtime decision.
 			runtime = db.AgentRuntime{}
 		}
-		if failure := h.enforceA2AClaimExecutionSafety(r.Context(), &task, runtime); failure != nil {
+		if failure := h.enforceA2AClaimExecutionSafety(r.Context(), r, &task, runtime); failure != nil {
 			writeError(w, failure.status, failure.message)
 			return
 		}

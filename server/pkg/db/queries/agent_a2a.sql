@@ -215,20 +215,27 @@ WHERE endpoint.public_agent_id = sqlc.arg('public_agent_id')
   AND endpoint.enabled = TRUE
   AND a.archived_at IS NULL
   AND a.runtime_id IS NOT NULL
+  -- Runtime template aliases, manifest versions and capabilities intentionally
+  -- do not participate. Keep only the provider-family boundary that has a
+  -- verified native or managed-prerelease A2A execution path.
   AND (
     (runtime.runtime_mode = 'local' AND runtime.provider = 'claude')
     OR (
       runtime.runtime_mode = 'cloud'
       AND runtime.provider = 'opencode'
-      AND btrim(runtime.metadata->>'kind') = 'cloud-sandbox'
-      AND lower(btrim(runtime.metadata->>'sandbox_backend')) = 'aliyun_fc'
-      AND COALESCE(
-        NULLIF(lower(btrim(runtime.metadata->>'provider')), ''),
-        runtime.provider
-      ) = 'opencode'
-      AND lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
-      AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
-      AND runtime.metadata->'capabilities' ? 'a2a_inbound_opencode_v1'
+      AND (
+        btrim(runtime.metadata->>'kind') = 'fc-e2b'
+        OR (
+          btrim(runtime.metadata->>'kind') = 'cloud-sandbox'
+          AND lower(btrim(runtime.metadata->>'sandbox_backend')) = 'aliyun_fc'
+          AND COALESCE(
+            NULLIF(lower(btrim(runtime.metadata->>'provider')), ''),
+            runtime.provider
+          ) = 'opencode'
+          AND lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
+          AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
+        )
+      )
     )
   )
   AND a.owner_id = endpoint.delegated_by_user_id;
@@ -602,24 +609,26 @@ WITH locked_agent AS MATERIALIZED (
       AND a.workspace_id = sqlc.arg('workspace_id')
       AND a.archived_at IS NULL
       AND a.runtime_id IS NOT NULL
-      -- Keep this predicate aligned with isAgentA2AEligibleRuntime, the
-      -- published Card query, and the daemon's fail-closed execution guard.
-      -- The cloud exception is deliberately tied to the platform-managed
-      -- Aliyun FC sandbox shape, not to cloud/OpenCode runtimes in general.
+      -- Keep aligned with isAgentA2ASupportedRuntimeFamily and the published
+      -- Card query. Version/capability metadata selects claim mode only.
       AND (
         (runtime.runtime_mode = 'local' AND runtime.provider = 'claude')
         OR (
           runtime.runtime_mode = 'cloud'
           AND runtime.provider = 'opencode'
-          AND btrim(runtime.metadata->>'kind') = 'cloud-sandbox'
-          AND lower(btrim(runtime.metadata->>'sandbox_backend')) = 'aliyun_fc'
-          AND COALESCE(
-            NULLIF(lower(btrim(runtime.metadata->>'provider')), ''),
-            runtime.provider
-          ) = 'opencode'
-          AND lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
-          AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
-          AND runtime.metadata->'capabilities' ? 'a2a_inbound_opencode_v1'
+          AND (
+            btrim(runtime.metadata->>'kind') = 'fc-e2b'
+            OR (
+              btrim(runtime.metadata->>'kind') = 'cloud-sandbox'
+              AND lower(btrim(runtime.metadata->>'sandbox_backend')) = 'aliyun_fc'
+              AND COALESCE(
+                NULLIF(lower(btrim(runtime.metadata->>'provider')), ''),
+                runtime.provider
+              ) = 'opencode'
+              AND lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
+              AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
+            )
+          )
         )
       )
     FOR SHARE OF a, runtime

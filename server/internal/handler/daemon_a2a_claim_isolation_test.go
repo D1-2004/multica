@@ -14,6 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestClaimTaskByRuntime_A2AWorkspaceDataIsolation(t *testing.T) {
@@ -167,6 +168,108 @@ func TestClaimTaskByRuntime_A2AManagedPrereleaseRuntimeAttestation(t *testing.T)
 	}
 }
 
+func TestClaimTaskByRuntime_A2ALegacyDaemonGetsDenyAllCompatibilityToken(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	withA2AClaimTestFlags(t, true, false)
+	allowA2AClaimExecutionForTest(t)
+
+	ctx := context.Background()
+	fixture := createQueuedA2AClaimTestTask(
+		t,
+		ctx,
+		"legacy managed OpenCode A2A claim",
+		"cloud",
+		"opencode",
+		`{"multica_origin":"a2a"}`,
+		true,
+	)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_runtime
+		SET metadata = $2::jsonb
+		WHERE id = $1
+	`, fixture.runtimeID, agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A); err != nil {
+		t.Fatalf("mark legacy managed runtime: %v", err)
+	}
+
+	w := postA2AClaimTestTaskWithCapabilities(fixture.runtimeID, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var envelope struct {
+		Task *AgentTaskResponse `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode claim response: %v", err)
+	}
+	if envelope.Task == nil || envelope.Task.ID != fixture.taskID {
+		t.Fatalf("claimed task = %+v, want id %s", envelope.Task, fixture.taskID)
+	}
+	if envelope.Task.A2AInvocation || envelope.Task.A2AUnsafePrereleaseRuntime {
+		t.Fatalf("legacy daemon must not receive native A2A markers: %+v", envelope.Task)
+	}
+	if !strings.HasPrefix(envelope.Task.AuthToken, "mat_") {
+		t.Fatalf("legacy compatibility token has unexpected shape")
+	}
+	if len(envelope.Task.Repos) != 0 || envelope.Task.WorkspaceContext != "" || len(envelope.Task.ConnectedApps) != 0 {
+		t.Fatalf("legacy A2A claim leaked server-owned workspace data: %+v", envelope.Task)
+	}
+	var persistedTokenCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM task_token WHERE task_id = $1`, fixture.taskID).Scan(&persistedTokenCount); err != nil {
+		t.Fatalf("count persisted compatibility tokens: %v", err)
+	}
+	if persistedTokenCount != 0 {
+		t.Fatalf("legacy A2A compatibility token unexpectedly gained API authority: %d persisted tokens", persistedTokenCount)
+	}
+}
+
+func TestHardenLegacyA2AClaimResponseStripsOptionalInternalCapabilities(t *testing.T) {
+	response := AgentTaskResponse{
+		TraceID:                            "trace-secret",
+		TraceStartedAtUnixMS:               123,
+		ProjectID:                          "project-secret",
+		ProjectResources:                   []ProjectResourceData{{ID: "resource-secret"}},
+		PriorSessionID:                     "session-secret",
+		PriorWorkDir:                       "/internal/workdir",
+		ChatSessionID:                      "chat-routing-id",
+		ChatMessage:                        "external A2A input",
+		ChatHistory:                        "private history",
+		ChatMessageAttachments:             []ChatAttachmentMeta{{ID: "attachment-secret"}},
+		RequestingUserName:                 "Private Owner",
+		RequestingUserProfileDescription:   "private profile",
+		InitiatorID:                        "internal-user-id",
+		AgentIdentityContextToken:          "identity-secret",
+		AgentIdentityContextTokenExpiresAt: 123,
+		Agent: &TaskAgentData{
+			Name:          "Public Agent",
+			Instructions:  "public instructions",
+			CustomEnv:     map[string]string{"SECRET": "value"},
+			CustomArgs:    []string{"--unsafe"},
+			McpConfig:     json.RawMessage(`{"mcpServers":{"private":{}}}`),
+			RuntimeConfig: json.RawMessage(`{"gateway":{"token":"secret"}}`),
+		},
+	}
+
+	hardenLegacyA2AClaimResponse(&response)
+
+	if response.ChatSessionID != "chat-routing-id" || response.ChatMessage != "external A2A input" {
+		t.Fatalf("A2A routing/input was removed: %+v", response)
+	}
+	if response.TraceID != "" || response.ProjectID != "" || response.PriorSessionID != "" ||
+		response.PriorWorkDir != "" || response.ChatHistory != "" || len(response.ChatMessageAttachments) != 0 ||
+		response.RequestingUserName != "" || response.InitiatorID != "" || response.AgentIdentityContextToken != "" {
+		t.Fatalf("legacy hardening retained internal context: %+v", response)
+	}
+	if response.Agent == nil || response.Agent.Name != "Public Agent" || response.Agent.Instructions != "public instructions" {
+		t.Fatalf("public Agent contract was removed: %+v", response.Agent)
+	}
+	if len(response.Agent.CustomEnv) != 0 || len(response.Agent.CustomArgs) != 0 || len(response.Agent.RuntimeConfig) != 0 ||
+		string(response.Agent.McpConfig) != `{"mcpServers":{}}` {
+		t.Fatalf("legacy Agent capabilities were not stripped: %+v", response.Agent)
+	}
+}
+
 func TestClaimTaskByRuntime_A2AExecutionSafetyRecheck(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -216,7 +319,7 @@ func TestClaimTaskByRuntime_A2AExecutionSafetyRecheck(t *testing.T) {
 			wantPersistedError: a2aClaimRuntimeSafetyPolicyError,
 		},
 		{
-			name:               "cloud runtime slipped through admission",
+			name:               "unsupported cloud provider fails closed",
 			runtimeMode:        "cloud",
 			runtimeProvider:    "claude",
 			taskContext:        `{"multica_origin":"a2a"}`,
@@ -228,7 +331,7 @@ func TestClaimTaskByRuntime_A2AExecutionSafetyRecheck(t *testing.T) {
 			wantPersistedError: a2aClaimRuntimeSafetyPolicyError,
 		},
 		{
-			name:               "unsupported local provider slipped through admission",
+			name:               "unsupported local provider fails closed",
 			runtimeMode:        "local",
 			runtimeProvider:    "opencode",
 			taskContext:        `{"multica_origin":"a2a"}`,
@@ -334,10 +437,17 @@ func TestClaimTaskByRuntime_A2ASafetyRejectTerminatesRuntimeStartAttempt(t *test
 		ctx,
 		"targeted A2A cloud runtime rejection",
 		"cloud",
-		"claude",
+		"opencode",
 		`{"multica_origin":"a2a"}`,
 		true,
 	)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_runtime
+		SET metadata = $2::jsonb
+		WHERE id = $1
+	`, fixture.runtimeID, agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A); err != nil {
+		t.Fatalf("mark managed runtime for safety rejection: %v", err)
+	}
 	task, err := testHandler.Queries.GetAgentTask(ctx, parseUUID(fixture.taskID))
 	if err != nil {
 		t.Fatalf("load A2A task for runtime start attempt: %v", err)
@@ -351,6 +461,9 @@ func TestClaimTaskByRuntime_A2ASafetyRejectTerminatesRuntimeStartAttempt(t *test
 	if err != nil {
 		t.Fatalf("begin A2A runtime start attempt: %v", err)
 	}
+	// Runtime provider/version no longer rejects A2A. Revoke the deployment
+	// safety exemption to exercise the actual fail-closed execution gate.
+	t.Setenv(agentA2AAllowUnsafeLocalRuntimeEnv, "")
 
 	w := claimRuntimeStartFixture(t, fixture.runtimeID, map[string]any{
 		"target_task_id":           fixture.taskID,
@@ -409,6 +522,7 @@ func TestStartTask_A2AExecutionSafetyRecheck(t *testing.T) {
 		testWorkspaceID,
 		"a2a-start-safety",
 	)
+	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityA2AInvocationV1)
 	req = withURLParam(req, "taskId", fixture.taskID)
 	testHandler.StartTask(w, req)
 	if w.Code != http.StatusConflict {
@@ -420,7 +534,7 @@ func TestStartTask_A2AExecutionSafetyRecheck(t *testing.T) {
 	assertA2AClaimInputAndBindingPersisted(t, ctx, fixture, "failed")
 }
 
-func TestClaimTasksByRuntime_A2AExecutionSafetyRecheck(t *testing.T) {
+func TestClaimTasksByRuntime_A2ALegacyCompatibilityUsesDenyAllToken(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
@@ -431,12 +545,19 @@ func TestClaimTasksByRuntime_A2AExecutionSafetyRecheck(t *testing.T) {
 	fixture := createQueuedA2AClaimTestTask(
 		t,
 		ctx,
-		"batch A2A cloud runtime rejection",
+		"batch A2A legacy cloud runtime",
 		"cloud",
-		"claude",
+		"opencode",
 		`{"multica_origin":"a2a"}`,
 		true,
 	)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_runtime
+		SET metadata = $2::jsonb
+		WHERE id = $1
+	`, fixture.runtimeID, agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A); err != nil {
+		t.Fatalf("mark batch legacy managed runtime: %v", err)
+	}
 
 	w := postBatchClaim(t, testWorkspaceID, []string{fixture.runtimeID}, 1)
 	if w.Code != http.StatusOK {
@@ -446,32 +567,28 @@ func TestClaimTasksByRuntime_A2AExecutionSafetyRecheck(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode batch claim response: %v", err)
 	}
-	if len(response.Tasks) != 0 {
-		t.Fatalf("batch claim returned policy-rejected A2A task: %s", w.Body.String())
+	if len(response.Tasks) != 1 || response.Tasks[0].ID != fixture.taskID {
+		t.Fatalf("batch claim task = %+v, want %s", response.Tasks, fixture.taskID)
 	}
-
-	var (
-		status        string
-		failureReason pgtype.Text
-		persistedErr  pgtype.Text
-	)
-	if err := testPool.QueryRow(ctx, `
-		SELECT status, failure_reason, error
-		FROM agent_task_queue
-		WHERE id = $1
-	`, fixture.taskID).Scan(&status, &failureReason, &persistedErr); err != nil {
+	claimed := response.Tasks[0]
+	if claimed.A2AInvocation || claimed.A2AUnsafePrereleaseRuntime || !strings.HasPrefix(claimed.AuthToken, "mat_") {
+		t.Fatalf("batch legacy compatibility response = %+v", claimed)
+	}
+	var status string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, fixture.taskID).Scan(&status); err != nil {
 		t.Fatalf("read batch-claimed task state: %v", err)
 	}
-	if status != "failed" {
-		t.Fatalf("batch-claimed task state = %q, want failed", status)
+	if status != "dispatched" {
+		t.Fatalf("batch-claimed task state = %q, want dispatched", status)
 	}
-	if !failureReason.Valid || failureReason.String != "agent_error" {
-		t.Fatalf("batch-claimed failure_reason = %+v, want agent_error", failureReason)
+	var persistedTokenCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM task_token WHERE task_id = $1`, fixture.taskID).Scan(&persistedTokenCount); err != nil {
+		t.Fatalf("count batch compatibility tokens: %v", err)
 	}
-	if !persistedErr.Valid || persistedErr.String != a2aClaimRuntimeSafetyPolicyError {
-		t.Fatalf("batch-claimed error = %+v, want %q", persistedErr, a2aClaimRuntimeSafetyPolicyError)
+	if persistedTokenCount != 0 {
+		t.Fatalf("batch legacy compatibility token unexpectedly gained API authority: %d", persistedTokenCount)
 	}
-	assertA2AClaimInputAndBindingPersisted(t, ctx, fixture, "failed")
+	assertA2AClaimInputAndBindingPersisted(t, ctx, fixture, "dispatched")
 }
 
 func TestFailA2AClaimOnAgentLoadError_OrdinaryTaskUnchanged(t *testing.T) {
@@ -563,36 +680,83 @@ func TestFailA2AClaimOnAgentLoadError_DurableA2ATerminalFailure(t *testing.T) {
 	assertA2AClaimInputAndBindingPersisted(t, ctx, fixture, "failed")
 }
 
-func TestIsA2AClaimTokenlessRuntime(t *testing.T) {
-	for _, provider := range []string{"claude"} {
-		t.Run(provider, func(t *testing.T) {
-			if !isA2AClaimTokenlessRuntime(db.AgentRuntime{RuntimeMode: "local", Provider: provider}) {
-				t.Fatalf("local provider %q must be in the unsafe-loopback A2A E2E allowlist", provider)
+func TestA2AClaimModeNegotiationIsVersionIndependent(t *testing.T) {
+	validRuntime := func(mode, provider, metadata string) db.AgentRuntime {
+		return db.AgentRuntime{
+			ID:          pgtype.UUID{Valid: true},
+			WorkspaceID: pgtype.UUID{Valid: true},
+			RuntimeMode: mode,
+			Provider:    provider,
+			Metadata:    []byte(metadata),
+		}
+	}
+
+	if isA2AClaimRuntimeSupported(db.AgentRuntime{}) {
+		t.Fatal("missing runtime identity must fail the execution-time support check")
+	}
+	for _, runtime := range []db.AgentRuntime{
+		validRuntime("local", "claude", `{}`),
+		validRuntime("cloud", "opencode", agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A),
+		validRuntime("cloud", "opencode", agentA2ATestManagedOpenCodeRuntimeMetadata),
+		validRuntime("cloud", "opencode", `{"kind":"fc-e2b","template":"legacy-opencode"}`),
+	} {
+		if !isA2AClaimRuntimeSupported(runtime) {
+			t.Fatalf("supported runtime family must remain A2A-executable independent of version metadata: %+v", runtime)
+		}
+	}
+	for _, runtime := range []db.AgentRuntime{
+		validRuntime("local", "codex", `{}`),
+		validRuntime("cloud", "hermes", `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"hermes","artifact_kind":"e2b_template","artifact_ref":"template"}`),
+		validRuntime("cloud", "opencode", `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode","artifact_kind":"oci_image","artifact_ref":"registry.example/repo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`),
+		validRuntime("cloud", "opencode", `{}`),
+	} {
+		if isA2AClaimRuntimeSupported(runtime) {
+			t.Fatalf("runtime family without a verified A2A adapter was accepted: %+v", runtime)
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/claim", nil)
+	request.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityA2AInvocationV1)
+	a2aContext := []byte(`{"multica_origin":"a2a"}`)
+
+	localClaude := validRuntime("local", "claude", `{}`)
+	if !requestUsesNativeA2AInvocation(request, a2aContext, localClaude) {
+		t.Fatal("A2A-aware local Claude daemon must use the native tokenless path")
+	}
+
+	for name, metadata := range map[string]string{
+		"pre-capability template": agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A,
+		"current template":        agentA2ATestManagedOpenCodeRuntimeMetadata,
+	} {
+		t.Run(name, func(t *testing.T) {
+			runtime := validRuntime("cloud", "opencode", metadata)
+			if !requestUsesNativeA2AInvocation(request, a2aContext, runtime) || !isA2AUnsafePrereleaseManagedRuntime(runtime) {
+				t.Fatalf("managed OpenCode native negotiation must not depend on template capability/version: %+v", runtime)
 			}
 		})
 	}
-	managedPrerelease := db.AgentRuntime{
-		RuntimeMode: "cloud",
-		Provider:    "opencode",
-		Metadata:    []byte(agentA2ATestManagedOpenCodeRuntimeMetadata),
+
+	legacyRequest := httptest.NewRequest(http.MethodPost, "/claim", nil)
+	if requestUsesNativeA2AInvocation(legacyRequest, a2aContext, localClaude) {
+		t.Fatal("daemon without A2A capability must use legacy compatibility")
 	}
-	if !isA2AClaimTokenlessRuntime(managedPrerelease) || !isA2AUnsafePrereleaseManagedRuntime(managedPrerelease) {
-		t.Fatalf("managed prerelease runtime must be admitted with its explicit daemon attestation: %+v", managedPrerelease)
+	legacyManaged := validRuntime("cloud", "opencode", agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A)
+	if requestUsesNativeA2AInvocation(legacyRequest, a2aContext, legacyManaged) {
+		t.Fatal("pre-capability managed image must use legacy compatibility")
+	}
+	attestedManaged := validRuntime("cloud", "opencode", agentA2ATestManagedOpenCodeRuntimeMetadata)
+	if !requestUsesNativeA2AInvocation(legacyRequest, a2aContext, attestedManaged) {
+		t.Fatal("existing m5 image must retain its native A2A manifest attestation")
+	}
+	if requestUsesNativeA2AInvocation(request, []byte(`{}`), localClaude) {
+		t.Fatal("ordinary task must never negotiate A2A invocation")
 	}
 	for _, runtime := range []db.AgentRuntime{
-		{RuntimeMode: "cloud", Provider: "claude"},
-		{RuntimeMode: "cloud", Provider: "opencode"},
-		{RuntimeMode: "cloud", Provider: "opencode", Metadata: []byte(agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A)},
-		{RuntimeMode: "cloud", Provider: "opencode", Metadata: []byte(`{"kind":"cloud-sandbox","sandbox_backend":"asb"}`)},
-		{RuntimeMode: "local", Provider: "codebuddy"},
-		{RuntimeMode: "local", Provider: "opencode"},
-		{RuntimeMode: "local", Provider: "codex"},
-		{RuntimeMode: "local", Provider: "cursor"},
-		{RuntimeMode: "local", Provider: "openclaw"},
-		{RuntimeMode: "local", Provider: "Claude"},
+		validRuntime("local", "codex", `{}`),
+		validRuntime("cloud", "hermes", `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"hermes"}`),
 	} {
-		if isA2AClaimTokenlessRuntime(runtime) {
-			t.Fatalf("runtime %+v must not support tokenless A2A execution", runtime)
+		if requestUsesNativeA2AInvocation(request, a2aContext, runtime) {
+			t.Fatalf("provider without native isolation unexpectedly negotiated A2A: %+v", runtime)
 		}
 	}
 }
@@ -865,6 +1029,10 @@ func assertA2AClaimInputAndBindingPersisted(t *testing.T, ctx context.Context, f
 }
 
 func postA2AClaimTestTask(runtimeID string) *httptest.ResponseRecorder {
+	return postA2AClaimTestTaskWithCapabilities(runtimeID, protocol.DaemonCapabilityA2AInvocationV1)
+}
+
+func postA2AClaimTestTaskWithCapabilities(runtimeID, capabilities string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest(
 		http.MethodPost,
@@ -873,6 +1041,9 @@ func postA2AClaimTestTask(runtimeID string) *httptest.ResponseRecorder {
 		testWorkspaceID,
 		"a2a-claim-safety",
 	)
+	if capabilities != "" {
+		req.Header.Set("X-Client-Capabilities", capabilities)
+	}
 	req = withURLParam(req, "runtimeId", runtimeID)
 	testHandler.ClaimTaskByRuntime(w, req)
 	return w

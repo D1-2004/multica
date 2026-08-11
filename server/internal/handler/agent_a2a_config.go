@@ -231,7 +231,7 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to load agent runtime")
 			return
 		}
-		if runtimeErr = validateAgentA2ARuntimeEligibility(runtime); runtimeErr != nil {
+		if runtimeErr = validateAgentA2ARuntimeFamily(runtime); runtimeErr != nil {
 			writeError(w, http.StatusBadRequest, runtimeErr.Error())
 			return
 		}
@@ -604,7 +604,7 @@ func (h *Handler) loadAgentA2AConfigResponse(r *http.Request, scope agentA2AMana
 		return AgentA2AConfigResponse{}, err
 	}
 
-	runtimeEligible := false
+	runtimeSupported := false
 	if scope.Agent.RuntimeID.Valid {
 		runtime, runtimeErr := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
 			ID:          scope.Agent.RuntimeID,
@@ -613,10 +613,10 @@ func (h *Handler) loadAgentA2AConfigResponse(r *http.Request, scope agentA2AMana
 		if runtimeErr != nil && !errors.Is(runtimeErr, pgx.ErrNoRows) {
 			return AgentA2AConfigResponse{}, runtimeErr
 		}
-		runtimeEligible = runtimeErr == nil && isAgentA2AEligibleRuntime(runtime)
+		runtimeSupported = runtimeErr == nil && isAgentA2ASupportedRuntimeFamily(runtime)
 	}
 
-	endpointResponse, card, err := h.agentA2AEndpointPresentation(scope.Agent, runtimeEligible, endpoint)
+	endpointResponse, card, err := h.agentA2AEndpointPresentation(scope.Agent, runtimeSupported, endpoint)
 	if err != nil {
 		return AgentA2AConfigResponse{}, err
 	}
@@ -641,7 +641,7 @@ func (h *Handler) loadAgentA2AConfigResponse(r *http.Request, scope agentA2AMana
 	return response, nil
 }
 
-func (h *Handler) agentA2AEndpointPresentation(agent db.Agent, runtimeEligible bool, endpoint db.AgentA2aEndpoint) (AgentA2AEndpointResponse, *a2a.AgentCard, error) {
+func (h *Handler) agentA2AEndpointPresentation(agent db.Agent, runtimeSupported bool, endpoint db.AgentA2aEndpoint) (AgentA2AEndpointResponse, *a2a.AgentCard, error) {
 	skills, encodedSkills, err := normalizeAgentA2ACardSkills(endpoint.CardSkills)
 	if err != nil {
 		return AgentA2AEndpointResponse{}, nil, err
@@ -692,7 +692,7 @@ func (h *Handler) agentA2AEndpointPresentation(agent db.Agent, runtimeEligible b
 	response.RPCURL = rpcURL
 	response.Enabled = endpoint.Enabled &&
 		uuidToString(endpoint.DelegatedByUserID) == uuidToString(agent.OwnerID) &&
-		!agent.ArchivedAt.Valid && agent.RuntimeID.Valid && runtimeEligible &&
+		!agent.ArchivedAt.Valid && agent.RuntimeID.Valid && runtimeSupported &&
 		runtimeSafety.Allowed
 	return response, card, nil
 }
@@ -931,19 +931,19 @@ func normalizeAgentA2AScopes(scopes []string) ([]string, error) {
 	return normalized, nil
 }
 
-func validateAgentA2ARuntimeEligibility(runtime db.AgentRuntime) error {
-	if isAgentA2AEligibleRuntime(runtime) {
+func validateAgentA2ARuntimeFamily(runtime db.AgentRuntime) error {
+	if isAgentA2ASupportedRuntimeFamily(runtime) {
 		return nil
 	}
-	return errors.New("A2A inbound prerelease currently only supports a local Claude runtime or an A2A-capable managed Aliyun FC OpenCode runtime")
+	return errors.New("A2A inbound requires a local Claude runtime or a managed Aliyun FC OpenCode cloud sandbox; all runtime template and capability versions in those families are supported")
 }
 
-func isAgentA2AEligibleRuntime(runtime db.AgentRuntime) bool {
-	// Keep this predicate aligned with both runtime filters in agent_a2a.sql and
-	// the daemon's fail-closed execution guard. The managed hosted exception is
-	// deliberately tied to the isolated Aliyun FC sandbox shape used by the
-	// platform; provider/mode alone must never make an arbitrary cloud runtime
-	// eligible.
+func isAgentA2ASupportedRuntimeFamily(runtime db.AgentRuntime) bool {
+	// Runtime versions, template aliases, manifest versions and capabilities are
+	// deliberately absent from this predicate. They select native versus legacy
+	// claim handling, never endpoint admission. Provider families remain an
+	// explicit boundary because the daemon currently has verified A2A isolation
+	// only for Claude and the managed Aliyun FC OpenCode sandbox adapter.
 	if runtime.RuntimeMode == "local" && runtime.Provider == "claude" {
 		return true
 	}
@@ -952,10 +952,8 @@ func isAgentA2AEligibleRuntime(runtime db.AgentRuntime) bool {
 	}
 	metadata, err := service.ParseCloudSandboxRuntime(runtime)
 	return err == nil &&
-		metadata.Kind == service.CloudSandboxMetadataKind &&
 		metadata.SandboxBackend == service.SandboxBackendAliyunFC &&
-		metadata.Provider == "opencode" &&
-		service.FCE2BRuntimeHasCapability(runtime, service.A2AInboundOpenCodeCapability)
+		metadata.Provider == "opencode"
 }
 
 func parseAgentA2ACredentialExpiry(value *string) (pgtype.Timestamptz, error) {

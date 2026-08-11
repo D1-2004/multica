@@ -187,6 +187,7 @@ func daemonClientCapabilities() string {
 		protocol.DaemonCapabilityCoalescedCommentsV1,
 		protocol.DaemonCapabilityTaskInstructionV1,
 		protocol.DaemonCapabilityRPCV1,
+		protocol.DaemonCapabilityA2AInvocationV1,
 	}, ",")
 }
 

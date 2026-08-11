@@ -95,107 +95,6 @@ func TestNormalizeAgentA2AScopes(t *testing.T) {
 	}
 }
 
-func TestValidateAgentA2ARuntimeEligibility(t *testing.T) {
-	managedMetadata := []byte(agentA2ATestManagedOpenCodeRuntimeMetadata)
-	tests := []struct {
-		name    string
-		runtime db.AgentRuntime
-		want    bool
-	}{
-		{
-			name:    "local Claude",
-			runtime: db.AgentRuntime{RuntimeMode: "local", Provider: "claude"},
-			want:    true,
-		},
-		{
-			name: "managed Aliyun FC OpenCode",
-			runtime: db.AgentRuntime{
-				RuntimeMode: "cloud",
-				Provider:    "opencode",
-				Metadata:    managedMetadata,
-			},
-			want: true,
-		},
-		{
-			name:    "managed runtime missing metadata",
-			runtime: db.AgentRuntime{RuntimeMode: "cloud", Provider: "opencode", Metadata: []byte(`{}`)},
-		},
-		{
-			name: "managed runtime missing explicit A2A capability",
-			runtime: db.AgentRuntime{
-				RuntimeMode: "cloud",
-				Provider:    "opencode",
-				Metadata:    []byte(agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A),
-			},
-		},
-		{
-			name: "managed runtime metadata provider drift",
-			runtime: db.AgentRuntime{
-				RuntimeMode: "cloud",
-				Provider:    "opencode",
-				Metadata: []byte(`{
-					"kind":"cloud-sandbox",
-					"sandbox_backend":"aliyun_fc",
-					"provider":"hermes",
-					"artifact_kind":"e2b_template",
-					"artifact_ref":"template-a2a-m5",
-					"capabilities":["a2a_inbound_opencode_v1"]
-				}`),
-			},
-		},
-		{
-			name: "managed runtime blank artifact ref",
-			runtime: db.AgentRuntime{
-				RuntimeMode: "cloud",
-				Provider:    "opencode",
-				Metadata: []byte(`{
-					"kind":"cloud-sandbox",
-					"sandbox_backend":"aliyun_fc",
-					"provider":"opencode",
-					"artifact_kind":"e2b_template",
-					"artifact_ref":"   ",
-					"capabilities":["a2a_inbound_opencode_v1"]
-				}`),
-			},
-		},
-		{
-			name:    "managed runtime wrong kind",
-			runtime: db.AgentRuntime{RuntimeMode: "cloud", Provider: "opencode", Metadata: []byte(`{"kind":"fc-e2b","sandbox_backend":"aliyun_fc"}`)},
-		},
-		{
-			name:    "managed runtime wrong backend",
-			runtime: db.AgentRuntime{RuntimeMode: "cloud", Provider: "opencode", Metadata: []byte(`{"kind":"cloud-sandbox","sandbox_backend":"asb"}`)},
-		},
-		{
-			name:    "local OpenCode with managed metadata",
-			runtime: db.AgentRuntime{RuntimeMode: "local", Provider: "opencode", Metadata: managedMetadata},
-		},
-		{
-			name:    "cloud Claude with managed metadata",
-			runtime: db.AgentRuntime{RuntimeMode: "cloud", Provider: "claude", Metadata: managedMetadata},
-		},
-		{
-			name:    "malformed metadata",
-			runtime: db.AgentRuntime{RuntimeMode: "cloud", Provider: "opencode", Metadata: []byte(`{`)},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got := isAgentA2AEligibleRuntime(test.runtime)
-			if got != test.want {
-				t.Fatalf("isAgentA2AEligibleRuntime() = %v, want %v", got, test.want)
-			}
-			err := validateAgentA2ARuntimeEligibility(test.runtime)
-			if test.want && err != nil {
-				t.Fatalf("eligible runtime rejected: %v", err)
-			}
-			if !test.want && (err == nil || !strings.Contains(err.Error(), "local Claude runtime or an A2A-capable managed Aliyun FC OpenCode runtime")) {
-				t.Fatalf("ineligible runtime error = %v, want eligibility guidance", err)
-			}
-		})
-	}
-}
-
 func TestNormalizeAgentA2ACardSkillsUsesOfficialWireFields(t *testing.T) {
 	raw := json.RawMessage(`[{
   "id":"build",
@@ -454,7 +353,7 @@ func TestAgentA2AEnableRequiresRuntimeSafetyExemption(t *testing.T) {
 	}
 }
 
-func TestAgentA2AEnableRejectsIneligibleRuntime(t *testing.T) {
+func TestAgentA2AEnableIsRuntimeVersionAgnostic(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -466,12 +365,41 @@ func TestAgentA2AEnableRejectsIneligibleRuntime(t *testing.T) {
 		runtimeMode string
 		provider    string
 		metadata    string
+		wantAllowed bool
 	}{
+		{
+			name:        "local Claude",
+			runtimeMode: "local",
+			provider:    "claude",
+			metadata:    `{}`,
+			wantAllowed: true,
+		},
+		{
+			name:        "managed OpenCode before A2A capability",
+			runtimeMode: "cloud",
+			provider:    "opencode",
+			metadata:    agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A,
+			wantAllowed: true,
+		},
+		{
+			name:        "managed OpenCode current capability",
+			runtimeMode: "cloud",
+			provider:    "opencode",
+			metadata:    agentA2ATestManagedOpenCodeRuntimeMetadata,
+			wantAllowed: true,
+		},
+		{
+			name:        "legacy managed OpenCode metadata",
+			runtimeMode: "cloud",
+			provider:    "opencode",
+			metadata:    `{"kind":"fc-e2b","template":"legacy-opencode","runner":"multica-fc-opencode-runner"}`,
+			wantAllowed: true,
+		},
 		{
 			name:        "cloud Claude",
 			runtimeMode: "cloud",
 			provider:    "claude",
-			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc"}`,
+			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"claude","artifact_kind":"e2b_template","artifact_ref":"template"}`,
 		},
 		{
 			name:        "local OpenCode",
@@ -484,12 +412,6 @@ func TestAgentA2AEnableRejectsIneligibleRuntime(t *testing.T) {
 			runtimeMode: "cloud",
 			provider:    "opencode",
 			metadata:    `{}`,
-		},
-		{
-			name:        "cloud OpenCode template missing A2A capability",
-			runtimeMode: "cloud",
-			provider:    "opencode",
-			metadata:    agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A,
 		},
 		{
 			name:        "cloud OpenCode metadata provider drift",
@@ -513,14 +435,16 @@ func TestAgentA2AEnableRejectsIneligibleRuntime(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv(agentA2AAllowUnsafeLocalRuntimeEnv, "")
 			agentID, ownerID, _ := privateAgentTestFixture(t)
 			assignAgentA2ATestRuntime(t, agentID, test.runtimeMode, test.provider, test.metadata)
 
 			response := putAgentA2ATestConfig(t, agentID, ownerID, true)
-			const wantError = "local Claude runtime or an A2A-capable managed Aliyun FC OpenCode runtime"
-			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), wantError) {
-				t.Fatalf("enable response = %d %s, want clear 400 containing %q", response.Code, response.Body.String(), wantError)
+			wantStatus := http.StatusBadRequest
+			if test.wantAllowed {
+				wantStatus = http.StatusOK
+			}
+			if response.Code != wantStatus {
+				t.Fatalf("enable response = %d %s, want %d", response.Code, response.Body.String(), wantStatus)
 			}
 
 			var enabledEndpointExists bool
@@ -532,8 +456,8 @@ func TestAgentA2AEnableRejectsIneligibleRuntime(t *testing.T) {
 			`, agentID).Scan(&enabledEndpointExists); err != nil {
 				t.Fatalf("check rejected endpoint: %v", err)
 			}
-			if enabledEndpointExists {
-				t.Fatal("ineligible runtime must not leave an enabled endpoint")
+			if enabledEndpointExists != test.wantAllowed {
+				t.Fatalf("enabled endpoint exists = %v, want %v", enabledEndpointExists, test.wantAllowed)
 			}
 		})
 	}
@@ -696,7 +620,7 @@ func TestAgentA2AClientRejectsUnimplementedFirstSliceControls(t *testing.T) {
 	}
 }
 
-func TestAgentA2ASendRejectsRuntimeSwitchedOutOfAllowlistWithoutCreatingTask(t *testing.T) {
+func TestAgentA2ASendRemainsAvailableAcrossRuntimeVersionChanges(t *testing.T) {
 	if testHandler == nil || testHandler.A2AService == nil {
 		t.Skip("database not available")
 	}
@@ -704,10 +628,11 @@ func TestAgentA2ASendRejectsRuntimeSwitchedOutOfAllowlistWithoutCreatingTask(t *
 	configureAgentA2ATestHandler(t)
 
 	tests := []struct {
-		name        string
-		runtimeMode string
-		provider    string
-		metadata    string
+		name          string
+		runtimeMode   string
+		provider      string
+		metadata      string
+		wantAvailable bool
 	}{
 		{name: "runtime switched to cloud Claude", runtimeMode: "cloud", provider: "claude", metadata: `{}`},
 		{name: "runtime switched to unsupported local provider", runtimeMode: "local", provider: "codebuddy", metadata: `{}`},
@@ -718,10 +643,25 @@ func TestAgentA2ASendRejectsRuntimeSwitchedOutOfAllowlistWithoutCreatingTask(t *
 			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"asb"}`,
 		},
 		{
-			name:        "runtime switched to pre-A2A managed OpenCode template",
-			runtimeMode: "cloud",
-			provider:    "opencode",
-			metadata:    agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A,
+			name:          "runtime switched to pre-A2A managed OpenCode template",
+			runtimeMode:   "cloud",
+			provider:      "opencode",
+			metadata:      agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A,
+			wantAvailable: true,
+		},
+		{
+			name:          "runtime switched to current managed OpenCode template",
+			runtimeMode:   "cloud",
+			provider:      "opencode",
+			metadata:      agentA2ATestManagedOpenCodeRuntimeMetadata,
+			wantAvailable: true,
+		},
+		{
+			name:          "runtime switched to legacy managed OpenCode metadata",
+			runtimeMode:   "cloud",
+			provider:      "opencode",
+			metadata:      `{"kind":"fc-e2b","template":"legacy-opencode","runner":"multica-fc-opencode-runner"}`,
+			wantAvailable: true,
 		},
 		{
 			name:        "runtime metadata provider drifted away from OpenCode",
@@ -800,8 +740,8 @@ func TestAgentA2ASendRejectsRuntimeSwitchedOutOfAllowlistWithoutCreatingTask(t *
 			if err := json.Unmarshal(ownerResponse.Body.Bytes(), &ownerConfig); err != nil {
 				t.Fatalf("decode owner config after runtime switch: %v", err)
 			}
-			if ownerConfig.Endpoint == nil || ownerConfig.Endpoint.Enabled {
-				t.Fatalf("runtime-ineligible owner config endpoint = %#v, want effective enabled false", ownerConfig.Endpoint)
+			if ownerConfig.Endpoint == nil || ownerConfig.Endpoint.Enabled != test.wantAvailable {
+				t.Fatalf("owner config endpoint = %#v, want available %v", ownerConfig.Endpoint, test.wantAvailable)
 			}
 
 			var storedEnabled bool
@@ -823,8 +763,12 @@ func TestAgentA2ASendRejectsRuntimeSwitchedOutOfAllowlistWithoutCreatingTask(t *
 			cardRequest = withAgentA2AURLParams(cardRequest, "publicAgentId", endpoint.PublicAgentID)
 			cardResponse := httptest.NewRecorder()
 			testHandler.GetAgentA2ACard(cardResponse, cardRequest)
-			if cardResponse.Code != http.StatusNotFound {
-				t.Fatalf("anonymous Card after runtime switch status = %d, want 404: %s", cardResponse.Code, cardResponse.Body.String())
+			wantCardStatus := http.StatusNotFound
+			if test.wantAvailable {
+				wantCardStatus = http.StatusOK
+			}
+			if cardResponse.Code != wantCardStatus {
+				t.Fatalf("anonymous Card after runtime switch status = %d, want %d: %s", cardResponse.Code, wantCardStatus, cardResponse.Body.String())
 			}
 
 			var taskCountBefore int
@@ -847,13 +791,16 @@ func TestAgentA2ASendRejectsRuntimeSwitchedOutOfAllowlistWithoutCreatingTask(t *
 			_, sendErr := testHandler.A2AService.SendMessage(ctx, &a2a.SendMessageRequest{
 				Config: &a2a.SendMessageConfig{ReturnImmediately: true},
 				Message: &a2a.Message{
-					ID:    "message-runtime-switched-out-of-allowlist",
+					ID:    "message-runtime-version-independent",
 					Role:  a2a.MessageRoleUser,
-					Parts: a2a.ContentParts{a2a.NewTextPart("must not create a local task")},
+					Parts: a2a.ContentParts{a2a.NewTextPart("runtime version metadata must not block this task")},
 				},
 			})
-			if !errors.Is(sendErr, a2a.ErrUnauthorized) {
-				t.Fatalf("SendMessage error = %v, want unauthorized after runtime switch", sendErr)
+			if test.wantAvailable && sendErr != nil {
+				t.Fatalf("SendMessage after supported runtime version change: %v", sendErr)
+			}
+			if !test.wantAvailable && sendErr == nil {
+				t.Fatal("SendMessage unexpectedly admitted an unsupported runtime family")
 			}
 
 			var taskCountAfter int
@@ -862,14 +809,18 @@ func TestAgentA2ASendRejectsRuntimeSwitchedOutOfAllowlistWithoutCreatingTask(t *
 			`, agentID).Scan(&taskCountAfter); err != nil {
 				t.Fatalf("count tasks after SendMessage: %v", err)
 			}
-			if taskCountAfter != taskCountBefore {
-				t.Fatalf("task count changed from %d to %d after rejected SendMessage", taskCountBefore, taskCountAfter)
+			wantTaskCount := taskCountBefore
+			if test.wantAvailable {
+				wantTaskCount++
+			}
+			if taskCountAfter != wantTaskCount {
+				t.Fatalf("task count changed from %d to %d, want %d", taskCountBefore, taskCountAfter, wantTaskCount)
 			}
 		})
 	}
 }
 
-func TestLockAgentA2ASendAdmissionLocksRuntimeEligibility(t *testing.T) {
+func TestLockAgentA2ASendAdmissionLocksRuntimeBinding(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -933,7 +884,7 @@ func TestLockAgentA2ASendAdmissionLocksRuntimeEligibility(t *testing.T) {
 	}
 }
 
-func TestLockAgentA2ASendAdmissionRechecksRuntimeAfterWaitingForSwitch(t *testing.T) {
+func TestLockAgentA2ASendAdmissionKeepsVersionIndependentAdmissionAfterSwitch(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -961,9 +912,12 @@ func TestLockAgentA2ASendAdmissionRechecksRuntimeAfterWaitingForSwitch(t *testin
 	defer switchTx.Rollback(context.Background())
 	if _, err := switchTx.Exec(ctx, `
 		UPDATE agent_runtime
-		SET runtime_mode = 'cloud', updated_at = now()
+		SET runtime_mode = 'cloud',
+		    provider = 'opencode',
+		    metadata = $2::jsonb,
+		    updated_at = now()
 		WHERE id = $1
-	`, runtimeID); err != nil {
+	`, runtimeID, agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A); err != nil {
 		t.Fatalf("stage runtime switch: %v", err)
 	}
 
@@ -1012,8 +966,8 @@ func TestLockAgentA2ASendAdmissionRechecksRuntimeAfterWaitingForSwitch(t *testin
 	}
 	select {
 	case outcome := <-admissionDone:
-		if !errors.Is(outcome.err, pgx.ErrNoRows) {
-			t.Fatalf("admission after cloud switch error = %v, want pgx.ErrNoRows", outcome.err)
+		if outcome.err != nil {
+			t.Fatalf("admission after runtime metadata switch: %v", outcome.err)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("admission did not resume after runtime switch committed")

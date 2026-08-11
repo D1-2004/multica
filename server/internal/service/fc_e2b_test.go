@@ -987,6 +987,104 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	}
 }
 
+func TestFCE2BA2ARunnerEnvIsTaskLocalAcrossRuntimeVersions(t *testing.T) {
+	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	runtime := db.AgentRuntime{
+		ID:          util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		WorkspaceID: util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+		DaemonID:    pgtype.Text{String: "fc-e2b:ws:opencode", Valid: true},
+		Name:        "FC OpenCode m2",
+		RuntimeMode: "cloud",
+		Provider:    "opencode",
+		Metadata: []byte(`{
+			"kind":"cloud-sandbox",
+			"sandbox_backend":"aliyun_fc",
+			"provider":"opencode",
+			"artifact_kind":"e2b_template",
+			"artifact_ref":"template-m2",
+			"manifest_version":2,
+			"capabilities":["opencode"]
+		}`),
+	}
+	task := db.AgentTaskQueue{ID: taskID, Context: newA2ATaskContext()}
+	env := hardenFCE2BA2ARunnerEnv(task, runtime, map[string]string{"OPENAI_MODEL": "qwen3.7-plus"})
+	root := "/tmp/multica-dws/22222222-2222-2222-2222-222222222222"
+	want := map[string]string{
+		"DWS_CONFIG_DIR":                      root,
+		"GH_CONFIG_DIR":                       root + "/gh",
+		"XDG_CONFIG_HOME":                     root + "/xdg/config",
+		"XDG_DATA_HOME":                       root + "/xdg/data",
+		"XDG_STATE_HOME":                      root + "/xdg/state",
+		"XDG_CACHE_HOME":                      root + "/xdg/cache",
+		"OPENCODE_CONFIG_DIR":                 root + "/xdg/config/opencode",
+		"OPENCODE_CONFIG":                     "/home/user/.config/opencode/opencode.json",
+		"OPENCODE_CONFIG_CONTENT":             "",
+		"OPENCODE_DISABLE_CLAUDE_CODE_PROMPT": "true",
+		"MULTICA_A2A_INVOCATION":              "1",
+		"OPENAI_MODEL":                        "qwen3.7-plus",
+	}
+	if !reflect.DeepEqual(env, want) {
+		t.Fatalf("A2A runner env = %#v, want %#v", env, want)
+	}
+
+	runner := &fakeCommandRunner{}
+	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{
+		ServerURL:  "https://api.multica.test",
+		LLMBaseURL: "https://api-deap.dingtalk.com/deapai",
+		LLMAPIKey:  "maas_secret",
+		CLIPath:    "/usr/local/bin/e2b",
+	}, runner)
+	launch := mustFCE2BRunnerLaunch(t, runtime)
+	if err := launcher.execRunOnce(context.Background(), "sbx_a2a_m2", runtime, launch.Mode, taskID, "mdt_test_token", false, env); err != nil {
+		t.Fatalf("execRunOnce A2A env: %v", err)
+	}
+	args := runner.calls[len(runner.calls)-1].args
+	dwsCount := 0
+	seen := make(map[string]string)
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] != "-e" {
+			continue
+		}
+		key, value, ok := strings.Cut(args[index+1], "=")
+		if !ok {
+			continue
+		}
+		seen[key] = value
+		if key == "DWS_CONFIG_DIR" {
+			dwsCount++
+		}
+	}
+	if dwsCount != 1 {
+		t.Fatalf("DWS_CONFIG_DIR occurrences = %d, want 1: %#v", dwsCount, args)
+	}
+	for key, value := range want {
+		if seen[key] != value {
+			t.Fatalf("exec env %s = %q, want %q", key, seen[key], value)
+		}
+	}
+	if _, present := seen["OPENCODE_DISABLE_PROJECT_CONFIG"]; present {
+		t.Fatal("legacy A2A runner must keep the fresh workdir Agent brief and skills visible")
+	}
+}
+
+func TestFCE2BA2ARunnerEnvLeavesOrdinaryAndOtherProvidersUnchanged(t *testing.T) {
+	base := map[string]string{"OPENAI_MODEL": "qwen3.7-plus"}
+	ordinary := db.AgentTaskQueue{ID: util.MustParseUUID("22222222-2222-2222-2222-222222222222"), Context: []byte(`{}`)}
+	managed := db.AgentRuntime{
+		RuntimeMode: "cloud",
+		Provider:    "opencode",
+		Metadata:    []byte(`{"kind":"fc-e2b","template":"legacy-opencode"}`),
+	}
+	if got := hardenFCE2BA2ARunnerEnv(ordinary, managed, base); !reflect.DeepEqual(got, base) {
+		t.Fatalf("ordinary task env changed: %#v", got)
+	}
+	otherProvider := managed
+	otherProvider.Provider = "hermes"
+	if got := hardenFCE2BA2ARunnerEnv(db.AgentTaskQueue{ID: ordinary.ID, Context: newA2ATaskContext()}, otherProvider, base); !reflect.DeepEqual(got, base) {
+		t.Fatalf("unsupported A2A provider env changed: %#v", got)
+	}
+}
+
 func TestFCE2BExecRunOnceRejectsUnsafeRunnerEnvironment(t *testing.T) {
 	rt := db.AgentRuntime{
 		ID:          util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
