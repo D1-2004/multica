@@ -46,6 +46,10 @@ func TestClientSubmitExecutionResultUsesTrustedBaseAndCredential(t *testing.T) {
 		ExecutionStatus:    "completed",
 		ResultMessage:      "最后回复",
 		ExecutionResult:    map[string]any{"failureReason": ""},
+		ExecutionSummary: map[string]any{
+			"task_id": "root-task",
+			"runtime": map[string]any{"provider": "hermes"},
+		},
 	}
 	if err := client.SubmitExecutionResult(context.Background(), "/api/v1/dispatch-tasks/router-task-1/execution-result", request); err != nil {
 		t.Fatal(err)
@@ -53,6 +57,9 @@ func TestClientSubmitExecutionResultUsesTrustedBaseAndCredential(t *testing.T) {
 	if body.RequestID != request.RequestID || body.ResultMessage != request.ResultMessage ||
 		body.ExternalTaskID != request.ExternalTaskID {
 		t.Fatalf("body = %#v", body)
+	}
+	if body.ExecutionSummary["task_id"] != "root-task" {
+		t.Fatalf("executionSummary = %#v", body.ExecutionSummary)
 	}
 }
 

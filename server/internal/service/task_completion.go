@@ -31,6 +31,7 @@ type TaskCompletion struct {
 	ExternalSessionID string
 	ExecutionStatus   string
 	ResultMessage     string
+	ExecutionSummary  []byte
 	Error             string
 	FailureReason     string
 }
@@ -173,6 +174,14 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 	if len(targets) == 0 {
 		return false, nil
 	}
+	executionSummary, err := BuildTaskExecutionSummary(ctx, qtx, task)
+	if err != nil {
+		return false, err
+	}
+	executionSummaryJSON, err := json.Marshal(executionSummary)
+	if err != nil {
+		return false, err
+	}
 	fallbackReply := ""
 	if status == "failed" {
 		var replyErr error
@@ -204,6 +213,7 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 			errMessage,
 			failureReason,
 		)
+		completion.ExecutionSummary = executionSummaryJSON
 		_, enqueueErr := qtx.EnqueueTaskCompletion(ctx, db.EnqueueTaskCompletionParams{
 			RootTaskID:        completion.RootTaskID,
 			TerminalTaskID:    completion.TerminalTaskID,
@@ -213,6 +223,7 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 			AgentID:           completion.AgentID,
 			ExecutionStatus:   completion.ExecutionStatus,
 			ResultMessage:     completion.ResultMessage,
+			ExecutionSummary:  completion.ExecutionSummary,
 			ExternalSessionID: pgtype.Text{String: completion.ExternalSessionID, Valid: completion.ExternalSessionID != ""},
 			Error:             pgtype.Text{String: completion.Error, Valid: completion.Error != ""},
 			FailureReason:     pgtype.Text{String: completion.FailureReason, Valid: completion.FailureReason != ""},

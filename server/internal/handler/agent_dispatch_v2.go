@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -118,9 +119,12 @@ type DispatchOutbound struct {
 }
 
 type DispatchCompletionCallback struct {
-	URL       string `json:"url"`
-	UpdateURL string `json:"updateUrl,omitempty"`
-	Target    string `json:"-"`
+	URL                string `json:"url"`
+	UpdateURL          string `json:"updateUrl,omitempty"`
+	TelemetryURL       string `json:"telemetryUrl,omitempty"`
+	TelemetryToken     string `json:"telemetryToken,omitempty"`
+	TelemetryExpiresAt int64  `json:"telemetryExpiresAt,omitempty"`
+	Target             string `json:"-"`
 }
 
 type DispatchCommand struct {
@@ -219,7 +223,33 @@ func resolveSurfaceRuntimePrompt(flags *featureflag.Service, surfaceType string)
 var defaultDispatchPromptBuilder = NewDispatchPromptBuilder()
 var routerCompletionCallbackPattern = regexp.MustCompile(`^/api/v1/dispatch-tasks/([A-Za-z0-9_-]{1,128})/execution-result$`)
 var routerExecutionUpdateCallbackPattern = regexp.MustCompile(`^/api/v1/dispatch-tasks/([A-Za-z0-9_-]{1,128})/execution-update$`)
+var routerTelemetryCallbackPathPattern = regexp.MustCompile(`^/api/v1/dispatch-tasks/([A-Za-z0-9_-]{1,128})/llm-traces$`)
 var routerCompletionTargetPattern = regexp.MustCompile(`^router-target:v1:sha256:[a-f0-9]{64}$`)
+
+func routerTelemetryCallbackTaskID(rawURL string) (string, bool) {
+	parsed, err := url.ParseRequestURI(rawURL)
+	if err != nil || !strings.HasPrefix(rawURL, "/") || parsed.IsAbs() || parsed.Host != "" ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+	match := routerTelemetryCallbackPathPattern.FindStringSubmatch(parsed.Path)
+	if len(match) != 2 {
+		return "", false
+	}
+	return match[1], true
+}
+
+func validTelemetryToken(token string) bool {
+	if token == "" || len(token) > 4096 || strings.TrimSpace(token) != token {
+		return false
+	}
+	for _, value := range token {
+		if unicode.IsControl(value) || unicode.IsSpace(value) {
+			return false
+		}
+	}
+	return true
+}
 
 func (c DispatchCommand) validate() error {
 	if c.SchemaVersion != "2.0" {
@@ -269,6 +299,20 @@ func (c DispatchCommand) validate() error {
 			resultMatch := routerCompletionCallbackPattern.FindStringSubmatch(c.CompletionCallback.URL)
 			updateMatch := routerExecutionUpdateCallbackPattern.FindStringSubmatch(c.CompletionCallback.UpdateURL)
 			if len(resultMatch) != 2 || len(updateMatch) != 2 || resultMatch[1] != updateMatch[1] {
+				return errors.New("completionCallback urls must reference the same dispatch task")
+			}
+		}
+		telemetryPresent := c.CompletionCallback.TelemetryURL != "" ||
+			c.CompletionCallback.TelemetryToken != "" ||
+			c.CompletionCallback.TelemetryExpiresAt != 0
+		if telemetryPresent {
+			telemetryTaskID, ok := routerTelemetryCallbackTaskID(c.CompletionCallback.TelemetryURL)
+			if !ok || !validTelemetryToken(c.CompletionCallback.TelemetryToken) ||
+				c.CompletionCallback.TelemetryExpiresAt <= 0 {
+				return errors.New("completionCallback telemetry capability is invalid")
+			}
+			resultMatch := routerCompletionCallbackPattern.FindStringSubmatch(c.CompletionCallback.URL)
+			if len(resultMatch) != 2 || resultMatch[1] != telemetryTaskID {
 				return errors.New("completionCallback urls must reference the same dispatch task")
 			}
 		}

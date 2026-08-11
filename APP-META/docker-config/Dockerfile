@@ -32,9 +32,9 @@ RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_codex_u
 FROM ${NODE_BASE_IMAGE} AS web-builder
 ARG APP_NAME
 WORKDIR /workspace
-ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
-ENV npm_config_registry=https://registry.npmmirror.com
-ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+ENV NPM_CONFIG_REGISTRY=https://registry.anpm.alibaba-inc.com
+ENV npm_config_registry=https://registry.anpm.alibaba-inc.com
+ENV COREPACK_NPM_REGISTRY=https://registry.anpm.alibaba-inc.com
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY ${APP_NAME}.tgz /tmp/source.tgz
 RUN tar -xzf /tmp/source.tgz --strip-components=1 -C /workspace
@@ -75,8 +75,8 @@ ENV BACKEND_PORT=8080
 ENV FRONTEND_PORT=3000
 ENV HOSTNAME=0.0.0.0
 ENV PATH="/home/admin/${APP_NAME}/node/bin:/home/admin/${APP_NAME}/target/${APP_NAME}/bin:${PATH}"
-ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
-ENV npm_config_registry=https://registry.npmmirror.com
+ENV NPM_CONFIG_REGISTRY=https://registry.anpm.alibaba-inc.com
+ENV npm_config_registry=https://registry.anpm.alibaba-inc.com
 
 RUN npm install -g @e2b/cli@2.13.0 && \
     E2B_BIN="$(command -v e2b)" && \

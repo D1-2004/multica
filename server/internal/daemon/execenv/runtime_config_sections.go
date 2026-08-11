@@ -209,6 +209,8 @@ func writeAvailableCommands(b *strings.Builder, includeIssueDelegation bool) {
 	b.WriteString("## Available Commands\n\n")
 	b.WriteString("Prefer `--output json` for structured data. The default brief lists only the core agent loop and common issue create/update tasks; for everything else run `multica --help` or `multica <command> --help`.\n\n")
 	b.WriteString("### Core\n")
+	b.WriteString("- `multica mcp tools --output json` — discover the MCP tools and schemas currently published by the server; tool names are not compiled into the CLI.\n")
+	b.WriteString("- `multica mcp call --method <name> [--arguments '<json>' | --arguments-file <path> | --arguments-stdin] --output json` — call a method returned by `mcp tools`; do not guess method names or arguments.\n")
 	b.WriteString("- `multica issue get <id> --output json` — full issue.\n")
 	b.WriteString("- `multica issue comment list <issue-id> [--thread <comment-id> [--tail N] | --recent N] [--before <ts> --before-id <uuid>] [--since <RFC3339>] [--full] --output json` — thread-aware comment reads. Resolved threads come back folded by default on complete-thread reads (default list, `--recent`, `--thread` without `--tail`); pass `--full` to expand. Page older replies / threads with `--before`/`--before-id` (stderr labels: `Next reply cursor`, `Next thread cursor`); `--help` for full semantics.\n")
 	if includeIssueDelegation {

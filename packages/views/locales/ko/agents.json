@@ -257,6 +257,7 @@
     "integrations": "연동",
     "identity": "신원",
     "runtime_config": "라우팅",
+    "llm_trace": "LLM 추적",
     "discard_dialog_title": "저장하지 않은 변경사항을 버릴까요?",
     "discard_dialog_description": "이 탭에 저장하지 않은 변경사항이 있습니다. 지금 나가면 변경사항이 사라집니다.",
     "discard_keep": "계속 편집",
@@ -482,6 +483,15 @@
       "tls_hint": "http:// 대신 https://로 다이얼",
       "saved_toast": "라우팅 설정이 저장되었습니다",
       "save_failed_toast": "라우팅 설정 저장 실패"
+    },
+    "llm_trace": {
+      "intro": "이 에이전트의 작업이 클라우드 샌드박스에서 실행될 때 LLM 요청을 추적 수신 주소로 미러링합니다.",
+      "enabled_label": "LLM 요청 추적 사용",
+      "enabled_hint": "추적을 켜고 수신 URL을 설정하면 각 작업의 LLM 요청 body가 수신 주소로 전달됩니다.",
+      "sink_url_label": "추적 수신 URL",
+      "sink_url_placeholder": "https://trace.example.com/ingest",
+      "saved_toast": "LLM 추적 설정이 저장되었습니다",
+      "save_failed_toast": "LLM 추적 설정 저장 실패"
     },
     "skills": {
       "assigned_title": "에이전트에 할당됨",

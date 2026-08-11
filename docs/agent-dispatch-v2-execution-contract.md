@@ -31,6 +31,16 @@ Continuation kind identifies the materialized locator, not the execution mode.
 Both `chat` and `auto` therefore return a `chat` continuation containing
 `chatSessionId`; `issue` returns an Issue continuation.
 
+For DingTalk channel messages, a newly created Chat title includes enough topic
+context to distinguish repeated conversations with the same sender. Private
+messages use `sender：opening summary`; group messages use
+`conversation · sender：opening summary`, with missing group or sender fields
+omitted. The summary is NFKC-normalized, strips control and format characters,
+collapses whitespace, and the complete title is capped at 160 Unicode runes.
+On an existing session, only older machine-derived titles such as `sender` or
+`conversation · sender` may be upgraded on the next message; manual and LLM
+titles are never overwritten by channel ingestion.
+
 ## Identity
 
 The webhook bearer credential authenticates an Agent Dispatch endpoint and
@@ -148,6 +158,54 @@ Outbound selection is independent of source type and surface. Issue plus DWS,
 chat plus DWS, Issue plus robot SDK, and chat plus robot SDK remain valid
 compositions subject to the command's ordinary validation.
 
+## LLM telemetry and terminal summary
+
+`completionCallback` may carry a task-scoped telemetry capability in addition
+to its existing terminal and update callback paths:
+
+```json
+{
+  "url": "/api/v1/dispatch-tasks/dispatch-1/execution-result",
+  "updateUrl": "/api/v1/dispatch-tasks/dispatch-1/execution-update",
+  "telemetryUrl": "/api/v1/dispatch-tasks/dispatch-1/llm-traces",
+  "telemetryToken": "opaque-task-write-capability",
+  "telemetryExpiresAt": 1786377600000
+}
+```
+
+The telemetry fields are optional as a group. When present, `telemetryUrl` is
+a trusted relative Router path without query or fragment; all three callback
+paths must identify the same Router dispatch task. The token is an opaque
+Bearer value and `telemetryExpiresAt` is Unix epoch milliseconds. Multica
+stores the Router path and capability only in private task context. The cloud
+sandbox receives an absolute HTTPS Multica task-relay URL plus its existing
+short-lived daemon token, so it reuses the same reachable control-plane origin
+as task messages, usage, and completion. Multica authenticates the daemon,
+checks task/Runtime ownership, resolves the stored relative Router path against
+its existing Router Internal Base URL, and forwards the payload over the
+internal network. None of the Router telemetry values is written to task
+content, sandbox environment, response payloads, command arguments, or logs.
+
+In deployments using the existing Sandbox Relay, the runtime maps that
+same-origin Multica endpoint through its per-task loopback egress relay. The
+edge verifies the sandbox assertion and daemon-token digest before Multica
+applies ordinary `DaemonAuth` and task ownership checks. The sandbox assertion
+remains outside provider proxy configuration.
+
+Agent `runtime_config.llm_trace.enabled` remains the delivery switch. A complete
+Router telemetry capability and the Agent's configured static sink are
+independent destinations. Multica fans out one sandbox submission to both when
+both are present. A static sink receives the unchanged trace JSON without a
+Router or daemon token. Missing or disabled configuration produces no trace
+delivery.
+
+The terminal `execution-result` request now also accepts an optional
+`executionSummary`. Multica freezes the same task timing, usage, message/tool
+counts, and runtime/sandbox shape exposed by its task summary endpoint into the
+completion outbox in the terminal transaction. Every retry sends that immutable
+snapshot, allowing Router to persist Agent environment data without making a
+post-terminal summary/messages request back to Multica.
+
 ## History
 
 - 2026-07-22: Separated surface, authenticated principal, prompt projection,
@@ -182,6 +240,8 @@ compositions subject to the command's ordinary validation.
 - 2026-08-06: Split prompt construction by daemon capability. New daemons use
   only `common + mode + contextPrompt`; older images always use the previous
   structured DingTalk prompt builder and legacy task-content transport.
+- 2026-08-07: Added the opening-message summary to DingTalk Chat titles while
+  retaining CAS protection for manual and LLM titles.
 
 ## Reason
 
@@ -271,3 +331,46 @@ parsing or rewriting Router's context string.
 - Reason: Rolling deployments must preserve complete prompt behavior while old
   runtime images still ignore `instruction`, without mixing legacy policy into
   new images or duplicating instructions.
+
+## Change record: 2026-08-07 DingTalk Chat title projection
+
+- History: DingTalk private Chat titles now use `sender：opening summary`; group
+  Chat titles use `conversation · sender：opening summary`. Older sender-only or
+  group/sender machine titles are eligible for one safe in-place upgrade.
+- Reason: Sender identity alone produces multiple indistinguishable Chat rows
+  for repeated digital-employee conversations. Adding a normalized opening
+  summary preserves the channel counterpart while making the conversation topic
+  visible, without overwriting user-managed titles.
+
+## Change record: 2026-08-07 LLM trace observability
+
+- History: Added the optional task-scoped LLM telemetry URL/token/expiry
+  callback and the optional immutable `executionSummary` terminal payload.
+- Reason: The sandbox needs a narrow, expiring write target for paired model
+  traffic, while Router needs Agent environment data without a post-terminal
+  pull whose runtime snapshot may already have changed or expired.
+
+## Change record: 2026-08-08 Multica LLM trace relay
+
+- History: Changed `completionCallback.telemetryUrl` from a separately
+  configured absolute Router URL to a trusted relative path. The sandbox now
+  posts paired trace payloads to an absolute HTTPS Multica task endpoint;
+  Multica validates the stored task capability and forwards the unchanged body
+  to Router through the existing internal Router client.
+- Reason: Cloud sandboxes can already reach the Multica control plane but may
+  not reach a private Router staging or production ingress. Reusing the
+  existing callback origin removes the unnecessary telemetry-Origin setting
+  and keeps raw model traffic off an additional public network path. The
+  per-task Sandbox Relay assertion is also preserved as the first-hop network
+  boundary rather than exposing it to the provider proxy.
+
+## Change record: 2026-08-08 Multica trace fan-out
+
+- History: Replaced Router-capability authentication at the sandbox boundary
+  with the existing short-lived daemon token. The Multica task endpoint now
+  authenticates through `DaemonAuth`, verifies task/Runtime ownership, and
+  independently forwards the same pair to Router telemetry and the Agent's
+  configured static sink.
+- Reason: A Router callback must not override the Agent's original trace
+  destination, and private Router capabilities should remain server-side while
+  sandbox traffic reuses the proven task lifecycle control-plane channel.

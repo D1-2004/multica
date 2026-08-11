@@ -363,6 +363,11 @@ type beginBindingMetadataDB struct {
 	workspaceID pgtype.UUID
 }
 
+func (b *beginBindingMetadataDB) GetAgent(context.Context, pgtype.UUID) (db.Agent, error) {
+	b.queries = append(b.queries, "GetAgent")
+	return b.agent, nil
+}
+
 type fakeDingTalkAccountBindingPermissionStore struct {
 	member    db.Member
 	memberErr error

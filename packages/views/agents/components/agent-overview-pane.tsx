@@ -37,6 +37,7 @@ import { AgentMcpTab } from "./tabs/agent-mcp-tab";
 import { IntegrationsTab } from "./tabs/integrations-tab";
 import { IdentityTab } from "./tabs/identity-tab";
 import { RuntimeConfigTab } from "./tabs/runtime-config-tab";
+import { LLMTraceTab } from "./tabs/llm-trace-tab";
 import { AgentDetailInspector } from "./agent-detail-inspector";
 import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
@@ -59,7 +60,8 @@ export type DetailTab =
   | "access"
   | "env"
   | "custom_args"
-  | "runtime_config";
+  | "runtime_config"
+  | "llm_trace";
 
 type SecondaryTab = {
   id: DetailTab;
@@ -74,7 +76,8 @@ type SecondaryTab = {
     | "access"
     | "environment"
     | "custom_args"
-    | "runtime_config";
+    | "runtime_config"
+    | "llm_trace";
 };
 
 const CAPABILITY_TABS: SecondaryTab[] = [
@@ -92,6 +95,7 @@ const SETTINGS_TABS: SecondaryTab[] = [
   { id: "env", labelKey: "environment" },
   { id: "custom_args", labelKey: "custom_args" },
   { id: "runtime_config", labelKey: "runtime_config" },
+  { id: "llm_trace", labelKey: "llm_trace" },
 ];
 
 const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
@@ -233,10 +237,14 @@ export function AgentOverviewPane({
 
   const visibleSettingsTabs = useMemo(
     () =>
-      SETTINGS_TABS.filter(
-        (tab) => tab.id !== "runtime_config" || runtime?.provider === "openclaw",
-      ),
-    [runtime?.provider],
+      SETTINGS_TABS.filter((tab) => {
+        if (tab.id === "runtime_config") {
+          return runtime?.provider === "openclaw";
+        }
+        if (tab.id === "llm_trace") return agent.runtime_mode === "cloud";
+        return true;
+      }),
+    [agent.runtime_mode, runtime?.provider],
   );
 
   const visibleViews = useMemo(
@@ -511,6 +519,13 @@ export function AgentOverviewPane({
                   )}
                   {effectiveView === "runtime_config" && (
                     <RuntimeConfigTab
+                      agent={agent}
+                      onSave={(updates) => onUpdate(agent.id, updates)}
+                      onDirtyChange={setActiveDirty}
+                    />
+                  )}
+                  {effectiveView === "llm_trace" && (
+                    <LLMTraceTab
                       agent={agent}
                       onSave={(updates) => onUpdate(agent.id, updates)}
                       onDirtyChange={setActiveDirty}
