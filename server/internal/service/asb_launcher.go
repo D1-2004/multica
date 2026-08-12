@@ -2193,7 +2193,8 @@ func validateASBArtifact(artifact ASBArtifact) error {
 }
 
 func validateASBRuntimeManifest(manifest map[string]any) error {
-	if intMetadataValue(manifest, "schema_version") != 3 ||
+	schemaVersion := intMetadataValue(manifest, "schema_version")
+	if (schemaVersion < 3 || schemaVersion > 6) ||
 		!containsAllStrings(stringSliceMetadataValue(manifest, "sandbox_backends"), "asb") ||
 		!containsAllStrings(stringSliceMetadataValue(manifest, "providers"), "hermes", "opencode", "pi") ||
 		!containsAllStrings(
@@ -2213,6 +2214,9 @@ func validateASBRuntimeManifest(manifest map[string]any) error {
 func validateASBReleaseManifest(manifest map[string]any) error {
 	if err := validateASBRuntimeManifest(manifest); err != nil {
 		return err
+	}
+	if intMetadataValue(manifest, "schema_version") != 6 {
+		return errors.New("ASB A2A v2 release manifest must use schema version 6")
 	}
 	if !containsAllStrings(
 		manifestStringSliceForBackend(manifest, "capabilities_by_backend", string(SandboxBackendASB)),

@@ -687,7 +687,7 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	const runtimeAPIKey = "runtime-owned-validation-key"
 	digest := "sha256:" + strings.Repeat("a", 64)
 	manifest := map[string]any{
-		"schema_version":   3,
+		"schema_version":   6,
 		"sandbox_backends": []string{"aliyun_fc", "asb"},
 		"providers":        []string{"hermes", "opencode", "pi"},
 		"capabilities_by_backend": map[string][]string{
@@ -805,7 +805,7 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	if capacity.createRequests != 1 {
 		t.Fatalf("capacity create requests = %d, want 1", capacity.createRequests)
 	}
-	if intMetadataValue(got, "schema_version") != 3 {
+	if intMetadataValue(got, "schema_version") != 6 {
 		t.Fatalf("manifest = %#v", got)
 	}
 }

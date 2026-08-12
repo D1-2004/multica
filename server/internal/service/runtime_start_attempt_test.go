@@ -147,7 +147,7 @@ func TestASBCapacityErrorUsesGenericExternalDetailChannel(t *testing.T) {
 	}
 }
 
-func TestASBReleaseManifestRequiresAdditiveStartupEventsCapability(t *testing.T) {
+func TestASBReleaseManifestRequiresSchemaSixAndAdditiveCapabilities(t *testing.T) {
 	t.Parallel()
 
 	manifest := map[string]any{
@@ -162,15 +162,29 @@ func TestASBReleaseManifestRequiresAdditiveStartupEventsCapability(t *testing.T)
 		},
 		"runner_protocol": "root-log-v1",
 	}
-	if err := validateASBRuntimeManifest(manifest); err != nil {
-		t.Fatalf("existing ASB runtime manifest rejected: %v", err)
+	for _, schemaVersion := range []int{3, 4, 5, 6} {
+		manifest["schema_version"] = schemaVersion
+		if err := validateASBRuntimeManifest(manifest); err != nil {
+			t.Fatalf("known ASB runtime manifest schema %d rejected: %v", schemaVersion, err)
+		}
 	}
+	for _, schemaVersion := range []int{2, 7} {
+		manifest["schema_version"] = schemaVersion
+		if err := validateASBRuntimeManifest(manifest); err == nil {
+			t.Fatalf("unknown ASB runtime manifest schema %d accepted", schemaVersion)
+		}
+	}
+	manifest["schema_version"] = 3
 	if err := validateASBReleaseManifest(manifest); err == nil {
-		t.Fatal("new ASB release accepted without runtime start events")
+		t.Fatal("new ASB release accepted with a legacy manifest schema")
 	}
 	manifest["capabilities_by_backend"] = map[string][]string{
 		"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, A2AInvocationV2Capability},
 	}
+	if err := validateASBReleaseManifest(manifest); err == nil {
+		t.Fatal("new ASB release accepted with v2 capabilities but a legacy manifest schema")
+	}
+	manifest["schema_version"] = 6
 	if err := validateASBReleaseManifest(manifest); err != nil {
 		t.Fatalf("new ASB release manifest rejected: %v", err)
 	}
