@@ -23,8 +23,9 @@ import (
 )
 
 const (
-	a2aTextMIMEType  = "text/plain"
-	a2aIDRandomBytes = 24
+	a2aTextMIMEType         = "text/plain"
+	a2aIDRandomBytes        = 24
+	a2aBlockingPollInterval = 250 * time.Millisecond
 )
 
 // A2AService is the application boundary for inbound A2A requests. Protocol
@@ -64,14 +65,15 @@ type a2aPrincipalIDs struct {
 }
 
 type validatedA2ASend struct {
-	MessageID   string
-	Content     string
-	Fingerprint string
+	MessageID         string
+	Content           string
+	Fingerprint       string
+	ReturnImmediately bool
 }
 
-// SendMessage accepts one new, asynchronous text task. Context continuation,
-// streaming, files, and synchronous waiting are intentionally outside this
-// first inbound slice.
+// SendMessage accepts one new text task. A returnImmediately request returns
+// the durable submitted task, while the protocol default waits on PostgreSQL
+// until that same logical task reaches a terminal state.
 func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
 	if s == nil || s.Queries == nil || s.TxStarter == nil || s.TaskService == nil {
 		return nil, a2a.NewError(a2a.ErrInternalError, "A2A service is not configured")
@@ -106,7 +108,7 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 	if replay, found, err := s.replayA2AMessage(ctx, principalIDs, validated); err != nil {
 		return nil, err
 	} else if found {
-		return replay, nil
+		return s.completeA2ASend(ctx, validated, replay)
 	}
 
 	publicContextID, err := newA2APublicID("ctx_")
@@ -234,7 +236,11 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 
 	// A daemon may only observe the task after every A2A identity row commits.
 	s.TaskService.NotifyTaskEnqueued(ctx, queuedTask)
-	return s.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(publicTaskID)})
+	task, err := s.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(publicTaskID)})
+	if err != nil {
+		return nil, err
+	}
+	return s.completeA2ASend(ctx, validated, task)
 }
 
 // GetTask returns only stable A2A identifiers and protocol-safe output. Local
@@ -322,7 +328,11 @@ func (s *A2AService) finishA2ASendError(
 			if claim.RequestFingerprint != request.Fingerprint {
 				return nil, a2a.NewError(a2a.ErrInvalidParams, "message id conflicts with a different A2A request")
 			}
-			return s.replayA2AClaim(ctx, principal, request.Fingerprint, claim)
+			task, replayErr := s.replayA2AClaim(ctx, principal, request.Fingerprint, claim)
+			if replayErr != nil {
+				return nil, replayErr
+			}
+			return s.completeA2ASend(ctx, request, task)
 		}
 	}
 	slog.Error("accept A2A message failed", "stage", stage, "message_id", request.MessageID, "error", cause)
@@ -333,13 +343,11 @@ func validateA2ASendRequest(request *a2a.SendMessageRequest) (validatedA2ASend, 
 	if request == nil || request.Message == nil {
 		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "message is required")
 	}
-	if request.Config == nil || !request.Config.ReturnImmediately {
-		return validatedA2ASend{}, a2a.NewError(a2a.ErrUnsupportedOperation, "only returnImmediately=true is supported")
-	}
-	if request.Config.PushConfig != nil {
+	returnImmediately := request.Config != nil && request.Config.ReturnImmediately
+	if request.Config != nil && request.Config.PushConfig != nil {
 		return validatedA2ASend{}, a2a.ErrPushNotificationNotSupported
 	}
-	if len(request.Config.AcceptedOutputModes) > 0 && !containsString(request.Config.AcceptedOutputModes, a2aTextMIMEType) {
+	if request.Config != nil && len(request.Config.AcceptedOutputModes) > 0 && !containsString(request.Config.AcceptedOutputModes, a2aTextMIMEType) {
 		return validatedA2ASend{}, a2a.ErrUnsupportedContentType
 	}
 
@@ -377,7 +385,55 @@ func validateA2ASendRequest(request *a2a.SendMessageRequest) (validatedA2ASend, 
 	if err != nil {
 		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "message cannot be fingerprinted")
 	}
-	return validatedA2ASend{MessageID: messageID, Content: content, Fingerprint: fingerprint}, nil
+	return validatedA2ASend{
+		MessageID:         messageID,
+		Content:           content,
+		Fingerprint:       fingerprint,
+		ReturnImmediately: returnImmediately,
+	}, nil
+}
+
+func (s *A2AService) completeA2ASend(ctx context.Context, request validatedA2ASend, task *a2a.Task) (a2a.SendMessageResult, error) {
+	if request.ReturnImmediately || task.Status.State.Terminal() {
+		return task, nil
+	}
+	terminal, err := waitForA2ATerminalTask(ctx, task, a2aBlockingPollInterval, func(loadCtx context.Context, taskID a2a.TaskID) (*a2a.Task, error) {
+		return s.GetTask(loadCtx, &a2a.GetTaskRequest{ID: taskID})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return terminal, nil
+}
+
+func waitForA2ATerminalTask(
+	ctx context.Context,
+	task *a2a.Task,
+	pollInterval time.Duration,
+	load func(context.Context, a2a.TaskID) (*a2a.Task, error),
+) (*a2a.Task, error) {
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			current, err := load(ctx, task.ID)
+			if err != nil {
+				if contextErr := ctx.Err(); contextErr != nil {
+					return nil, contextErr
+				}
+				return nil, err
+			}
+			if current.Status.State.Terminal() {
+				return current, nil
+			}
+		}
+	}
 }
 
 func fingerprintA2ASendRequest(request *a2a.SendMessageRequest) (string, error) {

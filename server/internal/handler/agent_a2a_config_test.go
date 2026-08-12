@@ -139,6 +139,97 @@ func TestNormalizeAgentA2ACardSkillsUsesOfficialWireFields(t *testing.T) {
 	}
 }
 
+func TestAgentA2ACardTracksEnabledMulticaSkills(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	requireAgentA2ATestSchema(t)
+	configureAgentA2ATestHandler(t)
+
+	agentID, ownerID, _ := privateAgentTestFixture(t)
+	assignAgentA2ATestRuntime(t, agentID, "local", "claude")
+	skill, err := testHandler.Queries.CreateSkill(context.Background(), db.CreateSkillParams{
+		WorkspaceID: parseUUID(testWorkspaceID),
+		Name:        "a2a-card-observability",
+		Description: "Queries task lifecycle observations.",
+		Content:     "# A2A Card Observability",
+		Config:      []byte(`{}`),
+		CreatedBy:   parseUUID(ownerID),
+	})
+	if err != nil {
+		t.Fatalf("create configured Agent Skill: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = testHandler.Queries.RemoveAgentSkill(context.Background(), db.RemoveAgentSkillParams{
+			AgentID: parseUUID(agentID),
+			SkillID: skill.ID,
+		})
+		_ = testHandler.Queries.DeleteSkill(context.Background(), db.DeleteSkillParams{
+			ID:          skill.ID,
+			WorkspaceID: parseUUID(testWorkspaceID),
+		})
+	})
+	if err := testHandler.Queries.AddAgentSkill(context.Background(), db.AddAgentSkillParams{
+		AgentID: parseUUID(agentID),
+		SkillID: skill.ID,
+	}); err != nil {
+		t.Fatalf("attach configured Agent Skill: %v", err)
+	}
+
+	configResponse := putAgentA2ATestConfig(t, agentID, ownerID, true)
+	if configResponse.Code != http.StatusOK {
+		t.Fatalf("enable A2A status = %d, want 200: %s", configResponse.Code, configResponse.Body.String())
+	}
+	var config AgentA2AConfigResponse
+	if err := json.Unmarshal(configResponse.Body.Bytes(), &config); err != nil {
+		t.Fatalf("decode A2A config: %v", err)
+	}
+	if config.Endpoint == nil {
+		t.Fatal("enabled A2A config is missing endpoint")
+	}
+
+	loadCard := func() *a2a.AgentCard {
+		t.Helper()
+		request := httptest.NewRequest(
+			http.MethodGet,
+			"/api/a2a/agents/"+config.Endpoint.PublicAgentID+"/.well-known/agent-card.json",
+			nil,
+		)
+		request.RemoteAddr = "127.0.0.1:49152"
+		request = withAgentA2AURLParams(request, "publicAgentId", config.Endpoint.PublicAgentID)
+		response := httptest.NewRecorder()
+		testHandler.GetAgentA2ACard(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("Agent Card status = %d, want 200: %s", response.Code, response.Body.String())
+		}
+		var card a2a.AgentCard
+		if err := json.Unmarshal(response.Body.Bytes(), &card); err != nil {
+			t.Fatalf("decode Agent Card: %v", err)
+		}
+		return &card
+	}
+
+	card := loadCard()
+	if len(card.Skills) != 1 || card.Skills[0].Name != skill.Name {
+		t.Fatalf("Agent Card skills = %#v, want configured Skill %q", card.Skills, skill.Name)
+	}
+	if !strings.HasPrefix(card.Skills[0].ID, "multica-skill-") || strings.Contains(card.Skills[0].ID, uuidToString(skill.ID)) {
+		t.Fatalf("Agent Card Skill ID is not opaque: %q", card.Skills[0].ID)
+	}
+
+	if rows, err := testHandler.Queries.SetAgentSkillEnabled(context.Background(), db.SetAgentSkillEnabledParams{
+		AgentID: parseUUID(agentID),
+		SkillID: skill.ID,
+		Enabled: false,
+	}); err != nil || rows != 1 {
+		t.Fatalf("disable configured Agent Skill rows=%d error=%v", rows, err)
+	}
+	card = loadCard()
+	if len(card.Skills) != 1 || card.Skills[0].ID != "multica-agent-task" {
+		t.Fatalf("Agent Card skills after disable = %#v, want only base task capability", card.Skills)
+	}
+}
+
 func TestAgentA2AEndpointPresentationUsesConfiguredPublicURL(t *testing.T) {
 	allowUnsafeLocalAgentA2ARuntimeForTest(t)
 	ownerID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
@@ -165,7 +256,7 @@ func TestAgentA2AEndpointPresentationUsesConfiguredPublicURL(t *testing.T) {
 		UpdatedAt:         now,
 	}
 
-	response, card, err := h.agentA2AEndpointPresentation(agent, true, endpoint)
+	response, card, err := h.agentA2AEndpointPresentation(agent, true, endpoint, nil)
 	if err != nil {
 		t.Fatalf("agentA2AEndpointPresentation: %v", err)
 	}
@@ -182,7 +273,7 @@ func TestAgentA2AEndpointPresentationUsesConfiguredPublicURL(t *testing.T) {
 		t.Fatalf("card does not use the canonical RPC URL: %#v", card)
 	}
 
-	response, _, err = h.agentA2AEndpointPresentation(agent, false, endpoint)
+	response, _, err = h.agentA2AEndpointPresentation(agent, false, endpoint, nil)
 	if err != nil {
 		t.Fatalf("runtime-ineligible presentation: %v", err)
 	}
@@ -193,7 +284,7 @@ func TestAgentA2AEndpointPresentationUsesConfiguredPublicURL(t *testing.T) {
 	// Owner drift is an effective kill switch even if the stored enabled bit
 	// remains true until the new owner explicitly saves the configuration.
 	agent.OwnerID = util.MustParseUUID("55555555-5555-5555-5555-555555555555")
-	response, _, err = h.agentA2AEndpointPresentation(agent, true, endpoint)
+	response, _, err = h.agentA2AEndpointPresentation(agent, true, endpoint, nil)
 	if err != nil {
 		t.Fatalf("owner-drift presentation: %v", err)
 	}
@@ -222,7 +313,7 @@ func TestAgentA2AEndpointPresentationFailsClosedWithoutRuntimeSafety(t *testing.
 		CardName:          "Coding Agent",
 		CardVersion:       "1.0.0",
 		CardSkills:        []byte(`[]`),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("agentA2AEndpointPresentation: %v", err)
 	}
@@ -251,7 +342,7 @@ func TestAgentA2AEndpointPresentationWithoutPublicURLStaysManageable(t *testing.
 		CardName:          "Coding Agent",
 		CardVersion:       "1.0.0",
 		CardSkills:        []byte(`[]`),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("agentA2AEndpointPresentation: %v", err)
 	}
@@ -1058,6 +1149,109 @@ func TestAgentA2ASendRemainsAvailableAcrossRuntimeVersionChanges(t *testing.T) {
 				t.Fatalf("task count changed from %d to %d, want %d", taskCountBefore, taskCountAfter, wantTaskCount)
 			}
 		})
+	}
+}
+
+func TestAgentA2ABlockingSendWaitsForTerminalTask(t *testing.T) {
+	if testHandler == nil || testHandler.A2AService == nil {
+		t.Skip("database not available")
+	}
+	requireAgentA2ATestSchema(t)
+	configureAgentA2ATestHandler(t)
+
+	agentID, ownerID, _ := privateAgentTestFixture(t)
+	assignAgentA2ATestRuntime(t, agentID, "local", "claude")
+	endpoint, client, secret := createAgentA2ATestCaller(t, agentID, ownerID)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	ctx = a2aintegration.WithPrincipal(ctx, a2aintegration.Principal{
+		WorkspaceID:     testWorkspaceID,
+		AgentID:         agentID,
+		EndpointID:      endpoint.ID,
+		PublicAgentID:   endpoint.PublicAgentID,
+		ClientID:        client.ID,
+		CredentialID:    secret.Credential.ID,
+		Scopes:          []string{"send", "read"},
+		EndpointEnabled: true,
+	})
+
+	type sendOutcome struct {
+		result a2a.SendMessageResult
+		err    error
+	}
+	sendDone := make(chan sendOutcome, 1)
+	const messageID = "message-default-blocking"
+	go func() {
+		result, err := testHandler.A2AService.SendMessage(ctx, &a2a.SendMessageRequest{
+			Message: &a2a.Message{
+				ID:    messageID,
+				Role:  a2a.MessageRoleUser,
+				Parts: a2a.ContentParts{a2a.NewTextPart("wait for the durable result")},
+			},
+		})
+		sendDone <- sendOutcome{result: result, err: err}
+	}()
+
+	var claim db.A2aTaskBinding
+	claimDeadline := time.Now().Add(3 * time.Second)
+	for {
+		var err error
+		claim, err = testHandler.Queries.GetA2AMessageClaimForClient(ctx, db.GetA2AMessageClaimForClientParams{
+			EndpointID: parseUUID(endpoint.ID),
+			ClientID:   parseUUID(client.ID),
+			MessageID:  messageID,
+		})
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("load blocking SendMessage claim: %v", err)
+		}
+		select {
+		case outcome := <-sendDone:
+			t.Fatalf("blocking SendMessage returned before terminal state: result=%#v error=%v", outcome.result, outcome.err)
+		default:
+		}
+		if time.Now().After(claimDeadline) {
+			t.Fatal("blocking SendMessage did not persist its task")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	localTask, err := testHandler.Queries.GetAgentTask(ctx, claim.RootLocalTaskID)
+	if err != nil {
+		t.Fatalf("load blocking SendMessage local task: %v", err)
+	}
+	if _, err := testHandler.Queries.CreateChatMessage(ctx, db.CreateChatMessageParams{
+		ChatSessionID: localTask.ChatSessionID,
+		Role:          "assistant",
+		Content:       "blocking send completed",
+		TaskID:        localTask.ID,
+	}); err != nil {
+		t.Fatalf("create blocking SendMessage outcome: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET status = 'completed', completed_at = now(), result = '{}'::jsonb
+		WHERE id = $1
+	`, localTask.ID); err != nil {
+		t.Fatalf("complete blocking SendMessage local task: %v", err)
+	}
+
+	select {
+	case outcome := <-sendDone:
+		if outcome.err != nil {
+			t.Fatalf("blocking SendMessage error = %v", outcome.err)
+		}
+		task, ok := outcome.result.(*a2a.Task)
+		if !ok {
+			t.Fatalf("blocking SendMessage result = %T, want *a2a.Task", outcome.result)
+		}
+		if task.Status.State != a2a.TaskStateCompleted || len(task.Artifacts) != 1 || task.Artifacts[0].Parts[0].Text() != "blocking send completed" {
+			t.Fatalf("blocking SendMessage terminal task = %#v", task)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("blocking SendMessage did not return after terminal state")
 	}
 }
 

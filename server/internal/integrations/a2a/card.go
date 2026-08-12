@@ -1,6 +1,8 @@
 package a2aintegration
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"strings"
@@ -22,6 +24,61 @@ type CardConfig struct {
 	Description   string
 	Version       string
 	Skills        []a2a.AgentSkill
+}
+
+// ConfiguredAgentSkill is the public metadata subset of a Skill enabled on a
+// Multica Agent. The database identifier is used only to derive a stable,
+// opaque Agent Card skill ID.
+type ConfiguredAgentSkill struct {
+	ID          string
+	Name        string
+	Description string
+}
+
+// MergeConfiguredAgentSkills adds the Agent's enabled Multica Skills to any
+// explicitly declared Agent Card capabilities. It never exposes a database
+// UUID and keeps the resulting identifiers stable across card requests.
+func MergeConfiguredAgentSkills(declared []a2a.AgentSkill, configured []ConfiguredAgentSkill) ([]a2a.AgentSkill, error) {
+	result := make([]a2a.AgentSkill, len(declared), len(declared)+len(configured))
+	copy(result, declared)
+	seen := make(map[string]struct{}, len(result)+len(configured))
+	for _, skill := range result {
+		seen[skill.ID] = struct{}{}
+	}
+
+	for _, skill := range configured {
+		internalID := strings.TrimSpace(skill.ID)
+		name := strings.TrimSpace(skill.Name)
+		if internalID == "" || name == "" {
+			return nil, fmt.Errorf("configured Multica Agent Skill requires id and name")
+		}
+		digest := sha256.Sum256([]byte(internalID))
+		publicID := "multica-skill-" + hex.EncodeToString(digest[:])
+		if _, exists := seen[publicID]; exists {
+			continue
+		}
+		description := strings.TrimSpace(skill.Description)
+		if description == "" {
+			description = fmt.Sprintf("Provides the configured Multica skill %q.", name)
+		}
+		result = append(result, a2a.AgentSkill{
+			ID:          publicID,
+			Name:        name,
+			Description: description,
+			Tags:        []string{"multica", "configured-skill"},
+		})
+		seen[publicID] = struct{}{}
+	}
+	return result, nil
+}
+
+func baseAgentTaskSkill() a2a.AgentSkill {
+	return a2a.AgentSkill{
+		ID:          "multica-agent-task",
+		Name:        "Multica Agent task",
+		Description: "Accepts a text request and returns the Agent's text result.",
+		Tags:        []string{"multica", "text-task"},
+	}
 }
 
 // AgentCardURL returns the direct discovery URL for one hosted agent.
@@ -106,6 +163,9 @@ func BuildAgentCard(config CardConfig) (*a2a.AgentCard, error) {
 
 	skills := make([]a2a.AgentSkill, len(config.Skills))
 	copy(skills, config.Skills)
+	if len(skills) == 0 {
+		skills = append(skills, baseAgentTaskSkill())
+	}
 	for i := range skills {
 		if skills[i].Tags == nil {
 			skills[i].Tags = []string{}

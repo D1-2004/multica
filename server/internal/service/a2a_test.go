@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -26,13 +27,15 @@ func TestValidateA2ASendRequest(t *testing.T) {
 	}
 
 	tests := []struct {
-		name    string
-		mutate  func(*a2a.SendMessageRequest)
-		wantErr error
+		name                  string
+		mutate                func(*a2a.SendMessageRequest)
+		wantErr               error
+		wantReturnImmediately bool
 	}{
-		{name: "valid"},
+		{name: "valid", wantReturnImmediately: true},
 		{name: "missing message", mutate: func(request *a2a.SendMessageRequest) { request.Message = nil }, wantErr: a2a.ErrInvalidParams},
-		{name: "must return immediately", mutate: func(request *a2a.SendMessageRequest) { request.Config.ReturnImmediately = false }, wantErr: a2a.ErrUnsupportedOperation},
+		{name: "explicit blocking", mutate: func(request *a2a.SendMessageRequest) { request.Config.ReturnImmediately = false }},
+		{name: "default blocking", mutate: func(request *a2a.SendMessageRequest) { request.Config = nil }},
 		{name: "agent role", mutate: func(request *a2a.SendMessageRequest) { request.Message.Role = a2a.MessageRoleAgent }, wantErr: a2a.ErrInvalidParams},
 		{name: "missing message id", mutate: func(request *a2a.SendMessageRequest) { request.Message.ID = "" }, wantErr: a2a.ErrInvalidParams},
 		{name: "external context", mutate: func(request *a2a.SendMessageRequest) { request.Message.ContextID = "external-context" }, wantErr: a2a.ErrUnsupportedOperation},
@@ -62,7 +65,7 @@ func TestValidateA2ASendRequest(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.MessageID != "message-1" || got.Content != "first\nsecond" {
+			if got.MessageID != "message-1" || got.Content != "first\nsecond" || got.ReturnImmediately != test.wantReturnImmediately {
 				t.Fatalf("validated send = %+v", got)
 			}
 			if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(got.Fingerprint) {
@@ -86,6 +89,65 @@ func TestValidateA2ASendRequestFromV1JSONWire(t *testing.T) {
 	}
 	if validated.MessageID != "wire-message-1" || validated.Content != "hello from wire" {
 		t.Fatalf("validated wire request = %+v", validated)
+	}
+}
+
+func TestCompleteA2ASendHonorsImmediateTerminalAndCancellation(t *testing.T) {
+	t.Parallel()
+	svc := &A2AService{}
+	submitted := &a2a.Task{
+		ID:     "tsk_submitted",
+		Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted},
+	}
+
+	result, err := svc.completeA2ASend(context.Background(), validatedA2ASend{ReturnImmediately: true}, submitted)
+	if err != nil || result != submitted {
+		t.Fatalf("immediate result = %#v, error = %v", result, err)
+	}
+
+	completed := &a2a.Task{
+		ID:     "tsk_completed",
+		Status: a2a.TaskStatus{State: a2a.TaskStateCompleted},
+	}
+	result, err = svc.completeA2ASend(context.Background(), validatedA2ASend{}, completed)
+	if err != nil || result != completed {
+		t.Fatalf("terminal result = %#v, error = %v", result, err)
+	}
+
+	canceledContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err = svc.completeA2ASend(canceledContext, validatedA2ASend{}, submitted)
+	if result != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled blocking result = %#v, error = %v", result, err)
+	}
+}
+
+func TestWaitForA2ATerminalTaskPollsDurableProjection(t *testing.T) {
+	t.Parallel()
+	submitted := &a2a.Task{
+		ID:     "tsk_poll",
+		Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted},
+	}
+	completed := &a2a.Task{
+		ID:     submitted.ID,
+		Status: a2a.TaskStatus{State: a2a.TaskStateCompleted},
+	}
+	loads := 0
+	result, err := waitForA2ATerminalTask(context.Background(), submitted, time.Millisecond, func(_ context.Context, taskID a2a.TaskID) (*a2a.Task, error) {
+		loads++
+		if taskID != submitted.ID {
+			t.Fatalf("polled task ID = %q, want %q", taskID, submitted.ID)
+		}
+		if loads == 1 {
+			return submitted, nil
+		}
+		return completed, nil
+	})
+	if err != nil {
+		t.Fatalf("waitForA2ATerminalTask() error = %v", err)
+	}
+	if result != completed || loads != 2 {
+		t.Fatalf("terminal result = %#v after %d loads", result, loads)
 	}
 }
 

@@ -51,7 +51,17 @@ func (h *Handler) GetAgentA2ACard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	skills, _, err := normalizeAgentA2ACardSkills(endpoint.CardSkills)
+	declaredSkills, _, err := normalizeAgentA2ACardSkills(endpoint.CardSkills)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	configuredSkills, err := h.loadConfiguredAgentA2ACardSkills(r.Context(), endpoint.AgentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load A2A Agent Card skills")
+		return
+	}
+	skills, err := a2aintegration.MergeConfiguredAgentSkills(declaredSkills, configuredSkills)
 	if err != nil {
 		http.NotFound(w, r)
 		return

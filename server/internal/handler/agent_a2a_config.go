@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -651,7 +652,11 @@ func (h *Handler) loadAgentA2AConfigResponse(r *http.Request, scope agentA2AMana
 		runtimeSupported = runtimeErr == nil && isAgentA2ASupportedRuntimeFamily(runtime)
 	}
 
-	endpointResponse, card, err := h.agentA2AEndpointPresentation(scope.Agent, runtimeSupported, endpoint)
+	configuredSkills, err := h.loadConfiguredAgentA2ACardSkills(r.Context(), scope.Agent.ID)
+	if err != nil {
+		return AgentA2AConfigResponse{}, err
+	}
+	endpointResponse, card, err := h.agentA2AEndpointPresentation(scope.Agent, runtimeSupported, endpoint, configuredSkills)
 	if err != nil {
 		return AgentA2AConfigResponse{}, err
 	}
@@ -676,8 +681,17 @@ func (h *Handler) loadAgentA2AConfigResponse(r *http.Request, scope agentA2AMana
 	return response, nil
 }
 
-func (h *Handler) agentA2AEndpointPresentation(agent db.Agent, runtimeSupported bool, endpoint db.AgentA2aEndpoint) (AgentA2AEndpointResponse, *a2a.AgentCard, error) {
-	skills, encodedSkills, err := normalizeAgentA2ACardSkills(endpoint.CardSkills)
+func (h *Handler) agentA2AEndpointPresentation(
+	agent db.Agent,
+	runtimeSupported bool,
+	endpoint db.AgentA2aEndpoint,
+	configuredSkills []a2aintegration.ConfiguredAgentSkill,
+) (AgentA2AEndpointResponse, *a2a.AgentCard, error) {
+	declaredSkills, encodedSkills, err := normalizeAgentA2ACardSkills(endpoint.CardSkills)
+	if err != nil {
+		return AgentA2AEndpointResponse{}, nil, err
+	}
+	skills, err := a2aintegration.MergeConfiguredAgentSkills(declaredSkills, configuredSkills)
 	if err != nil {
 		return AgentA2AEndpointResponse{}, nil, err
 	}
@@ -735,6 +749,22 @@ func (h *Handler) agentA2AEndpointPresentation(agent db.Agent, runtimeSupported 
 		!agent.ArchivedAt.Valid && agent.RuntimeID.Valid && runtimeSupported &&
 		runtimeSafety.Allowed
 	return response, card, nil
+}
+
+func (h *Handler) loadConfiguredAgentA2ACardSkills(ctx context.Context, agentID pgtype.UUID) ([]a2aintegration.ConfiguredAgentSkill, error) {
+	rows, err := h.Queries.ListEnabledAgentSkillCardMetadata(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	skills := make([]a2aintegration.ConfiguredAgentSkill, 0, len(rows))
+	for _, row := range rows {
+		skills = append(skills, a2aintegration.ConfiguredAgentSkill{
+			ID:          uuidToString(row.ID),
+			Name:        row.Name,
+			Description: row.Description,
+		})
+	}
+	return skills, nil
 }
 
 func (h *Handler) findAgentA2AClient(r *http.Request, scope agentA2AManagementScope, clientID pgtype.UUID) (db.A2aClient, bool, error) {

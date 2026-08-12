@@ -13,7 +13,7 @@
 
 ## 一句话结论
 
-在 Multica server 新增一个按 Agent 开启的 A2A v1.0 JSON-RPC inbound adapter，把外部 `SendMessage(returnImmediately=true)` 原子物化为现有 Chat session、`agent_task_queue` 和 user message，并用 `GetTask` 轮询结果；后续继续走现有 daemon 与本地 Coding Agent 执行链。首切只做单轮文本 Send/Get，daemon 显式识别 A2A task，禁止为其签发 owner-backed task token，并隔离本地控制能力。不实现 Multica 主动调用其他 Agent。
+在 Multica server 新增一个按 Agent 开启的 A2A v1.0 JSON-RPC inbound adapter，把外部 `SendMessage` 原子物化为现有 Chat session、`agent_task_queue` 和 user message；`returnImmediately=true` 返回已提交 Task，false/缺省按标准阻塞到终态，异步调用方也可继续用 `GetTask` 轮询结果。后续继续走现有 daemon 与本地 Coding Agent 执行链。当前只做单轮文本 Send/Get，daemon 显式识别 A2A task，禁止为其签发 owner-backed task token，并隔离本地控制能力。不实现 Multica 主动调用其他 Agent。
 
 ## 可行性结论
 
@@ -94,7 +94,7 @@ PR 还缺少 A2A v1.0 所需的 `A2A-Version`、完整 `supportedInterfaces`、�
 
 1. Agent owner 能在 Agent 设置中启用 A2A、编辑公开 Card 信息、创建/吊销命名 client 与凭证。
 2. Agent owner 能从界面导出该 Agent 的标准 Agent Card 和不含 secret 的 A2A client bootstrap 配置，并复制使用环境变量占位符的调用示例。
-3. 外部 A2A client 能读取 Card，并通过 Bearer 凭证调用 `SendMessage(returnImmediately=true)` 和 `GetTask`；未实现方法明确返回 UnsupportedOperation。
+3. 外部 A2A client 能读取 Card，并通过 Bearer 凭证调用缺省阻塞或 `returnImmediately=true` 的 `SendMessage` 和 `GetTask`；未实现方法明确返回 UnsupportedOperation。
 4. 每次 A2A `SendMessage` 对应一个稳定的 A2A logical Task 和一个由服务端生成的新 context；首切不接受 context/task continuation。
 5. 所有业务状态以 PostgreSQL 为真相源，server 重启或请求落到另一副本后仍可查询、去重和取消。
 6. A2A 请求不能获得 Agent owner 的个人 Composio/MCP 连接，也不能伪造为某个 human user 发起。
@@ -108,7 +108,7 @@ PR 还缺少 A2A v1.0 所需的 `A2A-Version`、完整 `supportedInterfaces`、�
 - `SendStreamingMessage`、SSE、task resubscribe、push notification。
 - gRPC、HTTP+JSON/REST binding；第一期只做 JSON-RPC。
 - FilePart、DataPart、URL/raw/data 附件、外部 Artifact 文件下载。
-- blocking Send、`ListTasks`、`CancelTask`、context/task continuation、client rate/concurrency limit 和 TCK；这些保留在后续里程碑，不在首切 UI/API 中伪装成可用能力。
+- `ListTasks`、`CancelTask`、context/task continuation、client rate/concurrency limit 和 TCK；这些保留在后续里程碑，不在当前 UI/API 中伪装成可用能力。
 - `INPUT_REQUIRED`、`AUTH_REQUIRED` 的持久暂停与继续；Coding Agent 要求补充信息时，第一期仍按普通文本结果完成。
 - OAuth/OIDC 流程、mTLS、Agent Card 签名和 authenticated extended Card。
 - 在常规导出文件、复制示例或下载文件中包含 Bearer secret；secret 仍只允许在 credential 创建时显示一次。
@@ -119,7 +119,7 @@ PR 还缺少 A2A v1.0 所需的 `A2A-Version`、完整 `supportedInterfaces`、�
 
 - 第一阶段输入和输出只接受 `text/plain`；请求只能包含 `ROLE_USER` TextPart。
 - Agent Card 使用不可枚举的 `public_agent_id` 作为 direct-discovery URL；Card 可匿名读取，调用接口必须 Bearer 鉴权。
-- Card 只展示 owner 显式确认的公开名称、描述和 skills，不从 Agent instructions、tools、MCP 或私有 source 自动推导。
+- Card 展示 owner 显式确认的公开名称、描述和自定义 skills，并自动加入 Agent 当前启用的 Multica Skill 名称与描述；不公开 SKILL.md 内容，也不从 Agent instructions、tools、MCP 或私有 source 推导额外能力。
 - 首切拒绝 caller 提供的 `contextId` 或 `taskId`；每次 Send 由服务端生成独立 context。
 - A2A endpoint 的启用即 owner 对该 Agent 的精确调用授权；A2A client 不是 Multica member/user。
 - endpoint 启用前要求 Agent 有 owner、未 archived、已配置 runtime，且 `MULTICA_PUBLIC_URL` 可生成合法 Card URL；runtime 暂时 offline 不阻止后续 admission。
@@ -320,10 +320,10 @@ A2A cancel 不能直接调用当前浏览器语义的 `CancelTaskWithResult(root
 5. cancel 先取得 binding lock 时，后续 failure finalizer 看到 intent 并跳过 retry；failure-finalized marker 先提交时，CancelTask 返回 TaskNotCancelable。重复 CancelTask 返回同一个 cancelled Task，状态不能倒退。
 6. HTTP client 断开只结束 blocking waiter，不隐式取消已接收 Task。
 
-### 11. Blocking 与多副本（后续里程碑）
+### 11. Blocking 与多副本
 
-- 首切只接受 `returnImmediately=true`，立即返回 submitted/working Task；false/缺省返回 UnsupportedOperation。
-- 本地 Coding Agent E2E 使用 `returnImmediately=true`，避免模型执行时长占用请求连接。
+- `returnImmediately=true` 立即返回 submitted/working Task；false/缺省按 A2A 标准等待 terminal 或请求上下文中断。
+- 需要长时间运行或自行恢复的调用方仍应使用 `returnImmediately=true` 加 `GetTask`，避免模型执行时长持续占用请求连接。
 - blocking waiter 周期性从 PostgreSQL 读取 logical Task；现有 completion event 或 Redis/Tair 只能作为降低延迟的 wakeup，不是状态真相源。
 - 任一 server 实例重启后，client 通过 `GetTask` 恢复查询；请求连接失败不影响 daemon 后台执行。
 - SDK 默认 in-memory TaskStore、进程内 idempotency map 和本地文件均禁止作为生产真相源。
@@ -367,7 +367,7 @@ FC launcher 的 `runtime_start_attempt` 不能继续只把 `task_token` 当作 c
 
 | Method | 第一阶段行为 |
 |---|---|
-| `SendMessage` | text-only；仅 `returnImmediately=true`，始终返回 Task |
+| `SendMessage` | text-only；`returnImmediately=true` 立即返回 Task，false/缺省等待终态 Task |
 | `GetTask` | 仅 client 自己的 task；从 PostgreSQL 投影 current/final lineage |
 | `ListTasks` | UnsupportedOperation；client scope 也拒绝 `list` |
 | `CancelTask` | UnsupportedOperation；client scope 也拒绝 `cancel` |
@@ -426,7 +426,7 @@ Transport 前置错误如无/错 Bearer和 body 超限使用 HTTP 401/403/413；
 - [x] 里程碑 0：从最新目标基线创建 `codex/agent-a2a-inbound`，确认 migration 编号，完成官方 SDK server/client API spike，固定 `a2a-go/v2@v2.4.0` 和 wire contract；TCK shim 留待协议验证里程碑实现。
 - [x] 里程碑 1：实现 additive schema、sqlc、endpoint/client/credential 管理 service/API 与 owner-only 权限；全局 flag 默认关闭。
 - [x] 里程碑 2：实现 Card 与 JSON-RPC transport，打通 text-only `SendMessage(returnImmediately=true)` 到 Chat/task/daemon 的纵向 happy path。
-- [ ] 里程碑 3：在当前 caller-scoped Get 与 stable Artifact 基础上，补齐 blocking Send、List projection、context follow-up 和多副本/重启验证。
+- [ ] 里程碑 3：已补齐 blocking Send；继续完成 List projection、context follow-up 和多副本/重启验证。
 - [ ] 里程碑 4：实现两条 failure finalization 的 durable marker、retry lineage、cancel intent、preserve-input cancellation、terminal race 与多副本/重启一致性。
 - [x] 里程碑 5：实现 Agent Settings A2A tab、一次性凭证 UX、Card 安全说明、feature flag 与 locales。
 - [ ] 里程碑 6：增加协议 golden、官方 SDK client、PostgreSQL integration、TCK 与安全/限流/回归验证。
@@ -591,7 +591,7 @@ credential 写入权限 `0600` 文件或 stdin/env，不出现在命令参数、
 | 调研与 Plan | 已完成 |  | upstream PR、A2A spec/SDK、Google ADK、Langflow、Agent Stack、Dify/Coze/Flowise、本仓库 Chat/Task/daemon/UI 只读检查 | 确认 per-Agent Card + credential 分离；定稿无 secret 导出合同 |
 | 协议 spike | 已完成 |  | `a2a-go/v2@v2.4.0` API/source 与 TCK runner 检查 | 采用 SDK RequestHandler/JSONRPC；补自有 version guard、Bearer middleware、Card HTTP cache |
 | Schema / 管理面 | 首切已完成 |  | migration 270、sqlc、Handler PostgreSQL integration tests | endpoint/client/credential 分层；secret 只返回一次；member revoke 与 owner transfer 使用固定锁序永久吊销旧 grant |
-| Inbound happy path | 首切已完成 |  | A2A service/handler/daemon 定向测试 + 真实 Claude E2E | Card、Bearer、官方 SDK JSON-RPC、Send/Get 与持久 binding 已打通；仅支持 `returnImmediately=true` |
+| Inbound happy path | 当前纵向切片已完成 |  | A2A service/handler/daemon 定向测试 + 真实 Claude E2E | Card、Bearer、官方 SDK JSON-RPC、缺省 blocking Send、异步 Send/Get 与持久 binding 已打通 |
 | Logical task / cancel | 待执行 |  |  |  |
 | UI | 已完成 |  | Core/Views typecheck；Core 930 tests；Views 2053 tests；A2A Core 39 tests + Views 7 tests | owner-only A2A tab；Card URL/Card JSON/Multica preset/curl 导出均不含 secret；raw token 仅一次性 dialog；schema drift 不假成功，disabled 投影仍保留 owner URL 可见性但不开放导出/credential |
 | 自动化验证 | 首切已完成 |  | Go A2A/daemon/auth/service/CLI 定向测试、Core/Views tests、`make build`、`git diff --check` | 相关测试与构建通过；Card/transport/auth/claim/env/local-daemon 能力已覆盖；List/Cancel/TCK/rate-limit 属于后续里程碑。更宽的既有 Handler/Service integration suite 仍受本地旧 fixture/schema/date 基线问题影响，不计作本切片通过 |
@@ -603,7 +603,7 @@ credential 写入权限 `0600` 文件或 stdin/env，不出现在命令参数、
 
 ## 首切结果与遗留项
 
-首个纵向切片已完成：外部 caller 可发现单个 Agent 的标准 Card，使用独立 Bearer credential 调用 `SendMessage(returnImmediately=true)`，再以 `GetTask` 读取持久化状态与 stable Artifact；owner 可在 Agent Settings 中管理 endpoint/client/credential，并导出 Card URL、标准 Card JSON、不含 secret 的 Multica 私有 preset 和 curl 模板。
+当前纵向切片已完成：外部 caller 可发现包含启用 Multica Skills 的标准 Card，使用独立 Bearer credential 调用缺省阻塞或 `returnImmediately=true` 的 `SendMessage`，异步模式再以 `GetTask` 读取持久化状态与 stable Artifact；owner 可在 Agent Settings 中管理 endpoint/client/credential，并导出 Card URL、标准 Card JSON、不含 secret 的 Multica 私有 preset 和 curl 模板。
 
 2026-08-09 本地黑盒 E2E 使用隔离 profile、数据库、Workspace 和 loopback backend。A2A Task 经真实 daemon 驱动本机 Claude Code，在 `/Users/yuanzhan/multica_workspaces_a2a-e2e-9df9/e1c3e65c-b6a3-4b08-b9e2-c8df5ec02705/49da33d2/workdir` 创建 Node.js 项目并完成测试。数据库确认 local task 为 completed，`started_at`、`completed_at`、`work_dir` 均非空；独立 oracle 验证 NFKC/大小写/分隔符/空字符串/类型错误和 proof JSON。管理响应未出现完整 `mca2a_` secret，数据库只保存 64 字符 SHA-256 hash；验收结束后 A2A credential 与专用 PAT 均已吊销，本地 profile token 已移除，daemon/backend 已停止，Workspace 与项目证据保留。
 
@@ -625,4 +625,4 @@ OpenCode UI 补齐 Commit `e753a7e26` 经 run `3103052566` 完成代码/配置�
 
 Run `3103086275` 已完成代码合并、配置合并、构建、制品扫描、预发部署和预发集成测试，当前仅停在人工“预发验证”，没有进入生产。目标 Agent 的长期 `0600` 调试 credential 通过 secret connect URL 完成 MCP initialize，返回 `multica-hosted-agent/1.0.0` 和 tools capability；随后在隔离 `CODEX_HOME` 中让本地 Codex 实际调用 `delegate_task` 并轮询 `get_task` 到 terminal，得到精确 Artifact `MCP_SPLIT_UI_860EB467D`，临时 Codex 配置已清理，用户原全局配置未改变。浏览器自动登录身份仅拥有 `yufa` 工作区，无法访问目标 `pre-testing` 页面，因此没有把该浏览器会话作为 UI 验收证据；CLI 授权身份、黑盒接口和本地 Coding Agent 链路均已通过。
 
-仍未完成的是 blocking Send、List、context follow-up、Cancel/retry 完整状态机、多副本/重启、rate limit、官方 TCK 和生产发布。尤其生产仍被宿主 OS/HOME、Claude settings/hooks/plugins/skills、provider credential 与工具 shell 文件权限未隔离所阻断；当前 hard deny 与 unsafe loopback gate 必须保留，不能把本次可信固定 prompt E2E 解读为恶意 prompt 安全验收。由于总 Plan 仍有后续里程碑，本文件暂不改名为 `*-done.md`。
+仍未完成的是 List、context follow-up、Cancel/retry 完整状态机、多副本/重启、rate limit、官方 TCK 和生产发布。尤其生产仍被宿主 OS/HOME、Claude settings/hooks/plugins/skills、provider credential 与工具 shell 文件权限未隔离所阻断；当前 hard deny 与 unsafe loopback gate 必须保留，不能把本次可信固定 prompt E2E 解读为恶意 prompt 安全验收。由于总 Plan 仍有后续里程碑，本文件暂不改名为 `*-done.md`。

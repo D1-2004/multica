@@ -2,6 +2,7 @@ package a2aintegration
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -39,7 +40,7 @@ func TestBuildAgentCardJSON(t *testing.T) {
 	}
 }
 
-func TestBuildAgentCardNormalizesNilCollections(t *testing.T) {
+func TestBuildAgentCardDeclaresBaseTaskSkillWhenNoSkillsAreConfigured(t *testing.T) {
 	t.Parallel()
 
 	card, err := BuildAgentCard(CardConfig{
@@ -51,11 +52,14 @@ func TestBuildAgentCardNormalizesNilCollections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildAgentCard() error = %v", err)
 	}
-	if card.Skills == nil {
-		t.Fatal("BuildAgentCard() Skills = nil, want non-nil empty slice")
+	if len(card.Skills) != 1 {
+		t.Fatalf("BuildAgentCard() Skills length = %d, want the base task skill", len(card.Skills))
 	}
-	if len(card.Skills) != 0 {
-		t.Fatalf("BuildAgentCard() Skills length = %d, want 0", len(card.Skills))
+	if got, want := card.Skills[0].ID, "multica-agent-task"; got != want {
+		t.Fatalf("BuildAgentCard() base skill ID = %q, want %q", got, want)
+	}
+	if card.Skills[0].Name == "" || card.Skills[0].Description == "" || card.Skills[0].Tags == nil {
+		t.Fatalf("BuildAgentCard() base skill is incomplete: %#v", card.Skills[0])
 	}
 	if got := card.SupportedInterfaces[0].Tenant; got != "" {
 		t.Fatalf("BuildAgentCard() interface tenant = %q, want empty", got)
@@ -65,6 +69,57 @@ func TestBuildAgentCardNormalizesNilCollections(t *testing.T) {
 	}
 	if card.Capabilities.Streaming || card.Capabilities.PushNotifications || card.Capabilities.ExtendedAgentCard {
 		t.Fatalf("BuildAgentCard() capabilities = %+v, want all optional capabilities disabled", card.Capabilities)
+	}
+}
+
+func TestMergeConfiguredAgentSkillsPublishesStableOpaqueCapabilities(t *testing.T) {
+	t.Parallel()
+
+	declared := []a2a.AgentSkill{{
+		ID:          "custom-review",
+		Name:        "Custom review",
+		Description: "Reviews a submitted change.",
+	}}
+	configured := []ConfiguredAgentSkill{
+		{
+			ID:          "9dacba10-0cc7-4761-96e1-a8c87a763a16",
+			Name:        "agent-message-router-observability",
+			Description: "Queries message routing observations.",
+		},
+		{
+			ID:   "c58b7310-4e81-4f2b-82f8-ab4fa0690969",
+			Name: "dws",
+		},
+	}
+
+	got, err := MergeConfiguredAgentSkills(declared, configured)
+	if err != nil {
+		t.Fatalf("MergeConfiguredAgentSkills() error = %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("MergeConfiguredAgentSkills() length = %d, want 3", len(got))
+	}
+	if got[0].ID != declared[0].ID {
+		t.Fatalf("declared skill changed: %#v", got[0])
+	}
+	for index, skill := range got[1:] {
+		if !strings.HasPrefix(skill.ID, "multica-skill-") {
+			t.Fatalf("configured skill %d ID = %q, want opaque Multica ID", index, skill.ID)
+		}
+		if strings.Contains(skill.ID, configured[index].ID) {
+			t.Fatalf("configured skill %d leaked its database ID: %q", index, skill.ID)
+		}
+		if skill.Name != configured[index].Name || skill.Description == "" || skill.Tags == nil {
+			t.Fatalf("configured skill %d is incomplete: %#v", index, skill)
+		}
+	}
+
+	again, err := MergeConfiguredAgentSkills(nil, configured[:1])
+	if err != nil {
+		t.Fatalf("second MergeConfiguredAgentSkills() error = %v", err)
+	}
+	if again[0].ID != got[1].ID {
+		t.Fatalf("configured skill ID is not stable: first=%q second=%q", got[1].ID, again[0].ID)
 	}
 }
 
