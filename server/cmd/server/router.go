@@ -124,7 +124,8 @@ func dingTalkAccountCallbackCORSMiddleware(appOrigins []string, dbaseOrigin stri
 	global := cors.Handler(cors.Options{
 		AllowedOrigins:   appOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Workspace-ID", "X-Workspace-Slug", "X-Request-ID", "X-Agent-ID", "X-Task-ID", "X-CSRF-Token", "X-Client-Platform", "X-Client-Version", "X-Client-OS"},
+		AllowedHeaders:   corsAllowedHeaders,
+		ExposedHeaders:   corsExposedHeaders,
 		AllowCredentials: true,
 		MaxAge:           300,
 	})
@@ -1514,14 +1515,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// using one config source instead of a parallel one.
 	realtime.SetTrustedProxies(signupConfig.TrustedProxies)
 
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   origins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   corsAllowedHeaders,
-		ExposedHeaders:   corsExposedHeaders,
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
+	if opts.RuntimeConfig != nil {
+		r.Use(dynamicDingTalkAccountCallbackCORSMiddleware(opts.RuntimeConfig))
+	} else {
+		r.Use(dingTalkAccountCallbackCORSMiddleware(
+			origins,
+			h.DingTalkAccountBindingOrigin,
+		))
+	}
+	if opts.DeploymentFence != nil {
+		r.Use(opts.DeploymentFence.Middleware)
+	}
 
 	// Health / readiness checks
 	r.Get("/health", health.liveHandler)
@@ -1734,6 +1738,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/usage", h.ReportTaskUsage)
 		r.Post("/tasks/{taskId}/messages", h.ReportTaskMessages)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
+		r.Post("/tasks/{taskId}/llm-traces", h.RelayTaskLLMTrace)
 		r.Post("/tasks/{taskId}/cancel-ack", h.AckTaskCancelled)
 
 		r.Post("/workspaces/{workspaceId}/issues/gc-check", h.BatchIssueGCCheck)
@@ -1769,6 +1774,32 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.With(handler.RequireHumanActor).Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
+		r.Get("/api/runtimes/fc-e2b/stable-channel", h.GetFCE2BStableChannel)
+		r.Post("/api/runtimes/fc-e2b/stable-releases", h.CreateFCE2BStableRelease)
+		r.Get("/api/runtimes/fc-e2b/stable-releases", h.ListFCE2BStableReleases)
+		r.Get("/api/runtimes/fc-e2b/stable-releases/{releaseId}", h.GetFCE2BStableRelease)
+		r.Get("/api/runtimes/fc-e2b/stable-runtimes", h.ListFCE2BStableRuntimes)
+		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/pause", h.PauseFCE2BStableRelease)
+		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/resume", h.ResumeFCE2BStableRelease)
+		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/start-rollout", h.StartFCE2BStableRollout)
+		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/advance-rollout", h.AdvanceFCE2BStableRollout)
+		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/complete-observation", h.CompleteFCE2BStableObservation)
+		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/terminate", h.TerminateFCE2BStableRelease)
+		r.Post("/api/runtimes/fc-e2b/stable-releases/{releaseId}/rollback", h.RollbackFCE2BStableRelease)
+		r.Get("/api/runtimes/cloud-sandbox/stable-channel", h.GetCloudSandboxStableChannel)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases", h.CreateCloudSandboxStableRelease)
+		r.Get("/api/runtimes/cloud-sandbox/stable-releases", h.ListCloudSandboxStableReleases)
+		r.Get("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}", h.GetFCE2BStableRelease)
+		r.Get("/api/runtimes/cloud-sandbox/stable-runtimes", h.ListCloudSandboxStableRuntimes)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/pause", h.PauseFCE2BStableRelease)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/resume", h.ResumeFCE2BStableRelease)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/start-rollout", h.StartFCE2BStableRollout)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/advance-rollout", h.AdvanceFCE2BStableRollout)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/complete-observation", h.CompleteFCE2BStableObservation)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/terminate", h.TerminateFCE2BStableRelease)
+		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/rollback", h.RollbackFCE2BStableRelease)
+		r.With(handler.RequireDingTalkHumanActor).Get("/api/fde/onboarding", h.GetFDEOnboarding)
+		r.With(handler.RequireDingTalkHumanActor).Post("/api/fde/onboarding", h.ProvisionFDEOnboarding)
 		r.With(handler.RequireHumanActor).Post("/api/client-usage", h.UpsertClientUsage)
 
 		// Note (MUL-4309): the generic OpenAI-compatible passthrough endpoints
@@ -2111,6 +2142,23 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Task messages (user-facing, not daemon auth)
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
 
+			// DTA deployment load verification. These endpoints expose only
+			// server-stamped smoke Issues, never generic Issue or Chat CRUD.
+			r.Route("/api/dta/load-smokes", func(r chi.Router) {
+				r.Get("/", h.GetDTALoadSmokeByOperation)
+				r.Post("/", h.CreateDTALoadSmoke)
+				r.Route("/{issueId}", func(r chi.Router) {
+					r.Get("/runs", h.ListDTALoadSmokeRuns)
+					r.Get("/runs/{taskId}/messages", h.ListDTALoadSmokeMessages)
+					r.Get("/comments", h.ListDTALoadSmokeComments)
+					r.Post("/retry", h.RetryDTALoadSmoke)
+				})
+			})
+
+			// Task-scoped Chat -> Issue background handoff. The handler requires
+			// a task token and rejects ordinary member credentials.
+			r.Post("/api/issue-delegations", h.DelegateIssue)
+
 			// Issue quick actions (definitions; running one lives under
 			// /api/issues/{id}/quick-actions/{quickActionId}/run)
 			r.Route("/api/quick-actions", func(r chi.Router) {
@@ -2424,6 +2472,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/archive", h.SetChatSessionArchived)
 					r.Delete("/", h.DeleteChatSession)
 					r.Post("/messages", h.SendChatMessage)
+					r.Post("/messages/{messageId}/received", h.AcknowledgeChatMessageReceived)
 					r.Post("/onboarding", h.StartMikaOnboarding)
 					// Explicit "refresh" of a turn's quick actions: re-runs the
 					// daemon suggestion pass for the latest assistant reply (MUL-5149).

@@ -272,6 +272,46 @@ func TestConfigRouteIsPublic(t *testing.T) {
 	readJSON(t, resp, &result)
 }
 
+func TestStableRuntimeRoutesAreRegistered(t *testing.T) {
+	for _, path := range []string{
+		"/api/runtimes/fc-e2b/stable-channel",
+		"/api/runtimes/cloud-sandbox/stable-channel?sandbox_backend=asb",
+	} {
+		t.Run(path, func(t *testing.T) {
+			resp := authRequest(t, http.MethodGet, path, nil)
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("stable Runtime route returned %d: %s", resp.StatusCode, body)
+			}
+		})
+	}
+}
+
+func TestDeploymentFenceIgnoresStaleConnectionState(t *testing.T) {
+	ctx := context.Background()
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `UPDATE deployment_fence SET state = 'normal' WHERE singleton_id = 1`); err != nil {
+		t.Fatalf("set authoritative fence state: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('multica.deployment_fence_state', 'draining', true)`); err != nil {
+		t.Fatalf("seed stale connection state: %v", err)
+	}
+
+	var state string
+	if err := tx.QueryRow(ctx, `SELECT multica_current_deployment_fence_state()`).Scan(&state); err != nil {
+		t.Fatalf("read deployment fence state: %v", err)
+	}
+	if state != "normal" {
+		t.Fatalf("deployment fence state = %q, want authoritative normal", state)
+	}
+}
+
 func TestDingTalkBotInstallRouteAllowsPlainWorkspaceMember(t *testing.T) {
 	ctx := context.Background()
 	var userID string
