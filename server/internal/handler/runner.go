@@ -79,6 +79,18 @@ func runnerPairingIDFromToken(token string) (pgtype.UUID, bool) {
 	return pairingID, err == nil
 }
 
+func logRunnerDeviceAuthorizationRejected(reason string, pairingID pgtype.UUID, attributes ...any) {
+	fields := []any{
+		"event", "runner_device_authorization_rejected",
+		"reason", reason,
+	}
+	if pairingID.Valid {
+		fields = append(fields, "pairing_id", uuidToString(pairingID))
+	}
+	fields = append(fields, attributes...)
+	slog.Warn("Runner device authorization rejected", fields...)
+}
+
 func generateRunnerUserCode() (string, error) {
 	raw := make([]byte, 5)
 	if _, err := rand.Read(raw); err != nil {
@@ -361,21 +373,44 @@ func (h *Handler) BeginRunnerDeviceAuthorization(w http.ResponseWriter, r *http.
 	roots, _ := json.Marshal(req.Roots)
 	pairingID, ok := runnerPairingIDFromToken(req.PairingToken)
 	if !ok {
+		logRunnerDeviceAuthorizationRejected("token_format", pgtype.UUID{})
 		writeError(w, http.StatusBadRequest, "Runner pairing token is invalid or expired")
 		return
 	}
 	pairing, err := h.Queries.GetRunnerPairingByID(r.Context(), pairingID)
 	if errors.Is(err, pgx.ErrNoRows) {
+		logRunnerDeviceAuthorizationRejected("pairing_not_found", pairingID)
 		writeError(w, http.StatusBadRequest, "Runner pairing token is invalid or expired")
 		return
 	}
 	if err != nil {
+		slog.Error("Failed to read Runner pairing for device authorization",
+			"event", "runner_device_authorization_failed",
+			"reason", "pairing_lookup",
+			"pairing_id", uuidToString(pairingID),
+			"error", err,
+		)
 		writeError(w, http.StatusInternalServerError, "failed to begin Runner authorization")
 		return
 	}
 	expectedHash := auth.HashToken(strings.TrimSpace(req.PairingToken))
-	if subtle.ConstantTimeCompare([]byte(expectedHash), []byte(pairing.PairingTokenHash)) != 1 ||
-		pairing.State != "pending" || !pairing.ExpiresAt.Valid || !pairing.ExpiresAt.Time.After(time.Now()) {
+	if subtle.ConstantTimeCompare([]byte(expectedHash), []byte(pairing.PairingTokenHash)) != 1 {
+		logRunnerDeviceAuthorizationRejected("token_hash_mismatch", pairing.ID)
+		writeError(w, http.StatusBadRequest, "Runner pairing token is invalid or expired")
+		return
+	}
+	if pairing.State != "pending" {
+		logRunnerDeviceAuthorizationRejected("pairing_state", pairing.ID, "pairing_state", pairing.State)
+		writeError(w, http.StatusBadRequest, "Runner pairing token is invalid or expired")
+		return
+	}
+	if !pairing.ExpiresAt.Valid {
+		logRunnerDeviceAuthorizationRejected("pairing_expiry_missing", pairing.ID)
+		writeError(w, http.StatusBadRequest, "Runner pairing token is invalid or expired")
+		return
+	}
+	if !pairing.ExpiresAt.Time.After(time.Now()) {
+		logRunnerDeviceAuthorizationRejected("pairing_expired", pairing.ID)
 		writeError(w, http.StatusBadRequest, "Runner pairing token is invalid or expired")
 		return
 	}
@@ -412,10 +447,17 @@ func (h *Handler) BeginRunnerDeviceAuthorization(w http.ResponseWriter, r *http.
 		}
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
+		logRunnerDeviceAuthorizationRejected("state_transition_conflict", pairing.ID)
 		writeError(w, http.StatusBadRequest, "Runner pairing token is invalid or expired")
 		return
 	}
 	if err != nil {
+		slog.Error("Failed to transition Runner pairing into device authorization",
+			"event", "runner_device_authorization_failed",
+			"reason", "state_transition",
+			"pairing_id", uuidToString(pairing.ID),
+			"error", err,
+		)
 		writeError(w, http.StatusInternalServerError, "failed to begin Runner authorization")
 		return
 	}
