@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
@@ -60,6 +61,22 @@ func generateRunnerSecret(prefix string, byteCount int) (string, error) {
 		return "", err
 	}
 	return prefix + hex.EncodeToString(raw), nil
+}
+
+func runnerPairingIDFromToken(token string) (pgtype.UUID, bool) {
+	token = strings.TrimSpace(token)
+	if !strings.HasPrefix(token, "rps_") {
+		return pgtype.UUID{}, false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(token, "rps_"), "_", 2)
+	if len(parts) != 2 || len(parts[1]) != 48 {
+		return pgtype.UUID{}, false
+	}
+	if _, err := hex.DecodeString(parts[1]); err != nil {
+		return pgtype.UUID{}, false
+	}
+	pairingID, err := util.ParseUUID(parts[0])
+	return pairingID, err == nil
 }
 
 func generateRunnerUserCode() (string, error) {
@@ -149,13 +166,16 @@ func (h *Handler) CreateAgentRunnerPairing(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusServiceUnavailable, "Runner binding requires MULTICA_PUBLIC_URL")
 		return
 	}
-	token, err := generateRunnerSecret("rps_", 24)
+	secret, err := generateRunnerSecret("", 24)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create Runner pairing")
 		return
 	}
+	pairingID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	token := "rps_" + uuidToString(pairingID) + "_" + secret
 	expiresAt := time.Now().Add(runnerPairingTTL)
 	row, err := h.Queries.CreateRunnerPairingSession(r.Context(), db.CreateRunnerPairingSessionParams{
+		ID:               pairingID,
 		WorkspaceID:      agent.WorkspaceID,
 		AgentID:          agent.ID,
 		OwnerID:          agent.OwnerID,
@@ -339,7 +359,12 @@ func (h *Handler) BeginRunnerDeviceAuthorization(w http.ResponseWriter, r *http.
 		return
 	}
 	roots, _ := json.Marshal(req.Roots)
-	pairing, err := h.Queries.GetRunnerPairingByTokenHash(r.Context(), auth.HashToken(strings.TrimSpace(req.PairingToken)))
+	pairingID, ok := runnerPairingIDFromToken(req.PairingToken)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Runner pairing token is invalid or expired")
+		return
+	}
+	pairing, err := h.Queries.GetRunnerPairingByID(r.Context(), pairingID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusBadRequest, "Runner pairing token is invalid or expired")
 		return
@@ -348,11 +373,13 @@ func (h *Handler) BeginRunnerDeviceAuthorization(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to begin Runner authorization")
 		return
 	}
-	if pairing.State != "pending" || !pairing.ExpiresAt.Valid || !pairing.ExpiresAt.Time.After(time.Now()) {
+	expectedHash := auth.HashToken(strings.TrimSpace(req.PairingToken))
+	if subtle.ConstantTimeCompare([]byte(expectedHash), []byte(pairing.PairingTokenHash)) != 1 ||
+		pairing.State != "pending" || !pairing.ExpiresAt.Valid || !pairing.ExpiresAt.Time.After(time.Now()) {
 		writeError(w, http.StatusBadRequest, "Runner pairing token is invalid or expired")
 		return
 	}
-	pairingID := pairing.ID
+	pairingID = pairing.ID
 	deviceCode, err := generateRunnerSecret("rdc_", 24)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to begin Runner authorization")

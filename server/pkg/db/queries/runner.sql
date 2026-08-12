@@ -1,12 +1,12 @@
 -- name: CreateRunnerPairingSession :one
 INSERT INTO runner_pairing_session (
-    workspace_id, agent_id, owner_id, pairing_token_hash, expires_at
-) VALUES ($1, $2, $3, $4, $5)
+    id, workspace_id, agent_id, owner_id, pairing_token_hash, expires_at
+) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
--- name: GetRunnerPairingByTokenHash :one
+-- name: GetRunnerPairingByID :one
 SELECT * FROM runner_pairing_session
-WHERE pairing_token_hash = $1;
+WHERE id = $1;
 
 -- name: BeginRunnerDeviceAuthorization :one
 UPDATE runner_pairing_session

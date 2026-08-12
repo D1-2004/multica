@@ -8,6 +8,26 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+func TestRunnerPairingIDFromToken(t *testing.T) {
+	const id = "29f6cd78-cfaf-4023-9fbd-c804a299a10d"
+	const secret = "0123456789abcdef0123456789abcdef0123456789abcdef"
+	pairingID, ok := runnerPairingIDFromToken("rps_" + id + "_" + secret)
+	if !ok || uuidToString(pairingID) != id {
+		t.Fatalf("pairing token id = %q, ok = %v", uuidToString(pairingID), ok)
+	}
+	for _, token := range []string{
+		"rps_0123456789abcdef",
+		"rps_not-a-uuid_" + secret,
+		"rps_" + id + "_",
+		"rps_" + id + "_z123456789abcdef0123456789abcdef0123456789abcdef",
+		id + "_" + secret,
+	} {
+		if _, ok := runnerPairingIDFromToken(token); ok {
+			t.Fatalf("invalid pairing token accepted: %q", token)
+		}
+	}
+}
+
 func TestRunnerCallTimeoutTracksForegroundShellTimeout(t *testing.T) {
 	if got := runnerCallTimeout("read_file", []byte(`{}`)); got != time.Minute {
 		t.Fatalf("read timeout = %s, want 1m", got)

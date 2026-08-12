@@ -399,12 +399,13 @@ func (q *Queries) CreateRunnerCall(ctx context.Context, arg CreateRunnerCallPara
 
 const createRunnerPairingSession = `-- name: CreateRunnerPairingSession :one
 INSERT INTO runner_pairing_session (
-    workspace_id, agent_id, owner_id, pairing_token_hash, expires_at
-) VALUES ($1, $2, $3, $4, $5)
+    id, workspace_id, agent_id, owner_id, pairing_token_hash, expires_at
+) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, workspace_id, agent_id, owner_id, pairing_token_hash, device_code_hash, user_code, public_key, machine_name, os, arch, client_version, roots, state, machine_id, expires_at, approved_at, denied_at, consumed_at, created_at, updated_at
 `
 
 type CreateRunnerPairingSessionParams struct {
+	ID               pgtype.UUID        `json:"id"`
 	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
 	AgentID          pgtype.UUID        `json:"agent_id"`
 	OwnerID          pgtype.UUID        `json:"owner_id"`
@@ -414,6 +415,7 @@ type CreateRunnerPairingSessionParams struct {
 
 func (q *Queries) CreateRunnerPairingSession(ctx context.Context, arg CreateRunnerPairingSessionParams) (RunnerPairingSession, error) {
 	row := q.db.QueryRow(ctx, createRunnerPairingSession,
+		arg.ID,
 		arg.WorkspaceID,
 		arg.AgentID,
 		arg.OwnerID,
@@ -708,13 +710,13 @@ func (q *Queries) GetRunnerPairingByDeviceCode(ctx context.Context, deviceCodeHa
 	return i, err
 }
 
-const getRunnerPairingByTokenHash = `-- name: GetRunnerPairingByTokenHash :one
+const getRunnerPairingByID = `-- name: GetRunnerPairingByID :one
 SELECT id, workspace_id, agent_id, owner_id, pairing_token_hash, device_code_hash, user_code, public_key, machine_name, os, arch, client_version, roots, state, machine_id, expires_at, approved_at, denied_at, consumed_at, created_at, updated_at FROM runner_pairing_session
-WHERE pairing_token_hash = $1
+WHERE id = $1
 `
 
-func (q *Queries) GetRunnerPairingByTokenHash(ctx context.Context, pairingTokenHash string) (RunnerPairingSession, error) {
-	row := q.db.QueryRow(ctx, getRunnerPairingByTokenHash, pairingTokenHash)
+func (q *Queries) GetRunnerPairingByID(ctx context.Context, id pgtype.UUID) (RunnerPairingSession, error) {
+	row := q.db.QueryRow(ctx, getRunnerPairingByID, id)
 	var i RunnerPairingSession
 	err := row.Scan(
 		&i.ID,
