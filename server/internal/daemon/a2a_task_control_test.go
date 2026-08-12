@@ -82,6 +82,28 @@ func TestA2ATaskControlToolsExposeStrictPartUnions(t *testing.T) {
 	}
 }
 
+func TestA2ATaskControlRequestInputSchemaIsAnObject(t *testing.T) {
+	for _, tool := range a2aTaskControlTools() {
+		if tool["name"] != "request_input" {
+			continue
+		}
+		inputSchema, ok := tool["inputSchema"].(map[string]any)
+		if !ok {
+			t.Fatalf("request_input input schema = %#v", tool["inputSchema"])
+		}
+		properties, ok := inputSchema["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("request_input properties = %#v", inputSchema["properties"])
+		}
+		schema, ok := properties["schema"].(map[string]any)
+		if !ok || schema["type"] != "object" {
+			t.Fatalf("request_input schema property = %#v, want object", properties["schema"])
+		}
+		return
+	}
+	t.Fatal("request_input tool not found")
+}
+
 func TestA2ATaskControlCapabilityIsTaskScopedAndRevoked(t *testing.T) {
 	var upstreamPath string
 	var upstreamBody map[string]any

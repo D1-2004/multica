@@ -375,7 +375,7 @@ func a2aTaskControlTools() []map[string]any {
 		{
 			"name":        "request_input",
 			"description": "Pause this A2A task and ask the caller for additional natural-language or structured input.",
-			"inputSchema": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"parts"}, "properties": map[string]any{"parts": promptParts, "schema": map[string]any{}}},
+			"inputSchema": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"parts"}, "properties": map[string]any{"parts": promptParts, "schema": map[string]any{"type": "object"}}},
 		},
 		{
 			"name":        "request_auth",
