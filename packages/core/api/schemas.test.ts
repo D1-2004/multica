@@ -237,6 +237,61 @@ describe("DingTalk account binding schemas", () => {
     });
   });
 
+  it("parses the v2 message scope subscription into camelCase buckets", () => {
+    const parsed = DingTalkAccountBindingsResponseSchema.parse({
+      bindings: [
+        {
+          id: "installation-1",
+          workspace_id: "workspace-1",
+          agent_id: "agent-1",
+          dws_identity: { status: "unbound" },
+          message_route: {
+            status: "active",
+            message_scope: "custom",
+            message_scope_version: 2,
+            subscription: {
+              direct_cids: [],
+              group_cids: ["*"],
+            },
+          },
+        },
+      ],
+      configured: true,
+    });
+
+    expect(parsed.bindings[0]?.messageRoute.messageScopeVersion).toBe(2);
+    expect(parsed.bindings[0]?.messageRoute.subscription).toEqual({
+      directCids: [],
+      groupCids: ["*"],
+    });
+  });
+
+  it("keeps an explicit null subscription and drops malformed bucket payloads", () => {
+    const parseWith = (subscription: unknown) =>
+      DingTalkAccountBindingsResponseSchema.parse({
+        bindings: [
+          {
+            id: "installation-1",
+            workspace_id: "workspace-1",
+            agent_id: "agent-1",
+            dws_identity: { status: "unbound" },
+            message_route: {
+              status: "active",
+              message_scope: "custom",
+              message_scope_version: 2,
+              subscription,
+            },
+          },
+        ],
+        configured: true,
+      });
+
+    expect(parseWith(null).bindings[0]?.messageRoute.subscription).toBeNull();
+    expect(
+      parseWith({ direct_cids: ["*"] }).bindings[0]?.messageRoute.subscription,
+    ).toBeUndefined();
+  });
+
   it("parses a safe message-route failure for user-visible diagnostics", () => {
     const parsed = DingTalkAccountBindingsResponseSchema.parse({
       bindings: [

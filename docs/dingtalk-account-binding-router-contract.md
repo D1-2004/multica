@@ -165,6 +165,55 @@ They describe the DingTalk account listening for messages. Multica stores them
 with the message route for display only; they do not populate
 `identity_binding` and do not become the Agent execution identity.
 
+### Message scope contract versions
+
+The completion callback may report the message-listening scope in two contract
+versions under `message_binding`:
+
+```json
+{
+  "message_scope": "custom",
+  "message_scope_version": 2,
+  "message_scope_detail": {
+    "direct_cids": ["101:202"],
+    "group_cids": ["grp-1"]
+  }
+}
+```
+
+A missing `message_scope_version` means v1: `message_scope` + `conversations`
+are the only scope payload and `message_scope_detail` must be absent. Version 2
+carries the dual-dimension detail: each bucket accepts `["*"]` (all), a cid
+list (specified), or `[]` (muted); both buckets must be present, may not both
+be empty, `"*"` must be the only entry of its bucket, and cids are non-empty,
+whitespace-free, and at most 512 bytes. A successful v2 callback must include
+the detail; a failed v2 callback may omit it and is then persisted as v1. The
+legacy `message_scope` is still reported as a degraded fallback for old
+renderers, so v2 relaxes the "custom requires conversations" rule (a
+wildcard-or-muted combination selects no conversations).
+
+The binding-list API mirrors the stored scope per record under `message_route`:
+
+```json
+{
+  "message_scope": "custom",
+  "message_scope_version": 2,
+  "subscription": {"direct_cids": ["101:202"], "group_cids": ["grp-1"]},
+  "legacy_view": {"message_scope": "custom", "cids": ["101:202", "grp-1"]}
+}
+```
+
+`subscription` is the dual-dimension view: the stored detail for v2 records, or
+an upgraded projection for v1 records (`all` → double `["*"]`; `direct_only` →
+both buckets empty, because the underlying `uid:uid` self-chat rule is not
+deliverable by the event center; `custom` conversations split by the cid
+colon). `legacy_view` keeps old renderers working: v1 records restate their
+stored scope, while v2 records degrade (`["*"]`+`["*"]` → `all`/`["*"]`;
+all-direct plus muted-group → `direct_only`/`["uid:uid"]` synthesized from the
+bound account id; specified-only → `custom`/merged cids; any other wildcard
+combination → `custom`/`null`). Existing rows default to version 1 without
+migration.
+
 ### Binding failure details
 
 When the DBase completion callback reports a failed message binding, it includes

@@ -125,7 +125,90 @@ function DingTalkMessageScopeSummary({
   const { t } = useT("agents");
   const [expanded, setExpanded] = useState(false);
 
+  const renderExpandableSummary = (summary: string) => (
+    <div>
+      <button
+        type="button"
+        className="flex items-center gap-1 text-left hover:text-foreground"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((open) => !open)}
+      >
+        {expanded ? (
+          <ChevronDown className="size-3 shrink-0" />
+        ) : (
+          <ChevronRight className="size-3 shrink-0" />
+        )}
+        <span>{summary}</span>
+      </button>
+      {expanded ? (
+        <ul className="mt-2 space-y-2 pl-4">
+          {outcome.conversations.map((conversation) => (
+            <li key={conversation.cid} className="flex items-center gap-2">
+              <DingTalkConversationAvatar conversation={conversation} />
+              <span className="leading-relaxed text-foreground">
+                {conversation.name}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+
+  const subscriptionSummary = (() => {
+    if (outcome.messageScopeVersion !== 2 || !outcome.subscription) {
+      return undefined;
+    }
+    const { directCids, groupCids } = outcome.subscription;
+    const directAll = directCids.includes("*");
+    const groupAll = groupCids.includes("*");
+    const directCount = directAll ? 0 : directCids.length;
+    const groupCount = groupAll ? 0 : groupCids.length;
+    if (directAll && groupAll) {
+      return t(($) => $.tab_body.integrations.dingtalk_account_scope_all);
+    }
+    if (directAll) {
+      return groupCount === 0
+        ? t(($) => $.tab_body.integrations.dingtalk_account_scope_direct_all)
+        : t(($) => $.tab_body.integrations.dingtalk_account_scope_direct_all_group_custom, {
+            count: groupCount,
+          });
+    }
+    if (groupAll) {
+      return directCount === 0
+        ? t(($) => $.tab_body.integrations.dingtalk_account_scope_group_all)
+        : t(($) => $.tab_body.integrations.dingtalk_account_scope_direct_custom_group_all, {
+            count: directCount,
+          });
+    }
+    if (directCount === 0 && groupCount === 0) {
+      return undefined;
+    }
+    if (directCount === 0) {
+      return t(($) => $.tab_body.integrations.dingtalk_account_scope_group_custom, {
+        count: groupCount,
+      });
+    }
+    if (groupCount === 0) {
+      return t(($) => $.tab_body.integrations.dingtalk_account_scope_direct_custom, {
+        count: directCount,
+      });
+    }
+    return t(($) => $.tab_body.integrations.dingtalk_account_scope_direct_custom_group_custom, {
+      count: directCount + groupCount,
+      directCount,
+      groupCount,
+    });
+  })();
+
   const messageScopeSummary = (() => {
+    if (subscriptionSummary !== undefined) {
+      return outcome.conversations.length > 0 ? (
+        renderExpandableSummary(subscriptionSummary)
+      ) : (
+        <p>{subscriptionSummary}</p>
+      );
+    }
     switch (outcome.messageScope) {
       case "all":
         return <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_all)}</p>;
@@ -134,35 +217,7 @@ function DingTalkMessageScopeSummary({
           ($) => $.tab_body.integrations.dingtalk_account_scope_custom,
           { count: outcome.conversations.length },
         );
-        return (
-          <div>
-            <button
-              type="button"
-              className="flex items-center gap-1 text-left hover:text-foreground"
-              aria-expanded={expanded}
-              onClick={() => setExpanded((open) => !open)}
-            >
-              {expanded ? (
-                <ChevronDown className="size-3 shrink-0" />
-              ) : (
-                <ChevronRight className="size-3 shrink-0" />
-              )}
-              <span>{summary}</span>
-            </button>
-            {expanded ? (
-              <ul className="mt-2 space-y-2 pl-4">
-                {outcome.conversations.map((conversation) => (
-                  <li key={conversation.cid} className="flex items-center gap-2">
-                    <DingTalkConversationAvatar conversation={conversation} />
-                    <span className="leading-relaxed text-foreground">
-                      {conversation.name}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        );
+        return renderExpandableSummary(summary);
       }
       case "direct_only":
       default:
