@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/storage"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -30,8 +31,16 @@ const (
 	maxAgentA2ACardSkills   = 64
 )
 
-var agentA2AScopeOrder = []string{"send", "read"}
-var defaultAgentA2AScopes = []string{"send", "read"}
+var agentA2AScopeOrder = []string{"send", "read", "list", "cancel"}
+var defaultAgentA2AScopes = []string{"send", "read", "list", "cancel"}
+
+func agentA2AAdvertisedContentModes(store storage.Storage) []string {
+	modes := []string{"text/plain", "application/json"}
+	if _, ok := store.(storage.Presigner); ok {
+		modes = append(modes, "application/octet-stream", "image/*", "audio/*", "video/*")
+	}
+	return modes
+}
 
 type AgentA2AEndpointResponse struct {
 	ID                string          `json:"id"`
@@ -255,13 +264,19 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, agentA2AUnsafeRuntimeForbidden)
 			return
 		}
+		contentModes := agentA2AAdvertisedContentModes(h.Storage)
 		if _, buildErr := a2aintegration.BuildAgentCard(a2aintegration.CardConfig{
-			BaseURL:       runtimeSafety.PublicBaseURL,
-			PublicAgentID: publicAgentID,
-			Name:          request.CardName,
-			Description:   request.CardDescription,
-			Version:       request.CardVersion,
-			Skills:        cardSkills,
+			BaseURL:                runtimeSafety.PublicBaseURL,
+			PublicAgentID:          publicAgentID,
+			Name:                   request.CardName,
+			Description:            request.CardDescription,
+			Version:                request.CardVersion,
+			Skills:                 cardSkills,
+			Streaming:              true,
+			PushNotifications:      h.A2AService != nil && h.A2AService.PushSecrets != nil,
+			AgentIdentityExtension: true,
+			InputModes:             contentModes,
+			OutputModes:            contentModes,
 		}); buildErr != nil {
 			writeError(w, http.StatusBadRequest, "invalid agent card configuration")
 			return
@@ -330,20 +345,22 @@ func (h *Handler) CreateAgentA2AClient(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if request.RateLimitPerMinute != nil {
-		writeError(w, http.StatusBadRequest, "rate_limit_per_minute is not supported yet")
+	rateLimit, err := positiveAgentA2ALimit(request.RateLimitPerMinute, "rate_limit_per_minute")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if request.MaxConcurrentTasks != nil {
-		writeError(w, http.StatusBadRequest, "max_concurrent_tasks is not supported yet")
+	maxConcurrent, err := positiveAgentA2ALimit(request.MaxConcurrentTasks, "max_concurrent_tasks")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	client, err := h.Queries.CreateAgentA2AClientForOwner(r.Context(), db.CreateAgentA2AClientForOwnerParams{
 		Name:               request.Name,
 		Scopes:             scopes,
-		RateLimitPerMinute: pgtype.Int4{},
-		MaxConcurrentTasks: pgtype.Int4{},
+		RateLimitPerMinute: rateLimit,
+		MaxConcurrentTasks: maxConcurrent,
 		OwnerUserID:        scope.OwnerUserID,
 		ActorUserID:        scope.ActorUserID,
 		WorkspaceID:        scope.WorkspaceID,
@@ -414,19 +431,19 @@ func (h *Handler) UpdateAgentA2AClient(w http.ResponseWriter, r *http.Request) {
 	}
 	rateLimit := current.RateLimitPerMinute
 	if len(request.RateLimitPerMinute) != 0 {
-		if string(request.RateLimitPerMinute) != "null" {
-			writeError(w, http.StatusBadRequest, "rate_limit_per_minute is not supported yet")
+		rateLimit, err = decodePositiveAgentA2ALimit(request.RateLimitPerMinute, "rate_limit_per_minute")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		rateLimit = pgtype.Int4{}
 	}
 	maxConcurrent := current.MaxConcurrentTasks
 	if len(request.MaxConcurrentTasks) != 0 {
-		if string(request.MaxConcurrentTasks) != "null" {
-			writeError(w, http.StatusBadRequest, "max_concurrent_tasks is not supported yet")
+		maxConcurrent, err = decodePositiveAgentA2ALimit(request.MaxConcurrentTasks, "max_concurrent_tasks")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		maxConcurrent = pgtype.Int4{}
 	}
 
 	if status == "revoked" {
@@ -730,13 +747,19 @@ func (h *Handler) agentA2AEndpointPresentation(
 	if err != nil {
 		return AgentA2AEndpointResponse{}, nil, err
 	}
+	contentModes := agentA2AAdvertisedContentModes(h.Storage)
 	card, err := a2aintegration.BuildAgentCard(a2aintegration.CardConfig{
-		BaseURL:       baseURL,
-		PublicAgentID: endpoint.PublicAgentID,
-		Name:          endpoint.CardName,
-		Description:   endpoint.CardDescription,
-		Version:       endpoint.CardVersion,
-		Skills:        skills,
+		BaseURL:                baseURL,
+		PublicAgentID:          endpoint.PublicAgentID,
+		Name:                   endpoint.CardName,
+		Description:            endpoint.CardDescription,
+		Version:                endpoint.CardVersion,
+		Skills:                 skills,
+		Streaming:              true,
+		PushNotifications:      h.A2AService != nil && h.A2AService.PushSecrets != nil,
+		AgentIdentityExtension: true,
+		InputModes:             contentModes,
+		OutputModes:            contentModes,
 	})
 	if err != nil {
 		return AgentA2AEndpointResponse{}, nil, err
@@ -947,8 +970,8 @@ func normalizeAgentA2ACardSkills(raw json.RawMessage) ([]a2a.AgentSkill, []byte,
 		if skill.Tags == nil {
 			skill.Tags = []string{}
 		}
-		if !agentA2ATextModesOnly(skill.InputModes) || !agentA2ATextModesOnly(skill.OutputModes) {
-			return nil, nil, errors.New("card skill inputModes and outputModes only support text/plain")
+		if !agentA2ASupportedCardModesOnly(skill.InputModes) || !agentA2ASupportedCardModesOnly(skill.OutputModes) {
+			return nil, nil, errors.New("card skill modes must be one of the endpoint's advertised media types")
 		}
 		// Security is endpoint-wide in the first inbound release. Do not allow a
 		// stored skill payload to add undeclared or weaker per-skill requirements.
@@ -961,9 +984,13 @@ func normalizeAgentA2ACardSkills(raw json.RawMessage) ([]a2a.AgentSkill, []byte,
 	return skills, encoded, nil
 }
 
-func agentA2ATextModesOnly(modes []string) bool {
+func agentA2ASupportedCardModesOnly(modes []string) bool {
+	allowed := map[string]struct{}{
+		"text/plain": {}, "application/json": {}, "application/octet-stream": {},
+		"image/*": {}, "audio/*": {}, "video/*": {},
+	}
 	for _, mode := range modes {
-		if mode != "text/plain" {
+		if _, ok := allowed[mode]; !ok {
 			return false
 		}
 	}
@@ -996,24 +1023,40 @@ func normalizeAgentA2AScopes(scopes []string) ([]string, error) {
 		}
 	}
 	if len(selected) != 0 {
-		return nil, errors.New("scopes currently only support send and read")
+		return nil, errors.New("scopes only support send, read, list, and cancel")
 	}
 	return normalized, nil
+}
+
+func positiveAgentA2ALimit(value *int32, field string) (pgtype.Int4, error) {
+	if value == nil {
+		return pgtype.Int4{}, nil
+	}
+	if *value <= 0 {
+		return pgtype.Int4{}, errors.New(field + " must be a positive integer or null")
+	}
+	return pgtype.Int4{Int32: *value, Valid: true}, nil
+}
+
+func decodePositiveAgentA2ALimit(raw json.RawMessage, field string) (pgtype.Int4, error) {
+	if strings.TrimSpace(string(raw)) == "null" {
+		return pgtype.Int4{}, nil
+	}
+	var value int32
+	if err := json.Unmarshal(raw, &value); err != nil || value <= 0 {
+		return pgtype.Int4{}, errors.New(field + " must be a positive integer or null")
+	}
+	return pgtype.Int4{Int32: value, Valid: true}, nil
 }
 
 func validateAgentA2ARuntimeFamily(runtime db.AgentRuntime) error {
 	if isAgentA2ASupportedRuntimeFamily(runtime) {
 		return nil
 	}
-	return errors.New("A2A inbound requires a local Claude runtime or a managed Aliyun FC OpenCode cloud sandbox; all runtime template and capability versions in those families are supported")
+	return errors.New("A2A inbound requires a local Claude runtime or an FC/ASB OpenCode runtime whose image manifest advertises a2a-invocation-v2")
 }
 
 func isAgentA2ASupportedRuntimeFamily(runtime db.AgentRuntime) bool {
-	// Runtime versions, template aliases, manifest versions and capabilities are
-	// deliberately absent from this predicate. They select native versus legacy
-	// claim handling, never endpoint admission. Provider families remain an
-	// explicit boundary because the daemon currently has verified A2A isolation
-	// only for Claude and the managed Aliyun FC OpenCode sandbox adapter.
 	if runtime.RuntimeMode == "local" && runtime.Provider == "claude" {
 		return true
 	}
@@ -1022,8 +1065,9 @@ func isAgentA2ASupportedRuntimeFamily(runtime db.AgentRuntime) bool {
 	}
 	metadata, err := service.ParseCloudSandboxRuntime(runtime)
 	return err == nil &&
-		metadata.SandboxBackend == service.SandboxBackendAliyunFC &&
-		metadata.Provider == "opencode"
+		(metadata.SandboxBackend == service.SandboxBackendAliyunFC || metadata.SandboxBackend == service.SandboxBackendASB) &&
+		metadata.Provider == "opencode" &&
+		service.CloudSandboxRuntimeHasCapability(runtime, service.A2AInvocationV2Capability)
 }
 
 func parseAgentA2ACredentialExpiry(value *string) (pgtype.Timestamptz, error) {

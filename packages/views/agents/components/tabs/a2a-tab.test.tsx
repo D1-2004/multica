@@ -15,6 +15,7 @@ const configRef = vi.hoisted(() => ({
 const createCredentialSpy = vi.hoisted(() => vi.fn());
 const deleteCredentialSpy = vi.hoisted(() => vi.fn());
 const updateConfigSpy = vi.hoisted(() => vi.fn());
+const updateClientSpy = vi.hoisted(() => vi.fn());
 const copyTextSpy = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-query", () => ({
@@ -38,7 +39,7 @@ vi.mock("@multica/core/agent-a2a", () => ({
     isPending: false,
   }),
   useCreateAgentA2AClient: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useUpdateAgentA2AClient: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateAgentA2AClient: () => ({ mutateAsync: updateClientSpy, isPending: false }),
   useCreateAgentA2ACredential: () => ({
     mutateAsync: createCredentialSpy,
     isPending: false,
@@ -98,6 +99,7 @@ describe("A2ATab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     updateConfigSpy.mockResolvedValue(undefined);
+    updateClientSpy.mockResolvedValue(undefined);
     copyTextSpy.mockResolvedValue(true);
     configRef.current = {
       endpoint: {
@@ -137,7 +139,7 @@ describe("A2ATab", () => {
           id: "client-1",
           name: "A2A Client",
           status: "active",
-          scopes: ["send", "read"],
+          scopes: ["send", "read", "list", "cancel"],
           rateLimitPerMinute: null,
           maxConcurrentTasks: null,
           credentials: [],

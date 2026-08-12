@@ -168,7 +168,7 @@ describe("Agent A2A management schemas", () => {
     });
   });
 
-  it("rejects A2A scopes that are not implemented by the first slice", () => {
+  it("accepts all managed A2A task scopes and rejects unknown scopes", () => {
     const baseClient = {
       id: "client-1",
       name: "Unsupported caller",
@@ -181,12 +181,14 @@ describe("Agent A2A management schemas", () => {
       revoked_at: null,
     };
 
-    for (const scope of ["list", "cancel"]) {
-      expect(AgentA2AClientSchema.safeParse({
-        ...baseClient,
-        scopes: ["send", scope],
-      }).success).toBe(false);
-    }
+    expect(AgentA2AClientSchema.safeParse({
+      ...baseClient,
+      scopes: ["send", "read", "list", "cancel"],
+    }).success).toBe(true);
+    expect(AgentA2AClientSchema.safeParse({
+      ...baseClient,
+      scopes: ["send", "admin"],
+    }).success).toBe(false);
   });
 
   it("falls back safely when the management response is malformed", () => {

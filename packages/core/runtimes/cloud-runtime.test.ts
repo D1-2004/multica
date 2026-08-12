@@ -232,7 +232,7 @@ describe("filterRuntimesForSandboxBackend", () => {
 });
 
 describe("isReadyFCE2BTemplate", () => {
-  it("accepts published m2 through m5 manifests only", () => {
+  it("accepts published m2 through m6 manifests only", () => {
     expect(
       isReadyFCE2BTemplate(makeTemplate({ manifest_version: 2 })),
     ).toBe(true);
@@ -250,7 +250,7 @@ describe("isReadyFCE2BTemplate", () => {
     ).toBe(true);
     expect(
       isReadyFCE2BTemplate(makeTemplate({ manifest_version: 6 })),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("requires both a real template ID and ready status", () => {

@@ -10,6 +10,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type A2aArtifact struct {
+	ID               pgtype.UUID        `json:"id"`
+	BindingID        pgtype.UUID        `json:"binding_id"`
+	PublicArtifactID string             `json:"public_artifact_id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	Extensions       []string           `json:"extensions"`
+	Metadata         []byte             `json:"metadata"`
+	Parts            []byte             `json:"parts"`
+	Append           bool               `json:"append"`
+	LastChunk        bool               `json:"last_chunk"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type A2aClient struct {
 	ID                 pgtype.UUID        `json:"id"`
 	EndpointID         pgtype.UUID        `json:"endpoint_id"`
@@ -54,6 +69,34 @@ type A2aContext struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
+type A2aPushConfig struct {
+	ID                         pgtype.UUID        `json:"id"`
+	BindingID                  pgtype.UUID        `json:"binding_id"`
+	EndpointID                 pgtype.UUID        `json:"endpoint_id"`
+	ClientID                   pgtype.UUID        `json:"client_id"`
+	PublicConfigID             string             `json:"public_config_id"`
+	CallbackUrl                string             `json:"callback_url"`
+	NotificationTokenEncrypted []byte             `json:"notification_token_encrypted"`
+	AuthScheme                 pgtype.Text        `json:"auth_scheme"`
+	AuthCredentialsEncrypted   []byte             `json:"auth_credentials_encrypted"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type A2aPushDelivery struct {
+	ID             pgtype.UUID        `json:"id"`
+	PushConfigID   pgtype.UUID        `json:"push_config_id"`
+	EventID        pgtype.UUID        `json:"event_id"`
+	Status         string             `json:"status"`
+	AttemptCount   int32              `json:"attempt_count"`
+	NextAttemptAt  pgtype.Timestamptz `json:"next_attempt_at"`
+	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError      pgtype.Text        `json:"last_error"`
+	DeliveredAt    pgtype.Timestamptz `json:"delivered_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type A2aTaskBinding struct {
 	ID                          pgtype.UUID        `json:"id"`
 	EndpointID                  pgtype.UUID        `json:"endpoint_id"`
@@ -71,6 +114,43 @@ type A2aTaskBinding struct {
 	FailureFinalizedLocalTaskID pgtype.UUID        `json:"failure_finalized_local_task_id"`
 	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	PublicState                 string             `json:"public_state"`
+	StatusMessage               []byte             `json:"status_message"`
+	StatusUpdatedAt             pgtype.Timestamptz `json:"status_updated_at"`
+	NextEventSequence           int64              `json:"next_event_sequence"`
+}
+
+type A2aTaskEvent struct {
+	ID        pgtype.UUID        `json:"id"`
+	BindingID pgtype.UUID        `json:"binding_id"`
+	Sequence  int64              `json:"sequence"`
+	EventType string             `json:"event_type"`
+	DedupeKey string             `json:"dedupe_key"`
+	Payload   []byte             `json:"payload"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type A2aTaskTurn struct {
+	ID                   pgtype.UUID        `json:"id"`
+	BindingID            pgtype.UUID        `json:"binding_id"`
+	EndpointID           pgtype.UUID        `json:"endpoint_id"`
+	ClientID             pgtype.UUID        `json:"client_id"`
+	AcceptedCredentialID pgtype.UUID        `json:"accepted_credential_id"`
+	Sequence             int32              `json:"sequence"`
+	MessageID            string             `json:"message_id"`
+	RequestFingerprint   string             `json:"request_fingerprint"`
+	LocalTaskID          pgtype.UUID        `json:"local_task_id"`
+	InputChatMessageID   pgtype.UUID        `json:"input_chat_message_id"`
+	InputParts           []byte             `json:"input_parts"`
+	MessageExtensions    []string           `json:"message_extensions"`
+	MessageMetadata      []byte             `json:"message_metadata"`
+	ReferenceTaskIds     []string           `json:"reference_task_ids"`
+	AcceptedOutputModes  []string           `json:"accepted_output_modes"`
+	ControlSignal        pgtype.Text        `json:"control_signal"`
+	ControlPayload       []byte             `json:"control_payload"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
 }
 
 type ActivityLog struct {

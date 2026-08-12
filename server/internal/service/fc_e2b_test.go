@@ -987,7 +987,7 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	}
 }
 
-func TestFCE2BA2ARunnerEnvIsTaskLocalAcrossRuntimeVersions(t *testing.T) {
+func TestFCE2BA2ARunnerEnvIsTaskLocalForRuntimeV2(t *testing.T) {
 	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
 	runtime := db.AgentRuntime{
 		ID:          util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
@@ -1005,11 +1005,11 @@ func TestFCE2BA2ARunnerEnvIsTaskLocalAcrossRuntimeVersions(t *testing.T) {
 			"template_channel":"stable",
 			"manifest_version":2,
 			"runner":"multica-fc-opencode-container-log-entry",
-			"capabilities":["opencode"]
+		"capabilities":["opencode","a2a-invocation-v2"]
 		}`),
 	}
 	task := db.AgentTaskQueue{ID: taskID, Context: newA2ATaskContext()}
-	env := hardenFCE2BA2ARunnerEnv(task, runtime, map[string]string{"OPENAI_MODEL": "qwen3.7-plus"})
+	env := hardenCloudSandboxA2ARunnerEnv(task, runtime, map[string]string{"OPENAI_MODEL": "qwen3.7-plus"})
 	root := "/tmp/multica-dws/22222222-2222-2222-2222-222222222222"
 	want := map[string]string{
 		"DWS_CONFIG_DIR":                      root,
@@ -1065,7 +1065,7 @@ func TestFCE2BA2ARunnerEnvIsTaskLocalAcrossRuntimeVersions(t *testing.T) {
 		}
 	}
 	if _, present := seen["OPENCODE_DISABLE_PROJECT_CONFIG"]; present {
-		t.Fatal("legacy A2A runner must keep the fresh workdir Agent brief and skills visible")
+		t.Fatal("runner must leave project-config isolation to the v2 daemon")
 	}
 }
 
@@ -1077,12 +1077,12 @@ func TestFCE2BA2ARunnerEnvLeavesOrdinaryAndOtherProvidersUnchanged(t *testing.T)
 		Provider:    "opencode",
 		Metadata:    []byte(`{"kind":"fc-e2b","template":"legacy-opencode"}`),
 	}
-	if got := hardenFCE2BA2ARunnerEnv(ordinary, managed, base); !reflect.DeepEqual(got, base) {
+	if got := hardenCloudSandboxA2ARunnerEnv(ordinary, managed, base); !reflect.DeepEqual(got, base) {
 		t.Fatalf("ordinary task env changed: %#v", got)
 	}
 	otherProvider := managed
 	otherProvider.Provider = "hermes"
-	if got := hardenFCE2BA2ARunnerEnv(db.AgentTaskQueue{ID: ordinary.ID, Context: newA2ATaskContext()}, otherProvider, base); !reflect.DeepEqual(got, base) {
+	if got := hardenCloudSandboxA2ARunnerEnv(db.AgentTaskQueue{ID: ordinary.ID, Context: newA2ATaskContext()}, otherProvider, base); !reflect.DeepEqual(got, base) {
 		t.Fatalf("unsupported A2A provider env changed: %#v", got)
 	}
 }

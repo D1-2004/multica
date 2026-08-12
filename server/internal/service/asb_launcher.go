@@ -792,6 +792,7 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	if err != nil {
 		return asbLaunchSubmission{}, false, err
 	}
+	extraEnv = hardenCloudSandboxA2ARunnerEnv(task, runtime, extraEnv)
 	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "daemon_token_preparing"); err != nil {
 		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB daemon token stage: %w", err)
 	}
@@ -2209,9 +2210,6 @@ func validateASBRuntimeManifest(manifest map[string]any) error {
 	return nil
 }
 
-// Existing ASB images remain valid runtime bindings during a rolling backend
-// deployment. Only a newly promoted release must advertise the additive
-// startup-events capability.
 func validateASBReleaseManifest(manifest map[string]any) error {
 	if err := validateASBRuntimeManifest(manifest); err != nil {
 		return err
@@ -2219,8 +2217,9 @@ func validateASBReleaseManifest(manifest map[string]any) error {
 	if !containsAllStrings(
 		manifestStringSliceForBackend(manifest, "capabilities_by_backend", string(SandboxBackendASB)),
 		RuntimeStartCapabilityEventsV1,
+		A2AInvocationV2Capability,
 	) {
-		return errors.New("ASB release manifest does not advertise runtime start events")
+		return errors.New("ASB release manifest does not advertise runtime start events and a2a-invocation-v2")
 	}
 	return nil
 }

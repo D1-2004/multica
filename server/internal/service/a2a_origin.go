@@ -1,6 +1,10 @@
 package service
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
+)
 
 const (
 	a2aTaskOriginContextKey = "multica_origin"
@@ -12,8 +16,21 @@ const (
 // task row. The marker is intentionally protocol-neutral and contains no
 // external or local identifiers. Retry tasks inherit task context, so the
 // privacy boundary follows the complete local lineage.
-func newA2ATaskContext() []byte {
-	return []byte(a2aTaskContextJSON)
+func newA2ATaskContext(identity ...a2aintegration.InvocationIdentity) []byte {
+	if len(identity) == 0 || identity[0].ContextToken == "" {
+		return []byte(a2aTaskContextJSON)
+	}
+	context := map[string]any{
+		a2aTaskOriginContextKey:                   a2aTaskOriginValue,
+		"agent_identity_context_token":            identity[0].ContextToken,
+		"agent_identity_context_token_expires_at": identity[0].ExpiresAtUnixMS,
+		"agent_identity_context_token_source":     "external",
+	}
+	encoded, err := json.Marshal(context)
+	if err != nil {
+		panic(err)
+	}
+	return encoded
 }
 
 func hasA2ATaskOrigin(taskContext []byte) bool {

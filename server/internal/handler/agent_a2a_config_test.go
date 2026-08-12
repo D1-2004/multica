@@ -29,10 +29,10 @@ const agentA2ATestManagedOpenCodeRuntimeMetadata = `{
 	"provider":"opencode",
 	"artifact_kind":"e2b_template",
 	"artifact_channel":"candidate",
-	"artifact_ref":"template-a2a-m5",
-	"manifest_version":5,
+	"artifact_ref":"template-a2a-m6",
+	"manifest_version":6,
 	"runner_protocol":"root-log-v1",
-	"capabilities":["opencode","dws","mcp","a2a_inbound_opencode_v1"]
+	"capabilities":["opencode","dws","mcp","a2a_inbound_opencode_v1","a2a-invocation-v2"]
 }`
 
 const agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A = `{
@@ -93,21 +93,32 @@ func TestNormalizeAgentA2APublicBaseURL(t *testing.T) {
 }
 
 func TestNormalizeAgentA2AScopes(t *testing.T) {
-	got, err := normalizeAgentA2AScopes([]string{"read", "send", "read"})
+	got, err := normalizeAgentA2AScopes([]string{"cancel", "read", "send", "list", "read"})
 	if err != nil {
 		t.Fatalf("normalizeAgentA2AScopes: %v", err)
 	}
-	want := []string{"send", "read"}
+	want := []string{"send", "read", "list", "cancel"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("normalized scopes = %v, want %v", got, want)
 	}
-	for _, unsupported := range []string{"list", "cancel", "admin"} {
+	for _, unsupported := range []string{"admin", "*"} {
 		if _, err := normalizeAgentA2AScopes([]string{"send", unsupported}); err == nil {
 			t.Fatalf("unsupported scope %q must be rejected", unsupported)
 		}
 	}
 	if _, err := normalizeAgentA2AScopes(nil); err == nil {
 		t.Fatal("empty scopes must be rejected")
+	}
+}
+
+func TestAgentA2AAdvertisedContentModesMatchStorage(t *testing.T) {
+	withoutSignedURLs := agentA2AAdvertisedContentModes(nil)
+	if strings.Join(withoutSignedURLs, ",") != "text/plain,application/json" {
+		t.Fatalf("modes without signed URLs = %v", withoutSignedURLs)
+	}
+	withSignedURLs := agentA2AAdvertisedContentModes(&mockStorage{})
+	if strings.Join(withSignedURLs, ",") != "text/plain,application/json,application/octet-stream,image/*,audio/*,video/*" {
+		t.Fatalf("modes with signed URLs = %v", withSignedURLs)
 	}
 }
 
@@ -620,7 +631,7 @@ func TestAgentA2AEnableRequiresRuntimeSafetyExemption(t *testing.T) {
 	}
 }
 
-func TestAgentA2AEnableIsRuntimeVersionAgnostic(t *testing.T) {
+func TestAgentA2AEnableRequiresRuntimeV2(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -646,7 +657,7 @@ func TestAgentA2AEnableIsRuntimeVersionAgnostic(t *testing.T) {
 			runtimeMode: "cloud",
 			provider:    "opencode",
 			metadata:    agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A,
-			wantAllowed: true,
+			wantAllowed: false,
 		},
 		{
 			name:        "managed OpenCode current capability",
@@ -660,14 +671,14 @@ func TestAgentA2AEnableIsRuntimeVersionAgnostic(t *testing.T) {
 			runtimeMode: "cloud",
 			provider:    "opencode",
 			metadata:    agentA2ATestManagedOpenCodeStableM2Metadata,
-			wantAllowed: true,
+			wantAllowed: false,
 		},
 		{
 			name:        "legacy managed OpenCode metadata",
 			runtimeMode: "cloud",
 			provider:    "opencode",
 			metadata:    `{"kind":"fc-e2b","template":"legacy-opencode","runner":"multica-fc-opencode-runner"}`,
-			wantAllowed: true,
+			wantAllowed: false,
 		},
 		{
 			name:        "cloud Claude",
@@ -850,7 +861,7 @@ func TestAgentMCPAdmissionIsIndependentFromA2APublication(t *testing.T) {
 	}
 }
 
-func TestAgentA2AClientRejectsUnimplementedFirstSliceControls(t *testing.T) {
+func TestAgentA2AClientManagesScopesAndLimits(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -868,10 +879,9 @@ func TestAgentA2AClientRejectsUnimplementedFirstSliceControls(t *testing.T) {
 		body      map[string]any
 		wantError string
 	}{
-		{name: "list scope", body: map[string]any{"name": "list", "scopes": []string{"send", "list"}}, wantError: "send and read"},
-		{name: "cancel scope", body: map[string]any{"name": "cancel", "scopes": []string{"cancel"}}, wantError: "send and read"},
-		{name: "rate limit", body: map[string]any{"name": "rate", "rate_limit_per_minute": 10}, wantError: "rate_limit_per_minute is not supported"},
-		{name: "concurrency limit", body: map[string]any{"name": "concurrency", "max_concurrent_tasks": 2}, wantError: "max_concurrent_tasks is not supported"},
+		{name: "unknown scope", body: map[string]any{"name": "admin", "scopes": []string{"send", "admin"}}, wantError: "send, read, list, and cancel"},
+		{name: "zero rate limit", body: map[string]any{"name": "rate", "rate_limit_per_minute": 0}, wantError: "positive integer"},
+		{name: "negative concurrency limit", body: map[string]any{"name": "concurrency", "max_concurrent_tasks": -1}, wantError: "positive integer"},
 	}
 	for _, test := range createCases {
 		t.Run("create "+test.name, func(t *testing.T) {
@@ -884,9 +894,9 @@ func TestAgentA2AClientRejectsUnimplementedFirstSliceControls(t *testing.T) {
 
 	response := createAgentA2ATestClient(t, agentID, ownerID, map[string]any{
 		"name":                  "supported-client",
-		"scopes":                []string{"read", "send"},
-		"rate_limit_per_minute": nil,
-		"max_concurrent_tasks":  nil,
+		"scopes":                []string{"cancel", "read", "send", "list"},
+		"rate_limit_per_minute": 10,
+		"max_concurrent_tasks":  2,
 	})
 	if response.Code != http.StatusCreated {
 		t.Fatalf("supported create status = %d, want 201: %s", response.Code, response.Body.String())
@@ -895,14 +905,9 @@ func TestAgentA2AClientRejectsUnimplementedFirstSliceControls(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &client); err != nil {
 		t.Fatalf("decode supported client: %v", err)
 	}
-
-	if _, err := testPool.Exec(context.Background(), `
-		UPDATE a2a_client
-		SET rate_limit_per_minute = 10,
-		    max_concurrent_tasks = 2
-		WHERE id = $1
-	`, client.ID); err != nil {
-		t.Fatalf("seed future client controls: %v", err)
+	if client.RateLimitPerMinute == nil || *client.RateLimitPerMinute != 10 ||
+		client.MaxConcurrentTasks == nil || *client.MaxConcurrentTasks != 2 {
+		t.Fatalf("created limits = rate:%v concurrent:%v", client.RateLimitPerMinute, client.MaxConcurrentTasks)
 	}
 
 	updateCases := []struct {
@@ -910,10 +915,9 @@ func TestAgentA2AClientRejectsUnimplementedFirstSliceControls(t *testing.T) {
 		body      map[string]any
 		wantError string
 	}{
-		{name: "list scope", body: map[string]any{"scopes": []string{"list"}}, wantError: "send and read"},
-		{name: "cancel scope", body: map[string]any{"scopes": []string{"send", "cancel"}}, wantError: "send and read"},
-		{name: "rate limit", body: map[string]any{"rate_limit_per_minute": 20}, wantError: "rate_limit_per_minute is not supported"},
-		{name: "concurrency limit", body: map[string]any{"max_concurrent_tasks": 3}, wantError: "max_concurrent_tasks is not supported"},
+		{name: "unknown scope", body: map[string]any{"scopes": []string{"list", "owner"}}, wantError: "send, read, list, and cancel"},
+		{name: "zero rate limit", body: map[string]any{"rate_limit_per_minute": 0}, wantError: "positive integer"},
+		{name: "negative concurrency limit", body: map[string]any{"max_concurrent_tasks": -1}, wantError: "positive integer"},
 	}
 	for _, test := range updateCases {
 		t.Run("update "+test.name, func(t *testing.T) {
@@ -972,7 +976,7 @@ func TestAgentA2ASendRemainsAvailableAcrossRuntimeVersionChanges(t *testing.T) {
 			runtimeMode:   "cloud",
 			provider:      "opencode",
 			metadata:      agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A,
-			wantAvailable: true,
+			wantAvailable: false,
 		},
 		{
 			name:          "runtime switched to current managed OpenCode template",
@@ -986,14 +990,14 @@ func TestAgentA2ASendRemainsAvailableAcrossRuntimeVersionChanges(t *testing.T) {
 			runtimeMode:   "cloud",
 			provider:      "opencode",
 			metadata:      agentA2ATestManagedOpenCodeStableM2Metadata,
-			wantAvailable: true,
+			wantAvailable: false,
 		},
 		{
 			name:          "runtime switched to legacy managed OpenCode metadata",
 			runtimeMode:   "cloud",
 			provider:      "opencode",
 			metadata:      `{"kind":"fc-e2b","template":"legacy-opencode","runner":"multica-fc-opencode-runner"}`,
-			wantAvailable: true,
+			wantAvailable: false,
 		},
 		{
 			name:        "runtime metadata provider drifted away from OpenCode",

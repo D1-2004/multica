@@ -35,14 +35,14 @@ func resolveTaskMcpConfig(provider string, agentConfig json.RawMessage, a2aInvoc
 // strict while admitting the exact server-attested managed prerelease runtime.
 // OpenCode merges inline configuration rather than replacing every native
 // source, so this exception is safe only together with the task-local XDG
-// directories installed by the daemon and the production-hard-deny server
+// directories installed by the daemon and the v2 runtime capability server
 // gate. It is intentionally unsuitable as a general OpenCode A2A capability.
-func resolveTaskMcpConfigForRuntime(provider string, agentConfig json.RawMessage, a2aInvocation, unsafePrereleaseRuntime bool) (json.RawMessage, error) {
+func resolveTaskMcpConfigForRuntime(provider string, agentConfig json.RawMessage, a2aInvocation, managedRuntimeV2 bool) (json.RawMessage, error) {
 	if !a2aInvocation {
 		return mergeRuntimeAndAgentMcpConfig(provider, agentConfig)
 	}
 
-	if !supportsA2AStrictMcpIsolation(provider) && !(unsafePrereleaseRuntime && provider == "opencode") {
+	if !supportsA2AStrictMcpIsolation(provider) && !(managedRuntimeV2 && provider == "opencode") {
 		return nil, fmt.Errorf("runtime provider %q cannot safely isolate native MCP configuration for A2A invocations", provider)
 	}
 

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/multica-ai/multica/server/internal/featureflags"
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -213,6 +214,97 @@ func TestParseAgentAccessTokenSupportsSimpleHeadersAndCapabilityPath(t *testing.
 	request.Header.Set("X-API-Key", "mca2a_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if _, ok := parseAgentAccessToken(request, valid); ok {
 		t.Fatal("conflicting credentials were accepted")
+	}
+}
+
+func TestParseAgentAccessTokenRejectsDuplicateAndConflictingHeaders(t *testing.T) {
+	valid := "mca2a_0123456789abcdef0123456789abcdef01234567"
+	request := httptest.NewRequest(http.MethodPost, "/api/a2a/agents/agent/v1", nil)
+	request.Header.Add("Authorization", "Bearer "+valid)
+	request.Header.Add("Authorization", "Bearer "+valid)
+	if _, ok := parseAgentAccessToken(request, ""); ok {
+		t.Fatal("duplicate Authorization headers were accepted")
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/a2a/agents/agent/v1", nil)
+	request.Header.Set("Authorization", "Bearer "+valid)
+	request.Header.Set("X-API-Key", "mca2a_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if _, ok := parseAgentAccessToken(request, ""); ok {
+		t.Fatal("conflicting Authorization and X-API-Key headers were accepted")
+	}
+}
+
+func TestParseAgentA2AInvocationIdentity(t *testing.T) {
+	const token = "opaque-external-context"
+	const expires = "4102444800000"
+	valid := httptest.NewRequest(http.MethodPost, "/v1", nil)
+	valid.Header.Set("A2A-Extensions", "urn:example:other:v1, "+a2aintegration.AgentIdentityExtensionURI)
+	valid.Header.Set(a2aintegration.AgentIdentityTokenHeader, token)
+	valid.Header.Set(a2aintegration.AgentIdentityExpiryHeader, expires)
+	identity, ok := parseAgentA2AInvocationIdentity(valid)
+	if !ok || !identity.ExtensionDeclared || identity.ContextToken != token || identity.ExpiresAtUnixMS != 4102444800000 {
+		t.Fatalf("parsed identity = %#v, ok=%v", identity, ok)
+	}
+
+	tests := []struct {
+		name      string
+		configure func(*http.Request)
+	}{
+		{
+			name: "token without extension",
+			configure: func(request *http.Request) {
+				request.Header.Set(a2aintegration.AgentIdentityTokenHeader, token)
+				request.Header.Set(a2aintegration.AgentIdentityExpiryHeader, expires)
+			},
+		},
+		{
+			name: "token without expiry",
+			configure: func(request *http.Request) {
+				request.Header.Set("A2A-Extensions", a2aintegration.AgentIdentityExtensionURI)
+				request.Header.Set(a2aintegration.AgentIdentityTokenHeader, token)
+			},
+		},
+		{
+			name: "expiry without token",
+			configure: func(request *http.Request) {
+				request.Header.Set("A2A-Extensions", a2aintegration.AgentIdentityExtensionURI)
+				request.Header.Set(a2aintegration.AgentIdentityExpiryHeader, expires)
+			},
+		},
+		{
+			name: "whitespace",
+			configure: func(request *http.Request) {
+				request.Header.Set("A2A-Extensions", a2aintegration.AgentIdentityExtensionURI)
+				request.Header.Set(a2aintegration.AgentIdentityTokenHeader, " "+token)
+				request.Header.Set(a2aintegration.AgentIdentityExpiryHeader, expires)
+			},
+		},
+		{
+			name: "duplicate token",
+			configure: func(request *http.Request) {
+				request.Header.Set("A2A-Extensions", a2aintegration.AgentIdentityExtensionURI)
+				request.Header.Add(a2aintegration.AgentIdentityTokenHeader, token)
+				request.Header.Add(a2aintegration.AgentIdentityTokenHeader, token)
+				request.Header.Set(a2aintegration.AgentIdentityExpiryHeader, expires)
+			},
+		},
+		{
+			name: "invalid expiry",
+			configure: func(request *http.Request) {
+				request.Header.Set("A2A-Extensions", a2aintegration.AgentIdentityExtensionURI)
+				request.Header.Set(a2aintegration.AgentIdentityTokenHeader, token)
+				request.Header.Set(a2aintegration.AgentIdentityExpiryHeader, "tomorrow")
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/v1", nil)
+			test.configure(request)
+			if identity, ok := parseAgentA2AInvocationIdentity(request); ok {
+				t.Fatalf("invalid identity was accepted: %#v", identity)
+			}
+		})
 	}
 }
 

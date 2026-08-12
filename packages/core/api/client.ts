@@ -2273,6 +2273,8 @@ export class ApiClient {
         body: JSON.stringify({
           name: data.name,
           scopes: data.scopes,
+          rate_limit_per_minute: data.rateLimitPerMinute,
+          max_concurrent_tasks: data.maxConcurrentTasks,
         }),
       },
     );
@@ -2295,6 +2297,8 @@ export class ApiClient {
           name: data.name,
           status: data.status,
           scopes: data.scopes,
+          rate_limit_per_minute: data.rateLimitPerMinute,
+          max_concurrent_tasks: data.maxConcurrentTasks,
         }),
       },
     );

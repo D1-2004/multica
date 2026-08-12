@@ -169,7 +169,7 @@ func TestASBReleaseManifestRequiresAdditiveStartupEventsCapability(t *testing.T)
 		t.Fatal("new ASB release accepted without runtime start events")
 	}
 	manifest["capabilities_by_backend"] = map[string][]string{
-		"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1},
+		"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, A2AInvocationV2Capability},
 	}
 	if err := validateASBReleaseManifest(manifest); err != nil {
 		t.Fatalf("new ASB release manifest rejected: %v", err)

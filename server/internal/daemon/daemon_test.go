@@ -258,6 +258,29 @@ func TestChildAgentIdentityContextToken(t *testing.T) {
 	}
 }
 
+func TestManagedA2AIdentityConfigDirs(t *testing.T) {
+	taskID := "11111111-1111-1111-1111-111111111111"
+	dwsDir := filepath.Join(t.TempDir(), taskID)
+	t.Setenv("DWS_CONFIG_DIR", dwsDir)
+	t.Setenv("GH_CONFIG_DIR", filepath.Join(dwsDir, "gh"))
+	dws, github, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "external-context-token")
+	if err != nil || dws != dwsDir || github != filepath.Join(dwsDir, "gh") {
+		t.Fatalf("managed dirs = %q, %q, %v", dws, github, err)
+	}
+
+	t.Setenv("GH_CONFIG_DIR", filepath.Join(t.TempDir(), "gh"))
+	if _, _, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "external-context-token"); err == nil {
+		t.Fatal("GitHub config outside the task-local DWS root was accepted")
+	}
+	t.Setenv("GH_CONFIG_DIR", "")
+	if _, _, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "external-context-token"); err == nil {
+		t.Fatal("missing task-local GitHub config was accepted")
+	}
+	if dws, github, err := managedA2AIdentityConfigDirs("local", taskID, "external-context-token"); err != nil || dws != "" || github != "" {
+		t.Fatalf("local runtime unexpectedly required managed dirs: %q, %q, %v", dws, github, err)
+	}
+}
+
 // TestLayerCustomEnvAndHermesHome exercises the daemon-assembled child env for
 // HERMES_HOME: no overlay passes the user's value through, an overlay overrides
 // it, and blocklisted keys are still dropped.
@@ -3531,7 +3554,7 @@ func TestHermesLaunchArgsAndEnvByScenario(t *testing.T) {
 	}
 }
 
-func TestConfigureUnsafePrereleaseOpenCodeEnv(t *testing.T) {
+func TestConfigureManagedA2AV2OpenCodeEnv(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "https://model.example/v1")
 	t.Setenv("OPENAI_API_KEY", "test-managed-key")
 	t.Setenv("OPENAI_MODEL", "test-model")
@@ -3546,7 +3569,7 @@ func TestConfigureUnsafePrereleaseOpenCodeEnv(t *testing.T) {
 	}
 
 	const runtimeBrief = "managed A2A runtime brief"
-	if err := configureUnsafePrereleaseOpenCodeEnv(agentEnv, "opencode", root, runtimeBrief, skills); err != nil {
+	if err := configureManagedA2AV2OpenCodeEnv(agentEnv, "opencode", root, runtimeBrief, skills); err != nil {
 		t.Fatal(err)
 	}
 	if agentEnv["OPENAI_BASE_URL"] != "https://model.example/v1" ||
@@ -3608,7 +3631,7 @@ func TestConfigureUnsafePrereleaseOpenCodeEnv(t *testing.T) {
 		t.Fatalf("managed skill copy = %q err=%v", copiedSkill, err)
 	}
 
-	if err := configureUnsafePrereleaseOpenCodeEnv(map[string]string{}, "codex", root, runtimeBrief, skills); err == nil {
+	if err := configureManagedA2AV2OpenCodeEnv(map[string]string{}, "codex", root, runtimeBrief, skills); err == nil {
 		t.Fatal("non-OpenCode provider must fail closed")
 	}
 }

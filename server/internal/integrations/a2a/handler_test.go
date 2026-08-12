@@ -36,12 +36,15 @@ func TestJSONRPCVersionGuard(t *testing.T) {
 
 	tests := []struct {
 		name       string
+		path       string
 		version    string
 		wantCode   int
 		wantCalled bool
 	}{
 		{name: "missing defaults to v0.3", wantCode: -32009},
+		{name: "query parameter does not select a version", path: "/api/a2a/agents/agent_1/v1?A2A-Version=1.0", wantCode: -32009},
 		{name: "unsupported version", version: "0.3", wantCode: -32009},
+		{name: "version whitespace is rejected", version: " 1.0 ", wantCode: -32009},
 		{name: "v1", version: "1.0", wantCalled: true},
 	}
 
@@ -51,9 +54,13 @@ func TestJSONRPCVersionGuard(t *testing.T) {
 
 			port := &testPort{}
 			handler := NewJSONRPCHandler(port)
+			path := test.path
+			if path == "" {
+				path = "/api/a2a/agents/agent_1/v1"
+			}
 			request := httptest.NewRequest(
 				http.MethodPost,
-				"/api/a2a/agents/agent_1/v1",
+				path,
 				strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"GetTask","params":{"id":"task_1"}}`),
 			)
 			if test.version != "" {
@@ -93,6 +100,37 @@ func TestJSONRPCVersionGuard(t *testing.T) {
 				t.Fatalf("Port principal = %+v, want injected client", port.principal)
 			}
 		})
+	}
+}
+
+func TestJSONRPCVersionGuardRejectsDuplicateVersionHeaders(t *testing.T) {
+	t.Parallel()
+
+	port := &testPort{}
+	handler := NewJSONRPCHandler(port)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/a2a/agents/agent_1/v1",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"GetTask","params":{"id":"task_1"}}`),
+	)
+	request.Header.Add(a2a.SvcParamVersion, "1.0")
+	request.Header.Add(a2a.SvcParamVersion, "1.0")
+	request = request.WithContext(WithPrincipal(request.Context(), Principal{
+		EndpointID: "endpoint_1", ClientID: "client_1", Scopes: []string{"read"}, EndpointEnabled: true,
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	var payload struct {
+		Error *struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Error == nil || payload.Error.Code != -32009 || port.getTaskCalls != 0 {
+		t.Fatalf("duplicate version response = %s, calls=%d", response.Body.String(), port.getTaskCalls)
 	}
 }
 
@@ -205,7 +243,10 @@ func TestMethodScopeFailsClosedForUnknownSDKMethod(t *testing.T) {
 		"ListTasks":            "list",
 		"CancelTask":           "cancel",
 		"GetTaskPushConfig":    "read",
+		"GetExtendedAgentCard": "read",
 		"CreateTaskPushConfig": "send",
+		"DeleteTaskPushConfig": "send",
+		"ListTaskPushConfigs":  "list",
 		"FutureMutation":       "",
 	}
 	for method, want := range tests {

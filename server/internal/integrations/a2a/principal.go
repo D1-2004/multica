@@ -2,6 +2,14 @@ package a2aintegration
 
 import "context"
 
+const (
+	// AgentIdentityExtensionURI is the optional extension a caller declares
+	// before supplying a task-local Agent Identity ContextToken.
+	AgentIdentityExtensionURI = "urn:multica:a2a:agent-identity:v1"
+	AgentIdentityTokenHeader  = "X-Multica-Agent-Identity-Context-Token"
+	AgentIdentityExpiryHeader = "X-Multica-Agent-Identity-Context-Token-Expires-At"
+)
+
 // Principal identifies the authenticated external caller and its target endpoint.
 // IDs are opaque to the protocol layer and are intentionally carried as strings.
 type Principal struct {
@@ -24,6 +32,16 @@ type Principal struct {
 
 type principalContextKey struct{}
 
+type invocationIdentityContextKey struct{}
+
+// InvocationIdentity is private request metadata. It is intentionally kept
+// outside the A2A Message so it cannot be copied into task history or events.
+type InvocationIdentity struct {
+	ExtensionDeclared bool
+	ContextToken      string
+	ExpiresAtUnixMS   int64
+}
+
 // WithPrincipal attaches an authenticated A2A principal to a request context.
 func WithPrincipal(ctx context.Context, principal Principal) context.Context {
 	principal.Scopes = append([]string(nil), principal.Scopes...)
@@ -34,4 +52,16 @@ func WithPrincipal(ctx context.Context, principal Principal) context.Context {
 func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 	principal, ok := ctx.Value(principalContextKey{}).(Principal)
 	return principal, ok
+}
+
+// WithInvocationIdentity attaches one request's optional external identity.
+func WithInvocationIdentity(ctx context.Context, identity InvocationIdentity) context.Context {
+	return context.WithValue(ctx, invocationIdentityContextKey{}, identity)
+}
+
+// InvocationIdentityFromContext returns the external identity headers for the
+// current turn. Callers must never log the returned token.
+func InvocationIdentityFromContext(ctx context.Context) (InvocationIdentity, bool) {
+	identity, ok := ctx.Value(invocationIdentityContextKey{}).(InvocationIdentity)
+	return identity, ok
 }

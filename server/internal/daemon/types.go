@@ -143,9 +143,9 @@ type Task struct {
 	// a credentialless child process while keeping missing tokens fail-closed
 	// for every ordinary task.
 	A2AInvocation bool `json:"a2a_invocation,omitempty"`
-	// A2AUnsafePrereleaseRuntime is a server-attested escape hatch for the
-	// allowlisted managed prerelease cloud runtime. Production never emits it.
-	A2AUnsafePrereleaseRuntime bool `json:"a2a_unsafe_prerelease_runtime,omitempty"`
+	// A2AManagedRuntimeV2 attests that both the managed Runtime image manifest
+	// and daemon implement the a2a-invocation-v2 isolation contract.
+	A2AManagedRuntimeV2 bool `json:"a2a_managed_runtime_v2,omitempty"`
 	// AuthToken is the task-scoped credential the server mints at claim time.
 	// The daemon injects it into the spawned agent as MULTICA_TOKEN so the
 	// agent never sees the daemon's own (often workspace-owner) credential.
@@ -165,6 +165,8 @@ type ChatAttachmentMeta struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type,omitempty"`
+	SizeBytes   int64  `json:"size_bytes,omitempty"`
+	LocalPath   string `json:"-"`
 }
 
 // ChatMessageSourcePayload mirrors handler.ChatMessageSourcePayload. Payload

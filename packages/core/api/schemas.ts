@@ -2126,7 +2126,7 @@ export const AgentA2AClientSchema = z.object({
   id: z.string(),
   name: z.string(),
   status: z.enum(["active", "disabled", "revoked"]),
-  scopes: z.array(z.enum(["send", "read"])),
+  scopes: z.array(z.enum(["send", "read", "list", "cancel"])),
   rate_limit_per_minute: z.number().int().positive().nullable().optional().default(null),
   max_concurrent_tasks: z.number().int().positive().nullable().optional().default(null),
   credentials: z.array(AgentA2ACredentialSchema).optional().default([]),

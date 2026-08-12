@@ -44,7 +44,7 @@ export interface CreateCloudRuntimeNodeRequest {
  */
 export const FC_E2B_RUNTIME_PROVIDERS = ["hermes", "opencode", "pi"] as const;
 const MIN_PUBLISHED_FC_E2B_MANIFEST_VERSION = 2;
-const MAX_PUBLISHED_FC_E2B_MANIFEST_VERSION = 5;
+const MAX_PUBLISHED_FC_E2B_MANIFEST_VERSION = 6;
 export type FCE2BRuntimeProvider = (typeof FC_E2B_RUNTIME_PROVIDERS)[number];
 export type SandboxBackend = "aliyun_fc" | "asb";
 export type CloudSandboxArtifactChannel = "stable" | "candidate";

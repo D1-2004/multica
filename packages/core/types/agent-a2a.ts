@@ -1,7 +1,7 @@
 export type AgentA2AClientStatus = "active" | "disabled" | "revoked";
 export type AgentA2ACredentialStatus = "active" | "revoked";
-/** Methods implemented by the first inbound A2A slice. */
-export type AgentA2AScope = "send" | "read";
+/** Independently assignable permissions for the inbound A2A endpoint. */
+export type AgentA2AScope = "send" | "read" | "list" | "cancel";
 
 export interface AgentA2ASecurityRequirement {
   schemes: Record<string, string[]>;
@@ -121,12 +121,16 @@ export interface UpdateAgentA2AConfigRequest {
 export interface CreateAgentA2AClientRequest {
   name: string;
   scopes?: AgentA2AScope[];
+  rateLimitPerMinute?: number | null;
+  maxConcurrentTasks?: number | null;
 }
 
 export interface UpdateAgentA2AClientRequest {
   name?: string;
   status?: AgentA2AClientStatus;
   scopes?: AgentA2AScope[];
+  rateLimitPerMinute?: number | null;
+  maxConcurrentTasks?: number | null;
 }
 
 export interface CreateAgentA2ACredentialRequest {

@@ -3,7 +3,6 @@ package a2aintegration
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -26,7 +25,7 @@ func (VersionInterceptor) Before(
 	version := legacyDefaultProtocolVersion
 	if params := callContext.ServiceParams(); params != nil {
 		if values, ok := params.Get(a2a.SvcParamVersion); ok && len(values) == 1 {
-			if candidate := strings.TrimSpace(values[0]); candidate != "" {
+			if candidate := values[0]; candidate != "" {
 				version = candidate
 			}
 		}

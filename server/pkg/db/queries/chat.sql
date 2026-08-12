@@ -267,6 +267,9 @@ RETURNING *;
 -- A2A tasks deliberately have no human initiator/originator and no personal
 -- runtime overlay. The endpoint owner is only chat_session ownership plumbing;
 -- it must never become the caller identity or grant access to personal apps.
+-- Every turn starts deferred so a polling daemon cannot claim two turns from
+-- the same Context concurrently. The A2A scheduler promotes exactly one FIFO
+-- turn after the transaction containing its message and identity has committed.
 -- Retry stays disabled until A2A logical retry lineage is implemented.
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, chat_session_id,
@@ -274,7 +277,23 @@ INSERT INTO agent_task_queue (
     runtime_mcp_overlay, runtime_connected_apps, context, max_attempts
 )
 VALUES (
-    @agent_id, @runtime_id, NULL, 'queued', 2, @chat_session_id,
+    @agent_id, @runtime_id, NULL, 'deferred', 2, @chat_session_id,
+    NULL, NULL, FALSE, NULL, NULL, sqlc.narg(task_context), 1
+)
+RETURNING *;
+
+-- name: CreatePausedA2AChatTask :one
+-- An expired external ContextToken must produce an AUTH_REQUIRED public task
+-- without allowing the local execution to race a claim. The placeholder task
+-- remains deferred with no fire_at; a later authenticated turn promotes it and
+-- supplies the fresh task-private identity context.
+INSERT INTO agent_task_queue (
+    agent_id, runtime_id, issue_id, status, priority, chat_session_id,
+    initiator_user_id, originator_user_id, force_fresh_session,
+    runtime_mcp_overlay, runtime_connected_apps, context, max_attempts
+)
+VALUES (
+    @agent_id, @runtime_id, NULL, 'deferred', 2, @chat_session_id,
     NULL, NULL, FALSE, NULL, NULL, sqlc.narg(task_context), 1
 )
 RETURNING *;

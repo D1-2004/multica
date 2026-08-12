@@ -10,6 +10,7 @@ import {
   useCreateAgentA2AClient,
   useCreateAgentA2ACredential,
   useDeleteAgentA2ACredential,
+  useUpdateAgentA2AClient,
   useUpdateAgentA2AConfig,
   type AgentA2AClient,
 } from "@multica/core/agent-a2a";
@@ -27,6 +28,7 @@ import {
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
+import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { Switch } from "@multica/ui/components/ui/switch";
@@ -34,7 +36,7 @@ import { copyText } from "@multica/ui/lib/clipboard";
 import { useT } from "../../../i18n";
 
 const A2A_CLIENT_NAME = "A2A Client";
-const DEFAULT_SCOPES = ["send", "read"] as const;
+const DEFAULT_SCOPES = ["send", "read", "list", "cancel"] as const;
 const DEFAULT_EXPIRY_DAYS = 90;
 const EMPTY_CLIENTS: AgentA2AClient[] = [];
 
@@ -69,6 +71,7 @@ export function A2ATab({ agent }: { agent: Agent }) {
   });
   const updateConfig = useUpdateAgentA2AConfig(wsId, agent.id);
   const createClient = useCreateAgentA2AClient(wsId, agent.id);
+  const updateClient = useUpdateAgentA2AClient(wsId, agent.id);
   const createCredential = useCreateAgentA2ACredential(wsId, agent.id);
   const deleteCredential = useDeleteAgentA2ACredential(wsId, agent.id);
 
@@ -100,6 +103,7 @@ export function A2ATab({ agent }: { agent: Agent }) {
     generating ||
     updateConfig.isPending ||
     createClient.isPending ||
+    updateClient.isPending ||
     createCredential.isPending ||
     deleteCredential.isPending;
 
@@ -197,6 +201,57 @@ export function A2ATab({ agent }: { agent: Agent }) {
       );
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleScopeChange = async (
+    scope: (typeof DEFAULT_SCOPES)[number],
+    enabled: boolean,
+  ) => {
+    if (!a2aClient) return;
+    const next = DEFAULT_SCOPES.filter((candidate) =>
+      candidate === scope ? enabled : a2aClient.scopes.includes(candidate),
+    );
+    if (next.length === 0) return;
+    try {
+      await updateClient.mutateAsync({
+        clientId: a2aClient.id,
+        data: { scopes: [...next] },
+      });
+      toast.success(t(($) => $.tab_body.a2a.permissions_saved));
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t(($) => $.tab_body.a2a.permissions_save_failed),
+      );
+    }
+  };
+
+  const handleLimitChange = async (
+    field: "rateLimitPerMinute" | "maxConcurrentTasks",
+    rawValue: string,
+  ) => {
+    if (!a2aClient) return;
+    const trimmed = rawValue.trim();
+    const value = trimmed === "" ? null : Number(trimmed);
+    if (value !== null && (!Number.isInteger(value) || value <= 0)) {
+      toast.error(t(($) => $.tab_body.a2a.limit_invalid));
+      return;
+    }
+    if (a2aClient[field] === value) return;
+    try {
+      await updateClient.mutateAsync({
+        clientId: a2aClient.id,
+        data: { [field]: value },
+      });
+      toast.success(t(($) => $.tab_body.a2a.permissions_saved));
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t(($) => $.tab_body.a2a.permissions_save_failed),
+      );
     }
   };
 
@@ -337,6 +392,62 @@ export function A2ATab({ agent }: { agent: Agent }) {
               <p className="text-xs text-muted-foreground">
                 {t(($) => $.tab_body.a2a.secret_warning)}
               </p>
+            )}
+
+            {a2aClient && (
+              <div className="space-y-3">
+                <Label>{t(($) => $.tab_body.a2a.permissions)}</Label>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {DEFAULT_SCOPES.map((scope) => (
+                    <label key={scope} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={a2aClient.scopes.includes(scope)}
+                        disabled={busy}
+                        onCheckedChange={(checked) =>
+                          void handleScopeChange(scope, checked === true)
+                        }
+                      />
+                      {t(($) => $.tab_body.a2a.scope_labels[scope])}
+                    </label>
+                  ))}
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="a2a-rate-limit">
+                      {t(($) => $.tab_body.a2a.rate_limit)}
+                    </Label>
+                    <Input
+                      id="a2a-rate-limit"
+                      type="number"
+                      min={1}
+                      step={1}
+                      disabled={busy}
+                      defaultValue={a2aClient.rateLimitPerMinute ?? ""}
+                      placeholder={t(($) => $.tab_body.a2a.unlimited)}
+                      onBlur={(event) =>
+                        void handleLimitChange("rateLimitPerMinute", event.target.value)
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="a2a-concurrency-limit">
+                      {t(($) => $.tab_body.a2a.concurrency_limit)}
+                    </Label>
+                    <Input
+                      id="a2a-concurrency-limit"
+                      type="number"
+                      min={1}
+                      step={1}
+                      disabled={busy}
+                      defaultValue={a2aClient.maxConcurrentTasks ?? ""}
+                      placeholder={t(($) => $.tab_body.a2a.unlimited)}
+                      onBlur={(event) =>
+                        void handleLimitChange("maxConcurrentTasks", event.target.value)
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
             )}
 
             <div className="flex flex-wrap gap-2">

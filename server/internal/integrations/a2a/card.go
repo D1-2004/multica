@@ -18,12 +18,17 @@ const (
 
 // CardConfig contains the public, non-secret fields needed to disclose one hosted agent.
 type CardConfig struct {
-	BaseURL       string
-	PublicAgentID string
-	Name          string
-	Description   string
-	Version       string
-	Skills        []a2a.AgentSkill
+	BaseURL                string
+	PublicAgentID          string
+	Name                   string
+	Description            string
+	Version                string
+	Skills                 []a2a.AgentSkill
+	Streaming              bool
+	PushNotifications      bool
+	AgentIdentityExtension bool
+	InputModes             []string
+	OutputModes            []string
 }
 
 // ConfiguredAgentSkill is the public metadata subset of a Skill enabled on a
@@ -76,8 +81,8 @@ func baseAgentTaskSkill() a2a.AgentSkill {
 	return a2a.AgentSkill{
 		ID:          "multica-agent-task",
 		Name:        "Multica Agent task",
-		Description: "Accepts a text request and returns the Agent's text result.",
-		Tags:        []string{"multica", "text-task"},
+		Description: "Runs a durable multi-turn Agent task with text, structured data, and file input or artifacts.",
+		Tags:        []string{"multica", "multi-turn", "multimodal", "structured-data"},
 	}
 }
 
@@ -172,6 +177,27 @@ func BuildAgentCard(config CardConfig) (*a2a.AgentCard, error) {
 		}
 	}
 
+	inputModes := append([]string(nil), config.InputModes...)
+	if len(inputModes) == 0 {
+		inputModes = []string{textMIMEType}
+	}
+	outputModes := append([]string(nil), config.OutputModes...)
+	if len(outputModes) == 0 {
+		outputModes = []string{textMIMEType}
+	}
+	capabilities := a2a.AgentCapabilities{
+		Streaming:         config.Streaming,
+		PushNotifications: config.PushNotifications,
+		ExtendedAgentCard: false,
+	}
+	if config.AgentIdentityExtension {
+		capabilities.Extensions = []a2a.AgentExtension{{
+			URI:         AgentIdentityExtensionURI,
+			Required:    false,
+			Description: "Accepts an optional external Multica Agent Identity ContextToken for one task turn.",
+		}}
+	}
+
 	return &a2a.AgentCard{
 		SupportedInterfaces: []*a2a.AgentInterface{
 			{
@@ -180,13 +206,9 @@ func BuildAgentCard(config CardConfig) (*a2a.AgentCard, error) {
 				ProtocolVersion: a2a.Version,
 			},
 		},
-		Capabilities: a2a.AgentCapabilities{
-			Streaming:         false,
-			PushNotifications: false,
-			ExtendedAgentCard: false,
-		},
-		DefaultInputModes:  []string{textMIMEType},
-		DefaultOutputModes: []string{textMIMEType},
+		Capabilities:       capabilities,
+		DefaultInputModes:  inputModes,
+		DefaultOutputModes: outputModes,
 		Description:        config.Description,
 		Name:               name,
 		SecurityRequirements: a2a.SecurityRequirementsOptions{

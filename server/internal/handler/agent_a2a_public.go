@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -19,7 +20,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-const maxAgentA2AProtocolBody = 1 << 20
+const maxAgentA2AProtocolBody = 16 << 20
 
 // GetAgentA2ACard publishes the standard, credential-free discovery document
 // for one enabled hosted Agent. Its origin comes only from MULTICA_PUBLIC_URL;
@@ -66,13 +67,19 @@ func (h *Handler) GetAgentA2ACard(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	contentModes := agentA2AAdvertisedContentModes(h.Storage)
 	card, err := a2aintegration.BuildAgentCard(a2aintegration.CardConfig{
-		BaseURL:       baseURL,
-		PublicAgentID: endpoint.PublicAgentID,
-		Name:          endpoint.CardName,
-		Description:   endpoint.CardDescription,
-		Version:       endpoint.CardVersion,
-		Skills:        skills,
+		BaseURL:                baseURL,
+		PublicAgentID:          endpoint.PublicAgentID,
+		Name:                   endpoint.CardName,
+		Description:            endpoint.CardDescription,
+		Version:                endpoint.CardVersion,
+		Skills:                 skills,
+		Streaming:              true,
+		PushNotifications:      h.A2AService != nil && h.A2AService.PushSecrets != nil,
+		AgentIdentityExtension: true,
+		InputModes:             contentModes,
+		OutputModes:            contentModes,
 	})
 	if err != nil {
 		http.NotFound(w, r)
@@ -140,6 +147,11 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 		writeAgentA2AUnauthorized(w)
 		return
 	}
+	invocationIdentity, ok := parseAgentA2AInvocationIdentity(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid A2A Agent Identity headers")
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxAgentA2AProtocolBody)
 	body, err := io.ReadAll(r.Body)
@@ -152,16 +164,10 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "failed to read A2A request body")
 		return
 	}
-	// JSON-RPC carries A2A service parameters as HTTP headers. Accepting the
-	// standard query spelling as a convenience keeps local clients simple while
-	// preserving one canonical version check inside the SDK interceptor.
-	if r.Header.Get("A2A-Version") == "" {
-		if version := strings.TrimSpace(r.URL.Query().Get("A2A-Version")); version != "" {
-			r.Header.Set("A2A-Version", version)
-		}
-	}
 	r.Header.Del("Authorization")
 	r.Header.Del("X-API-Key")
+	r.Header.Del(a2aintegration.AgentIdentityTokenHeader)
+	r.Header.Del(a2aintegration.AgentIdentityExpiryHeader)
 	if agentA2AHasTrailingJSONValue(body) {
 		// The SDK decoder owns JSON-RPC errors, but it intentionally consumes one
 		// value. Replace multi-value input with malformed JSON so the same SDK
@@ -181,6 +187,7 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 		Scopes:          credential.ClientScopes,
 		EndpointEnabled: credential.EndpointEnabled,
 	})
+	ctx = a2aintegration.WithInvocationIdentity(ctx, invocationIdentity)
 	_ = h.Queries.TouchAgentA2ACredentialLastUsed(ctx, credential.CredentialID)
 	warnAgentA2AUnsafeRuntimeAccepted(
 		runtimeSafety.Mode,
@@ -191,6 +198,48 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 		uuidToString(credential.ClientID),
 	)
 	h.A2AProtocol.ServeHTTP(w, r.WithContext(ctx))
+}
+
+func parseAgentA2AInvocationIdentity(r *http.Request) (a2aintegration.InvocationIdentity, bool) {
+	if r == nil {
+		return a2aintegration.InvocationIdentity{}, false
+	}
+	identity := a2aintegration.InvocationIdentity{}
+	for _, value := range r.Header.Values("A2A-Extensions") {
+		for _, extension := range strings.Split(value, ",") {
+			if strings.TrimSpace(extension) == a2aintegration.AgentIdentityExtensionURI {
+				identity.ExtensionDeclared = true
+			}
+		}
+	}
+	tokenValues := r.Header.Values(a2aintegration.AgentIdentityTokenHeader)
+	expiryValues := r.Header.Values(a2aintegration.AgentIdentityExpiryHeader)
+	if len(tokenValues) > 1 || len(expiryValues) > 1 {
+		return a2aintegration.InvocationIdentity{}, false
+	}
+	tokenRaw := r.Header.Get(a2aintegration.AgentIdentityTokenHeader)
+	expiresHeader := r.Header.Get(a2aintegration.AgentIdentityExpiryHeader)
+	token := strings.TrimSpace(tokenRaw)
+	expiresRaw := strings.TrimSpace(expiresHeader)
+	if token != tokenRaw || expiresRaw != expiresHeader {
+		return a2aintegration.InvocationIdentity{}, false
+	}
+	if (token == "") != (expiresRaw == "") {
+		return a2aintegration.InvocationIdentity{}, false
+	}
+	if token == "" {
+		return identity, true
+	}
+	if !identity.ExtensionDeclared || len(token) > 16<<10 {
+		return a2aintegration.InvocationIdentity{}, false
+	}
+	expiresAt, err := strconv.ParseInt(expiresRaw, 10, 64)
+	if err != nil || expiresAt <= 0 {
+		return a2aintegration.InvocationIdentity{}, false
+	}
+	identity.ContextToken = token
+	identity.ExpiresAtUnixMS = expiresAt
+	return identity, true
 }
 
 func parseAgentA2ABearer(authorization string) (string, bool) {
@@ -213,6 +262,9 @@ func parseAgentA2ABearer(authorization string) (string, bool) {
 // and MCP. Authorization is canonical; X-API-Key keeps simple clients simple.
 // A path token is accepted only by the explicit MCP convenience route.
 func parseAgentAccessToken(r *http.Request, pathToken string) (string, bool) {
+	if r == nil || len(r.Header.Values("Authorization")) > 1 || len(r.Header.Values("X-API-Key")) > 1 {
+		return "", false
+	}
 	candidates := make([]string, 0, 3)
 	if authorization := strings.TrimSpace(r.Header.Get("Authorization")); authorization != "" {
 		token, ok := parseAgentA2ABearer(authorization)
@@ -221,7 +273,11 @@ func parseAgentAccessToken(r *http.Request, pathToken string) (string, bool) {
 		}
 		candidates = append(candidates, token)
 	}
-	if apiKey := strings.TrimSpace(r.Header.Get("X-API-Key")); apiKey != "" {
+	apiKeyRaw := r.Header.Get("X-API-Key")
+	if apiKey := strings.TrimSpace(apiKeyRaw); apiKey != "" {
+		if apiKey != apiKeyRaw {
+			return "", false
+		}
 		if !validAgentAccessToken(apiKey) {
 			return "", false
 		}

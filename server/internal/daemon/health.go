@@ -338,6 +338,7 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 	mux.HandleFunc("/health", d.healthHandler(startedAt))
 	mux.HandleFunc("/shutdown", d.shutdownHandler())
 	mux.HandleFunc("/repo/checkout", d.repoCheckoutHandler())
+	mux.HandleFunc("/a2a/task-control", d.a2aTaskControlHandler())
 
 	srv := &http.Server{Handler: mux}
 

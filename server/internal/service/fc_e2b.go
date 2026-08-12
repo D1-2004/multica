@@ -39,6 +39,9 @@ const (
 	// A2AInboundOpenCodeCapability declares support for inbound A2A delivery
 	// through the OpenCode runtime provider.
 	A2AInboundOpenCodeCapability = "a2a_inbound_opencode_v1"
+	// A2AInvocationV2Capability requires the image and daemon to implement the
+	// complete strict A2A execution contract.
+	A2AInvocationV2Capability = "a2a-invocation-v2"
 	// FCE2BProvider is the first provider selected when a verified template
 	// manifest declares Hermes support and the request omits a provider.
 	FCE2BProvider = "hermes"
@@ -58,7 +61,7 @@ const (
 	fcE2BRunOnceHealthPortSpan      = 30000
 	fcE2BRootRunnerInstallDir       = "/usr/local/libexec"
 	fcE2BLegacyRunnerInstallDir     = "/usr/local/bin"
-	fcE2BTemplateManifestVersion    = 5
+	fcE2BTemplateManifestVersion    = 6
 	fcE2BChatSessionIDEnvKey        = "MULTICA_CHAT_SESSION_ID"
 	fcE2BA2AIsolationRoot           = "/tmp/multica-dws"
 )
@@ -749,7 +752,7 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 	return templates, nil
 }
 
-var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([12345])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dimsta|dimst|dims|dim|di)-r1-([0-9a-f]{6})$`)
+var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([123456])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dimstav2|dimsta|dimst|dims|dim|di)-r1-([0-9a-f]{6})$`)
 
 func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (bool, error) {
 	if template == nil {
@@ -768,7 +771,7 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 		return false, nil
 	}
 	capabilityCode := matches[7]
-	expectedCapabilityCode := map[int]string{1: "di", 2: "dim", 3: "dims", 4: "dimst", 5: "dimsta"}[manifestVersion]
+	expectedCapabilityCode := map[int]string{1: "di", 2: "dim", 3: "dims", 4: "dimst", 5: "dimsta", 6: "dimstav2"}[manifestVersion]
 	if capabilityCode != expectedCapabilityCode {
 		return false, nil
 	}
@@ -795,6 +798,9 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 	}
 	if manifestVersion >= 5 {
 		template.Capabilities = append(template.Capabilities, A2AInboundOpenCodeCapability)
+	}
+	if manifestVersion >= 6 {
+		template.Capabilities = append(template.Capabilities, A2AInvocationV2Capability)
 	}
 	template.ComponentVersions = map[string]string{
 		"hermes":   hermesVersion,
@@ -1652,7 +1658,7 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	if err != nil {
 		return fcE2BLaunchSubmission{}, false, err
 	}
-	extraEnv = hardenFCE2BA2ARunnerEnv(task, runtime, extraEnv)
+	extraEnv = hardenCloudSandboxA2ARunnerEnv(task, runtime, extraEnv)
 	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "daemon_token_preparing"); err != nil {
 		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B daemon token stage: %w", err)
 	}
@@ -2001,10 +2007,10 @@ func (l *FCE2BLauncher) identityEnvForTask(
 	agentRow db.Agent,
 ) (map[string]string, error) {
 	if IsA2ATaskOrigin(task.Context) {
-		// External A2A principals are intentionally unbound. Do not attach a
-		// cached ContextToken, the Agent's DingTalk execution identity, or the
-		// owner's GitHub connection to a remotely supplied prompt.
-		return nil, nil
+		// A2A may use only the explicitly supplied task-local external token.
+		// fcE2BAgentIdentityExtraEnv validates the paired expiry and external
+		// source marker; owner bindings and connected identities stay skipped.
+		return fcE2BAgentIdentityExtraEnv(task, l.Config)
 	}
 	resolved, err := l.resolveIdentityForTask(ctx, task, runtime, sandboxID, agentRow)
 	if err != nil {
@@ -2806,23 +2812,16 @@ func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 	}
 }
 
-// hardenFCE2BA2ARunnerEnv gives every managed FC/OpenCode A2A run a task-local
-// DWS/GitHub/XDG/OpenCode state root before any daemon version starts. This is
-// primarily for pre-capability images whose daemon cannot perform native A2A
-// child isolation. Their runner rewrites the provider-only OpenCode config at
-// the fixed path below on every invocation, so keeping that explicit file while
-// moving all discovery/state directories preserves model startup without
-// reusing a prior task's shared configuration.
-//
-// This remains defense in depth, not a production security boundary: an old
-// daemon still needs its process-level daemon token and model credential, and
-// may inherit them into the Coding Agent child. Production A2A stays hard-denied.
-func hardenFCE2BA2ARunnerEnv(task db.AgentTaskQueue, runtime db.AgentRuntime, env map[string]string) map[string]string {
+// hardenCloudSandboxA2ARunnerEnv gives every admitted FC/ASB OpenCode A2A run a task-local
+// DWS/GitHub/XDG/OpenCode state root before the v2 daemon starts. Runtime and
+// daemon capability checks remain mandatory; this runner layer prevents state
+// reuse across successive tasks in the same sandbox.
+func hardenCloudSandboxA2ARunnerEnv(task db.AgentTaskQueue, runtime db.AgentRuntime, env map[string]string) map[string]string {
 	if !IsA2ATaskOrigin(task.Context) {
 		return env
 	}
 	metadata, err := ParseCloudSandboxRuntime(runtime)
-	if err != nil || metadata.SandboxBackend != SandboxBackendAliyunFC || metadata.Provider != "opencode" {
+	if err != nil || (metadata.SandboxBackend != SandboxBackendAliyunFC && metadata.SandboxBackend != SandboxBackendASB) || metadata.Provider != "opencode" {
 		return env
 	}
 	if env == nil {

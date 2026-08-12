@@ -257,6 +257,8 @@ type Daemon struct {
 	localControlNonceErr    error
 	localTaskCapabilitiesMu sync.RWMutex
 	localTaskCapabilities   map[[32]byte]*localTaskCapability
+	a2aTaskCapabilitiesMu   sync.RWMutex
+	a2aTaskCapabilities     map[[32]byte]*a2aTaskControlCapability
 
 	// claimMu guards pauseClaims and claimsInFlight. It is held only for the
 	// microseconds it takes to make a decision; ClaimTask itself runs without
@@ -3778,6 +3780,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.A2AInvocation && task.Agent == nil {
 		return TaskResult{}, errors.New("refusing to spawn A2A invocation: claim has no Agent configuration")
 	}
+	var a2aRunCancel context.CancelFunc
+	if task.A2AInvocation {
+		ctx, a2aRunCancel = context.WithCancel(ctx)
+		defer a2aRunCancel()
+	}
 
 	// Refuse to spawn an agent without a workspace. An empty workspace_id
 	// here would make MULTICA_WORKSPACE_ID empty in the agent env, and the
@@ -3938,7 +3945,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 	}
 	effectiveMcpConfig = agentMcpConfig
-	if resolved, resolveErr := resolveTaskMcpConfigForRuntime(provider, agentMcpConfig, task.A2AInvocation, task.A2AUnsafePrereleaseRuntime); resolveErr != nil {
+	if resolved, resolveErr := resolveTaskMcpConfigForRuntime(provider, agentMcpConfig, task.A2AInvocation, task.A2AManagedRuntimeV2); resolveErr != nil {
 		if task.A2AInvocation {
 			return TaskResult{}, fmt.Errorf("resolve A2A MCP configuration: %w", resolveErr)
 		}
@@ -3948,6 +3955,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		)
 	} else {
 		effectiveMcpConfig = resolved
+	}
+	if task.A2AInvocation {
+		controlToken, releaseControl, controlErr := d.registerA2ATaskControlCapability(task, a2aRunCancel)
+		if controlErr != nil {
+			return TaskResult{}, fmt.Errorf("register A2A task control capability: %w", controlErr)
+		}
+		defer releaseControl()
+		effectiveMcpConfig, controlErr = injectA2ATaskControlMCP(effectiveMcpConfig, d.cfg.HealthPort, controlToken)
+		if controlErr != nil {
+			return TaskResult{}, fmt.Errorf("inject A2A task control MCP: %w", controlErr)
+		}
 	}
 	// Decode openclaw-specific runtime_config knobs once so reuse / prepare /
 	// ExecOptions all see the same mode + gateway pin (issue #3260). Parse
@@ -4106,6 +4124,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}()
 	}
 
+	var inputImages []agent.InputImage
+	if task.A2AInvocation {
+		materialized, nativeImages, materializeErr := materializeA2AInputAttachments(
+			ctx, d.client, task.ID, task.ChatMessageAttachments, taskTempDir, provider,
+		)
+		if materializeErr != nil {
+			return TaskResult{}, fmt.Errorf("materialize A2A input attachments: %w", materializeErr)
+		}
+		task.ChatMessageAttachments = materialized
+		inputImages = nativeImages
+	}
 	prompt := BuildPrompt(task, provider)
 
 	// Pass task-scoped auth credentials and context so ordinary spawned agents
@@ -4123,11 +4152,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		taskLog.Error("task auth token invalid; refusing to start agent", "error", err)
 		return TaskResult{}, err
 	}
-	var inputImages []agent.InputImage
-	if providerSupportsNativeImageInput(provider) {
-		if task.A2AInvocation && len(task.ChatMessageAttachments) > 0 {
-			return TaskResult{}, errors.New("A2A invocation cannot materialize authenticated chat attachments")
-		}
+	if !task.A2AInvocation && providerSupportsNativeImageInput(provider) {
 		inputImages, err = materializeChatImages(
 			ctx,
 			cli.NewAPIClient(d.cfg.ServerBaseURL, task.WorkspaceID, agentToken),
@@ -4170,11 +4195,22 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("resolve Agent Identity ContextToken: %w", err)
 	}
-	if task.A2AInvocation && token != "" {
-		return TaskResult{}, errors.New("A2A invocation unexpectedly received an Agent Identity ContextToken")
+	a2aDWSConfigDir, a2aGitHubConfigDir, err := managedA2AIdentityConfigDirs(
+		d.cfg.LaunchedBy,
+		task.ID,
+		task.AgentIdentityContextToken,
+	)
+	if err != nil {
+		return TaskResult{}, err
 	}
 	if token != "" {
 		agentEnv[protocol.AgentIdentityContextTokenEnvKey] = token
+	}
+	if a2aDWSConfigDir != "" {
+		agentEnv["DWS_CONFIG_DIR"] = a2aDWSConfigDir
+	}
+	if a2aGitHubConfigDir != "" {
+		agentEnv["GH_CONFIG_DIR"] = a2aGitHubConfigDir
 	}
 	// Quick-create marker — when set, the multica CLI's `issue create`
 	// command stamps the new issue with origin_type=quick_create +
@@ -4196,6 +4232,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// this after all task metadata is assembled so future MULTICA_* additions
 		// also fail closed for externally triggered children.
 		isolateA2AChildEnv(agentEnv)
+		// The scrub above removes every ambient identity. Restore only the
+		// server-attested, task-local external ContextToken for this turn.
+		if token != "" {
+			agentEnv[protocol.AgentIdentityContextTokenEnvKey] = token
+		}
+		if a2aDWSConfigDir != "" {
+			agentEnv["DWS_CONFIG_DIR"] = a2aDWSConfigDir
+		}
+		if a2aGitHubConfigDir != "" {
+			agentEnv["GH_CONFIG_DIR"] = a2aGitHubConfigDir
+		}
 	}
 	// Ensure the multica CLI is on PATH inside the agent's environment.
 	// Some runtimes (e.g. Codex) run in an isolated sandbox that may not
@@ -4246,8 +4293,23 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentCustomEnv = task.Agent.CustomEnv
 	}
 	layerCustomEnvAndHermesHome(agentEnv, agentCustomEnv, env.HermesHome, d.logger)
-	if task.A2AUnsafePrereleaseRuntime {
-		if err := configureUnsafePrereleaseOpenCodeEnv(agentEnv, provider, env.RootDir, runtimeBrief, taskCtx.AgentSkills); err != nil {
+	if task.A2AInvocation {
+		// Reapply isolation after Agent configuration is layered. The server
+		// normally omits custom environment values for A2A claims, but the daemon
+		// independently enforces the boundary before constructing the child.
+		isolateA2AChildEnv(agentEnv)
+		if token != "" {
+			agentEnv[protocol.AgentIdentityContextTokenEnvKey] = token
+		}
+		if a2aDWSConfigDir != "" {
+			agentEnv["DWS_CONFIG_DIR"] = a2aDWSConfigDir
+		}
+		if a2aGitHubConfigDir != "" {
+			agentEnv["GH_CONFIG_DIR"] = a2aGitHubConfigDir
+		}
+	}
+	if task.A2AManagedRuntimeV2 {
+		if err := configureManagedA2AV2OpenCodeEnv(agentEnv, provider, env.RootDir, runtimeBrief, taskCtx.AgentSkills); err != nil {
 			return TaskResult{}, err
 		}
 	}
@@ -5330,27 +5392,26 @@ func isolateA2AChildEnv(agentEnv map[string]string) {
 	agentEnv["MULTICA_A2A_INVOCATION"] = "1"
 }
 
-// configureUnsafePrereleaseOpenCodeEnv restores only the managed model
-// bootstrap needed by the allowlisted prerelease cloud runtime. The generic
-// A2A environment scrub deliberately removes these credentials, and production
-// must never reach this exception. OpenCode receives a fresh config/XDG root,
+// configureManagedA2AV2OpenCodeEnv restores only the managed model bootstrap
+// needed by an attested v2 cloud runtime. The generic A2A environment scrub
+// deliberately removes ambient credentials. OpenCode receives a fresh config/XDG root,
 // project config discovery is disabled, and every ambient OPENCODE_* override
 // is masked before the small managed set below is installed. The model
-// credential is still visible to the coding-agent process, which is why this
-// path remains explicitly unsafe and prerelease-only.
-func configureUnsafePrereleaseOpenCodeEnv(agentEnv map[string]string, provider, envRoot, runtimeBrief string, skills []execenv.SkillContextForEnv) error {
+// credential is necessarily visible to the coding-agent process, while owner
+// identity and configuration remain excluded.
+func configureManagedA2AV2OpenCodeEnv(agentEnv map[string]string, provider, envRoot, runtimeBrief string, skills []execenv.SkillContextForEnv) error {
 	if provider != "opencode" {
-		return fmt.Errorf("unsafe prerelease A2A runtime requires opencode, got %q", provider)
+		return fmt.Errorf("managed A2A v2 runtime requires opencode, got %q", provider)
 	}
 	envRoot = strings.TrimSpace(envRoot)
 	if envRoot == "" {
-		return errors.New("unsafe prerelease A2A runtime requires an execution root")
+		return errors.New("managed A2A v2 runtime requires an execution root")
 	}
 	managedModelEnv := make(map[string]string, 3)
 	for _, key := range []string{"OPENAI_BASE_URL", "OPENAI_API_KEY"} {
 		value := strings.TrimSpace(os.Getenv(key))
 		if value == "" {
-			return fmt.Errorf("unsafe prerelease A2A runtime is missing %s", key)
+			return fmt.Errorf("managed A2A v2 runtime is missing %s", key)
 		}
 		managedModelEnv[key] = value
 	}
@@ -5359,7 +5420,7 @@ func configureUnsafePrereleaseOpenCodeEnv(agentEnv map[string]string, provider, 
 	}
 	providerGeneration := strings.TrimSpace(os.Getenv("MULTICA_TRACE_ID"))
 	if providerGeneration == "" {
-		return errors.New("unsafe prerelease A2A runtime is missing provider generation")
+		return errors.New("managed A2A v2 runtime is missing provider generation")
 	}
 
 	// Agent custom_env is layered immediately before this helper. Mask both
@@ -5383,16 +5444,16 @@ func configureUnsafePrereleaseOpenCodeEnv(agentEnv map[string]string, provider, 
 
 	xdgRoot, err := os.MkdirTemp(envRoot, ".a2a-opencode-")
 	if err != nil {
-		return fmt.Errorf("prepare unsafe prerelease OpenCode root: %w", err)
+		return fmt.Errorf("prepare managed A2A OpenCode root: %w", err)
 	}
 	if err := os.Chmod(xdgRoot, 0o700); err != nil {
-		return fmt.Errorf("secure unsafe prerelease OpenCode root: %w", err)
+		return fmt.Errorf("secure managed A2A OpenCode root: %w", err)
 	}
 	homeDir := filepath.Join(xdgRoot, "home")
 	managedConfigDir := filepath.Join(xdgRoot, "managed-config")
 	for _, path := range []string{homeDir, managedConfigDir} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
-			return fmt.Errorf("prepare unsafe prerelease OpenCode directory: %w", err)
+			return fmt.Errorf("prepare managed A2A OpenCode directory: %w", err)
 		}
 	}
 	for key, leaf := range map[string]string{
@@ -5403,14 +5464,14 @@ func configureUnsafePrereleaseOpenCodeEnv(agentEnv map[string]string, provider, 
 	} {
 		path := filepath.Join(xdgRoot, leaf)
 		if err := os.MkdirAll(path, 0o700); err != nil {
-			return fmt.Errorf("prepare unsafe prerelease OpenCode %s: %w", key, err)
+			return fmt.Errorf("prepare managed A2A OpenCode %s: %w", key, err)
 		}
 		agentEnv[key] = path
 	}
 
 	briefPath := filepath.Join(xdgRoot, "runtime-brief.md")
 	if err := os.WriteFile(briefPath, []byte(runtimeBrief), 0o600); err != nil {
-		return fmt.Errorf("write unsafe prerelease OpenCode runtime brief: %w", err)
+		return fmt.Errorf("write managed A2A OpenCode runtime brief: %w", err)
 	}
 	// OPENCODE_DISABLE_PROJECT_CONFIG also disables workdir-native skills.
 	// Materialize the authoritative Agent-bound skill contexts directly into
@@ -5418,7 +5479,7 @@ func configureUnsafePrereleaseOpenCodeEnv(agentEnv map[string]string, provider, 
 	// a checked-out repository may contain its own untrusted .opencode tree.
 	if len(skills) > 0 {
 		if err := execenv.WriteManagedSkills(filepath.Join(managedConfigDir, "skills"), skills); err != nil {
-			return fmt.Errorf("write unsafe prerelease OpenCode managed skills: %w", err)
+			return fmt.Errorf("write managed A2A OpenCode skills: %w", err)
 		}
 	}
 
@@ -5458,15 +5519,15 @@ func configureUnsafePrereleaseOpenCodeEnv(agentEnv map[string]string, provider, 
 	configPath := filepath.Join(xdgRoot, "managed-opencode.json")
 	configFile, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return fmt.Errorf("create unsafe prerelease OpenCode config: %w", err)
+		return fmt.Errorf("create managed A2A OpenCode config: %w", err)
 	}
 	encodeErr := json.NewEncoder(configFile).Encode(providerConfig)
 	closeErr := configFile.Close()
 	if encodeErr != nil {
-		return fmt.Errorf("write unsafe prerelease OpenCode config: %w", encodeErr)
+		return fmt.Errorf("write managed A2A OpenCode config: %w", encodeErr)
 	}
 	if closeErr != nil {
-		return fmt.Errorf("close unsafe prerelease OpenCode config: %w", closeErr)
+		return fmt.Errorf("close managed A2A OpenCode config: %w", closeErr)
 	}
 
 	agentEnv["OPENCODE_CONFIG"] = configPath
@@ -5532,9 +5593,9 @@ func isA2AInheritedCredentialEnvKey(key string) bool {
 	}
 }
 
-// childAgentIdentityContextToken keeps the ContextToken available to legacy
-// standalone runtimes that have no outer identity bootstrap, but never passes
-// it into an FC/E2B agent child. The FC runner redeems the token before the
+// childAgentIdentityContextToken keeps the ContextToken available to local
+// runtimes that have no outer identity bootstrap, but never passes it into a
+// managed cloud Agent child. The runner redeems the token before the
 // daemon starts, stores only the resulting task-scoped DWS credentials, and
 // clears the original token. Re-injecting the claim copy here would undo that
 // credential boundary and expose a server-private bearer token to model tools.
@@ -5560,6 +5621,27 @@ func childAgentIdentityContextToken(launchedBy, token string, expiresAt int64, n
 		return "", fmt.Errorf("Agent Identity ContextToken expires within the one-minute execution safety window at %s", expiry.UTC().Format(time.RFC3339Nano))
 	}
 	return token, nil
+}
+
+func managedA2AIdentityConfigDirs(launchedBy, taskID, contextToken string) (string, string, error) {
+	if !strings.EqualFold(strings.TrimSpace(launchedBy), "fc-e2b") || strings.TrimSpace(contextToken) == "" {
+		return "", "", nil
+	}
+	taskID = strings.TrimSpace(taskID)
+	dwsDirectory := strings.TrimSpace(os.Getenv("DWS_CONFIG_DIR"))
+	githubDirectory := strings.TrimSpace(os.Getenv("GH_CONFIG_DIR"))
+	if taskID == "" || dwsDirectory == "" || githubDirectory == "" {
+		return "", "", errors.New("managed A2A identity requires task-local DWS and GitHub configuration directories")
+	}
+	cleanDWS := filepath.Clean(dwsDirectory)
+	if !filepath.IsAbs(cleanDWS) || filepath.Base(cleanDWS) != taskID {
+		return "", "", errors.New("managed A2A DWS configuration directory is not bound to the task")
+	}
+	cleanGitHub := filepath.Clean(githubDirectory)
+	if !filepath.IsAbs(cleanGitHub) || filepath.Dir(cleanGitHub) != cleanDWS || filepath.Base(cleanGitHub) != "gh" {
+		return "", "", errors.New("managed A2A GitHub configuration directory is not bound to the task")
+	}
+	return cleanDWS, cleanGitHub, nil
 }
 
 // layerCustomEnvAndHermesHome applies the agent's custom_env onto the child env

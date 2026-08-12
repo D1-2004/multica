@@ -13,12 +13,10 @@ const (
 	// Gated so only daemons+servers that both support it route claim over WS;
 	// everyone else keeps using the HTTP claim endpoint.
 	DaemonCapabilityRPCV1 = "rpc-v1"
-	// DaemonCapabilityA2AInvocationV1 advertises that the daemon understands
-	// the credentialless A2A invocation marker and applies the corresponding
-	// child-process isolation. Servers use it to distinguish that native path
-	// from the explicitly prerelease-unsafe compatibility path required by older
-	// managed runtime images.
-	DaemonCapabilityA2AInvocationV1 = "a2a-invocation-v1"
+	// DaemonCapabilityA2AInvocationV2 advertises strict MCP replacement,
+	// task-control injection, external ContextToken isolation, and file
+	// artifact support for inbound A2A execution.
+	DaemonCapabilityA2AInvocationV2 = "a2a-invocation-v2"
 )
 
 const (

@@ -50,6 +50,7 @@ type TaskService struct {
 	// runtimes for a newly queued task; local runtimes simply no-op there.
 	RuntimeLauncher     TaskRuntimeLauncher
 	CompletionNotifier  TaskCompletionNotifier
+	A2AStateObserver    A2ATaskStateObserver
 	runtimeLaunchLeases taskRuntimeLaunchLeaseStore
 	// Composio computes the per-task MCP overlay (Stage 3 of the Composio
 	// epic, MUL-3721) — the integration's "current user's connected apps
@@ -88,6 +89,13 @@ type ComposioOverlayBuilder interface {
 
 type TaskWakeupNotifier interface {
 	NotifyTaskAvailable(runtimeID, taskID string)
+}
+
+// A2ATaskStateObserver projects committed local lifecycle changes into the
+// durable public A2A Task and event stream. It is invoked only after the local
+// transition has committed.
+type A2ATaskStateObserver interface {
+	SyncA2ALocalTask(context.Context, pgtype.UUID)
 }
 
 type TaskRuntimeLauncher interface {
@@ -4015,6 +4023,9 @@ func (s *TaskService) ShouldSuppressA2AHumanRealtime(ctx context.Context, task d
 }
 
 func (s *TaskService) broadcastTaskDispatch(ctx context.Context, task db.AgentTaskQueue) {
+	if s.A2AStateObserver != nil {
+		s.A2AStateObserver.SyncA2ALocalTask(ctx, task.ID)
+	}
 	if s.ShouldSuppressA2AHumanRealtime(ctx, task) {
 		return
 	}
@@ -4112,6 +4123,9 @@ func safeDispatchEventData(data map[string]any) map[string]any {
 }
 
 func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, task db.AgentTaskQueue) {
+	if s.A2AStateObserver != nil {
+		s.A2AStateObserver.SyncA2ALocalTask(ctx, task.ID)
+	}
 	if s.ShouldSuppressA2AHumanRealtime(ctx, task) {
 		return
 	}

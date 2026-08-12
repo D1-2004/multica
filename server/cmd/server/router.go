@@ -363,6 +363,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		publicURLProvider = opts.RuntimeConfig.publicURL
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	if pushKey, pushKeyErr := secretbox.LoadKey("MULTICA_A2A_PUSH_SECRET_KEY"); pushKeyErr == nil {
+		pushSecrets, boxErr := secretbox.New(pushKey)
+		if boxErr != nil {
+			slog.Error("A2A push secret configuration is invalid; push notifications disabled", "error", boxErr)
+		} else {
+			h.A2AService.PushSecrets = pushSecrets
+			h.A2APushWorker = service.NewA2APushWorker(queries, h.A2AService)
+			h.A2AService.PushNotifier = h.A2APushWorker
+		}
+	} else {
+		slog.Info("A2A push notifications disabled (MULTICA_A2A_PUSH_SECRET_KEY not set)")
+	}
 	h.A2AProtocol = a2aintegration.NewJSONRPCHandler(h.A2AService)
 	if opts.RuntimeConfig != nil {
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
@@ -1469,6 +1481,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/fail", h.FailTask)
 		r.Post("/tasks/{taskId}/usage", h.ReportTaskUsage)
 		r.Post("/tasks/{taskId}/messages", h.ReportTaskMessages)
+		r.Post("/tasks/{taskId}/a2a-control", h.ControlA2ATask)
+		r.Get("/tasks/{taskId}/a2a-attachments/{attachmentId}", h.DownloadDaemonA2AAttachment)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
 		r.Post("/tasks/{taskId}/llm-traces", h.RelayTaskLLMTrace)
 

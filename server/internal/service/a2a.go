@@ -10,16 +10,23 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"mime"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
+	"github.com/multica-ai/multica/server/internal/storage"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -31,9 +38,13 @@ const (
 // A2AService is the application boundary for inbound A2A requests. Protocol
 // identifiers are deliberately separate from local database UUIDs.
 type A2AService struct {
-	Queries     *db.Queries
-	TxStarter   A2ATxStarter
-	TaskService A2ATaskNotifier
+	Queries      *db.Queries
+	TxStarter    A2ATxStarter
+	TaskService  A2ATaskController
+	Storage      storage.Storage
+	HTTPClient   *http.Client
+	PushSecrets  *secretbox.Box
+	PushNotifier A2APushNotifier
 }
 
 var _ a2aintegration.Port = (*A2AService)(nil)
@@ -48,11 +59,25 @@ type A2ATaskNotifier interface {
 	NotifyTaskEnqueued(context.Context, db.AgentTaskQueue)
 }
 
-func NewA2AService(queries *db.Queries, txStarter A2ATxStarter, taskService A2ATaskNotifier) *A2AService {
+// A2ATaskController is the narrow task lifecycle surface needed by public A2A
+// task management. It does not expose the ordinary Multica task API.
+type A2ATaskController interface {
+	A2ATaskNotifier
+	CancelTask(context.Context, pgtype.UUID) (*db.AgentTaskQueue, error)
+}
+
+// A2APushNotifier wakes the durable push worker after an event is committed.
+type A2APushNotifier interface {
+	NotifyA2APush()
+}
+
+func NewA2AService(queries *db.Queries, txStarter A2ATxStarter, taskService A2ATaskController, store storage.Storage) *A2AService {
 	return &A2AService{
 		Queries:     queries,
 		TxStarter:   txStarter,
 		TaskService: taskService,
+		Storage:     store,
+		HTTPClient:  newA2AOutboundHTTPClient(30 * time.Second),
 	}
 }
 
@@ -65,15 +90,26 @@ type a2aPrincipalIDs struct {
 }
 
 type validatedA2ASend struct {
-	MessageID         string
-	Content           string
-	Fingerprint       string
-	ReturnImmediately bool
+	MessageID           string
+	Fingerprint         string
+	ReturnImmediately   bool
+	ContextID           string
+	TaskID              string
+	Parts               a2a.ContentParts
+	MessageExtensions   []string
+	Metadata            map[string]any
+	ReferenceTaskIDs    []string
+	AcceptedOutputModes []string
+	HistoryLength       int
+	PushConfig          *a2a.PushConfig
+	Identity            a2aintegration.InvocationIdentity
+	IdentityExpired     bool
 }
 
-// SendMessage accepts one new text task. A returnImmediately request returns
-// the durable submitted task, while the protocol default waits on PostgreSQL
-// until that same logical task reaches a terminal state.
+// SendMessage appends one durable turn. A missing task id creates a public
+// task; a non-terminal task id queues another local execution in the same Chat
+// Session. PostgreSQL serializes concurrent turns and is the sole source of
+// public state, history, artifacts, and event order.
 func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
 	if s == nil || s.Queries == nil || s.TxStarter == nil || s.TaskService == nil {
 		return nil, a2a.NewError(a2a.ErrInternalError, "A2A service is not configured")
@@ -83,7 +119,7 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 	if err != nil {
 		return nil, err
 	}
-	validated, err := validateA2ASendRequest(request)
+	validated, err := validateA2ASendRequest(ctx, request, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -111,20 +147,39 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 		return s.completeA2ASend(ctx, validated, replay)
 	}
 
-	publicContextID, err := newA2APublicID("ctx_")
+	ingestID, err := newA2APublicID("ing_")
 	if err != nil {
-		return nil, a2a.NewError(a2a.ErrInternalError, "unable to allocate A2A context")
+		return nil, a2a.NewError(a2a.ErrInternalError, "unable to allocate A2A input storage")
 	}
-	publicTaskID, err := newA2APublicID("tsk_")
+	// Every contender for the same messageId receives a distinct staging
+	// prefix. A transaction that loses the idempotency race can then remove only
+	// its own objects without deleting the committed winner's input.
+	objectPrefix := "a2a/inputs/" + uuidStringOrOpaque(ingestID)
+	materializedParts, err := materializeA2AParts(ctx, s.Storage, s.HTTPClient, objectPrefix, validated.Parts)
 	if err != nil {
-		return nil, a2a.NewError(a2a.ErrInternalError, "unable to allocate A2A task")
+		return nil, err
 	}
-	artifactID, err := newA2APublicID("art_")
+	committed := false
+	defer func() {
+		if !committed {
+			deleteMaterializedA2AParts(s.Storage, materializedParts)
+		}
+	}()
+	storedParts, err := encodeStoredA2AParts(materializedParts)
 	if err != nil {
-		return nil, a2a.NewError(a2a.ErrInternalError, "unable to allocate A2A artifact")
+		return nil, a2a.NewError(a2a.ErrInternalError, "unable to encode A2A parts")
 	}
+	messageMetadata, err := json.Marshal(validated.Metadata)
+	if err != nil {
+		return nil, a2a.NewError(a2a.ErrInvalidParams, "message metadata is not valid JSON")
+	}
+	content := renderA2AInputForAgent(materializedParts)
 
 	var queuedTask db.AgentTaskQueue
+	var publicTaskID string
+	var publicContextID string
+	var binding db.A2aTaskBinding
+	var a2aContext db.A2aContext
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
 		slog.Error("begin A2A send transaction failed", "client_id", principal.ClientID, "error", err)
@@ -155,17 +210,42 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "lock admission")
 	}
 
+	isNewTask := validated.TaskID == ""
+	limits, err := qtx.CheckA2AClientSendLimits(ctx, db.CheckA2AClientSendLimitsParams{
+		ClientID:   principalIDs.ClientID,
+		EndpointID: principalIDs.EndpointID,
+		IsNewTask:  isNewTask,
+	})
+	if err != nil {
+		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "check client limits")
+	}
+	if !limits.RateAllowed.Valid || !limits.RateAllowed.Bool {
+		_ = tx.Rollback(ctx)
+		return nil, a2a.NewError(a2a.ErrServerError, "A2A client rate limit exceeded")
+	}
+	if !limits.ConcurrencyAllowed.Valid || !limits.ConcurrencyAllowed.Bool {
+		_ = tx.Rollback(ctx)
+		return nil, a2a.NewError(a2a.ErrServerError, "A2A client concurrent task limit exceeded")
+	}
+
 	// Re-check inside the transaction so a committed replay never allocates a
 	// second local chat task. The unique key remains the final race arbiter for
 	// two transactions that both observe no row here.
-	claim, claimErr := qtx.GetA2AMessageClaimForClient(ctx, db.GetA2AMessageClaimForClientParams{
+	claim, claimErr := qtx.GetA2AMessageTurnClaimForClient(ctx, db.GetA2AMessageTurnClaimForClientParams{
 		EndpointID: principalIDs.EndpointID,
 		ClientID:   principalIDs.ClientID,
 		MessageID:  validated.MessageID,
 	})
 	if claimErr == nil {
 		_ = tx.Rollback(ctx)
-		return s.replayA2AClaim(ctx, principalIDs, validated.Fingerprint, claim)
+		if claim.RequestFingerprint != validated.Fingerprint {
+			return nil, a2a.NewError(a2a.ErrInvalidParams, "message id conflicts with a different A2A request")
+		}
+		task, replayErr := s.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(claim.PublicTaskID), HistoryLength: a2aSendHistoryLength(request)})
+		if replayErr != nil {
+			return nil, replayErr
+		}
+		return s.completeA2ASend(ctx, validated, task)
 	}
 	if !errors.Is(claimErr, pgx.ErrNoRows) {
 		_ = tx.Rollback(ctx)
@@ -173,31 +253,128 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 		return nil, a2a.NewError(a2a.ErrInternalError, "unable to accept A2A message")
 	}
 
-	session, err := qtx.CreateChatSession(ctx, db.CreateChatSessionParams{
-		WorkspaceID:  admission.WorkspaceID,
-		AgentID:      admission.AgentID,
-		CreatorID:    admission.DelegatedByUserID,
-		Title:        admission.CardName,
-		IsAgentIntro: false,
-	})
-	if err != nil {
-		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "create chat session")
+	if validated.TaskID != "" {
+		binding, err = qtx.LockA2ATaskBindingForClient(ctx, db.LockA2ATaskBindingForClientParams{
+			EndpointID:   principalIDs.EndpointID,
+			ClientID:     principalIDs.ClientID,
+			PublicTaskID: validated.TaskID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(ctx)
+			return nil, a2a.ErrTaskNotFound
+		}
+		if err != nil {
+			return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "lock task")
+		}
+		if a2a.TaskState(binding.PublicState).Terminal() {
+			_ = tx.Rollback(ctx)
+			return nil, a2a.NewError(a2a.ErrInvalidParams, "terminal A2A task cannot be reopened")
+		}
+		publicProjection, loadErr := qtx.GetA2APublicTaskForClient(ctx, db.GetA2APublicTaskForClientParams{
+			EndpointID:   principalIDs.EndpointID,
+			ClientID:     principalIDs.ClientID,
+			PublicTaskID: validated.TaskID,
+		})
+		if loadErr != nil {
+			return s.finishA2ASendError(ctx, tx, principalIDs, validated, loadErr, "load task context")
+		}
+		publicTaskID = binding.PublicTaskID
+		publicContextID = publicProjection.PublicContextID
+		a2aContext = db.A2aContext{ID: binding.ContextID, EndpointID: binding.EndpointID, ClientID: binding.ClientID, PublicContextID: publicProjection.PublicContextID, ChatSessionID: publicProjection.ChatSessionID}
+		if validated.ContextID != "" && validated.ContextID != publicContextID {
+			_ = tx.Rollback(ctx)
+			return nil, a2a.NewError(a2a.ErrInvalidParams, "taskId and contextId do not match")
+		}
+		if binding.PublicState == string(a2a.TaskStateAuthRequired) && validated.Identity.ContextToken == "" && !validated.IdentityExpired {
+			_ = tx.Rollback(ctx)
+			return nil, a2a.NewError(a2a.ErrInvalidParams, "a valid external ContextToken is required to resume this task")
+		}
+	} else {
+		publicTaskID, err = newA2APublicID("tsk_")
+		if err != nil {
+			return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "allocate public task")
+		}
+		if validated.ContextID != "" {
+			a2aContext, err = qtx.LockA2AContextForClient(ctx, db.LockA2AContextForClientParams{
+				EndpointID:      principalIDs.EndpointID,
+				ClientID:        principalIDs.ClientID,
+				PublicContextID: validated.ContextID,
+			})
+			if errors.Is(err, pgx.ErrNoRows) {
+				_ = tx.Rollback(ctx)
+				return nil, a2a.ErrTaskNotFound
+			}
+			if err != nil {
+				return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "lock context")
+			}
+			publicContextID = a2aContext.PublicContextID
+		} else {
+			publicContextID, err = newA2APublicID("ctx_")
+			if err != nil {
+				return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "allocate context")
+			}
+			session, createErr := qtx.CreateChatSession(ctx, db.CreateChatSessionParams{
+				WorkspaceID:  admission.WorkspaceID,
+				AgentID:      admission.AgentID,
+				CreatorID:    admission.DelegatedByUserID,
+				Title:        admission.CardName,
+				IsAgentIntro: false,
+			})
+			if createErr != nil {
+				return s.finishA2ASendError(ctx, tx, principalIDs, validated, createErr, "create chat session")
+			}
+			a2aContext, err = qtx.CreateA2AContext(ctx, db.CreateA2AContextParams{
+				PublicContextID: publicContextID,
+				ChatSessionID:   session.ID,
+				ClientID:        principalIDs.ClientID,
+				EndpointID:      principalIDs.EndpointID,
+			})
+			if err != nil {
+				return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "create context")
+			}
+		}
 	}
-	a2aContext, err := qtx.CreateA2AContext(ctx, db.CreateA2AContextParams{
-		PublicContextID: publicContextID,
-		ChatSessionID:   session.ID,
-		ClientID:        principalIDs.ClientID,
-		EndpointID:      principalIDs.EndpointID,
-	})
-	if err != nil {
-		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "create context")
+	if len(validated.ReferenceTaskIDs) > 0 {
+		visible, referenceErr := qtx.CountVisibleA2AReferenceTasks(ctx, db.CountVisibleA2AReferenceTasksParams{
+			EndpointID:    principalIDs.EndpointID,
+			ClientID:      principalIDs.ClientID,
+			PublicTaskIds: validated.ReferenceTaskIDs,
+		})
+		if referenceErr != nil {
+			return s.finishA2ASendError(ctx, tx, principalIDs, validated, referenceErr, "validate references")
+		}
+		if visible != int64(len(validated.ReferenceTaskIDs)) {
+			_ = tx.Rollback(ctx)
+			return nil, a2a.NewError(a2a.ErrInvalidParams, "referenceTaskIds contain an unavailable task")
+		}
 	}
-	queuedTask, err = qtx.CreateA2AChatTask(ctx, db.CreateA2AChatTaskParams{
-		AgentID:       admission.AgentID,
-		RuntimeID:     admission.AgentRuntimeID,
-		ChatSessionID: session.ID,
-		TaskContext:   newA2ATaskContext(),
-	})
+	taskContext := newA2ATaskContext(validated.Identity)
+	if !isNewTask && a2a.TaskState(binding.PublicState) == a2a.TaskStateAuthRequired && validated.Identity.ContextToken != "" {
+		if _, resumeErr := qtx.ResumeDeferredA2AAuthTurns(ctx, db.ResumeDeferredA2AAuthTurnsParams{
+			TaskContext: taskContext,
+			BindingID:   binding.ID,
+		}); resumeErr != nil {
+			return s.finishA2ASendError(ctx, tx, principalIDs, validated, resumeErr, "resume authenticated turns")
+		}
+		if resumeErr := qtx.ClearDeferredA2AAuthTurnSignals(ctx, binding.ID); resumeErr != nil {
+			return s.finishA2ASendError(ctx, tx, principalIDs, validated, resumeErr, "clear resumed authentication signals")
+		}
+	}
+	if validated.IdentityExpired {
+		queuedTask, err = qtx.CreatePausedA2AChatTask(ctx, db.CreatePausedA2AChatTaskParams{
+			AgentID:       admission.AgentID,
+			RuntimeID:     admission.AgentRuntimeID,
+			ChatSessionID: a2aContext.ChatSessionID,
+			TaskContext:   taskContext,
+		})
+	} else {
+		queuedTask, err = qtx.CreateA2AChatTask(ctx, db.CreateA2AChatTaskParams{
+			AgentID:       admission.AgentID,
+			RuntimeID:     admission.AgentRuntimeID,
+			ChatSessionID: a2aContext.ChatSessionID,
+			TaskContext:   taskContext,
+		})
+	}
 	if err != nil {
 		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "create task")
 	}
@@ -206,41 +383,257 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "set task input owner")
 	}
 	inputMessage, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
-		ChatSessionID: session.ID,
+		ChatSessionID: a2aContext.ChatSessionID,
 		Role:          "user",
-		Content:       validated.Content,
+		Content:       content,
 		TaskID:        queuedTask.ID,
 	})
 	if err != nil {
 		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "create input message")
 	}
-	_, err = qtx.CreateA2ATaskBinding(ctx, db.CreateA2ATaskBindingParams{
-		PublicTaskID:       publicTaskID,
-		MessageID:          validated.MessageID,
-		RequestFingerprint: validated.Fingerprint,
-		ArtifactID:         artifactID,
-		CredentialID:       principalIDs.CredentialID,
-		RootLocalTaskID:    queuedTask.ID,
-		InputChatMessageID: inputMessage.ID,
-		ContextID:          a2aContext.ID,
-		EndpointID:         principalIDs.EndpointID,
-		ClientID:           principalIDs.ClientID,
+	attachmentIDs, err := createA2AInputAttachments(ctx, qtx, principalIDs, a2aContext.ChatSessionID, queuedTask.ID, materializedParts)
+	if err != nil {
+		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "create input attachments")
+	}
+	if len(attachmentIDs) > 0 {
+		linked, linkErr := qtx.LinkAttachmentsToChatMessage(ctx, db.LinkAttachmentsToChatMessageParams{
+			ChatMessageID: inputMessage.ID,
+			ChatSessionID: a2aContext.ChatSessionID,
+			WorkspaceID:   principalIDs.WorkspaceID,
+			UploaderType:  "agent",
+			UploaderID:    principalIDs.AgentID,
+			AttachmentIds: attachmentIDs,
+		})
+		if linkErr != nil || len(linked) != len(attachmentIDs) {
+			if linkErr == nil {
+				linkErr = errors.New("not all A2A input attachments were linked")
+			}
+			return s.finishA2ASendError(ctx, tx, principalIDs, validated, linkErr, "link input attachments")
+		}
+	}
+	if isNewTask {
+		artifactID, allocateErr := newA2APublicID("art_")
+		if allocateErr != nil {
+			return s.finishA2ASendError(ctx, tx, principalIDs, validated, allocateErr, "allocate artifact")
+		}
+		binding, err = qtx.CreateA2ATaskBinding(ctx, db.CreateA2ATaskBindingParams{
+			PublicTaskID:       publicTaskID,
+			MessageID:          validated.MessageID,
+			RequestFingerprint: validated.Fingerprint,
+			ArtifactID:         artifactID,
+			CredentialID:       principalIDs.CredentialID,
+			RootLocalTaskID:    queuedTask.ID,
+			InputChatMessageID: inputMessage.ID,
+			ContextID:          a2aContext.ID,
+			EndpointID:         principalIDs.EndpointID,
+			ClientID:           principalIDs.ClientID,
+		})
+		if err != nil {
+			return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "create task binding")
+		}
+	}
+	turn, err := qtx.CreateA2ATaskTurn(ctx, db.CreateA2ATaskTurnParams{
+		MessageID:           validated.MessageID,
+		RequestFingerprint:  validated.Fingerprint,
+		InputParts:          storedParts,
+		MessageExtensions:   validated.MessageExtensions,
+		MessageMetadata:     messageMetadata,
+		ReferenceTaskIds:    validated.ReferenceTaskIDs,
+		AcceptedOutputModes: validated.AcceptedOutputModes,
+		CredentialID:        principalIDs.CredentialID,
+		LocalTaskID:         queuedTask.ID,
+		InputChatMessageID:  inputMessage.ID,
+		BindingID:           binding.ID,
+		EndpointID:          principalIDs.EndpointID,
+		ClientID:            principalIDs.ClientID,
 	})
 	if err != nil {
-		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "create task binding")
+		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "create task turn")
+	}
+	publicState := a2a.TaskStateSubmitted
+	if !isNewTask && a2a.TaskState(binding.PublicState) == a2a.TaskStateWorking {
+		publicState = a2a.TaskStateWorking
+	}
+	statusMessage := []byte(nil)
+	if validated.IdentityExpired {
+		controlMessage := a2a.NewMessageForTask(a2a.MessageRoleAgent, &a2a.Task{ID: a2a.TaskID(publicTaskID), ContextID: publicContextID}, a2a.NewTextPart("A fresh external ContextToken is required to continue."))
+		statusMessage, _ = json.Marshal(controlMessage)
+		if _, err = qtx.SetA2ATurnControlSignal(ctx, db.SetA2ATurnControlSignalParams{
+			ControlSignal:  pgtype.Text{String: "auth_required", Valid: true},
+			ControlPayload: statusMessage,
+			LocalTaskID:    queuedTask.ID,
+		}); err != nil {
+			return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "pause task for authentication")
+		}
+		publicState = a2a.TaskStateAuthRequired
+	}
+	updatedBinding, err := qtx.UpdateA2ATaskPublicState(ctx, db.UpdateA2ATaskPublicStateParams{
+		PublicState:   string(publicState),
+		StatusMessage: statusMessage,
+		BindingID:     binding.ID,
+	})
+	if err == nil {
+		binding = updatedBinding
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "update public task state")
+	}
+	event, err := appendA2AStatusEvent(ctx, qtx, binding, publicContextID, publicState, statusMessage, "turn:"+fmt.Sprint(turn.Sequence)+":"+strings.ToLower(publicState.String()))
+	if err != nil {
+		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "append task event")
+	}
+	if validated.PushConfig != nil {
+		if _, err = s.createTaskPushConfigInTx(ctx, qtx, principalIDs, binding, validated.PushConfig); err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, err
+		}
+	}
+	if err = qtx.EnqueueA2APushDeliveriesForEvent(ctx, event.ID); err != nil {
+		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "enqueue push event")
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "commit task")
 	}
+	committed = true
 
-	// A daemon may only observe the task after every A2A identity row commits.
-	s.TaskService.NotifyTaskEnqueued(ctx, queuedTask)
-	task, err := s.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(publicTaskID)})
+	// A daemon may only observe a task after every A2A identity row commits.
+	// Context turns share a Chat Session, so wake only the oldest runnable turn.
+	if !validated.IdentityExpired {
+		s.notifyNextA2ATask(ctx, a2aContext.ChatSessionID)
+	}
+	if s.PushNotifier != nil {
+		s.PushNotifier.NotifyA2APush()
+	}
+	task, err := s.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(publicTaskID), HistoryLength: a2aSendHistoryLength(request)})
 	if err != nil {
 		return nil, err
 	}
 	return s.completeA2ASend(ctx, validated, task)
+}
+
+func (s *A2AService) notifyNextA2ATask(ctx context.Context, chatSessionID pgtype.UUID) {
+	if s == nil || s.Queries == nil || s.TxStarter == nil || s.TaskService == nil || !chatSessionID.Valid {
+		return
+	}
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		slog.Warn("begin next A2A turn transaction failed", "chat_session_id", chatSessionID, "error", err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.Queries.WithTx(tx)
+	candidate, err := qtx.LockNextDeferredA2ATurnForChatSession(ctx, chatSessionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return
+	}
+	if err != nil {
+		slog.Warn("lock next A2A turn failed", "chat_session_id", chatSessionID, "error", err)
+		return
+	}
+	if candidate.ControlSignal.Valid {
+		if err = tx.Commit(ctx); err != nil {
+			slog.Warn("commit blocked A2A turn check failed", "chat_session_id", chatSessionID, "error", err)
+		}
+		return
+	}
+	currentPublicState := a2a.TaskState(candidate.PublicState)
+	if currentPublicState == a2a.TaskStateInputRequired || currentPublicState == a2a.TaskStateAuthRequired {
+		// Input queued before the Agent entered a waiting state does not by itself
+		// satisfy the later request. A new same-task SendMessage is the explicit
+		// resume signal; it moves the public Task back to SUBMITTED before calling
+		// this scheduler. AUTH_REQUIRED additionally applies the fresh token to
+		// every pending FIFO row before that transition.
+		if err = tx.Commit(ctx); err != nil {
+			slog.Warn("commit waiting A2A turn check failed", "chat_session_id", chatSessionID, "error", err)
+		}
+		return
+	}
+	if a2AQueuedExternalIdentityNeedsAuth(candidate.TaskContext, time.Now()) {
+		message := &a2a.Message{
+			ID:        stableA2AAgentMessageID(candidate.PublicTaskID, candidate.TurnSequence),
+			Role:      a2a.MessageRoleAgent,
+			TaskID:    a2a.TaskID(candidate.PublicTaskID),
+			ContextID: candidate.PublicContextID,
+			Parts:     a2a.ContentParts{a2a.NewTextPart("A fresh external ContextToken is required to continue.")},
+			Metadata:  map[string]any{},
+		}
+		statusMessage, marshalErr := json.Marshal(message)
+		if marshalErr != nil {
+			slog.Warn("encode expired A2A identity prompt failed", "chat_session_id", chatSessionID, "error", marshalErr)
+			return
+		}
+		if _, err = qtx.SetA2ATurnControlSignal(ctx, db.SetA2ATurnControlSignalParams{
+			ControlSignal:  pgtype.Text{String: "auth_required", Valid: true},
+			ControlPayload: statusMessage,
+			LocalTaskID:    candidate.LocalTaskID,
+		}); err != nil {
+			slog.Warn("pause expired A2A identity turn failed", "chat_session_id", chatSessionID, "error", err)
+			return
+		}
+		if err = qtx.ClearDeferredA2ALocalTaskIdentityContext(ctx, candidate.LocalTaskID); err != nil {
+			slog.Warn("clear expired A2A identity failed", "chat_session_id", chatSessionID, "error", err)
+			return
+		}
+		binding, updateErr := qtx.UpdateA2ATaskPublicState(ctx, db.UpdateA2ATaskPublicStateParams{
+			PublicState:   a2a.TaskStateAuthRequired.String(),
+			StatusMessage: statusMessage,
+			BindingID:     candidate.BindingID,
+		})
+		if updateErr != nil {
+			slog.Warn("publish expired A2A identity state failed", "chat_session_id", chatSessionID, "error", updateErr)
+			return
+		}
+		dedupeKey := "turn:" + strconv.Itoa(int(candidate.TurnSequence)) + ":auth_required_expired"
+		event, appendErr := appendA2AStatusEvent(
+			ctx, qtx, binding, candidate.PublicContextID, a2a.TaskStateAuthRequired, statusMessage, dedupeKey,
+		)
+		if appendErr != nil {
+			slog.Warn("append expired A2A identity event failed", "chat_session_id", chatSessionID, "error", appendErr)
+			return
+		}
+		if err = qtx.EnqueueA2APushDeliveriesForEvent(ctx, event.ID); err != nil {
+			slog.Warn("enqueue expired A2A identity push failed", "chat_session_id", chatSessionID, "error", err)
+			return
+		}
+		if err = tx.Commit(ctx); err != nil {
+			slog.Warn("commit expired A2A identity state failed", "chat_session_id", chatSessionID, "error", err)
+			return
+		}
+		if s.PushNotifier != nil {
+			s.PushNotifier.NotifyA2APush()
+		}
+		return
+	}
+	next, err := qtx.PromoteNextRunnableA2ATaskForChatSession(ctx, chatSessionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return
+	}
+	if err != nil {
+		slog.Warn("promote next runnable A2A turn failed", "chat_session_id", chatSessionID, "error", err)
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		slog.Warn("commit next runnable A2A turn failed", "chat_session_id", chatSessionID, "error", err)
+		return
+	}
+	s.TaskService.NotifyTaskEnqueued(ctx, next)
+}
+
+func a2AQueuedExternalIdentityNeedsAuth(taskContext []byte, now time.Time) bool {
+	var envelope struct {
+		Origin    string  `json:"multica_origin"`
+		Token     *string `json:"agent_identity_context_token"`
+		ExpiresAt *int64  `json:"agent_identity_context_token_expires_at"`
+		Source    string  `json:"agent_identity_context_token_source"`
+	}
+	if err := json.Unmarshal(taskContext, &envelope); err != nil {
+		return true
+	}
+	if envelope.Source != protocol.AgentIdentityContextTokenSourceExternal {
+		return false
+	}
+	return envelope.Origin != a2aTaskOriginValue || envelope.Token == nil || strings.TrimSpace(*envelope.Token) == "" ||
+		envelope.ExpiresAt == nil || !time.UnixMilli(*envelope.ExpiresAt).After(now.Add(time.Minute))
 }
 
 // GetTask returns only stable A2A identifiers and protocol-safe output. Local
@@ -254,14 +647,14 @@ func (s *A2AService) GetTask(ctx context.Context, request *a2a.GetTaskRequest) (
 	if err != nil {
 		return nil, err
 	}
-	if request == nil || strings.TrimSpace(string(request.ID)) == "" {
+	if request == nil || strings.TrimSpace(string(request.ID)) == "" ||
+		strings.TrimSpace(string(request.ID)) != string(request.ID) || len(request.ID) > 128 {
 		return nil, a2a.NewError(a2a.ErrInvalidParams, "task id is required")
 	}
-	if request.HistoryLength != nil && *request.HistoryLength < 0 {
-		return nil, a2a.NewError(a2a.ErrInvalidParams, "history length must not be negative")
+	if request.HistoryLength != nil && (*request.HistoryLength < 0 || *request.HistoryLength > 100) {
+		return nil, a2a.NewError(a2a.ErrInvalidParams, "historyLength must be between 0 and 100")
 	}
-
-	projection, err := s.Queries.GetA2ATaskProjectionForClient(ctx, db.GetA2ATaskProjectionForClientParams{
+	projection, err := s.Queries.GetA2APublicTaskForClient(ctx, db.GetA2APublicTaskForClientParams{
 		EndpointID:   principalIDs.EndpointID,
 		ClientID:     principalIDs.ClientID,
 		PublicTaskID: string(request.ID),
@@ -273,11 +666,20 @@ func (s *A2AService) GetTask(ctx context.Context, request *a2a.GetTaskRequest) (
 		slog.Error("load A2A task projection failed", "public_task_id", request.ID, "error", err)
 		return nil, a2a.NewError(a2a.ErrInternalError, "unable to load A2A task")
 	}
-	return projectA2ATask(projection)
+	projection, err = s.reconcileA2ATaskState(ctx, projection)
+	if err != nil {
+		slog.Error("reconcile A2A task state failed", "public_task_id", request.ID, "error", err)
+		return nil, a2a.NewError(a2a.ErrInternalError, "unable to reconcile A2A task")
+	}
+	historyLength := 50
+	if request.HistoryLength != nil {
+		historyLength = *request.HistoryLength
+	}
+	return s.projectA2APublicTask(ctx, projection, historyLength, true)
 }
 
 func (s *A2AService) replayA2AMessage(ctx context.Context, principal a2aPrincipalIDs, request validatedA2ASend) (*a2a.Task, bool, error) {
-	claim, err := s.Queries.GetA2AMessageClaimForClient(ctx, db.GetA2AMessageClaimForClientParams{
+	claim, err := s.Queries.GetA2AMessageTurnClaimForClient(ctx, db.GetA2AMessageTurnClaimForClientParams{
 		EndpointID: principal.EndpointID,
 		ClientID:   principal.ClientID,
 		MessageID:  request.MessageID,
@@ -289,24 +691,12 @@ func (s *A2AService) replayA2AMessage(ctx context.Context, principal a2aPrincipa
 		slog.Error("load A2A replay claim failed", "message_id", request.MessageID, "error", err)
 		return nil, false, a2a.NewError(a2a.ErrInternalError, "unable to check A2A message replay")
 	}
-	task, err := s.replayA2AClaim(ctx, principal, request.Fingerprint, claim)
+	if claim.RequestFingerprint != request.Fingerprint {
+		return nil, true, a2a.NewError(a2a.ErrInvalidParams, "message id conflicts with a different A2A request")
+	}
+	historyLength := request.HistoryLength
+	task, err := s.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(claim.PublicTaskID), HistoryLength: &historyLength})
 	return task, true, err
-}
-
-func (s *A2AService) replayA2AClaim(ctx context.Context, principal a2aPrincipalIDs, fingerprint string, claim db.A2aTaskBinding) (*a2a.Task, error) {
-	if claim.RequestFingerprint != fingerprint {
-		return nil, a2a.NewError(a2a.ErrInvalidParams, "message id conflicts with a different A2A request")
-	}
-	projection, err := s.Queries.GetA2ATaskProjectionForClient(ctx, db.GetA2ATaskProjectionForClientParams{
-		EndpointID:   principal.EndpointID,
-		ClientID:     principal.ClientID,
-		PublicTaskID: claim.PublicTaskID,
-	})
-	if err != nil {
-		slog.Error("load replayed A2A task failed", "public_task_id", claim.PublicTaskID, "error", err)
-		return nil, a2a.NewError(a2a.ErrInternalError, "unable to load replayed A2A task")
-	}
-	return projectA2ATask(projection)
 }
 
 func (s *A2AService) finishA2ASendError(
@@ -319,7 +709,7 @@ func (s *A2AService) finishA2ASendError(
 ) (a2a.SendMessageResult, error) {
 	_ = tx.Rollback(ctx)
 	if isA2AUniqueViolation(cause) {
-		claim, err := s.Queries.GetA2AMessageClaimForClient(ctx, db.GetA2AMessageClaimForClientParams{
+		claim, err := s.Queries.GetA2AMessageTurnClaimForClient(ctx, db.GetA2AMessageTurnClaimForClientParams{
 			EndpointID: principal.EndpointID,
 			ClientID:   principal.ClientID,
 			MessageID:  request.MessageID,
@@ -328,7 +718,8 @@ func (s *A2AService) finishA2ASendError(
 			if claim.RequestFingerprint != request.Fingerprint {
 				return nil, a2a.NewError(a2a.ErrInvalidParams, "message id conflicts with a different A2A request")
 			}
-			task, replayErr := s.replayA2AClaim(ctx, principal, request.Fingerprint, claim)
+			historyLength := request.HistoryLength
+			task, replayErr := s.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(claim.PublicTaskID), HistoryLength: &historyLength})
 			if replayErr != nil {
 				return nil, replayErr
 			}
@@ -339,18 +730,45 @@ func (s *A2AService) finishA2ASendError(
 	return nil, a2a.NewError(a2a.ErrInternalError, "unable to accept A2A message")
 }
 
-func validateA2ASendRequest(request *a2a.SendMessageRequest) (validatedA2ASend, error) {
+func validateA2ASendRequest(ctx context.Context, request *a2a.SendMessageRequest, now time.Time) (validatedA2ASend, error) {
 	if request == nil || request.Message == nil {
 		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "message is required")
 	}
+	if strings.TrimSpace(request.Tenant) != "" {
+		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "tenant is not supported by this endpoint")
+	}
 	returnImmediately := request.Config != nil && request.Config.ReturnImmediately
-	if request.Config != nil && request.Config.PushConfig != nil {
-		return validatedA2ASend{}, a2a.ErrPushNotificationNotSupported
+	historyLength := 50
+	var pushConfig *a2a.PushConfig
+	acceptedOutputModes := []string{}
+	if request.Config != nil {
+		pushConfig = request.Config.PushConfig
+		if request.Config.HistoryLength != nil {
+			historyLength = *request.Config.HistoryLength
+		}
 	}
-	if request.Config != nil && len(request.Config.AcceptedOutputModes) > 0 && !containsString(request.Config.AcceptedOutputModes, a2aTextMIMEType) {
-		return validatedA2ASend{}, a2a.ErrUnsupportedContentType
+	if historyLength < 0 || historyLength > 100 {
+		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "historyLength must be between 0 and 100")
 	}
-
+	if request.Config != nil {
+		if len(request.Config.AcceptedOutputModes) > 32 {
+			return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "acceptedOutputModes supports at most 32 media types")
+		}
+		seenOutputModes := make(map[string]struct{}, len(request.Config.AcceptedOutputModes))
+		for _, rawMode := range request.Config.AcceptedOutputModes {
+			mode := strings.TrimSpace(rawMode)
+			parsed, parameters, err := mime.ParseMediaType(mode)
+			if err != nil || len(parameters) != 0 || mode != rawMode {
+				return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "acceptedOutputModes contains an invalid media type")
+			}
+			mode = strings.ToLower(parsed)
+			if _, duplicate := seenOutputModes[mode]; duplicate {
+				return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "acceptedOutputModes must not contain duplicates")
+			}
+			seenOutputModes[mode] = struct{}{}
+			acceptedOutputModes = append(acceptedOutputModes, mode)
+		}
+	}
 	message := request.Message
 	if message.Role != a2a.MessageRoleUser {
 		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "message role must be user")
@@ -359,46 +777,85 @@ func validateA2ASendRequest(request *a2a.SendMessageRequest) (validatedA2ASend, 
 	if strings.TrimSpace(messageID) == "" || strings.TrimSpace(messageID) != messageID || utf8.RuneCountInString(messageID) > 256 {
 		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "message id must be 1 to 256 non-whitespace characters")
 	}
-	if message.ContextID != "" || message.TaskID != "" || len(message.ReferenceTasks) > 0 {
-		return validatedA2ASend{}, a2a.NewError(a2a.ErrUnsupportedOperation, "context and task continuation are not supported")
+	contextID := strings.TrimSpace(message.ContextID)
+	taskID := strings.TrimSpace(string(message.TaskID))
+	if contextID != message.ContextID || utf8.RuneCountInString(contextID) > 256 || taskID != string(message.TaskID) || utf8.RuneCountInString(taskID) > 128 {
+		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "taskId or contextId is invalid")
 	}
-	if len(message.Parts) == 0 {
-		return validatedA2ASend{}, a2a.ErrUnsupportedContentType
+	if len(message.ReferenceTasks) > 10 {
+		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "referenceTaskIds supports at most 10 tasks")
 	}
-
-	texts := make([]string, 0, len(message.Parts))
-	for _, part := range message.Parts {
-		if part == nil {
-			return validatedA2ASend{}, a2a.ErrUnsupportedContentType
+	references := make([]string, 0, len(message.ReferenceTasks))
+	seenReferences := make(map[string]struct{}, len(message.ReferenceTasks))
+	for _, reference := range message.ReferenceTasks {
+		value := strings.TrimSpace(string(reference))
+		if value == "" || value != string(reference) || utf8.RuneCountInString(value) > 128 {
+			return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "referenceTaskIds contains an invalid task id")
 		}
-		text, ok := part.Content.(a2a.Text)
-		if !ok || (part.MediaType != "" && part.MediaType != a2aTextMIMEType) || part.Filename != "" {
-			return validatedA2ASend{}, a2a.ErrUnsupportedContentType
+		if _, duplicate := seenReferences[value]; duplicate {
+			return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "referenceTaskIds must not contain duplicates")
 		}
-		texts = append(texts, string(text))
+		seenReferences[value] = struct{}{}
+		references = append(references, value)
 	}
-	content := strings.Join(texts, "\n")
-	if strings.TrimSpace(content) == "" {
-		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "message text must not be empty")
+	if err := validateA2AParts(message.Parts); err != nil {
+		return validatedA2ASend{}, err
 	}
-	fingerprint, err := fingerprintA2ASendRequest(request)
+	messageExtensions, err := normalizeA2AExtensions(message.Extensions, "message extensions")
+	if err != nil {
+		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, err.Error())
+	}
+	if _, err := json.Marshal(message.Metadata); err != nil {
+		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "message metadata is not valid JSON")
+	}
+	identity, _ := a2aintegration.InvocationIdentityFromContext(ctx)
+	fingerprint, err := fingerprintA2ASendRequest(request, identity)
 	if err != nil {
 		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "message cannot be fingerprinted")
 	}
+	identityExpired := false
+	if identity.ContextToken != "" {
+		expiresAt := time.UnixMilli(identity.ExpiresAtUnixMS)
+		switch {
+		case !expiresAt.After(now):
+			identityExpired = true
+			identity.ContextToken = ""
+		case expiresAt.Before(now.Add(time.Minute)):
+			return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "external ContextToken must remain valid for at least 60 seconds")
+		}
+	}
 	return validatedA2ASend{
-		MessageID:         messageID,
-		Content:           content,
-		Fingerprint:       fingerprint,
-		ReturnImmediately: returnImmediately,
+		MessageID:           messageID,
+		Fingerprint:         fingerprint,
+		ReturnImmediately:   returnImmediately,
+		ContextID:           contextID,
+		TaskID:              taskID,
+		Parts:               message.Parts,
+		MessageExtensions:   messageExtensions,
+		Metadata:            message.Metadata,
+		ReferenceTaskIDs:    references,
+		AcceptedOutputModes: acceptedOutputModes,
+		HistoryLength:       historyLength,
+		PushConfig:          pushConfig,
+		Identity:            identity,
+		IdentityExpired:     identityExpired,
 	}, nil
 }
 
+func a2aSendHistoryLength(request *a2a.SendMessageRequest) *int {
+	if request == nil || request.Config == nil {
+		return nil
+	}
+	return request.Config.HistoryLength
+}
+
 func (s *A2AService) completeA2ASend(ctx context.Context, request validatedA2ASend, task *a2a.Task) (a2a.SendMessageResult, error) {
-	if request.ReturnImmediately || task.Status.State.Terminal() {
+	if request.ReturnImmediately || a2aSendWaitComplete(task.Status.State) {
 		return task, nil
 	}
 	terminal, err := waitForA2ATerminalTask(ctx, task, a2aBlockingPollInterval, func(loadCtx context.Context, taskID a2a.TaskID) (*a2a.Task, error) {
-		return s.GetTask(loadCtx, &a2a.GetTaskRequest{ID: taskID})
+		historyLength := request.HistoryLength
+		return s.GetTask(loadCtx, &a2a.GetTaskRequest{ID: taskID, HistoryLength: &historyLength})
 	})
 	if err != nil {
 		return nil, err
@@ -429,15 +886,35 @@ func waitForA2ATerminalTask(
 				}
 				return nil, err
 			}
-			if current.Status.State.Terminal() {
+			if a2aSendWaitComplete(current.Status.State) {
 				return current, nil
 			}
 		}
 	}
 }
 
-func fingerprintA2ASendRequest(request *a2a.SendMessageRequest) (string, error) {
-	encoded, err := json.Marshal(request)
+func a2aSendWaitComplete(state a2a.TaskState) bool {
+	return state.Terminal() || state == a2a.TaskStateInputRequired || state == a2a.TaskStateAuthRequired
+}
+
+func fingerprintA2ASendRequest(request *a2a.SendMessageRequest, identity a2aintegration.InvocationIdentity) (string, error) {
+	var tokenDigest string
+	if identity.ContextToken != "" {
+		sum := sha256.Sum256([]byte(identity.ContextToken))
+		tokenDigest = hex.EncodeToString(sum[:])
+	}
+	envelope := struct {
+		Request                    *a2a.SendMessageRequest `json:"request"`
+		IdentityExtensionDeclared  bool                    `json:"identityExtensionDeclared"`
+		IdentityTokenSHA256        string                  `json:"identityTokenSha256,omitempty"`
+		IdentityExpiresAtUnixMilli int64                   `json:"identityExpiresAtUnixMilli,omitempty"`
+	}{
+		Request:                    request,
+		IdentityExtensionDeclared:  identity.ExtensionDeclared,
+		IdentityTokenSHA256:        tokenDigest,
+		IdentityExpiresAtUnixMilli: identity.ExpiresAtUnixMS,
+	}
+	encoded, err := json.Marshal(envelope)
 	if err != nil {
 		return "", fmt.Errorf("encode A2A send request: %w", err)
 	}
@@ -560,6 +1037,61 @@ func newA2APublicID(prefix string) (string, error) {
 		return "", fmt.Errorf("read random A2A id: %w", err)
 	}
 	return prefix + base64.RawURLEncoding.EncodeToString(random), nil
+}
+
+func uuidStringOrOpaque(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:16])
+}
+
+func deleteMaterializedA2AParts(store storage.Storage, parts []materializedA2APart) {
+	if store == nil {
+		return
+	}
+	keys := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part.Stored.ObjectKey != "" {
+			keys = append(keys, part.Stored.ObjectKey)
+		}
+	}
+	store.DeleteKeys(context.Background(), keys)
+}
+
+func createA2AInputAttachments(
+	ctx context.Context,
+	queries *db.Queries,
+	principal a2aPrincipalIDs,
+	chatSessionID pgtype.UUID,
+	localTaskID pgtype.UUID,
+	parts []materializedA2APart,
+) ([]pgtype.UUID, error) {
+	ids := make([]pgtype.UUID, 0)
+	for _, part := range parts {
+		if part.Stored.Kind != "object" {
+			continue
+		}
+		id, err := uuid.NewV7()
+		if err != nil {
+			return nil, fmt.Errorf("allocate A2A attachment id: %w", err)
+		}
+		attachmentID := pgtype.UUID{Bytes: id, Valid: true}
+		if _, err = queries.CreateAttachment(ctx, db.CreateAttachmentParams{
+			ID:            attachmentID,
+			WorkspaceID:   principal.WorkspaceID,
+			UploaderType:  "agent",
+			UploaderID:    principal.AgentID,
+			Filename:      part.Stored.Filename,
+			Url:           part.ObjectURL,
+			ContentType:   part.Stored.MediaType,
+			SizeBytes:     part.Stored.SizeBytes,
+			ChatSessionID: chatSessionID,
+			TaskID:        localTaskID,
+		}); err != nil {
+			return nil, fmt.Errorf("create A2A attachment: %w", err)
+		}
+		ids = append(ids, attachmentID)
+	}
+	return ids, nil
 }
 
 func sameUUID(left, right pgtype.UUID) bool {

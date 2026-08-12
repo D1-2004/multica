@@ -409,7 +409,11 @@ func buildChatPromptForProvider(task Task, provider string) string {
 		hasDownloadAttachments := false
 		nativeImageInput := providerSupportsNativeImageInput(provider)
 		for _, a := range task.ChatMessageAttachments {
-			if a.ContentType != "" {
+			if a.LocalPath != "" && a.ContentType != "" {
+				fmt.Fprintf(&b, "- filename=%q content_type=%s local_path=%q\n", a.Filename, a.ContentType, a.LocalPath)
+			} else if a.LocalPath != "" {
+				fmt.Fprintf(&b, "- filename=%q local_path=%q\n", a.Filename, a.LocalPath)
+			} else if a.ContentType != "" {
 				fmt.Fprintf(&b, "- id=%s filename=%q content_type=%s\n", a.ID, a.Filename, a.ContentType)
 			} else {
 				fmt.Fprintf(&b, "- id=%s filename=%q\n", a.ID, a.Filename)
@@ -423,15 +427,21 @@ func buildChatPromptForProvider(task Task, provider string) string {
 		if hasNativeImages {
 			b.WriteString("Image attachments are already included as native visual input for this turn; inspect them directly.\n")
 		}
-		if hasDownloadAttachments {
+		if task.A2AInvocation {
+			b.WriteString("All A2A attachments are materialized at the listed task-private local paths. Read those paths directly.\n")
+		} else if hasDownloadAttachments {
 			b.WriteString("Use `multica attachment download <id>` to fetch each attachment that is not included as native visual input before referring to it.\n")
 		}
-		b.WriteString("When creating an issue that should preserve one of these attachments, pass `--attachment-id <id>` to `multica issue create` in addition to keeping the attachment markdown inline.\n")
+		if !task.A2AInvocation {
+			b.WriteString("When creating an issue that should preserve one of these attachments, pass `--attachment-id <id>` to `multica issue create` in addition to keeping the attachment markdown inline.\n")
+		}
 	}
 	// Outbound attachments: how the agent puts an image/file INTO its reply.
 	// Web/mobile chat only — for IM-channel chats the reply is delivered to
 	// that platform, not the Multica chat UI, so this binding does not apply.
-	if task.ChatChannelType == "" {
+	if task.A2AInvocation {
+		b.WriteString("\nUse the task-only `multica_a2a_task_control` tools for A2A interaction. Publish files or structured output with `publish_artifact`. If required caller input is missing, call `request_input` exactly once and stop this run immediately. If caller authentication is required, call `request_auth` exactly once without including credentials, then stop this run immediately. Do not emit a final answer after either pause tool succeeds.\n")
+	} else if task.ChatChannelType == "" {
 		b.WriteString("\nTo include a file or image you produced in your reply, run `multica attachment upload <local-path>`. The file binds to your reply automatically and appears as an attachment card below it even if you paste nothing. The command also returns a `markdown` snippet you may paste on its own line to place the item where you want it (files render as a card, images inline).\n")
 	}
 	return b.String()

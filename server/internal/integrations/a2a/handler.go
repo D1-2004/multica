@@ -27,6 +27,22 @@ type TaskCanceler interface {
 	CancelTask(context.Context, *a2a.CancelTaskRequest) (*a2a.Task, error)
 }
 
+// TaskStreamer is implemented by a Port that persists and replays ordered
+// task events. The wire adapter deliberately owns no in-memory event queue.
+type TaskStreamer interface {
+	SubscribeToTask(context.Context, *a2a.SubscribeToTaskRequest) iter.Seq2[a2a.Event, error]
+	SendStreamingMessage(context.Context, *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error]
+}
+
+// PushConfigManager is implemented by a Port that durably stores per-task
+// callback configuration and delivers task events through an outbox worker.
+type PushConfigManager interface {
+	GetTaskPushConfig(context.Context, *a2a.GetTaskPushConfigRequest) (*a2a.PushConfig, error)
+	ListTaskPushConfigs(context.Context, *a2a.ListTaskPushConfigRequest) (*a2a.ListTaskPushConfigResponse, error)
+	CreateTaskPushConfig(context.Context, *a2a.PushConfig) (*a2a.PushConfig, error)
+	DeleteTaskPushConfig(context.Context, *a2a.DeleteTaskPushConfigRequest) error
+}
+
 type requestHandler struct {
 	port Port
 }
@@ -108,28 +124,52 @@ func (handler *requestHandler) SendMessage(ctx context.Context, request *a2a.Sen
 	return handler.port.SendMessage(ctx, request)
 }
 
-func (handler *requestHandler) SubscribeToTask(context.Context, *a2a.SubscribeToTaskRequest) iter.Seq2[a2a.Event, error] {
-	return unsupportedEvents(a2a.ErrUnsupportedOperation)
+func (handler *requestHandler) SubscribeToTask(ctx context.Context, request *a2a.SubscribeToTaskRequest) iter.Seq2[a2a.Event, error] {
+	streamer, ok := handler.port.(TaskStreamer)
+	if !ok {
+		return unsupportedEvents(a2a.ErrUnsupportedOperation)
+	}
+	return streamer.SubscribeToTask(ctx, request)
 }
 
-func (handler *requestHandler) SendStreamingMessage(context.Context, *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
-	return unsupportedEvents(a2a.ErrUnsupportedOperation)
+func (handler *requestHandler) SendStreamingMessage(ctx context.Context, request *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
+	streamer, ok := handler.port.(TaskStreamer)
+	if !ok {
+		return unsupportedEvents(a2a.ErrUnsupportedOperation)
+	}
+	return streamer.SendStreamingMessage(ctx, request)
 }
 
-func (handler *requestHandler) GetTaskPushConfig(context.Context, *a2a.GetTaskPushConfigRequest) (*a2a.PushConfig, error) {
-	return nil, a2a.ErrPushNotificationNotSupported
+func (handler *requestHandler) GetTaskPushConfig(ctx context.Context, request *a2a.GetTaskPushConfigRequest) (*a2a.PushConfig, error) {
+	manager, ok := handler.port.(PushConfigManager)
+	if !ok {
+		return nil, a2a.ErrPushNotificationNotSupported
+	}
+	return manager.GetTaskPushConfig(ctx, request)
 }
 
-func (handler *requestHandler) ListTaskPushConfigs(context.Context, *a2a.ListTaskPushConfigRequest) (*a2a.ListTaskPushConfigResponse, error) {
-	return nil, a2a.ErrPushNotificationNotSupported
+func (handler *requestHandler) ListTaskPushConfigs(ctx context.Context, request *a2a.ListTaskPushConfigRequest) (*a2a.ListTaskPushConfigResponse, error) {
+	manager, ok := handler.port.(PushConfigManager)
+	if !ok {
+		return nil, a2a.ErrPushNotificationNotSupported
+	}
+	return manager.ListTaskPushConfigs(ctx, request)
 }
 
-func (handler *requestHandler) CreateTaskPushConfig(context.Context, *a2a.PushConfig) (*a2a.PushConfig, error) {
-	return nil, a2a.ErrPushNotificationNotSupported
+func (handler *requestHandler) CreateTaskPushConfig(ctx context.Context, request *a2a.PushConfig) (*a2a.PushConfig, error) {
+	manager, ok := handler.port.(PushConfigManager)
+	if !ok {
+		return nil, a2a.ErrPushNotificationNotSupported
+	}
+	return manager.CreateTaskPushConfig(ctx, request)
 }
 
-func (handler *requestHandler) DeleteTaskPushConfig(context.Context, *a2a.DeleteTaskPushConfigRequest) error {
-	return a2a.ErrPushNotificationNotSupported
+func (handler *requestHandler) DeleteTaskPushConfig(ctx context.Context, request *a2a.DeleteTaskPushConfigRequest) error {
+	manager, ok := handler.port.(PushConfigManager)
+	if !ok {
+		return a2a.ErrPushNotificationNotSupported
+	}
+	return manager.DeleteTaskPushConfig(ctx, request)
 }
 
 func (handler *requestHandler) GetExtendedAgentCard(context.Context, *a2a.GetExtendedAgentCardRequest) (*a2a.AgentCard, error) {

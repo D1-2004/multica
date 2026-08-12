@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/jackc/pgx/v5/pgtype"
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -38,15 +40,15 @@ func TestValidateA2ASendRequest(t *testing.T) {
 		{name: "default blocking", mutate: func(request *a2a.SendMessageRequest) { request.Config = nil }},
 		{name: "agent role", mutate: func(request *a2a.SendMessageRequest) { request.Message.Role = a2a.MessageRoleAgent }, wantErr: a2a.ErrInvalidParams},
 		{name: "missing message id", mutate: func(request *a2a.SendMessageRequest) { request.Message.ID = "" }, wantErr: a2a.ErrInvalidParams},
-		{name: "external context", mutate: func(request *a2a.SendMessageRequest) { request.Message.ContextID = "external-context" }, wantErr: a2a.ErrUnsupportedOperation},
-		{name: "task continuation", mutate: func(request *a2a.SendMessageRequest) { request.Message.TaskID = "external-task" }, wantErr: a2a.ErrUnsupportedOperation},
+		{name: "external context", mutate: func(request *a2a.SendMessageRequest) { request.Message.ContextID = "external-context" }, wantReturnImmediately: true},
+		{name: "task continuation", mutate: func(request *a2a.SendMessageRequest) { request.Message.TaskID = "external-task" }, wantReturnImmediately: true},
 		{name: "raw part", mutate: func(request *a2a.SendMessageRequest) {
 			request.Message.Parts = a2a.ContentParts{a2a.NewRawPart([]byte("x"))}
-		}, wantErr: a2a.ErrUnsupportedContentType},
-		{name: "blank text", mutate: func(request *a2a.SendMessageRequest) { request.Message.Parts = a2a.ContentParts{a2a.NewTextPart("  ")} }, wantErr: a2a.ErrInvalidParams},
+		}, wantReturnImmediately: true},
+		{name: "blank text", mutate: func(request *a2a.SendMessageRequest) { request.Message.Parts = a2a.ContentParts{a2a.NewTextPart("  ")} }, wantReturnImmediately: true},
 		{name: "unsupported output", mutate: func(request *a2a.SendMessageRequest) {
 			request.Config.AcceptedOutputModes = []string{"application/json"}
-		}, wantErr: a2a.ErrUnsupportedContentType},
+		}, wantReturnImmediately: true},
 	}
 
 	for _, test := range tests {
@@ -55,7 +57,7 @@ func TestValidateA2ASendRequest(t *testing.T) {
 			if test.mutate != nil {
 				test.mutate(request)
 			}
-			got, err := validateA2ASendRequest(request)
+			got, err := validateA2ASendRequest(context.Background(), request, time.Now())
 			if test.wantErr != nil {
 				if !errors.Is(err, test.wantErr) {
 					t.Fatalf("validate error = %v, want %v", err, test.wantErr)
@@ -65,7 +67,8 @@ func TestValidateA2ASendRequest(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.MessageID != "message-1" || got.Content != "first\nsecond" || got.ReturnImmediately != test.wantReturnImmediately {
+			if got.MessageID != "message-1" || len(got.Parts) != len(request.Message.Parts) || got.ReturnImmediately != test.wantReturnImmediately ||
+				got.ContextID != request.Message.ContextID || got.TaskID != string(request.Message.TaskID) {
 				t.Fatalf("validated send = %+v", got)
 			}
 			if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(got.Fingerprint) {
@@ -83,11 +86,11 @@ func TestValidateA2ASendRequestFromV1JSONWire(t *testing.T) {
 	}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	validated, err := validateA2ASendRequest(&request)
+	validated, err := validateA2ASendRequest(context.Background(), &request, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if validated.MessageID != "wire-message-1" || validated.Content != "hello from wire" {
+	if validated.MessageID != "wire-message-1" || len(validated.Parts) != 1 {
 		t.Fatalf("validated wire request = %+v", validated)
 	}
 }
@@ -164,23 +167,58 @@ func TestFingerprintA2ASendRequestIsCanonicalAndContentSensitive(t *testing.T) {
 		}
 	}
 
-	first, err := fingerprintA2ASendRequest(newRequest(map[string]any{"a": 1, "b": 2}, "hello"))
+	identity := a2aintegration.InvocationIdentity{
+		ExtensionDeclared: true,
+		ContextToken:      "context-token-a",
+		ExpiresAtUnixMS:   1_800_000_000_000,
+	}
+	first, err := fingerprintA2ASendRequest(newRequest(map[string]any{"a": 1, "b": 2}, "hello"), identity)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := fingerprintA2ASendRequest(newRequest(map[string]any{"b": 2, "a": 1}, "hello"))
+	second, err := fingerprintA2ASendRequest(newRequest(map[string]any{"b": 2, "a": 1}, "hello"), identity)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first != second {
 		t.Fatalf("equivalent requests produced %q and %q", first, second)
 	}
-	changed, err := fingerprintA2ASendRequest(newRequest(map[string]any{"a": 1, "b": 2}, "changed"))
+	changed, err := fingerprintA2ASendRequest(newRequest(map[string]any{"a": 1, "b": 2}, "changed"), identity)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first == changed {
 		t.Fatal("content change did not change fingerprint")
+	}
+
+	changedToken := identity
+	changedToken.ContextToken = "context-token-b"
+	changed, err = fingerprintA2ASendRequest(newRequest(map[string]any{"a": 1, "b": 2}, "hello"), changedToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == changed {
+		t.Fatal("identity token change did not change fingerprint")
+	}
+
+	changedExpiry := identity
+	changedExpiry.ExpiresAtUnixMS++
+	changed, err = fingerprintA2ASendRequest(newRequest(map[string]any{"a": 1, "b": 2}, "hello"), changedExpiry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == changed {
+		t.Fatal("identity expiry change did not change fingerprint")
+	}
+
+	undeclared := identity
+	undeclared.ExtensionDeclared = false
+	changed, err = fingerprintA2ASendRequest(newRequest(map[string]any{"a": 1, "b": 2}, "hello"), undeclared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == changed {
+		t.Fatal("identity extension declaration change did not change fingerprint")
 	}
 }
 
@@ -269,5 +307,28 @@ func TestNewA2APublicIDIsOpaqueAndPathSafe(t *testing.T) {
 	}
 	if !regexp.MustCompile(`^tsk_[A-Za-z0-9_-]{32}$`).MatchString(first) {
 		t.Fatalf("public id = %q", first)
+	}
+}
+
+func TestA2AQueuedExternalIdentityNeedsAuth(t *testing.T) {
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name    string
+		context string
+		want    bool
+	}{
+		{name: "no external identity", context: `{"multica_origin":"a2a"}`},
+		{name: "fresh", context: fmt.Sprintf(`{"multica_origin":"a2a","agent_identity_context_token":"token","agent_identity_context_token_expires_at":%d,"agent_identity_context_token_source":"external"}`, now.Add(2*time.Minute).UnixMilli())},
+		{name: "inside safety window", context: fmt.Sprintf(`{"multica_origin":"a2a","agent_identity_context_token":"token","agent_identity_context_token_expires_at":%d,"agent_identity_context_token_source":"external"}`, now.Add(59*time.Second).UnixMilli()), want: true},
+		{name: "expired", context: `{"multica_origin":"a2a","agent_identity_context_token":"token","agent_identity_context_token_expires_at":1,"agent_identity_context_token_source":"external"}`, want: true},
+		{name: "missing token", context: `{"multica_origin":"a2a","agent_identity_context_token_expires_at":4102444800000,"agent_identity_context_token_source":"external"}`, want: true},
+		{name: "malformed", context: `{`, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := a2AQueuedExternalIdentityNeedsAuth([]byte(test.context), now); got != test.want {
+				t.Fatalf("a2AQueuedExternalIdentityNeedsAuth() = %v, want %v", got, test.want)
+			}
+		})
 	}
 }

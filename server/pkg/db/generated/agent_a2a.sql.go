@@ -11,6 +11,372 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const appendA2ATaskEvent = `-- name: AppendA2ATaskEvent :one
+WITH existing AS (
+    SELECT event.id, event.binding_id, event.sequence, event.event_type, event.dedupe_key, event.payload, event.created_at
+    FROM a2a_task_event event
+    WHERE event.binding_id = $1
+      AND event.dedupe_key = $2
+), allocated AS (
+    UPDATE a2a_task_binding binding
+    SET next_event_sequence = binding.next_event_sequence + 1,
+        updated_at = now()
+    WHERE binding.id = $1
+      AND NOT EXISTS (SELECT 1 FROM existing)
+    RETURNING binding.next_event_sequence - 1 AS sequence
+), inserted AS (
+    INSERT INTO a2a_task_event (
+        binding_id,
+        sequence,
+        event_type,
+        dedupe_key,
+        payload
+    )
+    SELECT
+        $1,
+        allocated.sequence,
+        $3,
+        $2,
+        $4::jsonb
+    FROM allocated
+    ON CONFLICT (binding_id, dedupe_key) DO NOTHING
+    RETURNING id, binding_id, sequence, event_type, dedupe_key, payload, created_at
+)
+SELECT id, binding_id, sequence, event_type, dedupe_key, payload, created_at FROM inserted
+UNION ALL
+SELECT id, binding_id, sequence, event_type, dedupe_key, payload, created_at FROM existing
+LIMIT 1
+`
+
+type AppendA2ATaskEventParams struct {
+	BindingID pgtype.UUID `json:"binding_id"`
+	DedupeKey string      `json:"dedupe_key"`
+	EventType string      `json:"event_type"`
+	Payload   []byte      `json:"payload"`
+}
+
+type AppendA2ATaskEventRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	BindingID pgtype.UUID        `json:"binding_id"`
+	Sequence  int64              `json:"sequence"`
+	EventType string             `json:"event_type"`
+	DedupeKey string             `json:"dedupe_key"`
+	Payload   []byte             `json:"payload"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) AppendA2ATaskEvent(ctx context.Context, arg AppendA2ATaskEventParams) (AppendA2ATaskEventRow, error) {
+	row := q.db.QueryRow(ctx, appendA2ATaskEvent,
+		arg.BindingID,
+		arg.DedupeKey,
+		arg.EventType,
+		arg.Payload,
+	)
+	var i AppendA2ATaskEventRow
+	err := row.Scan(
+		&i.ID,
+		&i.BindingID,
+		&i.Sequence,
+		&i.EventType,
+		&i.DedupeKey,
+		&i.Payload,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const checkA2AClientSendLimits = `-- name: CheckA2AClientSendLimits :one
+SELECT
+    client.rate_limit_per_minute,
+    client.max_concurrent_tasks,
+    (
+        client.rate_limit_per_minute IS NULL
+        OR (
+            SELECT count(*)
+            FROM a2a_task_turn turn
+            WHERE turn.endpoint_id = client.endpoint_id
+              AND turn.client_id = client.id
+              AND turn.created_at >= now() - interval '1 minute'
+        ) < client.rate_limit_per_minute
+    ) AS rate_allowed,
+    (
+        NOT $1::boolean
+        OR client.max_concurrent_tasks IS NULL
+        OR (
+            SELECT count(*)
+            FROM a2a_task_binding binding
+            WHERE binding.endpoint_id = client.endpoint_id
+              AND binding.client_id = client.id
+              AND binding.public_state NOT IN (
+                  'TASK_STATE_CANCELED',
+                  'TASK_STATE_COMPLETED',
+                  'TASK_STATE_FAILED',
+                  'TASK_STATE_REJECTED'
+              )
+        ) < client.max_concurrent_tasks
+    ) AS concurrency_allowed
+FROM a2a_client client
+WHERE client.id = $2
+  AND client.endpoint_id = $3
+  AND client.status = 'active'
+`
+
+type CheckA2AClientSendLimitsParams struct {
+	IsNewTask  bool        `json:"is_new_task"`
+	ClientID   pgtype.UUID `json:"client_id"`
+	EndpointID pgtype.UUID `json:"endpoint_id"`
+}
+
+type CheckA2AClientSendLimitsRow struct {
+	RateLimitPerMinute pgtype.Int4 `json:"rate_limit_per_minute"`
+	MaxConcurrentTasks pgtype.Int4 `json:"max_concurrent_tasks"`
+	RateAllowed        pgtype.Bool `json:"rate_allowed"`
+	ConcurrencyAllowed pgtype.Bool `json:"concurrency_allowed"`
+}
+
+func (q *Queries) CheckA2AClientSendLimits(ctx context.Context, arg CheckA2AClientSendLimitsParams) (CheckA2AClientSendLimitsRow, error) {
+	row := q.db.QueryRow(ctx, checkA2AClientSendLimits, arg.IsNewTask, arg.ClientID, arg.EndpointID)
+	var i CheckA2AClientSendLimitsRow
+	err := row.Scan(
+		&i.RateLimitPerMinute,
+		&i.MaxConcurrentTasks,
+		&i.RateAllowed,
+		&i.ConcurrencyAllowed,
+	)
+	return i, err
+}
+
+const claimNextA2APushDelivery = `-- name: ClaimNextA2APushDelivery :one
+WITH selected AS (
+    SELECT delivery.id
+    FROM a2a_push_delivery delivery
+    JOIN a2a_task_event candidate_event ON candidate_event.id = delivery.event_id
+    WHERE (
+        delivery.status = 'pending'
+        OR (
+            delivery.status = 'delivering'
+            AND delivery.lease_expires_at < now()
+        )
+    )
+      AND delivery.next_attempt_at <= now()
+      AND NOT EXISTS (
+          SELECT 1
+          FROM a2a_push_delivery earlier_delivery
+          JOIN a2a_task_event earlier_event ON earlier_event.id = earlier_delivery.event_id
+          WHERE earlier_delivery.push_config_id = delivery.push_config_id
+            AND earlier_event.sequence < candidate_event.sequence
+            AND earlier_delivery.status NOT IN ('delivered', 'dead_letter')
+      )
+    ORDER BY delivery.next_attempt_at, delivery.created_at, delivery.id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+), claimed AS (
+    UPDATE a2a_push_delivery delivery
+    SET status = 'delivering',
+        attempt_count = delivery.attempt_count + 1,
+        lease_expires_at = now() + interval '30 seconds',
+        updated_at = now()
+    FROM selected
+    WHERE delivery.id = selected.id
+    RETURNING delivery.id, delivery.push_config_id, delivery.event_id, delivery.status, delivery.attempt_count, delivery.next_attempt_at, delivery.lease_expires_at, delivery.last_error, delivery.delivered_at, delivery.created_at, delivery.updated_at
+)
+SELECT
+    claimed.id, claimed.push_config_id, claimed.event_id, claimed.status, claimed.attempt_count, claimed.next_attempt_at, claimed.lease_expires_at, claimed.last_error, claimed.delivered_at, claimed.created_at, claimed.updated_at,
+    config.public_config_id,
+    config.callback_url,
+    config.notification_token_encrypted,
+    config.auth_scheme,
+    config.auth_credentials_encrypted,
+	 event.event_type,
+    event.payload AS event_payload
+FROM claimed
+JOIN a2a_push_config config ON config.id = claimed.push_config_id
+JOIN a2a_task_event event ON event.id = claimed.event_id
+`
+
+type ClaimNextA2APushDeliveryRow struct {
+	ID                         pgtype.UUID        `json:"id"`
+	PushConfigID               pgtype.UUID        `json:"push_config_id"`
+	EventID                    pgtype.UUID        `json:"event_id"`
+	Status                     string             `json:"status"`
+	AttemptCount               int32              `json:"attempt_count"`
+	NextAttemptAt              pgtype.Timestamptz `json:"next_attempt_at"`
+	LeaseExpiresAt             pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError                  pgtype.Text        `json:"last_error"`
+	DeliveredAt                pgtype.Timestamptz `json:"delivered_at"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	PublicConfigID             string             `json:"public_config_id"`
+	CallbackUrl                string             `json:"callback_url"`
+	NotificationTokenEncrypted []byte             `json:"notification_token_encrypted"`
+	AuthScheme                 pgtype.Text        `json:"auth_scheme"`
+	AuthCredentialsEncrypted   []byte             `json:"auth_credentials_encrypted"`
+	EventType                  string             `json:"event_type"`
+	EventPayload               []byte             `json:"event_payload"`
+}
+
+func (q *Queries) ClaimNextA2APushDelivery(ctx context.Context) (ClaimNextA2APushDeliveryRow, error) {
+	row := q.db.QueryRow(ctx, claimNextA2APushDelivery)
+	var i ClaimNextA2APushDeliveryRow
+	err := row.Scan(
+		&i.ID,
+		&i.PushConfigID,
+		&i.EventID,
+		&i.Status,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LeaseExpiresAt,
+		&i.LastError,
+		&i.DeliveredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PublicConfigID,
+		&i.CallbackUrl,
+		&i.NotificationTokenEncrypted,
+		&i.AuthScheme,
+		&i.AuthCredentialsEncrypted,
+		&i.EventType,
+		&i.EventPayload,
+	)
+	return i, err
+}
+
+const clearA2ALocalTaskIdentityContext = `-- name: ClearA2ALocalTaskIdentityContext :exec
+UPDATE agent_task_queue
+SET context = context
+    - 'agent_identity_context_token'
+    - 'agent_identity_context_token_expires_at'
+    - 'agent_identity_context_token_source'
+WHERE id = $1
+  AND status IN ('completed', 'failed', 'cancelled')
+  AND context->>'multica_origin' = 'a2a'
+`
+
+func (q *Queries) ClearA2ALocalTaskIdentityContext(ctx context.Context, localTaskID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, clearA2ALocalTaskIdentityContext, localTaskID)
+	return err
+}
+
+const clearDeferredA2AAuthTurnSignals = `-- name: ClearDeferredA2AAuthTurnSignals :exec
+UPDATE a2a_task_turn turn
+SET control_signal = NULL,
+    control_payload = NULL,
+    updated_at = now()
+FROM agent_task_queue task
+WHERE turn.binding_id = $1
+  AND turn.local_task_id = task.id
+  AND turn.control_signal = 'auth_required'
+  AND task.status = 'deferred'
+`
+
+func (q *Queries) ClearDeferredA2AAuthTurnSignals(ctx context.Context, bindingID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, clearDeferredA2AAuthTurnSignals, bindingID)
+	return err
+}
+
+const clearDeferredA2ALocalTaskIdentityContext = `-- name: ClearDeferredA2ALocalTaskIdentityContext :exec
+UPDATE agent_task_queue
+SET context = context
+    - 'agent_identity_context_token'
+    - 'agent_identity_context_token_expires_at'
+    - 'agent_identity_context_token_source'
+WHERE id = $1
+  AND status = 'deferred'
+  AND context->>'multica_origin' = 'a2a'
+`
+
+func (q *Queries) ClearDeferredA2ALocalTaskIdentityContext(ctx context.Context, localTaskID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, clearDeferredA2ALocalTaskIdentityContext, localTaskID)
+	return err
+}
+
+const completeA2ATaskTurn = `-- name: CompleteA2ATaskTurn :exec
+WITH RECURSIVE ancestors AS (
+    SELECT task.id, task.parent_task_id
+    FROM agent_task_queue task
+    WHERE task.id = $1
+      AND task.status IN ('completed', 'failed', 'cancelled')
+
+    UNION ALL
+
+    SELECT parent.id, parent.parent_task_id
+    FROM agent_task_queue parent
+    JOIN ancestors child ON parent.id = child.parent_task_id
+)
+UPDATE a2a_task_turn turn
+SET completed_at = COALESCE(completed_at, now()),
+    updated_at = now()
+FROM ancestors
+WHERE turn.local_task_id = ancestors.id
+`
+
+func (q *Queries) CompleteA2ATaskTurn(ctx context.Context, localTaskID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, completeA2ATaskTurn, localTaskID)
+	return err
+}
+
+const countA2APublicTasksForClient = `-- name: CountA2APublicTasksForClient :one
+SELECT count(*)
+FROM a2a_task_binding binding
+JOIN a2a_context context ON context.id = binding.context_id
+WHERE binding.endpoint_id = $1
+  AND binding.client_id = $2
+  AND (
+      $3::text IS NULL
+      OR context.public_context_id = $3::text
+  )
+  AND (
+      $4::text IS NULL
+      OR binding.public_state = $4::text
+  )
+  AND (
+      $5::timestamptz IS NULL
+      OR binding.status_updated_at > $5::timestamptz
+  )
+`
+
+type CountA2APublicTasksForClientParams struct {
+	EndpointID           pgtype.UUID        `json:"endpoint_id"`
+	ClientID             pgtype.UUID        `json:"client_id"`
+	PublicContextID      pgtype.Text        `json:"public_context_id"`
+	PublicState          pgtype.Text        `json:"public_state"`
+	StatusTimestampAfter pgtype.Timestamptz `json:"status_timestamp_after"`
+}
+
+func (q *Queries) CountA2APublicTasksForClient(ctx context.Context, arg CountA2APublicTasksForClientParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countA2APublicTasksForClient,
+		arg.EndpointID,
+		arg.ClientID,
+		arg.PublicContextID,
+		arg.PublicState,
+		arg.StatusTimestampAfter,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countVisibleA2AReferenceTasks = `-- name: CountVisibleA2AReferenceTasks :one
+SELECT count(*)
+FROM a2a_task_binding
+WHERE endpoint_id = $1
+  AND client_id = $2
+  AND public_task_id = ANY($3::text[])
+`
+
+type CountVisibleA2AReferenceTasksParams struct {
+	EndpointID    pgtype.UUID `json:"endpoint_id"`
+	ClientID      pgtype.UUID `json:"client_id"`
+	PublicTaskIds []string    `json:"public_task_ids"`
+}
+
+func (q *Queries) CountVisibleA2AReferenceTasks(ctx context.Context, arg CountVisibleA2AReferenceTasksParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countVisibleA2AReferenceTasks, arg.EndpointID, arg.ClientID, arg.PublicTaskIds)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createA2AContext = `-- name: CreateA2AContext :one
 INSERT INTO a2a_context (
     endpoint_id,
@@ -57,6 +423,78 @@ func (q *Queries) CreateA2AContext(ctx context.Context, arg CreateA2AContextPara
 		&i.ChatSessionID,
 		&i.LastActivityAt,
 		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createA2APushConfig = `-- name: CreateA2APushConfig :one
+INSERT INTO a2a_push_config (
+    binding_id,
+    endpoint_id,
+    client_id,
+    public_config_id,
+    callback_url,
+    notification_token_encrypted,
+    auth_scheme,
+    auth_credentials_encrypted
+)
+SELECT
+    binding.id,
+    binding.endpoint_id,
+    binding.client_id,
+    $1,
+    $2,
+    $3::bytea,
+    $4::text,
+    $5::bytea
+FROM a2a_task_binding binding
+WHERE binding.id = $6
+  AND binding.endpoint_id = $7
+  AND binding.client_id = $8
+ON CONFLICT (binding_id, public_config_id) DO UPDATE SET
+    callback_url = EXCLUDED.callback_url,
+    notification_token_encrypted = EXCLUDED.notification_token_encrypted,
+    auth_scheme = EXCLUDED.auth_scheme,
+    auth_credentials_encrypted = EXCLUDED.auth_credentials_encrypted,
+    updated_at = now()
+RETURNING id, binding_id, endpoint_id, client_id, public_config_id, callback_url, notification_token_encrypted, auth_scheme, auth_credentials_encrypted, created_at, updated_at
+`
+
+type CreateA2APushConfigParams struct {
+	PublicConfigID             string      `json:"public_config_id"`
+	CallbackUrl                string      `json:"callback_url"`
+	NotificationTokenEncrypted []byte      `json:"notification_token_encrypted"`
+	AuthScheme                 pgtype.Text `json:"auth_scheme"`
+	AuthCredentialsEncrypted   []byte      `json:"auth_credentials_encrypted"`
+	BindingID                  pgtype.UUID `json:"binding_id"`
+	EndpointID                 pgtype.UUID `json:"endpoint_id"`
+	ClientID                   pgtype.UUID `json:"client_id"`
+}
+
+func (q *Queries) CreateA2APushConfig(ctx context.Context, arg CreateA2APushConfigParams) (A2aPushConfig, error) {
+	row := q.db.QueryRow(ctx, createA2APushConfig,
+		arg.PublicConfigID,
+		arg.CallbackUrl,
+		arg.NotificationTokenEncrypted,
+		arg.AuthScheme,
+		arg.AuthCredentialsEncrypted,
+		arg.BindingID,
+		arg.EndpointID,
+		arg.ClientID,
+	)
+	var i A2aPushConfig
+	err := row.Scan(
+		&i.ID,
+		&i.BindingID,
+		&i.EndpointID,
+		&i.ClientID,
+		&i.PublicConfigID,
+		&i.CallbackUrl,
+		&i.NotificationTokenEncrypted,
+		&i.AuthScheme,
+		&i.AuthCredentialsEncrypted,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -123,7 +561,7 @@ WHERE context.id = $9
   AND context.client_id = $11
   AND endpoint.enabled = TRUE
   AND 'send' = ANY(client.scopes)
-RETURNING id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at
+RETURNING id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at, public_state, status_message, status_updated_at, next_event_sequence
 `
 
 type CreateA2ATaskBindingParams struct {
@@ -172,6 +610,129 @@ func (q *Queries) CreateA2ATaskBinding(ctx context.Context, arg CreateA2ATaskBin
 		&i.FailureFinalizedLocalTaskID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PublicState,
+		&i.StatusMessage,
+		&i.StatusUpdatedAt,
+		&i.NextEventSequence,
+	)
+	return i, err
+}
+
+const createA2ATaskTurn = `-- name: CreateA2ATaskTurn :one
+INSERT INTO a2a_task_turn (
+    binding_id,
+    endpoint_id,
+    client_id,
+    accepted_credential_id,
+    sequence,
+    message_id,
+    request_fingerprint,
+    local_task_id,
+    input_chat_message_id,
+    input_parts,
+    message_extensions,
+    message_metadata,
+    reference_task_ids,
+    accepted_output_modes
+)
+SELECT
+    binding.id,
+    binding.endpoint_id,
+    binding.client_id,
+    credential.id,
+    COALESCE((
+        SELECT MAX(existing.sequence) + 1
+        FROM a2a_task_turn existing
+        WHERE existing.binding_id = binding.id
+    ), 1),
+    $1,
+    $2,
+    task.id,
+    input_message.id,
+    $3::jsonb,
+    $4::text[],
+    $5::jsonb,
+    $6::text[],
+    $7::text[]
+FROM a2a_task_binding binding
+JOIN a2a_context context ON context.id = binding.context_id
+JOIN a2a_client client
+  ON client.id = binding.client_id
+ AND client.endpoint_id = binding.endpoint_id
+ AND client.status = 'active'
+JOIN a2a_client_credential credential
+  ON credential.id = $8
+ AND credential.client_id = client.id
+ AND credential.status = 'active'
+ AND (credential.expires_at IS NULL OR credential.expires_at > now())
+JOIN agent_task_queue task
+  ON task.id = $9
+ AND task.chat_session_id = context.chat_session_id
+JOIN chat_message input_message
+  ON input_message.id = $10
+ AND input_message.chat_session_id = context.chat_session_id
+ AND input_message.task_id = task.id
+ AND input_message.role = 'user'
+WHERE binding.id = $11
+  AND binding.endpoint_id = $12
+  AND binding.client_id = $13
+RETURNING id, binding_id, endpoint_id, client_id, accepted_credential_id, sequence, message_id, request_fingerprint, local_task_id, input_chat_message_id, input_parts, message_extensions, message_metadata, reference_task_ids, accepted_output_modes, control_signal, control_payload, created_at, updated_at, completed_at
+`
+
+type CreateA2ATaskTurnParams struct {
+	MessageID           string      `json:"message_id"`
+	RequestFingerprint  string      `json:"request_fingerprint"`
+	InputParts          []byte      `json:"input_parts"`
+	MessageExtensions   []string    `json:"message_extensions"`
+	MessageMetadata     []byte      `json:"message_metadata"`
+	ReferenceTaskIds    []string    `json:"reference_task_ids"`
+	AcceptedOutputModes []string    `json:"accepted_output_modes"`
+	CredentialID        pgtype.UUID `json:"credential_id"`
+	LocalTaskID         pgtype.UUID `json:"local_task_id"`
+	InputChatMessageID  pgtype.UUID `json:"input_chat_message_id"`
+	BindingID           pgtype.UUID `json:"binding_id"`
+	EndpointID          pgtype.UUID `json:"endpoint_id"`
+	ClientID            pgtype.UUID `json:"client_id"`
+}
+
+func (q *Queries) CreateA2ATaskTurn(ctx context.Context, arg CreateA2ATaskTurnParams) (A2aTaskTurn, error) {
+	row := q.db.QueryRow(ctx, createA2ATaskTurn,
+		arg.MessageID,
+		arg.RequestFingerprint,
+		arg.InputParts,
+		arg.MessageExtensions,
+		arg.MessageMetadata,
+		arg.ReferenceTaskIds,
+		arg.AcceptedOutputModes,
+		arg.CredentialID,
+		arg.LocalTaskID,
+		arg.InputChatMessageID,
+		arg.BindingID,
+		arg.EndpointID,
+		arg.ClientID,
+	)
+	var i A2aTaskTurn
+	err := row.Scan(
+		&i.ID,
+		&i.BindingID,
+		&i.EndpointID,
+		&i.ClientID,
+		&i.AcceptedCredentialID,
+		&i.Sequence,
+		&i.MessageID,
+		&i.RequestFingerprint,
+		&i.LocalTaskID,
+		&i.InputChatMessageID,
+		&i.InputParts,
+		&i.MessageExtensions,
+		&i.MessageMetadata,
+		&i.ReferenceTaskIds,
+		&i.AcceptedOutputModes,
+		&i.ControlSignal,
+		&i.ControlPayload,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -477,6 +1038,36 @@ func (q *Queries) CreateAgentA2AEndpointIfMissing(ctx context.Context, arg Creat
 	return i, err
 }
 
+const deleteA2APushConfigForClient = `-- name: DeleteA2APushConfigForClient :execrows
+DELETE FROM a2a_push_config config
+USING a2a_task_binding binding
+WHERE config.binding_id = binding.id
+  AND binding.endpoint_id = $1
+  AND binding.client_id = $2
+  AND binding.public_task_id = $3
+  AND config.public_config_id = $4
+`
+
+type DeleteA2APushConfigForClientParams struct {
+	EndpointID     pgtype.UUID `json:"endpoint_id"`
+	ClientID       pgtype.UUID `json:"client_id"`
+	PublicTaskID   string      `json:"public_task_id"`
+	PublicConfigID string      `json:"public_config_id"`
+}
+
+func (q *Queries) DeleteA2APushConfigForClient(ctx context.Context, arg DeleteA2APushConfigForClientParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteA2APushConfigForClient,
+		arg.EndpointID,
+		arg.ClientID,
+		arg.PublicTaskID,
+		arg.PublicConfigID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const disableAgentA2AEndpointsForMemberRevocation = `-- name: DisableAgentA2AEndpointsForMemberRevocation :many
 UPDATE agent_a2a_endpoint endpoint
 SET enabled = FALSE,
@@ -503,6 +1094,83 @@ func (q *Queries) DisableAgentA2AEndpointsForMemberRevocation(ctx context.Contex
 		return nil, err
 	}
 	return items, nil
+}
+
+const enqueueA2APushDeliveriesForEvent = `-- name: EnqueueA2APushDeliveriesForEvent :exec
+INSERT INTO a2a_push_delivery (push_config_id, event_id)
+SELECT config.id, event.id
+FROM a2a_task_event event
+JOIN a2a_push_config config ON config.binding_id = event.binding_id
+WHERE event.id = $1
+ON CONFLICT (push_config_id, event_id) DO NOTHING
+`
+
+func (q *Queries) EnqueueA2APushDeliveriesForEvent(ctx context.Context, eventID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, enqueueA2APushDeliveriesForEvent, eventID)
+	return err
+}
+
+const getA2AArtifactForBinding = `-- name: GetA2AArtifactForBinding :one
+SELECT id, binding_id, public_artifact_id, name, description, extensions, metadata, parts, append, last_chunk, created_at, updated_at
+FROM a2a_artifact
+WHERE binding_id = $1
+  AND public_artifact_id = $2
+`
+
+type GetA2AArtifactForBindingParams struct {
+	BindingID        pgtype.UUID `json:"binding_id"`
+	PublicArtifactID string      `json:"public_artifact_id"`
+}
+
+func (q *Queries) GetA2AArtifactForBinding(ctx context.Context, arg GetA2AArtifactForBindingParams) (A2aArtifact, error) {
+	row := q.db.QueryRow(ctx, getA2AArtifactForBinding, arg.BindingID, arg.PublicArtifactID)
+	var i A2aArtifact
+	err := row.Scan(
+		&i.ID,
+		&i.BindingID,
+		&i.PublicArtifactID,
+		&i.Name,
+		&i.Description,
+		&i.Extensions,
+		&i.Metadata,
+		&i.Parts,
+		&i.Append,
+		&i.LastChunk,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getA2AContextByIDForClient = `-- name: GetA2AContextByIDForClient :one
+SELECT id, endpoint_id, client_id, public_context_id, chat_session_id, last_activity_at, expires_at, created_at, updated_at
+FROM a2a_context
+WHERE id = $1
+  AND endpoint_id = $2
+  AND client_id = $3
+`
+
+type GetA2AContextByIDForClientParams struct {
+	ID         pgtype.UUID `json:"id"`
+	EndpointID pgtype.UUID `json:"endpoint_id"`
+	ClientID   pgtype.UUID `json:"client_id"`
+}
+
+func (q *Queries) GetA2AContextByIDForClient(ctx context.Context, arg GetA2AContextByIDForClientParams) (A2aContext, error) {
+	row := q.db.QueryRow(ctx, getA2AContextByIDForClient, arg.ID, arg.EndpointID, arg.ClientID)
+	var i A2aContext
+	err := row.Scan(
+		&i.ID,
+		&i.EndpointID,
+		&i.ClientID,
+		&i.PublicContextID,
+		&i.ChatSessionID,
+		&i.LastActivityAt,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getA2AContextForClient = `-- name: GetA2AContextForClient :one
@@ -537,7 +1205,7 @@ func (q *Queries) GetA2AContextForClient(ctx context.Context, arg GetA2AContextF
 }
 
 const getA2AMessageClaimForClient = `-- name: GetA2AMessageClaimForClient :one
-SELECT id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at
+SELECT id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at, public_state, status_message, status_updated_at, next_event_sequence
 FROM a2a_task_binding
 WHERE endpoint_id = $1
   AND client_id = $2
@@ -570,12 +1238,203 @@ func (q *Queries) GetA2AMessageClaimForClient(ctx context.Context, arg GetA2AMes
 		&i.FailureFinalizedLocalTaskID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PublicState,
+		&i.StatusMessage,
+		&i.StatusUpdatedAt,
+		&i.NextEventSequence,
+	)
+	return i, err
+}
+
+const getA2AMessageTurnClaimForClient = `-- name: GetA2AMessageTurnClaimForClient :one
+
+SELECT turn.id, turn.binding_id, turn.endpoint_id, turn.client_id, turn.accepted_credential_id, turn.sequence, turn.message_id, turn.request_fingerprint, turn.local_task_id, turn.input_chat_message_id, turn.input_parts, turn.message_extensions, turn.message_metadata, turn.reference_task_ids, turn.accepted_output_modes, turn.control_signal, turn.control_payload, turn.created_at, turn.updated_at, turn.completed_at, binding.public_task_id, context.public_context_id
+FROM a2a_task_turn turn
+JOIN a2a_task_binding binding ON binding.id = turn.binding_id
+JOIN a2a_context context ON context.id = binding.context_id
+WHERE turn.endpoint_id = $1
+  AND turn.client_id = $2
+  AND turn.message_id = $3
+`
+
+type GetA2AMessageTurnClaimForClientParams struct {
+	EndpointID pgtype.UUID `json:"endpoint_id"`
+	ClientID   pgtype.UUID `json:"client_id"`
+	MessageID  string      `json:"message_id"`
+}
+
+type GetA2AMessageTurnClaimForClientRow struct {
+	ID                   pgtype.UUID        `json:"id"`
+	BindingID            pgtype.UUID        `json:"binding_id"`
+	EndpointID           pgtype.UUID        `json:"endpoint_id"`
+	ClientID             pgtype.UUID        `json:"client_id"`
+	AcceptedCredentialID pgtype.UUID        `json:"accepted_credential_id"`
+	Sequence             int32              `json:"sequence"`
+	MessageID            string             `json:"message_id"`
+	RequestFingerprint   string             `json:"request_fingerprint"`
+	LocalTaskID          pgtype.UUID        `json:"local_task_id"`
+	InputChatMessageID   pgtype.UUID        `json:"input_chat_message_id"`
+	InputParts           []byte             `json:"input_parts"`
+	MessageExtensions    []string           `json:"message_extensions"`
+	MessageMetadata      []byte             `json:"message_metadata"`
+	ReferenceTaskIds     []string           `json:"reference_task_ids"`
+	AcceptedOutputModes  []string           `json:"accepted_output_modes"`
+	ControlSignal        pgtype.Text        `json:"control_signal"`
+	ControlPayload       []byte             `json:"control_payload"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
+	PublicTaskID         string             `json:"public_task_id"`
+	PublicContextID      string             `json:"public_context_id"`
+}
+
+// A2A v1 durable conversation/task model -----------------------------------
+func (q *Queries) GetA2AMessageTurnClaimForClient(ctx context.Context, arg GetA2AMessageTurnClaimForClientParams) (GetA2AMessageTurnClaimForClientRow, error) {
+	row := q.db.QueryRow(ctx, getA2AMessageTurnClaimForClient, arg.EndpointID, arg.ClientID, arg.MessageID)
+	var i GetA2AMessageTurnClaimForClientRow
+	err := row.Scan(
+		&i.ID,
+		&i.BindingID,
+		&i.EndpointID,
+		&i.ClientID,
+		&i.AcceptedCredentialID,
+		&i.Sequence,
+		&i.MessageID,
+		&i.RequestFingerprint,
+		&i.LocalTaskID,
+		&i.InputChatMessageID,
+		&i.InputParts,
+		&i.MessageExtensions,
+		&i.MessageMetadata,
+		&i.ReferenceTaskIds,
+		&i.AcceptedOutputModes,
+		&i.ControlSignal,
+		&i.ControlPayload,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.PublicTaskID,
+		&i.PublicContextID,
+	)
+	return i, err
+}
+
+const getA2APublicTaskForClient = `-- name: GetA2APublicTaskForClient :one
+SELECT
+    binding.id, binding.endpoint_id, binding.client_id, binding.context_id, binding.accepted_credential_id, binding.public_task_id, binding.message_id, binding.request_fingerprint, binding.artifact_id, binding.root_local_task_id, binding.input_chat_message_id, binding.request_id, binding.cancel_requested_at, binding.failure_finalized_local_task_id, binding.created_at, binding.updated_at, binding.public_state, binding.status_message, binding.status_updated_at, binding.next_event_sequence,
+    context.public_context_id,
+    context.chat_session_id
+FROM a2a_task_binding binding
+JOIN a2a_context context ON context.id = binding.context_id
+WHERE binding.endpoint_id = $1
+  AND binding.client_id = $2
+  AND binding.public_task_id = $3
+`
+
+type GetA2APublicTaskForClientParams struct {
+	EndpointID   pgtype.UUID `json:"endpoint_id"`
+	ClientID     pgtype.UUID `json:"client_id"`
+	PublicTaskID string      `json:"public_task_id"`
+}
+
+type GetA2APublicTaskForClientRow struct {
+	ID                          pgtype.UUID        `json:"id"`
+	EndpointID                  pgtype.UUID        `json:"endpoint_id"`
+	ClientID                    pgtype.UUID        `json:"client_id"`
+	ContextID                   pgtype.UUID        `json:"context_id"`
+	AcceptedCredentialID        pgtype.UUID        `json:"accepted_credential_id"`
+	PublicTaskID                string             `json:"public_task_id"`
+	MessageID                   string             `json:"message_id"`
+	RequestFingerprint          string             `json:"request_fingerprint"`
+	ArtifactID                  string             `json:"artifact_id"`
+	RootLocalTaskID             pgtype.UUID        `json:"root_local_task_id"`
+	InputChatMessageID          pgtype.UUID        `json:"input_chat_message_id"`
+	RequestID                   pgtype.Text        `json:"request_id"`
+	CancelRequestedAt           pgtype.Timestamptz `json:"cancel_requested_at"`
+	FailureFinalizedLocalTaskID pgtype.UUID        `json:"failure_finalized_local_task_id"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	PublicState                 string             `json:"public_state"`
+	StatusMessage               []byte             `json:"status_message"`
+	StatusUpdatedAt             pgtype.Timestamptz `json:"status_updated_at"`
+	NextEventSequence           int64              `json:"next_event_sequence"`
+	PublicContextID             string             `json:"public_context_id"`
+	ChatSessionID               pgtype.UUID        `json:"chat_session_id"`
+}
+
+func (q *Queries) GetA2APublicTaskForClient(ctx context.Context, arg GetA2APublicTaskForClientParams) (GetA2APublicTaskForClientRow, error) {
+	row := q.db.QueryRow(ctx, getA2APublicTaskForClient, arg.EndpointID, arg.ClientID, arg.PublicTaskID)
+	var i GetA2APublicTaskForClientRow
+	err := row.Scan(
+		&i.ID,
+		&i.EndpointID,
+		&i.ClientID,
+		&i.ContextID,
+		&i.AcceptedCredentialID,
+		&i.PublicTaskID,
+		&i.MessageID,
+		&i.RequestFingerprint,
+		&i.ArtifactID,
+		&i.RootLocalTaskID,
+		&i.InputChatMessageID,
+		&i.RequestID,
+		&i.CancelRequestedAt,
+		&i.FailureFinalizedLocalTaskID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PublicState,
+		&i.StatusMessage,
+		&i.StatusUpdatedAt,
+		&i.NextEventSequence,
+		&i.PublicContextID,
+		&i.ChatSessionID,
+	)
+	return i, err
+}
+
+const getA2APushConfigForClient = `-- name: GetA2APushConfigForClient :one
+SELECT config.id, config.binding_id, config.endpoint_id, config.client_id, config.public_config_id, config.callback_url, config.notification_token_encrypted, config.auth_scheme, config.auth_credentials_encrypted, config.created_at, config.updated_at
+FROM a2a_push_config config
+JOIN a2a_task_binding binding ON binding.id = config.binding_id
+WHERE binding.endpoint_id = $1
+  AND binding.client_id = $2
+  AND binding.public_task_id = $3
+  AND config.public_config_id = $4
+`
+
+type GetA2APushConfigForClientParams struct {
+	EndpointID     pgtype.UUID `json:"endpoint_id"`
+	ClientID       pgtype.UUID `json:"client_id"`
+	PublicTaskID   string      `json:"public_task_id"`
+	PublicConfigID string      `json:"public_config_id"`
+}
+
+func (q *Queries) GetA2APushConfigForClient(ctx context.Context, arg GetA2APushConfigForClientParams) (A2aPushConfig, error) {
+	row := q.db.QueryRow(ctx, getA2APushConfigForClient,
+		arg.EndpointID,
+		arg.ClientID,
+		arg.PublicTaskID,
+		arg.PublicConfigID,
+	)
+	var i A2aPushConfig
+	err := row.Scan(
+		&i.ID,
+		&i.BindingID,
+		&i.EndpointID,
+		&i.ClientID,
+		&i.PublicConfigID,
+		&i.CallbackUrl,
+		&i.NotificationTokenEncrypted,
+		&i.AuthScheme,
+		&i.AuthCredentialsEncrypted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const getA2ATaskBindingForClient = `-- name: GetA2ATaskBindingForClient :one
-SELECT id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at
+SELECT id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at, public_state, status_message, status_updated_at, next_event_sequence
 FROM a2a_task_binding
 WHERE endpoint_id = $1
   AND client_id = $2
@@ -608,13 +1467,64 @@ func (q *Queries) GetA2ATaskBindingForClient(ctx context.Context, arg GetA2ATask
 		&i.FailureFinalizedLocalTaskID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PublicState,
+		&i.StatusMessage,
+		&i.StatusUpdatedAt,
+		&i.NextEventSequence,
+	)
+	return i, err
+}
+
+const getA2ATaskBindingForLocalTaskV2 = `-- name: GetA2ATaskBindingForLocalTaskV2 :one
+WITH RECURSIVE ancestors AS (
+    SELECT task.id, task.parent_task_id
+    FROM agent_task_queue task
+    WHERE task.id = $1
+
+    UNION ALL
+
+    SELECT parent.id, parent.parent_task_id
+    FROM agent_task_queue parent
+    JOIN ancestors child ON parent.id = child.parent_task_id
+)
+SELECT binding.id, binding.endpoint_id, binding.client_id, binding.context_id, binding.accepted_credential_id, binding.public_task_id, binding.message_id, binding.request_fingerprint, binding.artifact_id, binding.root_local_task_id, binding.input_chat_message_id, binding.request_id, binding.cancel_requested_at, binding.failure_finalized_local_task_id, binding.created_at, binding.updated_at, binding.public_state, binding.status_message, binding.status_updated_at, binding.next_event_sequence
+FROM a2a_task_binding binding
+JOIN a2a_task_turn turn ON turn.binding_id = binding.id
+JOIN ancestors ON ancestors.id = turn.local_task_id
+LIMIT 1
+`
+
+func (q *Queries) GetA2ATaskBindingForLocalTaskV2(ctx context.Context, localTaskID pgtype.UUID) (A2aTaskBinding, error) {
+	row := q.db.QueryRow(ctx, getA2ATaskBindingForLocalTaskV2, localTaskID)
+	var i A2aTaskBinding
+	err := row.Scan(
+		&i.ID,
+		&i.EndpointID,
+		&i.ClientID,
+		&i.ContextID,
+		&i.AcceptedCredentialID,
+		&i.PublicTaskID,
+		&i.MessageID,
+		&i.RequestFingerprint,
+		&i.ArtifactID,
+		&i.RootLocalTaskID,
+		&i.InputChatMessageID,
+		&i.RequestID,
+		&i.CancelRequestedAt,
+		&i.FailureFinalizedLocalTaskID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PublicState,
+		&i.StatusMessage,
+		&i.StatusUpdatedAt,
+		&i.NextEventSequence,
 	)
 	return i, err
 }
 
 const getA2ATaskProjectionForClient = `-- name: GetA2ATaskProjectionForClient :one
 WITH RECURSIVE selected_binding AS (
-    SELECT binding.id, binding.endpoint_id, binding.client_id, binding.context_id, binding.accepted_credential_id, binding.public_task_id, binding.message_id, binding.request_fingerprint, binding.artifact_id, binding.root_local_task_id, binding.input_chat_message_id, binding.request_id, binding.cancel_requested_at, binding.failure_finalized_local_task_id, binding.created_at, binding.updated_at
+    SELECT binding.id, binding.endpoint_id, binding.client_id, binding.context_id, binding.accepted_credential_id, binding.public_task_id, binding.message_id, binding.request_fingerprint, binding.artifact_id, binding.root_local_task_id, binding.input_chat_message_id, binding.request_id, binding.cancel_requested_at, binding.failure_finalized_local_task_id, binding.created_at, binding.updated_at, binding.public_state, binding.status_message, binding.status_updated_at, binding.next_event_sequence
     FROM a2a_task_binding binding
     WHERE binding.endpoint_id = $1
       AND binding.client_id = $2
@@ -771,6 +1681,47 @@ func (q *Queries) GetA2ATaskProjectionForClient(ctx context.Context, arg GetA2AT
 		&i.BindingUpdatedAt,
 	)
 	return i, err
+}
+
+const getA2ATaskRuntimeState = `-- name: GetA2ATaskRuntimeState :one
+WITH RECURSIVE lineage AS (
+    SELECT turn.id AS turn_id, turn.control_signal, task.id, task.parent_task_id, task.status, task.created_at, 0 AS depth
+    FROM a2a_task_turn turn
+    JOIN agent_task_queue task ON task.id = turn.local_task_id
+    WHERE turn.binding_id = $1
+
+    UNION ALL
+
+    SELECT parent.turn_id, parent.control_signal, child.id, child.parent_task_id, child.status, child.created_at, parent.depth + 1
+    FROM lineage parent
+    JOIN agent_task_queue child ON child.parent_task_id = parent.id
+), ranked AS (
+    SELECT
+        lineage.turn_id, lineage.control_signal, lineage.id, lineage.parent_task_id, lineage.status, lineage.created_at, lineage.depth,
+        row_number() OVER (
+            PARTITION BY turn_id
+            ORDER BY depth DESC, created_at DESC, id DESC
+        ) AS task_rank
+    FROM lineage
+), current_tasks AS (
+    SELECT turn_id, control_signal, id, parent_task_id, status, created_at, depth, task_rank FROM ranked WHERE task_rank = 1
+)
+SELECT CASE
+    WHEN bool_or(status IN ('dispatched', 'running', 'waiting_local_directory')) THEN 'TASK_STATE_WORKING'
+    WHEN bool_or(status IN ('queued', 'deferred')) THEN 'TASK_STATE_SUBMITTED'
+    WHEN bool_or(status = 'failed' AND control_signal IS NULL) THEN 'TASK_STATE_FAILED'
+    WHEN bool_or(status = 'cancelled' AND control_signal IS NULL) THEN 'TASK_STATE_CANCELED'
+    WHEN bool_and(status = 'completed' OR control_signal IS NOT NULL) THEN 'TASK_STATE_COMPLETED'
+    ELSE 'TASK_STATE_REJECTED'
+END::text AS public_state
+FROM current_tasks
+`
+
+func (q *Queries) GetA2ATaskRuntimeState(ctx context.Context, bindingID pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getA2ATaskRuntimeState, bindingID)
+	var public_state string
+	err := row.Scan(&public_state)
+	return public_state, err
 }
 
 const getAgentA2ACredentialByTokenHash = `-- name: GetAgentA2ACredentialByTokenHash :one
@@ -1003,34 +1954,47 @@ WHERE endpoint.public_agent_id = $1
   AND (endpoint.enabled = TRUE OR $2::boolean)
   AND a.archived_at IS NULL
   AND a.runtime_id IS NOT NULL
-  -- Runtime template aliases, manifest versions and capabilities intentionally
-  -- do not participate. Keep only the provider-family boundary that has a
-  -- verified native or managed-prerelease A2A execution path.
+  -- Managed cloud runtimes are admitted only when their immutable image
+  -- metadata advertises the v2 isolation contract. Local Claude implements
+  -- the same contract natively in the daemon.
   AND (
     (runtime.runtime_mode = 'local' AND runtime.provider = 'claude')
     OR (
       runtime.runtime_mode = 'cloud'
       AND runtime.provider = 'opencode'
+      AND runtime.metadata->'capabilities' ? 'a2a-invocation-v2'
       AND (
         btrim(runtime.metadata->>'kind') = 'fc-e2b'
         OR (
           btrim(runtime.metadata->>'kind') = 'cloud-sandbox'
-          AND lower(btrim(runtime.metadata->>'sandbox_backend')) = 'aliyun_fc'
+          AND lower(btrim(runtime.metadata->>'sandbox_backend')) IN ('aliyun_fc', 'asb')
           AND COALESCE(
             NULLIF(lower(btrim(runtime.metadata->>'provider')), ''),
             runtime.provider
           ) = 'opencode'
-          AND (
-            (
-              lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
-              AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
+          AND CASE lower(btrim(runtime.metadata->>'sandbox_backend'))
+            WHEN 'aliyun_fc' THEN (
+              (
+                lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
+                AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
+              )
+              OR (
+                btrim(COALESCE(runtime.metadata->>'artifact_kind', '')) = ''
+                AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) = ''
+                AND btrim(COALESCE(runtime.metadata->>'template_id', '')) <> ''
+              )
             )
-            OR (
-              btrim(COALESCE(runtime.metadata->>'artifact_kind', '')) = ''
-              AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) = ''
-              AND btrim(COALESCE(runtime.metadata->>'template_id', '')) <> ''
-            )
-          )
+            WHEN 'asb' THEN
+              lower(btrim(runtime.metadata->>'artifact_kind')) = 'oci_image'
+              AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) ~ '@sha256:[0-9a-f]{64}$'
+              AND (
+                btrim(COALESCE(runtime.metadata->>'artifact_digest', '')) = ''
+                OR btrim(runtime.metadata->>'artifact_digest') = substring(
+                  btrim(runtime.metadata->>'artifact_ref') FROM '(sha256:[0-9a-f]{64})$'
+                )
+              )
+            ELSE FALSE
+          END
         )
       )
     )
@@ -1102,9 +2066,391 @@ func (q *Queries) IsA2ALocalTask(ctx context.Context, localTaskID pgtype.UUID) (
 	return exists, err
 }
 
+const listA2AActiveLocalTasksForBinding = `-- name: ListA2AActiveLocalTasksForBinding :many
+WITH RECURSIVE lineage AS (
+    SELECT turn.id AS turn_id, turn.control_signal, task.id, task.parent_task_id, task.status, task.created_at, 0 AS depth
+    FROM a2a_task_turn turn
+    JOIN agent_task_queue task ON task.id = turn.local_task_id
+    WHERE turn.binding_id = $1
+
+    UNION ALL
+
+    SELECT parent.turn_id, parent.control_signal, child.id, child.parent_task_id, child.status, child.created_at, parent.depth + 1
+    FROM lineage parent
+    JOIN agent_task_queue child ON child.parent_task_id = parent.id
+), ranked AS (
+    SELECT
+        lineage.turn_id, lineage.control_signal, lineage.id, lineage.parent_task_id, lineage.status, lineage.created_at, lineage.depth,
+        row_number() OVER (
+            PARTITION BY turn_id
+            ORDER BY depth DESC, created_at DESC, id DESC
+        ) AS task_rank
+    FROM lineage
+)
+SELECT task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.runtime_launch_lease_token, task.runtime_launch_lease_expires_at
+FROM ranked current_task
+JOIN agent_task_queue task ON task.id = current_task.id
+WHERE current_task.task_rank = 1
+  AND current_task.status NOT IN ('completed', 'failed', 'cancelled')
+ORDER BY task.created_at, task.id
+`
+
+func (q *Queries) ListA2AActiveLocalTasksForBinding(ctx context.Context, bindingID pgtype.UUID) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, listA2AActiveLocalTasksForBinding, bindingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.RuntimeLaunchLeaseToken,
+			&i.RuntimeLaunchLeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listA2AArtifactsForBinding = `-- name: ListA2AArtifactsForBinding :many
+SELECT id, binding_id, public_artifact_id, name, description, extensions, metadata, parts, append, last_chunk, created_at, updated_at
+FROM a2a_artifact
+WHERE binding_id = $1
+ORDER BY created_at, id
+`
+
+func (q *Queries) ListA2AArtifactsForBinding(ctx context.Context, bindingID pgtype.UUID) ([]A2aArtifact, error) {
+	rows, err := q.db.Query(ctx, listA2AArtifactsForBinding, bindingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []A2aArtifact{}
+	for rows.Next() {
+		var i A2aArtifact
+		if err := rows.Scan(
+			&i.ID,
+			&i.BindingID,
+			&i.PublicArtifactID,
+			&i.Name,
+			&i.Description,
+			&i.Extensions,
+			&i.Metadata,
+			&i.Parts,
+			&i.Append,
+			&i.LastChunk,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listA2APublicTasksForClient = `-- name: ListA2APublicTasksForClient :many
+WITH filtered AS (
+    SELECT
+        binding.id, binding.endpoint_id, binding.client_id, binding.context_id, binding.accepted_credential_id, binding.public_task_id, binding.message_id, binding.request_fingerprint, binding.artifact_id, binding.root_local_task_id, binding.input_chat_message_id, binding.request_id, binding.cancel_requested_at, binding.failure_finalized_local_task_id, binding.created_at, binding.updated_at, binding.public_state, binding.status_message, binding.status_updated_at, binding.next_event_sequence,
+        context.public_context_id,
+        context.chat_session_id
+    FROM a2a_task_binding binding
+    JOIN a2a_context context ON context.id = binding.context_id
+    WHERE binding.endpoint_id = $1
+      AND binding.client_id = $2
+      AND (
+          $3::text IS NULL
+          OR context.public_context_id = $3::text
+      )
+      AND (
+          $4::text IS NULL
+          OR binding.public_state = $4::text
+      )
+      AND (
+          $5::timestamptz IS NULL
+          OR binding.status_updated_at > $5::timestamptz
+      )
+), counted AS (
+    SELECT filtered.id, filtered.endpoint_id, filtered.client_id, filtered.context_id, filtered.accepted_credential_id, filtered.public_task_id, filtered.message_id, filtered.request_fingerprint, filtered.artifact_id, filtered.root_local_task_id, filtered.input_chat_message_id, filtered.request_id, filtered.cancel_requested_at, filtered.failure_finalized_local_task_id, filtered.created_at, filtered.updated_at, filtered.public_state, filtered.status_message, filtered.status_updated_at, filtered.next_event_sequence, filtered.public_context_id, filtered.chat_session_id, count(*) OVER () AS total_size
+    FROM filtered
+), paged AS (
+    SELECT id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at, public_state, status_message, status_updated_at, next_event_sequence, public_context_id, chat_session_id, total_size
+    FROM counted
+    WHERE (
+        $6::timestamptz IS NULL
+        OR (created_at, public_task_id) < (
+            $6::timestamptz,
+            $7::text
+        )
+    )
+    ORDER BY created_at DESC, public_task_id DESC
+    LIMIT $8
+)
+SELECT id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at, public_state, status_message, status_updated_at, next_event_sequence, public_context_id, chat_session_id, total_size FROM paged
+ORDER BY created_at DESC, public_task_id DESC
+`
+
+type ListA2APublicTasksForClientParams struct {
+	EndpointID           pgtype.UUID        `json:"endpoint_id"`
+	ClientID             pgtype.UUID        `json:"client_id"`
+	PublicContextID      pgtype.Text        `json:"public_context_id"`
+	PublicState          pgtype.Text        `json:"public_state"`
+	StatusTimestampAfter pgtype.Timestamptz `json:"status_timestamp_after"`
+	BeforeCreatedAt      pgtype.Timestamptz `json:"before_created_at"`
+	BeforePublicTaskID   pgtype.Text        `json:"before_public_task_id"`
+	PageLimit            int32              `json:"page_limit"`
+}
+
+type ListA2APublicTasksForClientRow struct {
+	ID                          pgtype.UUID        `json:"id"`
+	EndpointID                  pgtype.UUID        `json:"endpoint_id"`
+	ClientID                    pgtype.UUID        `json:"client_id"`
+	ContextID                   pgtype.UUID        `json:"context_id"`
+	AcceptedCredentialID        pgtype.UUID        `json:"accepted_credential_id"`
+	PublicTaskID                string             `json:"public_task_id"`
+	MessageID                   string             `json:"message_id"`
+	RequestFingerprint          string             `json:"request_fingerprint"`
+	ArtifactID                  string             `json:"artifact_id"`
+	RootLocalTaskID             pgtype.UUID        `json:"root_local_task_id"`
+	InputChatMessageID          pgtype.UUID        `json:"input_chat_message_id"`
+	RequestID                   pgtype.Text        `json:"request_id"`
+	CancelRequestedAt           pgtype.Timestamptz `json:"cancel_requested_at"`
+	FailureFinalizedLocalTaskID pgtype.UUID        `json:"failure_finalized_local_task_id"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	PublicState                 string             `json:"public_state"`
+	StatusMessage               []byte             `json:"status_message"`
+	StatusUpdatedAt             pgtype.Timestamptz `json:"status_updated_at"`
+	NextEventSequence           int64              `json:"next_event_sequence"`
+	PublicContextID             string             `json:"public_context_id"`
+	ChatSessionID               pgtype.UUID        `json:"chat_session_id"`
+	TotalSize                   int64              `json:"total_size"`
+}
+
+func (q *Queries) ListA2APublicTasksForClient(ctx context.Context, arg ListA2APublicTasksForClientParams) ([]ListA2APublicTasksForClientRow, error) {
+	rows, err := q.db.Query(ctx, listA2APublicTasksForClient,
+		arg.EndpointID,
+		arg.ClientID,
+		arg.PublicContextID,
+		arg.PublicState,
+		arg.StatusTimestampAfter,
+		arg.BeforeCreatedAt,
+		arg.BeforePublicTaskID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListA2APublicTasksForClientRow{}
+	for rows.Next() {
+		var i ListA2APublicTasksForClientRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EndpointID,
+			&i.ClientID,
+			&i.ContextID,
+			&i.AcceptedCredentialID,
+			&i.PublicTaskID,
+			&i.MessageID,
+			&i.RequestFingerprint,
+			&i.ArtifactID,
+			&i.RootLocalTaskID,
+			&i.InputChatMessageID,
+			&i.RequestID,
+			&i.CancelRequestedAt,
+			&i.FailureFinalizedLocalTaskID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PublicState,
+			&i.StatusMessage,
+			&i.StatusUpdatedAt,
+			&i.NextEventSequence,
+			&i.PublicContextID,
+			&i.ChatSessionID,
+			&i.TotalSize,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listA2APushConfigsForClient = `-- name: ListA2APushConfigsForClient :many
+SELECT config.id, config.binding_id, config.endpoint_id, config.client_id, config.public_config_id, config.callback_url, config.notification_token_encrypted, config.auth_scheme, config.auth_credentials_encrypted, config.created_at, config.updated_at
+FROM a2a_push_config config
+JOIN a2a_task_binding binding ON binding.id = config.binding_id
+WHERE binding.endpoint_id = $1
+  AND binding.client_id = $2
+  AND binding.public_task_id = $3
+  AND (
+      $4::timestamptz IS NULL
+      OR (config.created_at, config.public_config_id) < (
+          $4::timestamptz,
+          $5::text
+      )
+  )
+ORDER BY config.created_at DESC, config.public_config_id DESC
+LIMIT $6
+`
+
+type ListA2APushConfigsForClientParams struct {
+	EndpointID           pgtype.UUID        `json:"endpoint_id"`
+	ClientID             pgtype.UUID        `json:"client_id"`
+	PublicTaskID         string             `json:"public_task_id"`
+	BeforeCreatedAt      pgtype.Timestamptz `json:"before_created_at"`
+	BeforePublicConfigID pgtype.Text        `json:"before_public_config_id"`
+	PageLimit            int32              `json:"page_limit"`
+}
+
+func (q *Queries) ListA2APushConfigsForClient(ctx context.Context, arg ListA2APushConfigsForClientParams) ([]A2aPushConfig, error) {
+	rows, err := q.db.Query(ctx, listA2APushConfigsForClient,
+		arg.EndpointID,
+		arg.ClientID,
+		arg.PublicTaskID,
+		arg.BeforeCreatedAt,
+		arg.BeforePublicConfigID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []A2aPushConfig{}
+	for rows.Next() {
+		var i A2aPushConfig
+		if err := rows.Scan(
+			&i.ID,
+			&i.BindingID,
+			&i.EndpointID,
+			&i.ClientID,
+			&i.PublicConfigID,
+			&i.CallbackUrl,
+			&i.NotificationTokenEncrypted,
+			&i.AuthScheme,
+			&i.AuthCredentialsEncrypted,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listA2ATaskEventsAfter = `-- name: ListA2ATaskEventsAfter :many
+SELECT event.id, event.binding_id, event.sequence, event.event_type, event.dedupe_key, event.payload, event.created_at
+FROM a2a_task_event event
+JOIN a2a_task_binding binding ON binding.id = event.binding_id
+WHERE binding.endpoint_id = $1
+  AND binding.client_id = $2
+  AND binding.public_task_id = $3
+  AND event.sequence > $4
+ORDER BY event.sequence
+LIMIT $5
+`
+
+type ListA2ATaskEventsAfterParams struct {
+	EndpointID    pgtype.UUID `json:"endpoint_id"`
+	ClientID      pgtype.UUID `json:"client_id"`
+	PublicTaskID  string      `json:"public_task_id"`
+	AfterSequence int64       `json:"after_sequence"`
+	EventLimit    int32       `json:"event_limit"`
+}
+
+func (q *Queries) ListA2ATaskEventsAfter(ctx context.Context, arg ListA2ATaskEventsAfterParams) ([]A2aTaskEvent, error) {
+	rows, err := q.db.Query(ctx, listA2ATaskEventsAfter,
+		arg.EndpointID,
+		arg.ClientID,
+		arg.PublicTaskID,
+		arg.AfterSequence,
+		arg.EventLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []A2aTaskEvent{}
+	for rows.Next() {
+		var i A2aTaskEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.BindingID,
+			&i.Sequence,
+			&i.EventType,
+			&i.DedupeKey,
+			&i.Payload,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listA2ATaskProjectionsForClient = `-- name: ListA2ATaskProjectionsForClient :many
 WITH RECURSIVE selected_bindings AS (
-    SELECT binding.id, binding.endpoint_id, binding.client_id, binding.context_id, binding.accepted_credential_id, binding.public_task_id, binding.message_id, binding.request_fingerprint, binding.artifact_id, binding.root_local_task_id, binding.input_chat_message_id, binding.request_id, binding.cancel_requested_at, binding.failure_finalized_local_task_id, binding.created_at, binding.updated_at
+    SELECT binding.id, binding.endpoint_id, binding.client_id, binding.context_id, binding.accepted_credential_id, binding.public_task_id, binding.message_id, binding.request_fingerprint, binding.artifact_id, binding.root_local_task_id, binding.input_chat_message_id, binding.request_id, binding.cancel_requested_at, binding.failure_finalized_local_task_id, binding.created_at, binding.updated_at, binding.public_state, binding.status_message, binding.status_updated_at, binding.next_event_sequence
     FROM a2a_task_binding binding
     WHERE binding.endpoint_id = $1
       AND binding.client_id = $2
@@ -1287,6 +2633,143 @@ func (q *Queries) ListA2ATaskProjectionsForClient(ctx context.Context, arg ListA
 			&i.FailureFinalizedLocalTaskID,
 			&i.BindingCreatedAt,
 			&i.BindingUpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listA2ATaskTurnsWithOutcome = `-- name: ListA2ATaskTurnsWithOutcome :many
+WITH RECURSIVE selected_turns AS (
+    SELECT turn.id, turn.binding_id, turn.endpoint_id, turn.client_id, turn.accepted_credential_id, turn.sequence, turn.message_id, turn.request_fingerprint, turn.local_task_id, turn.input_chat_message_id, turn.input_parts, turn.message_extensions, turn.message_metadata, turn.reference_task_ids, turn.accepted_output_modes, turn.control_signal, turn.control_payload, turn.created_at, turn.updated_at, turn.completed_at
+    FROM a2a_task_turn turn
+    WHERE turn.binding_id = $1
+), lineage AS (
+    SELECT
+        turn.id AS turn_id,
+        task.id,
+        task.parent_task_id,
+        task.status,
+        task.created_at,
+        task.completed_at,
+        0 AS depth
+    FROM selected_turns turn
+    JOIN agent_task_queue task ON task.id = turn.local_task_id
+
+    UNION ALL
+
+    SELECT
+        parent.turn_id,
+        child.id,
+        child.parent_task_id,
+        child.status,
+        child.created_at,
+        child.completed_at,
+        parent.depth + 1
+    FROM lineage parent
+    JOIN agent_task_queue child ON child.parent_task_id = parent.id
+), ranked AS (
+    SELECT
+        lineage.turn_id, lineage.id, lineage.parent_task_id, lineage.status, lineage.created_at, lineage.completed_at, lineage.depth,
+        row_number() OVER (
+            PARTITION BY lineage.turn_id
+            ORDER BY lineage.depth DESC, lineage.created_at DESC, lineage.id DESC
+        ) AS task_rank
+    FROM lineage
+)
+SELECT
+    turn.id, turn.binding_id, turn.endpoint_id, turn.client_id, turn.accepted_credential_id, turn.sequence, turn.message_id, turn.request_fingerprint, turn.local_task_id, turn.input_chat_message_id, turn.input_parts, turn.message_extensions, turn.message_metadata, turn.reference_task_ids, turn.accepted_output_modes, turn.control_signal, turn.control_payload, turn.created_at, turn.updated_at, turn.completed_at,
+    current_task.id AS current_local_task_id,
+    current_task.status AS local_task_status,
+    current_task.completed_at AS local_task_completed_at,
+    COALESCE(outcome.content, '')::text AS assistant_result_text,
+    COALESCE(outcome.message_kind, '')::text AS assistant_message_kind,
+    outcome.created_at AS assistant_created_at
+FROM selected_turns turn
+JOIN ranked current_task
+  ON current_task.turn_id = turn.id
+ AND current_task.task_rank = 1
+LEFT JOIN LATERAL (
+    SELECT message.content, message.message_kind, message.created_at
+    FROM chat_message message
+    WHERE message.task_id = current_task.id
+      AND message.role = 'assistant'
+    ORDER BY message.created_at DESC, message.id DESC
+    LIMIT 1
+) outcome ON TRUE
+ORDER BY turn.sequence
+`
+
+type ListA2ATaskTurnsWithOutcomeRow struct {
+	ID                   pgtype.UUID        `json:"id"`
+	BindingID            pgtype.UUID        `json:"binding_id"`
+	EndpointID           pgtype.UUID        `json:"endpoint_id"`
+	ClientID             pgtype.UUID        `json:"client_id"`
+	AcceptedCredentialID pgtype.UUID        `json:"accepted_credential_id"`
+	Sequence             int32              `json:"sequence"`
+	MessageID            string             `json:"message_id"`
+	RequestFingerprint   string             `json:"request_fingerprint"`
+	LocalTaskID          pgtype.UUID        `json:"local_task_id"`
+	InputChatMessageID   pgtype.UUID        `json:"input_chat_message_id"`
+	InputParts           []byte             `json:"input_parts"`
+	MessageExtensions    []string           `json:"message_extensions"`
+	MessageMetadata      []byte             `json:"message_metadata"`
+	ReferenceTaskIds     []string           `json:"reference_task_ids"`
+	AcceptedOutputModes  []string           `json:"accepted_output_modes"`
+	ControlSignal        pgtype.Text        `json:"control_signal"`
+	ControlPayload       []byte             `json:"control_payload"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
+	CurrentLocalTaskID   pgtype.UUID        `json:"current_local_task_id"`
+	LocalTaskStatus      string             `json:"local_task_status"`
+	LocalTaskCompletedAt pgtype.Timestamptz `json:"local_task_completed_at"`
+	AssistantResultText  string             `json:"assistant_result_text"`
+	AssistantMessageKind string             `json:"assistant_message_kind"`
+	AssistantCreatedAt   pgtype.Timestamptz `json:"assistant_created_at"`
+}
+
+func (q *Queries) ListA2ATaskTurnsWithOutcome(ctx context.Context, bindingID pgtype.UUID) ([]ListA2ATaskTurnsWithOutcomeRow, error) {
+	rows, err := q.db.Query(ctx, listA2ATaskTurnsWithOutcome, bindingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListA2ATaskTurnsWithOutcomeRow{}
+	for rows.Next() {
+		var i ListA2ATaskTurnsWithOutcomeRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BindingID,
+			&i.EndpointID,
+			&i.ClientID,
+			&i.AcceptedCredentialID,
+			&i.Sequence,
+			&i.MessageID,
+			&i.RequestFingerprint,
+			&i.LocalTaskID,
+			&i.InputChatMessageID,
+			&i.InputParts,
+			&i.MessageExtensions,
+			&i.MessageMetadata,
+			&i.ReferenceTaskIds,
+			&i.AcceptedOutputModes,
+			&i.ControlSignal,
+			&i.ControlPayload,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CompletedAt,
+			&i.CurrentLocalTaskID,
+			&i.LocalTaskStatus,
+			&i.LocalTaskCompletedAt,
+			&i.AssistantResultText,
+			&i.AssistantMessageKind,
+			&i.AssistantCreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1536,7 +3019,7 @@ func (q *Queries) LockA2ACredentialsForMemberRevocation(ctx context.Context, cli
 }
 
 const lockA2ATaskBindingForClient = `-- name: LockA2ATaskBindingForClient :one
-SELECT id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at
+SELECT id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at, public_state, status_message, status_updated_at, next_event_sequence
 FROM a2a_task_binding
 WHERE endpoint_id = $1
   AND client_id = $2
@@ -1570,6 +3053,10 @@ func (q *Queries) LockA2ATaskBindingForClient(ctx context.Context, arg LockA2ATa
 		&i.FailureFinalizedLocalTaskID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PublicState,
+		&i.StatusMessage,
+		&i.StatusUpdatedAt,
+		&i.NextEventSequence,
 	)
 	return i, err
 }
@@ -1586,7 +3073,7 @@ WITH RECURSIVE ancestors AS (
     FROM agent_task_queue parent
     JOIN ancestors child ON parent.id = child.parent_task_id
 )
-SELECT binding.id, binding.endpoint_id, binding.client_id, binding.context_id, binding.accepted_credential_id, binding.public_task_id, binding.message_id, binding.request_fingerprint, binding.artifact_id, binding.root_local_task_id, binding.input_chat_message_id, binding.request_id, binding.cancel_requested_at, binding.failure_finalized_local_task_id, binding.created_at, binding.updated_at
+SELECT binding.id, binding.endpoint_id, binding.client_id, binding.context_id, binding.accepted_credential_id, binding.public_task_id, binding.message_id, binding.request_fingerprint, binding.artifact_id, binding.root_local_task_id, binding.input_chat_message_id, binding.request_id, binding.cancel_requested_at, binding.failure_finalized_local_task_id, binding.created_at, binding.updated_at, binding.public_state, binding.status_message, binding.status_updated_at, binding.next_event_sequence
 FROM a2a_task_binding binding
 JOIN ancestors ON ancestors.id = binding.root_local_task_id
 FOR UPDATE OF binding
@@ -1612,6 +3099,10 @@ func (q *Queries) LockA2ATaskBindingForLocalTask(ctx context.Context, localTaskI
 		&i.FailureFinalizedLocalTaskID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PublicState,
+		&i.StatusMessage,
+		&i.StatusUpdatedAt,
+		&i.NextEventSequence,
 	)
 	return i, err
 }
@@ -1665,32 +3156,45 @@ WITH locked_agent AS MATERIALIZED (
       AND a.archived_at IS NULL
       AND a.runtime_id IS NOT NULL
       -- Keep aligned with isAgentA2ASupportedRuntimeFamily and the published
-      -- Card query. Version/capability metadata selects claim mode only.
+      -- Card query. Managed images must advertise the v2 isolation contract.
       AND (
         (runtime.runtime_mode = 'local' AND runtime.provider = 'claude')
         OR (
           runtime.runtime_mode = 'cloud'
           AND runtime.provider = 'opencode'
+          AND runtime.metadata->'capabilities' ? 'a2a-invocation-v2'
           AND (
             btrim(runtime.metadata->>'kind') = 'fc-e2b'
             OR (
               btrim(runtime.metadata->>'kind') = 'cloud-sandbox'
-              AND lower(btrim(runtime.metadata->>'sandbox_backend')) = 'aliyun_fc'
+              AND lower(btrim(runtime.metadata->>'sandbox_backend')) IN ('aliyun_fc', 'asb')
               AND COALESCE(
                 NULLIF(lower(btrim(runtime.metadata->>'provider')), ''),
                 runtime.provider
               ) = 'opencode'
-              AND (
-                (
-                  lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
-                  AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
+              AND CASE lower(btrim(runtime.metadata->>'sandbox_backend'))
+                WHEN 'aliyun_fc' THEN (
+                  (
+                    lower(btrim(runtime.metadata->>'artifact_kind')) = 'e2b_template'
+                    AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) <> ''
+                  )
+                  OR (
+                    btrim(COALESCE(runtime.metadata->>'artifact_kind', '')) = ''
+                    AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) = ''
+                    AND btrim(COALESCE(runtime.metadata->>'template_id', '')) <> ''
+                  )
                 )
-                OR (
-                  btrim(COALESCE(runtime.metadata->>'artifact_kind', '')) = ''
-                  AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) = ''
-                  AND btrim(COALESCE(runtime.metadata->>'template_id', '')) <> ''
-                )
-              )
+                WHEN 'asb' THEN
+                  lower(btrim(runtime.metadata->>'artifact_kind')) = 'oci_image'
+                  AND btrim(COALESCE(runtime.metadata->>'artifact_ref', '')) ~ '@sha256:[0-9a-f]{64}$'
+                  AND (
+                    btrim(COALESCE(runtime.metadata->>'artifact_digest', '')) = ''
+                    OR btrim(runtime.metadata->>'artifact_digest') = substring(
+                      btrim(runtime.metadata->>'artifact_ref') FROM '(sha256:[0-9a-f]{64})$'
+                    )
+                  )
+                ELSE FALSE
+              END
             )
           )
         )
@@ -1844,13 +3348,158 @@ func (q *Queries) LockAgentsForMemberA2ARevocation(ctx context.Context, arg Lock
 	return items, nil
 }
 
+const lockNextDeferredA2ATurnForChatSession = `-- name: LockNextDeferredA2ATurnForChatSession :one
+WITH context_lock AS MATERIALIZED (
+    SELECT pg_try_advisory_xact_lock(
+        hashtextextended($1::uuid::text, 479823117)
+    ) AS acquired
+)
+SELECT
+    task.id AS local_task_id,
+    task.context AS task_context,
+    turn.sequence AS turn_sequence,
+    turn.control_signal,
+    binding.id AS binding_id,
+    binding.public_task_id,
+    binding.public_state,
+    context.public_context_id
+FROM agent_task_queue task
+JOIN a2a_task_turn turn ON turn.local_task_id = task.id
+JOIN a2a_task_binding binding ON binding.id = turn.binding_id
+JOIN a2a_context context ON context.id = binding.context_id
+CROSS JOIN context_lock
+WHERE context_lock.acquired
+  AND task.chat_session_id = $1
+  AND task.status = 'deferred'
+  AND binding.public_state NOT IN (
+      'TASK_STATE_CANCELED',
+      'TASK_STATE_COMPLETED',
+      'TASK_STATE_FAILED',
+      'TASK_STATE_REJECTED'
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM agent_task_queue occupied
+      WHERE occupied.chat_session_id = task.chat_session_id
+        AND occupied.agent_id = task.agent_id
+        AND occupied.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  )
+ORDER BY task.created_at, task.id
+FOR UPDATE OF task, turn, binding SKIP LOCKED
+LIMIT 1
+`
+
+type LockNextDeferredA2ATurnForChatSessionRow struct {
+	LocalTaskID     pgtype.UUID `json:"local_task_id"`
+	TaskContext     []byte      `json:"task_context"`
+	TurnSequence    int32       `json:"turn_sequence"`
+	ControlSignal   pgtype.Text `json:"control_signal"`
+	BindingID       pgtype.UUID `json:"binding_id"`
+	PublicTaskID    string      `json:"public_task_id"`
+	PublicState     string      `json:"public_state"`
+	PublicContextID string      `json:"public_context_id"`
+}
+
+// Locks the FIFO head before promotion so the service can turn a ContextToken
+// that expired while queued into AUTH_REQUIRED instead of dispatching it.
+func (q *Queries) LockNextDeferredA2ATurnForChatSession(ctx context.Context, chatSessionID pgtype.UUID) (LockNextDeferredA2ATurnForChatSessionRow, error) {
+	row := q.db.QueryRow(ctx, lockNextDeferredA2ATurnForChatSession, chatSessionID)
+	var i LockNextDeferredA2ATurnForChatSessionRow
+	err := row.Scan(
+		&i.LocalTaskID,
+		&i.TaskContext,
+		&i.TurnSequence,
+		&i.ControlSignal,
+		&i.BindingID,
+		&i.PublicTaskID,
+		&i.PublicState,
+		&i.PublicContextID,
+	)
+	return i, err
+}
+
+const lockRunningA2ALocalTask = `-- name: LockRunningA2ALocalTask :one
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, runtime_launch_lease_token, runtime_launch_lease_expires_at
+FROM agent_task_queue
+WHERE id = $1
+  AND status IN ('dispatched', 'running')
+FOR UPDATE
+`
+
+// Serializes task-control signals and artifact publication with the daemon's
+// terminal status update. Whichever transaction locks the local task first is
+// the only operation allowed to mutate the public A2A turn.
+func (q *Queries) LockRunningA2ALocalTask(ctx context.Context, localTaskID pgtype.UUID) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, lockRunningA2ALocalTask, localTaskID)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.RuntimeLaunchLeaseToken,
+		&i.RuntimeLaunchLeaseExpiresAt,
+	)
+	return i, err
+}
+
+const markA2APushDeliveryDelivered = `-- name: MarkA2APushDeliveryDelivered :exec
+UPDATE a2a_push_delivery
+SET status = 'delivered',
+    lease_expires_at = NULL,
+    last_error = NULL,
+    delivered_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND status = 'delivering'
+`
+
+func (q *Queries) MarkA2APushDeliveryDelivered(ctx context.Context, deliveryID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markA2APushDeliveryDelivered, deliveryID)
+	return err
+}
+
 const markA2ATaskFailureFinalized = `-- name: MarkA2ATaskFailureFinalized :one
 UPDATE a2a_task_binding
 SET failure_finalized_local_task_id = $1,
     updated_at = now()
 WHERE id = $2
   AND cancel_requested_at IS NULL
-RETURNING id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at
+RETURNING id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at, public_state, status_message, status_updated_at, next_event_sequence
 `
 
 type MarkA2ATaskFailureFinalizedParams struct {
@@ -1878,8 +3527,219 @@ func (q *Queries) MarkA2ATaskFailureFinalized(ctx context.Context, arg MarkA2ATa
 		&i.FailureFinalizedLocalTaskID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PublicState,
+		&i.StatusMessage,
+		&i.StatusUpdatedAt,
+		&i.NextEventSequence,
 	)
 	return i, err
+}
+
+const promoteNextRunnableA2ATaskForChatSession = `-- name: PromoteNextRunnableA2ATaskForChatSession :one
+WITH context_lock AS MATERIALIZED (
+    SELECT pg_try_advisory_xact_lock(
+        hashtextextended($1::uuid::text, 479823117)
+    ) AS acquired
+), candidate AS MATERIALIZED (
+    SELECT task.id, turn.control_signal
+    FROM agent_task_queue task
+    JOIN a2a_task_turn turn ON turn.local_task_id = task.id
+    JOIN a2a_task_binding binding ON binding.id = turn.binding_id
+    CROSS JOIN context_lock
+    WHERE context_lock.acquired
+      AND task.chat_session_id = $1
+      AND task.status = 'deferred'
+      AND binding.public_state IN ('TASK_STATE_SUBMITTED', 'TASK_STATE_WORKING')
+      AND NOT EXISTS (
+          SELECT 1
+          FROM agent_task_queue occupied
+          WHERE occupied.chat_session_id = task.chat_session_id
+            AND occupied.agent_id = task.agent_id
+            AND occupied.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+      )
+      AND CASE
+          WHEN task.context->>'agent_identity_context_token_source' = 'external' THEN
+              CASE
+                  WHEN jsonb_typeof(task.context->'agent_identity_context_token_expires_at') = 'number' THEN
+                      (task.context->>'agent_identity_context_token_expires_at')::numeric
+                          > extract(epoch FROM now() + interval '60 seconds') * 1000
+                  ELSE FALSE
+              END
+          ELSE TRUE
+      END
+    ORDER BY task.created_at, task.id
+    FOR UPDATE OF task SKIP LOCKED
+    LIMIT 1
+)
+UPDATE agent_task_queue task
+SET status = 'queued'
+FROM candidate
+WHERE task.id = candidate.id
+  AND task.status = 'deferred'
+  AND candidate.control_signal IS NULL
+RETURNING task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.runtime_launch_lease_token, task.runtime_launch_lease_expires_at
+`
+
+// A2A turns sharing one Context also share one Chat Session and must execute
+// in arrival order. A transaction-scoped advisory lock makes concurrent API
+// replicas single-winner for this Context without blocking an unrelated one.
+// The try-lock loser returns no row and normal runtime polling retries later.
+func (q *Queries) PromoteNextRunnableA2ATaskForChatSession(ctx context.Context, chatSessionID pgtype.UUID) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, promoteNextRunnableA2ATaskForChatSession, chatSessionID)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.RuntimeLaunchLeaseToken,
+		&i.RuntimeLaunchLeaseExpiresAt,
+	)
+	return i, err
+}
+
+const resumeDeferredA2AAuthTurns = `-- name: ResumeDeferredA2AAuthTurns :many
+UPDATE agent_task_queue task
+SET context = $1::jsonb,
+    fire_at = NULL
+FROM a2a_task_turn turn
+WHERE turn.binding_id = $2
+  AND turn.local_task_id = task.id
+  AND task.status = 'deferred'
+RETURNING task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.runtime_launch_lease_token, task.runtime_launch_lease_expires_at
+`
+
+type ResumeDeferredA2AAuthTurnsParams struct {
+	TaskContext []byte      `json:"task_context"`
+	BindingID   pgtype.UUID `json:"binding_id"`
+}
+
+// A fresh ContextToken resumes the whole pending FIFO, including input that
+// arrived while the Agent was still working before it requested auth. Keep all
+// rows deferred; the normal Context scheduler still releases exactly one at a
+// time. A turn that requested auth from inside the Agent has already run and is
+// cancelled, so it is not restarted.
+func (q *Queries) ResumeDeferredA2AAuthTurns(ctx context.Context, arg ResumeDeferredA2AAuthTurnsParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, resumeDeferredA2AAuthTurns, arg.TaskContext, arg.BindingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.RuntimeLaunchLeaseToken,
+			&i.RuntimeLaunchLeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const retryA2APushDelivery = `-- name: RetryA2APushDelivery :exec
+UPDATE a2a_push_delivery
+SET status = CASE WHEN $1::boolean THEN 'dead_letter' ELSE 'pending' END,
+    next_attempt_at = $2,
+    lease_expires_at = NULL,
+    last_error = left($3, 2000),
+    updated_at = now()
+WHERE id = $4
+  AND status = 'delivering'
+`
+
+type RetryA2APushDeliveryParams struct {
+	DeadLetter    bool               `json:"dead_letter"`
+	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
+	LastError     string             `json:"last_error"`
+	DeliveryID    pgtype.UUID        `json:"delivery_id"`
+}
+
+func (q *Queries) RetryA2APushDelivery(ctx context.Context, arg RetryA2APushDeliveryParams) error {
+	_, err := q.db.Exec(ctx, retryA2APushDelivery,
+		arg.DeadLetter,
+		arg.NextAttemptAt,
+		arg.LastError,
+		arg.DeliveryID,
+	)
+	return err
 }
 
 const revokeA2AClientsForMemberRevocation = `-- name: RevokeA2AClientsForMemberRevocation :many
@@ -2135,7 +3995,7 @@ UPDATE a2a_task_binding
 SET cancel_requested_at = COALESCE(cancel_requested_at, now()),
     updated_at = now()
 WHERE id = $1
-RETURNING id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at
+RETURNING id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at, public_state, status_message, status_updated_at, next_event_sequence
 `
 
 func (q *Queries) SetA2ATaskCancelRequested(ctx context.Context, bindingID pgtype.UUID) (A2aTaskBinding, error) {
@@ -2158,6 +4018,72 @@ func (q *Queries) SetA2ATaskCancelRequested(ctx context.Context, bindingID pgtyp
 		&i.FailureFinalizedLocalTaskID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PublicState,
+		&i.StatusMessage,
+		&i.StatusUpdatedAt,
+		&i.NextEventSequence,
+	)
+	return i, err
+}
+
+const setA2ATurnControlSignal = `-- name: SetA2ATurnControlSignal :one
+WITH RECURSIVE ancestors AS (
+    SELECT task.id, task.parent_task_id
+    FROM agent_task_queue task
+    WHERE task.id = $3
+
+    UNION ALL
+
+    SELECT parent.id, parent.parent_task_id
+    FROM agent_task_queue parent
+    JOIN ancestors child ON parent.id = child.parent_task_id
+), selected_turn AS (
+    SELECT turn.id
+    FROM a2a_task_turn turn
+    JOIN ancestors ON ancestors.id = turn.local_task_id
+    ORDER BY turn.sequence DESC
+    LIMIT 1
+)
+UPDATE a2a_task_turn turn
+SET control_signal = $1,
+    control_payload = $2::jsonb,
+    updated_at = now()
+FROM selected_turn
+WHERE turn.id = selected_turn.id
+  AND turn.control_signal IS NULL
+RETURNING turn.id, turn.binding_id, turn.endpoint_id, turn.client_id, turn.accepted_credential_id, turn.sequence, turn.message_id, turn.request_fingerprint, turn.local_task_id, turn.input_chat_message_id, turn.input_parts, turn.message_extensions, turn.message_metadata, turn.reference_task_ids, turn.accepted_output_modes, turn.control_signal, turn.control_payload, turn.created_at, turn.updated_at, turn.completed_at
+`
+
+type SetA2ATurnControlSignalParams struct {
+	ControlSignal  pgtype.Text `json:"control_signal"`
+	ControlPayload []byte      `json:"control_payload"`
+	LocalTaskID    pgtype.UUID `json:"local_task_id"`
+}
+
+func (q *Queries) SetA2ATurnControlSignal(ctx context.Context, arg SetA2ATurnControlSignalParams) (A2aTaskTurn, error) {
+	row := q.db.QueryRow(ctx, setA2ATurnControlSignal, arg.ControlSignal, arg.ControlPayload, arg.LocalTaskID)
+	var i A2aTaskTurn
+	err := row.Scan(
+		&i.ID,
+		&i.BindingID,
+		&i.EndpointID,
+		&i.ClientID,
+		&i.AcceptedCredentialID,
+		&i.Sequence,
+		&i.MessageID,
+		&i.RequestFingerprint,
+		&i.LocalTaskID,
+		&i.InputChatMessageID,
+		&i.InputParts,
+		&i.MessageExtensions,
+		&i.MessageMetadata,
+		&i.ReferenceTaskIds,
+		&i.AcceptedOutputModes,
+		&i.ControlSignal,
+		&i.ControlPayload,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -2193,6 +4119,56 @@ WHERE id = $1
 func (q *Queries) TouchAgentA2ACredentialLastUsed(ctx context.Context, credentialID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, touchAgentA2ACredentialLastUsed, credentialID)
 	return err
+}
+
+const updateA2ATaskPublicState = `-- name: UpdateA2ATaskPublicState :one
+UPDATE a2a_task_binding
+SET public_state = $1,
+    status_message = $2::jsonb,
+    status_updated_at = now(),
+    updated_at = now()
+WHERE id = $3
+  AND public_state NOT IN (
+      'TASK_STATE_CANCELED',
+      'TASK_STATE_COMPLETED',
+      'TASK_STATE_FAILED',
+      'TASK_STATE_REJECTED'
+  )
+RETURNING id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at, public_state, status_message, status_updated_at, next_event_sequence
+`
+
+type UpdateA2ATaskPublicStateParams struct {
+	PublicState   string      `json:"public_state"`
+	StatusMessage []byte      `json:"status_message"`
+	BindingID     pgtype.UUID `json:"binding_id"`
+}
+
+func (q *Queries) UpdateA2ATaskPublicState(ctx context.Context, arg UpdateA2ATaskPublicStateParams) (A2aTaskBinding, error) {
+	row := q.db.QueryRow(ctx, updateA2ATaskPublicState, arg.PublicState, arg.StatusMessage, arg.BindingID)
+	var i A2aTaskBinding
+	err := row.Scan(
+		&i.ID,
+		&i.EndpointID,
+		&i.ClientID,
+		&i.ContextID,
+		&i.AcceptedCredentialID,
+		&i.PublicTaskID,
+		&i.MessageID,
+		&i.RequestFingerprint,
+		&i.ArtifactID,
+		&i.RootLocalTaskID,
+		&i.InputChatMessageID,
+		&i.RequestID,
+		&i.CancelRequestedAt,
+		&i.FailureFinalizedLocalTaskID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PublicState,
+		&i.StatusMessage,
+		&i.StatusUpdatedAt,
+		&i.NextEventSequence,
+	)
+	return i, err
 }
 
 const updateAgentA2AClientForOwner = `-- name: UpdateAgentA2AClientForOwner :one
@@ -2260,6 +4236,86 @@ func (q *Queries) UpdateAgentA2AClientForOwner(ctx context.Context, arg UpdateAg
 		&i.UpdatedBy,
 		&i.RevokedAt,
 		&i.RevokedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertA2AArtifact = `-- name: UpsertA2AArtifact :one
+INSERT INTO a2a_artifact (
+    binding_id,
+    public_artifact_id,
+    name,
+    description,
+    extensions,
+    metadata,
+    parts,
+    append,
+    last_chunk
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5::text[],
+    $6::jsonb,
+    $7::jsonb,
+    $8,
+    $9
+)
+ON CONFLICT (binding_id, public_artifact_id) DO UPDATE SET
+    name = CASE WHEN EXCLUDED.name <> '' THEN EXCLUDED.name ELSE a2a_artifact.name END,
+    description = CASE WHEN EXCLUDED.description <> '' THEN EXCLUDED.description ELSE a2a_artifact.description END,
+    extensions = CASE WHEN cardinality(EXCLUDED.extensions) > 0 THEN EXCLUDED.extensions ELSE a2a_artifact.extensions END,
+    metadata = COALESCE(EXCLUDED.metadata, a2a_artifact.metadata),
+    parts = CASE
+        WHEN EXCLUDED.append THEN a2a_artifact.parts || EXCLUDED.parts
+        ELSE EXCLUDED.parts
+    END,
+    append = EXCLUDED.append,
+    last_chunk = EXCLUDED.last_chunk,
+    updated_at = now()
+RETURNING id, binding_id, public_artifact_id, name, description, extensions, metadata, parts, append, last_chunk, created_at, updated_at
+`
+
+type UpsertA2AArtifactParams struct {
+	BindingID        pgtype.UUID `json:"binding_id"`
+	PublicArtifactID string      `json:"public_artifact_id"`
+	Name             string      `json:"name"`
+	Description      string      `json:"description"`
+	Extensions       []string    `json:"extensions"`
+	Metadata         []byte      `json:"metadata"`
+	Parts            []byte      `json:"parts"`
+	Append           bool        `json:"append"`
+	LastChunk        bool        `json:"last_chunk"`
+}
+
+func (q *Queries) UpsertA2AArtifact(ctx context.Context, arg UpsertA2AArtifactParams) (A2aArtifact, error) {
+	row := q.db.QueryRow(ctx, upsertA2AArtifact,
+		arg.BindingID,
+		arg.PublicArtifactID,
+		arg.Name,
+		arg.Description,
+		arg.Extensions,
+		arg.Metadata,
+		arg.Parts,
+		arg.Append,
+		arg.LastChunk,
+	)
+	var i A2aArtifact
+	err := row.Scan(
+		&i.ID,
+		&i.BindingID,
+		&i.PublicArtifactID,
+		&i.Name,
+		&i.Description,
+		&i.Extensions,
+		&i.Metadata,
+		&i.Parts,
+		&i.Append,
+		&i.LastChunk,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
