@@ -154,6 +154,15 @@ const DingTalkMessageRouteOutcomeSchema = z
     surface_type: z.string().nullable().optional(),
     bound_at: z.string().nullable().optional(),
     message_scope: z.string().optional(),
+    message_scope_version: z.number().optional(),
+    subscription: z
+      .object({
+        direct_cids: z.array(z.string()),
+        group_cids: z.array(z.string()),
+      })
+      .nullable()
+      .optional()
+      .catch(undefined),
     enabled_domains: z.array(z.string()).optional().default([]),
     calendar_start_enabled: z.boolean().optional(),
     conversations: z.array(DingTalkConversationSummarySchema).optional().default([]),
@@ -177,6 +186,20 @@ const DingTalkMessageRouteOutcomeSchema = z
     ...(outcome.bound_at !== undefined ? { boundAt: outcome.bound_at } : {}),
     ...(outcome.error !== undefined ? { error: outcome.error } : {}),
     messageScope: normalizeDingTalkMessageScope(outcome.message_scope),
+    ...(outcome.message_scope_version !== undefined
+      ? { messageScopeVersion: outcome.message_scope_version }
+      : {}),
+    ...(outcome.subscription !== undefined
+      ? {
+          subscription:
+            outcome.subscription === null
+              ? null
+              : {
+                  directCids: outcome.subscription.direct_cids,
+                  groupCids: outcome.subscription.group_cids,
+                },
+        }
+      : {}),
     enabledDomains: outcome.enabled_domains,
     calendarStartEnabled: outcome.calendar_start_enabled ?? false,
     conversations: outcome.conversations,

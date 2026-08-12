@@ -35,10 +35,17 @@ export interface DingTalkConversationSummary {
   avatarUrl?: string | null;
 }
 
+export interface DingTalkMessageScopeSubscription {
+  directCids: string[];
+  groupCids: string[];
+}
+
 export interface DingTalkMessageRouteOutcome
   extends DingTalkAccountBindingOutcome {
   surfaceType?: DingTalkProcessingSurface | null;
   messageScope: DingTalkMessageScope;
+  messageScopeVersion?: number;
+  subscription?: DingTalkMessageScopeSubscription | null;
   enabledDomains: string[];
   calendarStartEnabled?: boolean;
   conversations: DingTalkConversationSummary[];
