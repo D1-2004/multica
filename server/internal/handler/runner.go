@@ -339,29 +339,43 @@ func (h *Handler) BeginRunnerDeviceAuthorization(w http.ResponseWriter, r *http.
 		return
 	}
 	roots, _ := json.Marshal(req.Roots)
+	pairing, err := h.Queries.GetRunnerPairingByTokenHash(r.Context(), auth.HashToken(strings.TrimSpace(req.PairingToken)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusBadRequest, "Runner pairing token is invalid or expired")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin Runner authorization")
+		return
+	}
+	if pairing.State != "pending" || !pairing.ExpiresAt.Valid || !pairing.ExpiresAt.Time.After(time.Now()) {
+		writeError(w, http.StatusBadRequest, "Runner pairing token is invalid or expired")
+		return
+	}
+	pairingID := pairing.ID
 	deviceCode, err := generateRunnerSecret("rdc_", 24)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to begin Runner authorization")
 		return
 	}
 
-	var pairing db.RunnerPairingSession
+	var authorizedPairing db.RunnerPairingSession
 	for attempt := 0; attempt < 5; attempt++ {
 		userCode, codeErr := generateRunnerUserCode()
 		if codeErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to begin Runner authorization")
 			return
 		}
-		pairing, err = h.Queries.BeginRunnerDeviceAuthorization(r.Context(), db.BeginRunnerDeviceAuthorizationParams{
-			PairingTokenHash: auth.HashToken(strings.TrimSpace(req.PairingToken)),
-			DeviceCodeHash:   pgtype.Text{String: auth.HashToken(deviceCode), Valid: true},
-			UserCode:         pgtype.Text{String: userCode, Valid: true},
-			PublicKey:        publicKey,
-			MachineName:      pgtype.Text{String: req.MachineName, Valid: true},
-			Os:               pgtype.Text{String: req.OS, Valid: true},
-			Arch:             pgtype.Text{String: req.Arch, Valid: true},
-			ClientVersion:    req.ClientVersion,
-			Roots:            roots,
+		authorizedPairing, err = h.Queries.BeginRunnerDeviceAuthorization(r.Context(), db.BeginRunnerDeviceAuthorizationParams{
+			ID:             pairingID,
+			DeviceCodeHash: pgtype.Text{String: auth.HashToken(deviceCode), Valid: true},
+			UserCode:       pgtype.Text{String: userCode, Valid: true},
+			PublicKey:      publicKey,
+			MachineName:    pgtype.Text{String: req.MachineName, Valid: true},
+			Os:             pgtype.Text{String: req.OS, Valid: true},
+			Arch:           pgtype.Text{String: req.Arch, Valid: true},
+			ClientVersion:  req.ClientVersion,
+			Roots:          roots,
 		})
 		if err == nil {
 			break
@@ -378,6 +392,7 @@ func (h *Handler) BeginRunnerDeviceAuthorization(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to begin Runner authorization")
 		return
 	}
+	pairing = authorizedPairing
 	slog.Info("Runner device authorization started",
 		"event", "runner_device_authorization_started",
 		"pairing_id", uuidToString(pairing.ID),

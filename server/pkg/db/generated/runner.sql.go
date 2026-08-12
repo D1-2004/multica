@@ -41,27 +41,27 @@ SET device_code_hash = $2,
     roots = $9,
     state = 'device_pending',
     updated_at = now()
-WHERE pairing_token_hash = $1
+WHERE id = $1
   AND state = 'pending'
   AND expires_at > now()
 RETURNING id, workspace_id, agent_id, owner_id, pairing_token_hash, device_code_hash, user_code, public_key, machine_name, os, arch, client_version, roots, state, machine_id, expires_at, approved_at, denied_at, consumed_at, created_at, updated_at
 `
 
 type BeginRunnerDeviceAuthorizationParams struct {
-	PairingTokenHash string      `json:"pairing_token_hash"`
-	DeviceCodeHash   pgtype.Text `json:"device_code_hash"`
-	UserCode         pgtype.Text `json:"user_code"`
-	PublicKey        []byte      `json:"public_key"`
-	MachineName      pgtype.Text `json:"machine_name"`
-	Os               pgtype.Text `json:"os"`
-	Arch             pgtype.Text `json:"arch"`
-	ClientVersion    string      `json:"client_version"`
-	Roots            []byte      `json:"roots"`
+	ID             pgtype.UUID `json:"id"`
+	DeviceCodeHash pgtype.Text `json:"device_code_hash"`
+	UserCode       pgtype.Text `json:"user_code"`
+	PublicKey      []byte      `json:"public_key"`
+	MachineName    pgtype.Text `json:"machine_name"`
+	Os             pgtype.Text `json:"os"`
+	Arch           pgtype.Text `json:"arch"`
+	ClientVersion  string      `json:"client_version"`
+	Roots          []byte      `json:"roots"`
 }
 
 func (q *Queries) BeginRunnerDeviceAuthorization(ctx context.Context, arg BeginRunnerDeviceAuthorizationParams) (RunnerPairingSession, error) {
 	row := q.db.QueryRow(ctx, beginRunnerDeviceAuthorization,
-		arg.PairingTokenHash,
+		arg.ID,
 		arg.DeviceCodeHash,
 		arg.UserCode,
 		arg.PublicKey,
@@ -681,6 +681,40 @@ WHERE device_code_hash = $1
 
 func (q *Queries) GetRunnerPairingByDeviceCode(ctx context.Context, deviceCodeHash pgtype.Text) (RunnerPairingSession, error) {
 	row := q.db.QueryRow(ctx, getRunnerPairingByDeviceCode, deviceCodeHash)
+	var i RunnerPairingSession
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.OwnerID,
+		&i.PairingTokenHash,
+		&i.DeviceCodeHash,
+		&i.UserCode,
+		&i.PublicKey,
+		&i.MachineName,
+		&i.Os,
+		&i.Arch,
+		&i.ClientVersion,
+		&i.Roots,
+		&i.State,
+		&i.MachineID,
+		&i.ExpiresAt,
+		&i.ApprovedAt,
+		&i.DeniedAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getRunnerPairingByTokenHash = `-- name: GetRunnerPairingByTokenHash :one
+SELECT id, workspace_id, agent_id, owner_id, pairing_token_hash, device_code_hash, user_code, public_key, machine_name, os, arch, client_version, roots, state, machine_id, expires_at, approved_at, denied_at, consumed_at, created_at, updated_at FROM runner_pairing_session
+WHERE pairing_token_hash = $1
+`
+
+func (q *Queries) GetRunnerPairingByTokenHash(ctx context.Context, pairingTokenHash string) (RunnerPairingSession, error) {
+	row := q.db.QueryRow(ctx, getRunnerPairingByTokenHash, pairingTokenHash)
 	var i RunnerPairingSession
 	err := row.Scan(
 		&i.ID,

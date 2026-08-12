@@ -4,6 +4,10 @@ INSERT INTO runner_pairing_session (
 ) VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
+-- name: GetRunnerPairingByTokenHash :one
+SELECT * FROM runner_pairing_session
+WHERE pairing_token_hash = $1;
+
 -- name: BeginRunnerDeviceAuthorization :one
 UPDATE runner_pairing_session
 SET device_code_hash = $2,
@@ -16,7 +20,7 @@ SET device_code_hash = $2,
     roots = $9,
     state = 'device_pending',
     updated_at = now()
-WHERE pairing_token_hash = $1
+WHERE id = $1
   AND state = 'pending'
   AND expires_at > now()
 RETURNING *;
