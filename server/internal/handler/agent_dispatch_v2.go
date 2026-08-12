@@ -519,6 +519,40 @@ type persistedDispatchContext struct {
 	ContextPrompt      string                      `json:"dispatch_context_prompt"`
 }
 
+const dingTalkReplyFormattingInstruction = `## DingTalk Reply Formatting
+
+The final user-visible reply will be delivered through DingTalk Markdown. Do not use Markdown tables or raw HTML because result rows can disappear during delivery. Use plain numbered or bulleted lines instead. For search or list results, include actual items rather than only a count or summary. When an item has a URL, include its title and complete URL in the visible reply. Never refer to item numbers whose rows are absent.`
+
+func applyDingTalkReplyFormattingInstruction(response *AgentTaskResponse, rawContext []byte) {
+	if response == nil || !isDingTalkTaskContext(rawContext) {
+		return
+	}
+	existing := strings.TrimSpace(response.Instruction)
+	if existing == "" {
+		response.Instruction = dingTalkReplyFormattingInstruction
+		return
+	}
+	response.Instruction = existing + "\n\n" + dingTalkReplyFormattingInstruction
+}
+
+func isDingTalkTaskContext(rawContext []byte) bool {
+	if len(rawContext) == 0 {
+		return false
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(rawContext, &payload); err != nil {
+		return false
+	}
+	if raw, present := payload[protocol.DingTalkStreamSourceJSONKey]; present {
+		value := strings.TrimSpace(string(raw))
+		if value != "" && value != "null" {
+			return true
+		}
+	}
+	var stored persistedDispatchContext
+	return json.Unmarshal(rawContext, &stored) == nil && stored.Source.Platform == "dingtalk"
+}
+
 // applyDingTalkDispatchPromptToExistingTaskFields rebuilds the claim-scoped
 // instruction from current Diamond configuration and the persisted Router
 // context. Direct callers use the instruction-capable response projection.

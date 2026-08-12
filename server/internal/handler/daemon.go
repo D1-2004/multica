@@ -2435,12 +2435,16 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		)
 	}
 
+	supportsTaskInstruction := requestHasDaemonCapability(r, protocol.DaemonCapabilityTaskInstructionV1)
 	applyDingTalkDispatchPromptForClaimWithFeatureFlags(
 		&resp,
 		task.Context,
 		h.FeatureFlags,
-		requestHasDaemonCapability(r, protocol.DaemonCapabilityTaskInstructionV1),
+		supportsTaskInstruction,
 	)
+	if supportsTaskInstruction {
+		applyDingTalkReplyFormattingInstruction(&resp, task.Context)
+	}
 
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
 }
