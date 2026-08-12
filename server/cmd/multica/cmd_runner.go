@@ -295,7 +295,12 @@ func startRunnerBackground() error {
 	if err := process.Process.Release(); err != nil {
 		return fmt.Errorf("release Runner process: %w", err)
 	}
-	for i := 0; i < 20; i++ {
+	// A freshly downloaded macOS binary can spend several seconds in the
+	// operating system's first-launch verification before it reaches Cobra and
+	// writes runner.pid. Keep the installer attached long enough to observe the
+	// real child instead of reporting a false startup failure while that child
+	// is already on its way to connecting.
+	for i := 0; i < 300; i++ {
 		time.Sleep(100 * time.Millisecond)
 		if pid, running := currentRunnerPID(); running {
 			fmt.Fprintf(os.Stderr, "Runner started (pid %d). Log: %s\n", pid, logPath)
