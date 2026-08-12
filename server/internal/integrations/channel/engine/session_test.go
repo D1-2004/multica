@@ -133,13 +133,19 @@ func (f *fakeSessionQueries) UpsertDeferredChannelChatTask(_ context.Context, ar
 		f.pendingFresh = false
 	}
 	task := db.AgentTaskQueue{
-		ID:                arg.ID,
-		AgentID:           arg.AgentID,
-		RuntimeID:         arg.RuntimeID,
-		ChatSessionID:     arg.ChatSessionID,
-		Status:            "deferred",
-		FireAt:            pgtype.Timestamptz{Time: time.Now().Add(3 * time.Second), Valid: true},
-		ForceFreshSession: forceFresh,
+		ID:                   arg.ID,
+		AgentID:              arg.AgentID,
+		RuntimeID:            arg.RuntimeID,
+		ChatSessionID:        arg.ChatSessionID,
+		Status:               "deferred",
+		FireAt:               pgtype.Timestamptz{Time: time.Now().Add(3 * time.Second), Valid: true},
+		InitiatorUserID:      arg.InitiatorUserID,
+		OriginatorUserID:     arg.OriginatorUserID,
+		AccountableUserID:    arg.AccountableUserID,
+		OriginatorSource:     arg.OriginatorSource,
+		TriggerEvidenceKind:  arg.TriggerEvidenceKind,
+		TriggerEvidenceRefID: arg.TriggerEvidenceRefID,
+		ForceFreshSession:    forceFresh,
 	}
 	f.upsertedTask = task
 	return task, nil
@@ -517,10 +523,14 @@ func TestAppendUserMessage_DurableTaskAndMessageShareTransaction(t *testing.T) {
 		RuntimeID:            uid(3),
 		InitiatorUserID:      uid(7),
 		OriginatorUserID:     uid(7),
+		AccountableUserID:    uid(7),
 		ForceFreshSession:    true,
 		TaskContext:          []byte(`{"source":"dingtalk"}`),
 		RuntimeMCPOverlay:    []byte(`{"mcpServers":{}}`),
 		RuntimeConnectedApps: []byte(`[]`),
+		OriginatorSource:     pgtype.Text{String: "direct_human", Valid: true},
+		TriggerEvidenceKind:  pgtype.Text{String: "chat", Valid: true},
+		TriggerEvidenceRefID: uid(1),
 		DebounceSeconds:      3,
 	}
 
@@ -537,6 +547,12 @@ func TestAppendUserMessage_DurableTaskAndMessageShareTransaction(t *testing.T) {
 	}
 	if f.upsertTaskCalls != 1 || f.upsertedTask.ID != prepared.ID {
 		t.Fatalf("durable task upsert = (%d, %v), want (1, %v)", f.upsertTaskCalls, f.upsertedTask.ID, prepared.ID)
+	}
+	if f.upsertedTask.AccountableUserID != prepared.AccountableUserID ||
+		f.upsertedTask.OriginatorSource != prepared.OriginatorSource ||
+		f.upsertedTask.TriggerEvidenceKind != prepared.TriggerEvidenceKind ||
+		f.upsertedTask.TriggerEvidenceRefID != prepared.TriggerEvidenceRefID {
+		t.Fatalf("durable task attribution was not passed to SQL: got %+v", f.upsertedTask)
 	}
 	if len(f.messageTaskIDs) != 1 || f.messageTaskIDs[0] != prepared.ID {
 		t.Fatalf("message task ids = %v, want [%v]", f.messageTaskIDs, prepared.ID)

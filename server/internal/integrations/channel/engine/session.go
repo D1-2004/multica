@@ -485,10 +485,14 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 			ChatSessionID:        in.SessionID,
 			InitiatorUserID:      prepared.InitiatorUserID,
 			OriginatorUserID:     prepared.OriginatorUserID,
+			AccountableUserID:    prepared.AccountableUserID,
 			ForceFreshSession:    pgtype.Bool{Bool: prepared.ForceFreshSession, Valid: true},
 			RuntimeMcpOverlay:    prepared.RuntimeMCPOverlay,
 			RuntimeConnectedApps: prepared.RuntimeConnectedApps,
 			TaskContext:          prepared.TaskContext,
+			OriginatorSource:     prepared.OriginatorSource,
+			TriggerEvidenceKind:  prepared.TriggerEvidenceKind,
+			TriggerEvidenceRefID: prepared.TriggerEvidenceRefID,
 			DebounceSeconds:      debounceSeconds,
 		})
 		if err != nil {
