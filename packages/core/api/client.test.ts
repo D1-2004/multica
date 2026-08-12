@@ -8,6 +8,130 @@ afterEach(() => {
   setSchemaLogger(noopLogger);
 });
 
+describe("ApiClient Runner contracts", () => {
+  const bindingId = "11111111-1111-4111-8111-111111111111";
+  const machineId = "22222222-2222-4222-8222-222222222222";
+  const pairingId = "33333333-3333-4333-8333-333333333333";
+  const agentId = "44444444-4444-4444-8444-444444444444";
+
+  it("validates and maps every human-facing Runner endpoint", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            machines: [
+              {
+                binding_id: bindingId,
+                machine_id: machineId,
+                name: "build-mac",
+                os: "darwin",
+                arch: "arm64",
+                client_version: "0.2.0",
+                roots: ["/Users/dev/project"],
+                online: true,
+                last_seen_at: "2026-08-12T10:00:00Z",
+                bound_at: "2026-08-12T09:00:00Z",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: pairingId,
+            install_command: "curl example.test | sh",
+            expires_at: "2026-08-12T10:10:00Z",
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            user_code: "ABCD-EFGH",
+            state: "device_pending",
+            agent_id: agentId,
+            agent_name: "Coder",
+            machine_name: "build-mac",
+            os: "darwin",
+            arch: "arm64",
+            roots: ["/Users/dev/project"],
+            expires_at: "2026-08-12T10:10:00Z",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ status: "approved", machine_id: machineId }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.listAgentRunnerBindings(agentId)).resolves.toEqual({
+      machines: [
+        expect.objectContaining({
+          bindingId,
+          machineId,
+          name: "build-mac",
+          online: true,
+        }),
+      ],
+    });
+    await expect(client.createAgentRunnerPairing(agentId)).resolves.toEqual({
+      id: pairingId,
+      installCommand: "curl example.test | sh",
+      expiresAt: "2026-08-12T10:10:00Z",
+    });
+    await expect(
+      client.getRunnerDeviceAuthorization("ABCD-EFGH"),
+    ).resolves.toMatchObject({
+      userCode: "ABCD-EFGH",
+      agentId,
+      machineName: "build-mac",
+    });
+    await expect(
+      client.finishRunnerDeviceAuthorization("ABCD-EFGH", "approve"),
+    ).resolves.toEqual({ status: "approved", machineId });
+    await expect(
+      client.revokeAgentRunnerBinding(agentId, bindingId),
+    ).resolves.toBeUndefined();
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      `https://api.example.test/api/agents/${agentId}/runner-bindings`,
+      `https://api.example.test/api/agents/${agentId}/runner-pairings`,
+      "https://api.example.test/api/runner/device-authorizations/ABCD-EFGH",
+      "https://api.example.test/api/runner/device-authorizations/ABCD-EFGH/approve",
+      `https://api.example.test/api/agents/${agentId}/runner-bindings/${bindingId}`,
+    ]);
+  });
+
+  it("rejects malformed Runner responses instead of hiding contract drift", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ machines: "not-an-array" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listAgentRunnerBindings(agentId)).rejects.toThrow();
+    await expect(client.createAgentRunnerPairing(agentId)).rejects.toThrow();
+    await expect(
+      client.getRunnerDeviceAuthorization("ABCD-EFGH"),
+    ).rejects.toThrow();
+  });
+});
+
 describe("ApiClient pull-request response schema", () => {
   const validPR = {
     id: "pr-1",

@@ -303,10 +303,11 @@ type RouterOptions struct {
 	BusinessMetrics *obsmetrics.BusinessMetrics
 	// WecomMetrics is the WeCom adapter's health sink. Nil discards every
 	// counter, which is what a deployment with /metrics turned off gets.
-	WecomMetrics *obsmetrics.WecomMetrics
-	DaemonHub    *daemonws.Hub
-	DaemonWakeup service.TaskWakeupNotifier
-	FeatureFlags *featureflag.Service
+	WecomMetrics    *obsmetrics.WecomMetrics
+	DaemonHub       *daemonws.Hub
+	DaemonWakeup    service.TaskWakeupNotifier
+	RunnerRelay     realtime.Broadcaster
+	FeatureFlags    *featureflag.Service
 	// HeartbeatScheduler, when non-nil, replaces the default synchronous
 	// passthrough scheduler on the constructed Handler. main.go injects a
 	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
@@ -420,6 +421,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		publicURLProvider = opts.RuntimeConfig.publicURL
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	h.RunnerRelay = opts.RunnerRelay
+	if setter, ok := opts.RunnerRelay.(interface {
+		SetRunnerMachineDeliverer(realtime.RunnerMachineDeliverer)
+	}); ok {
+		setter.SetRunnerMachineDeliverer(h)
+	}
 	if opts.RuntimeConfig != nil {
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
@@ -1614,6 +1621,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	trustedProxies := middleware.ParseTrustedProxies(os.Getenv("RATE_LIMIT_TRUSTED_PROXIES"))
 	authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
 	authVerifyRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_VERIFY", 20), time.Minute, trustedProxies)
+	runnerDeviceBeginRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_RUNNER_DEVICE_BEGIN", 30), time.Minute, trustedProxies)
+	runnerDevicePollRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_RUNNER_DEVICE_POLL", 600), time.Minute, trustedProxies)
+	runnerChallengeRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_RUNNER_CHALLENGE", 120), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
 	// LOGIN_PROVIDERS (with LOGIN_DINGTALK_ONLY as its legacy alias) closes
 	// the login paths of unlisted providers entirely — not merely hidden in
@@ -1702,6 +1712,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// path; the callback never trusts identity coordinates from query params.
 	r.Get("/api/agent-enterprise-identity/buc/callback", h.CompleteAgentEnterpriseIdentityBinding)
 
+	// Runner installation and OAuth device authorization are public by design.
+	// The short-lived pairing token scopes device registration to an Agent; a
+	// logged-in owner must still approve it through the protected routes below.
+	r.Get("/api/runner/install", h.ServeRunnerInstall)
+	r.Get("/api/runner/binaries/{os}/{arch}", h.ServeRunnerBinary)
+	r.Get("/api/runner/binaries/{os}/{arch}/checksum", h.ServeRunnerBinaryChecksum)
+	r.With(runnerDeviceBeginRL).Post("/api/runner/device-authorizations", h.BeginRunnerDeviceAuthorization)
+	r.With(runnerDevicePollRL).Post("/api/runner/device-authorizations/token", h.PollRunnerDeviceAuthorization)
+	r.With(runnerChallengeRL).Post("/api/runner/machines/{machineId}/challenges", h.CreateRunnerChallenge)
+	r.Get("/api/runner/ws", h.RunnerWebSocket)
+
 	// Daemon API routes (require daemon token or valid user token)
 	r.Route("/api/daemon", func(r chi.Router) {
 		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier))
@@ -1763,6 +1784,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.With(handler.RequireHumanActor).Patch("/api/me/onboarding", h.PatchOnboarding)
 		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/complete", h.CompleteOnboarding)
 		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/cloud-waitlist", h.JoinCloudWaitlist)
+		r.With(handler.RequireHumanActor).Get("/api/runner/device-authorizations/{userCode}", h.GetRunnerDeviceAuthorization)
+		r.With(handler.RequireHumanActor).Post("/api/runner/device-authorizations/{userCode}/approve", h.ApproveRunnerDeviceAuthorization)
+		r.With(handler.RequireHumanActor).Post("/api/runner/device-authorizations/{userCode}/deny", h.DenyRunnerDeviceAuthorization)
 		// DEPRECATED — shim routes for desktop < v3 during the rollout
 		// window. v3 frontend creates the Helper agent + starter issue
 		// via generic CreateAgent / CreateIssue and only calls /complete
@@ -1827,6 +1851,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// session_id or agent_id, then enforce membership and Agent permissions in
 		// the handler, so generic MCP clients need no custom workspace header.
 		r.Handle("/api/mcp", http.HandlerFunc(h.MulticaMCP))
+		r.Handle("/api/runner-mcp", http.HandlerFunc(h.RunnerMCP))
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
@@ -2333,6 +2358,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// internal/handler/agent_env.go.
 					r.Get("/env", h.GetAgentEnv)
 					r.Put("/env", h.UpdateAgentEnv)
+					r.With(handler.RequireHumanActor).Get("/runner-bindings", h.ListAgentRunnerBindings)
+					r.With(handler.RequireHumanActor).Post("/runner-pairings", h.CreateAgentRunnerPairing)
+					r.With(handler.RequireHumanActor).Delete("/runner-bindings/{bindingId}", h.RevokeAgentRunnerBinding)
 				})
 			})
 

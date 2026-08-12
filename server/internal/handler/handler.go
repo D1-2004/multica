@@ -39,6 +39,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/runnerws"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -185,6 +186,8 @@ type Handler struct {
 	TxStarter               txStarter
 	Hub                     *realtime.Hub
 	DaemonHub               *daemonws.Hub
+	RunnerHub               *runnerws.Hub
+	RunnerRelay             realtime.Broadcaster
 	DaemonProfileRefresh    RuntimeProfileRefreshNotifier
 	DaemonWorkspaceRefresh  WorkspaceSetRefreshNotifier
 	Bus                     *events.Bus
@@ -491,6 +494,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		TxStarter:                    txStarter,
 		Hub:                          hub,
 		DaemonHub:                    daemonHub,
+		RunnerHub:                    runnerws.NewHub(),
 		DaemonProfileRefresh:         daemonProfileRefresh,
 		DaemonWorkspaceRefresh:       daemonWorkspaceRefresh,
 		Bus:                          bus,
@@ -523,6 +527,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		LLM:                 llmClient,
 		cfg:                 cfg,
 	}
+	h.RunnerHub.SetHandlers(h.handleRunnerConnected, h.handleRunnerDisconnected, h.handleRunnerHeartbeat, h.handleRunnerResult)
 	if pool, ok := txStarter.(*pgxpool.Pool); ok {
 		h.FCE2BStable = service.NewFCE2BStableService(
 			pool,

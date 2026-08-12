@@ -71,6 +71,8 @@
     "./agents/use-agent-presence": "./agents/use-agent-presence.ts",
     "./agents/visibility-label": "./agents/visibility-label.ts",
     "./agents/stores": "./agents/stores/index.ts",
+    "./runner": "./runner/index.ts",
+    "./runner/schemas": "./runner/schemas.ts",
     "./squads": "./squads/index.ts",
     "./squads/stores": "./squads/stores/index.ts",
     "./permissions": "./permissions/index.ts",

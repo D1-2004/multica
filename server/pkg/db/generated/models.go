@@ -163,6 +163,20 @@ type AgentInvocationTarget struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+// Revocable many-to-many bindings between Agents and local Runner machines
+type AgentRunnerBinding struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	MachineID   pgtype.UUID        `json:"machine_id"`
+	BoundBy     pgtype.UUID        `json:"bound_by"`
+	Roots       []byte             `json:"roots"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+	RevokedBy   pgtype.UUID        `json:"revoked_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentRuntime struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
@@ -1290,6 +1304,78 @@ type QuickAction struct {
 	CreatedByID   pgtype.UUID        `json:"created_by_id"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RunnerAuthChallenge struct {
+	ID            pgtype.UUID        `json:"id"`
+	MachineID     pgtype.UUID        `json:"machine_id"`
+	ChallengeHash string             `json:"challenge_hash"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt    pgtype.Timestamptz `json:"consumed_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+// Durable cross-replica rendezvous for task-scoped Runner MCP calls
+type RunnerCall struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	AgentID      pgtype.UUID        `json:"agent_id"`
+	TaskID       pgtype.UUID        `json:"task_id"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	MachineID    pgtype.UUID        `json:"machine_id"`
+	ToolName     string             `json:"tool_name"`
+	Arguments    []byte             `json:"arguments"`
+	Roots        []byte             `json:"roots"`
+	Result       []byte             `json:"result"`
+	Status       string             `json:"status"`
+	ErrorCode    pgtype.Text        `json:"error_code"`
+	ErrorMessage pgtype.Text        `json:"error_message"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	StartedAt    pgtype.Timestamptz `json:"started_at"`
+	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+// User-owned local Runner identities authenticated by an Ed25519 public key
+type RunnerMachine struct {
+	ID            pgtype.UUID        `json:"id"`
+	OwnerID       pgtype.UUID        `json:"owner_id"`
+	Name          string             `json:"name"`
+	Os            string             `json:"os"`
+	Arch          string             `json:"arch"`
+	PublicKey     []byte             `json:"public_key"`
+	ClientVersion string             `json:"client_version"`
+	LastSeenAt    pgtype.Timestamptz `json:"last_seen_at"`
+	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
+	RevokedBy     pgtype.UUID        `json:"revoked_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+// Short-lived browser-approved OAuth device authorization for a Runner binding
+type RunnerPairingSession struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	OwnerID          pgtype.UUID        `json:"owner_id"`
+	PairingTokenHash string             `json:"pairing_token_hash"`
+	DeviceCodeHash   pgtype.Text        `json:"device_code_hash"`
+	UserCode         pgtype.Text        `json:"user_code"`
+	PublicKey        []byte             `json:"public_key"`
+	MachineName      pgtype.Text        `json:"machine_name"`
+	Os               pgtype.Text        `json:"os"`
+	Arch             pgtype.Text        `json:"arch"`
+	ClientVersion    string             `json:"client_version"`
+	Roots            []byte             `json:"roots"`
+	State            string             `json:"state"`
+	MachineID        pgtype.UUID        `json:"machine_id"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	ApprovedAt       pgtype.Timestamptz `json:"approved_at"`
+	DeniedAt         pgtype.Timestamptz `json:"denied_at"`
+	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type RuntimeProfile struct {

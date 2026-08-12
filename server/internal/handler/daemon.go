@@ -1582,6 +1582,24 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
+		if err := h.injectRunnerMCP(r.Context(), rt, task.AgentID, tokenStr, resp.Agent); err != nil {
+			if errors.Is(err, errRunnerMCPRuntimeUnsupported) {
+				slog.Error("batch claim: Runner MCP requires an MCP-capable Pi runtime; cancelling task",
+					"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
+				if _, cancelErr := h.TaskService.CancelTask(r.Context(), task.ID); cancelErr != nil {
+					slog.Error("batch claim: cancel after Runner MCP capability mismatch failed",
+						"task_id", uuidToString(task.ID), "error", cancelErr)
+				}
+				continue
+			}
+			slog.Error("batch claim: inject Runner MCP failed; requeueing claim",
+				"task_id", uuidToString(task.ID), "error", err)
+			if _, rerr := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), task); rerr != nil {
+				slog.Error("batch claim: requeue after Runner MCP injection failed",
+					"task_id", uuidToString(task.ID), "error", rerr)
+			}
+			continue
+		}
 		// Route through the SAME finalization as the per-runtime endpoint so the
 		// token and the comment-delivery receipt (delivered_comment_ids for
 		// comment/coalesced-comment tasks) are persisted atomically; on failure
@@ -2886,6 +2904,25 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			"task_id", uuidToString(task.ID), "error", terr)
 		requeueFailedClaim("token_generation")
 		writeError(w, http.StatusInternalServerError, "failed to mint task token")
+		return
+	}
+	if err := h.injectRunnerMCP(r.Context(), runtime, task.AgentID, tokenStr, resp.Agent); err != nil {
+		if errors.Is(err, errRunnerMCPRuntimeUnsupported) {
+			outcome = "error_runtime_capability"
+			slog.Error("task claim: Runner MCP requires an MCP-capable Pi runtime; cancelling task",
+				"task_id", uuidToString(task.ID), "runtime_id", runtimeID)
+			if _, cancelErr := h.TaskService.CancelTask(r.Context(), task.ID); cancelErr != nil {
+				slog.Error("task claim: cancel after Runner MCP capability mismatch failed",
+					"task_id", uuidToString(task.ID), "error", cancelErr)
+			}
+			writeError(w, http.StatusConflict, "Pi runtime template does not support managed MCP; rotate it to an MCP-capable template")
+			return
+		}
+		outcome = "error_runner_mcp"
+		slog.Error("task claim: failed to inject Runner MCP",
+			"task_id", uuidToString(task.ID), "error", err)
+		requeueFailedClaim("runner_mcp_injection")
+		writeError(w, http.StatusInternalServerError, "failed to configure Runner MCP")
 		return
 	}
 	receipt, ferr := h.TaskService.FinalizeTaskClaim(r.Context(), *task, db.CreateTaskTokenParams{

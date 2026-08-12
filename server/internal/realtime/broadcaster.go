@@ -11,6 +11,9 @@ const (
 	// ScopeDaemonRuntime routes daemon wakeup frames through the Redis relay.
 	// It is consumed by the daemon WebSocket hub, not by browser clients.
 	ScopeDaemonRuntime = "daemon_runtime"
+	// ScopeRunnerMachine routes durable Runner call notifications to the API
+	// replica that currently owns the machine's outbound WebSocket.
+	ScopeRunnerMachine = "runner_machine"
 )
 
 // Broadcaster is the abstraction every realtime event producer should depend
@@ -44,6 +47,21 @@ type Broadcaster interface {
 // DaemonRuntimeDeliverer consumes daemon-runtime scoped relay frames.
 type DaemonRuntimeDeliverer interface {
 	DeliverDaemonRuntime(scopeID string, frame []byte, eventID string)
+}
+
+// RunnerMachineDeliverer consumes machine-scoped Runner relay frames. The
+// payload is only a wakeup hint; the durable runner_call row remains the
+// source of truth and is claimed before it is sent to the machine.
+type RunnerMachineDeliverer interface {
+	DeliverRunnerMachine(scopeID string, frame []byte, eventID string)
+}
+
+// RunnerMachineScopeSubscriber lets connection-oriented consumers keep the
+// legacy per-scope Redis relay subscribed while a Runner socket is local.
+// Fixed-shard relays read every shard and therefore do not need this hook.
+type RunnerMachineScopeSubscriber interface {
+	SubscribeRunnerMachine(scopeID string)
+	UnsubscribeRunnerMachine(scopeID string)
 }
 
 // Compile-time assertion that *Hub continues to satisfy Broadcaster.

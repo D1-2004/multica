@@ -462,6 +462,7 @@ func main() {
 		WecomMetrics:       wecomMetrics,
 		DaemonHub:          daemonHub,
 		DaemonWakeup:       daemonWakeup,
+		RunnerRelay:        relay,
 		FeatureFlags:       flags,
 		HeartbeatScheduler: heartbeatScheduler,
 		SandboxRelaySigner: sandboxRelaySigner,
@@ -497,6 +498,7 @@ func main() {
 
 	// Start background sweeper to mark stale runtimes as offline.
 	go runRuntimeSweeper(sweepCtx, queries, liveness, taskSvc, bus)
+	go runRunnerArtifactCleanup(sweepCtx, queries)
 	go taskSvc.RunDeferredChannelTaskPromoter(sweepCtx)
 	go heartbeatScheduler.Run(sweepCtx)
 	if h.FCE2BStable != nil {
