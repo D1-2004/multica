@@ -9,7 +9,9 @@
 -- cannot append a value. It must therefore carry every value added by earlier
 -- migrations — including 'dingtalk_chat' (migration 259) — or this rebuild
 -- would silently drop it. Keep this list in sync with the newest
--- issue_origin_* migration when rebasing.
+-- issue_origin_* migration when rebasing. The internal fork also carries
+-- 'agent_mcp'; keep it here so rebuilding the upstream constraint cannot
+-- invalidate existing hosted Agent MCP issues.
 --
 -- The CHECK is only WIDENED (one new allowed value), so every existing row
 -- already satisfies it. Add it NOT VALID so this statement takes ACCESS
@@ -26,5 +28,5 @@
 -- defeating the split.
 ALTER TABLE issue DROP CONSTRAINT IF EXISTS issue_origin_type_check;
 ALTER TABLE issue ADD CONSTRAINT issue_origin_type_check
-    CHECK (origin_type IN ('autopilot', 'quick_create', 'lark_chat', 'slack_chat', 'agent_create', 'dingtalk_chat', 'wecom_chat'))
+    CHECK (origin_type IN ('autopilot', 'quick_create', 'lark_chat', 'slack_chat', 'agent_create', 'dingtalk_chat', 'wecom_chat', 'agent_mcp'))
     NOT VALID;

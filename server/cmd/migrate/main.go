@@ -59,11 +59,37 @@ type preMigrationHook func(ctx context.Context, pool *pgxpool.Pool) error
 // way, so it carries the same hazard — an INVALID v2 leftover recorded as
 // success would let migration 262 drop the still-valid v1, leaving all four
 // dashboard rollups on a full table scan.
+//
+// Internal environments may already contain origin_type='agent_mcp' rows from
+// the historical 271_agent_mcp_issue_delegation migration. Upstream migration
+// 259 does not know that fork-owned value and installs a NOT VALID constraint
+// without it; the hook widens the constraint before migration 260 validates it.
 var preMigrationHooks = map[string]preMigrationHook{
 	"103_drop_legacy_daily_rollups":                         runTaskUsageHourlyHook,
 	"198_agent_task_attribution_strict_constraint_validate": runAttributionStrictHook,
 	"257_agent_task_queue_channel_media_pending_unique_v2":  cleanupInvalidConcurrentIndexHook("idx_one_pending_task_per_issue_agent_v2"),
+	"260_issue_origin_dingtalk_chat_validate":               repairIssueOriginTypeConstraintHook,
 	"261_agent_task_queue_terminal_completed_at_v2":         cleanupInvalidConcurrentIndexHook("idx_agent_task_queue_terminal_completed_at_v2"),
+}
+
+func repairIssueOriginTypeConstraintHook(ctx context.Context, pool *pgxpool.Pool) error {
+	if _, err := pool.Exec(ctx, `
+		ALTER TABLE issue DROP CONSTRAINT IF EXISTS issue_origin_type_check;
+		ALTER TABLE issue ADD CONSTRAINT issue_origin_type_check
+			CHECK (origin_type IN (
+				'autopilot',
+				'quick_create',
+				'lark_chat',
+				'slack_chat',
+				'agent_create',
+				'dingtalk_chat',
+				'agent_mcp'
+			))
+			NOT VALID
+	`); err != nil {
+		return fmt.Errorf("repair issue origin type constraint before validation: %w", err)
+	}
+	return nil
 }
 
 // cleanupInvalidConcurrentIndexHook removes an INVALID index left by an

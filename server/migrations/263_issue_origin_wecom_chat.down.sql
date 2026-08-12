@@ -1,6 +1,7 @@
 -- Revert to the pre-wecom_chat issue_origin_type_check list. This restores the
 -- state left by the newest earlier issue_origin_* migration, which includes
--- 'dingtalk_chat' (259) — dropping it here would break DingTalk.
+-- 'dingtalk_chat' (259) and the fork-owned 'agent_mcp' value — dropping
+-- either here would break an internal channel.
 --
 -- The down path deliberately VALIDATEs in this same file, unlike the up path.
 -- Narrowing a CHECK can genuinely be violated by existing data, so this must
@@ -11,6 +12,6 @@
 -- Same reasoning as 259_issue_origin_dingtalk_chat.down.sql.
 ALTER TABLE issue DROP CONSTRAINT IF EXISTS issue_origin_type_check;
 ALTER TABLE issue ADD CONSTRAINT issue_origin_type_check
-    CHECK (origin_type IN ('autopilot', 'quick_create', 'lark_chat', 'slack_chat', 'agent_create', 'dingtalk_chat'))
+    CHECK (origin_type IN ('autopilot', 'quick_create', 'lark_chat', 'slack_chat', 'agent_create', 'dingtalk_chat', 'agent_mcp'))
     NOT VALID;
 ALTER TABLE issue VALIDATE CONSTRAINT issue_origin_type_check;
