@@ -46,47 +46,70 @@ type migrationVersionAlias struct {
 	Current string
 }
 
-// migrationVersionAliases preserves databases that received the ASB
-// migrations from prepub-only revisions before the feature was rebased onto
-// the shared migration sequence. The SQL contents are unchanged: moving the
-// bookkeeping row prevents the same schema change from running twice.
+// migrationVersionAliases preserves databases that applied fork migrations
+// before they moved into the reserved 9000+ namespace. Reconciliation keeps
+// both stems: the new binary skips replaying the migration, while a binary
+// rollback still sees the historical stem it understands.
 var migrationVersionAliases = []migrationVersionAlias{
-	{
-		Legacy:  "253_asb_enterprise_runtime",
-		Current: "258_asb_enterprise_runtime",
-	},
-	{
-		Legacy:  "257_asb_enterprise_runtime",
-		Current: "258_asb_enterprise_runtime",
-	},
-	{
-		Legacy:  "254_buc_identity_from_callback",
-		Current: "259_buc_identity_from_callback",
-	},
-	{
-		Legacy:  "258_buc_identity_from_callback",
-		Current: "259_buc_identity_from_callback",
-	},
-	{
-		Legacy:  "259_asb_artifact_build_time",
-		Current: "260_asb_artifact_build_time",
-	},
-	{
-		Legacy:  "260_asb_identity_anchor_renewal",
-		Current: "261_asb_identity_anchor_renewal",
-	},
-	{
-		Legacy:  "261_platform_asb_credentials",
-		Current: "262_platform_asb_credentials",
-	},
-	{
-		Legacy:  "262_asb_paused_identity_source",
-		Current: "263_asb_paused_identity_source",
-	},
-	{
-		Legacy:  "263_asb_shared_identity_source",
-		Current: "264_asb_shared_identity_source",
-	},
+	{Legacy: "175_webhook_delivery_worker", Current: "176_webhook_delivery_worker"},
+	{Legacy: "176_autopilot_run_webhook_delivery_index", Current: "177_autopilot_run_webhook_delivery_index"},
+	{Legacy: "177_webhook_delivery_queue_index", Current: "178_webhook_delivery_queue_index"},
+	{Legacy: "178_fc_e2b_sandbox_session", Current: "9000_fc_e2b_sandbox_session"},
+	{Legacy: "179_dws_auth_profile", Current: "9001_dws_auth_profile"},
+	{Legacy: "180_issue_origin_dingtalk_chat", Current: "9002_issue_origin_dingtalk_chat"},
+	{Legacy: "181_dingtalk_install_session", Current: "9003_dingtalk_install_session"},
+	{Legacy: "182_channel_typing_indicator", Current: "9004_channel_typing_indicator"},
+	{Legacy: "183_github_agent_source", Current: "9005_github_agent_source"},
+	{Legacy: "184_agent_task_runtime_launch_lease", Current: "9006_agent_task_runtime_launch_lease"},
+	{Legacy: "185_agent_dispatch_endpoint", Current: "9007_agent_dispatch_endpoint"},
+	{Legacy: "186_dingtalk_account_binding_status", Current: "9008_dingtalk_account_binding_status"},
+	{Legacy: "187_agent_dingtalk_identity", Current: "9009_agent_dingtalk_identity"},
+	{Legacy: "188_agent_dingtalk_identity_backend_ids", Current: "9010_agent_dingtalk_identity_backend_ids"},
+	{Legacy: "189_managed_agent_source", Current: "9011_managed_agent_source"},
+	{Legacy: "190_dingtalk_stream_inbox", Current: "9012_dingtalk_stream_inbox"},
+	{Legacy: "191_agent_task_deferred_chat_unique", Current: "9013_agent_task_deferred_chat_unique"},
+	{Legacy: "192_agent_task_deferred_chat_dispatch_index", Current: "9014_agent_task_deferred_chat_dispatch_index"},
+	{Legacy: "193_agent_dingtalk_identity_organization_name", Current: "9015_agent_dingtalk_identity_organization_name"},
+	{Legacy: "194_dingtalk_stream_receiver_hostname", Current: "9016_dingtalk_stream_receiver_hostname"},
+	{Legacy: "195_chat_message_client_receipt", Current: "9017_chat_message_client_receipt"},
+	{Legacy: "196_chat_message_source_payload", Current: "9018_chat_message_source_payload"},
+	{Legacy: "197_fde_onboarding_workspace", Current: "9019_fde_onboarding_workspace"},
+	{Legacy: "198_unified_dingtalk_router_registration", Current: "9020_unified_dingtalk_router_registration"},
+	{Legacy: "199_dingtalk_install_transport_generation", Current: "9021_dingtalk_install_transport_generation"},
+	{Legacy: "200_restore_legacy_dingtalk_stream_installations", Current: "9022_restore_legacy_dingtalk_stream_installations"},
+	{Legacy: "201_dingtalk_processing_emotion_lifecycle", Current: "9023_dingtalk_processing_emotion_lifecycle"},
+	{Legacy: "202_chat_session_pending_fresh", Current: "9024_chat_session_pending_fresh"},
+	{Legacy: "203_task_completion_outbox", Current: "9025_task_completion_outbox"},
+	{Legacy: "249_fc_e2b_stable_channel", Current: "9026_fc_e2b_stable_channel"},
+	{Legacy: "250_fc_e2b_stable_release_evidence", Current: "9027_fc_e2b_stable_release_evidence"},
+	{Legacy: "251_fc_e2b_stable_developer_rollout", Current: "9028_fc_e2b_stable_developer_rollout"},
+	{Legacy: "252_unify_agent_source_github", Current: "9029_unify_agent_source_github"},
+	{Legacy: "255_issue_delegated_task_completion", Current: "9030_issue_delegated_task_completion"},
+	{Legacy: "256_task_execution_update_outbox", Current: "9031_task_execution_update_outbox"},
+	{Legacy: "257_delegated_comment_completion_fanout", Current: "9032_delegated_comment_completion_fanout"},
+	{Legacy: "258_asb_enterprise_runtime", Current: "9033_asb_enterprise_runtime"},
+	{Legacy: "259_buc_identity_from_callback", Current: "9034_buc_identity_from_callback"},
+	{Legacy: "260_asb_artifact_build_time", Current: "9035_asb_artifact_build_time"},
+	{Legacy: "261_asb_identity_anchor_renewal", Current: "9036_asb_identity_anchor_renewal"},
+	{Legacy: "262_platform_asb_credentials", Current: "9037_platform_asb_credentials"},
+	{Legacy: "263_asb_paused_identity_source", Current: "9038_asb_paused_identity_source"},
+	{Legacy: "264_asb_shared_identity_source", Current: "9039_asb_shared_identity_source"},
+	{Legacy: "265_drop_legacy_fc_e2b_environment_scope_index", Current: "9040_drop_legacy_fc_e2b_environment_scope_index"},
+	{Legacy: "266_runtime_start_attempt_observability", Current: "9041_runtime_start_attempt_observability"},
+	{Legacy: "266_workspace_access_token", Current: "9042_workspace_access_token"},
+	{Legacy: "267_workspace_access_native_ownership", Current: "9043_workspace_access_native_ownership"},
+	{Legacy: "268_dta_load_smoke_operation_idempotency", Current: "9044_dta_load_smoke_operation_idempotency"},
+	{Legacy: "269_workspace_access_service_member", Current: "9045_workspace_access_service_member"},
+	{Legacy: "270_task_completion_execution_summary", Current: "9046_task_completion_execution_summary"},
+	{Legacy: "253_asb_enterprise_runtime", Current: "9033_asb_enterprise_runtime"},
+	{Legacy: "257_asb_enterprise_runtime", Current: "9033_asb_enterprise_runtime"},
+	{Legacy: "254_buc_identity_from_callback", Current: "9034_buc_identity_from_callback"},
+	{Legacy: "258_buc_identity_from_callback", Current: "9034_buc_identity_from_callback"},
+	{Legacy: "259_asb_artifact_build_time", Current: "9035_asb_artifact_build_time"},
+	{Legacy: "260_asb_identity_anchor_renewal", Current: "9036_asb_identity_anchor_renewal"},
+	{Legacy: "261_platform_asb_credentials", Current: "9037_platform_asb_credentials"},
+	{Legacy: "262_asb_paused_identity_source", Current: "9038_asb_paused_identity_source"},
+	{Legacy: "263_asb_shared_identity_source", Current: "9039_asb_shared_identity_source"},
 }
 
 func runTaskUsageHourlyHook(ctx context.Context, pool *pgxpool.Pool) error {
@@ -254,6 +277,12 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lockKey); err != nil {
 		return fmt.Errorf("acquire migration advisory lock: %w", err)
 	}
+	// Migrations are the only writes allowed while the deployment fence is
+	// frozen. The bypass is scoped to this pinned migration-runner session and
+	// is never set by the application server.
+	if _, err := conn.Exec(ctx, "SELECT set_config('multica.deployment_fence_bypass', 'migration-runner', false)"); err != nil {
+		return fmt.Errorf("enable deployment fence migration bypass: %w", err)
+	}
 	// Best-effort explicit unlock on the success path. On error returns
 	// the defer still runs; on os.Exit error paths in main() it does not,
 	// but session-level advisory locks are released automatically when
@@ -340,6 +369,32 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 		fmt.Printf("  %s  %s\n", opts.Direction, version)
 	}
 
+	// Upstream syncs can add tables with migration numbers below the fork's
+	// 9000+ range, so migration 9047 may already be recorded before those new
+	// files arrive. Reinstall the idempotent triggers after every production
+	// up-run to cover every table that now exists before the server starts.
+	if opts.Direction == "up" && table == defaultSchemaMigrationsTable {
+		if err := refreshDeploymentFenceTriggers(ctx, conn); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func refreshDeploymentFenceTriggers(ctx context.Context, conn *pgxpool.Conn) error {
+	var available bool
+	if err := conn.QueryRow(ctx, `
+		SELECT to_regprocedure('multica_install_deployment_fence_triggers()') IS NOT NULL
+	`).Scan(&available); err != nil {
+		return fmt.Errorf("detect deployment fence trigger installer: %w", err)
+	}
+	if !available {
+		return nil
+	}
+	if _, err := conn.Exec(ctx, "SELECT multica_install_deployment_fence_triggers()"); err != nil {
+		return fmt.Errorf("refresh deployment fence triggers: %w", err)
+	}
 	return nil
 }
 
@@ -355,14 +410,10 @@ func reconcileMigrationVersionAliases(
 	}
 
 	statement := fmt.Sprintf(`
-		WITH legacy AS (
-			DELETE FROM %s
-			WHERE version = $1
-			RETURNING applied_at
-		)
 		INSERT INTO %s (version, applied_at)
 		SELECT $2, applied_at
-		FROM legacy
+		FROM %s
+		WHERE version = $1
 		ON CONFLICT (version) DO NOTHING
 	`, tableIdent, tableIdent)
 	for _, alias := range migrationVersionAliases {

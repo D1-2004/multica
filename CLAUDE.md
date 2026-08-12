@@ -267,6 +267,24 @@ new release. The migration runner holds a PostgreSQL advisory lock, so concurren
 pod startup is serialized safely. Generic container entrypoints still require an
 explicit migration phase.
 
+Upstream schema syncs use the database-authoritative deployment fence in
+`server/internal/deploymentfence`:
+
+- Operate it only through `GET/PUT /api/internal/deployment-fence`, authenticated
+  with `MULTICA_LOG_TAIL_TOKEN`; never update `deployment_fence` directly.
+- The required state flow is `normal -> draining -> frozen -> normal`.
+  `draining` makes the user-facing API unavailable, rejects new task/channel/
+  webhook admissions, and still lets already-dispatched daemon tasks finish.
+  `frozen` rejects all business writes at PostgreSQL trigger level.
+- Every live replica must acknowledge the draining revision and all active task,
+  inbox, lease, and completion-outbox counts must reach zero before `frozen` is
+  accepted. The transition also refuses to freeze if any public business table
+  is missing its global fence trigger. Health and the fence/log operator
+  endpoints remain available.
+- The migration runner is the sole frozen-state writer. It sets a session-scoped
+  bypass and reinstalls the fence triggers after `migrate up`, covering tables
+  introduced later by an upstream migration below the fork namespace.
+
 Migration rules:
 
 - Pre-release is managed Postgres (PolarDB). It refuses `CREATE EXTENSION` to the
@@ -282,6 +300,9 @@ Migration rules:
 - Verify risky migrations against the real pre-release database inside a
   rolled-back transaction. A local Postgres runs as superuser and cannot
   reproduce PolarDB's permission model.
+- Fork-owned migrations use the reserved `9000+` range. When moving a migration
+  into that range, add a full-stem alias in `cmd/migrate`, preserve both old and
+  new bookkeeping rows for binary rollback, and keep replayed SQL idempotent.
 
 When syncing upstream (`git merge upstream/main`):
 

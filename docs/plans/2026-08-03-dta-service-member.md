@@ -267,7 +267,7 @@ DTA HTTPS → dta_ 生命周期校验 → 原生 member middleware → 业务 Ha
 
 - [x] 从 `origin/develop@d839e6c38` rebase 19 个功能提交，并保留 rebase 前本地备份分支 `codex/dta-service-member-pre-rebase-20260804`。
 - [x] 解决数字员工绑定、Runtime 和 Router subscription 测试冲突；以最新正式账号键、ASB Runtime 与绑定权限模型为基线，只重放普通成员/DTA service member 增量。
-- [x] 将 migration 调整为 `266_workspace_access_token`、`267_workspace_access_native_ownership`、`268_dta_load_smoke_operation_idempotency`、`269_workspace_access_service_member`。
+- [x] 将 migration 调整为 `9042_workspace_access_token`、`9043_workspace_access_native_ownership`、`9044_dta_load_smoke_operation_idempotency`、`9045_workspace_access_service_member`。
 - [x] 验证新 migration 在全新正式 schema 与已执行旧 257–260 的预发 schema 上均可安全执行。
 - [x] 运行 migration lint、认证/成员、Runtime、数字员工绑定/Router、Core/Views 类型检查与目标测试。
 - [x] 完成最终 diff 审核和正式发布风险记录；本地提交后等待 force-with-lease push 的单独授权。

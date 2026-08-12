@@ -9,7 +9,7 @@ Related:
 - `docs/custom-runtimes.md`
 - `server/internal/service/fc_e2b.go`
 - `server/internal/service/fc_e2b_stable.go`
-- `server/migrations/249_fc_e2b_stable_channel.up.sql`
+- `server/migrations/9026_fc_e2b_stable_channel.up.sql`
 - `packages/core/runtimes/cloud-runtime.ts`
 
 ## 1. 目标
