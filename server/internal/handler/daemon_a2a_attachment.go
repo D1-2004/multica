@@ -45,10 +45,7 @@ func (h *Handler) DownloadDaemonA2AAttachment(w http.ResponseWriter, r *http.Req
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", storage.ContentDisposition(contentType, attachment.Filename))
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	setDaemonA2AAttachmentHeaders(w.Header(), contentType, attachment.Filename)
 	written, copyErr := io.Copy(w, reader)
 	if copyErr != nil {
 		slog.Warn("stream A2A attachment failed",
@@ -68,4 +65,16 @@ func (h *Handler) DownloadDaemonA2AAttachment(w http.ResponseWriter, r *http.Req
 			"written_size_bytes", written,
 		)
 	}
+}
+
+func setDaemonA2AAttachmentHeaders(header http.Header, sourceContentType, filename string) {
+	// This endpoint transports opaque bytes to the task daemon. Advertising an
+	// HTML source type lets ingress products rewrite the response body (for
+	// example by injecting login bootstrap markup), corrupting the attachment.
+	// The daemon already receives the original media type in task metadata, so
+	// keep the transport representation strictly binary.
+	header.Set("Content-Type", "application/octet-stream")
+	header.Set("Content-Disposition", storage.ContentDisposition(sourceContentType, filename))
+	header.Set("Cache-Control", "no-store")
+	header.Set("X-Content-Type-Options", "nosniff")
 }
