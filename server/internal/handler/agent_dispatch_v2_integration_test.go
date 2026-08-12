@@ -1231,6 +1231,8 @@ func TestHandleAgentDispatchV2RobotSDKCompletionDependsOnlyOnCallbackPresence(t 
 				completeResult(t, "robot final reply"),
 				"",
 				"",
+				false,
+				"",
 			); err != nil {
 				t.Fatal(err)
 			}
@@ -1272,7 +1274,7 @@ func TestHandleAgentDispatchV2RobotSDKChatKeepsInstallationGuards(t *testing.T) 
 		sourceType                  string
 		transportMode               dingtalk.TransportMode
 		installationEndpointMatches bool
-		withCallback               bool
+		withCallback                bool
 		wantStatus                  int
 	}{
 		{name: "robot callback rejects Stream installation", sourceType: "robot", transportMode: dingtalk.TransportModeStream, installationEndpointMatches: true, withCallback: true, wantStatus: http.StatusForbidden},

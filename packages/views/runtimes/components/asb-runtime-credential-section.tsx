@@ -20,7 +20,7 @@ function ASBQuotaList({ quotas }: { quotas: ASBRuntimeQuota[] }) {
 
   if (quotas.length === 0) {
     return (
-      <p className="text-xs text-muted-foreground">
+      <p className="text-caption text-muted-foreground">
         {t(($) => $.fc_e2b_runtime.quota_empty)}
       </p>
     );
@@ -31,7 +31,7 @@ function ASBQuotaList({ quotas }: { quotas: ASBRuntimeQuota[] }) {
       {quotas.map((quota) => (
         <div
           key={`${quota.network_zone}:${quota.region}`}
-          className="rounded-md border bg-background/60 px-2.5 py-2 text-xs"
+          className="rounded-md border bg-background/60 px-2.5 py-2 text-caption"
         >
           <p className="font-medium">
             {quota.network_zone} · {quota.region}
@@ -118,19 +118,19 @@ export function ASBRuntimeCredentialSection({
     <div className="rounded-lg border">
       <div className="flex items-center gap-1.5 border-b px-4 py-2.5">
         <KeyRound className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-xs font-semibold">
+        <span className="text-caption font-semibold">
           {t(($) => $.detail.asb_credential.title)}
         </span>
       </div>
       <div className="space-y-3 p-4">
         {credential.isPending ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 text-caption text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             {t(($) => $.detail.asb_credential.loading)}
           </div>
         ) : credential.isError ? (
           <div className="space-y-2">
-            <p className="text-xs text-destructive">
+            <p className="text-caption text-destructive">
               {credential.error instanceof Error && credential.error.message
                 ? credential.error.message
                 : t(($) => $.detail.asb_credential.load_failed)}
@@ -149,21 +149,21 @@ export function ASBRuntimeCredentialSection({
         ) : credential.data ? (
           <>
             <div className="space-y-1.5">
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              <div className="text-micro uppercase tracking-wide text-muted-foreground">
                 {t(($) => $.detail.asb_credential.configured_key)}
               </div>
               {credential.data.configured ? (
-                <code className="block rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                <code className="block rounded-md border bg-muted/30 px-3 py-2 text-caption">
                   ••••••••{credential.data.api_key_hint}
                 </code>
               ) : (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-caption text-muted-foreground">
                   {t(($) => $.detail.asb_credential.not_configured)}
                 </p>
               )}
             </div>
             <div className="space-y-2 border-t pt-3">
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              <div className="text-micro uppercase tracking-wide text-muted-foreground">
                 {t(($) => $.detail.asb_credential.current_quota)}
               </div>
               <ASBQuotaList quotas={credential.data.quotas} />
@@ -172,7 +172,7 @@ export function ASBRuntimeCredentialSection({
         ) : null}
 
         <div className="space-y-2 border-t pt-3">
-          <Label htmlFor={`asb-api-key-${runtimeId}`} className="text-xs">
+          <Label htmlFor={`asb-api-key-${runtimeId}`} className="text-caption">
             {t(($) => $.detail.asb_credential.replace_label)}
           </Label>
           <Input
@@ -187,7 +187,7 @@ export function ASBRuntimeCredentialSection({
               validateCredential.reset();
             }}
           />
-          <p className="text-xs text-muted-foreground">
+          <p className="text-caption text-muted-foreground">
             {t(($) => $.detail.asb_credential.warning)}
           </p>
           <div className="flex flex-wrap gap-2">
@@ -224,7 +224,7 @@ export function ASBRuntimeCredentialSection({
             </Button>
           </div>
           {validateCredential.isError && (
-            <p className="text-xs text-destructive">
+            <p className="text-caption text-destructive">
               {validateCredential.error instanceof Error &&
               validateCredential.error.message
                 ? validateCredential.error.message
@@ -233,7 +233,7 @@ export function ASBRuntimeCredentialSection({
           )}
           {apiKeyIsValidated && validateCredential.data && (
             <div className="space-y-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
-              <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+              <p className="flex items-center gap-1.5 text-caption font-medium text-emerald-700 dark:text-emerald-300">
                 <Check className="h-3.5 w-3.5" />
                 {t(($) => $.fc_e2b_runtime.api_key_valid)}
               </p>

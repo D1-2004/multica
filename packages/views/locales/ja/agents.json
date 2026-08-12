@@ -62,11 +62,13 @@
     "last_active": "最終アクティブ",
     "model": "モデル",
     "created": "作成日時",
-    "owner": "オーナー"
+    "owner": "オーナー",
+    "access": "アクセス"
   },
   "row": {
     "you": "あなた",
     "archived": "アーカイブ済み",
+    "needs_runtime": "ランタイム未設定",
     "no_description": "説明なし",
     "fallback_runtime_cloud": "クラウド",
     "fallback_runtime_local": "ローカル",
@@ -86,6 +88,12 @@
     "duplicate": "複製",
     "restore": "復元",
     "archive": "アーカイブ",
+    "set_access": "アクセス範囲を設定",
+    "set_access_dialog_title": "アクセス範囲を設定",
+    "set_access_applies_to": "{{count}} 件の agent に適用します。",
+    "set_access_skipped": "{{count}} 件スキップ(あなた所有ではありません)。",
+    "set_access_dialog_confirm": "適用",
+    "set_access_bulk_partial": "{{succeeded}} 件適用、{{failed}} 件失敗(現在の状態を維持)。",
     "agent_archived_toast": "エージェントをアーカイブしました",
     "archive_failed_toast": "エージェントをアーカイブできませんでした",
     "agent_restored_toast": "エージェントを復元しました",
@@ -116,6 +124,8 @@
     "no_access_hint": "この非公開エージェントは、エージェントのオーナーまたはワークスペースの admin のみが閲覧できます。",
     "try_again": "再試行",
     "archived_banner": "このエージェントはアーカイブされています。割り当てやメンションはできません。",
+    "runtime_required_banner": "このエージェントの設定と履歴は保持されていますが、実行するにはランタイムを設定する必要があります。",
+    "bind_runtime": "ランタイムを設定",
     "restore": "復元",
     "archive_dialog_title": "エージェントをアーカイブしますか？",
     "archive_dialog_description": "\"{{name}}\" がアーカイブされます。割り当てやメンションはできなくなりますが、履歴はすべて保持されます。後で復元できます。",
@@ -130,6 +140,7 @@
     "restore_failed_toast": "エージェントを復元できませんでした",
     "dm": "DM",
     "dm_no_permission_toast": "このエージェントとチャットする権限がありません。",
+    "runtime_required_toast": "このエージェントを実行する前にランタイムを設定してください。",
     "assign_work": "作業を割り当てる",
     "more_actions_aria": "エージェントの操作",
     "updated": "{{when}}に更新",
@@ -152,6 +163,7 @@
     "prop_runtime": "ランタイム",
     "prop_model": "モデル",
     "prop_thinking": "思考",
+    "prop_speed": "速度",
     "prop_visibility": "公開範囲",
     "prop_concurrency": "同時実行数",
     "prop_owner": "オーナー",
@@ -162,8 +174,6 @@
     "avatar_hint": "割り当て、アクティビティ、チャットに表示されます。",
     "name_label": "名前",
     "description_label": "説明",
-    "labels_label": "ラベル",
-    "labels_hint": "このエージェントを分類するワークスペースラベルです。",
     "change_avatar_aria": "アバターを変更",
     "avatar_updated_toast": "アバターを更新しました",
     "avatar_upload_failed_toast": "アバターをアップロードできませんでした",
@@ -174,6 +184,8 @@
     "description_placeholder": "このエージェントは何をしますか？",
     "save": "保存",
     "cancel": "キャンセル",
+    "labels_label": "ラベル",
+    "labels_hint": "このエージェントを分類するワークスペースラベルです。",
     "github_managed_profile": "指示とリポジトリスキルは GitHub で管理され、名前と説明は Multica で編集できます。"
   },
   "overview": {
@@ -186,7 +198,11 @@
     "source_commit": "コミット",
     "source_synced_at": "最終同期",
     "source_sync": "今すぐ同期",
-    "source_status": { "ready": "正常", "failed": "同期失敗", "disconnected": "切断済み" }
+    "source_status": {
+      "ready": "正常",
+      "failed": "同期失敗",
+      "disconnected": "切断済み"
+    }
   },
   "skill_attach": {
     "trigger_aria": "ワークスペースのスキルを追加",
@@ -217,7 +233,11 @@
     "thinking_default": "CLI 設定に従う",
     "thinking_tooltip": "思考 · {{value}}",
     "thinking_clear": "CLI 設定に従う",
-    "thinking_clear_title": "上書きをクリアし、推論レベルをローカルの CLI 設定（claude/codex）に任せます"
+    "thinking_clear_title": "上書きをクリアし、推論レベルをローカルの CLI 設定（claude/codex）に任せます",
+    "service_tier_default": "ランタイムのデフォルト",
+    "service_tier_tooltip": "速度 · {{value}}",
+    "service_tier_clear": "ランタイムのデフォルト",
+    "service_tier_clear_title": "速度の上書きをクリアし、ローカルの Codex 設定に任せます"
   },
   "model_dropdown": {
     "label": "モデル",
@@ -247,13 +267,13 @@
     "mcp_config": "MCP",
     "composio_mcp": "MCP アプリ",
     "integrations": "連携",
-    "identity": "ID",
     "runtime_config": "ルーティング",
-    "llm_trace": "LLM トレース",
     "discard_dialog_title": "保存していない変更を破棄しますか？",
     "discard_dialog_description": "このタブに保存していない変更があります。今移動すると変更は破棄されます。",
     "discard_keep": "編集を続ける",
-    "discard_confirm": "変更を破棄"
+    "discard_confirm": "変更を破棄",
+    "identity": "ID",
+    "llm_trace": "LLM トレース"
   },
   "create_dialog": {
     "title_create": "エージェントを作成",
@@ -328,9 +348,16 @@
     },
     "instructions": {
       "intro": "すべてのタスクで使用する System Prompt を設定します。Markdown に対応しています。",
-      "github_managed": "この System Prompt は接続された GitHub リポジトリで管理されています。更新するにはソースを同期してください。",
       "system_prompt_label": "System Prompt",
-      "placeholder": "このエージェントの役割、専門分野、作業スタイルを定義してください。\n\n# 例\nあなたは React と TypeScript を専門とするフロントエンドエンジニアです。\n\n## 作業スタイル\n- 小さく焦点を絞った PR を作成する — 論理的な変更ごとに1コミット\n- 継承よりコンポジションを優先する\n- 新しいコンポーネントには必ずユニットテストを追加する\n\n## 制約\n- 明示的な承認なしに shared/ の型を変更しない\n- features/ の既存のコンポーネントパターンに従う"
+      "placeholder": "このエージェントの役割、専門分野、作業スタイルを定義してください。\n\n# 例\nあなたは React と TypeScript を専門とするフロントエンドエンジニアです。\n\n## 作業スタイル\n- 小さく焦点を絞った PR を作成する — 論理的な変更ごとに1コミット\n- 継承よりコンポジションを優先する\n- 新しいコンポーネントには必ずユニットテストを追加する\n\n## 制約\n- 明示的な承認なしに shared/ の型を変更しない\n- features/ の既存のコンポーネントパターンに従う",
+      "system_layer_label": "Multica が管理",
+      "system_layer_hint": "Multica のリリースごとに更新されます。編集はできず、下に書いた内容が上書きされることもありません。",
+      "system_layer_show": "表示",
+      "system_layer_hide": "隠す",
+      "workspace_notes_label": "ワークスペースの補足",
+      "workspace_notes_intro": "チームのコンテキストや好みを下に追加してください。Multica がこのエージェント向けに管理している指示の上に適用されます。Markdown が使えます。",
+      "workspace_notes_placeholder": "このエージェントが常に知っておくべきことを書きます。\n\n# 例\nメインリポジトリは github.com/acme/platform です。\nチャットが日本語でも、タスクは英語で書いてください。\n金曜日はデプロイしません。",
+      "github_managed": "この System Prompt は接続された GitHub リポジトリで管理されています。更新するにはソースを同期してください。"
     },
     "env": {
       "intro_readonly": "エージェントプロセスの起動時に注入されます。値の読み取りや編集ができるのはワークスペースのオーナーと admin のみで、すべての表示と編集はワークスペースの監査ログに記録されます。",
@@ -476,15 +503,6 @@
       "saved_toast": "ルーティング設定を保存しました",
       "save_failed_toast": "ルーティング設定の保存に失敗しました"
     },
-    "llm_trace": {
-      "intro": "このエージェントのタスクがクラウドサンドボックスで実行されるときに、LLM リクエストをトレース受信先へミラーします。",
-      "enabled_label": "LLM リクエストのトレースを有効化",
-      "enabled_hint": "有効化し、受信先 URL を設定すると、各タスクの LLM リクエスト body が受信先に転送されます。",
-      "sink_url_label": "トレース受信 URL",
-      "sink_url_placeholder": "https://trace.example.com/ingest",
-      "saved_toast": "LLM トレース設定を保存しました",
-      "save_failed_toast": "LLM トレース設定の保存に失敗しました"
-    },
     "skills": {
       "assigned_title": "エージェントに割り当て済み",
       "assigned_hint": "ワークスペースのスキルはエージェントと一緒に移動します。削除せず一時的に無効化できます。",
@@ -497,6 +515,8 @@
       "toggle_aria": "{{name}} の有効・無効を切り替え",
       "remove_aria": "{{name}} を削除",
       "toggle_failed_toast": "スキルの状態を変更できませんでした",
+      "runtime_toggle_aria": "継承した {{name}} の有効・無効を切り替え",
+      "runtime_toggle_failed_toast": "継承スキルの状態を変更できませんでした",
       "runtime_missing": "継承スキルを検出するには、ローカルランタイムを割り当ててください。",
       "runtime_offline": "ローカルランタイムはオフラインです。再接続すると更新できます。",
       "runtime_discovering": "ローカルランタイムからスキルを検出中…",
@@ -698,6 +718,15 @@
       "started_prefix": "{{when}} に開始",
       "dispatched_prefix": "{{when}} にディスパッチ",
       "queued_prefix": "{{when}} に待機開始"
+    },
+    "llm_trace": {
+      "intro": "このエージェントのタスクがクラウドサンドボックスで実行されるときに、LLM リクエストをトレース受信先へミラーします。",
+      "enabled_label": "LLM リクエストのトレースを有効化",
+      "enabled_hint": "有効化し、受信先 URL を設定すると、各タスクの LLM リクエスト body が受信先に転送されます。",
+      "sink_url_label": "トレース受信 URL",
+      "sink_url_placeholder": "https://trace.example.com/ingest",
+      "saved_toast": "LLM トレース設定を保存しました",
+      "save_failed_toast": "LLM トレース設定の保存に失敗しました"
     }
   },
   "char_counter": {
@@ -721,6 +750,11 @@
     "tooltip": "アクセス · 誰がこのエージェントを実行できるか",
     "trigger_private": "自分のみ",
     "trigger_workspace": "ワークスペース",
+    "scope_labels": {
+      "workspace": "ワークスペース",
+      "specific_people": "特定のメンバー",
+      "owner_only": "オーナーのみ"
+    },
     "trigger_members_count": "{{count}} 人",
     "trigger_members_empty": "特定のメンバー",
     "trigger_team": "チーム",
@@ -766,17 +800,60 @@
     "status_failed": "失敗",
     "filter": "フィルター",
     "clear_filters": "フィルターをクリア",
-    "tool_calls_other": "ツール呼び出し {{count}} 回",
     "events_other": "イベント {{count}} 件",
     "events_filtered": "イベント {{total}} 件中 {{shown}} 件",
     "copy_all": "すべてコピー",
     "copy_filtered": "フィルター結果をコピー",
     "copied": "コピーしました",
     "waiting_events": "イベントを待機中...",
+    "antigravity_live_unavailable": "Antigravity は現在、リアルタイム実行イベントを提供していません。作業完了後に実行記録を確認できます。",
     "no_data": "記録された実行データがありません。",
     "sort_label": "並び替え",
     "sort_chronological": "古い順",
     "sort_newest_first": "新しい順",
+    "density_label": "展開モード",
+    "density_smart": "重点展開",
+    "density_smart_desc": "回答とエラーは展開、思考とツールの過程は折りたたみ",
+    "density_expanded": "すべて展開",
+    "density_expanded_desc": "各行のパラメータと出力を完全に展開し、逐次レビューに",
+    "density_collapsed": "すべて折りたたむ",
+    "density_collapsed_desc": "1 行 1 イベントの最もコンパクトな表示",
+    "no_output": "出力なし",
+    "show_all": "すべて表示",
+    "patch_truncated": "...（切り詰め済み）",
+    "patch_body_truncated": "...（本文を切り詰めました）",
+    "patch_no_content": "（内容の記録なし）",
+    "patch_summary_more": "{{path}} 他 {{extra}} 件",
+    "status_queued": "待機列",
+    "status_dispatched": "ディスパッチ済み",
+    "status_cancelled": "キャンセル",
+    "status_waiting": "待機中",
+    "trigger_initial": "初回実行",
+    "trigger_comment": "コメントから",
+    "trigger_autopilot": "オートパイロット",
+    "trigger_retry": "再試行",
+    "trigger_chat": "チャットから",
+    "trigger_quick_create": "クイック作成",
+    "trigger_direct": "直接アサイン",
+    "run_info": "実行の詳細",
+    "details_runtime": "ランタイム",
+    "details_provider": "プロバイダー",
+    "details_mode": "モード",
+    "details_workdir": "作業ディレクトリ",
+    "details_created": "作成",
+    "details_started": "開始",
+    "details_completed": "完了",
+    "copy_workdir": "作業ディレクトリをコピー",
+    "close": "閉じる",
+    "fact_created": "作成 {{time}}",
+    "fact_took": "所要 {{duration}}",
+    "details_input": "入力",
+    "details_output": "出力",
+    "details_cache_read": "キャッシュ読み取り",
+    "details_cache_write": "キャッシュ書き込み",
+    "details_cost": "費用",
+    "usage_chip_title": "この実行のトークンと推定費用",
+    "tool_calls_other": "ツール呼び出し {{count}} 回",
     "expand_visible": "表示中を展開",
     "collapse_visible": "表示中を折りたたむ",
     "preserve_filters": "フィルターを保持",
@@ -808,6 +885,7 @@
     "filter_active_count_other": "{{count}} 件のフィルター",
     "clear_filters": "フィルターをクリア",
     "section_availability": "可用性",
+    "section_access": "アクセス",
     "section_runtime": "ランタイム",
     "display": "表示",
     "sort_by": "並び替え",
@@ -828,10 +906,8 @@
     "recommended": "おすすめ",
     "continue": "続ける",
     "step_choose": "開始方法を選択",
-    "step_template": "テンプレートを選択",
     "step_configure": "確認して設定",
     "step_ai": "会話で作成",
-    "step_github": "GitHub からインポート",
     "modes": {
       "blank": {
         "title": "空白から始める",
@@ -850,6 +926,79 @@
         "description": "dingtalk-agent.json、エージェント定義、スキル、補助ファイルを含むバージョン管理された DTA Agent Project から作成します。"
       }
     },
+    "sections": {
+      "identity": "基本情報",
+      "identity_hint": "識別しやすい名前と簡潔な目的を設定します。",
+      "behavior": "動作と機能",
+      "behavior_hint": "動作方法を定義し、利用できるワークスペースのスキルを追加します。",
+      "execution": "実行環境",
+      "execution_hint": "エージェントを実行する場所を選び、必要に応じてランタイムの既定モデルを変更します。",
+      "access": "アクセス",
+      "access_hint": "このエージェントを実行できるユーザーを設定します。後から変更できます。"
+    },
+    "thinking_label": "思考",
+    "speed_label": "速度",
+    "access": {
+      "private": {
+        "title": "自分のみ",
+        "description": "このエージェントを実行できるのは自分だけです。"
+      },
+      "workspace": {
+        "title": "ワークスペース全体",
+        "description": "すべてのワークスペースメンバーが実行できます。"
+      },
+      "members": {
+        "title": "特定のメンバー",
+        "description": "選択したメンバーだけが実行できます。",
+        "required": "メンバーを1人以上選択してください。"
+      }
+    },
+    "builder": {
+      "setup_title": "Agent Builder のランタイムを選択",
+      "setup_description": "選択したオンラインのランタイムが設定会話を実行し、新しいエージェントの既定ランタイムになります。",
+      "start": "会話を開始",
+      "connect_runtime": "ランタイムを接続",
+      "start_failed": "Agent Builder を開始できませんでした。",
+      "send_failed": "メッセージを送信できませんでした。",
+      "stop_failed": "現在の生成を停止できませんでした。",
+      "switch_runtime_failed": "ランタイムを切り替えられませんでした。会話は引き続き元のランタイムで実行されています。",
+      "switch_runtime_pending": "現在の返信を停止するとランタイムを切り替えられます。",
+      "switch_runtime_success": "ランタイムを切り替えました。下書き設定はそのまま残り、以降の会話は新しいランタイムで新しいモデルセッションとして続きます。",
+      "chat_title": "Agent Builder",
+      "chat_hint": "会話で要件を整理し、隣の設定を調整します。",
+      "runtime_online": "ランタイムはオンライン",
+      "runtime_offline": "ランタイムはオフライン",
+      "empty_title": "このエージェントに何をさせますか？",
+      "empty_description": "役割、ワークフロー、出力、制約を説明してください。右側に最初の下書きが表示されます。",
+      "prompt_review": "フロントエンドの Pull Request をレビュー",
+      "prompt_research": "競合を調査して結果を要約",
+      "prompt_assistant": "チームのプロジェクト計画と文章作成を支援",
+      "thinking": "下書きを更新中…",
+      "placeholder": "必要なエージェントを説明…",
+      "send": "メッセージを送信"
+    },
+    "live_draft": "エージェント設定",
+    "live_draft_hint": "会話内容がここに反映され、各項目を直接調整できます。",
+    "duplicate_env_notice": "指示、スキル、モデル、コマンド引数がコピーされます。セキュリティ上、環境変数はコピーされません。",
+    "duplicate_runtime_reset_notice": "元のランタイムが利用できないため、このコピーは別のランタイムで実行されます。モデル・思考レベル・速度は選択したランタイムでのみ有効なため、クリアされました。",
+    "create_and_open": "作成して開く",
+    "create_and_add": "作成してスクワッドに追加",
+    "creating": "エージェントを作成中…",
+    "create_failed": "エージェントを作成できませんでした。",
+    "name_conflict": "同じ名前のエージェントがすでに存在します。",
+    "created": "{{name}} を作成しました",
+    "drafts": {
+      "title": "下書き",
+      "untitled": "無題の下書き",
+      "discard": "作成を破棄",
+      "discard_confirm": "会話と右側の設定は完全に削除されます。",
+      "discard_title": "この作成を破棄しますか？",
+      "discard_cancel": "編集を続ける",
+      "banner": "未完了の下書きが {{count}} 件あります",
+      "pick_hint": "続きを選んでください。"
+    },
+    "step_template": "テンプレートを選択",
+    "step_github": "GitHub からインポート",
     "github": {
       "source_title": "GitHub ソース",
       "source_hint": "リポジトリと ref を選択し、作成前に dingtalk-agent.json を検証してプレビューします。",
@@ -880,61 +1029,7 @@
       "skills": "含まれるスキル",
       "instructions": "指示",
       "use": "このテンプレートを使用"
-    },
-    "sections": {
-      "identity": "基本情報",
-      "identity_hint": "識別しやすい名前と簡潔な目的を設定します。",
-      "behavior": "動作と機能",
-      "behavior_hint": "動作方法を定義し、利用できるワークスペースのスキルを追加します。",
-      "execution": "実行環境",
-      "execution_hint": "エージェントを実行する場所を選び、必要に応じてランタイムの既定モデルを変更します。",
-      "access": "アクセス",
-      "access_hint": "このエージェントを実行できるユーザーを設定します。後から変更できます。"
-    },
-    "access": {
-      "private": {
-        "title": "自分のみ",
-        "description": "このエージェントを実行できるのは自分だけです。"
-      },
-      "workspace": {
-        "title": "ワークスペース全体",
-        "description": "すべてのワークスペースメンバーが実行できます。"
-      },
-      "members": {
-        "title": "特定のメンバー",
-        "description": "選択したメンバーだけが実行できます。",
-        "required": "メンバーを1人以上選択してください。"
-      }
-    },
-    "builder": {
-      "setup_title": "Agent Builder のランタイムを選択",
-      "setup_description": "選択したオンラインのランタイムが設定会話を実行し、新しいエージェントの既定ランタイムになります。",
-      "start": "会話を開始",
-      "connect_runtime": "ランタイムを接続",
-      "start_failed": "Agent Builder を開始できませんでした。",
-      "send_failed": "メッセージを送信できませんでした。",
-      "stop_failed": "現在の生成を停止できませんでした。",
-      "chat_title": "Agent Builder",
-      "chat_hint": "会話で要件を整理し、隣の設定を調整します。",
-      "runtime_online": "ランタイムはオンライン",
-      "runtime_offline": "ランタイムはオフライン",
-      "empty_title": "このエージェントに何をさせますか？",
-      "empty_description": "役割、ワークフロー、出力、制約を説明してください。右側に最初の下書きが表示されます。",
-      "prompt_review": "フロントエンドの Pull Request をレビュー",
-      "prompt_research": "競合を調査して結果を要約",
-      "prompt_assistant": "チームのプロジェクト計画と文章作成を支援",
-      "thinking": "下書きを更新中…",
-      "placeholder": "必要なエージェントを説明…",
-      "send": "メッセージを送信"
-    },
-    "live_draft": "エージェント設定",
-    "live_draft_hint": "会話内容がここに反映され、各項目を直接調整できます。",
-    "duplicate_env_notice": "指示、スキル、モデル、コマンド引数がコピーされます。セキュリティ上、環境変数はコピーされません。",
-    "create_and_open": "作成して開く",
-    "create_and_add": "作成してスクワッドに追加",
-    "creating": "エージェントを作成中…",
-    "create_failed": "エージェントを作成できませんでした。",
-    "created": "{{name}} を作成しました"
+    }
   },
   "actions": {
     "selected_other": "{{count}} 件選択中",

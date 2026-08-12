@@ -103,11 +103,12 @@ export function FCE2BRuntimeDialog({
   const templatesQuery = useFCE2BTemplates(wsId, canPublish);
   const stableChannelQuery = useCloudSandboxStableChannel(sandboxBackend);
   const templates = (templatesQuery.data ?? []).filter(isReadyFCE2BTemplate);
-  const [templateChannel, setTemplateChannel] = useState<"stable" | "candidate">(
-    "stable",
-  );
+  const [templateChannel, setTemplateChannel] = useState<
+    "stable" | "candidate"
+  >("stable");
   const [query, setQuery] = useState("");
-  const [selectedTemplate, setSelectedTemplate] = useState<FCE2BTemplate | null>(null);
+  const [selectedTemplate, setSelectedTemplate] =
+    useState<FCE2BTemplate | null>(null);
   const [provider, setProvider] = useState<FCE2BRuntimeProvider>("hermes");
   const [name, setName] = useState("");
   const [visibility, setVisibility] = useState<RuntimeVisibility>("private");
@@ -197,9 +198,7 @@ export function FCE2BRuntimeDialog({
     if (
       sandboxBackend === "asb" &&
       templateChannel === "candidate" &&
-      (!artifactRef.trim() ||
-        !artifactBuildId.trim() ||
-        !artifactDigest.trim())
+      (!artifactRef.trim() || !artifactBuildId.trim() || !artifactDigest.trim())
     ) {
       return;
     }
@@ -207,8 +206,7 @@ export function FCE2BRuntimeDialog({
       await createRuntime.mutateAsync({
         sandbox_backend: sandboxBackend,
         ...(sandboxBackend === "asb" ? { api_key: apiKey.trim() } : {}),
-        ...(sandboxBackend === "aliyun_fc" &&
-        templateChannel === "candidate"
+        ...(sandboxBackend === "aliyun_fc" && templateChannel === "candidate"
           ? { template_id: selectedTemplate!.id }
           : {}),
         ...(sandboxBackend === "asb" && templateChannel === "candidate"
@@ -225,8 +223,8 @@ export function FCE2BRuntimeDialog({
           (sandboxBackend === "asb"
             ? `ASB-${PROVIDER_LABELS[provider]}`
             : selectedTemplate
-            ? templateRuntimeName(selectedTemplate, provider)
-            : `FC-${PROVIDER_LABELS[provider]}-Stable`),
+              ? templateRuntimeName(selectedTemplate, provider)
+              : `FC-${PROVIDER_LABELS[provider]}-Stable`),
         provider,
         visibility,
       });
@@ -245,11 +243,11 @@ export function FCE2BRuntimeDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
+          <DialogTitle className="flex items-center gap-2 text-title-sm">
             <Cloud className="h-4 w-4 text-muted-foreground" />
             {t(($) => $.fc_e2b_runtime.title)}
           </DialogTitle>
-          <DialogDescription className="text-xs">
+          <DialogDescription className="text-caption">
             {t(($) => $.fc_e2b_runtime.description)}
           </DialogDescription>
         </DialogHeader>
@@ -259,7 +257,7 @@ export function FCE2BRuntimeDialog({
           onSubmit={handleSubmit}
           className="space-y-4"
         >
-          <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <p className="rounded-md border bg-muted/30 px-3 py-2 text-caption text-muted-foreground">
             {sandboxBackend === "asb"
               ? t(($) => $.fc_e2b_runtime.backend_asb_hint)
               : t(($) => $.fc_e2b_runtime.backend_aliyun_fc_hint)}
@@ -267,7 +265,7 @@ export function FCE2BRuntimeDialog({
 
           {sandboxBackend === "asb" && (
             <div className="space-y-1.5">
-              <Label htmlFor="asb-api-key" className="text-xs">
+              <Label htmlFor="asb-api-key" className="text-caption">
                 {t(($) => $.fc_e2b_runtime.fields.api_key)}
               </Label>
               <Input
@@ -282,7 +280,7 @@ export function FCE2BRuntimeDialog({
                 }}
                 required
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-caption text-muted-foreground">
                 {t(($) => $.fc_e2b_runtime.api_key_hint)}
               </p>
               <Button
@@ -303,7 +301,7 @@ export function FCE2BRuntimeDialog({
                   : t(($) => $.fc_e2b_runtime.api_key_validate)}
               </Button>
               {validateASBCredential.isError && (
-                <p className="text-xs text-destructive">
+                <p className="text-caption text-destructive">
                   {validateASBCredential.error instanceof Error
                     ? validateASBCredential.error.message
                     : t(($) => $.fc_e2b_runtime.api_key_validation_failed)}
@@ -311,12 +309,12 @@ export function FCE2BRuntimeDialog({
               )}
               {apiKeyIsValidated && validateASBCredential.data && (
                 <div className="mt-2 space-y-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
-                  <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                  <p className="flex items-center gap-1.5 text-caption font-medium text-emerald-700 dark:text-emerald-300">
                     <Check className="h-3.5 w-3.5" />
                     {t(($) => $.fc_e2b_runtime.api_key_valid)}
                   </p>
                   {validateASBCredential.data.quotas.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-caption text-muted-foreground">
                       {t(($) => $.fc_e2b_runtime.quota_empty)}
                     </p>
                   ) : (
@@ -324,7 +322,7 @@ export function FCE2BRuntimeDialog({
                       {validateASBCredential.data.quotas.map((quota) => (
                         <div
                           key={`${quota.network_zone}:${quota.region}`}
-                          className="rounded border bg-background/60 px-2.5 py-2 text-xs"
+                          className="rounded border bg-background/60 px-2.5 py-2 text-caption"
                         >
                           <p className="font-medium">
                             {quota.network_zone} · {quota.region}
@@ -354,10 +352,24 @@ export function FCE2BRuntimeDialog({
           )}
 
           <div className="space-y-1.5">
-            <Label className="text-xs">
+            <Label className="text-caption">
               {t(($) => $.fc_e2b_runtime.fields.channel)}
             </Label>
             <Select
+              items={[
+                {
+                  value: "stable",
+                  label: t(($) => $.fc_e2b_runtime.channel_stable),
+                },
+                ...(canPublish
+                  ? [
+                      {
+                        value: "candidate",
+                        label: t(($) => $.fc_e2b_runtime.channel_candidate),
+                      },
+                    ]
+                  : []),
+              ]}
               value={templateChannel}
               onValueChange={(value) =>
                 setTemplateChannel(value as "stable" | "candidate")
@@ -377,7 +389,7 @@ export function FCE2BRuntimeDialog({
                 )}
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-caption text-muted-foreground">
               {templateChannel === "stable"
                 ? stableChannelQuery.data?.current
                   ? stableChannelQuery.data.current.artifact_alias ||
@@ -391,105 +403,111 @@ export function FCE2BRuntimeDialog({
 
           {sandboxBackend === "aliyun_fc" &&
             templateChannel === "candidate" && (
-          <div className="space-y-2">
-            <Label htmlFor="fc-e2b-template-search" className="text-xs">
-              {t(($) => $.fc_e2b_runtime.fields.template)}
-            </Label>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                id="fc-e2b-template-search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={t(($) => $.fc_e2b_runtime.template_search_placeholder)}
-                className="pl-8"
-              />
-            </div>
-            <div className="max-h-48 overflow-y-auto rounded-md border">
-              {templatesQuery.isLoading && (
-                <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  {t(($) => $.fc_e2b_runtime.templates_loading)}
+              <div className="space-y-2">
+                <Label htmlFor="fc-e2b-template-search" className="text-caption">
+                  {t(($) => $.fc_e2b_runtime.fields.template)}
+                </Label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    id="fc-e2b-template-search"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder={t(
+                      ($) => $.fc_e2b_runtime.template_search_placeholder,
+                    )}
+                    className="pl-8"
+                  />
                 </div>
-              )}
-              {templatesQuery.isError && (
-                <div className="p-3 text-xs text-destructive">
-                  {templatesQuery.error instanceof Error
-                    ? templatesQuery.error.message
-                    : t(($) => $.fc_e2b_runtime.templates_failed)}
-                </div>
-              )}
-              {!templatesQuery.isLoading &&
-                !templatesQuery.isError &&
-                filteredTemplates.length === 0 && (
-                  <div className="p-3 text-xs text-muted-foreground">
-                    {t(($) => $.fc_e2b_runtime.templates_empty)}
-                  </div>
-                )}
-              {filteredTemplates.map((template) => {
-                const selected =
-                  selectedTemplate?.template === template.template &&
-                  selectedTemplate?.id === template.id;
-                const displayName = templateDisplayName(template);
-                const identifier = templateIdentifier(template);
-                const updatedAt = formatTemplateUpdatedAt(template.updated_at);
-                return (
-                  <button
-                    key={`${template.template}:${template.id ?? ""}:${template.name ?? ""}`}
-                    type="button"
-                    onClick={() => pickTemplate(template)}
-                    className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-xs last:border-b-0 hover:bg-muted/50"
-                  >
-                    <span className="min-w-0 space-y-1">
-                      <span className="block truncate font-medium">
-                        {displayName}
-                      </span>
-                      {identifier && identifier !== displayName && (
-                        <span className="block truncate text-muted-foreground">
-                          {identifier}
-                        </span>
-                      )}
-                      {(updatedAt || template.status) && (
-                        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground">
-                          {updatedAt && (
-                            <span className="truncate">
-                              {t(($) => $.fc_e2b_runtime.template_updated, {
-                                time: updatedAt,
-                              })}
+                <div className="max-h-48 overflow-y-auto rounded-md border">
+                  {templatesQuery.isLoading && (
+                    <div className="flex items-center gap-2 p-3 text-caption text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      {t(($) => $.fc_e2b_runtime.templates_loading)}
+                    </div>
+                  )}
+                  {templatesQuery.isError && (
+                    <div className="p-3 text-caption text-destructive">
+                      {templatesQuery.error instanceof Error
+                        ? templatesQuery.error.message
+                        : t(($) => $.fc_e2b_runtime.templates_failed)}
+                    </div>
+                  )}
+                  {!templatesQuery.isLoading &&
+                    !templatesQuery.isError &&
+                    filteredTemplates.length === 0 && (
+                      <div className="p-3 text-caption text-muted-foreground">
+                        {t(($) => $.fc_e2b_runtime.templates_empty)}
+                      </div>
+                    )}
+                  {filteredTemplates.map((template) => {
+                    const selected =
+                      selectedTemplate?.template === template.template &&
+                      selectedTemplate?.id === template.id;
+                    const displayName = templateDisplayName(template);
+                    const identifier = templateIdentifier(template);
+                    const updatedAt = formatTemplateUpdatedAt(
+                      template.updated_at,
+                    );
+                    return (
+                      <button
+                        key={`${template.template}:${template.id ?? ""}:${template.name ?? ""}`}
+                        type="button"
+                        onClick={() => pickTemplate(template)}
+                        className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-caption last:border-b-0 hover:bg-muted/50"
+                      >
+                        <span className="min-w-0 space-y-1">
+                          <span className="block truncate font-medium">
+                            {displayName}
+                          </span>
+                          {identifier && identifier !== displayName && (
+                            <span className="block truncate text-muted-foreground">
+                              {identifier}
                             </span>
                           )}
-                          {template.status && <span>{template.status}</span>}
+                          {(updatedAt || template.status) && (
+                            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground">
+                              {updatedAt && (
+                                <span className="truncate">
+                                  {t(($) => $.fc_e2b_runtime.template_updated, {
+                                    time: updatedAt,
+                                  })}
+                                </span>
+                              )}
+                              {template.status && (
+                                <span>{template.status}</span>
+                              )}
+                            </span>
+                          )}
+                          <span className="block truncate text-muted-foreground">
+                            {template.providers
+                              .filter((item) =>
+                                (
+                                  FC_E2B_RUNTIME_PROVIDERS as readonly string[]
+                                ).includes(item),
+                              )
+                              .map(
+                                (item) =>
+                                  PROVIDER_LABELS[item as FCE2BRuntimeProvider],
+                              )
+                              .join(" · ")}
+                            {template.capabilities.length > 0
+                              ? ` · ${template.capabilities.join(" · ")}`
+                              : ""}
+                          </span>
                         </span>
-                      )}
-                      <span className="block truncate text-muted-foreground">
-                        {template.providers
-                          .filter((item) =>
-                            (FC_E2B_RUNTIME_PROVIDERS as readonly string[]).includes(
-                              item,
-                            ),
-                          )
-                          .map(
-                            (item) =>
-                              PROVIDER_LABELS[item as FCE2BRuntimeProvider],
-                          )
-                          .join(" · ")}
-                        {template.capabilities.length > 0
-                          ? ` · ${template.capabilities.join(" · ")}`
-                          : ""}
-                      </span>
-                    </span>
-                    {selected && <Check className="mt-0.5 h-3.5 w-3.5" />}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          )}
+                        {selected && <Check className="mt-0.5 h-3.5 w-3.5" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
           {sandboxBackend === "asb" && templateChannel === "candidate" ? (
             <div className="space-y-3 rounded-md border p-3">
               <div className="space-y-1.5">
-                <Label htmlFor="asb-artifact-ref" className="text-xs">
+                <Label htmlFor="asb-artifact-ref" className="text-caption">
                   {t(($) => $.fc_e2b_runtime.fields.artifact_ref)}
                 </Label>
                 <Input
@@ -500,7 +518,7 @@ export function FCE2BRuntimeDialog({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="asb-artifact-build-id" className="text-xs">
+                <Label htmlFor="asb-artifact-build-id" className="text-caption">
                   {t(($) => $.fc_e2b_runtime.fields.artifact_build_id)}
                 </Label>
                 <Input
@@ -511,7 +529,7 @@ export function FCE2BRuntimeDialog({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="asb-artifact-digest" className="text-xs">
+                <Label htmlFor="asb-artifact-digest" className="text-caption">
                   {t(($) => $.fc_e2b_runtime.fields.artifact_digest)}
                 </Label>
                 <Input
@@ -522,7 +540,7 @@ export function FCE2BRuntimeDialog({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="asb-artifact-alias" className="text-xs">
+                <Label htmlFor="asb-artifact-alias" className="text-caption">
                   {t(($) => $.fc_e2b_runtime.fields.artifact_alias)}
                 </Label>
                 <Input
@@ -536,12 +554,18 @@ export function FCE2BRuntimeDialog({
           ) : null}
 
           <div className="space-y-1.5">
-            <Label className="text-xs">
+            <Label className="text-caption">
               {t(($) => $.fc_e2b_runtime.fields.provider)}
             </Label>
             <Select
+              items={availableProviders.map((option) => ({
+                value: option,
+                label: PROVIDER_LABELS[option],
+              }))}
               value={provider}
-              onValueChange={(value) => pickProvider(value as FCE2BRuntimeProvider)}
+              onValueChange={(value) =>
+                pickProvider(value as FCE2BRuntimeProvider)
+              }
             >
               <SelectTrigger>
                 <SelectValue />
@@ -554,13 +578,13 @@ export function FCE2BRuntimeDialog({
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-caption text-muted-foreground">
               {t(($) => $.fc_e2b_runtime.provider_hint)}
             </p>
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="fc-e2b-runtime-name" className="text-xs">
+            <Label htmlFor="fc-e2b-runtime-name" className="text-caption">
               {t(($) => $.fc_e2b_runtime.fields.name)}
             </Label>
             <Input
@@ -571,21 +595,37 @@ export function FCE2BRuntimeDialog({
                 sandboxBackend === "asb"
                   ? `ASB-${PROVIDER_LABELS[provider]}`
                   : selectedTemplate
-                  ? templateRuntimeName(selectedTemplate, provider)
-                  : templateChannel === "stable"
-                    ? `FC-${PROVIDER_LABELS[provider]}-Stable`
-                    : t(($) => $.fc_e2b_runtime.name_placeholder)
+                    ? templateRuntimeName(selectedTemplate, provider)
+                    : templateChannel === "stable"
+                      ? `FC-${PROVIDER_LABELS[provider]}-Stable`
+                      : t(($) => $.fc_e2b_runtime.name_placeholder)
               }
             />
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-xs">
+            <Label className="text-caption">
               {t(($) => $.fc_e2b_runtime.fields.visibility)}
             </Label>
             <Select
+              items={[
+                {
+                  value: "private",
+                  label: t(($) => $.detail.visibility_label.private),
+                },
+                ...(canCreatePublic
+                  ? [
+                      {
+                        value: "public",
+                        label: t(($) => $.detail.visibility_label.public),
+                      },
+                    ]
+                  : []),
+              ]}
               value={visibility}
-              onValueChange={(value) => setVisibility(value as RuntimeVisibility)}
+              onValueChange={(value) =>
+                setVisibility(value as RuntimeVisibility)
+              }
             >
               <SelectTrigger>
                 <SelectValue />
@@ -601,7 +641,7 @@ export function FCE2BRuntimeDialog({
                 )}
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-caption text-muted-foreground">
               {t(($) => $.fc_e2b_runtime.visibility_hint)}
             </p>
           </div>

@@ -7,10 +7,7 @@ import type { Agent, AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enAgents from "../../locales/en/agents.json";
-import {
-  NavigationProvider,
-  type NavigationAdapter,
-} from "../../navigation";
+import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 
 const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
 
@@ -71,6 +68,9 @@ const dingtalkListingRef = vi.hoisted(() => ({
 const dingtalkAccountListingRef = vi.hoisted(() => ({
   current: { bindings: [] as unknown[], configured: false },
 }));
+const wecomListingRef = vi.hoisted(() => ({
+  current: { installations: [] as unknown[], configured: false },
+}));
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
 }));
@@ -96,6 +96,12 @@ vi.mock("@multica/core/dingtalk-account-bindings", () => ({
   dingtalkAccountBindingsOptions: () => ({
     queryKey: ["dingtalk-account-bindings", "list"],
     queryFn: () => Promise.resolve(dingtalkAccountListingRef.current),
+  }),
+}));
+vi.mock("@multica/core/wecom", () => ({
+  wecomInstallationsOptions: () => ({
+    queryKey: ["wecom", "installations"],
+    queryFn: () => Promise.resolve(wecomListingRef.current),
   }),
 }));
 
@@ -137,7 +143,7 @@ function makeRuntime(provider: string, capabilities?: string[]): AgentRuntime {
     launch_header: "",
     status: "online",
     device_info: "",
-	metadata: capabilities ? { capabilities } : {},
+    metadata: capabilities ? { capabilities } : {},
     owner_id: null,
     visibility: "private",
     last_seen_at: null,
@@ -149,6 +155,7 @@ function makeRuntime(provider: string, capabilities?: string[]): AgentRuntime {
 function renderPane(
   runtimes: AgentRuntime[],
   agentOverrides: Partial<Agent> = {},
+  { canEdit = true }: { canEdit?: boolean } = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -172,7 +179,7 @@ function renderPane(
             runtimes={runtimes}
             members={[]}
             onUpdate={vi.fn().mockResolvedValue(undefined)}
-            canEdit
+            canEdit={canEdit}
             canOperateDingTalkBinding
             dingTalkBindingPermissionLoading={false}
           />
@@ -195,6 +202,7 @@ beforeEach(() => {
   slackListingRef.current = { installations: [], configured: false };
   dingtalkListingRef.current = { installations: [], configured: false };
   dingtalkAccountListingRef.current = { bindings: [], configured: false };
+  wecomListingRef.current = { installations: [], configured: false };
 });
 
 describe("AgentOverviewPane MCP tab visibility", () => {
@@ -207,13 +215,16 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     ["Kiro", "kiro"],
     ["OpenCode", "opencode"],
     ["OpenClaw", "openclaw"],
-  ])("renders the MCP tab when the agent runs on the %s runtime", (_label, provider) => {
-    renderPane([makeRuntime(provider)]);
-    openCapabilities();
-    expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
-  });
+  ])(
+    "renders the MCP tab when the agent runs on the %s runtime",
+    (_label, provider) => {
+      renderPane([makeRuntime(provider)]);
+      openCapabilities();
+      expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
+    },
+  );
 
-	it("hides the MCP tab for providers whose backend does not read mcp_config", () => {
+  it("hides the MCP tab for providers whose backend does not read mcp_config", () => {
     // Saving an MCP config on e.g. Gemini would be a silent no-op at run
     // time — that's the bug this hiding logic is meant to prevent.
     renderPane([makeRuntime("gemini")]);
@@ -221,18 +232,20 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     expect(
       screen.queryByRole("tab", { name: /^MCP$/i }),
     ).not.toBeInTheDocument();
-	});
+  });
 
-	it("shows MCP only for Pi runtimes whose template declares the capability", () => {
-		const { unmount } = renderPane([makeRuntime("pi", ["pi", "mcp"])]);
-		openCapabilities();
-		expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
-		unmount();
+  it("shows MCP only for Pi runtimes whose template declares the capability", () => {
+    const { unmount } = renderPane([makeRuntime("pi", ["pi", "mcp"])]);
+    openCapabilities();
+    expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
+    unmount();
 
-		renderPane([makeRuntime("pi", ["pi", "dws"])]);
-		openCapabilities();
-		expect(screen.queryByRole("tab", { name: /^MCP$/i })).not.toBeInTheDocument();
-	});
+    renderPane([makeRuntime("pi", ["pi", "dws"])]);
+    openCapabilities();
+    expect(
+      screen.queryByRole("tab", { name: /^MCP$/i }),
+    ).not.toBeInTheDocument();
+  });
 
   it("keeps the MCP tab visible when the runtime row hasn't loaded yet", () => {
     // Empty runtimes[] mimics the brief window between the page mounting and
@@ -337,6 +350,29 @@ describe("AgentOverviewPane Settings navigation", () => {
 
     renderPane([makeRuntime("hermes")], { runtime_mode: "cloud" });
     openSettings();
-    expect(screen.getByRole("tab", { name: /^LLM Trace$/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /^LLM Trace$/i }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("AgentOverviewPane Environment tab visibility", () => {
+  it("shows the Environment tab to someone who can manage the agent", () => {
+    renderPane([makeRuntime("claude")]);
+    openSettings();
+    expect(
+      screen.getByRole("tab", { name: /^Environment$/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the Environment tab from users who cannot manage the agent", () => {
+    // The env endpoints admit the agent owner or a workspace owner/admin
+    // (MUL-5438) — the rule `canEdit` already encodes. Anyone else who opens
+    // the tab hits a guaranteed 403 on "Reveal & edit".
+    renderPane([makeRuntime("claude")], {}, { canEdit: false });
+    openSettings();
+    expect(
+      screen.queryByRole("tab", { name: /^Environment$/i }),
+    ).not.toBeInTheDocument();
   });
 });

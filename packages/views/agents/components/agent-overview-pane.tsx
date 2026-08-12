@@ -16,6 +16,7 @@ import { dingtalkInstallationsOptions } from "@multica/core/dingtalk";
 import { dingtalkAccountBindingsOptions } from "@multica/core/dingtalk-account-bindings";
 import { larkInstallationsOptions } from "@multica/core/lark";
 import { slackInstallationsOptions } from "@multica/core/slack";
+import { wecomInstallationsOptions } from "@multica/core/wecom";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -105,9 +106,7 @@ const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
   { id: "settings", labelKey: "settings" },
 ];
 
-const CAPABILITY_IDS = new Set<DetailTab>(
-  CAPABILITY_TABS.map((tab) => tab.id),
-);
+const CAPABILITY_IDS = new Set<DetailTab>(CAPABILITY_TABS.map((tab) => tab.id));
 const SETTINGS_IDS = new Set<DetailTab>(SETTINGS_TABS.map((tab) => tab.id));
 const DETAIL_VIEWS = new Set<DetailTab>([
   "overview",
@@ -200,12 +199,17 @@ export function AgentOverviewPane({
     ...dingtalkAccountBindingsOptions(wsId),
     enabled: !!wsId,
   });
+  const { data: wecomListing } = useQuery({
+    ...wecomInstallationsOptions(wsId),
+    enabled: !!wsId,
+  });
 
   const integrationsConfigured =
     larkListing?.configured === true ||
     slackListing?.configured === true ||
     dingtalkListing?.configured === true ||
-    dingtalkAccountListing?.configured === true;
+    dingtalkAccountListing?.configured === true ||
+    wecomListing?.configured === true;
 
   const visibleCapabilityTabs = useMemo(() => {
     const showMcp = runtime
@@ -238,13 +242,14 @@ export function AgentOverviewPane({
   const visibleSettingsTabs = useMemo(
     () =>
       SETTINGS_TABS.filter((tab) => {
+        if (tab.id === "env") return canEdit;
         if (tab.id === "runtime_config") {
           return runtime?.provider === "openclaw";
         }
         if (tab.id === "llm_trace") return agent.runtime_mode === "cloud";
         return true;
       }),
-    [agent.runtime_mode, runtime?.provider],
+    [agent.runtime_mode, canEdit, runtime?.provider],
   );
 
   const visibleViews = useMemo(
@@ -337,7 +342,8 @@ export function AgentOverviewPane({
   const activeSecondaryTab = secondaryTabs.find(
     (tab) => tab.id === effectiveView,
   );
-  const isSecondaryLayout = secondaryTabs.length > 0 && activeSecondaryTab != null;
+  const isSecondaryLayout =
+    secondaryTabs.length > 0 && activeSecondaryTab != null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
@@ -355,7 +361,7 @@ export function AgentOverviewPane({
               aria-selected={activeSection === tab.id}
               onClick={() => requestSection(tab.id)}
               className={cn(
-                "relative shrink-0 py-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                "relative shrink-0 py-3 text-body font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                 activeSection === tab.id
                   ? "text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground"
                   : "text-muted-foreground hover:text-foreground",
@@ -420,7 +426,7 @@ export function AgentOverviewPane({
                       aria-selected={active}
                       onClick={() => requestView(tab.id)}
                       className={cn(
-                        "flex h-8 shrink-0 items-center rounded-md px-2.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:w-full",
+                        "flex h-8 shrink-0 items-center rounded-md px-2.5 text-left text-caption transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:w-full",
                         active
                           ? "bg-surface-selected font-medium text-surface-selected-foreground hover:bg-surface-selected"
                           : "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
@@ -436,7 +442,7 @@ export function AgentOverviewPane({
             <section className="min-w-0 flex-1 md:overflow-y-auto">
               <div className="mx-auto w-full max-w-3xl p-4 sm:p-6 md:p-8">
                 <header>
-                  <h2 className="text-base font-medium text-balance">
+                  <h2 className="text-title-sm font-medium text-balance">
                     {t(($) => $.tabs[activeSecondaryTab.labelKey])}
                   </h2>
                 </header>
@@ -474,7 +480,9 @@ export function AgentOverviewPane({
                     <IntegrationsTab
                       agent={agent}
                       canOperateDingTalkBinding={canOperateDingTalkBinding}
-                      dingTalkBindingPermissionLoading={dingTalkBindingPermissionLoading}
+                      dingTalkBindingPermissionLoading={
+                        dingTalkBindingPermissionLoading
+                      }
                     />
                   )}
                   {effectiveView === "identity" && (
@@ -482,7 +490,9 @@ export function AgentOverviewPane({
                       agent={agent}
                       runtime={runtime}
                       canOperateDingTalkBinding={canOperateDingTalkBinding}
-                      dingTalkBindingPermissionLoading={dingTalkBindingPermissionLoading}
+                      dingTalkBindingPermissionLoading={
+                        dingTalkBindingPermissionLoading
+                      }
                     />
                   )}
                   {effectiveView === "general" && (

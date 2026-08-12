@@ -258,6 +258,8 @@ func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t
 		[]byte(`{"output":"已转入后台处理"}`),
 		"chat-session-runtime",
 		"",
+		false,
+		"",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -304,6 +306,8 @@ func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t
 		targetTaskUUID,
 		[]byte(`{"output":"科技新闻卡片已发送"}`),
 		"issue-session-runtime",
+		"",
+		false,
 		"",
 	)
 	if err != nil {
@@ -432,6 +436,8 @@ func TestDelegateIssueCreateRollsBackIssueWhenTaskEnqueueFails(t *testing.T) {
 		sourceTaskUUID,
 		[]byte(`{"output":"后台转移失败，前台已完成闭环"}`),
 		"chat-session-runtime",
+		"",
+		false,
 		"",
 	); err != nil {
 		t.Fatal(err)
@@ -638,11 +644,11 @@ func TestDelegateIssueContinueCoalescesCallbacksOntoOneIssueTask(t *testing.T) {
 	}
 
 	var (
-		parentTaskID        string
-		targetContext       string
+		parentTaskID         string
+		targetContext        string
 		targetRuntimeOverlay string
-		triggerCommentID    string
-		coalescedCommentIDs []string
+		triggerCommentID     string
+		coalescedCommentIDs  []string
 	)
 	if err := testPool.QueryRow(context.Background(), `
 		SELECT parent_task_id::text, context::text, runtime_mcp_overlay::text,
@@ -707,6 +713,8 @@ func TestDelegateIssueContinueCoalescesCallbacksOntoOneIssueTask(t *testing.T) {
 			[]byte(`{"output":"已转入后台处理"}`),
 			"",
 			"",
+			false,
+			"",
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -756,6 +764,8 @@ func TestDelegateIssueContinueCoalescesCallbacksOntoOneIssueTask(t *testing.T) {
 		[]byte(`{"output":"本轮合并任务执行完成"}`),
 		"",
 		"",
+		false,
+		"",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -771,8 +781,8 @@ func TestDelegateIssueContinueCoalescesCallbacksOntoOneIssueTask(t *testing.T) {
 	}
 	defer rows.Close()
 	got := map[string]struct {
-		rootTaskID   string
-		requestID    string
+		rootTaskID    string
+		requestID     string
 		resultMessage string
 	}{}
 	for rows.Next() {
@@ -781,8 +791,8 @@ func TestDelegateIssueContinueCoalescesCallbacksOntoOneIssueTask(t *testing.T) {
 			t.Fatal(err)
 		}
 		got[callbackURL] = struct {
-			rootTaskID   string
-			requestID    string
+			rootTaskID    string
+			requestID     string
 			resultMessage string
 		}{rootTaskID, requestID, resultMessage}
 	}
@@ -910,6 +920,8 @@ func TestDelegateIssueContinuationWaitsUntilCommentIsDelivered(t *testing.T) {
 		sourceTaskUUID,
 		[]byte(`{"output":"已转入后台处理"}`),
 		"",
+		"",
+		false,
 		"",
 	); err != nil {
 		t.Fatal(err)
@@ -1050,6 +1062,8 @@ func TestCancelReleasedDelegationSourceCancelsBackgroundTaskAndReportsSource(t *
 		[]byte(`{"output":"已转入后台处理"}`),
 		"",
 		"",
+		false,
+		"",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -1070,7 +1084,10 @@ func TestCancelReleasedDelegationSourceCancelsBackgroundTaskAndReportsSource(t *
 		t.Fatal(err)
 	}
 
-	cancelled, err := testHandler.TaskService.CancelTaskWithResult(context.Background(), sourceTaskUUID)
+	cancelled, err := testHandler.TaskService.CancelTaskWithResult(
+		context.Background(), sourceTaskUUID,
+		service.CancelTaskOptions{ClientSupportsDraftRestore: true},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1170,6 +1187,8 @@ func TestDelegateIssueWithoutExternalCallbackStillFinalizesRelation(t *testing.T
 		targetTaskID,
 		[]byte(`{"output":"调研完成"}`),
 		"",
+		"",
+		false,
 		"",
 	); err != nil {
 		t.Fatal(err)

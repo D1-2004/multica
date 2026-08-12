@@ -1,6 +1,8 @@
 import type {
   Issue,
+  IssuePriority,
   CreateIssueRequest,
+  MoveIssueRequest,
   UpdateIssueRequest,
   GroupedIssuesResponse,
   ListIssuesResponse,
@@ -17,15 +19,32 @@ import type {
   AddDingTalkWorkspaceMembersResponse,
   ListIssuesParams,
   ListGroupedIssuesParams,
+  IssueTableFacetsRequest,
+  IssueTableFacetsResponse,
+  IssueTableGroupsRequest,
+  IssueTableGroupsResponse,
+  IssueTableRowsRequest,
+  IssueTableRowsResponse,
   Agent,
+  MikaBootstrapResponse,
   CreateAgentRequest,
+  AgentTemplate,
+  AgentTemplateSummary,
+  CreateAgentFromTemplateRequest,
+  CreateAgentFromTemplateResponse,
+  AgentBuilderRuntimeSwitch,
   AgentBuilderSession,
+  AgentBuilderSessionSummary,
+  StoredAgentDraft,
   UpdateAgentRequest,
   AgentEnvResponse,
   UpdateAgentEnvRequest,
   AgentTask,
   AgentActivityBucket,
   AgentRunCount,
+  WorkspaceWorkingAgent,
+  WorkspaceWorkingAgentMineRelation,
+  WorkspaceWorkingAgentType,
   AgentRuntime,
   RuntimeProfile,
   CreateRuntimeProfileRequest,
@@ -48,6 +67,7 @@ import type {
   CreateSkillRequest,
   UpdateSkillRequest,
   SetAgentSkillsRequest,
+  SetAgentRuntimeSkillEnabledRequest,
   PersonalAccessToken,
   CreatePersonalAccessTokenRequest,
   CreatePersonalAccessTokenResponse,
@@ -65,6 +85,8 @@ import type {
   DashboardUsageByAgent,
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
+  DashboardFailureDaily,
+  DashboardFailureByAgent,
   RuntimeUpdate,
   RuntimeModelListRequest,
   RuntimeLocalSkillListRequest,
@@ -78,11 +100,14 @@ import type {
   ChatPinnedAgent,
   ChatMessage,
   ChatMessagesPage,
+  ChatDraftRestoresResponse,
   ChatPendingTask,
+  PrioritizeQueuedChatTaskResponse,
   PendingChatTasksResponse,
   HasPendingChatTasksResponse,
   SendChatMessageResponse,
   ChatReplyReceivedRequest,
+  StartMikaOnboardingResponse,
   CancelTaskResponse,
   Project,
   CreateProjectRequest,
@@ -93,6 +118,16 @@ import type {
   UpdateProjectResourceRequest,
   ListProjectResourcesResponse,
   Label,
+  IssueProperty,
+  IssuePropertyValue,
+  CreatePropertyRequest,
+  QuickAction,
+  CreateQuickActionRequest,
+  UpdateQuickActionRequest,
+  ListQuickActionsResponse,
+  UpdatePropertyRequest,
+  ListPropertiesResponse,
+  IssuePropertiesResponse,
   CreateLabelRequest,
   UpdateLabelRequest,
   ListLabelsResponse,
@@ -112,6 +147,7 @@ import type {
   CreateAutopilotTriggerRequest,
   UpdateAutopilotTriggerRequest,
   ListAutopilotsResponse,
+  CronPreviewResponse,
   GetAutopilotResponse,
   AutopilotCollaboratorsResponse,
   ListAutopilotRunsResponse,
@@ -122,6 +158,7 @@ import type {
   GitHubPullRequest,
   GitHubInstallation,
   ListGitHubInstallationsResponse,
+  ListGitHubRepositoriesResponse,
   GitHubConnectResponse,
   GitHubAgentPreviewRequest,
   GitHubAgentPreview,
@@ -130,6 +167,9 @@ import type {
   CreateGitHubAgentResponse,
   AgentSource,
   SyncAgentSourceResponse,
+  ListVCSConnectionsResponse,
+  ConnectVCSRequest,
+  ConnectVCSResponse,
   ListLarkInstallationsResponse,
   BeginLarkInstallResponse,
   LarkInstallStatusResponse,
@@ -154,6 +194,10 @@ import type {
   BeginAgentEnterpriseIdentityBindingResponse,
   RegisterSlackBYORequest,
   RedeemSlackBindingTokenResponse,
+  WecomInstallation,
+  ListWecomInstallationsResponse,
+  RegisterWecomBYORequest,
+  RedeemWecomBindingTokenResponse,
   Squad,
   SquadMember,
   SquadMemberStatusListResponse,
@@ -199,8 +243,17 @@ import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
 import {
   AgentTaskListSchema,
+  AgentTemplateSchema,
+  AgentTemplateSummaryListSchema,
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
+  ChatDraftRestoresResponseSchema,
+  ChatMessageListSchema,
+  ChatMessagesPageSchema,
+  ChatPendingTaskSchema,
+  PrioritizeQueuedChatTaskResponseSchema,
+  SendChatMessageResponseSchema,
+  StartMikaOnboardingResponseSchema,
   ChildIssuesResponseSchema,
   CommentsListSchema,
   CommentTriggerPreviewSchema,
@@ -220,20 +273,36 @@ import {
   AddDingTalkGroupMembersResponseSchema,
   AddDingTalkWorkspaceMembersResponseSchema,
   DingTalkUserSearchResponseSchema,
+  CreateAgentFromTemplateResponseSchema,
+  AgentBuilderRuntimeSwitchSchema,
   AgentBuilderSessionSchema,
+  AgentBuilderSessionListSchema,
+  EMPTY_AGENT_BUILDER_SESSION_LIST,
+  agentBuilderRuntimeSwitchFallback,
   DashboardAgentRunTimeListSchema,
   DashboardRunTimeDailyListSchema,
+  DashboardFailureDailyListSchema,
+  DashboardFailureByAgentListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
+  EMPTY_AGENT_TEMPLATE_DETAIL,
+  EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
   EMPTY_APP_CONFIG,
   EMPTY_ATTACHMENT,
+  EMPTY_CHAT_MESSAGE_LIST,
+  EMPTY_CHAT_PENDING_TASK,
+  EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE,
   EMPTY_CLOUD_RUNTIME_NODE,
   EMPTY_CLOUD_RUNTIME_NODE_LIST,
+  EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_ADD_DINGTALK_GROUP_MEMBERS_RESPONSE,
   EMPTY_ADD_DINGTALK_WORKSPACE_MEMBERS_RESPONSE,
   EMPTY_DINGTALK_USER_SEARCH_RESPONSE,
   EMPTY_AGENT_BUILDER_SESSION,
   EMPTY_GROUPED_ISSUES_RESPONSE,
+  EMPTY_ISSUE_TABLE_FACETS_RESPONSE,
+  EMPTY_ISSUE_TABLE_GROUPS_RESPONSE,
+  EMPTY_ISSUE_TABLE_ROWS_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
   EMPTY_SEARCH_ISSUES_RESPONSE,
   EMPTY_SEARCH_PROJECTS_RESPONSE,
@@ -247,9 +316,17 @@ import {
   AppConfigSchema,
   type AppConfigResponse,
   GroupedIssuesResponseSchema,
+  IssueTableFacetsResponseSchema,
+  IssueTableGroupsResponseSchema,
+  IssueTableRowsResponseSchema,
   ListAutopilotsResponseSchema,
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
+  AutopilotRunSchema,
+  FALLBACK_AUTOPILOT_RUN,
+  CronPreviewResponseSchema,
+  UNREADABLE_CRON_PREVIEW_RESPONSE,
   ListIssuesResponseSchema,
+  CreateIssueResponseSchema,
   ListWebhookDeliveriesResponseSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
@@ -272,6 +349,13 @@ import {
   CreateBillingCheckoutSessionResponseSchema,
   BillingCheckoutSessionStatusSchema,
   CreateBillingPortalSessionResponseSchema,
+  WecomInstallationSchema,
+  ListWecomInstallationsResponseSchema,
+  ListDingTalkInstallationsResponseSchema,
+  RedeemWecomBindingTokenResponseSchema,
+  EMPTY_WECOM_INSTALLATION,
+  EMPTY_LIST_WECOM_INSTALLATIONS_RESPONSE,
+  EMPTY_REDEEM_WECOM_BINDING_TOKEN_RESPONSE,
   EMPTY_BILLING_BALANCE,
   EMPTY_BILLING_TRANSACTIONS_PAGE,
   EMPTY_BILLING_BATCHES_PAGE,
@@ -281,12 +365,32 @@ import {
   EMPTY_BILLING_CHECKOUT_SESSION_STATUS,
   EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE,
   EMPTY_CANCEL_TASK_RESPONSE,
+  EMPTY_CHAT_DRAFT_RESTORES,
   CreateFeedbackResponseSchema,
   EMPTY_CREATE_FEEDBACK_RESPONSE,
   InboxUnreadSummarySchema,
   EMPTY_INBOX_UNREAD_SUMMARY,
+  InboxItemListSchema,
+  EMPTY_INBOX_ITEMS,
+  NotificationPreferenceResponseSchema,
+  EMPTY_NOTIFICATION_PREFERENCE_RESPONSE,
   LabelSchema,
   ListLabelsResponseSchema,
+  IssuePropertySchema,
+  ListPropertiesResponseSchema,
+  IssuePropertiesResponseSchema,
+  QuickActionSchema,
+  ListQuickActionsResponseSchema,
+  QuickActionRenderSchema,
+  EMPTY_QUICK_ACTION,
+  EMPTY_LIST_QUICK_ACTIONS_RESPONSE,
+  CommentSchema,
+  EMPTY_COMMENT,
+  EMPTY_ISSUE_PROPERTY,
+  EMPTY_LIST_PROPERTIES_RESPONSE,
+  EMPTY_ISSUE_PROPERTIES_RESPONSE,
+  EMPTY_ISSUE_PULL_REQUESTS_RESPONSE,
+  IssuePullRequestsResponseSchema,
   ResourceLabelsResponseSchema,
   EMPTY_LABEL,
   EMPTY_LIST_LABELS_RESPONSE,
@@ -326,6 +430,19 @@ import {
   WorkspaceAccessTokenSecretResponseSchema,
   EMPTY_WORKSPACE_ACCESS_TOKEN,
   EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE,
+  GitHubConnectResponseSchema,
+  ListGitHubRepositoriesResponseSchema,
+  EMPTY_GITHUB_CONNECT_RESPONSE,
+  EMPTY_LIST_GITHUB_REPOSITORIES_RESPONSE,
+  RuntimeModelListRequestSchema,
+  MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
+  IssueViewSchema,
+  IssueViewListSchema,
+  IssueViewPreferenceSchema,
+  EMPTY_ISSUE_VIEW_PREFERENCE,
+  type IssueView,
+  type IssueViewPreference,
+  type CreateIssueViewRequest,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -337,7 +454,7 @@ export interface ApiClientIdentity {
   platform?: string;
   /** Client/app version string (e.g. "0.1.0", git tag, commit). */
   version?: string;
-  /** Operating system the client is running on: "macos" | "windows" | "linux". */
+  /** Coarse operating-system bucket (for example "macos", "windows", or "linux"). */
   os?: string;
 }
 
@@ -346,6 +463,19 @@ export interface ApiClientOptions {
   onUnauthorized?: () => void;
   /** Identifies the client to the server. Sent as X-Client-* headers. */
   identity?: ApiClientIdentity;
+}
+
+export interface ClientRuntimeSnapshot {
+  probe_result: "success" | "error";
+  runtime_count?: number;
+  provider_summary?: Record<string, number>;
+  online_count?: number;
+  offline_count?: number;
+}
+
+export interface ClientUsageRequest {
+  install_id: string;
+  runtime?: ClientRuntimeSnapshot;
 }
 
 export interface LoginResponse {
@@ -361,13 +491,46 @@ export class ApiError extends Error {
   // identifiers instead of pattern-matching the human-readable message.
   readonly body?: unknown;
 
-  constructor(message: string, status: number, statusText: string, body?: unknown) {
+  constructor(
+    message: string,
+    status: number,
+    statusText: string,
+    body?: unknown,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.statusText = statusText;
     this.body = body;
   }
+}
+
+// errorCode extracts the stable `code` a handler attaches to a failure
+// (writeErrorCode), so a caller can render its own localized sentence instead
+// of toasting the server's English one. Returns undefined for a non-ApiError,
+// or a server that did not send one — the caller then falls back to
+// err.message, which is what every endpoint that has not adopted this yet
+// produces.
+export function errorCode(err: unknown): string | undefined {
+  if (err instanceof ApiError && err.body && typeof err.body === "object") {
+    const code = (err.body as { code?: unknown }).code;
+    if (typeof code === "string" && code.length > 0) return code;
+  }
+  return undefined;
+}
+
+// dispatchReasonCode extracts the stable, machine-readable admission reason
+// (MUL-4525) from a blocked-trigger error's structured body, when present. UI
+// callers localize a blocked/partial trigger from this code instead of pattern
+// matching the human-readable message. Returns undefined for non-ApiErrors or
+// bodies without a reason_code (older servers), so callers fall back to their
+// generic failure toast.
+export function dispatchReasonCode(err: unknown): string | undefined {
+  if (err instanceof ApiError && err.body && typeof err.body === "object") {
+    const code = (err.body as { reason_code?: unknown }).reason_code;
+    if (typeof code === "string" && code.length > 0) return code;
+  }
+  return undefined;
 }
 
 // Thrown by getAttachmentTextContent when the server refuses to inline a
@@ -389,6 +552,42 @@ export class PreviewUnsupportedError extends Error {
     super("attachment type not supported for inline preview");
     this.name = "PreviewUnsupportedError";
   }
+}
+
+/**
+ * Advertised in X-Client-Capabilities so the server knows this client can
+ * recover a cancelled prompt from the durable draft-restore row (#5219).
+ * Must stay in sync with protocol.AppCapabilityChatDraftRestoreV1.
+ */
+export const CHAT_DRAFT_RESTORE_CAPABILITY = "chat-draft-restore-v1";
+
+/**
+ * Body shared by both unsubscribe endpoints: an omitted target means "the
+ * caller", which the server resolves from the request actor.
+ */
+function subscriberTarget(
+  userId?: string,
+  userType?: string,
+): Record<string, string> {
+  const body: Record<string, string> = {};
+  if (userId) body.user_id = userId;
+  if (userType) body.user_type = userType;
+  return body;
+}
+
+/**
+ * Per-call override for the workspace a request targets.
+ *
+ * `authHeaders()` normally stamps `X-Workspace-Slug` from the global
+ * current-workspace singleton, and the server resolves the workspace from that
+ * header BEFORE any `workspace_id` query param. Anything that acts on a
+ * workspace the user is not currently "in" — notably the create-workspace flow,
+ * which provisions a workspace it has not navigated to yet — must say so
+ * explicitly, or a concurrent writer of that singleton silently redirects the
+ * write to the wrong workspace.
+ */
+function workspaceHeader(slug?: string): Record<string, string> | undefined {
+  return slug ? { "X-Workspace-Slug": slug } : undefined;
 }
 
 export class ApiClient {
@@ -416,7 +615,7 @@ export class ApiClient {
     const match = document.cookie
       .split("; ")
       .find((c) => c.startsWith("multica_csrf="));
-    return match ? match.split("=")[1] ?? null : null;
+    return match ? (match.split("=")[1] ?? null) : null;
   }
 
   private authHeaders(): Record<string, string> {
@@ -442,9 +641,12 @@ export class ApiClient {
     this.options.onUnauthorized?.();
   }
 
-  private async parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  private async parseErrorMessage(
+    res: Response,
+    fallback: string,
+  ): Promise<string> {
     try {
-      const data = await res.json() as { error?: string };
+      const data = (await res.json()) as { error?: string };
       if (typeof data.error === "string" && data.error) return data.error;
     } catch {
       // Ignore non-JSON error bodies.
@@ -455,10 +657,14 @@ export class ApiClient {
   // Reads the response body once for both human-readable error message and
   // structured fields. The Response stream can only be consumed once, so
   // both pieces have to come from a single read.
-  private async parseErrorBody(res: Response, fallback: string): Promise<{ message: string; body: unknown }> {
+  private async parseErrorBody(
+    res: Response,
+    fallback: string,
+  ): Promise<{ message: string; body: unknown }> {
     try {
-      const data = await res.json() as { error?: string };
-      const message = typeof data.error === "string" && data.error ? data.error : fallback;
+      const data = (await res.json()) as { error?: string };
+      const message =
+        typeof data.error === "string" && data.error ? data.error : fallback;
       return { message, body: data };
     } catch {
       return { message: fallback, body: undefined };
@@ -495,13 +701,23 @@ export class ApiClient {
 
     if (!res.ok) {
       if (res.status === 401) this.handleUnauthorized();
-      const { message, body } = await this.parseErrorBody(res, `API error: ${res.status} ${res.statusText}`);
+      const { message, body } = await this.parseErrorBody(
+        res,
+        `API error: ${res.status} ${res.statusText}`,
+      );
       const logLevel = res.status === 404 ? "warn" : "error";
-      this.logger[logLevel](`← ${res.status} ${path}`, { rid, duration: `${Date.now() - start}ms`, error: message });
+      this.logger[logLevel](`← ${res.status} ${path}`, {
+        rid,
+        duration: `${Date.now() - start}ms`,
+        error: message,
+      });
       throw new ApiError(message, res.status, res.statusText, body);
     }
 
-    this.logger.info(`← ${res.status} ${path}`, { rid, duration: `${Date.now() - start}ms` });
+    this.logger.info(`← ${res.status} ${path}`, {
+      rid,
+      duration: `${Date.now() - start}ms`,
+    });
     return res;
   }
 
@@ -633,16 +849,50 @@ export class ApiClient {
     if (params?.limit) search.set("limit", String(params.limit));
     if (params?.offset) search.set("offset", String(params.offset));
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
+    if (params?.q?.trim()) search.set("q", params.q.trim());
     if (params?.status) search.set("status", params.status);
+    if (params?.statuses?.length)
+      search.set("statuses", params.statuses.join(","));
     if (params?.priority) search.set("priority", params.priority);
+    if (params?.priorities?.length)
+      search.set("priorities", params.priorities.join(","));
     if (params?.assignee_id) search.set("assignee_id", params.assignee_id);
-    if (params?.assignee_ids?.length) search.set("assignee_ids", params.assignee_ids.join(","));
-    if (params?.assignee_types?.length) search.set("assignee_types", params.assignee_types.join(","));
+    if (params?.assignee_ids?.length)
+      search.set("assignee_ids", params.assignee_ids.join(","));
+    if (params?.assignee_types?.length)
+      search.set("assignee_types", params.assignee_types.join(","));
     if (params?.creator_id) search.set("creator_id", params.creator_id);
     if (params?.project_id) search.set("project_id", params.project_id);
-    if (params?.involves_user_id) search.set("involves_user_id", params.involves_user_id);
+    if (params?.assignee_filters?.length) {
+      search.set(
+        "assignee_filters",
+        params.assignee_filters.map((f) => `${f.type}:${f.id}`).join(","),
+      );
+    }
+    if (params?.include_no_assignee) search.set("include_no_assignee", "true");
+    if (params?.creator_filters?.length) {
+      search.set(
+        "creator_filters",
+        params.creator_filters.map((f) => `${f.type}:${f.id}`).join(","),
+      );
+    }
+    if (params?.project_ids?.length)
+      search.set("project_ids", params.project_ids.join(","));
+    if (params?.include_no_project) search.set("include_no_project", "true");
+    if (params?.label_ids?.length)
+      search.set("label_ids", params.label_ids.join(","));
+    if (params?.top_level_only) search.set("top_level_only", "true");
+    // No `.length` guard on purpose: an empty ids array must still send
+    // `ids=` — the server treats a PRESENT-but-empty list as an empty window
+    // (nothing running), while an absent param means no restriction.
+    if (params?.ids) search.set("ids", params.ids.join(","));
+    if (params?.involves_user_id)
+      search.set("involves_user_id", params.involves_user_id);
     if (params?.metadata && Object.keys(params.metadata).length > 0) {
       search.set("metadata", JSON.stringify(params.metadata));
+    }
+    if (params?.properties && Object.keys(params.properties).length > 0) {
+      search.set("properties", JSON.stringify(params.properties));
     }
     if (params?.open_only) search.set("open_only", "true");
     if (params?.scheduled) search.set("scheduled", "true");
@@ -651,78 +901,195 @@ export class ApiClient {
     if (params?.date_end) search.set("date_end", params.date_end);
     if (params?.sort_by) search.set("sort", params.sort_by);
     if (params?.sort_direction) search.set("direction", params.sort_direction);
+    // An ids facet can carry hundreds of UUIDs (agents-working filter) —
+    // enough to blow the ~8 KB request-line cap of common reverse proxies.
+    // Route those windows through the POST twin, which takes the SAME
+    // key/value pairs as a JSON body.
+    if (params?.ids) {
+      const raw = await this.fetch<unknown>("/api/issues/query", {
+        method: "POST",
+        body: JSON.stringify(Object.fromEntries(search)),
+      });
+      return parseWithFallback(
+        raw,
+        ListIssuesResponseSchema,
+        EMPTY_LIST_ISSUES_RESPONSE,
+        {
+          endpoint: "POST /api/issues/query",
+        },
+      );
+    }
     const path = `/api/issues?${search}`;
     const raw = await this.fetch<unknown>(path);
-    return parseWithFallback(raw, ListIssuesResponseSchema, EMPTY_LIST_ISSUES_RESPONSE, {
-      endpoint: "GET /api/issues",
-    });
+    return parseWithFallback(
+      raw,
+      ListIssuesResponseSchema,
+      EMPTY_LIST_ISSUES_RESPONSE,
+      {
+        endpoint: "GET /api/issues",
+      },
+    );
   }
 
-  async listGroupedIssues(params: ListGroupedIssuesParams): Promise<GroupedIssuesResponse> {
+  async listGroupedIssues(
+    params: ListGroupedIssuesParams,
+  ): Promise<GroupedIssuesResponse> {
     const search = new URLSearchParams({ group_by: params.group_by });
     if (params.limit) search.set("limit", String(params.limit));
     if (params.offset) search.set("offset", String(params.offset));
     if (params.workspace_id) search.set("workspace_id", params.workspace_id);
-    if (params.statuses?.length) search.set("statuses", params.statuses.join(","));
-    if (params.priorities?.length) search.set("priorities", params.priorities.join(","));
-    if (params.assignee_types?.length) search.set("assignee_types", params.assignee_types.join(","));
+    if (params.statuses?.length)
+      search.set("statuses", params.statuses.join(","));
+    if (params.priorities?.length)
+      search.set("priorities", params.priorities.join(","));
+    if (params.assignee_types?.length)
+      search.set("assignee_types", params.assignee_types.join(","));
     if (params.assignee_id) search.set("assignee_id", params.assignee_id);
-    if (params.assignee_ids?.length) search.set("assignee_ids", params.assignee_ids.join(","));
+    if (params.assignee_ids?.length)
+      search.set("assignee_ids", params.assignee_ids.join(","));
     if (params.creator_id) search.set("creator_id", params.creator_id);
     if (params.project_id) search.set("project_id", params.project_id);
-    if (params.involves_user_id) search.set("involves_user_id", params.involves_user_id);
+    if (params.involves_user_id)
+      search.set("involves_user_id", params.involves_user_id);
     if (params.metadata && Object.keys(params.metadata).length > 0) {
       search.set("metadata", JSON.stringify(params.metadata));
     }
+    if (params.properties && Object.keys(params.properties).length > 0) {
+      search.set("properties", JSON.stringify(params.properties));
+    }
     if (params.assignee_filters?.length) {
-      search.set("assignee_filters", params.assignee_filters.map((f) => `${f.type}:${f.id}`).join(","));
+      search.set(
+        "assignee_filters",
+        params.assignee_filters.map((f) => `${f.type}:${f.id}`).join(","),
+      );
     }
     if (params.include_no_assignee) search.set("include_no_assignee", "true");
     if (params.creator_filters?.length) {
-      search.set("creator_filters", params.creator_filters.map((f) => `${f.type}:${f.id}`).join(","));
+      search.set(
+        "creator_filters",
+        params.creator_filters.map((f) => `${f.type}:${f.id}`).join(","),
+      );
     }
-    if (params.project_ids?.length) search.set("project_ids", params.project_ids.join(","));
+    if (params.project_ids?.length)
+      search.set("project_ids", params.project_ids.join(","));
     if (params.include_no_project) search.set("include_no_project", "true");
-    if (params.label_ids?.length) search.set("label_ids", params.label_ids.join(","));
-    if (params.group_assignee_type) search.set("group_assignee_type", params.group_assignee_type);
-    if (params.group_assignee_id) search.set("group_assignee_id", params.group_assignee_id);
+    if (params.label_ids?.length)
+      search.set("label_ids", params.label_ids.join(","));
+    if (params.group_assignee_type)
+      search.set("group_assignee_type", params.group_assignee_type);
+    if (params.group_assignee_id)
+      search.set("group_assignee_id", params.group_assignee_id);
     if (params.date_field) search.set("date_field", params.date_field);
     if (params.date_start) search.set("date_start", params.date_start);
     if (params.date_end) search.set("date_end", params.date_end);
     if (params.sort_by) search.set("sort", params.sort_by);
     if (params.sort_direction) search.set("direction", params.sort_direction);
     const raw = await this.fetch<unknown>(`/api/issues/grouped?${search}`);
-    return parseWithFallback(raw, GroupedIssuesResponseSchema, EMPTY_GROUPED_ISSUES_RESPONSE, {
-      endpoint: "GET /api/issues/grouped",
-    });
+    return parseWithFallback(
+      raw,
+      GroupedIssuesResponseSchema,
+      EMPTY_GROUPED_ISSUES_RESPONSE,
+      {
+        endpoint: "GET /api/issues/grouped",
+      },
+    );
   }
 
-  async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchIssuesResponse> {
+  async listIssueTableGroups(
+    params: IssueTableGroupsRequest,
+  ): Promise<IssueTableGroupsResponse> {
+    const raw = await this.fetch<unknown>("/api/issues/table/groups", {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+    return parseWithFallback(
+      raw,
+      IssueTableGroupsResponseSchema,
+      EMPTY_ISSUE_TABLE_GROUPS_RESPONSE,
+      { endpoint: "POST /api/issues/table/groups" },
+    );
+  }
+
+  async listIssueTableRows(
+    params: IssueTableRowsRequest,
+  ): Promise<IssueTableRowsResponse> {
+    const raw = await this.fetch<unknown>("/api/issues/table/rows", {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+    return parseWithFallback(
+      raw,
+      IssueTableRowsResponseSchema,
+      EMPTY_ISSUE_TABLE_ROWS_RESPONSE,
+      { endpoint: "POST /api/issues/table/rows" },
+    );
+  }
+
+  async listIssueTableFacets(
+    params: IssueTableFacetsRequest,
+  ): Promise<IssueTableFacetsResponse> {
+    const raw = await this.fetch<unknown>("/api/issues/table/facets", {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+    return parseWithFallback(
+      raw,
+      IssueTableFacetsResponseSchema,
+      EMPTY_ISSUE_TABLE_FACETS_RESPONSE,
+      { endpoint: "POST /api/issues/table/facets" },
+    );
+  }
+
+  async searchIssues(params: {
+    q: string;
+    limit?: number;
+    offset?: number;
+    include_closed?: boolean;
+    signal?: AbortSignal;
+  }): Promise<SearchIssuesResponse> {
     const search = new URLSearchParams({ q: params.q });
     if (params.limit !== undefined) search.set("limit", String(params.limit));
-    if (params.offset !== undefined) search.set("offset", String(params.offset));
+    if (params.offset !== undefined)
+      search.set("offset", String(params.offset));
     if (params.include_closed) search.set("include_closed", "true");
     const raw = await this.fetch<unknown>(
       `/api/issues/search?${search}`,
       params.signal ? { signal: params.signal } : undefined,
     );
-    return parseWithFallback(raw, SearchIssuesResponseSchema, EMPTY_SEARCH_ISSUES_RESPONSE, {
-      endpoint: "GET /api/issues/search",
-    });
+    return parseWithFallback(
+      raw,
+      SearchIssuesResponseSchema,
+      EMPTY_SEARCH_ISSUES_RESPONSE,
+      {
+        endpoint: "GET /api/issues/search",
+      },
+    );
   }
 
-  async searchProjects(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchProjectsResponse> {
+  async searchProjects(params: {
+    q: string;
+    limit?: number;
+    offset?: number;
+    include_closed?: boolean;
+    signal?: AbortSignal;
+  }): Promise<SearchProjectsResponse> {
     const search = new URLSearchParams({ q: params.q });
     if (params.limit !== undefined) search.set("limit", String(params.limit));
-    if (params.offset !== undefined) search.set("offset", String(params.offset));
+    if (params.offset !== undefined)
+      search.set("offset", String(params.offset));
     if (params.include_closed) search.set("include_closed", "true");
     const raw = await this.fetch<unknown>(
       `/api/projects/search?${search}`,
       params.signal ? { signal: params.signal } : undefined,
     );
-    return parseWithFallback(raw, SearchProjectsResponseSchema, EMPTY_SEARCH_PROJECTS_RESPONSE, {
-      endpoint: "GET /api/projects/search",
-    });
+    return parseWithFallback(
+      raw,
+      SearchProjectsResponseSchema,
+      EMPTY_SEARCH_PROJECTS_RESPONSE,
+      {
+        endpoint: "GET /api/projects/search",
+      },
+    );
   }
 
   async getIssue(id: string): Promise<Issue> {
@@ -730,16 +1097,39 @@ export class ApiClient {
   }
 
   async createIssue(data: CreateIssueRequest): Promise<Issue> {
-    return this.fetch("/api/issues", {
+    // Parse through a schema (not a raw cast): the create modal keys its
+    // label-attach compatibility fallback off `labels` being absent vs a
+    // validated Label[], so an unvalidated wrong shape must not slip through.
+    // Unlike list endpoints, a create that returns an unusable body is a
+    // FAILED mutation, not a safe-empty read: fall back to null and reject so
+    // the modal keeps the draft and shows a failure toast instead of a blank
+    // "created" card pointing at an empty issue id. parseWithFallback already
+    // logged the schema issues + raw payload; the empty message lets the modal
+    // render its localized "failed to create" toast.
+    const raw = await this.fetch<unknown>("/api/issues", {
       method: "POST",
       body: JSON.stringify(data),
     });
+    const issue = parseWithFallback<Issue | null>(
+      raw,
+      CreateIssueResponseSchema,
+      null,
+      {
+        endpoint: "POST /api/issues",
+      },
+    );
+    if (!issue) {
+      throw new Error();
+    }
+    return issue;
   }
 
   async quickCreateIssue(data: {
     agent_id?: string;
     squad_id?: string;
     prompt: string;
+    priority?: IssuePriority;
+    due_date?: string;
     project_id?: string | null;
     parent_issue_id?: string | null;
     attachment_ids?: string[];
@@ -760,8 +1150,20 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, CreateFeedbackResponseSchema, EMPTY_CREATE_FEEDBACK_RESPONSE, {
-      endpoint: "POST /api/feedback",
+    return parseWithFallback(
+      raw,
+      CreateFeedbackResponseSchema,
+      EMPTY_CREATE_FEEDBACK_RESPONSE,
+      {
+        endpoint: "POST /api/feedback",
+      },
+    );
+  }
+
+  async upsertClientUsage(data: ClientUsageRequest): Promise<void> {
+    await this.fetch("/api/client-usage", {
+      method: "POST",
+      body: JSON.stringify(data),
     });
   }
 
@@ -772,27 +1174,48 @@ export class ApiClient {
     });
   }
 
+  async moveIssue(id: string, data: MoveIssueRequest): Promise<Issue> {
+    return this.fetch(`/api/issues/${id}/move`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
   async listChildIssues(id: string): Promise<{ issues: Issue[] }> {
     const raw = await this.fetch<unknown>(`/api/issues/${id}/children`);
-    return parseWithFallback(raw, ChildIssuesResponseSchema, { issues: [] }, {
-      endpoint: "GET /api/issues/:id/children",
-    });
+    return parseWithFallback(
+      raw,
+      ChildIssuesResponseSchema,
+      { issues: [] },
+      {
+        endpoint: "GET /api/issues/:id/children",
+      },
+    );
   }
 
   /** Batched variant — returns children for multiple parents in one request.
    *  Avoids an N-request fan-out in Swimlane (one per visible parent lane).
    *  parentIds must be non-empty; pass a sorted, deduplicated list so the
    *  React Query cache key is stable across renders. */
-  async listChildrenByParents(parentIds: string[]): Promise<{ issues: Issue[] }> {
+  async listChildrenByParents(
+    parentIds: string[],
+  ): Promise<{ issues: Issue[] }> {
     const raw = await this.fetch<unknown>(
       `/api/issues/children?parent_ids=${parentIds.join(",")}`,
     );
-    return parseWithFallback(raw, ChildIssuesResponseSchema, { issues: [] }, {
-      endpoint: "GET /api/issues/children",
-    });
+    return parseWithFallback(
+      raw,
+      ChildIssuesResponseSchema,
+      { issues: [] },
+      {
+        endpoint: "GET /api/issues/children",
+      },
+    );
   }
 
-  async getChildIssueProgress(): Promise<{ progress: { parent_issue_id: string; total: number; done: number }[] }> {
+  async getChildIssueProgress(): Promise<{
+    progress: { parent_issue_id: string; total: number; done: number }[];
+  }> {
     return this.fetch("/api/issues/child-progress");
   }
 
@@ -800,7 +1223,10 @@ export class ApiClient {
     await this.fetch(`/api/issues/${id}`, { method: "DELETE" });
   }
 
-  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<{ updated: number }> {
+  async batchUpdateIssues(
+    issueIds: string[],
+    updates: UpdateIssueRequest,
+  ): Promise<{ updated: number }> {
     return this.fetch("/api/issues/batch-update", {
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds, updates }),
@@ -837,30 +1263,47 @@ export class ApiClient {
         type: type ?? "comment",
         ...(parentId ? { parent_id: parentId } : {}),
         ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
-        ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
+        ...(suppressAgentIds?.length
+          ? { suppress_agent_ids: suppressAgentIds }
+          : {}),
       }),
     });
   }
 
-  async previewCommentTriggers(issueId: string, content: string, parentId?: string, editingCommentId?: string): Promise<CommentTriggerPreview> {
-    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/comments/trigger-preview`, {
-      method: "POST",
-      body: JSON.stringify({
-        content,
-        ...(parentId ? { parent_id: parentId } : {}),
-        ...(editingCommentId ? { editing_comment_id: editingCommentId } : {}),
-      }),
-    });
-    return parseWithFallback(raw, CommentTriggerPreviewSchema, { agents: [] }, {
-      endpoint: "POST /api/issues/:id/comments/trigger-preview",
-    });
+  async previewCommentTriggers(
+    issueId: string,
+    content: string,
+    parentId?: string,
+    editingCommentId?: string,
+  ): Promise<CommentTriggerPreview> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${issueId}/comments/trigger-preview`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          content,
+          ...(parentId ? { parent_id: parentId } : {}),
+          ...(editingCommentId ? { editing_comment_id: editingCommentId } : {}),
+        }),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      CommentTriggerPreviewSchema,
+      { agents: [] },
+      {
+        endpoint: "POST /api/issues/:id/comments/trigger-preview",
+      },
+    );
   }
 
   /** Dry-run the unified run-enqueue predicate for a prospective issue write
    *  (create / single assign / single status / batch). Returns the runs that
    *  would start; no side effect. The four entry points consult this instead
    *  of re-implementing the rule (MUL-3375). */
-  async previewIssueTrigger(params: IssueTriggerPreviewParams): Promise<IssueTriggerPreview> {
+  async previewIssueTrigger(
+    params: IssueTriggerPreviewParams,
+  ): Promise<IssueTriggerPreview> {
     const raw = await this.fetch<unknown>("/api/issues/preview-trigger", {
       method: "POST",
       body: JSON.stringify({
@@ -871,31 +1314,46 @@ export class ApiClient {
         ...(params.status ? { status: params.status } : {}),
       }),
     });
-    return parseWithFallback(raw, IssueTriggerPreviewSchema, { triggers: [], total_count: 0 }, {
-      endpoint: "POST /api/issues/preview-trigger",
-    });
+    return parseWithFallback(
+      raw,
+      IssueTriggerPreviewSchema,
+      { triggers: [], total_count: 0 },
+      {
+        endpoint: "POST /api/issues/preview-trigger",
+      },
+    );
   }
 
   async listTimeline(issueId: string): Promise<TimelineEntry[]> {
-    const raw = await this.fetch<unknown>(
-      `/api/issues/${issueId}/timeline`,
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/timeline`);
+    return parseWithFallback(
+      raw,
+      TimelineEntriesSchema,
+      EMPTY_TIMELINE_ENTRIES,
+      {
+        endpoint: "GET /api/issues/:id/timeline",
+      },
     );
-    return parseWithFallback(raw, TimelineEntriesSchema, EMPTY_TIMELINE_ENTRIES, {
-      endpoint: "GET /api/issues/:id/timeline",
-    });
   }
 
   async getAssigneeFrequency(): Promise<AssigneeFrequencyEntry[]> {
     return this.fetch("/api/assignee-frequency");
   }
 
-  async updateComment(commentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[]): Promise<Comment> {
+  async updateComment(
+    commentId: string,
+    content: string,
+    attachmentIds?: string[],
+    suppressAgentIds?: string[],
+  ): Promise<Comment> {
     return this.fetch(`/api/comments/${commentId}`, {
       method: "PUT",
       body: JSON.stringify({
         content,
         attachment_ids: attachmentIds,
-        ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
+        ...(suppressAgentIds?.length
+          ? { suppress_agent_ids: suppressAgentIds }
+          : {}),
       }),
     });
   }
@@ -909,7 +1367,9 @@ export class ApiClient {
   }
 
   async unresolveComment(commentId: string): Promise<Comment> {
-    return this.fetch(`/api/comments/${commentId}/resolve`, { method: "DELETE" });
+    return this.fetch(`/api/comments/${commentId}/resolve`, {
+      method: "DELETE",
+    });
   }
 
   async addReaction(commentId: string, emoji: string): Promise<Reaction> {
@@ -926,7 +1386,10 @@ export class ApiClient {
     });
   }
 
-  async addIssueReaction(issueId: string, emoji: string): Promise<IssueReaction> {
+  async addIssueReaction(
+    issueId: string,
+    emoji: string,
+  ): Promise<IssueReaction> {
     return this.fetch(`/api/issues/${issueId}/reactions`, {
       method: "POST",
       body: JSON.stringify({ emoji }),
@@ -948,7 +1411,11 @@ export class ApiClient {
     });
   }
 
-  async subscribeToIssue(issueId: string, userId?: string, userType?: string): Promise<void> {
+  async subscribeToIssue(
+    issueId: string,
+    userId?: string,
+    userType?: string,
+  ): Promise<void> {
     const body: Record<string, string> = {};
     if (userId) body.user_id = userId;
     if (userType) body.user_type = userType;
@@ -958,18 +1425,45 @@ export class ApiClient {
     });
   }
 
-  async unsubscribeFromIssue(issueId: string, userId?: string, userType?: string): Promise<void> {
-    const body: Record<string, string> = {};
-    if (userId) body.user_id = userId;
-    if (userType) body.user_type = userType;
+  async unsubscribeFromIssue(
+    issueId: string,
+    userId?: string,
+    userType?: string,
+  ): Promise<void> {
     await this.fetch(`/api/issues/${issueId}/unsubscribe`, {
       method: "POST",
-      body: JSON.stringify(body),
+      body: JSON.stringify(subscriberTarget(userId, userType)),
+    });
+  }
+
+  /**
+   * Leaves this issue and every descendant, and keeps future children of the
+   * tree from re-subscribing the user — the escape hatch for an agent-built
+   * tree that keeps growing (MUL-5483).
+   *
+   * Deliberately its own endpoint rather than a `subtree` flag on
+   * `unsubscribeFromIssue`. Web/desktop staging ships on merge while the
+   * backend is deployed by hand, so this client regularly runs against an
+   * older server; one that predates the feature would ignore an unknown body
+   * field, unsubscribe only the root, and still answer 200. A distinct path
+   * 404s there, which surfaces as a failed mutation instead of a silent lie.
+   */
+  async unsubscribeFromIssueSubtree(
+    issueId: string,
+    userId?: string,
+    userType?: string,
+  ): Promise<void> {
+    await this.fetch(`/api/issues/${issueId}/unsubscribe/subtree`, {
+      method: "POST",
+      body: JSON.stringify(subscriberTarget(userId, userType)),
     });
   }
 
   // Agents
-  async listAgents(params?: { workspace_id?: string; include_archived?: boolean }): Promise<Agent[]> {
+  async listAgents(params?: {
+    workspace_id?: string;
+    include_archived?: boolean;
+  }): Promise<Agent[]> {
     const search = new URLSearchParams();
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.include_archived) search.set("include_archived", "true");
@@ -983,6 +1477,35 @@ export class ApiClient {
   async createAgent(data: CreateAgentRequest): Promise<Agent> {
     return this.fetch("/api/agents", {
       method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  /**
+   * Provisions the workspace's built-in Chief of Staff, or returns the
+   * existing one.
+   *
+   * Only a runtime and a language are sent: name, description, avatar,
+   * permissions, and the system instruction layer are server constants, so a
+   * client cannot mint an agent that would claim them. The server is also the
+   * idempotency boundary — calling twice yields the same agent.
+   */
+  async createMikaAgent(
+    data: {
+      runtime_id: string;
+      language: "en" | "zh" | "ko" | "ja";
+      /** Empty means "whatever the runtime defaults to". */
+      model?: string;
+      /** Label for the onboarding conversation, used only if this call is the
+       *  one that creates it. The session's identity is the member and Mika,
+       *  never this string — it is localized. */
+      session_title?: string;
+    },
+    workspaceSlug?: string,
+  ): Promise<MikaBootstrapResponse> {
+    return this.fetch("/api/agents/mika", {
+      method: "POST",
+      headers: workspaceHeader(workspaceSlug),
       body: JSON.stringify(data),
     });
   }
@@ -1003,6 +1526,113 @@ export class ApiClient {
     );
   }
 
+  /**
+   * The caller's unfinished agent-creation conversations.
+   *
+   * Builder sessions are hidden from every chat list (their carrier agent is
+   * `kind = 'system'`), so this is the only route back to one. A 404 means the
+   * backend predates the endpoint: degrade to "no drafts" instead of erroring
+   * the Agents page, exactly as listChatDraftRestores does.
+   */
+  async listAgentBuilderSessions(): Promise<AgentBuilderSessionSummary[]> {
+    let raw: unknown;
+    try {
+      raw = await this.fetch<unknown>("/api/agent-builder/sessions");
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) return [];
+      throw err;
+    }
+    return parseWithFallback(
+      raw,
+      AgentBuilderSessionListSchema,
+      EMPTY_AGENT_BUILDER_SESSION_LIST,
+      { endpoint: "GET /api/agent-builder/sessions" },
+    ).sessions;
+  }
+
+  /**
+   * Stores the configuration a creation conversation has arrived at, including
+   * edits the user typed but has not sent. Whole-object last-write-wins: one
+   * conversation has one editor, so a field-level merge could only reconstruct
+   * a state nobody saw. Read back through `listAgentBuilderSessions`.
+   */
+  async saveAgentBuilderDraft(
+    sessionId: string,
+    draft: StoredAgentDraft,
+  ): Promise<void> {
+    await this.fetch(`/api/agent-builder/sessions/${sessionId}/draft`, {
+      method: "PUT",
+      body: JSON.stringify({ draft }),
+    });
+  }
+
+  /** Rebinds a live builder conversation to another runtime. Callers must not
+   *  show the new runtime as selected until this resolves — the whole point is
+   *  that the UI's runtime and the executing runtime agree.
+   *
+   *  A non-2xx throws before we get here and nothing was committed. Reaching the
+   *  parse means the server bound `data.runtime_id`, so that is the fallback for
+   *  an unparseable body — see agentBuilderRuntimeSwitchFallback. */
+  async switchAgentBuilderRuntime(
+    sessionId: string,
+    data: { runtime_id: string },
+  ): Promise<AgentBuilderRuntimeSwitch> {
+    const raw = await this.fetch<unknown>(
+      `/api/agent-builder/sessions/${sessionId}/runtime`,
+      { method: "PATCH", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(
+      raw,
+      AgentBuilderRuntimeSwitchSchema,
+      agentBuilderRuntimeSwitchFallback(data.runtime_id),
+      { endpoint: "PATCH /api/agent-builder/sessions/{id}/runtime" },
+    );
+  }
+
+  async listAgentTemplates(): Promise<AgentTemplateSummary[]> {
+    const raw = await this.fetch<unknown>("/api/agent-templates");
+    return parseWithFallback(
+      raw,
+      AgentTemplateSummaryListSchema,
+      EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
+      { endpoint: "GET /api/agent-templates" },
+    );
+  }
+
+  async getAgentTemplate(slug: string): Promise<AgentTemplate> {
+    const raw = await this.fetch<unknown>(
+      `/api/agent-templates/${encodeURIComponent(slug)}`,
+    );
+    // Round-trip the requested slug into the fallback so a malformed
+    // detail response still produces a navigable record matching the URL
+    // the user clicked.
+    return parseWithFallback(
+      raw,
+      AgentTemplateSchema,
+      { ...EMPTY_AGENT_TEMPLATE_DETAIL, slug },
+      { endpoint: "GET /api/agent-templates/:slug" },
+    );
+  }
+
+  /** Creates an agent from a curated template. The server fetches every
+   *  referenced skill URL in parallel, materializes them into the workspace
+   *  (find-or-create by name), and writes the agent + skill bindings in a
+   *  single transaction. On any upstream fetch failure, the entire write is
+   *  rolled back and the API returns 422 with `failed_urls`. */
+  async createAgentFromTemplate(
+    data: CreateAgentFromTemplateRequest,
+  ): Promise<CreateAgentFromTemplateResponse> {
+    const raw = await this.fetch<unknown>("/api/agents/from-template", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(
+      raw,
+      CreateAgentFromTemplateResponseSchema,
+      EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
+      { endpoint: "POST /api/agents/from-template" },
+    );
+  }
   async updateAgent(id: string, data: UpdateAgentRequest): Promise<Agent> {
     return this.fetch(`/api/agents/${id}`, {
       method: "PUT",
@@ -1015,10 +1645,10 @@ export class ApiClient {
   }
 
   /**
-   * Returns the plaintext `custom_env` map for an agent. Owner/admin
-   * only; calls from agent-actor sessions get a 403. Every successful
-   * call writes an `agent_env_revealed` activity_log row server-side.
-   * MUL-2600.
+   * Returns the plaintext `custom_env` map for an agent. Admits the
+   * agent's owner or a workspace owner/admin (MUL-5438); calls from
+   * agent-actor sessions get a 403. Every successful call writes an
+   * `agent_env_revealed` activity_log row server-side. MUL-2600.
    */
   async getAgentEnv(id: string): Promise<AgentEnvResponse> {
     return this.fetch(`/api/agents/${id}/env`);
@@ -1028,11 +1658,14 @@ export class ApiClient {
    * Replaces an agent's `custom_env` wholesale. Values equal to
    * `"****"` are preserved server-side (the **** guard) so a partial
    * UI edit doesn't overwrite real secrets with the masked
-   * placeholder. Owner/admin only; agent actors get a 403. Every
-   * successful call writes an `agent_env_updated` activity_log row.
-   * MUL-2600.
+   * placeholder. Admits the agent's owner or a workspace owner/admin
+   * (MUL-5438); agent actors get a 403. Every successful call writes an
+   * `agent_env_updated` activity_log row. MUL-2600.
    */
-  async updateAgentEnv(id: string, data: UpdateAgentEnvRequest): Promise<AgentEnvResponse> {
+  async updateAgentEnv(
+    id: string,
+    data: UpdateAgentEnvRequest,
+  ): Promise<AgentEnvResponse> {
     return this.fetch(`/api/agents/${id}/env`, {
       method: "PUT",
       body: JSON.stringify(data),
@@ -1051,11 +1684,19 @@ export class ApiClient {
     return this.fetch(`/api/agents/${id}/cancel-tasks`, { method: "POST" });
   }
 
-  async listRuntimes(params?: { workspace_id?: string; owner?: "me" }): Promise<AgentRuntime[]> {
+  async listRuntimes(
+    params?: { workspace_id?: string; owner?: "me" },
+    workspaceSlug?: string,
+  ): Promise<AgentRuntime[]> {
     const search = new URLSearchParams();
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.owner) search.set("owner", params.owner);
-    return this.fetch(`/api/runtimes?${search}`);
+    // workspace_id alone is not enough: the server resolves the workspace from
+    // the slug header first, so a caller listing another workspace's runtimes
+    // must override the header too.
+    return this.fetch(`/api/runtimes?${search}`, {
+      headers: workspaceHeader(workspaceSlug),
+    });
   }
 
   async createFCE2BRuntime(
@@ -1081,7 +1722,9 @@ export class ApiClient {
   }
 
   async getFCE2BStableChannel(): Promise<FCE2BStableChannel> {
-    const raw = await this.fetch<unknown>("/api/runtimes/fc-e2b/stable-channel");
+    const raw = await this.fetch<unknown>(
+      "/api/runtimes/fc-e2b/stable-channel",
+    );
     return parseWithFallback(
       raw,
       FCE2BStableChannelSchema,
@@ -1109,11 +1752,14 @@ export class ApiClient {
     data: CreateFCE2BStableReleaseRequest,
     idempotencyKey: string,
   ): Promise<FCE2BStableRelease> {
-    const raw = await this.fetch<unknown>("/api/runtimes/fc-e2b/stable-releases", {
-      method: "POST",
-      body: JSON.stringify(data),
-      headers: { "Idempotency-Key": idempotencyKey },
-    });
+    const raw = await this.fetch<unknown>(
+      "/api/runtimes/fc-e2b/stable-releases",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+        headers: { "Idempotency-Key": idempotencyKey },
+      },
+    );
     return parseWithFallback(
       raw,
       FCE2BStableReleaseSchema,
@@ -1174,12 +1820,9 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(
       "/api/runtimes/fc-e2b/stable-runtimes",
     );
-    return parseWithFallback(
-      raw,
-      FCE2BStableRuntimeOverviewListSchema,
-      [],
-      { endpoint: "GET /api/runtimes/fc-e2b/stable-runtimes" },
-    );
+    return parseWithFallback(raw, FCE2BStableRuntimeOverviewListSchema, [], {
+      endpoint: "GET /api/runtimes/fc-e2b/stable-runtimes",
+    });
   }
 
   async listCloudSandboxStableRuntimes(
@@ -1189,12 +1832,9 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(
       `/api/runtimes/cloud-sandbox/stable-runtimes?${search.toString()}`,
     );
-    return parseWithFallback(
-      raw,
-      FCE2BStableRuntimeOverviewListSchema,
-      [],
-      { endpoint: "GET /api/runtimes/cloud-sandbox/stable-runtimes" },
-    );
+    return parseWithFallback(raw, FCE2BStableRuntimeOverviewListSchema, [], {
+      endpoint: "GET /api/runtimes/cloud-sandbox/stable-runtimes",
+    });
   }
 
   async mutateFCE2BStableRelease(
@@ -1295,7 +1935,8 @@ export class ApiClient {
   ): Promise<CloudRuntimeNode[]> {
     const search = new URLSearchParams();
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
-    if (params?.offset !== undefined) search.set("offset", String(params.offset));
+    if (params?.offset !== undefined)
+      search.set("offset", String(params.offset));
     const query = search.toString();
     const raw = await this.fetch<unknown>(
       `/api/cloud-runtime/nodes${query ? `?${query}` : ""}`,
@@ -1316,7 +1957,7 @@ export class ApiClient {
       body: JSON.stringify(data),
       extraHeaders: { "Content-Type": "application/json" },
     });
-    const raw = await res.json() as unknown;
+    const raw = (await res.json()) as unknown;
     return parseWithFallback(
       raw,
       CloudRuntimeNodeSchema,
@@ -1347,12 +1988,14 @@ export class ApiClient {
     });
   }
 
-  async listCloudBillingTransactions(
-    params?: { page?: number; page_size?: number },
-  ): Promise<BillingTransactionsPage> {
+  async listCloudBillingTransactions(params?: {
+    page?: number;
+    page_size?: number;
+  }): Promise<BillingTransactionsPage> {
     const search = new URLSearchParams();
     if (params?.page !== undefined) search.set("page", String(params.page));
-    if (params?.page_size !== undefined) search.set("page_size", String(params.page_size));
+    if (params?.page_size !== undefined)
+      search.set("page_size", String(params.page_size));
     const query = search.toString();
     const raw = await this.fetch<unknown>(
       `/api/cloud-billing/transactions${query ? `?${query}` : ""}`,
@@ -1365,12 +2008,14 @@ export class ApiClient {
     );
   }
 
-  async listCloudBillingBatches(
-    params?: { page?: number; page_size?: number },
-  ): Promise<BillingBatchesPage> {
+  async listCloudBillingBatches(params?: {
+    page?: number;
+    page_size?: number;
+  }): Promise<BillingBatchesPage> {
     const search = new URLSearchParams();
     if (params?.page !== undefined) search.set("page", String(params.page));
-    if (params?.page_size !== undefined) search.set("page_size", String(params.page_size));
+    if (params?.page_size !== undefined)
+      search.set("page_size", String(params.page_size));
     const query = search.toString();
     const raw = await this.fetch<unknown>(
       `/api/cloud-billing/batches${query ? `?${query}` : ""}`,
@@ -1383,12 +2028,14 @@ export class ApiClient {
     );
   }
 
-  async listCloudBillingTopups(
-    params?: { page?: number; page_size?: number },
-  ): Promise<BillingTopupsPage> {
+  async listCloudBillingTopups(params?: {
+    page?: number;
+    page_size?: number;
+  }): Promise<BillingTopupsPage> {
     const search = new URLSearchParams();
     if (params?.page !== undefined) search.set("page", String(params.page));
-    if (params?.page_size !== undefined) search.set("page_size", String(params.page_size));
+    if (params?.page_size !== undefined)
+      search.set("page_size", String(params.page_size));
     const query = search.toString();
     const raw = await this.fetch<unknown>(
       `/api/cloud-billing/topups${query ? `?${query}` : ""}`,
@@ -1466,21 +2113,34 @@ export class ApiClient {
     await this.fetch(`/api/runtimes/${runtimeId}`, { method: "DELETE" });
   }
 
-  // Cascade variant of deleteRuntime. The strict DELETE refuses with
+  // Confirmed variant of deleteRuntime. The strict DELETE refuses with
   // structured 409 (`code: "runtime_has_active_agents"`, body carries the
   // blocking agents) when active agents are bound; the front-end then opens
-  // the cascade-mode confirmation dialog and submits the user-confirmed
-  // active agent set here. Server compares the snapshot to the live set
-  // inside the transaction and refuses with `code: "runtime_delete_plan_changed"`
-  // (same shape, fresh `active_agents`) if they don't match — caller should
-  // re-render the agent list and force the user to re-confirm.
-  async archiveAgentsAndDeleteRuntime(
+  // the confirmation dialog and submits the user-confirmed active agent set
+  // here. Server compares the snapshot to the live set inside the transaction
+  // and refuses with `code: "runtime_delete_plan_changed"` (same shape, fresh
+  // `active_agents`) if they don't match — caller should re-render the agent
+  // list and force the user to re-confirm.
+  //
+  // The agents are UNBOUND, not archived or deleted (MUL-5559): they keep their
+  // configuration, chats and task history and need a new runtime to run again.
+  // `agents_archived` is the server's deprecated mirror of `agents_unbound`,
+  // kept because installed clients read it; prefer `agents_unbound`.
+  async unbindAgentsAndDeleteRuntime(
     runtimeId: string,
     expectedActiveAgentIds: string[],
-  ): Promise<{ status: string; agents_archived: number; tasks_cancelled: number }> {
-    return this.fetch(`/api/runtimes/${runtimeId}/archive-agents-and-delete`, {
+  ): Promise<{
+    status: string;
+    agents_unbound?: number;
+    agents_archived?: number;
+    tasks_cancelled: number;
+    autopilots_paused?: number;
+  }> {
+    return this.fetch(`/api/runtimes/${runtimeId}/unbind-agents-and-delete`, {
       method: "POST",
-      body: JSON.stringify({ expected_active_agent_ids: expectedActiveAgentIds }),
+      body: JSON.stringify({
+        expected_active_agent_ids: expectedActiveAgentIds,
+      }),
     });
   }
 
@@ -1639,14 +2299,18 @@ export class ApiClient {
   // as the per-runtime endpoints above).
   // ---------------------------------------------------------------------------
 
-  async getDashboardUsageDaily(
-    params: { days?: number; project_id?: string | null; tz?: string },
-  ): Promise<DashboardUsageDaily[]> {
+  async getDashboardUsageDaily(params: {
+    days?: number;
+    project_id?: string | null;
+    tz?: string;
+  }): Promise<DashboardUsageDaily[]> {
     const search = new URLSearchParams();
     if (params.days) search.set("days", String(params.days));
     if (params.project_id) search.set("project_id", params.project_id);
     if (params.tz) search.set("tz", params.tz);
-    const raw = await this.fetch<unknown>(`/api/dashboard/usage/daily?${search}`);
+    const raw = await this.fetch<unknown>(
+      `/api/dashboard/usage/daily?${search}`,
+    );
     return parseWithFallback<DashboardUsageDaily[]>(
       raw,
       DashboardUsageDailyListSchema,
@@ -1655,14 +2319,18 @@ export class ApiClient {
     );
   }
 
-  async getDashboardUsageByAgent(
-    params: { days?: number; project_id?: string | null; tz?: string },
-  ): Promise<DashboardUsageByAgent[]> {
+  async getDashboardUsageByAgent(params: {
+    days?: number;
+    project_id?: string | null;
+    tz?: string;
+  }): Promise<DashboardUsageByAgent[]> {
     const search = new URLSearchParams();
     if (params.days) search.set("days", String(params.days));
     if (params.project_id) search.set("project_id", params.project_id);
     if (params.tz) search.set("tz", params.tz);
-    const raw = await this.fetch<unknown>(`/api/dashboard/usage/by-agent?${search}`);
+    const raw = await this.fetch<unknown>(
+      `/api/dashboard/usage/by-agent?${search}`,
+    );
     return parseWithFallback<DashboardUsageByAgent[]>(
       raw,
       DashboardUsageByAgentListSchema,
@@ -1671,16 +2339,20 @@ export class ApiClient {
     );
   }
 
-  async getDashboardAgentRunTime(
-    params: { days?: number; project_id?: string | null; tz?: string },
-  ): Promise<DashboardAgentRunTime[]> {
+  async getDashboardAgentRunTime(params: {
+    days?: number;
+    project_id?: string | null;
+    tz?: string;
+  }): Promise<DashboardAgentRunTime[]> {
     const search = new URLSearchParams();
     if (params.days) search.set("days", String(params.days));
     if (params.project_id) search.set("project_id", params.project_id);
     // `tz` aligns the "last N days" cutoff with the viewer's calendar,
     // matching the per-agent token card.
     if (params.tz) search.set("tz", params.tz);
-    const raw = await this.fetch<unknown>(`/api/dashboard/agent-runtime?${search}`);
+    const raw = await this.fetch<unknown>(
+      `/api/dashboard/agent-runtime?${search}`,
+    );
     return parseWithFallback<DashboardAgentRunTime[]>(
       raw,
       DashboardAgentRunTimeListSchema,
@@ -1689,21 +2361,67 @@ export class ApiClient {
     );
   }
 
-  async getDashboardRunTimeDaily(
-    params: { days?: number; project_id?: string | null; tz?: string },
-  ): Promise<DashboardRunTimeDaily[]> {
+  async getDashboardRunTimeDaily(params: {
+    days?: number;
+    project_id?: string | null;
+    tz?: string;
+  }): Promise<DashboardRunTimeDaily[]> {
     const search = new URLSearchParams();
     if (params.days) search.set("days", String(params.days));
     if (params.project_id) search.set("project_id", params.project_id);
     // `tz` cuts the day buckets in the viewer's calendar so Time / Tasks
     // align with the Cost / Tokens charts.
     if (params.tz) search.set("tz", params.tz);
-    const raw = await this.fetch<unknown>(`/api/dashboard/runtime/daily?${search}`);
+    const raw = await this.fetch<unknown>(
+      `/api/dashboard/runtime/daily?${search}`,
+    );
     return parseWithFallback<DashboardRunTimeDaily[]>(
       raw,
       DashboardRunTimeDailyListSchema,
       [],
       { endpoint: "GET /api/dashboard/runtime/daily" },
+    );
+  }
+
+  async getDashboardFailuresDaily(params: {
+    days?: number;
+    project_id?: string | null;
+    tz?: string;
+  }): Promise<DashboardFailureDaily[]> {
+    const search = new URLSearchParams();
+    if (params.days) search.set("days", String(params.days));
+    if (params.project_id) search.set("project_id", params.project_id);
+    // `tz` cuts the day buckets in the viewer's calendar so the Errors chart
+    // shares an x-axis with the other four metrics.
+    if (params.tz) search.set("tz", params.tz);
+    const raw = await this.fetch<unknown>(
+      `/api/dashboard/failures/daily?${search}`,
+    );
+    return parseWithFallback<DashboardFailureDaily[]>(
+      raw,
+      DashboardFailureDailyListSchema,
+      [],
+      { endpoint: "GET /api/dashboard/failures/daily" },
+    );
+  }
+
+  async getDashboardFailuresByAgent(params: {
+    days?: number;
+    project_id?: string | null;
+    tz?: string;
+  }): Promise<DashboardFailureByAgent[]> {
+    const search = new URLSearchParams();
+    if (params.days) search.set("days", String(params.days));
+    if (params.project_id) search.set("project_id", params.project_id);
+    if (params.tz) search.set("tz", params.tz);
+    const raw = await this.fetch<unknown>(
+      `/api/dashboard/failures/by-agent?${search}`,
+    );
+    return parseWithFallback<DashboardFailureByAgent[]>(
+      raw,
+      DashboardFailureByAgentListSchema,
+      [],
+      { endpoint: "GET /api/dashboard/failures/by-agent" },
     );
   }
 
@@ -1724,15 +2442,42 @@ export class ApiClient {
     return this.fetch(`/api/runtimes/${runtimeId}/update/${updateId}`);
   }
 
-  async initiateListModels(runtimeId: string): Promise<RuntimeModelListRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/models`, { method: "POST" });
+  // Both discovery endpoints feed a UI state machine (poll while
+  // pending/running, then render or fail), so the response is validated rather
+  // than cast: an unparseable body degrades to an explicit "failed" record that
+  // shows the discovery error and keeps manual model entry usable, instead of a
+  // fabricated empty catalog or an endless spinner (MUL-5444).
+  async initiateListModels(
+    runtimeId: string,
+  ): Promise<RuntimeModelListRequest> {
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/models`, {
+      method: "POST",
+    });
+    return parseWithFallback<RuntimeModelListRequest>(
+      raw,
+      RuntimeModelListRequestSchema,
+      { ...MALFORMED_RUNTIME_MODEL_LIST_REQUEST, runtime_id: runtimeId },
+      { endpoint: "POST /api/runtimes/{id}/models" },
+    );
   }
 
   async getListModelsResult(
     runtimeId: string,
     requestId: string,
   ): Promise<RuntimeModelListRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/models/${requestId}`);
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/${runtimeId}/models/${requestId}`,
+    );
+    return parseWithFallback<RuntimeModelListRequest>(
+      raw,
+      RuntimeModelListRequestSchema,
+      {
+        ...MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
+        id: requestId,
+        runtime_id: runtimeId,
+      },
+      { endpoint: "GET /api/runtimes/{id}/models/{requestId}" },
+    );
   }
 
   async initiateListLocalSkills(
@@ -1764,7 +2509,9 @@ export class ApiClient {
     runtimeId: string,
     requestId: string,
   ): Promise<RuntimeLocalSkillImportRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/local-skills/import/${requestId}`);
+    return this.fetch(
+      `/api/runtimes/${runtimeId}/local-skills/import/${requestId}`,
+    );
   }
 
   async listAgentTasks(agentId: string): Promise<AgentTask[]> {
@@ -1780,6 +2527,31 @@ export class ApiClient {
     return this.fetch(`/api/agent-task-snapshot`);
   }
 
+  // Independent workspace-level projection. Unlike the task snapshot, this
+  // already deduplicates running agents and returns only the display fields
+  // consumers need. Callers may narrow the projection by task source and, for
+  // issue work, the authenticated member's My Issues relation.
+  // `parentIssueId` narrows the projection to that issue's direct children,
+  // which is how the sub-issue header on issue detail reads the same source
+  // as the Issues list header. The server rejects combining it with `scope`,
+  // so callers pass one or the other.
+  async getWorkspaceWorkingAgents(
+    type?: WorkspaceWorkingAgentType,
+    mineRelation?: WorkspaceWorkingAgentMineRelation,
+    parentIssueId?: string,
+  ): Promise<WorkspaceWorkingAgent[]> {
+    const search = new URLSearchParams();
+    if (type) search.set("type", type);
+    if (mineRelation) {
+      search.set("scope", "mine");
+      search.set("relation", mineRelation);
+    } else if (parentIssueId) {
+      search.set("parent", parentIssueId);
+    }
+    const query = search.toString();
+    return this.fetch(`/api/working-agents${query ? `?${query}` : ""}`);
+  }
+
   // Per-agent daily activity for the last 30 days, anchored on
   // completed_at. One workspace-wide fetch backs both the Agents-list
   // sparkline (uses trailing 7 buckets) and the agent detail "Last 30
@@ -1793,7 +2565,9 @@ export class ApiClient {
     return this.fetch(`/api/agent-run-counts`);
   }
 
-  async getActiveTasksForIssue(issueId: string): Promise<{ tasks: AgentTask[] }> {
+  async getActiveTasksForIssue(
+    issueId: string,
+  ): Promise<{ tasks: AgentTask[] }> {
     return this.fetch(`/api/issues/${issueId}/active-task`);
   }
 
@@ -1834,8 +2608,26 @@ export class ApiClient {
     return this.fetch(`/api/inbox/${id}/read`, { method: "POST" });
   }
 
+  async markInboxUnread(id: string): Promise<InboxItem> {
+    return this.fetch(`/api/inbox/${id}/unread`, { method: "POST" });
+  }
+
   async archiveInbox(id: string): Promise<InboxItem> {
     return this.fetch(`/api/inbox/${id}/archive`, { method: "POST" });
+  }
+
+  // Archived notifications, backing the inbox's "Archived" sub-view. Capped
+  // server-side (no pagination in v1). Schema-guarded so a contract drift
+  // renders an empty archive instead of taking the inbox down with it.
+  async listArchivedInbox(): Promise<InboxItem[]> {
+    const raw = await this.fetch<unknown>("/api/inbox/archived");
+    return parseWithFallback(raw, InboxItemListSchema, EMPTY_INBOX_ITEMS, {
+      endpoint: "GET /api/inbox/archived",
+    });
+  }
+
+  async unarchiveInbox(id: string): Promise<InboxItem> {
+    return this.fetch(`/api/inbox/${id}/unarchive`, { method: "POST" });
   }
 
   async getUnreadInboxCount(): Promise<{ count: number }> {
@@ -1848,9 +2640,14 @@ export class ApiClient {
   // than crashing the sidebar.
   async getInboxUnreadSummary(): Promise<InboxWorkspaceUnread[]> {
     const raw = await this.fetch<unknown>("/api/inbox/unread-summary");
-    return parseWithFallback(raw, InboxUnreadSummarySchema, EMPTY_INBOX_UNREAD_SUMMARY, {
-      endpoint: "GET /api/inbox/unread-summary",
-    });
+    return parseWithFallback(
+      raw,
+      InboxUnreadSummarySchema,
+      EMPTY_INBOX_UNREAD_SUMMARY,
+      {
+        endpoint: "GET /api/inbox/unread-summary",
+      },
+    );
   }
 
   async markAllInboxRead(): Promise<{ count: number }> {
@@ -1875,26 +2672,51 @@ export class ApiClient {
   // follows the active workspace) so a caller can read a SPECIFIC workspace's
   // preferences — e.g. honoring the mute setting of the workspace an inbox
   // notification came from while the user is viewing a different one (#3766).
-  async getNotificationPreferences(workspaceSlug?: string): Promise<NotificationPreferenceResponse> {
-    return this.fetch(
+  async getNotificationPreferences(
+    workspaceSlug?: string,
+  ): Promise<NotificationPreferenceResponse> {
+    const raw = await this.fetch<unknown>(
       "/api/notification-preferences",
-      workspaceSlug ? { headers: { "X-Workspace-Slug": workspaceSlug } } : undefined,
+      workspaceSlug
+        ? { headers: { "X-Workspace-Slug": workspaceSlug } }
+        : undefined,
+    );
+    return parseWithFallback(
+      raw,
+      NotificationPreferenceResponseSchema,
+      EMPTY_NOTIFICATION_PREFERENCE_RESPONSE,
+      { endpoint: "GET /api/notification-preferences" },
     );
   }
 
-  async updateNotificationPreferences(preferences: NotificationPreferences): Promise<NotificationPreferenceResponse> {
-    return this.fetch("/api/notification-preferences", {
-      method: "PUT",
+  async updateNotificationPreferences(
+    preferences: NotificationPreferences,
+    workspaceSlug?: string,
+  ): Promise<NotificationPreferenceResponse> {
+    const raw = await this.fetch<unknown>("/api/notification-preferences", {
+      method: "PATCH",
+      headers: workspaceHeader(workspaceSlug),
       body: JSON.stringify({ preferences }),
     });
+    return parseWithFallback(
+      raw,
+      NotificationPreferenceResponseSchema,
+      EMPTY_NOTIFICATION_PREFERENCE_RESPONSE,
+      { endpoint: "PATCH /api/notification-preferences" },
+    );
   }
 
   // App Config
   async getConfig(): Promise<AppConfigResponse> {
     const raw = await this.fetch<unknown>("/api/config");
-    return parseWithFallback<AppConfigResponse>(raw, AppConfigSchema, EMPTY_APP_CONFIG, {
-      endpoint: "GET /api/config",
-    });
+    return parseWithFallback<AppConfigResponse>(
+      raw,
+      AppConfigSchema,
+      EMPTY_APP_CONFIG,
+      {
+        endpoint: "GET /api/config",
+      },
+    );
   }
 
   // Workspaces
@@ -1906,7 +2728,12 @@ export class ApiClient {
     return this.fetch(`/api/workspaces/${id}`);
   }
 
-  async createWorkspace(data: { name: string; slug: string; description?: string; context?: string }): Promise<Workspace> {
+  async createWorkspace(data: {
+    name: string;
+    slug: string;
+    description?: string;
+    context?: string;
+  }): Promise<Workspace> {
     return this.fetch("/api/workspaces", {
       method: "POST",
       body: JSON.stringify(data),
@@ -1915,9 +2742,14 @@ export class ApiClient {
 
   async getFDEOnboarding(): Promise<FDEOnboardingState> {
     const raw = await this.fetch<unknown>("/api/fde/onboarding");
-    return parseWithFallback(raw, FDEOnboardingStateSchema, EMPTY_FDE_ONBOARDING_STATE, {
-      endpoint: "GET /api/fde/onboarding",
-    });
+    return parseWithFallback(
+      raw,
+      FDEOnboardingStateSchema,
+      EMPTY_FDE_ONBOARDING_STATE,
+      {
+        endpoint: "GET /api/fde/onboarding",
+      },
+    );
   }
 
   async provisionFDEOnboarding(
@@ -1935,7 +2767,18 @@ export class ApiClient {
     );
   }
 
-  async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: Record<string, unknown>; repos?: WorkspaceRepo[]; issue_prefix?: string; avatar_url?: string }): Promise<Workspace> {
+  async updateWorkspace(
+    id: string,
+    data: {
+      name?: string;
+      description?: string;
+      context?: string;
+      settings?: Record<string, unknown>;
+      repos?: WorkspaceRepo[];
+      issue_prefix?: string;
+      avatar_url?: string;
+    },
+  ): Promise<Workspace> {
     return this.fetch(`/api/workspaces/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -1947,14 +2790,21 @@ export class ApiClient {
     return this.fetch(`/api/workspaces/${workspaceId}/members`);
   }
 
-  async createMember(workspaceId: string, data: CreateMemberRequest): Promise<Invitation> {
+  async createMember(
+    workspaceId: string,
+    data: CreateMemberRequest,
+  ): Promise<Invitation> {
     return this.fetch(`/api/workspaces/${workspaceId}/members`, {
       method: "POST",
       body: JSON.stringify(data),
     });
   }
 
-  async updateMember(workspaceId: string, memberId: string, data: UpdateMemberRequest): Promise<MemberWithUser> {
+  async updateMember(
+    workspaceId: string,
+    memberId: string,
+    data: UpdateMemberRequest,
+  ): Promise<MemberWithUser> {
     return this.fetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -1967,12 +2817,18 @@ export class ApiClient {
     });
   }
 
-  async searchDingTalkUsers(workspaceId: string, query: string, limit = 10): Promise<DingTalkUser[]> {
+  async searchDingTalkUsers(
+    workspaceId: string,
+    query: string,
+    limit = 10,
+  ): Promise<DingTalkUser[]> {
     const params = new URLSearchParams({
       q: query,
       limit: String(limit),
     });
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/dingtalk/users/search?${params.toString()}`);
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/dingtalk/users/search?${params.toString()}`,
+    );
     return parseWithFallback(
       raw,
       DingTalkUserSearchResponseSchema,
@@ -1985,10 +2841,13 @@ export class ApiClient {
     workspaceId: string,
     data: AddDingTalkWorkspaceMembersRequest,
   ): Promise<AddDingTalkWorkspaceMembersResponse> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/dingtalk/members`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/dingtalk/members`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
     return parseWithFallback(
       raw,
       AddDingTalkWorkspaceMembersResponseSchema,
@@ -2001,10 +2860,13 @@ export class ApiClient {
     workspaceId: string,
     data: AddDingTalkGroupMembersRequest,
   ): Promise<AddDingTalkGroupMembersResponse> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/dingtalk/group-members`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/dingtalk/group-members`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
     return parseWithFallback(
       raw,
       AddDingTalkGroupMembersResponseSchema,
@@ -2024,10 +2886,16 @@ export class ApiClient {
     return this.fetch(`/api/workspaces/${workspaceId}/invitations`);
   }
 
-  async revokeInvitation(workspaceId: string, invitationId: string): Promise<void> {
-    await this.fetch(`/api/workspaces/${workspaceId}/invitations/${invitationId}`, {
-      method: "DELETE",
-    });
+  async revokeInvitation(
+    workspaceId: string,
+    invitationId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/invitations/${invitationId}`,
+      {
+        method: "DELETE",
+      },
+    );
   }
 
   async listMyInvitations(): Promise<Invitation[]> {
@@ -2094,7 +2962,10 @@ export class ApiClient {
     return this.fetch(`/api/agents/${agentId}/skills`);
   }
 
-  async setAgentSkills(agentId: string, data: SetAgentSkillsRequest): Promise<void> {
+  async setAgentSkills(
+    agentId: string,
+    data: SetAgentSkillsRequest,
+  ): Promise<void> {
     await this.fetch(`/api/agents/${agentId}/skills`, {
       method: "PUT",
       body: JSON.stringify(data),
@@ -2104,32 +2975,51 @@ export class ApiClient {
   // Incremental attach: POST /skills/add only inserts the given ids (the
   // server upserts with ON CONFLICT DO NOTHING), so callers don't need to
   // read the agent's current skill set first.
-  async addAgentSkills(agentId: string, data: SetAgentSkillsRequest): Promise<void> {
+  async addAgentSkills(
+    agentId: string,
+    data: SetAgentSkillsRequest,
+  ): Promise<void> {
     await this.fetch(`/api/agents/${agentId}/skills/add`, {
       method: "POST",
       body: JSON.stringify(data),
     });
   }
 
-	async setAgentSkillEnabled(agentId: string, skillId: string, enabled: boolean): Promise<void> {
-		await this.fetch(`/api/agents/${agentId}/skills/${skillId}/enabled`, {
-			method: "PUT",
-			body: JSON.stringify({ enabled }),
-		});
-	}
+  async setAgentSkillEnabled(
+    agentId: string,
+    skillId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    await this.fetch(`/api/agents/${agentId}/skills/${skillId}/enabled`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    });
+  }
 
-	async removeAgentSkill(agentId: string, skillId: string): Promise<void> {
-		await this.fetch(`/api/agents/${agentId}/skills/${skillId}`, {
-			method: "DELETE",
-		});
-	}
+  async setAgentRuntimeSkillEnabled(
+    agentId: string,
+    data: SetAgentRuntimeSkillEnabledRequest,
+  ): Promise<void> {
+    await this.fetch(`/api/agents/${agentId}/runtime-skills/enabled`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async removeAgentSkill(agentId: string, skillId: string): Promise<void> {
+    await this.fetch(`/api/agents/${agentId}/skills/${skillId}`, {
+      method: "DELETE",
+    });
+  }
 
   // Personal Access Tokens
   async listPersonalAccessTokens(): Promise<PersonalAccessToken[]> {
     return this.fetch("/api/tokens");
   }
 
-  async createPersonalAccessToken(data: CreatePersonalAccessTokenRequest): Promise<CreatePersonalAccessTokenResponse> {
+  async createPersonalAccessToken(
+    data: CreatePersonalAccessTokenRequest,
+  ): Promise<CreatePersonalAccessTokenResponse> {
     return this.fetch("/api/tokens", {
       method: "POST",
       body: JSON.stringify(data),
@@ -2142,69 +3032,126 @@ export class ApiClient {
 
   // Owner-managed DTA workspace access. These credentials are intentionally
   // separate from personal PATs and are never used by the Multica CLI.
-  async listWorkspaceAccessTokens(workspaceId: string): Promise<WorkspaceAccessToken[]> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-tokens`);
+  async listWorkspaceAccessTokens(
+    workspaceId: string,
+  ): Promise<WorkspaceAccessToken[]> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/access-tokens`,
+    );
     return parseWithFallback(raw, WorkspaceAccessTokenListSchema, [], {
       endpoint: "GET /api/workspaces/:id/access-tokens",
       includeReceived: false,
     });
   }
 
-  async createWorkspaceAccessToken(workspaceId: string, data: CreateWorkspaceAccessTokenRequest): Promise<WorkspaceAccessTokenSecretResponse> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-tokens`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, WorkspaceAccessTokenSecretResponseSchema, EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE, {
-      endpoint: "POST /api/workspaces/:id/access-tokens",
-      includeReceived: false,
-    });
+  async createWorkspaceAccessToken(
+    workspaceId: string,
+    data: CreateWorkspaceAccessTokenRequest,
+  ): Promise<WorkspaceAccessTokenSecretResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/access-tokens`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      WorkspaceAccessTokenSecretResponseSchema,
+      EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE,
+      {
+        endpoint: "POST /api/workspaces/:id/access-tokens",
+        includeReceived: false,
+      },
+    );
   }
 
-  async updateWorkspaceAccessToken(workspaceId: string, tokenId: string, data: UpdateWorkspaceAccessTokenRequest): Promise<WorkspaceAccessToken> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-tokens/${tokenId}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, WorkspaceAccessTokenSchema, EMPTY_WORKSPACE_ACCESS_TOKEN, {
-      endpoint: "PATCH /api/workspaces/:id/access-tokens/:tokenId",
-      includeReceived: false,
-    });
+  async updateWorkspaceAccessToken(
+    workspaceId: string,
+    tokenId: string,
+    data: UpdateWorkspaceAccessTokenRequest,
+  ): Promise<WorkspaceAccessToken> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/access-tokens/${tokenId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      WorkspaceAccessTokenSchema,
+      EMPTY_WORKSPACE_ACCESS_TOKEN,
+      {
+        endpoint: "PATCH /api/workspaces/:id/access-tokens/:tokenId",
+        includeReceived: false,
+      },
+    );
   }
 
-  async regenerateWorkspaceAccessToken(workspaceId: string, tokenId: string, data: RegenerateWorkspaceAccessTokenRequest): Promise<WorkspaceAccessTokenSecretResponse> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/access-tokens/${tokenId}/regenerate`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, WorkspaceAccessTokenSecretResponseSchema, EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE, {
-      endpoint: "POST /api/workspaces/:id/access-tokens/:tokenId/regenerate",
-      includeReceived: false,
-    });
+  async regenerateWorkspaceAccessToken(
+    workspaceId: string,
+    tokenId: string,
+    data: RegenerateWorkspaceAccessTokenRequest,
+  ): Promise<WorkspaceAccessTokenSecretResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/access-tokens/${tokenId}/regenerate`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      WorkspaceAccessTokenSecretResponseSchema,
+      EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE,
+      {
+        endpoint: "POST /api/workspaces/:id/access-tokens/:tokenId/regenerate",
+        includeReceived: false,
+      },
+    );
   }
 
-  async revokeWorkspaceAccessToken(workspaceId: string, tokenId: string): Promise<void> {
-    await this.fetch(`/api/workspaces/${workspaceId}/access-tokens/${tokenId}/revoke`, {
-      method: "POST",
-    });
+  async revokeWorkspaceAccessToken(
+    workspaceId: string,
+    tokenId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/access-tokens/${tokenId}/revoke`,
+      {
+        method: "POST",
+      },
+    );
   }
 
-  async deleteWorkspaceAccessToken(workspaceId: string, tokenId: string): Promise<void> {
-    await this.fetch(`/api/workspaces/${workspaceId}/access-tokens/${tokenId}`, {
-      method: "DELETE",
-    });
+  async deleteWorkspaceAccessToken(
+    workspaceId: string,
+    tokenId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/access-tokens/${tokenId}`,
+      {
+        method: "DELETE",
+      },
+    );
   }
 
   // File Upload & Attachments
   async uploadFile(
     file: File,
     opts?: { issueId?: string; commentId?: string; chatSessionId?: string },
+    // Optional abort signal so a module-level upload coordinator (MUL-5181)
+    // can cancel an in-flight upload on logout. When aborted, `fetch` rejects
+    // with an AbortError, which the coordinator distinguishes from a real
+    // failure via `signal.aborted` / `err.name === "AbortError"`.
+    signal?: AbortSignal,
   ): Promise<Attachment> {
     const formData = new FormData();
     formData.append("file", file);
     if (opts?.issueId) formData.append("issue_id", opts.issueId);
     if (opts?.commentId) formData.append("comment_id", opts.commentId);
-    if (opts?.chatSessionId) formData.append("chat_session_id", opts.chatSessionId);
+    if (opts?.chatSessionId)
+      formData.append("chat_session_id", opts.chatSessionId);
 
     const rid = createRequestId();
     const start = Date.now();
@@ -2215,16 +3162,27 @@ export class ApiClient {
       headers: this.authHeaders(),
       body: formData,
       credentials: "include",
+      signal,
     });
 
     if (!res.ok) {
       if (res.status === 401) this.handleUnauthorized();
-      const message = await this.parseErrorMessage(res, `Upload failed: ${res.status}`);
-      this.logger.error(`← ${res.status} /api/upload-file`, { rid, duration: `${Date.now() - start}ms`, error: message });
+      const message = await this.parseErrorMessage(
+        res,
+        `Upload failed: ${res.status}`,
+      );
+      this.logger.error(`← ${res.status} /api/upload-file`, {
+        rid,
+        duration: `${Date.now() - start}ms`,
+        error: message,
+      });
       throw new Error(message);
     }
 
-    this.logger.info(`← ${res.status} /api/upload-file`, { rid, duration: `${Date.now() - start}ms` });
+    this.logger.info(`← ${res.status} /api/upload-file`, {
+      rid,
+      duration: `${Date.now() - start}ms`,
+    });
     const raw = (await res.json()) as unknown;
     return parseWithFallback(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
       endpoint: "POST /api/upload-file",
@@ -2232,18 +3190,31 @@ export class ApiClient {
   }
 
   // Chat Sessions
-  async listChatSessions(params?: { status?: string }): Promise<ChatSession[]> {
+  async listChatSessions(
+    params?: { status?: string },
+    workspaceSlug?: string,
+  ): Promise<ChatSession[]> {
     const query = params?.status ? `?status=${params.status}` : "";
-    return this.fetch(`/api/chat/sessions${query}`);
+    return this.fetch(`/api/chat/sessions${query}`, {
+      headers: workspaceHeader(workspaceSlug),
+    });
   }
 
   async getChatSession(id: string): Promise<ChatSession> {
     return this.fetch(`/api/chat/sessions/${id}`);
   }
 
-  async createChatSession(data: { agent_id: string; title?: string }): Promise<ChatSession> {
+  async createChatSession(
+    data: {
+      agent_id: string;
+      title?: string;
+      project_id?: string | null;
+    },
+    workspaceSlug?: string,
+  ): Promise<ChatSession> {
     return this.fetch("/api/chat/sessions", {
       method: "POST",
+      headers: workspaceHeader(workspaceSlug),
       body: JSON.stringify(data),
     });
   }
@@ -2252,21 +3223,53 @@ export class ApiClient {
     await this.fetch(`/api/chat/sessions/${id}`, { method: "DELETE" });
   }
 
-  async updateChatSession(id: string, data: { title: string }): Promise<ChatSession> {
+  // Refresh the quick-action suggestions for a session's latest assistant turn.
+  // Fire-and-forget: the server enqueues a background regeneration pass and the
+  // refreshed pills arrive over the chat:quick_actions realtime event, so the
+  // caller anchors its pending placeholder on the turn it already knows rather
+  // than on this response.
+  // Refresh the quick actions for the given assistant turn. Sends the message
+  // id the caller is refreshing so the server can atomically confirm it is still
+  // the session's latest turn (409 otherwise) — that keeps the client's pending
+  // marker aligned with the turn chat:quick_actions will resolve, with no
+  // response reconciliation needed even under a WS-before-HTTP race (MUL-5149).
+  async regenerateChatQuickActions(
+    sessionId: string,
+    messageId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/chat/sessions/${sessionId}/quick-actions/regenerate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ message_id: messageId }),
+      },
+    );
+  }
+
+  async updateChatSession(
+    id: string,
+    data: { title: string } | { project_id: string | null },
+  ): Promise<ChatSession> {
     return this.fetch(`/api/chat/sessions/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     });
   }
 
-  async setChatSessionPinned(id: string, pinned: boolean): Promise<ChatSession> {
+  async setChatSessionPinned(
+    id: string,
+    pinned: boolean,
+  ): Promise<ChatSession> {
     return this.fetch(`/api/chat/sessions/${id}/pin`, {
       method: "PATCH",
       body: JSON.stringify({ pinned }),
     });
   }
 
-  async setChatSessionArchived(id: string, archived: boolean): Promise<ChatSession> {
+  async setChatSessionArchived(
+    id: string,
+    archived: boolean,
+  ): Promise<ChatSession> {
     return this.fetch(`/api/chat/sessions/${id}/archive`, {
       method: "PATCH",
       body: JSON.stringify({ archived }),
@@ -2286,16 +3289,31 @@ export class ApiClient {
   }
 
   async unpinChatAgent(agentId: string): Promise<void> {
-    await this.fetch(`/api/chat/pinned-agents/${agentId}`, { method: "DELETE" });
+    await this.fetch(`/api/chat/pinned-agents/${agentId}`, {
+      method: "DELETE",
+    });
   }
 
   async listChatMessages(sessionId: string): Promise<ChatMessage[]> {
-    return this.fetch(`/api/chat/sessions/${sessionId}/messages`);
+    const raw: unknown = await this.fetch(
+      `/api/chat/sessions/${sessionId}/messages`,
+    );
+    return parseWithFallback(
+      raw,
+      ChatMessageListSchema,
+      EMPTY_CHAT_MESSAGE_LIST,
+      {
+        endpoint: "GET /api/chat/sessions/:id/messages",
+      },
+    );
   }
 
   async listChatMessagesPage(
     sessionId: string,
-    params: { before?: { created_at: string; id: string } | null; limit?: number } = {},
+    params: {
+      before?: { created_at: string; id: string } | null;
+      limit?: number;
+    } = {},
   ): Promise<ChatMessagesPage> {
     const limit = params.limit ?? 50;
     const query = new URLSearchParams({ limit: String(limit) });
@@ -2304,8 +3322,16 @@ export class ApiClient {
       query.set("before_id", params.before.id);
     }
     try {
-      return await this.fetch(
+      const raw: unknown = await this.fetch(
         `/api/chat/sessions/${sessionId}/messages/page?${query.toString()}`,
+      );
+      return parseWithFallback(
+        raw,
+        ChatMessagesPageSchema,
+        { messages: [], limit, has_more: false, next_cursor: null },
+        {
+          endpoint: "GET /api/chat/sessions/:id/messages/page",
+        },
       );
     } catch (err) {
       // Deployment-order compatibility: a backend deployed before this endpoint
@@ -2329,18 +3355,131 @@ export class ApiClient {
     content: string,
     attachmentIds?: string[],
   ): Promise<SendChatMessageResponse> {
-    const body: { content: string; attachment_ids?: string[] } = { content };
+    const body: {
+      content: string;
+      attachment_ids?: string[];
+    } = { content };
     if (attachmentIds && attachmentIds.length > 0) {
       body.attachment_ids = attachmentIds;
     }
-    return this.fetch(`/api/chat/sessions/${sessionId}/messages`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
+    const raw = await this.fetch<unknown>(
+      `/api/chat/sessions/${sessionId}/messages`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    );
+    const response = parseWithFallback<SendChatMessageResponse | null>(
+      raw,
+      SendChatMessageResponseSchema,
+      null,
+      { endpoint: "POST /api/chat/sessions/:id/messages" },
+    );
+    if (!response) throw new Error("invalid send chat message response");
+    return response;
+  }
+
+  async startMikaOnboarding(
+    sessionId: string,
+    data: {
+      language: "en" | "zh" | "ko" | "ja";
+    },
+    workspaceSlug?: string,
+  ): Promise<StartMikaOnboardingResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/chat/sessions/${sessionId}/onboarding`,
+      {
+        method: "POST",
+        headers: workspaceHeader(workspaceSlug),
+        body: JSON.stringify(data),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      StartMikaOnboardingResponseSchema,
+      { started: false },
+      { endpoint: "POST /api/chat/sessions/:id/onboarding" },
+    );
   }
 
   async getPendingChatTask(sessionId: string): Promise<ChatPendingTask> {
-    return this.fetch(`/api/chat/sessions/${sessionId}/pending-task`);
+    const raw = await this.fetch<unknown>(
+      `/api/chat/sessions/${sessionId}/pending-task`,
+    );
+    return parseWithFallback(
+      raw,
+      ChatPendingTaskSchema,
+      EMPTY_CHAT_PENDING_TASK,
+      {
+        endpoint: "GET /api/chat/sessions/:id/pending-task",
+      },
+    );
+  }
+
+  async prioritizeQueuedChatTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<PrioritizeQueuedChatTaskResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/chat/sessions/${sessionId}/queued-tasks/${taskId}/prioritize`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      PrioritizeQueuedChatTaskResponseSchema,
+      EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE,
+      {
+        endpoint: "POST /api/chat/sessions/:id/queued-tasks/:taskId/prioritize",
+      },
+    );
+  }
+
+  async clearQueuedChatTasks(sessionId: string): Promise<void> {
+    await this.fetch(`/api/chat/sessions/${sessionId}/queued-tasks`, {
+      method: "DELETE",
+    });
+  }
+
+  /**
+   * Pending deferred-cancellation draft restores for a session (#5219).
+   * A 404 means the backend predates the endpoint — treat as "nothing
+   * pending" so older servers never error the composer.
+   */
+  async listChatDraftRestores(
+    sessionId: string,
+  ): Promise<ChatDraftRestoresResponse> {
+    let raw: unknown;
+    try {
+      raw = await this.fetch<unknown>(
+        `/api/chat/sessions/${sessionId}/draft-restores`,
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        return { restores: [] };
+      }
+      throw err;
+    }
+    return parseWithFallback(
+      raw,
+      ChatDraftRestoresResponseSchema,
+      EMPTY_CHAT_DRAFT_RESTORES,
+      {
+        endpoint: "GET /api/chat/sessions/{id}/draft-restores",
+      },
+    );
+  }
+
+  /** Idempotent consume — deleting an already-consumed restore is a 204 no-op. */
+  async consumeChatDraftRestore(
+    sessionId: string,
+    restoreId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/chat/sessions/${sessionId}/draft-restores/${restoreId}`,
+      {
+        method: "DELETE",
+      },
+    );
   }
 
   async listPendingChatTasks(): Promise<PendingChatTasksResponse> {
@@ -2352,7 +3491,9 @@ export class ApiClient {
   }
 
   async markChatSessionRead(sessionId: string): Promise<void> {
-    await this.fetch(`/api/chat/sessions/${sessionId}/read`, { method: "POST" });
+    await this.fetch(`/api/chat/sessions/${sessionId}/read`, {
+      method: "POST",
+    });
   }
 
   async reportChatReplyReceived(
@@ -2369,11 +3510,38 @@ export class ApiClient {
     );
   }
 
-  async cancelTaskById(taskId: string): Promise<CancelTaskResponse> {
-    const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/cancel`, { method: "POST" });
-    return parseWithFallback(raw, CancelTaskResponseSchema, EMPTY_CANCEL_TASK_RESPONSE, {
-      endpoint: "POST /api/tasks/{taskId}/cancel",
-    });
+  // Advertises the durable draft-restore capability (#5219). The server only
+  // defers the empty-transcript judgment — and therefore only withholds the
+  // synchronous restore from the response — for clients that send this; without
+  // it we would be treated as a pre-#5219 client and get the legacy behaviour.
+  async cancelTaskById(
+    taskId: string,
+    options?: { queuedAction?: "edit" | "remove"; sessionId?: string },
+  ): Promise<CancelTaskResponse> {
+    const params = new URLSearchParams();
+    if (options?.queuedAction) {
+      if (!options.sessionId)
+        throw new Error("sessionId is required for queued-only cancellation");
+      params.set("expected_status", "queued");
+      params.set("chat_session_id", options.sessionId);
+      params.set("queue_action", options.queuedAction);
+    }
+    const query = params.size > 0 ? `?${params}` : "";
+    const raw = await this.fetch<unknown>(
+      `/api/tasks/${taskId}/cancel${query}`,
+      {
+        method: "POST",
+        headers: { "X-Client-Capabilities": CHAT_DRAFT_RESTORE_CAPABILITY },
+      },
+    );
+    return parseWithFallback(
+      raw,
+      CancelTaskResponseSchema,
+      EMPTY_CANCEL_TASK_RESPONSE,
+      {
+        endpoint: "POST /api/tasks/{taskId}/cancel",
+      },
+    );
   }
 
   async listAttachments(issueId: string): Promise<Attachment[]> {
@@ -2427,8 +3595,33 @@ export class ApiClient {
     };
   }
 
+  // Fetches the raw bytes of an attachment through the unified download
+  // endpoint.
+  //
+  // This is the last-resort inline-media path for deployments where the
+  // server has no natively-loadable URL to offer. `GET /api/attachments/{id}`
+  // only upgrades `download_url` to a signed storage URL under CloudFront
+  // signing or presign mode; in **proxy** mode (self-hosted MinIO or any
+  // storage endpoint on an internal host, which the default `auto` mode
+  // classifies as proxy) it returns the auth-gated API path again. Clients
+  // that cannot ride the session cookie on a native `<img>` resource fetch —
+  // Desktop's file:// renderer, the mobile webview, split-origin web — get
+  // the bytes here and render them from an object URL instead.
+  //
+  // Routes through `fetchRaw` so it inherits the standard auth headers,
+  // 401 → handleUnauthorized recovery, request-id logging and ApiError shape.
+  // Callers must only reach for this once the metadata refresh has shown
+  // there is no signed URL: in the other modes the endpoint 302s to storage,
+  // where CORS is not configured for a JS fetch.
+  async getAttachmentBlob(id: string): Promise<Blob> {
+    const res = await this.fetchRaw(`/api/attachments/${id}/download`);
+    return res.blob();
+  }
+
   // Projects
-  async listProjects(params?: { status?: string }): Promise<ListProjectsResponse> {
+  async listProjects(params?: {
+    status?: string;
+  }): Promise<ListProjectsResponse> {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);
     return this.fetch(`/api/projects?${search}`);
@@ -2445,7 +3638,10 @@ export class ApiClient {
     });
   }
 
-  async updateProject(id: string, data: UpdateProjectRequest): Promise<Project> {
+  async updateProject(
+    id: string,
+    data: UpdateProjectRequest,
+  ): Promise<Project> {
     return this.fetch(`/api/projects/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
@@ -2494,11 +3690,20 @@ export class ApiClient {
   }
 
   // Labels
-  async listLabels(resourceType: LabelResourceType = "issue"): Promise<ListLabelsResponse> {
-    const raw = await this.fetch<unknown>(`/api/labels?resource_type=${resourceType}`);
-    return parseWithFallback(raw, ListLabelsResponseSchema, EMPTY_LIST_LABELS_RESPONSE, {
-      endpoint: "GET /api/labels",
-    });
+  async listLabels(
+    resourceType: LabelResourceType = "issue",
+  ): Promise<ListLabelsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/labels?resource_type=${resourceType}`,
+    );
+    return parseWithFallback(
+      raw,
+      ListLabelsResponseSchema,
+      EMPTY_LIST_LABELS_RESPONSE,
+      {
+        endpoint: "GET /api/labels",
+      },
+    );
   }
 
   async getLabel(id: string): Promise<Label> {
@@ -2532,40 +3737,286 @@ export class ApiClient {
     await this.fetch(`/api/labels/${id}`, { method: "DELETE" });
   }
 
-  async listLabelsForIssue(issueId: string): Promise<IssueLabelsResponse> {
-    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels`);
-    return parseWithFallback(raw, ResourceLabelsResponseSchema, EMPTY_RESOURCE_LABELS_RESPONSE, {
-      endpoint: "GET /api/issues/{id}/labels",
+  // Custom issue properties
+  async listProperties(
+    includeArchived = false,
+  ): Promise<ListPropertiesResponse> {
+    const suffix = includeArchived ? "?include_archived=true" : "";
+    let raw: unknown;
+    try {
+      raw = await this.fetch<unknown>(`/api/properties${suffix}`);
+    } catch (error) {
+      // A backend predating custom properties 404s here (e.g. after a
+      // server-only rollback). Treat it as an empty catalog: the property
+      // UI sections disappear and the active-catalog reconciliation strips
+      // persisted property sorts/filters, so no property params ever reach
+      // the old server. Other errors keep normal query-error semantics.
+      if (
+        error instanceof Error &&
+        "status" in error &&
+        (error as { status?: number }).status === 404
+      ) {
+        return EMPTY_LIST_PROPERTIES_RESPONSE;
+      }
+      throw error;
+    }
+    return parseWithFallback(
+      raw,
+      ListPropertiesResponseSchema,
+      EMPTY_LIST_PROPERTIES_RESPONSE,
+      {
+        endpoint: "GET /api/properties",
+      },
+    );
+  }
+
+  /**
+   * Quick actions catalog — one projection for every caller.
+   *
+   * The server hides nothing beyond `private` ownership; whether the caller
+   * may RUN an action is answered by runQuickAction, not here. There is
+   * deliberately no "runnable only" mode: filtering the sidebar by permission
+   * made two people looking at one issue see different sidebars with no
+   * explanation.
+   *
+   * A backend predating quick actions 404s here; treat that as an empty
+   * catalog so the sidebar section and settings tab simply do not render.
+   */
+  async listQuickActions(opts?: {
+    includeArchived?: boolean;
+  }): Promise<ListQuickActionsResponse> {
+    const suffix =
+      opts?.includeArchived === true ? "?include_archived=true" : "";
+    let raw: unknown;
+    try {
+      raw = await this.fetch<unknown>(`/api/quick-actions${suffix}`);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "status" in error &&
+        (error as { status?: number }).status === 404
+      ) {
+        return EMPTY_LIST_QUICK_ACTIONS_RESPONSE;
+      }
+      throw error;
+    }
+    return parseWithFallback(
+      raw,
+      ListQuickActionsResponseSchema,
+      EMPTY_LIST_QUICK_ACTIONS_RESPONSE,
+      {
+        endpoint: "GET /api/quick-actions",
+      },
+    );
+  }
+
+  async createQuickAction(
+    data: CreateQuickActionRequest,
+  ): Promise<QuickAction> {
+    const raw = await this.fetch<unknown>(`/api/quick-actions`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, QuickActionSchema, EMPTY_QUICK_ACTION, {
+      endpoint: "POST /api/quick-actions",
     });
   }
 
-  async attachLabel(issueId: string, labelId: string): Promise<IssueLabelsResponse> {
+  async updateQuickAction(
+    id: string,
+    data: UpdateQuickActionRequest,
+  ): Promise<QuickAction> {
+    const raw = await this.fetch<unknown>(`/api/quick-actions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, QuickActionSchema, EMPTY_QUICK_ACTION, {
+      endpoint: "PATCH /api/quick-actions/{id}",
+    });
+  }
+
+  async deleteQuickAction(id: string): Promise<void> {
+    await this.fetch<void>(`/api/quick-actions/${id}`, { method: "DELETE" });
+  }
+
+  /**
+   * Run a quick action against one issue. The response is a Comment carrying
+   * `trigger_outcomes` — the same shape POST /comments returns — so callers
+   * reuse one result handler and inherit `queued` / `coalesced` / `deferred` /
+   * `blocked` instead of a parallel vocabulary that would drift.
+   */
+  async runQuickAction(
+    issueId: string,
+    quickActionId: string,
+  ): Promise<Comment> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${issueId}/quick-actions/${quickActionId}/run`,
+      {
+        method: "POST",
+      },
+    );
+    return parseWithFallback(raw, CommentSchema, EMPTY_COMMENT, {
+      endpoint: "POST /api/issues/{id}/quick-actions/{quickActionId}/run",
+    });
+  }
+
+  /**
+   * What a quick action WOULD post, without posting it. Backs the composer
+   * hand-off (⌥-click and the `/` menu) so the user can edit before sending.
+   * Returns "" when the response cannot be read — callers must treat an empty
+   * string as "insert nothing" rather than clearing the composer.
+   */
+  async renderQuickAction(
+    issueId: string,
+    quickActionId: string,
+  ): Promise<string> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${issueId}/quick-actions/${quickActionId}/render`,
+      {
+        method: "POST",
+      },
+    );
+    const parsed = parseWithFallback(
+      raw,
+      QuickActionRenderSchema,
+      { content: "" },
+      {
+        endpoint: "POST /api/issues/{id}/quick-actions/{quickActionId}/render",
+      },
+    );
+    return parsed.content;
+  }
+
+  async createProperty(data: CreatePropertyRequest): Promise<IssueProperty> {
+    const raw = await this.fetch<unknown>(`/api/properties`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, IssuePropertySchema, EMPTY_ISSUE_PROPERTY, {
+      endpoint: "POST /api/properties",
+    });
+  }
+
+  async updateProperty(
+    id: string,
+    data: UpdatePropertyRequest,
+  ): Promise<IssueProperty> {
+    const raw = await this.fetch<unknown>(`/api/properties/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, IssuePropertySchema, EMPTY_ISSUE_PROPERTY, {
+      endpoint: "PATCH /api/properties/{id}",
+    });
+  }
+
+  async setIssueProperty(
+    issueId: string,
+    propertyId: string,
+    value: IssuePropertyValue,
+  ): Promise<IssuePropertiesResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${issueId}/properties/${propertyId}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ value }),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      IssuePropertiesResponseSchema,
+      EMPTY_ISSUE_PROPERTIES_RESPONSE,
+      {
+        endpoint: "PUT /api/issues/{id}/properties/{propertyId}",
+      },
+    );
+  }
+
+  async unsetIssueProperty(
+    issueId: string,
+    propertyId: string,
+  ): Promise<IssuePropertiesResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${issueId}/properties/${propertyId}`,
+      {
+        method: "DELETE",
+      },
+    );
+    return parseWithFallback(
+      raw,
+      IssuePropertiesResponseSchema,
+      EMPTY_ISSUE_PROPERTIES_RESPONSE,
+      {
+        endpoint: "DELETE /api/issues/{id}/properties/{propertyId}",
+      },
+    );
+  }
+
+  async listLabelsForIssue(issueId: string): Promise<IssueLabelsResponse> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels`);
+    return parseWithFallback(
+      raw,
+      ResourceLabelsResponseSchema,
+      EMPTY_RESOURCE_LABELS_RESPONSE,
+      {
+        endpoint: "GET /api/issues/{id}/labels",
+      },
+    );
+  }
+
+  async attachLabel(
+    issueId: string,
+    labelId: string,
+  ): Promise<IssueLabelsResponse> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels`, {
       method: "POST",
       body: JSON.stringify({ label_id: labelId }),
     });
-    return parseWithFallback(raw, ResourceLabelsResponseSchema, EMPTY_RESOURCE_LABELS_RESPONSE, {
-      endpoint: "POST /api/issues/{id}/labels",
-    });
+    return parseWithFallback(
+      raw,
+      ResourceLabelsResponseSchema,
+      EMPTY_RESOURCE_LABELS_RESPONSE,
+      {
+        endpoint: "POST /api/issues/{id}/labels",
+      },
+    );
   }
 
-  async detachLabel(issueId: string, labelId: string): Promise<IssueLabelsResponse> {
-    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels/${labelId}`, {
-      method: "DELETE",
-    });
-    return parseWithFallback(raw, ResourceLabelsResponseSchema, EMPTY_RESOURCE_LABELS_RESPONSE, {
-      endpoint: "DELETE /api/issues/{id}/labels/{labelId}",
-    });
+  async detachLabel(
+    issueId: string,
+    labelId: string,
+  ): Promise<IssueLabelsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${issueId}/labels/${labelId}`,
+      {
+        method: "DELETE",
+      },
+    );
+    return parseWithFallback(
+      raw,
+      ResourceLabelsResponseSchema,
+      EMPTY_RESOURCE_LABELS_RESPONSE,
+      {
+        endpoint: "DELETE /api/issues/{id}/labels/{labelId}",
+      },
+    );
   }
 
   async listLabelsForResource(
     resourceType: "agent" | "skill",
     resourceId: string,
   ): Promise<ResourceLabelsResponse> {
-    const raw = await this.fetch<unknown>(`/api/${resourceType === "agent" ? "agents" : "skills"}/${resourceId}/labels`);
-    return parseWithFallback(raw, ResourceLabelsResponseSchema, EMPTY_RESOURCE_LABELS_RESPONSE, {
-      endpoint: `GET /api/${resourceType === "agent" ? "agents" : "skills"}/{id}/labels`,
-    });
+    const raw = await this.fetch<unknown>(
+      `/api/${resourceType === "agent" ? "agents" : "skills"}/${resourceId}/labels`,
+    );
+    return parseWithFallback(
+      raw,
+      ResourceLabelsResponseSchema,
+      EMPTY_RESOURCE_LABELS_RESPONSE,
+      {
+        endpoint: `GET /api/${resourceType === "agent" ? "agents" : "skills"}/{id}/labels`,
+      },
+    );
   }
 
   async attachLabelToResource(
@@ -2573,13 +4024,21 @@ export class ApiClient {
     resourceId: string,
     labelId: string,
   ): Promise<ResourceLabelsResponse> {
-    const raw = await this.fetch<unknown>(`/api/${resourceType === "agent" ? "agents" : "skills"}/${resourceId}/labels`, {
-      method: "POST",
-      body: JSON.stringify({ label_id: labelId }),
-    });
-    return parseWithFallback(raw, ResourceLabelsResponseSchema, EMPTY_RESOURCE_LABELS_RESPONSE, {
-      endpoint: `POST /api/${resourceType === "agent" ? "agents" : "skills"}/{id}/labels`,
-    });
+    const raw = await this.fetch<unknown>(
+      `/api/${resourceType === "agent" ? "agents" : "skills"}/${resourceId}/labels`,
+      {
+        method: "POST",
+        body: JSON.stringify({ label_id: labelId }),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      ResourceLabelsResponseSchema,
+      EMPTY_RESOURCE_LABELS_RESPONSE,
+      {
+        endpoint: `POST /api/${resourceType === "agent" ? "agents" : "skills"}/{id}/labels`,
+      },
+    );
   }
 
   async detachLabelFromResource(
@@ -2587,17 +4046,126 @@ export class ApiClient {
     resourceId: string,
     labelId: string,
   ): Promise<ResourceLabelsResponse> {
-    const raw = await this.fetch<unknown>(`/api/${resourceType === "agent" ? "agents" : "skills"}/${resourceId}/labels/${labelId}`, {
-      method: "DELETE",
+    const raw = await this.fetch<unknown>(
+      `/api/${resourceType === "agent" ? "agents" : "skills"}/${resourceId}/labels/${labelId}`,
+      {
+        method: "DELETE",
+      },
+    );
+    return parseWithFallback(
+      raw,
+      ResourceLabelsResponseSchema,
+      EMPTY_RESOURCE_LABELS_RESPONSE,
+      {
+        endpoint: `DELETE /api/${resourceType === "agent" ? "agents" : "skills"}/{id}/labels/{labelId}`,
+      },
+    );
+  }
+
+  // Saved issue views (MUL-4796). Responses go through zod so installed
+  // desktop builds survive backend drift; a malformed list degrades to []
+  // (selector shows only built-ins) rather than blanking the page.
+  async listIssueViews(params: {
+    scope_type: string;
+    scope_id?: string | null;
+  }): Promise<IssueView[]> {
+    const qs = new URLSearchParams({ scope_type: params.scope_type });
+    if (params.scope_id) qs.set("scope_id", params.scope_id);
+    const raw = await this.fetch<unknown>(`/api/issue-views?${qs.toString()}`);
+    return parseWithFallback(raw, IssueViewListSchema, [], {
+      endpoint: "GET /api/issue-views",
     });
-    return parseWithFallback(raw, ResourceLabelsResponseSchema, EMPTY_RESOURCE_LABELS_RESPONSE, {
-      endpoint: `DELETE /api/${resourceType === "agent" ? "agents" : "skills"}/{id}/labels/{labelId}`,
+  }
+
+  async createIssueView(
+    data: CreateIssueViewRequest,
+  ): Promise<IssueView | null> {
+    const raw = await this.fetch<unknown>("/api/issue-views", {
+      method: "POST",
+      body: JSON.stringify(data),
     });
+    // null fallback: the create itself succeeded server-side; a response we
+    // cannot parse must not crash the dialog — callers refetch the list.
+    return parseWithFallback(raw, IssueViewSchema.nullable(), null, {
+      endpoint: "POST /api/issue-views",
+    });
+  }
+
+  async updateIssueView(
+    id: string,
+    data: {
+      name?: string;
+      visibility?: "private" | "workspace";
+      scope_variant?: string | null;
+      query?: Record<string, unknown>;
+      display?: Record<string, unknown>;
+      expected_revision: number;
+    },
+  ): Promise<IssueView | null> {
+    const raw = await this.fetch<unknown>(`/api/issue-views/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, IssueViewSchema.nullable(), null, {
+      endpoint: "PATCH /api/issue-views/{id}",
+    });
+  }
+
+  async getIssueView(id: string): Promise<IssueView | null> {
+    const raw = await this.fetch<unknown>(`/api/issue-views/${id}`);
+    return parseWithFallback(raw, IssueViewSchema.nullable(), null, {
+      endpoint: "GET /api/issue-views/{id}",
+    });
+  }
+
+  async deleteIssueView(id: string): Promise<void> {
+    await this.fetch(`/api/issue-views/${id}`, { method: "DELETE" });
+  }
+
+  async getIssueViewPreference(params: {
+    scope_type: string;
+    scope_id?: string | null;
+  }): Promise<IssueViewPreference> {
+    const qs = new URLSearchParams({ scope_type: params.scope_type });
+    if (params.scope_id) qs.set("scope_id", params.scope_id);
+    const raw = await this.fetch<unknown>(
+      `/api/issue-view-preferences?${qs.toString()}`,
+    );
+    return parseWithFallback(
+      raw,
+      IssueViewPreferenceSchema,
+      EMPTY_ISSUE_VIEW_PREFERENCE,
+      {
+        endpoint: "GET /api/issue-view-preferences",
+      },
+    );
+  }
+
+  async putIssueViewPreference(data: {
+    scope_type: string;
+    scope_id?: string | null;
+    prefs: { hidden: string[]; order: string[] };
+  }): Promise<IssueViewPreference> {
+    const raw = await this.fetch<unknown>("/api/issue-view-preferences", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(
+      raw,
+      IssueViewPreferenceSchema,
+      EMPTY_ISSUE_VIEW_PREFERENCE,
+      {
+        endpoint: "PUT /api/issue-view-preferences",
+      },
+    );
   }
 
   // Pins
   async listPins(): Promise<PinnedItem[]> {
-    return this.fetch("/api/pins");
+    // include=view is the capability opt-in: the server withholds view pins
+    // from clients that don't declare support (old builds treated any
+    // non-issue pin as a project pin and auto-deleted it on 404).
+    return this.fetch("/api/pins?include=view");
   }
 
   async createPin(data: CreatePinRequest): Promise<PinnedItem> {
@@ -2633,15 +4201,35 @@ export class ApiClient {
     }) as Squad;
   }
 
-  async createSquad(data: { name: string; description?: string; leader_id: string; avatar_url?: string }): Promise<Squad> {
-    const raw = await this.fetch<unknown>("/api/squads", { method: "POST", body: JSON.stringify(data) });
+  async createSquad(data: {
+    name: string;
+    description?: string;
+    leader_id: string;
+    avatar_url?: string;
+  }): Promise<Squad> {
+    const raw = await this.fetch<unknown>("/api/squads", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
     return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
       endpoint: "POST /api/squads",
     }) as Squad;
   }
 
-  async updateSquad(id: string, data: { name?: string; description?: string; instructions?: string; leader_id?: string; avatar_url?: string }): Promise<Squad> {
-    const raw = await this.fetch<unknown>(`/api/squads/${id}`, { method: "PUT", body: JSON.stringify(data) });
+  async updateSquad(
+    id: string,
+    data: {
+      name?: string;
+      description?: string;
+      instructions?: string;
+      leader_id?: string;
+      avatar_url?: string;
+    },
+  ): Promise<Squad> {
+    const raw = await this.fetch<unknown>(`/api/squads/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
     return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
       endpoint: "PUT /api/squads/:id",
     }) as Squad;
@@ -2655,31 +4243,60 @@ export class ApiClient {
     return this.fetch(`/api/squads/${squadId}/members`);
   }
 
-  async addSquadMember(squadId: string, data: { member_type: string; member_id: string; role?: string }): Promise<SquadMember> {
-    return this.fetch(`/api/squads/${squadId}/members`, { method: "POST", body: JSON.stringify(data) });
+  async addSquadMember(
+    squadId: string,
+    data: { member_type: string; member_id: string; role?: string },
+  ): Promise<SquadMember> {
+    return this.fetch(`/api/squads/${squadId}/members`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
-  async removeSquadMember(squadId: string, data: { member_type: string; member_id: string }): Promise<void> {
-    await this.fetch(`/api/squads/${squadId}/members`, { method: "DELETE", body: JSON.stringify(data) });
+  async removeSquadMember(
+    squadId: string,
+    data: { member_type: string; member_id: string },
+  ): Promise<void> {
+    await this.fetch(`/api/squads/${squadId}/members`, {
+      method: "DELETE",
+      body: JSON.stringify(data),
+    });
   }
 
-  async updateSquadMemberRole(squadId: string, data: { member_type: string; member_id: string; role: string }): Promise<SquadMember> {
-    return this.fetch(`/api/squads/${squadId}/members/role`, { method: "PATCH", body: JSON.stringify(data) });
+  async updateSquadMemberRole(
+    squadId: string,
+    data: { member_type: string; member_id: string; role: string },
+  ): Promise<SquadMember> {
+    return this.fetch(`/api/squads/${squadId}/members/role`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
   }
 
   // Per-squad members status snapshot: one row per member with derived
   // working/idle/offline/unstable plus the issues each agent is currently
   // running. Parsed with a lenient schema so a new server-side status
   // value or extra field can't white-screen the Squad page (#2143).
-  async getSquadMemberStatus(squadId: string): Promise<SquadMemberStatusListResponse> {
-    const raw = await this.fetch<unknown>(`/api/squads/${squadId}/members/status`);
-    return parseWithFallback(raw, SquadMemberStatusListResponseSchema, EMPTY_SQUAD_MEMBER_STATUS_LIST, {
-      endpoint: "GET /api/squads/:id/members/status",
-    }) as SquadMemberStatusListResponse;
+  async getSquadMemberStatus(
+    squadId: string,
+  ): Promise<SquadMemberStatusListResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/squads/${squadId}/members/status`,
+    );
+    return parseWithFallback(
+      raw,
+      SquadMemberStatusListResponseSchema,
+      EMPTY_SQUAD_MEMBER_STATUS_LIST,
+      {
+        endpoint: "GET /api/squads/:id/members/status",
+      },
+    ) as SquadMemberStatusListResponse;
   }
 
   // Autopilots
-  async listAutopilots(params?: { status?: string }): Promise<ListAutopilotsResponse> {
+  async listAutopilots(params?: {
+    status?: string;
+  }): Promise<ListAutopilotsResponse> {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);
     const raw = await this.fetch<unknown>(`/api/autopilots?${search}`);
@@ -2702,7 +4319,10 @@ export class ApiClient {
     });
   }
 
-  async updateAutopilot(id: string, data: UpdateAutopilotRequest): Promise<Autopilot> {
+  async updateAutopilot(
+    id: string,
+    data: UpdateAutopilotRequest,
+  ): Promise<Autopilot> {
     return this.fetch(`/api/autopilots/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -2716,24 +4336,41 @@ export class ApiClient {
   // Grant a workspace member explicit write access to the autopilot. Both
   // grant and revoke return the full updated collaborator list so callers can
   // refresh without a second round-trip.
-  async grantAutopilotAccess(id: string, userId: string): Promise<AutopilotCollaboratorsResponse> {
+  async grantAutopilotAccess(
+    id: string,
+    userId: string,
+  ): Promise<AutopilotCollaboratorsResponse> {
     return this.fetch(`/api/autopilots/${id}/collaborators`, {
       method: "POST",
       body: JSON.stringify({ user_id: userId }),
     });
   }
 
-  async revokeAutopilotAccess(id: string, userId: string): Promise<AutopilotCollaboratorsResponse> {
+  async revokeAutopilotAccess(
+    id: string,
+    userId: string,
+  ): Promise<AutopilotCollaboratorsResponse> {
     return this.fetch(`/api/autopilots/${id}/collaborators/${userId}`, {
       method: "DELETE",
     });
   }
 
   async triggerAutopilot(id: string): Promise<AutopilotRun> {
-    return this.fetch(`/api/autopilots/${id}/trigger`, { method: "POST" });
+    // Manual "run now" returns 200 even when admission blocks the run (status
+    // skipped/failed). The UI branches on status/reason_code to avoid a
+    // false-success toast (MUL-4525), so parse defensively rather than casting.
+    const raw = await this.fetch<unknown>(`/api/autopilots/${id}/trigger`, {
+      method: "POST",
+    });
+    return parseWithFallback(raw, AutopilotRunSchema, FALLBACK_AUTOPILOT_RUN, {
+      endpoint: "POST /api/autopilots/:id/trigger",
+    });
   }
 
-  async listAutopilotRuns(id: string, params?: { limit?: number; offset?: number }): Promise<ListAutopilotRunsResponse> {
+  async listAutopilotRuns(
+    id: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<ListAutopilotRunsResponse> {
     const search = new URLSearchParams();
     if (params?.limit) search.set("limit", params.limit.toString());
     if (params?.offset) search.set("offset", params.offset.toString());
@@ -2743,26 +4380,59 @@ export class ApiClient {
   // Returns a single run including its full trigger_payload. List responses
   // omit trigger_payload to keep them small (a webhook envelope can be
   // up to 256 KiB × limit rows), so the detail view fetches via this route.
-  async getAutopilotRun(autopilotId: string, runId: string): Promise<AutopilotRun> {
+  async getAutopilotRun(
+    autopilotId: string,
+    runId: string,
+  ): Promise<AutopilotRun> {
     return this.fetch(`/api/autopilots/${autopilotId}/runs/${runId}`);
   }
 
-  async createAutopilotTrigger(autopilotId: string, data: CreateAutopilotTriggerRequest): Promise<AutopilotTrigger> {
+  async createAutopilotTrigger(
+    autopilotId: string,
+    data: CreateAutopilotTriggerRequest,
+  ): Promise<AutopilotTrigger> {
     return this.fetch(`/api/autopilots/${autopilotId}/triggers`, {
       method: "POST",
       body: JSON.stringify(data),
     });
   }
 
-  async updateAutopilotTrigger(autopilotId: string, triggerId: string, data: UpdateAutopilotTriggerRequest): Promise<AutopilotTrigger> {
+  async updateAutopilotTrigger(
+    autopilotId: string,
+    triggerId: string,
+    data: UpdateAutopilotTriggerRequest,
+  ): Promise<AutopilotTrigger> {
     return this.fetch(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     });
   }
 
-  async deleteAutopilotTrigger(autopilotId: string, triggerId: string): Promise<void> {
-    await this.fetch(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, { method: "DELETE" });
+  async deleteAutopilotTrigger(
+    autopilotId: string,
+    triggerId: string,
+  ): Promise<void> {
+    await this.fetch(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async cronPreview(params: {
+    expr: string;
+    tz: string;
+  }): Promise<CronPreviewResponse> {
+    const search = new URLSearchParams();
+    search.set("expr", params.expr);
+    search.set("tz", params.tz);
+    const raw = await this.fetch<unknown>(
+      `/api/autopilots/cron-preview?${search}`,
+    );
+    return parseWithFallback(
+      raw,
+      CronPreviewResponseSchema,
+      UNREADABLE_CRON_PREVIEW_RESPONSE,
+      { endpoint: "GET /api/autopilots/cron-preview" },
+    );
   }
 
   async rotateAutopilotTriggerWebhookToken(
@@ -2834,12 +4504,30 @@ export class ApiClient {
   }
 
   // GitHub integration
-  async getGitHubConnectURL(workspaceId: string): Promise<GitHubConnectResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/github/connect`);
+  async getGitHubConnectURL(
+    workspaceId: string,
+    returnTo?: "github" | "repositories",
+  ): Promise<GitHubConnectResponse> {
+    const search = new URLSearchParams();
+    if (returnTo) search.set("return_to", returnTo);
+    const suffix = search.size > 0 ? `?${search.toString()}` : "";
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/github/connect${suffix}`,
+    );
+    return parseWithFallback(
+      raw,
+      GitHubConnectResponseSchema,
+      EMPTY_GITHUB_CONNECT_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/github/connect" },
+    );
   }
 
-  async listGitHubInstallations(workspaceId: string): Promise<ListGitHubInstallationsResponse> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/github/installations`);
+  async listGitHubInstallations(
+    workspaceId: string,
+  ): Promise<ListGitHubInstallationsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/github/installations`,
+    );
     return parseWithFallback(
       raw,
       ListGitHubInstallationsResponseSchema,
@@ -2867,10 +4555,40 @@ export class ApiClient {
     );
   }
 
-  async deleteGitHubInstallation(workspaceId: string, installationId: string): Promise<void> {
-    await this.fetch(`/api/workspaces/${workspaceId}/github/installations/${installationId}`, {
-      method: "DELETE",
-    });
+  async listGitHubInstallationRepositories(
+    workspaceId: string,
+    installationId: string,
+    params: { page?: number; per_page?: number } = {},
+  ): Promise<ListGitHubRepositoriesResponse> {
+    const search = new URLSearchParams();
+    if (params.page !== undefined) search.set("page", String(params.page));
+    if (params.per_page !== undefined)
+      search.set("per_page", String(params.per_page));
+    const suffix = search.size > 0 ? `?${search.toString()}` : "";
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/github/installations/${installationId}/repositories${suffix}`,
+    );
+    return parseWithFallback(
+      raw,
+      ListGitHubRepositoriesResponseSchema,
+      EMPTY_LIST_GITHUB_REPOSITORIES_RESPONSE,
+      {
+        endpoint:
+          "GET /api/workspaces/:id/github/installations/:installationId/repositories",
+      },
+    );
+  }
+
+  async deleteGitHubInstallation(
+    workspaceId: string,
+    installationId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/github/installations/${installationId}`,
+      {
+        method: "DELETE",
+      },
+    );
   }
 
   async listGitHubAgentRepositories(
@@ -2896,9 +4614,14 @@ export class ApiClient {
       `/api/workspaces/${workspaceId}/github/agent-preview`,
       { method: "POST", body: JSON.stringify(data) },
     );
-    return parseWithFallback(raw, GitHubAgentPreviewSchema, EMPTY_GITHUB_AGENT_PREVIEW, {
-      endpoint: "POST /api/workspaces/:id/github/agent-preview",
-    });
+    return parseWithFallback(
+      raw,
+      GitHubAgentPreviewSchema,
+      EMPTY_GITHUB_AGENT_PREVIEW,
+      {
+        endpoint: "POST /api/workspaces/:id/github/agent-preview",
+      },
+    );
   }
 
   async createGitHubAgent(
@@ -2925,9 +4648,12 @@ export class ApiClient {
   }
 
   async syncAgentSource(agentId: string): Promise<SyncAgentSourceResponse> {
-    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/source/sync`, {
-      method: "POST",
-    });
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${agentId}/source/sync`,
+      {
+        method: "POST",
+      },
+    );
     return parseWithFallback(
       raw,
       SyncAgentSourceResponseSchema,
@@ -2936,12 +4662,63 @@ export class ApiClient {
     );
   }
 
-  async listIssuePullRequests(issueId: string): Promise<{ pull_requests: GitHubPullRequest[] }> {
-    return this.fetch(`/api/issues/${issueId}/pull-requests`);
+  async listIssuePullRequests(
+    issueId: string,
+  ): Promise<{ pull_requests: GitHubPullRequest[] }> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${issueId}/pull-requests`,
+    );
+    return parseWithFallback(
+      raw,
+      IssuePullRequestsResponseSchema,
+      EMPTY_ISSUE_PULL_REQUESTS_RESPONSE,
+      { endpoint: "GET /api/issues/:id/pull-requests" },
+    );
+  }
+
+  // VCS integration (Forgejo / Gitea / GitLab)
+  async listVCSConnections(
+    workspaceId: string,
+  ): Promise<ListVCSConnectionsResponse> {
+    return this.fetch(`/api/workspaces/${workspaceId}/vcs/connections`);
+  }
+
+  async connectVCS(
+    workspaceId: string,
+    body: ConnectVCSRequest,
+  ): Promise<ConnectVCSResponse> {
+    return this.fetch(`/api/workspaces/${workspaceId}/vcs/connections`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async deleteVCSConnection(
+    workspaceId: string,
+    connectionId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/vcs/connections/${connectionId}`,
+      {
+        method: "DELETE",
+      },
+    );
+  }
+
+  async rotateVCSWebhook(
+    workspaceId: string,
+    connectionId: string,
+  ): Promise<ConnectVCSResponse> {
+    return this.fetch(
+      `/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/rotate-webhook`,
+      { method: "POST" },
+    );
   }
 
   // Lark integration
-  async listLarkInstallations(workspaceId: string): Promise<ListLarkInstallationsResponse> {
+  async listLarkInstallations(
+    workspaceId: string,
+  ): Promise<ListLarkInstallationsResponse> {
     return this.fetch(`/api/workspaces/${workspaceId}/lark/installations`);
   }
 
@@ -2959,22 +4736,38 @@ export class ApiClient {
     // arg here so every call site is forced to make a deliberate
     // choice rather than silently defaulting to mainland.
     const search = new URLSearchParams({ agent_id: agentId, region });
-    return this.fetch(`/api/workspaces/${workspaceId}/lark/install/begin?${search.toString()}`, {
-      method: "POST",
-    });
+    return this.fetch(
+      `/api/workspaces/${workspaceId}/lark/install/begin?${search.toString()}`,
+      {
+        method: "POST",
+      },
+    );
   }
 
-  async getLarkInstallStatus(workspaceId: string, sessionId: string): Promise<LarkInstallStatusResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/lark/install/${sessionId}/status`);
+  async getLarkInstallStatus(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<LarkInstallStatusResponse> {
+    return this.fetch(
+      `/api/workspaces/${workspaceId}/lark/install/${sessionId}/status`,
+    );
   }
 
-  async deleteLarkInstallation(workspaceId: string, installationId: string): Promise<void> {
-    await this.fetch(`/api/workspaces/${workspaceId}/lark/installations/${installationId}`, {
-      method: "DELETE",
-    });
+  async deleteLarkInstallation(
+    workspaceId: string,
+    installationId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/lark/installations/${installationId}`,
+      {
+        method: "DELETE",
+      },
+    );
   }
 
-  async redeemLarkBindingToken(token: string): Promise<RedeemLarkBindingTokenResponse> {
+  async redeemLarkBindingToken(
+    token: string,
+  ): Promise<RedeemLarkBindingTokenResponse> {
     return this.fetch(`/api/lark/binding/redeem`, {
       method: "POST",
       body: JSON.stringify({ token }),
@@ -2982,8 +4775,13 @@ export class ApiClient {
   }
 
   // DingTalk bot integration (scan-to-create device flow)
-  async listDingTalkInstallations(workspaceId: string): Promise<ListDingTalkInstallationsResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/installations`);
+  async listDingTalkInstallations(
+    workspaceId: string,
+  ): Promise<ListDingTalkInstallationsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/dingtalk/installations`,
+    );
+    return ListDingTalkInstallationsResponseSchema.parse(raw);
   }
 
   async beginDingTalkInstall(
@@ -2995,16 +4793,21 @@ export class ApiClient {
     const search = new URLSearchParams({ agent_id: agentId });
     if (allowUnbound) search.set("allow_unbound", "true");
     search.set("transport_mode", transportMode);
-    return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/install/begin?${search.toString()}`, {
-      method: "POST",
-    });
+    return this.fetch(
+      `/api/workspaces/${workspaceId}/dingtalk/install/begin?${search.toString()}`,
+      {
+        method: "POST",
+      },
+    );
   }
 
   async getDingTalkInstallStatus(
     workspaceId: string,
     sessionId: string,
   ): Promise<DingTalkInstallStatusResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/install/${sessionId}/status`);
+    return this.fetch(
+      `/api/workspaces/${workspaceId}/dingtalk/install/${sessionId}/status`,
+    );
   }
 
   // Manual install: create the DingTalk bot installation directly from an
@@ -3014,24 +4817,38 @@ export class ApiClient {
   async manualInstallDingTalk(
     workspaceId: string,
     agentId: string,
-    params: { clientId: string; clientSecret: string; robotCode: string; allowUnbound?: boolean },
+    params: {
+      clientId: string;
+      clientSecret: string;
+      robotCode: string;
+      allowUnbound?: boolean;
+    },
   ): Promise<DingTalkInstallation> {
-    return this.fetch(`/api/workspaces/${workspaceId}/dingtalk/install/manual`, {
-      method: "POST",
-      body: JSON.stringify({
-        agent_id: agentId,
-        client_id: params.clientId,
-        client_secret: params.clientSecret,
-        robot_code: params.robotCode,
-        allow_unbound: params.allowUnbound ?? false,
-      }),
-    });
+    return this.fetch(
+      `/api/workspaces/${workspaceId}/dingtalk/install/manual`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          agent_id: agentId,
+          client_id: params.clientId,
+          client_secret: params.clientSecret,
+          robot_code: params.robotCode,
+          allow_unbound: params.allowUnbound ?? false,
+        }),
+      },
+    );
   }
 
-  async deleteDingTalkInstallation(workspaceId: string, installationId: string): Promise<void> {
-    await this.fetch(`/api/workspaces/${workspaceId}/dingtalk/installations/${installationId}`, {
-      method: "DELETE",
-    });
+  async deleteDingTalkInstallation(
+    workspaceId: string,
+    installationId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/dingtalk/installations/${installationId}`,
+      {
+        method: "DELETE",
+      },
+    );
   }
 
   async retryDingTalkRouterRegistration(
@@ -3044,7 +4861,9 @@ export class ApiClient {
     );
   }
 
-  async redeemDingTalkBindingToken(token: string): Promise<RedeemDingTalkBindingTokenResponse> {
+  async redeemDingTalkBindingToken(
+    token: string,
+  ): Promise<RedeemDingTalkBindingTokenResponse> {
     return this.fetch(`/api/dingtalk/binding/redeem`, {
       method: "POST",
       body: JSON.stringify({ token }),
@@ -3168,7 +4987,10 @@ export class ApiClient {
       raw,
       TestAgentIdentityGitHubConnectionResponseSchema,
       EMPTY_TEST_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
-      { endpoint: "POST /api/workspaces/:id/agent-identity/github/:connectionId/test" },
+      {
+        endpoint:
+          "POST /api/workspaces/:id/agent-identity/github/:connectionId/test",
+      },
     );
   }
 
@@ -3186,7 +5008,10 @@ export class ApiClient {
       raw,
       DisconnectAgentIdentityGitHubConnectionResponseSchema,
       EMPTY_DISCONNECT_AGENT_IDENTITY_GITHUB_CONNECTION_RESPONSE,
-      { endpoint: "DELETE /api/workspaces/:id/agent-identity/github/:connectionId" },
+      {
+        endpoint:
+          "DELETE /api/workspaces/:id/agent-identity/github/:connectionId",
+      },
     );
   }
 
@@ -3203,8 +5028,7 @@ export class ApiClient {
       AgentEnterpriseIdentityStatusResponseSchema,
       EMPTY_AGENT_ENTERPRISE_IDENTITY_STATUS_RESPONSE,
       {
-        endpoint:
-          "GET /api/workspaces/:id/agent-identity/enterprise/status",
+        endpoint: "GET /api/workspaces/:id/agent-identity/enterprise/status",
         includeReceived: false,
       },
     );
@@ -3266,7 +5090,9 @@ export class ApiClient {
 
   /** Starts a hosted Composio connect flow for a toolkit and returns the
    * redirect URL the browser should be sent to. */
-  async beginComposioConnect(toolkitSlug: string): Promise<ComposioConnectInitResponse> {
+  async beginComposioConnect(
+    toolkitSlug: string,
+  ): Promise<ComposioConnectInitResponse> {
     return this.fetch(`/api/integrations/composio/connect/init`, {
       method: "POST",
       body: JSON.stringify({ toolkit_slug: toolkitSlug }),
@@ -3281,7 +5107,9 @@ export class ApiClient {
   }
 
   // Slack integration (MUL-3666)
-  async listSlackInstallations(workspaceId: string): Promise<ListSlackInstallationsResponse> {
+  async listSlackInstallations(
+    workspaceId: string,
+  ): Promise<ListSlackInstallationsResponse> {
     return this.fetch(`/api/workspaces/${workspaceId}/slack/installations`);
   }
 
@@ -3294,22 +5122,113 @@ export class ApiClient {
     body: RegisterSlackBYORequest,
   ): Promise<SlackInstallation> {
     const search = new URLSearchParams({ agent_id: agentId });
-    return this.fetch(`/api/workspaces/${workspaceId}/slack/install/byo?${search.toString()}`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
+    return this.fetch(
+      `/api/workspaces/${workspaceId}/slack/install/byo?${search.toString()}`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    );
   }
 
-  async deleteSlackInstallation(workspaceId: string, installationId: string): Promise<void> {
-    await this.fetch(`/api/workspaces/${workspaceId}/slack/installations/${installationId}`, {
-      method: "DELETE",
-    });
+  async deleteSlackInstallation(
+    workspaceId: string,
+    installationId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/slack/installations/${installationId}`,
+      {
+        method: "DELETE",
+      },
+    );
   }
 
-  async redeemSlackBindingToken(token: string): Promise<RedeemSlackBindingTokenResponse> {
+  async redeemSlackBindingToken(
+    token: string,
+  ): Promise<RedeemSlackBindingTokenResponse> {
     return this.fetch(`/api/slack/binding/redeem`, {
       method: "POST",
       body: JSON.stringify({ token }),
     });
+  }
+
+  // WeCom smart-bot ("智能机器人" / aibot) integration. The bot dials a
+  // WebSocket long connection to wss://openws.work.weixin.qq.com and stays
+  // authenticated with (bot_id, secret); no public callback URL is required.
+  // These three methods drive the Settings-page BYO Connect dialog + list +
+  // disconnect only — the inbound WebSocket loop runs entirely server-side.
+  async listWecomInstallations(
+    workspaceId: string,
+  ): Promise<ListWecomInstallationsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/wecom/installations`,
+    );
+    return parseWithFallback(
+      raw,
+      ListWecomInstallationsResponseSchema,
+      EMPTY_LIST_WECOM_INSTALLATIONS_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/wecom/installations" },
+    );
+  }
+
+  // registerWecomBYO performs a bring-your-own-app install: the admin pastes
+  // the bot id and long-connection secret from the WeCom admin console,
+  // and the backend seals the secret with MULTICA_WECOM_SECRET_KEY before
+  // persisting, returning the new installation.
+  async registerWecomBYO(
+    workspaceId: string,
+    agentId: string,
+    body: RegisterWecomBYORequest,
+  ): Promise<WecomInstallation> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/wecom/install/byo?${search.toString()}`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      WecomInstallationSchema,
+      EMPTY_WECOM_INSTALLATION,
+      {
+        endpoint: "POST /api/workspaces/:id/wecom/install/byo",
+      },
+    );
+  }
+
+  async deleteWecomInstallation(
+    workspaceId: string,
+    installationId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/wecom/installations/${installationId}`,
+      {
+        method: "DELETE",
+      },
+    );
+  }
+
+  // redeemWecomBindingToken binds the WeCom aibot userid carried by the
+  // token to the logged-in Multica user. Called by the /wecom/bind redeem
+  // page after the user clicks through the "link your Multica account"
+  // prompt the bot sent in WeCom. Status codes:
+  //   410 Gone      → invalid / expired / already consumed
+  //   409 Conflict  → the WeCom user is already bound to a different user
+  //   403 Forbidden → the logged-in user is not a workspace member
+  async redeemWecomBindingToken(
+    token: string,
+  ): Promise<RedeemWecomBindingTokenResponse> {
+    const raw = await this.fetch<unknown>(`/api/wecom/binding/redeem`, {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    });
+    return parseWithFallback(
+      raw,
+      RedeemWecomBindingTokenResponseSchema,
+      EMPTY_REDEEM_WECOM_BINDING_TOKEN_RESPONSE,
+      { endpoint: "POST /api/wecom/binding/redeem" },
+    );
   }
 }

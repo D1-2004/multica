@@ -76,16 +76,16 @@ func (f *fakeDingTalkBindingTeardownStore) DeleteBindingProjection(
 }
 
 type fakeDingTalkBindingTeardownRouter struct {
-	unbindResult agentmessagerouter.DigitalEmployeeBindingUnbindResult
-	unbindErr    error
-	sourceResult agentmessagerouter.DigitalEmployeeSourceIdentityResult
-	sourceErr    error
-	subscription agentmessagerouter.Subscription
-	subscribeErr error
-	unbinds      []agentmessagerouter.DigitalEmployeeBindingKey
-	sourceIDs    [][]string
-	sourcesRead  []string
-	unbindStarted chan struct{}
+	unbindResult   agentmessagerouter.DigitalEmployeeBindingUnbindResult
+	unbindErr      error
+	sourceResult   agentmessagerouter.DigitalEmployeeSourceIdentityResult
+	sourceErr      error
+	subscription   agentmessagerouter.Subscription
+	subscribeErr   error
+	unbinds        []agentmessagerouter.DigitalEmployeeBindingKey
+	sourceIDs      [][]string
+	sourcesRead    []string
+	unbindStarted  chan struct{}
 	unbindContinue chan struct{}
 }
 

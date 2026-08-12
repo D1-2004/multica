@@ -3,10 +3,12 @@ package lark
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -21,21 +23,47 @@ const typingEmoji = "Typing"
 // reconnect replays old events. Aligned with OpenClaw's 2-minute bound.
 const typingIndicatorMaxAge = 2 * time.Minute
 
-// TypingIndicatorState holds the identifiers needed to remove a reaction.
-// TypingIndicatorState is the persisted shape of one pending reaction. It
-// lives in channel_typing_indicator.target (migration 182) rather than in
-// process memory: the replica that clears a reaction is the one that serves
-// the daemon's completion POST, not the lease-holding replica that ingested
-// the message. ReactionID is only knowable from the Add response, so unlike
-// DingTalk/Slack it cannot be rebuilt from the binding row.
+// TypingIndicatorState holds the identifiers needed to remove a reaction, plus
+// the installation whose app credentials added it. The installation id is
+// recorded at add time because that is the last moment it is certainly
+// resolvable: it is reachable from the session's channel_chat_session_binding
+// row, and a session delete drops that row while the cancel it triggers is
+// still on its way to the Patcher.
 type TypingIndicatorState struct {
-	MessageID  string `json:"message_id"`
-	ReactionID string `json:"reaction_id"`
+	MessageID       string                     `json:"message_id"`
+	ReactionID      string                     `json:"reaction_id"`
+	InstallSnapshot typingInstallationSnapshot `json:"installation_snapshot"`
 }
 
-// TypingIndicatorStore persists pending reactions across replicas. Separate
-// from TypingIndicatorQueries so the lark store abstraction (which speaks lark
-// types) stays untouched.
+type typingInstallationSnapshot struct {
+	AppID              string `json:"app_id"`
+	AppSecretEncrypted []byte `json:"app_secret_encrypted,omitempty"`
+	TenantKey          string `json:"tenant_key,omitempty"`
+	TenantKeyValid     bool   `json:"tenant_key_valid,omitempty"`
+	Region             string `json:"region"`
+}
+
+func snapshotInstallation(inst Installation) typingInstallationSnapshot {
+	return typingInstallationSnapshot{
+		AppID:              inst.AppID,
+		AppSecretEncrypted: append([]byte(nil), inst.AppSecretEncrypted...),
+		TenantKey:          inst.TenantKey.String,
+		TenantKeyValid:     inst.TenantKey.Valid,
+		Region:             inst.Region,
+	}
+}
+
+func (s typingInstallationSnapshot) installation(id pgtype.UUID) Installation {
+	return Installation{
+		ID:                 id,
+		AppID:              s.AppID,
+		AppSecretEncrypted: append([]byte(nil), s.AppSecretEncrypted...),
+		TenantKey:          pgtype.Text{String: s.TenantKey, Valid: s.TenantKeyValid},
+		Region:             s.Region,
+	}
+}
+
+// TypingIndicatorStore persists pending reactions across replicas.
 type TypingIndicatorStore interface {
 	AddChannelTypingIndicator(ctx context.Context, arg db.AddChannelTypingIndicatorParams) error
 	TakeChannelTypingIndicators(ctx context.Context, arg db.TakeChannelTypingIndicatorsParams) ([]db.ChannelTypingIndicator, error)
@@ -43,14 +71,13 @@ type TypingIndicatorStore interface {
 
 // TypingIndicatorQueries is the narrow DB surface the manager needs.
 type TypingIndicatorQueries interface {
-	GetLarkChatSessionBindingBySession(ctx context.Context, chatSessionID pgtype.UUID) (ChatSessionBinding, error)
 	GetLarkInstallation(ctx context.Context, id pgtype.UUID) (Installation, error)
 }
 
 // TypingIndicatorManager owns the "processing" reaction lifecycle for
 // inbound Lark messages. When a message is successfully ingested it adds
-// a Typing reaction; when the agent eventually replies (or fails) it
-// clears the reaction(s) for that chat session.
+// a Typing reaction; when the run ends — with a reply, a failure or a
+// cancellation — it clears the reaction(s) for that chat session.
 //
 // The manager is safe for concurrent use. It tolerates missing or
 // stale state gracefully: adding a reaction to a message that already
@@ -133,20 +160,17 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst Installation, cha
 
 	key := uuidString(chatSessionID)
 	if m.store != nil {
-		payload, jerr := json.Marshal(TypingIndicatorState{MessageID: messageID, ReactionID: reactionID})
-		if jerr != nil {
-			m.log.Warn("lark typing indicator: encode target failed",
-				"chat_session_id", key, "err", jerr)
-		} else if serr := m.store.AddChannelTypingIndicator(ctx, db.AddChannelTypingIndicatorParams{
-			ChatSessionID:  chatSessionID,
-			ChannelType:    "feishu",
-			InstallationID: inst.ID,
-			Target:         payload,
-		}); serr != nil {
-			// The reaction is already on the message; failing to record it only
-			// means it will not be removed. Cosmetic, so log and move on.
-			m.log.Warn("lark typing indicator: persist target failed",
-				"chat_session_id", key, "message_id", messageID, "err", serr)
+		payload, encodeErr := json.Marshal(TypingIndicatorState{
+			MessageID:       messageID,
+			ReactionID:      reactionID,
+			InstallSnapshot: snapshotInstallation(inst),
+		})
+		if encodeErr != nil {
+			m.log.Warn("lark typing indicator: encode target failed", "chat_session_id", key, "err", encodeErr)
+		} else if storeErr := m.store.AddChannelTypingIndicator(ctx, db.AddChannelTypingIndicatorParams{
+			ChatSessionID: chatSessionID, ChannelType: "feishu", InstallationID: inst.ID, Target: payload,
+		}); storeErr != nil {
+			m.log.Warn("lark typing indicator: persist target failed", "chat_session_id", key, "message_id", messageID, "err", storeErr)
 		}
 	}
 
@@ -161,6 +185,18 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst Installation, cha
 // drops the state entry. It is synchronous so the reaction is gone before
 // the agent's reply is sent, giving the user a clean visual transition.
 // Individual delete failures are logged but do not abort the loop.
+//
+// Credentials come from the installation each state recorded, not from the
+// session's binding, because a clear can outlive that binding: deleting a chat
+// session drops the binding row inside the same transaction that cancels the
+// session's tasks, and the task:cancelled events that reach the Patcher are
+// broadcast after that transaction commits. A binding lookup would miss, and
+// since the state has already been taken here, there would be nothing left to
+// clear from. Installation rows survive a session delete.
+//
+// They do NOT survive a runtime teardown, which deletes them in the same
+// transaction — so each state also carries the installation as it stood at add
+// time, consulted only when the row is gone. See TypingIndicatorState.
 func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype.UUID) {
 	key := uuidString(chatSessionID)
 	if m.store == nil {
@@ -180,7 +216,11 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype
 	if len(rows) == 0 {
 		return
 	}
-	states := make([]*TypingIndicatorState, 0, len(rows))
+	type persistedState struct {
+		TypingIndicatorState
+		installationID pgtype.UUID
+	}
+	states := make([]persistedState, 0, len(rows))
 	for _, row := range rows {
 		var st TypingIndicatorState
 		if err := json.Unmarshal(row.Target, &st); err != nil {
@@ -188,42 +228,33 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype
 				"chat_session_id", key, "err", err)
 			continue
 		}
-		states = append(states, &st)
+		states = append(states, persistedState{
+			TypingIndicatorState: st,
+			installationID:       row.InstallationID,
+		})
 	}
 
-	binding, err := m.queries.GetLarkChatSessionBindingBySession(ctx, chatSessionID)
-	if err != nil {
-		m.log.Warn("lark typing indicator: failed to lookup binding for clear",
-			"chat_session_id", key,
-			"err", err,
-		)
-		return
-	}
-
-	inst, err := m.queries.GetLarkInstallation(ctx, binding.InstallationID)
-	if err != nil {
-		m.log.Warn("lark typing indicator: failed to lookup installation for clear",
-			"chat_session_id", key,
-			"err", err,
-		)
-		return
-	}
-
-	creds, err := m.resolveCredentials(inst)
-	if err != nil {
-		m.log.Warn("lark typing indicator: failed to resolve credentials for clear",
-			"chat_session_id", key,
-			"err", err,
-		)
-		return
-	}
-
+	resolved := make(map[string]*InstallationCredentials, 1)
 	for _, s := range states {
 		if s.ReactionID == "" {
 			continue
 		}
+		instKey := uuidString(s.installationID)
+		creds, seen := resolved[instKey]
+		if !seen {
+			creds = m.credentialsForInstallation(
+				ctx,
+				key,
+				s.installationID,
+				s.InstallSnapshot.installation(s.installationID),
+			)
+			resolved[instKey] = creds
+		}
+		if creds == nil {
+			continue
+		}
 		if err := m.client.DeleteMessageReaction(ctx, DeleteReactionParams{
-			InstallationID: creds,
+			InstallationID: *creds,
 			MessageID:      s.MessageID,
 			ReactionID:     s.ReactionID,
 		}); err != nil {
@@ -241,6 +272,36 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype
 			"reaction_id", s.ReactionID,
 		)
 	}
+}
+
+func (m *TypingIndicatorManager) credentialsForInstallation(
+	ctx context.Context,
+	sessionKey string,
+	id pgtype.UUID,
+	snapshot Installation,
+) *InstallationCredentials {
+	inst, err := m.queries.GetLarkInstallation(ctx, id)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) || !snapshot.ID.Valid {
+			m.log.Warn("lark typing indicator: failed to lookup installation for clear",
+				"chat_session_id", sessionKey,
+				"installation_id", uuidString(id),
+				"err", err,
+			)
+			return nil
+		}
+		inst = snapshot
+	}
+	creds, err := m.resolveCredentials(inst)
+	if err != nil {
+		m.log.Warn("lark typing indicator: failed to resolve credentials for clear",
+			"chat_session_id", sessionKey,
+			"installation_id", uuidString(id),
+			"err", err,
+		)
+		return nil
+	}
+	return &creds
 }
 
 func isMessageTooOld(createTime string) bool {

@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	LLMTraceCapability       = "llm_trace_v1"
+	LLMTraceCapability      = "llm_trace_v1"
 	llmTraceEnabledEnvKey   = "MULTICA_LLM_TRACE_ENABLED"
 	llmTraceSinkURLEnvKey   = "MULTICA_LLM_TRACE_SINK_URL"
 	llmTraceTokenEnvKey     = "MULTICA_LLM_TRACE_TOKEN"

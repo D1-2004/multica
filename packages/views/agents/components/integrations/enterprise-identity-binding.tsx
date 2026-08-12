@@ -147,10 +147,10 @@ export function EnterpriseIdentityBindingCard({
           <Building2 className="h-4 w-4" />
         </span>
         <div className="min-w-0 flex-1 space-y-1">
-          <h3 className="text-sm font-medium">
+          <h3 className="text-body font-medium">
             {t(($) => $.tab_body.integrations.enterprise_identity_title)}
           </h3>
-          <p className="text-xs leading-relaxed text-muted-foreground">
+          <p className="text-caption leading-relaxed text-muted-foreground">
             {t(($) => $.tab_body.integrations.enterprise_identity_description)}
           </p>
         </div>
@@ -158,11 +158,11 @@ export function EnterpriseIdentityBindingCard({
 
       <div className="space-y-3 border-t px-4 py-3">
         {isPending ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-caption text-muted-foreground">
             {t(($) => $.tab_body.integrations.enterprise_identity_loading)}
           </p>
         ) : data?.configured !== true ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-caption text-muted-foreground">
             {t(
               ($) => $.tab_body.integrations.enterprise_identity_not_configured,
             )}
@@ -172,7 +172,7 @@ export function EnterpriseIdentityBindingCard({
             <div className="space-y-1">
               {canMutate ? (
                 <>
-                  <p className="text-sm font-medium">
+                  <p className="text-body font-medium">
                     {identity.displayName ||
                       t(
                         ($) =>
@@ -181,7 +181,7 @@ export function EnterpriseIdentityBindingCard({
                       )}
                   </p>
                   {identity.employeeId ? (
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-caption text-muted-foreground">
                       {t(
                         ($) =>
                           $.tab_body.integrations.enterprise_identity_employee,
@@ -190,7 +190,7 @@ export function EnterpriseIdentityBindingCard({
                     </p>
                   ) : null}
                   {identity.aipId ? (
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-caption text-muted-foreground">
                       {t(
                         ($) => $.tab_body.integrations.enterprise_identity_aip,
                       )}
@@ -199,20 +199,20 @@ export function EnterpriseIdentityBindingCard({
                   ) : null}
                 </>
               ) : null}
-              <p className="text-xs text-muted-foreground">
+              <p className="text-caption text-muted-foreground">
                 {t(($) => $.tab_body.integrations.enterprise_identity_status)}:{" "}
                 {statusLabel(identity.status)}
               </p>
               {canMutate ? (
                 <>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-caption text-muted-foreground">
                     {t(
                       ($) =>
                         $.tab_body.integrations.enterprise_identity_buc_status,
                     )}
                     : {statusLabel(identity.bucStatus)}
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-caption text-muted-foreground">
                     {t(
                       ($) =>
                         $.tab_body.integrations
@@ -223,7 +223,7 @@ export function EnterpriseIdentityBindingCard({
                 </>
               ) : null}
               {canMutate && refreshExpiresAt ? (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-caption text-muted-foreground">
                   {t(
                     ($) =>
                       $.tab_body.integrations
@@ -233,7 +233,7 @@ export function EnterpriseIdentityBindingCard({
                 </p>
               ) : null}
               {!canMutate ? (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-caption text-muted-foreground">
                   {t(
                     ($) =>
                       $.tab_body.integrations.enterprise_identity_members_note,
@@ -291,19 +291,19 @@ export function EnterpriseIdentityBindingCard({
           </Button>
         ) : (
           <>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-caption text-muted-foreground">
               {t(($) => $.tab_body.integrations.enterprise_identity_unbound)}
             </p>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-caption text-muted-foreground">
               {t(($) => $.tab_body.integrations.enterprise_identity_members_note)}
             </p>
           </>
         )}
         {actionMessage ? (
-          <p className="text-xs text-emerald-600">{actionMessage}</p>
+          <p className="text-caption text-emerald-600">{actionMessage}</p>
         ) : null}
         {actionError ? (
-          <p className="text-xs text-destructive">{actionError}</p>
+          <p className="text-caption text-destructive">{actionError}</p>
         ) : null}
       </div>
     </section>

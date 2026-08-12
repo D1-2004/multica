@@ -18,7 +18,7 @@ func TestTaskDispatchBroadcastOnlyCarriesSafeDispatchMetadata(t *testing.T) {
 		RuntimeID:     typingIndependentUUID(33),
 		IssueID:       typingIndependentUUID(34),
 		ChatSessionID: typingIndependentUUID(35),
-			Context: []byte(`{
+		Context: []byte(`{
 				"agent_identity_context_token":"ctx-secret",
 				"agent_identity_context_token_expires_at":4102444800000,
 				"agent_identity_context_token_source":"external",

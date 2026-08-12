@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -31,8 +33,9 @@ const chatSessionTitleMaxLen = 200
 // ---------------------------------------------------------------------------
 
 type CreateChatSessionRequest struct {
-	AgentID string `json:"agent_id"`
-	Title   string `json:"title"`
+	AgentID   string  `json:"agent_id"`
+	Title     string  `json:"title"`
+	ProjectID *string `json:"project_id"`
 }
 
 func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +62,13 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	projectID := pgtype.UUID{Valid: false}
+	if req.ProjectID != nil && strings.TrimSpace(*req.ProjectID) != "" {
+		projectID, ok = parseUUIDOrBadRequest(w, strings.TrimSpace(*req.ProjectID), "project_id")
+		if !ok {
+			return
+		}
+	}
 
 	// Verify agent exists in workspace.
 	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
@@ -82,14 +92,55 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
+	// Create inside a tx that first takes a FOR KEY SHARE lock on the workspace
+	// row: it conflicts with DeleteWorkspace's FOR UPDATE, so a session cannot be
+	// created into a workspace whose delete is in progress and then be orphaned by
+	// the finalizer after the delete's sweep (#5219 create/delete protocol; see
+	// LockWorkspaceForChatSessionCreate).
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	if _, err := qtx.LockWorkspaceForChatSessionCreate(r.Context(), workspaceUUID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "workspace not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to lock workspace")
+		return
+	}
+	if projectID.Valid {
+		if _, err := qtx.LockProjectForChatSessionCreate(r.Context(), db.LockProjectForChatSessionCreateParams{
+			ID:          projectID,
+			WorkspaceID: workspaceUUID,
+		}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "project not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to lock project")
+			return
+		}
+	}
+
+	session, err := qtx.CreateChatSession(r.Context(), db.CreateChatSessionParams{
 		WorkspaceID: workspaceUUID,
 		AgentID:     agentID,
 		CreatorID:   parseUUID(userID),
 		Title:       req.Title,
+		ProjectID:   projectID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create chat session")
+		return
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit chat session create")
 		return
 	}
 
@@ -144,6 +195,7 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 				WorkspaceID: uuidToString(s.WorkspaceID),
 				AgentID:     uuidToString(s.AgentID),
 				CreatorID:   uuidToString(s.CreatorID),
+				ProjectID:   uuidToPtr(s.ProjectID),
 				Title:       s.Title,
 				Status:      s.Status,
 				HasUnread:   s.UnreadCount > 0,
@@ -173,6 +225,7 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 				WorkspaceID: uuidToString(s.WorkspaceID),
 				AgentID:     uuidToString(s.AgentID),
 				CreatorID:   uuidToString(s.CreatorID),
+				ProjectID:   uuidToPtr(s.ProjectID),
 				Title:       s.Title,
 				Status:      s.Status,
 				HasUnread:   s.UnreadCount > 0,
@@ -234,6 +287,28 @@ func (h *Handler) gateChatSessionForUser(w http.ResponseWriter, r *http.Request,
 	return session, true
 }
 
+// gatePublicChatSessionForUser adds the member-visible projection boundary to
+// the normal ownership and private-agent checks. Internal channel commands stay
+// durable, but a session containing only those commands is not a public Chat.
+// Cleanup and recovery operations keep using the lower-level ownership gates
+// so an empty bound session can still be archived or deleted and a member's
+// own cancelled draft is never stranded. Every ordinary Chat interaction uses
+// this gate so a cached hidden session ID cannot resurrect a command-only Chat.
+func (h *Handler) gatePublicChatSessionForUser(w http.ResponseWriter, r *http.Request, userID, workspaceID, sessionID string) (db.ChatSession, bool) {
+	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	if !ok {
+		return db.ChatSession{}, false
+	}
+	if _, err := h.Queries.GetPublicChatSessionInWorkspace(r.Context(), db.GetPublicChatSessionInWorkspaceParams{
+		ID:          session.ID,
+		WorkspaceID: session.WorkspaceID,
+	}); err != nil {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return db.ChatSession{}, false
+	}
+	return session, true
+}
+
 func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -242,7 +317,7 @@ func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
@@ -251,15 +326,15 @@ func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateChatSessionRequest struct {
-	Title *string `json:"title"`
+	Title     *string         `json:"title"`
+	ProjectID json.RawMessage `json:"project_id"`
 }
 
-// UpdateChatSession updates user-editable fields on a chat session — today
-// just `title`, surfaced by the inline rename affordance in the session
-// dropdown. Title is the only field accepted here: `status` has its own
-// archive/unarchive endpoint (SetChatSessionArchived), `pinned` its own pin
-// endpoint, agent/creator/workspace are immutable, the resume pointers
-// (session_id / work_dir / runtime_id) are daemon-owned.
+// UpdateChatSession updates one user-editable field on a chat session. Title
+// is surfaced by inline rename; project_id controls the project context used
+// by subsequent turns. Status and pinned keep their dedicated endpoints,
+// agent/creator/workspace are immutable, and the resume pointers
+// (session_id / work_dir / runtime_id) remain daemon-owned.
 func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -273,40 +348,104 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Title == nil {
-		writeError(w, http.StatusBadRequest, "title is required")
-		return
-	}
-	title := strings.TrimSpace(*req.Title)
-	if title == "" {
-		writeError(w, http.StatusBadRequest, "title is required")
-		return
-	}
-	if len([]rune(title)) > chatSessionTitleMaxLen {
-		writeError(w, http.StatusBadRequest, "title is too long")
+	hasTitle := req.Title != nil
+	hasProjectID := req.ProjectID != nil
+	if hasTitle == hasProjectID {
+		writeError(w, http.StatusBadRequest, "exactly one of title or project_id is required")
 		return
 	}
 
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
 
-	updated, err := h.Queries.UpdateChatSessionTitle(r.Context(), db.UpdateChatSessionTitleParams{
-		ID:    session.ID,
-		Title: title,
-	})
+	var (
+		updated db.ChatSession
+		err     error
+	)
+	var projectIDChanged bool
+	if hasTitle {
+		title := strings.TrimSpace(*req.Title)
+		if title == "" {
+			writeError(w, http.StatusBadRequest, "title is required")
+			return
+		}
+		if len([]rune(title)) > chatSessionTitleMaxLen {
+			writeError(w, http.StatusBadRequest, "title is too long")
+			return
+		}
+		updated, err = h.Queries.UpdateChatSessionTitle(r.Context(), db.UpdateChatSessionTitleParams{
+			ID:    session.ID,
+			Title: title,
+		})
+	} else {
+		projectID := pgtype.UUID{Valid: false}
+		if string(req.ProjectID) != "null" {
+			var rawProjectID string
+			if err := json.Unmarshal(req.ProjectID, &rawProjectID); err != nil {
+				writeError(w, http.StatusBadRequest, "project_id must be a UUID or null")
+				return
+			}
+			rawProjectID = strings.TrimSpace(rawProjectID)
+			if rawProjectID == "" {
+				writeError(w, http.StatusBadRequest, "project_id must be a UUID or null")
+				return
+			}
+			projectID, ok = parseUUIDOrBadRequest(w, rawProjectID, "project_id")
+			if !ok {
+				return
+			}
+		}
+
+		tx, txErr := h.TxStarter.Begin(r.Context())
+		if txErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to start transaction")
+			return
+		}
+		defer tx.Rollback(r.Context())
+		qtx := h.Queries.WithTx(tx)
+
+		if projectID.Valid {
+			if _, lockErr := qtx.LockProjectForChatSessionCreate(r.Context(), db.LockProjectForChatSessionCreateParams{
+				ID:          projectID,
+				WorkspaceID: session.WorkspaceID,
+			}); lockErr != nil {
+				if errors.Is(lockErr, pgx.ErrNoRows) {
+					writeError(w, http.StatusNotFound, "project not found")
+					return
+				}
+				writeError(w, http.StatusInternalServerError, "failed to lock project")
+				return
+			}
+		}
+
+		updated, err = qtx.UpdateChatSessionProject(r.Context(), db.UpdateChatSessionProjectParams{
+			ID:          session.ID,
+			WorkspaceID: session.WorkspaceID,
+			ProjectID:   projectID,
+		})
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
+		projectIDChanged = true
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update chat session")
 		return
 	}
 
 	resolvedSessionID := uuidToString(updated.ID)
-	h.publishChat(protocol.EventChatSessionUpdated, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionUpdatedPayload{
+	payload := protocol.ChatSessionUpdatedPayload{
 		ChatSessionID: resolvedSessionID,
 		Title:         updated.Title,
 		UpdatedAt:     timestampToString(updated.UpdatedAt),
-	})
+	}
+	if projectIDChanged {
+		projectID := uuidToPtr(updated.ProjectID)
+		payload.ProjectID = &projectID
+	}
+	h.publishChat(protocol.EventChatSessionUpdated, workspaceID, "member", userID, resolvedSessionID, payload)
 
 	writeJSON(w, http.StatusOK, chatSessionToResponse(updated))
 }
@@ -333,7 +472,7 @@ func (h *Handler) SetChatSessionPinned(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
@@ -379,6 +518,15 @@ type SetChatSessionArchivedRequest struct {
 // reviving this archived one. Unarchive deliberately does NOT recreate the
 // binding: if later traffic already forked a new session, that session owns the
 // channel now, and restoring the old binding would steal it back.
+//
+// Severing that binding is what makes archiving a bound session cancel its
+// in-flight tasks: the adapter still holds the chat id, so a turn that survives
+// the archive answers into a group room the session no longer belongs to. That
+// cancel is therefore scoped to sessions that HAD a binding. Archiving a
+// web-only chat leaves its tasks alone — it is the reversible organizing action
+// the UI presents (no confirmation, unarchive undoes it), and the destructive
+// counterpart is the Stop button, which cancels through CancelTaskByUser and
+// gives the user their typed prompt back.
 func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -415,7 +563,58 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Rows cancelled inside the tx, broadcast after it commits. nil when the
+	// request unarchives and nil for a web-only chat; BroadcastCancelledTasks
+	// is a no-op on an empty slice.
+	var cancelled []db.AgentTaskQueue
+
 	if req.Archived {
+		// Read the binding BEFORE the delete below, which is what erases the
+		// evidence: after it runs there is no way to tell a session that was
+		// on a channel from one that never was.
+		_, bindingErr := qtx.GetChannelChatSessionBindingBySessionAny(r.Context(), session.ID)
+		switch {
+		case bindingErr == nil:
+			// Bound, and the delete below is about to drop that binding.
+			// ClaimAgentTask does not read chat_session.status, so a task
+			// queued before the archive stays claimable after it: the daemon
+			// runs a turn on a conversation the user closed, spending runtime
+			// and quota and writing assistant messages into an archived chat.
+			// The binding is gone by then, so the brief describes the run as a
+			// private web chat — the misattribution the history note below
+			// exists to prevent — while the outbound senders, which resolve
+			// their destination through that same deleted row, have no route
+			// left to deliver on. Cancel in the same tx that drops the
+			// binding, as DeleteChatSession does.
+			//
+			// The query is not limited to never-started work: it also matches
+			// dispatched, running, waiting_local_directory and deferred, which
+			// is why the returned rows have to reach the post-commit broadcast
+			// below rather than being discarded.
+			cancelled, err = qtx.CancelAgentTasksByChatSession(r.Context(), session.ID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to cancel queued tasks for the archived session")
+				return
+			}
+		case errors.Is(bindingErr, pgx.ErrNoRows):
+			// A web-only chat has no room, no adapter and nowhere for a late
+			// answer to land, so there is nothing here to protect anyone from
+			// and archiving stays what the UI already says it is: the
+			// reversible "put it away" step that unarchive undoes, offered
+			// with no confirmation, with hard delete available only after it.
+			// Cancelling would also destroy the user's typed prompt — the Stop
+			// button cancels through CancelTaskByUser, which hands the prompt
+			// back (cancelled_chat_message.restore_to_input, or a durable
+			// chat_draft_restore row), and CancelAgentTasksByChatSession does
+			// neither.
+		default:
+			// We cannot tell whether this session was bound. Carrying on would
+			// silently skip the cancel and reopen the bug above, so fail the
+			// archive rather than guess; the caller can retry.
+			slog.Warn("read chat session channel binding failed", "session_id", sessionID, "error", bindingErr)
+			writeError(w, http.StatusInternalServerError, "failed to read chat session channel binding")
+			return
+		}
 		if err := qtx.DeleteChannelChatSessionBindingBySession(r.Context(), session.ID); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to clear chat session channel binding")
 			return
@@ -427,6 +626,15 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to commit chat session update")
 		return
 	}
+
+	// Post-commit broadcasts, same as DeleteChatSession: subscribers should
+	// never observe events for a tx that didn't actually persist. This is the
+	// call that captures the cancellation and revokes the tasks' mat_ tokens,
+	// reconciles each agent off 'working', emits task:cancelled so other
+	// clients drop the row instead of showing it queued until the next
+	// refresh, and wakes the runtime so a queued successor is claimed now
+	// rather than at the daemon's next poll.
+	h.TaskService.BroadcastCancelledTasks(r.Context(), workspaceID, cancelled)
 
 	resolvedSessionID := uuidToString(updated.ID)
 	status := updated.Status
@@ -480,6 +688,14 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Claim, clear, prioritize, and direct send all lock the agent before task
+	// rows. Keep delete on the same agent -> task suffix after its session lock,
+	// otherwise a builder-agent delete can deadlock with a concurrent claim.
+	if _, err := qtx.GetAgentForClaimUpdate(r.Context(), session.AgentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock chat agent")
+		return
+	}
+
 	cancelled, err := qtx.CancelAgentTasksByChatSession(r.Context(), session.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to cancel chat session tasks")
@@ -498,6 +714,23 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 	// permanent orphan card rows (#4810 follow-up).
 	if err := qtx.DeleteChannelOutboundCardMessagesBySession(r.Context(), session.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete chat session outbound cards")
+		return
+	}
+	// chat_draft_restore is keyed by chat_session_id with no FK either, so its
+	// pending restores are pruned here rather than by a DB cascade (#5219). The
+	// LockChatSessionForDelete above doubles as the deleter half of the
+	// draft-restore protocol: FinalizeDeferredCancelledChat takes the same
+	// chat_session lock before inserting a restore, so it cannot slip one past
+	// this sweep (see LockChatSessionForTask in chat.sql).
+	if err := qtx.DeleteChatDraftRestoresBySession(r.Context(), session.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete chat session draft restores")
+		return
+	}
+
+	// Same no-FK chore, for the agent configuration a builder conversation was
+	// editing. A no-op for ordinary chats, which never have one.
+	if err := qtx.DeleteAgentBuilderDraft(r.Context(), session.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete agent builder draft")
 		return
 	}
 
@@ -525,7 +758,11 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 
 	// Post-commit broadcasts. Subscribers should never observe events for a
 	// tx that didn't actually persist.
-	h.TaskService.BroadcastCancelledTasks(r.Context(), cancelled)
+	//
+	// The workspace has to come from the session we just deleted: the tasks were
+	// cancelled and returned before the delete, so they still carry its id, but
+	// the row they would be resolved through is gone by now.
+	h.TaskService.BroadcastCancelledTasks(r.Context(), workspaceID, cancelled)
 
 	resolvedSessionID := uuidToString(session.ID)
 	h.publishChat(protocol.EventChatSessionDeleted, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionDeletedPayload{
@@ -545,9 +782,10 @@ type SendChatMessageRequest struct {
 }
 
 type SendChatMessageResponse struct {
-	MessageID string `json:"message_id"`
-	TaskID    string `json:"task_id"`
-	TraceID   string `json:"trace_id"`
+	MessageID     string `json:"message_id"`
+	TaskID        string `json:"task_id"`
+	SupportsQueue bool   `json:"supports_queue"`
+	Queued        bool   `json:"queued"`
 	// AttachmentIDs are the attachment rows actually bound to this message by
 	// the server. The client diffs these against the ids it requested so it
 	// can warn the user when an attachment silently failed to bind — no extra
@@ -602,7 +840,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// workspace role (or the agent's owner) may have changed since — keep
 	// stale sessions from being a back-door into a private agent the user
 	// can no longer reach. Agent senders bypass to preserve A2A collaboration.
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
@@ -631,7 +869,22 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !agent.RuntimeID.Valid {
-		writeError(w, http.StatusConflict, "chat agent has no runtime")
+		h.writeDispatchBlocked(w, http.StatusConflict, ReasonAgentRuntimeRequired)
+		return
+	}
+
+	// Re-run the INVOKE gate on every send, not just the softer view gate in
+	// gatePublicChatSessionForUser (MUL-4525). canAccessPrivateAgent lets a workspace
+	// admin keep reading a transcript, but sending a message enqueues a run and
+	// must satisfy canInvokeAgent — which has no admin bypass. A session created
+	// while the user could invoke the agent must stop enqueuing work the instant
+	// that permission is revoked (agent flipped private, ownership moved, target
+	// removed from the allow-list), and it must fail BEFORE we persist the user
+	// message / attachments / task. Blocked returns a structured, enumeration-safe
+	// reason so the composer can explain it without leaking private-agent details.
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	if !h.canInvokeAgent(r.Context(), agent, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), workspaceID) {
+		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
 		return
 	}
 
@@ -652,11 +905,20 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// all commit together, and the daemon is only notified after the commit. For
 	// web chat the sender is the authenticated request user (sessions are
 	// creator-only), so they are the task initiator — surfaced to the agent
-	// under `## Task Initiator`.
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	// under `## Task Initiator`. actorType/actorID were resolved above for the
+	// invoke gate.
 	sent, err := h.TaskService.SendDirectChatMessage(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID), trace)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to send chat message: "+err.Error())
+		switch {
+		case errors.Is(err, service.ErrChatSessionArchived):
+			writeError(w, http.StatusConflict, "chat session is archived")
+		case errors.Is(err, service.ErrChatTaskAgentArchived):
+			writeError(w, http.StatusConflict, "chat agent is archived")
+		case errors.Is(err, service.ErrChatTaskAgentNoRuntime):
+			writeError(w, http.StatusConflict, "chat agent has no runtime")
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to send chat message: "+err.Error())
+		}
 		return
 	}
 	msg := sent.Message
@@ -715,7 +977,8 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, SendChatMessageResponse{
 		MessageID:     uuidToString(msg.ID),
 		TaskID:        uuidToString(task.ID),
-		TraceID:       trace.TraceID,
+		SupportsQueue: true,
+		Queued:        sent.Queued,
 		CreatedAt:     timestampToString(task.CreatedAt),
 		AttachmentIDs: boundAttachmentIDs,
 	})
@@ -923,6 +1186,104 @@ func parseChatMessagesPageParams(r *http.Request) (int, pgtype.Timestamptz, pgty
 	return limit, pgtype.Timestamptz{Time: beforeTime, Valid: true}, beforeID, nil
 }
 
+// RegenerateChatQuickActionsResponse acknowledges an accepted refresh request.
+// message_id is the assistant turn the refreshed pills will attach to — the
+// client anchors its pending placeholder on it and resolves it when the
+// chat:quick_actions supplement arrives.
+// RegenerateChatQuickActionsRequest names the assistant turn the client is
+// refreshing. The server confirms it is still the session's latest turn before
+// enqueuing (409 otherwise), so the client's pending marker stays aligned with
+// the turn chat:quick_actions will resolve — no ack reconciliation needed
+// (MUL-5149).
+type RegenerateChatQuickActionsRequest struct {
+	MessageID string `json:"message_id"`
+}
+
+type RegenerateChatQuickActionsResponse struct {
+	MessageID string `json:"message_id"`
+}
+
+// RegenerateChatQuickActions re-runs the suggestion pass for a session's latest
+// assistant turn on explicit user request (the "refresh" button on the
+// quick-actions row, MUL-5149). Generation is server-side, so this spawns no
+// agent run; the refreshed pills arrive over the same chat:quick_actions
+// realtime path as the automatic pass.
+func (h *Handler) RegenerateChatQuickActions(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	sessionID := chi.URLParam(r, "sessionId")
+
+	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	if !ok {
+		return
+	}
+	if session.Status != "active" {
+		writeError(w, http.StatusBadRequest, "chat session is archived")
+		return
+	}
+	agent, err := h.Queries.GetAgent(r.Context(), session.AgentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load chat agent")
+		return
+	}
+	if agent.ArchivedAt.Valid {
+		writeError(w, http.StatusConflict, "chat agent is archived")
+		return
+	}
+	// The refresh no longer runs the agent, but it is still a user-triggered
+	// spend against that agent's conversation, so it keeps clearing the same
+	// INVOKE gate as a send (MUL-4525) rather than the softer view gate in
+	// gatePublicChatSessionForUser. Deliberately NOT relaxed as a side effect of
+	// moving generation server-side.
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	if !h.canInvokeAgent(r.Context(), agent, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), workspaceID) {
+		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
+		return
+	}
+
+	var req RegenerateChatQuickActionsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	expectedMessageID, ok := parseUUIDOrBadRequest(w, req.MessageID, "message_id")
+	if !ok {
+		return
+	}
+
+	messageID, targetTask, err := h.TaskService.RegenerateChatQuickActions(r.Context(), session, expectedMessageID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrChatQuickActionsStale):
+			// The turn the client was refreshing is no longer the latest — its
+			// view is stale (a newer reply arrived). 409 → the client rolls back
+			// its optimistic marker and re-offers refresh on the new turn.
+			writeError(w, http.StatusConflict, "a newer reply arrived — refresh it instead")
+		case errors.Is(err, service.ErrChatQuickActionsBusy):
+			// A turn is already running for this session; it is about to replace
+			// the reply these pills would hang on. 409 → the client rolls back
+			// and can refresh once the session settles.
+			writeError(w, http.StatusConflict, "still working — try refreshing in a moment")
+		case errors.Is(err, service.ErrChatQuickActionsNoTurn):
+			writeError(w, http.StatusConflict, "no assistant reply to refresh yet")
+		case errors.Is(err, service.ErrChatQuickActionsUnavailable):
+			writeError(w, http.StatusServiceUnavailable, "suggestions are not available on this deployment")
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to regenerate quick actions")
+		}
+		return
+	}
+	// Detached like the automatic pass: answer 202 now, deliver the refreshed
+	// pills over chat:quick_actions.
+	h.TaskService.GenerateChatQuickActionsAsync(targetTask, service.ChatQuickActionsRefresh)
+	writeJSON(w, http.StatusAccepted, RegenerateChatQuickActionsResponse{
+		MessageID: uuidToString(messageID),
+	})
+}
+
 func (h *Handler) ListChatMessages(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -931,7 +1292,7 @@ func (h *Handler) ListChatMessages(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
@@ -941,6 +1302,7 @@ func (h *Handler) ListChatMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list chat messages")
 		return
 	}
+	messages = visibleChatMessages(messages)
 
 	messageIDs := make([]pgtype.UUID, len(messages))
 	for i, m := range messages {
@@ -963,7 +1325,7 @@ func (h *Handler) ListChatMessagesPage(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
@@ -974,9 +1336,12 @@ func (h *Handler) ListChatMessagesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A session can contain one server-authored onboarding kickoff. Fetch one
+	// extra row beyond the normal lookahead so hiding it cannot make a visible
+	// page appear shorter or lose its next cursor.
 	messages, err := h.Queries.ListChatMessagesPage(r.Context(), db.ListChatMessagesPageParams{
 		ChatSessionID:   session.ID,
-		Limit:           int32(limit + 1),
+		Limit:           int32(limit + 2),
 		BeforeCreatedAt: beforeCreatedAt,
 		BeforeID:        beforeID,
 	})
@@ -984,6 +1349,7 @@ func (h *Handler) ListChatMessagesPage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list chat messages")
 		return
 	}
+	messages = visibleChatMessages(messages)
 	hasMore := len(messages) > limit
 	if hasMore {
 		messages = messages[:limit]
@@ -1028,9 +1394,24 @@ func (h *Handler) ListChatMessagesPage(w http.ResponseWriter, r *http.Request) {
 // optimistic seeds don't have a real task created_at and the timer needs to
 // survive refresh / reopen.
 type PendingChatTaskResponse struct {
-	TaskID    string `json:"task_id,omitempty"`
-	Status    string `json:"status,omitempty"`
-	CreatedAt string `json:"created_at,omitempty"`
+	TaskID        string                   `json:"task_id,omitempty"`
+	Status        string                   `json:"status,omitempty"`
+	CreatedAt     string                   `json:"created_at,omitempty"`
+	SupportsQueue bool                     `json:"supports_queue"`
+	QueuedTasks   []QueuedChatTaskResponse `json:"queued_tasks,omitempty"`
+}
+
+type QueuedChatTaskResponse struct {
+	TaskID    string `json:"task_id"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+	MessageID string `json:"message_id,omitempty"`
+	Content   string `json:"content,omitempty"`
+}
+
+type PrioritizeQueuedChatTaskResponse struct {
+	TaskID       string `json:"task_id"`
+	ActiveTaskID string `json:"active_task_id,omitempty"`
 }
 
 // MarkChatSessionRead clears the session's unread_since (→ has_unread=false)
@@ -1044,7 +1425,7 @@ func (h *Handler) MarkChatSessionRead(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
@@ -1060,6 +1441,152 @@ func (h *Handler) MarkChatSessionRead(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---------------------------------------------------------------------------
+// Deferred-cancellation draft restores (#5219)
+// ---------------------------------------------------------------------------
+
+// ChatDraftRestoreResponse is one recoverable composer draft: a deferred
+// cancellation settled as empty-transcript after the cancel HTTP response
+// returned, so the deleted prompt is persisted server-side until the
+// creator's client applies and consumes it. Attachments are resolved from
+// the stored ids at read time so they carry the normal handler URL policy.
+type ChatDraftRestoreResponse struct {
+	ID            string               `json:"id"`
+	ChatSessionID string               `json:"chat_session_id"`
+	TaskID        string               `json:"task_id"`
+	Content       string               `json:"content"`
+	Attachments   []AttachmentResponse `json:"attachments,omitempty"`
+	CreatedAt     string               `json:"created_at"`
+}
+
+type ChatDraftRestoresResponse struct {
+	Restores []ChatDraftRestoreResponse `json:"restores"`
+}
+
+// ListChatDraftRestores returns the session's pending draft restores.
+// Creator-only via loadChatSessionForUser — deliberately not the
+// private-agent gate: the content is the caller's own deleted prompt, and
+// losing agent access must not strand it server-side forever.
+func (h *Handler) ListChatDraftRestores(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	sessionID := chi.URLParam(r, "sessionId")
+
+	session, ok := h.loadChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	if !ok {
+		return
+	}
+
+	rows, err := h.Queries.ListChatDraftRestoresBySession(r.Context(), session.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list draft restores")
+		return
+	}
+
+	var attachmentIDs []pgtype.UUID
+	for _, row := range rows {
+		attachmentIDs = append(attachmentIDs, row.AttachmentIds...)
+	}
+	attachmentsByID := map[string]AttachmentResponse{}
+	if len(attachmentIDs) > 0 {
+		attRows, err := h.Queries.ListAttachmentsByIDs(r.Context(), db.ListAttachmentsByIDsParams{
+			AttachmentIds: attachmentIDs,
+			WorkspaceID:   session.WorkspaceID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load draft restore attachments")
+			return
+		}
+		attachmentMode := attachmentURLModeFromRequest(r)
+		for _, a := range attRows {
+			attachmentsByID[uuidToString(a.ID)] = h.attachmentToResponse(a, attachmentMode)
+		}
+	}
+
+	resp := ChatDraftRestoresResponse{Restores: make([]ChatDraftRestoreResponse, 0, len(rows))}
+	for _, row := range rows {
+		item := ChatDraftRestoreResponse{
+			ID:            uuidToString(row.ID),
+			ChatSessionID: uuidToString(row.ChatSessionID),
+			TaskID:        uuidToString(row.TaskID),
+			Content:       row.Content,
+			CreatedAt:     timestampToString(row.CreatedAt),
+		}
+		for _, attID := range row.AttachmentIds {
+			if a, ok := attachmentsByID[uuidToString(attID)]; ok {
+				item.Attachments = append(item.Attachments, a)
+			}
+		}
+		resp.Restores = append(resp.Restores, item)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ConsumeChatDraftRestore deletes one draft restore after the creator's
+// client applied it. Idempotent: consuming an already-consumed (or never
+// existing) restore still returns 204, so a retried consume after a lost
+// response can't fail the client.
+func (h *Handler) ConsumeChatDraftRestore(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	sessionID := chi.URLParam(r, "sessionId")
+
+	session, ok := h.loadChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	if !ok {
+		return
+	}
+	restoreUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "restoreId"), "restore id")
+	if !ok {
+		return
+	}
+
+	if _, err := h.Queries.DeleteChatDraftRestore(r.Context(), db.DeleteChatDraftRestoreParams{
+		ID:            restoreUUID,
+		ChatSessionID: session.ID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to consume draft restore")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// pruneRuntimeSystemAgentChatDraftRestores drops the pending draft restores of
+// every chat_session a runtime teardown is about to remove through the agent
+// cascade (chat_session.agent_id is ON DELETE CASCADE, migration 033).
+// chat_draft_restore has no FK (MUL-3515) and no reaper, so a restore left
+// behind keeps the user's prompt text forever, unreachable and undeletable.
+//
+// Every runtime/agent teardown path must call this in its own transaction and
+// BEFORE deleting the agent rows — the queries join through them. Only system
+// agents are in scope: since MUL-5559 a runtime delete unbinds its user agents
+// instead of deleting them, so their sessions and restores must survive.
+//
+// The sessions are locked before the sweep: that is the deleter half of the
+// mutual-exclusion protocol with FinalizeDeferredCancelledChat, which would
+// otherwise insert a restore this sweep can no longer see (see LockChatSession*
+// in chat.sql).
+//
+// The workspace teardown has its own copy of this shape (locks, then sweeps
+// inside the DeleteWorkspace CTE) because that statement's prune must stay in
+// the same statement as the workspace row it commits with.
+func pruneRuntimeSystemAgentChatDraftRestores(ctx context.Context, q *db.Queries, runtimeID pgtype.UUID) error {
+	if _, err := q.LockChatSessionsBySystemRuntimeAgents(ctx, runtimeID); err != nil {
+		return err
+	}
+	if err := q.DeleteChatDraftRestoresBySystemRuntimeAgents(ctx, runtimeID); err != nil {
+		return err
+	}
+	// Builder drafts only ever hang off a system carrier, so they are pruned
+	// here and nowhere else — the archived-agent sweep above has none to find.
+	return q.DeleteAgentBuilderDraftsBySystemRuntimeAgents(ctx, runtimeID)
 }
 
 // PendingChatTasksResponse is the aggregate view consumed by the FAB.
@@ -1203,9 +1730,9 @@ func (h *Handler) HasPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, HasPendingChatTasksResponse{HasPending: hasPending})
 }
 
-// GetPendingChatTask returns the most recent in-flight task (queued / dispatched
-// / running) for a chat session. The frontend polls this on mount / session
-// switch so pending UI state survives refresh and reopen.
+// GetPendingChatTask returns the current task plus its ordered follow-ups. The
+// root fields retain the original response shape so older clients continue to
+// recover a single pending task after refresh / reopen.
 func (h *Handler) GetPendingChatTask(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -1214,23 +1741,27 @@ func (h *Handler) GetPendingChatTask(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
 
-	task, err := h.Queries.GetPendingChatTask(r.Context(), session.ID)
+	tasks, err := h.Queries.ListPendingChatTasksForSession(r.Context(), session.ID)
 	if err != nil {
-		// No in-flight task — return an empty object, not an error.
-		writeJSON(w, http.StatusOK, PendingChatTaskResponse{})
+		writeError(w, http.StatusInternalServerError, "failed to list pending chat tasks")
 		return
 	}
-	if task.Status == "queued" && h.TaskService != nil {
-		fullTask, err := h.Queries.GetAgentTask(r.Context(), task.ID)
+	if len(tasks) == 0 {
+		writeJSON(w, http.StatusOK, PendingChatTaskResponse{SupportsQueue: true})
+		return
+	}
+	head := tasks[0]
+	if head.Status == "queued" && h.TaskService != nil {
+		fullTask, err := h.Queries.GetAgentTask(r.Context(), head.ID)
 		if err != nil {
 			slog.Warn("failed to load pending chat task for queued recovery",
 				"chat_session_id", uuidToString(session.ID),
-				"task_id", uuidToString(task.ID),
+				"task_id", uuidToString(head.ID),
 				"error", err,
 			)
 		} else {
@@ -1238,11 +1769,125 @@ func (h *Handler) GetPendingChatTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	queued := make([]QueuedChatTaskResponse, 0, len(tasks)-1)
+	for _, task := range tasks[1:] {
+		if task.Status != "queued" {
+			continue
+		}
+		queued = append(queued, QueuedChatTaskResponse{
+			TaskID:    uuidToString(task.ID),
+			Status:    task.Status,
+			CreatedAt: timestampToString(task.CreatedAt),
+			MessageID: uuidToString(task.MessageID),
+			Content:   task.Content,
+		})
+	}
+
 	writeJSON(w, http.StatusOK, PendingChatTaskResponse{
-		TaskID:    uuidToString(task.ID),
-		Status:    task.Status,
-		CreatedAt: timestampToString(task.CreatedAt),
+		TaskID:        uuidToString(head.ID),
+		Status:        head.Status,
+		CreatedAt:     timestampToString(head.CreatedAt),
+		SupportsQueue: true,
+		QueuedTasks:   queued,
 	})
+}
+
+// PrioritizeQueuedChatTask moves one queued follow-up ahead of its FIFO peers.
+// The client then cancels the current task through the existing cancellation
+// endpoint, preserving that path's transcript and draft-restore semantics.
+func (h *Handler) PrioritizeQueuedChatTask(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	sessionID := chi.URLParam(r, "sessionId")
+	taskID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "taskId"), "task id")
+	if !ok {
+		return
+	}
+
+	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	if !ok {
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prioritize transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	// ClaimTask takes this same row lock before selecting work. Holding it here
+	// makes "prioritize + report the active task" one server-authoritative
+	// decision instead of two client requests racing the daemon.
+	if _, err := qtx.GetAgentForClaimUpdate(r.Context(), session.AgentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock chat agent")
+		return
+	}
+	prioritized, err := qtx.PrioritizeQueuedChatTask(
+		r.Context(),
+		db.PrioritizeQueuedChatTaskParams{ID: taskID, ChatSessionID: session.ID},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The compare-and-set rejects both a stale queue row and a still-valid
+		// follow-up that has no claimed reply to replace. Distinguish them for
+		// current clients while preserving the same 409 compatibility contract.
+		queuedTask, loadErr := qtx.GetAgentTask(r.Context(), taskID)
+		if loadErr != nil && !errors.Is(loadErr, pgx.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "failed to load queued task")
+			return
+		}
+		if loadErr == nil &&
+			queuedTask.Status == "queued" &&
+			queuedTask.ChatSessionID.Valid &&
+			uuidToString(queuedTask.ChatSessionID) == uuidToString(session.ID) {
+			writeError(w, http.StatusConflict, "there is no active reply to replace")
+			return
+		}
+		writeError(w, http.StatusConflict, "task is no longer queued")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prioritize queued task")
+		return
+	}
+	queuedTask, err := qtx.GetAgentTask(r.Context(), taskID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load prioritized task")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit queued task priority")
+		return
+	}
+	h.TaskService.BroadcastTaskQueued(r.Context(), queuedTask)
+
+	writeJSON(w, http.StatusOK, PrioritizeQueuedChatTaskResponse{
+		TaskID:       uuidToString(prioritized.TaskID),
+		ActiveTaskID: uuidToString(prioritized.ActiveTaskID),
+	})
+}
+
+// ClearQueuedChatTasks cancels every queued follow-up without touching the
+// session's current positional head, even when that head is not claimed yet.
+func (h *Handler) ClearQueuedChatTasks(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	sessionID := chi.URLParam(r, "sessionId")
+	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	if !ok {
+		return
+	}
+	if err := h.TaskService.CancelQueuedChatTasks(r.Context(), session.ID, session.AgentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clear queued tasks")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---------------------------------------------------------------------------
@@ -1294,6 +1939,34 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var (
+		queuedOnly      bool
+		expectedSession pgtype.UUID
+		queueAction     string
+	)
+	if expectedStatus := r.URL.Query().Get("expected_status"); expectedStatus != "" {
+		if expectedStatus != "queued" {
+			writeError(w, http.StatusBadRequest, "expected_status must be queued")
+			return
+		}
+		sessionID := r.URL.Query().Get("chat_session_id")
+		var ok bool
+		expectedSession, ok = parseUUIDOrBadRequest(w, sessionID, "chat_session_id")
+		if !ok {
+			return
+		}
+		if !task.ChatSessionID.Valid || task.ChatSessionID != expectedSession {
+			writeError(w, http.StatusConflict, "task does not belong to the expected chat session")
+			return
+		}
+		queueAction = r.URL.Query().Get("queue_action")
+		if queueAction != "edit" && queueAction != "remove" {
+			writeError(w, http.StatusBadRequest, "queue_action must be edit or remove")
+			return
+		}
+		queuedOnly = true
+	}
+
 	if task.ChatSessionID.Valid {
 		// Chat privacy: only the member who opened the conversation may
 		// cancel its task, even though the workspace is shared.
@@ -1328,7 +2001,16 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cancelled, err := h.TaskService.CancelTaskWithResult(r.Context(), taskUUID)
+	cancelled, err := h.TaskService.CancelTaskWithResult(r.Context(), taskUUID, service.CancelTaskOptions{
+		ClientSupportsDraftRestore: requestHasClientCapability(r, protocol.AppCapabilityChatDraftRestoreV1),
+		QueuedOnly:                 queuedOnly,
+		ExpectedChatSession:        expectedSession,
+		QueueAction:                queueAction,
+	})
+	if errors.Is(err, service.ErrTaskNoLongerQueued) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1337,10 +2019,12 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 	resp := CancelTaskByUserResponse{
 		AgentTaskResponse: taskToResponse(cancelled.Task, workspaceID),
 	}
+	h.hydrateTaskAttributions(r.Context(), []*TaskAttribution{resp.AgentTaskResponse.Attribution})
 	if cancelled.CancelledChatMessage != nil {
 		attachments := make([]AttachmentResponse, 0, len(cancelled.CancelledChatMessage.Attachments))
+		attachmentMode := attachmentURLModeFromRequest(r)
 		for _, a := range cancelled.CancelledChatMessage.Attachments {
-			attachments = append(attachments, h.attachmentToResponse(a))
+			attachments = append(attachments, h.attachmentToResponse(a, attachmentMode))
 		}
 		resp.CancelledChatMessage = &CancelledChatMessageResponse{
 			ChatSessionID:  cancelled.CancelledChatMessage.ChatSessionID,
@@ -1359,12 +2043,13 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 type ChatSessionResponse struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
-	AgentID     string `json:"agent_id"`
-	CreatorID   string `json:"creator_id"`
-	Title       string `json:"title"`
-	Status      string `json:"status"`
+	ID          string  `json:"id"`
+	WorkspaceID string  `json:"workspace_id"`
+	AgentID     string  `json:"agent_id"`
+	CreatorID   string  `json:"creator_id"`
+	ProjectID   *string `json:"project_id"`
+	Title       string  `json:"title"`
+	Status      string  `json:"status"`
 	// Only populated by list endpoints — single-session fetches return 0/false/nil.
 	// HasUnread is kept as a convenience (== UnreadCount > 0) for existing consumers.
 	HasUnread   bool             `json:"has_unread"`
@@ -1385,16 +2070,15 @@ type ChatLastMessage struct {
 	Role          string  `json:"role"`
 	CreatedAt     string  `json:"created_at"`
 	FailureReason *string `json:"failure_reason"`
-	// MessageKind is 'message' (default) or 'no_response'. Lets the session
-	// list render a localized preview for a no-text-reply turn instead of the
-	// English fallback content the server stores (MUL-4351).
+	// MessageKind is 'message' (default) or 'no_response'. Hidden onboarding
+	// kickoff rows make buildChatLastMessage return nil and are never exposed.
 	MessageKind string `json:"message_kind"`
 }
 
 // buildChatLastMessage assembles the preview from list-row columns; returns nil
 // when there is no last message (the LEFT JOIN produced a NULL timestamp).
 func buildChatLastMessage(at pgtype.Timestamptz, content, role string, failure pgtype.Text, kind string) *ChatLastMessage {
-	if !at.Valid {
+	if !at.Valid || kind == protocol.ChatMessageKindOnboardingKickoff {
 		return nil
 	}
 	return &ChatLastMessage{
@@ -1419,10 +2103,12 @@ type ChatMessageResponse struct {
 	// ElapsedMs is the wall-clock duration from task creation to terminal
 	// state. Drives "Replied in 38s" / "Failed after 12s" captions.
 	ElapsedMs *int64 `json:"elapsed_ms"`
-	// MessageKind is 'message' (default) or 'no_response' — a completed
-	// direct-chat turn that produced no text reply (MUL-4351). Additive:
-	// clients that don't understand it fall back to the non-empty content.
+	// MessageKind is additive. User-facing list handlers filter onboarding
+	// kickoff rows; clients still understand that kind as a compatibility guard.
 	MessageKind string `json:"message_kind"`
+	// QuickActions are sanitized follow-ups generated with this assistant turn.
+	// Always an empty array for legacy rows and user messages.
+	QuickActions []protocol.ChatQuickAction `json:"quick_actions"`
 	// Attachments linked to this message via chat_message_id. The chat
 	// bubble renders file cards from these, and the daemon claim path
 	// (daemon.go) pulls structured metadata from the same source so the
@@ -1437,6 +2123,7 @@ func chatSessionToResponse(s db.ChatSession) ChatSessionResponse {
 		WorkspaceID: uuidToString(s.WorkspaceID),
 		AgentID:     uuidToString(s.AgentID),
 		CreatorID:   uuidToString(s.CreatorID),
+		ProjectID:   uuidToPtr(s.ProjectID),
 		Title:       s.Title,
 		Status:      s.Status,
 		Pinned:      s.PinnedAt.Valid,
@@ -1456,9 +2143,44 @@ func chatMessageToResponse(m db.ChatMessage, attachments []AttachmentResponse) C
 		FailureReason: textToPtr(m.FailureReason),
 		ElapsedMs:     int8ToPtr(m.ElapsedMs),
 		MessageKind:   normalizeMessageKind(m.MessageKind),
+		QuickActions:  decodeChatQuickActions(m.QuickActions),
 		Attachments:   attachments,
 	}
 }
+
+// visibleChatMessages removes product-authored context that is sent to the
+// agent runtime but is never part of the member-visible conversation. The
+// daemon reads its task-scoped input through ListChatInputMessages, so this
+// user-facing filter does not remove the kickoff from Mika's execution.
+func visibleChatMessages(messages []db.ChatMessage) []db.ChatMessage {
+	visible := make([]db.ChatMessage, 0, len(messages))
+	for _, message := range messages {
+		if message.MessageKind == protocol.ChatMessageKindOnboardingKickoff {
+			continue
+		}
+		visible = append(visible, message)
+	}
+	return visible
+}
+
+func decodeChatQuickActions(raw []byte) []protocol.ChatQuickAction {
+	actions := make([]protocol.ChatQuickAction, 0)
+	if len(raw) == 0 {
+		return actions
+	}
+	if err := json.Unmarshal(raw, &actions); err != nil {
+		return []protocol.ChatQuickAction{}
+	}
+	if actions == nil {
+		return []protocol.ChatQuickAction{}
+	}
+	if len(actions) > chatQuickActionResponseLimit {
+		actions = actions[:chatQuickActionResponseLimit]
+	}
+	return actions
+}
+
+const chatQuickActionResponseLimit = 3
 
 // normalizeMessageKind maps a stored chat_message.message_kind to the value the
 // API exposes. Unknown / empty kinds degrade to 'message' so a future kind
@@ -1467,6 +2189,10 @@ func normalizeMessageKind(kind string) string {
 	switch kind {
 	case protocol.ChatMessageKindNoResponse:
 		return protocol.ChatMessageKindNoResponse
+	case protocol.ChatMessageKindOnboardingKickoff:
+		return protocol.ChatMessageKindOnboardingKickoff
+	case protocol.ChatMessageKindOnboardingOpening:
+		return protocol.ChatMessageKindOnboardingOpening
 	default:
 		return protocol.ChatMessageKindMessage
 	}

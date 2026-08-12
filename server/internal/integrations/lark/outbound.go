@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -142,6 +143,7 @@ func (defaultRenderer) Render(in RenderInput) (CardRender, error) {
 // without a real Postgres connection.
 type PatcherQueries interface {
 	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
+	TaskHasChannelIngestedMessages(ctx context.Context, taskID pgtype.UUID) (bool, error)
 	GetChatSession(ctx context.Context, id pgtype.UUID) (db.ChatSession, error)
 	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
 	GetLarkInstallation(ctx context.Context, id pgtype.UUID) (Installation, error)
@@ -256,6 +258,28 @@ func (p *Patcher) SetTypingIndicatorManager(m *TypingIndicatorManager) {
 //     both chat and /issue runs — sending a second error card here
 //     would double-post.
 //
+//   - EventTaskCancelled — the run ended without an answer. Nothing is
+//     sent for it; the subscription exists so the Typing reaction comes
+//     off. A cancellation publishes no chat-done and no task-failed, so
+//     without this the badge sits on the user's message for good.
+//     task:cancelled is broadcast once per cancelled row by CancelTask,
+//     the queued follow-up cancel behind it, the agent- and issue-level
+//     bulk cancels, the runtime and member revocations, and deleting the
+//     chat session. The delete is the one that used to publish nothing:
+//     BroadcastCancelledTasks resolved each task's workspace through its
+//     chat_session, the same row its transaction had just deleted, and an
+//     event with no workspace is dropped before it reaches the bus. It now
+//     takes the workspace from its caller. Two holes are left, neither of
+//     them a missing subscription: archiving an agent stays silent by
+//     choice — agent:archived invalidates every client's task list
+//     instead — and no list refresh removes a Lark reaction; and an
+//     ending that arrives while the reaction is still being added clears
+//     nothing, because Add records its state only after the Lark call
+//     returns, so the badge lands after the clear with nothing left to
+//     take it off. That second one predates task:cancelled — chat-done
+//     and task-failed race the add the same way — and closing it needs a
+//     per-session generation the add can check when its call returns.
+//
 // We deliberately do NOT subscribe to EventTaskQueued / EventTaskRunning
 // (no thinking-card lifecycle anymore — adds noise without value) or to
 // EventTaskCompleted (chat tasks always emit EventChatDone first, which
@@ -266,6 +290,7 @@ func (p *Patcher) SetTypingIndicatorManager(m *TypingIndicatorManager) {
 func (p *Patcher) Register(bus *events.Bus) {
 	bus.Subscribe(protocol.EventTaskFailed, p.handleEvent)
 	bus.Subscribe(protocol.EventChatDone, p.handleEvent)
+	bus.Subscribe(protocol.EventTaskCancelled, p.handleEvent)
 }
 
 func (p *Patcher) handleEvent(e events.Event) {
@@ -285,12 +310,38 @@ func (p *Patcher) handleEvent(e events.Event) {
 }
 
 func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
-	_, chatSessionID, ok := taskAndSessionFromEvent(e)
+	taskID, chatSessionID, ok := taskAndSessionFromEvent(e)
 	if !ok {
 		return nil
 	}
 	if !chatSessionID.Valid {
 		// Issue / autopilot tasks have no chat_session.
+		return nil
+	}
+	// A cancelled run has no reply to place, so the only thing owed to the user
+	// is taking the Typing badge off. That runs before every lookup below,
+	// because each of them can answer "no" for a run that still has a badge on
+	// screen:
+	//
+	//   - the binding is gone by the time a session delete's cancels are
+	//     broadcast (they fire after the transaction that dropped it commits);
+	//
+	//   - the origin classification answers "does this answer belong on Lark",
+	//     and a task cancelled for owning an empty input batch — the failure
+	//     #6611 fixed the cause of — reports no channel-ingested messages, so a
+	//     clear behind it would be skipped on exactly the run that most needs
+	//     it. A cancellation has no answer to misroute, so the question does not
+	//     arise.
+	//
+	// Nothing is posted here, so neither gate is protecting anything: the badge
+	// is Lark's own, and Clear only touches sessions this process put one on.
+	// The clear is keyed by session rather than by turn, so cancelling one of
+	// two turns in a session takes the badge off both; the worst that costs is a
+	// missing badge on a turn still running.
+	if e.Type == protocol.EventTaskCancelled {
+		if p.typingIndicator != nil {
+			p.typingIndicator.Clear(ctx, chatSessionID)
+		}
 		return nil
 	}
 
@@ -301,6 +352,24 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 			return nil
 		}
 		return fmt.Errorf("lookup chat session binding: %w", err)
+	}
+
+	// Only bound sessions reach here, so classify the task origin before
+	// spending any send work. Web/mobile direct-chat tasks can reuse a session
+	// that originated in Lark, but their replies belong only in Multica.
+	// Sealed channel tasks own an input batch just like direct tasks, so the
+	// discriminator is the immutable channel_ingested provenance of that
+	// batch, not chat_input_task_id presence (which #5645 originally used).
+	task, err := p.queries.GetAgentTask(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("load agent task: %w", err)
+	}
+	deliver, err := engine.TaskInputIsChannelIngested(ctx, p.queries, task)
+	if err != nil {
+		return fmt.Errorf("classify task input origin: %w", err)
+	}
+	if !deliver {
+		return nil
 	}
 
 	inst, err := p.queries.GetLarkInstallation(ctx, binding.InstallationID)
@@ -465,8 +534,38 @@ func (p *Patcher) installationCredentials(inst Installation) (InstallationCreden
 	return creds, nil
 }
 
-// taskAndSessionFromEvent parses the typed-ish payload broadcastTaskEvent
-// publishes — a map[string]any with `task_id` (always) and
+// fail surfaces a short error card on task failure. Unlike the
+// success path (plain text via sendChatReply), failures stay as cards
+// because the user benefits from the visual distinction — a red /
+// header-styled card is much harder to miss than a regular bubble,
+// and these are rare enough that the card chrome isn't noisy.
+//
+// One-shot send (no patching, no DB row): if the task fails a second
+// time we'd just send a second card, which is fine — failure is
+// usually a single terminal event.
+func (p *Patcher) fail(ctx context.Context, creds InstallationCredentials, binding ChatSessionBinding, taskID pgtype.UUID, agentName string, payload any) error {
+	render, err := p.cfg.Renderer.Render(RenderInput{
+		Kind:         CardKindError,
+		AgentName:    agentName,
+		TaskID:       taskID,
+		ErrorMessage: errorMessageFromPayload(payload),
+	})
+	if err != nil {
+		return fmt.Errorf("render error card: %w", err)
+	}
+	return sendWithThreadFallback(p.cfg.Logger, "send error card", threadReplyTarget(binding), func(t ReplyTarget) error {
+		_, err := p.client.SendInteractiveCard(ctx, SendCardParams{
+			InstallationID: creds,
+			ChatID:         outboundChatID(binding),
+			CardJSON:       render.JSON,
+			ReplyTarget:    t,
+		})
+		return err
+	})
+}
+
+// taskAndSessionFromEvent parses the typed-ish payload the task publishers
+// emit — a map[string]any with `task_id` (always) and
 // `chat_session_id` (chat tasks only). EventChatDone carries a
 // ChatDonePayload struct instead.
 func taskAndSessionFromEvent(e events.Event) (taskID, chatSessionID pgtype.UUID, ok bool) {
@@ -510,6 +609,18 @@ func chatDoneContent(payload any) string {
 	case map[string]any:
 		if s, ok := p["content"].(string); ok {
 			return s
+		}
+	}
+	return ""
+}
+
+func errorMessageFromPayload(payload any) string {
+	if values, ok := payload.(map[string]any); ok {
+		if message, ok := values["error"].(string); ok {
+			return message
+		}
+		if message, ok := values["error_message"].(string); ok {
+			return message
 		}
 	}
 	return ""

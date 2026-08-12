@@ -371,7 +371,7 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		h.TaskService.ReconcileAgentStatus(r.Context(), created.ID)
 		created, _ = h.Queries.GetAgent(r.Context(), created.ID)
 	}
-	response := agentToResponse(created)
+	response := h.agentToResponse(created)
 	_ = h.attachAgentSkills(r.Context(), &response, created.ID)
 	_ = h.enrichAgentResponseWithTargets(r.Context(), &response, created.ID)
 	actorType, actorID := h.resolveActor(r, ownerID, workspaceID)
@@ -600,7 +600,7 @@ func (h *Handler) publishAgentSourceSync(r *http.Request, agentRow db.Agent, cha
 		slog.Warn("load agent after GitHub source sync", "error", err, "agent_id", uuidToString(agentRow.ID))
 		return
 	}
-	response := agentToResponse(refreshed)
+	response := h.agentToResponse(refreshed)
 	if err := h.attachAgentSkills(r.Context(), &response, refreshed.ID); err != nil {
 		slog.Warn("load agent skills after GitHub source sync", "error", err, "agent_id", uuidToString(agentRow.ID))
 		return

@@ -3,7 +3,14 @@ import type {
   DashboardUsageByAgent,
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
+  DashboardFailureDaily,
+  DashboardFailureByAgent,
 } from "@multica/core/types";
+import {
+  FAILURE_CLASSES,
+  failureClassOf,
+  type FailureClass,
+} from "@multica/core/dashboard";
 import {
   addDaysIso,
   estimateCost,
@@ -18,6 +25,10 @@ import type {
   DailyTasksData,
   WeeklyTimeData,
   WeeklyTasksData,
+  DailyErrorsData,
+  WeeklyErrorsData,
+  FailureBucketTotals,
+  FailureClassCounts,
 } from "../runtimes/components/charts";
 
 // ---------------------------------------------------------------------------
@@ -53,8 +64,13 @@ function formatDateLabel(d: string): string {
 // Per-(date, model) rows → 1 row per date with cost broken into the three
 // segments the stacked bar chart consumes. Stable sort by date asc so the
 // chart x-axis is left-to-right oldest-to-newest.
-export function aggregateDailyCost(usage: DashboardUsageDaily[]): DailyCostStack[] {
-  const map = new Map<string, { input: number; output: number; cacheWrite: number }>();
+export function aggregateDailyCost(
+  usage: DashboardUsageDaily[],
+): DailyCostStack[] {
+  const map = new Map<
+    string,
+    { input: number; output: number; cacheWrite: number }
+  >();
   for (const u of usage) {
     const b = estimateCostBreakdown(u);
     const entry = map.get(u.date) ?? { input: 0, output: 0, cacheWrite: 0 };
@@ -87,7 +103,9 @@ export function aggregateDailyCost(usage: DashboardUsageDaily[]): DailyCostStack
 // Mirrors `aggregateByDate(...).dailyTokens` from the runtimes utils so
 // the Tokens chart on the Usage page consumes the same shape as the one
 // on the runtime-detail page.
-export function aggregateDailyTokens(usage: DashboardUsageDaily[]): DailyTokenData[] {
+export function aggregateDailyTokens(
+  usage: DashboardUsageDaily[],
+): DailyTokenData[] {
   const map = new Map<
     string,
     { input: number; output: number; cacheRead: number; cacheWrite: number }
@@ -131,7 +149,9 @@ export interface DashboardTokenTotals {
 // the value can over-count if the same task has tokens in two days; that's
 // acceptable for a KPI ("rough volume") and the per-agent run-time card
 // gives the precise figure.
-export function computeDailyTotals(usage: DashboardUsageDaily[]): DashboardTokenTotals {
+export function computeDailyTotals(
+  usage: DashboardUsageDaily[],
+): DashboardTokenTotals {
   return usage.reduce<DashboardTokenTotals>(
     (acc, u) => ({
       input: acc.input + u.input_tokens,
@@ -155,7 +175,9 @@ export interface AgentCostRow {
 // Fold per-(agent, model) rows into one row per agent. Cost is the sum
 // across this agent's models, which is the figure the user cares about.
 // Sort by cost desc so the heaviest spender lands first.
-export function aggregateAgentTokens(rows: DashboardUsageByAgent[]): AgentCostRow[] {
+export function aggregateAgentTokens(
+  rows: DashboardUsageByAgent[],
+): AgentCostRow[] {
   const map = new Map<string, AgentCostRow>();
   for (const r of rows) {
     const entry = map.get(r.agent_id) ?? {
@@ -165,7 +187,10 @@ export function aggregateAgentTokens(rows: DashboardUsageByAgent[]): AgentCostRo
       taskCount: 0,
     };
     entry.tokens +=
-      r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens;
+      r.input_tokens +
+      r.output_tokens +
+      r.cache_read_tokens +
+      r.cache_write_tokens;
     entry.cost += estimateCost(r);
     entry.taskCount += r.task_count;
     map.set(r.agent_id, entry);
@@ -232,6 +257,17 @@ export function mergeAgentDashboardRows(
 // placeholder instead of looking the id up in the agent list.
 export const DELETED_AGENTS_ROW_ID = "__deleted_agents__";
 
+// Synthetic agentId the SERVER sends for the bucket aggregating every agent it
+// refuses to name (MUL-5409): agents the viewer may not see, plus the hidden
+// system carriers behind agent-builder sessions, which no client can resolve to
+// a name for anyone. Mirrors `restrictedAgentsRowID` in
+// server/internal/handler/dashboard.go — the two strings must stay in sync.
+//
+// Distinct from DELETED_AGENTS_ROW_ID on purpose: those agents are gone, these
+// are alive and still running. Labelling them "Deleted agents" told the user
+// something false, which is why the bucket renders as a neutral "Other agents".
+export const RESTRICTED_AGENTS_ROW_ID = "__restricted_agents__";
+
 // Fold usage rows whose agent no longer exists in the workspace into a single
 // aggregated "Deleted agents" row instead of dropping them. The agent list is
 // fetched with `include_archived: true`, so archived agents keep their names
@@ -251,6 +287,11 @@ export const DELETED_AGENTS_ROW_ID = "__deleted_agents__";
 // `knownAgentIds` is `null` while the agent list is still loading; callers
 // pass `null` in that case so the rows pass through untouched instead of the
 // whole leaderboard collapsing into one bucket on a slow fetch.
+//
+// The server's restricted bucket is NOT in `knownAgentIds` either (it is not an
+// agent), so it is passed through explicitly rather than swept into the deleted
+// bucket. It also keeps its seconds / taskCount: unlike a hard-deleted agent it
+// really did run, and the run-time rollup folds those numbers into it.
 export function bucketUnknownAgentRows(
   rows: AgentDashboardRow[],
   knownAgentIds: ReadonlySet<string> | null,
@@ -266,7 +307,10 @@ export function bucketUnknownAgentRows(
   };
   let hasDeleted = false;
   for (const r of rows) {
-    if (knownAgentIds.has(r.agentId)) {
+    if (
+      knownAgentIds.has(r.agentId) ||
+      r.agentId === RESTRICTED_AGENTS_ROW_ID
+    ) {
       known.push(r);
       continue;
     }
@@ -337,6 +381,7 @@ export function buildAgentComparisonSeries({
 
   const visibleAgentId = (agentId: string | undefined) => {
     if (!agentId) return "";
+    if (agentId === RESTRICTED_AGENTS_ROW_ID) return agentId;
     return knownAgentIds.has(agentId) ? agentId : DELETED_AGENTS_ROW_ID;
   };
   const addValue = (date: string, agentId: string, value: number) => {
@@ -375,6 +420,15 @@ export function buildAgentComparisonSeries({
   return points;
 }
 
+// Rows the leaderboard renders as a synthetic bucket rather than an agent.
+// `deletedAgentCount` and the caption's agent count both have to exclude these,
+// or the card claims more agents (or more deletions) than it is showing.
+export function isSyntheticAgentRow(agentId: string): boolean {
+  return (
+    agentId === DELETED_AGENTS_ROW_ID || agentId === RESTRICTED_AGENTS_ROW_ID
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Weekly fold for run-time + tasks. Mirrors `aggregateByWeek` in
 // `runtimes/utils.ts` which already covers cost / tokens — same calendar
@@ -411,7 +465,10 @@ function buildWeekShells(tz: string, weekCount: number): WeekShell[] {
     // Closed weeks sit at 7; the current week reports 1..6.
     const clampedToday =
       today < weekStart ? weekStart : today < weekEnd ? today : weekEnd;
-    const elapsed = Math.min(7, Math.max(1, diffDaysIso(weekStart, clampedToday) + 1));
+    const elapsed = Math.min(
+      7,
+      Math.max(1, diffDaysIso(weekStart, clampedToday) + 1),
+    );
     shells.push({
       weekStart,
       weekEnd,
@@ -445,7 +502,10 @@ export function aggregateWeeklyTime(
     if (!totals.has(wkStart)) continue;
     totals.set(wkStart, (totals.get(wkStart) ?? 0) + r.total_seconds);
   }
-  return shells.map((s) => ({ ...s, totalSeconds: totals.get(s.weekStart) ?? 0 }));
+  return shells.map((s) => ({
+    ...s,
+    totalSeconds: totals.get(s.weekStart) ?? 0,
+  }));
 }
 
 export function aggregateWeeklyTasks(
@@ -454,28 +514,44 @@ export function aggregateWeeklyTasks(
   weekCount: number,
 ): WeeklyTasksData[] {
   const shells = buildWeekShells(tz, weekCount);
-  const buckets = new Map<string, { completed: number; failed: number }>();
+  const buckets = new Map<
+    string,
+    { completed: number; failed: number; cancelled: number }
+  >();
   for (const shell of shells)
-    buckets.set(shell.weekStart, { completed: 0, failed: 0 });
+    buckets.set(shell.weekStart, { completed: 0, failed: 0, cancelled: 0 });
   for (const r of rows) {
     const wkStart = weekStartIso(r.date);
     const bucket = buckets.get(wkStart);
     if (!bucket) continue;
     const failed = r.failed_count;
-    const completed = Math.max(0, r.task_count - failed);
+    const cancelled = r.cancelled_count;
+    const completed = Math.max(0, r.task_count - failed - cancelled);
     bucket.completed += completed;
     bucket.failed += failed;
+    bucket.cancelled += cancelled;
   }
   return shells.map((s) => {
-    const b = buckets.get(s.weekStart) ?? { completed: 0, failed: 0 };
-    return { ...s, completed: b.completed, failed: b.failed };
+    const b = buckets.get(s.weekStart) ?? {
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+    };
+    return {
+      ...s,
+      completed: b.completed,
+      failed: b.failed,
+      cancelled: b.cancelled,
+    };
   });
 }
 
 // Per-date run-time rows → one row per date with `totalSeconds` for the
 // DailyTimeChart. Sorted ascending so the x-axis reads oldest-to-newest,
 // matching the cost / tokens aggregators.
-export function aggregateDailyTime(rows: DashboardRunTimeDaily[]): DailyTimeData[] {
+export function aggregateDailyTime(
+  rows: DashboardRunTimeDaily[],
+): DailyTimeData[] {
   const totals = new Map<string, number>();
   for (const row of rows) {
     totals.set(row.date, (totals.get(row.date) ?? 0) + row.total_seconds);
@@ -489,15 +565,30 @@ export function aggregateDailyTime(rows: DashboardRunTimeDaily[]): DailyTimeData
     }));
 }
 
-// Per-date run-time rows → one row per date with `completed` and `failed`
-// counts for the DailyTasksChart's stacked bar (failed_count is a subset
-// of task_count, so completed = task_count - failed_count).
-export function aggregateDailyTasks(rows: DashboardRunTimeDaily[]): DailyTasksData[] {
-  const totals = new Map<string, { completed: number; failed: number }>();
+// Per-date run-time rows → one row per date with `completed`, `failed` and
+// `cancelled` counts for the DailyTasksChart's stacked bar. failed_count and
+// cancelled_count are disjoint subsets of task_count, so the succeeded count
+// is the remainder. Subtracting cancelled matters: without it a run the user
+// stopped would render in the green "completed" segment.
+export function aggregateDailyTasks(
+  rows: DashboardRunTimeDaily[],
+): DailyTasksData[] {
+  const totals = new Map<
+    string,
+    { completed: number; failed: number; cancelled: number }
+  >();
   for (const row of rows) {
-    const current = totals.get(row.date) ?? { completed: 0, failed: 0 };
+    const current = totals.get(row.date) ?? {
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+    };
     current.failed += row.failed_count;
-    current.completed += Math.max(0, row.task_count - row.failed_count);
+    current.cancelled += row.cancelled_count;
+    current.completed += Math.max(
+      0,
+      row.task_count - row.failed_count - row.cancelled_count,
+    );
     totals.set(row.date, current);
   }
   return Array.from(totals.entries())
@@ -507,6 +598,7 @@ export function aggregateDailyTasks(rows: DashboardRunTimeDaily[]): DailyTasksDa
       label: formatDateLabel(date),
       completed: totalsForDate.completed,
       failed: totalsForDate.failed,
+      cancelled: totalsForDate.cancelled,
     }));
 }
 
@@ -514,7 +606,10 @@ export function aggregateDailyTasks(rows: DashboardRunTimeDaily[]): DailyTasksDa
 // the dashboard run-time KPI and the per-agent run-time column. Keeps two
 // segments max — three segments adds visual noise without precision the
 // dashboard actually needs.
-export function formatDuration(seconds: number, lessThanMinuteLabel: string): string {
+export function formatDuration(
+  seconds: number,
+  lessThanMinuteLabel: string,
+): string {
   if (seconds < 0 || !Number.isFinite(seconds)) return lessThanMinuteLabel;
   if (seconds < 60) {
     if (seconds < 1) return lessThanMinuteLabel;
@@ -533,4 +628,308 @@ export function formatDuration(seconds: number, lessThanMinuteLabel: string): st
     return h > 0 ? `${days}d ${h}h` : `${days}d`;
   }
   return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+// ---------------------------------------------------------------------------
+// Failure aggregations
+//
+// The two failure rollups ship every terminal task, with `failure_reason: ""`
+// marking the succeeded bucket. Keeping successes in the same payload is what
+// lets these helpers produce an error *rate* whose numerator and denominator
+// come from identical filters — the run-time rollups can't serve as the
+// denominator because they require `started_at IS NOT NULL` and a task that
+// expired in the queue never started.
+//
+// Everything here folds raw reasons into the seven display classes from
+// `@multica/core/dashboard`; the raw reason survives only in
+// `aggregateFailureReasons`, which powers the detail rows under the class
+// summary.
+// ---------------------------------------------------------------------------
+
+function emptyClassCounts(): FailureClassCounts {
+  return Object.fromEntries(
+    FAILURE_CLASSES.map((c) => [c, 0]),
+  ) as FailureClassCounts;
+}
+
+// Fold one rollup row into a mutable accumulator. `failure_reason: ""` is the
+// succeeded bucket: it moves `total` only, never `failed` or a class.
+function foldFailureRow(
+  acc: FailureClassCounts & FailureBucketTotals,
+  reason: string,
+  count: number,
+): void {
+  acc.total += count;
+  if (reason === "") return;
+  acc.failed += count;
+  acc[failureClassOf(reason)] += count;
+}
+
+// Per-(date, reason) rows → one row per date with per-class failure counts
+// and the day's failed / total totals. Sorted date asc to match the other
+// daily aggregators.
+export function aggregateDailyErrors(
+  rows: DashboardFailureDaily[],
+): DailyErrorsData[] {
+  const map = new Map<string, FailureClassCounts & FailureBucketTotals>();
+  for (const r of rows) {
+    let entry = map.get(r.date);
+    if (!entry) {
+      entry = { ...emptyClassCounts(), failed: 0, total: 0 };
+      map.set(r.date, entry);
+    }
+    foldFailureRow(entry, r.failure_reason, r.task_count);
+  }
+  return Array.from(map.entries())
+    .toSorted(([a], [b]) => a.localeCompare(b))
+    .map(([date, counts]) => ({
+      ...counts,
+      date,
+      label: formatDateLabel(date),
+    }));
+}
+
+// Weekly counterpart. Buckets are pre-zeroed from the same week shells the
+// time / tasks weekly aggregators use, so a week with no terminal tasks
+// renders as an empty bar instead of collapsing the x-axis.
+export function aggregateWeeklyErrors(
+  rows: DashboardFailureDaily[],
+  tz: string,
+  weekCount: number,
+): WeeklyErrorsData[] {
+  const shells = buildWeekShells(tz, weekCount);
+  const buckets = new Map<string, FailureClassCounts & FailureBucketTotals>();
+  for (const shell of shells) {
+    buckets.set(shell.weekStart, {
+      ...emptyClassCounts(),
+      failed: 0,
+      total: 0,
+    });
+  }
+  for (const r of rows) {
+    const bucket = buckets.get(weekStartIso(r.date));
+    if (!bucket) continue;
+    foldFailureRow(bucket, r.failure_reason, r.task_count);
+  }
+  return shells.map((s) => ({
+    ...(buckets.get(s.weekStart) ?? {
+      ...emptyClassCounts(),
+      failed: 0,
+      total: 0,
+    }),
+    ...s,
+  }));
+}
+
+// Whole-window failure totals for the Errors KPI hint and the breakdown
+// header. `rate` is a fraction in [0, 1]; 0 when the window has no terminal
+// tasks at all.
+export interface FailureTotals {
+  failed: number;
+  total: number;
+  rate: number;
+}
+
+export function computeFailureTotals(
+  rows: { failure_reason: string; task_count: number }[],
+): FailureTotals {
+  let failed = 0;
+  let total = 0;
+  for (const r of rows) {
+    total += r.task_count;
+    if (r.failure_reason !== "") failed += r.task_count;
+  }
+  return { failed, total, rate: total > 0 ? failed / total : 0 };
+}
+
+export interface FailureClassRow {
+  failureClass: FailureClass;
+  count: number;
+}
+
+// Per-class window totals, heaviest first, zero-count classes dropped. Ties
+// break on FAILURE_CLASSES order so the list doesn't reshuffle between
+// renders when two classes sit at the same count.
+export function aggregateFailureClasses(
+  rows: { failure_reason: string; task_count: number }[],
+): FailureClassRow[] {
+  const counts = emptyClassCounts();
+  for (const r of rows) {
+    if (r.failure_reason === "") continue;
+    counts[failureClassOf(r.failure_reason)] += r.task_count;
+  }
+  return FAILURE_CLASSES.map((failureClass) => ({
+    failureClass,
+    count: counts[failureClass],
+  }))
+    .filter((r) => r.count > 0)
+    .toSorted((a, b) => b.count - a.count);
+}
+
+export interface FailureReasonRow {
+  reason: string;
+  failureClass: FailureClass;
+  count: number;
+}
+
+// Per-raw-reason window totals, heaviest first. This is the row set that
+// answers "which specific error", under the coarser class summary.
+export function aggregateFailureReasons(
+  rows: { failure_reason: string; task_count: number }[],
+): FailureReasonRow[] {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    if (r.failure_reason === "") continue;
+    counts.set(
+      r.failure_reason,
+      (counts.get(r.failure_reason) ?? 0) + r.task_count,
+    );
+  }
+  return Array.from(counts.entries())
+    .map(([reason, count]) => ({
+      reason,
+      failureClass: failureClassOf(reason),
+      count,
+    }))
+    .toSorted((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+}
+
+// Synthetic agentId for the row aggregating every agent the viewer can't
+// resolve to a name. Distinct from DELETED_AGENTS_ROW_ID because this bucket
+// covers two populations at once: hard-deleted agents, and the server's
+// already-anonymized restricted bucket. Naming it after deletion would be a
+// lie for the second group, so the Errors card labels it neutrally
+// ("Other agents"), which is honest for both.
+export const UNRESOLVED_AGENTS_ROW_ID = "__unresolved_agents__";
+
+export interface AgentFailureRow {
+  agentId: string;
+  failed: number;
+  total: number;
+  rate: number;
+  // Full per-class split of this agent's failures, which the offender row
+  // draws as a stacked bar. Carries the whole composition rather than just
+  // the heaviest class: "fails one way" and "fails five ways" are different
+  // problems, and a single dominant-class label collapsed them into the same
+  // row. Every class is present (0 when unused) so the bar can be built
+  // without existence checks.
+  classes: FailureClassCounts;
+}
+
+// Per-agent failure totals, worst first. Default order is absolute failure
+// count: an agent with 1/1 failed is a 100% rate but is rarely the thing an
+// operator should look at before the agent that failed 40 times. The rate
+// rides along on the row, and `sortAgentFailures` can re-rank on it.
+//
+// Agents with zero failures are dropped — this list is a triage aid, not a
+// census; the leaderboard above it already shows every agent.
+export function aggregateAgentFailures(
+  rows: DashboardFailureByAgent[],
+): AgentFailureRow[] {
+  const map = new Map<
+    string,
+    { failed: number; total: number; classes: FailureClassCounts }
+  >();
+  for (const r of rows) {
+    let entry = map.get(r.agent_id);
+    if (!entry) {
+      entry = { failed: 0, total: 0, classes: emptyClassCounts() };
+      map.set(r.agent_id, entry);
+    }
+    entry.total += r.task_count;
+    if (r.failure_reason === "") continue;
+    entry.failed += r.task_count;
+    entry.classes[failureClassOf(r.failure_reason)] += r.task_count;
+  }
+  return sortAgentFailures(
+    Array.from(map.entries())
+      .filter(([, v]) => v.failed > 0)
+      .map(([agentId, v]) => ({
+        agentId,
+        failed: v.failed,
+        total: v.total,
+        rate: v.total > 0 ? v.failed / v.total : 0,
+        classes: v.classes,
+      })),
+    "failed",
+  );
+}
+
+// Which metric ranks the offender list, and therefore how long its bars are.
+// The two used to disagree: the list ranked on absolute failures while the
+// most prominent number on the row was the rate, so the bar looked like it
+// measured a percentage it had nothing to do with. Mirrors LeaderboardSort's
+// contract — sort metric, bar length and the emphasised column move together.
+export type OffenderSort = "failed" | "rate";
+
+export const OFFENDER_METRIC: Record<
+  OffenderSort,
+  (r: AgentFailureRow) => number
+> = {
+  failed: (r) => r.failed,
+  rate: (r) => r.rate,
+};
+
+// Minimum terminal runs before an agent's failure rate is allowed to compete
+// on the Rate ranking. One run that failed is a 100% rate, and without a floor
+// that row wins outright and buries every agent worth looking at.
+//
+// Small-sample rows are demoted, NOT hidden: this list has to keep reconciling
+// with the workspace failure count above it, and an agent that failed its only
+// two runs is still a real thing an operator may want to see.
+export const MIN_RATE_SAMPLE = 10;
+
+export function hasRateSample(row: AgentFailureRow): boolean {
+  return row.total >= MIN_RATE_SAMPLE;
+}
+
+// Re-rank the offender rows for the selected metric. Ties break on the other
+// metric so an equal-valued bucket keeps a stable, meaningful order instead of
+// reshuffling on every render.
+export function sortAgentFailures(
+  rows: AgentFailureRow[],
+  sortBy: OffenderSort,
+): AgentFailureRow[] {
+  if (sortBy === "failed") {
+    return rows.toSorted((a, b) => b.failed - a.failed || b.rate - a.rate);
+  }
+  const sample = (r: AgentFailureRow) => (hasRateSample(r) ? 0 : 1);
+  return rows.toSorted(
+    (a, b) => sample(a) - sample(b) || b.rate - a.rate || b.failed - a.failed,
+  );
+}
+
+// Fold rows whose agent the viewer cannot resolve into one aggregated bucket
+// so the Errors list never renders a bare agent UUID.
+//
+// The privacy boundary itself now lives on the server: GetDashboardFailuresByAgent
+// folds agents the caller may not view onto RESTRICTED_AGENTS_ROW_ID before
+// serializing (MUL-5409), because client-side filtering is decoration — one
+// curl bypasses it. This function stays as the display-side backstop: it still
+// owns hard-deleted agents, whose ids the server has no reason to hide but
+// which resolve to no name, and it re-anonymizes the server's bucket into the
+// same neutral row so the card has one "not an agent you can open" case.
+//
+// `knownAgentIds` is null while the agent list is still loading. Unlike
+// `bucketUnknownAgentRows`, which passes rows through in that window, this
+// one anonymizes them: a transient flash of UUIDs is exactly the leak the
+// function exists to prevent, and one merged row for a few hundred
+// milliseconds is the cheaper failure.
+//
+// This rewrites the RAW per-(agent, reason) rows rather than merging the
+// aggregated ones, so the bucket is just another agent_id by the time
+// `aggregateAgentFailures` runs: its totals, rate, class split and rank all
+// come out of the same code path as every other row. Merging aggregated rows
+// would mean re-deriving `total` and `rate` by hand at the merge site — a
+// second, easily-skewed copy of arithmetic that already exists once.
+export function anonymizeUnresolvedAgentRows(
+  rows: DashboardFailureByAgent[],
+  knownAgentIds: ReadonlySet<string> | null,
+): DashboardFailureByAgent[] {
+  if (!rows.some((r) => !knownAgentIds?.has(r.agent_id))) return rows;
+  return rows.map((r) =>
+    knownAgentIds?.has(r.agent_id)
+      ? r
+      : { ...r, agent_id: UNRESOLVED_AGENTS_ROW_ID },
+  );
 }

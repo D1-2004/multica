@@ -209,16 +209,16 @@ func TestWritePiMCPConfigRequiresOwnerOnlyTaskTempDir(t *testing.T) {
 	}
 }
 
-func TestAddPiManagedExtensionArgKeepsPromptLast(t *testing.T) {
-	got := addPiManagedExtensionArg([]string{"-p", "--mode", "json", "prompt"}, "/opt/multica-pi-mcp/index.mjs")
-	want := []string{"-p", "--mode", "json", "--no-extensions", "--extension", "/opt/multica-pi-mcp/index.mjs", "prompt"}
+func TestAddPiManagedExtensionArgPrecedesNativeImageInputs(t *testing.T) {
+	got := addPiManagedExtensionArg([]string{"-p", "--mode", "json", "@/tmp/input.png"}, "/opt/multica-pi-mcp/index.mjs")
+	want := []string{"-p", "--mode", "json", "--no-extensions", "--extension", "/opt/multica-pi-mcp/index.mjs", "@/tmp/input.png"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("args = %#v, want %#v", got, want)
 	}
 }
 
 func TestBuildPiArgsManagedMCPBlocksUntrustedExtensions(t *testing.T) {
-	args := buildPiArgs("prompt", "/tmp/s.jsonl", ExecOptions{
+	args := buildPiArgs("/tmp/s.jsonl", ExecOptions{
 		McpConfig: json.RawMessage(`{"mcpServers":{}}`),
 		CustomArgs: []string{
 			"--extension", "/tmp/untrusted.mjs",

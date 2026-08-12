@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -50,6 +51,13 @@ var daemonStatusCmd = &cobra.Command{
 	RunE:  runDaemonStatus,
 }
 
+var daemonProbeRuntimesCmd = &cobra.Command{
+	Use:    "probe-runtimes",
+	Short:  "Probe locally configured runtimes for the Desktop app",
+	Hidden: true,
+	RunE:   runDaemonProbeRuntimes,
+}
+
 var daemonRunOnceCmd = &cobra.Command{
 	Use:    "run-once",
 	Short:  "Claim and run one task without registering or heartbeating",
@@ -81,7 +89,12 @@ var daemonDiskUsageCmd = &cobra.Command{
 		"applies within each root and --workspaces-root is not allowed.\n\n" +
 		"Bytes are split into total and the artifact-cleanable subset (node_modules, .next, .turbo by default,\n" +
 		"overridable via MULTICA_GC_ARTIFACT_PATTERNS) so the report stays in sync with what the GC reclaims.\n" +
-		"The walk skips .git and never follows symlinks. The daemon does not need to be running.",
+		"A .git directory counts toward the total but never toward the artifact subset — the GC frees it only\n" +
+		"when it removes the whole task directory. Symlinks are never followed.\n\n" +
+		"The STATUS column shows the current status of the issue each directory belongs to, which requires\n" +
+		"contacting the server. When the machine is offline, logged out, or the request fails, the column is\n" +
+		"left blank and the rest of the report still prints. --by-workspace has no STATUS column and therefore\n" +
+		"makes no network request unless --output json is also set. The daemon does not need to be running.",
 	RunE: runDaemonDiskUsage,
 }
 
@@ -99,6 +112,7 @@ func init() {
 	f.Int("max-concurrent-tasks", 0, "Max tasks running in parallel (env: MULTICA_DAEMON_MAX_CONCURRENT_TASKS)")
 	f.Bool("no-auto-update", false, "Disable periodic CLI self-update (env: MULTICA_DAEMON_AUTO_UPDATE=false)")
 	f.Duration("auto-update-interval", 0, "How often to poll GitHub for a newer release (env: MULTICA_DAEMON_AUTO_UPDATE_INTERVAL)")
+	f.Bool("no-auto-reload", false, "Disable restarting when the multica binary on disk changes version (env: MULTICA_DAEMON_AUTO_RELOAD=false)")
 
 	daemonLogsCmd.Flags().BoolP("follow", "f", false, "Follow log output")
 	daemonLogsCmd.Flags().IntP("lines", "n", 50, "Number of lines to show")
@@ -128,6 +142,7 @@ func init() {
 	rf.Int("max-concurrent-tasks", 0, "Max tasks running in parallel (env: MULTICA_DAEMON_MAX_CONCURRENT_TASKS)")
 	rf.Bool("no-auto-update", false, "Disable periodic CLI self-update (env: MULTICA_DAEMON_AUTO_UPDATE=false)")
 	rf.Duration("auto-update-interval", 0, "How often to poll GitHub for a newer release (env: MULTICA_DAEMON_AUTO_UPDATE_INTERVAL)")
+	rf.Bool("no-auto-reload", false, "Disable restarting when the multica binary on disk changes version (env: MULTICA_DAEMON_AUTO_RELOAD=false)")
 
 	df := daemonDiskUsageCmd.Flags()
 	df.Bool("by-workspace", false, "Aggregate output by workspace instead of by task")
@@ -142,8 +157,42 @@ func init() {
 	daemonCmd.AddCommand(daemonRestartCmd)
 	daemonCmd.AddCommand(daemonStatusCmd)
 	daemonCmd.AddCommand(daemonRunOnceCmd)
+	daemonCmd.AddCommand(daemonProbeRuntimesCmd)
 	daemonCmd.AddCommand(daemonLogsCmd)
 	daemonCmd.AddCommand(daemonDiskUsageCmd)
+}
+
+type daemonRuntimeProbe struct {
+	ProbeResult     string         `json:"probe_result"`
+	RuntimeCount    int            `json:"runtime_count"`
+	ProviderSummary map[string]int `json:"provider_summary"`
+}
+
+func runDaemonProbeRuntimes(cmd *cobra.Command, _ []string) error {
+	if err := requireHumanLocalCommand("daemon probe-runtimes"); err != nil {
+		return err
+	}
+	cfg, err := daemon.LoadConfig(daemon.Overrides{
+		Profile:       resolveProfile(cmd),
+		AllowNoAgents: true,
+	})
+	if err != nil {
+		return err
+	}
+	probe := daemonRuntimeProbeFromAgents(cfg.Agents)
+	return json.NewEncoder(cmd.OutOrStdout()).Encode(probe)
+}
+
+func daemonRuntimeProbeFromAgents(agents map[string]daemon.AgentEntry) daemonRuntimeProbe {
+	probe := daemonRuntimeProbe{
+		ProbeResult:     "success",
+		RuntimeCount:    len(agents),
+		ProviderSummary: make(map[string]int, len(agents)),
+	}
+	for provider := range agents {
+		probe.ProviderSummary[provider]++
+	}
+	return probe
 }
 
 // daemonDirForProfile returns the state directory for the given profile.
@@ -251,9 +300,176 @@ func healthPortForProfile(profile string) int {
 	return daemon.DefaultHealthPort + 1 + (h % 1000)
 }
 
+// unknownProfileError reports an explicitly named --profile that has no
+// directory under ~/.multica/profiles. It carries the known profile names so
+// both the text and JSON renderings can list them without re-reading the disk.
+type unknownProfileError struct {
+	Profile string
+	Known   []string
+}
+
+func (e *unknownProfileError) Error() string {
+	if len(e.Known) == 0 {
+		// The command is left unquoted so the shell-quoted profile name below
+		// stays the only quoting in the line and the hint pastes cleanly.
+		return fmt.Sprintf("unknown profile %q: no named profiles exist yet.\nCreate one with: multica login --profile %s", e.Profile, shellQuoteArg(e.Profile))
+	}
+	return fmt.Sprintf("unknown profile %q\nKnown profiles: %s", e.Profile, strings.Join(e.Known, ", "))
+}
+
+// jsonPayload renders the error for `--output json`. Known stays a non-nil
+// slice so the field marshals as [] rather than null.
+func (e *unknownProfileError) jsonPayload() map[string]any {
+	known := e.Known
+	if known == nil {
+		known = []string{}
+	}
+	return map[string]any{
+		"status":         "unknown_profile",
+		"profile":        e.Profile,
+		"known_profiles": known,
+	}
+}
+
+// profileConfigFileName is the file whose presence marks a directory under the
+// profiles root as an actual profile rather than just a parent of one. Kept in
+// step with cli.CLIConfigPathForProfile.
+const profileConfigFileName = "config.json"
+
+// profileExists reports whether an explicitly named profile has state on disk.
+//
+// The name is resolved through the same path logic the config layer uses
+// rather than matched against a flat directory listing, because a profile name
+// may contain separators: `multica --profile team/dev config set ...` creates
+// ~/.multica/profiles/team/dev. Matching against top-level entries would
+// reject that profile while offering its parent "team" as a suggestion.
+func profileExists(profile string) (bool, error) {
+	dir, err := cli.ProfileDir(profile)
+	if err != nil {
+		return false, err
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return info.IsDir(), nil
+}
+
+// knownProfiles lists the profiles that exist on disk, sorted by name, for use
+// as suggestions after a name misses. A profile is a directory under the
+// profiles root holding a config.json, at any depth — requiring that file is
+// what keeps a bare parent directory such as "team" out of a list where every
+// entry is meant to be directly usable as --profile.
+//
+// A missing profiles root is not an error: it just means no named profile has
+// been created yet, the common case for a default-profile-only user.
+func knownProfiles() ([]string, error) {
+	root, err := profilesRootDir()
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0)
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			// An unreadable subtree costs us suggestions, not correctness:
+			// skip it so the rest of the list still reaches the user.
+			if d != nil && d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() || d.Name() != profileConfigFileName {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, filepath.Dir(path))
+		if relErr != nil || rel == "." {
+			return nil
+		}
+		names = append(names, filepath.ToSlash(rel))
+		return nil
+	})
+	if walkErr != nil {
+		if os.IsNotExist(walkErr) {
+			return nil, nil
+		}
+		return nil, walkErr
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// requireKnownProfile rejects an explicitly named profile that does not exist.
+//
+// healthPortForProfile hashes ANY string into a port, so without this check a
+// mistyped --profile probes a port nothing is bound to and the command reports
+// a flat "stopped" — indistinguishable from a daemon that is genuinely not
+// running, even while the correctly-named daemon serves happily on another
+// port (#6694). Failing loudly with the known names turns that dead end into a
+// one-glance fix.
+//
+// The default profile is never validated: it owns ~/.multica directly, has no
+// entry under profiles/, and is always legitimate.
+//
+// Callers must invoke this AFTER their daemon-managed-task guard
+// (requireHumanLocalCommand, or daemonStatusHealthPort for status). Listing the
+// profiles root inside a task would disclose the Owner's profile names, which
+// those guards exist to prevent.
+func requireKnownProfile(profile string) error {
+	if profile == "" {
+		return nil
+	}
+	exists, err := profileExists(profile)
+	if err != nil {
+		return fmt.Errorf("resolve profile %q: %w", profile, err)
+	}
+	if exists {
+		return nil
+	}
+	// Only now is the listing worth its disk walk, and only now can it be
+	// wrong in a way the user sees.
+	names, err := knownProfiles()
+	if err != nil {
+		return fmt.Errorf("list profiles: %w", err)
+	}
+	return &unknownProfileError{Profile: profile, Known: names}
+}
+
 // --- daemon start ---
 
+// daemonExecutable resolves the binary to spawn as the background daemon
+// child. Tests override it: spawning the resolved executable there would fork
+// the test binary itself, which ignores the daemon args and re-runs the suite.
+var daemonExecutable = selfexec.Resolve
+
+// requireDaemonAuth fails fast when the user never ran `multica login`. The
+// daemon child performs the same check (resolveAuth) and dies immediately,
+// but the background parent can't see that exit — it would poll the health
+// port for the full 45s readiness window and then print a vague "check logs"
+// warning. Checking before spawning turns that silent stall into an
+// immediate, actionable error. Mirrors daemon.resolveAuth: the daemon only
+// authenticates via the stored config token, never MULTICA_TOKEN.
+func requireDaemonAuth(profile string) error {
+	cfg, err := cli.LoadCLIConfigForProfile(profile)
+	if err != nil {
+		return fmt.Errorf("load CLI config: %w", err)
+	}
+	if cfg.Token == "" {
+		loginHint := "multica login"
+		if profile != "" {
+			loginHint = fmt.Sprintf("multica login --profile %s", profile)
+		}
+		return fmt.Errorf("you are not logged in. Run '%s' first, then start the daemon", loginHint)
+	}
+	return nil
+}
+
 func runDaemonStart(cmd *cobra.Command, _ []string) error {
+	if err := requireHumanLocalCommand("daemon start"); err != nil {
+		return err
+	}
 	foreground, _ := cmd.Flags().GetBool("foreground")
 	if foreground {
 		return runDaemonForeground(cmd)
@@ -278,8 +494,12 @@ func runDaemonBackground(cmd *cobra.Command) error {
 		return fmt.Errorf("%s is already running (pid %v). Use 'daemon restart' to restart it", label, int(pid))
 	}
 
+	if err := requireDaemonAuth(profile); err != nil {
+		return err
+	}
+
 	// Resolve current executable so the foreground child reuses this binary.
-	exePath, err := selfexec.Resolve()
+	exePath, err := daemonExecutable()
 	if err != nil {
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
@@ -305,6 +525,18 @@ func runDaemonBackground(cmd *cobra.Command) error {
 	// Where the daemon's structured logs actually land (rotated), for the
 	// user-facing hints below.
 	logPath := daemonLogPathForProfile(profile)
+
+	// Remember where both logs end now so an early-death report below can show
+	// only what THIS startup attempt wrote, not stale history. The err-log
+	// offset is taken after openBoundedErrLog, which may have rolled the file.
+	var logOffset int64
+	if info, statErr := os.Stat(logPath); statErr == nil {
+		logOffset = info.Size()
+	}
+	var errLogOffset int64
+	if info, statErr := os.Stat(errLogPath); statErr == nil {
+		errLogOffset = info.Size()
+	}
 
 	child := exec.Command(exePath, args...)
 	child.Stdout = logFile
@@ -336,8 +568,15 @@ func runDaemonBackground(cmd *cobra.Command) error {
 	logFile.Close()
 	pid := child.Process.Pid
 
-	// Detach: we don't Wait() on the child — it runs independently.
-	child.Process.Release()
+	// Watch for early death instead of Release()ing right away: a child that
+	// fails preflight (unreachable server, token rejected with 401, ...) exits
+	// within seconds, and without this signal the readiness poll below would
+	// blindly run out its full window before printing a vague warning. The
+	// goroutine leaks Wait() for the (short) remainder of this process when
+	// the daemon starts fine — the child is never killed by it and keeps
+	// running independently, same as with Release().
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- child.Wait() }()
 
 	// Write PID file.
 	pidPath := daemonPIDPathForProfile(profile)
@@ -356,7 +595,16 @@ func runDaemonBackground(cmd *cobra.Command) error {
 	started := false
 	lastStatus := ""
 	for time.Now().Before(deadline) {
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case waitErr := <-waitCh:
+			return daemonStartupFailureError(daemonStartupLogs{
+				logPath:      logPath,
+				logOffset:    logOffset,
+				errLogPath:   errLogPath,
+				errLogOffset: errLogOffset,
+			}, waitErr, profile, resolveDaemonServerURL(cmd, profile))
+		case <-time.After(500 * time.Millisecond):
+		}
 		hctx, hcancel := context.WithTimeout(context.Background(), 2*time.Second)
 		health = checkDaemonHealthOnPort(hctx, healthPort)
 		hcancel()
@@ -382,6 +630,144 @@ func runDaemonBackground(cmd *cobra.Command) error {
 	}
 	fmt.Fprintf(os.Stderr, "Logs: %s\n", logPath)
 	return nil
+}
+
+// resolveDaemonServerURL resolves the server URL the daemon will talk to,
+// in the same precedence order the foreground daemon uses: --server-url flag,
+// MULTICA_SERVER_URL env, then the stored CLI config for the profile.
+func resolveDaemonServerURL(cmd *cobra.Command, profile string) string {
+	serverURL := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL", "")
+	if serverURL == "" {
+		if c, err := cli.LoadCLIConfigForProfile(profile); err == nil && c.ServerURL != "" {
+			serverURL = c.ServerURL
+		}
+	}
+	return serverURL
+}
+
+// daemonStartupLogs names the two sinks a failed startup attempt may have
+// written to: the child's structured slog output lands in the rotating
+// daemon.log, while raw stderr — Go panics and the final cobra "Error: ..."
+// line — lands in the crash sink (daemon.err.log). Both carry an offset
+// recorded before the spawn so the report covers only this attempt.
+type daemonStartupLogs struct {
+	logPath      string
+	logOffset    int64
+	errLogPath   string
+	errLogOffset int64
+}
+
+// daemonStartupFailureError turns a daemon child that exited before ever
+// reporting ready into a friendly, actionable error. The two failure modes
+// users actually hit — stored token rejected by the server, server not
+// reachable — are recognized from what this startup attempt appended to the
+// structured log and the crash sink, and rendered as one reason line plus a
+// next step. Anything else falls back to a log excerpt with DBG/INF noise
+// dropped.
+func daemonStartupFailureError(logs daemonStartupLogs, waitErr error, profile, serverURL string) error {
+	lines := readLogTailSince(logs.logPath, logs.logOffset, 40)
+	crashLines := readLogTailSince(logs.errLogPath, logs.errLogOffset, 40)
+	joined := strings.Join(append(append([]string{}, lines...), crashLines...), "\n")
+
+	loginHint := "multica login"
+	if profile != "" {
+		loginHint += " --profile " + profile
+	}
+
+	switch {
+	case strings.Contains(joined, "auth token rejected") ||
+		strings.Contains(joined, "returned 401") ||
+		strings.Contains(joined, "not authenticated"):
+		return fmt.Errorf("daemon failed to start: the server rejected your login token (it may have expired or been revoked).\nRun '%s' to sign in again, then rerun 'multica daemon start'.\nFull log: %s", loginHint, logs.logPath)
+	case strings.Contains(joined, "connection refused") ||
+		strings.Contains(joined, "no such host") ||
+		strings.Contains(joined, "i/o timeout") ||
+		strings.Contains(joined, "network is unreachable"):
+		target := "the Multica server"
+		if serverURL != "" {
+			target += " at " + serverURL
+		}
+		return fmt.Errorf("daemon failed to start: cannot reach %s.\nMake sure the server is running and reachable, then rerun 'multica daemon start'.\nFull log: %s", target, logs.logPath)
+	}
+
+	var b strings.Builder
+	if exitErr := (&exec.ExitError{}); errors.As(waitErr, &exitErr) {
+		fmt.Fprintf(&b, "daemon exited during startup (%s).", exitErr)
+	} else {
+		b.WriteString("daemon exited during startup.")
+	}
+	excerpt := filterDaemonLogNoise(lines, 5)
+	// Crash output is already raw (panics, the final cobra error line) — no
+	// noise filter, just cap it like the structured excerpt.
+	if len(crashLines) > 5 {
+		crashLines = crashLines[len(crashLines)-5:]
+	}
+	excerpt = append(excerpt, crashLines...)
+	if len(excerpt) > 0 {
+		b.WriteString("\nLog output:")
+		for _, line := range excerpt {
+			fmt.Fprintf(&b, "\n  %s", line)
+		}
+	}
+	fmt.Fprintf(&b, "\nFull log: %s", logs.logPath)
+	if len(crashLines) > 0 {
+		fmt.Fprintf(&b, "\nCrash output: %s", logs.errLogPath)
+	}
+	return errors.New(b.String())
+}
+
+// filterDaemonLogNoise drops DBG/INF log lines from an excerpt, keeping
+// WRN/ERR entries and plain (non-slog) lines such as the final error the
+// child printed before exiting, capped to the last max lines.
+func filterDaemonLogNoise(lines []string, max int) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.Contains(line, " DBG ") || strings.Contains(line, " INF ") {
+			continue
+		}
+		out = append(out, line)
+	}
+	if len(out) > max {
+		out = out[len(out)-max:]
+	}
+	return out
+}
+
+// readLogTailSince returns up to maxLines of the log content appended after
+// sinceOffset. Reads are capped at 64 KiB so a huge burst can't balloon the
+// error report; on any read problem it returns nil and the caller just points
+// at the log file instead.
+func readLogTailSince(logPath string, sinceOffset int64, maxLines int) []string {
+	f, err := os.Open(logPath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	const readCap = 64 * 1024
+	if info, err := f.Stat(); err == nil && info.Size()-sinceOffset > readCap {
+		sinceOffset = info.Size() - readCap
+	}
+	if _, err := f.Seek(sinceOffset, io.SeekStart); err != nil {
+		return nil
+	}
+	data, err := io.ReadAll(io.LimitReader(f, readCap))
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	out := make([]string, 0, maxLines)
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	if len(out) > maxLines {
+		out = out[len(out)-maxLines:]
+	}
+	return out
 }
 
 // buildDaemonStartArgs constructs args for the background child process.
@@ -424,6 +810,9 @@ func buildDaemonStartArgs(cmd *cobra.Command) []string {
 	if d, _ := cmd.Flags().GetDuration("auto-update-interval"); d > 0 {
 		args = append(args, "--auto-update-interval", d.String())
 	}
+	if b, _ := cmd.Flags().GetBool("no-auto-reload"); b {
+		args = append(args, "--no-auto-reload")
+	}
 
 	// Forward global persistent flags.
 	if v, _ := cmd.Flags().GetString("server-url"); v != "" {
@@ -441,6 +830,12 @@ func runDaemonForeground(cmd *cobra.Command) error {
 
 	profile := resolveProfile(cmd)
 
+	// Load the profile config once — several daemon knobs fall back to
+	// values persisted here when both the CLI flag and the env var are
+	// unset. Errors reading the config are non-fatal for anything other
+	// than server URL: an unreadable / missing config only means "no
+	// persisted overrides", not "cannot start".
+	fileCfg, _ := cli.LoadCLIConfigForProfile(profile)
 	// Pick the log sink. A user who runs `daemon start --foreground` in a shell
 	// keeps live, colored logging on their terminal (a documented debugging
 	// path — see docs troubleshooting). A detached/background child, whose
@@ -469,46 +864,105 @@ func runDaemonForeground(cmd *cobra.Command) error {
 		logger = logger_pkg.NewWriterLoggerDefault("daemon", logRotator)
 	}
 
-	serverURL := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL", "")
-	if serverURL == "" {
-		if c, err := cli.LoadCLIConfigForProfile(profile); err == nil && c.ServerURL != "" {
-			serverURL = c.ServerURL
-		}
-	}
+	serverURL := resolveDaemonServerURL(cmd, profile)
+	// Each persistable daemon knob follows the same three-tier precedence:
+	//
+	//   --flag  >  MULTICA_… env  >  config.json  >  built-in default
+	//
+	// The flag/env pair is resolved inside daemon.LoadConfig (via
+	// Overrides + envOrDefault). Here we only substitute the config-file
+	// value when BOTH the flag AND the env are unset, so a live env
+	// override (typical for systemd units) always wins over the file. This
+	// matches server_url's precedence above and resolves #3824.
+	deviceNameFlag := resolveDaemonStringOverride(
+		flagString(cmd, "device-name"),
+		"MULTICA_DAEMON_DEVICE_NAME",
+		fileCfg.DeviceName,
+	)
+	runtimeNameFlag := resolveDaemonStringOverride(
+		flagString(cmd, "runtime-name"),
+		"MULTICA_AGENT_RUNTIME_NAME",
+		fileCfg.RuntimeName,
+	)
+
 	overrides := daemon.Overrides{
 		ServerURL:   serverURL,
 		DaemonID:    flagString(cmd, "daemon-id"),
-		DeviceName:  flagString(cmd, "device-name"),
-		RuntimeName: flagString(cmd, "runtime-name"),
+		DeviceName:  deviceNameFlag,
+		RuntimeName: runtimeNameFlag,
 		Profile:     profile,
 		HealthPort:  healthPortForProfile(profile),
 	}
-	if d, _ := cmd.Flags().GetDuration("poll-interval"); d > 0 {
-		overrides.PollInterval = d
+	pollFlag, _ := cmd.Flags().GetDuration("poll-interval")
+	pollOverride, err := resolveDaemonDurationOverride(pollFlag, "MULTICA_DAEMON_POLL_INTERVAL", fileCfg.PollInterval)
+	if err != nil {
+		return err
 	}
-	if d, _ := cmd.Flags().GetDuration("heartbeat-interval"); d > 0 {
-		overrides.HeartbeatInterval = d
+	if pollOverride > 0 {
+		overrides.PollInterval = pollOverride
+	}
+	heartbeatFlag, _ := cmd.Flags().GetDuration("heartbeat-interval")
+	heartbeatOverride, err := resolveDaemonDurationOverride(heartbeatFlag, "MULTICA_DAEMON_HEARTBEAT_INTERVAL", fileCfg.HeartbeatInterval)
+	if err != nil {
+		return err
+	}
+	if heartbeatOverride > 0 {
+		overrides.HeartbeatInterval = heartbeatOverride
 	}
 	// Distinguish "flag not passed" from an explicit `--agent-timeout 0` so a
-	// user can turn off an env-configured cap from the CLI.
-	if cmd.Flags().Changed("agent-timeout") {
-		d, _ := cmd.Flags().GetDuration("agent-timeout")
-		overrides.AgentTimeout = &d
+	// user can turn off an env-configured cap from the CLI. The persisted
+	// config.json value uses the same tri-state (see cli.CLIConfig.AgentTimeout)
+	// so `config set agent_timeout 0s` can survive daemon restarts.
+	agentTimeoutOverride, err := resolveDaemonAgentTimeoutOverride(cmd, "MULTICA_AGENT_TIMEOUT", fileCfg.AgentTimeout)
+	if err != nil {
+		return err
 	}
-	if d, _ := cmd.Flags().GetDuration("codex-semantic-inactivity-timeout"); d > 0 {
-		overrides.CodexSemanticInactivityTimeout = d
+	if agentTimeoutOverride != nil {
+		overrides.AgentTimeout = agentTimeoutOverride
 	}
-	if d, _ := cmd.Flags().GetDuration("codex-handshake-timeout"); d > 0 {
-		overrides.CodexHandshakeTimeout = d
+	semanticFlag, _ := cmd.Flags().GetDuration("codex-semantic-inactivity-timeout")
+	semanticOverride, err := resolveDaemonDurationOverride(semanticFlag, "MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", fileCfg.CodexSemanticInactivityTimeout)
+	if err != nil {
+		return err
 	}
-	if n, _ := cmd.Flags().GetInt("max-concurrent-tasks"); n > 0 {
+	if semanticOverride > 0 {
+		overrides.CodexSemanticInactivityTimeout = semanticOverride
+	}
+	handshakeFlag, _ := cmd.Flags().GetDuration("codex-handshake-timeout")
+	handshakeOverride, err := resolveDaemonDurationOverride(handshakeFlag, "MULTICA_CODEX_HANDSHAKE_TIMEOUT", fileCfg.CodexHandshakeTimeout)
+	if err != nil {
+		return err
+	}
+	if handshakeOverride > 0 {
+		overrides.CodexHandshakeTimeout = handshakeOverride
+	}
+	maxFlag, _ := cmd.Flags().GetInt("max-concurrent-tasks")
+	if n := resolveDaemonIntOverride(maxFlag, "MULTICA_DAEMON_MAX_CONCURRENT_TASKS", fileCfg.MaxConcurrentTasks); n > 0 {
 		overrides.MaxConcurrentTasks = n
 	}
-	if b, _ := cmd.Flags().GetBool("no-auto-update"); b {
+	// --no-auto-update / MULTICA_DAEMON_AUTO_UPDATE=false / config.json
+	// disable_auto_update are all single-direction: none of them can force
+	// auto-update *on*, they can only turn it off. Env "true" is not
+	// treated as an override signal here — LoadConfig honors the raw env
+	// itself for the affirmative case.
+	noAutoUpdateFlag, _ := cmd.Flags().GetBool("no-auto-update")
+	if resolveDaemonDisableSignal(noAutoUpdateFlag, "MULTICA_DAEMON_AUTO_UPDATE", fileCfg.DisableAutoUpdate) {
 		overrides.DisableAutoUpdate = true
 	}
-	if d, _ := cmd.Flags().GetDuration("auto-update-interval"); d > 0 {
-		overrides.AutoUpdateCheckInterval = d
+	// Same single-direction shape for the on-disk version watcher, resolved
+	// through its own env var: turning off GitHub polling must not also stop the
+	// daemon from following a binary the operator replaced by hand.
+	noAutoReloadFlag, _ := cmd.Flags().GetBool("no-auto-reload")
+	if resolveDaemonDisableSignal(noAutoReloadFlag, "MULTICA_DAEMON_AUTO_RELOAD", fileCfg.DisableAutoReload) {
+		overrides.DisableAutoReload = true
+	}
+	autoUpdateFlag, _ := cmd.Flags().GetDuration("auto-update-interval")
+	autoUpdateOverride, err := resolveDaemonDurationOverride(autoUpdateFlag, "MULTICA_DAEMON_AUTO_UPDATE_INTERVAL", fileCfg.AutoUpdateCheckInterval)
+	if err != nil {
+		return err
+	}
+	if autoUpdateOverride > 0 {
+		overrides.AutoUpdateCheckInterval = autoUpdateOverride
 	}
 
 	cfg, err := daemon.LoadConfig(overrides)
@@ -675,15 +1129,76 @@ func runDaemonRunOnce(cmd *cobra.Command, _ []string) error {
 
 // --- daemon restart ---
 
+// requireDaemonRestartPreflight validates, before a running daemon is
+// stopped, that its replacement could actually start. requireDaemonAuth's
+// empty-token check is not enough here: a stored token can be expired or
+// revoked, and the server can be unreachable — either passes the local check,
+// kills the working daemon in the stop phase, and then fails the replacement
+// child's preflight, leaving no daemon at all (#5165). So probe the server
+// the daemon will talk to with the stored token (same whoami call as
+// `multica auth status`) and refuse to touch the running daemon on failure.
+func requireDaemonRestartPreflight(cmd *cobra.Command, profile string) error {
+	if err := requireDaemonAuth(profile); err != nil {
+		return err
+	}
+	cfg, err := cli.LoadCLIConfigForProfile(profile)
+	if err != nil {
+		return fmt.Errorf("load CLI config: %w", err)
+	}
+
+	rawURL := resolveDaemonServerURL(cmd, profile)
+	if rawURL == "" {
+		rawURL = daemon.DefaultServerURL
+	}
+	baseURL, err := daemon.NormalizeServerBaseURL(rawURL)
+	if err != nil {
+		return fmt.Errorf("refusing to restart: invalid server URL %q: %w", rawURL, err)
+	}
+
+	loginHint := "multica login"
+	if profile != "" {
+		loginHint += " --profile " + profile
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	if err := cli.NewAPIClient(baseURL, "", cfg.Token).GetJSON(ctx, "/api/me", nil); err != nil {
+		var httpErr *cli.HTTPError
+		if errors.As(err, &httpErr) {
+			if httpErr.StatusCode == http.StatusUnauthorized {
+				return fmt.Errorf("refusing to restart: the server rejected your login token (it may have expired or been revoked); the running daemon was left untouched.\nRun '%s' to sign in again, then rerun 'multica daemon restart'", loginHint)
+			}
+			return fmt.Errorf("refusing to restart: preflight check against %s failed (%w); the running daemon was left untouched", baseURL, err)
+		}
+		return fmt.Errorf("refusing to restart: cannot reach the Multica server at %s (%w); the running daemon was left untouched.\nMake sure the server is running and reachable, then rerun 'multica daemon restart'", baseURL, err)
+	}
+	return nil
+}
+
 func runDaemonRestart(cmd *cobra.Command, args []string) error {
+	if err := requireHumanLocalCommand("daemon restart"); err != nil {
+		return err
+	}
 	profile := resolveProfile(cmd)
+	if err := requireKnownProfile(profile); err != nil {
+		return err
+	}
 	healthPort := healthPortForProfile(profile)
 
-	// Stop if running.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	health := checkDaemonHealthOnPort(ctx, healthPort)
 	if daemonAlive(health) {
+		// Validate the restart can succeed BEFORE the stop phase, not just
+		// inside the start phase: a missing/revoked token or an unreachable
+		// server would otherwise kill the running daemon and then fail to
+		// start a replacement, leaving no daemon at all. When nothing is
+		// running there is nothing to lose, so the cheaper start-path checks
+		// (empty-token guard + early child-exit detection) handle it without
+		// this extra server round-trip.
+		if err := requireDaemonRestartPreflight(cmd, profile); err != nil {
+			return err
+		}
 		pid, _ := health["pid"].(float64)
 		if pid > 0 {
 			fmt.Fprintf(os.Stderr, "Stopping daemon (pid %d)...\n", int(pid))
@@ -713,7 +1228,13 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 // --- daemon stop ---
 
 func runDaemonStop(cmd *cobra.Command, _ []string) error {
+	if err := requireHumanLocalCommand("daemon stop"); err != nil {
+		return err
+	}
 	profile := resolveProfile(cmd)
+	if err := requireKnownProfile(profile); err != nil {
+		return err
+	}
 	healthPort := healthPortForProfile(profile)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -796,14 +1317,32 @@ func requestDaemonShutdown(healthPort int) error {
 
 func runDaemonStatus(cmd *cobra.Command, _ []string) error {
 	profile := resolveProfile(cmd)
-	healthPort := healthPortForProfile(profile)
+	healthPort, err := daemonStatusHealthPort(cmd)
+	if err != nil {
+		return err
+	}
+	output, _ := cmd.Flags().GetString("output")
+
+	// Safe to list profiles here: daemonStatusHealthPort already rejected an
+	// explicit --profile inside a daemon-managed task.
+	if err := requireKnownProfile(profile); err != nil {
+		var unknown *unknownProfileError
+		if output == "json" && errors.As(err, &unknown) {
+			// Keep stdout a single valid JSON document. The non-zero exit
+			// carries the failure, so errSilent suppresses the stderr copy.
+			if printErr := cli.PrintJSON(os.Stdout, unknown.jsonPayload()); printErr != nil {
+				return printErr
+			}
+			return errSilent
+		}
+		return err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	health := checkDaemonHealthOnPort(ctx, healthPort)
 
-	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
 		return cli.PrintJSON(os.Stdout, health)
 	}
@@ -824,6 +1363,32 @@ func runDaemonStatus(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// daemonStatusHealthPort resolves which daemon `status` should probe. Outside a
+// task that is the --profile-derived port. Inside a managed task it is the
+// daemon-injected MULTICA_DAEMON_PORT and nothing else: healthPortForProfile
+// hashes whatever profile name the caller passes, so deriving the port there
+// would let a task report on a daemon that is not the one hosting it — and for
+// a task hosted by a named-profile daemon it would silently probe the default
+// daemon instead. A missing port fails closed rather than guessing.
+func daemonStatusHealthPort(cmd *cobra.Command) (int, error) {
+	profile := resolveProfile(cmd)
+	if !inDaemonManagedExecutionContext() {
+		return healthPortForProfile(profile), nil
+	}
+	if profile != "" {
+		return 0, fmt.Errorf("daemon status --profile is not available inside a daemon-managed task")
+	}
+	raw := strings.TrimSpace(os.Getenv("MULTICA_DAEMON_PORT"))
+	if raw == "" {
+		return 0, fmt.Errorf("daemon status inside a daemon-managed task requires the daemon-injected MULTICA_DAEMON_PORT")
+	}
+	port, err := strconv.Atoi(raw)
+	if err != nil || port <= 0 {
+		return 0, fmt.Errorf("invalid MULTICA_DAEMON_PORT %q inside a daemon-managed task", raw)
+	}
+	return port, nil
+}
+
 // printDaemonStatusReport renders a key/value summary of the daemon health
 // response. The value column is aligned to the widest label so the dynamic
 // "Daemon [profile]" row stays in step with the static rows below it.
@@ -834,6 +1399,11 @@ func printDaemonStatusReport(w io.Writer, label string, health map[string]any) {
 	}
 	if version, ok := health["cli_version"].(string); ok && version != "" {
 		rows = append(rows, row{"Version", version})
+	}
+	// Only present while a confirmed on-disk version change is waiting for the
+	// daemon to go idle, so it reads as an explanation rather than a status line.
+	if reason, ok := health["reload_pending_reason"].(string); ok && reason != "" {
+		rows = append(rows, row{"Restart pending", reason})
 	}
 	if agents, ok := health["agents"].([]any); ok && len(agents) > 0 {
 		parts := make([]string, len(agents))
@@ -860,7 +1430,13 @@ func printDaemonStatusReport(w io.Writer, label string, health map[string]any) {
 // --- daemon logs ---
 
 func runDaemonLogs(cmd *cobra.Command, _ []string) error {
+	if err := requireHumanLocalCommand("daemon logs"); err != nil {
+		return err
+	}
 	profile := resolveProfile(cmd)
+	if err := requireKnownProfile(profile); err != nil {
+		return err
+	}
 	logPath := daemonLogPathForProfile(profile)
 	if _, err := os.Stat(logPath); os.IsNotExist(err) {
 		return fmt.Errorf("no log file found at %s\nThe daemon may not have been started in background mode", logPath)
@@ -914,9 +1490,146 @@ func flagString(cmd *cobra.Command, name string) string {
 	return val
 }
 
+// envUnset reports whether the given env var is empty or missing entirely.
+// The three-tier precedence for daemon knobs (flag > env > config.json)
+// hinges on this check: config-file substitution only fires when both the
+// flag AND the env are unset. Trimming whitespace matches the behavior of
+// daemon.envOrDefault, so an env exported to " " reads as "not set" for
+// fallback purposes — same as the runtime.
+func envUnset(name string) bool {
+	return strings.TrimSpace(os.Getenv(name)) == ""
+}
+
+// resolveDaemonStringOverride picks the value that goes into
+// daemon.Overrides for a string knob (device_name, runtime_name).
+// Precedence, highest first:
+//
+//  1. flag (already resolved to string; empty means "not passed")
+//  2. env  (if set, we leave overrides empty — daemon.LoadConfig reads env)
+//  3. cfg  (persisted config.json value)
+//  4. ""   (leave overrides empty — daemon.LoadConfig applies its default)
+//
+// Split out so the precedence is testable without spinning up cobra + the
+// full daemon.LoadConfig pipeline. Returns the override value the caller
+// should assign; an empty string means "let daemon.LoadConfig decide".
+func resolveDaemonStringOverride(flagValue, envName, cfgValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if !envUnset(envName) {
+		// Env is set — return empty so daemon.LoadConfig's envOrDefault
+		// resolves it. If we returned the env value here we'd double-read
+		// it and quietly diverge if the daemon's own trimming ever changes.
+		return ""
+	}
+	return cfgValue
+}
+
+// resolveDaemonDurationOverride is the numeric counterpart for
+// poll_interval. flagValue > 0 wins; otherwise, if the env var is unset
+// we parse cfgValue. Parse errors and non-positive values are surfaced
+// so a bad config.json value doesn't silently fall through to the
+// default — `config set` already rejects the same shapes at write
+// time, and this guard catches legacy configs that predate that check.
+func resolveDaemonDurationOverride(flagValue time.Duration, envName, cfgValue string) (time.Duration, error) {
+	if flagValue > 0 {
+		return flagValue, nil
+	}
+	if !envUnset(envName) || cfgValue == "" {
+		return 0, nil
+	}
+	parsed, err := time.ParseDuration(cfgValue)
+	if err != nil {
+		return 0, fmt.Errorf("config value %q for %s is not a valid duration: %w", cfgValue, envName, err)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("config value %q for %s must be positive", cfgValue, envName)
+	}
+	return parsed, nil
+}
+
+// resolveDaemonIntOverride is the max_concurrent_tasks counterpart to
+// resolveDaemonStringOverride. flagValue > 0 wins; otherwise the config
+// value applies only when the env var is unset.
+func resolveDaemonIntOverride(flagValue int, envName string, cfgValue int) int {
+	if flagValue > 0 {
+		return flagValue
+	}
+	if !envUnset(envName) {
+		return 0
+	}
+	if cfgValue > 0 {
+		return cfgValue
+	}
+	return 0
+}
+
+// resolveDaemonAgentTimeoutOverride resolves --agent-timeout across the
+// same three-tier precedence used by the other daemon knobs, but preserves
+// the tri-state agent_timeout semantics: nil result = "not overridden",
+// non-nil = "use this exact value" (which may legitimately be zero to
+// disable the wall-clock cap).
+//
+//  1. --agent-timeout was explicitly passed (even as `--agent-timeout 0`)
+//     -> use that value; daemon.LoadConfig then bypasses env/default.
+//  2. MULTICA_AGENT_TIMEOUT is set -> return nil so LoadConfig reads the
+//     env itself (matches the other duration helpers).
+//  3. cfgValue non-nil -> parse the persisted string and use it. "0s" is
+//     valid here (it's the "disabled" sentinel).
+//  4. Otherwise -> nil, LoadConfig applies DefaultAgentTimeout.
+func resolveDaemonAgentTimeoutOverride(cmd *cobra.Command, envName string, cfgValue *string) (*time.Duration, error) {
+	if cmd.Flags().Changed("agent-timeout") {
+		d, _ := cmd.Flags().GetDuration("agent-timeout")
+		return &d, nil
+	}
+	if !envUnset(envName) {
+		return nil, nil
+	}
+	if cfgValue == nil || *cfgValue == "" {
+		return nil, nil
+	}
+	parsed, err := time.ParseDuration(strings.TrimSpace(*cfgValue))
+	if err != nil {
+		return nil, fmt.Errorf("config value %q for %s is not a valid duration: %w", *cfgValue, envName, err)
+	}
+	if parsed < 0 {
+		return nil, fmt.Errorf("config value %q for %s must be >= 0", *cfgValue, envName)
+	}
+	return &parsed, nil
+}
+
+// resolveDaemonDisableSignal resolves a single-direction disable signal —
+// auto-update (--no-auto-update) and auto-reload (--no-auto-reload) share the
+// shape. Precedence, using auto-update as the example:
+//
+//  1. --no-auto-update flag passed -> disable.
+//  2. MULTICA_DAEMON_AUTO_UPDATE explicitly set to a falsy value ->
+//     disable. Env values other than false/0/no/off are handled inside
+//     daemon.LoadConfig (they may enable auto-update on self-host, which
+//     is not something we can express via CLI overrides today).
+//  3. config.json disable_auto_update=true (only when both flag and env
+//     are silent) -> disable.
+//  4. Otherwise -> leave the override off; LoadConfig picks the default.
+func resolveDaemonDisableSignal(flagValue bool, envName string, cfgValue bool) bool {
+	if flagValue {
+		return true
+	}
+	if v := strings.TrimSpace(os.Getenv(envName)); v != "" {
+		switch strings.ToLower(v) {
+		case "false", "0", "no", "off":
+			return true
+		}
+		// Env is set to something other than a falsy value — leave the
+		// override off and let LoadConfig read the raw env itself.
+		return false
+	}
+	return cfgValue
+}
+
 // --- daemon disk-usage ---
 
 func runDaemonDiskUsage(cmd *cobra.Command, _ []string) error {
+	taskContext := inDaemonManagedExecutionContext()
 	profile := resolveProfile(cmd)
 	rootOverride, _ := cmd.Flags().GetString("workspaces-root")
 	byWorkspace, _ := cmd.Flags().GetBool("by-workspace")
@@ -925,6 +1638,11 @@ func runDaemonDiskUsage(cmd *cobra.Command, _ []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	allProfiles, _ := cmd.Flags().GetBool("all-profiles")
 
+	if taskContext {
+		if err := checkTaskDiskUsageScope(profile, rootOverride, allProfiles); err != nil {
+			return err
+		}
+	}
 	if byWorkspace && byTask {
 		return fmt.Errorf("--by-workspace and --by-task are mutually exclusive")
 	}
@@ -936,10 +1654,10 @@ func runDaemonDiskUsage(cmd *cobra.Command, _ []string) error {
 	}
 
 	if allProfiles {
-		return runDaemonDiskUsageAggregate(byWorkspace, top, output)
+		return runDaemonDiskUsageAggregate(cmd, byWorkspace, top, output)
 	}
 
-	workspacesRoot, err := daemon.ResolveWorkspacesRoot(profile, rootOverride)
+	workspacesRoot, err := resolveDiskUsageRoot(taskContext, profile, rootOverride)
 	if err != nil {
 		return fmt.Errorf("resolve workspaces root: %w", err)
 	}
@@ -947,6 +1665,13 @@ func runDaemonDiskUsage(cmd *cobra.Command, _ []string) error {
 	report, err := daemon.ScanDiskUsage(workspacesRoot, daemon.ArtifactPatternsFromEnv())
 	if err != nil {
 		return err
+	}
+	// Resolve before --top trims the slice: the batch endpoint costs the same
+	// either way, and the JSON consumer sees statuses for everything it gets.
+	// Skipped in a task: the fetcher authenticates with the Owner profile's
+	// stored token, which a task must not borrow, so the column stays blank.
+	if !taskContext && diskUsageNeedsParentStatus(byWorkspace, output) {
+		fillDiskUsageParentStatuses(cmd, profile, &report)
 	}
 
 	if top > 0 {
@@ -965,19 +1690,123 @@ func runDaemonDiskUsage(cmd *cobra.Command, _ []string) error {
 
 	if byWorkspace {
 		printDiskUsageWorkspaceTable(os.Stdout, report)
-		printDiskUsageOtherRootsHint(os.Stdout, report, profile, rootOverride)
+		printDiskUsageOtherRootsHint(os.Stdout, report, profile, rootOverride, taskContext)
 		return nil
 	}
 	printDiskUsageTaskTable(os.Stdout, report)
-	printDiskUsageOtherRootsHint(os.Stdout, report, profile, rootOverride)
+	printDiskUsageOtherRootsHint(os.Stdout, report, profile, rootOverride, taskContext)
 	return nil
+}
+
+// checkTaskDiskUsageScope keeps a managed task's disk-usage view inside the
+// daemon root that hosts it. Each rejected input widens the report past that
+// boundary: --all-profiles enumerates ~/.multica/profiles and discloses the
+// Owner's profile names, while --workspaces-root and --profile aim the scan at
+// a directory this daemon does not manage.
+func checkTaskDiskUsageScope(profile, rootOverride string, allProfiles bool) error {
+	switch {
+	case allProfiles:
+		return fmt.Errorf("daemon disk-usage --all-profiles is not available inside a daemon-managed task")
+	case rootOverride != "":
+		return fmt.Errorf("daemon disk-usage --workspaces-root is not available inside a daemon-managed task")
+	case profile != "":
+		return fmt.Errorf("daemon disk-usage --profile is not available inside a daemon-managed task")
+	}
+	return nil
+}
+
+// resolveDiskUsageRoot picks the directory to scan. A managed task reads the
+// daemon-injected root only: ResolveWorkspacesRoot falls back to a $HOME- and
+// profile-derived default, which for a task hosted by a named-profile daemon
+// resolves to the default root and reports a tree the task has nothing to do
+// with. Failing closed on a missing value keeps that guess out of the output.
+func resolveDiskUsageRoot(taskContext bool, profile, rootOverride string) (string, error) {
+	if !taskContext {
+		return daemon.ResolveWorkspacesRoot(profile, rootOverride)
+	}
+	root := strings.TrimSpace(os.Getenv(daemon.TaskWorkspacesRootEnv))
+	if root == "" {
+		return "", fmt.Errorf("daemon-managed task requires the daemon-injected workspaces root in %s", daemon.TaskWorkspacesRootEnv)
+	}
+	if !filepath.IsAbs(root) {
+		return "", fmt.Errorf("%s must be an absolute path", daemon.TaskWorkspacesRootEnv)
+	}
+	return filepath.Clean(root), nil
+}
+
+// diskUsageNeedsParentStatus reports whether this invocation renders per-task
+// rows at all. The --by-workspace table has no STATUS column, so resolving
+// statuses for it would spend a network round trip — and, against an
+// unreachable server, a full timeout — on data nothing displays, turning a
+// local diagnostic into a command that hangs offline. JSON output always
+// carries the task array, so it still needs them even with --by-workspace.
+func diskUsageNeedsParentStatus(byWorkspace bool, output string) bool {
+	return !byWorkspace || output == "json"
+}
+
+// fillDiskUsageParentStatuses populates the report's STATUS column in place.
+//
+// This is best-effort and never fails the command: `disk-usage` is a local
+// diagnostic that has to keep working when the machine is offline or logged
+// out. When statuses can't be resolved the column simply stays blank, and the
+// reason goes to stderr so `--output json` stdout stays machine-readable.
+func fillDiskUsageParentStatuses(cmd *cobra.Command, profile string, report *daemon.DiskUsageReport) {
+	fetch := newParentStatusFetcher(cmd, profile)
+	if fetch == nil {
+		return
+	}
+	ctx, cancel := cli.APIContext(cmd.Context())
+	defer cancel()
+	if err := daemon.ResolveParentStatuses(ctx, report, fetch); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not resolve issue statuses, STATUS column may be blank: %v\n", err)
+	}
+}
+
+// newParentStatusFetcher builds a fetcher backed by the same batch gc-check
+// endpoint the daemon's GC loop uses, so the STATUS column reports exactly the
+// status the GC would act on. The daemon authenticates with the profile's CLI
+// token (see Daemon.resolveAuth), so reusing it here needs no extra API
+// surface. Returns nil when this profile has no usable credentials — the
+// caller then leaves the column blank rather than erroring.
+func newParentStatusFetcher(cmd *cobra.Command, profile string) daemon.ParentStatusFetcher {
+	cfg, err := cli.LoadCLIConfigForProfile(profile)
+	if err != nil || strings.TrimSpace(cfg.Token) == "" {
+		return nil
+	}
+	rawURL := resolveDaemonServerURL(cmd, profile)
+	if rawURL == "" {
+		rawURL = daemon.DefaultServerURL
+	}
+	baseURL, err := daemon.NormalizeServerBaseURL(rawURL)
+	if err != nil {
+		return nil
+	}
+
+	client := daemon.NewClient(baseURL)
+	client.SetToken(cfg.Token)
+	return func(ctx context.Context, workspaceID string, issueIDs []string) (map[string]string, error) {
+		results, err := client.GetIssueGCChecks(ctx, workspaceID, issueIDs)
+		if err != nil {
+			return nil, err
+		}
+		statuses := make(map[string]string, len(results))
+		for id, result := range results {
+			// Skip per-issue failures and 404s: an unresolved id must stay
+			// blank so it reads as "unknown", not as a status.
+			if result.Err != nil || !result.Found {
+				continue
+			}
+			statuses[id] = result.Status
+		}
+		return statuses, nil
+	}
 }
 
 // runDaemonDiskUsageAggregate scans every workspace root (the default root plus
 // each ~/.multica/profiles/* root) and renders a per-root breakdown with a
 // combined grand total. This is the path that surfaces the Desktop app's
 // `desktop-<host>` root, which the default single-root scan never sees.
-func runDaemonDiskUsageAggregate(byWorkspace bool, top int, output string) error {
+func runDaemonDiskUsageAggregate(cmd *cobra.Command, byWorkspace bool, top int, output string) error {
 	roots, err := enumerateDiskUsageRoots()
 	if err != nil {
 		return err
@@ -985,6 +1814,15 @@ func runDaemonDiskUsageAggregate(byWorkspace bool, top int, output string) error
 	agg, err := daemon.ScanDiskUsageRoots(roots, daemon.ArtifactPatternsFromEnv())
 	if err != nil {
 		return err
+	}
+	// Each root belongs to its own profile, so it needs that profile's token.
+	// Skipping the whole loop when nothing renders task rows matters most
+	// here: an unreachable server would otherwise burn one full timeout per
+	// root, serially.
+	if diskUsageNeedsParentStatus(byWorkspace, output) {
+		for i := range agg.Roots {
+			fillDiskUsageParentStatuses(cmd, agg.Roots[i].Profile, &agg.Roots[i].Report)
+		}
 	}
 
 	// --top trims each root's table independently — the grand total in the
@@ -1073,12 +1911,17 @@ func printAggregateDiskUsage(w io.Writer, agg daemon.AggregateDiskUsageReport, b
 	fmt.Fprintf(w, "\nGrand total: %s across %d task(s) in %d root(s); %s reclaimable as artifacts (%.1f%%).\n",
 		formatBytes(agg.TotalSizeBytes), agg.TotalTaskCount, len(agg.Roots),
 		formatBytes(agg.TotalArtifactSizeBytes), agg.TotalArtifactRatio*100)
+	if agg.TotalRepoCacheCount > 0 || agg.TotalRepoCacheSizeBytes > 0 {
+		fmt.Fprintf(w, "Repo cache (.repos): %s across %d repo(s) in all roots, not included above.\n",
+			formatBytes(agg.TotalRepoCacheSizeBytes), agg.TotalRepoCacheCount)
+	}
 }
 
 func printDiskUsageTaskTable(w io.Writer, report daemon.DiskUsageReport) {
 	fmt.Fprintf(w, "Workspaces root: %s\n", report.WorkspacesRoot)
 	if report.TotalTaskCount == 0 {
 		fmt.Fprintln(w, "(no task directories)")
+		printRepoCacheLine(w, report)
 		return
 	}
 	rows := make([][]string, 0, len(report.Tasks))
@@ -1106,17 +1949,32 @@ func printDiskUsageTaskTable(w io.Writer, report daemon.DiskUsageReport) {
 			formatBytes(displayedSize), formatBytes(displayedArtifact),
 			formatBytes(report.TotalSizeBytes), formatBytes(report.TotalArtifactSizeBytes),
 			report.TotalArtifactRatio*100)
+	} else {
+		fmt.Fprintf(w, "\nTotal: %s across %d task(s); %s reclaimable as artifacts (%.1f%%).\n",
+			formatBytes(report.TotalSizeBytes), report.TotalTaskCount,
+			formatBytes(report.TotalArtifactSizeBytes), report.TotalArtifactRatio*100)
+	}
+	printRepoCacheLine(w, report)
+}
+
+// printRepoCacheLine reports the bare-repo cache on its own line. Every task
+// directory in a workspace checks out from this shared cache, so folding it
+// into the task totals would attribute it to directories that do not contain
+// it. Omitting it entirely — the previous behaviour — is what made the
+// reported total silently disagree with the user's file manager.
+func printRepoCacheLine(w io.Writer, report daemon.DiskUsageReport) {
+	if report.RepoCacheCount == 0 && report.RepoCacheSizeBytes == 0 {
 		return
 	}
-	fmt.Fprintf(w, "\nTotal: %s across %d task(s); %s reclaimable as artifacts (%.1f%%).\n",
-		formatBytes(report.TotalSizeBytes), report.TotalTaskCount,
-		formatBytes(report.TotalArtifactSizeBytes), report.TotalArtifactRatio*100)
+	fmt.Fprintf(w, "Repo cache (.repos): %s across %d repo(s), not included above. Evicted once a repo is unused for MULTICA_GC_REPO_TTL and no longer attached to a workspace.\n",
+		formatBytes(report.RepoCacheSizeBytes), report.RepoCacheCount)
 }
 
 func printDiskUsageWorkspaceTable(w io.Writer, report daemon.DiskUsageReport) {
 	fmt.Fprintf(w, "Workspaces root: %s\n", report.WorkspacesRoot)
 	if report.TotalWorkspaceCount == 0 {
 		fmt.Fprintln(w, "(no workspaces)")
+		printRepoCacheLine(w, report)
 		return
 	}
 	rows := make([][]string, 0, len(report.Workspaces))
@@ -1141,11 +1999,12 @@ func printDiskUsageWorkspaceTable(w io.Writer, report daemon.DiskUsageReport) {
 			formatBytes(displayedSize), formatBytes(displayedArtifact),
 			formatBytes(report.TotalSizeBytes), formatBytes(report.TotalArtifactSizeBytes),
 			report.TotalArtifactRatio*100)
-		return
+	} else {
+		fmt.Fprintf(w, "\nTotal: %s across %d workspace(s); %s reclaimable as artifacts (%.1f%%).\n",
+			formatBytes(report.TotalSizeBytes), report.TotalWorkspaceCount,
+			formatBytes(report.TotalArtifactSizeBytes), report.TotalArtifactRatio*100)
 	}
-	fmt.Fprintf(w, "\nTotal: %s across %d workspace(s); %s reclaimable as artifacts (%.1f%%).\n",
-		formatBytes(report.TotalSizeBytes), report.TotalWorkspaceCount,
-		formatBytes(report.TotalArtifactSizeBytes), report.TotalArtifactRatio*100)
+	printRepoCacheLine(w, report)
 }
 
 // printDiskUsageOtherRootsHint warns that workspace roots OTHER than the one
@@ -1153,8 +2012,15 @@ func printDiskUsageWorkspaceTable(w io.Writer, report daemon.DiskUsageReport) {
 // app's `desktop-<host>` root behind a non-empty default root. It fires
 // whenever such roots exist (empty current root or not); the only opt-out is an
 // explicit --workspaces-root, where the user already chose exactly what to scan.
-func printDiskUsageOtherRootsHint(w io.Writer, report daemon.DiskUsageReport, profile, rootOverride string) {
+func printDiskUsageOtherRootsHint(w io.Writer, report daemon.DiskUsageReport, profile, rootOverride string, taskContext bool) {
 	if rootOverride != "" {
+		return
+	}
+	// The suggestions are built by listing ~/.multica/profiles, so printing
+	// them inside a task would disclose the Owner's profile names — exactly
+	// what rejecting --all-profiles prevents — and every command they suggest
+	// is rejected there anyway.
+	if taskContext {
 		return
 	}
 	suggestions := diskUsageProfileSuggestions(profile, report.WorkspacesRoot)

@@ -127,9 +127,9 @@ func (s *Service) CompleteBinding(ctx context.Context, params CompleteBindingPar
 				return CompleteBindingResult{}, ErrCallbackExpired
 			}
 			binding = PublicDingTalkAccountBinding{
-				ID:           util.UUIDToString(attempt.AgentID),
-				WorkspaceID:  util.UUIDToString(attempt.WorkspaceID),
-				AgentID:      util.UUIDToString(attempt.AgentID),
+				ID:          util.UUIDToString(attempt.AgentID),
+				WorkspaceID: util.UUIDToString(attempt.WorkspaceID),
+				AgentID:     util.UUIDToString(attempt.AgentID),
 				DWSIdentity: PublicDingTalkBindingOutcome{
 					Status: DingTalkBindingStatusFailed,
 					Error:  params.Identity.Error,

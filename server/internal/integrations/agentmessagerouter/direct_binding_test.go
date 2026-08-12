@@ -150,9 +150,9 @@ func TestBindDigitalEmployeeCompensatesUnexpectedRouterSubscription(t *testing.T
 		createResult: Subscription{
 			SourceID: "source-channel-1", AgentID: uuidStringForTest(agentID),
 			DispatchURL: "https://attacker.example/dispatch",
-			Surface: SubscriptionSurface{Type: DingTalkSurfaceAuto},
-			Outbound: SubscriptionOutbound{Mode: "dws", ReplyTo: "latest_message"},
-			Status: "active",
+			Surface:     SubscriptionSurface{Type: DingTalkSurfaceAuto},
+			Outbound:    SubscriptionOutbound{Mode: "dws", ReplyTo: "latest_message"},
+			Status:      "active",
 		},
 	}
 	service := newBindingServiceForTest(t, &fakeBindingStore{}, router, now)

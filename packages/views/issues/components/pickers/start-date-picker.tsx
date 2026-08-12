@@ -18,7 +18,7 @@ export function StartDatePicker({
   startDate: string | null;
   onUpdate: (updates: Partial<UpdateIssueRequest>) => void;
   trigger?: React.ReactNode;
-  triggerRender?: React.ReactElement;
+  triggerRender?: React.ReactElement<Record<string, unknown>>;
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
   align?: "start" | "center" | "end";
@@ -33,7 +33,7 @@ export function StartDatePicker({
       onChange={(v) => onUpdate({ start_date: v })}
       icon={<CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />}
       placeholder={t(($) => $.pickers.start_date.trigger_label)}
-      clearLabel={t(($) => $.pickers.start_date.clear_action)}
+      emptyLabel={t(($) => $.pickers.start_date.none)}
       trigger={trigger}
       triggerRender={triggerRender}
       open={open}

@@ -1146,10 +1146,10 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding Publ
 			return PublicDingTalkAccountBinding{}, resolveErr
 		}
 		updated, updateErr := s.store.BackfillDingTalkAccountRouterAccountKey(ctx, db.BackfillDingTalkAccountRouterAccountKeyParams{
-			RouterPlatform: identity.Platform,
-			RouterTenantID: identity.TenantID,
+			RouterPlatform:  identity.Platform,
+			RouterTenantID:  identity.TenantID,
 			RouterAccountID: identity.AccountID,
-			ID: row.ID, WorkspaceID: row.WorkspaceID, AgentID: row.AgentID,
+			ID:              row.ID, WorkspaceID: row.WorkspaceID, AgentID: row.AgentID,
 			ExpectedStatus: row.Status, ExpectedRouterSourceID: config.RouterSourceID,
 			ExpectedConfig: append([]byte(nil), row.Config...),
 		})

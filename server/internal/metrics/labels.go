@@ -61,6 +61,7 @@ var businessMetricLabels = map[string][]string{
 	"multica_team_invite_accepted_total":               {},
 	"multica_onboarding_started_total":                 {labelPlatform},
 	"multica_onboarding_questionnaire_submitted_total": {},
+	"multica_onboarding_source_submitted_total":        {},
 	"multica_onboarding_completed_total":               {labelPath},
 	"multica_cloud_waitlist_joined_total":              {},
 	"multica_issue_created_total":                      {labelSource, labelPlatform},
@@ -86,25 +87,30 @@ var businessMetricLabels = map[string][]string{
 	"multica_cloudruntime_request_duration_seconds":    {labelOp},
 	"multica_feedback_submitted_total":                 {labelKind, labelPlatform},
 	"multica_contact_sales_submitted_total":            {labelSource},
-
-	// DingTalk account binding and dispatch credential contract.
-	"dingtalk_account_begin_total":               {labelOutcome},
-	"dingtalk_account_callback_total":            {labelOutcome},
-	"dingtalk_account_subscription_verify_total": {labelOutcome},
-	"dingtalk_account_unbind_total":              {labelOutcome},
-	"dispatch_credential_derive_total":            {labelOutcome, labelKeyID},
-	"dispatch_auth_total":                         {labelOutcome},
+	"multica_chat_output_local_path_total":             {labelKind},
+	"dingtalk_account_begin_total":                     {labelOutcome},
+	"dingtalk_account_callback_total":                  {labelOutcome},
+	"dingtalk_account_subscription_verify_total":       {labelOutcome},
+	"dingtalk_account_unbind_total":                    {labelOutcome},
+	"dispatch_credential_derive_total":                 {labelOutcome, labelKeyID},
+	"dispatch_auth_total":                              {labelOutcome},
 }
 
 var forbiddenMetricLabels = map[string]struct{}{
 	"workspace_id": {},
-	"user_id":      {},
-	"agent_id":     {},
-	"task_id":      {},
-	"issue_id":     {},
-	"runtime_id":   {},
-	"session_id":   {},
-	"ip":           {},
+	// installation_id is the same class as the rest: one series per channel
+	// installation, growing with tenants rather than with the deployment. It
+	// is also the natural thing to reach for in any channel metric — every
+	// adapter call site already carries one — which is what makes leaving it
+	// off this list a matter of time rather than of luck.
+	"installation_id": {},
+	"user_id":         {},
+	"agent_id":        {},
+	"task_id":         {},
+	"issue_id":        {},
+	"runtime_id":      {},
+	"session_id":      {},
+	"ip":              {},
 }
 
 var (
@@ -131,14 +137,20 @@ var (
 		"copilot":       "copilot",
 		"cursor":        "cursor",
 		"gemini":        "gemini",
+		"grok":          "grok",
 		"hermes":        "hermes",
 		"kiro":          "kiro",
 		"kimi":          "kimi",
+		"reasonix":      "reasonix",
 		"multica_agent": "multica_agent",
 		"openclaw":      "openclaw",
 		"opencode":      "opencode",
 		"deveco":        "deveco",
 		"pi":            "pi",
+		"qoder":         "qoder",
+		"qoderclicn":    "qoderclicn",
+		"qwen":          "qwen",
+		"traecli":       "traecli",
 		"other":         "other",
 	}
 	knownTerminalStatuses = map[string]string{
@@ -154,9 +166,9 @@ var (
 		"cache_read":  "cache_read",
 		"cache_write": "cache_write",
 	}
-	knownFailureReasons = map[string]string{}
-	modelAliasUnsafeRe  = regexp.MustCompile(`[^a-z0-9._:/+-]+`)
-	metricKeyIDRe       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,31}$`)
+	knownFailureReasons    = map[string]string{}
+	modelAliasUnsafeRe     = regexp.MustCompile(`[^a-z0-9._:/+-]+`)
+	metricKeyIDRe          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,31}$`)
 	knownOperationOutcomes = map[string]string{
 		"success":               "success",
 		"error":                 "error",

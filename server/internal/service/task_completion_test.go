@@ -93,8 +93,8 @@ func TestBuildTaskCompletionPrefersExplicitResultMessage(t *testing.T) {
 func TestBuildTaskCompletionFailureKeepsLastReplyAndReason(t *testing.T) {
 	completion := buildTaskCompletion(
 		taskCompletionTarget{
-			RootTaskID:    pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
-			CallbackURL:   "/api/v1/dispatch-tasks/router-task-1/execution-result",
+			RootTaskID:     pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
+			CallbackURL:    "/api/v1/dispatch-tasks/router-task-1/execution-result",
 			TargetIdentity: taskCompletionTestTarget,
 		},
 		db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}, AgentID: pgtype.UUID{Bytes: [16]byte{3}, Valid: true}},
@@ -262,6 +262,8 @@ func TestCompleteTaskEnqueuesRouterCompletionInTerminalTransaction(t *testing.T)
 		[]byte(`{"output":"agent execution summary","result_message":"第一行\\n第二行"}`),
 		"session-1",
 		"",
+		false,
+		"",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -322,6 +324,8 @@ func TestFailTaskWithResultMessageSkipsRetryAndEnqueuesExplicitReply(t *testing.
 		"session-1",
 		"",
 		"timeout",
+		false,
+		"",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -373,14 +377,14 @@ func TestCompleteTaskDoesNotAckOutboxConflictAndCanRetry(t *testing.T) {
 	}
 	queries := db.New(pool)
 	conflict, err := queries.EnqueueTaskCompletion(ctx, db.EnqueueTaskCompletionParams{
-		RootTaskID:       util.MustParseUUID(taskID),
-		TerminalTaskID:   pgtype.UUID{Bytes: [16]byte{99}, Valid: true},
-		CallbackUrl:      "/api/v1/dispatch-tasks/router-task-cas/execution-result",
-		TargetIdentity:   taskCompletionTestTarget,
-		RequestID:        "multica-terminal:" + taskID,
-		AgentID:          util.MustParseUUID(agentID),
-		ExecutionStatus:  "failed",
-		FailureReason:    pgtype.Text{String: "stale_parent", Valid: true},
+		RootTaskID:      util.MustParseUUID(taskID),
+		TerminalTaskID:  pgtype.UUID{Bytes: [16]byte{99}, Valid: true},
+		CallbackUrl:     "/api/v1/dispatch-tasks/router-task-cas/execution-result",
+		TargetIdentity:  taskCompletionTestTarget,
+		RequestID:       "multica-terminal:" + taskID,
+		AgentID:         util.MustParseUUID(agentID),
+		ExecutionStatus: "failed",
+		FailureReason:   pgtype.Text{String: "stale_parent", Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -395,6 +399,8 @@ func TestCompleteTaskDoesNotAckOutboxConflictAndCanRetry(t *testing.T) {
 		util.MustParseUUID(taskID),
 		[]byte(`{"output":"最终回复"}`),
 		"session-1",
+		"",
+		false,
 		"",
 	); !errors.Is(err, ErrTaskCompletionConflict) {
 		t.Fatalf("complete conflict error = %v", err)
@@ -418,6 +424,8 @@ func TestCompleteTaskDoesNotAckOutboxConflictAndCanRetry(t *testing.T) {
 		[]byte(`{"output":"最终回复"}`),
 		"session-1",
 		"",
+		false,
+		"",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -435,14 +443,14 @@ func TestTerminalTaskCASDoesNotAcknowledgeNonTerminalTask(t *testing.T) {
 		{
 			name: "complete",
 			run: func(ctx context.Context, svc *TaskService, taskID pgtype.UUID) error {
-				_, err := svc.CompleteTask(ctx, taskID, []byte(`{"output":"done"}`), "", "")
+				_, err := svc.CompleteTask(ctx, taskID, []byte(`{"output":"done"}`), "", "", false, "")
 				return err
 			},
 		},
 		{
 			name: "fail",
 			run: func(ctx context.Context, svc *TaskService, taskID pgtype.UUID) error {
-				_, err := svc.FailTask(ctx, taskID, "failed", "", "", "agent_error")
+				_, err := svc.FailTask(ctx, taskID, "failed", "", "", "agent_error", false, "")
 				return err
 			},
 		},
@@ -515,6 +523,8 @@ func TestFailTaskDefersCompletionUntilRetryChainTerminates(t *testing.T) {
 		"session-1",
 		"",
 		"runtime_offline",
+		false,
+		"",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -547,6 +557,8 @@ func TestFailTaskDefersCompletionUntilRetryChainTerminates(t *testing.T) {
 		"session-2",
 		"",
 		"agent_error",
+		false,
+		"",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -677,14 +689,14 @@ func TestTaskCompletionOutboxRejectsConflictingTerminalResult(t *testing.T) {
 	queries := db.New(pool)
 	rootID := pgtype.UUID{Bytes: [16]byte{10}, Valid: true}
 	first := db.EnqueueTaskCompletionParams{
-		RootTaskID:      rootID,
-		TerminalTaskID:  pgtype.UUID{Bytes: [16]byte{11}, Valid: true},
-		CallbackUrl:     "/api/v1/dispatch-tasks/router-task-conflict/execution-result",
-		TargetIdentity:  taskCompletionTestTarget,
-		RequestID:       "multica-terminal:conflict",
-		AgentID:         pgtype.UUID{Bytes: [16]byte{12}, Valid: true},
-		ExecutionStatus: "completed",
-		ResultMessage:   "done",
+		RootTaskID:       rootID,
+		TerminalTaskID:   pgtype.UUID{Bytes: [16]byte{11}, Valid: true},
+		CallbackUrl:      "/api/v1/dispatch-tasks/router-task-conflict/execution-result",
+		TargetIdentity:   taskCompletionTestTarget,
+		RequestID:        "multica-terminal:conflict",
+		AgentID:          pgtype.UUID{Bytes: [16]byte{12}, Valid: true},
+		ExecutionStatus:  "completed",
+		ResultMessage:    "done",
 		ExecutionSummary: []byte(`{"task_id":"task-1","status":"completed"}`),
 	}
 	if _, err := queries.EnqueueTaskCompletion(ctx, first); err != nil {

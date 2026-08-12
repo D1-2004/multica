@@ -75,7 +75,7 @@ func TestExecuteAndDrainEmitsTraceMilestonesForHermesAndOpenCode(t *testing.T) {
 			)
 			d := newTestDaemon(t)
 			var seq atomic.Int32
-			result, _, err := d.executeAndDrain(context.Background(), traceLoggingBackend{}, "prompt", agent.ExecOptions{}, logger, "task-1", &seq)
+			result, _, err := d.executeAndDrain(context.Background(), traceLoggingBackend{}, "prompt", agent.ExecOptions{}, logger, "task-1", "", &seq)
 			if err != nil {
 				t.Fatalf("executeAndDrain: %v", err)
 			}

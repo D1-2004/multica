@@ -1,4 +1,51 @@
 {
+  "quick_actions": {
+    "title": "Quick Actions",
+    "description": "Preset an agent and a prompt once, then trigger it from any issue's sidebar with a single click.",
+    "add": "New quick action",
+    "search_placeholder": "Search quick actions",
+    "loading": "Loading quick actions…",
+    "no_results": "No quick actions match your search",
+    "actions_open": "Open actions for {{name}}",
+    "columns": {
+      "name": "Name",
+      "target": "Runs as",
+      "visibility": "Who",
+      "usage": "Used",
+      "updated": "Updated"
+    },
+    "empty_title": "No quick actions yet",
+    "empty_hint": "Create one for the work you ask an agent to do again and again — code review, writing tests, a security pass.",
+    "archived": "Archived",
+    "visibility_public": "Team",
+    "visibility_private": "Just me",
+    "visibility_public_hint": "Everyone in the workspace",
+    "visibility_private_hint": "Only you",
+    "field_visibility": "Who can use it",
+    "public_target_hint": "Must be an agent everyone can trigger.",
+    "target_private": "private",
+    "target_missing": "Target unavailable",
+    "archive": "Archive",
+    "unarchive": "Restore",
+    "edit": "Edit",
+    "delete": "Delete",
+    "cancel": "Cancel",
+    "save": "Save",
+    "never_used": "Never used",
+    "used_count": "Used {{count}}×",
+    "create_title": "New quick action",
+    "edit_title": "Edit quick action",
+    "dialog_description": "Runs as a comment on the issue, like an @mention.",
+    "field_name": "Name",
+    "field_name_placeholder": "Code Review",
+    "field_target": "Runs as",
+    "field_prompt": "Prompt",
+    "field_prompt_placeholder": "Review the code linked to this issue. Focus on correctness and edge cases.",
+    "prompt_hint": "Sent as written. The agent already sees the issue.",
+    "template_not_supported": "Variables aren’t supported yet — remove {{token}}. The agent already reads this issue.",
+    "delete_title": "Delete this quick action?",
+    "delete_description": "It disappears from every issue sidebar. Past runs stay in the execution log. Archive instead if you may want it back."
+  },
   "auto_save": {
     "saving": "Saving…",
     "saved": "Saved",
@@ -62,23 +109,90 @@
       "navigation": "Navigation"
     },
     "actions": {
-      "openSearch": { "label": "Open search", "description": "Search and run commands from anywhere." },
-      "createIssue": { "label": "Create issue", "description": "Open your preferred issue creation flow." },
-      "toggleSidebar": { "label": "Toggle sidebar", "description": "Show or hide the main sidebar." },
-      "findInIssue": { "label": "Find in issue", "description": "Search within the open issue detail." },
-      "send": { "label": "Send", "description": "Send chat messages, comments, replies, feedback, and prompts." },
-      "goInbox": { "label": "Go to Inbox", "description": "Open the workspace inbox." },
-      "goChat": { "label": "Go to Chat", "description": "Open workspace chat." },
-      "goMyIssues": { "label": "Go to My Issues", "description": "Open issues assigned to you." },
-      "goIssues": { "label": "Go to Issues", "description": "Open the issue list." },
-      "goProjects": { "label": "Go to Projects", "description": "Open the project list." },
-      "goAutopilots": { "label": "Go to Autopilot", "description": "Open workspace automations." },
-      "goAgents": { "label": "Go to Agents", "description": "Open the agent list." },
-      "goSquads": { "label": "Go to Squads", "description": "Open the squad list." },
-      "goUsage": { "label": "Go to Usage", "description": "Open usage analytics." },
-      "goRuntimes": { "label": "Go to Runtimes", "description": "Open runtime configuration." },
-      "goSkills": { "label": "Go to Skills", "description": "Open the skill library." },
-      "goSettings": { "label": "Go to Settings", "description": "Open workspace settings." }
+      "openSearch": {
+        "label": "Open search",
+        "description": "Search and run commands from anywhere."
+      },
+      "createIssue": {
+        "label": "Create issue",
+        "description": "Open your preferred issue creation flow."
+      },
+      "toggleSidebar": {
+        "label": "Toggle sidebar",
+        "description": "Show or hide the main sidebar."
+      },
+      "toggleChat": {
+        "label": "Toggle chat window",
+        "description": "Open or close the floating chat window. Opening it focuses the message input."
+      },
+      "findInIssue": {
+        "label": "Find in issue",
+        "description": "Search within the open issue detail."
+      },
+      "openThreadNav": {
+        "label": "Open thread navigator",
+        "description": "List, search, and jump between the comment threads of the open issue."
+      },
+      "send": {
+        "label": "Send",
+        "description": "Send chat messages, comments, replies, feedback, and prompts."
+      },
+      "goBack": {
+        "label": "Go back",
+        "description": "Navigate back through history, like a browser."
+      },
+      "goForward": {
+        "label": "Go forward",
+        "description": "Navigate forward through history, like a browser."
+      },
+      "goInbox": {
+        "label": "Go to Inbox",
+        "description": "Open the workspace inbox."
+      },
+      "goChat": {
+        "label": "Go to Chat",
+        "description": "Open workspace chat."
+      },
+      "goMyIssues": {
+        "label": "Go to My Issues",
+        "description": "Open issues assigned to you."
+      },
+      "goIssues": {
+        "label": "Go to Issues",
+        "description": "Open the issue list."
+      },
+      "goProjects": {
+        "label": "Go to Projects",
+        "description": "Open the project list."
+      },
+      "goAutopilots": {
+        "label": "Go to Autopilot",
+        "description": "Open workspace automations."
+      },
+      "goAgents": {
+        "label": "Go to Agents",
+        "description": "Open the agent list."
+      },
+      "goSquads": {
+        "label": "Go to Squads",
+        "description": "Open the squad list."
+      },
+      "goUsage": {
+        "label": "Go to Usage",
+        "description": "Open usage analytics."
+      },
+      "goRuntimes": {
+        "label": "Go to Runtimes",
+        "description": "Open runtime configuration."
+      },
+      "goSkills": {
+        "label": "Go to Skills",
+        "description": "Open the skill library."
+      },
+      "goSettings": {
+        "label": "Go to Settings",
+        "description": "Open workspace settings."
+      }
     },
     "fixed": {
       "title": "Fixed system shortcuts",
@@ -95,6 +209,22 @@
     "floating_label": "Floating chat window",
     "floating_hint": "Show the floating chat button in the corner of every page. Off by default — turn it on to summon chat anywhere; when off, Chat lives only in this tab."
   },
+  "issue": {
+    "description": "Choose which fields each create dialog keeps on its toolbar. Hidden fields stay available from the ⋯ menu and reappear while they hold a value.",
+    "quick_create_title": "Create with agent",
+    "quick_create_description": "Fields shown in the quick create toolbar.",
+    "manual_create_title": "Create manually",
+    "manual_create_description": "Fields shown in the manual create toolbar.",
+    "fields": {
+      "status": "Status",
+      "priority": "Priority",
+      "assignee": "Assignee",
+      "labels": "Labels",
+      "project": "Project",
+      "due_date": "Due date",
+      "start_date": "Start date"
+    }
+  },
   "page": {
     "title": "Settings",
     "my_account": "My Account",
@@ -103,6 +233,7 @@
       "profile": "Profile",
       "preferences": "Preferences",
       "shortcuts": "Shortcuts",
+      "issue": "Issue",
       "chat": "Chat",
       "notifications": "Notifications",
       "tokens": "API Tokens",
@@ -113,59 +244,84 @@
       "labs": "Labs",
       "members": "Members",
       "labels": "Labels",
+      "properties": "Properties",
+      "quick_actions": "Quick Actions",
       "workspace_access": "DTA Access"
     }
   },
-  "workspace_access": {
-    "title": "DTA Access",
-    "description": "Issue workspace-bound credentials for DTA. External operators use DTA only and do not receive a Multica account or personal API token.",
-    "owner_only": "Only workspace owners can manage DTA access.",
-    "tokens_title": "DTA tokens",
-    "tokens_description": "Each token represents one external operator with standard member access in this workspace, an independent expiry, and immediate revocation.",
-    "create": "Create token",
-    "loading": "Loading DTA access…",
-    "empty": "No DTA tokens yet.",
-    "edit": "Edit",
-    "expires": "Expires",
-    "last_used": "Last used",
-    "revoked": "Revoked",
-    "revoke": "Revoke key",
-    "revoke_confirm": "Revoke this DTA access key? DTA requests using it will fail immediately.",
-    "delete": "Delete record",
-    "delete_confirm": "Permanently delete this revoked token record? Its service member, agents, and history will remain.",
-    "saved": "DTA token saved",
-    "save_failed": "Couldn't save DTA token",
-    "create_title": "Create DTA token",
-    "edit_title": "Edit DTA token",
-    "name_placeholder": "External operator name",
-    "member_role": "Standard workspace member access",
-    "member_permissions_description": "This token has the same access as a standard workspace member. It can manage its own agents, tasks, traces, schedules, bindings, and stable private runtimes. It cannot manage members or workspace settings, create public managed runtimes, or administer stable releases.",
-    "regenerate": "Regenerate",
-    "regenerated": "DTA token regenerated",
-    "regenerate_title": "Regenerate DTA token",
-    "regenerate_warning": "The current key will stop working immediately. Configure the newly generated key in DTA after you save it.",
-    "expiry_title": "Expiry",
-    "expiry_description": "All DTA requests using this token fail immediately after it expires. You can edit the expiry or regenerate the key with a new expiry.",
-    "expiry": {
-      "keep": "Keep current expiry",
-      "days": "{{count}} days",
-      "never": "Never expires"
+  "properties": {
+    "title": "Properties",
+    "description": "Define typed custom properties for issues in this workspace. Values are set on each issue and are readable and writable by agents.",
+    "search_placeholder": "Filter by name...",
+    "new_property": "New property",
+    "show_archived": "Show archived",
+    "columns": {
+      "name": "Name",
+      "type": "Type",
+      "options": "Options",
+      "usage": "Used by",
+      "updated": "Updated"
     },
-    "permanent_warning": "A token with no expiry remains usable until it is revoked. Use an expiring token when possible.",
-    "cancel": "Cancel",
-    "save": "Save",
-    "secret_title": "Save this DTA access key now",
-    "secret_warning": "This key is shown only once. Send it only through your approved secret-delivery channel; it cannot be recovered later.",
-    "secret_confirm": "I have copied and stored this key safely",
-    "close": "Close"
+    "usage_count_one": "{{count}} issue",
+    "usage_count_other": "{{count}} issues",
+    "loading": "Loading properties...",
+    "empty": "No properties yet",
+    "empty_hint": "Create typed fields like Severity or Environment — agents can read and write them with validation.",
+    "no_results": "No matching properties",
+    "save_failed": "Couldn't save property",
+    "limit_hint": "{{count}}/{{max}} active properties",
+    "archived_badge": "Archived",
+    "types": {
+      "text": "Text",
+      "number": "Number",
+      "select": "Select",
+      "multi_select": "Multi-select",
+      "date": "Date",
+      "checkbox": "Checkbox",
+      "url": "URL"
+    },
+    "actions": {
+      "open": "Actions for {{name}}",
+      "edit": "Edit",
+      "archive": "Archive",
+      "unarchive": "Restore"
+    },
+    "editor": {
+      "create_title": "New property",
+      "edit_title": "Edit property",
+      "admin_hint": "Only workspace owners and admins can manage property definitions.",
+      "icon": "Icon",
+      "choose_icon": "Choose icon",
+      "remove_icon": "Remove icon",
+      "name": "Name",
+      "name_placeholder": "e.g. Severity",
+      "type": "Type",
+      "type_locked_hint": "Type can't be changed after creation.",
+      "description": "Description",
+      "description_placeholder": "What this property means and when to set it",
+      "options": "Options",
+      "option_name_placeholder": "Option name",
+      "add_option": "Add option",
+      "remove_option": "Remove option",
+      "cancel": "Cancel",
+      "save": "Save property",
+      "saving": "Saving..."
+    },
+    "archive_dialog": {
+      "title": "Archive property?",
+      "description": "\"{{name}}\" will be hidden from pickers and filters. Existing values on issues are preserved. You can restore it later.",
+      "cancel": "Cancel",
+      "confirm": "Archive property",
+      "failed": "Couldn't archive property"
+    }
   },
   "labels": {
     "title": "Labels",
-    "description": "Manage the separate label catalogs used to organize issues, agents, and skills in this workspace.",
+    "description": "Manage the separate label catalogs used to organize issues and skills in this workspace.",
     "scopes": {
       "issue": "Issues",
-      "agent": "Agents",
-      "skill": "Skills"
+      "skill": "Skills",
+      "agent": "Agents"
     },
     "search_placeholder": "Filter by name or description...",
     "new_label": "New label",
@@ -194,10 +350,10 @@
       "description": "Description",
       "description_placeholder": "Describe when this label should be used",
       "color": "Color",
-      "custom_color": "Choose a custom color",
       "cancel": "Cancel",
       "save": "Save label",
-      "saving": "Saving..."
+      "saving": "Saving...",
+      "custom_color": "Choose a custom color"
     },
     "delete_dialog": {
       "title": "Delete label?",
@@ -239,6 +395,10 @@
       "comments": {
         "label": "Comments & Mentions",
         "description": "New comments on issues you follow, or when someone @mentions you"
+      },
+      "mentions": {
+        "label": "Mentions",
+        "description": "When someone @mentions you, including @all and @squad"
       },
       "updates": {
         "label": "Priority & Due date",
@@ -376,14 +536,6 @@
     "connect_github": "Connect GitHub",
     "connect_opening": "Opening…",
     "connect_disabled_tooltip": "GitHub App is not configured on this server",
-    "reusable_title": "Available connections",
-    "reusable_description": "Reuse a GitHub App connection from another workspace you manage. The original workspace stays connected.",
-    "reusable_from": "From {{workspace}}",
-    "reuse_connection": "Use connection",
-    "reusing_connection": "Connecting…",
-    "reuse_connection_aria": "Use {{login}} connection from {{workspace}}",
-    "toast_reused": "GitHub connection added",
-    "toast_reuse_failed": "Failed to reuse GitHub connection",
     "disconnect": "Disconnect",
     "disconnecting": "Disconnecting…",
     "disconnect_confirm_title": "Disconnect GitHub App",
@@ -410,7 +562,56 @@
     "section_repositories": "Repositories",
     "repositories_shortcut_label": "Repository URLs live in the Repositories tab",
     "repositories_shortcut_link": "Manage repositories →",
-    "toast_failed": "Failed to update GitHub settings"
+    "toast_failed": "Failed to update GitHub settings",
+    "reusable_title": "Available connections",
+    "reusable_description": "Reuse a GitHub App connection from another workspace you manage. The original workspace stays connected.",
+    "reusable_from": "From {{workspace}}",
+    "reuse_connection": "Use connection",
+    "reusing_connection": "Connecting…",
+    "reuse_connection_aria": "Use {{login}} connection from {{workspace}}",
+    "toast_reused": "GitHub connection added",
+    "toast_reuse_failed": "Failed to reuse GitHub connection"
+  },
+  "vcs": {
+    "section_title": "Git providers (self-hosted)",
+    "page_description": "Connect a self-hosted Forgejo, Gitea, or GitLab instance to mirror pull requests onto issues. Each connection uses an access token; agents push branches and open PRs using the runtime's own Git credentials.",
+    "connect_title": "Connect a provider instance",
+    "connected_as": "Connected as {{login}}",
+    "form_provider_label": "Provider",
+    "form_instance_url_label": "Instance URL",
+    "form_token_label": "Access token",
+    "form_token_placeholder": "Access token",
+    "form_token_hint": "Create an access token with read access to repositories. Forgejo/Gitea: Settings, Applications. GitLab: a personal access token with the read_api scope.",
+    "connect": "Connect",
+    "connecting": "Connecting...",
+    "disconnect": "Disconnect",
+    "disconnecting": "Disconnecting...",
+    "not_configured": "Git provider integration is not configured on this server. Ask an administrator to set",
+    "contact_admin": "Ask a workspace admin to connect a Git provider instance.",
+    "webhook_setup_title": "Finish setup in your provider",
+    "webhook_setup_description": "Add a webhook on your repository or organisation with the URL and secret below. Forgejo/Gitea: choose the Gitea format and the Pull Request (and Commit Status) events. GitLab: paste the secret as the token and enable Merge request and Pipeline events.",
+    "webhook_url_label": "Webhook URL",
+    "webhook_secret_label": "Webhook secret",
+    "webhook_secret_warning": "Copy the secret now. It is shown only once and cannot be retrieved later.",
+    "copy": "Copy",
+    "copied": "Copied to clipboard",
+    "copy_failed": "Could not copy",
+    "disconnect_confirm_title": "Disconnect this provider?",
+    "disconnect_confirm_description": "Mirrored pull requests and their issue links for this connection will be removed. This cannot be undone.",
+    "disconnect_confirm_cancel": "Cancel",
+    "disconnect_confirm_action": "Disconnect",
+    "toast_connected": "Provider connected",
+    "toast_connect_failed": "Could not connect to the provider",
+    "toast_disconnected": "Provider disconnected",
+    "toast_disconnect_failed": "Could not disconnect",
+    "regenerate_webhook": "Regenerate webhook",
+    "rotate_confirm_title": "Regenerate webhook secret?",
+    "rotate_confirm_description": "The current webhook secret will stop working immediately. Deliveries from your Git provider will fail until you update the webhook secret in provider settings.",
+    "rotate_confirm_cancel": "Cancel",
+    "rotate_confirm_action": "Regenerate",
+    "rotating": "Regenerating...",
+    "toast_rotated": "Webhook secret regenerated",
+    "toast_rotate_failed": "Could not regenerate webhook secret"
   },
   "lark": {
     "section_title": "Lark",
@@ -567,8 +768,6 @@
     "not_enabled_description_prefix": "The server is missing the encryption setting used to store enterprise bot credentials (",
     "not_enabled_description_suffix": "). Configure it before creating enterprise bots.",
     "not_enabled_self_host_hint": "Self-hosters: see the project README for details.",
-    "preview_title": "Enterprise bot installation coming soon",
-    "preview_description": "The at-rest key is set, but the scan-to-create enterprise bot flow is not wired in this build. The entry point will appear here once it is enabled.",
     "connected_bots": "Connected enterprise bots",
     "loading": "Loading…",
     "empty_title": "No enterprise bots connected yet",
@@ -584,19 +783,30 @@
     "disconnect_confirm_cancel": "Cancel",
     "toast_disconnected": "Disconnected enterprise bot",
     "toast_disconnect_failed": "Disconnect failed",
+    "bind_button": "Create enterprise bot",
+    "bind_button_title": "Create a DingTalk enterprise bot for {{agent}}",
+    "agent_bot_connected_label": "Enterprise bot connected",
+    "agent_bot_disconnect_tooltip": "Unbind this enterprise bot from the Agent. The bot will stop receiving DingTalk messages.",
+    "byo_dialog_title": "Connect a DingTalk bot",
+    "byo_docs_link": "Step-by-step: connect your Multica agent to DingTalk",
+    "byo_appkey_label": "AppKey (client id)",
+    "byo_appsecret_label": "AppSecret (client secret)",
+    "byo_submit": "Connect",
+    "byo_submitting": "Connecting…",
+    "byo_cancel": "Cancel",
+    "byo_success_toast": "DingTalk bot connected",
+    "byo_failed_toast": "Could not connect the DingTalk bot",
+    "preview_title": "Enterprise bot installation coming soon",
+    "preview_description": "The at-rest key is set, but the scan-to-create enterprise bot flow is not wired in this build. The entry point will appear here once it is enabled.",
     "toast_router_retry_succeeded": "Router registration restored",
     "toast_router_retry_failed": "Router registration retry failed",
     "router_registered": "HTTP callback · Router registered",
     "router_registration_failed": "HTTP callback · Router not registered",
     "router_retry": "Retry Router",
-    "bind_button": "Create enterprise bot",
-    "bind_button_title": "Create a DingTalk enterprise bot for {{agent}}",
-    "agent_bot_connected_label": "Enterprise bot connected",
     "agent_bot_approving_label": "Enterprise bot under review",
     "approving_hint": "DingTalk is reviewing this bot. It cannot send or receive messages until approved.",
     "agent_bot_manage_link": "Manage enterprise bot in DingTalk",
     "agent_bot_manage_tooltip": "Open the DingTalk developer console to manage the created bot app — permissions, credentials, release.",
-    "agent_bot_disconnect_tooltip": "Unbind this enterprise bot from the Agent. The bot will stop receiving DingTalk messages.",
     "install_dialog_title": "Create enterprise bot",
     "install_dialog_description": "Open DingTalk on your phone and scan the code below to create an enterprise bot in your organization.",
     "install_dialog_description_for_agent": "Open DingTalk on your phone and scan the code below to create an enterprise bot for {{agent}}.",
@@ -641,6 +851,56 @@
     "install_manual_missing_fields": "Enter both the AppKey and the AppSecret.",
     "install_manual_error_generic": "Could not connect the app. Check the AppKey and AppSecret, then try again."
   },
+  "wecom": {
+    "section_title": "WeCom",
+    "page_description": "Connect each Multica Agent to its own WeCom (企业微信) smart bot. Members can DM the bot, @ it in groups, and type /issue to spin up a new Multica issue. The Agent replies over a long WebSocket connection, so no public callback URL is required.",
+    "not_enabled_title": "WeCom integration not enabled",
+    "not_enabled_description_prefix": "Set",
+    "not_enabled_description_suffix": "on the server to enable WeCom smart-bot installations.",
+    "not_enabled_self_host_hint": "Self-hosters: see the project README for details.",
+    "preview_title": "WeCom install coming soon",
+    "preview_description": "The at-rest key is set, but this deployment has not fully enabled WeCom installs yet.",
+    "connected_bots": "Connected bots",
+    "loading": "Loading…",
+    "empty_title": "No bots connected yet",
+    "empty_description_prefix": "Open an Agent in this workspace and click",
+    "empty_description_cta": "Connect WeCom",
+    "empty_description_suffix": "to install a smart bot for it.",
+    "revoked_badge": "revoked",
+    "bot_id_label": "Bot ID: {{botId}}",
+    "disconnect": "Disconnect",
+    "disconnecting": "Disconnecting…",
+    "disconnect_confirm_title": "Disconnect this WeCom bot?",
+    "disconnect_confirm_description": "The bot will stop receiving WeCom messages for this workspace. The installation row is kept for audit; you can re-install later from the same Agent.",
+    "disconnect_confirm_cancel": "Cancel",
+    "toast_disconnected": "Disconnected WeCom bot",
+    "toast_disconnect_failed": "Disconnect failed",
+    "bind_button": "Connect WeCom",
+    "bind_button_title": "Connect {{agent}} to a WeCom smart bot",
+    "agent_bot_connected_label": "Connected to WeCom",
+    "agent_bot_connected_label_with_id": "Connected to WeCom — {{botId}}",
+    "agent_bot_disconnect_tooltip": "Unbind this smart bot from the Agent. The bot will stop receiving WeCom messages.",
+    "byo_dialog_title": "Connect a WeCom smart bot",
+    "byo_bot_id_label": "Bot ID",
+    "byo_bot_id_placeholder": "e.g. aibot_xxxxxxxxxxxxxxxx",
+    "byo_secret_label": "Long-connection secret",
+    "byo_secret_placeholder": "Paste the secret shown once in the console",
+    "byo_bot_name_label": "Bot name in chat (optional)",
+    "byo_bot_name_placeholder": "e.g. Multica Bot",
+    "byo_bot_name_hint": "Only needed if the name has a space in it, so the bot can tell its own @-mention apart from the command typed after it. To change it later — including after renaming the bot in the WeCom console — disconnect this bot and connect it again.",
+    "byo_submit": "Connect",
+    "byo_submitting": "Connecting…",
+    "byo_cancel": "Cancel",
+    "byo_success_toast": "WeCom bot connected",
+    "byo_conflict_same_workspace": "This bot is already connected to another Agent in this workspace. Disconnect it there first, then connect it here.",
+    "byo_conflict_archived_agent": "This bot is connected to an archived Agent in this workspace. Restore that Agent, or disconnect its bot, before connecting it here.",
+    "byo_conflict_other_workspace": "This bot is already connected to a different Multica workspace. Disconnect it there before connecting it here.",
+    "byo_rejected": "Could not connect the bot. Check the Bot ID and secret from the WeCom admin console, and that it is a smart bot with the long connection enabled.",
+    "byo_credentials_rejected": "WeCom rejected this Bot ID and secret. Check both on the WeCom admin console, and that it is a smart bot with the long connection enabled.",
+    "byo_credentials_unverifiable": "Couldn't reach WeCom to verify this bot. Your credentials were not changed — try again in a moment.",
+    "byo_install_failed": "Couldn't save this bot — something went wrong on our side. Your credentials were not changed; try again, and contact support if it keeps failing.",
+    "byo_failed_toast": "Could not connect the WeCom bot"
+  },
   "repositories": {
     "section_title": "Repositories",
     "description": "Git repositories associated with this workspace. Agents use these to clone and work on code.",
@@ -648,6 +908,27 @@
     "url_empty": "(empty URL)",
     "description_placeholder": "Description (e.g. Go backend + Next.js frontend)",
     "add": "Add repository",
+    "connect_github": "Connect GitHub",
+    "choose_from_github": "Choose from GitHub",
+    "github_not_configured": "GitHub connection is not configured for this deployment.",
+    "github_browse_not_configured": "Repository browsing requires GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY.",
+    "github_connect_failed": "Could not connect GitHub. Try again.",
+    "github_picker_title": "Choose GitHub repositories",
+    "github_picker_description": "Select repositories to add to this workspace. Existing manual entries stay unchanged.",
+    "github_account": "GitHub account",
+    "github_search_placeholder": "Search loaded repositories",
+    "github_loading": "Loading repositories…",
+    "github_load_failed": "Could not load repositories from GitHub. Check the installation access and try again.",
+    "github_empty": "This installation has no accessible repositories.",
+    "github_no_search_results": "No loaded repositories match this search.",
+    "github_private": "Private",
+    "github_archived": "Archived",
+    "github_added": "Added",
+    "github_load_more": "Load more",
+    "github_selected_count": "{{count}} selected",
+    "github_cancel": "Cancel",
+    "github_import": "Add repositories",
+    "complete_manual_entry_first": "Complete or remove the empty manual repository before importing.",
     "save": "Save",
     "saving": "Saving...",
     "saved_hint": "All changes saved",
@@ -710,6 +991,20 @@
     "remove_action": "Remove from workspace",
     "cannot_demote_last_owner_title": "Promote another member to owner first — a workspace must keep at least one owner.",
     "cannot_demote_last_owner": "Cannot demote the last owner",
+    "roles": {
+      "owner": {
+        "label": "Owner",
+        "description": "Full access, manage all settings"
+      },
+      "admin": {
+        "label": "Admin",
+        "description": "Manage members and settings"
+      },
+      "member": {
+        "label": "Member",
+        "description": "Create and work on issues"
+      }
+    },
     "dingtalk_title": "Pick from DingTalk org",
     "dingtalk_description": "Search org contacts, select members, and add them directly to the workspace.",
     "dingtalk_open_picker": "Add from DingTalk",
@@ -754,20 +1049,49 @@
     "toast_dingtalk_identity_missing": "{{count}} members are missing a DingTalk identity for sign-in. Check Open Platform permissions.",
     "toast_dingtalk_group_missing": "Enter a DingTalk group chatid first",
     "toast_dingtalk_group_added": "Added {{count}} people to the DingTalk group",
-    "toast_dingtalk_group_failed": "Failed to add members to DingTalk group",
-    "roles": {
-      "owner": {
-        "label": "Owner",
-        "description": "Full access, manage all settings"
-      },
-      "admin": {
-        "label": "Admin",
-        "description": "Manage members and settings"
-      },
-      "member": {
-        "label": "Member",
-        "description": "Create and work on issues"
-      }
-    }
+    "toast_dingtalk_group_failed": "Failed to add members to DingTalk group"
+  },
+  "workspace_access": {
+    "title": "DTA Access",
+    "description": "Issue workspace-bound credentials for DTA. External operators use DTA only and do not receive a Multica account or personal API token.",
+    "owner_only": "Only workspace owners can manage DTA access.",
+    "tokens_title": "DTA tokens",
+    "tokens_description": "Each token represents one external operator with standard member access in this workspace, an independent expiry, and immediate revocation.",
+    "create": "Create token",
+    "loading": "Loading DTA access…",
+    "empty": "No DTA tokens yet.",
+    "edit": "Edit",
+    "expires": "Expires",
+    "last_used": "Last used",
+    "revoked": "Revoked",
+    "revoke": "Revoke key",
+    "revoke_confirm": "Revoke this DTA access key? DTA requests using it will fail immediately.",
+    "delete": "Delete record",
+    "delete_confirm": "Permanently delete this revoked token record? Its service member, agents, and history will remain.",
+    "saved": "DTA token saved",
+    "save_failed": "Couldn't save DTA token",
+    "create_title": "Create DTA token",
+    "edit_title": "Edit DTA token",
+    "name_placeholder": "External operator name",
+    "member_role": "Standard workspace member access",
+    "member_permissions_description": "This token has the same access as a standard workspace member. It can manage its own agents, tasks, traces, schedules, bindings, and stable private runtimes. It cannot manage members or workspace settings, create public managed runtimes, or administer stable releases.",
+    "regenerate": "Regenerate",
+    "regenerated": "DTA token regenerated",
+    "regenerate_title": "Regenerate DTA token",
+    "regenerate_warning": "The current key will stop working immediately. Configure the newly generated key in DTA after you save it.",
+    "expiry_title": "Expiry",
+    "expiry_description": "All DTA requests using this token fail immediately after it expires. You can edit the expiry or regenerate the key with a new expiry.",
+    "expiry": {
+      "keep": "Keep current expiry",
+      "days": "{{count}} days",
+      "never": "Never expires"
+    },
+    "permanent_warning": "A token with no expiry remains usable until it is revoked. Use an expiring token when possible.",
+    "cancel": "Cancel",
+    "save": "Save",
+    "secret_title": "Save this DTA access key now",
+    "secret_warning": "This key is shown only once. Send it only through your approved secret-delivery channel; it cannot be recovered later.",
+    "secret_confirm": "I have copied and stored this key safely",
+    "close": "Close"
   }
 }

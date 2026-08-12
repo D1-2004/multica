@@ -38,14 +38,14 @@ func TestClientSubmitExecutionResultUsesTrustedBaseAndCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := ExecutionResultRequest{
-		RequestID:          "multica-terminal:root-task",
-		AgentID:            "agent-1",
-		ExternalTaskID:     "root-task",
-		ExternalRunID:      "leaf-task",
-		ExternalSessionID:  "session-1",
-		ExecutionStatus:    "completed",
-		ResultMessage:      "最后回复",
-		ExecutionResult:    map[string]any{"failureReason": ""},
+		RequestID:         "multica-terminal:root-task",
+		AgentID:           "agent-1",
+		ExternalTaskID:    "root-task",
+		ExternalRunID:     "leaf-task",
+		ExternalSessionID: "session-1",
+		ExecutionStatus:   "completed",
+		ResultMessage:     "最后回复",
+		ExecutionResult:   map[string]any{"failureReason": ""},
 		ExecutionSummary: map[string]any{
 			"task_id": "root-task",
 			"runtime": map[string]any{"provider": "hermes"},

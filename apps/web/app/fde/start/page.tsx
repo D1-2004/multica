@@ -251,8 +251,8 @@ function FDEStartContent() {
     <main className="h-full min-h-dvh overflow-y-auto bg-gradient-to-b from-sky-50 to-white px-4 py-8 text-slate-950 sm:flex sm:items-start sm:justify-center">
       <Card className="mx-auto w-full max-w-md border-sky-100 shadow-lg shadow-sky-100/60">
         <CardHeader className="space-y-3 text-center">
-          <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-sky-600 text-lg font-bold text-white">FDE</div>
-          <CardTitle className="text-2xl">{stage === "done" ? "FDE 开发者工作空间已就绪" : "创建专属 FDE 开发者工作空间"}</CardTitle>
+          <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-sky-600 text-title font-bold text-white">FDE</div>
+          <CardTitle className="text-display-sm">{stage === "done" ? "FDE 开发者工作空间已就绪" : "创建专属 FDE 开发者工作空间"}</CardTitle>
           <CardDescription>{stage === "done" ? "工作区、FDE 智能体和钉钉机器人均已完成配置。" : "我们将新建一个独立工作区，并自动创建 FDE 智能体、绑定钉钉机器人。不会修改你已有的工作区。"}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -263,17 +263,17 @@ function FDEStartContent() {
           {stage === "create" && (
             <div className="space-y-6">
               <section className="space-y-4" aria-labelledby="new-workspace-title">
-                <h2 id="new-workspace-title" className="text-sm font-medium text-slate-900">新建专属 FDE 开发者工作空间</h2>
+                <h2 id="new-workspace-title" className="text-body font-medium text-slate-900">新建专属 FDE 开发者工作空间</h2>
                 <div>
-                  <label htmlFor="workspace-name" className="mb-2 block text-sm font-medium">工作区名称</label>
+                  <label htmlFor="workspace-name" className="mb-2 block text-body font-medium">工作区名称</label>
                   <Input id="workspace-name" value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="例如：我的 FDE 工作区" autoFocus />
                 </div>
                 <Button className="h-12 w-full" disabled={!workspaceName.trim()} onClick={submit}>创建并继续</Button>
               </section>
               <section className="space-y-3" aria-labelledby="existing-workspaces-title">
                 <div>
-                  <h2 id="existing-workspaces-title" className="text-sm font-medium text-slate-900">已有工作区（仅展示）</h2>
-                  <p className="mt-1 text-xs text-slate-500">已有工作区不会被选择、修改或用于本次初始化。</p>
+                  <h2 id="existing-workspaces-title" className="text-body font-medium text-slate-900">已有工作区（仅展示）</h2>
+                  <p className="mt-1 text-caption text-slate-500">已有工作区不会被选择、修改或用于本次初始化。</p>
                 </div>
                 {state && state.workspaces.length > 0 ? (
                   <ul
@@ -284,12 +284,12 @@ function FDEStartContent() {
                     {state.workspaces.map((workspace) => (
                       <li key={workspace.id} className="rounded-xl border border-slate-200 bg-slate-100/80 px-4 py-3 opacity-70">
                         <p className="font-medium text-slate-700">{workspace.name}</p>
-                        <p className="mt-1 truncate text-xs text-slate-500">{workspace.slug}</p>
+                        <p className="mt-1 truncate text-caption text-slate-500">{workspace.slug}</p>
                       </li>
                     ))}
                   </ul>
                 ) : (
-                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">暂无已有工作区</div>
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-body text-slate-500">暂无已有工作区</div>
                 )}
               </section>
               {createConfirmation}
@@ -299,7 +299,7 @@ function FDEStartContent() {
           {stage === "install" && install && (
             <div className="space-y-4 text-center">
               <StatusLoading text="等待钉钉机器人创建完成…" />
-              <p className="text-sm text-slate-600">请在钉钉开放平台完成机器人的创建与发布。如果页面没有自动打开，请点击下方按钮。PC 端完成后请返回本页面，本页会自动检测创建结果。</p>
+              <p className="text-body text-slate-600">请在钉钉开放平台完成机器人的创建与发布。如果页面没有自动打开，请点击下方按钮。PC 端完成后请返回本页面，本页会自动检测创建结果。</p>
               <Button className="h-12 w-full" onClick={() => void openDingTalkInstallPage(install.qr_code_url)}>前往创建钉钉机器人</Button>
             </div>
           )}
@@ -308,20 +308,20 @@ function FDEStartContent() {
             <div className="space-y-5 py-4 text-center">
               <CheckCircle2 className="mx-auto size-14 text-emerald-500" />
               <div>
-                <h2 className="text-xl font-semibold">FDE 工作区和钉钉机器人已准备就绪</h2>
-                <p className="mt-2 text-sm text-slate-600">已为你完成以下配置：</p>
+                <h2 className="text-title-lg font-semibold">FDE 工作区和钉钉机器人已准备就绪</h2>
+                <p className="mt-2 text-body text-slate-600">已为你完成以下配置：</p>
               </div>
               <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-4 text-left">
                 <div>
-                  <p className="text-xs text-slate-500">工作区</p>
+                  <p className="text-caption text-slate-500">工作区</p>
                   <p className="mt-1 font-medium text-slate-900">{result.workspace.name}</p>
                 </div>
-                <ul className="space-y-2 text-sm text-slate-700">
+                <ul className="space-y-2 text-body text-slate-700">
                   <li className="flex gap-2"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />创建 FDE 智能体和云端运行时</li>
                   <li className="flex gap-2"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />创建并绑定钉钉机器人</li>
                 </ul>
               </div>
-              <p className="text-sm text-slate-600">现在你可以在钉钉中向机器人发送消息，也可以进入工作区管理 issue、智能体和运行时。</p>
+              <p className="text-body text-slate-600">现在你可以在钉钉中向机器人发送消息，也可以进入工作区管理 issue、智能体和运行时。</p>
               <Button className="h-12 w-full" onClick={enterWorkspace}>进入工作区</Button>
             </div>
           )}
@@ -329,7 +329,7 @@ function FDEStartContent() {
           {stage === "error" && (
             <div className="space-y-4 text-center">
               <AlertCircle className="mx-auto size-12 text-rose-500" />
-              <div><h2 className="font-semibold">暂时无法继续</h2><p className="mt-2 break-words text-sm text-slate-600">{error}</p></div>
+              <div><h2 className="font-semibold">暂时无法继续</h2><p className="mt-2 break-words text-body text-slate-600">{error}</p></div>
               <Button variant="outline" className="h-11 w-full" onClick={() => window.location.reload()}>重试</Button>
             </div>
           )}
@@ -340,7 +340,7 @@ function FDEStartContent() {
 }
 
 function StatusLoading({ text }: { text: string }) {
-  return <div className="flex flex-col items-center gap-3 py-6 text-center"><Loader2 className="size-8 animate-spin text-sky-600" /><p className="text-sm text-slate-600">{text}</p></div>;
+  return <div className="flex flex-col items-center gap-3 py-6 text-center"><Loader2 className="size-8 animate-spin text-sky-600" /><p className="text-body text-slate-600">{text}</p></div>;
 }
 
 export default function FDEStartPage() {

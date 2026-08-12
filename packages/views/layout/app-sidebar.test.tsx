@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
 import { AppSidebar } from "./app-sidebar";
 
-const { appForeground, chatSessions, chatStore, detail, deletePin, navigation, pins, summary, workspaces } = vi.hoisted(() => ({
+const { appForeground, chatSessions, chatStore, detail, deletePin, inboxItems, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
   appForeground: { current: true },
+  sidebarState: { setOpenMobile: vi.fn() },
   chatSessions: { current: [] as { id?: string; unread_count?: number }[] },
   chatStore: { current: { activeSessionId: null as string | null, isOpen: false } },
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   deletePin: vi.fn(),
+  inboxItems: { current: [] as { id: string; read: boolean }[] },
   navigation: { current: { pathname: "/acme/issues" } },
   summary: { current: [] as { workspace_id: string; count: number }[] },
   workspaces: {
@@ -66,6 +68,7 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
   ),
   SidebarMenuItem: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarRail: () => null,
+  useSidebar: () => ({ setOpenMobile: sidebarState.setOpenMobile }),
 }));
 vi.mock("@multica/ui/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -111,7 +114,11 @@ vi.mock("@multica/core/chat", () => ({
     { getState: () => chatStore.current },
   ),
 }));
-vi.mock("@multica/core/paths", () => ({
+vi.mock("@multica/core/paths", async (importOriginal) => ({
+  // Spread the real module so pure helpers (resolveRouteIconName, used by the
+  // nav to derive each item's icon from its href) stay intact; only the
+  // workspace/context hooks below are stubbed to control routes in tests.
+  ...(await importOriginal<typeof import("@multica/core/paths")>()),
   paths: { workspace: (slug: string) => ({ issues: () => `/${slug}/issues` }) },
   useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme", slug: "acme" }),
   useWorkspacePaths: () => ({
@@ -174,6 +181,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
     if (queryKey[0] === "pins") return { data: pins.current };
     if (queryKey[0] === "issue") return detail.current;
     if (queryKey[0] === "inbox" && queryKey[1] === "unread-summary") return { data: summary.current };
+    if (queryKey[0] === "inbox") return { data: inboxItems.current };
     if (queryKey[0] === "workspaces") return { data: workspaces.current };
     if (queryKey[0] === "chat" && queryKey[2] === "sessions") return { data: chatSessions.current };
     return { data: [] };
@@ -225,6 +233,36 @@ describe("PinRow", () => {
       "true",
     );
     expect(container.querySelector('button[data-href="/acme/issues"]')).not.toHaveAttribute("data-active");
+  });
+});
+
+// On a phone the sidebar is a Sheet laid over the page, so a nav tap that
+// leaves it open renders the destination underneath and reads as a dead tap.
+describe("mobile sheet dismissal", () => {
+  beforeEach(() => {
+    sidebarState.setOpenMobile.mockClear();
+    navigation.current = { pathname: "/acme/issues" };
+  });
+
+  it("dismisses the sheet once the route changes", () => {
+    const { rerender } = render(<AppSidebar />);
+    sidebarState.setOpenMobile.mockClear();
+
+    navigation.current = { pathname: "/acme/inbox" };
+    rerender(<AppSidebar />);
+
+    expect(sidebarState.setOpenMobile).toHaveBeenCalledWith(false);
+  });
+
+  // Closing on `pathname` rather than per-link keeps every route out of the
+  // sidebar covered at once — nav groups, pins, and the switcher's own push.
+  it("does not re-dismiss while the route holds still", () => {
+    const { rerender } = render(<AppSidebar />);
+    sidebarState.setOpenMobile.mockClear();
+
+    rerender(<AppSidebar />);
+
+    expect(sidebarState.setOpenMobile).not.toHaveBeenCalled();
   });
 });
 
@@ -298,6 +336,7 @@ describe("workspace-switcher dropdown per-workspace dot", () => {
 describe("personal nav — Chat", () => {
   beforeEach(() => {
     chatSessions.current = [];
+    inboxItems.current = [];
     navigation.current = { pathname: "/acme/issues" };
     chatStore.current = { activeSessionId: null, isOpen: false };
     appForeground.current = true;
@@ -309,6 +348,19 @@ describe("personal nav — Chat", () => {
     container.querySelector<HTMLElement>('button[data-href="/acme/chat"]');
   const chatBadge = (container: HTMLElement) =>
     chatNav(container)?.querySelector("number-flow-react") ?? null;
+
+  it("keeps persistent Inbox and Chat counters static", () => {
+    inboxItems.current = [{ id: "inbox-1", read: false }];
+    chatSessions.current = [{ id: "chat-1", unread_count: 2 }];
+    const { container } = render(<AppSidebar />);
+    const inboxBadge = container
+      .querySelector<HTMLElement>('button[data-href="/acme/inbox"]')
+      ?.querySelector("number-flow-react") as (HTMLElement & { animated?: boolean }) | null;
+    const currentChatBadge = chatBadge(container) as (HTMLElement & { animated?: boolean }) | null;
+
+    expect(inboxBadge?.animated).toBe(false);
+    expect(currentChatBadge?.animated).toBe(false);
+  });
 
   it("renders a Chat nav link to the workspace chat route", () => {
     const { container } = render(<AppSidebar />);

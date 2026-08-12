@@ -143,11 +143,11 @@ export function UpdateFCE2BRuntimeTemplateDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
+          <DialogTitle className="flex items-center gap-2 text-title-sm">
             <Cloud className="h-4 w-4 text-muted-foreground" />
             {t(($) => $.fc_e2b_template_update.title)}
           </DialogTitle>
-          <DialogDescription className="text-xs">
+          <DialogDescription className="text-caption">
             {t(($) => $.fc_e2b_template_update.description)}
           </DialogDescription>
         </DialogHeader>
@@ -159,30 +159,30 @@ export function UpdateFCE2BRuntimeTemplateDialog({
         >
           <div className="grid grid-cols-1 gap-3 rounded-md border bg-muted/30 p-3 sm:grid-cols-[minmax(0,1fr)_120px]">
             <div className="min-w-0">
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              <div className="text-micro uppercase tracking-wide text-muted-foreground">
                 {t(($) => $.fc_e2b_template_update.current_template)}
               </div>
-              <div className="mt-1 truncate font-mono text-xs">
+              <div className="mt-1 truncate font-mono text-caption">
                 {currentTemplateName}
               </div>
             </div>
             <div className="min-w-0">
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              <div className="text-micro uppercase tracking-wide text-muted-foreground">
                 {t(($) => $.fc_e2b_template_update.provider)}
               </div>
-              <div className="mt-1 truncate text-xs font-medium">
+              <div className="mt-1 truncate text-caption font-medium">
                 {providerDisplayName(runtime.provider)}
               </div>
             </div>
           </div>
 
-          <div className="flex items-start gap-2 rounded-md border px-3 py-2.5 text-xs text-muted-foreground">
+          <div className="flex items-start gap-2 rounded-md border px-3 py-2.5 text-caption text-muted-foreground">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <p>{t(($) => $.fc_e2b_template_update.cutover_notice)}</p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="fc-e2b-template-update-search" className="text-xs">
+            <Label htmlFor="fc-e2b-template-update-search" className="text-caption">
               {t(($) => $.fc_e2b_template_update.new_template)}
             </Label>
             <div className="relative">
@@ -199,13 +199,13 @@ export function UpdateFCE2BRuntimeTemplateDialog({
             </div>
             <div className="max-h-56 overflow-y-auto rounded-md border">
               {templatesQuery.isLoading && (
-                <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
+                <div className="flex items-center gap-2 p-3 text-caption text-muted-foreground">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   {t(($) => $.fc_e2b_runtime.templates_loading)}
                 </div>
               )}
               {templatesQuery.isError && (
-                <div className="p-3 text-xs text-destructive">
+                <div className="p-3 text-caption text-destructive">
                   {templatesQuery.error instanceof Error
                     ? templatesQuery.error.message
                     : t(($) => $.fc_e2b_runtime.templates_failed)}
@@ -214,7 +214,7 @@ export function UpdateFCE2BRuntimeTemplateDialog({
               {!templatesQuery.isLoading &&
                 !templatesQuery.isError &&
                 filteredTemplates.length === 0 && (
-                  <div className="p-3 text-xs text-muted-foreground">
+                  <div className="p-3 text-caption text-muted-foreground">
                     {t(($) => $.fc_e2b_runtime.templates_empty)}
                   </div>
                 )}
@@ -240,14 +240,14 @@ export function UpdateFCE2BRuntimeTemplateDialog({
                     type="button"
                     disabled={!selectable}
                     onClick={() => setSelectedTemplate(template)}
-                    className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-xs transition-colors last:border-b-0 enabled:hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-55"
+                    className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-caption transition-colors last:border-b-0 enabled:hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-55"
                   >
                     <span className="min-w-0 space-y-1">
                       <span className="block truncate font-medium">
                         {displayName}
                       </span>
                       {templateId && templateId !== displayName && (
-                        <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                        <span className="block truncate font-mono text-micro text-muted-foreground">
                           {templateId}
                         </span>
                       )}

@@ -276,17 +276,17 @@ func (h *Handler) handleAgentChatDispatch(
 	}
 
 	message, err := dingtalk.InboundFromHTTPCallback(dingtalk.HTTPCallbackMessage{
-		ConversationID:       ctx.Conversation.ID,
-		ConversationType:     ctx.Conversation.Type,
-		ConversationTitle:    ctx.Conversation.Title,
-		MessageID:            ctx.Message.ID,
-		CreatedAt:            ctx.Message.CreatedAt,
-		SenderUID:            ctx.Sender.ID,
-		SenderOrgID:          ctx.Sender.TenantID,
-		SenderStaffID:        ctx.Sender.StaffID,
-		SenderName:           ctx.Sender.Name,
-		Text:                 ctx.Message.Text,
-		IdentityContextToken: agentDispatchContextToken(req),
+		ConversationID:                ctx.Conversation.ID,
+		ConversationType:              ctx.Conversation.Type,
+		ConversationTitle:             ctx.Conversation.Title,
+		MessageID:                     ctx.Message.ID,
+		CreatedAt:                     ctx.Message.CreatedAt,
+		SenderUID:                     ctx.Sender.ID,
+		SenderOrgID:                   ctx.Sender.TenantID,
+		SenderStaffID:                 ctx.Sender.StaffID,
+		SenderName:                    ctx.Sender.Name,
+		Text:                          ctx.Message.Text,
+		IdentityContextToken:          agentDispatchContextToken(req),
 		IdentityContextTokenExpiresAt: agentDispatchContextTokenExpiresAt(req),
 	}, robotInstallation.ClientID, uuidToString(installation.ID))
 	if err != nil {
@@ -521,7 +521,7 @@ func (h *Handler) createAgentDispatchIssue(w http.ResponseWriter, r *http.Reques
 		ActorID:          uuidToString(userID),
 		AnalyticsAgentID: uuidToString(agent.ID),
 		Platform:         "webhook",
-		BroadcastPayload: func(issue db.Issue, _ []db.Attachment) map[string]any {
+		BroadcastPayload: func(issue db.Issue, _ []db.Attachment, _ []db.IssueLabel) map[string]any {
 			return map[string]any{"issue": issueToResponse(issue, prefix)}
 		},
 	})
@@ -600,6 +600,7 @@ func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Requ
 			attachmentService.DeleteImported(r.Context(), imported)
 		}
 	}()
+	attachmentMode := attachmentURLModeFromRequest(r)
 	result, err := h.IssueCommentService.CreateExternalFollowUp(r.Context(), service.IssueCommentCreateParams{
 		Issue:                     issue,
 		AuthorID:                  dispatchContext.UserID,
@@ -611,7 +612,7 @@ func (h *Handler) createAgentDispatchComment(w http.ResponseWriter, r *http.Requ
 		BroadcastPayload: func(comment db.Comment, attachments []db.Attachment) map[string]any {
 			responses := make([]AttachmentResponse, 0, len(attachments))
 			for _, attachment := range attachments {
-				responses = append(responses, h.attachmentToResponse(attachment))
+				responses = append(responses, h.attachmentToResponse(attachment, attachmentMode))
 			}
 			return map[string]any{
 				"comment":             commentToResponse(comment, nil, responses),

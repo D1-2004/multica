@@ -469,9 +469,14 @@ func TestRuntimeCascadeCancelsDeferredTaskBeforeHardDelete(t *testing.T) {
 		tx.Rollback(context.Background())
 		t.Fatal(err)
 	}
-	if err := qtx.DeleteArchivedAgentsByRuntime(
-		context.Background(),
-		util.MustParseUUID(fixture.runtimeID),
+	if _, err := qtx.UnbindUserAgentsFromRuntime(
+		context.Background(), util.MustParseUUID(fixture.runtimeID),
+	); err != nil {
+		tx.Rollback(context.Background())
+		t.Fatal(err)
+	}
+	if _, err := qtx.UnbindTasksFromRuntime(
+		context.Background(), util.MustParseUUID(fixture.runtimeID),
 	); err != nil {
 		tx.Rollback(context.Background())
 		t.Fatal(err)
