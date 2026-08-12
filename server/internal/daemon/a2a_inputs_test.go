@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -102,5 +103,19 @@ func TestMaterializeA2AInputAttachmentsRejectsSymlinkRootAndDownloadFailure(t *t
 		"task-1", input, t.TempDir(), "opencode",
 	); err == nil {
 		t.Fatal("attachment download failure was ignored")
+	}
+}
+
+func TestMaterializeA2AInputAttachmentsReportsExpectedAndDownloadedSize(t *testing.T) {
+	_, _, err := materializeA2AInputAttachments(
+		context.Background(),
+		stubA2AAttachmentDownloader{data: map[string][]byte{"attachment-1": []byte("abc")}},
+		"task-1",
+		[]ChatAttachmentMeta{{ID: "attachment-1", Filename: "file.bin", SizeBytes: 4}},
+		t.TempDir(),
+		"opencode",
+	)
+	if err == nil || !strings.Contains(err.Error(), "size mismatch: expected 4 bytes, got 3") {
+		t.Fatalf("materializeA2AInputAttachments() error = %v", err)
 	}
 }

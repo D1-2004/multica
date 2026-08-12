@@ -2,8 +2,8 @@ package handler
 
 import (
 	"io"
+	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -47,8 +47,25 @@ func (h *Handler) DownloadDaemonA2AAttachment(w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", storage.ContentDisposition(contentType, attachment.Filename))
-	w.Header().Set("Content-Length", strconv.FormatInt(attachment.SizeBytes, 10))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, _ = io.Copy(w, reader)
+	written, copyErr := io.Copy(w, reader)
+	if copyErr != nil {
+		slog.Warn("stream A2A attachment failed",
+			"task_id", taskID,
+			"attachment_id", uuidToString(attachmentID),
+			"expected_size_bytes", attachment.SizeBytes,
+			"written_size_bytes", written,
+			"error", copyErr,
+		)
+		return
+	}
+	if attachment.SizeBytes > 0 && written != attachment.SizeBytes {
+		slog.Warn("A2A attachment storage size mismatch",
+			"task_id", taskID,
+			"attachment_id", uuidToString(attachmentID),
+			"expected_size_bytes", attachment.SizeBytes,
+			"written_size_bytes", written,
+		)
+	}
 }

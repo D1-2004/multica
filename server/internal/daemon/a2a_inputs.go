@@ -68,7 +68,12 @@ func materializeA2AInputAttachments(
 			return nil, nil, fmt.Errorf("download A2A attachment %s: %w", attachment.ID, err)
 		}
 		if attachment.SizeBytes > 0 && attachment.SizeBytes != int64(len(data)) {
-			return nil, nil, fmt.Errorf("A2A attachment %s size mismatch", attachment.ID)
+			return nil, nil, fmt.Errorf(
+				"A2A attachment %s size mismatch: expected %d bytes, got %d",
+				attachment.ID,
+				attachment.SizeBytes,
+				len(data),
+			)
 		}
 		dir := filepath.Join(root, fmt.Sprintf("%02d", index+1))
 		if err := os.Mkdir(dir, 0o700); err != nil {
