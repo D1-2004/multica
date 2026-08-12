@@ -601,8 +601,11 @@ func TestASBIdentityProbeCommandHasValidShellSyntax(t *testing.T) {
 			if strings.Contains(command, "nw-aliwork") {
 				t.Fatalf("identity probe still depends on removed nw-aliwork CLI: %q", command)
 			}
+			if strings.Contains(command, "sandbox=true") {
+				t.Fatalf("identity probe unexpectedly requires a sandbox SSO ticket: %q", command)
+			}
 			for _, required := range []string{
-				"sandbox=true",
+				"https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json",
 				"EXPECTED_EMP_ID",
 				"EXPECTED_BUC_AGENT_ID",
 				"p.get(\"success\") is True",
