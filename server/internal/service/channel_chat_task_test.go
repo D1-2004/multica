@@ -149,6 +149,118 @@ func TestDeferredA2ATurnsShareOneChatSession(t *testing.T) {
 	}
 }
 
+func TestCancelA2ATaskPreservesPublicBindingAndInput(t *testing.T) {
+	f := newDurableChannelTaskFixture(t)
+	queries := db.New(f.pool)
+	ctx := context.Background()
+	task, err := queries.CreatePausedA2AChatTask(ctx, db.CreatePausedA2AChatTaskParams{
+		AgentID:       f.agentID,
+		RuntimeID:     f.runtimeID,
+		ChatSessionID: f.sessionID,
+		TaskContext:   newA2ATaskContext(),
+	})
+	if err != nil {
+		t.Fatalf("create paused A2A task: %v", err)
+	}
+	input, err := queries.CreateChatMessage(ctx, db.CreateChatMessageParams{
+		ChatSessionID: f.sessionID,
+		Role:          "user",
+		Content:       "durable A2A cancel input",
+		TaskID:        task.ID,
+	})
+	if err != nil {
+		t.Fatalf("create A2A input message: %v", err)
+	}
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	var endpointID, clientID, contextID, bindingID pgtype.UUID
+	if err := f.pool.QueryRow(ctx, `
+		INSERT INTO agent_a2a_endpoint (
+			workspace_id, agent_id, public_agent_id, enabled,
+			delegated_by_user_id, card_name
+		)
+		VALUES ($1, $2, $3, TRUE, $4, 'A2A cancel durability')
+		RETURNING id
+	`, f.workspaceID, f.agentID, "a2a_cancel_agent_"+suffix, f.userID).Scan(&endpointID); err != nil {
+		t.Fatalf("create A2A endpoint: %v", err)
+	}
+	if err := f.pool.QueryRow(ctx, `
+		INSERT INTO a2a_client (
+			endpoint_id, name, scopes, created_by, updated_by
+		)
+		VALUES ($1, 'cancel durability', ARRAY['send','read','list','cancel']::text[], $2, $2)
+		RETURNING id
+	`, endpointID, f.userID).Scan(&clientID); err != nil {
+		t.Fatalf("create A2A client: %v", err)
+	}
+	if err := f.pool.QueryRow(ctx, `
+		INSERT INTO a2a_context (
+			endpoint_id, client_id, public_context_id, chat_session_id
+		)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id
+	`, endpointID, clientID, "ctx_cancel_"+suffix, f.sessionID).Scan(&contextID); err != nil {
+		t.Fatalf("create A2A context: %v", err)
+	}
+	if err := f.pool.QueryRow(ctx, `
+		INSERT INTO a2a_task_binding (
+			endpoint_id, client_id, context_id, public_task_id, message_id,
+			request_fingerprint, artifact_id, root_local_task_id,
+			input_chat_message_id, public_state
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'TASK_STATE_AUTH_REQUIRED')
+		RETURNING id
+	`, endpointID, clientID, contextID, "tsk_cancel_"+suffix,
+		"msg_cancel_"+suffix, fmt.Sprintf("%064d", 0), "art_cancel_"+suffix,
+		task.ID, input.ID).Scan(&bindingID); err != nil {
+		t.Fatalf("create A2A task binding: %v", err)
+	}
+
+	svc := NewTaskService(queries, f.pool, nil, events.New())
+	cancelled, err := svc.CancelTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("cancel A2A local task: %v", err)
+	}
+	if cancelled.Status != "cancelled" {
+		t.Fatalf("local task status = %q, want cancelled", cancelled.Status)
+	}
+
+	var publicState string
+	if err := f.pool.QueryRow(ctx, `
+		SELECT public_state
+		FROM a2a_task_binding
+		WHERE id = $1
+	`, bindingID).Scan(&publicState); err != nil {
+		t.Fatalf("A2A binding disappeared after cancellation: %v", err)
+	}
+	if publicState != "TASK_STATE_AUTH_REQUIRED" {
+		t.Fatalf("public task state = %q, want unchanged local-cancel fixture state", publicState)
+	}
+
+	var inputContent string
+	if err := f.pool.QueryRow(ctx, `
+		SELECT content
+		FROM chat_message
+		WHERE id = $1 AND role = 'user'
+	`, input.ID).Scan(&inputContent); err != nil {
+		t.Fatalf("A2A input disappeared after cancellation: %v", err)
+	}
+	if inputContent != "durable A2A cancel input" {
+		t.Fatalf("A2A input content = %q", inputContent)
+	}
+	var stoppedCount int
+	if err := f.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM chat_message
+		WHERE task_id = $1 AND role = 'assistant' AND content = 'Stopped.'
+	`, task.ID).Scan(&stoppedCount); err != nil {
+		t.Fatalf("count A2A cancellation outcome: %v", err)
+	}
+	if stoppedCount != 1 {
+		t.Fatalf("A2A cancellation outcome count = %d, want 1", stoppedCount)
+	}
+}
+
 func (f durableChannelTaskFixture) session(t *testing.T) db.ChatSession {
 	t.Helper()
 	session, err := db.New(f.pool).GetChatSession(context.Background(), f.sessionID)

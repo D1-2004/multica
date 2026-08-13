@@ -1598,7 +1598,23 @@ func (s *TaskService) finalizeCancelledChatMessage(ctx context.Context, task db.
 		if err != nil {
 			return fmt.Errorf("list cancelled chat task messages: %w", err)
 		}
-		if len(messages) == 0 {
+		restorable := len(messages) == 0
+		if restorable {
+			// A2A input is an immutable external record, not a draft typed in
+			// the Multica composer. Deleting it would cascade through the A2A
+			// input binding and erase the public CANCELED task. Prefer the
+			// durable task marker, with the chat-session binding as a fallback
+			// for rows created before the marker was introduced.
+			isA2A := hasA2ATaskOrigin(task.Context)
+			if !isA2A {
+				isA2A, err = qtx.IsA2ALocalTask(ctx, task.ID)
+				if err != nil {
+					return fmt.Errorf("check cancelled chat A2A provenance: %w", err)
+				}
+			}
+			restorable = !isA2A
+		}
+		if restorable {
 			// Detach attachments BEFORE deleting the user message — the
 			// attachment FK is ON DELETE CASCADE, so deleting first would
 			// destroy rows the restored draft needs to re-bind.
