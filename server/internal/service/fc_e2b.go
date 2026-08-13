@@ -465,7 +465,8 @@ func IsFCE2BTemplateReady(template FCE2BTemplate) bool {
 
 // IsFCE2BTemplatePublished reports whether the current build carries a valid
 // supported manifest alias required for safe publication, runtime creation,
-// and rotation. m2 through m5 are supported; m1 is retired.
+// and rotation. m2 through the current manifest version are supported; m1 is
+// retired.
 func IsFCE2BTemplatePublished(template FCE2BTemplate) bool {
 	return template.ManifestVersion >= 2 &&
 		template.ManifestVersion <= fcE2BTemplateManifestVersion &&
@@ -1335,13 +1336,13 @@ func (l *FCE2BLauncher) VerifyStableTemplate(ctx context.Context, selected FCE2B
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &manifest); err != nil {
 		return nil, fmt.Errorf("decode runtime manifest: %w", err)
 	}
-	if manifest.SchemaVersion != 3 ||
+	if manifest.SchemaVersion != selected.ManifestVersion ||
 		!containsAllStrings(manifest.SandboxBackends, string(SandboxBackendAliyunFC)) ||
-		!slices.Equal(manifest.Providers, []string{"hermes", "opencode", "pi"}) ||
-		!slices.Equal(manifest.Capabilities, []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1}) ||
+		!slices.Equal(manifest.Providers, selected.Providers) ||
+		!slices.Equal(manifest.Capabilities, selected.Capabilities) ||
 		!slices.Equal(
 			manifest.CapabilitiesByBackend[string(SandboxBackendAliyunFC)],
-			[]string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
+			selected.Capabilities,
 		) ||
 		!slices.Equal(
 			manifest.IdentityModesByBackend[string(SandboxBackendAliyunFC)],

@@ -3327,16 +3327,21 @@ func isStableSourceRevision(value string) bool {
 
 func releaseTemplate(release FCE2BStableRelease) FCE2BTemplate {
 	return FCE2BTemplate{
-		ID:                release.TemplateID,
-		BuildID:           release.TemplateBuildID,
-		Name:              release.TemplateAlias,
-		Template:          release.TemplateAlias,
-		Status:            "READY",
-		ManifestVersion:   3,
-		Providers:         []string{"hermes", "opencode", "pi"},
-		Capabilities:      []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
+		ID:              release.TemplateID,
+		BuildID:         release.TemplateBuildID,
+		SourceRevision:  release.SourceRevision,
+		Name:            release.TemplateAlias,
+		Template:        release.TemplateAlias,
+		Status:          "READY",
+		ManifestVersion: intMetadataValue(release.Manifest, "schema_version"),
+		Providers:       stringSliceMetadataValue(release.Manifest, "providers"),
+		Capabilities: manifestStringSliceForBackend(
+			release.Manifest,
+			"capabilities_by_backend",
+			string(SandboxBackendAliyunFC),
+		),
 		ComponentVersions: releaseComponentVersions(release.Manifest),
-		RunnerProtocol:    string(fcE2BRunnerLaunchRootLog),
+		RunnerProtocol:    stringMetadataValue(release.Manifest, "runner_protocol"),
 	}
 }
 
@@ -3412,11 +3417,12 @@ func runtimeUsesArtifact(runtime db.AgentRuntime, ref, buildID, digest string) b
 }
 
 func runtimeUsesStableRelease(runtime db.AgentRuntime, release FCE2BStableRelease) bool {
+	var bindingMatches bool
 	switch SandboxBackendKind(release.SandboxBackend) {
 	case SandboxBackendAliyunFC:
-		return runtimeUsesTemplate(runtime, release.TemplateID, release.TemplateBuildID)
+		bindingMatches = runtimeUsesTemplate(runtime, release.TemplateID, release.TemplateBuildID)
 	case SandboxBackendASB:
-		return runtimeUsesArtifact(
+		bindingMatches = runtimeUsesArtifact(
 			runtime,
 			release.ArtifactRef,
 			release.ArtifactBuildID,
@@ -3425,6 +3431,26 @@ func runtimeUsesStableRelease(runtime db.AgentRuntime, release FCE2BStableReleas
 	default:
 		return false
 	}
+	if !bindingMatches {
+		return false
+	}
+	metadata, err := ParseCloudSandboxRuntime(runtime)
+	if err != nil {
+		return false
+	}
+	expectedManifestVersion := intMetadataValue(release.Manifest, "schema_version")
+	expectedRunnerProtocol := stringMetadataValue(release.Manifest, "runner_protocol")
+	expectedCapabilities := manifestStringSliceForBackend(
+		release.Manifest,
+		"capabilities_by_backend",
+		release.SandboxBackend,
+	)
+	return expectedManifestVersion > 0 &&
+		expectedRunnerProtocol != "" &&
+		len(expectedCapabilities) > 0 &&
+		metadata.ManifestVersion == expectedManifestVersion &&
+		metadata.RunnerProtocol == expectedRunnerProtocol &&
+		containsAllStrings(metadata.Capabilities, expectedCapabilities...)
 }
 
 func isUniqueViolation(err error) bool {

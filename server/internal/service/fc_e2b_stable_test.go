@@ -688,19 +688,140 @@ func TestRuntimeUsesTemplateRequiresTemplateAndBuild(t *testing.T) {
 	}
 }
 
+func TestReleaseTemplatePreservesVerifiedFCManifest(t *testing.T) {
+	release := FCE2BStableRelease{
+		TemplateID:      "template-v6",
+		TemplateBuildID: "build-v6",
+		TemplateAlias:   "multica-m6",
+		SourceRevision:  "029b33",
+		Manifest: map[string]any{
+			"schema_version": float64(6),
+			"providers":      []any{"hermes", "opencode", "pi"},
+			"capabilities_by_backend": map[string]any{
+				"aliyun_fc": []any{
+					"dws",
+					"dws.im_event",
+					"mcp",
+					RuntimeStartCapabilityEventsV1,
+					LLMTraceCapability,
+					A2AInboundOpenCodeCapability,
+					A2AInvocationV2Capability,
+				},
+			},
+			"component_versions": map[string]any{
+				"opencode": "v1.18.11",
+				"dws":      "v1.0.58-beta.4",
+			},
+			"runner_protocol": "root-log-v1",
+		},
+	}
+
+	template := releaseTemplate(release)
+	if template.ManifestVersion != 6 {
+		t.Fatalf("manifest version = %d, want 6", template.ManifestVersion)
+	}
+	if template.SourceRevision != release.SourceRevision {
+		t.Fatalf("source revision = %q, want %q", template.SourceRevision, release.SourceRevision)
+	}
+	if want := []string{"hermes", "opencode", "pi"}; !reflect.DeepEqual(template.Providers, want) {
+		t.Fatalf("providers = %#v, want %#v", template.Providers, want)
+	}
+	if !containsAllStrings(template.Capabilities, A2AInvocationV2Capability) {
+		t.Fatalf("capabilities = %#v, want %q", template.Capabilities, A2AInvocationV2Capability)
+	}
+	if template.RunnerProtocol != "root-log-v1" {
+		t.Fatalf("runner protocol = %q, want root-log-v1", template.RunnerProtocol)
+	}
+	if template.ComponentVersions["opencode"] != "v1.18.11" ||
+		template.ComponentVersions["dws"] != "v1.0.58-beta.4" {
+		t.Fatalf("component versions = %#v", template.ComponentVersions)
+	}
+}
+
+func TestRuntimeUsesStableReleaseRequiresVerifiedManifestMetadata(t *testing.T) {
+	manifest := map[string]any{
+		"schema_version": float64(6),
+		"capabilities_by_backend": map[string]any{
+			"aliyun_fc": []any{"dws", RuntimeStartCapabilityEventsV1, A2AInvocationV2Capability},
+			"asb":       []any{"dws", RuntimeStartCapabilityEventsV1, A2AInvocationV2Capability},
+		},
+		"runner_protocol": "root-log-v1",
+	}
+	fcRelease := FCE2BStableRelease{
+		SandboxBackend:  string(SandboxBackendAliyunFC),
+		TemplateID:      "template-v6",
+		TemplateBuildID: "build-v6",
+		Manifest:        manifest,
+	}
+	fcRuntime := db.AgentRuntime{
+		RuntimeMode: "cloud",
+		Provider:    "opencode",
+		Metadata: []byte(`{
+			"kind":"fc-e2b",
+			"template_id":"template-v6",
+			"template_build_id":"build-v6",
+			"manifest_version":6,
+			"runner_protocol":"root-log-v1",
+			"capabilities":["opencode","dws","runtime_start_events_v1","a2a-invocation-v2"]
+		}`),
+	}
+	if !runtimeUsesStableRelease(fcRuntime, fcRelease) {
+		t.Fatal("FC Runtime with the verified manifest metadata was rejected")
+	}
+	fcRuntime.Metadata = []byte(`{
+		"kind":"fc-e2b",
+		"template_id":"template-v6",
+		"template_build_id":"build-v6",
+		"manifest_version":6,
+		"runner_protocol":"root-log-v1",
+		"capabilities":["opencode","dws","runtime_start_events_v1"]
+	}`)
+	if runtimeUsesStableRelease(fcRuntime, fcRelease) {
+		t.Fatal("FC Runtime missing a2a-invocation-v2 passed stable release readback")
+	}
+
+	digest := strings.Repeat("a", 64)
+	asbRelease := FCE2BStableRelease{
+		SandboxBackend:  string(SandboxBackendASB),
+		ArtifactRef:     "registry.example/runtime@sha256:" + digest,
+		ArtifactBuildID: "build-v6",
+		ArtifactDigest:  "sha256:" + digest,
+		Manifest:        manifest,
+	}
+	asbRuntime := db.AgentRuntime{
+		RuntimeMode: "cloud",
+		Provider:    "opencode",
+		Metadata: []byte(`{
+			"kind":"cloud-sandbox",
+			"sandbox_backend":"asb",
+			"provider":"opencode",
+			"artifact_kind":"oci_image",
+			"artifact_ref":"registry.example/runtime@sha256:` + digest + `",
+			"artifact_build_id":"build-v6",
+			"artifact_digest":"sha256:` + digest + `",
+			"manifest_version":6,
+			"runner_protocol":"root-log-v1",
+			"capabilities":["dws","runtime_start_events_v1","a2a-invocation-v2"]
+		}`),
+	}
+	if !runtimeUsesStableRelease(asbRuntime, asbRelease) {
+		t.Fatal("ASB Runtime with the verified manifest metadata was rejected")
+	}
+}
+
 func TestVerifyStableTemplateRunsNativeSmokeAndChecksManifest(t *testing.T) {
 	runner := &fakeCommandRunner{out: []string{
 		"Sandbox created with ID sbx_stable123 using template multica-stable\n",
 		"",
 		"",
 		`{
-			"schema_version":3,
+			"schema_version":6,
 			"sandbox_backends":["aliyun_fc","asb"],
 			"providers":["hermes","opencode","pi"],
-			"capabilities":["dws","dws.im_event","mcp","runtime_start_events_v1"],
+			"capabilities":["dws","dws.im_event","mcp","runtime_start_events_v1","llm_trace_v1","a2a_inbound_opencode_v1","a2a-invocation-v2"],
 			"capabilities_by_backend":{
-				"aliyun_fc":["dws","dws.im_event","mcp","runtime_start_events_v1"],
-				"asb":["dws","dws.im_event","mcp","runtime_start_events_v1","a1","mw","buc"]
+				"aliyun_fc":["dws","dws.im_event","mcp","runtime_start_events_v1","llm_trace_v1","a2a_inbound_opencode_v1","a2a-invocation-v2"],
+				"asb":["dws","dws.im_event","mcp","runtime_start_events_v1","llm_trace_v1","a1","mw","buc","a2a-invocation-v2"]
 			},
 			"identity_modes_by_backend":{
 				"aliyun_fc":["agent_identity"],
@@ -730,9 +851,17 @@ func TestVerifyStableTemplateRunsNativeSmokeAndChecksManifest(t *testing.T) {
 		BuildID:         "build-1",
 		Template:        "multica-stable",
 		Status:          "READY",
-		ManifestVersion: 3,
+		ManifestVersion: 6,
 		Providers:       []string{"hermes", "opencode", "pi"},
-		Capabilities:    []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
+		Capabilities: []string{
+			"dws",
+			"dws.im_event",
+			"mcp",
+			RuntimeStartCapabilityEventsV1,
+			LLMTraceCapability,
+			A2AInboundOpenCodeCapability,
+			A2AInvocationV2Capability,
+		},
 		ComponentVersions: map[string]string{
 			"hermes":   "0.19.0",
 			"opencode": "v1.18.4",
