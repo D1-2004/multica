@@ -149,7 +149,7 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 	}
 	invocationIdentity, ok := parseAgentA2AInvocationIdentity(r)
 	if !ok {
-		writeError(w, http.StatusBadRequest, "invalid A2A Agent Identity headers")
+		writeError(w, http.StatusBadRequest, "invalid A2A identity headers")
 		return
 	}
 
