@@ -1459,6 +1459,25 @@ ORDER BY task.created_at, task.id
 FOR UPDATE OF task, turn, binding SKIP LOCKED
 LIMIT 1;
 
+-- name: LockA2ARequestBoundTurnAdmission :one
+-- A DEAP DWS token cannot be persisted beyond its HTTP request. Serialize with
+-- the Context scheduler and accept such a turn only when it can be promoted
+-- immediately, with no active or older deferred execution in the same Chat
+-- Session. The caller creates the new deferred row while retaining this lock.
+WITH context_lock AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(
+        hashtextextended(sqlc.arg('chat_session_id')::uuid::text, 479823117)
+    ) AS acquired
+)
+SELECT NOT EXISTS (
+    SELECT 1
+    FROM agent_task_queue task
+    CROSS JOIN context_lock
+    WHERE task.chat_session_id = sqlc.arg('chat_session_id')
+      AND task.status IN ('deferred', 'queued', 'dispatched', 'running', 'waiting_local_directory')
+) AS runnable
+FROM context_lock;
+
 -- name: ResumeDeferredA2AAuthTurns :many
 -- A fresh ContextToken resumes the whole pending FIFO, including input that
 -- arrived while the Agent was still working before it requested auth. Keep all

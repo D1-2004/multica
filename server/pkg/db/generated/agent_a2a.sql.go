@@ -3018,6 +3018,33 @@ func (q *Queries) LockA2ACredentialsForMemberRevocation(ctx context.Context, cli
 	return items, nil
 }
 
+const lockA2ARequestBoundTurnAdmission = `-- name: LockA2ARequestBoundTurnAdmission :one
+WITH context_lock AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(
+        hashtextextended($1::uuid::text, 479823117)
+    ) AS acquired
+)
+SELECT NOT EXISTS (
+    SELECT 1
+    FROM agent_task_queue task
+    CROSS JOIN context_lock
+    WHERE task.chat_session_id = $1
+      AND task.status IN ('deferred', 'queued', 'dispatched', 'running', 'waiting_local_directory')
+) AS runnable
+FROM context_lock
+`
+
+// A DEAP DWS token cannot be persisted beyond its HTTP request. Serialize with
+// the Context scheduler and accept such a turn only when it can be promoted
+// immediately, with no active or older deferred execution in the same Chat
+// Session. The caller creates the new deferred row while retaining this lock.
+func (q *Queries) LockA2ARequestBoundTurnAdmission(ctx context.Context, chatSessionID pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, lockA2ARequestBoundTurnAdmission, chatSessionID)
+	var runnable bool
+	err := row.Scan(&runnable)
+	return runnable, err
+}
+
 const lockA2ATaskBindingForClient = `-- name: LockA2ATaskBindingForClient :one
 SELECT id, endpoint_id, client_id, context_id, accepted_credential_id, public_task_id, message_id, request_fingerprint, artifact_id, root_local_task_id, input_chat_message_id, request_id, cancel_requested_at, failure_finalized_local_task_id, created_at, updated_at, public_state, status_message, status_updated_at, next_event_sequence
 FROM a2a_task_binding

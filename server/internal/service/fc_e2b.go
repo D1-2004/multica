@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/chattrace"
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
@@ -2007,6 +2008,19 @@ func (l *FCE2BLauncher) identityEnvForTask(
 	agentRow db.Agent,
 ) (map[string]string, error) {
 	if IsA2ATaskOrigin(task.Context) {
+		if requiresA2ADEAPDWSToken(task.Context) {
+			if !FCE2BRuntimeHasCapability(runtime, "dws") {
+				return nil, errors.New("A2A DEAP DWS identity requires a DWS-capable Runtime")
+			}
+			identity, ok := a2aintegration.InvocationIdentityFromContext(ctx)
+			if !ok || strings.TrimSpace(identity.DEAPDWSToken) == "" {
+				return nil, errors.New("A2A DEAP DWS identity is unavailable outside its request")
+			}
+			if identity.ContextToken != "" {
+				return nil, errors.New("A2A DEAP DWS identity conflicts with ContextToken identity")
+			}
+			return map[string]string{protocol.DEAPDWSTokenEnvKey: identity.DEAPDWSToken}, nil
+		}
 		// A2A may use only the explicitly supplied task-local external token.
 		// fcE2BAgentIdentityExtraEnv validates the paired expiry and external
 		// source marker; owner bindings and connected identities stay skipped.
@@ -2800,6 +2814,7 @@ func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 		protocol.DingTalkStreamNodeIDEnvKey,
 		protocol.DingTalkStreamConnectionIDEnvKey,
 		protocol.AgentIdentityContextTokenEnvKey,
+		protocol.DEAPDWSTokenEnvKey,
 		protocol.SandboxRelayTokenEnvKey,
 		"MULTICA_AGENT_IDENTITY_BASE_URL",
 		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS",

@@ -95,6 +95,44 @@ func TestValidateA2ASendRequestFromV1JSONWire(t *testing.T) {
 	}
 }
 
+func TestValidateA2ASendRequestKeepsDEAPDWSTokenRequestBound(t *testing.T) {
+	request := &a2a.SendMessageRequest{
+		Config: &a2a.SendMessageConfig{ReturnImmediately: true},
+		Message: &a2a.Message{
+			ID:    "message-deap",
+			Role:  a2a.MessageRoleUser,
+			Parts: a2a.ContentParts{a2a.NewTextPart("hello")},
+		},
+	}
+	identity := a2aintegration.InvocationIdentity{DEAPDWSToken: "deap-request-token"}
+	ctx := a2aintegration.WithInvocationIdentity(context.Background(), identity)
+	if _, err := validateA2ASendRequest(ctx, request, time.Now()); !errors.Is(err, a2a.ErrInvalidParams) {
+		t.Fatalf("immediate DEAP request error = %v, want invalid params", err)
+	}
+
+	request.Config.ReturnImmediately = false
+	validated, err := validateA2ASendRequest(ctx, request, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated.Identity.DEAPDWSToken != identity.DEAPDWSToken || validated.ReturnImmediately {
+		t.Fatalf("blocking DEAP request = %+v", validated)
+	}
+
+	request.Config.ReturnImmediately = true
+	identity.RequestBound = true
+	ctx = a2aintegration.WithInvocationIdentity(context.Background(), identity)
+	if _, err = validateA2ASendRequest(ctx, request, time.Now()); err != nil {
+		t.Fatalf("stream-bound DEAP request rejected: %v", err)
+	}
+
+	identity.ContextToken = "conflicting-context-token"
+	ctx = a2aintegration.WithInvocationIdentity(context.Background(), identity)
+	if _, err = validateA2ASendRequest(ctx, request, time.Now()); !errors.Is(err, a2a.ErrInvalidParams) {
+		t.Fatalf("conflicting identity error = %v, want invalid params", err)
+	}
+}
+
 func TestCompleteA2ASendHonorsImmediateTerminalAndCancellation(t *testing.T) {
 	t.Parallel()
 	svc := &A2AService{}
@@ -220,6 +258,20 @@ func TestFingerprintA2ASendRequestIsCanonicalAndContentSensitive(t *testing.T) {
 	if first == changed {
 		t.Fatal("identity extension declaration change did not change fingerprint")
 	}
+
+	deapIdentity := a2aintegration.InvocationIdentity{DEAPDWSToken: "deap-token-a"}
+	deapFirst, err := fingerprintA2ASendRequest(newRequest(map[string]any{"a": 1, "b": 2}, "hello"), deapIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deapIdentity.DEAPDWSToken = "deap-token-b"
+	deapChanged, err := fingerprintA2ASendRequest(newRequest(map[string]any{"a": 1, "b": 2}, "hello"), deapIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deapFirst == deapChanged {
+		t.Fatal("DEAP DWS token change did not change fingerprint")
+	}
 }
 
 func TestProjectA2ATaskState(t *testing.T) {
@@ -326,9 +378,21 @@ func TestA2AQueuedExternalIdentityNeedsAuth(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := a2AQueuedExternalIdentityNeedsAuth([]byte(test.context), now); got != test.want {
+			if got := a2AQueuedExternalIdentityNeedsAuth(context.Background(), []byte(test.context), now); got != test.want {
 				t.Fatalf("a2AQueuedExternalIdentityNeedsAuth() = %v, want %v", got, test.want)
 			}
 		})
+	}
+
+	directContext := []byte(a2aTaskDEAPDWSContextJSON)
+	if !a2AQueuedExternalIdentityNeedsAuth(context.Background(), directContext, now) {
+		t.Fatal("DEAP DWS turn without its live request token did not require auth")
+	}
+	requestContext := a2aintegration.WithInvocationIdentity(
+		context.Background(),
+		a2aintegration.InvocationIdentity{DEAPDWSToken: "deap-request-token"},
+	)
+	if a2AQueuedExternalIdentityNeedsAuth(requestContext, directContext, now) {
+		t.Fatal("DEAP DWS turn rejected its live request token")
 	}
 }

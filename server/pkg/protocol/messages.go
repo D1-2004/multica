@@ -25,6 +25,7 @@ const (
 	AgentIdentityContextTokenSourceJSONKey    = "agent_identity_context_token_source"
 	AgentIdentityContextTokenSourceExternal   = "external"
 	AgentIdentityContextTokenEnvKey           = "AGENT_IDENTITY_CONTEXT_TOKEN"
+	DEAPDWSTokenEnvKey                        = "MULTICA_DEAP_DWS_TOKEN"
 	DispatchSurfaceJSONKey                    = "dispatch_surface"
 	DispatchOutboundJSONKey                   = "dispatch_outbound"
 	DispatchContextPromptJSONKey              = "dispatch_context_prompt"

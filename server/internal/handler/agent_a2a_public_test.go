@@ -246,6 +246,13 @@ func TestParseAgentA2AInvocationIdentity(t *testing.T) {
 		t.Fatalf("parsed identity = %#v, ok=%v", identity, ok)
 	}
 
+	deap := httptest.NewRequest(http.MethodPost, "/v1", nil)
+	deap.Header.Set(a2aintegration.DEAPDWSTokenHeader, "opaque-deap-dws-token")
+	identity, ok = parseAgentA2AInvocationIdentity(deap)
+	if !ok || identity.DEAPDWSToken != "opaque-deap-dws-token" || identity.ContextToken != "" {
+		t.Fatalf("parsed DEAP identity = %#v, ok=%v", identity, ok)
+	}
+
 	tests := []struct {
 		name      string
 		configure func(*http.Request)
@@ -294,6 +301,34 @@ func TestParseAgentA2AInvocationIdentity(t *testing.T) {
 				request.Header.Set("A2A-Extensions", a2aintegration.AgentIdentityExtensionURI)
 				request.Header.Set(a2aintegration.AgentIdentityTokenHeader, token)
 				request.Header.Set(a2aintegration.AgentIdentityExpiryHeader, "tomorrow")
+			},
+		},
+		{
+			name: "empty DEAP DWS token",
+			configure: func(request *http.Request) {
+				request.Header.Set(a2aintegration.DEAPDWSTokenHeader, "")
+			},
+		},
+		{
+			name: "whitespace DEAP DWS token",
+			configure: func(request *http.Request) {
+				request.Header.Set(a2aintegration.DEAPDWSTokenHeader, " opaque-deap-dws-token")
+			},
+		},
+		{
+			name: "duplicate DEAP DWS token",
+			configure: func(request *http.Request) {
+				request.Header.Add(a2aintegration.DEAPDWSTokenHeader, "opaque-deap-dws-token")
+				request.Header.Add(a2aintegration.DEAPDWSTokenHeader, "opaque-deap-dws-token")
+			},
+		},
+		{
+			name: "conflicting DEAP and ContextToken identities",
+			configure: func(request *http.Request) {
+				request.Header.Set("A2A-Extensions", a2aintegration.AgentIdentityExtensionURI)
+				request.Header.Set(a2aintegration.AgentIdentityTokenHeader, token)
+				request.Header.Set(a2aintegration.AgentIdentityExpiryHeader, expires)
+				request.Header.Set(a2aintegration.DEAPDWSTokenHeader, "opaque-deap-dws-token")
 			},
 		},
 	}

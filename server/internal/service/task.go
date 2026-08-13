@@ -17,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
@@ -3688,21 +3689,33 @@ func (s *TaskService) NotifyTaskEnqueued(ctx context.Context, task db.AgentTaskQ
 	}
 	s.captureTaskQueued(ctx, task)
 	s.notifyTaskAvailable(task)
-	s.launchRuntimeForTask(task)
+	s.launchRuntimeForTaskWithContext(ctx, task)
 }
 
 func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
+	s.launchRuntimeForTaskWithContext(context.Background(), task)
+}
+
+func (s *TaskService) launchRuntimeForTaskWithContext(ctx context.Context, task db.AgentTaskQueue) {
 	if s == nil || s.RuntimeLauncher == nil || s.runtimeLaunchLeases == nil {
 		return
 	}
+	launchParent := context.Background()
+	if requiresA2ADEAPDWSToken(task.Context) {
+		if identity, ok := a2aintegration.InvocationIdentityFromContext(ctx); ok && strings.TrimSpace(identity.DEAPDWSToken) != "" {
+			// Preserve cancellation only for the request-scoped DEAP credential.
+			// Every ordinary launch retains its existing background lifecycle.
+			launchParent = ctx
+		}
+	}
 	taskCopy := task
-	go func() {
+	go func(parent context.Context) {
 		taskKey := util.UUIDToString(taskCopy.ID)
 		trace, traceErr := chattrace.ForTask(taskCopy.Context, taskKey, taskCopy.CreatedAt.Time)
 		if traceErr != nil {
 			slog.Error("runtime launcher task has invalid task trace", "task_id", taskKey, "error", traceErr)
 		}
-		acquireCtx, acquireCancel := context.WithTimeout(context.Background(), runtimeLaunchLeaseDBTimeout)
+		acquireCtx, acquireCancel := context.WithTimeout(parent, runtimeLaunchLeaseDBTimeout)
 		lease, acquired, err := s.runtimeLaunchLeases.Acquire(acquireCtx, taskCopy.ID, runtimeLaunchLeaseDuration)
 		acquireCancel()
 		if err != nil {
@@ -3729,7 +3742,7 @@ func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 			return
 		}
 
-		launchCtx, cancelLaunch := context.WithCancelCause(context.Background())
+		launchCtx, cancelLaunch := context.WithCancelCause(parent)
 		launchCtx = withTaskRuntimeLaunchLease(launchCtx, lease)
 		renewDone := make(chan struct{})
 		go s.renewRuntimeLaunchLease(launchCtx, cancelLaunch, lease, renewDone)
@@ -3793,7 +3806,7 @@ func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 				"stage_elapsed_ms", time.Since(started).Milliseconds(),
 			)
 		}
-	}()
+	}(launchParent)
 }
 
 func (s *TaskService) renewRuntimeLaunchLease(

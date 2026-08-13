@@ -168,6 +168,7 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("X-API-Key")
 	r.Header.Del(a2aintegration.AgentIdentityTokenHeader)
 	r.Header.Del(a2aintegration.AgentIdentityExpiryHeader)
+	r.Header.Del(a2aintegration.DEAPDWSTokenHeader)
 	if agentA2AHasTrailingJSONValue(body) {
 		// The SDK decoder owns JSON-RPC errors, but it intentionally consumes one
 		// value. Replace multi-value input with malformed JSON so the same SDK
@@ -214,19 +215,31 @@ func parseAgentA2AInvocationIdentity(r *http.Request) (a2aintegration.Invocation
 	}
 	tokenValues := r.Header.Values(a2aintegration.AgentIdentityTokenHeader)
 	expiryValues := r.Header.Values(a2aintegration.AgentIdentityExpiryHeader)
-	if len(tokenValues) > 1 || len(expiryValues) > 1 {
+	dwsTokenValues := r.Header.Values(a2aintegration.DEAPDWSTokenHeader)
+	if len(tokenValues) > 1 || len(expiryValues) > 1 || len(dwsTokenValues) > 1 {
 		return a2aintegration.InvocationIdentity{}, false
 	}
 	tokenRaw := r.Header.Get(a2aintegration.AgentIdentityTokenHeader)
 	expiresHeader := r.Header.Get(a2aintegration.AgentIdentityExpiryHeader)
+	dwsTokenRaw := r.Header.Get(a2aintegration.DEAPDWSTokenHeader)
 	token := strings.TrimSpace(tokenRaw)
 	expiresRaw := strings.TrimSpace(expiresHeader)
-	if token != tokenRaw || expiresRaw != expiresHeader {
+	dwsToken := strings.TrimSpace(dwsTokenRaw)
+	if token != tokenRaw || expiresRaw != expiresHeader || dwsToken != dwsTokenRaw {
+		return a2aintegration.InvocationIdentity{}, false
+	}
+	if len(dwsTokenValues) == 1 && (dwsToken == "" || len(dwsToken) > 64<<10) {
 		return a2aintegration.InvocationIdentity{}, false
 	}
 	if (token == "") != (expiresRaw == "") {
 		return a2aintegration.InvocationIdentity{}, false
 	}
+	if dwsToken != "" && token != "" {
+		// Two independently authoritative external identities are ambiguous.
+		// Require the caller to choose one instead of silently changing identity.
+		return a2aintegration.InvocationIdentity{}, false
+	}
+	identity.DEAPDWSToken = dwsToken
 	if token == "" {
 		return identity, true
 	}

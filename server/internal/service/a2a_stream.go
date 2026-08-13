@@ -10,6 +10,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/jackc/pgx/v5"
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -32,6 +33,10 @@ func (s *A2AService) SendStreamingMessage(ctx context.Context, request *a2a.Send
 			immediate.Config = &config
 		}
 		immediate.Config.ReturnImmediately = true
+		if identity, ok := a2aintegration.InvocationIdentityFromContext(ctx); ok {
+			identity.RequestBound = true
+			ctx = a2aintegration.WithInvocationIdentity(ctx, identity)
+		}
 		result, err := s.SendMessage(ctx, &immediate)
 		if err != nil {
 			yield(nil, err)

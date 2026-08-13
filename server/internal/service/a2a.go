@@ -285,9 +285,9 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 			_ = tx.Rollback(ctx)
 			return nil, a2a.NewError(a2a.ErrInvalidParams, "taskId and contextId do not match")
 		}
-		if binding.PublicState == string(a2a.TaskStateAuthRequired) && validated.Identity.ContextToken == "" && !validated.IdentityExpired {
+		if binding.PublicState == string(a2a.TaskStateAuthRequired) && validated.Identity.ContextToken == "" && validated.Identity.DEAPDWSToken == "" && !validated.IdentityExpired {
 			_ = tx.Rollback(ctx)
-			return nil, a2a.NewError(a2a.ErrInvalidParams, "a valid external ContextToken is required to resume this task")
+			return nil, a2a.NewError(a2a.ErrInvalidParams, "a valid external identity is required to resume this task")
 		}
 	} else {
 		publicTaskID, err = newA2APublicID("tsk_")
@@ -332,6 +332,16 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 			if err != nil {
 				return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "create context")
 			}
+		}
+	}
+	if validated.Identity.DEAPDWSToken != "" {
+		runnable, admissionErr := qtx.LockA2ARequestBoundTurnAdmission(ctx, a2aContext.ChatSessionID)
+		if admissionErr != nil {
+			return s.finishA2ASendError(ctx, tx, principalIDs, validated, admissionErr, "lock request-bound turn")
+		}
+		if !runnable {
+			_ = tx.Rollback(ctx)
+			return nil, a2a.NewError(a2a.ErrInvalidParams, "X-DWS-Token cannot be queued behind another turn")
 		}
 	}
 	if len(validated.ReferenceTaskIDs) > 0 {
@@ -548,13 +558,17 @@ func (s *A2AService) notifyNextA2ATask(ctx context.Context, chatSessionID pgtype
 		}
 		return
 	}
-	if a2AQueuedExternalIdentityNeedsAuth(candidate.TaskContext, time.Now()) {
+	if a2AQueuedExternalIdentityNeedsAuth(ctx, candidate.TaskContext, time.Now()) {
+		prompt := "A fresh external ContextToken is required to continue."
+		if requiresA2ADEAPDWSToken(candidate.TaskContext) {
+			prompt = "A fresh request-scoped X-DWS-Token is required to continue."
+		}
 		message := &a2a.Message{
 			ID:        stableA2AAgentMessageID(candidate.PublicTaskID, candidate.TurnSequence),
 			Role:      a2a.MessageRoleAgent,
 			TaskID:    a2a.TaskID(candidate.PublicTaskID),
 			ContextID: candidate.PublicContextID,
-			Parts:     a2a.ContentParts{a2a.NewTextPart("A fresh external ContextToken is required to continue.")},
+			Parts:     a2a.ContentParts{a2a.NewTextPart(prompt)},
 			Metadata:  map[string]any{},
 		}
 		statusMessage, marshalErr := json.Marshal(message)
@@ -619,7 +633,11 @@ func (s *A2AService) notifyNextA2ATask(ctx context.Context, chatSessionID pgtype
 	s.TaskService.NotifyTaskEnqueued(ctx, next)
 }
 
-func a2AQueuedExternalIdentityNeedsAuth(taskContext []byte, now time.Time) bool {
+func a2AQueuedExternalIdentityNeedsAuth(ctx context.Context, taskContext []byte, now time.Time) bool {
+	if requiresA2ADEAPDWSToken(taskContext) {
+		identity, ok := a2aintegration.InvocationIdentityFromContext(ctx)
+		return !ok || strings.TrimSpace(identity.DEAPDWSToken) == "" || identity.ContextToken != ""
+	}
 	var envelope struct {
 		Origin    string  `json:"multica_origin"`
 		Token     *string `json:"agent_identity_context_token"`
@@ -809,6 +827,12 @@ func validateA2ASendRequest(ctx context.Context, request *a2a.SendMessageRequest
 		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "message metadata is not valid JSON")
 	}
 	identity, _ := a2aintegration.InvocationIdentityFromContext(ctx)
+	if identity.ContextToken != "" && identity.DEAPDWSToken != "" {
+		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "external identity headers are ambiguous")
+	}
+	if identity.DEAPDWSToken != "" && returnImmediately && !identity.RequestBound {
+		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "X-DWS-Token requires blocking or streaming execution")
+	}
 	fingerprint, err := fingerprintA2ASendRequest(request, identity)
 	if err != nil {
 		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "message cannot be fingerprinted")
@@ -898,20 +922,27 @@ func a2aSendWaitComplete(state a2a.TaskState) bool {
 }
 
 func fingerprintA2ASendRequest(request *a2a.SendMessageRequest, identity a2aintegration.InvocationIdentity) (string, error) {
-	var tokenDigest string
+	var contextTokenDigest string
 	if identity.ContextToken != "" {
 		sum := sha256.Sum256([]byte(identity.ContextToken))
-		tokenDigest = hex.EncodeToString(sum[:])
+		contextTokenDigest = hex.EncodeToString(sum[:])
+	}
+	var dwsTokenDigest string
+	if identity.DEAPDWSToken != "" {
+		sum := sha256.Sum256([]byte(identity.DEAPDWSToken))
+		dwsTokenDigest = hex.EncodeToString(sum[:])
 	}
 	envelope := struct {
 		Request                    *a2a.SendMessageRequest `json:"request"`
 		IdentityExtensionDeclared  bool                    `json:"identityExtensionDeclared"`
 		IdentityTokenSHA256        string                  `json:"identityTokenSha256,omitempty"`
+		DEAPDWSTokenSHA256         string                  `json:"deapDwsTokenSha256,omitempty"`
 		IdentityExpiresAtUnixMilli int64                   `json:"identityExpiresAtUnixMilli,omitempty"`
 	}{
 		Request:                    request,
 		IdentityExtensionDeclared:  identity.ExtensionDeclared,
-		IdentityTokenSHA256:        tokenDigest,
+		IdentityTokenSHA256:        contextTokenDigest,
+		DEAPDWSTokenSHA256:         dwsTokenDigest,
 		IdentityExpiresAtUnixMilli: identity.ExpiresAtUnixMS,
 	}
 	encoded, err := json.Marshal(envelope)

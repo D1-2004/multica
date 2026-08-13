@@ -7,9 +7,11 @@ import (
 )
 
 const (
-	a2aTaskOriginContextKey = "multica_origin"
-	a2aTaskOriginValue      = "a2a"
-	a2aTaskContextJSON      = `{"multica_origin":"a2a"}`
+	a2aTaskOriginContextKey               = "multica_origin"
+	a2aTaskOriginValue                    = "a2a"
+	a2aTaskDEAPDWSTokenRequiredContextKey = "deap_dws_token_required"
+	a2aTaskContextJSON                    = `{"multica_origin":"a2a"}`
+	a2aTaskDEAPDWSContextJSON             = `{"deap_dws_token_required":true,"multica_origin":"a2a"}`
 )
 
 // newA2ATaskContext marks an execution as A2A-originated on the durable local
@@ -17,7 +19,15 @@ const (
 // external or local identifiers. Retry tasks inherit task context, so the
 // privacy boundary follows the complete local lineage.
 func newA2ATaskContext(identity ...a2aintegration.InvocationIdentity) []byte {
-	if len(identity) == 0 || identity[0].ContextToken == "" {
+	if len(identity) == 0 {
+		return []byte(a2aTaskContextJSON)
+	}
+	if identity[0].DEAPDWSToken != "" {
+		// Only the non-secret execution requirement is durable. The opaque DEAP
+		// credential remains exclusively in the live request context.
+		return []byte(a2aTaskDEAPDWSContextJSON)
+	}
+	if identity[0].ContextToken == "" {
 		return []byte(a2aTaskContextJSON)
 	}
 	context := map[string]any{
@@ -31,6 +41,22 @@ func newA2ATaskContext(identity ...a2aintegration.InvocationIdentity) []byte {
 		panic(err)
 	}
 	return encoded
+}
+
+func requiresA2ADEAPDWSToken(taskContext []byte) bool {
+	if len(taskContext) == 0 {
+		return false
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(taskContext, &envelope); err != nil {
+		return false
+	}
+	raw, ok := envelope[a2aTaskDEAPDWSTokenRequiredContextKey]
+	if !ok {
+		return false
+	}
+	var required bool
+	return json.Unmarshal(raw, &required) == nil && required
 }
 
 func hasA2ATaskOrigin(taskContext []byte) bool {

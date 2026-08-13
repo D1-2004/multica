@@ -1,11 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/events"
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -104,5 +106,48 @@ func TestA2ATaskDoesNotReceiveFCE2BIdentityEnvironment(t *testing.T) {
 	}
 	if len(env) != 0 {
 		t.Fatalf("A2A task received identity environment: %#v", env)
+	}
+}
+
+func TestA2ADEAPDWSTokenStaysOutOfDurableTaskContext(t *testing.T) {
+	const token = "deap-request-token-secret"
+	taskContext := newA2ATaskContext(a2aintegration.InvocationIdentity{DEAPDWSToken: token})
+	if bytes.Contains(taskContext, []byte(token)) {
+		t.Fatalf("DEAP DWS token leaked into durable task context: %s", taskContext)
+	}
+	if !requiresA2ADEAPDWSToken(taskContext) {
+		t.Fatalf("durable request requirement is missing: %s", taskContext)
+	}
+
+	launcher := &FCE2BLauncher{}
+	runtime := db.AgentRuntime{
+		RuntimeMode: "cloud",
+		Metadata:    []byte(`{"kind":"fc-e2b","capabilities":["dws"]}`),
+	}
+	requestContext := a2aintegration.WithInvocationIdentity(
+		context.Background(),
+		a2aintegration.InvocationIdentity{DEAPDWSToken: token},
+	)
+	env, err := launcher.identityEnvForTask(
+		requestContext,
+		db.AgentTaskQueue{Context: taskContext},
+		runtime,
+		"sandbox-deap",
+		db.Agent{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(env) != 1 || env[protocol.DEAPDWSTokenEnvKey] != token {
+		t.Fatalf("DEAP DWS environment = %#v", env)
+	}
+	if _, err = launcher.identityEnvForTask(
+		context.Background(),
+		db.AgentTaskQueue{Context: taskContext},
+		runtime,
+		"sandbox-deap",
+		db.Agent{},
+	); err == nil {
+		t.Fatal("request-scoped DEAP DWS identity was accepted without its request context")
 	}
 }

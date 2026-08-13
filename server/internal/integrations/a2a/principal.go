@@ -8,6 +8,7 @@ const (
 	AgentIdentityExtensionURI = "urn:multica:a2a:agent-identity:v1"
 	AgentIdentityTokenHeader  = "X-Multica-Agent-Identity-Context-Token"
 	AgentIdentityExpiryHeader = "X-Multica-Agent-Identity-Context-Token-Expires-At"
+	DEAPDWSTokenHeader        = "X-DWS-Token"
 )
 
 // Principal identifies the authenticated external caller and its target endpoint.
@@ -40,6 +41,12 @@ type InvocationIdentity struct {
 	ExtensionDeclared bool
 	ContextToken      string
 	ExpiresAtUnixMS   int64
+	// DEAPDWSToken is a request-scoped DWS credential supplied by DEAP. It must
+	// never be copied into an A2A message, task context, event, or durable queue.
+	DEAPDWSToken string
+	// RequestBound permits an internal immediate SendMessage only while the
+	// surrounding streaming request remains open.
+	RequestBound bool
 }
 
 // WithPrincipal attaches an authenticated A2A principal to a request context.
