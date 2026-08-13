@@ -1521,11 +1521,12 @@ func (l *ASBLauncher) execRunOnce(
 	if err != nil {
 		return err
 	}
+	// Background Runner lifetime is governed by task cancellation and the
+	// sandbox lifecycle. Readiness timeouts must not terminate active tasks.
 	result, err := l.Client.Exec(ctx, endpoint, ASBExecInput{
 		Command:    command,
 		CWD:        "/workspace",
 		Background: true,
-		Timeout:    l.Config.ReadyTimeout,
 		Envs:       envs,
 	})
 	if err != nil {
