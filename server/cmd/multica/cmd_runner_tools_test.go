@@ -127,6 +127,32 @@ func TestDefaultRunnerDesktopFailsWhenDesktopIsAbsent(t *testing.T) {
 	}
 }
 
+func TestRunnerConnectionStateTracksCurrentProcessAndMachine(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const machineID = "machine-1"
+	if err := writeRunnerConnectionState(machineID); err != nil {
+		t.Fatalf("write connection state: %v", err)
+	}
+	if !runnerConnectionActive(os.Getpid(), machineID) {
+		t.Fatal("current Runner connection was not recognized")
+	}
+	if runnerConnectionActive(os.Getpid()+1, machineID) {
+		t.Fatal("connection state accepted another process")
+	}
+	if runnerConnectionActive(os.Getpid(), "machine-2") {
+		t.Fatal("connection state accepted another machine")
+	}
+
+	clearRunnerConnectionState(os.Getpid() + 1)
+	if !runnerConnectionActive(os.Getpid(), machineID) {
+		t.Fatal("another process cleared the current Runner connection")
+	}
+	clearRunnerConnectionState(os.Getpid())
+	if runnerConnectionActive(os.Getpid(), machineID) {
+		t.Fatal("current Runner connection state was not cleared")
+	}
+}
+
 func TestExecuteRunnerCallRejectsOversizedEncodedResult(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "control-bytes.txt")

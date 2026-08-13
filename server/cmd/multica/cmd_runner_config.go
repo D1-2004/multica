@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type runnerConfig struct {
@@ -18,6 +19,12 @@ type runnerConfig struct {
 	PublicKey  string   `json:"public_key"`
 	PrivateKey string   `json:"private_key"`
 	Roots      []string `json:"roots"`
+}
+
+type runnerConnectionState struct {
+	PID         int       `json:"pid"`
+	MachineID   string    `json:"machine_id"`
+	ConnectedAt time.Time `json:"connected_at"`
 }
 
 func runnerStateDir() (string, error) {
@@ -135,4 +142,66 @@ func runnerLogPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "runner.log"), nil
+}
+
+func runnerConnectionStatePath() (string, error) {
+	dir, err := runnerStateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "connection.json"), nil
+}
+
+func writeRunnerConnectionState(machineID string) error {
+	path, err := runnerConnectionStatePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create Runner state directory: %w", err)
+	}
+	raw, err := json.Marshal(runnerConnectionState{
+		PID:         os.Getpid(),
+		MachineID:   machineID,
+		ConnectedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("encode Runner connection state: %w", err)
+	}
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write Runner connection state: %w", err)
+	}
+	return nil
+}
+
+func runnerConnectionActive(pid int, machineID string) bool {
+	path, err := runnerConnectionStatePath()
+	if err != nil {
+		return false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var state runnerConnectionState
+	if json.Unmarshal(raw, &state) != nil {
+		return false
+	}
+	return state.PID == pid && state.MachineID == machineID
+}
+
+func clearRunnerConnectionState(pid int) {
+	path, err := runnerConnectionStatePath()
+	if err != nil {
+		return
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var state runnerConnectionState
+	if json.Unmarshal(raw, &state) != nil || state.PID != pid {
+		return
+	}
+	_ = os.Remove(path)
 }

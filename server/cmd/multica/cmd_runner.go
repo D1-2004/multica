@@ -263,6 +263,7 @@ func runRunnerReconnect(cmd *cobra.Command, _ []string) error {
 	var result struct {
 		Status             string `json:"status"`
 		ActiveBindingCount int64  `json:"active_binding_count"`
+		MachineOnline      bool   `json:"machine_online"`
 	}
 	path := "/api/runner/machines/" + url.PathEscape(cfg.MachineID) + "/reconnect"
 	if err := client.PostJSONWithHeaders(ctx, path, map[string]string{
@@ -273,8 +274,12 @@ func runRunnerReconnect(cmd *cobra.Command, _ []string) error {
 	if result.Status != "connected" || result.ActiveBindingCount < 1 {
 		return errors.New("Runner binding did not reconnect")
 	}
-	fmt.Fprintln(os.Stderr, "Runner binding reconnected. Starting the shared background service...")
-	return startRunnerBackground()
+	if result.MachineOnline {
+		fmt.Fprintln(os.Stderr, "Runner binding reconnected. The shared background service is already online.")
+		return keepOnlineOrStartRunnerBackground()
+	}
+	fmt.Fprintln(os.Stderr, "Runner binding reconnected. The shared background service is offline; restarting it...")
+	return restartRunnerBackground()
 }
 
 func runRunnerStart(cmd *cobra.Command, _ []string) error {
@@ -324,10 +329,65 @@ func runRunnerStart(cmd *cobra.Command, _ []string) error {
 }
 
 func startRunnerBackground() error {
-	if pid, running := currentRunnerPID(); running {
-		fmt.Fprintf(os.Stderr, "Runner is already running (pid %d).\n", pid)
-		return nil
+	return ensureRunnerBackground(false)
+}
+
+func keepOnlineOrStartRunnerBackground() error {
+	return ensureRunnerBackground(true)
+}
+
+func ensureRunnerBackground(preserveRunning bool) error {
+	cfg, err := loadRunnerConfig()
+	if err != nil {
+		return err
 	}
+	if cfg.ServerURL == "" || cfg.MachineID == "" {
+		return errors.New("Runner is not bound; copy a new install command from Agent settings")
+	}
+	if pid, running := currentRunnerPID(); running {
+		if preserveRunning || runnerConnectionActive(pid, cfg.MachineID) {
+			fmt.Fprintf(os.Stderr, "Runner is already running and connected (pid %d).\n", pid)
+			return nil
+		}
+		fmt.Fprintf(os.Stderr, "Runner process %d is running but offline; restarting it...\n", pid)
+		if err := stopAndWaitRunner(pid); err != nil {
+			return err
+		}
+	}
+	return launchRunnerBackground(cfg)
+}
+
+func restartRunnerBackground() error {
+	if pid, running := currentRunnerPID(); running {
+		fmt.Fprintf(os.Stderr, "Restarting offline Runner process %d...\n", pid)
+		if err := stopAndWaitRunner(pid); err != nil {
+			return err
+		}
+	}
+	cfg, err := loadRunnerConfig()
+	if err != nil {
+		return err
+	}
+	if cfg.ServerURL == "" || cfg.MachineID == "" {
+		return errors.New("Runner is not bound; copy a new install command from Agent settings")
+	}
+	return launchRunnerBackground(cfg)
+}
+
+func stopAndWaitRunner(pid int) error {
+	if err := stopRunnerPID(pid); err != nil {
+		return fmt.Errorf("stop offline Runner: %w", err)
+	}
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if _, running := currentRunnerPID(); !running {
+			return nil
+		}
+	}
+	return errors.New("offline Runner did not stop within 5 seconds")
+}
+
+func launchRunnerBackground(cfg runnerConfig) error {
 	executable, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve Runner executable: %w", err)
@@ -362,12 +422,21 @@ func startRunnerBackground() error {
 	// writes runner.pid. Keep the installer attached long enough to observe the
 	// real child instead of reporting a false startup failure while that child
 	// is already on its way to connecting.
+	startedPID := 0
 	for i := 0; i < 300; i++ {
 		time.Sleep(100 * time.Millisecond)
 		if pid, running := currentRunnerPID(); running {
-			fmt.Fprintf(os.Stderr, "Runner started (pid %d). Log: %s\n", pid, logPath)
-			return nil
+			startedPID = pid
+			if runnerConnectionActive(pid, cfg.MachineID) {
+				fmt.Fprintf(os.Stderr, "Runner started and connected (pid %d). Log: %s\n", pid, logPath)
+				return nil
+			}
+		} else if startedPID != 0 {
+			return fmt.Errorf("Runner process %d exited before connecting; inspect %s", startedPID, logPath)
 		}
+	}
+	if startedPID != 0 {
+		return fmt.Errorf("Runner process %d did not establish a WebSocket within 30 seconds; it is still retrying. Inspect %s", startedPID, logPath)
 	}
 	return fmt.Errorf("Runner did not start; inspect %s", logPath)
 }
@@ -418,7 +487,10 @@ func runRunnerStatus(_ *cobra.Command, _ []string) error {
 	pid, running := currentRunnerPID()
 	status := "stopped"
 	if running {
-		status = "running"
+		status = "running (offline)"
+		if runnerConnectionActive(pid, cfg.MachineID) {
+			status = "online"
+		}
 	}
 	fmt.Printf("Status: %s\n", status)
 	if running {
@@ -524,6 +596,7 @@ func runRunnerConnection(ctx context.Context, cfg runnerConfig, privateKey ed255
 		return fmt.Errorf("connect Runner WebSocket: %w", err)
 	}
 	defer conn.Close()
+	defer clearRunnerConnectionState(os.Getpid())
 	conn.SetReadLimit(2 << 20)
 	logger.Info("Runner connected", "machine_id", cfg.MachineID)
 
@@ -585,10 +658,20 @@ func runRunnerConnection(ctx context.Context, cfg runnerConfig, privateKey ed255
 		}
 		if envelope.Type == runnerprotocol.MessageBindingsChanged {
 			var bindings runnerprotocol.BindingsChanged
-			if json.Unmarshal(raw, &bindings) == nil && bindings.ActiveBindingCount == 0 {
+			if json.Unmarshal(raw, &bindings) != nil {
+				continue
+			}
+			if bindings.ActiveBindingCount == 0 {
 				connectionCancel()
 				<-heartbeatsDone
 				return errRunnerHasNoBindings
+			}
+			if !runnerConnectionActive(os.Getpid(), cfg.MachineID) {
+				if err := writeRunnerConnectionState(cfg.MachineID); err != nil {
+					connectionCancel()
+					<-heartbeatsDone
+					return err
+				}
 			}
 			continue
 		}

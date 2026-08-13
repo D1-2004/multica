@@ -59,7 +59,11 @@ type runnerBindingResponse struct {
 }
 
 func runnerBindingOnline(disconnectedAt pgtype.Timestamptz, connectionID pgtype.UUID, lastSeenAt pgtype.Timestamptz, now time.Time) bool {
-	return !disconnectedAt.Valid && connectionID.Valid && lastSeenAt.Valid && now.Sub(lastSeenAt.Time) <= runnerOnlineTTL
+	return !disconnectedAt.Valid && runnerMachineOnline(connectionID, lastSeenAt, now)
+}
+
+func runnerMachineOnline(connectionID pgtype.UUID, lastSeenAt pgtype.Timestamptz, now time.Time) bool {
+	return connectionID.Valid && lastSeenAt.Valid && now.Sub(lastSeenAt.Time) <= runnerOnlineTTL
 }
 
 func runnerReconnectCommand(publicURL, token string) string {
@@ -972,6 +976,12 @@ func (h *Handler) ReconnectRunnerBinding(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to read Runner bindings")
 		return
 	}
+	machine, err := qtx.GetRunnerMachine(r.Context(), machineID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read Runner connection")
+		return
+	}
+	machineOnline := runnerMachineOnline(machine.ConnectionID, machine.LastSeenAt, time.Now())
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to reconnect Runner binding")
 		return
@@ -988,6 +998,7 @@ func (h *Handler) ReconnectRunnerBinding(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":               "connected",
 		"active_binding_count": activeBindings,
+		"machine_online":       machineOnline,
 	})
 }
 

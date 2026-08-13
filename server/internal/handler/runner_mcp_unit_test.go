@@ -62,6 +62,9 @@ func TestRunnerBindingOnlineRequiresConnectedRecentSocket(t *testing.T) {
 	if !runnerBindingOnline(pgtype.Timestamptz{}, connected, recent, now) {
 		t.Fatal("connected Runner with a recent heartbeat reported offline")
 	}
+	if !runnerMachineOnline(connected, recent, now) {
+		t.Fatal("machine with a connected recent socket reported offline")
+	}
 	for name, online := range map[string]bool{
 		"logical disconnect": runnerBindingOnline(disconnected, connected, recent, now),
 		"socket absent":      runnerBindingOnline(pgtype.Timestamptz{}, pgtype.UUID{}, recent, now),
@@ -70,6 +73,9 @@ func TestRunnerBindingOnlineRequiresConnectedRecentSocket(t *testing.T) {
 		if online {
 			t.Fatalf("%s reported online", name)
 		}
+	}
+	if runnerMachineOnline(connected, stale, now) {
+		t.Fatal("machine with a stale heartbeat reported online")
 	}
 }
 
