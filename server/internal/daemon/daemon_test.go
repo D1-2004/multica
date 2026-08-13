@@ -900,14 +900,14 @@ func TestSessionContinuityNoticeMatchesSurface(t *testing.T) {
 	}
 }
 
-// TestBackendResumeContinuityNoticeSuppressedWhenPromptAlreadyHasIt is the
+// TestBackendResumeRecoveryContextAvoidsDuplicatePromptContext is the
 // count guard Elon asked for, on the combination that actually occurs: the
 // codex overflow fresh retry. The daemon appends the notice to the prompt AND
 // hands the backend a notice to prepend, so before MUL-5722 one turn carried
 // the same paragraph twice — at full token price, from two hand-written
 // strings. Suppression is keyed on the prompt already carrying it, so the two
 // injectors cannot both fire.
-func TestBackendResumeContinuityNoticeSuppressedWhenPromptAlreadyHasIt(t *testing.T) {
+func TestBackendResumeRecoveryContextAvoidsDuplicatePromptContext(t *testing.T) {
 	t.Parallel()
 
 	const heading = "## Session Continuity Notice"
@@ -915,7 +915,7 @@ func TestBackendResumeContinuityNoticeSuppressedWhenPromptAlreadyHasIt(t *testin
 	// Live resume rejection the daemon cannot see pre-launch: the prompt says
 	// nothing, so the backend must.
 	fresh := Task{IssueID: "a1b2c3d4-e5f6-7890-abcd-ef1234567890", TriggerCommentID: "c0ffee00-0000-0000-0000-000000000000"}
-	if got := backendResumeContinuityNotice(fresh); !strings.Contains(got, heading) {
+	if got := backendResumeRecoveryContext(fresh); !strings.Contains(got, heading) {
 		t.Fatal("backend must disclose when the prompt does not")
 	}
 	if strings.Contains(BuildPrompt(fresh, "codex"), heading) {
@@ -930,7 +930,7 @@ func TestBackendResumeContinuityNoticeSuppressedWhenPromptAlreadyHasIt(t *testin
 	if n := strings.Count(prompt, heading); n != 1 {
 		t.Fatalf("prompt must carry exactly one notice, got %d", n)
 	}
-	backendNotice := backendResumeContinuityNotice(retry)
+	backendNotice := backendResumeRecoveryContext(retry)
 	if backendNotice != "" {
 		t.Fatalf("backend must not add a second copy, got:\n%s", backendNotice)
 	}
@@ -938,6 +938,24 @@ func TestBackendResumeContinuityNoticeSuppressedWhenPromptAlreadyHasIt(t *testin
 	turn := backendNotice + prompt
 	if n := strings.Count(turn, heading); n != 1 {
 		t.Fatalf("assembled turn carries %d notices, want exactly 1:\n%s", n, turn)
+	}
+
+	// A live resume rejection in a cloud chat receives the durable database
+	// transcript instead of the false unrecoverable-history notice. The warm
+	// prompt itself omits the carried copy until the backend proves resume failed.
+	chat := Task{
+		ChatSessionID:  "chat-1",
+		ChatHistory:    "User:\nsecret phrase\n\nAssistant:\nblue lantern",
+		ChatMessage:    "what was the phrase?",
+		PriorSessionID: "provider-session-1",
+	}
+	warmPrompt := BuildPrompt(chat, "codex")
+	if strings.Contains(warmPrompt, "blue lantern") {
+		t.Fatalf("warm prompt duplicated database history:\n%s", warmPrompt)
+	}
+	recovery := backendResumeRecoveryContext(chat)
+	if !strings.Contains(recovery, "blue lantern") || strings.Contains(recovery, heading) {
+		t.Fatalf("live chat resume recovery must carry history without a loss notice:\n%s", recovery)
 	}
 }
 
@@ -1704,17 +1722,19 @@ func TestGateCodexResumeToRolloutPresence(t *testing.T) {
 		provider    string
 		sessionID   string
 		codexHome   string
+		chatHistory string
 		wantSession string
 	}{
 		{name: "rollout present keeps resume", provider: "codex", sessionID: "present-session", codexHome: codexHome, wantSession: "present-session"},
 		{name: "rollout absent drops resume", provider: "codex", sessionID: "gone-session", codexHome: codexHome, wantSession: ""},
+		{name: "rollout absent recovers cloud chat history", provider: "codex", sessionID: "gone-session", codexHome: codexHome, chatHistory: "User:\nremember me", wantSession: ""},
 		{name: "non-codex provider is a no-op", provider: "claude", sessionID: "present-session", codexHome: codexHome, wantSession: "present-session"},
 		{name: "empty codex home is a no-op", provider: "codex", sessionID: "present-session", codexHome: "", wantSession: "present-session"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			task := Task{PriorSessionID: tt.sessionID}
+			task := Task{PriorSessionID: tt.sessionID, ChatHistory: tt.chatHistory}
 			taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: tt.sessionID != ""}
 
 			gateCodexResumeToRolloutPresence(&task, &taskCtx, tt.provider, tt.codexHome, slog.Default())
@@ -1727,7 +1747,7 @@ func TestGateCodexResumeToRolloutPresence(t *testing.T) {
 			}
 			// A dropped resume (had a session, now cleared) must be surfaced to
 			// the user via the brief; a kept/no-op resume must not.
-			wantUnavailable := tt.sessionID != "" && tt.wantSession == ""
+			wantUnavailable := tt.sessionID != "" && tt.wantSession == "" && strings.TrimSpace(tt.chatHistory) == ""
 			if taskCtx.PriorSessionResumeUnavailable != wantUnavailable {
 				t.Fatalf("PriorSessionResumeUnavailable = %v, want %v", taskCtx.PriorSessionResumeUnavailable, wantUnavailable)
 			}
@@ -1973,6 +1993,7 @@ func TestGateResumeToReusedWorkdir(t *testing.T) {
 		sessionID               string
 		priorDir                string
 		envDir                  string
+		chatHistory             string
 		resumeContextCompatible bool
 		wantSession             string
 		wantReused              bool
@@ -2004,6 +2025,15 @@ func TestGateResumeToReusedWorkdir(t *testing.T) {
 			wantReused:  false,
 		},
 		{
+			name:        "fresh cloud workdir recovers chat from database history",
+			sessionID:   "sess-1",
+			priorDir:    "/ws/task-a/workdir",
+			envDir:      "/ws/task-b/workdir",
+			chatHistory: "User:\nremember this\n\nAssistant:\nremembered",
+			wantSession: "",
+			wantReused:  false,
+		},
+		{
 			name:        "session without recorded workdir drops session",
 			sessionID:   "sess-1",
 			priorDir:    "",
@@ -2023,7 +2053,7 @@ func TestGateResumeToReusedWorkdir(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			task := Task{PriorSessionID: tt.sessionID, PriorWorkDir: tt.priorDir}
+			task := Task{PriorSessionID: tt.sessionID, PriorWorkDir: tt.priorDir, ChatHistory: tt.chatHistory}
 			taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: tt.sessionID != ""}
 
 			reused := gateResumeToCompatibleWorkdir(&task, &taskCtx, tt.envDir, tt.resumeContextCompatible, slog.Default())
@@ -2039,7 +2069,7 @@ func TestGateResumeToReusedWorkdir(t *testing.T) {
 			}
 			// A dropped resume (had a session, now cleared) must be surfaced to
 			// the user via the brief; a kept/no-op resume must not.
-			wantUnavailable := tt.sessionID != "" && tt.wantSession == ""
+			wantUnavailable := tt.sessionID != "" && tt.wantSession == "" && strings.TrimSpace(tt.chatHistory) == ""
 			if taskCtx.PriorSessionResumeUnavailable != wantUnavailable {
 				t.Fatalf("PriorSessionResumeUnavailable = %v, want %v", taskCtx.PriorSessionResumeUnavailable, wantUnavailable)
 			}

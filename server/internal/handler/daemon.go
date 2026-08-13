@@ -1555,7 +1555,7 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		if handled, _ := h.repairStaleCommentPlanIfNeeded(r.Context(), &task, rtWorkspaceID); handled {
 			continue
 		}
-		resp, deliveredCommentIDs, _, _, failure := h.buildClaimedTaskResponse(r, &task, rt, uuidToString(task.RuntimeID), rtWorkspaceID, false)
+		resp, deliveredCommentIDs, _, _, failure := h.buildClaimedTaskResponse(r, &task, rt, uuidToString(task.RuntimeID), rtWorkspaceID)
 		if failure != nil {
 			// Builder rejected this task (workspace isolation / chat-input);
 			// it has already cancelled the task where the failure requires it.
@@ -1636,12 +1636,7 @@ type claimBuildFailure struct {
 // feed the same delivery receipt into FinalizeTaskClaim. A non-nil failure
 // means the task must not be dispatched; the builder has already cancelled it
 // where the failure semantics require it.
-//
-// fcE2BColdStart is request-scoped: only the per-runtime endpoint carries it
-// (an FC/E2B sandbox announces its own cold start there). The batch path is a
-// local daemon claiming for its own runtimes, which are never FC/E2B microVMs,
-// so it passes false.
-func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string, fcE2BColdStart bool) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
+func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
 	// Claim-only capability: this server resolves the squad-leader role on the
@@ -2349,11 +2344,35 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			var inputLoadErr error
 			if task.ChatInputTaskID.Valid {
 				unanswered, inputLoadErr = h.Queries.ListChatInputMessages(r.Context(), task.ChatInputTaskID)
+				// Cloud sandboxes can lose their provider-local session even while the
+				// sandbox itself stays warm: a runtime rollout, incompatible durable
+				// context, or a rejected provider resume can all force a new workdir or
+				// session. Carry the authoritative bounded Multica transcript on every
+				// cloud claim. The daemon emits it only when native resume is unavailable,
+				// so a healthy warm resume does not receive duplicate history.
+				if inputLoadErr == nil && resp.ChatChannelType == "" && service.IsCloudSandboxRuntime(runtime) && len(unanswered) > 0 {
+					if msgs, err := h.Queries.ListChatMessages(r.Context(), cs.ID); err != nil {
+						inputLoadErr = err
+					} else {
+						cutoff := -1
+						for i := range msgs {
+							if msgs[i].ID == unanswered[0].ID {
+								cutoff = i
+								break
+							}
+						}
+						if cutoff < 0 {
+							inputLoadErr = errors.New("chat input message missing from visible transcript")
+						} else if cutoff > 0 {
+							resp.ChatHistory = boundedChatHistoryTranscript(msgs[:cutoff])
+						}
+					}
+				}
 			} else if msgs, err := h.Queries.ListChatMessagesForLegacyTask(r.Context(), cs.ID); err == nil {
 				unanswered = trailingUserMessages(msgs)
-				// Same cold-start replay for legacy / channel tasks: everything
-				// before the trailing unanswered run is answered transcript.
-				if fcE2BColdStart && service.IsFCE2BRuntime(runtime) {
+				// Legacy tasks have no immutable input owner. Everything before the
+				// trailing unanswered run is the recoverable answered transcript.
+				if resp.ChatChannelType == "" && service.IsCloudSandboxRuntime(runtime) {
 					historyEnd := len(msgs) - len(unanswered)
 					if historyEnd > 0 {
 						resp.ChatHistory = boundedChatHistoryTranscript(msgs[:historyEnd])
@@ -2361,6 +2380,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			} else {
 				inputLoadErr = err
+			}
+			// A rollout-missing marker can make the server select an older provider
+			// session. Once the database transcript is present, prefer it over that
+			// incomplete pointer and start one coherent recovered conversation.
+			if strings.TrimSpace(resp.ChatHistory) != "" && resp.PriorSessionResumeUnavailable {
+				resp.PriorSessionID = ""
+				resp.PriorSessionResumeUnavailable = false
 			}
 			// A read failure must NOT masquerade as "zero input". Preserve the
 			// just-dispatched task (the stale-dispatched reclaim redelivers it)
@@ -2672,9 +2698,10 @@ func requestHasDaemonCapability(r *http.Request, capability string) bool {
 }
 
 // claimTaskByRuntimeRequest is the optional body of the per-runtime claim. An
-// FC/E2B sandbox sends it: TargetTaskID names the exact task the server booted
-// the microVM for, and FCE2BColdStart says the microVM has no resumable session
-// (so the claim payload must carry replayed chat history).
+// A cloud sandbox sends it: TargetTaskID names the exact task the server booted
+// the sandbox for. FCE2BColdStart remains the wire-compatible sandbox reuse
+// signal; conversation recovery no longer relies on it because warm sandboxes
+// can also lose a provider session or compatible workdir.
 type claimTaskByRuntimeRequest struct {
 	FCE2BColdStart        bool   `json:"fc_e2b_cold_start"`
 	TargetTaskID          string `json:"target_task_id"`
@@ -2838,7 +2865,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	outcome = "claimed"
 	buildStart = time.Now()
 
-	resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure := h.buildClaimedTaskResponse(r, task, runtime, runtimeID, runtimeWorkspaceID, req.FCE2BColdStart)
+	resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure := h.buildClaimedTaskResponse(r, task, runtime, runtimeID, runtimeWorkspaceID)
 	if failure != nil {
 		outcome = failure.outcome
 		writeError(w, failure.status, failure.message)

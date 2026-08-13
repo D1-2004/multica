@@ -629,16 +629,31 @@ func TestBuildChatPromptChannelAwareness(t *testing.T) {
 		}
 	})
 
-	t.Run("cold-start history is injected when present", func(t *testing.T) {
+	t.Run("fresh-session history is injected when present", func(t *testing.T) {
 		out := buildChatPrompt(Task{
 			ChatSessionID: "sess-1",
 			ChatHistory:   "User:\n1+1等于多少\n\nAssistant:\n1+1等于2。",
 			ChatMessage:   "+2呢",
 		})
-		for _, want := range []string{"Conversation history from earlier turns", "1+1等于2。", "User message:\n+2呢"} {
+		for _, want := range []string{"Recovered conversation history from earlier turns", "1+1等于2。", "User message:\n+2呢"} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("cold-start chat prompt missing %q\n--- output ---\n%s", want, out)
 			}
+		}
+	})
+
+	t.Run("warm resumed session does not duplicate carried history", func(t *testing.T) {
+		out := buildChatPrompt(Task{
+			ChatSessionID:  "sess-1",
+			ChatHistory:    "User:\nshould stay in recovery payload only",
+			ChatMessage:    "continue",
+			PriorSessionID: "provider-session-1",
+		})
+		if strings.Contains(out, "should stay in recovery payload only") {
+			t.Fatalf("warm resumed prompt duplicated the database transcript:\n%s", out)
+		}
+		if !strings.Contains(out, "User message:\ncontinue") {
+			t.Fatalf("warm resumed prompt lost the current message:\n%s", out)
 		}
 	})
 }
@@ -1266,6 +1281,30 @@ func TestBuildPromptColdStartAfterUnreusedWorkdirReadsIssueThread(t *testing.T) 
 		if !strings.Contains(out, want) {
 			t.Fatalf("cold issue prompt missing %q\n--- output ---\n%s", want, out)
 		}
+	}
+}
+
+func TestBuildPromptFreshCloudChatRecoversDatabaseHistoryWithoutLossNotice(t *testing.T) {
+	task := Task{
+		ChatSessionID:  "chat-1",
+		ChatMessage:    "what did I ask before?",
+		ChatHistory:    "User:\nremember blue lantern\n\nAssistant:\nI will remember blue lantern.",
+		PriorSessionID: "session-from-old-sandbox",
+		PriorWorkDir:   "/workspaces/ws/old-task/workdir",
+	}
+	taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
+
+	gateResumeToCompatibleWorkdir(&task, &taskCtx, "/workspaces/ws/new-task/workdir", true, slog.Default())
+	out := BuildPrompt(task, "opencode")
+
+	if !strings.Contains(out, "remember blue lantern") {
+		t.Fatalf("fresh cloud chat prompt missing database history:\n%s", out)
+	}
+	if strings.Contains(out, "Session Continuity Notice") {
+		t.Fatalf("recovered chat prompt must not claim history was lost:\n%s", out)
+	}
+	if task.PriorSessionResumeUnavailable || taskCtx.PriorSessionResumeUnavailable {
+		t.Fatalf("database history should satisfy continuity, task=%v context=%v", task.PriorSessionResumeUnavailable, taskCtx.PriorSessionResumeUnavailable)
 	}
 }
 

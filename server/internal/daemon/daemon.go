@@ -5259,6 +5259,12 @@ func providerNeedsInlineSystemPrompt(provider string) bool {
 	}
 }
 
+func markResumeUnavailableUnlessChatHistory(task *Task, taskCtx *execenv.TaskContextForEnv) {
+	unavailable := strings.TrimSpace(task.ChatHistory) == ""
+	task.PriorSessionResumeUnavailable = unavailable
+	taskCtx.PriorSessionResumeUnavailable = unavailable
+}
+
 // gateResumeToCompatibleWorkdir clears the task's prior provider session unless
 // both its workdir and durable runtime context are compatible, and reports
 // whether the workdir itself was reused.
@@ -5281,12 +5287,10 @@ func gateResumeToCompatibleWorkdir(task *Task, taskCtx *execenv.TaskContextForEn
 		)
 		task.PriorSessionID = ""
 		taskCtx.PriorSessionResumed = false
-		// The user expected this run to continue the prior conversation; surface
-		// the loss instead of silently restarting (MUL-4424). Set it on BOTH
-		// carriers: the notice is rendered from `task` by BuildPrompt (MUL-5377
-		// moved it out of the brief), while taskCtx still drives execenv.
-		taskCtx.PriorSessionResumeUnavailable = true
-		task.PriorSessionResumeUnavailable = true
+		// A cloud chat can rebuild its conversation from the bounded database
+		// transcript carried on the task. Other surfaces still need the explicit
+		// continuity-gap signal (MUL-4424).
+		markResumeUnavailableUnlessChatHistory(task, taskCtx)
 	}
 	return reused
 }
@@ -5385,12 +5389,7 @@ func gateCodexResumeToRolloutPresence(task *Task, taskCtx *execenv.TaskContextFo
 		"session_id", task.PriorSessionID, "codex_home", codexHome)
 	task.PriorSessionID = ""
 	taskCtx.PriorSessionResumed = false
-	// The user expected this run to continue the prior conversation; surface the
-	// loss instead of silently restarting (MUL-4424). Set it on BOTH carriers:
-	// the notice is rendered from `task` by BuildPrompt (MUL-5377 moved it out
-	// of the brief), while taskCtx still drives execenv.
-	taskCtx.PriorSessionResumeUnavailable = true
-	task.PriorSessionResumeUnavailable = true
+	markResumeUnavailableUnlessChatHistory(task, taskCtx)
 }
 
 const (
@@ -6372,18 +6371,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		HandshakeTimeout:          d.cfg.CodexHandshakeTimeout,
 		ResumeSessionID:           task.PriorSessionID,
 		// Post-gate intent: PriorSessionID here already reflects the pre-flight
-		// resume gates (a dropped resume is surfaced via the prompt instead). If it
-		// survived to here, the backend must disclose the loss when the live
+		// resume gates (a dropped resume is recovered via the prompt instead). If it
+		// survived to here, the backend must inject recovery context when the live
 		// resume still fails — even across the fresh-session retry below, which
 		// clears ResumeSessionID but not this (MUL-4424).
 		//
-		// What that disclosure SAYS, and whether it addresses the user at all,
-		// depends on whether this surface's conversation is still readable, which
-		// only the daemon knows — hence handing the backend finished text rather
-		// than a flag. Empty when the prompt already carries the notice, so a turn
-		// can never pay for it twice (MUL-5722).
+		// The daemon supplies either durable history or a surface-specific notice.
+		// Empty means the prompt already carries that context (MUL-5722).
 		ResumeExpected:         task.PriorSessionID != "",
-		ResumeContinuityNotice: backendResumeContinuityNotice(task),
+		ResumeContinuityNotice: backendResumeRecoveryContext(task),
 		ExtraArgs:              extraArgs,
 		CustomArgs:             customArgs,
 		McpConfig:              mcpConfig,
@@ -6481,17 +6477,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		//     like Kiro load themselves).
 		//   - clearing task.PriorSessionID rebuilds the prompt on the cold
 		//     comment-reading path instead of the warm resumed one.
-		//   - PriorSessionResumeUnavailable=true makes BuildPrompt append the
-		//     continuity notice for this surface, so the agent knows not to
-		//     assume continuity it no longer has. This is now the ONLY injector
-		//     on the retry path: the backend's own copy is suppressed below,
-		//     because before MUL-5722 both fired and the turn carried the same
-		//     paragraph twice.
+		//   - the database transcript is rendered for cloud chats; surfaces with
+		//     no readable history retain the continuity-gap notice.
 		// task and taskCtx are local (runTask takes task by value), so these
 		// mutations only affect the retry.
 		execOpts.ResumeSessionID = ""
 		task.PriorSessionID = ""
-		task.PriorSessionResumeUnavailable = true
+		markResumeUnavailableUnlessChatHistory(&task, &taskCtx)
 		execOpts.ResumeContinuityNotice = ""
 		taskCtx.PriorSessionResumed = false
 		if freshBrief, briefErr := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx); briefErr != nil {

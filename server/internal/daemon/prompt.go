@@ -9,9 +9,8 @@ import (
 
 // sessionContinuityNoticeFor picks the notice matching what this surface
 // actually lost. See the constants in execenv for the full reasoning; the
-// question is whether the conversation is still READABLE, not whether it is a
-// chat — an issue's comments and a Slack channel's history both are, a web
-// chat's and a Feishu channel's are not (MUL-5722).
+// question is whether the conversation is still readable. Callers skip this
+// notice when the server supplied a durable chat transcript (MUL-5722).
 func sessionContinuityNoticeFor(task Task) string {
 	if task.ChatSessionID == "" {
 		return execenv.SessionContinuityNoticeIssue
@@ -23,20 +22,27 @@ func sessionContinuityNoticeFor(task Task) string {
 	return execenv.SessionContinuityNoticeUnrecoverable
 }
 
-// backendResumeContinuityNotice returns the notice the BACKEND should inject if
-// it lands on a fresh thread, or "" when the prompt already carries one.
+func chatHistoryRecoveryBlock(history string) string {
+	history = strings.TrimSpace(history)
+	if history == "" {
+		return ""
+	}
+	return "Recovered conversation history from earlier turns. Use it as context for the latest user message; do not restate it unless the user asks:\n" + history + "\n\n"
+}
+
+// backendResumeRecoveryContext returns the context the backend should inject if
+// it lands on a fresh thread, or "" when the prompt already carries it.
 //
-// Only one notice may reach a turn. Two paths can produce it — the daemon,
-// which appends it to the prompt whenever it already knows the resume is gone,
-// and the backend, which is the only one that can see a live resume RPC being
-// rejected mid-run. Before MUL-5722 both fired on the codex overflow retry, so
-// the same paragraph was paid for twice in one turn and maintained as two
-// hand-written strings. Deriving the backend's copy from the daemon's, and
-// suppressing it exactly when the prompt already said it, makes a duplicate
-// structurally impossible rather than merely unlikely.
-func backendResumeContinuityNotice(task Task) string {
+// A cloud chat claim carries a bounded database transcript. If a live provider
+// resume is rejected after prompt construction, that transcript is the recovery
+// context; no user-facing loss notice is truthful. Other surfaces keep the
+// existing continuity notice. Only one copy may reach a turn.
+func backendResumeRecoveryContext(task Task) string {
 	if task.PriorSessionResumeUnavailable {
 		return ""
+	}
+	if history := chatHistoryRecoveryBlock(task.ChatHistory); history != "" {
+		return history
 	}
 	return sessionContinuityNoticeFor(task)
 }
@@ -70,7 +76,7 @@ const (
 // Returns "" when none of the blocks apply.
 func perTurnContextBlocks(task Task) string {
 	var b strings.Builder
-	if task.PriorSessionResumeUnavailable {
+	if task.PriorSessionResumeUnavailable && chatHistoryRecoveryBlock(task.ChatHistory) == "" {
 		b.WriteString(sessionContinuityNoticeFor(task))
 	}
 	b.WriteString(execenv.BuildTaskInitiatorBlock(task.InitiatorType, task.InitiatorName, task.InitiatorEmail))
@@ -499,10 +505,11 @@ func buildChatPromptForProvider(task Task, provider string) string {
 		fmt.Fprintf(&b, "Reply to %s with the final outcome only. Do NOT narrate planned or in-progress steps (\"我先读取…\"); completed actions are part of the outcome.\n", platform)
 		b.WriteString("\n")
 	}
-	if strings.TrimSpace(task.ChatHistory) != "" {
-		b.WriteString("Conversation history from earlier turns in this Multica chat. Use it as context for the latest user message; do not restate it unless the user asks:\n")
-		b.WriteString(task.ChatHistory)
-		b.WriteString("\n\n")
+	// A healthy warm path resumes the provider-native session, which already
+	// owns this transcript. Emit the database copy only for a fresh/recovered
+	// session so history is neither duplicated nor lost.
+	if task.PriorSessionID == "" || task.PriorSessionResumeUnavailable {
+		b.WriteString(chatHistoryRecoveryBlock(task.ChatHistory))
 	}
 	if task.Agent != nil && len(task.Agent.Skills) > 0 {
 		refs := ExtractSlashSkills(task.ChatMessage)
