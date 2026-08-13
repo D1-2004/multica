@@ -26,16 +26,21 @@ import (
 )
 
 const (
-	defaultBUCAuthorizeURL                 = "https://login.alibaba-inc.com/oauth2/auth.htm"
-	defaultBUCTokenURL                     = "https://login.alibaba-inc.com/rpc/oauth2/access_token.json"
-	defaultBUCIssuer                       = "https://login.alibaba-inc.com/oauth2"
-	defaultBUCJWKSURL                      = "https://login.alibaba-inc.com/oauth2/v1/keys"
-	defaultEnterpriseAuthXTTL              = int64(3600)
-	defaultEnterpriseAITTTL                = int64(900)
-	defaultEnterpriseIdemTimeout           = 15 * time.Second
-	defaultEnterpriseOAuthAttemptTTL       = 10 * time.Minute
-	defaultEnterpriseMaintenanceInterval   = 5 * time.Minute
-	defaultEnterpriseRefreshBefore         = 24 * time.Hour
+	defaultBUCAuthorizeURL               = "https://login.alibaba-inc.com/oauth2/auth.htm"
+	defaultBUCTokenURL                   = "https://login.alibaba-inc.com/rpc/oauth2/access_token.json"
+	defaultBUCIssuer                     = "https://login.alibaba-inc.com/oauth2"
+	defaultBUCJWKSURL                    = "https://login.alibaba-inc.com/oauth2/v1/keys"
+	defaultEnterpriseAuthXTTL            = int64(3600)
+	defaultEnterpriseAITTTL              = int64(900)
+	defaultEnterpriseIdemTimeout         = 15 * time.Second
+	defaultEnterpriseOAuthAttemptTTL     = 10 * time.Minute
+	defaultEnterpriseMaintenanceInterval = 5 * time.Minute
+	defaultEnterpriseRefreshBefore       = 24 * time.Hour
+	// A short-lived inherited sandbox requests a WireGuard ticket immediately
+	// on startup. The zero-trust service validates the cached BUC ID token at
+	// that point and rotates its refresh-token family when renewal is due. Run
+	// this well inside the server-side credential cache lifetime so inactive
+	// Agents are refreshed without retaining a running sandbox.
 	defaultEnterpriseSourceRefreshInterval = 12 * time.Hour
 	defaultEnterpriseMaintenanceBatch      = int32(50)
 	enterpriseIdentityTokenLockClass       = int32(0x4549544b) // "EITK"
@@ -201,7 +206,7 @@ type enterpriseIdentityStore interface {
 	CountActiveAgentEnterpriseIdentitySourceReferences(context.Context, db.CountActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error)
 	UpsertAgentEnterpriseIdentity(context.Context, db.UpsertAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
 	CompareAndSwapAgentEnterpriseIdentitySource(context.Context, db.CompareAndSwapAgentEnterpriseIdentitySourceParams) (db.AgentEnterpriseIdentity, error)
-	TouchActiveAgentEnterpriseIdentitySourceReferences(context.Context, db.TouchActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error)
+	RotateActiveAgentEnterpriseIdentitySourceReferences(context.Context, db.RotateActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error)
 	CompareAndSwapAgentEnterpriseIdentityToken(context.Context, db.CompareAndSwapAgentEnterpriseIdentityTokenParams) (db.AgentEnterpriseIdentity, error)
 	ListAgentEnterpriseIdentitiesForMaintenance(context.Context, db.ListAgentEnterpriseIdentitiesForMaintenanceParams) ([]db.AgentEnterpriseIdentity, error)
 	MarkAgentEnterpriseIdentityNeedsReauth(context.Context, db.MarkAgentEnterpriseIdentityNeedsReauthParams) (int64, error)
@@ -998,20 +1003,6 @@ func (s *EnterpriseIdentityService) reuseOrCreateIdentitySource(
 			prepareErr = s.Source.Park(ctx, sourceRuntimeID, sandboxID)
 		}
 		if prepareErr == nil {
-			_, touchErr := s.Store.TouchActiveAgentEnterpriseIdentitySourceReferences(
-				ctx,
-				db.TouchActiveAgentEnterpriseIdentitySourceReferencesParams{
-					WorkspaceID: key.WorkspaceID,
-					RuntimeID:   sourceRuntimeID,
-					SandboxID:   pgtype.Text{String: sandboxID, Valid: true},
-				},
-			)
-			if touchErr != nil {
-				return EnterpriseIdentitySourceAvailability{}, false, fmt.Errorf(
-					"touch reusable ASB enterprise identity source: %w",
-					touchErr,
-				)
-			}
 			return EnterpriseIdentitySourceAvailability{
 				SandboxID: sandboxID,
 				RuntimeID: sourceRuntimeID,
@@ -1466,45 +1457,40 @@ func (s *EnterpriseIdentityService) refreshIdentitySource(
 	if !sameEnterpriseIdentitySourceSnapshot(identity, current) {
 		return nil
 	}
-	if err := s.Source.Prepare(
+	rotated, err := s.Source.Rotate(
 		ctx,
 		current.BucIdentitySourceRuntimeID,
 		current.BucIdentitySourceSandboxID.String,
 		current.RawEmpID,
 		current.BucAgentID,
-	); err != nil {
+	)
+	if err != nil {
 		return err
 	}
-	parked := false
-	defer func() {
-		if parked {
-			return
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = s.Source.Park(
-			cleanupCtx,
-			current.BucIdentitySourceRuntimeID,
-			current.BucIdentitySourceSandboxID.String,
-		)
-	}()
-	if err := s.Source.Park(
+	affected, err := s.Store.RotateActiveAgentEnterpriseIdentitySourceReferences(
 		ctx,
-		current.BucIdentitySourceRuntimeID,
-		current.BucIdentitySourceSandboxID.String,
-	); err != nil {
-		return err
-	}
-	parked = true
-	_, err = s.Store.TouchActiveAgentEnterpriseIdentitySourceReferences(
-		ctx,
-		db.TouchActiveAgentEnterpriseIdentitySourceReferencesParams{
-			WorkspaceID: current.WorkspaceID,
-			RuntimeID:   current.BucIdentitySourceRuntimeID,
-			SandboxID:   current.BucIdentitySourceSandboxID,
+		db.RotateActiveAgentEnterpriseIdentitySourceReferencesParams{
+			NewRuntimeID:      rotated.RuntimeID,
+			NewSandboxID:      pgtype.Text{String: rotated.SandboxID, Valid: true},
+			WorkspaceID:       current.WorkspaceID,
+			ExpectedRuntimeID: current.BucIdentitySourceRuntimeID,
+			ExpectedSandboxID: current.BucIdentitySourceSandboxID,
 		},
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("persist rotated ASB enterprise identity seed: %w", err)
+	}
+	if affected == 0 {
+		return errors.New("rotated ASB enterprise identity seed had no active references")
+	}
+	slog.Info(
+		"shared ASB enterprise identity seed references rotated",
+		"workspace_id", util.UUIDToString(current.WorkspaceID),
+		"predecessor_sandbox_id", current.BucIdentitySourceSandboxID.String,
+		"sandbox_id", rotated.SandboxID,
+		"affected_references", affected,
+	)
+	return nil
 }
 
 func (s *EnterpriseIdentityService) rotateAuthXToken(

@@ -26,6 +26,7 @@ type EnterpriseIdentitySource interface {
 		enterpriseIdentitySourceKey,
 		BUCIdentityTokens,
 	) (EnterpriseIdentitySourceAvailability, error)
+	Rotate(context.Context, pgtype.UUID, string, string, string) (EnterpriseIdentitySourceAvailability, error)
 	Prepare(context.Context, pgtype.UUID, string, string, string) error
 	Park(context.Context, pgtype.UUID, string) error
 	Delete(context.Context, pgtype.UUID, string) error
@@ -36,12 +37,12 @@ type asbIdentitySourceRuntimeStore interface {
 }
 
 // ASBIdentitySourceManager establishes a BUC credential directory inside a
-// dedicated ASB sandbox built from the owning Runtime's image at bind time.
-// OpenSandbox provision sandboxes do not support ASB's pause operation, so the
-// source remains running while task sandboxes in the same credential scope
-// inherit only its identity directory through buc.originalSandboxID. Runtime
-// image rotation does not replace the source image. Park releases only the
-// Multica-side source lease; it does not mutate the sandbox lifecycle.
+// short-lived ASB sandbox built from the owning Runtime's current image. After
+// the credentials have been proven, the sandbox is terminated and retained as
+// a credential seed. ASB preserves the seed's identity directory and permits a
+// later sandbox in the same tenant to inherit it through buc.originalSandboxID.
+// Rotating that terminated seed periodically keeps credentials fresh without
+// consuming a permanent sandbox slot.
 type ASBIdentitySourceManager struct {
 	Store          asbIdentitySourceRuntimeStore
 	Credentials    *ASBRuntimeClientProvider
@@ -133,14 +134,19 @@ func (m *ASBIdentitySourceManager) Create(
 			err,
 		)
 	}
-	retained := false
+	seedReady := false
 	defer func() {
-		if retained {
+		if seedReady {
 			return
 		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if cleanupErr := client.DeleteSandbox(cleanupCtx, sandbox.ID); cleanupErr != nil {
+		if cleanupErr := deleteASBIdentitySourceIfExists(
+			cleanupCtx,
+			client,
+			sandbox.ID,
+			m.sourceLifecycleTimeout(),
+		); cleanupErr != nil {
 			logASBIdentitySourceFailure("cleanup_sandbox", sandbox.ID, cleanupErr)
 		}
 	}()
@@ -166,25 +172,162 @@ func (m *ASBIdentitySourceManager) Create(
 		logASBIdentitySourceFailure("establish_buc_identity", sandbox.ID, err)
 		return EnterpriseIdentitySourceAvailability{}, err
 	}
-	if err := initializeASBIdentitySourceExpiration(
+	if err := terminateASBIdentitySource(
 		ctx,
 		client,
 		sandbox.ID,
-		sandbox.CreatedAt,
+		m.sourceLifecycleTimeout(),
 	); err != nil {
-		logASBIdentitySourceFailure("initialize_source_expiration", sandbox.ID, err)
+		logASBIdentitySourceFailure("terminate_seed", sandbox.ID, err)
 		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
-			"initialize temporary ASB enterprise identity source expiration: %w",
+			"terminate temporary ASB enterprise identity seed: %w",
 			err,
 		)
 	}
-	retained = true
+	seedReady = true
 	slog.Info(
-		"running ASB enterprise identity source established",
+		"terminated ASB enterprise identity seed established",
 		"runtime_id", util.UUIDToString(runtimeID),
 		"subject_key", enterpriseIdentitySourceFingerprint(key),
 		"sandbox_id", sandbox.ID,
-		"running_quota_retained", true,
+		"running_quota_retained", false,
+	)
+	return EnterpriseIdentitySourceAvailability{
+		SandboxID: sandbox.ID,
+		RuntimeID: runtimeID,
+	}, nil
+}
+
+func (m *ASBIdentitySourceManager) Rotate(
+	ctx context.Context,
+	runtimeID pgtype.UUID,
+	predecessorSandboxID string,
+	employeeID string,
+	bucAgentID string,
+) (EnterpriseIdentitySourceAvailability, error) {
+	config := m.currentConfig()
+	if m == nil || m.Store == nil || m.Credentials == nil || m.Capacity == nil {
+		return EnterpriseIdentitySourceAvailability{}, errors.New(
+			"ASB enterprise identity source manager is unavailable",
+		)
+	}
+	predecessorSandboxID = strings.TrimSpace(predecessorSandboxID)
+	if !runtimeID.Valid || predecessorSandboxID == "" ||
+		strings.TrimSpace(employeeID) == "" || strings.TrimSpace(bucAgentID) == "" {
+		return EnterpriseIdentitySourceAvailability{}, errors.New(
+			"ASB enterprise identity seed rotation input is incomplete",
+		)
+	}
+	runtime, err := m.Store.GetAgentRuntime(ctx, runtimeID)
+	if err != nil {
+		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
+			"load ASB Runtime for enterprise identity seed rotation: %w",
+			err,
+		)
+	}
+	metadata, err := ParseCloudSandboxRuntime(runtime)
+	if err != nil || metadata.SandboxBackend != SandboxBackendASB {
+		return EnterpriseIdentitySourceAvailability{}, errors.New(
+			"enterprise identity seed rotation requires an ASB Runtime",
+		)
+	}
+	client, err := m.Credentials.ClientForRuntime(ctx, runtimeID)
+	if err != nil {
+		return EnterpriseIdentitySourceAvailability{}, err
+	}
+	if err := validateASBIdentitySeed(ctx, client, predecessorSandboxID); err != nil {
+		logASBIdentitySourceFailure("validate_predecessor_seed", predecessorSandboxID, err)
+		return EnterpriseIdentitySourceAvailability{}, err
+	}
+	sandbox, err := m.Capacity.Create(ctx, runtimeID, client, ASBCreateSandboxInput{
+		ImageURI:       metadata.ArtifactRef,
+		TimeoutSeconds: asbMaxCreateTimeout,
+		ResourceCPU:    config.ResourceCPU,
+		ResourceMemory: config.ResourceMemory,
+		Entrypoint:     []string{"sleep infinity"},
+		Metadata: map[string]string{
+			"multica.identity_source":             "true",
+			"multica.identity_source_rotation":    "true",
+			"multica.identity_source_predecessor": predecessorSandboxID,
+			"multica.runtime_id":                  util.UUIDToString(runtimeID),
+		},
+		Extensions: map[string]string{
+			"wireguard.worker":      strings.TrimSpace(employeeID),
+			"buc.originalSandboxID": predecessorSandboxID,
+		},
+	})
+	if err != nil {
+		logASBIdentitySourceFailure("create_rotated_seed", predecessorSandboxID, err)
+		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
+			"create rotated ASB enterprise identity seed: %w",
+			err,
+		)
+	}
+	seedReady := false
+	defer func() {
+		if seedReady {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if cleanupErr := deleteASBIdentitySourceIfExists(
+			cleanupCtx,
+			client,
+			sandbox.ID,
+			m.sourceLifecycleTimeout(),
+		); cleanupErr != nil {
+			logASBIdentitySourceFailure("cleanup_rotated_seed", sandbox.ID, cleanupErr)
+		}
+	}()
+	if err := waitForASBSandboxRunning(ctx, client, sandbox.ID, config.ReadyTimeout); err != nil {
+		logASBIdentitySourceFailure("wait_rotated_seed_running", sandbox.ID, err)
+		return EnterpriseIdentitySourceAvailability{}, err
+	}
+	if err := waitForASBIdentitySourceBUC(
+		ctx,
+		client,
+		sandbox.ID,
+		employeeID,
+		bucAgentID,
+		config.WireGuardReadyTimeout,
+	); err != nil {
+		logASBIdentitySourceFailure("probe_rotated_seed", sandbox.ID, err)
+		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
+			"prove rotated ASB enterprise identity seed: %w",
+			err,
+		)
+	}
+	if err := terminateASBIdentitySource(
+		ctx,
+		client,
+		sandbox.ID,
+		m.sourceLifecycleTimeout(),
+	); err != nil {
+		logASBIdentitySourceFailure("terminate_rotated_seed", sandbox.ID, err)
+		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
+			"terminate rotated ASB enterprise identity seed: %w",
+			err,
+		)
+	}
+	if err := terminateASBIdentitySource(
+		ctx,
+		client,
+		predecessorSandboxID,
+		m.sourceLifecycleTimeout(),
+	); err != nil {
+		logASBIdentitySourceFailure("terminate_predecessor_seed", predecessorSandboxID, err)
+		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
+			"terminate predecessor ASB enterprise identity seed: %w",
+			err,
+		)
+	}
+	seedReady = true
+	slog.Info(
+		"ASB enterprise identity seed rotated",
+		"runtime_id", util.UUIDToString(runtimeID),
+		"predecessor_sandbox_id", predecessorSandboxID,
+		"sandbox_id", sandbox.ID,
+		"running_quota_retained", false,
 	)
 	return EnterpriseIdentitySourceAvailability{
 		SandboxID: sandbox.ID,
@@ -218,10 +361,9 @@ func (m *ASBIdentitySourceManager) Prepare(
 		return err
 	}
 	slog.Info(
-		"ASB enterprise identity source prepared",
+		"ASB enterprise identity seed prepared",
 		"runtime_id", util.UUIDToString(runtimeID),
 		"sandbox_id", sandboxID,
-		"state", "running",
 	)
 	return nil
 }
@@ -235,21 +377,21 @@ func (m *ASBIdentitySourceManager) Park(
 	if err != nil {
 		return err
 	}
-	if err := retainASBIdentitySource(
+	if err := terminateASBIdentitySource(
 		ctx,
 		client,
 		sandboxID,
 		m.sourceLifecycleTimeout(),
 	); err != nil {
-		logASBIdentitySourceFailure("retain_source", sandboxID, err)
+		logASBIdentitySourceFailure("terminate_source_after_lease", sandboxID, err)
 		return err
 	}
 	slog.Info(
-		"ASB enterprise identity source lease released",
+		"ASB enterprise identity seed lease released",
 		"runtime_id", util.UUIDToString(runtimeID),
 		"sandbox_id", sandboxID,
-		"sandbox_lifecycle_action", "none",
-		"running_quota_retained", true,
+		"sandbox_lifecycle_action", "terminate",
+		"running_quota_retained", false,
 	)
 	return nil
 }
@@ -263,11 +405,13 @@ func (m *ASBIdentitySourceManager) Delete(
 	if err != nil {
 		return err
 	}
-	if err := deleteASBSandboxIfExists(ctx, client, sandboxID); err != nil {
+	if err := deleteASBIdentitySourceIfExists(
+		ctx,
+		client,
+		sandboxID,
+		m.sourceLifecycleTimeout(),
+	); err != nil {
 		return err
-	}
-	if err := waitForASBCapacityRelease(ctx, client, sandboxID); err != nil {
-		return fmt.Errorf("wait for ASB enterprise identity source capacity release: %w", err)
 	}
 	slog.Info(
 		"deleted ASB enterprise identity source",
@@ -335,31 +479,58 @@ func attachAndProbeASBIdentitySource(
 		return fmt.Errorf("wait for attached ASB identity source to return running: %w", err)
 	}
 
-	// Preserve the last proven prepub contract: synchronous BUC attachment,
-	// followed only by the BUC reachability probe. A1 and other CLI checks belong
-	// to real task verification and must not make an otherwise valid binding fail.
+	return waitForASBIdentitySourceBUC(
+		identityCtx,
+		client,
+		sandboxID,
+		employeeID,
+		bucAgentID,
+		timeout,
+	)
+}
+
+func waitForASBIdentitySourceBUC(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+	employeeID string,
+	bucAgentID string,
+	timeout time.Duration,
+) error {
+	if timeout <= 0 {
+		return errors.New("ASB WireGuard ready timeout is not configured")
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	// Source establishment and rotation prove only BUC reachability. Starting
+	// the inherited WireGuard client also requests a security ticket, which is
+	// the zero-trust service's BUC-token validation and renewal point. A1 and
+	// other CLI checks belong to real task verification and must not make an
+	// otherwise valid seed fail.
 	ticker := time.NewTicker(asbIdentityProbeInterval(timeout))
 	defer ticker.Stop()
 	var lastErr error
 	for {
 		if err := probeASBIdentitySourceBUC(
-			identityCtx,
+			probeCtx,
 			client,
 			sandboxID,
 			employeeID,
 			bucAgentID,
 		); err == nil {
 			return nil
+		} else if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+			return err
 		} else {
 			lastErr = err
 		}
 		select {
-		case <-identityCtx.Done():
-			if !errors.Is(identityCtx.Err(), context.DeadlineExceeded) {
-				return identityCtx.Err()
+		case <-probeCtx.Done():
+			if !errors.Is(probeCtx.Err(), context.DeadlineExceeded) {
+				return probeCtx.Err()
 			}
 			return fmt.Errorf(
-				"temporary ASB enterprise identity source did not become ready within %s: %w",
+				"temporary ASB enterprise identity seed did not become ready within %s: %w",
 				timeout,
 				lastErr,
 			)
@@ -443,9 +614,14 @@ func prepareASBIdentitySource(
 	defer cancel()
 	sandbox, err := client.GetSandbox(sourceCtx, sandboxID)
 	if err != nil {
+		if isASBSandboxNotFound(err) {
+			return ErrEnterpriseIdentityNeedsReauth
+		}
 		return fmt.Errorf("load ASB enterprise identity source: %w", err)
 	}
 	switch state := strings.ToLower(strings.TrimSpace(sandbox.Status.State)); state {
+	case "terminated":
+		return nil
 	case "paused":
 		if err := client.ResumeSandbox(sourceCtx, sandboxID); err != nil {
 			return fmt.Errorf("resume ASB enterprise identity source: %w", err)
@@ -458,7 +634,7 @@ func prepareASBIdentitySource(
 			return fmt.Errorf("resume ASB enterprise identity source: %w", err)
 		}
 	case "running", "pending", "resuming":
-	case "failed", "terminated", "error":
+	case "failed", "error":
 		return ErrEnterpriseIdentityNeedsReauth
 	default:
 		return fmt.Errorf("ASB enterprise identity source has unsupported state %q", state)
@@ -505,12 +681,37 @@ func probeASBIdentitySourceBUC(
 		return err
 	}
 	if result.ExitCode == nil || *result.ExitCode != 0 || result.ErrorName != "" {
+		if result.ExitCode != nil && *result.ExitCode == asbIdentityInvalidExitCode {
+			return ErrEnterpriseIdentityNeedsReauth
+		}
 		return errors.New("ASB BUC identity probe failed")
 	}
 	return nil
 }
 
-func retainASBIdentitySource(
+func validateASBIdentitySeed(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+) error {
+	source, err := client.GetSandbox(ctx, sandboxID)
+	if err != nil {
+		if isASBSandboxNotFound(err) {
+			return ErrEnterpriseIdentityNeedsReauth
+		}
+		return fmt.Errorf("load ASB enterprise identity seed: %w", err)
+	}
+	switch state := strings.ToLower(strings.TrimSpace(source.Status.State)); state {
+	case "running", "paused", "terminated":
+		return nil
+	case "failed", "error":
+		return ErrEnterpriseIdentityNeedsReauth
+	default:
+		return fmt.Errorf("ASB enterprise identity seed has unsupported state %q", state)
+	}
+}
+
+func terminateASBIdentitySource(
 	ctx context.Context,
 	client *ASBClient,
 	sandboxID string,
@@ -521,49 +722,59 @@ func retainASBIdentitySource(
 	}
 	sourceCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if err := validateASBIdentitySeed(sourceCtx, client, sandboxID); err != nil {
+		return err
+	}
 	source, err := client.GetSandbox(sourceCtx, sandboxID)
 	if err != nil {
-		return fmt.Errorf("load ASB enterprise identity source before lease release: %w", err)
+		if isASBSandboxNotFound(err) {
+			return ErrEnterpriseIdentityNeedsReauth
+		}
+		return err
 	}
-	switch state := strings.ToLower(strings.TrimSpace(source.Status.State)); state {
-	case "running", "paused":
+	if strings.EqualFold(strings.TrimSpace(source.Status.State), "terminated") {
 		return nil
-	case "pending", "resuming":
-		return waitForASBSandboxState(sourceCtx, client, sandboxID, timeout, "running")
-	case "pausing":
-		return waitForASBSandboxState(sourceCtx, client, sandboxID, timeout, "paused")
-	case "failed", "terminated", "error":
-		return ErrEnterpriseIdentityNeedsReauth
-	default:
-		return fmt.Errorf("ASB enterprise identity source has unsupported state %q", state)
 	}
-}
-
-func initializeASBIdentitySourceExpiration(
-	ctx context.Context,
-	client *ASBClient,
-	sandboxID string,
-	createdAt time.Time,
-) error {
-	if createdAt.IsZero() {
-		return errors.New("ASB enterprise identity source creation time is missing")
+	if err := client.DeleteSandbox(sourceCtx, sandboxID); err != nil {
+		return fmt.Errorf("terminate ASB enterprise identity seed: %w", err)
 	}
-	expiresAt := asbIdentitySourceInitialExpiration(createdAt)
-	if err := client.RenewSandbox(ctx, sandboxID, expiresAt, false); err != nil {
-		return fmt.Errorf("set ASB enterprise identity source expiration: %w", err)
+	if err := waitForASBSandboxState(sourceCtx, client, sandboxID, timeout, "terminated"); err != nil {
+		return fmt.Errorf("wait for ASB enterprise identity seed termination: %w", err)
 	}
 	return nil
 }
 
-const asbIdentitySourceExpirationSafetyMargin = time.Minute
+func deleteASBIdentitySourceIfExists(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+	timeout time.Duration,
+) error {
+	if timeout <= 0 {
+		return errors.New("ASB identity source lifecycle timeout is not configured")
+	}
+	source, err := client.GetSandbox(ctx, sandboxID)
+	if err != nil {
+		if isASBSandboxNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("load ASB enterprise identity source before deletion: %w", err)
+	}
+	if strings.EqualFold(strings.TrimSpace(source.Status.State), "terminated") {
+		return nil
+	}
+	if err := client.DeleteSandbox(ctx, sandboxID); err != nil {
+		return fmt.Errorf("delete ASB enterprise identity source: %w", err)
+	}
+	if err := waitForASBSandboxState(ctx, client, sandboxID, timeout, "terminated"); err != nil {
+		return fmt.Errorf("wait for ASB enterprise identity source deletion: %w", err)
+	}
+	return nil
+}
 
-// Set the source lifetime once, immediately after creation. ASB enforces a
-// creation-relative maximum, so later renewal attempts cannot extend an
-// existing source and must not be part of task startup or maintenance.
-func asbIdentitySourceInitialExpiration(createdAt time.Time) time.Time {
-	return createdAt.Add(
-		asbMaxRenewalDuration - asbIdentitySourceExpirationSafetyMargin,
-	)
+func isASBSandboxNotFound(err error) bool {
+	var httpErr *ASBHTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound
 }
 
 func waitForASBSandboxState(
@@ -676,9 +887,11 @@ func asbBUCOnlyIdentityProbeCommand() string {
 		"ok=p.get(\"success\") is True and str(p.get(\"errorCode\")) == \"0\" and " +
 		"str(d.get(\"empId\", \"\")) == os.environ[\"EXPECTED_EMP_ID\"] and " +
 		"str(d.get(\"agentId\", \"\")) == os.environ[\"EXPECTED_BUC_AGENT_ID\"]; " +
-		"raise SystemExit(0 if ok else 1)" +
+		fmt.Sprintf("raise SystemExit(0 if ok else %d)", asbIdentityInvalidExitCode) +
 		"'"
 }
+
+const asbIdentityInvalidExitCode = 42
 
 func asbBUCIdentityProbeCommand() string {
 	return asbBUCOnlyIdentityProbeCommand() + "; " +

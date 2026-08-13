@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -54,7 +55,7 @@ func (store *fakeASBIdentitySourceStore) ListASBRuntimeCredentials(
 	return []db.AsbRuntimeCredential{store.credential}, nil
 }
 
-func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
+func TestASBIdentitySourceBecomesTerminatedCredentialSeed(t *testing.T) {
 	const (
 		sourceSandboxID        = "identity-source-123"
 		runtimeImageRef        = "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -233,9 +234,9 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	}
 	if source.SandboxID != sourceSandboxID ||
 		source.RuntimeID != runtimeID ||
-		state != "Running" ||
+		state != "Terminated" ||
 		pauseCalls != 0 ||
-		deleteCalls != 0 {
+		deleteCalls != 1 {
 		t.Fatalf(
 			"created identity source = %#v, state=%s pause_calls=%d delete_calls=%d",
 			source,
@@ -254,7 +255,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	); err != nil {
 		t.Fatalf("Prepare identity source: %v", err)
 	}
-	if state != "Running" || resumeCalls != 0 || renewCalls != 1 {
+	if state != "Terminated" || resumeCalls != 0 || renewCalls != 0 {
 		t.Fatalf(
 			"prepared state=%s resume_calls=%d renew_calls=%d",
 			state,
@@ -265,7 +266,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	if err := manager.Park(context.Background(), runtimeID, sourceSandboxID); err != nil {
 		t.Fatalf("Park identity source: %v", err)
 	}
-	if state != "Running" || pauseCalls != 0 {
+	if state != "Terminated" || pauseCalls != 0 {
 		t.Fatalf("released state=%s pause_calls=%d", state, pauseCalls)
 	}
 	store.runtime.Metadata = []byte(strings.Replace(
@@ -286,7 +287,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	if err := manager.Delete(context.Background(), runtimeID, sourceSandboxID); err != nil {
 		t.Fatalf("Delete identity source: %v", err)
 	}
-	if attachCalls != 1 || probeCalls != 3 || deleteCalls != 1 {
+	if attachCalls != 1 || probeCalls != 1 || deleteCalls != 1 {
 		t.Fatalf(
 			"attach_calls=%d probe_calls=%d delete_calls=%d",
 			attachCalls,
@@ -296,58 +297,182 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	}
 }
 
-func TestASBIdentitySourceInitialExpirationLeavesOneMinuteSafetyMargin(t *testing.T) {
-	t.Parallel()
+func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
+	const (
+		predecessorSandboxID = "identity-seed-predecessor"
+		rotatedSandboxID     = "identity-seed-rotated"
+		runtimeImageRef      = "registry.example/runtime@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+		employeeID           = "12345"
+		bucAgentID           = "agent-multica-asb"
+	)
 
-	createdAt := time.Date(2026, time.July, 30, 14, 0, 0, 0, time.UTC)
-	expiresAt := asbIdentitySourceInitialExpiration(createdAt)
-	want := createdAt.Add(asbMaxRenewalDuration - time.Minute)
-	if !expiresAt.Equal(want) {
-		t.Fatalf("expires_at = %s, want %s", expiresAt, want)
+	states := map[string]string{
+		predecessorSandboxID: "Running",
+		rotatedSandboxID:     "Running",
 	}
-	if got := expiresAt.Sub(createdAt); got != 167*time.Hour+59*time.Minute {
-		t.Fatalf("initial source lifetime = %s, want 167h59m", got)
-	}
-}
-
-func TestInitializeASBIdentitySourceExpirationUsesCreateResponseTimeWithoutReloading(t *testing.T) {
-	t.Parallel()
-
-	const sandboxID = "identity-source-absolute-expiration"
-	createdAt := time.Now().UTC().Add(-52 * time.Second).Truncate(time.Second)
-	want := asbIdentitySourceInitialExpiration(createdAt)
-	renewCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	deleteCalls := map[string]int{}
+	probeCalls := 0
+	probeInvalid := false
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
-		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes/"+sandboxID+"/renew-expiration":
-			var payload struct {
-				ExpiresAt time.Time `json:"expiresAt"`
-			}
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes":
+			var payload asbCreateSandboxRequest
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-				t.Fatalf("decode renew request: %v", err)
+				t.Fatalf("decode rotated seed request: %v", err)
 			}
-			if !payload.ExpiresAt.Equal(want) {
-				t.Fatalf("renew expires_at = %s, want creation-relative %s", payload.ExpiresAt, want)
+			if payload.Image.URI != runtimeImageRef ||
+				payload.Extensions["wireguard.worker"] != employeeID ||
+				payload.Extensions["buc.originalSandboxID"] != predecessorSandboxID ||
+				len(payload.Extensions) != 2 ||
+				payload.Metadata["multica.identity_source_rotation"] != "true" {
+				t.Fatalf("rotated seed create request = %#v", payload)
 			}
-			renewCalls++
-			response.WriteHeader(http.StatusOK)
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":        rotatedSandboxID,
+				"status":    map[string]string{"state": "Pending"},
+				"createdAt": createdAt,
+			})
+		case request.Method == http.MethodGet &&
+			strings.HasPrefix(request.URL.Path, "/v1/sandboxes/") &&
+			!strings.Contains(request.URL.Path, "/endpoints/"):
+			sandboxID := strings.TrimPrefix(request.URL.Path, "/v1/sandboxes/")
+			state, exists := states[sandboxID]
+			if !exists {
+				http.NotFound(response, request)
+				return
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":        sandboxID,
+				"status":    map[string]string{"state": state},
+				"createdAt": createdAt,
+				"image":     map[string]string{"uri": runtimeImageRef},
+			})
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/"+rotatedSandboxID+"/endpoints/44772":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/exec",
+				"headers":  map[string]string{"X-Sandbox-Token": "endpoint-token"},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/exec/command":
+			probeCalls++
+			response.Header().Set("Content-Type", "text/event-stream")
+			if probeInvalid {
+				_, _ = io.WriteString(
+					response,
+					"data: {\"type\":\"error\",\"error\":{\"ename\":\"CommandError\",\"evalue\":\"42\"}}\n"+
+						"data: {\"type\":\"execution_complete\",\"execution_time\":1}\n",
+				)
+				return
+			}
+			_, _ = io.WriteString(response, "data: {\"type\":\"execution_complete\",\"execution_time\":1}\n")
+		case request.Method == http.MethodDelete && strings.HasPrefix(request.URL.Path, "/v1/sandboxes/"):
+			sandboxID := strings.TrimPrefix(request.URL.Path, "/v1/sandboxes/")
+			deleteCalls[sandboxID]++
+			states[sandboxID] = "Terminated"
+			response.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(response, request)
 		}
 	}))
 	defer server.Close()
 
-	client := newTestASBClient(t, server)
-	if err := initializeASBIdentitySourceExpiration(
-		context.Background(),
-		client,
-		sandboxID,
-		createdAt,
-	); err != nil {
-		t.Fatalf("initialize source expiration: %v", err)
+	box, err := secretbox.New(bytes.Repeat([]byte{0x43}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if renewCalls != 1 {
-		t.Fatalf("renew calls = %d, want 1", renewCalls)
+	sealedAPIKey, err := box.Seal([]byte("runtime-api-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
+	store := &fakeASBIdentitySourceStore{
+		runtime: db.AgentRuntime{
+			ID:          runtimeID,
+			RuntimeMode: "cloud",
+			Provider:    "hermes",
+			Metadata: []byte(`{
+				"kind":"cloud-sandbox",
+				"sandbox_backend":"asb",
+				"provider":"hermes",
+				"artifact_kind":"oci_image",
+				"artifact_channel":"stable",
+				"artifact_ref":"registry.example/runtime@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+			}`),
+		},
+		credential: db.AsbRuntimeCredential{
+			RuntimeID:       runtimeID,
+			ApiKeyEncrypted: sealedAPIKey,
+		},
+	}
+	manager := &ASBIdentitySourceManager{
+		Store: store,
+		Credentials: &ASBRuntimeClientProvider{
+			Store:   store,
+			Secrets: box,
+			Config:  ASBConfig{APIURL: server.URL},
+		},
+		Capacity: fakeASBIdentitySourceCapacity{},
+		Config: ASBConfig{
+			ResourceCPU:           "2",
+			ResourceMemory:        "4Gi",
+			ReadyTimeout:          time.Second,
+			WireGuardReadyTimeout: time.Second,
+		},
+	}
+
+	rotated, err := manager.Rotate(
+		context.Background(),
+		runtimeID,
+		predecessorSandboxID,
+		employeeID,
+		bucAgentID,
+	)
+	if err != nil {
+		t.Fatalf("Rotate identity seed: %v", err)
+	}
+	if rotated.SandboxID != rotatedSandboxID || rotated.RuntimeID != runtimeID ||
+		states[predecessorSandboxID] != "Terminated" ||
+		states[rotatedSandboxID] != "Terminated" ||
+		deleteCalls[predecessorSandboxID] != 1 ||
+		deleteCalls[rotatedSandboxID] != 1 || probeCalls != 1 {
+		t.Fatalf(
+			"rotation=%#v states=%v delete_calls=%v probe_calls=%d",
+			rotated,
+			states,
+			deleteCalls,
+			probeCalls,
+		)
+	}
+
+	states[predecessorSandboxID] = "Running"
+	states[rotatedSandboxID] = "Running"
+	deleteCalls = map[string]int{}
+	probeInvalid = true
+	_, err = manager.Rotate(
+		context.Background(),
+		runtimeID,
+		predecessorSandboxID,
+		employeeID,
+		bucAgentID,
+	)
+	if !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+		t.Fatalf("Rotate invalid identity error = %v, want needs reauth", err)
+	}
+	if states[predecessorSandboxID] != "Running" ||
+		states[rotatedSandboxID] != "Terminated" ||
+		deleteCalls[predecessorSandboxID] != 0 ||
+		deleteCalls[rotatedSandboxID] != 1 {
+		t.Fatalf(
+			"failed rotation states=%v delete_calls=%v",
+			states,
+			deleteCalls,
+		)
 	}
 }
 
@@ -503,6 +628,56 @@ func TestAttachAndProbeASBIdentitySourceProbesAfterWireGuardConvergingResponse(t
 	}
 	if attachCalls != 1 {
 		t.Fatalf("attach calls = %d, want exactly one", attachCalls)
+	}
+}
+
+func TestWaitForASBIdentitySourceBUCStopsImmediatelyWhenIdentityIsInvalid(t *testing.T) {
+	const sandboxID = "identity-seed-invalid"
+	probeCalls := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/endpoints/44772":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/exec",
+				"headers":  map[string]string{"X-Sandbox-Token": "endpoint-token"},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/exec/command":
+			probeCalls++
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(
+				response,
+				"data: {\"type\":\"error\",\"error\":{\"ename\":\"CommandError\",\"evalue\":\"42\"}}\n"+
+					"data: {\"type\":\"execution_complete\",\"execution_time\":1}\n",
+			)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewASBClient(ASBClientConfig{
+		BaseURL: server.URL,
+		APIKey:  "runtime-api-key",
+	})
+	if err != nil {
+		t.Fatalf("NewASBClient: %v", err)
+	}
+	err = waitForASBIdentitySourceBUC(
+		context.Background(),
+		client,
+		sandboxID,
+		"12345",
+		"agent-multica-asb",
+		time.Second,
+	)
+	if !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+		t.Fatalf("waitForASBIdentitySourceBUC() error = %v, want needs reauth", err)
+	}
+	if probeCalls != 1 {
+		t.Fatalf("probe calls = %d, want exactly one", probeCalls)
 	}
 }
 

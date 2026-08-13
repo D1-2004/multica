@@ -45,7 +45,8 @@ type fakeEnterpriseIdentityStore struct {
 	maintenanceArgs db.ListAgentEnterpriseIdentitiesForMaintenanceParams
 	activeSessions  []db.FcE2bSandboxSession
 	markedStale     []db.MarkCloudSandboxSessionStaleParams
-	touchedSources  int
+	rotatedSources  int
+	sourceRotation  db.RotateActiveAgentEnterpriseIdentitySourceReferencesParams
 	invalidSources  int
 }
 
@@ -191,13 +192,42 @@ func (f *fakeEnterpriseIdentityStore) CompareAndSwapAgentEnterpriseIdentitySourc
 	return f.current, nil
 }
 
-func (f *fakeEnterpriseIdentityStore) TouchActiveAgentEnterpriseIdentitySourceReferences(
-	context.Context,
-	db.TouchActiveAgentEnterpriseIdentitySourceReferencesParams,
+func (f *fakeEnterpriseIdentityStore) RotateActiveAgentEnterpriseIdentitySourceReferences(
+	_ context.Context,
+	params db.RotateActiveAgentEnterpriseIdentitySourceReferencesParams,
 ) (int64, error) {
-	f.touchedSources++
-	f.current.BucIdentitySourceUpdatedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
-	return 1, nil
+	f.rotatedSources++
+	f.sourceRotation = params
+	var affected int64
+	currentMatches := f.current.Status == "active" &&
+		f.current.WorkspaceID == params.WorkspaceID &&
+		f.current.BucIdentitySourceRuntimeID == params.ExpectedRuntimeID &&
+		f.current.BucIdentitySourceSandboxID == params.ExpectedSandboxID
+	if currentMatches {
+		f.current.BucIdentitySourceRuntimeID = params.NewRuntimeID
+		f.current.BucIdentitySourceSandboxID = params.NewSandboxID
+		f.current.BucIdentitySourceUpdatedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		if f.references == nil {
+			affected++
+		}
+	}
+	for index := range f.references {
+		identity := &f.references[index]
+		if identity.Status != "active" ||
+			identity.WorkspaceID != params.WorkspaceID ||
+			identity.BucIdentitySourceRuntimeID != params.ExpectedRuntimeID ||
+			identity.BucIdentitySourceSandboxID != params.ExpectedSandboxID {
+			continue
+		}
+		identity.BucIdentitySourceRuntimeID = params.NewRuntimeID
+		identity.BucIdentitySourceSandboxID = params.NewSandboxID
+		identity.BucIdentitySourceUpdatedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		if currentMatches && identity.ID == f.current.ID {
+			f.current = *identity
+		}
+		affected++
+	}
+	return affected, nil
 }
 
 func (f *fakeEnterpriseIdentityStore) CompareAndSwapAgentEnterpriseIdentityToken(
@@ -438,18 +468,21 @@ func containsUUID(values []pgtype.UUID, target pgtype.UUID) bool {
 }
 
 type fakeEnterpriseIdentitySource struct {
-	availability EnterpriseIdentitySourceAvailability
-	key          enterpriseIdentitySourceKey
-	createCalls  int
-	employeeID   string
-	bucAgentID   string
-	tokens       BUCIdentityTokens
-	err          error
-	prepared     []string
-	preparedOn   []pgtype.UUID
-	parked       []string
-	parkedOn     []pgtype.UUID
-	deleted      []string
+	availability         EnterpriseIdentitySourceAvailability
+	rotationAvailability EnterpriseIdentitySourceAvailability
+	key                  enterpriseIdentitySourceKey
+	createCalls          int
+	employeeID           string
+	bucAgentID           string
+	tokens               BUCIdentityTokens
+	err                  error
+	rotated              []string
+	rotatedOn            []pgtype.UUID
+	prepared             []string
+	preparedOn           []pgtype.UUID
+	parked               []string
+	parkedOn             []pgtype.UUID
+	deleted              []string
 }
 
 func (f *fakeEnterpriseIdentitySource) Create(
@@ -472,6 +505,30 @@ func (f *fakeEnterpriseIdentitySource) Create(
 		f.availability.RuntimeID = key.RuntimeID
 	}
 	return f.availability, nil
+}
+
+func (f *fakeEnterpriseIdentitySource) Rotate(
+	_ context.Context,
+	runtimeID pgtype.UUID,
+	predecessorSandboxID string,
+	employeeID string,
+	bucAgentID string,
+) (EnterpriseIdentitySourceAvailability, error) {
+	f.rotated = append(f.rotated, predecessorSandboxID)
+	f.rotatedOn = append(f.rotatedOn, runtimeID)
+	f.employeeID = employeeID
+	f.bucAgentID = bucAgentID
+	if f.err != nil {
+		return EnterpriseIdentitySourceAvailability{}, f.err
+	}
+	availability := f.rotationAvailability
+	if strings.TrimSpace(availability.SandboxID) == "" {
+		availability.SandboxID = "identity-source-rotated"
+	}
+	if !availability.RuntimeID.Valid {
+		availability.RuntimeID = runtimeID
+	}
+	return availability, nil
 }
 
 func (f *fakeEnterpriseIdentitySource) Prepare(
@@ -990,13 +1047,12 @@ func TestEnterpriseIdentityReusesSharedSourceAcrossAgentsAndRuntimes(t *testing.
 		t.Fatalf("shared source availability = %#v, created=%t", availability, created)
 	}
 	if source.createCalls != 0 || strings.Join(source.prepared, ",") != "shared-source-1" ||
-		strings.Join(source.parked, ",") != "shared-source-1" || store.touchedSources != 1 {
+		strings.Join(source.parked, ",") != "shared-source-1" {
 		t.Fatalf(
-			"shared source actions: create=%d prepare=%v park=%v touch=%d",
+			"shared source actions: create=%d prepare=%v park=%v",
 			source.createCalls,
 			source.prepared,
 			source.parked,
-			store.touchedSources,
 		)
 	}
 	if len(source.preparedOn) != 1 || source.preparedOn[0] != sourceRuntimeID ||
@@ -1291,9 +1347,17 @@ func TestEnterpriseIdentityMaintenanceRefreshesPlatformCredentials(t *testing.T)
 		Status:                     "active",
 		BoundBy:                    util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
 	}
+	sharedIdentity := identity
+	sharedIdentity.ID = util.MustParseUUID("66666666-6666-6666-6666-666666666666")
+	sharedIdentity.AgentID = util.MustParseUUID("77777777-7777-7777-7777-777777777777")
+	sharedIdentity.AuthxRefreshExpiresAt = pgtype.Timestamptz{
+		Time:  now.Add(24 * time.Hour),
+		Valid: true,
+	}
 	store := &fakeEnterpriseIdentityStore{
 		current:     identity,
-		maintenance: []db.AgentEnterpriseIdentity{identity},
+		references:  []db.AgentEnterpriseIdentity{identity, sharedIdentity},
+		maintenance: []db.AgentEnterpriseIdentity{identity, sharedIdentity},
 	}
 	authX := &fakeEnterpriseAuthX{renewResult: EnterpriseOIDCToken{
 		IDToken:          "authx-id-new",
@@ -1333,11 +1397,26 @@ func TestEnterpriseIdentityMaintenanceRefreshesPlatformCredentials(t *testing.T)
 		store.maintenanceArgs.BatchSize != defaultEnterpriseMaintenanceBatch {
 		t.Fatalf("maintenance query = %#v", store.maintenanceArgs)
 	}
-	if got := strings.Join(source.prepared, ","); got != "source-1" {
-		t.Fatalf("maintained identity source = %q", got)
+	if got := strings.Join(source.rotated, ","); got != "source-1" {
+		t.Fatalf("rotated identity seed = %q", got)
 	}
-	if got := strings.Join(source.parked, ","); got != "source-1" {
-		t.Fatalf("parked maintained identity source = %q", got)
+	if len(source.rotatedOn) != 1 || source.rotatedOn[0] != runtimeID {
+		t.Fatalf("rotated identity seed Runtime = %v", source.rotatedOn)
+	}
+	if store.rotatedSources != 1 ||
+		store.sourceRotation.ExpectedRuntimeID != runtimeID ||
+		store.sourceRotation.ExpectedSandboxID.String != "source-1" ||
+		store.sourceRotation.NewRuntimeID != runtimeID ||
+		store.sourceRotation.NewSandboxID.String != "identity-source-rotated" ||
+		store.current.BucIdentitySourceSandboxID.String != "identity-source-rotated" ||
+		len(store.references) != 2 ||
+		store.references[0].BucIdentitySourceSandboxID.String != "identity-source-rotated" ||
+		store.references[1].BucIdentitySourceSandboxID.String != "identity-source-rotated" {
+		t.Fatalf(
+			"persisted identity seed rotation = %#v current=%#v",
+			store.sourceRotation,
+			store.current,
+		)
 	}
 }
 
