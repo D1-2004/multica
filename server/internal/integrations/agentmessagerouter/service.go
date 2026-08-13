@@ -874,7 +874,7 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 			return PublicDingTalkAccountBinding{}, ErrInvalidResult
 		}
 	}
-	messageScope, conversations, validationErr := validateCompleteBindingParams(CompleteBindingParams{
+	validated, validationErr := validateCompleteBindingParams(CompleteBindingParams{
 		BindingID:     params.BindingID,
 		BindingMode:   params.BindingMode,
 		CallbackToken: params.CallbackToken,
@@ -944,10 +944,12 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 	config.SurfaceType = subscription.Surface.Type
 	config.MessageRouteStatus = ""
 	config.MessageRouteError = nil
-	config.MessageScope = messageScope
+	config.MessageScope = validated.messageScope
+	config.MessageScopeVersion = validated.scopeVersion
+	config.MessageScopeDetail = validated.scopeDetail
 	config.EnabledDomains, _ = bindingSubscriptionDomains(params.MessageBinding.Subscriptions)
 	config.CalendarStartEnabled = containsBindingDomain(config.EnabledDomains, "calendar")
-	config.Conversations = conversations
+	config.Conversations = validated.conversations
 	config.BoundAt = &boundAt
 	activeConfig, err := config.Marshal()
 	if err != nil {
@@ -1146,10 +1148,10 @@ func (s *Service) Unbind(ctx context.Context, params UnbindParams) (binding Publ
 			return PublicDingTalkAccountBinding{}, resolveErr
 		}
 		updated, updateErr := s.store.BackfillDingTalkAccountRouterAccountKey(ctx, db.BackfillDingTalkAccountRouterAccountKeyParams{
-			RouterPlatform: identity.Platform,
-			RouterTenantID: identity.TenantID,
+			RouterPlatform:  identity.Platform,
+			RouterTenantID:  identity.TenantID,
 			RouterAccountID: identity.AccountID,
-			ID: row.ID, WorkspaceID: row.WorkspaceID, AgentID: row.AgentID,
+			ID:              row.ID, WorkspaceID: row.WorkspaceID, AgentID: row.AgentID,
 			ExpectedStatus: row.Status, ExpectedRouterSourceID: config.RouterSourceID,
 			ExpectedConfig: append([]byte(nil), row.Config...),
 		})

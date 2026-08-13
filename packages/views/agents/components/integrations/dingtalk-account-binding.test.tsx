@@ -181,6 +181,91 @@ describe("DingTalkAccountBindingCard", () => {
     expect(await screen.findByText(summary)).toBeInTheDocument();
   });
 
+  it.each<[string[], string[], string]>([
+    [["*"], ["*"], "Listening to all messages"],
+    [["*"], [], "Listening to all direct messages"],
+    [[], ["*"], "Listening to @me messages in all groups"],
+    [["cid-a"], [], "Listening to messages from 1 direct conversation"],
+    [[], ["cid-g1", "cid-g2"], "Listening to @me messages in 2 groups"],
+    [["*"], ["cid-g1"], "Listening to all direct messages and @me messages in 1 group"],
+    [
+      ["cid-a", "cid-b"],
+      ["*"],
+      "Listening to messages from 2 direct conversations and @me messages in all groups",
+    ],
+  ])(
+    "shows the v2 subscription summary for direct=%j group=%j",
+    async (directCids, groupCids, summary) => {
+      listBindings.mockResolvedValue({
+        bindings: [
+          {
+            ...activeBinding,
+            messageRoute: {
+              ...activeBinding.messageRoute,
+              messageScope: "custom",
+              messageScopeVersion: 2,
+              subscription: { directCids, groupCids },
+              conversations: [],
+            },
+          },
+        ],
+        configured: true,
+      });
+
+      renderCard();
+
+      expect(await screen.findByText(summary)).toBeInTheDocument();
+    },
+  );
+
+  it("keeps the legacy summary when the subscription has no v2 version marker", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          messageRoute: {
+            ...activeBinding.messageRoute,
+            messageScope: "custom",
+            subscription: { directCids: [], groupCids: ["*"] },
+            conversations: [],
+          },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard();
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Listening to messages from 0 conversations",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to the legacy summary when a v2 record carries no subscription", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          messageRoute: {
+            ...activeBinding.messageRoute,
+            messageScope: "direct_only",
+            messageScopeVersion: 2,
+            subscription: null,
+          },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard();
+
+    expect(
+      await screen.findByText("Listening to my direct messages"),
+    ).toBeInTheDocument();
+  });
+
   it("shows calendar listening when the binding enables calendar starts", async () => {
     listBindings.mockResolvedValue({
       bindings: [
@@ -226,6 +311,25 @@ describe("DingTalkAccountBindingCard", () => {
     expect(integrations.dingtalk_account_scope_all).toBe("已监听全部消息");
     expect(integrations.dingtalk_account_scope_custom_other).toBe(
       "已监听 {{count}} 个对话的消息",
+    );
+    expect(integrations.dingtalk_account_scope_direct_all).toBe("已监听所有单聊消息");
+    expect(integrations.dingtalk_account_scope_group_all).toBe(
+      "已监听所有群聊@我的消息",
+    );
+    expect(integrations.dingtalk_account_scope_direct_custom_other).toBe(
+      "已监听 {{count}} 个单聊对话的消息",
+    );
+    expect(integrations.dingtalk_account_scope_group_custom_other).toBe(
+      "已监听 {{count}} 个群聊@我的消息",
+    );
+    expect(integrations.dingtalk_account_scope_direct_all_group_custom_other).toBe(
+      "已监听所有单聊消息和 {{count}} 个群聊@我的消息",
+    );
+    expect(integrations.dingtalk_account_scope_direct_custom_group_all_other).toBe(
+      "已监听 {{count}} 个单聊对话和所有群聊@我的消息",
+    );
+    expect(integrations.dingtalk_account_scope_direct_custom_group_custom_other).toBe(
+      "已监听 {{directCount}} 个单聊对话和 {{groupCount}} 个群聊@我的消息",
     );
     expect(integrations.dingtalk_account_scope_approval).toBe("已监听审批事件");
     expect(integrations.dingtalk_account_binding_invalid_warning).toBe(

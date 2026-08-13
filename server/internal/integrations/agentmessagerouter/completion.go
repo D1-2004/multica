@@ -48,18 +48,20 @@ type BindingSubscriptionResult struct {
 }
 
 type MessageBindingResult struct {
-	Status             string                         `json:"status"`
-	Platform           string                         `json:"platform"`
-	TenantID           string                         `json:"tenant_id"`
-	AccountID          string                         `json:"account_id"`
-	PreviousAgentID    string                         `json:"previous_agent_id,omitempty"`
-	AccountDisplayName string                         `json:"account_display_name"`
-	AccountAvatarURL   string                         `json:"account_avatar_url"`
-	MessageScope       string                         `json:"message_scope"`
-	Conversations      []DingTalkConversationSnapshot `json:"conversations"`
-	SourceID           string                         `json:"source_id"`
-	Subscriptions      []BindingSubscriptionResult    `json:"subscriptions"`
-	Error              *BindingTaskError              `json:"error"`
+	Status              string                         `json:"status"`
+	Platform            string                         `json:"platform"`
+	TenantID            string                         `json:"tenant_id"`
+	AccountID           string                         `json:"account_id"`
+	PreviousAgentID     string                         `json:"previous_agent_id,omitempty"`
+	AccountDisplayName  string                         `json:"account_display_name"`
+	AccountAvatarURL    string                         `json:"account_avatar_url"`
+	MessageScope        string                         `json:"message_scope"`
+	MessageScopeVersion int                            `json:"message_scope_version,omitempty"`
+	MessageScopeDetail  *DingTalkMessageScopeDetail    `json:"message_scope_detail,omitempty"`
+	Conversations       []DingTalkConversationSnapshot `json:"conversations"`
+	SourceID            string                         `json:"source_id"`
+	Subscriptions       []BindingSubscriptionResult    `json:"subscriptions"`
+	Error               *BindingTaskError              `json:"error"`
 }
 
 type CompleteBindingParams struct {
@@ -96,7 +98,7 @@ func (s *Service) CompleteBinding(ctx context.Context, params CompleteBindingPar
 	if !params.BindingID.Valid || !params.BindingMode.Valid() {
 		return CompleteBindingResult{}, ErrNotFound
 	}
-	messageScope, conversations, err := validateCompleteBindingParams(params)
+	validated, err := validateCompleteBindingParams(params)
 	if err != nil {
 		return CompleteBindingResult{}, ErrInvalidResult
 	}
@@ -127,9 +129,9 @@ func (s *Service) CompleteBinding(ctx context.Context, params CompleteBindingPar
 				return CompleteBindingResult{}, ErrCallbackExpired
 			}
 			binding = PublicDingTalkAccountBinding{
-				ID:           util.UUIDToString(attempt.AgentID),
-				WorkspaceID:  util.UUIDToString(attempt.WorkspaceID),
-				AgentID:      util.UUIDToString(attempt.AgentID),
+				ID:          util.UUIDToString(attempt.AgentID),
+				WorkspaceID: util.UUIDToString(attempt.WorkspaceID),
+				AgentID:     util.UUIDToString(attempt.AgentID),
 				DWSIdentity: PublicDingTalkBindingOutcome{
 					Status: DingTalkBindingStatusFailed,
 					Error:  params.Identity.Error,
@@ -169,9 +171,11 @@ func (s *Service) CompleteBinding(ctx context.Context, params CompleteBindingPar
 		}
 		config.MessageRouteStatus = params.Message.Status
 		config.MessageRouteError = params.Message.Error
-		config.MessageScope = messageScope
+		config.MessageScope = validated.messageScope
+		config.MessageScopeVersion = validated.scopeVersion
+		config.MessageScopeDetail = validated.scopeDetail
 		config.CalendarStartEnabled = false
-		config.Conversations = conversations
+		config.Conversations = validated.conversations
 		rawConfig, marshalErr := config.Marshal()
 		if marshalErr != nil {
 			return CompleteBindingResult{}, fmt.Errorf("%w: terminal binding config", ErrInvalidResult)
@@ -211,9 +215,16 @@ func completeBindingAcknowledgement(params CompleteBindingParams, binding Public
 	}
 }
 
-func validateCompleteBindingParams(params CompleteBindingParams) (string, []DingTalkConversationSnapshot, error) {
+type validatedMessageBinding struct {
+	messageScope  string
+	conversations []DingTalkConversationSnapshot
+	scopeVersion  int
+	scopeDetail   *DingTalkMessageScopeDetail
+}
+
+func validateCompleteBindingParams(params CompleteBindingParams) (validatedMessageBinding, error) {
 	if params.Status != DingTalkBindingCompletionStatus || !params.BindingMode.Valid() {
-		return "", nil, ErrInvalidResult
+		return validatedMessageBinding{}, ErrInvalidResult
 	}
 	switch params.Identity.Status {
 	case DingTalkBindingTaskStatusSuccess:
@@ -222,27 +233,27 @@ func validateCompleteBindingParams(params CompleteBindingParams) (string, []Ding
 			utf8.RuneCountInString(strings.TrimSpace(params.Identity.AccountOrganizationName)) > maxOrganizationNameRunes ||
 			utf8.RuneCountInString(strings.TrimSpace(params.Identity.AccountDisplayName)) > maxAccountNameRunes ||
 			!validAccountAvatarURL(strings.TrimSpace(params.Identity.AccountAvatarURL)) {
-			return "", nil, ErrInvalidResult
+			return validatedMessageBinding{}, ErrInvalidResult
 		}
 	case DingTalkBindingTaskStatusFailed:
 		if !emptyIdentityResult(params.Identity) || !validBindingTaskError(params.Identity.Error) {
-			return "", nil, ErrInvalidResult
+			return validatedMessageBinding{}, ErrInvalidResult
 		}
 	case DingTalkBindingTaskStatusSkipped:
 		if !emptyIdentityResult(params.Identity) || params.Identity.Error != nil {
-			return "", nil, ErrInvalidResult
+			return validatedMessageBinding{}, ErrInvalidResult
 		}
 	default:
-		return "", nil, ErrInvalidResult
+		return validatedMessageBinding{}, ErrInvalidResult
 	}
 	if params.BindingMode == BindingModeIdentity {
 		if params.Identity.Status == DingTalkBindingTaskStatusSkipped ||
 			params.Message.Status != DingTalkBindingTaskStatusSkipped {
-			return "", nil, ErrInvalidResult
+			return validatedMessageBinding{}, ErrInvalidResult
 		}
 	} else if params.Identity.Status != DingTalkBindingTaskStatusSkipped ||
 		params.Message.Status == DingTalkBindingTaskStatusSkipped {
-		return "", nil, ErrInvalidResult
+		return validatedMessageBinding{}, ErrInvalidResult
 	}
 
 	switch params.Message.Status {
@@ -255,36 +266,99 @@ func validateCompleteBindingParams(params CompleteBindingParams) (string, []Ding
 			!validSourceID(params.Message.SourceID) || !validBindingSubscriptions(params.Message.SourceID, params.Message.Subscriptions) ||
 			utf8.RuneCountInString(strings.TrimSpace(params.Message.AccountDisplayName)) > maxAccountNameRunes ||
 			!validAccountAvatarURL(strings.TrimSpace(params.Message.AccountAvatarURL)) {
-			return "", nil, ErrInvalidResult
+			return validatedMessageBinding{}, ErrInvalidResult
 		}
-		return normalizeDingTalkConversationBinding(params.Message.MessageScope, params.Message.Conversations)
+		scopeVersion, scopeDetail, err := normalizeReportedMessageScope(params.Message.MessageScopeVersion, params.Message.MessageScopeDetail, true)
+		if err != nil {
+			return validatedMessageBinding{}, ErrInvalidResult
+		}
+		messageScope, conversations, err := normalizeDingTalkConversationBindingForVersion(params.Message.MessageScope, params.Message.Conversations, scopeVersion)
+		if err != nil {
+			return validatedMessageBinding{}, ErrInvalidResult
+		}
+		return validatedMessageBinding{
+			messageScope:  messageScope,
+			conversations: conversations,
+			scopeVersion:  scopeVersion,
+			scopeDetail:   scopeDetail,
+		}, nil
 	case DingTalkBindingTaskStatusSkipped:
 		if params.Message.Error != nil || params.Message.SourceID != "" || params.Message.MessageScope != "" ||
 			params.Message.Platform != "" || params.Message.TenantID != "" || params.Message.AccountID != "" ||
 			params.Message.PreviousAgentID != "" ||
 			params.Message.AccountDisplayName != "" || params.Message.AccountAvatarURL != "" ||
-			len(params.Message.Conversations) != 0 || len(params.Message.Subscriptions) != 0 {
-			return "", nil, ErrInvalidResult
+			len(params.Message.Conversations) != 0 || len(params.Message.Subscriptions) != 0 ||
+			params.Message.MessageScopeDetail != nil {
+			return validatedMessageBinding{}, ErrInvalidResult
 		}
-		return DingTalkMessageScopeDirectOnly, nil, nil
+		if version := params.Message.MessageScopeVersion; version != 0 &&
+			version != DingTalkMessageScopeVersionLegacy && version != DingTalkMessageScopeVersionBuckets {
+			return validatedMessageBinding{}, ErrInvalidResult
+		}
+		return validatedMessageBinding{
+			messageScope: DingTalkMessageScopeDirectOnly,
+			scopeVersion: DingTalkMessageScopeVersionLegacy,
+		}, nil
 	case DingTalkBindingTaskStatusFailed:
 		if params.Message.SourceID != "" || len(params.Message.Subscriptions) != 0 ||
 			params.Message.Platform != "" || params.Message.TenantID != "" || params.Message.AccountID != "" ||
 			params.Message.PreviousAgentID != "" ||
 			params.Message.AccountDisplayName != "" || params.Message.AccountAvatarURL != "" ||
 			!validBindingTaskError(params.Message.Error) {
-			return "", nil, ErrInvalidResult
+			return validatedMessageBinding{}, ErrInvalidResult
+		}
+		scopeVersion, scopeDetail, err := normalizeReportedMessageScope(params.Message.MessageScopeVersion, params.Message.MessageScopeDetail, false)
+		if err != nil {
+			return validatedMessageBinding{}, ErrInvalidResult
 		}
 		if params.Message.MessageScope == "" {
 			if len(params.Message.Conversations) != 0 {
-				return "", nil, ErrInvalidResult
+				return validatedMessageBinding{}, ErrInvalidResult
 			}
-			return DingTalkMessageScopeDirectOnly, nil, nil
+			return validatedMessageBinding{
+				messageScope: DingTalkMessageScopeDirectOnly,
+				scopeVersion: scopeVersion,
+				scopeDetail:  scopeDetail,
+			}, nil
 		}
-		return normalizeDingTalkConversationBinding(params.Message.MessageScope, params.Message.Conversations)
+		messageScope, conversations, err := normalizeDingTalkConversationBindingForVersion(params.Message.MessageScope, params.Message.Conversations, scopeVersion)
+		if err != nil {
+			return validatedMessageBinding{}, ErrInvalidResult
+		}
+		return validatedMessageBinding{
+			messageScope:  messageScope,
+			conversations: conversations,
+			scopeVersion:  scopeVersion,
+			scopeDetail:   scopeDetail,
+		}, nil
 	default:
-		return "", nil, ErrInvalidResult
+		return validatedMessageBinding{}, ErrInvalidResult
 	}
+}
+
+// normalizeReportedMessageScope 归一化回调上报的订阅范围版本与明细：无版本标记一律按 v1；
+// v1 不允许携带明细；v2 必须携带合法明细（requireDetail=false 的失败回执缺明细时按 v1 落库）。
+func normalizeReportedMessageScope(version int, detail *DingTalkMessageScopeDetail, requireDetail bool) (int, *DingTalkMessageScopeDetail, error) {
+	if version == 0 {
+		version = DingTalkMessageScopeVersionLegacy
+	}
+	if version != DingTalkMessageScopeVersionLegacy && version != DingTalkMessageScopeVersionBuckets {
+		return 0, nil, ErrInvalidResult
+	}
+	if detail == nil {
+		if requireDetail && version == DingTalkMessageScopeVersionBuckets {
+			return 0, nil, ErrInvalidResult
+		}
+		return DingTalkMessageScopeVersionLegacy, nil, nil
+	}
+	if version != DingTalkMessageScopeVersionBuckets {
+		return 0, nil, ErrInvalidResult
+	}
+	normalized, err := normalizeDingTalkMessageScopeDetail(detail)
+	if err != nil {
+		return 0, nil, ErrInvalidResult
+	}
+	return DingTalkMessageScopeVersionBuckets, normalized, nil
 }
 
 func validOptionalPreviousAgentID(value string) bool {
