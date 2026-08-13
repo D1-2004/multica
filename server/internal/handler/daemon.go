@@ -2381,13 +2381,15 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			} else {
 				inputLoadErr = err
 			}
-			// A rollout-missing marker can make the server select an older provider
-			// session. Once the database transcript is present, prefer it over that
-			// incomplete pointer and start one coherent recovered conversation.
-			if strings.TrimSpace(resp.ChatHistory) != "" && resp.PriorSessionResumeUnavailable {
-				resp.PriorSessionID = ""
-				resp.PriorSessionResumeUnavailable = false
-			}
+			// The Multica transcript is the authoritative continuity source for a
+			// direct cloud chat. Do not also ask the sandbox daemon to resume a
+			// provider-local session: cloud Runtime images are released separately
+			// from the server, and older daemons turn a missing/incompatible session
+			// into an explicit "history is unrecoverable" notice even when this
+			// transcript is present. Starting one coherent provider session from the
+			// database copy makes the contract identical for FC/ASB and cold/warm
+			// sandboxes, without depending on the image's daemon version.
+			makeChatHistoryAuthoritative(&resp)
 			// A read failure must NOT masquerade as "zero input". Preserve the
 			// just-dispatched task (the stale-dispatched reclaim redelivers it)
 			// and reject the claim with 5xx, rather than cancelling a valid direct
@@ -3096,6 +3098,14 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 		selected[i], selected[j] = selected[j], selected[i]
 	}
 	return strings.Join(selected, "\n\n")
+}
+
+func makeChatHistoryAuthoritative(resp *AgentTaskResponse) {
+	if resp == nil || strings.TrimSpace(resp.ChatHistory) == "" {
+		return
+	}
+	resp.PriorSessionID = ""
+	resp.PriorSessionResumeUnavailable = false
 }
 
 // ListPendingTasksByRuntime returns queued/dispatched tasks for a runtime.

@@ -9,11 +9,30 @@ import (
 	"testing"
 )
 
+func TestMakeChatHistoryAuthoritative(t *testing.T) {
+	t.Parallel()
+
+	resp := AgentTaskResponse{
+		ChatHistory:                   "User:\nremember the blue lantern",
+		PriorSessionID:                "provider-session-from-another-sandbox",
+		PriorSessionResumeUnavailable: true,
+	}
+	makeChatHistoryAuthoritative(&resp)
+
+	if resp.PriorSessionID != "" {
+		t.Fatalf("PriorSessionID = %q, want empty", resp.PriorSessionID)
+	}
+	if resp.PriorSessionResumeUnavailable {
+		t.Fatal("database history is available; unrecoverable-session notice must be false")
+	}
+}
+
 // A task-owned direct-chat task (chat_input_task_id set — the shape every
 // web/mobile send has taken since MUL-4351) claimed by either cloud backend
 // carries the already-answered transcript on both cold and warm claims. The
-// daemon decides whether native resume succeeded and emits this copy only when
-// it needs to start a fresh provider session.
+// server makes that transcript authoritative and withholds the provider-local
+// resume pointer, so separately-versioned cloud images cannot contradict the
+// recovered history when their daemon fails a native resume.
 func TestClaimTaskByRuntime_CloudSandboxCarriesTaskOwnedChatHistory(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -62,8 +81,14 @@ func TestClaimTaskByRuntime_CloudSandboxCarriesTaskOwnedChatHistory(t *testing.T
 
 			var sessionID string
 			if err := testPool.QueryRow(ctx, `
-		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, status, runtime_id)
-		VALUES ($1, $2, $3, 'fc-e2b history', 'active', $4)
+		INSERT INTO chat_session (
+			workspace_id, agent_id, creator_id, title, status,
+			runtime_id, session_id, work_dir
+		)
+		VALUES (
+			$1, $2, $3, 'fc-e2b history', 'active',
+			$4, 'provider-session-from-previous-turn', '/workspace/previous-turn/workdir'
+		)
 		RETURNING id
 	`, testWorkspaceID, agentID, testUserID, runtimeID).Scan(&sessionID); err != nil {
 				t.Fatalf("setup: create chat session: %v", err)
@@ -114,9 +139,11 @@ func TestClaimTaskByRuntime_CloudSandboxCarriesTaskOwnedChatHistory(t *testing.T
 
 			var resp struct {
 				Task *struct {
-					ID          string `json:"id"`
-					ChatHistory string `json:"chat_history"`
-					Prompt      string `json:"prompt"`
+					ID                            string `json:"id"`
+					ChatHistory                   string `json:"chat_history"`
+					Prompt                        string `json:"prompt"`
+					PriorSessionID                string `json:"prior_session_id"`
+					PriorSessionResumeUnavailable bool   `json:"prior_session_resume_unavailable"`
 				} `json:"task"`
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
@@ -139,6 +166,12 @@ func TestClaimTaskByRuntime_CloudSandboxCarriesTaskOwnedChatHistory(t *testing.T
 			// must not be double-sent.
 			if strings.Contains(resp.Task.ChatHistory, "and its population?") {
 				t.Errorf("chat_history must stop before the task's own input batch: %q", resp.Task.ChatHistory)
+			}
+			if resp.Task.PriorSessionID != "" {
+				t.Errorf("provider session must be withheld when database history is present, got %q", resp.Task.PriorSessionID)
+			}
+			if resp.Task.PriorSessionResumeUnavailable {
+				t.Fatal("database history is available; claim must not carry an unrecoverable-session notice")
 			}
 		})
 	}
