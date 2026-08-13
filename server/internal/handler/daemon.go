@@ -2423,7 +2423,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// quick-create) so every agent running in the workspace sees the same
 	// shared context. Empty string when the owner hasn't set one; the daemon
 	// skips rendering the heading in that case.
+	workspaceSlug := ""
 	if ws, err := h.Queries.GetWorkspace(r.Context(), parseUUID(resp.WorkspaceID)); err == nil {
+		workspaceSlug = ws.Slug
 		if ws.Context.Valid {
 			resp.WorkspaceContext = ws.Context.String
 		}
@@ -2444,6 +2446,23 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	)
 	if supportsTaskInstruction {
 		applyDingTalkReplyFormattingInstruction(&resp, task.Context)
+		if h.EnterpriseIdentity != nil && service.IsASBRuntime(runtime) {
+			authorizationURL := buildEnterpriseIdentityAuthorizationURL(
+				h.currentConfig().AppURL,
+				workspaceSlug,
+				resp.AgentID,
+			)
+			if authorizationURL == "" {
+				slog.Warn(
+					"ASB BUC authorization link could not be built",
+					"task_id", uuidToString(task.ID),
+					"agent_id", resp.AgentID,
+					"workspace_id", resp.WorkspaceID,
+				)
+			} else {
+				applyEnterpriseIdentityAuthorizationInstruction(&resp, authorizationURL)
+			}
+		}
 	}
 
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil

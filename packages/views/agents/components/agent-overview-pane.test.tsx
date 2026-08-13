@@ -146,6 +146,22 @@ function makeRuntime(provider: string, capabilities?: string[]): AgentRuntime {
   };
 }
 
+function makeASBRuntime(): AgentRuntime {
+  const digest = `sha256:${"a".repeat(64)}`;
+  return {
+    ...makeRuntime("hermes"),
+    runtime_mode: "cloud",
+    metadata: {
+      kind: "cloud-sandbox",
+      sandbox_backend: "asb",
+      provider: "hermes",
+      artifact_kind: "oci_image",
+      artifact_ref: `registry.example/runtime@${digest}`,
+      artifact_digest: digest,
+    },
+  };
+}
+
 function renderPane(
   runtimes: AgentRuntime[],
   agentOverrides: Partial<Agent> = {},
@@ -310,7 +326,14 @@ describe("AgentOverviewPane Identity tab", () => {
     expect(screen.getByText("identity-tab")).toBeInTheDocument();
   });
 
-  it("hides Identity when account binding is not configured", () => {
+  it("shows Identity for an ASB runtime even when DingTalk account binding is not configured", () => {
+    renderPane([makeASBRuntime()], { runtime_mode: "cloud" });
+    openCapabilities();
+
+    expect(screen.getByRole("tab", { name: /^Identity$/i })).toBeInTheDocument();
+  });
+
+  it("hides Identity when account binding is not configured and the runtime is not ASB", () => {
     renderPane([makeRuntime("claude")]);
     openCapabilities();
 

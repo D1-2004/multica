@@ -625,6 +625,8 @@
       "github_identity_test_failed": "GitHub ID をテストできませんでした。",
       "enterprise_identity_title": "Alibaba 従業員 ID",
       "enterprise_identity_description": "従業員 ID を連携すると、Aone Sandbox 内で BUC SSO、a1、mw を利用できます。",
+      "enterprise_identity_dingtalk_authorization_note": "認証後、a1、Aliwork、その他の BUC 対応機能を使用する前に、Alibaba DingTalk のグループアカウント権限アシスタントを確認し、このリクエストのすべての認証操作を完了してください。",
+      "enterprise_identity_authorize_forbidden": "このエージェントの認証を開始できるのは、エージェント所有者とワークスペースのオーナー/管理者だけです。",
       "enterprise_identity_members_note": "エージェントの所有者とワークスペースのオーナー/管理者のみ管理できます。",
       "enterprise_identity_loading": "従業員 ID を読み込んでいます...",
       "enterprise_identity_not_configured": "この環境では従業員 ID が設定されていません。",

@@ -743,6 +743,8 @@
       "github_identity_test_failed": "Unable to test GitHub identity.",
       "enterprise_identity_title": "Alibaba employee identity",
       "enterprise_identity_description": "Bind an employee identity so this agent can use BUC single sign-on, a1, and mw inside Aone Sandbox.",
+      "enterprise_identity_dingtalk_authorization_note": "After authorizing, check Alibaba DingTalk's Group Account Permission Assistant and complete every authorization action for this request before using a1, Aliwork, or other BUC-backed capabilities.",
+      "enterprise_identity_authorize_forbidden": "Only the agent owner and workspace owners/admins can start authorization for this agent.",
       "enterprise_identity_members_note": "Only the agent owner and workspace owners/admins can manage this identity.",
       "enterprise_identity_loading": "Loading employee identity...",
       "enterprise_identity_not_configured": "Alibaba employee identity is not configured for this deployment.",

@@ -9,6 +9,7 @@ import type {
   MemberWithUser,
 } from "@multica/core/types";
 import { runtimeSupportsMcpConfig } from "@multica/core/agents";
+import { isASBRuntime } from "@multica/core/runtimes";
 import { useFeatureEnabled } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -222,7 +223,7 @@ export function AgentOverviewPane({
       if (tab.id === "composio_mcp") return showComposioMcp;
       if (tab.id === "integrations") return integrationsConfigured;
       if (tab.id === "identity") {
-        return dingtalkAccountListing?.configured === true;
+        return dingtalkAccountListing?.configured === true || isASBRuntime(runtime);
       }
       return true;
     });
