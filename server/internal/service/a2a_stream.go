@@ -47,7 +47,8 @@ func (s *A2AService) SendStreamingMessage(ctx context.Context, request *a2a.Send
 			yield(result, nil)
 			return
 		}
-		snapshot, afterSequence, err := s.a2aStreamSnapshot(ctx, task.ID)
+		historyLength := *a2aSendHistoryLength(&immediate)
+		snapshot, afterSequence, err := s.a2aStreamSnapshot(ctx, task.ID, historyLength)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -69,7 +70,7 @@ func (s *A2AService) SubscribeToTask(ctx context.Context, request *a2a.Subscribe
 			yield(nil, a2a.NewError(a2a.ErrInvalidParams, "task id is required"))
 			return
 		}
-		task, afterSequence, err := s.a2aStreamSnapshot(ctx, request.ID)
+		task, afterSequence, err := s.a2aStreamSnapshot(ctx, request.ID, 50)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -85,7 +86,7 @@ func (s *A2AService) SubscribeToTask(ctx context.Context, request *a2a.Subscribe
 	}
 }
 
-func (s *A2AService) a2aStreamSnapshot(ctx context.Context, taskID a2a.TaskID) (*a2a.Task, int64, error) {
+func (s *A2AService) a2aStreamSnapshot(ctx context.Context, taskID a2a.TaskID, historyLength int) (*a2a.Task, int64, error) {
 	_, principal, err := a2aPrincipalFromContext(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -105,7 +106,7 @@ func (s *A2AService) a2aStreamSnapshot(ctx context.Context, taskID a2a.TaskID) (
 	if err != nil {
 		return nil, 0, a2a.NewError(a2a.ErrInternalError, "unable to reconcile A2A task")
 	}
-	task, err := s.projectA2APublicTask(ctx, row, 50, true)
+	task, err := s.projectA2APublicTask(ctx, row, historyLength, true)
 	if err != nil {
 		return nil, 0, a2a.NewError(a2a.ErrInternalError, "unable to project A2A task")
 	}

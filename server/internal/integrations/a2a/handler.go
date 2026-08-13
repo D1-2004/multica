@@ -5,10 +5,13 @@ import (
 	"iter"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 )
+
+const a2aStreamKeepAliveInterval = 15 * time.Second
 
 // Port is the narrow application boundary required by the inbound A2A wire adapter.
 // Implementations can obtain the authenticated caller through PrincipalFromContext.
@@ -97,7 +100,14 @@ func NewRequestHandler(port Port, options ...HandlerOption) a2asrv.RequestHandle
 
 // NewJSONRPCHandler constructs an A2A v1 JSON-RPC HTTP handler backed only by the injected Port.
 func NewJSONRPCHandler(port Port, options ...HandlerOption) http.Handler {
-	return a2asrv.NewJSONRPCHandler(NewRequestHandler(port, options...))
+	return newJSONRPCHandler(port, a2aStreamKeepAliveInterval, options...)
+}
+
+func newJSONRPCHandler(port Port, keepAliveInterval time.Duration, options ...HandlerOption) http.Handler {
+	return a2asrv.NewJSONRPCHandler(
+		NewRequestHandler(port, options...),
+		a2asrv.WithTransportKeepAlive(keepAliveInterval),
+	)
 }
 
 func (handler *requestHandler) GetTask(ctx context.Context, request *a2a.GetTaskRequest) (*a2a.Task, error) {

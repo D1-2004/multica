@@ -1,13 +1,16 @@
 package a2aintegration
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 )
@@ -15,6 +18,24 @@ import (
 type testPort struct {
 	getTaskCalls int
 	principal    Principal
+}
+
+type keepAlivePort struct {
+	testPort
+	release <-chan struct{}
+}
+
+func (port *keepAlivePort) SendStreamingMessage(ctx context.Context, _ *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		select {
+		case <-ctx.Done():
+		case <-port.release:
+		}
+	}
+}
+
+func (port *keepAlivePort) SubscribeToTask(context.Context, *a2a.SubscribeToTaskRequest) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {}
 }
 
 func (port *testPort) SendMessage(context.Context, *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
@@ -176,6 +197,54 @@ func TestJSONRPCProtocolErrorsRemainSDKNative(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestJSONRPCStreamingSendsKeepAlive(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	handler := newJSONRPCHandler(&keepAlivePort{release: release}, 10*time.Millisecond)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := WithPrincipal(r.Context(), Principal{
+			Scopes:          []string{"send"},
+			EndpointEnabled: true,
+		})
+		handler.ServeHTTP(w, r.WithContext(ctx))
+	}))
+	defer server.Close()
+
+	requestCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(
+		requestCtx,
+		http.MethodPost,
+		server.URL,
+		strings.NewReader(`{"jsonrpc":"2.0","id":"keep-alive","method":"SendStreamingMessage","params":{"message":{"messageId":"message-1","role":"ROLE_USER","parts":[{"text":"hello"}]}}}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set(a2a.SvcParamVersion, string(a2a.Version))
+
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatalf("open streaming response: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("streaming status = %d, want 200", response.StatusCode)
+	}
+	if contentType := response.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
+		t.Fatalf("streaming content type = %q, want text/event-stream", contentType)
+	}
+	line, err := bufio.NewReader(response.Body).ReadString('\n')
+	if err != nil {
+		t.Fatalf("read keep-alive: %v", err)
+	}
+	if line != ": keep-alive\n" {
+		t.Fatalf("keep-alive line = %q", line)
+	}
+	close(release)
 }
 
 func TestJSONRPCScopeAuthorizationRunsAtSDKMethodBoundary(t *testing.T) {
