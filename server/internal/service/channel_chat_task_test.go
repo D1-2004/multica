@@ -36,9 +36,11 @@ func newDurableChannelTaskFixture(t *testing.T) durableChannelTaskFixture {
 	// under test. Install the two intended indexes idempotently so the generated
 	// ON CONFLICT target has the same contract as production.
 	if _, err := pool.Exec(ctx, `
-		CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_task_queue_deferred_chat_session
+		CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_task_queue_deferred_channel_session
 		ON agent_task_queue (chat_session_id)
-		WHERE status = 'deferred' AND chat_session_id IS NOT NULL
+		WHERE status = 'deferred'
+		  AND chat_session_id IS NOT NULL
+		  AND fire_at IS NOT NULL
 	`); err != nil {
 		t.Fatalf("ensure deferred chat unique index: %v", err)
 	}
@@ -117,6 +119,34 @@ func newDurableChannelTaskFixture(t *testing.T) durableChannelTaskFixture {
 		pool.Exec(cleanupCtx, `DELETE FROM "user" WHERE id = $1`, f.userID)
 	})
 	return f
+}
+
+func TestDeferredA2ATurnsShareOneChatSession(t *testing.T) {
+	f := newDurableChannelTaskFixture(t)
+	queries := db.New(f.pool)
+	ctx := context.Background()
+	first, err := queries.CreatePausedA2AChatTask(ctx, db.CreatePausedA2AChatTaskParams{
+		AgentID:       f.agentID,
+		RuntimeID:     f.runtimeID,
+		ChatSessionID: f.sessionID,
+		TaskContext:   []byte(`{"multica_origin":"a2a"}`),
+	})
+	if err != nil {
+		t.Fatalf("create paused A2A turn: %v", err)
+	}
+	second, err := queries.CreateA2AChatTask(ctx, db.CreateA2AChatTaskParams{
+		AgentID:       f.agentID,
+		RuntimeID:     f.runtimeID,
+		ChatSessionID: f.sessionID,
+		TaskContext:   []byte(`{"multica_origin":"a2a"}`),
+	})
+	if err != nil {
+		t.Fatalf("queue A2A input behind paused turn: %v", err)
+	}
+	if first.ID == second.ID || first.Status != "deferred" || second.Status != "deferred" {
+		t.Fatalf("A2A deferred turns = first(%s, %s) second(%s, %s)",
+			util.UUIDToString(first.ID), first.Status, util.UUIDToString(second.ID), second.Status)
+	}
 }
 
 func (f durableChannelTaskFixture) session(t *testing.T) db.ChatSession {

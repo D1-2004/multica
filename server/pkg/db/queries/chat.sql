@@ -331,7 +331,9 @@ VALUES (
     now() + make_interval(secs => @debounce_seconds::double precision)
 )
 ON CONFLICT (chat_session_id)
-    WHERE status = 'deferred' AND chat_session_id IS NOT NULL
+    WHERE status = 'deferred'
+      AND chat_session_id IS NOT NULL
+      AND fire_at IS NOT NULL
 DO UPDATE SET
     agent_id = EXCLUDED.agent_id,
     runtime_id = EXCLUDED.runtime_id,
