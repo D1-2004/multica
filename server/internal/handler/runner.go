@@ -1106,6 +1106,14 @@ func (h *Handler) handleRunnerHeartbeat(ctx context.Context, identity runnerws.I
 	_, _ = h.Queries.UpdateRunnerMachineHeartbeat(ctx, db.UpdateRunnerMachineHeartbeatParams{
 		ID: machineID, ConnectionID: connectionID, ClientVersion: clientVersion,
 	})
+	activeBindings, err := h.Queries.CountConnectedRunnerBindings(ctx, machineID)
+	if err != nil || activeBindings > 0 {
+		return
+	}
+	// The disconnect/revoke request may land on a different replica from the
+	// WebSocket. Re-checking on the owning replica makes zero-binding shutdown
+	// independent of cross-replica notification delivery.
+	h.notifyRunnerBindingsChanged(identity.MachineID, 0)
 }
 
 func (h *Handler) handleRunnerResult(ctx context.Context, identity runnerws.Identity, result runnerprotocol.Result) {
