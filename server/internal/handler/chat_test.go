@@ -33,6 +33,90 @@ func withChatTestWorkspaceCtx(t *testing.T, req *http.Request) *http.Request {
 	return req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, memberRow))
 }
 
+func bindA2ATestContext(t *testing.T, agentID, sessionID, ownerID string) {
+	t.Helper()
+	var endpointID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_a2a_endpoint (
+			workspace_id, agent_id, public_agent_id, enabled,
+			delegated_by_user_id, card_name, card_skills
+		)
+		VALUES ($1, $2, 'test-a2a-' || gen_random_uuid()::text, true, $3, 'A2A test agent', '[]'::jsonb)
+		RETURNING id
+	`, testWorkspaceID, agentID, ownerID).Scan(&endpointID); err != nil {
+		t.Fatalf("insert A2A endpoint: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_a2a_endpoint WHERE id = $1`, endpointID)
+	})
+
+	var clientID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO a2a_client (endpoint_id, name, created_by, updated_by)
+		VALUES ($1, 'A2A test client', $2, $2)
+		RETURNING id
+	`, endpointID, ownerID).Scan(&clientID); err != nil {
+		t.Fatalf("insert A2A client: %v", err)
+	}
+
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO a2a_context (endpoint_id, client_id, public_context_id, chat_session_id)
+		VALUES ($1, $2, 'ctx_' || gen_random_uuid()::text, $3)
+	`, endpointID, clientID, sessionID); err != nil {
+		t.Fatalf("insert A2A context: %v", err)
+	}
+}
+
+func TestListAndGetChatSessions_IncludeA2AWithLabel(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "ChatVisibleA2AAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	bindA2ATestContext(t, agentID, sessionID, testUserID)
+
+	listReq := withChatTestWorkspaceCtx(t, newRequest("GET", "/api/chat/sessions?status=all", nil))
+	listW := httptest.NewRecorder()
+	testHandler.ListChatSessions(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("ListChatSessions: expected 200, got %d: %s", listW.Code, listW.Body.String())
+	}
+	var sessions []ChatSessionResponse
+	if err := json.Unmarshal(listW.Body.Bytes(), &sessions); err != nil {
+		t.Fatalf("decode sessions: %v", err)
+	}
+	found := false
+	for _, session := range sessions {
+		if session.ID != sessionID {
+			continue
+		}
+		found = true
+		if !session.IsA2A {
+			t.Fatalf("A2A session response is missing is_a2a=true: %+v", session)
+		}
+	}
+	if !found {
+		t.Fatalf("A2A session %s was excluded from the chat list", sessionID)
+	}
+
+	getReq := newRequest("GET", "/api/chat/sessions/"+sessionID, nil)
+	getReq = withURLParam(getReq, "sessionId", sessionID)
+	getReq = withChatTestWorkspaceCtx(t, getReq)
+	getW := httptest.NewRecorder()
+	testHandler.GetChatSession(getW, getReq)
+	if getW.Code != http.StatusOK {
+		t.Fatalf("GetChatSession: expected 200, got %d: %s", getW.Code, getW.Body.String())
+	}
+	var session ChatSessionResponse
+	if err := json.Unmarshal(getW.Body.Bytes(), &session); err != nil {
+		t.Fatalf("decode session: %v", err)
+	}
+	if !session.IsA2A {
+		t.Fatalf("single A2A session response is missing is_a2a=true: %+v", session)
+	}
+}
+
 // TestSendChatMessage_LinksAttachments verifies that attachments uploaded
 // against a chat_session (chat_message_id NULL) are back-filled with the
 // message_id when SendChatMessage receives the matching attachment_ids.

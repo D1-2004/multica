@@ -1320,6 +1320,9 @@ func TestAgentA2ABlockingSendWaitsForTerminalTask(t *testing.T) {
 		if task.Status.State != a2a.TaskStateCompleted || len(task.Artifacts) != 1 || task.Artifacts[0].Parts[0].Text() != "blocking send completed" {
 			t.Fatalf("blocking SendMessage terminal task = %#v", task)
 		}
+		if len(task.History) != 0 {
+			t.Fatalf("blocking SendMessage default history = %#v, want no echoed request history", task.History)
+		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("blocking SendMessage did not return after terminal state")
 	}

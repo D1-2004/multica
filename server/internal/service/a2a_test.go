@@ -78,6 +78,40 @@ func TestValidateA2ASendRequest(t *testing.T) {
 	}
 }
 
+func TestA2ASendHistoryIsOptIn(t *testing.T) {
+	request := &a2a.SendMessageRequest{
+		Message: &a2a.Message{
+			ID:    "message-history-default",
+			Role:  a2a.MessageRoleUser,
+			Parts: a2a.ContentParts{a2a.NewTextPart("do not echo this input")},
+		},
+	}
+
+	validated, err := validateA2ASendRequest(context.Background(), request, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated.HistoryLength != 0 {
+		t.Fatalf("default SendMessage history length = %d, want 0", validated.HistoryLength)
+	}
+	if historyLength := a2aSendHistoryLength(request); historyLength == nil || *historyLength != 0 {
+		t.Fatalf("default replay history length = %v, want 0", historyLength)
+	}
+
+	explicitHistoryLength := 2
+	request.Config = &a2a.SendMessageConfig{HistoryLength: &explicitHistoryLength}
+	validated, err = validateA2ASendRequest(context.Background(), request, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated.HistoryLength != explicitHistoryLength {
+		t.Fatalf("explicit SendMessage history length = %d, want %d", validated.HistoryLength, explicitHistoryLength)
+	}
+	if historyLength := a2aSendHistoryLength(request); historyLength == nil || *historyLength != explicitHistoryLength {
+		t.Fatalf("explicit replay history length = %v, want %d", historyLength, explicitHistoryLength)
+	}
+}
+
 func TestValidateA2ASendRequestFromV1JSONWire(t *testing.T) {
 	var request a2a.SendMessageRequest
 	if err := json.Unmarshal([]byte(`{

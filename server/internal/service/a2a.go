@@ -756,7 +756,11 @@ func validateA2ASendRequest(ctx context.Context, request *a2a.SendMessageRequest
 		return validatedA2ASend{}, a2a.NewError(a2a.ErrInvalidParams, "tenant is not supported by this endpoint")
 	}
 	returnImmediately := request.Config != nil && request.Config.ReturnImmediately
-	historyLength := 50
+	// SendMessage responses are minimal by default: the submitted user message
+	// must not be repeated alongside the answer artifact. Callers that need
+	// inline history can request it explicitly; GetTask keeps its own history
+	// default for task inspection.
+	historyLength := 0
 	var pushConfig *a2a.PushConfig
 	acceptedOutputModes := []string{}
 	if request.Config != nil {
@@ -867,10 +871,11 @@ func validateA2ASendRequest(ctx context.Context, request *a2a.SendMessageRequest
 }
 
 func a2aSendHistoryLength(request *a2a.SendMessageRequest) *int {
-	if request == nil || request.Config == nil {
-		return nil
+	historyLength := 0
+	if request != nil && request.Config != nil && request.Config.HistoryLength != nil {
+		historyLength = *request.Config.HistoryLength
 	}
-	return request.Config.HistoryLength
+	return &historyLength
 }
 
 func (s *A2AService) completeA2ASend(ctx context.Context, request validatedA2ASend, task *a2a.Task) (a2a.SendMessageResult, error) {

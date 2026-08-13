@@ -471,9 +471,6 @@ const getChatSessionInWorkspace = `-- name: GetChatSessionInWorkspace :one
 SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at FROM chat_session
 WHERE chat_session.id = $1
   AND chat_session.workspace_id = $2
-  AND NOT EXISTS (
-    SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = chat_session.id
-  )
 `
 
 type GetChatSessionInWorkspaceParams struct {
@@ -606,9 +603,6 @@ SELECT EXISTS (
     AND cs.workspace_id = $1
     AND cs.creator_id = $2
     AND cs.agent_id = ANY($3::uuid[])
-    AND NOT EXISTS (
-      SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
-    )
 ) AS has_pending
 `
 
@@ -632,6 +626,19 @@ func (q *Queries) HasPendingChatTasksByCreator(ctx context.Context, arg HasPendi
 	var has_pending bool
 	err := row.Scan(&has_pending)
 	return has_pending, err
+}
+
+const isA2AChatSession = `-- name: IsA2AChatSession :one
+SELECT EXISTS (
+  SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = $1
+) AS is_a2a
+`
+
+func (q *Queries) IsA2AChatSession(ctx context.Context, chatSessionID pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, isA2AChatSession, chatSessionID)
+	var is_a2a bool
+	err := row.Scan(&is_a2a)
+	return is_a2a, err
 }
 
 const linkChatMessageToTask = `-- name: LinkChatMessageToTask :exec
@@ -662,7 +669,10 @@ SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_
        COALESCE(lm.role, '') AS last_message_role,
        lm.created_at AS last_message_at,
        lm.failure_reason AS last_message_failure_reason,
-       COALESCE(lm.message_kind, '') AS last_message_kind
+       COALESCE(lm.message_kind, '') AS last_message_kind,
+       EXISTS (
+         SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+       ) AS is_a2a
 FROM chat_session cs
 LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
@@ -672,9 +682,6 @@ LEFT JOIN LATERAL (
    LIMIT 1
 ) lm ON true
 WHERE cs.workspace_id = $1 AND cs.creator_id = $2
-  AND NOT EXISTS (
-    SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
-  )
 ORDER BY (cs.pinned_at IS NOT NULL) DESC, cs.pinned_at DESC, COALESCE(lm.created_at, cs.updated_at) DESC
 `
 
@@ -705,6 +712,7 @@ type ListAllChatSessionsByCreatorRow struct {
 	LastMessageAt            pgtype.Timestamptz `json:"last_message_at"`
 	LastMessageFailureReason pgtype.Text        `json:"last_message_failure_reason"`
 	LastMessageKind          string             `json:"last_message_kind"`
+	IsA2a                    bool               `json:"is_a2a"`
 }
 
 // Unlike ListChatSessionsByCreator this returns archived sessions too (for the
@@ -745,6 +753,7 @@ func (q *Queries) ListAllChatSessionsByCreator(ctx context.Context, arg ListAllC
 			&i.LastMessageAt,
 			&i.LastMessageFailureReason,
 			&i.LastMessageKind,
+			&i.IsA2a,
 		); err != nil {
 			return nil, err
 		}
@@ -904,7 +913,10 @@ SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_
        COALESCE(lm.role, '') AS last_message_role,
        lm.created_at AS last_message_at,
        lm.failure_reason AS last_message_failure_reason,
-       COALESCE(lm.message_kind, '') AS last_message_kind
+       COALESCE(lm.message_kind, '') AS last_message_kind,
+       EXISTS (
+         SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+       ) AS is_a2a
 FROM chat_session cs
 LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
@@ -914,9 +926,6 @@ LEFT JOIN LATERAL (
    LIMIT 1
 ) lm ON true
 WHERE cs.workspace_id = $1 AND cs.creator_id = $2 AND cs.status = 'active'
-  AND NOT EXISTS (
-    SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
-  )
 ORDER BY (cs.pinned_at IS NOT NULL) DESC, cs.pinned_at DESC, COALESCE(lm.created_at, cs.updated_at) DESC
 `
 
@@ -947,6 +956,7 @@ type ListChatSessionsByCreatorRow struct {
 	LastMessageAt            pgtype.Timestamptz `json:"last_message_at"`
 	LastMessageFailureReason pgtype.Text        `json:"last_message_failure_reason"`
 	LastMessageKind          string             `json:"last_message_kind"`
+	IsA2a                    bool               `json:"is_a2a"`
 }
 
 // IM-style list: each active session with its unread *count* (assistant
@@ -983,6 +993,7 @@ func (q *Queries) ListChatSessionsByCreator(ctx context.Context, arg ListChatSes
 			&i.LastMessageAt,
 			&i.LastMessageFailureReason,
 			&i.LastMessageKind,
+			&i.IsA2a,
 		); err != nil {
 			return nil, err
 		}
@@ -1044,9 +1055,6 @@ WHERE atq.chat_session_id IS NOT NULL
   AND atq.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
   AND cs.workspace_id = $1
   AND cs.creator_id = $2
-  AND NOT EXISTS (
-    SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
-  )
 ORDER BY atq.created_at DESC
 `
 
