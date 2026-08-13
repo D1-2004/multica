@@ -629,8 +629,10 @@ func TestA2AClaimModeNegotiationRequiresV2Attestation(t *testing.T) {
 	}
 	for _, runtime := range []db.AgentRuntime{
 		validRuntime("local", "claude", `{}`),
+		validRuntime("cloud", "hermes", agentA2ATestManagedHermesRuntimeMetadata),
 		validRuntime("cloud", "opencode", agentA2ATestManagedOpenCodeRuntimeMetadata),
-		validRuntime("cloud", "opencode", `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode","artifact_kind":"oci_image","artifact_ref":"registry.example/repo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","capabilities":["a2a-invocation-v2"]}`),
+		validRuntime("cloud", "opencode", `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode","artifact_kind":"oci_image","artifact_ref":"registry.example/repo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","capabilities":["a2a_inbound_opencode_v1","a2a-invocation-v2"]}`),
+		validRuntime("cloud", "pi", agentA2ATestManagedPiASBRuntimeMetadata),
 	} {
 		if !isA2AClaimRuntimeSupported(runtime) {
 			t.Fatalf("v2-attested runtime must be A2A-executable: %+v", runtime)
@@ -640,8 +642,9 @@ func TestA2AClaimModeNegotiationRequiresV2Attestation(t *testing.T) {
 		validRuntime("local", "codex", `{}`),
 		validRuntime("cloud", "opencode", agentA2ATestManagedOpenCodeStableM2Metadata),
 		validRuntime("cloud", "opencode", agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A),
-		validRuntime("cloud", "hermes", `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"hermes","artifact_kind":"e2b_template","artifact_ref":"template"}`),
-		validRuntime("cloud", "opencode", `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode","artifact_kind":"oci_image","artifact_ref":"registry.example/repo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`),
+		validRuntime("cloud", "hermes", `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"hermes","artifact_kind":"e2b_template","artifact_ref":"template","capabilities":["a2a-invocation-v2"]}`),
+		validRuntime("cloud", "opencode", `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode","artifact_kind":"oci_image","artifact_ref":"registry.example/repo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","capabilities":["a2a_inbound_opencode_v1"]}`),
+		validRuntime("cloud", "pi", `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"pi","artifact_kind":"oci_image","artifact_ref":"registry.example/repo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","capabilities":["a2a_inbound_pi_v1"]}`),
 		validRuntime("cloud", "opencode", `{}`),
 	} {
 		if isA2AClaimRuntimeSupported(runtime) {
@@ -662,6 +665,14 @@ func TestA2AClaimModeNegotiationRequiresV2Attestation(t *testing.T) {
 	if !requestUsesNativeA2AInvocation(request, a2aContext, attestedManaged) {
 		t.Fatal("v2 image and v2 daemon capability must negotiate A2A")
 	}
+	for _, runtime := range []db.AgentRuntime{
+		validRuntime("cloud", "hermes", agentA2ATestManagedHermesRuntimeMetadata),
+		validRuntime("cloud", "pi", agentA2ATestManagedPiASBRuntimeMetadata),
+	} {
+		if !requestUsesNativeA2AInvocation(request, a2aContext, runtime) {
+			t.Fatalf("provider-complete v2 runtime must negotiate A2A: %+v", runtime)
+		}
+	}
 
 	legacyRequest := httptest.NewRequest(http.MethodPost, "/claim", nil)
 	if requestUsesNativeA2AInvocation(legacyRequest, a2aContext, localClaude) {
@@ -679,7 +690,7 @@ func TestA2AClaimModeNegotiationRequiresV2Attestation(t *testing.T) {
 	}
 	for _, runtime := range []db.AgentRuntime{
 		validRuntime("local", "codex", `{}`),
-		validRuntime("cloud", "hermes", `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"hermes"}`),
+		validRuntime("cloud", "hermes", `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"hermes","artifact_kind":"e2b_template","artifact_ref":"template","capabilities":["a2a-invocation-v2"]}`),
 	} {
 		if requestUsesNativeA2AInvocation(request, a2aContext, runtime) {
 			t.Fatalf("provider without native isolation unexpectedly negotiated A2A: %+v", runtime)

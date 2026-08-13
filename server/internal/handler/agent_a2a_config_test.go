@@ -35,6 +35,30 @@ const agentA2ATestManagedOpenCodeRuntimeMetadata = `{
 	"capabilities":["opencode","dws","mcp","a2a_inbound_opencode_v1","a2a-invocation-v2"]
 }`
 
+const agentA2ATestManagedHermesRuntimeMetadata = `{
+	"kind":"cloud-sandbox",
+	"sandbox_backend":"aliyun_fc",
+	"provider":"hermes",
+	"artifact_kind":"e2b_template",
+	"artifact_channel":"candidate",
+	"artifact_ref":"template-a2a-m6-hermes-pi",
+	"manifest_version":6,
+	"runner_protocol":"root-log-v1",
+	"capabilities":["hermes","dws","mcp","a2a_inbound_hermes_v1","a2a-invocation-v2"]
+}`
+
+const agentA2ATestManagedPiASBRuntimeMetadata = `{
+	"kind":"cloud-sandbox",
+	"sandbox_backend":"asb",
+	"provider":"pi",
+	"artifact_kind":"oci_image",
+	"artifact_channel":"candidate",
+	"artifact_ref":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	"manifest_version":6,
+	"runner_protocol":"root-log-v1",
+	"capabilities":["pi","dws","mcp","a2a_inbound_pi_v1","a2a-invocation-v2"]
+}`
+
 const agentA2ATestManagedOpenCodeRuntimeMetadataWithoutA2A = `{
 	"kind":"cloud-sandbox",
 	"sandbox_backend":"aliyun_fc",
@@ -667,6 +691,34 @@ func TestAgentA2AEnableRequiresRuntimeV2(t *testing.T) {
 			wantAllowed: true,
 		},
 		{
+			name:        "managed Hermes current capability",
+			runtimeMode: "cloud",
+			provider:    "hermes",
+			metadata:    agentA2ATestManagedHermesRuntimeMetadata,
+			wantAllowed: true,
+		},
+		{
+			name:        "managed Pi ASB current capability",
+			runtimeMode: "cloud",
+			provider:    "pi",
+			metadata:    agentA2ATestManagedPiASBRuntimeMetadata,
+			wantAllowed: true,
+		},
+		{
+			name:        "managed Hermes missing provider adapter",
+			runtimeMode: "cloud",
+			provider:    "hermes",
+			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"hermes","artifact_kind":"e2b_template","artifact_ref":"template-a2a-m6","capabilities":["a2a-invocation-v2"]}`,
+			wantAllowed: false,
+		},
+		{
+			name:        "managed Pi missing invocation v2",
+			runtimeMode: "cloud",
+			provider:    "pi",
+			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"pi","artifact_kind":"e2b_template","artifact_ref":"template-a2a-m6","capabilities":["a2a_inbound_pi_v1"]}`,
+			wantAllowed: false,
+		},
+		{
 			name:        "managed OpenCode stable m2 template metadata",
 			runtimeMode: "cloud",
 			provider:    "opencode",
@@ -983,6 +1035,20 @@ func TestAgentA2ASendRemainsAvailableAcrossRuntimeVersionChanges(t *testing.T) {
 			runtimeMode:   "cloud",
 			provider:      "opencode",
 			metadata:      agentA2ATestManagedOpenCodeRuntimeMetadata,
+			wantAvailable: true,
+		},
+		{
+			name:          "runtime switched to current managed Hermes template",
+			runtimeMode:   "cloud",
+			provider:      "hermes",
+			metadata:      agentA2ATestManagedHermesRuntimeMetadata,
+			wantAvailable: true,
+		},
+		{
+			name:          "runtime switched to current managed Pi ASB image",
+			runtimeMode:   "cloud",
+			provider:      "pi",
+			metadata:      agentA2ATestManagedPiASBRuntimeMetadata,
 			wantAvailable: true,
 		},
 		{

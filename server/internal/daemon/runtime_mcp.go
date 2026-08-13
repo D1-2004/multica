@@ -32,17 +32,17 @@ func resolveTaskMcpConfig(provider string, agentConfig json.RawMessage, a2aInvoc
 }
 
 // resolveTaskMcpConfigForRuntime keeps the default A2A provider allowlist
-// strict while admitting the exact server-attested managed prerelease runtime.
-// OpenCode merges inline configuration rather than replacing every native
-// source, so this exception is safe only together with the task-local XDG
-// directories installed by the daemon and the v2 runtime capability server
-// gate. It is intentionally unsuitable as a general OpenCode A2A capability.
+// strict while admitting an exact server-attested managed v2 cloud runtime.
+// Hermes, OpenCode, and Pi each get a fresh provider home plus an explicit MCP
+// replacement path before launch. The exception is therefore tied to both the
+// server attestation and the provider-specific isolation installed by the
+// daemon; it is not a general capability for unverified runtimes.
 func resolveTaskMcpConfigForRuntime(provider string, agentConfig json.RawMessage, a2aInvocation, managedRuntimeV2 bool) (json.RawMessage, error) {
 	if !a2aInvocation {
 		return mergeRuntimeAndAgentMcpConfig(provider, agentConfig)
 	}
 
-	if !supportsA2AStrictMcpIsolation(provider) && !(managedRuntimeV2 && provider == "opencode") {
+	if !supportsA2AStrictMcpIsolation(provider) && !(managedRuntimeV2 && supportsManagedA2AV2Provider(provider)) {
 		return nil, fmt.Errorf("runtime provider %q cannot safely isolate native MCP configuration for A2A invocations", provider)
 	}
 

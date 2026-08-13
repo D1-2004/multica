@@ -1053,21 +1053,37 @@ func validateAgentA2ARuntimeFamily(runtime db.AgentRuntime) error {
 	if isAgentA2ASupportedRuntimeFamily(runtime) {
 		return nil
 	}
-	return errors.New("A2A inbound requires a local Claude runtime or an FC/ASB OpenCode runtime whose image manifest advertises a2a-invocation-v2")
+	return errors.New("A2A inbound requires a local Claude runtime or an FC/ASB Hermes, OpenCode, or Pi runtime whose image manifest advertises the provider's inbound adapter and a2a-invocation-v2")
 }
 
 func isAgentA2ASupportedRuntimeFamily(runtime db.AgentRuntime) bool {
-	if runtime.RuntimeMode == "local" && runtime.Provider == "claude" {
+	provider := strings.ToLower(strings.TrimSpace(runtime.Provider))
+	if runtime.RuntimeMode == "local" && provider == "claude" {
 		return true
 	}
-	if runtime.RuntimeMode != "cloud" || runtime.Provider != "opencode" {
+	providerCapability, supportedProvider := agentA2ACloudProviderCapability(provider)
+	if runtime.RuntimeMode != "cloud" || !supportedProvider {
 		return false
 	}
 	metadata, err := service.ParseCloudSandboxRuntime(runtime)
 	return err == nil &&
 		(metadata.SandboxBackend == service.SandboxBackendAliyunFC || metadata.SandboxBackend == service.SandboxBackendASB) &&
-		metadata.Provider == "opencode" &&
+		metadata.Provider == provider &&
+		service.CloudSandboxRuntimeHasCapability(runtime, providerCapability) &&
 		service.CloudSandboxRuntimeHasCapability(runtime, service.A2AInvocationV2Capability)
+}
+
+func agentA2ACloudProviderCapability(provider string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "hermes":
+		return service.A2AInboundHermesCapability, true
+	case "opencode":
+		return service.A2AInboundOpenCodeCapability, true
+	case "pi":
+		return service.A2AInboundPiCapability, true
+	default:
+		return "", false
+	}
 }
 
 func parseAgentA2ACredentialExpiry(value *string) (pgtype.Timestamptz, error) {

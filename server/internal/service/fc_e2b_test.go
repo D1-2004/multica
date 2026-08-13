@@ -528,6 +528,14 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 			wantCapabilities: []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInboundOpenCodeCapability, A2AInvocationV2Capability},
 		},
 		{
+			name:             "valid m6 provider-complete A2A invocation v2",
+			buildID:          "build-v6-provider-complete",
+			alias:            "multica-m6-h0_19_0-o1_18_11-p0_83_0-d1_0_58b4-cdimsta2hp-r1-9a6bfa",
+			wantApplied:      true,
+			wantPublished:    true,
+			wantCapabilities: []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInboundOpenCodeCapability, A2AInvocationV2Capability, A2AInboundHermesCapability, A2AInboundPiCapability},
+		},
+		{
 			name:             "valid m4 compatibility",
 			buildID:          "build-previous",
 			alias:            "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-bbbbbb",
@@ -542,6 +550,7 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 		{name: "leading zero", buildID: "build-current", alias: "multica-m3-h00_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
 		{name: "current missing A2A marker", buildID: "build-current", alias: "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"},
 		{name: "m4 falsely claims A2A", buildID: "build-current", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"},
+		{name: "m5 falsely claims provider-complete A2A", buildID: "build-current", alias: "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta2hp-r1-9a6bfa"},
 		{name: "m4 missing trace marker", buildID: "build-current", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
 		{name: "previous falsely claims trace", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"},
 		{name: "previous falsely claims startup events", buildID: "build-current", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},

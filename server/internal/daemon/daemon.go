@@ -4309,7 +4309,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 	}
 	if task.A2AManagedRuntimeV2 {
-		if err := configureManagedA2AV2OpenCodeEnv(agentEnv, provider, env.RootDir, runtimeBrief, taskCtx.AgentSkills); err != nil {
+		if err := configureManagedA2AV2ProviderEnv(agentEnv, provider, env.RootDir, runtimeBrief, taskCtx.AgentSkills); err != nil {
 			return TaskResult{}, err
 		}
 	}
@@ -4344,7 +4344,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		customArgs = task.Agent.CustomArgs
 	}
 	if provider == "hermes" {
-		customArgs = hermesLaunchArgs(customArgs, env != nil && env.HermesHome != "")
+		customArgs = hermesLaunchArgs(customArgs, env != nil && (env.HermesHome != "" || task.A2AManagedRuntimeV2))
 	}
 	// Two-tier model resolution: an explicit agent.model wins,
 	// then the daemon-wide MULTICA_<PROVIDER>_MODEL env var. If

@@ -37,9 +37,15 @@ import (
 
 const (
 	FCE2BMetadataKind = "fc-e2b"
+	// A2AInboundHermesCapability declares support for inbound A2A delivery
+	// through the Hermes runtime provider.
+	A2AInboundHermesCapability = "a2a_inbound_hermes_v1"
 	// A2AInboundOpenCodeCapability declares support for inbound A2A delivery
 	// through the OpenCode runtime provider.
 	A2AInboundOpenCodeCapability = "a2a_inbound_opencode_v1"
+	// A2AInboundPiCapability declares support for inbound A2A delivery through
+	// the Pi runtime provider.
+	A2AInboundPiCapability = "a2a_inbound_pi_v1"
 	// A2AInvocationV2Capability requires the image and daemon to implement the
 	// complete strict A2A execution contract.
 	A2AInvocationV2Capability = "a2a-invocation-v2"
@@ -754,7 +760,7 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 	return templates, nil
 }
 
-var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([123456])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dimsta2|dimsta|dimst|dims|dim|di)-r1-([0-9a-f]{6})$`)
+var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([123456])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dimsta2hp|dimsta2|dimsta|dimst|dims|dim|di)-r1-([0-9a-f]{6})$`)
 
 func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (bool, error) {
 	if template == nil {
@@ -774,7 +780,8 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 	}
 	capabilityCode := matches[7]
 	expectedCapabilityCode := map[int]string{1: "di", 2: "dim", 3: "dims", 4: "dimst", 5: "dimsta", 6: "dimsta2"}[manifestVersion]
-	if capabilityCode != expectedCapabilityCode {
+	providerCompleteA2A := manifestVersion == 6 && capabilityCode == "dimsta2hp"
+	if capabilityCode != expectedCapabilityCode && !providerCompleteA2A {
 		return false, nil
 	}
 	hermesVersion, hermesOK := parseFCE2BUnderscoreSemver(matches[2])
@@ -803,6 +810,9 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 	}
 	if manifestVersion >= 6 {
 		template.Capabilities = append(template.Capabilities, A2AInvocationV2Capability)
+	}
+	if providerCompleteA2A {
+		template.Capabilities = append(template.Capabilities, A2AInboundHermesCapability, A2AInboundPiCapability)
 	}
 	template.ComponentVersions = map[string]string{
 		"hermes":   hermesVersion,
