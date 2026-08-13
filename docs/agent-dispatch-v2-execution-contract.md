@@ -206,6 +206,24 @@ completion outbox in the terminal transaction. Every retry sends that immutable
 snapshot, allowing Router to persist Agent environment data without making a
 post-terminal summary/messages request back to Multica.
 
+The summary also carries the first effective Agent activity time:
+
+```json
+{
+  "executionSummary": {
+    "first_effective_reply_at": "2026-08-13T02:03:04.567Z"
+  }
+}
+```
+
+`first_effective_reply_at` is a nullable JSON string formatted as RFC3339 or
+RFC3339Nano. Its non-null value is the `created_at` of the first item by `seq`
+in this task's persisted Agent message stream, including `thinking`, `text`,
+`tool_use`, `tool_result`, and `error` activity. It is `null` when the task has
+no persisted Agent messages; Multica does not substitute task creation, start,
+or completion time. Like the rest of `executionSummary`, the value is frozen at
+the terminal transaction and is unchanged across delivery retries.
+
 ## History
 
 - 2026-07-22: Separated surface, authenticated principal, prompt projection,
@@ -374,3 +392,13 @@ parsing or rewriting Router's context string.
 - Reason: A Router callback must not override the Agent's original trace
   destination, and private Router capabilities should remain server-side while
   sandbox traffic reuses the proven task lifecycle control-plane channel.
+
+## Change record: 2026-08-13 First effective reply timestamp
+
+- History: Added nullable `executionSummary.first_effective_reply_at` to the
+  terminal execution-result callback as the first persisted Agent activity
+  timestamp by message-stream order for the task. Existing outbox rows are not
+  backfilled.
+- Reason: Router now consumes the immutable terminal summary without querying
+  the post-terminal transcript, so the summary must carry the original first
+  activity signal used by first-reply latency metrics.
