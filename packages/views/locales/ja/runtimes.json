@@ -289,6 +289,7 @@
     "backend_aliyun_fc_hint": "Alibaba Cloud FC で選択した E2B テンプレートを実行します。",
     "backend_asb_hint": "BUC SSO、a1、mw に対応します。エージェントには従業員 ID の連携が必要です。",
     "api_key_hint": "自分の Aone Sandbox クォータを使用します。キーは暗号化され、ランタイムメタデータやサンドボックス環境には保存されません。",
+    "api_key_docs": "Aone Sandbox API Key 管理ガイドを見る",
     "api_key_validate": "検証してクォータを確認",
     "api_key_validating": "検証中...",
     "api_key_valid": "API Key は有効です",

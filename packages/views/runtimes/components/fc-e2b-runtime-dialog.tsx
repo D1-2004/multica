@@ -44,6 +44,9 @@ const PROVIDER_LABELS: Record<FCE2BRuntimeProvider, string> = {
   pi: "Pi",
 };
 
+const ASB_API_KEY_DOCS_URL =
+  "https://sandbox.aone.alibaba-inc.com/docs/tenant-ops.html#api-keys-%E7%AE%A1%E7%90%86";
+
 // Mirrors the server-side default name: the provider is prefixed when the
 // template name does not mention it, so two runtimes created from the same
 // dual-CLI template get distinct defaults.
@@ -285,6 +288,14 @@ export function FCE2BRuntimeDialog({
               <p className="text-xs text-muted-foreground">
                 {t(($) => $.fc_e2b_runtime.api_key_hint)}
               </p>
+              <a
+                href={ASB_API_KEY_DOCS_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex text-xs text-primary underline underline-offset-4 hover:text-primary/80"
+              >
+                {t(($) => $.fc_e2b_runtime.api_key_docs)}
+              </a>
               <Button
                 type="button"
                 variant="outline"

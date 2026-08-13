@@ -289,6 +289,7 @@
     "backend_aliyun_fc_hint": "在阿里云 FC 上运行所选 E2B 模板。",
     "backend_asb_hint": "支持 BUC 免登、a1 和 mw。智能体需要先绑定集团员工身份。",
     "api_key_hint": "使用你自己的 Aone Sandbox 配额。密钥会加密保存，不会写入运行时元数据或沙箱环境。",
+    "api_key_docs": "查看 Aone Sandbox API Key 管理文档",
     "api_key_validate": "校验并查询额度",
     "api_key_validating": "正在校验...",
     "api_key_valid": "API Key 有效",

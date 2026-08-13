@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -12,6 +12,7 @@ import enAgents from "../../../locales/en/agents.json";
 import { EnterpriseIdentityBindingCard } from "./enterprise-identity-binding";
 
 const getStatus = vi.fn();
+const beginBinding = vi.fn();
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "workspace-1",
@@ -45,9 +46,10 @@ function renderCard(canManage: boolean) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.history.replaceState(null, "", "/acme/agents/agent-1");
   setApiInstance({
     getAgentEnterpriseIdentityStatus: getStatus,
-    beginAgentEnterpriseIdentityBinding: vi.fn(),
+    beginAgentEnterpriseIdentityBinding: beginBinding,
     revokeAgentEnterpriseIdentity: vi.fn(),
   } as unknown as ApiClient);
 });
@@ -122,6 +124,58 @@ describe("EnterpriseIdentityBindingCard", () => {
     expect(
       await screen.findByRole("button", { name: "Bind identity" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Group Account Permission Assistant/),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("starts a fresh binding when opened from a task authorization link", async () => {
+    getStatus.mockResolvedValue({
+      configured: true,
+      canManage: true,
+      identity: null,
+    });
+    beginBinding.mockResolvedValue({
+      authorizationUrl: "https://login.example.com/authorize",
+      expiresAt: 1799200000,
+    });
+    window.history.replaceState(
+      null,
+      "",
+      "/acme/agents/agent-1?view=identity&enterprise_identity=authorize",
+    );
+
+    renderCard(true);
+
+    await waitFor(() => {
+      expect(beginBinding).toHaveBeenCalledWith(
+        "workspace-1",
+        "agent-1",
+        "/acme/agents/agent-1?view=identity",
+      );
+    });
+    expect(window.location.search).toBe("?view=identity");
+  });
+
+  it("does not start binding from a shared link for a user who cannot manage the agent", async () => {
+    getStatus.mockResolvedValue({
+      configured: true,
+      canManage: false,
+      identity: null,
+    });
+    window.history.replaceState(
+      null,
+      "",
+      "/acme/agents/agent-1?view=identity&enterprise_identity=authorize",
+    );
+
+    renderCard(false);
+
+    expect(
+      await screen.findByText(/Only the agent owner and workspace owners\/admins/),
+    ).toBeInTheDocument();
+    expect(beginBinding).not.toHaveBeenCalled();
+    expect(window.location.search).toBe("?view=identity");
   });
 });

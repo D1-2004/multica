@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/pkg/featureflag"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestDispatchClaimComposesInstructionWithoutChangingUserContent(t *testing.T) {
@@ -355,6 +356,39 @@ func TestDispatchRuntimeContextPersistsContextPrompt(t *testing.T) {
 	}
 	if _, ok := emptyPayload["dispatch_context_prompt"]; ok {
 		t.Fatalf("empty context prompt was persisted: %s", emptyPayload["dispatch_context_prompt"])
+	}
+}
+
+func TestApplyDingTalkReplyFormattingInstructionForStreamChat(t *testing.T) {
+	context, err := json.Marshal(map[string]any{
+		protocol.DingTalkStreamSourceJSONKey: protocol.DingTalkStreamSource{
+			Hostname:     "stream-host",
+			NodeID:       "stream-node",
+			ConnectionID: "stream-connection",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := AgentTaskResponse{Instruction: "existing trusted instruction"}
+	applyDingTalkReplyFormattingInstruction(&response, context)
+
+	for _, want := range []string{
+		"existing trusted instruction",
+		"Do not use Markdown tables or raw HTML",
+		"include its title and complete URL",
+	} {
+		if !strings.Contains(response.Instruction, want) {
+			t.Fatalf("instruction missing %q: %q", want, response.Instruction)
+		}
+	}
+}
+
+func TestApplyDingTalkReplyFormattingInstructionIgnoresNonDingTalkTask(t *testing.T) {
+	response := AgentTaskResponse{Instruction: "unchanged"}
+	applyDingTalkReplyFormattingInstruction(&response, []byte(`{"source":"web"}`))
+	if response.Instruction != "unchanged" {
+		t.Fatalf("instruction = %q, want unchanged", response.Instruction)
 	}
 }
 

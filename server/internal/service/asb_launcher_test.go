@@ -868,10 +868,11 @@ func TestASBExecFailureDetailRedactsAndBoundsOutput(t *testing.T) {
 	}
 }
 
-func TestASBExecRunOnceUsesDefaultUserAndDirectCore(t *testing.T) {
+func TestASBExecRunOnceUsesDefaultUserAndUnboundedBackgroundCommand(t *testing.T) {
 	t.Parallel()
 
 	var captured asbExecRequest
+	var capturedBody []byte
 	commandRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
@@ -882,7 +883,13 @@ func TestASBExecRunOnceUsesDefaultUserAndDirectCore(t *testing.T) {
 				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
 			})
 		case "/execd/command":
-			if err := json.NewDecoder(request.Body).Decode(&captured); err != nil {
+			body, err := io.ReadAll(request.Body)
+			if err != nil {
+				t.Fatalf("read exec request: %v", err)
+			}
+			capturedBody = append(capturedBody[:0], body...)
+			captured = asbExecRequest{}
+			if err := json.Unmarshal(body, &captured); err != nil {
 				t.Fatalf("decode exec request: %v", err)
 			}
 			commandRequests++
@@ -916,7 +923,7 @@ func TestASBExecRunOnceUsesDefaultUserAndDirectCore(t *testing.T) {
 	launcher := &ASBLauncher{
 		Client: newTestASBClient(t, server),
 		Config: ASBConfig{
-			ReadyTimeout:        3 * time.Second,
+			ReadyTimeout:        5 * time.Minute,
 			CommandReadyTimeout: 3 * time.Second,
 			LLMBaseURL:          "https://models.example/v1",
 			LLMAPIKey:           "test-model-key",
@@ -954,6 +961,9 @@ func TestASBExecRunOnceUsesDefaultUserAndDirectCore(t *testing.T) {
 		!strings.HasPrefix(captured.Command, "/usr/local/libexec/multica-fc-runner ") ||
 		strings.Contains(captured.Command, "container-log-entry") {
 		t.Fatalf("ASB runner exec request = %#v", captured)
+	}
+	if captured.Timeout != 0 || bytes.Contains(capturedBody, []byte(`"timeout"`)) {
+		t.Fatalf("ASB background runner must not have a command timeout: request=%s", capturedBody)
 	}
 	if captured.Envs["MULTICA_RUNNER_PROVIDER"] != "hermes" ||
 		captured.Envs["HOME"] != asbRunnerHome ||
