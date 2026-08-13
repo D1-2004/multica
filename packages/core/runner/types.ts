@@ -7,8 +7,14 @@ export interface RunnerMachineBinding {
   clientVersion: string;
   roots: string[];
   online: boolean;
+  disconnected: boolean;
   lastSeenAt: string | null;
   boundAt: string;
+}
+
+export interface CreateRunnerReconnectCommandResponse {
+  reconnectCommand: string;
+  expiresAt: string;
 }
 
 export interface RunnerMachineBindingList {

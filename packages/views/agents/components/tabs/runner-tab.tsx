@@ -9,6 +9,8 @@ import {
   Laptop,
   Loader2,
   Plus,
+  Power,
+  RefreshCw,
   Terminal,
   Trash2,
   Wifi,
@@ -19,9 +21,12 @@ import type { Agent } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
   agentRunnerBindingsOptions,
+  useCreateAgentRunnerReconnectCommand,
   useCreateAgentRunnerPairing,
+  useDisconnectAgentRunnerBinding,
   useRevokeAgentRunnerBinding,
   type CreateRunnerPairingResponse,
+  type CreateRunnerReconnectCommandResponse,
   type RunnerMachineBinding,
 } from "@multica/core/runner";
 import {
@@ -62,12 +67,21 @@ export function RunnerTab({
     agentRunnerBindingsOptions(workspaceId, agent.id),
   );
   const createPairing = useCreateAgentRunnerPairing(agent.id);
+  const createReconnectCommand = useCreateAgentRunnerReconnectCommand(agent.id);
+  const disconnectBinding = useDisconnectAgentRunnerBinding(
+    workspaceId,
+    agent.id,
+  );
   const revokeBinding = useRevokeAgentRunnerBinding(workspaceId, agent.id);
   const [pairing, setPairing] = useState<CreateRunnerPairingResponse | null>(
     null,
   );
   const [revokeTarget, setRevokeTarget] =
     useState<RunnerMachineBinding | null>(null);
+  const [disconnectTarget, setDisconnectTarget] =
+    useState<RunnerMachineBinding | null>(null);
+  const [reconnectCommand, setReconnectCommand] =
+    useState<CreateRunnerReconnectCommandResponse | null>(null);
 
   const handleCreatePairing = async () => {
     try {
@@ -96,6 +110,38 @@ export function RunnerTab({
         error instanceof Error
           ? error.message
           : t(($) => $.tab_body.runner.revoke_failed_toast),
+      );
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!disconnectTarget) return;
+    try {
+      await disconnectBinding.mutateAsync(disconnectTarget.bindingId);
+      toast.success(t(($) => $.tab_body.runner.disconnected_toast));
+      setDisconnectTarget(null);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t(($) => $.tab_body.runner.disconnect_failed_toast),
+      );
+    }
+  };
+
+  const handleCreateReconnectCommand = async (
+    machine: RunnerMachineBinding,
+  ) => {
+    try {
+      const created = await createReconnectCommand.mutateAsync(
+        machine.bindingId,
+      );
+      setReconnectCommand(created);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t(($) => $.tab_body.runner.reconnect_failed_toast),
       );
     }
   };
@@ -195,9 +241,11 @@ export function RunnerTab({
                       ) : (
                         <WifiOff className="h-2.5 w-2.5" aria-hidden />
                       )}
-                      {machine.online
-                        ? t(($) => $.tab_body.runner.online)
-                        : t(($) => $.tab_body.runner.offline)}
+                      {machine.disconnected
+                        ? t(($) => $.tab_body.runner.disconnected)
+                        : machine.online
+                          ? t(($) => $.tab_body.runner.online)
+                          : t(($) => $.tab_body.runner.offline)}
                     </Badge>
                     <Badge variant="secondary" className="text-[10px]">
                       {machine.os}/{machine.arch}
@@ -207,16 +255,52 @@ export function RunnerTab({
                     {machine.machineId}
                   </p>
                 </div>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={t(($) => $.tab_body.runner.revoke_aria, {
-                    name: machine.name,
-                  })}
-                  onClick={() => setRevokeTarget(machine)}
-                >
-                  <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
-                </Button>
+                <div className="flex shrink-0 items-center gap-1">
+                  {machine.disconnected ? (
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={t(($) => $.tab_body.runner.reconnect_aria, {
+                        name: machine.name,
+                      })}
+                      disabled={createReconnectCommand.isPending}
+                      onClick={() =>
+                        void handleCreateReconnectCommand(machine)
+                      }
+                    >
+                      {createReconnectCommand.isPending &&
+                      createReconnectCommand.variables === machine.bindingId ? (
+                        <Loader2
+                          className="h-3.5 w-3.5 animate-spin"
+                          aria-hidden
+                        />
+                      ) : (
+                        <RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
+                      )}
+                    </Button>
+                  ) : (
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={t(($) => $.tab_body.runner.disconnect_aria, {
+                        name: machine.name,
+                      })}
+                      onClick={() => setDisconnectTarget(machine)}
+                    >
+                      <Power className="h-3.5 w-3.5 text-muted-foreground" />
+                    </Button>
+                  )}
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={t(($) => $.tab_body.runner.revoke_aria, {
+                      name: machine.name,
+                    })}
+                    onClick={() => setRevokeTarget(machine)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                  </Button>
+                </div>
               </div>
               <div>
                 <p className="mb-1 text-[11px] font-medium text-muted-foreground">
@@ -238,13 +322,66 @@ export function RunnerTab({
         </ul>
       )}
 
-      <PairingCommandDialog
-        pairing={pairing}
+      <RunnerCommandDialog
+        command={pairing?.installCommand ?? null}
+        title={t(($) => $.tab_body.runner.command_title)}
+        description={t(($) => $.tab_body.runner.command_description)}
+        expiry={t(($) => $.tab_body.runner.command_expiry)}
+        copiedToast={t(($) => $.tab_body.runner.copied_toast)}
         onClose={() => {
           setPairing(null);
           createPairing.reset();
         }}
       />
+
+      <RunnerCommandDialog
+        command={reconnectCommand?.reconnectCommand ?? null}
+        title={t(($) => $.tab_body.runner.reconnect_command_title)}
+        description={t(($) => $.tab_body.runner.reconnect_command_description)}
+        expiry={t(($) => $.tab_body.runner.reconnect_command_expiry)}
+        copiedToast={t(($) => $.tab_body.runner.reconnect_copied_toast)}
+        onClose={() => {
+          setReconnectCommand(null);
+          createReconnectCommand.reset();
+        }}
+      />
+
+      <AlertDialog
+        open={disconnectTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !disconnectBinding.isPending) setDisconnectTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t(($) => $.tab_body.runner.disconnect_title, {
+                name: disconnectTarget?.name ?? "",
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(($) => $.tab_body.runner.disconnect_description)}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={disconnectBinding.isPending}>
+              {t(($) => $.tab_body.runner.cancel)}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleDisconnect();
+              }}
+              disabled={disconnectBinding.isPending}
+            >
+              {disconnectBinding.isPending && (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              )}
+              {t(($) => $.tab_body.runner.disconnect_confirm)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={revokeTarget !== null}
@@ -287,38 +424,44 @@ export function RunnerTab({
   );
 }
 
-function PairingCommandDialog({
-  pairing,
+function RunnerCommandDialog({
+  command,
+  title,
+  description,
+  expiry,
+  copiedToast,
   onClose,
 }: {
-  pairing: CreateRunnerPairingResponse | null;
+  command: string | null;
+  title: string;
+  description: string;
+  expiry: string;
+  copiedToast: string;
   onClose: () => void;
 }) {
   const { t } = useT("agents");
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (!pairing) setCopied(false);
-  }, [pairing]);
+    if (!command) setCopied(false);
+  }, [command]);
 
   const handleCopy = async () => {
-    if (!pairing) return;
-    if (await copyText(pairing.installCommand)) {
+    if (!command) return;
+    if (await copyText(command)) {
       setCopied(true);
-      toast.success(t(($) => $.tab_body.runner.copied_toast));
+      toast.success(copiedToast);
     }
   };
 
   return (
-    <Dialog open={pairing !== null} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={command !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{t(($) => $.tab_body.runner.command_title)}</DialogTitle>
-          <DialogDescription>
-            {t(($) => $.tab_body.runner.command_description)}
-          </DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        {pairing && (
+        {command && (
           <div className="space-y-3">
             <div className="flex items-start gap-2 rounded-lg bg-muted px-3 py-3">
               <Terminal
@@ -331,7 +474,7 @@ function PairingCommandDialog({
                   CODE_LIGATURE_CLASS,
                 )}
               >
-                {pairing.installCommand}
+                {command}
               </code>
               <button
                 type="button"
@@ -347,7 +490,7 @@ function PairingCommandDialog({
               </button>
             </div>
             <p className="text-xs text-muted-foreground">
-              {t(($) => $.tab_body.runner.command_expiry)}
+              {expiry}
             </p>
           </div>
         )}

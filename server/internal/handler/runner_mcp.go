@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/runnerprotocol"
 )
 
 const (
@@ -220,7 +221,11 @@ func (h *Handler) handleRunnerMCPToolsCall(w http.ResponseWriter, r *http.Reques
 		h.writeRunnerMCPResult(w, req.ID, map[string]any{"machine_id": machineIDString, "roots": decodeRunnerRoots(binding.Roots)})
 		return
 	}
-	if !binding.LastSeenAt.Valid || time.Since(binding.LastSeenAt.Time) > runnerOnlineTTL {
+	if binding.DisconnectedAt.Valid {
+		h.writeRunnerMCPToolError(w, req.ID, "runner_disconnected", "The selected Runner binding is disconnected")
+		return
+	}
+	if !runnerBindingOnline(binding.DisconnectedAt, binding.ConnectionID, binding.LastSeenAt, time.Now()) {
 		h.writeRunnerMCPToolError(w, req.ID, "runner_offline", "The selected Runner machine is offline")
 		return
 	}
@@ -245,11 +250,13 @@ func (h *Handler) runnerMCPListMachines(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	machines := make([]map[string]any, 0, len(rows))
+	now := time.Now()
 	for _, row := range rows {
-		online := row.LastSeenAt.Valid && time.Since(row.LastSeenAt.Time) <= runnerOnlineTTL
+		online := runnerBindingOnline(row.DisconnectedAt, row.ConnectionID, row.LastSeenAt, now)
 		machines = append(machines, map[string]any{
 			"machine_id": uuidToString(row.MachineID), "name": row.Name,
 			"os": row.Os, "arch": row.Arch, "online": online,
+			"disconnected": row.DisconnectedAt.Valid,
 		})
 	}
 	h.writeRunnerMCPResult(w, id, map[string]any{"machines": machines, "count": len(machines)})
@@ -418,17 +425,7 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	if err != nil {
 		return errors.New("Runner MCP requires MULTICA_PUBLIC_URL")
 	}
-	overlay, err := json.Marshal(map[string]any{
-		"mcpServers": map[string]any{
-			"multica_runner": map[string]any{
-				"type": "http",
-				"url":  publicURL + "/api/runner-mcp",
-				"headers": map[string]string{
-					"Authorization": "Bearer " + taskToken,
-				},
-			},
-		},
-	})
+	overlay, err := runnerMCPOverlay(publicURL, taskToken)
 	if err != nil {
 		return err
 	}
@@ -438,4 +435,19 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	}
 	agentData.McpConfig = merged
 	return nil
+}
+
+func runnerMCPOverlay(publicURL, taskToken string) (json.RawMessage, error) {
+	return json.Marshal(map[string]any{
+		"mcpServers": map[string]any{
+			runnerprotocol.ManagedMCPServerName: map[string]any{
+				"type": "http",
+				"url":  publicURL + runnerprotocol.ManagedMCPPath,
+				"headers": map[string]string{
+					"Authorization":                        "Bearer " + taskToken,
+					runnerprotocol.ManagedMCPRoutingHeader: runnerprotocol.ManagedMCPRoutingValue,
+				},
+			},
+		},
+	})
 }

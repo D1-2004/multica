@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -50,6 +51,13 @@ var runnerStopCmd = &cobra.Command{
 	RunE:  runRunnerStop,
 }
 
+var runnerReconnectCmd = &cobra.Command{
+	Use:   "reconnect",
+	Short: "Reconnect one Agent binding for this local Runner",
+	Args:  cobra.NoArgs,
+	RunE:  runRunnerReconnect,
+}
+
 var runnerStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show local Runner status",
@@ -59,9 +67,10 @@ var runnerStatusCmd = &cobra.Command{
 
 func init() {
 	runnerBindCmd.Flags().String("pairing-token", "", "Short-lived pairing token copied from Agent settings")
-	runnerBindCmd.Flags().StringSlice("root", nil, "Absolute file root to expose; defaults to the current directory on first bind")
+	runnerBindCmd.Flags().StringSlice("root", nil, "Absolute file root to expose; defaults to this user's Desktop on first bind")
+	runnerReconnectCmd.Flags().String("reconnect-token", "", "Short-lived reconnect token copied from Agent settings")
 	runnerStartCmd.Flags().Bool("foreground", false, "Run in the current terminal")
-	runnerCmd.AddCommand(runnerBindCmd, runnerStartCmd, runnerStopCmd, runnerStatusCmd)
+	runnerCmd.AddCommand(runnerBindCmd, runnerReconnectCmd, runnerStartCmd, runnerStopCmd, runnerStatusCmd)
 }
 
 type runnerDeviceAuthorization struct {
@@ -105,11 +114,11 @@ func runRunnerBind(cmd *cobra.Command, _ []string) error {
 		if len(cfg.Roots) > 0 {
 			roots = cfg.Roots
 		} else {
-			cwd, cwdErr := os.Getwd()
-			if cwdErr != nil {
-				return fmt.Errorf("resolve default Runner root: %w", cwdErr)
+			desktop, desktopErr := defaultRunnerDesktop()
+			if desktopErr != nil {
+				return desktopErr
 			}
-			roots = []string{cwd}
+			roots = []string{desktop}
 		}
 	}
 	for i, root := range roots {
@@ -182,7 +191,7 @@ func runRunnerBind(cmd *cobra.Command, _ []string) error {
 				return err
 			}
 			fmt.Fprintln(os.Stderr, "Runner authorized. Starting the background service...")
-			if err := restartRunnerBackground(); err != nil {
+			if err := startRunnerBackground(); err != nil {
 				return err
 			}
 			fmt.Fprintf(os.Stderr, "Runner started and is connecting. File roots: %s\n", strings.Join(roots, ", "))
@@ -197,6 +206,75 @@ func runRunnerBind(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	return errors.New("Runner authorization expired; create a new command in Agent settings")
+}
+
+func defaultRunnerDesktop() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home for default Runner root: %w", err)
+	}
+	desktop := filepath.Join(home, "Desktop")
+	info, err := os.Stat(desktop)
+	if err != nil {
+		return "", fmt.Errorf("default Runner root is not available: %s", desktop)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("default Runner root is not a directory: %s", desktop)
+	}
+	return filepath.Clean(desktop), nil
+}
+
+func runRunnerReconnect(cmd *cobra.Command, _ []string) error {
+	reconnectToken, _ := cmd.Flags().GetString("reconnect-token")
+	if strings.TrimSpace(reconnectToken) == "" {
+		return errors.New("--reconnect-token is required")
+	}
+	cfg, err := loadRunnerConfig()
+	if err != nil {
+		return err
+	}
+	if cfg.ServerURL == "" || cfg.MachineID == "" {
+		return errors.New("Runner is not bound on this machine")
+	}
+	serverURL, _ := cmd.Flags().GetString("server-url")
+	serverURL, err = normalizeRunnerServerURL(serverURL)
+	if err != nil {
+		return err
+	}
+	configuredURL, err := normalizeRunnerServerURL(cfg.ServerURL)
+	if err != nil {
+		return err
+	}
+	if serverURL != configuredURL {
+		return fmt.Errorf("this Runner is registered with %s, not %s", configuredURL, serverURL)
+	}
+	privateKey, err := runnerPrivateKey(cfg)
+	if err != nil {
+		return err
+	}
+	client := cli.NewAPIClient(serverURL, "", "")
+	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+	defer cancel()
+	challenge, err := createRunnerChallenge(ctx, client, cfg.MachineID)
+	if err != nil {
+		return fmt.Errorf("create reconnect challenge: %w", err)
+	}
+	headers := runnerChallengeHeaders(challenge, privateKey)
+	var result struct {
+		Status             string `json:"status"`
+		ActiveBindingCount int64  `json:"active_binding_count"`
+	}
+	path := "/api/runner/machines/" + url.PathEscape(cfg.MachineID) + "/reconnect"
+	if err := client.PostJSONWithHeaders(ctx, path, map[string]string{
+		"reconnect_token": reconnectToken,
+	}, &result, headers); err != nil {
+		return fmt.Errorf("reconnect Runner binding: %w", err)
+	}
+	if result.Status != "connected" || result.ActiveBindingCount < 1 {
+		return errors.New("Runner binding did not reconnect")
+	}
+	fmt.Fprintln(os.Stderr, "Runner binding reconnected. Starting the shared background service...")
+	return startRunnerBackground()
 }
 
 func runRunnerStart(cmd *cobra.Command, _ []string) error {
@@ -239,26 +317,10 @@ func runRunnerStart(cmd *cobra.Command, _ []string) error {
 	defer stopSignals()
 	defer stopAllRunnerBackgroundProcesses()
 	err = runRunnerLoop(runnerCtx, cfg, privateKey)
-	if errors.Is(err, context.Canceled) && runnerCtx.Err() != nil {
+	if errors.Is(err, errRunnerHasNoBindings) || (errors.Is(err, context.Canceled) && runnerCtx.Err() != nil) {
 		return nil
 	}
 	return err
-}
-
-func restartRunnerBackground() error {
-	if pid, running := currentRunnerPID(); running {
-		if err := stopRunnerPID(pid); err != nil {
-			return fmt.Errorf("restart Runner: %w", err)
-		}
-		for i := 0; i < 50; i++ {
-			time.Sleep(100 * time.Millisecond)
-			if _, stillRunning := currentRunnerPID(); !stillRunning {
-				return startRunnerBackground()
-			}
-		}
-		return errors.New("Runner did not stop within 5 seconds")
-	}
-	return startRunnerBackground()
 }
 
 func startRunnerBackground() error {
@@ -369,8 +431,25 @@ func runRunnerStatus(_ *cobra.Command, _ []string) error {
 }
 
 type runnerChallenge struct {
-	ChallengeID string `json:"challenge_id"`
-	Challenge   string `json:"challenge"`
+	ChallengeID        string `json:"challenge_id"`
+	Challenge          string `json:"challenge"`
+	ActiveBindingCount int64  `json:"active_binding_count"`
+}
+
+var errRunnerHasNoBindings = errors.New("Runner has no connected Agent bindings")
+
+func createRunnerChallenge(ctx context.Context, client *cli.APIClient, machineID string) (runnerChallenge, error) {
+	var challenge runnerChallenge
+	err := client.PostJSON(ctx, "/api/runner/machines/"+url.PathEscape(machineID)+"/challenges", map[string]any{}, &challenge)
+	return challenge, err
+}
+
+func runnerChallengeHeaders(challenge runnerChallenge, privateKey ed25519.PrivateKey) map[string]string {
+	return map[string]string{
+		"X-Runner-Challenge-ID": challenge.ChallengeID,
+		"X-Runner-Challenge":    challenge.Challenge,
+		"X-Runner-Signature":    base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(challenge.Challenge))),
+	}
 }
 
 func normalizeRunnerServerURL(raw string) (string, error) {
@@ -392,6 +471,10 @@ func runRunnerLoop(ctx context.Context, cfg runnerConfig, privateKey ed25519.Pri
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if errors.Is(err, errRunnerHasNoBindings) {
+			logger.Info("Runner has no connected Agent bindings; exiting")
+			return err
+		}
 		logger.Warn("Runner connection closed", "error", err)
 		select {
 		case <-ctx.Done():
@@ -405,9 +488,12 @@ func runRunnerConnection(ctx context.Context, cfg runnerConfig, privateKey ed255
 	client := cli.NewAPIClient(cfg.ServerURL, "", "")
 	challengeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	var challenge runnerChallenge
-	if err := client.PostJSON(challengeCtx, "/api/runner/machines/"+url.PathEscape(cfg.MachineID)+"/challenges", map[string]any{}, &challenge); err != nil {
+	challenge, err := createRunnerChallenge(challengeCtx, client, cfg.MachineID)
+	if err != nil {
 		return fmt.Errorf("create connection challenge: %w", err)
+	}
+	if challenge.ActiveBindingCount == 0 {
+		return errRunnerHasNoBindings
 	}
 
 	wsURL, err := url.Parse(cfg.ServerURL)
@@ -427,9 +513,9 @@ func runRunnerConnection(ctx context.Context, cfg runnerConfig, privateKey ed255
 	query.Set("machine_id", cfg.MachineID)
 	wsURL.RawQuery = query.Encode()
 	headers := http.Header{}
-	headers.Set("X-Runner-Challenge-ID", challenge.ChallengeID)
-	headers.Set("X-Runner-Challenge", challenge.Challenge)
-	headers.Set("X-Runner-Signature", base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(challenge.Challenge))))
+	for key, value := range runnerChallengeHeaders(challenge, privateKey) {
+		headers.Set(key, value)
+	}
 	conn, response, err := websocket.DefaultDialer.DialContext(ctx, wsURL.String(), headers)
 	if response != nil && response.Body != nil {
 		_ = response.Body.Close()
@@ -476,27 +562,81 @@ func runRunnerConnection(ctx context.Context, cfg runnerConfig, privateKey ed255
 	}()
 
 	sem := make(chan struct{}, 4)
+	var callsMu sync.Mutex
+	runningCalls := make(map[string]context.CancelFunc)
+	cancelledCalls := make(map[string]struct{})
+	defer func() {
+		callsMu.Lock()
+		defer callsMu.Unlock()
+		for _, cancelCall := range runningCalls {
+			cancelCall()
+		}
+	}()
 	for {
-		var call runnerprotocol.Call
-		if err := conn.ReadJSON(&call); err != nil {
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
 			connectionCancel()
 			<-heartbeatsDone
 			return err
 		}
-		if call.Type != runnerprotocol.MessageCall || call.CallID == "" {
+		var envelope runnerprotocol.Envelope
+		if json.Unmarshal(raw, &envelope) != nil {
 			continue
 		}
-		select {
-		case sem <- struct{}{}:
-			go func(call runnerprotocol.Call) {
-				defer func() { <-sem }()
-				result := executeRunnerCall(connectionCtx, call)
-				if err := writeJSON(result); err != nil {
-					connectionCancel()
-				}
-			}(call)
-		case <-connectionCtx.Done():
-			return connectionCtx.Err()
+		if envelope.Type == runnerprotocol.MessageBindingsChanged {
+			var bindings runnerprotocol.BindingsChanged
+			if json.Unmarshal(raw, &bindings) == nil && bindings.ActiveBindingCount == 0 {
+				connectionCancel()
+				<-heartbeatsDone
+				return errRunnerHasNoBindings
+			}
+			continue
 		}
+		if envelope.Type == runnerprotocol.MessageCallsCancelled {
+			var cancelled runnerprotocol.CallsCancelled
+			if json.Unmarshal(raw, &cancelled) != nil {
+				continue
+			}
+			callsMu.Lock()
+			for _, callID := range cancelled.CallIDs {
+				cancelledCalls[callID] = struct{}{}
+				if cancelCall, ok := runningCalls[callID]; ok {
+					cancelCall()
+				}
+			}
+			callsMu.Unlock()
+			continue
+		}
+		if envelope.Type != runnerprotocol.MessageCall {
+			continue
+		}
+		var call runnerprotocol.Call
+		if json.Unmarshal(raw, &call) != nil || call.CallID == "" {
+			continue
+		}
+		callCtx, cancelCall := context.WithCancel(connectionCtx)
+		callsMu.Lock()
+		runningCalls[call.CallID] = cancelCall
+		if _, cancelled := cancelledCalls[call.CallID]; cancelled {
+			delete(cancelledCalls, call.CallID)
+			cancelCall()
+		}
+		callsMu.Unlock()
+		go func(call runnerprotocol.Call) {
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-callCtx.Done():
+			}
+			result := executeRunnerCall(callCtx, call)
+			callsMu.Lock()
+			delete(runningCalls, call.CallID)
+			delete(cancelledCalls, call.CallID)
+			callsMu.Unlock()
+			cancelCall()
+			if err := writeJSON(result); err != nil {
+				connectionCancel()
+			}
+		}(call)
 	}
 }

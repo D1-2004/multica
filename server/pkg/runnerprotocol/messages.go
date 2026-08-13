@@ -3,10 +3,17 @@ package runnerprotocol
 import "encoding/json"
 
 const (
-	MessageCall      = "runner:call"
-	MessageResult    = "runner:result"
-	MessageHeartbeat = "runner:heartbeat"
-	MessageHello     = "runner:hello"
+	MessageCall            = "runner:call"
+	MessageResult          = "runner:result"
+	MessageHeartbeat       = "runner:heartbeat"
+	MessageHello           = "runner:hello"
+	MessageBindingsChanged = "runner:bindings_changed"
+	MessageCallsCancelled  = "runner:calls_cancelled"
+
+	ManagedMCPServerName    = "multica_runner"
+	ManagedMCPRoutingHeader = "X-Multica-Runner-MCP"
+	ManagedMCPRoutingValue  = "v1"
+	ManagedMCPPath          = "/api/runner-mcp"
 )
 
 type Envelope struct {
@@ -39,4 +46,14 @@ type Heartbeat struct {
 type Hello struct {
 	Type      string `json:"type"`
 	MachineID string `json:"machine_id"`
+}
+
+type BindingsChanged struct {
+	Type               string `json:"type"`
+	ActiveBindingCount int64  `json:"active_binding_count"`
+}
+
+type CallsCancelled struct {
+	Type    string   `json:"type"`
+	CallIDs []string `json:"call_ids"`
 }

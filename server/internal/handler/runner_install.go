@@ -19,6 +19,7 @@ set -eu
 
 server_url=""
 pairing_token=""
+reconnect_token=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --server-url)
@@ -31,6 +32,11 @@ while [ "$#" -gt 0 ]; do
       pairing_token="$2"
       shift 2
       ;;
+    --reconnect-token)
+      [ "$#" -ge 2 ] || { echo "--reconnect-token requires a value" >&2; exit 2; }
+      reconnect_token="$2"
+      shift 2
+      ;;
     *)
       echo "unknown argument: $1" >&2
       exit 2
@@ -39,7 +45,14 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$server_url" ] || { echo "--server-url is required" >&2; exit 2; }
-[ -n "$pairing_token" ] || { echo "--pairing-token is required" >&2; exit 2; }
+if [ -n "$pairing_token" ] && [ -n "$reconnect_token" ]; then
+  echo "--pairing-token and --reconnect-token are mutually exclusive" >&2
+  exit 2
+fi
+if [ -z "$pairing_token" ] && [ -z "$reconnect_token" ]; then
+  echo "--pairing-token or --reconnect-token is required" >&2
+  exit 2
+fi
 
 case "$(uname -s)" in
   Darwin) runner_os="darwin" ;;
@@ -79,7 +92,10 @@ mkdir -p "$install_dir"
 chmod 0755 "$temp_dir/multica"
 mv "$temp_dir/multica" "$install_dir/multica"
 
-exec "$install_dir/multica" runner bind --server-url "$server_url" --pairing-token "$pairing_token"
+if [ -n "$pairing_token" ]; then
+  exec "$install_dir/multica" runner bind --server-url "$server_url" --pairing-token "$pairing_token"
+fi
+exec "$install_dir/multica" runner reconnect --server-url "$server_url" --reconnect-token "$reconnect_token"
 `
 
 func (h *Handler) ServeRunnerInstall(w http.ResponseWriter, _ *http.Request) {

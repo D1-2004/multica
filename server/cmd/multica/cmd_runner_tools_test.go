@@ -102,6 +102,31 @@ func TestNormalizeRunnerServerURLRequiresOrigin(t *testing.T) {
 	}
 }
 
+func TestDefaultRunnerDesktopUsesCurrentUserHome(t *testing.T) {
+	home := t.TempDir()
+	desktop := filepath.Join(home, "Desktop")
+	if err := os.Mkdir(desktop, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+
+	got, err := defaultRunnerDesktop()
+	if err != nil {
+		t.Fatalf("resolve default Runner root: %v", err)
+	}
+	if got != desktop {
+		t.Fatalf("default Runner root = %q, want %q", got, desktop)
+	}
+}
+
+func TestDefaultRunnerDesktopFailsWhenDesktopIsAbsent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if _, err := defaultRunnerDesktop(); err == nil {
+		t.Fatal("missing Desktop unexpectedly received a different default root")
+	}
+}
+
 func TestExecuteRunnerCallRejectsOversizedEncodedResult(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "control-bytes.txt")

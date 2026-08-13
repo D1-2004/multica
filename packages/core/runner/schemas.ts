@@ -10,6 +10,7 @@ const RunnerMachineBindingSchema = z
     client_version: z.string(),
     roots: z.array(z.string()),
     online: z.boolean(),
+    disconnected: z.boolean().optional().default(false),
     last_seen_at: z.string().nullable(),
     bound_at: z.string(),
   })
@@ -23,6 +24,7 @@ const RunnerMachineBindingSchema = z
     clientVersion: machine.client_version,
     roots: machine.roots,
     online: machine.online,
+    disconnected: machine.disconnected,
     lastSeenAt: machine.last_seen_at,
     boundAt: machine.bound_at,
   }));
@@ -42,6 +44,17 @@ export const CreateRunnerPairingResponseSchema = z
     id: pairing.id,
     installCommand: pairing.install_command,
     expiresAt: pairing.expires_at,
+  }));
+
+export const CreateRunnerReconnectCommandResponseSchema = z
+  .object({
+    reconnect_command: z.string().min(1),
+    expires_at: z.string(),
+  })
+  .loose()
+  .transform((response) => ({
+    reconnectCommand: response.reconnect_command,
+    expiresAt: response.expires_at,
   }));
 
 export const RunnerDeviceAuthorizationSchema = z

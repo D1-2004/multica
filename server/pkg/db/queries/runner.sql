@@ -74,6 +74,8 @@ INSERT INTO agent_runner_binding (
 ON CONFLICT (agent_id, machine_id) WHERE revoked_at IS NULL DO UPDATE
 SET roots = EXCLUDED.roots,
     bound_by = EXCLUDED.bound_by,
+    disconnected_at = NULL,
+    disconnected_by = NULL,
     updated_at = now()
 RETURNING *;
 
@@ -91,7 +93,9 @@ SELECT
     m.arch,
     m.client_version,
     b.roots,
+    b.disconnected_at,
     m.last_seen_at,
+    m.connection_id,
     m.created_at AS machine_created_at
 FROM agent_runner_binding b
 JOIN runner_machine m ON m.id = b.machine_id
@@ -113,7 +117,9 @@ SELECT
     m.arch,
     m.client_version,
     b.roots,
-    m.last_seen_at
+    b.disconnected_at,
+    m.last_seen_at,
+    m.connection_id
 FROM agent_runner_binding b
 JOIN runner_machine m ON m.id = b.machine_id
 WHERE b.workspace_id = $1
@@ -138,14 +144,61 @@ SET revoked_at = now(), revoked_by = $3, updated_at = now()
 WHERE id = $1 AND agent_id = $2 AND revoked_at IS NULL
 RETURNING *;
 
+-- name: DisconnectAgentRunnerBinding :one
+UPDATE agent_runner_binding
+SET disconnected_at = COALESCE(disconnected_at, now()),
+    disconnected_by = $3,
+    updated_at = now()
+WHERE id = $1 AND agent_id = $2 AND revoked_at IS NULL
+RETURNING *;
+
+-- name: GetAgentRunnerBindingByID :one
+SELECT b.*
+FROM agent_runner_binding b
+JOIN runner_machine m ON m.id = b.machine_id
+WHERE b.id = $1
+  AND b.agent_id = $2
+  AND b.revoked_at IS NULL
+  AND m.revoked_at IS NULL;
+
 -- name: GetRunnerMachine :one
 SELECT * FROM runner_machine WHERE id = $1 AND revoked_at IS NULL;
 
+-- name: ActivateRunnerMachineConnection :one
+UPDATE runner_machine
+SET connection_id = $2,
+    connected_at = now(),
+    last_seen_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND revoked_at IS NULL
+RETURNING *;
+
 -- name: UpdateRunnerMachineHeartbeat :one
 UPDATE runner_machine
-SET last_seen_at = now(), client_version = $2, updated_at = now()
-WHERE id = $1 AND revoked_at IS NULL
+SET last_seen_at = now(), client_version = $3, updated_at = now()
+WHERE id = $1
+  AND connection_id = $2
+  AND revoked_at IS NULL
 RETURNING *;
+
+-- name: ClearRunnerMachineConnection :one
+UPDATE runner_machine
+SET connection_id = NULL,
+    connected_at = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND connection_id = $2
+RETURNING *;
+
+-- name: CountConnectedRunnerBindings :one
+SELECT count(*)
+FROM agent_runner_binding b
+JOIN runner_machine m ON m.id = b.machine_id
+WHERE b.machine_id = $1
+  AND b.revoked_at IS NULL
+  AND b.disconnected_at IS NULL
+  AND m.revoked_at IS NULL;
 
 -- name: CreateRunnerAuthChallenge :one
 INSERT INTO runner_auth_challenge (machine_id, challenge_hash, expires_at)
@@ -189,6 +242,7 @@ WHERE b.workspace_id = sqlc.arg(workspace_id)
   AND b.agent_id = sqlc.arg(agent_id)
   AND b.machine_id = sqlc.arg(machine_id)
   AND b.revoked_at IS NULL
+  AND b.disconnected_at IS NULL
   AND m.revoked_at IS NULL
 FOR SHARE OF b
 RETURNING *;
@@ -203,14 +257,85 @@ WHERE agent_id = $1
   AND status IN ('queued', 'running')
 RETURNING id;
 
+-- name: ExpireRunnerCallsForBindingDisconnect :many
+UPDATE runner_call
+SET status = 'expired', error_code = 'runner_disconnected',
+    error_message = 'The Runner binding was disconnected',
+    completed_at = now(), updated_at = now()
+WHERE agent_id = $1
+  AND machine_id = $2
+  AND status IN ('queued', 'running')
+RETURNING id;
+
 -- name: ClaimRunnerCall :one
 UPDATE runner_call
 SET status = 'running', started_at = now(), updated_at = now()
-WHERE id = $1
-  AND machine_id = $2
-  AND status = 'queued'
-  AND expires_at > now()
+WHERE runner_call.id = $1
+  AND runner_call.machine_id = $2
+  AND runner_call.status = 'queued'
+  AND runner_call.expires_at > now()
+  AND EXISTS (
+      SELECT 1
+      FROM agent_runner_binding b
+      JOIN runner_machine m ON m.id = b.machine_id
+      WHERE b.agent_id = runner_call.agent_id
+        AND b.machine_id = runner_call.machine_id
+        AND b.revoked_at IS NULL
+        AND b.disconnected_at IS NULL
+        AND m.revoked_at IS NULL
+  )
 RETURNING *;
+
+-- name: CreateRunnerReconnectSession :one
+WITH invalidated AS (
+    UPDATE runner_reconnect_session
+    SET consumed_at = now()
+    WHERE runner_reconnect_session.binding_id = sqlc.arg(binding_id)
+      AND runner_reconnect_session.consumed_at IS NULL
+), eligible AS (
+    SELECT b.id, b.machine_id
+    FROM agent_runner_binding b
+    JOIN runner_machine m ON m.id = b.machine_id
+    WHERE b.id = sqlc.arg(binding_id)
+      AND b.agent_id = sqlc.arg(agent_id)
+      AND b.revoked_at IS NULL
+      AND b.disconnected_at IS NOT NULL
+      AND m.revoked_at IS NULL
+)
+INSERT INTO runner_reconnect_session (id, binding_id, machine_id, token_hash, expires_at)
+SELECT sqlc.arg(session_id), eligible.id, eligible.machine_id, sqlc.arg(token_hash), sqlc.arg(expires_at)
+FROM eligible
+RETURNING *;
+
+-- name: GetRunnerReconnectSession :one
+SELECT * FROM runner_reconnect_session WHERE id = $1;
+
+-- name: ConsumeRunnerReconnectSession :one
+WITH consumed AS (
+    UPDATE runner_reconnect_session
+    SET consumed_at = now()
+    WHERE runner_reconnect_session.id = sqlc.arg(id)
+      AND runner_reconnect_session.binding_id = sqlc.arg(binding_id)
+      AND runner_reconnect_session.machine_id = sqlc.arg(machine_id)
+      AND runner_reconnect_session.token_hash = sqlc.arg(token_hash)
+      AND runner_reconnect_session.consumed_at IS NULL
+      AND runner_reconnect_session.expires_at > now()
+    RETURNING binding_id, machine_id
+)
+UPDATE agent_runner_binding b
+SET disconnected_at = NULL,
+    disconnected_by = NULL,
+    updated_at = now()
+FROM consumed c
+WHERE b.id = c.binding_id
+  AND b.machine_id = c.machine_id
+  AND b.revoked_at IS NULL
+  AND b.disconnected_at IS NOT NULL
+RETURNING b.*;
+
+-- name: DeleteRunnerReconnectSessionsForBinding :exec
+DELETE FROM runner_reconnect_session
+WHERE binding_id = $1;
 
 -- name: RequeueRunnerCall :exec
 UPDATE runner_call
@@ -256,6 +381,14 @@ WITH deleted_challenges AS (
 ), deleted_pairings AS (
     DELETE FROM runner_pairing_session
     WHERE expires_at < now() - interval '1 hour'
+), deleted_reconnect_sessions AS (
+    DELETE FROM runner_reconnect_session
+    WHERE expires_at < now() - interval '1 hour'
+       OR NOT EXISTS (
+           SELECT 1 FROM agent_runner_binding b
+           WHERE b.id = runner_reconnect_session.binding_id
+             AND b.machine_id = runner_reconnect_session.machine_id
+       )
 )
 DELETE FROM runner_call
 WHERE (completed_at IS NOT NULL AND completed_at < now() - interval '10 minutes')

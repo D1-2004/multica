@@ -30,6 +30,7 @@ describe("ApiClient Runner contracts", () => {
                 client_version: "0.2.0",
                 roots: ["/Users/dev/project"],
                 online: true,
+                disconnected: false,
                 last_seen_at: "2026-08-12T10:00:00Z",
                 bound_at: "2026-08-12T09:00:00Z",
               },
@@ -70,6 +71,21 @@ describe("ApiClient Runner contracts", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
       )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "disconnected" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            reconnect_command: "curl example.test | sh -s -- --reconnect-token secret",
+            expires_at: "2026-08-12T10:20:00Z",
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        ),
+      )
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -100,6 +116,16 @@ describe("ApiClient Runner contracts", () => {
       client.finishRunnerDeviceAuthorization("ABCD-EFGH", "approve"),
     ).resolves.toEqual({ status: "approved", machineId });
     await expect(
+      client.disconnectAgentRunnerBinding(agentId, bindingId),
+    ).resolves.toBeUndefined();
+    await expect(
+      client.createAgentRunnerReconnectCommand(agentId, bindingId),
+    ).resolves.toEqual({
+      reconnectCommand:
+        "curl example.test | sh -s -- --reconnect-token secret",
+      expiresAt: "2026-08-12T10:20:00Z",
+    });
+    await expect(
       client.revokeAgentRunnerBinding(agentId, bindingId),
     ).resolves.toBeUndefined();
 
@@ -108,6 +134,8 @@ describe("ApiClient Runner contracts", () => {
       `https://api.example.test/api/agents/${agentId}/runner-pairings`,
       "https://api.example.test/api/runner/device-authorizations/ABCD-EFGH",
       "https://api.example.test/api/runner/device-authorizations/ABCD-EFGH/approve",
+      `https://api.example.test/api/agents/${agentId}/runner-bindings/${bindingId}/disconnect`,
+      `https://api.example.test/api/agents/${agentId}/runner-bindings/${bindingId}/reconnect-command`,
       `https://api.example.test/api/agents/${agentId}/runner-bindings/${bindingId}`,
     ]);
   });
@@ -129,6 +157,37 @@ describe("ApiClient Runner contracts", () => {
     await expect(
       client.getRunnerDeviceAuthorization("ABCD-EFGH"),
     ).rejects.toThrow();
+  });
+
+  it("defaults disconnected to false for older Runner binding responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            machines: [
+              {
+                binding_id: bindingId,
+                machine_id: machineId,
+                name: "build-mac",
+                os: "darwin",
+                arch: "arm64",
+                client_version: "0.1.0",
+                roots: ["/Users/dev/Desktop"],
+                online: false,
+                last_seen_at: null,
+                bound_at: "2026-08-12T09:00:00Z",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").listAgentRunnerBindings(agentId),
+    ).resolves.toMatchObject({ machines: [{ disconnected: false }] });
   });
 });
 

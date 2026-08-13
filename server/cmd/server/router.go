@@ -1721,6 +1721,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.With(runnerDeviceBeginRL).Post("/api/runner/device-authorizations", h.BeginRunnerDeviceAuthorization)
 	r.With(runnerDevicePollRL).Post("/api/runner/device-authorizations/token", h.PollRunnerDeviceAuthorization)
 	r.With(runnerChallengeRL).Post("/api/runner/machines/{machineId}/challenges", h.CreateRunnerChallenge)
+	r.With(runnerChallengeRL).Post("/api/runner/machines/{machineId}/reconnect", h.ReconnectRunnerBinding)
 	r.Get("/api/runner/ws", h.RunnerWebSocket)
 
 	// Daemon API routes (require daemon token or valid user token)
@@ -2360,6 +2361,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/env", h.UpdateAgentEnv)
 					r.With(handler.RequireHumanActor).Get("/runner-bindings", h.ListAgentRunnerBindings)
 					r.With(handler.RequireHumanActor).Post("/runner-pairings", h.CreateAgentRunnerPairing)
+					r.With(handler.RequireHumanActor).Post("/runner-bindings/{bindingId}/disconnect", h.DisconnectAgentRunnerBinding)
+					r.With(handler.RequireHumanActor).Post("/runner-bindings/{bindingId}/reconnect-command", h.CreateAgentRunnerReconnectCommand)
 					r.With(handler.RequireHumanActor).Delete("/runner-bindings/{bindingId}", h.RevokeAgentRunnerBinding)
 				})
 			})

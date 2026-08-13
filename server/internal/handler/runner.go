@@ -32,14 +32,16 @@ import (
 
 const (
 	runnerPairingTTL   = 10 * time.Minute
+	runnerReconnectTTL = 10 * time.Minute
 	runnerChallengeTTL = 90 * time.Second
 	runnerOnlineTTL    = 45 * time.Second
 	runnerMaxRoots     = 32
 	runnerMaxRootBytes = 4096
 	runnerMaxResult    = 2 << 20
 
-	runnerBindingAuthorizedActivity = "runner_binding_authorized"
-	runnerBindingRevokedActivity    = "runner_binding_revoked"
+	runnerBindingAuthorizedActivity   = "runner_binding_authorized"
+	runnerBindingDisconnectedActivity = "runner_binding_disconnected"
+	runnerBindingRevokedActivity      = "runner_binding_revoked"
 )
 
 type runnerBindingResponse struct {
@@ -51,8 +53,22 @@ type runnerBindingResponse struct {
 	ClientVersion string   `json:"client_version"`
 	Roots         []string `json:"roots"`
 	Online        bool     `json:"online"`
+	Disconnected  bool     `json:"disconnected"`
 	LastSeenAt    *string  `json:"last_seen_at"`
 	BoundAt       string   `json:"bound_at"`
+}
+
+func runnerBindingOnline(disconnectedAt pgtype.Timestamptz, connectionID pgtype.UUID, lastSeenAt pgtype.Timestamptz, now time.Time) bool {
+	return !disconnectedAt.Valid && connectionID.Valid && lastSeenAt.Valid && now.Sub(lastSeenAt.Time) <= runnerOnlineTTL
+}
+
+func runnerReconnectCommand(publicURL, token string) string {
+	return fmt.Sprintf(
+		"curl -fsSL %s | sh -s -- --server-url %s --reconnect-token %s",
+		runnerShellQuote(publicURL+"/api/runner/install"),
+		runnerShellQuote(publicURL),
+		runnerShellQuote(token),
+	)
 }
 
 func generateRunnerSecret(prefix string, byteCount int) (string, error) {
@@ -77,6 +93,22 @@ func runnerPairingIDFromToken(token string) (pgtype.UUID, bool) {
 	}
 	pairingID, err := util.ParseUUID(parts[0])
 	return pairingID, err == nil
+}
+
+func runnerReconnectIDFromToken(token string) (pgtype.UUID, bool) {
+	token = strings.TrimSpace(token)
+	if !strings.HasPrefix(token, "rrs_") {
+		return pgtype.UUID{}, false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(token, "rrs_"), "_", 2)
+	if len(parts) != 2 || len(parts[1]) != 48 {
+		return pgtype.UUID{}, false
+	}
+	if _, err := hex.DecodeString(parts[1]); err != nil {
+		return pgtype.UUID{}, false
+	}
+	sessionID, err := util.ParseUUID(parts[0])
+	return sessionID, err == nil
 }
 
 func logRunnerDeviceAuthorizationRejected(reason string, pairingID pgtype.UUID, attributes ...any) {
@@ -242,7 +274,8 @@ func (h *Handler) ListAgentRunnerBindings(w http.ResponseWriter, r *http.Request
 			Arch:          row.Arch,
 			ClientVersion: row.ClientVersion,
 			Roots:         decodeRunnerRoots(row.Roots),
-			Online:        row.LastSeenAt.Valid && now.Sub(row.LastSeenAt.Time) <= runnerOnlineTTL,
+			Online:        runnerBindingOnline(row.DisconnectedAt, row.ConnectionID, row.LastSeenAt, now),
+			Disconnected:  row.DisconnectedAt.Valid,
 			BoundAt:       row.BoundAt.Time.UTC().Format(time.RFC3339),
 		}
 		if row.LastSeenAt.Valid {
@@ -252,6 +285,137 @@ func (h *Handler) ListAgentRunnerBindings(w http.ResponseWriter, r *http.Request
 		items = append(items, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"machines": items})
+}
+
+func (h *Handler) CreateAgentRunnerReconnectCommand(w http.ResponseWriter, r *http.Request) {
+	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
+	if !ok || !h.canManageAgent(w, r, agent) {
+		return
+	}
+	bindingID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "bindingId"), "Runner binding id")
+	if !ok {
+		return
+	}
+	publicURL, err := runnerBaseURL(h.currentConfig().PublicURL)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Runner reconnect requires MULTICA_PUBLIC_URL")
+		return
+	}
+	secret, err := generateRunnerSecret("", 24)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create Runner reconnect command")
+		return
+	}
+	sessionID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	token := "rrs_" + uuidToString(sessionID) + "_" + secret
+	expiresAt := time.Now().Add(runnerReconnectTTL)
+	session, err := h.Queries.CreateRunnerReconnectSession(r.Context(), db.CreateRunnerReconnectSessionParams{
+		BindingID: bindingID,
+		AgentID:   agent.ID,
+		SessionID: sessionID,
+		TokenHash: auth.HashToken(token),
+		ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, "Runner binding is not disconnected")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create Runner reconnect command")
+		return
+	}
+	slog.Info("Runner reconnect command created",
+		"event", "runner_reconnect_command_created",
+		"workspace_id", uuidToString(agent.WorkspaceID),
+		"agent_id", uuidToString(agent.ID),
+		"binding_id", uuidToString(session.BindingID),
+		"machine_id", uuidToString(session.MachineID),
+		"actor_id", requestUserID(r),
+	)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"reconnect_command": runnerReconnectCommand(publicURL, token),
+		"expires_at":        expiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+func (h *Handler) DisconnectAgentRunnerBinding(w http.ResponseWriter, r *http.Request) {
+	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
+	if !ok || !h.canManageAgent(w, r, agent) {
+		return
+	}
+	bindingID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "bindingId"), "Runner binding id")
+	if !ok {
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to disconnect Runner binding")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	binding, err := qtx.DisconnectAgentRunnerBinding(r.Context(), db.DisconnectAgentRunnerBindingParams{
+		ID: bindingID, AgentID: agent.ID, DisconnectedBy: parseUUID(requestUserID(r)),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "Runner binding not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to disconnect Runner binding")
+		return
+	}
+	expiredCalls, err := qtx.ExpireRunnerCallsForBindingDisconnect(r.Context(), db.ExpireRunnerCallsForBindingDisconnectParams{
+		AgentID: agent.ID, MachineID: binding.MachineID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to stop active Runner calls")
+		return
+	}
+	activeBindings, err := qtx.CountConnectedRunnerBindings(r.Context(), binding.MachineID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to count Runner bindings")
+		return
+	}
+	details, _ := json.Marshal(map[string]any{
+		"agent_id":             uuidToString(agent.ID),
+		"binding_id":           uuidToString(binding.ID),
+		"machine_id":           uuidToString(binding.MachineID),
+		"active_binding_count": activeBindings,
+	})
+	if _, err := qtx.CreateActivity(r.Context(), db.CreateActivityParams{
+		WorkspaceID: agent.WorkspaceID,
+		IssueID:     pgtype.UUID{},
+		ActorType:   pgtype.Text{String: "member", Valid: true},
+		ActorID:     parseUUID(requestUserID(r)),
+		Action:      runnerBindingDisconnectedActivity,
+		Details:     details,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to audit Runner disconnect")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to disconnect Runner binding")
+		return
+	}
+	if activeBindings > 0 {
+		h.notifyRunnerCallsCancelled(uuidToString(binding.MachineID), expiredCalls)
+	}
+	h.notifyRunnerBindingsChanged(uuidToString(binding.MachineID), activeBindings)
+	slog.Info("Runner binding disconnected",
+		"event", "runner_binding_disconnected",
+		"workspace_id", uuidToString(agent.WorkspaceID),
+		"agent_id", uuidToString(agent.ID),
+		"binding_id", uuidToString(binding.ID),
+		"machine_id", uuidToString(binding.MachineID),
+		"actor_id", requestUserID(r),
+		"active_binding_count", activeBindings,
+		"expired_call_count", len(expiredCalls),
+	)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":               "disconnected",
+		"active_binding_count": activeBindings,
+	})
 }
 
 func (h *Handler) RevokeAgentRunnerBinding(w http.ResponseWriter, r *http.Request) {
@@ -287,13 +451,23 @@ func (h *Handler) RevokeAgentRunnerBinding(w http.ResponseWriter, r *http.Reques
 		AgentID: agent.ID, MachineID: revoked.MachineID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to revoke active Runner calls")
+		writeError(w, http.StatusInternalServerError, "failed to stop active Runner calls")
+		return
+	}
+	if err := qtx.DeleteRunnerReconnectSessionsForBinding(r.Context(), revoked.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to invalidate Runner reconnect commands")
+		return
+	}
+	activeBindings, err := qtx.CountConnectedRunnerBindings(r.Context(), revoked.MachineID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to count Runner bindings")
 		return
 	}
 	details, _ := json.Marshal(map[string]any{
-		"agent_id":   uuidToString(agent.ID),
-		"binding_id": uuidToString(revoked.ID),
-		"machine_id": uuidToString(revoked.MachineID),
+		"agent_id":             uuidToString(agent.ID),
+		"binding_id":           uuidToString(revoked.ID),
+		"machine_id":           uuidToString(revoked.MachineID),
+		"active_binding_count": activeBindings,
 	})
 	if _, err := qtx.CreateActivity(r.Context(), db.CreateActivityParams{
 		WorkspaceID: agent.WorkspaceID,
@@ -310,6 +484,10 @@ func (h *Handler) RevokeAgentRunnerBinding(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to revoke Runner binding")
 		return
 	}
+	if activeBindings > 0 {
+		h.notifyRunnerCallsCancelled(uuidToString(revoked.MachineID), expiredCalls)
+	}
+	h.notifyRunnerBindingsChanged(uuidToString(revoked.MachineID), activeBindings)
 	slog.Info("Runner binding revoked",
 		"event", "runner_binding_revoked",
 		"workspace_id", uuidToString(agent.WorkspaceID),
@@ -317,6 +495,7 @@ func (h *Handler) RevokeAgentRunnerBinding(w http.ResponseWriter, r *http.Reques
 		"binding_id", uuidToString(revoked.ID),
 		"machine_id", uuidToString(revoked.MachineID),
 		"actor_id", requestUserID(r),
+		"active_binding_count", activeBindings,
 		"expired_call_count", len(expiredCalls),
 	)
 	w.WriteHeader(http.StatusNoContent)
@@ -687,6 +866,11 @@ func (h *Handler) CreateRunnerChallenge(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "Runner machine not found")
 		return
 	}
+	activeBindings, err := h.Queries.CountConnectedRunnerBindings(r.Context(), machineID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read Runner bindings")
+		return
+	}
 	challenge, err := generateRunnerSecret("rch_", 32)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create Runner challenge")
@@ -702,9 +886,108 @@ func (h *Handler) CreateRunnerChallenge(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"challenge_id": uuidToString(row.ID),
-		"challenge":    challenge,
-		"expires_in":   int(runnerChallengeTTL.Seconds()),
+		"challenge_id":         uuidToString(row.ID),
+		"challenge":            challenge,
+		"expires_in":           int(runnerChallengeTTL.Seconds()),
+		"active_binding_count": activeBindings,
+	})
+}
+
+func (h *Handler) consumeRunnerChallenge(ctx context.Context, machineID pgtype.UUID, r *http.Request) error {
+	challengeID, err := util.ParseUUID(strings.TrimSpace(r.Header.Get("X-Runner-Challenge-ID")))
+	if err != nil {
+		return errors.New("Runner challenge is required")
+	}
+	challenge := strings.TrimSpace(r.Header.Get("X-Runner-Challenge"))
+	signature, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(r.Header.Get("X-Runner-Signature")))
+	if err != nil || challenge == "" || len(signature) != ed25519.SignatureSize {
+		return errors.New("invalid Runner signature")
+	}
+	row, err := h.Queries.GetRunnerAuthChallenge(ctx, db.GetRunnerAuthChallengeParams{ID: challengeID, MachineID: machineID})
+	if err != nil || row.ConsumedAt.Valid || row.MachineRevokedAt.Valid || !row.ExpiresAt.Time.After(time.Now()) {
+		return errors.New("Runner challenge is invalid or expired")
+	}
+	expectedHash := auth.HashToken(challenge)
+	if subtle.ConstantTimeCompare([]byte(expectedHash), []byte(row.ChallengeHash)) != 1 ||
+		!ed25519.Verify(ed25519.PublicKey(row.PublicKey), []byte(challenge), signature) {
+		return errors.New("invalid Runner signature")
+	}
+	if _, err := h.Queries.ConsumeRunnerAuthChallenge(ctx, db.ConsumeRunnerAuthChallengeParams{
+		ID: challengeID, MachineID: machineID, ChallengeHash: expectedHash,
+	}); err != nil {
+		return errors.New("Runner challenge was already used")
+	}
+	return nil
+}
+
+func (h *Handler) ReconnectRunnerBinding(w http.ResponseWriter, r *http.Request) {
+	machineID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "machineId"), "Runner machine id")
+	if !ok {
+		return
+	}
+	var req struct {
+		ReconnectToken string `json:"reconnect_token"`
+	}
+	if err := decodeRunnerRequest(w, r, 8<<10, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "reconnect_token is required")
+		return
+	}
+	sessionID, ok := runnerReconnectIDFromToken(req.ReconnectToken)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Runner reconnect command is invalid or expired")
+		return
+	}
+	session, err := h.Queries.GetRunnerReconnectSession(r.Context(), sessionID)
+	expectedHash := auth.HashToken(strings.TrimSpace(req.ReconnectToken))
+	if err != nil || session.ConsumedAt.Valid || session.MachineID != machineID ||
+		!session.ExpiresAt.Time.After(time.Now()) ||
+		subtle.ConstantTimeCompare([]byte(expectedHash), []byte(session.TokenHash)) != 1 {
+		writeError(w, http.StatusBadRequest, "Runner reconnect command is invalid or expired")
+		return
+	}
+	if err := h.consumeRunnerChallenge(r.Context(), machineID, r); err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reconnect Runner binding")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	binding, err := qtx.ConsumeRunnerReconnectSession(r.Context(), db.ConsumeRunnerReconnectSessionParams{
+		ID: session.ID, BindingID: session.BindingID, MachineID: machineID, TokenHash: expectedHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, "Runner reconnect command was already used")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reconnect Runner binding")
+		return
+	}
+	activeBindings, err := qtx.CountConnectedRunnerBindings(r.Context(), machineID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read Runner bindings")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reconnect Runner binding")
+		return
+	}
+	h.notifyRunnerBindingsChanged(uuidToString(machineID), activeBindings)
+	slog.Info("Runner binding reconnected",
+		"event", "runner_binding_reconnected",
+		"workspace_id", uuidToString(binding.WorkspaceID),
+		"agent_id", uuidToString(binding.AgentID),
+		"binding_id", uuidToString(binding.ID),
+		"machine_id", uuidToString(machineID),
+		"active_binding_count", activeBindings,
+	)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":               "connected",
+		"active_binding_count": activeBindings,
 	})
 }
 
@@ -718,35 +1001,23 @@ func (h *Handler) RunnerWebSocket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "machine_id is required")
 		return
 	}
-	challengeID, err := util.ParseUUID(strings.TrimSpace(r.Header.Get("X-Runner-Challenge-ID")))
+	activeBindings, err := h.Queries.CountConnectedRunnerBindings(r.Context(), machineID)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "Runner challenge is required")
+		writeError(w, http.StatusInternalServerError, "failed to read Runner bindings")
 		return
 	}
-	challenge := strings.TrimSpace(r.Header.Get("X-Runner-Challenge"))
-	signature, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(r.Header.Get("X-Runner-Signature")))
-	if err != nil || challenge == "" || len(signature) != ed25519.SignatureSize {
-		writeError(w, http.StatusUnauthorized, "invalid Runner signature")
+	if activeBindings == 0 {
+		writeError(w, http.StatusConflict, "Runner has no connected Agent bindings")
 		return
 	}
-	row, err := h.Queries.GetRunnerAuthChallenge(r.Context(), db.GetRunnerAuthChallengeParams{ID: challengeID, MachineID: machineID})
-	if err != nil || row.ConsumedAt.Valid || row.MachineRevokedAt.Valid || !row.ExpiresAt.Time.After(time.Now()) {
-		writeError(w, http.StatusUnauthorized, "Runner challenge is invalid or expired")
+	if err := h.consumeRunnerChallenge(r.Context(), machineID, r); err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	expectedHash := auth.HashToken(challenge)
-	if subtle.ConstantTimeCompare([]byte(expectedHash), []byte(row.ChallengeHash)) != 1 ||
-		!ed25519.Verify(ed25519.PublicKey(row.PublicKey), []byte(challenge), signature) {
-		writeError(w, http.StatusUnauthorized, "invalid Runner signature")
-		return
-	}
-	if _, err := h.Queries.ConsumeRunnerAuthChallenge(r.Context(), db.ConsumeRunnerAuthChallengeParams{
-		ID: challengeID, MachineID: machineID, ChallengeHash: expectedHash,
-	}); err != nil {
-		writeError(w, http.StatusUnauthorized, "Runner challenge was already used")
-		return
-	}
-	h.RunnerHub.HandleWebSocket(w, r, runnerws.Identity{MachineID: uuidToString(machineID)})
+	connectionID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	h.RunnerHub.HandleWebSocket(w, r, runnerws.Identity{
+		MachineID: uuidToString(machineID), ConnectionID: uuidToString(connectionID),
+	})
 }
 
 func (h *Handler) handleRunnerConnected(ctx context.Context, identity runnerws.Identity) {
@@ -754,8 +1025,17 @@ func (h *Handler) handleRunnerConnected(ctx context.Context, identity runnerws.I
 	if err != nil {
 		return
 	}
-	machine, err := h.Queries.GetRunnerMachine(ctx, machineID)
+	connectionID, err := util.ParseUUID(identity.ConnectionID)
 	if err != nil {
+		return
+	}
+	machine, err := h.Queries.ActivateRunnerMachineConnection(ctx, db.ActivateRunnerMachineConnectionParams{
+		ID: machineID, ConnectionID: connectionID,
+	})
+	if err != nil {
+		if h.RunnerHub != nil {
+			h.RunnerHub.Close(identity.MachineID)
+		}
 		return
 	}
 	if h.RunnerHub != nil && h.RunnerHub.Connected(identity.MachineID) {
@@ -763,14 +1043,21 @@ func (h *Handler) handleRunnerConnected(ctx context.Context, identity runnerws.I
 			subscriber.SubscribeRunnerMachine(identity.MachineID)
 		}
 	}
-	_, _ = h.Queries.UpdateRunnerMachineHeartbeat(ctx, db.UpdateRunnerMachineHeartbeatParams{
-		ID: machineID, ClientVersion: machine.ClientVersion,
-	})
+	activeBindings, err := h.Queries.CountConnectedRunnerBindings(ctx, machineID)
+	if err != nil {
+		return
+	}
+	h.notifyRunnerBindingsChanged(identity.MachineID, activeBindings)
 	slog.Info("Runner connected",
 		"event", "runner_connected",
 		"machine_id", identity.MachineID,
+		"connection_id", identity.ConnectionID,
 		"client_version", machine.ClientVersion,
+		"active_binding_count", activeBindings,
 	)
+	if activeBindings == 0 {
+		return
+	}
 	calls, err := h.Queries.ListQueuedRunnerCalls(ctx, machineID)
 	if err != nil {
 		return
@@ -781,13 +1068,26 @@ func (h *Handler) handleRunnerConnected(ctx context.Context, identity runnerws.I
 }
 
 func (h *Handler) handleRunnerDisconnected(identity runnerws.Identity) {
+	machineID, machineErr := util.ParseUUID(identity.MachineID)
+	connectionID, connectionErr := util.ParseUUID(identity.ConnectionID)
+	if machineErr == nil && connectionErr == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, _ = h.Queries.ClearRunnerMachineConnection(ctx, db.ClearRunnerMachineConnectionParams{
+			ID: machineID, ConnectionID: connectionID,
+		})
+		cancel()
+	}
 	if h.RunnerHub != nil && h.RunnerHub.Connected(identity.MachineID) {
 		return
 	}
 	if subscriber, ok := h.RunnerRelay.(realtime.RunnerMachineScopeSubscriber); ok {
 		subscriber.UnsubscribeRunnerMachine(identity.MachineID)
 	}
-	slog.Info("Runner disconnected", "event", "runner_disconnected", "machine_id", identity.MachineID)
+	slog.Info("Runner disconnected",
+		"event", "runner_disconnected",
+		"machine_id", identity.MachineID,
+		"connection_id", identity.ConnectionID,
+	)
 }
 
 func (h *Handler) handleRunnerHeartbeat(ctx context.Context, identity runnerws.Identity, heartbeat runnerprotocol.Heartbeat) {
@@ -795,11 +1095,17 @@ func (h *Handler) handleRunnerHeartbeat(ctx context.Context, identity runnerws.I
 	if err != nil {
 		return
 	}
+	connectionID, err := util.ParseUUID(identity.ConnectionID)
+	if err != nil {
+		return
+	}
 	clientVersion := strings.TrimSpace(heartbeat.ClientVersion)
 	if len(clientVersion) > 64 {
 		return
 	}
-	_, _ = h.Queries.UpdateRunnerMachineHeartbeat(ctx, db.UpdateRunnerMachineHeartbeatParams{ID: machineID, ClientVersion: clientVersion})
+	_, _ = h.Queries.UpdateRunnerMachineHeartbeat(ctx, db.UpdateRunnerMachineHeartbeatParams{
+		ID: machineID, ConnectionID: connectionID, ClientVersion: clientVersion,
+	})
 }
 
 func (h *Handler) handleRunnerResult(ctx context.Context, identity runnerws.Identity, result runnerprotocol.Result) {
@@ -848,16 +1154,34 @@ func (h *Handler) dispatchQueuedRunnerCalls(ctx context.Context, machineID pgtyp
 }
 
 type runnerDispatchFrame struct {
-	Type   string `json:"type"`
-	CallID string `json:"call_id"`
+	Type               string   `json:"type"`
+	CallID             string   `json:"call_id,omitempty"`
+	ActiveBindingCount int64    `json:"active_binding_count,omitempty"`
+	CallIDs            []string `json:"call_ids,omitempty"`
 }
 
 func (h *Handler) DeliverRunnerMachine(scopeID string, frame []byte, _ string) {
 	var dispatch runnerDispatchFrame
-	if json.Unmarshal(frame, &dispatch) != nil || dispatch.Type != "runner:dispatch" {
+	if json.Unmarshal(frame, &dispatch) != nil {
 		return
 	}
-	h.dispatchRunnerCall(context.Background(), scopeID, dispatch.CallID)
+	switch dispatch.Type {
+	case "runner:dispatch":
+		h.dispatchRunnerCall(context.Background(), scopeID, dispatch.CallID)
+	case runnerprotocol.MessageBindingsChanged:
+		if h.RunnerHub == nil {
+			return
+		}
+		if dispatch.ActiveBindingCount == 0 {
+			if !h.RunnerHub.SendAndClose(scopeID, frame) {
+				h.RunnerHub.Close(scopeID)
+			}
+			return
+		}
+		h.RunnerHub.Send(scopeID, frame)
+	case runnerprotocol.MessageCallsCancelled:
+		h.RunnerHub.Send(scopeID, frame)
+	}
 }
 
 func (h *Handler) dispatchRunnerCall(ctx context.Context, machineIDString, callIDString string) {
@@ -900,6 +1224,33 @@ func (h *Handler) dispatchRunnerCall(ctx context.Context, machineIDString, callI
 
 func (h *Handler) notifyRunnerCall(machineID, callID string) {
 	frame, _ := json.Marshal(runnerDispatchFrame{Type: "runner:dispatch", CallID: callID})
+	h.DeliverRunnerMachine(machineID, frame, "")
+	if h.RunnerRelay != nil {
+		h.RunnerRelay.BroadcastToScope(realtime.ScopeRunnerMachine, machineID, frame)
+	}
+}
+
+func (h *Handler) notifyRunnerBindingsChanged(machineID string, activeBindingCount int64) {
+	frame, _ := json.Marshal(runnerDispatchFrame{
+		Type: runnerprotocol.MessageBindingsChanged, ActiveBindingCount: activeBindingCount,
+	})
+	h.DeliverRunnerMachine(machineID, frame, "")
+	if h.RunnerRelay != nil {
+		h.RunnerRelay.BroadcastToScope(realtime.ScopeRunnerMachine, machineID, frame)
+	}
+}
+
+func (h *Handler) notifyRunnerCallsCancelled(machineID string, callIDs []pgtype.UUID) {
+	if len(callIDs) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(callIDs))
+	for _, callID := range callIDs {
+		ids = append(ids, uuidToString(callID))
+	}
+	frame, _ := json.Marshal(runnerDispatchFrame{
+		Type: runnerprotocol.MessageCallsCancelled, CallIDs: ids,
+	})
 	h.DeliverRunnerMachine(machineID, frame, "")
 	if h.RunnerRelay != nil {
 		h.RunnerRelay.BroadcastToScope(realtime.ScopeRunnerMachine, machineID, frame)

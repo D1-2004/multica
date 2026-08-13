@@ -175,6 +175,9 @@ type AgentRunnerBinding struct {
 	RevokedBy   pgtype.UUID        `json:"revoked_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	// Agent-scoped logical disconnect; the shared machine process exits only when no connected bindings remain
+	DisconnectedAt pgtype.Timestamptz `json:"disconnected_at"`
+	DisconnectedBy pgtype.UUID        `json:"disconnected_by"`
 }
 
 type AgentRuntime struct {
@@ -1351,6 +1354,9 @@ type RunnerMachine struct {
 	RevokedBy     pgtype.UUID        `json:"revoked_by"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	// Server-assigned identifier for the currently registered Runner WebSocket
+	ConnectionID pgtype.UUID        `json:"connection_id"`
+	ConnectedAt  pgtype.Timestamptz `json:"connected_at"`
 }
 
 // Short-lived browser-approved OAuth device authorization for a Runner binding
@@ -1376,6 +1382,17 @@ type RunnerPairingSession struct {
 	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+// Short-lived one-time credentials for reconnecting one Agent Runner binding from the bound machine
+type RunnerReconnectSession struct {
+	ID         pgtype.UUID        `json:"id"`
+	BindingID  pgtype.UUID        `json:"binding_id"`
+	MachineID  pgtype.UUID        `json:"machine_id"`
+	TokenHash  string             `json:"token_hash"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt pgtype.Timestamptz `json:"consumed_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type RuntimeProfile struct {

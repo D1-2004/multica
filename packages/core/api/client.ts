@@ -218,12 +218,14 @@ import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
 import type {
   CreateRunnerPairingResponse,
+  CreateRunnerReconnectCommandResponse,
   RunnerDeviceAuthorization,
   RunnerDeviceAuthorizationResult,
   RunnerMachineBindingList,
 } from "../runner/types";
 import {
   CreateRunnerPairingResponseSchema,
+  CreateRunnerReconnectCommandResponseSchema,
   RunnerDeviceAuthorizationResultSchema,
   RunnerDeviceAuthorizationSchema,
   RunnerMachineBindingListSchema,
@@ -1714,6 +1716,27 @@ export class ApiClient {
     await this.fetch(`/api/agents/${agentId}/runner-bindings/${bindingId}`, {
       method: "DELETE",
     });
+  }
+
+  async disconnectAgentRunnerBinding(
+    agentId: string,
+    bindingId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/agents/${agentId}/runner-bindings/${bindingId}/disconnect`,
+      { method: "POST" },
+    );
+  }
+
+  async createAgentRunnerReconnectCommand(
+    agentId: string,
+    bindingId: string,
+  ): Promise<CreateRunnerReconnectCommandResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${agentId}/runner-bindings/${bindingId}/reconnect-command`,
+      { method: "POST" },
+    );
+    return CreateRunnerReconnectCommandResponseSchema.parse(raw);
   }
 
   async getRunnerDeviceAuthorization(

@@ -20,7 +20,8 @@ const (
 )
 
 type Identity struct {
-	MachineID string
+	MachineID    string
+	ConnectionID string
 }
 
 type ConnectHandler func(context.Context, Identity)
@@ -32,15 +33,22 @@ type client struct {
 	hub      *Hub
 	conn     *websocket.Conn
 	identity Identity
-	send     chan []byte
+	send     chan outboundFrame
 	done     chan struct{}
 	close    sync.Once
+}
+
+type outboundFrame struct {
+	payload    []byte
+	closeAfter bool
 }
 
 func (c *client) stop() {
 	c.close.Do(func() {
 		close(c.done)
-		_ = c.conn.Close()
+		if c.conn != nil {
+			_ = c.conn.Close()
+		}
 	})
 }
 
@@ -84,7 +92,7 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request, identity I
 		hub:      h,
 		conn:     conn,
 		identity: identity,
-		send:     make(chan []byte, 32),
+		send:     make(chan outboundFrame, 32),
 		done:     make(chan struct{}),
 	}
 
@@ -122,10 +130,52 @@ func (h *Hub) Send(machineID string, frame []byte) bool {
 	select {
 	case <-c.done:
 		return false
-	case c.send <- append([]byte(nil), frame...):
+	case c.send <- outboundFrame{payload: append([]byte(nil), frame...)}:
 		return true
 	default:
 		return false
+	}
+}
+
+// SendAndClose queues one final control frame and closes the socket only after
+// the write succeeds. Runner uses this for an operator-requested shutdown so
+// the client can distinguish it from a transient network failure and exit
+// instead of reconnecting.
+func (h *Hub) SendAndClose(machineID string, frame []byte) bool {
+	h.mu.RLock()
+	c := h.byMachine[machineID]
+	h.mu.RUnlock()
+	if c == nil {
+		return false
+	}
+	select {
+	case <-c.done:
+		return false
+	default:
+	}
+	select {
+	case <-c.done:
+		return false
+	case c.send <- outboundFrame{payload: append([]byte(nil), frame...), closeAfter: true}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *Hub) Close(machineID string) bool {
+	h.mu.RLock()
+	c := h.byMachine[machineID]
+	h.mu.RUnlock()
+	if c == nil {
+		return false
+	}
+	select {
+	case <-c.done:
+		return false
+	default:
+		c.stop()
+		return true
 	}
 }
 
@@ -204,7 +254,15 @@ func (c *client) writePump() {
 		select {
 		case frame := <-c.send:
 			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := c.conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+			if err := c.conn.WriteMessage(websocket.TextMessage, frame.payload); err != nil {
+				return
+			}
+			if frame.closeAfter {
+				_ = c.conn.WriteControl(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Runner disconnected"),
+					time.Now().Add(writeWait),
+				)
 				return
 			}
 		case <-ticker.C:

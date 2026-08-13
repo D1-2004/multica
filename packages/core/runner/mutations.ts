@@ -23,3 +23,26 @@ export function useRevokeAgentRunnerBinding(
     },
   });
 }
+
+export function useDisconnectAgentRunnerBinding(
+  workspaceId: string,
+  agentId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (bindingId: string) =>
+      api.disconnectAgentRunnerBinding(agentId, bindingId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: runnerBindingKeys.agent(workspaceId, agentId),
+      });
+    },
+  });
+}
+
+export function useCreateAgentRunnerReconnectCommand(agentId: string) {
+  return useMutation({
+    mutationFn: (bindingId: string) =>
+      api.createAgentRunnerReconnectCommand(agentId, bindingId),
+  });
+}
