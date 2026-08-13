@@ -203,6 +203,8 @@ func TestEnterpriseIdentityCallbackProgressPagePollsNewBindingVersion(t *testing
 	)
 	for _, expected := range []string{
 		"通常需要 1–2 分钟",
+		"集团账号权限助手",
+		"完成所有“前往授权”",
 		"fetch(statusURL",
 		"payload.binding_version",
 		"expectedBindingVersion=7",

@@ -282,9 +282,9 @@ func enterpriseIdentityCallbackProgressPage(
 <title>正在绑定员工身份</title>
 <style>
 body{margin:0;background:#f7f8fa;color:#171a1f;font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-main{max-width:420px;margin:18vh auto;padding:32px 24px;text-align:center}
+main{max-width:520px;margin:14vh auto;padding:32px 24px;text-align:center}
 .spinner{width:36px;height:36px;margin:0 auto 22px;border:3px solid #e5e7eb;border-top-color:#ff6a00;border-radius:50%%;animation:spin .8s linear infinite}
-h1{font-size:20px;margin:0 0 12px}p{color:#5f6672;margin:0}
+h1{font-size:20px;margin:0 0 12px}p{color:#5f6672;margin:0}.notice{margin-top:16px;padding:14px 16px;border-radius:10px;background:#fff4e8;color:#7c3f00;text-align:left;font-size:14px}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
@@ -292,7 +292,8 @@ h1{font-size:20px;margin:0 0 12px}p{color:#5f6672;margin:0}
 <main>
 <div class="spinner" aria-hidden="true"></div>
 <h1 id="callback-title">正在绑定员工身份</h1>
-<p id="callback-message">授权已接收，正在创建企业沙箱身份，通常需要 1–2 分钟，繁忙时可能稍久。请不要返回或重复点击。</p>
+<p id="callback-message">授权请求已提交，正在创建企业沙箱身份，通常需要 1–2 分钟。完成前请保持本页打开。</p>
+<p id="callback-notice" class="notice">请检查阿里钉的“集团账号权限助手”；如收到本次请求，请完成所有“前往授权”，以免绑定成功后 a1、阿里内外等能力仍因应用未授权而失败。本页会继续创建沙箱身份。</p>
 </main>
 <script nonce="%s">
 window.history.replaceState(null,"",window.location.pathname);
@@ -315,7 +316,7 @@ async function pollBinding(){
   } catch (_) {}
   if(Date.now()-startedAt>=%d){
     document.getElementById("callback-title").textContent="员工身份绑定未完成";
-    document.getElementById("callback-message").textContent="请返回 Multica 后重新发起绑定。";
+    document.getElementById("callback-message").textContent="请先到阿里钉的“集团账号权限助手”完成所有“前往授权”，再返回 Multica 重新发起授权。";
     return;
   }
   window.setTimeout(pollBinding,%d);

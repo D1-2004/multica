@@ -737,6 +737,8 @@
       "github_identity_test_failed": "无法测试 GitHub 身份。",
       "enterprise_identity_title": "集团员工身份",
       "enterprise_identity_description": "绑定员工身份后，这个智能体可在 Aone Sandbox 中使用 BUC 免登、a1 和 mw。",
+      "enterprise_identity_dingtalk_authorization_note": "授权后请检查阿里钉的“集团账号权限助手”，并完成本次所有“前往授权”，再使用 a1、阿里内外等能力。",
+      "enterprise_identity_authorize_forbidden": "只有智能体所有者、工作区 owner 和 admin 可以为此智能体发起授权。",
       "enterprise_identity_members_note": "只有智能体所有者、工作区 owner 和 admin 可以管理此身份。",
       "enterprise_identity_loading": "正在加载员工身份...",
       "enterprise_identity_not_configured": "当前部署尚未配置集团员工身份。",

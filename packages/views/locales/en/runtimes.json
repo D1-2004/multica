@@ -301,6 +301,7 @@
     "backend_aliyun_fc_hint": "Runs the selected E2B template on Alibaba Cloud FC.",
     "backend_asb_hint": "Supports BUC single sign-on, a1, and mw. Agents must bind an Alibaba employee identity.",
     "api_key_hint": "Uses your own Aone Sandbox quota. The key is encrypted and never written to runtime metadata or sandbox environments.",
+    "api_key_docs": "View the Aone Sandbox API key management guide",
     "api_key_validate": "Validate and check quota",
     "api_key_validating": "Validating...",
     "api_key_valid": "API Key is valid",

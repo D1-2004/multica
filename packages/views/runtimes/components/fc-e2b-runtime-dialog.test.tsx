@@ -124,6 +124,16 @@ describe("FCE2BRuntimeDialog ASB credential validation", () => {
   it("requires live validation and displays current quota before creation", async () => {
     renderDialog();
 
+    const docsLink = screen.getByRole("link", {
+      name: "View the Aone Sandbox API key management guide",
+    });
+    expect(docsLink).toHaveAttribute(
+      "href",
+      "https://sandbox.aone.alibaba-inc.com/docs/tenant-ops.html#api-keys-%E7%AE%A1%E7%90%86",
+    );
+    expect(docsLink).toHaveAttribute("target", "_blank");
+    expect(docsLink).toHaveAttribute("rel", "noopener noreferrer");
+
     const create = screen.getByRole("button", { name: "Create runtime" });
     const apiKey = screen.getByLabelText("ASB API Key");
     expect((create as HTMLButtonElement).disabled).toBe(true);

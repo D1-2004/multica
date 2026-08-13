@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Building2, RefreshCw, Unplug } from "lucide-react";
 import {
@@ -94,7 +94,7 @@ export function EnterpriseIdentityBindingCard({
     }
   }
 
-  async function connect() {
+  const connect = useCallback(async () => {
     setActionError(null);
     setActionMessage(null);
     try {
@@ -117,7 +117,31 @@ export function EnterpriseIdentityBindingCard({
         ),
       );
     }
-  }
+  }, [agentId, beginBinding, t]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || isPending || !data) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("enterprise_identity") !== "authorize") return;
+    clearOAuthReturnParam();
+    if (data.configured !== true) {
+      setActionError(
+        t(($) => $.tab_body.integrations.enterprise_identity_not_configured),
+      );
+      return;
+    }
+    if (!canMutate) {
+      setActionError(
+        t(
+          ($) =>
+            $.tab_body.integrations
+              .enterprise_identity_authorize_forbidden,
+        ),
+      );
+      return;
+    }
+    void connect();
+  }, [canMutate, connect, data, isPending, t]);
 
   async function revoke() {
     setActionError(null);
@@ -157,6 +181,15 @@ export function EnterpriseIdentityBindingCard({
       </div>
 
       <div className="space-y-3 border-t px-4 py-3">
+        {data?.configured === true ? (
+          <p className="rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+            {t(
+              ($) =>
+                $.tab_body.integrations
+                  .enterprise_identity_dingtalk_authorization_note,
+            )}
+          </p>
+        ) : null}
         {isPending ? (
           <p className="text-xs text-muted-foreground">
             {t(($) => $.tab_body.integrations.enterprise_identity_loading)}
