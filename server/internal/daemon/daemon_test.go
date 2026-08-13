@@ -23,6 +23,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func createDaemonTestRepo(t *testing.T) string {
@@ -255,6 +256,74 @@ func TestChildAgentIdentityContextToken(t *testing.T) {
 				t.Fatalf("expiresAt %d was accepted", tc.expiresAt)
 			}
 		})
+	}
+}
+
+func TestValidateManagedA2ADEAPDWSToken(t *testing.T) {
+	const token = "deap-request-token-secret"
+
+	got, err := validateManagedA2ADEAPDWSToken("fc-e2b", true, true, token, true)
+	if err != nil || got != token {
+		t.Fatalf("managed DEAP DWS token = %q, %v", got, err)
+	}
+	if got, err = validateManagedA2ADEAPDWSToken("fc-e2b", true, true, "", false); err != nil || got != "" {
+		t.Fatalf("absent DEAP DWS token = %q, %v", got, err)
+	}
+
+	for _, test := range []struct {
+		name             string
+		launchedBy       string
+		a2aInvocation    bool
+		managedRuntimeV2 bool
+		raw              string
+	}{
+		{name: "ordinary task", launchedBy: "fc-e2b", managedRuntimeV2: true, raw: token},
+		{name: "unattested runtime", launchedBy: "fc-e2b", a2aInvocation: true, raw: token},
+		{name: "local runtime", launchedBy: "local", a2aInvocation: true, managedRuntimeV2: true, raw: token},
+		{name: "empty token", launchedBy: "fc-e2b", a2aInvocation: true, managedRuntimeV2: true},
+		{name: "surrounding whitespace", launchedBy: "fc-e2b", a2aInvocation: true, managedRuntimeV2: true, raw: " " + token},
+		{name: "oversized token", launchedBy: "fc-e2b", a2aInvocation: true, managedRuntimeV2: true, raw: strings.Repeat("x", (64<<10)+1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := validateManagedA2ADEAPDWSToken(
+				test.launchedBy,
+				test.a2aInvocation,
+				test.managedRuntimeV2,
+				test.raw,
+				true,
+			); err == nil {
+				t.Fatal("invalid request-scoped DEAP DWS identity was accepted")
+			}
+		})
+	}
+}
+
+func TestRestoreA2ATaskIdentityEnvRestoresDEAPDWSTokenAfterIsolation(t *testing.T) {
+	agentEnv := map[string]string{
+		protocol.AgentIdentityContextTokenEnvKey: "",
+		protocol.DEAPDWSTokenEnvKey:              "",
+		"DWS_CONFIG_DIR":                         "",
+		"GH_CONFIG_DIR":                          "",
+	}
+	restoreA2ATaskIdentityEnv(
+		agentEnv,
+		"external-context-token",
+		"/tmp/task/dws",
+		"/tmp/task/dws/gh",
+		"deap-request-token-secret",
+	)
+
+	if got := agentEnv[protocol.AgentIdentityContextTokenEnvKey]; got != "external-context-token" {
+		t.Fatalf("ContextToken = %q", got)
+	}
+	if got := agentEnv[protocol.DEAPDWSTokenEnvKey]; got != "deap-request-token-secret" {
+		t.Fatalf("DEAP DWS token = %q", got)
+	}
+	if got := agentEnv["DWS_CONFIG_DIR"]; got != "/tmp/task/dws" {
+		t.Fatalf("DWS_CONFIG_DIR = %q", got)
+	}
+	if got := agentEnv["GH_CONFIG_DIR"]; got != "/tmp/task/dws/gh" {
+		t.Fatalf("GH_CONFIG_DIR = %q", got)
 	}
 }
 

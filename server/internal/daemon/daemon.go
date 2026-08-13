@@ -4203,6 +4203,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err != nil {
 		return TaskResult{}, err
 	}
+	deapDWSToken, err := managedA2ADEAPDWSToken(
+		d.cfg.LaunchedBy,
+		task.A2AInvocation,
+		task.A2AManagedRuntimeV2,
+	)
+	if err != nil {
+		return TaskResult{}, err
+	}
 	if token != "" {
 		agentEnv[protocol.AgentIdentityContextTokenEnvKey] = token
 	}
@@ -4233,16 +4241,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// also fail closed for externally triggered children.
 		isolateA2AChildEnv(agentEnv)
 		// The scrub above removes every ambient identity. Restore only the
-		// server-attested, task-local external ContextToken for this turn.
-		if token != "" {
-			agentEnv[protocol.AgentIdentityContextTokenEnvKey] = token
-		}
-		if a2aDWSConfigDir != "" {
-			agentEnv["DWS_CONFIG_DIR"] = a2aDWSConfigDir
-		}
-		if a2aGitHubConfigDir != "" {
-			agentEnv["GH_CONFIG_DIR"] = a2aGitHubConfigDir
-		}
+		// server-attested, task-local external identity for this turn.
+		restoreA2ATaskIdentityEnv(agentEnv, token, a2aDWSConfigDir, a2aGitHubConfigDir, deapDWSToken)
 	}
 	// Ensure the multica CLI is on PATH inside the agent's environment.
 	// Some runtimes (e.g. Codex) run in an isolated sandbox that may not
@@ -4298,15 +4298,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// normally omits custom environment values for A2A claims, but the daemon
 		// independently enforces the boundary before constructing the child.
 		isolateA2AChildEnv(agentEnv)
-		if token != "" {
-			agentEnv[protocol.AgentIdentityContextTokenEnvKey] = token
-		}
-		if a2aDWSConfigDir != "" {
-			agentEnv["DWS_CONFIG_DIR"] = a2aDWSConfigDir
-		}
-		if a2aGitHubConfigDir != "" {
-			agentEnv["GH_CONFIG_DIR"] = a2aGitHubConfigDir
-		}
+		restoreA2ATaskIdentityEnv(agentEnv, token, a2aDWSConfigDir, a2aGitHubConfigDir, deapDWSToken)
 	}
 	if task.A2AManagedRuntimeV2 {
 		if err := configureManagedA2AV2ProviderEnv(agentEnv, provider, env.RootDir, runtimeBrief, taskCtx.AgentSkills); err != nil {
@@ -5621,6 +5613,56 @@ func childAgentIdentityContextToken(launchedBy, token string, expiresAt int64, n
 		return "", fmt.Errorf("Agent Identity ContextToken expires within the one-minute execution safety window at %s", expiry.UTC().Format(time.RFC3339Nano))
 	}
 	return token, nil
+}
+
+// managedA2ADEAPDWSToken preserves the request-scoped DEAP credential across
+// the managed run-once daemon boundary. The outer runner has already verified
+// the credential with DWS; the daemon may expose it only to the single
+// server-attested A2A child that this run-once process was created to execute.
+func managedA2ADEAPDWSToken(launchedBy string, a2aInvocation, managedRuntimeV2 bool) (string, error) {
+	raw, present := os.LookupEnv(protocol.DEAPDWSTokenEnvKey)
+	return validateManagedA2ADEAPDWSToken(launchedBy, a2aInvocation, managedRuntimeV2, raw, present)
+}
+
+func validateManagedA2ADEAPDWSToken(
+	launchedBy string,
+	a2aInvocation bool,
+	managedRuntimeV2 bool,
+	raw string,
+	present bool,
+) (string, error) {
+	if !present {
+		return "", nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(launchedBy), "fc-e2b") || !a2aInvocation || !managedRuntimeV2 {
+		return "", errors.New("request-scoped DEAP DWS identity requires an attested managed A2A cloud runtime")
+	}
+	token := strings.TrimSpace(raw)
+	if token == "" {
+		return "", errors.New("request-scoped DEAP DWS token is empty")
+	}
+	if token != raw {
+		return "", errors.New("request-scoped DEAP DWS token contains surrounding whitespace")
+	}
+	if len(token) > 64<<10 {
+		return "", errors.New("request-scoped DEAP DWS token exceeds 64 KiB")
+	}
+	return token, nil
+}
+
+func restoreA2ATaskIdentityEnv(agentEnv map[string]string, contextToken, dwsConfigDir, githubConfigDir, deapDWSToken string) {
+	if contextToken != "" {
+		agentEnv[protocol.AgentIdentityContextTokenEnvKey] = contextToken
+	}
+	if dwsConfigDir != "" {
+		agentEnv["DWS_CONFIG_DIR"] = dwsConfigDir
+	}
+	if githubConfigDir != "" {
+		agentEnv["GH_CONFIG_DIR"] = githubConfigDir
+	}
+	if deapDWSToken != "" {
+		agentEnv[protocol.DEAPDWSTokenEnvKey] = deapDWSToken
+	}
 }
 
 func managedA2AIdentityConfigDirs(launchedBy, taskID, contextToken string) (string, string, error) {
