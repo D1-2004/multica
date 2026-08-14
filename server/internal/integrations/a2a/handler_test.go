@@ -353,19 +353,19 @@ func TestJSONRPCConvertsTransportPanicsToProtocolErrors(t *testing.T) {
 
 	handler := NewJSONRPCHandler(&panickingPort{})
 	tests := []struct {
-		name      string
-		body      string
-		wantPanic string
+		name        string
+		body        string
+		privateText string
 	}{
 		{
-			name:      "GetTask",
-			body:      `{"jsonrpc":"2.0","id":"panic-get","method":"GetTask","params":{"id":"task_completed"}}`,
-			wantPanic: "completed task projection",
+			name:        "GetTask",
+			body:        `{"jsonrpc":"2.0","id":"panic-get","method":"GetTask","params":{"id":"task_completed"}}`,
+			privateText: "completed task projection",
 		},
 		{
-			name:      "SendStreamingMessage",
-			body:      `{"jsonrpc":"2.0","id":"panic-stream","method":"SendStreamingMessage","params":{"message":{"messageId":"message-panic","role":"ROLE_USER","parts":[{"text":"hello"}]}}}`,
-			wantPanic: "completed streaming projection",
+			name:        "SendStreamingMessage",
+			body:        `{"jsonrpc":"2.0","id":"panic-stream","method":"SendStreamingMessage","params":{"message":{"messageId":"message-panic","role":"ROLE_USER","parts":[{"text":"hello"}]}}}`,
+			privateText: "completed streaming projection",
 		},
 	}
 	for _, test := range tests {
@@ -382,7 +382,8 @@ func TestJSONRPCConvertsTransportPanicsToProtocolErrors(t *testing.T) {
 			if response.Code != http.StatusOK {
 				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 			}
-			if body := response.Body.String(); !strings.Contains(body, `"code":-32603`) || !strings.Contains(body, test.wantPanic) {
+			if body := response.Body.String(); !strings.Contains(body, `"code":-32603`) ||
+				!strings.Contains(body, "A2A transport internal error") || strings.Contains(body, test.privateText) {
 				t.Fatalf("panic response is not a JSON-RPC internal error: %s", body)
 			}
 		})

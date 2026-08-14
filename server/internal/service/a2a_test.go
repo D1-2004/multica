@@ -443,6 +443,24 @@ func TestNewA2APublicIDIsOpaqueAndPathSafe(t *testing.T) {
 	}
 }
 
+func TestLastA2ATaskTurn(t *testing.T) {
+	if _, err := lastA2ATaskTurn(nil); err == nil {
+		t.Fatal("empty terminal turn list did not return an error")
+	}
+
+	turns := []db.ListA2ATaskTurnsWithOutcomeRow{
+		{Sequence: 1, AssistantResultText: "first"},
+		{Sequence: 2, AssistantResultText: "final"},
+	}
+	latest, err := lastA2ATaskTurn(turns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Sequence != 2 || latest.AssistantResultText != "final" {
+		t.Fatalf("latest terminal turn = %+v", latest)
+	}
+}
+
 func TestA2AQueuedExternalIdentityNeedsAuth(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
 	tests := []struct {

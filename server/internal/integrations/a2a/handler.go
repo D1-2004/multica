@@ -127,7 +127,7 @@ func a2aTransportPanicError(recovered any) error {
 		"panic", panicText,
 		"stack", string(debug.Stack()),
 	)
-	return a2a.NewError(a2a.ErrInternalError, "A2A transport panic: "+panicText)
+	return a2a.NewError(a2a.ErrInternalError, "A2A transport internal error")
 }
 
 func (handler *requestHandler) GetTask(ctx context.Context, request *a2a.GetTaskRequest) (*a2a.Task, error) {

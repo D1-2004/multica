@@ -93,6 +93,13 @@ func projectionFromGet(row db.GetA2APublicTaskForClientRow) a2aPublicTaskProject
 	}
 }
 
+func lastA2ATaskTurn(turns []db.ListA2ATaskTurnsWithOutcomeRow) (db.ListA2ATaskTurnsWithOutcomeRow, error) {
+	if len(turns) == 0 {
+		return db.ListA2ATaskTurnsWithOutcomeRow{}, errors.New("terminal A2A task has no turns")
+	}
+	return turns[len(turns)-1], nil
+}
+
 func (s *A2AService) reconcileA2ATaskState(
 	ctx context.Context,
 	row db.GetA2APublicTaskForClientRow,
@@ -134,20 +141,22 @@ func (s *A2AService) reconcileA2ATaskState(
 	}
 	next = a2a.TaskState(nextValue)
 	var turns []db.ListA2ATaskTurnsWithOutcomeRow
+	var latestTerminalTurn db.ListA2ATaskTurnsWithOutcomeRow
 	if next == a2a.TaskStateCompleted || next == a2a.TaskStateFailed {
-		turns, turnErr := qtx.ListA2ATaskTurnsWithOutcome(ctx, locked.ID)
+		loadedTurns, turnErr := qtx.ListA2ATaskTurnsWithOutcome(ctx, locked.ID)
 		if turnErr != nil {
 			return row, turnErr
 		}
-		if len(turns) == 0 {
-			return row, errors.New("terminal A2A task has no turns")
+		latestTerminalTurn, turnErr = lastA2ATaskTurn(loadedTurns)
+		if turnErr != nil {
+			return row, turnErr
 		}
+		turns = loadedTurns
 	}
 	if next == a2a.TaskStateCompleted {
-		latest := turns[len(turns)-1]
 		storedParts := []storedA2APart{{
 			Kind:      "text",
-			Text:      latest.AssistantResultText,
+			Text:      latestTerminalTurn.AssistantResultText,
 			MediaType: a2aTextMIMEType,
 		}}
 		parts, marshalErr := json.Marshal(storedParts)
