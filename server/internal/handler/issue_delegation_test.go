@@ -1138,12 +1138,13 @@ func TestCancelReleasedDelegationSourceCancelsBackgroundTaskAndReportsSource(t *
 		terminalTaskID != uuidToString(retryTask.ID) ||
 		storedCallbackURL != callbackURL ||
 		callbackAgentID != sourceAgentID ||
-		executionStatus != "failed" ||
+		executionStatus != "canceled" ||
 		failureReason != "cancelled" {
 		t.Fatalf(
-			"cancel completion root=%q terminal=%q callback=%q agent=%q status=%q reason=%q",
+			"cancel completion root=%q terminal=%q (want %q) callback=%q agent=%q status=%q reason=%q",
 			rootTaskID,
 			terminalTaskID,
+			uuidToString(retryTask.ID),
 			storedCallbackURL,
 			callbackAgentID,
 			executionStatus,

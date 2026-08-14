@@ -830,7 +830,7 @@ func TestReconcileTaskCompletionsRepairsCancelledTask(t *testing.T) {
 	`, taskID).Scan(&status, &reason, &errMessage); err != nil {
 		t.Fatal(err)
 	}
-	if status != "failed" || reason != "cancelled" || errMessage != "task cancelled" {
+	if status != "canceled" || reason != "cancelled" || errMessage != "task cancelled" {
 		t.Fatalf("completion = status:%s reason:%s error:%q", status, reason, errMessage)
 	}
 }
