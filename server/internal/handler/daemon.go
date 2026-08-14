@@ -2348,9 +2348,10 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				// sandbox itself stays warm: a runtime rollout, incompatible durable
 				// context, or a rejected provider resume can all force a new workdir or
 				// session. Carry the authoritative bounded Multica transcript on every
-				// cloud claim. The daemon emits it only when native resume is unavailable,
-				// so a healthy warm resume does not receive duplicate history.
-				if inputLoadErr == nil && resp.ChatChannelType == "" && service.IsCloudSandboxRuntime(runtime) && len(unanswered) > 0 {
+				// task-owned cloud chat claim, including channel-backed sessions. It is
+				// made authoritative below so cold and warm backends recover from the
+				// same persisted source instead of provider-local session state.
+				if inputLoadErr == nil && service.IsCloudSandboxRuntime(runtime) && len(unanswered) > 0 {
 					if msgs, err := h.Queries.ListChatMessages(r.Context(), cs.ID); err != nil {
 						inputLoadErr = err
 					} else {
@@ -2382,7 +2383,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				inputLoadErr = err
 			}
 			// The Multica transcript is the authoritative continuity source for a
-			// direct cloud chat. Do not also ask the sandbox daemon to resume a
+			// cloud chat. Do not also ask the sandbox daemon to resume a
 			// provider-local session: cloud Runtime images are released separately
 			// from the server, and older daemons turn a missing/incompatible session
 			// into an explicit "history is unrecoverable" notice even when this

@@ -27,8 +27,8 @@ func TestMakeChatHistoryAuthoritative(t *testing.T) {
 	}
 }
 
-// A task-owned direct-chat task (chat_input_task_id set — the shape every
-// web/mobile send has taken since MUL-4351) claimed by either cloud backend
+// A task-owned chat task (chat_input_task_id set — the shape every web/mobile
+// send and current channel enqueue uses) claimed by either cloud backend
 // carries the already-answered transcript on both cold and warm claims. The
 // server makes that transcript authoritative and withholds the provider-local
 // resume pointer, so separately-versioned cloud images cannot contradict the
@@ -39,20 +39,37 @@ func TestClaimTaskByRuntime_CloudSandboxCarriesTaskOwnedChatHistory(t *testing.T
 	}
 
 	tests := []struct {
-		name      string
-		metadata  string
-		coldStart bool
+		name        string
+		metadata    string
+		channelType string
+		coldStart   bool
 	}{
-		{name: "fc cold", metadata: `{"kind":"fc-e2b"}`, coldStart: true},
-		{name: "fc warm", metadata: `{"kind":"fc-e2b"}`, coldStart: false},
+		{name: "web fc cold", metadata: `{"kind":"fc-e2b"}`, coldStart: true},
+		{name: "web fc warm", metadata: `{"kind":"fc-e2b"}`, coldStart: false},
 		{
-			name: "asb cold",
+			name: "web asb cold",
 			metadata: `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode","artifact_kind":"oci_image",` +
 				`"artifact_ref":"hub.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
 			coldStart: true,
 		},
 		{
-			name: "asb warm",
+			name: "web asb warm",
+			metadata: `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode","artifact_kind":"oci_image",` +
+				`"artifact_ref":"hub.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+			coldStart: false,
+		},
+		{name: "dingtalk fc cold", metadata: `{"kind":"fc-e2b"}`, channelType: "dingtalk", coldStart: true},
+		{name: "dingtalk fc warm", metadata: `{"kind":"fc-e2b"}`, channelType: "dingtalk", coldStart: false},
+		{
+			name:        "dingtalk asb cold",
+			channelType: "dingtalk",
+			metadata: `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode","artifact_kind":"oci_image",` +
+				`"artifact_ref":"hub.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+			coldStart: true,
+		},
+		{
+			name:        "dingtalk asb warm",
+			channelType: "dingtalk",
 			metadata: `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode","artifact_kind":"oci_image",` +
 				`"artifact_ref":"hub.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
 			coldStart: false,
@@ -94,14 +111,17 @@ func TestClaimTaskByRuntime_CloudSandboxCarriesTaskOwnedChatHistory(t *testing.T
 				t.Fatalf("setup: create chat session: %v", err)
 			}
 			t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID) })
+			if tc.channelType != "" {
+				seedChannelBinding(t, ctx, agentID, sessionID, tc.channelType, "message-previous", "message-previous")
+			}
 
 			// An already-answered turn: the transcript the cold-started microVM must
 			// be told about.
 			if _, err := testPool.Exec(ctx, `
-		INSERT INTO chat_message (chat_session_id, role, content, created_at)
-		VALUES ($1, 'user', 'what is the capital of France?', now() - interval '2 minutes'),
-		       ($1, 'assistant', 'Paris.', now() - interval '1 minute')
-	`, sessionID); err != nil {
+		INSERT INTO chat_message (chat_session_id, role, content, created_at, channel_ingested)
+		VALUES ($1, 'user', 'what is the capital of France?', now() - interval '2 minutes', $2),
+		       ($1, 'assistant', 'Paris.', now() - interval '1 minute', FALSE)
+	`, sessionID, tc.channelType != ""); err != nil {
 				t.Fatalf("setup: seed answered turn: %v", err)
 			}
 
@@ -118,9 +138,9 @@ func TestClaimTaskByRuntime_CloudSandboxCarriesTaskOwnedChatHistory(t *testing.T
 			// The new turn's input batch is owned by the task itself — the task-owned
 			// shape that ListChatInputMessages reads.
 			if _, err := testPool.Exec(ctx, `
-		INSERT INTO chat_message (chat_session_id, role, content, task_id)
-		VALUES ($1, 'user', 'and its population?', $2)
-	`, sessionID, taskID); err != nil {
+		INSERT INTO chat_message (chat_session_id, role, content, task_id, channel_ingested)
+		VALUES ($1, 'user', 'and its population?', $2, $3)
+	`, sessionID, taskID, tc.channelType != ""); err != nil {
 				t.Fatalf("setup: seed input batch message: %v", err)
 			}
 			if _, err := testPool.Exec(ctx,
@@ -140,6 +160,7 @@ func TestClaimTaskByRuntime_CloudSandboxCarriesTaskOwnedChatHistory(t *testing.T
 			var resp struct {
 				Task *struct {
 					ID                            string `json:"id"`
+					ChatChannelType               string `json:"chat_channel_type"`
 					ChatHistory                   string `json:"chat_history"`
 					Prompt                        string `json:"prompt"`
 					PriorSessionID                string `json:"prior_session_id"`
@@ -154,6 +175,9 @@ func TestClaimTaskByRuntime_CloudSandboxCarriesTaskOwnedChatHistory(t *testing.T
 			}
 			if resp.Task.ID != taskID {
 				t.Fatalf("claimed task = %s, want %s", resp.Task.ID, taskID)
+			}
+			if resp.Task.ChatChannelType != tc.channelType {
+				t.Fatalf("chat_channel_type = %q, want %q", resp.Task.ChatChannelType, tc.channelType)
 			}
 			if resp.Task.ChatHistory == "" {
 				t.Fatal("expected the answered transcript to be carried by the cloud claim, got empty chat_history")

@@ -1285,26 +1285,39 @@ func TestBuildPromptColdStartAfterUnreusedWorkdirReadsIssueThread(t *testing.T) 
 }
 
 func TestBuildPromptFreshCloudChatRecoversDatabaseHistoryWithoutLossNotice(t *testing.T) {
-	task := Task{
-		ChatSessionID:  "chat-1",
-		ChatMessage:    "what did I ask before?",
-		ChatHistory:    "User:\nremember blue lantern\n\nAssistant:\nI will remember blue lantern.",
-		PriorSessionID: "session-from-old-sandbox",
-		PriorWorkDir:   "/workspaces/ws/old-task/workdir",
+	tests := []struct {
+		name        string
+		channelType string
+	}{
+		{name: "web"},
+		{name: "dingtalk", channelType: "dingtalk"},
 	}
-	taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
 
-	gateResumeToCompatibleWorkdir(&task, &taskCtx, "/workspaces/ws/new-task/workdir", true, slog.Default())
-	out := BuildPrompt(task, "opencode")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			task := Task{
+				ChatSessionID:   "chat-1",
+				ChatChannelType: tc.channelType,
+				ChatMessage:     "what did I ask before?",
+				ChatHistory:     "User:\nremember blue lantern\n\nAssistant:\nI will remember blue lantern.",
+				PriorSessionID:  "session-from-old-sandbox",
+				PriorWorkDir:    "/workspaces/ws/old-task/workdir",
+			}
+			taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
 
-	if !strings.Contains(out, "remember blue lantern") {
-		t.Fatalf("fresh cloud chat prompt missing database history:\n%s", out)
-	}
-	if strings.Contains(out, "Session Continuity Notice") {
-		t.Fatalf("recovered chat prompt must not claim history was lost:\n%s", out)
-	}
-	if task.PriorSessionResumeUnavailable || taskCtx.PriorSessionResumeUnavailable {
-		t.Fatalf("database history should satisfy continuity, task=%v context=%v", task.PriorSessionResumeUnavailable, taskCtx.PriorSessionResumeUnavailable)
+			gateResumeToCompatibleWorkdir(&task, &taskCtx, "/workspaces/ws/new-task/workdir", true, slog.Default())
+			out := BuildPrompt(task, "opencode")
+
+			if !strings.Contains(out, "remember blue lantern") {
+				t.Fatalf("fresh cloud chat prompt missing database history:\n%s", out)
+			}
+			if strings.Contains(out, "Session Continuity Notice") {
+				t.Fatalf("recovered chat prompt must not claim history was lost:\n%s", out)
+			}
+			if task.PriorSessionResumeUnavailable || taskCtx.PriorSessionResumeUnavailable {
+				t.Fatalf("database history should satisfy continuity, task=%v context=%v", task.PriorSessionResumeUnavailable, taskCtx.PriorSessionResumeUnavailable)
+			}
+		})
 	}
 }
 
