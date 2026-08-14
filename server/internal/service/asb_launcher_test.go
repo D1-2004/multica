@@ -24,6 +24,7 @@ import (
 type fakeASBTaskIdentityResolver struct {
 	identity ASBResolvedIdentity
 	err      error
+	released *atomic.Bool
 }
 
 func TestASBConfigCommandReadyTimeout(t *testing.T) {
@@ -77,7 +78,12 @@ func (resolver fakeASBTaskIdentityResolver) AcquireASBTaskIdentitySource(
 	if resolver.err != nil {
 		return nil, resolver.err
 	}
-	return func(context.Context) error { return nil }, nil
+	return func(context.Context) error {
+		if resolver.released != nil {
+			resolver.released.Store(true)
+		}
+		return nil
+	}, nil
 }
 
 func TestASBLaunchIdentityAllowsExplicitUnboundMode(t *testing.T) {
@@ -479,6 +485,114 @@ func TestInspectReusableASBSandboxRejectsUnavailableStates(t *testing.T) {
 	}
 }
 
+func TestResolveASBSandboxKeepsIdentitySourceUntilCallerReleases(t *testing.T) {
+	pool := newSandboxLockPool(t)
+	_, agentID, runtimeID := seedFCE2BSandboxRuntime(
+		t,
+		pool,
+		"Bound ASB Identity Source Lease",
+	)
+	queries := db.New(pool)
+	runtime, err := queries.GetAgentRuntime(context.Background(), runtimeID)
+	if err != nil {
+		t.Fatalf("load runtime: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/quotas":
+			_, _ = io.WriteString(response, `[{"networkZone":"ALITest","region":"cn-zhangjiakou","quota":5,"usage":1}]`)
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes":
+			response.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(response, `{"id":"bound-sandbox","status":{"state":"Pending"},"createdAt":"2026-08-04T08:00:00Z"}`)
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/bound-sandbox":
+			_, _ = io.WriteString(response, `{"id":"bound-sandbox","status":{"state":"Running"},"createdAt":"2026-08-04T08:00:00Z"}`)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	box, err := secretbox.New(bytes.Repeat([]byte{0x53}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedAPIKey, err := box.Seal([]byte(testASBAPIKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := db.AsbRuntimeCredential{
+		RuntimeID:       runtimeID,
+		ApiKeyEncrypted: encryptedAPIKey,
+		ApiKeyHint:      "-key",
+	}
+	credentials := &ASBRuntimeClientProvider{
+		Store: &fakeASBRuntimeCredentialStore{
+			credential:  credential,
+			credentials: []db.AsbRuntimeCredential{credential},
+		},
+		Secrets: box,
+		Config:  ASBConfig{APIURL: server.URL},
+	}
+	released := &atomic.Bool{}
+	identity := ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:              "aip-1",
+		SourceSandboxID:    "identity-source-1",
+		SourceRuntimeID:    runtimeID,
+		AgentIdentityToken: "ait",
+		Fingerprint:        strings.Repeat("a", 64),
+	}
+	launcher := &ASBLauncher{
+		Queries:     queries,
+		Config:      ASBConfig{TimeoutSeconds: 300, ReadyTimeout: time.Second, ResourceCPU: "2", ResourceMemory: "4Gi", WireGuardCredentials: "wireguard-credentials"},
+		Client:      newTestASBClient(t, server),
+		Credentials: credentials,
+		Identity: fakeASBTaskIdentityResolver{
+			identity: identity,
+			released: released,
+		},
+	}
+	conn, err := pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire runtime lock connection: %v", err)
+	}
+	defer conn.Release()
+	launcher.Queries = db.New(conn)
+	resolution, err := launcher.resolveSandbox(
+		context.Background(),
+		runtime,
+		CloudSandboxRuntimeMetadata{ArtifactRef: "registry.example/runtime@sha256:" + strings.Repeat("a", 64)},
+		fcE2BTaskScope{},
+		false,
+		agentID,
+		pgtype.UUID{},
+		identity,
+		conn,
+		chattrace.New("task"),
+	)
+	if err != nil {
+		t.Fatalf("resolve sandbox: %v", err)
+	}
+	if resolution.sandboxID != "bound-sandbox" || !resolution.coldStart || resolution.identity != identity {
+		t.Fatalf("resolution = %#v", resolution)
+	}
+	if resolution.releaseIdentitySource == nil {
+		t.Fatal("bound cold sandbox did not retain its identity source lease")
+	}
+	if released.Load() {
+		t.Fatal("identity source was released before enterprise identity readiness")
+	}
+	resolution.releaseIdentitySource("test_release_after_identity_ready")
+	if !released.Load() {
+		t.Fatal("identity source lease was not released by the caller")
+	}
+}
+
 func TestResolveASBSandboxReplacesUnavailableWarmSession(t *testing.T) {
 	pool := newSandboxLockPool(t)
 	workspaceID, userID, runtimeID := seedFCE2BSandboxRuntime(
@@ -583,7 +697,7 @@ func TestResolveASBSandboxReplacesUnavailableWarmSession(t *testing.T) {
 				t.Fatalf("acquire runtime lock connection: %v", err)
 			}
 			launcher.Queries = db.New(conn)
-			sandboxID, coldStart, _, err := launcher.resolveSandbox(
+			resolution, err := launcher.resolveSandbox(
 				context.Background(),
 				runtime,
 				metadata,
@@ -600,8 +714,8 @@ func TestResolveASBSandboxReplacesUnavailableWarmSession(t *testing.T) {
 				t.Fatalf("resolve sandbox: %v", err)
 			}
 			wantSandboxID := "replacement-" + strconv.Itoa(index+1)
-			if sandboxID != wantSandboxID || !coldStart {
-				t.Fatalf("resolved sandbox = (%q, cold=%v), want (%q, true)", sandboxID, coldStart, wantSandboxID)
+			if resolution.sandboxID != wantSandboxID || !resolution.coldStart {
+				t.Fatalf("resolved sandbox = (%q, cold=%v), want (%q, true)", resolution.sandboxID, resolution.coldStart, wantSandboxID)
 			}
 
 			session, err := baseQueries.GetActiveCloudSandboxSession(
