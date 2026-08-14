@@ -213,10 +213,10 @@ func TestASBLaunchWithoutIdentityServiceUsesUnboundMode(t *testing.T) {
 	}
 }
 
-func TestASBA2ATaskNeverResolvesEmployeeIdentity(t *testing.T) {
+func TestASBA2ATaskResolvesAgentEnterpriseIdentity(t *testing.T) {
 	t.Parallel()
 
-	launcher := &ASBLauncher{Identity: fakeASBTaskIdentityResolver{identity: ASBResolvedIdentity{
+	want := ASBResolvedIdentity{
 		Mode:               asbIdentityModeBound,
 		RawEmployeeID:      "12345",
 		BUCAgentID:         "agent-multica-asb",
@@ -226,17 +226,24 @@ func TestASBA2ATaskNeverResolvesEmployeeIdentity(t *testing.T) {
 		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		AgentIdentityToken: "ait",
 		Fingerprint:        strings.Repeat("a", 64),
-	}}}
+	}
+	agentID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	runtimeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	launcher := &ASBLauncher{Identity: fakeASBTaskIdentityResolver{identity: want}}
 	identity, err := launcher.resolveTaskIdentityForTask(
 		context.Background(),
-		db.AgentTaskQueue{Context: newA2ATaskContext()},
+		db.AgentTaskQueue{
+			AgentID:   agentID,
+			RuntimeID: runtimeID,
+			Context:   newA2ATaskContext(),
+		},
 		pgtype.UUID{},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity != unboundASBResolvedIdentity() {
-		t.Fatalf("A2A identity = %#v, want unbound", identity)
+	if identity != want {
+		t.Fatalf("A2A identity = %#v, want %#v", identity, want)
 	}
 }
 

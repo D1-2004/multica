@@ -705,11 +705,10 @@ func (l *ASBLauncher) resolveTaskIdentityForTask(
 	task db.AgentTaskQueue,
 	workspaceID pgtype.UUID,
 ) (ASBResolvedIdentity, error) {
-	if IsA2ATaskOrigin(task.Context) {
-		// A remote A2A caller never receives the Agent/owner employee identity,
-		// BUC session, a1/mw access, or identity-derived sandbox extensions.
-		return unboundASBResolvedIdentity(), nil
-	}
+	// Enterprise identity is bound to the Multica Agent, not to the inbound
+	// transport principal. ASB therefore resolves the same Agent binding for
+	// web Chat and A2A tasks. Request-scoped A2A credentials remain isolated in
+	// extraEnvForTask and do not replace the Agent's ASB identity attachment.
 	return l.resolveTaskIdentity(ctx, workspaceID, task.AgentID, task.RuntimeID)
 }
 
@@ -925,9 +924,8 @@ func (l *ASBLauncher) resolveSandbox(
 				)
 				break
 			}
-			// A warm task sandbox is reusable independently of optional employee
-			// identity state. Any SPIFFE reattachment is scheduled only after the
-			// runner command has been submitted.
+			// The fingerprint match keeps warm sandbox reuse scoped to the selected
+			// enterprise identity. Readiness is proved again before runner start.
 			return session.SandboxID, false, identity, nil
 		}
 		if err := l.deleteSupersededASBSandboxForScope(

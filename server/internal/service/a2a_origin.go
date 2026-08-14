@@ -75,10 +75,12 @@ func hasA2ATaskOrigin(taskContext []byte) bool {
 	return json.Unmarshal(encoded, &origin) == nil && origin == a2aTaskOriginValue
 }
 
-// IsA2ATaskOrigin is the cross-runtime security gate for execution identity
-// and personal integration injection. Callers must use the durable task
-// context supplied by CreateA2AChatTask, never request headers or in-memory
-// state.
+// IsA2ATaskOrigin is the durable cross-runtime marker for A2A-specific
+// execution and credential isolation. Callers must use the task context
+// supplied by CreateA2AChatTask, never request headers or in-memory state.
+// Runtime-specific identity policy is applied separately: FC accepts only the
+// task-scoped external identity, while ASB may attach the Multica Agent's
+// enterprise identity.
 func IsA2ATaskOrigin(taskContext []byte) bool {
 	return hasA2ATaskOrigin(taskContext)
 }
