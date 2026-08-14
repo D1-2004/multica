@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -99,13 +100,50 @@ func TestParseCloudSandboxRuntimeProjectsStableM2TemplateMetadata(t *testing.T) 
 		"template alias only":       `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"opencode","template":"mutable-alias"}`,
 		"partial new artifact":      `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"opencode","artifact_kind":"e2b_template","template_id":"template-m2-id"}`,
 		"ASB legacy template":       `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode","template_id":"template-m2-id"}`,
-		"other provider template":   `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"hermes","template_id":"template-m2-id"}`,
+		"unsupported provider":      `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"codex","template_id":"template-m2-id"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			candidate := runtime
 			candidate.Metadata = json.RawMessage(raw)
 			if _, err := ParseCloudSandboxRuntime(candidate); !errors.Is(err, ErrCloudSandboxMetadata) {
 				t.Fatalf("invalid stable metadata error = %v", err)
+			}
+		})
+	}
+}
+
+func TestParseCloudSandboxRuntimeProjectsLegacyTemplateForEverySupportedFCProvider(t *testing.T) {
+	t.Parallel()
+
+	for _, provider := range FCE2BSupportedProviders {
+		provider := provider
+		t.Run(provider, func(t *testing.T) {
+			t.Parallel()
+			runtime := db.AgentRuntime{
+				RuntimeMode: "cloud",
+				Provider:    provider,
+				Metadata: json.RawMessage(fmt.Sprintf(`{
+					"kind": "cloud-sandbox",
+					"sandbox_backend": "aliyun_fc",
+					"provider": %q,
+					"template": "multica-template",
+					"template_id": "template-id",
+					"template_build_id": "build-id",
+					"template_channel": "candidate"
+				}`, provider)),
+			}
+
+			metadata, err := ParseCloudSandboxRuntime(runtime)
+			if err != nil {
+				t.Fatalf("ParseCloudSandboxRuntime(%s): %v", provider, err)
+			}
+			if metadata.SandboxBackend != SandboxBackendAliyunFC ||
+				metadata.Provider != provider ||
+				metadata.ArtifactKind != CloudSandboxArtifactE2BTemplate ||
+				metadata.ArtifactRef != "template-id" ||
+				metadata.ArtifactBuildID != "build-id" ||
+				metadata.ArtifactChannel != CloudSandboxChannelCandidate {
+				t.Fatalf("legacy %s metadata = %#v", provider, metadata)
 			}
 		})
 	}

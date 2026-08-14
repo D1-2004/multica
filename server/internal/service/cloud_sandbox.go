@@ -122,12 +122,13 @@ func ParseCloudSandboxRuntime(rt db.AgentRuntime) (CloudSandboxRuntimeMetadata, 
 		artifactBuildID := strings.TrimSpace(wire.ArtifactBuildID)
 		artifactAlias := strings.TrimSpace(wire.ArtifactAlias)
 		artifactChannel := wire.ArtifactChannel
-		if backend == SandboxBackendAliyunFC && provider == "opencode" &&
+		if backend == SandboxBackendAliyunFC && IsFCE2BSupportedProvider(provider) &&
 			artifactKind == "" && artifactRef == "" && strings.TrimSpace(wire.TemplateID) != "" {
-			// Stable m2 rows were migrated to kind=cloud-sandbox before the
+			// Some FC rows were migrated to kind=cloud-sandbox before the
 			// artifact_* vocabulary existed. They still carry the immutable FC
-			// template identity under template_id/template. Normalize only that
-			// exact all-legacy shape; mixed partial metadata stays invalid.
+			// template identity under template_id/template. Normalize that exact
+			// all-legacy shape for every supported FC provider; mixed partial
+			// metadata stays invalid.
 			artifactKind = CloudSandboxArtifactE2BTemplate
 			artifactRef = strings.TrimSpace(wire.TemplateID)
 			artifactBuildID = strings.TrimSpace(wire.TemplateBuildID)
