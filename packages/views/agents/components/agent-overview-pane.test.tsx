@@ -250,7 +250,7 @@ describe("AgentOverviewPane MCP tab visibility", () => {
       renderPane([makeRuntime(provider)]);
       openCapabilities();
       expect(
-        screen.getByRole("tab", { name: /^MCP tools$/i }),
+        screen.getByRole("tab", { name: /^MCP$/i }),
       ).toBeInTheDocument();
     },
   );
@@ -261,7 +261,7 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     renderPane([makeRuntime("gemini")]);
     openCapabilities();
     expect(
-      screen.queryByRole("tab", { name: /^MCP tools$/i }),
+      screen.queryByRole("tab", { name: /^MCP$/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -269,14 +269,14 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     const { unmount } = renderPane([makeRuntime("pi", ["pi", "mcp"])]);
     openCapabilities();
     expect(
-      screen.getByRole("tab", { name: /^MCP tools$/i }),
+      screen.getByRole("tab", { name: /^MCP$/i }),
     ).toBeInTheDocument();
     unmount();
 
     renderPane([makeRuntime("pi", ["pi", "dws"])]);
     openCapabilities();
     expect(
-      screen.queryByRole("tab", { name: /^MCP tools$/i }),
+      screen.queryByRole("tab", { name: /^MCP$/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -286,7 +286,7 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     // then back on, which reads as a bug.
     renderPane([]);
     openCapabilities();
-    expect(screen.getByRole("tab", { name: /^MCP tools$/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
   });
 });
 
@@ -358,7 +358,8 @@ describe("AgentOverviewPane Identity tab", () => {
       "Settings",
       "Instructions",
       "Skills",
-      "MCP tools",
+      "MCP",
+      "Local Runner",
       "Integrations",
       "Identity",
     ]);
@@ -368,7 +369,9 @@ describe("AgentOverviewPane Identity tab", () => {
   });
 
   it("shows Identity for an ASB runtime even when DingTalk account binding is not configured", () => {
-    renderPane([makeASBRuntime()], { runtime_mode: "cloud" });
+    renderPane([makeASBRuntime()], {
+      agentOverrides: { runtime_mode: "cloud" },
+    });
     openCapabilities();
 
     expect(screen.getByRole("tab", { name: /^Identity$/i })).toBeInTheDocument();

@@ -2095,6 +2095,7 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 		PreviousArtifactBuildID: strings.TrimSpace(stringMetadataValue(metadata, "artifact_build_id")),
 		PreviousArtifactDigest:  strings.TrimSpace(stringMetadataValue(metadata, "artifact_digest")),
 	}
+	activateCandidate := needsCandidateASBArtifactActivation(runtime, metadata, managedMetadata)
 	managedChanged := false
 	for key, value := range managedMetadata {
 		if fmt.Sprint(metadata[key]) != fmt.Sprint(value) {
@@ -2105,7 +2106,8 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 	if result.PreviousArtifactRef == artifact.Ref &&
 		result.PreviousArtifactBuildID == artifact.BuildID &&
 		result.PreviousArtifactDigest == artifact.Digest &&
-		!managedChanged {
+		!managedChanged &&
+		!activateCandidate {
 		if err := tx.Commit(ctx); err != nil {
 			return ASBRuntimeArtifactUpdateResult{}, fmt.Errorf("commit idempotent ASB artifact update: %w", err)
 		}
@@ -2138,6 +2140,12 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 	if err != nil {
 		return ASBRuntimeArtifactUpdateResult{}, fmt.Errorf("update ASB runtime metadata: %w", err)
 	}
+	if activateCandidate {
+		updated, err = qtx.MarkAgentRuntimeOnline(ctx, runtimeID)
+		if err != nil {
+			return ASBRuntimeArtifactUpdateResult{}, fmt.Errorf("activate validated ASB candidate runtime: %w", err)
+		}
+	}
 	invalidated, err := qtx.MarkCloudSandboxSessionsStaleByRuntimeAndBackend(
 		ctx,
 		db.MarkCloudSandboxSessionsStaleByRuntimeAndBackendParams{
@@ -2157,6 +2165,22 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 	return result, nil
 }
 
+func needsCandidateASBArtifactActivation(
+	runtime db.AgentRuntime,
+	metadata map[string]any,
+	managedMetadata map[string]any,
+) bool {
+	if strings.ToLower(strings.TrimSpace(stringMetadataValue(
+		managedMetadata,
+		"artifact_channel",
+	))) != CloudSandboxChannelCandidate {
+		return false
+	}
+	return runtime.Status != "online" ||
+		strings.ToUpper(strings.TrimSpace(stringMetadataValue(metadata, "artifact_status"))) != "READY" ||
+		intMetadataValue(metadata, "manifest_version") <= 0
+}
+
 func validateASBArtifact(artifact ASBArtifact) error {
 	artifact.Ref = strings.TrimSpace(artifact.Ref)
 	artifact.BuildID = strings.TrimSpace(artifact.BuildID)
@@ -2172,7 +2196,7 @@ func validateASBArtifact(artifact ASBArtifact) error {
 
 func validateASBRuntimeManifest(manifest map[string]any) error {
 	schemaVersion := intMetadataValue(manifest, "schema_version")
-	if (schemaVersion != 3 && schemaVersion != 4 && schemaVersion != 5 && schemaVersion != 6) ||
+	if (schemaVersion < 3 || schemaVersion > 7) ||
 		!containsAllStrings(stringSliceMetadataValue(manifest, "sandbox_backends"), "asb") ||
 		!containsAllStrings(stringSliceMetadataValue(manifest, "providers"), "hermes", "opencode", "pi") ||
 		!containsAllStrings(
@@ -2186,25 +2210,33 @@ func validateASBRuntimeManifest(manifest map[string]any) error {
 		stringMetadataValue(manifest, "runner_protocol") != string(fcE2BRunnerLaunchRootLog) {
 		return errors.New("ASB runtime manifest does not satisfy the enterprise sandbox contract")
 	}
+	if schemaVersion == 7 &&
+		(!containsAllStrings(stringSliceMetadataValue(manifest, "providers"), "dsh", "opencode-v2") ||
+			!containsAllStrings(
+				manifestStringSliceForBackend(manifest, "capabilities_by_backend", "asb"),
+				DSHTrajectoryCapability,
+			)) {
+		return errors.New("ASB schema v7 runtime manifest does not satisfy the five-runner contract")
+	}
 	return nil
 }
 
-// Existing schema-v3 through schema-v5 ASB images remain valid runtime bindings
-// during a rolling backend deployment. A newly promoted A2A v2 release must use
-// schema v6 and advertise every capability required by the current server and
-// daemon.
+// Existing schema-v3 through schema-v6 ASB images remain valid runtime bindings
+// during a rolling backend deployment. A newly promoted five-runner release
+// must use schema v7 and advertise every current enterprise capability.
 func validateASBReleaseManifest(manifest map[string]any) error {
 	if err := validateASBRuntimeManifest(manifest); err != nil {
 		return err
 	}
-	if intMetadataValue(manifest, "schema_version") != 6 {
-		return errors.New("ASB A2A v2 release manifest must use schema version 6")
+	if intMetadataValue(manifest, "schema_version") != 7 {
+		return errors.New("ASB five-runner release manifest must use schema version 7")
 	}
 	if !containsAllStrings(
 		manifestStringSliceForBackend(manifest, "capabilities_by_backend", string(SandboxBackendASB)),
 		RuntimeStartCapabilityEventsV1,
 		LLMTraceCapability,
 		A2AInvocationV2Capability,
+		DSHTrajectoryCapability,
 	) {
 		return errors.New("ASB release manifest does not advertise current runtime capabilities")
 	}

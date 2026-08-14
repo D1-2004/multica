@@ -42,6 +42,8 @@ export function runtimeDisplayLabel(
  */
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   qoderclicn: "Qoder CN",
+  dsh: "DeepSeek Harness",
+  "opencode-v2": "OpenCode 2.0 Preview",
   traecli: "Trae",
   qwen: "Qwen Code",
   qwenpaw: "QwenPaw",

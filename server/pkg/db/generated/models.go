@@ -409,6 +409,24 @@ type AgentSourceSkill struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
+// Private, task-scoped index for a DSH native session trajectory stored in object storage.
+type AgentTaskDshTrajectory struct {
+	TaskID    pgtype.UUID `json:"task_id"`
+	SessionID string      `json:"session_id"`
+	// Internal ciphertext object key only. User APIs decrypt and stream it after task and private-agent authorization and never expose this key or a bucket URL.
+	StorageKey       string `json:"storage_key"`
+	EncryptionScheme string `json:"encryption_scheme"`
+	// Per-object AES-256 data key. Object storage receives only nonce-prefixed authenticated ciphertext, because attachment buckets and local /uploads routes may be public.
+	EncryptionKey   []byte             `json:"encryption_key"`
+	Sha256          string             `json:"sha256"`
+	SizeBytes       int64              `json:"size_bytes"`
+	StoredSizeBytes int64              `json:"stored_size_bytes"`
+	EventCount      int32              `json:"event_count"`
+	FormatVersion   int32              `json:"format_version"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentTaskQueue struct {
 	ID                    pgtype.UUID        `json:"id"`
 	AgentID               pgtype.UUID        `json:"agent_id"`

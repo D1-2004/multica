@@ -2365,7 +2365,7 @@ func stableRuntimeProvider(provider string) string {
 		return "hermes"
 	}
 	switch provider {
-	case "hermes", "opencode", "pi":
+	case "hermes", "opencode", "pi", "dsh", "opencode-v2":
 		return provider
 	default:
 		return ""
@@ -2386,7 +2386,7 @@ func stableRuntimeMetadataForBackend(
 }
 
 func assignStableBatches(releaseID string, targets []stableRuntimeTarget) {
-	byProviderWorkspace := make(map[string]map[string][]stableRuntimeTarget, 3)
+	byProviderWorkspace := make(map[string]map[string][]stableRuntimeTarget, len(FCE2BSupportedProviders))
 	for _, target := range targets {
 		workspaceID := util.UUIDToString(target.WorkspaceID)
 		if byProviderWorkspace[target.Provider] == nil {
@@ -2397,8 +2397,8 @@ func assignStableBatches(releaseID string, targets []stableRuntimeTarget) {
 			target,
 		)
 	}
-	byProvider := make(map[string][]stableRuntimeTarget, 3)
-	for _, provider := range []string{"hermes", "opencode", "pi"} {
+	byProvider := make(map[string][]stableRuntimeTarget, len(FCE2BSupportedProviders))
+	for _, provider := range FCE2BSupportedProviders {
 		workspaces := byProviderWorkspace[provider]
 		workspaceIDs := make([]string, 0, len(workspaces))
 		for workspaceID := range workspaces {
@@ -2430,7 +2430,7 @@ func assignStableBatches(releaseID string, targets []stableRuntimeTarget) {
 	}
 	ordered := make([]stableRuntimeTarget, 0, len(targets))
 	for index := 0; len(ordered) < len(targets); index++ {
-		for _, provider := range []string{"hermes", "opencode", "pi"} {
+		for _, provider := range FCE2BSupportedProviders {
 			if index < len(byProvider[provider]) {
 				ordered = append(ordered, byProvider[provider][index])
 			}
@@ -2831,7 +2831,7 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 	if err := sessionRows.Err(); err != nil {
 		return err
 	}
-	for _, provider := range []string{"hermes", "opencode", "pi"} {
+	for _, provider := range FCE2BSupportedProviders {
 		health, present := candidate[provider]
 		if !present {
 			continue
@@ -3472,7 +3472,9 @@ func stableReleaseCapabilitiesForProvider(provider string, capabilities []string
 		case A2AInboundHermesCapability:
 			owner = "hermes"
 		case A2AInboundOpenCodeCapability:
-			owner = "opencode"
+			if !usesOpenCodeA2AInboundAdapter(provider) {
+				continue
+			}
 		case A2AInboundPiCapability:
 			owner = "pi"
 		case "dsh_trajectory_v1":

@@ -38,6 +38,76 @@ func TestASBConfigCommandReadyTimeout(t *testing.T) {
 	}
 }
 
+func TestNeedsCandidateASBArtifactActivation(t *testing.T) {
+	readyMetadata := map[string]any{
+		"artifact_status":  "READY",
+		"manifest_version": float64(7),
+	}
+	pendingMetadata := map[string]any{
+		"artifact_status":  "PENDING_STABLE_VALIDATION",
+		"manifest_version": float64(0),
+	}
+	candidateMetadata := map[string]any{"artifact_channel": CloudSandboxChannelCandidate}
+	stableMetadata := map[string]any{"artifact_channel": CloudSandboxChannelStable}
+
+	tests := []struct {
+		name     string
+		status   string
+		metadata map[string]any
+		managed  map[string]any
+		want     bool
+	}{
+		{
+			name:     "offline bootstrap",
+			status:   "offline",
+			metadata: pendingMetadata,
+			managed:  candidateMetadata,
+			want:     true,
+		},
+		{
+			name:     "online bootstrap with pending manifest",
+			status:   "online",
+			metadata: pendingMetadata,
+			managed:  candidateMetadata,
+			want:     true,
+		},
+		{
+			name:     "offline candidate with verified manifest",
+			status:   "offline",
+			metadata: readyMetadata,
+			managed:  candidateMetadata,
+			want:     true,
+		},
+		{
+			name:     "online verified candidate",
+			status:   "online",
+			metadata: readyMetadata,
+			managed:  candidateMetadata,
+			want:     false,
+		},
+		{
+			name:     "stable release update never activates",
+			status:   "offline",
+			metadata: pendingMetadata,
+			managed:  stableMetadata,
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := needsCandidateASBArtifactActivation(
+				db.AgentRuntime{Status: tt.status},
+				tt.metadata,
+				tt.managed,
+			)
+			if got != tt.want {
+				t.Fatalf("activation = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 type fakeASBSandboxCapacity struct {
 	t              *testing.T
 	wantRuntimeID  pgtype.UUID
@@ -644,10 +714,14 @@ func TestValidateASBManifestVersionContract(t *testing.T) {
 	t.Parallel()
 
 	manifest := func(version int, capabilities ...string) map[string]any {
+		providers := []string{"hermes", "opencode", "pi"}
+		if version == 7 {
+			providers = append(providers, "dsh", "opencode-v2")
+		}
 		return map[string]any{
 			"schema_version":   version,
 			"sandbox_backends": []string{"aliyun_fc", "asb"},
-			"providers":        []string{"hermes", "opencode", "pi"},
+			"providers":        providers,
 			"capabilities_by_backend": map[string][]string{
 				"asb": append([]string{"dws", "mcp", "a1", "mw", "buc"}, capabilities...),
 			},
@@ -680,18 +754,30 @@ func TestValidateASBManifestVersionContract(t *testing.T) {
 			wantReleaseErr: true,
 		},
 		{
-			name:     "current schema v6 release",
-			manifest: manifest(6, RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability),
-		},
-		{
-			name:           "schema v6 release missing trace capability",
-			manifest:       manifest(6, RuntimeStartCapabilityEventsV1, A2AInvocationV2Capability),
+			name:           "existing schema v6 runtime",
+			manifest:       manifest(6, RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability),
 			wantReleaseErr: true,
 		},
 		{
-			name:           "schema v6 release missing A2A invocation capability",
-			manifest:       manifest(6, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+			name:           "schema v7 release missing trace capability",
+			manifest:       manifest(7, RuntimeStartCapabilityEventsV1, A2AInvocationV2Capability, DSHTrajectoryCapability),
+			wantRuntimeErr: false,
 			wantReleaseErr: true,
+		},
+		{
+			name:           "schema v7 release missing A2A invocation capability",
+			manifest:       manifest(7, RuntimeStartCapabilityEventsV1, LLMTraceCapability, DSHTrajectoryCapability),
+			wantReleaseErr: true,
+		},
+		{
+			name:           "schema v7 release missing DSH trajectory capability",
+			manifest:       manifest(7, RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability),
+			wantRuntimeErr: true,
+			wantReleaseErr: true,
+		},
+		{
+			name:     "current schema v7 release",
+			manifest: manifest(7, RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability, DSHTrajectoryCapability),
 		},
 		{
 			name:           "unsupported schema v2",
@@ -700,8 +786,8 @@ func TestValidateASBManifestVersionContract(t *testing.T) {
 			wantReleaseErr: true,
 		},
 		{
-			name:           "unsupported schema v7",
-			manifest:       manifest(7, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+			name:           "unsupported schema v8",
+			manifest:       manifest(8, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
 			wantRuntimeErr: true,
 			wantReleaseErr: true,
 		},
@@ -724,11 +810,11 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	const runtimeAPIKey = "runtime-owned-validation-key"
 	digest := "sha256:" + strings.Repeat("a", 64)
 	manifest := map[string]any{
-		"schema_version":   6,
+		"schema_version":   7,
 		"sandbox_backends": []string{"aliyun_fc", "asb"},
-		"providers":        []string{"hermes", "opencode", "pi"},
+		"providers":        []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"},
 		"capabilities_by_backend": map[string][]string{
-			"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability},
+			"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability, DSHTrajectoryCapability},
 		},
 		"identity_modes_by_backend": map[string][]string{
 			"asb": {"agent_identity", "spiffe", "buc_wireguard"},
@@ -842,7 +928,7 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	if capacity.createRequests != 1 {
 		t.Fatalf("capacity create requests = %d, want 1", capacity.createRequests)
 	}
-	if intMetadataValue(got, "schema_version") != 6 {
+	if intMetadataValue(got, "schema_version") != 7 {
 		t.Fatalf("manifest = %#v", got)
 	}
 }

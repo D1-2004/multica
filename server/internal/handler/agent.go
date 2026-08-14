@@ -445,6 +445,10 @@ type AgentTaskResponse struct {
 	// model call, genuinely has no number, and showing 0 would assert it was
 	// free. omitempty keeps both off the wire.
 	Usage []TaskUsageData `json:"usage,omitempty"`
+	// DSHTrajectoryAvailable is user-facing additive metadata. The object key
+	// and native session id stay server-private; the dedicated GET endpoint
+	// re-applies task and private-agent authorization before streaming bytes.
+	DSHTrajectoryAvailable bool `json:"dsh_trajectory_available,omitempty"`
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -2338,7 +2342,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		resp[i] = taskToResponse(t, workspaceID)
 	}
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
-
+	h.hydrateDSHTrajectoryAvailability(r.Context(), resp)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -2614,6 +2618,7 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 		resp = append(resp, taskToResponse(t, workspaceID))
 	}
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
+	h.hydrateDSHTrajectoryAvailability(r.Context(), resp)
 
 	writeJSON(w, http.StatusOK, resp)
 }

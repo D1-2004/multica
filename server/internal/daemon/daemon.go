@@ -5223,11 +5223,13 @@ func gcMetaForTask(task Task) (execenv.GCMeta, bool) {
 // this map at init so their display names stay in lockstep with the
 // descriptor.
 var runtimeDisplayNameOverrides = map[string]string{
-	"traecli":    "Trae",
-	"grok":       "Grok",
-	"qoderclicn": "Qoder CN",
-	"qwen":       "Qwen Code",
-	"qwenpaw":    "QwenPaw",
+	"dsh":         "DeepSeek Harness",
+	"opencode-v2": "OpenCode 2.0 Preview",
+	"traecli":     "Trae",
+	"grok":        "Grok",
+	"qoderclicn":  "Qoder CN",
+	"qwen":        "Qwen Code",
+	"qwenpaw":     "QwenPaw",
 }
 
 func init() {

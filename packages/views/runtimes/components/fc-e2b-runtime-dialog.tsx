@@ -42,6 +42,8 @@ const PROVIDER_LABELS: Record<FCE2BRuntimeProvider, string> = {
   hermes: "Hermes",
   opencode: "OpenCode",
   pi: "Pi",
+  dsh: "DeepSeek Harness",
+  "opencode-v2": "OpenCode 2.0 Preview",
 };
 
 const ASB_API_KEY_DOCS_URL =

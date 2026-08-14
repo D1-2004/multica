@@ -40,6 +40,7 @@ import type {
   AgentEnvResponse,
   UpdateAgentEnvRequest,
   AgentTask,
+  DSHTrajectoryArtifact,
   AgentActivityBucket,
   AgentRunCount,
   WorkspaceWorkingAgent,
@@ -2669,6 +2670,28 @@ export class ApiClient {
 
   async listTaskMessages(taskId: string): Promise<TaskMessagePayload[]> {
     return this.fetch(`/api/tasks/${taskId}/messages`);
+  }
+
+  async getDSHTrajectory(taskId: string): Promise<DSHTrajectoryArtifact> {
+    const res = await this.fetchRaw(`/api/tasks/${taskId}/dsh-trajectory`);
+    const sessionId = res.headers.get("X-DSH-Session-ID");
+    const sha256 = res.headers.get("X-Content-SHA256");
+    const rawEventCount = res.headers.get("X-DSH-Event-Count");
+    const eventCount = rawEventCount === null ? Number.NaN : Number(rawEventCount);
+    if (
+      !sessionId ||
+      !sha256?.match(/^[0-9a-f]{64}$/) ||
+      !Number.isSafeInteger(eventCount) ||
+      eventCount < 0
+    ) {
+      throw new Error("Invalid DSH trajectory metadata");
+    }
+    return {
+      session_id: sessionId,
+      sha256,
+      event_count: eventCount,
+      jsonl: await res.text(),
+    };
   }
 
   async listTasksByIssue(issueId: string): Promise<AgentTask[]> {

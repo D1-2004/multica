@@ -126,6 +126,57 @@ func TestStableBatchCutoffs(t *testing.T) {
 	}
 }
 
+func TestReleaseTemplateUsesPublishedFiveRunnerManifest(t *testing.T) {
+	release := FCE2BStableRelease{
+		TemplateID:      "template-five-runner",
+		TemplateBuildID: "build-five-runner",
+		TemplateAlias:   "multica-m7-v3904c2e827d58ad7-r1-abcdef",
+		SourceRevision:  "abcdef",
+		Manifest: map[string]any{
+			"schema_version": 7,
+			"providers": []string{
+				"hermes", "opencode", "pi", "dsh", "opencode-v2",
+			},
+			"capabilities_by_backend": map[string][]string{
+				string(SandboxBackendAliyunFC): {
+					"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1,
+					LLMTraceCapability, A2AInboundOpenCodeCapability,
+					A2AInvocationV2Capability, DSHTrajectoryCapability,
+				},
+			},
+			"component_versions": map[string]any{
+				"hermes":      "0.19.0",
+				"opencode":    "v1.18.11",
+				"pi":          "0.83.0",
+				"dsh":         "0.1.0-rc.6",
+				"opencode-v2": "0.0.0-beta-202608110357",
+			},
+			"runner_protocol": string(fcE2BRunnerLaunchRootLog),
+		},
+	}
+
+	template := releaseTemplate(release)
+	if template.ManifestVersion != 7 || template.SourceRevision != release.SourceRevision {
+		t.Fatalf("release template identity = %#v", template)
+	}
+	if !reflect.DeepEqual(template.Providers, FCE2BSupportedProviders) {
+		t.Fatalf("release providers = %#v, want %#v", template.Providers, FCE2BSupportedProviders)
+	}
+	if !reflect.DeepEqual(
+		template.Capabilities,
+		release.Manifest["capabilities_by_backend"].(map[string][]string)[string(SandboxBackendAliyunFC)],
+	) {
+		t.Fatalf("release capabilities = %#v", template.Capabilities)
+	}
+	if template.ComponentVersions["dsh"] != "0.1.0-rc.6" ||
+		template.ComponentVersions["opencode-v2"] != "0.0.0-beta-202608110357" {
+		t.Fatalf("release component versions = %#v", template.ComponentVersions)
+	}
+	if template.RunnerProtocol != string(fcE2BRunnerLaunchRootLog) {
+		t.Fatalf("release runner protocol = %q", template.RunnerProtocol)
+	}
+}
+
 func TestStableRolloutCoverageUsesCumulativeUpdatedTargets(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -849,8 +900,8 @@ func TestStableReleaseCapabilitiesForProvider(t *testing.T) {
 		{"hermes", []string{"dws", A2AInboundHermesCapability}},
 		{"opencode", []string{"dws", A2AInboundOpenCodeCapability}},
 		{"pi", []string{"dws", A2AInboundPiCapability}},
-		{"dsh", []string{"dws", "dsh_trajectory_v1"}},
-		{"opencode-v2", []string{"dws"}},
+		{"dsh", []string{"dws", A2AInboundOpenCodeCapability, "dsh_trajectory_v1"}},
+		{"opencode-v2", []string{"dws", A2AInboundOpenCodeCapability}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.provider, func(t *testing.T) {

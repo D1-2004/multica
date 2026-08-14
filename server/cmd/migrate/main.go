@@ -201,6 +201,8 @@ var migrationVersionAliases = []migrationVersionAlias{
 	{Legacy: "263_asb_shared_identity_source", Current: "9039_asb_shared_identity_source"},
 	{Legacy: "270_pinned_item_view", Current: "9062_pinned_item_view"},
 	{Legacy: "271_channel_chat_pending_fresh", Current: "9063_channel_chat_pending_fresh"},
+	{Legacy: "9062_agent_task_dsh_trajectory", Current: "9064_agent_task_dsh_trajectory"},
+	{Legacy: "9063_fc_e2b_stable_release_target_five_providers", Current: "9065_fc_e2b_stable_release_target_five_providers"},
 }
 
 func runTaskUsageHourlyHook(ctx context.Context, pool *pgxpool.Pool) error {

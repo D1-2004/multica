@@ -17,6 +17,7 @@ export type {
   TaskAttribution,
   AttributionUser,
   TaskEvidence,
+  DSHTrajectoryArtifact,
   AgentActivityBucket,
   AgentRunCount,
   WorkspaceWorkingAgent,

@@ -2190,8 +2190,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Task messages (user-facing, not daemon auth)
+			// User-readable task artifacts plus the task-token-only DSH upload.
+			// Each handler re-applies its own transcript/trajectory authorization.
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			r.Put("/api/tasks/{taskId}/dsh-trajectory", h.UploadDSHTrajectory)
+			r.Get("/api/tasks/{taskId}/dsh-trajectory", h.GetDSHTrajectory)
 
 			// DTA deployment load verification. These endpoints expose only
 			// server-stamped smoke Issues, never generic Issue or Chat CRUD.
