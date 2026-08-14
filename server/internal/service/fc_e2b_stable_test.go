@@ -780,6 +780,31 @@ func TestRuntimeUsesStableReleaseRequiresVerifiedManifestMetadata(t *testing.T) 
 		t.Fatal("FC Runtime missing a2a-invocation-v2 passed stable release readback")
 	}
 
+	fcRelease.Manifest = map[string]any{
+		"schema_version": float64(6),
+		"capabilities_by_backend": map[string]any{
+			"aliyun_fc": []any{
+				"dws",
+				RuntimeStartCapabilityEventsV1,
+				A2AInboundOpenCodeCapability,
+				A2AInvocationV2Capability,
+			},
+		},
+		"runner_protocol": "root-log-v1",
+	}
+	fcRuntime.Provider = "hermes"
+	fcRuntime.Metadata = []byte(`{
+		"kind":"fc-e2b",
+		"template_id":"template-v6",
+		"template_build_id":"build-v6",
+		"manifest_version":6,
+		"runner_protocol":"root-log-v1",
+		"capabilities":["hermes","dws","runtime_start_events_v1","a2a-invocation-v2"]
+	}`)
+	if !runtimeUsesStableRelease(fcRuntime, fcRelease) {
+		t.Fatal("Hermes Runtime was rejected for omitting the sibling OpenCode A2A capability")
+	}
+
 	digest := strings.Repeat("a", 64)
 	asbRelease := FCE2BStableRelease{
 		SandboxBackend:  string(SandboxBackendASB),
@@ -806,6 +831,33 @@ func TestRuntimeUsesStableReleaseRequiresVerifiedManifestMetadata(t *testing.T) 
 	}
 	if !runtimeUsesStableRelease(asbRuntime, asbRelease) {
 		t.Fatal("ASB Runtime with the verified manifest metadata was rejected")
+	}
+}
+
+func TestStableReleaseCapabilitiesForProvider(t *testing.T) {
+	capabilities := []string{
+		"dws",
+		A2AInboundHermesCapability,
+		A2AInboundOpenCodeCapability,
+		A2AInboundPiCapability,
+		"dsh_trajectory_v1",
+	}
+	tests := []struct {
+		provider string
+		want     []string
+	}{
+		{"hermes", []string{"dws", A2AInboundHermesCapability}},
+		{"opencode", []string{"dws", A2AInboundOpenCodeCapability}},
+		{"pi", []string{"dws", A2AInboundPiCapability}},
+		{"dsh", []string{"dws", "dsh_trajectory_v1"}},
+		{"opencode-v2", []string{"dws"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			if got := stableReleaseCapabilitiesForProvider(tt.provider, capabilities); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("capabilities = %#v, want %#v", got, tt.want)
+			}
+		})
 	}
 }
 

@@ -3445,12 +3445,45 @@ func runtimeUsesStableRelease(runtime db.AgentRuntime, release FCE2BStableReleas
 		"capabilities_by_backend",
 		release.SandboxBackend,
 	)
+	if SandboxBackendKind(release.SandboxBackend) == SandboxBackendAliyunFC {
+		// FC persists the capabilities that the immutable Runtime provider can
+		// actually expose. A backend manifest may also advertise capabilities
+		// owned by sibling providers (for example OpenCode A2A on a Hermes
+		// Runtime), so comparing against the whole backend list rejects a
+		// successful template rotation even though its database readback is
+		// correct.
+		expectedCapabilities = stableReleaseCapabilitiesForProvider(metadata.Provider, expectedCapabilities)
+	}
 	return expectedManifestVersion > 0 &&
 		expectedRunnerProtocol != "" &&
 		len(expectedCapabilities) > 0 &&
 		metadata.ManifestVersion == expectedManifestVersion &&
 		metadata.RunnerProtocol == expectedRunnerProtocol &&
 		containsAllStrings(metadata.Capabilities, expectedCapabilities...)
+}
+
+func stableReleaseCapabilitiesForProvider(provider string, capabilities []string) []string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	filtered := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		capability = strings.ToLower(strings.TrimSpace(capability))
+		var owner string
+		switch capability {
+		case A2AInboundHermesCapability:
+			owner = "hermes"
+		case A2AInboundOpenCodeCapability:
+			owner = "opencode"
+		case A2AInboundPiCapability:
+			owner = "pi"
+		case "dsh_trajectory_v1":
+			owner = "dsh"
+		}
+		if owner != "" && owner != provider {
+			continue
+		}
+		filtered = append(filtered, capability)
+	}
+	return normalizeCloudSandboxCapabilities(filtered)
 }
 
 func isUniqueViolation(err error) bool {
