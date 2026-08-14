@@ -232,7 +232,7 @@ describe("filterRuntimesForSandboxBackend", () => {
 });
 
 describe("isReadyFCE2BTemplate", () => {
-  it("accepts published m2 through m4 manifests only", () => {
+  it("accepts published m2 through m7 manifests only", () => {
     expect(
       isReadyFCE2BTemplate(makeTemplate({ manifest_version: 2 })),
     ).toBe(true);
@@ -247,6 +247,15 @@ describe("isReadyFCE2BTemplate", () => {
     ).toBe(true);
     expect(
       isReadyFCE2BTemplate(makeTemplate({ manifest_version: 5 })),
+    ).toBe(true);
+    expect(
+      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 6 })),
+    ).toBe(true);
+    expect(
+      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 7 })),
+    ).toBe(true);
+    expect(
+      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 8 })),
     ).toBe(false);
   });
 
@@ -274,6 +283,11 @@ describe("fcE2BProviderForTemplate", () => {
     expect(
       fcE2BProviderForTemplate(makeTemplate({ providers: ["pi"] })),
     ).toBe("pi");
+    expect(
+      fcE2BProviderForTemplate(
+        makeTemplate({ providers: ["opencode-v2", "dsh"] }),
+      ),
+    ).toBe("dsh");
     expect(
       fcE2BProviderForTemplate(makeTemplate({ providers: ["unknown"] })),
     ).toBeNull();

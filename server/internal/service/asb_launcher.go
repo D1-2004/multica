@@ -2185,8 +2185,8 @@ func validateASBArtifact(artifact ASBArtifact) error {
 }
 
 func validateASBRuntimeManifest(manifest map[string]any) error {
-	manifestVersion := intMetadataValue(manifest, "schema_version")
-	if (manifestVersion != 3 && manifestVersion != 4) ||
+	schemaVersion := intMetadataValue(manifest, "schema_version")
+	if (schemaVersion < 3 || schemaVersion > 7) ||
 		!containsAllStrings(stringSliceMetadataValue(manifest, "sandbox_backends"), "asb") ||
 		!containsAllStrings(stringSliceMetadataValue(manifest, "providers"), "hermes", "opencode", "pi") ||
 		!containsAllStrings(
@@ -2200,23 +2200,33 @@ func validateASBRuntimeManifest(manifest map[string]any) error {
 		stringMetadataValue(manifest, "runner_protocol") != string(fcE2BRunnerLaunchRootLog) {
 		return errors.New("ASB runtime manifest does not satisfy the enterprise sandbox contract")
 	}
+	if schemaVersion == 7 &&
+		(!containsAllStrings(stringSliceMetadataValue(manifest, "providers"), "dsh", "opencode-v2") ||
+			!containsAllStrings(
+				manifestStringSliceForBackend(manifest, "capabilities_by_backend", "asb"),
+				DSHTrajectoryCapability,
+			)) {
+		return errors.New("ASB schema v7 runtime manifest does not satisfy the five-runner contract")
+	}
 	return nil
 }
 
-// Existing schema-v3 ASB images remain valid runtime bindings during a rolling
-// backend deployment. A newly promoted release must use the current schema and
-// advertise both additive capabilities introduced by schemas v3 and v4.
+// Existing schema-v3 through schema-v6 ASB images remain valid runtime bindings
+// during a rolling backend deployment. A newly promoted five-runner release
+// must use schema v7 and advertise every current enterprise capability.
 func validateASBReleaseManifest(manifest map[string]any) error {
 	if err := validateASBRuntimeManifest(manifest); err != nil {
 		return err
 	}
-	if intMetadataValue(manifest, "schema_version") != 4 {
-		return errors.New("ASB release manifest must use schema version 4")
+	if intMetadataValue(manifest, "schema_version") != 7 {
+		return errors.New("ASB five-runner release manifest must use schema version 7")
 	}
 	if !containsAllStrings(
 		manifestStringSliceForBackend(manifest, "capabilities_by_backend", string(SandboxBackendASB)),
 		RuntimeStartCapabilityEventsV1,
 		LLMTraceCapability,
+		A2AInvocationV2Capability,
+		DSHTrajectoryCapability,
 	) {
 		return errors.New("ASB release manifest does not advertise current runtime capabilities")
 	}

@@ -41,6 +41,8 @@ export function runtimeDisplayLabel(
  * capitalization of its slug on both sides. Keep in sync with the daemon map.
  */
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  dsh: "DeepSeek Harness",
+  "opencode-v2": "OpenCode 2.0 Preview",
   traecli: "Trae",
 };
 

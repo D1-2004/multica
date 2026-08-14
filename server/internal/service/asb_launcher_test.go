@@ -658,10 +658,14 @@ func TestValidateASBManifestVersionContract(t *testing.T) {
 	t.Parallel()
 
 	manifest := func(version int, capabilities ...string) map[string]any {
+		providers := []string{"hermes", "opencode", "pi"}
+		if version == 7 {
+			providers = append(providers, "dsh", "opencode-v2")
+		}
 		return map[string]any{
 			"schema_version":   version,
 			"sandbox_backends": []string{"aliyun_fc", "asb"},
-			"providers":        []string{"hermes", "opencode", "pi"},
+			"providers":        providers,
 			"capabilities_by_backend": map[string][]string{
 				"asb": append([]string{"dws", "mcp", "a1", "mw", "buc"}, capabilities...),
 			},
@@ -684,13 +688,40 @@ func TestValidateASBManifestVersionContract(t *testing.T) {
 			wantReleaseErr: true,
 		},
 		{
-			name:     "current schema v4 release",
-			manifest: manifest(4, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+			name:           "existing schema v4 runtime",
+			manifest:       manifest(4, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+			wantReleaseErr: true,
 		},
 		{
-			name:           "schema v4 release missing trace capability",
-			manifest:       manifest(4, RuntimeStartCapabilityEventsV1),
+			name:           "existing schema v5 runtime",
+			manifest:       manifest(5, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
 			wantReleaseErr: true,
+		},
+		{
+			name:           "existing schema v6 runtime",
+			manifest:       manifest(6, RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability),
+			wantReleaseErr: true,
+		},
+		{
+			name:           "schema v7 release missing trace capability",
+			manifest:       manifest(7, RuntimeStartCapabilityEventsV1, A2AInvocationV2Capability, DSHTrajectoryCapability),
+			wantRuntimeErr: false,
+			wantReleaseErr: true,
+		},
+		{
+			name:           "schema v7 release missing A2A invocation capability",
+			manifest:       manifest(7, RuntimeStartCapabilityEventsV1, LLMTraceCapability, DSHTrajectoryCapability),
+			wantReleaseErr: true,
+		},
+		{
+			name:           "schema v7 release missing DSH trajectory capability",
+			manifest:       manifest(7, RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability),
+			wantRuntimeErr: true,
+			wantReleaseErr: true,
+		},
+		{
+			name:     "current schema v7 release",
+			manifest: manifest(7, RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability, DSHTrajectoryCapability),
 		},
 		{
 			name:           "unsupported schema v2",
@@ -699,8 +730,8 @@ func TestValidateASBManifestVersionContract(t *testing.T) {
 			wantReleaseErr: true,
 		},
 		{
-			name:           "unsupported schema v5",
-			manifest:       manifest(5, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+			name:           "unsupported schema v8",
+			manifest:       manifest(8, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
 			wantRuntimeErr: true,
 			wantReleaseErr: true,
 		},
@@ -723,11 +754,11 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	const runtimeAPIKey = "runtime-owned-validation-key"
 	digest := "sha256:" + strings.Repeat("a", 64)
 	manifest := map[string]any{
-		"schema_version":   4,
+		"schema_version":   7,
 		"sandbox_backends": []string{"aliyun_fc", "asb"},
-		"providers":        []string{"hermes", "opencode", "pi"},
+		"providers":        []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"},
 		"capabilities_by_backend": map[string][]string{
-			"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, LLMTraceCapability},
+			"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability, DSHTrajectoryCapability},
 		},
 		"identity_modes_by_backend": map[string][]string{
 			"asb": {"agent_identity", "spiffe", "buc_wireguard"},
@@ -841,7 +872,7 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	if capacity.createRequests != 1 {
 		t.Fatalf("capacity create requests = %d, want 1", capacity.createRequests)
 	}
-	if intMetadataValue(got, "schema_version") != 4 {
+	if intMetadataValue(got, "schema_version") != 7 {
 		t.Fatalf("manifest = %#v", got)
 	}
 }

@@ -25,6 +25,7 @@ import {
   deriveRuntimeHealth,
   parseFCE2BRuntimeMetadata,
   isASBRuntime,
+  providerDisplayName,
   runtimeDisplayName,
   runtimeProfileListOptions,
   useFCE2BStableChannel,
@@ -535,12 +536,7 @@ function DiagnosticsCard({
     fcE2BMetadata?.template ||
     fcE2BMetadata?.templateId ||
     t(($) => $.detail.cloud_image.unknown_template);
-  const provider =
-    runtime.provider.toLowerCase() === "opencode"
-      ? "OpenCode"
-      : runtime.provider.toLowerCase() === "hermes"
-        ? "Hermes"
-        : runtime.provider;
+  const provider = providerDisplayName(runtime.provider.toLowerCase());
   return (
     <div className="rounded-lg border">
       <div className="border-b px-4 py-2.5">

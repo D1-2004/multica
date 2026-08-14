@@ -149,7 +149,7 @@ func TestFCE2BProviderForTemplate(t *testing.T) {
 }
 
 func TestIsFCE2BSupportedProvider(t *testing.T) {
-	for _, provider := range []string{"hermes", "opencode", "pi", " Hermes ", "OPENCODE", " PI "} {
+	for _, provider := range []string{"hermes", "opencode", "pi", "dsh", "opencode-v2", " Hermes ", "OPENCODE", " PI ", " DSH ", " OPENCODE-V2 "} {
 		if !IsFCE2BSupportedProvider(provider) {
 			t.Fatalf("IsFCE2BSupportedProvider(%q) = false, want true", provider)
 		}
@@ -169,6 +169,8 @@ func TestFCE2BRunnerCommandForProvider(t *testing.T) {
 		{"hermes", "multica-fc-hermes-container-log-entry"},
 		{"opencode", "multica-fc-opencode-container-log-entry"},
 		{"pi", "multica-fc-pi-container-log-entry"},
+		{"dsh", "multica-fc-dsh-container-log-entry"},
+		{"opencode-v2", "multica-fc-opencode-v2-container-log-entry"},
 		{" OpenCode ", "multica-fc-opencode-container-log-entry"},
 		{"", "multica-fc-hermes-container-log-entry"},
 	}
@@ -542,6 +544,48 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 	}
 	if _, err := applyFCE2BTemplateManifestAlias(nil, validAlias); err == nil {
 		t.Fatal("nil template was accepted")
+	}
+}
+
+func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
+	template := FCE2BTemplate{BuildID: "build-v7"}
+	published, err := applyFCE2BTemplateManifestAlias(
+		&template,
+		"multica-m7-v3904c2e827d58ad7-r1-9a6bfa",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !published || !IsFCE2BTemplatePublished(template) {
+		t.Fatalf("v7 alias was not published: %+v", template)
+	}
+	if want := []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}; !reflect.DeepEqual(template.Providers, want) {
+		t.Fatalf("providers = %#v, want %#v", template.Providers, want)
+	}
+	if want := []string{
+		"dws",
+		"dws.im_event",
+		"mcp",
+		RuntimeStartCapabilityEventsV1,
+		LLMTraceCapability,
+		A2AInboundOpenCodeCapability,
+		A2AInvocationV2Capability,
+		DSHTrajectoryCapability,
+	}; !reflect.DeepEqual(template.Capabilities, want) {
+		t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, want)
+	}
+	if template.ComponentVersions["dsh"] != "0.1.0-rc.6" ||
+		template.ComponentVersions["opencode-v2"] != "0.0.0-beta-202608110357" ||
+		template.SourceRevision != "9a6bfa" {
+		t.Fatalf("v7 contract = %+v", template)
+	}
+
+	wrong := FCE2BTemplate{BuildID: "build-v7-wrong"}
+	if applied, err := applyFCE2BTemplateManifestAlias(
+		&wrong,
+		"multica-m7-v0000000000000000-r1-9a6bfa",
+	); err != nil || applied {
+		t.Fatalf("wrong v7 fingerprint applied=%v err=%v", applied, err)
 	}
 }
 
@@ -932,8 +976,8 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	if err := launcher.execRunOnce(context.Background(), "sbx_dws", rt, launch.Mode, taskID, "mdt_test_token", false, map[string]string{
 		"AGENT_IDENTITY_CONTEXT_TOKEN": "context_secret",
 		"MULTICA_CHAT_SESSION_ID":      "chat-session-1",
-		llmTraceEnabledEnvKey:            "true",
-		llmTraceSinkURLEnvKey:            "https://trace.example.test/ingest",
+		llmTraceEnabledEnvKey:          "true",
+		llmTraceSinkURLEnvKey:          "https://trace.example.test/ingest",
 	}); err != nil {
 		t.Fatalf("execRunOnce returned error: %v", err)
 	}

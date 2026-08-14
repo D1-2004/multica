@@ -269,7 +269,7 @@ type AgentTaskResponse struct {
 	AgentID              string `json:"agent_id"`
 	RuntimeID            string `json:"runtime_id"`
 	IssueID              string `json:"issue_id"`
-	IssueIdentifier     string `json:"issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123), resolved on claim so the agent can embed it when creating external approvals
+	IssueIdentifier      string `json:"issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123), resolved on claim so the agent can embed it when creating external approvals
 	WorkspaceID          string `json:"workspace_id"`
 	Instruction          string `json:"instruction,omitempty"` // daemon-claim only: trusted per-task instruction prepended to the generated task prompt
 	TraceID              string `json:"trace_id,omitempty"`
@@ -378,6 +378,10 @@ type AgentTaskResponse struct {
 	InitiatorName  string `json:"initiator_name,omitempty"`  // display name of the initiator
 	InitiatorEmail string `json:"initiator_email,omitempty"` // member email; empty for agent initiators
 	Kind           string `json:"kind"`                      // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
+	// DSHTrajectoryAvailable is user-facing additive metadata. The object key
+	// and native session id stay server-private; the dedicated GET endpoint
+	// re-applies task and private-agent authorization before streaming bytes.
+	DSHTrajectoryAvailable bool `json:"dsh_trajectory_available,omitempty"`
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -1992,6 +1996,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	for i, t := range tasks {
 		resp[i] = taskToResponse(t, workspaceID)
 	}
+	h.hydrateDSHTrajectoryAvailability(r.Context(), resp)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -2128,6 +2133,7 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 		}
 		resp = append(resp, taskToResponse(t, workspaceID))
 	}
+	h.hydrateDSHTrajectoryAvailability(r.Context(), resp)
 
 	writeJSON(w, http.StatusOK, resp)
 }

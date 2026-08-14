@@ -35,6 +35,21 @@ import (
 
 const (
 	FCE2BMetadataKind = "fc-e2b"
+	// A2AInboundHermesCapability declares support for inbound A2A delivery
+	// through the Hermes runtime provider.
+	A2AInboundHermesCapability = "a2a_inbound_hermes_v1"
+	// A2AInboundOpenCodeCapability declares support for inbound A2A delivery
+	// through the OpenCode runtime provider.
+	A2AInboundOpenCodeCapability = "a2a_inbound_opencode_v1"
+	// A2AInboundPiCapability declares support for inbound A2A delivery through
+	// the Pi runtime provider.
+	A2AInboundPiCapability = "a2a_inbound_pi_v1"
+	// A2AInvocationV2Capability requires the image and daemon to implement the
+	// complete strict A2A execution contract.
+	A2AInvocationV2Capability = "a2a-invocation-v2"
+	// DSHTrajectoryCapability declares that a DSH runner persists its native
+	// JSONL event ledger through the authenticated task trajectory endpoint.
+	DSHTrajectoryCapability = "dsh_trajectory_v1"
 	// FCE2BProvider is the first provider selected when a verified template
 	// manifest declares Hermes support and the request omits a provider.
 	FCE2BProvider = "hermes"
@@ -54,7 +69,7 @@ const (
 	fcE2BRunOnceHealthPortSpan      = 30000
 	fcE2BRootRunnerInstallDir       = "/usr/local/libexec"
 	fcE2BLegacyRunnerInstallDir     = "/usr/local/bin"
-	fcE2BTemplateManifestVersion    = 4
+	fcE2BTemplateManifestVersion    = 7
 	fcE2BChatSessionIDEnvKey        = "MULTICA_CHAT_SESSION_ID"
 )
 
@@ -368,7 +383,7 @@ func IsFCE2BRuntime(rt db.AgentRuntime) bool {
 // can run. A template image may ship several of these CLIs side by side; the
 // runtime's provider is chosen at creation time. FCE2BProvider (hermes) is
 // the default when a request names none.
-var FCE2BSupportedProviders = []string{FCE2BProvider, "opencode", "pi"}
+var FCE2BSupportedProviders = []string{FCE2BProvider, "opencode", "pi", "dsh", "opencode-v2"}
 
 // IsFCE2BSupportedProvider reports whether provider can back an FC/E2B
 // sandbox runtime.
@@ -439,6 +454,24 @@ func FCE2BTemplateCapabilities(provider string, template FCE2BTemplate) []string
 		if capability == "" {
 			continue
 		}
+		switch capability {
+		case A2AInboundHermesCapability:
+			if provider != "hermes" {
+				continue
+			}
+		case A2AInboundOpenCodeCapability:
+			if provider != "opencode" {
+				continue
+			}
+		case A2AInboundPiCapability:
+			if provider != "pi" {
+				continue
+			}
+		case DSHTrajectoryCapability:
+			if provider != "dsh" {
+				continue
+			}
+		}
 		if _, ok := seen[capability]; ok {
 			continue
 		}
@@ -478,8 +511,8 @@ func fcE2BRunnerLaunchForMode(provider string, mode fcE2BRunnerLaunchMode) (fcE2
 			Home:    "/root",
 		}, nil
 	case fcE2BRunnerLaunchLegacyUser:
-		if provider == "pi" {
-			return fcE2BRunnerLaunch{}, errors.New("Pi FC/E2B runtimes require the root-log-v1 runner protocol")
+		if provider != "hermes" && provider != "opencode" {
+			return fcE2BRunnerLaunch{}, fmt.Errorf("%s FC/E2B runtimes require the root-log-v1 runner protocol", provider)
 		}
 		return fcE2BRunnerLaunch{
 			Mode:    mode,
@@ -745,6 +778,9 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 }
 
 var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([1234])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dimst|dims|dim|di)-r1-([0-9a-f]{6})$`)
+var fcE2BTemplateManifestV7AliasPattern = regexp.MustCompile(`^multica-m7-v([0-9a-f]{16})-r1-([0-9a-f]{6})$`)
+
+const fcE2BTemplateManifestV7Fingerprint = "3904c2e827d58ad7"
 
 func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (bool, error) {
 	if template == nil {
@@ -754,6 +790,36 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 		return false, nil
 	}
 	alias = strings.TrimSpace(alias)
+	if matches := fcE2BTemplateManifestV7AliasPattern.FindStringSubmatch(alias); matches != nil {
+		if matches[1] != fcE2BTemplateManifestV7Fingerprint {
+			return false, nil
+		}
+		template.Name = alias
+		template.Template = alias
+		template.ManifestVersion = 7
+		template.Providers = []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}
+		template.Capabilities = []string{
+			"dws",
+			"dws.im_event",
+			"mcp",
+			RuntimeStartCapabilityEventsV1,
+			LLMTraceCapability,
+			A2AInboundOpenCodeCapability,
+			A2AInvocationV2Capability,
+			DSHTrajectoryCapability,
+		}
+		template.ComponentVersions = map[string]string{
+			"hermes":      "0.19.0",
+			"opencode":    "v1.18.11",
+			"opencode-v2": "0.0.0-beta-202608110357",
+			"dsh":         "0.1.0-rc.6",
+			"pi":          "0.83.0",
+			"dws":         "v1.0.58-beta.4",
+		}
+		template.RunnerProtocol = string(fcE2BRunnerLaunchRootLog)
+		template.SourceRevision = matches[2]
+		return true, nil
+	}
 	matches := fcE2BTemplateManifestAliasPattern.FindStringSubmatch(alias)
 	if matches == nil {
 		return false, nil
@@ -1320,13 +1386,13 @@ func (l *FCE2BLauncher) VerifyStableTemplate(ctx context.Context, selected FCE2B
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &manifest); err != nil {
 		return nil, fmt.Errorf("decode runtime manifest: %w", err)
 	}
-	if manifest.SchemaVersion != 3 ||
+	if manifest.SchemaVersion != selected.ManifestVersion ||
 		!containsAllStrings(manifest.SandboxBackends, string(SandboxBackendAliyunFC)) ||
-		!slices.Equal(manifest.Providers, []string{"hermes", "opencode", "pi"}) ||
-		!slices.Equal(manifest.Capabilities, []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1}) ||
+		!slices.Equal(manifest.Providers, selected.Providers) ||
+		!slices.Equal(manifest.Capabilities, selected.Capabilities) ||
 		!slices.Equal(
 			manifest.CapabilitiesByBackend[string(SandboxBackendAliyunFC)],
-			[]string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
+			selected.Capabilities,
 		) ||
 		!slices.Equal(
 			manifest.IdentityModesByBackend[string(SandboxBackendAliyunFC)],

@@ -44,7 +44,13 @@ vi.mock("@multica/core/hooks", () => ({
 }));
 
 vi.mock("@multica/core/runtimes", () => ({
-  FC_E2B_RUNTIME_PROVIDERS: ["hermes", "opencode", "pi"],
+  FC_E2B_RUNTIME_PROVIDERS: [
+    "hermes",
+    "opencode",
+    "pi",
+    "dsh",
+    "opencode-v2",
+  ],
   fcE2BProviderForTemplate: () => "hermes",
   isReadyFCE2BTemplate: () => true,
   useCloudSandboxStableChannel: () => ({

@@ -2465,7 +2465,21 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 	}
 
+	// DSH headless deliberately creates one fresh native session per task and
+	// does not expose a supported resume flag. Never send an old DSH session id
+	// through the OpenCode-compatible adapter: doing so would claim continuity
+	// that the provider cannot honor. Cloud direct chats already carry bounded,
+	// database-authoritative history; issue tasks rebuild their platform context
+	// in the fresh runtime brief while retaining any reusable workdir.
+	applyProviderSessionContract(&resp, service.CloudSandboxRuntimeProvider(runtime))
+
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
+}
+
+func applyProviderSessionContract(resp *AgentTaskResponse, provider string) {
+	if resp != nil && strings.EqualFold(strings.TrimSpace(provider), "dsh") {
+		resp.PriorSessionID = ""
+	}
 }
 
 // claimTaskByRuntimeRequest is the optional body of the per-runtime claim. An
@@ -3893,8 +3907,32 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 	for i, t := range tasks {
 		resp[i] = taskToResponse(t, workspaceID)
 	}
+	h.hydrateDSHTrajectoryAvailability(r.Context(), resp)
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// hydrateDSHTrajectoryAvailability adds one boolean to user-facing task rows
+// with a single batch lookup. Artifact identity stays out of list responses.
+func (h *Handler) hydrateDSHTrajectoryAvailability(ctx context.Context, resp []AgentTaskResponse) {
+	if len(resp) == 0 {
+		return
+	}
+	taskIDs := make([]pgtype.UUID, 0, len(resp))
+	for i := range resp {
+		taskIDs = append(taskIDs, parseUUID(resp[i].ID))
+	}
+	rows, err := h.Queries.ListAgentTaskDSHTrajectories(ctx, taskIDs)
+	if err != nil || len(rows) == 0 {
+		return
+	}
+	available := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		available[uuidToString(row.TaskID)] = struct{}{}
+	}
+	for i := range resp {
+		_, resp[i].DSHTrajectoryAvailable = available[resp[i].ID]
+	}
 }
 
 // ListTaskMessagesByUser returns task messages for a task.
@@ -3935,7 +3973,6 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	_ = member
-
 	sinceSeq := 0
 	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
 		parsed, parseErr := strconv.Atoi(sinceStr)

@@ -16,6 +16,7 @@ import {
 import { ActorAvatar } from "../../common/actor-avatar";
 import { formatDuration } from "../../agents/components/agent-activity-hover-content";
 import { TranscriptButton } from "../../common/task-transcript";
+import { DSHTrajectoryButton } from "../../common/task-trajectory";
 import { failureReasonLabel } from "../../agents/components/tabs/task-failure";
 import { useT } from "../../i18n";
 import { TerminateTaskConfirmDialog } from "./terminate-task-confirm-dialog";
@@ -325,6 +326,7 @@ export function ActiveTaskRow({
             title={t(($) => $.execution_log.transcript_tooltip)}
           />
         )}
+        <DSHTrajectoryButton task={task} />
         <Tooltip>
           <TooltipTrigger
             render={
@@ -407,6 +409,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
       </RowStatus>
       <RowActions>
         <TranscriptButton task={task} agentName="" title={t(($) => $.execution_log.transcript_tooltip)} />
+        <DSHTrajectoryButton task={task} />
         {canRetry && (
           <Tooltip>
             <TooltipTrigger

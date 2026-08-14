@@ -50,6 +50,10 @@ function providerDisplayName(provider: string): string {
       return "OpenCode";
     case "pi":
       return "Pi";
+    case "dsh":
+      return "DeepSeek Harness";
+    case "opencode-v2":
+      return "OpenCode 2.0 Preview";
     default:
       return provider;
   }

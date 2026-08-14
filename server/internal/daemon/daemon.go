@@ -3525,7 +3525,9 @@ func gcMetaForTask(task Task) (execenv.GCMeta, bool) {
 // name when simple title-casing would read awkwardly. Providers not listed
 // here fall back to capitalizing the key (claude → "Claude", codex → "Codex").
 var runtimeDisplayNameOverrides = map[string]string{
-	"traecli": "Trae",
+	"dsh":         "DeepSeek Harness",
+	"opencode-v2": "OpenCode 2.0 Preview",
+	"traecli":     "Trae",
 }
 
 // providerDisplayName returns the human-facing runtime name for a provider key.

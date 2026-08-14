@@ -13,6 +13,7 @@ export type {
   AgentInvocationTarget,
   AgentInvocationTargetInput,
   AgentTask,
+  DSHTrajectoryArtifact,
   AgentActivityBucket,
   AgentRunCount,
   TaskFailureReason,
