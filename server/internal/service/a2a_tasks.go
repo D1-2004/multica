@@ -133,14 +133,17 @@ func (s *A2AService) reconcileA2ATaskState(
 		return row, err
 	}
 	next = a2a.TaskState(nextValue)
-	if next == a2a.TaskStateCompleted {
+	var turns []db.ListA2ATaskTurnsWithOutcomeRow
+	if next == a2a.TaskStateCompleted || next == a2a.TaskStateFailed {
 		turns, turnErr := qtx.ListA2ATaskTurnsWithOutcome(ctx, locked.ID)
 		if turnErr != nil {
 			return row, turnErr
 		}
 		if len(turns) == 0 {
-			return row, errors.New("completed A2A task has no turns")
+			return row, errors.New("terminal A2A task has no turns")
 		}
+	}
+	if next == a2a.TaskStateCompleted {
 		latest := turns[len(turns)-1]
 		storedParts := []storedA2APart{{
 			Kind:      "text",
@@ -191,9 +194,14 @@ func (s *A2AService) reconcileA2ATaskState(
 			return row, enqueueErr
 		}
 	}
+	statusMessage, err := terminalA2AStatusMessage(locked, row.PublicContextID, next, turns)
+	if err != nil {
+		return row, err
+	}
 	updated, err := qtx.UpdateA2ATaskPublicState(ctx, db.UpdateA2ATaskPublicStateParams{
-		PublicState: next.String(),
-		BindingID:   locked.ID,
+		PublicState:   next.String(),
+		StatusMessage: statusMessage,
+		BindingID:     locked.ID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return row, tx.Commit(ctx)
@@ -207,7 +215,7 @@ func (s *A2AService) reconcileA2ATaskState(
 		updated,
 		row.PublicContextID,
 		next,
-		nil,
+		statusMessage,
 		"state:"+strings.ToLower(next.String())+":"+strconv.FormatInt(updated.StatusUpdatedAt.Time.UnixNano(), 10),
 	)
 	if err != nil {
@@ -227,6 +235,39 @@ func (s *A2AService) reconcileA2ATaskState(
 		ClientID:     row.ClientID,
 		PublicTaskID: row.PublicTaskID,
 	})
+}
+
+// terminalA2AStatusMessage publishes the same redacted assistant outcome that
+// Multica Chat shows for a failed turn. The task queue error is intentionally
+// not exposed because it can contain local paths or other runtime-only detail.
+func terminalA2AStatusMessage(
+	binding db.A2aTaskBinding,
+	publicContextID string,
+	state a2a.TaskState,
+	turns []db.ListA2ATaskTurnsWithOutcomeRow,
+) ([]byte, error) {
+	if state != a2a.TaskStateFailed {
+		return nil, nil
+	}
+	for index := len(turns) - 1; index >= 0; index-- {
+		turn := turns[index]
+		if turn.LocalTaskStatus != "failed" || strings.TrimSpace(turn.AssistantResultText) == "" {
+			continue
+		}
+		message := &a2a.Message{
+			ID:        stableA2AAgentMessageID(binding.PublicTaskID, turn.Sequence),
+			Role:      a2a.MessageRoleAgent,
+			TaskID:    a2a.TaskID(binding.PublicTaskID),
+			ContextID: publicContextID,
+			Parts:     a2a.ContentParts{a2a.NewTextPart(turn.AssistantResultText)},
+		}
+		statusMessage, err := json.Marshal(message)
+		if err != nil {
+			return nil, fmt.Errorf("encode failed A2A status message: %w", err)
+		}
+		return statusMessage, nil
+	}
+	return nil, nil
 }
 
 func appendA2AStatusEvent(

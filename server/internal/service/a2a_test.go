@@ -340,6 +340,53 @@ func TestProjectA2ATaskState(t *testing.T) {
 	}
 }
 
+func TestTerminalA2AStatusMessageUsesLatestRedactedFailureOutcome(t *testing.T) {
+	binding := db.A2aTaskBinding{PublicTaskID: "tsk_public_failure"}
+	turns := []db.ListA2ATaskTurnsWithOutcomeRow{
+		{
+			Sequence:            1,
+			LocalTaskStatus:     "failed",
+			AssistantResultText: "first redacted failure",
+		},
+		{
+			Sequence:            2,
+			LocalTaskStatus:     "completed",
+			AssistantResultText: "completed output",
+		},
+		{
+			Sequence:            3,
+			LocalTaskStatus:     "failed",
+			AssistantResultText: "latest redacted failure",
+		},
+	}
+
+	encoded, err := terminalA2AStatusMessage(binding, "ctx_public_failure", a2a.TaskStateFailed, turns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var message a2a.Message
+	if err := json.Unmarshal(encoded, &message); err != nil {
+		t.Fatal(err)
+	}
+	if message.ID != stableA2AAgentMessageID(binding.PublicTaskID, 3) ||
+		message.Role != a2a.MessageRoleAgent ||
+		message.TaskID != a2a.TaskID(binding.PublicTaskID) ||
+		message.ContextID != "ctx_public_failure" {
+		t.Fatalf("status message identity = %+v", message)
+	}
+	if len(message.Parts) != 1 || message.Parts[0].Text() != "latest redacted failure" {
+		t.Fatalf("status message parts = %+v", message.Parts)
+	}
+
+	encoded, err = terminalA2AStatusMessage(binding, "ctx_public_failure", a2a.TaskStateCompleted, turns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encoded != nil {
+		t.Fatalf("completed status message = %s, want nil", encoded)
+	}
+}
+
 func TestProjectA2ACompletedTaskUsesStablePublicIDsAndOutputArtifact(t *testing.T) {
 	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	row := db.GetA2ATaskProjectionForClientRow{
