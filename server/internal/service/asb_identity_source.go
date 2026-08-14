@@ -619,35 +619,15 @@ func attachASBBUCIdentityOnce(
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
 ) error {
-	// Submit the synchronous attachment exactly once. ASB can return the
-	// documented tunnel-converging response after it has started sandbox-side
-	// WireGuard setup. Repeating the POST restarts that setup and can keep the
-	// tunnel permanently unready. The caller therefore treats this one response
-	// as an in-progress attachment and proves completion through state and BUC
-	// probes only.
-	err := client.AttachBUCIdentity(ctx, sandboxID, grant, true)
-	if err == nil {
-		return nil
-	}
-	if isASBWireGuardTunnelConverging(err) {
-		slog.Info(
-			"ASB BUC identity attachment is converging after single submission",
-			"sandbox_id", sandboxID,
-		)
-		return nil
-	}
-	return err
-}
-
-func isASBWireGuardTunnelConverging(err error) bool {
-	var httpErr *ASBHTTPError
-	return errors.As(err, &httpErr) &&
-		httpErr.Operation == "attach_buc_identity" &&
-		httpErr.StatusCode == http.StatusBadRequest &&
-		strings.Contains(
-			strings.ToLower(httpErr.ErrorMessage),
-			"wireguard tunnel not ready yet",
-		)
+	// Submit the documented asynchronous attachment exactly once. With
+	// sync=true ASB performs an additional status command through its egress
+	// operations endpoint; that endpoint can still return 404 after the
+	// bootstrap command was accepted, causing ASB to wrap an in-progress attach
+	// as HTTP 400. Multica already owns the bounded readiness window below and
+	// proves the exact BUC employee and Agent identity through execd, so the
+	// control-plane status wait is both redundant and racy. Repeating either
+	// form of the POST is unsafe because it restarts wgclient.
+	return client.AttachBUCIdentity(ctx, sandboxID, grant, false)
 }
 
 func asbIdentityProbeInterval(timeout time.Duration) time.Duration {
