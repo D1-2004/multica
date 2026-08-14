@@ -442,6 +442,13 @@ type asbLaunchSubmission struct {
 	identityFingerprint string
 }
 
+type asbSandboxResolution struct {
+	sandboxID             string
+	coldStart             bool
+	identity              ASBResolvedIdentity
+	releaseIdentitySource func(stage string)
+}
+
 func NewASBLauncher(
 	queries *db.Queries,
 	tasks *TaskService,
@@ -763,7 +770,7 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "sandbox_resolving"); err != nil {
 		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB sandbox stage: %w", err)
 	}
-	sandboxID, coldStart, effectiveIdentity, err := l.resolveSandbox(
+	resolution, err := l.resolveSandbox(
 		ctx,
 		runtime,
 		metadata,
@@ -778,11 +785,15 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	if err != nil {
 		return asbLaunchSubmission{}, false, err
 	}
-	attempt, err = l.Tasks.UpdateRuntimeStartSandbox(ctx, attempt, sandboxID, coldStart, "sandbox_ready")
+	if resolution.releaseIdentitySource != nil {
+		defer resolution.releaseIdentitySource("release_source_after_task_preparation")
+	}
+	sandboxID := resolution.sandboxID
+	attempt, err = l.Tasks.UpdateRuntimeStartSandbox(ctx, attempt, sandboxID, resolution.coldStart, "sandbox_ready")
 	if err != nil {
 		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB sandbox ready stage: %w", err)
 	}
-	identity = effectiveIdentity
+	identity = resolution.identity
 	if identity.Mode == asbIdentityModeBound {
 		if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "identity_preparing"); err != nil {
 			return asbLaunchSubmission{}, false, fmt.Errorf("record ASB identity preparation stage: %w", err)
@@ -797,6 +808,9 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 			identity,
 			l.Config.WireGuardReadyTimeout,
 		); err != nil {
+			if resolution.releaseIdentitySource != nil {
+				resolution.releaseIdentitySource("release_source_after_failed_identity_preflight")
+			}
 			return asbLaunchSubmission{}, false, withRuntimeStartUserDetail(
 				fmt.Errorf("prepare ASB enterprise identity before task start: %w", err),
 				"ASB enterprise identity did not become ready before task start. Reauthorize the Agent enterprise identity and retry.",
@@ -804,6 +818,12 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 		}
 		if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "identity_ready"); err != nil {
 			return asbLaunchSubmission{}, false, fmt.Errorf("record ASB identity ready stage: %w", err)
+		}
+		if resolution.releaseIdentitySource != nil {
+			// ASB copies the BUC source asynchronously. Keep the source running
+			// until both inherited BUC and attached Agent Identity have passed
+			// their CLI probes; Running alone is not a copy-completion signal.
+			resolution.releaseIdentitySource("release_source_after_identity_ready")
 		}
 	}
 	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "task_environment_preparing"); err != nil {
@@ -854,7 +874,7 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "runner_exec_submitting"); err != nil {
 		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB runner exec submission stage: %w", err)
 	}
-	if err := l.execRunOnce(ctx, sandboxID, runtime, task.ID, token, coldStart, extraEnv); err != nil {
+	if err := l.execRunOnce(ctx, sandboxID, runtime, task.ID, token, resolution.coldStart, extraEnv); err != nil {
 		return asbLaunchSubmission{}, false, err
 	}
 	if err := l.Tasks.RecordRuntimeStartRunnerExecSubmitted(ctx, attempt.ID, task.ID, task.RuntimeID); err != nil {
@@ -863,7 +883,7 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	return asbLaunchSubmission{
 		runtime:             runtime,
 		sandboxID:           sandboxID,
-		coldStart:           coldStart,
+		coldStart:           resolution.coldStart,
 		scope:               scope,
 		scoped:              scoped,
 		identityFingerprint: identity.Fingerprint,
@@ -881,14 +901,14 @@ func (l *ASBLauncher) resolveSandbox(
 	identity ASBResolvedIdentity,
 	runtimeLockConn *pgxpool.Conn,
 	trace chattrace.Trace,
-) (string, bool, ASBResolvedIdentity, error) {
+) (asbSandboxResolution, error) {
 	if err := identity.validate(); err != nil {
-		return "", false, ASBResolvedIdentity{}, err
+		return asbSandboxResolution{}, err
 	}
 	if scoped {
 		release, err := l.lockSandboxScopeOnConnection(ctx, runtime, scope, runtimeLockConn)
 		if err != nil {
-			return "", false, ASBResolvedIdentity{}, err
+			return asbSandboxResolution{}, err
 		}
 		defer release()
 		for {
@@ -904,11 +924,11 @@ func (l *ASBLauncher) resolveSandbox(
 				break
 			}
 			if err != nil {
-				return "", false, ASBResolvedIdentity{}, fmt.Errorf("load ASB sandbox session: %w", err)
+				return asbSandboxResolution{}, fmt.Errorf("load ASB sandbox session: %w", err)
 			}
 			reusable, state, err := inspectReusableASBSandbox(ctx, l.Client, session.SandboxID)
 			if err != nil {
-				return "", false, ASBResolvedIdentity{}, fmt.Errorf(
+				return asbSandboxResolution{}, fmt.Errorf(
 					"query reusable ASB sandbox: %w",
 					err,
 				)
@@ -926,7 +946,10 @@ func (l *ASBLauncher) resolveSandbox(
 			}
 			// The fingerprint match keeps warm sandbox reuse scoped to the selected
 			// enterprise identity. Readiness is proved again before runner start.
-			return session.SandboxID, false, identity, nil
+			return asbSandboxResolution{
+				sandboxID: session.SandboxID,
+				identity:  identity,
+			}, nil
 		}
 		if err := l.deleteSupersededASBSandboxForScope(
 			ctx,
@@ -935,7 +958,7 @@ func (l *ASBLauncher) resolveSandbox(
 			excludedTaskID,
 			identity.Fingerprint,
 		); err != nil {
-			return "", false, ASBResolvedIdentity{}, err
+			return asbSandboxResolution{}, err
 		}
 	}
 
@@ -1009,7 +1032,7 @@ func (l *ASBLauncher) resolveSandbox(
 		)
 		if err != nil {
 			releaseSource("release_source_after_failed_task_create")
-			return "", true, ASBResolvedIdentity{}, err
+			return asbSandboxResolution{}, err
 		}
 		// Persist the control-plane handle before waiting for readiness or
 		// inherited identity. Capacity reconciliation must be able to find and
@@ -1036,12 +1059,12 @@ func (l *ASBLauncher) resolveSandbox(
 					sandbox.ID,
 				)
 				if cleanupErr != nil {
-					return "", true, ASBResolvedIdentity{}, errors.Join(
+					return asbSandboxResolution{}, errors.Join(
 						fmt.Errorf("record ASB sandbox session: %w", err),
 						cleanupErr,
 					)
 				}
-				return "", true, ASBResolvedIdentity{}, fmt.Errorf("record ASB sandbox session: %w", err)
+				return asbSandboxResolution{}, fmt.Errorf("record ASB sandbox session: %w", err)
 			}
 		}
 		if err := l.waitSandboxRunning(ctx, sandbox.ID); err != nil {
@@ -1053,18 +1076,24 @@ func (l *ASBLauncher) resolveSandbox(
 				identity.Fingerprint,
 				sandbox.ID,
 			); cleanupErr != nil {
-				return "", true, ASBResolvedIdentity{}, errors.Join(err, cleanupErr)
+				return asbSandboxResolution{}, errors.Join(err, cleanupErr)
 			}
-			return "", true, ASBResolvedIdentity{}, err
-		}
-		if identity.Mode == asbIdentityModeBound {
-			releaseSource("release_source_after_sandbox_running")
+			return asbSandboxResolution{}, err
 		}
 		chattrace.LogStage(slog.Default(), trace, "asb_sandbox_create", "ready",
 			"sandbox_id", sandbox.ID,
 			"identity_mode", string(identity.Mode),
 		)
-		return sandbox.ID, true, identity, nil
+		var retainedSourceRelease func(string)
+		if releaseIdentitySource != nil {
+			retainedSourceRelease = releaseSource
+		}
+		return asbSandboxResolution{
+			sandboxID:             sandbox.ID,
+			coldStart:             true,
+			identity:              identity,
+			releaseIdentitySource: retainedSourceRelease,
+		}, nil
 	}
 }
 
