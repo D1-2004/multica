@@ -252,8 +252,7 @@ func (m *ASBIdentitySourceManager) Rotate(
 			"multica.runtime_id":                  util.UUIDToString(runtimeID),
 		},
 		Extensions: map[string]string{
-			"wireguard.worker":      strings.TrimSpace(employeeID),
-			"buc.originalSandboxID": predecessorSandboxID,
+			"wireguard.lazyAuth": "true",
 		},
 	})
 	if err != nil {
@@ -283,15 +282,22 @@ func (m *ASBIdentitySourceManager) Rotate(
 		logASBIdentitySourceFailure("wait_rotated_seed_running", sandbox.ID, err)
 		return EnterpriseIdentitySourceAvailability{}, err
 	}
-	if err := waitForASBIdentitySourceBUC(
+	// Match the initial source-establishment path: lazyAuth mounts the complete
+	// identity store, then the explicit synchronous attach copies the selected
+	// predecessor into this sandbox's own persistence directory. Creating a
+	// worker sandbox with only buc.originalSandboxID bypasses that authoritative
+	// attach boundary and does not prove the next generation is self-contained.
+	if err := attachAndProbeInheritedASBIdentitySource(
 		ctx,
 		client,
 		sandbox.ID,
 		employeeID,
 		bucAgentID,
+		predecessorSandboxID,
+		config.WireGuardCredentials,
 		config.WireGuardReadyTimeout,
 	); err != nil {
-		logASBIdentitySourceFailure("probe_rotated_seed", sandbox.ID, err)
+		logASBIdentitySourceFailure("attach_and_probe_rotated_seed", sandbox.ID, err)
 		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
 			"prove rotated ASB enterprise identity seed: %w",
 			err,
@@ -450,6 +456,57 @@ func attachAndProbeASBIdentitySource(
 	wireGuardCredentials string,
 	timeout time.Duration,
 ) error {
+	return attachAndProbeASBIdentitySourceGrant(
+		ctx,
+		client,
+		sandboxID,
+		employeeID,
+		bucAgentID,
+		ASBBUCIdentityGrant{
+			EmployeeID:           employeeID,
+			BUCAccessToken:       tokens.AccessToken,
+			BUCRefreshToken:      tokens.RefreshToken,
+			BUCIDToken:           tokens.IDToken,
+			WireGuardCredentials: wireGuardCredentials,
+		},
+		timeout,
+	)
+}
+
+func attachAndProbeInheritedASBIdentitySource(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+	employeeID string,
+	bucAgentID string,
+	originalSandboxID string,
+	wireGuardCredentials string,
+	timeout time.Duration,
+) error {
+	return attachAndProbeASBIdentitySourceGrant(
+		ctx,
+		client,
+		sandboxID,
+		employeeID,
+		bucAgentID,
+		ASBBUCIdentityGrant{
+			EmployeeID:           employeeID,
+			WireGuardCredentials: wireGuardCredentials,
+			OriginalSandboxID:    originalSandboxID,
+		},
+		timeout,
+	)
+}
+
+func attachAndProbeASBIdentitySourceGrant(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+	employeeID string,
+	bucAgentID string,
+	grant ASBBUCIdentityGrant,
+	timeout time.Duration,
+) error {
 	if timeout <= 0 {
 		return errors.New("ASB WireGuard ready timeout is not configured")
 	}
@@ -459,13 +516,7 @@ func attachAndProbeASBIdentitySource(
 		identityCtx,
 		client,
 		sandboxID,
-		ASBBUCIdentityGrant{
-			EmployeeID:           employeeID,
-			BUCAccessToken:       tokens.AccessToken,
-			BUCRefreshToken:      tokens.RefreshToken,
-			BUCIDToken:           tokens.IDToken,
-			WireGuardCredentials: wireGuardCredentials,
-		},
+		grant,
 	); err != nil {
 		return err
 	}

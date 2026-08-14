@@ -311,6 +311,7 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 		rotatedSandboxID:     "Running",
 	}
 	deleteCalls := map[string]int{}
+	attachCalls := 0
 	probeCalls := 0
 	probeInvalid := false
 	createdAt := time.Now().UTC().Format(time.RFC3339)
@@ -323,9 +324,8 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 				t.Fatalf("decode rotated seed request: %v", err)
 			}
 			if payload.Image.URI != runtimeImageRef ||
-				payload.Extensions["wireguard.worker"] != employeeID ||
-				payload.Extensions["buc.originalSandboxID"] != predecessorSandboxID ||
-				len(payload.Extensions) != 2 ||
+				payload.Extensions["wireguard.lazyAuth"] != "true" ||
+				len(payload.Extensions) != 1 ||
 				payload.Metadata["multica.identity_source_rotation"] != "true" {
 				t.Fatalf("rotated seed create request = %#v", payload)
 			}
@@ -336,6 +336,23 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 				"status":    map[string]string{"state": "Pending"},
 				"createdAt": createdAt,
 			})
+		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/"+rotatedSandboxID+"/identity/wireguard":
+			attachCalls++
+			if request.URL.Query().Get("sync") != "true" {
+				t.Fatalf("rotated seed attach sync = %q", request.URL.Query().Get("sync"))
+			}
+			var grant ASBBUCIdentityGrant
+			if err := json.NewDecoder(request.Body).Decode(&grant); err != nil {
+				t.Fatalf("decode rotated seed identity grant: %v", err)
+			}
+			if grant.EmployeeID != employeeID ||
+				grant.OriginalSandboxID != predecessorSandboxID ||
+				grant.WireGuardCredentials != "wireguard-credentials" ||
+				grant.BUCAccessToken != "" || grant.BUCRefreshToken != "" || grant.BUCIDToken != "" {
+				t.Fatalf("rotated seed identity grant = %#v", grant)
+			}
+			response.WriteHeader(http.StatusOK)
 		case request.Method == http.MethodGet &&
 			strings.HasPrefix(request.URL.Path, "/v1/sandboxes/") &&
 			!strings.Contains(request.URL.Path, "/endpoints/"):
@@ -423,6 +440,7 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 			ResourceMemory:        "4Gi",
 			ReadyTimeout:          time.Second,
 			WireGuardReadyTimeout: time.Second,
+			WireGuardCredentials:  "wireguard-credentials",
 		},
 	}
 
@@ -440,12 +458,13 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 		states[predecessorSandboxID] != "Terminated" ||
 		states[rotatedSandboxID] != "Terminated" ||
 		deleteCalls[predecessorSandboxID] != 1 ||
-		deleteCalls[rotatedSandboxID] != 1 || probeCalls != 1 {
+		deleteCalls[rotatedSandboxID] != 1 || attachCalls != 1 || probeCalls != 1 {
 		t.Fatalf(
-			"rotation=%#v states=%v delete_calls=%v probe_calls=%d",
+			"rotation=%#v states=%v delete_calls=%v attach_calls=%d probe_calls=%d",
 			rotated,
 			states,
 			deleteCalls,
+			attachCalls,
 			probeCalls,
 		)
 	}

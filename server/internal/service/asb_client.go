@@ -642,16 +642,20 @@ func (c *ASBClient) AttachBUCIdentity(ctx context.Context, sandboxID string, gra
 	accessToken := strings.TrimSpace(grant.BUCAccessToken)
 	refreshToken := strings.TrimSpace(grant.BUCRefreshToken)
 	idToken := strings.TrimSpace(grant.BUCIDToken)
+	originalSandboxID := strings.TrimSpace(grant.OriginalSandboxID)
 	hasAnyToken := accessToken != "" || refreshToken != "" || idToken != ""
 	hasAllTokens := accessToken != "" && refreshToken != "" && idToken != ""
 	if hasAnyToken && !hasAllTokens {
 		return errors.New("ASB BUC identity token trio is incomplete")
 	}
-	if !hasAllTokens {
+	// ASB can bootstrap from either a complete OAuth token trio or a retained
+	// source sandbox. Rotation deliberately uses the latter and never persists
+	// employee OAuth tokens in Multica.
+	if !hasAllTokens && originalSandboxID == "" {
 		return errors.New("ASB BUC identity token trio is required")
 	}
-	if strings.TrimSpace(grant.OriginalSandboxID) != "" {
-		if err := validateASBSandboxID(grant.OriginalSandboxID); err != nil {
+	if originalSandboxID != "" {
+		if err := validateASBSandboxID(originalSandboxID); err != nil {
 			return err
 		}
 	}

@@ -470,13 +470,25 @@ func TestASBClientSynchronousBUCIdentityUsesCallerDeadline(t *testing.T) {
 	}
 }
 
-func TestASBClientRejectsBUCIdentitySourceReuseWithoutTokenTrio(t *testing.T) {
+func TestASBClientAcceptsBUCIdentitySourceReuseWithoutTokenTrio(t *testing.T) {
 	t.Parallel()
 
 	var called atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		called.Store(true)
-		http.Error(response, "unexpected request", http.StatusInternalServerError)
+		if request.URL.Path != "/v1/sandboxes/"+testSandboxID+"/identity/wireguard" ||
+			request.URL.Query().Get("sync") != "true" {
+			t.Fatalf("unexpected inherited BUC request: %s %s", request.Method, request.URL.String())
+		}
+		var grant ASBBUCIdentityGrant
+		if err := json.NewDecoder(request.Body).Decode(&grant); err != nil {
+			t.Fatalf("decode inherited BUC grant: %v", err)
+		}
+		if grant.OriginalSandboxID != "identity-source-1" ||
+			grant.BUCAccessToken != "" || grant.BUCRefreshToken != "" || grant.BUCIDToken != "" {
+			t.Fatalf("inherited BUC grant = %#v", grant)
+		}
+		response.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
@@ -486,17 +498,36 @@ func TestASBClientRejectsBUCIdentitySourceReuseWithoutTokenTrio(t *testing.T) {
 		WireGuardCredentials: "wireguard-credentials",
 		OriginalSandboxID:    "identity-source-1",
 	}
-	err := client.AttachBUCIdentity(
+	if err := client.AttachBUCIdentity(
 		context.Background(),
 		testSandboxID,
 		grant,
 		true,
+	); err != nil {
+		t.Fatalf("AttachBUCIdentity inherited source: %v", err)
+	}
+	if !called.Load() {
+		t.Fatal("source-only BUC grant did not reach the ASB API")
+	}
+}
+
+func TestASBClientRejectsBUCIdentityWithoutTokensOrSource(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	client := newTestASBClient(t, server)
+	err := client.AttachBUCIdentity(
+		context.Background(),
+		testSandboxID,
+		ASBBUCIdentityGrant{
+			EmployeeID:           "12345",
+			WireGuardCredentials: "wireguard-credentials",
+		},
+		true,
 	)
 	if err == nil || !strings.Contains(err.Error(), "token trio is required") {
 		t.Fatalf("AttachBUCIdentity error = %v", err)
-	}
-	if called.Load() {
-		t.Fatal("invalid source-only BUC grant reached the ASB API")
 	}
 }
 
