@@ -719,6 +719,11 @@ func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autop
 		// (agent_create is the ordinary agent `issue create` path, MUL-4305);
 		// surface that task id and keep the manual source label.
 		return analytics.SourceManual, originID, ""
+	case "agent_mcp":
+		// MCP's origin_id references its idempotency claim rather than an
+		// agent_task_queue row. Keep the analytics task id empty; execution is
+		// linked through agent_mcp_delegation.root_local_task_id instead.
+		return analytics.SourceManual, "", ""
 	case "autopilot":
 		return analytics.SourceAutopilot, "", originID
 	default:

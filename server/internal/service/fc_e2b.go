@@ -12,6 +12,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -24,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/chattrace"
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
@@ -35,6 +37,18 @@ import (
 
 const (
 	FCE2BMetadataKind = "fc-e2b"
+	// A2AInboundHermesCapability declares support for inbound A2A delivery
+	// through the Hermes runtime provider.
+	A2AInboundHermesCapability = "a2a_inbound_hermes_v1"
+	// A2AInboundOpenCodeCapability declares support for inbound A2A delivery
+	// through the OpenCode runtime provider.
+	A2AInboundOpenCodeCapability = "a2a_inbound_opencode_v1"
+	// A2AInboundPiCapability declares support for inbound A2A delivery through
+	// the Pi runtime provider.
+	A2AInboundPiCapability = "a2a_inbound_pi_v1"
+	// A2AInvocationV2Capability requires the image and daemon to implement the
+	// complete strict A2A execution contract.
+	A2AInvocationV2Capability = "a2a-invocation-v2"
 	// FCE2BProvider is the first provider selected when a verified template
 	// manifest declares Hermes support and the request omits a provider.
 	FCE2BProvider = "hermes"
@@ -54,8 +68,9 @@ const (
 	fcE2BRunOnceHealthPortSpan      = 30000
 	fcE2BRootRunnerInstallDir       = "/usr/local/libexec"
 	fcE2BLegacyRunnerInstallDir     = "/usr/local/bin"
-	fcE2BTemplateManifestVersion    = 4
+	fcE2BTemplateManifestVersion    = 6
 	fcE2BChatSessionIDEnvKey        = "MULTICA_CHAT_SESSION_ID"
+	fcE2BA2AIsolationRoot           = "/tmp/multica-dws"
 )
 
 var errAgentIdentityContextTokenRefreshRequired = errors.New("Agent Identity ContextToken refresh required")
@@ -456,7 +471,8 @@ func IsFCE2BTemplateReady(template FCE2BTemplate) bool {
 
 // IsFCE2BTemplatePublished reports whether the current build carries a valid
 // supported manifest alias required for safe publication, runtime creation,
-// and rotation. m2 through m4 are supported; m1 is retired.
+// and rotation. m2 through the current manifest version are supported; m1 is
+// retired.
 func IsFCE2BTemplatePublished(template FCE2BTemplate) bool {
 	return template.ManifestVersion >= 2 &&
 		template.ManifestVersion <= fcE2BTemplateManifestVersion &&
@@ -744,7 +760,7 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 	return templates, nil
 }
 
-var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([1234])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dimst|dims|dim|di)-r1-([0-9a-f]{6})$`)
+var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([123456])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dimsta3|dimsta2|dimsta|dimst|dims|dim|di)-r1-([0-9a-f]{6})$`)
 
 func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (bool, error) {
 	if template == nil {
@@ -763,8 +779,9 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 		return false, nil
 	}
 	capabilityCode := matches[7]
-	expectedCapabilityCode := map[int]string{1: "di", 2: "dim", 3: "dims", 4: "dimst"}[manifestVersion]
-	if capabilityCode != expectedCapabilityCode {
+	expectedCapabilityCode := map[int]string{1: "di", 2: "dim", 3: "dims", 4: "dimst", 5: "dimsta", 6: "dimsta2"}[manifestVersion]
+	providerCompleteA2A := manifestVersion == 6 && capabilityCode == "dimsta3"
+	if capabilityCode != expectedCapabilityCode && !providerCompleteA2A {
 		return false, nil
 	}
 	hermesVersion, hermesOK := parseFCE2BUnderscoreSemver(matches[2])
@@ -787,6 +804,15 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 	}
 	if manifestVersion >= 4 {
 		template.Capabilities = append(template.Capabilities, LLMTraceCapability)
+	}
+	if manifestVersion >= 5 {
+		template.Capabilities = append(template.Capabilities, A2AInboundOpenCodeCapability)
+	}
+	if manifestVersion >= 6 {
+		template.Capabilities = append(template.Capabilities, A2AInvocationV2Capability)
+	}
+	if providerCompleteA2A {
+		template.Capabilities = append(template.Capabilities, A2AInboundHermesCapability, A2AInboundPiCapability)
 	}
 	template.ComponentVersions = map[string]string{
 		"hermes":   hermesVersion,
@@ -1320,13 +1346,13 @@ func (l *FCE2BLauncher) VerifyStableTemplate(ctx context.Context, selected FCE2B
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &manifest); err != nil {
 		return nil, fmt.Errorf("decode runtime manifest: %w", err)
 	}
-	if manifest.SchemaVersion != 3 ||
+	if manifest.SchemaVersion != selected.ManifestVersion ||
 		!containsAllStrings(manifest.SandboxBackends, string(SandboxBackendAliyunFC)) ||
-		!slices.Equal(manifest.Providers, []string{"hermes", "opencode", "pi"}) ||
-		!slices.Equal(manifest.Capabilities, []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1}) ||
+		!slices.Equal(manifest.Providers, selected.Providers) ||
+		!slices.Equal(manifest.Capabilities, selected.Capabilities) ||
 		!slices.Equal(
 			manifest.CapabilitiesByBackend[string(SandboxBackendAliyunFC)],
-			[]string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
+			selected.Capabilities,
 		) ||
 		!slices.Equal(
 			manifest.IdentityModesByBackend[string(SandboxBackendAliyunFC)],
@@ -1644,6 +1670,7 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	if err != nil {
 		return fcE2BLaunchSubmission{}, false, err
 	}
+	extraEnv = hardenCloudSandboxA2ARunnerEnv(task, runtime, extraEnv)
 	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "daemon_token_preparing"); err != nil {
 		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B daemon token stage: %w", err)
 	}
@@ -1756,13 +1783,16 @@ func (l *FCE2BLauncher) waitForRunOnceClaim(
 	checkedInitialBlocker := false
 
 	for {
-		// A task token is written only at the final claim boundary. Besides the
-		// current handler's in-transaction finalization, this CAS lets a new
-		// launcher observe a claim completed by an older server replica during a
-		// rolling deployment.
+		// A task token is written only at the ordinary-task final claim boundary.
+		// Besides the current handler's in-transaction finalization, this CAS lets
+		// a new launcher observe an ordinary claim completed by an older server
+		// replica during a rolling deployment. It must never opt into tokenless A2A
+		// finalization here: dispatched precedes response construction, so only the
+		// handler transaction may mark a tokenless claim as complete.
 		if _, err := l.Queries.FinalizeAgentTaskRuntimeStartAttemptForTask(ctx, db.FinalizeAgentTaskRuntimeStartAttemptForTaskParams{
-			TaskID:    task.ID,
-			RuntimeID: task.RuntimeID,
+			TaskID:            task.ID,
+			RuntimeID:         task.RuntimeID,
+			AllowTokenlessA2a: false,
 		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return "", fmt.Errorf("finalize Runtime runner claim from task token: %w", err)
 		}
@@ -1988,6 +2018,25 @@ func (l *FCE2BLauncher) identityEnvForTask(
 	sandboxID string,
 	agentRow db.Agent,
 ) (map[string]string, error) {
+	if IsA2ATaskOrigin(task.Context) {
+		if requiresA2ADEAPDWSToken(task.Context) {
+			if !CloudSandboxRuntimeHasCapability(runtime, "dws") {
+				return nil, errors.New("A2A DEAP DWS identity requires a DWS-capable Runtime")
+			}
+			identity, ok := a2aintegration.InvocationIdentityFromContext(ctx)
+			if !ok || strings.TrimSpace(identity.DEAPDWSToken) == "" {
+				return nil, errors.New("A2A DEAP DWS identity is unavailable outside its request")
+			}
+			if identity.ContextToken != "" {
+				return nil, errors.New("A2A DEAP DWS identity conflicts with ContextToken identity")
+			}
+			return map[string]string{protocol.DEAPDWSTokenEnvKey: identity.DEAPDWSToken}, nil
+		}
+		// A2A may use only the explicitly supplied task-local external token.
+		// fcE2BAgentIdentityExtraEnv validates the paired expiry and external
+		// source marker; owner bindings and connected identities stay skipped.
+		return fcE2BAgentIdentityExtraEnv(task, l.Config)
+	}
 	resolved, err := l.resolveIdentityForTask(ctx, task, runtime, sandboxID, agentRow)
 	if err != nil {
 		return nil, err
@@ -2666,6 +2715,10 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 			"-e", "ENV=",
 		)
 	}
+	dwsConfigDir := "/home/user/.dws"
+	if overridden := strings.TrimSpace(extraEnv["DWS_CONFIG_DIR"]); overridden != "" {
+		dwsConfigDir = overridden
+	}
 	args = append(args,
 		"-e", "MULTICA_SERVER_URL="+l.Config.ServerURL,
 		"-e", "MULTICA_DAEMON_TOKEN="+token,
@@ -2674,7 +2727,7 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "MULTICA_DAEMON_ID="+rt.DaemonID.String,
 		"-e", "MULTICA_AGENT_RUNTIME_NAME="+rt.Name,
 		"-e", "HOME="+launch.Home,
-		"-e", "DWS_CONFIG_DIR=/home/user/.dws",
+		"-e", "DWS_CONFIG_DIR="+dwsConfigDir,
 		"-e", "OPENAI_BASE_URL="+l.Config.LLMBaseURL,
 		"-e", "OPENAI_API_KEY="+l.Config.LLMAPIKey,
 	)
@@ -2682,6 +2735,9 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		args = append(args, "-e", "MULTICA_FC_E2B_COLD_START=true")
 	}
 	for _, key := range sortedEnvKeys(extraEnv) {
+		if key == "DWS_CONFIG_DIR" {
+			continue
+		}
 		args = append(args, "-e", key+"="+extraEnv[key])
 	}
 	args = append(args,
@@ -2748,6 +2804,17 @@ func sortedEnvKeys(env map[string]string) []string {
 func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 	switch key {
 	case "OPENAI_MODEL",
+		"DWS_CONFIG_DIR",
+		"GH_CONFIG_DIR",
+		"XDG_CONFIG_HOME",
+		"XDG_DATA_HOME",
+		"XDG_STATE_HOME",
+		"XDG_CACHE_HOME",
+		"OPENCODE_CONFIG",
+		"OPENCODE_CONFIG_DIR",
+		"OPENCODE_CONFIG_CONTENT",
+		"OPENCODE_DISABLE_CLAUDE_CODE_PROMPT",
+		"MULTICA_A2A_INVOCATION",
 		llmTraceEnabledEnvKey,
 		llmTraceSinkURLEnvKey,
 		llmTraceTokenEnvKey,
@@ -2760,6 +2827,7 @@ func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 		protocol.DingTalkStreamNodeIDEnvKey,
 		protocol.DingTalkStreamConnectionIDEnvKey,
 		protocol.AgentIdentityContextTokenEnvKey,
+		protocol.DEAPDWSTokenEnvKey,
 		protocol.SandboxRelayTokenEnvKey,
 		"MULTICA_AGENT_IDENTITY_BASE_URL",
 		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS",
@@ -2770,6 +2838,37 @@ func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 	default:
 		return false
 	}
+}
+
+// hardenCloudSandboxA2ARunnerEnv gives every admitted FC/ASB OpenCode A2A run a task-local
+// DWS/GitHub/XDG/OpenCode state root before the v2 daemon starts. Runtime and
+// daemon capability checks remain mandatory; this runner layer prevents state
+// reuse across successive tasks in the same sandbox.
+func hardenCloudSandboxA2ARunnerEnv(task db.AgentTaskQueue, runtime db.AgentRuntime, env map[string]string) map[string]string {
+	if !IsA2ATaskOrigin(task.Context) {
+		return env
+	}
+	metadata, err := ParseCloudSandboxRuntime(runtime)
+	if err != nil || (metadata.SandboxBackend != SandboxBackendAliyunFC && metadata.SandboxBackend != SandboxBackendASB) || metadata.Provider != "opencode" {
+		return env
+	}
+	if env == nil {
+		env = make(map[string]string)
+	}
+	root := filepath.Join(fcE2BA2AIsolationRoot, util.UUIDToString(task.ID))
+	xdgRoot := filepath.Join(root, "xdg")
+	env["DWS_CONFIG_DIR"] = root
+	env["GH_CONFIG_DIR"] = filepath.Join(root, "gh")
+	env["XDG_CONFIG_HOME"] = filepath.Join(xdgRoot, "config")
+	env["XDG_DATA_HOME"] = filepath.Join(xdgRoot, "data")
+	env["XDG_STATE_HOME"] = filepath.Join(xdgRoot, "state")
+	env["XDG_CACHE_HOME"] = filepath.Join(xdgRoot, "cache")
+	env["OPENCODE_CONFIG_DIR"] = filepath.Join(xdgRoot, "config", "opencode")
+	env["OPENCODE_CONFIG"] = "/home/user/.config/opencode/opencode.json"
+	env["OPENCODE_CONFIG_CONTENT"] = ""
+	env["OPENCODE_DISABLE_CLAUDE_CODE_PROMPT"] = "true"
+	env["MULTICA_A2A_INVOCATION"] = "1"
+	return env
 }
 
 func fcE2BTemplateForRuntime(rt db.AgentRuntime, configuredTemplate string) (string, error) {

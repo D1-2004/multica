@@ -392,7 +392,6 @@ parsing or rewriting Router's context string.
 - Reason: A Router callback must not override the Agent's original trace
   destination, and private Router capabilities should remain server-side while
   sandbox traffic reuses the proven task lifecycle control-plane channel.
-
 ## Change record: 2026-08-13 First effective reply timestamp
 
 - History: Added nullable `executionSummary.first_effective_reply_at` to the

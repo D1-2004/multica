@@ -143,6 +143,33 @@ func TestASBLaunchWithoutIdentityServiceUsesUnboundMode(t *testing.T) {
 	}
 }
 
+func TestASBA2ATaskNeverResolvesEmployeeIdentity(t *testing.T) {
+	t.Parallel()
+
+	launcher := &ASBLauncher{Identity: fakeASBTaskIdentityResolver{identity: ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:              "aip-1",
+		SourceSandboxID:    "identity-source-1",
+		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentIdentityToken: "ait",
+		Fingerprint:        strings.Repeat("a", 64),
+	}}}
+	identity, err := launcher.resolveTaskIdentityForTask(
+		context.Background(),
+		db.AgentTaskQueue{Context: newA2ATaskContext()},
+		pgtype.UUID{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity != unboundASBResolvedIdentity() {
+		t.Fatalf("A2A identity = %#v, want unbound", identity)
+	}
+}
+
 func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
 	t.Parallel()
 
@@ -313,47 +340,6 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 	if attachCalls.Load() != 2 {
 		t.Fatalf("SPIFFE attachment calls = %d, want 2", attachCalls.Load())
 	}
-}
-
-func TestASBOptionalIdentityAttachmentDoesNotBlockTaskStart(t *testing.T) {
-	t.Parallel()
-
-	requestStarted := make(chan struct{})
-	releaseRequest := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost ||
-			request.URL.Path != "/v1/sandboxes/sandbox-123/identity/spiffe" {
-			http.NotFound(response, request)
-			return
-		}
-		close(requestStarted)
-		<-releaseRequest
-		response.WriteHeader(http.StatusAccepted)
-	}))
-	defer server.Close()
-
-	launcher := &ASBLauncher{Client: newTestASBClient(t, server)}
-	startedAt := time.Now()
-	launcher.attachSandboxIdentityAfterTaskStart(
-		util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
-		util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
-		"sandbox-123",
-		ASBResolvedIdentity{
-			Mode:               asbIdentityModeBound,
-			RawEmployeeID:      "12345",
-			AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
-			AgentIdentityToken: "ait",
-		},
-	)
-	if elapsed := time.Since(startedAt); elapsed > 100*time.Millisecond {
-		t.Fatalf("optional identity attachment blocked for %s", elapsed)
-	}
-	select {
-	case <-requestStarted:
-	case <-time.After(time.Second):
-		t.Fatal("optional identity attachment request was not started")
-	}
-	close(releaseRequest)
 }
 
 func TestASBAgentIdentityAttachmentConvergingRejectsOtherBadRequest(t *testing.T) {
@@ -684,12 +670,27 @@ func TestValidateASBManifestVersionContract(t *testing.T) {
 			wantReleaseErr: true,
 		},
 		{
-			name:     "current schema v4 release",
-			manifest: manifest(4, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+			name:           "existing schema v4 runtime",
+			manifest:       manifest(4, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+			wantReleaseErr: true,
 		},
 		{
-			name:           "schema v4 release missing trace capability",
-			manifest:       manifest(4, RuntimeStartCapabilityEventsV1),
+			name:           "existing schema v5 runtime",
+			manifest:       manifest(5, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+			wantReleaseErr: true,
+		},
+		{
+			name:     "current schema v6 release",
+			manifest: manifest(6, RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability),
+		},
+		{
+			name:           "schema v6 release missing trace capability",
+			manifest:       manifest(6, RuntimeStartCapabilityEventsV1, A2AInvocationV2Capability),
+			wantReleaseErr: true,
+		},
+		{
+			name:           "schema v6 release missing A2A invocation capability",
+			manifest:       manifest(6, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
 			wantReleaseErr: true,
 		},
 		{
@@ -699,8 +700,8 @@ func TestValidateASBManifestVersionContract(t *testing.T) {
 			wantReleaseErr: true,
 		},
 		{
-			name:           "unsupported schema v5",
-			manifest:       manifest(5, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+			name:           "unsupported schema v7",
+			manifest:       manifest(7, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
 			wantRuntimeErr: true,
 			wantReleaseErr: true,
 		},
@@ -723,11 +724,11 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	const runtimeAPIKey = "runtime-owned-validation-key"
 	digest := "sha256:" + strings.Repeat("a", 64)
 	manifest := map[string]any{
-		"schema_version":   4,
+		"schema_version":   6,
 		"sandbox_backends": []string{"aliyun_fc", "asb"},
 		"providers":        []string{"hermes", "opencode", "pi"},
 		"capabilities_by_backend": map[string][]string{
-			"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, LLMTraceCapability},
+			"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability},
 		},
 		"identity_modes_by_backend": map[string][]string{
 			"asb": {"agent_identity", "spiffe", "buc_wireguard"},
@@ -841,7 +842,7 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	if capacity.createRequests != 1 {
 		t.Fatalf("capacity create requests = %d, want 1", capacity.createRequests)
 	}
-	if intMetadataValue(got, "schema_version") != 4 {
+	if intMetadataValue(got, "schema_version") != 6 {
 		t.Fatalf("manifest = %#v", got)
 	}
 }

@@ -167,6 +167,38 @@ func (q *Queries) ListMembersWithUser(ctx context.Context, workspaceID pgtype.UU
 	return items, nil
 }
 
+const lockWorkspaceMemberForRevocation = `-- name: LockWorkspaceMemberForRevocation :one
+SELECT id, workspace_id, user_id, role, created_at FROM member
+WHERE id = $1
+  AND workspace_id = $2
+  AND user_id = $3
+FOR UPDATE
+`
+
+type LockWorkspaceMemberForRevocationParams struct {
+	MemberID    pgtype.UUID `json:"member_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+}
+
+// This is the outer linearization lock for member removal. A2A durable-grant
+// creation takes FOR KEY SHARE on this same row before locking Agent-owned
+// resources, so either the grant commits first and is included by the later
+// revocation snapshots, or member deletion wins and the grant INSERT sees no
+// eligible member after its lock wait.
+func (q *Queries) LockWorkspaceMemberForRevocation(ctx context.Context, arg LockWorkspaceMemberForRevocationParams) (Member, error) {
+	row := q.db.QueryRow(ctx, lockWorkspaceMemberForRevocation, arg.MemberID, arg.WorkspaceID, arg.UserID)
+	var i Member
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const updateMemberRole = `-- name: UpdateMemberRole :one
 UPDATE member SET role = $2
 WHERE id = $1

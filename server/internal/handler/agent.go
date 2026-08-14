@@ -420,6 +420,14 @@ type AgentTaskResponse struct {
 	InitiatorName  string `json:"initiator_name,omitempty"`  // display name of the initiator
 	InitiatorEmail string `json:"initiator_email,omitempty"` // member email; empty for agent initiators
 	Kind           string `json:"kind"`                      // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
+	// A2AInvocation is set only on the authenticated daemon claim payload when
+	// the durable task context marks an inbound A2A execution. It is the
+	// daemon's explicit authorization to run without a task token; an empty
+	// AuthToken remains fatal for every ordinary task.
+	A2AInvocation bool `json:"a2a_invocation,omitempty"`
+	// A2AManagedRuntimeV2 is emitted only after the server has verified both the
+	// managed image manifest and daemon's a2a-invocation-v2 capability.
+	A2AManagedRuntimeV2 bool `json:"a2a_managed_runtime_v2,omitempty"`
 	// Attribution is the resolved accountable-human provenance for this run
 	// (MUL-4302 §9): the source label + precise flag, the initiator (accountable)
 	// and originator refs, the evidence pointer, and lineage. Always present (the
@@ -596,6 +604,7 @@ type ChatAttachmentMeta struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type,omitempty"`
+	SizeBytes   int64  `json:"size_bytes,omitempty"`
 }
 
 // ChatMessageSourcePayload associates one sanitized platform callback with the
@@ -2318,7 +2327,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := h.Queries.ListAgentTasks(r.Context(), agent.ID)
+	tasks, err := h.Queries.ListHumanVisibleAgentTasks(r.Context(), agent.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agent tasks")
 		return

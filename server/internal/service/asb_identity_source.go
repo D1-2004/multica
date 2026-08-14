@@ -938,8 +938,8 @@ func asbEnterpriseCLIIdentityProbeFailureStage(err error) string {
 }
 
 func asbBUCOnlyIdentityProbeCommand() string {
-	// The sandbox=true variant additionally requires an SSO_TICKET. Source
-	// establishment only needs to prove the injected zero-trust identity.
+	// The sandbox=true variant additionally requires an SSO ticket. Source and
+	// task startup only need to prove the injected zero-trust identity.
 	return "set -euo pipefail; " +
 		"printf 'probe_stage=buc\\n' >&2; " +
 		"curl -fsS --max-time 10 -X POST " +

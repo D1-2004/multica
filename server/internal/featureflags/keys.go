@@ -23,6 +23,10 @@ const (
 	WorkspaceAccessTokens = "workspace_access_tokens"
 	// MulticaMCPChatSend gates the server-hosted MCP chat continuation endpoint.
 	MulticaMCPChatSend = "multica_mcp_chat_send"
+	// AgentA2AInbound gates publishing a user-owned Agent through the inbound
+	// A2A control plane and protocol endpoint. It is fail-closed during the
+	// additive-schema and rolling-server rollout.
+	AgentA2AInbound = "agent_a2a_inbound"
 	// agentSkillTogglesCompat is no longer a release flag. Keep publishing the
 	// key as enabled so installed v0.4.0 desktop clients, which still gate the
 	// switch on this config decision, receive the permanently enabled behavior.
@@ -34,6 +38,7 @@ var frontendPublicFlags = []string{
 	AgentBuilder,
 	ResourceLabels,
 	WorkspaceAccessTokens,
+	AgentA2AInbound,
 }
 
 func ComposioMCPAppsEnabled(ctx context.Context, flags *featureflag.Service) bool {
@@ -54,6 +59,10 @@ func WorkspaceAccessTokensEnabled(ctx context.Context, flags *featureflag.Servic
 
 func MulticaMCPChatSendEnabled(ctx context.Context, flags *featureflag.Service) bool {
 	return flags.IsEnabled(ctx, MulticaMCPChatSend, false)
+}
+
+func AgentA2AInboundEnabled(ctx context.Context, flags *featureflag.Service) bool {
+	return flags.IsEnabled(ctx, AgentA2AInbound, false)
 }
 
 func EvaluateFrontendPublicFlags(ctx context.Context, flags *featureflag.Service) map[string]bool {

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -196,6 +197,124 @@ func TestLegacyRuntimeClaimFinalizesAttemptWithoutProtocolFields(t *testing.T) {
 	}
 	if got.Status != "claimed" || got.LastStage != "claim_finalized" || !got.ClaimFinalizedAt.Valid {
 		t.Fatalf("legacy attempt after claim = %+v", got)
+	}
+}
+
+func TestA2ATokenlessClaimFinalizesRuntimeStartAttemptAtHandlerBoundary(t *testing.T) {
+	ctx := context.Background()
+	pool := newTaskClaimRacePool(t)
+	queries := db.New(pool)
+	svc := NewTaskService(queries, pool, nil, events.New())
+	taskID, _, _ := dispatchedCommentTaskFixture(t, ctx, pool)
+	taskUUID := util.MustParseUUID(taskID)
+	if _, err := pool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET context = jsonb_build_object('multica_origin', 'a2a')
+		WHERE id = $1
+	`, taskUUID); err != nil {
+		t.Fatalf("mark task as A2A: %v", err)
+	}
+	task, err := queries.GetAgentTask(ctx, taskUUID)
+	if err != nil {
+		t.Fatalf("load A2A task: %v", err)
+	}
+	attempt, err := svc.BeginRuntimeStartAttempt(ctx, task, SandboxBackendAliyunFC, RuntimeStartProtocolHTTPJSONV1)
+	if err != nil {
+		t.Fatalf("begin A2A attempt: %v", err)
+	}
+
+	// The launcher observes claims but must not infer completion merely from a
+	// dispatched A2A task. Only the handler's post-payload transaction opts into
+	// the durable tokenless A2A proof.
+	if _, err := queries.FinalizeAgentTaskRuntimeStartAttemptForTask(ctx, db.FinalizeAgentTaskRuntimeStartAttemptForTaskParams{
+		TaskID: task.ID, RuntimeID: task.RuntimeID, AllowTokenlessA2a: false,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("launcher observation before handler finalization = %v, want no rows", err)
+	}
+	before, err := queries.GetAgentTaskRuntimeStartAttempt(ctx, db.GetAgentTaskRuntimeStartAttemptParams{
+		ID: attempt.ID, TaskID: task.ID, RuntimeID: task.RuntimeID,
+	})
+	if err != nil {
+		t.Fatalf("load pre-finalization attempt: %v", err)
+	}
+	if before.Status != "starting" {
+		t.Fatalf("launcher observation changed attempt to %q", before.Status)
+	}
+
+	if _, err := svc.FinalizeTaskClaimWithoutToken(ctx, task, nil, false); err != nil {
+		t.Fatalf("finalize tokenless A2A claim: %v", err)
+	}
+	got, err := queries.GetAgentTaskRuntimeStartAttempt(ctx, db.GetAgentTaskRuntimeStartAttemptParams{
+		ID: attempt.ID, TaskID: task.ID, RuntimeID: task.RuntimeID,
+	})
+	if err != nil {
+		t.Fatalf("load finalized A2A attempt: %v", err)
+	}
+	if got.Status != "claimed" || got.LastStage != "claim_finalized" || !got.ClaimFinalizedAt.Valid {
+		t.Fatalf("A2A attempt after tokenless claim = %+v", got)
+	}
+	var tokenCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM task_token WHERE task_id = $1`, task.ID).Scan(&tokenCount); err != nil {
+		t.Fatalf("count A2A task tokens: %v", err)
+	}
+	if tokenCount != 0 {
+		t.Fatalf("tokenless A2A claim persisted %d task tokens", tokenCount)
+	}
+
+	failure := NewRuntimeStartFailure(
+		SandboxBackendAliyunFC,
+		"FCE2B-RUNNER-CLAIM-TIMEOUT",
+		"claim_wait",
+		true,
+		"Runner 未在规定时间内完成任务领取。",
+		"late launcher timeout after tokenless A2A finalization",
+	)
+	gotTask, err := svc.FailTaskRuntimeStart(ctx, task.ID, task.RuntimeID, attempt.ID, failure)
+	if err != nil {
+		t.Fatalf("late A2A startup failure: %v", err)
+	}
+	if gotTask.Status != "dispatched" {
+		t.Fatalf("late A2A startup failure changed task status to %q", gotTask.Status)
+	}
+	got, err = queries.GetAgentTaskRuntimeStartAttempt(ctx, db.GetAgentTaskRuntimeStartAttemptParams{
+		ID: attempt.ID, TaskID: task.ID, RuntimeID: task.RuntimeID,
+	})
+	if err != nil {
+		t.Fatalf("reload A2A attempt after late failure: %v", err)
+	}
+	if got.Status != "claimed" {
+		t.Fatalf("late A2A startup failure changed attempt status to %q", got.Status)
+	}
+}
+
+func TestTokenlessRuntimeStartFinalizationRequiresDurableA2AOrigin(t *testing.T) {
+	ctx := context.Background()
+	pool := newTaskClaimRacePool(t)
+	queries := db.New(pool)
+	svc := NewTaskService(queries, pool, nil, events.New())
+	taskID, _, _ := dispatchedCommentTaskFixture(t, ctx, pool)
+	task, err := queries.GetAgentTask(ctx, util.MustParseUUID(taskID))
+	if err != nil {
+		t.Fatalf("load ordinary task: %v", err)
+	}
+	attempt, err := svc.BeginRuntimeStartAttempt(ctx, task, SandboxBackendAliyunFC, RuntimeStartProtocolHTTPJSONV1)
+	if err != nil {
+		t.Fatalf("begin ordinary attempt: %v", err)
+	}
+
+	if _, err := queries.FinalizeAgentTaskRuntimeStartAttemptForTask(ctx, db.FinalizeAgentTaskRuntimeStartAttemptForTaskParams{
+		TaskID: task.ID, RuntimeID: task.RuntimeID, AllowTokenlessA2a: true,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("ordinary tokenless finalization = %v, want no rows", err)
+	}
+	got, err := queries.GetAgentTaskRuntimeStartAttempt(ctx, db.GetAgentTaskRuntimeStartAttemptParams{
+		ID: attempt.ID, TaskID: task.ID, RuntimeID: task.RuntimeID,
+	})
+	if err != nil {
+		t.Fatalf("load ordinary attempt: %v", err)
+	}
+	if got.Status != "starting" {
+		t.Fatalf("ordinary tokenless finalization changed attempt to %q", got.Status)
 	}
 }
 

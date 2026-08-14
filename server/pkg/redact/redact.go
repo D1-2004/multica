@@ -73,6 +73,10 @@ var patterns = []secretPattern{
 	// Task-scoped Agent Identity credentials in JSON or key/value output.
 	{regexp.MustCompile(`(?i)(?:agent_identity_context_token|dws_auth_code)\s*["']?\s*[=:]\s*["']?[^"',\s}]+`), "[REDACTED CREDENTIAL]"},
 
+	// DEAP supplies an opaque request-scoped DWS credential through an HTTP
+	// header, which may be rendered as a header, JSON field, or runner env var.
+	{regexp.MustCompile(`(?i)(?:x-dws-token|multica_deap_dws_token)\s*["']?\s*[=:]\s*["']?[^"',\s}]+`), "[REDACTED CREDENTIAL]"},
+
 	// Generic key=value patterns for common secret env var names
 	{regexp.MustCompile(`(?i)(?:API_KEY|API_SECRET|SECRET_KEY|SECRET|ACCESS_TOKEN|AUTH_TOKEN|AUTH_CODE|PRIVATE_KEY|DATABASE_URL|DB_PASSWORD|DB_URL|REDIS_URL|PASSWORD|TOKEN)\s*[=:]\s*\S+`), "[REDACTED CREDENTIAL]"},
 }

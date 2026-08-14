@@ -185,6 +185,23 @@ func TestRedactAgentIdentityContextTokenJSON(t *testing.T) {
 	}
 }
 
+func TestRedactDEAPDWSToken(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{
+		`{"X-DWS-Token":"deap-request-token-secret"}`,
+		"X-DWS-Token: deap-request-token-secret",
+		"MULTICA_DEAP_DWS_TOKEN=deap-request-token-secret",
+	} {
+		got := Text(input)
+		if strings.Contains(got, "deap-request-token-secret") {
+			t.Fatalf("DEAP DWS token not redacted: %s", got)
+		}
+		if !strings.Contains(got, "[REDACTED CREDENTIAL]") {
+			t.Fatalf("missing redaction marker: %s", got)
+		}
+	}
+}
+
 // TestRedactBearerMCPToken is a regression guard for the Composio MCP session
 // headers (MUL-3720): the SDK attaches the project key as `Bearer mcp_...` on
 // some MCP transports, so the generic Bearer pattern must mask it before it can

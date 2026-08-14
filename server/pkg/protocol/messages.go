@@ -13,6 +13,10 @@ const (
 	// Gated so only daemons+servers that both support it route claim over WS;
 	// everyone else keeps using the HTTP claim endpoint.
 	DaemonCapabilityRPCV1 = "rpc-v1"
+	// DaemonCapabilityA2AInvocationV2 advertises strict MCP replacement,
+	// task-control injection, external ContextToken isolation, and file
+	// artifact support for inbound A2A execution.
+	DaemonCapabilityA2AInvocationV2 = "a2a-invocation-v2"
 
 	// AppCapabilityChatDraftRestoreV1 is advertised (X-Client-Capabilities) by
 	// app clients that understand the durable draft-restore recovery path:
@@ -30,6 +34,7 @@ const (
 	AgentIdentityContextTokenSourceJSONKey    = "agent_identity_context_token_source"
 	AgentIdentityContextTokenSourceExternal   = "external"
 	AgentIdentityContextTokenEnvKey           = "AGENT_IDENTITY_CONTEXT_TOKEN"
+	DEAPDWSTokenEnvKey                        = "MULTICA_DEAP_DWS_TOKEN"
 	DispatchSurfaceJSONKey                    = "dispatch_surface"
 	DispatchOutboundJSONKey                   = "dispatch_outbound"
 	DispatchContextPromptJSONKey              = "dispatch_context_prompt"

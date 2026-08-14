@@ -161,6 +161,7 @@ export type {
 } from "./chat";
 export type { StorageAdapter } from "./storage";
 export type * from "./workspace-access";
+export type * from "./agent-a2a";
 export type {
   Project,
   ProjectStatus,

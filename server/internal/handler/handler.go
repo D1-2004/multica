@@ -192,6 +192,9 @@ type Handler struct {
 	DaemonWorkspaceRefresh  WorkspaceSetRefreshNotifier
 	Bus                     *events.Bus
 	TaskService             *service.TaskService
+	A2AService              *service.A2AService
+	A2AProtocol             http.Handler
+	A2APushWorker           *service.A2APushWorker
 	FCE2BLauncher           *service.FCE2BLauncher
 	ASBLauncher             *service.ASBLauncher
 	EnterpriseIdentity      *service.EnterpriseIdentityService
@@ -470,6 +473,8 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		fcLauncher.SetPool(pool)
 	}
 	taskSvc.RuntimeLauncher = fcLauncher
+	a2aSvc := service.NewA2AService(queries, txStarter, taskSvc, store)
+	taskSvc.A2AStateObserver = a2aSvc
 
 	githubClient, githubErr := githubapp.New(githubapp.Config{
 		AppID:           os.Getenv("GITHUB_APP_ID"),
@@ -499,6 +504,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		DaemonWorkspaceRefresh:       daemonWorkspaceRefresh,
 		Bus:                          bus,
 		TaskService:                  taskSvc,
+		A2AService:                   a2aSvc,
 		FCE2BLauncher:                fcLauncher,
 		IssueService:                 service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
 		IssueCommentService:          service.NewIssueCommentService(queries, bus, taskSvc),

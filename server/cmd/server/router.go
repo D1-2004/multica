@@ -30,6 +30,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -303,11 +304,11 @@ type RouterOptions struct {
 	BusinessMetrics *obsmetrics.BusinessMetrics
 	// WecomMetrics is the WeCom adapter's health sink. Nil discards every
 	// counter, which is what a deployment with /metrics turned off gets.
-	WecomMetrics    *obsmetrics.WecomMetrics
-	DaemonHub       *daemonws.Hub
-	DaemonWakeup    service.TaskWakeupNotifier
-	RunnerRelay     realtime.Broadcaster
-	FeatureFlags    *featureflag.Service
+	WecomMetrics *obsmetrics.WecomMetrics
+	DaemonHub    *daemonws.Hub
+	DaemonWakeup service.TaskWakeupNotifier
+	RunnerRelay  realtime.Broadcaster
+	FeatureFlags *featureflag.Service
 	// HeartbeatScheduler, when non-nil, replaces the default synchronous
 	// passthrough scheduler on the constructed Handler. main.go injects a
 	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
@@ -421,6 +422,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		publicURLProvider = opts.RuntimeConfig.publicURL
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	if pushKey, pushKeyErr := secretbox.LoadKey("MULTICA_A2A_PUSH_SECRET_KEY"); pushKeyErr == nil {
+		pushSecrets, boxErr := secretbox.New(pushKey)
+		if boxErr != nil {
+			slog.Error("A2A push secret configuration is invalid; push notifications disabled", "error", boxErr)
+		} else {
+			h.A2AService.PushSecrets = pushSecrets
+			h.A2APushWorker = service.NewA2APushWorker(queries, h.A2AService)
+			h.A2AService.PushNotifier = h.A2APushWorker
+		}
+	} else {
+		slog.Info("A2A push notifications disabled (MULTICA_A2A_PUSH_SECRET_KEY not set)")
+	}
+	h.A2AProtocol = a2aintegration.NewJSONRPCHandler(h.A2AService)
 	h.RunnerRelay = opts.RunnerRelay
 	if setter, ok := opts.RunnerRelay.(interface {
 		SetRunnerMachineDeliverer(realtime.RunnerMachineDeliverer)
@@ -1661,6 +1675,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Public API
 	r.Get("/api/config", h.GetConfig)
 	r.With(contactSalesRL).Post("/api/contact-sales", h.CreateContactSales)
+	// Per-Agent A2A discovery is public metadata; JSON-RPC uses an endpoint-
+	// specific Bearer credential and derives all tenant context server-side.
+	r.Get("/api/a2a/agents/{publicAgentId}/.well-known/agent-card.json", h.GetAgentA2ACard)
+	r.Post("/api/a2a/agents/{publicAgentId}/v1", h.HandleAgentA2ARPC)
+	// The header-authenticated URL is canonical. The secret-bearing connect URL
+	// exists so a local Coding Agent can be configured with one copied command.
+	r.Post("/api/mcp/agents/{publicAgentId}", h.HandleAgentMCP)
+	r.Post("/api/mcp/connect/{accessToken}", h.HandleAgentMCP)
 
 	// Webhook ingress for autopilots. Outside the authenticated group on
 	// purpose: the bearer token in the URL path IS the credential. Workspace
@@ -1759,6 +1781,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/fail", h.FailTask)
 		r.Post("/tasks/{taskId}/usage", h.ReportTaskUsage)
 		r.Post("/tasks/{taskId}/messages", h.ReportTaskMessages)
+		r.Post("/tasks/{taskId}/a2a-control", h.ControlA2ATask)
+		r.Get("/tasks/{taskId}/a2a-attachments/{attachmentId}", h.DownloadDaemonA2AAttachment)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
 		r.Post("/tasks/{taskId}/llm-traces", h.RelayTaskLLMTrace)
 		r.Post("/tasks/{taskId}/cancel-ack", h.AckTaskCancelled)
@@ -2352,6 +2376,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/skills/{skillId}/enabled", h.SetAgentSkillEnabled)
 					r.Put("/runtime-skills/enabled", h.SetAgentRuntimeSkillEnabled)
 					r.Delete("/skills/{skillId}", h.RemoveAgentSkill)
+					r.Route("/a2a", func(r chi.Router) {
+						r.Use(handler.RequireHumanActor)
+						r.Get("/", h.GetAgentA2AConfig)
+						r.Put("/", h.UpdateAgentA2AConfig)
+						r.Post("/clients", h.CreateAgentA2AClient)
+						r.Patch("/clients/{clientId}", h.UpdateAgentA2AClient)
+						r.Post("/clients/{clientId}/credentials", h.CreateAgentA2ACredential)
+						r.Delete("/clients/{clientId}/credentials/{credentialId}", h.DeleteAgentA2ACredential)
+					})
 					// Dedicated env-management endpoint. Admits the agent
 					// owner or a workspace owner/admin; agent actors are
 					// denied. Every reveal / write is audited to

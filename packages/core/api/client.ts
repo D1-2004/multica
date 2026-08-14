@@ -76,6 +76,13 @@ import type {
   UpdateWorkspaceAccessTokenRequest,
   RegenerateWorkspaceAccessTokenRequest,
   WorkspaceAccessTokenSecretResponse,
+  AgentA2AConfig,
+  AgentA2AClient,
+  AgentA2ACredentialSecretResponse,
+  UpdateAgentA2AConfigRequest,
+  CreateAgentA2AClientRequest,
+  UpdateAgentA2AClientRequest,
+  CreateAgentA2ACredentialRequest,
   RuntimeUsage,
   IssueUsageSummary,
   RuntimeHourlyActivity,
@@ -444,6 +451,12 @@ import {
   WorkspaceAccessTokenSecretResponseSchema,
   EMPTY_WORKSPACE_ACCESS_TOKEN,
   EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE,
+  AgentA2AConfigSchema,
+  AgentA2AClientSchema,
+  AgentA2ACredentialSecretResponseSchema,
+  EMPTY_AGENT_A2A_CONFIG,
+  EMPTY_AGENT_A2A_CLIENT,
+  EMPTY_AGENT_A2A_CREDENTIAL_SECRET_RESPONSE,
   GitHubConnectResponseSchema,
   ListGitHubRepositoriesResponseSchema,
   EMPTY_GITHUB_CONNECT_RESPONSE,
@@ -3216,6 +3229,140 @@ export class ApiClient {
       {
         method: "DELETE",
       },
+    );
+  }
+
+  // Owner-managed inbound A2A exposure for one Agent. The raw credential
+  // returned by createAgentA2ACredential must be consumed by the mutation
+  // layer and never retained in TanStack Query state.
+  async getAgentA2AConfig(agentId: string): Promise<AgentA2AConfig> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/a2a`,
+    );
+    const parsed = parseWithFallback(
+      raw,
+      AgentA2AConfigSchema,
+      EMPTY_AGENT_A2A_CONFIG,
+      {
+        endpoint: "GET /api/agents/:id/a2a",
+        includeReceived: false,
+      },
+    );
+    if (parsed === EMPTY_AGENT_A2A_CONFIG) {
+      throw new Error("Invalid A2A configuration response");
+    }
+    return parsed;
+  }
+
+  async updateAgentA2AConfig(
+    agentId: string,
+    data: UpdateAgentA2AConfigRequest,
+  ): Promise<AgentA2AConfig> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/a2a`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: data.enabled,
+          card_name: data.cardName,
+          card_description: data.cardDescription,
+          card_version: data.cardVersion,
+          card_skills: data.cardSkills,
+        }),
+      },
+    );
+    const parsed = parseWithFallback(
+      raw,
+      AgentA2AConfigSchema,
+      EMPTY_AGENT_A2A_CONFIG,
+      {
+        endpoint: "PUT /api/agents/:id/a2a",
+        includeReceived: false,
+      },
+    );
+    if (parsed === EMPTY_AGENT_A2A_CONFIG) {
+      throw new Error("Invalid A2A configuration response");
+    }
+    return parsed;
+  }
+
+  async createAgentA2AClient(
+    agentId: string,
+    data: CreateAgentA2AClientRequest,
+  ): Promise<AgentA2AClient> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/a2a/clients`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          name: data.name,
+          scopes: data.scopes,
+          rate_limit_per_minute: data.rateLimitPerMinute,
+          max_concurrent_tasks: data.maxConcurrentTasks,
+        }),
+      },
+    );
+    return parseWithFallback(raw, AgentA2AClientSchema, EMPTY_AGENT_A2A_CLIENT, {
+      endpoint: "POST /api/agents/:id/a2a/clients",
+      includeReceived: false,
+    });
+  }
+
+  async updateAgentA2AClient(
+    agentId: string,
+    clientId: string,
+    data: UpdateAgentA2AClientRequest,
+  ): Promise<AgentA2AClient> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/a2a/clients/${encodeURIComponent(clientId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: data.name,
+          status: data.status,
+          scopes: data.scopes,
+          rate_limit_per_minute: data.rateLimitPerMinute,
+          max_concurrent_tasks: data.maxConcurrentTasks,
+        }),
+      },
+    );
+    return parseWithFallback(raw, AgentA2AClientSchema, EMPTY_AGENT_A2A_CLIENT, {
+      endpoint: "PATCH /api/agents/:id/a2a/clients/:clientId",
+      includeReceived: false,
+    });
+  }
+
+  async createAgentA2ACredential(
+    agentId: string,
+    clientId: string,
+    data: CreateAgentA2ACredentialRequest,
+  ): Promise<AgentA2ACredentialSecretResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/a2a/clients/${encodeURIComponent(clientId)}/credentials`,
+      {
+        method: "POST",
+        body: JSON.stringify({ expires_at: data.expiresAt }),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      AgentA2ACredentialSecretResponseSchema,
+      EMPTY_AGENT_A2A_CREDENTIAL_SECRET_RESPONSE,
+      {
+        endpoint: "POST /api/agents/:id/a2a/clients/:clientId/credentials",
+        includeReceived: false,
+      },
+    );
+  }
+
+  async deleteAgentA2ACredential(
+    agentId: string,
+    clientId: string,
+    credentialId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/agents/${encodeURIComponent(agentId)}/a2a/clients/${encodeURIComponent(clientId)}/credentials/${encodeURIComponent(credentialId)}`,
+      { method: "DELETE" },
     );
   }
 

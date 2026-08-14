@@ -312,6 +312,21 @@ SELECT * FROM agent_task_queue
 WHERE agent_id = $1
 ORDER BY created_at DESC;
 
+-- name: ListHumanVisibleAgentTasks :many
+-- External A2A principals share the execution engine but not the ordinary
+-- member Activity surface. Keep ListAgentTasks unfiltered for schedulers and
+-- concurrency/blocker checks; only this presentation query hides A2A rows.
+SELECT task.*
+FROM agent_task_queue task
+WHERE task.agent_id = $1
+  AND COALESCE(task.context ->> 'multica_origin', '') <> 'a2a'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM a2a_context context
+      WHERE context.chat_session_id = task.chat_session_id
+  )
+ORDER BY created_at DESC;
+
 -- name: CreateAgentTask :one
 -- head_sha, agent_identity_context_token and dispatch_context are
 -- server-private task context.
@@ -1809,12 +1824,53 @@ WHERE runtime_id = $1 AND status = 'queued'
 ORDER BY priority DESC, created_at ASC;
 
 -- name: PromoteDueDeferredTasksForRuntime :many
-UPDATE agent_task_queue
+WITH a2a_fifo_candidates AS MATERIALIZED (
+  SELECT DISTINCT ON (task.chat_session_id)
+      task.id,
+      task.chat_session_id,
+      turn.control_signal
+  FROM agent_task_queue task
+  JOIN a2a_task_turn turn ON turn.local_task_id = task.id
+  JOIN a2a_task_binding binding ON binding.id = turn.binding_id
+  WHERE task.runtime_id = @runtime_id
+    AND task.status = 'deferred'
+    AND task.chat_session_id IS NOT NULL
+    AND binding.public_state IN ('TASK_STATE_SUBMITTED', 'TASK_STATE_WORKING')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM agent_task_queue occupied
+      WHERE occupied.chat_session_id = task.chat_session_id
+        AND occupied.agent_id = task.agent_id
+        AND occupied.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+    )
+  ORDER BY task.chat_session_id, task.created_at, task.id
+), runnable_a2a AS MATERIALIZED (
+  SELECT candidate.id
+  FROM a2a_fifo_candidates candidate
+  JOIN agent_task_queue candidate_task ON candidate_task.id = candidate.id
+  WHERE candidate.control_signal IS NULL
+    AND CASE
+      WHEN candidate_task.context->>'agent_identity_context_token_source' = 'external' THEN
+        CASE
+          WHEN jsonb_typeof(candidate_task.context->'agent_identity_context_token_expires_at') = 'number' THEN
+            (candidate_task.context->>'agent_identity_context_token_expires_at')::numeric
+              > extract(epoch FROM now() + interval '60 seconds') * 1000
+          ELSE FALSE
+        END
+      ELSE TRUE
+    END
+    AND pg_try_advisory_xact_lock(
+      hashtextextended(candidate.chat_session_id::text, 479823117)
+    )
+)
+UPDATE agent_task_queue AS task
 SET status = 'queued'
-WHERE runtime_id = @runtime_id
-  AND status = 'deferred'
-  AND chat_session_id IS NULL
-  AND fire_at <= now()
+WHERE task.runtime_id = @runtime_id
+  AND task.status = 'deferred'
+  AND (
+    (task.chat_session_id IS NULL AND task.fire_at <= now())
+    OR task.id IN (SELECT id FROM runnable_a2a)
+  )
 RETURNING *;
 
 -- name: ListQueuedClaimCandidatesByRuntimes :many
@@ -1835,12 +1891,53 @@ ORDER BY priority DESC, created_at ASC;
 -- name: PromoteDueDeferredTasksForRuntimes :many
 -- Batch variant of PromoteDueDeferredTasksForRuntime (MUL-4257): promotes all
 -- due deferred tasks across the runtime set in one UPDATE.
-UPDATE agent_task_queue
+WITH a2a_fifo_candidates AS MATERIALIZED (
+  SELECT DISTINCT ON (task.chat_session_id)
+      task.id,
+      task.chat_session_id,
+      turn.control_signal
+  FROM agent_task_queue task
+  JOIN a2a_task_turn turn ON turn.local_task_id = task.id
+  JOIN a2a_task_binding binding ON binding.id = turn.binding_id
+  WHERE task.runtime_id = ANY(@runtime_ids::uuid[])
+    AND task.status = 'deferred'
+    AND task.chat_session_id IS NOT NULL
+    AND binding.public_state IN ('TASK_STATE_SUBMITTED', 'TASK_STATE_WORKING')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM agent_task_queue occupied
+      WHERE occupied.chat_session_id = task.chat_session_id
+        AND occupied.agent_id = task.agent_id
+        AND occupied.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+    )
+  ORDER BY task.chat_session_id, task.created_at, task.id
+), runnable_a2a AS MATERIALIZED (
+  SELECT candidate.id
+  FROM a2a_fifo_candidates candidate
+  JOIN agent_task_queue candidate_task ON candidate_task.id = candidate.id
+  WHERE candidate.control_signal IS NULL
+    AND CASE
+      WHEN candidate_task.context->>'agent_identity_context_token_source' = 'external' THEN
+        CASE
+          WHEN jsonb_typeof(candidate_task.context->'agent_identity_context_token_expires_at') = 'number' THEN
+            (candidate_task.context->>'agent_identity_context_token_expires_at')::numeric
+              > extract(epoch FROM now() + interval '60 seconds') * 1000
+          ELSE FALSE
+        END
+      ELSE TRUE
+    END
+    AND pg_try_advisory_xact_lock(
+      hashtextextended(candidate.chat_session_id::text, 479823117)
+    )
+)
+UPDATE agent_task_queue AS task
 SET status = 'queued'
-WHERE runtime_id = ANY(@runtime_ids::uuid[])
-  AND status = 'deferred'
-  AND chat_session_id IS NULL
-  AND fire_at <= now()
+WHERE task.runtime_id = ANY(@runtime_ids::uuid[])
+  AND task.status = 'deferred'
+  AND (
+    (task.chat_session_id IS NULL AND task.fire_at <= now())
+    OR task.id IN (SELECT id FROM runnable_a2a)
+  )
 RETURNING *;
 
 -- name: PromoteDueDeferredChannelChatTasks :many
@@ -1995,6 +2092,12 @@ SELECT atq.* FROM agent_task_queue atq
 JOIN agent a ON a.id = atq.agent_id
 WHERE a.workspace_id = $1
   AND atq.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND COALESCE(atq.context ->> 'multica_origin', '') <> 'a2a'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM a2a_context context
+      WHERE context.chat_session_id = atq.chat_session_id
+  )
 
 UNION ALL
 
@@ -2004,6 +2107,12 @@ JOIN LATERAL (
   FROM agent_task_queue atq
   WHERE atq.agent_id = a.id
     AND atq.status IN ('completed', 'failed')
+    AND COALESCE(atq.context ->> 'multica_origin', '') <> 'a2a'
+    AND NOT EXISTS (
+        SELECT 1
+        FROM a2a_context context
+        WHERE context.chat_session_id = atq.chat_session_id
+    )
   ORDER BY atq.completed_at DESC NULLS LAST, atq.created_at DESC, atq.id DESC
   LIMIT 1
 ) latest ON TRUE

@@ -19,6 +19,20 @@ func TestReleaseFlagsDefaultToOff(t *testing.T) {
 	if MulticaMCPChatSendEnabled(ctx, nil) {
 		t.Fatal("Multica MCP Chat send release flag must default to off")
 	}
+	if AgentA2AInboundEnabled(ctx, nil) {
+		t.Fatal("agent A2A inbound release flag must default to off")
+	}
+}
+
+func TestAgentA2AInboundIsPublishedToFrontend(t *testing.T) {
+	flags := EvaluateFrontendPublicFlags(context.Background(), nil)
+	value, ok := flags[AgentA2AInbound]
+	if !ok {
+		t.Fatal("agent A2A inbound release flag must be published to the frontend")
+	}
+	if value {
+		t.Fatal("agent A2A inbound release flag must default to off")
+	}
 }
 
 // MUL-5345: hang stack capture is gone from this build, but v0.4.13–v0.4.18 are

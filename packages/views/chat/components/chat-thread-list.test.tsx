@@ -170,3 +170,25 @@ describe("ChatThreadList no_response preview (MUL-4351)", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("ChatThreadList A2A session label", () => {
+  it("labels only inbound A2A conversations", () => {
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatThreadList
+          sessions={[
+            makeSession({ id: "a2a", title: "External conversation", is_a2a: true }),
+            makeSession({ id: "web", title: "Direct conversation", is_a2a: false }),
+          ]}
+          agents={[agent]}
+          activeSessionId={null}
+          onSelectSession={vi.fn()}
+          onArchive={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("A2A")).toBeInTheDocument();
+    expect(screen.getAllByText("A2A")).toHaveLength(1);
+  });
+});

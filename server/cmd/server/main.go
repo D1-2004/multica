@@ -512,6 +512,9 @@ func main() {
 	if h.WebhookDeliveryWorker != nil {
 		go h.WebhookDeliveryWorker.Run(sweepCtx)
 	}
+	if h.A2APushWorker != nil {
+		go h.A2APushWorker.Run(sweepCtx)
+	}
 	if h.TaskCompletionWorker != nil {
 		go h.TaskCompletionWorker.Run(sweepCtx)
 	}
@@ -635,6 +638,9 @@ func main() {
 	heartbeatScheduler.Stop()
 	if h.WebhookDeliveryWorker != nil && !h.WebhookDeliveryWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("webhook delivery worker did not exit within shutdown timeout")
+	}
+	if h.A2APushWorker != nil && !h.A2APushWorker.WaitWithTimeout(5*time.Second) {
+		slog.Warn("A2A push worker did not exit within shutdown timeout")
 	}
 	if h.TaskCompletionWorker != nil && !h.TaskCompletionWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("task completion worker did not exit within shutdown timeout")

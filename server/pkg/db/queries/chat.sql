@@ -17,7 +17,13 @@ WHERE id = $1;
 
 -- name: GetChatSessionInWorkspace :one
 SELECT * FROM chat_session
-WHERE id = $1 AND workspace_id = $2;
+WHERE chat_session.id = $1
+  AND chat_session.workspace_id = $2;
+
+-- name: IsA2AChatSession :one
+SELECT EXISTS (
+  SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = $1
+) AS is_a2a;
 
 -- name: GetPublicChatSessionInWorkspace :one
 -- A channel command is a durable control-plane record, not a public chat turn.
@@ -60,7 +66,10 @@ SELECT cs.*,
        COALESCE(lm.role, '') AS last_message_role,
        lm.created_at AS last_message_at,
        lm.failure_reason AS last_message_failure_reason,
-       COALESCE(lm.message_kind, '') AS last_message_kind
+       COALESCE(lm.message_kind, '') AS last_message_kind,
+       EXISTS (
+         SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+       ) AS is_a2a
 FROM chat_session cs
 LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
@@ -106,7 +115,10 @@ SELECT cs.*,
        COALESCE(lm.role, '') AS last_message_role,
        lm.created_at AS last_message_at,
        lm.failure_reason AS last_message_failure_reason,
-       COALESCE(lm.message_kind, '') AS last_message_kind
+       COALESCE(lm.message_kind, '') AS last_message_kind,
+       EXISTS (
+         SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+       ) AS is_a2a
 FROM chat_session cs
 LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
@@ -974,6 +986,41 @@ VALUES (
 )
 RETURNING *;
 
+-- name: CreateA2AChatTask :one
+-- A2A tasks deliberately have no human initiator/originator and no personal
+-- runtime overlay. The endpoint owner is only chat_session ownership plumbing;
+-- it must never become the caller identity or grant access to personal apps.
+-- Every turn starts deferred so a polling daemon cannot claim two turns from
+-- the same Context concurrently. The A2A scheduler promotes exactly one FIFO
+-- turn after the transaction containing its message and identity has committed.
+-- Retry stays disabled until A2A logical retry lineage is implemented.
+INSERT INTO agent_task_queue (
+    agent_id, runtime_id, issue_id, status, priority, chat_session_id,
+    initiator_user_id, originator_user_id, force_fresh_session,
+    runtime_mcp_overlay, runtime_connected_apps, context, max_attempts
+)
+VALUES (
+    @agent_id, @runtime_id, NULL, 'deferred', 2, @chat_session_id,
+    NULL, NULL, FALSE, NULL, NULL, sqlc.narg(task_context), 1
+)
+RETURNING *;
+
+-- name: CreatePausedA2AChatTask :one
+-- An expired external ContextToken must produce an AUTH_REQUIRED public task
+-- without allowing the local execution to race a claim. The placeholder task
+-- remains deferred with no fire_at; a later authenticated turn promotes it and
+-- supplies the fresh task-private identity context.
+INSERT INTO agent_task_queue (
+    agent_id, runtime_id, issue_id, status, priority, chat_session_id,
+    initiator_user_id, originator_user_id, force_fresh_session,
+    runtime_mcp_overlay, runtime_connected_apps, context, max_attempts
+)
+VALUES (
+    @agent_id, @runtime_id, NULL, 'deferred', 2, @chat_session_id,
+    NULL, NULL, FALSE, NULL, NULL, sqlc.narg(task_context), 1
+)
+RETURNING *;
+
 -- name: PutChatSessionPendingFresh :exec
 INSERT INTO chat_session_pending_fresh (chat_session_id)
 VALUES ($1)
@@ -1008,7 +1055,9 @@ VALUES (
     now() + make_interval(secs => @debounce_seconds::double precision)
 )
 ON CONFLICT (chat_session_id)
-    WHERE status = 'deferred' AND chat_session_id IS NOT NULL
+    WHERE status = 'deferred'
+      AND chat_session_id IS NOT NULL
+      AND fire_at IS NOT NULL
 DO UPDATE SET
     agent_id = EXCLUDED.agent_id,
     runtime_id = EXCLUDED.runtime_id,

@@ -144,7 +144,7 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, chatSessionToResponse(session))
+	writeJSON(w, http.StatusCreated, chatSessionToResponse(session, false))
 }
 
 func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
@@ -201,6 +201,7 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 				HasUnread:   s.UnreadCount > 0,
 				UnreadCount: int(s.UnreadCount),
 				LastMessage: buildChatLastMessage(s.LastMessageAt, s.LastMessageContent, s.LastMessageRole, s.LastMessageFailureReason, s.LastMessageKind),
+				IsA2A:       s.IsA2a,
 				Pinned:      s.PinnedAt.Valid,
 				CreatedAt:   timestampToString(s.CreatedAt),
 				UpdatedAt:   timestampToString(s.UpdatedAt),
@@ -231,6 +232,7 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 				HasUnread:   s.UnreadCount > 0,
 				UnreadCount: int(s.UnreadCount),
 				LastMessage: buildChatLastMessage(s.LastMessageAt, s.LastMessageContent, s.LastMessageRole, s.LastMessageFailureReason, s.LastMessageKind),
+				IsA2A:       s.IsA2a,
 				Pinned:      s.PinnedAt.Valid,
 				CreatedAt:   timestampToString(s.CreatedAt),
 				UpdatedAt:   timestampToString(s.UpdatedAt),
@@ -321,8 +323,13 @@ func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	isA2A, a2aErr := h.Queries.IsA2AChatSession(r.Context(), session.ID)
+	if a2aErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve chat session type")
+		return
+	}
 
-	writeJSON(w, http.StatusOK, chatSessionToResponse(session))
+	writeJSON(w, http.StatusOK, chatSessionToResponse(session, isA2A))
 }
 
 type UpdateChatSessionRequest struct {
@@ -357,6 +364,11 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 
 	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
 	if !ok {
+		return
+	}
+	isA2A, a2aErr := h.Queries.IsA2AChatSession(r.Context(), session.ID)
+	if a2aErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve chat session type")
 		return
 	}
 
@@ -447,7 +459,7 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 	h.publishChat(protocol.EventChatSessionUpdated, workspaceID, "member", userID, resolvedSessionID, payload)
 
-	writeJSON(w, http.StatusOK, chatSessionToResponse(updated))
+	writeJSON(w, http.StatusOK, chatSessionToResponse(updated, isA2A))
 }
 
 type SetChatSessionPinnedRequest struct {
@@ -476,6 +488,11 @@ func (h *Handler) SetChatSessionPinned(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	isA2A, err := h.Queries.IsA2AChatSession(r.Context(), session.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve chat session type")
+		return
+	}
 
 	updated, err := h.Queries.SetChatSessionPinned(r.Context(), db.SetChatSessionPinnedParams{
 		ID:     session.ID,
@@ -495,7 +512,7 @@ func (h *Handler) SetChatSessionPinned(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:     timestampToString(updated.UpdatedAt),
 	})
 
-	writeJSON(w, http.StatusOK, chatSessionToResponse(updated))
+	writeJSON(w, http.StatusOK, chatSessionToResponse(updated, isA2A))
 }
 
 type SetChatSessionArchivedRequest struct {
@@ -553,6 +570,11 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	isA2A, err := qtx.IsA2AChatSession(r.Context(), session.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve chat session type")
+		return
+	}
 
 	updated, err := qtx.SetChatSessionArchived(r.Context(), db.SetChatSessionArchivedParams{
 		ID:       session.ID,
@@ -645,7 +667,7 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 		UpdatedAt:     timestampToString(updated.UpdatedAt),
 	})
 
-	writeJSON(w, http.StatusOK, chatSessionToResponse(updated))
+	writeJSON(w, http.StatusOK, chatSessionToResponse(updated, isA2A))
 }
 
 // DeleteChatSession hard-deletes a chat session owned by the caller. The
@@ -2055,6 +2077,9 @@ type ChatSessionResponse struct {
 	HasUnread   bool             `json:"has_unread"`
 	UnreadCount int              `json:"unread_count"`
 	LastMessage *ChatLastMessage `json:"last_message"`
+	// IsA2A marks sessions created by an inbound A2A Context so clients can
+	// distinguish externally initiated conversations without parsing titles.
+	IsA2A bool `json:"is_a2a"`
 	// Pinned marks a chat the user has stuck to the top of the list. Populated
 	// by list endpoints and by the pin/unpin + single-session responses.
 	Pinned    bool   `json:"pinned"`
@@ -2117,7 +2142,7 @@ type ChatMessageResponse struct {
 	Attachments []AttachmentResponse `json:"attachments,omitempty"`
 }
 
-func chatSessionToResponse(s db.ChatSession) ChatSessionResponse {
+func chatSessionToResponse(s db.ChatSession, isA2A bool) ChatSessionResponse {
 	return ChatSessionResponse{
 		ID:          uuidToString(s.ID),
 		WorkspaceID: uuidToString(s.WorkspaceID),
@@ -2126,6 +2151,7 @@ func chatSessionToResponse(s db.ChatSession) ChatSessionResponse {
 		ProjectID:   uuidToPtr(s.ProjectID),
 		Title:       s.Title,
 		Status:      s.Status,
+		IsA2A:       isA2A,
 		Pinned:      s.PinnedAt.Valid,
 		CreatedAt:   timestampToString(s.CreatedAt),
 		UpdatedAt:   timestampToString(s.UpdatedAt),

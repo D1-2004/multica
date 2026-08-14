@@ -199,6 +199,8 @@ var migrationVersionAliases = []migrationVersionAlias{
 	{Legacy: "261_platform_asb_credentials", Current: "9037_platform_asb_credentials"},
 	{Legacy: "262_asb_paused_identity_source", Current: "9038_asb_paused_identity_source"},
 	{Legacy: "263_asb_shared_identity_source", Current: "9039_asb_shared_identity_source"},
+	{Legacy: "270_pinned_item_view", Current: "9062_pinned_item_view"},
+	{Legacy: "271_channel_chat_pending_fresh", Current: "9063_channel_chat_pending_fresh"},
 }
 
 func runTaskUsageHourlyHook(ctx context.Context, pool *pgxpool.Pool) error {

@@ -11,7 +11,10 @@ import type {
 import { runtimeSupportsMcpConfig } from "@multica/core/agents";
 import { isASBRuntime } from "@multica/core/runtimes";
 import { useFeatureEnabled } from "@multica/core/config";
-import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
+import {
+  AGENT_A2A_INBOUND_FLAG,
+  COMPOSIO_MCP_APPS_FLAG,
+} from "@multica/core/feature-flags";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { dingtalkInstallationsOptions } from "@multica/core/dingtalk";
 import { dingtalkAccountBindingsOptions } from "@multica/core/dingtalk-account-bindings";
@@ -41,6 +44,7 @@ import { IdentityTab } from "./tabs/identity-tab";
 import { RuntimeConfigTab } from "./tabs/runtime-config-tab";
 import { LLMTraceTab } from "./tabs/llm-trace-tab";
 import { RunnerTab } from "./tabs/runner-tab";
+import { A2ATab } from "./tabs/a2a-tab";
 import { AgentDetailInspector } from "./agent-detail-inspector";
 import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
@@ -65,7 +69,8 @@ export type DetailTab =
   | "env"
   | "custom_args"
   | "runtime_config"
-  | "llm_trace";
+  | "llm_trace"
+  | "a2a";
 
 type SecondaryTab = {
   id: DetailTab;
@@ -82,7 +87,8 @@ type SecondaryTab = {
     | "environment"
     | "custom_args"
     | "runtime_config"
-    | "llm_trace";
+    | "llm_trace"
+    | "a2a";
 };
 
 const CAPABILITY_TABS: SecondaryTab[] = [
@@ -102,6 +108,7 @@ const SETTINGS_TABS: SecondaryTab[] = [
   { id: "custom_args", labelKey: "custom_args" },
   { id: "runtime_config", labelKey: "runtime_config" },
   { id: "llm_trace", labelKey: "llm_trace" },
+  { id: "a2a", labelKey: "a2a" },
 ];
 
 const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
@@ -181,6 +188,10 @@ export function AgentOverviewPane({
     COMPOSIO_MCP_APPS_FLAG,
     false,
   );
+  const agentA2AInboundEnabled = useFeatureEnabled(
+    AGENT_A2A_INBOUND_FLAG,
+    false,
+  );
   const [activeView, setActiveView] = useState<DetailTab>(() =>
     isDetailTab(urlView) ? urlView : "overview",
   );
@@ -215,6 +226,11 @@ export function AgentOverviewPane({
     dingtalkListing?.configured === true ||
     dingtalkAccountListing?.configured === true ||
     wecomListing?.configured === true;
+  const showMcpIntegration =
+    agentA2AInboundEnabled &&
+    !!currentUserId &&
+    !!agent.owner_id &&
+    agent.owner_id === currentUserId;
 
   const visibleCapabilityTabs = useMemo(() => {
     const showMcp = runtime
@@ -230,7 +246,9 @@ export function AgentOverviewPane({
       if (tab.id === "mcp_config") return showMcp;
       if (tab.id === "runner") return canEdit;
       if (tab.id === "composio_mcp") return showComposioMcp;
-      if (tab.id === "integrations") return integrationsConfigured;
+      if (tab.id === "integrations") {
+        return integrationsConfigured || showMcpIntegration;
+      }
       if (tab.id === "identity") {
         return dingtalkAccountListing?.configured === true || isASBRuntime(runtime);
       }
@@ -244,6 +262,7 @@ export function AgentOverviewPane({
     dingtalkAccountListing?.configured,
     integrationsConfigured,
     runtime,
+    showMcpIntegration,
   ]);
 
   const visibleSettingsTabs = useMemo(
@@ -254,9 +273,23 @@ export function AgentOverviewPane({
           return runtime?.provider === "openclaw";
         }
         if (tab.id === "llm_trace") return agent.runtime_mode === "cloud";
+        if (tab.id === "a2a") {
+          return (
+            agentA2AInboundEnabled &&
+            !!currentUserId &&
+            agent.owner_id === currentUserId
+          );
+        }
         return true;
       }),
-    [agent.runtime_mode, canEdit, runtime?.provider],
+    [
+      agent.owner_id,
+      agent.runtime_mode,
+      agentA2AInboundEnabled,
+      canEdit,
+      currentUserId,
+      runtime?.provider,
+    ],
   );
 
   const visibleViews = useMemo(
@@ -494,6 +527,8 @@ export function AgentOverviewPane({
                   {effectiveView === "integrations" && (
                     <IntegrationsTab
                       agent={agent}
+                      showMcpLink={showMcpIntegration}
+                      platformIntegrationsConfigured={integrationsConfigured}
                       canOperateDingTalkBinding={canOperateDingTalkBinding}
                       dingTalkBindingPermissionLoading={
                         dingTalkBindingPermissionLoading
@@ -556,6 +591,7 @@ export function AgentOverviewPane({
                       onDirtyChange={setActiveDirty}
                     />
                   )}
+                  {effectiveView === "a2a" && <A2ATab agent={agent} />}
                 </div>
               </div>
             </section>
