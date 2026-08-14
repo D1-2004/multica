@@ -390,7 +390,7 @@ export function LoginPage({
         <Card className="w-full max-w-sm">
           <CardHeader className="text-center">
             {logo && <div className="mx-auto mb-4">{logo}</div>}
-            <CardTitle className="text-2xl">
+            <CardTitle className="text-display-sm">
               {t(($) => $.cli.title)}
             </CardTitle>
             <CardDescription>
@@ -434,7 +434,7 @@ export function LoginPage({
         <Card className="w-full max-w-sm">
           <CardHeader className="text-center">
             {logo && <div className="mx-auto mb-4">{logo}</div>}
-            <CardTitle className="text-2xl">
+            <CardTitle className="text-display-sm">
               {t(($) => $.verify.title)}
             </CardTitle>
             <CardDescription>
@@ -462,9 +462,9 @@ export function LoginPage({
               </InputOTPGroup>
             </InputOTP>
             {error && (
-              <p className="text-sm text-destructive">{error}</p>
+              <p className="text-body text-destructive">{error}</p>
             )}
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 text-body text-muted-foreground">
               <button
                 type="button"
                 onClick={handleResend}
@@ -505,7 +505,7 @@ export function LoginPage({
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           {logo && <div className="mx-auto mb-4">{logo}</div>}
-          <CardTitle className="text-2xl">
+          <CardTitle className="text-display-sm">
             {title ?? t(($) => $.signin.title)}
           </CardTitle>
           <CardDescription>
@@ -517,7 +517,7 @@ export function LoginPage({
         {oauthOnlyMode ? (
           error ? (
             <CardContent>
-              <p className="text-sm text-destructive">{error}</p>
+              <p className="text-body text-destructive">{error}</p>
             </CardContent>
           ) : null
         ) : (
@@ -536,7 +536,7 @@ export function LoginPage({
                 />
               </div>
               {error && (
-                <p className="text-sm text-destructive">{error}</p>
+                <p className="text-body text-destructive">{error}</p>
               )}
             </form>
           </CardContent>
@@ -562,7 +562,7 @@ export function LoginPage({
                   <div className="absolute inset-0 flex items-center">
                     <span className="w-full border-t" />
                   </div>
-                  <div className="relative flex justify-center text-xs uppercase">
+                  <div className="relative flex justify-center text-caption uppercase">
                     <span className="bg-card px-2 text-muted-foreground">
                       {t(($) => $.signin.divider)}
                     </span>
@@ -648,7 +648,9 @@ export function LoginPage({
           )}
           {extra && <div className="w-full pt-1 text-center">{extra}</div>}
           {title && (
-            <p className="w-full pt-1 text-center text-[11px] text-muted-foreground/70">
+            // Product attribution; intentionally identical in every locale.
+            // eslint-disable-next-line i18next/no-literal-string
+            <p className="w-full pt-1 text-center text-micro text-muted-foreground">
               Powered by Multica
             </p>
           )}

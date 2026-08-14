@@ -1,13 +1,36 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Crown, Shield, User, MoreHorizontal, UserMinus, Users, Clock, X, Mail, Search, UserPlus } from "lucide-react";
+import {
+  Crown,
+  Shield,
+  User,
+  MoreHorizontal,
+  UserMinus,
+  Users,
+  Clock,
+  X,
+  Mail,
+  Search,
+  UserPlus,
+  Plus,
+} from "lucide-react";
 import { ActorAvatar } from "../../common/actor-avatar";
-import type { MemberWithUser, MemberRole, Invitation, DingTalkUser } from "@multica/core/types";
+import type {
+  MemberWithUser,
+  MemberRole,
+  Invitation,
+  DingTalkUser,
+} from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
+import { Input } from "@multica/ui/components/ui/input";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Badge } from "@multica/ui/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@multica/ui/components/ui/avatar";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@multica/ui/components/ui/avatar";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import {
   Dialog,
@@ -48,7 +71,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
-import { memberListOptions, invitationListOptions, workspaceKeys } from "@multica/core/workspace/queries";
+import {
+  memberListOptions,
+  invitationListOptions,
+  workspaceKeys,
+} from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
 import { useT } from "../../i18n";
 import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
@@ -68,7 +95,11 @@ function normalizeSearchText(value: string | undefined | null): string {
   return (value ?? "").trim().replace(/\s+/g, "").toLowerCase();
 }
 
-function dingTalkSearchScore(user: DingTalkUser, query: string, index: number): number {
+function dingTalkSearchScore(
+  user: DingTalkUser,
+  query: string,
+  index: number,
+): number {
   const needle = normalizeSearchText(query);
   if (!needle) return index;
   const fields = [
@@ -78,7 +109,9 @@ function dingTalkSearchScore(user: DingTalkUser, query: string, index: number): 
     user.user_id,
     user.union_id,
     user.title,
-  ].map(normalizeSearchText).filter(Boolean);
+  ]
+    .map(normalizeSearchText)
+    .filter(Boolean);
   const name = normalizeSearchText(user.name);
 
   if (name === needle) return index / 1000;
@@ -90,7 +123,10 @@ function dingTalkSearchScore(user: DingTalkUser, query: string, index: number): 
   return 10 + index / 1000;
 }
 
-function rankDingTalkUsers(users: DingTalkUser[], query: string): DingTalkUser[] {
+function rankDingTalkUsers(
+  users: DingTalkUser[],
+  query: string,
+): DingTalkUser[] {
   const seen = new Set<string>();
   return users
     .filter((user) => {
@@ -100,7 +136,10 @@ function rankDingTalkUsers(users: DingTalkUser[], query: string): DingTalkUser[]
       seen.add(key);
       return true;
     })
-    .map((user, index) => ({ user, score: dingTalkSearchScore(user, query, index) }))
+    .map((user, index) => ({
+      user,
+      score: dingTalkSearchScore(user, query, index),
+    }))
     .sort((a, b) => a.score - b.score)
     .map(({ user }) => user);
 }
@@ -151,8 +190,10 @@ function MemberRow({
   const roleConfig = useRoleLabels();
   const rc = roleConfig[member.role];
   const RoleIcon = rc.icon;
-  const canEditRole = canManage && !isSelf && (member.role !== "owner" || canManageOwners);
-  const canRemove = canManage && !isSelf && (member.role !== "owner" || canManageOwners);
+  const canEditRole =
+    canManage && !isSelf && (member.role !== "owner" || canManageOwners);
+  const canRemove =
+    canManage && !isSelf && (member.role !== "owner" || canManageOwners);
   const isLastOwner = member.role === "owner" && ownerCount <= 1;
   const showMenu = canEditRole || canRemove;
 
@@ -160,8 +201,10 @@ function MemberRow({
     <div className="flex items-center gap-3 px-4 py-3">
       <ActorAvatar actorType="member" actorId={member.user_id} size="lg" />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium truncate">{member.name}</div>
-        <div className="text-xs text-muted-foreground truncate">{member.email}</div>
+        <div className="text-body font-medium truncate">{member.name}</div>
+        <div className="text-caption text-muted-foreground truncate">
+          {member.email}
+        </div>
       </div>
       {showMenu && (
         <DropdownMenu>
@@ -180,41 +223,46 @@ function MemberRow({
                   {t(($) => $.members.change_role)}
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className="w-auto">
-                  {(Object.entries(roleConfig) as [MemberRole, (typeof roleConfig)[MemberRole]][]).map(
-                    ([role, config]) => {
-                      if (role === "owner" && !canManageOwners) return null;
-                      const Icon = config.icon;
-                      const wouldDemoteLastOwner =
-                        isLastOwner && role !== "owner";
-                      return (
-                        <DropdownMenuItem
-                          key={role}
-                          onClick={() =>
-                            wouldDemoteLastOwner ? undefined : onRoleChange(role)
-                          }
-                          disabled={wouldDemoteLastOwner}
-                          title={
-                            wouldDemoteLastOwner
-                              ? t(($) => $.members.cannot_demote_last_owner_title)
-                              : undefined
-                          }
-                        >
-                          <Icon className="h-3.5 w-3.5" />
-                          <div className="flex flex-col">
-                            <span>{config.label}</span>
-                            <span className="text-xs text-muted-foreground font-normal">
-                              {wouldDemoteLastOwner
-                                ? t(($) => $.members.cannot_demote_last_owner)
-                                : config.description}
-                            </span>
-                          </div>
-                          {member.role === role && (
-                            <span className="ml-auto text-xs text-muted-foreground">{"✓"}</span>
-                          )}
-                        </DropdownMenuItem>
-                      );
-                    }
-                  )}
+                  {(
+                    Object.entries(roleConfig) as [
+                      MemberRole,
+                      (typeof roleConfig)[MemberRole],
+                    ][]
+                  ).map(([role, config]) => {
+                    if (role === "owner" && !canManageOwners) return null;
+                    const Icon = config.icon;
+                    const wouldDemoteLastOwner =
+                      isLastOwner && role !== "owner";
+                    return (
+                      <DropdownMenuItem
+                        key={role}
+                        onClick={() =>
+                          wouldDemoteLastOwner ? undefined : onRoleChange(role)
+                        }
+                        disabled={wouldDemoteLastOwner}
+                        title={
+                          wouldDemoteLastOwner
+                            ? t(($) => $.members.cannot_demote_last_owner_title)
+                            : undefined
+                        }
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        <div className="flex flex-col">
+                          <span>{config.label}</span>
+                          <span className="text-caption text-muted-foreground font-normal">
+                            {wouldDemoteLastOwner
+                              ? t(($) => $.members.cannot_demote_last_owner)
+                              : config.description}
+                          </span>
+                        </div>
+                        {member.role === role && (
+                          <span className="ml-auto text-caption text-muted-foreground">
+                            {"✓"}
+                          </span>
+                        )}
+                      </DropdownMenuItem>
+                    );
+                  })}
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
             )}
@@ -257,8 +305,10 @@ function InvitationRow({
         <Mail className="h-4 w-4 text-muted-foreground" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium truncate">{invitation.invitee_email}</div>
-        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+        <div className="text-body font-medium truncate">
+          {invitation.invitee_email}
+        </div>
+        <div className="flex items-center gap-1 text-caption text-muted-foreground">
           <Clock className="h-3 w-3" />
           <span>{t(($) => $.members.pending_status)}</span>
         </div>
@@ -274,9 +324,7 @@ function InvitationRow({
           <X className="h-4 w-4 text-muted-foreground" />
         </Button>
       )}
-      <Badge variant="outline">
-        {rc.label}
-      </Badge>
+      <Badge variant="outline">{rc.label}</Badge>
     </div>
   );
 }
@@ -298,7 +346,9 @@ function DingTalkUserRow({
     user.title,
     user.email || user.mobile,
     `${userIdLabel}: ${user.user_id}`,
-  ].filter(Boolean).join(" · ");
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <label
@@ -309,19 +359,23 @@ function DingTalkUserRow({
     >
       <Checkbox checked={checked} onCheckedChange={onToggle} />
       <Avatar>
-        {user.avatar_url && <AvatarImage src={user.avatar_url} alt={user.name} />}
+        {user.avatar_url && (
+          <AvatarImage src={user.avatar_url} alt={user.name} />
+        )}
         <AvatarFallback>{initials(user.name || user.user_id)}</AvatarFallback>
       </Avatar>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-medium">{user.name || user.user_id}</span>
+          <span className="truncate text-body font-medium">
+            {user.name || user.user_id}
+          </span>
           {!user.email && (
             <Badge variant="outline" className="shrink-0">
               {identityLabel}
             </Badge>
           )}
         </div>
-        <div className="truncate text-xs text-muted-foreground">{meta}</div>
+        <div className="truncate text-caption text-muted-foreground">{meta}</div>
       </div>
     </label>
   );
@@ -337,17 +391,28 @@ export function MembersTab() {
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: invitations = [] } = useQuery(invitationListOptions(wsId));
 
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<MemberRole>("member");
+  const [inviteLoading, setInviteLoading] = useState(false);
+
   const [dingtalkQuery, setDingtalkQuery] = useState("");
   const [dingtalkResults, setDingtalkResults] = useState<DingTalkUser[]>([]);
-  const [selectedDingtalkUsers, setSelectedDingtalkUsers] = useState<Record<string, DingTalkUser>>({});
-  const [dingtalkMemberRole, setDingtalkMemberRole] = useState<MemberRole>("member");
+  const [selectedDingtalkUsers, setSelectedDingtalkUsers] = useState<
+    Record<string, DingTalkUser>
+  >({});
+  const [dingtalkMemberRole, setDingtalkMemberRole] =
+    useState<MemberRole>("member");
   const [dingtalkSearchAttempted, setDingtalkSearchAttempted] = useState(false);
-  const [dingtalkSearchError, setDingtalkSearchError] = useState<string | null>(null);
+  const [dingtalkSearchError, setDingtalkSearchError] = useState<string | null>(
+    null,
+  );
   const [dingtalkLoading, setDingtalkLoading] = useState(false);
   const [dingtalkActionLoading, setDingtalkActionLoading] = useState(false);
   const [dingtalkPickerOpen, setDingtalkPickerOpen] = useState(false);
   const [memberActionId, setMemberActionId] = useState<string | null>(null);
-  const [invitationActionId, setInvitationActionId] = useState<string | null>(null);
+  const [invitationActionId, setInvitationActionId] = useState<string | null>(
+    null,
+  );
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
     description: string;
@@ -356,7 +421,8 @@ export function MembersTab() {
   } | null>(null);
 
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManageWorkspace = currentMember?.role === "owner" || currentMember?.role === "admin";
+  const canManageWorkspace =
+    currentMember?.role === "owner" || currentMember?.role === "admin";
   const isOwner = currentMember?.role === "owner";
   const ownerCount = members.filter((m) => m.role === "owner").length;
   const selectedDingtalkList = Object.values(selectedDingtalkUsers);
@@ -383,21 +449,32 @@ export function MembersTab() {
     setDingtalkPickerOpen(false);
   }, [workspace?.id]);
 
-  const searchDingTalkUsers = useCallback(async (query: string) => {
-    if (!workspace || !query.trim()) return;
-    setDingtalkLoading(true);
-    setDingtalkSearchAttempted(true);
-    setDingtalkSearchError(null);
-    try {
-      const users = await api.searchDingTalkUsers(workspace.id, query.trim(), 20);
-      setDingtalkResults(rankDingTalkUsers(users, query));
-    } catch (e) {
-      setDingtalkResults([]);
-      setDingtalkSearchError(e instanceof Error ? e.message : t(($) => $.members.toast_dingtalk_search_failed));
-    } finally {
-      setDingtalkLoading(false);
-    }
-  }, [workspace, t]);
+  const searchDingTalkUsers = useCallback(
+    async (query: string) => {
+      if (!workspace || !query.trim()) return;
+      setDingtalkLoading(true);
+      setDingtalkSearchAttempted(true);
+      setDingtalkSearchError(null);
+      try {
+        const users = await api.searchDingTalkUsers(
+          workspace.id,
+          query.trim(),
+          20,
+        );
+        setDingtalkResults(rankDingTalkUsers(users, query));
+      } catch (e) {
+        setDingtalkResults([]);
+        setDingtalkSearchError(
+          e instanceof Error
+            ? e.message
+            : t(($) => $.members.toast_dingtalk_search_failed),
+        );
+      } finally {
+        setDingtalkLoading(false);
+      }
+    },
+    [workspace, t],
+  );
 
   const handleDingTalkSearch = async () => {
     await searchDingTalkUsers(dingtalkQuery);
@@ -450,22 +527,69 @@ export function MembersTab() {
       qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
       const unresolved = resp.unresolved_user_ids?.length ?? 0;
       if (resp.added_count > 0 && unresolved > 0) {
-        toast.warning(t(($) => $.members.toast_dingtalk_add_partial, { added: resp.added_count, skipped: unresolved }));
+        toast.warning(
+          t(($) => $.members.toast_dingtalk_add_partial, {
+            added: resp.added_count,
+            skipped: unresolved,
+          }),
+        );
       } else if (resp.added_count > 0) {
-        toast.success(t(($) => $.members.toast_dingtalk_add_success, { count: resp.added_count }));
+        toast.success(
+          t(($) => $.members.toast_dingtalk_add_success, {
+            count: resp.added_count,
+          }),
+        );
       } else if (resp.already_member_count > 0 && unresolved === 0) {
-        toast.success(t(($) => $.members.toast_dingtalk_already_members, { count: resp.already_member_count }));
+        toast.success(
+          t(($) => $.members.toast_dingtalk_already_members, {
+            count: resp.already_member_count,
+          }),
+        );
       } else {
-        toast.error(t(($) => $.members.toast_dingtalk_identity_missing, { count: unresolved || users.length }));
+        toast.error(
+          t(($) => $.members.toast_dingtalk_identity_missing, {
+            count: unresolved || users.length,
+          }),
+        );
       }
-      if (resp.added_count > 0 || (resp.already_member_count > 0 && unresolved === 0)) {
+      if (
+        resp.added_count > 0 ||
+        (resp.already_member_count > 0 && unresolved === 0)
+      ) {
         setSelectedDingtalkUsers({});
         setDingtalkPickerOpen(false);
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_dingtalk_add_failed));
+      toast.error(
+        e instanceof Error
+          ? e.message
+          : t(($) => $.members.toast_dingtalk_add_failed),
+      );
     } finally {
       setDingtalkActionLoading(false);
+    }
+  };
+
+  const handleInviteMember = async () => {
+    if (!workspace) return;
+    setInviteLoading(true);
+    try {
+      await api.createMember(workspace.id, {
+        email: inviteEmail.trim(),
+        role: inviteRole,
+      });
+      setInviteEmail("");
+      setInviteRole("member");
+      qc.invalidateQueries({ queryKey: workspaceKeys.invitations(wsId) });
+      toast.success(t(($) => $.members.toast_invitation_sent));
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t(($) => $.members.toast_invitation_failed),
+      );
+    } finally {
+      setInviteLoading(false);
     }
   };
 
@@ -473,7 +597,9 @@ export function MembersTab() {
     if (!workspace) return;
     setConfirmAction({
       title: t(($) => $.members.revoke_invitation_title),
-      description: t(($) => $.members.revoke_invitation_description, { email: invitation.invitee_email }),
+      description: t(($) => $.members.revoke_invitation_description, {
+        email: invitation.invitee_email,
+      }),
       variant: "destructive",
       onConfirm: async () => {
         setInvitationActionId(invitation.id);
@@ -482,7 +608,11 @@ export function MembersTab() {
           qc.invalidateQueries({ queryKey: workspaceKeys.invitations(wsId) });
           toast.success(t(($) => $.members.toast_invitation_revoked));
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_invitation_revoke_failed));
+          toast.error(
+            e instanceof Error
+              ? e.message
+              : t(($) => $.members.toast_invitation_revoke_failed),
+          );
         } finally {
           setInvitationActionId(null);
         }
@@ -498,7 +628,9 @@ export function MembersTab() {
       qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
       toast.success(t(($) => $.members.toast_role_updated));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_role_failed));
+      toast.error(
+        e instanceof Error ? e.message : t(($) => $.members.toast_role_failed),
+      );
     } finally {
       setMemberActionId(null);
     }
@@ -508,7 +640,10 @@ export function MembersTab() {
     if (!workspace) return;
     setConfirmAction({
       title: t(($) => $.members.remove_member_title, { name: member.name }),
-      description: t(($) => $.members.remove_member_description, { name: member.name, workspace: workspace.name }),
+      description: t(($) => $.members.remove_member_description, {
+        name: member.name,
+        workspace: workspace.name,
+      }),
       variant: "destructive",
       onConfirm: async () => {
         setMemberActionId(member.id);
@@ -517,7 +652,11 @@ export function MembersTab() {
           qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
           toast.success(t(($) => $.members.toast_member_removed));
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : t(($) => $.members.toast_member_remove_failed));
+          toast.error(
+            e instanceof Error
+              ? e.message
+              : t(($) => $.members.toast_member_remove_failed),
+          );
         } finally {
           setMemberActionId(null);
         }
@@ -529,26 +668,92 @@ export function MembersTab() {
 
   return (
     <SettingsTab title={t(($) => $.page.tabs.members)}>
-      <SettingsSection title={t(($) => $.members.section_title, { count: members.length })}>
-
+      <SettingsSection
+        title={t(($) => $.members.section_title, { count: members.length })}
+      >
         {canManageWorkspace && (
-          <Card>
-            <CardContent>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <UserPlus className="h-4 w-4 text-muted-foreground" />
-                    <h3 className="text-sm font-medium">{t(($) => $.members.dingtalk_title)}</h3>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{t(($) => $.members.dingtalk_description)}</p>
+          <div className="space-y-3">
+            <Card>
+              <CardContent className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Plus className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="text-body font-medium">
+                    {t(($) => $.members.invite_title)}
+                  </h3>
                 </div>
-                <Button onClick={() => setDingtalkPickerOpen(true)}>
-                  <UserPlus className="h-4 w-4" />
-                  {t(($) => $.members.dingtalk_open_picker)}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+                <div className="grid gap-3 sm:grid-cols-[1fr_120px_auto]">
+                  <Input
+                    type="email"
+                    name="invite-email"
+                    autoComplete="email"
+                    spellCheck={false}
+                    aria-label={t(($) => $.members.invite_email_placeholder)}
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    placeholder={t(($) => $.members.invite_email_placeholder)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && inviteEmail.trim())
+                        handleInviteMember();
+                    }}
+                  />
+                  <Select
+                    items={(["member", "admin"] as const).map((value) => ({
+                      value,
+                      label: roleConfig[value].label,
+                    }))}
+                    value={inviteRole}
+                    onValueChange={(value) =>
+                      setInviteRole(value as MemberRole)
+                    }
+                  >
+                    <SelectTrigger size="sm">
+                      <SelectValue>
+                        {() => roleConfig[inviteRole].label}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="member">
+                        {roleConfig.member.label}
+                      </SelectItem>
+                      <SelectItem value="admin">
+                        {roleConfig.admin.label}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    onClick={handleInviteMember}
+                    disabled={inviteLoading || !inviteEmail.trim()}
+                  >
+                    {inviteLoading
+                      ? t(($) => $.members.inviting)
+                      : t(($) => $.members.invite_button)}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <UserPlus className="h-4 w-4 text-muted-foreground" />
+                      <h3 className="text-body font-medium">
+                        {t(($) => $.members.dingtalk_title)}
+                      </h3>
+                    </div>
+                    <p className="text-caption text-muted-foreground">
+                      {t(($) => $.members.dingtalk_description)}
+                    </p>
+                  </div>
+                  <Button onClick={() => setDingtalkPickerOpen(true)}>
+                    <UserPlus className="h-4 w-4" />
+                    {t(($) => $.members.dingtalk_open_picker)}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {members.length > 0 ? (
@@ -569,12 +774,18 @@ export function MembersTab() {
             ))}
           </SettingsCard>
         ) : (
-          <p className="text-sm text-muted-foreground">{t(($) => $.members.no_members)}</p>
+          <p className="text-body text-muted-foreground">
+            {t(($) => $.members.no_members)}
+          </p>
         )}
       </SettingsSection>
 
       {invitations.length > 0 && (
-        <SettingsSection title={t(($) => $.members.pending_title, { count: invitations.length })}>
+        <SettingsSection
+          title={t(($) => $.members.pending_title, {
+            count: invitations.length,
+          })}
+        >
           <SettingsCard>
             {invitations.map((inv) => (
               <div key={inv.id}>
@@ -597,7 +808,7 @@ export function MembersTab() {
         >
           <div className="flex shrink-0 items-start justify-between gap-4 border-b px-6 py-5">
             <DialogHeader className="gap-1">
-              <DialogTitle className="text-2xl font-semibold leading-tight">
+              <DialogTitle className="text-display-sm font-semibold leading-tight">
                 {t(($) => $.members.dingtalk_picker_title)}
               </DialogTitle>
               <DialogDescription className="sr-only">
@@ -622,23 +833,26 @@ export function MembersTab() {
                 value={dingtalkQuery}
                 onChange={(e) => setDingtalkQuery(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && dingtalkQuery.trim()) handleDingTalkSearch();
+                  if (e.key === "Enter" && dingtalkQuery.trim())
+                    handleDingTalkSearch();
                 }}
                 placeholder={t(($) => $.members.dingtalk_search_placeholder)}
-                className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
+                className="min-w-0 flex-1 bg-transparent text-title-sm outline-none placeholder:text-muted-foreground"
               />
             </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-4">
             <div className="mb-2 flex items-center justify-between gap-3">
-              <div className="text-sm font-medium text-muted-foreground">
+              <div className="text-body font-medium text-muted-foreground">
                 {dingtalkQuery.trim()
                   ? t(($) => $.members.dingtalk_picker_results)
                   : t(($) => $.members.dingtalk_picker_suggestions)}
               </div>
               {dingtalkLoading && (
-                <div className="text-xs text-muted-foreground">{t(($) => $.members.dingtalk_searching)}</div>
+                <div className="text-caption text-muted-foreground">
+                  {t(($) => $.members.dingtalk_searching)}
+                </div>
               )}
             </div>
 
@@ -660,29 +874,52 @@ export function MembersTab() {
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
                   <Users className="h-5 w-5 text-muted-foreground" />
                 </div>
-                <div className="mt-3 text-sm font-medium">{dingtalkEmptyTitle}</div>
-                <div className="mt-1 max-w-xs text-xs text-muted-foreground">{dingtalkEmptyDescription}</div>
+                <div className="mt-3 text-body font-medium">
+                  {dingtalkEmptyTitle}
+                </div>
+                <div className="mt-1 max-w-xs text-caption text-muted-foreground">
+                  {dingtalkEmptyDescription}
+                </div>
               </div>
             )}
           </div>
 
           <div className="flex shrink-0 flex-col gap-3 border-t bg-muted/40 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-sm text-muted-foreground">
-              {t(($) => $.members.dingtalk_selected_count, { count: selectedDingtalkList.length })}
+            <div className="text-body text-muted-foreground">
+              {t(($) => $.members.dingtalk_selected_count, {
+                count: selectedDingtalkList.length,
+              })}
             </div>
             <div className="grid gap-2 sm:grid-cols-[120px_auto]">
-              <Select value={dingtalkMemberRole} onValueChange={(value) => setDingtalkMemberRole(value as MemberRole)}>
+              <Select
+                items={(["member", "admin"] as const).map((value) => ({
+                  value,
+                  label: roleConfig[value].label,
+                }))}
+                value={dingtalkMemberRole}
+                onValueChange={(value) =>
+                  setDingtalkMemberRole(value as MemberRole)
+                }
+              >
                 <SelectTrigger size="sm">
-                  <SelectValue>{() => roleConfig[dingtalkMemberRole].label}</SelectValue>
+                  <SelectValue>
+                    {() => roleConfig[dingtalkMemberRole].label}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="member">{roleConfig.member.label}</SelectItem>
-                  <SelectItem value="admin">{roleConfig.admin.label}</SelectItem>
+                  <SelectItem value="member">
+                    {roleConfig.member.label}
+                  </SelectItem>
+                  <SelectItem value="admin">
+                    {roleConfig.admin.label}
+                  </SelectItem>
                 </SelectContent>
               </Select>
               <Button
                 onClick={handleAddDingTalkWorkspaceMembers}
-                disabled={dingtalkActionLoading || selectedDingtalkList.length === 0}
+                disabled={
+                  dingtalkActionLoading || selectedDingtalkList.length === 0
+                }
               >
                 <UserPlus className="h-4 w-4" />
                 {dingtalkAddButtonLabel}
@@ -692,16 +929,29 @@ export function MembersTab() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={!!confirmAction} onOpenChange={(v) => { if (!v) setConfirmAction(null); }}>
+      <AlertDialog
+        open={!!confirmAction}
+        onOpenChange={(v) => {
+          if (!v) setConfirmAction(null);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{confirmAction?.title}</AlertDialogTitle>
-            <AlertDialogDescription>{confirmAction?.description}</AlertDialogDescription>
+            <AlertDialogDescription>
+              {confirmAction?.description}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t(($) => $.members.confirm_cancel)}</AlertDialogCancel>
+            <AlertDialogCancel>
+              {t(($) => $.members.confirm_cancel)}
+            </AlertDialogCancel>
             <AlertDialogAction
-              variant={confirmAction?.variant === "destructive" ? "destructive" : "default"}
+              variant={
+                confirmAction?.variant === "destructive"
+                  ? "destructive"
+                  : "default"
+              }
               onClick={async () => {
                 await confirmAction?.onConfirm();
                 setConfirmAction(null);

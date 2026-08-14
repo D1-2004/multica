@@ -21,16 +21,16 @@ import (
 )
 
 const (
-	multicaMCPProtocolVersion       = "2025-06-18"
-	multicaMCPCompatProtocolVersion = "2025-03-26"
-	multicaMCPChatSendTool          = "chat_send_message"
-	multicaMCPBindingGetTool        = "get_digital_employee_binding"
-	multicaMCPBindingBindTool       = "bind_digital_employee_to_multica_agent"
-	multicaMCPBindingUnbindTool     = "unbind_digital_employee"
-	multicaMCPAgentSearchTool       = "search_agents"
-	multicaMCPAgentListTool         = "list_agents"
-	multicaMCPMaxRequestBytes       = 1 << 20
-	multicaMCPPersonalTokenPrefix   = "mul_"
+	multicaMCPProtocolVersion                = "2025-06-18"
+	multicaMCPCompatProtocolVersion          = "2025-03-26"
+	multicaMCPChatSendTool                   = "chat_send_message"
+	multicaMCPBindingGetTool                 = "get_digital_employee_binding"
+	multicaMCPBindingBindTool                = "bind_digital_employee_to_multica_agent"
+	multicaMCPBindingUnbindTool              = "unbind_digital_employee"
+	multicaMCPAgentSearchTool                = "search_agents"
+	multicaMCPAgentListTool                  = "list_agents"
+	multicaMCPMaxRequestBytes                = 1 << 20
+	multicaMCPPersonalTokenPrefix            = "mul_"
 	multicaMCPForwardedFromTaskContextKey    = "mcp_forwarded_from_task_id"
 	multicaMCPForwardedFromSessionContextKey = "mcp_forwarded_from_chat_session_id"
 	multicaMCPForwardedFromAgentContextKey   = "mcp_forwarded_from_agent_id"
@@ -80,9 +80,9 @@ type multicaMCPRequest struct {
 }
 
 type multicaMCPResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Result  any             `json:"result,omitempty"`
+	JSONRPC string           `json:"jsonrpc"`
+	ID      json.RawMessage  `json:"id,omitempty"`
+	Result  any              `json:"result,omitempty"`
 	Error   *multicaMCPError `json:"error,omitempty"`
 }
 
@@ -116,12 +116,12 @@ type multicaMCPChatSendResult struct {
 }
 
 type multicaMCPDigitalEmployeeBindArguments struct {
-	AgentID           string                                             `json:"agent_id"`
-	TenantID          string                                             `json:"tenant_id"`
-	DigitalEmployeeID string                                             `json:"digital_employee_id"`
-	SurfaceType       string                                             `json:"surface_type"`
-	MessageScope      string                                             `json:"message_scope"`
-	EnabledDomains    []string                                           `json:"enabled_domains"`
+	AgentID           string                                            `json:"agent_id"`
+	TenantID          string                                            `json:"tenant_id"`
+	DigitalEmployeeID string                                            `json:"digital_employee_id"`
+	SurfaceType       string                                            `json:"surface_type"`
+	MessageScope      string                                            `json:"message_scope"`
+	EnabledDomains    []string                                          `json:"enabled_domains"`
 	Conversations     []agentmessagerouter.DingTalkConversationSnapshot `json:"conversations"`
 }
 
@@ -364,12 +364,12 @@ func multicaMCPBindingBindDefinition() map[string]any {
 			"type":                 "object",
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"agent_id":             multicaMCPAgentIDProperty(),
-				"tenant_id":            map[string]any{"type": "string", "minLength": 1, "description": "DingTalk organization identifier returned by DWS."},
-				"digital_employee_id":  map[string]any{"type": "string", "minLength": 1, "description": "Digital employee account identifier returned by DWS."},
-				"surface_type":         map[string]any{"type": "string", "enum": []string{"issue", "chat", "auto"}, "default": "auto"},
-				"message_scope":        map[string]any{"type": "string", "enum": []string{"direct_only", "custom", "all"}, "default": "direct_only"},
-				"enabled_domains":      map[string]any{"type": "array", "items": map[string]any{"type": "string", "minLength": 1}, "default": []string{"channel"}},
+				"agent_id":            multicaMCPAgentIDProperty(),
+				"tenant_id":           map[string]any{"type": "string", "minLength": 1, "description": "DingTalk organization identifier returned by DWS."},
+				"digital_employee_id": map[string]any{"type": "string", "minLength": 1, "description": "Digital employee account identifier returned by DWS."},
+				"surface_type":        map[string]any{"type": "string", "enum": []string{"issue", "chat", "auto"}, "default": "auto"},
+				"message_scope":       map[string]any{"type": "string", "enum": []string{"direct_only", "custom", "all"}, "default": "direct_only"},
+				"enabled_domains":     map[string]any{"type": "array", "items": map[string]any{"type": "string", "minLength": 1}, "default": []string{"channel"}},
 				"conversations": map[string]any{
 					"type": "array",
 					"items": map[string]any{
@@ -417,7 +417,7 @@ func multicaMCPAgentSelectionSchema() map[string]any {
 
 func multicaMCPAgentIDProperty() map[string]any {
 	return map[string]any{
-		"type": "string",
+		"type":        "string",
 		"description": "Agent UUID. Required with a personal access token; omit with a task token to use the authenticated task Agent.",
 	}
 }

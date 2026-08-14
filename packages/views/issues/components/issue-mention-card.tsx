@@ -14,11 +14,19 @@ interface IssueMentionCardProps {
  * Navigable chip — wraps IssueChip in an AppLink pointing at the issue's
  * detail page. Hover/cursor affordance is layered onto the chip itself so
  * the visual target matches the clickable target.
+ *
+ * AppLink owns the click semantics: plain click navigates in place, modifier
+ * and middle clicks open tabs. There is deliberately no per-surface or
+ * per-preference override.
  */
 export function IssueMentionCard({ issueId, fallbackLabel }: IssueMentionCardProps) {
   const p = useWorkspacePaths();
   return (
-    <AppLink href={p.issueDetail(issueId)} className="issue-mention not-prose align-middle">
+    <AppLink
+      href={p.issueDetail(issueId)}
+      newTabTitle={fallbackLabel}
+      className="issue-mention align-middle"
+    >
       <IssueChip
         issueId={issueId}
         fallbackLabel={fallbackLabel}

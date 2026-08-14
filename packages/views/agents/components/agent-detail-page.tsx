@@ -24,6 +24,7 @@ import {
   type AgentPresenceDetail,
   agentSourceKeys,
   agentSourceOptions,
+  isAgentRuntimeBound,
   useWorkspacePresenceMap,
 } from "@multica/core/agents";
 import { api, ApiError } from "@multica/core/api";
@@ -36,7 +37,10 @@ import {
   memberListOptions,
   workspaceKeys,
 } from "@multica/core/workspace/queries";
-import { runtimeDisplayLabel, runtimeListOptions } from "@multica/core/runtimes";
+import {
+  runtimeDisplayLabel,
+  runtimeListOptions,
+} from "@multica/core/runtimes";
 import { useAgentPermissions } from "@multica/core/permissions";
 import { Button } from "@multica/ui/components/ui/button";
 import { CapabilityBanner } from "@multica/ui/components/common/capability-banner";
@@ -61,6 +65,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { AgentPresenceIndicator } from "./agent-presence-indicator";
 import { VisibilityBadge } from "./visibility-badge";
 import { AgentOverviewPane, type DetailTab } from "./agent-overview-pane";
+import { ExpandableDescription } from "../../common/expandable-description";
 import { useT, useTimeAgo } from "../../i18n";
 
 interface AgentDetailPageProps {
@@ -89,8 +94,9 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
 
   const agent = agents.find((a) => a.id === agentId) ?? null;
-  const presence: AgentPresenceDetail | null =
-    agent ? presenceMap.get(agent.id) ?? null : null;
+  const presence: AgentPresenceDetail | null = agent
+    ? (presenceMap.get(agent.id) ?? null)
+    : null;
 
   // Fallback fetch: when the agent is missing from the workspace list, hit
   // GET /api/agents/{id} directly to disambiguate "doesn't exist" (404) from
@@ -141,17 +147,25 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     // would clobber a concurrent successful mutation if the failing call
     // resolves last (e.g. flipping visibility then runtime simultaneously
     // and only the visibility PATCH fails).
+    const optimisticData =
+      typeof data.runtime_id === "string"
+        ? { ...data, runtime_bound: data.runtime_id.trim().length > 0 }
+        : data;
     const queryKey = workspaceKeys.agents(wsId);
     const prevAgents = qc.getQueryData<Agent[]>(queryKey);
     const prevAgent = prevAgents?.find((a) => a.id === id);
     const prevFields: Record<string, unknown> = {};
     if (prevAgent) {
-      for (const key of Object.keys(data)) {
-        prevFields[key] = (prevAgent as unknown as Record<string, unknown>)[key];
+      for (const key of Object.keys(optimisticData)) {
+        prevFields[key] = (prevAgent as unknown as Record<string, unknown>)[
+          key
+        ];
       }
     }
     qc.setQueryData<Agent[]>(queryKey, (old) =>
-      old?.map((a) => (a.id === id ? ({ ...a, ...data } as Agent) : a)),
+      old?.map((a) =>
+        a.id === id ? ({ ...a, ...optimisticData } as Agent) : a,
+      ),
     );
     try {
       await api.updateAgent(id, data as UpdateAgentRequest);
@@ -166,7 +180,9 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         );
       }
       qc.invalidateQueries({ queryKey });
-      toast.error(e instanceof Error ? e.message : t(($) => $.detail.update_failed_toast));
+      toast.error(
+        e instanceof Error ? e.message : t(($) => $.detail.update_failed_toast),
+      );
       throw e;
     }
   };
@@ -177,7 +193,11 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
       toast.success(t(($) => $.detail.agent_archived_toast));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.detail.archive_failed_toast));
+      toast.error(
+        e instanceof Error
+          ? e.message
+          : t(($) => $.detail.archive_failed_toast),
+      );
     }
   };
 
@@ -187,7 +207,11 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
       toast.success(t(($) => $.detail.agent_restored_toast));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.detail.restore_failed_toast));
+      toast.error(
+        e instanceof Error
+          ? e.message
+          : t(($) => $.detail.restore_failed_toast),
+      );
     }
   };
 
@@ -197,7 +221,9 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     try {
       const result = await api.syncAgentSource(agentId);
       await Promise.all([
-        qc.invalidateQueries({ queryKey: agentSourceKeys.detail(wsId, agentId) }),
+        qc.invalidateQueries({
+          queryKey: agentSourceKeys.detail(wsId, agentId),
+        }),
         qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) }),
         qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) }),
       ]);
@@ -208,9 +234,13 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       );
       result.warnings.forEach((warning) => toast.warning(warning));
     } catch (error) {
-      await qc.invalidateQueries({ queryKey: agentSourceKeys.detail(wsId, agentId) });
+      await qc.invalidateQueries({
+        queryKey: agentSourceKeys.detail(wsId, agentId),
+      });
       toast.error(
-        error instanceof Error ? error.message : t(($) => $.detail.source_sync_failed),
+        error instanceof Error
+          ? error.message
+          : t(($) => $.detail.source_sync_failed),
       );
     } finally {
       setSourceSyncing(false);
@@ -226,19 +256,24 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   if (!agent && isForbidden) {
     return (
       <div className="flex flex-1 min-h-0 flex-col">
-        <BackHeader paths={paths.agents()} title={t(($) => $.detail.back_to_agents)} />
+        <BackHeader
+          paths={paths.agents()}
+          title={t(($) => $.detail.back_to_agents)}
+        />
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
           <Lock className="h-8 w-8 text-muted-foreground" />
           <div>
-            <p className="text-sm font-medium">{t(($) => $.detail.no_access_title)}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="text-body font-medium">
+              {t(($) => $.detail.no_access_title)}
+            </p>
+            <p className="mt-1 text-caption text-muted-foreground">
               {t(($) => $.detail.no_access_hint)}
             </p>
           </div>
           <Button
-            type="button"
             size="sm"
-            onClick={() => navigation.push(paths.agents())}
+            render={<AppLink href={paths.agents()} />}
+            nativeButton={false}
           >
             {t(($) => $.detail.back_to_agents_full)}
           </Button>
@@ -251,12 +286,17 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   if (!agent) {
     return (
       <div className="flex flex-1 min-h-0 flex-col">
-        <BackHeader paths={paths.agents()} title={t(($) => $.detail.back_to_agents)} />
+        <BackHeader
+          paths={paths.agents()}
+          title={t(($) => $.detail.back_to_agents)}
+        />
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
           <AlertCircle className="h-8 w-8 text-destructive" />
           <div>
-            <p className="text-sm font-medium">{t(($) => $.detail.not_found_title)}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="text-body font-medium">
+              {t(($) => $.detail.not_found_title)}
+            </p>
+            <p className="mt-1 text-caption text-muted-foreground">
               {agentsError instanceof Error
                 ? agentsError.message
                 : t(($) => $.detail.not_found_default)}
@@ -272,9 +312,9 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
               {t(($) => $.detail.try_again)}
             </Button>
             <Button
-              type="button"
               size="sm"
-              onClick={() => navigation.push(paths.agents())}
+              render={<AppLink href={paths.agents()} />}
+              nativeButton={false}
             >
               {t(($) => $.detail.back_to_agents_full)}
             </Button>
@@ -285,11 +325,12 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   }
 
   const isArchived = !!agent.archived_at;
-  const runtime = agent.runtime_id
-    ? runtimes.find((r) => r.id === agent.runtime_id) ?? null
+  const runtimeBound = isAgentRuntimeBound(agent);
+  const runtime = runtimeBound
+    ? (runtimes.find((r) => r.id === agent.runtime_id) ?? null)
     : null;
   const owner = agent.owner_id
-    ? members.find((m) => m.user_id === agent.owner_id) ?? null
+    ? (members.find((m) => m.user_id === agent.owner_id) ?? null)
     : null;
 
   // Chat shares the invocation gate with assignment (MUL-3963): starting a
@@ -297,13 +338,30 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   // click explains itself instead of the affordance silently missing. While
   // membership is still resolving the decision is undetermined, so the button
   // is disabled rather than toasting a false "no access" at a real member.
-  const handleDm = () => {
-    if (permissionsLoading) return;
+  //
+  // The control is a real link, so a failed gate has to cancel the navigation
+  // AppLink would otherwise perform — preventDefault is that cancel.
+  const handleDm = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (permissionsLoading) {
+      e.preventDefault();
+      return;
+    }
     if (!canAssign.allowed) {
+      e.preventDefault();
       toast.error(t(($) => $.detail.dm_no_permission_toast));
       return;
     }
-    navigation.push(`${paths.chat()}?agent=${agent.id}`);
+    if (!runtimeBound) {
+      e.preventDefault();
+      toast.error(t(($) => $.detail.runtime_required_toast));
+    }
+  };
+  const handleAssign = () => {
+    if (!runtimeBound) {
+      toast.error(t(($) => $.detail.runtime_required_toast));
+      return;
+    }
+    useModalStore.getState().open("quick-create-issue", { agent_id: agent.id });
   };
 
   return (
@@ -316,13 +374,10 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         canAssign={canAssign.allowed}
         canArchive={canEdit.allowed}
         dmPending={permissionsLoading}
+        dmHref={`${paths.chat()}?agent=${agent.id}`}
         onDm={handleDm}
-        onAssign={() =>
-          useModalStore
-            .getState()
-            .open("quick-create-issue", { agent_id: agent.id })
-        }
-        onArchive={() => setConfirmArchive(true)}
+        onAssign={handleAssign}
+        onArchive={agent.system_key ? undefined : () => setConfirmArchive(true)}
       />
 
       {!canEdit.allowed && (
@@ -336,19 +391,36 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       )}
 
       {isArchived && (
-        <div className="flex shrink-0 items-center gap-2 border-b bg-muted/50 px-6 py-2 text-xs text-muted-foreground">
+        <div className="flex shrink-0 items-center gap-2 border-b bg-muted/50 px-6 py-2 text-caption text-muted-foreground">
           <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">{t(($) => $.detail.archived_banner)}</span>
+          {canEdit.allowed && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 text-caption"
+              onClick={() => handleRestore(agent.id)}
+            >
+              {t(($) => $.detail.restore)}
+            </Button>
+          )}
+        </div>
+      )}
+
+      {!isArchived && !runtimeBound && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-6 py-2 text-caption text-amber-900 dark:text-amber-100">
+          <Server className="h-3.5 w-3.5 shrink-0" />
           <span className="flex-1">
-            {t(($) => $.detail.archived_banner)}
+            {t(($) => $.detail.runtime_required_banner)}
           </span>
           {canEdit.allowed && (
             <Button
               variant="outline"
               size="sm"
-              className="h-6 text-xs"
-              onClick={() => handleRestore(agent.id)}
+              className="h-6 border-amber-500/40 bg-background/70 text-caption"
+              onClick={() => setTabNavIntent("general")}
             >
-              {t(($) => $.detail.restore)}
+              {t(($) => $.detail.bind_runtime)}
             </Button>
           )}
         </div>
@@ -387,19 +459,18 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
                 <AlertCircle className="h-5 w-5 text-destructive" />
               </div>
               <DialogHeader className="flex-1 gap-1">
-                <DialogTitle className="text-sm font-semibold">
+                <DialogTitle className="text-body font-semibold">
                   {t(($) => $.detail.archive_dialog_title)}
                 </DialogTitle>
-                <DialogDescription className="text-xs">
-                  {t(($) => $.detail.archive_dialog_description, { name: agent.name })}
+                <DialogDescription className="text-caption">
+                  {t(($) => $.detail.archive_dialog_description, {
+                    name: agent.name,
+                  })}
                 </DialogDescription>
               </DialogHeader>
             </div>
             <DialogFooter>
-              <Button
-                variant="ghost"
-                onClick={() => setConfirmArchive(false)}
-              >
+              <Button variant="ghost" onClick={() => setConfirmArchive(false)}>
                 {t(($) => $.detail.archive_dialog_cancel)}
               </Button>
               <Button
@@ -428,6 +499,7 @@ function DetailHeader({
   canAssign,
   canArchive,
   dmPending,
+  dmHref,
   onDm,
   onAssign,
   onArchive,
@@ -439,18 +511,24 @@ function DetailHeader({
   canAssign: boolean;
   canArchive: boolean;
   dmPending: boolean;
-  onDm: () => void;
+  dmHref: string;
+  /** Runs before the link navigates; calls preventDefault when a gate denies
+   *  the chat, which is what stops AppLink from pushing. */
+  onDm: (e: React.MouseEvent<HTMLAnchorElement>) => void;
   onAssign: () => void;
-  onArchive: () => void;
+  /** Absent for Multica's built-in agents, which the server refuses to
+   *  archive — the menu hides the action rather than offering a failure. */
+  onArchive?: () => void;
 }) {
   const { t } = useT("agents");
   const timeAgo = useTimeAgo();
   const isArchived = !!agent.archived_at;
+  const hasMoreActions = !!onArchive;
 
   return (
     <header className="shrink-0 border-b bg-background px-4 pb-5 pt-3 sm:px-6">
       <div className="mx-auto max-w-[1440px]">
-        <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <div className="flex min-w-0 items-center gap-1.5 text-caption text-muted-foreground">
           <AppLink
             href={backHref}
             className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -472,18 +550,21 @@ function DetailHeader({
             />
             <div className="min-w-0 pt-0.5">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                <h1 className="min-w-0 text-balance text-xl font-semibold tracking-tight sm:text-2xl">
+                <h1 className="min-w-0 text-balance text-title-lg font-semibold tracking-tight sm:text-display-sm">
                   {agent.name}
                 </h1>
                 <AgentPresenceIndicator detail={presence} />
               </div>
-              <p className="mt-1 max-w-2xl text-pretty text-sm leading-6 text-muted-foreground">
-                {agent.description || t(($) => $.inspector.no_description_placeholder)}
-              </p>
-              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+              <ExpandableDescription>
+                {agent.description ||
+                  t(($) => $.inspector.no_description_placeholder)}
+              </ExpandableDescription>
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-caption text-muted-foreground">
                 <span className="inline-flex min-w-0 items-center gap-1.5">
                   <Bot className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  <span className="truncate">{agent.model || t(($) => $.pickers.model_default)}</span>
+                  <span className="truncate">
+                    {agent.model || t(($) => $.pickers.model_default)}
+                  </span>
                 </span>
                 <span className="inline-flex min-w-0 items-center gap-1.5">
                   <Server className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -496,7 +577,9 @@ function DetailHeader({
                 <VisibilityBadge value={agent.visibility} />
                 <span className="inline-flex items-center gap-1.5">
                   <Clock3 className="h-3.5 w-3.5" aria-hidden="true" />
-                  {t(($) => $.detail.updated, { when: timeAgo(agent.updated_at) })}
+                  {t(($) => $.detail.updated, {
+                    when: timeAgo(agent.updated_at),
+                  })}
                 </span>
               </div>
             </div>
@@ -505,11 +588,15 @@ function DetailHeader({
           <div className="flex shrink-0 items-center gap-2 self-end lg:self-start">
             {!isArchived && (
               <Button
-                type="button"
                 variant="outline"
                 size="sm"
                 disabled={dmPending}
-                onClick={onDm}
+                // An anchor never matches `:disabled`, so the base variant's
+                // `disabled:` rules never fire here — Base UI's data-disabled
+                // is what carries the dimmed, inert look.
+                className="data-disabled:pointer-events-none data-disabled:opacity-50"
+                render={<AppLink href={dmHref} onClick={onDm} />}
+                nativeButton={false}
               >
                 <MessageSquare className="h-4 w-4" aria-hidden="true" />
                 {t(($) => $.detail.dm)}
@@ -521,27 +608,26 @@ function DetailHeader({
                 {t(($) => $.detail.assign_work)}
               </Button>
             )}
-            {!isArchived && canArchive ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={<Button variant="ghost" size="icon-sm" />}
-              aria-label={t(($) => $.detail.more_actions_aria)}
-            >
-              <MoreHorizontal
-                className="h-4 w-4 text-muted-foreground"
-                aria-hidden="true"
-              />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-auto">
-              <DropdownMenuItem
-                variant="destructive"
-                onClick={onArchive}
-              >
-                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                {t(($) => $.detail.more_archive)}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+            {!isArchived && canArchive && hasMoreActions ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={<Button variant="ghost" size="icon-sm" />}
+                  aria-label={t(($) => $.detail.more_actions_aria)}
+                >
+                  <MoreHorizontal
+                    className="h-4 w-4 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-auto">
+                  {onArchive && (
+                    <DropdownMenuItem variant="destructive" onClick={onArchive}>
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      {t(($) => $.detail.more_archive)}
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : null}
           </div>
         </div>
@@ -556,7 +642,7 @@ function BackHeader({ paths, title }: { paths: string; title: string }) {
       <div className="flex items-center gap-2">
         <AppLink
           href={paths}
-          className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-caption text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           {title}

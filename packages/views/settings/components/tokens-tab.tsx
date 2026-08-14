@@ -44,6 +44,10 @@ const EXPIRY_KEYS = ["30", "90", "365", "never"] as const;
 
 export function TokensTab() {
   const { t } = useT("settings");
+  const expiryItems = EXPIRY_KEYS.map((value) => ({
+    value,
+    label: t(($) => $.tokens.expiry[value]),
+  }));
   const [tokens, setTokens] = useState<PersonalAccessToken[]>([]);
   const [tokenName, setTokenName] = useState("");
   const [tokenExpiry, setTokenExpiry] = useState("90");
@@ -147,14 +151,18 @@ export function TokensTab() {
                 onChange={(e) => setTokenName(e.target.value)}
                 placeholder={t(($) => $.tokens.name_placeholder)}
               />
-              <Select value={tokenExpiry} onValueChange={(v) => { if (v) setTokenExpiry(v); }}>
+              <Select
+                items={expiryItems}
+                value={tokenExpiry}
+                onValueChange={(v) => { if (v) setTokenExpiry(v); }}
+              >
                 <SelectTrigger
                   size="sm"
                   aria-label={t(($) => $.tokens.title)}
                 ><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {EXPIRY_KEYS.map((key) => (
-                    <SelectItem key={key} value={key}>{t(($) => $.tokens.expiry[key])}</SelectItem>
+                  {expiryItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -182,7 +190,7 @@ export function TokensTab() {
         ) : tokens.length === 0 ? (
           <Card>
             <CardContent>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-caption text-muted-foreground">
                 {tokensLoadFailed ? t(($) => $.tokens.load_failed) : t(($) => $.tokens.empty)}
               </p>
             </CardContent>
@@ -193,8 +201,8 @@ export function TokensTab() {
               <Card key={token.id}>
                 <CardContent className="flex items-center gap-3">
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium truncate">{token.name}</div>
-                    <div className="text-xs text-muted-foreground">
+                    <div className="text-body font-medium truncate">{token.name}</div>
+                    <div className="text-caption text-muted-foreground">
                       {t(($) => $.tokens.metadata_prefix, {
                         prefix: token.token_prefix,
                         created: new Date(token.created_at).toLocaleDateString(),
@@ -269,7 +277,7 @@ export function TokensTab() {
             </AlertDescription>
           </Alert>
           <div className="flex min-w-0 items-center gap-2">
-            <code className="min-w-0 flex-1 truncate rounded-md border bg-muted/50 px-3 py-2 text-sm select-all">
+            <code className="min-w-0 flex-1 truncate rounded-md border bg-muted/50 px-3 py-2 text-body select-all">
               {newToken}
             </code>
             <Tooltip>
@@ -289,9 +297,9 @@ export function TokensTab() {
             </Tooltip>
           </div>
           <div className="min-w-0 space-y-1.5">
-            <p className="text-xs text-muted-foreground">{t(($) => $.tokens.created_dialog.cli_hint)}</p>
+            <p className="text-caption text-muted-foreground">{t(($) => $.tokens.created_dialog.cli_hint)}</p>
             <div className="flex min-w-0 items-center gap-2">
-              <code className="min-w-0 flex-1 truncate rounded-md border bg-muted/50 px-3 py-2 text-sm select-all">
+              <code className="min-w-0 flex-1 truncate rounded-md border bg-muted/50 px-3 py-2 text-body select-all">
                 {`multica login --token ${newToken}`}
               </code>
               <Tooltip>
@@ -312,7 +320,7 @@ export function TokensTab() {
             </div>
           </div>
           <DialogFooter className="items-center sm:justify-between">
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex items-center gap-2 text-body">
               <Checkbox
                 checked={storedConfirmed}
                 onCheckedChange={(v) => setStoredConfirmed(v === true)}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/attribution"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 
@@ -46,10 +47,14 @@ type PreparedChannelChatTask struct {
 	RuntimeID            pgtype.UUID
 	InitiatorUserID      pgtype.UUID
 	OriginatorUserID     pgtype.UUID
+	AccountableUserID    pgtype.UUID
 	ForceFreshSession    bool
 	TaskContext          []byte
 	RuntimeMCPOverlay    []byte
 	RuntimeConnectedApps []byte
+	OriginatorSource     pgtype.Text
+	TriggerEvidenceKind  pgtype.Text
+	TriggerEvidenceRefID pgtype.UUID
 	DebounceSeconds      float64
 }
 
@@ -81,6 +86,22 @@ func (s *TaskService) PrepareChannelChatTask(
 		return PreparedChannelChatTask{}, ErrChatTaskAgentNoRuntime
 	}
 
+	// Match every other chat enqueue path: a direct channel message is
+	// attributed to the resolved Multica principal, with the chat session as
+	// evidence. This must be resolved before AppendUserMessage opens its
+	// transaction because an unresolved principal may require a workspace
+	// attribution-policy read.
+	attr := attribution.DirectHumanRun(identity.PrincipalUserID, attribution.EvidenceChat, session.ID)
+	attr, err = s.applyAttributionFallback(ctx, attr, agent)
+	if err != nil {
+		slog.Warn("durable channel task prepare refused: attribution fail-closed",
+			"event", "channel_chat_task_prepare_attribution_refused",
+			"chat_session_id", util.UUIDToString(session.ID),
+		)
+		return PreparedChannelChatTask{}, err
+	}
+	attrSource, _, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
+
 	overlay := s.buildRuntimeMCPOverlay(ctx, identity.PrincipalUserID, agent)
 	taskID := uuid.New()
 	return PreparedChannelChatTask{
@@ -88,11 +109,15 @@ func (s *TaskService) PrepareChannelChatTask(
 		AgentID:              session.AgentID,
 		RuntimeID:            agent.RuntimeID,
 		InitiatorUserID:      identity.InitiatorUserID,
-		OriginatorUserID:     identity.PrincipalUserID,
+		OriginatorUserID:     attr.UserID,
+		AccountableUserID:    attr.AccountableUserID,
 		ForceFreshSession:    forceFreshSession,
 		TaskContext:          append([]byte(nil), taskContext...),
 		RuntimeMCPOverlay:    append([]byte(nil), overlay.Overlay...),
 		RuntimeConnectedApps: append([]byte(nil), overlay.ConnectedApps...),
+		OriginatorSource:     attrSource,
+		TriggerEvidenceKind:  attrEvidenceKind,
+		TriggerEvidenceRefID: attrEvidenceRef,
 		DebounceSeconds:      ChannelChatDebounceWindow.Seconds(),
 	}, nil
 }

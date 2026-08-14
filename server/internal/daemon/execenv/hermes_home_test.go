@@ -65,7 +65,7 @@ func TestPrepareHermesHomeOverlay(t *testing.T) {
 
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "Help review code."}}
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 
@@ -129,7 +129,7 @@ func TestHermesDisablesExternalMemoryProvider(t *testing.T) {
 
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 
@@ -157,7 +157,7 @@ func TestHermesDerivedConfigRebasesRelativeExternalDirs(t *testing.T) {
 
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 
@@ -185,7 +185,7 @@ func TestHermesExternalDirsExpandsSanitizedEnv(t *testing.T) {
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	env := map[string]string{"TEAM_SKILLS": "/srv/team"} // MYSTERY_VAR set nowhere
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, env, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, env, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 
@@ -211,7 +211,7 @@ func TestHermesBoundSkillKeepsNaturalSlug(t *testing.T) {
 
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "WORKSPACE VERSION"}}
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 
@@ -238,7 +238,7 @@ func TestHermesOverlayIsolatesMemories(t *testing.T) {
 
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 
@@ -256,11 +256,104 @@ func TestHermesOverlayIsolatesMemories(t *testing.T) {
 	if data, _ := os.ReadFile(filepath.Join(sharedHome, "memories", "MEMORY.md")); string(data) != "HOST MEMORY — must not leak" {
 		t.Errorf("host memory was modified through the overlay: %q", data)
 	}
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome (reuse) failed: %v", err)
 	}
 	if data, _ := os.ReadFile(filepath.Join(memDir, "MEMORY.md")); string(data) != "TASK MEMORY" {
 		t.Errorf("reuse should preserve task-local memory, got: %q", data)
+	}
+}
+
+// TestHermesOverlayKeepsSessionDatabaseTaskLocal verifies the live SQLite
+// session store is never mirrored from the host. Hermes creates it lazily in
+// the task home, and reuse must preserve that task-local database instead of
+// replacing it with a fresh host snapshot.
+func TestHermesOverlayKeepsSessionDatabaseTaskLocal(t *testing.T) {
+	t.Parallel()
+	sharedHome := t.TempDir()
+	mustWrite(t, filepath.Join(sharedHome, "config.yaml"), "model: hermes-4\n")
+	stateFiles := []string{"state.db", "state.db-wal", "state.db-shm", "state.db-journal"}
+	for _, name := range stateFiles {
+		mustWrite(t, filepath.Join(sharedHome, name), "HOST "+name)
+	}
+
+	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
+	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
+		t.Fatalf("prepareHermesHome failed: %v", err)
+	}
+	for _, name := range stateFiles {
+		if _, err := os.Lstat(filepath.Join(hermesHome, name)); !os.IsNotExist(err) {
+			t.Fatalf("host %s must not be mirrored into a fresh task overlay: %v", name, err)
+		}
+		mustWrite(t, filepath.Join(hermesHome, name), "TASK "+name)
+		mustWrite(t, filepath.Join(sharedHome, name), "UPDATED HOST "+name)
+	}
+
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
+		t.Fatalf("prepareHermesHome (reuse) failed: %v", err)
+	}
+	for _, name := range stateFiles {
+		data, err := os.ReadFile(filepath.Join(hermesHome, name))
+		if err != nil {
+			t.Fatalf("read task-local %s after reuse: %v", name, err)
+		}
+		if got, want := string(data), "TASK "+name; got != want {
+			t.Errorf("task-local %s after reuse = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// TestHermesOverlayMigratesLegacySessionDatabase verifies an overlay created by
+// an older daemon drops potentially inconsistent copied SQLite files once,
+// without touching the host, then preserves the database Hermes creates locally.
+func TestHermesOverlayMigratesLegacySessionDatabase(t *testing.T) {
+	t.Parallel()
+	sharedHome := t.TempDir()
+	mustWrite(t, filepath.Join(sharedHome, "config.yaml"), "model: hermes-4\n")
+	stateFiles := []string{"state.db", "state.db-wal", "state.db-shm", "state.db-journal"}
+	for _, name := range stateFiles {
+		mustWrite(t, filepath.Join(sharedHome, name), "HOST "+name)
+	}
+
+	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
+	for _, name := range stateFiles {
+		mustWrite(t, filepath.Join(hermesHome, name), "LEGACY COPY "+name)
+	}
+	// POSIX overlays used symlinks while Windows without symlink privilege used
+	// copies. Exercise the symlink migration when the host permits creating one.
+	walPath := filepath.Join(hermesHome, "state.db-wal")
+	if err := os.Remove(walPath); err != nil {
+		t.Fatalf("remove copied WAL before symlink setup: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(sharedHome, "state.db-wal"), walPath); err != nil {
+		mustWrite(t, walPath, "LEGACY COPY state.db-wal")
+	}
+	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
+		t.Fatalf("prepareHermesHome failed: %v", err)
+	}
+	for _, name := range stateFiles {
+		if _, err := os.Lstat(filepath.Join(hermesHome, name)); !os.IsNotExist(err) {
+			t.Errorf("legacy overlay %s should be removed during migration: %v", name, err)
+		}
+		data, err := os.ReadFile(filepath.Join(sharedHome, name))
+		if err != nil {
+			t.Fatalf("read host %s after migration: %v", name, err)
+		}
+		if got, want := string(data), "HOST "+name; got != want {
+			t.Errorf("host %s changed during migration: got %q, want %q", name, got, want)
+		}
+	}
+
+	mustWrite(t, filepath.Join(hermesHome, "state.db"), "TASK DB")
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
+		t.Fatalf("prepareHermesHome (reuse) failed: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(hermesHome, "state.db")); err != nil {
+		t.Fatalf("read migrated task-local state.db after reuse: %v", err)
+	} else if got := string(data); got != "TASK DB" {
+		t.Errorf("migrated task-local state.db after reuse = %q, want TASK DB", got)
 	}
 }
 
@@ -273,7 +366,7 @@ func TestHermesOverlayPermissions(t *testing.T) {
 
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 
@@ -287,6 +380,11 @@ func TestHermesOverlayPermissions(t *testing.T) {
 	} else if fi.Mode().Perm() != 0o600 {
 		t.Errorf("derived config perms = %o, want 0600", fi.Mode().Perm())
 	}
+	if fi, err := os.Stat(filepath.Join(hermesHome, hermesTaskLocalStateMarker)); err != nil {
+		t.Fatalf("stat task-local state marker: %v", err)
+	} else if fi.Mode().Perm() != 0o600 {
+		t.Errorf("task-local state marker perms = %o, want 0600", fi.Mode().Perm())
+	}
 }
 
 // TestHermesOverlayReconcilesDeletedSharedEntry asserts a top-level entry
@@ -299,7 +397,7 @@ func TestHermesOverlayReconcilesDeletedSharedEntry(t *testing.T) {
 
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 	if _, err := os.Lstat(filepath.Join(hermesHome, "plugins")); err != nil {
@@ -308,7 +406,7 @@ func TestHermesOverlayReconcilesDeletedSharedEntry(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(sharedHome, "plugins")); err != nil {
 		t.Fatalf("remove shared plugins: %v", err)
 	}
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome (rebuild) failed: %v", err)
 	}
 	if _, err := os.Lstat(filepath.Join(hermesHome, "plugins")); !os.IsNotExist(err) {
@@ -328,7 +426,7 @@ func TestHermesOverlayPreservesTaskSessionDBAcrossReuse(t *testing.T) {
 
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 
@@ -340,7 +438,7 @@ func TestHermesOverlayPreservesTaskSessionDBAcrossReuse(t *testing.T) {
 		mustWrite(t, filepath.Join(hermesHome, name), content)
 	}
 
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome (reuse) failed: %v", err)
 	}
 	for name, want := range map[string]string{
@@ -368,7 +466,7 @@ func TestPrepareHermesHomeFailsClosed(t *testing.T) {
 	}
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err == nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err == nil {
 		t.Fatal("expected prepareHermesHome to fail closed on an unreadable shared config")
 	}
 }
@@ -498,7 +596,7 @@ func TestHermesExternalDirsExpandsAgainstSelectedProfileHome(t *testing.T) {
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	env := map[string]string{"HERMES_HOME": profileHome} // as the daemon sets it
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
-	if err := prepareHermesHome(hermesHome, profileHome, true, skills, env, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, profileHome, true, skills, env, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 
@@ -526,7 +624,7 @@ func TestHermesOverlayEnvPinsHomeAfterDotenvOverride(t *testing.T) {
 
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
-	if err := prepareHermesHome(hermesHome, sourceHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sourceHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 
@@ -562,7 +660,7 @@ func TestHermesOverlayEnvCreatedWhenSourceHasNone(t *testing.T) {
 	sourceHome := t.TempDir() // no .env present
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
-	if err := prepareHermesHome(hermesHome, sourceHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sourceHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 	env := applyDotenvOverride(t, filepath.Join(hermesHome, ".env"))
@@ -665,7 +763,7 @@ func TestHermesOverlayDoesNotMirrorStickyProfile(t *testing.T) {
 
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
-	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, testLogger()); err != nil {
+	if err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", testLogger()); err != nil {
 		t.Fatalf("prepareHermesHome failed: %v", err)
 	}
 	for _, name := range []string{"active_profile", "profiles"} {
@@ -685,7 +783,7 @@ func TestPrepareHermesHomeFailsOnMissingNamedProfile(t *testing.T) {
 	missingProfileHome := filepath.Join(base, "profiles", "does-not-exist")
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
-	if err := prepareHermesHome(hermesHome, missingProfileHome, true, skills, nil, testLogger()); err == nil {
+	if err := prepareHermesHome(hermesHome, missingProfileHome, true, skills, nil, "", testLogger()); err == nil {
 		t.Fatal("expected a missing named profile home to fail closed")
 	}
 }

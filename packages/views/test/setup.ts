@@ -1,35 +1,12 @@
 import "@testing-library/jest-dom/vitest";
 
-function createMemoryStorage(): Storage {
-  const values = new Map<string, string>();
-
-  return {
-    get length() {
-      return values.size;
-    },
-    clear: () => values.clear(),
-    getItem: (key: string) => values.get(key) ?? null,
-    key: (index: number) => Array.from(values.keys())[index] ?? null,
-    removeItem: (key: string) => {
-      values.delete(key);
-    },
-    setItem: (key: string, value: string) => {
-      values.set(key, value);
-    },
-  };
-}
-
-if (typeof globalThis.localStorage?.clear !== "function") {
-  const storage = createMemoryStorage();
-  Object.defineProperty(globalThis, "localStorage", {
-    configurable: true,
-    value: storage,
-  });
-  Object.defineProperty(window, "localStorage", {
-    configurable: true,
-    value: storage,
-  });
-}
+// Node 25 exposes its own global localStorage. In a jsdom test that object is
+// not the browser storage at window.localStorage, even though browsers expose
+// both names as the same object. Keep the test environment browser-accurate.
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  value: window.localStorage,
+});
 
 // jsdom doesn't provide matchMedia; useIsMobile() relies on it.
 if (typeof window.matchMedia !== "function") {
@@ -59,4 +36,10 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 // jsdom doesn't implement elementFromPoint; input-otp uses it internally.
 if (typeof document.elementFromPoint !== "function") {
   document.elementFromPoint = () => null;
+}
+
+// jsdom has no layout, so it doesn't implement scrollIntoView; list components
+// that keep a keyboard cursor in view (e.g. the thread navigator) call it.
+if (typeof Element.prototype.scrollIntoView !== "function") {
+  Element.prototype.scrollIntoView = () => {};
 }

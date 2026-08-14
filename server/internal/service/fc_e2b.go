@@ -2926,7 +2926,7 @@ func (s *TaskService) FailTaskRuntimeStart(
 	s.captureTaskFailed(ctx, task)
 	s.ReconcileAgentStatus(ctx, task.AgentID)
 	if task.ChatSessionID.Valid {
-		s.broadcastChatDone(ctx, task, assistantMsg)
+		s.broadcastChatDone(ctx, task, assistantMsg, false)
 	}
 	s.broadcastTaskEvent(ctx, protocol.EventTaskFailed, task)
 	return &task, nil

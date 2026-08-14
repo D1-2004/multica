@@ -166,6 +166,19 @@ describe("FCE2BRuntimeDialog ASB credential validation", () => {
     );
   });
 
+  it("uses a wide responsive dialog without horizontal overflow", () => {
+    renderDialog();
+
+    expect(screen.getByRole("dialog")).toHaveClass(
+      "min-w-0",
+      "overflow-x-hidden",
+      "sm:max-w-[min(48rem,calc(100vw-2rem))]",
+    );
+    expect(document.querySelector("#fc-e2b-runtime-form")).toHaveClass(
+      "min-w-0",
+    );
+  });
+
   it("invalidates the result whenever the API Key changes", async () => {
     renderDialog();
 

@@ -71,8 +71,8 @@ func TestMessageBindingCallbackStoresRouteWithoutChangingExecutionIdentity(t *te
 	originalIdentity := store.identity
 
 	binding, err := service.CompleteCallback(context.Background(), CallbackParams{
-		BindingID:    store.row.ID,
-		BindingMode:  BindingModeMessage,
+		BindingID:     store.row.ID,
+		BindingMode:   BindingModeMessage,
 		CallbackToken: canonicalCallbackToken,
 		IdentityBinding: IdentityBindingResult{
 			Status: "skipped",

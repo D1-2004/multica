@@ -1,4 +1,51 @@
 {
+  "quick_actions": {
+    "title": "快捷操作",
+    "description": "预先配置好执行的 Agent 和提示词，之后在任意任务侧边栏一键触发。",
+    "add": "新建快捷操作",
+    "search_placeholder": "搜索快捷操作",
+    "loading": "正在加载快捷操作…",
+    "no_results": "没有匹配的快捷操作",
+    "actions_open": "打开\"{{name}}\"的操作菜单",
+    "columns": {
+      "name": "名称",
+      "target": "执行者",
+      "visibility": "可见范围",
+      "usage": "使用",
+      "updated": "更新时间"
+    },
+    "empty_title": "还没有快捷操作",
+    "empty_hint": "把反复交给 Agent 做的事配置成快捷操作——代码审查、补测试、安全检查。",
+    "archived": "已归档",
+    "visibility_public": "团队",
+    "visibility_private": "仅自己",
+    "visibility_public_hint": "工作区所有成员",
+    "visibility_private_hint": "只有你",
+    "field_visibility": "谁可以使用",
+    "public_target_hint": "只能选所有成员都能触发的 Agent。",
+    "target_private": "私有",
+    "target_missing": "执行者不可用",
+    "archive": "归档",
+    "unarchive": "恢复",
+    "edit": "编辑",
+    "delete": "删除",
+    "cancel": "取消",
+    "save": "保存",
+    "never_used": "从未使用",
+    "used_count": "已使用 {{count}} 次",
+    "create_title": "新建快捷操作",
+    "edit_title": "编辑快捷操作",
+    "dialog_description": "以任务评论的形式执行，和 @提及 一样。",
+    "field_name": "名称",
+    "field_name_placeholder": "代码审查",
+    "field_target": "执行者",
+    "field_prompt": "提示词",
+    "field_prompt_placeholder": "请审查这个任务关联的代码，重点关注正确性和边界情况。",
+    "prompt_hint": "原样发送。Agent 本来就能看到这个任务。",
+    "template_not_supported": "暂不支持变量，请删除 {{token}}。Agent 本来就能读到这个任务。",
+    "delete_title": "删除这条快捷操作？",
+    "delete_description": "它会从所有任务侧边栏消失，历史运行记录仍保留在执行日志中。如果以后可能还要用，建议改为归档。"
+  },
   "auto_save": {
     "saving": "正在保存…",
     "saved": "已保存",
@@ -62,23 +109,90 @@
       "navigation": "导航"
     },
     "actions": {
-      "openSearch": { "label": "打开搜索", "description": "随时搜索内容或运行命令。" },
-      "createIssue": { "label": "新建 issue", "description": "打开你常用的 issue 创建流程。" },
-      "toggleSidebar": { "label": "显示或隐藏侧边栏", "description": "切换主侧边栏的显示状态。" },
-      "findInIssue": { "label": "在 issue 中查找", "description": "搜索当前打开的 issue 详情。" },
-      "send": { "label": "发送", "description": "发送聊天消息、评论、回复、反馈和提示词。" },
-      "goInbox": { "label": "前往收件箱", "description": "打开工作区收件箱。" },
-      "goChat": { "label": "前往聊天", "description": "打开工作区聊天。" },
-      "goMyIssues": { "label": "前往我的 issue", "description": "打开分配给你的 issue。" },
-      "goIssues": { "label": "前往 Issues", "description": "打开 issue 列表。" },
-      "goProjects": { "label": "前往项目", "description": "打开项目列表。" },
-      "goAutopilots": { "label": "前往自动化", "description": "打开工作区自动化。" },
-      "goAgents": { "label": "前往智能体", "description": "打开智能体列表。" },
-      "goSquads": { "label": "前往小队", "description": "打开小队列表。" },
-      "goUsage": { "label": "前往用量", "description": "打开用量分析。" },
-      "goRuntimes": { "label": "前往运行时", "description": "打开运行时配置。" },
-      "goSkills": { "label": "前往 Skills", "description": "打开 skill 库。" },
-      "goSettings": { "label": "前往设置", "description": "打开工作区设置。" }
+      "openSearch": {
+        "label": "打开搜索",
+        "description": "随时搜索内容或运行命令。"
+      },
+      "createIssue": {
+        "label": "新建 issue",
+        "description": "打开你常用的 issue 创建流程。"
+      },
+      "toggleSidebar": {
+        "label": "显示或隐藏侧边栏",
+        "description": "切换主侧边栏的显示状态。"
+      },
+      "toggleChat": {
+        "label": "显示或隐藏聊天窗",
+        "description": "打开或关闭悬浮聊天窗，打开时自动聚焦输入框。"
+      },
+      "findInIssue": {
+        "label": "在 issue 中查找",
+        "description": "搜索当前打开的 issue 详情。"
+      },
+      "openThreadNav": {
+        "label": "打开讨论导航",
+        "description": "列出、搜索并跳转当前任务的评论讨论。"
+      },
+      "send": {
+        "label": "发送",
+        "description": "发送聊天消息、评论、回复、反馈和提示词。"
+      },
+      "goBack": {
+        "label": "后退",
+        "description": "像浏览器一样在历史记录中后退。"
+      },
+      "goForward": {
+        "label": "前进",
+        "description": "像浏览器一样在历史记录中前进。"
+      },
+      "goInbox": {
+        "label": "前往收件箱",
+        "description": "打开工作区收件箱。"
+      },
+      "goChat": {
+        "label": "前往聊天",
+        "description": "打开工作区聊天。"
+      },
+      "goMyIssues": {
+        "label": "前往我的 issue",
+        "description": "打开分配给你的 issue。"
+      },
+      "goIssues": {
+        "label": "前往 Issues",
+        "description": "打开 issue 列表。"
+      },
+      "goProjects": {
+        "label": "前往项目",
+        "description": "打开项目列表。"
+      },
+      "goAutopilots": {
+        "label": "前往自动化",
+        "description": "打开工作区自动化。"
+      },
+      "goAgents": {
+        "label": "前往智能体",
+        "description": "打开智能体列表。"
+      },
+      "goSquads": {
+        "label": "前往小队",
+        "description": "打开小队列表。"
+      },
+      "goUsage": {
+        "label": "前往用量",
+        "description": "打开用量分析。"
+      },
+      "goRuntimes": {
+        "label": "前往运行时",
+        "description": "打开运行时配置。"
+      },
+      "goSkills": {
+        "label": "前往 Skills",
+        "description": "打开 skill 库。"
+      },
+      "goSettings": {
+        "label": "前往设置",
+        "description": "打开工作区设置。"
+      }
     },
     "fixed": {
       "title": "固定的系统快捷键",
@@ -95,6 +209,22 @@
     "floating_label": "悬浮聊天窗",
     "floating_hint": "在每个页面右下角显示悬浮聊天按钮。默认关闭——打开后可随处召唤聊天；关闭时，聊天只在此标签页中可用。"
   },
+  "issue": {
+    "description": "选择各创建方式的工具栏中常驻显示的字段。隐藏的字段仍可从 ⋯ 菜单使用，有值时会自动显示。",
+    "quick_create_title": "通过智能体创建",
+    "quick_create_description": "快速创建工具栏中显示的字段。",
+    "manual_create_title": "手动创建",
+    "manual_create_description": "手动创建工具栏中显示的字段。",
+    "fields": {
+      "status": "状态",
+      "priority": "优先级",
+      "assignee": "负责人",
+      "labels": "标签",
+      "project": "项目",
+      "due_date": "截止日期",
+      "start_date": "开始日期"
+    }
+  },
   "page": {
     "title": "设置",
     "my_account": "我的账号",
@@ -103,6 +233,7 @@
       "profile": "个人资料",
       "preferences": "偏好设置",
       "shortcuts": "快捷键",
+      "issue": "任务",
       "chat": "聊天",
       "notifications": "通知",
       "tokens": "API Token",
@@ -113,59 +244,83 @@
       "labs": "实验室",
       "members": "成员",
       "labels": "标签",
+      "properties": "属性",
+      "quick_actions": "快捷操作",
       "workspace_access": "DTA Token"
     }
   },
-  "workspace_access": {
-    "title": "DTA Token",
-    "description": "为 DTA 签发仅绑定当前工作区的访问凭证。外部服务商只使用 DTA，不获得 Multica 账号或个人 API Token。",
-    "owner_only": "只有工作区所有者可以管理 DTA Token。",
-    "tokens_title": "DTA Token",
-    "tokens_description": "每个 Token 代表一个独立的外部使用方，拥有当前工作区普通成员权限；可分别设置有效期并随时吊销。",
-    "create": "新建 Token",
-    "loading": "正在加载 DTA Token…",
-    "empty": "暂无 DTA Token。",
-    "edit": "编辑",
-    "expires": "到期时间",
-    "last_used": "最后使用",
-    "revoked": "已吊销",
-    "revoke": "吊销密钥",
-    "revoke_confirm": "确定吊销这个 DTA 访问密钥？使用该密钥的 DTA 请求会立即失败。",
-    "delete": "删除记录",
-    "delete_confirm": "确定彻底删除这条已吊销的 Token 记录？其 service member、智能体和历史数据会保留。",
-    "saved": "DTA Token 已保存",
-    "save_failed": "无法保存 DTA Token",
-    "create_title": "新建 DTA Token",
-    "edit_title": "编辑 DTA Token",
-    "name_placeholder": "外部使用方名称",
-    "member_role": "工作区普通成员权限",
-    "member_permissions_description": "此 Token 与工作区普通成员拥有相同权限，可以管理自己的智能体、任务、Trace、节律、绑定和 stable 私有 Runtime；不能管理成员或工作区设置，也不能创建公共托管 Runtime 或管理稳定版本发布。",
-    "regenerate": "重新生成",
-    "regenerated": "DTA Token 已重新生成",
-    "regenerate_title": "重新生成 DTA Token",
-    "regenerate_warning": "当前密钥会立即失效。请保存新密钥后，将其重新配置到 DTA。",
-    "expiry_title": "有效期",
-    "expiry_description": "到期后，使用此 Token 的所有 DTA 请求会立即失败。可以编辑到期时间，或重新生成密钥并设置新的有效期。",
-    "expiry": {
-      "keep": "保持当前到期时间",
-      "days": "{{count}} 天",
-      "never": "永不过期"
+  "properties": {
+    "title": "属性",
+    "description": "为该工作区的任务定义类型化的自定义属性。属性值设置在每个任务上，agent 可读写。",
+    "search_placeholder": "按名称筛选...",
+    "new_property": "新建属性",
+    "show_archived": "显示已归档",
+    "columns": {
+      "name": "名称",
+      "type": "类型",
+      "options": "选项",
+      "usage": "使用数量",
+      "updated": "更新时间"
     },
-    "permanent_warning": "永不过期的 Token 会一直有效，直到被吊销。建议优先设置到期时间。",
-    "cancel": "取消",
-    "save": "保存",
-    "secret_title": "立即保存 DTA 访问密钥",
-    "secret_warning": "该密钥只展示一次，之后无法找回。请仅通过已批准的密钥交付渠道发送。",
-    "secret_confirm": "我已复制并安全保存此密钥",
-    "close": "关闭"
+    "usage_count_other": "{{count}} 个任务",
+    "loading": "正在加载属性...",
+    "empty": "还没有属性",
+    "empty_hint": "创建 Severity、Environment 这类类型化字段——agent 可带校验地读写它们。",
+    "no_results": "没有匹配的属性",
+    "save_failed": "保存属性失败",
+    "limit_hint": "{{count}}/{{max}} 个启用中属性",
+    "archived_badge": "已归档",
+    "types": {
+      "text": "文本",
+      "number": "数字",
+      "select": "单选",
+      "multi_select": "多选",
+      "date": "日期",
+      "checkbox": "勾选",
+      "url": "链接"
+    },
+    "actions": {
+      "open": "{{name}} 的操作",
+      "edit": "编辑",
+      "archive": "归档",
+      "unarchive": "恢复"
+    },
+    "editor": {
+      "create_title": "新建属性",
+      "edit_title": "编辑属性",
+      "admin_hint": "仅工作区 Owner 和 Admin 可以管理属性定义。",
+      "icon": "图标",
+      "choose_icon": "选择图标",
+      "remove_icon": "移除图标",
+      "name": "名称",
+      "name_placeholder": "例如 Severity",
+      "type": "类型",
+      "type_locked_hint": "创建后类型不可修改。",
+      "description": "描述",
+      "description_placeholder": "这个属性的含义以及何时设置",
+      "options": "选项",
+      "option_name_placeholder": "选项名称",
+      "add_option": "添加选项",
+      "remove_option": "移除选项",
+      "cancel": "取消",
+      "save": "保存属性",
+      "saving": "保存中..."
+    },
+    "archive_dialog": {
+      "title": "归档属性？",
+      "description": "“{{name}}”将从选择器和筛选中隐藏，任务上已有的值会保留。之后可以恢复。",
+      "cancel": "取消",
+      "confirm": "归档属性",
+      "failed": "归档属性失败"
+    }
   },
   "labels": {
     "title": "标签",
-    "description": "分别管理工作区中用于整理 issue、智能体和 skill 的标签。三类标签相互独立。",
+    "description": "分别管理工作区中用于整理 issue 和 skill 的标签，两类标签相互独立。",
     "scopes": {
       "issue": "Issue",
-      "agent": "智能体",
-      "skill": "Skill"
+      "skill": "Skill",
+      "agent": "智能体"
     },
     "search_placeholder": "按名称或描述筛选...",
     "new_label": "新建标签",
@@ -194,10 +349,10 @@
       "description": "描述",
       "description_placeholder": "说明什么时候应使用这个标签",
       "color": "颜色",
-      "custom_color": "选择自定义颜色",
       "cancel": "取消",
       "save": "保存标签",
-      "saving": "保存中..."
+      "saving": "保存中...",
+      "custom_color": "选择自定义颜色"
     },
     "delete_dialog": {
       "title": "删除标签？",
@@ -239,6 +394,10 @@
       "comments": {
         "label": "评论与提及",
         "description": "你订阅的 issue 有新评论，或有人 @ 你时"
+      },
+      "mentions": {
+        "label": "提及",
+        "description": "有人 @ 你时，包括 @all 和 @squad"
       },
       "updates": {
         "label": "优先级与截止日期",
@@ -376,14 +535,6 @@
     "connect_github": "连接 GitHub",
     "connect_opening": "正在打开…",
     "connect_disabled_tooltip": "服务端未配置 GitHub App",
-    "reusable_title": "可使用的已有连接",
-    "reusable_description": "复用你管理的其他工作区中的 GitHub App 连接，原工作区会继续保持连接。",
-    "reusable_from": "来自 {{workspace}}",
-    "reuse_connection": "使用该连接",
-    "reusing_connection": "连接中…",
-    "reuse_connection_aria": "使用来自 {{workspace}} 的 {{login}} 连接",
-    "toast_reused": "已添加 GitHub 连接",
-    "toast_reuse_failed": "复用 GitHub 连接失败",
     "disconnect": "断开",
     "disconnecting": "断开中…",
     "disconnect_confirm_title": "断开 GitHub App",
@@ -410,7 +561,56 @@
     "section_repositories": "代码仓库",
     "repositories_shortcut_label": "仓库 URL 仍在「代码仓库」标签页中管理",
     "repositories_shortcut_link": "前往管理 →",
-    "toast_failed": "更新 GitHub 设置失败"
+    "toast_failed": "更新 GitHub 设置失败",
+    "reusable_title": "可使用的已有连接",
+    "reusable_description": "复用你管理的其他工作区中的 GitHub App 连接，原工作区会继续保持连接。",
+    "reusable_from": "来自 {{workspace}}",
+    "reuse_connection": "使用该连接",
+    "reusing_connection": "连接中…",
+    "reuse_connection_aria": "使用来自 {{workspace}} 的 {{login}} 连接",
+    "toast_reused": "已添加 GitHub 连接",
+    "toast_reuse_failed": "复用 GitHub 连接失败"
+  },
+  "vcs": {
+    "section_title": "Git 代码托管（自托管）",
+    "page_description": "连接自托管的 Forgejo、Gitea 或 GitLab 实例，将 Pull Request 镜像到任务上。每个连接使用一个访问令牌；智能体使用运行时自身的 Git 凭据推送分支并创建 PR。",
+    "connect_title": "连接代码托管实例",
+    "connected_as": "已以 {{login}} 身份连接",
+    "form_provider_label": "提供方",
+    "form_instance_url_label": "实例地址",
+    "form_token_label": "访问令牌",
+    "form_token_placeholder": "访问令牌",
+    "form_token_hint": "创建具备仓库读取权限的访问令牌。Forgejo/Gitea：设置 - 应用；GitLab：具备 read_api 权限的个人访问令牌。",
+    "connect": "连接",
+    "connecting": "连接中…",
+    "disconnect": "断开",
+    "disconnecting": "断开中...",
+    "not_configured": "此服务器尚未配置 Git 代码托管集成。请管理员设置",
+    "contact_admin": "请工作区管理员连接 Git 代码托管实例。",
+    "webhook_setup_title": "在代码托管中完成设置",
+    "webhook_setup_description": "在仓库或组织中添加 Webhook，使用下方的地址和密钥。Forgejo/Gitea：格式选择 Gitea，事件勾选 Pull Request（及 Commit Status）。GitLab：将密钥填入 token，并启用 Merge request 与 Pipeline 事件。",
+    "webhook_url_label": "Webhook 地址",
+    "webhook_secret_label": "Webhook 密钥",
+    "webhook_secret_warning": "请立即复制密钥。它只显示一次，之后无法再次获取。",
+    "copy": "复制",
+    "copied": "已复制到剪贴板",
+    "copy_failed": "复制失败",
+    "disconnect_confirm_title": "断开此代码托管连接？",
+    "disconnect_confirm_description": "该连接镜像的 Pull Request 及其任务关联将被移除。此操作无法撤销。",
+    "disconnect_confirm_cancel": "取消",
+    "disconnect_confirm_action": "断开",
+    "toast_connected": "已连接代码托管",
+    "toast_connect_failed": "无法连接代码托管",
+    "toast_disconnected": "已断开代码托管连接",
+    "toast_disconnect_failed": "断开连接失败",
+    "regenerate_webhook": "重新生成 Webhook",
+    "rotate_confirm_title": "重新生成 Webhook 密钥？",
+    "rotate_confirm_description": "当前的 Webhook 密钥将立即失效。在代码托管设置中更新密钥前，来自该平台的推送将无法送达。",
+    "rotate_confirm_cancel": "取消",
+    "rotate_confirm_action": "重新生成",
+    "rotating": "重新生成中…",
+    "toast_rotated": "已重新生成 Webhook 密钥",
+    "toast_rotate_failed": "重新生成 Webhook 密钥失败"
   },
   "lark": {
     "section_title": "飞书",
@@ -567,8 +767,6 @@
     "not_enabled_description_prefix": "当前服务端还缺少用于保存企业机器人凭证的加密配置（",
     "not_enabled_description_suffix": "）。配置完成后即可创建企业机器人。",
     "not_enabled_self_host_hint": "自托管部署请参考项目 README。",
-    "preview_title": "企业机器人安装即将上线",
-    "preview_description": "服务器已配置加密密钥，但本版本尚未接入扫码创建企业机器人流程。启用后，创建入口将在此展示。",
     "connected_bots": "已连接的企业机器人",
     "loading": "加载中…",
     "empty_title": "暂无已连接的企业机器人",
@@ -584,19 +782,30 @@
     "disconnect_confirm_cancel": "取消",
     "toast_disconnected": "已断开企业机器人",
     "toast_disconnect_failed": "断开失败",
+    "bind_button": "创建企业机器人",
+    "bind_button_title": "为 {{agent}} 创建钉钉企业机器人",
+    "agent_bot_connected_label": "已连接企业机器人",
+    "agent_bot_disconnect_tooltip": "将该企业机器人与智能体解绑，机器人将停止接收钉钉消息。",
+    "byo_dialog_title": "连接钉钉机器人",
+    "byo_docs_link": "Step-by-step：把你的 Multica 智能体连接到钉钉",
+    "byo_appkey_label": "AppKey（client id）",
+    "byo_appsecret_label": "AppSecret（client secret）",
+    "byo_submit": "连接",
+    "byo_submitting": "连接中…",
+    "byo_cancel": "取消",
+    "byo_success_toast": "钉钉机器人已连接",
+    "byo_failed_toast": "无法连接钉钉机器人",
+    "preview_title": "企业机器人安装即将上线",
+    "preview_description": "服务器已配置加密密钥，但本版本尚未接入扫码创建企业机器人流程。启用后，创建入口将在此展示。",
     "toast_router_retry_succeeded": "Router 注册已恢复",
     "toast_router_retry_failed": "Router 注册重试失败",
     "router_registered": "HTTP 回调 · Router 已注册",
     "router_registration_failed": "HTTP 回调 · Router 未注册",
     "router_retry": "重试 Router",
-    "bind_button": "创建企业机器人",
-    "bind_button_title": "为 {{agent}} 创建钉钉企业机器人",
-    "agent_bot_connected_label": "已连接企业机器人",
     "agent_bot_approving_label": "企业机器人审核中",
     "approving_hint": "钉钉正在审核该机器人，审核通过前不能收发消息。",
     "agent_bot_manage_link": "在钉钉中管理企业机器人",
     "agent_bot_manage_tooltip": "打开钉钉开发者后台管理已创建的机器人应用——权限、凭证、发布。",
-    "agent_bot_disconnect_tooltip": "将该企业机器人与智能体解绑，机器人将停止接收钉钉消息。",
     "install_dialog_title": "创建企业机器人",
     "install_dialog_description": "用钉钉扫描下方二维码，在你的组织内创建一个企业机器人。",
     "install_dialog_description_for_agent": "用钉钉扫描下方二维码，为 {{agent}} 创建一个企业机器人。",
@@ -641,6 +850,56 @@
     "install_manual_missing_fields": "请同时填写 AppKey 和 AppSecret。",
     "install_manual_error_generic": "无法绑定应用。请检查 AppKey 和 AppSecret 后重试。"
   },
+  "wecom": {
+    "section_title": "企业微信",
+    "page_description": "将每个 Multica 智能体连接到专属的企业微信智能机器人。成员可私聊机器人、在群里 @ 它，或输入 /issue 直接创建 Multica 任务。Agent 通过 WebSocket 长连接回复，无需公网回调地址。",
+    "not_enabled_title": "企业微信集成未启用",
+    "not_enabled_description_prefix": "在服务器上设置",
+    "not_enabled_description_suffix": "以启用企业微信智能机器人的安装。",
+    "not_enabled_self_host_hint": "自部署用户：详见项目 README。",
+    "preview_title": "企业微信安装即将上线",
+    "preview_description": "静态加密密钥已设置，但本部署尚未完成企业微信安装能力的开通。",
+    "connected_bots": "已连接的机器人",
+    "loading": "加载中…",
+    "empty_title": "尚未连接机器人",
+    "empty_description_prefix": "在本工作区打开一个 Agent，点击",
+    "empty_description_cta": "连接企业微信",
+    "empty_description_suffix": "为其安装智能机器人。",
+    "revoked_badge": "已撤销",
+    "bot_id_label": "Bot ID：{{botId}}",
+    "disconnect": "断开连接",
+    "disconnecting": "正在断开…",
+    "disconnect_confirm_title": "断开此企业微信机器人？",
+    "disconnect_confirm_description": "该机器人将停止接收此工作区的企业微信消息。安装记录会保留以备审计；你之后可以从同一个 Agent 重新安装。",
+    "disconnect_confirm_cancel": "取消",
+    "toast_disconnected": "已断开企业微信机器人",
+    "toast_disconnect_failed": "断开失败",
+    "bind_button": "连接企业微信",
+    "bind_button_title": "把 {{agent}} 连接到企业微信智能机器人",
+    "agent_bot_connected_label": "已连接到企业微信",
+    "agent_bot_connected_label_with_id": "已连接到企业微信 — {{botId}}",
+    "agent_bot_disconnect_tooltip": "将此智能机器人从 Agent 解绑。机器人将停止接收企业微信消息。",
+    "byo_dialog_title": "连接企业微信智能机器人",
+    "byo_bot_id_label": "Bot ID",
+    "byo_bot_id_placeholder": "例如：aibot_xxxxxxxxxxxxxxxx",
+    "byo_secret_label": "长连接 Secret",
+    "byo_secret_placeholder": "粘贴在管理后台仅显示一次的 Secret",
+    "byo_bot_name_label": "机器人在聊天里的名字（可选）",
+    "byo_bot_name_placeholder": "例如 Multica Bot",
+    "byo_bot_name_hint": "名字里有空格时才需要填，机器人靠它把自己的 @ 和后面的命令分开。之后想改（包括在企业微信后台改名后），要先断开这个机器人再重新连接。",
+    "byo_submit": "连接",
+    "byo_submitting": "连接中…",
+    "byo_cancel": "取消",
+    "byo_success_toast": "企业微信机器人已连接",
+    "byo_conflict_same_workspace": "该机器人已连接到本工作区的另一个智能体。请先在那里断开，再连接到这里。",
+    "byo_conflict_archived_agent": "该机器人连接在本工作区一个已归档的智能体上。请先恢复那个智能体，或断开它的机器人，再连接到这里。",
+    "byo_conflict_other_workspace": "该机器人已连接到另一个 Multica 工作区。请先在那边断开，再连接到这里。",
+    "byo_rejected": "无法连接机器人。请核对企业微信管理后台的 Bot ID 与密钥，并确认它是已开启长连接的智能机器人。",
+    "byo_credentials_rejected": "企业微信拒绝了这组 Bot ID 和密钥。请在企业微信管理后台核对这两项，并确认它是已开启长连接的智能机器人。",
+    "byo_credentials_unverifiable": "没能连上企业微信来校验这个机器人。你的凭据没有被改动，请稍后重试。",
+    "byo_install_failed": "没能保存这个机器人，是我们这边出了问题。你的凭据没有被改动，请重试；如果一直失败，请联系支持。",
+    "byo_failed_toast": "无法连接企业微信机器人"
+  },
   "repositories": {
     "section_title": "代码仓库",
     "description": "与该工作区关联的 Git 仓库。智能体会从这里 clone 代码并完成工作。",
@@ -648,6 +907,27 @@
     "url_empty": "（空 URL）",
     "description_placeholder": "描述（例如：Go 后端 + Next.js 前端）",
     "add": "添加仓库",
+    "connect_github": "连接 GitHub",
+    "choose_from_github": "从 GitHub 选择",
+    "github_not_configured": "当前部署尚未配置 GitHub 连接。",
+    "github_browse_not_configured": "浏览仓库需要配置 GITHUB_APP_ID 和 GITHUB_APP_PRIVATE_KEY。",
+    "github_connect_failed": "无法连接 GitHub，请重试。",
+    "github_picker_title": "选择 GitHub 仓库",
+    "github_picker_description": "选择要添加到当前工作区的仓库，现有手动配置不会被修改。",
+    "github_account": "GitHub 账号",
+    "github_search_placeholder": "搜索已加载的仓库",
+    "github_loading": "正在加载仓库…",
+    "github_load_failed": "无法从 GitHub 加载仓库，请检查安装权限后重试。",
+    "github_empty": "该安装下没有可访问的仓库。",
+    "github_no_search_results": "已加载的仓库中没有匹配项。",
+    "github_private": "私有",
+    "github_archived": "已归档",
+    "github_added": "已添加",
+    "github_load_more": "加载更多",
+    "github_selected_count": "已选择 {{count}} 个",
+    "github_cancel": "取消",
+    "github_import": "添加仓库",
+    "complete_manual_entry_first": "请先补全或删除空的手动仓库配置，再从 GitHub 导入。",
     "save": "保存",
     "saving": "保存中...",
     "saved_hint": "所有改动已保存",
@@ -710,6 +990,20 @@
     "remove_action": "从工作区移除",
     "cannot_demote_last_owner_title": "请先把另一位成员升级为所有者——工作区必须至少保留一位所有者。",
     "cannot_demote_last_owner": "不能降级最后一位所有者",
+    "roles": {
+      "owner": {
+        "label": "所有者",
+        "description": "完全访问权限，可管理所有设置"
+      },
+      "admin": {
+        "label": "管理员",
+        "description": "管理成员与设置"
+      },
+      "member": {
+        "label": "成员",
+        "description": "创建并处理 issue"
+      }
+    },
     "dingtalk_title": "从钉钉组织选人",
     "dingtalk_description": "搜索组织通讯录，选择成员后直接添加到工作区。",
     "dingtalk_open_picker": "从钉钉添加",
@@ -754,20 +1048,49 @@
     "toast_dingtalk_identity_missing": "{{count}} 位成员缺少可用于登录的钉钉身份，请确认开放平台权限",
     "toast_dingtalk_group_missing": "请先填写钉钉群 chatid",
     "toast_dingtalk_group_added": "已将 {{count}} 人加入钉钉群",
-    "toast_dingtalk_group_failed": "加入钉钉群失败",
-    "roles": {
-      "owner": {
-        "label": "所有者",
-        "description": "完全访问权限，可管理所有设置"
-      },
-      "admin": {
-        "label": "管理员",
-        "description": "管理成员与设置"
-      },
-      "member": {
-        "label": "成员",
-        "description": "创建并处理 issue"
-      }
-    }
+    "toast_dingtalk_group_failed": "加入钉钉群失败"
+  },
+  "workspace_access": {
+    "title": "DTA Token",
+    "description": "为 DTA 签发仅绑定当前工作区的访问凭证。外部服务商只使用 DTA，不获得 Multica 账号或个人 API Token。",
+    "owner_only": "只有工作区所有者可以管理 DTA Token。",
+    "tokens_title": "DTA Token",
+    "tokens_description": "每个 Token 代表一个独立的外部使用方，拥有当前工作区普通成员权限；可分别设置有效期并随时吊销。",
+    "create": "新建 Token",
+    "loading": "正在加载 DTA Token…",
+    "empty": "暂无 DTA Token。",
+    "edit": "编辑",
+    "expires": "到期时间",
+    "last_used": "最后使用",
+    "revoked": "已吊销",
+    "revoke": "吊销密钥",
+    "revoke_confirm": "确定吊销这个 DTA 访问密钥？使用该密钥的 DTA 请求会立即失败。",
+    "delete": "删除记录",
+    "delete_confirm": "确定彻底删除这条已吊销的 Token 记录？其 service member、智能体和历史数据会保留。",
+    "saved": "DTA Token 已保存",
+    "save_failed": "无法保存 DTA Token",
+    "create_title": "新建 DTA Token",
+    "edit_title": "编辑 DTA Token",
+    "name_placeholder": "外部使用方名称",
+    "member_role": "工作区普通成员权限",
+    "member_permissions_description": "此 Token 与工作区普通成员拥有相同权限，可以管理自己的智能体、任务、Trace、节律、绑定和 stable 私有 Runtime；不能管理成员或工作区设置，也不能创建公共托管 Runtime 或管理稳定版本发布。",
+    "regenerate": "重新生成",
+    "regenerated": "DTA Token 已重新生成",
+    "regenerate_title": "重新生成 DTA Token",
+    "regenerate_warning": "当前密钥会立即失效。请保存新密钥后，将其重新配置到 DTA。",
+    "expiry_title": "有效期",
+    "expiry_description": "到期后，使用此 Token 的所有 DTA 请求会立即失败。可以编辑到期时间，或重新生成密钥并设置新的有效期。",
+    "expiry": {
+      "keep": "保持当前到期时间",
+      "days": "{{count}} 天",
+      "never": "永不过期"
+    },
+    "permanent_warning": "永不过期的 Token 会一直有效，直到被吊销。建议优先设置到期时间。",
+    "cancel": "取消",
+    "save": "保存",
+    "secret_title": "立即保存 DTA 访问密钥",
+    "secret_warning": "该密钥只展示一次，之后无法找回。请仅通过已批准的密钥交付渠道发送。",
+    "secret_confirm": "我已复制并安全保存此密钥",
+    "close": "关闭"
   }
 }

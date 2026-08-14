@@ -55,6 +55,45 @@ describe("parseWithFallback sensitive responses", () => {
 // app in past incidents. The contract is: a malformed response degrades to
 // an empty/safe shape, never throws into React.
 describe("ApiClient schema fallback", () => {
+  describe("GitHub repository import", () => {
+    it("falls back safely when installation or repository responses are malformed", async () => {
+      stubFetchJson({ installations: "not-an-array", configured: true });
+      const client = new ApiClient("https://api.example.test");
+      await expect(client.listGitHubInstallations("ws-1")).resolves.toEqual({
+        installations: [],
+        reusable_installations: [],
+        configured: false,
+        repository_browse_configured: false,
+        can_manage: false,
+      });
+
+      stubFetchJson({ repositories: [{ id: "wrong-type" }] });
+      await expect(
+        client.listGitHubInstallationRepositories("ws-1", "installation-1"),
+      ).resolves.toEqual({
+        repositories: [],
+        total_count: 0,
+        next_page: null,
+      });
+    });
+
+    it("adds the allowlisted repository return target to the connect request", async () => {
+      stubFetchJson({
+        configured: true,
+        url: "https://github.com/apps/multica/installations/new",
+      });
+      const client = new ApiClient("https://api.example.test");
+
+      await client.getGitHubConnectURL("ws-1", "repositories");
+
+      const fetchMock = vi.mocked(fetch);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.example.test/api/workspaces/ws-1/github/connect?return_to=repositories",
+        expect.any(Object),
+      );
+    });
+  });
+
   describe("listTimeline", () => {
     it("falls back to an empty array when the body is null", async () => {
       stubFetchJson(null);
@@ -119,6 +158,91 @@ describe("ApiClient schema fallback", () => {
       const client = new ApiClient("https://api.example.test");
       const res = await client.listIssues();
       expect(res).toEqual({ issues: [], total: 0 });
+    });
+  });
+
+  describe("createIssue", () => {
+    // The create modal decides whether to run its label-attach fallback by
+    // reading `labels` off the parsed response, and treats a rejection as a
+    // failed create (keep the draft, failure toast). So: a valid issue with
+    // any labels shape resolves (labels absent → undefined, valid → Label[],
+    // malformed → undefined), but a body that isn't a usable issue rejects
+    // rather than fabricating a blank "success".
+    const validIssue = {
+      id: "issue-1",
+      workspace_id: "ws-1",
+      number: 1,
+      identifier: "MUL-1",
+      title: "Created",
+      description: null,
+      status: "todo",
+      priority: "none",
+      assignee_type: null,
+      assignee_id: null,
+      creator_type: "member",
+      creator_id: "user-1",
+      parent_issue_id: null,
+      project_id: null,
+      position: 0,
+      stage: null,
+      start_date: null,
+      due_date: null,
+      metadata: {},
+      properties: {},
+      created_at: "2025-01-01T00:00:00Z",
+      updated_at: "2025-01-01T00:00:00Z",
+    };
+    const label = {
+      id: "label-1",
+      workspace_id: "ws-1",
+      name: "bug",
+      color: "#ef4444",
+      created_at: "2025-01-01T00:00:00Z",
+      updated_at: "2025-01-01T00:00:00Z",
+    };
+
+    it("keeps labels undefined when the backend omits the field (older backend)", async () => {
+      stubFetchJson(validIssue, 201);
+      const client = new ApiClient("https://api.example.test");
+      const issue = await client.createIssue({ title: "Created" });
+      expect(issue.id).toBe("issue-1");
+      expect(issue.labels).toBeUndefined();
+    });
+
+    it("validates a well-formed labels array", async () => {
+      stubFetchJson({ ...validIssue, labels: [label] }, 201);
+      const client = new ApiClient("https://api.example.test");
+      const issue = await client.createIssue({ title: "Created" });
+      expect(issue.labels?.map((l) => l.id)).toEqual(["label-1"]);
+    });
+
+    it("degrades a null labels field to undefined so the client falls back", async () => {
+      stubFetchJson({ ...validIssue, labels: null }, 201);
+      const client = new ApiClient("https://api.example.test");
+      const issue = await client.createIssue({ title: "Created" });
+      // The issue itself still parses; only the malformed labels degrade.
+      expect(issue.id).toBe("issue-1");
+      expect(issue.labels).toBeUndefined();
+    });
+
+    it("degrades a labels array of the wrong element shape to undefined", async () => {
+      stubFetchJson({ ...validIssue, labels: [{ nope: true }] }, 201);
+      const client = new ApiClient("https://api.example.test");
+      const issue = await client.createIssue({ title: "Created" });
+      expect(issue.id).toBe("issue-1");
+      expect(issue.labels).toBeUndefined();
+    });
+
+    it("rejects when the whole response body is not a usable issue (no fake success)", async () => {
+      stubFetchJson({ not: "an issue" }, 201);
+      const client = new ApiClient("https://api.example.test");
+      await expect(client.createIssue({ title: "Created" })).rejects.toThrow();
+    });
+
+    it("rejects when the created issue has an empty id", async () => {
+      stubFetchJson({ ...validIssue, id: "" }, 201);
+      const client = new ApiClient("https://api.example.test");
+      await expect(client.createIssue({ title: "Created" })).rejects.toThrow();
     });
   });
 
@@ -198,6 +322,40 @@ describe("ApiClient schema fallback", () => {
       ]);
       expect(res.autopilots[0]?.next_run_at).toBe("2026-06-13T09:00:00Z");
       expect(res.autopilots[0]?.last_run_status).toBe("some_future_status");
+    });
+  });
+
+  describe("listDingTalkInstallations", () => {
+    it("rejects a malformed response instead of hiding the contract violation", async () => {
+      stubFetchJson({ installations: "not-an-array", configured: true });
+      const client = new ApiClient("https://api.example.test");
+      await expect(client.listDingTalkInstallations("ws-1")).rejects.toThrow();
+    });
+
+    it("accepts a complete row when the optional install_supported flag is absent", async () => {
+      stubFetchJson({
+        installations: [
+          {
+            id: "dt-1",
+            workspace_id: "ws-1",
+            agent_id: "agent-1",
+            client_id: "ding-app-key",
+            installer_user_id: "user-1",
+            status: "active",
+            installed_at: "2026-08-12T00:00:00Z",
+            created_at: "2026-08-12T00:00:00Z",
+            updated_at: "2026-08-12T00:00:00Z",
+          },
+        ],
+        configured: true,
+        // The flag is optional for compatibility with servers predating it.
+        future_field: true,
+      });
+      const client = new ApiClient("https://api.example.test");
+      const res = await client.listDingTalkInstallations("ws-1");
+      expect(res.installations).toHaveLength(1);
+      expect(res.configured).toBe(true);
+      expect(res.install_supported).toBeUndefined();
     });
   });
 
@@ -330,6 +488,208 @@ describe("ApiClient schema fallback", () => {
     });
   });
 
+  describe("listAgentBuilderSessions", () => {
+    it("falls back to no drafts when the response is malformed", async () => {
+      stubFetchJson({ unexpected: "shape" });
+      const client = new ApiClient("https://api.example.test");
+      expect(await client.listAgentBuilderSessions()).toEqual([]);
+    });
+
+    // Losing the whole row would lose the conversation. A draft missing its
+    // runtime degrades to "let the user pick one" instead.
+    it("keeps a draft whose runtime the server omitted", async () => {
+      stubFetchJson({
+        sessions: [{ session_id: "s-1", title: "Create an agent" }],
+      });
+      const client = new ApiClient("https://api.example.test");
+      const sessions = await client.listAgentBuilderSessions();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.session_id).toBe("s-1");
+      expect(sessions[0]?.runtime_id).toBe("");
+    });
+
+    // An installed desktop build can outrun a self-hosted backend. Without this
+    // the Agents page would error instead of simply offering no drafts.
+    it("treats a 404 from an older backend as no drafts", async () => {
+      stubFetchJson({ error: "not found" }, 404);
+      const client = new ApiClient("https://api.example.test");
+      expect(await client.listAgentBuilderSessions()).toEqual([]);
+    });
+  });
+
+  describe("createAgentFromTemplate", () => {
+    it("falls back to an empty agent when the response is malformed", async () => {
+      // The agent was created server-side even though the client can't
+      // parse the response — UI code reads `agent.id === ""` and skips
+      // the navigation step rather than landing on `/agents/`.
+      stubFetchJson({ unexpected: "shape" });
+      const client = new ApiClient("https://api.example.test");
+      const resp = await client.createAgentFromTemplate({
+        template_slug: "x",
+        name: "X",
+        runtime_id: "rt-1",
+      });
+      expect(resp.agent.id).toBe("");
+      expect(resp.imported_skill_ids).toEqual([]);
+      expect(resp.reused_skill_ids).toEqual([]);
+    });
+
+    it("defaults imported_skill_ids / reused_skill_ids to [] when missing", async () => {
+      stubFetchJson({ agent: { id: "agent-1" } });
+      const client = new ApiClient("https://api.example.test");
+      const resp = await client.createAgentFromTemplate({
+        template_slug: "x",
+        name: "X",
+        runtime_id: "rt-1",
+      });
+      expect(resp.agent.id).toBe("agent-1");
+      expect(resp.imported_skill_ids).toEqual([]);
+      expect(resp.reused_skill_ids).toEqual([]);
+    });
+  });
+
+  describe("cronPreview", () => {
+    it("returns the parsed next runs", async () => {
+      stubFetchJson({
+        next_runs: ["2026-07-14T01:00:00Z", "2026-07-14T03:00:00Z"],
+      });
+      const client = new ApiClient("https://api.example.test");
+      const res = await client.cronPreview({
+        expr: "0 9-21/2 * * *",
+        tz: "Asia/Shanghai",
+      });
+      expect(res).toEqual({
+        next_runs: ["2026-07-14T01:00:00Z", "2026-07-14T03:00:00Z"],
+      });
+    });
+
+    it("URL-encodes the expression and timezone", async () => {
+      stubFetchJson({ next_runs: [] });
+      const client = new ApiClient("https://api.example.test");
+      await client.cronPreview({ expr: "0 9-21/2 * * 2-4", tz: "Asia/Shanghai" });
+      const url = String(vi.mocked(fetch).mock.calls[0]?.[0]);
+      expect(url).toContain("/api/autopilots/cron-preview?");
+      expect(url).toContain("expr=0+9-21%2F2+*+*+2-4");
+      expect(url).toContain("tz=Asia%2FShanghai");
+    });
+
+    it("returns an empty list verbatim when the expression never fires", async () => {
+      stubFetchJson({ next_runs: [] });
+      const client = new ApiClient("https://api.example.test");
+      const res = await client.cronPreview({ expr: "0 0 30 2 *", tz: "UTC" });
+      expect(res).toEqual({ next_runs: [] });
+    });
+
+    it("falls back to null when the response is malformed", async () => {
+      // null, not [] — the caller must be able to tell "unreadable response"
+      // apart from "this expression never fires".
+      stubFetchJson({ next_runs: "not-an-array" });
+      const client = new ApiClient("https://api.example.test");
+      const res = await client.cronPreview({ expr: "0 9 * * *", tz: "UTC" });
+      expect(res).toEqual({ next_runs: null });
+    });
+
+    it("falls back to null when the field is missing entirely", async () => {
+      stubFetchJson({ runs: ["2026-07-14T01:00:00Z"] });
+      const client = new ApiClient("https://api.example.test");
+      const res = await client.cronPreview({ expr: "0 9 * * *", tz: "UTC" });
+      expect(res).toEqual({ next_runs: null });
+    });
+  });
+
+  describe("cloud billing", () => {
+    it("falls back to an empty balance when the response is malformed", async () => {
+      stubFetchJson({ balance_micro: "not-a-number" });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.getCloudBillingBalance()).resolves.toEqual({
+        owner_id: "",
+        balance_micro: 0,
+        balance_credit: 0,
+        updated_at: "",
+      });
+    });
+
+    it("falls back to an empty transactions page when items are malformed", async () => {
+      stubFetchJson({ items: "not-an-array", total: 1, page: 1, page_size: 20 });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.listCloudBillingTransactions()).resolves.toEqual({
+        items: [],
+        total: 0,
+        page: 1,
+        page_size: 20,
+      });
+    });
+
+    it("falls back to an empty batches page when items are malformed", async () => {
+      stubFetchJson({ items: "not-an-array", total: 1, page: 1, page_size: 20 });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.listCloudBillingBatches()).resolves.toEqual({
+        items: [],
+        total: 0,
+        page: 1,
+        page_size: 20,
+      });
+    });
+
+    it("falls back to an empty top-ups page when items are malformed", async () => {
+      stubFetchJson({ items: "not-an-array", total: 1, page: 1, page_size: 20 });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.listCloudBillingTopups()).resolves.toEqual({
+        items: [],
+        total: 0,
+        page: 1,
+        page_size: 20,
+      });
+    });
+
+    it("falls back to no price tiers when the response is not an array", async () => {
+      stubFetchJson({ tiers: [] });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.listCloudBillingPriceTiers()).resolves.toEqual([]);
+    });
+
+    it("falls back to an empty checkout session when the response is malformed", async () => {
+      stubFetchJson({ order_id: 123 });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(
+        client.createCloudBillingCheckoutSession({ tier_id: "starter" }),
+      ).resolves.toEqual({
+        order_id: "",
+        session_id: "",
+        url: "",
+      });
+    });
+
+    it("falls back to a pending checkout status when the response is malformed", async () => {
+      stubFetchJson({ status: 123 });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.getCloudBillingCheckoutSession("cs_test")).resolves.toEqual({
+        order_id: "",
+        status: "pending",
+        amount_cents: 0,
+        credits: 0,
+        bonus_credits: 0,
+        currency: "usd",
+        tier_id: "",
+      });
+    });
+
+    it("falls back to an empty portal URL when the response is malformed", async () => {
+      stubFetchJson({ url: 123 });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.createCloudBillingPortalSession()).resolves.toEqual({
+        url: "",
+      });
+    });
+  });
 });
 
 // Direct tests for the helper, decoupled from any specific endpoint —

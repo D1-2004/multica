@@ -1,4 +1,8 @@
-import { QueryClient, type InfiniteData } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryObserver,
+  type InfiniteData,
+} from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
@@ -14,6 +18,7 @@ import { workspaceKeys } from "../workspace/queries";
 import type {
   ChatDonePayload,
   ChatMessage,
+  ChatMessageEventPayload,
   ChatPendingTask,
   ChatMessagesPage,
   ChatSession,
@@ -21,7 +26,10 @@ import type {
   Workspace,
 } from "../types";
 import {
+  applyChatCancelFinalizedToCache,
   applyChatDoneToCache,
+  applyChatMessageToCache,
+  applyChatQuickActionsToCache,
   applyChatSessionUpdatedToCache,
   applyWorkspaceUpdatedToCache,
   handleInboxNew,
@@ -120,6 +128,26 @@ describe("applyChatDoneToCache", () => {
     expect(msgs?.[1]?.message_kind).toBe("no_response");
   });
 
+  it("carries quick actions on the inline assistant message", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatMessage[]>(messagesKey, [userMessage()]);
+    const quickActions = [
+      { label: "Draft it", prompt: "Draft the full brief", primary: true },
+    ];
+
+    applyChatDoneToCache(qc, donePayload({ quick_actions: quickActions }));
+
+    expect(qc.getQueryData<ChatMessage[]>(messagesKey)?.[1]?.quick_actions).toEqual(
+      quickActions,
+    );
+  });
+
+  // A replay merges instead of appending (MUL-5711): the cached row keeps every
+  // field it already has, and only fields it is MISSING are filled from the
+  // payload — here `message_kind`, which this hand-built row predates. That
+  // fill direction is what lets a send response and its chat:message echo
+  // converge in either arrival order without the echo dropping the response's
+  // attachments.
   it("does not duplicate a replayed chat done event", () => {
     const qc = createQueryClient();
     const assistant: ChatMessage = {
@@ -138,12 +166,35 @@ describe("applyChatDoneToCache", () => {
     });
 
     applyChatDoneToCache(qc, donePayload());
+    applyChatDoneToCache(qc, donePayload());
 
     expect(qc.getQueryData<ChatMessage[]>(messagesKey)).toEqual([
       userMessage(),
-      assistant,
+      { ...assistant, message_kind: "message" },
     ]);
     expect(qc.getQueryData<ChatPendingTask>(pendingKey)).toEqual({});
+  });
+
+  // The cached row wins on every field it defines, so a later, thinner write
+  // for the same id cannot downgrade it.
+  it("does not let a replay overwrite fields the cached row already has", () => {
+    const qc = createQueryClient();
+    const assistant: ChatMessage = {
+      id: "msg-assistant",
+      chat_session_id: sessionId,
+      role: "assistant",
+      content: "done",
+      task_id: taskId,
+      created_at: "2026-05-13T05:00:02Z",
+      elapsed_ms: 1234,
+      message_kind: "message",
+      attachments: [],
+    };
+    qc.setQueryData<ChatMessage[]>(messagesKey, [assistant]);
+
+    applyChatDoneToCache(qc, donePayload({ content: "", elapsed_ms: 9999 }));
+
+    expect(qc.getQueryData<ChatMessage[]>(messagesKey)?.[0]).toBe(assistant);
   });
 
   it("falls back to invalidation-only when older servers omit message fields", () => {
@@ -203,6 +254,21 @@ describe("applyChatSessionUpdatedToCache", () => {
       ...overrides,
     };
   }
+
+  it("applies an explicit null project_id from another tab", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatSession[]>(chatKeys.sessions(WS_ID), [
+      makeSession({ project_id: "project-1" }),
+    ]);
+
+    applyChatSessionUpdatedToCache(qc, WS_ID, {
+      chat_session_id: "s1",
+      project_id: null,
+    });
+
+    const row = qc.getQueryData<ChatSession[]>(chatKeys.sessions(WS_ID))![0]!;
+    expect(row.project_id).toBeNull();
+  });
 
   // MUL-4360 cross-tab: chatSessionsOptions is staleTime: Infinity, so a stale
   // cache in another tab never self-heals. When an archive event lands there,
@@ -275,6 +341,224 @@ describe("invalidateChatMessageQueries", () => {
 
     expect(invalidate).toHaveBeenCalledWith({ queryKey: chatKeys.messages(sessionId) });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: chatKeys.messagesPage(sessionId) });
+  });
+});
+
+describe("applyChatCancelFinalizedToCache", () => {
+  function cancelledUserMessage(): ChatMessage {
+    return {
+      id: "msg-cancelled-user",
+      chat_session_id: sessionId,
+      role: "user",
+      content: "run the thing",
+      task_id: taskId,
+      created_at: "2026-05-13T05:00:00Z",
+    };
+  }
+
+  const draftRestoresKey = chatKeys.draftRestores(sessionId);
+
+  it("inserts the late Stopped. assistant row on a stopped outcome", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatMessage[]>(messagesKey, [cancelledUserMessage()]);
+
+    applyChatCancelFinalizedToCache(qc, {
+      outcome: "stopped",
+      chat_session_id: sessionId,
+      task_id: taskId,
+      message_id: "msg-stopped",
+      content: "Stopped.",
+      created_at: "2026-05-13T05:00:05Z",
+      elapsed_ms: 5000,
+    });
+
+    expect(qc.getQueryData<ChatMessage[]>(messagesKey)).toEqual([
+      cancelledUserMessage(),
+      {
+        id: "msg-stopped",
+        chat_session_id: sessionId,
+        role: "assistant",
+        content: "Stopped.",
+        task_id: taskId,
+        created_at: "2026-05-13T05:00:05Z",
+        elapsed_ms: 5000,
+        message_kind: "message",
+      },
+    ]);
+  });
+
+  it("removes the user message and clears the pending task on a restored outcome", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatMessage[]>(messagesKey, [cancelledUserMessage()]);
+    qc.setQueryData<ChatPendingTask>(pendingKey, {
+      task_id: taskId,
+      status: "running",
+    });
+
+    applyChatCancelFinalizedToCache(qc, {
+      outcome: "restored",
+      chat_session_id: sessionId,
+      task_id: taskId,
+      message_id: "msg-cancelled-user",
+    });
+
+    expect(qc.getQueryData<ChatMessage[]>(messagesKey)).toEqual([]);
+    expect(qc.getQueryData<ChatPendingTask>(pendingKey)).toEqual({});
+  });
+
+  it("promotes the next queued task when the restored task was the head", () => {
+    const qc = createQueryClient();
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    qc.setQueryData<ChatPendingTask>(pendingKey, {
+      task_id: taskId,
+      status: "running",
+      queued_tasks: [
+        {
+          task_id: "task-next",
+          status: "queued",
+          created_at: "2026-05-13T05:00:01Z",
+          content: "next",
+        },
+        {
+          task_id: "task-later",
+          status: "queued",
+          created_at: "2026-05-13T05:00:02Z",
+          content: "later",
+        },
+      ],
+    });
+
+    applyChatCancelFinalizedToCache(qc, {
+      outcome: "restored",
+      chat_session_id: sessionId,
+      task_id: taskId,
+      message_id: "msg-cancelled-user",
+    });
+
+    expect(qc.getQueryData<ChatPendingTask>(pendingKey)).toEqual({
+      task_id: "task-next",
+      status: "queued",
+      created_at: "2026-05-13T05:00:01Z",
+      content: "next",
+      queued_tasks: [
+        {
+          task_id: "task-later",
+          status: "queued",
+          created_at: "2026-05-13T05:00:02Z",
+          content: "later",
+        },
+      ],
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: pendingKey });
+  });
+
+  it("keeps a promoted successor when the restored event arrives late", () => {
+    const qc = createQueryClient();
+    const successor: ChatPendingTask = {
+      task_id: "task-next",
+      status: "running",
+      created_at: "2026-05-13T05:00:01Z",
+      queued_tasks: [
+        {
+          task_id: "task-later",
+          status: "queued",
+          created_at: "2026-05-13T05:00:02Z",
+          content: "later",
+        },
+      ],
+    };
+    qc.setQueryData<ChatPendingTask>(pendingKey, successor);
+
+    applyChatCancelFinalizedToCache(qc, {
+      outcome: "restored",
+      chat_session_id: sessionId,
+      task_id: taskId,
+      message_id: "msg-cancelled-user",
+    });
+
+    expect(qc.getQueryData<ChatPendingTask>(pendingKey)).toEqual(successor);
+  });
+
+  it("invalidates the draft-restores query for the initiator", () => {
+    const qc = createQueryClient();
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+
+    applyChatCancelFinalizedToCache(
+      qc,
+      {
+        outcome: "restored",
+        chat_session_id: sessionId,
+        task_id: taskId,
+        message_id: "msg-cancelled-user",
+        initiator_user_id: "user-initiator",
+      },
+      "user-initiator",
+    );
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: draftRestoresKey });
+  });
+
+  it("does not fetch the restore for a non-initiator recipient of the broadcast", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatMessage[]>(messagesKey, [cancelledUserMessage()]);
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+
+    applyChatCancelFinalizedToCache(
+      qc,
+      {
+        outcome: "restored",
+        chat_session_id: sessionId,
+        task_id: taskId,
+        message_id: "msg-cancelled-user",
+        initiator_user_id: "user-initiator",
+      },
+      "user-someone-else",
+    );
+
+    // The bubble is still dropped for cache consistency, but the restore
+    // fetch (and thus the private prompt) stays with the initiator.
+    expect(qc.getQueryData<ChatMessage[]>(messagesKey)).toEqual([]);
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: draftRestoresKey });
+  });
+
+  it("fails closed when the event omits initiator_user_id", () => {
+    const qc = createQueryClient();
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+
+    applyChatCancelFinalizedToCache(
+      qc,
+      {
+        outcome: "restored",
+        chat_session_id: sessionId,
+        task_id: taskId,
+        message_id: "msg-cancelled-user",
+      },
+      "user-initiator",
+    );
+
+    // Nothing is lost by skipping the eager fetch: the durable restore is
+    // still picked up on the next composer mount / reconnect refetch.
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: draftRestoresKey });
+  });
+
+  it("still settles the caches when a restored outcome carries no message id", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatMessage[]>(messagesKey, [cancelledUserMessage()]);
+    qc.setQueryData<ChatPendingTask>(pendingKey, {
+      task_id: taskId,
+      status: "running",
+    });
+
+    applyChatCancelFinalizedToCache(qc, {
+      outcome: "restored",
+      chat_session_id: sessionId,
+      task_id: taskId,
+    });
+
+    // No id to surgically remove — the list is left to the invalidation
+    // refetch — but the pending indicator still clears.
+    expect(qc.getQueryData<ChatMessage[]>(messagesKey)).toEqual([cancelledUserMessage()]);
+    expect(qc.getQueryData<ChatPendingTask>(pendingKey)).toEqual({});
   });
 });
 
@@ -576,8 +860,11 @@ describe("handleInboxNew", () => {
 
     await handleInboxNew(qc, inboxItem());
 
+    // The workspace prefix, which covers both the main list and the archived
+    // one: a new notification on an archived issue revives it into the main
+    // inbox, so the archived list has to drop it in the same pass (MUL-3736).
     expect(invalidate).toHaveBeenCalledWith({
-      queryKey: inboxKeys.list("ws-a"),
+      queryKey: inboxKeys.all("ws-a"),
     });
     expect(showNotification).toHaveBeenCalledWith(
       expect.objectContaining({ slug: "workspace-a" }),
@@ -732,5 +1019,311 @@ describe("handleInboxNew", () => {
     await handleInboxNew(qc, inboxItem());
 
     expect(webBanners).toHaveLength(0);
+  });
+});
+
+describe("chat quick-actions supplement flow", () => {
+  const pendingMarkerKey = chatKeys.quickActionsPending(sessionId);
+
+  it("chat:done raises the pending marker when the daemon declared a supplement", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatMessage[]>(messagesKey, [userMessage()]);
+    applyChatDoneToCache(qc, donePayload({ quick_actions_pending: true }));
+    expect(qc.getQueryData(pendingMarkerKey)).toEqual({
+      message_id: "msg-assistant",
+      task_id: taskId,
+      // Absolute give-up deadline stamped at raise time (MUL-5149); its exact
+      // value tracks the wall clock, so assert presence, not a fixed number.
+      expires_at: expect.any(Number),
+    });
+  });
+
+  it("chat:done clears the marker when no supplement was declared (older daemons)", () => {
+    const qc = createQueryClient();
+    qc.setQueryData(pendingMarkerKey, { message_id: "stale", task_id: "old" });
+    qc.setQueryData<ChatMessage[]>(messagesKey, [userMessage()]);
+    applyChatDoneToCache(qc, donePayload());
+    expect(qc.getQueryData(pendingMarkerKey)).toBeNull();
+  });
+
+  it("chat:quick_actions patches the message in both caches and resolves the marker", async () => {
+    const qc = createQueryClient();
+    const assistant: ChatMessage = {
+      id: "msg-assistant",
+      chat_session_id: sessionId,
+      role: "assistant",
+      content: "done",
+      task_id: taskId,
+      created_at: "2026-05-13T05:00:02Z",
+    };
+    qc.setQueryData<ChatMessage[]>(messagesKey, [userMessage(), assistant]);
+    qc.setQueryData<InfiniteData<ChatMessagesPage>>(chatKeys.messagesPage(sessionId), {
+      pages: [{ messages: [assistant], limit: 50, has_more: false, next_cursor: null }],
+      pageParams: [null],
+    });
+    qc.setQueryData(pendingMarkerKey, { message_id: "msg-assistant", task_id: taskId });
+
+    const actions = [{ label: "Next", prompt: "Do the next thing", primary: true }];
+    await applyChatQuickActionsToCache(qc, {
+      chat_session_id: sessionId,
+      task_id: taskId,
+      message_id: "msg-assistant",
+      quick_actions: actions,
+    });
+
+    const messages = qc.getQueryData<ChatMessage[]>(messagesKey);
+    expect(messages?.at(-1)?.quick_actions).toEqual(actions);
+    const pages = qc.getQueryData<InfiniteData<ChatMessagesPage>>(
+      chatKeys.messagesPage(sessionId),
+    );
+    expect(pages?.pages[0]?.messages[0]?.quick_actions).toEqual(actions);
+    expect(qc.getQueryData(pendingMarkerKey)).toBeNull();
+  });
+
+  it("an empty supplement resolves the marker without touching messages", async () => {
+    const qc = createQueryClient();
+    const assistant: ChatMessage = {
+      id: "msg-assistant",
+      chat_session_id: sessionId,
+      role: "assistant",
+      content: "done",
+      task_id: taskId,
+      created_at: "2026-05-13T05:00:02Z",
+      quick_actions: [{ label: "Keep", prompt: "Keep me" }],
+    };
+    qc.setQueryData<ChatMessage[]>(messagesKey, [assistant]);
+    qc.setQueryData(pendingMarkerKey, { message_id: "msg-assistant", task_id: taskId });
+
+    await applyChatQuickActionsToCache(qc, {
+      chat_session_id: sessionId,
+      task_id: taskId,
+      message_id: "msg-assistant",
+      quick_actions: [],
+    });
+
+    expect(qc.getQueryData<ChatMessage[]>(messagesKey)?.[0]?.quick_actions).toEqual([
+      { label: "Keep", prompt: "Keep me" },
+    ]);
+    expect(qc.getQueryData(pendingMarkerKey)).toBeNull();
+  });
+
+  // Regression (MUL-5149): the chat:done invalidate can leave a messages refetch
+  // in flight that read the row before the actions were persisted. If that
+  // refetch resolves AFTER the chat:quick_actions patch, it must not overwrite
+  // the freshly-patched actions — the supplement cancels the in-flight refetch
+  // first. staleTime: Infinity means an overwrite would be permanent.
+  it("a stale chat:done refetch resolving after the supplement cannot overwrite it", async () => {
+    const qc = createQueryClient();
+    const assistant: ChatMessage = {
+      id: "msg-assistant",
+      chat_session_id: sessionId,
+      role: "assistant",
+      content: "done",
+      task_id: taskId,
+      created_at: "2026-05-13T05:00:02Z",
+    };
+    const actions = [{ label: "Next", prompt: "Do the next thing", primary: true }];
+    // Settled post-chat:done state: assistant present, no actions yet.
+    const staleRows = [userMessage(), assistant];
+    qc.setQueryData<ChatMessage[]>(messagesKey, staleRows);
+
+    // Server truth, which the broadcast lags: the actions are persisted BEFORE
+    // chat:quick_actions is published (SupplementChatQuickActions), so a request
+    // issued after the event reads them back while the in-flight one predates
+    // them.
+    let serverRows = staleRows;
+
+    // An active observer (a mounted chat screen) whose refetch we hold open, so
+    // it is genuinely in flight when the supplement lands.
+    let releaseRefetch: ((rows: ChatMessage[]) => void) | undefined;
+    const observer = new QueryObserver<ChatMessage[]>(qc, {
+      queryKey: messagesKey,
+      queryFn: () =>
+        releaseRefetch
+          ? Promise.resolve(serverRows)
+          : new Promise<ChatMessage[]>((resolve) => {
+              releaseRefetch = resolve;
+            }),
+      staleTime: Infinity,
+      gcTime: Infinity,
+      retry: false,
+    });
+    const unsub = observer.subscribe(() => {});
+
+    // chat:done's invalidate kicks off the refetch (not awaited — it is held).
+    void qc.invalidateQueries({ queryKey: messagesKey });
+    await vi.waitFor(() => {
+      expect(qc.getQueryState(messagesKey)?.fetchStatus).toBe("fetching");
+      expect(typeof releaseRefetch).toBe("function");
+    });
+
+    serverRows = [userMessage(), { ...assistant, quick_actions: actions }];
+    await applyChatQuickActionsToCache(qc, {
+      chat_session_id: sessionId,
+      task_id: taskId,
+      message_id: "msg-assistant",
+      quick_actions: actions,
+    });
+
+    // The now-cancelled refetch finally resolves with the actions-less rows.
+    releaseRefetch?.(staleRows);
+    await vi.waitFor(() => {
+      expect(qc.getQueryState(messagesKey)?.fetchStatus).toBe("idle");
+    });
+
+    expect(qc.getQueryData<ChatMessage[]>(messagesKey)?.at(-1)?.quick_actions).toEqual(
+      actions,
+    );
+    unsub();
+  });
+
+  // Regression (MUL-5711): cancelQueries defaults to revert:true, so the cancel
+  // above ALSO rolls the cache back to the pre-fetch snapshot. Rows that only
+  // the cancelled response carried — a peer's user message, anything that landed
+  // while this surface was unmounted — must come back, which is what the
+  // re-invalidate after the patch is for. Without it the hole is permanent: both
+  // caches are staleTime: Infinity and nothing else re-fetches.
+  it("re-syncs after the cancel so rows only the cancelled refetch carried are not lost", async () => {
+    const qc = createQueryClient();
+    const assistant: ChatMessage = {
+      id: "msg-assistant",
+      chat_session_id: sessionId,
+      role: "assistant",
+      content: "done",
+      task_id: taskId,
+      created_at: "2026-05-13T05:00:02Z",
+    };
+    // This client never wrote the peer's prompt locally — only the in-flight
+    // refetch carries it.
+    const peerPrompt: ChatMessage = {
+      id: "msg-peer",
+      chat_session_id: sessionId,
+      role: "user",
+      content: "sent from another window",
+      task_id: taskId,
+      created_at: "2026-05-13T05:00:01Z",
+    };
+    const actions = [{ label: "Next", prompt: "Do the next thing", primary: true }];
+    qc.setQueryData<ChatMessage[]>(messagesKey, [assistant]);
+
+    let serverRows: ChatMessage[] = [peerPrompt, assistant];
+    let releaseRefetch: ((rows: ChatMessage[]) => void) | undefined;
+    const observer = new QueryObserver<ChatMessage[]>(qc, {
+      queryKey: messagesKey,
+      queryFn: () =>
+        releaseRefetch
+          ? Promise.resolve(serverRows)
+          : new Promise<ChatMessage[]>((resolve) => {
+              releaseRefetch = resolve;
+            }),
+      staleTime: Infinity,
+      gcTime: Infinity,
+      retry: false,
+    });
+    const unsub = observer.subscribe(() => {});
+
+    void qc.invalidateQueries({ queryKey: messagesKey });
+    await vi.waitFor(() => {
+      expect(qc.getQueryState(messagesKey)?.fetchStatus).toBe("fetching");
+      expect(typeof releaseRefetch).toBe("function");
+    });
+
+    serverRows = [peerPrompt, { ...assistant, quick_actions: actions }];
+    await applyChatQuickActionsToCache(qc, {
+      chat_session_id: sessionId,
+      task_id: taskId,
+      message_id: "msg-assistant",
+      quick_actions: actions,
+    });
+    releaseRefetch?.([peerPrompt, assistant]);
+
+    await vi.waitFor(() => {
+      const rows = qc.getQueryData<ChatMessage[]>(messagesKey);
+      expect(rows?.map((m) => m.id)).toEqual(["msg-peer", "msg-assistant"]);
+      expect(rows?.at(-1)?.quick_actions).toEqual(actions);
+    });
+    unsub();
+  });
+});
+
+describe("applyChatMessageToCache", () => {
+  function messagePayload(
+    overrides: Partial<ChatMessageEventPayload> = {},
+  ): ChatMessageEventPayload {
+    return {
+      chat_session_id: sessionId,
+      message_id: "msg-user-2",
+      role: "user",
+      content: "second prompt",
+      task_id: taskId,
+      created_at: "2026-05-13T05:00:05Z",
+      ...overrides,
+    };
+  }
+
+  it("writes the user message into both caches without waiting for a refetch", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatMessage[]>(messagesKey, [userMessage()]);
+    qc.setQueryData<InfiniteData<ChatMessagesPage>>(chatKeys.messagesPage(sessionId), {
+      pages: [{ messages: [userMessage()], limit: 50, has_more: false, next_cursor: null }],
+      pageParams: [null],
+    });
+
+    applyChatMessageToCache(qc, messagePayload());
+
+    const flat = qc.getQueryData<ChatMessage[]>(messagesKey);
+    expect(flat?.map((m) => m.id)).toEqual(["msg-user", "msg-user-2"]);
+    expect(flat?.at(-1)).toMatchObject({
+      role: "user",
+      content: "second prompt",
+      task_id: taskId,
+      created_at: "2026-05-13T05:00:05Z",
+    });
+    const pages = qc.getQueryData<InfiniteData<ChatMessagesPage>>(
+      chatKeys.messagesPage(sessionId),
+    );
+    expect(pages?.pages[0]?.messages.map((m) => m.id)).toEqual(["msg-user", "msg-user-2"]);
+  });
+
+  it("is idempotent against the sender's own write and reconnect replay", () => {
+    const qc = createQueryClient();
+    // The sender's row is richer than the event: it carries the draft
+    // attachments, which this payload has no field for.
+    const alreadySent: ChatMessage = {
+      id: "msg-user-2",
+      chat_session_id: sessionId,
+      role: "user",
+      content: "second prompt",
+      task_id: taskId,
+      created_at: "2026-05-13T05:00:05Z",
+      attachments: [],
+    };
+    qc.setQueryData<ChatMessage[]>(messagesKey, [alreadySent]);
+
+    applyChatMessageToCache(qc, messagePayload());
+    applyChatMessageToCache(qc, messagePayload());
+
+    const rows = qc.getQueryData<ChatMessage[]>(messagesKey);
+    expect(rows).toHaveLength(1);
+    expect(rows?.[0]).toBe(alreadySent);
+  });
+
+  it("leaves assistant turns to chat:done, which carries the richer row", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatMessage[]>(messagesKey, [userMessage()]);
+
+    applyChatMessageToCache(
+      qc,
+      messagePayload({ message_id: "msg-assistant", role: "assistant", content: "done" }),
+    );
+
+    expect(qc.getQueryData<ChatMessage[]>(messagesKey)).toHaveLength(1);
+  });
+
+  it("does not seed an unfetched cache — the first fetch owns it", () => {
+    const qc = createQueryClient();
+    applyChatMessageToCache(qc, messagePayload());
+    expect(qc.getQueryData<ChatMessage[]>(messagesKey)).toBeUndefined();
+    expect(qc.getQueryData(chatKeys.messagesPage(sessionId))).toBeUndefined();
   });
 });

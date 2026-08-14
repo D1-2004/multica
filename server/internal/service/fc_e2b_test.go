@@ -932,8 +932,8 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	if err := launcher.execRunOnce(context.Background(), "sbx_dws", rt, launch.Mode, taskID, "mdt_test_token", false, map[string]string{
 		"AGENT_IDENTITY_CONTEXT_TOKEN": "context_secret",
 		"MULTICA_CHAT_SESSION_ID":      "chat-session-1",
-		llmTraceEnabledEnvKey:            "true",
-		llmTraceSinkURLEnvKey:            "https://trace.example.test/ingest",
+		llmTraceEnabledEnvKey:          "true",
+		llmTraceSinkURLEnvKey:          "https://trace.example.test/ingest",
 	}); err != nil {
 		t.Fatalf("execRunOnce returned error: %v", err)
 	}
