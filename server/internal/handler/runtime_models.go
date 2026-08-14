@@ -368,6 +368,32 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resolvedRuntimeID := uuidToString(rt.ID)
+	if catalog, ok := h.configuredCloudSandboxModelCatalog(rt); ok {
+		if len(catalog.Models) == 0 {
+			writeError(w, http.StatusServiceUnavailable, catalog.ConfigKey+" is empty")
+			return
+		}
+		models := make([]ModelEntry, 0, len(catalog.Models))
+		for index, model := range catalog.Models {
+			models = append(models, ModelEntry{
+				ID:       model,
+				Label:    model,
+				Provider: catalog.Provider,
+				Default:  index == 0,
+			})
+		}
+		now := time.Now()
+		writeJSON(w, http.StatusOK, &ModelListRequest{
+			ID:        catalog.RequestIDPrefix + ":" + resolvedRuntimeID,
+			RuntimeID: resolvedRuntimeID,
+			Status:    ModelListCompleted,
+			Models:    models,
+			Supported: true,
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+		return
+	}
 
 	if cached := h.cachedModelCatalog(r.Context(), resolvedRuntimeID); cached != nil {
 		age := cached.Age(time.Now())
