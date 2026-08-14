@@ -665,10 +665,12 @@ func asbEnterpriseCLIIdentityProbeFailureStage(err error) string {
 }
 
 func asbBUCOnlyIdentityProbeCommand() string {
+	// The sandbox=true variant additionally requires an SSO ticket. Source and
+	// task startup only need to prove the injected zero-trust identity.
 	return "set -euo pipefail; " +
 		"printf 'probe_stage=buc\\n' >&2; " +
 		"curl -fsS --max-time 10 -X POST " +
-		"'https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json?sandbox=true' | " +
+		"'https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json' | " +
 		"/opt/task-python/bin/python -c '" +
 		"import json,os,sys; p=json.load(sys.stdin); d=p.get(\"content\",{}).get(\"data\",{}); " +
 		"ok=p.get(\"success\") is True and str(p.get(\"errorCode\")) == \"0\" and " +

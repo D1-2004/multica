@@ -32,7 +32,6 @@ const (
 	defaultASBWireGuardProbeInterval = 5 * time.Second
 	defaultASBResourceCPU            = "2"
 	defaultASBResourceMemory         = "4Gi"
-	asbOptionalIdentityAttachTimeout = 30 * time.Second
 	asbCommandReadyRetryInterval     = time.Second
 	asbCommandProbeTimeout           = 5 * time.Second
 	asbRunnerHome                    = "/home/user"
@@ -785,6 +784,29 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB sandbox ready stage: %w", err)
 	}
 	identity = effectiveIdentity
+	if identity.Mode == asbIdentityModeBound {
+		if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "identity_preparing"); err != nil {
+			return asbLaunchSubmission{}, false, fmt.Errorf("record ASB identity preparation stage: %w", err)
+		}
+		// A reused sandbox can retain the previous task's enterprise CLI state
+		// while its task-scoped SPIFFE attachment is no longer ready. Prove the
+		// selected employee identity before occupying execd with the runner; an
+		// accepted asynchronous attachment alone is not a readiness guarantee.
+		if err := l.ensureSandboxIdentityReady(
+			ctx,
+			sandboxID,
+			identity,
+			l.Config.WireGuardReadyTimeout,
+		); err != nil {
+			return asbLaunchSubmission{}, false, withRuntimeStartUserDetail(
+				fmt.Errorf("prepare ASB enterprise identity before task start: %w", err),
+				"ASB enterprise identity did not become ready before task start. Reauthorize the Agent enterprise identity and retry.",
+			)
+		}
+		if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "identity_ready"); err != nil {
+			return asbLaunchSubmission{}, false, fmt.Errorf("record ASB identity ready stage: %w", err)
+		}
+	}
 	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "task_environment_preparing"); err != nil {
 		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB task environment stage: %w", err)
 	}
@@ -839,11 +861,6 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 	if err := l.Tasks.RecordRuntimeStartRunnerExecSubmitted(ctx, attempt.ID, task.ID, task.RuntimeID); err != nil {
 		return asbLaunchSubmission{}, false, fmt.Errorf("record ASB runner exec stage: %w", err)
 	}
-	// Employee identity is an optional Runtime enhancement. Submit the runner
-	// first, then ask ASB to attach SPIFFE identity once through its lifecycle
-	// API. Do not run CLI probes here: the sandbox command endpoint is also used
-	// by the runner and must never be held up by identity readiness.
-	l.attachSandboxIdentityAfterTaskStart(runtime.ID, task.ID, sandboxID, identity)
 	return asbLaunchSubmission{
 		runtime:             runtime,
 		sandboxID:           sandboxID,
@@ -1232,46 +1249,6 @@ func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) 
 		case <-ticker.C:
 		}
 	}
-}
-
-func (l *ASBLauncher) attachSandboxIdentityAfterTaskStart(
-	runtimeID pgtype.UUID,
-	taskID pgtype.UUID,
-	sandboxID string,
-	identity ASBResolvedIdentity,
-) {
-	if l == nil || l.Client == nil || identity.Mode != asbIdentityModeBound {
-		return
-	}
-	grant := ASBAgentIdentityGrant{
-		RawEmployeeID: identity.RawEmployeeID,
-		AgentToken:    identity.AgentIdentityToken,
-		AgentID:       identity.AgentSPIFFEID,
-	}
-	go func() {
-		attachCtx, cancel := context.WithTimeout(
-			context.Background(),
-			asbOptionalIdentityAttachTimeout,
-		)
-		defer cancel()
-		if err := l.Client.AttachAgentIdentity(attachCtx, sandboxID, grant); err != nil {
-			logASBIdentityAttachmentFailure(sandboxID, err)
-			slog.Warn(
-				"ASB optional employee identity attachment failed after task start",
-				"runtime_id", util.UUIDToString(runtimeID),
-				"task_id", util.UUIDToString(taskID),
-				"sandbox_id", sandboxID,
-				"error", redact.Text(err.Error()),
-			)
-			return
-		}
-		slog.Info(
-			"ASB optional employee identity attachment accepted after task start",
-			"runtime_id", util.UUIDToString(runtimeID),
-			"task_id", util.UUIDToString(taskID),
-			"sandbox_id", sandboxID,
-		)
-	}()
 }
 
 func (l *ASBLauncher) waitSandboxCommandReady(
