@@ -1420,6 +1420,107 @@ func TestEnterpriseIdentityMaintenanceRefreshesPlatformCredentials(t *testing.T)
 	}
 }
 
+func TestEnterpriseIdentityForceRotateSourceUsesCurrentLockedCoordinate(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 14, 8, 0, 0, 0, time.UTC)
+	runtimeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
+	identity := db.AgentEnterpriseIdentity{
+		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+		WorkspaceID:                util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID:                    util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		RawEmpID:                   "12345",
+		BucAgentID:                 "buc-agent-1",
+		BucIdentitySourceSandboxID: pgtype.Text{String: "source-0", Valid: true},
+		BucIdentitySourceRuntimeID: runtimeID,
+		BucIdentitySourceUpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true},
+		Status:                     "active",
+		BoundBy:                    util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+	}
+	sharedIdentity := identity
+	sharedIdentity.ID = util.MustParseUUID("66666666-6666-6666-6666-666666666666")
+	sharedIdentity.AgentID = util.MustParseUUID("77777777-7777-7777-7777-777777777777")
+	store := &fakeEnterpriseIdentityStore{
+		current:    identity,
+		references: []db.AgentEnterpriseIdentity{identity, sharedIdentity},
+	}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{},
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+
+	result, err := serviceUnderTest.ForceRotateIdentitySource(
+		context.Background(),
+		identity.WorkspaceID,
+		identity.AgentID,
+	)
+	if err != nil {
+		t.Fatalf("ForceRotateIdentitySource: %v", err)
+	}
+	if result.PreviousRuntimeID != runtimeID ||
+		result.PreviousSandboxID != "source-0" ||
+		result.RuntimeID != runtimeID ||
+		result.SandboxID != "identity-source-rotated" ||
+		result.AffectedReferences != 2 {
+		t.Fatalf("rotation result = %#v", result)
+	}
+	if store.rotatedSources != 1 ||
+		store.sourceRotation.ExpectedSandboxID.String != "source-0" ||
+		store.sourceRotation.NewSandboxID.String != "identity-source-rotated" ||
+		store.references[0].BucIdentitySourceSandboxID.String != "identity-source-rotated" ||
+		store.references[1].BucIdentitySourceSandboxID.String != "identity-source-rotated" {
+		t.Fatalf("persisted forced rotation = %#v refs=%#v", store.sourceRotation, store.references)
+	}
+}
+
+func TestEnterpriseIdentityForceRotateSourceRejectsInactiveIdentity(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 14, 8, 0, 0, 0, time.UTC)
+	runtimeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
+	identity := db.AgentEnterpriseIdentity{
+		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+		WorkspaceID:                util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID:                    util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		RawEmpID:                   "12345",
+		BucAgentID:                 "buc-agent-1",
+		BucIdentitySourceSandboxID: pgtype.Text{String: "source-0", Valid: true},
+		BucIdentitySourceRuntimeID: runtimeID,
+		BucIdentitySourceUpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true},
+		Status:                     "needs_reauth",
+		BoundBy:                    util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+	}
+	store := &fakeEnterpriseIdentityStore{current: identity}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{},
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+
+	_, err := serviceUnderTest.ForceRotateIdentitySource(
+		context.Background(),
+		identity.WorkspaceID,
+		identity.AgentID,
+	)
+	if !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+		t.Fatalf("ForceRotateIdentitySource error = %v, want needs reauthorization", err)
+	}
+	if source := serviceUnderTest.Source.(*fakeEnterpriseIdentitySource); len(source.rotated) != 0 {
+		t.Fatalf("inactive identity rotated sources = %#v", source.rotated)
+	}
+}
+
 func TestEnterpriseIdentityRevokeRetiresActiveASBSandboxes(t *testing.T) {
 	t.Parallel()
 

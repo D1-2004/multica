@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -48,6 +49,18 @@ type startAgentEnterpriseIdentityRequest struct {
 type startAgentEnterpriseIdentityResponse struct {
 	AuthorizationURL string `json:"authorization_url"`
 	ExpiresAt        int64  `json:"expires_at"`
+}
+
+type rotateAgentEnterpriseIdentitySourceRequest struct {
+	AgentID string `json:"agent_id"`
+}
+
+type rotateAgentEnterpriseIdentitySourceResponse struct {
+	PreviousRuntimeID  string `json:"previous_runtime_id"`
+	PreviousSandboxID  string `json:"previous_sandbox_id"`
+	RuntimeID          string `json:"runtime_id"`
+	SandboxID          string `json:"sandbox_id"`
+	AffectedReferences int64  `json:"affected_references"`
 }
 
 const (
@@ -353,6 +366,70 @@ func (h *Handler) RevokeAgentEnterpriseIdentity(w http.ResponseWriter, r *http.R
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) RotateAgentEnterpriseIdentitySource(w http.ResponseWriter, r *http.Request) {
+	if !enterpriseIdentitySourceRotationEnabled() {
+		http.NotFound(w, r)
+		return
+	}
+	if h.EnterpriseIdentity == nil {
+		writeError(w, http.StatusServiceUnavailable, "enterprise sandbox identity is not configured")
+		return
+	}
+	var request rotateAgentEnterpriseIdentitySourceRequest
+	if err := decodeLimitedJSON(w, r, 4<<10, &request, "invalid_request"); err != nil {
+		return
+	}
+	workspaceID, agent, ok := h.authorizeAgentEnterpriseIdentitySourceRotation(
+		w,
+		r,
+		strings.TrimSpace(request.AgentID),
+	)
+	if !ok {
+		return
+	}
+	result, err := h.EnterpriseIdentity.ForceRotateIdentitySource(
+		r.Context(),
+		workspaceID,
+		agent.ID,
+	)
+	if err != nil {
+		writeEnterpriseIdentityError(w, r, "rotate_source", workspaceID, agent.ID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rotateAgentEnterpriseIdentitySourceResponse{
+		PreviousRuntimeID:  util.UUIDToString(result.PreviousRuntimeID),
+		PreviousSandboxID:  result.PreviousSandboxID,
+		RuntimeID:          util.UUIDToString(result.RuntimeID),
+		SandboxID:          result.SandboxID,
+		AffectedReferences: result.AffectedReferences,
+	})
+}
+
+func enterpriseIdentitySourceRotationEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AONE_ENV_TYPE"))) {
+	case "pre", "prepub", "staging":
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *Handler) authorizeAgentEnterpriseIdentitySourceRotation(
+	w http.ResponseWriter,
+	r *http.Request,
+	agentID string,
+) (pgtype.UUID, db.Agent, bool) {
+	workspaceID, agent, _, member, ok := h.loadAgentEnterpriseIdentityTarget(w, r, agentID)
+	if !ok {
+		return pgtype.UUID{}, db.Agent{}, false
+	}
+	if !roleAllowed(member.Role, "owner", "admin") {
+		writeError(w, http.StatusForbidden, "only workspace owners or admins can rotate enterprise identity sources")
+		return pgtype.UUID{}, db.Agent{}, false
+	}
+	return workspaceID, agent, true
 }
 
 func (h *Handler) authorizeAgentEnterpriseIdentity(

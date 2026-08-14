@@ -216,3 +216,62 @@ func TestEnterpriseIdentityCallbackProgressPagePollsNewBindingVersion(t *testing
 		}
 	}
 }
+
+func TestEnterpriseIdentitySourceRotationEnvironmentGuard(t *testing.T) {
+	cases := []struct {
+		environment string
+		want        bool
+	}{
+		{environment: "pre", want: true},
+		{environment: "prepub", want: true},
+		{environment: "staging", want: true},
+		{environment: "production", want: false},
+		{environment: "", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.environment, func(t *testing.T) {
+			t.Setenv("AONE_ENV_TYPE", tc.environment)
+			if got := enterpriseIdentitySourceRotationEnabled(); got != tc.want {
+				t.Fatalf("rotation enabled = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRotateAgentEnterpriseIdentitySourceIsHiddenOutsidePrepub(t *testing.T) {
+	t.Setenv("AONE_ENV_TYPE", "production")
+
+	handler := &Handler{}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/workspaces/workspace-id/agent-identity/enterprise/source/rotate",
+		strings.NewReader(`{"agent_id":"agent-id"}`),
+	)
+	response := httptest.NewRecorder()
+	handler.RotateAgentEnterpriseIdentitySource(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", response.Code)
+	}
+}
+
+func TestRotateAgentEnterpriseIdentitySourceRequiresWorkspaceAdmin(t *testing.T) {
+	t.Setenv("AONE_ENV_TYPE", "prepub")
+	agentID, memberUserID := createEnterpriseIdentityHandlerFixture(t)
+	handler := *testHandler
+	handler.EnterpriseIdentity = &service.EnterpriseIdentityService{}
+	body := strings.NewReader(fmt.Sprintf(`{"agent_id":%q}`, agentID))
+	request := newRequestAsUser(
+		memberUserID,
+		http.MethodPost,
+		"/api/workspaces/"+testWorkspaceID+"/agent-identity/enterprise/source/rotate",
+		body,
+	)
+	request = withURLParams(request, "id", testWorkspaceID)
+	response := httptest.NewRecorder()
+	handler.RotateAgentEnterpriseIdentitySource(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", response.Code, response.Body.String())
+	}
+}
