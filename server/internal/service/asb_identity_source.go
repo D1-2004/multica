@@ -619,15 +619,39 @@ func attachASBBUCIdentityOnce(
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
 ) error {
-	// Submit the documented asynchronous attachment exactly once. With
-	// sync=true ASB performs an additional status command through its egress
-	// operations endpoint; that endpoint can still return 404 after the
-	// bootstrap command was accepted, causing ASB to wrap an in-progress attach
-	// as HTTP 400. Multica already owns the bounded readiness window below and
-	// proves the exact BUC employee and Agent identity through execd, so the
-	// control-plane status wait is both redundant and racy. Repeating either
-	// form of the POST is unsafe because it restarts wgclient.
-	return client.AttachBUCIdentity(ctx, sandboxID, grant, false)
+	// Submit the synchronous attachment exactly once. In the current ASB
+	// implementation the bootstrap command is accepted before the optional
+	// status command runs. That status command can still report a converging
+	// tunnel or a transient egress-ops 404 and ASB wraps either result as HTTP
+	// 400. Both responses therefore mean "bootstrap submitted", not "submission
+	// rejected". Multica owns the bounded readiness window below and proves the
+	// exact BUC employee and Agent identity through execd. Never repeat this POST:
+	// every submission restarts wgclient and can prevent convergence.
+	err := client.AttachBUCIdentity(ctx, sandboxID, grant, true)
+	if err == nil {
+		return nil
+	}
+	if isASBWireGuardPostAttachCheckPending(err) {
+		slog.Info(
+			"ASB BUC identity bootstrap submitted; post-attach check is pending",
+			"sandbox_id", sandboxID,
+		)
+		return nil
+	}
+	return err
+}
+
+func isASBWireGuardPostAttachCheckPending(err error) bool {
+	var httpErr *ASBHTTPError
+	if !errors.As(err, &httpErr) ||
+		httpErr.Operation != "attach_buc_identity" ||
+		httpErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(httpErr.ErrorMessage))
+	return strings.Contains(message, "wireguard tunnel not ready yet") ||
+		(strings.Contains(message, "failed to check wireguard status") &&
+			strings.Contains(message, "status code 404"))
 }
 
 func asbIdentityProbeInterval(timeout time.Duration) time.Duration {
