@@ -241,7 +241,7 @@ export function FCE2BRuntimeDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+      <DialogContent className="max-h-[90vh] min-w-0 overflow-x-hidden overflow-y-auto sm:max-w-[min(48rem,calc(100vw-2rem))]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-title-sm">
             <Cloud className="h-4 w-4 text-muted-foreground" />
@@ -255,7 +255,7 @@ export function FCE2BRuntimeDialog({
         <form
           id="fc-e2b-runtime-form"
           onSubmit={handleSubmit}
-          className="space-y-4"
+          className="min-w-0 space-y-4"
         >
           <p className="rounded-md border bg-muted/30 px-3 py-2 text-caption text-muted-foreground">
             {sandboxBackend === "asb"
@@ -403,7 +403,7 @@ export function FCE2BRuntimeDialog({
 
           {sandboxBackend === "aliyun_fc" &&
             templateChannel === "candidate" && (
-              <div className="space-y-2">
+              <div className="min-w-0 space-y-2">
                 <Label htmlFor="fc-e2b-template-search" className="text-caption">
                   {t(($) => $.fc_e2b_runtime.fields.template)}
                 </Label>
@@ -419,7 +419,7 @@ export function FCE2BRuntimeDialog({
                     className="pl-8"
                   />
                 </div>
-                <div className="max-h-48 overflow-y-auto rounded-md border">
+                <div className="max-h-48 min-w-0 overflow-y-auto rounded-md border">
                   {templatesQuery.isLoading && (
                     <div className="flex items-center gap-2 p-3 text-caption text-muted-foreground">
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -454,21 +454,21 @@ export function FCE2BRuntimeDialog({
                         key={`${template.template}:${template.id ?? ""}:${template.name ?? ""}`}
                         type="button"
                         onClick={() => pickTemplate(template)}
-                        className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-caption last:border-b-0 hover:bg-muted/50"
+                        className="flex w-full min-w-0 items-start justify-between gap-3 border-b p-3 text-left text-caption last:border-b-0 hover:bg-muted/50"
                       >
                         <span className="min-w-0 space-y-1">
-                          <span className="block truncate font-medium">
+                          <span className="block break-all font-medium">
                             {displayName}
                           </span>
                           {identifier && identifier !== displayName && (
-                            <span className="block truncate text-muted-foreground">
+                            <span className="block break-all text-muted-foreground">
                               {identifier}
                             </span>
                           )}
                           {(updatedAt || template.status) && (
                             <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground">
                               {updatedAt && (
-                                <span className="truncate">
+                                <span>
                                   {t(($) => $.fc_e2b_runtime.template_updated, {
                                     time: updatedAt,
                                   })}
@@ -479,7 +479,7 @@ export function FCE2BRuntimeDialog({
                               )}
                             </span>
                           )}
-                          <span className="block truncate text-muted-foreground">
+                          <span className="block break-words whitespace-normal text-muted-foreground">
                             {template.providers
                               .filter((item) =>
                                 (
