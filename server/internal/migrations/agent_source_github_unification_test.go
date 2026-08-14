@@ -14,11 +14,11 @@ func TestAgentSourceGitHubUnificationMigration(t *testing.T) {
 		t.Fatal("resolve migration test path")
 	}
 	migrationsDir := filepath.Clean(filepath.Join(filepath.Dir(current), "..", "..", "migrations"))
-	up, err := os.ReadFile(filepath.Join(migrationsDir, "252_unify_agent_source_github.up.sql"))
+	up, err := os.ReadFile(filepath.Join(migrationsDir, "9029_unify_agent_source_github.up.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	down, err := os.ReadFile(filepath.Join(migrationsDir, "252_unify_agent_source_github.down.sql"))
+	down, err := os.ReadFile(filepath.Join(migrationsDir, "9029_unify_agent_source_github.down.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}

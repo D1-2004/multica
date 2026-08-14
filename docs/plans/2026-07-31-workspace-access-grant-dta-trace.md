@@ -186,8 +186,8 @@ Workspace 设置页显示平铺的“DTA Token”：
 
 ## 文件与职责
 
-- `server/migrations/266_workspace_access_token.*.sql`：正式发布 migration 创建 Token + audit，并兼容预发旧 schema 重放。
-- `server/migrations/268_dta_load_smoke_operation_idempotency.*.sql`：以 Workspace＋Token＋Agent＋marker 建立 load-smoke 永久唯一约束。
+- `server/migrations/9042_workspace_access_token.*.sql`：正式发布 migration 创建 Token + audit，并兼容预发旧 schema 重放。
+- `server/migrations/9044_dta_load_smoke_operation_idempotency.*.sql`：以 Workspace＋Token＋Agent＋marker 建立 load-smoke 永久唯一约束。
 - `server/pkg/db/queries/workspace_access_token.sql`：单层 Token CRUD、认证、regenerate、revoke 和 audit。
 - `server/internal/middleware/auth.go`、`workspace_access_principal.go`：去除 GrantID，策略直接来自 Token。
 - `server/internal/handler/workspace_access.go`：平铺 Token 管理 API。

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/deploymentfence"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -406,6 +407,17 @@ func main() {
 	// alongside the sweeper, and Stop is called explicitly during graceful
 	// shutdown so any pending bumps are flushed before we exit.
 	heartbeatScheduler := handler.NewBatchedHeartbeatScheduler(queries, handler.DefaultHeartbeatBatchInterval)
+	instanceID, err := os.Hostname()
+	if err != nil {
+		slog.Error("deployment fence instance identity failed", "error", err)
+		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
+	}
+	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit)
+	if err != nil {
+		slog.Error("deployment fence initialization failed", "error", err)
+		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
+	}
+	go deploymentFence.Run(relayCtx)
 
 	r, h := NewRouterWithOptions(pool, hub, bus, analyticsClient, storeRedis, RouterOptions{
 		HTTPMetrics:        httpMetrics,
@@ -417,6 +429,7 @@ func main() {
 		SandboxRelaySigner: sandboxRelaySigner,
 		SandboxRelay:       sandboxRelayMiddleware,
 		RuntimeConfig:      appRuntimeConfig,
+		DeploymentFence:    deploymentFence,
 	})
 
 	srv := &http.Server{
