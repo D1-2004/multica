@@ -34,6 +34,8 @@ type fakeEnterpriseIdentityHandlerService struct {
 	rotate func(context.Context, pgtype.UUID, pgtype.UUID, string) (service.EnterpriseIdentitySourceRotationResult, error)
 }
 
+func (f *fakeEnterpriseIdentityHandlerService) Run(context.Context) {}
+
 func (f *fakeEnterpriseIdentityHandlerService) StartBinding(
 	context.Context,
 	service.StartEnterpriseIdentityBindingInput,

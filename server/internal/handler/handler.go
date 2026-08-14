@@ -152,6 +152,7 @@ type WorkspaceSetRefreshNotifier interface {
 }
 
 type enterpriseIdentityService interface {
+	Run(context.Context)
 	StartBinding(context.Context, service.StartEnterpriseIdentityBindingInput) (service.StartEnterpriseIdentityBindingResult, error)
 	PrepareBindingCompletion(context.Context, string) (service.PreparedEnterpriseIdentityBinding, error)
 	CompletePreparedBinding(context.Context, service.PreparedEnterpriseIdentityBinding, string) (service.CompleteEnterpriseIdentityBindingResult, error)
