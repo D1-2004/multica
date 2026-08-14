@@ -2,9 +2,12 @@ package a2aintegration
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -107,7 +110,24 @@ func newJSONRPCHandler(port Port, keepAliveInterval time.Duration, options ...Ha
 	return a2asrv.NewJSONRPCHandler(
 		NewRequestHandler(port, options...),
 		a2asrv.WithTransportKeepAlive(keepAliveInterval),
+		a2asrv.WithTransportPanicHandler(a2aTransportPanicError),
 	)
+}
+
+func a2aTransportPanicError(recovered any) error {
+	panicText := strings.TrimSpace(fmt.Sprint(recovered))
+	if newline := strings.IndexByte(panicText, '\n'); newline >= 0 {
+		panicText = panicText[:newline]
+	}
+	if len(panicText) > 256 {
+		panicText = panicText[:256]
+	}
+	slog.Error("A2A JSON-RPC transport panic",
+		"panic_type", fmt.Sprintf("%T", recovered),
+		"panic", panicText,
+		"stack", string(debug.Stack()),
+	)
+	return a2a.NewError(a2a.ErrInternalError, "A2A transport panic: "+panicText)
 }
 
 func (handler *requestHandler) GetTask(ctx context.Context, request *a2a.GetTaskRequest) (*a2a.Task, error) {

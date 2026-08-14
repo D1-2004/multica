@@ -25,6 +25,68 @@ type keepAlivePort struct {
 	release <-chan struct{}
 }
 
+type completedTaskPort struct {
+	testPort
+}
+
+type panickingPort struct {
+	testPort
+}
+
+func completedTask(taskID a2a.TaskID) *a2a.Task {
+	return &a2a.Task{
+		ID:        taskID,
+		ContextID: "ctx_completed",
+		Status:    a2a.TaskStatus{State: a2a.TaskStateCompleted},
+		Artifacts: []*a2a.Artifact{{
+			ID:    "art_completed",
+			Name:  "result",
+			Parts: a2a.ContentParts{a2a.NewTextPart("completed output")},
+		}},
+	}
+}
+
+func (port *completedTaskPort) GetTask(_ context.Context, request *a2a.GetTaskRequest) (*a2a.Task, error) {
+	return completedTask(request.ID), nil
+}
+
+func (port *completedTaskPort) SendStreamingMessage(context.Context, *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		task := completedTask("task_completed")
+		if !yield(task, nil) {
+			return
+		}
+		yield(&a2a.TaskArtifactUpdateEvent{
+			TaskID:    task.ID,
+			ContextID: task.ContextID,
+			Artifact:  task.Artifacts[0],
+			LastChunk: true,
+		}, nil)
+	}
+}
+
+func (port *completedTaskPort) SubscribeToTask(context.Context, *a2a.SubscribeToTaskRequest) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		yield(completedTask("task_completed"), nil)
+	}
+}
+
+func (port *panickingPort) GetTask(context.Context, *a2a.GetTaskRequest) (*a2a.Task, error) {
+	panic("completed task projection")
+}
+
+func (port *panickingPort) SendStreamingMessage(context.Context, *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
+	return func(func(a2a.Event, error) bool) {
+		panic("completed streaming projection")
+	}
+}
+
+func (port *panickingPort) SubscribeToTask(context.Context, *a2a.SubscribeToTaskRequest) iter.Seq2[a2a.Event, error] {
+	return func(func(a2a.Event, error) bool) {
+		panic("completed subscription projection")
+	}
+}
+
 func (port *keepAlivePort) SendStreamingMessage(ctx context.Context, _ *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		select {
@@ -245,6 +307,86 @@ func TestJSONRPCStreamingSendsKeepAlive(t *testing.T) {
 		t.Fatalf("keep-alive line = %q", line)
 	}
 	close(release)
+}
+
+func TestJSONRPCSerializesCompletedTaskAndTextArtifact(t *testing.T) {
+	t.Parallel()
+
+	handler := NewJSONRPCHandler(&completedTaskPort{})
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "GetTask",
+			body: `{"jsonrpc":"2.0","id":"get-completed","method":"GetTask","params":{"id":"task_completed"}}`,
+		},
+		{
+			name: "SendStreamingMessage",
+			body: `{"jsonrpc":"2.0","id":"stream-completed","method":"SendStreamingMessage","params":{"message":{"messageId":"message-completed","role":"ROLE_USER","parts":[{"text":"hello"}]}}}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/v1", strings.NewReader(test.body))
+			request.Header.Set(a2a.SvcParamVersion, string(a2a.Version))
+			request = request.WithContext(WithPrincipal(request.Context(), Principal{
+				Scopes:          []string{"send", "read"},
+				EndpointEnabled: true,
+			}))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+			body := response.Body.String()
+			if !strings.Contains(body, `"text":"completed output"`) {
+				t.Fatalf("response is missing text artifact: %s", body)
+			}
+		})
+	}
+}
+
+func TestJSONRPCConvertsTransportPanicsToProtocolErrors(t *testing.T) {
+	t.Parallel()
+
+	handler := NewJSONRPCHandler(&panickingPort{})
+	tests := []struct {
+		name      string
+		body      string
+		wantPanic string
+	}{
+		{
+			name:      "GetTask",
+			body:      `{"jsonrpc":"2.0","id":"panic-get","method":"GetTask","params":{"id":"task_completed"}}`,
+			wantPanic: "completed task projection",
+		},
+		{
+			name:      "SendStreamingMessage",
+			body:      `{"jsonrpc":"2.0","id":"panic-stream","method":"SendStreamingMessage","params":{"message":{"messageId":"message-panic","role":"ROLE_USER","parts":[{"text":"hello"}]}}}`,
+			wantPanic: "completed streaming projection",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/v1", strings.NewReader(test.body))
+			request.Header.Set(a2a.SvcParamVersion, string(a2a.Version))
+			request = request.WithContext(WithPrincipal(request.Context(), Principal{
+				Scopes:          []string{"send", "read"},
+				EndpointEnabled: true,
+			}))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+			if body := response.Body.String(); !strings.Contains(body, `"code":-32603`) || !strings.Contains(body, test.wantPanic) {
+				t.Fatalf("panic response is not a JSON-RPC internal error: %s", body)
+			}
+		})
+	}
 }
 
 func TestJSONRPCScopeAuthorizationRunsAtSDKMethodBoundary(t *testing.T) {
