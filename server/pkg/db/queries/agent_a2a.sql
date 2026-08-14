@@ -271,11 +271,11 @@ WHERE endpoint.public_agent_id = sqlc.arg('public_agent_id')
     (runtime.runtime_mode = 'local' AND runtime.provider = 'claude')
     OR (
       runtime.runtime_mode = 'cloud'
-      AND runtime.provider IN ('hermes', 'opencode', 'pi')
+      AND runtime.provider IN ('hermes', 'opencode', 'pi', 'dsh', 'opencode-v2')
       AND runtime.metadata->'capabilities' ? 'a2a-invocation-v2'
       AND (
         (runtime.provider = 'hermes' AND runtime.metadata->'capabilities' ? 'a2a_inbound_hermes_v1')
-        OR (runtime.provider = 'opencode' AND runtime.metadata->'capabilities' ? 'a2a_inbound_opencode_v1')
+        OR (runtime.provider IN ('opencode', 'dsh', 'opencode-v2') AND runtime.metadata->'capabilities' ? 'a2a_inbound_opencode_v1')
         OR (runtime.provider = 'pi' AND runtime.metadata->'capabilities' ? 'a2a_inbound_pi_v1')
       )
       AND (
@@ -700,11 +700,11 @@ WITH locked_agent AS MATERIALIZED (
         (runtime.runtime_mode = 'local' AND runtime.provider = 'claude')
         OR (
           runtime.runtime_mode = 'cloud'
-          AND runtime.provider IN ('hermes', 'opencode', 'pi')
+          AND runtime.provider IN ('hermes', 'opencode', 'pi', 'dsh', 'opencode-v2')
           AND runtime.metadata->'capabilities' ? 'a2a-invocation-v2'
           AND (
             (runtime.provider = 'hermes' AND runtime.metadata->'capabilities' ? 'a2a_inbound_hermes_v1')
-            OR (runtime.provider = 'opencode' AND runtime.metadata->'capabilities' ? 'a2a_inbound_opencode_v1')
+            OR (runtime.provider IN ('opencode', 'dsh', 'opencode-v2') AND runtime.metadata->'capabilities' ? 'a2a_inbound_opencode_v1')
             OR (runtime.provider = 'pi' AND runtime.metadata->'capabilities' ? 'a2a_inbound_pi_v1')
           )
           AND (

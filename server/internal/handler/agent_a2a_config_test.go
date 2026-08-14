@@ -35,6 +35,29 @@ const agentA2ATestManagedOpenCodeRuntimeMetadata = `{
 	"capabilities":["opencode","dws","mcp","a2a_inbound_opencode_v1","a2a-invocation-v2"]
 }`
 
+func TestAgentA2ACloudProviderCapability(t *testing.T) {
+	tests := []struct {
+		provider   string
+		capability string
+		supported  bool
+	}{
+		{provider: "hermes", capability: "a2a_inbound_hermes_v1", supported: true},
+		{provider: "opencode", capability: "a2a_inbound_opencode_v1", supported: true},
+		{provider: "dsh", capability: "a2a_inbound_opencode_v1", supported: true},
+		{provider: "opencode-v2", capability: "a2a_inbound_opencode_v1", supported: true},
+		{provider: "pi", capability: "a2a_inbound_pi_v1", supported: true},
+		{provider: "claude"},
+	}
+	for _, test := range tests {
+		t.Run(test.provider, func(t *testing.T) {
+			capability, supported := agentA2ACloudProviderCapability(test.provider)
+			if capability != test.capability || supported != test.supported {
+				t.Fatalf("capability = %q, supported = %v; want %q, %v", capability, supported, test.capability, test.supported)
+			}
+		})
+	}
+}
+
 const agentA2ATestManagedHermesRuntimeMetadata = `{
 	"kind":"cloud-sandbox",
 	"sandbox_backend":"aliyun_fc",
@@ -717,6 +740,20 @@ func TestAgentA2AEnableRequiresRuntimeV2(t *testing.T) {
 			wantAllowed: true,
 		},
 		{
+			name:        "managed DSH current OpenCode adapter capability",
+			runtimeMode: "cloud",
+			provider:    "dsh",
+			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"dsh","artifact_kind":"e2b_template","artifact_ref":"template-a2a-m7","capabilities":["a2a_inbound_opencode_v1","a2a-invocation-v2","dsh_trajectory_v1"]}`,
+			wantAllowed: true,
+		},
+		{
+			name:        "managed OpenCode v2 ASB current OpenCode adapter capability",
+			runtimeMode: "cloud",
+			provider:    "opencode-v2",
+			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode-v2","artifact_kind":"oci_image","artifact_ref":"registry.example/runtime@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","capabilities":["a2a_inbound_opencode_v1","a2a-invocation-v2"]}`,
+			wantAllowed: true,
+		},
+		{
 			name:        "managed Hermes missing provider adapter",
 			runtimeMode: "cloud",
 			provider:    "hermes",
@@ -1077,6 +1114,20 @@ func TestAgentA2ASendRemainsAvailableAcrossRuntimeVersionChanges(t *testing.T) {
 			runtimeMode:   "cloud",
 			provider:      "pi",
 			metadata:      agentA2ATestManagedPiASBRuntimeMetadata,
+			wantAvailable: true,
+		},
+		{
+			name:          "runtime switched to current managed DSH image",
+			runtimeMode:   "cloud",
+			provider:      "dsh",
+			metadata:      `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"dsh","artifact_kind":"e2b_template","artifact_ref":"template-a2a-m7","capabilities":["a2a_inbound_opencode_v1","a2a-invocation-v2","dsh_trajectory_v1"]}`,
+			wantAvailable: true,
+		},
+		{
+			name:          "runtime switched to current managed OpenCode v2 ASB image",
+			runtimeMode:   "cloud",
+			provider:      "opencode-v2",
+			metadata:      `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode-v2","artifact_kind":"oci_image","artifact_ref":"registry.example/runtime@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","capabilities":["a2a_inbound_opencode_v1","a2a-invocation-v2"]}`,
 			wantAvailable: true,
 		},
 		{

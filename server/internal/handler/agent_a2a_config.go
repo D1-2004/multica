@@ -1053,7 +1053,7 @@ func validateAgentA2ARuntimeFamily(runtime db.AgentRuntime) error {
 	if isAgentA2ASupportedRuntimeFamily(runtime) {
 		return nil
 	}
-	return errors.New("A2A inbound requires a local Claude runtime or an FC/ASB Hermes, OpenCode, or Pi runtime whose image manifest advertises the provider's inbound adapter and a2a-invocation-v2")
+	return errors.New("A2A inbound requires a local Claude runtime or an FC/ASB Hermes, OpenCode, Pi, DSH, or OpenCode v2 runtime whose image manifest advertises the provider's inbound adapter and a2a-invocation-v2")
 }
 
 func isAgentA2ASupportedRuntimeFamily(runtime db.AgentRuntime) bool {
@@ -1077,7 +1077,7 @@ func agentA2ACloudProviderCapability(provider string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "hermes":
 		return service.A2AInboundHermesCapability, true
-	case "opencode":
+	case "opencode", "dsh", "opencode-v2":
 		return service.A2AInboundOpenCodeCapability, true
 	case "pi":
 		return service.A2AInboundPiCapability, true
