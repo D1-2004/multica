@@ -47,6 +47,18 @@ const agentA2ATestManagedHermesRuntimeMetadata = `{
 	"capabilities":["hermes","dws","mcp","a2a_inbound_hermes_v1","a2a-invocation-v2"]
 }`
 
+const agentA2ATestManagedHermesASBRuntimeMetadata = `{
+	"kind":"cloud-sandbox",
+	"sandbox_backend":"asb",
+	"provider":"hermes",
+	"artifact_kind":"oci_image",
+	"artifact_channel":"candidate",
+	"artifact_ref":"registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	"manifest_version":6,
+	"runner_protocol":"root-log-v1",
+	"capabilities":["hermes","dws","mcp","a2a_inbound_hermes_v1","a2a-invocation-v2"]
+}`
+
 const agentA2ATestManagedPiASBRuntimeMetadata = `{
 	"kind":"cloud-sandbox",
 	"sandbox_backend":"asb",
@@ -812,59 +824,68 @@ func TestAgentA2AManagedHostedRuntimeIsPublishedAndAdmitted(t *testing.T) {
 	}
 	requireAgentA2ATestSchema(t)
 	configureAgentA2ATestHandler(t)
-	agentID, ownerID, _ := privateAgentTestFixture(t)
-	runtimeID := assignAgentA2ATestRuntime(
-		t,
-		agentID,
-		"cloud",
-		"opencode",
-		agentA2ATestManagedOpenCodeRuntimeMetadata,
-	)
-	endpoint, client, secret := createAgentA2ATestCaller(t, agentID, ownerID)
 
-	ownerResponse := httptest.NewRecorder()
-	testHandler.GetAgentA2AConfig(ownerResponse, withAgentA2AURLParams(
-		newRequestAs(ownerID, http.MethodGet, "/api/agents/"+agentID+"/a2a", nil),
-		"id", agentID,
-	))
-	if ownerResponse.Code != http.StatusOK {
-		t.Fatalf("managed runtime owner config status = %d, want 200: %s", ownerResponse.Code, ownerResponse.Body.String())
+	tests := []struct {
+		name     string
+		provider string
+		metadata string
+	}{
+		{name: "FC OpenCode", provider: "opencode", metadata: agentA2ATestManagedOpenCodeRuntimeMetadata},
+		{name: "FC Hermes", provider: "hermes", metadata: agentA2ATestManagedHermesRuntimeMetadata},
+		{name: "ASB Hermes", provider: "hermes", metadata: agentA2ATestManagedHermesASBRuntimeMetadata},
+		{name: "ASB Pi", provider: "pi", metadata: agentA2ATestManagedPiASBRuntimeMetadata},
 	}
-	var ownerConfig AgentA2AConfigResponse
-	if err := json.Unmarshal(ownerResponse.Body.Bytes(), &ownerConfig); err != nil {
-		t.Fatalf("decode managed runtime owner config: %v", err)
-	}
-	if ownerConfig.Endpoint == nil || !ownerConfig.Endpoint.Enabled {
-		t.Fatalf("managed runtime owner config endpoint = %#v, want effectively enabled", ownerConfig.Endpoint)
-	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			agentID, ownerID, _ := privateAgentTestFixture(t)
+			runtimeID := assignAgentA2ATestRuntime(t, agentID, "cloud", test.provider, test.metadata)
+			endpoint, client, secret := createAgentA2ATestCaller(t, agentID, ownerID)
 
-	published, err := testHandler.Queries.GetPublishedAgentA2AEndpointByPublicID(
-		context.Background(),
-		db.GetPublishedAgentA2AEndpointByPublicIDParams{PublicAgentID: endpoint.PublicAgentID},
-	)
-	if err != nil {
-		t.Fatalf("publish managed runtime endpoint: %v", err)
-	}
-	if uuidToString(published.AgentRuntimeID) != runtimeID {
-		t.Fatalf("published runtime = %s, want %s", uuidToString(published.AgentRuntimeID), runtimeID)
-	}
+			ownerResponse := httptest.NewRecorder()
+			testHandler.GetAgentA2AConfig(ownerResponse, withAgentA2AURLParams(
+				newRequestAs(ownerID, http.MethodGet, "/api/agents/"+agentID+"/a2a", nil),
+				"id", agentID,
+			))
+			if ownerResponse.Code != http.StatusOK {
+				t.Fatalf("managed runtime owner config status = %d, want 200: %s", ownerResponse.Code, ownerResponse.Body.String())
+			}
+			var ownerConfig AgentA2AConfigResponse
+			if err := json.Unmarshal(ownerResponse.Body.Bytes(), &ownerConfig); err != nil {
+				t.Fatalf("decode managed runtime owner config: %v", err)
+			}
+			if ownerConfig.Endpoint == nil || !ownerConfig.Endpoint.Enabled {
+				t.Fatalf("managed runtime owner config endpoint = %#v, want effectively enabled", ownerConfig.Endpoint)
+			}
 
-	admission, err := testHandler.Queries.LockAgentA2ASendAdmission(
-		context.Background(),
-		db.LockAgentA2ASendAdmissionParams{
-			AgentID:       util.MustParseUUID(agentID),
-			WorkspaceID:   util.MustParseUUID(testWorkspaceID),
-			EndpointID:    util.MustParseUUID(endpoint.ID),
-			PublicAgentID: endpoint.PublicAgentID,
-			ClientID:      util.MustParseUUID(client.ID),
-			CredentialID:  util.MustParseUUID(secret.Credential.ID),
-		},
-	)
-	if err != nil {
-		t.Fatalf("admit managed runtime caller: %v", err)
-	}
-	if uuidToString(admission.AgentRuntimeID) != runtimeID {
-		t.Fatalf("admitted runtime = %s, want %s", uuidToString(admission.AgentRuntimeID), runtimeID)
+			published, err := testHandler.Queries.GetPublishedAgentA2AEndpointByPublicID(
+				context.Background(),
+				db.GetPublishedAgentA2AEndpointByPublicIDParams{PublicAgentID: endpoint.PublicAgentID},
+			)
+			if err != nil {
+				t.Fatalf("publish managed runtime endpoint: %v", err)
+			}
+			if uuidToString(published.AgentRuntimeID) != runtimeID {
+				t.Fatalf("published runtime = %s, want %s", uuidToString(published.AgentRuntimeID), runtimeID)
+			}
+
+			admission, err := testHandler.Queries.LockAgentA2ASendAdmission(
+				context.Background(),
+				db.LockAgentA2ASendAdmissionParams{
+					AgentID:       util.MustParseUUID(agentID),
+					WorkspaceID:   util.MustParseUUID(testWorkspaceID),
+					EndpointID:    util.MustParseUUID(endpoint.ID),
+					PublicAgentID: endpoint.PublicAgentID,
+					ClientID:      util.MustParseUUID(client.ID),
+					CredentialID:  util.MustParseUUID(secret.Credential.ID),
+				},
+			)
+			if err != nil {
+				t.Fatalf("admit managed runtime caller: %v", err)
+			}
+			if uuidToString(admission.AgentRuntimeID) != runtimeID {
+				t.Fatalf("admitted runtime = %s, want %s", uuidToString(admission.AgentRuntimeID), runtimeID)
+			}
+		})
 	}
 }
 
@@ -1045,11 +1066,30 @@ func TestAgentA2ASendRemainsAvailableAcrossRuntimeVersionChanges(t *testing.T) {
 			wantAvailable: true,
 		},
 		{
+			name:          "runtime switched to current managed Hermes ASB image",
+			runtimeMode:   "cloud",
+			provider:      "hermes",
+			metadata:      agentA2ATestManagedHermesASBRuntimeMetadata,
+			wantAvailable: true,
+		},
+		{
 			name:          "runtime switched to current managed Pi ASB image",
 			runtimeMode:   "cloud",
 			provider:      "pi",
 			metadata:      agentA2ATestManagedPiASBRuntimeMetadata,
 			wantAvailable: true,
+		},
+		{
+			name:        "runtime switched to Hermes image missing provider adapter",
+			runtimeMode: "cloud",
+			provider:    "hermes",
+			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"hermes","artifact_kind":"oci_image","artifact_ref":"registry.example/runtime@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","capabilities":["a2a-invocation-v2"]}`,
+		},
+		{
+			name:        "runtime switched to Pi image missing invocation v2",
+			runtimeMode: "cloud",
+			provider:    "pi",
+			metadata:    `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"pi","artifact_kind":"oci_image","artifact_ref":"registry.example/runtime@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","capabilities":["a2a_inbound_pi_v1"]}`,
 		},
 		{
 			name:          "runtime switched to stable m2 template metadata",

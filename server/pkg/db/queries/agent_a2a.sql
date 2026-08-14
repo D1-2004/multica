@@ -265,14 +265,19 @@ WHERE endpoint.public_agent_id = sqlc.arg('public_agent_id')
   AND a.archived_at IS NULL
   AND a.runtime_id IS NOT NULL
   -- Managed cloud runtimes are admitted only when their immutable image
-  -- metadata advertises the v2 isolation contract. Local Claude implements
-  -- the same contract natively in the daemon.
+  -- metadata advertises both the provider adapter and the v2 isolation
+  -- contract. Local Claude implements the same contract natively in the daemon.
   AND (
     (runtime.runtime_mode = 'local' AND runtime.provider = 'claude')
     OR (
       runtime.runtime_mode = 'cloud'
-      AND runtime.provider = 'opencode'
+      AND runtime.provider IN ('hermes', 'opencode', 'pi')
       AND runtime.metadata->'capabilities' ? 'a2a-invocation-v2'
+      AND (
+        (runtime.provider = 'hermes' AND runtime.metadata->'capabilities' ? 'a2a_inbound_hermes_v1')
+        OR (runtime.provider = 'opencode' AND runtime.metadata->'capabilities' ? 'a2a_inbound_opencode_v1')
+        OR (runtime.provider = 'pi' AND runtime.metadata->'capabilities' ? 'a2a_inbound_pi_v1')
+      )
       AND (
         btrim(runtime.metadata->>'kind') = 'fc-e2b'
         OR (
@@ -281,7 +286,7 @@ WHERE endpoint.public_agent_id = sqlc.arg('public_agent_id')
           AND COALESCE(
             NULLIF(lower(btrim(runtime.metadata->>'provider')), ''),
             runtime.provider
-          ) = 'opencode'
+          ) = runtime.provider
           AND CASE lower(btrim(runtime.metadata->>'sandbox_backend'))
             WHEN 'aliyun_fc' THEN (
               (
@@ -689,13 +694,19 @@ WITH locked_agent AS MATERIALIZED (
       AND a.archived_at IS NULL
       AND a.runtime_id IS NOT NULL
       -- Keep aligned with isAgentA2ASupportedRuntimeFamily and the published
-      -- Card query. Managed images must advertise the v2 isolation contract.
+      -- Card query. Managed images must advertise their provider adapter and
+      -- the v2 isolation contract.
       AND (
         (runtime.runtime_mode = 'local' AND runtime.provider = 'claude')
         OR (
           runtime.runtime_mode = 'cloud'
-          AND runtime.provider = 'opencode'
+          AND runtime.provider IN ('hermes', 'opencode', 'pi')
           AND runtime.metadata->'capabilities' ? 'a2a-invocation-v2'
+          AND (
+            (runtime.provider = 'hermes' AND runtime.metadata->'capabilities' ? 'a2a_inbound_hermes_v1')
+            OR (runtime.provider = 'opencode' AND runtime.metadata->'capabilities' ? 'a2a_inbound_opencode_v1')
+            OR (runtime.provider = 'pi' AND runtime.metadata->'capabilities' ? 'a2a_inbound_pi_v1')
+          )
           AND (
             btrim(runtime.metadata->>'kind') = 'fc-e2b'
             OR (
@@ -704,7 +715,7 @@ WITH locked_agent AS MATERIALIZED (
               AND COALESCE(
                 NULLIF(lower(btrim(runtime.metadata->>'provider')), ''),
                 runtime.provider
-              ) = 'opencode'
+              ) = runtime.provider
               AND CASE lower(btrim(runtime.metadata->>'sandbox_backend'))
                 WHEN 'aliyun_fc' THEN (
                   (
