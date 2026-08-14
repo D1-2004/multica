@@ -41,24 +41,25 @@ type TaskExecutionRuntimeSummary struct {
 }
 
 type TaskExecutionSummary struct {
-	TaskID              string                       `json:"task_id"`
-	Status              string                       `json:"status"`
-	CreatedAt           string                       `json:"created_at"`
-	DispatchedAt        *string                      `json:"dispatched_at"`
-	StartedAt           *string                      `json:"started_at"`
-	CompletedAt         *string                      `json:"completed_at"`
-	DurationMS          *int64                       `json:"duration_ms"`
-	Provider            *string                      `json:"provider"`
-	Model               *string                      `json:"model"`
-	InputTokens         *int64                       `json:"input_tokens"`
-	OutputTokens        *int64                       `json:"output_tokens"`
-	CacheReadTokens     *int64                       `json:"cache_read_tokens"`
-	CacheWriteTokens    *int64                       `json:"cache_write_tokens"`
-	MessageCount        int32                        `json:"message_count"`
-	ToolCallCount       int32                        `json:"tool_call_count"`
-	UsageDetails        []TaskExecutionUsageSummary  `json:"usage_details"`
-	TranscriptAvailable bool                         `json:"transcript_available"`
-	Runtime             *TaskExecutionRuntimeSummary `json:"runtime,omitempty"`
+	TaskID                string                       `json:"task_id"`
+	Status                string                       `json:"status"`
+	CreatedAt             string                       `json:"created_at"`
+	DispatchedAt          *string                      `json:"dispatched_at"`
+	StartedAt             *string                      `json:"started_at"`
+	CompletedAt           *string                      `json:"completed_at"`
+	FirstEffectiveReplyAt *string                      `json:"first_effective_reply_at"`
+	DurationMS            *int64                       `json:"duration_ms"`
+	Provider              *string                      `json:"provider"`
+	Model                 *string                      `json:"model"`
+	InputTokens           *int64                       `json:"input_tokens"`
+	OutputTokens          *int64                       `json:"output_tokens"`
+	CacheReadTokens       *int64                       `json:"cache_read_tokens"`
+	CacheWriteTokens      *int64                       `json:"cache_write_tokens"`
+	MessageCount          int32                        `json:"message_count"`
+	ToolCallCount         int32                        `json:"tool_call_count"`
+	UsageDetails          []TaskExecutionUsageSummary  `json:"usage_details"`
+	TranscriptAvailable   bool                         `json:"transcript_available"`
+	Runtime               *TaskExecutionRuntimeSummary `json:"runtime,omitempty"`
 }
 
 func BuildTaskExecutionSummary(
@@ -80,17 +81,18 @@ func BuildTaskExecutionSummary(
 	}
 
 	summary := TaskExecutionSummary{
-		TaskID:              util.UUIDToString(task.ID),
-		Status:              task.Status,
-		CreatedAt:           taskExecutionTimestamp(task.CreatedAt),
-		DispatchedAt:        taskExecutionTimestampPtr(task.DispatchedAt),
-		StartedAt:           taskExecutionTimestampPtr(task.StartedAt),
-		CompletedAt:         taskExecutionTimestampPtr(task.CompletedAt),
-		MessageCount:        messageSummary.MessageCount,
-		ToolCallCount:       messageSummary.ToolCallCount,
-		UsageDetails:        make([]TaskExecutionUsageSummary, 0, len(usageRows)),
-		TranscriptAvailable: true,
-		Runtime:             runtimeSummary,
+		TaskID:                util.UUIDToString(task.ID),
+		Status:                task.Status,
+		CreatedAt:             taskExecutionTimestamp(task.CreatedAt),
+		DispatchedAt:          taskExecutionTimestampPtr(task.DispatchedAt),
+		StartedAt:             taskExecutionTimestampPtr(task.StartedAt),
+		CompletedAt:           taskExecutionTimestampPtr(task.CompletedAt),
+		FirstEffectiveReplyAt: taskExecutionTimestampPtr(messageSummary.FirstEffectiveReplyAt),
+		MessageCount:          messageSummary.MessageCount,
+		ToolCallCount:         messageSummary.ToolCallCount,
+		UsageDetails:          make([]TaskExecutionUsageSummary, 0, len(usageRows)),
+		TranscriptAvailable:   true,
+		Runtime:               runtimeSummary,
 	}
 	if task.StartedAt.Valid && task.CompletedAt.Valid && !task.CompletedAt.Time.Before(task.StartedAt.Time) {
 		durationMS := task.CompletedAt.Time.Sub(task.StartedAt.Time).Milliseconds()

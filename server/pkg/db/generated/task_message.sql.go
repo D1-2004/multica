@@ -65,20 +65,28 @@ func (q *Queries) DeleteTaskMessages(ctx context.Context, taskID pgtype.UUID) er
 const getTaskMessageSummary = `-- name: GetTaskMessageSummary :one
 SELECT
     COUNT(*)::int AS message_count,
-    COUNT(*) FILTER (WHERE type = 'tool_use')::int AS tool_call_count
+    COUNT(*) FILTER (WHERE type = 'tool_use')::int AS tool_call_count,
+    (
+        SELECT first_message.created_at
+        FROM task_message AS first_message
+        WHERE first_message.task_id = $1
+        ORDER BY first_message.seq ASC
+        LIMIT 1
+    )::timestamptz AS first_effective_reply_at
 FROM task_message
 WHERE task_id = $1
 `
 
 type GetTaskMessageSummaryRow struct {
-	MessageCount  int32 `json:"message_count"`
-	ToolCallCount int32 `json:"tool_call_count"`
+	MessageCount          int32              `json:"message_count"`
+	ToolCallCount         int32              `json:"tool_call_count"`
+	FirstEffectiveReplyAt pgtype.Timestamptz `json:"first_effective_reply_at"`
 }
 
 func (q *Queries) GetTaskMessageSummary(ctx context.Context, taskID pgtype.UUID) (GetTaskMessageSummaryRow, error) {
 	row := q.db.QueryRow(ctx, getTaskMessageSummary, taskID)
 	var i GetTaskMessageSummaryRow
-	err := row.Scan(&i.MessageCount, &i.ToolCallCount)
+	err := row.Scan(&i.MessageCount, &i.ToolCallCount, &i.FirstEffectiveReplyAt)
 	return i, err
 }
 

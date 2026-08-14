@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -238,6 +239,7 @@ func TestCompleteTaskEnqueuesRouterCompletionInTerminalTransaction(t *testing.T)
 	ctx := context.Background()
 	pool := newTaskClaimRacePool(t)
 	agentID := createClaimCapacityFixture(t, ctx, pool)
+	firstEffectiveReplyAt := time.Date(2026, 8, 13, 2, 3, 4, 567000000, time.UTC)
 	var taskID string
 	if err := pool.QueryRow(ctx, `
 		UPDATE agent_task_queue
@@ -254,6 +256,14 @@ func TestCompleteTaskEnqueuesRouterCompletionInTerminalTransaction(t *testing.T)
 	t.Cleanup(func() {
 		pool.Exec(context.Background(), `DELETE FROM task_completion_outbox WHERE root_task_id = $1`, taskID)
 	})
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO task_message (task_id, seq, type, content, created_at)
+		VALUES
+			($1, 1, 'thinking', 'working', $2),
+			($1, 2, 'text', 'answer', $3)
+	`, taskID, firstEffectiveReplyAt, firstEffectiveReplyAt.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
 
 	svc := NewTaskService(db.New(pool), pool, nil, events.New())
 	if _, err := svc.CompleteTask(
@@ -285,8 +295,14 @@ func TestCompleteTaskEnqueuesRouterCompletionInTerminalTransaction(t *testing.T)
 	if err := json.Unmarshal(executionSummary, &summary); err != nil {
 		t.Fatal(err)
 	}
-	if summary.TaskID != taskID || summary.Status != "completed" || summary.MessageCount != 0 {
+	if summary.TaskID != taskID || summary.Status != "completed" || summary.MessageCount != 2 {
 		t.Fatalf("execution summary = %#v", summary)
+	}
+	if summary.FirstEffectiveReplyAt == nil {
+		t.Fatal("first effective reply at is nil")
+	}
+	if got, want := *summary.FirstEffectiveReplyAt, firstEffectiveReplyAt.Format(time.RFC3339Nano); got != want {
+		t.Fatalf("first effective reply at = %s, want %s", got, want)
 	}
 }
 

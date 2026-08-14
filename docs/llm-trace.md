@@ -98,6 +98,11 @@ When a task terminates, Multica writes an immutable JSON summary into
 terminal result. The completion worker sends it as top-level
 `executionSummary` on every retry. It contains the existing task-summary shape:
 timing, provider/model usage, message/tool counts, and runtime/current sandbox.
+It also contains nullable RFC3339/RFC3339Nano string
+`first_effective_reply_at`, derived from the `created_at` of the first persisted
+activity by `seq` in the task message stream. Tasks with no persisted messages
+send this field as `null`; task lifecycle timestamps are never used as a
+fallback.
 
 Router uses this pushed snapshot for Agent environment data. LLM request and
 response pairs remain available through Router's separate inference-detail
@@ -120,3 +125,4 @@ status, task identity, sequence, sizes, and bounded error classification.
 | 2026-08-08 | Routed task-scoped paired traces through an absolute HTTPS Multica task endpoint, while keeping Router's telemetry path relative and forwarding it over the existing internal Router connection | Cloud sandboxes can reach Multica but may not reach a private Router ingress; the relay removes a separate telemetry-Origin configuration and public-network dependency |
 | 2026-08-08 | Bound the Multica trace endpoint to the existing per-task Sandbox Relay assertion before validating the Router capability | Preserve the proven sandbox control-plane tunnel without exposing its relay token to the model proxy configuration |
 | 2026-08-08 | Unified all sandbox trace delivery through daemon-authenticated Multica ingress and added server-side fan-out to both Router telemetry and the Agent static sink | Prevent a dynamic Router callback from suppressing the original trace destination, keep Router capabilities out of the sandbox, and reuse the same proven control-plane path as task lifecycle reporting |
+| 2026-08-13 | Added nullable `executionSummary.first_effective_reply_at` from the task's first persisted Agent activity by message-stream order; no historical outbox rows are backfilled | Preserve first-reply latency metrics after Router stopped fetching the post-terminal transcript |
