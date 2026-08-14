@@ -38,6 +38,76 @@ func TestASBConfigCommandReadyTimeout(t *testing.T) {
 	}
 }
 
+func TestNeedsCandidateASBArtifactActivation(t *testing.T) {
+	readyMetadata := map[string]any{
+		"artifact_status":  "READY",
+		"manifest_version": float64(7),
+	}
+	pendingMetadata := map[string]any{
+		"artifact_status":  "PENDING_STABLE_VALIDATION",
+		"manifest_version": float64(0),
+	}
+	candidateMetadata := map[string]any{"artifact_channel": CloudSandboxChannelCandidate}
+	stableMetadata := map[string]any{"artifact_channel": CloudSandboxChannelStable}
+
+	tests := []struct {
+		name     string
+		status   string
+		metadata map[string]any
+		managed  map[string]any
+		want     bool
+	}{
+		{
+			name:     "offline bootstrap",
+			status:   "offline",
+			metadata: pendingMetadata,
+			managed:  candidateMetadata,
+			want:     true,
+		},
+		{
+			name:     "online bootstrap with pending manifest",
+			status:   "online",
+			metadata: pendingMetadata,
+			managed:  candidateMetadata,
+			want:     true,
+		},
+		{
+			name:     "offline candidate with verified manifest",
+			status:   "offline",
+			metadata: readyMetadata,
+			managed:  candidateMetadata,
+			want:     true,
+		},
+		{
+			name:     "online verified candidate",
+			status:   "online",
+			metadata: readyMetadata,
+			managed:  candidateMetadata,
+			want:     false,
+		},
+		{
+			name:     "stable release update never activates",
+			status:   "offline",
+			metadata: pendingMetadata,
+			managed:  stableMetadata,
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := needsCandidateASBArtifactActivation(
+				db.AgentRuntime{Status: tt.status},
+				tt.metadata,
+				tt.managed,
+			)
+			if got != tt.want {
+				t.Fatalf("activation = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 type fakeASBSandboxCapacity struct {
 	t              *testing.T
 	wantRuntimeID  pgtype.UUID

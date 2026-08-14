@@ -2109,6 +2109,7 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 		PreviousArtifactBuildID: strings.TrimSpace(stringMetadataValue(metadata, "artifact_build_id")),
 		PreviousArtifactDigest:  strings.TrimSpace(stringMetadataValue(metadata, "artifact_digest")),
 	}
+	activateCandidate := needsCandidateASBArtifactActivation(runtime, metadata, managedMetadata)
 	managedChanged := false
 	for key, value := range managedMetadata {
 		if fmt.Sprint(metadata[key]) != fmt.Sprint(value) {
@@ -2119,7 +2120,8 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 	if result.PreviousArtifactRef == artifact.Ref &&
 		result.PreviousArtifactBuildID == artifact.BuildID &&
 		result.PreviousArtifactDigest == artifact.Digest &&
-		!managedChanged {
+		!managedChanged &&
+		!activateCandidate {
 		if err := tx.Commit(ctx); err != nil {
 			return ASBRuntimeArtifactUpdateResult{}, fmt.Errorf("commit idempotent ASB artifact update: %w", err)
 		}
@@ -2152,6 +2154,12 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 	if err != nil {
 		return ASBRuntimeArtifactUpdateResult{}, fmt.Errorf("update ASB runtime metadata: %w", err)
 	}
+	if activateCandidate {
+		updated, err = qtx.MarkAgentRuntimeOnline(ctx, runtimeID)
+		if err != nil {
+			return ASBRuntimeArtifactUpdateResult{}, fmt.Errorf("activate validated ASB candidate runtime: %w", err)
+		}
+	}
 	invalidated, err := qtx.MarkCloudSandboxSessionsStaleByRuntimeAndBackend(
 		ctx,
 		db.MarkCloudSandboxSessionsStaleByRuntimeAndBackendParams{
@@ -2169,6 +2177,22 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 	result.InvalidatedSandboxCount = invalidated
 	result.Changed = true
 	return result, nil
+}
+
+func needsCandidateASBArtifactActivation(
+	runtime db.AgentRuntime,
+	metadata map[string]any,
+	managedMetadata map[string]any,
+) bool {
+	if strings.ToLower(strings.TrimSpace(stringMetadataValue(
+		managedMetadata,
+		"artifact_channel",
+	))) != CloudSandboxChannelCandidate {
+		return false
+	}
+	return runtime.Status != "online" ||
+		strings.ToUpper(strings.TrimSpace(stringMetadataValue(metadata, "artifact_status"))) != "READY" ||
+		intMetadataValue(metadata, "manifest_version") <= 0
 }
 
 func validateASBArtifact(artifact ASBArtifact) error {
