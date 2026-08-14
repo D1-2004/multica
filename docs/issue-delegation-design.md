@@ -342,7 +342,7 @@ rolling-deploy 兼容重试，避免旧 Pod 的短暂 404 让 Router 永远看�
 本次只保证 terminal callback 闭环：
 
 1. 取消物理 target task 时，对已交付评论的 source callback 分别上报
-   `failed/cancelled`；
+   `executionStatus=canceled`，并保留 `failureReason=cancelled` 作为诊断信息；
 2. 单独取消一个 comment source、取消尚未交付的评论，或让共享物理 task
    继续执行，留给后续
    comment-level cancellation 设计。
@@ -451,6 +451,7 @@ Content-Type: application/json
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-08-14 | task completion outbox 和取消触发器新增 `canceled` 终态，reconciliation 同步按该值回调；既有 `failed/cancelled` 历史行不回填 | 取消是独立业务终态，不应继续被 Router 计入失败数和失败率；保留 failureReason 便于诊断但不再决定统计分类 |
 | 2026-07-29 | 初版提出独立 delegation 表、状态机和 completion resolver | 当时按“多个外部任务可合并到一个 Issue task 且分别回调”建模，导致实现超出 surface handoff 本身 |
 | 2026-07-30 | 重构为 Chat Dispatch → Issue Dispatch 桥接；删除 delegation 表和独立状态机，复用 task lineage、Issue materializer、completion outbox；callback 使用 root Agent ID | 澄清后确认两种 surface 已共享完整身份、创建和回调链路，新工具只需从可信源 task 取参数并切换 surface；同时保留 Router 的 Agent 校验 |
 | 2026-07-30 | 增加原子控制权边界、`completionCallback.updateUrl`、可靠 execution update outbox 及 update-before-terminal 顺序保证 | Issue 创建成功不能等价于外部任务完成；必须让 Chat 在失败时继续负责闭环，并在成功后把后台 Issue 快照可靠通知 Router，同时避免极快的 Issue 终态越过 handoff |

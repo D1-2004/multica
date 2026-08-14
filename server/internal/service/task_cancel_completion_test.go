@@ -129,7 +129,7 @@ func assertCancelledCompletion(
 	if rootID != rootTaskID ||
 		terminalID != terminalTaskID ||
 		requestID != "multica-terminal:"+rootTaskID ||
-		executionStatus != "failed" ||
+		executionStatus != "canceled" ||
 		resultMessage != wantReply ||
 		errMessage != "task cancelled" ||
 		failureReason != "cancelled" {
@@ -290,7 +290,7 @@ func TestCancelledDelegatedIssueTaskFansOutDeliveredCommentCallbacks(t *testing.
 			row[0] != want.sourceTaskID ||
 			row[1] != "multica-comment-terminal:"+want.sourceTaskID ||
 			row[2] != want.reply ||
-			row[3] != "failed" ||
+			row[3] != "canceled" ||
 			row[4] != "cancelled" {
 			t.Fatalf("cancel callback %s = %v", want.callbackURL, row)
 		}
