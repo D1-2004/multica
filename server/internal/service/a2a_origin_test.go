@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/events"
@@ -149,5 +150,38 @@ func TestA2ADEAPDWSTokenStaysOutOfDurableTaskContext(t *testing.T) {
 		db.Agent{},
 	); err == nil {
 		t.Fatal("request-scoped DEAP DWS identity was accepted without its request context")
+	}
+}
+
+func TestA2ADEAPDWSTokenSupportsASBDWSCapability(t *testing.T) {
+	const token = "deap-request-token-secret"
+	const digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	runtime := db.AgentRuntime{
+		RuntimeMode: "cloud",
+		Provider:    "hermes",
+		Metadata: []byte(fmt.Sprintf(
+			`{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"hermes","artifact_kind":"oci_image","artifact_ref":"registry.example/runtime@sha256:%s","artifact_digest":"sha256:%s","capabilities":["dws"]}`,
+			digest,
+			digest,
+		)),
+	}
+	taskContext := newA2ATaskContext(a2aintegration.InvocationIdentity{DEAPDWSToken: token})
+	requestContext := a2aintegration.WithInvocationIdentity(
+		context.Background(),
+		a2aintegration.InvocationIdentity{DEAPDWSToken: token},
+	)
+
+	env, err := (&FCE2BLauncher{}).identityEnvForTask(
+		requestContext,
+		db.AgentTaskQueue{Context: taskContext},
+		runtime,
+		"sandbox-asb-deap",
+		db.Agent{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(env) != 1 || env[protocol.DEAPDWSTokenEnvKey] != token {
+		t.Fatalf("ASB DEAP DWS environment = %#v", env)
 	}
 }

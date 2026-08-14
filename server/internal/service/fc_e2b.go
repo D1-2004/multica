@@ -2020,7 +2020,7 @@ func (l *FCE2BLauncher) identityEnvForTask(
 ) (map[string]string, error) {
 	if IsA2ATaskOrigin(task.Context) {
 		if requiresA2ADEAPDWSToken(task.Context) {
-			if !FCE2BRuntimeHasCapability(runtime, "dws") {
+			if !CloudSandboxRuntimeHasCapability(runtime, "dws") {
 				return nil, errors.New("A2A DEAP DWS identity requires a DWS-capable Runtime")
 			}
 			identity, ok := a2aintegration.InvocationIdentityFromContext(ctx)
