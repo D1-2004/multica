@@ -519,15 +519,26 @@ func waitForASBIdentitySourceBUC(
 			bucAgentID,
 		); err == nil {
 			return nil
-		} else if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
-			return err
 		} else {
-			lastErr = err
+			// A probe that starts just before the outer deadline can return the
+			// deadline itself. Preserve the last substantive result so a seed
+			// that consistently presented the wrong identity is still classified
+			// as requiring reauthorization after the full convergence window.
+			if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
+				lastErr = err
+			}
 		}
 		select {
 		case <-probeCtx.Done():
 			if !errors.Is(probeCtx.Err(), context.DeadlineExceeded) {
 				return probeCtx.Err()
+			}
+			if errors.Is(lastErr, ErrEnterpriseIdentityNeedsReauth) {
+				return fmt.Errorf(
+					"temporary ASB enterprise identity seed did not present the expected identity within %s: %w",
+					timeout,
+					ErrEnterpriseIdentityNeedsReauth,
+				)
 			}
 			return fmt.Errorf(
 				"temporary ASB enterprise identity seed did not become ready within %s: %w",

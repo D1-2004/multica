@@ -631,7 +631,60 @@ func TestAttachAndProbeASBIdentitySourceProbesAfterWireGuardConvergingResponse(t
 	}
 }
 
-func TestWaitForASBIdentitySourceBUCStopsImmediatelyWhenIdentityIsInvalid(t *testing.T) {
+func TestWaitForASBIdentitySourceBUCRetriesIdentityMismatchDuringConvergence(t *testing.T) {
+	const sandboxID = "identity-seed-converging"
+	probeCalls := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/endpoints/44772":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/exec",
+				"headers":  map[string]string{"X-Sandbox-Token": "endpoint-token"},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/exec/command":
+			probeCalls++
+			response.Header().Set("Content-Type", "text/event-stream")
+			if probeCalls == 1 {
+				_, _ = io.WriteString(
+					response,
+					"data: {\"type\":\"error\",\"error\":{\"ename\":\"CommandError\",\"evalue\":\"42\"}}\n"+
+						"data: {\"type\":\"execution_complete\",\"execution_time\":1}\n",
+				)
+				return
+			}
+			_, _ = io.WriteString(response, "data: {\"type\":\"execution_complete\",\"execution_time\":1}\n")
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewASBClient(ASBClientConfig{
+		BaseURL: server.URL,
+		APIKey:  "runtime-api-key",
+	})
+	if err != nil {
+		t.Fatalf("NewASBClient: %v", err)
+	}
+	if err := waitForASBIdentitySourceBUC(
+		context.Background(),
+		client,
+		sandboxID,
+		"12345",
+		"agent-multica-asb",
+		100*time.Millisecond,
+	); err != nil {
+		t.Fatalf("waitForASBIdentitySourceBUC() error = %v", err)
+	}
+	if probeCalls != 2 {
+		t.Fatalf("probe calls = %d, want exactly two", probeCalls)
+	}
+}
+
+func TestWaitForASBIdentitySourceBUCRequiresReauthAfterPersistentIdentityMismatch(t *testing.T) {
 	const sandboxID = "identity-seed-invalid"
 	probeCalls := 0
 	var server *httptest.Server
@@ -671,13 +724,13 @@ func TestWaitForASBIdentitySourceBUCStopsImmediatelyWhenIdentityIsInvalid(t *tes
 		sandboxID,
 		"12345",
 		"agent-multica-asb",
-		time.Second,
+		100*time.Millisecond,
 	)
 	if !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
 		t.Fatalf("waitForASBIdentitySourceBUC() error = %v, want needs reauth", err)
 	}
-	if probeCalls != 1 {
-		t.Fatalf("probe calls = %d, want exactly one", probeCalls)
+	if probeCalls < 2 {
+		t.Fatalf("probe calls = %d, want retries until timeout", probeCalls)
 	}
 }
 
