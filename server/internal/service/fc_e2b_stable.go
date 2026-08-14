@@ -3472,7 +3472,9 @@ func stableReleaseCapabilitiesForProvider(provider string, capabilities []string
 		case A2AInboundHermesCapability:
 			owner = "hermes"
 		case A2AInboundOpenCodeCapability:
-			owner = "opencode"
+			if !usesOpenCodeA2AInboundAdapter(provider) {
+				continue
+			}
 		case A2AInboundPiCapability:
 			owner = "pi"
 		case "dsh_trajectory_v1":

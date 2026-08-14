@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -42,6 +43,47 @@ type updateCloudSandboxArtifactRequest struct {
 	ArtifactBuildID string `json:"artifact_build_id"`
 	ArtifactAlias   string `json:"artifact_alias"`
 	ArtifactDigest  string `json:"artifact_digest"`
+}
+
+const asbArtifactValidationProgressInterval = 15 * time.Second
+
+type asbArtifactValidationOutcome struct {
+	manifest map[string]any
+	err      error
+}
+
+// validateASBArtifactWithProgress preserves the endpoint's final JSON status
+// while keeping long cold-image validation alive through gateways with a
+// shorter idle timeout. HTTP permits any number of informational 1xx responses
+// before the final response; 102 Processing therefore does not turn validation
+// failures into successful requests and does not require an in-memory job.
+func validateASBArtifactWithProgress(
+	ctx context.Context,
+	w http.ResponseWriter,
+	interval time.Duration,
+	validate func(context.Context) (map[string]any, error),
+) (map[string]any, error) {
+	if interval <= 0 {
+		return nil, errors.New("ASB artifact validation progress interval must be positive")
+	}
+	outcomeCh := make(chan asbArtifactValidationOutcome, 1)
+	go func() {
+		manifest, err := validate(ctx)
+		outcomeCh <- asbArtifactValidationOutcome{manifest: manifest, err: err}
+	}()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case outcome := <-outcomeCh:
+			return outcome.manifest, outcome.err
+		case <-ticker.C:
+			w.WriteHeader(http.StatusProcessing)
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		}
+	}
 }
 
 type updateASBRuntimeCredentialRequest struct {
@@ -833,7 +875,14 @@ func (h *Handler) UpdateCloudSandboxRuntimeArtifact(w http.ResponseWriter, r *ht
 		Alias:   strings.TrimSpace(req.ArtifactAlias),
 		Digest:  strings.ToLower(strings.TrimSpace(req.ArtifactDigest)),
 	}
-	manifest, err := h.ASBLauncher.VerifyStableArtifact(r.Context(), runtimeUUID, artifact)
+	manifest, err := validateASBArtifactWithProgress(
+		r.Context(),
+		w,
+		asbArtifactValidationProgressInterval,
+		func(ctx context.Context) (map[string]any, error) {
+			return h.ASBLauncher.VerifyStableArtifact(ctx, runtimeUUID, artifact)
+		},
+	)
 	if err != nil {
 		slog.Error("ASB candidate artifact update validation failed",
 			"error", err,

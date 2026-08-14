@@ -551,7 +551,7 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 	template := FCE2BTemplate{BuildID: "build-v7"}
 	published, err := applyFCE2BTemplateManifestAlias(
 		&template,
-		"multica-m7-v3904c2e827d58ad7-r1-9a6bfa",
+		"multica-m7-vda499f3161a007c0-r1-9a6bfa",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -570,6 +570,8 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 		LLMTraceCapability,
 		A2AInboundOpenCodeCapability,
 		A2AInvocationV2Capability,
+		A2AInboundHermesCapability,
+		A2AInboundPiCapability,
 		DSHTrajectoryCapability,
 	}; !reflect.DeepEqual(template.Capabilities, want) {
 		t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, want)

@@ -900,8 +900,8 @@ func TestStableReleaseCapabilitiesForProvider(t *testing.T) {
 		{"hermes", []string{"dws", A2AInboundHermesCapability}},
 		{"opencode", []string{"dws", A2AInboundOpenCodeCapability}},
 		{"pi", []string{"dws", A2AInboundPiCapability}},
-		{"dsh", []string{"dws", "dsh_trajectory_v1"}},
-		{"opencode-v2", []string{"dws"}},
+		{"dsh", []string{"dws", A2AInboundOpenCodeCapability, "dsh_trajectory_v1"}},
+		{"opencode-v2", []string{"dws", A2AInboundOpenCodeCapability}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.provider, func(t *testing.T) {
