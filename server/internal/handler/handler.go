@@ -180,6 +180,15 @@ type DaemonPendingWorkNotifier interface {
 	NotifyPendingWork(runtimeID, kind string)
 }
 
+type enterpriseIdentityService interface {
+	Run(context.Context)
+	StartBinding(context.Context, service.StartEnterpriseIdentityBindingInput) (service.StartEnterpriseIdentityBindingResult, error)
+	PrepareBindingCompletion(context.Context, string) (service.PreparedEnterpriseIdentityBinding, error)
+	CompletePreparedBinding(context.Context, service.PreparedEnterpriseIdentityBinding, string) (service.CompleteEnterpriseIdentityBindingResult, error)
+	Revoke(context.Context, pgtype.UUID, pgtype.UUID) error
+	ForceRotateIdentitySource(context.Context, pgtype.UUID, pgtype.UUID, string) (service.EnterpriseIdentitySourceRotationResult, error)
+}
+
 type Handler struct {
 	Queries                 *db.Queries
 	DB                      dbExecutor
@@ -197,7 +206,7 @@ type Handler struct {
 	A2APushWorker           *service.A2APushWorker
 	FCE2BLauncher           *service.FCE2BLauncher
 	ASBLauncher             *service.ASBLauncher
-	EnterpriseIdentity      *service.EnterpriseIdentityService
+	EnterpriseIdentity      enterpriseIdentityService
 	FCE2BStable             *service.FCE2BStableService
 	IssueService            *service.IssueService
 	IssueCommentService     *service.IssueCommentService

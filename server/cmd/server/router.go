@@ -2021,6 +2021,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/agent-identity/github/{connectionId}", h.DisconnectAgentIdentityGitHubConnection)
 					r.Get("/agent-identity/enterprise/status", h.GetAgentEnterpriseIdentityStatus)
 					r.Post("/agent-identity/enterprise/oauth/start", h.BeginAgentEnterpriseIdentityBinding)
+					r.With(handler.RequireHumanActor).Post("/agent-identity/enterprise/source/rotate", h.RotateAgentEnterpriseIdentitySource)
 					r.Delete("/agent-identity/enterprise", h.RevokeAgentEnterpriseIdentity)
 				})
 				// Slack integration (MUL-3666). Same admin/member split as

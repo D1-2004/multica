@@ -619,19 +619,21 @@ func attachASBBUCIdentityOnce(
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
 ) error {
-	// Submit the synchronous attachment exactly once. ASB can return the
-	// documented tunnel-converging response after it has started sandbox-side
-	// WireGuard setup. Repeating the POST restarts that setup and can keep the
-	// tunnel permanently unready. The caller therefore treats this one response
-	// as an in-progress attachment and proves completion through state and BUC
-	// probes only.
+	// Submit the synchronous attachment exactly once. In the current ASB
+	// implementation the bootstrap command is accepted before the optional
+	// status command runs. That status command can still report a converging
+	// tunnel or a transient egress-ops 404 and ASB wraps either result as HTTP
+	// 400. Both responses therefore mean "bootstrap submitted", not "submission
+	// rejected". Multica owns the bounded readiness window below and proves the
+	// exact BUC employee and Agent identity through execd. Never repeat this POST:
+	// every submission restarts wgclient and can prevent convergence.
 	err := client.AttachBUCIdentity(ctx, sandboxID, grant, true)
 	if err == nil {
 		return nil
 	}
-	if isASBWireGuardTunnelConverging(err) {
+	if isASBWireGuardPostAttachCheckPending(err) {
 		slog.Info(
-			"ASB BUC identity attachment is converging after single submission",
+			"ASB BUC identity bootstrap submitted; post-attach check is pending",
 			"sandbox_id", sandboxID,
 		)
 		return nil
@@ -639,15 +641,17 @@ func attachASBBUCIdentityOnce(
 	return err
 }
 
-func isASBWireGuardTunnelConverging(err error) bool {
+func isASBWireGuardPostAttachCheckPending(err error) bool {
 	var httpErr *ASBHTTPError
-	return errors.As(err, &httpErr) &&
-		httpErr.Operation == "attach_buc_identity" &&
-		httpErr.StatusCode == http.StatusBadRequest &&
-		strings.Contains(
-			strings.ToLower(httpErr.ErrorMessage),
-			"wireguard tunnel not ready yet",
-		)
+	if !errors.As(err, &httpErr) ||
+		httpErr.Operation != "attach_buc_identity" ||
+		httpErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(httpErr.ErrorMessage))
+	return strings.Contains(message, "wireguard tunnel not ready yet") ||
+		(strings.Contains(message, "failed to check wireguard status") &&
+			strings.Contains(message, "status code 404"))
 }
 
 func asbIdentityProbeInterval(timeout time.Duration) time.Duration {
