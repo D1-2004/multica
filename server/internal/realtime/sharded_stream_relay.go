@@ -87,7 +87,9 @@ type ShardedStreamRelay struct {
 	stopping bool
 	wg       sync.WaitGroup
 
+	deliverMu     sync.RWMutex
 	daemonRuntime DaemonRuntimeDeliverer
+	runnerMachine RunnerMachineDeliverer
 }
 
 func NewShardedStreamRelay(hub *Hub, writeRDB, readRDB *redis.Client, config ShardedStreamRelayConfig) *ShardedStreamRelay {
@@ -106,7 +108,15 @@ func NewShardedStreamRelay(hub *Hub, writeRDB, readRDB *redis.Client, config Sha
 func (r *ShardedStreamRelay) NodeID() string { return r.nodeID }
 
 func (r *ShardedStreamRelay) SetDaemonRuntimeDeliverer(d DaemonRuntimeDeliverer) {
+	r.deliverMu.Lock()
 	r.daemonRuntime = d
+	r.deliverMu.Unlock()
+}
+
+func (r *ShardedStreamRelay) SetRunnerMachineDeliverer(d RunnerMachineDeliverer) {
+	r.deliverMu.Lock()
+	r.runnerMachine = d
+	r.deliverMu.Unlock()
 }
 
 func (r *ShardedStreamRelay) Start(ctx context.Context) {
@@ -274,7 +284,11 @@ func (r *ShardedStreamRelay) deliverMessage(msg redis.XMessage) {
 	if !ok || ev.Scope == "" || ev.ScopeID == "" {
 		return
 	}
-	deliverEnvelope(r.hub, r.daemonRuntime, ev)
+	r.deliverMu.RLock()
+	daemonRuntime := r.daemonRuntime
+	runnerMachine := r.runnerMachine
+	r.deliverMu.RUnlock()
+	deliverEnvelope(r.hub, daemonRuntime, runnerMachine, ev)
 }
 
 func (r *ShardedStreamRelay) heartbeatLoop(ctx context.Context) {

@@ -45,6 +45,33 @@ func (r *MirroredRelay) SetDaemonRuntimeDeliverer(d DaemonRuntimeDeliverer) {
 	}
 }
 
+func (r *MirroredRelay) SetRunnerMachineDeliverer(d RunnerMachineDeliverer) {
+	if setter, ok := r.primary.(interface{ SetRunnerMachineDeliverer(RunnerMachineDeliverer) }); ok {
+		setter.SetRunnerMachineDeliverer(d)
+	}
+	if setter, ok := r.mirror.(interface{ SetRunnerMachineDeliverer(RunnerMachineDeliverer) }); ok {
+		setter.SetRunnerMachineDeliverer(d)
+	}
+}
+
+func (r *MirroredRelay) SubscribeRunnerMachine(scopeID string) {
+	if subscriber, ok := r.primary.(RunnerMachineScopeSubscriber); ok {
+		subscriber.SubscribeRunnerMachine(scopeID)
+	}
+	if subscriber, ok := r.mirror.(RunnerMachineScopeSubscriber); ok {
+		subscriber.SubscribeRunnerMachine(scopeID)
+	}
+}
+
+func (r *MirroredRelay) UnsubscribeRunnerMachine(scopeID string) {
+	if subscriber, ok := r.primary.(RunnerMachineScopeSubscriber); ok {
+		subscriber.UnsubscribeRunnerMachine(scopeID)
+	}
+	if subscriber, ok := r.mirror.(RunnerMachineScopeSubscriber); ok {
+		subscriber.UnsubscribeRunnerMachine(scopeID)
+	}
+}
+
 func (r *MirroredRelay) Start(ctx context.Context) {
 	r.primary.Start(ctx)
 	r.mirror.Start(ctx)
@@ -83,7 +110,7 @@ func (r *MirroredRelay) Broadcast(message []byte) {
 
 func (r *MirroredRelay) PublishWithID(scopeType, scopeID, exclude string, frame []byte, id string) error {
 	primaryErr := r.primary.PublishWithID(scopeType, scopeID, exclude, frame, id)
-	if scopeType == ScopeDaemonRuntime {
+	if scopeType == ScopeDaemonRuntime || scopeType == ScopeRunnerMachine {
 		return primaryErr
 	}
 	mirrorErr := r.mirror.PublishWithID(scopeType, scopeID, exclude, frame, id)

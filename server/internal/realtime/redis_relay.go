@@ -106,7 +106,7 @@ func redisString(v any) string {
 	}
 }
 
-func deliverEnvelope(hub *Hub, daemonRuntime DaemonRuntimeDeliverer, ev envelope) {
+func deliverEnvelope(hub *Hub, daemonRuntime DaemonRuntimeDeliverer, runnerMachine RunnerMachineDeliverer, ev envelope) {
 	if ev.PayloadJSON == "" {
 		return
 	}
@@ -115,6 +115,10 @@ func deliverEnvelope(hub *Hub, daemonRuntime DaemonRuntimeDeliverer, ev envelope
 	case ScopeDaemonRuntime:
 		if daemonRuntime != nil {
 			daemonRuntime.DeliverDaemonRuntime(ev.ScopeID, frame, ev.EventID)
+		}
+	case ScopeRunnerMachine:
+		if runnerMachine != nil {
+			runnerMachine.DeliverRunnerMachine(ev.ScopeID, frame, ev.EventID)
 		}
 	case "global":
 		hub.fanoutAllDedup(frame, "", ev.EventID)
@@ -137,9 +141,12 @@ type RedisRelay struct {
 	mu        sync.Mutex
 	consumers map[scopeKey]*scopeConsumer
 	stopping  bool
+	startCtx  context.Context
 	wg        sync.WaitGroup
 
+	deliverMu     sync.RWMutex
 	daemonRuntime DaemonRuntimeDeliverer
+	runnerMachine RunnerMachineDeliverer
 }
 
 type scopeConsumer struct {
@@ -174,7 +181,15 @@ func NewRedisRelayWithClients(hub *Hub, writeRDB, readRDB *redis.Client) *RedisR
 func (r *RedisRelay) NodeID() string { return r.nodeID }
 
 func (r *RedisRelay) SetDaemonRuntimeDeliverer(d DaemonRuntimeDeliverer) {
+	r.deliverMu.Lock()
 	r.daemonRuntime = d
+	r.deliverMu.Unlock()
+}
+
+func (r *RedisRelay) SetRunnerMachineDeliverer(d RunnerMachineDeliverer) {
+	r.deliverMu.Lock()
+	r.runnerMachine = d
+	r.deliverMu.Unlock()
 }
 
 // Wait blocks until all relay-owned goroutines have exited after the Start
@@ -202,6 +217,9 @@ func (r *RedisRelay) Stop() {
 // about. ctx controls all background goroutines: cancelling it shuts the
 // relay down.
 func (r *RedisRelay) Start(ctx context.Context) {
+	r.mu.Lock()
+	r.startCtx = ctx
+	r.mu.Unlock()
 	M.NodeID.Store(r.nodeID)
 	if err := r.writeRDB.Ping(ctx).Err(); err != nil {
 		slog.Error("realtime/redis: initial ping failed", "error", err)
@@ -237,6 +255,24 @@ func (r *RedisRelay) Start(ctx context.Context) {
 		defer r.wg.Done()
 		r.consumerSweeper(ctx)
 	}()
+}
+
+func (r *RedisRelay) SubscribeRunnerMachine(scopeID string) {
+	r.mu.Lock()
+	ctx := r.startCtx
+	stopping := r.stopping
+	r.mu.Unlock()
+	if ctx == nil || stopping || scopeID == "" {
+		return
+	}
+	r.startConsumer(ctx, ScopeRunnerMachine, scopeID)
+}
+
+func (r *RedisRelay) UnsubscribeRunnerMachine(scopeID string) {
+	if scopeID == "" {
+		return
+	}
+	r.stopConsumer(ScopeRunnerMachine, scopeID)
 }
 
 // BroadcastToScope publishes message into the scope's Redis stream. The
@@ -404,7 +440,11 @@ func (r *RedisRelay) deliverMessage(scopeType, scopeID string, msg redis.XMessag
 	if ev.ScopeID == "" {
 		ev.ScopeID = scopeID
 	}
-	deliverEnvelope(r.hub, r.daemonRuntime, ev)
+	r.deliverMu.RLock()
+	daemonRuntime := r.daemonRuntime
+	runnerMachine := r.runnerMachine
+	r.deliverMu.RUnlock()
+	deliverEnvelope(r.hub, daemonRuntime, runnerMachine, ev)
 }
 
 // fanoutUser is implemented in hub.go.

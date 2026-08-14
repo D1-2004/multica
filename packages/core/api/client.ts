@@ -217,6 +217,20 @@ import type {
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
 import type {
+  CreateRunnerPairingResponse,
+  CreateRunnerReconnectCommandResponse,
+  RunnerDeviceAuthorization,
+  RunnerDeviceAuthorizationResult,
+  RunnerMachineBindingList,
+} from "../runner/types";
+import {
+  CreateRunnerPairingResponseSchema,
+  CreateRunnerReconnectCommandResponseSchema,
+  RunnerDeviceAuthorizationResultSchema,
+  RunnerDeviceAuthorizationSchema,
+  RunnerMachineBindingListSchema,
+} from "../runner/schemas";
+import type {
   CloudRuntimeNode,
   CreateCloudSandboxRuntimeRequest,
   CreateCloudSandboxStableReleaseRequest,
@@ -1674,6 +1688,75 @@ export class ApiClient {
 
   async restoreAgent(id: string): Promise<Agent> {
     return this.fetch(`/api/agents/${id}/restore`, { method: "POST" });
+  }
+
+  async listAgentRunnerBindings(
+    agentId: string,
+  ): Promise<RunnerMachineBindingList> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${agentId}/runner-bindings`,
+    );
+    return RunnerMachineBindingListSchema.parse(raw);
+  }
+
+  async createAgentRunnerPairing(
+    agentId: string,
+  ): Promise<CreateRunnerPairingResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${agentId}/runner-pairings`,
+      { method: "POST" },
+    );
+    return CreateRunnerPairingResponseSchema.parse(raw);
+  }
+
+  async revokeAgentRunnerBinding(
+    agentId: string,
+    bindingId: string,
+  ): Promise<void> {
+    await this.fetch(`/api/agents/${agentId}/runner-bindings/${bindingId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async disconnectAgentRunnerBinding(
+    agentId: string,
+    bindingId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/agents/${agentId}/runner-bindings/${bindingId}/disconnect`,
+      { method: "POST" },
+    );
+  }
+
+  async createAgentRunnerReconnectCommand(
+    agentId: string,
+    bindingId: string,
+  ): Promise<CreateRunnerReconnectCommandResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${agentId}/runner-bindings/${bindingId}/reconnect-command`,
+      { method: "POST" },
+    );
+    return CreateRunnerReconnectCommandResponseSchema.parse(raw);
+  }
+
+  async getRunnerDeviceAuthorization(
+    userCode: string,
+  ): Promise<RunnerDeviceAuthorization> {
+    const raw = await this.fetch<unknown>(
+      `/api/runner/device-authorizations/${encodeURIComponent(userCode)}`,
+    );
+    return RunnerDeviceAuthorizationSchema.parse(raw);
+  }
+
+  async finishRunnerDeviceAuthorization(
+    userCode: string,
+    action: "approve" | "deny",
+  ): Promise<RunnerDeviceAuthorizationResult> {
+    const raw = await this.fetch<unknown>(
+      `/api/runner/device-authorizations/${encodeURIComponent(userCode)}/${action}`,
+      { method: "POST" },
+    );
+    return RunnerDeviceAuthorizationResultSchema.parse(raw);
   }
 
   // Bulk-cancel every active task (queued/dispatched/running) for the agent.

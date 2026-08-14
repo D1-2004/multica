@@ -5875,6 +5875,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		} else {
 			effectiveMcpConfig = merged
 		}
+		routedMcpConfig, routeErr := rebaseManagedRunnerMCP(effectiveMcpConfig, d.cfg.ServerBaseURL)
+		if routeErr != nil {
+			return TaskResult{}, fmt.Errorf("route managed Runner MCP through daemon server: %w", routeErr)
+		}
+		effectiveMcpConfig = routedMcpConfig
 		if provider == "cursor" {
 			cursorMcpAuthSource = strings.TrimSpace(task.Agent.CustomEnv[execenv.CursorMcpAuthSourceEnv])
 		}

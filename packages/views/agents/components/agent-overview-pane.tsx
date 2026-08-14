@@ -40,6 +40,7 @@ import { IntegrationsTab } from "./tabs/integrations-tab";
 import { IdentityTab } from "./tabs/identity-tab";
 import { RuntimeConfigTab } from "./tabs/runtime-config-tab";
 import { LLMTraceTab } from "./tabs/llm-trace-tab";
+import { RunnerTab } from "./tabs/runner-tab";
 import { AgentDetailInspector } from "./agent-detail-inspector";
 import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
@@ -55,6 +56,7 @@ export type DetailTab =
   | "instructions"
   | "skills"
   | "mcp_config"
+  | "runner"
   | "composio_mcp"
   | "integrations"
   | "identity"
@@ -71,6 +73,7 @@ type SecondaryTab = {
     | "instructions"
     | "skills"
     | "mcp_config"
+    | "runner"
     | "composio_mcp"
     | "integrations"
     | "identity"
@@ -86,6 +89,7 @@ const CAPABILITY_TABS: SecondaryTab[] = [
   { id: "instructions", labelKey: "instructions" },
   { id: "skills", labelKey: "skills" },
   { id: "mcp_config", labelKey: "mcp_config" },
+  { id: "runner", labelKey: "runner" },
   { id: "composio_mcp", labelKey: "composio_mcp" },
   { id: "integrations", labelKey: "integrations" },
   { id: "identity", labelKey: "identity" },
@@ -224,6 +228,7 @@ export function AgentOverviewPane({
 
     return CAPABILITY_TABS.filter((tab) => {
       if (tab.id === "mcp_config") return showMcp;
+      if (tab.id === "runner") return canEdit;
       if (tab.id === "composio_mcp") return showComposioMcp;
       if (tab.id === "integrations") return integrationsConfigured;
       if (tab.id === "identity") {
@@ -235,6 +240,7 @@ export function AgentOverviewPane({
     agent.owner_id,
     composioMCPAppsEnabled,
     currentUserId,
+    canEdit,
     dingtalkAccountListing?.configured,
     integrationsConfigured,
     runtime,
@@ -472,6 +478,14 @@ export function AgentOverviewPane({
                       runtime={runtime}
                       onSave={(updates) => onUpdate(agent.id, updates)}
                       onDirtyChange={setActiveDirty}
+                    />
+                  )}
+                  {effectiveView === "runner" && (
+                    <RunnerTab
+                      agent={agent}
+                      canBind={
+                        !!currentUserId && agent.owner_id === currentUserId
+                      }
                     />
                   )}
                   {effectiveView === "composio_mcp" && (
