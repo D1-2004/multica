@@ -3417,11 +3417,12 @@ func runtimeUsesArtifact(runtime db.AgentRuntime, ref, buildID, digest string) b
 }
 
 func runtimeUsesStableRelease(runtime db.AgentRuntime, release FCE2BStableRelease) bool {
+	var bindingMatches bool
 	switch SandboxBackendKind(release.SandboxBackend) {
 	case SandboxBackendAliyunFC:
-		return runtimeUsesTemplate(runtime, release.TemplateID, release.TemplateBuildID)
+		bindingMatches = runtimeUsesTemplate(runtime, release.TemplateID, release.TemplateBuildID)
 	case SandboxBackendASB:
-		return runtimeUsesArtifact(
+		bindingMatches = runtimeUsesArtifact(
 			runtime,
 			release.ArtifactRef,
 			release.ArtifactBuildID,
@@ -3430,6 +3431,59 @@ func runtimeUsesStableRelease(runtime db.AgentRuntime, release FCE2BStableReleas
 	default:
 		return false
 	}
+	if !bindingMatches {
+		return false
+	}
+	metadata, err := ParseCloudSandboxRuntime(runtime)
+	if err != nil {
+		return false
+	}
+	expectedManifestVersion := intMetadataValue(release.Manifest, "schema_version")
+	expectedRunnerProtocol := stringMetadataValue(release.Manifest, "runner_protocol")
+	expectedCapabilities := manifestStringSliceForBackend(
+		release.Manifest,
+		"capabilities_by_backend",
+		release.SandboxBackend,
+	)
+	if SandboxBackendKind(release.SandboxBackend) == SandboxBackendAliyunFC {
+		// FC persists the capabilities that the immutable Runtime provider can
+		// actually expose. A backend manifest may also advertise capabilities
+		// owned by sibling providers (for example OpenCode A2A on a Hermes
+		// Runtime), so comparing against the whole backend list rejects a
+		// successful template rotation even though its database readback is
+		// correct.
+		expectedCapabilities = stableReleaseCapabilitiesForProvider(metadata.Provider, expectedCapabilities)
+	}
+	return expectedManifestVersion > 0 &&
+		expectedRunnerProtocol != "" &&
+		len(expectedCapabilities) > 0 &&
+		metadata.ManifestVersion == expectedManifestVersion &&
+		metadata.RunnerProtocol == expectedRunnerProtocol &&
+		containsAllStrings(metadata.Capabilities, expectedCapabilities...)
+}
+
+func stableReleaseCapabilitiesForProvider(provider string, capabilities []string) []string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	filtered := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		capability = strings.ToLower(strings.TrimSpace(capability))
+		var owner string
+		switch capability {
+		case A2AInboundHermesCapability:
+			owner = "hermes"
+		case A2AInboundOpenCodeCapability:
+			owner = "opencode"
+		case A2AInboundPiCapability:
+			owner = "pi"
+		case "dsh_trajectory_v1":
+			owner = "dsh"
+		}
+		if owner != "" && owner != provider {
+			continue
+		}
+		filtered = append(filtered, capability)
+	}
+	return normalizeCloudSandboxCapabilities(filtered)
 }
 
 func isUniqueViolation(err error) bool {
