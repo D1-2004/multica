@@ -50,6 +50,7 @@ var (
 	ErrEnterpriseIdentityDisabled         = errors.New("enterprise identity is not configured")
 	ErrEnterpriseIdentityNeedsReauth      = errors.New("enterprise identity requires employee reauthorization")
 	ErrEnterpriseIdentityEmployeeConflict = errors.New("enterprise identity must be revoked before binding another employee")
+	ErrEnterpriseIdentitySourceChanged    = errors.New("enterprise identity source no longer matches the expected predecessor")
 
 	enterpriseEmployeeIDPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 	enterprisePathPartPattern   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -1473,13 +1474,20 @@ func (s *EnterpriseIdentityService) refreshIdentitySource(
 }
 
 // ForceRotateIdentitySource rotates the source currently bound to an active
-// Agent without relying on the periodic age threshold. Callers do not choose a
-// predecessor: the current source is resolved and locked by the service.
+// Agent without relying on the periodic age threshold. The expected predecessor
+// makes repeated asynchronous requests idempotent after the current source changes.
 func (s *EnterpriseIdentityService) ForceRotateIdentitySource(
 	ctx context.Context,
 	workspaceID pgtype.UUID,
 	agentID pgtype.UUID,
+	expectedPredecessorSandboxID string,
 ) (EnterpriseIdentitySourceRotationResult, error) {
+	expectedPredecessorSandboxID = strings.TrimSpace(expectedPredecessorSandboxID)
+	if expectedPredecessorSandboxID == "" {
+		return EnterpriseIdentitySourceRotationResult{}, errors.New(
+			"expected ASB enterprise identity predecessor sandbox is required",
+		)
+	}
 	current, releaseLocks, err := s.lockEnterpriseIdentityForSourceMutation(
 		ctx,
 		workspaceID,
@@ -1496,6 +1504,9 @@ func (s *EnterpriseIdentityService) ForceRotateIdentitySource(
 		!current.AuthxRefreshExpiresAt.Valid ||
 		!current.AuthxRefreshExpiresAt.Time.After(s.Now()) {
 		return EnterpriseIdentitySourceRotationResult{}, ErrEnterpriseIdentityNeedsReauth
+	}
+	if current.BucIdentitySourceSandboxID.String != expectedPredecessorSandboxID {
+		return EnterpriseIdentitySourceRotationResult{}, ErrEnterpriseIdentitySourceChanged
 	}
 	return s.rotateIdentitySourceUnderLock(ctx, current)
 }

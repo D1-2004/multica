@@ -52,20 +52,19 @@ type startAgentEnterpriseIdentityResponse struct {
 }
 
 type rotateAgentEnterpriseIdentitySourceRequest struct {
-	AgentID string `json:"agent_id"`
+	AgentID                   string `json:"agent_id"`
+	ExpectedPreviousSandboxID string `json:"expected_previous_sandbox_id"`
 }
 
-type rotateAgentEnterpriseIdentitySourceResponse struct {
-	PreviousRuntimeID  string `json:"previous_runtime_id"`
-	PreviousSandboxID  string `json:"previous_sandbox_id"`
-	RuntimeID          string `json:"runtime_id"`
-	SandboxID          string `json:"sandbox_id"`
-	AffectedReferences int64  `json:"affected_references"`
+type rotateAgentEnterpriseIdentitySourceAcceptedResponse struct {
+	Status                    string `json:"status"`
+	ExpectedPreviousSandboxID string `json:"expected_previous_sandbox_id"`
 }
 
 const (
-	enterpriseIdentityCallbackTimeout      = 15 * time.Minute
-	enterpriseIdentityCallbackPollInterval = 2 * time.Second
+	enterpriseIdentityCallbackTimeout       = 15 * time.Minute
+	enterpriseIdentityCallbackPollInterval  = 2 * time.Second
+	enterpriseIdentitySourceRotationTimeout = 5 * time.Minute
 )
 
 func (h *Handler) GetAgentEnterpriseIdentityStatus(w http.ResponseWriter, r *http.Request) {
@@ -389,21 +388,71 @@ func (h *Handler) RotateAgentEnterpriseIdentitySource(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	result, err := h.EnterpriseIdentity.ForceRotateIdentitySource(
-		r.Context(),
-		workspaceID,
-		agent.ID,
-	)
-	if err != nil {
-		writeEnterpriseIdentityError(w, r, "rotate_source", workspaceID, agent.ID, err)
+	expectedPreviousSandboxID := strings.TrimSpace(request.ExpectedPreviousSandboxID)
+	if expectedPreviousSandboxID == "" {
+		writeError(w, http.StatusBadRequest, "expected_previous_sandbox_id is required")
 		return
 	}
-	writeJSON(w, http.StatusOK, rotateAgentEnterpriseIdentitySourceResponse{
-		PreviousRuntimeID:  util.UUIDToString(result.PreviousRuntimeID),
-		PreviousSandboxID:  result.PreviousSandboxID,
-		RuntimeID:          util.UUIDToString(result.RuntimeID),
-		SandboxID:          result.SandboxID,
-		AffectedReferences: result.AffectedReferences,
+
+	requestAttrs := logger.RequestAttrs(r)
+	rotationContext, cancelRotation := context.WithTimeout(
+		context.WithoutCancel(r.Context()),
+		enterpriseIdentitySourceRotationTimeout,
+	)
+	go func() {
+		defer cancelRotation()
+		result, rotateErr := h.EnterpriseIdentity.ForceRotateIdentitySource(
+			rotationContext,
+			workspaceID,
+			agent.ID,
+			expectedPreviousSandboxID,
+		)
+		if rotateErr != nil {
+			status := "failed"
+			switch {
+			case errors.Is(rotateErr, service.ErrEnterpriseIdentitySourceChanged):
+				status = "stale_predecessor"
+			case errors.Is(rotateErr, service.ErrEnterpriseIdentityNeedsReauth):
+				status = "needs_reauthorization"
+			case errors.Is(rotateErr, context.DeadlineExceeded):
+				status = "timed_out"
+			}
+			slog.Warn(
+				"ASB enterprise identity source force rotation failed",
+				append(requestAttrs,
+					"workspace_id", util.UUIDToString(workspaceID),
+					"agent_id", util.UUIDToString(agent.ID),
+					"expected_predecessor_sandbox_id", expectedPreviousSandboxID,
+					"status", status,
+				)...,
+			)
+			return
+		}
+		slog.Info(
+			"ASB enterprise identity source force rotation completed",
+			append(requestAttrs,
+				"workspace_id", util.UUIDToString(workspaceID),
+				"agent_id", util.UUIDToString(agent.ID),
+				"previous_runtime_id", util.UUIDToString(result.PreviousRuntimeID),
+				"previous_sandbox_id", result.PreviousSandboxID,
+				"runtime_id", util.UUIDToString(result.RuntimeID),
+				"sandbox_id", result.SandboxID,
+				"affected_references", result.AffectedReferences,
+			)...,
+		)
+	}()
+
+	slog.Info(
+		"ASB enterprise identity source force rotation accepted",
+		append(requestAttrs,
+			"workspace_id", util.UUIDToString(workspaceID),
+			"agent_id", util.UUIDToString(agent.ID),
+			"expected_predecessor_sandbox_id", expectedPreviousSandboxID,
+		)...,
+	)
+	writeJSON(w, http.StatusAccepted, rotateAgentEnterpriseIdentitySourceAcceptedResponse{
+		Status:                    "accepted",
+		ExpectedPreviousSandboxID: expectedPreviousSandboxID,
 	})
 }
 
