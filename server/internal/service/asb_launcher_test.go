@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -220,6 +221,31 @@ func TestASBBoundIdentityDeclaresRuntimeIdentityAttachments(t *testing.T) {
 	}
 }
 
+func TestASBTaskIdentityProbeUsesEmployeeBoundary(t *testing.T) {
+	t.Parallel()
+
+	bucCommand := asbTaskBUCIdentityProbeCommand()
+	if !strings.Contains(bucCommand, "EXPECTED_EMP_ID") ||
+		!strings.Contains(bucCommand, "agentId") {
+		t.Fatalf("task BUC probe does not verify employee identity and agent presence: %q", bucCommand)
+	}
+	if strings.Contains(bucCommand, "EXPECTED_BUC_AGENT_ID") {
+		t.Fatalf("task BUC probe incorrectly requires the source OAuth agent ID: %q", bucCommand)
+	}
+	for name, command := range map[string]string{
+		"buc":    bucCommand,
+		"buc_a1": asbTaskEnterpriseIdentityProbeCommand(),
+	} {
+		command := command
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if output, err := exec.Command("bash", "-n", "-c", command).CombinedOutput(); err != nil {
+				t.Fatalf("task identity probe shell syntax: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
 func TestASBLauncherExplicitlyInheritsBUCBeforeAgentIdentityProbe(t *testing.T) {
 	t.Parallel()
 
@@ -342,7 +368,7 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 				t.Fatalf("decode ASB exec request: %v", err)
 			}
 			response.Header().Set("Content-Type", "text/event-stream")
-			if input.Command == asbBUCOnlyIdentityProbeCommand() {
+			if input.Command == asbTaskBUCIdentityProbeCommand() {
 				_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 				return
 			}
