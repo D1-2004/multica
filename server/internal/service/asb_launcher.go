@@ -1390,7 +1390,6 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(
 		ctx,
 		sandboxID,
 		identity.RawEmployeeID,
-		identity.BUCAgentID,
 		grant,
 		attachmentNeedsRetry,
 		timeout,
@@ -1405,12 +1404,11 @@ func (l *ASBLauncher) ensureSandboxBUCIdentityAttached(
 	sandboxID string,
 	identity ASBResolvedIdentity,
 ) error {
-	if err := probeASBIdentitySourceBUC(
+	if err := probeASBTaskBUCIdentity(
 		ctx,
 		l.Client,
 		sandboxID,
 		identity.RawEmployeeID,
-		identity.BUCAgentID,
 	); err == nil {
 		return nil
 	}
@@ -1420,12 +1418,115 @@ func (l *ASBLauncher) ensureSandboxBUCIdentityAttached(
 		OriginalSandboxID:    identity.SourceSandboxID,
 	}
 	// Submit once without ASB's optional synchronous status command. The
-	// bounded exact-identity probe below is the authoritative readiness check;
-	// repeating this POST would restart wgclient and delay convergence.
+	// bounded employee-identity and CLI probe below is the authoritative
+	// readiness check; repeating this POST would restart wgclient and delay
+	// convergence.
 	if err := l.Client.AttachBUCIdentity(ctx, sandboxID, grant, false); err != nil {
 		return fmt.Errorf("attach inherited ASB BUC identity: %w", err)
 	}
 	return nil
+}
+
+// Task sandboxes inherit the employee's BUC identity from a source sandbox,
+// but ASB may expose a different non-empty zero-trust agentId for the child
+// sandbox. The source-establishment path still verifies the configured BUC
+// agentId exactly. At task startup the security boundary is the exact employee
+// match plus a present agentId; requiring the source OAuth agentId here rejects
+// a valid inherited identity before the Runtime can start.
+func probeASBTaskBUCIdentity(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+	employeeID string,
+) error {
+	return probeASBTaskIdentityCommand(
+		ctx,
+		client,
+		sandboxID,
+		employeeID,
+		asbTaskBUCIdentityProbeCommand(),
+		15*time.Second,
+	)
+}
+
+func probeASBTaskEnterpriseIdentity(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+	employeeID string,
+) error {
+	return probeASBTaskIdentityCommand(
+		ctx,
+		client,
+		sandboxID,
+		employeeID,
+		asbTaskEnterpriseIdentityProbeCommand(),
+		60*time.Second,
+	)
+}
+
+func probeASBTaskIdentityCommand(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+	employeeID string,
+	command string,
+	timeout time.Duration,
+) error {
+	endpoint, err := client.GetEndpoint(ctx, sandboxID, asbExecPort)
+	if err != nil {
+		if sandbox, stateErr := client.GetSandbox(ctx, sandboxID); stateErr == nil {
+			return fmt.Errorf(
+				"resolve ASB command endpoint for task identity probe (sandbox_state=%s): %w",
+				strings.ToLower(strings.TrimSpace(sandbox.Status.State)),
+				err,
+			)
+		}
+		return fmt.Errorf("resolve ASB command endpoint for task identity probe: %w", err)
+	}
+	result, err := client.Exec(ctx, endpoint, ASBExecInput{
+		Command: command,
+		CWD:     "/",
+		Timeout: timeout,
+		Envs: map[string]string{
+			"HOME":            asbRunnerHome,
+			"USER":            "user",
+			"LOGNAME":         "user",
+			"EXPECTED_EMP_ID": employeeID,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode == nil || *result.ExitCode != 0 || result.ErrorName != "" {
+		stage := asbIdentityProbeStage(result.Stderr)
+		if stage == "" {
+			stage = "unknown"
+		}
+		return &asbEnterpriseCLIIdentityProbeError{stage: stage}
+	}
+	return nil
+}
+
+func asbTaskBUCIdentityProbeCommand() string {
+	return "set -euo pipefail; " +
+		"printf 'probe_stage=buc\\n' >&2; " +
+		"curl -fsS --max-time 10 -X POST " +
+		"'https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json' | " +
+		"/opt/task-python/bin/python -c '" +
+		"import json,os,sys; p=json.load(sys.stdin); d=p.get(\"content\",{}).get(\"data\",{}); " +
+		"ok=p.get(\"success\") is True and str(p.get(\"errorCode\")) == \"0\" and " +
+		"str(d.get(\"empId\", \"\")) == os.environ[\"EXPECTED_EMP_ID\"] and " +
+		"bool(str(d.get(\"agentId\", \"\")).strip()); " +
+		"raise SystemExit(0 if ok else 1)" +
+		"'"
+}
+
+func asbTaskEnterpriseIdentityProbeCommand() string {
+	return asbTaskBUCIdentityProbeCommand() + "; " +
+		"printf 'probe_stage=a1\\n' >&2; " +
+		"a1 --no-update-check -f json auth whoami >/dev/null; " +
+		"printf 'probe_stage=complete\\n' >&2"
 }
 
 func isASBAgentIdentityAttachmentConverging(err error) bool {
@@ -1444,7 +1545,6 @@ func (l *ASBLauncher) waitSandboxBUCIdentityReady(
 	ctx context.Context,
 	sandboxID string,
 	employeeID string,
-	bucAgentID string,
 	agentIdentityGrant ASBAgentIdentityGrant,
 	attachmentNeedsRetry bool,
 	timeout time.Duration,
@@ -1458,12 +1558,11 @@ func (l *ASBLauncher) waitSandboxBUCIdentityReady(
 	defer ticker.Stop()
 	var lastErr error
 	for {
-		if err := probeASBBUCIdentity(
+		if err := probeASBTaskEnterpriseIdentity(
 			ctx,
 			l.Client,
 			sandboxID,
 			employeeID,
-			bucAgentID,
 		); err == nil {
 			return nil
 		} else {
