@@ -1012,6 +1012,71 @@ func TestEnterpriseIdentityReusesSharedSourceAcrossAgentsAndRuntimes(t *testing.
 	}
 }
 
+func TestEnterpriseIdentityReauthorizationCreatesFreshSource(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 15, 1, 0, 0, 0, time.UTC)
+	workspaceID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
+	boundBy := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	runtimeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	store := &fakeEnterpriseIdentityStore{reusable: db.AgentEnterpriseIdentity{
+		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+		WorkspaceID:                workspaceID,
+		RawEmpID:                   "12345",
+		BucAgentID:                 "buc-agent-1",
+		BucIdentitySourceSandboxID: pgtype.Text{String: "expired-source-1", Valid: true},
+		BucIdentitySourceRuntimeID: runtimeID,
+		Status:                     "active",
+		BoundBy:                    boundBy,
+	}}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{},
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+	source := serviceUnderTest.Source.(*fakeEnterpriseIdentitySource)
+	tokens := BUCIdentityTokens{
+		AccessToken:  "fresh-access",
+		RefreshToken: "fresh-refresh",
+		IDToken:      "fresh-id",
+	}
+	availability, created, err := serviceUnderTest.provisionIdentitySourceForBinding(
+		context.Background(),
+		enterpriseIdentitySourceKey{
+			WorkspaceID:   workspaceID,
+			BoundBy:       boundBy,
+			RuntimeID:     runtimeID,
+			TenantLockKey: 42,
+			RawEmployeeID: "12345",
+			BUCAgentID:    "buc-agent-1",
+		},
+		[]pgtype.UUID{runtimeID},
+		tokens,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("provisionIdentitySourceForBinding: %v", err)
+	}
+	if !created || availability.SandboxID != "identity-source-1" ||
+		availability.RuntimeID != runtimeID {
+		t.Fatalf("fresh source availability = %#v, created=%t", availability, created)
+	}
+	if source.createCalls != 1 || source.tokens != tokens || source.key.RuntimeID != runtimeID {
+		t.Fatalf("fresh source creation = calls:%d tokens:%#v key:%#v", source.createCalls, source.tokens, source.key)
+	}
+	if len(source.prepared) != 0 || len(source.parked) != 0 {
+		t.Fatalf(
+			"reauthorization reused stale source: prepare=%v park=%v",
+			source.prepared,
+			source.parked,
+		)
+	}
+}
+
 func TestEnterpriseIdentitySourceLockUsesSharedTenantAcrossRuntimes(t *testing.T) {
 	t.Parallel()
 
