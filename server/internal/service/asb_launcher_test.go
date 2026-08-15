@@ -184,7 +184,7 @@ func TestASBA2ATaskResolvesAgentEnterpriseIdentity(t *testing.T) {
 	}
 }
 
-func TestASBBoundIdentityDeclaresRuntimeIdentityAttachments(t *testing.T) {
+func TestASBBoundIdentityDeclaresCreateTimeBUCInheritance(t *testing.T) {
 	t.Parallel()
 
 	identity := ASBResolvedIdentity{
@@ -203,18 +203,16 @@ func TestASBBoundIdentityDeclaresRuntimeIdentityAttachments(t *testing.T) {
 	}
 	extensions := identity.sandboxExtensions("wireguard-credentials")
 	for key, expected := range map[string]string{
-		"spiffe.lazyAuth":    "true",
-		"wireguard.lazyAuth": "true",
+		"spiffe.lazyAuth":          "true",
+		"wireguard.worker":         identity.RawEmployeeID,
+		"wireguard.uemCredentials": "wireguard-credentials",
+		"buc.originalSandboxID":    identity.SourceSandboxID,
 	} {
 		if extensions[key] != expected {
 			t.Fatalf("bound sandbox extension %s = %q, want %q", key, extensions[key], expected)
 		}
 	}
-	for _, forbidden := range []string{
-		"wireguard.worker",
-		"wireguard.uemCredentials",
-		"buc.originalSandboxID",
-	} {
+	for _, forbidden := range []string{"wireguard.lazyAuth"} {
 		if _, ok := extensions[forbidden]; ok {
 			t.Fatalf("bound sandbox extension %q mixes create-time and runtime BUC attachment", forbidden)
 		}
@@ -246,12 +244,10 @@ func TestASBTaskIdentityProbeUsesEmployeeBoundary(t *testing.T) {
 	}
 }
 
-func TestASBLauncherExplicitlyInheritsBUCBeforeAgentIdentityProbe(t *testing.T) {
+func TestASBLauncherAttachesAgentIdentityBeforeInheritedIdentityProbe(t *testing.T) {
 	t.Parallel()
 
-	var bucGrant ASBBUCIdentityGrant
 	var spiffeGrant ASBAgentIdentityGrant
-	var bucAttached atomic.Bool
 	var spiffeAttached atomic.Bool
 	var probeCalls atomic.Int32
 	var server *httptest.Server
@@ -267,32 +263,13 @@ func TestASBLauncherExplicitlyInheritsBUCBeforeAgentIdentityProbe(t *testing.T) 
 			request.URL.Path == "/execd/command":
 			probeCalls.Add(1)
 			response.Header().Set("Content-Type", "text/event-stream")
-			if !bucAttached.Load() {
-				_, _ = io.WriteString(response, `data: {"type":"stderr","text":"probe_stage=buc\n"}`+"\n")
-				_, _ = io.WriteString(response, `data: {"type":"error","error":{"ename":"CommandExecError","evalue":"1"}}`+"\n")
-				_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
-				return
-			}
 			if !spiffeAttached.Load() {
 				http.Error(response, "SPIFFE identity must be attached before the combined CLI probe", http.StatusConflict)
 				return
 			}
 			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 		case request.Method == http.MethodPost &&
-			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/wireguard":
-			if request.URL.Query().Get("sync") != "false" {
-				t.Fatalf("BUC identity sync = %q", request.URL.Query().Get("sync"))
-			}
-			if err := json.NewDecoder(request.Body).Decode(&bucGrant); err != nil {
-				t.Fatalf("decode BUC identity: %v", err)
-			}
-			bucAttached.Store(true)
-			response.WriteHeader(http.StatusAccepted)
-		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/spiffe":
-			if !bucAttached.Load() {
-				t.Fatal("SPIFFE identity attached before inherited BUC identity")
-			}
 			if err := json.NewDecoder(request.Body).Decode(&spiffeGrant); err != nil {
 				t.Fatalf("decode SPIFFE identity: %v", err)
 			}
@@ -335,16 +312,8 @@ func TestASBLauncherExplicitlyInheritsBUCBeforeAgentIdentityProbe(t *testing.T) 
 		spiffeGrant.AgentID != identity.AgentSPIFFEID {
 		t.Fatalf("SPIFFE identity grant = %#v", spiffeGrant)
 	}
-	if bucGrant.EmployeeID != identity.RawEmployeeID ||
-		bucGrant.OriginalSandboxID != identity.SourceSandboxID ||
-		bucGrant.WireGuardCredentials != launcher.Config.WireGuardCredentials ||
-		bucGrant.BUCAccessToken != "" ||
-		bucGrant.BUCRefreshToken != "" ||
-		bucGrant.BUCIDToken != "" {
-		t.Fatalf("BUC identity grant = %#v", bucGrant)
-	}
-	if probeCalls.Load() != 2 {
-		t.Fatalf("identity probe calls = %d, want 2", probeCalls.Load())
+	if probeCalls.Load() != 1 {
+		t.Fatalf("identity probe calls = %d, want 1", probeCalls.Load())
 	}
 }
 

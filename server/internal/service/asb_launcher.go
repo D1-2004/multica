@@ -251,17 +251,22 @@ func (identity ASBResolvedIdentity) validate() error {
 }
 
 func (identity ASBResolvedIdentity) sandboxExtensions(
-	_ string,
+	wireGuardCredentials string,
 ) map[string]string {
 	if identity.Mode == asbIdentityModeUnbound {
 		return nil
 	}
-	// Both enterprise identities are attached after the sandbox enters Running.
-	// ASB requires the matching lazy-auth declaration at creation time; mixing
-	// create-time wireguard.worker with the runtime attachment API is rejected.
+	// ASB's documented replacement path inherits an existing identity seed at
+	// sandbox creation. The platform mounts the predecessor's credential
+	// directory before wgclient starts; the runtime identity API is reserved for
+	// lazy-auth sandboxes and does not reliably materialize a terminated seed.
+	// SPIFFE remains a runtime attachment because its task-scoped token is issued
+	// immediately before launch.
 	return map[string]string{
-		"spiffe.lazyAuth":    "true",
-		"wireguard.lazyAuth": "true",
+		"spiffe.lazyAuth":          "true",
+		"wireguard.worker":         identity.RawEmployeeID,
+		"wireguard.uemCredentials": wireGuardCredentials,
+		"buc.originalSandboxID":    identity.SourceSandboxID,
 	}
 }
 
@@ -1359,13 +1364,6 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(
 	identity ASBResolvedIdentity,
 	timeout time.Duration,
 ) error {
-	// A terminated identity seed is only a persisted source coordinate. The
-	// create-time extension is not the authoritative ASB copy boundary, so a
-	// cold task sandbox must explicitly inherit the source once. Warm sandboxes
-	// that already present the expected BUC identity skip the attachment.
-	if err := l.ensureSandboxBUCIdentityAttached(ctx, sandboxID, identity); err != nil {
-		return err
-	}
 	// The enterprise CLI probe calls a1, which needs the SPIFFE auth headers
 	// installed by AttachAgentIdentity. Attach them before probing the inherited
 	// BUC credential directory to avoid a circular readiness dependency.
@@ -1395,34 +1393,6 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(
 		timeout,
 	); err != nil {
 		return err
-	}
-	return nil
-}
-
-func (l *ASBLauncher) ensureSandboxBUCIdentityAttached(
-	ctx context.Context,
-	sandboxID string,
-	identity ASBResolvedIdentity,
-) error {
-	if err := probeASBTaskBUCIdentity(
-		ctx,
-		l.Client,
-		sandboxID,
-		identity.RawEmployeeID,
-	); err == nil {
-		return nil
-	}
-	grant := ASBBUCIdentityGrant{
-		EmployeeID:           identity.RawEmployeeID,
-		WireGuardCredentials: l.Config.WireGuardCredentials,
-		OriginalSandboxID:    identity.SourceSandboxID,
-	}
-	// Submit once without ASB's optional synchronous status command. The
-	// bounded employee-identity and CLI probe below is the authoritative
-	// readiness check; repeating this POST would restart wgclient and delay
-	// convergence.
-	if err := l.Client.AttachBUCIdentity(ctx, sandboxID, grant, false); err != nil {
-		return fmt.Errorf("attach inherited ASB BUC identity: %w", err)
 	}
 	return nil
 }
