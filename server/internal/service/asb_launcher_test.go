@@ -183,7 +183,7 @@ func TestASBA2ATaskResolvesAgentEnterpriseIdentity(t *testing.T) {
 	}
 }
 
-func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
+func TestASBBoundIdentityDeclaresRuntimeIdentityAttachments(t *testing.T) {
 	t.Parallel()
 
 	identity := ASBResolvedIdentity{
@@ -202,17 +202,21 @@ func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
 	}
 	extensions := identity.sandboxExtensions("wireguard-credentials")
 	for key, expected := range map[string]string{
-		"spiffe.lazyAuth":          "true",
-		"wireguard.worker":         identity.RawEmployeeID,
-		"wireguard.uemCredentials": "wireguard-credentials",
-		"buc.originalSandboxID":    identity.SourceSandboxID,
+		"spiffe.lazyAuth":    "true",
+		"wireguard.lazyAuth": "true",
 	} {
 		if extensions[key] != expected {
 			t.Fatalf("bound sandbox extension %s = %q, want %q", key, extensions[key], expected)
 		}
 	}
-	if _, ok := extensions["wireguard.lazyAuth"]; ok {
-		t.Fatal("bound sandbox extensions mix lazy WireGuard auth with create-time identity")
+	for _, forbidden := range []string{
+		"wireguard.worker",
+		"wireguard.uemCredentials",
+		"buc.originalSandboxID",
+	} {
+		if _, ok := extensions[forbidden]; ok {
+			t.Fatalf("bound sandbox extension %q mixes create-time and runtime BUC attachment", forbidden)
+		}
 	}
 }
 
@@ -250,14 +254,14 @@ func TestASBLauncherExplicitlyInheritsBUCBeforeAgentIdentityProbe(t *testing.T) 
 			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/wireguard":
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Fatalf("BUC identity sync = %q", request.URL.Query().Get("sync"))
 			}
 			if err := json.NewDecoder(request.Body).Decode(&bucGrant); err != nil {
 				t.Fatalf("decode BUC identity: %v", err)
 			}
 			bucAttached.Store(true)
-			response.WriteHeader(http.StatusOK)
+			response.WriteHeader(http.StatusAccepted)
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/spiffe":
 			if !bucAttached.Load() {
