@@ -216,11 +216,14 @@ func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
 	}
 }
 
-func TestASBLauncherUsesCreateTimeBUCAndAttachesAgentIdentityBeforeProbe(t *testing.T) {
+func TestASBLauncherExplicitlyInheritsBUCBeforeAgentIdentityProbe(t *testing.T) {
 	t.Parallel()
 
+	var bucGrant ASBBUCIdentityGrant
 	var spiffeGrant ASBAgentIdentityGrant
+	var bucAttached atomic.Bool
 	var spiffeAttached atomic.Bool
+	var probeCalls atomic.Int32
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
@@ -232,14 +235,34 @@ func TestASBLauncherUsesCreateTimeBUCAndAttachesAgentIdentityBeforeProbe(t *test
 			})
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/execd/command":
-			if !spiffeAttached.Load() {
-				http.Error(response, "SPIFFE identity must be attached before the CLI probe", http.StatusConflict)
+			probeCalls.Add(1)
+			response.Header().Set("Content-Type", "text/event-stream")
+			if !bucAttached.Load() {
+				_, _ = io.WriteString(response, `data: {"type":"stderr","text":"probe_stage=buc\n"}`+"\n")
+				_, _ = io.WriteString(response, `data: {"type":"error","error":{"ename":"CommandExecError","evalue":"1"}}`+"\n")
+				_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 				return
 			}
-			response.Header().Set("Content-Type", "text/event-stream")
+			if !spiffeAttached.Load() {
+				http.Error(response, "SPIFFE identity must be attached before the combined CLI probe", http.StatusConflict)
+				return
+			}
 			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/wireguard":
+			if request.URL.Query().Get("sync") != "true" {
+				t.Fatalf("BUC identity sync = %q", request.URL.Query().Get("sync"))
+			}
+			if err := json.NewDecoder(request.Body).Decode(&bucGrant); err != nil {
+				t.Fatalf("decode BUC identity: %v", err)
+			}
+			bucAttached.Store(true)
+			response.WriteHeader(http.StatusOK)
+		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/spiffe":
+			if !bucAttached.Load() {
+				t.Fatal("SPIFFE identity attached before inherited BUC identity")
+			}
 			if err := json.NewDecoder(request.Body).Decode(&spiffeGrant); err != nil {
 				t.Fatalf("decode SPIFFE identity: %v", err)
 			}
@@ -282,6 +305,17 @@ func TestASBLauncherUsesCreateTimeBUCAndAttachesAgentIdentityBeforeProbe(t *test
 		spiffeGrant.AgentID != identity.AgentSPIFFEID {
 		t.Fatalf("SPIFFE identity grant = %#v", spiffeGrant)
 	}
+	if bucGrant.EmployeeID != identity.RawEmployeeID ||
+		bucGrant.OriginalSandboxID != identity.SourceSandboxID ||
+		bucGrant.WireGuardCredentials != launcher.Config.WireGuardCredentials ||
+		bucGrant.BUCAccessToken != "" ||
+		bucGrant.BUCRefreshToken != "" ||
+		bucGrant.BUCIDToken != "" {
+		t.Fatalf("BUC identity grant = %#v", bucGrant)
+	}
+	if probeCalls.Load() != 2 {
+		t.Fatalf("identity probe calls = %d, want 2", probeCalls.Load())
+	}
 }
 
 func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
@@ -299,8 +333,16 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
 			})
 		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
-			probeObserved.Store(true)
+			var input asbExecRequest
+			if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+				t.Fatalf("decode ASB exec request: %v", err)
+			}
 			response.Header().Set("Content-Type", "text/event-stream")
+			if input.Command == asbBUCOnlyIdentityProbeCommand() {
+				_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
+				return
+			}
+			probeObserved.Store(true)
 			if attachCalls.Load() < 2 {
 				_, _ = io.WriteString(response, `data: {"type":"stderr","text":"probe_stage=a1\n"}`+"\n")
 				_, _ = io.WriteString(response, `data: {"type":"error","error":{"ename":"CommandExecError","evalue":"1"}}`+"\n")
