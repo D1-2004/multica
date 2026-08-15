@@ -1361,6 +1361,13 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(
 	identity ASBResolvedIdentity,
 	timeout time.Duration,
 ) error {
+	// A terminated identity seed is only a persisted source coordinate. The
+	// create-time extension is not the authoritative ASB copy boundary, so a
+	// cold task sandbox must explicitly inherit the source once. Warm sandboxes
+	// that already present the expected BUC identity skip the attachment.
+	if err := l.ensureSandboxBUCIdentityAttached(ctx, sandboxID, identity); err != nil {
+		return err
+	}
 	// The enterprise CLI probe calls a1, which needs the SPIFFE auth headers
 	// installed by AttachAgentIdentity. Attach them before probing the inherited
 	// BUC credential directory to avoid a circular readiness dependency.
@@ -1393,6 +1400,50 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(
 		return err
 	}
 	return nil
+}
+
+func (l *ASBLauncher) ensureSandboxBUCIdentityAttached(
+	ctx context.Context,
+	sandboxID string,
+	identity ASBResolvedIdentity,
+) error {
+	if err := probeASBIdentitySourceBUC(
+		ctx,
+		l.Client,
+		sandboxID,
+		identity.RawEmployeeID,
+		identity.BUCAgentID,
+	); err == nil {
+		return nil
+	}
+	grant := ASBBUCIdentityGrant{
+		EmployeeID:           identity.RawEmployeeID,
+		WireGuardCredentials: l.Config.WireGuardCredentials,
+		OriginalSandboxID:    identity.SourceSandboxID,
+	}
+	if err := l.Client.AttachBUCIdentity(ctx, sandboxID, grant, true); err != nil {
+		if !isASBTaskWireGuardPostAttachCheckPending(err) {
+			return fmt.Errorf("attach inherited ASB BUC identity: %w", err)
+		}
+		slog.Info(
+			"ASB task BUC identity bootstrap submitted; post-attach check is pending",
+			"sandbox_id", sandboxID,
+		)
+	}
+	return nil
+}
+
+func isASBTaskWireGuardPostAttachCheckPending(err error) bool {
+	var httpErr *ASBHTTPError
+	if !errors.As(err, &httpErr) ||
+		httpErr.Operation != "attach_buc_identity" ||
+		httpErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(httpErr.ErrorMessage))
+	return strings.Contains(message, "wireguard tunnel not ready yet") ||
+		(strings.Contains(message, "failed to check wireguard status") &&
+			strings.Contains(message, "status code 404"))
 }
 
 func isASBAgentIdentityAttachmentConverging(err error) bool {
