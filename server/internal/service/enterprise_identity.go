@@ -714,11 +714,17 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 			unlockSource()
 		}
 	}()
-	source, sourceCreated, err := s.reuseOrCreateIdentitySource(
+	// Reauthorization carries a fresh one-shot BUC token set. Reusing the
+	// current Agent's existing source would discard those credentials and leave
+	// an expired WireGuard seed active even though the binding version advances.
+	// First-time bindings may still share a proven source across Agents in the
+	// same employee and ASB tenant scope.
+	source, sourceCreated, err := s.provisionIdentitySourceForBinding(
 		ctx,
 		sourceKey,
 		tenantScope.RuntimeIDs,
 		bucTokens,
+		oldIdentityFound,
 	)
 	if err != nil {
 		logEnterpriseIdentityBindingStageFailure(
@@ -1033,6 +1039,23 @@ func (s *EnterpriseIdentityService) reuseOrCreateIdentitySource(
 		)
 	}
 
+	source, err := s.Source.Create(ctx, key, tokens)
+	if err != nil {
+		return EnterpriseIdentitySourceAvailability{}, false, err
+	}
+	return source, true, nil
+}
+
+func (s *EnterpriseIdentityService) provisionIdentitySourceForBinding(
+	ctx context.Context,
+	key enterpriseIdentitySourceKey,
+	runtimeIDs []pgtype.UUID,
+	tokens BUCIdentityTokens,
+	forceFresh bool,
+) (EnterpriseIdentitySourceAvailability, bool, error) {
+	if !forceFresh {
+		return s.reuseOrCreateIdentitySource(ctx, key, runtimeIDs, tokens)
+	}
 	source, err := s.Source.Create(ctx, key, tokens)
 	if err != nil {
 		return EnterpriseIdentitySourceAvailability{}, false, err
