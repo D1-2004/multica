@@ -251,19 +251,17 @@ func (identity ASBResolvedIdentity) validate() error {
 }
 
 func (identity ASBResolvedIdentity) sandboxExtensions(
-	wireGuardCredentials string,
+	_ string,
 ) map[string]string {
 	if identity.Mode == asbIdentityModeUnbound {
 		return nil
 	}
-	// ASB copies only the source credential directory during sandbox creation.
-	// The task sandbox still boots from the current Runtime image, so an image
-	// rotation must not invalidate the long-lived identity source.
+	// Both enterprise identities are attached after the sandbox enters Running.
+	// ASB requires the matching lazy-auth declaration at creation time; mixing
+	// create-time wireguard.worker with the runtime attachment API is rejected.
 	return map[string]string{
-		"spiffe.lazyAuth":          "true",
-		"wireguard.worker":         identity.RawEmployeeID,
-		"wireguard.uemCredentials": wireGuardCredentials,
-		"buc.originalSandboxID":    identity.SourceSandboxID,
+		"spiffe.lazyAuth":    "true",
+		"wireguard.lazyAuth": "true",
 	}
 }
 
@@ -1421,29 +1419,13 @@ func (l *ASBLauncher) ensureSandboxBUCIdentityAttached(
 		WireGuardCredentials: l.Config.WireGuardCredentials,
 		OriginalSandboxID:    identity.SourceSandboxID,
 	}
-	if err := l.Client.AttachBUCIdentity(ctx, sandboxID, grant, true); err != nil {
-		if !isASBTaskWireGuardPostAttachCheckPending(err) {
-			return fmt.Errorf("attach inherited ASB BUC identity: %w", err)
-		}
-		slog.Info(
-			"ASB task BUC identity bootstrap submitted; post-attach check is pending",
-			"sandbox_id", sandboxID,
-		)
+	// Submit once without ASB's optional synchronous status command. The
+	// bounded exact-identity probe below is the authoritative readiness check;
+	// repeating this POST would restart wgclient and delay convergence.
+	if err := l.Client.AttachBUCIdentity(ctx, sandboxID, grant, false); err != nil {
+		return fmt.Errorf("attach inherited ASB BUC identity: %w", err)
 	}
 	return nil
-}
-
-func isASBTaskWireGuardPostAttachCheckPending(err error) bool {
-	var httpErr *ASBHTTPError
-	if !errors.As(err, &httpErr) ||
-		httpErr.Operation != "attach_buc_identity" ||
-		httpErr.StatusCode != http.StatusBadRequest {
-		return false
-	}
-	message := strings.ToLower(strings.TrimSpace(httpErr.ErrorMessage))
-	return strings.Contains(message, "wireguard tunnel not ready yet") ||
-		(strings.Contains(message, "failed to check wireguard status") &&
-			strings.Contains(message, "status code 404"))
 }
 
 func isASBAgentIdentityAttachmentConverging(err error) bool {
