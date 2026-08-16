@@ -43,7 +43,7 @@ func TestOpencodeHandleTextEvent(t *testing.T) {
 
 	b := &opencodeBackend{}
 	ch := make(chan Message, 10)
-	var output strings.Builder
+	var output opencodeAssistantTextAccumulator
 
 	event := opencodeEvent{
 		Type:      "text",
@@ -73,7 +73,7 @@ func TestOpencodeHandleTextEventEmpty(t *testing.T) {
 
 	b := &opencodeBackend{}
 	ch := make(chan Message, 10)
-	var output strings.Builder
+	var output opencodeAssistantTextAccumulator
 
 	event := opencodeEvent{
 		Type: "text",
@@ -608,6 +608,43 @@ func TestOpencodeProcessEventsHappyPath(t *testing.T) {
 	}
 	if msgs[4].Type != MessageText || msgs[4].Content != " Done." {
 		t.Errorf("msg[4]: got %+v", msgs[4])
+	}
+}
+
+func TestOpencodeProcessEventsUsesLatestAssistantMessageAsTerminalOutput(t *testing.T) {
+	t.Parallel()
+
+	b := &opencodeBackend{cfg: Config{Logger: slog.Default()}}
+	ch := make(chan Message, 256)
+
+	lines := strings.Join([]string{
+		`{"type":"step_start","sessionID":"ses_final","part":{"messageID":"msg_progress_1","type":"step-start"}}`,
+		`{"type":"text","sessionID":"ses_final","part":{"messageID":"msg_progress_1","type":"text","text":"I will inspect the data."}}`,
+		`{"type":"tool_use","sessionID":"ses_final","part":{"messageID":"msg_progress_1","tool":"bash","callID":"call_1","state":{"status":"completed","input":{"command":"inspect"},"output":"ok"}}}`,
+		`{"type":"text","sessionID":"ses_final","part":{"messageID":"msg_progress_2","type":"text","text":"The inspection is complete."}}`,
+		`{"type":"tool_use","sessionID":"ses_final","part":{"messageID":"msg_progress_2","tool":"bash","callID":"call_2","state":{"status":"completed","input":{"command":"download"},"output":"saved"}}}`,
+		`{"type":"text","sessionID":"ses_final","part":{"messageID":"msg_final","type":"text","text":"最终结果第一段。"}}`,
+		`{"type":"text","sessionID":"ses_final","part":{"messageID":"msg_final","type":"text","text":"最终结果第二段。"}}`,
+		`{"type":"step_finish","sessionID":"ses_final","part":{"messageID":"msg_final","type":"step-finish"}}`,
+	}, "\n")
+
+	result := b.processEvents(strings.NewReader(lines), ch)
+	if result.status != "completed" {
+		t.Fatalf("status: got %q, want completed", result.status)
+	}
+	if result.output != "最终结果第一段。最终结果第二段。" {
+		t.Fatalf("output: got %q, want only the latest assistant message", result.output)
+	}
+
+	close(ch)
+	var streamedText strings.Builder
+	for message := range ch {
+		if message.Type == MessageText {
+			streamedText.WriteString(message.Content)
+		}
+	}
+	if got := streamedText.String(); got != "I will inspect the data.The inspection is complete.最终结果第一段。最终结果第二段。" {
+		t.Fatalf("streamed text: got %q", got)
 	}
 }
 
