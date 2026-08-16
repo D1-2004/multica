@@ -29,12 +29,16 @@ const (
 	DefaultAgentTimeout                   = 0
 	DefaultCodexSemanticInactivityTimeout = 10 * time.Minute
 	DefaultCodexHandshakeTimeout          = 30 * time.Second
-	// DefaultOpenCodeIdleWatchdog shortens the no-message budget for OpenCode
-	// runs while they are not executing a tool. OpenCode streams text and tool
-	// events incrementally, so a completely silent interval here covers both a
-	// missing first model token and a stalled response stream. The generic
-	// AgentIdleWatchdog remains the global enable/disable switch.
-	DefaultOpenCodeIdleWatchdog = 10 * time.Minute
+	// DefaultOpenCodeIdleWatchdog is the no-message budget for OpenCode-backed
+	// runs while they are not executing a tool. OpenCode streams text, reasoning,
+	// and tool events incrementally, so a completely silent interval here covers
+	// both a missing first model token and a stalled response stream. Keep the
+	// default aligned with the generic 30-minute budget: DSH and other managed
+	// OpenCode adapters can legitimately spend more than ten minutes inside one
+	// model/tool round. Operators can still choose a shorter provider-specific
+	// window with MULTICA_OPENCODE_IDLE_WATCHDOG; AgentIdleWatchdog remains the
+	// global enable/disable switch and upper bound.
+	DefaultOpenCodeIdleWatchdog = 30 * time.Minute
 	// DefaultAgentIdleWatchdog is the per-task safety net that force-stops a
 	// run when the backend has emitted no message for this long AND its
 	// message queue is empty. Backends like Claude Code can hang indefinitely

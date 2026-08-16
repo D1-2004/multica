@@ -35,6 +35,12 @@ func TestDefaultGCIntervalIsTwoHours(t *testing.T) {
 	}
 }
 
+func TestDefaultOpenCodeIdleWatchdogIsThirtyMinutes(t *testing.T) {
+	if DefaultOpenCodeIdleWatchdog != 30*time.Minute {
+		t.Fatalf("DefaultOpenCodeIdleWatchdog = %s, want 30m", DefaultOpenCodeIdleWatchdog)
+	}
+}
+
 func TestPatternsFromEnv_DropsSeparatorBearingEntries(t *testing.T) {
 	t.Setenv("MULTICA_GC_ARTIFACT_PATTERNS", "node_modules, .next ,foo/bar, ../etc, ,target")
 	got := patternsFromEnv("MULTICA_GC_ARTIFACT_PATTERNS", nil)

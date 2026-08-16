@@ -419,6 +419,13 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 			if event.Part.Text != "" {
 				stepProducedOutput = true
 			}
+		case "reasoning":
+			b.handleReasoningEvent(event, ch)
+		case "tool_start":
+			b.handleToolStartEvent(event, ch)
+			stepProducedOutput = true
+		case "tool_result":
+			b.handleToolResultEvent(event, ch)
 		case "tool_use":
 			b.handleToolUseEvent(event, ch)
 			stepProducedOutput = true
@@ -537,6 +544,48 @@ func (b *opencodeBackend) handleTextEvent(event opencodeEvent, ch chan<- Message
 		output.WriteString(text)
 		trySend(ch, Message{Type: MessageText, Content: text})
 	}
+}
+
+func (b *opencodeBackend) handleReasoningEvent(event opencodeEvent, ch chan<- Message) {
+	if event.Part.Text != "" {
+		trySend(ch, Message{Type: MessageThinking, Content: event.Part.Text})
+	}
+}
+
+// handleToolStartEvent processes the split tool-start event emitted by managed
+// adapters whose native ledger records invocation and settlement separately.
+// Native OpenCode continues to use its combined terminal "tool_use" event.
+func (b *opencodeBackend) handleToolStartEvent(event opencodeEvent, ch chan<- Message) {
+	var input map[string]any
+	if event.Part.State != nil && event.Part.State.Input != nil {
+		_ = json.Unmarshal(event.Part.State.Input, &input)
+	}
+	trySend(ch, Message{
+		Type:   MessageToolUse,
+		Tool:   event.Part.Tool,
+		CallID: event.Part.CallID,
+		Input:  input,
+	})
+}
+
+// handleToolResultEvent closes a prior split tool-start event. Keeping the
+// messages separate lets the daemon apply its in-flight tool watchdog while a
+// managed adapter's native tool is still running.
+func (b *opencodeBackend) handleToolResultEvent(event opencodeEvent, ch chan<- Message) {
+	state := event.Part.State
+	if state == nil || (state.Status != "completed" && state.Status != "error") {
+		return
+	}
+	output := extractToolOutput(state.Output)
+	if state.Status == "error" && state.Error != "" {
+		output = state.Error
+	}
+	trySend(ch, Message{
+		Type:   MessageToolResult,
+		Tool:   event.Part.Tool,
+		CallID: event.Part.CallID,
+		Output: output,
+	})
 }
 
 // handleToolUseEvent processes "tool_use" events from opencode. A single
@@ -671,7 +720,10 @@ func extractToolOutput(output any) string {
 // Event types observed in real output:
 //
 //	"step_start"  — agent step begins
+//	"reasoning"   — reasoning output from agent (part.text)
 //	"text"        — text output from agent (part.text)
+//	"tool_start"  — managed-adapter tool invocation (part.tool, part.callID, part.state.input)
+//	"tool_result" — managed-adapter tool settlement (part.tool, part.callID, part.state)
 //	"tool_use"    — tool invocation with call and result (part.tool, part.callID, part.state)
 //	"error"       — error from opencode (error.name, error.data.message)
 //	"step_finish" — agent step completes (includes token usage)
