@@ -373,6 +373,23 @@ func TestOpencodeEventParsingTextFixture(t *testing.T) {
 	}
 }
 
+func TestOpencodeEventParsingReasoningFixture(t *testing.T) {
+	t.Parallel()
+
+	line := `{"type":"reasoning","timestamp":1775116675832,"sessionID":"ses_abc","part":{"id":"prt_reasoning","messageID":"msg_456","sessionID":"ses_abc","type":"reasoning","text":"Inspecting the workspace."}}`
+
+	var event opencodeEvent
+	if err := json.Unmarshal([]byte(line), &event); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if event.Type != "reasoning" {
+		t.Errorf("type: got %q, want %q", event.Type, "reasoning")
+	}
+	if event.Part.Text != "Inspecting the workspace." {
+		t.Errorf("part.text: got %q", event.Part.Text)
+	}
+}
+
 func TestOpencodeEventParsingToolUseFixture(t *testing.T) {
 	t.Parallel()
 
@@ -608,6 +625,76 @@ func TestOpencodeProcessEventsHappyPath(t *testing.T) {
 	}
 	if msgs[4].Type != MessageText || msgs[4].Content != " Done." {
 		t.Errorf("msg[4]: got %+v", msgs[4])
+	}
+}
+
+func TestOpencodeProcessEventsEmitsReasoningAsThinking(t *testing.T) {
+	t.Parallel()
+
+	b := &opencodeBackend{cfg: Config{Logger: slog.Default()}}
+	ch := make(chan Message, 256)
+	lines := strings.Join([]string{
+		`{"type":"step_start","timestamp":1000,"sessionID":"ses_reasoning","part":{"type":"step-start"}}`,
+		`{"type":"reasoning","timestamp":1001,"sessionID":"ses_reasoning","part":{"type":"reasoning","text":"Checking the inputs."}}`,
+		`{"type":"text","timestamp":1002,"sessionID":"ses_reasoning","part":{"type":"text","text":"Done."}}`,
+		`{"type":"step_finish","timestamp":1003,"sessionID":"ses_reasoning","part":{"type":"step-finish","reason":"stop","tokens":{"input":10,"output":4,"reasoning":3}}}`,
+	}, "\n")
+
+	result := b.processEvents(strings.NewReader(lines), ch)
+	if result.status != "completed" {
+		t.Fatalf("status: got %q, want completed (error=%q)", result.status, result.errMsg)
+	}
+
+	close(ch)
+	var messages []Message
+	for message := range ch {
+		messages = append(messages, message)
+	}
+	if len(messages) != 3 {
+		t.Fatalf("expected status, thinking, and text messages; got %d: %+v", len(messages), messages)
+	}
+	if messages[1].Type != MessageThinking || messages[1].Content != "Checking the inputs." {
+		t.Fatalf("reasoning message = %+v, want thinking content", messages[1])
+	}
+	if messages[2].Type != MessageText || messages[2].Content != "Done." {
+		t.Fatalf("text message = %+v, want final text", messages[2])
+	}
+}
+
+func TestOpencodeProcessEventsSupportsSplitManagedToolEvents(t *testing.T) {
+	t.Parallel()
+
+	b := &opencodeBackend{cfg: Config{Logger: slog.Default()}}
+	ch := make(chan Message, 256)
+	lines := strings.Join([]string{
+		`{"type":"step_start","timestamp":1000,"sessionID":"ses_split_tool","part":{"type":"step-start"}}`,
+		`{"type":"tool_start","timestamp":1001,"sessionID":"ses_split_tool","part":{"type":"tool","tool":"bash","callID":"call_split","state":{"status":"running","input":{"command":"sleep 1"}}}}`,
+		`{"type":"tool_result","timestamp":1002,"sessionID":"ses_split_tool","part":{"type":"tool","tool":"bash","callID":"call_split","state":{"status":"completed","output":"done\n"}}}`,
+		`{"type":"text","timestamp":1003,"sessionID":"ses_split_tool","part":{"type":"text","text":"Finished."}}`,
+		`{"type":"step_finish","timestamp":1004,"sessionID":"ses_split_tool","part":{"type":"step-finish","reason":"stop","tokens":{"input":10,"output":4}}}`,
+	}, "\n")
+
+	result := b.processEvents(strings.NewReader(lines), ch)
+	if result.status != "completed" {
+		t.Fatalf("status: got %q, want completed (error=%q)", result.status, result.errMsg)
+	}
+
+	close(ch)
+	var messages []Message
+	for message := range ch {
+		messages = append(messages, message)
+	}
+	if len(messages) != 4 {
+		t.Fatalf("expected status, tool use, tool result, and text; got %d: %+v", len(messages), messages)
+	}
+	if messages[1].Type != MessageToolUse || messages[1].Tool != "bash" || messages[1].CallID != "call_split" {
+		t.Fatalf("tool start message = %+v", messages[1])
+	}
+	if messages[1].Input["command"] != "sleep 1" {
+		t.Fatalf("tool input = %#v", messages[1].Input)
+	}
+	if messages[2].Type != MessageToolResult || messages[2].Output != "done\n" {
+		t.Fatalf("tool result message = %+v", messages[2])
 	}
 }
 
