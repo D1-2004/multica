@@ -1637,7 +1637,8 @@ func (l *ASBLauncher) execRunOnce(
 		return err
 	}
 	// Background Runner lifetime is governed by task cancellation and the
-	// sandbox lifecycle. Readiness timeouts must not terminate active tasks.
+	// sandbox lifecycle. Command readiness is bounded separately; startup
+	// timeouts must not terminate an active task after it has started.
 	result, err := l.Client.Exec(ctx, endpoint, ASBExecInput{
 		Command:    command,
 		CWD:        "/workspace",
