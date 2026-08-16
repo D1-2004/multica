@@ -1636,11 +1636,13 @@ func (l *ASBLauncher) execRunOnce(
 	if err != nil {
 		return err
 	}
+	// The background runner remains alive for the task lifetime. Command
+	// readiness is bounded separately by waitSandboxCommandReady; reusing that
+	// startup timeout here can terminate a healthy task after it has started.
 	result, err := l.Client.Exec(ctx, endpoint, ASBExecInput{
 		Command:    command,
 		CWD:        "/workspace",
 		Background: true,
-		Timeout:    l.Config.ReadyTimeout,
 		Envs:       envs,
 	})
 	if err != nil {
