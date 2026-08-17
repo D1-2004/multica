@@ -131,26 +131,27 @@ type A2aTaskEvent struct {
 }
 
 type A2aTaskTurn struct {
-	ID                   pgtype.UUID        `json:"id"`
-	BindingID            pgtype.UUID        `json:"binding_id"`
-	EndpointID           pgtype.UUID        `json:"endpoint_id"`
-	ClientID             pgtype.UUID        `json:"client_id"`
-	AcceptedCredentialID pgtype.UUID        `json:"accepted_credential_id"`
-	Sequence             int32              `json:"sequence"`
-	MessageID            string             `json:"message_id"`
-	RequestFingerprint   string             `json:"request_fingerprint"`
-	LocalTaskID          pgtype.UUID        `json:"local_task_id"`
-	InputChatMessageID   pgtype.UUID        `json:"input_chat_message_id"`
-	InputParts           []byte             `json:"input_parts"`
-	MessageExtensions    []string           `json:"message_extensions"`
-	MessageMetadata      []byte             `json:"message_metadata"`
-	ReferenceTaskIds     []string           `json:"reference_task_ids"`
-	AcceptedOutputModes  []string           `json:"accepted_output_modes"`
-	ControlSignal        pgtype.Text        `json:"control_signal"`
-	ControlPayload       []byte             `json:"control_payload"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
+	ID                         pgtype.UUID        `json:"id"`
+	BindingID                  pgtype.UUID        `json:"binding_id"`
+	EndpointID                 pgtype.UUID        `json:"endpoint_id"`
+	ClientID                   pgtype.UUID        `json:"client_id"`
+	AcceptedCredentialID       pgtype.UUID        `json:"accepted_credential_id"`
+	Sequence                   int32              `json:"sequence"`
+	MessageID                  string             `json:"message_id"`
+	RequestFingerprint         string             `json:"request_fingerprint"`
+	LocalTaskID                pgtype.UUID        `json:"local_task_id"`
+	InputChatMessageID         pgtype.UUID        `json:"input_chat_message_id"`
+	InputParts                 []byte             `json:"input_parts"`
+	MessageExtensions          []string           `json:"message_extensions"`
+	MessageMetadata            []byte             `json:"message_metadata"`
+	ReferenceTaskIds           []string           `json:"reference_task_ids"`
+	AcceptedOutputModes        []string           `json:"accepted_output_modes"`
+	ControlSignal              pgtype.Text        `json:"control_signal"`
+	ControlPayload             []byte             `json:"control_payload"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt                pgtype.Timestamptz `json:"completed_at"`
+	RequestBoundLeaseExpiresAt pgtype.Timestamptz `json:"request_bound_lease_expires_at"`
 }
 
 type ActivityLog struct {

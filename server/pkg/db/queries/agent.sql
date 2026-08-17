@@ -1849,6 +1849,7 @@ WITH a2a_fifo_candidates AS MATERIALIZED (
   FROM a2a_fifo_candidates candidate
   JOIN agent_task_queue candidate_task ON candidate_task.id = candidate.id
   WHERE candidate.control_signal IS NULL
+    AND COALESCE(candidate_task.context->>'deap_dws_token_required', 'false') <> 'true'
     AND CASE
       WHEN candidate_task.context->>'agent_identity_context_token_source' = 'external' THEN
         CASE
@@ -1916,6 +1917,7 @@ WITH a2a_fifo_candidates AS MATERIALIZED (
   FROM a2a_fifo_candidates candidate
   JOIN agent_task_queue candidate_task ON candidate_task.id = candidate.id
   WHERE candidate.control_signal IS NULL
+    AND COALESCE(candidate_task.context->>'deap_dws_token_required', 'false') <> 'true'
     AND CASE
       WHEN candidate_task.context->>'agent_identity_context_token_source' = 'external' THEN
         CASE

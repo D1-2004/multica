@@ -26,7 +26,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -122,6 +121,10 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 	validated, err := validateA2ASendRequest(ctx, request, time.Now())
 	if err != nil {
 		return nil, err
+	}
+	ctx, requestBoundClaim := ensureA2ARequestBoundTurnClaim(ctx, validated)
+	if requestBoundClaim != nil && !validated.ReturnImmediately {
+		defer s.releaseA2ARequestBoundTurn(requestBoundClaim)
 	}
 
 	endpoint, err := s.Queries.GetPublishedAgentA2AEndpointByPublicID(ctx, db.GetPublishedAgentA2AEndpointByPublicIDParams{
@@ -241,6 +244,10 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 		if claim.RequestFingerprint != validated.Fingerprint {
 			return nil, a2a.NewError(a2a.ErrInvalidParams, "message id conflicts with a different A2A request")
 		}
+		if requestBoundClaim != nil {
+			requestBoundClaim.localTaskID = claim.LocalTaskID
+			s.maintainA2ARequestBoundTurn(ctx)
+		}
 		task, replayErr := s.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(claim.PublicTaskID), HistoryLength: a2aSendHistoryLength(request)})
 		if replayErr != nil {
 			return nil, replayErr
@@ -332,16 +339,6 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 			if err != nil {
 				return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "create context")
 			}
-		}
-	}
-	if validated.Identity.DEAPDWSToken != "" {
-		runnable, admissionErr := qtx.LockA2ARequestBoundTurnAdmission(ctx, a2aContext.ChatSessionID)
-		if admissionErr != nil {
-			return s.finishA2ASendError(ctx, tx, principalIDs, validated, admissionErr, "lock request-bound turn")
-		}
-		if !runnable {
-			_ = tx.Rollback(ctx)
-			return nil, a2a.NewError(a2a.ErrInvalidParams, "X-DWS-Token cannot be queued behind another turn")
 		}
 	}
 	if len(validated.ReferenceTaskIDs) > 0 {
@@ -460,6 +457,20 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 	if err != nil {
 		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "create task turn")
 	}
+	if requestBoundClaim != nil {
+		leaseNow := time.Now()
+		leased, leaseErr := qtx.SetA2ARequestBoundTurnLease(ctx, db.SetA2ARequestBoundTurnLeaseParams{
+			LeaseExpiresAt:     pgtype.Timestamptz{Time: leaseNow.Add(a2aRequestBoundTurnLeaseDuration), Valid: true},
+			LocalTaskID:        queuedTask.ID,
+			RequestFingerprint: validated.Fingerprint,
+		})
+		if leaseErr != nil {
+			return s.finishA2ASendError(ctx, tx, principalIDs, validated, leaseErr, "set request-bound turn lease")
+		}
+		requestBoundClaim.localTaskID = leased.LocalTaskID
+		requestBoundClaim.chatSessionID = leased.ChatSessionID
+		requestBoundClaim.nextLeaseRenewal = leaseNow.Add(a2aRequestBoundTurnLeaseRenewal)
+	}
 	publicState := a2a.TaskStateSubmitted
 	if !isNewTask && a2a.TaskState(binding.PublicState) == a2a.TaskStateWorking {
 		publicState = a2a.TaskStateWorking
@@ -508,7 +519,9 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 
 	// A daemon may only observe a task after every A2A identity row commits.
 	// Context turns share a Chat Session, so wake only the oldest runnable turn.
-	if !validated.IdentityExpired {
+	if requestBoundClaim != nil {
+		s.maintainA2ARequestBoundTurn(ctx)
+	} else if !validated.IdentityExpired {
 		s.notifyNextA2ATask(ctx, a2aContext.ChatSessionID)
 	}
 	if s.PushNotifier != nil {
@@ -540,7 +553,7 @@ func (s *A2AService) notifyNextA2ATask(ctx context.Context, chatSessionID pgtype
 		slog.Warn("lock next A2A turn failed", "chat_session_id", chatSessionID, "error", err)
 		return
 	}
-	if candidate.ControlSignal.Valid {
+	if candidate.ControlSignal.Valid && candidate.ControlSignal.String != a2aRequestBoundControlSignal {
 		if err = tx.Commit(ctx); err != nil {
 			slog.Warn("commit blocked A2A turn check failed", "chat_session_id", chatSessionID, "error", err)
 		}
@@ -558,7 +571,20 @@ func (s *A2AService) notifyNextA2ATask(ctx context.Context, chatSessionID pgtype
 		}
 		return
 	}
-	if a2AQueuedExternalIdentityNeedsAuth(ctx, candidate.TaskContext, time.Now()) {
+	identityDisposition := a2AQueuedExternalIdentityDispositionFor(
+		ctx,
+		candidate.TaskContext,
+		candidate.RequestFingerprint,
+		candidate.RequestBoundLeaseExpiresAt,
+		time.Now(),
+	)
+	if identityDisposition == a2aQueuedIdentityWait {
+		if err = tx.Commit(ctx); err != nil {
+			slog.Warn("commit request-bound A2A turn wait failed", "chat_session_id", chatSessionID, "error", err)
+		}
+		return
+	}
+	if identityDisposition == a2aQueuedIdentityAuthRequired {
 		prompt := "A fresh external ContextToken is required to continue."
 		if requiresA2ADEAPDWSToken(candidate.TaskContext) {
 			prompt = "A fresh request-scoped X-DWS-Token is required to continue."
@@ -618,6 +644,15 @@ func (s *A2AService) notifyNextA2ATask(ctx context.Context, chatSessionID pgtype
 		}
 		return
 	}
+	if candidate.ControlSignal.Valid && candidate.ControlSignal.String == a2aRequestBoundControlSignal {
+		if _, err = qtx.ClearA2ARequestBoundTurnSignal(ctx, db.ClearA2ARequestBoundTurnSignalParams{
+			LocalTaskID:        candidate.LocalTaskID,
+			RequestFingerprint: candidate.RequestFingerprint,
+		}); err != nil {
+			slog.Warn("clear request-bound A2A turn signal failed", "chat_session_id", chatSessionID, "error", err)
+			return
+		}
+	}
 	next, err := qtx.PromoteNextRunnableA2ATaskForChatSession(ctx, chatSessionID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return
@@ -630,28 +665,10 @@ func (s *A2AService) notifyNextA2ATask(ctx context.Context, chatSessionID pgtype
 		slog.Warn("commit next runnable A2A turn failed", "chat_session_id", chatSessionID, "error", err)
 		return
 	}
+	if claim := a2aRequestBoundTurnClaimFromContext(ctx); claim != nil && sameUUID(next.ID, claim.localTaskID) {
+		claim.promoted = true
+	}
 	s.TaskService.NotifyTaskEnqueued(ctx, next)
-}
-
-func a2AQueuedExternalIdentityNeedsAuth(ctx context.Context, taskContext []byte, now time.Time) bool {
-	if requiresA2ADEAPDWSToken(taskContext) {
-		identity, ok := a2aintegration.InvocationIdentityFromContext(ctx)
-		return !ok || strings.TrimSpace(identity.DEAPDWSToken) == "" || identity.ContextToken != ""
-	}
-	var envelope struct {
-		Origin    string  `json:"multica_origin"`
-		Token     *string `json:"agent_identity_context_token"`
-		ExpiresAt *int64  `json:"agent_identity_context_token_expires_at"`
-		Source    string  `json:"agent_identity_context_token_source"`
-	}
-	if err := json.Unmarshal(taskContext, &envelope); err != nil {
-		return true
-	}
-	if envelope.Source != protocol.AgentIdentityContextTokenSourceExternal {
-		return false
-	}
-	return envelope.Origin != a2aTaskOriginValue || envelope.Token == nil || strings.TrimSpace(*envelope.Token) == "" ||
-		envelope.ExpiresAt == nil || !time.UnixMilli(*envelope.ExpiresAt).After(now.Add(time.Minute))
 }
 
 // GetTask returns only stable A2A identifiers and protocol-safe output. Local
@@ -712,6 +729,10 @@ func (s *A2AService) replayA2AMessage(ctx context.Context, principal a2aPrincipa
 	if claim.RequestFingerprint != request.Fingerprint {
 		return nil, true, a2a.NewError(a2a.ErrInvalidParams, "message id conflicts with a different A2A request")
 	}
+	if requestBoundClaim := a2aRequestBoundTurnClaimFromContext(ctx); requestBoundClaim != nil {
+		requestBoundClaim.localTaskID = claim.LocalTaskID
+		s.maintainA2ARequestBoundTurn(ctx)
+	}
 	historyLength := request.HistoryLength
 	task, err := s.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(claim.PublicTaskID), HistoryLength: &historyLength})
 	return task, true, err
@@ -735,6 +756,10 @@ func (s *A2AService) finishA2ASendError(
 		if err == nil {
 			if claim.RequestFingerprint != request.Fingerprint {
 				return nil, a2a.NewError(a2a.ErrInvalidParams, "message id conflicts with a different A2A request")
+			}
+			if requestBoundClaim := a2aRequestBoundTurnClaimFromContext(ctx); requestBoundClaim != nil {
+				requestBoundClaim.localTaskID = claim.LocalTaskID
+				s.maintainA2ARequestBoundTurn(ctx)
 			}
 			historyLength := request.HistoryLength
 			task, replayErr := s.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(claim.PublicTaskID), HistoryLength: &historyLength})
@@ -883,6 +908,7 @@ func (s *A2AService) completeA2ASend(ctx context.Context, request validatedA2ASe
 		return task, nil
 	}
 	terminal, err := waitForA2ATerminalTask(ctx, task, a2aBlockingPollInterval, func(loadCtx context.Context, taskID a2a.TaskID) (*a2a.Task, error) {
+		s.maintainA2ARequestBoundTurn(loadCtx)
 		historyLength := request.HistoryLength
 		return s.GetTask(loadCtx, &a2a.GetTaskRequest{ID: taskID, HistoryLength: &historyLength})
 	})

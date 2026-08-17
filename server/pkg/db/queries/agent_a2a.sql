@@ -1399,6 +1399,10 @@ WITH context_lock AS MATERIALIZED (
       AND task.chat_session_id = sqlc.arg('chat_session_id')
       AND task.status = 'deferred'
       AND binding.public_state IN ('TASK_STATE_SUBMITTED', 'TASK_STATE_WORKING')
+      AND (
+          COALESCE(task.context->>'deap_dws_token_required', 'false') <> 'true'
+          OR turn.request_bound_lease_expires_at > now()
+      )
       AND NOT EXISTS (
           SELECT 1
           FROM agent_task_queue occupied
@@ -1440,6 +1444,8 @@ SELECT
     task.id AS local_task_id,
     task.context AS task_context,
     turn.sequence AS turn_sequence,
+    turn.request_fingerprint,
+    turn.request_bound_lease_expires_at,
     turn.control_signal,
     binding.id AS binding_id,
     binding.public_task_id,
@@ -1470,24 +1476,41 @@ ORDER BY task.created_at, task.id
 FOR UPDATE OF task, turn, binding SKIP LOCKED
 LIMIT 1;
 
--- name: LockA2ARequestBoundTurnAdmission :one
--- A DEAP DWS token cannot be persisted beyond its HTTP request. Serialize with
--- the Context scheduler and accept such a turn only when it can be promoted
--- immediately, with no active or older deferred execution in the same Chat
--- Session. The caller creates the new deferred row while retaining this lock.
-WITH context_lock AS MATERIALIZED (
-    SELECT pg_advisory_xact_lock(
-        hashtextextended(sqlc.arg('chat_session_id')::uuid::text, 479823117)
-    ) AS acquired
-)
-SELECT NOT EXISTS (
-    SELECT 1
-    FROM agent_task_queue task
-    CROSS JOIN context_lock
-    WHERE task.chat_session_id = sqlc.arg('chat_session_id')
-      AND task.status IN ('deferred', 'queued', 'dispatched', 'running', 'waiting_local_directory')
-) AS runnable
-FROM context_lock;
+-- name: SetA2ARequestBoundTurnLease :one
+-- The opaque X-DWS-Token remains only in the live HTTP request. This durable,
+-- non-secret lease lets the FIFO scheduler distinguish a still-connected
+-- request from one that must transition to AUTH_REQUIRED after disconnect.
+UPDATE a2a_task_turn turn
+SET control_signal = COALESCE(control_signal, 'request_bound'),
+    request_bound_lease_expires_at = sqlc.arg('lease_expires_at'),
+    updated_at = now()
+FROM agent_task_queue task
+WHERE turn.local_task_id = sqlc.arg('local_task_id')
+  AND turn.request_fingerprint = sqlc.arg('request_fingerprint')
+  AND turn.local_task_id = task.id
+  AND (turn.control_signal IS NULL OR turn.control_signal = 'request_bound')
+  AND task.status = 'deferred'
+  AND task.context->>'deap_dws_token_required' = 'true'
+RETURNING
+    turn.local_task_id,
+    task.chat_session_id,
+    turn.request_bound_lease_expires_at;
+
+-- name: ClearA2ARequestBoundTurnSignal :one
+-- The matching live request has reached the FIFO head. Clear the rolling-safe
+-- hold in the same transaction that will promote the local task. The lease is
+-- retained as an audit/recovery watermark until the turn completes.
+UPDATE a2a_task_turn turn
+SET control_signal = NULL,
+    control_payload = NULL,
+    updated_at = now()
+FROM agent_task_queue task
+WHERE turn.local_task_id = sqlc.arg('local_task_id')
+  AND turn.request_fingerprint = sqlc.arg('request_fingerprint')
+  AND turn.local_task_id = task.id
+  AND turn.control_signal = 'request_bound'
+  AND task.status = 'deferred'
+RETURNING turn.*;
 
 -- name: ResumeDeferredA2AAuthTurns :many
 -- A fresh ContextToken resumes the whole pending FIFO, including input that
@@ -1632,10 +1655,11 @@ WITH RECURSIVE ancestors AS (
 UPDATE a2a_task_turn turn
 SET control_signal = sqlc.arg('control_signal'),
     control_payload = sqlc.arg('control_payload')::jsonb,
+    request_bound_lease_expires_at = NULL,
     updated_at = now()
 FROM selected_turn
 WHERE turn.id = selected_turn.id
-  AND turn.control_signal IS NULL
+  AND (turn.control_signal IS NULL OR turn.control_signal = 'request_bound')
 RETURNING turn.*;
 
 -- name: CompleteA2ATaskTurn :exec

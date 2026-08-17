@@ -33,9 +33,18 @@ func (s *A2AService) SendStreamingMessage(ctx context.Context, request *a2a.Send
 			immediate.Config = &config
 		}
 		immediate.Config.ReturnImmediately = true
+		var requestBoundHolder *a2aRequestBoundTurnClaimHolder
 		if identity, ok := a2aintegration.InvocationIdentityFromContext(ctx); ok {
 			identity.RequestBound = true
 			ctx = a2aintegration.WithInvocationIdentity(ctx, identity)
+			if strings.TrimSpace(identity.DEAPDWSToken) != "" {
+				ctx, requestBoundHolder = withA2ARequestBoundTurnClaimHolder(ctx)
+				defer func() {
+					if requestBoundHolder != nil {
+						s.releaseA2ARequestBoundTurn(requestBoundHolder.claim)
+					}
+				}()
+			}
 		}
 		result, err := s.SendMessage(ctx, &immediate)
 		if err != nil {
@@ -131,6 +140,7 @@ func (s *A2AService) streamA2AEvents(
 	ticker := time.NewTicker(a2aBlockingPollInterval)
 	defer ticker.Stop()
 	for {
+		s.maintainA2ARequestBoundTurn(ctx)
 		// Reconciliation turns local runtime changes into durable public events.
 		current, loadErr := s.GetTask(ctx, &a2a.GetTaskRequest{ID: taskID})
 		if loadErr != nil {
