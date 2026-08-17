@@ -477,21 +477,12 @@ func TestA2AQueuedExternalIdentityNeedsAuth(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := a2AQueuedExternalIdentityNeedsAuth(context.Background(), []byte(test.context), now); got != test.want {
-				t.Fatalf("a2AQueuedExternalIdentityNeedsAuth() = %v, want %v", got, test.want)
+			got := a2AQueuedExternalIdentityDispositionFor(
+				context.Background(), []byte(test.context), "", pgtype.Timestamptz{}, now,
+			) == a2aQueuedIdentityAuthRequired
+			if got != test.want {
+				t.Fatalf("queued identity auth requirement = %v, want %v", got, test.want)
 			}
 		})
-	}
-
-	directContext := []byte(a2aTaskDEAPDWSContextJSON)
-	if !a2AQueuedExternalIdentityNeedsAuth(context.Background(), directContext, now) {
-		t.Fatal("DEAP DWS turn without its live request token did not require auth")
-	}
-	requestContext := a2aintegration.WithInvocationIdentity(
-		context.Background(),
-		a2aintegration.InvocationIdentity{DEAPDWSToken: "deap-request-token"},
-	)
-	if a2AQueuedExternalIdentityNeedsAuth(requestContext, directContext, now) {
-		t.Fatal("DEAP DWS turn rejected its live request token")
 	}
 }

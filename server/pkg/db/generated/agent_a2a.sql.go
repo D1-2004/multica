@@ -257,6 +257,57 @@ func (q *Queries) ClearA2ALocalTaskIdentityContext(ctx context.Context, localTas
 	return err
 }
 
+const clearA2ARequestBoundTurnSignal = `-- name: ClearA2ARequestBoundTurnSignal :one
+UPDATE a2a_task_turn turn
+SET control_signal = NULL,
+    control_payload = NULL,
+    updated_at = now()
+FROM agent_task_queue task
+WHERE turn.local_task_id = $1
+  AND turn.request_fingerprint = $2
+  AND turn.local_task_id = task.id
+  AND turn.control_signal = 'request_bound'
+  AND task.status = 'deferred'
+RETURNING turn.id, turn.binding_id, turn.endpoint_id, turn.client_id, turn.accepted_credential_id, turn.sequence, turn.message_id, turn.request_fingerprint, turn.local_task_id, turn.input_chat_message_id, turn.input_parts, turn.message_extensions, turn.message_metadata, turn.reference_task_ids, turn.accepted_output_modes, turn.control_signal, turn.control_payload, turn.created_at, turn.updated_at, turn.completed_at, turn.request_bound_lease_expires_at
+`
+
+type ClearA2ARequestBoundTurnSignalParams struct {
+	LocalTaskID        pgtype.UUID `json:"local_task_id"`
+	RequestFingerprint string      `json:"request_fingerprint"`
+}
+
+// The matching live request has reached the FIFO head. Clear the rolling-safe
+// hold in the same transaction that will promote the local task. The lease is
+// retained as an audit/recovery watermark until the turn completes.
+func (q *Queries) ClearA2ARequestBoundTurnSignal(ctx context.Context, arg ClearA2ARequestBoundTurnSignalParams) (A2aTaskTurn, error) {
+	row := q.db.QueryRow(ctx, clearA2ARequestBoundTurnSignal, arg.LocalTaskID, arg.RequestFingerprint)
+	var i A2aTaskTurn
+	err := row.Scan(
+		&i.ID,
+		&i.BindingID,
+		&i.EndpointID,
+		&i.ClientID,
+		&i.AcceptedCredentialID,
+		&i.Sequence,
+		&i.MessageID,
+		&i.RequestFingerprint,
+		&i.LocalTaskID,
+		&i.InputChatMessageID,
+		&i.InputParts,
+		&i.MessageExtensions,
+		&i.MessageMetadata,
+		&i.ReferenceTaskIds,
+		&i.AcceptedOutputModes,
+		&i.ControlSignal,
+		&i.ControlPayload,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.RequestBoundLeaseExpiresAt,
+	)
+	return i, err
+}
+
 const clearDeferredA2AAuthTurnSignals = `-- name: ClearDeferredA2AAuthTurnSignals :exec
 UPDATE a2a_task_turn turn
 SET control_signal = NULL,
@@ -676,7 +727,7 @@ JOIN chat_message input_message
 WHERE binding.id = $11
   AND binding.endpoint_id = $12
   AND binding.client_id = $13
-RETURNING id, binding_id, endpoint_id, client_id, accepted_credential_id, sequence, message_id, request_fingerprint, local_task_id, input_chat_message_id, input_parts, message_extensions, message_metadata, reference_task_ids, accepted_output_modes, control_signal, control_payload, created_at, updated_at, completed_at
+RETURNING id, binding_id, endpoint_id, client_id, accepted_credential_id, sequence, message_id, request_fingerprint, local_task_id, input_chat_message_id, input_parts, message_extensions, message_metadata, reference_task_ids, accepted_output_modes, control_signal, control_payload, created_at, updated_at, completed_at, request_bound_lease_expires_at
 `
 
 type CreateA2ATaskTurnParams struct {
@@ -733,6 +784,7 @@ func (q *Queries) CreateA2ATaskTurn(ctx context.Context, arg CreateA2ATaskTurnPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.RequestBoundLeaseExpiresAt,
 	)
 	return i, err
 }
@@ -1248,7 +1300,7 @@ func (q *Queries) GetA2AMessageClaimForClient(ctx context.Context, arg GetA2AMes
 
 const getA2AMessageTurnClaimForClient = `-- name: GetA2AMessageTurnClaimForClient :one
 
-SELECT turn.id, turn.binding_id, turn.endpoint_id, turn.client_id, turn.accepted_credential_id, turn.sequence, turn.message_id, turn.request_fingerprint, turn.local_task_id, turn.input_chat_message_id, turn.input_parts, turn.message_extensions, turn.message_metadata, turn.reference_task_ids, turn.accepted_output_modes, turn.control_signal, turn.control_payload, turn.created_at, turn.updated_at, turn.completed_at, binding.public_task_id, context.public_context_id
+SELECT turn.id, turn.binding_id, turn.endpoint_id, turn.client_id, turn.accepted_credential_id, turn.sequence, turn.message_id, turn.request_fingerprint, turn.local_task_id, turn.input_chat_message_id, turn.input_parts, turn.message_extensions, turn.message_metadata, turn.reference_task_ids, turn.accepted_output_modes, turn.control_signal, turn.control_payload, turn.created_at, turn.updated_at, turn.completed_at, turn.request_bound_lease_expires_at, binding.public_task_id, context.public_context_id
 FROM a2a_task_turn turn
 JOIN a2a_task_binding binding ON binding.id = turn.binding_id
 JOIN a2a_context context ON context.id = binding.context_id
@@ -1264,28 +1316,29 @@ type GetA2AMessageTurnClaimForClientParams struct {
 }
 
 type GetA2AMessageTurnClaimForClientRow struct {
-	ID                   pgtype.UUID        `json:"id"`
-	BindingID            pgtype.UUID        `json:"binding_id"`
-	EndpointID           pgtype.UUID        `json:"endpoint_id"`
-	ClientID             pgtype.UUID        `json:"client_id"`
-	AcceptedCredentialID pgtype.UUID        `json:"accepted_credential_id"`
-	Sequence             int32              `json:"sequence"`
-	MessageID            string             `json:"message_id"`
-	RequestFingerprint   string             `json:"request_fingerprint"`
-	LocalTaskID          pgtype.UUID        `json:"local_task_id"`
-	InputChatMessageID   pgtype.UUID        `json:"input_chat_message_id"`
-	InputParts           []byte             `json:"input_parts"`
-	MessageExtensions    []string           `json:"message_extensions"`
-	MessageMetadata      []byte             `json:"message_metadata"`
-	ReferenceTaskIds     []string           `json:"reference_task_ids"`
-	AcceptedOutputModes  []string           `json:"accepted_output_modes"`
-	ControlSignal        pgtype.Text        `json:"control_signal"`
-	ControlPayload       []byte             `json:"control_payload"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
-	PublicTaskID         string             `json:"public_task_id"`
-	PublicContextID      string             `json:"public_context_id"`
+	ID                         pgtype.UUID        `json:"id"`
+	BindingID                  pgtype.UUID        `json:"binding_id"`
+	EndpointID                 pgtype.UUID        `json:"endpoint_id"`
+	ClientID                   pgtype.UUID        `json:"client_id"`
+	AcceptedCredentialID       pgtype.UUID        `json:"accepted_credential_id"`
+	Sequence                   int32              `json:"sequence"`
+	MessageID                  string             `json:"message_id"`
+	RequestFingerprint         string             `json:"request_fingerprint"`
+	LocalTaskID                pgtype.UUID        `json:"local_task_id"`
+	InputChatMessageID         pgtype.UUID        `json:"input_chat_message_id"`
+	InputParts                 []byte             `json:"input_parts"`
+	MessageExtensions          []string           `json:"message_extensions"`
+	MessageMetadata            []byte             `json:"message_metadata"`
+	ReferenceTaskIds           []string           `json:"reference_task_ids"`
+	AcceptedOutputModes        []string           `json:"accepted_output_modes"`
+	ControlSignal              pgtype.Text        `json:"control_signal"`
+	ControlPayload             []byte             `json:"control_payload"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt                pgtype.Timestamptz `json:"completed_at"`
+	RequestBoundLeaseExpiresAt pgtype.Timestamptz `json:"request_bound_lease_expires_at"`
+	PublicTaskID               string             `json:"public_task_id"`
+	PublicContextID            string             `json:"public_context_id"`
 }
 
 // A2A v1 durable conversation/task model -----------------------------------
@@ -1313,6 +1366,7 @@ func (q *Queries) GetA2AMessageTurnClaimForClient(ctx context.Context, arg GetA2
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.RequestBoundLeaseExpiresAt,
 		&i.PublicTaskID,
 		&i.PublicContextID,
 	)
@@ -2651,7 +2705,7 @@ func (q *Queries) ListA2ATaskProjectionsForClient(ctx context.Context, arg ListA
 
 const listA2ATaskTurnsWithOutcome = `-- name: ListA2ATaskTurnsWithOutcome :many
 WITH RECURSIVE selected_turns AS (
-    SELECT turn.id, turn.binding_id, turn.endpoint_id, turn.client_id, turn.accepted_credential_id, turn.sequence, turn.message_id, turn.request_fingerprint, turn.local_task_id, turn.input_chat_message_id, turn.input_parts, turn.message_extensions, turn.message_metadata, turn.reference_task_ids, turn.accepted_output_modes, turn.control_signal, turn.control_payload, turn.created_at, turn.updated_at, turn.completed_at
+    SELECT turn.id, turn.binding_id, turn.endpoint_id, turn.client_id, turn.accepted_credential_id, turn.sequence, turn.message_id, turn.request_fingerprint, turn.local_task_id, turn.input_chat_message_id, turn.input_parts, turn.message_extensions, turn.message_metadata, turn.reference_task_ids, turn.accepted_output_modes, turn.control_signal, turn.control_payload, turn.created_at, turn.updated_at, turn.completed_at, turn.request_bound_lease_expires_at
     FROM a2a_task_turn turn
     WHERE turn.binding_id = $1
 ), lineage AS (
@@ -2688,7 +2742,7 @@ WITH RECURSIVE selected_turns AS (
     FROM lineage
 )
 SELECT
-    turn.id, turn.binding_id, turn.endpoint_id, turn.client_id, turn.accepted_credential_id, turn.sequence, turn.message_id, turn.request_fingerprint, turn.local_task_id, turn.input_chat_message_id, turn.input_parts, turn.message_extensions, turn.message_metadata, turn.reference_task_ids, turn.accepted_output_modes, turn.control_signal, turn.control_payload, turn.created_at, turn.updated_at, turn.completed_at,
+    turn.id, turn.binding_id, turn.endpoint_id, turn.client_id, turn.accepted_credential_id, turn.sequence, turn.message_id, turn.request_fingerprint, turn.local_task_id, turn.input_chat_message_id, turn.input_parts, turn.message_extensions, turn.message_metadata, turn.reference_task_ids, turn.accepted_output_modes, turn.control_signal, turn.control_payload, turn.created_at, turn.updated_at, turn.completed_at, turn.request_bound_lease_expires_at,
     current_task.id AS current_local_task_id,
     current_task.status AS local_task_status,
     current_task.completed_at AS local_task_completed_at,
@@ -2711,32 +2765,33 @@ ORDER BY turn.sequence
 `
 
 type ListA2ATaskTurnsWithOutcomeRow struct {
-	ID                   pgtype.UUID        `json:"id"`
-	BindingID            pgtype.UUID        `json:"binding_id"`
-	EndpointID           pgtype.UUID        `json:"endpoint_id"`
-	ClientID             pgtype.UUID        `json:"client_id"`
-	AcceptedCredentialID pgtype.UUID        `json:"accepted_credential_id"`
-	Sequence             int32              `json:"sequence"`
-	MessageID            string             `json:"message_id"`
-	RequestFingerprint   string             `json:"request_fingerprint"`
-	LocalTaskID          pgtype.UUID        `json:"local_task_id"`
-	InputChatMessageID   pgtype.UUID        `json:"input_chat_message_id"`
-	InputParts           []byte             `json:"input_parts"`
-	MessageExtensions    []string           `json:"message_extensions"`
-	MessageMetadata      []byte             `json:"message_metadata"`
-	ReferenceTaskIds     []string           `json:"reference_task_ids"`
-	AcceptedOutputModes  []string           `json:"accepted_output_modes"`
-	ControlSignal        pgtype.Text        `json:"control_signal"`
-	ControlPayload       []byte             `json:"control_payload"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
-	CurrentLocalTaskID   pgtype.UUID        `json:"current_local_task_id"`
-	LocalTaskStatus      string             `json:"local_task_status"`
-	LocalTaskCompletedAt pgtype.Timestamptz `json:"local_task_completed_at"`
-	AssistantResultText  string             `json:"assistant_result_text"`
-	AssistantMessageKind string             `json:"assistant_message_kind"`
-	AssistantCreatedAt   pgtype.Timestamptz `json:"assistant_created_at"`
+	ID                         pgtype.UUID        `json:"id"`
+	BindingID                  pgtype.UUID        `json:"binding_id"`
+	EndpointID                 pgtype.UUID        `json:"endpoint_id"`
+	ClientID                   pgtype.UUID        `json:"client_id"`
+	AcceptedCredentialID       pgtype.UUID        `json:"accepted_credential_id"`
+	Sequence                   int32              `json:"sequence"`
+	MessageID                  string             `json:"message_id"`
+	RequestFingerprint         string             `json:"request_fingerprint"`
+	LocalTaskID                pgtype.UUID        `json:"local_task_id"`
+	InputChatMessageID         pgtype.UUID        `json:"input_chat_message_id"`
+	InputParts                 []byte             `json:"input_parts"`
+	MessageExtensions          []string           `json:"message_extensions"`
+	MessageMetadata            []byte             `json:"message_metadata"`
+	ReferenceTaskIds           []string           `json:"reference_task_ids"`
+	AcceptedOutputModes        []string           `json:"accepted_output_modes"`
+	ControlSignal              pgtype.Text        `json:"control_signal"`
+	ControlPayload             []byte             `json:"control_payload"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt                pgtype.Timestamptz `json:"completed_at"`
+	RequestBoundLeaseExpiresAt pgtype.Timestamptz `json:"request_bound_lease_expires_at"`
+	CurrentLocalTaskID         pgtype.UUID        `json:"current_local_task_id"`
+	LocalTaskStatus            string             `json:"local_task_status"`
+	LocalTaskCompletedAt       pgtype.Timestamptz `json:"local_task_completed_at"`
+	AssistantResultText        string             `json:"assistant_result_text"`
+	AssistantMessageKind       string             `json:"assistant_message_kind"`
+	AssistantCreatedAt         pgtype.Timestamptz `json:"assistant_created_at"`
 }
 
 func (q *Queries) ListA2ATaskTurnsWithOutcome(ctx context.Context, bindingID pgtype.UUID) ([]ListA2ATaskTurnsWithOutcomeRow, error) {
@@ -2769,6 +2824,7 @@ func (q *Queries) ListA2ATaskTurnsWithOutcome(ctx context.Context, bindingID pgt
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CompletedAt,
+			&i.RequestBoundLeaseExpiresAt,
 			&i.CurrentLocalTaskID,
 			&i.LocalTaskStatus,
 			&i.LocalTaskCompletedAt,
@@ -3021,33 +3077,6 @@ func (q *Queries) LockA2ACredentialsForMemberRevocation(ctx context.Context, cli
 		return nil, err
 	}
 	return items, nil
-}
-
-const lockA2ARequestBoundTurnAdmission = `-- name: LockA2ARequestBoundTurnAdmission :one
-WITH context_lock AS MATERIALIZED (
-    SELECT pg_advisory_xact_lock(
-        hashtextextended($1::uuid::text, 479823117)
-    ) AS acquired
-)
-SELECT NOT EXISTS (
-    SELECT 1
-    FROM agent_task_queue task
-    CROSS JOIN context_lock
-    WHERE task.chat_session_id = $1
-      AND task.status IN ('deferred', 'queued', 'dispatched', 'running', 'waiting_local_directory')
-) AS runnable
-FROM context_lock
-`
-
-// A DEAP DWS token cannot be persisted beyond its HTTP request. Serialize with
-// the Context scheduler and accept such a turn only when it can be promoted
-// immediately, with no active or older deferred execution in the same Chat
-// Session. The caller creates the new deferred row while retaining this lock.
-func (q *Queries) LockA2ARequestBoundTurnAdmission(ctx context.Context, chatSessionID pgtype.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, lockA2ARequestBoundTurnAdmission, chatSessionID)
-	var runnable bool
-	err := row.Scan(&runnable)
-	return runnable, err
 }
 
 const lockA2ATaskBindingForClient = `-- name: LockA2ATaskBindingForClient :one
@@ -3396,6 +3425,8 @@ SELECT
     task.id AS local_task_id,
     task.context AS task_context,
     turn.sequence AS turn_sequence,
+    turn.request_fingerprint,
+    turn.request_bound_lease_expires_at,
     turn.control_signal,
     binding.id AS binding_id,
     binding.public_task_id,
@@ -3428,14 +3459,16 @@ LIMIT 1
 `
 
 type LockNextDeferredA2ATurnForChatSessionRow struct {
-	LocalTaskID     pgtype.UUID `json:"local_task_id"`
-	TaskContext     []byte      `json:"task_context"`
-	TurnSequence    int32       `json:"turn_sequence"`
-	ControlSignal   pgtype.Text `json:"control_signal"`
-	BindingID       pgtype.UUID `json:"binding_id"`
-	PublicTaskID    string      `json:"public_task_id"`
-	PublicState     string      `json:"public_state"`
-	PublicContextID string      `json:"public_context_id"`
+	LocalTaskID                pgtype.UUID        `json:"local_task_id"`
+	TaskContext                []byte             `json:"task_context"`
+	TurnSequence               int32              `json:"turn_sequence"`
+	RequestFingerprint         string             `json:"request_fingerprint"`
+	RequestBoundLeaseExpiresAt pgtype.Timestamptz `json:"request_bound_lease_expires_at"`
+	ControlSignal              pgtype.Text        `json:"control_signal"`
+	BindingID                  pgtype.UUID        `json:"binding_id"`
+	PublicTaskID               string             `json:"public_task_id"`
+	PublicState                string             `json:"public_state"`
+	PublicContextID            string             `json:"public_context_id"`
 }
 
 // Locks the FIFO head before promotion so the service can turn a ContextToken
@@ -3447,6 +3480,8 @@ func (q *Queries) LockNextDeferredA2ATurnForChatSession(ctx context.Context, cha
 		&i.LocalTaskID,
 		&i.TaskContext,
 		&i.TurnSequence,
+		&i.RequestFingerprint,
+		&i.RequestBoundLeaseExpiresAt,
 		&i.ControlSignal,
 		&i.BindingID,
 		&i.PublicTaskID,
@@ -3588,6 +3623,10 @@ WITH context_lock AS MATERIALIZED (
       AND task.chat_session_id = $1
       AND task.status = 'deferred'
       AND binding.public_state IN ('TASK_STATE_SUBMITTED', 'TASK_STATE_WORKING')
+      AND (
+          COALESCE(task.context->>'deap_dws_token_required', 'false') <> 'true'
+          OR turn.request_bound_lease_expires_at > now()
+      )
       AND NOT EXISTS (
           SELECT 1
           FROM agent_task_queue occupied
@@ -4028,6 +4067,46 @@ func (q *Queries) RevokeAgentA2ACredentialForOwner(ctx context.Context, arg Revo
 	return i, err
 }
 
+const setA2ARequestBoundTurnLease = `-- name: SetA2ARequestBoundTurnLease :one
+UPDATE a2a_task_turn turn
+SET control_signal = COALESCE(control_signal, 'request_bound'),
+    request_bound_lease_expires_at = $1,
+    updated_at = now()
+FROM agent_task_queue task
+WHERE turn.local_task_id = $2
+  AND turn.request_fingerprint = $3
+  AND turn.local_task_id = task.id
+  AND (turn.control_signal IS NULL OR turn.control_signal = 'request_bound')
+  AND task.status = 'deferred'
+  AND task.context->>'deap_dws_token_required' = 'true'
+RETURNING
+    turn.local_task_id,
+    task.chat_session_id,
+    turn.request_bound_lease_expires_at
+`
+
+type SetA2ARequestBoundTurnLeaseParams struct {
+	LeaseExpiresAt     pgtype.Timestamptz `json:"lease_expires_at"`
+	LocalTaskID        pgtype.UUID        `json:"local_task_id"`
+	RequestFingerprint string             `json:"request_fingerprint"`
+}
+
+type SetA2ARequestBoundTurnLeaseRow struct {
+	LocalTaskID                pgtype.UUID        `json:"local_task_id"`
+	ChatSessionID              pgtype.UUID        `json:"chat_session_id"`
+	RequestBoundLeaseExpiresAt pgtype.Timestamptz `json:"request_bound_lease_expires_at"`
+}
+
+// The opaque X-DWS-Token remains only in the live HTTP request. This durable,
+// non-secret lease lets the FIFO scheduler distinguish a still-connected
+// request from one that must transition to AUTH_REQUIRED after disconnect.
+func (q *Queries) SetA2ARequestBoundTurnLease(ctx context.Context, arg SetA2ARequestBoundTurnLeaseParams) (SetA2ARequestBoundTurnLeaseRow, error) {
+	row := q.db.QueryRow(ctx, setA2ARequestBoundTurnLease, arg.LeaseExpiresAt, arg.LocalTaskID, arg.RequestFingerprint)
+	var i SetA2ARequestBoundTurnLeaseRow
+	err := row.Scan(&i.LocalTaskID, &i.ChatSessionID, &i.RequestBoundLeaseExpiresAt)
+	return i, err
+}
+
 const setA2ATaskCancelRequested = `-- name: SetA2ATaskCancelRequested :one
 UPDATE a2a_task_binding
 SET cancel_requested_at = COALESCE(cancel_requested_at, now()),
@@ -4085,11 +4164,12 @@ WITH RECURSIVE ancestors AS (
 UPDATE a2a_task_turn turn
 SET control_signal = $1,
     control_payload = $2::jsonb,
+    request_bound_lease_expires_at = NULL,
     updated_at = now()
 FROM selected_turn
 WHERE turn.id = selected_turn.id
-  AND turn.control_signal IS NULL
-RETURNING turn.id, turn.binding_id, turn.endpoint_id, turn.client_id, turn.accepted_credential_id, turn.sequence, turn.message_id, turn.request_fingerprint, turn.local_task_id, turn.input_chat_message_id, turn.input_parts, turn.message_extensions, turn.message_metadata, turn.reference_task_ids, turn.accepted_output_modes, turn.control_signal, turn.control_payload, turn.created_at, turn.updated_at, turn.completed_at
+  AND (turn.control_signal IS NULL OR turn.control_signal = 'request_bound')
+RETURNING turn.id, turn.binding_id, turn.endpoint_id, turn.client_id, turn.accepted_credential_id, turn.sequence, turn.message_id, turn.request_fingerprint, turn.local_task_id, turn.input_chat_message_id, turn.input_parts, turn.message_extensions, turn.message_metadata, turn.reference_task_ids, turn.accepted_output_modes, turn.control_signal, turn.control_payload, turn.created_at, turn.updated_at, turn.completed_at, turn.request_bound_lease_expires_at
 `
 
 type SetA2ATurnControlSignalParams struct {
@@ -4122,6 +4202,7 @@ func (q *Queries) SetA2ATurnControlSignal(ctx context.Context, arg SetA2ATurnCon
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.RequestBoundLeaseExpiresAt,
 	)
 	return i, err
 }
