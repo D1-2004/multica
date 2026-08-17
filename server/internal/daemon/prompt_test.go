@@ -450,6 +450,25 @@ func TestBuildChatPromptChannelAwareness(t *testing.T) {
 	})
 }
 
+func TestBuildChatPromptA2AArtifactBoundary(t *testing.T) {
+	out := buildChatPrompt(Task{
+		ChatSessionID: "sess-a2a",
+		ChatMessage:   "send the result",
+		A2AInvocation: true,
+	})
+	for _, want := range []string{
+		"ordinary final answer is published automatically",
+		"do not call `publish_artifact` for ordinary final text",
+		"internal or tool data",
+		"side-effect receipts",
+		"only when the caller explicitly asks for a file or structured result to be returned through A2A",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("A2A chat prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+}
+
 func TestBuildChatPromptAgentIntro(t *testing.T) {
 	// The proactive self-introduction chat (MUL-4230) has no user message: the
 	// prompt must tell the agent to open the conversation itself, and must NOT

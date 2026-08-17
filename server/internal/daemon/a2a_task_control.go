@@ -384,7 +384,7 @@ func a2aTaskControlTools() []map[string]any {
 		},
 		{
 			"name":        "publish_artifact",
-			"description": "Publish or append a text, structured-data, or file artifact for the current A2A task.",
+			"description": "Publish or append a caller-requested text, structured-data, or file artifact for the current A2A task. Ordinary final answers are published automatically; do not publish internal/tool data, side-effect receipts, or duplicate summaries.",
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false, "required": []string{"parts"},
 				"properties": map[string]any{
