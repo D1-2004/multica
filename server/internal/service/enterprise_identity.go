@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -34,6 +35,7 @@ const (
 	defaultEnterpriseAITTTL                = int64(900)
 	defaultEnterpriseIdemTimeout           = 15 * time.Second
 	defaultEnterpriseOAuthAttemptTTL       = 10 * time.Minute
+	defaultEnterpriseBindingCompletionTTL  = 15 * time.Minute
 	defaultEnterpriseMaintenanceInterval   = 5 * time.Minute
 	defaultEnterpriseRefreshBefore         = 24 * time.Hour
 	defaultEnterpriseSourceRefreshInterval = 12 * time.Hour
@@ -42,9 +44,10 @@ const (
 )
 
 var (
-	ErrEnterpriseIdentityDisabled         = errors.New("enterprise identity is not configured")
-	ErrEnterpriseIdentityNeedsReauth      = errors.New("enterprise identity requires employee reauthorization")
-	ErrEnterpriseIdentityEmployeeConflict = errors.New("enterprise identity must be revoked before binding another employee")
+	ErrEnterpriseIdentityDisabled          = errors.New("enterprise identity is not configured")
+	ErrEnterpriseIdentityNeedsReauth       = errors.New("enterprise identity requires employee reauthorization")
+	ErrEnterpriseIdentityEmployeeConflict  = errors.New("enterprise identity must be revoked before binding another employee")
+	ErrEnterpriseIdentityBindingInProgress = errors.New("enterprise identity binding is already in progress")
 
 	enterpriseEmployeeIDPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 	enterprisePathPartPattern   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -193,6 +196,9 @@ func (c EnterpriseIdentityConfig) Validate(_ ASBConfig) error {
 type enterpriseIdentityStore interface {
 	CreateAgentEnterpriseIdentityAttempt(context.Context, db.CreateAgentEnterpriseIdentityAttemptParams) (db.AgentEnterpriseIdentityAttempt, error)
 	ConsumeAgentEnterpriseIdentityAttempt(context.Context, []byte) (db.AgentEnterpriseIdentityAttempt, error)
+	GetActiveAgentEnterpriseIdentityAttempt(context.Context, db.GetActiveAgentEnterpriseIdentityAttemptParams) (db.AgentEnterpriseIdentityAttempt, error)
+	CompleteAgentEnterpriseIdentityAttempt(context.Context, db.CompleteAgentEnterpriseIdentityAttemptParams) (int64, error)
+	DeleteExpiredAgentEnterpriseIdentityAttempts(context.Context, pgtype.Timestamptz) (int64, error)
 	GetAgent(context.Context, pgtype.UUID) (db.Agent, error)
 	GetAgentEnterpriseIdentity(context.Context, db.GetAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
 	GetActiveAgentEnterpriseIdentity(context.Context, db.GetActiveAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
@@ -389,6 +395,32 @@ func (s *EnterpriseIdentityService) StartBinding(
 	if err := validateEnterpriseRedirectPath(input.RedirectPath); err != nil {
 		return StartEnterpriseIdentityBindingResult{}, err
 	}
+	now := s.Now()
+	staleAttemptCutoff := now.Add(-defaultEnterpriseBindingCompletionTTL)
+	if _, err := s.Store.DeleteExpiredAgentEnterpriseIdentityAttempts(
+		ctx,
+		pgtype.Timestamptz{Time: staleAttemptCutoff, Valid: true},
+	); err != nil {
+		return StartEnterpriseIdentityBindingResult{}, fmt.Errorf(
+			"delete expired enterprise identity binding attempts: %w",
+			err,
+		)
+	}
+	if _, err := s.Store.GetActiveAgentEnterpriseIdentityAttempt(
+		ctx,
+		db.GetActiveAgentEnterpriseIdentityAttemptParams{
+			WorkspaceID: input.WorkspaceID,
+			AgentID:     input.AgentID,
+			ActiveAfter: pgtype.Timestamptz{Time: staleAttemptCutoff, Valid: true},
+		},
+	); err == nil {
+		return StartEnterpriseIdentityBindingResult{}, ErrEnterpriseIdentityBindingInProgress
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return StartEnterpriseIdentityBindingResult{}, fmt.Errorf(
+			"load active enterprise identity binding attempt: %w",
+			err,
+		)
+	}
 	state, err := randomEnterpriseToken()
 	if err != nil {
 		return StartEnterpriseIdentityBindingResult{}, errors.New("generate enterprise identity OAuth state")
@@ -397,7 +429,6 @@ func (s *EnterpriseIdentityService) StartBinding(
 	if err != nil {
 		return StartEnterpriseIdentityBindingResult{}, errors.New("generate enterprise identity OAuth nonce")
 	}
-	now := s.Now()
 	expiresAt := now.Add(config.OAuthAttemptTTL)
 	if _, err := s.Store.CreateAgentEnterpriseIdentityAttempt(ctx, db.CreateAgentEnterpriseIdentityAttemptParams{
 		WorkspaceID:       input.WorkspaceID,
@@ -449,6 +480,7 @@ type CompleteEnterpriseIdentityBindingResult struct {
 // The database row stays private to this package; callers only receive the
 // coordinates required to render and poll the progress page.
 type PreparedEnterpriseIdentityBinding struct {
+	AttemptID    pgtype.UUID
 	WorkspaceID  pgtype.UUID
 	AgentID      pgtype.UUID
 	RedirectPath string
@@ -472,6 +504,9 @@ func (s *EnterpriseIdentityService) PrepareBindingCompletion(
 	attempt, err := s.Store.ConsumeAgentEnterpriseIdentityAttempt(ctx, sha256Bytes(state))
 	if err != nil {
 		logEnterpriseIdentityBindingStageFailure("consume_oauth_attempt", stageStarted, err)
+		if isEnterpriseIdentityBindingInProgressError(err) {
+			return PreparedEnterpriseIdentityBinding{}, ErrEnterpriseIdentityBindingInProgress
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PreparedEnterpriseIdentityBinding{}, errors.New("enterprise identity OAuth attempt is invalid, expired, or already used")
 		}
@@ -483,6 +518,7 @@ func (s *EnterpriseIdentityService) PrepareBindingCompletion(
 	}
 	logEnterpriseIdentityBindingStageSuccess("consume_oauth_attempt", stageStarted, bindingAttrs...)
 	return PreparedEnterpriseIdentityBinding{
+		AttemptID:    attempt.ID,
 		WorkspaceID:  attempt.WorkspaceID,
 		AgentID:      attempt.AgentID,
 		RedirectPath: attempt.RedirectPath,
@@ -507,7 +543,40 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 	ctx context.Context,
 	prepared PreparedEnterpriseIdentityBinding,
 	code string,
-) (CompleteEnterpriseIdentityBindingResult, error) {
+) (result CompleteEnterpriseIdentityBindingResult, resultErr error) {
+	defer func() {
+		if !prepared.AttemptID.Valid {
+			return
+		}
+		completionStatus := "succeeded"
+		completionErrorCode := pgtype.Text{}
+		if resultErr != nil {
+			completionStatus = "failed"
+			completionErrorCode = pgtype.Text{
+				String: enterpriseIdentityBindingCompletionErrorCode(resultErr),
+				Valid:  true,
+			}
+		}
+		completionCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		updated, completionErr := s.Store.CompleteAgentEnterpriseIdentityAttempt(
+			completionCtx,
+			db.CompleteAgentEnterpriseIdentityAttemptParams{
+				CompletionStatus:    completionStatus,
+				CompletionErrorCode: completionErrorCode,
+				ID:                  prepared.AttemptID,
+			},
+		)
+		if completionErr != nil || updated != 1 {
+			slog.Warn(
+				"enterprise identity binding attempt completion was not persisted",
+				"attempt_id", util.UUIDToString(prepared.AttemptID),
+				"status", completionStatus,
+				"updated_rows", updated,
+				"error_type", fmt.Sprintf("%T", completionErr),
+			)
+		}
+	}()
 	config := s.currentConfig()
 	bindingStarted := prepared.started
 	if bindingStarted.IsZero() {
@@ -883,6 +952,28 @@ func logEnterpriseIdentityBindingStageSuccess(stage string, started time.Time, a
 		"duration_ms", enterpriseIdentityDurationMilliseconds(started),
 	}
 	slog.Info("enterprise identity binding stage completed", append(base, attributes...)...)
+}
+
+func isEnterpriseIdentityBindingInProgressError(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "agent_enterprise_identity_attempt_one_pending_idx"
+}
+
+func enterpriseIdentityBindingCompletionErrorCode(err error) string {
+	switch {
+	case errors.Is(err, ErrEnterpriseIdentityBindingInProgress):
+		return "binding_in_progress"
+	case errors.Is(err, ErrEnterpriseIdentityNeedsReauth):
+		return "needs_reauthorization"
+	case errors.Is(err, ErrEnterpriseIdentityEmployeeConflict):
+		return "employee_conflict"
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return "timed_out"
+	default:
+		return "internal_error"
+	}
 }
 
 func logEnterpriseIdentityBindingStageFailure(

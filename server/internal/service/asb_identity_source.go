@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 
@@ -386,35 +385,13 @@ func attachASBBUCIdentityOnce(
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
 ) error {
-	// Submit the synchronous attachment exactly once. ASB can return the
-	// documented tunnel-converging response after it has started sandbox-side
-	// WireGuard setup. Repeating the POST restarts that setup and can keep the
-	// tunnel permanently unready. The caller therefore treats this one response
-	// as an in-progress attachment and proves completion through state and BUC
-	// probes only.
-	err := client.AttachBUCIdentity(ctx, sandboxID, grant, true)
-	if err == nil {
-		return nil
-	}
-	if isASBWireGuardTunnelConverging(err) {
-		slog.Info(
-			"ASB BUC identity attachment is converging after single submission",
-			"sandbox_id", sandboxID,
-		)
-		return nil
-	}
-	return err
-}
-
-func isASBWireGuardTunnelConverging(err error) bool {
-	var httpErr *ASBHTTPError
-	return errors.As(err, &httpErr) &&
-		httpErr.Operation == "attach_buc_identity" &&
-		httpErr.StatusCode == http.StatusBadRequest &&
-		strings.Contains(
-			strings.ToLower(httpErr.ErrorMessage),
-			"wireguard tunnel not ready yet",
-		)
+	// Submit the documented asynchronous attachment exactly once. The
+	// synchronous form executes an extra status command through ASB egress-ops;
+	// a failed status command is returned as HTTP 400 even when bootstrap was
+	// already submitted, so callers cannot distinguish convergence from a dead
+	// wgclient. Multica owns the bounded employee and Agent identity probe below.
+	// Repeating either form is unsafe because it restarts wgclient.
+	return client.AttachBUCIdentity(ctx, sandboxID, grant, false)
 }
 
 func asbIdentityProbeInterval(timeout time.Duration) time.Duration {

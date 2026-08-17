@@ -103,7 +103,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 			})
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/identity/wireguard":
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBBUCIdentityGrant
@@ -116,7 +116,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 				t.Fatalf("BUC identity grant = %#v", grant)
 			}
 			attachCalls++
-			response.WriteHeader(http.StatusOK)
+			response.WriteHeader(http.StatusAccepted)
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/endpoints/44772":
 			response.Header().Set("Content-Type", "application/json")
@@ -361,14 +361,14 @@ func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
 			attachCalls++
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			if attachCalls > 1 {
 				t.Fatalf("identity source attach calls = %d, want exactly one", attachCalls)
 			}
 			time.Sleep(10 * time.Millisecond)
-			response.WriteHeader(http.StatusOK)
+			response.WriteHeader(http.StatusAccepted)
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID:
 			response.Header().Set("Content-Type", "application/json")
@@ -436,7 +436,7 @@ func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T
 	}
 }
 
-func TestAttachAndProbeASBIdentitySourceProbesAfterWireGuardConvergingResponse(t *testing.T) {
+func TestAttachAndProbeASBIdentitySourceDoesNotHideAsyncAttachFailure(t *testing.T) {
 	const sandboxID = "identity-source-wireguard-converging"
 	attachCalls := 0
 	var server *httptest.Server
@@ -485,7 +485,7 @@ func TestAttachAndProbeASBIdentitySourceProbesAfterWireGuardConvergingResponse(t
 	if err != nil {
 		t.Fatalf("NewASBClient: %v", err)
 	}
-	if err := attachAndProbeASBIdentitySource(
+	err = attachAndProbeASBIdentitySource(
 		context.Background(),
 		client,
 		sandboxID,
@@ -498,8 +498,9 @@ func TestAttachAndProbeASBIdentitySourceProbesAfterWireGuardConvergingResponse(t
 		},
 		"wg-client",
 		250*time.Millisecond,
-	); err != nil {
-		t.Fatalf("attachAndProbeASBIdentitySource: %v", err)
+	)
+	if err == nil || !strings.Contains(err.Error(), "attach BUC identity") {
+		t.Fatalf("attachAndProbeASBIdentitySource error = %v, want attach failure", err)
 	}
 	if attachCalls != 1 {
 		t.Fatalf("attach calls = %d, want exactly one", attachCalls)

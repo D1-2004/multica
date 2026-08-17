@@ -20,6 +20,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -29,24 +30,27 @@ import (
 )
 
 type fakeEnterpriseIdentityStore struct {
-	attempt         db.AgentEnterpriseIdentityAttempt
-	agent           db.Agent
-	current         db.AgentEnterpriseIdentity
-	reusable        db.AgentEnterpriseIdentity
-	reusableArgs    db.GetReusableAgentEnterpriseIdentitySourceParams
-	references      []db.AgentEnterpriseIdentity
-	getCurrentErr   error
-	createAttempt   db.CreateAgentEnterpriseIdentityAttemptParams
-	upsert          db.UpsertAgentEnterpriseIdentityParams
-	sourceCAS       db.CompareAndSwapAgentEnterpriseIdentitySourceParams
-	cas             db.CompareAndSwapAgentEnterpriseIdentityTokenParams
-	markNeedsReauth int
-	maintenance     []db.AgentEnterpriseIdentity
-	maintenanceArgs db.ListAgentEnterpriseIdentitiesForMaintenanceParams
-	activeSessions  []db.FcE2bSandboxSession
-	markedStale     []db.MarkCloudSandboxSessionStaleParams
-	touchedSources  int
-	invalidSources  int
+	attempt               db.AgentEnterpriseIdentityAttempt
+	activeAttempt         db.AgentEnterpriseIdentityAttempt
+	completedAttempt      db.CompleteAgentEnterpriseIdentityAttemptParams
+	deletedAttemptsBefore pgtype.Timestamptz
+	agent                 db.Agent
+	current               db.AgentEnterpriseIdentity
+	reusable              db.AgentEnterpriseIdentity
+	reusableArgs          db.GetReusableAgentEnterpriseIdentitySourceParams
+	references            []db.AgentEnterpriseIdentity
+	getCurrentErr         error
+	createAttempt         db.CreateAgentEnterpriseIdentityAttemptParams
+	upsert                db.UpsertAgentEnterpriseIdentityParams
+	sourceCAS             db.CompareAndSwapAgentEnterpriseIdentitySourceParams
+	cas                   db.CompareAndSwapAgentEnterpriseIdentityTokenParams
+	markNeedsReauth       int
+	maintenance           []db.AgentEnterpriseIdentity
+	maintenanceArgs       db.ListAgentEnterpriseIdentitiesForMaintenanceParams
+	activeSessions        []db.FcE2bSandboxSession
+	markedStale           []db.MarkCloudSandboxSessionStaleParams
+	touchedSources        int
+	invalidSources        int
 }
 
 func (f *fakeEnterpriseIdentityStore) CreateAgentEnterpriseIdentityAttempt(
@@ -65,6 +69,32 @@ func (f *fakeEnterpriseIdentityStore) ConsumeAgentEnterpriseIdentityAttempt(
 		return db.AgentEnterpriseIdentityAttempt{}, pgx.ErrNoRows
 	}
 	return f.attempt, nil
+}
+
+func (f *fakeEnterpriseIdentityStore) GetActiveAgentEnterpriseIdentityAttempt(
+	_ context.Context,
+	_ db.GetActiveAgentEnterpriseIdentityAttemptParams,
+) (db.AgentEnterpriseIdentityAttempt, error) {
+	if !f.activeAttempt.ID.Valid {
+		return db.AgentEnterpriseIdentityAttempt{}, pgx.ErrNoRows
+	}
+	return f.activeAttempt, nil
+}
+
+func (f *fakeEnterpriseIdentityStore) CompleteAgentEnterpriseIdentityAttempt(
+	_ context.Context,
+	params db.CompleteAgentEnterpriseIdentityAttemptParams,
+) (int64, error) {
+	f.completedAttempt = params
+	return 1, nil
+}
+
+func (f *fakeEnterpriseIdentityStore) DeleteExpiredAgentEnterpriseIdentityAttempts(
+	_ context.Context,
+	expiredBefore pgtype.Timestamptz,
+) (int64, error) {
+	f.deletedAttemptsBefore = expiredBefore
+	return 0, nil
 }
 
 func (f *fakeEnterpriseIdentityStore) GetAgent(context.Context, pgtype.UUID) (db.Agent, error) {
@@ -699,6 +729,98 @@ func TestEnterpriseIdentityStartBindingStoresOnlyHashedStateAndNonce(t *testing.
 		authorizeURL.Query().Get("authorize_app") != "authorized-app-1,authorized-app-2" ||
 		authorizeURL.Query().Get("scope") != "profile openid employee user_authorize" {
 		t.Fatalf("authorize query = %v", authorizeURL.Query())
+	}
+}
+
+func TestEnterpriseIdentityStartBindingRejectsActiveAttempt(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 17, 4, 0, 0, 0, time.UTC)
+	store := &fakeEnterpriseIdentityStore{
+		activeAttempt: db.AgentEnterpriseIdentityAttempt{
+			ID:               util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+			CompletionStatus: "pending",
+		},
+	}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{},
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+	_, err := serviceUnderTest.StartBinding(context.Background(), StartEnterpriseIdentityBindingInput{
+		WorkspaceID:  util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID:      util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		ActorUserID:  util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+		RedirectPath: "/agents/222/settings",
+	})
+	if !errors.Is(err, ErrEnterpriseIdentityBindingInProgress) {
+		t.Fatalf("StartBinding error = %v, want binding in progress", err)
+	}
+	wantCutoff := now.Add(-defaultEnterpriseBindingCompletionTTL)
+	if !store.deletedAttemptsBefore.Valid || !store.deletedAttemptsBefore.Time.Equal(wantCutoff) {
+		t.Fatalf("expired attempt cleanup cutoff = %#v, want %s", store.deletedAttemptsBefore, wantCutoff)
+	}
+	if store.createAttempt.AgentID.Valid {
+		t.Fatalf("StartBinding created a duplicate OAuth attempt: %#v", store.createAttempt)
+	}
+}
+
+func TestEnterpriseIdentityCompleteBindingPersistsFailureStatus(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 17, 4, 0, 0, 0, time.UTC)
+	state := "oauth-state"
+	attemptID := util.MustParseUUID("44444444-4444-4444-4444-444444444444")
+	store := &fakeEnterpriseIdentityStore{
+		attempt: db.AgentEnterpriseIdentityAttempt{
+			ID:           attemptID,
+			WorkspaceID:  util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+			AgentID:      util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+			ActorUserID:  util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+			StateHash:    sha256Bytes(state),
+			NonceHash:    sha256Bytes("oauth-nonce"),
+			RedirectPath: "/agents/222/settings",
+		},
+	}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{verifyErr: ErrEnterpriseIdentityNeedsReauth},
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+	_, err := serviceUnderTest.CompleteBinding(context.Background(), state, "authorization-code")
+	if !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+		t.Fatalf("CompleteBinding error = %v, want needs reauthorization", err)
+	}
+	if store.completedAttempt.ID != attemptID ||
+		store.completedAttempt.CompletionStatus != "failed" ||
+		!store.completedAttempt.CompletionErrorCode.Valid ||
+		store.completedAttempt.CompletionErrorCode.String != "needs_reauthorization" {
+		t.Fatalf("completed attempt = %#v", store.completedAttempt)
+	}
+}
+
+func TestEnterpriseIdentityBindingInProgressErrorMatchesOnlyPendingConstraint(t *testing.T) {
+	t.Parallel()
+
+	if !isEnterpriseIdentityBindingInProgressError(&pgconn.PgError{
+		Code:           "23505",
+		ConstraintName: "agent_enterprise_identity_attempt_one_pending_idx",
+	}) {
+		t.Fatal("pending binding constraint was not recognized")
+	}
+	if isEnterpriseIdentityBindingInProgressError(&pgconn.PgError{
+		Code:           "23505",
+		ConstraintName: "another_unique_constraint",
+	}) {
+		t.Fatal("unrelated unique constraint was recognized as binding in progress")
 	}
 }
 
