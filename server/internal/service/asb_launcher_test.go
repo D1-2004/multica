@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/chattrace"
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -26,6 +27,7 @@ type fakeASBTaskIdentityResolver struct {
 	identity ASBResolvedIdentity
 	err      error
 	released *atomic.Bool
+	calls    *atomic.Int32
 }
 
 func TestASBConfigCommandReadyTimeout(t *testing.T) {
@@ -66,6 +68,9 @@ func (resolver fakeASBTaskIdentityResolver) ResolveASBTaskIdentity(
 	pgtype.UUID,
 	pgtype.UUID,
 ) (ASBResolvedIdentity, error) {
+	if resolver.calls != nil {
+		resolver.calls.Add(1)
+	}
 	return resolver.identity, resolver.err
 }
 
@@ -150,7 +155,50 @@ func TestASBLaunchWithoutIdentityServiceUsesUnboundMode(t *testing.T) {
 	}
 }
 
-func TestASBA2ATaskResolvesAgentEnterpriseIdentity(t *testing.T) {
+func TestASBA2ATaskSkipsAgentEnterpriseIdentity(t *testing.T) {
+	t.Parallel()
+
+	bound := ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:              "aip-1",
+		SourceSandboxID:    "identity-source-1",
+		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentIdentityToken: "ait",
+		Fingerprint:        strings.Repeat("a", 64),
+	}
+	agentID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	runtimeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	var calls atomic.Int32
+	launcher := &ASBLauncher{Identity: fakeASBTaskIdentityResolver{identity: bound, calls: &calls}}
+	for _, taskContext := range [][]byte{
+		newA2ATaskContext(),
+		newA2ATaskContext(a2aintegration.InvocationIdentity{DEAPDWSToken: "request-token"}),
+	} {
+		identity, err := launcher.resolveTaskIdentityForTask(
+			context.Background(),
+			db.AgentTaskQueue{
+				AgentID:   agentID,
+				RuntimeID: runtimeID,
+				Context:   taskContext,
+			},
+			pgtype.UUID{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if identity != unboundASBResolvedIdentity() {
+			t.Fatalf("A2A identity = %#v, want unbound", identity)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("A2A task resolved Agent enterprise identity %d times", calls.Load())
+	}
+}
+
+func TestASBOrdinaryTaskResolvesAgentEnterpriseIdentity(t *testing.T) {
 	t.Parallel()
 
 	want := ASBResolvedIdentity{
@@ -164,15 +212,13 @@ func TestASBA2ATaskResolvesAgentEnterpriseIdentity(t *testing.T) {
 		AgentIdentityToken: "ait",
 		Fingerprint:        strings.Repeat("a", 64),
 	}
-	agentID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
-	runtimeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
-	launcher := &ASBLauncher{Identity: fakeASBTaskIdentityResolver{identity: want}}
+	var calls atomic.Int32
+	launcher := &ASBLauncher{Identity: fakeASBTaskIdentityResolver{identity: want, calls: &calls}}
 	identity, err := launcher.resolveTaskIdentityForTask(
 		context.Background(),
 		db.AgentTaskQueue{
-			AgentID:   agentID,
-			RuntimeID: runtimeID,
-			Context:   newA2ATaskContext(),
+			AgentID:   util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+			RuntimeID: util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
 		},
 		pgtype.UUID{},
 	)
@@ -180,7 +226,10 @@ func TestASBA2ATaskResolvesAgentEnterpriseIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if identity != want {
-		t.Fatalf("A2A identity = %#v, want %#v", identity, want)
+		t.Fatalf("ordinary task identity = %#v, want %#v", identity, want)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("ordinary task identity resolver calls = %d, want 1", calls.Load())
 	}
 }
 
