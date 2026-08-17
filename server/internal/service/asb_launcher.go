@@ -813,6 +813,7 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 			ctx,
 			sandboxID,
 			identity,
+			!resolution.coldStart,
 			l.Config.WireGuardReadyTimeout,
 		); err != nil {
 			if resolution.releaseIdentitySource != nil {
@@ -1366,11 +1367,35 @@ func (l *ASBLauncher) ensureSandboxIdentityReady(
 	ctx context.Context,
 	sandboxID string,
 	identity ASBResolvedIdentity,
+	warmReuse bool,
 	timeout time.Duration,
 ) error {
+	if warmReuse {
+		probeStarted := time.Now()
+		probeErr := probeASBTaskEnterpriseIdentity(
+			ctx,
+			l.Client,
+			sandboxID,
+			identity.RawEmployeeID,
+		)
+		if probeErr == nil {
+			slog.Info(
+				"ASB warm sandbox enterprise identity reused",
+				"sandbox_id", sandboxID,
+				"duration_ms", time.Since(probeStarted).Milliseconds(),
+			)
+			return nil
+		}
+		slog.Info(
+			"ASB warm sandbox enterprise identity requires refresh",
+			"sandbox_id", sandboxID,
+			"probe_stage", asbEnterpriseCLIIdentityProbeFailureStage(probeErr),
+			"duration_ms", time.Since(probeStarted).Milliseconds(),
+		)
+	}
 	// The enterprise CLI probe calls a1, which needs the SPIFFE auth headers
-	// installed by AttachAgentIdentity. Attach them before probing the inherited
-	// BUC credential directory to avoid a circular readiness dependency.
+	// installed by AttachAgentIdentity. A cold or no-longer-ready sandbox must
+	// install the current grant before probing the inherited BUC directory.
 	grant := ASBAgentIdentityGrant{
 		RawEmployeeID: identity.RawEmployeeID,
 		AgentToken:    identity.AgentIdentityToken,
