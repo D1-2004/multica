@@ -396,7 +396,117 @@ func TestASBTaskIdentityProbeUsesEmployeeBoundary(t *testing.T) {
 	}
 }
 
-func TestASBLauncherAttachesAgentIdentityBeforeInheritedIdentityProbe(t *testing.T) {
+func TestASBLauncherReusesReadyWarmSandboxIdentityWithoutReattachment(t *testing.T) {
+	t.Parallel()
+
+	var attachCalls atomic.Int32
+	var probeCalls atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/sandbox-123/endpoints/44772":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/execd",
+				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
+			probeCalls.Add(1)
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
+		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/spiffe":
+			attachCalls.Add(1)
+			response.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	launcher := &ASBLauncher{Client: newTestASBClient(t, server)}
+	identity := ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AgentIdentityToken: "ait",
+	}
+	if err := launcher.ensureSandboxIdentityReady(
+		context.Background(),
+		"sandbox-123",
+		identity,
+		true,
+		time.Second,
+	); err != nil {
+		t.Fatalf("reuse ready warm identity: %v", err)
+	}
+	if probeCalls.Load() != 1 || attachCalls.Load() != 0 {
+		t.Fatalf(
+			"warm identity calls = (probe=%d attach=%d), want (1, 0)",
+			probeCalls.Load(),
+			attachCalls.Load(),
+		)
+	}
+}
+
+func TestASBLauncherRefreshesUnreadyWarmSandboxIdentity(t *testing.T) {
+	t.Parallel()
+
+	var attachCalls atomic.Int32
+	var probeCalls atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/sandbox-123/endpoints/44772":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/execd",
+				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
+			call := probeCalls.Add(1)
+			response.Header().Set("Content-Type", "text/event-stream")
+			if call == 1 {
+				_, _ = io.WriteString(response, `data: {"type":"stderr","text":"probe_stage=a1\n"}`+"\n")
+				_, _ = io.WriteString(response, `data: {"type":"error","error":{"ename":"CommandExecError","evalue":"1"}}`+"\n")
+			}
+			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
+		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/spiffe":
+			attachCalls.Add(1)
+			response.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	launcher := &ASBLauncher{Client: newTestASBClient(t, server)}
+	identity := ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AgentIdentityToken: "ait",
+	}
+	if err := launcher.ensureSandboxIdentityReady(
+		context.Background(),
+		"sandbox-123",
+		identity,
+		true,
+		time.Second,
+	); err != nil {
+		t.Fatalf("refresh unready warm identity: %v", err)
+	}
+	if probeCalls.Load() != 2 || attachCalls.Load() != 1 {
+		t.Fatalf(
+			"warm identity calls = (probe=%d attach=%d), want (2, 1)",
+			probeCalls.Load(),
+			attachCalls.Load(),
+		)
+	}
+}
+
+func TestASBLauncherAttachesAgentIdentityBeforeColdSandboxIdentityProbe(t *testing.T) {
 	t.Parallel()
 
 	var spiffeGrant ASBAgentIdentityGrant
@@ -455,6 +565,7 @@ func TestASBLauncherAttachesAgentIdentityBeforeInheritedIdentityProbe(t *testing
 		context.Background(),
 		"sandbox-123",
 		identity,
+		false,
 		launcher.Config.WireGuardReadyTimeout,
 	); err != nil {
 		t.Fatalf("ensureSandboxIdentityReady: %v", err)
@@ -536,6 +647,7 @@ func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
 		context.Background(),
 		"sandbox-123",
 		identity,
+		false,
 		launcher.Config.WireGuardReadyTimeout,
 	); err != nil {
 		t.Fatalf("ensureSandboxIdentityReady: %v", err)
