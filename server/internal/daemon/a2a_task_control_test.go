@@ -80,6 +80,11 @@ func TestA2ATaskControlToolsExposeStrictPartUnions(t *testing.T) {
 			t.Fatalf("tool schema is missing %s: %s", required, text)
 		}
 	}
+	for _, required := range []string{"caller-requested", "published automatically", "side-effect receipts", "duplicate summaries"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("publish_artifact description is missing %q: %s", required, text)
+		}
+	}
 }
 
 func TestA2ATaskControlRequestInputSchemaIsAnObject(t *testing.T) {

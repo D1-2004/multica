@@ -592,7 +592,7 @@ func buildChatPromptForProvider(task Task, provider string) string {
 	}
 	// Outbound attachments: how the agent puts an image/file INTO its reply.
 	if task.A2AInvocation {
-		b.WriteString("\nUse the task-only `multica_a2a_task_control` tools for A2A interaction. Publish files or structured output with `publish_artifact`. If required caller input is missing, call `request_input` exactly once and stop this run immediately. If caller authentication is required, call `request_auth` exactly once without including credentials, then stop this run immediately. Do not emit a final answer after either pause tool succeeds.\n")
+		b.WriteString("\nUse the task-only `multica_a2a_task_control` tools for A2A interaction. Your ordinary final answer is published automatically as the final text artifact; do not call `publish_artifact` for ordinary final text, internal or tool data, side-effect receipts, or a duplicate summary. Call `publish_artifact` only when the caller explicitly asks for a file or structured result to be returned through A2A, or when the requested result cannot be represented as ordinary final text. If required caller input is missing, call `request_input` exactly once and stop this run immediately. If caller authentication is required, call `request_auth` exactly once without including credentials, then stop this run immediately. Do not emit a final answer after either pause tool succeeds.\n")
 		return b.String()
 	}
 
