@@ -715,10 +715,12 @@ func (l *ASBLauncher) resolveTaskIdentityForTask(
 	task db.AgentTaskQueue,
 	workspaceID pgtype.UUID,
 ) (ASBResolvedIdentity, error) {
-	if IsA2ATaskOrigin(task.Context) {
-		// An external A2A caller may use only the identity explicitly supplied
-		// for this turn. Do not attach the Multica Agent owner's enterprise
-		// identity before extraEnvForTask injects that request-scoped credential.
+	if IsA2ATaskOrigin(task.Context) && !requiresA2ADEAPDWSToken(task.Context) {
+		// An ordinary external A2A caller may use only the identity explicitly
+		// supplied for this turn. DEAP DWS invocations are the deliberate hybrid
+		// case: extraEnvForTask and the Runtime wrapper keep DWS bound to the
+		// request-scoped DEAP token, while the separately resolved enterprise
+		// identity supplies non-DWS corporate access such as BUC/A1/Aliway.
 		return unboundASBResolvedIdentity(), nil
 	}
 	return l.resolveTaskIdentity(ctx, workspaceID, task.AgentID, task.RuntimeID)

@@ -78,8 +78,10 @@ func hasA2ATaskOrigin(taskContext []byte) bool {
 // IsA2ATaskOrigin is the durable cross-runtime marker for A2A-specific
 // execution and credential isolation. Callers must use the task context
 // supplied by CreateA2AChatTask, never request headers or in-memory state.
-// Every cloud-sandbox backend accepts only the task-scoped external identity;
-// the Multica Agent owner's enterprise identity must never be inherited.
+// Ordinary A2A tasks accept only their task-scoped external identity. A task
+// carrying the durable DEAP DWS requirement is the explicit hybrid ASB case:
+// DWS stays bound to the request-scoped external token, while the Agent's
+// enterprise identity may be mounted solely for non-DWS corporate access.
 func IsA2ATaskOrigin(taskContext []byte) bool {
 	return hasA2ATaskOrigin(taskContext)
 }
