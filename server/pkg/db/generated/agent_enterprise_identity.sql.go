@@ -111,9 +111,35 @@ func (q *Queries) CompareAndSwapAgentEnterpriseIdentityToken(ctx context.Context
 	return i, err
 }
 
+const completeAgentEnterpriseIdentityAttempt = `-- name: CompleteAgentEnterpriseIdentityAttempt :execrows
+UPDATE agent_enterprise_identity_attempt
+SET completion_status = $1,
+    completion_error_code = $2,
+    completed_at = now()
+WHERE id = $3
+  AND completion_status = 'pending'
+`
+
+type CompleteAgentEnterpriseIdentityAttemptParams struct {
+	CompletionStatus    string      `json:"completion_status"`
+	CompletionErrorCode pgtype.Text `json:"completion_error_code"`
+	ID                  pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) CompleteAgentEnterpriseIdentityAttempt(ctx context.Context, arg CompleteAgentEnterpriseIdentityAttemptParams) (int64, error) {
+	result, err := q.db.Exec(ctx, completeAgentEnterpriseIdentityAttempt, arg.CompletionStatus, arg.CompletionErrorCode, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const consumeAgentEnterpriseIdentityAttempt = `-- name: ConsumeAgentEnterpriseIdentityAttempt :one
 UPDATE agent_enterprise_identity_attempt AS attempt
-SET consumed_at = now()
+SET consumed_at = now(),
+    completion_status = 'pending',
+    completion_error_code = NULL,
+    completed_at = NULL
 FROM agent, member
 WHERE attempt.state_hash = $1
   AND attempt.consumed_at IS NULL
@@ -128,7 +154,7 @@ WHERE attempt.state_hash = $1
       member.role IN ('owner', 'admin')
       OR agent.owner_id = attempt.actor_user_id
   )
-RETURNING attempt.id, attempt.workspace_id, attempt.agent_id, attempt.actor_user_id, attempt.requested_raw_emp_id, attempt.state_hash, attempt.nonce_hash, attempt.pkce_verifier_encrypted, attempt.redirect_path, attempt.expires_at, attempt.consumed_at, attempt.created_at
+RETURNING attempt.id, attempt.workspace_id, attempt.agent_id, attempt.actor_user_id, attempt.requested_raw_emp_id, attempt.state_hash, attempt.nonce_hash, attempt.pkce_verifier_encrypted, attempt.redirect_path, attempt.expires_at, attempt.consumed_at, attempt.created_at, attempt.completion_status, attempt.completion_error_code, attempt.completed_at
 `
 
 func (q *Queries) ConsumeAgentEnterpriseIdentityAttempt(ctx context.Context, stateHash []byte) (AgentEnterpriseIdentityAttempt, error) {
@@ -147,6 +173,9 @@ func (q *Queries) ConsumeAgentEnterpriseIdentityAttempt(ctx context.Context, sta
 		&i.ExpiresAt,
 		&i.ConsumedAt,
 		&i.CreatedAt,
+		&i.CompletionStatus,
+		&i.CompletionErrorCode,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -201,7 +230,7 @@ JOIN member
    AND member.user_id = $3
 WHERE agent.id = $2
   AND agent.workspace_id = $1
-RETURNING agent_enterprise_identity_attempt.id, agent_enterprise_identity_attempt.workspace_id, agent_enterprise_identity_attempt.agent_id, agent_enterprise_identity_attempt.actor_user_id, agent_enterprise_identity_attempt.requested_raw_emp_id, agent_enterprise_identity_attempt.state_hash, agent_enterprise_identity_attempt.nonce_hash, agent_enterprise_identity_attempt.pkce_verifier_encrypted, agent_enterprise_identity_attempt.redirect_path, agent_enterprise_identity_attempt.expires_at, agent_enterprise_identity_attempt.consumed_at, agent_enterprise_identity_attempt.created_at
+RETURNING agent_enterprise_identity_attempt.id, agent_enterprise_identity_attempt.workspace_id, agent_enterprise_identity_attempt.agent_id, agent_enterprise_identity_attempt.actor_user_id, agent_enterprise_identity_attempt.requested_raw_emp_id, agent_enterprise_identity_attempt.state_hash, agent_enterprise_identity_attempt.nonce_hash, agent_enterprise_identity_attempt.pkce_verifier_encrypted, agent_enterprise_identity_attempt.redirect_path, agent_enterprise_identity_attempt.expires_at, agent_enterprise_identity_attempt.consumed_at, agent_enterprise_identity_attempt.created_at, agent_enterprise_identity_attempt.completion_status, agent_enterprise_identity_attempt.completion_error_code, agent_enterprise_identity_attempt.completed_at
 `
 
 type CreateAgentEnterpriseIdentityAttemptParams struct {
@@ -242,6 +271,9 @@ func (q *Queries) CreateAgentEnterpriseIdentityAttempt(ctx context.Context, arg 
 		&i.ExpiresAt,
 		&i.ConsumedAt,
 		&i.CreatedAt,
+		&i.CompletionStatus,
+		&i.CompletionErrorCode,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -298,6 +330,47 @@ func (q *Queries) GetActiveAgentEnterpriseIdentity(ctx context.Context, arg GetA
 	return i, err
 }
 
+const getActiveAgentEnterpriseIdentityAttempt = `-- name: GetActiveAgentEnterpriseIdentityAttempt :one
+SELECT id, workspace_id, agent_id, actor_user_id, requested_raw_emp_id, state_hash, nonce_hash, pkce_verifier_encrypted, redirect_path, expires_at, consumed_at, created_at, completion_status, completion_error_code, completed_at
+FROM agent_enterprise_identity_attempt
+WHERE workspace_id = $1
+  AND agent_id = $2
+  AND consumed_at IS NOT NULL
+  AND completion_status = 'pending'
+  AND consumed_at > $3
+ORDER BY consumed_at DESC
+LIMIT 1
+`
+
+type GetActiveAgentEnterpriseIdentityAttemptParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	ActiveAfter pgtype.Timestamptz `json:"active_after"`
+}
+
+func (q *Queries) GetActiveAgentEnterpriseIdentityAttempt(ctx context.Context, arg GetActiveAgentEnterpriseIdentityAttemptParams) (AgentEnterpriseIdentityAttempt, error) {
+	row := q.db.QueryRow(ctx, getActiveAgentEnterpriseIdentityAttempt, arg.WorkspaceID, arg.AgentID, arg.ActiveAfter)
+	var i AgentEnterpriseIdentityAttempt
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.ActorUserID,
+		&i.RequestedRawEmpID,
+		&i.StateHash,
+		&i.NonceHash,
+		&i.PkceVerifierEncrypted,
+		&i.RedirectPath,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
+		&i.CompletionStatus,
+		&i.CompletionErrorCode,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
 const getAgentEnterpriseIdentity = `-- name: GetAgentEnterpriseIdentity :one
 SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at
 FROM agent_enterprise_identity
@@ -332,6 +405,44 @@ func (q *Queries) GetAgentEnterpriseIdentity(ctx context.Context, arg GetAgentEn
 		&i.BucIdentitySourceSandboxID,
 		&i.BucIdentitySourceRuntimeID,
 		&i.BucIdentitySourceUpdatedAt,
+	)
+	return i, err
+}
+
+const getAgentEnterpriseIdentityAttemptStatus = `-- name: GetAgentEnterpriseIdentityAttemptStatus :one
+SELECT
+    id,
+    completion_status,
+    completion_error_code,
+    completed_at
+FROM agent_enterprise_identity_attempt
+WHERE id = $1
+  AND workspace_id = $2
+  AND agent_id = $3
+  AND consumed_at IS NOT NULL
+`
+
+type GetAgentEnterpriseIdentityAttemptStatusParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+}
+
+type GetAgentEnterpriseIdentityAttemptStatusRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	CompletionStatus    string             `json:"completion_status"`
+	CompletionErrorCode pgtype.Text        `json:"completion_error_code"`
+	CompletedAt         pgtype.Timestamptz `json:"completed_at"`
+}
+
+func (q *Queries) GetAgentEnterpriseIdentityAttemptStatus(ctx context.Context, arg GetAgentEnterpriseIdentityAttemptStatusParams) (GetAgentEnterpriseIdentityAttemptStatusRow, error) {
+	row := q.db.QueryRow(ctx, getAgentEnterpriseIdentityAttemptStatus, arg.ID, arg.WorkspaceID, arg.AgentID)
+	var i GetAgentEnterpriseIdentityAttemptStatusRow
+	err := row.Scan(
+		&i.ID,
+		&i.CompletionStatus,
+		&i.CompletionErrorCode,
+		&i.CompletedAt,
 	)
 	return i, err
 }

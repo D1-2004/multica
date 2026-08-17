@@ -619,39 +619,13 @@ func attachASBBUCIdentityOnce(
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
 ) error {
-	// Submit the synchronous attachment exactly once. In the current ASB
-	// implementation the bootstrap command is accepted before the optional
-	// status command runs. That status command can still report a converging
-	// tunnel or a transient egress-ops 404 and ASB wraps either result as HTTP
-	// 400. Both responses therefore mean "bootstrap submitted", not "submission
-	// rejected". Multica owns the bounded readiness window below and proves the
-	// exact BUC employee and Agent identity through execd. Never repeat this POST:
-	// every submission restarts wgclient and can prevent convergence.
-	err := client.AttachBUCIdentity(ctx, sandboxID, grant, true)
-	if err == nil {
-		return nil
-	}
-	if isASBWireGuardPostAttachCheckPending(err) {
-		slog.Info(
-			"ASB BUC identity bootstrap submitted; post-attach check is pending",
-			"sandbox_id", sandboxID,
-		)
-		return nil
-	}
-	return err
-}
-
-func isASBWireGuardPostAttachCheckPending(err error) bool {
-	var httpErr *ASBHTTPError
-	if !errors.As(err, &httpErr) ||
-		httpErr.Operation != "attach_buc_identity" ||
-		httpErr.StatusCode != http.StatusBadRequest {
-		return false
-	}
-	message := strings.ToLower(strings.TrimSpace(httpErr.ErrorMessage))
-	return strings.Contains(message, "wireguard tunnel not ready yet") ||
-		(strings.Contains(message, "failed to check wireguard status") &&
-			strings.Contains(message, "status code 404"))
+	// Submit the documented asynchronous attachment exactly once. The
+	// synchronous form executes an extra status command through ASB egress-ops;
+	// a failed status command is returned as HTTP 400 even when bootstrap was
+	// already submitted, so callers cannot distinguish convergence from a dead
+	// wgclient. Multica owns the bounded employee and Agent identity probe below.
+	// Repeating either form is unsafe because it restarts wgclient.
+	return client.AttachBUCIdentity(ctx, sandboxID, grant, false)
 }
 
 func asbIdentityProbeInterval(timeout time.Duration) time.Duration {

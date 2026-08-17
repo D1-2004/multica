@@ -104,7 +104,7 @@ func TestASBIdentitySourceBecomesTerminatedCredentialSeed(t *testing.T) {
 			})
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/identity/wireguard":
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBBUCIdentityGrant
@@ -117,7 +117,7 @@ func TestASBIdentitySourceBecomesTerminatedCredentialSeed(t *testing.T) {
 				t.Fatalf("BUC identity grant = %#v", grant)
 			}
 			attachCalls++
-			response.WriteHeader(http.StatusOK)
+			response.WriteHeader(http.StatusAccepted)
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/endpoints/44772":
 			response.Header().Set("Content-Type", "application/json")
@@ -339,7 +339,7 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+rotatedSandboxID+"/identity/wireguard":
 			attachCalls++
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Fatalf("rotated seed attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBBUCIdentityGrant
@@ -352,7 +352,7 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 				grant.BUCAccessToken != "" || grant.BUCRefreshToken != "" || grant.BUCIDToken != "" {
 				t.Fatalf("rotated seed identity grant = %#v", grant)
 			}
-			response.WriteHeader(http.StatusOK)
+			response.WriteHeader(http.StatusAccepted)
 		case request.Method == http.MethodGet &&
 			strings.HasPrefix(request.URL.Path, "/v1/sandboxes/") &&
 			!strings.Contains(request.URL.Path, "/endpoints/"):
@@ -505,14 +505,14 @@ func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
 			attachCalls++
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			if attachCalls > 1 {
 				t.Fatalf("identity source attach calls = %d, want exactly one", attachCalls)
 			}
 			time.Sleep(10 * time.Millisecond)
-			response.WriteHeader(http.StatusOK)
+			response.WriteHeader(http.StatusAccepted)
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID:
 			response.Header().Set("Content-Type", "application/json")
@@ -580,8 +580,8 @@ func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T
 	}
 }
 
-func TestAttachAndProbeASBIdentitySourceAcceptsPostAttachStatus404(t *testing.T) {
-	const sandboxID = "identity-source-sync-attach"
+func TestAttachAndProbeASBIdentitySourceDoesNotHideAsyncAttachFailure(t *testing.T) {
+	const sandboxID = "identity-source-wireguard-converging"
 	attachCalls := 0
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -589,20 +589,20 @@ func TestAttachAndProbeASBIdentitySourceAcceptsPostAttachStatus404(t *testing.T)
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
 			attachCalls++
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			response.Header().Set("Content-Type", "application/json")
 			response.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(response, `{
 				"code":"BAD_REQUEST",
-				"message":"failed to check wireguard status for identity-source-sync-attach, got status code 404"
+				"message":"failed to check wireguard status for identity-source-wireguard-converging, got status code 404"
 			}`)
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID:
 			response.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(response, `{
-				"id":"identity-source-sync-attach",
+				"id":"identity-source-wireguard-converging",
 				"status":{"state":"Running"},
 				"createdAt":"2026-07-31T05:00:00Z"
 			}`)
@@ -632,7 +632,7 @@ func TestAttachAndProbeASBIdentitySourceAcceptsPostAttachStatus404(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewASBClient: %v", err)
 	}
-	if err := attachAndProbeASBIdentitySource(
+	err = attachAndProbeASBIdentitySource(
 		context.Background(),
 		client,
 		sandboxID,
@@ -645,8 +645,9 @@ func TestAttachAndProbeASBIdentitySourceAcceptsPostAttachStatus404(t *testing.T)
 		},
 		"wg-client",
 		250*time.Millisecond,
-	); err != nil {
-		t.Fatalf("attachAndProbeASBIdentitySource: %v", err)
+	)
+	if err == nil || !strings.Contains(err.Error(), "attach BUC identity") {
+		t.Fatalf("attachAndProbeASBIdentitySource error = %v, want attach failure", err)
 	}
 	if attachCalls != 1 {
 		t.Fatalf("attach calls = %d, want exactly one", attachCalls)

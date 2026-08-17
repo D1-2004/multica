@@ -243,8 +243,9 @@ func TestEnterpriseIdentityCallbackProgressPagePollsNewBindingVersion(t *testing
 
 	page := enterpriseIdentityCallbackProgressPage(
 		"nonce",
-		"/api/workspaces/workspace-id/agent-identity/enterprise/status?agent_id=agent-id",
+		"/api/workspaces/workspace-id/agent-identity/enterprise/status?agent_id=agent-id&attempt_id=attempt-id",
 		"/settings?enterprise_identity=connected",
+		"/settings",
 		7,
 	)
 	for _, expected := range []string{
@@ -252,6 +253,11 @@ func TestEnterpriseIdentityCallbackProgressPagePollsNewBindingVersion(t *testing
 		"集团账号权限助手",
 		"完成所有“前往授权”",
 		"fetch(statusURL",
+		"payload.binding_attempt?.status===\"failed\"",
+		"showBindingFailure(payload.binding_attempt.error_code)",
+		"callback-spinner",
+		"本次绑定已经停止，不会继续创建沙箱",
+		"href=\"/settings\" hidden",
 		"payload.binding_version",
 		"expectedBindingVersion=7",
 		"window.location.replace(redirectURL)",
@@ -260,6 +266,9 @@ func TestEnterpriseIdentityCallbackProgressPagePollsNewBindingVersion(t *testing
 		if !strings.Contains(page, expected) {
 			t.Fatalf("callback progress page does not contain %q", expected)
 		}
+	}
+	if strings.Contains(page, "%!") {
+		t.Fatalf("callback progress page contains a formatting error: %s", page)
 	}
 }
 

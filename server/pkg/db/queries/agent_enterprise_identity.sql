@@ -251,7 +251,10 @@ RETURNING agent_enterprise_identity_attempt.*;
 
 -- name: ConsumeAgentEnterpriseIdentityAttempt :one
 UPDATE agent_enterprise_identity_attempt AS attempt
-SET consumed_at = now()
+SET consumed_at = now(),
+    completion_status = 'pending',
+    completion_error_code = NULL,
+    completed_at = NULL
 FROM agent, member
 WHERE attempt.state_hash = sqlc.arg('state_hash')
   AND attempt.consumed_at IS NULL
@@ -267,6 +270,37 @@ WHERE attempt.state_hash = sqlc.arg('state_hash')
       OR agent.owner_id = attempt.actor_user_id
   )
 RETURNING attempt.*;
+
+-- name: GetActiveAgentEnterpriseIdentityAttempt :one
+SELECT *
+FROM agent_enterprise_identity_attempt
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND agent_id = sqlc.arg('agent_id')
+  AND consumed_at IS NOT NULL
+  AND completion_status = 'pending'
+  AND consumed_at > sqlc.arg('active_after')
+ORDER BY consumed_at DESC
+LIMIT 1;
+
+-- name: GetAgentEnterpriseIdentityAttemptStatus :one
+SELECT
+    id,
+    completion_status,
+    completion_error_code,
+    completed_at
+FROM agent_enterprise_identity_attempt
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND agent_id = sqlc.arg('agent_id')
+  AND consumed_at IS NOT NULL;
+
+-- name: CompleteAgentEnterpriseIdentityAttempt :execrows
+UPDATE agent_enterprise_identity_attempt
+SET completion_status = sqlc.arg('completion_status'),
+    completion_error_code = sqlc.narg('completion_error_code'),
+    completed_at = now()
+WHERE id = sqlc.arg('id')
+  AND completion_status = 'pending';
 
 -- name: DeleteExpiredAgentEnterpriseIdentityAttempts :execrows
 DELETE FROM agent_enterprise_identity_attempt
