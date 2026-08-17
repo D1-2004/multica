@@ -25,6 +25,67 @@ func runtimeStartClaimTokenParams(task db.AgentTaskQueue, userID, workspaceID, s
 	}
 }
 
+func TestRuntimeStartFailurePersistsAfterRequestCancellation(t *testing.T) {
+	ctx := context.Background()
+	pool := newTaskClaimRacePool(t)
+	queries := db.New(pool)
+	svc := NewTaskService(queries, pool, nil, events.New())
+	taskID, _, _ := dispatchedCommentTaskFixture(t, ctx, pool)
+	task, err := queries.GetAgentTask(ctx, util.MustParseUUID(taskID))
+	if err != nil {
+		t.Fatalf("load task: %v", err)
+	}
+	attempt, err := svc.BeginRuntimeStartAttempt(
+		ctx,
+		task,
+		SandboxBackendASB,
+		RuntimeStartProtocolHTTPJSONV1,
+	)
+	if err != nil {
+		t.Fatalf("begin attempt: %v", err)
+	}
+	if _, err := svc.RecordRuntimeStartStage(
+		ctx,
+		attempt.ID,
+		task.ID,
+		task.RuntimeID,
+		"identity_preparing",
+	); err != nil {
+		t.Fatalf("record identity stage: %v", err)
+	}
+
+	requestCtx, cancelRequest := context.WithCancel(ctx)
+	cancelRequest()
+	failure := ClassifyRuntimeStartError(SandboxBackendASB, requestCtx.Err())
+	failedTask, err := svc.FailTaskRuntimeStart(
+		requestCtx,
+		task.ID,
+		task.RuntimeID,
+		attempt.ID,
+		failure,
+	)
+	if err != nil {
+		t.Fatalf("persist failure after request cancellation: %v", err)
+	}
+	if failedTask.Status != "failed" {
+		t.Fatalf("task status = %q, want failed", failedTask.Status)
+	}
+
+	gotAttempt, err := queries.GetAgentTaskRuntimeStartAttempt(ctx, db.GetAgentTaskRuntimeStartAttemptParams{
+		ID:        attempt.ID,
+		TaskID:    task.ID,
+		RuntimeID: task.RuntimeID,
+	})
+	if err != nil {
+		t.Fatalf("load failed attempt: %v", err)
+	}
+	if gotAttempt.Status != "failed" ||
+		gotAttempt.LastStage != "identity_preparing" ||
+		gotAttempt.ErrorCode != "ASB-IDENTITY-PREPARING-FAILED" {
+		t.Fatalf("failed attempt = %+v", gotAttempt)
+	}
+}
+
 func TestNewRuntimeLaunchLeaseSupersedesAbandonedAttempt(t *testing.T) {
 	ctx := context.Background()
 	pool := newTaskClaimRacePool(t)

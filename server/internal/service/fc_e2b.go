@@ -2904,6 +2904,8 @@ func (l *FCE2BLauncher) failLaunch(
 
 var e2bSandboxIDPattern = regexp.MustCompile(`Sandbox created with ID ([A-Za-z0-9_-]+) using template`)
 
+const runtimeStartFailurePersistTimeout = 10 * time.Second
+
 func parseE2BSandboxID(output string) (string, error) {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
@@ -2922,6 +2924,26 @@ func (s *TaskService) FailTaskRuntimeStart(
 	attemptID pgtype.UUID,
 	failure RuntimeStartFailure,
 ) (*db.AgentTaskQueue, error) {
+	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) {
+		return nil, cause
+	}
+	// A request-scoped A2A identity intentionally cancels Runtime startup when
+	// its HTTP request ends. Persist that cancellation as a terminal task state
+	// with an independent bounded context; otherwise the same canceled context
+	// aborts this transaction and leaves the task indefinitely queued.
+	persistCtx, cancelPersist := context.WithTimeout(
+		context.Background(),
+		runtimeStartFailurePersistTimeout,
+	)
+	defer cancelPersist()
+	ctx = persistCtx
+	if attemptID.Valid {
+		failure = runtimeStartFailureAtLastStage(ctx, s.Queries, db.AgentTaskRuntimeStartAttempt{
+			ID:        attemptID,
+			TaskID:    taskID,
+			RuntimeID: runtimeID,
+		}, failure)
+	}
 	userMessage := FormatRuntimeStartUserMessage(taskID, failure)
 	var task db.AgentTaskQueue
 	var assistantMsg *db.ChatMessage
