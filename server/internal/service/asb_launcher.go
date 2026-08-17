@@ -715,10 +715,12 @@ func (l *ASBLauncher) resolveTaskIdentityForTask(
 	task db.AgentTaskQueue,
 	workspaceID pgtype.UUID,
 ) (ASBResolvedIdentity, error) {
-	// Enterprise identity is bound to the Multica Agent, not to the inbound
-	// transport principal. ASB therefore resolves the same Agent binding for
-	// web Chat and A2A tasks. Request-scoped A2A credentials remain isolated in
-	// extraEnvForTask and do not replace the Agent's ASB identity attachment.
+	if IsA2ATaskOrigin(task.Context) {
+		// An external A2A caller may use only the identity explicitly supplied
+		// for this turn. Do not attach the Multica Agent owner's enterprise
+		// identity before extraEnvForTask injects that request-scoped credential.
+		return unboundASBResolvedIdentity(), nil
+	}
 	return l.resolveTaskIdentity(ctx, workspaceID, task.AgentID, task.RuntimeID)
 }
 
