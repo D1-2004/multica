@@ -59,9 +59,12 @@ type MessageBindingResult struct {
 	MessageScopeVersion int                            `json:"message_scope_version,omitempty"`
 	MessageScopeDetail  *DingTalkMessageScopeDetail    `json:"message_scope_detail,omitempty"`
 	Conversations       []DingTalkConversationSnapshot `json:"conversations"`
-	SourceID            string                         `json:"source_id"`
-	Subscriptions       []BindingSubscriptionResult    `json:"subscriptions"`
-	Error               *BindingTaskError              `json:"error"`
+	// EmojiConversations 是表情回复监听会话快照（dm-bind 回调契约），结构同
+	// Conversations；identity 模式（message skipped）时为空数组。
+	EmojiConversations []DingTalkConversationSnapshot `json:"emoji_conversations"`
+	SourceID           string                         `json:"source_id"`
+	Subscriptions      []BindingSubscriptionResult    `json:"subscriptions"`
+	Error              *BindingTaskError              `json:"error"`
 }
 
 type CompleteBindingParams struct {
@@ -176,6 +179,7 @@ func (s *Service) CompleteBinding(ctx context.Context, params CompleteBindingPar
 		config.MessageScopeDetail = validated.scopeDetail
 		config.CalendarStartEnabled = false
 		config.Conversations = validated.conversations
+		config.EmojiConversations = validated.emojiConversations
 		rawConfig, marshalErr := config.Marshal()
 		if marshalErr != nil {
 			return CompleteBindingResult{}, fmt.Errorf("%w: terminal binding config", ErrInvalidResult)
@@ -216,10 +220,11 @@ func completeBindingAcknowledgement(params CompleteBindingParams, binding Public
 }
 
 type validatedMessageBinding struct {
-	messageScope  string
-	conversations []DingTalkConversationSnapshot
-	scopeVersion  int
-	scopeDetail   *DingTalkMessageScopeDetail
+	messageScope       string
+	conversations      []DingTalkConversationSnapshot
+	emojiConversations []DingTalkConversationSnapshot
+	scopeVersion       int
+	scopeDetail        *DingTalkMessageScopeDetail
 }
 
 func validateCompleteBindingParams(params CompleteBindingParams) (validatedMessageBinding, error) {
@@ -276,18 +281,24 @@ func validateCompleteBindingParams(params CompleteBindingParams) (validatedMessa
 		if err != nil {
 			return validatedMessageBinding{}, ErrInvalidResult
 		}
+		emojiConversations, err := normalizeDingTalkConversationSnapshots(params.Message.EmojiConversations)
+		if err != nil {
+			return validatedMessageBinding{}, ErrInvalidResult
+		}
 		return validatedMessageBinding{
-			messageScope:  messageScope,
-			conversations: conversations,
-			scopeVersion:  scopeVersion,
-			scopeDetail:   scopeDetail,
+			messageScope:       messageScope,
+			conversations:      conversations,
+			emojiConversations: emojiConversations,
+			scopeVersion:       scopeVersion,
+			scopeDetail:        scopeDetail,
 		}, nil
 	case DingTalkBindingTaskStatusSkipped:
 		if params.Message.Error != nil || params.Message.SourceID != "" || params.Message.MessageScope != "" ||
 			params.Message.Platform != "" || params.Message.TenantID != "" || params.Message.AccountID != "" ||
 			params.Message.PreviousAgentID != "" ||
 			params.Message.AccountDisplayName != "" || params.Message.AccountAvatarURL != "" ||
-			len(params.Message.Conversations) != 0 || len(params.Message.Subscriptions) != 0 ||
+			len(params.Message.Conversations) != 0 || len(params.Message.EmojiConversations) != 0 ||
+			len(params.Message.Subscriptions) != 0 ||
 			params.Message.MessageScopeDetail != nil {
 			return validatedMessageBinding{}, ErrInvalidResult
 		}
@@ -312,7 +323,7 @@ func validateCompleteBindingParams(params CompleteBindingParams) (validatedMessa
 			return validatedMessageBinding{}, ErrInvalidResult
 		}
 		if params.Message.MessageScope == "" {
-			if len(params.Message.Conversations) != 0 {
+			if len(params.Message.Conversations) != 0 || len(params.Message.EmojiConversations) != 0 {
 				return validatedMessageBinding{}, ErrInvalidResult
 			}
 			return validatedMessageBinding{
@@ -325,11 +336,16 @@ func validateCompleteBindingParams(params CompleteBindingParams) (validatedMessa
 		if err != nil {
 			return validatedMessageBinding{}, ErrInvalidResult
 		}
+		emojiConversations, err := normalizeDingTalkConversationSnapshots(params.Message.EmojiConversations)
+		if err != nil {
+			return validatedMessageBinding{}, ErrInvalidResult
+		}
 		return validatedMessageBinding{
-			messageScope:  messageScope,
-			conversations: conversations,
-			scopeVersion:  scopeVersion,
-			scopeDetail:   scopeDetail,
+			messageScope:       messageScope,
+			conversations:      conversations,
+			emojiConversations: emojiConversations,
+			scopeVersion:       scopeVersion,
+			scopeDetail:        scopeDetail,
 		}, nil
 	default:
 		return validatedMessageBinding{}, ErrInvalidResult

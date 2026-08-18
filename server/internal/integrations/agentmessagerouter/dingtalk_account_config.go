@@ -45,11 +45,14 @@ type DingTalkConversationSnapshot struct {
 }
 
 // DingTalkMessageScopeDetail 是 v2 双维度订阅范围明细快照，与 dm-bind 回调的
-// message_scope_detail 契约一致：每个桶接受 ["*"]（所有）、cid 列表（指定）或
-// 空数组（不接收），两桶不允许同时为空。
+// message_scope_detail 契约一致：direct/group 桶接受 ["*"]（所有）、cid 列表（指定）或
+// 空数组（不接收），两桶不允许同时为空。EmojiReactionCids 是表情回复事件监听桶（可选），
+// 缺省/空数组表示不订阅；与消息桶不同，它禁通配符 "*"（事件中心要求限定会话），
+// 且不参与"两桶不同时为空"的判定。
 type DingTalkMessageScopeDetail struct {
-	DirectCids []string `json:"direct_cids"`
-	GroupCids  []string `json:"group_cids"`
+	DirectCids        []string `json:"direct_cids"`
+	GroupCids         []string `json:"group_cids"`
+	EmojiReactionCids []string `json:"emoji_reaction_cids,omitempty"`
 }
 
 type DingTalkAccountConfig struct {
@@ -76,7 +79,10 @@ type DingTalkAccountConfig struct {
 	EnabledDomains       []string                       `json:"enabled_domains,omitempty"`
 	CalendarStartEnabled bool                           `json:"calendar_start_enabled,omitempty"`
 	Conversations        []DingTalkConversationSnapshot `json:"conversations,omitempty"`
-	BoundAt              *time.Time                     `json:"bound_at,omitempty"`
+	// EmojiConversations 是表情回复监听会话快照，与 emoji_reaction_cids 一一对应，
+	// 结构同 Conversations；identity 模式（message skipped）时为空。
+	EmojiConversations []DingTalkConversationSnapshot `json:"emoji_conversations,omitempty"`
+	BoundAt            *time.Time                     `json:"bound_at,omitempty"`
 }
 
 type PublicDingTalkAccountBinding struct {
@@ -101,6 +107,7 @@ type PublicDingTalkBindingOutcome struct {
 	EnabledDomains       []string                              `json:"enabled_domains,omitempty"`
 	CalendarStartEnabled bool                                  `json:"calendar_start_enabled,omitempty"`
 	Conversations        []DingTalkConversationSnapshot        `json:"conversations,omitempty"`
+	EmojiConversations   []DingTalkConversationSnapshot        `json:"emoji_conversations,omitempty"`
 	BoundAt              *time.Time                            `json:"bound_at,omitempty"`
 	Error                *BindingTaskError                     `json:"error,omitempty"`
 }
@@ -110,6 +117,8 @@ type PublicDingTalkBindingOutcome struct {
 type PublicDingTalkMessageScopeView struct {
 	DirectCids []string `json:"direct_cids"`
 	GroupCids  []string `json:"group_cids"`
+	// EmojiReactionCids 表情回复监听范围；v1 记录升格为空数组。
+	EmojiReactionCids []string `json:"emoji_reaction_cids"`
 }
 
 // PublicDingTalkMessageScopeLegacyView 是老视图兜底（dm-bind 方案 §2.4 legacyView），
@@ -150,6 +159,11 @@ func (c DingTalkAccountConfig) Marshal() ([]byte, error) {
 	}
 	c.MessageScope = messageScope
 	c.Conversations = conversations
+	emojiConversations, err := normalizeDingTalkConversationSnapshots(c.EmojiConversations)
+	if err != nil {
+		return nil, err
+	}
+	c.EmojiConversations = emojiConversations
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -181,6 +195,11 @@ func ParseDingTalkAccountConfig(raw []byte) (DingTalkAccountConfig, error) {
 	}
 	config.MessageScope = messageScope
 	config.Conversations = conversations
+	emojiConversations, err := normalizeDingTalkConversationSnapshots(config.EmojiConversations)
+	if err != nil {
+		return DingTalkAccountConfig{}, err
+	}
+	config.EmojiConversations = emojiConversations
 	if err := config.Validate(); err != nil {
 		return DingTalkAccountConfig{}, err
 	}
@@ -265,6 +284,9 @@ func (c DingTalkAccountConfig) Validate() error {
 	if _, _, err := normalizeDingTalkConversationBindingForVersion(c.MessageScope, c.Conversations, scopeVersion); err != nil {
 		return err
 	}
+	if _, err := normalizeDingTalkConversationSnapshots(c.EmojiConversations); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -323,6 +345,16 @@ func normalizeDingTalkConversationBindingForVersion(messageScope string, convers
 		return "", nil, errors.New("custom dingtalk account message scope requires conversations")
 	}
 
+	normalized, err := normalizeDingTalkConversationSnapshots(conversations)
+	if err != nil {
+		return "", nil, err
+	}
+	return messageScope, normalized, nil
+}
+
+// normalizeDingTalkConversationSnapshots 校验并归一化会话快照列表（trim、长度/字符集、
+// cid 去重），消息监听 conversations 与表情回复 emoji_conversations 共用。
+func normalizeDingTalkConversationSnapshots(conversations []DingTalkConversationSnapshot) ([]DingTalkConversationSnapshot, error) {
 	normalized := make([]DingTalkConversationSnapshot, len(conversations))
 	seenCIDs := make(map[string]struct{}, len(conversations))
 	for i, conversation := range conversations {
@@ -332,30 +364,31 @@ func normalizeDingTalkConversationBindingForVersion(messageScope string, convers
 		conversation.AvatarURL = strings.TrimSpace(conversation.AvatarURL)
 		if conversation.CID == "" || len(conversation.CID) > maxConversationCIDBytes ||
 			!utf8.ValidString(conversation.CID) || strings.IndexFunc(conversation.CID, unicode.IsControl) >= 0 {
-			return "", nil, errors.New("dingtalk conversation cid is invalid")
+			return nil, errors.New("dingtalk conversation cid is invalid")
 		}
 		if conversation.Name == "" || utf8.RuneCountInString(conversation.Name) > maxConversationNameRunes ||
 			!utf8.ValidString(conversation.Name) || strings.IndexFunc(conversation.Name, unicode.IsControl) >= 0 {
-			return "", nil, errors.New("dingtalk conversation name is invalid")
+			return nil, errors.New("dingtalk conversation name is invalid")
 		}
 		if len(conversation.AvatarMediaID) > maxConversationMediaIDBytes ||
 			!utf8.ValidString(conversation.AvatarMediaID) || strings.IndexFunc(conversation.AvatarMediaID, unicode.IsControl) >= 0 {
-			return "", nil, errors.New("dingtalk conversation avatar media id is invalid")
+			return nil, errors.New("dingtalk conversation avatar media id is invalid")
 		}
 		if !validAccountAvatarURL(conversation.AvatarURL) {
-			return "", nil, errors.New("dingtalk conversation avatar url is invalid")
+			return nil, errors.New("dingtalk conversation avatar url is invalid")
 		}
 		if _, exists := seenCIDs[conversation.CID]; exists {
-			return "", nil, errors.New("dingtalk conversation cid is duplicated")
+			return nil, errors.New("dingtalk conversation cid is duplicated")
 		}
 		seenCIDs[conversation.CID] = struct{}{}
 		normalized[i] = conversation
 	}
-	return messageScope, normalized, nil
+	return normalized, nil
 }
 
 // normalizeDingTalkMessageScopeDetail 校验 v2 双维度明细（与 dm-bind 页面校验对齐）：
-// 两字段必传（允许空数组）、不允许同时为空、"*" 桶内独占、cid 非空且 ≤512 无空白字符。
+// direct/group 两字段必传（允许空数组）、不允许同时为空、"*" 桶内独占、cid 非空且 ≤512
+// 无空白字符。emoji 桶可选：缺省归一化为空数组，禁通配符 "*"，元素规则与消息桶一致。
 func normalizeDingTalkMessageScopeDetail(detail *DingTalkMessageScopeDetail) (*DingTalkMessageScopeDetail, error) {
 	if detail == nil || detail.DirectCids == nil || detail.GroupCids == nil {
 		return nil, errors.New("dingtalk message scope detail is incomplete")
@@ -371,7 +404,28 @@ func normalizeDingTalkMessageScopeDetail(detail *DingTalkMessageScopeDetail) (*D
 	if err != nil {
 		return nil, err
 	}
-	return &DingTalkMessageScopeDetail{DirectCids: directCids, GroupCids: groupCids}, nil
+	emojiReactionCids, err := normalizeEmojiReactionCIDBucket(detail.EmojiReactionCids)
+	if err != nil {
+		return nil, err
+	}
+	return &DingTalkMessageScopeDetail{
+		DirectCids:        directCids,
+		GroupCids:         groupCids,
+		EmojiReactionCids: emojiReactionCids,
+	}, nil
+}
+
+// normalizeEmojiReactionCIDBucket 校验表情回复监听桶：可选（nil 归一化为空数组），
+// 禁通配符 "*"（事件中心要求 emotion_reply 订阅限定会话），元素规则与消息桶一致。
+func normalizeEmojiReactionCIDBucket(cids []string) ([]string, error) {
+	normalized := make([]string, 0, len(cids))
+	for _, cid := range cids {
+		if cid == "*" || !validScopeCID(cid) {
+			return nil, errors.New("dingtalk emoji reaction scope cid is invalid")
+		}
+		normalized = append(normalized, cid)
+	}
+	return normalized, nil
 }
 
 func normalizeScopeCIDBucket(cids []string) ([]string, error) {
@@ -409,11 +463,12 @@ func copyScopeCids(cids []string) []string {
 func upgradeLegacyMessageScopeView(scope string, conversations []DingTalkConversationSnapshot) PublicDingTalkMessageScopeView {
 	switch scope {
 	case DingTalkMessageScopeAll:
-		return PublicDingTalkMessageScopeView{DirectCids: []string{"*"}, GroupCids: []string{"*"}}
+		return PublicDingTalkMessageScopeView{DirectCids: []string{"*"}, GroupCids: []string{"*"}, EmojiReactionCids: []string{}}
 	case DingTalkMessageScopeCustom:
 		view := PublicDingTalkMessageScopeView{
-			DirectCids: make([]string, 0, len(conversations)),
-			GroupCids:  make([]string, 0, len(conversations)),
+			DirectCids:        make([]string, 0, len(conversations)),
+			GroupCids:         make([]string, 0, len(conversations)),
+			EmojiReactionCids: []string{},
 		}
 		for _, conversation := range conversations {
 			if strings.Contains(conversation.CID, ":") {
@@ -424,7 +479,7 @@ func upgradeLegacyMessageScopeView(scope string, conversations []DingTalkConvers
 		}
 		return view
 	default:
-		return PublicDingTalkMessageScopeView{DirectCids: []string{}, GroupCids: []string{}}
+		return PublicDingTalkMessageScopeView{DirectCids: []string{}, GroupCids: []string{}, EmojiReactionCids: []string{}}
 	}
 }
 
@@ -490,8 +545,9 @@ func (c DingTalkAccountConfig) PublicBinding(
 	legacyView := legacyMessageScopeView(c.MessageScope, c.Conversations, c.RouterAccountID)
 	if scopeVersion == DingTalkMessageScopeVersionBuckets && c.MessageScopeDetail != nil {
 		subscription = PublicDingTalkMessageScopeView{
-			DirectCids: copyScopeCids(c.MessageScopeDetail.DirectCids),
-			GroupCids:  copyScopeCids(c.MessageScopeDetail.GroupCids),
+			DirectCids:        copyScopeCids(c.MessageScopeDetail.DirectCids),
+			GroupCids:         copyScopeCids(c.MessageScopeDetail.GroupCids),
+			EmojiReactionCids: copyScopeCids(c.MessageScopeDetail.EmojiReactionCids),
 		}
 		legacyView = downgradeBucketMessageScopeView(*c.MessageScopeDetail, c.RouterAccountID)
 	}
@@ -512,6 +568,7 @@ func (c DingTalkAccountConfig) PublicBinding(
 			EnabledDomains:       append([]string(nil), c.EnabledDomains...),
 			CalendarStartEnabled: c.CalendarStartEnabled,
 			Conversations:        append([]DingTalkConversationSnapshot(nil), c.Conversations...),
+			EmojiConversations:   append([]DingTalkConversationSnapshot(nil), c.EmojiConversations...),
 			BoundAt:              c.BoundAt,
 			Error:                c.MessageRouteError,
 		},

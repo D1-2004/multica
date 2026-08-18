@@ -38,6 +38,7 @@ export interface DingTalkConversationSummary {
 export interface DingTalkMessageScopeSubscription {
   directCids: string[];
   groupCids: string[];
+  emojiReactionCids: string[];
 }
 
 export interface DingTalkMessageRouteOutcome
@@ -49,6 +50,7 @@ export interface DingTalkMessageRouteOutcome
   enabledDomains: string[];
   calendarStartEnabled?: boolean;
   conversations: DingTalkConversationSummary[];
+  emojiConversations: DingTalkConversationSummary[];
 }
 
 export interface DingTalkAccountBinding {
