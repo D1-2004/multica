@@ -318,13 +318,11 @@ func TestRunMigrationsConcurrentAlreadyApplied(t *testing.T) {
 	}
 }
 
-// TestRunMigrationsReconcilesRenumberedASBMigrations proves that databases
-// which already applied the ASB migrations under their pre-rebase versions
-// advance to the shared migration sequence without executing the same DDL a
-// second time. The replacement files contain SQL that must never run; a
-// successful migration therefore proves both the bookkeeping rename and the
-// skip path.
-func TestRunMigrationsReconcilesRenumberedASBMigrations(t *testing.T) {
+// TestRunMigrationsReconcilesRenumberedForkMigrations proves that databases
+// which already applied fork migrations under historical stems advance to the
+// reserved namespace without executing the same DDL a second time. Both stems
+// remain recorded so rolling back to the previous binary cannot replay DDL.
+func TestRunMigrationsReconcilesRenumberedForkMigrations(t *testing.T) {
 	f := newFixture(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), raceTestTimeout)
@@ -341,7 +339,7 @@ func TestRunMigrationsReconcilesRenumberedASBMigrations(t *testing.T) {
 	}
 
 	legacyVersions := make([]string, 0, len(migrationVersionAliases))
-	currentVersionSet := make(map[string]struct{}, len(migrationVersionAliases))
+	expectedVersionSet := make(map[string]struct{}, len(migrationVersionAliases)*2)
 	files := make([]string, 0, len(migrationVersionAliases))
 	fileSet := make(map[string]struct{}, len(migrationVersionAliases))
 	dir := t.TempDir()
@@ -362,14 +360,15 @@ func TestRunMigrationsReconcilesRenumberedASBMigrations(t *testing.T) {
 			fileSet[alias.Current] = struct{}{}
 		}
 		legacyVersions = append(legacyVersions, alias.Legacy)
-		currentVersionSet[alias.Current] = struct{}{}
+		expectedVersionSet[alias.Legacy] = struct{}{}
+		expectedVersionSet[alias.Current] = struct{}{}
 	}
-	currentVersions := make([]string, 0, len(currentVersionSet))
-	for version := range currentVersionSet {
-		currentVersions = append(currentVersions, version)
+	expectedVersions := make([]string, 0, len(expectedVersionSet))
+	for version := range expectedVersionSet {
+		expectedVersions = append(expectedVersions, version)
 	}
 	sort.Strings(files)
-	sort.Strings(currentVersions)
+	sort.Strings(expectedVersions)
 
 	if err := runMigrations(ctx, f.pool, runOptions{
 		Direction:             "up",
@@ -377,11 +376,11 @@ func TestRunMigrationsReconcilesRenumberedASBMigrations(t *testing.T) {
 		SchemaMigrationsTable: f.tableFQN,
 		AdvisoryLockKey:       f.lockKey,
 	}); err != nil {
-		t.Fatalf("runMigrations with renumbered ASB migrations: %v", err)
+		t.Fatalf("runMigrations with renumbered fork migrations: %v", err)
 	}
 
-	if got := f.appliedVersions(t); !equalStrings(got, currentVersions) {
-		t.Fatalf("schema_migrations after renumbering = %v, want %v", got, currentVersions)
+	if got := f.appliedVersions(t); !equalStrings(got, expectedVersions) {
+		t.Fatalf("schema_migrations after renumbering = %v, want %v", got, expectedVersions)
 	}
 	for _, legacy := range legacyVersions {
 		var exists bool
@@ -391,8 +390,8 @@ func TestRunMigrationsReconcilesRenumberedASBMigrations(t *testing.T) {
 		).Scan(&exists); err != nil {
 			t.Fatalf("check legacy migration %s: %v", legacy, err)
 		}
-		if exists {
-			t.Fatalf("legacy migration %s still exists after renumbering", legacy)
+		if !exists {
+			t.Fatalf("legacy migration %s was removed during renumbering", legacy)
 		}
 	}
 }
@@ -596,6 +595,20 @@ func TestRunMigrationsRejectsInvalidDirection(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "invalid direction") {
 			t.Errorf("direction %q: error %q does not mention 'invalid direction'", dir, err)
+		}
+	}
+}
+
+func TestMigrationVersionAliasesHaveUniqueLegacyStemsAndCurrentFiles(t *testing.T) {
+	seenLegacy := make(map[string]string, len(migrationVersionAliases))
+	for _, alias := range migrationVersionAliases {
+		if previous, exists := seenLegacy[alias.Legacy]; exists {
+			t.Errorf("legacy migration %s maps to both %s and %s", alias.Legacy, previous, alias.Current)
+		}
+		seenLegacy[alias.Legacy] = alias.Current
+		path := filepath.Join("..", "..", "migrations", alias.Current+".up.sql")
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("current migration for alias %s -> %s is unavailable: %v", alias.Legacy, alias.Current, err)
 		}
 	}
 }

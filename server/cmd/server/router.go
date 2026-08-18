@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/deploymentfence"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -264,8 +265,9 @@ type RouterOptions struct {
 	// SandboxRelay is nil on ordinary deployments. Production injects the
 	// signed pre-release sandbox relay here so requests carrying the routing
 	// assertion are intercepted before local authentication and routing.
-	SandboxRelay  func(http.Handler) http.Handler
-	RuntimeConfig *appRuntimeConfig
+	SandboxRelay    func(http.Handler) http.Handler
+	RuntimeConfig   *appRuntimeConfig
+	DeploymentFence *deploymentfence.Service
 }
 
 // NewRouterWithOptions builds the fully-configured Chi router and
@@ -1277,6 +1279,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			h.DingTalkAccountBindingOrigin,
 		))
 	}
+	if opts.DeploymentFence != nil {
+		r.Use(opts.DeploymentFence.Middleware)
+	}
 
 	// Health / readiness checks
 	r.Get("/health", health.liveHandler)
@@ -1300,6 +1305,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Authorization: Bearer, and is disabled unless MULTICA_LOG_DIR is set
 	// (main.sh exports it in containerized deployments).
 	r.Get("/api/internal/logs/tail", logTailHandler(os.Getenv("MULTICA_LOG_TAIL_TOKEN"), os.Getenv("MULTICA_LOG_DIR")))
+	if opts.DeploymentFence != nil {
+		fenceToken := os.Getenv("MULTICA_LOG_TAIL_TOKEN")
+		r.Get("/api/internal/deployment-fence", deploymentFenceStatusHandler(fenceToken, opts.DeploymentFence))
+		r.Put("/api/internal/deployment-fence", deploymentFenceTransitionHandler(fenceToken, opts.DeploymentFence))
+	}
 
 	// Deployment-only HSF diagnostic. This proves that the application can
 	// reach Agent Identity through its local Dapr sidecar without ever exposing
