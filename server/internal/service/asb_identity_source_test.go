@@ -54,7 +54,7 @@ func (store *fakeASBIdentitySourceStore) ListASBRuntimeCredentials(
 	return []db.AsbRuntimeCredential{store.credential}, nil
 }
 
-func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
+func TestASBIdentitySourceBecomesTerminatedCredentialSeed(t *testing.T) {
 	const (
 		sourceSandboxID        = "identity-source-123"
 		runtimeImageRef        = "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -233,9 +233,9 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	}
 	if source.SandboxID != sourceSandboxID ||
 		source.RuntimeID != runtimeID ||
-		state != "Running" ||
+		state != "Terminated" ||
 		pauseCalls != 0 ||
-		deleteCalls != 0 {
+		deleteCalls != 1 {
 		t.Fatalf(
 			"created identity source = %#v, state=%s pause_calls=%d delete_calls=%d",
 			source,
@@ -254,7 +254,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	); err != nil {
 		t.Fatalf("Prepare identity source: %v", err)
 	}
-	if state != "Running" || resumeCalls != 0 || renewCalls != 1 {
+	if state != "Terminated" || resumeCalls != 0 || renewCalls != 0 {
 		t.Fatalf(
 			"prepared state=%s resume_calls=%d renew_calls=%d",
 			state,
@@ -265,7 +265,7 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	if err := manager.Park(context.Background(), runtimeID, sourceSandboxID); err != nil {
 		t.Fatalf("Park identity source: %v", err)
 	}
-	if state != "Running" || pauseCalls != 0 {
+	if state != "Terminated" || pauseCalls != 0 {
 		t.Fatalf("released state=%s pause_calls=%d", state, pauseCalls)
 	}
 	store.runtime.Metadata = []byte(strings.Replace(
@@ -286,68 +286,13 @@ func TestASBIdentitySourceRemainsRunningForInheritance(t *testing.T) {
 	if err := manager.Delete(context.Background(), runtimeID, sourceSandboxID); err != nil {
 		t.Fatalf("Delete identity source: %v", err)
 	}
-	if attachCalls != 1 || probeCalls != 3 || deleteCalls != 1 {
+	if attachCalls != 1 || probeCalls != 1 || deleteCalls != 1 {
 		t.Fatalf(
 			"attach_calls=%d probe_calls=%d delete_calls=%d",
 			attachCalls,
 			probeCalls,
 			deleteCalls,
 		)
-	}
-}
-
-func TestASBIdentitySourceInitialExpirationLeavesOneMinuteSafetyMargin(t *testing.T) {
-	t.Parallel()
-
-	createdAt := time.Date(2026, time.July, 30, 14, 0, 0, 0, time.UTC)
-	expiresAt := asbIdentitySourceInitialExpiration(createdAt)
-	want := createdAt.Add(asbMaxRenewalDuration - time.Minute)
-	if !expiresAt.Equal(want) {
-		t.Fatalf("expires_at = %s, want %s", expiresAt, want)
-	}
-	if got := expiresAt.Sub(createdAt); got != 167*time.Hour+59*time.Minute {
-		t.Fatalf("initial source lifetime = %s, want 167h59m", got)
-	}
-}
-
-func TestInitializeASBIdentitySourceExpirationUsesCreateResponseTimeWithoutReloading(t *testing.T) {
-	t.Parallel()
-
-	const sandboxID = "identity-source-absolute-expiration"
-	createdAt := time.Now().UTC().Add(-52 * time.Second).Truncate(time.Second)
-	want := asbIdentitySourceInitialExpiration(createdAt)
-	renewCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch {
-		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes/"+sandboxID+"/renew-expiration":
-			var payload struct {
-				ExpiresAt time.Time `json:"expiresAt"`
-			}
-			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-				t.Fatalf("decode renew request: %v", err)
-			}
-			if !payload.ExpiresAt.Equal(want) {
-				t.Fatalf("renew expires_at = %s, want creation-relative %s", payload.ExpiresAt, want)
-			}
-			renewCalls++
-			response.WriteHeader(http.StatusOK)
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	defer server.Close()
-
-	client := newTestASBClient(t, server)
-	if err := initializeASBIdentitySourceExpiration(
-		context.Background(),
-		client,
-		sandboxID,
-		createdAt,
-	); err != nil {
-		t.Fatalf("initialize source expiration: %v", err)
-	}
-	if renewCalls != 1 {
-		t.Fatalf("renew calls = %d, want 1", renewCalls)
 	}
 }
 
